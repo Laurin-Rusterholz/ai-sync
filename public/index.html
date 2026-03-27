@@ -7540,6 +7540,101 @@ function pickLatestRemoteCandidate(results) {
   })[0] || null;
 }
 let _transferInProgress = false;
+
+// ── PDF Cloud Sync (Firebase Storage) ──
+async function syncPDFsToFirebase(silent = false) {
+  if (!isFirebaseCloudAvailable()) return { uploaded: 0, skipped: 0 };
+  const books = typeof rhGetBooks === 'function' ? rhGetBooks() : (window.rhGetBooks ? window.rhGetBooks() : []);
+  const pdfBooks = books.filter(b => b.hasPdfFile && !b.firebaseUrl);
+  if (pdfBooks.length === 0) return { uploaded: 0, skipped: 0 };
+  
+  console.log('[PDFSync] Found', pdfBooks.length, 'PDFs without Firebase URL, uploading...');
+  if (!silent) toast('info', 'PDF-Sync', pdfBooks.length + ' PDFs werden hochgeladen...');
+  
+  let uploaded = 0, skipped = 0;
+  const db = window.rhGetDb ? window.rhGetDb() : null;
+  if (!db && window.rhInitDB) { try { await window.rhInitDB(); } catch(e) {} }
+  
+  for (const book of pdfBooks) {
+    try {
+      const pdfData = window.rhGetPDF ? await window.rhGetPDF(book.id) : null;
+      if (!pdfData) { skipped++; continue; }
+      
+      const pdfBlob = new Blob([pdfData], { type: 'application/pdf' });
+      const pdfFile = new File([pdfBlob], (book.fileName || book.id + '.pdf'), { type: 'application/pdf' });
+      const url = await uploadToFirebase(pdfFile, 'readinghub/pdfs/' + book.id + '.pdf');
+      
+      book.firebaseUrl = url;
+      book.updatedAt = new Date().toISOString();
+      uploaded++;
+      console.log('[PDFSync] Uploaded:', book.title, '→', url);
+    } catch(e) {
+      console.warn('[PDFSync] Failed for', book.title, ':', e.message);
+      skipped++;
+    }
+  }
+  
+  if (uploaded > 0) {
+    const allBooks = typeof rhGetBooks === 'function' ? rhGetBooks() : (window.rhGetBooks ? window.rhGetBooks() : []);
+    for (const book of pdfBooks) {
+      const target = allBooks.find(b => b.id === book.id);
+      if (target && book.firebaseUrl) target.firebaseUrl = book.firebaseUrl;
+    }
+    if (window.rhSaveBooks) window.rhSaveBooks(allBooks);
+    if (typeof refreshReadingHubShadowCache === 'function') refreshReadingHubShadowCache();
+  }
+  
+  console.log('[PDFSync] Done: uploaded=' + uploaded + ', skipped=' + skipped);
+  return { uploaded, skipped };
+}
+
+async function syncPDFsFromFirebase(silent = false) {
+  if (!isFirebaseCloudAvailable()) return { downloaded: 0, skipped: 0 };
+  const books = typeof rhGetBooks === 'function' ? rhGetBooks() : (window.rhGetBooks ? window.rhGetBooks() : []);
+  const booksToDownload = books.filter(b => b.firebaseUrl);
+  if (booksToDownload.length === 0) return { downloaded: 0, skipped: 0 };
+  
+  const db = window.rhGetDb ? window.rhGetDb() : null;
+  if (!db && window.rhInitDB) { try { await window.rhInitDB(); } catch(e) {} }
+  
+  let downloaded = 0, skipped = 0;
+  console.log('[PDFSync] Checking', booksToDownload.length, 'books with Firebase URLs for local caching...');
+  
+  for (const book of booksToDownload) {
+    try {
+      // Check if already cached locally
+      let hasLocal = false;
+      try {
+        const existing = window.rhGetPDF ? await window.rhGetPDF(book.id) : null;
+        hasLocal = !!existing;
+      } catch(e) {}
+      
+      if (hasLocal) { skipped++; continue; }
+      
+      console.log('[PDFSync] Downloading:', book.title);
+      if (!silent) toast('info', 'PDF-Download', 'Lade "' + (book.title || '').slice(0, 30) + '"...');
+      
+      const resp = await fetch(book.firebaseUrl);
+      if (!resp.ok) { skipped++; continue; }
+      const arrayBuffer = await resp.arrayBuffer();
+      
+      if (window.rhSavePDF) await window.rhSavePDF(book.id, arrayBuffer);
+      downloaded++;
+      console.log('[PDFSync] Downloaded & cached:', book.title);
+    } catch(e) {
+      console.warn('[PDFSync] Download failed for', book.title, ':', e.message);
+      skipped++;
+    }
+  }
+  
+  console.log('[PDFSync] Pull done: downloaded=' + downloaded + ', skipped=' + skipped);
+  if (!silent && downloaded > 0) toast('ok', 'PDF-Sync', downloaded + ' PDFs heruntergeladen');
+  return { downloaded, skipped };
+}
+
+window.syncPDFsToFirebase = syncPDFsToFirebase;
+window.syncPDFsFromFirebase = syncPDFsFromFirebase;
+
 async function manualTransferPush(silent = false) {
   if (_transferInProgress) {
     if (!silent) toast('warn', 'Bitte warten', 'Übertragung läuft bereits...');
@@ -7603,6 +7698,10 @@ async function manualTransferPush(silent = false) {
     saveLocalData();
     updateSyncChip();
     if (!silent) toast('ok', 'Übertragen', 'Cloud-Version gespeichert: ' + okResults.map(r => cloudProviderLabel(r.provider)).join(' + '));
+    // Sync PDFs to Firebase (non-blocking)
+    syncPDFsToFirebase(silent).then(r => {
+      if (r.uploaded > 0) console.log('[ManualPush] PDF sync: ' + r.uploaded + ' uploaded');
+    }).catch(e => console.warn('[ManualPush] PDF sync error:', e));
     return { ok: true, appResults, rhResults, transferVersionId };
   }
 
@@ -7709,6 +7808,10 @@ async function manualTransferPull(silent = false) {
     updateSyncChip();
     if (typeof render === 'function') render();
     if (!silent) toast('ok', 'Übernommen', 'Neueste Cloud-Version übernommen' + (appCandidates.length > 1 ? ' (' + cloudProviderLabel(chosen.provider) + ' war neuer)' : ''));
+    // Download PDFs from Firebase (non-blocking)
+    syncPDFsFromFirebase(silent).then(r => {
+      if (r.downloaded > 0) console.log('[ManualPull] PDF sync: ' + r.downloaded + ' downloaded');
+    }).catch(e => console.warn('[ManualPull] PDF sync error:', e));
     return { ok: true, provider: chosen.provider, updatedAt: incoming?.meta?.updatedAt || '' };
   } catch (e) {
     console.warn('Manual cloud pull failed:', e);
@@ -36783,14 +36886,18 @@ function initRecallLabApp() {
   // Karten-Helfer
   const isNew = c => !c.srs || (!c.srs.repetitions && c.srs.phase !== "learning");
   const isLearning = c => c.srs && (c.srs.phase === "learning" || c.srs.phase === "relearning");
+  const isLearningDue = c => isLearning(c) && c.srs.nextReview <= Date.now();
+  const isLearningWaiting = c => isLearning(c) && c.srs.nextReview > Date.now();
   const isDue = c => c.srs && c.srs.nextReview <= Date.now() && c.srs.repetitions > 0 && c.srs.phase === "review";
   const isMature = c => c.srs && c.srs.intervalDays >= 21;
-  const getDueCount = () => rlState.cards.filter(c => (isDue(c)||isLearning(c)) && !c.suspended).length;
+  const getDueCount = () => rlState.cards.filter(c => (isDue(c)||isLearningDue(c)) && !c.suspended).length;
   const getNewCount = () => rlState.cards.filter(c => isNew(c) && !c.suspended).length;
   
   // Navigation
   function rlNavigate(route, params = {}) {
     currentRLRoute = route;
+    // Clean up learning timer when leaving review
+    if (route !== "rl-review" && window._rlLearningTimer) { clearTimeout(window._rlLearningTimer); window._rlLearningTimer = null; }
     document.querySelectorAll(".rl-nav-item").forEach(i => i.classList.remove("active"));
     document.querySelector(`[data-route="${route}"]`)?.classList.add("active");
     
@@ -36930,22 +37037,75 @@ function initRecallLabApp() {
     const due = cards.filter(c => isDue(c)).sort(() => Math.random()-0.5);
     const deckObj = deckId ? rlState.decks.find(d => d.id === deckId) : null;
     const maxNew = (deckObj && deckObj.newCardsPerDay !== undefined) ? deckObj.newCardsPerDay : rlState.settings.newCardsPerDay;
-    const fresh = cards.filter(c => isNew(c)).slice(0, maxNew);
+    // Bug 3 fix: Track how many new cards were already introduced today
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const todayMs = todayStart.getTime();
+    // Count unique cards that had their FIRST ever review today (= new cards introduced today)
+    const newIntroducedToday = new Set();
+    const todaysCardIds = new Set(rlState.reviewLogs.filter(l => l.timestamp >= todayMs).map(l => l.cardId));
+    for (const cardId of todaysCardIds) {
+      const hasOlderLog = rlState.reviewLogs.some(l => l.cardId === cardId && l.timestamp < todayMs);
+      if (!hasOlderLog) newIntroducedToday.add(cardId);
+    }
+    const remainingNew = Math.max(0, maxNew - newIntroducedToday.size);
+    const fresh = cards.filter(c => isNew(c)).slice(0, remainingNew);
     reviewQueue = [...learning, ...due, ...fresh];
     reviewIndex = 0; answerRevealed = false;
+    // Clear any existing learning timer
+    if (window._rlLearningTimer) { clearTimeout(window._rlLearningTimer); window._rlLearningTimer = null; }
     if (!reviewQueue.length) {
-      document.getElementById("rl-content").innerHTML = `<div class="rl-empty" style="padding:60px"><div class="rl-empty-icon">🎉</div><div class="rl-empty-title">Alles erledigt!</div><p style="color:#71717a">Keine Karten zum Lernen.</p><button class="rl-btn rl-btn-primary" style="margin-top:20px" onclick="window.rlNavigate('rl-dashboard')">Dashboard</button></div>`;
+      document.getElementById("rl-content").innerHTML = `<div class="rl-empty" style="padding:60px"><div class="rl-empty-icon">🎉</div><div class="rl-empty-title">Alles erledigt!</div><p style="color:#71717a">Keine Karten zum Lernen.${remainingNew === 0 && cards.filter(c => isNew(c)).length > 0 ? '<br><span style="font-size:12px">Tageslimit für neue Karten erreicht (' + maxNew + '/' + maxNew + ')</span>' : ''}</p><button class="rl-btn rl-btn-primary" style="margin-top:20px" onclick="window.rlNavigate('rl-dashboard')">Dashboard</button></div>`;
       return;
     }
     showReviewCard();
   }
   
   function showReviewCard() {
-    const card = reviewQueue[reviewIndex];
+    // Bug 2 fix: Skip learning/relearning cards that aren't due yet
+    // Find the next card that's actually ready
+    if (window._rlLearningTimer) { clearTimeout(window._rlLearningTimer); window._rlLearningTimer = null; }
+    
+    let card = null;
+    let scanned = 0;
+    const now = Date.now();
+    let earliestWaiting = Infinity;
+    
+    while (scanned < reviewQueue.length) {
+      const idx = (reviewIndex + scanned) % reviewQueue.length;
+      if (idx >= reviewQueue.length) break;
+      const candidate = reviewQueue[reviewIndex];
+      if (!candidate) break;
+      
+      // Check if this learning card is still waiting
+      if (isLearningWaiting(candidate)) {
+        const waitMs = candidate.srs.nextReview - now;
+        earliestWaiting = Math.min(earliestWaiting, waitMs);
+        // Move to end of queue
+        reviewQueue.splice(reviewIndex, 1);
+        reviewQueue.push(candidate);
+        scanned++;
+        continue;
+      }
+      
+      card = candidate;
+      break;
+    }
+    
     if (!card) {
+      // All remaining cards are waiting learning cards
+      if (earliestWaiting < Infinity && earliestWaiting > 0) {
+        const waitSec = Math.ceil(earliestWaiting / 1000);
+        const waitDisplay = waitSec < 60 ? waitSec + 's' : Math.ceil(waitSec/60) + 'min';
+        document.getElementById("rl-content").innerHTML = `<div class="rl-empty" style="padding:60px"><div class="rl-empty-icon">⏳</div><div class="rl-empty-title">Warte auf Lernkarten...</div><p style="color:#71717a">Nächste Karte in <strong id="rl-wait-countdown">${waitDisplay}</strong></p><button class="rl-btn rl-btn-primary" style="margin-top:20px" onclick="window.rlNavigate('rl-dashboard')">Dashboard</button></div>`;
+        // Auto-continue when first card becomes due
+        window._rlLearningTimer = setTimeout(() => { showReviewCard(); }, Math.min(earliestWaiting + 500, 60000));
+        return;
+      }
+      // Truly done
       document.getElementById("rl-content").innerHTML = `<div class="rl-empty" style="padding:60px"><div class="rl-empty-icon">🎉</div><div class="rl-empty-title">Session beendet!</div><p style="color:#71717a">${reviewIndex} Karten gelernt</p><button class="rl-btn rl-btn-primary" style="margin-top:20px" onclick="window.rlNavigate('rl-dashboard')">Dashboard</button></div>`;
       return;
     }
+    
     const deck = rlState.decks.find(d => d.id === card.deckId);
     answerRevealed = false;
     const isCloze = card.cardType === "cloze";
@@ -37026,11 +37186,10 @@ function initRecallLabApp() {
     card.srs = res;
     if (res.isLeech) { card.suspended=true; card.leech=true; rlToast("⚠️ Leech! Karte ausgesetzt.","warning"); }
     rlState.reviewLogs.push({ cardId:card.id, rating, timestamp:Date.now() });
-    // Requeue learning cards
+    // Requeue learning cards at end — showReviewCard will check nextReview timing
     if (res.phase==="learning"||res.phase==="relearning") {
       reviewQueue.splice(reviewIndex,1);
-      const pos = Math.min(reviewIndex+3+Math.floor(Math.random()*3), reviewQueue.length);
-      reviewQueue.splice(pos,0,card);
+      reviewQueue.push(card);
     } else { reviewIndex++; }
     const xp={again:1,hard:2,good:3,easy:5}[rating]||0;
     rlState.user.xp+=xp; rlState.user.level=Math.floor(rlState.user.xp/100)+1;
@@ -50089,6 +50248,10 @@ Beginne direkt mit dem Text:`
   window.rhGetBooks = rhGetBooks;
   window.rhSaveBooks = rhSaveBooks;
   window.rhState = rhState;
+  window.rhSavePDF = rhSavePDF;
+  window.rhGetPDF = rhGetPDF;
+  window.rhInitDB = rhInitDB;
+  window.rhGetDb = () => rhDb;
   
   // Aktueller Reader-Tab
   let rhCurrentReaderTab = 'text';
@@ -54840,7 +55003,7 @@ function ensDk(rl,id,name){if(!rl.decks.find(d=>d.id===id))rl.decks.push({id,nam
 /* ── Settings & API ── */
 function gSet(){try{const s=JSON.parse(localStorage.getItem(SKEY)||'{}');if(!s.apiKey&&window.APP?.state?.data?.settings?.claudeApiKey)s.apiKey=window.APP.state.data.settings.claudeApiKey;if(!s.openaiKey&&window.APP?.state?.settings?.openai?.apiKey?.trim())s.openaiKey=window.APP.state.settings.openai.apiKey.trim();if(!s.apiKey&&window.APP?.state?.settings?.anthropicApiKey?.trim())s.apiKey=window.APP.state.settings.anthropicApiKey.trim();return s}catch{return{}}}
 function sSet(d){localStorage.setItem(SKEY,JSON.stringify(d))}
-async function callGPT(prompt,mt){const s=gSet();const ok=s.openaiKey;if(ok){try{const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ok},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.choices?.[0]?.message?.content?.trim()||null}}catch(e){}}const ck=s.apiKey;if(ck){try{const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ck,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.content?.map(c=>c.text||'').join('').trim()||null}}catch(e){}}nhToastMsg('API Key fehlt');return null}
+async function callGPT(prompt,mt){const s=gSet();const gk=APP?.state?.settings?.geminiApiKey||s.geminiKey||'';if(gk){try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+gk,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});if(r.ok){const d=await r.json();const t=d.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||null;if(t)return t}}catch(e){console.log('Gemini callGPT failed:',e)}}const ok=s.openaiKey;if(ok){try{const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ok},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.choices?.[0]?.message?.content?.trim()||null}}catch(e){}}const ck=s.apiKey;if(ck){try{const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ck,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.content?.map(c=>c.text||'').join('').trim()||null}}catch(e){}}nhToastMsg('API Key fehlt (Gemini/OpenAI/Anthropic)');return null}
 async function extractPDF(file){const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)});const k=gSet().apiKey;if(!k){nhToastMsg('Claude API Key fehlt');return null}nhToastMsg('PDF wird extrahiert…');try{const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:'Extract the complete text from this PDF. Return ONLY the raw text, no comments. Keep paragraphs.'}]}]})});if(!resp.ok){nhToastMsg('PDF Fehler');return null}const d=await resp.json();nhToastMsg('✓ PDF extrahiert');return d.content?.map(c=>c.text||'').join('').trim();}catch(e){nhToastMsg(e.message);return null}}
 
 /* ── Cloud — handled by main app's scheduleSave(), no separate sync ── */
@@ -54882,7 +55045,7 @@ function nhOpenPD(cid){
 }
 function nhUpdPD(cid,k,v){const m=D.col.find(x=>x.id===cid);if(m){m[k]=v;m.updated=iso();saveData()}}
 function nhToRecall(cid){const m=D.col.find(x=>x.id===cid);if(!m)return;nhClosePD();nhRCM(null,m.title,m.content)}
-async function nhTranslatePD(cid){const m=D.col.find(x=>x.id===cid);if(!m?.content)return;nhToastMsg('Übersetze…');const txt=await callGPT(`Translate. If English→German, if German→English, else→English. Return ONLY the translation.\n\nText: "${m.content}"`);if(txt){nhAutoRC(m.content,txt);nhOpenM('🌐 Übersetzung',`<div class="fg"><label>Original</label><div class="text-block">${esc(m.content)}</div></div><div class="fg"><label>Übersetzung</label><div style="padding:12px;background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--r);font-size:14px;line-height:1.6">${esc(txt)}</div></div>`,`<button class="btn" onclick="navigator.clipboard.writeText('${esc(txt).replace(/'/g,"\\'")}');nhToastMsg('Kopiert')">Kopieren</button><button class="btn btn-p" onclick="nhCloseM()">OK</button>`)}}
+async function nhTranslatePD(cid){const m=D.col.find(x=>x.id===cid);if(!m?.content)return;nhToastMsg('Übersetze…');const txt=await callGPT(`Du bist ein präziser Übersetzer für einen Deutschschweizer. Übersetze den folgenden englischen Text ins Deutsche. Antworte NUR mit der deutschen Übersetzung, ohne Erklärungen.\n\nText:\n\nText: "${m.content}"`);if(txt){nhAutoRC(m.content,txt);nhOpenM('🌐 Übersetzung',`<div class="fg"><label>Original</label><div class="text-block">${esc(m.content)}</div></div><div class="fg"><label>Übersetzung</label><div style="padding:12px;background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--r);font-size:14px;line-height:1.6">${esc(txt)}</div></div>`,`<button class="btn" onclick="navigator.clipboard.writeText('${esc(txt).replace(/'/g,"\\'")}');nhToastMsg('Kopiert')">Kopieren</button><button class="btn btn-p" onclick="nhCloseM()">OK</button>`)}}
 
 /* ── Pinboard (grid, no rotation) ── */
 function mkPinboard(items,el){
@@ -54909,7 +55072,7 @@ let _newsReadId=null;
 function nhOpenNewsReader(nid){_newsReadId=nid;const n=D.news.find(x=>x.id===nid);if(n){n.read=true;saveData()}nhNav('newsreader')}
 function rNewsReader(){const n=D.news.find(x=>x.id===_newsReadId);if(!n){document.getElementById('nh-p-newsreader').innerHTML='<div class="cnt"><div class="empty"><h3>Nicht gefunden</h3></div></div>';return}document.getElementById('nh-p-newsreader').innerHTML=`<div class="rdr"><div class="rdr-body"><div style="max-width:660px;margin:0 auto"><h1 style="font-family:var(--head);font-size:26px;font-weight:900;color:var(--ink);margin-bottom:8px">${esc(n.title)}</h1><div style="display:flex;gap:10px;font-size:12px;color:var(--ink3);margin-bottom:20px;flex-wrap:wrap">${n.source?'<span>'+esc(n.source)+'</span>':''}${fdt(n.created)}${(n.tags||[]).map(t=>'<span class="tag t-b">'+esc(t)+'</span>').join(' ')}${n.link?'<a href="'+esc(n.link)+'" target="_blank">Link ↗</a>':''}</div><div class="rdr-text" oncontextmenu="nhCtxNews(event,'${n.id}')" style="color:var(--ink)">${esc(n.summary||'Kein Inhalt')}</div></div></div><div class="rdr-side"><div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap"><button class="btn btn-sm" onclick="nhNav('news')">← Zurück</button><strong style="font-family:var(--head);font-size:13px;flex:1">${esc(tr(n.title,35))}</strong></div><div style="display:flex;flex-direction:column;gap:8px"><button class="btn btn-sm" style="width:100%;justify-content:center" onclick="nhPromote('news','${n.id}')">📑 → Topic</button><button class="btn btn-sm" style="width:100%;justify-content:center" onclick="nhRCM(null,'${esc(n.title).replace(/'/g,"\\'")}','${esc(tr(n.summary||'',200)).replace(/'/g,"\\'")}')">🧠 → RecallLab</button><button class="btn btn-sm" style="width:100%;justify-content:center" onclick="nhNewsToLibrary('${n.id}')">📄 → Library</button></div></div></div>`}
 function nhCtxNews(e,nid){e.preventDefault();const s=window.getSelection().toString().trim();if(!s)return;_sel=s;_selA=null;const m=document.getElementById('nh-ctx');m.innerHTML=`<button class="ctx-i" onclick="nhQTrSel()">🌐 Übersetzen</button><div class="ctx-s"></div><button class="ctx-i" onclick="nhDictM(_sel)">📖 Dictionary</button><button class="ctx-i" onclick="nhRCM(null,_sel)">🧠 Flashcard</button>`;m.style.left=Math.min(e.clientX,innerWidth-220)+'px';m.style.top=Math.min(e.clientY,innerHeight-270)+'px';m.classList.add('show');const cl=ev=>{if(!m.contains(ev.target)){m.classList.remove('show');document.removeEventListener('click',cl)}};setTimeout(()=>document.addEventListener('click',cl),10)}
-async function nhQTrSel(){document.getElementById('nh-ctx').classList.remove('show');if(!_sel)return;nhToastMsg('Übersetze…');const txt=await callGPT(`Translate. If English→German, if German→English, else→English. Return ONLY the translation.\n\n"${_sel}"`);if(txt){nhAutoRC(_sel,txt);nhOpenM('🌐 Übersetzung',`<div class="fg"><label>Original</label><div class="text-block" style="color:var(--ink)">${esc(_sel)}</div></div><div class="fg"><label>Übersetzung</label><div style="padding:12px;background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--r);font-size:14px;line-height:1.6;color:var(--ink)">${esc(txt)}</div></div>`,`<button class="btn" onclick="navigator.clipboard.writeText('${esc(txt).replace(/'/g,"\\'")}');nhToastMsg('Kopiert')">Kopieren</button><button class="btn" onclick="nhCloseM();nhDictM('${esc(_sel).replace(/'/g,"\\'")}')">📖 Dict</button><button class="btn btn-p" onclick="nhCloseM()">OK</button>`)}}
+async function nhQTrSel(){document.getElementById('nh-ctx').classList.remove('show');if(!_sel)return;nhToastMsg('Übersetze…');const txt=await callGPT(`Du bist ein präziser Übersetzer für einen Deutschschweizer. Übersetze den folgenden englischen Text ins Deutsche. Antworte NUR mit der deutschen Übersetzung, ohne Erklärungen oder Anführungszeichen.\n\nText:\n\n"${_sel}"`);if(txt){nhAutoRC(_sel,txt);nhOpenM('🌐 Übersetzung',`<div class="fg"><label>Original</label><div class="text-block" style="color:var(--ink)">${esc(_sel)}</div></div><div class="fg"><label>Übersetzung</label><div style="padding:12px;background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--r);font-size:14px;line-height:1.6;color:var(--ink)">${esc(txt)}</div></div>`,`<button class="btn" onclick="navigator.clipboard.writeText('${esc(txt).replace(/'/g,"\\'")}');nhToastMsg('Kopiert')">Kopieren</button><button class="btn" onclick="nhCloseM();nhDictM('${esc(_sel).replace(/'/g,"\\'")}')">📖 Dict</button><button class="btn btn-p" onclick="nhCloseM()">OK</button>`)}}
 function nhNewsToLibrary(nid){const n=D.news.find(x=>x.id===nid);if(!n)return;D.articles.push({id:uid(),title:n.title,content:n.summary||'',isPdf:false,status:'new',readProgress:0,createdAt:iso()});saveData();nhBadges();nhToastMsg('📄 → Library')}
 /* Auto-send translation to RecallLab */
 function nhAutoRC(front,back){if(!front||!back)return;const rl=gRL();ensDk(rl,'deck_en_de','🇬🇧 Englisch');if(!rl.cards.find(c=>c.front?.toLowerCase()===front.toLowerCase()&&c.deckId==='deck_en_de')){rl.cards.push({id:uid(),deckId:'deck_en_de',front:front,back:back,source:'NewsroomHub',type:'vocab',cardType:'basic',reversible:true,createdAt:Date.now(),srs:null});sRL(rl);nhToastMsg('🧠 → RecallLab')}}
@@ -54956,13 +55119,13 @@ let _readId=null,_sel='',_selA=null;
 function rReader(){const a=D.articles.find(x=>x.id===_readId);if(!a){document.getElementById('nh-p-reader').innerHTML='<div class="cnt"><div class="empty"><h3>Nicht gefunden</h3></div></div>';return}if(a.status==='new'){a.status='reading';saveData()}const anns=D.annotations.filter(x=>x.articleId===_readId);document.getElementById('nh-p-reader').innerHTML=`<div class="rdr"><div class="rdr-body"><div class="rdr-text" oncontextmenu="nhCtxR(event,'${a.id}')">${esc(a.content||'')}</div></div><div class="rdr-side"><div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap"><button class="btn btn-sm" onclick="nhNav('library')">← Zurück</button><strong style="font-family:var(--head);font-size:14px;flex:1">${esc(tr(a.title,40))}</strong><button class="btn btn-sm" onclick="var a=D.articles.find(x=>x.id==='${a.id}');if(a){a.status='done';a.readProgress=100;saveData();render(curP);nhToastMsg('✓ Done')}">✓ Done</button></div><h4 style="font-family:var(--head);font-size:13px;margin-bottom:8px">Annotations (${anns.length})</h4>${anns.length?anns.map(n=>`<div class="card card-p" style="margin-bottom:6px;border-left:3px solid ${n.type==='highlight'?'var(--purple)':n.type==='note'?'var(--green)':'var(--red)'}"><div style="font-size:9px;font-weight:700;text-transform:uppercase;color:var(--ink3)">${n.type}</div><div style="font-size:12px;color:var(--ink2);margin-top:2px">${esc(tr(n.selectedText,200))}</div>${n.note?'<div style="font-size:11px;margin-top:4px;padding-top:4px;border-top:1px solid var(--bdr)">'+esc(n.note)+'</div>':''}<div style="display:flex;justify-content:space-between;margin-top:4px;font-size:9px;color:var(--ink4)"><span>${fdt(n.createdAt)}</span><button class="btn btn-g btn-sm" style="color:var(--red)" onclick="D.annotations=D.annotations.filter(x=>x.id!=='${n.id}');saveData();rReader()">✕</button></div></div>`).join(''):'<div style="color:var(--ink4);font-size:12px;text-align:center;padding:20px">Text markieren → Rechtsklick</div>'}<div style="margin-top:16px"><button class="btn btn-sm" style="width:100%;justify-content:center" onclick="nhRCM('${a.id}')">🧠 → RecallLab</button></div></div></div>`}
 function nhCtxR(e,aid){e.preventDefault();const s=window.getSelection().toString().trim();if(!s)return;_sel=s;_selA=aid;const m=document.getElementById('nh-ctx');m.innerHTML=`<button class="ctx-i" onclick="nhAddAnn('highlight')">✨ Highlight</button><button class="ctx-i" onclick="nhAddAnn('note')">📝 Note</button><button class="ctx-i" onclick="nhAddAnn('question')">❓ Question</button><div class="ctx-s"></div><button class="ctx-i" onclick="nhQTr()">🌐 Übersetzen</button><button class="ctx-i" onclick="nhDictM(_sel)">📖 Dictionary</button><button class="ctx-i" onclick="nhRCM(_selA,_sel)">🧠 Flashcard</button>`;m.style.left=Math.min(e.clientX,innerWidth-220)+'px';m.style.top=Math.min(e.clientY,innerHeight-270)+'px';m.classList.add('show');const cl=ev=>{if(!m.contains(ev.target)){m.classList.remove('show');document.removeEventListener('click',cl)}};setTimeout(()=>document.addEventListener('click',cl),10)}
 function nhAddAnn(type){document.getElementById('nh-ctx').classList.remove('show');if(type==='note'||type==='question'){nhOpenM(type==='note'?'Note':'Question',`<div class="fg"><label>Markiert</label><div class="text-block">${esc(tr(_sel,280))}</div></div><div class="fg"><label>${type==='note'?'Notiz':'Frage'}</label><textarea class="fc" id="ann-n" rows="3"></textarea></div>`,`<button class="btn btn-p" onclick="D.annotations.push({id:uid(),articleId:_selA,type:'${type}',selectedText:_sel,note:document.getElementById('ann-n')?.value?.trim()||'',createdAt:iso()});saveData();nhCloseM();rReader()">OK</button>`);return}D.annotations.push({id:uid(),articleId:_selA,type,selectedText:_sel,note:'',createdAt:iso()});saveData();rReader();nhToastMsg('✨ Highlighted')}
-async function nhQTr(){document.getElementById('nh-ctx').classList.remove('show');if(!_sel)return;nhToastMsg('Übersetze…');const txt=await callGPT(`Translate. If English→German, if German→English, else→English. Return ONLY the translation.\n\n"${_sel}"`);if(txt){nhAutoRC(_sel,txt);nhOpenM('🌐 Übersetzung',`<div class="fg"><label>Original</label><div class="text-block">${esc(_sel)}</div></div><div class="fg"><label>Übersetzung</label><div style="padding:12px;background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--r);font-size:14px;line-height:1.6">${esc(txt)}</div></div>`,`<button class="btn" onclick="navigator.clipboard.writeText('${esc(txt).replace(/'/g,"\\'")}');nhToastMsg('Kopiert')">Kopieren</button><button class="btn" onclick="nhCloseM();nhDictM('${esc(_sel).replace(/'/g,"\\'")}')">📖 Dict</button><button class="btn btn-p" onclick="nhCloseM()">OK</button>`)}}
+async function nhQTr(){document.getElementById('nh-ctx').classList.remove('show');if(!_sel)return;nhToastMsg('Übersetze…');const txt=await callGPT(`Du bist ein präziser Übersetzer für einen Deutschschweizer. Übersetze den folgenden englischen Text ins Deutsche. Antworte NUR mit der deutschen Übersetzung, ohne Erklärungen.\n\nText:\n\n"${_sel}"`);if(txt){nhAutoRC(_sel,txt);nhOpenM('🌐 Übersetzung',`<div class="fg"><label>Original</label><div class="text-block">${esc(_sel)}</div></div><div class="fg"><label>Übersetzung</label><div style="padding:12px;background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--r);font-size:14px;line-height:1.6">${esc(txt)}</div></div>`,`<button class="btn" onclick="navigator.clipboard.writeText('${esc(txt).replace(/'/g,"\\'")}');nhToastMsg('Kopiert')">Kopieren</button><button class="btn" onclick="nhCloseM();nhDictM('${esc(_sel).replace(/'/g,"\\'")}')">📖 Dict</button><button class="btn btn-p" onclick="nhCloseM()">OK</button>`)}}
 
 /* ═══ DICTIONARY ═══ */
 function rDict(){const ent=[...D.dictionary].sort((a,b)=>(a.word||'').localeCompare(b.word||''));document.getElementById('nh-p-dict').innerHTML=`<div class="card card-p" style="margin-bottom:16px"><h3 style="font-family:var(--head);margin-bottom:10px">🌐 Quick Translator</h3><div style="display:flex;gap:8px"><input class="fc" id="qt-w" placeholder="Wort oder Phrase…" style="flex:1" onkeydown="if(event.key==='Enter')nhQTrDi()"><button class="btn btn-p" onclick="nhQTrDi()">Übersetzen</button></div><div id="qt-r" style="display:none;margin-top:10px"><div id="qt-rt" style="padding:12px;background:var(--blue-l);border:1px solid var(--blue);border-radius:var(--r);font-size:14px"></div><button class="btn btn-sm" style="margin-top:8px" onclick="nhDictM(document.getElementById('qt-w')?.value?.trim())">+ Dictionary</button></div></div>${ent.length?'<div class="g3">'+ent.map(d=>`<div class="card card-p"><div style="display:flex;justify-content:space-between"><strong style="font-family:var(--head);color:var(--blue)">${esc(d.word)}</strong><button class="btn btn-g btn-sm" style="color:var(--red)" onclick="D.dictionary=D.dictionary.filter(x=>x.id!=='${d.id}');saveData();rDict()">✕</button></div><div style="font-size:13px;color:var(--ink2);margin-top:4px">${esc(d.translation)}</div>${d.context?'<div style="font-size:11px;color:var(--ink4);margin-top:4px;font-style:italic">"'+esc(tr(d.context,80))+'"</div>':''}</div>`).join('')+'</div>':'<div class="empty"><h3>Leer</h3></div>'}`}
-async function nhQTrDi(){const w=document.getElementById('qt-w')?.value?.trim();if(!w)return;document.getElementById('qt-r').style.display='block';document.getElementById('qt-rt').innerHTML='Übersetze…';const txt=await callGPT(`Translate: "${w}". If English→German, if German→English, else→English. Return ONLY the translation.`);document.getElementById('qt-rt').textContent=txt||'—'}
+async function nhQTrDi(){const w=document.getElementById('qt-w')?.value?.trim();if(!w)return;document.getElementById('qt-r').style.display='block';document.getElementById('qt-rt').innerHTML='Übersetze…';const txt=await callGPT(`Übersetze ins Deutsche (für Deutschschweizer). Antworte NUR mit der Übersetzung.\n\nWort: "${w}"`);document.getElementById('qt-rt').textContent=txt||'—'}
 function nhDictM(pre){nhOpenM('Dictionary',`<div class="fg"><label>Wort / Phrase</label><div style="display:flex;gap:6px"><input class="fc" id="d-w" value="${pre?esc(pre):''}" style="flex:1"><button class="btn btn-p" id="nh-tr-btn" onclick="nhAutoTr()">Übersetzen</button></div></div><div id="nh-tr-load" style="display:none;text-align:center;padding:8px;font-size:12px;color:var(--ink3)">Übersetze…</div><div class="fg"><label>Übersetzung</label><input class="fc" id="d-t"/></div><div class="fg"><label>Kontext</label><textarea class="fc" id="d-c" rows="2"></textarea></div>`,`<button class="btn" onclick="nhCloseM()">Cancel</button><button class="btn btn-p" onclick="nhSvDi()">OK</button>`);if(pre)nhAutoTr()}
-async function nhAutoTr(){const w=document.getElementById('d-w')?.value?.trim();if(!w)return;document.getElementById('nh-tr-load').style.display='block';const txt=await callGPT(`Translate this word/phrase. If English→German, if German→English, else→English. ONLY the translation.\n\nWord: "${w}"`);if(txt)document.getElementById('d-t').value=txt;document.getElementById('nh-tr-load').style.display='none'}
+async function nhAutoTr(){const w=document.getElementById('d-w')?.value?.trim();if(!w)return;document.getElementById('nh-tr-load').style.display='block';const txt=await callGPT(`Du bist ein präziser Übersetzer für einen Deutschschweizer. Übersetze das folgende englische Wort/Phrase ins Deutsche. Antworte NUR mit der deutschen Übersetzung.\n\nWort: "${w}"`);if(txt)document.getElementById('d-t').value=txt;document.getElementById('nh-tr-load').style.display='none'}
 function nhSvDi(){const w=document.getElementById('d-w')?.value?.trim(),t=document.getElementById('d-t')?.value?.trim();if(!w||!t)return;const id=uid();D.dictionary.push({id,word:w,translation:t,context:document.getElementById('d-c')?.value?.trim()||'',createdAt:iso()});const rl=gRL();ensDk(rl,'deck_en_de','🇬🇧 Englisch');if(!rl.cards.find(c=>c.front?.toLowerCase()===w.toLowerCase()&&c.deckId==='deck_en_de')){rl.cards.push({id:uid(),deckId:'deck_en_de',front:w,back:t,source:'NewsroomHub',type:'vocab',cardType:'basic',reversible:true,createdAt:Date.now(),srs:null});sRL(rl)}saveData();nhCloseM();render(curP)}
 
 /* ═══ RECALLLAB ═══ */
