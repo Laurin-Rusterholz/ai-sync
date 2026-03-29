@@ -26516,47 +26516,57 @@ window.fetchBelege = async function(showToast) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     const belege = data.belege || [];
-    
+
     if (!belege.length) {
       if (showToast) toast("info", "Belege", "Keine neuen Belege");
       return 0;
     }
-    
-    // Track already imported
+
     if (!APP.state.data._importedBelege) APP.state.data._importedBelege = [];
     const imported = APP.state.data._importedBelege;
-    
+
     let count = 0;
     for (const b of belege) {
       if (imported.includes(b.id)) continue;
-      
-      // Create task
+
+      // Create task first so we have the entity ID for the file path
       const taskId = createEntity("task", {
         title: "📄 Beleg: " + b.title + " (CHF " + (b.amount || 0).toFixed(2) + ")",
-        description: "Eingereicht von: " + (b.name || "Unbekannt") + "\n" +
+        description:
+          "Eingereicht von: " + (b.name || "Unbekannt") + "\n" +
           "Betrag: CHF " + (b.amount || 0).toFixed(2) + "\n" +
           "Fällig: " + (b.dueDate || "Kein Datum") + "\n" +
-          "Bezahlt: " + (b.paid ? "Ja" : "Nein") + "\n" +
-          (b.comment ? "Kommentar: " + b.comment + "\n" : "") +
-          (b.hasFile ? "\nDatei: " + (b.fileName || "Anhang") + "\n" + window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id : "\nKein Dokument angehängt"),
+          "Bezahlt: " + (b.paid ? "Ja" : "Nein") +
+          (b.comment ? "\nKommentar: " + b.comment : "") +
+          (!b.hasFile ? "\nKein Dokument angehängt" : ""),
         status: "todo",
         priority: b.paid ? 4 : 2,
         dueDate: b.dueDate || null,
         tags: ["beleg", "sp-ar", b.paid ? "bezahlt" : "offen"],
         belegId: b.id,
-        belegData: {
-          name: b.name,
-          amount: b.amount,
-          paid: b.paid,
-          fileName: b.fileName,
-          fileUrl: b.hasFile ? window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id : null,
-          portalId: b.id,
-        },
+        belegData: { name: b.name, amount: b.amount, dueDate: b.dueDate, paid: b.paid, portalId: b.id },
+        files: [],
       });
-      
+
+      // File: use Firebase URL directly (portal uploads to Firebase, we just reference the URL)
+      const task = APP.state.data.entities.tasks[taskId];
+      if (task && b.hasFile && b.firebaseUrl) {
+        if (!task.files) task.files = [];
+        task.files.push({
+          id: 'f_beleg_' + b.id,
+          name: b.fileName || ('beleg_' + b.id + '.pdf'),
+          originalName: b.fileName || ('beleg_' + b.id + '.pdf'),
+          size: 0,
+          type: b.fileType || 'application/pdf',
+          storagePath: b.firebasePath || ('belege/' + b.id),
+          url: b.firebaseUrl,
+          uploadedAt: b.createdAt || new Date().toISOString(),
+        });
+      }
+
       imported.push(b.id);
       count++;
-      
+
       // Mark as processed on portal
       try {
         await fetch(window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list?action=mark', {
@@ -26566,7 +26576,7 @@ window.fetchBelege = async function(showToast) {
         });
       } catch(e) { console.warn('Mark beleg failed:', e); }
     }
-    
+
     if (count > 0) {
       scheduleSave();
       render();
