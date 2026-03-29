@@ -22495,6 +22495,9 @@ function viewUpdates() {
       </div>
     </div>
     
+    <!-- Programme -->
+    ${renderProgramButtonsFor("updates-page", "updates-page")}
+    
     <!-- Statistiken -->
     <div class="grid grid-4 mb-4">
       <div class="card stat-card">
@@ -22800,7 +22803,14 @@ function openAddProgramToTaskModal(taskId) {
 
 function renderProgramButtonsFor(kind, entityId) {
   const e = APP.state.data.entities;
-  const entity = kind === "project" ? e.projects[entityId] : kind === "organization" ? e.organizations[entityId] : kind === "task" ? e.tasks[entityId] : null;
+  let entity;
+  if (kind === "updates-page") {
+    // Virtual entity for the Updates page
+    if (!APP.state.data.updatesPageConfig) APP.state.data.updatesPageConfig = { programButtons: [], linkedProgramLinks: [], linkedPrograms: [] };
+    entity = APP.state.data.updatesPageConfig;
+  } else {
+    entity = kind === "project" ? e.projects[entityId] : kind === "organization" ? e.organizations[entityId] : kind === "task" ? e.tasks[entityId] : null;
+  }
   if (!entity) return "";
   
   const programButtons = entity.programButtons || [];
@@ -22880,10 +22890,16 @@ function openAddProgramButtonsModal(targetKind, targetId) {
   const oldPrograms = Object.values(e.programs || {});
   const programLinks = Object.values(e.programLinks || {});
   const programFolders = Object.values(e.programFolders || {});
-  const entity = getEntity(targetKind, targetId);
+  let entity;
+  if (targetKind === "updates-page") {
+    if (!APP.state.data.updatesPageConfig) APP.state.data.updatesPageConfig = { programButtons: [], linkedProgramLinks: [], linkedPrograms: [] };
+    entity = APP.state.data.updatesPageConfig;
+  } else {
+    entity = getEntity(targetKind, targetId);
+  }
   if (!entity) return;
   
-  const kindLabel = targetKind === "project" ? "Projekt" : targetKind === "task" ? "Aufgabe" : targetKind === "organization" ? "Organisation" : "Element";
+  const kindLabel = targetKind === "updates-page" ? "Updates-Seite" : targetKind === "project" ? "Projekt" : targetKind === "task" ? "Aufgabe" : targetKind === "organization" ? "Organisation" : "Element";
   
   // Check if there are any programs at all
   if (oldPrograms.length === 0 && programLinks.length === 0) {
@@ -22976,7 +22992,12 @@ function openAddProgramButtonsModal(targetKind, targetId) {
 
 function addProgramButtonTo(targetKind, targetId, programId, buttonId) {
   const e = APP.state.data.entities;
-  const entity = targetKind === "project" ? e.projects[targetId] : e.organizations[targetId];
+  let entity;
+  if (targetKind === "updates-page") {
+    entity = APP.state.data.updatesPageConfig = APP.state.data.updatesPageConfig || { programButtons: [], linkedProgramLinks: [], linkedPrograms: [] };
+  } else {
+    entity = targetKind === "project" ? e.projects[targetId] : targetKind === "task" ? e.tasks[targetId] : e.organizations[targetId];
+  }
   if (!entity) return;
   
   entity.programButtons = entity.programButtons || [];
@@ -22988,7 +23009,7 @@ function addProgramButtonTo(targetKind, targetId, programId, buttonId) {
   }
   
   entity.programButtons.push({ programId, buttonId });
-  entity.updatedAt = nowIso();
+  if (entity.updatedAt !== undefined) entity.updatedAt = nowIso();
   scheduleSave();
   closeModal();
   render();
@@ -22997,14 +23018,19 @@ function addProgramButtonTo(targetKind, targetId, programId, buttonId) {
 
 function removeProgramButtonFrom(targetKind, targetId, programId, buttonId) {
   const e = APP.state.data.entities;
-  const entity = targetKind === "project" ? e.projects[targetId] : e.organizations[targetId];
+  let entity;
+  if (targetKind === "updates-page") {
+    entity = APP.state.data.updatesPageConfig;
+  } else {
+    entity = targetKind === "project" ? e.projects[targetId] : targetKind === "task" ? e.tasks[targetId] : e.organizations[targetId];
+  }
   if (!entity) return;
   
   entity.programButtons = entity.programButtons || [];
   entity.programButtons = entity.programButtons.filter(pb => 
     !(pb.programId === programId && pb.buttonId === buttonId)
   );
-  entity.updatedAt = nowIso();
+  if (entity.updatedAt !== undefined) entity.updatedAt = nowIso();
   scheduleSave();
   render();
   toast("ok", "Entfernt", "Programm-Button entfernt");
@@ -33612,12 +33638,12 @@ case "sync-strategy-to-google": {
       const tKind = el.dataset.targetKind;
       const tId = el.dataset.targetId;
       const linkId = el.dataset.linkId;
-      const entity = getEntity(tKind, tId);
+      const entity = tKind === "updates-page" ? (APP.state.data.updatesPageConfig = APP.state.data.updatesPageConfig || { programButtons: [], linkedProgramLinks: [], linkedPrograms: [] }) : getEntity(tKind, tId);
       if (entity && linkId) {
         entity.linkedProgramLinks = entity.linkedProgramLinks || [];
         if (!entity.linkedProgramLinks.includes(linkId)) {
           entity.linkedProgramLinks.push(linkId);
-          entity.updatedAt = nowIso();
+          if (entity.updatedAt !== undefined) entity.updatedAt = nowIso();
           scheduleSave();
           toast("ok", "Verknüpft", "Programm-Link verknüpft");
         } else {
@@ -33633,10 +33659,10 @@ case "sync-strategy-to-google": {
       const uKind = el.dataset.targetKind;
       const uId = el.dataset.targetId;
       const uLinkId = el.dataset.linkId;
-      const uEntity = getEntity(uKind, uId);
+      const uEntity = uKind === "updates-page" ? APP.state.data.updatesPageConfig : getEntity(uKind, uId);
       if (uEntity && uEntity.linkedProgramLinks) {
         uEntity.linkedProgramLinks = uEntity.linkedProgramLinks.filter(lid => lid !== uLinkId);
-        uEntity.updatedAt = nowIso();
+        if (uEntity.updatedAt !== undefined) uEntity.updatedAt = nowIso();
         scheduleSave();
         render();
         toast("ok", "Entfernt", "Programm-Link entfernt");
@@ -33656,12 +33682,12 @@ case "unlink-program": {
   const srcId = el.dataset.srcId;
   const programId = el.dataset.programId;
   
-  const entity = getEntity(srcKind, srcId);
+  const entity = srcKind === "updates-page" ? APP.state.data.updatesPageConfig : getEntity(srcKind, srcId);
   if (!entity) break;
   
   if (entity.linkedPrograms) {
     entity.linkedPrograms = entity.linkedPrograms.filter(id => id !== programId);
-    entity.updatedAt = nowIso();
+    if (entity.updatedAt !== undefined) entity.updatedAt = nowIso();
     scheduleSave();
     toast("ok", "Entfernt", "Programm-Verknüpfung entfernt");
     render();
