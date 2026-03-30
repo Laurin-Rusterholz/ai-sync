@@ -5525,6 +5525,24 @@ function openFilePreview(kind, entityId, fileIdx) {
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   const f = entity.files[fileIdx];
+  
+  // If URL missing but storagePath exists, try to regenerate
+  if (!f.url && f.storagePath && firebaseStorage) {
+    toast("info", "Laden", "Datei-URL wird generiert...");
+    firebaseStorage.ref(f.storagePath).getDownloadURL().then(url => {
+      f.url = url;
+      scheduleSave();
+      openFilePreview(kind, entityId, fileIdx);
+    }).catch(err => {
+      toast("danger", "Fehler", "URL konnte nicht generiert werden: " + err.message);
+    });
+    return;
+  }
+  if (!f.url) {
+    toast("warn", "Fehler", "Keine Datei-URL vorhanden" + (!firebaseStorage ? " — Firebase nicht geladen" : ""));
+    return;
+  }
+  
   const ext = (f.name || '').split('.').pop().toLowerCase();
 
   let bodyHtml = '';
@@ -26510,64 +26528,76 @@ window.calendarCleanAll = function() {
 window.BELEG_PORTAL_URL = 'https://sp-ar-belege.netlify.app';
 
 window.fetchBelege = async function(showToast) {
+  if (window._fetchingBelege) return 0;
+  window._fetchingBelege = true;
   try {
-    const url = window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list?status=neu';
+    const url = window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list';
     const r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     const belege = data.belege || [];
-
+    
     if (!belege.length) {
       if (showToast) toast("info", "Belege", "Keine neuen Belege");
+      window._fetchingBelege = false;
       return 0;
     }
-
+    
+    // Triple duplicate check:
+    // 1. Track in _importedBelege array
     if (!APP.state.data._importedBelege) APP.state.data._importedBelege = [];
     const imported = APP.state.data._importedBelege;
-
+    
+    // 2. Check existing tasks for belegId
+    const existingBelegIds = new Set();
+    Object.values(APP.state.data.entities.tasks || {}).forEach(t => {
+      if (t.belegId) existingBelegIds.add(t.belegId);
+    });
+    
+    // 3. Generate beleg number
+    if (!APP.state.data._nextBelegNr) APP.state.data._nextBelegNr = 1;
+    
     let count = 0;
     for (const b of belege) {
+      // Skip if already imported (any check)
       if (imported.includes(b.id)) continue;
-
-      // Create task first so we have the entity ID for the file path
-      const taskId = createEntity("task", {
-        title: "📄 Beleg: " + b.title + " (CHF " + (b.amount || 0).toFixed(2) + ")",
-        description:
+      if (existingBelegIds.has(b.id)) { imported.push(b.id); continue; }
+      if (b.status === 'importiert' || b.status === 'verarbeitet') { imported.push(b.id); continue; }
+      
+      // Generate beleg number
+      const belegNr = 'BEL-' + String(APP.state.data._nextBelegNr).padStart(4, '0');
+      APP.state.data._nextBelegNr++;
+      
+      // Create task
+      createEntity("task", {
+        title: "📄 " + belegNr + ": " + b.title + " (CHF " + (b.amount || 0).toFixed(2) + ")",
+        description: "Belegnummer: " + belegNr + "\n" +
           "Eingereicht von: " + (b.name || "Unbekannt") + "\n" +
           "Betrag: CHF " + (b.amount || 0).toFixed(2) + "\n" +
           "Fällig: " + (b.dueDate || "Kein Datum") + "\n" +
-          "Bezahlt: " + (b.paid ? "Ja" : "Nein") +
-          (b.comment ? "\nKommentar: " + b.comment : "") +
-          (!b.hasFile ? "\nKein Dokument angehängt" : ""),
+          "Bezahlt: " + (b.paid ? "Ja" : "Nein") + "\n" +
+          (b.comment ? "Kommentar: " + b.comment + "\n" : "") +
+          (b.hasFile ? "\nDatei: " + (b.fileName || "Anhang") + "\n" + window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id : "\nKein Dokument angehängt"),
         status: "todo",
         priority: b.paid ? 4 : 2,
         dueDate: b.dueDate || null,
         tags: ["beleg", "sp-ar", b.paid ? "bezahlt" : "offen"],
         belegId: b.id,
-        belegData: { name: b.name, amount: b.amount, dueDate: b.dueDate, paid: b.paid, portalId: b.id },
-        files: [],
+        belegNr: belegNr,
+        belegData: {
+          name: b.name,
+          amount: b.amount,
+          paid: b.paid,
+          fileName: b.fileName,
+          fileUrl: b.hasFile ? window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id : null,
+          portalId: b.id,
+        },
       });
-
-      // File: use Firebase URL directly (portal uploads to Firebase, we just reference the URL)
-      const task = APP.state.data.entities.tasks[taskId];
-      if (task && b.hasFile && b.firebaseUrl) {
-        if (!task.files) task.files = [];
-        task.files.push({
-          id: 'f_beleg_' + b.id,
-          name: b.fileName || ('beleg_' + b.id + '.pdf'),
-          originalName: b.fileName || ('beleg_' + b.id + '.pdf'),
-          size: 0,
-          type: b.fileType || 'application/pdf',
-          storagePath: b.firebasePath || ('belege/' + b.id),
-          url: b.firebaseUrl,
-          uploadedAt: b.createdAt || new Date().toISOString(),
-        });
-      }
-
+      
       imported.push(b.id);
       count++;
-
-      // Mark as processed on portal
+      
+      // Mark on portal
       try {
         await fetch(window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list?action=mark', {
           method: 'POST',
@@ -26576,7 +26606,7 @@ window.fetchBelege = async function(showToast) {
         });
       } catch(e) { console.warn('Mark beleg failed:', e); }
     }
-
+    
     if (count > 0) {
       scheduleSave();
       render();
@@ -26584,18 +26614,19 @@ window.fetchBelege = async function(showToast) {
     } else if (showToast) {
       toast("info", "Belege", "Keine neuen Belege");
     }
+    window._fetchingBelege = false;
     return count;
   } catch(err) {
     console.error('Beleg fetch error:', err);
     if (showToast) toast("danger", "Fehler", "Belege laden fehlgeschlagen: " + err.message);
+    window._fetchingBelege = false;
     return 0;
   }
 };
 
-// Auto-check on load (after 5 seconds)
-setTimeout(() => { window.fetchBelege(false); }, 5000);
-// Check every 5 minutes
-setInterval(() => { window.fetchBelege(false); }, 5 * 60 * 1000);
+// Auto-check: 10s nach Start, dann alle 10 Minuten
+setTimeout(() => { window.fetchBelege(false); }, 10000);
+setInterval(() => { window.fetchBelege(false); }, 10 * 60 * 1000);
 
 window.calendarJumpToMonth = function(month) {
   const ui = APP.state.ui;
@@ -43970,10 +44001,31 @@ window.handleClick = function(e){
     return;
   }
   if (action === "download-file") {
+    e.preventDefault();
+    e.stopPropagation();
     const _km2 = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
     const _ent2 = APP.state.data.entities[_km2[el.dataset.kind]]?.[el.dataset.id];
-    if (_ent2?.files?.[parseInt(el.dataset.fileIdx, 10)]?.url) {
-      window.open(_ent2.files[parseInt(el.dataset.fileIdx, 10)].url, '_blank');
+    const fileIdx = parseInt(el.dataset.fileIdx, 10);
+    const file = _ent2?.files?.[fileIdx];
+    if (!file) { toast("warn", "Fehler", "Datei nicht gefunden"); return; }
+    
+    if (file.url) {
+      // Try direct URL first
+      window.open(file.url, '_blank');
+    } else if (file.storagePath && firebaseStorage) {
+      // Regenerate URL from storagePath
+      toast("info", "Download", "URL wird generiert...");
+      firebaseStorage.ref(file.storagePath).getDownloadURL().then(url => {
+        file.url = url;
+        scheduleSave();
+        window.open(url, '_blank');
+      }).catch(err => {
+        toast("danger", "Fehler", "Download fehlgeschlagen: " + err.message);
+      });
+    } else if (file.storagePath) {
+      toast("danger", "Fehler", "Firebase nicht geladen — Adblocker deaktivieren oder auf Netlify deployen");
+    } else {
+      toast("warn", "Fehler", "Keine Download-URL vorhanden");
     }
     return;
   }
