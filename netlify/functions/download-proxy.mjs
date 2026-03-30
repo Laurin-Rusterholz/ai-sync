@@ -5,19 +5,21 @@ export default async (req, context) => {
 
   const url = new URL(req.url);
   const fileUrl = url.searchParams.get("url");
-  const fileName = url.searchParams.get("name") || "download";
+  const rawName = url.searchParams.get("name") || "download";
 
   if (!fileUrl) return new Response("Missing url param", { status: 400 });
 
   try {
     const resp = await fetch(fileUrl);
     if (!resp.ok) return new Response("Fetch failed: " + resp.status, { status: 502 });
-    const blob = await resp.blob();
 
-    return new Response(blob, {
+    const safeName = rawName.replace(/[^\x20-\x7E]/g, "_");
+    const encodedName = encodeURIComponent(rawName);
+
+    return new Response(resp.body, {
       headers: {
         "Content-Type": resp.headers.get("content-type") || "application/octet-stream",
-        "Content-Disposition": 'attachment; filename="' + fileName + '"',
+        "Content-Disposition": "attachment; filename=\"" + safeName + "\"; filename*=UTF-8''" + encodedName,
         "Access-Control-Allow-Origin": "*",
       }
     });
