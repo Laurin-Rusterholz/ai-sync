@@ -44010,33 +44010,11 @@ window.handleClick = function(e){
     if (!file) { toast("warn", "Fehler", "Datei nicht gefunden"); return; }
     
     async function doDownload(url, fileName) {
-      toast("info", "Download", "Wird heruntergeladen...");
-      try {
-        const xhr = new XMLHttpRequest();
-        xhr.responseType = 'blob';
-        xhr.onload = function() {
-          const blob = xhr.response;
-          const blobUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = fileName || 'download';
-          a.style.display = 'none';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-          toast("ok", "Download", fileName);
-        };
-        xhr.onerror = function() {
-          // Fallback: open in new tab
-          window.open(url, '_blank');
-          toast("info", "Download", "Im neuen Tab geöffnet");
-        };
-        xhr.open('GET', url);
-        xhr.send();
-      } catch(err) {
-        window.open(url, '_blank');
-      }
+      // Use Netlify proxy to force download with Content-Disposition: attachment
+      const proxyBase = 'https://management-xo2-pro.netlify.app/.netlify/functions/download-proxy';
+      const proxyUrl = proxyBase + '?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(fileName || 'download');
+      window.location.href = proxyUrl;
+      toast("ok", "Download", fileName);
     }
     
     if (file.url) {
