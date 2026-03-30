@@ -44010,22 +44010,16 @@ window.handleClick = function(e){
     if (!file) { toast("warn", "Fehler", "Datei nicht gefunden"); return; }
     
     async function doDownload(url, fileName) {
-      toast("info", "Download", "Datei wird heruntergeladen...");
-      try {
-        const resp = await fetch(url);
-        const blob = await resp.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = fileName || 'download';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        toast("ok", "Download", fileName);
-      } catch(err) {
-        toast("danger", "Fehler", "Download fehlgeschlagen: " + err.message);
-      }
+      // Firebase Storage URLs can't be fetched cross-origin — use direct link
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName || 'download';
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast("ok", "Download", fileName);
     }
     
     if (file.url) {
