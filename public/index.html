@@ -44009,23 +44009,37 @@ window.handleClick = function(e){
     const file = _ent2?.files?.[fileIdx];
     if (!file) { toast("warn", "Fehler", "Datei nicht gefunden"); return; }
     
+    async function doDownload(url, fileName) {
+      toast("info", "Download", "Datei wird heruntergeladen...");
+      try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fileName || 'download';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        toast("ok", "Download", fileName);
+      } catch(err) {
+        toast("danger", "Fehler", "Download fehlgeschlagen: " + err.message);
+      }
+    }
+    
     if (file.url) {
-      // Try direct URL first
-      window.open(file.url, '_blank');
+      doDownload(file.url, file.name);
     } else if (file.storagePath && firebaseStorage) {
-      // Regenerate URL from storagePath
-      toast("info", "Download", "URL wird generiert...");
       firebaseStorage.ref(file.storagePath).getDownloadURL().then(url => {
         file.url = url;
         scheduleSave();
-        window.open(url, '_blank');
+        doDownload(url, file.name);
       }).catch(err => {
-        toast("danger", "Fehler", "Download fehlgeschlagen: " + err.message);
+        toast("danger", "Fehler", "URL fehlgeschlagen: " + err.message);
       });
-    } else if (file.storagePath) {
-      toast("danger", "Fehler", "Firebase nicht geladen — Adblocker deaktivieren oder auf Netlify deployen");
     } else {
-      toast("warn", "Fehler", "Keine Download-URL vorhanden");
+      toast("warn", "Fehler", !firebaseStorage ? "Firebase nicht geladen" : "Keine Download-URL");
     }
     return;
   }
