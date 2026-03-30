@@ -44010,16 +44010,33 @@ window.handleClick = function(e){
     if (!file) { toast("warn", "Fehler", "Datei nicht gefunden"); return; }
     
     async function doDownload(url, fileName) {
-      // Firebase Storage URLs can't be fetched cross-origin — use direct link
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName || 'download';
-      a.target = '_blank';
-      a.rel = 'noopener';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      toast("ok", "Download", fileName);
+      toast("info", "Download", "Wird heruntergeladen...");
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.responseType = 'blob';
+        xhr.onload = function() {
+          const blob = xhr.response;
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = fileName || 'download';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+          toast("ok", "Download", fileName);
+        };
+        xhr.onerror = function() {
+          // Fallback: open in new tab
+          window.open(url, '_blank');
+          toast("info", "Download", "Im neuen Tab geöffnet");
+        };
+        xhr.open('GET', url);
+        xhr.send();
+      } catch(err) {
+        window.open(url, '_blank');
+      }
     }
     
     if (file.url) {
