@@ -12933,17 +12933,22 @@ async function dbExportPdf() {
   if (overdueTasks.length) {
     y = label("ÜBERFÄLLIG", mx, y, C.rose);
     overdueTasks.forEach(t => {
-      card(mx, y - 4, cw, 16, C.cardBg);
+      const titleText = clean(t.title).slice(0, 80);
+      const titleLines = doc.splitTextToSize(titleText, cw - 55);
+      const cardH = Math.max(14, titleLines.length * 4.5 + 6);
+      if (y + cardH > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
+      card(mx, y - 4, cw, cardH, C.cardBg);
       doc.setFillColor(...C.rose);
-      doc.roundedRect(mx, y - 4, 3, 16, 1.5, 1.5, "F");
-      doc.setFontSize(10.5);
+      doc.roundedRect(mx, y - 4, 3, cardH, 1.5, 1.5, "F");
+      doc.setFontSize(10);
       doc.setTextColor(...C.white);
       doc.setFont(fontName, "bold");
-      doc.text(clean(clean(t.title)), mx + 10, y + 4);
+      let cy = y + 2;
+      titleLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 4.5; });
       doc.setFontSize(8);
       doc.setTextColor(...C.rose);
-      doc.text("Fällig: " + t.dueDate, mxR - 6, y + 4, { align: "right" });
-      y += 22;
+      doc.text("Fällig: " + t.dueDate, mxR - 6, y + 2, { align: "right" });
+      y += cardH + 4;
     });
     y += 4;
   }
@@ -12951,17 +12956,22 @@ async function dbExportPdf() {
   if (upcomingTasks.length) {
     y = label("NÄCHSTE 3 TAGE", mx, y, C.muted);
     upcomingTasks.forEach(t => {
-      card(mx, y - 4, cw, 16, C.cardBg);
+      const titleText = clean(t.title).slice(0, 80);
+      const titleLines = doc.splitTextToSize(titleText, cw - 55);
+      const cardH = Math.max(14, titleLines.length * 4.5 + 6);
+      if (y + cardH > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
+      card(mx, y - 4, cw, cardH, C.cardBg);
       doc.setFillColor(...C.accent);
-      doc.roundedRect(mx, y - 4, 3, 16, 1.5, 1.5, "F");
-      doc.setFontSize(10.5);
+      doc.roundedRect(mx, y - 4, 3, cardH, 1.5, 1.5, "F");
+      doc.setFontSize(10);
       doc.setTextColor(...C.light);
       doc.setFont(fontName, "normal");
-      doc.text(clean(clean(t.title)), mx + 10, y + 4);
+      let cy = y + 2;
+      titleLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 4.5; });
       doc.setFontSize(8);
       doc.setTextColor(...C.muted);
-      doc.text("Fällig: " + t.dueDate, mxR - 6, y + 4, { align: "right" });
-      y += 22;
+      doc.text("Fällig: " + t.dueDate, mxR - 6, y + 2, { align: "right" });
+      y += cardH + 4;
     });
   }
 
@@ -12992,29 +13002,30 @@ async function dbExportPdf() {
   if (selectedProjects.length) {
     selectedProjects.forEach(p => {
       const pTasks = allTasks.filter(t => t.projectId === p.id && t.status !== "done");
-      const desc = p.description ? clean(p.description).slice(0, 200) : "";
-      const descLines = desc ? doc.splitTextToSize(desc, cw - 24) : [];
-      const cardH = 20 + descLines.length * 5;
+      const desc = p.description ? clean(p.description).slice(0, 120) : "";
+      const descLines = desc ? doc.splitTextToSize(desc, cw - 24).slice(0, 2) : [];
+      const titleText = clean(p.title).slice(0, 60);
+      const cardH = 18 + descLines.length * 4.5;
+      if (y + cardH > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
       card(mx, y - 4, cw, cardH, C.cardBg);
       doc.setFillColor(...C.accent);
       doc.roundedRect(mx, y - 4, 3, cardH, 1.5, 1.5, "F");
-      doc.setFontSize(11);
+      doc.setFontSize(10.5);
       doc.setTextColor(...C.white);
       doc.setFont(fontName, "bold");
-      doc.text(clean(clean(p.title)), mx + 10, y + 5);
-      // Badge: offene Aufgaben
+      doc.text(titleText, mx + 10, y + 4);
       doc.setFontSize(8);
       doc.setTextColor(...C.accent);
       doc.setFont(fontName, "bold");
-      doc.text(pTasks.length + " offen", mxR - 6, y + 5, { align: "right" });
+      doc.text(pTasks.length + " offen", mxR - 6, y + 4, { align: "right" });
       if (descLines.length) {
-        let dy = y + 12;
-        doc.setFontSize(9);
+        let dy = y + 11;
+        doc.setFontSize(8.5);
         doc.setTextColor(...C.muted);
         doc.setFont(fontName, "normal");
-        descLines.forEach(line => { doc.text(line, mx + 10, dy); dy += 5; });
+        descLines.forEach(line => { doc.text(line, mx + 10, dy); dy += 4.5; });
       }
-      y += cardH + 5;
+      y += cardH + 4;
     });
   } else {
     doc.setFontSize(10.5);
@@ -13046,24 +13057,56 @@ async function dbExportPdf() {
   if (allPlanItems.length) {
     allPlanItems.forEach(item => {
       const timeStr = item.allDay ? "Ganztags" : (item.startTime || "") + " - " + (item.endTime || "");
-      card(mx, y - 4, cw, 18, C.cardBg);
+      const titleText = clean(item.title).slice(0, 60) + (item.isBlock ? "" : " (Kalender)");
+      const titleLines = doc.splitTextToSize(titleText, cw - 20);
+      const cardH = Math.max(16, titleLines.length > 1 ? 22 : 18);
+      if (y + cardH > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
+      card(mx, y - 4, cw, cardH, C.cardBg);
       doc.setFillColor(...(item.isBlock ? (item.taskId ? C.accent : C.emerald) : C.warm));
-      doc.roundedRect(mx, y - 4, 3, 18, 1.5, 1.5, "F");
+      doc.roundedRect(mx, y - 4, 3, cardH, 1.5, 1.5, "F");
       doc.setFontSize(9);
       doc.setTextColor(...(item.isBlock ? C.emerald : C.warm));
       doc.setFont(fontName, "bold");
       doc.text(timeStr, mx + 10, y + 3);
-      doc.setFontSize(11);
+      doc.setFontSize(10);
       doc.setTextColor(...C.white);
       doc.setFont(fontName, "normal");
-      doc.text(clean(item.title) + (item.isBlock ? "" : " (Kalender)"), mx + 10, y + 10);
-      y += 24;
+      doc.text(titleLines[0] || "", mx + 10, y + 10);
+      if (titleLines[1]) { doc.setFontSize(9); doc.text(titleLines[1], mx + 10, y + 15); }
+      y += cardH + 4;
     });
   } else {
     doc.setFontSize(10.5);
     doc.setTextColor(...C.subtle);
     doc.setFont(fontName, "italic");
     doc.text("Keine Termine heute.", mx + 4, y + 2);
+  }
+
+  // ── Für heute ausgewählt ──
+  const pdfSelectedIds = APP.state.data.todaySelectedTasks || [];
+  const pdfSelectedTasks = pdfSelectedIds.map(id => APP.state.data.entities.tasks?.[id]).filter(t => t && t.status !== "done");
+  if (pdfSelectedTasks.length) {
+    y += 16;
+    if (y > ph - 60) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
+    drawAccentBar(y, 50, [34, 197, 94]);
+    y += 10;
+    y = sectionTitle("Für heute ausgewählt", y, C.white);
+    y += 4;
+    pdfSelectedTasks.forEach(t => {
+      const titleText = clean(t.title).slice(0, 70);
+      const em = t.estimatedMinutes || 0;
+      const emStr = em >= 60 ? Math.floor(em/60) + "h " + (em%60 ? em%60 + "m" : "") : (em ? em + "m" : "");
+      if (y + 16 > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
+      card(mx, y - 4, cw, 14, C.cardBg);
+      doc.setFillColor(34, 197, 94);
+      doc.roundedRect(mx, y - 4, 3, 14, 1.5, 1.5, "F");
+      doc.setFontSize(10);
+      doc.setTextColor(...C.white);
+      doc.setFont(fontName, "normal");
+      doc.text(titleText, mx + 10, y + 3);
+      if (emStr) { doc.setFontSize(8); doc.setTextColor(34, 197, 94); doc.text(emStr, mxR - 6, y + 3, {align:"right"}); }
+      y += 18;
+    });
   }
 
   // Divider
@@ -13188,9 +13231,18 @@ async function dbExportPdf() {
   const pdfMessages = Object.values(APP.state.data.entities.scheduledMessages || {}).filter(m => {
     if (!m.dueDate) return m.status !== 'sent';
     return m.dueDate <= today && m.status !== 'sent';
-  }).sort((a,b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).slice(0, 20);
+  }).sort((a,b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
   
-  if (pdfMessages.length) {
+  // Deduplicate by title (remove "Projekt ohne Aufgaben" duplicates etc.)
+  const seenMsgTitles = new Set();
+  const dedupedMessages = pdfMessages.filter(m => {
+    const key = clean(m.title || m.text || "").slice(0, 60);
+    if (seenMsgTitles.has(key)) return false;
+    seenMsgTitles.add(key);
+    return true;
+  }).slice(0, 15);
+  
+  if (dedupedMessages.length) {
     newPage();
     pageBg(C.pageBg);
     footer();
@@ -13199,30 +13251,36 @@ async function dbExportPdf() {
     y += 10;
     y = sectionTitle("Nachrichten", y, C.white);
     y += 6;
-    pdfMessages.forEach(m => {
+    dedupedMessages.forEach(m => {
       const titleText = clean(m.title || m.text?.slice(0, 60) || "Nachricht");
-      const bodyText = clean((m.text || "").slice(0, 150));
-      const lines = doc.splitTextToSize(bodyText, cw - 16);
-      const cardH = Math.max(20, 14 + lines.length * 4.5);
+      const bodyText = clean((m.text || m.content || "").slice(0, 120));
+      const titleLines = doc.splitTextToSize(titleText, cw - 20);
+      const bodyLines = bodyText ? doc.splitTextToSize(bodyText, cw - 20) : [];
+      // Limit lines to prevent overflow
+      const maxTitleLines = titleLines.slice(0, 2);
+      const maxBodyLines = bodyLines.slice(0, 3);
+      const cardH = Math.max(16, (maxTitleLines.length * 5) + (maxBodyLines.length * 4.2) + 14);
       if (y + cardH > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
       card(mx, y - 4, cw, cardH, C.cardBg);
       doc.setFillColor(59, 130, 246);
       doc.roundedRect(mx, y - 4, 3, cardH, 1.5, 1.5, "F");
-      doc.setFontSize(10.5);
+      let cy = y + 2;
+      doc.setFontSize(10);
       doc.setTextColor(...C.white);
       doc.setFont(fontName, "bold");
-      doc.text(titleText, mx + 10, y + 3);
-      if (lines.length) {
-        let ly = y + 10;
-        doc.setFontSize(9);
+      maxTitleLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 5; });
+      if (maxBodyLines.length) {
+        cy += 1;
+        doc.setFontSize(8.5);
         doc.setTextColor(...C.light);
         doc.setFont(fontName, "normal");
-        lines.forEach(line => { doc.text(line, mx + 10, ly); ly += 4.5; });
+        maxBodyLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 4.2; });
       }
-      doc.setFontSize(8);
+      doc.setFontSize(7.5);
       doc.setTextColor(...C.muted);
-      doc.text(m.dueDate || "", mxR - 6, y + 3, {align: "right"});
-      y += cardH + 5;
+      const dateStr = m.deliveredAt ? m.deliveredAt.slice(0,16).replace("T"," ") : (m.dueDate || "");
+      doc.text(dateStr, mxR - 6, y + 2, {align: "right"});
+      y += cardH + 4;
     });
   }
 
@@ -13242,9 +13300,9 @@ async function dbExportPdf() {
       const yesV = (d.votes||[]).filter(v=>v.vote==="yes").length;
       const noV = (d.votes||[]).filter(v=>v.vote==="no").length;
       const maybeV = (d.votes||[]).filter(v=>v.vote==="maybe").length;
-      const titleLines = doc.splitTextToSize(clean(d.title), cw - 16);
-      const descLines = d.description ? doc.splitTextToSize(clean(d.description).slice(0, 200), cw - 16) : [];
-      const cardH = Math.max(24, (titleLines.length * 5.5) + (descLines.length * 4.5) + 22);
+      const titleLines = doc.splitTextToSize(clean(d.title), cw - 20).slice(0, 2);
+      const descLines = d.description ? doc.splitTextToSize(clean(d.description).slice(0, 150), cw - 20).slice(0, 3) : [];
+      const cardH = Math.max(22, (titleLines.length * 5) + (descLines.length * 4.2) + 18);
       if (y + cardH > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
       card(mx, y - 4, cw, cardH, C.cardBg);
       doc.setFillColor(245, 158, 11);
@@ -13302,38 +13360,49 @@ async function dbExportPdf() {
 
   // ═══════════════════════════════════════════
   // ══════════════════════════════════════════
-  const pdfDeliveredMsgs = Object.values(APP.state.data.entities.scheduledMessages || {}).filter(m => m.isDelivered).sort((a,b) => (b.deliveredAt||"").localeCompare(a.deliveredAt||"")).slice(0, 15);
-  if (pdfDeliveredMsgs.length) {
+  const pdfDeliveredMsgs = Object.values(APP.state.data.entities.scheduledMessages || {}).filter(m => m.isDelivered).sort((a,b) => (b.deliveredAt||"").localeCompare(a.deliveredAt||""));
+  // Deduplicate delivered messages by title
+  const seenDelivered = new Set();
+  const dedupedDelivered = pdfDeliveredMsgs.filter(m => {
+    const key = clean(m.title || "").slice(0, 50);
+    if (seenDelivered.has(key)) return false;
+    seenDelivered.add(key);
+    return true;
+  }).slice(0, 10);
+  if (dedupedDelivered.length) {
     newPage();
     pageBg(C.pageBg);
     footer();
     y = 28;
     drawAccentBar(y, 50, C.accentSoft);
     y += 10;
-    y = sectionTitle("Nachrichten", y, C.white);
+    y = sectionTitle("Zugestellte Nachrichten", y, C.white);
     y += 6;
-    pdfDeliveredMsgs.forEach(m => {
-      const titleLines = doc.splitTextToSize(clean(m.title) || "Nachricht", cw - 16);
-      const contentLines = doc.splitTextToSize(clean(m.content) || "", cw - 16);
-      const cardH = Math.max(22, (titleLines.length * 5.5) + (contentLines.length * 4.5) + 20);
+    dedupedDelivered.forEach(m => {
+      const titleLines = doc.splitTextToSize(clean(m.title) || "Nachricht", cw - 20).slice(0, 2);
+      const contentText = clean(m.content || "").slice(0, 100);
+      const contentLines = contentText ? doc.splitTextToSize(contentText, cw - 20).slice(0, 2) : [];
+      const cardH = Math.max(16, (titleLines.length * 5) + (contentLines.length * 4.2) + 14);
       if (y + cardH > ph - 30) { newPage(); pageBg(C.pageBg); footer(); y = 28; }
       card(mx, y - 4, cw, cardH, C.cardBg);
       doc.setFillColor(...C.accentSoft);
       doc.roundedRect(mx, y - 4, 3, cardH, 1.5, 1.5, "F");
       let cy = y + 2;
-      doc.setFontSize(10.5);
+      doc.setFontSize(10);
       doc.setTextColor(...C.white);
       doc.setFont(fontName, "bold");
-      titleLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 5.5; });
-      cy += 3;
-      doc.setFontSize(9);
-      doc.setTextColor(...C.light);
-      doc.setFont(fontName, "normal");
-      contentLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 4.5; });
+      titleLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 5; });
+      if (contentLines.length) {
+        cy += 1;
+        doc.setFontSize(8.5);
+        doc.setTextColor(...C.light);
+        doc.setFont(fontName, "normal");
+        contentLines.forEach(line => { doc.text(line, mx + 10, cy); cy += 4.2; });
+      }
       doc.setFontSize(7.5);
       doc.setTextColor(...C.muted);
       doc.text(m.deliveredAt ? m.deliveredAt.slice(0,16).replace("T"," ") : "", mxR - 6, y + 2, {align:"right"});
-      y += cardH + 6;
+      y += cardH + 4;
     });
   }
 
