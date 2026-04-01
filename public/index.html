@@ -2081,7 +2081,7 @@
 .noteflow-container{
   position:fixed;
   inset:0;
-  z-index:500;
+  z-index:600;
   display:none;
   flex-direction:column;
   background:#000;
@@ -3012,16 +3012,17 @@
 .nf-sidebar-toggle{
   position:absolute;
   left:0;top:12px;
-  z-index:10;width:20px;height:36px;
+  z-index:100;width:28px;height:44px;
   background:var(--nf-bg3);border:1px solid var(--nf-border2);border-left:none;
-  border-radius:0 8px 8px 0;
-  cursor:pointer;display:flex;align-items:center;justify-content:center;
-  font-size:10px;color:var(--nf-txt3);transition:all .2s;
-  opacity:0;pointer-events:none;
+  border-radius:0 10px 10px 0;
+  cursor:pointer;display:none;align-items:center;justify-content:center;
+  font-size:13px;color:var(--nf-txt2);transition:background .2s,color .2s;
+  box-shadow:2px 0 8px rgba(0,0,0,.15);
 }
 .nf-sidebar-toggle:hover{background:var(--nf-accent);color:#fff;border-color:var(--nf-accent)}
-.nf-sidebar.collapsed ~ .nf-main .nf-sidebar-toggle{opacity:1;pointer-events:auto}
-.nf-sidebar:not(.collapsed) ~ .nf-main .nf-sidebar-toggle{opacity:0;pointer-events:none}
+.nf-sidebar-toggle.visible{display:flex}
+.nf-sidebar.collapsed ~ .nf-main .nf-sidebar-toggle{display:flex}
+.nf-sidebar:not(.collapsed) ~ .nf-main .nf-sidebar-toggle{display:none}
 .nf-editor-toolbar{gap:4px;flex-wrap:wrap}
 .nf-toolbar-group{gap:2px}
 
@@ -3181,6 +3182,28 @@ textarea::placeholder, input::placeholder {
 .file-item .file-actions{display:flex;gap:4px;flex-shrink:0}
 .file-item .file-actions button{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 6px;border-radius:6px;font-size:12px;transition:var(--transition)}
 .file-item .file-actions button:hover{background:var(--panel3);color:var(--text)}
+.file-item[draggable="true"]{cursor:grab}
+.file-item[draggable="true"]:active{cursor:grabbing}
+.file-folder{margin-top:8px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--panel);transition:border-color .2s}
+.file-folder.drag-over{border-color:var(--accent);box-shadow:0 0 0 2px rgba(99,102,241,.2)}
+.file-folder-header{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;transition:background .15s;user-select:none}
+.file-folder-header:hover{background:var(--panel2)}
+.file-folder-header .folder-icon{font-size:16px;transition:transform .2s}
+.file-folder-header .folder-icon.open{transform:rotate(90deg)}
+.file-folder-header .folder-name{flex:1;font-weight:600;font-size:13px}
+.file-folder-header .folder-count{font-size:10px;color:var(--muted);background:var(--panel2);padding:2px 8px;border-radius:10px}
+.file-folder-header .folder-actions{display:flex;gap:2px}
+.file-folder-header .folder-actions button{background:none;border:none;color:var(--muted);cursor:pointer;padding:3px 5px;border-radius:6px;font-size:11px;transition:var(--transition);opacity:.5}
+.file-folder-header .folder-actions button:hover{background:var(--panel3);color:var(--text);opacity:1}
+.file-folder-body{border-top:1px solid var(--border);padding:6px 8px;display:none}
+.file-folder-body.open{display:block}
+.file-folder-body .file-item{border-radius:8px}
+.file-folder-body .file-upload-zone{margin:6px 0;padding:12px;border-width:1.5px}
+.file-folder-body .file-upload-zone .upload-icon{font-size:18px;margin-bottom:2px}
+.file-folder-body .file-upload-zone .upload-text{font-size:11px}
+.file-folder-body .file-upload-zone .upload-hint{font-size:9px}
+.file-folder-add{display:flex;align-items:center;gap:6px;padding:8px 12px;margin-top:6px;cursor:pointer;color:var(--muted);font-size:12px;border-radius:8px;transition:var(--transition);border:1px dashed var(--border);background:transparent}
+.file-folder-add:hover{background:var(--panel2);color:var(--text);border-color:var(--accent)}
 .file-preview-overlay{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px;animation:fadeIn .2s ease}
 .file-preview-container{background:var(--panel);border-radius:16px;max-width:90vw;max-height:90vh;overflow:auto;position:relative;box-shadow:var(--shadow-lg);display:flex;flex-direction:column}
 .file-preview-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);z-index:1;border-radius:16px 16px 0 0}
@@ -5426,8 +5449,11 @@ function renderFileAttachments(kind, entityId) {
   const entity = e[kindMap[kind]]?.[entityId];
   if (!entity) return '';
   const files = entity.files || [];
+  if (!entity.fileFolders) entity.fileFolders = [];
+  const folders = entity.fileFolders;
   const fbOk = !!firebaseStorage;
-  const fileListHtml = files.map((f, idx) => {
+
+  function renderFileItem(f, idx) {
     const ext = (f.name || '').split('.').pop().toLowerCase();
     const isImg = isImageFile(f.name);
     const isWord = ['docx','doc'].includes(ext);
@@ -5438,48 +5464,102 @@ function renderFileAttachments(kind, entityId) {
       : isPdf ? `<div class="file-thumb pdf">📕</div>`
       : `<div class="file-icon">${getFileIcon(f.name)}</div>`;
     return `
-    <div class="file-item ${isImg ? 'has-thumb' : ''}">
+    <div class="file-item ${isImg ? 'has-thumb' : ''}" draggable="true"
+         ondragstart="event.dataTransfer.setData('text/plain','fileidx:${idx}:${kind}:${entityId}');this.style.opacity='0.4'"
+         ondragend="this.style.opacity='1'">
       ${thumbHtml}
       <div class="file-info">
         <div class="file-name" data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="${esc(f.name)}">${esc(f.name)}</div>
         <div class="file-meta">${formatFileSize(f.size)} · ${ext.toUpperCase()}${f.uploadedAt ? ' · ' + new Date(f.uploadedAt).toLocaleDateString('de-CH') : ''}</div>
       </div>
       <div class="file-actions">
+        ${folders.length > 0 ? `<select title="In Ordner verschieben" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:10px;padding:2px 4px;border-radius:6px;cursor:pointer;max-width:80px" onchange="window._moveFileToFolder('${kind}','${entityId}',${idx},this.value)"><option value="">📂 …</option>${folders.map(fo => `<option value="${fo.id}" ${f.folderId === fo.id ? 'selected' : ''}>${esc(fo.name)}</option>`).join('')}</select>` : ''}
         <button data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="Preview">👁</button>
         <button data-action="download-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="Download">⬇️</button>
         <button data-action="delete-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="Delete" style="color:var(--danger)">🗑</button>
       </div>
     </div>`;
-  }).join('');
+  }
 
-  return `
-    <div class="card mb-4">
-      <h3>📎 Dokumente (${files.length})</h3>
-      ${!fbOk ? `<div style="padding:8px 12px;margin-bottom:10px;background:rgba(255,159,10,.1);border:1px solid rgba(255,159,10,.3);border-radius:8px;font-size:11px;color:var(--warn)">⚠️ Firebase nicht geladen — stelle sicher, dass kein Adblocker Firebase blockiert. Auf Netlify deployen damit es funktioniert.</div>` : ''}
-      <div class="file-upload-zone" data-action="trigger-file-upload" data-kind="${kind}" data-id="${entityId}"
+  function renderUploadZone(folderId) {
+    const fSuffix = folderId ? `_${folderId}` : '';
+    return `
+      <div class="file-upload-zone" data-action="trigger-file-upload" data-kind="${kind}" data-id="${entityId}" data-folder-id="${folderId || ''}"
            ondragover="event.preventDefault();this.classList.add('dragging')" 
            ondragleave="this.classList.remove('dragging')"
-           ondrop="event.preventDefault();this.classList.remove('dragging');window._handleFileDrop(event,'${kind}','${entityId}')">
+           ondrop="event.preventDefault();this.classList.remove('dragging');window._handleFileDrop(event,'${kind}','${entityId}','${folderId || ''}')">
         <div class="upload-icon">${fbOk ? '📤' : '🔒'}</div>
         <div class="upload-text">${fbOk ? 'Upload files' : 'Upload disabled'}</div>
         <div class="upload-hint">${fbOk ? 'Click or drag & drop · max 50 MB' : 'Firebase config missing'}</div>
       </div>
-      <div class="file-upload-progress" id="fileProgress_${kind}_${entityId}">
-        <div class="bar" id="fileProgressBar_${kind}_${entityId}"></div>
+      <div class="file-upload-progress" id="fileProgress_${kind}_${entityId}${fSuffix}">
+        <div class="bar" id="fileProgressBar_${kind}_${entityId}${fSuffix}"></div>
       </div>
-      <input type="file" id="fileInput_${kind}_${entityId}" multiple style="display:none" 
-             onchange="window._handleFileSelect(this.files,'${kind}','${entityId}')" />
-      ${files.length > 0 ? `<div class="file-list">${fileListHtml}</div>` : ''}
+      <input type="file" id="fileInput_${kind}_${entityId}${fSuffix}" multiple style="display:none" 
+             onchange="window._handleFileSelect(this.files,'${kind}','${entityId}','${folderId || ''}')" />`;
+  }
+
+  // Unsorted files (no folder)
+  const unsorted = files.map((f, i) => ({f, i})).filter(x => !x.f.folderId);
+  // Folder rendering
+  const foldersHtml = folders.map(fo => {
+    const folderFiles = files.map((f, i) => ({f, i})).filter(x => x.f.folderId === fo.id);
+    const isOpen = window._openFileFolders?.[`${kind}_${entityId}_${fo.id}`] !== false;
+    return `
+    <div class="file-folder" ondragover="event.preventDefault();this.querySelector('.file-folder-header').style.background='rgba(99,102,241,.15)'"
+         ondragleave="this.querySelector('.file-folder-header').style.background=''"
+         ondrop="event.preventDefault();this.querySelector('.file-folder-header').style.background='';window._dropFileOnFolder(event,'${kind}','${entityId}','${fo.id}')">
+      <div class="file-folder-header" onclick="window._toggleFileFolder('${kind}','${entityId}','${fo.id}')">
+        <span class="folder-icon ${isOpen ? 'open' : ''}">▶</span>
+        <span class="folder-name">📁 ${esc(fo.name)}</span>
+        <span class="folder-count">${folderFiles.length}</span>
+        <div class="folder-actions">
+          <button onclick="event.stopPropagation();window._renameFileFolder('${kind}','${entityId}','${fo.id}')" title="Umbenennen">✏️</button>
+          <button onclick="event.stopPropagation();window._deleteFileFolder('${kind}','${entityId}','${fo.id}')" title="Löschen" style="color:var(--danger)">🗑</button>
+        </div>
+      </div>
+      <div class="file-folder-body ${isOpen ? 'open' : ''}">
+        ${renderUploadZone(fo.id)}
+        ${folderFiles.length > 0 ? `<div class="file-list">${folderFiles.map(x => renderFileItem(x.f, x.i)).join('')}</div>` : '<div style="padding:8px 12px;font-size:11px;color:var(--muted)">Dateien hierher ziehen oder hochladen</div>'}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Unsorted drop zone (to remove from folder)
+  const unsortedDropZone = folders.length > 0 ? `
+    <div class="file-list" style="margin-top:8px;min-height:${unsorted.length === 0 ? '40px' : 'auto'};border:1px dashed transparent;border-radius:10px;padding:4px;transition:all .2s"
+         ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(99,102,241,.05)'"
+         ondragleave="this.style.borderColor='transparent';this.style.background=''"
+         ondrop="event.preventDefault();this.style.borderColor='transparent';this.style.background='';window._dropFileOnFolder(event,'${kind}','${entityId}','')">
+      ${unsorted.length > 0 ? unsorted.map(x => renderFileItem(x.f, x.i)).join('') : '<div style="padding:6px 12px;font-size:11px;color:var(--muted);text-align:center">📄 Unsortierte Dateien — hierher ziehen zum Entfernen aus Ordner</div>'}
+    </div>` : (unsorted.length > 0 ? `<div class="file-list" style="margin-top:8px">${unsorted.map(x => renderFileItem(x.f, x.i)).join('')}</div>` : '');
+
+  return `
+    <div class="card mb-4">
+      <h3 style="display:flex;align-items:center;justify-content:space-between">
+        <span>📎 Dokumente (${files.length})</span>
+        <button onclick="window._createFileFolder('${kind}','${entityId}')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:4px;transition:all .15s" title="Neuen Ordner erstellen">📁+ Ordner</button>
+      </h3>
+      ${!fbOk ? `<div style="padding:8px 12px;margin-bottom:10px;background:rgba(255,159,10,.1);border:1px solid rgba(255,159,10,.3);border-radius:8px;font-size:11px;color:var(--warn)">⚠️ Firebase nicht geladen — stelle sicher, dass kein Adblocker Firebase blockiert. Auf Netlify deployen damit es funktioniert.</div>` : ''}
+      ${renderUploadZone('')}
+      ${foldersHtml}
+      ${unsortedDropZone}
     </div>
   `;
 }
 
-window._handleFileDrop = function(e, kind, entityId) {
+window._handleFileDrop = function(e, kind, entityId, folderId) {
+  // Check if this is an internal file drag (existing file being moved)
+  const data = e.dataTransfer?.getData('text/plain') || '';
+  if (data.startsWith('fileidx:')) {
+    window._dropFileOnFolder(e, kind, entityId, folderId);
+    return;
+  }
   const files = e.dataTransfer?.files;
-  if (files && files.length > 0) window._handleFileSelect(files, kind, entityId);
+  if (files && files.length > 0) window._handleFileSelect(files, kind, entityId, folderId);
 };
 
-window._handleFileSelect = async function(fileList, kind, entityId) {
+window._handleFileSelect = async function(fileList, kind, entityId, folderId) {
   if (!fileList || fileList.length === 0) return;
   if (!firebaseStorage) { toast('error', 'Firebase', 'Firebase SDK nicht geladen – Adblocker deaktivieren oder auf Netlify deployen'); return; }
   const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
@@ -5487,8 +5567,9 @@ window._handleFileSelect = async function(fileList, kind, entityId) {
   if (!entity) return;
   if (!entity.files) entity.files = [];
 
-  const progressEl = document.getElementById(`fileProgress_${kind}_${entityId}`);
-  const barEl = document.getElementById(`fileProgressBar_${kind}_${entityId}`);
+  const fSuffix = folderId ? `_${folderId}` : '';
+  const progressEl = document.getElementById(`fileProgress_${kind}_${entityId}${fSuffix}`);
+  const barEl = document.getElementById(`fileProgressBar_${kind}_${entityId}${fSuffix}`);
   if (progressEl) progressEl.style.display = 'block';
 
   for (let i = 0; i < fileList.length; i++) {
@@ -5499,7 +5580,7 @@ window._handleFileSelect = async function(fileList, kind, entityId) {
     try {
       if (barEl) barEl.style.width = '0%';
       const downloadUrl = await uploadToFirebase(file, storagePath, (pct) => { if (barEl) barEl.style.width = pct + '%'; });
-      entity.files.push({
+      const fileObj = {
         id: fileId,
         name: file.name,
         originalName: file.name,
@@ -5508,7 +5589,9 @@ window._handleFileSelect = async function(fileList, kind, entityId) {
         storagePath: storagePath,
         url: downloadUrl,
         uploadedAt: new Date().toISOString()
-      });
+      };
+      if (folderId) fileObj.folderId = folderId;
+      entity.files.push(fileObj);
       toast('ok', 'Uploaded', file.name);
     } catch(err) {
       toast('error', 'Upload failed', err.message);
@@ -5518,6 +5601,97 @@ window._handleFileSelect = async function(fileList, kind, entityId) {
   entity.updatedAt = new Date().toISOString();
   scheduleSave();
   render();
+};
+
+// --- File Folder Management ---
+if (!window._openFileFolders) window._openFileFolders = {};
+
+window._toggleFileFolder = function(kind, entityId, folderId) {
+  const key = `${kind}_${entityId}_${folderId}`;
+  const current = window._openFileFolders[key];
+  window._openFileFolders[key] = current === false ? true : false;
+  render();
+};
+
+window._createFileFolder = function(kind, entityId) {
+  const name = prompt('Ordnername:');
+  if (!name || !name.trim()) return;
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  if (!entity) return;
+  if (!entity.fileFolders) entity.fileFolders = [];
+  entity.fileFolders.push({ id: 'ff_' + Date.now().toString(36), name: name.trim(), createdAt: new Date().toISOString() });
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave();
+  render();
+  toast('ok', '📁', 'Ordner erstellt');
+};
+
+window._renameFileFolder = function(kind, entityId, folderId) {
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  if (!entity) return;
+  const folder = (entity.fileFolders || []).find(f => f.id === folderId);
+  if (!folder) return;
+  const newName = prompt('Neuer Ordnername:', folder.name);
+  if (!newName || !newName.trim()) return;
+  folder.name = newName.trim();
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave();
+  render();
+  toast('ok', '📁', 'Ordner umbenannt');
+};
+
+window._deleteFileFolder = function(kind, entityId, folderId) {
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  if (!entity) return;
+  const folder = (entity.fileFolders || []).find(f => f.id === folderId);
+  if (!folder) return;
+  const folderFiles = (entity.files || []).filter(f => f.folderId === folderId);
+  const msg = folderFiles.length > 0
+    ? `Ordner "${folder.name}" mit ${folderFiles.length} Datei(en) löschen?\nDateien werden in "Unsortiert" verschoben.`
+    : `Ordner "${folder.name}" wirklich löschen?`;
+  if (!confirm(msg)) return;
+  // Move files to unsorted
+  (entity.files || []).forEach(f => { if (f.folderId === folderId) delete f.folderId; });
+  entity.fileFolders = (entity.fileFolders || []).filter(f => f.id !== folderId);
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave();
+  render();
+  toast('ok', '📁', 'Ordner gelöscht');
+};
+
+window._moveFileToFolder = function(kind, entityId, fileIdx, folderId) {
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  if (!entity || !entity.files?.[fileIdx]) return;
+  if (folderId) {
+    entity.files[fileIdx].folderId = folderId;
+  } else {
+    delete entity.files[fileIdx].folderId;
+  }
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave();
+  render();
+};
+
+window._dropFileOnFolder = function(e, kind, entityId, folderId) {
+  const data = e.dataTransfer?.getData('text/plain') || '';
+  if (data.startsWith('fileidx:')) {
+    // Internal file drag: move existing file to folder
+    const parts = data.split(':');
+    const fileIdx = parseInt(parts[1], 10);
+    const srcKind = parts[2];
+    const srcId = parts[3];
+    if (srcKind === kind && srcId === entityId) {
+      window._moveFileToFolder(kind, entityId, fileIdx, folderId);
+      toast('ok', '📁', folderId ? 'Datei verschoben' : 'Datei aus Ordner entfernt');
+    }
+  } else if (e.dataTransfer?.files?.length > 0) {
+    // OS file drop: upload to folder
+    window._handleFileSelect(e.dataTransfer.files, kind, entityId, folderId);
+  }
 };
 
 function openFilePreview(kind, entityId, fileIdx) {
@@ -26529,6 +26703,8 @@ window.BELEG_PORTAL_URL = 'https://sp-ar-belege.netlify.app';
 
 window.fetchBelege = async function(showToast) {
   if (window._fetchingBelege) return 0;
+  // Skip silently when running locally (file://)
+  if (location.protocol === 'file:') { return 0; }
   window._fetchingBelege = true;
   try {
     const url = window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list';
@@ -41358,7 +41534,7 @@ function initNoteFlow() {
       '<div class="nf-sidebar-header">' +
         '<div class="nf-logo"><div class="nf-logo-icon">📝</div><span>NoteFlow</span></div>' +
         '<div style="display:flex;gap:6px;align-items:center">' +
-          '<button style="background:var(--nf-bg3);border:1px solid var(--nf-border);cursor:pointer;color:var(--nf-txt2);font-size:12px;padding:6px 10px;border-radius:6px;display:flex;align-items:center;gap:4px;transition:all .15s" onclick="window.nfCollapseSidebar()" title="Sidebar einklappen"><span style="font-size:10px">◀</span></button>' +
+          '<button style="background:var(--nf-bg3);border:1px solid var(--nf-border);cursor:pointer;color:var(--nf-txt2);font-size:12px;padding:6px 10px;border-radius:6px;display:flex;align-items:center;gap:4px;transition:all .15s" onclick="if(window.nfCollapseSidebar){window.nfCollapseSidebar()}else{var s=document.getElementById(\'nf-sidebar\');if(s){s.style.width=\'0\';s.style.opacity=\'0\';s.style.pointerEvents=\'none\';s.classList.add(\'collapsed\')}var b=document.querySelector(\'.nf-sidebar-toggle\');if(b){b.style.display=\'flex\'}}" title="Sidebar einklappen"><span style="font-size:10px">◀</span></button>' +
           '<button class="nf-back-btn" onclick="window.closeNoteFlow()">← Zurück</button>' +
         '</div>' +
       '</div>' +
@@ -41386,7 +41562,7 @@ function initNoteFlow() {
       '</div>' +
     '</aside>' +
     '<main class="nf-main">' +
-      '<button class="nf-sidebar-toggle" onclick="window.nfExpandSidebar()" title="Sidebar öffnen">▶</button>' +
+      '<button class="nf-sidebar-toggle" onclick="if(window.nfExpandSidebar){window.nfExpandSidebar()}else{var s=document.getElementById(\'nf-sidebar\');if(s){s.style.width=\'\';s.style.opacity=\'\';s.style.pointerEvents=\'\';s.classList.remove(\'collapsed\')}this.style.display=\'none\'}" title="Sidebar öffnen">▶</button>' +
       '<header class="nf-header">' +
         '<div><h1 id="nf-header-title">Dashboard</h1><p id="nf-header-sub">Übersicht</p></div>' +
         '<div class="nf-search"><input type="text" id="nf-search" placeholder="Suchen..." oninput="window.nfSearch(this.value)"></div>' +
@@ -41823,18 +41999,48 @@ function initNoteFlow() {
   // Globale Funktionen
   window.nfNav = nfNavigate;
   
-  // Sidebar collapse/expand
+  // Sidebar collapse/expand - mit inline styles für maximale Zuverlässigkeit
   window.nfCollapseSidebar = function() {
     var sb = document.getElementById("nf-sidebar");
-    if (sb) sb.classList.add("collapsed");
+    if (sb) {
+      sb.style.width = "0";
+      sb.style.opacity = "0";
+      sb.style.pointerEvents = "none";
+      sb.style.borderRight = "none";
+      sb.style.overflow = "hidden";
+      sb.classList.add("collapsed");
+    }
+    var btn = document.querySelector(".nf-sidebar-toggle");
+    if (btn) {
+      btn.style.display = "flex";
+      btn.classList.add("visible");
+    }
   };
   window.nfExpandSidebar = function() {
     var sb = document.getElementById("nf-sidebar");
-    if (sb) sb.classList.remove("collapsed");
+    if (sb) {
+      sb.style.width = "";
+      sb.style.opacity = "";
+      sb.style.pointerEvents = "";
+      sb.style.borderRight = "";
+      sb.style.overflow = "";
+      sb.classList.remove("collapsed");
+    }
+    var btn = document.querySelector(".nf-sidebar-toggle");
+    if (btn) {
+      btn.style.display = "none";
+      btn.classList.remove("visible");
+    }
   };
   window.nfToggleSidebar = function() {
     var sb = document.getElementById("nf-sidebar");
-    if (sb) sb.classList.toggle("collapsed");
+    if (sb) {
+      if (sb.classList.contains("collapsed")) {
+        window.nfExpandSidebar();
+      } else {
+        window.nfCollapseSidebar();
+      }
+    }
   };
   window.nfToggleEditorSidebar = function() {
     var es = document.querySelector(".nf-editor-sidebar");
@@ -43971,7 +44177,9 @@ window.handleClick = function(e){
     }
     const fKind = el.dataset.kind;
     const fId = el.dataset.id;
-    const inp = document.getElementById(`fileInput_${fKind}_${fId}`);
+    const fFolder = el.dataset.folderId || '';
+    const fSuffix = fFolder ? `_${fFolder}` : '';
+    const inp = document.getElementById(`fileInput_${fKind}_${fId}${fSuffix}`);
     if (inp) inp.click();
     else toast("warn", "Upload", "Upload-Feld nicht gefunden. Bitte Seite neu laden.");
     return;
