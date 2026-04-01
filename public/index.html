@@ -2183,7 +2183,10 @@
   flex:1;
   overflow-y:auto;
   padding:6px 8px;
+  scrollbar-width:none;
+  -ms-overflow-style:none;
 }
+.nf-sidebar-content::-webkit-scrollbar{display:none}
 .nf-nav-group{
   margin-bottom:12px;
 }
@@ -2591,10 +2594,15 @@
 .nf-editor-body{
   flex:1;
   padding:20px 32px 60px;
+  padding-top:15vh;
   overflow-y:auto;
   display:flex;
   justify-content:center;
+  align-items:flex-start;
+  scrollbar-width:none;
+  -ms-overflow-style:none;
 }
+.nf-editor-body::-webkit-scrollbar{display:none}
 .nf-editor-content{
   width:100%;
   max-width:720px;
@@ -12505,6 +12513,8 @@ async function dbExportPdf() {
     doc.addFont("NotoSans-Regular.ttf", "NotoSans", "normal");
     doc.addFileToVFS("NotoSans-Bold.ttf", window._pdfFontCache.bold);
     doc.addFont("NotoSans-Bold.ttf", "NotoSans", "bold");
+    // Register normal as italic fallback (no italic font file available)
+    doc.addFont("NotoSans-Regular.ttf", "NotoSans", "italic");
     doc.setFont("NotoSans");
   }
   const fontName = window._pdfFontCache ? "NotoSans" : "helvetica";
@@ -13180,7 +13190,7 @@ async function dbExportPdf() {
     return m.dueDate <= today && m.status !== 'sent';
   }).sort((a,b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).slice(0, 20);
   
-  if (pdfDeliveredMsgs.length) {
+  if (pdfMessages.length) {
     newPage();
     pageBg(C.pageBg);
     footer();
@@ -40758,7 +40768,10 @@ function initNoteFlow() {
       ? '<span class="nf-note-card-tasks has-tasks">✓ ' + linkedTasks + '</span>' 
       : '';
     
+    const isPinnedNote = (APP.state.data.pinnedItems || []).includes("note:" + n.id);
+    
     return '<div class="nf-note-card" style="--card-color:' + color + '" onclick="window.nfOpenNote(\'' + n.id + '\')" draggable="true" ondragstart="window.nfDragNote(event,\'' + n.id + '\')">' +
+      (isPinnedNote ? '<span style="position:absolute;top:8px;right:8px;font-size:12px;opacity:.7">📌</span>' : '') +
       '<div class="nf-note-card-title">' + nfEsc(n.title || "Unbenannt") + '</div>' +
       '<div class="nf-note-card-preview">' + nfEsc(preview) + '</div>' +
       '<div class="nf-note-card-footer">' +
@@ -40866,6 +40879,21 @@ function initNoteFlow() {
     renderNFEditorTags();
     renderNFEditorLinks();
     renderNFEditorTasks();
+    
+    // Apply saved font settings
+    if (contentEl) {
+      var savedFont = nfCurrentNote?._fontFamily || nfCurrentNote?.fontFamily || "Inter";
+      var savedSize = nfCurrentNote?._fontSize || nfCurrentNote?.fontSize || "16";
+      contentEl.style.fontFamily = "'" + savedFont + "',sans-serif";
+      contentEl.style.fontSize = savedSize + "px";
+      var fontSel = document.getElementById("nf-font-select");
+      if (fontSel) fontSel.value = savedFont;
+      var sizeSel = document.getElementById("nf-fontsize-select");
+      if (sizeSel) sizeSel.value = savedSize;
+    }
+    // Update pin button
+    nfUpdatePinBtn();
+    
     nfNavigate("editor");
   }
   
@@ -40898,6 +40926,10 @@ function initNoteFlow() {
     nfCurrentNote.content = contentEl?.innerHTML || "";
     nfCurrentNote.updatedAt = new Date().toISOString();
     
+    // Save font settings
+    if (nfCurrentNote._fontFamily) nfCurrentNote.fontFamily = nfCurrentNote._fontFamily;
+    if (nfCurrentNote._fontSize) nfCurrentNote.fontSize = nfCurrentNote._fontSize;
+    
     // In Hauptapp speichern
     if (!APP.state.data.entities.notes) APP.state.data.entities.notes = {};
     APP.state.data.entities.notes[nfCurrentNote.id] = nfCurrentNote;
@@ -40917,6 +40949,8 @@ function initNoteFlow() {
     if (titleEl) nfCurrentNote.title = titleEl.value || "Unbenannt";
     if (contentEl) nfCurrentNote.content = contentEl.innerHTML || "";
     nfCurrentNote.updatedAt = new Date().toISOString();
+    if (nfCurrentNote._fontFamily) nfCurrentNote.fontFamily = nfCurrentNote._fontFamily;
+    if (nfCurrentNote._fontSize) nfCurrentNote.fontSize = nfCurrentNote._fontSize;
     if (!APP.state.data.entities.notes) APP.state.data.entities.notes = {};
     APP.state.data.entities.notes[nfCurrentNote.id] = nfCurrentNote;
     scheduleSave();
@@ -41066,6 +41100,46 @@ function initNoteFlow() {
     window.print();
   }
   window.nfPrintNote = nfPrintNote;
+  
+  // Font management
+  window.nfSetFont = function(fontFamily) {
+    var ed = document.getElementById("nf-ed-content");
+    if (ed) ed.style.fontFamily = "'" + fontFamily + "',sans-serif";
+    if (nfCurrentNote) nfCurrentNote._fontFamily = fontFamily;
+  };
+  window.nfSetFontSize = function(size) {
+    var ed = document.getElementById("nf-ed-content");
+    if (ed) ed.style.fontSize = size + "px";
+    if (nfCurrentNote) nfCurrentNote._fontSize = size;
+  };
+  
+  // Pin note toggle
+  window.nfTogglePin = function() {
+    if (!nfCurrentNote || !nfCurrentNote.id) { nfToast("Zuerst Notiz speichern", "error"); return; }
+    var key = "note:" + nfCurrentNote.id;
+    var items = APP.state.data.pinnedItems || [];
+    var idx = items.indexOf(key);
+    if (idx >= 0) {
+      items.splice(idx, 1);
+      nfToast("📌 Nicht mehr angepinnt");
+    } else {
+      items.push(key);
+      nfToast("📌 Angepinnt!");
+    }
+    APP.state.data.pinnedItems = items;
+    scheduleSave();
+    renderNFPinned();
+    nfUpdatePinBtn();
+  };
+  function nfUpdatePinBtn() {
+    var btn = document.getElementById("nf-pin-btn");
+    if (!btn) return;
+    if (!nfCurrentNote || !nfCurrentNote.id) { btn.style.background = ""; return; }
+    var key = "note:" + nfCurrentNote.id;
+    var isPinned = (APP.state.data.pinnedItems || []).includes(key);
+    btn.style.background = isPinned ? "rgba(255,214,10,.2)" : "";
+    btn.title = isPinned ? "Notiz lospinnen" : "Notiz anpinnen";
+  }
   
   // KI-Assistent
   function nfAiAssist() {
@@ -41703,7 +41777,26 @@ function initNoteFlow() {
               '<button class="nf-toolbar-btn" onclick="window.nfHighlight(\'cyan\')" title="Blau markieren" style="background:rgba(33,150,243,.25)">🔵</button>' +
               '<button class="nf-toolbar-btn" onclick="window.nfRemoveFormat()" title="Formatierung entfernen">🚫</button>' +
             '</div>' +
+            '<div class="nf-toolbar-group">' +
+              '<select id="nf-font-select" title="Schriftart" style="background:var(--nf-bg3);border:1px solid var(--nf-border);color:var(--nf-txt2);font-size:11px;padding:4px 6px;border-radius:6px;cursor:pointer;max-width:100px;height:28px" onchange="window.nfSetFont(this.value)">' +
+                '<option value="Inter">Inter</option>' +
+                '<option value="Georgia">Georgia</option>' +
+                '<option value="Courier New">Courier New</option>' +
+                '<option value="Times New Roman">Times New Roman</option>' +
+                '<option value="Verdana">Verdana</option>' +
+                '<option value="Trebuchet MS">Trebuchet MS</option>' +
+                '<option value="system-ui">System</option>' +
+              '</select>' +
+              '<select id="nf-fontsize-select" title="Schriftgrösse" style="background:var(--nf-bg3);border:1px solid var(--nf-border);color:var(--nf-txt2);font-size:11px;padding:4px 4px;border-radius:6px;cursor:pointer;width:52px;height:28px" onchange="window.nfSetFontSize(this.value)">' +
+                '<option value="14">14</option>' +
+                '<option value="16" selected>16</option>' +
+                '<option value="18">18</option>' +
+                '<option value="20">20</option>' +
+                '<option value="22">22</option>' +
+              '</select>' +
+            '</div>' +
             '<div style="margin-left:auto;display:flex;gap:6px;align-items:center">' +
+              '<button class="nf-toolbar-btn" onclick="window.nfTogglePin()" title="Notiz anpinnen" id="nf-pin-btn" style="font-size:13px">📌</button>' +
               '<button class="nf-toolbar-btn" onclick="window.nfAiAssist()" title="KI-Assistent" style="background:rgba(99,102,241,.15);color:#a78bfa">✨</button>' +
               '<button class="nf-toolbar-btn" onclick="window.nfPrintNote()" title="Drucken">🖨️</button>' +
               '<button class="nf-toolbar-btn" onclick="window.nfToggleZen()" title="Vollbild" id="nf-zen-btn">⛶</button>' +
