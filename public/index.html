@@ -16368,6 +16368,33 @@ function viewProjectDetail(id) {
         </div>
         
         <div class="card mb-4">
+          <h3 style="display:flex;align-items:center;justify-content:space-between">
+            <span>💡 Ideen</span>
+            <button class="btn sm primary" data-action="create-idea-for" data-kind="project" data-id="${id}">+ Neue Idee</button>
+          </h3>
+          ${(function(){
+            const projectIdeas = Object.values(e.ideas || {}).filter(function(i){ return i.projectId === id || (i.linkedProjects || []).includes(id) || (p.linkedIdeas || []).includes(i.id); });
+            if (projectIdeas.length === 0) return '<div class="mini">Noch keine Ideen. Erstelle eine neue Idee oder verknüpfe bestehende.</div>';
+            return '<div class="list">' + projectIdeas.map(function(i){
+              var statusColors = { 'neu': '#6366f1', 'geprüft': '#f59e0b', 'umgesetzt': '#10b981', 'verworfen': '#636366' };
+              var sc = statusColors[i.status] || '#6366f1';
+              return '<div class="list-item" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'var(--panel2)\'" onmouseout="this.style.background=\'\'" data-action="open-slide" data-kind="idea" data-id="' + i.id + '">' +
+                '<div style="font-size:20px;flex-shrink:0">💡</div>' +
+                '<div style="flex:1;min-width:0">' +
+                  '<div style="font-weight:600;font-size:13px">' + esc((i.title || i.text || '').slice(0,80)) + '</div>' +
+                  (i.description ? '<div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4;max-height:40px;overflow:hidden">' + esc((i.description || '').slice(0,150)) + '</div>' : '') +
+                '</div>' +
+                '<span style="flex-shrink:0;font-size:10px;padding:2px 8px;border-radius:6px;background:' + sc + '20;color:' + sc + ';font-weight:600;border:1px solid ' + sc + '40">' + esc(i.status || 'neu') + '</span>' +
+              '</div>';
+            }).join('') + '</div>';
+          })()}
+          <div class="flex gap-2 mt-3" style="flex-wrap:wrap">
+            <button class="btn sm" data-action="open-link-modal" data-kind="project" data-id="${id}">🔗 Idee verknüpfen</button>
+            <button class="btn sm" onclick="var t=prompt('Schnelle Idee:');if(t&&t.trim()){var iid=createEntity('idea',{title:t.trim(),status:'neu',linkedProjects:['${id}']});var pr=APP.state.data.entities.projects['${id}'];if(pr){if(!pr.linkedIdeas)pr.linkedIdeas=[];if(iid&&!pr.linkedIdeas.includes(iid))pr.linkedIdeas.push(iid);pr.updatedAt=new Date().toISOString()}scheduleSave();render();toast('ok','💡','Idee erstellt')}">⚡ Schnelle Idee</button>
+          </div>
+        </div>
+        
+        <div class="card mb-4">
           <h3>🔗 Verknüpfungen</h3>
           <div class="flex flex-wrap gap-2 mb-3" style="flex-wrap:wrap">
             ${allProjectLinks}
@@ -17857,7 +17884,7 @@ window.createIdeaForEntity = function(kind, entityId) {
   if (!entity) return;
   const entityName = getEntityDisplayName(kind, entity);
   const projects = Object.values(APP.state.data.entities.projects || {}).filter(p => p.status !== 'done' && p.status !== 'archived');
-  const projOptions = projects.map(pr => '<option value="' + pr.id + '">' + esc(pr.title) + ' (' + (pr.projectType || 'standard') + ')</option>').join('');
+  const projOptions = projects.map(pr => '<option value="' + pr.id + '"' + (kind === 'project' && pr.id === entityId ? ' selected' : '') + '>' + esc(pr.title) + ' (' + (pr.projectType || 'standard') + ')</option>').join('');
   
   openModal("💡 Neue Idee für " + esc(entityName), `
     <div class="form">
