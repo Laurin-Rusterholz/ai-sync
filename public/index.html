@@ -13646,26 +13646,55 @@ function viewDecisionDetail(id) {
     ${sourceHtml}
     ${deadlineBar}
 
-    <div class="grid grid-2 mb-4">
-      <!-- Decision Paper -->
-      <div style="background:${statusGradient};border:1px solid var(--border);border-radius:16px;padding:20px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-          <span style="font-size:18px">📝</span>
-          <span style="font-size:15px;font-weight:700">Decision Paper</span>
-        </div>
-        <div class="form">
-          <label>Titel<input type="text" id="dcTitle" value="${esc(dc.title || "")}" style="font-weight:600;font-size:14px" /></label>
-          <label>Beschreibung / Kontext<textarea id="dcDesc" style="min-height:120px;line-height:1.6">${esc(dc.description || "")}</textarea></label>
-          <label>Deadline</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-            <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,1)}'" style="font-size:11px;padding:4px 10px">Morgen</button>
-            <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,3)}'" style="font-size:11px;padding:4px 10px">3 Tage</button>
-            <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,7)}'" style="font-size:11px;padding:4px 10px">1 Woche</button>
-            <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,14)}'" style="font-size:11px;padding:4px 10px">2 Wochen</button>
-            <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,30)}'" style="font-size:11px;padding:4px 10px">1 Monat</button>
+    <div class="grid grid-12 mb-4">
+      <!-- Decision Paper - Left -->
+      <div class="col-8">
+        <div style="background:${statusGradient};border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+            <span style="font-size:18px">📝</span>
+            <span style="font-size:15px;font-weight:700">Decision Paper</span>
           </div>
-          <input type="date" id="dcDeadline" value="${dc.deadline || ""}" />
-          <div class="grid grid-2" style="margin-top:10px">
+          <div class="form">
+            <label>Titel<input type="text" id="dcTitle" value="${esc(dc.title || "")}" style="font-weight:600;font-size:14px" /></label>
+            <label>Beschreibung / Kontext<textarea id="dcDesc" style="min-height:140px;line-height:1.6">${esc(dc.description || "")}</textarea></label>
+          </div>
+        </div>
+        
+        <!-- Gedanken & Notizen inline -->
+        <div style="background:linear-gradient(135deg,rgba(139,92,246,.06),rgba(99,102,241,.03));border:1px solid var(--border);border-radius:16px;padding:20px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:18px">💭</span>
+              <span style="font-size:15px;font-weight:700">Gedanken & Notizen</span>
+            </div>
+            <span style="padding:4px 10px;background:rgba(139,92,246,.15);border-radius:8px;font-size:12px;font-weight:700;color:#a78bfa">${(dc.thoughts || []).length} Einträge</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:14px">
+            <textarea id="dcThoughtText" rows="2" placeholder="Was denkst du darüber? Halte Gedanken, Pro/Contra, Fakten fest…" style="flex:1;border-radius:10px"></textarea>
+            <button class="btn primary" data-action="add-decision-thought" data-id="${id}" style="align-self:flex-end;background:linear-gradient(135deg,#8b5cf6,#6366f1);border:none;padding:10px 18px;font-weight:700;border-radius:10px">💭 +</button>
+          </div>
+          ${thoughtsHtml}
+        </div>
+      </div>
+      
+      <!-- Right column: Status + Voting -->
+      <div class="col-4">
+        <!-- Status & Deadline -->
+        <div style="background:${statusGradient};border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <span style="font-size:16px">⚙️</span>
+            <span style="font-size:14px;font-weight:700">Status & Deadline</span>
+          </div>
+          <div class="form">
+            <label style="margin-bottom:6px">Deadline</label>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,1)}'" style="font-size:10px;padding:3px 8px">Morgen</button>
+              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,3)}'" style="font-size:10px;padding:3px 8px">3d</button>
+              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,7)}'" style="font-size:10px;padding:3px 8px">1W</button>
+              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,14)}'" style="font-size:10px;padding:3px 8px">2W</button>
+              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,30)}'" style="font-size:10px;padding:3px 8px">1M</button>
+            </div>
+            <input type="date" id="dcDeadline" value="${dc.deadline || ""}" style="margin-bottom:8px" />
             <label>Status
               <select id="dcStatus">
                 <option value="open" ${dc.status === "open" ? "selected" : ""}>🟣 Offen</option>
@@ -13681,67 +13710,51 @@ function viewDecisionDetail(id) {
                 <option value="no" ${dc.result === "no" ? "selected" : ""}>❌ Nein</option>
               </select>
             </label>
+            <button class="btn primary" data-action="save-decision" data-id="${id}" style="margin-top:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;width:100%;padding:10px">💾 Speichern</button>
           </div>
-          <button class="btn primary" data-action="save-decision" data-id="${id}" style="margin-top:12px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;width:100%;padding:10px">💾 Speichern</button>
         </div>
-      </div>
 
-      <!-- Voting -->
-      <div style="background:linear-gradient(135deg,rgba(139,92,246,.08),rgba(139,92,246,.02));border:1px solid var(--border);border-radius:16px;padding:20px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:18px">🗳️</span>
-            <span style="font-size:15px;font-weight:700">Abstimmung</span>
+        <!-- Voting -->
+        <div style="background:linear-gradient(135deg,rgba(139,92,246,.08),rgba(139,92,246,.02));border:1px solid var(--border);border-radius:16px;padding:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:16px">🗳️</span>
+              <span style="font-size:14px;font-weight:700">Abstimmung</span>
+            </div>
+            <span style="padding:3px 8px;background:rgba(139,92,246,.15);border-radius:8px;font-size:11px;font-weight:700;color:#a78bfa">${totalVotes}</span>
           </div>
-          <span style="padding:4px 10px;background:rgba(139,92,246,.15);border-radius:8px;font-size:12px;font-weight:700;color:#a78bfa">${totalVotes} Stimmen</span>
-        </div>
-        ${barHtml}
-        ${dc.mode === "open" ? `
-          <div style="padding:16px;background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:12px;text-align:center;margin-bottom:14px">
-            <span style="font-size:24px;display:block;margin-bottom:8px">💬</span>
-            <p style="font-size:13px;color:var(--muted)">Offene Entscheidung — Sammle Ideen und Gedanken unten</p>
+          ${barHtml}
+          ${dc.mode === "open" ? `
+            <div style="padding:12px;background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.15);border-radius:10px;text-align:center;margin-bottom:12px">
+              <span style="font-size:20px;display:block;margin-bottom:4px">💬</span>
+              <p style="font-size:12px;color:var(--muted)">Offene Entscheidung — Sammle Ideen unten</p>
+            </div>
+          ` : dc.mode === "custom" && (dc.customOptions||[]).length > 0 ? `
+            <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+              ${(dc.customOptions||[]).map((opt, idx) => {
+                const optVotes = (dc.votes||[]).filter(v => v.vote === "opt_" + idx).length;
+                const colors = ["#6366f1","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#ec4899","#f97316"];
+                const c = colors[idx % colors.length];
+                return `<button class="btn" data-action="vote-decision" data-id="${id}" data-vote="opt_${idx}" style="background:${c}15;border:2px solid ${c}40;color:${c};font-weight:600;padding:10px 14px;border-radius:10px;font-size:12px;text-align:left;display:flex;justify-content:space-between;align-items:center;transition:all .15s" onmouseover="this.style.background='${c}25'" onmouseout="this.style.background='${c}15'">
+                  <span>${esc(opt)}</span>
+                  ${optVotes > 0 ? `<span style="padding:2px 8px;background:${c}20;border-radius:8px;font-size:10px">${optVotes}×</span>` : ""}
+                </button>`;
+              }).join("")}
+            </div>
+          ` : `
+            <div style="display:flex;gap:6px;margin-bottom:12px">
+              <button class="btn" data-action="vote-decision" data-id="${id}" data-vote="yes" style="flex:1;background:rgba(16,185,129,.12);border:2px solid rgba(16,185,129,.25);color:#34d399;font-weight:700;padding:10px;border-radius:10px;font-size:13px;transition:all .15s" onmouseover="this.style.background='rgba(16,185,129,.25)'" onmouseout="this.style.background='rgba(16,185,129,.12)'">👍 Ja</button>
+              <button class="btn" data-action="vote-decision" data-id="${id}" data-vote="maybe" style="flex:1;background:rgba(245,158,11,.12);border:2px solid rgba(245,158,11,.25);color:#fbbf24;font-weight:700;padding:10px;border-radius:10px;font-size:13px;transition:all .15s" onmouseover="this.style.background='rgba(245,158,11,.25)'" onmouseout="this.style.background='rgba(245,158,11,.12)'">🤷</button>
+              <button class="btn" data-action="vote-decision" data-id="${id}" data-vote="no" style="flex:1;background:rgba(239,68,68,.12);border:2px solid rgba(239,68,68,.25);color:#f87171;font-weight:700;padding:10px;border-radius:10px;font-size:13px;transition:all .15s" onmouseover="this.style.background='rgba(239,68,68,.25)'" onmouseout="this.style.background='rgba(239,68,68,.12)'">👎 Nein</button>
+            </div>
+          `}
+          <textarea id="dcVoteNote" rows="2" placeholder="${dc.mode === "open" ? "Deine Idee oder Gedanke..." : "Begründung (optional)…"}" style="margin-bottom:8px;border-radius:10px;font-size:12px"></textarea>
+          ${dc.mode === "open" ? `<button class="btn primary" data-action="add-decision-thought" data-id="${id}" style="width:100%;margin-bottom:10px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;padding:8px;border-radius:10px;font-size:12px">💬 Idee hinzufügen</button>` : ""}
+          <div style="max-height:250px;overflow-y:auto">
+            ${votesHtml}
           </div>
-        ` : dc.mode === "custom" && (dc.customOptions||[]).length > 0 ? `
-          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
-            ${(dc.customOptions||[]).map((opt, idx) => {
-              const optVotes = (dc.votes||[]).filter(v => v.vote === "opt_" + idx).length;
-              const colors = ["#6366f1","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#ec4899","#f97316"];
-              const c = colors[idx % colors.length];
-              return `<button class="btn" data-action="vote-decision" data-id="${id}" data-vote="opt_${idx}" style="background:${c}15;border:2px solid ${c}40;color:${c};font-weight:600;padding:12px 16px;border-radius:12px;font-size:13px;text-align:left;display:flex;justify-content:space-between;align-items:center;transition:all .15s" onmouseover="this.style.background='${c}25'" onmouseout="this.style.background='${c}15'">
-                <span>${esc(opt)}</span>
-                ${optVotes > 0 ? `<span style="padding:2px 8px;background:${c}20;border-radius:8px;font-size:11px">${optVotes}×</span>` : ""}
-              </button>`;
-            }).join("")}
-          </div>
-        ` : `
-          <div style="display:flex;gap:8px;margin-bottom:14px">
-            <button class="btn" data-action="vote-decision" data-id="${id}" data-vote="yes" style="flex:1;background:rgba(16,185,129,.12);border:2px solid rgba(16,185,129,.25);color:#34d399;font-weight:700;padding:12px;border-radius:12px;font-size:14px;transition:all .15s" onmouseover="this.style.background='rgba(16,185,129,.25)'" onmouseout="this.style.background='rgba(16,185,129,.12)'">👍 Ja</button>
-            <button class="btn" data-action="vote-decision" data-id="${id}" data-vote="maybe" style="flex:1;background:rgba(245,158,11,.12);border:2px solid rgba(245,158,11,.25);color:#fbbf24;font-weight:700;padding:12px;border-radius:12px;font-size:14px;transition:all .15s" onmouseover="this.style.background='rgba(245,158,11,.25)'" onmouseout="this.style.background='rgba(245,158,11,.12)'">🤷 Vielleicht</button>
-            <button class="btn" data-action="vote-decision" data-id="${id}" data-vote="no" style="flex:1;background:rgba(239,68,68,.12);border:2px solid rgba(239,68,68,.25);color:#f87171;font-weight:700;padding:12px;border-radius:12px;font-size:14px;transition:all .15s" onmouseover="this.style.background='rgba(239,68,68,.25)'" onmouseout="this.style.background='rgba(239,68,68,.12)'">👎 Nein</button>
-          </div>
-        `}
-        <textarea id="dcVoteNote" rows="2" placeholder="${dc.mode === "open" ? "Deine Idee oder Gedanke..." : "Begründung zum Vote (optional)…"}" style="margin-bottom:10px;border-radius:10px"></textarea>
-        ${dc.mode === "open" ? `<button class="btn primary" data-action="add-decision-thought" data-id="${id}" style="width:100%;margin-bottom:12px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;padding:10px;border-radius:10px">💬 Idee hinzufügen</button>` : ""}
-        <div style="max-height:300px;overflow-y:auto">
-          ${votesHtml}
         </div>
       </div>
-    </div>
-
-    <!-- Thoughts -->
-    <div style="background:linear-gradient(135deg,rgba(139,92,246,.06),rgba(99,102,241,.03));border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:18px">💭</span>
-          <span style="font-size:15px;font-weight:700">Gedanken & Notizen</span>
-        </div>
-        <span style="padding:4px 10px;background:rgba(139,92,246,.15);border-radius:8px;font-size:12px;font-weight:700;color:#a78bfa">${(dc.thoughts || []).length} Einträge</span>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:14px">
-        <textarea id="dcThoughtText" rows="2" placeholder="Was denkst du darüber? Halte Gedanken, Pro/Contra, Fakten fest…" style="flex:1;border-radius:10px"></textarea>
-        <button class="btn primary" data-action="add-decision-thought" data-id="${id}" style="align-self:flex-end;background:linear-gradient(135deg,#8b5cf6,#6366f1);border:none;padding:10px 18px;font-weight:700;border-radius:10px">💭 +</button>
-      </div>
-      ${thoughtsHtml}
     </div>
 
     ${renderLinkedEntitiesSection("decision", id)}
@@ -18526,8 +18539,29 @@ function viewNoteDetail(id) {
                   <button style="font-size:11px;width:auto;padding:2px 10px;background:rgba(255,69,58,.15);border:1px solid rgba(255,69,58,.3);border-radius:6px;color:#ff453a;cursor:pointer" data-action="clear-note-formatting" data-note-id="${id}" title="Alle Formatierung entfernen">✕ Reset</button>
                 </div>
               </div>
-              <textarea id="noteContentTextarea" class="${n.textColor ? `text-${n.textColor}` : ""} ${n.highlightColor ? `highlight-${n.highlightColor}` : ""}" style="min-height:300px;color:#fff !important" data-action="field-edit" data-kind="note" data-id="${id}" data-field="content">${esc(n.content || "")}</textarea>
-              <div class="mini mt-1" style="color:var(--muted)">💡 Tipp: Wähle eine Farbe für den gesamten Notiz-Text</div>
+              <textarea id="noteContentTextarea" class="${n.textColor ? `text-${n.textColor}` : ""} ${n.highlightColor ? `highlight-${n.highlightColor}` : ""}" style="min-height:300px;color:#fff !important;font-family:${n.fontFamily || 'inherit'};${n.fontSize ? 'font-size:' + n.fontSize : ''}" data-action="field-edit" data-kind="note" data-id="${id}" data-field="content">${esc(n.content || "")}</textarea>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+                <span class="mini" style="margin-right:2px">Schriftart:</span>
+                <select style="background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:11px;padding:4px 8px;border-radius:6px;cursor:pointer" onchange="var n=APP.state.data.entities.notes['${id}'];if(n){n.fontFamily=this.value;n.updatedAt=new Date().toISOString();scheduleSave();var ta=document.getElementById('noteContentTextarea');if(ta)ta.style.fontFamily=this.value}">
+                  <option value="inherit" ${!n.fontFamily || n.fontFamily === 'inherit' ? 'selected' : ''}>Standard (System)</option>
+                  <option value="'Inter',sans-serif" ${n.fontFamily === "'Inter',sans-serif" ? 'selected' : ''}>Inter</option>
+                  <option value="Georgia,serif" ${n.fontFamily === 'Georgia,serif' ? 'selected' : ''}>Georgia (Serif)</option>
+                  <option value="'Courier New',monospace" ${n.fontFamily === "'Courier New',monospace" ? 'selected' : ''}>Courier New (Mono)</option>
+                  <option value="'Times New Roman',serif" ${n.fontFamily === "'Times New Roman',serif" ? 'selected' : ''}>Times New Roman</option>
+                  <option value="Verdana,sans-serif" ${n.fontFamily === 'Verdana,sans-serif' ? 'selected' : ''}>Verdana</option>
+                  <option value="'Trebuchet MS',sans-serif" ${n.fontFamily === "'Trebuchet MS',sans-serif" ? 'selected' : ''}>Trebuchet MS</option>
+                  <option value="'Comic Sans MS',cursive" ${n.fontFamily === "'Comic Sans MS',cursive" ? 'selected' : ''}>Comic Sans</option>
+                </select>
+                <span class="mini" style="margin-left:8px;margin-right:2px">Grösse:</span>
+                <select style="background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:11px;padding:4px 8px;border-radius:6px;cursor:pointer" onchange="var n=APP.state.data.entities.notes['${id}'];if(n){n.fontSize=this.value;n.updatedAt=new Date().toISOString();scheduleSave();var ta=document.getElementById('noteContentTextarea');if(ta)ta.style.fontSize=this.value}">
+                  <option value="" ${!n.fontSize ? 'selected' : ''}>Standard</option>
+                  <option value="12px" ${n.fontSize === '12px' ? 'selected' : ''}>Klein (12px)</option>
+                  <option value="14px" ${n.fontSize === '14px' ? 'selected' : ''}>Normal (14px)</option>
+                  <option value="16px" ${n.fontSize === '16px' ? 'selected' : ''}>Gross (16px)</option>
+                  <option value="18px" ${n.fontSize === '18px' ? 'selected' : ''}>Sehr gross (18px)</option>
+                  <option value="20px" ${n.fontSize === '20px' ? 'selected' : ''}>XL (20px)</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -24015,6 +24049,7 @@ function viewToday() {
                 </div>
               </div>
               <div class="item-actions">
+                <button class="btn sm" style="background:rgba(239,68,68,.1);color:#f87171;border-color:rgba(239,68,68,.2);padding:6px 10px;font-size:11px" data-action="remove-from-today" data-id="${t.id}" title="Aus Tagesplanung entfernen">✕</button>
                 <button class="btn sm good" data-action="quick-complete-task" data-id="${t.id}" style="padding:6px 12px">✓</button>
               </div>
             </div>`;
@@ -30177,6 +30212,17 @@ case "toggle-today-task": {
   }
   scheduleSave();
   render();
+  break;
+}
+
+case "remove-from-today": {
+  e.preventDefault();
+  if (e.stopPropagation) e.stopPropagation();
+  var rmId = el.dataset.id;
+  APP.state.data.todaySelectedTasks = (APP.state.data.todaySelectedTasks || []).filter(function(x){ return x !== rmId; });
+  scheduleSave();
+  render();
+  toast("ok", "✅", "Aus Tagesplanung entfernt");
   break;
 }
 
@@ -40996,6 +41042,23 @@ function initNoteFlow() {
       }
     }
   }
+  
+  // Sync nf-focus-mode when user exits fullscreen via Escape
+  document.addEventListener("fullscreenchange", function() {
+    if (!document.fullscreenElement) {
+      const app = document.getElementById("noteflowApp");
+      if (app && app.classList.contains("nf-focus-mode")) {
+        app.classList.remove("nf-focus-mode");
+        // Restore sidebar inline styles if they were hidden by focus mode
+        var sb = document.getElementById("nf-sidebar");
+        if (sb && !sb.classList.contains("collapsed")) {
+          sb.style.width = "";
+          sb.style.opacity = "";
+          sb.style.pointerEvents = "";
+        }
+      }
+    }
+  });
   
   // Drucken
   function nfPrintNote() {
