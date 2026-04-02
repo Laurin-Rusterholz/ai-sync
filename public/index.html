@@ -16600,13 +16600,256 @@ function renderCustomProjectFeatures(id) {
   if (!p || !p.externalId) return '';
   
   switch (p.externalId) {
-    // ┌─────────────────────────────────────────────────┐
-    // │  HIER NEUE PROJEKT-IDS EINFÜGEN:                │
-    // │  case 'PRJ-XXXXX': return renderCustom_PRJXXXXX(id, p); │
-    // └─────────────────────────────────────────────────┘
+    case 'PRJ-NFYW5': return renderCustom_PRJNFYW5(id, p);
     default: return '';
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🎉 PRJ-NFYW5 — Familienfest
+// ═══════════════════════════════════════════════════════════════════════
+
+const FAMFEST_DATES = [
+  { id: 'd1', date: '2026-11-14', label: 'Samstag, 14. November 2026' },
+  { id: 'd2', date: '2026-11-21', label: 'Samstag, 21. November 2026' },
+  { id: 'd3', date: '2026-11-28', label: 'Samstag, 28. November 2026' },
+];
+
+function _ffEnsureData(p) {
+  if (!p._custom) p._custom = {};
+  const c = p._custom;
+  if (!c.participants) c.participants = [];
+  if (!c.dateVotes) c.dateVotes = {};
+  // dateVotes: { personName: ['d1','d3'], ... }
+  return c;
+}
+
+function renderCustom_PRJNFYW5(id, p) {
+  const c = _ffEnsureData(p);
+  const e = APP.state.data.entities;
+
+  // ── Statistiken ──
+  const totalPersons = c.participants.length;
+  const totalVoters = Object.keys(c.dateVotes).filter(k => c.dateVotes[k].length > 0).length;
+  const votesPerDate = {};
+  FAMFEST_DATES.forEach(d => { votesPerDate[d.id] = []; });
+  for (const [person, dates] of Object.entries(c.dateVotes)) {
+    dates.forEach(did => { if (votesPerDate[did]) votesPerDate[did].push(person); });
+  }
+  const bestDate = FAMFEST_DATES.reduce((best, d) => (votesPerDate[d.id].length > (votesPerDate[best.id]?.length || 0)) ? d : best, FAMFEST_DATES[0]);
+  const bestDateCount = votesPerDate[bestDate.id].length;
+
+  // ── Datumsumfrage ──
+  const maxVotes = Math.max(1, ...FAMFEST_DATES.map(d => votesPerDate[d.id].length));
+  const datePollHtml = FAMFEST_DATES.map(d => {
+    const voters = votesPerDate[d.id];
+    const pct = Math.round((voters.length / maxVotes) * 100);
+    const isBest = d.id === bestDate.id && bestDateCount > 0;
+    return `<div style="padding:12px;background:${isBest ? 'rgba(45,212,191,.08)' : 'var(--panel2)'};border:1px solid ${isBest ? 'rgba(45,212,191,.35)' : 'var(--border)'};border-radius:10px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:700;font-size:14px">${isBest ? '⭐ ' : '📅 '}${d.label}</div>
+        <div style="font-size:20px;font-weight:900;color:var(--teal)">${voters.length}</div>
+      </div>
+      <div style="height:5px;background:rgba(255,255,255,.06);border-radius:3px;margin:8px 0;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:var(--teal);border-radius:3px;transition:width .3s"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">${voters.length > 0 ? voters.map(esc).join(', ') : 'Noch keine Stimmen'}</div>
+    </div>`;
+  }).join('');
+
+  // ── Teilnehmer-Chips ──
+  const participantsChipsHtml = c.participants.length > 0
+    ? c.participants.map(pt => `<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.2);border-radius:100px;font-size:12px;font-weight:700;color:rgba(120,180,230,1);margin:3px">
+        👤 ${esc(pt.name)}
+        <button style="background:none;border:none;color:rgba(120,180,230,.4);cursor:pointer;font-size:12px" onclick="window._ffRemoveParticipant('${id}','${pt.id}')">✕</button>
+      </span>`).join('')
+    : '<div class="mini" style="opacity:.5">Noch keine Anmeldungen.</div>';
+
+  // ── Übersichtstabelle (Pro Person: Votes + Status) ──
+  const allPersonNames = [...new Set([
+    ...c.participants.map(pt => pt.name),
+    ...Object.keys(c.dateVotes)
+  ])].sort((a,b) => a.localeCompare(b, 'de'));
+
+  const overviewRowsHtml = allPersonNames.length > 0 ? allPersonNames.map(name => {
+    const isRegistered = c.participants.some(pt => pt.name === name);
+    const personVotes = c.dateVotes[name] || [];
+    const dateCells = FAMFEST_DATES.map(d => {
+      const voted = personVotes.includes(d.id);
+      return `<td style="text-align:center;padding:8px;border-bottom:1px solid var(--border)">
+        <span style="cursor:pointer;font-size:16px" onclick="window._ffToggleVote('${id}','${esc(name)}','${d.id}')" title="Klicken zum Ändern">${voted ? '✅' : '⬜'}</span>
+      </td>`;
+    }).join('');
+    return `<tr>
+      <td style="padding:8px 10px;font-weight:700;font-size:13px;border-bottom:1px solid var(--border);white-space:nowrap">
+        ${isRegistered ? '👤' : '❓'} ${esc(name)}
+      </td>
+      ${dateCells}
+      <td style="text-align:center;padding:8px;border-bottom:1px solid var(--border)">
+        <span style="font-size:11px;padding:3px 8px;border-radius:6px;font-weight:700;${isRegistered
+          ? 'background:rgba(45,212,191,.12);color:var(--teal);border:1px solid rgba(45,212,191,.3)'
+          : 'background:rgba(251,191,36,.1);color:rgb(200,160,40);border:1px solid rgba(251,191,36,.3)'}">${isRegistered ? 'Angemeldet' : 'Nur Vote'}</span>
+      </td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted)">Noch keine Daten.</td></tr>';
+
+  return `
+    <!-- 🎉 Familienfest: Statistiken -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+      <div class="card stat-card" style="margin:0"><div class="value">${totalPersons}</div><div class="label">Teilnehmer</div></div>
+      <div class="card stat-card" style="margin:0"><div class="value" style="color:var(--teal)">${totalVoters}</div><div class="label">Abgestimmt</div></div>
+      <div class="card stat-card" style="margin:0"><div class="value" style="color:rgb(200,160,40)">${bestDateCount}</div><div class="label">Beste Option</div></div>
+      <div class="card stat-card" style="margin:0"><div class="value" style="font-size:14px;color:var(--teal)">${bestDateCount > 0 ? bestDate.label.split(',')[0] : '—'}</div><div class="label">Favorit</div></div>
+    </div>
+
+    <!-- 🎉 Familienfest: Gesamtübersicht -->
+    <div class="card mb-4">
+      <h3>📋 Gesamtübersicht — Alle Antworten</h3>
+      <div style="overflow-x:auto;margin-top:10px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border)">
+              <th style="text-align:left;padding:8px 10px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Person</th>
+              ${FAMFEST_DATES.map(d => `<th style="text-align:center;padding:8px;font-size:11px;color:var(--muted)">${d.date.split('-').reverse().slice(0,2).join('.')}</th>`).join('')}
+              <th style="text-align:center;padding:8px;font-size:12px;color:var(--muted)">Status</th>
+            </tr>
+          </thead>
+          <tbody>${overviewRowsHtml}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:12px">
+          <input type="text" id="ffQuickPerson_${id}" placeholder="Person hinzufügen (Name)" style="width:220px;padding:8px 12px;font-size:13px" onkeydown="if(event.key==='Enter')window._ffQuickAddPerson('${id}')" />
+          <button class="btn sm" onclick="window._ffQuickAddPerson('${id}')">👤 Hinzufügen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 🎉 Familienfest: Datumsumfrage -->
+    <div class="card mb-4">
+      <h3>📅 Datumsumfrage</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Klicke auf ✅/⬜ in der Übersicht oben, um Stimmen zu setzen</div>
+      ${datePollHtml}
+    </div>
+
+    <!-- 🎉 Familienfest: Teilnehmer -->
+    <div class="card mb-4">
+      <h3>👥 Angemeldete Teilnehmer (${totalPersons})</h3>
+      <div style="display:flex;flex-wrap:wrap;margin:8px 0">${participantsChipsHtml}</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <input type="text" id="ffNewParticipant_${id}" placeholder="Name eingeben..." style="flex:1;padding:8px 12px;font-size:13px" onkeydown="if(event.key==='Enter')window._ffAddParticipant('${id}')" />
+        <button class="btn sm" style="background:var(--accent);border-color:var(--accent);color:#fff" onclick="window._ffAddParticipant('${id}')">👤 Anmelden</button>
+      </div>
+    </div>
+
+    <!-- 🎉 Familienfest: Schnell-Aktionen -->
+    <div class="card mb-4">
+      <h3>⚡ Schnell-Aktionen</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn sm" onclick="window._ffCreateLocationTask('${id}')">📍 Ortsidee als Aufgabe</button>
+        <button class="btn sm" onclick="window._ffCreateAnnouncement('${id}')">📢 Mitteilung senden</button>
+      </div>
+    </div>
+  `;
+}
+
+// ── PRJ-NFYW5 Aktionen ──
+
+window._ffAddParticipant = function(projectId) {
+  const inp = document.getElementById('ffNewParticipant_' + projectId);
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) { toast('warn', 'Fehler', 'Bitte einen Namen eingeben'); return; }
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p) return;
+  const c = _ffEnsureData(p);
+  if (c.participants.some(pt => pt.name.toLowerCase() === name.toLowerCase())) {
+    toast('warn', 'Bereits angemeldet', name + ' ist bereits registriert'); return;
+  }
+  c.participants.push({ id: Math.random().toString(36).slice(2,10), name, addedAt: new Date().toISOString() });
+  updateEntity('project', projectId, { _custom: p._custom });
+  inp.value = '';
+  render();
+  toast('ok', '👤 Angemeldet', name + ' wurde hinzugefügt');
+};
+
+window._ffRemoveParticipant = function(projectId, ptId) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p?._custom?.participants) return;
+  const pt = p._custom.participants.find(x => x.id === ptId);
+  if (pt && !confirm(pt.name + ' wirklich abmelden?')) return;
+  p._custom.participants = p._custom.participants.filter(x => x.id !== ptId);
+  // Also remove their votes
+  if (pt && p._custom.dateVotes?.[pt.name]) delete p._custom.dateVotes[pt.name];
+  updateEntity('project', projectId, { _custom: p._custom });
+  render();
+};
+
+window._ffToggleVote = function(projectId, personName, dateId) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p) return;
+  const c = _ffEnsureData(p);
+  if (!c.dateVotes[personName]) c.dateVotes[personName] = [];
+  const arr = c.dateVotes[personName];
+  const idx = arr.indexOf(dateId);
+  if (idx >= 0) arr.splice(idx, 1);
+  else arr.push(dateId);
+  updateEntity('project', projectId, { _custom: p._custom });
+  render();
+};
+
+window._ffQuickAddPerson = function(projectId) {
+  const inp = document.getElementById('ffQuickPerson_' + projectId);
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) return;
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p) return;
+  const c = _ffEnsureData(p);
+  // Add as participant if not exists
+  if (!c.participants.some(pt => pt.name.toLowerCase() === name.toLowerCase())) {
+    c.participants.push({ id: Math.random().toString(36).slice(2,10), name, addedAt: new Date().toISOString() });
+  }
+  // Init empty votes
+  if (!c.dateVotes[name]) c.dateVotes[name] = [];
+  updateEntity('project', projectId, { _custom: p._custom });
+  inp.value = '';
+  render();
+  toast('ok', '👤', name + ' hinzugefügt — jetzt Daten ankreuzen');
+};
+
+window._ffCreateLocationTask = function(projectId) {
+  const name = prompt('📍 Name des Orts:');
+  if (!name || !name.trim()) return;
+  const desc = prompt('Beschreibung (optional):') || '';
+  createEntity('task', {
+    title: '📍 Ortsidee: ' + name.trim(),
+    description: desc.trim() || 'Ortsvorschlag für das Familienfest',
+    status: 'todo',
+    priority: 4,
+    projectId: projectId,
+    tags: ['familienfest', 'ortsidee'],
+  });
+  render();
+  toast('ok', '📍 Ortsidee', '"' + name.trim() + '" als Aufgabe erstellt');
+};
+
+window._ffCreateAnnouncement = function(projectId) {
+  const text = prompt('📢 Mitteilung an alle:');
+  if (!text || !text.trim()) return;
+  createEntity('scheduledMessage', {
+    title: '📢 Familienfest: ' + text.trim().slice(0, 50),
+    content: text.trim(),
+    priority: 3,
+    deliverAt: new Date().toISOString(),
+    isDelivered: true,
+    deliveredAt: new Date().toISOString(),
+    isRead: false,
+    linkedProjects: [projectId],
+  });
+  render();
+  toast('ok', '📢 Gesendet', 'Mitteilung erstellt');
+};
 
 // ── Hilfs-Funktionen für Custom Features ──
 
@@ -27151,23 +27394,57 @@ window.fetchExternalInbox = async function(showToast) {
               }
             }
             
-            // Create task on the project
-            const taskId = createEntity('task', {
-              title: '📡 ' + (submission.title || 'Externe Einreichung'),
-              description: desc.trim(),
-              status: 'todo',
-              priority: submission.priority || 3,
-              projectId: project.id,
-              tags: ['extern', 'inbox', ...(submission.tags || [])],
-              dueDate: submission.dueDate || null,
-              inboxSubmissionId: subId,
-              inboxSource: submission.senderApp || 'Extern',
-              inboxFiles: fileLinks,
-            });
+            // Create entity on the project (type-aware)
+            if (submission.entityType === 'message') {
+              createEntity('scheduledMessage', {
+                title: '📡 ' + (submission.title || 'Externe Mitteilung'),
+                content: (submission.description || '') + (fileLinks.length > 0 ? '\n\n📎 Dateien:\n' + fileLinks.map(f => '• ' + f.name + ': ' + f.url).join('\n') : ''),
+                priority: submission.priority || 3,
+                deliverAt: new Date().toISOString(),
+                isDelivered: true,
+                deliveredAt: new Date().toISOString(),
+                isRead: false,
+                linkedProjects: [project.id],
+                inboxSubmissionId: subId,
+              });
+            } else {
+              const taskId = createEntity('task', {
+                title: '📡 ' + (submission.title || 'Externe Einreichung'),
+                description: desc.trim(),
+                status: 'todo',
+                priority: submission.priority || 3,
+                projectId: project.id,
+                tags: ['extern', 'inbox', ...(submission.tags || [])],
+                dueDate: submission.dueDate || null,
+                inboxSubmissionId: subId,
+                inboxSource: submission.senderApp || 'Extern',
+                inboxFiles: fileLinks,
+              });
+              if (taskId && project.linkedTasks) {
+                if (!project.linkedTasks.includes(taskId)) project.linkedTasks.push(taskId);
+              }
+            }
             
-            // Also link task to project
-            if (taskId && project.linkedTasks) {
-              if (!project.linkedTasks.includes(taskId)) project.linkedTasks.push(taskId);
+            // Sync custom project data (e.g. familienfest votes/participants)
+            if (submission._ffData && project.externalId === 'PRJ-NFYW5') {
+              if (!project._custom) project._custom = {};
+              const c = project._custom;
+              const ff = submission._ffData;
+              // Merge participants (avoid duplicates by name)
+              if (!c.participants) c.participants = [];
+              if (ff.participants) {
+                for (const pt of ff.participants) {
+                  if (!c.participants.some(x => x.name.toLowerCase() === pt.name.toLowerCase())) {
+                    c.participants.push({ id: Math.random().toString(36).slice(2,10), name: pt.name, addedAt: new Date().toISOString() });
+                  }
+                }
+              }
+              // Merge date votes
+              if (!c.dateVotes) c.dateVotes = {};
+              if (ff.voter && ff.selectedDates) {
+                c.dateVotes[ff.voter] = ff.selectedDates;
+              }
+              updateEntity('project', project.id, { _custom: c });
             }
             
             // Mark as imported on Firebase
