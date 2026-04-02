@@ -16514,6 +16514,8 @@ function viewProjectDetail(id) {
           <div class="tags mb-3">${tagsHtml}</div>
           <input type="text" placeholder="Tag eingeben, Enter drücken" data-action="add-tag-input" data-kind="project" data-id="${id}" />
         </div>
+        
+        ${renderCustomProjectFeatures(id)}
       </div>
       
 <div class="col-4">
@@ -16578,6 +16580,87 @@ function viewProjectDetail(id) {
     </div>
   `;
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🎯 CUSTOM PROJECT FEATURES
+// ════════════════════════════════════════════════════════════════════════════
+// Massgeschneiderte Erweiterungen pro Projekt-ID.
+// Jeder Block ist ein if (p.externalId === 'PRJ-XXXXX') der zusätzliche
+// Cards zurückgibt. Die Daten werden in p._custom gespeichert.
+//
+// HOWTO für die KI:
+// 1. Neue Funktion: renderCustom_PRJXXXXX(id, p)  — gibt HTML-String zurück
+// 2. Daten initialisieren: if (!p._custom) p._custom = {}; …
+// 3. Aktionen: window._cpXXX = function(id, …) { … updateEntity(); render(); }
+// 4. Im switch unten den externalId-Case registrieren
+// ════════════════════════════════════════════════════════════════════════════
+
+function renderCustomProjectFeatures(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !p.externalId) return '';
+  
+  switch (p.externalId) {
+    // ┌─────────────────────────────────────────────────┐
+    // │  HIER NEUE PROJEKT-IDS EINFÜGEN:                │
+    // │  case 'PRJ-XXXXX': return renderCustom_PRJXXXXX(id, p); │
+    // └─────────────────────────────────────────────────┘
+    default: return '';
+  }
+}
+
+// ── Hilfs-Funktionen für Custom Features ──
+
+// Einfache Liste mit Add/Remove (für Teilnehmer, Ideen, etc.)
+window._cpAddToList = function(projectId, listKey, item) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p) return;
+  if (!p._custom) p._custom = {};
+  if (!p._custom[listKey]) p._custom[listKey] = [];
+  p._custom[listKey].push({ id: crypto.randomUUID ? crypto.randomUUID().slice(0,8) : Math.random().toString(36).slice(2,10), ...item, addedAt: new Date().toISOString() });
+  updateEntity('project', projectId, { _custom: p._custom });
+  render();
+};
+
+window._cpRemoveFromList = function(projectId, listKey, itemId) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p?._custom?.[listKey]) return;
+  p._custom[listKey] = p._custom[listKey].filter(x => x.id !== itemId);
+  updateEntity('project', projectId, { _custom: p._custom });
+  render();
+};
+
+// Vote-Toggle (für Abstimmungen)
+window._cpToggleVote = function(projectId, listKey, itemId, voterField) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p?._custom?.[listKey]) return;
+  const item = p._custom[listKey].find(x => x.id === itemId);
+  if (!item) return;
+  if (!item.votes) item.votes = [];
+  const voter = voterField || 'Ich';
+  const idx = item.votes.indexOf(voter);
+  if (idx >= 0) item.votes.splice(idx, 1);
+  else item.votes.push(voter);
+  updateEntity('project', projectId, { _custom: p._custom });
+  render();
+};
+
+// Custom-Feld setzen
+window._cpSet = function(projectId, key, value) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p) return;
+  if (!p._custom) p._custom = {};
+  p._custom[key] = value;
+  updateEntity('project', projectId, { _custom: p._custom });
+  render();
+};
+
+// Custom-Feld lesen
+window._cpGet = function(projectId, key, fallback) {
+  const p = APP.state.data.entities.projects[projectId];
+  return p?._custom?.[key] ?? fallback;
+};
+
+// ════════════════════════════════════════════════════════════════════════════
 
 function viewProjectCreate() {
   const e = APP.state.data.entities;
