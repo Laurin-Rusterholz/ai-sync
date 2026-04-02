@@ -4740,6 +4740,10 @@ textarea::placeholder, input::placeholder {
         <span class="icon">📄</span>
         <span>Belege abrufen</span>
       </button>
+      <button class="sidebar-quick-item" onclick="window.fetchExternalInbox(true)">
+        <span class="icon">📡</span>
+        <span>Externe Inbox</span>
+      </button>
     </div>
   </aside>
   
@@ -16362,6 +16366,11 @@ function viewProjectDetail(id) {
       <div class="page-title">
         <h2>${esc(p.title)}</h2>
         <p>Erstellt ${fmtDateTime(p.createdAt)}</p>
+        ${p.externalId ? `<div style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:6px 12px;background:rgba(100,210,255,.08);border:1px solid rgba(100,210,255,.25);border-radius:8px;cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')" title="Klicken zum Kopieren – diese ID in externe Programme einfügen">
+          <span style="font-size:11px;color:var(--muted)">📡 Externe ID:</span>
+          <code style="font-size:13px;font-weight:700;color:var(--teal);letter-spacing:1px">${p.externalId}</code>
+          <span style="font-size:11px;color:var(--muted)">📋</span>
+        </div>` : ''}
       </div>
       <div class="page-actions">
         <button class="btn sm" data-action="go-back">← ${t("back")}</button>
@@ -16834,6 +16843,7 @@ function viewLearningProjectDetail(id) {
       <div class="page-title">
         <h2>📚 ${esc(p.title)}</h2>
         <p>Lernprojekt · ${fmtDateTime(p.createdAt)}</p>
+        ${p.externalId ? `<div style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:6px 12px;background:rgba(100,210,255,.08);border:1px solid rgba(100,210,255,.25);border-radius:8px;cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')" title="Klicken zum Kopieren"><span style="font-size:11px;color:var(--muted)">📡</span><code style="font-size:13px;font-weight:700;color:var(--teal);letter-spacing:1px">${p.externalId}</code><span style="font-size:11px;color:var(--muted)">📋</span></div>` : ''}
       </div>
       <div class="page-actions">
         <button class="btn sm" data-action="go-back">← Zurück</button>
@@ -17154,6 +17164,7 @@ function viewPersonalityProjectDetail(id) {
           <div style="font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:rgba(168,85,247,.7);font-weight:700;margin-bottom:6px">Persönlichkeitsprojekt</div>
           <h2 style="margin:0;font-size:24px">🌱 ${esc(p.title)}</h2>
           <p style="margin:6px 0 0;font-size:13px;color:var(--muted)">Erstellt ${fmtDateTime(p.createdAt)}${p.description ? ' · ' + esc(p.description.slice(0, 80)) : ''}</p>
+          ${p.externalId ? `<div style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:5px 10px;background:rgba(100,210,255,.08);border:1px solid rgba(100,210,255,.25);border-radius:8px;cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')" title="Klicken zum Kopieren"><span style="font-size:11px;color:var(--muted)">📡</span><code style="font-size:12px;font-weight:700;color:var(--teal);letter-spacing:1px">${p.externalId}</code><span style="font-size:11px;color:var(--muted)">📋</span></div>` : ''}
         </div>
         <div class="flex gap-2" style="flex-wrap:wrap">
           <button class="btn sm" data-action="go-back">← Zurück</button>
@@ -26945,6 +26956,182 @@ window.fetchBelege = async function(showToast) {
 setTimeout(() => { window.fetchBelege(false); }, 10000);
 setInterval(() => { window.fetchBelege(false); }, 10 * 60 * 1000);
 
+// ═══════════════════════════════════════════════════════════════
+// 📡 EXTERNAL PROJECT INBOX – Cross-Program Integration
+// ═══════════════════════════════════════════════════════════════
+
+window.generateExternalProjectId = function() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let id = 'PRJ-';
+  for (let i = 0; i < 5; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+};
+
+// Ensure all projects have an externalId
+window.ensureExternalProjectIds = function() {
+  const projects = APP.state.data.entities.projects || {};
+  const existingIds = new Set(Object.values(projects).map(p => p.externalId).filter(Boolean));
+  let changed = false;
+  for (const p of Object.values(projects)) {
+    if (!p.externalId) {
+      let newId;
+      do { newId = window.generateExternalProjectId(); } while (existingIds.has(newId));
+      p.externalId = newId;
+      existingIds.add(newId);
+      changed = true;
+    }
+  }
+  if (changed) scheduleSave();
+};
+
+// Run after data load
+setTimeout(() => { window.ensureExternalProjectIds(); }, 3000);
+
+window.getProjectByExternalId = function(extId) {
+  const projects = APP.state.data.entities.projects || {};
+  return Object.values(projects).find(p => p.externalId === extId) || null;
+};
+
+window.copyExternalProjectId = function(extId) {
+  navigator.clipboard.writeText(extId).then(() => {
+    toast('ok', '📋 Kopiert', 'Externe Projekt-ID: ' + extId);
+  }).catch(() => {
+    prompt('Externe Projekt-ID kopieren:', extId);
+  });
+};
+
+// Firebase-based project inbox
+window._fetchingExternalInbox = false;
+
+window.fetchExternalInbox = async function(showToast) {
+  if (window._fetchingExternalInbox) return 0;
+  if (location.protocol === 'file:') return 0;
+  if (!firebaseStorage) {
+    if (showToast) toast('warn', 'Inbox', 'Firebase nicht verfügbar');
+    return 0;
+  }
+  window._fetchingExternalInbox = true;
+  
+  try {
+    const projects = APP.state.data.entities.projects || {};
+    const allProjects = Object.values(projects).filter(p => p.externalId);
+    if (!allProjects.length) { window._fetchingExternalInbox = false; return 0; }
+    
+    if (!APP.state.data._importedInboxIds) APP.state.data._importedInboxIds = [];
+    const imported = APP.state.data._importedInboxIds;
+    const existingInboxIds = new Set();
+    Object.values(APP.state.data.entities.tasks || {}).forEach(t => {
+      if (t.inboxSubmissionId) existingInboxIds.add(t.inboxSubmissionId);
+    });
+    
+    let totalCount = 0;
+    
+    for (const project of allProjects) {
+      try {
+        const listRef = firebaseStorage.ref('project-inbox/' + project.externalId);
+        const listResult = await listRef.listAll();
+        
+        for (const itemRef of listResult.items) {
+          if (!itemRef.name.endsWith('.json')) continue;
+          const subId = itemRef.name.replace('.json', '');
+          
+          if (imported.includes(subId) || existingInboxIds.has(subId)) continue;
+          
+          try {
+            const url = await itemRef.getDownloadURL();
+            const resp = await fetch(url);
+            if (!resp.ok) continue;
+            const submission = await resp.json();
+            
+            if (submission.status === 'imported') { imported.push(subId); continue; }
+            
+            // Build description
+            let desc = '';
+            if (submission.senderApp) desc += '📡 Quelle: ' + submission.senderApp + '\n';
+            if (submission.senderName) desc += '👤 Von: ' + submission.senderName + '\n';
+            desc += '📅 Eingereicht: ' + (submission.createdAt ? new Date(submission.createdAt).toLocaleString('de-CH') : 'Unbekannt') + '\n';
+            if (submission.description) desc += '\n' + submission.description;
+            
+            // Collect file URLs
+            const fileLinks = [];
+            if (submission.files && submission.files.length > 0) {
+              desc += '\n\n📎 Dateien:\n';
+              for (const f of submission.files) {
+                const fPath = 'project-inbox/' + project.externalId + '/files/' + subId + '/' + f.name;
+                try {
+                  const fileUrl = await firebaseStorage.ref(fPath).getDownloadURL();
+                  desc += '• ' + f.name + ': ' + fileUrl + '\n';
+                  fileLinks.push({ name: f.name, url: fileUrl, storagePath: fPath });
+                } catch(fe) {
+                  desc += '• ' + f.name + ' (Datei nicht gefunden)\n';
+                }
+              }
+            }
+            
+            // Create task on the project
+            const taskId = createEntity('task', {
+              title: '📡 ' + (submission.title || 'Externe Einreichung'),
+              description: desc.trim(),
+              status: 'todo',
+              priority: submission.priority || 3,
+              projectId: project.id,
+              tags: ['extern', 'inbox', ...(submission.tags || [])],
+              dueDate: submission.dueDate || null,
+              inboxSubmissionId: subId,
+              inboxSource: submission.senderApp || 'Extern',
+              inboxFiles: fileLinks,
+            });
+            
+            // Also link task to project
+            if (taskId && project.linkedTasks) {
+              if (!project.linkedTasks.includes(taskId)) project.linkedTasks.push(taskId);
+            }
+            
+            // Mark as imported on Firebase
+            try {
+              const markedData = JSON.stringify({ ...submission, status: 'imported', importedAt: new Date().toISOString() });
+              const blob = new Blob([markedData], { type: 'application/json' });
+              await firebaseStorage.ref('project-inbox/' + project.externalId + '/' + subId + '.json').put(blob, { contentType: 'application/json' });
+            } catch(me) { console.warn('Mark inbox item failed:', me); }
+            
+            imported.push(subId);
+            totalCount++;
+          } catch(itemErr) {
+            console.warn('Inbox item error:', subId, itemErr);
+          }
+        }
+      } catch(projErr) {
+        // listAll might fail if no items exist yet – that's fine
+        if (projErr.code !== 'storage/object-not-found') {
+          console.warn('Inbox fetch for', project.externalId, ':', projErr.message);
+        }
+      }
+    }
+    
+    if (totalCount > 0) {
+      scheduleSave();
+      render();
+      toast('ok', '📡 Externe Inbox', totalCount + ' neue Einreichung' + (totalCount > 1 ? 'en' : '') + ' importiert');
+    } else if (showToast) {
+      toast('info', '📡 Inbox', 'Keine neuen Einreichungen');
+    }
+    
+    window._fetchingExternalInbox = false;
+    return totalCount;
+  } catch(err) {
+    console.error('External inbox error:', err);
+    if (showToast) toast('danger', 'Fehler', 'Externe Inbox: ' + err.message);
+    window._fetchingExternalInbox = false;
+    return 0;
+  }
+};
+
+// Auto-check external inbox: 15s nach Start, dann alle 5 Minuten
+setTimeout(() => { window.fetchExternalInbox(false); }, 15000);
+setInterval(() => { window.fetchExternalInbox(false); }, 5 * 60 * 1000);
+
+// ═══════════════════════════════════════════════════════════════
+
 window.calendarJumpToMonth = function(month) {
   const ui = APP.state.ui;
   ui.calendar = ui.calendar || {};
@@ -28529,7 +28716,7 @@ document.addEventListener("click", function(e) {
         return;
       }
       
-      const projectData = { title, description: desc, status, organizationId: org, tags, projectType };
+      const projectData = { title, description: desc, status, organizationId: org, tags, projectType, externalId: window.generateExternalProjectId() };
       
       // Learning project: create/link notebook and deck
       if (projectType === 'learning') {
