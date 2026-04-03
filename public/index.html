@@ -16850,40 +16850,101 @@ window._ffQuickAddPerson = function(pid) {
   toast('ok','👤',name+' hinzugefügt');
 };
 
-window._ffFetchInbox = function(pid) { window.fetchExternalInbox(true); };
+window._ffFetchInbox = async function(pid) {
+  const PORTAL = 'https://familienfest-portal.netlify.app';
+  toast('info','📡','Lade Einreichungen vom Portal...');
+  try {
+    const r = await fetch(PORTAL + '/.netlify/functions/inbox-list');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const submissions = data.submissions || [];
+    
+    if (!APP.state.data._importedInboxIds) APP.state.data._importedInboxIds = [];
+    const imported = APP.state.data._importedInboxIds;
+    const existingIds = new Set();
+    Object.values(APP.state.data.entities.tasks || {}).forEach(t => { if (t.inboxSubmissionId) existingIds.add(t.inboxSubmissionId); });
+    Object.values(APP.state.data.entities.scheduledMessages || {}).forEach(m => { if (m.inboxSubmissionId) existingIds.add(m.inboxSubmissionId); });
+    
+    let count = 0;
+    const project = APP.state.data.entities.projects[pid];
+    if (!project) return;
+    
+    for (const sub of submissions) {
+      if (!sub.id || !sub.title) continue;
+      if (sub.status === 'imported') continue;
+      if (imported.includes(sub.id) || existingIds.has(sub.id)) continue;
+      
+      // Create entity
+      if (sub.entityType === 'message') {
+        createEntity('scheduledMessage', {
+          title: '📡 ' + sub.title, content: sub.description || '', priority: sub.priority || 3,
+          deliverAt: nowIso(), isDelivered: true, deliveredAt: nowIso(), isRead: false,
+          linkedProjects: [pid], inboxSubmissionId: sub.id,
+        });
+      } else {
+        const taskId = createEntity('task', {
+          title: '📡 ' + sub.title, description: sub.description || '', status: 'todo',
+          priority: sub.priority || 3, projectId: pid,
+          tags: ['extern','inbox', ...(sub.tags || [])],
+          inboxSubmissionId: sub.id, inboxSource: sub.senderApp || 'Extern',
+        });
+        if (taskId && project.linkedTasks && !project.linkedTasks.includes(taskId)) {
+          project.linkedTasks.push(taskId);
+        }
+      }
+      
+      // Sync _ffData
+      if (sub._ffData) {
+        if (!project._custom) project._custom = {};
+        const c = project._custom;
+        if (!c.participants) c.participants = [];
+        if (!c.dateVotes) c.dateVotes = {};
+        const ff = sub._ffData;
+        if (ff.participants) {
+          for (const pt of ff.participants) {
+            if (!c.participants.some(x => x.name.toLowerCase() === pt.name.toLowerCase())) {
+              c.participants.push({ id: Math.random().toString(36).slice(2,10), name: pt.name, addedAt: nowIso() });
+            }
+          }
+        }
+        if (ff.voter && ff.selectedDates) c.dateVotes[ff.voter] = ff.selectedDates;
+        updateEntity('project', pid, { _custom: c });
+      }
+      
+      // Mark as imported on portal
+      try {
+        await fetch(PORTAL + '/.netlify/functions/inbox-list?action=mark', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: sub.id, status: 'imported' }),
+        });
+      } catch(me) { console.warn('Mark failed:', me); }
+      
+      imported.push(sub.id);
+      count++;
+    }
+    
+    if (count > 0) { scheduleSave(); render(); toast('ok','📡',count+' neue Einreichung'+(count>1?'en':'')+' importiert'); }
+    else toast('info','📡','Keine neuen Einreichungen');
+  } catch(e) {
+    console.error('Famfest inbox error:', e);
+    toast('danger','Fehler','Portal nicht erreichbar: '+e.message);
+  }
+};
 
 window._ffDebugInbox = async function(pid) {
-  if (!firebaseStorage) { toast('danger','Debug','Firebase nicht geladen'); return; }
-  const p = APP.state.data.entities.projects[pid];
-  if (!p?.externalId) { toast('danger','Debug','Projekt hat keine externe ID'); return; }
-  toast('info','Debug','Teste project-inbox/' + p.externalId + '/ ...');
+  const PORTAL = 'https://familienfest-portal.netlify.app';
+  toast('info','Debug','Teste Verbindung zu '+PORTAL+'...');
   try {
-    const listRef = firebaseStorage.ref('project-inbox/' + p.externalId);
-    const result = await listRef.listAll();
-    const names = result.items.map(i => i.name);
-    if (names.length === 0) {
-      toast('warn','Debug','listAll OK aber 0 Dateien gefunden. Entweder noch nichts gesendet oder falsche ID.');
-    } else {
-      toast('ok','Debug', names.length + ' Dateien gefunden: ' + names.slice(0,5).join(', '));
-      console.log('[FF Debug] Files:', names);
-      // Try reading first file
-      const first = result.items.find(i => i.name.endsWith('.json') && !i.name.startsWith('ff_updates'));
-      if (first) {
-        const url = await first.getDownloadURL();
-        const bust = url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now();
-        const r = await fetch(bust, { credentials: 'omit' });
-        const data = await r.json();
-        console.log('[FF Debug] First submission:', data);
-        toast('ok','Debug','Erste Datei gelesen: ' + (data.title || data.id || first.name));
-      }
-    }
+    const r = await fetch(PORTAL + '/.netlify/functions/inbox-list');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const subs = data.submissions || [];
+    const pending = subs.filter(s => s.status !== 'imported');
+    toast('ok','Debug',subs.length+' Einreichungen total, '+pending.length+' offen');
+    console.log('[FF Debug] Submissions:', subs);
   } catch(e) {
     console.error('[FF Debug]', e);
-    if (e.code === 'storage/unauthorized') {
-      toast('danger','Debug','❌ FEHLER: Firebase Storage Rules erlauben kein "list". Gehe zu Firebase Console → Storage → Rules und füge "list" hinzu.');
-    } else {
-      toast('danger','Debug','Fehler: ' + e.code + ' – ' + e.message);
-    }
+    toast('danger','Debug','Fehler: '+e.message);
   }
 };
 
@@ -16970,72 +17031,58 @@ window._ffDeleteVenue = function(pid, idx) {
 
 // ── Portal Updates veröffentlichen ──
 
-window._ffPortalUpdates = {}; // cache
+window._ffPortalUpdates = {};
+
+const _FF_PORTAL = 'https://familienfest-portal.netlify.app';
 
 window._ffPublishUpdate = async function(pid) {
   const inp = document.getElementById('ffUpdateText_' + pid); if (!inp) return;
   const text = inp.value.trim(); if (!text) { toast('warn','Leer','Bitte Text eingeben'); return; }
-  if (!firebaseStorage) { toast('danger','Fehler','Firebase nicht verfügbar'); return; }
-  
-  // Load existing
-  const path = 'project-inbox/PRJ-NFYW5/ff_updates.json';
-  let data = { updates: [] };
   try {
-    const url = await firebaseStorage.ref(path).getDownloadURL();
-    const r = await fetch(url+(url.includes('?')?'&':'?')+'_ts='+Date.now(),{credentials:'omit'}); if (r.ok) data = await r.json();
-  } catch(e) { /* first time */ }
-  
-  data.updates.push({ id: Math.random().toString(36).slice(2,10), text, createdAt: new Date().toISOString() });
-  
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  try {
-    await firebaseStorage.ref(path).put(blob, { contentType: 'application/json' });
-    window._ffPortalUpdates = data;
+    const r = await fetch(_FF_PORTAL + '/.netlify/functions/inbox-updates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Fehler');
+    window._ffPortalUpdates = { updates: data.updates || [] };
     inp.value = '';
     toast('ok','📢 Gepostet','Update ist jetzt im Portal sichtbar');
-    window._ffRenderUpdatesPreview(pid, data);
+    window._ffRenderUpdatesPreview(pid, window._ffPortalUpdates);
   } catch(e) { toast('danger','Fehler',e.message); }
 };
 
 window._ffLoadUpdates = async function(pid) {
-  if (!firebaseStorage) { toast('danger','Fehler','Firebase nicht verfügbar'); return; }
-  const path = 'project-inbox/PRJ-NFYW5/ff_updates.json';
   try {
-    const url = await firebaseStorage.ref(path).getDownloadURL();
-    const r = await fetch(url+(url.includes('?')?'&':'?')+'_ts='+Date.now(),{credentials:'omit'}); if (!r.ok) throw new Error('HTTP '+r.status);
+    const r = await fetch(_FF_PORTAL + '/.netlify/functions/inbox-updates');
+    if (!r.ok) throw new Error('HTTP '+r.status);
     const data = await r.json();
     window._ffPortalUpdates = data;
     window._ffRenderUpdatesPreview(pid, data);
     toast('ok','Geladen',(data.updates||[]).length+' Updates');
-  } catch(e) {
-    if (e.code === 'storage/object-not-found') toast('info','Leer','Noch keine Updates veröffentlicht');
-    else toast('danger','Fehler',e.message);
-  }
+  } catch(e) { toast('danger','Fehler',e.message); }
 };
 
 window._ffClearUpdates = async function(pid) {
   if (!confirm('Alle Portal-Updates löschen?')) return;
-  if (!firebaseStorage) return;
-  const path = 'project-inbox/PRJ-NFYW5/ff_updates.json';
-  const data = { updates: [] };
-  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   try {
-    await firebaseStorage.ref(path).put(blob, { contentType: 'application/json' });
-    window._ffPortalUpdates = data;
-    window._ffRenderUpdatesPreview(pid, data);
+    const r = await fetch(_FF_PORTAL + '/.netlify/functions/inbox-updates', { method: 'DELETE' });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    window._ffPortalUpdates = { updates: [] };
+    window._ffRenderUpdatesPreview(pid, { updates: [] });
     toast('ok','Gelöscht','Alle Updates entfernt');
   } catch(e) { toast('danger','Fehler',e.message); }
 };
 
 window._ffRemoveUpdate = async function(pid, updateId) {
-  if (!firebaseStorage) return;
-  const data = window._ffPortalUpdates || { updates: [] };
-  data.updates = data.updates.filter(u => u.id !== updateId);
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   try {
-    await firebaseStorage.ref('project-inbox/PRJ-NFYW5/ff_updates.json').put(blob, { contentType: 'application/json' });
-    window._ffPortalUpdates = data;
-    window._ffRenderUpdatesPreview(pid, data);
+    const r = await fetch(_FF_PORTAL + '/.netlify/functions/inbox-updates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'remove', id: updateId }),
+    });
+    const data = await r.json();
+    window._ffPortalUpdates = { updates: data.updates || [] };
+    window._ffRenderUpdatesPreview(pid, window._ffPortalUpdates);
     toast('ok','Entfernt','Update gelöscht');
   } catch(e) { toast('danger','Fehler',e.message); }
 };
