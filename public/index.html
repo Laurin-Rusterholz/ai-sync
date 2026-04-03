@@ -16756,6 +16756,7 @@ function renderCustom_PRJNFYW5(id, p) {
         <input type="text" id="ffQuickPerson_${id}" placeholder="Person hinzufügen..." style="width:200px;padding:7px 10px;font-size:12px" onkeydown="if(event.key==='Enter')window._ffQuickAddPerson('${id}')" />
         <button class="btn sm" onclick="window._ffQuickAddPerson('${id}')">👤 +</button>
         <button class="btn sm" onclick="window._ffFetchInbox('${id}')" title="Externe Einreichungen jetzt abrufen">📡 Inbox abrufen</button>
+        <button class="btn sm" onclick="window._ffDebugInbox('${id}')" title="Verbindung testen" style="font-size:11px">🔍 Debug</button>
       </div>
     </div>
 
@@ -16850,6 +16851,40 @@ window._ffQuickAddPerson = function(pid) {
 };
 
 window._ffFetchInbox = function(pid) { window.fetchExternalInbox(true); };
+
+window._ffDebugInbox = async function(pid) {
+  if (!firebaseStorage) { toast('danger','Debug','Firebase nicht geladen'); return; }
+  const p = APP.state.data.entities.projects[pid];
+  if (!p?.externalId) { toast('danger','Debug','Projekt hat keine externe ID'); return; }
+  toast('info','Debug','Teste project-inbox/' + p.externalId + '/ ...');
+  try {
+    const listRef = firebaseStorage.ref('project-inbox/' + p.externalId);
+    const result = await listRef.listAll();
+    const names = result.items.map(i => i.name);
+    if (names.length === 0) {
+      toast('warn','Debug','listAll OK aber 0 Dateien gefunden. Entweder noch nichts gesendet oder falsche ID.');
+    } else {
+      toast('ok','Debug', names.length + ' Dateien gefunden: ' + names.slice(0,5).join(', '));
+      console.log('[FF Debug] Files:', names);
+      // Try reading first file
+      const first = result.items.find(i => i.name.endsWith('.json') && !i.name.startsWith('ff_updates'));
+      if (first) {
+        const url = await first.getDownloadURL();
+        const r = await fetch(url);
+        const data = await r.json();
+        console.log('[FF Debug] First submission:', data);
+        toast('ok','Debug','Erste Datei gelesen: ' + (data.title || data.id || first.name));
+      }
+    }
+  } catch(e) {
+    console.error('[FF Debug]', e);
+    if (e.code === 'storage/unauthorized') {
+      toast('danger','Debug','❌ FEHLER: Firebase Storage Rules erlauben kein "list". Gehe zu Firebase Console → Storage → Rules und füge "list" hinzu.');
+    } else {
+      toast('danger','Debug','Fehler: ' + e.code + ' – ' + e.message);
+    }
+  }
+};
 
 window._ffCreateAnnouncement = function(pid) {
   const text = prompt('📢 Mitteilung:'); if (!text?.trim()) return;
@@ -27526,6 +27561,9 @@ window.fetchExternalInbox = async function(showToast) {
     const existingInboxIds = new Set();
     Object.values(APP.state.data.entities.tasks || {}).forEach(t => {
       if (t.inboxSubmissionId) existingInboxIds.add(t.inboxSubmissionId);
+    });
+    Object.values(APP.state.data.entities.scheduledMessages || {}).forEach(m => {
+      if (m.inboxSubmissionId) existingInboxIds.add(m.inboxSubmissionId);
     });
     
     let totalCount = 0;
