@@ -16366,10 +16366,11 @@ function viewProjectDetail(id) {
       <div class="page-title">
         <h2>${esc(p.title)}</h2>
         <p>Erstellt ${fmtDateTime(p.createdAt)}</p>
-        ${p.externalId ? `<div style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:6px 12px;background:rgba(100,210,255,.08);border:1px solid rgba(100,210,255,.25);border-radius:8px;cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')" title="Klicken zum Kopieren – diese ID in externe Programme einfügen">
+        ${p.externalId ? `<div style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:6px 12px;background:rgba(100,210,255,.08);border:1px solid rgba(100,210,255,.25);border-radius:8px">
           <span style="font-size:11px;color:var(--muted)">📡 Externe ID:</span>
-          <code style="font-size:13px;font-weight:700;color:var(--teal);letter-spacing:1px">${p.externalId}</code>
-          <span style="font-size:11px;color:var(--muted)">📋</span>
+          <code style="font-size:13px;font-weight:700;color:var(--teal);letter-spacing:1px;cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')">${p.externalId}</code>
+          <span style="font-size:11px;color:var(--muted);cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')">📋</span>
+          <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:2px 4px" onclick="window.editExternalProjectId('${id}')" title="ID ändern">✏️</button>
         </div>` : ''}
       </div>
       <div class="page-actions">
@@ -16610,9 +16611,9 @@ function renderCustomProjectFeatures(id) {
 // ═══════════════════════════════════════════════════════════════════════
 
 const FAMFEST_DATES = [
-  { id: 'd1', date: '2026-11-14', label: 'Samstag, 14. November 2026' },
-  { id: 'd2', date: '2026-11-21', label: 'Samstag, 21. November 2026' },
-  { id: 'd3', date: '2026-11-28', label: 'Samstag, 28. November 2026' },
+  { id: 'd1', date: '2026-11-14', label: 'Sa, 14. Nov 2026', short: '14.11.' },
+  { id: 'd2', date: '2026-11-21', label: 'Sa, 21. Nov 2026', short: '21.11.' },
+  { id: 'd3', date: '2026-11-28', label: 'Sa, 28. Nov 2026', short: '28.11.' },
 ];
 
 function _ffEnsureData(p) {
@@ -16620,134 +16621,183 @@ function _ffEnsureData(p) {
   const c = p._custom;
   if (!c.participants) c.participants = [];
   if (!c.dateVotes) c.dateVotes = {};
-  // dateVotes: { personName: ['d1','d3'], ... }
+  if (!c.venues) c.venues = [];
   return c;
+}
+
+function _ffFindDuplicates(participants) {
+  const seen = {};
+  const dupes = new Set();
+  participants.forEach(pt => {
+    const key = pt.name.trim().toLowerCase();
+    if (seen[key]) dupes.add(key);
+    seen[key] = (seen[key] || 0) + 1;
+  });
+  return dupes;
 }
 
 function renderCustom_PRJNFYW5(id, p) {
   const c = _ffEnsureData(p);
-  const e = APP.state.data.entities;
 
-  // ── Statistiken ──
+  // Stats
   const totalPersons = c.participants.length;
-  const totalVoters = Object.keys(c.dateVotes).filter(k => c.dateVotes[k].length > 0).length;
+  const totalVoters = Object.keys(c.dateVotes).filter(k => c.dateVotes[k]?.length > 0).length;
   const votesPerDate = {};
   FAMFEST_DATES.forEach(d => { votesPerDate[d.id] = []; });
   for (const [person, dates] of Object.entries(c.dateVotes)) {
-    dates.forEach(did => { if (votesPerDate[did]) votesPerDate[did].push(person); });
+    (dates || []).forEach(did => { if (votesPerDate[did]) votesPerDate[did].push(person); });
   }
   const bestDate = FAMFEST_DATES.reduce((best, d) => (votesPerDate[d.id].length > (votesPerDate[best.id]?.length || 0)) ? d : best, FAMFEST_DATES[0]);
-  const bestDateCount = votesPerDate[bestDate.id].length;
+  const bestCount = votesPerDate[bestDate.id].length;
+  const duplicates = _ffFindDuplicates(c.participants);
+  const hasDupes = duplicates.size > 0;
 
-  // ── Datumsumfrage ──
-  const maxVotes = Math.max(1, ...FAMFEST_DATES.map(d => votesPerDate[d.id].length));
-  const datePollHtml = FAMFEST_DATES.map(d => {
+  // ── Persons table ──
+  const allNames = [...new Set([...c.participants.map(pt => pt.name), ...Object.keys(c.dateVotes)])].sort((a,b) => a.localeCompare(b, 'de'));
+
+  const rowsHtml = allNames.length > 0 ? allNames.map(name => {
+    const isReg = c.participants.some(pt => pt.name === name);
+    const isDupe = duplicates.has(name.trim().toLowerCase());
+    const votes = c.dateVotes[name] || [];
+    const ptObj = c.participants.find(pt => pt.name === name);
+    const dateCells = FAMFEST_DATES.map(d => {
+      const v = votes.includes(d.id);
+      const safeName = name.replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+      return `<td style="text-align:center;padding:7px;border-bottom:1px solid var(--border)">
+        <span style="cursor:pointer;font-size:15px" onclick="window._ffToggleVote('${id}','${safeName}','${d.id}')">${v ? '✅' : '⬜'}</span>
+      </td>`;
+    }).join('');
+    const rowBg = isDupe ? 'background:rgba(248,113,113,.08);' : '';
+    return `<tr style="${rowBg}">
+      <td style="padding:7px 10px;font-weight:700;font-size:13px;border-bottom:1px solid var(--border);white-space:nowrap">
+        ${isDupe ? '⚠️' : (isReg ? '👤' : '❓')} ${esc(name)}
+        ${isDupe ? '<span style="font-size:10px;color:var(--danger);font-weight:800;margin-left:4px">DOPPELT</span>' : ''}
+      </td>
+      ${dateCells}
+      <td style="text-align:center;padding:7px;border-bottom:1px solid var(--border)">
+        ${isReg
+          ? '<span style="font-size:10px;padding:2px 7px;border-radius:5px;font-weight:700;background:rgba(45,212,191,.12);color:var(--teal);border:1px solid rgba(45,212,191,.3)">✓</span>'
+          : '<span style="font-size:10px;padding:2px 7px;border-radius:5px;font-weight:700;background:rgba(251,191,36,.1);color:rgb(180,140,30);border:1px solid rgba(251,191,36,.3)">Vote</span>'}
+      </td>
+      <td style="text-align:center;padding:7px;border-bottom:1px solid var(--border)">
+        ${ptObj ? `<button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:2px 4px" onclick="window._ffRemoveParticipant('${id}','${ptObj.id}')">🗑</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--muted)">Noch keine Daten.</td></tr>';
+
+  // ── Date poll bars ──
+  const maxV = Math.max(1, ...FAMFEST_DATES.map(d => votesPerDate[d.id].length));
+  const pollHtml = FAMFEST_DATES.map(d => {
     const voters = votesPerDate[d.id];
-    const pct = Math.round((voters.length / maxVotes) * 100);
-    const isBest = d.id === bestDate.id && bestDateCount > 0;
-    return `<div style="padding:12px;background:${isBest ? 'rgba(45,212,191,.08)' : 'var(--panel2)'};border:1px solid ${isBest ? 'rgba(45,212,191,.35)' : 'var(--border)'};border-radius:10px;margin-bottom:8px">
+    const pct = Math.round((voters.length / maxV) * 100);
+    const isBest = d.id === bestDate.id && bestCount > 0;
+    return `<div style="padding:11px 14px;background:${isBest ? 'rgba(45,212,191,.08)' : 'var(--panel2)'};border:1px solid ${isBest ? 'rgba(45,212,191,.35)' : 'var(--border)'};border-radius:10px;margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div style="font-weight:700;font-size:14px">${isBest ? '⭐ ' : '📅 '}${d.label}</div>
-        <div style="font-size:20px;font-weight:900;color:var(--teal)">${voters.length}</div>
+        <span style="font-weight:700;font-size:13px">${isBest ? '⭐ ' : '📅 '}${d.label}</span>
+        <span style="font-size:18px;font-weight:900;color:var(--teal)">${voters.length}</span>
       </div>
-      <div style="height:5px;background:rgba(255,255,255,.06);border-radius:3px;margin:8px 0;overflow:hidden">
-        <div style="height:100%;width:${pct}%;background:var(--teal);border-radius:3px;transition:width .3s"></div>
-      </div>
-      <div style="font-size:11px;color:var(--muted)">${voters.length > 0 ? voters.map(esc).join(', ') : 'Noch keine Stimmen'}</div>
+      <div style="height:4px;background:rgba(255,255,255,.06);border-radius:2px;margin:6px 0;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--teal);border-radius:2px"></div></div>
+      <div style="font-size:11px;color:var(--muted)">${voters.length > 0 ? voters.map(esc).join(', ') : 'Keine Stimmen'}</div>
     </div>`;
   }).join('');
 
-  // ── Teilnehmer-Chips ──
-  const participantsChipsHtml = c.participants.length > 0
-    ? c.participants.map(pt => `<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.2);border-radius:100px;font-size:12px;font-weight:700;color:rgba(120,180,230,1);margin:3px">
-        👤 ${esc(pt.name)}
-        <button style="background:none;border:none;color:rgba(120,180,230,.4);cursor:pointer;font-size:12px" onclick="window._ffRemoveParticipant('${id}','${pt.id}')">✕</button>
-      </span>`).join('')
-    : '<div class="mini" style="opacity:.5">Noch keine Anmeldungen.</div>';
-
-  // ── Übersichtstabelle (Pro Person: Votes + Status) ──
-  const allPersonNames = [...new Set([
-    ...c.participants.map(pt => pt.name),
-    ...Object.keys(c.dateVotes)
-  ])].sort((a,b) => a.localeCompare(b, 'de'));
-
-  const overviewRowsHtml = allPersonNames.length > 0 ? allPersonNames.map(name => {
-    const isRegistered = c.participants.some(pt => pt.name === name);
-    const personVotes = c.dateVotes[name] || [];
-    const dateCells = FAMFEST_DATES.map(d => {
-      const voted = personVotes.includes(d.id);
-      return `<td style="text-align:center;padding:8px;border-bottom:1px solid var(--border)">
-        <span style="cursor:pointer;font-size:16px" onclick="window._ffToggleVote('${id}','${esc(name)}','${d.id}')" title="Klicken zum Ändern">${voted ? '✅' : '⬜'}</span>
-      </td>`;
-    }).join('');
-    return `<tr>
-      <td style="padding:8px 10px;font-weight:700;font-size:13px;border-bottom:1px solid var(--border);white-space:nowrap">
-        ${isRegistered ? '👤' : '❓'} ${esc(name)}
-      </td>
-      ${dateCells}
-      <td style="text-align:center;padding:8px;border-bottom:1px solid var(--border)">
-        <span style="font-size:11px;padding:3px 8px;border-radius:6px;font-weight:700;${isRegistered
-          ? 'background:rgba(45,212,191,.12);color:var(--teal);border:1px solid rgba(45,212,191,.3)'
-          : 'background:rgba(251,191,36,.1);color:rgb(200,160,40);border:1px solid rgba(251,191,36,.3)'}">${isRegistered ? 'Angemeldet' : 'Nur Vote'}</span>
-      </td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--muted)">Noch keine Daten.</td></tr>';
-
-  return `
-    <!-- 🎉 Familienfest: Statistiken -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
-      <div class="card stat-card" style="margin:0"><div class="value">${totalPersons}</div><div class="label">Teilnehmer</div></div>
-      <div class="card stat-card" style="margin:0"><div class="value" style="color:var(--teal)">${totalVoters}</div><div class="label">Abgestimmt</div></div>
-      <div class="card stat-card" style="margin:0"><div class="value" style="color:rgb(200,160,40)">${bestDateCount}</div><div class="label">Beste Option</div></div>
-      <div class="card stat-card" style="margin:0"><div class="value" style="font-size:14px;color:var(--teal)">${bestDateCount > 0 ? bestDate.label.split(',')[0] : '—'}</div><div class="label">Favorit</div></div>
-    </div>
-
-    <!-- 🎉 Familienfest: Gesamtübersicht -->
-    <div class="card mb-4">
-      <h3>📋 Gesamtübersicht — Alle Antworten</h3>
-      <div style="overflow-x:auto;margin-top:10px">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="border-bottom:2px solid var(--border)">
-              <th style="text-align:left;padding:8px 10px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Person</th>
-              ${FAMFEST_DATES.map(d => `<th style="text-align:center;padding:8px;font-size:11px;color:var(--muted)">${d.date.split('-').reverse().slice(0,2).join('.')}</th>`).join('')}
-              <th style="text-align:center;padding:8px;font-size:12px;color:var(--muted)">Status</th>
-            </tr>
-          </thead>
-          <tbody>${overviewRowsHtml}</tbody>
-        </table>
-      </div>
-      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:12px">
-          <input type="text" id="ffQuickPerson_${id}" placeholder="Person hinzufügen (Name)" style="width:220px;padding:8px 12px;font-size:13px" onkeydown="if(event.key==='Enter')window._ffQuickAddPerson('${id}')" />
-          <button class="btn sm" onclick="window._ffQuickAddPerson('${id}')">👤 Hinzufügen</button>
+  // ── Venues ──
+  const VENUE_STATUS = { offen:'⚪', angefragt:'📞', reserviert:'✅', abgelehnt:'❌', favorit:'⭐' };
+  const venuesHtml = c.venues.length > 0 ? c.venues.map((v, vi) => `
+    <div style="padding:14px;background:var(--panel2);border:1px solid ${v.status === 'favorit' ? 'rgba(45,212,191,.35)' : (v.status === 'reserviert' ? 'rgba(52,211,153,.3)' : 'var(--border)')};border-radius:10px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:800;font-size:14px">${VENUE_STATUS[v.status] || '⚪'} ${esc(v.name)}</div>
+          ${v.address ? '<div style="font-size:12px;color:var(--muted);margin-top:2px">📍 '+esc(v.address)+'</div>' : ''}
+          ${v.comment ? '<div style="font-size:12px;color:var(--text);margin-top:6px;white-space:pre-wrap;line-height:1.5">'+esc(v.comment)+'</div>' : ''}
+          ${v.link ? '<a href="'+esc(v.link)+'" target="_blank" rel="noopener" style="font-size:12px;color:var(--accent);display:inline-block;margin-top:4px">🔗 '+esc(v.link.replace(/^https?:\/\//, '').slice(0,40))+'</a>' : ''}
+          ${v.capacity ? '<div style="font-size:11px;color:var(--muted);margin-top:4px">👥 Kapazität: '+esc(v.capacity)+'</div>' : ''}
+          ${v.price ? '<div style="font-size:11px;color:var(--muted);margin-top:2px">💰 '+esc(v.price)+'</div>' : ''}
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <select style="padding:4px 6px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer" onchange="window._ffSetVenueStatus('${id}',${vi},this.value)">
+            ${Object.entries(VENUE_STATUS).map(([k,ico]) => '<option value="'+k+'" '+(v.status===k?'selected':'')+'>'+ico+' '+k+'</option>').join('')}
+          </select>
+          <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:4px" onclick="window._ffEditVenue('${id}',${vi})">✏️</button>
+          <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:4px" onclick="window._ffDeleteVenue('${id}',${vi})">🗑</button>
         </div>
       </div>
     </div>
+  `).join('') : '<div class="mini" style="opacity:.5">Noch keine Örtlichkeiten erfasst.</div>';
 
-    <!-- 🎉 Familienfest: Datumsumfrage -->
-    <div class="card mb-4">
-      <h3>📅 Datumsumfrage</h3>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Klicke auf ✅/⬜ in der Übersicht oben, um Stimmen zu setzen</div>
-      ${datePollHtml}
+  return `
+    <!-- Stats -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+      <div class="card stat-card" style="margin:0"><div class="value">${totalPersons}</div><div class="label">Teilnehmer</div></div>
+      <div class="card stat-card" style="margin:0"><div class="value" style="color:var(--teal)">${totalVoters}</div><div class="label">Abgestimmt</div></div>
+      <div class="card stat-card" style="margin:0"><div class="value" style="color:${hasDupes ? 'var(--danger)' : 'rgb(200,160,40)'}">${hasDupes ? '⚠️' : bestCount}</div><div class="label">${hasDupes ? 'Duplikate!' : 'Meiste Stimmen'}</div></div>
+      <div class="card stat-card" style="margin:0"><div class="value" style="font-size:13px;color:var(--teal)">${bestCount > 0 ? bestDate.short : '—'}</div><div class="label">Favorit</div></div>
     </div>
 
-    <!-- 🎉 Familienfest: Teilnehmer -->
+    <!-- Gesamtübersicht -->
     <div class="card mb-4">
-      <h3>👥 Angemeldete Teilnehmer (${totalPersons})</h3>
-      <div style="display:flex;flex-wrap:wrap;margin:8px 0">${participantsChipsHtml}</div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <input type="text" id="ffNewParticipant_${id}" placeholder="Name eingeben..." style="flex:1;padding:8px 12px;font-size:13px" onkeydown="if(event.key==='Enter')window._ffAddParticipant('${id}')" />
-        <button class="btn sm" style="background:var(--accent);border-color:var(--accent);color:#fff" onclick="window._ffAddParticipant('${id}')">👤 Anmelden</button>
+      <h3 style="display:flex;justify-content:space-between;align-items:center">
+        <span>📋 Gesamtübersicht</span>
+        <span style="font-size:12px;font-weight:600;color:var(--muted)">${allNames.length} Personen</span>
+      </h3>
+      ${hasDupes ? '<div style="padding:8px 12px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:8px;font-size:12px;color:var(--danger);font-weight:700;margin:8px 0">⚠️ Doppelte Namen gefunden — bitte mit 🗑 bereinigen</div>' : ''}
+      <div style="overflow-x:auto;margin-top:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="border-bottom:2px solid var(--border)">
+            <th style="text-align:left;padding:7px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Person</th>
+            ${FAMFEST_DATES.map(d => '<th style="text-align:center;padding:7px;font-size:11px;color:var(--muted)">'+d.short+'</th>').join('')}
+            <th style="text-align:center;padding:7px;font-size:11px;color:var(--muted)">Status</th>
+            <th style="width:36px"></th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <input type="text" id="ffQuickPerson_${id}" placeholder="Person hinzufügen..." style="width:200px;padding:7px 10px;font-size:12px" onkeydown="if(event.key==='Enter')window._ffQuickAddPerson('${id}')" />
+        <button class="btn sm" onclick="window._ffQuickAddPerson('${id}')">👤 +</button>
+        <button class="btn sm" onclick="window._ffFetchInbox('${id}')" title="Externe Einreichungen jetzt abrufen">📡 Inbox abrufen</button>
       </div>
     </div>
 
-    <!-- 🎉 Familienfest: Schnell-Aktionen -->
+    <!-- Datumsumfrage -->
     <div class="card mb-4">
-      <h3>⚡ Schnell-Aktionen</h3>
+      <h3>📅 Datumsumfrage</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Stimmen über ✅/⬜ in der Tabelle oben setzen</div>
+      ${pollHtml}
+    </div>
+
+    <!-- 📍 Örtlichkeiten -->
+    <div class="card mb-4">
+      <h3 style="display:flex;justify-content:space-between;align-items:center">
+        <span>📍 Örtlichkeiten (${c.venues.length})</span>
+        <button class="btn sm" onclick="window._ffAddVenue('${id}')">+ Ort erfassen</button>
+      </h3>
+      <div style="margin-top:10px">${venuesHtml}</div>
+    </div>
+
+    <!-- Schnell-Aktionen -->
+    <div class="card mb-4">
+      <h3>⚡ Aktionen</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn sm" onclick="window._ffCreateLocationTask('${id}')">📍 Ortsidee als Aufgabe</button>
         <button class="btn sm" onclick="window._ffCreateAnnouncement('${id}')">📢 Mitteilung senden</button>
+      </div>
+    </div>
+
+    <!-- 📢 Updates fürs Portal veröffentlichen -->
+    <div class="card mb-4">
+      <h3 style="display:flex;justify-content:space-between;align-items:center">
+        <span>📢 Portal-Updates</span>
+        <span style="font-size:11px;color:var(--muted)">Sichtbar für alle im Portal</span>
+      </h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Poste Infos die alle Familienmitglieder im Portal sehen (Ort, Zeit, Einladung, etc.)</div>
+      <div id="ffUpdatesPreview_${id}" style="margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="ffUpdateText_${id}" placeholder="z.B. Ort: Restaurant Rössli, 18:00 Uhr" style="flex:1;padding:8px 12px;font-size:13px" onkeydown="if(event.key==='Enter')window._ffPublishUpdate('${id}')" />
+        <button class="btn sm" style="background:var(--accent);border-color:var(--accent);color:#fff" onclick="window._ffPublishUpdate('${id}')">📢 Posten</button>
+      </div>
+      <div style="margin-top:8px">
+        <button class="btn sm" onclick="window._ffLoadUpdates('${id}')">🔄 Vorhandene laden</button>
+        <button class="btn sm" onclick="window._ffClearUpdates('${id}')" style="color:var(--danger)">🗑 Alle löschen</button>
       </div>
     </div>
   `;
@@ -16755,100 +16805,213 @@ function renderCustom_PRJNFYW5(id, p) {
 
 // ── PRJ-NFYW5 Aktionen ──
 
-window._ffAddParticipant = function(projectId) {
-  const inp = document.getElementById('ffNewParticipant_' + projectId);
+window._ffAddParticipant = function(pid) {
+  const inp = document.getElementById('ffNewParticipant_' + pid);
   if (!inp) return;
   const name = inp.value.trim();
-  if (!name) { toast('warn', 'Fehler', 'Bitte einen Namen eingeben'); return; }
-  const p = APP.state.data.entities.projects[projectId];
-  if (!p) return;
+  if (!name) { toast('warn','Fehler','Name eingeben'); return; }
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
   const c = _ffEnsureData(p);
-  if (c.participants.some(pt => pt.name.toLowerCase() === name.toLowerCase())) {
-    toast('warn', 'Bereits angemeldet', name + ' ist bereits registriert'); return;
-  }
-  c.participants.push({ id: Math.random().toString(36).slice(2,10), name, addedAt: new Date().toISOString() });
-  updateEntity('project', projectId, { _custom: p._custom });
-  inp.value = '';
-  render();
-  toast('ok', '👤 Angemeldet', name + ' wurde hinzugefügt');
+  if (c.participants.some(pt => pt.name.toLowerCase() === name.toLowerCase())) { toast('warn','Doppelt',name+' existiert bereits'); return; }
+  c.participants.push({ id: Math.random().toString(36).slice(2,10), name, addedAt: nowIso() });
+  updateEntity('project', pid, { _custom: p._custom }); render();
+  toast('ok','👤',name+' angemeldet'); inp.value = '';
 };
 
-window._ffRemoveParticipant = function(projectId, ptId) {
-  const p = APP.state.data.entities.projects[projectId];
-  if (!p?._custom?.participants) return;
+window._ffRemoveParticipant = function(pid, ptId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p?._custom?.participants) return;
   const pt = p._custom.participants.find(x => x.id === ptId);
-  if (pt && !confirm(pt.name + ' wirklich abmelden?')) return;
+  if (pt && !confirm(pt.name + ' entfernen?')) return;
   p._custom.participants = p._custom.participants.filter(x => x.id !== ptId);
-  // Also remove their votes
   if (pt && p._custom.dateVotes?.[pt.name]) delete p._custom.dateVotes[pt.name];
-  updateEntity('project', projectId, { _custom: p._custom });
-  render();
+  updateEntity('project', pid, { _custom: p._custom }); render();
 };
 
-window._ffToggleVote = function(projectId, personName, dateId) {
-  const p = APP.state.data.entities.projects[projectId];
-  if (!p) return;
+window._ffToggleVote = function(pid, person, dateId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
   const c = _ffEnsureData(p);
-  if (!c.dateVotes[personName]) c.dateVotes[personName] = [];
-  const arr = c.dateVotes[personName];
-  const idx = arr.indexOf(dateId);
-  if (idx >= 0) arr.splice(idx, 1);
-  else arr.push(dateId);
-  updateEntity('project', projectId, { _custom: p._custom });
-  render();
+  if (!c.dateVotes[person]) c.dateVotes[person] = [];
+  const a = c.dateVotes[person], i = a.indexOf(dateId);
+  if (i >= 0) a.splice(i,1); else a.push(dateId);
+  updateEntity('project', pid, { _custom: p._custom }); render();
 };
 
-window._ffQuickAddPerson = function(projectId) {
-  const inp = document.getElementById('ffQuickPerson_' + projectId);
-  if (!inp) return;
-  const name = inp.value.trim();
-  if (!name) return;
-  const p = APP.state.data.entities.projects[projectId];
-  if (!p) return;
+window._ffQuickAddPerson = function(pid) {
+  const inp = document.getElementById('ffQuickPerson_' + pid); if (!inp) return;
+  const name = inp.value.trim(); if (!name) return;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
   const c = _ffEnsureData(p);
-  // Add as participant if not exists
   if (!c.participants.some(pt => pt.name.toLowerCase() === name.toLowerCase())) {
-    c.participants.push({ id: Math.random().toString(36).slice(2,10), name, addedAt: new Date().toISOString() });
+    c.participants.push({ id: Math.random().toString(36).slice(2,10), name, addedAt: nowIso() });
   }
-  // Init empty votes
   if (!c.dateVotes[name]) c.dateVotes[name] = [];
-  updateEntity('project', projectId, { _custom: p._custom });
-  inp.value = '';
-  render();
-  toast('ok', '👤', name + ' hinzugefügt — jetzt Daten ankreuzen');
+  updateEntity('project', pid, { _custom: p._custom }); inp.value = ''; render();
+  toast('ok','👤',name+' hinzugefügt');
 };
 
-window._ffCreateLocationTask = function(projectId) {
-  const name = prompt('📍 Name des Orts:');
-  if (!name || !name.trim()) return;
-  const desc = prompt('Beschreibung (optional):') || '';
-  createEntity('task', {
-    title: '📍 Ortsidee: ' + name.trim(),
-    description: desc.trim() || 'Ortsvorschlag für das Familienfest',
-    status: 'todo',
-    priority: 4,
-    projectId: projectId,
-    tags: ['familienfest', 'ortsidee'],
-  });
-  render();
-  toast('ok', '📍 Ortsidee', '"' + name.trim() + '" als Aufgabe erstellt');
-};
+window._ffFetchInbox = function(pid) { window.fetchExternalInbox(true); };
 
-window._ffCreateAnnouncement = function(projectId) {
-  const text = prompt('📢 Mitteilung an alle:');
-  if (!text || !text.trim()) return;
+window._ffCreateAnnouncement = function(pid) {
+  const text = prompt('📢 Mitteilung:'); if (!text?.trim()) return;
   createEntity('scheduledMessage', {
-    title: '📢 Familienfest: ' + text.trim().slice(0, 50),
-    content: text.trim(),
-    priority: 3,
-    deliverAt: new Date().toISOString(),
-    isDelivered: true,
-    deliveredAt: new Date().toISOString(),
-    isRead: false,
-    linkedProjects: [projectId],
+    title: '📢 Familienfest: ' + text.trim().slice(0,50), content: text.trim(), priority: 3,
+    deliverAt: nowIso(), isDelivered: true, deliveredAt: nowIso(), isRead: false, linkedProjects: [pid],
   });
-  render();
-  toast('ok', '📢 Gesendet', 'Mitteilung erstellt');
+  render(); toast('ok','📢','Mitteilung erstellt');
+};
+
+// ── Venues / Örtlichkeiten ──
+
+window._ffAddVenue = function(pid) {
+  const name = prompt('📍 Name der Örtlichkeit:'); if (!name?.trim()) return;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = _ffEnsureData(p);
+  c.venues.push({
+    id: Math.random().toString(36).slice(2,10),
+    name: name.trim(),
+    address: '',
+    status: 'offen',
+    comment: '',
+    link: '',
+    capacity: '',
+    price: '',
+    addedAt: nowIso(),
+  });
+  updateEntity('project', pid, { _custom: p._custom }); render();
+  // Direkt bearbeiten
+  setTimeout(() => window._ffEditVenue(pid, c.venues.length - 1), 100);
+};
+
+window._ffEditVenue = function(pid, idx) {
+  const p = APP.state.data.entities.projects[pid]; if (!p?._custom?.venues?.[idx]) return;
+  const v = p._custom.venues[idx];
+  const html = `
+    <div style="display:flex;flex-direction:column;gap:10px;max-width:420px">
+      <label style="font-size:12px;font-weight:700;color:var(--muted)">Name<input type="text" id="ffVName" value="${esc(v.name)}" style="margin-top:4px" /></label>
+      <label style="font-size:12px;font-weight:700;color:var(--muted)">Adresse<input type="text" id="ffVAddr" value="${esc(v.address || '')}" style="margin-top:4px" /></label>
+      <div style="display:flex;gap:8px">
+        <label style="flex:1;font-size:12px;font-weight:700;color:var(--muted)">Kapazität<input type="text" id="ffVCap" value="${esc(v.capacity || '')}" placeholder="z.B. 30 Personen" style="margin-top:4px" /></label>
+        <label style="flex:1;font-size:12px;font-weight:700;color:var(--muted)">Preis<input type="text" id="ffVPrice" value="${esc(v.price || '')}" placeholder="z.B. CHF 500" style="margin-top:4px" /></label>
+      </div>
+      <label style="font-size:12px;font-weight:700;color:var(--muted)">Link / Website<input type="text" id="ffVLink" value="${esc(v.link || '')}" placeholder="https://..." style="margin-top:4px" /></label>
+      <label style="font-size:12px;font-weight:700;color:var(--muted)">Kommentar / Notizen<textarea id="ffVComment" style="margin-top:4px;min-height:60px">${esc(v.comment || '')}</textarea></label>
+    </div>
+  `;
+  openModal('📍 ' + esc(v.name) + ' bearbeiten', html, `
+    <button class="btn primary" onclick="window._ffSaveVenue('${pid}',${idx})">💾 Speichern</button>
+    <button class="btn" onclick="closeModal()">Abbrechen</button>
+  `);
+};
+
+window._ffSaveVenue = function(pid, idx) {
+  const p = APP.state.data.entities.projects[pid]; if (!p?._custom?.venues?.[idx]) return;
+  const v = p._custom.venues[idx];
+  v.name = document.getElementById('ffVName')?.value.trim() || v.name;
+  v.address = document.getElementById('ffVAddr')?.value.trim() || '';
+  v.capacity = document.getElementById('ffVCap')?.value.trim() || '';
+  v.price = document.getElementById('ffVPrice')?.value.trim() || '';
+  v.link = document.getElementById('ffVLink')?.value.trim() || '';
+  v.comment = document.getElementById('ffVComment')?.value.trim() || '';
+  v.updatedAt = nowIso();
+  updateEntity('project', pid, { _custom: p._custom });
+  closeModal(); render();
+  toast('ok','💾','Gespeichert');
+};
+
+window._ffSetVenueStatus = function(pid, idx, status) {
+  const p = APP.state.data.entities.projects[pid]; if (!p?._custom?.venues?.[idx]) return;
+  p._custom.venues[idx].status = status;
+  p._custom.venues[idx].updatedAt = nowIso();
+  updateEntity('project', pid, { _custom: p._custom }); render();
+};
+
+window._ffDeleteVenue = function(pid, idx) {
+  const p = APP.state.data.entities.projects[pid]; if (!p?._custom?.venues?.[idx]) return;
+  if (!confirm(p._custom.venues[idx].name + ' löschen?')) return;
+  p._custom.venues.splice(idx, 1);
+  updateEntity('project', pid, { _custom: p._custom }); render();
+};
+
+// ── Portal Updates veröffentlichen ──
+
+window._ffPortalUpdates = {}; // cache
+
+window._ffPublishUpdate = async function(pid) {
+  const inp = document.getElementById('ffUpdateText_' + pid); if (!inp) return;
+  const text = inp.value.trim(); if (!text) { toast('warn','Leer','Bitte Text eingeben'); return; }
+  if (!firebaseStorage) { toast('danger','Fehler','Firebase nicht verfügbar'); return; }
+  
+  // Load existing
+  const path = 'project-inbox/PRJ-NFYW5/ff_updates.json';
+  let data = { updates: [] };
+  try {
+    const url = await firebaseStorage.ref(path).getDownloadURL();
+    const r = await fetch(url); if (r.ok) data = await r.json();
+  } catch(e) { /* first time */ }
+  
+  data.updates.push({ id: Math.random().toString(36).slice(2,10), text, createdAt: new Date().toISOString() });
+  
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  try {
+    await firebaseStorage.ref(path).put(blob, { contentType: 'application/json' });
+    window._ffPortalUpdates = data;
+    inp.value = '';
+    toast('ok','📢 Gepostet','Update ist jetzt im Portal sichtbar');
+    window._ffRenderUpdatesPreview(pid, data);
+  } catch(e) { toast('danger','Fehler',e.message); }
+};
+
+window._ffLoadUpdates = async function(pid) {
+  if (!firebaseStorage) { toast('danger','Fehler','Firebase nicht verfügbar'); return; }
+  const path = 'project-inbox/PRJ-NFYW5/ff_updates.json';
+  try {
+    const url = await firebaseStorage.ref(path).getDownloadURL();
+    const r = await fetch(url); if (!r.ok) throw new Error('HTTP '+r.status);
+    const data = await r.json();
+    window._ffPortalUpdates = data;
+    window._ffRenderUpdatesPreview(pid, data);
+    toast('ok','Geladen',(data.updates||[]).length+' Updates');
+  } catch(e) {
+    if (e.code === 'storage/object-not-found') toast('info','Leer','Noch keine Updates veröffentlicht');
+    else toast('danger','Fehler',e.message);
+  }
+};
+
+window._ffClearUpdates = async function(pid) {
+  if (!confirm('Alle Portal-Updates löschen?')) return;
+  if (!firebaseStorage) return;
+  const path = 'project-inbox/PRJ-NFYW5/ff_updates.json';
+  const data = { updates: [] };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  try {
+    await firebaseStorage.ref(path).put(blob, { contentType: 'application/json' });
+    window._ffPortalUpdates = data;
+    window._ffRenderUpdatesPreview(pid, data);
+    toast('ok','Gelöscht','Alle Updates entfernt');
+  } catch(e) { toast('danger','Fehler',e.message); }
+};
+
+window._ffRemoveUpdate = async function(pid, updateId) {
+  if (!firebaseStorage) return;
+  const data = window._ffPortalUpdates || { updates: [] };
+  data.updates = data.updates.filter(u => u.id !== updateId);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  try {
+    await firebaseStorage.ref('project-inbox/PRJ-NFYW5/ff_updates.json').put(blob, { contentType: 'application/json' });
+    window._ffPortalUpdates = data;
+    window._ffRenderUpdatesPreview(pid, data);
+    toast('ok','Entfernt','Update gelöscht');
+  } catch(e) { toast('danger','Fehler',e.message); }
+};
+
+window._ffRenderUpdatesPreview = function(pid, data) {
+  const el = document.getElementById('ffUpdatesPreview_' + pid); if (!el) return;
+  const updates = (data?.updates || []).slice().reverse();
+  if (!updates.length) { el.innerHTML = '<div class="mini" style="opacity:.5">Keine Updates veröffentlicht.</div>'; return; }
+  el.innerHTML = updates.map(u => `<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.15);border-radius:8px;margin-bottom:4px;font-size:12px">
+    <div style="flex:1"><div style="font-weight:700">📢 ${esc(u.text)}</div><div style="font-size:10px;color:var(--muted);margin-top:2px">${u.createdAt ? new Date(u.createdAt).toLocaleString('de-CH') : ''}</div></div>
+    <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:2px 4px" onclick="window._ffRemoveUpdate('${pid}','${u.id}')">✕</button>
+  </div>`).join('');
 };
 
 // ── Hilfs-Funktionen für Custom Features ──
@@ -27326,6 +27489,21 @@ window.copyExternalProjectId = function(extId) {
   });
 };
 
+window.editExternalProjectId = function(projectId) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p) return;
+  const newId = prompt('Externe Projekt-ID ändern:\n\n(Format: PRJ-XXXXX)', p.externalId || '');
+  if (!newId || newId === p.externalId) return;
+  const trimmed = newId.trim().toUpperCase();
+  if (!trimmed.startsWith('PRJ-')) { toast('warn','Ungültig','ID muss mit PRJ- beginnen'); return; }
+  // Check for duplicates
+  const existing = Object.values(APP.state.data.entities.projects).find(x => x.externalId === trimmed && x.id !== projectId);
+  if (existing) { toast('warn','Doppelt','Diese ID wird bereits von "'+existing.title+'" verwendet'); return; }
+  updateEntity('project', projectId, { externalId: trimmed });
+  render();
+  toast('ok','📡 Geändert','Neue externe ID: '+trimmed);
+};
+
 // Firebase-based project inbox
 window._fetchingExternalInbox = false;
 
@@ -27359,6 +27537,8 @@ window.fetchExternalInbox = async function(showToast) {
         
         for (const itemRef of listResult.items) {
           if (!itemRef.name.endsWith('.json')) continue;
+          // Skip non-submission files
+          if (itemRef.name === 'ff_updates.json' || itemRef.name === 'familienfest-state.json' || itemRef.name === 'familienfest-responses.json') continue;
           const subId = itemRef.name.replace('.json', '');
           
           if (imported.includes(subId) || existingInboxIds.has(subId)) continue;
@@ -27369,6 +27549,8 @@ window.fetchExternalInbox = async function(showToast) {
             if (!resp.ok) continue;
             const submission = await resp.json();
             
+            // Skip non-submission files (no title = not a submission)
+            if (!submission.title) { imported.push(subId); continue; }
             if (submission.status === 'imported') { imported.push(subId); continue; }
             
             // Build description
