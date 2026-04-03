@@ -16907,7 +16907,11 @@ window._ffFetchInbox = async function(pid) {
             }
           }
         }
-        if (ff.voter && ff.selectedDates) c.dateVotes[ff.voter] = ff.selectedDates;
+        if (ff.selectedDates && ff.participants) {
+          for (const pt of ff.participants) {
+            c.dateVotes[pt.name] = [...ff.selectedDates];
+          }
+        }
         updateEntity('project', pid, { _custom: c });
       }
       
@@ -27617,6 +27621,8 @@ window.fetchExternalInbox = async function(showToast) {
     let totalCount = 0;
     
     for (const project of allProjects) {
+      // PRJ-NFYW5 uses Netlify Functions, not Firebase
+      if (project.externalId === 'PRJ-NFYW5') continue;
       try {
         const listRef = firebaseStorage.ref('project-inbox/' + project.externalId);
         const listResult = await listRef.listAll();
@@ -27710,8 +27716,10 @@ window.fetchExternalInbox = async function(showToast) {
               }
               // Merge date votes
               if (!c.dateVotes) c.dateVotes = {};
-              if (ff.voter && ff.selectedDates) {
-                c.dateVotes[ff.voter] = ff.selectedDates;
+              if (ff.selectedDates && ff.participants) {
+                for (const pt of ff.participants) {
+                  c.dateVotes[pt.name] = [...ff.selectedDates];
+                }
               }
               updateEntity('project', project.id, { _custom: c });
             }
