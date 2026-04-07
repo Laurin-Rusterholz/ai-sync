@@ -39838,14 +39838,21 @@ function initRecallLabApp() {
   rlState.cards.forEach(c=>{if(c.deckId==='deck_books'||c.deckId==='deck_research')c.deckId='deck_general'});
   rlState.decks=rlState.decks.filter(d=>d.id!=='deck_books'&&d.id!=='deck_research');
   // C1 Vokabular Deck (fix, einmalig seeden)
-  if(!rlState.decks.find(d=>d.id==='deck_c1'))rlState.decks.push({id:'deck_c1',name:'🎓 C1 Vokabular',description:'450 C1-Vokabeln (Rechtschreibung & Verwendung)',createdAt:Date.now(),newCardsPerDay:10,fixed:true});
+  if(!rlState.decks.find(d=>d.id==='deck_c1'))rlState.decks.push({id:'deck_c1',name:'🎓 C1 Vokabular',description:'450 C1-Vokabeln Englisch ↔ Deutsch',createdAt:Date.now(),newCardsPerDay:10,fixed:true});
   else { const _dc1=rlState.decks.find(d=>d.id==='deck_c1'); _dc1.fixed=true; if(_dc1.newCardsPerDay===undefined)_dc1.newCardsPerDay=10; }
   (function seedC1(){
-    const C1_WORDS=["capitalisation","punctuation","ambiguity","ambiguous","adjective","hyphenated","apostrophes","capitalise","antecedent","apostrophe","parenthesis","adjectives","parliament","alternative","grammatical","information","acceptable","transitive","translation","experience","university","convention","modifiers","unemployment","intransitive","subjunctive","abbreviation","difference","historical","measurement","relationship","significance","administration","development","explanation","metaphor","population","preposition","conclusion","connection","continuous","destruction","distinction","intelligence","preferable","statistical","sustainable","compensation","correlation","declaration","environment","impression","infinitive","opposition","organisation","permissible","prohibition","publication","specialist","transportation","affordable","conversation","description","diacritical","discussion","evangelical","hypothetical","journalism","journalist","parallelism","practicable","pronouns","temptation","abstinence","advertisement","association","collective","commission","correctness","definition","distinctive","employment","exaggeration","federalist","governance","homogeneous","impracticable","impractical","introduction","observation","ophthalmology","originality","possibility","preference","profession","pronunciation","proportion","protagonist","punishment","repetition","responsible","revolution","abstraction","acidification","aggression","bowdlerisation","collectable","conversion","counterintuitive","depreciation","discontinuity","exclamation","geographical","homelessness","impossible","initiative","investment","miscellaneous","modifier","morphology","nominalisation","nothingness","opportunity","production","regression","speciality","superfluous","television","terminology","wilderness","acceleration","accessible","accordance","actionable","adaptation","americanism","amortisation","appearance","assumption","calculation","charitable","christianity","coincidence","comparability","complexity","conjunction","conservatism","conservative","constitution","constructive","consultation","contradiction","corporation","demography","depression","discrimination","dispensable","etymological","exhaustive","experiment","familiarity","forgivable","generation","geopolitical","hyphenation","identifiable","independence","indicative","inevitable","inflection","initialism","inquisition","institution","instruction","integration","knowledgeable","manageable","mathematical","metaphorical","misdirection","obsolescence","paradoxical","parenthetical","picaresque","picturesque","pleasurable","possession","precondition","probability","procession","proliferation","pronounceable","readability","renaissance","representative","requirement","responsibility","restrictive","rhetoric","rhetorical","semicolon","simplicity","substantive","suggestion","transliteration","unattractive","unshakable","singular","quotation","confusion","argument","exception","judgment","causation","majority","eponymous","classical","existence","jihadist","numerical","religious","terrorist","analogue","identical","islamism","communist","fraction","genitive","insurance","nauseous","precision","readable","syllable","testament","tortuous","tradition","venerable","aetiology","autarchy","avocation","chastity","concision","criticism","effective","enormity","euphemism","executive","geography","homologue","humility","ideology","memorable","nobility","occasion","pomposity","sanction","scalable","secretive","sensuous","sharpness","tangible","valuable","variance","arguable","authority","avoidance","baroness","capacity","catalogue","chemical","clerical","columnist","creation","desirable","division","equation","explosion","extension","feasible","happiness","ideation","identity","ignorance","isolation","liability","likeable","lucidity","magnitude","modernism","mortality","nautical","pavement","placement","priority","profusion","proximity","quantity","scientist","sensible","sequence","sexuality","traceable","treatment","validity","variable","velocity","virtuous","whimsical","accumulation","acknowledgment","acquisition","adjustment","administrative","allegation","amplification","analytical","antichrist","antidisestablishmentarianism","application","appreciation","argumentation","arrangement","atlanticist","attractive","attractiveness","attributable","authoritative","awkwardness","betterment","bridgeable","cancellation","capitalism","carelessness","categorical","catholicism","censorship","championship","changeable","chauvinism","circulation","civilisation","classicist","cleverness","climatology","collectivity","colonialism","comfortable","commitment","communication","competition","completion","compliment","conciseness","concoction","conference","confidence","conscience","consecutive","consequence","consideration","constitutionalist","construction","consumption","contraction","convertible","correction","corruption","creativity","credibility","crossreference","culpability","cultivation","cylindrical","declarative","decommission","dedication","desiccation","differentiation","digestible","disability","disappointment","disconnection","disingenuous","dismissible","disputable","dissimulation","distinctiveness","distraction","distribution","ditransitive","ecclesiastical","electrical","elliptical","enlargement","entertainment","estimation","etymologist","evaluation","examination","excitement","excommunist","exhibition","exhortation","exposition","expression","expressionism","expurgation","extraterritoriality","fashionable","favourable","fellowship","fermentation","figurative","finlandisation","foolishness","foreignism","frustration","fulfilment","gynaecology","gynecology","highintensity","honourable","illumination","illustration","imaginable","imagination","immigration","imperative","implacable","implausible","implication","impossibility","impressionism","impressionist","improvement","inadmissible","inauguration","incredulity","indescribable","indestructible","indictable","indispensable","indistinguishable","inequality","inexhaustible","infiltration","informative","innovative","insincerity","insouciance"];
+    const C1={"capitalisation":"Grossschreibung","punctuation":"Zeichensetzung","ambiguity":"Mehrdeutigkeit","ambiguous":"mehrdeutig","adjective":"Adjektiv","hyphenated":"mit Bindestrich","apostrophes":"Apostrophe","capitalise":"grossschreiben","antecedent":"Vorläufer","apostrophe":"Apostroph","parenthesis":"Klammer","adjectives":"Adjektive","parliament":"Parlament","alternative":"Alternative","grammatical":"grammatikalisch","information":"Information","acceptable":"akzeptabel","transitive":"transitiv","translation":"Übersetzung","experience":"Erfahrung","university":"Universität","convention":"Konvention","modifiers":"Modifikatoren","unemployment":"Arbeitslosigkeit","intransitive":"intransitiv","subjunctive":"Konjunktiv","abbreviation":"Abkürzung","difference":"Unterschied","historical":"historisch","measurement":"Messung","relationship":"Beziehung","significance":"Bedeutung","administration":"Verwaltung","development":"Entwicklung","explanation":"Erklärung","metaphor":"Metapher","population":"Bevölkerung","preposition":"Präposition","conclusion":"Schlussfolgerung","connection":"Verbindung","continuous":"fortlaufend","destruction":"Zerstörung","distinction":"Unterscheidung","intelligence":"Intelligenz","preferable":"vorzuziehen","statistical":"statistisch","sustainable":"nachhaltig","compensation":"Entschädigung","correlation":"Korrelation","declaration":"Erklärung","environment":"Umwelt","impression":"Eindruck","infinitive":"Infinitiv","opposition":"Opposition","organisation":"Organisation","permissible":"zulässig","prohibition":"Verbot","publication":"Veröffentlichung","specialist":"Spezialist","transportation":"Transport","affordable":"erschwinglich","conversation":"Gespräch","description":"Beschreibung","diacritical":"diakritisch","discussion":"Diskussion","evangelical":"evangelisch","hypothetical":"hypothetisch","journalism":"Journalismus","journalist":"Journalist","parallelism":"Parallelismus","practicable":"durchführbar","pronouns":"Pronomen","temptation":"Versuchung","abstinence":"Enthaltsamkeit","advertisement":"Werbung","association":"Verband","collective":"kollektiv","commission":"Kommission","correctness":"Korrektheit","definition":"Definition","distinctive":"unverwechselbar","employment":"Beschäftigung","exaggeration":"Übertreibung","federalist":"Föderalist","governance":"Regierungsführung","homogeneous":"homogen","impracticable":"undurchführbar","impractical":"unpraktisch","introduction":"Einführung","observation":"Beobachtung","ophthalmology":"Augenheilkunde","originality":"Originalität","possibility":"Möglichkeit","preference":"Vorliebe","profession":"Beruf","pronunciation":"Aussprache","proportion":"Verhältnis","protagonist":"Protagonist","punishment":"Bestrafung","repetition":"Wiederholung","responsible":"verantwortlich","revolution":"Revolution","abstraction":"Abstraktion","acidification":"Versauerung","aggression":"Aggression","bowdlerisation":"Zensur","collectable":"sammelbar","conversion":"Umwandlung","counterintuitive":"kontraintuitiv","depreciation":"Abwertung","discontinuity":"Diskontinuität","exclamation":"Ausruf","geographical":"geografisch","homelessness":"Obdachlosigkeit","impossible":"unmöglich","initiative":"Initiative","investment":"Investition","miscellaneous":"verschiedenes","modifier":"Modifikator","morphology":"Morphologie","nominalisation":"Nominalisierung","nothingness":"Nichts","opportunity":"Gelegenheit","production":"Produktion","regression":"Rückgang","speciality":"Spezialität","superfluous":"überflüssig","television":"Fernsehen","terminology":"Terminologie","wilderness":"Wildnis","acceleration":"Beschleunigung","accessible":"zugänglich","accordance":"Übereinstimmung","actionable":"umsetzbar","adaptation":"Anpassung","americanism":"Amerikanismus","amortisation":"Amortisation","appearance":"Erscheinung","assumption":"Annahme","calculation":"Berechnung","charitable":"wohltätig","christianity":"Christentum","coincidence":"Zufall","comparability":"Vergleichbarkeit","complexity":"Komplexität","conjunction":"Konjunktion","conservatism":"Konservatismus","conservative":"konservativ","constitution":"Verfassung","constructive":"konstruktiv","consultation":"Beratung","contradiction":"Widerspruch","corporation":"Unternehmen","demography":"Demografie","depression":"Depression","discrimination":"Diskriminierung","dispensable":"entbehrlich","etymological":"etymologisch","exhaustive":"erschöpfend","experiment":"Experiment","familiarity":"Vertrautheit","forgivable":"verzeihlich","generation":"Generation","geopolitical":"geopolitisch","hyphenation":"Silbentrennung","identifiable":"identifizierbar","independence":"Unabhängigkeit","indicative":"Indikativ","inevitable":"unvermeidlich","inflection":"Beugung","initialism":"Initialwort","inquisition":"Inquisition","institution":"Institution","instruction":"Anweisung","integration":"Integration","knowledgeable":"sachkundig","manageable":"handhabbar","mathematical":"mathematisch","metaphorical":"metaphorisch","misdirection":"Irreführung","obsolescence":"Veralterung","paradoxical":"paradox","parenthetical":"in Klammern","picaresque":"pikarisch","picturesque":"malerisch","pleasurable":"angenehm","possession":"Besitz","precondition":"Voraussetzung","probability":"Wahrscheinlichkeit","procession":"Prozession","proliferation":"Verbreitung","pronounceable":"aussprechbar","readability":"Lesbarkeit","renaissance":"Renaissance","representative":"Vertreter","requirement":"Anforderung","responsibility":"Verantwortung","restrictive":"einschränkend","rhetoric":"Rhetorik","rhetorical":"rhetorisch","semicolon":"Semikolon","simplicity":"Einfachheit","substantive":"wesentlich","suggestion":"Vorschlag","transliteration":"Transliteration","unattractive":"unattraktiv","unshakable":"unerschütterlich","singular":"Singular","quotation":"Zitat","confusion":"Verwirrung","argument":"Argument","exception":"Ausnahme","judgment":"Urteil","causation":"Verursachung","majority":"Mehrheit","eponymous":"namensgebend","classical":"klassisch","existence":"Existenz","jihadist":"Dschihadist","numerical":"numerisch","religious":"religiös","terrorist":"Terrorist","analogue":"Analogon","identical":"identisch","islamism":"Islamismus","communist":"Kommunist","fraction":"Bruch","genitive":"Genitiv","insurance":"Versicherung","nauseous":"übel","precision":"Präzision","readable":"lesbar","syllable":"Silbe","testament":"Testament","tortuous":"gewunden","tradition":"Tradition","venerable":"ehrwürdig","aetiology":"Ätiologie","autarchy":"Autarkie","avocation":"Nebenbeschäftigung","chastity":"Keuschheit","concision":"Prägnanz","criticism":"Kritik","effective":"wirksam","enormity":"Ungeheuerlichkeit","euphemism":"Euphemismus","executive":"Geschäftsführer","geography":"Geografie","homologue":"Homolog","humility":"Demut","ideology":"Ideologie","memorable":"denkwürdig","nobility":"Adel","occasion":"Anlass","pomposity":"Aufgeblasenheit","sanction":"Sanktion","scalable":"skalierbar","secretive":"geheimnistuerisch","sensuous":"sinnlich","sharpness":"Schärfe","tangible":"greifbar","valuable":"wertvoll","variance":"Abweichung","arguable":"diskutierbar","authority":"Autorität","avoidance":"Vermeidung","baroness":"Baronin","capacity":"Kapazität","catalogue":"Katalog","chemical":"chemisch","clerical":"klerikal","columnist":"Kolumnist","creation":"Schöpfung","desirable":"wünschenswert","division":"Abteilung","equation":"Gleichung","explosion":"Explosion","extension":"Erweiterung","feasible":"machbar","happiness":"Glück","ideation":"Ideenfindung","identity":"Identität","ignorance":"Unwissenheit","isolation":"Isolation","liability":"Haftung","likeable":"sympathisch","lucidity":"Klarheit","magnitude":"Grössenordnung","modernism":"Modernismus","mortality":"Sterblichkeit","nautical":"nautisch","pavement":"Gehweg","placement":"Platzierung","priority":"Priorität","profusion":"Überfluss","proximity":"Nähe","quantity":"Menge","scientist":"Wissenschaftler","sensible":"vernünftig","sequence":"Reihenfolge","sexuality":"Sexualität","traceable":"rückverfolgbar","treatment":"Behandlung","validity":"Gültigkeit","variable":"Variable","velocity":"Geschwindigkeit","virtuous":"tugendhaft","whimsical":"launisch","accumulation":"Ansammlung","acknowledgment":"Anerkennung","acquisition":"Erwerb","adjustment":"Anpassung","administrative":"administrativ","allegation":"Behauptung","amplification":"Verstärkung","analytical":"analytisch","antichrist":"Antichrist","antidisestablishmentarianism":"Antidisestablishmentarianismus","application":"Bewerbung","appreciation":"Wertschätzung","argumentation":"Argumentation","arrangement":"Vereinbarung","atlanticist":"Atlantiker","attractive":"attraktiv","attractiveness":"Attraktivität","attributable":"zurechenbar","authoritative":"massgeblich","awkwardness":"Unbeholfenheit","betterment":"Verbesserung","bridgeable":"überbrückbar","cancellation":"Stornierung","capitalism":"Kapitalismus","carelessness":"Nachlässigkeit","categorical":"kategorisch","catholicism":"Katholizismus","censorship":"Zensur","championship":"Meisterschaft","changeable":"veränderlich","chauvinism":"Chauvinismus","circulation":"Umlauf","civilisation":"Zivilisation","classicist":"Klassizist","cleverness":"Klugheit","climatology":"Klimatologie","collectivity":"Kollektivität","colonialism":"Kolonialismus","comfortable":"bequem","commitment":"Engagement","communication":"Kommunikation","competition":"Wettbewerb","completion":"Fertigstellung","compliment":"Kompliment","conciseness":"Knappheit","concoction":"Gebräu","conference":"Konferenz","confidence":"Vertrauen","conscience":"Gewissen","consecutive":"aufeinanderfolgend","consequence":"Konsequenz","consideration":"Überlegung","constitutionalist":"Verfassungsrechtler","construction":"Bau","consumption":"Verbrauch","contraction":"Zusammenziehung","convertible":"wandelbar","correction":"Korrektur","corruption":"Korruption","creativity":"Kreativität","credibility":"Glaubwürdigkeit","crossreference":"Querverweis","culpability":"Schuldhaftigkeit","cultivation":"Anbau","cylindrical":"zylindrisch","declarative":"deklarativ","decommission":"stilllegen","dedication":"Hingabe","desiccation":"Austrocknung","differentiation":"Differenzierung","digestible":"verdaulich","disability":"Behinderung","disappointment":"Enttäuschung","disconnection":"Trennung","disingenuous":"unaufrichtig","dismissible":"abweisbar","disputable":"strittig","dissimulation":"Verstellung","distinctiveness":"Unverwechselbarkeit","distraction":"Ablenkung","distribution":"Verteilung","ditransitive":"ditransitiv","ecclesiastical":"kirchlich","electrical":"elektrisch","elliptical":"elliptisch","enlargement":"Vergrösserung","entertainment":"Unterhaltung","estimation":"Schätzung","etymologist":"Etymologe","evaluation":"Bewertung","examination":"Prüfung","excitement":"Aufregung","excommunist":"Exkommunist","exhibition":"Ausstellung","exhortation":"Ermahnung","exposition":"Ausstellung","expression":"Ausdruck","expressionism":"Expressionismus","expurgation":"Bereinigung","extraterritoriality":"Exterritorialität","fashionable":"modisch","favourable":"günstig","fellowship":"Gemeinschaft","fermentation":"Gärung","figurative":"figurativ","finlandisation":"Finnlandisierung","foolishness":"Torheit","foreignism":"Fremdwort","frustration":"Frustration","fulfilment":"Erfüllung","gynaecology":"Gynäkologie","gynecology":"Gynäkologie","highintensity":"hochintensiv","honourable":"ehrenhaft","illumination":"Beleuchtung","illustration":"Illustration","imaginable":"vorstellbar","imagination":"Vorstellungskraft","immigration":"Einwanderung","imperative":"Imperativ","implacable":"unversöhnlich","implausible":"unplausibel","implication":"Auswirkung","impossibility":"Unmöglichkeit","impressionism":"Impressionismus","impressionist":"Impressionist","improvement":"Verbesserung","inadmissible":"unzulässig","inauguration":"Amtseinführung","incredulity":"Ungläubigkeit","indescribable":"unbeschreiblich","indestructible":"unzerstörbar","indictable":"anklagbar","indispensable":"unverzichtbar","indistinguishable":"ununterscheidbar","inequality":"Ungleichheit","inexhaustible":"unerschöpflich","infiltration":"Infiltration","informative":"informativ","innovative":"innovativ","insincerity":"Unaufrichtigkeit","insouciance":"Sorglosigkeit"};
     const existing=new Set(rlState.cards.filter(c=>c.deckId==='deck_c1').map(c=>c.front));
-    C1_WORDS.forEach(w=>{
-      if(!existing.has(w)){
-        rlState.cards.push({id:'c1_'+w.replace(/\s/g,'_'),deckId:'deck_c1',front:w,back:'C1 Vokabular ✓',createdAt:Date.now(),tags:['c1','vokabular']});
+    Object.entries(C1).forEach(([en,de])=>{
+      if(!existing.has(en)){
+        rlState.cards.push({id:'c1_'+en.replace(/\s/g,'_'),deckId:'deck_c1',front:en,back:de,createdAt:Date.now(),tags:['c1','vokabular'],reversible:true});
+      }
+    });
+    // Fix existing cards that have placeholder back
+    rlState.cards.forEach(c=>{
+      if(c.deckId==='deck_c1'&&(c.back==='C1 Vokabular ✓'||!c.back)&&C1[c.front]){
+        c.back=C1[c.front];
+        if(!c.reversible)c.reversible=true;
       }
     });
   })();
@@ -40109,6 +40116,16 @@ function initRecallLabApp() {
           <button class="rl-btn rl-btn-secondary" style="width:100%;margin-top:12px" onclick="window.openGlobalTaskModal({tags:['recalllab','lernen']})">+ Neue Aufgabe</button>
         </div>
       </div>
+      <!-- Übersetzer -->
+      <div class="rl-card" style="margin-top:16px">
+        <div class="rl-card-title">🔄 Übersetzer → Lernkarte</div>
+        <div style="font-size:12px;color:#71717a;margin-bottom:12px">Englisch oder Deutsch eingeben — wird übersetzt und als Karte gespeichert.</div>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input type="text" class="rl-input" id="rlTranslateInput" placeholder="Wort oder Phrase eingeben..." style="flex:1" onkeydown="if(event.key==='Enter')window.rlTranslateAndSave()" />
+          <button class="rl-btn rl-btn-primary" id="rlTranslateBtn" onclick="window.rlTranslateAndSave()">🔄</button>
+        </div>
+        <div id="rlTranslateResult" style="font-size:13px;color:#a1a1aa"></div>
+      </div>
     `;
   }
   
@@ -40197,11 +40214,14 @@ function initRecallLabApp() {
     const phL = {new:"🆕",learning:"📖",relearning:"🔄",review:"📗"}[ph]||"🆕";
 
     let front = card.front||card.question||"", back = card.back||card.answer||"";
+    const needsTranslation = back === 'C1 Vokabular ✓' || back === '';
     let fLbl="", bLbl="";
-    if (card.reversible && Math.random()<0.5) { [front,back]=[back,front]; fLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇩🇪 → 🇬🇧</div>'; bLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇬🇧</div>'; }
-    else if (card.reversible) { fLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇬🇧 → 🇩🇪</div>'; bLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇩🇪</div>'; }
+    if (card.reversible && !needsTranslation && Math.random()<0.5) { [front,back]=[back,front]; fLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇩🇪 → 🇬🇧</div>'; bLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇬🇧</div>'; }
+    else if (card.reversible && !needsTranslation) { fLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇬🇧 → 🇩🇪</div>'; bLbl='<div style="color:#6366f1;font-size:11px;font-weight:600;margin-bottom:8px">🇩🇪</div>'; }
+    else if (needsTranslation) { fLbl='<div style="color:#ffd60a;font-size:11px;font-weight:600;margin-bottom:8px">🇬🇧 → 🇩🇪 (wird übersetzt...)</div>'; }
     const qH = isCloze ? renderCloze(front,false) : rlEsc(front);
-    const aH = isCloze ? renderCloze(front,true) : rlEsc(back);
+    const translateBtn = needsTranslation ? '<div id="rl-autotranslate-status" style="margin-top:8px;font-size:12px"><button class="rl-btn rl-btn-sm" style="font-size:11px" onclick="window.rlAutoTranslateCard(\''+card.id+'\')">🔄 Jetzt übersetzen</button></div>' : '';
+    const aH = needsTranslation ? '<span id="rl-review-back-text" style="color:#ffd60a">⚠️ Noch nicht übersetzt</span>' + translateBtn : (isCloze ? renderCloze(front,true) : '<span id="rl-review-back-text">' + rlEsc(back) + '</span>');
     const pA=getIntervalPreview(card,"again"),pH=getIntervalPreview(card,"hard"),pG=getIntervalPreview(card,"good"),pE=getIntervalPreview(card,"easy");
 
     document.getElementById("rl-content").innerHTML = `
@@ -40262,6 +40282,11 @@ function initRecallLabApp() {
     if (answerEl) answerEl.style.display = "block";
     if (hintEl) hintEl.style.display = "none";
     if (rateEl) rateEl.style.display = "flex";
+    // Auto-translate if needed
+    const card = reviewQueue[reviewIndex];
+    if (card && (card.back === 'C1 Vokabular ✓' || !card.back)) {
+      window.rlAutoTranslateCard(card.id);
+    }
   };
   
   window.rlRateCard = function(rating) {
@@ -40923,6 +40948,10 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
           </div>
         </div>
         <button class="rl-btn rl-btn-primary" onclick="window.rlNavigate('rl-review', {deckId:'${deckId}'})">Dieses Deck lernen</button>
+        ${deckId === 'deck_c1' ? (() => {
+          const untranslated = cards.filter(c => c.back === 'C1 Vokabular ✓' || !c.back).length;
+          return untranslated > 0 ? '<button class="rl-btn rl-btn-secondary" style="margin-left:8px" onclick="window.rlBatchTranslateC1()">🔄 ' + untranslated + ' Karten übersetzen</button>' : '<div style="margin-top:8px;font-size:12px;color:#30d158">✅ Alle Karten übersetzt</div>';
+        })() : ''}
         <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
           <label style="font-size:12px;color:#a1a1aa">Neue Karten pro Tag (dieses Deck):</label>
           <input type="number" min="1" max="200" class="rl-input" style="width:70px;padding:4px 8px;font-size:13px" value="${deck.newCardsPerDay !== undefined ? deck.newCardsPerDay : rlState.settings.newCardsPerDay}" onchange="window.rlUpdateDeckSetting('${deckId}','newCardsPerDay',parseInt(this.value))">
@@ -40934,6 +40963,7 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
           <div class="rl-list-item">
             <div style="flex:1;min-width:0">
               <div style="font-size:13px">${rlEsc(c.front || "")}</div>
+              <div style="font-size:11px;color:${c.back && c.back !== 'C1 Vokabular ✓' ? '#a1a1aa' : '#f59e0b'}">${c.back && c.back !== 'C1 Vokabular ✓' ? rlEsc(c.back) : '⚠️ Nicht übersetzt'}</div>
             </div>
             <button class="rl-btn rl-btn-sm rl-btn-secondary" onclick="window.rlNavigate('rl-editor', {cardId:'${c.id}'})">✏️</button>
           </div>
@@ -41386,6 +41416,102 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
       });
     } else {
       toast("warn", "Fehler", "Task-Modal nicht verfügbar. Bitte zur Hauptseite navigieren.");
+    }
+  };
+  
+  // ── Übersetzer ──
+  window.rlTranslateAndSave = async function() {
+    const inp = document.getElementById('rlTranslateInput');
+    const resultEl = document.getElementById('rlTranslateResult');
+    const btn = document.getElementById('rlTranslateBtn');
+    if (!inp || !resultEl) return;
+    const word = inp.value.trim();
+    if (!word) return;
+    
+    btn.disabled = true; btn.textContent = '⏳';
+    resultEl.innerHTML = '<span style="color:#71717a">Übersetze...</span>';
+    
+    try {
+      const resp = await window.callAI('Übersetze das folgende Wort/Phrase. Wenn es Englisch ist, übersetze auf Deutsch. Wenn es Deutsch ist, übersetze auf Englisch. Antworte NUR im Format: EN|DE (z.B. "ambiguity|Mehrdeutigkeit"). Kein anderer Text.\n\nWort: ' + word);
+      const parts = resp.split('|').map(s => s.trim());
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        resultEl.innerHTML = '<span style="color:#ef4444">Unerwartete Antwort: ' + rlEsc(resp) + '</span>';
+        return;
+      }
+      const en = parts[0], de = parts[1];
+      
+      // Save to RecallLab
+      rlSyncFromStorage();
+      const existing = rlState.cards.find(c => c.front?.toLowerCase() === en.toLowerCase() && c.deckId === 'deck_en_de');
+      if (existing) {
+        existing.back = de;
+        resultEl.innerHTML = '✅ <strong>' + rlEsc(en) + '</strong> → <strong>' + rlEsc(de) + '</strong> (aktualisiert)';
+      } else {
+        rlState.cards.push({ id: 'tr_' + Date.now(), deckId: 'deck_en_de', front: en, back: de, cardType: 'basic', reversible: true, createdAt: Date.now(), source: 'Übersetzer', srs: null });
+        resultEl.innerHTML = '✅ <strong>' + rlEsc(en) + '</strong> → <strong>' + rlEsc(de) + '</strong> — Karte erstellt!';
+      }
+      rlSave();
+      inp.value = '';
+    } catch(e) {
+      resultEl.innerHTML = '<span style="color:#ef4444">Fehler: ' + rlEsc(e.message) + '</span>';
+    } finally {
+      btn.disabled = false; btn.textContent = '🔄';
+    }
+  };
+  
+  // ── Auto-Translate C1 Karte bei Review ──
+  window.rlAutoTranslateCard = async function(cardId) {
+    rlSyncFromStorage();
+    const card = rlState.cards.find(c => c.id === cardId);
+    if (!card || !card.front) return;
+    
+    const el = document.getElementById('rl-autotranslate-status');
+    if (el) el.innerHTML = '<span style="color:#ffd60a">⏳ Übersetze...</span>';
+    
+    try {
+      const resp = await window.callAI('Übersetze das englische Wort ins Deutsche. Antworte NUR mit der deutschen Übersetzung, nichts anderes.\n\nWort: ' + card.front);
+      const translation = resp.trim().split('\n')[0].trim();
+      if (translation && translation.length < 100) {
+        card.back = translation;
+        rlSave();
+        // Update display
+        const backEl = document.getElementById('rl-review-back-text');
+        if (backEl) backEl.textContent = translation;
+        if (el) el.innerHTML = '<span style="color:#30d158">✅ ' + rlEsc(translation) + '</span>';
+      }
+    } catch(e) {
+      if (el) el.innerHTML = '<span style="color:#ef4444">Fehler</span>';
+    }
+  };
+  
+  // ── Batch Translate C1 ──
+  window.rlBatchTranslateC1 = async function() {
+    rlSyncFromStorage();
+    const untranslated = rlState.cards.filter(c => c.deckId === 'deck_c1' && (c.back === 'C1 Vokabular ✓' || !c.back || c.back === ''));
+    if (!untranslated.length) { rlToast('Alle C1-Karten sind bereits übersetzt!'); return; }
+    
+    const batch = untranslated.slice(0, 20); // 20 at a time
+    rlToast(batch.length + ' Karten werden übersetzt...', 'info');
+    
+    const words = batch.map(c => c.front).join(', ');
+    try {
+      const resp = await window.callAI('Übersetze folgende englische Wörter ins Deutsche. Antworte als Liste, ein Wort pro Zeile, Format: englisch|deutsch. Nur die Liste, kein anderer Text.\n\nWörter: ' + words);
+      const lines = resp.trim().split('\n');
+      let count = 0;
+      for (const line of lines) {
+        const parts = line.split('|').map(s => s.trim());
+        if (parts.length !== 2) continue;
+        const card = batch.find(c => c.front.toLowerCase() === parts[0].toLowerCase());
+        if (card && parts[1]) {
+          card.back = parts[1];
+          count++;
+        }
+      }
+      rlSave();
+      rlToast(count + '/' + batch.length + ' Karten übersetzt! ' + (untranslated.length - batch.length > 0 ? 'Noch ' + (untranslated.length - batch.length) + ' offen — nochmal klicken.' : '🎉 Alle fertig!'));
+      rlNavigate(rlCurrentRoute, rlCurrentParams);
+    } catch(e) {
+      rlToast('Fehler: ' + e.message, 'error');
     }
   };
   
