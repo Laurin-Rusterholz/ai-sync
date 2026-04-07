@@ -41432,7 +41432,11 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
     resultEl.innerHTML = '<span style="color:#71717a">Übersetze...</span>';
     
     try {
-      const resp = await window.callAI('Übersetze das folgende Wort/Phrase. Wenn es Englisch ist, übersetze auf Deutsch. Wenn es Deutsch ist, übersetze auf Englisch. Antworte NUR im Format: EN|DE (z.B. "ambiguity|Mehrdeutigkeit"). Kein anderer Text.\n\nWort: ' + word);
+      const resp = await callOpenAI(
+        [{ role: 'user', content: 'Übersetze: ' + word }],
+        'Du bist ein Übersetzer. Wenn das Wort Englisch ist, übersetze auf Deutsch. Wenn Deutsch, übersetze auf Englisch. Antworte NUR im Format: EN|DE (z.B. "ambiguity|Mehrdeutigkeit"). Kein anderer Text.',
+        { maxTokens: 50, temperature: 0.1 }
+      );
       const parts = resp.split('|').map(s => s.trim());
       if (parts.length !== 2 || !parts[0] || !parts[1]) {
         resultEl.innerHTML = '<span style="color:#ef4444">Unerwartete Antwort: ' + rlEsc(resp) + '</span>';
@@ -41469,7 +41473,11 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
     if (el) el.innerHTML = '<span style="color:#ffd60a">⏳ Übersetze...</span>';
     
     try {
-      const resp = await window.callAI('Übersetze das englische Wort ins Deutsche. Antworte NUR mit der deutschen Übersetzung, nichts anderes.\n\nWort: ' + card.front);
+      const resp = await callOpenAI(
+        [{ role: 'user', content: 'Übersetze ins Deutsche: ' + card.front }],
+        'Du bist ein Übersetzer Englisch→Deutsch. Antworte NUR mit der deutschen Übersetzung, ein Wort oder kurze Phrase. Nichts anderes.',
+        { maxTokens: 30, temperature: 0.1 }
+      );
       const translation = resp.trim().split('\n')[0].trim();
       if (translation && translation.length < 100) {
         card.back = translation;
@@ -41495,7 +41503,11 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
     
     const words = batch.map(c => c.front).join(', ');
     try {
-      const resp = await window.callAI('Übersetze folgende englische Wörter ins Deutsche. Antworte als Liste, ein Wort pro Zeile, Format: englisch|deutsch. Nur die Liste, kein anderer Text.\n\nWörter: ' + words);
+      const resp = await callOpenAI(
+        [{ role: 'user', content: 'Übersetze diese Wörter: ' + words }],
+        'Du bist ein Übersetzer Englisch→Deutsch. Übersetze jedes Wort. Antworte als Liste, ein Wort pro Zeile, Format: englisch|deutsch. Nur die Liste, kein anderer Text.',
+        { maxTokens: 1000, temperature: 0.1 }
+      );
       const lines = resp.trim().split('\n');
       let count = 0;
       for (const line of lines) {
