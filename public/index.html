@@ -7266,6 +7266,80 @@ function countEntities(data) {
   return count;
 }
 
+// ✅ FIX: Detaillierte Entity-Statistik für Sync-Verifikation
+// Gibt pro Entity-Typ (tasks, projects, notes, ...) die Anzahl zurück,
+// sowie Top-Level-Arrays und wichtige Felder. Wird vor/nach Push und Pull verglichen.
+function getSyncStats(data) {
+  const stats = {
+    entities: {},
+    totalEntities: 0,
+    arrays: {},
+    hasMeta: !!data?.meta,
+    hasSettings: !!data?._settings,
+    readingHubBooks: Array.isArray(data?._readingHubBooks?.books) ? data._readingHubBooks.books.length : 0,
+    timestamp: data?.meta?.updatedAt || null,
+    checksum: ''
+  };
+  if (data?.entities && typeof data.entities === 'object') {
+    for (const [k, col] of Object.entries(data.entities)) {
+      if (typeof col === 'object' && col !== null && !Array.isArray(col)) {
+        const n = Object.keys(col).length;
+        stats.entities[k] = n;
+        stats.totalEntities += n;
+      }
+    }
+  }
+  const arrKeys = ['reflections', 'quickTodos', 'pinnedItems', 'weeklyGoals', 'activityLog',
+                   'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots',
+                   '_importedBelege'];
+  for (const k of arrKeys) {
+    if (Array.isArray(data?.[k])) stats.arrays[k] = data[k].length;
+  }
+  if (data?.dailyGoals) stats.arrays.dailyGoals = Object.keys(data.dailyGoals).length;
+  // Kurzer Hash der Statistik für einen quick-equality-check
+  try {
+    const s = JSON.stringify({ e: stats.entities, a: stats.arrays, r: stats.readingHubBooks });
+    let h = 0;
+    for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+    stats.checksum = String(h);
+  } catch(e) {}
+  return stats;
+}
+
+// ✅ FIX: Vergleicht zwei Stat-Objekte. Gibt Array an Diskrepanzen zurück.
+function diffSyncStats(before, after) {
+  const diffs = [];
+  if (!before || !after) return ['missing_stats'];
+  const allKeys = new Set([...Object.keys(before.entities || {}), ...Object.keys(after.entities || {})]);
+  for (const k of allKeys) {
+    const b = before.entities[k] || 0;
+    const a = after.entities[k] || 0;
+    if (b !== a) diffs.push(k + ': ' + b + ' → ' + a);
+  }
+  const allArrKeys = new Set([...Object.keys(before.arrays || {}), ...Object.keys(after.arrays || {})]);
+  for (const k of allArrKeys) {
+    const b = before.arrays[k] || 0;
+    const a = after.arrays[k] || 0;
+    if (b !== a) diffs.push(k + ' [arr]: ' + b + ' → ' + a);
+  }
+  if ((before.readingHubBooks || 0) !== (after.readingHubBooks || 0)) {
+    diffs.push('readingHubBooks: ' + before.readingHubBooks + ' → ' + after.readingHubBooks);
+  }
+  return diffs;
+}
+
+function formatSyncStatsShort(stats) {
+  if (!stats) return '(keine)';
+  const parts = [];
+  if (stats.totalEntities != null) parts.push(stats.totalEntities + ' Entities');
+  const n = stats.entities?.notes || 0;
+  const t = stats.entities?.tasks || 0;
+  const p = stats.entities?.projects || 0;
+  parts.push(t + ' Tasks, ' + p + ' Projekte, ' + n + ' Notizen');
+  if (stats.readingHubBooks) parts.push(stats.readingHubBooks + ' Bücher');
+  return parts.join(' · ');
+}
+
 function mergeEntity(local, remote) {
   if (!local) return remote;
   if (!remote) return local;
@@ -7879,6 +7953,9 @@ async function manualTransferPush(silent = false) {
   payload.meta.lastManualTransferAt = now;
   payload.meta.transferVersionId = transferVersionId;
 
+  // ✅ FIX: Sync-Statistik VOR Push erstellen (für Verifikation)
+  const localStatsBefore = getSyncStats(payload);
+  console.log('[ManualPush] Lokale Statistik VOR Push:', formatSyncStatsShort(localStatsBefore), localStatsBefore);
   console.log('[ManualPush] Pushing to cloud. Entities:', countEntities(payload), 'Providers: Netlify=' + isBlobSyncConfigured() + ', Firebase=' + isFirebaseCloudAvailable());
 
   const appResults = [];
@@ -7895,22 +7972,80 @@ async function manualTransferPush(silent = false) {
 
   const okResults = appResults.filter(r => r && r.ok);
   if (okResults.length > 0) {
+    // ✅ FIX: Verifikation — direkt nach dem Upload vom Cloud lesen und vergleichen
+    let verifyStatus = 'ok';
+    let verifyDiffs = [];
+    try {
+      const readBack = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+      const latest = pickLatestRemoteCandidate(readBack);
+      if (latest && latest.data) {
+        const remoteStatsAfter = getSyncStats(latest.data);
+        verifyDiffs = diffSyncStats(localStatsBefore, remoteStatsAfter);
+        console.log('[ManualPush] Verifikation NACH Push:', formatSyncStatsShort(remoteStatsAfter), 'Diskrepanzen:', verifyDiffs);
+        if (verifyDiffs.length > 0) {
+          verifyStatus = 'mismatch';
+          console.warn('[ManualPush] ⚠️ Diskrepanz zwischen lokalem Push und Cloud-Read:', verifyDiffs);
+        }
+      } else {
+        verifyStatus = 'readback_failed';
+        console.warn('[ManualPush] ⚠️ Read-back nach Push fehlgeschlagen — Upload könnte unvollständig sein');
+      }
+    } catch(e) {
+      verifyStatus = 'verify_error';
+      console.warn('[ManualPush] Verifikation fehlgeschlagen:', e);
+    }
+
+    // Bei Mismatch: 1x Retry mit force
+    if (verifyStatus === 'mismatch') {
+      console.log('[ManualPush] 🔄 Retry mit force wegen Diskrepanz...');
+      if (!silent) toast('info', 'Verifikation', 'Unvollständig — wiederhole Upload...');
+      if (isBlobSyncConfigured()) await netlifyBlobPut(APP.state.settings.storage.blobKey, payload, { force: true, _retry412: true });
+      if (isFirebaseCloudAvailable()) await firebaseJsonPut(APP.state.settings.storage.blobKey, payload, { force: true });
+      // Erneut verifizieren
+      try {
+        const readBack2 = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+        const latest2 = pickLatestRemoteCandidate(readBack2);
+        if (latest2 && latest2.data) {
+          const stats2 = getSyncStats(latest2.data);
+          const diffs2 = diffSyncStats(localStatsBefore, stats2);
+          if (diffs2.length === 0) verifyStatus = 'ok_after_retry';
+          else { verifyStatus = 'mismatch_persists'; verifyDiffs = diffs2; }
+        }
+      } catch(e) { console.warn('[ManualPush] Re-Verifikation fehlgeschlagen:', e); }
+    }
+
     if (!APP.state.data.meta) APP.state.data.meta = {};
     APP.state.data.meta.transferVersionId = transferVersionId;
     APP.state.data.meta.lastManualTransferAt = now;
     APP.state.data.meta.lastSavedBy = getOrCreateDeviceId();
+    APP.state.data.meta.lastVerifyStatus = verifyStatus;
     APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now();
     APP.state.storage.lastRemoteProvider = okResults[0].provider;
-    APP.state.storage.status = 'saved';
-    APP.state.storage.message = 'Übertragen via ' + okResults.map(r => cloudProviderLabel(r.provider)).join(' + ');
+    APP.state.storage.status = (verifyStatus === 'ok' || verifyStatus === 'ok_after_retry') ? 'saved' : 'warning';
+    const providers = okResults.map(r => cloudProviderLabel(r.provider)).join(' + ');
+    if (verifyStatus === 'ok' || verifyStatus === 'ok_after_retry') {
+      APP.state.storage.message = 'Übertragen & verifiziert via ' + providers + ' · ' + formatSyncStatsShort(localStatsBefore);
+    } else if (verifyStatus === 'mismatch_persists') {
+      APP.state.storage.message = '⚠️ Unvollständiger Upload: ' + verifyDiffs.join(', ');
+    } else {
+      APP.state.storage.message = 'Übertragen via ' + providers + ' (Verifikation: ' + verifyStatus + ')';
+    }
     saveLocalData();
     updateSyncChip();
-    if (!silent) toast('ok', 'Übertragen', 'Cloud-Version gespeichert: ' + okResults.map(r => cloudProviderLabel(r.provider)).join(' + '));
+    if (!silent) {
+      if (verifyStatus === 'ok' || verifyStatus === 'ok_after_retry') {
+        toast('ok', 'Übertragen ✓', formatSyncStatsShort(localStatsBefore) + ' · ' + providers);
+      } else if (verifyStatus === 'mismatch_persists') {
+        toast('danger', 'Upload unvollständig', 'Diskrepanz: ' + verifyDiffs.slice(0, 3).join(', '));
+      } else {
+        toast('warn', 'Übertragen (Warnung)', 'Verifikation: ' + verifyStatus);
+      }
+    }
     // Sync PDFs to Firebase (non-blocking)
     syncPDFsToFirebase(silent).then(r => {
       if (r.uploaded > 0) console.log('[ManualPush] PDF sync: ' + r.uploaded + ' uploaded');
     }).catch(e => console.warn('[ManualPush] PDF sync error:', e));
-    return { ok: true, appResults, rhResults, transferVersionId };
+    return { ok: true, appResults, rhResults, transferVersionId, verifyStatus, verifyDiffs, stats: localStatsBefore };
   }
 
   const failures = appResults.map(r => {
@@ -7978,6 +8113,12 @@ async function manualTransferPull(silent = false) {
   await idbBackup(APP.state.data, 'manual_pull_' + Date.now());
   _syncLockActive = true;
   try {
+    // ✅ FIX: Cloud-Statistik VOR der Übernahme erfassen
+    const cloudStatsBefore = getSyncStats(chosen.data);
+    const localStatsBefore = getSyncStats(APP.state.data);
+    console.log('[ManualPull] Cloud-Daten:', formatSyncStatsShort(cloudStatsBefore), cloudStatsBefore);
+    console.log('[ManualPull] Lokale Daten (vorher):', formatSyncStatsShort(localStatsBefore));
+
     const incoming = normalizeData(chosen.data);
     APP.state.data = incoming;
 
@@ -8009,18 +8150,40 @@ async function manualTransferPull(silent = false) {
 
     _saveDirty = false;
     saveLocalData();
-    APP.state.storage.status = 'saved';
+
+    // ✅ FIX: Verifikation NACH Pull — lokale Stats mit Cloud-Stats vergleichen
+    const localStatsAfter = getSyncStats(APP.state.data);
+    const pullDiffs = diffSyncStats(cloudStatsBefore, localStatsAfter);
+    let pullVerify = 'ok';
+    if (pullDiffs.length > 0) {
+      pullVerify = 'mismatch';
+      console.warn('[ManualPull] ⚠️ Diskrepanz zwischen Cloud und lokal NACH Pull:', pullDiffs);
+    } else {
+      console.log('[ManualPull] ✓ Verifikation OK:', formatSyncStatsShort(localStatsAfter));
+    }
+    if (!APP.state.data.meta) APP.state.data.meta = {};
+    APP.state.data.meta.lastPullVerifyStatus = pullVerify;
+
+    APP.state.storage.status = pullVerify === 'ok' ? 'saved' : 'warning';
     APP.state.storage.lastRemoteProvider = chosen.provider;
     APP.state.storage.lastRemoteSeenAt = getDataTimestamp(chosen.data) || Date.now();
-    APP.state.storage.message = 'Übernommen von ' + cloudProviderLabel(chosen.provider);
+    APP.state.storage.message = pullVerify === 'ok'
+      ? ('Übernommen von ' + cloudProviderLabel(chosen.provider) + ' · ' + formatSyncStatsShort(localStatsAfter))
+      : ('⚠️ Unvollständiger Pull: ' + pullDiffs.join(', '));
     updateSyncChip();
     if (typeof render === 'function') render();
-    if (!silent) toast('ok', 'Übernommen', 'Neueste Cloud-Version übernommen' + (appCandidates.length > 1 ? ' (' + cloudProviderLabel(chosen.provider) + ' war neuer)' : ''));
+    if (!silent) {
+      if (pullVerify === 'ok') {
+        toast('ok', 'Übernommen ✓', formatSyncStatsShort(localStatsAfter) + ' · ' + cloudProviderLabel(chosen.provider));
+      } else {
+        toast('danger', 'Pull unvollständig', 'Diskrepanz: ' + pullDiffs.slice(0, 3).join(', '));
+      }
+    }
     // Download PDFs from Firebase (non-blocking)
     syncPDFsFromFirebase(silent).then(r => {
       if (r.downloaded > 0) console.log('[ManualPull] PDF sync: ' + r.downloaded + ' downloaded');
     }).catch(e => console.warn('[ManualPull] PDF sync error:', e));
-    return { ok: true, provider: chosen.provider, updatedAt: incoming?.meta?.updatedAt || '' };
+    return { ok: true, provider: chosen.provider, updatedAt: incoming?.meta?.updatedAt || '', verifyStatus: pullVerify, verifyDiffs: pullDiffs, stats: localStatsAfter };
   } catch (e) {
     console.warn('Manual cloud pull failed:', e);
     APP.state.storage.status = 'error';
@@ -27472,6 +27635,19 @@ window.fetchBelege = async function(showToast) {
       const belegNr = 'BEL-' + String(APP.state.data._nextBelegNr).padStart(4, '0');
       APP.state.data._nextBelegNr++;
       
+      // ✅ FIX: Bevorzugt firebaseUrl (direkter Link zur Datei), sonst Netlify-Fallback
+      // Das SP-AR-Formular lädt Dateien direkt zu Firebase Storage hoch und sendet
+      // die firebaseUrl im Payload mit. Wenn verfügbar, diese direkt verwenden.
+      let fileUrl = null;
+      if (b.hasFile) {
+        if (b.firebaseUrl && b.firebaseUrl.startsWith('http')) {
+          fileUrl = b.firebaseUrl;
+        } else {
+          // Fallback: alter Pfad über Netlify Function (für ältere Belege)
+          fileUrl = window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id;
+        }
+      }
+      
       // Create task
       createEntity("task", {
         title: "📄 " + belegNr + ": " + b.title + " (CHF " + (b.amount || 0).toFixed(2) + ")",
@@ -27481,19 +27657,35 @@ window.fetchBelege = async function(showToast) {
           "Fällig: " + (b.dueDate || "Kein Datum") + "\n" +
           "Bezahlt: " + (b.paid ? "Ja" : "Nein") + "\n" +
           (b.comment ? "Kommentar: " + b.comment + "\n" : "") +
-          (b.hasFile ? "\nDatei: " + (b.fileName || "Anhang") + "\n" + window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id : "\nKein Dokument angehängt"),
+          (b.hasFile && fileUrl ? "\n📎 Datei: " + (b.fileName || "Anhang") + "\n🔗 " + fileUrl : "\nKein Dokument angehängt"),
         status: "todo",
         priority: b.paid ? 4 : 2,
         dueDate: b.dueDate || null,
         tags: ["beleg", "sp-ar", b.paid ? "bezahlt" : "offen"],
         belegId: b.id,
         belegNr: belegNr,
+        // ✅ FIX: Attachments-Array wie bei normalen Tasks füllen,
+        // damit die Datei im Task sichtbar ist
+        attachments: b.hasFile && fileUrl ? [{
+          id: 'att_beleg_' + b.id,
+          name: b.fileName || 'Beleg-Anhang',
+          url: fileUrl,
+          type: b.fileType || 'application/octet-stream',
+          size: b.fileSize || 0,
+          source: 'firebase',
+          firebasePath: b.firebasePath || null,
+          uploadedAt: b.submittedAt || new Date().toISOString()
+        }] : [],
         belegData: {
           name: b.name,
           amount: b.amount,
           paid: b.paid,
           fileName: b.fileName,
-          fileUrl: b.hasFile ? window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id : null,
+          fileType: b.fileType || null,
+          fileSize: b.fileSize || null,
+          fileUrl: fileUrl,
+          firebaseUrl: b.firebaseUrl || null,
+          firebasePath: b.firebasePath || null,
           portalId: b.id,
         },
       });
@@ -43452,15 +43644,58 @@ function resetShortcutsToDefaults() {
 }
 
 function exportAllData() {
+  // ✅ FIX: Kompletter Snapshot inkl. ReadingHub, RecallLab etc. (via buildRemoteAppPayload)
+  // Dies sorgt dafür, dass ALLE Daten (nicht nur APP.state.data) im Export enthalten sind.
+  let remotePayload = null;
+  try {
+    if (typeof buildRemoteAppPayload === 'function') {
+      remotePayload = buildRemoteAppPayload();
+    }
+  } catch(e) { console.warn('[Export] buildRemoteAppPayload failed:', e); }
+
+  // ReadingHub Cloud-Payload separat sichern (Bücher, Annotationen, Vocabulary, Bookmarks, Settings)
+  let readingHubPayload = null;
+  try {
+    if (typeof buildReadingHubCloudPayload === 'function') {
+      readingHubPayload = buildReadingHubCloudPayload();
+    }
+  } catch(e) { console.warn('[Export] buildReadingHubCloudPayload failed:', e); }
+
+  const dataToExport = remotePayload || APP.state.data;
+  const stats = (typeof getSyncStats === 'function') ? getSyncStats(dataToExport) : null;
+
   const exportData = {
     version: VERSION,
     schemaVersion: SCHEMA_VERSION,
     exportedAt: nowIso(),
-    data: APP.state.data,
-    settings: APP.state.settings
+    deviceId: (typeof getOrCreateDeviceId === 'function') ? getOrCreateDeviceId() : null,
+    data: dataToExport,
+    settings: APP.state.settings,
+    // Separater ReadingHub-Payload zusätzlich (Redundanz für vollständiges Backup)
+    readingHub: readingHubPayload,
+    // Zusätzliche localStorage-Werte die nicht in data stecken
+    extraStorage: (() => {
+      const extra = {};
+      try {
+        const keys = ['recalllab', 'readinghub-books', 'readinghub-annotations', 'readinghub-vocabulary',
+                      'readinghub-bookmarks', 'readinghub-settings'];
+        for (const k of keys) {
+          const v = localStorage.getItem(k);
+          if (v) extra[k] = v;
+        }
+      } catch(e) {}
+      return extra;
+    })(),
+    stats: stats,
+    _integrity: {
+      totalEntities: stats?.totalEntities || 0,
+      entityBreakdown: stats?.entities || {},
+      checksum: stats?.checksum || '',
+    }
   };
-  
-  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+
+  const json = JSON.stringify(exportData, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -43469,8 +43704,12 @@ function exportAllData() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  
-  toast("ok", "Exportiert", "Daten wurden als JSON exportiert");
+
+  const msg = stats
+    ? (typeof formatSyncStatsShort === 'function' ? formatSyncStatsShort(stats) : (stats.totalEntities + ' Entities'))
+    : 'JSON exportiert';
+  console.log('[Export] Erfolgreich:', msg, 'Size:', Math.round(json.length / 1024) + ' KB');
+  toast("ok", "Exportiert ✓", msg + ' · ' + Math.round(json.length / 1024) + ' KB');
 }
 
 function importDataFromFile(input) {
@@ -43487,20 +43726,65 @@ function importDataFromFile(input) {
         return;
       }
       
-      if (confirm("Achtung: Alle vorhandenen Daten werden überschrieben! Fortfahren?")) {
+      // ✅ FIX: Stats aus dem Import-File anzeigen vor dem Bestätigen
+      const importStats = (typeof getSyncStats === 'function') ? getSyncStats(imported.data) : null;
+      const statsMsg = importStats
+        ? (typeof formatSyncStatsShort === 'function' ? formatSyncStatsShort(importStats) : (importStats.totalEntities + ' Entities'))
+        : 'unbekannter Inhalt';
+
+      if (confirm("Achtung: Alle vorhandenen Daten werden überschrieben!\n\nImport enthält: " + statsMsg + "\n\nFortfahren?")) {
         APP.state.data = normalizeData(imported.data);
         if (imported.settings) {
-          APP.state.settings = { ...APP.state.settings, ...imported.settings };
+          const preservedStorage = { ...(APP.state.settings?.storage || {}) };
+          APP.state.settings = { ...APP.state.settings, ...imported.settings, storage: preservedStorage };
           saveSettings(APP.state.settings);
         }
+
+        // ✅ FIX: ReadingHub-Payload wiederherstellen, falls vorhanden
+        try {
+          if (imported.readingHub && typeof persistReadingHubCloudPayload === 'function') {
+            persistReadingHubCloudPayload(imported.readingHub);
+            console.log('[Import] ReadingHub restored');
+          }
+        } catch(err) { console.warn('[Import] ReadingHub restore failed:', err); }
+
+        // ✅ FIX: extraStorage (RecallLab, ReadingHub raw) wiederherstellen
+        try {
+          if (imported.extraStorage && typeof imported.extraStorage === 'object') {
+            for (const [k, v] of Object.entries(imported.extraStorage)) {
+              if (typeof v === 'string') localStorage.setItem(k, v);
+            }
+            console.log('[Import] extraStorage restored:', Object.keys(imported.extraStorage));
+          }
+        } catch(err) { console.warn('[Import] extraStorage restore failed:', err); }
+
+        // Fallback: RecallLab aus imported.data.recallLabData
+        try {
+          if (imported.data.recallLabData && typeof imported.data.recallLabData === 'object') {
+            localStorage.setItem('recalllab', JSON.stringify(imported.data.recallLabData));
+          }
+        } catch(err) { console.warn('[Import] RecallLab fallback failed:', err); }
+
         saveLocalData();
+
+        // ✅ FIX: Verifikation nach Import
+        const afterStats = (typeof getSyncStats === 'function') ? getSyncStats(APP.state.data) : null;
+        const diffs = (typeof diffSyncStats === 'function' && importStats && afterStats)
+          ? diffSyncStats(importStats, afterStats)
+          : [];
+        if (diffs.length > 0) {
+          console.warn('[Import] ⚠️ Diskrepanz zwischen File und lokal:', diffs);
+        } else {
+          console.log('[Import] ✓ Verifikation OK:', afterStats ? formatSyncStatsShort(afterStats) : '');
+        }
+
         closeModal();
         render();
-        toast("ok", "Importiert", "Daten wurden erfolgreich importiert");
+        toast("ok", "Importiert ✓", statsMsg + (diffs.length ? ' (⚠️ ' + diffs.length + ' Diskrepanzen)' : ''));
       }
     } catch (err) {
       console.error("Import error:", err);
-      toast("warn", "Fehler", "Datei konnte nicht gelesen werden");
+      toast("warn", "Fehler", "Datei konnte nicht gelesen werden: " + (err?.message || ''));
     }
   };
   reader.readAsText(file);
