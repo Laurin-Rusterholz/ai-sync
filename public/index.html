@@ -60669,248 +60669,214 @@ setInterval(()=>{
 </script>
 
 <!-- ============================================================================
-     GLOBAL FLOATING TIMER - sichtbar in jeder App (höchster z-index)
+     GLOBALER TIMER – integriert sich direkt in den Header jeder sichtbaren App
+     (Haupt-Topbar, NoteFlow, Journal Booklet, Newsroom Hub, ReadingHub usw.)
 ============================================================================ -->
 <style>
-  #globalFloatingTimer {
-    position: fixed;
-    top: 14px;
-    right: 16px;
-    z-index: 9999999;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: rgba(20, 20, 24, 0.92);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.2);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: 13px;
-    color: #fff;
-    user-select: none;
-    transition: all 0.2s ease;
-    cursor: default;
-  }
-  #globalFloatingTimer.running {
-    background: rgba(255, 59, 48, 0.18);
-    border-color: rgba(255, 59, 48, 0.45);
-    box-shadow: 0 8px 24px rgba(255, 59, 48, 0.25), 0 2px 6px rgba(0, 0, 0, 0.3);
-  }
-  #globalFloatingTimer.minimized {
-    padding: 6px 10px;
-  }
-  #globalFloatingTimer .gft-start-btn {
-    background: transparent;
-    border: none;
-    color: #fff;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 4px 8px;
-    border-radius: 8px;
-    display: flex;
+  .gti-widget {
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    transition: background 0.15s;
-    font-weight: 600;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 9px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 12px;
+    color: inherit;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    white-space: nowrap;
+    line-height: 1;
+    height: 30px;
+    box-sizing: border-box;
   }
-  #globalFloatingTimer .gft-start-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
+  .gti-widget:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
   }
-  #globalFloatingTimer .gft-running-row {
-    display: none;
-    align-items: center;
-    gap: 8px;
+  .gti-widget.running {
+    background: rgba(255, 59, 48, 0.15);
+    border-color: rgba(255, 59, 48, 0.4);
+    color: #ff6b60;
   }
-  #globalFloatingTimer.running .gft-start-btn { display: none; }
-  #globalFloatingTimer.running .gft-running-row { display: flex; }
-  #globalFloatingTimer .gft-label {
-    max-width: 180px;
+  .gti-widget.running:hover {
+    background: rgba(255, 59, 48, 0.22);
+  }
+  .gti-widget .gti-icon {
+    font-size: 13px;
+    line-height: 1;
+  }
+  .gti-widget.running .gti-icon {
+    animation: gtiPulse 2s infinite ease-in-out;
+  }
+  .gti-widget .gti-label {
+    max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
     font-weight: 500;
-    font-size: 12px;
-    opacity: 0.92;
+    font-size: 11px;
+    opacity: 0.85;
   }
-  #globalFloatingTimer .gft-time {
+  .gti-widget .gti-time {
     font-weight: 700;
     font-variant-numeric: tabular-nums;
-    color: #ff6b60;
-    font-size: 13px;
-    min-width: 48px;
-    text-align: right;
+    font-size: 12px;
   }
-  #globalFloatingTimer .gft-icon {
-    font-size: 14px;
-    animation: gftPulse 2s infinite ease-in-out;
-  }
-  #globalFloatingTimer .gft-stop {
-    background: rgba(255, 59, 48, 0.2);
-    border: none;
-    color: #ff6b60;
-    cursor: pointer;
-    width: 26px;
-    height: 26px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    transition: background 0.15s;
-  }
-  #globalFloatingTimer .gft-stop:hover {
-    background: rgba(255, 59, 48, 0.35);
-  }
-  #globalFloatingTimer .gft-collapse {
+  .gti-widget .gti-stop-btn {
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.5);
+    color: inherit;
     cursor: pointer;
-    padding: 2px 4px;
     font-size: 11px;
-    border-radius: 4px;
+    padding: 0 4px;
+    opacity: 0.8;
+    line-height: 1;
   }
-  #globalFloatingTimer .gft-collapse:hover { color: #fff; }
-  @keyframes gftPulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(0.92); }
+  .gti-widget .gti-stop-btn:hover { opacity: 1; }
+  @keyframes gtiPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
   }
-  /* Kompakt-Modus: nur Icon sichtbar */
-  #globalFloatingTimer.collapsed .gft-label,
-  #globalFloatingTimer.collapsed .gft-time,
-  #globalFloatingTimer.collapsed .gft-stop,
-  #globalFloatingTimer.collapsed .gft-start-text {
-    display: none;
+  /* Hellmodus für Sub-Apps mit hellem Hintergrund */
+  .gti-widget.light {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #111;
   }
-  #globalFloatingTimer.collapsed .gft-running-row {
-    display: flex !important;
-    gap: 0;
-  }
-  /* Hellmodus-Anpassungen */
-  @media (prefers-color-scheme: light) {
-    #globalFloatingTimer {
-      background: rgba(255, 255, 255, 0.92);
-      border-color: rgba(0, 0, 0, 0.1);
-      color: #111;
-    }
-    #globalFloatingTimer .gft-start-btn { color: #111; }
-    #globalFloatingTimer .gft-start-btn:hover { background: rgba(0, 0, 0, 0.06); }
-  }
-  /* Mobile */
+  .gti-widget.light:hover { background: rgba(0, 0, 0, 0.08); }
   @media (max-width: 640px) {
-    #globalFloatingTimer {
-      top: 8px;
-      right: 8px;
-      padding: 6px 10px;
-      font-size: 12px;
-    }
-    #globalFloatingTimer .gft-label { max-width: 100px; }
+    .gti-widget .gti-label { max-width: 80px; }
   }
-  /* Print: verstecken */
-  @media print {
-    #globalFloatingTimer { display: none !important; }
-  }
+  @media print { .gti-widget { display: none !important; } }
 </style>
-
-<div id="globalFloatingTimer" class="" title="Timer">
-  <button class="gft-start-btn" onclick="window.gftOpenStartModal()" title="Timer starten">
-    <span class="gft-icon">⏱️</span>
-    <span class="gft-start-text">Timer</span>
-  </button>
-  <div class="gft-running-row">
-    <span class="gft-icon">⏱️</span>
-    <span class="gft-label" id="gftLabel" onclick="window.gftNavigateToEntity()" style="cursor:pointer"></span>
-    <span class="gft-time" id="gftTime">0:00</span>
-    <button class="gft-stop" onclick="window.gftStop()" title="Stoppen">⏹</button>
-  </div>
-  <button class="gft-collapse" onclick="window.gftToggleCollapse()" title="Minimieren/Maximieren">⇔</button>
-</div>
 
 <script>
 (function(){
   'use strict';
 
-  // Merken des Collapse-Status in localStorage
-  const COLLAPSE_KEY = '_gft_collapsed';
-  try {
-    if (localStorage.getItem(COLLAPSE_KEY) === '1') {
-      document.getElementById('globalFloatingTimer')?.classList.add('collapsed');
-    }
-  } catch(e) {}
+  // ── Ziel-Header-Elemente identifizieren ─────────────────────────────
+  // Jeder Eintrag: { find: Selector für aktiven Container,
+  //                  into: Selector innerhalb, wo das Widget landet (append),
+  //                  lightBg: ob heller Hintergrund (für Kontrast) }
+  const HEADER_TARGETS = [
+    // NoteFlow — helle Editor-Umgebung
+    { find: '.nf-view.active .nf-header', into: '.nf-view.active .nf-header .nf-header-actions', lightBg: true },
+    // Journal Booklet — eigene Nav
+    { find: '.jb-container.active', into: '.jb-container.active .jb-nav-links', lightBg: false },
+    // Newsroom Hub (.nh)
+    { find: '.nh[style*="display: flex"], .nh[style*="display:flex"]', into: '.nh .nh-header, .nh header', lightBg: false },
+    // ReadingHub — eigene rh-header
+    { find: '.rh-header', into: '.rh-header .rh-header-actions, .rh-header', lightBg: false },
+  ];
 
-  window.gftToggleCollapse = function() {
-    const el = document.getElementById('globalFloatingTimer');
-    if (!el) return;
-    el.classList.toggle('collapsed');
-    try { localStorage.setItem(COLLAPSE_KEY, el.classList.contains('collapsed') ? '1' : '0'); } catch(e) {}
-  };
+  function buildWidgetHtml(id) {
+    return '<button class="gti-widget" id="' + id + '" type="button" title="Timer">' +
+      '<span class="gti-icon">⏱️</span>' +
+      '<span class="gti-start-text">Timer</span>' +
+      '<span class="gti-running-parts" style="display:none;align-items:center;gap:6px">' +
+        '<span class="gti-label"></span>' +
+        '<span class="gti-time"></span>' +
+        '<span class="gti-stop-btn" title="Stoppen">⏹</span>' +
+      '</span>' +
+    '</button>';
+  }
 
-  // Öffnet das Timer-Start-Modal.
-  // Priorität 1: openManualTimerModal (die existierende App-Funktion mit Tabs: Manuell / Aufgabe / Projekt)
-  // Fallback: eigenes einfaches Prompt-Modal
-  window.gftOpenStartModal = function() {
+  // Widget in alle relevanten Headers injizieren, wenn es fehlt
+  function injectWidgets() {
+    HEADER_TARGETS.forEach((target, i) => {
+      // Nur wenn Container aktuell sichtbar/aktiv ist
+      let container;
+      try { container = document.querySelector(target.find); } catch(e) { return; }
+      if (!container) return;
+      // Prüfen, ob bereits vorhanden
+      const widgetId = 'gtiWidget_' + i;
+      if (document.getElementById(widgetId)) return;
+      // Zielelement für Insertion suchen
+      let host = null;
+      const intoList = target.into.split(',').map(s => s.trim());
+      for (const sel of intoList) {
+        try { host = document.querySelector(sel); } catch(e) {}
+        if (host) break;
+      }
+      if (!host) return;
+      // Einfügen
+      const tmp = document.createElement('div');
+      tmp.innerHTML = buildWidgetHtml(widgetId);
+      const widgetEl = tmp.firstChild;
+      if (target.lightBg) widgetEl.classList.add('light');
+      // Click-Handler
+      widgetEl.addEventListener('click', (e) => {
+        // Wenn Stop-Button geklickt: stoppen statt Modal öffnen
+        if (e.target && e.target.classList.contains('gti-stop-btn')) {
+          e.stopPropagation();
+          stopRunningTimer();
+          return;
+        }
+        // Wenn Timer gerade läuft: nichts tun (Label ist sichtbar)
+        if (widgetEl.classList.contains('running')) {
+          // Click auf Label → zur Entity navigieren
+          navigateToRunningEntity();
+          return;
+        }
+        openTimerModal();
+      });
+      // In NoteFlow-Header (helle Buttons rechts): vor dem "+ Neue Notiz"-Button einfügen
+      if (host.firstChild && host.classList?.contains('nf-header-actions')) {
+        host.insertBefore(widgetEl, host.firstChild);
+      } else {
+        host.appendChild(widgetEl);
+      }
+    });
+  }
+
+  function openTimerModal() {
     if (typeof window.openManualTimerModal === 'function') {
-      try { window.openManualTimerModal(); return; } catch(e) { console.warn('[GFT] openManualTimerModal failed:', e); }
+      try { window.openManualTimerModal(); return; } catch(e) { console.warn('[GTI] openManualTimerModal failed:', e); }
     }
-    // Fallback — falls die App-Funktion nicht verfügbar ist (z.B. vor dem Laden)
+    // Fallback
     const label = prompt('Was machst du gerade? (Timer-Beschreibung)');
     if (!label || !label.trim()) return;
-    gftStartManualTimer(label.trim());
-  };
-
-  // Fallback-Starter: Manueller Timer ohne Modal
-  function gftStartManualTimer(label) {
     if (typeof APP === 'undefined' || !APP.state) return;
     if (!APP.state.data.timers) APP.state.data.timers = {};
     const timerId = 'manual_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
     APP.state.data.timers[timerId] = {
       startTs: new Date().toISOString(),
-      manualLabel: label,
-      note: label,
+      manualLabel: label.trim(),
+      note: label.trim(),
       category: '',
       createdAt: new Date().toISOString()
     };
     if (typeof scheduleSave === 'function') scheduleSave();
-    if (typeof toast === 'function') toast('ok', '▶️ Timer gestartet', label);
-    gftTick();
+    if (typeof toast === 'function') toast('ok', '▶️ Timer gestartet', label.trim());
   }
 
-  // Stoppt den aktuell laufenden Timer und erfasst Zeit
-  window.gftStop = function() {
+  function stopRunningTimer() {
     if (typeof APP === 'undefined' || !APP.state?.data?.timers) return;
-    const timers = APP.state.data.timers;
-    const runningEntries = Object.entries(timers).filter(([, t]) => t && t.startTs);
-    if (runningEntries.length === 0) return;
-    const [timerId, timer] = runningEntries[0];
-
-    // Bevorzugt: existierende App-Funktionen (korrektes Zeit-Tracking)
+    const running = Object.entries(APP.state.data.timers).filter(([, t]) => t && t.startTs);
+    if (running.length === 0) return;
+    const [timerId, timer] = running[0];
     if (timerId.startsWith('manual_') && typeof window.stopManualTimer === 'function') {
-      try { window.stopManualTimer(timerId); gftTick(); return; } catch(e) { console.warn('[GFT] stopManualTimer failed:', e); }
+      try { window.stopManualTimer(timerId); return; } catch(e) { console.warn('[GTI] stopManualTimer failed:', e); }
     }
     if (typeof window.headerTimerStop === 'function') {
-      try { window.headerTimerStop(); gftTick(); return; } catch(e) { console.warn('[GFT] headerTimerStop failed:', e); }
+      try { window.headerTimerStop(); return; } catch(e) { console.warn('[GTI] headerTimerStop failed:', e); }
     }
-
-    // Fallback: Timer einfach entfernen
     const elapsed = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
-    delete timers[timerId];
+    delete APP.state.data.timers[timerId];
     if (typeof scheduleSave === 'function') scheduleSave();
     if (typeof toast === 'function') {
       const m = Math.floor(elapsed / 60), s = elapsed % 60;
-      toast('ok', '⏹ Timer gestoppt', m + ':' + String(s).padStart(2, '0') + ' Min erfasst');
+      toast('ok', '⏹ Timer gestoppt', m + ':' + String(s).padStart(2, '0') + ' erfasst');
     }
-    gftTick();
-  };
+  }
 
-  // Navigation: wenn ein Task/Projekt den Timer hat, hinspringen
-  window.gftNavigateToEntity = function() {
+  function navigateToRunningEntity() {
     if (typeof APP === 'undefined' || !APP.state?.data?.timers) return;
-    const runningEntries = Object.entries(APP.state.data.timers).filter(([, t]) => t && t.startTs);
-    if (runningEntries.length === 0) return;
-    const [timerId] = runningEntries[0];
+    const running = Object.entries(APP.state.data.timers).filter(([, t]) => t && t.startTs);
+    if (running.length === 0) return;
+    const [timerId] = running[0];
     if (typeof window.navigate !== 'function') return;
     try {
       if (typeof window.getEntity === 'function') {
@@ -60919,69 +60885,82 @@ setInterval(()=>{
       }
       if (timerId.startsWith('project-')) {
         window.navigate('projects', timerId.replace('project-', ''));
-        return;
       }
-    } catch(e) { console.warn('[GFT] navigate failed:', e); }
-  };
+    } catch(e) { console.warn('[GTI] navigate failed:', e); }
+  }
 
-  // Aktualisierung: Widget-Inhalt und Klassen anhand der Timer-Daten neu setzen
-  function gftTick() {
-    const el = document.getElementById('globalFloatingTimer');
-    if (!el) return;
-    if (typeof APP === 'undefined' || !APP.state?.data) {
-      el.classList.remove('running');
-      return;
-    }
+  // Widget-Anzeige alle 1 s aktualisieren
+  function updateAllWidgets() {
+    if (typeof APP === 'undefined' || !APP.state?.data) return;
     const timers = APP.state.data.timers || {};
     const running = Object.entries(timers).filter(([, t]) => t && t.startTs);
 
-    if (running.length === 0) {
-      el.classList.remove('running');
-      return;
+    let label = '', timeStr = '', isRunning = false;
+    if (running.length > 0) {
+      isRunning = true;
+      const [timerId, timer] = running[0];
+      const elapsed = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
+      const h = Math.floor(elapsed / 3600);
+      const m = Math.floor((elapsed % 3600) / 60);
+      const s = elapsed % 60;
+      timeStr = h > 0
+        ? h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0')
+        : m + ':' + String(s).padStart(2,'0');
+      try {
+        if (timerId.startsWith('manual_')) {
+          label = timer.manualLabel || timer.note || 'Manueller Timer';
+        } else if (timerId === 'planning') {
+          label = 'Planung';
+        } else if (timerId.startsWith('project-') && typeof window.getEntity === 'function') {
+          const p = window.getEntity('project', timerId.replace('project-', ''));
+          label = p ? (p.title || 'Projekt') : 'Projekt';
+        } else if (typeof window.getEntity === 'function') {
+          const t = window.getEntity('task', timerId);
+          label = t ? (t.title || 'Aufgabe') : timerId;
+        } else {
+          label = timerId;
+        }
+      } catch(e) { label = 'Timer'; }
     }
-    el.classList.add('running');
 
-    const [timerId, timer] = running[0];
-    const elapsed = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
-    const h = Math.floor(elapsed / 3600);
-    const m = Math.floor((elapsed % 3600) / 60);
-    const s = elapsed % 60;
-    const timeStr = h > 0
-      ? h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0')
-      : m + ':' + String(s).padStart(2,'0');
-
-    // Label bestimmen (Task/Projekt/Manuell)
-    let label = '';
-    try {
-      if (timerId.startsWith('manual_')) {
-        label = timer.manualLabel || timer.note || 'Manueller Timer';
-      } else if (timerId === 'planning') {
-        label = 'Planung';
-      } else if (timerId.startsWith('project-') && typeof window.getEntity === 'function') {
-        const p = window.getEntity('project', timerId.replace('project-', ''));
-        label = p ? (p.title || 'Projekt') : 'Projekt';
-      } else if (typeof window.getEntity === 'function') {
-        const t = window.getEntity('task', timerId);
-        label = t ? (t.title || 'Aufgabe') : timerId;
+    document.querySelectorAll('.gti-widget').forEach(el => {
+      if (isRunning) {
+        el.classList.add('running');
+        const startText = el.querySelector('.gti-start-text');
+        if (startText) startText.style.display = 'none';
+        const parts = el.querySelector('.gti-running-parts');
+        if (parts) parts.style.display = 'inline-flex';
+        const lab = el.querySelector('.gti-label');
+        const tim = el.querySelector('.gti-time');
+        if (lab) lab.textContent = label;
+        if (tim) tim.textContent = timeStr;
+        el.title = label + ' · ' + timeStr + ' — klicken zum Navigieren';
       } else {
-        label = timerId;
+        el.classList.remove('running');
+        const startText = el.querySelector('.gti-start-text');
+        if (startText) startText.style.display = '';
+        const parts = el.querySelector('.gti-running-parts');
+        if (parts) parts.style.display = 'none';
+        el.title = 'Timer starten';
       }
-    } catch(e) { label = 'Timer'; }
-
-    const labelEl = document.getElementById('gftLabel');
-    const timeEl = document.getElementById('gftTime');
-    if (labelEl) labelEl.textContent = label;
-    if (timeEl) timeEl.textContent = timeStr;
-    // Tooltip voller Label
-    el.title = label + ' · ' + timeStr;
+    });
   }
 
-  // Tick alle 1 Sekunde
-  setInterval(gftTick, 1000);
-  // Initial + nach Render (einige Edge-Cases)
-  setTimeout(gftTick, 200);
-  setTimeout(gftTick, 1500);
-  window.gftTick = gftTick;
+  // Kombinierter Tick: erst injizieren, dann updaten
+  function tick() {
+    injectWidgets();
+    updateAllWidgets();
+  }
+
+  setInterval(tick, 1000);
+  // Mehrfach zu Beginn, weil einige Sub-Apps später initialisiert werden
+  setTimeout(tick, 300);
+  setTimeout(tick, 1500);
+  setTimeout(tick, 3000);
+
+  // Expose
+  window.gtiTick = tick;
+  window.gtiOpenModal = openTimerModal;
 })();
 </script>
 
