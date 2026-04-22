@@ -4788,6 +4788,7 @@ textarea::placeholder, input::placeholder {
         <button class="topbar-btn" id="btnQuickTask" title="Schnellaufgabe (⌘+N)">✅</button>
         <button class="topbar-btn" id="btnQuickNote" title="Schnellnotiz">📝</button>
         <button class="topbar-btn" id="btnQuickIdea" title="Schnellidee (⌘+I)">💡</button>
+        <button class="topbar-btn" id="btnStartTimer" title="Timer starten" onclick="openManualTimerModal()">⏱️</button>
         <div class="topbar-divider"></div>
         <div style="position:relative" id="pinnedDropdownWrap">
           <button class="topbar-btn" id="btnPinnedItems" title="Angepinnte Elemente" onclick="togglePinnedDropdown()">📌</button>
@@ -48578,6 +48579,9 @@ function updateHeaderTimer() {
     label = proj ? (proj.title || 'Projekt') : 'Projekt';
   } else if (taskId === 'planning') {
     label = 'Planung';
+  } else if (taskId.startsWith('manual_')) {
+    // ✅ FIX: Manuelle Timer mit freiem Label
+    label = timer.manualLabel || timer.note || 'Manueller Timer';
   } else {
     label = taskId;
   }
@@ -48601,6 +48605,9 @@ function headerTimerClick() {
     navigate('projects', taskId.replace('project-', ''));
   } else if (taskId === 'planning') {
     navigate('weekplanning');
+  } else if (taskId.startsWith('manual_')) {
+    // ✅ FIX: Bei manuellem Timer das Bearbeiten-Modal öffnen
+    openManualTimerEditModal(taskId);
   }
 }
 
@@ -48660,9 +48667,315 @@ window.renderPinnedDropdown = renderPinnedDropdown;
 function headerTimerStop() {
   const indicator = document.getElementById('headerTimerIndicator');
   if (!indicator || !indicator._taskId) return;
-  stopTimer(indicator._taskId);
+  const taskId = indicator._taskId;
+
+  // ✅ FIX: Manuelle Timer brauchen eigene Stop-Logik, da stopTimer() nur mit
+  // echten taskIds funktioniert und einen Time-Entry mit taskId erzeugt.
+  if (taskId.startsWith('manual_')) {
+    stopManualTimer(taskId);
+  } else if (taskId === 'planning') {
+    // Planung nutzt eigene Logik
+    const timer = APP.state.data.timers['planning'];
+    if (timer && timer.startTs) {
+      const durationSec = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
+      const minutes = Math.round(durationSec / 60);
+      createEntity("timeEntry", {
+        taskId: null, projectId: null,
+        startTs: timer.startTs, endTs: nowIso(),
+        durationSec,
+        note: `⏱️ Planung - ${minutes} Min`,
+        category: "Planung", billable: false
+      });
+      delete APP.state.data.timers['planning'];
+      scheduleSave();
+      toast('ok', 'Timer', fmtDurationShort(durationSec) + ' Planung erfasst');
+    }
+  } else if (taskId.startsWith('project-')) {
+    // Projekt-Timer
+    const timer = APP.state.data.timers[taskId];
+    if (timer && timer.startTs) {
+      const projectId = taskId.replace('project-', '');
+      const durationSec = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
+      createEntity("timeEntry", {
+        taskId: null,
+        projectId,
+        startTs: timer.startTs, endTs: nowIso(),
+        durationSec,
+        note: timer.note || '',
+        category: timer.category || 'Projekt',
+        billable: false
+      });
+      delete APP.state.data.timers[taskId];
+      scheduleSave();
+      toast('ok', 'Timer', fmtDurationShort(durationSec) + ' auf Projekt erfasst');
+    }
+  } else {
+    stopTimer(taskId);
+  }
   updateHeaderTimer();
 }
+
+// ============================================================================
+// ✅ NEW: Manueller Timer aus der Topbar
+// ============================================================================
+
+// Öffnet das Start-Modal mit 3 Optionen: Manuell, Aufgabe verbinden, Projekt verbinden
+function openManualTimerModal() {
+  const tasks = Object.values(APP.state.data.entities?.tasks || {})
+    .filter(t => t.status !== 'done' && t.status !== 'archived')
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
+    .slice(0, 100);
+  const projects = Object.values(APP.state.data.entities?.projects || {})
+    .filter(p => p.status !== 'done' && p.status !== 'archived')
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
+    .slice(0, 100);
+
+  const taskOptions = tasks.map(t => `<option value="${esc(t.id)}">${esc(t.title || 'Aufgabe')}</option>`).join('');
+  const projectOptions = projects.map(p => `<option value="${esc(p.id)}">${esc(p.title || 'Projekt')}</option>`).join('');
+
+  const body = `
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;gap:6px;background:var(--panel2);padding:4px;border-radius:10px">
+        <button type="button" id="mtTabManual" class="mt-tab active" onclick="window._switchManualTimerTab('manual')" style="flex:1;padding:8px;border:none;background:var(--accent);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">✍️ Manuell</button>
+        <button type="button" id="mtTabTask" class="mt-tab" onclick="window._switchManualTimerTab('task')" style="flex:1;padding:8px;border:none;background:transparent;color:var(--text);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">✅ Aufgabe</button>
+        <button type="button" id="mtTabProject" class="mt-tab" onclick="window._switchManualTimerTab('project')" style="flex:1;padding:8px;border:none;background:transparent;color:var(--text);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">📁 Projekt</button>
+      </div>
+
+      <div id="mtPaneManual">
+        <label class="lbl" style="display:block;margin-bottom:6px;font-size:12px;color:var(--muted)">Was machst du gerade?</label>
+        <input type="text" id="mtManualLabel" placeholder="z.B. E-Mails bearbeiten, Recherche, Meeting-Vorbereitung..." style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:14px" autofocus />
+        <label class="lbl" style="display:block;margin:12px 0 6px;font-size:12px;color:var(--muted)">Kategorie (optional)</label>
+        <select id="mtManualCategory" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px">
+          <option value="">— Keine —</option>
+          <option value="Admin">Admin</option>
+          <option value="E-Mail">E-Mail</option>
+          <option value="Meeting">Meeting</option>
+          <option value="Recherche">Recherche</option>
+          <option value="Planung">Planung</option>
+          <option value="Schreiben">Schreiben</option>
+          <option value="Lernen">Lernen</option>
+          <option value="Sonstiges">Sonstiges</option>
+        </select>
+      </div>
+
+      <div id="mtPaneTask" style="display:none">
+        <label class="lbl" style="display:block;margin-bottom:6px;font-size:12px;color:var(--muted)">Aufgabe auswählen</label>
+        <input type="text" id="mtTaskFilter" placeholder="🔍 Aufgabe suchen..." oninput="window._filterManualTimerOptions('task')" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px;margin-bottom:8px" />
+        <select id="mtTaskSelect" size="8" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px">
+          ${taskOptions || '<option disabled>Keine offenen Aufgaben</option>'}
+        </select>
+        <label class="lbl" style="display:block;margin:12px 0 6px;font-size:12px;color:var(--muted)">Notiz (optional)</label>
+        <input type="text" id="mtTaskNote" placeholder="Zusätzliche Notiz..." style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px" />
+      </div>
+
+      <div id="mtPaneProject" style="display:none">
+        <label class="lbl" style="display:block;margin-bottom:6px;font-size:12px;color:var(--muted)">Projekt auswählen</label>
+        <input type="text" id="mtProjectFilter" placeholder="🔍 Projekt suchen..." oninput="window._filterManualTimerOptions('project')" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px;margin-bottom:8px" />
+        <select id="mtProjectSelect" size="8" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px">
+          ${projectOptions || '<option disabled>Keine offenen Projekte</option>'}
+        </select>
+        <label class="lbl" style="display:block;margin:12px 0 6px;font-size:12px;color:var(--muted)">Was machst du am Projekt? (optional)</label>
+        <input type="text" id="mtProjectNote" placeholder="z.B. Dokumentation, Review, Implementation..." style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px" />
+      </div>
+    </div>
+  `;
+  const footer = `
+    <button class="btn" data-action="close-modal">Abbrechen</button>
+    <button class="btn primary" onclick="window._startManualTimerFromModal()">▶️ Timer starten</button>
+  `;
+  openModal('⏱️ Timer starten', body, footer);
+  // Enter-Taste submitted direkt im Manuell-Tab
+  setTimeout(() => {
+    const inp = document.getElementById('mtManualLabel');
+    if (inp) {
+      inp.focus();
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && window._manualTimerTab === 'manual') {
+          e.preventDefault();
+          window._startManualTimerFromModal();
+        }
+      });
+    }
+  }, 80);
+}
+
+window._manualTimerTab = 'manual';
+window._manualTimerAllOptions = null; // gecachte Listen für Filter
+
+window._switchManualTimerTab = function(tab) {
+  window._manualTimerTab = tab;
+  const tabs = { manual: 'mtTabManual', task: 'mtTabTask', project: 'mtTabProject' };
+  const panes = { manual: 'mtPaneManual', task: 'mtPaneTask', project: 'mtPaneProject' };
+  for (const [key, tabId] of Object.entries(tabs)) {
+    const btn = document.getElementById(tabId);
+    const pane = document.getElementById(panes[key]);
+    if (btn) {
+      if (key === tab) { btn.style.background = 'var(--accent)'; btn.style.color = '#fff'; }
+      else { btn.style.background = 'transparent'; btn.style.color = 'var(--text)'; }
+    }
+    if (pane) pane.style.display = (key === tab) ? 'block' : 'none';
+  }
+  // Fokus in neues Pane
+  setTimeout(() => {
+    if (tab === 'manual') document.getElementById('mtManualLabel')?.focus();
+    else if (tab === 'task') document.getElementById('mtTaskFilter')?.focus();
+    else if (tab === 'project') document.getElementById('mtProjectFilter')?.focus();
+  }, 60);
+};
+
+window._filterManualTimerOptions = function(type) {
+  const filterInput = document.getElementById(type === 'task' ? 'mtTaskFilter' : 'mtProjectFilter');
+  const selectEl = document.getElementById(type === 'task' ? 'mtTaskSelect' : 'mtProjectSelect');
+  if (!filterInput || !selectEl) return;
+  const q = filterInput.value.trim().toLowerCase();
+  const entities = type === 'task'
+    ? Object.values(APP.state.data.entities?.tasks || {}).filter(t => t.status !== 'done' && t.status !== 'archived')
+    : Object.values(APP.state.data.entities?.projects || {}).filter(p => p.status !== 'done' && p.status !== 'archived');
+  const filtered = q
+    ? entities.filter(e => (e.title || '').toLowerCase().includes(q))
+    : entities;
+  filtered.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+  selectEl.innerHTML = filtered.length
+    ? filtered.slice(0, 100).map(e => `<option value="${esc(e.id)}">${esc(e.title || 'Unbenannt')}</option>`).join('')
+    : '<option disabled>Keine Treffer</option>';
+};
+
+window._startManualTimerFromModal = function() {
+  const tab = window._manualTimerTab || 'manual';
+
+  // Prüfen: läuft schon ein Timer? (Warnung)
+  const runningCount = Object.values(APP.state.data.timers || {}).filter(t => t && t.startTs).length;
+  if (runningCount > 0) {
+    if (!confirm('Es läuft bereits ein Timer. Trotzdem einen weiteren starten?')) return;
+  }
+
+  if (tab === 'manual') {
+    const label = (document.getElementById('mtManualLabel')?.value || '').trim();
+    const category = document.getElementById('mtManualCategory')?.value || '';
+    if (!label) {
+      toast('warn', 'Fehler', 'Bitte gib an, was du machst');
+      document.getElementById('mtManualLabel')?.focus();
+      return;
+    }
+    const timerId = 'manual_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    if (!APP.state.data.timers) APP.state.data.timers = {};
+    APP.state.data.timers[timerId] = {
+      startTs: nowIso(),
+      manualLabel: label,
+      category: category || null,
+      note: label,
+      isManual: true
+    };
+    scheduleSave();
+    closeModal();
+    updateHeaderTimer();
+    toast('ok', '⏱️ Timer läuft', label);
+  } else if (tab === 'task') {
+    const taskId = document.getElementById('mtTaskSelect')?.value;
+    const note = (document.getElementById('mtTaskNote')?.value || '').trim();
+    if (!taskId) { toast('warn', 'Fehler', 'Bitte eine Aufgabe wählen'); return; }
+    const task = getEntity('task', taskId);
+    if (!task) { toast('warn', 'Fehler', 'Aufgabe nicht gefunden'); return; }
+    if (!APP.state.data.timers) APP.state.data.timers = {};
+    APP.state.data.timers[taskId] = {
+      startTs: nowIso(),
+      note: note || ''
+    };
+    scheduleSave();
+    closeModal();
+    updateHeaderTimer();
+    toast('ok', '⏱️ Timer läuft', task.title || 'Aufgabe');
+  } else if (tab === 'project') {
+    const projectId = document.getElementById('mtProjectSelect')?.value;
+    const note = (document.getElementById('mtProjectNote')?.value || '').trim();
+    if (!projectId) { toast('warn', 'Fehler', 'Bitte ein Projekt wählen'); return; }
+    const project = getEntity('project', projectId);
+    if (!project) { toast('warn', 'Fehler', 'Projekt nicht gefunden'); return; }
+    const timerId = 'project-' + projectId;
+    if (!APP.state.data.timers) APP.state.data.timers = {};
+    APP.state.data.timers[timerId] = {
+      startTs: nowIso(),
+      note: note || '',
+      category: 'Projekt'
+    };
+    scheduleSave();
+    closeModal();
+    updateHeaderTimer();
+    toast('ok', '⏱️ Timer läuft', project.title || 'Projekt');
+  }
+};
+
+// Stop eines manuellen Timers: Erzeugt TimeEntry ohne task/project-Link
+function stopManualTimer(timerId) {
+  const timer = APP.state.data.timers?.[timerId];
+  if (!timer || !timer.startTs) return;
+  const startTs = new Date(timer.startTs);
+  const endTs = new Date();
+  const durationSec = Math.max(0, Math.round((endTs - startTs) / 1000));
+  createEntity('timeEntry', {
+    taskId: null,
+    projectId: null,
+    startTs: timer.startTs,
+    endTs: nowIso(),
+    durationSec,
+    note: timer.manualLabel || timer.note || 'Manueller Timer',
+    category: timer.category || 'Manuell',
+    billable: false,
+    isManual: true
+  });
+  delete APP.state.data.timers[timerId];
+  scheduleSave();
+  const durTxt = (typeof fmtDurationShort === 'function') ? fmtDurationShort(durationSec) : (Math.round(durationSec/60) + ' Min');
+  toast('ok', 'Timer gestoppt', durTxt + ' erfasst: ' + (timer.manualLabel || 'Manuell'));
+}
+
+// Öffnet ein kleines Bearbeiten-Modal, wenn auf einen manuellen Timer geklickt wird
+function openManualTimerEditModal(timerId) {
+  const timer = APP.state.data.timers?.[timerId];
+  if (!timer) return;
+  const elapsed = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
+  const h = Math.floor(elapsed / 3600);
+  const m = Math.floor((elapsed % 3600) / 60);
+  const s = elapsed % 60;
+  const timeStr = h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+  const body = `
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div style="padding:14px;background:rgba(255,59,48,.1);border:1px solid rgba(255,59,48,.3);border-radius:10px;text-align:center">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Läuft seit</div>
+        <div style="font-size:28px;font-weight:700;color:#ff3b30;font-variant-numeric:tabular-nums">${timeStr}</div>
+      </div>
+      <label class="lbl" style="font-size:12px;color:var(--muted)">Aktivität</label>
+      <input type="text" id="mtEditLabel" value="${esc(timer.manualLabel || '')}" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:14px" />
+      <label class="lbl" style="font-size:12px;color:var(--muted)">Kategorie</label>
+      <select id="mtEditCategory" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:13px">
+        ${['','Admin','E-Mail','Meeting','Recherche','Planung','Schreiben','Lernen','Sonstiges'].map(c => `<option value="${esc(c)}" ${(timer.category||'')===c?'selected':''}>${c||'— Keine —'}</option>`).join('')}
+      </select>
+    </div>
+  `;
+  const footer = `
+    <button class="btn danger" onclick="stopManualTimer('${esc(timerId)}');closeModal();updateHeaderTimer()">⏹ Stoppen & erfassen</button>
+    <button class="btn" data-action="close-modal">Schliessen</button>
+    <button class="btn primary" onclick="window._saveManualTimerEdit('${esc(timerId)}')">💾 Speichern</button>
+  `;
+  openModal('⏱️ Timer bearbeiten', body, footer);
+}
+
+window._saveManualTimerEdit = function(timerId) {
+  const timer = APP.state.data.timers?.[timerId];
+  if (!timer) return;
+  const label = (document.getElementById('mtEditLabel')?.value || '').trim();
+  const category = document.getElementById('mtEditCategory')?.value || '';
+  if (label) { timer.manualLabel = label; timer.note = label; }
+  timer.category = category || null;
+  scheduleSave();
+  updateHeaderTimer();
+  closeModal();
+  toast('ok', 'Gespeichert', 'Timer aktualisiert');
+};
+
+window.openManualTimerModal = openManualTimerModal;
+window.openManualTimerEditModal = openManualTimerEditModal;
+window.stopManualTimer = stopManualTimer;
 
 // Fix: Date inputs should default to current year when empty
 document.addEventListener('focus', function(e) {
@@ -60352,6 +60665,323 @@ setInterval(()=>{
   if(str !== lastCtxStr){ lastCtxStr=str; refresh(); }
 },1500);
 
+})();
+</script>
+
+<!-- ============================================================================
+     GLOBAL FLOATING TIMER - sichtbar in jeder App (höchster z-index)
+============================================================================ -->
+<style>
+  #globalFloatingTimer {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    z-index: 9999999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(20, 20, 24, 0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.2);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 13px;
+    color: #fff;
+    user-select: none;
+    transition: all 0.2s ease;
+    cursor: default;
+  }
+  #globalFloatingTimer.running {
+    background: rgba(255, 59, 48, 0.18);
+    border-color: rgba(255, 59, 48, 0.45);
+    box-shadow: 0 8px 24px rgba(255, 59, 48, 0.25), 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+  #globalFloatingTimer.minimized {
+    padding: 6px 10px;
+  }
+  #globalFloatingTimer .gft-start-btn {
+    background: transparent;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s;
+    font-weight: 600;
+  }
+  #globalFloatingTimer .gft-start-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  #globalFloatingTimer .gft-running-row {
+    display: none;
+    align-items: center;
+    gap: 8px;
+  }
+  #globalFloatingTimer.running .gft-start-btn { display: none; }
+  #globalFloatingTimer.running .gft-running-row { display: flex; }
+  #globalFloatingTimer .gft-label {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+    font-size: 12px;
+    opacity: 0.92;
+  }
+  #globalFloatingTimer .gft-time {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #ff6b60;
+    font-size: 13px;
+    min-width: 48px;
+    text-align: right;
+  }
+  #globalFloatingTimer .gft-icon {
+    font-size: 14px;
+    animation: gftPulse 2s infinite ease-in-out;
+  }
+  #globalFloatingTimer .gft-stop {
+    background: rgba(255, 59, 48, 0.2);
+    border: none;
+    color: #ff6b60;
+    cursor: pointer;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    transition: background 0.15s;
+  }
+  #globalFloatingTimer .gft-stop:hover {
+    background: rgba(255, 59, 48, 0.35);
+  }
+  #globalFloatingTimer .gft-collapse {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 11px;
+    border-radius: 4px;
+  }
+  #globalFloatingTimer .gft-collapse:hover { color: #fff; }
+  @keyframes gftPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.92); }
+  }
+  /* Kompakt-Modus: nur Icon sichtbar */
+  #globalFloatingTimer.collapsed .gft-label,
+  #globalFloatingTimer.collapsed .gft-time,
+  #globalFloatingTimer.collapsed .gft-stop,
+  #globalFloatingTimer.collapsed .gft-start-text {
+    display: none;
+  }
+  #globalFloatingTimer.collapsed .gft-running-row {
+    display: flex !important;
+    gap: 0;
+  }
+  /* Hellmodus-Anpassungen */
+  @media (prefers-color-scheme: light) {
+    #globalFloatingTimer {
+      background: rgba(255, 255, 255, 0.92);
+      border-color: rgba(0, 0, 0, 0.1);
+      color: #111;
+    }
+    #globalFloatingTimer .gft-start-btn { color: #111; }
+    #globalFloatingTimer .gft-start-btn:hover { background: rgba(0, 0, 0, 0.06); }
+  }
+  /* Mobile */
+  @media (max-width: 640px) {
+    #globalFloatingTimer {
+      top: 8px;
+      right: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    #globalFloatingTimer .gft-label { max-width: 100px; }
+  }
+  /* Print: verstecken */
+  @media print {
+    #globalFloatingTimer { display: none !important; }
+  }
+</style>
+
+<div id="globalFloatingTimer" class="" title="Timer">
+  <button class="gft-start-btn" onclick="window.gftOpenStartModal()" title="Timer starten">
+    <span class="gft-icon">⏱️</span>
+    <span class="gft-start-text">Timer</span>
+  </button>
+  <div class="gft-running-row">
+    <span class="gft-icon">⏱️</span>
+    <span class="gft-label" id="gftLabel" onclick="window.gftNavigateToEntity()" style="cursor:pointer"></span>
+    <span class="gft-time" id="gftTime">0:00</span>
+    <button class="gft-stop" onclick="window.gftStop()" title="Stoppen">⏹</button>
+  </div>
+  <button class="gft-collapse" onclick="window.gftToggleCollapse()" title="Minimieren/Maximieren">⇔</button>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // Merken des Collapse-Status in localStorage
+  const COLLAPSE_KEY = '_gft_collapsed';
+  try {
+    if (localStorage.getItem(COLLAPSE_KEY) === '1') {
+      document.getElementById('globalFloatingTimer')?.classList.add('collapsed');
+    }
+  } catch(e) {}
+
+  window.gftToggleCollapse = function() {
+    const el = document.getElementById('globalFloatingTimer');
+    if (!el) return;
+    el.classList.toggle('collapsed');
+    try { localStorage.setItem(COLLAPSE_KEY, el.classList.contains('collapsed') ? '1' : '0'); } catch(e) {}
+  };
+
+  // Öffnet das Timer-Start-Modal.
+  // Priorität 1: openManualTimerModal (die existierende App-Funktion mit Tabs: Manuell / Aufgabe / Projekt)
+  // Fallback: eigenes einfaches Prompt-Modal
+  window.gftOpenStartModal = function() {
+    if (typeof window.openManualTimerModal === 'function') {
+      try { window.openManualTimerModal(); return; } catch(e) { console.warn('[GFT] openManualTimerModal failed:', e); }
+    }
+    // Fallback — falls die App-Funktion nicht verfügbar ist (z.B. vor dem Laden)
+    const label = prompt('Was machst du gerade? (Timer-Beschreibung)');
+    if (!label || !label.trim()) return;
+    gftStartManualTimer(label.trim());
+  };
+
+  // Fallback-Starter: Manueller Timer ohne Modal
+  function gftStartManualTimer(label) {
+    if (typeof APP === 'undefined' || !APP.state) return;
+    if (!APP.state.data.timers) APP.state.data.timers = {};
+    const timerId = 'manual_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    APP.state.data.timers[timerId] = {
+      startTs: new Date().toISOString(),
+      manualLabel: label,
+      note: label,
+      category: '',
+      createdAt: new Date().toISOString()
+    };
+    if (typeof scheduleSave === 'function') scheduleSave();
+    if (typeof toast === 'function') toast('ok', '▶️ Timer gestartet', label);
+    gftTick();
+  }
+
+  // Stoppt den aktuell laufenden Timer und erfasst Zeit
+  window.gftStop = function() {
+    if (typeof APP === 'undefined' || !APP.state?.data?.timers) return;
+    const timers = APP.state.data.timers;
+    const runningEntries = Object.entries(timers).filter(([, t]) => t && t.startTs);
+    if (runningEntries.length === 0) return;
+    const [timerId, timer] = runningEntries[0];
+
+    // Bevorzugt: existierende App-Funktionen (korrektes Zeit-Tracking)
+    if (timerId.startsWith('manual_') && typeof window.stopManualTimer === 'function') {
+      try { window.stopManualTimer(timerId); gftTick(); return; } catch(e) { console.warn('[GFT] stopManualTimer failed:', e); }
+    }
+    if (typeof window.headerTimerStop === 'function') {
+      try { window.headerTimerStop(); gftTick(); return; } catch(e) { console.warn('[GFT] headerTimerStop failed:', e); }
+    }
+
+    // Fallback: Timer einfach entfernen
+    const elapsed = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
+    delete timers[timerId];
+    if (typeof scheduleSave === 'function') scheduleSave();
+    if (typeof toast === 'function') {
+      const m = Math.floor(elapsed / 60), s = elapsed % 60;
+      toast('ok', '⏹ Timer gestoppt', m + ':' + String(s).padStart(2, '0') + ' Min erfasst');
+    }
+    gftTick();
+  };
+
+  // Navigation: wenn ein Task/Projekt den Timer hat, hinspringen
+  window.gftNavigateToEntity = function() {
+    if (typeof APP === 'undefined' || !APP.state?.data?.timers) return;
+    const runningEntries = Object.entries(APP.state.data.timers).filter(([, t]) => t && t.startTs);
+    if (runningEntries.length === 0) return;
+    const [timerId] = runningEntries[0];
+    if (typeof window.navigate !== 'function') return;
+    try {
+      if (typeof window.getEntity === 'function') {
+        const task = window.getEntity('task', timerId);
+        if (task) { window.navigate('tasks', timerId); return; }
+      }
+      if (timerId.startsWith('project-')) {
+        window.navigate('projects', timerId.replace('project-', ''));
+        return;
+      }
+    } catch(e) { console.warn('[GFT] navigate failed:', e); }
+  };
+
+  // Aktualisierung: Widget-Inhalt und Klassen anhand der Timer-Daten neu setzen
+  function gftTick() {
+    const el = document.getElementById('globalFloatingTimer');
+    if (!el) return;
+    if (typeof APP === 'undefined' || !APP.state?.data) {
+      el.classList.remove('running');
+      return;
+    }
+    const timers = APP.state.data.timers || {};
+    const running = Object.entries(timers).filter(([, t]) => t && t.startTs);
+
+    if (running.length === 0) {
+      el.classList.remove('running');
+      return;
+    }
+    el.classList.add('running');
+
+    const [timerId, timer] = running[0];
+    const elapsed = Math.max(0, Math.round((Date.now() - new Date(timer.startTs).getTime()) / 1000));
+    const h = Math.floor(elapsed / 3600);
+    const m = Math.floor((elapsed % 3600) / 60);
+    const s = elapsed % 60;
+    const timeStr = h > 0
+      ? h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0')
+      : m + ':' + String(s).padStart(2,'0');
+
+    // Label bestimmen (Task/Projekt/Manuell)
+    let label = '';
+    try {
+      if (timerId.startsWith('manual_')) {
+        label = timer.manualLabel || timer.note || 'Manueller Timer';
+      } else if (timerId === 'planning') {
+        label = 'Planung';
+      } else if (timerId.startsWith('project-') && typeof window.getEntity === 'function') {
+        const p = window.getEntity('project', timerId.replace('project-', ''));
+        label = p ? (p.title || 'Projekt') : 'Projekt';
+      } else if (typeof window.getEntity === 'function') {
+        const t = window.getEntity('task', timerId);
+        label = t ? (t.title || 'Aufgabe') : timerId;
+      } else {
+        label = timerId;
+      }
+    } catch(e) { label = 'Timer'; }
+
+    const labelEl = document.getElementById('gftLabel');
+    const timeEl = document.getElementById('gftTime');
+    if (labelEl) labelEl.textContent = label;
+    if (timeEl) timeEl.textContent = timeStr;
+    // Tooltip voller Label
+    el.title = label + ' · ' + timeStr;
+  }
+
+  // Tick alle 1 Sekunde
+  setInterval(gftTick, 1000);
+  // Initial + nach Render (einige Edge-Cases)
+  setTimeout(gftTick, 200);
+  setTimeout(gftTick, 1500);
+  window.gftTick = gftTick;
 })();
 </script>
 
