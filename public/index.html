@@ -27598,6 +27598,40 @@ window.fetchBelege = async function(showToast) {
   if (location.protocol === 'file:') { return 0; }
   window._fetchingBelege = true;
   try {
+    // ✅ FIX: Migration — bestehende Beleg-Tasks, die noch keinen Eintrag in files[]
+    // haben (alte Import-Logik), nachträglich befüllen, damit das Dokument in der
+    // "Dokumente"-Sektion erscheint statt nur als Link im Description-Text.
+    try {
+      const tasks = APP.state.data?.entities?.tasks || {};
+      let migrated = 0;
+      for (const t of Object.values(tasks)) {
+        if (!t.belegId) continue;
+        if (Array.isArray(t.files) && t.files.some(f => f?.fromBeleg)) continue; // schon migriert
+        const bd = t.belegData;
+        if (!bd) continue;
+        const url = (bd.firebaseUrl && bd.firebaseUrl.startsWith('http')) ? bd.firebaseUrl : bd.fileUrl;
+        if (!url) continue;
+        if (!Array.isArray(t.files)) t.files = [];
+        t.files.push({
+          id: 'f_beleg_' + t.belegId,
+          name: bd.fileName || ('Beleg-' + (t.belegNr || t.belegId) + '.pdf'),
+          originalName: bd.fileName || ('Beleg-' + (t.belegNr || t.belegId) + '.pdf'),
+          size: bd.fileSize || 0,
+          type: bd.fileType || 'application/pdf',
+          storagePath: bd.firebasePath || null,
+          url: url,
+          uploadedAt: t.createdAt || new Date().toISOString(),
+          fromBeleg: true,
+          belegId: t.belegId
+        });
+        if (!Array.isArray(t.fileFolders)) t.fileFolders = [];
+        migrated++;
+      }
+      if (migrated > 0) {
+        console.log('[Beleg Migration] ' + migrated + ' bestehende Beleg-Tasks mit Dokument-Verknüpfung nachgerüstet');
+        scheduleSave();
+      }
+    } catch(migErr) { console.warn('[Beleg Migration] Fehler:', migErr); }
     const url = window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list';
     const r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -27647,38 +27681,63 @@ window.fetchBelege = async function(showToast) {
           fileUrl = window.BELEG_PORTAL_URL + "/.netlify/functions/beleg-file?id=" + b.id;
         }
       }
+
+      // ✅ FIX: File-Objekt im gleichen Format wie Upload über _handleFileSelect,
+      // damit es in der "Dokumente"-Sektion der Aufgabe normal erscheint.
+      // Gleiche Felder: id, name, size, type, storagePath, url, uploadedAt
+      const belegFiles = [];
+      if (b.hasFile && fileUrl) {
+        const fileName = b.fileName || ('Beleg-' + belegNr + '.pdf');
+        belegFiles.push({
+          id: 'f_beleg_' + b.id,
+          name: fileName,
+          originalName: fileName,
+          size: b.fileSize || 0,
+          type: b.fileType || 'application/pdf',
+          storagePath: b.firebasePath || null,
+          url: fileUrl,
+          uploadedAt: b.submittedAt || new Date().toISOString(),
+          // Beleg-spezifische Metadaten:
+          fromBeleg: true,
+          belegId: b.id
+        });
+      }
+
+      // ✅ FIX: Flexible Titel-/Description-Bildung, da nur die Datei Pflicht ist.
+      // Wenn kein Betrag angegeben → nicht anzeigen. Wenn kein Titel → Dateiname.
+      const hasAmount = b.amount && Number(b.amount) > 0;
+      const belegTitle = (b.title && b.title.trim()) ? b.title.trim()
+        : (b.fileName ? b.fileName.replace(/\.[^.]+$/, '') : 'Beleg');
+      const taskTitle = "📄 " + belegNr + ": " + belegTitle
+        + (hasAmount ? " (CHF " + Number(b.amount).toFixed(2) + ")" : "");
+
+      const descLines = ["Belegnummer: " + belegNr];
+      if (b.name && b.name !== 'Unbekannt') descLines.push("Eingereicht von: " + b.name);
+      if (hasAmount) descLines.push("Betrag: CHF " + Number(b.amount).toFixed(2));
+      if (b.dueDate) descLines.push("Fällig: " + b.dueDate);
+      descLines.push("Bezahlt: " + (b.paid ? "Ja" : "Nein"));
+      if (b.comment) descLines.push("Kommentar: " + b.comment);
+      descLines.push(b.hasFile && fileUrl
+        ? "\n📎 Beleg-Dokument siehe 'Dokumente'-Sektion unten."
+        : "\n(Kein Dokument angehängt)");
       
       // Create task
       createEntity("task", {
-        title: "📄 " + belegNr + ": " + b.title + " (CHF " + (b.amount || 0).toFixed(2) + ")",
-        description: "Belegnummer: " + belegNr + "\n" +
-          "Eingereicht von: " + (b.name || "Unbekannt") + "\n" +
-          "Betrag: CHF " + (b.amount || 0).toFixed(2) + "\n" +
-          "Fällig: " + (b.dueDate || "Kein Datum") + "\n" +
-          "Bezahlt: " + (b.paid ? "Ja" : "Nein") + "\n" +
-          (b.comment ? "Kommentar: " + b.comment + "\n" : "") +
-          (b.hasFile && fileUrl ? "\n📎 Datei: " + (b.fileName || "Anhang") + "\n🔗 " + fileUrl : "\nKein Dokument angehängt"),
+        title: taskTitle,
+        description: descLines.join("\n"),
         status: "todo",
         priority: b.paid ? 4 : 2,
         dueDate: b.dueDate || null,
         tags: ["beleg", "sp-ar", b.paid ? "bezahlt" : "offen"],
         belegId: b.id,
         belegNr: belegNr,
-        // ✅ FIX: Attachments-Array wie bei normalen Tasks füllen,
-        // damit die Datei im Task sichtbar ist
-        attachments: b.hasFile && fileUrl ? [{
-          id: 'att_beleg_' + b.id,
-          name: b.fileName || 'Beleg-Anhang',
-          url: fileUrl,
-          type: b.fileType || 'application/octet-stream',
-          size: b.fileSize || 0,
-          source: 'firebase',
-          firebasePath: b.firebasePath || null,
-          uploadedAt: b.submittedAt || new Date().toISOString()
-        }] : [],
+        // ✅ FIX: files[] statt attachments — das ist das Feld, das die
+        // "Dokumente"-Sektion in Tasks rendert (renderFileAttachments).
+        files: belegFiles,
+        fileFolders: [],
         belegData: {
           name: b.name,
-          amount: b.amount,
+          amount: b.amount || 0,
           paid: b.paid,
           fileName: b.fileName,
           fileType: b.fileType || null,
