@@ -642,8 +642,19 @@
     .grid-5{grid-template-columns:repeat(5,1fr)}
     .grid-12{grid-template-columns:repeat(12,1fr)}
     .col-1{grid-column:span 1}.col-2{grid-column:span 2}.col-3{grid-column:span 3}.col-4{grid-column:span 4}.col-5{grid-column:span 5}.col-6{grid-column:span 6}.col-7{grid-column:span 7}.col-8{grid-column:span 8}.col-9{grid-column:span 9}.col-10{grid-column:span 10}.col-11{grid-column:span 11}.col-12{grid-column:span 12}
+    /* Verhindert, dass Inhalte (lange Wörter, Code, Stat-Reihen) Spalten sprengen */
+    .grid-12 > [class*="col-"]{min-width:0}
     @media(max-width:1200px){.grid-5{grid-template-columns:repeat(3,1fr)}}
     @media(max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+    /* col-8/col-4 in grid-12: bei mittlerer Breite mehr Platz für Sidebar-Spalte */
+    @media(max-width:1500px){
+      .grid-12 .col-8{grid-column:span 7}
+      .grid-12 .col-4{grid-column:span 5}
+    }
+    /* Bei schmalem Viewport: vertikal stapeln statt abschneiden */
+    @media(max-width:1200px){
+      .grid-12 .col-8,.grid-12 .col-4,.grid-12 .col-7,.grid-12 .col-5,.grid-12 .col-6,.grid-12 .col-9,.grid-12 .col-3{grid-column:span 12}
+    }
     @media(max-width:900px){.grid-2,.grid-3,.grid-4,.grid-5{grid-template-columns:1fr}}
     @media(max-width:900px){
       .app{grid-template-columns:1fr}
@@ -17802,10 +17813,10 @@ function viewLearningProjectDetail(id) {
         <div class="card mb-4">
           <h3>🧠 Karteikarten</h3>
           ${p.deckId ? `
-            <div style="display:flex;gap:12px;margin-bottom:10px">
-              <div style="text-align:center;flex:1"><div style="font-size:20px;font-weight:800">${deckInfo.cards}</div><div style="font-size:10px;color:var(--muted)">Gesamt</div></div>
-              <div style="text-align:center;flex:1"><div style="font-size:20px;font-weight:800;color:var(--danger)">${deckInfo.due}</div><div style="font-size:10px;color:var(--muted)">Fällig</div></div>
-              <div style="text-align:center;flex:1"><div style="font-size:20px;font-weight:800;color:var(--accent)">${deckInfo.newC}</div><div style="font-size:10px;color:var(--muted)">Neu</div></div>
+            <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+              <div style="text-align:center;flex:1;min-width:0"><div style="font-size:20px;font-weight:800">${deckInfo.cards}</div><div style="font-size:10px;color:var(--muted)">Gesamt</div></div>
+              <div style="text-align:center;flex:1;min-width:0"><div style="font-size:20px;font-weight:800;color:var(--danger)">${deckInfo.due}</div><div style="font-size:10px;color:var(--muted)">Fällig</div></div>
+              <div style="text-align:center;flex:1;min-width:0"><div style="font-size:20px;font-weight:800;color:var(--accent)">${deckInfo.newC}</div><div style="font-size:10px;color:var(--muted)">Neu</div></div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
               ${deckInfo.due + deckInfo.newC > 0 ? '<button class="btn sm primary" onclick="window.lpStartReview(\'' + p.deckId + '\')">▶️ Lernen</button>' : '<div class="mini" style="padding:4px 0">Keine fälligen Karten</div>'}
