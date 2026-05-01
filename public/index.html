@@ -4799,6 +4799,7 @@ textarea::placeholder, input::placeholder {
         <button class="topbar-btn" id="btnQuickTask" title="Schnellaufgabe (⌘+N)">✅</button>
         <button class="topbar-btn" id="btnQuickNote" title="Schnellnotiz">📝</button>
         <button class="topbar-btn" id="btnQuickIdea" title="Schnellidee (⌘+I)">💡</button>
+        <button class="topbar-btn" data-action="nav" data-route="programs" title="Programme">🧩</button>
         <button class="topbar-btn" id="btnStartTimer" title="Timer starten" onclick="openManualTimerModal()">⏱️</button>
         <div class="topbar-divider"></div>
         <div style="position:relative" id="pinnedDropdownWrap">
@@ -5469,7 +5470,7 @@ function isImageFile(filename) {
 
 function renderFileAttachments(kind, entityId) {
   const e = APP.state.data.entities;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
   const entity = e[kindMap[kind]]?.[entityId];
   if (!entity) return '';
   const files = entity.files || [];
@@ -5583,48 +5584,130 @@ window._handleFileDrop = function(e, kind, entityId, folderId) {
   if (files && files.length > 0) window._handleFileSelect(files, kind, entityId, folderId);
 };
 
+window._uploadLocks = window._uploadLocks || {};
 window._handleFileSelect = async function(fileList, kind, entityId, folderId) {
   if (!fileList || fileList.length === 0) return;
   if (!firebaseStorage) { toast('error', 'Firebase', 'Firebase SDK nicht geladen – Adblocker deaktivieren oder auf Netlify deployen'); return; }
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.files) entity.files = [];
+
+  // 🔒 Idempotenz-Lock: verhindert doppelten Upload bei doppelt feuerndem change-Event
+  const lockKey = `${kind}_${entityId}_${folderId || ''}`;
+  if (window._uploadLocks[lockKey]) {
+    console.warn('[Upload] Bereits aktiv für', lockKey, '– ignoriere doppelten Trigger');
+    return;
+  }
+  window._uploadLocks[lockKey] = true;
 
   const fSuffix = folderId ? `_${folderId}` : '';
   const progressEl = document.getElementById(`fileProgress_${kind}_${entityId}${fSuffix}`);
   const barEl = document.getElementById(`fileProgressBar_${kind}_${entityId}${fSuffix}`);
   if (progressEl) progressEl.style.display = 'block';
 
-  for (let i = 0; i < fileList.length; i++) {
-    const file = fileList[i];
-    if (file.size > 50 * 1024 * 1024) { toast('error', 'Too large', `${file.name} exceeds 50 MB`); continue; }
-    const fileId = 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-    const storagePath = `attachments/${kind}/${entityId}/${fileId}_${file.name}`;
-    try {
-      if (barEl) barEl.style.width = '0%';
-      const downloadUrl = await uploadToFirebase(file, storagePath, (pct) => { if (barEl) barEl.style.width = pct + '%'; });
-      const fileObj = {
-        id: fileId,
-        name: file.name,
-        originalName: file.name,
-        size: file.size,
-        type: file.type,
-        storagePath: storagePath,
-        url: downloadUrl,
-        uploadedAt: new Date().toISOString()
-      };
-      if (folderId) fileObj.folderId = folderId;
-      entity.files.push(fileObj);
-      toast('ok', 'Uploaded', file.name);
-    } catch(err) {
-      toast('error', 'Upload failed', err.message);
+  try {
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      if (file.size > 50 * 1024 * 1024) { toast('error', 'Too large', `${file.name} exceeds 50 MB`); continue; }
+      // Dedup: gleiche Datei (Name+Size) innerhalb der letzten 5 Sek nicht nochmal hochladen
+      const recentDuplicate = (entity.files || []).find(f => f.name === file.name && f.size === file.size && f.uploadedAt && (Date.now() - new Date(f.uploadedAt).getTime() < 5000));
+      if (recentDuplicate) {
+        console.warn('[Upload] Duplikat übersprungen:', file.name);
+        continue;
+      }
+      const fileId = 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+      const storagePath = `attachments/${kind}/${entityId}/${fileId}_${file.name}`;
+      try {
+        if (barEl) barEl.style.width = '0%';
+        const downloadUrl = await uploadToFirebase(file, storagePath, (pct) => { if (barEl) barEl.style.width = pct + '%'; });
+        const fileObj = {
+          id: fileId,
+          name: file.name,
+          originalName: file.name,
+          size: file.size,
+          type: file.type,
+          storagePath: storagePath,
+          url: downloadUrl,
+          uploadedAt: new Date().toISOString()
+        };
+        if (folderId) fileObj.folderId = folderId;
+        entity.files.push(fileObj);
+        toast('ok', 'Uploaded', file.name);
+      } catch(err) {
+        toast('error', 'Upload failed', err.message);
+      }
     }
+  } finally {
+    // 🔓 Lock IMMER freigeben (auch bei Fehler)
+    delete window._uploadLocks[lockKey];
   }
+
   if (progressEl) { setTimeout(() => { progressEl.style.display = 'none'; if(barEl) barEl.style.width = '0%'; }, 800); }
   entity.updatedAt = new Date().toISOString();
+
+  // 🔄 Input zurücksetzen, damit gleiche Datei erneut wählbar ist und kein zweiter change feuert
+  const inpReset = document.getElementById(`fileInput_${kind}_${entityId}${fSuffix}`);
+  if (inpReset) inpReset.value = '';
+
   scheduleSave();
   render();
+};
+
+// --- Message-File-Upload Helpers ---
+window._uploadMessageFiles = async function(msgId, fileList) {
+  if (!fileList || fileList.length === 0) return;
+  if (!firebaseStorage) { toast('error', 'Firebase', 'Firebase SDK nicht geladen'); return; }
+  const msg = APP.state.data.entities.scheduledMessages?.[msgId];
+  if (!msg) { toast('error', 'Fehler', 'Nachricht nicht gefunden'); return; }
+  if (!msg.files) msg.files = [];
+  const lockKey = `message_${msgId}_`;
+  if (window._uploadLocks && window._uploadLocks[lockKey]) return;
+  window._uploadLocks = window._uploadLocks || {};
+  window._uploadLocks[lockKey] = true;
+  try {
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      if (file.size > 50 * 1024 * 1024) { toast('error', 'Zu groß', file.name + ' > 50 MB'); continue; }
+      const recentDup = msg.files.find(f => f.name === file.name && f.size === file.size && f.uploadedAt && (Date.now() - new Date(f.uploadedAt).getTime() < 5000));
+      if (recentDup) continue;
+      const fileId = 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6);
+      const storagePath = `attachments/message/${msgId}/${fileId}_${file.name}`;
+      try {
+        const downloadUrl = await uploadToFirebase(file, storagePath, () => {});
+        msg.files.push({
+          id: fileId, name: file.name, originalName: file.name, size: file.size, type: file.type,
+          storagePath, url: downloadUrl, uploadedAt: new Date().toISOString()
+        });
+        toast('ok', 'Hochgeladen', file.name);
+      } catch (err) {
+        toast('error', 'Upload-Fehler', err.message || 'Unbekannt');
+      }
+    }
+  } finally {
+    delete window._uploadLocks[lockKey];
+  }
+  msg.updatedAt = new Date().toISOString();
+  // Reset Input
+  const inp = document.getElementById('msgFileUpload_' + msgId);
+  if (inp) inp.value = '';
+  scheduleSave();
+  // Modal neu öffnen mit aktualisierter Liste
+  closeModal();
+  setTimeout(() => { window._reopenMessageModal(msgId); }, 150);
+};
+
+window._reopenMessageModal = function(msgId) {
+  // Löst handleClick direkt mit synthetischem target aus
+  const fakeEl = document.createElement('div');
+  fakeEl.dataset.action = 'open-message';
+  fakeEl.dataset.id = msgId;
+  document.body.appendChild(fakeEl);
+  const ev = { target: fakeEl, preventDefault: () => {}, stopPropagation: () => {} };
+  if (window.handleClick) {
+    try { window.handleClick(ev); } catch(err) { console.error('Reopen failed', err); }
+  }
+  setTimeout(() => fakeEl.remove(), 50);
 };
 
 // --- File Folder Management ---
@@ -5640,7 +5723,7 @@ window._toggleFileFolder = function(kind, entityId, folderId) {
 window._createFileFolder = function(kind, entityId) {
   const name = prompt('Ordnername:');
   if (!name || !name.trim()) return;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.fileFolders) entity.fileFolders = [];
@@ -5652,7 +5735,7 @@ window._createFileFolder = function(kind, entityId) {
 };
 
 window._renameFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -5667,7 +5750,7 @@ window._renameFileFolder = function(kind, entityId, folderId) {
 };
 
 window._deleteFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -5687,7 +5770,7 @@ window._deleteFileFolder = function(kind, entityId, folderId) {
 };
 
 window._moveFileToFolder = function(kind, entityId, fileIdx, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   if (folderId) {
@@ -5719,7 +5802,7 @@ window._dropFileOnFolder = function(e, kind, entityId, folderId) {
 };
 
 function openFilePreview(kind, entityId, fileIdx) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   const f = entity.files[fileIdx];
@@ -6705,6 +6788,7 @@ for (const u of Object.values(e.updates)) {
     p.currentWorkflowStep = p.currentWorkflowStep ?? 0;
     p.emails = p.emails || [];
     p.documents = p.documents || [];
+    p.thoughts = p.thoughts || [];
     p.budget = p.budget ?? null;
     p.spent = p.spent ?? null;
   }
@@ -6925,7 +7009,12 @@ for (const u of Object.values(e.updates)) {
     m.sourceType = m.sourceType || "";
     m.lastRecurrenceDate = m.lastRecurrenceDate || null;
     m.decisionId = m.decisionId || null;
+    m.files = m.files || [];
+    m.fileFolders = m.fileFolders || [];
   }
+  
+  // ========== READING LIST ==========
+  d.readingList = d.readingList || []; // [{id, type, title, url, content, files, status, addedAt, completedAt, notes}]
   
   // ========== JOURNAL BOOKLET ==========
   if (!d.journal) d.journal = { documents: [], contacts: [], topics: [], selfLetters: [], settings: { name: '', street: '', city: '', geminiApiKey: '' } };
@@ -7953,6 +8042,34 @@ async function manualTransferPush(silent = false) {
 
   await manualLocalSave(true);
 
+  // ✅ NEU: Vor Push Mobile-Delta einmischen, damit Lernfortschritte vom Handy in den Push wandern
+  // Robuster Schutz gegen Datenverlust: Selbst wenn Pull übersprungen wurde, mergen wir hier nochmal.
+  let mobileMergeOk = true;
+  try {
+    const mobileResult = await mergeMobileRecallLabDelta();
+    if (mobileResult.applied > 0) {
+      console.log('[ManualPush] Mobile-Delta vor Push gemergt:', mobileResult.applied);
+      if (!silent) toast('info', '📱 Mobile-Sync', mobileResult.applied + ' Lern-Updates vom Handy übernommen');
+    }
+    // Track when we last consumed mobile delta - protect against accidental overwrites
+    if (!APP.state.data.meta) APP.state.data.meta = {};
+    APP.state.data.meta.lastMobileDeltaCheckAt = new Date().toISOString();
+  } catch(e) { 
+    mobileMergeOk = false;
+    console.warn('[ManualPush] Mobile-Delta-Merge fehlgeschlagen:', e);
+    if (!silent) {
+      // Bei Fehler: User fragen, ob trotzdem pushen
+      const proceed = confirm('⚠️ Mobile-Lernfortschritte konnten nicht geprüft werden.\n\nFehler: ' + (e.message || 'Unbekannt') + '\n\nTrotzdem hochladen? Achtung: Falls am Handy kürzlich gelernt wurde, könnten diese Daten verloren gehen.');
+      if (!proceed) {
+        APP.state.storage.status = 'error';
+        APP.state.storage.message = 'Push abgebrochen — Mobile-Sync nicht möglich';
+        updateSyncChip();
+        toast('warn', 'Abgebrochen', 'Push wegen Mobile-Sync-Risiko abgebrochen');
+        return { ok: false, reason: 'mobile_merge_failed' };
+      }
+    }
+  }
+
   // Clear stale ETags for manual push (user explicitly wants to overwrite)
   APP.state.storage.etag = null;
   for (const k in _remoteEtags) delete _remoteEtags[k];
@@ -8057,6 +8174,8 @@ async function manualTransferPush(silent = false) {
     syncPDFsToFirebase(silent).then(r => {
       if (r.uploaded > 0) console.log('[ManualPush] PDF sync: ' + r.uploaded + ' uploaded');
     }).catch(e => console.warn('[ManualPush] PDF sync error:', e));
+    // ✅ NEU: Mobile-Delta als konsumiert markieren (non-blocking)
+    clearMobileRecallLabDelta().catch(e => console.warn('[ManualPush] Mobile-Delta clear error:', e));
     return { ok: true, appResults, rhResults, transferVersionId, verifyStatus, verifyDiffs, stats: localStatsBefore };
   }
 
@@ -8142,6 +8261,15 @@ async function manualTransferPull(silent = false) {
       }
     } catch(e) { console.warn('[ManualPull] RecallLab restore failed:', e); }
 
+    // ✅ NEU: Mobile-Delta für RecallLab anwenden (Lernfortschritte vom Handy)
+    try {
+      const mobileDeltaResult = await mergeMobileRecallLabDelta();
+      if (mobileDeltaResult.applied > 0) {
+        console.log('[ManualPull] Mobile-Delta angewendet:', mobileDeltaResult.applied, 'Karten');
+        if (!silent) toast('info', '📱 Mobile-Sync', mobileDeltaResult.applied + ' Lern-Updates vom Handy übernommen');
+      }
+    } catch(e) { console.warn('[ManualPull] Mobile-Delta-Merge fehlgeschlagen:', e); }
+
     const rhCandidates = await fetchRemoteCandidates('readinghub-data.json');
     const chosenRh = pickLatestRemoteCandidate(rhCandidates);
     if (chosenRh && chosenRh.data) persistReadingHubCloudPayload(chosenRh.data);
@@ -8210,6 +8338,89 @@ async function manualTransferPull(silent = false) {
 }
 window.manualTransferPush = manualTransferPush;
 window.manualTransferPull = manualTransferPull;
+
+// ===== MOBILE-DELTA für RecallLab =====
+// Wird vom RecallLab Mobile-App in `recalllab-mobile.json` geschrieben.
+// Format: { type:'recalllab-mobile-delta', deviceId, generatedAt, reviews:[{cardId,srs,rating,ts,deviceId}], user:{xp,level,streak,lastStudyDate} }
+// Strategie: nach Pull mergen wir Mobile-SRS-Updates pro Karten-ID NUR wenn Mobile-Timestamp neuer als
+// `srs.lastReviewAt` der Karte. Dadurch bleibt der Stand des PCs erhalten, falls nach Mobile-Lernen am PC weiter gelernt wurde.
+async function mergeMobileRecallLabDelta() {
+  const result = { applied: 0, skipped: 0, deltaKey: 'recalllab-mobile.json' };
+  try {
+    // Mobile-Delta vom Cloud holen (kann fehlen — das ist OK)
+    const candidates = await fetchRemoteCandidates(result.deltaKey);
+    const chosen = pickLatestRemoteCandidate(candidates);
+    if (!chosen || !chosen.data) return result;
+    const delta = chosen.data;
+    if (delta.type !== 'recalllab-mobile-delta' || !Array.isArray(delta.reviews)) return result;
+
+    // Lokalen RecallLab-Stand laden
+    const rlRaw = localStorage.getItem('recalllab');
+    if (!rlRaw) return result;
+    const rl = JSON.parse(rlRaw);
+    if (!Array.isArray(rl.cards)) return result;
+    const cardMap = new Map(rl.cards.map(c => [c.id, c]));
+
+    // Reviews mergen
+    delta.reviews.forEach(r => {
+      const c = cardMap.get(r.cardId);
+      if (!c) { result.skipped++; return; }
+      const localReviewTs = c.srs?.lastReviewAt ? new Date(c.srs.lastReviewAt).getTime() : 0;
+      // Mobile gewinnt nur, wenn Mobile-Review neuer ist als der lokale Stand
+      if (r.ts > localReviewTs) {
+        c.srs = { ...(c.srs||{}), ...r.srs, lastReviewAt: new Date(r.ts).toISOString(), lastReviewBy: r.deviceId || 'mobile' };
+        // Review-Log ergänzen, falls noch nicht vorhanden
+        if (!Array.isArray(rl.reviewLogs)) rl.reviewLogs = [];
+        const exists = rl.reviewLogs.some(l => l.cardId === r.cardId && l.timestamp === r.ts);
+        if (!exists) rl.reviewLogs.push({ cardId: r.cardId, rating: r.rating, timestamp: r.ts, deviceId: r.deviceId });
+        result.applied++;
+      } else {
+        result.skipped++;
+      }
+    });
+
+    // User-Stats: höchster Wert gewinnt (XP/Streak akkumulieren ist heikel — wir nehmen den frischeren Stand des Mobile, falls Streak größer)
+    if (delta.user && rl.user) {
+      if ((delta.user.xp||0) > (rl.user.xp||0)) rl.user.xp = delta.user.xp;
+      if ((delta.user.streak||0) > (rl.user.streak||0)) rl.user.streak = delta.user.streak;
+      if ((delta.user.level||0) > (rl.user.level||0)) rl.user.level = delta.user.level;
+      if (delta.user.lastStudyDate && (!rl.user.lastStudyDate || new Date(delta.user.lastStudyDate) > new Date(rl.user.lastStudyDate))) {
+        rl.user.lastStudyDate = delta.user.lastStudyDate;
+      }
+    }
+
+    if (result.applied > 0) {
+      localStorage.setItem('recalllab', JSON.stringify(rl));
+      // Auch in incoming-payload aktualisieren, damit der nächste Push den gemergten Stand mitnimmt
+      if (APP.state.data) APP.state.data.recallLabData = rl;
+    }
+  } catch(e) {
+    console.warn('[MobileDelta] Merge-Fehler:', e);
+  }
+  return result;
+}
+
+// Mobile-Delta nach erfolgreichem Push als konsumiert markieren (durch leere Delta-Datei ersetzen).
+// Das ist sicherer als löschen — es zeigt dem Mobile, dass die Daten angekommen sind.
+async function clearMobileRecallLabDelta() {
+  try {
+    const emptyPayload = {
+      type: 'recalllab-mobile-delta',
+      consumedAt: new Date().toISOString(),
+      consumedBy: getOrCreateDeviceId(),
+      reviews: []
+    };
+    if (isBlobSyncConfigured()) await netlifyBlobPut('recalllab-mobile.json', emptyPayload, { force: true });
+    if (isFirebaseCloudAvailable()) await firebaseJsonPut('recalllab-mobile.json', emptyPayload, { force: true });
+    console.log('[MobileDelta] Delta als konsumiert markiert');
+  } catch(e) {
+    console.warn('[MobileDelta] Clear fehlgeschlagen:', e);
+  }
+}
+
+window.mergeMobileRecallLabDelta = mergeMobileRecallLabDelta;
+window.clearMobileRecallLabDelta = clearMobileRecallLabDelta;
+
 // Expose cloud sync functions for ReadingHub module (separate IIFE)
 window.remoteGetByKey = remoteGetByKey;
 window.remotePutByKey = remotePutByKey;
@@ -12399,6 +12610,7 @@ function viewDailyBriefing() {
         </div>
       </div>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        ${isToday ? '<button class="db-pdf-btn" onclick="if(typeof showLaunchScreen===\'function\')showLaunchScreen(\'morning\');" style="background:linear-gradient(135deg,#e8956a,#f5c16c);color:#000">' + "\u2600\uFE0F" + ' Den Tag starten</button>' : ''}
         ${isToday ? '<div class="db-mode-toggle"><button class="db-mode-btn ' + (isPlanning?"active":"") + '" onclick="var db=APP.state.data.dailyBriefing;if(!db){db={};APP.state.data.dailyBriefing=db;}db.mode=\'planning\';scheduleSave();render();">' + "\u270F\uFE0F" + ' Planning</button><button class="db-mode-btn ' + (!isPlanning?"active":"") + '" onclick="var db=APP.state.data.dailyBriefing;if(!db){db={};APP.state.data.dailyBriefing=db;}db.mode=\'operative\';scheduleSave();render();">' + "\u{1F441}\uFE0F" + ' Operativ</button></div>' : ""}
         <button class="db-pdf-btn" onclick="if(typeof window.dbExportPdf==='function')window.dbExportPdf();">` + "\u{1F4C4}" + ` Dossier</button>
       </div>
@@ -12518,6 +12730,44 @@ function viewDailyBriefing() {
       </div>
       ${(APP.state.data.journal?.topics || []).slice().reverse().slice(0, 5).map(t => '<div style="padding:8px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.1);border-radius:10px;margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><span style="flex-shrink:0;font-size:14px">💭</span><div style="flex:1;min-width:0"><div style="font-size:13px;line-height:1.5">' + esc(t.text) + '</div><div style="font-size:10px;color:var(--muted);margin-top:4px">' + new Date(t.createdAt).toLocaleDateString("de-CH") + '</div></div><button class="btn sm ghost danger" data-action="delete-thought" data-id="' + t.id + '" style="flex-shrink:0;font-size:10px">🗑</button></div>').join("") || '<div class="mini" style="opacity:.5">Noch keine Gedanken notiert.</div>'}
     </div>
+    
+    <!-- Leseliste -->
+    ${(() => {
+      const rl = APP.state.data.readingList || [];
+      const open = rl.filter(r => !r.completedAt);
+      const done = rl.filter(r => r.completedAt);
+      const renderItem = (r) => {
+        const isDone = !!r.completedAt;
+        const typeIcon = r.type === 'link' ? '🔗' : r.type === 'file' ? '📎' : '📝';
+        let bodyHtml = '';
+        if (r.type === 'link' && r.url) {
+          bodyHtml = '<a href="' + esc(r.url) + '" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:600;font-size:13px;word-break:break-all">' + esc(r.title || r.url) + '</a>';
+          if (r.url !== (r.title || '')) bodyHtml += '<div style="font-size:11px;color:var(--muted);margin-top:2px;word-break:break-all">' + esc(r.url) + '</div>';
+        } else if (r.type === 'file' && r.files?.length) {
+          bodyHtml = '<div style="font-weight:600;font-size:13px">' + esc(r.title || r.files[0].name) + '</div>';
+          bodyHtml += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">' + r.files.map(f => '<a href="' + esc(f.url) + '" target="_blank" rel="noopener" class="btn sm" style="text-decoration:none;font-size:11px">📎 ' + esc(f.name) + '</a>').join('') + '</div>';
+        } else {
+          bodyHtml = '<div style="font-weight:600;font-size:13px">' + esc(r.title || 'Ohne Titel') + '</div>';
+          if (r.content) bodyHtml += '<div style="font-size:12px;color:var(--ink2);margin-top:4px;white-space:pre-wrap;max-height:80px;overflow:hidden">' + esc(r.content) + '</div>';
+        }
+        if (r.notes) bodyHtml += '<div style="font-size:11px;color:var(--muted);margin-top:4px;font-style:italic">📝 ' + esc(r.notes) + '</div>';
+        return '<div style="padding:10px 12px;background:' + (isDone?'rgba(16,185,129,.05)':'rgba(99,102,241,.04)') + ';border:1px solid ' + (isDone?'rgba(16,185,129,.2)':'rgba(99,102,241,.15)') + ';border-radius:10px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px;' + (isDone?'opacity:.7':'') + '">' +
+          '<button data-action="toggle-reading-item" data-id="' + r.id + '" style="background:none;border:none;cursor:pointer;font-size:18px;flex-shrink:0;padding:0;line-height:1" title="Erledigt markieren">' + (isDone?'✅':'⬜') + '</button>' +
+          '<span style="font-size:14px;flex-shrink:0">' + typeIcon + '</span>' +
+          '<div style="flex:1;min-width:0;' + (isDone?'text-decoration:line-through':'') + '">' + bodyHtml + '<div style="font-size:10px;color:var(--muted);margin-top:4px">' + new Date(r.addedAt).toLocaleDateString("de-CH") + (isDone?' · erledigt ' + new Date(r.completedAt).toLocaleDateString("de-CH"):'') + '</div></div>' +
+          '<button class="btn sm ghost danger" data-action="delete-reading-item" data-id="' + r.id + '" style="flex-shrink:0;font-size:10px">🗑</button>' +
+        '</div>';
+      };
+      return '<div class="db-section"><h3>📚 Leseliste <span style="font-size:12px;color:var(--muted)">(' + open.length + ' offen' + (done.length?', '+done.length+' erledigt':'') + ')</span></h3>' +
+        '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">' +
+        '<button class="btn sm primary" data-action="add-reading-link">🔗 Link</button>' +
+        '<button class="btn sm" data-action="add-reading-text">📝 Text</button>' +
+        '<button class="btn sm" data-action="add-reading-file">📎 Datei</button>' +
+        '</div>' +
+        (open.length ? open.map(renderItem).join('') : '<div class="mini" style="opacity:.5">Keine offenen Einträge.</div>') +
+        (done.length ? '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted);padding:6px 0">' + done.length + ' erledigt</summary><div style="margin-top:6px">' + done.slice(-10).reverse().map(renderItem).join('') + '</div></details>' : '') +
+      '</div>';
+    })()}
     
     <!-- Tagesplanung -->
     <div class="db-section">
@@ -14143,6 +14393,46 @@ function checkAutoMessages() {
     m.lastRecurrenceDate = today;
     delivered = true;
   });
+  
+  // ===== TÄGLICHE LESELISTE-NACHRICHT =====
+  const rlMsgKey = "readingList_" + today;
+  const rlAlreadyToday = Object.values(e.scheduledMessages || {}).some(m => m.id === rlMsgKey);
+  if (!rlAlreadyToday) {
+    const rl = APP.state.data.readingList || [];
+    const openItems = rl.filter(r => !r.completedAt);
+    if (openItems.length > 0) {
+      let content = "📚 Deine offene Leseliste (" + openItems.length + " Einträge):\n\n";
+      openItems.forEach((r, i) => {
+        const num = (i + 1) + ". ";
+        if (r.type === 'link' && r.url) {
+          content += num + (r.title || r.url) + "\n   🔗 " + r.url + "\n";
+        } else if (r.type === 'file' && r.files?.length) {
+          content += num + (r.title || r.files[0].name) + "\n";
+          r.files.forEach(f => { content += "   📎 " + f.name + ": " + f.url + "\n"; });
+        } else {
+          content += num + (r.title || 'Text') + "\n";
+          if (r.content) content += "   📝 " + r.content.slice(0, 120) + (r.content.length > 120 ? "..." : "") + "\n";
+        }
+        if (r.notes) content += "   💭 " + r.notes + "\n";
+        content += "\n";
+      });
+      content += "\nÖffne das Daily Briefing, um Einträge zu erledigen oder zu verwalten.";
+      
+      e.scheduledMessages[rlMsgKey] = {
+        id: rlMsgKey,
+        title: "📚 Leseliste vom " + new Date().toLocaleDateString("de-CH", {weekday:'long', day:'numeric', month:'long'}),
+        content: content,
+        scheduledAt: nowIso(), deliverAt: nowIso(), deliveredAt: nowIso(),
+        isDelivered: true, isRead: false, isPinned: false,
+        priority: 3, type: "readingList", sourceType: "Tägliche Leseliste",
+        recurrence: "none",
+        linkedTasks: [], linkedProjects: [], linkedOrganizations: [], linkedNotes: [], linkedGoals: [],
+        files: [], fileFolders: [],
+        tags: ["leseliste"], createdAt: nowIso()
+      };
+      delivered = true;
+    }
+  }
   
   if (delivered) scheduleSave();
 }
@@ -16812,6 +17102,17 @@ function viewProjectDetail(id) {
           </div>
         </div>
         
+        <div class="card mb-4">
+          <h3 style="display:flex;align-items:center;justify-content:space-between">
+            <span>${"\u{1F4AD}"} Gedanken & Notizen <span style="font-size:12px;color:var(--muted);font-weight:400">(${(p.thoughts||[]).length})</span></span>
+          </h3>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <textarea id="projThoughtInput${id}" placeholder="Was geht dir zu diesem Projekt durch den Kopf? (Ctrl+Enter)" style="flex:1;padding:8px 12px;min-height:48px;font-size:13px;line-height:1.5;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);resize:vertical;outline:none;font-family:inherit" onkeydown="if(event.key==='Enter'&&event.ctrlKey){this.parentElement.querySelector('[data-action=add-project-thought]').click()}"></textarea>
+            <button class="btn primary" data-action="add-project-thought" data-id="${id}" style="white-space:nowrap;align-self:flex-end">+ Gedanke</button>
+          </div>
+          ${(p.thoughts||[]).slice().reverse().map(t => '<div style="padding:8px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.1);border-radius:10px;margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><span style="flex-shrink:0;font-size:14px">' + "\u{1F4AD}" + '</span><div style="flex:1;min-width:0"><div style="font-size:13px;line-height:1.5;white-space:pre-wrap">' + esc(t.text) + '</div><div style="font-size:10px;color:var(--muted);margin-top:4px">' + new Date(t.createdAt).toLocaleDateString("de-CH") + ' \u00B7 ' + new Date(t.createdAt).toLocaleTimeString("de-CH",{hour:'2-digit',minute:'2-digit'}) + '</div></div><button class="btn sm ghost danger" data-action="delete-project-thought" data-id="' + id + '" data-thought-id="' + t.id + '" style="flex-shrink:0;font-size:10px">' + "\u{1F5D1}" + '</button></div>').join('') || '<div class="mini" style="opacity:.5">Noch keine Gedanken zu diesem Projekt.</div>'}
+        </div>
+        
         ${renderFileAttachments("project", id)}
         
         <div class="card">
@@ -16846,6 +17147,7 @@ function renderCustomProjectFeatures(id) {
   
   switch (p.externalId) {
     case 'PRJ-NFYW5': return renderCustom_PRJNFYW5(id, p);
+    case 'PRJ-Z2SEX': return renderCustom_PRJZ2SEX(id, p);
     default: return '';
   }
 }
@@ -17395,6 +17697,1332 @@ window._cpSet = function(projectId, key, value) {
 window._cpGet = function(projectId, key, fallback) {
   const p = APP.state.data.entities.projects[projectId];
   return p?._custom?.[key] ?? fallback;
+};
+
+// __KV_ABSCHLUSS_INSERTION_POINT__
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🎓 PRJ-Z2SEX — KV-Abschlussprüfung (Betrieblich + Schulisch)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Datenstruktur initialisieren
+function _kvEnsureData(p) {
+  if (!p._custom) p._custom = {};
+  const c = p._custom;
+  if (!c.examDate) c.examDate = "2026-06-15"; // Default: Mitte Juni
+  if (!c.activeTab) c.activeTab = "overview"; // overview | betrieblich | schulisch | quiz | exam
+  if (!c.activeArea) c.activeArea = null; // 'betrieblich' | 'schulisch' wenn Detail offen
+  
+  ['betrieblich', 'schulisch'].forEach(area => {
+    if (!c[area]) c[area] = {};
+    const a = c[area];
+    a.themes = a.themes || [];        // [{id,name,description,mastery(1-5),status,createdAt}]
+    a.folders = a.folders || [];      // [{id,name,parentId,createdAt}]
+    a.fileTags = a.fileTags || {};    // { fileId: { themeIds:[], folderId:'' } }
+    a.links = a.links || [];          // [{id,url,title,themeId,addedAt}]
+    a.notes = a.notes || [];          // [{id,title,content,themeId,createdAt,updatedAt}]
+    a.flashcards = a.flashcards || []; // [{id,themeId,front,back,easeFactor,interval,nextReview,reps,lapses,createdAt,lastReviewAt}]
+    a.studySessions = a.studySessions || []; // [{id,themeId,startedAt,endedAt,seconds}]
+    a.quizHistory = a.quizHistory || []; // [{id,date,total,correct,themeIds,kind}]
+  });
+  return c;
+}
+
+function _kvSave(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  p.updatedAt = new Date().toISOString();
+  scheduleSave();
+}
+
+function _kvDaysUntilExam(c) {
+  if (!c.examDate) return null;
+  const now = new Date(); now.setHours(0,0,0,0);
+  const exam = new Date(c.examDate); exam.setHours(0,0,0,0);
+  return Math.round((exam - now) / 86400000);
+}
+
+function _kvAreaStats(area) {
+  const themes = area.themes || [];
+  const totalMastery = themes.reduce((s,t) => s + (t.mastery || 0), 0);
+  const avgMastery = themes.length ? (totalMastery / themes.length).toFixed(1) : 0;
+  const masteredCount = themes.filter(t => (t.mastery || 0) >= 4).length;
+  const weakCount = themes.filter(t => (t.mastery || 0) <= 2 && t.mastery > 0).length;
+  const newCount = themes.filter(t => !t.mastery).length;
+  const totalSeconds = (area.studySessions || []).reduce((s,x) => s + (x.seconds || 0), 0);
+  const totalCards = (area.flashcards || []).length;
+  const dueCards = (area.flashcards || []).filter(c => !c.nextReview || c.nextReview <= Date.now()).length;
+  return { themes: themes.length, avgMastery, masteredCount, weakCount, newCount, totalMinutes: Math.round(totalSeconds/60), totalCards, dueCards };
+}
+
+function renderCustom_PRJZ2SEX(id, p) {
+  const c = _kvEnsureData(p);
+  const days = _kvDaysUntilExam(c);
+  
+  // Wenn ein Bereich offen ist → Detail-View
+  if (c.activeArea === 'betrieblich' || c.activeArea === 'schulisch') {
+    return _kvRenderAreaDetail(id, p, c.activeArea);
+  }
+  
+  // Wenn Quiz-Modus aktiv → Quiz-View
+  if (c.activeTab === 'quiz') return _kvRenderQuiz(id, p);
+  if (c.activeTab === 'exam') return _kvRenderExamSimulation(id, p);
+  
+  const betr = _kvAreaStats(c.betrieblich);
+  const schul = _kvAreaStats(c.schulisch);
+  
+  let countdownColor = '#10b981'; // grün
+  if (days !== null) {
+    if (days <= 14) countdownColor = '#ef4444';
+    else if (days <= 30) countdownColor = '#f59e0b';
+    else if (days <= 60) countdownColor = '#eab308';
+  }
+  
+  return `
+    <style>
+      .kv-card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px}
+      .kv-tile{background:linear-gradient(135deg,rgba(99,102,241,0.08),rgba(139,92,246,0.05));border:2px solid var(--border);border-radius:16px;padding:20px;cursor:pointer;transition:all 0.2s;display:flex;flex-direction:column;gap:10px}
+      .kv-tile:hover{transform:translateY(-2px);border-color:var(--accent);box-shadow:0 8px 30px rgba(99,102,241,0.15)}
+      .kv-tile-betr{background:linear-gradient(135deg,rgba(245,158,11,0.08),rgba(217,119,6,0.04))}
+      .kv-tile-betr:hover{border-color:#f59e0b;box-shadow:0 8px 30px rgba(245,158,11,0.15)}
+      .kv-tile-schul{background:linear-gradient(135deg,rgba(34,197,94,0.08),rgba(22,163,74,0.04))}
+      .kv-tile-schul:hover{border-color:#22c55e;box-shadow:0 8px 30px rgba(34,197,94,0.15)}
+      .kv-tile-icon{font-size:36px;line-height:1}
+      .kv-tile-title{font-size:18px;font-weight:800;letter-spacing:-0.3px}
+      .kv-tile-desc{font-size:12px;color:var(--muted);line-height:1.4}
+      .kv-tile-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid var(--border)}
+      .kv-tile-stat{text-align:center}
+      .kv-tile-stat-val{font-size:18px;font-weight:800}
+      .kv-tile-stat-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px}
+      .kv-countdown{text-align:center;padding:24px;border-radius:16px;background:var(--panel2);border:2px solid ${countdownColor}40;margin-bottom:14px}
+      .kv-countdown-num{font-size:48px;font-weight:900;line-height:1;color:${countdownColor};font-variant-numeric:tabular-nums}
+      .kv-countdown-lbl{font-size:13px;color:var(--muted);margin-top:6px;font-weight:600}
+      .kv-mastery-bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;margin-top:4px}
+      .kv-mastery-fill{height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e);transition:width 0.3s}
+      .kv-action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+      .kv-action-btn{flex:1;min-width:120px;padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px;transition:all 0.15s}
+      .kv-action-btn:hover{background:var(--panel);border-color:var(--accent)}
+      .kv-action-btn.primary{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border-color:transparent}
+      .kv-theme-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px}
+      .kv-theme-row:hover{border-color:var(--accent)}
+      .kv-theme-name{flex:1;font-weight:600;font-size:13px}
+      .kv-theme-mastery{display:flex;gap:2px}
+      .kv-star{font-size:14px;color:#52525b;cursor:pointer;user-select:none}
+      .kv-star.filled{color:#fbbf24}
+      .kv-star:hover{transform:scale(1.2)}
+      .kv-folder{margin:6px 0;border:1px solid var(--border);border-radius:10px;background:var(--panel2);overflow:hidden}
+      .kv-folder-header{padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px}
+      .kv-folder-header:hover{background:var(--panel)}
+      .kv-folder-body{padding:8px 12px 10px;border-top:1px solid var(--border)}
+      .kv-tab-bar{display:flex;gap:4px;background:var(--panel2);padding:4px;border-radius:10px;margin-bottom:14px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+      .kv-tab{padding:8px 14px;border-radius:8px;border:none;background:transparent;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
+      .kv-tab.active{background:var(--accent);color:#fff}
+      .kv-empty{padding:30px 20px;text-align:center;color:var(--muted);font-size:13px}
+      .kv-link-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;margin-bottom:5px;font-size:12px}
+      .kv-link-row a{color:var(--accent);text-decoration:none;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .kv-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:var(--panel);border:1px solid var(--border)}
+      .kv-pill.weak{background:rgba(239,68,68,0.1);color:#fca5a5;border-color:rgba(239,68,68,0.3)}
+      .kv-pill.solid{background:rgba(34,197,94,0.1);color:#86efac;border-color:rgba(34,197,94,0.3)}
+      .kv-pill.medium{background:rgba(245,158,11,0.1);color:#fbbf24;border-color:rgba(245,158,11,0.3)}
+      .kv-flashcard{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;font-size:12px;display:flex;align-items:start;gap:8px}
+      .kv-flashcard .front{font-weight:600;flex:1}
+      .kv-flashcard .back{color:var(--muted);font-size:11px;margin-top:3px}
+    </style>
+    
+    <div class="kv-card" style="background:linear-gradient(135deg,rgba(99,102,241,0.06),rgba(139,92,246,0.03));border-color:rgba(99,102,241,0.3)">
+      <h3 style="margin:0 0 4px;display:flex;align-items:center;gap:8px;font-size:18px">🎓 KV-Abschlussprüfung 2026</h3>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Lern-Cockpit für betriebliche & schulische Prüfung</div>
+      
+      <div class="kv-countdown">
+        ${days !== null ? `
+          <div class="kv-countdown-num">${days >= 0 ? days : '✓'}</div>
+          <div class="kv-countdown-lbl">${days > 1 ? 'Tage bis zur Prüfung' : days === 1 ? 'Tag bis zur Prüfung' : days === 0 ? 'PRÜFUNG HEUTE!' : 'Prüfung absolviert'}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">📅 ${new Date(c.examDate).toLocaleDateString('de-CH',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
+        ` : `
+          <div style="font-size:14px;color:var(--muted)">Kein Prüfungsdatum gesetzt</div>
+        `}
+        <button class="btn sm" style="margin-top:10px" onclick="window._kvSetExamDate('${id}')">📅 Datum ändern</button>
+      </div>
+    </div>
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="kv-grid-tiles">
+      <div class="kv-tile kv-tile-betr" onclick="window._kvOpenArea('${id}','betrieblich')">
+        <div style="display:flex;align-items:start;justify-content:space-between">
+          <div class="kv-tile-icon">🏢</div>
+          <div class="kv-pill" style="background:rgba(245,158,11,0.15);color:#fbbf24;border-color:rgba(245,158,11,0.3)">Betrieblich</div>
+        </div>
+        <div>
+          <div class="kv-tile-title">Betriebliche Abschlussprüfung</div>
+          <div class="kv-tile-desc">Mobiliar Versicherungen — alle Versicherungssparten, Beratung, Schadenfälle</div>
+        </div>
+        <div class="kv-tile-stats">
+          <div class="kv-tile-stat">
+            <div class="kv-tile-stat-val">${betr.themes}</div>
+            <div class="kv-tile-stat-lbl">Themen</div>
+          </div>
+          <div class="kv-tile-stat">
+            <div class="kv-tile-stat-val" style="color:#22c55e">${betr.masteredCount}</div>
+            <div class="kv-tile-stat-lbl">Sicher</div>
+          </div>
+          <div class="kv-tile-stat">
+            <div class="kv-tile-stat-val" style="color:#ef4444">${betr.weakCount}</div>
+            <div class="kv-tile-stat-lbl">Schwach</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Ø Mastery: ${betr.avgMastery}/5 · ${betr.totalMinutes} Min gelernt · ${betr.totalCards} Karten (${betr.dueCards} fällig)</div>
+      </div>
+      
+      <div class="kv-tile kv-tile-schul" onclick="window._kvOpenArea('${id}','schulisch')">
+        <div style="display:flex;align-items:start;justify-content:space-between">
+          <div class="kv-tile-icon">🏫</div>
+          <div class="kv-pill" style="background:rgba(34,197,94,0.15);color:#86efac;border-color:rgba(34,197,94,0.3)">Schulisch</div>
+        </div>
+        <div>
+          <div class="kv-tile-title">Schulische Abschlussprüfung</div>
+          <div class="kv-tile-desc">BWK, Buchhaltung, Wirtschaft & Gesellschaft, Sprachen, IKA</div>
+        </div>
+        <div class="kv-tile-stats">
+          <div class="kv-tile-stat">
+            <div class="kv-tile-stat-val">${schul.themes}</div>
+            <div class="kv-tile-stat-lbl">Themen</div>
+          </div>
+          <div class="kv-tile-stat">
+            <div class="kv-tile-stat-val" style="color:#22c55e">${schul.masteredCount}</div>
+            <div class="kv-tile-stat-lbl">Sicher</div>
+          </div>
+          <div class="kv-tile-stat">
+            <div class="kv-tile-stat-val" style="color:#ef4444">${schul.weakCount}</div>
+            <div class="kv-tile-stat-lbl">Schwach</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">Ø Mastery: ${schul.avgMastery}/5 · ${schul.totalMinutes} Min gelernt · ${schul.totalCards} Karten (${schul.dueCards} fällig)</div>
+      </div>
+    </div>
+    
+    <style>
+      @media (max-width:760px){
+        .kv-grid-tiles{grid-template-columns:1fr !important}
+      }
+    </style>
+    
+    <div class="kv-card">
+      <h3 style="margin:0 0 12px">🚀 Schnell-Aktionen</h3>
+      <div class="kv-action-row">
+        <button class="kv-action-btn primary" onclick="window._kvOpenQuiz('${id}')">⚡ Mixed Quiz starten</button>
+        <button class="kv-action-btn" onclick="window._kvOpenExamSim('${id}')">📝 Prüfungssimulation</button>
+        <button class="kv-action-btn" onclick="window._kvShowWeakest('${id}')">🎯 Schwachstellen</button>
+        <button class="kv-action-btn" onclick="window._kvShowDueCards('${id}')">📚 Fällige Karten</button>
+      </div>
+    </div>
+    
+    ${_kvRenderWeakSpotsHint(id, c)}
+    ${_kvRenderRecentActivity(id, c)}
+  `;
+}
+
+function _kvRenderWeakSpotsHint(id, c) {
+  const allWeak = [];
+  ['betrieblich','schulisch'].forEach(area => {
+    (c[area].themes || []).forEach(t => {
+      if ((t.mastery || 0) > 0 && (t.mastery || 0) <= 2) {
+        allWeak.push({ ...t, area });
+      }
+    });
+  });
+  if (allWeak.length === 0) return '';
+  return `
+    <div class="kv-card" style="border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.04)">
+      <h3 style="margin:0 0 10px;color:#fca5a5;display:flex;align-items:center;gap:8px">⚠️ Aktuell schwache Themen (${allWeak.length})</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${allWeak.slice(0,12).map(t => `
+          <span class="kv-pill weak" style="cursor:pointer;font-size:11px;padding:5px 10px" onclick="window._kvOpenAreaToTheme('${id}','${t.area}','${t.id}')">${t.area === 'betrieblich' ? '🏢' : '🏫'} ${esc(t.name)}</span>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function _kvRenderRecentActivity(id, c) {
+  const allSessions = [
+    ...(c.betrieblich.studySessions || []).map(s => ({...s, area: 'betrieblich'})),
+    ...(c.schulisch.studySessions || []).map(s => ({...s, area: 'schulisch'}))
+  ].sort((a,b) => new Date(b.startedAt) - new Date(a.startedAt)).slice(0, 5);
+  
+  const allQuizzes = [
+    ...(c.betrieblich.quizHistory || []).map(q => ({...q, area: 'betrieblich'})),
+    ...(c.schulisch.quizHistory || []).map(q => ({...q, area: 'schulisch'}))
+  ].sort((a,b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+  
+  if (allSessions.length === 0 && allQuizzes.length === 0) return '';
+  
+  return `
+    <div class="kv-card">
+      <h3 style="margin:0 0 10px">📈 Letzte Aktivität</h3>
+      ${allQuizzes.length > 0 ? `
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600">Letzte Quizzes</div>
+        ${allQuizzes.map(q => `
+          <div style="padding:8px 10px;background:var(--panel2);border-radius:8px;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;font-size:12px">
+            <span>${q.area === 'betrieblich' ? '🏢' : '🏫'} ${q.kind || 'Quiz'} · ${new Date(q.date).toLocaleDateString('de-CH')}</span>
+            <span style="font-weight:700;color:${q.correct/q.total >= 0.8 ? '#22c55e' : q.correct/q.total >= 0.5 ? '#f59e0b' : '#ef4444'}">${q.correct}/${q.total}</span>
+          </div>
+        `).join('')}
+      ` : ''}
+      ${allSessions.length > 0 ? `
+        <div style="font-size:12px;color:var(--muted);margin:10px 0 6px;font-weight:600">Letzte Lernzeit</div>
+        ${allSessions.map(s => `
+          <div style="padding:6px 10px;background:var(--panel2);border-radius:8px;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between;font-size:11px">
+            <span>${s.area === 'betrieblich' ? '🏢' : '🏫'} ${esc(s.themeName || 'Allgemein')} · ${new Date(s.startedAt).toLocaleDateString('de-CH')}</span>
+            <span style="color:var(--muted)">${Math.round((s.seconds||0)/60)} Min</span>
+          </div>
+        `).join('')}
+      ` : ''}
+    </div>
+  `;
+}
+
+// Bereich-Detail (Betrieblich oder Schulisch)
+function _kvRenderAreaDetail(id, p, area) {
+  const c = p._custom;
+  const a = c[area];
+  const isBetr = area === 'betrieblich';
+  const accent = isBetr ? '#f59e0b' : '#22c55e';
+  const icon = isBetr ? '🏢' : '🏫';
+  const label = isBetr ? 'Betriebliche Prüfung' : 'Schulische Prüfung';
+  const stats = _kvAreaStats(a);
+  
+  // Themen sortieren: schwächste zuerst, dann neue
+  const themesSorted = [...(a.themes || [])].sort((x,y) => {
+    const mx = x.mastery || 0, my = y.mastery || 0;
+    if (mx === 0 && my === 0) return new Date(y.createdAt||0) - new Date(x.createdAt||0);
+    if (mx === 0) return 1;
+    if (my === 0) return -1;
+    return mx - my;
+  });
+  
+  const linkedFiles = (p.files || []).filter(f => a.fileTags[f.id]);
+  
+  return `
+    <style>${_kvBaseStyles()}</style>
+    <div class="kv-card" style="border-color:${accent}40;background:linear-gradient(135deg,${accent}10,transparent)">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="btn sm" onclick="window._kvCloseArea('${id}')">← Zurück</button>
+          <h3 style="margin:0;font-size:18px;display:flex;align-items:center;gap:8px">${icon} ${label}</h3>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm primary" onclick="window._kvAddTheme('${id}','${area}')">+ Thema</button>
+          <button class="btn sm" onclick="window._kvAreaQuiz('${id}','${area}')">⚡ Quiz</button>
+          <button class="btn sm" onclick="window._kvImportThemesAI('${id}','${area}')">🤖 AI-Themen</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px" class="kv-stat-grid">
+        <div style="text-align:center;padding:10px;background:var(--panel2);border-radius:10px"><div style="font-size:20px;font-weight:800">${stats.themes}</div><div style="font-size:10px;color:var(--muted)">THEMEN</div></div>
+        <div style="text-align:center;padding:10px;background:var(--panel2);border-radius:10px"><div style="font-size:20px;font-weight:800">${stats.avgMastery}</div><div style="font-size:10px;color:var(--muted)">Ø MASTERY</div></div>
+        <div style="text-align:center;padding:10px;background:var(--panel2);border-radius:10px"><div style="font-size:20px;font-weight:800">${stats.totalCards}</div><div style="font-size:10px;color:var(--muted)">KARTEN</div></div>
+        <div style="text-align:center;padding:10px;background:var(--panel2);border-radius:10px"><div style="font-size:20px;font-weight:800;color:#f59e0b">${stats.dueCards}</div><div style="font-size:10px;color:var(--muted)">FÄLLIG</div></div>
+      </div>
+    </div>
+    
+    <div class="kv-card">
+      <h3 style="margin:0 0 10px;display:flex;align-items:center;justify-content:space-between"><span>📚 Themen</span><span style="font-size:11px;color:var(--muted);font-weight:400">Sortiert: schwächste zuerst</span></h3>
+      ${themesSorted.length === 0 ? `
+        <div class="kv-empty">
+          <div style="font-size:36px;margin-bottom:8px">📭</div>
+          Noch keine Themen.<br>
+          <button class="btn sm primary mt-2" onclick="window._kvAddTheme('${id}','${area}')">+ Erstes Thema</button>
+          <button class="btn sm mt-2" onclick="window._kvImportThemesAI('${id}','${area}')">🤖 KV-Themen automatisch generieren</button>
+        </div>
+      ` : themesSorted.map(t => {
+        const themeCards = (a.flashcards || []).filter(f => f.themeId === t.id);
+        const themeDue = themeCards.filter(f => !f.nextReview || f.nextReview <= Date.now()).length;
+        const themeNotes = (a.notes || []).filter(n => n.themeId === t.id).length;
+        const themeLinks = (a.links || []).filter(l => l.themeId === t.id).length;
+        const themeFiles = (p.files || []).filter(f => a.fileTags[f.id]?.themeIds?.includes(t.id)).length;
+        const m = t.mastery || 0;
+        const masteryColor = m >= 4 ? '#22c55e' : m >= 3 ? '#84cc16' : m >= 2 ? '#f59e0b' : m >= 1 ? '#ef4444' : '#52525b';
+        return `
+          <div style="background:var(--panel2);border:1px solid var(--border);border-left:4px solid ${masteryColor};border-radius:10px;padding:12px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px;cursor:pointer" onclick="window._kvEditTheme('${id}','${area}','${t.id}')">
+                <div style="font-weight:700;font-size:14px">${esc(t.name)}</div>
+                ${t.description ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(t.description.slice(0,100))}${t.description.length>100?'…':''}</div>` : ''}
+                <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+                  ${themeCards.length > 0 ? `<span class="kv-pill">📇 ${themeCards.length} Karten${themeDue>0?` (${themeDue} fällig)`:''}</span>` : ''}
+                  ${themeNotes > 0 ? `<span class="kv-pill">📝 ${themeNotes}</span>` : ''}
+                  ${themeLinks > 0 ? `<span class="kv-pill">🔗 ${themeLinks}</span>` : ''}
+                  ${themeFiles > 0 ? `<span class="kv-pill">📎 ${themeFiles}</span>` : ''}
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <div style="display:flex;gap:1px">
+                  ${[1,2,3,4,5].map(n => `<span class="kv-star ${m >= n ? 'filled' : ''}" onclick="window._kvSetMastery('${id}','${area}','${t.id}',${n})" title="Stufe ${n}">${m >= n ? '★' : '☆'}</span>`).join('')}
+                </div>
+                <div style="display:flex;gap:4px">
+                  <button class="btn sm" title="Lernen" onclick="window._kvStudyTheme('${id}','${area}','${t.id}')">🎯</button>
+                  <button class="btn sm" title="Karte hinzufügen" onclick="window._kvAddCard('${id}','${area}','${t.id}')">+ Karte</button>
+                  <button class="btn sm ghost danger" title="Löschen" onclick="window._kvDeleteTheme('${id}','${area}','${t.id}')">🗑</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+    
+    <div class="kv-card">
+      <h3 style="margin:0 0 10px;display:flex;justify-content:space-between"><span>🔗 Links</span><button class="btn sm" onclick="window._kvAddLink('${id}','${area}')">+ Link</button></h3>
+      ${(a.links || []).length === 0 ? '<div class="mini" style="opacity:.5">Keine Links.</div>' : 
+        (a.links || []).slice().reverse().map(l => {
+          const theme = a.themes.find(t => t.id === l.themeId);
+          return `<div class="kv-link-row">
+            <span style="font-size:14px">🔗</span>
+            <a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.title || l.url)}</a>
+            ${theme ? `<span class="kv-pill" style="font-size:10px">${esc(theme.name)}</span>` : ''}
+            <button class="btn sm ghost danger" onclick="window._kvDeleteLink('${id}','${area}','${l.id}')">🗑</button>
+          </div>`;
+        }).join('')
+      }
+    </div>
+    
+    <div class="kv-card">
+      <h3 style="margin:0 0 10px;display:flex;justify-content:space-between"><span>📝 Notizen</span><button class="btn sm" onclick="window._kvAddNote('${id}','${area}')">+ Notiz</button></h3>
+      ${(a.notes || []).length === 0 ? '<div class="mini" style="opacity:.5">Keine Notizen.</div>' : 
+        (a.notes || []).slice().reverse().map(n => {
+          const theme = a.themes.find(t => t.id === n.themeId);
+          return `<div style="padding:10px 12px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer" onclick="window._kvEditNote('${id}','${area}','${n.id}')">
+            <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:13px">${esc(n.title || 'Ohne Titel')}</div>
+                ${n.content ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4">${esc(n.content.slice(0,150))}${n.content.length>150?'…':''}</div>` : ''}
+                ${theme ? `<span class="kv-pill" style="font-size:10px;margin-top:4px;display:inline-flex">📌 ${esc(theme.name)}</span>` : ''}
+              </div>
+              <button class="btn sm ghost danger" onclick="event.stopPropagation();window._kvDeleteNote('${id}','${area}','${n.id}')">🗑</button>
+            </div>
+          </div>`;
+        }).join('')
+      }
+    </div>
+    
+    <div class="kv-card">
+      <h3 style="margin:0 0 10px;display:flex;justify-content:space-between"><span>📁 Ordnerstruktur & Dokumente</span><button class="btn sm" onclick="window._kvAddFolder('${id}','${area}')">+ Ordner</button></h3>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Hochgeladene Dateien aus dem Projekt-Bereich kannst du hier zu Ordnern und Themen zuordnen.</div>
+      ${_kvRenderFolderTree(id, p, area)}
+    </div>
+  `;
+}
+
+function _kvBaseStyles() {
+  return `
+    .kv-card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px}
+    .kv-empty{padding:30px 20px;text-align:center;color:var(--muted);font-size:13px}
+    .kv-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:var(--panel);border:1px solid var(--border)}
+    .kv-pill.weak{background:rgba(239,68,68,0.1);color:#fca5a5;border-color:rgba(239,68,68,0.3)}
+    .kv-link-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;margin-bottom:5px;font-size:12px}
+    .kv-link-row a{color:var(--accent);text-decoration:none;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .kv-star{font-size:18px;color:#52525b;cursor:pointer;user-select:none;line-height:1}
+    .kv-star.filled{color:#fbbf24}
+    .kv-folder{margin:4px 0;border:1px solid var(--border);border-radius:8px;background:var(--panel2);overflow:hidden}
+    .kv-folder-header{padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px}
+    .kv-folder-header:hover{background:var(--panel)}
+    @media (max-width:600px){
+      .kv-stat-grid{grid-template-columns:repeat(2,1fr) !important}
+    }
+  `;
+}
+
+function _kvRenderFolderTree(id, p, area) {
+  const c = p._custom;
+  const a = c[area];
+  const folders = a.folders || [];
+  const allFiles = p.files || [];
+  
+  // Files mit fileTag in diesem Bereich
+  const tagged = allFiles.filter(f => a.fileTags[f.id]);
+  const untagged = allFiles.filter(f => !a.fileTags[f.id] && !c.betrieblich.fileTags[f.id] && !c.schulisch.fileTags[f.id]);
+  
+  // Group by folder
+  const filesByFolder = {};
+  tagged.forEach(f => {
+    const fid = a.fileTags[f.id]?.folderId || '_unsorted';
+    if (!filesByFolder[fid]) filesByFolder[fid] = [];
+    filesByFolder[fid].push(f);
+  });
+  
+  let html = '';
+  
+  // Folder rendering (rekursiv)
+  function renderFolders(parentId) {
+    const children = folders.filter(f => (f.parentId || null) === parentId);
+    if (children.length === 0) return '';
+    return children.map(f => {
+      const folderFiles = filesByFolder[f.id] || [];
+      const subFolders = folders.filter(sf => sf.parentId === f.id);
+      return `
+        <div class="kv-folder">
+          <div class="kv-folder-header" onclick="window._kvToggleFolder('${id}','${area}','${f.id}')">
+            <span style="font-size:14px">📁</span>
+            <span style="flex:1">${esc(f.name)}</span>
+            <span class="kv-pill" style="font-size:10px">${folderFiles.length} Dateien${subFolders.length?` · ${subFolders.length} Ordner`:''}</span>
+            <button class="btn sm ghost" onclick="event.stopPropagation();window._kvRenameFolder('${id}','${area}','${f.id}')" title="Umbenennen">✏️</button>
+            <button class="btn sm ghost" onclick="event.stopPropagation();window._kvAddSubFolder('${id}','${area}','${f.id}')" title="Unterordner">+📁</button>
+            <button class="btn sm ghost danger" onclick="event.stopPropagation();window._kvDeleteFolder('${id}','${area}','${f.id}')" title="Löschen">🗑</button>
+          </div>
+          <div class="kv-folder-body">
+            ${folderFiles.length === 0 && subFolders.length === 0 ? '<div class="mini" style="opacity:.5">Leer.</div>' : ''}
+            ${folderFiles.map(file => _kvRenderFileRow(id, area, file, a)).join('')}
+            ${renderFolders(f.id)}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  html += renderFolders(null);
+  
+  // Unsortierte (in diesem Bereich getaggt aber ohne Ordner)
+  if (filesByFolder['_unsorted'] && filesByFolder['_unsorted'].length > 0) {
+    html += `
+      <div class="kv-folder" style="border-style:dashed">
+        <div class="kv-folder-header"><span>📂</span><span style="flex:1">Ohne Ordner (${filesByFolder['_unsorted'].length})</span></div>
+        <div class="kv-folder-body">${filesByFolder['_unsorted'].map(f => _kvRenderFileRow(id, area, f, a)).join('')}</div>
+      </div>
+    `;
+  }
+  
+  // Verfügbare (untagged) Dateien aus dem Projekt
+  if (untagged.length > 0) {
+    html += `
+      <div class="kv-folder" style="border-style:dashed;opacity:0.85">
+        <div class="kv-folder-header"><span>📥</span><span style="flex:1">Verfügbare Projekt-Dateien (${untagged.length})</span><span style="font-size:11px;color:var(--muted);font-weight:400">Klick = zu diesem Bereich hinzufügen</span></div>
+        <div class="kv-folder-body">
+          ${untagged.map(f => `
+            <div style="padding:6px 10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;display:flex;align-items:center;gap:8px;font-size:12px">
+              <span>📄</span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+              <button class="btn sm primary" onclick="window._kvAssignFile('${id}','${area}','${f.id}')">→ ${area === 'betrieblich' ? '🏢' : '🏫'}</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+  
+  if (folders.length === 0 && Object.keys(filesByFolder).length === 0 && untagged.length === 0) {
+    html = '<div class="kv-empty">📭 Keine Dateien im Projekt. Lade oben in der Dokumente-Sektion welche hoch.</div>';
+  }
+  
+  return html;
+}
+
+function _kvRenderFileRow(id, area, file, a) {
+  const tag = a.fileTags[file.id] || {};
+  const themeIds = tag.themeIds || [];
+  const themes = (a.themes || []).filter(t => themeIds.includes(t.id));
+  const ext = (file.name || '').split('.').pop()?.toUpperCase() || 'FILE';
+  return `
+    <div style="padding:6px 10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap">
+      <span>📄</span>
+      <a href="${esc(file.url)}" target="_blank" rel="noopener" style="flex:1;color:var(--text);text-decoration:none;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:120px">${esc(file.name)}</a>
+      ${themes.map(t => `<span class="kv-pill" style="font-size:10px">${esc(t.name)}</span>`).join('')}
+      <button class="btn sm" onclick="window._kvAssignFolderFile('${id}','${area}','${file.id}')" title="Ordner ändern">📁</button>
+      <button class="btn sm" onclick="window._kvAssignThemes('${id}','${area}','${file.id}')" title="Themen zuordnen">🏷️</button>
+      <button class="btn sm ghost danger" onclick="window._kvUnassignFile('${id}','${area}','${file.id}')" title="Aus Bereich entfernen">✕</button>
+    </div>
+  `;
+}
+
+// ════════ THEME ACTIONS ════════
+window._kvOpenArea = function(pid, area) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  _kvEnsureData(p);
+  p._custom.activeArea = area;
+  p._custom.activeTab = area;
+  _kvSave(pid);
+  render();
+};
+
+window._kvCloseArea = function(pid) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom.activeArea = null;
+  p._custom.activeTab = 'overview';
+  _kvSave(pid);
+  render();
+};
+
+window._kvOpenAreaToTheme = function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  _kvEnsureData(p);
+  p._custom.activeArea = area;
+  _kvSave(pid);
+  render();
+  setTimeout(() => window._kvEditTheme(pid, area, themeId), 200);
+};
+
+window._kvSetExamDate = function(pid) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = _kvEnsureData(p);
+  const d = prompt('Prüfungsdatum (YYYY-MM-DD):', c.examDate || '2026-06-15');
+  if (!d) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { toast('warn','Format','YYYY-MM-DD nötig'); return; }
+  c.examDate = d;
+  _kvSave(pid);
+  render();
+  toast('ok','📅','Prüfungsdatum gesetzt');
+};
+
+window._kvAddTheme = function(pid, area) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = _kvEnsureData(p);
+  openModal('+ Neues Thema (' + area + ')', `
+    <div class="form">
+      <label class="col-12">Name<input type="text" id="kvThemeName" placeholder="z.B. Hausratversicherung" autofocus /></label>
+      <label class="col-12">Beschreibung (optional)<textarea id="kvThemeDesc" placeholder="Was umfasst dieses Thema?" rows="3"></textarea></label>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" onclick="window._kvSaveTheme('${pid}','${area}')">Speichern</button>`);
+  setTimeout(() => document.getElementById('kvThemeName')?.focus(), 100);
+};
+
+window._kvSaveTheme = function(pid, area) {
+  const name = document.getElementById('kvThemeName')?.value.trim();
+  if (!name) { toast('warn','Fehler','Name erforderlich'); return; }
+  const desc = document.getElementById('kvThemeDesc')?.value.trim() || '';
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = _kvEnsureData(p);
+  c[area].themes.push({
+    id: 'th_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    name, description: desc,
+    mastery: 0, status: 'open',
+    createdAt: new Date().toISOString()
+  });
+  _kvSave(pid);
+  closeModal();
+  toast('ok','📚','Thema hinzugefügt');
+  render();
+};
+
+window._kvEditTheme = function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const t = p._custom[area].themes.find(x => x.id === themeId);
+  if (!t) return;
+  const a = p._custom[area];
+  const cards = a.flashcards.filter(c => c.themeId === themeId);
+  const notes = a.notes.filter(n => n.themeId === themeId);
+  const links = a.links.filter(l => l.themeId === themeId);
+  const files = (p.files || []).filter(f => a.fileTags[f.id]?.themeIds?.includes(themeId));
+  const sessions = a.studySessions.filter(s => s.themeId === themeId);
+  const totalMin = Math.round(sessions.reduce((s,x) => s + (x.seconds||0), 0) / 60);
+  
+  openModal('📚 ' + t.name, `
+    <div class="form">
+      <label class="col-12">Name<input type="text" id="kvThemeEditName" value="${esc(t.name)}" /></label>
+      <label class="col-12">Beschreibung<textarea id="kvThemeEditDesc" rows="3">${esc(t.description||'')}</textarea></label>
+      <label class="col-12">Mastery (Selbsteinschätzung)
+        <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+          ${[1,2,3,4,5].map(n => `<button class="btn ${(t.mastery||0)>=n?'primary':''}" onclick="window._kvSetMasteryInline(${n})" data-mastery-btn>${n} ${(t.mastery||0)>=n?'★':'☆'}</button>`).join('')}
+          <input type="hidden" id="kvThemeEditMastery" value="${t.mastery || 0}" />
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">1=keine Ahnung · 2=schwach · 3=mittel · 4=gut · 5=sicher</div>
+      </label>
+    </div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        <span class="kv-pill" style="font-size:11px">📇 ${cards.length} Karten</span>
+        <span class="kv-pill" style="font-size:11px">📝 ${notes.length} Notizen</span>
+        <span class="kv-pill" style="font-size:11px">🔗 ${links.length} Links</span>
+        <span class="kv-pill" style="font-size:11px">📎 ${files.length} Dateien</span>
+        <span class="kv-pill" style="font-size:11px">⏱️ ${totalMin} Min</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn sm primary" onclick="closeModal();window._kvStudyTheme('${pid}','${area}','${themeId}')">🎯 Lernen starten</button>
+        <button class="btn sm" onclick="closeModal();window._kvAddCard('${pid}','${area}','${themeId}')">+ Karte</button>
+        <button class="btn sm" onclick="closeModal();window._kvAIGenerateCards('${pid}','${area}','${themeId}')">🤖 AI-Karten</button>
+        <button class="btn sm" onclick="closeModal();window._kvAddNote('${pid}','${area}','${themeId}')">+ Notiz</button>
+        <button class="btn sm" onclick="closeModal();window._kvAddLink('${pid}','${area}','${themeId}')">+ Link</button>
+      </div>
+    </div>
+    <script>
+      window._kvSetMasteryInline = function(n){
+        document.getElementById('kvThemeEditMastery').value = n;
+        document.querySelectorAll('[data-mastery-btn]').forEach((b,i)=>{
+          if(i<n){b.classList.add('primary');b.textContent=(i+1)+' ★'}
+          else{b.classList.remove('primary');b.textContent=(i+1)+' ☆'}
+        });
+      };
+    <\/script>
+  `, `<button class="btn danger" onclick="window._kvDeleteTheme('${pid}','${area}','${themeId}')">🗑 Löschen</button>
+      <button class="btn" data-action="close-modal">Schließen</button>
+      <button class="btn primary" onclick="window._kvSaveThemeEdit('${pid}','${area}','${themeId}')">Speichern</button>`);
+};
+
+window._kvSaveThemeEdit = function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const t = p._custom[area].themes.find(x => x.id === themeId);
+  if (!t) return;
+  t.name = document.getElementById('kvThemeEditName')?.value.trim() || t.name;
+  t.description = document.getElementById('kvThemeEditDesc')?.value.trim() || '';
+  t.mastery = parseInt(document.getElementById('kvThemeEditMastery')?.value) || t.mastery || 0;
+  _kvSave(pid);
+  closeModal();
+  toast('ok','✓','Thema gespeichert');
+  render();
+};
+
+window._kvDeleteTheme = function(pid, area, themeId) {
+  if (!confirm('Thema und alle zugehörigen Karten/Notizen/Links wirklich löschen?')) return;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const a = p._custom[area];
+  a.themes = a.themes.filter(t => t.id !== themeId);
+  a.flashcards = a.flashcards.filter(c => c.themeId !== themeId);
+  a.notes = a.notes.filter(n => n.themeId !== themeId);
+  a.links = a.links.filter(l => l.themeId !== themeId);
+  a.studySessions = a.studySessions.filter(s => s.themeId !== themeId);
+  // Themen-Tag aus File-Tags entfernen
+  Object.keys(a.fileTags).forEach(fid => {
+    if (a.fileTags[fid]?.themeIds) {
+      a.fileTags[fid].themeIds = a.fileTags[fid].themeIds.filter(id => id !== themeId);
+    }
+  });
+  _kvSave(pid);
+  closeModal();
+  toast('ok','🗑','Thema gelöscht');
+  render();
+};
+
+window._kvSetMastery = function(pid, area, themeId, level) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const t = p._custom[area].themes.find(x => x.id === themeId);
+  if (!t) return;
+  // Toggle: same level twice → unset
+  t.mastery = (t.mastery === level) ? Math.max(0, level - 1) : level;
+  _kvSave(pid);
+  render();
+};
+
+// ════════ FLASHCARDS ════════
+window._kvAddCard = function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = _kvEnsureData(p);
+  const themeOpts = c[area].themes.map(t => `<option value="${t.id}" ${t.id===themeId?'selected':''}>${esc(t.name)}</option>`).join('');
+  openModal('+ Neue Lernkarte', `
+    <div class="form">
+      <label class="col-12">Thema<select id="kvCardTheme">${themeOpts}</select></label>
+      <label class="col-12">Vorderseite (Frage)<textarea id="kvCardFront" rows="3" autofocus placeholder="z.B. Was deckt eine Hausratversicherung ab?"></textarea></label>
+      <label class="col-12">Rückseite (Antwort)<textarea id="kvCardBack" rows="4" placeholder="z.B. Schäden an beweglichen Gegenständen durch Feuer, Wasser, Diebstahl, Vandalismus..."></textarea></label>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" onclick="window._kvSaveCard('${pid}','${area}')">Speichern</button>`);
+  setTimeout(() => document.getElementById('kvCardFront')?.focus(), 100);
+};
+
+window._kvSaveCard = function(pid, area) {
+  const themeId = document.getElementById('kvCardTheme')?.value;
+  const front = document.getElementById('kvCardFront')?.value.trim();
+  const back = document.getElementById('kvCardBack')?.value.trim();
+  if (!front || !back) { toast('warn','Fehler','Beide Seiten ausfüllen'); return; }
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom[area].flashcards.push({
+    id: 'card_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    themeId, front, back,
+    easeFactor: 2.5, interval: 0, reps: 0, lapses: 0,
+    nextReview: Date.now(), createdAt: new Date().toISOString(), lastReviewAt: null
+  });
+  _kvSave(pid);
+  closeModal();
+  toast('ok','📇','Karte hinzugefügt');
+  render();
+};
+
+window._kvAIGenerateCards = async function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const t = p._custom[area].themes.find(x => x.id === themeId);
+  if (!t) return;
+  
+  if (typeof callAI !== 'function') {
+    toast('warn', 'AI', 'AI-Funktion nicht verfügbar');
+    return;
+  }
+  
+  const count = parseInt(prompt('Wie viele Karten generieren? (3-15)', '8') || '0');
+  if (!count || count < 1 || count > 20) return;
+  
+  toast('info', '🤖', 'Generiere ' + count + ' Karten...');
+  
+  const areaContext = area === 'betrieblich' 
+    ? 'KV-Abschlussprüfung Schweiz, Bereich Mobiliar Versicherungen / Branchenkunde Versicherung'
+    : 'KV-Abschlussprüfung Schweiz, schulischer Teil (BWK, W&G, IKA, Sprachen)';
+  
+  const prompt2 = `Erstelle ${count} kompakte Lernkarten für die KV-Abschlussprüfung zum Thema "${t.name}".
+
+Kontext: ${areaContext}
+${t.description ? 'Themenbeschreibung: ' + t.description : ''}
+
+Format: Antworte AUSSCHLIESSLICH als JSON-Array, keine Einleitung, kein Markdown:
+[
+  {"front":"Frage 1","back":"Antwort 1"},
+  {"front":"Frage 2","back":"Antwort 2"}
+]
+
+Anforderungen:
+- Frage präzise und lerntauglich (max. 1 Satz)
+- Antwort vollständig aber knapp (1-3 Sätze, max. 200 Zeichen)
+- Schweizer Kontext, Schweizer Recht/Begriffe wo passend
+- Variiere Fragetypen: Definition, Beispiel, Abgrenzung, Wann/Wer/Wieviel
+- Auf Deutsch (Schweizer Hochdeutsch)`;
+
+  try {
+    const response = await callAI(prompt2);
+    if (!response) { toast('err', 'AI-Fehler', 'Keine Antwort'); return; }
+    
+    // Extract JSON
+    let jsonStr = response.trim();
+    const match = jsonStr.match(/\[[\s\S]*\]/);
+    if (match) jsonStr = match[0];
+    
+    let cards;
+    try { cards = JSON.parse(jsonStr); } catch(e) {
+      toast('err', 'Parse-Fehler', 'AI-Antwort nicht parsbar');
+      console.error('AI response:', response);
+      return;
+    }
+    
+    if (!Array.isArray(cards)) { toast('err', 'Format', 'Kein Array'); return; }
+    
+    let added = 0;
+    cards.forEach(c => {
+      if (c.front && c.back) {
+        p._custom[area].flashcards.push({
+          id: 'card_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5) + added,
+          themeId, front: c.front, back: c.back,
+          easeFactor: 2.5, interval: 0, reps: 0, lapses: 0,
+          nextReview: Date.now(), createdAt: new Date().toISOString(), lastReviewAt: null,
+          source: 'ai'
+        });
+        added++;
+      }
+    });
+    
+    _kvSave(pid);
+    toast('ok', '🤖', added + ' Karten erstellt');
+    render();
+  } catch(e) {
+    toast('err', 'Fehler', e.message);
+  }
+};
+
+// SM-2 SRS Algorithmus (vereinfacht)
+function _kvCardUpdate(card, rating) {
+  // rating: 0=again, 1=hard, 2=good, 3=easy
+  let { easeFactor, interval, reps, lapses } = card;
+  
+  if (rating === 0) {
+    lapses++;
+    reps = 0;
+    interval = 0;
+    easeFactor = Math.max(1.3, easeFactor - 0.2);
+    return { easeFactor, interval, reps, lapses, nextReview: Date.now() + 10*60*1000, lastReviewAt: new Date().toISOString() };
+  }
+  
+  reps++;
+  if (reps === 1) interval = rating === 3 ? 4 : 1;
+  else if (reps === 2) interval = rating === 3 ? 6 : 3;
+  else interval = Math.round(interval * easeFactor * (rating === 3 ? 1.3 : rating === 1 ? 0.8 : 1));
+  
+  if (rating === 1) easeFactor = Math.max(1.3, easeFactor - 0.15);
+  if (rating === 3) easeFactor = easeFactor + 0.15;
+  
+  return { easeFactor, interval, reps, lapses, nextReview: Date.now() + interval*86400000, lastReviewAt: new Date().toISOString() };
+}
+
+// ════════ STUDY (Theme review) ════════
+window._kvStudyTheme = function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const cards = p._custom[area].flashcards.filter(c => c.themeId === themeId);
+  if (cards.length === 0) {
+    if (confirm('Keine Karten für dieses Thema. Jetzt eine erstellen?')) {
+      window._kvAddCard(pid, area, themeId);
+    }
+    return;
+  }
+  const due = cards.filter(c => !c.nextReview || c.nextReview <= Date.now());
+  const queue = due.length > 0 ? due : cards;
+  _kvStartCardSession(pid, area, queue, 'theme:' + themeId);
+};
+
+window._kvOpenQuiz = function(pid) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const all = [...(p._custom.betrieblich.flashcards||[]), ...(p._custom.schulisch.flashcards||[])];
+  const due = all.filter(c => !c.nextReview || c.nextReview <= Date.now());
+  const queue = due.length > 0 ? due : all;
+  if (queue.length === 0) { toast('warn','Quiz','Keine Karten vorhanden'); return; }
+  _kvStartCardSession(pid, null, queue, 'mixed');
+};
+
+window._kvAreaQuiz = function(pid, area) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const cards = p._custom[area].flashcards || [];
+  if (cards.length === 0) { toast('warn','Quiz','Keine Karten in diesem Bereich'); return; }
+  _kvStartCardSession(pid, area, cards, 'area:' + area);
+};
+
+window._kvShowDueCards = function(pid) {
+  window._kvOpenQuiz(pid);
+};
+
+window._kvShowWeakest = function(pid) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = p._custom;
+  const weakThemes = [];
+  ['betrieblich','schulisch'].forEach(area => {
+    (c[area].themes || []).forEach(t => {
+      if ((t.mastery || 0) > 0 && (t.mastery || 0) <= 2) {
+        const cards = c[area].flashcards.filter(card => card.themeId === t.id);
+        cards.forEach(card => weakThemes.push(card));
+      }
+    });
+  });
+  if (weakThemes.length === 0) { toast('info','Keine','Keine schwachen Themen mit Karten'); return; }
+  _kvStartCardSession(pid, null, weakThemes, 'weak');
+};
+
+window._kvOpenExamSim = function(pid) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom.activeTab = 'exam';
+  p._custom.activeArea = null;
+  // Build exam: random 30 cards from all areas
+  const all = [...(p._custom.betrieblich.flashcards||[]), ...(p._custom.schulisch.flashcards||[])];
+  if (all.length < 5) { toast('warn','Zu wenig','Mindestens 5 Karten nötig für Prüfungssimulation'); return; }
+  const shuffled = [...all].sort(() => Math.random() - 0.5);
+  const queue = shuffled.slice(0, Math.min(30, all.length));
+  _kvStartCardSession(pid, null, queue, 'exam');
+};
+
+window._kvCardSession = null;
+
+function _kvStartCardSession(pid, area, queue, kind) {
+  // Shuffle for variety
+  const shuffled = [...queue].sort(() => Math.random() - 0.5);
+  window._kvCardSession = {
+    pid, area, kind, queue: shuffled, index: 0,
+    correct: 0, total: shuffled.length, revealed: false,
+    startedAt: Date.now(), themeId: kind.startsWith('theme:') ? kind.slice(6) : null,
+  };
+  _kvShowCardModal();
+}
+
+function _kvShowCardModal() {
+  const s = window._kvCardSession;
+  if (!s) return;
+  if (s.index >= s.queue.length) {
+    _kvFinishSession();
+    return;
+  }
+  const card = s.queue[s.index];
+  const pct = Math.round((s.index / s.total) * 100);
+  
+  openModal(`📇 Karte ${s.index + 1} / ${s.total}`, `
+    <div style="margin-bottom:14px;height:6px;background:var(--panel2);border-radius:3px;overflow:hidden">
+      <div style="height:100%;background:linear-gradient(90deg,#6366f1,#8b5cf6);width:${pct}%;transition:width 0.3s"></div>
+    </div>
+    <div style="background:var(--panel2);border:1px solid var(--border);border-radius:14px;padding:24px;text-align:center;min-height:160px;cursor:${s.revealed?'default':'pointer'}" id="kvCardBody" ${!s.revealed?`onclick="window._kvRevealCard()"`:''}>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">${s.revealed ? 'Antwort' : 'Frage'}</div>
+      <div style="font-size:16px;line-height:1.5;font-weight:500;white-space:pre-wrap">${esc(card.front)}</div>
+      ${s.revealed ? `
+        <div style="height:1px;background:var(--border);margin:16px 0"></div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">Antwort</div>
+        <div style="font-size:16px;line-height:1.5;color:#a5f3fc;white-space:pre-wrap">${esc(card.back)}</div>
+      ` : `
+        <div style="font-size:11px;color:var(--muted);margin-top:16px">Tippe um aufzudecken</div>
+      `}
+    </div>
+    ${s.revealed ? `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:14px">
+        <button class="btn" style="background:#dc2626;color:#fff;font-weight:700" onclick="window._kvRateCard(0)">Nochmal</button>
+        <button class="btn" style="background:#ea580c;color:#fff;font-weight:700" onclick="window._kvRateCard(1)">Schwer</button>
+        <button class="btn" style="background:#16a34a;color:#fff;font-weight:700" onclick="window._kvRateCard(2)">Gut</button>
+        <button class="btn" style="background:#0891b2;color:#fff;font-weight:700" onclick="window._kvRateCard(3)">Leicht</button>
+      </div>
+    ` : ''}
+  `, `<button class="btn" onclick="window._kvCancelSession()">Abbrechen</button>${s.revealed?'':'<button class="btn primary" onclick="window._kvRevealCard()">Antwort zeigen</button>'}`);
+}
+
+window._kvRevealCard = function() {
+  const s = window._kvCardSession; if (!s) return;
+  s.revealed = true;
+  _kvShowCardModal();
+};
+
+window._kvRateCard = function(rating) {
+  const s = window._kvCardSession; if (!s) return;
+  const card = s.queue[s.index];
+  const p = APP.state.data.entities.projects[s.pid]; if (!p) return;
+  
+  // Update card SRS in DB
+  const findArea = ['betrieblich','schulisch'].find(a => p._custom[a].flashcards.some(c => c.id === card.id));
+  if (findArea) {
+    const dbCard = p._custom[findArea].flashcards.find(c => c.id === card.id);
+    if (dbCard) {
+      const updated = _kvCardUpdate(dbCard, rating);
+      Object.assign(dbCard, updated);
+    }
+  }
+  
+  if (rating >= 2) s.correct++;
+  s.index++;
+  s.revealed = false;
+  _kvSave(s.pid);
+  _kvShowCardModal();
+};
+
+window._kvCancelSession = function() {
+  const s = window._kvCardSession;
+  if (s && s.index > 0 && !confirm('Sitzung wirklich abbrechen? Fortschritt wird gespeichert.')) return;
+  _kvFinishSession();
+};
+
+function _kvFinishSession() {
+  const s = window._kvCardSession;
+  if (!s) { closeModal(); return; }
+  const pct = s.total > 0 ? Math.round((s.correct / s.total) * 100) : 0;
+  const elapsed = Math.round((Date.now() - s.startedAt) / 1000);
+  
+  // Save quiz history
+  const p = APP.state.data.entities.projects[s.pid];
+  if (p && s.area) {
+    p._custom[s.area].quizHistory.push({
+      id: 'q_' + Date.now().toString(36),
+      date: new Date().toISOString(),
+      total: s.total, correct: s.correct,
+      themeIds: s.themeId ? [s.themeId] : [],
+      kind: s.kind, seconds: elapsed
+    });
+    if (s.themeId) {
+      p._custom[s.area].studySessions.push({
+        id: 's_' + Date.now().toString(36),
+        themeId: s.themeId,
+        themeName: p._custom[s.area].themes.find(t => t.id === s.themeId)?.name || '',
+        startedAt: new Date(s.startedAt).toISOString(),
+        endedAt: new Date().toISOString(),
+        seconds: elapsed
+      });
+    }
+  } else if (p && s.kind === 'mixed' || s.kind === 'exam' || s.kind === 'weak') {
+    // Save to whichever area has more cards
+    const area = (p._custom.betrieblich.flashcards.length >= p._custom.schulisch.flashcards.length) ? 'betrieblich' : 'schulisch';
+    p._custom[area].quizHistory.push({
+      id: 'q_' + Date.now().toString(36),
+      date: new Date().toISOString(),
+      total: s.total, correct: s.correct,
+      themeIds: [], kind: s.kind, seconds: elapsed
+    });
+  }
+  _kvSave(s.pid);
+  
+  let medal = '🥉';
+  if (pct >= 90) medal = '🏆';
+  else if (pct >= 75) medal = '🥇';
+  else if (pct >= 60) medal = '🥈';
+  
+  openModal('🎉 Sitzung beendet', `
+    <div style="text-align:center;padding:20px">
+      <div style="font-size:64px;margin-bottom:12px">${medal}</div>
+      <div style="font-size:32px;font-weight:900;color:${pct>=75?'#22c55e':pct>=50?'#f59e0b':'#ef4444'}">${pct}%</div>
+      <div style="font-size:14px;color:var(--muted);margin-top:6px">${s.correct} von ${s.total} richtig</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">⏱️ ${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,'0')} min</div>
+    </div>
+  `, `<button class="btn primary" data-action="close-modal">Schließen</button>`);
+  
+  window._kvCardSession = null;
+}
+
+function _kvRenderQuiz(pid, p) {
+  // Eigentlich nicht direkt aufgerufen, da Quiz im Modal läuft
+  return _kvRenderAreaDetail(pid, p, p._custom.activeArea || 'betrieblich');
+}
+
+function _kvRenderExamSimulation(pid, p) {
+  return '';
+}
+
+// ════════ NOTES & LINKS ════════
+window._kvAddLink = function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = _kvEnsureData(p);
+  const themeOpts = '<option value="">— Keinem Thema —</option>' + c[area].themes.map(t => `<option value="${t.id}" ${t.id===themeId?'selected':''}>${esc(t.name)}</option>`).join('');
+  openModal('+ Link hinzufügen', `
+    <div class="form">
+      <label class="col-12">URL<input type="url" id="kvLinkUrl" placeholder="https://..." autofocus /></label>
+      <label class="col-12">Titel<input type="text" id="kvLinkTitle" placeholder="Optionaler Titel" /></label>
+      <label class="col-12">Thema (optional)<select id="kvLinkTheme">${themeOpts}</select></label>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" onclick="window._kvSaveLink('${pid}','${area}')">Speichern</button>`);
+};
+
+window._kvSaveLink = function(pid, area) {
+  const url = document.getElementById('kvLinkUrl')?.value.trim();
+  if (!url) { toast('warn','Fehler','URL nötig'); return; }
+  const title = document.getElementById('kvLinkTitle')?.value.trim() || url;
+  const themeId = document.getElementById('kvLinkTheme')?.value || null;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom[area].links.push({
+    id: 'l_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    url, title, themeId, addedAt: new Date().toISOString()
+  });
+  _kvSave(pid);
+  closeModal();
+  toast('ok','🔗','Link hinzugefügt');
+  render();
+};
+
+window._kvDeleteLink = function(pid, area, linkId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom[area].links = p._custom[area].links.filter(l => l.id !== linkId);
+  _kvSave(pid);
+  render();
+};
+
+window._kvAddNote = function(pid, area, themeId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const c = _kvEnsureData(p);
+  const themeOpts = '<option value="">— Keinem Thema —</option>' + c[area].themes.map(t => `<option value="${t.id}" ${t.id===themeId?'selected':''}>${esc(t.name)}</option>`).join('');
+  openModal('+ Notiz', `
+    <div class="form">
+      <label class="col-12">Titel<input type="text" id="kvNoteTitle" placeholder="Titel" autofocus /></label>
+      <label class="col-12">Thema<select id="kvNoteTheme">${themeOpts}</select></label>
+      <label class="col-12">Inhalt<textarea id="kvNoteContent" rows="8" placeholder="Notizinhalt..."></textarea></label>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" onclick="window._kvSaveNote('${pid}','${area}')">Speichern</button>`);
+};
+
+window._kvSaveNote = function(pid, area) {
+  const title = document.getElementById('kvNoteTitle')?.value.trim();
+  const content = document.getElementById('kvNoteContent')?.value.trim();
+  if (!title && !content) { toast('warn','Fehler','Titel oder Inhalt nötig'); return; }
+  const themeId = document.getElementById('kvNoteTheme')?.value || null;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom[area].notes.push({
+    id: 'n_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    title: title || 'Notiz', content, themeId,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+  });
+  _kvSave(pid);
+  closeModal();
+  toast('ok','📝','Notiz gespeichert');
+  render();
+};
+
+window._kvEditNote = function(pid, area, noteId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const n = p._custom[area].notes.find(x => x.id === noteId);
+  if (!n) return;
+  const themeOpts = '<option value="">— Kein Thema —</option>' + p._custom[area].themes.map(t => `<option value="${t.id}" ${t.id===n.themeId?'selected':''}>${esc(t.name)}</option>`).join('');
+  openModal('📝 Notiz bearbeiten', `
+    <div class="form">
+      <label class="col-12">Titel<input type="text" id="kvNoteEditTitle" value="${esc(n.title)}" /></label>
+      <label class="col-12">Thema<select id="kvNoteEditTheme">${themeOpts}</select></label>
+      <label class="col-12">Inhalt<textarea id="kvNoteEditContent" rows="10">${esc(n.content||'')}</textarea></label>
+    </div>
+  `, `<button class="btn danger" onclick="window._kvDeleteNote('${pid}','${area}','${noteId}')">🗑 Löschen</button>
+      <button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" onclick="window._kvSaveNoteEdit('${pid}','${area}','${noteId}')">Speichern</button>`);
+};
+
+window._kvSaveNoteEdit = function(pid, area, noteId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const n = p._custom[area].notes.find(x => x.id === noteId);
+  if (!n) return;
+  n.title = document.getElementById('kvNoteEditTitle')?.value.trim() || n.title;
+  n.themeId = document.getElementById('kvNoteEditTheme')?.value || null;
+  n.content = document.getElementById('kvNoteEditContent')?.value.trim() || '';
+  n.updatedAt = new Date().toISOString();
+  _kvSave(pid);
+  closeModal();
+  toast('ok','✓','Gespeichert');
+  render();
+};
+
+window._kvDeleteNote = function(pid, area, noteId) {
+  if (!confirm('Notiz löschen?')) return;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom[area].notes = p._custom[area].notes.filter(n => n.id !== noteId);
+  _kvSave(pid);
+  closeModal();
+  render();
+};
+
+// ════════ FOLDERS & FILE MANAGEMENT ════════
+window._kvAddFolder = function(pid, area, parentId) {
+  const name = prompt('Ordnername:');
+  if (!name?.trim()) return;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  p._custom[area].folders.push({
+    id: 'f_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    name: name.trim(), parentId: parentId || null,
+    createdAt: new Date().toISOString()
+  });
+  _kvSave(pid);
+  toast('ok','📁','Ordner erstellt');
+  render();
+};
+
+window._kvAddSubFolder = function(pid, area, parentId) {
+  window._kvAddFolder(pid, area, parentId);
+};
+
+window._kvRenameFolder = function(pid, area, folderId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const f = p._custom[area].folders.find(x => x.id === folderId);
+  if (!f) return;
+  const name = prompt('Neuer Name:', f.name);
+  if (!name?.trim()) return;
+  f.name = name.trim();
+  _kvSave(pid);
+  render();
+};
+
+window._kvDeleteFolder = function(pid, area, folderId) {
+  if (!confirm('Ordner löschen? Dateien werden auf "Ohne Ordner" verschoben.')) return;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const a = p._custom[area];
+  // Files aus dem Ordner ent-zuordnen
+  Object.keys(a.fileTags).forEach(fid => {
+    if (a.fileTags[fid]?.folderId === folderId) a.fileTags[fid].folderId = null;
+  });
+  // Sub-Folders ebenfalls
+  a.folders = a.folders.filter(f => f.id !== folderId && f.parentId !== folderId);
+  _kvSave(pid);
+  render();
+};
+
+window._kvToggleFolder = function(pid, area, folderId) {
+  // Nur visuell — wir rendern alles offen aktuell
+};
+
+window._kvAssignFile = function(pid, area, fileId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  if (!p._custom[area].fileTags[fileId]) p._custom[area].fileTags[fileId] = { themeIds: [], folderId: null };
+  _kvSave(pid);
+  toast('ok','✓','Datei zugewiesen');
+  render();
+};
+
+window._kvUnassignFile = function(pid, area, fileId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  delete p._custom[area].fileTags[fileId];
+  _kvSave(pid);
+  render();
+};
+
+window._kvAssignFolderFile = function(pid, area, fileId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const a = p._custom[area];
+  const folders = a.folders || [];
+  if (folders.length === 0) {
+    if (confirm('Keine Ordner vorhanden. Jetzt einen erstellen?')) {
+      window._kvAddFolder(pid, area);
+    }
+    return;
+  }
+  const current = a.fileTags[fileId]?.folderId || '';
+  const folderOpts = '<option value="">— Ohne Ordner —</option>' + folders.map(f => `<option value="${f.id}" ${current===f.id?'selected':''}>${esc(f.name)}</option>`).join('');
+  openModal('📁 Ordner zuweisen', `
+    <div class="form">
+      <label class="col-12">Ordner wählen<select id="kvFolderSelect">${folderOpts}</select></label>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" onclick="window._kvSaveFileFolder('${pid}','${area}','${fileId}')">Speichern</button>`);
+};
+
+window._kvSaveFileFolder = function(pid, area, fileId) {
+  const folderId = document.getElementById('kvFolderSelect')?.value || null;
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  if (!p._custom[area].fileTags[fileId]) p._custom[area].fileTags[fileId] = { themeIds: [], folderId: null };
+  p._custom[area].fileTags[fileId].folderId = folderId;
+  _kvSave(pid);
+  closeModal();
+  toast('ok','📁','Verschoben');
+  render();
+};
+
+window._kvAssignThemes = function(pid, area, fileId) {
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  const a = p._custom[area];
+  const themes = a.themes || [];
+  if (themes.length === 0) { toast('warn','Keine Themen','Erst Themen anlegen'); return; }
+  const current = a.fileTags[fileId]?.themeIds || [];
+  const checks = themes.map(t => `
+    <label style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:8px;margin-bottom:4px;cursor:pointer">
+      <input type="checkbox" value="${t.id}" ${current.includes(t.id)?'checked':''} class="kv-theme-check" />
+      <span>${esc(t.name)}</span>
+    </label>
+  `).join('');
+  openModal('🏷️ Themen zuordnen', `
+    <div class="form">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Mehrere Themen auswählbar</div>
+      ${checks}
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" onclick="window._kvSaveFileThemes('${pid}','${area}','${fileId}')">Speichern</button>`);
+};
+
+window._kvSaveFileThemes = function(pid, area, fileId) {
+  const checked = Array.from(document.querySelectorAll('.kv-theme-check:checked')).map(c => c.value);
+  const p = APP.state.data.entities.projects[pid]; if (!p) return;
+  if (!p._custom[area].fileTags[fileId]) p._custom[area].fileTags[fileId] = { themeIds: [], folderId: null };
+  p._custom[area].fileTags[fileId].themeIds = checked;
+  _kvSave(pid);
+  closeModal();
+  toast('ok','🏷️','Themen zugeordnet');
+  render();
+};
+
+// ════════ AI THEMES ════════
+window._kvImportThemesAI = async function(pid, area) {
+  if (typeof callAI !== 'function') { toast('warn','AI','AI-Funktion nicht verfügbar'); return; }
+  if (!confirm('Standard-Themen für ' + (area === 'betrieblich' ? 'die betriebliche' : 'die schulische') + ' KV-Abschlussprüfung importieren?')) return;
+  
+  toast('info', '🤖', 'Generiere Themen...');
+  
+  const prompt2 = area === 'betrieblich' 
+    ? `Liste die 10-15 wichtigsten Themengebiete der betrieblichen KV-Abschlussprüfung 2026 in der Schweiz, Branche Versicherung (Mobiliar). Fokus auf Versicherungssparten und Beratung. Format: ausschliesslich JSON-Array, keine Einleitung:
+[{"name":"Name","description":"Kurze Beschreibung was umfasst ist"}]
+Auf Deutsch. Beispiele: Hausratversicherung, Privathaftpflicht, Motorfahrzeugversicherung, Unfallversicherung, Lebensversicherung, etc.`
+    : `Liste die 10-15 wichtigsten Themengebiete der schulischen KV-Abschlussprüfung 2026 in der Schweiz (Profil E oder M). Format: ausschliesslich JSON-Array, keine Einleitung:
+[{"name":"Name","description":"Kurze Beschreibung"}]
+Auf Deutsch. Bereiche: Wirtschaft & Gesellschaft (W&G), IKA, Sprachen, etc.`;
+  
+  try {
+    const response = await callAI(prompt2);
+    if (!response) { toast('err','AI','Keine Antwort'); return; }
+    let jsonStr = response.trim();
+    const match = jsonStr.match(/\[[\s\S]*\]/);
+    if (match) jsonStr = match[0];
+    const themes = JSON.parse(jsonStr);
+    if (!Array.isArray(themes)) throw new Error('Kein Array');
+    
+    const p = APP.state.data.entities.projects[pid]; if (!p) return;
+    let added = 0;
+    themes.forEach(t => {
+      if (!t.name) return;
+      // Skip duplicates
+      if (p._custom[area].themes.some(x => x.name.toLowerCase() === t.name.toLowerCase())) return;
+      p._custom[area].themes.push({
+        id: 'th_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5) + added,
+        name: t.name, description: t.description || '',
+        mastery: 0, status: 'open',
+        createdAt: new Date().toISOString(), source: 'ai'
+      });
+      added++;
+    });
+    _kvSave(pid);
+    toast('ok','🤖', added + ' Themen hinzugefügt');
+    render();
+  } catch(e) {
+    toast('err','Fehler', e.message);
+    console.error(e);
+  }
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -29583,6 +31211,188 @@ document.addEventListener("click", function(e) {
       break;
     }
     
+    case "add-project-thought": {
+      e.preventDefault();
+      const projId = el.dataset.id;
+      const proj = APP.state.data.entities.projects[projId];
+      if (!proj) break;
+      const inp = document.getElementById("projThoughtInput" + projId);
+      const text = (inp?.value || "").trim();
+      if (!text) { toast("warn", "Fehler", "Bitte Text eingeben"); break; }
+      if (!proj.thoughts) proj.thoughts = [];
+      proj.thoughts.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2,5), text, createdAt: new Date().toISOString() });
+      proj.updatedAt = new Date().toISOString();
+      if (inp) inp.value = "";
+      scheduleSave();
+      toast("ok", "💭", "Gedanke festgehalten");
+      render();
+      break;
+    }
+    
+    case "delete-project-thought": {
+      e.preventDefault();
+      const projId = el.dataset.id;
+      const tid = el.dataset.thoughtId;
+      const proj = APP.state.data.entities.projects[projId];
+      if (!proj) break;
+      proj.thoughts = (proj.thoughts || []).filter(t => t.id !== tid);
+      proj.updatedAt = new Date().toISOString();
+      scheduleSave();
+      render();
+      break;
+    }
+    
+    // ===== READING LIST =====
+    case "add-reading-link": {
+      e.preventDefault();
+      openModal("🔗 Link zur Leseliste", `
+        <div class="form">
+          <label class="col-12">Titel<input type="text" id="rlLinkTitle" placeholder="Optional, z.B. 'NZZ-Artikel zu KI'" /></label>
+          <label class="col-12">URL<input type="url" id="rlLinkUrl" placeholder="https://..." autofocus /></label>
+          <label class="col-12">Notiz (optional)<textarea id="rlLinkNotes" rows="2" placeholder="Warum lesen, worauf achten..."></textarea></label>
+        </div>
+      `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+          <button class="btn primary" data-action="save-reading-link">+ Hinzufügen</button>`);
+      setTimeout(() => $("#rlLinkUrl")?.focus(), 100);
+      break;
+    }
+    
+    case "save-reading-link": {
+      e.preventDefault();
+      const url = ($("#rlLinkUrl")?.value || "").trim();
+      if (!url) { toast("warn", "Fehler", "URL erforderlich"); break; }
+      const title = ($("#rlLinkTitle")?.value || "").trim();
+      const notes = ($("#rlLinkNotes")?.value || "").trim();
+      APP.state.data.readingList = APP.state.data.readingList || [];
+      APP.state.data.readingList.push({
+        id: 'rl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+        type: 'link', title: title || url, url, notes,
+        addedAt: new Date().toISOString(), completedAt: null
+      });
+      scheduleSave();
+      closeModal();
+      toast("ok", "📚", "Zur Leseliste hinzugefügt");
+      render();
+      break;
+    }
+    
+    case "add-reading-text": {
+      e.preventDefault();
+      openModal("📝 Text zur Leseliste", `
+        <div class="form">
+          <label class="col-12">Titel<input type="text" id="rlTextTitle" placeholder="z.B. 'Notiz zu Strategieartikel'" autofocus /></label>
+          <label class="col-12">Inhalt<textarea id="rlTextContent" rows="8" placeholder="Text einfügen..."></textarea></label>
+          <label class="col-12">Notiz (optional)<textarea id="rlTextNotes" rows="2" placeholder="Optional"></textarea></label>
+        </div>
+      `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+          <button class="btn primary" data-action="save-reading-text">+ Hinzufügen</button>`);
+      setTimeout(() => $("#rlTextTitle")?.focus(), 100);
+      break;
+    }
+    
+    case "save-reading-text": {
+      e.preventDefault();
+      const title = ($("#rlTextTitle")?.value || "").trim();
+      const content = ($("#rlTextContent")?.value || "").trim();
+      if (!title && !content) { toast("warn", "Fehler", "Titel oder Inhalt erforderlich"); break; }
+      const notes = ($("#rlTextNotes")?.value || "").trim();
+      APP.state.data.readingList = APP.state.data.readingList || [];
+      APP.state.data.readingList.push({
+        id: 'rl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+        type: 'text', title: title || 'Text', content, notes,
+        addedAt: new Date().toISOString(), completedAt: null
+      });
+      scheduleSave();
+      closeModal();
+      toast("ok", "📚", "Zur Leseliste hinzugefügt");
+      render();
+      break;
+    }
+    
+    case "add-reading-file": {
+      e.preventDefault();
+      if (!firebaseStorage) { toast("warn", "Firebase fehlt", "Datei-Upload erfordert Firebase"); break; }
+      openModal("📎 Datei zur Leseliste", `
+        <div class="form">
+          <label class="col-12">Titel<input type="text" id="rlFileTitle" placeholder="z.B. 'PDF zu OECD-Bericht'" /></label>
+          <label class="col-12">Datei wählen
+            <input type="file" id="rlFileInput" multiple style="margin-top:6px" />
+          </label>
+          <label class="col-12">Notiz (optional)<textarea id="rlFileNotes" rows="2" placeholder="Optional"></textarea></label>
+        </div>
+      `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+          <button class="btn primary" data-action="save-reading-file">📤 Hochladen</button>`);
+      break;
+    }
+    
+    case "save-reading-file": {
+      e.preventDefault();
+      const inp = document.getElementById("rlFileInput");
+      const fileList = inp?.files;
+      if (!fileList || fileList.length === 0) { toast("warn", "Fehler", "Bitte Datei wählen"); break; }
+      const title = ($("#rlFileTitle")?.value || "").trim();
+      const notes = ($("#rlFileNotes")?.value || "").trim();
+      
+      const itemId = 'rl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+      APP.state.data.readingList = APP.state.data.readingList || [];
+      const item = {
+        id: itemId, type: 'file', title: title || fileList[0].name, files: [], notes,
+        addedAt: new Date().toISOString(), completedAt: null
+      };
+      APP.state.data.readingList.push(item);
+      
+      toast("info", "Upload", "Lade " + fileList.length + " Datei(en) hoch...");
+      closeModal();
+      
+      (async () => {
+        for (let i = 0; i < fileList.length; i++) {
+          const file = fileList[i];
+          if (file.size > 50 * 1024 * 1024) { toast('error', 'Zu groß', file.name); continue; }
+          const fileId = 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+          const storagePath = `attachments/readingList/${itemId}/${fileId}_${file.name}`;
+          try {
+            const downloadUrl = await uploadToFirebase(file, storagePath, () => {});
+            item.files.push({
+              id: fileId, name: file.name, size: file.size, type: file.type,
+              storagePath, url: downloadUrl, uploadedAt: new Date().toISOString()
+            });
+            toast('ok', 'Hochgeladen', file.name);
+          } catch (err) {
+            toast('error', 'Upload-Fehler', err.message || 'Unbekannt');
+          }
+        }
+        scheduleSave();
+        render();
+      })();
+      break;
+    }
+    
+    case "toggle-reading-item": {
+      e.preventDefault();
+      e.stopPropagation();
+      const rid = el.dataset.id;
+      const list = APP.state.data.readingList || [];
+      const item = list.find(r => r.id === rid);
+      if (!item) break;
+      item.completedAt = item.completedAt ? null : new Date().toISOString();
+      scheduleSave();
+      toast("ok", item.completedAt ? "✅" : "↩️", item.completedAt ? "Erledigt" : "Wieder offen");
+      render();
+      break;
+    }
+    
+    case "delete-reading-item": {
+      e.preventDefault();
+      e.stopPropagation();
+      const rid = el.dataset.id;
+      if (!confirm("Eintrag aus Leseliste löschen?")) break;
+      APP.state.data.readingList = (APP.state.data.readingList || []).filter(r => r.id !== rid);
+      scheduleSave();
+      toast("ok", "🗑", "Gelöscht");
+      render();
+      break;
+    }
+    
     case "delete-thought": {
       e.preventDefault();
       const thId = el.dataset.id;
@@ -31395,15 +33205,51 @@ case "open-message": {
     const _dc = getEntity("decision", msg.decisionId);
     if (_dc) _dcLinkHtml = '<div class="sep"></div><div style="margin-top:12px"><button class="btn sm primary" onclick="closeModal();navigate(\'decisions\',\'' + msg.decisionId + '\')" style="width:100%">⚖️ Zur Entscheidung</button></div>';
   }
+  
+  // Files-Sektion für Nachrichten
+  const _msgFiles = msg.files || [];
+  const _filesHtml = _msgFiles.length 
+    ? '<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">' + _msgFiles.map((f, i) => {
+        const ext = (f.name || '').split('.').pop()?.toUpperCase() || 'FILE';
+        const sizeStr = f.size ? (f.size > 1048576 ? (f.size/1048576).toFixed(1)+' MB' : (f.size/1024).toFixed(0)+' KB') : '';
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:12px"><span style="font-size:16px">📎</span><div style="flex:1;min-width:0;overflow:hidden"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(f.name) + '</div><div style="font-size:10px;color:var(--muted)">' + ext + (sizeStr?' · '+sizeStr:'') + '</div></div><a href="' + esc(f.url) + '" target="_blank" rel="noopener" class="btn sm" style="text-decoration:none">⬇️</a><button class="btn sm ghost danger" data-action="delete-message-file" data-id="' + msgId + '" data-file-idx="' + i + '">🗑</button></div>';
+      }).join('') + '</div>'
+    : '<div class="mini" style="opacity:.5;margin-top:6px">Keine Anhänge.</div>';
+  
   openModal(`📬 ${esc(msg.title)}`, `
     <div class="mini mb-2">Erstellt: ${fmtDateTime(msg.createdAt)}</div>
     <div class="mini mb-3">Priorität: ${msg.priority === 1 ? "🔴 Hoch" : msg.priority === 5 ? "🟢 Niedrig" : "🟡 Normal"}</div>
     ${msg.sourceType ? '<div class="mini mb-2" style="display:inline-flex;padding:3px 8px;background:rgba(99,102,241,.08);border-radius:6px;font-size:11px;font-weight:600">' + esc(msg.sourceType) + '</div>' : ''}
     <div class="sep"></div>
     <div style="white-space:pre-wrap;line-height:1.6">${esc(msg.content || "Keine Nachricht")}</div>
+    <div class="sep" style="margin:14px 0 10px"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <h4 style="margin:0;font-size:13px">📎 Anhänge (${_msgFiles.length})</h4>
+      <button class="btn sm" onclick="document.getElementById('msgFileUpload_${msgId}').click()">📤 Datei anhängen</button>
+    </div>
+    <input type="file" id="msgFileUpload_${msgId}" multiple style="display:none" onchange="window._uploadMessageFiles('${msgId}',this.files)" />
+    ${_filesHtml}
     ${_dcLinkHtml}
   `, `<button class="btn danger" data-action="delete-message" data-id="${msgId}">🗑 Löschen</button>
       <button class="btn" data-action="close-modal">Schliessen</button>`);
+  break;
+}
+
+case "delete-message-file": {
+  e.preventDefault();
+  e.stopPropagation();
+  const msgId = el.dataset.id;
+  const fIdx = parseInt(el.dataset.fileIdx, 10);
+  const msg = APP.state.data.entities.scheduledMessages?.[msgId];
+  if (!msg || !msg.files?.[fIdx]) break;
+  if (!confirm('Anhang entfernen?')) break;
+  msg.files.splice(fIdx, 1);
+  msg.updatedAt = nowIso();
+  scheduleSave();
+  closeModal();
+  toast('ok','Entfernt','Anhang gelöscht');
+  // Modal mit aktualisierter Liste neu öffnen
+  setTimeout(() => { if (window._reopenMessageModal) window._reopenMessageModal(msgId); }, 100);
   break;
 }
 
@@ -38781,6 +40627,33 @@ async function init() {
       _syncLockActive = false;
     }
   }, 30000);
+  
+  // Mobile-Delta-Polling für RecallLab (alle 60s, nur wenn Tab aktiv)
+  setInterval(async () => {
+    if (document.hidden || !navigator.onLine) return;
+    if (!isBlobSyncConfigured() && !isFirebaseCloudAvailable()) return;
+    if (_syncLockActive) return;
+    if (typeof mergeMobileRecallLabDelta !== 'function') return;
+    try {
+      const r = await mergeMobileRecallLabDelta();
+      if (r && r.applied > 0) {
+        console.log('[Auto] Mobile-Delta-Polling angewendet:', r.applied);
+        // Nach dem Mergen Push, damit der gemergte Stand in die Cloud kommt
+        if (typeof doSave === 'function') {
+          await doSave(true).catch(e => console.warn('[Auto] Save nach Mobile-Merge failed:', e));
+          // Delta nach erfolgreichem Save als konsumiert markieren
+          if (typeof clearMobileRecallLabDelta === 'function') {
+            clearMobileRecallLabDelta().catch(e => console.warn('[Auto] Delta-Clear failed:', e));
+          }
+        } else if (typeof scheduleSave === 'function') {
+          scheduleSave();
+        }
+        try { if (typeof render === 'function') render(); } catch(e) {}
+      }
+    } catch(e) {
+      console.warn('[Auto] Mobile-Delta-Polling Fehler:', e);
+    }
+  }, 60000);
   
   // Daily IndexedDB full backup
   setInterval(() => { idbBackup(APP.state.data, 'periodic'); }, 3600000);
