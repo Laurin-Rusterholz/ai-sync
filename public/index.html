@@ -5066,7 +5066,11 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
 }
 function buildStorageAuthHeaders(token) {
   const headers = {};
-  if (token) headers['Authorization'] = token;
+  if (token) {
+    // Akzeptiere Token mit oder ohne "Bearer "-Prefix; sende immer mit Bearer
+    const t = String(token).trim();
+    headers['Authorization'] = t.toLowerCase().startsWith('bearer ') ? t : ('Bearer ' + t);
+  }
   return headers;
 }
 function getLocalReadingHubBooks() {
@@ -8043,31 +8047,18 @@ async function manualTransferPush(silent = false) {
   await manualLocalSave(true);
 
   // ✅ NEU: Vor Push Mobile-Delta einmischen, damit Lernfortschritte vom Handy in den Push wandern
-  // Robuster Schutz gegen Datenverlust: Selbst wenn Pull übersprungen wurde, mergen wir hier nochmal.
-  let mobileMergeOk = true;
+  // Robust: Selbst bei Fehler blockiert das den Push NICHT, da mergeMobileRecallLabDelta intern alle Fehler schluckt.
   try {
     const mobileResult = await mergeMobileRecallLabDelta();
     if (mobileResult.applied > 0) {
       console.log('[ManualPush] Mobile-Delta vor Push gemergt:', mobileResult.applied);
       if (!silent) toast('info', '📱 Mobile-Sync', mobileResult.applied + ' Lern-Updates vom Handy übernommen');
     }
-    // Track when we last consumed mobile delta - protect against accidental overwrites
     if (!APP.state.data.meta) APP.state.data.meta = {};
     APP.state.data.meta.lastMobileDeltaCheckAt = new Date().toISOString();
   } catch(e) { 
-    mobileMergeOk = false;
-    console.warn('[ManualPush] Mobile-Delta-Merge fehlgeschlagen:', e);
-    if (!silent) {
-      // Bei Fehler: User fragen, ob trotzdem pushen
-      const proceed = confirm('⚠️ Mobile-Lernfortschritte konnten nicht geprüft werden.\n\nFehler: ' + (e.message || 'Unbekannt') + '\n\nTrotzdem hochladen? Achtung: Falls am Handy kürzlich gelernt wurde, könnten diese Daten verloren gehen.');
-      if (!proceed) {
-        APP.state.storage.status = 'error';
-        APP.state.storage.message = 'Push abgebrochen — Mobile-Sync nicht möglich';
-        updateSyncChip();
-        toast('warn', 'Abgebrochen', 'Push wegen Mobile-Sync-Risiko abgebrochen');
-        return { ok: false, reason: 'mobile_merge_failed' };
-      }
-    }
+    // Sollte nie passieren (Funktion fängt selber alles ab), aber falls doch: nur loggen, NICHT blocken
+    console.warn('[ManualPush] Mobile-Delta-Merge unerwarteter Fehler:', e);
   }
 
   // Clear stale ETags for manual push (user explicitly wants to overwrite)
@@ -8181,18 +8172,24 @@ async function manualTransferPush(silent = false) {
 
   const failures = appResults.map(r => {
     const prov = cloudProviderLabel(r?.provider);
-    if (r?.skipped) return prov + ': übersprungen';
+    if (r?.skipped) return prov + ': übersprungen (nicht konfiguriert)';
+    if (r?.status === 401) return prov + ': 401 Unauthorized — Auth-Token fehlt oder falsch (Settings → Storage → Auth Token)';
+    if (r?.status === 404) return prov + ': 404 — Function nicht deployed';
+    if (r?.status === 403) return prov + ': 403 Forbidden';
+    if (r?.status === 500) return prov + ': 500 Server-Fehler — Netlify-Logs prüfen';
     if (r?.status) return prov + ': HTTP ' + r.status;
     if (r?.error?.code) return prov + ': ' + r.error.code;
-    if (r?.error?.message) return prov + ': ' + String(r.error.message).slice(0, 60);
-    return prov + ': Fehler';
+    if (r?.error?.message) return prov + ': ' + String(r.error.message).slice(0, 80);
+    return prov + ': Fehler (siehe Console)';
   }).join(' · ');
   console.warn('[ManualPush] All providers failed:', failures, appResults);
   APP.state.storage.status = 'error';
   APP.state.storage.message = failures || 'Übertragung fehlgeschlagen';
   updateSyncChip();
-  if (!silent) toast('warn', 'Übertragung fehlgeschlagen', failures || 'Kein Cloud-Ziel erreichbar');
-  return { ok: false, appResults, rhResults };
+  if (!silent) {
+    toast('warn', 'Übertragung fehlgeschlagen', failures || 'Kein Cloud-Ziel erreichbar', 9000);
+  }
+  return { ok: false, appResults, rhResults, failures };
   } finally { _transferInProgress = false; }
 }
 async function manualTransferPull(silent = false) {
@@ -8338,6 +8335,85 @@ async function manualTransferPull(silent = false) {
 }
 window.manualTransferPush = manualTransferPush;
 window.manualTransferPull = manualTransferPull;
+
+// 🩺 Diagnose-Funktion: in Browser-Console aufrufen mit `diagnoseSync()`
+// oder über Settings → Storage → "🩺 Diagnose ausführen"
+window.diagnoseSync = async function() {
+  console.log('=== SYNC DIAGNOSE ===');
+  const s = APP.state.settings.storage;
+  const lines = [];
+  const log = (msg, ok) => {
+    console.log(msg);
+    lines.push((ok === true ? '✅ ' : ok === false ? '❌ ' : '· ') + msg);
+  };
+  
+  log('Settings: blobKey=' + s.blobKey);
+  log('GET URL: ' + s.getUrl);
+  log('PUT URL: ' + s.putUrl);
+  log('Auth-Token: ' + (s.authToken ? 'gesetzt (' + s.authToken.length + ' Zeichen)' : 'LEER'));
+  log('Aktuelle Domain: ' + window.location.origin);
+  
+  // Prüfe ob URLs absolut sind oder relativ — wenn relativ und Domain != Netlify, gibt das ein Problem
+  const isRelative = !s.getUrl.startsWith('http');
+  if (isRelative) log('URLs sind relativ — Functions werden auf ' + window.location.origin + ' aufgerufen', null);
+  
+  log('Netlify konfiguriert: ' + (isBlobSyncConfigured() ? 'JA' : 'NEIN'), isBlobSyncConfigured());
+  log('Firebase verfügbar: ' + (isFirebaseCloudAvailable() ? 'JA' : 'NEIN'), null);
+  
+  log('Teste Netlify GET …', null);
+  try {
+    const r = await netlifyBlobGet(s.blobKey, { force: true });
+    if (r.ok) log('GET: ✓ erfolgreich (' + JSON.stringify(r.data).length + ' Bytes empfangen)', true);
+    else if (r.status === 401) log('GET: 401 — Auth-Token falsch oder fehlt', false);
+    else if (r.status === 404) log('GET: 404 — noch keine Daten in Cloud (OK beim ersten Mal)', null);
+    else if (r.status === 500) log('GET: 500 Server-Fehler — Netlify-Function-Logs prüfen', false);
+    else if (r.status) log('GET: HTTP ' + r.status, false);
+    else log('GET: Fehler — ' + (r.error?.message || 'unbekannt'), false);
+  } catch(e) { log('GET Exception: ' + e.message, false); }
+  
+  log('Teste Netlify PUT (mit Test-Daten) …', null);
+  try {
+    const testData = { test: true, ts: Date.now(), msg: 'diagnose' };
+    const r = await netlifyBlobPut('_diagnose-test.json', testData, { force: true });
+    if (r.ok) log('PUT: ✓ erfolgreich', true);
+    else if (r.status === 401) log('PUT: 401 — Auth-Token falsch', false);
+    else if (r.status === 404) log('PUT: 404 — Function nicht deployed', false);
+    else if (r.status === 405) log('PUT: 405 — Function akzeptiert kein PUT (Bundler-Problem?)', false);
+    else if (r.status === 500) log('PUT: 500 — Server-Fehler in der Function', false);
+    else if (r.status) log('PUT: HTTP ' + r.status, false);
+    else log('PUT: Fehler — ' + (r.error?.message || 'unbekannt'), false);
+  } catch(e) { log('PUT Exception: ' + e.message, false); }
+  
+  const stats = getSyncStats(APP.state.data);
+  log('Lokale Daten: ' + formatSyncStatsShort(stats), null);
+  console.log('=== ENDE DIAGNOSE ===');
+  
+  // Im UI anzeigen, falls offen
+  const out = document.getElementById('diagnoseResult');
+  if (out) {
+    out.innerHTML = lines.map(l => '<div style="margin:2px 0">' + esc(l) + '</div>').join('');
+  }
+  toast('info', 'Diagnose fertig', 'Details in Settings + Console (F12)', 6000);
+};
+
+window._autoSetupEndpoints = function() {
+  const origin = window.location.origin;
+  if (!origin || origin === 'null' || origin.startsWith('file:')) {
+    toast('warn', 'Auto-Setup', 'Funktioniert nur, wenn die App auf einer Netlify-Domain offen ist (nicht lokal)');
+    return;
+  }
+  const newGet = origin + '/.netlify/functions/blob-get?key={key}';
+  const newPut = origin + '/.netlify/functions/blob-put?key={key}';
+  APP.state.settings.storage.getUrl = newGet;
+  APP.state.settings.storage.putUrl = newPut;
+  // Inputs aktualisieren falls offen
+  const gi = document.getElementById('setGetUrl'); if (gi) gi.value = newGet;
+  const pi = document.getElementById('setPutUrl'); if (pi) pi.value = newPut;
+  saveSettings(APP.state.settings);
+  toast('ok', '🔧 Endpoints gesetzt', 'GET/PUT URLs auf ' + origin);
+};
+
+console.log('💡 Tipp: Führe "diagnoseSync()" in der Console aus oder gehe zu Settings → Storage');
 
 // ===== MOBILE-DELTA für RecallLab =====
 // Wird vom RecallLab Mobile-App in `recalllab-mobile.json` geschrieben.
@@ -18190,12 +18266,21 @@ function _kvRenderFolderTree(id, p, area) {
     `;
   }
   
-  // Verfügbare (untagged) Dateien aus dem Projekt
+  // Verfügbare (untagged) Dateien aus dem Projekt — eingeklappt by default
   if (untagged.length > 0) {
     html += `
-      <div class="kv-folder" style="border-style:dashed;opacity:0.85">
-        <div class="kv-folder-header"><span>📥</span><span style="flex:1">Verfügbare Projekt-Dateien (${untagged.length})</span><span style="font-size:11px;color:var(--muted);font-weight:400">Klick = zu diesem Bereich hinzufügen</span></div>
-        <div class="kv-folder-body">
+      <details class="kv-folder" style="border-style:dashed;opacity:0.85">
+        <summary style="padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px;list-style:none">
+          <span style="font-size:14px;transition:transform 0.2s">▶</span>
+          <span>📥</span>
+          <span style="flex:1">Verfügbare Projekt-Dateien (${untagged.length})</span>
+          <span style="font-size:11px;color:var(--muted);font-weight:400">Klick zum Aufklappen</span>
+        </summary>
+        <style>
+          details[open] > summary > span:first-child{transform:rotate(90deg)}
+          summary::-webkit-details-marker{display:none}
+        </style>
+        <div style="padding:8px 12px;border-top:1px solid var(--border)">
           ${untagged.map(f => `
             <div style="padding:6px 10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-bottom:4px;display:flex;align-items:center;gap:8px;font-size:12px">
               <span>📄</span>
@@ -18204,7 +18289,7 @@ function _kvRenderFolderTree(id, p, area) {
             </div>
           `).join('')}
         </div>
-      </div>
+      </details>
     `;
   }
   
@@ -40105,10 +40190,22 @@ async function init() {
         <div id="storageTab" class="settings-tab-content">
           <div class="form">
             <h4 style="margin-bottom:12px">☁️ Cloud-Synchronisation</h4>
+            
+            <div class="card" style="padding:12px;border:1px solid rgba(99,102,241,0.3);background:rgba(99,102,241,0.05);margin-bottom:14px">
+              <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px">🩺 Sync-Diagnose</div>
+              <div class="mini" style="color:var(--muted);margin-bottom:8px">Testet, ob Netlify-Functions erreichbar sind und der Auth-Token stimmt.</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="btn primary" onclick="window.diagnoseSync()">🩺 Diagnose ausführen</button>
+                <button type="button" class="btn" onclick="window._autoSetupEndpoints()">🔧 URLs auf aktuelle Domain setzen</button>
+              </div>
+              <div id="diagnoseResult" style="margin-top:10px;font-size:12px;font-family:monospace;color:var(--muted)"></div>
+            </div>
+            
             <label class="col-12">Blob Key<input type="text" id="setBlobKey" value="${esc(APP.state.settings.storage.blobKey)}" /></label>
             <label class="col-12">GET URL<input type="text" id="setGetUrl" value="${esc(APP.state.settings.storage.getUrl)}" /></label>
             <label class="col-12">PUT URL<input type="text" id="setPutUrl" value="${esc(APP.state.settings.storage.putUrl)}" /></label>
-            <label class="col-12">Auth Token<input type="text" id="setAuthToken" value="${esc(APP.state.settings.storage.authToken)}" /></label>
+            <label class="col-12">Auth Token<input type="text" id="setAuthToken" value="${esc(APP.state.settings.storage.authToken)}" placeholder="Leer lassen falls SYNC_AUTH_TOKEN nicht gesetzt" /></label>
+            <div class="mini" style="color:var(--muted);margin:-6px 0 14px">Token muss <strong>exakt</strong> mit der <code>SYNC_AUTH_TOKEN</code>-Env-Variable in Netlify übereinstimmen. "Bearer "-Prefix nicht nötig.</div>
             <div class="card" style="padding:12px;border:1px solid var(--border);background:var(--panel2);margin:8px 0 14px">
               <div style="font-weight:700;margin-bottom:6px">🧭 Manueller Geräte-Transfer aktiv</div>
               <div class="mini" style="color:var(--muted)">💾 Speichern = lokale Version fixieren · ☁️ Übertragen = diese Version in die Cloud schreiben · 📥 Übernehmen = neueste Cloud-Version vollständig lokal übernehmen.</div>
