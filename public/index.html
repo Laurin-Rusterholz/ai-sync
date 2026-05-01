@@ -17044,13 +17044,14 @@ function viewProjectDetail(id) {
           </div>
         </div>
         
+        ${renderCustomProjectFeatures(id)}
+        
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
           <div class="tags mb-3">${tagsHtml}</div>
           <input type="text" placeholder="Tag eingeben, Enter drücken" data-action="add-tag-input" data-kind="project" data-id="${id}" />
         </div>
         
-        ${renderCustomProjectFeatures(id)}
       </div>
       
 <div class="col-4">
@@ -19393,6 +19394,8 @@ function viewLearningProjectDetail(id) {
             <button class="btn sm" data-action="create-idea-for" data-kind="project" data-id="${id}">💡 Idee</button>
           </div>
         </div>
+        
+        ${renderCustomProjectFeatures(id)}
       </div>
 
       <div class="col-4">
@@ -19729,6 +19732,8 @@ function viewPersonalityProjectDetail(id) {
             <button class="btn sm" data-action="create-idea-for" data-kind="project" data-id="${id}">💡 Idee</button>
           </div>
         </div>
+
+        ${renderCustomProjectFeatures(id)}
 
         <!-- Messages -->
         <div class="card mb-4">
