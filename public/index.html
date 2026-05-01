@@ -17230,25 +17230,91 @@ function viewProjectDetail(id) {
 
 function renderCustomProjectFeatures(id) {
   const p = APP.state.data.entities.projects[id];
-  if (!p || !p.externalId) return '';
+  if (!p) return '';
   
-  // Normalisiere ID: alle Bindestrich-Varianten zu '-' und uppercase
-  const normalized = String(p.externalId)
+  const titleHasKV = /abschluss|prüfung|kv|lehrabschluss/i.test(p.title || '');
+  const hasExt = !!p.externalId;
+  
+  // Wenn keine externalId UND der Titel auch nicht passt → keine Custom-Features
+  if (!hasExt && !titleHasKV) return '';
+  
+  const normalized = String(p.externalId || '')
     .replace(/[\u2010-\u2015\u2212\u2043]/g, '-')
     .toUpperCase().trim();
   
-  switch (normalized) {
-    case 'PRJ-NFYW5': return renderCustom_PRJNFYW5(id, p);
-    case 'PRJ-Z2SEX': 
-      try {
-        return renderCustom_PRJZ2SEX(id, p);
-      } catch(e) {
-        console.error('[CustomFeat] Render-Fehler PRJ-Z2SEX:', e);
-        return '<div style="padding:14px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:10px;color:#fca5a5;margin-top:10px"><strong>⚠️ Render-Fehler:</strong> ' + (e.message || e) + '</div>';
-      }
-    default: 
-      return '';
+  // PRJ-NFYW5
+  if (normalized === 'PRJ-NFYW5') {
+    try { return renderCustom_PRJNFYW5(id, p); } catch(e) { return _kvErrorBox('PRJ-NFYW5', e); }
   }
+  
+  // PRJ-Z2SEX explizit ODER (Titel passt UND keine externalId existiert)
+  if (normalized === 'PRJ-Z2SEX' || (titleHasKV && !hasExt)) {
+    // Auto-Fix wenn externalId fehlt
+    if (!p.externalId && titleHasKV) {
+      p.externalId = 'PRJ-Z2SEX';
+      try { 
+        if (typeof persist === 'function') persist();
+        else if (typeof saveData === 'function') saveData();
+        else if (typeof APP?.actions?.save === 'function') APP.actions.save();
+      } catch(_) {}
+    }
+    try { 
+      const result = renderCustom_PRJZ2SEX(id, p);
+      // Wenn das Cockpit leer rauskommt → Diagnose anzeigen
+      if (!result || result.trim().length < 50) {
+        return _kvDiagnose(id, p, 'Cockpit leer geliefert (Länge: ' + (result?.length || 0) + ')');
+      }
+      return result;
+    } catch(e) { 
+      return _kvErrorBox('PRJ-Z2SEX', e); 
+    }
+  }
+  
+  // Wenn externalId existiert aber unbekannt → Hinweis anzeigen
+  if (hasExt && normalized !== 'PRJ-Z2SEX' && normalized !== 'PRJ-NFYW5') {
+    return `<div style="padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:10px;color:var(--muted);margin-top:14px;font-size:12px">
+      <strong>ℹ️ Externe ID:</strong> ${normalized || '(leer)'} — keine Custom-Features definiert.
+      ${titleHasKV ? '<br><br>Titel sieht nach KV-Prüfung aus. <button class="btn sm primary" onclick="window._kvForceSetId(\\'' + id + '\\')" style="margin-top:6px">→ Auf PRJ-Z2SEX setzen</button>' : ''}
+    </div>`;
+  }
+  
+  return '';
+}
+
+window._kvForceSetId = function(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  p.externalId = 'PRJ-Z2SEX';
+  try { 
+    if (typeof persist === 'function') persist();
+    if (typeof render === 'function') render();
+    if (typeof toast === 'function') toast('ok', '✓', 'PRJ-Z2SEX gesetzt — KV-Cockpit aktiv');
+  } catch(_) { location.reload(); }
+};
+
+function _kvErrorBox(which, e) {
+  console.error('[CustomFeat] Render-Fehler ' + which + ':', e);
+  return `<div style="padding:18px;background:rgba(239,68,68,0.1);border:2px solid rgba(239,68,68,0.4);border-radius:14px;color:#fca5a5;margin-top:14px">
+    <div style="font-size:15px;font-weight:700;margin-bottom:8px">⚠️ Render-Fehler im ${which}-Cockpit</div>
+    <div style="font-size:13px;font-family:monospace;background:rgba(0,0,0,0.3);padding:10px;border-radius:8px">${(e.message || e).toString().replace(/[<>]/g, '')}</div>
+    <pre style="font-size:10px;font-family:monospace;background:rgba(0,0,0,0.3);padding:10px;border-radius:8px;margin-top:8px;overflow:auto;max-height:200px">${(e.stack || '').replace(/[<>]/g, '').slice(0, 1500)}</pre>
+  </div>`;
+}
+
+function _kvDiagnose(id, p, reason) {
+  return `<div style="padding:18px;background:rgba(245,158,11,0.1);border:2px solid rgba(245,158,11,0.4);border-radius:14px;margin-top:14px">
+    <div style="font-size:15px;font-weight:700;margin-bottom:10px;color:#fbbf24">🔍 KV-Cockpit Diagnose</div>
+    <div style="font-size:12px;font-family:monospace;line-height:1.8;color:var(--text)">
+      <div><strong>Grund:</strong> ${reason}</div>
+      <div><strong>Projekt-ID:</strong> ${id}</div>
+      <div><strong>Titel:</strong> ${(p.title || '').replace(/[<>]/g, '')}</div>
+      <div><strong>externalId (raw):</strong> ${JSON.stringify(p.externalId)}</div>
+      <div><strong>projectType:</strong> ${p.projectType || '(none)'}</div>
+      <div><strong>_custom vorhanden:</strong> ${!!p._custom}</div>
+      <div><strong>Funktion def.:</strong> ${typeof renderCustom_PRJZ2SEX}</div>
+    </div>
+    <button class="btn primary" style="margin-top:12px" onclick="window._kvForceSetId('${id}');location.reload()">↻ Reset und neu laden</button>
+  </div>`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
