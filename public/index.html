@@ -17272,9 +17272,12 @@ function renderCustomProjectFeatures(id) {
   
   // Wenn externalId existiert aber unbekannt → Hinweis anzeigen
   if (hasExt && normalized !== 'PRJ-Z2SEX' && normalized !== 'PRJ-NFYW5') {
+    const titleKVNote = titleHasKV 
+      ? '<br><br>Titel sieht nach KV-Prüfung aus. <button class="btn sm primary" onclick="window._kvForceSetId(\'' + id + '\')" style="margin-top:6px">→ Auf PRJ-Z2SEX setzen</button>'
+      : '';
     return `<div style="padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:10px;color:var(--muted);margin-top:14px;font-size:12px">
       <strong>ℹ️ Externe ID:</strong> ${normalized || '(leer)'} — keine Custom-Features definiert.
-      ${titleHasKV ? '<br><br>Titel sieht nach KV-Prüfung aus. <button class="btn sm primary" onclick="window._kvForceSetId(\\'' + id + '\\')" style="margin-top:6px">→ Auf PRJ-Z2SEX setzen</button>' : ''}
+      ${titleKVNote}
     </div>`;
   }
   
