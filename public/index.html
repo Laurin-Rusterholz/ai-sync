@@ -17230,12 +17230,28 @@ function viewProjectDetail(id) {
 
 function renderCustomProjectFeatures(id) {
   const p = APP.state.data.entities.projects[id];
-  if (!p || !p.externalId) return '';
+  if (!p) { console.log('[CustomFeat] Projekt nicht gefunden:', id); return ''; }
+  if (!p.externalId) { console.log('[CustomFeat] Keine externalId für', id, p.title); return ''; }
   
-  switch (p.externalId) {
+  // Normalisiere ID: alle Bindestrich-Varianten zu '-' und uppercase
+  const normalized = String(p.externalId)
+    .replace(/[\u2010-\u2015\u2212\u2043]/g, '-')
+    .toUpperCase().trim();
+  
+  console.log('[CustomFeat] externalId:', JSON.stringify(p.externalId), '→ normalized:', JSON.stringify(normalized));
+  
+  switch (normalized) {
     case 'PRJ-NFYW5': return renderCustom_PRJNFYW5(id, p);
-    case 'PRJ-Z2SEX': return renderCustom_PRJZ2SEX(id, p);
-    default: return '';
+    case 'PRJ-Z2SEX': 
+      try {
+        return renderCustom_PRJZ2SEX(id, p);
+      } catch(e) {
+        console.error('[CustomFeat] Render-Fehler PRJ-Z2SEX:', e);
+        return '<div style="padding:14px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:10px;color:#fca5a5;margin-top:10px"><strong>⚠️ Render-Fehler im KV-Cockpit:</strong> ' + (e.message || e) + '<br><span style="font-size:11px;opacity:0.7">Schau in die Browser-Console (F12) für Details.</span></div>';
+      }
+    default: 
+      console.log('[CustomFeat] Keine Custom-View für', normalized);
+      return '';
   }
 }
 
