@@ -17288,11 +17288,28 @@ window._kvForceSetId = function(pid) {
   const p = APP.state.data.entities.projects[pid];
   if (!p) return;
   p.externalId = 'PRJ-Z2SEX';
+  // State zurücksetzen falls hängengeblieben
+  if (p._custom) {
+    p._custom.activeTab = 'overview';
+    p._custom.activeArea = null;
+  }
   try { 
     if (typeof persist === 'function') persist();
     if (typeof render === 'function') render();
-    if (typeof toast === 'function') toast('ok', '✓', 'PRJ-Z2SEX gesetzt — KV-Cockpit aktiv');
+    if (typeof toast === 'function') toast('ok', '✓', 'Cockpit zurückgesetzt');
   } catch(_) { location.reload(); }
+};
+
+// Globaler Reset-Helfer für Konsole
+window._kvResetCockpit = function() {
+  Object.values(APP.state.data.entities.projects || {}).forEach(p => {
+    if (p.externalId === 'PRJ-Z2SEX' && p._custom) {
+      p._custom.activeTab = 'overview';
+      p._custom.activeArea = null;
+    }
+  });
+  if (typeof persist === 'function') persist();
+  location.reload();
 };
 
 function _kvErrorBox(which, e) {
@@ -17927,14 +17944,24 @@ function renderCustom_PRJZ2SEX(id, p) {
   const c = _kvEnsureData(p);
   const days = _kvDaysUntilExam(c);
   
+  // SAFETY: ungültige States resetten — verhindert leere Cockpits
+  const validAreas = [null, 'betrieblich', 'schulisch'];
+  const validTabs = ['overview', 'betrieblich', 'schulisch', 'quiz', 'exam'];
+  if (!validAreas.includes(c.activeArea)) c.activeArea = null;
+  if (!validTabs.includes(c.activeTab)) c.activeTab = 'overview';
+  
   // Wenn ein Bereich offen ist → Detail-View
   if (c.activeArea === 'betrieblich' || c.activeArea === 'schulisch') {
-    return _kvRenderAreaDetail(id, p, c.activeArea);
+    const result = _kvRenderAreaDetail(id, p, c.activeArea);
+    if (result && result.length > 50) return result;
+    // Fallback: Detail-View leer → zurück auf Overview
+    c.activeArea = null;
   }
   
-  // Wenn Quiz-Modus aktiv → Quiz-View
-  if (c.activeTab === 'quiz') return _kvRenderQuiz(id, p);
-  if (c.activeTab === 'exam') return _kvRenderExamSimulation(id, p);
+  // Quiz/Exam-Modus → da diese Tabs leer rendern, einfach auf Overview fallen
+  if (c.activeTab === 'quiz' || c.activeTab === 'exam') {
+    c.activeTab = 'overview';
+  }
   
   const betr = _kvAreaStats(c.betrieblich);
   const schul = _kvAreaStats(c.schulisch);
