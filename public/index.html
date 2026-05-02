@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>AI Management Pro v4</title>
+  <title>Quantus</title>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
     :root{
@@ -3262,7 +3262,7 @@ textarea::placeholder, input::placeholder {
   <div class="launch-logo-container">
     <div class="launch-logo">🚀</div>
   </div>
-  <div class="launch-app-title">AI Management Pro</div>
+  <div class="launch-app-title">Quantus</div>
   <div class="launch-app-subtitle">Dein intelligenter Produktivitäts-Assistent</div>
   <div class="launch-progress-container">
     <div class="launch-progress-bar" id="launchProgressBar"></div>
@@ -4724,8 +4724,8 @@ textarea::placeholder, input::placeholder {
       <div class="sidebar-brand" data-action="nav" data-route="dashboard">
         <div class="logo"></div>
         <div class="brand-text">
-          <h1>AI Management</h1>
-          <div class="sub" id="sidebarWorkspaceName">Mein Workspace</div>
+          <h1>Quantus</h1>
+          <div class="sub" id="sidebarWorkspaceName">FocusSpace</div>
         </div>
       </div>
       <button class="sidebar-pin-btn" id="sidebarPinBtn" title="Sidebar anpinnen">📌</button>
@@ -4775,7 +4775,7 @@ textarea::placeholder, input::placeholder {
       <div class="brand" id="brandHome" role="button" tabindex="0" title="Dashboard">
         <div class="logo"></div>
         <div class="brand-text">
-          <h1>AI Management</h1>
+          <h1>Quantus</h1>
           <div class="sub" id="workspaceName">Workspace</div>
         </div>
       </div>
@@ -6137,8 +6137,8 @@ function t(key) {
 window.t = t;
 
 function getLang() {
-  try { if (typeof APP !== "undefined" && APP && APP.state && APP.state.settings) return APP.state.settings.language || "en"; } catch(e) {}
-  return "de";
+  // Quantus is now English-only
+  return "en";
 }
 
 function getLocale() {
@@ -12141,7 +12141,7 @@ function renderSidebar() {
   // Update workspace name
   const wsName = $("#sidebarWorkspaceName");
   if (wsName) {
-    wsName.textContent = APP.state.data.settings?.workspaceName || (getLang()==="en" ? "My Workspace" : "Mein Workspace");
+    wsName.textContent = APP.state.data.settings?.workspaceName || "FocusSpace";
   }
   
   // Update pin button state
@@ -14699,31 +14699,192 @@ function generateAutoBriefingHTML(date) {
 }
 window.generateAutoBriefingHTML = generateAutoBriefingHTML;
 
-// Vorlagen-System (bleibt als manuell auslösbare Nachrichten)
-function sendQuickTemplate(template) {
+// Vorlagen-System (alle KI-basiert via Gemini, mit allen Aktivitäten)
+async function sendQuickTemplate(template) {
   const e = APP.state.data.entities;
   if (!e.scheduledMessages) e.scheduledMessages = {};
-  const msgId = "tpl_" + Date.now();
-  const templates = {
-    "morning": { title: "☀️ Morgen-Briefing", content: generateMorningBriefingText(), priority: 2, sourceType: "Morgen-Briefing" },
-    "weekly": { title: "📊 Wochen-Zusammenfassung", content: generateWeeklySummaryText(), priority: 3, sourceType: "Wochen-Zusammenfassung" },
-    "reflection": { title: "🪞 Reflexions-Prompt", content: "Nimm dir 5 Minuten:\n\n1. Was habe ich heute erreicht?\n2. Was hat mich überrascht?\n3. Wofür bin ich dankbar?\n4. Was möchte ich morgen anders machen?\n5. Welcher Gedanke begleitet mich?", priority: 3, sourceType: "Reflexions-Prompt" },
-    "focus": { title: "🎯 Fokus-Check", content: "Kurze Standortbestimmung:\n\n• Arbeite ich gerade an der WICHTIGSTEN Aufgabe?\n• Bin ich fokussiert oder abgelenkt?\n• Was ist der nächste konkrete Schritt?\n• Brauche ich Hilfe von jemandem?", priority: 2, sourceType: "Fokus-Check" }
+  
+  // Wochenbericht hat eigene dedicated Funktion mit reichhaltiger Datenbasis
+  if (template === 'weekly') {
+    if (typeof generateAIWeeklySummary === 'function') return generateAIWeeklySummary();
+  }
+  
+  const titleMap = {
+    morning: "☀️ Morgen-Briefing",
+    weekly: "📊 Wochen-Zusammenfassung",
+    reflection: "🪞 Reflexions-Prompt",
+    focus: "🎯 Fokus-Check",
   };
-  const tpl = templates[template];
-  if (!tpl) return;
+  const sourceMap = {
+    morning: "Morgen-Briefing (KI)",
+    weekly: "Wochen-Zusammenfassung (KI)",
+    reflection: "Reflexions-Prompt (KI)",
+    focus: "Fokus-Check (KI)",
+  };
+  
+  const apiKey = (typeof getGeminiKey === 'function' ? getGeminiKey() : '') 
+    || APP.state.data.journal?.settings?.geminiApiKey 
+    || APP.state.data.settings?.geminiApiKey 
+    || '';
+  
+  // Daten zusammentragen (alle Aktivitäten)
+  const today = todayYmd();
+  const yesterday = addDaysYmd(today, -1);
+  const weekAgo = addDaysYmd(today, -7);
+  
+  const tasks = Object.values(e.tasks || {});
+  const tasksOpen = tasks.filter(t => t.status !== "done");
+  const todayTasks = tasksOpen.filter(t => t.dueDate === today);
+  const overdue = tasksOpen.filter(t => t.dueDate && t.dueDate < today);
+  const completedToday = tasks.filter(t => t.status === "done" && (t.completedAt || '').slice(0,10) === today);
+  const completedYesterday = tasks.filter(t => t.status === "done" && (t.completedAt || '').slice(0,10) === yesterday);
+  const meetings = Object.values(e.calendarEvents || {}).filter(ev => ev.date === today);
+  const goals = Object.values(e.goals || {}).filter(g => g.status !== 'archived');
+  const recentNotes = Object.values(e.notes || {}).filter(n => (n.updatedAt || '').slice(0,10) >= weekAgo).slice(-5);
+  const recentIdeas = Object.values(e.ideas || {}).filter(i => (i.createdAt || '').slice(0,10) >= weekAgo).slice(-5);
+  const journal = APP.state.data.journal || {};
+  const recentThoughts = (journal.topics || []).filter(t => new Date(t.createdAt) >= new Date(weekAgo)).slice(-5);
+  const recentReflections = (APP.state.data.reflections || []).filter(r => r.date >= weekAgo);
+  
+  // Lese-Liste
+  let unreadList = [];
+  try {
+    const rl = JSON.parse(localStorage.getItem('readlist-v1') || 'null');
+    if (rl?.articles) unreadList = rl.articles.filter(a => !a.read).slice(0, 10);
+  } catch(e) {}
+  
+  // RecallLab heute fällig
+  let cardsDue = 0;
+  try {
+    const rl = JSON.parse(localStorage.getItem('recalllab') || 'null');
+    if (rl?.cards) {
+      cardsDue = rl.cards.filter(c => {
+        if (c.suspended) return false;
+        if (!c.srs?.nextReview) return true;
+        return new Date(c.srs.nextReview) <= new Date();
+      }).length;
+    }
+  } catch(e) {}
+  
+  const dataSummary = `
+=== KONTEXT (${new Date().toLocaleDateString("de-CH", {weekday:"long",day:"numeric",month:"long",year:"numeric"})}) ===
+
+OFFENE AUFGABEN (${tasksOpen.length}):
+${todayTasks.length ? "Heute fällig: " + todayTasks.slice(0,8).map(t => "• " + t.title + " (P" + (t.priority||3) + ")").join("\n") : "Heute keine fällig"}
+${overdue.length ? "\nÜBERFÄLLIG (" + overdue.length + "):\n" + overdue.slice(0,5).map(t => "• " + t.title + " (seit " + t.dueDate + ")").join("\n") : ""}
+
+GESTERN ERLEDIGT (${completedYesterday.length}):
+${completedYesterday.slice(0,5).map(t => "• " + t.title).join("\n") || "(keine)"}
+
+HEUTE BEREITS ERLEDIGT (${completedToday.length}):
+${completedToday.slice(0,5).map(t => "• " + t.title).join("\n") || "(keine)"}
+
+TERMINE HEUTE (${meetings.length}):
+${meetings.slice(0,5).map(m => "• " + (m.startTime||"?") + " " + m.title).join("\n") || "(keine)"}
+
+ZIELE (${goals.length}):
+${goals.slice(0,5).map(g => "• " + g.title + (g.dueDate ? " (bis " + g.dueDate + ")" : "")).join("\n") || "(keine)"}
+
+LERNKARTEN HEUTE FÄLLIG: ${cardsDue}
+
+LESELISTE UNGELESEN (${unreadList.length}):
+${unreadList.slice(0,5).map(a => "• " + a.title + (a.readingTime ? " (" + a.readingTime + " min)" : "")).join("\n") || "(keine)"}
+
+LETZTE GEDANKEN (${recentThoughts.length}):
+${recentThoughts.map(t => "• " + (t.text || '').slice(0,120)).join("\n") || "(keine)"}
+
+LETZTE REFLEXIONEN:
+${recentReflections.slice(-2).map(r => `${r.date}: ${(r.openQuestions?.a || '').slice(0,150)}`).join("\n") || "(keine)"}
+
+NEUE IDEEN (${recentIdeas.length}): ${recentIdeas.slice(0,3).map(i => i.title || (i.text||'').slice(0,60)).join(" / ")}
+`.trim();
+  
+  const prompts = {
+    morning: `Du bist mein persönlicher Coach. Erstelle ein KURZES (max. 200 Wörter) Morgen-Briefing für mich für heute, ${new Date().toLocaleDateString("de-CH", {weekday:"long"})}. Sei konkret, nicht allgemein.
+
+${dataSummary}
+
+ANFORDERUNGEN:
+- Begrüssung
+- 2-3 wichtigste Fokuspunkte für heute (basierend auf konkreten Aufgaben/Terminen)
+- Eine kurze, motivierende Bemerkung
+- KEINE generischen Floskeln
+
+Format: Klar strukturiert mit Emojis als Markern. Sprich mich direkt an.`,
+    
+    reflection: `Du bist mein Reflexions-Coach. Auf Basis meiner Aktivitäten der letzten Tage, gib mir 5 personalisierte, tiefgehende Reflexions-Fragen (max. 250 Wörter total).
+
+${dataSummary}
+
+ANFORDERUNGEN:
+- Fragen sollen sich auf KONKRETE Beobachtungen aus meinen Daten beziehen (z.B. "Du hast Aufgabe X aufgeschoben — was ...")
+- Nicht generisch ("Was war heute gut?"), sondern spezifisch
+- Manche Fragen können unbequem sein
+- Format: Nummerierte Liste`,
+    
+    focus: `Du bist mein Fokus-Coach. Mache eine kurze (max. 180 Wörter) Standortbestimmung für mich JETZT.
+
+${dataSummary}
+
+ANFORDERUNGEN:
+- Identifiziere die EINE wichtigste Aufgabe gerade jetzt (basierend auf Daten)
+- Warnung wenn ich mich verzettle (zu viele Baustellen?)
+- Konkreter nächster Schritt für die nächsten 30 Minuten
+- Direkt, ehrlich, ohne Smalltalk`,
+  };
+  
+  const prompt = prompts[template];
+  if (!prompt) return;
+  
+  let aiText = '';
+  
+  if (apiKey) {
+    toast("info", titleMap[template], "Gemini analysiert deine Aktivitäten...");
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 1024, temperature: 0.6 }
+        })
+      });
+      const data = await response.json();
+      aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    } catch(err) {
+      console.warn('Gemini-Fehler:', err);
+    }
+  } else {
+    toast("warn", "API Key fehlt", "Gemini API Key in Einstellungen hinterlegen für KI-Briefings");
+  }
+  
+  if (!aiText) {
+    // Fallback: kompakter Static-Text
+    if (template === 'morning') aiText = generateMorningBriefingText();
+    else if (template === 'reflection') aiText = "1. Was habe ich heute erreicht?\n2. Was hat mich überrascht?\n3. Wofür bin ich dankbar?\n4. Was möchte ich morgen anders machen?\n5. Welcher Gedanke begleitet mich?";
+    else if (template === 'focus') aiText = "Kurze Standortbestimmung:\n\n• Arbeite ich gerade an der WICHTIGSTEN Aufgabe?\n• Bin ich fokussiert oder abgelenkt?\n• Was ist der nächste konkrete Schritt?\n• Brauche ich Hilfe von jemandem?";
+  }
+  
+  const msgId = "tpl_" + Date.now();
   e.scheduledMessages[msgId] = {
-    id: msgId, ...tpl, scheduledAt: nowIso(), deliverAt: nowIso(), deliveredAt: nowIso(),
+    id: msgId,
+    title: titleMap[template] + " · " + new Date().toLocaleDateString("de-CH", {day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}),
+    content: aiText,
+    priority: template === 'morning' ? 2 : 3,
+    sourceType: sourceMap[template],
+    scheduledAt: nowIso(), deliverAt: nowIso(), deliveredAt: nowIso(),
     isDelivered: true, isRead: false, isPinned: false, recurrence: "none",
-    linkedTasks: [], linkedProjects: [], linkedOrganizations: [], linkedNotes: [], linkedGoals: [], tags: ["template"],
+    linkedTasks: [], linkedProjects: [], linkedOrganizations: [], linkedNotes: [], linkedGoals: [], 
+    tags: ["template", "ki-briefing"],
     createdAt: nowIso()
   };
+  
   scheduleSave();
-  toast("ok", "📬", tpl.title + " erstellt");
-  render();
+  if (typeof render === 'function') render();
+  toast("ok", titleMap[template], "Briefing erstellt — siehe Posteingang");
 }
 window.sendQuickTemplate = sendQuickTemplate;
 
+// Legacy: bleibt verfügbar als Fallback (statisch)
 function generateMorningBriefingText() {
   const today = todayYmd();
   const e = APP.state.data.entities;
@@ -15590,6 +15751,46 @@ function viewDashboard() {
         <div class="list">${upcomingHtml}</div>
       </div>
     </div>
+    
+    <!-- LESELISTE: Ungelesene Artikel + Quick-Add URL -->
+    ${(() => {
+      let unread = [];
+      try {
+        const rl = JSON.parse(localStorage.getItem('readlist-v1') || 'null');
+        if (rl?.articles) unread = rl.articles.filter(a => !a.read);
+      } catch(e) {}
+      const total = unread.length;
+      const display = unread.slice(0, 4);
+      return `
+      <div class="card mb-4" style="border:1px solid rgba(168,85,247,0.18);background:linear-gradient(135deg,rgba(168,85,247,0.04),rgba(0,0,0,0));">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <h3 style="margin:0;flex:1">📚 Leseliste · ${total} ungelesen</h3>
+          <button class="btn sm" onclick="if(typeof window.openReadlist==='function')window.openReadlist();" style="font-size:11px">Alle anzeigen →</button>
+        </div>
+        <div class="sep"></div>
+        <!-- Quick-Add URL direkt -->
+        <div style="display:flex;gap:6px;margin:10px 0">
+          <input type="url" id="rlQuickUrl" placeholder="🔗 URL einfügen für später lesen..." style="flex:1;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 12px;color:#e4e4e7;font-size:13px;outline:none;font-family:inherit" onkeydown="if(event.key==='Enter')window.rlQuickAddFromDashboard()" />
+          <button class="btn sm primary" onclick="window.rlQuickAddFromDashboard()" style="font-size:12px;padding:8px 14px">＋</button>
+        </div>
+        ${display.length ? `
+          <div class="list" style="max-height:280px;overflow-y:auto">
+            ${display.map(a => `
+              <div class="list-item" style="cursor:pointer;display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.05)" onclick="if(typeof window.openReadlist==='function'){window.openReadlist();setTimeout(()=>{if(typeof window.rlOpenReader==='function')window.rlOpenReader('${a.id}')},200);}">
+                <div style="font-size:16px;flex-shrink:0">${a.pdfUrl || a.fileName ? '📄' : (a.domain ? '🌐' : '📝')}</div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600;color:#e4e4e7;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(a.title || 'Ohne Titel')}</div>
+                  <div style="font-size:11px;color:#71717a;margin-top:2px">${a.domain ? esc(a.domain) + ' · ' : ''}${a.readingTime ? a.readingTime + ' min' : ''}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          ${total > 4 ? `<div style="text-align:center;padding-top:8px"><button class="btn sm" onclick="if(typeof window.openReadlist==='function')window.openReadlist();" style="font-size:11px">+ ${total - 4} weitere</button></div>` : ''}
+        ` : `
+          <div class="mini text-center" style="padding:14px 0;color:#71717a">Keine ungelesenen Artikel. Füge oben eine URL ein oder öffne die Leseliste.</div>
+        `}
+      </div>`;
+    })()}
     
     <!-- NEU: Entscheidungen & Kategorien -->
     <div class="grid grid-2 mb-4">
@@ -41358,27 +41559,8 @@ function calculateLaunchStats() {
 }
 
 function finishDay() {
-  // Show 2-second launching screen, then open Reflect
-  const ls = document.createElement("div");
-  ls.id = "reflect-launch";
-  ls.style.cssText = "position:fixed;inset:0;z-index:99998;background:#09090b;display:flex;flex-direction:column;align-items:center;justify-content:center;animation:rfFadeIn .3s ease";
-  ls.innerHTML = `
-    <div style="font-size:48px;margin-bottom:16px;animation:rfPulse 1s infinite">🪞</div>
-    <div style="font-size:22px;font-weight:700;color:#a78bfa;margin-bottom:8px">Reflect</div>
-    <div style="color:#52525b;font-size:14px">Tagesreflexion wird geöffnet...</div>
-    <div style="width:120px;height:3px;background:#27272a;border-radius:3px;margin-top:20px;overflow:hidden">
-      <div style="width:0%;height:100%;background:linear-gradient(90deg,#6366f1,#a78bfa);border-radius:3px;animation:rfProgress 2s linear forwards"></div>
-    </div>
-    <style>
-      @keyframes rfPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
-      @keyframes rfProgress { from{width:0%} to{width:100%} }
-    </style>
-  `;
-  document.body.appendChild(ls);
-  setTimeout(() => {
-    ls.remove();
-    showReflectOverlay();
-  }, 2000);
+  // Direkt zum Reflect-Overlay (kein 2s-Launch mehr)
+  showReflectOverlay();
 }
 window.finishDay = finishDay;
 
@@ -41393,10 +41575,8 @@ function completeFinishDay() {
   stopAllTimers();
   doSave(true);
   downloadBackup();
-  playCelebration(document.querySelector('[data-action="finish-day"], .finish-day-btn') || document.body);
-  showLoadingOverlay("Tag wird abgeschlossen... 🌙", 5000, () => {
-    showLaunchScreen("evening");
-  });
+  // Direkt zum Tag-Ende-Screen ohne Loading-Zwischenstop
+  showLaunchScreen("evening");
 }
 window.completeFinishDay = completeFinishDay;
 
@@ -60279,10 +60459,11 @@ select.jb-select option{background:#18181b;color:#fff}
 
     <!-- Right: Actions -->
     <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+      <button onclick="jbSendToMobile()" id="jbSendMobileBtn" style="background:linear-gradient(135deg,#a855f7,#7c3aed);border:0;color:#fff;font-size:9px;padding:5px 12px;border-radius:6px;cursor:pointer;font-weight:700;text-transform:uppercase;letter-spacing:.1em;box-shadow:0 2px 8px rgba(168,85,247,0.4)" title="Send entry to Mobile">📱 To Mobile</button>
       <button onclick="jbDownloadPDF()" style="background:none;border:1px solid #27272a;color:#a1a1aa;font-size:9px;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;text-transform:uppercase;letter-spacing:.1em" title="PDF Export">PDF</button>
       <button onclick="jbExportHTML()" style="background:none;border:1px solid #27272a;color:#a1a1aa;font-size:9px;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;text-transform:uppercase;letter-spacing:.1em" title="HTML Export">HTML</button>
       <button onclick="jbToggleFullscreen()" style="background:none;border:1px solid #27272a;color:#a1a1aa;font-size:12px;padding:4px 8px;border-radius:6px;cursor:pointer" title="Vollbild">⛶</button>
-      <button onclick="jbToggleSidebar()" style="background:none;border:1px solid #52525b;color:#fff;font-size:9px;padding:4px 12px;border-radius:6px;cursor:pointer;font-weight:600;text-transform:uppercase;letter-spacing:.1em" title="KI & Ideen">KI ✦</button>
+      <button onclick="jbToggleSidebar()" style="background:none;border:1px solid #52525b;color:#fff;font-size:9px;padding:4px 12px;border-radius:6px;cursor:pointer;font-weight:600;text-transform:uppercase;letter-spacing:.1em" title="KI & Ideen">AI ✦</button>
     </div>
   </header>
   <div class="jb-editor-body">
@@ -60787,6 +60968,93 @@ select.jb-select option{background:#18181b;color:#fff}
     if (!silent) jbToast("Gesichert");
     document.getElementById("jbEditorStatus").textContent = "Gespeichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"});
   }
+
+  // Send current entry to Mobile App
+  window.jbSendToMobile = async function() {
+    const doc = jd().documents.find(d => d.id === _jbCurrentDocId);
+    if (!doc) {
+      jbToast("Kein Eintrag offen");
+      return;
+    }
+    
+    // Save current state first
+    jbSaveCurrentDoc(true);
+    
+    const title = doc.title || "Tagebucheintrag";
+    const content = doc.content || "";
+    const plainText = (function(){
+      const tmp = document.createElement('div');
+      tmp.innerHTML = content;
+      return (tmp.textContent || '').trim();
+    })();
+    
+    if (!plainText) {
+      jbToast("Eintrag ist leer");
+      return;
+    }
+    
+    // mobilePushes Array initialisieren
+    if (!Array.isArray(APP.state.data.mobilePushes)) {
+      APP.state.data.mobilePushes = [];
+    }
+    
+    // Existierender Push für dieses Doc?
+    const existing = APP.state.data.mobilePushes.find(p => p.docId === doc.id);
+    const now = new Date().toISOString();
+    
+    if (existing) {
+      // Update existing
+      existing.title = title;
+      existing.content = content;
+      existing.font = doc.font;
+      existing.updatedAt = now;
+    } else {
+      // Neuer Push
+      APP.state.data.mobilePushes.unshift({
+        id: 'mp_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+        docId: doc.id,
+        title: title,
+        content: content,
+        font: doc.font || 'jb-font-inter',
+        sentAt: now,
+        type: 'journal',
+      });
+      
+      // Limit auf 50 letzte Pushes
+      if (APP.state.data.mobilePushes.length > 50) {
+        APP.state.data.mobilePushes = APP.state.data.mobilePushes.slice(0, 50);
+      }
+    }
+    
+    // Force-save (sofort, nicht debounced) damit Mobile es schnell sieht
+    if (typeof doSave === 'function') {
+      try { 
+        doSave(true); 
+      } catch(e) {
+        scheduleSave();
+      }
+    } else {
+      scheduleSave();
+    }
+    
+    // Visuelles Feedback auf Button
+    const btn = document.getElementById('jbSendMobileBtn');
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✓ Sent!';
+      btn.style.background = 'linear-gradient(135deg,#22c55e,#16a34a)';
+      setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.style.background = 'linear-gradient(135deg,#a855f7,#7c3aed)';
+      }, 2200);
+    }
+    
+    if (typeof toast === 'function') {
+      toast('ok', '📱 Mobile', 'Journal entry sent to Mobile');
+    } else {
+      jbToast('📱 An Mobile gesendet');
+    }
+  };
 
   window.jbCloseEditor = function() {
     jbSaveCurrentDoc(true);
@@ -63492,6 +63760,60 @@ function buildSpotlightItems() {
     }
   } catch(e) {}
   
+  // Apps (immer indexiert für Cmd+K)
+  try {
+    const APPS_LIST = [
+      { icon: '◫', title: 'Dashboard', sub: 'Startseite', open: () => { window.location.hash = '#/dashboard'; } },
+      { icon: '☀️', title: 'Heute', sub: 'Tagesübersicht', open: () => { window.location.hash = '#/today'; } },
+      { icon: '✓', title: 'Aufgaben', sub: 'Alle Tasks', open: () => { window.location.hash = '#/tasks'; } },
+      { icon: '📦', title: 'Projekte', sub: 'Projekt-Übersicht', open: () => { window.location.hash = '#/projects'; } },
+      { icon: '📝', title: 'NoteFlow', sub: 'Notizen & Notizbücher', open: () => { window.location.hash = '#/notes'; } },
+      { icon: '💡', title: 'Ideen', sub: 'Idea-Inbox', open: () => { window.location.hash = '#/ideas'; } },
+      { icon: '🤝', title: 'Meetings', sub: 'Termine & Sitzungen', open: () => { window.location.hash = '#/meetings'; } },
+      { icon: '🎯', title: 'Ziele', sub: 'Goals & Tracking', open: () => { window.location.hash = '#/goals'; } },
+      { icon: '📅', title: 'Kalender', sub: 'Termine im Überblick', open: () => { window.location.hash = '#/calendar'; } },
+      { icon: '🧠', title: 'RecallLab', sub: 'Spaced Repetition Lernkarten', open: () => { window.location.hash = '#/recall'; } },
+      { icon: '📰', title: 'Newsroom', sub: 'Editorial × Research Hub', open: () => { 
+        if (typeof window.openResearchHub === 'function') window.openResearchHub();
+        else window.location.hash = '#/articles';
+      }},
+      { icon: '📚', title: 'ReadingHub', sub: 'Bücher, PDFs, Annotations', open: () => {
+        if (typeof window.openReadingHub === 'function') window.openReadingHub();
+        else window.location.hash = '#/readinghub';
+      }},
+      { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
+        if (typeof window.openReadlist === 'function') window.openReadlist();
+      }},
+      { icon: '🌐', title: 'Übersetzer', sub: 'AI-Übersetzung → RecallLab (⌘⇧T)', open: () => { 
+        if (typeof window.openTranslator === 'function') window.openTranslator(); 
+      }},
+      { icon: '✏️', title: 'Editor', sub: 'Schreiben mit AI', open: () => {
+        if (typeof window.openResearchHub === 'function') { 
+          window.openResearchHub(); 
+          setTimeout(() => { if (typeof window.nhNav === 'function') window.nhNav('editor'); }, 200); 
+        }
+      }},
+      { icon: '🌙', title: 'Daily Wrap', sub: 'Tagesabschluss & Reflexion', open: () => {
+        if (typeof window.openDailyWrap === 'function') window.openDailyWrap();
+      }},
+      { icon: '📓', title: 'Journal', sub: 'Selbst-Briefe', open: () => { window.location.hash = '#/journal'; } },
+      { icon: '🎓', title: 'KV-Cockpit', sub: 'Abschlussprüfung Mai 2026', open: () => {
+        try {
+          const projs = window.APP?.state?.data?.entities?.projects || {};
+          const p = Object.values(projs).find(x => x.externalId === 'PRJ-Z2SEX');
+          if (p) window.location.hash = '#/projects/' + p.id;
+        } catch(e) {}
+      }},
+      { icon: '⚙️', title: 'Einstellungen', sub: 'API Keys, Preferences', open: () => { window.location.hash = '#/settings'; } },
+    ];
+    APPS_LIST.forEach(a => {
+      items.push({
+        kind: 'app', icon: a.icon, id: 'app-' + (a.title || '').toLowerCase(),
+        title: a.title, sub: a.sub, open: a.open,
+      });
+    });
+  } catch(e) { console.warn('Apps-Index Fehler:', e); }
+  
   return items;
 }
 
@@ -64427,6 +64749,14 @@ document.addEventListener('mouseup', () => {
       return;
     }
     
+    // ── NEU: Selection-Tools NUR im Newsroom Hub anzeigen ──
+    // Newsroom-Hub hat den Container .nh, Reader hat #nh-p-reader, oder ReadingHub
+    const allowedHost = el.closest('.nh, #researchHubContainer, #readingHubContainer, .nh-rdr-content, [data-allow-sel-tools]');
+    if (!allowedHost) {
+      tools.classList.remove('show');
+      return;
+    }
+    
     // Position
     const rect = range.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return;
@@ -64795,6 +65125,4600 @@ console.log('✨ Enhanced Features Package v1.0 geladen — Cmd+K für Spotlight
 <!-- ═══ END ENHANCED FEATURES ═══ -->
 
 
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     NEWSROOM/READINGHUB INTEGRATION + READER + PDF + RESEARCH PACKAGE
+     B: Cross-Linking
+     C: Reader-Mode in Newsroom
+     D: PDF-Upload + Übersetzung
+     E: Recherche/Editor-Erweiterungen
+   ═══════════════════════════════════════════════════════════════════════ -->
+
+<style id="nrhIntegrationStyles">
+/* Reader-Toolbar im Newsroom */
+.nh-rdr-toolbar {
+  position: sticky; top: 0; z-index: 5;
+  background: rgba(20,20,24,0.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding: 10px 16px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.nh-rdr-toolbar .btn-tb {
+  padding: 6px 11px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+  color: #e4e4e7; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; transition: all 0.15s;
+}
+.nh-rdr-toolbar .btn-tb:hover { background: rgba(255,255,255,0.09); }
+.nh-rdr-toolbar .btn-tb.active { background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.35); color: #c7d2fe; }
+.nh-rdr-toolbar .group { display: flex; gap: 2px; padding: 2px; background: rgba(255,255,255,0.04); border-radius: 8px; }
+.nh-rdr-toolbar .group .btn-tb { background: transparent; border: 0; padding: 4px 9px; }
+.nh-rdr-toolbar .group .btn-tb.active { background: rgba(99,102,241,0.25); }
+.nh-rdr-meta { font-size: 11px; color: #71717a; margin-left: auto; }
+
+.nh-rdr-content {
+  max-width: var(--rdr-w, 720px); margin: 30px auto 80px; padding: 0 24px;
+  font-family: var(--rdr-f, Georgia, "New York", serif);
+  font-size: var(--rdr-s, 18px); line-height: var(--rdr-lh, 1.7);
+  color: #e4e4e7;
+}
+.nh-rdr-content p { margin: 0.9em 0; }
+.nh-rdr-content h1, .nh-rdr-content h2, .nh-rdr-content h3 { 
+  font-family: -apple-system, system-ui, sans-serif; font-weight: 700; margin-top: 1.6em; 
+}
+
+/* Themes */
+body.nh-rdr-sepia .nh-rdr-content { color: #2d2418; background: #f4ecd8; padding: 30px 40px; border-radius: 12px; }
+body.nh-rdr-light .nh-rdr-content { color: #18181b; background: #fafafa; padding: 30px 40px; border-radius: 12px; }
+body.nh-rdr-focus .side, body.nh-rdr-focus .top, body.nh-rdr-focus .crumb,
+body.nh-rdr-focus .topbar, body.nh-rdr-focus #sidebar { display: none !important; }
+body.nh-rdr-focus .nh .main { width: 100% !important; max-width: 100% !important; }
+
+.nh-rdr-progress {
+  position: fixed; bottom: 0; left: 0; height: 3px;
+  background: linear-gradient(90deg, #6366f1, #a855f7);
+  width: 0%; transition: width 0.1s; z-index: 100; pointer-events: none;
+}
+
+/* Topic-Quellen-Sidebar im Editor */
+.nh-ed-sources {
+  margin-top: 14px; padding: 12px; background: rgba(99,102,241,0.06);
+  border: 1px solid rgba(99,102,241,0.18); border-radius: 10px;
+}
+.nh-ed-sources h4 {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #a5b4fc; margin: 0 0 8px;
+}
+.nh-ed-source {
+  padding: 8px 10px; background: rgba(255,255,255,0.04); border-radius: 8px;
+  margin-bottom: 4px; cursor: pointer; transition: all 0.15s; font-size: 12px;
+  display: flex; gap: 8px; align-items: flex-start;
+}
+.nh-ed-source:hover { background: rgba(255,255,255,0.07); }
+.nh-ed-source-icon { flex-shrink: 0; font-size: 14px; }
+.nh-ed-source-content { flex: 1; min-width: 0; }
+.nh-ed-source-title { font-weight: 600; color: #e4e4e7; line-height: 1.3; word-break: break-word; }
+.nh-ed-source-meta { font-size: 10.5px; color: #71717a; margin-top: 2px; }
+.nh-ed-source-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.nh-ed-source-actions button {
+  padding: 3px 7px; background: rgba(99,102,241,0.18); border: 0; border-radius: 5px;
+  color: #c7d2fe; font-size: 10px; font-weight: 600; cursor: pointer;
+}
+.nh-ed-source-actions button:hover { background: rgba(99,102,241,0.3); }
+
+/* ReadingHub: Newsroom-zurück-Knopf */
+#rhToNewsroomBtn {
+  background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3);
+  color: #c7d2fe; padding: 6px 12px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+#rhToNewsroomBtn:hover { background: rgba(99,102,241,0.25); }
+
+/* PDF-Upload-Box in Newsroom Library */
+.nh-pdf-uploader {
+  padding: 16px; border: 2px dashed rgba(99,102,241,0.3); border-radius: 12px;
+  text-align: center; margin-bottom: 14px; cursor: pointer;
+  background: rgba(99,102,241,0.04); transition: all 0.2s;
+}
+.nh-pdf-uploader:hover { background: rgba(99,102,241,0.08); border-color: rgba(99,102,241,0.5); }
+.nh-pdf-uploader input { display: none; }
+.nh-pdf-uploader-icon { font-size: 28px; margin-bottom: 6px; }
+.nh-pdf-uploader-text { font-size: 13px; font-weight: 600; color: #c7d2fe; }
+.nh-pdf-uploader-sub { font-size: 11px; color: #71717a; margin-top: 4px; }
+
+/* PDF-Reader Toolbar */
+.nh-pdf-page { background: #fff; margin: 8px auto; box-shadow: 0 4px 20px rgba(0,0,0,0.4); display: block; max-width: 100%; }
+.nh-pdf-toolbar {
+  position: sticky; top: 0; z-index: 5;
+  background: rgba(20,20,24,0.95); backdrop-filter: blur(10px);
+  padding: 10px 16px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.nh-pdf-page-counter {
+  font-size: 12px; color: #a1a1aa; padding: 4px 10px;
+  background: rgba(255,255,255,0.05); border-radius: 6px; font-feature-settings: "tnum";
+}
+.nh-pdf-canvas-wrapper { padding: 16px; max-width: 900px; margin: 0 auto; }
+
+/* Quote-Modal */
+.nh-quote-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+  z-index: 9998; display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.nh-quote-overlay.show { display: flex; }
+.nh-quote-box {
+  background: #18181b; border: 1px solid #3f3f46; border-radius: 16px;
+  width: 100%; max-width: 560px; padding: 22px;
+  max-height: 86vh; overflow-y: auto;
+}
+.nh-quote-box h3 { margin: 0 0 14px; font-size: 16px; font-weight: 700; }
+.nh-quote-block { 
+  padding: 14px; background: rgba(255,255,255,0.04); border-radius: 10px;
+  font-size: 13.5px; line-height: 1.55; margin-bottom: 14px;
+  border-left: 3px solid #6366f1;
+}
+.nh-quote-source { font-size: 12px; color: #71717a; margin-bottom: 14px; word-break: break-all; }
+.nh-quote-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.nh-quote-actions button { 
+  flex: 1; min-width: 130px; padding: 9px 12px; background: rgba(99,102,241,0.15);
+  border: 1px solid rgba(99,102,241,0.3); color: #c7d2fe;
+  border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.nh-quote-actions button:hover { background: rgba(99,102,241,0.25); }
+.nh-quote-actions button.primary { background: #6366f1; color: #fff; border-color: #6366f1; }
+.nh-quote-actions button.ghost { background: transparent; border-color: rgba(255,255,255,0.1); color: #a1a1aa; }
+.nh-translate-result {
+  margin-top: 12px; padding: 12px; background: rgba(34,197,94,0.08);
+  border: 1px solid rgba(34,197,94,0.2); border-radius: 10px;
+  font-size: 13.5px; line-height: 1.55; color: #d1fae5;
+}
+.nh-lang-pick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.nh-lang-pick button {
+  padding: 5px 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  color: #a1a1aa; border-radius: 999px; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.nh-lang-pick button.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+</style>
+
+<!-- Quote-Translate-Modal -->
+<div class="nh-quote-overlay" id="nhQuoteOverlay">
+  <div class="nh-quote-box" id="nhQuoteBox"></div>
+</div>
+
+<!-- Reader-Progress-Bar -->
+<div class="nh-rdr-progress" id="nhRdrProgress" style="display:none"></div>
+
+<script id="nrhIntegrationScript">
+(function() {
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════
+// 1. CROSS-LINK Newsroom ↔ ReadingHub
+// ═══════════════════════════════════════════════════════════════════════
+
+// Sidebar-Eintrag "📚 Books" hinzufügen sobald Newsroom aktiviert wird
+function injectBooksLink() {
+  const sidebar = document.querySelector('.nh .side-nav');
+  if (!sidebar) return;
+  if (sidebar.querySelector('[data-action-rh]')) return; // schon da
+  
+  // Vor dem letzten ".ns Research" Block einfügen — fügen ans Ende
+  const newItem = document.createElement('div');
+  newItem.className = 'ni';
+  newItem.setAttribute('data-action-rh', '1');
+  newItem.innerHTML = '📚 Books (PDF/EPUB)';
+  newItem.onclick = () => {
+    if (typeof window.closeResearchHub === 'function') window.closeResearchHub();
+    setTimeout(() => {
+      if (typeof window.openReadingHub === 'function') window.openReadingHub();
+      else if (window.location.hash !== '#/readinghub') window.location.hash = '#/readinghub';
+    }, 100);
+  };
+  sidebar.appendChild(newItem);
+}
+
+// "📰 Newsroom"-Knopf im ReadingHub einfügen
+function injectNewsroomBtn() {
+  const rh = document.getElementById('readingHubContainer');
+  if (!rh) return;
+  if (document.getElementById('rhToNewsroomBtn')) return;
+  // Suche eine Topbar / Header-Stelle im rh
+  const header = rh.querySelector('.rh-sidebar') || rh.querySelector('.rh-topbar') || rh;
+  if (!header) return;
+  
+  const btn = document.createElement('button');
+  btn.id = 'rhToNewsroomBtn';
+  btn.innerHTML = '📰 Newsroom öffnen';
+  btn.style.cssText = 'margin: 8px; width: calc(100% - 16px); justify-content: center;';
+  btn.onclick = () => {
+    if (typeof window.closeReadingHub === 'function') window.closeReadingHub();
+    setTimeout(() => {
+      if (typeof window.openResearchHub === 'function') window.openResearchHub();
+    }, 200);
+  };
+  header.insertBefore(btn, header.firstChild);
+}
+
+// Beobachte beide Container für Aktivierung
+const containerObserver = new MutationObserver(() => {
+  const nhActive = document.getElementById('researchHubContainer')?.classList.contains('active');
+  const rhActive = document.getElementById('readingHubContainer')?.classList.contains('active');
+  if (nhActive) injectBooksLink();
+  if (rhActive) injectNewsroomBtn();
+});
+['researchHubContainer', 'readingHubContainer'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) containerObserver.observe(el, { attributes: true, attributeFilter: ['class'] });
+});
+
+// Auch sofort versuchen für den Fall dass schon offen
+setTimeout(() => { injectBooksLink(); injectNewsroomBtn(); }, 1000);
+
+// ═══════════════════════════════════════════════════════════════════════
+// 2. PDF-UPLOAD im Newsroom (über vorhandene Firebase-Storage / Library)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Beobachte Newsroom-Library und erweitere mit Upload-Knopf
+function injectPdfUploader() {
+  const lib = document.getElementById('nh-p-library');
+  if (!lib || !lib.classList.contains('on')) return;
+  if (lib.querySelector('.nh-pdf-uploader')) return;
+  
+  const uploader = document.createElement('div');
+  uploader.className = 'nh-pdf-uploader';
+  uploader.innerHTML = `
+    <input type="file" accept="application/pdf" id="nhPdfFileInput" />
+    <div class="nh-pdf-uploader-icon">📑</div>
+    <div class="nh-pdf-uploader-text">PDF hochladen</div>
+    <div class="nh-pdf-uploader-sub">Klicken oder PDF hierher ziehen — wird in ReadingHub abgelegt und im Reader geöffnet</div>
+  `;
+  uploader.onclick = (e) => {
+    if (e.target.tagName !== 'INPUT') uploader.querySelector('input').click();
+  };
+  // Drag & drop
+  uploader.ondragover = (e) => { e.preventDefault(); uploader.style.background = 'rgba(99,102,241,0.12)'; };
+  uploader.ondragleave = () => { uploader.style.background = ''; };
+  uploader.ondrop = (e) => {
+    e.preventDefault();
+    uploader.style.background = '';
+    const f = e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') handlePdfUpload(f);
+  };
+  
+  // Insert at top
+  lib.insertBefore(uploader, lib.firstChild);
+  
+  uploader.querySelector('input').onchange = (e) => {
+    const f = e.target.files[0];
+    if (f) handlePdfUpload(f);
+  };
+}
+
+async function handlePdfUpload(file) {
+  if (!file) return;
+  if (typeof toast === 'function') toast('info', '📑', 'Lade PDF hoch...');
+  
+  try {
+    // Lese als ArrayBuffer und legen via Indexed DB / lokal ab
+    // Variante: Wir öffnen direkt in unserem PDF-Reader (im Newsroom)
+    const arrayBuffer = await file.arrayBuffer();
+    
+    // Upload zu Firebase falls verfügbar (für persistenten Zugriff)
+    let url = null;
+    if (window.firebaseStorage) {
+      try {
+        const path = 'newsroom-pdfs/' + Date.now() + '-' + file.name.replace(/[^\w.-]/g, '_');
+        const ref = window.firebaseStorage.ref(path);
+        const snapshot = await ref.put(file);
+        url = await snapshot.ref.getDownloadURL();
+      } catch(e) {
+        console.warn('Firebase upload fehlgeschlagen, nutze lokal:', e);
+      }
+    }
+    
+    // Als Library-Eintrag (typ "pdf") speichern wenn D existiert
+    if (window.D && Array.isArray(window.D.articles)) {
+      const id = 'pdf_' + Date.now().toString(36);
+      const entry = {
+        id, type: 'pdf', kind: 'pdf',
+        title: file.name.replace(/\.pdf$/i, ''),
+        content: '', // wird beim Lesen extrahiert
+        url: url || null,
+        addedAt: new Date().toISOString(),
+        status: 'new',
+        size: file.size,
+      };
+      window.D.articles.unshift(entry);
+      if (typeof window.saveData === 'function') window.saveData();
+      if (typeof toast === 'function') toast('ok', '✓', 'PDF gespeichert');
+      
+      // Direkt öffnen
+      openPdfInNewsroom(arrayBuffer, entry);
+    } else {
+      openPdfInNewsroom(arrayBuffer, { title: file.name });
+    }
+  } catch(e) {
+    console.error('PDF-Upload-Fehler:', e);
+    if (typeof toast === 'function') toast('err', 'Upload', e.message);
+  }
+}
+
+// PDF-Reader öffnen (als eigene Page im Newsroom)
+async function openPdfInNewsroom(arrayBuffer, meta) {
+  // pdfjsLib ist über die Hauptapp schon geladen (ReadingHub nutzt sie)
+  if (!window.pdfjsLib) {
+    if (typeof toast === 'function') toast('warn', 'PDF.js', 'PDF-Library nicht geladen — öffne in neuem Tab');
+    if (meta.url) window.open(meta.url, '_blank');
+    return;
+  }
+  
+  // Suche/erzeuge eine Reader-Page im Newsroom
+  let page = document.getElementById('nh-p-pdfreader');
+  if (!page) {
+    page = document.createElement('div');
+    page.id = 'nh-p-pdfreader';
+    page.className = 'page';
+    const main = document.querySelector('.nh .main');
+    if (main) main.appendChild(page);
+  }
+  
+  // Alle anderen pages aus
+  document.querySelectorAll('.nh .page').forEach(p => p.classList.remove('on'));
+  page.classList.add('on');
+  
+  page.innerHTML = `
+    <div class="nh-pdf-toolbar">
+      <button class="btn-tb" onclick="nhBackFromPdf()">← Library</button>
+      <strong style="font-size:13px;flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(meta.title || 'PDF')}</strong>
+      <button class="btn-tb" onclick="nhPdfPrev()">← Seite</button>
+      <span class="nh-pdf-page-counter" id="nhPdfPageInfo">– / –</span>
+      <button class="btn-tb" onclick="nhPdfNext()">Seite →</button>
+      <button class="btn-tb" onclick="nhPdfExtractAll()">📋 Volltext</button>
+      <button class="btn-tb" onclick="nhPdfShowHelp()">ℹ️</button>
+    </div>
+    <div class="nh-pdf-canvas-wrapper" id="nhPdfWrap">
+      <canvas id="nhPdfCanvas" class="nh-pdf-page"></canvas>
+    </div>
+  `;
+  
+  try {
+    const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer });
+    window._nhCurrentPdf = await loadingTask.promise;
+    window._nhPdfPage = 1;
+    window._nhPdfMeta = meta;
+    await renderPdfPage(1);
+  } catch(e) {
+    console.error('PDF-Render-Fehler:', e);
+    page.innerHTML = `<div style="padding:30px;text-align:center;color:#ef4444">PDF konnte nicht geladen werden: ${escHTML(e.message)}</div>`;
+  }
+}
+
+async function renderPdfPage(num) {
+  const pdf = window._nhCurrentPdf;
+  if (!pdf) return;
+  num = Math.max(1, Math.min(pdf.numPages, num));
+  window._nhPdfPage = num;
+  
+  const pg = await pdf.getPage(num);
+  const canvas = document.getElementById('nhPdfCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  
+  const viewport = pg.getViewport({ scale: 1.5 });
+  canvas.height = viewport.height;
+  canvas.width = viewport.width;
+  await pg.render({ canvasContext: ctx, viewport }).promise;
+  
+  // Text-Layer für Text-Auswahl (vereinfacht: render text content overlay)
+  const textContent = await pg.getTextContent();
+  const wrap = document.getElementById('nhPdfWrap');
+  let textLayer = wrap.querySelector('.nh-pdf-text-layer');
+  if (!textLayer) {
+    textLayer = document.createElement('div');
+    textLayer.className = 'nh-pdf-text-layer';
+    textLayer.style.cssText = 'position:absolute;top:0;left:0;color:transparent;user-select:text;pointer-events:auto;';
+    wrap.style.position = 'relative';
+    wrap.appendChild(textLayer);
+  }
+  // Position relative to canvas
+  const cRect = canvas.getBoundingClientRect();
+  const wRect = wrap.getBoundingClientRect();
+  textLayer.style.top = (canvas.offsetTop) + 'px';
+  textLayer.style.left = (canvas.offsetLeft) + 'px';
+  textLayer.style.width = canvas.width + 'px';
+  textLayer.style.height = canvas.height + 'px';
+  textLayer.style.transform = '';
+  
+  // Render text-spans positioniert
+  textLayer.innerHTML = '';
+  const sf = canvas.width / viewport.width;
+  textContent.items.forEach(it => {
+    const span = document.createElement('span');
+    span.textContent = it.str;
+    const tx = window.pdfjsLib.Util.transform(viewport.transform, it.transform);
+    span.style.cssText = `position:absolute;left:${tx[4]}px;top:${tx[5] - it.height * sf}px;font-size:${it.height * 0.95}px;white-space:pre;line-height:1;font-family:sans-serif;`;
+    textLayer.appendChild(span);
+  });
+  
+  // Update counter
+  const info = document.getElementById('nhPdfPageInfo');
+  if (info) info.textContent = num + ' / ' + pdf.numPages;
+}
+
+window.nhPdfNext = () => { if (window._nhCurrentPdf) renderPdfPage((window._nhPdfPage || 1) + 1); };
+window.nhPdfPrev = () => { if (window._nhCurrentPdf) renderPdfPage((window._nhPdfPage || 1) - 1); };
+
+window.nhBackFromPdf = () => {
+  document.getElementById('nh-p-pdfreader')?.classList.remove('on');
+  if (typeof window.nhNav === 'function') window.nhNav('library');
+  window._nhCurrentPdf = null;
+};
+
+window.nhPdfShowHelp = () => {
+  alert('PDF-Reader\n\nText markieren = Selection-Tools öffnen sich (Übersetzen / Zitat / Notiz / Karte)\nVolltext-Knopf = extrahiert allen Text als Notiz\nPfeile = Seiten blättern');
+};
+
+window.nhPdfExtractAll = async () => {
+  const pdf = window._nhCurrentPdf;
+  if (!pdf) return;
+  if (typeof toast === 'function') toast('info', '📋', 'Extrahiere Volltext...');
+  let allText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i);
+    const tc = await pg.getTextContent();
+    allText += '\n\n=== Seite ' + i + ' ===\n\n' + tc.items.map(it => it.str).join(' ');
+  }
+  // Als Notiz speichern
+  if (typeof createEntity === 'function') {
+    try {
+      createEntity('note', {
+        title: 'PDF-Volltext: ' + (window._nhPdfMeta?.title || 'PDF'),
+        content: allText,
+        createdAt: new Date().toISOString(),
+        notebookId: null, // Inbox
+        source: 'pdf-extract',
+      });
+      if (typeof toast === 'function') toast('ok', '✓', 'Als Notiz in Inbox gespeichert (' + allText.length + ' Zeichen)');
+    } catch(e) {
+      console.error(e);
+      // Fallback: Clipboard
+      window._lastClipboardText = allText;
+      navigator.clipboard.writeText(allText).then(() => {
+        if (typeof toast === 'function') toast('ok', '📋', 'In Zwischenablage (' + allText.length + ' Zeichen)');
+      });
+    }
+  } else {
+    window._lastClipboardText = allText;
+    navigator.clipboard.writeText(allText);
+    if (typeof toast === 'function') toast('ok', '📋', 'In Zwischenablage');
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// 3. READER-MODE Toolbar im Newsroom (für Article-Reader)
+// ═══════════════════════════════════════════════════════════════════════
+
+const READER_KEY = 'nh-reader-prefs';
+function getRdrPrefs() { try { return JSON.parse(localStorage.getItem(READER_KEY) || '{}'); } catch { return {}; } }
+function saveRdrPrefs(p) { localStorage.setItem(READER_KEY, JSON.stringify(p)); }
+function applyRdrPrefs() {
+  const p = getRdrPrefs();
+  const r = document.documentElement;
+  r.style.setProperty('--rdr-s', (p.size || 18) + 'px');
+  r.style.setProperty('--rdr-w', (p.width || 720) + 'px');
+  r.style.setProperty('--rdr-lh', p.lineHeight || 1.7);
+  r.style.setProperty('--rdr-f', p.font || 'Georgia, serif');
+  document.body.classList.remove('nh-rdr-sepia', 'nh-rdr-light');
+  if (p.theme === 'sepia') document.body.classList.add('nh-rdr-sepia');
+  if (p.theme === 'light') document.body.classList.add('nh-rdr-light');
+}
+applyRdrPrefs();
+
+window.nhRdrSet = function(key, val) {
+  const p = getRdrPrefs();
+  p[key] = val;
+  saveRdrPrefs(p);
+  applyRdrPrefs();
+  // Update toolbar visual state
+  document.querySelectorAll('.nh-rdr-toolbar [data-pref]').forEach(b => {
+    if (b.dataset.pref === key) {
+      b.classList.toggle('active', String(b.dataset.val) === String(val));
+    }
+  });
+};
+
+window.nhRdrFocusToggle = function() {
+  document.body.classList.toggle('nh-rdr-focus');
+};
+
+window.nhBuildRdrToolbar = function() {
+  const p = getRdrPrefs();
+  return `
+    <div class="nh-rdr-toolbar">
+      <div class="group">
+        <button class="btn-tb ${(p.size||18)<=15?'active':''}" data-pref="size" data-val="14" onclick="nhRdrSet('size',14)">A-</button>
+        <button class="btn-tb ${(p.size||18)>=16&&(p.size||18)<=19?'active':''}" data-pref="size" data-val="18" onclick="nhRdrSet('size',18)">A</button>
+        <button class="btn-tb ${(p.size||18)>=20?'active':''}" data-pref="size" data-val="22" onclick="nhRdrSet('size',22)">A+</button>
+      </div>
+      <div class="group">
+        <button class="btn-tb ${(p.width||720)<=600?'active':''}" data-pref="width" data-val="560" onclick="nhRdrSet('width',560)">▌</button>
+        <button class="btn-tb ${(p.width||720)>=601&&(p.width||720)<=760?'active':''}" data-pref="width" data-val="720" onclick="nhRdrSet('width',720)">▌▌</button>
+        <button class="btn-tb ${(p.width||720)>=800?'active':''}" data-pref="width" data-val="900" onclick="nhRdrSet('width',900)">▌▌▌</button>
+      </div>
+      <div class="group">
+        <button class="btn-tb ${(!p.theme||p.theme==='dark')?'active':''}" data-pref="theme" data-val="dark" onclick="nhRdrSet('theme','dark')">🌑</button>
+        <button class="btn-tb ${p.theme==='sepia'?'active':''}" data-pref="theme" data-val="sepia" onclick="nhRdrSet('theme','sepia')">📜</button>
+        <button class="btn-tb ${p.theme==='light'?'active':''}" data-pref="theme" data-val="light" onclick="nhRdrSet('theme','light')">☀️</button>
+      </div>
+      <button class="btn-tb" onclick="nhRdrFocusToggle()" title="Fokus-Modus">🎯</button>
+      <span class="nh-rdr-meta" id="nhRdrMeta"></span>
+    </div>
+  `;
+};
+
+// Beobachte Article-Reader im Newsroom und füge Toolbar ein
+function enhanceReader() {
+  const rdr = document.querySelector('.nh #nh-p-reader.on');
+  if (!rdr) return;
+  if (rdr.querySelector('.nh-rdr-toolbar')) return;
+  
+  const text = rdr.querySelector('.rdr-text');
+  if (!text) return;
+  
+  // Lesezeit berechnen
+  const words = (text.textContent || '').split(/\s+/).filter(Boolean).length;
+  const minutes = Math.max(1, Math.ceil(words / 220));
+  
+  // Toolbar prepend
+  const toolbar = document.createElement('div');
+  toolbar.innerHTML = window.nhBuildRdrToolbar();
+  rdr.insertBefore(toolbar.firstElementChild, rdr.firstChild);
+  
+  // Meta
+  const meta = document.getElementById('nhRdrMeta');
+  if (meta) meta.textContent = words + ' Wörter · ~' + minutes + ' min';
+  
+  // Apply preferences zur text-Klasse
+  text.classList.add('nh-rdr-content');
+  
+  // Progress-Balken aktivieren
+  const bar = document.getElementById('nhRdrProgress');
+  if (bar) bar.style.display = 'block';
+}
+
+function deactivateReader() {
+  const bar = document.getElementById('nhRdrProgress');
+  if (bar) bar.style.display = 'none';
+  document.body.classList.remove('nh-rdr-focus');
+}
+
+// Beobachte Page-Wechsel im Newsroom
+const pageObserver = new MutationObserver(() => {
+  const reader = document.querySelector('.nh #nh-p-reader.on');
+  if (reader) enhanceReader();
+  else deactivateReader();
+  
+  if (document.querySelector('.nh #nh-p-library.on')) injectPdfUploader();
+});
+setTimeout(() => {
+  document.querySelectorAll('.nh .page').forEach(p => {
+    pageObserver.observe(p, { attributes: true, attributeFilter: ['class'] });
+  });
+}, 1500);
+
+// Progress-Balken Update
+window.addEventListener('scroll', () => {
+  const bar = document.getElementById('nhRdrProgress');
+  if (!bar || bar.style.display === 'none') return;
+  const reader = document.querySelector('.nh #nh-p-reader.on .rdr-text, .nh #nh-p-reader.on .rdr-body');
+  if (!reader) return;
+  const total = reader.scrollHeight - window.innerHeight;
+  const done = window.scrollY - reader.offsetTop;
+  const pct = total > 0 ? Math.min(100, Math.max(0, (done / total) * 100)) : 0;
+  bar.style.width = pct + '%';
+}, { passive: true });
+
+// ═══════════════════════════════════════════════════════════════════════
+// 4. SELECTION-TOOLS Erweiterung — "Quote→Editor" + Übersetzen
+// ═══════════════════════════════════════════════════════════════════════
+
+// Erweitert die vorhandenen Selection-Tools um neue Aktionen
+const selectionTools = document.getElementById('selectionTools');
+if (selectionTools && !selectionTools.querySelector('[data-action="editor"]')) {
+  // Quote->Editor button hinzufügen
+  const editorBtn = document.createElement('button');
+  editorBtn.dataset.action = 'editor';
+  editorBtn.textContent = '✏️ → Editor';
+  editorBtn.onclick = () => window.nhSelectionToEditor();
+  selectionTools.appendChild(editorBtn);
+}
+
+window.nhSelectionToEditor = function() {
+  const sel = window.getSelection();
+  const text = sel?.toString().trim();
+  if (!text) return;
+  
+  const tools = document.getElementById('selectionTools');
+  if (tools) tools.classList.remove('show');
+  
+  // Quelle ermitteln
+  const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+  const ancestor = range?.commonAncestorContainer;
+  const el = ancestor?.nodeType === 1 ? ancestor : ancestor?.parentElement;
+  let sourceTitle = '';
+  let sourceUrl = '';
+  
+  if (el) {
+    // Newsroom-Article-Reader?
+    const articleReader = el.closest('#nh-p-reader');
+    if (articleReader && window.D && window._readId) {
+      const a = window.D.articles?.find(x => x.id === window._readId);
+      if (a) { sourceTitle = a.title || ''; sourceUrl = a.url || ''; }
+    }
+    // PDF-Reader?
+    const pdfReader = el.closest('#nh-p-pdfreader');
+    if (pdfReader && window._nhPdfMeta) {
+      sourceTitle = window._nhPdfMeta.title || 'PDF';
+      sourceUrl = window._nhPdfMeta.url || '';
+    }
+  }
+  
+  showQuoteModal(text, { title: sourceTitle, url: sourceUrl });
+};
+
+function showQuoteModal(text, source) {
+  const overlay = document.getElementById('nhQuoteOverlay');
+  const box = document.getElementById('nhQuoteBox');
+  if (!overlay || !box) return;
+  
+  window._nhQuoteText = text;
+  window._nhQuoteSource = source;
+  
+  box.innerHTML = `
+    <h3>📝 Zitat verwenden</h3>
+    <div class="nh-quote-block">${escHTML(text.slice(0, 400))}${text.length > 400 ? '…' : ''}</div>
+    ${source.title ? `<div class="nh-quote-source">📖 <strong>${escHTML(source.title)}</strong>${source.url ? '<br>' + escHTML(source.url) : ''}</div>` : ''}
+    
+    <div class="nh-lang-pick">
+      <span style="font-size:11px;color:#71717a;align-self:center;margin-right:4px">Übersetzen:</span>
+      <button onclick="nhQuoteTranslate('Englisch')">EN</button>
+      <button onclick="nhQuoteTranslate('Deutsch')">DE</button>
+      <button onclick="nhQuoteTranslate('Französisch')">FR</button>
+      <button onclick="nhQuoteTranslate('Italienisch')">IT</button>
+      <button onclick="nhQuoteTranslate('Spanisch')">ES</button>
+    </div>
+    <div id="nhTranslateResult"></div>
+    
+    <div class="nh-quote-actions" style="margin-top:14px">
+      <button class="primary" onclick="nhQuoteToEditor(false)">→ Editor (Zitat)</button>
+      <button onclick="nhQuoteToEditor(true)">→ Editor (mit Fußnote)</button>
+      <button onclick="nhQuoteAsNote()">📓 Als Notiz</button>
+      <button class="ghost" onclick="nhQuoteClose()">Schließen</button>
+    </div>
+  `;
+  overlay.classList.add('show');
+}
+
+window.nhQuoteClose = () => {
+  document.getElementById('nhQuoteOverlay')?.classList.remove('show');
+};
+
+window.nhQuoteTranslate = async (targetLang) => {
+  const text = window._nhQuoteText;
+  if (!text) return;
+  if (typeof callAI !== 'function') {
+    if (typeof toast === 'function') toast('warn', 'AI', 'AI-Funktion nicht verfügbar');
+    return;
+  }
+  const result = document.getElementById('nhTranslateResult');
+  if (result) result.innerHTML = '<div style="padding:12px;color:#71717a;font-size:12px">⏳ Übersetze...</div>';
+  
+  try {
+    const response = await callAI(`Übersetze folgenden Text präzise ins ${targetLang}. Behalte Bedeutung und Ton bei. Gib NUR die Übersetzung zurück, ohne Einleitung oder Anführungszeichen:\n\n${text}`);
+    window._nhQuoteTranslation = { lang: targetLang, text: response };
+    if (result) {
+      result.innerHTML = `
+        <div class="nh-translate-result">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#86efac;margin-bottom:6px">${targetLang}</div>
+          ${escHTML(response)}
+        </div>
+      `;
+    }
+  } catch(e) {
+    if (result) result.innerHTML = '<div style="padding:12px;color:#ef4444;font-size:12px">Fehler: ' + escHTML(e.message) + '</div>';
+  }
+};
+
+window.nhQuoteToEditor = (withFootnote) => {
+  const text = window._nhQuoteText;
+  const source = window._nhQuoteSource || {};
+  const trans = window._nhQuoteTranslation;
+  if (!text) return;
+  
+  // Wenn Übersetzung da → den übersetzten Text einfügen
+  const finalText = trans?.text || text;
+  
+  // Fußnoten-Index
+  let footnoteText = '';
+  if (withFootnote && (source.title || source.url)) {
+    if (!window._nhEditorFootnotes) window._nhEditorFootnotes = [];
+    const idx = window._nhEditorFootnotes.length + 1;
+    window._nhEditorFootnotes.push({
+      idx, title: source.title, url: source.url, originalText: text.slice(0, 200)
+    });
+    footnoteText = ` [${idx}]`;
+  }
+  
+  // Quote als Markdown-Blockquote formatieren
+  const insertion = '\n> ' + finalText.replace(/\n/g, '\n> ') + footnoteText + (source.title || source.url ? '\n> — ' + (source.title || '') + (source.url ? ' (' + source.url + ')' : '') : '') + '\n\n';
+  
+  // In den Newsroom-Editor einfügen
+  const editorBody = document.getElementById('nh-ed-b');
+  if (editorBody) {
+    const start = editorBody.selectionStart || editorBody.value.length;
+    const end = editorBody.selectionEnd || editorBody.value.length;
+    editorBody.value = editorBody.value.slice(0, start) + insertion + editorBody.value.slice(end);
+    editorBody.dispatchEvent(new Event('input', { bubbles: true }));
+    editorBody.focus();
+    
+    // Footnotes-Block aktualisieren
+    if (withFootnote) appendFootnotesToEditor();
+    
+    if (typeof toast === 'function') toast('ok', '✓', 'Im Editor eingefügt');
+    
+    // Wechsle auf Editor-Page falls nicht offen
+    if (typeof window.nhNav === 'function' && !document.querySelector('.nh #nh-p-editor.on')) {
+      window.nhNav('editor');
+    }
+  } else {
+    // Fallback: in Zwischenablage
+    window._lastClipboardText = insertion;
+    navigator.clipboard.writeText(insertion);
+    if (typeof toast === 'function') toast('warn', '📋', 'Editor nicht offen — in Zwischenablage');
+  }
+  window.nhQuoteClose();
+};
+
+function appendFootnotesToEditor() {
+  const editorBody = document.getElementById('nh-ed-b');
+  if (!editorBody || !window._nhEditorFootnotes?.length) return;
+  
+  const sep = '\n\n--- Quellen ---\n';
+  let txt = editorBody.value;
+  
+  // Bestehenden Footnotes-Block entfernen
+  const sepIdx = txt.lastIndexOf('\n\n--- Quellen ---');
+  if (sepIdx >= 0) txt = txt.slice(0, sepIdx);
+  
+  // Neu anhängen
+  txt += sep + window._nhEditorFootnotes
+    .map(f => `[${f.idx}] ${f.title || ''}${f.url ? ' — ' + f.url : ''}`)
+    .join('\n');
+  
+  editorBody.value = txt;
+  editorBody.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+window.nhQuoteAsNote = () => {
+  const text = window._nhQuoteText;
+  const source = window._nhQuoteSource || {};
+  const trans = window._nhQuoteTranslation;
+  
+  let content = text;
+  if (trans) content = '🌐 ' + trans.lang + ':\n' + trans.text + '\n\n— Original —\n' + text;
+  if (source.title || source.url) {
+    content += '\n\n— Quelle —\n' + (source.title || '') + (source.url ? '\n' + source.url : '');
+  }
+  
+  if (typeof createEntity === 'function') {
+    try {
+      createEntity('note', {
+        title: text.slice(0, 60),
+        content,
+        notebookId: null,
+        createdAt: new Date().toISOString(),
+        source: 'newsroom-quote',
+      });
+      if (typeof toast === 'function') toast('ok', '📓', 'Notiz in Inbox gespeichert');
+    } catch(e) {
+      if (typeof toast === 'function') toast('err', 'Fehler', e.message);
+    }
+  }
+  window.nhQuoteClose();
+};
+
+// Klick auf Overlay schließt
+document.getElementById('nhQuoteOverlay')?.addEventListener('click', (e) => {
+  if (e.target.id === 'nhQuoteOverlay') window.nhQuoteClose();
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// 5. TOPIC-QUELLEN-SIDEBAR im Editor
+// ═══════════════════════════════════════════════════════════════════════
+
+function enhanceEditor() {
+  const ed = document.querySelector('.nh #nh-p-editor.on');
+  if (!ed) return;
+  if (ed.querySelector('.nh-ed-sources')) return;
+  
+  const sideBar = ed.querySelector('.ed-side');
+  if (!sideBar) return;
+  
+  // Topic-Quellen anzeigen
+  if (!window.D || !window.D.ed) return;
+  const tid = window.D.ed.tid;
+  if (!tid) return;
+  
+  // Sammle Quellen für dieses Topic
+  const articles = (window.D.articles || []).filter(a => a.topicId === tid);
+  const annotations = (window.D.annotations || []).filter(an => {
+    const art = (window.D.articles || []).find(a => a.id === an.articleId);
+    return art && art.topicId === tid;
+  });
+  
+  if (articles.length === 0 && annotations.length === 0) return;
+  
+  const sourcesDiv = document.createElement('div');
+  sourcesDiv.className = 'nh-ed-sources';
+  let html = '<h4>📚 Quellen für dieses Topic</h4>';
+  
+  articles.slice(0, 10).forEach(a => {
+    const sourceHtml = JSON.stringify({ title: a.title, url: a.url || '' }).replace(/"/g, '&quot;');
+    const textHtml = (a.content || '').slice(0, 800).replace(/"/g, '&quot;');
+    html += `
+      <div class="nh-ed-source">
+        <span class="nh-ed-source-icon">${a.kind === 'pdf' ? '📑' : '📄'}</span>
+        <div class="nh-ed-source-content">
+          <div class="nh-ed-source-title">${escHTML(a.title || 'Ohne Titel')}</div>
+          ${a.url ? `<div class="nh-ed-source-meta">${escHTML(new URL(a.url, location.href).hostname)}</div>` : ''}
+        </div>
+        <div class="nh-ed-source-actions">
+          <button onclick="nhEdOpenSource('${a.id}')">Lesen</button>
+        </div>
+      </div>
+    `;
+  });
+  
+  if (annotations.length > 0) {
+    html += '<h4 style="margin-top:12px">✏️ Highlights</h4>';
+    annotations.slice(0, 8).forEach((an, i) => {
+      const t = an.selectedText || '';
+      window._nhAnnotationLookup = window._nhAnnotationLookup || {};
+      const lookupId = 'ann_' + an.id;
+      window._nhAnnotationLookup[lookupId] = { text: t, source: an.articleId };
+      html += `
+        <div class="nh-ed-source" data-ann-id="${lookupId}">
+          <span class="nh-ed-source-icon">${an.type === 'highlight' ? '🟨' : an.type === 'note' ? '📝' : '🔴'}</span>
+          <div class="nh-ed-source-content">
+            <div class="nh-ed-source-title" style="font-weight:500;font-size:11.5px">${escHTML(t.slice(0, 120))}${t.length > 120 ? '…' : ''}</div>
+            ${an.note ? `<div class="nh-ed-source-meta">💭 ${escHTML(an.note.slice(0, 60))}</div>` : ''}
+          </div>
+          <div class="nh-ed-source-actions">
+            <button data-act="insert">Einfügen</button>
+          </div>
+        </div>
+      `;
+    });
+  }
+  
+  sourcesDiv.innerHTML = html;
+  sideBar.appendChild(sourcesDiv);
+  
+  // Click-Delegation
+  sourcesDiv.querySelectorAll('[data-ann-id]').forEach(el => {
+    el.querySelector('[data-act="insert"]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const lookup = window._nhAnnotationLookup[el.dataset.annId];
+      if (!lookup) return;
+      const editorBody = document.getElementById('nh-ed-b');
+      if (editorBody) {
+        const txt = '\n> ' + lookup.text + '\n\n';
+        editorBody.value = (editorBody.value || '') + txt;
+        editorBody.dispatchEvent(new Event('input', { bubbles: true }));
+        if (typeof toast === 'function') toast('ok', '✓', 'Highlight eingefügt');
+      }
+    });
+  });
+}
+
+window.nhEdOpenSource = function(articleId) {
+  if (typeof window.nhNav !== 'function') return;
+  window._readId = articleId;
+  window.nhNav('reader');
+};
+
+// Beobachte Editor-Page
+setTimeout(() => {
+  const ed = document.getElementById('nh-p-editor');
+  if (ed) {
+    new MutationObserver(() => { 
+      if (ed.classList.contains('on')) setTimeout(enhanceEditor, 100);
+    }).observe(ed, { attributes: true, attributeFilter: ['class'] });
+  }
+}, 1500);
+
+// ═══════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════
+function escHTML(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+console.log('✨ Newsroom/ReadingHub Integration loaded');
+})();
+</script>
+<!-- ═══ END NRH INTEGRATION ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     TABS + TRANSLATOR + SPOTLIGHT-APPS PACKAGE v1.0
+     A: Spotlight-Apps (Cmd+K → Apps)
+     B: Translator-App (standalone, → RecallLab)
+     C: Browser-Tab-System (Chrome-style, persistent)
+   ═══════════════════════════════════════════════════════════════════════ -->
+
+<style id="tabsTranslatorStyles">
+/* ── Browser-Tab-Bar ───────────────────────────────────────────── */
+#browserTabBar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 99;
+  background: linear-gradient(180deg, #18181b 0%, #1a1a1d 100%);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  height: 38px; display: flex; align-items: stretch;
+  padding: 6px 6px 0; gap: 2px;
+  user-select: none; -webkit-user-select: none;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+#browserTabBar::-webkit-scrollbar { height: 4px; }
+#browserTabBar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+body.tabs-on { padding-top: 38px; }
+body.tabs-on .topbar { top: 38px !important; }
+
+.bt-tab {
+  display: flex; align-items: center; gap: 7px;
+  min-width: 110px; max-width: 220px;
+  padding: 0 10px 0 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 0;
+  border-radius: 9px 9px 0 0;
+  color: #a1a1aa; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; flex-shrink: 0;
+  transition: all 0.12s; position: relative;
+  letter-spacing: -0.005em;
+}
+.bt-tab:hover { background: rgba(255,255,255,0.06); color: #d4d4d8; }
+.bt-tab.active {
+  background: linear-gradient(180deg, rgba(99,102,241,0.18) 0%, #1f1f23 100%);
+  color: #fff;
+  border-color: rgba(99,102,241,0.3);
+  border-bottom: 0;
+}
+.bt-tab.active::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, #6366f1, #a855f7);
+  border-radius: 2px 2px 0 0;
+}
+.bt-tab-icon { font-size: 14px; flex-shrink: 0; line-height: 1; }
+.bt-tab-title {
+  flex: 1; min-width: 0; white-space: nowrap; 
+  overflow: hidden; text-overflow: ellipsis;
+}
+.bt-tab-close {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; line-height: 1; opacity: 0;
+  background: transparent; flex-shrink: 0;
+  transition: all 0.12s; color: inherit;
+}
+.bt-tab:hover .bt-tab-close { opacity: 0.6; }
+.bt-tab.active .bt-tab-close { opacity: 0.8; }
+.bt-tab-close:hover { background: rgba(255,255,255,0.15); opacity: 1 !important; }
+
+.bt-tab.dragging { opacity: 0.5; }
+.bt-tab.drop-target { box-shadow: -2px 0 0 #6366f1; }
+
+/* Pinned tab (Dashboard) — kompakter, kein close, nicht draggable */
+.bt-tab.pinned {
+  min-width: auto;
+  padding: 0 14px;
+  cursor: default;
+  background: rgba(99,102,241,0.08);
+  border-color: rgba(99,102,241,0.18);
+}
+.bt-tab.pinned .bt-tab-title {
+  font-weight: 600;
+}
+.bt-tab.pinned:hover {
+  background: rgba(99,102,241,0.14);
+}
+
+/* ── Tab-Bar muss IMMER oben sichtbar sein, auch in Apps ──── */
+#browserTabBar {
+  z-index: 2147483600 !important; /* höher als alle Hub-Container */
+}
+body.tabs-on .noteflow-container,
+body.tabs-on .recalllab-container,
+body.tabs-on .readinghub-container,
+body.tabs-on .nh {
+  top: 38px !important;
+  height: calc(100vh - 38px) !important;
+  inset: 38px 0 0 0 !important;
+}
+
+/* Loading-Overlay komplett deaktivieren beim Hub-Wechsel */
+body.tabs-on #loadingOverlay {
+  display: none !important;
+}
+
+/* Sub-fixed-Elemente in Hubs (z.B. ReadingHub-Sidebar) auch nach unten verschieben */
+body.tabs-on .rh-sidebar {
+  top: 38px !important;
+  height: calc(100vh - 38px) !important;
+}
+
+/* ─── Quick Assistant: Neon-Violett Override ──────────── */
+#qc-fab {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  box-shadow: 0 4px 20px rgba(168,85,247,0.45) !important;
+}
+#qc-fab:hover {
+  box-shadow: 0 6px 28px rgba(168,85,247,0.6) !important;
+}
+.qc-hdr {
+  background: linear-gradient(135deg, rgba(168,85,247,0.14), rgba(124,58,237,0.06)) !important;
+}
+.qc-hdr-icon {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  box-shadow: 0 2px 8px rgba(168,85,247,0.35) !important;
+}
+.qc-act:hover {
+  background: rgba(168,85,247,0.18) !important;
+  border-color: rgba(168,85,247,0.4) !important;
+  color: #d8b4fe !important;
+}
+.qc-m.u {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  color: #fff !important;
+}
+.qc-m.a strong {
+  color: #c084fc !important;
+}
+.qc-m a.qc-link {
+  color: #c084fc !important;
+}
+.qc-m a.qc-link:hover {
+  color: #d8b4fe !important;
+}
+#qc-input:focus, #qc-input:focus-within {
+  border-color: rgba(168,85,247,0.5) !important;
+  box-shadow: 0 0 0 3px rgba(168,85,247,0.15) !important;
+}
+.qc-send-btn, #qc-send {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  box-shadow: 0 2px 8px rgba(168,85,247,0.4) !important;
+}
+
+#btNewTab {
+  width: 32px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 0;
+  color: #71717a; font-size: 18px; line-height: 1;
+  cursor: pointer; border-radius: 6px;
+  margin: 4px 0 0 4px;
+  transition: all 0.12s;
+}
+#btNewTab:hover { background: rgba(255,255,255,0.06); color: #fff; }
+
+#btToggleHint {
+  position: fixed; right: 12px; top: 7px; z-index: 100;
+  font-size: 10px; color: #52525b; font-weight: 500;
+  letter-spacing: 0.04em; pointer-events: none;
+}
+body:not(.tabs-on) #browserTabBar, body:not(.tabs-on) #btToggleHint { display: none; }
+
+/* ── Translator-App ────────────────────────────────────────────── */
+#translatorOverlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  z-index: 9997;
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 80px 16px 16px;
+}
+#translatorOverlay.open { display: flex; }
+#translatorBox {
+  background: #18181b; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px; width: 100%; max-width: 580px;
+  display: flex; flex-direction: column;
+  max-height: calc(100vh - 100px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+#translatorBox header {
+  padding: 14px 18px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+#translatorBox header h3 { 
+  margin: 0; font-size: 15px; font-weight: 700; flex: 1; letter-spacing: -0.015em;
+}
+#translatorBox header .ico {
+  width: 32px; height: 32px; border-radius: 9px;
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+  box-shadow: 0 4px 12px rgba(99,102,241,0.4);
+}
+#translatorBox .close-btn {
+  background: transparent; border: 0; color: #71717a;
+  font-size: 22px; line-height: 1; padding: 0 6px; cursor: pointer;
+}
+.tr-langbar {
+  display: flex; gap: 6px; padding: 10px 16px; flex-wrap: wrap;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.tr-langbar .lbl { font-size: 11px; color: #71717a; margin-right: 4px; }
+.tr-langbar select {
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+  color: #e4e4e7; border-radius: 8px; padding: 5px 10px; font-size: 12.5px;
+  outline: none; font-family: inherit; cursor: pointer;
+}
+.tr-langbar select:focus { border-color: #6366f1; }
+.tr-langbar .swap {
+  background: rgba(255,255,255,0.05); border: 0; color: #818cf8;
+  width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 14px;
+}
+.tr-langbar .swap:hover { background: rgba(99,102,241,0.15); }
+.tr-body { padding: 14px 16px; overflow-y: auto; flex: 1; min-height: 0; }
+.tr-input {
+  width: 100%; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
+  padding: 12px 14px; color: #e4e4e7; font-size: 15px;
+  resize: vertical; min-height: 80px; outline: none; font-family: inherit;
+  line-height: 1.5; letter-spacing: -0.005em;
+}
+.tr-input:focus { border-color: #6366f1; background: rgba(99,102,241,0.05); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+.tr-bar {
+  display: flex; gap: 8px; align-items: center; margin-top: 10px;
+}
+.tr-bar button {
+  padding: 8px 14px; background: #6366f1; color: #fff; border: 0;
+  border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: all 0.15s;
+}
+.tr-bar button:hover { background: #5558e3; }
+.tr-bar button:disabled { background: rgba(255,255,255,0.08); color: #52525b; cursor: not-allowed; }
+.tr-bar button.ghost { background: rgba(255,255,255,0.06); color: #a1a1aa; }
+.tr-bar button.ghost:hover { background: rgba(255,255,255,0.1); color: #e4e4e7; }
+.tr-bar .hint { margin-left: auto; font-size: 11px; color: #52525b; }
+.tr-result {
+  margin-top: 14px; padding: 14px; border-radius: 10px;
+  background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.18);
+  font-size: 14.5px; line-height: 1.55; color: #d1fae5;
+  letter-spacing: -0.005em; white-space: pre-wrap; word-break: break-word;
+}
+.tr-result.empty { background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.05); color: #52525b; font-size: 12px; }
+.tr-defbox {
+  margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+  background: rgba(255,255,255,0.04); font-size: 12.5px;
+  color: #a1a1aa; line-height: 1.5;
+}
+.tr-savebar { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tr-savebar select {
+  flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  color: #e4e4e7; border-radius: 8px; padding: 8px 10px; font-size: 12.5px;
+}
+.tr-savebar button {
+  padding: 8px 14px; background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff; border: 0; border-radius: 8px; font-size: 12.5px; font-weight: 700;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(34,197,94,0.3);
+}
+.tr-savebar button:hover { transform: translateY(-1px); }
+
+.tr-history { margin-top: 16px; }
+.tr-history h4 {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #71717a; margin: 0 0 8px;
+}
+.tr-hist-item {
+  padding: 8px 10px; background: rgba(255,255,255,0.03);
+  border-radius: 7px; margin-bottom: 4px; font-size: 12px;
+  cursor: pointer; transition: all 0.12s;
+  display: flex; gap: 8px; align-items: center;
+}
+.tr-hist-item:hover { background: rgba(255,255,255,0.06); }
+.tr-hist-from { color: #a1a1aa; flex-shrink: 0; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-hist-arrow { color: #52525b; }
+.tr-hist-to { color: #d4d4d8; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-hist-saved { color: #22c55e; font-size: 11px; flex-shrink: 0; }
+</style>
+
+<!-- Tab-Bar Container -->
+<div id="browserTabBar"></div>
+<button id="btNewTab" title="Neuer Tab (⌘T)" style="display:none">+</button>
+<div id="btToggleHint">⌘T · ⌘W · ⌘1-9</div>
+
+<!-- Translator -->
+<div id="translatorOverlay">
+  <div id="translatorBox">
+    <header>
+      <div class="ico">🌐</div>
+      <h3>Übersetzer</h3>
+      <button class="close-btn" onclick="window.closeTranslator()" title="Schließen (Esc)">×</button>
+    </header>
+    <div class="tr-langbar">
+      <span class="lbl">Von</span>
+      <select id="trLangFrom">
+        <option value="auto">Auto-erkennen</option>
+        <option value="Englisch">Englisch</option>
+        <option value="Deutsch">Deutsch</option>
+        <option value="Französisch">Französisch</option>
+        <option value="Italienisch">Italienisch</option>
+        <option value="Spanisch">Spanisch</option>
+      </select>
+      <button class="swap" onclick="window.swapTranslateLangs()" title="Sprachen tauschen">⇄</button>
+      <span class="lbl">Nach</span>
+      <select id="trLangTo">
+        <option value="Deutsch">Deutsch</option>
+        <option value="Englisch" selected>Englisch</option>
+        <option value="Französisch">Französisch</option>
+        <option value="Italienisch">Italienisch</option>
+        <option value="Spanisch">Spanisch</option>
+      </select>
+    </div>
+    <div class="tr-body">
+      <textarea class="tr-input" id="trInput" placeholder="Wort, Phrase oder Satz eingeben..." rows="3"></textarea>
+      <div class="tr-bar">
+        <button id="trGo" onclick="window.runTranslate()">Übersetzen</button>
+        <button class="ghost" onclick="window.clearTranslate()">Löschen</button>
+        <span class="hint">⌘+↵ zum Übersetzen</span>
+      </div>
+      <div id="trResult" class="tr-result empty">Übersetzung erscheint hier</div>
+      <div id="trDefBox" style="display:none"></div>
+      <div id="trSaveBar" style="display:none" class="tr-savebar"></div>
+      <div class="tr-history" id="trHistory"></div>
+    </div>
+  </div>
+</div>
+
+<script id="tabsTranslatorScript">
+(function() {
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════
+// SECTION A: SPOTLIGHT-APPS Erweiterung
+// ═══════════════════════════════════════════════════════════════════════
+const APPS = [
+  { id: 'newsroom', icon: '📰', title: 'Newsroom', sub: 'Editorial × Research Hub', open: () => { 
+    if (window.openResearchHub) window.openResearchHub();
+    else window.location.hash = '#/articles';
+  }},
+  { id: 'readinghub', icon: '📚', title: 'ReadingHub', sub: 'Bücher, PDFs, Annotations', open: () => {
+    if (window.openReadingHub) window.openReadingHub();
+    else window.location.hash = '#/readinghub';
+  }},
+  { id: 'recalllab', icon: '🧠', title: 'RecallLab', sub: 'Spaced Repetition Lernkarten', open: () => { window.location.hash = '#/recall'; }},
+  { id: 'translator', icon: '🌐', title: 'Übersetzer', sub: 'AI-Übersetzung → RecallLab (⌘⇧T)', open: () => window.openTranslator() },
+  { id: 'editor', icon: '✏️', title: 'Editor', sub: 'Schreiben mit AI-Unterstützung', open: () => {
+    if (window.openResearchHub) { window.openResearchHub(); setTimeout(() => window.nhNav?.('editor'), 200); }
+  }},
+  { id: 'daily', icon: '☀️', title: 'Daily Briefing', sub: 'Tagesübersicht', open: () => { window.location.hash = '#/dashboard'; }},
+  { id: 'wrap', icon: '🌙', title: 'Daily Wrap', sub: 'Tagesabschluss & Reflexion', open: () => { 
+    if (window.openDailyWrap) window.openDailyWrap();
+  }},
+  { id: 'tasks', icon: '✓', title: 'Aufgaben', sub: 'Alle Tasks', open: () => { window.location.hash = '#/tasks'; }},
+  { id: 'projects', icon: '📦', title: 'Projekte', sub: 'Alle Projekte', open: () => { window.location.hash = '#/projects'; }},
+  { id: 'notes', icon: '📝', title: 'Notizen', sub: 'Alle Notizbücher', open: () => { window.location.hash = '#/notes'; }},
+  { id: 'meetings', icon: '🤝', title: 'Meetings', sub: 'Termine & Sitzungen', open: () => { window.location.hash = '#/meetings'; }},
+  { id: 'calendar', icon: '📅', title: 'Kalender', sub: 'Termine im Überblick', open: () => { window.location.hash = '#/calendar'; }},
+  { id: 'kvcockpit', icon: '🎓', title: 'KV-Cockpit', sub: 'Abschlussprüfung Mai 2026', open: () => {
+    const D = window.APP?.state?.data;
+    const p = D ? Object.values(D.entities?.projects || {}).find(x => x.externalId === 'PRJ-Z2SEX') : null;
+    if (p) window.location.hash = '#/projects/' + p.id;
+  }},
+  { id: 'settings', icon: '⚙️', title: 'Einstellungen', sub: 'API Keys, Preferences', open: () => { window.location.hash = '#/settings'; }},
+];
+
+// Apps werden direkt in buildSpotlightItems() integriert (siehe oben in der Funktion).
+// Kein zusätzlicher Patch nötig.
+
+// ═══════════════════════════════════════════════════════════════════════
+// SECTION B: TRANSLATOR-APP
+// ═══════════════════════════════════════════════════════════════════════
+const TR_HISTORY_KEY = 'translator-history-v1';
+
+function trGetHistory() {
+  try { return JSON.parse(localStorage.getItem(TR_HISTORY_KEY) || '[]'); } catch { return []; }
+}
+function trSaveHistory(items) {
+  try { localStorage.setItem(TR_HISTORY_KEY, JSON.stringify(items.slice(0, 30))); } catch(e) {}
+}
+function trAddHistory(entry) {
+  const all = trGetHistory();
+  all.unshift({ ...entry, ts: Date.now() });
+  trSaveHistory(all);
+  trRenderHistory();
+}
+
+function trRenderHistory() {
+  const wrap = document.getElementById('trHistory');
+  if (!wrap) return;
+  const items = trGetHistory();
+  if (items.length === 0) {
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.innerHTML = '<h4>Letzte Übersetzungen</h4>' + items.slice(0, 8).map((it, i) => `
+    <div class="tr-hist-item" data-idx="${i}">
+      <div class="tr-hist-from">${escHTML(it.from || '')}</div>
+      <div class="tr-hist-arrow">→</div>
+      <div class="tr-hist-to">${escHTML(it.to || '')}</div>
+      ${it.saved ? '<div class="tr-hist-saved">🧠</div>' : ''}
+    </div>
+  `).join('');
+  wrap.querySelectorAll('.tr-hist-item').forEach(el => {
+    el.onclick = () => {
+      const idx = parseInt(el.dataset.idx);
+      const it = items[idx];
+      if (!it) return;
+      const inp = document.getElementById('trInput');
+      const result = document.getElementById('trResult');
+      if (inp) inp.value = it.from || '';
+      if (result) {
+        result.classList.remove('empty');
+        result.textContent = it.to || '';
+      }
+      window._lastTranslation = { from: it.from, to: it.to, fromLang: it.fromLang, toLang: it.toLang };
+      buildSaveBar(it.fromLang, it.toLang);
+    };
+  });
+}
+
+window.openTranslator = function() {
+  const overlay = document.getElementById('translatorOverlay');
+  if (!overlay) return;
+  overlay.classList.add('open');
+  setTimeout(() => document.getElementById('trInput')?.focus(), 80);
+  trRenderHistory();
+};
+
+window.closeTranslator = function() {
+  document.getElementById('translatorOverlay')?.classList.remove('open');
+};
+
+window.swapTranslateLangs = function() {
+  const f = document.getElementById('trLangFrom');
+  const t = document.getElementById('trLangTo');
+  if (!f || !t) return;
+  // 'auto' nicht in to packen
+  if (f.value === 'auto') return;
+  const tmp = f.value;
+  f.value = t.value;
+  t.value = tmp;
+  // Auch Texte tauschen wenn beide vorhanden
+  const inp = document.getElementById('trInput');
+  const res = document.getElementById('trResult');
+  if (inp && res && !res.classList.contains('empty') && res.textContent.trim()) {
+    const oldInput = inp.value;
+    inp.value = res.textContent.trim();
+    res.textContent = oldInput;
+  }
+};
+
+window.clearTranslate = function() {
+  const inp = document.getElementById('trInput');
+  const res = document.getElementById('trResult');
+  if (inp) inp.value = '';
+  if (res) { res.textContent = 'Übersetzung erscheint hier'; res.classList.add('empty'); }
+  document.getElementById('trDefBox').style.display = 'none';
+  document.getElementById('trSaveBar').style.display = 'none';
+  if (inp) inp.focus();
+};
+
+window.runTranslate = async function() {
+  const text = document.getElementById('trInput')?.value?.trim();
+  if (!text) return;
+  
+  const fromLang = document.getElementById('trLangFrom').value;
+  const toLang = document.getElementById('trLangTo').value;
+  const result = document.getElementById('trResult');
+  const defBox = document.getElementById('trDefBox');
+  const saveBar = document.getElementById('trSaveBar');
+  const goBtn = document.getElementById('trGo');
+  
+  if (goBtn) goBtn.disabled = true;
+  if (result) {
+    result.classList.add('empty');
+    result.textContent = 'Übersetze...';
+  }
+  defBox.style.display = 'none';
+  saveBar.style.display = 'none';
+  
+  let translation = '';
+  let definition = '';
+  
+  // Prompt — bei kurzen Wörtern auch Definition + Beispielsatz
+  const isShort = text.split(/\s+/).length <= 3;
+  const fromHint = fromLang === 'auto' ? '(automatisch erkennen)' : 'aus ' + fromLang;
+  const prompt = isShort
+    ? `Übersetze folgenden Begriff ${fromHint} ins ${toLang}.\n\nBegriff: "${text}"\n\nAntworte EXAKT in diesem JSON-Format (ohne Markdown):\n{"translation":"<die Übersetzung>","definition":"<kurze Definition 5-15 Wörter>","example":"<ein Beispielsatz im ${toLang}>"}`
+    : `Übersetze folgenden Text ${fromHint} ins ${toLang}. Behalte Bedeutung und Ton bei. Gib NUR die Übersetzung zurück, ohne Anführungszeichen, ohne Einleitung.\n\nText:\n${text}`;
+  
+  try {
+    if (typeof callAI === 'function') {
+      const response = await callAI(prompt);
+      const cleaned = response.trim();
+      if (isShort) {
+        // Versuche JSON zu parsen
+        try {
+          const m = cleaned.match(/\{[^]*\}/);
+          if (m) {
+            const obj = JSON.parse(m[0]);
+            translation = obj.translation || '';
+            definition = [obj.definition, obj.example ? '\n💬 ' + obj.example : ''].filter(Boolean).join('');
+          } else {
+            translation = cleaned;
+          }
+        } catch {
+          translation = cleaned;
+        }
+      } else {
+        translation = cleaned;
+      }
+    } else {
+      translation = '⚠️ AI-Funktion nicht verfügbar. Bitte API-Key in Einstellungen prüfen.';
+    }
+  } catch(e) {
+    translation = '❌ Fehler: ' + (e.message || 'Übersetzung fehlgeschlagen');
+  }
+  
+  if (result) {
+    result.classList.remove('empty');
+    result.textContent = translation;
+  }
+  if (definition && defBox) {
+    defBox.className = 'tr-defbox';
+    defBox.textContent = definition;
+    defBox.style.display = 'block';
+  }
+  
+  // Save-Bar bauen
+  if (translation && !translation.startsWith('⚠️') && !translation.startsWith('❌')) {
+    window._lastTranslation = { from: text, to: translation, fromLang, toLang, definition };
+    buildSaveBar(fromLang, toLang);
+    saveBar.style.display = 'flex';
+    
+    // Zur History
+    trAddHistory({ from: text, to: translation, fromLang, toLang });
+  }
+  
+  if (goBtn) goBtn.disabled = false;
+};
+
+function buildSaveBar(fromLang, toLang) {
+  const saveBar = document.getElementById('trSaveBar');
+  if (!saveBar) return;
+  
+  // Decks aus RecallLab laden
+  let decks = [];
+  try {
+    const rl = JSON.parse(localStorage.getItem('recalllab') || 'null');
+    decks = rl?.decks || [];
+  } catch {}
+  
+  let optionsHtml = decks.length > 0
+    ? decks.map(d => `<option value="${escHTML(d.id)}">${escHTML(d.name || 'Deck')}</option>`).join('')
+    : '<option value="__new__">Neues Deck erstellen...</option>';
+  
+  if (decks.length > 0) optionsHtml += '<option value="__new__">+ Neues Deck...</option>';
+  
+  saveBar.innerHTML = `
+    <select id="trDeckSelect">${optionsHtml}</select>
+    <button onclick="window.saveTranslateAsCard()">🧠 Als Karte</button>
+  `;
+  saveBar.style.display = 'flex';
+}
+
+window.saveTranslateAsCard = function() {
+  const t = window._lastTranslation;
+  if (!t) return;
+  
+  let deckId = document.getElementById('trDeckSelect')?.value;
+  
+  let rl;
+  try {
+    rl = JSON.parse(localStorage.getItem('recalllab') || 'null') 
+      || { decks: [], cards: [], reviewLogs: [], user: { xp: 0, level: 1, streak: 0 } };
+  } catch {
+    rl = { decks: [], cards: [], reviewLogs: [], user: { xp: 0, level: 1, streak: 0 } };
+  }
+  
+  if (deckId === '__new__' || !deckId) {
+    const name = prompt('Name des neuen Decks:', '🌐 ' + (t.toLang || 'Übersetzungen'));
+    if (!name) return;
+    const newDeck = {
+      id: 'deck_' + Date.now().toString(36),
+      name: name,
+      description: 'Übersetzungen ' + (t.fromLang || '') + ' → ' + (t.toLang || ''),
+      createdAt: Date.now(),
+      newCardsPerDay: 15,
+    };
+    rl.decks.push(newDeck);
+    deckId = newDeck.id;
+  }
+  
+  // Karte erstellen — Front: Original, Back: Übersetzung + ggf. Definition
+  const back = t.to + (t.definition ? '\n\n' + t.definition : '');
+  
+  rl.cards.push({
+    id: 'card_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    deckId: deckId,
+    front: t.from,
+    back: back,
+    reversible: true,
+    cardType: 'basic',
+    createdAt: Date.now(),
+    srs: null,
+    tags: ['translator', t.toLang || ''].filter(Boolean),
+  });
+  
+  localStorage.setItem('recalllab', JSON.stringify(rl));
+  
+  // Toast
+  if (typeof toast === 'function') {
+    toast('ok', '🧠 Karte erstellt', 'Im Deck "' + (rl.decks.find(d => d.id === deckId)?.name || 'Übersetzungen') + '"');
+  }
+  
+  // History markieren
+  const hist = trGetHistory();
+  if (hist[0] && hist[0].from === t.from) {
+    hist[0].saved = true;
+    trSaveHistory(hist);
+    trRenderHistory();
+  }
+};
+
+// Tastatur in Translator
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('translatorOverlay');
+  if (!overlay?.classList.contains('open')) return;
+  
+  if (e.key === 'Escape') { window.closeTranslator(); e.preventDefault(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { window.runTranslate(); e.preventDefault(); return; }
+});
+
+// Cmd+Shift+T = Translator
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 't') {
+    e.preventDefault();
+    window.openTranslator();
+  }
+});
+
+// Klick auf Overlay-Hintergrund schließt
+document.getElementById('translatorOverlay')?.addEventListener('click', (e) => {
+  if (e.target.id === 'translatorOverlay') window.closeTranslator();
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// SECTION C: BROWSER-TAB-SYSTEM v3 — Tab-per-Navigation
+// Jede Navigation öffnet einen NEUEN Tab. Apps und Projekte landen
+// als eigene Tabs. Dashboard ist nur der Start-Tab, nicht fix.
+// ═══════════════════════════════════════════════════════════════════════
+const TABS_KEY = 'browser-tabs-v3';
+const TABS_ENABLED_KEY = 'browser-tabs-enabled';
+
+// Ein Tab repräsentiert einen "View". View hat:
+//   kind: 'hash' | 'newsroom' | 'readinghub'
+//   ref: für 'hash' → der Hash-String, für Apps → Sub-Page (z.B. 'editor', 'library')
+let _tabs = [];          // [{id, kind, ref, title, icon}]
+let _activeTabId = null;
+let _closedTabs = [];    // Stack
+let _suppressNav = false;
+let _navigatingFromTab = false; // Tab-Klick → Navigation, kein neuer Tab
+
+function tabsEnabled() { return localStorage.getItem(TABS_ENABLED_KEY) !== 'false'; }
+function setTabsEnabled(on) {
+  localStorage.setItem(TABS_ENABLED_KEY, on ? 'true' : 'false');
+  document.body.classList.toggle('tabs-on', on);
+  const newBtn = document.getElementById('btNewTab');
+  if (newBtn) newBtn.style.display = on ? 'inline-flex' : 'none';
+  if (on && _tabs.length === 0) bootstrapInitialTab();
+}
+window.toggleBrowserTabs = function() { setTabsEnabled(!tabsEnabled()); };
+
+function loadTabs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TABS_KEY) || '{}');
+    _tabs = Array.isArray(saved.tabs) ? saved.tabs : [];
+    _activeTabId = saved.activeId || (_tabs[0]?.id || null);
+  } catch { _tabs = []; _activeTabId = null; }
+}
+function saveTabs() {
+  try { localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: _tabs, activeId: _activeTabId })); } catch(e) {}
+}
+function genTabId() { return 'tab_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+
+// ─── View-Detection ─────────────────────────────────────────────
+function detectCurrentView() {
+  const nrh = document.getElementById('researchHubContainer')?.classList.contains('active');
+  const rh = document.getElementById('readingHubContainer')?.classList.contains('active');
+  const nf = document.getElementById('noteflowContainer')?.classList.contains('active');
+  const rcl = document.getElementById('recalllabContainer')?.classList.contains('active');
+  const rl = document.getElementById('readlistContainer')?.classList.contains('active');
+  
+  if (nrh) {
+    const activePage = document.querySelector('.nh .page.on');
+    const subPage = activePage?.id?.replace('nh-p-', '') || 'dashboard';
+    return { kind: 'newsroom', ref: subPage, ...newsroomTitleFor(subPage) };
+  }
+  if (rh) return { kind: 'readinghub', ref: '', title: 'ReadingHub', icon: '📚' };
+  if (nf) return { kind: 'noteflow', ref: '', title: 'NoteFlow', icon: '📝' };
+  if (rcl) return { kind: 'recalllab', ref: '', title: 'RecallLab', icon: '🧠' };
+  if (rl) return { kind: 'readlist', ref: '', title: 'Leseliste', icon: '📖' };
+  
+  const hash = window.location.hash || '#/dashboard';
+  const info = inferHashTitle(hash);
+  return { kind: 'hash', ref: hash, title: info.title, icon: info.icon };
+}
+
+function newsroomTitleFor(subPage) {
+  const map = {
+    dashboard: { title: 'Newsroom', icon: '📰' },
+    news: { title: 'News Monitor', icon: '⚡' },
+    newsreader: { title: 'News Reader', icon: '⚡' },
+    topics: { title: 'Topics', icon: '📑' },
+    topic: { title: 'Topic', icon: '📑' },
+    library: { title: 'Library', icon: '📄' },
+    editor: { title: 'Editor', icon: '✏️' },
+    reader: { title: 'Reader', icon: '📖' },
+    pdfreader: { title: 'PDF-Reader', icon: '📑' },
+    collection: { title: 'Collection', icon: '📦' },
+    outputs: { title: 'Publications', icon: '📤' },
+    dict: { title: 'Dictionary', icon: '📖' },
+    recall: { title: 'RecallLab', icon: '🧠' },
+    ideas: { title: 'Thoughts', icon: '💡' },
+    fw: { title: 'FutureWatch', icon: '🔭' },
+    sp: { title: 'Focus', icon: '🎯' },
+  };
+  return map[subPage] || { title: 'Newsroom', icon: '📰' };
+}
+
+function inferHashTitle(hash) {
+  const parts = (hash || '').replace(/^#\/?/, '').split('/');
+  const h = parts[0] || 'dashboard';
+  const id = parts[1];
+  const map = {
+    dashboard: { title: 'Dashboard', icon: '◫' },
+    tasks: { title: 'Aufgaben', icon: '✓' },
+    today: { title: 'Heute', icon: '☀️' },
+    projects: { title: 'Projekte', icon: '📦' },
+    notes: { title: 'NoteFlow', icon: '📝' },
+    ideas: { title: 'Ideen', icon: '💡' },
+    meetings: { title: 'Meetings', icon: '🤝' },
+    goals: { title: 'Ziele', icon: '🎯' },
+    calendar: { title: 'Kalender', icon: '📅' },
+    recall: { title: 'RecallLab', icon: '🧠' },
+    learn: { title: 'RecallLab', icon: '🧠' },
+    articles: { title: 'Newsroom', icon: '📰' },
+    readinghub: { title: 'ReadingHub', icon: '📚' },
+    settings: { title: 'Einstellungen', icon: '⚙️' },
+    journal: { title: 'Journal', icon: '📓' },
+  };
+  let info = map[h] || { title: h ? (h.charAt(0).toUpperCase() + h.slice(1)) : 'Dashboard', icon: '◫' };
+  
+  // Detail-Pages: Titel aus Daten lesen
+  if (id) {
+    try {
+      const E = window.APP?.state?.data?.entities;
+      if (!E) return info;
+      let entity = null;
+      if (h === 'tasks') entity = E.tasks?.[id];
+      else if (h === 'projects') entity = E.projects?.[id];
+      else if (h === 'notes') entity = E.notes?.[id];
+      else if (h === 'ideas') entity = E.ideas?.[id];
+      else if (h === 'meetings') entity = E.meetings?.[id];
+      else if (h === 'goals') entity = E.goals?.[id];
+      
+      if (entity) {
+        const t = entity.title || entity.name || entity.front || '';
+        if (t) {
+          info = {
+            title: t.length > 32 ? t.slice(0, 30) + '…' : t,
+            icon: entity.icon || info.icon
+          };
+        }
+      }
+    } catch {}
+  }
+  return info;
+}
+
+// ─── View-Apply: Versetzt App in den Zustand des Tabs ───────────
+function applyView(v) {
+  _suppressNav = true;
+  _navigatingFromTab = true;
+  
+  // Helper: Hubs SOFORT schließen (ohne Animation, ohne Hash-Reset)
+  // Direkter Container-Zugriff umgeht die langsamen close*-Funktionen
+  const closeHubsExcept = (keepKind) => {
+    if (keepKind !== 'newsroom') {
+      const nh = document.getElementById('researchHubContainer');
+      if (nh?.classList.contains('active')) nh.classList.remove('active');
+    }
+    if (keepKind !== 'readinghub') {
+      const rh = document.getElementById('readingHubContainer');
+      if (rh?.classList.contains('active')) rh.classList.remove('active');
+    }
+    if (keepKind !== 'noteflow') {
+      const nf = document.getElementById('noteflowContainer');
+      if (nf?.classList.contains('active')) nf.classList.remove('active');
+    }
+    // RecallLab — selber Mechanismus
+    if (keepKind !== 'recalllab') {
+      const rcl = document.getElementById('recalllabContainer');
+      if (rcl?.classList.contains('active')) rcl.classList.remove('active');
+    }
+    if (keepKind !== 'readlist') {
+      const rl = document.getElementById('readlistContainer');
+      if (rl?.classList.contains('active')) rl.classList.remove('active');
+    }
+    // Loading-Overlay sicher weg
+    const lo = document.getElementById('loadingOverlay');
+    if (lo) lo.style.display = 'none';
+  };
+  
+  if (v.kind === 'newsroom') {
+    closeHubsExcept('newsroom');
+    if (typeof window.openResearchHub === 'function') {
+      window.openResearchHub();
+      if (v.ref && v.ref !== 'dashboard' && typeof window.nhNav === 'function') {
+        setTimeout(() => window.nhNav(v.ref), 100);
+      }
+    }
+  } else if (v.kind === 'readinghub') {
+    closeHubsExcept('readinghub');
+    if (typeof window.openReadingHub === 'function') window.openReadingHub();
+  } else if (v.kind === 'noteflow') {
+    closeHubsExcept('noteflow');
+    if (typeof window.openNoteFlow === 'function') window.openNoteFlow();
+  } else if (v.kind === 'recalllab') {
+    closeHubsExcept('recalllab');
+    if (typeof window.openRecallLab === 'function') window.openRecallLab();
+  } else if (v.kind === 'readlist') {
+    closeHubsExcept('readlist');
+    if (typeof window.openReadlist === 'function') window.openReadlist();
+  } else {
+    // Hash-View
+    closeHubsExcept(null);
+    if (window.location.hash !== v.ref) {
+      window.location.hash = v.ref;
+    } else if (typeof window.render === 'function') {
+      window.render();
+    }
+  }
+  
+  setTimeout(() => { 
+    _suppressNav = false; 
+    _navigatingFromTab = false;
+    // Topbar/UI nach Tab-Wechsel auf alle Fälle aktualisieren
+    if (typeof window.render === 'function') {
+      try { window.render(); } catch(e) {}
+    }
+  }, 350);
+}
+
+// ─── Tab-Operationen ────────────────────────────────────────────
+function activateTab(tabId) {
+  const t = _tabs.find(x => x.id === tabId);
+  if (!t) return;
+  if (_activeTabId === tabId) return;
+  _activeTabId = tabId;
+  saveTabs();
+  renderTabs();
+  applyView(t);
+}
+
+function bootstrapInitialTab() {
+  const v = detectCurrentView();
+  // Wenn Start-View = Dashboard → als pinned markieren
+  const isDashboard = v.kind === 'hash' && (v.ref === '#/dashboard' || v.ref === '#/' || v.ref === '');
+  const tab = { id: genTabId(), ...v, pinned: isDashboard };
+  // Falls nicht Dashboard, zusätzlich Dashboard-Tab davor anlegen
+  if (!isDashboard) {
+    const dashTab = {
+      id: genTabId(),
+      kind: 'hash', ref: '#/dashboard',
+      title: 'Dashboard', icon: '◫',
+      pinned: true,
+    };
+    _tabs = [dashTab, tab];
+    _activeTabId = tab.id;
+  } else {
+    _tabs = [tab];
+    _activeTabId = tab.id;
+  }
+  saveTabs();
+  renderTabs();
+}
+
+// Wird gerufen wenn sich der View ändert (Hash/Hub-State)
+function onViewChange() {
+  if (_suppressNav) return;
+  if (!tabsEnabled()) return;
+  const v = detectCurrentView();
+  
+  // Wenn der aktuelle Tab denselben View hat → nur Title aktualisieren
+  const active = _tabs.find(t => t.id === _activeTabId);
+  if (active && active.kind === v.kind && active.ref === v.ref) {
+    // Title kann sich geändert haben (z.B. Projekt-Daten geladen)
+    if (active.title !== v.title || active.icon !== v.icon) {
+      active.title = v.title; active.icon = v.icon;
+      saveTabs(); renderTabs();
+    }
+    return;
+  }
+  
+  // Wenn diese View bereits in einem anderen Tab existiert → den aktivieren
+  // (Das verhindert Duplikate wenn z.B. Spotlight zur gleichen Stelle navigiert)
+  // ABER: für Projekt-Detail-Pages und ähnliches werden bewusst neue Tabs erlaubt
+  // → Wir machen Duplikat-Prävention nur für Apps und Top-Level-Routes
+  const isAppView = v.kind === 'newsroom' || v.kind === 'readinghub';
+  const isTopLevel = v.kind === 'hash' && v.ref.split('/').length <= 2; // #/notes etc.
+  
+  if (isAppView || isTopLevel) {
+    const existing = _tabs.find(t => t.kind === v.kind && t.ref === v.ref);
+    if (existing) {
+      _activeTabId = existing.id;
+      saveTabs(); renderTabs();
+      return;
+    }
+  }
+  
+  // Sonst: neuen Tab erstellen
+  const tab = { id: genTabId(), ...v };
+  _tabs.push(tab);
+  _activeTabId = tab.id;
+  saveTabs();
+  renderTabs();
+}
+
+function closeTab(tabId) {
+  const idx = _tabs.findIndex(x => x.id === tabId);
+  if (idx === -1) return;
+  if (_tabs[idx].pinned) return; // pinned tabs (Dashboard) niemals schließen
+  
+  const removed = _tabs[idx];
+  _closedTabs.push(removed);
+  if (_closedTabs.length > 10) _closedTabs.shift();
+  
+  _tabs.splice(idx, 1);
+  
+  // Wenn das der letzte Tab war → leeren Dashboard-Tab erstellen
+  if (_tabs.length === 0) {
+    bootstrapInitialTab();
+    applyView({ kind: 'hash', ref: '#/dashboard' });
+    return;
+  }
+  
+  // Aktiv-Wechsel falls nötig
+  if (_activeTabId === tabId) {
+    const next = _tabs[Math.min(idx, _tabs.length - 1)];
+    _activeTabId = next.id;
+    saveTabs(); renderTabs();
+    applyView(next);
+  } else {
+    saveTabs(); renderTabs();
+  }
+}
+
+function restoreClosedTab() {
+  const t = _closedTabs.pop();
+  if (!t) return;
+  const newTab = { ...t, id: genTabId() };
+  _tabs.push(newTab);
+  _activeTabId = newTab.id;
+  saveTabs(); renderTabs();
+  applyView(newTab);
+}
+
+function reorderTab(draggedId, targetId) {
+  const di = _tabs.findIndex(t => t.id === draggedId);
+  const ti = _tabs.findIndex(t => t.id === targetId);
+  if (di === -1 || ti === -1) return;
+  if (_tabs[di].pinned || _tabs[ti].pinned) return; // pinned bleiben fix
+  const [d] = _tabs.splice(di, 1);
+  _tabs.splice(ti, 0, d);
+  saveTabs(); renderTabs();
+}
+
+// ─── Rendering ──────────────────────────────────────────────────
+function renderTabs() {
+  const bar = document.getElementById('browserTabBar');
+  if (!bar) return;
+  bar.innerHTML = _tabs.map(t => `
+    <div class="bt-tab ${t.id === _activeTabId ? 'active' : ''} ${t.pinned ? 'pinned' : ''}" data-tab-id="${t.id}" draggable="${t.pinned ? 'false' : 'true'}" title="${escHTML(t.title)}">
+      <span class="bt-tab-icon">${t.icon || '◫'}</span>
+      <span class="bt-tab-title">${escHTML(t.title || 'Tab')}</span>
+      ${t.pinned ? '' : `<span class="bt-tab-close" data-close-id="${t.id}" title="Schließen (⌘W)">×</span>`}
+    </div>
+  `).join('');
+  
+  bar.querySelectorAll('[data-tab-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-close-id]')) return;
+      activateTab(el.dataset.tabId);
+    });
+    el.addEventListener('mousedown', (e) => {
+      if (e.button === 1) { e.preventDefault(); closeTab(el.dataset.tabId); }
+    });
+    el.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', el.dataset.tabId);
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', () => el.classList.remove('dragging'));
+    el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drop-target'); });
+    el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('drop-target');
+      const draggedId = e.dataTransfer.getData('text/plain');
+      if (draggedId === el.dataset.tabId) return;
+      reorderTab(draggedId, el.dataset.tabId);
+    });
+  });
+  bar.querySelectorAll('[data-close-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTab(el.dataset.closeId);
+    });
+  });
+  
+  // Active scrollen
+  const activeEl = bar.querySelector('.bt-tab.active');
+  if (activeEl) activeEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+}
+
+// ─── Event-Hooks: Hash + Hub-Aktivierung ────────────────────────
+window.addEventListener('hashchange', () => {
+  if (!tabsEnabled()) return;
+  setTimeout(onViewChange, 30);
+});
+
+// MutationObserver für Hub-Container (.active wird bei open/close getoggelt)
+const hubObserver = new MutationObserver(() => {
+  if (!tabsEnabled()) return;
+  setTimeout(onViewChange, 50);
+});
+function attachHubObservers() {
+  ['researchHubContainer', 'readingHubContainer', 'noteflowContainer', 'recalllabContainer', 'readlistContainer'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) hubObserver.observe(el, { attributes: true, attributeFilter: ['class'] });
+  });
+  // Auch newsroom sub-page wechsel beobachten
+  const main = document.querySelector('.nh .main');
+  if (main) {
+    new MutationObserver(() => {
+      if (!tabsEnabled()) return;
+      // Nur reagieren wenn Newsroom aktiv ist
+      const nrh = document.getElementById('researchHubContainer')?.classList.contains('active');
+      if (nrh) setTimeout(onViewChange, 50);
+    }).observe(main, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  }
+}
+
+// Periodisches Title-Refresh (für Projekte deren Daten erst nachgeladen werden)
+setInterval(() => {
+  if (!tabsEnabled()) return;
+  let changed = false;
+  _tabs.forEach(t => {
+    let info;
+    if (t.kind === 'hash') info = inferHashTitle(t.ref);
+    else if (t.kind === 'newsroom') info = newsroomTitleFor(t.ref);
+    else if (t.kind === 'readinghub') info = { title: 'ReadingHub', icon: '📚' };
+    else if (t.kind === 'noteflow') info = { title: 'NoteFlow', icon: '📝' };
+    else if (t.kind === 'recalllab') info = { title: 'RecallLab', icon: '🧠' };
+    else if (t.kind === 'readlist') info = { title: 'Leseliste', icon: '📖' };
+    else return;
+    if (t.title !== info.title || t.icon !== info.icon) {
+      t.title = info.title; t.icon = info.icon;
+      changed = true;
+    }
+  });
+  if (changed) { saveTabs(); renderTabs(); }
+}, 3000);
+
+// ─── New-Tab-Button ─────────────────────────────────────────────
+document.getElementById('btNewTab')?.addEventListener('click', () => {
+  // Spotlight öffnen für Tab-Auswahl (kein leerer Tab erstmal)
+  if (window.openSpotlight) window.openSpotlight();
+});
+
+// ─── Tastatur-Shortcuts ────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (!tabsEnabled()) return;
+  const inInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable;
+  
+  // Cmd+T = Spotlight
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't' && !e.shiftKey && !e.altKey) {
+    if (!inInput) {
+      e.preventDefault();
+      if (window.openSpotlight) window.openSpotlight();
+    }
+    return;
+  }
+  // Cmd+W = Tab schließen
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w' && !e.shiftKey) {
+    if (!inInput) {
+      e.preventDefault();
+      if (_activeTabId) closeTab(_activeTabId);
+    }
+    return;
+  }
+  // Cmd+Shift+T = Wiederherstellen
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 't') {
+    if (!inInput) {
+      e.preventDefault();
+      restoreClosedTab();
+    }
+    return;
+  }
+  // Cmd+1..9
+  if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key) && !e.shiftKey && !e.altKey) {
+    if (!inInput) {
+      e.preventDefault();
+      const n = parseInt(e.key) - 1;
+      if (_tabs[n]) activateTab(_tabs[n].id);
+    }
+    return;
+  }
+  // Cmd+Tab nicht abfangen (System)
+});
+
+// ─── Init ──────────────────────────────────────────────────────
+function initTabs() {
+  loadTabs();
+  
+  // Validate
+  _tabs = _tabs.filter(t => t && t.id && (t.kind === 'hash' ? !!t.ref : true));
+  
+  // Stelle sicher, dass es einen pinned Dashboard-Tab gibt — als ERSTEN Tab
+  const hasPinnedDash = _tabs.some(t => t.pinned && t.kind === 'hash' && (t.ref === '#/dashboard' || t.ref === '#/' || t.ref === ''));
+  if (!hasPinnedDash) {
+    const dashTab = {
+      id: genTabId(),
+      kind: 'hash', ref: '#/dashboard',
+      title: 'Dashboard', icon: '◫',
+      pinned: true,
+    };
+    _tabs.unshift(dashTab);
+  } else {
+    // Pinned Dashboard immer an Position 0
+    const idx = _tabs.findIndex(t => t.pinned);
+    if (idx > 0) {
+      const [d] = _tabs.splice(idx, 1);
+      _tabs.unshift(d);
+    }
+  }
+  
+  if (_tabs.length === 0) {
+    bootstrapInitialTab();
+  } else {
+    if (!_tabs.find(t => t.id === _activeTabId)) {
+      _activeTabId = _tabs[0].id;
+    }
+  }
+  
+  setTabsEnabled(tabsEnabled());
+  saveTabs();
+  renderTabs();
+  
+  setTimeout(attachHubObservers, 500);
+  
+  // View des aktiven Tabs anwenden falls nötig — defensiv mit try/catch
+  const active = _tabs.find(t => t.id === _activeTabId);
+  if (active && (active.kind === 'newsroom' || active.kind === 'readinghub' || active.kind === 'noteflow' || active.kind === 'recalllab' || active.kind === 'readlist')) {
+    setTimeout(() => {
+      try {
+        // Nur wenn die nötigen open-Funktionen existieren
+        const fnMap = {
+          newsroom: 'openResearchHub',
+          readinghub: 'openReadingHub',
+          noteflow: 'openNoteFlow',
+          recalllab: 'openRecallLab',
+          readlist: 'openReadlist',
+        };
+        const fnName = fnMap[active.kind];
+        if (typeof window[fnName] === 'function') {
+          applyView(active);
+        } else {
+          // Fallback: zum Dashboard
+          _activeTabId = _tabs[0]?.id;
+          saveTabs(); renderTabs();
+        }
+      } catch(e) {
+        console.warn('[Tabs] Auto-Restore fehlgeschlagen:', e);
+        // Zurück zu Dashboard
+        _activeTabId = _tabs.find(t => t.pinned)?.id || _tabs[0]?.id;
+        saveTabs(); renderTabs();
+      }
+    }, 1500);
+  }
+}
+
+function escHTML(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initTabs);
+} else {
+  setTimeout(initTabs, 100);
+}
+
+// ─── App-Loader-Overlays bypassen ──────────────────────────
+// NoteFlow & RecallLab zeigen 2s Loading-Animation. Damit Tabs schneller
+// laden, sofort weg-fade-en sobald Container aktiv ist.
+function suppressLoaders() {
+  if (!tabsEnabled()) return;
+  const overlay = document.getElementById('loadingOverlay');
+  if (overlay && overlay.style.display !== 'none') {
+    overlay.style.display = 'none';
+    overlay.classList.add('fade-out');
+  }
+}
+// Beobachte Hub-Aktivierung
+['recalllabContainer', 'noteflowContainer', 'researchHubContainer', 'readingHubContainer'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) {
+    new MutationObserver(() => {
+      // Sofort und nochmal nach kurzer Zeit
+      suppressLoaders();
+      setTimeout(suppressLoaders, 50);
+      setTimeout(suppressLoaders, 200);
+      setTimeout(suppressLoaders, 500);
+    }).observe(el, { attributes: true, attributeFilter: ['class'] });
+  }
+});
+// Initial check (falls Loader beim Pageload schon offen)
+setTimeout(suppressLoaders, 200);
+setTimeout(suppressLoaders, 1000);
+
+// ─── Tab-Bar verstecken wenn Vollbild-Overlays aktiv (Reflect, Launch-Screen) ──
+function updateTabBarVisibility() {
+  if (!tabsEnabled()) return;
+  const bar = document.getElementById('browserTabBar');
+  if (!bar) return;
+  
+  const reflectOpen = !!document.getElementById('reflect-overlay');
+  const reflectStatsOpen = !!document.getElementById('reflect-stats-overlay');
+  const reflectLaunchOpen = !!document.getElementById('reflect-launch');
+  const launchScreen = document.getElementById('launchScreen');
+  const launchOpen = launchScreen 
+    && !launchScreen.classList.contains('hidden') 
+    && launchScreen.style.display !== 'none'
+    && launchScreen.offsetHeight > 100;  // Wirklich sichtbar?
+  
+  const hide = reflectOpen || reflectStatsOpen || reflectLaunchOpen || launchOpen;
+  
+  if (hide) {
+    bar.style.display = 'none';
+    document.body.classList.remove('tabs-on');
+  } else {
+    bar.style.display = '';
+    document.body.classList.add('tabs-on');
+  }
+}
+
+// Periodische Prüfung — alle 2s reicht völlig (kein MutationObserver auf body)
+setInterval(updateTabBarVisibility, 2000);
+// Initial nach kurzer Verzögerung
+setTimeout(updateTabBarVisibility, 500);
+
+// ─── Notausgang: Tab-Bar via Console deaktivieren ───────────────
+window.disableTabs = function() {
+  localStorage.setItem(TABS_ENABLED_KEY, 'false');
+  document.body.classList.remove('tabs-on');
+  const b = document.getElementById('browserTabBar'); 
+  if (b) b.style.display = 'none';
+  console.log('Tab-Bar deaktiviert. Reload nötig für sauberen Zustand.');
+};
+window.enableTabs = function() {
+  localStorage.setItem(TABS_ENABLED_KEY, 'true');
+  location.reload();
+};
+
+// ─── Auto-Recovery: Wenn body komplett dunkel und nichts sichtbar ──
+// Falls die Tab-Bar einen Layout-Bug verursacht, nach 5s automatisch abschalten
+setTimeout(() => {
+  const visibleApp = document.querySelector('.app, .topbar, #app, #sidebar');
+  const hasContent = visibleApp && visibleApp.offsetHeight > 50;
+  if (!hasContent && tabsEnabled()) {
+    console.warn('[Tabs] App nicht sichtbar — deaktiviere Tab-System als Notausgang');
+    window.disableTabs();
+  }
+}, 5000);
+
+
+console.log('🌐 Tabs + Translator + Spotlight-Apps geladen');
+})();
+</script>
+<!-- ═══ END TABS + TRANSLATOR ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     NEON-VIOLETT THEME + SIDEBAR NEU-ERSTELLEN-BUTTON
+   ═══════════════════════════════════════════════════════════════════════ -->
+
+<style id="neonVioletTheme">
+/* ── Color Override: Neon-Violett überall ────────────────────── */
+:root {
+  --accent: #a855f7 !important;       /* Violet-500 — Neon */
+  --accent2: #c084fc !important;      /* Violet-400 */
+  --accent3: #7c3aed !important;      /* Violet-600 — tiefer */
+  --neon: #c084fc !important;
+  --neon-glow: rgba(168, 85, 247, 0.4) !important;
+}
+
+/* Sidebar — aktive Items leuchten neon-violett */
+.sidebar-item.active,
+.sidebar-nav-item.active,
+.nav-item.active {
+  background: linear-gradient(135deg, rgba(168,85,247,0.18), rgba(124,58,237,0.10)) !important;
+  color: #d8b4fe !important;
+  border-left: 2px solid #a855f7 !important;
+}
+
+/* Buttons primary → neon */
+.btn.primary,
+.btn-primary,
+button.primary,
+.btn.btn-primary,
+button.btn.primary {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 14px rgba(168,85,247,0.35) !important;
+}
+.btn.primary:hover,
+.btn-primary:hover,
+button.primary:hover {
+  background: linear-gradient(135deg, #b765f8, #8b3df0) !important;
+  box-shadow: 0 6px 18px rgba(168,85,247,0.5) !important;
+}
+
+/* Dashboard quick-action buttons (Aufgabe, Pomodoro etc.) Action-Bar im Dashboard-Header */
+.dashboard-actions .btn.primary,
+.db-actions .btn.primary,
+.card-actions .btn.primary,
+.section-header .btn.primary,
+.toolbar .btn.primary {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+}
+
+/* "+ Neue Aufgabe" und ähnliche im Dashboard-Header */
+button[data-action="quick-task"].primary,
+button[data-action="create-task"].primary,
+button[data-action="quick-note"].primary,
+button[data-action="quick-idea"].primary,
+button[data-action="quick-project"].primary {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 12px rgba(168,85,247,0.35) !important;
+}
+
+/* Stat-card Werte die Akzent verwenden */
+.stat-card .value,
+.stat-value {
+  /* Default bleibt — nur wenn .accent oder .primary, dann violett */
+}
+.stat-card.accent .value,
+.stat-card.primary .value,
+.stat-value.accent {
+  color: #c084fc !important;
+}
+
+/* Plus-Knöpfe / FABs */
+.fab, .floating-action-button, button.add-btn {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  box-shadow: 0 8px 24px rgba(168,85,247,0.45) !important;
+}
+
+/* Header Quick-Action Buttons — farbig hervorgehoben */
+#btnQuickTask {
+  background: linear-gradient(135deg, rgba(34,197,94,0.18), rgba(34,197,94,0.08)) !important;
+  border: 1px solid rgba(34,197,94,0.35) !important;
+  color: #4ade80 !important;
+  border-radius: 9px !important;
+  padding: 6px 10px !important;
+  font-size: 14px !important;
+  width: auto !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+}
+#btnQuickTask::after {
+  content: attr(data-count);
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 2px;
+}
+#btnQuickNote {
+  background: linear-gradient(135deg, rgba(96,165,250,0.18), rgba(96,165,250,0.08)) !important;
+  border: 1px solid rgba(96,165,250,0.35) !important;
+  color: #93c5fd !important;
+  border-radius: 9px !important;
+  padding: 6px 10px !important;
+  font-size: 14px !important;
+  width: auto !important;
+}
+#btnQuickIdea {
+  background: linear-gradient(135deg, rgba(251,191,36,0.18), rgba(251,191,36,0.08)) !important;
+  border: 1px solid rgba(251,191,36,0.35) !important;
+  color: #fcd34d !important;
+  border-radius: 9px !important;
+  padding: 6px 10px !important;
+  font-size: 14px !important;
+  width: auto !important;
+}
+#btnDailyWrap {
+  background: linear-gradient(135deg, rgba(168,85,247,0.18), rgba(168,85,247,0.08)) !important;
+  border: 1px solid rgba(168,85,247,0.35) !important;
+  color: #d8b4fe !important;
+  border-radius: 9px !important;
+  padding: 6px 10px !important;
+  font-size: 14px !important;
+  width: auto !important;
+}
+
+/* Quick-Action Buttons hover */
+#btnQuickTask:hover, #btnQuickNote:hover, #btnQuickIdea:hover, #btnDailyWrap:hover {
+  filter: brightness(1.2);
+  transform: translateY(-1px);
+}
+
+/* Logo & Brand — neon glow */
+.sidebar-brand .logo,
+.brand .logo {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  box-shadow: 0 4px 14px rgba(168,85,247,0.4) !important;
+}
+
+/* Tab-Bar Active-Tab Indicator → neon */
+.bt-tab.active::before {
+  background: linear-gradient(90deg, #a855f7, #c084fc) !important;
+}
+.bt-tab.active {
+  background: linear-gradient(180deg, rgba(168,85,247,0.22) 0%, #1f1f23 100%) !important;
+  border-color: rgba(168,85,247,0.35) !important;
+}
+.bt-tab.pinned {
+  background: rgba(168,85,247,0.10) !important;
+  border-color: rgba(168,85,247,0.22) !important;
+}
+
+/* Spotlight Search Highlight */
+.spotlight-result.selected {
+  background: linear-gradient(90deg, rgba(168,85,247,0.18), rgba(168,85,247,0.04)) !important;
+  border-left: 2px solid #a855f7 !important;
+}
+
+/* Search-Input fokussiert */
+input[type=text]:focus, textarea:focus, select:focus {
+  border-color: rgba(168,85,247,0.5) !important;
+}
+.universal-search:focus-within {
+  box-shadow: 0 0 0 3px rgba(168,85,247,0.15) !important;
+  border-color: rgba(168,85,247,0.4) !important;
+}
+
+/* Translator: Akzent-Farbe */
+.tr-bar button:not(.ghost) {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+}
+.tr-input:focus {
+  border-color: #a855f7 !important;
+  background: rgba(168,85,247,0.06) !important;
+  box-shadow: 0 0 0 3px rgba(168,85,247,0.12) !important;
+}
+
+/* ── Sidebar: Neuer "+ NEU ERSTELLEN" Button (versteckt alten Schnellzugriff) ── */
+#sidebarQuick { display: none !important; } /* Alten Schnellzugriff ausblenden */
+
+#sidebarCreateBtn {
+  margin: 12px 14px 16px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  color: #fff;
+  border: 0;
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(168,85,247,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.18s;
+  width: calc(100% - 28px);
+}
+#sidebarCreateBtn:hover {
+  background: linear-gradient(135deg, #b765f8, #8b3df0);
+  box-shadow: 0 6px 22px rgba(168,85,247,0.55);
+  transform: translateY(-1px);
+}
+#sidebarCreateBtn:active {
+  transform: translateY(0);
+}
+#sidebarCreateBtn .plus {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(255,255,255,0.22);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; line-height: 1;
+}
+
+/* Popup-Menü */
+#createPopup {
+  position: fixed;
+  background: #1a1a1d;
+  border: 1px solid rgba(168,85,247,0.25);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(168,85,247,0.12);
+  padding: 6px;
+  min-width: 220px;
+  z-index: 99999;
+  display: none;
+  animation: cpFadeIn 0.16s ease-out;
+  backdrop-filter: blur(20px);
+}
+@keyframes cpFadeIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+#createPopup.show { display: block; }
+.cp-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #e4e4e7;
+  transition: all 0.12s;
+  user-select: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  letter-spacing: -0.005em;
+}
+.cp-item:hover {
+  background: rgba(168,85,247,0.14);
+  color: #d8b4fe;
+}
+.cp-item .icon {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  background: rgba(168,85,247,0.12);
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+.cp-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+  margin: 4px 8px;
+}
+.cp-shortcut {
+  margin-left: auto;
+  font-size: 10px;
+  color: #71717a;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  font-family: ui-monospace, monospace;
+  padding: 2px 6px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+}
+
+/* Tab-bar pinned tab in violet */
+.bt-tab.pinned:hover {
+  background: rgba(168,85,247,0.18) !important;
+}
+
+/* Filter-Chips active → violett */
+.filter-chip.active {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 12px rgba(168,85,247,0.35) !important;
+}
+
+/* Scroll-bar tint */
+::-webkit-scrollbar-thumb {
+  background: rgba(168,85,247,0.25) !important;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(168,85,247,0.4) !important;
+}
+
+/* Stat cards accent value → violett */
+.stat-card.accent .value { color: #c084fc !important; }
+
+/* Dashboard "Aufgaben Total" und "Offen" sollen violett sein, nicht grün/blau */
+.stat-card .label { color: var(--muted) !important; }
+/* Einzelne Stat-cards die "neutrale Counter" sind aber bisher grün/blau angezeigt wurden */
+.stat-card:not(.ok):not(.danger):not(.warn) .value {
+  color: #c084fc !important;
+}
+
+/* Generelle Quick-Action-Buttons im Dashboard: alle Aktion-Buttons auf neon */
+.btn.primary,
+button.btn.primary,
+.btn[data-action="quick-task"],
+.btn[data-action="create-task"],
+.btn[data-action="quick-note"],
+.btn[data-action="quick-idea"],
+.btn[data-action="quick-project"],
+button[onclick*="openReadlist"].primary {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 12px rgba(168,85,247,0.35) !important;
+}
+
+/* Mute green & blue buttons that aren't semantic-success — set them to neon */
+.btn.green:not([data-action="toggle-task"]):not(.task-done) {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+}
+
+/* Dashboard cards Karten-Hover violett */
+.card:hover { border-color: rgba(168,85,247,0.18); }
+
+/* "Schnellvorlagen" cards violett-tinted (siehe Bild 2) */
+.card[onclick*="sendQuickTemplate"], 
+[data-action*="template"], 
+.template-card {
+  border-color: rgba(168,85,247,0.18) !important;
+}
+.card[onclick*="sendQuickTemplate"]:hover,
+.template-card:hover {
+  background: linear-gradient(135deg, rgba(168,85,247,0.08), rgba(0,0,0,0)) !important;
+}
+</style>
+
+<!-- Popup-Menü (Container) -->
+<div id="createPopup">
+  <button class="cp-item" data-cp-action="task">
+    <span class="icon">✓</span>
+    <span>Neue Aufgabe</span>
+    <span class="cp-shortcut">⌘N</span>
+  </button>
+  <button class="cp-item" data-cp-action="note">
+    <span class="icon">📝</span>
+    <span>Neue Notiz</span>
+  </button>
+  <button class="cp-item" data-cp-action="project">
+    <span class="icon">📦</span>
+    <span>Neues Projekt</span>
+  </button>
+  <button class="cp-item" data-cp-action="idea">
+    <span class="icon">💡</span>
+    <span>Neue Idee</span>
+    <span class="cp-shortcut">⌘I</span>
+  </button>
+  <button class="cp-item" data-cp-action="thought">
+    <span class="icon">💭</span>
+    <span>Gedanke notieren</span>
+  </button>
+  <div class="cp-divider"></div>
+  <button class="cp-item" data-cp-action="meeting">
+    <span class="icon">🤝</span>
+    <span>Neues Meeting</span>
+  </button>
+  <button class="cp-item" data-cp-action="goal">
+    <span class="icon">🎯</span>
+    <span>Neues Ziel</span>
+  </button>
+  <button class="cp-item" data-cp-action="event">
+    <span class="icon">📅</span>
+    <span>Neuer Termin</span>
+  </button>
+  <div class="cp-divider"></div>
+  <button class="cp-item" data-cp-action="belege">
+    <span class="icon">📄</span>
+    <span>Belege abrufen</span>
+  </button>
+  <button class="cp-item" data-cp-action="inbox">
+    <span class="icon">📡</span>
+    <span>Externe Inbox</span>
+  </button>
+</div>
+
+<script id="neonVioletScript">
+(function() {
+'use strict';
+
+// ─── Sidebar-Button injizieren ────────────────────────────
+function injectCreateBtn() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return setTimeout(injectCreateBtn, 500);
+  if (document.getElementById('sidebarCreateBtn')) return;
+  
+  const btn = document.createElement('button');
+  btn.id = 'sidebarCreateBtn';
+  btn.innerHTML = '<span class="plus">+</span><span>NEU ERSTELLEN</span>';
+  
+  // Vor dem Quick-Bereich einfügen (oder am Ende der Sidebar)
+  const quickSection = document.getElementById('sidebarQuick');
+  if (quickSection) {
+    sidebar.insertBefore(btn, quickSection);
+  } else {
+    sidebar.appendChild(btn);
+  }
+  
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showCreatePopup(btn);
+  });
+}
+
+function showCreatePopup(anchor) {
+  const popup = document.getElementById('createPopup');
+  if (!popup) return;
+  
+  // Position: über/links vom Button
+  const rect = anchor.getBoundingClientRect();
+  const popupHeight = 420; // approx — popup-Inhalt
+  
+  // Popup-Höhe: erst zeigen unsichtbar, messen, dann positionieren
+  popup.style.visibility = 'hidden';
+  popup.classList.add('show');
+  const actualHeight = popup.offsetHeight;
+  popup.style.visibility = '';
+  
+  // Position: über dem Button, rechts vom Sidebar
+  const top = Math.max(20, rect.top - actualHeight - 8);
+  const left = rect.right + 10;
+  
+  popup.style.top = top + 'px';
+  popup.style.left = left + 'px';
+  
+  // Klick außerhalb → schließen
+  setTimeout(() => {
+    document.addEventListener('click', closeOnOutside, { once: true });
+  }, 50);
+}
+
+function closeOnOutside(e) {
+  const popup = document.getElementById('createPopup');
+  if (!popup) return;
+  if (popup.contains(e.target)) {
+    // Inner-click — re-attach
+    document.addEventListener('click', closeOnOutside, { once: true });
+    return;
+  }
+  popup.classList.remove('show');
+}
+
+window.closeCreatePopup = function() {
+  document.getElementById('createPopup')?.classList.remove('show');
+};
+
+// ─── Popup-Actions ────────────────────────────────────────
+document.addEventListener('click', (e) => {
+  const item = e.target.closest('[data-cp-action]');
+  if (!item) return;
+  e.stopPropagation();
+  const action = item.dataset.cpAction;
+  const popup = document.getElementById('createPopup');
+  if (popup) popup.classList.remove('show');
+  
+  // Bestehende Funktionen aufrufen
+  switch (action) {
+    case 'task':
+      if (typeof window.showQuickTaskModal === 'function') window.showQuickTaskModal();
+      else if (typeof window.openQuickTask === 'function') window.openQuickTask();
+      else triggerSidebarAction('open-quick-task');
+      break;
+    case 'note':
+      if (typeof window.showQuickNoteModal === 'function') window.showQuickNoteModal();
+      else triggerSidebarAction('open-quick-note');
+      break;
+    case 'project':
+      triggerSidebarAction('open-quick-project');
+      break;
+    case 'idea':
+      if (typeof window.showQuickIdeaModal === 'function') window.showQuickIdeaModal();
+      else triggerSidebarAction('open-quick-idea');
+      break;
+    case 'thought':
+      triggerSidebarAction('open-quick-thought');
+      break;
+    case 'meeting':
+      window.location.hash = '#/meetings';
+      setTimeout(() => {
+        const btn = document.querySelector('[data-action="new-meeting"], #btnNewMeeting');
+        if (btn) btn.click();
+      }, 200);
+      break;
+    case 'goal':
+      window.location.hash = '#/goals';
+      setTimeout(() => {
+        const btn = document.querySelector('[data-action="new-goal"], #btnNewGoal');
+        if (btn) btn.click();
+      }, 200);
+      break;
+    case 'event':
+      window.location.hash = '#/calendar';
+      setTimeout(() => {
+        const btn = document.querySelector('[data-action="new-event"], #btnNewEvent');
+        if (btn) btn.click();
+      }, 200);
+      break;
+    case 'belege':
+      if (typeof window.fetchBelege === 'function') window.fetchBelege(true);
+      break;
+    case 'inbox':
+      if (typeof window.fetchExternalInbox === 'function') window.fetchExternalInbox(true);
+      break;
+  }
+});
+
+function triggerSidebarAction(action) {
+  // Triggert die existierenden data-action Handler
+  const fakeEvent = new MouseEvent('click', { bubbles: true });
+  const tempBtn = document.createElement('button');
+  tempBtn.dataset.action = action;
+  document.body.appendChild(tempBtn);
+  tempBtn.click();
+  setTimeout(() => tempBtn.remove(), 100);
+  
+  // Falls kein generischer Handler greift: existierende Sidebar-Buttons direkt klicken
+  const existing = document.querySelector('[data-action="' + action + '"]');
+  if (existing) existing.click();
+}
+
+// ─── Header Task-Counter aktualisieren ───────────────────────
+function updateHeaderCount() {
+  try {
+    const tasks = window.APP?.state?.data?.entities?.tasks || {};
+    const open = Object.values(tasks).filter(t => t && !t.deleted && !t.archived && t.status !== 'done').length;
+    const btn = document.getElementById('btnQuickTask');
+    if (btn) {
+      btn.dataset.count = open > 0 ? open : '';
+    }
+  } catch(e) {}
+}
+setInterval(updateHeaderCount, 5000);
+setTimeout(updateHeaderCount, 1000);
+
+// ─── ESC schließt Popup ───────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.getElementById('createPopup')?.classList.remove('show');
+  }
+});
+
+// ─── Init ─────────────────────────────────────────────────
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', injectCreateBtn);
+} else {
+  setTimeout(injectCreateBtn, 200);
+}
+
+console.log('💜 Neon-Violett Theme + Sidebar-Button geladen');
+})();
+</script>
+<!-- ═══ END NEON-VIOLETT ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     LESELISTE — READ LATER APP
+     Eigenständige App mit komfortablem Reader-Mode
+   ═══════════════════════════════════════════════════════════════════════ -->
+
+<style id="readlistStyles">
+/* ── Container ───────────────────────────────────────────── */
+#readlistContainer {
+  position: fixed; inset: 0; z-index: 700;
+  background: #0a0a0b; color: #f5f5f7;
+  display: none; flex-direction: column;
+  font-family: -apple-system, "SF Pro Display", "Inter", sans-serif;
+  letter-spacing: -0.011em;
+}
+#readlistContainer.active { display: flex; }
+body.tabs-on #readlistContainer.active {
+  top: 38px !important;
+  height: calc(100vh - 38px) !important;
+  inset: 38px 0 0 0 !important;
+}
+
+/* Header */
+.rl-header {
+  flex-shrink: 0;
+  padding: 18px 28px;
+  background: rgba(10,10,11,0.85);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  display: flex; align-items: center; gap: 14px;
+  position: sticky; top: 0; z-index: 5;
+}
+.rl-logo {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  box-shadow: 0 6px 16px rgba(168,85,247,0.4);
+}
+.rl-title-area { flex: 1; }
+.rl-title-area h1 {
+  margin: 0; font-size: 20px; font-weight: 800;
+  letter-spacing: -0.025em;
+}
+.rl-title-area .sub {
+  font-size: 12px; color: #71717a; margin-top: 2px; font-weight: 500;
+}
+.rl-btn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: #e4e4e7;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.rl-btn:hover { background: rgba(255,255,255,0.1); }
+.rl-btn-primary {
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  box-shadow: 0 4px 14px rgba(168,85,247,0.4);
+}
+.rl-btn-primary:hover {
+  box-shadow: 0 6px 20px rgba(168,85,247,0.55);
+  transform: translateY(-1px);
+}
+
+/* Filter bar */
+.rl-filters {
+  padding: 14px 28px;
+  display: flex; gap: 8px; align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.rl-filters::-webkit-scrollbar { display: none; }
+.rl-chip {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: #a1a1aa;
+  border-radius: 999px;
+  font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.rl-chip .count {
+  font-size: 11px;
+  background: rgba(255,255,255,0.08);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+.rl-chip:hover { background: rgba(255,255,255,0.08); }
+.rl-chip.active {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  color: #fff; border-color: transparent;
+  box-shadow: 0 4px 12px rgba(168,85,247,0.4);
+}
+.rl-chip.active .count { background: rgba(255,255,255,0.2); }
+
+.rl-search {
+  flex: 1;
+  min-width: 200px;
+  margin-left: auto;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  padding: 7px 14px;
+  color: #e4e4e7;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+.rl-search:focus { border-color: rgba(168,85,247,0.4); background: rgba(168,85,247,0.06); }
+
+/* Article list */
+.rl-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 28px 60px;
+  -webkit-overflow-scrolling: touch;
+}
+.rl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.rl-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+  padding: 18px;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 160px;
+}
+.rl-card:hover {
+  background: rgba(168,85,247,0.06);
+  border-color: rgba(168,85,247,0.18);
+  transform: translateY(-2px);
+}
+.rl-card.read { opacity: 0.55; }
+.rl-card-domain {
+  font-size: 11px; font-weight: 600;
+  color: #818cf8;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  display: flex; align-items: center; gap: 6px;
+}
+.rl-card-title {
+  font-size: 15.5px; font-weight: 700;
+  color: #fafafa;
+  line-height: 1.3;
+  letter-spacing: -0.011em;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rl-card-excerpt {
+  font-size: 12.5px;
+  color: #a1a1aa;
+  line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rl-card-meta {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px;
+  color: #71717a;
+}
+.rl-card-meta .icons { display: flex; gap: 6px; }
+.rl-card-meta .ico {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 6px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 5px;
+  font-weight: 600;
+}
+.rl-card-meta .ico.fav { background: rgba(251,191,36,0.15); color: #fcd34d; }
+.rl-card-meta .ico.read { background: rgba(34,197,94,0.15); color: #4ade80; }
+.rl-card-actions {
+  position: absolute;
+  top: 12px; right: 12px;
+  display: flex; gap: 4px;
+  opacity: 0; transition: opacity 0.15s;
+}
+.rl-card:hover .rl-card-actions { opacity: 1; }
+.rl-card-actions button {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #d4d4d8;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: all 0.12s;
+}
+.rl-card-actions button:hover { background: rgba(168,85,247,0.25); color: #fff; }
+
+.rl-empty {
+  text-align: center;
+  padding: 80px 20px;
+  color: #52525b;
+}
+.rl-empty .icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  filter: drop-shadow(0 4px 12px rgba(168,85,247,0.3));
+}
+.rl-empty h3 {
+  margin: 0 0 8px;
+  font-size: 18px; font-weight: 700;
+  color: #a1a1aa;
+}
+.rl-empty p {
+  font-size: 13px; margin: 0 0 16px;
+}
+
+/* ── Add Modal ───────────────────────────────────────────── */
+.rl-modal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(10px);
+  z-index: 9000;
+  display: none; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.rl-modal.show { display: flex; }
+.rl-modal-box {
+  background: #18181b;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 18px;
+  width: 100%; max-width: 560px;
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.rl-modal-box h3 {
+  margin: 0 0 4px; font-size: 19px; font-weight: 800;
+  letter-spacing: -0.025em;
+}
+.rl-modal-box .sub {
+  font-size: 13px; color: #71717a; margin-bottom: 20px;
+}
+.rl-tab-row {
+  display: flex; gap: 4px;
+  background: rgba(255,255,255,0.04);
+  padding: 3px; border-radius: 10px;
+  margin-bottom: 18px;
+}
+.rl-tab-btn {
+  flex: 1; padding: 8px;
+  background: transparent; border: 0;
+  color: #a1a1aa; font-size: 13px; font-weight: 600;
+  border-radius: 7px; cursor: pointer;
+  font-family: inherit;
+}
+.rl-tab-btn.active {
+  background: rgba(168,85,247,0.18);
+  color: #d8b4fe;
+}
+.rl-input, .rl-textarea {
+  width: 100%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #fafafa;
+  font-size: 14.5px;
+  font-family: inherit;
+  padding: 12px 14px;
+  border-radius: 10px;
+  outline: none;
+  margin-bottom: 12px;
+  letter-spacing: -0.005em;
+}
+.rl-input:focus, .rl-textarea:focus {
+  border-color: #a855f7;
+  box-shadow: 0 0 0 3px rgba(168,85,247,0.15);
+}
+.rl-textarea { min-height: 160px; resize: vertical; line-height: 1.5; }
+.rl-modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;
+}
+
+/* ── Reader (the comfortable reading mode) ──────────────── */
+#rlReader {
+  position: fixed; inset: 0;
+  z-index: 8500;
+  background: var(--rlrd-bg, #0a0a0b);
+  color: var(--rlrd-fg, #e4e4e7);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+#rlReader.show { display: flex; }
+body.tabs-on #rlReader.show { top: 38px !important; height: calc(100vh - 38px) !important; }
+
+/* Reader-Themes via CSS variables */
+#rlReader.theme-dark { --rlrd-bg: #0a0a0b; --rlrd-fg: #e4e4e7; --rlrd-meta: #71717a; --rlrd-accent: #a855f7; }
+#rlReader.theme-sepia { --rlrd-bg: #f4ecd8; --rlrd-fg: #2d2418; --rlrd-meta: #6b5d3f; --rlrd-accent: #8b4513; }
+#rlReader.theme-light { --rlrd-bg: #fafafa; --rlrd-fg: #18181b; --rlrd-meta: #71717a; --rlrd-accent: #a855f7; }
+#rlReader.theme-graphite { --rlrd-bg: #1a1a1d; --rlrd-fg: #d4d4d8; --rlrd-meta: #71717a; --rlrd-accent: #c084fc; }
+
+/* Reader toolbar */
+.rlrd-toolbar {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  background: var(--rlrd-bg);
+  border-bottom: 1px solid rgba(127,127,127,0.12);
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap;
+  position: sticky; top: 0; z-index: 5;
+  transition: opacity 0.3s;
+}
+#rlReader.focus-mode .rlrd-toolbar { 
+  opacity: 0.15;
+}
+#rlReader.focus-mode .rlrd-toolbar:hover { opacity: 1; }
+
+.rlrd-tb-btn {
+  background: rgba(127,127,127,0.08);
+  border: 1px solid rgba(127,127,127,0.15);
+  color: var(--rlrd-fg);
+  border-radius: 8px;
+  padding: 6px 11px;
+  font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+.rlrd-tb-btn:hover { background: rgba(127,127,127,0.15); }
+.rlrd-tb-btn.active {
+  background: rgba(168,85,247,0.2);
+  color: var(--rlrd-accent);
+  border-color: rgba(168,85,247,0.3);
+}
+.rlrd-tb-group {
+  display: flex; gap: 1px;
+  background: rgba(127,127,127,0.08);
+  border-radius: 8px;
+  padding: 2px;
+}
+.rlrd-tb-group .rlrd-tb-btn {
+  background: transparent; border: 0; padding: 4px 9px;
+}
+.rlrd-tb-group .rlrd-tb-btn.active {
+  background: rgba(168,85,247,0.25);
+}
+.rlrd-tb-meta {
+  margin-left: auto;
+  font-size: 11.5px; color: var(--rlrd-meta);
+  display: flex; gap: 12px; align-items: center;
+}
+
+/* Reader body */
+.rlrd-body {
+  flex: 1;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding: 0 20px 100px;
+  -webkit-overflow-scrolling: touch;
+}
+.rlrd-content {
+  max-width: var(--rlrd-w, 720px);
+  margin: var(--rlrd-mt, 40px) auto 0;
+  font-family: var(--rlrd-font, 'Charter', Georgia, 'New York', serif);
+  font-size: var(--rlrd-size, 19px);
+  line-height: var(--rlrd-lh, 1.7);
+  letter-spacing: 0;
+}
+.rlrd-content h1 {
+  font-size: calc(var(--rlrd-size, 19px) * 1.7);
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 12px;
+  font-family: -apple-system, "SF Pro Display", system-ui, sans-serif;
+  letter-spacing: -0.025em;
+}
+.rlrd-content .meta {
+  color: var(--rlrd-meta);
+  font-size: 13px;
+  margin-bottom: 32px;
+  font-family: -apple-system, system-ui, sans-serif;
+  display: flex; gap: 14px; flex-wrap: wrap;
+}
+.rlrd-content .meta a { color: var(--rlrd-accent); text-decoration: none; }
+.rlrd-content p {
+  margin: 0 0 1.1em;
+}
+.rlrd-content p:first-of-type::first-letter {
+  /* Drop cap optional, off by default */
+}
+.rlrd-content h2, .rlrd-content h3 {
+  font-family: -apple-system, system-ui, sans-serif;
+  font-weight: 700; margin-top: 1.6em; margin-bottom: 0.5em;
+  letter-spacing: -0.015em;
+}
+.rlrd-content h2 { font-size: calc(var(--rlrd-size) * 1.3); }
+.rlrd-content h3 { font-size: calc(var(--rlrd-size) * 1.1); }
+.rlrd-content blockquote {
+  border-left: 3px solid var(--rlrd-accent);
+  padding-left: 18px;
+  margin: 1.4em 0;
+  font-style: italic;
+  color: var(--rlrd-meta);
+}
+.rlrd-content code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: rgba(127,127,127,0.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.rlrd-content pre {
+  background: rgba(127,127,127,0.08);
+  padding: 14px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.rlrd-content a {
+  color: var(--rlrd-accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(168,85,247,0.3);
+  text-underline-offset: 3px;
+}
+.rlrd-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1.2em 0;
+}
+.rlrd-content mark, .rlrd-content .rl-highlight {
+  background: rgba(251,191,36,0.32);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+#rlReader.theme-dark .rlrd-content mark { background: rgba(251,191,36,0.22); }
+#rlReader.theme-light .rlrd-content mark { background: rgba(251,191,36,0.5); }
+
+/* Progress bar */
+.rlrd-progress {
+  position: fixed; bottom: 0; left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #a855f7, #c084fc);
+  width: 0%;
+  z-index: 8600;
+  transition: width 0.1s linear;
+  pointer-events: none;
+}
+
+/* Selection toolbar (for highlights/quotes) */
+.rlrd-sel-tb {
+  position: absolute;
+  background: #1a1a1d;
+  border: 1px solid rgba(168,85,247,0.4);
+  border-radius: 9px;
+  padding: 4px;
+  display: none;
+  gap: 2px;
+  z-index: 9000;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.rlrd-sel-tb.show { display: flex; }
+.rlrd-sel-tb button {
+  background: transparent; border: 0;
+  color: #d4d4d8;
+  padding: 6px 10px;
+  font-size: 12px; font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.rlrd-sel-tb button:hover { background: rgba(168,85,247,0.2); color: #fff; }
+
+/* Highlights side panel */
+.rlrd-side {
+  position: fixed;
+  top: 0; right: 0;
+  width: 320px;
+  height: 100vh;
+  background: rgba(20,20,24,0.96);
+  backdrop-filter: blur(20px);
+  border-left: 1px solid rgba(255,255,255,0.08);
+  padding: 60px 20px 20px;
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 8700;
+}
+body.tabs-on .rlrd-side { top: 38px; height: calc(100vh - 38px); }
+.rlrd-side.show { transform: translateX(0); }
+.rlrd-side h4 {
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: #71717a; margin: 0 0 12px;
+}
+.rlrd-hl-item {
+  background: rgba(255,255,255,0.04);
+  border-left: 2px solid #fbbf24;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #d4d4d8;
+}
+.rlrd-hl-item.note { border-left-color: #a855f7; }
+.rlrd-hl-item .note-text {
+  margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-size: 12px; color: #a1a1aa;
+}
+.rlrd-hl-item .actions {
+  display: flex; gap: 4px; margin-top: 6px;
+  font-size: 10px;
+}
+.rlrd-hl-item .actions button {
+  background: rgba(255,255,255,0.04);
+  border: 0; color: #71717a;
+  padding: 3px 7px; border-radius: 4px;
+  font-size: 10px; cursor: pointer;
+}
+.rlrd-hl-item .actions button:hover { background: rgba(168,85,247,0.2); color: #d4d4d8; }
+</style>
+
+<!-- Container -->
+<div id="readlistContainer">
+  <div class="rl-header">
+    <div class="rl-logo">📚</div>
+    <div class="rl-title-area">
+      <h1>Leseliste</h1>
+      <div class="sub" id="rlSubtitle">Artikel zum Lesen</div>
+    </div>
+    <button class="rl-btn rl-btn-primary" onclick="window.rlOpenAdd()">＋ Hinzufügen</button>
+    <button class="rl-btn" onclick="window.closeReadlist()">← Zurück</button>
+  </div>
+  
+  <div class="rl-filters" id="rlFilters"></div>
+  
+  <div class="rl-list" id="rlList"></div>
+</div>
+
+<!-- Add modal -->
+<div class="rl-modal" id="rlAddModal">
+  <div class="rl-modal-box">
+    <h3>Artikel hinzufügen</h3>
+    <div class="sub">URL einfügen oder Text direkt eingeben</div>
+    
+    <div class="rl-tab-row">
+      <button class="rl-tab-btn active" data-rl-tab="url">🔗 URL</button>
+      <button class="rl-tab-btn" data-rl-tab="pdf">📄 PDF</button>
+      <button class="rl-tab-btn" data-rl-tab="text">📝 Text</button>
+    </div>
+    
+    <div id="rlAddUrl">
+      <input type="url" class="rl-input" id="rlInputUrl" placeholder="https://..." autocomplete="off" />
+      <div style="font-size:11.5px;color:#71717a;margin:-4px 0 12px;line-height:1.5">
+        Tipp: Bei Bezahlschranken oder JS-Inhalten nimm den Text-Modus und kopiere den Inhalt manuell.
+      </div>
+    </div>
+    
+    <div id="rlAddPdf" style="display:none">
+      <div id="rlPdfDrop" style="border:2px dashed rgba(168,85,247,0.3);border-radius:14px;padding:36px 18px;text-align:center;cursor:pointer;background:rgba(168,85,247,0.04);transition:all 0.18s">
+        <div style="font-size:42px;margin-bottom:10px">📄</div>
+        <div style="font-size:14.5px;font-weight:600;color:#e4e4e7;margin-bottom:4px">PDF auswählen oder hierher ziehen</div>
+        <div style="font-size:11.5px;color:#71717a">Wird in Firebase hochgeladen, Text wird extrahiert</div>
+        <input type="file" id="rlInputPdf" accept="application/pdf,.pdf" style="display:none" />
+      </div>
+      <input type="text" class="rl-input" id="rlInputPdfTitle" placeholder="Titel (optional, sonst aus Dateiname)" style="margin-top:14px" />
+      <div id="rlPdfStatus" style="margin-top:10px;font-size:12px;color:#a1a1aa;display:none"></div>
+      <div id="rlPdfProgress" style="margin-top:8px;height:4px;background:rgba(255,255,255,0.05);border-radius:2px;overflow:hidden;display:none">
+        <div id="rlPdfProgressBar" style="height:100%;background:linear-gradient(90deg,#a855f7,#c084fc);width:0%;transition:width 0.3s"></div>
+      </div>
+    </div>
+    
+    <div id="rlAddText" style="display:none">
+      <input type="text" class="rl-input" id="rlInputTitle" placeholder="Titel (optional)" />
+      <textarea class="rl-textarea" id="rlInputText" placeholder="Text einfügen..."></textarea>
+      <input type="text" class="rl-input" id="rlInputSource" placeholder="Quelle / URL (optional)" />
+    </div>
+    
+    <div class="rl-modal-actions">
+      <button class="rl-btn" onclick="window.rlCloseAdd()">Abbrechen</button>
+      <button class="rl-btn rl-btn-primary" id="rlAddSaveBtn" onclick="window.rlAddSave()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reader -->
+<div id="rlReader" class="theme-dark">
+  <div class="rlrd-toolbar" id="rlReaderToolbar"></div>
+  <div class="rlrd-body" id="rlReaderBody"></div>
+  <div class="rlrd-progress" id="rlReaderProgress"></div>
+  <div class="rlrd-sel-tb" id="rlSelTb">
+    <button onclick="window.rlSelHighlight()">🟨 Highlight</button>
+    <button onclick="window.rlSelNote()">📝 Notiz</button>
+    <button onclick="window.rlSelToEditor()">✏️ → Editor</button>
+    <button onclick="window.rlSelCopy()">📋 Kopieren</button>
+  </div>
+</div>
+
+<!-- Highlights side panel -->
+<div class="rlrd-side" id="rlSidePanel">
+  <h4 id="rlSideTitle">Highlights</h4>
+  <div id="rlSideContent"></div>
+</div>
+
+<script id="readlistScript">
+(function() {
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════
+const RL_STORAGE_KEY = 'readlist-v1';
+const RL_PREFS_KEY = 'readlist-prefs-v1';
+const RL_HIGHLIGHTS_KEY = 'readlist-highlights-v1';
+const RL_PROGRESS_KEY = 'readlist-progress-v1';
+
+let _rlData = null;
+let _rlFilter = 'unread';
+let _rlSearchQuery = '';
+let _rlAddTab = 'url';
+let _rlCurrentArticle = null;
+let _rlSelectionRange = null;
+
+function loadData() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(RL_STORAGE_KEY) || 'null');
+    _rlData = stored || { articles: [] };
+  } catch { _rlData = { articles: [] }; }
+}
+function saveData() {
+  try { localStorage.setItem(RL_STORAGE_KEY, JSON.stringify(_rlData)); } catch(e) { console.warn(e); }
+}
+
+function getPrefs() {
+  try { return JSON.parse(localStorage.getItem(RL_PREFS_KEY) || '{}'); } catch { return {}; }
+}
+function savePrefs(p) { localStorage.setItem(RL_PREFS_KEY, JSON.stringify(p)); }
+
+function getHighlights(articleId) {
+  try { 
+    const all = JSON.parse(localStorage.getItem(RL_HIGHLIGHTS_KEY) || '{}');
+    return all[articleId] || [];
+  } catch { return []; }
+}
+function saveHighlights(articleId, list) {
+  try {
+    const all = JSON.parse(localStorage.getItem(RL_HIGHLIGHTS_KEY) || '{}');
+    all[articleId] = list;
+    localStorage.setItem(RL_HIGHLIGHTS_KEY, JSON.stringify(all));
+  } catch(e) {}
+}
+function getProgress(articleId) {
+  try {
+    const all = JSON.parse(localStorage.getItem(RL_PROGRESS_KEY) || '{}');
+    return all[articleId] || 0;
+  } catch { return 0; }
+}
+function saveProgress(articleId, pct) {
+  try {
+    const all = JSON.parse(localStorage.getItem(RL_PROGRESS_KEY) || '{}');
+    all[articleId] = pct;
+    localStorage.setItem(RL_PROGRESS_KEY, JSON.stringify(all));
+  } catch(e) {}
+}
+
+function escHTML(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function readingTime(text) {
+  const words = (text || '').split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(words / 220));
+}
+
+function domainFrom(url) {
+  if (!url) return '';
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const sec = (now - d) / 1000;
+  if (sec < 60) return 'gerade eben';
+  if (sec < 3600) return Math.floor(sec/60) + ' min';
+  if (sec < 86400) return Math.floor(sec/3600) + 'h';
+  if (sec < 86400*7) return Math.floor(sec/86400) + 'd';
+  return d.toLocaleDateString('de-CH', { day: '2-digit', month: 'short' });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// OPEN / CLOSE
+// ═══════════════════════════════════════════════════════════════════════
+window.openReadlist = function() {
+  loadData();
+  const c = document.getElementById('readlistContainer');
+  if (c) c.classList.add('active');
+  renderList();
+};
+window.closeReadlist = function() {
+  // Reader auch zumachen
+  document.getElementById('rlReader')?.classList.remove('show');
+  document.getElementById('rlSidePanel')?.classList.remove('show');
+  document.getElementById('readlistContainer')?.classList.remove('active');
+};
+
+// Quick-Add direkt vom Dashboard
+window.rlQuickAddFromDashboard = async function() {
+  const input = document.getElementById('rlQuickUrl');
+  if (!input) return;
+  const url = (input.value || '').trim();
+  if (!url) { input.focus(); return; }
+  
+  // Validierung — sehr loose
+  if (!/^https?:\/\//i.test(url)) {
+    alert('Bitte komplette URL eingeben (mit http:// oder https://)');
+    return;
+  }
+  
+  loadData();
+  
+  // Direkt anzeigen dass etwas passiert
+  input.disabled = true;
+  const orig = input.placeholder;
+  input.placeholder = '⏳ Lade Artikel...';
+  input.value = '';
+  
+  if (typeof toast === 'function') toast('info', '📚', 'Artikel wird geladen...');
+  
+  try {
+    const article = await fetchArticle(url);
+    _rlData.articles.unshift(article);
+    saveData();
+    
+    if (typeof toast === 'function') toast('ok', '📚', 'Zur Leseliste hinzugefügt');
+    
+    // Dashboard neu rendern damit der neue Artikel sofort sichtbar ist
+    if (typeof window.render === 'function') window.render();
+  } catch(e) {
+    console.error('rlQuickAdd:', e);
+    if (typeof toast === 'function') toast('warn', '⚠️', 'Konnte nicht laden — versuche es im Modal mit Text-Modus');
+    
+    // Fallback: minimaler Eintrag mit nur URL
+    const article = {
+      id: 'rl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      title: domainFrom(url) || url,
+      content: '<p style="color:#71717a;font-style:italic">Inhalt nicht automatisch geladen. Klicke auf den Link um zum Original zu gehen.</p><p><a href="' + escHTML(url) + '" target="_blank">' + escHTML(url) + '</a></p>',
+      excerpt: '',
+      url: url,
+      domain: domainFrom(url),
+      readingTime: 0,
+      addedAt: new Date().toISOString(),
+      read: false,
+      favorite: false,
+    };
+    _rlData.articles.unshift(article);
+    saveData();
+    if (typeof window.render === 'function') window.render();
+  } finally {
+    input.disabled = false;
+    input.placeholder = orig;
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// LIST RENDERING
+// ═══════════════════════════════════════════════════════════════════════
+function getFilteredArticles() {
+  let arts = _rlData?.articles || [];
+  
+  // Filter
+  if (_rlFilter === 'unread') arts = arts.filter(a => !a.read);
+  else if (_rlFilter === 'read') arts = arts.filter(a => a.read);
+  else if (_rlFilter === 'fav') arts = arts.filter(a => a.favorite);
+  else if (_rlFilter === 'today') {
+    const today = new Date(); today.setHours(0,0,0,0);
+    arts = arts.filter(a => {
+      if (!a.addedAt) return false;
+      return new Date(a.addedAt) >= today;
+    });
+  }
+  
+  // Search
+  if (_rlSearchQuery.trim()) {
+    const q = _rlSearchQuery.toLowerCase();
+    arts = arts.filter(a => 
+      (a.title || '').toLowerCase().includes(q) ||
+      (a.excerpt || '').toLowerCase().includes(q) ||
+      (a.domain || '').toLowerCase().includes(q)
+    );
+  }
+  
+  // Sort: unread first by addedAt desc, then read by readAt desc
+  arts.sort((a, b) => {
+    if (a.read !== b.read) return a.read ? 1 : -1;
+    return (b.addedAt || '').localeCompare(a.addedAt || '');
+  });
+  
+  return arts;
+}
+
+function renderFilters() {
+  const all = (_rlData?.articles || []);
+  const unread = all.filter(a => !a.read).length;
+  const read = all.filter(a => a.read).length;
+  const fav = all.filter(a => a.favorite).length;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayCount = all.filter(a => a.addedAt && new Date(a.addedAt) >= today).length;
+  
+  const filters = [
+    { id: 'unread', label: '📥 Ungelesen', count: unread },
+    { id: 'today', label: '☀️ Heute', count: todayCount },
+    { id: 'fav', label: '⭐ Favoriten', count: fav },
+    { id: 'read', label: '✓ Gelesen', count: read },
+    { id: 'all', label: '📚 Alle', count: all.length },
+  ];
+  
+  const html = filters.map(f => `
+    <button class="rl-chip ${_rlFilter === f.id ? 'active' : ''}" onclick="window.rlSetFilter('${f.id}')">
+      <span>${escHTML(f.label)}</span>
+      <span class="count">${f.count}</span>
+    </button>
+  `).join('') + `
+    <input type="search" class="rl-search" id="rlSearchInput" placeholder="Suchen..." value="${escHTML(_rlSearchQuery)}" />
+  `;
+  
+  document.getElementById('rlFilters').innerHTML = html;
+  
+  const search = document.getElementById('rlSearchInput');
+  if (search) {
+    search.addEventListener('input', (e) => {
+      _rlSearchQuery = e.target.value;
+      renderListItems();
+    });
+  }
+}
+
+window.rlSetFilter = function(id) {
+  _rlFilter = id;
+  renderList();
+};
+
+function renderList() {
+  renderFilters();
+  renderListItems();
+  // Subtitle
+  const total = (_rlData?.articles || []).length;
+  const sub = document.getElementById('rlSubtitle');
+  if (sub) sub.textContent = total + ' Artikel · ' + (_rlData?.articles || []).filter(a => !a.read).length + ' ungelesen';
+}
+
+function renderListItems() {
+  const wrap = document.getElementById('rlList');
+  if (!wrap) return;
+  const arts = getFilteredArticles();
+  
+  if (arts.length === 0) {
+    const isEmpty = (_rlData?.articles || []).length === 0;
+    wrap.innerHTML = `
+      <div class="rl-empty">
+        <div class="icon">📚</div>
+        <h3>${isEmpty ? 'Noch nichts hier' : 'Keine Treffer'}</h3>
+        <p>${isEmpty ? 'Füge deinen ersten Artikel hinzu — eine URL oder einfacher Text' : 'Andere Filter probieren oder neuen Artikel hinzufügen'}</p>
+        ${isEmpty ? '<button class="rl-btn rl-btn-primary" onclick="window.rlOpenAdd()">＋ Ersten Artikel hinzufügen</button>' : ''}
+      </div>
+    `;
+    return;
+  }
+  
+  wrap.innerHTML = '<div class="rl-grid">' + arts.map(a => {
+    const hl = getHighlights(a.id);
+    const progress = getProgress(a.id);
+    return `
+      <div class="rl-card ${a.read ? 'read' : ''}" data-id="${a.id}" onclick="window.rlOpenReader('${a.id}')">
+        <div class="rl-card-domain">
+          ${a.pdfUrl || a.fileName ? '📄 PDF' + (a.pageCount ? ' · ' + a.pageCount + ' Seiten' : '') : (a.domain ? '🌐 ' + escHTML(a.domain) : '📝 Eigener Text')}
+        </div>
+        <div class="rl-card-title">${escHTML(a.title || 'Ohne Titel')}</div>
+        ${a.excerpt ? `<div class="rl-card-excerpt">${escHTML(a.excerpt)}</div>` : ''}
+        <div class="rl-card-meta">
+          <div class="icons">
+            ${a.favorite ? '<span class="ico fav">★</span>' : ''}
+            ${a.read ? '<span class="ico read">✓</span>' : ''}
+            ${hl.length > 0 ? `<span class="ico" style="background:rgba(251,191,36,0.15);color:#fcd34d">🟨 ${hl.length}</span>` : ''}
+            ${progress > 5 && progress < 95 ? `<span class="ico" style="background:rgba(168,85,247,0.15);color:#c084fc">${Math.round(progress)}%</span>` : ''}
+          </div>
+          <div>
+            ${a.readingTime ? a.readingTime + ' min · ' : ''}${formatDate(a.addedAt)}
+          </div>
+        </div>
+        <div class="rl-card-actions">
+          ${a.pdfUrl ? `<button onclick="event.stopPropagation();window.open('${escHTML(a.pdfUrl)}', '_blank')" title="PDF Original öffnen">📥</button>` : ''}
+          <button onclick="event.stopPropagation();window.rlToggleFav('${a.id}')" title="Favorit">${a.favorite ? '★' : '☆'}</button>
+          <button onclick="event.stopPropagation();window.rlToggleRead('${a.id}')" title="${a.read ? 'Als ungelesen' : 'Als gelesen'}">${a.read ? '↻' : '✓'}</button>
+          <button onclick="event.stopPropagation();window.rlDelete('${a.id}')" title="Löschen">×</button>
+        </div>
+      </div>
+    `;
+  }).join('') + '</div>';
+}
+
+window.rlToggleFav = function(id) {
+  const a = _rlData.articles.find(x => x.id === id);
+  if (!a) return;
+  a.favorite = !a.favorite;
+  saveData(); renderList();
+};
+window.rlToggleRead = function(id) {
+  const a = _rlData.articles.find(x => x.id === id);
+  if (!a) return;
+  a.read = !a.read;
+  a.readAt = a.read ? new Date().toISOString() : null;
+  saveData(); renderList();
+};
+window.rlDelete = function(id) {
+  if (!confirm('Artikel wirklich löschen?')) return;
+  const a = _rlData.articles.find(x => x.id === id);
+  // Aus Firebase löschen falls PDF
+  if (a && a.pdfUrl && typeof window.deleteFromFirebase === 'function') {
+    try {
+      // pfad aus URL extrahieren
+      const m = a.pdfUrl.match(/\/o\/([^?]+)/);
+      if (m) {
+        const path = decodeURIComponent(m[1]);
+        window.deleteFromFirebase(path).catch(e => console.warn('Firebase delete:', e));
+      }
+    } catch(e) {}
+  }
+  // Aus Newsroom-Mirror entfernen
+  if (window.D && Array.isArray(window.D.articles)) {
+    window.D.articles = window.D.articles.filter(x => x.rlId !== id);
+    if (typeof window.saveData === 'function') {
+      try { window.saveData(); } catch(e) {}
+    }
+  }
+  _rlData.articles = _rlData.articles.filter(a => a.id !== id);
+  saveData(); renderList();
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// ADD MODAL
+// ═══════════════════════════════════════════════════════════════════════
+window.rlOpenAdd = function() {
+  const m = document.getElementById('rlAddModal');
+  if (m) m.classList.add('show');
+  setTimeout(() => {
+    if (_rlAddTab === 'url') document.getElementById('rlInputUrl')?.focus();
+    else document.getElementById('rlInputTitle')?.focus();
+  }, 80);
+};
+window.rlCloseAdd = function() {
+  document.getElementById('rlAddModal')?.classList.remove('show');
+  ['rlInputUrl','rlInputTitle','rlInputText','rlInputSource','rlInputPdfTitle'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const pdfInput = document.getElementById('rlInputPdf');
+  if (pdfInput) pdfInput.value = '';
+  _rlPdfFile = null;
+  const status = document.getElementById('rlPdfStatus');
+  if (status) status.style.display = 'none';
+  const progressWrap = document.getElementById('rlPdfProgress');
+  if (progressWrap) progressWrap.style.display = 'none';
+};
+
+// Tab switching
+document.addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-rl-tab]');
+  if (!tab) return;
+  const id = tab.dataset.rlTab;
+  _rlAddTab = id;
+  document.querySelectorAll('[data-rl-tab]').forEach(b => b.classList.toggle('active', b.dataset.rlTab === id));
+  document.getElementById('rlAddUrl').style.display = id === 'url' ? 'block' : 'none';
+  document.getElementById('rlAddText').style.display = id === 'text' ? 'block' : 'none';
+  document.getElementById('rlAddPdf').style.display = id === 'pdf' ? 'block' : 'none';
+});
+
+// PDF Drop & Click
+let _rlPdfFile = null;
+function setupPdfDropzone() {
+  const drop = document.getElementById('rlPdfDrop');
+  const input = document.getElementById('rlInputPdf');
+  if (!drop || !input || drop.dataset.bound) return;
+  drop.dataset.bound = '1';
+  
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    drop.style.borderColor = '#a855f7';
+    drop.style.background = 'rgba(168,85,247,0.12)';
+  });
+  drop.addEventListener('dragleave', () => {
+    drop.style.borderColor = 'rgba(168,85,247,0.3)';
+    drop.style.background = 'rgba(168,85,247,0.04)';
+  });
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    drop.style.borderColor = 'rgba(168,85,247,0.3)';
+    drop.style.background = 'rgba(168,85,247,0.04)';
+    const f = e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') {
+      _rlPdfFile = f;
+      showPdfStatus(f);
+    } else {
+      alert('Bitte eine PDF-Datei auswählen.');
+    }
+  });
+  input.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) {
+      _rlPdfFile = f;
+      showPdfStatus(f);
+    }
+  });
+}
+setTimeout(setupPdfDropzone, 200);
+
+function showPdfStatus(file) {
+  const status = document.getElementById('rlPdfStatus');
+  if (!status) return;
+  status.style.display = 'block';
+  status.innerHTML = `<strong style="color:#d8b4fe">📄 ${escHTML(file.name)}</strong><br><span style="color:#71717a">${(file.size/1024/1024).toFixed(2)} MB · bereit zum Hochladen</span>`;
+  // Auto-fill title
+  const titleInput = document.getElementById('rlInputPdfTitle');
+  if (titleInput && !titleInput.value) {
+    titleInput.value = file.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ');
+  }
+}
+
+window.rlAddSave = async function() {
+  const btn = document.getElementById('rlAddSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Lade...'; }
+  
+  try {
+    let article;
+    if (_rlAddTab === 'url') {
+      const url = document.getElementById('rlInputUrl').value.trim();
+      if (!url) { alert('URL eingeben'); return; }
+      article = await fetchArticle(url);
+    } else if (_rlAddTab === 'pdf') {
+      if (!_rlPdfFile) { alert('Bitte PDF auswählen'); return; }
+      const customTitle = document.getElementById('rlInputPdfTitle').value.trim();
+      article = await processPdf(_rlPdfFile, customTitle);
+    } else {
+      const title = document.getElementById('rlInputTitle').value.trim();
+      const text = document.getElementById('rlInputText').value.trim();
+      const source = document.getElementById('rlInputSource').value.trim();
+      if (!text) { alert('Text eingeben'); return; }
+      article = {
+        id: 'rl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+        title: title || text.split('\n')[0].slice(0, 80),
+        content: textToHtml(text),
+        excerpt: text.slice(0, 200),
+        url: source || null,
+        domain: domainFrom(source),
+        readingTime: readingTime(text),
+        addedAt: new Date().toISOString(),
+        read: false,
+        favorite: false,
+      };
+    }
+    
+    _rlData.articles.unshift(article);
+    saveData();
+    renderList();
+    window.rlCloseAdd();
+    
+    if (typeof toast === 'function') toast('ok', '📚', 'In Leseliste gespeichert');
+  } catch(e) {
+    console.error('rlAddSave:', e);
+    alert('Fehler: ' + (e.message || 'Konnte nicht gespeichert werden'));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Speichern'; }
+  }
+};
+
+function textToHtml(text) {
+  // Einfache Absatz-Konversion
+  return text.split(/\n\n+/).map(p => '<p>' + escHTML(p).replace(/\n/g, '<br>') + '</p>').join('');
+}
+
+// Article-Fetch via CORS-Proxy + Readability-like extraction
+async function fetchArticle(url) {
+  // Versuche r.jina.ai (gibt Markdown zurück, AI-freundlich, gratis)
+  // Fallback: nur URL speichern mit "Bitte Text manuell einfügen"
+  
+  let title = '', content = '', excerpt = '';
+  
+  try {
+    // jina.ai Reader API — wandelt URL in clean Markdown
+    const r = await fetch('https://r.jina.ai/' + url, {
+      headers: { 'X-Return-Format': 'markdown', 'Accept': 'text/plain' }
+    });
+    if (!r.ok) throw new Error('Fetch fehlgeschlagen: ' + r.status);
+    const text = await r.text();
+    
+    // Title aus erstem # extrahieren oder aus URL
+    const titleMatch = text.match(/^#\s+(.+)$/m);
+    title = titleMatch ? titleMatch[1].trim() : (domainFrom(url) || 'Artikel');
+    
+    // Markdown → HTML (sehr einfach)
+    content = mdToHtml(text);
+    
+    // Excerpt: erste paar Sätze des Texts (ohne Markdown)
+    const plain = text.replace(/[#*_`\[\]]/g, '').replace(/\n+/g, ' ').trim();
+    excerpt = plain.slice(0, 250);
+    
+  } catch(err) {
+    console.warn('Fetch via Jina fehlgeschlagen:', err);
+    // Fallback: Nur URL speichern, User soll Text später ergänzen
+    title = domainFrom(url) || url;
+    content = '<p style="color:#71717a;font-style:italic">Inhalt konnte nicht automatisch geladen werden. Du kannst den Artikel über den Link öffnen oder Text manuell hinzufügen.</p><p><a href="' + escHTML(url) + '" target="_blank">' + escHTML(url) + '</a></p>';
+    excerpt = '';
+  }
+  
+  return {
+    id: 'rl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    title: title,
+    content: content,
+    excerpt: excerpt,
+    url: url,
+    domain: domainFrom(url),
+    readingTime: readingTime(content.replace(/<[^>]+>/g, ' ')),
+    addedAt: new Date().toISOString(),
+    read: false,
+    favorite: false,
+  };
+}
+
+// Sehr einfache Markdown-zu-HTML-Konvertierung
+function mdToHtml(md) {
+  let html = md;
+  
+  // Code-Blocks erst (damit sie nicht weiter interpretiert werden)
+  html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => {
+    return '<pre><code>' + escHTML(code) + '</code></pre>';
+  });
+  
+  // Headings
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  
+  // Images
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
+  
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  
+  // Bold / Italic
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+  
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  
+  // Blockquotes
+  html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+  
+  // Lists (sehr einfach — nur ungeordnet)
+  html = html.replace(/^[-*+] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*?<\/li>\n?)+/g, m => '<ul>' + m + '</ul>');
+  
+  // Paragraphs (Doppel-Newlines)
+  html = html.split(/\n\n+/).map(p => {
+    const t = p.trim();
+    if (!t) return '';
+    // Wenn schon HTML-Tag → unverändert
+    if (/^<(h[1-6]|ul|ol|li|pre|blockquote|p|img)/.test(t)) return t;
+    return '<p>' + t.replace(/\n/g, '<br>') + '</p>';
+  }).join('\n\n');
+  
+  return html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// READER
+// ═══════════════════════════════════════════════════════════════════════
+window.rlOpenReader = function(id) {
+  const a = _rlData.articles.find(x => x.id === id);
+  if (!a) return;
+  _rlCurrentArticle = a;
+  
+  // Mark as opened
+  if (!a.openedAt) a.openedAt = new Date().toISOString();
+  saveData();
+  
+  // → Direkt im Newsroom Reader-Mode öffnen
+  openInNewsroomReader(a);
+};
+
+// Synct den Leselisten-Artikel in D.articles (Newsroom-State) und öffnet den Reader.
+// Wenn schon vorhanden (gleiche rlId), wird nur der Reader geöffnet.
+function openInNewsroomReader(rlArticle) {
+  // Prüfen ob Newsroom-Daten verfügbar sind
+  if (typeof window.D !== 'object' || !window.D || !Array.isArray(window.D.articles)) {
+    // Newsroom evtl. noch nicht initialisiert → kurz warten und retry
+    if (typeof window.openResearchHub === 'function') {
+      window.openResearchHub();
+      setTimeout(() => openInNewsroomReader(rlArticle), 600);
+      return;
+    }
+    alert('Newsroom-Reader nicht verfügbar.');
+    return;
+  }
+  
+  // Suche nach existierender Spiegelung dieses RL-Artikels
+  let mirror = window.D.articles.find(x => x.rlId === rlArticle.id);
+  if (!mirror) {
+    // Neu erstellen — content soll Plain-Text sein (Newsroom-Reader macht eigenes esc)
+    const plainContent = htmlToPlainText(rlArticle.content || '');
+    mirror = {
+      id: 'rlmir_' + rlArticle.id,
+      rlId: rlArticle.id, // Marker für später
+      title: rlArticle.title || 'Ohne Titel',
+      content: plainContent,
+      isPdf: !!rlArticle.pdfUrl,
+      pdfUrl: rlArticle.pdfUrl || null,
+      fileName: rlArticle.fileName || null,
+      url: rlArticle.url || null,
+      domain: rlArticle.domain || null,
+      status: 'reading',
+      readProgress: 0,
+      createdAt: rlArticle.addedAt || new Date().toISOString(),
+    };
+    window.D.articles.push(mirror);
+    if (typeof window.saveData === 'function') {
+      try { window.saveData(); } catch(e) {}
+    }
+  } else {
+    // Update content (falls geändert)
+    mirror.title = rlArticle.title || mirror.title;
+    mirror.content = htmlToPlainText(rlArticle.content || '');
+    mirror.pdfUrl = rlArticle.pdfUrl || mirror.pdfUrl;
+  }
+  
+  // Newsroom öffnen + Reader für diesen Artikel
+  if (typeof window.openResearchHub === 'function') {
+    window.openResearchHub();
+  }
+  setTimeout(() => {
+    if (typeof window.nhOpenReader === 'function') {
+      window.nhOpenReader(mirror.id);
+    } else if (typeof window.nhNav === 'function') {
+      window.nhNav('reader');
+    }
+  }, 250);
+  
+  // Eigenen Container im Hintergrund schließen
+  document.getElementById('readlistContainer')?.classList.remove('active');
+}
+
+function htmlToPlainText(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  // Ersetze Block-Elemente durch Newlines
+  tmp.querySelectorAll('p, h1, h2, h3, h4, li, blockquote, pre, br').forEach(el => {
+    el.insertAdjacentText('afterend', '\n\n');
+  });
+  return (tmp.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PDF processing — Firebase upload + Text extraction
+// ═══════════════════════════════════════════════════════════════════════
+async function processPdf(file, customTitle) {
+  const status = document.getElementById('rlPdfStatus');
+  const progressWrap = document.getElementById('rlPdfProgress');
+  const progressBar = document.getElementById('rlPdfProgressBar');
+  
+  const setStatus = (msg) => {
+    if (status) status.innerHTML = msg;
+    if (status) status.style.display = 'block';
+  };
+  const setProgress = (pct) => {
+    if (progressWrap) progressWrap.style.display = 'block';
+    if (progressBar) progressBar.style.width = pct + '%';
+  };
+  
+  // 1) PDF.js laden + Text extrahieren
+  setStatus('📖 PDF wird gelesen...');
+  setProgress(5);
+  
+  if (typeof window.loadPDFLibrary === 'function') {
+    await window.loadPDFLibrary();
+  }
+  if (!window.pdfjsLib) {
+    throw new Error('PDF.js konnte nicht geladen werden');
+  }
+  
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer, disableWorker: true }).promise;
+  
+  let fullText = '';
+  const totalPages = pdf.numPages;
+  for (let i = 1; i <= totalPages; i++) {
+    setStatus(`📖 Extrahiere Text — Seite ${i} / ${totalPages}`);
+    setProgress(5 + (i / totalPages) * 35); // 5–40%
+    const page = await pdf.getPage(i);
+    const tc = await page.getTextContent();
+    const pageText = tc.items.map(it => it.str).join(' ');
+    if (pageText.trim()) {
+      fullText += pageText.trim() + '\n\n';
+    }
+  }
+  fullText = fullText.trim();
+  
+  const wordCount = fullText.split(/\s+/).filter(Boolean).length;
+  const minutes = Math.max(1, Math.ceil(wordCount / 220));
+  const excerpt = fullText.slice(0, 280).replace(/\s+/g, ' ');
+  
+  // 2) Firebase Upload (parallel zu Anzeige)
+  let pdfUrl = null;
+  let firebaseError = null;
+  
+  if (typeof window.uploadToFirebase === 'function' && window.firebaseStorage) {
+    setStatus(`☁️ PDF wird in Firebase hochgeladen — ${(file.size/1024/1024).toFixed(1)} MB...`);
+    try {
+      const path = 'readlist-pdfs/' + Date.now() + '_' + file.name.replace(/[^\w.-]/g, '_');
+      pdfUrl = await window.uploadToFirebase(file, path, (pct) => {
+        setProgress(40 + (pct * 0.55)); // 40–95%
+        setStatus(`☁️ Upload — ${pct}%`);
+      });
+    } catch(e) {
+      console.warn('Firebase-Upload fehlgeschlagen:', e);
+      firebaseError = e.message;
+    }
+  } else {
+    firebaseError = 'Firebase nicht verfügbar';
+  }
+  
+  setProgress(98);
+  setStatus('✓ Fertig — speichere Artikel...');
+  
+  // 3) Article-Objekt
+  const article = {
+    id: 'rl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    title: customTitle || file.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' '),
+    content: textToHtml(fullText),
+    excerpt: excerpt,
+    pdfUrl: pdfUrl,           // Firebase-URL — kann null sein bei Fehler
+    fileName: file.name,
+    fileSize: file.size,
+    pageCount: totalPages,
+    wordCount: wordCount,
+    readingTime: minutes,
+    domain: 'PDF',
+    addedAt: new Date().toISOString(),
+    read: false,
+    favorite: false,
+  };
+  
+  if (firebaseError) {
+    article._firebaseError = firebaseError;
+    if (typeof toast === 'function') {
+      toast('warn', '⚠️ Firebase', 'PDF lokal gespeichert (Cloud-Upload fehlgeschlagen)');
+    }
+  } else {
+    if (typeof toast === 'function') {
+      toast('ok', '☁️', `PDF in Firebase · ${minutes} min Lesezeit`);
+    }
+  }
+  
+  // Reset UI
+  setProgress(100);
+  setTimeout(() => {
+    if (progressWrap) progressWrap.style.display = 'none';
+    if (status) status.style.display = 'none';
+    _rlPdfFile = null;
+    document.getElementById('rlInputPdf').value = '';
+    document.getElementById('rlInputPdfTitle').value = '';
+  }, 800);
+  
+  return article;
+}
+
+// Alte Reader-Funktion (bleibt als Fallback verfügbar, falls Newsroom nicht da)
+function openOwnReader(a) {
+  _rlCurrentArticle = a;
+  const reader = document.getElementById('rlReader');
+  reader.classList.add('show');
+  applyReaderPrefs();
+  buildReaderToolbar();
+  const body = document.getElementById('rlReaderBody');
+  body.innerHTML = `
+    <div class="rlrd-content">
+      <h1>${escHTML(a.title || 'Ohne Titel')}</h1>
+      <div class="meta">
+        ${a.domain ? '<span>🌐 ' + escHTML(a.domain) + '</span>' : ''}
+        ${a.readingTime ? '<span>⏱ ' + a.readingTime + ' min</span>' : ''}
+        ${a.url ? '<a href="' + escHTML(a.url) + '" target="_blank" rel="noopener">↗ Original öffnen</a>' : ''}
+      </div>
+      <div id="rlReaderArticle">${a.content || ''}</div>
+    </div>
+  `;
+  applyHighlightsToReader(a.id);
+  
+  // Scroll-Position wiederherstellen
+  setTimeout(() => {
+    const progress = getProgress(a.id);
+    const b1 = document.getElementById('rlReaderBody');
+    if (b1 && progress > 0 && progress < 95) {
+      const total = b1.scrollHeight - b1.clientHeight;
+      b1.scrollTop = (total * progress) / 100;
+    }
+  }, 100);
+  
+  // Track scroll for progress
+  const b2 = document.getElementById('rlReaderBody');
+  if (b2) {
+    b2.removeEventListener('scroll', _rlScrollHandler);
+    b2.addEventListener('scroll', _rlScrollHandler, { passive: true });
+  }
+}
+
+function _rlScrollHandler() {
+  const body = document.getElementById('rlReaderBody');
+  if (!body || !_rlCurrentArticle) return;
+  const total = body.scrollHeight - body.clientHeight;
+  const pct = total > 0 ? Math.min(100, Math.max(0, (body.scrollTop / total) * 100)) : 0;
+  
+  // Progress bar
+  const bar = document.getElementById('rlReaderProgress');
+  if (bar) bar.style.width = pct + '%';
+  
+  // Save progress (debounced via timer)
+  clearTimeout(_rlScrollHandler._t);
+  _rlScrollHandler._t = setTimeout(() => {
+    if (_rlCurrentArticle) {
+      saveProgress(_rlCurrentArticle.id, pct);
+      // Auto-mark-as-read at 95%
+      if (pct >= 95 && !_rlCurrentArticle.read) {
+        _rlCurrentArticle.read = true;
+        _rlCurrentArticle.readAt = new Date().toISOString();
+        saveData();
+        if (typeof toast === 'function') toast('ok', '✓', 'Als gelesen markiert');
+      }
+    }
+  }, 800);
+}
+
+function closeReader() {
+  document.getElementById('rlReader').classList.remove('show');
+  document.getElementById('rlSidePanel').classList.remove('show');
+  _rlCurrentArticle = null;
+  renderList();
+}
+window.rlCloseReader = closeReader;
+
+// Reader prefs
+function applyReaderPrefs() {
+  const p = getPrefs();
+  const reader = document.getElementById('rlReader');
+  if (!reader) return;
+  
+  reader.classList.remove('theme-dark','theme-sepia','theme-light','theme-graphite');
+  reader.classList.add('theme-' + (p.theme || 'dark'));
+  reader.classList.toggle('focus-mode', !!p.focus);
+  
+  reader.style.setProperty('--rlrd-size', (p.size || 19) + 'px');
+  reader.style.setProperty('--rlrd-w', (p.width || 720) + 'px');
+  reader.style.setProperty('--rlrd-lh', p.lineHeight || 1.7);
+  reader.style.setProperty('--rlrd-font', p.font || '"Charter", Georgia, serif');
+}
+
+function setPref(key, val) {
+  const p = getPrefs();
+  p[key] = val;
+  savePrefs(p);
+  applyReaderPrefs();
+  buildReaderToolbar();
+}
+window.rlSetPref = setPref;
+window.rlToggleFocus = () => {
+  const p = getPrefs();
+  p.focus = !p.focus;
+  savePrefs(p);
+  applyReaderPrefs();
+  buildReaderToolbar();
+};
+
+function buildReaderToolbar() {
+  const tb = document.getElementById('rlReaderToolbar');
+  if (!tb) return;
+  const p = getPrefs();
+  const a = _rlCurrentArticle;
+  if (!a) return;
+  
+  tb.innerHTML = `
+    <button class="rlrd-tb-btn" onclick="window.rlCloseReader()">← Liste</button>
+    
+    <div class="rlrd-tb-group">
+      <button class="rlrd-tb-btn ${(p.size||19)<=15?'active':''}" onclick="window.rlSetPref('size',14)">A−</button>
+      <button class="rlrd-tb-btn ${(p.size||19)>=16&&(p.size||19)<=20?'active':''}" onclick="window.rlSetPref('size',19)">A</button>
+      <button class="rlrd-tb-btn ${(p.size||19)>=21?'active':''}" onclick="window.rlSetPref('size',23)">A+</button>
+    </div>
+    
+    <div class="rlrd-tb-group">
+      <button class="rlrd-tb-btn ${(p.width||720)<=620?'active':''}" onclick="window.rlSetPref('width',560)">▌</button>
+      <button class="rlrd-tb-btn ${(p.width||720)>=621&&(p.width||720)<=780?'active':''}" onclick="window.rlSetPref('width',720)">▌▌</button>
+      <button class="rlrd-tb-btn ${(p.width||720)>=820?'active':''}" onclick="window.rlSetPref('width',900)">▌▌▌</button>
+    </div>
+    
+    <div class="rlrd-tb-group">
+      <button class="rlrd-tb-btn ${(!p.theme||p.theme==='dark')?'active':''}" onclick="window.rlSetPref('theme','dark')" title="Dark">🌑</button>
+      <button class="rlrd-tb-btn ${p.theme==='graphite'?'active':''}" onclick="window.rlSetPref('theme','graphite')" title="Graphite">⚫</button>
+      <button class="rlrd-tb-btn ${p.theme==='sepia'?'active':''}" onclick="window.rlSetPref('theme','sepia')" title="Sepia">📜</button>
+      <button class="rlrd-tb-btn ${p.theme==='light'?'active':''}" onclick="window.rlSetPref('theme','light')" title="Light">☀️</button>
+    </div>
+    
+    <div class="rlrd-tb-group">
+      <button class="rlrd-tb-btn ${(p.font||'').includes('Charter')||!p.font?'active':''}" onclick="window.rlSetPref('font','Charter, Georgia, serif')" title="Serif">Aa</button>
+      <button class="rlrd-tb-btn ${(p.font||'').includes('Inter')?'active':''}" onclick="window.rlSetPref('font','Inter, -apple-system, sans-serif')" title="Sans">𝐀</button>
+      <button class="rlrd-tb-btn ${(p.font||'').includes('mono')||(p.font||'').includes('Mono')?'active':''}" onclick="window.rlSetPref('font','ui-monospace, SF Mono, monospace')" title="Mono">𝙰</button>
+    </div>
+    
+    <button class="rlrd-tb-btn ${p.focus?'active':''}" onclick="window.rlToggleFocus()" title="Fokus-Modus (versteckt UI)">🎯</button>
+    <button class="rlrd-tb-btn" onclick="window.rlToggleSide()" title="Highlights anzeigen">🟨 ${getHighlights(a.id).length || ''}</button>
+    
+    <div class="rlrd-tb-meta">
+      <span>${a.readingTime || readingTime(a.content.replace(/<[^>]+>/g,' '))} min</span>
+      <span>${Math.round(getProgress(a.id))}%</span>
+    </div>
+    
+    <button class="rlrd-tb-btn" onclick="window.rlToggleFav('${a.id}');buildReaderToolbar();" title="Favorit">${a.favorite ? '★' : '☆'}</button>
+    <button class="rlrd-tb-btn" onclick="window.rlMarkAsRead()" title="Als gelesen">${a.read ? '↻' : '✓'}</button>
+  `;
+}
+window.buildReaderToolbar = buildReaderToolbar;
+
+window.rlMarkAsRead = function() {
+  const a = _rlCurrentArticle;
+  if (!a) return;
+  a.read = !a.read;
+  a.readAt = a.read ? new Date().toISOString() : null;
+  saveData();
+  buildReaderToolbar();
+  if (typeof toast === 'function') toast('ok', '✓', a.read ? 'Als gelesen' : 'Als ungelesen');
+};
+
+// Side panel (highlights)
+window.rlToggleSide = function() {
+  const side = document.getElementById('rlSidePanel');
+  if (!side) return;
+  if (side.classList.contains('show')) {
+    side.classList.remove('show');
+  } else {
+    renderSidePanel();
+    side.classList.add('show');
+  }
+};
+
+function renderSidePanel() {
+  const a = _rlCurrentArticle;
+  if (!a) return;
+  const hl = getHighlights(a.id);
+  document.getElementById('rlSideTitle').textContent = 'Highlights & Notizen (' + hl.length + ')';
+  const wrap = document.getElementById('rlSideContent');
+  if (hl.length === 0) {
+    wrap.innerHTML = '<div style="color:#52525b;font-size:12px;padding:14px 0">Markiere Text im Reader → Toolbar erscheint mit Highlight-Optionen</div>';
+    return;
+  }
+  wrap.innerHTML = hl.map((h, i) => `
+    <div class="rlrd-hl-item ${h.note ? 'note' : ''}">
+      "${escHTML(h.text.slice(0, 200))}${h.text.length > 200 ? '…' : ''}"
+      ${h.note ? '<div class="note-text">💭 ' + escHTML(h.note) + '</div>' : ''}
+      <div class="actions">
+        <button onclick="window.rlScrollToHl(${i})">→ Im Text</button>
+        <button onclick="window.rlEditNote(${i})">📝 Notiz</button>
+        <button onclick="window.rlDeleteHl(${i})">×</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+window.rlDeleteHl = function(idx) {
+  if (!_rlCurrentArticle) return;
+  const hl = getHighlights(_rlCurrentArticle.id);
+  hl.splice(idx, 1);
+  saveHighlights(_rlCurrentArticle.id, hl);
+  applyHighlightsToReader(_rlCurrentArticle.id);
+  renderSidePanel();
+  buildReaderToolbar();
+};
+
+window.rlEditNote = function(idx) {
+  if (!_rlCurrentArticle) return;
+  const hl = getHighlights(_rlCurrentArticle.id);
+  if (!hl[idx]) return;
+  const n = prompt('Notiz zu diesem Highlight:', hl[idx].note || '');
+  if (n === null) return;
+  hl[idx].note = n;
+  saveHighlights(_rlCurrentArticle.id, hl);
+  renderSidePanel();
+};
+
+window.rlScrollToHl = function(idx) {
+  const els = document.querySelectorAll('#rlReaderArticle .rl-highlight');
+  if (els[idx]) {
+    els[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    els[idx].style.transition = 'background 0.5s';
+    const orig = els[idx].style.background;
+    els[idx].style.background = 'rgba(168,85,247,0.5)';
+    setTimeout(() => { els[idx].style.background = ''; }, 1200);
+  }
+};
+
+// Highlight rendering
+function applyHighlightsToReader(articleId) {
+  const article = document.getElementById('rlReaderArticle');
+  if (!article) return;
+  const hl = getHighlights(articleId);
+  if (hl.length === 0) return;
+  
+  // Naive: für jeden highlight, finde text und wrap ihn
+  hl.forEach((h, i) => {
+    if (!h.text) return;
+    // Sehr einfach: nur erste Vorkommnis
+    const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
+    let node;
+    while (node = walker.nextNode()) {
+      const idx = node.textContent.indexOf(h.text);
+      if (idx >= 0) {
+        const range = document.createRange();
+        range.setStart(node, idx);
+        range.setEnd(node, idx + h.text.length);
+        const span = document.createElement('mark');
+        span.className = 'rl-highlight';
+        span.dataset.hlIdx = i;
+        try {
+          range.surroundContents(span);
+        } catch(e) { /* span across element boundaries */ }
+        break;
+      }
+    }
+  });
+}
+
+// Selection toolbar
+const _rlSelBody = document.getElementById('rlReaderBody');
+if (_rlSelBody) {
+  _rlSelBody.addEventListener('mouseup', handleSelection);
+  _rlSelBody.addEventListener('touchend', handleSelection);
+}
+
+function handleSelection() {
+  setTimeout(() => {
+    const sel = window.getSelection();
+    const text = sel?.toString().trim();
+    const tb = document.getElementById('rlSelTb');
+    if (!text || text.length < 3) {
+      if (tb) tb.classList.remove('show');
+      return;
+    }
+    
+    _rlSelectionRange = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (tb) {
+      tb.style.left = Math.max(20, rect.left + (rect.width / 2) - 100) + 'px';
+      tb.style.top = (rect.top - 50 + window.scrollY) + 'px';
+      tb.classList.add('show');
+    }
+  }, 30);
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('#rlSelTb')) {
+    document.getElementById('rlSelTb')?.classList.remove('show');
+  }
+});
+
+window.rlSelHighlight = function() {
+  const sel = window.getSelection();
+  const text = sel?.toString().trim();
+  if (!text || !_rlCurrentArticle) return;
+  
+  const hl = getHighlights(_rlCurrentArticle.id);
+  hl.push({ text, note: '', createdAt: new Date().toISOString() });
+  saveHighlights(_rlCurrentArticle.id, hl);
+  
+  applyHighlightsToReader(_rlCurrentArticle.id);
+  buildReaderToolbar();
+  document.getElementById('rlSelTb')?.classList.remove('show');
+  sel.removeAllRanges();
+  
+  if (typeof toast === 'function') toast('ok', '🟨', 'Markiert');
+};
+
+window.rlSelNote = function() {
+  const sel = window.getSelection();
+  const text = sel?.toString().trim();
+  if (!text || !_rlCurrentArticle) return;
+  
+  const note = prompt('Notiz zu "' + text.slice(0, 60) + (text.length > 60 ? '…' : '') + '":');
+  if (note === null) return;
+  
+  const hl = getHighlights(_rlCurrentArticle.id);
+  hl.push({ text, note, createdAt: new Date().toISOString() });
+  saveHighlights(_rlCurrentArticle.id, hl);
+  
+  applyHighlightsToReader(_rlCurrentArticle.id);
+  buildReaderToolbar();
+  document.getElementById('rlSelTb')?.classList.remove('show');
+  sel.removeAllRanges();
+  
+  if (typeof toast === 'function') toast('ok', '📝', 'Notiz gespeichert');
+};
+
+window.rlSelToEditor = function() {
+  const sel = window.getSelection();
+  const text = sel?.toString().trim();
+  if (!text || !_rlCurrentArticle) return;
+  
+  // Quote-Modal aus Newsroom verwenden falls da
+  if (typeof window.nhSelectionToEditor === 'function') {
+    // Dummy-Aufruf vorbereiten — direkt das Modal triggern
+    if (typeof window.showQuoteModal === 'function') {
+      window.showQuoteModal(text, { title: _rlCurrentArticle.title, url: _rlCurrentArticle.url });
+      return;
+    }
+  }
+  
+  // Fallback: Clipboard
+  navigator.clipboard.writeText(`> ${text}\n— ${_rlCurrentArticle.title}${_rlCurrentArticle.url ? ' (' + _rlCurrentArticle.url + ')' : ''}`);
+  if (typeof toast === 'function') toast('ok', '📋', 'Zitat in Zwischenablage');
+  document.getElementById('rlSelTb')?.classList.remove('show');
+};
+
+window.rlSelCopy = function() {
+  const sel = window.getSelection();
+  const text = sel?.toString().trim();
+  if (!text) return;
+  navigator.clipboard.writeText(text);
+  if (typeof toast === 'function') toast('ok', '📋', 'Kopiert');
+  document.getElementById('rlSelTb')?.classList.remove('show');
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// KEYBOARD SHORTCUTS
+// ═══════════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', (e) => {
+  const reader = document.getElementById('rlReader');
+  const isReaderOpen = reader?.classList.contains('show');
+  const inInput = ['INPUT', 'TEXTAREA'].includes(e.target.tagName) || e.target.isContentEditable;
+  
+  // Im Reader: ESC schließt
+  if (isReaderOpen && e.key === 'Escape' && !inInput) {
+    closeReader();
+    e.preventDefault();
+    return;
+  }
+  
+  // Im Reader: F = Fokus, A = Sidebar
+  if (isReaderOpen && !inInput) {
+    if (e.key === 'f') { e.preventDefault(); window.rlToggleFocus(); }
+    else if (e.key === 'a') { e.preventDefault(); window.rlToggleSide(); }
+  }
+  
+  // Modal: ESC schließt
+  if (document.getElementById('rlAddModal')?.classList.contains('show') && e.key === 'Escape') {
+    window.rlCloseAdd();
+    e.preventDefault();
+  }
+  
+  // Container: ESC zurück
+  const c = document.getElementById('readlistContainer');
+  if (c?.classList.contains('active') && !isReaderOpen && e.key === 'Escape' && !inInput) {
+    if (!document.getElementById('rlAddModal')?.classList.contains('show')) {
+      window.closeReadlist();
+      e.preventDefault();
+    }
+  }
+});
+
+// Modal background click closes
+document.getElementById('rlAddModal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'rlAddModal') window.rlCloseAdd();
+});
+
+// Apply prefs initially (sets theme defaults)
+applyReaderPrefs();
+
+console.log('📚 Leseliste geladen');
+})();
+</script>
+<!-- ═══ END LESELISTE ═══ -->
 
 </body>
 </html>
