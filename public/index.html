@@ -61093,9 +61093,15 @@ select.jb-select option{background:#18181b;color:#fff}
       return;
     }
     console.log('[jbSendToMobile] doc found:', doc.title);
+    console.log('[jbSendToMobile] doc.content length:', (doc.content || '').length);
     
     // Save current state first
-    jbSaveCurrentDoc(true);
+    try {
+      jbSaveCurrentDoc(true);
+      console.log('[jbSendToMobile] jbSaveCurrentDoc OK');
+    } catch(e) {
+      console.error('[jbSendToMobile] jbSaveCurrentDoc CRASHED:', e);
+    }
     
     const title = doc.title || "Tagebucheintrag";
     const content = doc.content || "";
@@ -61105,7 +61111,11 @@ select.jb-select option{background:#18181b;color:#fff}
       return (tmp.textContent || '').trim();
     })();
     
-    if (!plainText) {
+    console.log('[jbSendToMobile] plainText length:', plainText.length);
+    
+    // Falls Eintrag völlig leer (kein Titel UND kein Inhalt) → abbrechen
+    if (!plainText && !doc.title) {
+      console.warn('[jbSendToMobile] EMPTY entry — aborting');
       jbToast("Eintrag ist leer");
       return;
     }
@@ -61114,6 +61124,7 @@ select.jb-select option{background:#18181b;color:#fff}
     if (!Array.isArray(APP.state.data.mobilePushes)) {
       APP.state.data.mobilePushes = [];
     }
+    console.log('[jbSendToMobile] mobilePushes count BEFORE:', APP.state.data.mobilePushes.length);
     
     // Existierender Push für dieses Doc?
     const existing = APP.state.data.mobilePushes.find(p => p.docId === doc.id);
@@ -61160,7 +61171,6 @@ select.jb-select option{background:#18181b;color:#fff}
       
       console.log('[jbSendToMobile] PUT URL:', putUrl);
       console.log('[jbSendToMobile] GET URL:', getUrl);
-      console.log('[jbSendToMobile] mobilePushes count BEFORE:', APP.state.data.mobilePushes.length);
       
       // Schritt 1: Aktuellen Remote-State holen (damit wir nicht andere Devices' Updates überschreiben)
       let remoteData = null;
@@ -67085,6 +67095,10 @@ function applyView(v) {
   
   if (v.kind === 'newsroom') {
     closeHubsExcept('newsroom');
+    // Neutralen Hash setzen damit render() nicht alten Hash-View überlagert
+    if (window.location.hash !== '#/dashboard') {
+      try { history.replaceState(null, '', '#/dashboard'); } catch(e) {}
+    }
     if (typeof window.openResearchHub === 'function') {
       window.openResearchHub();
       if (v.ref && v.ref !== 'dashboard' && typeof window.nhNav === 'function') {
@@ -67093,15 +67107,27 @@ function applyView(v) {
     }
   } else if (v.kind === 'readinghub') {
     closeHubsExcept('readinghub');
+    if (window.location.hash !== '#/dashboard') {
+      try { history.replaceState(null, '', '#/dashboard'); } catch(e) {}
+    }
     if (typeof window.openReadingHub === 'function') window.openReadingHub();
   } else if (v.kind === 'noteflow') {
     closeHubsExcept('noteflow');
+    if (window.location.hash !== '#/dashboard') {
+      try { history.replaceState(null, '', '#/dashboard'); } catch(e) {}
+    }
     if (typeof window.openNoteFlow === 'function') window.openNoteFlow();
   } else if (v.kind === 'recalllab') {
     closeHubsExcept('recalllab');
+    if (window.location.hash !== '#/dashboard') {
+      try { history.replaceState(null, '', '#/dashboard'); } catch(e) {}
+    }
     if (typeof window.openRecallLab === 'function') window.openRecallLab();
   } else if (v.kind === 'readlist') {
     closeHubsExcept('readlist');
+    if (window.location.hash !== '#/dashboard') {
+      try { history.replaceState(null, '', '#/dashboard'); } catch(e) {}
+    }
     if (typeof window.openReadlist === 'function') window.openReadlist();
   } else {
     // Hash-View
@@ -67116,8 +67142,10 @@ function applyView(v) {
   setTimeout(() => { 
     _suppressNav = false; 
     _navigatingFromTab = false;
-    // Topbar/UI nach Tab-Wechsel auf alle Fälle aktualisieren
-    if (typeof window.render === 'function') {
+    // Topbar/UI nach Tab-Wechsel aktualisieren — aber NUR bei Hash-Views
+    // Bei Hub-Views (newsroom/readinghub/noteflow/recalllab/readlist) würde render()
+    // die Hub überlagern weil's auf den globalen Hash hört
+    if (v.kind === 'hash' && typeof window.render === 'function') {
       try { window.render(); } catch(e) {}
     }
   }, 350);
