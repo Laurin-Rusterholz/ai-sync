@@ -4772,7 +4772,7 @@ textarea::placeholder, input::placeholder {
   <!-- Topbar - Clean Apple Design -->
   <header class="topbar" id="topbar">
     <div class="topbar-left">
-      <div class="brand" id="brandHome" role="button" tabindex="0" title="Dashboard">
+      <div class="brand" id="brandHome" role="button" tabindex="0" title="Dashboard" style="display:none">
         <div class="logo"></div>
         <div class="brand-text">
           <h1>Quantus</h1>
@@ -6540,7 +6540,7 @@ function emptyData() {
   return {
     version: SCHEMA_VERSION,
     meta: {
-      workspaceName: "Mein Workspace",
+      workspaceName: "FocusSpace",
       createdAt: nowIso(),
       updatedAt: nowIso(),
     },
@@ -11987,7 +11987,15 @@ function _doRender() {
 function renderTopbar() {
   // Update workspace name
   const wsName = $("#workspaceName");
-  if (wsName) wsName.textContent = APP.state.data.meta.workspaceName || "Workspace";
+  if (wsName) {
+    let n = APP.state.data.meta.workspaceName || "FocusSpace";
+    // Migrate alten Default zu FocusSpace
+    if (n === "Mein Workspace" || n === "Workspace" || n === "My Workspace") {
+      n = "FocusSpace";
+      APP.state.data.meta.workspaceName = "FocusSpace";
+    }
+    wsName.textContent = n;
+  }
   
   // Update LLM chip (if present)
   const llmChip = $("#llmChip");
@@ -41563,6 +41571,7 @@ function finishDay() {
   showReflectOverlay();
 }
 window.finishDay = finishDay;
+if (typeof showLaunchScreen === "function") window.showLaunchScreen = showLaunchScreen;
 
 // The actual day-finishing logic (called after reflection is submitted)
 function completeFinishDay() {
@@ -61086,11 +61095,14 @@ select.jb-select option{background:#18181b;color:#fff}
     const now = new Date().toISOString();
     
     if (existing) {
-      // Update existing
+      // Update existing — sentAt MUSS aktualisiert werden damit Mobile es als "neu" erkennt
       existing.title = title;
       existing.content = content;
       existing.font = doc.font;
+      existing.sentAt = now;        // ← war fehlend; Mobile filtert nach sentAt
       existing.updatedAt = now;
+      // Sortiere mobilePushes neu (neuestes oben)
+      APP.state.data.mobilePushes.sort((a,b) => (b.sentAt||"").localeCompare(a.sentAt||""));
     } else {
       // Neuer Push
       APP.state.data.mobilePushes.unshift({
@@ -61109,14 +61121,18 @@ select.jb-select option{background:#18181b;color:#fff}
       }
     }
     
-    // Force-save (sofort, nicht debounced) damit Mobile es schnell sieht
-    if (typeof doSave === 'function') {
-      try { 
-        doSave(true); 
-      } catch(e) {
+    // Force-save MIT remote-push: doSave(false) erzwingt forceRemote
+    let saved = false;
+    try {
+      const saveFn = window.doSave || (typeof doSave === 'function' ? doSave : null);
+      if (saveFn) {
+        await saveFn(false);   // false = NICHT silent → forceRemote=true → push direkt zu Netlify Blob
+        saved = true;
+      } else {
         scheduleSave();
       }
-    } else {
+    } catch(e) {
+      console.warn('jbSendToMobile save error:', e);
       scheduleSave();
     }
     
@@ -66243,6 +66259,12 @@ body.tabs-on .rh-sidebar {
   height: calc(100vh - 38px) !important;
 }
 
+/* Journal Booklet Container: bei Tabs nicht hinter Tab-Bar verschwinden */
+body.tabs-on .jb-container.active {
+  top: 38px !important;
+  height: calc(100vh - 38px) !important;
+}
+
 /* ─── Quick Assistant: Neon-Violett Override ──────────── */
 #qc-fab {
   background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
@@ -67386,7 +67408,8 @@ function updateTabBarVisibility() {
     && launchScreen.style.display !== 'none'
     && launchScreen.offsetHeight > 100;  // Wirklich sichtbar?
   
-  // Journal Booklet: Editor / SelfLetter-Editor / Read-View aktiv?
+  // Journal Booklet: NUR Editor / SelfLetter-Editor / Read-View aktiv?
+  // Den Hauptcontainer NICHT - der respektiert padding-top via CSS-Regel
   const jbEditor = document.getElementById('jbEditor');
   const jbSLEditor = document.getElementById('jbSelfLetterEditor');
   const jbReadView = document.getElementById('jbReadView');
