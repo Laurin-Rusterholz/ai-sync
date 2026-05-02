@@ -6607,6 +6607,9 @@ function normalizeData(data) {
   d.version = d.version || SCHEMA_VERSION;
   d.meta = d.meta || { workspaceName: "Workspace", createdAt: nowIso(), updatedAt: nowIso() };
   
+  // Ensure mobilePushes Array (für Mobile-Journal-App)
+  if (!Array.isArray(d.mobilePushes)) d.mobilePushes = [];
+  
   // Ensure entities
   d.entities = d.entities || {};
   const e = d.entities;
@@ -8521,6 +8524,8 @@ window.netlifyBlobGet = netlifyBlobGet;
 window.netlifyBlobPut = netlifyBlobPut;
 window.firebaseJsonGet = firebaseJsonGet;
 window.firebaseJsonPut = firebaseJsonPut;
+window.buildRemoteAppPayload = buildRemoteAppPayload;
+window.buildLocalAppSnapshot = buildLocalAppSnapshot;
 window.isManualTransferMode = isManualTransferMode;
 window.isBlobSyncConfigured = isBlobSyncConfigured;
 window.isFirebaseCloudAvailable = isFirebaseCloudAvailable;
@@ -61121,14 +61126,23 @@ select.jb-select option{background:#18181b;color:#fff}
       }
     }
     
-    // Force-save MIT remote-push: doSave(false) erzwingt forceRemote
+    // Force-push direkt zur Netlify-Blob — umgeht Manual-Transfer-Mode
     let saved = false;
     try {
-      const saveFn = window.doSave || (typeof doSave === 'function' ? doSave : null);
-      if (saveFn) {
-        await saveFn(false);   // false = NICHT silent → forceRemote=true → push direkt zu Netlify Blob
-        saved = true;
+      // Sync-Lock prüfen damit keine Pull/Push-Konflikte
+      if (typeof window.netlifyBlobPut === 'function' && typeof window.buildRemoteAppPayload === 'function') {
+        const payload = window.buildRemoteAppPayload();
+        // Sicherstellen dass mobilePushes im Payload landet
+        payload.mobilePushes = APP.state.data.mobilePushes;
+        payload.meta = payload.meta || {};
+        payload.meta.updatedAt = new Date().toISOString();
+        
+        const blobKey = APP.state.settings.storage?.blobKey || 'app-data.json';
+        const result = await window.netlifyBlobPut(blobKey, payload, { force: true });
+        saved = !!(result && result.ok);
+        if (!saved) console.warn('jbSendToMobile push result:', result);
       } else {
+        // Fallback auf scheduleSave
         scheduleSave();
       }
     } catch(e) {
@@ -61140,18 +61154,24 @@ select.jb-select option{background:#18181b;color:#fff}
     const btn = document.getElementById('jbSendMobileBtn');
     if (btn) {
       const orig = btn.innerHTML;
-      btn.innerHTML = '✓ Sent!';
-      btn.style.background = 'linear-gradient(135deg,#22c55e,#16a34a)';
+      if (saved) {
+        btn.innerHTML = '✓ Sent!';
+        btn.style.background = 'linear-gradient(135deg,#22c55e,#16a34a)';
+      } else {
+        btn.innerHTML = '⚠ Local only';
+        btn.style.background = 'linear-gradient(135deg,#f59e0b,#d97706)';
+      }
       setTimeout(() => {
         btn.innerHTML = orig;
         btn.style.background = 'linear-gradient(135deg,#a855f7,#7c3aed)';
-      }, 2200);
+      }, 2800);
     }
     
     if (typeof toast === 'function') {
-      toast('ok', '📱 Mobile', 'Journal entry sent to Mobile');
+      if (saved) toast('ok', '📱 Mobile', 'Journal entry sent to Mobile');
+      else toast('warn', '⚠️ Push failed', 'Saved locally — sync next time');
     } else {
-      jbToast('📱 An Mobile gesendet');
+      jbToast(saved ? '📱 An Mobile gesendet' : '⚠️ Lokal gespeichert (Push fehlgeschlagen)');
     }
   };
 
