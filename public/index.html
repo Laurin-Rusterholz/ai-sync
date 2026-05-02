@@ -67061,6 +67061,7 @@ function inferHashTitle(hash) {
 
 // ─── View-Apply: Versetzt App in den Zustand des Tabs ───────────
 function applyView(v) {
+  console.log('[applyView] kind:', v.kind, 'ref:', v.ref);
   _suppressNav = true;
   _navigatingFromTab = true;
   
@@ -67156,6 +67157,7 @@ function activateTab(tabId) {
   const t = _tabs.find(x => x.id === tabId);
   if (!t) return;
   if (_activeTabId === tabId) return;
+  console.log('[activateTab]', t.kind, t.ref, 'title:', t.title);
   _activeTabId = tabId;
   saveTabs();
   renderTabs();
@@ -67187,9 +67189,13 @@ function bootstrapInitialTab() {
 
 // Wird gerufen wenn sich der View ändert (Hash/Hub-State)
 function onViewChange() {
-  if (_suppressNav) return;
+  if (_suppressNav) {
+    console.log('[onViewChange] SUPPRESSED');
+    return;
+  }
   if (!tabsEnabled()) return;
   const v = detectCurrentView();
+  console.log('[onViewChange] detected view:', v.kind, v.ref, '| activeTab:', _tabs.find(t=>t.id===_activeTabId)?.kind);
   
   // Wenn der aktuelle Tab denselben View hat → nur Title aktualisieren
   const active = _tabs.find(t => t.id === _activeTabId);
