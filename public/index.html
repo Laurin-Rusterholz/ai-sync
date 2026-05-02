@@ -61158,17 +61158,24 @@ select.jb-select option{background:#18181b;color:#fff}
       const putUrl = putUrlTpl.replace('{key}', encodeURIComponent(blobKey));
       const getUrl = getUrlTpl.replace('{key}', encodeURIComponent(blobKey));
       
+      console.log('[jbSendToMobile] PUT URL:', putUrl);
+      console.log('[jbSendToMobile] GET URL:', getUrl);
+      console.log('[jbSendToMobile] mobilePushes count BEFORE:', APP.state.data.mobilePushes.length);
+      
       // Schritt 1: Aktuellen Remote-State holen (damit wir nicht andere Devices' Updates überschreiben)
       let remoteData = null;
       try {
+        console.log('[jbSendToMobile] Pulling remote state...');
         const getResp = await fetch(getUrl + (getUrl.includes('?') ? '&' : '?') + '_ts=' + Date.now(), {
           cache: 'no-store',
         });
+        console.log('[jbSendToMobile] GET status:', getResp.status, getResp.statusText);
         if (getResp.ok) {
           remoteData = await getResp.json();
+          console.log('[jbSendToMobile] Remote has mobilePushes:', Array.isArray(remoteData?.mobilePushes) ? remoteData.mobilePushes.length : 'no');
         }
       } catch(e) {
-        console.warn('jbSendToMobile: pull failed, will push local state', e);
+        console.warn('[jbSendToMobile] pull failed, will push local state', e);
       }
       
       // Schritt 2: Payload bauen — bevorzuge Remote-State, packe nur mobilePushes drauf
@@ -61191,18 +61198,27 @@ select.jb-select option{background:#18181b;color:#fff}
         .sort((a,b) => (b.sentAt||'').localeCompare(a.sentAt||''))
         .slice(0, 50);
       
+      console.log('[jbSendToMobile] Merged mobilePushes count:', payload.mobilePushes.length);
+      console.log('[jbSendToMobile] Latest push:', payload.mobilePushes[0]);
+      
       payload.meta = payload.meta || {};
       payload.meta.updatedAt = new Date().toISOString();
       
+      const bodyStr = JSON.stringify(payload);
+      console.log('[jbSendToMobile] Payload size:', (bodyStr.length / 1024).toFixed(1) + ' KB');
+      
       // Schritt 3: Push (PUT)
+      console.log('[jbSendToMobile] PUT request starting...');
       const putResp = await fetch(putUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: bodyStr,
       });
+      console.log('[jbSendToMobile] PUT status:', putResp.status, putResp.statusText);
       
       if (putResp.ok) {
         saved = true;
+        console.log('[jbSendToMobile] ✅ PUT SUCCESS');
         // Auch lokal mergen damit nächster Pull konsistent ist
         APP.state.data.mobilePushes = payload.mobilePushes;
         if (typeof saveLocalData === 'function') {
@@ -61211,12 +61227,14 @@ select.jb-select option{background:#18181b;color:#fff}
       } else {
         pushError = 'HTTP ' + putResp.status;
         const txt = await putResp.text().catch(() => '');
-        console.warn('jbSendToMobile: PUT failed', putResp.status, txt);
+        console.warn('[jbSendToMobile] ❌ PUT FAILED', putResp.status, txt);
       }
     } catch(e) {
       pushError = e.message || String(e);
-      console.error('jbSendToMobile push error:', e);
+      console.error('[jbSendToMobile] ❌ EXCEPTION:', e);
     }
+    
+    console.log('[jbSendToMobile] Final result: saved=' + saved + ', error=' + pushError);
     
     // Visuelles Feedback auf Button
     const btn = document.getElementById('jbSendMobileBtn');
