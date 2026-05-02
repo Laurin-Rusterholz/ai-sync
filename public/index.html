@@ -61126,28 +61126,76 @@ select.jb-select option{background:#18181b;color:#fff}
       }
     }
     
-    // Force-push direkt zur Netlify-Blob — umgeht Manual-Transfer-Mode
+    // Force-push direkt zur Netlify-Blob — eigener fetch ohne Health-Check-Hindernisse
     let saved = false;
+    let pushError = null;
     try {
-      // Sync-Lock prüfen damit keine Pull/Push-Konflikte
-      if (typeof window.netlifyBlobPut === 'function' && typeof window.buildRemoteAppPayload === 'function') {
-        const payload = window.buildRemoteAppPayload();
-        // Sicherstellen dass mobilePushes im Payload landet
-        payload.mobilePushes = APP.state.data.mobilePushes;
-        payload.meta = payload.meta || {};
-        payload.meta.updatedAt = new Date().toISOString();
-        
-        const blobKey = APP.state.settings.storage?.blobKey || 'app-data.json';
-        const result = await window.netlifyBlobPut(blobKey, payload, { force: true });
-        saved = !!(result && result.ok);
-        if (!saved) console.warn('jbSendToMobile push result:', result);
+      // Settings holen mit Fallback zu Defaults
+      const s = (APP.state.settings && APP.state.settings.storage) || {};
+      const blobKey = s.blobKey || 'app-data.json';
+      const putUrlTpl = s.putUrl || '/.netlify/functions/blob-put?key={key}';
+      const getUrlTpl = s.getUrl || '/.netlify/functions/blob-get?key={key}';
+      const putUrl = putUrlTpl.replace('{key}', encodeURIComponent(blobKey));
+      const getUrl = getUrlTpl.replace('{key}', encodeURIComponent(blobKey));
+      
+      // Schritt 1: Aktuellen Remote-State holen (damit wir nicht andere Devices' Updates überschreiben)
+      let remoteData = null;
+      try {
+        const getResp = await fetch(getUrl + (getUrl.includes('?') ? '&' : '?') + '_ts=' + Date.now(), {
+          cache: 'no-store',
+        });
+        if (getResp.ok) {
+          remoteData = await getResp.json();
+        }
+      } catch(e) {
+        console.warn('jbSendToMobile: pull failed, will push local state', e);
+      }
+      
+      // Schritt 2: Payload bauen — bevorzuge Remote-State, packe nur mobilePushes drauf
+      const payload = (remoteData && typeof remoteData === 'object') 
+        ? remoteData 
+        : (typeof window.buildLocalAppSnapshot === 'function' ? window.buildLocalAppSnapshot() : { ...APP.state.data });
+      
+      // mobilePushes mergen: nimm das aktuellere von beiden, dann unser Update reinpatchen
+      if (!Array.isArray(payload.mobilePushes)) payload.mobilePushes = [];
+      // Unser eben hinzugefügter/aktualisierter Push muss IM payload landen
+      const localPushes = APP.state.data.mobilePushes;
+      // Merge: alle aus payload.mobilePushes übernehmen, dann localPushes drüber merge by id
+      const mergedById = {};
+      [...payload.mobilePushes, ...localPushes].forEach(p => {
+        if (!p || !p.id) return;
+        const ex = mergedById[p.id];
+        if (!ex || (p.sentAt || '') >= (ex.sentAt || '')) mergedById[p.id] = p;
+      });
+      payload.mobilePushes = Object.values(mergedById)
+        .sort((a,b) => (b.sentAt||'').localeCompare(a.sentAt||''))
+        .slice(0, 50);
+      
+      payload.meta = payload.meta || {};
+      payload.meta.updatedAt = new Date().toISOString();
+      
+      // Schritt 3: Push (PUT)
+      const putResp = await fetch(putUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      
+      if (putResp.ok) {
+        saved = true;
+        // Auch lokal mergen damit nächster Pull konsistent ist
+        APP.state.data.mobilePushes = payload.mobilePushes;
+        if (typeof saveLocalData === 'function') {
+          try { saveLocalData(); } catch(e) {}
+        }
       } else {
-        // Fallback auf scheduleSave
-        scheduleSave();
+        pushError = 'HTTP ' + putResp.status;
+        const txt = await putResp.text().catch(() => '');
+        console.warn('jbSendToMobile: PUT failed', putResp.status, txt);
       }
     } catch(e) {
-      console.warn('jbSendToMobile save error:', e);
-      scheduleSave();
+      pushError = e.message || String(e);
+      console.error('jbSendToMobile push error:', e);
     }
     
     // Visuelles Feedback auf Button
@@ -61169,9 +61217,9 @@ select.jb-select option{background:#18181b;color:#fff}
     
     if (typeof toast === 'function') {
       if (saved) toast('ok', '📱 Mobile', 'Journal entry sent to Mobile');
-      else toast('warn', '⚠️ Push failed', 'Saved locally — sync next time');
+      else toast('warn', '⚠️ Push failed', pushError || 'Saved locally — sync next time');
     } else {
-      jbToast(saved ? '📱 An Mobile gesendet' : '⚠️ Lokal gespeichert (Push fehlgeschlagen)');
+      jbToast(saved ? '📱 An Mobile gesendet' : ('⚠️ Push fehlgeschlagen: ' + (pushError || 'unbekannt')));
     }
   };
 
