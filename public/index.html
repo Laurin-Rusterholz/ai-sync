@@ -61044,6 +61044,22 @@ select.jb-select option{background:#18181b;color:#fff}
     document.getElementById("jbEditor").classList.add("active");
     document.getElementById("jbEditorTitle").focus();
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
+    
+    // Robust binding: addEventListener falls onclick blockiert wird
+    const sendBtn = document.getElementById("jbSendMobileBtn");
+    if (sendBtn && !sendBtn.dataset.bound) {
+      sendBtn.dataset.bound = "1";
+      sendBtn.addEventListener("click", function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        console.log("[jbSendMobileBtn] click event fired");
+        if (typeof window.jbSendToMobile === "function") {
+          window.jbSendToMobile();
+        } else {
+          console.error("[jbSendMobileBtn] window.jbSendToMobile is not a function!");
+        }
+      });
+    }
   }
   window.jbOpenDocument = jbOpenDocument;
 
@@ -61068,11 +61084,15 @@ select.jb-select option{background:#18181b;color:#fff}
 
   // Send current entry to Mobile App
   window.jbSendToMobile = async function() {
+    console.log('[jbSendToMobile] CALLED', { docId: _jbCurrentDocId });
+    
     const doc = jd().documents.find(d => d.id === _jbCurrentDocId);
     if (!doc) {
+      console.warn('[jbSendToMobile] No doc — _jbCurrentDocId is', _jbCurrentDocId);
       jbToast("Kein Eintrag offen");
       return;
     }
+    console.log('[jbSendToMobile] doc found:', doc.title);
     
     // Save current state first
     jbSaveCurrentDoc(true);
