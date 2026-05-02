@@ -67148,7 +67148,7 @@ function applyView(v) {
     if (v.kind === 'hash' && typeof window.render === 'function') {
       try { window.render(); } catch(e) {}
     }
-  }, 350);
+  }, v.kind === 'hash' ? 350 : 2500); // Bei Hubs länger sperren wegen Loading-Overlay
 }
 
 // ─── Tab-Operationen ────────────────────────────────────────────
