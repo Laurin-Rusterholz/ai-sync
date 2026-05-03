@@ -5001,7 +5001,17 @@ function isAutoSyncEnabled() {
 }
 function isBlobSyncConfigured() {
   const s = APP?.state?.settings?.storage || {};
-  return !!(s.getUrl && s.putUrl && s.blobKey);
+  // Auto-Heal: wenn URLs fehlen aber wir kennen die Defaults, setze sie automatisch
+  if (!s.getUrl || !s.putUrl || !s.blobKey) {
+    if (APP?.state?.settings?.storage) {
+      if (!APP.state.settings.storage.getUrl) APP.state.settings.storage.getUrl = "/.netlify/functions/blob-get?key={key}";
+      if (!APP.state.settings.storage.putUrl) APP.state.settings.storage.putUrl = "/.netlify/functions/blob-put?key={key}";
+      if (!APP.state.settings.storage.blobKey) APP.state.settings.storage.blobKey = "app-data.json";
+      console.log('[isBlobSyncConfigured] Auto-healed storage settings');
+    }
+  }
+  const t = APP?.state?.settings?.storage || {};
+  return !!(t.getUrl && t.putUrl && t.blobKey);
 }
 function isFirebaseCloudAvailable() {
   return !!firebaseStorage;
@@ -8424,6 +8434,25 @@ window._autoSetupEndpoints = function() {
   const pi = document.getElementById('setPutUrl'); if (pi) pi.value = newPut;
   saveSettings(APP.state.settings);
   toast('ok', '🔧 Endpoints gesetzt', 'GET/PUT URLs auf ' + origin);
+};
+
+// Setzt ALLE Storage-Felder auf die Standard-Defaults (relative Pfade — funktionieren überall wo die App auf gleicher Netlify-Site läuft)
+window._resetStorageDefaults = function() {
+  if (!APP?.state?.settings?.storage) return;
+  
+  APP.state.settings.storage.getUrl = "/.netlify/functions/blob-get?key={key}";
+  APP.state.settings.storage.putUrl = "/.netlify/functions/blob-put?key={key}";
+  APP.state.settings.storage.blobKey = "app-data.json";
+  
+  // UI-Felder updaten falls offen
+  const bk = document.getElementById('setBlobKey'); if (bk) bk.value = "app-data.json";
+  const gi = document.getElementById('setGetUrl'); if (gi) gi.value = "/.netlify/functions/blob-get?key={key}";
+  const pi = document.getElementById('setPutUrl'); if (pi) pi.value = "/.netlify/functions/blob-put?key={key}";
+  
+  saveSettings(APP.state.settings);
+  
+  console.log('[_resetStorageDefaults] Storage zurückgesetzt:', APP.state.settings.storage);
+  toast('ok', '⟳ Zurückgesetzt', 'Storage-URLs sind wieder auf Standard. Versuche jetzt Pull/Import.');
 };
 
 console.log('💡 Tipp: Führe "diagnoseSync()" in der Console aus oder gehe zu Settings → Storage');
@@ -40549,6 +40578,7 @@ async function init() {
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button type="button" class="btn primary" onclick="window.diagnoseSync()">🩺 Diagnose ausführen</button>
                 <button type="button" class="btn" onclick="window._autoSetupEndpoints()">🔧 URLs auf aktuelle Domain setzen</button>
+                <button type="button" class="btn" style="background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.4)" onclick="window._resetStorageDefaults()">⟳ Storage-URLs zurücksetzen</button>
               </div>
               <div id="diagnoseResult" style="margin-top:10px;font-size:12px;font-family:monospace;color:var(--muted)"></div>
             </div>
