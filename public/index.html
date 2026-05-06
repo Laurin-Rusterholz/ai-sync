@@ -48209,17 +48209,17 @@ window.handleClick = function(e){
     
     async function doDownload(url, fileName) {
       const safeName = fileName || 'download';
+      console.log('[doDownload] starting:', safeName, url);
       toast("ok", "Download startet...", safeName);
+      
+      // Versuche direkt von der Firebase-URL zu fetchen (Token in URL erlaubt CORS)
       try {
-        // Über Netlify-Proxy holen (forciert Content-Disposition: attachment + umgeht CORS bei Firebase Storage)
-        const proxyBase = 'https://management-xo2-pro.netlify.app/.netlify/functions/download-proxy';
-        const proxyUrl = proxyBase + '?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(safeName);
-        
-        const resp = await fetch(proxyUrl);
+        const resp = await fetch(url, { mode: 'cors' });
+        console.log('[doDownload] direct fetch status:', resp.status);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const blob = await resp.blob();
+        console.log('[doDownload] got blob:', blob.size, 'bytes', blob.type);
         
-        // Blob-URL erstellen + unsichtbarer Link + click
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
@@ -48227,32 +48227,43 @@ window.handleClick = function(e){
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
-        
-        // Cleanup
         setTimeout(() => {
           document.body.removeChild(a);
           URL.revokeObjectURL(blobUrl);
         }, 500);
-        
         toast("ok", "✓ Heruntergeladen", safeName);
+        return;
       } catch(e) {
-        console.warn('Proxy-Download fehlgeschlagen, versuche Direkt-Download:', e);
-        // Fallback: direkter Download (öffnet Bild evtl. inline, aber besser als nichts)
-        try {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = safeName;
-          a.target = '_blank';
-          a.rel = 'noopener';
-          a.style.display = 'none';
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => document.body.removeChild(a), 500);
-          toast("warn", "Fallback-Download", "Im neuen Tab geöffnet");
-        } catch(e2) {
-          toast("danger", "Fehler", "Download fehlgeschlagen: " + (e.message || e2.message));
-        }
+        console.warn('[doDownload] direct fetch failed:', e);
       }
+      
+      // Fallback 1: Proxy versuchen falls direkter Fetch CORS-blockiert wurde
+      try {
+        const proxyBase = 'https://management-xo2-pro.netlify.app/.netlify/functions/download-proxy';
+        const proxyUrl = proxyBase + '?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(safeName);
+        const resp = await fetch(proxyUrl);
+        console.log('[doDownload] proxy fetch status:', resp.status);
+        if (!resp.ok) throw new Error('Proxy HTTP ' + resp.status);
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = safeName;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        }, 500);
+        toast("ok", "✓ Heruntergeladen", safeName);
+        return;
+      } catch(e) {
+        console.warn('[doDownload] proxy fetch failed:', e);
+      }
+      
+      // Letzter Fallback: rechte-Maus-Hint statt Browser-Tab
+      toast("warn", "Download nicht möglich", "Rechtsklick auf Datei-Name → 'Verknüpfung speichern unter'");
     }
     
     if (file.url) {
