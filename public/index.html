@@ -6573,6 +6573,8 @@ function emptyData() {
       updates: {},
       ideas: {},
       decisions: {},
+      emails: {},
+      persons: {},
     },
     timers: {},
     pinnedItems: [], // ["task:id", "project:id", ...]
@@ -6655,6 +6657,44 @@ function normalizeData(data) {
   }
   
   e.tags = e.tags || {};
+  // Normalize emails (Mail Hub)
+  e.emails = e.emails || {};
+  for (const m of Object.values(e.emails)) {
+    m.subject = m.subject || "";
+    m.body = m.body || "";
+    m.summary = m.summary || "";
+    m.date = m.date || nowIso().slice(0, 10);
+    m.direction = m.direction || "incoming"; // incoming | outgoing | internal
+    m.fromPersonId = m.fromPersonId || null;
+    m.toPersonIds = Array.isArray(m.toPersonIds) ? m.toPersonIds : [];
+    m.ccPersonIds = Array.isArray(m.ccPersonIds) ? m.ccPersonIds : [];
+    m.linkedTasks = Array.isArray(m.linkedTasks) ? m.linkedTasks : [];
+    m.linkedProjects = Array.isArray(m.linkedProjects) ? m.linkedProjects : [];
+    m.linkedOrganizations = Array.isArray(m.linkedOrganizations) ? m.linkedOrganizations : [];
+    m.linkedNotes = Array.isArray(m.linkedNotes) ? m.linkedNotes : [];
+    m.linkedIdeas = Array.isArray(m.linkedIdeas) ? m.linkedIdeas : [];
+    m.tags = Array.isArray(m.tags) ? m.tags : [];
+    m.files = Array.isArray(m.files) ? m.files : [];
+    m.read = m.read !== false;
+    m.archived = !!m.archived;
+    m.starred = !!m.starred;
+    m.createdAt = m.createdAt || nowIso();
+    m.updatedAt = m.updatedAt || nowIso();
+  }
+  // Normalize persons
+  e.persons = e.persons || {};
+  for (const p of Object.values(e.persons)) {
+    p.name = p.name || "Unbekannt";
+    p.emails = Array.isArray(p.emails) ? p.emails : [];
+    p.phones = Array.isArray(p.phones) ? p.phones : [];
+    p.role = p.role || "";
+    p.notes = p.notes || "";
+    p.organizationId = p.organizationId || null;
+    p.tags = Array.isArray(p.tags) ? p.tags : [];
+    p.createdAt = p.createdAt || nowIso();
+    p.updatedAt = p.updatedAt || nowIso();
+  }
+  
   // Normalize updates
 e.updates = e.updates || {};
 for (const u of Object.values(e.updates)) {
@@ -10213,6 +10253,8 @@ function buildFullContextPrompt() {
 • Ideen: ${ideas.length}
 • Ziele: ${goals.length} (${goals.filter(g => g.status === "active").length} aktiv)
 • Meetings: ${meetings.length}
+• E-Mails: ${Object.keys(e.emails || {}).length} im Mail Hub
+• Personen: ${Object.keys(e.persons || {}).length} Kontakte
 • Kontakte: ${contacts.length}
 • Habits: ${habits.length}
 • Offene Updates: ${openUpdates.length}
@@ -10543,6 +10585,78 @@ Nutze dieses Wissen um:
 - Bei Fragen nach spezifischen Informationen: Durchsuche ALLE Daten
 - Antworte präzise, strukturiert und auf Deutsch
 - Du kannst Termine erstellen, Aufgaben anlegen und Verknüpfungen herstellen`;
+
+  // ========== ALLE E-MAILS (VOLLSTÄNDIG, ALLE) ==========
+  const emails = Object.values(e.emails || {});
+  const persons = Object.values(e.persons || {});
+  const personById = (id) => (e.persons || {})[id];
+  const personName = (id) => personById(id)?.name || null;
+  
+  if (persons.length > 0) {
+    context += `\n\n=== ALLE PERSONEN (${persons.length}) ===\n`;
+    persons.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).forEach(p => {
+      const orgName = p.organizationId ? (e.organizations?.[p.organizationId]?.name || '') : '';
+      const parts = [p.name];
+      if (p.role) parts.push('· ' + p.role);
+      if (orgName) parts.push('@ ' + orgName);
+      if (p.emails?.length) parts.push('📧 ' + p.emails.join(', '));
+      if (p.phones?.length) parts.push('📞 ' + p.phones.join(', '));
+      context += `• ${parts.join(' ')}`;
+      if (p.notes) context += `\n  Notiz: ${p.notes.slice(0, 200)}`;
+      context += '\n';
+    });
+  }
+  
+  if (emails.length > 0) {
+    context += `\n=== ALLE E-MAILS - VOLLSTÄNDIGE KORRESPONDENZ (${emails.length}) ===\n`;
+    context += `Du hast ZUGRIFF auf ALLE E-Mails (nicht nur die letzten 5). Nutze diese komplett für Antworten zu Personen, Projekten, Vereinbarungen, etc.\n\n`;
+    
+    // Sortiert nach Datum, neueste zuerst
+    const sortedEmails = emails.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    
+    sortedEmails.forEach(m => {
+      const fromName = personName(m.fromPersonId) || 'Unbekannt';
+      const toNames = (m.toPersonIds || []).map(personName).filter(Boolean).join(', ');
+      const ccNames = (m.ccPersonIds || []).map(personName).filter(Boolean).join(', ');
+      const dirLabel = { incoming: '📥 EINGANG', outgoing: '📤 AUSGANG', internal: '🔄 INTERN' }[m.direction] || m.direction;
+      
+      context += `\n[${m.date}] ${dirLabel} — "${m.subject || '(Kein Betreff)'}"\n`;
+      context += `  Von: ${fromName}`;
+      if (toNames) context += ` → An: ${toNames}`;
+      if (ccNames) context += ` (CC: ${ccNames})`;
+      context += '\n';
+      
+      // Verknüpfungen
+      const links = [];
+      if (m.linkedTasks?.length) {
+        const taskTitles = m.linkedTasks.map(tid => e.tasks?.[tid]?.title).filter(Boolean);
+        if (taskTitles.length) links.push(`Tasks: ${taskTitles.join(', ')}`);
+      }
+      if (m.linkedProjects?.length) {
+        const projTitles = m.linkedProjects.map(pid => e.projects?.[pid]?.title).filter(Boolean);
+        if (projTitles.length) links.push(`Projekte: ${projTitles.join(', ')}`);
+      }
+      if (m.linkedOrganizations?.length) {
+        const orgNames = m.linkedOrganizations.map(oid => e.organizations?.[oid]?.name).filter(Boolean);
+        if (orgNames.length) links.push(`Organisationen: ${orgNames.join(', ')}`);
+      }
+      if (links.length) context += `  Verknüpft: ${links.join(' | ')}\n`;
+      
+      // Zusammenfassung wenn vorhanden, sonst Body (komplett wenn kurz, sonst gekürzt)
+      if (m.summary) {
+        context += `  Zusammenfassung: ${m.summary}\n`;
+      }
+      if (m.body) {
+        // Komplette E-Mail wenn unter 1500 Zeichen, sonst gekürzt
+        const bodyText = m.body.length <= 1500 ? m.body : (m.body.slice(0, 1500) + '...[gekürzt]');
+        context += `  Inhalt:\n  ${bodyText.split('\n').join('\n  ')}\n`;
+      }
+      if (m.files?.length) {
+        context += `  Anhänge: ${m.files.map(f => f.name).join(', ')}\n`;
+      }
+      if (m.starred) context += `  ⭐ MARKIERT\n`;
+    });
+  }
 
   return context;
 }
@@ -12055,6 +12169,8 @@ function renderAppNav() {
     {key:"notes", icon:"📝", label:t("notes")},
     {key:"projects", icon:"📦", label:t("projects")},
     {key:"ideas", icon:"💡", label:t("ideas")},
+    {key:"mailhub", icon:"📬", label:"Mail Hub"},
+    {key:"persons", icon:"👤", label:"Personen"},
     {key:"updates", icon:"🔧", label:t("updates")},
     {key:"learn", icon:"📚", label:"RecallLab"},
     {key:"calendar", icon:"📅", label:t("calendar")},
@@ -12218,6 +12334,8 @@ function getAllApps() {
     {key:"strategies", icon:"🧭", label:t("strategies"), desc:getLang()==="de"?"Strategische Planung":"Strategic planning"},
     {key:"ideas", icon:"💡", label:t("ideas"), desc:getLang()==="de"?"Ideensammlung":"Idea collection"},
     {key:"meetings", icon:"🤝", label:t("meetings"), desc:getLang()==="de"?"Besprechungen":"Meetings"},
+    {key:"mailhub", icon:"📬", label:"Mail Hub", desc:getLang()==="de"?"E-Mails, Korrespondenz & Personen":"Emails, correspondence & people"},
+    {key:"persons", icon:"👤", label:"Personen", desc:getLang()==="de"?"Kontaktverwaltung":"Contact management"},
     {key:"articles", icon:"📰", label:"Newsroom Hub", desc:getLang()==="de"?"Redaktion, Artikel, Recherche & RecallLab":"Newsroom, articles, research & RecallLab"},
     {key:"knowledge", icon:"🧠", label:t("knowledge"), desc:getLang()==="de"?"Wissensdatenbank":"Knowledge base"},
     {key:"time", icon:"⏱️", label:t("time"), desc:getLang()==="de"?"Zeit tracken":"Track time"},
@@ -12558,6 +12676,8 @@ function renderMain() {
     case "dailybriefing": html = viewDailyBriefing(); break;
     case "reflecta": html = viewReflecta(); break;
     case "decisions": html = id ? viewDecisionDetail(id) : viewDecisions(); break;
+    case "mailhub": html = id ? viewEmailDetail(id) : viewMailHub(); break;
+    case "persons": html = id ? viewPersonDetail(id) : viewPersons(); break;
     case "journal": openJournalBooklet(); return;
     case "settings": { openSettings(); return; }
 
@@ -63992,6 +64112,30 @@ function buildSpotlightItems() {
     });
   });
   
+  // E-Mails (Mail Hub)
+  Object.values(e.emails || {}).forEach(m => {
+    if (m.archived) return;
+    const fromName = m.fromPersonId ? (e.persons?.[m.fromPersonId]?.name || '') : '';
+    items.push({
+      kind: 'email', icon: '📬', id: m.id,
+      title: m.subject || '(Kein Betreff)',
+      sub: (fromName ? fromName + ' · ' : '') + (m.summary || (m.body || '').slice(0, 80)),
+      route: '#/mailhub/' + m.id,
+      open: () => { window.location.hash = '#/mailhub/' + m.id; }
+    });
+  });
+  
+  // Personen
+  Object.values(e.persons || {}).forEach(p => {
+    items.push({
+      kind: 'person', icon: '👤', id: p.id,
+      title: p.name || 'Unbekannt',
+      sub: p.role || (p.emails?.[0] || ''),
+      route: '#/persons/' + p.id,
+      open: () => { window.location.hash = '#/persons/' + p.id; }
+    });
+  });
+  
   // Meetings
   Object.values(e.meetings || {}).forEach(m => {
     if (m.archived) return;
@@ -64082,6 +64226,8 @@ function buildSpotlightItems() {
         if (typeof window.openReadingHub === 'function') window.openReadingHub();
         else window.location.hash = '#/readinghub';
       }},
+      { icon: '📬', title: 'Mail Hub', sub: 'E-Mails, Personen, Korrespondenz', open: () => { window.location.hash = '#/mailhub'; } },
+      { icon: '👤', title: 'Personen', sub: 'Kontaktverwaltung', open: () => { window.location.hash = '#/persons'; } },
       { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
         if (typeof window.openReadlist === 'function') window.openReadlist();
       }},
@@ -70059,6 +70205,1409 @@ console.log('📚 Leseliste geladen');
 })();
 </script>
 <!-- ═══ END LESELISTE ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ═══ MAIL HUB + PERSONS                                              ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<style id="mailhubStyles">
+.mh-container { padding: 24px; max-width: 1400px; margin: 0 auto; }
+.mh-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+.mh-title { font-size:24px; font-weight:700; display:flex; align-items:center; gap:10px; }
+.mh-stats { display:flex; gap:16px; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+.mh-stat { display:flex; align-items:center; gap:5px; }
+.mh-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.mh-search { flex:1; min-width:240px; padding:9px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; color:var(--text); font-size:13px; }
+.mh-search:focus { outline:none; border-color:#a855f7; box-shadow:0 0 0 3px rgba(168,85,247,0.15); }
+.mh-filter { padding:7px 12px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:8px; font-size:12px; color:var(--muted); cursor:pointer; transition:all .15s; }
+.mh-filter:hover { color:var(--text); border-color:rgba(168,85,247,0.3); }
+.mh-filter.active { background:linear-gradient(135deg,#a855f7,#7c3aed); color:#fff; border-color:transparent; }
+.mh-add-btn { padding:9px 16px; background:linear-gradient(135deg,#a855f7,#7c3aed); color:#fff; border:0; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 4px 12px rgba(168,85,247,0.3); }
+.mh-add-btn:hover { box-shadow:0 6px 18px rgba(168,85,247,0.45); }
+.mh-list { display:flex; flex-direction:column; gap:8px; }
+.mh-mail-card {
+  display:flex; gap:14px; padding:16px 18px;
+  background:rgba(255,255,255,0.03);
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:12px; cursor:pointer; transition:all .15s;
+  position:relative;
+}
+.mh-mail-card:hover { background:rgba(168,85,247,0.05); border-color:rgba(168,85,247,0.25); }
+.mh-mail-card.unread { background:rgba(168,85,247,0.04); border-color:rgba(168,85,247,0.18); }
+.mh-mail-card.unread::before { content:''; position:absolute; left:-2px; top:14px; bottom:14px; width:3px; background:linear-gradient(180deg,#a855f7,#7c3aed); border-radius:2px; }
+.mh-mail-icon { flex-shrink:0; width:42px; height:42px; border-radius:50%; background:linear-gradient(135deg,rgba(168,85,247,0.15),rgba(124,58,237,0.05)); display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; color:#c084fc; }
+.mh-mail-body { flex:1; min-width:0; }
+.mh-mail-row1 { display:flex; align-items:baseline; gap:10px; margin-bottom:4px; }
+.mh-mail-from { font-weight:600; color:var(--text); flex-shrink:0; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mh-mail-direction { font-size:10px; padding:2px 7px; border-radius:6px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; flex-shrink:0; }
+.mh-mail-direction.incoming { background:rgba(34,197,94,0.15); color:#86efac; }
+.mh-mail-direction.outgoing { background:rgba(99,102,241,0.15); color:#a5b4fc; }
+.mh-mail-direction.internal { background:rgba(245,158,11,0.15); color:#fbbf24; }
+.mh-mail-date { margin-left:auto; font-size:11px; color:var(--muted); flex-shrink:0; }
+.mh-mail-subject { font-size:14px; font-weight:600; color:var(--text); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mh-mail-summary { font-size:12.5px; color:var(--muted); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.mh-mail-tags { display:flex; gap:5px; margin-top:7px; flex-wrap:wrap; }
+.mh-mail-tag { font-size:10px; padding:2px 7px; border-radius:5px; background:rgba(255,255,255,0.05); color:var(--muted); }
+.mh-mail-tag.task { background:rgba(34,197,94,0.12); color:#86efac; }
+.mh-mail-tag.project { background:rgba(99,102,241,0.12); color:#a5b4fc; }
+.mh-mail-tag.org { background:rgba(245,158,11,0.12); color:#fbbf24; }
+.mh-mail-actions { display:flex; gap:4px; align-items:center; flex-shrink:0; }
+.mh-mail-actions button { background:none; border:0; color:var(--muted); cursor:pointer; padding:4px 8px; border-radius:6px; font-size:14px; }
+.mh-mail-actions button:hover { background:rgba(168,85,247,0.15); color:#fff; }
+.mh-empty { text-align:center; padding:60px 20px; color:var(--muted); }
+.mh-empty-icon { font-size:48px; margin-bottom:14px; }
+
+/* Detail */
+.mh-detail { max-width:900px; margin:0 auto; padding:24px; }
+.mh-detail-head { margin-bottom:24px; }
+.mh-detail-subject { font-size:24px; font-weight:700; margin:0 0 8px; line-height:1.3; }
+.mh-detail-meta { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin-bottom:16px; }
+.mh-detail-section { padding:16px 0; border-top:1px solid rgba(255,255,255,0.06); }
+.mh-detail-section h4 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); margin:0 0 10px; }
+.mh-body-content { font-size:14px; line-height:1.7; color:var(--text); white-space:pre-wrap; }
+.mh-summary-box { padding:14px; background:rgba(168,85,247,0.06); border-left:3px solid #a855f7; border-radius:6px; font-size:13.5px; line-height:1.6; }
+.mh-link-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:8px; font-size:12.5px; color:var(--text); cursor:pointer; transition:all .15s; }
+.mh-link-pill:hover { background:rgba(168,85,247,0.15); border-color:rgba(168,85,247,0.35); }
+.mh-person-chip { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; background:rgba(99,102,241,0.1); border-radius:999px; font-size:12px; color:#a5b4fc; cursor:pointer; }
+.mh-person-chip:hover { background:rgba(99,102,241,0.2); }
+.mh-person-avatar { width:18px; height:18px; border-radius:50%; background:linear-gradient(135deg,#a855f7,#7c3aed); display:flex; align-items:center; justify-content:center; color:#fff; font-size:9px; font-weight:700; }
+
+/* Modal */
+.mh-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); z-index:10500; display:none; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto; }
+.mh-modal-overlay.show { display:flex; }
+.mh-modal { background:#0a0a0b; border:1px solid rgba(255,255,255,0.08); border-radius:16px; max-width:760px; width:100%; max-height:calc(100vh - 64px); display:flex; flex-direction:column; overflow:hidden; box-shadow:0 30px 60px rgba(0,0,0,0.5); }
+.mh-modal-head { padding:18px 22px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.mh-modal-title { font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; }
+.mh-modal-close { margin-left:auto; background:none; border:0; color:var(--muted); font-size:22px; cursor:pointer; line-height:1; padding:0 4px; }
+.mh-modal-body { padding:22px; flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:14px; }
+.mh-modal-foot { padding:14px 22px; border-top:1px solid rgba(255,255,255,0.06); display:flex; gap:8px; justify-content:flex-end; flex-shrink:0; }
+.mh-field { display:flex; flex-direction:column; gap:5px; }
+.mh-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); }
+.mh-input, .mh-textarea, .mh-select {
+  width:100%; padding:10px 13px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:9px; color:var(--text); font-size:13.5px; font-family:inherit;
+}
+.mh-textarea { min-height:120px; resize:vertical; line-height:1.6; }
+.mh-textarea.body { min-height:240px; font-size:14px; }
+.mh-input:focus, .mh-textarea:focus, .mh-select:focus { outline:none; border-color:#a855f7; box-shadow:0 0 0 3px rgba(168,85,247,0.15); }
+.mh-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.mh-row.three { grid-template-columns:1fr 1fr 1fr; }
+.mh-btn { padding:9px 18px; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; border:0; }
+.mh-btn.primary { background:linear-gradient(135deg,#a855f7,#7c3aed); color:#fff; }
+.mh-btn.ghost { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:var(--text); }
+.mh-btn.danger { background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); color:#f87171; }
+.mh-btn:hover { transform:translateY(-1px); }
+
+/* Person Picker */
+.mh-person-picker { position:relative; }
+.mh-person-input { width:100%; padding:10px 13px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:9px; color:var(--text); font-size:13.5px; }
+.mh-person-suggestions { position:absolute; top:100%; left:0; right:0; background:#0f0f10; border:1px solid rgba(168,85,247,0.3); border-radius:8px; max-height:240px; overflow-y:auto; z-index:50; margin-top:4px; box-shadow:0 12px 28px rgba(0,0,0,0.5); display:none; }
+.mh-person-suggestions.show { display:block; }
+.mh-person-suggestion { padding:10px 13px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:10px; transition:background 0.15s; }
+.mh-person-suggestion:hover { background:rgba(168,85,247,0.15); }
+.mh-person-suggestion.create { color:#c084fc; font-style:italic; border-top:1px solid rgba(255,255,255,0.06); }
+.mh-person-tags-row { display:flex; flex-wrap:wrap; gap:6px; min-height:36px; padding:6px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:9px; align-items:center; }
+.mh-person-tag-removable { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; background:rgba(168,85,247,0.15); border:1px solid rgba(168,85,247,0.3); border-radius:999px; font-size:12px; color:#d8b4fe; }
+.mh-person-tag-removable button { background:none; border:0; color:#d8b4fe; cursor:pointer; padding:0; font-size:14px; line-height:1; }
+
+/* Link picker (tasks, projects, orgs) */
+.mh-link-picker { display:flex; flex-direction:column; gap:8px; }
+.mh-link-search-input { padding:8px 12px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:8px; color:var(--text); font-size:13px; }
+.mh-link-results { max-height:160px; overflow-y:auto; border:1px solid rgba(255,255,255,0.06); border-radius:8px; }
+.mh-link-result { padding:8px 12px; cursor:pointer; font-size:12.5px; display:flex; align-items:center; gap:8px; }
+.mh-link-result:hover { background:rgba(168,85,247,0.1); }
+.mh-link-selected { display:flex; flex-wrap:wrap; gap:6px; }
+
+/* Persons View */
+.mh-persons-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }
+.mh-person-card { padding:16px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; cursor:pointer; transition:all .15s; }
+.mh-person-card:hover { background:rgba(99,102,241,0.05); border-color:rgba(99,102,241,0.25); transform:translateY(-2px); }
+.mh-person-card-head { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+.mh-person-card-avatar { width:42px; height:42px; border-radius:50%; background:linear-gradient(135deg,#a855f7,#7c3aed); display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px; font-weight:700; flex-shrink:0; }
+.mh-person-card-name { font-size:15px; font-weight:700; color:var(--text); }
+.mh-person-card-role { font-size:11.5px; color:var(--muted); }
+.mh-person-card-meta { font-size:11px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+</style>
+
+<script id="mailhubScript">
+(function() {
+  "use strict";
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════════════
+  function mhEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+  
+  function mhFmtDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    const now = new Date();
+    const diffSec = (now - d) / 1000;
+    if (diffSec < 60) return "Gerade eben";
+    if (diffSec < 3600) return Math.floor(diffSec/60) + " min";
+    if (diffSec < 86400) return Math.floor(diffSec/3600) + " h";
+    if (diffSec < 86400 * 7) return Math.floor(diffSec/86400) + " Tagen";
+    return d.toLocaleDateString("de-CH", { day: "2-digit", month: "short", year: "numeric" });
+  }
+  
+  function mhFmtDateLong(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleString("de-CH", { 
+      weekday: "long", day: "2-digit", month: "long", year: "numeric",
+      hour: "2-digit", minute: "2-digit"
+    });
+  }
+  
+  function mhInitials(name) {
+    return (name || "?").trim().split(/\s+/).slice(0, 2).map(s => s[0] || "").join("").toUpperCase();
+  }
+  
+  function mhId(prefix) {
+    return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+  
+  function mhData() { return APP?.state?.data?.entities; }
+  function mhEmails() { return mhData()?.emails || {}; }
+  function mhPersons() { return mhData()?.persons || {}; }
+  
+  function mhSave() {
+    if (typeof scheduleSave === "function") scheduleSave();
+    else if (typeof window.scheduleSave === "function") window.scheduleSave();
+    else if (typeof saveLocalData === "function") saveLocalData();
+  }
+  
+  function mhRender() {
+    if (typeof window.render === "function") window.render();
+  }
+  
+  function mhToast(kind, title, body) {
+    if (typeof toast === "function") toast(kind, title, body);
+    else console.log(kind, title, body);
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERSONS
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  // Find person by name (case-insensitive); create if missing
+  window.mhFindOrCreatePerson = function(name) {
+    name = (name || "").trim();
+    if (!name) return null;
+    const persons = Object.values(mhPersons());
+    const existing = persons.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (existing) return existing;
+    
+    // Create new
+    const id = mhId("prs");
+    const newPerson = {
+      id, name, emails: [], phones: [], role: "", notes: "",
+      organizationId: null, tags: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    APP.state.data.entities.persons[id] = newPerson;
+    mhSave();
+    return newPerson;
+  };
+  
+  window.mhPersonsList = function() {
+    return Object.values(mhPersons()).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  };
+  
+  window.mhSearchPersons = function(query) {
+    const q = (query || "").toLowerCase().trim();
+    if (!q) return mhPersonsList().slice(0, 8);
+    return mhPersonsList()
+      .filter(p => p.name.toLowerCase().includes(q) || (p.emails || []).some(e => e.toLowerCase().includes(q)))
+      .slice(0, 8);
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // VIEWS — Mail Hub Liste
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  let _mhFilter = "all"; // all | unread | starred | archived
+  let _mhSearch = "";
+  
+  window.mhSetFilter = function(f) {
+    _mhFilter = f;
+    mhRender();
+  };
+  
+  window.mhSearchInput = function(v) {
+    _mhSearch = v;
+    const list = document.getElementById("mhMailList");
+    if (list) list.innerHTML = renderMailListInner();
+  };
+  
+  function getFilteredMails() {
+    let mails = Object.values(mhEmails());
+    
+    if (_mhFilter === "unread") mails = mails.filter(m => !m.read && !m.archived);
+    else if (_mhFilter === "starred") mails = mails.filter(m => m.starred);
+    else if (_mhFilter === "archived") mails = mails.filter(m => m.archived);
+    else mails = mails.filter(m => !m.archived);
+    
+    if (_mhSearch) {
+      const q = _mhSearch.toLowerCase();
+      mails = mails.filter(m => 
+        (m.subject || "").toLowerCase().includes(q) ||
+        (m.body || "").toLowerCase().includes(q) ||
+        (m.summary || "").toLowerCase().includes(q)
+      );
+    }
+    
+    return mails.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }
+  
+  function renderMailListInner() {
+    const mails = getFilteredMails();
+    
+    if (mails.length === 0) {
+      return `<div class="mh-empty">
+        <div class="mh-empty-icon">📭</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px">Keine E-Mails</div>
+        <div style="font-size:12.5px">Klicke auf "+ Neue E-Mail" um deine erste E-Mail hinzuzufügen.</div>
+      </div>`;
+    }
+    
+    const persons = mhPersons();
+    
+    return mails.map(m => {
+      const fromPerson = persons[m.fromPersonId];
+      const fromName = fromPerson ? fromPerson.name : "Unbekannt";
+      const directionLabel = { incoming: "Eingang", outgoing: "Ausgang", internal: "Intern" }[m.direction] || m.direction;
+      
+      const tags = [];
+      if (m.linkedTasks?.length) tags.push(`<span class="mh-mail-tag task">✓ ${m.linkedTasks.length} Task${m.linkedTasks.length > 1 ? "s" : ""}</span>`);
+      if (m.linkedProjects?.length) tags.push(`<span class="mh-mail-tag project">📦 ${m.linkedProjects.length}</span>`);
+      if (m.linkedOrganizations?.length) tags.push(`<span class="mh-mail-tag org">🏛️ ${m.linkedOrganizations.length}</span>`);
+      if (m.files?.length) tags.push(`<span class="mh-mail-tag">📎 ${m.files.length}</span>`);
+      
+      const previewText = m.summary || (m.body || "").replace(/\s+/g, " ").slice(0, 200);
+      
+      return `<div class="mh-mail-card ${!m.read ? "unread" : ""}" onclick="window.navigate('mailhub','${m.id}')">
+        <div class="mh-mail-icon">${mhEsc(mhInitials(fromName))}</div>
+        <div class="mh-mail-body">
+          <div class="mh-mail-row1">
+            <span class="mh-mail-from">${mhEsc(fromName)}</span>
+            <span class="mh-mail-direction ${m.direction}">${directionLabel}</span>
+            <span class="mh-mail-date">${m.starred ? "⭐ " : ""}${mhFmtDate(m.date)}</span>
+          </div>
+          <div class="mh-mail-subject">${mhEsc(m.subject || "(Kein Betreff)")}</div>
+          ${previewText ? `<div class="mh-mail-summary">${mhEsc(previewText)}</div>` : ""}
+          ${tags.length ? `<div class="mh-mail-tags">${tags.join("")}</div>` : ""}
+        </div>
+        <div class="mh-mail-actions" onclick="event.stopPropagation()">
+          <button onclick="mhToggleStar('${m.id}')" title="${m.starred ? "Stern entfernen" : "Mit Stern markieren"}">${m.starred ? "⭐" : "☆"}</button>
+          <button onclick="mhToggleRead('${m.id}')" title="${m.read ? "Als ungelesen" : "Als gelesen"}">${m.read ? "📭" : "📬"}</button>
+          <button onclick="mhArchive('${m.id}')" title="Archivieren">📥</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  
+  window.viewMailHub = function() {
+    const all = Object.values(mhEmails()).filter(m => !m.archived);
+    const unreadCount = all.filter(m => !m.read).length;
+    const starredCount = Object.values(mhEmails()).filter(m => m.starred).length;
+    const archivedCount = Object.values(mhEmails()).filter(m => m.archived).length;
+    const personsCount = Object.keys(mhPersons()).length;
+    
+    return `<div class="mh-container">
+      <div class="mh-header">
+        <div>
+          <div class="mh-title">📬 Mail Hub</div>
+          <div class="mh-stats">
+            <span class="mh-stat">📥 ${all.length} aktiv</span>
+            ${unreadCount > 0 ? `<span class="mh-stat" style="color:#c084fc">📬 ${unreadCount} ungelesen</span>` : ""}
+            ${starredCount > 0 ? `<span class="mh-stat">⭐ ${starredCount} markiert</span>` : ""}
+            <span class="mh-stat">👤 ${personsCount} Personen</span>
+          </div>
+        </div>
+        <button class="mh-add-btn" onclick="mhOpenEditor()">+ Neue E-Mail</button>
+      </div>
+      
+      <div class="mh-toolbar">
+        <input type="text" class="mh-search" placeholder="🔍 In E-Mails suchen..." 
+               oninput="mhSearchInput(this.value)" value="${mhEsc(_mhSearch)}" />
+        <button class="mh-filter ${_mhFilter==='all'?'active':''}" onclick="mhSetFilter('all')">Alle</button>
+        <button class="mh-filter ${_mhFilter==='unread'?'active':''}" onclick="mhSetFilter('unread')">Ungelesen ${unreadCount > 0 ? `(${unreadCount})` : ""}</button>
+        <button class="mh-filter ${_mhFilter==='starred'?'active':''}" onclick="mhSetFilter('starred')">⭐ Markiert</button>
+        <button class="mh-filter ${_mhFilter==='archived'?'active':''}" onclick="mhSetFilter('archived')">📦 Archiv ${archivedCount > 0 ? `(${archivedCount})` : ""}</button>
+      </div>
+      
+      <div id="mhMailList" class="mh-list">${renderMailListInner()}</div>
+    </div>`;
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // VIEW — Mail Detail
+  // ═══════════════════════════════════════════════════════════════════════
+  window.viewEmailDetail = function(id) {
+    const mail = mhEmails()[id];
+    if (!mail) return `<div class="mh-empty"><div class="mh-empty-icon">❓</div>Mail nicht gefunden.<br><button class="mh-btn primary" onclick="navigate('mailhub')" style="margin-top:14px">Zurück zur Liste</button></div>`;
+    
+    // Mark as read on view
+    if (!mail.read) {
+      mail.read = true;
+      mail.updatedAt = new Date().toISOString();
+      mhSave();
+    }
+    
+    const persons = mhPersons();
+    const fromPerson = persons[mail.fromPersonId];
+    const toList = (mail.toPersonIds || []).map(pid => persons[pid]).filter(Boolean);
+    const ccList = (mail.ccPersonIds || []).map(pid => persons[pid]).filter(Boolean);
+    
+    function renderPersonChip(p) {
+      if (!p) return "";
+      return `<span class="mh-person-chip" onclick="navigate('persons','${p.id}')">
+        <span class="mh-person-avatar">${mhEsc(mhInitials(p.name))}</span>
+        ${mhEsc(p.name)}
+      </span>`;
+    }
+    
+    const directionLabel = { incoming: "📥 Eingehend", outgoing: "📤 Ausgehend", internal: "🔄 Intern" }[mail.direction] || mail.direction;
+    
+    // Linked entities
+    const ents = mhData();
+    const linkedHtml = [];
+    
+    if (mail.linkedTasks?.length) {
+      const taskPills = mail.linkedTasks.map(tid => {
+        const t = ents.tasks?.[tid];
+        if (!t) return "";
+        const done = t.status === "done";
+        return `<span class="mh-link-pill" onclick="navigate('tasks','${tid}')">
+          ${done ? "✓" : "◯"} ${mhEsc(t.title || "Task")}
+        </span>`;
+      }).filter(Boolean).join("");
+      if (taskPills) linkedHtml.push(`<div class="mh-detail-section"><h4>✅ Aufgaben</h4><div style="display:flex;gap:6px;flex-wrap:wrap">${taskPills}</div></div>`);
+    }
+    
+    if (mail.linkedProjects?.length) {
+      const projPills = mail.linkedProjects.map(pid => {
+        const p = ents.projects?.[pid];
+        if (!p) return "";
+        return `<span class="mh-link-pill" onclick="navigate('projects','${pid}')">📦 ${mhEsc(p.title || "Projekt")}</span>`;
+      }).filter(Boolean).join("");
+      if (projPills) linkedHtml.push(`<div class="mh-detail-section"><h4>📦 Projekte</h4><div style="display:flex;gap:6px;flex-wrap:wrap">${projPills}</div></div>`);
+    }
+    
+    if (mail.linkedOrganizations?.length) {
+      const orgPills = mail.linkedOrganizations.map(oid => {
+        const o = ents.organizations?.[oid];
+        if (!o) return "";
+        return `<span class="mh-link-pill" onclick="navigate('organizations','${oid}')">🏛️ ${mhEsc(o.name || "Org")}</span>`;
+      }).filter(Boolean).join("");
+      if (orgPills) linkedHtml.push(`<div class="mh-detail-section"><h4>🏛️ Organisationen</h4><div style="display:flex;gap:6px;flex-wrap:wrap">${orgPills}</div></div>`);
+    }
+    
+    return `<div class="mh-detail">
+      <div style="margin-bottom:18px">
+        <button class="mh-btn ghost" onclick="navigate('mailhub')">← Zurück</button>
+        <button class="mh-btn ghost" onclick="mhOpenEditor('${id}')" style="margin-left:8px">✏️ Bearbeiten</button>
+        <button class="mh-btn ghost" onclick="mhToggleStar('${id}',true)" style="margin-left:8px">${mail.starred ? "⭐ Entstern" : "☆ Mark"}</button>
+        <button class="mh-btn ghost" onclick="mhArchive('${id}',true)" style="margin-left:8px">${mail.archived ? "↺ Wiederherstellen" : "📥 Archivieren"}</button>
+        <button class="mh-btn danger" onclick="mhDeleteEmail('${id}')" style="margin-left:8px;float:right">🗑 Löschen</button>
+      </div>
+      
+      <div class="mh-detail-head">
+        <h1 class="mh-detail-subject">${mhEsc(mail.subject || "(Kein Betreff)")}</h1>
+        <div class="mh-detail-meta">
+          <span>${directionLabel}</span>
+          <span>📅 ${mhEsc(mhFmtDateLong(mail.date))}</span>
+          ${mail.starred ? `<span>⭐ Markiert</span>` : ""}
+        </div>
+      </div>
+      
+      <div class="mh-detail-section">
+        <h4>👤 Von</h4>
+        <div>${fromPerson ? renderPersonChip(fromPerson) : '<span style="color:var(--muted)">— Unbekannt —</span>'}</div>
+      </div>
+      
+      ${toList.length ? `<div class="mh-detail-section"><h4>📨 An</h4><div style="display:flex;gap:6px;flex-wrap:wrap">${toList.map(renderPersonChip).join("")}</div></div>` : ""}
+      ${ccList.length ? `<div class="mh-detail-section"><h4>👥 CC</h4><div style="display:flex;gap:6px;flex-wrap:wrap">${ccList.map(renderPersonChip).join("")}</div></div>` : ""}
+      
+      ${mail.summary ? `<div class="mh-detail-section">
+        <h4>📝 Zusammenfassung</h4>
+        <div class="mh-summary-box">${mhEsc(mail.summary)}</div>
+      </div>` : ""}
+      
+      ${mail.body ? `<div class="mh-detail-section">
+        <h4>✉️ Inhalt</h4>
+        <div class="mh-body-content">${mhEsc(mail.body)}</div>
+      </div>` : ""}
+      
+      ${linkedHtml.join("")}
+      
+      ${mail.files?.length ? `<div class="mh-detail-section">
+        <h4>📎 Anhänge (${mail.files.length})</h4>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${mail.files.map((f,i) => `<div class="mh-link-pill" onclick="mhOpenAttachment('${id}',${i})">
+            📎 ${mhEsc(f.name || "Datei")} ${f.size ? `<span style="color:var(--muted);font-size:11px">(${(f.size/1024).toFixed(1)} KB)</span>` : ""}
+          </div>`).join("")}
+        </div>
+      </div>` : ""}
+    </div>`;
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // EDITOR — Add/Edit Mail
+  // ═══════════════════════════════════════════════════════════════════════
+  let _mhEditing = null;
+  let _mhFromPersonId = null;
+  let _mhToPersonIds = [];
+  let _mhCcPersonIds = [];
+  let _mhLinkedTasks = [];
+  let _mhLinkedProjects = [];
+  let _mhLinkedOrgs = [];
+  let _mhFiles = [];
+  
+  window.mhOpenEditor = function(emailId, skipReset) {
+    _mhEditing = emailId || null;
+    const m = emailId ? mhEmails()[emailId] : null;
+    
+    if (!skipReset) {
+      _mhFromPersonId = m?.fromPersonId || null;
+      _mhToPersonIds = [...(m?.toPersonIds || [])];
+      _mhCcPersonIds = [...(m?.ccPersonIds || [])];
+      _mhLinkedTasks = [...(m?.linkedTasks || [])];
+      _mhLinkedProjects = [...(m?.linkedProjects || [])];
+      _mhLinkedOrgs = [...(m?.linkedOrganizations || [])];
+      _mhFiles = [...(m?.files || [])];
+    }
+    
+    let overlay = document.getElementById("mhEditorOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "mhEditorOverlay";
+      overlay.className = "mh-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    overlay.innerHTML = `<div class="mh-modal" onclick="event.stopPropagation()">
+      <div class="mh-modal-head">
+        <span class="mh-modal-title">📬 ${m ? "E-Mail bearbeiten" : "Neue E-Mail hinzufügen"}</span>
+        <button class="mh-modal-close" onclick="mhCloseEditor()">×</button>
+      </div>
+      <div class="mh-modal-body">
+        <div class="mh-row">
+          <div class="mh-field">
+            <label class="mh-label">Datum</label>
+            <input type="date" id="mhDate" class="mh-input" value="${m?.date || new Date().toISOString().slice(0,10)}" />
+          </div>
+          <div class="mh-field">
+            <label class="mh-label">Richtung</label>
+            <select id="mhDirection" class="mh-select">
+              <option value="incoming" ${m?.direction === "incoming" ? "selected" : ""}>📥 Eingehend</option>
+              <option value="outgoing" ${m?.direction === "outgoing" ? "selected" : ""}>📤 Ausgehend</option>
+              <option value="internal" ${m?.direction === "internal" ? "selected" : ""}>🔄 Intern</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">Betreff</label>
+          <input type="text" id="mhSubject" class="mh-input" placeholder="z.B. Anfrage Sponsoring 2026" value="${mhEsc(m?.subject || "")}" />
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">Von (1 Person)</label>
+          ${renderSinglePersonPicker("From", _mhFromPersonId)}
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">An (mehrere möglich)</label>
+          ${renderMultiPersonPicker("To", _mhToPersonIds)}
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">CC (optional)</label>
+          ${renderMultiPersonPicker("Cc", _mhCcPersonIds)}
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">Inhalt der E-Mail</label>
+          <textarea id="mhBody" class="mh-textarea body" placeholder="Hier den vollständigen E-Mail-Text einfügen...">${mhEsc(m?.body || "")}</textarea>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">Zusammenfassung (optional, kurz)</label>
+          <textarea id="mhSummary" class="mh-textarea" placeholder="Kurze Zusammenfassung für Übersichtsanzeige...">${mhEsc(m?.summary || "")}</textarea>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">Verknüpfungen</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            ${renderLinkPicker("tasks", _mhLinkedTasks, "✅ Aufgaben")}
+            ${renderLinkPicker("projects", _mhLinkedProjects, "📦 Projekte")}
+            ${renderLinkPicker("organizations", _mhLinkedOrgs, "🏛️ Organisationen")}
+          </div>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">Anhänge</label>
+          <div id="mhFilesList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">${renderFilesList()}</div>
+          <input type="file" id="mhFileInput" multiple style="display:none" onchange="mhHandleFileSelect(event)" />
+          <button class="mh-btn ghost" onclick="document.getElementById('mhFileInput').click()" style="font-size:12px">+ Datei hinzufügen</button>
+        </div>
+      </div>
+      <div class="mh-modal-foot">
+        <button class="mh-btn ghost" onclick="mhCloseEditor()">Abbrechen</button>
+        <button class="mh-btn primary" onclick="mhSaveEmail()">${m ? "Aktualisieren" : "Speichern"}</button>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) mhCloseEditor(); };
+    
+    setTimeout(() => document.getElementById("mhSubject")?.focus(), 50);
+  };
+  
+  window.mhCloseEditor = function() {
+    const overlay = document.getElementById("mhEditorOverlay");
+    if (overlay) overlay.classList.remove("show");
+  };
+  
+  function renderSinglePersonPicker(slot, currentId) {
+    const persons = mhPersons();
+    const current = currentId ? persons[currentId] : null;
+    return `<div class="mh-person-picker">
+      <input type="text" class="mh-person-input" id="mhPersonInput${slot}" 
+             placeholder="${current ? mhEsc(current.name) : "Name eingeben oder neu erstellen..."}" 
+             oninput="mhPersonSearch('${slot}', this.value, 'single')"
+             onfocus="mhPersonSearch('${slot}', this.value, 'single')"
+             onblur="setTimeout(()=>mhPersonHide('${slot}'), 200)" />
+      ${current ? `<div style="margin-top:6px"><span class="mh-person-tag-removable">${mhEsc(current.name)}<button onclick="mhSetFrom(null)">×</button></span></div>` : ""}
+      <div class="mh-person-suggestions" id="mhPersonSuggestions${slot}"></div>
+    </div>`;
+  }
+  
+  function renderMultiPersonPicker(slot, currentIds) {
+    const persons = mhPersons();
+    const tags = currentIds.map(id => {
+      const p = persons[id];
+      if (!p) return "";
+      return `<span class="mh-person-tag-removable">${mhEsc(p.name)}<button onclick="mhRemovePerson('${slot}','${id}')">×</button></span>`;
+    }).join("");
+    
+    return `<div class="mh-person-picker">
+      <div class="mh-person-tags-row" id="mhPersonTags${slot}">
+        ${tags}
+        <input type="text" class="mh-person-input" id="mhPersonInput${slot}" 
+               style="flex:1;min-width:120px;background:none;border:0;padding:4px;border-radius:0"
+               placeholder="Person suchen oder erstellen..." 
+               oninput="mhPersonSearch('${slot}', this.value, 'multi')"
+               onfocus="mhPersonSearch('${slot}', this.value, 'multi')"
+               onblur="setTimeout(()=>mhPersonHide('${slot}'), 200)"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();mhPersonEnter('${slot}',this.value)}" />
+      </div>
+      <div class="mh-person-suggestions" id="mhPersonSuggestions${slot}" style="position:absolute"></div>
+    </div>`;
+  }
+  
+  window.mhPersonSearch = function(slot, query, mode) {
+    const sugs = document.getElementById(`mhPersonSuggestions${slot}`);
+    if (!sugs) return;
+    const list = mhSearchPersons(query);
+    let html = list.map(p => 
+      `<div class="mh-person-suggestion" onmousedown="mhPickPerson('${slot}','${p.id}','${mode}')">
+        <span class="mh-person-avatar" style="width:22px;height:22px">${mhEsc(mhInitials(p.name))}</span>
+        <div>
+          <div>${mhEsc(p.name)}</div>
+          ${p.role || (p.emails?.[0]) ? `<div style="font-size:10.5px;color:var(--muted)">${mhEsc(p.role || p.emails[0])}</div>` : ""}
+        </div>
+      </div>`
+    ).join("");
+    if (query && query.trim() && !list.find(p => p.name.toLowerCase() === query.trim().toLowerCase())) {
+      html += `<div class="mh-person-suggestion create" onmousedown="mhPickPerson('${slot}','__new:${mhEsc(query.trim())}','${mode}')">
+        ✨ Neue Person erstellen: "${mhEsc(query.trim())}"
+      </div>`;
+    }
+    sugs.innerHTML = html;
+    sugs.classList.toggle("show", html.length > 0);
+  };
+  
+  window.mhPersonHide = function(slot) {
+    const sugs = document.getElementById(`mhPersonSuggestions${slot}`);
+    if (sugs) sugs.classList.remove("show");
+  };
+  
+  window.mhPickPerson = function(slot, idOrCmd, mode) {
+    let id = idOrCmd;
+    if (idOrCmd.startsWith("__new:")) {
+      const name = idOrCmd.slice(6);
+      const p = mhFindOrCreatePerson(name);
+      id = p ? p.id : null;
+    }
+    if (!id) return;
+    
+    if (mode === "single") {
+      if (slot === "From") _mhFromPersonId = id;
+    } else {
+      if (slot === "To" && !_mhToPersonIds.includes(id)) _mhToPersonIds.push(id);
+      if (slot === "Cc" && !_mhCcPersonIds.includes(id)) _mhCcPersonIds.push(id);
+    }
+    
+    // Re-open editor to refresh UI
+    mhRefreshEditor();
+  };
+  
+  window.mhPersonEnter = function(slot, val) {
+    val = (val || "").trim();
+    if (!val) return;
+    const p = mhFindOrCreatePerson(val);
+    if (p) mhPickPerson(slot, p.id, "multi");
+  };
+  
+  window.mhSetFrom = function(id) {
+    _mhFromPersonId = id;
+    mhRefreshEditor();
+  };
+  
+  window.mhRemovePerson = function(slot, id) {
+    if (slot === "To") _mhToPersonIds = _mhToPersonIds.filter(x => x !== id);
+    if (slot === "Cc") _mhCcPersonIds = _mhCcPersonIds.filter(x => x !== id);
+    mhRefreshEditor();
+  };
+  
+  function mhRefreshEditor() {
+    // Save current text values before re-render
+    const subject = document.getElementById("mhSubject")?.value;
+    const body = document.getElementById("mhBody")?.value;
+    const summary = document.getElementById("mhSummary")?.value;
+    const date = document.getElementById("mhDate")?.value;
+    const direction = document.getElementById("mhDirection")?.value;
+    
+    mhOpenEditor(_mhEditing, true);  // skipReset — bewahre pickbare State
+    
+    setTimeout(() => {
+      if (subject !== undefined) document.getElementById("mhSubject").value = subject;
+      if (body !== undefined) document.getElementById("mhBody").value = body;
+      if (summary !== undefined) document.getElementById("mhSummary").value = summary;
+      if (date !== undefined) document.getElementById("mhDate").value = date;
+      if (direction !== undefined) document.getElementById("mhDirection").value = direction;
+    }, 30);
+  }
+  
+  // ─── Link Picker (Tasks/Projects/Orgs) ───
+  function renderLinkPicker(kind, currentIds, label) {
+    const ents = mhData();
+    const map = ents[kind] || {};
+    const selected = currentIds.map(id => map[id]).filter(Boolean);
+    const titleField = kind === "organizations" ? "name" : "title";
+    
+    const selectedHtml = selected.map(item => 
+      `<span class="mh-person-tag-removable" style="background:rgba(99,102,241,0.15);border-color:rgba(99,102,241,0.3);color:#a5b4fc">
+        ${mhEsc((item[titleField] || "").slice(0, 28))}<button onclick="mhRemoveLink('${kind}','${item.id}')">×</button>
+      </span>`
+    ).join("");
+    
+    return `<div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:5px">${label}</div>
+      <div class="mh-person-tags-row" style="min-height:auto;padding:5px;flex-direction:column;align-items:stretch">
+        ${selectedHtml ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px">${selectedHtml}</div>` : ""}
+        <select class="mh-select" style="font-size:12px;padding:5px 8px" onchange="mhAddLink('${kind}', this.value); this.value=''">
+          <option value="">+ Hinzufügen...</option>
+          ${Object.values(map).filter(it => it && !currentIds.includes(it.id)).slice(0, 50).map(it => 
+            `<option value="${it.id}">${mhEsc((it[titleField] || "Unbenannt").slice(0, 60))}</option>`
+          ).join("")}
+        </select>
+      </div>
+    </div>`;
+  }
+  
+  window.mhAddLink = function(kind, id) {
+    if (!id) return;
+    if (kind === "tasks" && !_mhLinkedTasks.includes(id)) _mhLinkedTasks.push(id);
+    if (kind === "projects" && !_mhLinkedProjects.includes(id)) _mhLinkedProjects.push(id);
+    if (kind === "organizations" && !_mhLinkedOrgs.includes(id)) _mhLinkedOrgs.push(id);
+    mhRefreshEditor();
+  };
+  
+  window.mhRemoveLink = function(kind, id) {
+    if (kind === "tasks") _mhLinkedTasks = _mhLinkedTasks.filter(x => x !== id);
+    if (kind === "projects") _mhLinkedProjects = _mhLinkedProjects.filter(x => x !== id);
+    if (kind === "organizations") _mhLinkedOrgs = _mhLinkedOrgs.filter(x => x !== id);
+    mhRefreshEditor();
+  };
+  
+  // ─── Files ───
+  function renderFilesList() {
+    return _mhFiles.map((f, i) => 
+      `<div class="mh-link-pill" style="justify-content:space-between">
+        <span>📎 ${mhEsc(f.name)} <span style="color:var(--muted);font-size:11px">${f.size ? "("+(f.size/1024).toFixed(1)+" KB)" : ""}</span></span>
+        <button onclick="mhRemoveFile(${i})" style="background:none;border:0;color:#f87171;cursor:pointer">×</button>
+      </div>`
+    ).join("");
+  }
+  
+  window.mhHandleFileSelect = async function(e) {
+    const files = Array.from(e.target.files || []);
+    for (const file of files) {
+      try {
+        const path = "mailhub/" + Date.now() + "_" + file.name.replace(/[^\w.-]/g, "_");
+        let url = null;
+        if (typeof window.uploadToFirebase === "function" && window.firebaseStorage) {
+          url = await window.uploadToFirebase(file, path);
+        }
+        _mhFiles.push({ name: file.name, size: file.size, type: file.type, url: url || null, storagePath: url ? path : null });
+      } catch(err) {
+        console.warn("Upload failed for", file.name, err);
+        _mhFiles.push({ name: file.name, size: file.size, type: file.type, url: null });
+      }
+    }
+    e.target.value = "";
+    document.getElementById("mhFilesList").innerHTML = renderFilesList();
+  };
+  
+  window.mhRemoveFile = function(idx) {
+    _mhFiles.splice(idx, 1);
+    document.getElementById("mhFilesList").innerHTML = renderFilesList();
+  };
+  
+  // ─── Save ───
+  window.mhSaveEmail = function() {
+    const subject = document.getElementById("mhSubject")?.value.trim() || "";
+    const body = document.getElementById("mhBody")?.value.trim() || "";
+    const summary = document.getElementById("mhSummary")?.value.trim() || "";
+    const date = document.getElementById("mhDate")?.value || new Date().toISOString().slice(0,10);
+    const direction = document.getElementById("mhDirection")?.value || "incoming";
+    
+    if (!subject && !body) {
+      mhToast("warn", "Leer", "Bitte mindestens Betreff oder Inhalt ausfüllen");
+      return;
+    }
+    
+    const now = new Date().toISOString();
+    const id = _mhEditing || mhId("eml");
+    const isNew = !_mhEditing;
+    
+    APP.state.data.entities.emails[id] = {
+      ...(APP.state.data.entities.emails[id] || {}),
+      id, subject, body, summary, date, direction,
+      fromPersonId: _mhFromPersonId,
+      toPersonIds: [..._mhToPersonIds],
+      ccPersonIds: [..._mhCcPersonIds],
+      linkedTasks: [..._mhLinkedTasks],
+      linkedProjects: [..._mhLinkedProjects],
+      linkedOrganizations: [..._mhLinkedOrgs],
+      linkedNotes: APP.state.data.entities.emails[id]?.linkedNotes || [],
+      linkedIdeas: APP.state.data.entities.emails[id]?.linkedIdeas || [],
+      tags: APP.state.data.entities.emails[id]?.tags || [],
+      files: [..._mhFiles],
+      read: isNew ? false : (APP.state.data.entities.emails[id]?.read !== false),
+      archived: APP.state.data.entities.emails[id]?.archived || false,
+      starred: APP.state.data.entities.emails[id]?.starred || false,
+      createdAt: APP.state.data.entities.emails[id]?.createdAt || now,
+      updatedAt: now,
+    };
+    
+    mhSave();
+    mhCloseEditor();
+    mhToast("ok", "📬 Gespeichert", isNew ? "E-Mail hinzugefügt" : "Aktualisiert");
+    
+    // Reset state
+    _mhEditing = null;
+    _mhFromPersonId = null;
+    _mhToPersonIds = [];
+    _mhCcPersonIds = [];
+    _mhLinkedTasks = [];
+    _mhLinkedProjects = [];
+    _mhLinkedOrgs = [];
+    _mhFiles = [];
+    
+    if (isNew) {
+      window.navigate("mailhub", id);
+    } else {
+      mhRender();
+    }
+  };
+  
+  // ─── Actions ───
+  window.mhToggleStar = function(id, fromDetail) {
+    const m = mhEmails()[id];
+    if (!m) return;
+    m.starred = !m.starred;
+    m.updatedAt = new Date().toISOString();
+    mhSave();
+    mhRender();
+  };
+  
+  window.mhToggleRead = function(id) {
+    const m = mhEmails()[id];
+    if (!m) return;
+    m.read = !m.read;
+    m.updatedAt = new Date().toISOString();
+    mhSave();
+    mhRender();
+  };
+  
+  window.mhArchive = function(id, fromDetail) {
+    const m = mhEmails()[id];
+    if (!m) return;
+    m.archived = !m.archived;
+    m.updatedAt = new Date().toISOString();
+    mhSave();
+    mhToast("ok", m.archived ? "📥 Archiviert" : "📤 Wiederhergestellt", m.subject);
+    if (fromDetail) window.navigate("mailhub");
+    else mhRender();
+  };
+  
+  window.mhDeleteEmail = function(id) {
+    const m = mhEmails()[id];
+    if (!m) return;
+    if (!confirm(`E-Mail "${m.subject || "(Kein Betreff)"}" wirklich löschen?`)) return;
+    delete APP.state.data.entities.emails[id];
+    mhSave();
+    mhToast("ok", "🗑 Gelöscht", m.subject);
+    window.navigate("mailhub");
+  };
+  
+  window.mhOpenAttachment = function(emailId, fileIdx) {
+    const m = mhEmails()[emailId];
+    const f = m?.files?.[fileIdx];
+    if (!f) return;
+    if (f.url) window.open(f.url, "_blank");
+    else mhToast("warn", "Keine URL", "Datei nicht in Cloud verfügbar");
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // PERSONS VIEWS
+  // ═══════════════════════════════════════════════════════════════════════
+  window.viewPersons = function() {
+    const list = mhPersonsList();
+    
+    return `<div class="mh-container">
+      <div class="mh-header">
+        <div>
+          <div class="mh-title">👤 Personen</div>
+          <div class="mh-stats">
+            <span class="mh-stat">${list.length} Kontakte</span>
+          </div>
+        </div>
+        <button class="mh-add-btn" onclick="mhOpenPersonEditor()">+ Neue Person</button>
+      </div>
+      
+      ${list.length === 0 ? `<div class="mh-empty">
+        <div class="mh-empty-icon">👤</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px">Noch keine Personen</div>
+        <div style="font-size:12.5px">Personen werden automatisch erstellt wenn du sie in E-Mails hinzufügst, oder klick auf "+ Neue Person".</div>
+      </div>` : `
+      <div class="mh-persons-grid">
+        ${list.map(p => {
+          const orgName = p.organizationId ? mhData().organizations?.[p.organizationId]?.name : "";
+          return `<div class="mh-person-card" onclick="navigate('persons','${p.id}')">
+            <div class="mh-person-card-head">
+              <div class="mh-person-card-avatar">${mhEsc(mhInitials(p.name))}</div>
+              <div>
+                <div class="mh-person-card-name">${mhEsc(p.name)}</div>
+                ${p.role ? `<div class="mh-person-card-role">${mhEsc(p.role)}</div>` : ""}
+              </div>
+            </div>
+            ${p.emails?.[0] ? `<div style="font-size:12px;color:#a5b4fc;margin-bottom:4px">📧 ${mhEsc(p.emails[0])}</div>` : ""}
+            ${orgName ? `<div style="font-size:12px;color:var(--muted)">🏛️ ${mhEsc(orgName)}</div>` : ""}
+            <div class="mh-person-card-meta">
+              ${p.phones?.length ? `<span>📞 ${p.phones.length}</span>` : ""}
+              <span>📬 ${countMailsForPerson(p.id)} Mails</span>
+            </div>
+          </div>`;
+        }).join("")}
+      </div>`}
+    </div>`;
+  };
+  
+  function countMailsForPerson(pid) {
+    return Object.values(mhEmails()).filter(m => 
+      m.fromPersonId === pid || (m.toPersonIds || []).includes(pid) || (m.ccPersonIds || []).includes(pid)
+    ).length;
+  }
+  
+  window.viewPersonDetail = function(id) {
+    const p = mhPersons()[id];
+    if (!p) return `<div class="mh-empty"><div class="mh-empty-icon">❓</div>Person nicht gefunden.<br><button class="mh-btn primary" onclick="navigate('persons')" style="margin-top:14px">Zurück</button></div>`;
+    
+    const mails = Object.values(mhEmails()).filter(m => 
+      m.fromPersonId === id || (m.toPersonIds || []).includes(id) || (m.ccPersonIds || []).includes(id)
+    ).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    
+    const orgName = p.organizationId ? mhData().organizations?.[p.organizationId]?.name : "";
+    
+    return `<div class="mh-detail">
+      <div style="margin-bottom:18px">
+        <button class="mh-btn ghost" onclick="navigate('persons')">← Zurück</button>
+        <button class="mh-btn ghost" onclick="mhOpenPersonEditor('${id}')" style="margin-left:8px">✏️ Bearbeiten</button>
+        <button class="mh-btn danger" onclick="mhDeletePerson('${id}')" style="margin-left:8px;float:right">🗑 Löschen</button>
+      </div>
+      
+      <div class="mh-detail-head" style="display:flex;align-items:center;gap:18px">
+        <div class="mh-person-card-avatar" style="width:64px;height:64px;font-size:22px">${mhEsc(mhInitials(p.name))}</div>
+        <div>
+          <h1 class="mh-detail-subject">${mhEsc(p.name)}</h1>
+          ${p.role ? `<div style="color:var(--muted);font-size:14px">${mhEsc(p.role)}</div>` : ""}
+        </div>
+      </div>
+      
+      ${p.emails?.length ? `<div class="mh-detail-section"><h4>📧 E-Mail-Adressen</h4>
+        ${p.emails.map(e => `<div style="margin-bottom:4px"><a href="mailto:${mhEsc(e)}" style="color:#a5b4fc">${mhEsc(e)}</a></div>`).join("")}
+      </div>` : ""}
+      
+      ${p.phones?.length ? `<div class="mh-detail-section"><h4>📞 Telefon</h4>
+        ${p.phones.map(ph => `<div style="margin-bottom:4px"><a href="tel:${mhEsc(ph)}" style="color:#a5b4fc">${mhEsc(ph)}</a></div>`).join("")}
+      </div>` : ""}
+      
+      ${orgName ? `<div class="mh-detail-section"><h4>🏛️ Organisation</h4>
+        <span class="mh-link-pill" onclick="navigate('organizations','${p.organizationId}')">🏛️ ${mhEsc(orgName)}</span>
+      </div>` : ""}
+      
+      ${p.notes ? `<div class="mh-detail-section"><h4>📝 Notizen</h4>
+        <div class="mh-body-content">${mhEsc(p.notes)}</div>
+      </div>` : ""}
+      
+      <div class="mh-detail-section">
+        <h4>📬 E-Mails (${mails.length})</h4>
+        ${mails.length === 0 ? `<div style="color:var(--muted);font-size:13px">Keine E-Mails verknüpft.</div>` : `
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${mails.slice(0, 20).map(m => {
+            const role = m.fromPersonId === id ? "Von" : (m.toPersonIds || []).includes(id) ? "An" : "CC";
+            return `<div class="mh-mail-card" onclick="navigate('mailhub','${m.id}')">
+              <div class="mh-mail-icon" style="width:32px;height:32px;font-size:11px">${role}</div>
+              <div class="mh-mail-body">
+                <div style="font-size:13.5px;font-weight:600;margin-bottom:3px">${mhEsc(m.subject || "(Kein Betreff)")}</div>
+                <div style="font-size:11px;color:var(--muted)">${mhFmtDate(m.date)}</div>
+              </div>
+            </div>`;
+          }).join("")}
+          ${mails.length > 20 ? `<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px">… und ${mails.length - 20} weitere</div>` : ""}
+        </div>`}
+      </div>
+    </div>`;
+  };
+  
+  // Person Editor
+  window.mhOpenPersonEditor = function(personId) {
+    const p = personId ? mhPersons()[personId] : null;
+    
+    let overlay = document.getElementById("mhPersonEditorOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "mhPersonEditorOverlay";
+      overlay.className = "mh-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    const orgs = Object.values(mhData().organizations || {});
+    
+    overlay.innerHTML = `<div class="mh-modal" onclick="event.stopPropagation()">
+      <div class="mh-modal-head">
+        <span class="mh-modal-title">👤 ${p ? "Person bearbeiten" : "Neue Person"}</span>
+        <button class="mh-modal-close" onclick="mhClosePersonEditor()">×</button>
+      </div>
+      <div class="mh-modal-body">
+        <div class="mh-field">
+          <label class="mh-label">Name *</label>
+          <input type="text" id="mhpName" class="mh-input" placeholder="Vor- und Nachname" value="${mhEsc(p?.name || "")}" />
+        </div>
+        <div class="mh-field">
+          <label class="mh-label">Rolle / Position</label>
+          <input type="text" id="mhpRole" class="mh-input" placeholder="z.B. Projektleiter, Berater" value="${mhEsc(p?.role || "")}" />
+        </div>
+        <div class="mh-field">
+          <label class="mh-label">E-Mail-Adressen (eine pro Zeile)</label>
+          <textarea id="mhpEmails" class="mh-textarea" placeholder="z.B. max@example.com">${mhEsc((p?.emails || []).join("\n"))}</textarea>
+        </div>
+        <div class="mh-field">
+          <label class="mh-label">Telefon-Nummern (eine pro Zeile)</label>
+          <textarea id="mhpPhones" class="mh-textarea" placeholder="+41 79 ...">${mhEsc((p?.phones || []).join("\n"))}</textarea>
+        </div>
+        <div class="mh-field">
+          <label class="mh-label">Organisation</label>
+          <select id="mhpOrg" class="mh-select">
+            <option value="">— Keine —</option>
+            ${orgs.map(o => `<option value="${o.id}" ${p?.organizationId === o.id ? "selected" : ""}>${mhEsc(o.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="mh-field">
+          <label class="mh-label">Notizen</label>
+          <textarea id="mhpNotes" class="mh-textarea" placeholder="Beliebige Notizen zur Person...">${mhEsc(p?.notes || "")}</textarea>
+        </div>
+      </div>
+      <div class="mh-modal-foot">
+        <button class="mh-btn ghost" onclick="mhClosePersonEditor()">Abbrechen</button>
+        <button class="mh-btn primary" onclick="mhSavePerson('${personId || ""}')">${p ? "Aktualisieren" : "Speichern"}</button>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) mhClosePersonEditor(); };
+    
+    setTimeout(() => document.getElementById("mhpName")?.focus(), 50);
+  };
+  
+  window.mhClosePersonEditor = function() {
+    const overlay = document.getElementById("mhPersonEditorOverlay");
+    if (overlay) overlay.classList.remove("show");
+  };
+  
+  window.mhSavePerson = function(existingId) {
+    const name = document.getElementById("mhpName")?.value.trim();
+    if (!name) { mhToast("warn", "Name erforderlich"); return; }
+    
+    const role = document.getElementById("mhpRole")?.value.trim() || "";
+    const emails = (document.getElementById("mhpEmails")?.value || "").split("\n").map(s => s.trim()).filter(Boolean);
+    const phones = (document.getElementById("mhpPhones")?.value || "").split("\n").map(s => s.trim()).filter(Boolean);
+    const orgId = document.getElementById("mhpOrg")?.value || null;
+    const notes = document.getElementById("mhpNotes")?.value.trim() || "";
+    
+    const now = new Date().toISOString();
+    const id = existingId || mhId("prs");
+    const isNew = !existingId;
+    
+    APP.state.data.entities.persons[id] = {
+      ...(APP.state.data.entities.persons[id] || {}),
+      id, name, role, emails, phones,
+      organizationId: orgId || null,
+      notes,
+      tags: APP.state.data.entities.persons[id]?.tags || [],
+      createdAt: APP.state.data.entities.persons[id]?.createdAt || now,
+      updatedAt: now,
+    };
+    
+    mhSave();
+    mhClosePersonEditor();
+    mhToast("ok", "👤 Gespeichert", name);
+    if (isNew) window.navigate("persons", id);
+    else mhRender();
+  };
+  
+  window.mhDeletePerson = function(id) {
+    const p = mhPersons()[id];
+    if (!p) return;
+    const mailCount = countMailsForPerson(id);
+    if (mailCount > 0) {
+      if (!confirm(`"${p.name}" ist mit ${mailCount} E-Mails verknüpft. Wirklich löschen? E-Mails bleiben erhalten, aber Person wird daraus entfernt.`)) return;
+      // Aus allen Mails entfernen
+      Object.values(mhEmails()).forEach(m => {
+        if (m.fromPersonId === id) m.fromPersonId = null;
+        m.toPersonIds = (m.toPersonIds || []).filter(x => x !== id);
+        m.ccPersonIds = (m.ccPersonIds || []).filter(x => x !== id);
+      });
+    } else {
+      if (!confirm(`Person "${p.name}" wirklich löschen?`)) return;
+    }
+    delete APP.state.data.entities.persons[id];
+    mhSave();
+    mhToast("ok", "🗑 Gelöscht", p.name);
+    window.navigate("persons");
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // UNIVERSAL: Mails für andere Entities (Task, Projekt, Org, Person, Notiz)
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  // Liefert alle Mails die an eine Entity gekoppelt sind.
+  // entityKind: "task" | "project" | "organization" | "person" | "note" | "idea"
+  window.mhGetLinkedMails = function(entityKind, entityId) {
+    if (!entityKind || !entityId) return [];
+    const mails = Object.values(mhEmails());
+    return mails.filter(m => {
+      if (entityKind === "task") return (m.linkedTasks || []).includes(entityId);
+      if (entityKind === "project") return (m.linkedProjects || []).includes(entityId);
+      if (entityKind === "organization") return (m.linkedOrganizations || []).includes(entityId);
+      if (entityKind === "note") return (m.linkedNotes || []).includes(entityId);
+      if (entityKind === "idea") return (m.linkedIdeas || []).includes(entityId);
+      if (entityKind === "person") return m.fromPersonId === entityId 
+        || (m.toPersonIds || []).includes(entityId)
+        || (m.ccPersonIds || []).includes(entityId);
+      return false;
+    }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  };
+  
+  // Erzeugt HTML für die "📬 E-Mails"-Box, die in eine Detail-Seite eingebaut werden kann.
+  window.mhRenderLinkedMailsBox = function(entityKind, entityId, opts) {
+    opts = opts || {};
+    const mails = window.mhGetLinkedMails(entityKind, entityId);
+    const persons = mhPersons();
+    
+    const headerActions = `
+      <button class="mh-btn primary" style="font-size:11px;padding:5px 11px" onclick="mhCreateLinkedMail('${entityKind}','${entityId}')">+ Neue E-Mail</button>
+      <button class="mh-btn ghost" style="font-size:11px;padding:5px 11px;margin-left:6px" onclick="mhOpenLinkExisting('${entityKind}','${entityId}')">🔗 Verknüpfen</button>
+    `;
+    
+    let listHtml = "";
+    if (mails.length === 0) {
+      listHtml = `<div style="padding:18px;text-align:center;color:var(--muted);font-size:12.5px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.08);border-radius:10px">
+        Noch keine E-Mails verknüpft.
+      </div>`;
+    } else {
+      listHtml = mails.map(m => {
+        const fromName = persons[m.fromPersonId]?.name || "Unbekannt";
+        const dirLabel = { incoming: "📥", outgoing: "📤", internal: "🔄" }[m.direction] || "";
+        return `<div class="mh-mail-card" style="padding:10px 14px" onclick="navigate('mailhub','${m.id}')">
+          <div class="mh-mail-icon" style="width:32px;height:32px;font-size:11px">${mhEsc(mhInitials(fromName))}</div>
+          <div class="mh-mail-body">
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">
+              <span style="font-size:13px;font-weight:600">${mhEsc(m.subject || "(Kein Betreff)")}</span>
+              <span style="font-size:11px;color:var(--muted);margin-left:auto">${dirLabel} ${mhFmtDate(m.date)}</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--muted)">${mhEsc(fromName)}${m.summary ? " · " + mhEsc(m.summary.slice(0, 100)) : ""}</div>
+          </div>
+          <button class="mh-btn ghost" style="font-size:10px;padding:4px 8px;flex-shrink:0" onclick="event.stopPropagation();mhUnlinkMail('${m.id}','${entityKind}','${entityId}')" title="Verknüpfung entfernen">×</button>
+        </div>`;
+      }).join("");
+    }
+    
+    return `<div style="margin-top:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0;font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px">📬 E-Mails ${mails.length > 0 ? `<span style="font-size:11px;background:rgba(168,85,247,0.15);color:#c084fc;padding:2px 9px;border-radius:999px">${mails.length}</span>` : ""}</h3>
+        <div>${headerActions}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">${listHtml}</div>
+    </div>`;
+  };
+  
+  // Erstellt eine neue E-Mail, vorverknüpft mit der gegebenen Entity
+  window.mhCreateLinkedMail = function(entityKind, entityId) {
+    // Editor öffnen mit pre-population
+    _mhEditing = null;
+    _mhFromPersonId = null;
+    _mhToPersonIds = [];
+    _mhCcPersonIds = [];
+    _mhLinkedTasks = [];
+    _mhLinkedProjects = [];
+    _mhLinkedOrgs = [];
+    _mhFiles = [];
+    
+    // Pre-link
+    if (entityKind === "task") _mhLinkedTasks = [entityId];
+    if (entityKind === "project") _mhLinkedProjects = [entityId];
+    if (entityKind === "organization") _mhLinkedOrgs = [entityId];
+    if (entityKind === "person") _mhFromPersonId = entityId;  // Default: Person als Absender
+    
+    // Editor öffnen — skipReset true damit pre-links nicht überschrieben werden
+    mhOpenEditor(null, true);
+  };
+  
+  // Verknüpft eine bestehende Mail mit einer Entity
+  window.mhOpenLinkExisting = function(entityKind, entityId) {
+    let overlay = document.getElementById("mhLinkExistingOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "mhLinkExistingOverlay";
+      overlay.className = "mh-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    const allMails = Object.values(mhEmails())
+      .filter(m => !window.mhGetLinkedMails(entityKind, entityId).find(x => x.id === m.id))
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    
+    overlay.innerHTML = `<div class="mh-modal" onclick="event.stopPropagation()" style="max-width:560px">
+      <div class="mh-modal-head">
+        <span class="mh-modal-title">🔗 E-Mail verknüpfen</span>
+        <button class="mh-modal-close" onclick="document.getElementById('mhLinkExistingOverlay').classList.remove('show')">×</button>
+      </div>
+      <div class="mh-modal-body">
+        <div class="mh-field">
+          <label class="mh-label">Suche</label>
+          <input type="text" class="mh-input" id="mhLinkSearch" placeholder="Nach Betreff oder Absender suchen..." 
+                 oninput="mhFilterLinkList('${entityKind}','${entityId}', this.value)" />
+        </div>
+        <div id="mhLinkExistingList" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
+          ${allMails.length === 0 
+            ? `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">Keine weiteren E-Mails verfügbar.<br>Erstelle eine neue E-Mail über "+ Neue E-Mail".</div>`
+            : allMails.map(m => mhRenderLinkSelectionRow(m, entityKind, entityId)).join("")
+          }
+        </div>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove("show"); };
+  };
+  
+  function mhRenderLinkSelectionRow(m, entityKind, entityId) {
+    const persons = mhPersons();
+    const fromName = persons[m.fromPersonId]?.name || "Unbekannt";
+    const dirLabel = { incoming: "📥", outgoing: "📤", internal: "🔄" }[m.direction] || "";
+    return `<div class="mh-mail-card" style="padding:10px 14px;cursor:pointer" 
+                  data-mh-search="${mhEsc(((m.subject || "") + " " + fromName + " " + (m.summary || "")).toLowerCase())}"
+                  onclick="mhDoLink('${m.id}','${entityKind}','${entityId}')">
+      <div class="mh-mail-icon" style="width:32px;height:32px;font-size:11px">${mhEsc(mhInitials(fromName))}</div>
+      <div class="mh-mail-body">
+        <div style="font-size:13px;font-weight:600">${mhEsc(m.subject || "(Kein Betreff)")}</div>
+        <div style="font-size:11.5px;color:var(--muted)">${dirLabel} ${mhEsc(fromName)} · ${mhFmtDate(m.date)}</div>
+      </div>
+    </div>`;
+  }
+  
+  window.mhFilterLinkList = function(entityKind, entityId, query) {
+    const q = (query || "").toLowerCase().trim();
+    const list = document.getElementById("mhLinkExistingList");
+    if (!list) return;
+    list.querySelectorAll(".mh-mail-card").forEach(card => {
+      const text = card.dataset.mhSearch || "";
+      card.style.display = (!q || text.includes(q)) ? "" : "none";
+    });
+  };
+  
+  window.mhDoLink = function(mailId, entityKind, entityId) {
+    const m = mhEmails()[mailId];
+    if (!m) return;
+    
+    if (entityKind === "task") {
+      m.linkedTasks = Array.from(new Set([...(m.linkedTasks || []), entityId]));
+    } else if (entityKind === "project") {
+      m.linkedProjects = Array.from(new Set([...(m.linkedProjects || []), entityId]));
+    } else if (entityKind === "organization") {
+      m.linkedOrganizations = Array.from(new Set([...(m.linkedOrganizations || []), entityId]));
+    } else if (entityKind === "note") {
+      m.linkedNotes = Array.from(new Set([...(m.linkedNotes || []), entityId]));
+    } else if (entityKind === "idea") {
+      m.linkedIdeas = Array.from(new Set([...(m.linkedIdeas || []), entityId]));
+    } else if (entityKind === "person") {
+      // Person → als CC hinzufügen wenn nicht schon From/To
+      if (m.fromPersonId !== entityId && !(m.toPersonIds || []).includes(entityId) && !(m.ccPersonIds || []).includes(entityId)) {
+        m.ccPersonIds = [...(m.ccPersonIds || []), entityId];
+      }
+    }
+    
+    m.updatedAt = new Date().toISOString();
+    mhSave();
+    
+    document.getElementById("mhLinkExistingOverlay")?.classList.remove("show");
+    mhToast("ok", "🔗 Verknüpft", m.subject || "E-Mail");
+    mhRender();
+  };
+  
+  window.mhUnlinkMail = function(mailId, entityKind, entityId) {
+    const m = mhEmails()[mailId];
+    if (!m) return;
+    if (!confirm(`Verknüpfung mit "${m.subject || 'E-Mail'}" wirklich entfernen?`)) return;
+    
+    if (entityKind === "task") m.linkedTasks = (m.linkedTasks || []).filter(x => x !== entityId);
+    else if (entityKind === "project") m.linkedProjects = (m.linkedProjects || []).filter(x => x !== entityId);
+    else if (entityKind === "organization") m.linkedOrganizations = (m.linkedOrganizations || []).filter(x => x !== entityId);
+    else if (entityKind === "note") m.linkedNotes = (m.linkedNotes || []).filter(x => x !== entityId);
+    else if (entityKind === "idea") m.linkedIdeas = (m.linkedIdeas || []).filter(x => x !== entityId);
+    else if (entityKind === "person") {
+      if (m.fromPersonId === entityId) m.fromPersonId = null;
+      m.toPersonIds = (m.toPersonIds || []).filter(x => x !== entityId);
+      m.ccPersonIds = (m.ccPersonIds || []).filter(x => x !== entityId);
+    }
+    
+    m.updatedAt = new Date().toISOString();
+    mhSave();
+    mhToast("ok", "Verknüpfung entfernt", m.subject || "E-Mail");
+    mhRender();
+  };
+  
+  console.log("📬 Mail Hub + Personen geladen");
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // AUTO-INJECT: Mail-Box in alle Detail-Pages einhängen
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  // Hash-Pattern → entityKind
+  function detectEntityFromHash() {
+    const hash = window.location.hash || "";
+    // Format: #/<route>/<id>
+    const match = hash.match(/^#\/(\w+)\/([a-zA-Z0-9_-]+)/);
+    if (!match) return null;
+    
+    const route = match[1];
+    const id = match[2];
+    
+    const routeMap = {
+      tasks: "task",
+      projects: "project",
+      organizations: "organization",
+      notes: "note",
+      ideas: "idea",
+      // Personen + Mailhub bekommen keine Box (wären Selbstreferenzen)
+    };
+    
+    const entityKind = routeMap[route];
+    if (!entityKind) return null;
+    
+    // Prüfe ob Entity existiert
+    const entityKey = entityKind === "task" ? "tasks"
+      : entityKind === "project" ? "projects"
+      : entityKind === "organization" ? "organizations"
+      : entityKind === "note" ? "notes"
+      : entityKind === "idea" ? "ideas"
+      : null;
+    if (!entityKey) return null;
+    
+    const entities = APP?.state?.data?.entities?.[entityKey];
+    if (!entities || !entities[id]) return null;
+    
+    return { entityKind, entityId: id };
+  }
+  
+  function injectMailBox() {
+    const ctx = detectEntityFromHash();
+    if (!ctx) return;
+    
+    // Schon vorhanden? → skip
+    if (document.getElementById("mhAutoInjectedBox")) return;
+    
+    // Suche Hauptcontainer der Detail-Page
+    // Strategien: .page > div, .container, main, oder #pageContent
+    const containers = [
+      document.getElementById("pageContent"),
+      document.querySelector(".page-content"),
+      document.querySelector("#main .page"),
+      document.querySelector(".content-area"),
+      document.querySelector("main"),
+    ].filter(Boolean);
+    
+    const target = containers[0];
+    if (!target) return;
+    
+    // Mail-Box rendern und einhängen
+    const wrapper = document.createElement("div");
+    wrapper.id = "mhAutoInjectedBox";
+    wrapper.className = "card";
+    wrapper.style.cssText = "margin-top:16px";
+    wrapper.innerHTML = window.mhRenderLinkedMailsBox(ctx.entityKind, ctx.entityId);
+    
+    target.appendChild(wrapper);
+  }
+  
+  // Hash-Change → injection retry
+  let _mhInjectTimeout = null;
+  function scheduleInject() {
+    clearTimeout(_mhInjectTimeout);
+    _mhInjectTimeout = setTimeout(() => {
+      try { injectMailBox(); } catch(e) { console.warn("[MailHub inject]", e); }
+    }, 200);
+  }
+  
+  window.addEventListener("hashchange", scheduleInject);
+  
+  // MutationObserver: wenn Quantus den Inhalt neu rendert, müssen wir auch neu injizieren
+  let _mhMutObs = null;
+  setTimeout(() => {
+    const target = document.getElementById("pageContent") || document.querySelector("#main");
+    if (target && !_mhMutObs) {
+      _mhMutObs = new MutationObserver(() => {
+        // Nur wenn unsere Box nicht mehr da ist und wir auf einer Detail-Page sind
+        if (!document.getElementById("mhAutoInjectedBox")) scheduleInject();
+      });
+      _mhMutObs.observe(target, { childList: true, subtree: false });
+    }
+  }, 1000);
+  
+  // Initial-Try beim Laden
+  setTimeout(scheduleInject, 1500);
+})();
+</script>
+<!-- ═══ END MAIL HUB ═══ -->
 
 </body>
 </html>
