@@ -48208,11 +48208,51 @@ window.handleClick = function(e){
     if (!file) { toast("warn", "Fehler", "Datei nicht gefunden"); return; }
     
     async function doDownload(url, fileName) {
-      // Use Netlify proxy to force download with Content-Disposition: attachment
-      const proxyBase = 'https://management-xo2-pro.netlify.app/.netlify/functions/download-proxy';
-      const proxyUrl = proxyBase + '?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(fileName || 'download');
-      window.location.href = proxyUrl;
-      toast("ok", "Download", fileName);
+      const safeName = fileName || 'download';
+      toast("ok", "Download startet...", safeName);
+      try {
+        // Über Netlify-Proxy holen (forciert Content-Disposition: attachment + umgeht CORS bei Firebase Storage)
+        const proxyBase = 'https://management-xo2-pro.netlify.app/.netlify/functions/download-proxy';
+        const proxyUrl = proxyBase + '?url=' + encodeURIComponent(url) + '&name=' + encodeURIComponent(safeName);
+        
+        const resp = await fetch(proxyUrl);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const blob = await resp.blob();
+        
+        // Blob-URL erstellen + unsichtbarer Link + click
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = safeName;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        
+        // Cleanup
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        }, 500);
+        
+        toast("ok", "✓ Heruntergeladen", safeName);
+      } catch(e) {
+        console.warn('Proxy-Download fehlgeschlagen, versuche Direkt-Download:', e);
+        // Fallback: direkter Download (öffnet Bild evtl. inline, aber besser als nichts)
+        try {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = safeName;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => document.body.removeChild(a), 500);
+          toast("warn", "Fallback-Download", "Im neuen Tab geöffnet");
+        } catch(e2) {
+          toast("danger", "Fehler", "Download fehlgeschlagen: " + (e.message || e2.message));
+        }
+      }
     }
     
     if (file.url) {
