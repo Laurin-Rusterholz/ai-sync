@@ -6575,6 +6575,7 @@ function emptyData() {
       decisions: {},
       emails: {},
       persons: {},
+      protocols: {},
     },
     timers: {},
     pinnedItems: [], // ["task:id", "project:id", ...]
@@ -6693,6 +6694,26 @@ function normalizeData(data) {
     p.tags = Array.isArray(p.tags) ? p.tags : [];
     p.createdAt = p.createdAt || nowIso();
     p.updatedAt = p.updatedAt || nowIso();
+  }
+  // Normalize protocols
+  e.protocols = e.protocols || {};
+  for (const pr of Object.values(e.protocols)) {
+    pr.title = pr.title || "Unbenanntes Protokoll";
+    pr.date = pr.date || nowIso().slice(0, 10);
+    pr.organizationId = pr.organizationId || null;
+    pr.attendeePersonIds = Array.isArray(pr.attendeePersonIds) ? pr.attendeePersonIds : [];
+    pr.linkedTasks = Array.isArray(pr.linkedTasks) ? pr.linkedTasks : [];
+    pr.linkedProjects = Array.isArray(pr.linkedProjects) ? pr.linkedProjects : [];
+    pr.extractedText = pr.extractedText || "";  // Volltext (für KI)
+    pr.summary = pr.summary || "";  // Manuelle Zusammenfassung (optional)
+    pr.notes = pr.notes || "";  // Notizen
+    pr.fileUrl = pr.fileUrl || null;  // Firebase URL
+    pr.fileName = pr.fileName || "";
+    pr.fileSize = pr.fileSize || 0;
+    pr.storagePath = pr.storagePath || null;
+    pr.tags = Array.isArray(pr.tags) ? pr.tags : [];
+    pr.createdAt = pr.createdAt || nowIso();
+    pr.updatedAt = pr.updatedAt || nowIso();
   }
   
   // Normalize updates
@@ -10255,6 +10276,7 @@ function buildFullContextPrompt() {
 • Meetings: ${meetings.length}
 • E-Mails: ${Object.keys(e.emails || {}).length} im Mail Hub
 • Personen: ${Object.keys(e.persons || {}).length} Kontakte
+• Protokolle: ${Object.keys(e.protocols || {}).length} (mit Volltext-Zugriff für KI)
 • Kontakte: ${contacts.length}
 • Habits: ${habits.length}
 • Offene Updates: ${openUpdates.length}
@@ -10655,6 +10677,55 @@ Nutze dieses Wissen um:
         context += `  Anhänge: ${m.files.map(f => f.name).join(', ')}\n`;
       }
       if (m.starred) context += `  ⭐ MARKIERT\n`;
+    });
+  }
+  
+  // ========== ALLE PROTOKOLLE (VOLLSTÄNDIG) ==========
+  const protocols = Object.values(e.protocols || {});
+  if (protocols.length > 0) {
+    context += `\n=== ALLE PROTOKOLLE (${protocols.length}) ===\n`;
+    context += `Du hast Zugriff auf ALLE Protokolle inklusive der vollständig extrahierten PDF-Inhalte. Nutze sie für Beschlüsse, Diskussionen, Action Items.\n\n`;
+    
+    const sortedProtocols = protocols.slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    
+    sortedProtocols.forEach(pr => {
+      const orgName = pr.organizationId ? (e.organizations?.[pr.organizationId]?.name || "") : "";
+      const attendees = (pr.attendeePersonIds || []).map(pid => e.persons?.[pid]?.name).filter(Boolean);
+      
+      context += `\n[${pr.date}] 📜 ${pr.title}`;
+      if (orgName) context += ` — ${orgName}`;
+      context += "\n";
+      
+      if (attendees.length) {
+        context += `  Teilnehmer: ${attendees.join(", ")}\n`;
+      }
+      
+      // Verknüpfungen
+      const links = [];
+      if (pr.linkedTasks?.length) {
+        const taskTitles = pr.linkedTasks.map(tid => e.tasks?.[tid]?.title).filter(Boolean);
+        if (taskTitles.length) links.push(`Tasks: ${taskTitles.join(", ")}`);
+      }
+      if (pr.linkedProjects?.length) {
+        const projTitles = pr.linkedProjects.map(pid => e.projects?.[pid]?.title).filter(Boolean);
+        if (projTitles.length) links.push(`Projekte: ${projTitles.join(", ")}`);
+      }
+      if (links.length) context += `  Verknüpft: ${links.join(" | ")}\n`;
+      
+      if (pr.summary) {
+        context += `  Zusammenfassung: ${pr.summary}\n`;
+      }
+      if (pr.notes) {
+        context += `  Notizen: ${pr.notes}\n`;
+      }
+      
+      // Volltext aus PDF (gekürzt wenn sehr lang, aber großzügig — Protokolle sind zentral)
+      if (pr.extractedText) {
+        const txt = pr.extractedText.length <= 4000 
+          ? pr.extractedText 
+          : pr.extractedText.slice(0, 4000) + "\n...[Protokoll gekürzt — Volltext " + pr.extractedText.length.toLocaleString() + " Zeichen verfügbar]";
+        context += `  Inhalt aus PDF:\n  ${txt.split("\n").join("\n  ")}\n`;
+      }
     });
   }
 
@@ -12171,6 +12242,7 @@ function renderAppNav() {
     {key:"ideas", icon:"💡", label:t("ideas")},
     {key:"mailhub", icon:"📬", label:"Mail Hub"},
     {key:"persons", icon:"👤", label:"Personen"},
+    {key:"protocols", icon:"📜", label:"Protokolle"},
     {key:"updates", icon:"🔧", label:t("updates")},
     {key:"learn", icon:"📚", label:"RecallLab"},
     {key:"calendar", icon:"📅", label:t("calendar")},
@@ -12336,6 +12408,7 @@ function getAllApps() {
     {key:"meetings", icon:"🤝", label:t("meetings"), desc:getLang()==="de"?"Besprechungen":"Meetings"},
     {key:"mailhub", icon:"📬", label:"Mail Hub", desc:getLang()==="de"?"E-Mails, Korrespondenz & Personen":"Emails, correspondence & people"},
     {key:"persons", icon:"👤", label:"Personen", desc:getLang()==="de"?"Kontaktverwaltung":"Contact management"},
+    {key:"protocols", icon:"📜", label:"Protokolle", desc:getLang()==="de"?"PDF-Protokolle mit Text-Extraktion":"PDF protocols with text extraction"},
     {key:"articles", icon:"📰", label:"Newsroom Hub", desc:getLang()==="de"?"Redaktion, Artikel, Recherche & RecallLab":"Newsroom, articles, research & RecallLab"},
     {key:"knowledge", icon:"🧠", label:t("knowledge"), desc:getLang()==="de"?"Wissensdatenbank":"Knowledge base"},
     {key:"time", icon:"⏱️", label:t("time"), desc:getLang()==="de"?"Zeit tracken":"Track time"},
@@ -12678,6 +12751,7 @@ function renderMain() {
     case "decisions": html = id ? viewDecisionDetail(id) : viewDecisions(); break;
     case "mailhub": html = id ? viewEmailDetail(id) : viewMailHub(); break;
     case "persons": html = id ? viewPersonDetail(id) : viewPersons(); break;
+    case "protocols": html = id ? viewProtocolDetail(id) : viewProtocols(); break;
     case "journal": openJournalBooklet(); return;
     case "settings": { openSettings(); return; }
 
@@ -18466,7 +18540,8 @@ function renderCustom_PRJZ2SEX(id, p) {
     <div class="kv-card">
       <h3 style="margin:0 0 12px">🚀 Schnell-Aktionen</h3>
       <div class="kv-action-row">
-        <button class="kv-action-btn primary" onclick="window._kvOpenQuiz('${id}')">⚡ Mixed Quiz</button>
+        <button class="kv-action-btn primary" onclick="window._kvOpenLearningMode('${id}')" style="background:linear-gradient(135deg,#22c55e,#16a34a)">🎓 Learning Mode</button>
+        <button class="kv-action-btn" onclick="window._kvOpenQuiz('${id}')">⚡ Mixed Quiz</button>
         <button class="kv-action-btn" onclick="window._kvOpenExamSim('${id}')">📝 Prüfungssimulation</button>
         <button class="kv-action-btn" onclick="window._kvOralExam('${id}')">🎙️ Mündlich (TTS)</button>
         <button class="kv-action-btn" onclick="window._kvShowWeakest('${id}')">🎯 Schwachstellen</button>
@@ -19117,6 +19192,483 @@ window._kvStudyTheme = function(pid, area, themeId) {
   const due = cards.filter(c => !c.nextReview || c.nextReview <= Date.now());
   const queue = due.length > 0 ? due : cards;
   _kvStartCardSession(pid, area, queue, 'theme:' + themeId);
+};
+
+// ════════════════════════════════════════════════════════════════════════
+// 🎓 LEARNING MODE — PRJ-Z2SEX
+// Quick-Capture für Stichwörter, Themen-getaggt, mit Notizen + Aufgaben
+// ════════════════════════════════════════════════════════════════════════
+window._kvOpenLearningMode = function(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  
+  // State im Projekt-Custom-Bereich speichern (persistent)
+  if (!p._custom) p._custom = {};
+  if (!p._custom.learning) {
+    p._custom.learning = {
+      currentTopic: "",  // Aktives Thema
+      noteStrategy: "per-topic",  // "per-topic" (sammeln) | "per-keyword" (separat)
+      keywords: [],  // Alle erfassten Stichwörter: { id, word, topic, createdAt, noteId }
+    };
+  }
+  
+  // Notizbuch sicherstellen
+  const notebookId = _kvEnsureLearningNotebook(p);
+  p._custom.learning.notebookId = notebookId;
+  _kvSavePersist();
+  
+  // Modal rendern
+  let overlay = document.getElementById("kvLearningOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "kvLearningOverlay";
+    overlay.className = "pr-modal-overlay";
+    document.body.appendChild(overlay);
+  }
+  
+  overlay.innerHTML = _kvRenderLearningModal(pid);
+  overlay.classList.add("show");
+  overlay.onclick = (e) => { if (e.target === overlay) _kvCloseLearningMode(); };
+  
+  setTimeout(() => {
+    const focusEl = p._custom.learning.currentTopic 
+      ? document.getElementById("kvLearningKeywordInput")
+      : document.getElementById("kvLearningTopicInput");
+    focusEl?.focus();
+  }, 80);
+};
+
+window._kvCloseLearningMode = function() {
+  const overlay = document.getElementById("kvLearningOverlay");
+  if (overlay) overlay.classList.remove("show");
+};
+
+function _kvSavePersist() {
+  if (typeof persist === "function") persist();
+  else if (typeof scheduleSave === "function") scheduleSave();
+  else if (typeof saveData === "function") saveData();
+}
+
+function _kvEnsureLearningNotebook(project) {
+  const notebooks = APP.state.data.entities.notebooks;
+  const projectTitle = project.title || "Unbenannt";
+  const notebookName = "🎓 Learning · " + projectTitle.slice(0, 40);
+  
+  // Bestehendes Notizbuch suchen
+  let nb = Object.values(notebooks || {}).find(n => 
+    n.linkedProjectId === project.id && n.isLearningNotebook
+  );
+  
+  if (!nb) {
+    const id = "nb_lrn_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    nb = {
+      id, name: notebookName, color: "#22c55e", icon: "🎓",
+      linkedProjectId: project.id,
+      isLearningNotebook: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    APP.state.data.entities.notebooks[id] = nb;
+  } else if (nb.name !== notebookName) {
+    // Update wenn Projekt umbenannt wurde
+    nb.name = notebookName;
+    nb.updatedAt = new Date().toISOString();
+  }
+  
+  return nb.id;
+}
+
+function _kvLearningEsc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function _kvLearningTopics(p) {
+  const learning = p._custom.learning || { keywords: [] };
+  const topics = {};
+  (learning.keywords || []).forEach(kw => {
+    const t = kw.topic || "(Ohne Thema)";
+    if (!topics[t]) topics[t] = [];
+    topics[t].push(kw);
+  });
+  return topics;
+}
+
+function _kvRenderLearningModal(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return "";
+  const learning = p._custom.learning;
+  const topics = _kvLearningTopics(p);
+  const topicNames = Object.keys(topics).sort((a, b) => {
+    if (a === learning.currentTopic) return -1;
+    if (b === learning.currentTopic) return 1;
+    return a.localeCompare(b);
+  });
+  
+  const totalKeywords = (learning.keywords || []).length;
+  const currentTopicKeywords = learning.currentTopic ? (topics[learning.currentTopic] || []) : [];
+  
+  return `<div class="pr-modal" onclick="event.stopPropagation()" style="max-width:840px;max-height:calc(100vh - 64px)">
+    <div class="pr-modal-head" style="background:linear-gradient(135deg,rgba(34,197,94,0.08),rgba(22,163,74,0.04))">
+      <span class="pr-modal-title">🎓 Learning Mode <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">${_kvLearningEsc(p.title || "")}</span></span>
+      <button class="pr-modal-close" onclick="_kvCloseLearningMode()">×</button>
+    </div>
+    <div class="pr-modal-body" style="display:flex;flex-direction:column;gap:14px;max-height:75vh">
+      
+      <!-- Aktives Thema -->
+      <div style="padding:14px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:12px">
+        <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);margin-bottom:8px">📌 Aktuelles Thema</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="kvLearningTopicInput" 
+                 placeholder="z.B. Lebensversicherung, BVG, Sozialversicherungen..." 
+                 value="${_kvLearningEsc(learning.currentTopic)}"
+                 list="kvLearningTopicsList"
+                 style="flex:1;padding:11px 14px;background:rgba(255,255,255,0.05);border:1px solid rgba(34,197,94,0.3);border-radius:9px;color:var(--text);font-size:14.5px;font-weight:600"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();_kvLearningSetTopic('${pid}')}" />
+          <datalist id="kvLearningTopicsList">
+            ${topicNames.filter(t => t !== "(Ohne Thema)").map(t => `<option value="${_kvLearningEsc(t)}"></option>`).join("")}
+          </datalist>
+          <button class="pr-btn primary" onclick="_kvLearningSetTopic('${pid}')" style="background:linear-gradient(135deg,#22c55e,#16a34a);font-size:12px;padding:10px 14px">${learning.currentTopic ? "Wechseln" : "Setzen"}</button>
+        </div>
+        ${learning.currentTopic 
+          ? `<div style="margin-top:8px;font-size:11.5px;color:var(--muted)">${currentTopicKeywords.length} Stichwort${currentTopicKeywords.length === 1 ? "" : "er"} unter diesem Thema</div>` 
+          : `<div style="margin-top:8px;font-size:11.5px;color:#fbbf24">⚠️ Kein Thema gesetzt — Stichwörter werden unter "(Ohne Thema)" gespeichert</div>`}
+      </div>
+      
+      <!-- Notiz-Strategie (Toggle) -->
+      <div style="display:flex;gap:8px;align-items:center;padding:8px 0">
+        <span style="font-size:12px;color:var(--muted)">Notiz-Strategie:</span>
+        <button class="pr-btn ${learning.noteStrategy === "per-topic" ? "primary" : "ghost"}" 
+                style="font-size:11px;padding:5px 11px;${learning.noteStrategy === "per-topic" ? "background:linear-gradient(135deg,#22c55e,#16a34a)" : ""}"
+                onclick="_kvLearningSetStrategy('${pid}','per-topic')">
+          📓 Eine Notiz pro Thema
+        </button>
+        <button class="pr-btn ${learning.noteStrategy === "per-keyword" ? "primary" : "ghost"}" 
+                style="font-size:11px;padding:5px 11px;${learning.noteStrategy === "per-keyword" ? "background:linear-gradient(135deg,#22c55e,#16a34a)" : ""}"
+                onclick="_kvLearningSetStrategy('${pid}','per-keyword')">
+          📄 Eine Notiz pro Stichwort
+        </button>
+      </div>
+      
+      <!-- 4 Quick Actions -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        
+        <!-- Stichwort hinzufügen -->
+        <div style="padding:14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:11px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#86efac;margin-bottom:8px">📝 Stichwort erfassen</div>
+          <input type="text" id="kvLearningKeywordInput" 
+                 placeholder="Begriff, Wort, Konzept..." 
+                 ${!learning.currentTopic ? 'disabled title="Erst Thema setzen"' : ""}
+                 style="width:100%;padding:10px 13px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:9px;color:var(--text);font-size:13.5px;margin-bottom:8px;${!learning.currentTopic ? "opacity:0.5;cursor:not-allowed" : ""}"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();_kvLearningAddKeyword('${pid}')}" />
+          <button class="pr-btn primary" onclick="_kvLearningAddKeyword('${pid}')" 
+                  style="width:100%;background:linear-gradient(135deg,#22c55e,#16a34a);font-size:12px"
+                  ${!learning.currentTopic ? "disabled" : ""}>
+            + Hinzufügen ⏎
+          </button>
+        </div>
+        
+        <!-- Aufgabe erstellen -->
+        <div style="padding:14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:11px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#fbbf24;margin-bottom:8px">📋 Aufgabe / Recherche</div>
+          <input type="text" id="kvLearningTaskInput" 
+                 placeholder="z.B. Beispiel BVG-Auszahlung recherchieren" 
+                 style="width:100%;padding:10px 13px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:9px;color:var(--text);font-size:13.5px;margin-bottom:8px"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();_kvLearningAddTask('${pid}')}" />
+          <button class="pr-btn primary" onclick="_kvLearningAddTask('${pid}')" 
+                  style="width:100%;background:linear-gradient(135deg,#f59e0b,#d97706);font-size:12px">
+            + Aufgabe erstellen ⏎
+          </button>
+        </div>
+      </div>
+      
+      <!-- Stichwörter im aktuellen Thema -->
+      ${learning.currentTopic && currentTopicKeywords.length > 0 ? `
+      <div style="padding:14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:11px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px">📌 Stichwörter unter "${_kvLearningEsc(learning.currentTopic)}" (${currentTopicKeywords.length})</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${currentTopicKeywords.slice().reverse().slice(0, 30).map(kw => `
+            <span style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.25);border-radius:999px;font-size:12px;color:#86efac">
+              ${_kvLearningEsc(kw.word)}
+              ${kw.noteId ? `<a onclick="_kvLearningOpenNote('${kw.noteId}')" title="Notiz öffnen" style="cursor:pointer;color:#86efac">📝</a>` : ""}
+              <button onclick="_kvLearningRemoveKeyword('${pid}','${kw.id}')" style="background:none;border:0;color:#86efac;cursor:pointer;padding:0;font-size:14px;line-height:1">×</button>
+            </span>
+          `).join("")}
+          ${currentTopicKeywords.length > 30 ? `<span style="padding:5px 10px;color:var(--muted);font-size:11.5px">… und ${currentTopicKeywords.length - 30} weitere</span>` : ""}
+        </div>
+      </div>` : ""}
+      
+      <!-- Übersicht aller Themen -->
+      ${topicNames.length > 0 && (topicNames.length > 1 || topicNames[0] !== learning.currentTopic) ? `
+      <div style="padding:14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:11px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px">📚 Alle Themen (${topicNames.length})</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${topicNames.map(t => {
+            const kws = topics[t];
+            const isActive = t === learning.currentTopic;
+            return `<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;background:${isActive ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.03)"};border:1px solid ${isActive ? "rgba(34,197,94,0.3)" : "rgba(255,255,255,0.06)"};border-radius:8px">
+              <span style="flex:1;font-size:13px;font-weight:${isActive ? "700" : "500"};color:${isActive ? "#86efac" : "var(--text)"}">${_kvLearningEsc(t)}</span>
+              <span style="font-size:11px;color:var(--muted)">${kws.length} Stichw.</span>
+              ${!isActive ? `<button class="pr-btn ghost" style="font-size:10.5px;padding:4px 9px" onclick="_kvLearningSwitchTopic('${pid}','${_kvLearningEsc(t).replace(/'/g,"\\'")}')">▶ Aktivieren</button>` : ""}
+            </div>`;
+          }).join("")}
+        </div>
+      </div>` : ""}
+      
+      <!-- Stats Footer -->
+      <div style="display:flex;gap:14px;padding:10px 0;border-top:1px solid rgba(255,255,255,0.06);font-size:11.5px;color:var(--muted)">
+        <span>📚 ${totalKeywords} Stichwörter total</span>
+        <span>📂 ${topicNames.length} Themen</span>
+        <span style="margin-left:auto">💡 Tipp: Im Notizbuch findest du die Erklärungen pro Thema</span>
+      </div>
+    </div>
+    <div class="pr-modal-foot">
+      <button class="pr-btn ghost" onclick="_kvCloseLearningMode()">Schliessen</button>
+      <button class="pr-btn primary" onclick="_kvLearningOpenNotebook('${pid}')" style="background:linear-gradient(135deg,#22c55e,#16a34a)">📓 Notizbuch öffnen</button>
+    </div>
+  </div>`;
+}
+
+function _kvRefreshLearningModal(pid) {
+  const overlay = document.getElementById("kvLearningOverlay");
+  if (!overlay) return;
+  
+  // Aktive Inputs merken
+  const topicVal = document.getElementById("kvLearningTopicInput")?.value;
+  const keywordVal = document.getElementById("kvLearningKeywordInput")?.value;
+  const taskVal = document.getElementById("kvLearningTaskInput")?.value;
+  const focused = document.activeElement?.id;
+  
+  overlay.innerHTML = _kvRenderLearningModal(pid);
+  
+  setTimeout(() => {
+    if (topicVal !== undefined) {
+      const el = document.getElementById("kvLearningTopicInput");
+      if (el && el.value === el.defaultValue) el.value = topicVal;
+    }
+    if (keywordVal) {
+      const el = document.getElementById("kvLearningKeywordInput");
+      if (el) el.value = keywordVal;
+    }
+    if (taskVal) {
+      const el = document.getElementById("kvLearningTaskInput");
+      if (el) el.value = taskVal;
+    }
+    if (focused) {
+      document.getElementById(focused)?.focus();
+    }
+  }, 30);
+}
+
+window._kvLearningSetTopic = function(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  const input = document.getElementById("kvLearningTopicInput");
+  const newTopic = (input?.value || "").trim();
+  if (!newTopic) {
+    if (typeof toast === "function") toast("warn", "Thema leer", "Bitte gib ein Thema ein");
+    return;
+  }
+  p._custom.learning.currentTopic = newTopic;
+  _kvSavePersist();
+  if (typeof toast === "function") toast("ok", "📌 Thema gesetzt", newTopic);
+  _kvRefreshLearningModal(pid);
+  setTimeout(() => document.getElementById("kvLearningKeywordInput")?.focus(), 50);
+};
+
+window._kvLearningSetStrategy = function(pid, strategy) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  p._custom.learning.noteStrategy = strategy;
+  _kvSavePersist();
+  if (typeof toast === "function") toast("ok", "Strategie gesetzt", strategy === "per-topic" ? "Eine Notiz pro Thema" : "Eine Notiz pro Stichwort");
+  _kvRefreshLearningModal(pid);
+};
+
+window._kvLearningSwitchTopic = function(pid, topic) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  p._custom.learning.currentTopic = topic;
+  _kvSavePersist();
+  if (typeof toast === "function") toast("ok", "📌 Thema aktiv", topic);
+  _kvRefreshLearningModal(pid);
+};
+
+window._kvLearningAddKeyword = function(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  const input = document.getElementById("kvLearningKeywordInput");
+  const word = (input?.value || "").trim();
+  if (!word) return;
+  
+  const learning = p._custom.learning;
+  if (!learning.currentTopic) {
+    if (typeof toast === "function") toast("warn", "Thema fehlt", "Bitte erst ein Thema setzen");
+    return;
+  }
+  
+  // Stichwort erstellen
+  const kwId = "kw_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const keyword = {
+    id: kwId,
+    word: word,
+    topic: learning.currentTopic,
+    createdAt: new Date().toISOString(),
+    noteId: null,
+  };
+  
+  if (!Array.isArray(learning.keywords)) learning.keywords = [];
+  learning.keywords.push(keyword);
+  
+  // Notiz erstellen oder erweitern
+  const notebookId = learning.notebookId || _kvEnsureLearningNotebook(p);
+  learning.notebookId = notebookId;
+  
+  if (learning.noteStrategy === "per-keyword") {
+    // Eine Notiz pro Stichwort
+    const noteId = _kvLearningCreateKeywordNote(p, keyword, notebookId);
+    keyword.noteId = noteId;
+  } else {
+    // per-topic: in bestehende Themen-Notiz oder neu erstellen
+    const noteId = _kvLearningAppendToTopicNote(p, keyword, notebookId);
+    keyword.noteId = noteId;
+  }
+  
+  _kvSavePersist();
+  
+  // Input leeren, fokus halten
+  if (input) {
+    input.value = "";
+    input.focus();
+  }
+  
+  if (typeof toast === "function") toast("ok", "✓ " + word, "→ " + learning.currentTopic);
+  _kvRefreshLearningModal(pid);
+};
+
+function _kvLearningCreateKeywordNote(project, keyword, notebookId) {
+  const noteId = "note_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const now = new Date().toISOString();
+  APP.state.data.entities.notes[noteId] = {
+    id: noteId,
+    title: keyword.word,
+    content: `# ${keyword.word}\n\n*Thema: ${keyword.topic}*\n\n---\n\n_Hier deine Erklärung schreiben..._\n`,
+    notebookId: notebookId,
+    tags: [keyword.topic, "learning"],
+    linkedProjects: [project.id],
+    createdAt: now,
+    updatedAt: now,
+    pinned: false,
+    archived: false,
+  };
+  return noteId;
+}
+
+function _kvLearningAppendToTopicNote(project, keyword, notebookId) {
+  // Bestehende Themen-Notiz suchen
+  const learning = project._custom.learning;
+  const existingForTopic = (learning.keywords || []).find(kw => 
+    kw.topic === keyword.topic && kw.noteId && APP.state.data.entities.notes[kw.noteId] && !APP.state.data.entities.notes[kw.noteId].archived
+  );
+  
+  let noteId;
+  if (existingForTopic && APP.state.data.entities.notes[existingForTopic.noteId]) {
+    // Stichwort in bestehende Notiz anhängen
+    noteId = existingForTopic.noteId;
+    const note = APP.state.data.entities.notes[noteId];
+    
+    // Anhängen wenn nicht schon drin
+    const marker = `## ${keyword.word}`;
+    if (!note.content.includes(marker)) {
+      note.content = (note.content || "").trimEnd() 
+        + `\n\n## ${keyword.word}\n_Erklärung folgt..._\n`;
+    }
+    note.updatedAt = new Date().toISOString();
+  } else {
+    // Neue Themen-Notiz erstellen
+    noteId = "note_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    const now = new Date().toISOString();
+    APP.state.data.entities.notes[noteId] = {
+      id: noteId,
+      title: keyword.topic,
+      content: `# ${keyword.topic}\n\n_Stichwörter zu diesem Thema:_\n\n## ${keyword.word}\n_Erklärung folgt..._\n`,
+      notebookId: notebookId,
+      tags: [keyword.topic, "learning", "topic-note"],
+      linkedProjects: [project.id],
+      createdAt: now,
+      updatedAt: now,
+      pinned: false,
+      archived: false,
+    };
+  }
+  return noteId;
+}
+
+window._kvLearningRemoveKeyword = function(pid, kwId) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  const learning = p._custom.learning;
+  const kw = (learning.keywords || []).find(k => k.id === kwId);
+  if (!kw) return;
+  if (!confirm(`Stichwort "${kw.word}" entfernen? (Verknüpfte Notiz bleibt erhalten)`)) return;
+  
+  learning.keywords = learning.keywords.filter(k => k.id !== kwId);
+  _kvSavePersist();
+  if (typeof toast === "function") toast("ok", "Entfernt", kw.word);
+  _kvRefreshLearningModal(pid);
+};
+
+window._kvLearningAddTask = function(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  const input = document.getElementById("kvLearningTaskInput");
+  const title = (input?.value || "").trim();
+  if (!title) return;
+  
+  const learning = p._custom.learning;
+  const taskId = "task_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const now = new Date().toISOString();
+  
+  // Tags vorbereiten — wenn aktives Thema, als Tag hinzufügen
+  const tags = ["learning"];
+  if (learning.currentTopic) tags.push(learning.currentTopic);
+  
+  APP.state.data.entities.tasks[taskId] = {
+    id: taskId,
+    title: title,
+    description: learning.currentTopic ? `Thema: ${learning.currentTopic}` : "",
+    status: "todo",
+    projectId: pid,
+    tags: tags,
+    priority: "medium",
+    createdAt: now,
+    updatedAt: now,
+  };
+  
+  _kvSavePersist();
+  if (input) {
+    input.value = "";
+    input.focus();
+  }
+  if (typeof toast === "function") toast("ok", "📋 Aufgabe erstellt", title);
+  _kvRefreshLearningModal(pid);
+};
+
+window._kvLearningOpenNote = function(noteId) {
+  _kvCloseLearningMode();
+  if (typeof navigate === "function") navigate("notes", noteId);
+  else window.location.hash = "#/notes/" + noteId;
+};
+
+window._kvLearningOpenNotebook = function(pid) {
+  const p = APP.state.data.entities.projects[pid];
+  if (!p) return;
+  const notebookId = p._custom.learning?.notebookId;
+  _kvCloseLearningMode();
+  if (notebookId) {
+    window.location.hash = "#/notes?notebook=" + notebookId;
+  } else {
+    window.location.hash = "#/notes";
+  }
 };
 
 window._kvOpenQuiz = function(pid) {
@@ -64136,6 +64688,18 @@ function buildSpotlightItems() {
     });
   });
   
+  // Protokolle
+  Object.values(e.protocols || {}).forEach(pr => {
+    const orgName = pr.organizationId ? (e.organizations?.[pr.organizationId]?.name || '') : '';
+    items.push({
+      kind: 'protokoll', icon: '📜', id: pr.id,
+      title: pr.title || 'Unbenanntes Protokoll',
+      sub: (orgName ? orgName + ' · ' : '') + (pr.date || ''),
+      route: '#/protocols/' + pr.id,
+      open: () => { window.location.hash = '#/protocols/' + pr.id; }
+    });
+  });
+  
   // Meetings
   Object.values(e.meetings || {}).forEach(m => {
     if (m.archived) return;
@@ -64228,6 +64792,7 @@ function buildSpotlightItems() {
       }},
       { icon: '📬', title: 'Mail Hub', sub: 'E-Mails, Personen, Korrespondenz', open: () => { window.location.hash = '#/mailhub'; } },
       { icon: '👤', title: 'Personen', sub: 'Kontaktverwaltung', open: () => { window.location.hash = '#/persons'; } },
+      { icon: '📜', title: 'Protokolle', sub: 'PDF-Protokolle mit Text-Extraktion', open: () => { window.location.hash = '#/protocols'; } },
       { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
         if (typeof window.openReadlist === 'function') window.openReadlist();
       }},
@@ -71608,6 +72173,893 @@ console.log('📚 Leseliste geladen');
 })();
 </script>
 <!-- ═══ END MAIL HUB ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ═══ PROTOKOLLE                                                       ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<style id="protocolsStyles">
+.pr-container { padding: 24px; max-width: 1400px; margin: 0 auto; }
+.pr-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+.pr-title { font-size:24px; font-weight:700; display:flex; align-items:center; gap:10px; }
+.pr-stats { display:flex; gap:16px; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+.pr-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.pr-search { flex:1; min-width:240px; padding:9px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; color:var(--text); font-size:13px; }
+.pr-search:focus { outline:none; border-color:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,0.15); }
+.pr-add-btn { padding:9px 16px; background:linear-gradient(135deg,#f59e0b,#d97706); color:#fff; border:0; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 4px 12px rgba(245,158,11,0.3); }
+.pr-add-btn:hover { box-shadow:0 6px 18px rgba(245,158,11,0.45); }
+.pr-list { display:flex; flex-direction:column; gap:8px; }
+.pr-card {
+  display:flex; gap:14px; padding:16px 18px;
+  background:rgba(255,255,255,0.03);
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:12px; cursor:pointer; transition:all .15s;
+}
+.pr-card:hover { background:rgba(245,158,11,0.05); border-color:rgba(245,158,11,0.25); }
+.pr-icon {
+  flex-shrink:0; width:46px; height:46px; border-radius:11px;
+  background:linear-gradient(135deg,rgba(245,158,11,0.18),rgba(217,119,6,0.08));
+  display:flex; align-items:center; justify-content:center;
+  font-size:22px;
+}
+.pr-card-body { flex:1; min-width:0; }
+.pr-card-row1 { display:flex; align-items:baseline; gap:10px; margin-bottom:5px; flex-wrap:wrap; }
+.pr-card-title { font-size:14.5px; font-weight:700; color:var(--text); }
+.pr-card-date { font-size:11.5px; color:var(--muted); }
+.pr-card-org { font-size:12px; color:#fbbf24; margin-bottom:4px; }
+.pr-card-meta { font-size:11.5px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
+.pr-card-tag { font-size:10.5px; padding:2px 8px; border-radius:5px; background:rgba(255,255,255,0.05); }
+.pr-card-tag.has-pdf { background:rgba(245,158,11,0.15); color:#fbbf24; }
+.pr-card-tag.task { background:rgba(34,197,94,0.12); color:#86efac; }
+.pr-card-tag.project { background:rgba(99,102,241,0.12); color:#a5b4fc; }
+.pr-empty { text-align:center; padding:60px 20px; color:var(--muted); }
+.pr-empty-icon { font-size:48px; margin-bottom:14px; }
+
+/* Detail */
+.pr-detail { max-width:980px; margin:0 auto; padding:24px; }
+.pr-detail-head { margin-bottom:24px; }
+.pr-detail-title { font-size:24px; font-weight:700; margin:0 0 8px; line-height:1.3; }
+.pr-detail-meta { display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin-bottom:14px; }
+.pr-detail-section { padding:18px 0; border-top:1px solid rgba(255,255,255,0.06); }
+.pr-detail-section h4 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); margin:0 0 10px; }
+.pr-text-content {
+  font-size:13.5px; line-height:1.7; color:var(--text);
+  white-space:pre-wrap; max-height:500px; overflow-y:auto;
+  padding:14px;
+  background:rgba(255,255,255,0.02);
+  border:1px solid rgba(255,255,255,0.06);
+  border-radius:8px;
+}
+.pr-pdf-pill {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:10px 16px;
+  background:rgba(245,158,11,0.1);
+  border:1px solid rgba(245,158,11,0.3);
+  border-radius:10px;
+  font-size:13.5px; color:#fbbf24;
+  cursor:pointer; transition:all .15s;
+  text-decoration:none;
+}
+.pr-pdf-pill:hover { background:rgba(245,158,11,0.18); transform:translateY(-1px); }
+
+/* Modal */
+.pr-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); z-index:10500; display:none; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto; }
+.pr-modal-overlay.show { display:flex; }
+.pr-modal { background:#0a0a0b; border:1px solid rgba(255,255,255,0.08); border-radius:16px; max-width:760px; width:100%; max-height:calc(100vh - 64px); display:flex; flex-direction:column; overflow:hidden; box-shadow:0 30px 60px rgba(0,0,0,0.5); }
+.pr-modal-head { padding:18px 22px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.pr-modal-title { font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; }
+.pr-modal-close { margin-left:auto; background:none; border:0; color:var(--muted); font-size:22px; cursor:pointer; line-height:1; padding:0 4px; }
+.pr-modal-body { padding:22px; flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:14px; }
+.pr-modal-foot { padding:14px 22px; border-top:1px solid rgba(255,255,255,0.06); display:flex; gap:8px; justify-content:flex-end; flex-shrink:0; }
+.pr-field { display:flex; flex-direction:column; gap:5px; }
+.pr-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); }
+.pr-input, .pr-textarea, .pr-select {
+  width:100%; padding:10px 13px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:9px; color:var(--text); font-size:13.5px; font-family:inherit;
+}
+.pr-textarea { min-height:90px; resize:vertical; line-height:1.6; }
+.pr-input:focus, .pr-textarea:focus, .pr-select:focus { outline:none; border-color:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,0.15); }
+.pr-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.pr-btn { padding:9px 18px; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer; border:0; }
+.pr-btn.primary { background:linear-gradient(135deg,#f59e0b,#d97706); color:#fff; }
+.pr-btn.ghost { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:var(--text); }
+.pr-btn.danger { background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); color:#f87171; }
+.pr-btn:hover { transform:translateY(-1px); }
+.pr-btn:disabled { opacity:0.5; cursor:wait; transform:none; }
+
+.pr-upload-zone {
+  padding:24px; border:2px dashed rgba(245,158,11,0.3);
+  border-radius:12px; background:rgba(245,158,11,0.04);
+  text-align:center; cursor:pointer; transition:all .15s;
+}
+.pr-upload-zone:hover, .pr-upload-zone.dragover { background:rgba(245,158,11,0.1); border-color:rgba(245,158,11,0.5); }
+.pr-upload-zone.has-file { background:rgba(34,197,94,0.06); border-color:rgba(34,197,94,0.4); border-style:solid; }
+
+.pr-progress { height:5px; background:rgba(255,255,255,0.06); border-radius:3px; overflow:hidden; margin-top:8px; }
+.pr-progress-bar { height:100%; background:linear-gradient(90deg,#f59e0b,#d97706); transition:width 0.3s; }
+
+.pr-tag-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.3); border-radius:999px; font-size:12px; color:#fbbf24; }
+.pr-tag-pill button { background:none; border:0; color:#fbbf24; cursor:pointer; padding:0; font-size:14px; line-height:1; }
+.pr-tag-row { display:flex; flex-wrap:wrap; gap:6px; min-height:36px; padding:6px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:9px; align-items:center; }
+.pr-tag-row input { flex:1; min-width:120px; background:none; border:0; padding:4px; color:var(--text); font-size:13px; outline:none; }
+
+.pr-link-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background:rgba(99,102,241,0.1); border:1px solid rgba(99,102,241,0.25); border-radius:8px; font-size:12.5px; color:#a5b4fc; cursor:pointer; transition:all .15s; }
+.pr-link-pill:hover { background:rgba(99,102,241,0.2); }
+.pr-link-pill.task { background:rgba(34,197,94,0.1); border-color:rgba(34,197,94,0.25); color:#86efac; }
+</style>
+
+<script id="protocolsScript">
+(function() {
+  "use strict";
+  
+  function prEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+  
+  function prFmtDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleDateString("de-CH", { day: "2-digit", month: "short", year: "numeric" });
+  }
+  
+  function prFmtDateLong(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleDateString("de-CH", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+  }
+  
+  function prId() {
+    return "prot_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+  
+  function prData() { return APP?.state?.data?.entities; }
+  function prProtocols() { return prData()?.protocols || {}; }
+  
+  function prSave() {
+    if (typeof scheduleSave === "function") scheduleSave();
+    else if (typeof window.scheduleSave === "function") window.scheduleSave();
+  }
+  
+  function prRender() {
+    if (typeof window.render === "function") window.render();
+  }
+  
+  function prToast(kind, title, body) {
+    if (typeof toast === "function") toast(kind, title, body);
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // PDF Text Extraction
+  // ═══════════════════════════════════════════════════════════════════════
+  async function extractPdfText(file, onProgress) {
+    if (!window.pdfjsLib) {
+      throw new Error("PDF.js nicht geladen");
+    }
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer, disableWorker: true }).promise;
+    let fullText = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      if (onProgress) onProgress(i, pdf.numPages);
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      const pageText = tc.items.map(it => it.str).join(" ");
+      fullText += pageText + "\n\n";
+    }
+    return fullText.trim();
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Liste
+  // ═══════════════════════════════════════════════════════════════════════
+  let _prSearch = "";
+  
+  window.prSearchInput = function(v) {
+    _prSearch = v;
+    const list = document.getElementById("prList");
+    if (list) list.innerHTML = renderProtocolsList();
+  };
+  
+  function renderProtocolsList() {
+    let protocols = Object.values(prProtocols());
+    
+    if (_prSearch) {
+      const q = _prSearch.toLowerCase();
+      protocols = protocols.filter(p => 
+        (p.title || "").toLowerCase().includes(q) ||
+        (p.extractedText || "").toLowerCase().includes(q) ||
+        (p.notes || "").toLowerCase().includes(q) ||
+        (p.summary || "").toLowerCase().includes(q)
+      );
+    }
+    
+    protocols.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    
+    if (protocols.length === 0) {
+      return `<div class="pr-empty">
+        <div class="pr-empty-icon">📜</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px">${_prSearch ? "Keine Treffer" : "Keine Protokolle"}</div>
+        <div style="font-size:12.5px">${_prSearch ? "Andere Suche probieren" : 'Klicke auf "+ Neues Protokoll" um dein erstes Protokoll hochzuladen.'}</div>
+      </div>`;
+    }
+    
+    const ents = prData();
+    return protocols.map(p => {
+      const orgName = p.organizationId ? ents.organizations?.[p.organizationId]?.name : null;
+      const tags = [];
+      if (p.fileUrl) tags.push(`<span class="pr-card-tag has-pdf">📄 PDF</span>`);
+      if (p.linkedTasks?.length) tags.push(`<span class="pr-card-tag task">✓ ${p.linkedTasks.length}</span>`);
+      if (p.linkedProjects?.length) tags.push(`<span class="pr-card-tag project">📦 ${p.linkedProjects.length}</span>`);
+      if (p.attendeePersonIds?.length) tags.push(`<span class="pr-card-tag">👥 ${p.attendeePersonIds.length}</span>`);
+      
+      const preview = (p.summary || p.extractedText || p.notes || "").slice(0, 200).replace(/\s+/g, " ");
+      
+      return `<div class="pr-card" onclick="navigate('protocols','${p.id}')">
+        <div class="pr-icon">📜</div>
+        <div class="pr-card-body">
+          <div class="pr-card-row1">
+            <span class="pr-card-title">${prEsc(p.title)}</span>
+            <span class="pr-card-date" style="margin-left:auto">${prEsc(prFmtDate(p.date))}</span>
+          </div>
+          ${orgName ? `<div class="pr-card-org">🏛️ ${prEsc(orgName)}</div>` : ""}
+          ${preview ? `<div style="font-size:12.5px;color:var(--muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${prEsc(preview)}</div>` : ""}
+          ${tags.length ? `<div class="pr-card-meta">${tags.join("")}</div>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+  }
+  
+  window.viewProtocols = function() {
+    const all = Object.values(prProtocols());
+    const withPdf = all.filter(p => p.fileUrl).length;
+    
+    return `<div class="pr-container">
+      <div class="pr-header">
+        <div>
+          <div class="pr-title">📜 Protokolle</div>
+          <div class="pr-stats">
+            <span>${all.length} Protokolle</span>
+            ${withPdf > 0 ? `<span style="color:#fbbf24">📄 ${withPdf} mit PDF</span>` : ""}
+          </div>
+        </div>
+        <button class="pr-add-btn" onclick="prOpenEditor()">+ Neues Protokoll</button>
+      </div>
+      
+      <div class="pr-toolbar">
+        <input type="text" class="pr-search" placeholder="🔍 In Protokollen suchen (auch Volltext aus PDFs)..." 
+               oninput="prSearchInput(this.value)" value="${prEsc(_prSearch)}" />
+      </div>
+      
+      <div id="prList" class="pr-list">${renderProtocolsList()}</div>
+    </div>`;
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Detail
+  // ═══════════════════════════════════════════════════════════════════════
+  window.viewProtocolDetail = function(id) {
+    const pr = prProtocols()[id];
+    if (!pr) return `<div class="pr-empty"><div class="pr-empty-icon">❓</div>Protokoll nicht gefunden.<br><button class="pr-btn primary" onclick="navigate('protocols')" style="margin-top:14px">Zurück</button></div>`;
+    
+    const ents = prData();
+    const orgName = pr.organizationId ? ents.organizations?.[pr.organizationId]?.name : null;
+    const persons = ents.persons || {};
+    
+    const attendees = (pr.attendeePersonIds || []).map(pid => persons[pid]).filter(Boolean);
+    const tasks = (pr.linkedTasks || []).map(tid => ents.tasks?.[tid]).filter(Boolean);
+    const projects = (pr.linkedProjects || []).map(pid => ents.projects?.[pid]).filter(Boolean);
+    
+    return `<div class="pr-detail">
+      <div style="margin-bottom:18px">
+        <button class="pr-btn ghost" onclick="navigate('protocols')">← Zurück</button>
+        <button class="pr-btn ghost" onclick="prOpenEditor('${id}')" style="margin-left:8px">✏️ Bearbeiten</button>
+        <button class="pr-btn danger" onclick="prDeleteProtocol('${id}')" style="margin-left:8px;float:right">🗑 Löschen</button>
+      </div>
+      
+      <div class="pr-detail-head">
+        <h1 class="pr-detail-title">📜 ${prEsc(pr.title)}</h1>
+        <div class="pr-detail-meta">
+          <span>📅 ${prEsc(prFmtDateLong(pr.date))}</span>
+          ${orgName ? `<span>🏛️ <a onclick="navigate('organizations','${pr.organizationId}')" style="color:#fbbf24;cursor:pointer">${prEsc(orgName)}</a></span>` : ""}
+          ${pr.fileUrl ? `<span>📄 PDF · ${(pr.fileSize/1024).toFixed(0)} KB</span>` : ""}
+        </div>
+      </div>
+      
+      ${pr.fileUrl ? `<div style="margin-bottom:8px">
+        <a class="pr-pdf-pill" href="${prEsc(pr.fileUrl)}" target="_blank" rel="noopener">
+          📄 ${prEsc(pr.fileName || "Protokoll.pdf")} öffnen ↗
+        </a>
+      </div>` : ""}
+      
+      ${pr.summary ? `<div class="pr-detail-section">
+        <h4>📝 Zusammenfassung</h4>
+        <div style="padding:14px;background:rgba(245,158,11,0.06);border-left:3px solid #f59e0b;border-radius:6px;font-size:13.5px;line-height:1.7">${prEsc(pr.summary)}</div>
+      </div>` : ""}
+      
+      ${attendees.length > 0 ? `<div class="pr-detail-section">
+        <h4>👥 Teilnehmer (${attendees.length})</h4>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${attendees.map(p => `<span class="pr-link-pill" onclick="navigate('persons','${p.id}')">
+            👤 ${prEsc(p.name)}${p.role ? ` <span style="color:var(--muted);font-size:11px">· ${prEsc(p.role)}</span>` : ""}
+          </span>`).join("")}
+        </div>
+      </div>` : ""}
+      
+      ${tasks.length > 0 ? `<div class="pr-detail-section">
+        <h4>✅ Verknüpfte Aufgaben (${tasks.length})</h4>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${tasks.map(t => `<span class="pr-link-pill task" onclick="navigate('tasks','${t.id}')">
+            ${t.status === "done" ? "✓" : "◯"} ${prEsc(t.title || "Task")}
+          </span>`).join("")}
+        </div>
+      </div>` : ""}
+      
+      ${projects.length > 0 ? `<div class="pr-detail-section">
+        <h4>📦 Verknüpfte Projekte (${projects.length})</h4>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${projects.map(p => `<span class="pr-link-pill" onclick="navigate('projects','${p.id}')">📦 ${prEsc(p.title || "Projekt")}</span>`).join("")}
+        </div>
+      </div>` : ""}
+      
+      ${pr.notes ? `<div class="pr-detail-section">
+        <h4>📝 Notizen</h4>
+        <div style="font-size:13.5px;line-height:1.7;white-space:pre-wrap">${prEsc(pr.notes)}</div>
+      </div>` : ""}
+      
+      ${pr.extractedText ? `<div class="pr-detail-section">
+        <h4>📄 Extrahierter Text aus PDF (${pr.extractedText.length.toLocaleString()} Zeichen — KI hat vollen Zugriff)</h4>
+        <div class="pr-text-content">${prEsc(pr.extractedText)}</div>
+      </div>` : ""}
+    </div>`;
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Editor
+  // ═══════════════════════════════════════════════════════════════════════
+  let _prEditing = null;
+  let _prAttendeeIds = [];
+  let _prLinkedTasks = [];
+  let _prLinkedProjects = [];
+  let _prPendingFile = null;  // { file, name, size, extractedText, uploadedUrl, storagePath }
+  
+  window.prOpenEditor = function(protocolId) {
+    _prEditing = protocolId || null;
+    const pr = protocolId ? prProtocols()[protocolId] : null;
+    
+    _prAttendeeIds = [...(pr?.attendeePersonIds || [])];
+    _prLinkedTasks = [...(pr?.linkedTasks || [])];
+    _prLinkedProjects = [...(pr?.linkedProjects || [])];
+    _prPendingFile = pr?.fileUrl ? {
+      uploaded: true,
+      uploadedUrl: pr.fileUrl,
+      name: pr.fileName,
+      size: pr.fileSize,
+      storagePath: pr.storagePath,
+      extractedText: pr.extractedText || "",
+    } : null;
+    
+    let overlay = document.getElementById("prEditorOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "prEditorOverlay";
+      overlay.className = "pr-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    const orgs = Object.values(prData().organizations || {});
+    
+    overlay.innerHTML = `<div class="pr-modal" onclick="event.stopPropagation()">
+      <div class="pr-modal-head">
+        <span class="pr-modal-title">📜 ${pr ? "Protokoll bearbeiten" : "Neues Protokoll"}</span>
+        <button class="pr-modal-close" onclick="prCloseEditor()">×</button>
+      </div>
+      <div class="pr-modal-body">
+        <div class="pr-field">
+          <label class="pr-label">Titel *</label>
+          <input type="text" id="prTitle" class="pr-input" placeholder="z.B. Vorstandssitzung SP AR" value="${prEsc(pr?.title || "")}" />
+        </div>
+        
+        <div class="pr-row">
+          <div class="pr-field">
+            <label class="pr-label">Datum</label>
+            <input type="date" id="prDate" class="pr-input" value="${pr?.date || new Date().toISOString().slice(0,10)}" />
+          </div>
+          <div class="pr-field">
+            <label class="pr-label">Organisation</label>
+            <select id="prOrg" class="pr-select">
+              <option value="">— Keine —</option>
+              ${orgs.map(o => `<option value="${o.id}" ${pr?.organizationId === o.id ? "selected" : ""}>${prEsc(o.name)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        
+        <div class="pr-field">
+          <label class="pr-label">📄 PDF hochladen (Text wird automatisch extrahiert)</label>
+          <div id="prUploadZone" class="pr-upload-zone ${_prPendingFile ? 'has-file' : ''}">
+            ${renderUploadZone()}
+          </div>
+          <input type="file" id="prFileInput" accept=".pdf,application/pdf" style="display:none" onchange="prHandleFileSelect(event)" />
+        </div>
+        
+        <div class="pr-field">
+          <label class="pr-label">Zusammenfassung (optional, manuell)</label>
+          <textarea id="prSummary" class="pr-textarea" placeholder="Kurze Zusammenfassung des Protokolls...">${prEsc(pr?.summary || "")}</textarea>
+        </div>
+        
+        <div class="pr-field">
+          <label class="pr-label">Notizen (optional)</label>
+          <textarea id="prNotes" class="pr-textarea" placeholder="Eigene Notizen, Kommentare...">${prEsc(pr?.notes || "")}</textarea>
+        </div>
+        
+        <div class="pr-field">
+          <label class="pr-label">👥 Teilnehmer</label>
+          ${renderAttendeesPicker()}
+        </div>
+        
+        <div class="pr-row">
+          <div class="pr-field">
+            <label class="pr-label">✅ Verknüpfte Aufgaben</label>
+            ${renderLinkPicker("tasks", _prLinkedTasks)}
+          </div>
+          <div class="pr-field">
+            <label class="pr-label">📦 Verknüpfte Projekte</label>
+            ${renderLinkPicker("projects", _prLinkedProjects)}
+          </div>
+        </div>
+      </div>
+      <div class="pr-modal-foot">
+        <button class="pr-btn ghost" onclick="prCloseEditor()">Abbrechen</button>
+        <button class="pr-btn primary" id="prSaveBtn" onclick="prSaveProtocol()">${pr ? "Aktualisieren" : "Speichern"}</button>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) prCloseEditor(); };
+    setTimeout(() => document.getElementById("prTitle")?.focus(), 50);
+    
+    // Drag & Drop
+    const zone = document.getElementById("prUploadZone");
+    if (zone) {
+      zone.addEventListener("click", () => {
+        if (!_prPendingFile?.uploading) document.getElementById("prFileInput").click();
+      });
+      ["dragenter","dragover"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add("dragover"); }));
+      ["dragleave","drop"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove("dragover"); }));
+      zone.addEventListener("drop", e => {
+        e.preventDefault();
+        const f = e.dataTransfer.files?.[0];
+        if (f && f.type === "application/pdf") prProcessFile(f);
+      });
+    }
+  };
+  
+  function renderUploadZone() {
+    if (!_prPendingFile) {
+      return `<div style="font-size:32px;margin-bottom:8px">📄</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">PDF hier ablegen oder klicken</div>
+        <div style="font-size:11px;color:var(--muted)">Text wird automatisch extrahiert</div>`;
+    }
+    if (_prPendingFile.uploading) {
+      return `<div style="font-size:24px;margin-bottom:8px">⏳</div>
+        <div style="font-size:13px;font-weight:600">${prEsc(_prPendingFile.name)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">${_prPendingFile.statusText || "Wird verarbeitet..."}</div>
+        <div class="pr-progress"><div class="pr-progress-bar" style="width:${_prPendingFile.progress || 0}%"></div></div>`;
+    }
+    return `<div style="font-size:24px;margin-bottom:6px">${_prPendingFile.uploaded ? "✅" : "📄"}</div>
+      <div style="font-size:13px;font-weight:600">${prEsc(_prPendingFile.name)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">${(_prPendingFile.size/1024).toFixed(0)} KB${_prPendingFile.extractedText ? ` · ${_prPendingFile.extractedText.length.toLocaleString()} Zeichen extrahiert` : ""}</div>
+      <button class="pr-btn ghost" style="margin-top:10px;font-size:11px;padding:5px 11px" onclick="event.stopPropagation();prRemoveFile()">× Entfernen</button>`;
+  }
+  
+  function updateUploadZone() {
+    const zone = document.getElementById("prUploadZone");
+    if (zone) {
+      zone.innerHTML = renderUploadZone();
+      zone.classList.toggle("has-file", !!_prPendingFile && !_prPendingFile.uploading);
+    }
+  }
+  
+  window.prHandleFileSelect = function(e) {
+    const file = e.target.files?.[0];
+    if (file) prProcessFile(file);
+    e.target.value = "";
+  };
+  
+  async function prProcessFile(file) {
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      prToast("warn", "Nur PDFs", "Bitte eine PDF-Datei hochladen");
+      return;
+    }
+    
+    _prPendingFile = {
+      file, name: file.name, size: file.size,
+      uploading: true, progress: 0, statusText: "Text wird extrahiert..."
+    };
+    updateUploadZone();
+    
+    try {
+      // 1. Text extrahieren
+      const extractedText = await extractPdfText(file, (cur, total) => {
+        _prPendingFile.progress = Math.round((cur / total) * 50);
+        _prPendingFile.statusText = `Text-Extraktion: Seite ${cur}/${total}`;
+        updateUploadZone();
+      });
+      _prPendingFile.extractedText = extractedText;
+      
+      // 2. PDF zu Firebase hochladen
+      _prPendingFile.statusText = "Lade PDF zu Cloud hoch...";
+      _prPendingFile.progress = 60;
+      updateUploadZone();
+      
+      let url = null, storagePath = null;
+      if (typeof window.uploadToFirebase === "function" && window.firebaseStorage) {
+        storagePath = "protocols/" + Date.now() + "_" + file.name.replace(/[^\w.-]/g, "_");
+        url = await window.uploadToFirebase(file, storagePath);
+      } else {
+        console.warn("[Protokolle] Firebase nicht verfügbar — PDF wird nicht in Cloud gespeichert");
+      }
+      
+      _prPendingFile = {
+        ...(_prPendingFile),
+        uploading: false,
+        uploaded: !!url,
+        uploadedUrl: url,
+        storagePath: url ? storagePath : null,
+        extractedText,
+      };
+      updateUploadZone();
+      
+      prToast("ok", "✅ PDF verarbeitet", `${extractedText.length.toLocaleString()} Zeichen extrahiert${url ? " · in Cloud gespeichert" : ""}`);
+    } catch (e) {
+      console.error("[Protokolle] PDF-Processing failed:", e);
+      _prPendingFile = null;
+      updateUploadZone();
+      prToast("err", "Fehler", e.message || "PDF konnte nicht verarbeitet werden");
+    }
+  }
+  
+  window.prRemoveFile = function() {
+    _prPendingFile = null;
+    updateUploadZone();
+  };
+  
+  // ─── Attendees Picker (Personen) ───
+  function renderAttendeesPicker() {
+    const persons = prData().persons || {};
+    const tags = _prAttendeeIds.map(id => {
+      const p = persons[id];
+      if (!p) return "";
+      return `<span class="pr-tag-pill">${prEsc(p.name)}<button onclick="prRemoveAttendee('${id}')">×</button></span>`;
+    }).join("");
+    
+    return `<div style="position:relative">
+      <div class="pr-tag-row">
+        ${tags}
+        <input type="text" id="prAttendeeInput" placeholder="Person suchen oder erstellen..." 
+               oninput="prAttendeeSearch(this.value)" 
+               onfocus="prAttendeeSearch(this.value)"
+               onblur="setTimeout(()=>prAttendeeHide(), 200)"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();prAttendeeEnter(this.value)}" />
+      </div>
+      <div id="prAttendeeSuggestions" style="position:absolute;top:100%;left:0;right:0;background:#0f0f10;border:1px solid rgba(245,158,11,0.3);border-radius:8px;max-height:240px;overflow-y:auto;z-index:50;margin-top:4px;display:none;box-shadow:0 12px 28px rgba(0,0,0,0.5)"></div>
+    </div>`;
+  }
+  
+  window.prAttendeeSearch = function(query) {
+    const sugs = document.getElementById("prAttendeeSuggestions");
+    if (!sugs) return;
+    const q = (query || "").toLowerCase().trim();
+    const persons = Object.values(prData().persons || {})
+      .filter(p => !_prAttendeeIds.includes(p.id))
+      .filter(p => !q || p.name.toLowerCase().includes(q) || (p.emails || []).some(e => e.toLowerCase().includes(q)))
+      .slice(0, 8);
+    
+    let html = persons.map(p => 
+      `<div style="padding:10px 13px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:10px" 
+            onmousedown="prPickAttendee('${p.id}')"
+            onmouseover="this.style.background='rgba(245,158,11,0.15)'"
+            onmouseout="this.style.background='transparent'">
+        <span style="width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:700">${prEsc((p.name || "?").trim().split(/\s+/).slice(0,2).map(s=>s[0]||"").join("").toUpperCase())}</span>
+        <span>${prEsc(p.name)}${p.role ? ` <span style="color:var(--muted);font-size:11px">· ${prEsc(p.role)}</span>` : ""}</span>
+      </div>`
+    ).join("");
+    
+    if (q && !persons.find(p => p.name.toLowerCase() === q)) {
+      html += `<div style="padding:10px 13px;cursor:pointer;font-size:13px;color:#fbbf24;font-style:italic;border-top:1px solid rgba(255,255,255,0.06)" 
+                    onmousedown="prCreateAndPickAttendee('${prEsc(query.trim())}')"
+                    onmouseover="this.style.background='rgba(245,158,11,0.15)'"
+                    onmouseout="this.style.background='transparent'">
+        ✨ Neue Person erstellen: "${prEsc(query.trim())}"
+      </div>`;
+    }
+    
+    sugs.innerHTML = html;
+    sugs.style.display = html ? "block" : "none";
+  };
+  
+  window.prAttendeeHide = function() {
+    const sugs = document.getElementById("prAttendeeSuggestions");
+    if (sugs) sugs.style.display = "none";
+  };
+  
+  window.prPickAttendee = function(id) {
+    if (!_prAttendeeIds.includes(id)) _prAttendeeIds.push(id);
+    document.getElementById("prAttendeeInput").value = "";
+    prAttendeeHide();
+    prRefreshEditor();
+  };
+  
+  window.prCreateAndPickAttendee = function(name) {
+    if (typeof window.mhFindOrCreatePerson === "function") {
+      const p = window.mhFindOrCreatePerson(name);
+      if (p) prPickAttendee(p.id);
+    }
+  };
+  
+  window.prAttendeeEnter = function(val) {
+    val = (val || "").trim();
+    if (!val) return;
+    prCreateAndPickAttendee(val);
+  };
+  
+  window.prRemoveAttendee = function(id) {
+    _prAttendeeIds = _prAttendeeIds.filter(x => x !== id);
+    prRefreshEditor();
+  };
+  
+  // ─── Link Picker (Tasks/Projects) ───
+  function renderLinkPicker(kind, currentIds) {
+    const ents = prData();
+    const map = ents[kind] || {};
+    const titleField = "title";
+    const selected = currentIds.map(id => map[id]).filter(Boolean);
+    
+    const selectedHtml = selected.map(item => 
+      `<span class="pr-tag-pill" style="background:${kind==='tasks'?'rgba(34,197,94,0.15)':'rgba(99,102,241,0.15)'};border-color:${kind==='tasks'?'rgba(34,197,94,0.3)':'rgba(99,102,241,0.3)'};color:${kind==='tasks'?'#86efac':'#a5b4fc'}">
+        ${prEsc((item[titleField] || "").slice(0, 28))}<button onclick="prRemoveLink('${kind}','${item.id}')" style="color:inherit">×</button>
+      </span>`
+    ).join("");
+    
+    return `<div>
+      ${selectedHtml ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${selectedHtml}</div>` : ""}
+      <select class="pr-select" style="font-size:12px" onchange="prAddLink('${kind}', this.value); this.value=''">
+        <option value="">+ Hinzufügen...</option>
+        ${Object.values(map).filter(it => it && !currentIds.includes(it.id)).slice(0, 80).map(it => 
+          `<option value="${it.id}">${prEsc((it[titleField] || "Unbenannt").slice(0, 60))}</option>`
+        ).join("")}
+      </select>
+    </div>`;
+  }
+  
+  window.prAddLink = function(kind, id) {
+    if (!id) return;
+    if (kind === "tasks" && !_prLinkedTasks.includes(id)) _prLinkedTasks.push(id);
+    if (kind === "projects" && !_prLinkedProjects.includes(id)) _prLinkedProjects.push(id);
+    prRefreshEditor();
+  };
+  
+  window.prRemoveLink = function(kind, id) {
+    if (kind === "tasks") _prLinkedTasks = _prLinkedTasks.filter(x => x !== id);
+    if (kind === "projects") _prLinkedProjects = _prLinkedProjects.filter(x => x !== id);
+    prRefreshEditor();
+  };
+  
+  function prRefreshEditor() {
+    // Save text fields before re-render
+    const title = document.getElementById("prTitle")?.value;
+    const date = document.getElementById("prDate")?.value;
+    const org = document.getElementById("prOrg")?.value;
+    const summary = document.getElementById("prSummary")?.value;
+    const notes = document.getElementById("prNotes")?.value;
+    
+    prOpenEditor(_prEditing);
+    
+    setTimeout(() => {
+      if (title !== undefined) document.getElementById("prTitle").value = title;
+      if (date !== undefined) document.getElementById("prDate").value = date;
+      if (org !== undefined && document.getElementById("prOrg")) document.getElementById("prOrg").value = org;
+      if (summary !== undefined) document.getElementById("prSummary").value = summary;
+      if (notes !== undefined) document.getElementById("prNotes").value = notes;
+    }, 30);
+  }
+  
+  window.prCloseEditor = function() {
+    const overlay = document.getElementById("prEditorOverlay");
+    if (overlay) overlay.classList.remove("show");
+  };
+  
+  window.prSaveProtocol = function() {
+    const title = document.getElementById("prTitle")?.value.trim();
+    if (!title) { prToast("warn", "Titel erforderlich"); return; }
+    
+    const date = document.getElementById("prDate")?.value || new Date().toISOString().slice(0,10);
+    const orgId = document.getElementById("prOrg")?.value || null;
+    const summary = document.getElementById("prSummary")?.value.trim() || "";
+    const notes = document.getElementById("prNotes")?.value.trim() || "";
+    
+    if (_prPendingFile?.uploading) {
+      prToast("warn", "Bitte warten", "PDF wird noch verarbeitet...");
+      return;
+    }
+    
+    const now = new Date().toISOString();
+    const id = _prEditing || prId();
+    const isNew = !_prEditing;
+    const existing = prProtocols()[id];
+    
+    APP.state.data.entities.protocols[id] = {
+      ...(existing || {}),
+      id, title, date,
+      organizationId: orgId || null,
+      summary, notes,
+      attendeePersonIds: [..._prAttendeeIds],
+      linkedTasks: [..._prLinkedTasks],
+      linkedProjects: [..._prLinkedProjects],
+      extractedText: _prPendingFile?.extractedText || existing?.extractedText || "",
+      fileUrl: _prPendingFile?.uploadedUrl || existing?.fileUrl || null,
+      fileName: _prPendingFile?.name || existing?.fileName || "",
+      fileSize: _prPendingFile?.size || existing?.fileSize || 0,
+      storagePath: _prPendingFile?.storagePath || existing?.storagePath || null,
+      tags: existing?.tags || [],
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    };
+    
+    prSave();
+    prCloseEditor();
+    prToast("ok", "📜 Gespeichert", title);
+    
+    // Reset state
+    _prEditing = null;
+    _prAttendeeIds = [];
+    _prLinkedTasks = [];
+    _prLinkedProjects = [];
+    _prPendingFile = null;
+    
+    if (isNew) window.navigate("protocols", id);
+    else prRender();
+  };
+  
+  window.prDeleteProtocol = function(id) {
+    const pr = prProtocols()[id];
+    if (!pr) return;
+    if (!confirm(`Protokoll "${pr.title}" wirklich löschen? ${pr.fileUrl ? "Das PDF in der Cloud bleibt bestehen." : ""}`)) return;
+    delete APP.state.data.entities.protocols[id];
+    prSave();
+    prToast("ok", "🗑 Gelöscht", pr.title);
+    window.navigate("protocols");
+  };
+  
+  console.log("📜 Protokolle geladen");
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // UNIVERSAL: Protokoll-Box für andere Entities
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  window.prGetLinkedProtocols = function(entityKind, entityId) {
+    if (!entityKind || !entityId) return [];
+    return Object.values(prProtocols()).filter(pr => {
+      if (entityKind === "task") return (pr.linkedTasks || []).includes(entityId);
+      if (entityKind === "project") return (pr.linkedProjects || []).includes(entityId);
+      if (entityKind === "organization") return pr.organizationId === entityId;
+      if (entityKind === "person") return (pr.attendeePersonIds || []).includes(entityId);
+      return false;
+    }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  };
+  
+  window.prRenderLinkedProtocolsBox = function(entityKind, entityId) {
+    const protocols = window.prGetLinkedProtocols(entityKind, entityId);
+    
+    let listHtml = "";
+    if (protocols.length === 0) {
+      listHtml = `<div style="padding:18px;text-align:center;color:var(--muted);font-size:12.5px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.08);border-radius:10px">
+        Noch keine Protokolle verknüpft.
+      </div>`;
+    } else {
+      listHtml = protocols.map(pr => {
+        return `<div class="pr-card" style="padding:10px 14px" onclick="navigate('protocols','${pr.id}')">
+          <div class="pr-icon" style="width:32px;height:32px;font-size:14px">📜</div>
+          <div class="pr-card-body">
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">
+              <span style="font-size:13px;font-weight:600">${prEsc(pr.title)}</span>
+              <span style="font-size:11px;color:var(--muted);margin-left:auto">${prEsc(prFmtDate(pr.date))}</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--muted)">
+              ${pr.fileUrl ? "📄 PDF · " : ""}
+              ${pr.extractedText ? pr.extractedText.length.toLocaleString() + " Zeichen" : ""}
+            </div>
+          </div>
+        </div>`;
+      }).join("");
+    }
+    
+    return `<div style="margin-top:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0;font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px">📜 Protokolle ${protocols.length > 0 ? `<span style="font-size:11px;background:rgba(245,158,11,0.15);color:#fbbf24;padding:2px 9px;border-radius:999px">${protocols.length}</span>` : ""}</h3>
+        <button class="pr-btn primary" style="font-size:11px;padding:5px 11px" onclick="prCreateLinkedProtocol('${entityKind}','${entityId}')">+ Neues Protokoll</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">${listHtml}</div>
+    </div>`;
+  };
+  
+  // Erstellt ein neues Protokoll, vorverknüpft mit Entity
+  window.prCreateLinkedProtocol = function(entityKind, entityId) {
+    _prEditing = null;
+    _prAttendeeIds = [];
+    _prLinkedTasks = [];
+    _prLinkedProjects = [];
+    _prPendingFile = null;
+    
+    if (entityKind === "task") _prLinkedTasks = [entityId];
+    if (entityKind === "project") _prLinkedProjects = [entityId];
+    
+    const wasOpen = !!document.getElementById("prEditorOverlay");
+    prOpenEditor();
+    
+    // Bei Organisation: Org pre-selecten
+    if (entityKind === "organization") {
+      setTimeout(() => {
+        const orgSel = document.getElementById("prOrg");
+        if (orgSel) orgSel.value = entityId;
+      }, 100);
+    }
+    if (entityKind === "person") {
+      setTimeout(() => {
+        if (!_prAttendeeIds.includes(entityId)) {
+          _prAttendeeIds.push(entityId);
+          prRefreshEditor();
+        }
+      }, 100);
+    }
+  };
+  
+  // Auto-Inject in Detail-Pages
+  function prInjectBox() {
+    const hash = window.location.hash || "";
+    const match = hash.match(/^#\/(\w+)\/([a-zA-Z0-9_-]+)/);
+    if (!match) return;
+    
+    const route = match[1];
+    const id = match[2];
+    
+    const routeMap = { tasks: "task", projects: "project", organizations: "organization" };
+    const entityKind = routeMap[route];
+    if (!entityKind) return;
+    
+    if (document.getElementById("prAutoInjectedBox")) return;
+    
+    const target = document.getElementById("pageContent") || document.querySelector("#main");
+    if (!target) return;
+    
+    const wrapper = document.createElement("div");
+    wrapper.id = "prAutoInjectedBox";
+    wrapper.className = "card";
+    wrapper.style.cssText = "margin-top:16px";
+    wrapper.innerHTML = window.prRenderLinkedProtocolsBox(entityKind, id);
+    target.appendChild(wrapper);
+  }
+  
+  let _prInjectTimer = null;
+  function prScheduleInject() {
+    clearTimeout(_prInjectTimer);
+    _prInjectTimer = setTimeout(() => { try { prInjectBox(); } catch(e) {} }, 250);
+  }
+  
+  window.addEventListener("hashchange", prScheduleInject);
+  setTimeout(() => {
+    const target = document.getElementById("pageContent") || document.querySelector("#main");
+    if (target) {
+      const obs = new MutationObserver(() => {
+        if (!document.getElementById("prAutoInjectedBox")) prScheduleInject();
+      });
+      obs.observe(target, { childList: true, subtree: false });
+    }
+  }, 1500);
+  setTimeout(prScheduleInject, 1700);
+})();
+</script>
+<!-- ═══ END PROTOKOLLE ═══ -->
 
 </body>
 </html>
