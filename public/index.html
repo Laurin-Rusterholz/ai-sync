@@ -10450,12 +10450,83 @@ function buildFullContextPrompt() {
     dbData.beliefs.forEach(b => { context += `• "${b.text}"\n`; });
   }
   const todayStr = todayYmd();
-  const todayBlocks = (dbData.timeBlocks || {})[todayStr] || [];
-  if (todayBlocks.length > 0) {
-    context += `\n=== TAGESPLANUNG / ZEITBLÖCKE HEUTE (${todayBlocks.length}) ===\n`;
-    todayBlocks.sort((a,b) => (a.startTime||"").localeCompare(b.startTime||"")).forEach(tb => {
-      context += `• ${tb.startTime}-${tb.endTime}: "${tb.title}"${tb.taskId ? " (verknüpfte Aufgabe)" : ""}\n`;
+  
+  // Komplette Tagesplanungs-Übersicht: Heute + 7 Tage zurück + 14 Tage vorwärts
+  const allTimeBlocks = dbData.timeBlocks || {};
+  const allDailyGoals = APP.state.data.dailyGoals || {};
+  
+  // Helper: ISO-Datum n Tage von heute
+  function _ymdOffset(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+  
+  // Sammle alle Tage mit Plänen oder Zielen
+  const planDays = new Set();
+  Object.keys(allTimeBlocks).forEach(ymd => { 
+    if ((allTimeBlocks[ymd] || []).length > 0) planDays.add(ymd);
+  });
+  Object.keys(allDailyGoals).forEach(ymd => {
+    if ((allDailyGoals[ymd] || []).length > 0) planDays.add(ymd);
+  });
+  // Heute + 14 Tage vorwärts immer mit drin (auch wenn leer — KI weiss dann "leer")
+  for (let i = 0; i <= 14; i++) planDays.add(_ymdOffset(i));
+  
+  const sortedDays = Array.from(planDays)
+    .filter(ymd => ymd >= _ymdOffset(-7) && ymd <= _ymdOffset(30))  // Window
+    .sort();
+  
+  if (sortedDays.length > 0) {
+    context += `\n=== DAILY BRIEFING / TAGESPLANUNG (Heute=${todayStr}) ===\n`;
+    context += `Du hast vollständigen Lese- UND Schreibzugriff. Wenn der User etwas verändern will (kopieren, hinzufügen, löschen), gib am Ende deiner Antwort eine ACTION-Anweisung in genau diesem Format aus:\n`;
+    context += `[ACTION:copy_day from=YYYY-MM-DD to=YYYY-MM-DD]\n`;
+    context += `[ACTION:add_block date=YYYY-MM-DD start=HH:MM end=HH:MM title="..."]\n`;
+    context += `[ACTION:delete_block date=YYYY-MM-DD index=N]\n`;
+    context += `[ACTION:clear_day date=YYYY-MM-DD]\n`;
+    context += `[ACTION:add_goal date=YYYY-MM-DD title="..."]\n`;
+    context += `Mehrere ACTIONS hintereinander sind erlaubt. Nach den ACTIONS kommt nichts mehr — nur Text davor erklären.\n\n`;
+    
+    sortedDays.forEach(ymd => {
+      const blocks = allTimeBlocks[ymd] || [];
+      const goals = allDailyGoals[ymd] || [];
+      const isToday = ymd === todayStr;
+      const isFuture = ymd > todayStr;
+      const isPast = ymd < todayStr;
+      const dayLabel = isToday ? "🟢 HEUTE" : (isFuture ? "🔵" : "⚪");
+      const dateObj = new Date(ymd);
+      const weekday = dateObj.toLocaleDateString("de-CH", { weekday: "short" });
+      
+      if (blocks.length === 0 && goals.length === 0) {
+        if (isFuture && ymd <= _ymdOffset(7)) {
+          context += `${dayLabel} ${ymd} (${weekday}): — leer —\n`;
+        }
+        return;
+      }
+      
+      context += `\n${dayLabel} ${ymd} (${weekday}):\n`;
+      
+      if (blocks.length > 0) {
+        blocks.slice().sort((a, b) => (a.startTime || "").localeCompare(b.startTime || "")).forEach((tb, idx) => {
+          const taskTitle = tb.taskId ? (e.tasks?.[tb.taskId]?.title || "") : "";
+          context += `  [${idx}] ${tb.startTime || "??"}-${tb.endTime || "??"}: "${tb.title || ""}"${taskTitle ? ` (Task: ${taskTitle})` : ""}\n`;
+        });
+      }
+      if (goals.length > 0) {
+        goals.forEach(g => {
+          const done = g.completed ? "✓" : "◯";
+          context += `  ${done} Ziel: ${g.title || ""}\n`;
+        });
+      }
     });
+  }
+  
+  // Selected Projects im Briefing
+  if (dbData.selectedProjects?.length > 0) {
+    const selectedProjs = dbData.selectedProjects.map(pid => e.projects?.[pid]?.title).filter(Boolean);
+    if (selectedProjs.length > 0) {
+      context += `\nFokus-Projekte im Briefing: ${selectedProjs.join(", ")}\n`;
+    }
   }
   const wGoals = typeof getWeeklyGoals === "function" ? getWeeklyGoals() : [];
   if (wGoals.length > 0) {
@@ -63576,8 +63647,73 @@ function buildDataSnapshot(ctx){
   const dbBeliefs = dbData.beliefs || [];
   const dbRoutines = dbData.customRoutines || [];
   const dbDayLog = (dbData.dailyLog || {})[today] || {};
+  const allBlocks = dbData.timeBlocks || {};
+  const allDailyGoals = d.dailyGoals || {};
+  
+  // Helper für Datum n Tage von heute
+  function _qcYmdOff(days) {
+    const dt = new Date();
+    dt.setDate(dt.getDate() + days);
+    return dt.toISOString().slice(0, 10);
+  }
+  
+  // Sammle alle Tage mit Plänen (Heute + 7 zurück + 14 vorwärts)
+  const _qcPlanDays = new Set();
+  Object.keys(allBlocks).forEach(ymd => { if ((allBlocks[ymd] || []).length > 0) _qcPlanDays.add(ymd); });
+  Object.keys(allDailyGoals).forEach(ymd => { if ((allDailyGoals[ymd] || []).length > 0) _qcPlanDays.add(ymd); });
+  for (let i = -1; i <= 14; i++) _qcPlanDays.add(_qcYmdOff(i));  // -1 für gestern, +14 für 2 Wochen voraus
+  
+  const sortedDays = Array.from(_qcPlanDays)
+    .filter(ymd => ymd >= _qcYmdOff(-7) && ymd <= _qcYmdOff(30))
+    .sort();
+  
+  // Zeitblöcke + Tagesziele Block (auch wenn ansonsten Briefing leer)
+  if (sortedDays.length > 0) {
+    s += `═══ TAGESPLANUNG / DAILY BRIEFING ═══\n`;
+    s += `Du hast Lese- UND Schreibzugriff. Verwende {{COMMAND|...}} um zu modifizieren:\n`;
+    s += `  {{COPY_DAY|YYYY-MM-DD|YYYY-MM-DD}} — Tag kopieren (Quelle → Ziel)\n`;
+    s += `  {{ADD_BLOCK|YYYY-MM-DD|HH:MM|HH:MM|Titel}} — Zeitblock hinzufügen\n`;
+    s += `  {{DELETE_BLOCK|YYYY-MM-DD|index}} — Block löschen (index aus Liste unten)\n`;
+    s += `  {{CLEAR_DAY|YYYY-MM-DD}} — Alle Blöcke + Ziele eines Tages löschen\n`;
+    s += `  {{ADD_GOAL|YYYY-MM-DD|Titel}} — Tagesziel hinzufügen\n`;
+    s += `Du kannst mehrere Commands hintereinander setzen. Sie werden alle ausgeführt.\n\n`;
+    
+    sortedDays.forEach(ymd => {
+      const blocks = allBlocks[ymd] || [];
+      const goals = allDailyGoals[ymd] || [];
+      if (blocks.length === 0 && goals.length === 0) return;
+      
+      const isToday = ymd === today;
+      const dt = new Date(ymd);
+      const wd = dt.toLocaleDateString("de-CH", { weekday: "short" });
+      const label = isToday ? "🟢 HEUTE" : (ymd > today ? "🔵" : "⚪");
+      
+      s += `${label} ${ymd} (${wd}):\n`;
+      blocks.slice().sort((a, b) => (a.startTime || "").localeCompare(b.startTime || "")).forEach((tb, idx) => {
+        const taskTitle = tb.taskId ? (e.tasks?.[tb.taskId]?.title || "") : "";
+        s += `  [${idx}] ${tb.startTime || "??"}-${tb.endTime || "??"}: "${tb.title || ""}"${taskTitle ? ` (Task: ${taskTitle})` : ""}\n`;
+      });
+      goals.forEach(g => {
+        s += `  ${g.completed ? "✓" : "◯"} Ziel: ${g.title || ""}\n`;
+      });
+    });
+    
+    // Auch leere Tage in den nächsten 3 erwähnen (damit KI weiss "nichts geplant")
+    const emptyShortFuture = [];
+    for (let i = 0; i <= 3; i++) {
+      const ymd = _qcYmdOff(i);
+      const blocks = allBlocks[ymd] || [];
+      const goals = allDailyGoals[ymd] || [];
+      if (blocks.length === 0 && goals.length === 0) emptyShortFuture.push(ymd);
+    }
+    if (emptyShortFuture.length > 0) {
+      s += `\nLeere Tage (nichts geplant): ${emptyShortFuture.join(", ")}\n`;
+    }
+    s += "\n";
+  }
+  
   if(dbBeliefs.length || dbRoutines.length || dbDayLog.notes){
-    s += `═══ DAILY BRIEFING ═══\n`;
+    s += `═══ DAILY BRIEFING / WEITERE ═══\n`;
     if(dbBeliefs.length){
       s += `  Glaubenssätze (${dbBeliefs.length}):\n`;
       dbBeliefs.forEach(b => { s += `    💎 ${b.text}\n`; });
@@ -63716,6 +63852,26 @@ Beispiel: {{UPDATE|goal|def456|progress:75|status:active}}
 
 ## Zur Seite navigieren
 {{NAVIGATE|route}} oder {{NAVIGATE|route/id}}
+
+## Tagesplanung / Daily Briefing
+KRITISCH: Wenn der Nutzer Tagespläne kopieren, hinzufügen, löschen oder ändern möchte, NUTZE diese Commands.
+
+{{COPY_DAY|VonDatum|ZuDatum}} — Kompletten Tag (Zeitblöcke + Tagesziele) kopieren
+  Beispiel: "kopiere heute auf morgen" → {{COPY_DAY|2026-05-09|2026-05-10}}
+  
+{{ADD_BLOCK|Datum|StartHH:MM|EndeHH:MM|Titel}} — Einzelnen Zeitblock hinzufügen
+  Beispiel: {{ADD_BLOCK|2026-05-10|09:00|10:30|Lernen Vorsorge}}
+  
+{{DELETE_BLOCK|Datum|index}} — Block löschen (index aus Liste in TAGESPLANUNG-Section)
+  Beispiel: {{DELETE_BLOCK|2026-05-09|2}}
+  
+{{CLEAR_DAY|Datum}} — Alle Blöcke + Ziele eines Tages löschen
+  Beispiel: {{CLEAR_DAY|2026-05-11}}
+  
+{{ADD_GOAL|Datum|Titel}} — Tagesziel hinzufügen
+  Beispiel: {{ADD_GOAL|2026-05-09|3 Vorsorge-Karten lernen}}
+
+WICHTIG: Heutiges Datum siehst du oben (📅 HEUTE). Berechne andere Daten relativ dazu (gestern, morgen, übermorgen, nächste Woche). Bei "kopiere heute auf morgen" oder "verschiebe von Montag auf Dienstag" — IMMER konkrete YYYY-MM-DD-Daten benutzen, nicht "morgen" als Text.
 
 # WICHTIGE REGELN FÜR BEFEHLE
 - Wenn der Nutzer sagt "mach das", "ändere", "setze", "erstelle", "lösche", "verschiebe", "konvertiere" → FÜHRE DEN BEFEHL AUS
@@ -64074,6 +64230,100 @@ function processCommands(text){
     const parts = route.trim().split("/");
     setTimeout(()=>{ if(window.navigate) window.navigate(parts[0],parts[1]||null); },500);
     return `🔗 Navigiere zu ${route.trim()}`;
+  });
+  
+  // ════════ DAILY BRIEFING COMMANDS ════════
+  function _qcEnsureDb() {
+    const d = APP.state.data;
+    if (!d.dailyBriefing) d.dailyBriefing = { timeBlocks: {}, customRoutines: [], beliefs: [] };
+    if (!d.dailyBriefing.timeBlocks) d.dailyBriefing.timeBlocks = {};
+    if (!d.dailyGoals) d.dailyGoals = {};
+    return d;
+  }
+  
+  // ── COPY_DAY: Tagesplan + Ziele kopieren ──
+  out = out.replace(/\{\{COPY_DAY\|(\d{4}-\d{2}-\d{2})\|(\d{4}-\d{2}-\d{2})\}\}/g, (_, fromDate, toDate) => {
+    const d = _qcEnsureDb();
+    const srcBlocks = (d.dailyBriefing.timeBlocks[fromDate] || []).slice();
+    const srcGoals = (d.dailyGoals[fromDate] || []).slice();
+    
+    if (srcBlocks.length === 0 && srcGoals.length === 0) {
+      return `⚠️ ${fromDate} hat keine Einträge zum Kopieren`;
+    }
+    
+    // Deep-clone Blocks (neue IDs falls vorhanden)
+    const newBlocks = srcBlocks.map(b => ({
+      ...b,
+      id: "tb_" + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+    }));
+    const newGoals = srcGoals.map(g => ({
+      ...g,
+      id: "dg_" + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      completed: false,  // Reset completion-status beim Kopieren
+    }));
+    
+    d.dailyBriefing.timeBlocks[toDate] = newBlocks;
+    if (newGoals.length > 0) d.dailyGoals[toDate] = newGoals;
+    
+    changed = true;
+    const parts = [];
+    if (newBlocks.length) parts.push(`${newBlocks.length} Zeitblöcke`);
+    if (newGoals.length) parts.push(`${newGoals.length} Tagesziele`);
+    return `📋 ${fromDate} → ${toDate} kopiert (${parts.join(", ")})`;
+  });
+  
+  // ── ADD_BLOCK ──
+  out = out.replace(/\{\{ADD_BLOCK\|(\d{4}-\d{2}-\d{2})\|(\d{1,2}:\d{2})\|(\d{1,2}:\d{2})\|([^}]+)\}\}/g, (_, date, start, end, title) => {
+    const d = _qcEnsureDb();
+    if (!d.dailyBriefing.timeBlocks[date]) d.dailyBriefing.timeBlocks[date] = [];
+    const block = {
+      id: "tb_" + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      startTime: start.padStart(5, "0"),
+      endTime: end.padStart(5, "0"),
+      title: title.trim(),
+    };
+    d.dailyBriefing.timeBlocks[date].push(block);
+    changed = true;
+    return `➕ ${date} ${start}-${end}: "${title.trim()}"`;
+  });
+  
+  // ── DELETE_BLOCK ──
+  out = out.replace(/\{\{DELETE_BLOCK\|(\d{4}-\d{2}-\d{2})\|(\d+)\}\}/g, (_, date, idxStr) => {
+    const d = _qcEnsureDb();
+    const blocks = d.dailyBriefing.timeBlocks[date] || [];
+    const sorted = blocks.slice().sort((a,b) => (a.startTime||"").localeCompare(b.startTime||""));
+    const idx = parseInt(idxStr, 10);
+    const toRemove = sorted[idx];
+    if (!toRemove) return `⚠️ Block #${idx} nicht gefunden für ${date}`;
+    d.dailyBriefing.timeBlocks[date] = blocks.filter(b => b.id !== toRemove.id);
+    changed = true;
+    return `🗑️ ${date}: "${toRemove.title || ""}" (${toRemove.startTime}-${toRemove.endTime}) gelöscht`;
+  });
+  
+  // ── CLEAR_DAY ──
+  out = out.replace(/\{\{CLEAR_DAY\|(\d{4}-\d{2}-\d{2})\}\}/g, (_, date) => {
+    const d = _qcEnsureDb();
+    const blockCount = (d.dailyBriefing.timeBlocks[date] || []).length;
+    const goalCount = (d.dailyGoals[date] || []).length;
+    delete d.dailyBriefing.timeBlocks[date];
+    delete d.dailyGoals[date];
+    if (blockCount + goalCount === 0) return `ℹ️ ${date} war bereits leer`;
+    changed = true;
+    return `🧹 ${date} geleert (${blockCount} Blöcke, ${goalCount} Ziele)`;
+  });
+  
+  // ── ADD_GOAL ──
+  out = out.replace(/\{\{ADD_GOAL\|(\d{4}-\d{2}-\d{2})\|([^}]+)\}\}/g, (_, date, title) => {
+    const d = _qcEnsureDb();
+    if (!d.dailyGoals[date]) d.dailyGoals[date] = [];
+    d.dailyGoals[date].push({
+      id: "dg_" + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      title: title.trim(),
+      completed: false,
+      createdAt: new Date().toISOString(),
+    });
+    changed = true;
+    return `🎯 ${date}: Ziel "${title.trim()}" hinzugefügt`;
   });
 
   if(changed){ window.scheduleSave?.(); window.render?.(); }
