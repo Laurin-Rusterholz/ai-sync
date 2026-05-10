@@ -6915,6 +6915,20 @@ for (const u of Object.values(e.updates)) {
     p.tags = p.tags || [];
     p.comments = p.comments || [];
     p.externalLinks = p.externalLinks || [];
+    
+    // Auto-generierte externalId für bestehende Projekte ohne ID
+    if (!p.externalId) {
+      const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+      const existingIds = new Set(Object.values(e.projects).map(x => x.externalId).filter(Boolean));
+      let newId;
+      let safety = 100;
+      do {
+        newId = "PRJ-";
+        for (let i = 0; i < 5; i++) newId += chars[Math.floor(Math.random() * chars.length)];
+        safety--;
+      } while (existingIds.has(newId) && safety > 0);
+      p.externalId = newId;
+    }
     p.linkedTasks = p.linkedTasks || [];
     p.linkedNotes = p.linkedNotes || [];
     p.linkedOrganizations = p.linkedOrganizations || [];
@@ -12934,7 +12948,20 @@ function renderMain() {
     case "reports": html = viewReports(); break;
     case "chat": html = viewChat(); break;
     case "knowledge": html = viewKnowledge(); break;
-    case "budget": try { html = viewBudget(); } catch(e) { console.error("Budget error:", e); html = `<div class="page-header"><h1>💰 Budget</h1></div><div class="card p-4"><p>Fehler beim Laden: ${e.message}</p><button class="btn primary" onclick="location.hash='#/dashboard'">Zurück</button></div>`; } break;
+    case "budget": {
+      try {
+        // ═══ PIN-Schutz prüfen ═══
+        if (!window._budgetUnlocked) {
+          const storedPin = localStorage.getItem("quantus_budget_pin");
+          if (storedPin) {
+            html = renderBudgetLockScreen(false);
+            break;
+          }
+        }
+        html = viewBudget();
+      } catch(e) { console.error("Budget error:", e); html = `<div class="page-header"><h1>💰 Budget</h1></div><div class="card p-4"><p>Fehler beim Laden: ${e.message}</p><button class="btn primary" onclick="location.hash='#/dashboard'">Zurück</button></div>`; }
+      break;
+    }
     case "messages": html = viewMessages(); break;
     case "ideas": html = id ? viewIdeaDetail(id) : viewIdeas(); break;
     case "meetings": html = id ? viewMeetingDetail(id) : viewMeetings(); break;
@@ -15820,6 +15847,9 @@ function viewReflecta() {
     <div class="rfa-hero">
       <h2>🪞 Reflecta</h2>
       <p>Reflexionen, Learnings & persönliche Entwicklung</p>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button onclick="rfCreateDecision()" style="padding:9px 16px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:0;border-radius:10px;font-weight:700;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px">⚖️ Neue Entscheidung treffen</button>
+      </div>
     </div>
     
     <div class="rfa-stats">
@@ -15856,7 +15886,10 @@ function viewReflecta() {
           <textarea id="rfDidWell" placeholder="2-3 konkrete Situationen, Fortschritte..." rows="3" style="width:100%;padding:9px 12px;background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.2);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">${esc(todayRefl?.didWell || '')}</textarea>
         </div>
         <div>
-          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#fbbf24;margin-bottom:4px;display:block">🔧 Was kann besser?</label>
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#fbbf24;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+            <span>🔧 Was kann besser?</span>
+            <button onclick="rfCreateDecisionFromField('didBetter')" title="Aus diesem Punkt eine Entscheidung machen" style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);color:#fbbf24;font-size:9.5px;padding:2px 7px;border-radius:5px;cursor:pointer;font-weight:600;text-transform:none;letter-spacing:0">⚖️ Entscheidung</button>
+          </label>
           <textarea id="rfDidBetter" placeholder="1-2 Punkte mit kurzer Beobachtung..." rows="3" style="width:100%;padding:9px 12px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">${esc(todayRefl?.didBetter || '')}</textarea>
         </div>
         <div>
@@ -16022,6 +16055,83 @@ window.rfSaveDailyEditor = function() {
   if (window.scheduleSave) window.scheduleSave();
   if (window.render) window.render();
   if (typeof toast === "function") toast("ok", "✓ Reflecta", "Heutiger Eintrag gespeichert");
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// Reflecta → Decisions
+// ═══════════════════════════════════════════════════════════════════════
+window.rfCreateDecision = function() {
+  const title = prompt("Worüber willst du entscheiden? (Titel der Entscheidung)");
+  if (!title || !title.trim()) return;
+  
+  const id = "dc_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const now = new Date().toISOString();
+  if (!APP.state.data.entities.decisions) APP.state.data.entities.decisions = {};
+  
+  APP.state.data.entities.decisions[id] = {
+    id, title: title.trim(),
+    description: "",
+    status: "open",
+    votes: [],
+    mode: "yesno",
+    customOptions: [],
+    matrixEnabled: true,
+    matrixCriteria: typeof dcStandardCriteria === "function" ? dcStandardCriteria() : [],
+    matrixSummary: "",
+    sourceKind: "reflecta",
+    sourceId: null,
+    tags: ["reflecta"],
+    createdAt: now,
+    updatedAt: now,
+  };
+  
+  if (window.scheduleSave) window.scheduleSave();
+  if (typeof toast === "function") toast("ok", "⚖️ Entscheidung erstellt", title);
+  
+  // Direkt zur Entscheidung navigieren
+  if (typeof navigate === "function") navigate("decisions", id);
+  else window.location.hash = "#/decisions/" + id;
+};
+
+window.rfCreateDecisionFromField = function(fieldName) {
+  const fieldEl = document.getElementById("rfDidBetter");
+  const fieldValue = fieldEl?.value?.trim() || "";
+  
+  if (!fieldValue) {
+    if (typeof toast === "function") toast("warn", "Feld leer", "Schreibe erst was rein");
+    return;
+  }
+  
+  const title = prompt("Worüber willst du entscheiden?\n(Tipp: Aus deinem 'Was kann besser'-Feld)", 
+    fieldValue.length > 80 ? fieldValue.slice(0, 80) + "..." : fieldValue);
+  if (!title || !title.trim()) return;
+  
+  const id = "dc_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const now = new Date().toISOString();
+  if (!APP.state.data.entities.decisions) APP.state.data.entities.decisions = {};
+  
+  APP.state.data.entities.decisions[id] = {
+    id, title: title.trim(),
+    description: "Aus Reflecta-Tagebuch:\n" + fieldValue,
+    status: "open",
+    votes: [],
+    mode: "yesno",
+    customOptions: [],
+    matrixEnabled: true,
+    matrixCriteria: typeof dcStandardCriteria === "function" ? dcStandardCriteria() : [],
+    matrixSummary: "",
+    sourceKind: "reflecta",
+    sourceId: null,
+    tags: ["reflecta", "tagebuch"],
+    createdAt: now,
+    updatedAt: now,
+  };
+  
+  if (window.scheduleSave) window.scheduleSave();
+  if (typeof toast === "function") toast("ok", "⚖️ Entscheidung erstellt", "Mit Tagebuch-Eintrag verknüpft");
+  
+  if (typeof navigate === "function") navigate("decisions", id);
+  else window.location.hash = "#/decisions/" + id;
 };
   
   if (action === "rf-show-detail") {
@@ -17759,6 +17869,642 @@ function viewProjects() {
   `;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// 📋 Pflicht-Felder Banner für neue Projekte
+// ═══════════════════════════════════════════════════════════════════════
+function renderProjectMandatoryBanner(p, id) {
+  // Matrix-Status
+  const scs = (p.matrixCriteria || []).map(c => parseFloat(c.score)).filter(s => !isNaN(s) && s > 0);
+  const matrixDone = p.matrixEnabled && scs.length >= 5; // Mindestens 5 Kriterien bewertet
+  
+  // Zeitvoranschlag-Status
+  const timeBudgetDone = p.timeBudget && (p.timeBudget.totalHours > 0 || (p.timeBudget.phases || []).length > 0);
+  
+  if (matrixDone && timeBudgetDone) return ""; // Beides erledigt
+  
+  // Wenn beides fehlt
+  const items = [];
+  if (!matrixDone) items.push({ icon: "📊", title: "Bewertungsmatrix", desc: "Bewerte das Projekt nach 15 Kriterien", action: `scrollToProjectMatrix('${id}')` });
+  if (!timeBudgetDone) items.push({ icon: "🕒", title: "Zeitvoranschlag", desc: "Schätze den Aufwand pro Phase", action: `scrollToProjectTimeBudget('${id}')` });
+  
+  return `<div style="margin-bottom:14px;padding:14px 16px;background:linear-gradient(135deg,rgba(245,158,11,.08),rgba(249,115,22,.04));border:1px solid rgba(245,158,11,.3);border-radius:12px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:${items.length > 1 ? "10" : "0"}px">
+      <span style="font-size:20px">⚠️</span>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#fbbf24">Pflicht-Felder noch offen</div>
+        <div style="font-size:12px;color:var(--muted)">Fülle diese Felder aus damit du dieses Projekt strukturiert angehen kannst.</div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      ${items.map(it => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(255,255,255,.03);border-radius:8px">
+          <span style="font-size:16px">${it.icon}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600">${it.title}</div>
+            <div style="font-size:11px;color:var(--muted)">${it.desc}</div>
+          </div>
+          <button class="btn sm primary" onclick="${it.action}" style="font-size:11px;padding:5px 11px;background:linear-gradient(135deg,#f59e0b,#d97706)">Ausfüllen →</button>
+        </div>
+      `).join('')}
+    </div>
+  </div>`;
+}
+
+window.scrollToProjectMatrix = function(id) {
+  const el = document.getElementById("project-matrix-section-" + id);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+};
+
+window.scrollToProjectTimeBudget = function(id) {
+  const el = document.getElementById("project-timebudget-section-" + id);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// 📊 Projekt-Bewertungsmatrix (analog Decisions)
+// ═══════════════════════════════════════════════════════════════════════
+function renderProjectMatrix(p, id) {
+  const criteria = p.matrixCriteria || [];
+  const scores = criteria.map(c => parseFloat(c.score)).filter(s => !isNaN(s) && s > 0);
+  const avg = scores.length ? (scores.reduce((a,b) => a+b, 0) / scores.length) : 0;
+  
+  let avgColor = "#6b7280";
+  if (avg > 0) {
+    if (avg >= 7.5) avgColor = "#22c55e";
+    else if (avg >= 5) avgColor = "#eab308";
+    else avgColor = "#ef4444";
+  }
+  
+  if (!p.matrixEnabled) {
+    return `<div id="project-matrix-section-${id}" style="padding:18px;background:rgba(99,102,241,.04);border:1px dashed rgba(99,102,241,.25);border-radius:12px;text-align:center">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px">📊 Bewertungsmatrix</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Bewerte dieses Projekt systematisch nach 15 Standard-Kriterien (1-10).</div>
+      <button class="btn primary" onclick="prjEnableMatrix('${id}')" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);font-size:12px">+ Matrix aktivieren</button>
+    </div>`;
+  }
+  
+  const rowsHtml = criteria.map((c, idx) => `
+    <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+      <td style="padding:8px;vertical-align:top">
+        <input type="text" value="${esc(c.title)}" oninput="prjUpdateMatrixCrit('${id}',${idx},'title',this.value)" 
+               style="width:100%;padding:4px 7px;background:transparent;border:0;color:var(--text);font-size:12.5px;font-weight:600" />
+        <input type="text" value="${esc(c.sub || '')}" oninput="prjUpdateMatrixCrit('${id}',${idx},'sub',this.value)" 
+               style="width:100%;padding:2px 7px;background:transparent;border:0;color:var(--muted);font-size:10.5px" />
+      </td>
+      <td style="padding:8px;width:70px;text-align:center;vertical-align:top">
+        <input type="number" min="1" max="10" value="${c.score || ''}" 
+               oninput="prjUpdateMatrixCrit('${id}',${idx},'score',this.value)" 
+               style="width:54px;padding:6px;text-align:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:var(--text);font-size:13px;font-weight:700" />
+      </td>
+      <td style="padding:8px;vertical-align:top">
+        <textarea oninput="prjUpdateMatrixCrit('${id}',${idx},'note',this.value)" rows="1" placeholder="Notiz..."
+                  style="width:100%;padding:5px 8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:6px;color:var(--text);font-size:11.5px;font-family:inherit;resize:vertical;min-height:28px">${esc(c.note || '')}</textarea>
+      </td>
+      <td style="padding:8px;width:32px;text-align:center;vertical-align:top">
+        <button onclick="prjRemoveMatrixCrit('${id}','${c.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:13px">×</button>
+      </td>
+    </tr>
+  `).join('');
+  
+  return `<div id="project-matrix-section-${id}" style="padding:18px;background:linear-gradient(135deg,rgba(99,102,241,.04),rgba(139,92,246,.04));border:1px solid rgba(99,102,241,.2);border-radius:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px">📊 Bewertungsmatrix</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${scores.length}/${criteria.length} bewertet · 1-10</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div style="text-align:center;padding:7px 14px;background:rgba(255,255,255,.05);border-radius:8px;border:1px solid ${avgColor}40">
+          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700">Ø</div>
+          <div style="font-size:20px;font-weight:800;color:${avgColor}">${avg ? avg.toFixed(1) : "–"}</div>
+        </div>
+        <button class="btn sm" onclick="prjResetMatrix('${id}')" style="font-size:10px;padding:4px 9px">↻ Standard</button>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="border-bottom:2px solid rgba(255,255,255,.08)">
+          <th style="text-align:left;padding:6px 8px;font-size:9.5px;color:var(--muted);font-weight:700;text-transform:uppercase">Kriterium</th>
+          <th style="text-align:center;padding:6px 8px;font-size:9.5px;color:var(--muted);font-weight:700;text-transform:uppercase;width:70px">Score</th>
+          <th style="text-align:left;padding:6px 8px;font-size:9.5px;color:var(--muted);font-weight:700;text-transform:uppercase">Notiz</th>
+          <th style="width:32px"></th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <div style="margin-top:8px">
+      <button class="btn sm" onclick="prjAddMatrixCrit('${id}')" style="font-size:10.5px;padding:5px 10px">+ Eigenes Kriterium</button>
+    </div>
+    <div style="margin-top:12px">
+      <label style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:4px;display:block">📝 Erkenntnis</label>
+      <textarea oninput="prjUpdateMatrixSummary('${id}',this.value)" rows="2" placeholder="Zusammenfassung..." 
+                style="width:100%;padding:8px 11px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:7px;color:var(--text);font-size:12px;font-family:inherit;resize:vertical">${esc(p.matrixSummary || '')}</textarea>
+    </div>
+  </div>`;
+}
+
+// 15 Standard-Kriterien für Projekte (gleich wie Decisions)
+function prjStandardCriteria() {
+  return [
+    { title: "Zeitaufwand", sub: "Benötigte Zeit" },
+    { title: "Kosten / Ressourcen", sub: "Finanzielle & materielle Mittel" },
+    { title: "Motivation", sub: "Innere Motivation" },
+    { title: "Energie", sub: "Körperliche & mentale Kraft" },
+    { title: "Fachwissen / Können", sub: "Kenntnisse oder lernbar" },
+    { title: "Abhängigkeit von anderen", sub: "Benötigte Unterstützung" },
+    { title: "Umwelt / Rahmenbedingungen", sub: "Unterstützt dein Umfeld?" },
+    { title: "Priorität / Wichtigkeit", sub: "Relevanz für Ziele" },
+    { title: "Risiko / negative Konsequenzen", sub: "Mögliche Nachteile" },
+    { title: "Emotionale Belastung", sub: "Emotionaler Aufwand" },
+    { title: "Kontinuität / Nachhaltigkeit", sub: "Langfristig durchführbar" },
+    { title: "Langfristigkeit", sub: "Beitrag zu langfristigen Zielen" },
+    { title: "Werte & Prinzipien", sub: "Passt zur Haltung" },
+    { title: "Anspruchsniveau", sub: "Realistische Standards" },
+    { title: "Handlungsfeld", sub: "Konkrete Umsetzung" },
+  ].map(c => ({ id: "crit_" + Math.random().toString(36).slice(2, 8), title: c.title, sub: c.sub, score: "", note: "" }));
+}
+
+window.prjEnableMatrix = function(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  p.matrixEnabled = true;
+  if (!p.matrixCriteria || p.matrixCriteria.length === 0) p.matrixCriteria = prjStandardCriteria();
+  scheduleSave(); render();
+  toast("ok", "📊 Matrix aktiviert");
+};
+
+window.prjResetMatrix = function(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  if (!confirm("Auf 15 Standard-Kriterien zurücksetzen? Bestehende Bewertungen gehen verloren.")) return;
+  p.matrixCriteria = prjStandardCriteria();
+  scheduleSave(); render();
+};
+
+window.prjUpdateMatrixCrit = function(id, idx, field, value) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !p.matrixCriteria || !p.matrixCriteria[idx]) return;
+  if (field === "score") {
+    const num = parseFloat(value);
+    if (value === "" || (!isNaN(num) && num >= 1 && num <= 10)) p.matrixCriteria[idx].score = value;
+  } else {
+    p.matrixCriteria[idx][field] = value;
+  }
+  if (window._prjMatrixSaveTimer) clearTimeout(window._prjMatrixSaveTimer);
+  window._prjMatrixSaveTimer = setTimeout(() => { scheduleSave(); if (field === "score") render(); }, field === "score" ? 100 : 800);
+};
+
+window.prjAddMatrixCrit = function(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  if (!Array.isArray(p.matrixCriteria)) p.matrixCriteria = [];
+  p.matrixCriteria.push({ id: "crit_" + Math.random().toString(36).slice(2, 8), title: "", sub: "", score: "", note: "" });
+  scheduleSave(); render();
+};
+
+window.prjRemoveMatrixCrit = function(id, critId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.matrixCriteria)) return;
+  if (!confirm("Kriterium entfernen?")) return;
+  p.matrixCriteria = p.matrixCriteria.filter(x => x.id !== critId);
+  scheduleSave(); render();
+};
+
+window.prjUpdateMatrixSummary = function(id, value) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  p.matrixSummary = value;
+  if (window._prjSummarySaveTimer) clearTimeout(window._prjSummarySaveTimer);
+  window._prjSummarySaveTimer = setTimeout(() => scheduleSave(), 800);
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🕒 Projekt-Zeitvoranschlag
+// ═══════════════════════════════════════════════════════════════════════
+function renderProjectTimeBudget(p, id) {
+  const tb = p.timeBudget || {};
+  const phases = tb.phases || [];
+  const totalEstimated = phases.reduce((sum, ph) => sum + (parseFloat(ph.estimatedHours) || 0), 0);
+  const totalActual = phases.reduce((sum, ph) => sum + (parseFloat(ph.actualHours) || 0), 0);
+  const pct = totalEstimated > 0 ? Math.round((totalActual / totalEstimated) * 100) : 0;
+  const isOver = totalActual > totalEstimated && totalEstimated > 0;
+  
+  const phasesHtml = phases.map((ph, idx) => {
+    const phPct = ph.estimatedHours > 0 ? Math.round(((ph.actualHours || 0) / ph.estimatedHours) * 100) : 0;
+    const phOver = (ph.actualHours || 0) > (ph.estimatedHours || 0);
+    return `<div style="display:grid;grid-template-columns:1fr 90px 90px 90px 30px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+      <input type="text" value="${esc(ph.name)}" placeholder="Phase / Aufgabe..." oninput="prjUpdateTimePhase('${id}','${ph.id}','name',this.value)" 
+             style="padding:6px 9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:var(--text);font-size:12.5px" />
+      <input type="number" min="0" step="0.5" value="${ph.estimatedHours || ''}" placeholder="0" oninput="prjUpdateTimePhase('${id}','${ph.id}','estimatedHours',this.value)" 
+             style="padding:6px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.2);border-radius:6px;color:var(--text);font-size:12.5px;text-align:center" />
+      <input type="number" min="0" step="0.5" value="${ph.actualHours || ''}" placeholder="0" oninput="prjUpdateTimePhase('${id}','${ph.id}','actualHours',this.value)" 
+             style="padding:6px;background:${phOver ? 'rgba(239,68,68,.08)' : 'rgba(34,197,94,.05)'};border:1px solid ${phOver ? 'rgba(239,68,68,.3)' : 'rgba(34,197,94,.2)'};border-radius:6px;color:var(--text);font-size:12.5px;text-align:center" />
+      <div style="text-align:center;font-size:11px;color:${phOver ? '#f87171' : phPct > 80 ? '#fbbf24' : '#86efac'};font-weight:700">${phPct}%</div>
+      <button onclick="prjRemoveTimePhase('${id}','${ph.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:13px">×</button>
+    </div>`;
+  }).join('');
+  
+  return `<div id="project-timebudget-section-${id}" style="padding:18px;background:linear-gradient(135deg,rgba(34,197,94,.04),rgba(16,185,129,.04));border:1px solid rgba(34,197,94,.2);border-radius:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px">🕒 Zeitvoranschlag</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Schätze pro Phase die benötigten Stunden</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div style="text-align:center;padding:6px 12px;background:rgba(99,102,241,.1);border-radius:8px;border:1px solid rgba(99,102,241,.25)">
+          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Geplant</div>
+          <div style="font-size:16px;font-weight:800;color:#a5b4fc">${totalEstimated.toFixed(1)}h</div>
+        </div>
+        <div style="text-align:center;padding:6px 12px;background:${isOver ? 'rgba(239,68,68,.1)' : 'rgba(34,197,94,.1)'};border-radius:8px;border:1px solid ${isOver ? 'rgba(239,68,68,.3)' : 'rgba(34,197,94,.25)'}">
+          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Tatsächlich</div>
+          <div style="font-size:16px;font-weight:800;color:${isOver ? '#f87171' : '#86efac'}">${totalActual.toFixed(1)}h</div>
+        </div>
+        <div style="text-align:center;padding:6px 12px;background:rgba(255,255,255,.04);border-radius:8px;border:1px solid rgba(255,255,255,.08)">
+          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Auslastung</div>
+          <div style="font-size:16px;font-weight:800;color:${isOver ? '#f87171' : pct > 80 ? '#fbbf24' : '#86efac'}">${pct}%</div>
+        </div>
+      </div>
+    </div>
+    
+    ${phases.length > 0 ? `
+      <div style="display:grid;grid-template-columns:1fr 90px 90px 90px 30px;gap:8px;padding:6px 0;border-bottom:2px solid rgba(255,255,255,.08);font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700">
+        <div>Phase / Aufgabe</div>
+        <div style="text-align:center">Geplant (h)</div>
+        <div style="text-align:center">Tats. (h)</div>
+        <div style="text-align:center">%</div>
+        <div></div>
+      </div>
+      ${phasesHtml}
+    ` : `<div style="padding:18px;text-align:center;color:var(--muted);font-size:12px">Noch keine Phasen erfasst</div>`}
+    
+    <button class="btn sm" onclick="prjAddTimePhase('${id}')" style="margin-top:10px;font-size:11px;padding:6px 11px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac">+ Phase hinzufügen</button>
+    
+    ${(p.linkedTaskIds || []).length > 0 || true ? `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.05)">
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:4px;display:block">⏱ Wochenkapazität (Stunden/Woche)</label>
+            <input type="number" min="0" step="0.5" value="${p.weeklyTargetHours || ''}" 
+                   placeholder="z.B. 5" 
+                   oninput="prjUpdateWeeklyTarget('${id}',this.value)" 
+                   style="width:120px;padding:7px 10px;background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.25);border-radius:7px;color:var(--text);font-size:13px;font-weight:600" />
+          </div>
+          <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted)">🔗 Verknüpfung mit Statistics</div>
+          <a onclick="window.location.hash='#/statistics'" style="font-size:11.5px;color:#a5b4fc;cursor:pointer;text-decoration:underline">→ Wochen-Auslastung sehen</a>
+        </div>
+      </div>
+    ` : ""}
+  </div>`;
+}
+
+window.prjUpdateWeeklyTarget = function(id, value) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  p.weeklyTargetHours = parseFloat(value) || 0;
+  if (window._prjWeeklySaveTimer) clearTimeout(window._prjWeeklySaveTimer);
+  window._prjWeeklySaveTimer = setTimeout(() => scheduleSave(), 500);
+};
+
+window.prjAddTimePhase = function(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  if (!p.timeBudget) p.timeBudget = { phases: [], totalHours: 0 };
+  if (!Array.isArray(p.timeBudget.phases)) p.timeBudget.phases = [];
+  p.timeBudget.phases.push({ id: "ph_" + Math.random().toString(36).slice(2, 8), name: "", estimatedHours: 0, actualHours: 0 });
+  scheduleSave(); render();
+};
+
+window.prjUpdateTimePhase = function(id, phId, field, value) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !p.timeBudget?.phases) return;
+  const ph = p.timeBudget.phases.find(x => x.id === phId);
+  if (!ph) return;
+  if (field === "estimatedHours" || field === "actualHours") {
+    ph[field] = parseFloat(value) || 0;
+  } else {
+    ph[field] = value;
+  }
+  if (window._prjTimeSaveTimer) clearTimeout(window._prjTimeSaveTimer);
+  window._prjTimeSaveTimer = setTimeout(() => { scheduleSave(); if (field !== "name") render(); }, field === "name" ? 800 : 200);
+};
+
+window.prjRemoveTimePhase = function(id, phId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !p.timeBudget?.phases) return;
+  if (!confirm("Phase entfernen?")) return;
+  p.timeBudget.phases = p.timeBudget.phases.filter(x => x.id !== phId);
+  scheduleSave(); render();
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🎯 PROJECT PLANNER TABS: SWOT + Risks + Milestones + Sub-Goals
+// ═══════════════════════════════════════════════════════════════════════
+window._prjPlannerTab = {};  // {projectId: "swot"|"risks"|"milestones"|"subgoals"}
+
+window.prjSetPlannerTab = function(id, tab) {
+  window._prjPlannerTab[id] = tab;
+  render();
+};
+
+function renderProjectPlannerTabs(p, id) {
+  const tab = window._prjPlannerTab[id] || "swot";
+  const swotCount = ((p.swot?.strengths || []).length + (p.swot?.weaknesses || []).length + 
+                     (p.swot?.opportunities || []).length + (p.swot?.threats || []).length);
+  const risksCount = (p.risks || []).length;
+  const milestonesCount = (p.milestones || []).length;
+  const subGoalsCount = (p.subGoals || []).length;
+  
+  return `<div>
+    <!-- Tab Bar -->
+    <div style="display:flex;gap:4px;padding:4px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;margin-bottom:14px;flex-wrap:wrap">
+      ${[
+        {id:"swot", label:"📊 SWOT", count: swotCount, color:"#a78bfa"},
+        {id:"risks", label:"⚠️ Risiken", count: risksCount, color:"#f87171"},
+        {id:"milestones", label:"🚩 Milestones", count: milestonesCount, color:"#fbbf24"},
+        {id:"subgoals", label:"🎯 Sub-Goals", count: subGoalsCount, color:"#86efac"},
+      ].map(t => {
+        const isActive = tab === t.id;
+        return `<button onclick="prjSetPlannerTab('${id}','${t.id}')" 
+          style="flex:1;min-width:120px;padding:8px 12px;border:0;border-radius:7px;background:${isActive ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : 'transparent'};color:${isActive ? '#fff' : 'var(--muted)'};cursor:pointer;font-weight:${isActive ? '700' : '500'};font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .15s">
+          <span>${t.label}</span>
+          ${t.count > 0 ? `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${isActive ? 'rgba(255,255,255,.2)' : t.color + '30'};color:${isActive ? '#fff' : t.color};font-weight:700">${t.count}</span>` : ""}
+        </button>`;
+      }).join("")}
+    </div>
+    
+    <!-- Tab Content -->
+    ${tab === "swot" ? renderSWOTTab(p, id) : ""}
+    ${tab === "risks" ? renderRisksTab(p, id) : ""}
+    ${tab === "milestones" ? renderMilestonesTab(p, id) : ""}
+    ${tab === "subgoals" ? renderSubGoalsTab(p, id) : ""}
+  </div>`;
+}
+
+// ═══════════════════ SWOT ═══════════════════
+function renderSWOTTab(p, id) {
+  const swot = p.swot || { strengths: [], weaknesses: [], opportunities: [], threats: [] };
+  
+  function renderQuadrant(key, label, color, bg, icon) {
+    const items = swot[key] || [];
+    return `<div style="padding:14px;background:${bg};border:1px solid ${color}40;border-radius:11px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;color:${color};display:flex;align-items:center;gap:6px">${icon} ${label}</div>
+        <span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,.04);padding:2px 7px;border-radius:6px">${items.length}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px">
+        ${items.length === 0 ? `<div style="font-size:11px;color:var(--muted);font-style:italic;padding:6px 0">Noch leer</div>` : items.map(it => `
+          <div style="display:flex;gap:6px;align-items:flex-start;padding:7px 9px;background:rgba(255,255,255,.04);border-radius:6px">
+            <span style="color:${color};font-size:11px;line-height:1.5;flex-shrink:0">●</span>
+            <div style="flex:1;font-size:12px;line-height:1.5">${esc(it.text)}</div>
+            <button onclick="prjRemoveSWOT('${id}','${key}','${it.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:12px;flex-shrink:0;padding:0 2px">×</button>
+          </div>
+        `).join("")}
+      </div>
+      <input type="text" placeholder="+ ${label.toLowerCase()}..." 
+             onkeydown="if(event.key==='Enter'){event.preventDefault();prjAddSWOT('${id}','${key}',this.value);this.value=''}"
+             style="width:100%;padding:7px 10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:7px;color:var(--text);font-size:11.5px" />
+    </div>`;
+  }
+  
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    ${renderQuadrant("strengths", "Stärken", "#22c55e", "rgba(34,197,94,.05)", "💪")}
+    ${renderQuadrant("weaknesses", "Schwächen", "#f87171", "rgba(239,68,68,.05)", "🔻")}
+    ${renderQuadrant("opportunities", "Chancen", "#fbbf24", "rgba(245,158,11,.05)", "🌟")}
+    ${renderQuadrant("threats", "Risiken (extern)", "#a78bfa", "rgba(139,92,246,.05)", "⚡")}
+  </div>`;
+}
+
+window.prjAddSWOT = function(id, key, text) {
+  text = (text || "").trim();
+  if (!text) return;
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  if (!p.swot) p.swot = { strengths: [], weaknesses: [], opportunities: [], threats: [] };
+  if (!Array.isArray(p.swot[key])) p.swot[key] = [];
+  p.swot[key].push({ id: "sw_" + Math.random().toString(36).slice(2, 8), text, createdAt: new Date().toISOString() });
+  scheduleSave(); render();
+};
+
+window.prjRemoveSWOT = function(id, key, itemId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !p.swot || !Array.isArray(p.swot[key])) return;
+  p.swot[key] = p.swot[key].filter(x => x.id !== itemId);
+  scheduleSave(); render();
+};
+
+// ═══════════════════ RISKS ═══════════════════
+function renderRisksTab(p, id) {
+  const risks = p.risks || [];
+  
+  return `<div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+      ${risks.length === 0 ? `<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;background:rgba(255,255,255,.02);border:1px dashed rgba(255,255,255,.1);border-radius:10px">Noch keine Risiken erfasst</div>` : risks.map(r => {
+        const impact = r.impact || "medium";
+        const probability = r.probability || "medium";
+        const colorMap = { high: "#f87171", medium: "#fbbf24", low: "#86efac" };
+        const iColor = colorMap[impact];
+        const pColor = colorMap[probability];
+        
+        return `<div style="padding:12px 14px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-left:3px solid ${iColor};border-radius:10px">
+          <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">
+            <input type="text" value="${esc(r.title)}" placeholder="Risiko-Titel..." 
+                   oninput="prjUpdateRisk('${id}','${r.id}','title',this.value)" 
+                   style="flex:1;padding:6px 9px;background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.08);color:var(--text);font-size:13.5px;font-weight:600" />
+            <select onchange="prjUpdateRisk('${id}','${r.id}','impact',this.value)" style="padding:5px 8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:${iColor};font-size:11px;font-weight:600">
+              <option value="low" ${impact==='low'?'selected':''}>↓ Auswirkung</option>
+              <option value="medium" ${impact==='medium'?'selected':''}>→ Auswirkung</option>
+              <option value="high" ${impact==='high'?'selected':''}>↑ Auswirkung</option>
+            </select>
+            <select onchange="prjUpdateRisk('${id}','${r.id}','probability',this.value)" style="padding:5px 8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:${pColor};font-size:11px;font-weight:600">
+              <option value="low" ${probability==='low'?'selected':''}>↓ Wahrsch.</option>
+              <option value="medium" ${probability==='medium'?'selected':''}>→ Wahrsch.</option>
+              <option value="high" ${probability==='high'?'selected':''}>↑ Wahrsch.</option>
+            </select>
+            <button onclick="prjRemoveRisk('${id}','${r.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:14px;padding:4px 7px">×</button>
+          </div>
+          <textarea oninput="prjUpdateRisk('${id}','${r.id}','mitigation',this.value)" 
+                    placeholder="🛡 Maßnahmen / Mitigation..." rows="2"
+                    style="width:100%;padding:7px 10px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:6px;color:var(--text);font-size:11.5px;font-family:inherit;resize:vertical">${esc(r.mitigation || '')}</textarea>
+        </div>`;
+      }).join("")}
+    </div>
+    <button class="btn sm primary" onclick="prjAddRisk('${id}')" style="background:linear-gradient(135deg,#f87171,#ef4444);font-size:11.5px;padding:6px 12px">+ Risiko hinzufügen</button>
+  </div>`;
+}
+
+window.prjAddRisk = function(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  if (!Array.isArray(p.risks)) p.risks = [];
+  p.risks.push({ id: "rsk_" + Math.random().toString(36).slice(2, 8), title: "", mitigation: "", impact: "medium", probability: "medium", createdAt: new Date().toISOString() });
+  scheduleSave(); render();
+};
+
+window.prjUpdateRisk = function(id, riskId, field, value) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.risks)) return;
+  const r = p.risks.find(x => x.id === riskId);
+  if (!r) return;
+  r[field] = value;
+  if (window._prjRiskSaveTimer) clearTimeout(window._prjRiskSaveTimer);
+  window._prjRiskSaveTimer = setTimeout(() => { 
+    scheduleSave(); 
+    if (field === "impact" || field === "probability") render(); 
+  }, field === "title" || field === "mitigation" ? 800 : 100);
+};
+
+window.prjRemoveRisk = function(id, riskId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.risks)) return;
+  if (!confirm("Risiko entfernen?")) return;
+  p.risks = p.risks.filter(x => x.id !== riskId);
+  scheduleSave(); render();
+};
+
+// ═══════════════════ MILESTONES ═══════════════════
+function renderMilestonesTab(p, id) {
+  const milestones = (p.milestones || []).slice().sort((a, b) => {
+    if (!a.date) return 1; if (!b.date) return -1;
+    return a.date.localeCompare(b.date);
+  });
+  
+  return `<div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+      ${milestones.length === 0 ? `<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;background:rgba(255,255,255,.02);border:1px dashed rgba(255,255,255,.1);border-radius:10px">Noch keine Milestones</div>` : milestones.map(m => {
+        const today = new Date().toISOString().slice(0,10);
+        const isPast = m.date && m.date < today && !m.completed;
+        const statusColor = m.completed ? "#22c55e" : isPast ? "#f87171" : "#fbbf24";
+        
+        return `<div style="display:flex;gap:10px;align-items:center;padding:10px 12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-left:3px solid ${statusColor};border-radius:10px">
+          <input type="checkbox" ${m.completed ? "checked" : ""} 
+                 onchange="prjToggleMilestone('${id}','${m.id}')" 
+                 style="width:20px;height:20px;cursor:pointer;accent-color:#22c55e" />
+          <input type="text" value="${esc(m.title)}" placeholder="Milestone..." 
+                 oninput="prjUpdateMilestone('${id}','${m.id}','title',this.value)" 
+                 style="flex:1;padding:6px 9px;background:transparent;border:0;color:var(--text);font-size:13px;font-weight:600;${m.completed ? 'text-decoration:line-through;color:var(--muted)' : ''}" />
+          <input type="date" value="${m.date || ''}" 
+                 onchange="prjUpdateMilestone('${id}','${m.id}','date',this.value)" 
+                 style="padding:5px 8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:${isPast ? '#f87171' : 'var(--text)'};font-size:11.5px" />
+          <button onclick="prjRemoveMilestone('${id}','${m.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:14px;padding:4px 7px">×</button>
+        </div>`;
+      }).join("")}
+    </div>
+    <button class="btn sm primary" onclick="prjAddMilestone('${id}')" style="background:linear-gradient(135deg,#fbbf24,#f59e0b);font-size:11.5px;padding:6px 12px">+ Milestone hinzufügen</button>
+  </div>`;
+}
+
+window.prjAddMilestone = function(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  if (!Array.isArray(p.milestones)) p.milestones = [];
+  p.milestones.push({ id: "ms_" + Math.random().toString(36).slice(2, 8), title: "", date: "", completed: false, createdAt: new Date().toISOString() });
+  scheduleSave(); render();
+};
+
+window.prjUpdateMilestone = function(id, msId, field, value) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.milestones)) return;
+  const m = p.milestones.find(x => x.id === msId);
+  if (!m) return;
+  m[field] = value;
+  if (window._prjMsSaveTimer) clearTimeout(window._prjMsSaveTimer);
+  window._prjMsSaveTimer = setTimeout(() => { scheduleSave(); if (field === "date") render(); }, field === "title" ? 800 : 100);
+};
+
+window.prjToggleMilestone = function(id, msId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.milestones)) return;
+  const m = p.milestones.find(x => x.id === msId);
+  if (!m) return;
+  m.completed = !m.completed;
+  m.completedAt = m.completed ? new Date().toISOString() : null;
+  scheduleSave(); render();
+};
+
+window.prjRemoveMilestone = function(id, msId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.milestones)) return;
+  if (!confirm("Milestone entfernen?")) return;
+  p.milestones = p.milestones.filter(x => x.id !== msId);
+  scheduleSave(); render();
+};
+
+// ═══════════════════ SUB-GOALS ═══════════════════
+function renderSubGoalsTab(p, id) {
+  const subGoals = p.subGoals || [];
+  const done = subGoals.filter(g => g.completed).length;
+  const total = subGoals.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  
+  return `<div>
+    ${total > 0 ? `<div style="margin-bottom:12px;padding:10px 14px;background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.2);border-radius:9px;display:flex;align-items:center;gap:10px">
+      <div style="flex:1">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:3px">Fortschritt</div>
+        <div style="height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">
+          <div style="height:100%;background:linear-gradient(90deg,#22c55e,#10b981);width:${pct}%;transition:width .3s"></div>
+        </div>
+      </div>
+      <div style="font-size:18px;font-weight:800;color:#86efac">${done}/${total}</div>
+      <div style="font-size:12px;color:#86efac;font-weight:700">${pct}%</div>
+    </div>` : ""}
+    
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      ${subGoals.length === 0 ? `<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;background:rgba(255,255,255,.02);border:1px dashed rgba(255,255,255,.1);border-radius:10px">Noch keine Sub-Goals</div>` : subGoals.map(g => `
+        <div style="display:flex;gap:9px;align-items:center;padding:8px 12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:9px">
+          <input type="checkbox" ${g.completed ? "checked" : ""} 
+                 onchange="prjToggleSubGoal('${id}','${g.id}')" 
+                 style="width:18px;height:18px;cursor:pointer;accent-color:#22c55e;flex-shrink:0" />
+          <input type="text" value="${esc(g.title)}" placeholder="Sub-Goal..." 
+                 oninput="prjUpdateSubGoal('${id}','${g.id}',this.value)" 
+                 style="flex:1;padding:5px 8px;background:transparent;border:0;color:var(--text);font-size:13px;${g.completed ? 'text-decoration:line-through;color:var(--muted)' : ''}" />
+          <button onclick="prjRemoveSubGoal('${id}','${g.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:13px;flex-shrink:0;padding:2px 6px">×</button>
+        </div>
+      `).join("")}
+    </div>
+    
+    <input type="text" id="prjNewSubGoalInput_${id}" placeholder="+ Sub-Goal eingeben, Enter drücken..." 
+           onkeydown="if(event.key==='Enter'){event.preventDefault();prjAddSubGoal('${id}',this.value);this.value=''}" 
+           style="width:100%;padding:9px 13px;background:rgba(255,255,255,.04);border:1px solid rgba(34,197,94,.2);border-radius:8px;color:var(--text);font-size:12.5px" />
+  </div>`;
+}
+
+window.prjAddSubGoal = function(id, text) {
+  text = (text || "").trim();
+  if (!text) return;
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  if (!Array.isArray(p.subGoals)) p.subGoals = [];
+  p.subGoals.push({ id: "sg_" + Math.random().toString(36).slice(2, 8), title: text, completed: false, createdAt: new Date().toISOString() });
+  scheduleSave(); render();
+};
+
+window.prjUpdateSubGoal = function(id, sgId, value) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.subGoals)) return;
+  const g = p.subGoals.find(x => x.id === sgId);
+  if (!g) return;
+  g.title = value;
+  if (window._prjSgSaveTimer) clearTimeout(window._prjSgSaveTimer);
+  window._prjSgSaveTimer = setTimeout(() => scheduleSave(), 800);
+};
+
+window.prjToggleSubGoal = function(id, sgId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.subGoals)) return;
+  const g = p.subGoals.find(x => x.id === sgId);
+  if (!g) return;
+  g.completed = !g.completed;
+  g.completedAt = g.completed ? new Date().toISOString() : null;
+  scheduleSave(); render();
+};
+
+window.prjRemoveSubGoal = function(id, sgId) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p || !Array.isArray(p.subGoals)) return;
+  if (!confirm("Sub-Goal entfernen?")) return;
+  p.subGoals = p.subGoals.filter(x => x.id !== sgId);
+  scheduleSave(); render();
+};
+
 function viewProjectDetail(id) {
   if (id === "new") return viewProjectCreate();
   
@@ -17963,6 +18709,9 @@ function viewProjectDetail(id) {
       </div>
     </div>
     
+    <!-- Pflicht-Felder Banner -->
+    ${renderProjectMandatoryBanner(p, id)}
+    
     <!-- Program Buttons -->
     ${renderProgramButtonsFor("project", id)}
     
@@ -18089,6 +18838,19 @@ function viewProjectDetail(id) {
         
         ${renderCustomProjectFeatures(id)}
         
+        <!-- 📊 Bewertungsmatrix + 🕒 Zeitvoranschlag -->
+        <div class="card mb-4">
+          ${renderProjectMatrix(p, id)}
+        </div>
+        <div class="card mb-4">
+          ${renderProjectTimeBudget(p, id)}
+        </div>
+        
+        <!-- 🎯 SWOT + Risks + Milestones + Sub-Goals -->
+        <div class="card mb-4">
+          ${renderProjectPlannerTabs(p, id)}
+        </div>
+        
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
           <div class="tags mb-3">${tagsHtml}</div>
@@ -18189,35 +18951,37 @@ function renderCustomProjectFeatures(id) {
   const p = APP.state.data.entities.projects[id];
   if (!p) return '';
   
-  const titleHasKV = /abschluss|prüfung|kv|lehrabschluss/i.test(p.title || '');
-  const hasExt = !!p.externalId;
-  
-  // Wenn keine externalId UND der Titel auch nicht passt → keine Custom-Features
-  if (!hasExt && !titleHasKV) return '';
+  // STRIKT: Nur Projekte mit explizit gesetzter externalId bekommen Custom-Features.
+  // Kein Titel-Matching mehr — sonst werden neue Projekte mit ähnlichem Titel
+  // fälschlicherweise als PRJ-Z2SEX behandelt.
+  if (!p.externalId) return '';
   
   const normalized = String(p.externalId || '')
     .replace(/[\u2010-\u2015\u2212\u2043]/g, '-')
     .toUpperCase().trim();
+  
+  // PRJ-88QB4 — Newsroom-Pinnboard für Projekt
+  if (normalized === 'PRJ-88QB4') {
+    try { 
+      const result = renderCustom_PRJ88QB4(id, p);
+      if (!result || result.trim().length < 50) {
+        return '<div style="padding:14px;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.2);border-radius:10px;color:#f87171">Pinnboard leer geliefert.</div>';
+      }
+      return result;
+    } catch(e) { 
+      return '<div style="padding:14px;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.2);border-radius:10px;color:#f87171"><strong>Fehler PRJ-88QB4:</strong> ' + esc(e.message) + '</div>';
+    }
+  }
   
   // PRJ-NFYW5
   if (normalized === 'PRJ-NFYW5') {
     try { return renderCustom_PRJNFYW5(id, p); } catch(e) { return _kvErrorBox('PRJ-NFYW5', e); }
   }
   
-  // PRJ-Z2SEX explizit ODER (Titel passt UND keine externalId existiert)
-  if (normalized === 'PRJ-Z2SEX' || (titleHasKV && !hasExt)) {
-    // Auto-Fix wenn externalId fehlt
-    if (!p.externalId && titleHasKV) {
-      p.externalId = 'PRJ-Z2SEX';
-      try { 
-        if (typeof persist === 'function') persist();
-        else if (typeof saveData === 'function') saveData();
-        else if (typeof APP?.actions?.save === 'function') APP.actions.save();
-      } catch(_) {}
-    }
+  // PRJ-Z2SEX nur wenn explizit so gesetzt
+  if (normalized === 'PRJ-Z2SEX') {
     try { 
       const result = renderCustom_PRJZ2SEX(id, p);
-      // Wenn das Cockpit leer rauskommt → Diagnose anzeigen
       if (!result || result.trim().length < 50) {
         return _kvDiagnose(id, p, 'Cockpit leer geliefert (Länge: ' + (result?.length || 0) + ')');
       }
@@ -18227,19 +18991,609 @@ function renderCustomProjectFeatures(id) {
     }
   }
   
-  // Wenn externalId existiert aber unbekannt → Hinweis anzeigen
-  if (hasExt && normalized !== 'PRJ-Z2SEX' && normalized !== 'PRJ-NFYW5') {
-    const titleKVNote = titleHasKV 
-      ? '<br><br>Titel sieht nach KV-Prüfung aus. <button class="btn sm primary" onclick="window._kvForceSetId(\'' + id + '\')" style="margin-top:6px">→ Auf PRJ-Z2SEX setzen</button>'
-      : '';
-    return `<div style="padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:10px;color:var(--muted);margin-top:14px;font-size:12px">
-      <strong>ℹ️ Externe ID:</strong> ${normalized || '(leer)'} — keine Custom-Features definiert.
-      ${titleKVNote}
-    </div>`;
+  // Bei unbekannter externalId: nur sanften Hinweis (KEIN Auto-Setzen mehr)
+  const titleHasKV = /abschluss|prüfung|kv|lehrabschluss/i.test(p.title || '');
+  const titleKVNote = titleHasKV 
+    ? '<br><br>Titel sieht nach KV-Prüfung aus. <button class="btn sm primary" onclick="window._kvForceSetId(\'' + id + '\')" style="margin-top:6px">→ Als PRJ-Z2SEX kennzeichnen</button>'
+    : '';
+  return `<div style="padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:10px;color:var(--muted);margin-top:14px;font-size:12px">
+    <strong>ℹ️ Externe ID:</strong> ${normalized || '(leer)'} — keine Custom-Features definiert.
+    ${titleKVNote}
+  </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 📌 PRJ-88QB4 — NEWSROOM-PINNBOARD im Projekt
+// ════════════════════════════════════════════════════════════════════════
+function renderCustom_PRJ88QB4(id, p) {
+  // State initialisieren
+  if (!p._custom) p._custom = {};
+  if (!p._custom.pinboard) {
+    p._custom.pinboard = {
+      activeTab: "board",           // "board" | "topics" | "stats"
+      filterType: "all",
+      filterTopicId: null,
+      filterFocusArea: null,
+      filterSearch: "",
+      topics: [],                   // [{id, title, schwerpunkte:[{name}]}]
+      items: [],                    // [{id, type, title, content, source, topicId, focusArea, done, documents[], created, updated}]
+    };
   }
   
-  return '';
+  const pb = p._custom.pinboard;
+  const tab = pb.activeTab || "board";
+  
+  const TYPE_ICONS = {note:'📝', quote:'💬', question:'❓', task:'☑️', image:'🖼️', link:'🔗'};
+  const TYPE_LABELS = {note:'Notiz', quote:'Zitat', question:'Frage', task:'Aufgabe', image:'Bild', link:'Link'};
+  const TYPE_COLORS = {
+    note:{bg:'rgba(254,243,199,.95)',color:'#78350f'},
+    quote:{bg:'rgba(252,231,243,.95)',color:'#831843'},
+    question:{bg:'rgba(219,234,254,.95)',color:'#1e3a8a'},
+    task:{bg:'rgba(220,252,231,.95)',color:'#14532d'},
+    image:{bg:'rgba(243,232,255,.95)',color:'#581c87'},
+    link:{bg:'rgba(207,250,254,.95)',color:'#0c4a6e'},
+  };
+  
+  return `
+  <style>
+    .pb88-wrap { margin-top:18px; padding:18px; background:linear-gradient(135deg,rgba(99,102,241,.04),rgba(168,85,247,.04)); border:1px solid rgba(168,85,247,.2); border-radius:14px; }
+    .pb88-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px; }
+    .pb88-tabs { display:inline-flex; gap:3px; padding:3px; background:rgba(0,0,0,.15); border-radius:9px; }
+    .pb88-tab { padding:7px 14px; border:0; background:transparent; color:var(--muted); font-size:12px; font-weight:600; cursor:pointer; border-radius:7px; transition:all .15s; }
+    .pb88-tab.active { background:linear-gradient(135deg,#6366f1,#a855f7); color:#fff; }
+    .pb88-filters { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; align-items:center; }
+    .pb88-chip { padding:5px 11px; border-radius:999px; font-size:11.5px; font-weight:600; cursor:pointer; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04); color:var(--muted); transition:all .15s; }
+    .pb88-chip:hover { border-color:rgba(168,85,247,.4); }
+    .pb88-chip.active { background:linear-gradient(135deg,#6366f1,#a855f7); border-color:transparent; color:#fff; }
+    .pb88-search { flex:1; min-width:180px; padding:7px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:8px; color:var(--text); font-size:12px; }
+    .pb88-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; }
+    .pb88-postit { position:relative; padding:13px 13px 32px; border-radius:8px; box-shadow:0 6px 14px rgba(0,0,0,.18); cursor:pointer; transition:transform .15s, box-shadow .15s; min-height:130px; }
+    .pb88-postit:hover { transform:translateY(-3px) rotate(-.5deg); box-shadow:0 10px 22px rgba(0,0,0,.25); }
+    .pb88-postit-icon { font-size:18px; margin-bottom:6px; }
+    .pb88-postit-title { font-weight:800; font-size:13.5px; line-height:1.3; margin-bottom:6px; padding-right:22px; word-break:break-word; }
+    .pb88-postit-content { font-size:11.5px; line-height:1.5; opacity:.85; max-height:64px; overflow:hidden; }
+    .pb88-postit-meta { position:absolute; bottom:8px; left:13px; right:13px; display:flex; gap:6px; align-items:center; font-size:10px; opacity:.7; }
+    .pb88-postit-del { position:absolute; top:6px; right:6px; width:22px; height:22px; border-radius:50%; border:0; background:rgba(0,0,0,.15); color:inherit; cursor:pointer; font-size:11px; opacity:0; transition:opacity .15s; }
+    .pb88-postit:hover .pb88-postit-del { opacity:1; }
+    .pb88-postit-docs { display:inline-flex; align-items:center; gap:3px; padding:2px 6px; border-radius:5px; background:rgba(0,0,0,.1); font-weight:700; }
+    .pb88-postit.done .pb88-postit-title { text-decoration:line-through; opacity:.55; }
+    .pb88-empty { text-align:center; padding:40px 20px; color:var(--muted); }
+    
+    /* Item-Modal */
+    .pb88-modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(8px); z-index:9999; display:none; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto; }
+    .pb88-modal-bg.show { display:flex; }
+    .pb88-modal { background:#0a0a0b; border:1px solid rgba(255,255,255,.08); border-radius:16px; max-width:640px; width:100%; max-height:calc(100vh - 64px); display:flex; flex-direction:column; overflow:hidden; }
+    .pb88-modal-head { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,.06); display:flex; align-items:center; gap:10px; }
+    .pb88-modal-body { padding:18px 20px; flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px; }
+    .pb88-modal-foot { padding:14px 20px; border-top:1px solid rgba(255,255,255,.06); display:flex; gap:8px; justify-content:flex-end; }
+    .pb88-input, .pb88-textarea, .pb88-select { width:100%; padding:9px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:8px; color:var(--text); font-size:13px; font-family:inherit; }
+    .pb88-textarea { min-height:80px; resize:vertical; line-height:1.5; }
+    .pb88-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .pb88-label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:4px; display:block; }
+    .pb88-btn { padding:8px 14px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; border:0; }
+    .pb88-btn.primary { background:linear-gradient(135deg,#6366f1,#a855f7); color:#fff; }
+    .pb88-btn.ghost { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); color:var(--text); }
+    .pb88-btn.danger { background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.3); color:#f87171; }
+    
+    /* Topics-Verwaltung */
+    .pb88-topic-card { padding:14px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:11px; margin-bottom:10px; }
+    .pb88-fa-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; background:rgba(168,85,247,.12); border:1px solid rgba(168,85,247,.25); border-radius:999px; font-size:11.5px; color:#d8b4fe; margin:3px; }
+    .pb88-fa-pill button { background:none; border:0; color:#d8b4fe; cursor:pointer; font-size:13px; line-height:1; }
+    
+    /* Document attachments */
+    .pb88-doc-item { display:flex; align-items:center; gap:8px; padding:8px 12px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:7px; margin-bottom:5px; font-size:12px; }
+    .pb88-doc-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pb88-doc-size { color:var(--muted); font-size:10.5px; }
+    .pb88-doc-actions { display:flex; gap:4px; }
+    .pb88-upload-zone { padding:18px; border:2px dashed rgba(168,85,247,.25); border-radius:9px; background:rgba(168,85,247,.03); text-align:center; cursor:pointer; transition:all .15s; }
+    .pb88-upload-zone:hover { background:rgba(168,85,247,.08); }
+  </style>
+  
+  <div class="pb88-wrap">
+    <div class="pb88-head">
+      <div>
+        <h3 style="margin:0;display:flex;align-items:center;gap:8px;font-size:18px">📌 Pinnboard</h3>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Sammle Material, Fragen, Aufgaben mit Themen-Struktur</div>
+      </div>
+      <div class="pb88-tabs">
+        <button class="pb88-tab ${tab==='board'?'active':''}" onclick="pb88SetTab('${id}','board')">📌 Board</button>
+        <button class="pb88-tab ${tab==='topics'?'active':''}" onclick="pb88SetTab('${id}','topics')">📂 Themen & Schwerpunkte</button>
+        <button class="pb88-tab ${tab==='stats'?'active':''}" onclick="pb88SetTab('${id}','stats')">📊 Statistik</button>
+      </div>
+    </div>
+    
+    ${tab === 'board' ? renderPb88Board(id, pb, TYPE_ICONS, TYPE_LABELS, TYPE_COLORS) : ''}
+    ${tab === 'topics' ? renderPb88Topics(id, pb) : ''}
+    ${tab === 'stats' ? renderPb88Stats(id, pb, TYPE_ICONS, TYPE_LABELS) : ''}
+  </div>
+  `;
 }
+
+function renderPb88Board(id, pb, TI, TL, TC) {
+  const types = ['all','note','quote','question','task','image','link'];
+  let items = pb.items || [];
+  
+  // Filter
+  if (pb.filterType && pb.filterType !== 'all') items = items.filter(i => i.type === pb.filterType);
+  if (pb.filterTopicId) items = items.filter(i => i.topicId === pb.filterTopicId);
+  if (pb.filterFocusArea) items = items.filter(i => i.focusArea === pb.filterFocusArea);
+  if (pb.filterSearch) {
+    const q = pb.filterSearch.toLowerCase();
+    items = items.filter(i => 
+      (i.title||'').toLowerCase().includes(q) ||
+      (i.content||'').toLowerCase().includes(q) ||
+      (i.source||'').toLowerCase().includes(q)
+    );
+  }
+  items.sort((a,b) => (b.updated||'').localeCompare(a.updated||''));
+  
+  // Focus Areas dynamisch aus selected topic
+  let focusAreasHtml = '';
+  if (pb.filterTopicId) {
+    const t = (pb.topics||[]).find(t => t.id === pb.filterTopicId);
+    if (t && (t.schwerpunkte||[]).length > 0) {
+      focusAreasHtml = `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">
+        <span class="pb88-chip ${!pb.filterFocusArea ? 'active' : ''}" onclick="pb88FilterFocus('${id}',null)">Alle Schwerpunkte</span>
+        ${t.schwerpunkte.map(sp => `<span class="pb88-chip ${pb.filterFocusArea === sp.name ? 'active' : ''}" onclick="pb88FilterFocus('${id}','${esc(sp.name).replace(/'/g,"\\'")}')">${esc(sp.name)}</span>`).join('')}
+      </div>`;
+    }
+  }
+  
+  return `
+    <div class="pb88-filters">
+      ${types.map(t => {
+        const icon = t === 'all' ? '🌐' : TI[t];
+        const label = t === 'all' ? 'Alle' : TL[t];
+        const count = t === 'all' ? (pb.items||[]).length : (pb.items||[]).filter(i=>i.type===t).length;
+        return `<span class="pb88-chip ${(pb.filterType||'all')===t?'active':''}" onclick="pb88FilterType('${id}','${t}')">${icon} ${label}${count > 0 ? ` <strong>(${count})</strong>` : ''}</span>`;
+      }).join('')}
+      <input type="text" class="pb88-search" placeholder="🔍 Suchen..." value="${esc(pb.filterSearch||'')}" oninput="pb88FilterSearch('${id}',this.value)" />
+      <button class="pb88-btn primary" onclick="pb88OpenItem('${id}',null)" style="font-size:11.5px;padding:7px 13px">+ Neues Item</button>
+    </div>
+    
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">
+      <span class="pb88-chip ${!pb.filterTopicId?'active':''}" onclick="pb88FilterTopic('${id}',null)">📂 Alle Themen</span>
+      ${(pb.topics||[]).map(t => {
+        const count = (pb.items||[]).filter(i => i.topicId === t.id).length;
+        return `<span class="pb88-chip ${pb.filterTopicId === t.id ? 'active' : ''}" onclick="pb88FilterTopic('${id}','${t.id}')">${esc(t.title)}${count > 0 ? ` (${count})` : ''}</span>`;
+      }).join('')}
+    </div>
+    ${focusAreasHtml}
+    
+    ${items.length === 0 ? `
+      <div class="pb88-empty">
+        <div style="font-size:42px;margin-bottom:10px">📌</div>
+        <div style="font-weight:600;margin-bottom:5px">${(pb.items||[]).length === 0 ? 'Noch keine Items' : 'Keine Treffer'}</div>
+        <div style="font-size:11.5px">${(pb.items||[]).length === 0 ? 'Klicke "+ Neues Item" um zu starten.' : 'Andere Filter probieren.'}</div>
+      </div>
+    ` : `
+      <div class="pb88-grid">
+        ${items.map(it => {
+          const c = TC[it.type] || TC.note;
+          const topic = (pb.topics||[]).find(t => t.id === it.topicId);
+          const docs = (it.documents||[]).length;
+          return `<div class="pb88-postit ${it.done?'done':''}" style="background:${c.bg};color:${c.color}" onclick="pb88OpenItem('${id}','${it.id}')">
+            <button class="pb88-postit-del" onclick="event.stopPropagation();pb88DeleteItem('${id}','${it.id}')">✕</button>
+            <div class="pb88-postit-icon">${TI[it.type] || '📄'}</div>
+            <div class="pb88-postit-title">${esc(it.title)}</div>
+            ${it.content ? `<div class="pb88-postit-content">${esc(it.content)}</div>` : ''}
+            <div class="pb88-postit-meta">
+              ${it.focusArea ? `<span>◆ ${esc(it.focusArea)}</span>` : (topic ? `<span>📂 ${esc(topic.title)}</span>` : '')}
+              ${docs > 0 ? `<span class="pb88-postit-docs">📎 ${docs}</span>` : ''}
+              ${it.type === 'task' && it.done ? '<span>✓</span>' : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    `}
+  `;
+}
+
+function renderPb88Topics(id, pb) {
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h4 style="margin:0;font-size:14px">📂 Themen & Schwerpunkte</h4>
+      <button class="pb88-btn primary" onclick="pb88AddTopic('${id}')" style="font-size:11.5px;padding:6px 12px">+ Neues Thema</button>
+    </div>
+    
+    ${(pb.topics||[]).length === 0 ? `
+      <div class="pb88-empty">
+        <div style="font-size:42px;margin-bottom:10px">📂</div>
+        <div style="font-weight:600;margin-bottom:5px">Noch keine Themen</div>
+        <div style="font-size:11.5px">Themen helfen dabei, Items zu gruppieren.</div>
+      </div>
+    ` : (pb.topics||[]).map(t => `
+      <div class="pb88-topic-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <input type="text" value="${esc(t.title)}" oninput="pb88UpdateTopic('${id}','${t.id}','title',this.value)"
+                 style="flex:1;padding:6px 10px;background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.1);color:var(--text);font-size:14px;font-weight:700" />
+          <button class="pb88-btn danger" onclick="pb88DeleteTopic('${id}','${t.id}')" style="font-size:11px;padding:4px 10px;margin-left:8px">🗑 Thema</button>
+        </div>
+        <div style="margin-top:8px">
+          <div class="pb88-label">Schwerpunkte / Focus Areas</div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+            ${(t.schwerpunkte||[]).map(sp => `
+              <span class="pb88-fa-pill">${esc(sp.name)} <button onclick="pb88RemoveFA('${id}','${t.id}','${esc(sp.name).replace(/'/g,"\\'")}')">×</button></span>
+            `).join('')}
+          </div>
+          <input type="text" placeholder="+ Schwerpunkt hinzufügen (Enter)" 
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();pb88AddFA('${id}','${t.id}',this.value);this.value=''}"
+                 style="width:100%;padding:6px 10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);font-size:12px" />
+        </div>
+      </div>
+    `).join('')}
+  `;
+}
+
+function renderPb88Stats(id, pb, TI, TL) {
+  const items = pb.items || [];
+  const total = items.length;
+  const byType = {};
+  ['note','quote','question','task','image','link'].forEach(t => byType[t] = items.filter(i=>i.type===t).length);
+  const tasksDone = items.filter(i => i.type === 'task' && i.done).length;
+  const tasksTotal = byType.task;
+  const totalDocs = items.reduce((s,i)=>s+(i.documents||[]).length, 0);
+  const topicsCount = (pb.topics||[]).length;
+  const focusAreasCount = (pb.topics||[]).reduce((s,t)=>s+(t.schwerpunkte||[]).length, 0);
+  
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px">
+      <div style="padding:12px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:9px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#a5b4fc">${total}</div>
+        <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Items total</div>
+      </div>
+      <div style="padding:12px;background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.2);border-radius:9px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#d8b4fe">${topicsCount}</div>
+        <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Themen</div>
+      </div>
+      <div style="padding:12px;background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.2);border-radius:9px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#f9a8d4">${focusAreasCount}</div>
+        <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Schwerpunkte</div>
+      </div>
+      <div style="padding:12px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:9px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#86efac">${tasksDone}/${tasksTotal}</div>
+        <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Aufgaben ✓</div>
+      </div>
+      <div style="padding:12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:9px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#fbbf24">${totalDocs}</div>
+        <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">📎 Dokumente</div>
+      </div>
+    </div>
+    
+    <h4 style="margin:14px 0 8px;font-size:13px">Verteilung nach Typ</h4>
+    ${Object.entries(byType).map(([type, count]) => {
+      const pct = total > 0 ? Math.round((count/total)*100) : 0;
+      return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <div style="width:120px;font-size:12px;display:flex;gap:5px;align-items:center">${TI[type]} ${TL[type]}</div>
+        <div style="flex:1;height:8px;background:rgba(255,255,255,.04);border-radius:4px;overflow:hidden">
+          <div style="height:100%;background:linear-gradient(90deg,#6366f1,#a855f7);width:${pct}%;border-radius:4px"></div>
+        </div>
+        <div style="width:80px;text-align:right;font-size:11.5px;color:var(--muted)">${count} (${pct}%)</div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+// ════════ Mutations ════════
+function pb88P(id) { return APP.state.data.entities.projects[id]; }
+function pb88Pb(id) { return pb88P(id)?._custom?.pinboard; }
+function pb88Save() { if (typeof scheduleSave === 'function') scheduleSave(); }
+
+window.pb88SetTab = function(id, tab) {
+  const pb = pb88Pb(id); if (!pb) return;
+  pb.activeTab = tab; pb88Save(); render();
+};
+
+window.pb88FilterType = function(id, type) {
+  const pb = pb88Pb(id); if (!pb) return;
+  pb.filterType = type; pb88Save(); render();
+};
+window.pb88FilterTopic = function(id, topicId) {
+  const pb = pb88Pb(id); if (!pb) return;
+  pb.filterTopicId = topicId; pb.filterFocusArea = null; pb88Save(); render();
+};
+window.pb88FilterFocus = function(id, fa) {
+  const pb = pb88Pb(id); if (!pb) return;
+  pb.filterFocusArea = fa; pb88Save(); render();
+};
+window.pb88FilterSearch = function(id, v) {
+  const pb = pb88Pb(id); if (!pb) return;
+  pb.filterSearch = v;
+  if (window._pb88SearchTimer) clearTimeout(window._pb88SearchTimer);
+  window._pb88SearchTimer = setTimeout(() => { pb88Save(); render(); }, 300);
+};
+
+window.pb88AddTopic = function(id) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const title = prompt("Name des Themas?");
+  if (!title || !title.trim()) return;
+  if (!Array.isArray(pb.topics)) pb.topics = [];
+  pb.topics.push({ id: "topic_" + Math.random().toString(36).slice(2,10), title: title.trim(), schwerpunkte: [] });
+  pb88Save(); render();
+};
+
+window.pb88UpdateTopic = function(id, topicId, field, value) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
+  t[field] = value;
+  if (window._pb88TopicSaveTimer) clearTimeout(window._pb88TopicSaveTimer);
+  window._pb88TopicSaveTimer = setTimeout(() => pb88Save(), 600);
+};
+
+window.pb88DeleteTopic = function(id, topicId) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
+  if (!confirm(`Thema "${t.title}" löschen? Items behalten den Thema-Verweis, aber das Thema selbst wird entfernt.`)) return;
+  pb.topics = pb.topics.filter(x => x.id !== topicId);
+  pb88Save(); render();
+};
+
+window.pb88AddFA = function(id, topicId, value) {
+  value = (value||'').trim(); if (!value) return;
+  const pb = pb88Pb(id); if (!pb) return;
+  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
+  if (!Array.isArray(t.schwerpunkte)) t.schwerpunkte = [];
+  if (t.schwerpunkte.some(sp => sp.name === value)) return;
+  t.schwerpunkte.push({ name: value });
+  pb88Save(); render();
+};
+
+window.pb88RemoveFA = function(id, topicId, name) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
+  t.schwerpunkte = (t.schwerpunkte||[]).filter(sp => sp.name !== name);
+  pb88Save(); render();
+};
+
+// ════════ Item Editor Modal ════════
+let _pb88EditId = null;
+
+window.pb88OpenItem = function(id, itemId) {
+  const pb = pb88Pb(id); if (!pb) return;
+  _pb88EditId = itemId;
+  
+  let item = null;
+  if (itemId) {
+    item = (pb.items||[]).find(x => x.id === itemId);
+    if (!item) return;
+  } else {
+    item = { type: 'note', title: '', content: '', source: '', topicId: pb.filterTopicId || null, focusArea: pb.filterFocusArea || null, done: false, documents: [] };
+  }
+  
+  let overlay = document.getElementById('pb88ItemModal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'pb88ItemModal';
+    overlay.className = 'pb88-modal-bg';
+    document.body.appendChild(overlay);
+  }
+  
+  const topicOpts = (pb.topics||[]).map(t => `<option value="${t.id}" ${item.topicId === t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
+  const selT = (pb.topics||[]).find(t => t.id === item.topicId);
+  const faOpts = (selT?.schwerpunkte||[]).map(sp => `<option value="${esc(sp.name)}" ${item.focusArea === sp.name ? 'selected' : ''}>${esc(sp.name)}</option>`).join('');
+  
+  overlay.innerHTML = `
+    <div class="pb88-modal" onclick="event.stopPropagation()">
+      <div class="pb88-modal-head">
+        <span style="font-size:15px;font-weight:700">${itemId ? '✏️ Item bearbeiten' : '➕ Neues Item'}</span>
+        <button onclick="pb88CloseItem()" style="margin-left:auto;background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer">×</button>
+      </div>
+      <div class="pb88-modal-body">
+        <div class="pb88-row">
+          <div>
+            <label class="pb88-label">Typ</label>
+            <select id="pb88Type" class="pb88-select" onchange="pb88RefreshFA('${id}')">
+              <option value="note" ${item.type==='note'?'selected':''}>📝 Notiz</option>
+              <option value="quote" ${item.type==='quote'?'selected':''}>💬 Zitat</option>
+              <option value="question" ${item.type==='question'?'selected':''}>❓ Frage</option>
+              <option value="task" ${item.type==='task'?'selected':''}>☑️ Aufgabe</option>
+              <option value="image" ${item.type==='image'?'selected':''}>🖼️ Bild</option>
+              <option value="link" ${item.type==='link'?'selected':''}>🔗 Link</option>
+            </select>
+          </div>
+          <div>
+            <label class="pb88-label">Thema</label>
+            <select id="pb88Topic" class="pb88-select" onchange="pb88RefreshFA('${id}')">
+              <option value="">— Kein Thema —</option>
+              ${topicOpts}
+            </select>
+          </div>
+        </div>
+        
+        <div id="pb88FAWrap">
+          <label class="pb88-label">Schwerpunkt / Focus Area</label>
+          <select id="pb88FA" class="pb88-select">
+            <option value="">— Kein Schwerpunkt —</option>
+            ${faOpts}
+          </select>
+        </div>
+        
+        <div>
+          <label class="pb88-label">Titel *</label>
+          <input id="pb88Title" type="text" class="pb88-input" value="${esc(item.title||'')}" placeholder="Kurzer Titel..." />
+        </div>
+        
+        <div>
+          <label class="pb88-label">Inhalt</label>
+          <textarea id="pb88Content" class="pb88-textarea" placeholder="Notiz, Zitat-Text, Frage, Beschreibung...">${esc(item.content||'')}</textarea>
+        </div>
+        
+        <div>
+          <label class="pb88-label">Quelle / URL</label>
+          <input id="pb88Source" type="text" class="pb88-input" value="${esc(item.source||'')}" placeholder="z.B. https://... oder Buchtitel" />
+        </div>
+        
+        ${item.type === 'task' ? `
+          <div>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="pb88Done" ${item.done?'checked':''} style="width:18px;height:18px;cursor:pointer;accent-color:#22c55e" />
+              ✅ Aufgabe erledigt
+            </label>
+          </div>
+        ` : ''}
+        
+        <!-- Dokumente -->
+        <div>
+          <label class="pb88-label">📎 Dokumente / Anhänge</label>
+          <div id="pb88Docs">${renderPb88Docs(item.documents||[])}</div>
+          <div class="pb88-upload-zone" onclick="document.getElementById('pb88DocInput').click()" id="pb88UploadZone">
+            <div style="font-size:24px;margin-bottom:5px">📎</div>
+            <div style="font-size:12px;font-weight:600">Klicken oder Dateien hierher ziehen</div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:3px">PDFs, Bilder, Dokumente</div>
+          </div>
+          <input type="file" id="pb88DocInput" multiple style="display:none" onchange="pb88HandleDocs(event)" />
+        </div>
+      </div>
+      <div class="pb88-modal-foot">
+        ${itemId ? `<button class="pb88-btn danger" onclick="pb88DeleteItem('${id}','${itemId}',true)" style="margin-right:auto">🗑 Löschen</button>` : ''}
+        <button class="pb88-btn ghost" onclick="pb88CloseItem()">Abbrechen</button>
+        <button class="pb88-btn primary" onclick="pb88SaveItem('${id}')">${itemId ? 'Aktualisieren' : 'Erstellen'}</button>
+      </div>
+    </div>
+  `;
+  
+  overlay.classList.add('show');
+  overlay.onclick = (e) => { if (e.target === overlay) pb88CloseItem(); };
+  
+  // Pending docs state
+  window._pb88PendingDocs = [...(item.documents||[])];
+  
+  setTimeout(() => document.getElementById('pb88Title')?.focus(), 50);
+};
+
+function renderPb88Docs(docs) {
+  if (!docs || docs.length === 0) return '';
+  return docs.map((d, idx) => `
+    <div class="pb88-doc-item">
+      <span>${d.type?.startsWith('image/') ? '🖼️' : d.type?.includes('pdf') ? '📕' : '📄'}</span>
+      <span class="pb88-doc-name">${esc(d.name||'Datei')}</span>
+      <span class="pb88-doc-size">${d.size ? (d.size/1024).toFixed(0)+' KB' : ''}</span>
+      <div class="pb88-doc-actions">
+        ${d.dataUrl ? `<button class="pb88-btn ghost" onclick="pb88DownloadDoc(${idx})" style="font-size:10.5px;padding:3px 8px">↓</button>` : ''}
+        <button class="pb88-btn danger" onclick="pb88RemoveDoc(${idx})" style="font-size:10.5px;padding:3px 8px">×</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+window.pb88HandleDocs = async function(event) {
+  const files = Array.from(event.target.files || []);
+  if (files.length === 0) return;
+  
+  for (const f of files) {
+    if (f.size > 5 * 1024 * 1024) {
+      toast('warn', 'Zu groß', `${f.name} ist über 5MB. Lade kleinere Dateien hoch.`);
+      continue;
+    }
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(f);
+      });
+      window._pb88PendingDocs.push({
+        id: 'doc_' + Math.random().toString(36).slice(2,10),
+        name: f.name,
+        type: f.type,
+        size: f.size,
+        dataUrl,
+        uploadedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error('File upload failed:', e);
+      toast('err', 'Fehler', `Konnte ${f.name} nicht laden`);
+    }
+  }
+  
+  const wrap = document.getElementById('pb88Docs');
+  if (wrap) wrap.innerHTML = renderPb88Docs(window._pb88PendingDocs);
+  event.target.value = '';
+  toast('ok', '📎 Hochgeladen', `${files.length} Datei(en) bereit`);
+};
+
+window.pb88RemoveDoc = function(idx) {
+  if (!confirm('Dokument wirklich entfernen?')) return;
+  window._pb88PendingDocs.splice(idx, 1);
+  const wrap = document.getElementById('pb88Docs');
+  if (wrap) wrap.innerHTML = renderPb88Docs(window._pb88PendingDocs);
+};
+
+window.pb88DownloadDoc = function(idx) {
+  const doc = window._pb88PendingDocs[idx];
+  if (!doc?.dataUrl) return;
+  const a = document.createElement('a');
+  a.href = doc.dataUrl;
+  a.download = doc.name || 'datei';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => document.body.removeChild(a), 100);
+};
+
+window.pb88RefreshFA = function(id) {
+  const topicId = document.getElementById('pb88Topic')?.value;
+  const pb = pb88Pb(id); if (!pb) return;
+  const t = (pb.topics||[]).find(x => x.id === topicId);
+  const faSel = document.getElementById('pb88FA');
+  if (!faSel) return;
+  faSel.innerHTML = '<option value="">— Kein Schwerpunkt —</option>' + 
+    ((t?.schwerpunkte||[]).map(sp => `<option value="${esc(sp.name)}">${esc(sp.name)}</option>`).join(''));
+};
+
+window.pb88CloseItem = function() {
+  document.getElementById('pb88ItemModal')?.classList.remove('show');
+  _pb88EditId = null;
+  window._pb88PendingDocs = null;
+};
+
+window.pb88SaveItem = function(id) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const title = document.getElementById('pb88Title')?.value.trim();
+  if (!title) { toast('warn', 'Titel erforderlich'); return; }
+  
+  const type = document.getElementById('pb88Type').value;
+  const topicId = document.getElementById('pb88Topic').value || null;
+  const focusArea = document.getElementById('pb88FA').value || null;
+  const content = document.getElementById('pb88Content').value.trim();
+  const source = document.getElementById('pb88Source').value.trim();
+  const done = type === 'task' ? !!document.getElementById('pb88Done')?.checked : false;
+  
+  const now = new Date().toISOString();
+  if (!Array.isArray(pb.items)) pb.items = [];
+  
+  if (_pb88EditId) {
+    const item = pb.items.find(x => x.id === _pb88EditId);
+    if (item) {
+      Object.assign(item, { type, title, content, source, topicId, focusArea, done, documents: window._pb88PendingDocs || [], updated: now });
+    }
+  } else {
+    pb.items.push({
+      id: 'pbi_' + Math.random().toString(36).slice(2,10),
+      type, title, content, source, topicId, focusArea, done,
+      documents: window._pb88PendingDocs || [],
+      created: now, updated: now,
+    });
+  }
+  
+  pb88Save();
+  pb88CloseItem();
+  toast('ok', '✓ Gespeichert', title);
+  render();
+};
+
+window.pb88DeleteItem = function(id, itemId, fromModal) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const it = (pb.items||[]).find(x => x.id === itemId);
+  if (!it) return;
+  if (!confirm(`Item "${it.title}" löschen?`)) return;
+  pb.items = pb.items.filter(x => x.id !== itemId);
+  pb88Save();
+  if (fromModal) pb88CloseItem();
+  toast('ok', '🗑 Gelöscht', it.title);
+  render();
+};
+
+
 
 window._kvForceSetId = function(pid) {
   const p = APP.state.data.entities.projects[pid];
@@ -23850,6 +25204,126 @@ function viewTime() {
 // ============================================================================
 // VIEW: GOALS
 // ============================================================================
+// ════════════════════════════════════════════════════════════════════
+// 🎯 GOAL HIERARCHY (Vision → Yearly → Quarterly → Monthly → Weekly)
+// ════════════════════════════════════════════════════════════════════
+function renderGoalHierarchy(goal, id) {
+  const e = APP.state.data.entities;
+  const allGoals = Object.values(e.goals || {}).filter(x => x.status !== "archived");
+  
+  // Parent-Kette aufbauen (nach oben)
+  const parents = [];
+  let curr = goal;
+  let safety = 10;
+  while (curr.parentGoalId && safety-- > 0) {
+    const p = e.goals?.[curr.parentGoalId];
+    if (!p) break;
+    parents.unshift(p);
+    curr = p;
+  }
+  
+  // Sub-Goals (Kinder)
+  const children = allGoals.filter(g => g.parentGoalId === id);
+  
+  if (parents.length === 0 && children.length === 0) {
+    return ""; // Keine Hierarchie zu zeigen
+  }
+  
+  const horizonIcons = { vision: "🔮", yearly: "📅", quarterly: "📊", monthly: "📆", weekly: "📋" };
+  
+  return `<div class="card mb-4">
+    <h3 style="display:flex;align-items:center;gap:8px">🌳 Ziel-Hierarchie</h3>
+    
+    ${parents.length > 0 ? `
+      <div style="margin-bottom:14px">
+        <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">⬆️ Übergeordnete Ziele</div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          ${parents.map((p, idx) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15);border-radius:8px;margin-left:${idx * 20}px;cursor:pointer" data-action="open-entity" data-kind="goal" data-id="${p.id}">
+              ${p.horizon ? `<span style="font-size:14px">${horizonIcons[p.horizon] || ""}</span>` : ""}
+              <span style="flex:1;font-size:13px;font-weight:600">${esc(p.title)}</span>
+              ${p.horizon ? `<span style="font-size:10px;color:#a5b4fc;background:rgba(99,102,241,.15);padding:2px 7px;border-radius:5px">${p.horizon}</span>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    ` : ""}
+    
+    <div style="margin-bottom:${children.length > 0 ? '14' : '0'}px">
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#a78bfa;margin-bottom:8px">📍 Dieses Ziel</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:linear-gradient(135deg,rgba(139,92,246,.1),rgba(167,139,250,.05));border:1px solid rgba(139,92,246,.3);border-radius:8px;margin-left:${parents.length * 20}px">
+        ${goal.horizon ? `<span style="font-size:16px">${horizonIcons[goal.horizon] || ""}</span>` : ""}
+        <span style="flex:1;font-size:13.5px;font-weight:700">${esc(goal.title)}</span>
+        ${goal.horizon ? `<span style="font-size:10px;color:#c4b5fd;background:rgba(139,92,246,.2);padding:2px 7px;border-radius:5px">${goal.horizon}</span>` : ""}
+      </div>
+    </div>
+    
+    ${children.length > 0 ? `
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#86efac">⬇️ Sub-Ziele (${children.length})</div>
+          <button class="btn sm" onclick="goalCreateChild('${id}')" style="font-size:10.5px;padding:4px 9px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac">+ Sub-Ziel</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          ${children.map(c => {
+            const cChildren = allGoals.filter(g => g.parentGoalId === c.id).length;
+            return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(34,197,94,.04);border:1px solid rgba(34,197,94,.15);border-radius:8px;margin-left:${(parents.length + 1) * 20}px;cursor:pointer" data-action="open-entity" data-kind="goal" data-id="${c.id}">
+              ${c.horizon ? `<span style="font-size:14px">${horizonIcons[c.horizon] || ""}</span>` : ""}
+              <span style="flex:1;font-size:13px;font-weight:600">${esc(c.title)}</span>
+              ${cChildren > 0 ? `<span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,.04);padding:2px 6px;border-radius:5px">+${cChildren}</span>` : ""}
+              ${c.horizon ? `<span style="font-size:10px;color:#86efac;background:rgba(34,197,94,.15);padding:2px 7px;border-radius:5px">${c.horizon}</span>` : ""}
+              <span class="pill" style="font-size:9px">${c.status}</span>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>
+    ` : `
+      <div style="margin-top:10px">
+        <button class="btn sm" onclick="goalCreateChild('${id}')" style="font-size:10.5px;padding:5px 11px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac">+ Sub-Ziel hinzufügen</button>
+      </div>
+    `}
+  </div>`;
+}
+
+window.goalCreateChild = function(parentId) {
+  const parent = APP.state.data.entities.goals?.[parentId];
+  if (!parent) return;
+  
+  const title = prompt("Titel des Sub-Ziels?");
+  if (!title || !title.trim()) return;
+  
+  // Vorschlag für Horizont basierend auf Parent
+  const horizonChain = ["vision", "yearly", "quarterly", "monthly", "weekly"];
+  const parentIdx = horizonChain.indexOf(parent.horizon || "");
+  const suggestedHorizon = (parentIdx >= 0 && parentIdx < horizonChain.length - 1) 
+    ? horizonChain[parentIdx + 1] : "";
+  
+  const id = "goal_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const now = new Date().toISOString();
+  
+  if (!APP.state.data.entities.goals) APP.state.data.entities.goals = {};
+  APP.state.data.entities.goals[id] = {
+    id, title: title.trim(),
+    description: "",
+    status: "active",
+    type: "general",
+    horizon: suggestedHorizon,
+    parentGoalId: parentId,
+    targetType: null,
+    targetValue: 0,
+    deadline: null,
+    tags: [],
+    linkedTasks: [],
+    linkedProjects: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  
+  scheduleSave();
+  toast("ok", "🎯 Sub-Ziel erstellt", title.trim());
+  navigate("goals", id);
+};
+
 function viewGoalDetail(id) {
   if (id === "new") return viewGoalCreate();
   
@@ -23990,8 +25464,26 @@ function viewGoalDetail(id) {
                 <option value="time" ${g.type === "time" ? "selected" : ""}>Zeit investieren</option>
               </select>
             </label>
+            <label class="col-6">🌟 Horizont
+              <select data-action="field-edit" data-kind="goal" data-id="${id}" data-field="horizon">
+                <option value="" ${!g.horizon ? "selected" : ""}>— Nicht zugeordnet —</option>
+                <option value="vision" ${g.horizon === "vision" ? "selected" : ""}>🔮 Vision (Lebensziel)</option>
+                <option value="yearly" ${g.horizon === "yearly" ? "selected" : ""}>📅 Jahresziel</option>
+                <option value="quarterly" ${g.horizon === "quarterly" ? "selected" : ""}>📊 Quartalsziel</option>
+                <option value="monthly" ${g.horizon === "monthly" ? "selected" : ""}>📆 Monatsziel</option>
+                <option value="weekly" ${g.horizon === "weekly" ? "selected" : ""}>📋 Wochenziel</option>
+              </select>
+            </label>
+            <label class="col-12">⬆️ Übergeordnetes Ziel (optional)
+              <select data-action="field-edit" data-kind="goal" data-id="${id}" data-field="parentGoalId">
+                <option value="">— Kein Parent —</option>
+                ${Object.values(e.goals || {}).filter(pg => pg.id !== id && pg.status !== "archived").map(pg => `<option value="${pg.id}" ${g.parentGoalId === pg.id ? "selected" : ""}>${pg.horizon ? "[" + pg.horizon + "] " : ""}${esc(pg.title)}</option>`).join("")}
+              </select>
+            </label>
           </div>
         </div>
+        
+        ${renderGoalHierarchy(g, id)}
         
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
@@ -25761,6 +27253,94 @@ function viewProgramCreate() {
 // ============================================================================
 // VIEW: REPORTS
 // ============================================================================
+// ════════════════════════════════════════════════════════════════════
+// ⏱ Wochenkapazitäts-Widget pro Projekt
+// Jedes Projekt kann ein wöchentliches Stunden-Ziel haben (weeklyTargetHours)
+// → Widget zeigt Auslastung
+// ════════════════════════════════════════════════════════════════════
+function renderProjectCapacityWidget(weekSecondsTotal) {
+  const e = APP.state.data.entities;
+  const times = Object.values(e.timeEntries || {});
+  const projects = Object.values(e.projects || {});
+  
+  // Berechne diese Woche (Mo-So)
+  const now = new Date();
+  const weekStart = new Date(now);
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;  // Mo = 1, So = 0 → -6
+  weekStart.setDate(now.getDate() + diff);
+  weekStart.setHours(0, 0, 0, 0);
+  
+  // Projekte mit Wochenkapazität ODER mit Time-Tracking diese Woche
+  const projWithTimeThisWeek = {};
+  times.forEach(t => {
+    if (!t.startTs) return;
+    const d = new Date(t.startTs);
+    if (d < weekStart) return;
+    const task = e.tasks?.[t.taskId];
+    const pid = task?.projectId;
+    if (!pid) return;
+    projWithTimeThisWeek[pid] = (projWithTimeThisWeek[pid] || 0) + (t.durationSec || 0);
+  });
+  
+  // Aktive Projekte mit weeklyTargetHours ODER mit gemessener Zeit diese Woche
+  const relevantProjects = projects.filter(p => 
+    p.status !== "archived" && 
+    p.status !== "done" && 
+    (p.weeklyTargetHours > 0 || projWithTimeThisWeek[p.id])
+  );
+  
+  if (relevantProjects.length === 0) {
+    return `<div class="card mb-4" style="padding:18px;background:linear-gradient(135deg,rgba(99,102,241,.04),rgba(139,92,246,.04));border:1px dashed rgba(99,102,241,.25)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="margin:0;display:flex;align-items:center;gap:8px">⏱ Wochenkapazität pro Projekt</h3>
+      </div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.6">
+        Setze in einem Projekt die <strong>Wochenkapazität (Stunden)</strong> um die Auslastung hier zu sehen.<br>
+        Tipp: Im Projekt-Detail findest du das Feld unter dem Zeitvoranschlag.
+      </div>
+    </div>`;
+  }
+  
+  return `<div class="card mb-4">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h3 style="margin:0;display:flex;align-items:center;gap:8px">⏱ Wochenkapazität pro Projekt</h3>
+      <div style="font-size:11px;color:var(--muted)">${weekStart.toLocaleDateString("de-CH",{day:"2-digit",month:"2-digit"})} – ${new Date(weekStart.getTime() + 6*86400000).toLocaleDateString("de-CH",{day:"2-digit",month:"2-digit"})}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${relevantProjects.map(p => {
+        const seconds = projWithTimeThisWeek[p.id] || 0;
+        const hours = seconds / 3600;
+        const target = p.weeklyTargetHours || 0;
+        const pct = target > 0 ? Math.round((hours / target) * 100) : 0;
+        const isOver = target > 0 && hours > target;
+        const color = !target ? "#94a3b8" : pct >= 100 ? (isOver ? "#f87171" : "#22c55e") : pct >= 70 ? "#fbbf24" : "#a5b4fc";
+        const barWidth = target > 0 ? Math.min(150, pct) : 50;
+        
+        return `<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:9px;cursor:pointer" onclick="navigate('projects','${p.id}')">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+              <span style="font-size:13px;font-weight:600">${esc(p.title)}</span>
+              ${!target ? '<span style="font-size:9.5px;color:var(--muted);background:rgba(255,255,255,.04);padding:1px 6px;border-radius:5px">Keine Kapazität gesetzt</span>' : ""}
+            </div>
+            <div style="height:6px;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden;position:relative">
+              <div style="height:100%;background:${color};width:${barWidth}%;border-radius:3px;transition:width .3s"></div>
+              ${target > 0 ? `<div style="position:absolute;top:-1px;bottom:-1px;left:99.5%;width:2px;background:rgba(255,255,255,.3)"></div>` : ""}
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;min-width:90px">
+            <div style="font-size:14px;font-weight:800;color:${color};font-variant-numeric:tabular-nums">${hours.toFixed(1)}h${target > 0 ? ` / ${target}h` : ""}</div>
+            ${target > 0 ? `<div style="font-size:10px;color:${color};font-weight:600">${pct}%${isOver ? " ⚠" : ""}</div>` : ""}
+          </div>
+        </div>`;
+      }).join("")}
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);text-align:right">
+      <strong>${(Object.values(projWithTimeThisWeek).reduce((a,b)=>a+b,0) / 3600).toFixed(1)}h</strong> diese Woche getrackt
+    </div>
+  </div>`;
+}
+
 function viewStatistics() {
   const e = APP.state.data.entities;
   const tasks = Object.values(e.tasks);
@@ -25905,6 +27485,8 @@ function viewStatistics() {
         </div>
       </div>
     </div>
+    
+    ${renderProjectCapacityWidget(weekSeconds)}
     
     <!-- Haupt-Stat-Cards mit Mini-Grafiken -->
     <div class="grid grid-5 mb-4">
@@ -29011,6 +30593,235 @@ async function aiAssessPurchaseProposal(proposalId) {
     render();
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 🔒 BUDGET PIN-Schutz
+// ═══════════════════════════════════════════════════════════════════════
+window._budgetUnlocked = false;
+window._budgetPinInput = "";
+
+function hashPin(pin) {
+  // Einfacher Hash, ausreichend für lokalen Schutz
+  let h = 0;
+  for (let i = 0; i < pin.length; i++) {
+    h = ((h << 5) - h) + pin.charCodeAt(i);
+    h |= 0;
+  }
+  return "qpin_" + h.toString(36) + "_" + pin.length;
+}
+
+function renderBudgetLockScreen(wrongAttempt) {
+  const hasStoredPin = !!localStorage.getItem("quantus_budget_pin");
+  const pinDigits = (window._budgetPinInput || "").length;
+  
+  return `<div style="min-height:calc(100vh - 100px);display:flex;align-items:center;justify-content:center;padding:24px">
+    <div style="max-width:380px;width:100%;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:32px;text-align:center">
+      <div style="font-size:54px;margin-bottom:14px">🔒</div>
+      <h1 style="font-size:22px;font-weight:700;margin:0 0 8px;letter-spacing:-.02em">Budget gesperrt</h1>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 24px;line-height:1.5">${hasStoredPin ? "Gib deinen 4-stelligen PIN ein um auf deine Finanzen zuzugreifen." : "Lege einen 4-stelligen PIN fest um dein Budget zu schützen."}</p>
+      
+      <!-- PIN Anzeige -->
+      <div style="display:flex;gap:10px;justify-content:center;margin-bottom:${wrongAttempt ? "10" : "24"}px">
+        ${[0,1,2,3].map(i => `
+          <div style="width:48px;height:56px;border-radius:10px;background:${pinDigits > i ? 'linear-gradient(135deg,#22c55e,#16a34a)' : 'rgba(255,255,255,.04)'};border:1px solid ${pinDigits > i ? '#22c55e' : 'rgba(255,255,255,.1)'};display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;transition:all .15s">${pinDigits > i ? '●' : ''}</div>
+        `).join('')}
+      </div>
+      
+      ${wrongAttempt ? `<div style="color:#f87171;font-size:12.5px;margin-bottom:14px;animation:shake .4s">⚠️ Falscher PIN</div>` : ""}
+      
+      <!-- Number Pad -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+        ${[1,2,3,4,5,6,7,8,9].map(n => `
+          <button onclick="budgetPinDigit(${n})" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:22px;font-weight:600;cursor:pointer;transition:all .12s">${n}</button>
+        `).join('')}
+        <button onclick="budgetPinClear()" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:13px;cursor:pointer">CLR</button>
+        <button onclick="budgetPinDigit(0)" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:22px;font-weight:600;cursor:pointer">0</button>
+        <button onclick="budgetPinBackspace()" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:16px;cursor:pointer">⌫</button>
+      </div>
+      
+      ${hasStoredPin ? `
+        <button onclick="budgetPinReset()" style="background:none;border:0;color:var(--muted);font-size:11.5px;cursor:pointer;text-decoration:underline">PIN vergessen? Zurücksetzen</button>
+      ` : `
+        <div style="font-size:11.5px;color:var(--muted);margin-top:8px">PIN wird lokal in deinem Browser gespeichert</div>
+      `}
+    </div>
+  </div>
+  <style>
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-8px); }
+      75% { transform: translateX(8px); }
+    }
+  </style>`;
+}
+
+window.budgetPinDigit = function(d) {
+  if ((window._budgetPinInput || "").length >= 4) return;
+  window._budgetPinInput = (window._budgetPinInput || "") + d;
+  
+  if (window._budgetPinInput.length === 4) {
+    const storedPin = localStorage.getItem("quantus_budget_pin");
+    const inputHash = hashPin(window._budgetPinInput);
+    
+    if (storedPin) {
+      // Login
+      if (storedPin === inputHash) {
+        window._budgetUnlocked = true;
+        window._budgetPinInput = "";
+        toast("ok", "🔓 Entsperrt", "Willkommen zurück");
+        render();
+      } else {
+        window._budgetPinInput = "";
+        const main = document.getElementById("pageContent") || document.querySelector("#main");
+        if (main) main.innerHTML = renderBudgetLockScreen(true);
+        setTimeout(() => {
+          const main2 = document.getElementById("pageContent") || document.querySelector("#main");
+          if (main2) main2.innerHTML = renderBudgetLockScreen(false);
+        }, 1200);
+      }
+    } else {
+      // Erstmalige PIN-Erstellung
+      if (!window._budgetPinSetup) {
+        window._budgetPinSetup = window._budgetPinInput;
+        window._budgetPinInput = "";
+        const main = document.getElementById("pageContent") || document.querySelector("#main");
+        if (main) main.innerHTML = renderBudgetPinConfirm();
+      }
+    }
+  } else {
+    const main = document.getElementById("pageContent") || document.querySelector("#main");
+    if (main) main.innerHTML = renderBudgetLockScreen(false);
+  }
+};
+
+window.budgetPinBackspace = function() {
+  window._budgetPinInput = (window._budgetPinInput || "").slice(0, -1);
+  const main = document.getElementById("pageContent") || document.querySelector("#main");
+  if (main) main.innerHTML = renderBudgetLockScreen(false);
+};
+
+window.budgetPinClear = function() {
+  window._budgetPinInput = "";
+  const main = document.getElementById("pageContent") || document.querySelector("#main");
+  if (main) main.innerHTML = renderBudgetLockScreen(false);
+};
+
+window.budgetPinReset = function() {
+  if (!confirm("PIN wirklich zurücksetzen? Du musst danach einen neuen PIN festlegen. (Deine Finanzdaten bleiben erhalten.)")) return;
+  localStorage.removeItem("quantus_budget_pin");
+  window._budgetPinInput = "";
+  window._budgetPinSetup = null;
+  toast("ok", "🔄 PIN zurückgesetzt");
+  render();
+};
+
+window.budgetLock = function() {
+  window._budgetUnlocked = false;
+  toast("ok", "🔒 Gesperrt");
+  render();
+};
+
+function renderBudgetPinConfirm() {
+  const pinDigits = (window._budgetPinInput || "").length;
+  
+  return `<div style="min-height:calc(100vh - 100px);display:flex;align-items:center;justify-content:center;padding:24px">
+    <div style="max-width:380px;width:100%;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:32px;text-align:center">
+      <div style="font-size:54px;margin-bottom:14px">🔐</div>
+      <h1 style="font-size:22px;font-weight:700;margin:0 0 8px">PIN bestätigen</h1>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 24px;line-height:1.5">Gib deinen PIN noch einmal ein um ihn zu bestätigen.</p>
+      
+      <div style="display:flex;gap:10px;justify-content:center;margin-bottom:24px">
+        ${[0,1,2,3].map(i => `
+          <div style="width:48px;height:56px;border-radius:10px;background:${pinDigits > i ? 'linear-gradient(135deg,#22c55e,#16a34a)' : 'rgba(255,255,255,.04)'};border:1px solid ${pinDigits > i ? '#22c55e' : 'rgba(255,255,255,.1)'};display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff">${pinDigits > i ? '●' : ''}</div>
+        `).join('')}
+      </div>
+      
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+        ${[1,2,3,4,5,6,7,8,9].map(n => `
+          <button onclick="budgetPinConfirmDigit(${n})" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:22px;font-weight:600;cursor:pointer">${n}</button>
+        `).join('')}
+        <button onclick="budgetPinConfirmClear()" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:13px;cursor:pointer">CLR</button>
+        <button onclick="budgetPinConfirmDigit(0)" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:22px;font-weight:600;cursor:pointer">0</button>
+        <button onclick="budgetPinConfirmBack()" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:16px;cursor:pointer">⌫</button>
+      </div>
+      
+      <button onclick="budgetPinSetupCancel()" style="background:none;border:0;color:var(--muted);font-size:11.5px;cursor:pointer;text-decoration:underline">Abbrechen</button>
+    </div>
+  </div>`;
+}
+
+window.budgetPinConfirmDigit = function(d) {
+  if ((window._budgetPinInput || "").length >= 4) return;
+  window._budgetPinInput = (window._budgetPinInput || "") + d;
+  
+  if (window._budgetPinInput.length === 4) {
+    if (window._budgetPinInput === window._budgetPinSetup) {
+      localStorage.setItem("quantus_budget_pin", hashPin(window._budgetPinInput));
+      window._budgetUnlocked = true;
+      window._budgetPinInput = "";
+      window._budgetPinSetup = null;
+      toast("ok", "🔒 PIN festgelegt", "Budget ist jetzt geschützt");
+      render();
+    } else {
+      window._budgetPinInput = "";
+      window._budgetPinSetup = null;
+      toast("err", "PINs stimmen nicht überein", "Bitte erneut versuchen");
+      render();
+    }
+  } else {
+    const main = document.getElementById("pageContent") || document.querySelector("#main");
+    if (main) main.innerHTML = renderBudgetPinConfirm();
+  }
+};
+
+window.budgetPinConfirmBack = function() {
+  window._budgetPinInput = (window._budgetPinInput || "").slice(0, -1);
+  const main = document.getElementById("pageContent") || document.querySelector("#main");
+  if (main) main.innerHTML = renderBudgetPinConfirm();
+};
+
+window.budgetPinConfirmClear = function() {
+  window._budgetPinInput = "";
+  const main = document.getElementById("pageContent") || document.querySelector("#main");
+  if (main) main.innerHTML = renderBudgetPinConfirm();
+};
+
+window.budgetPinSetupCancel = function() {
+  window._budgetPinInput = "";
+  window._budgetPinSetup = null;
+  render();
+};
+
+// Floating Lock-Button (immer sichtbar wenn Budget entsperrt + active tab)
+function ensureBudgetLockButton() {
+  const isBudgetRoute = (window.location.hash || "").startsWith("#/budget");
+  let btn = document.getElementById("budgetLockBtn");
+  
+  if (!isBudgetRoute || !window._budgetUnlocked) {
+    if (btn) btn.remove();
+    return;
+  }
+  
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.id = "budgetLockBtn";
+    btn.title = "Budget sperren";
+    btn.innerHTML = "🔒";
+    btn.style.cssText = "position:fixed;bottom:90px;right:20px;width:46px;height:46px;border-radius:50%;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.7);backdrop-filter:blur(12px);color:#fff;font-size:18px;cursor:pointer;z-index:1000;box-shadow:0 4px 20px rgba(0,0,0,.4);transition:transform .15s";
+    btn.onmouseover = () => btn.style.transform = "scale(1.1)";
+    btn.onmouseout = () => btn.style.transform = "scale(1)";
+    btn.onclick = () => window.budgetLock();
+    document.body.appendChild(btn);
+  }
+}
+window.addEventListener("hashchange", ensureBudgetLockButton);
+setTimeout(() => {
+  ensureBudgetLockButton();
+  // Re-check nach jedem Render
+  const observer = new MutationObserver(ensureBudgetLockButton);
+  const target = document.getElementById("pageContent") || document.querySelector("#main");
+  if (target) observer.observe(target, { childList: true });
+}, 1500);
 
 function viewBudget() {
   const accounts = Object.values(APP.state.data.entities.accounts || {});
@@ -38387,6 +40198,18 @@ TAG: name | Beschreibung`;
       const title = $("#newProjectTitle")?.value?.trim();
       if (!title) { toast("warn", "Fehler", "Titel erforderlich"); el.dataset.processing = "false"; return; }
       const projectType = $("#newProjectType")?.value || "standard";
+      
+      // Auto-generierte externalId (PRJ-XXXXX mit 5 zufälligen alphanumerischen Zeichen)
+      function _genProjectExtId() {
+        const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // ohne I, L, O, 0, 1 (verwechslungsgefahr)
+        let id = "PRJ-";
+        for (let i = 0; i < 5; i++) id += chars[Math.floor(Math.random() * chars.length)];
+        // Sicherstellen dass eindeutig
+        const existingIds = new Set(Object.values(APP.state.data.entities.projects || {}).map(p => p.externalId).filter(Boolean));
+        if (existingIds.has(id)) return _genProjectExtId();
+        return id;
+      }
+      
       const projectData = {
         title,
         description: $("#newProjectDesc")?.value || "",
@@ -38395,6 +40218,7 @@ TAG: name | Beschreibung`;
         organizationId: $("#newProjectOrg")?.value || null,
         tags: parseTags($("#newProjectTags")?.value),
         projectType,
+        externalId: _genProjectExtId(),
       };
       
       // Learning project extras
@@ -63149,6 +64973,7 @@ function nhOpenPD(cid){
       ${tn?'<span>📑 '+esc(tn)+'</span>':''}${m.schwerpunkt?'<span>◆ '+esc(m.schwerpunkt)+'</span>':''}
       <span>${fdt(m.created)}</span>
     </div>
+    ${(m.documents||[]).length>0?'<div style="margin-top:12px;padding-top:10px;border-top:1px dashed rgba(0,0,0,.1)"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(0,0,0,.5);margin-bottom:6px">📎 Dokumente ('+(m.documents.length)+')</div>'+m.documents.map((d,idx)=>'<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(255,255,255,.5);border-radius:6px;margin-bottom:4px;font-size:11.5px"><span>'+(d.type?.startsWith('image/')?'🖼️':d.type?.includes('pdf')?'📕':'📄')+'</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(0,0,0,.75)">'+esc(d.name||'Datei')+'</span><span style="color:rgba(0,0,0,.45);font-size:10px">'+(d.size?(d.size/1024).toFixed(0)+' KB':'')+'</span>'+(d.dataUrl?'<a href="'+d.dataUrl+'" download="'+esc(d.name||'datei')+'" style="font-size:11px;padding:2px 8px;background:rgba(0,0,0,.1);border-radius:4px;color:rgba(0,0,0,.7);text-decoration:none">↓</a>':'')+'</div>').join('')+'</div>':''}
     <div style="display:flex;gap:5px;margin-top:14px;padding-top:12px;border-top:1px dashed rgba(0,0,0,.1)">
       <button class="btn btn-sm" onclick="nhToRecall('${cid}')">🧠 → RecallLab</button>
       ${m.content?'<button class="btn btn-sm" onclick="nhTranslatePD(\''+cid+'\')">🌐 Übersetzen</button>':''}
@@ -63163,7 +64988,7 @@ async function nhTranslatePD(cid){const m=D.col.find(x=>x.id===cid);if(!m?.conte
 /* ── Pinboard (grid, no rotation) ── */
 function mkPinboard(items,el){
   if(!items.length){el.innerHTML='<div class="pinboard" style="display:flex;align-items:center;justify-content:center;min-height:120px"><span style="color:var(--ink4);font-size:13px">Noch keine Einträge</span></div>';return}
-  el.innerHTML=`<div class="pinboard">${items.map(m=>`<div class="postit pi-${m.type}" onclick="nhOpenPD('${m.id}')"><div class="postit-inner"><button class="postit-del" onclick="event.stopPropagation();nhDel('col','${m.id}')">✕</button><span class="postit-icon">${TI[m.type]||'📄'}</span><div class="postit-title">${esc(m.title)}</div>${m.schwerpunkt?'<div class="postit-sp">◆ '+esc(m.schwerpunkt)+'</div>':''}</div></div>`).join('')}</div>`;
+  el.innerHTML=`<div class="pinboard">${items.map(m=>`<div class="postit pi-${m.type}" onclick="nhOpenPD('${m.id}')"><div class="postit-inner"><button class="postit-del" onclick="event.stopPropagation();nhDel('col','${m.id}')">✕</button><span class="postit-icon">${TI[m.type]||'📄'}</span><div class="postit-title">${esc(m.title)}</div>${m.schwerpunkt?'<div class="postit-sp">◆ '+esc(m.schwerpunkt)+'</div>':''}${(m.documents||[]).length>0?'<div style="position:absolute;bottom:8px;right:8px;font-size:10px;background:rgba(0,0,0,.15);padding:2px 7px;border-radius:5px;font-weight:700">📎 '+(m.documents.length)+'</div>':''}</div></div>`).join('')}</div>`;
 }
 function taskList(tasks,showTopic){if(!tasks.length)return'<div style="color:var(--ink4);font-size:12px;padding:8px">Keine Tasks.</div>';const s=[...tasks].sort((a,b)=>(a.done?1:0)-(b.done?1:0)||(a.due||'9').localeCompare(b.due||'9'));return'<div class="task-list">'+s.map(t=>{const dc=t.due?(new Date(t.due)<new Date()?'overdue':new Date(t.due)<new Date(Date.now()+3*86400000)?'soon':'ok'):'';const tn=showTopic&&t.topicId?D.topics.find(x=>x.id===t.topicId)?.title:'';return`<div class="task-item"><div class="task-check${t.done?' done':''}" onclick="nhToggleTask('${t.id}')">${t.done?'✓':''}</div><div class="task-body"><div class="task-title${t.done?' done':''}">${esc(t.title)}</div><div class="task-sub">${t.due?'<span class="task-due '+dc+'">'+fd(t.due)+'</span>':''}${t.schwerpunkt?'<span class="tag t-p" style="font-size:9px">◆ '+esc(t.schwerpunkt)+'</span>':''}${tn?'<span>📑 '+esc(tn)+'</span>':''}</div></div><button class="btn btn-g btn-sm" onclick="nhDel('col','${t.id}')">✕</button></div>`}).join('')+'</div>'}
 
@@ -63212,8 +65037,12 @@ function nhSaveSP(tid){const t=D.topics.find(x=>x.id===tid);if(!t)return;const n
 function nhOpenSP(tid,si){vTopic=tid;vSP=si;nhNav('sp')}
 function rSP(){const t=D.topics.find(x=>x.id===vTopic);if(!t)return;const sp=(t.schwerpunkte||[])[vSP];if(!sp)return;const mats=D.col.filter(m=>m.topicId===t.id&&m.schwerpunkt===sp.name);const tasks=mats.filter(m=>m.type==='task');const postits=mats.filter(m=>m.type!=='task');document.getElementById('nh-p-sp').innerHTML=`<div class="sp-hero"><div style="display:flex;justify-content:space-between"><div><h2>◆ ${esc(sp.name)}</h2>${sp.description?'<p style="margin-top:4px">'+esc(sp.description)+'</p>':''}<div style="margin-top:6px;font-size:12px;color:var(--purple)">${mats.length} materials</div></div></div></div><div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap">${['note','question','task','quote','image','link'].map(ty=>`<button class="btn btn-sm" onclick="nhColM({type:'${ty}'},'${vTopic}','${esc(sp.name)}')">${TI[ty]} ${TN[ty]}</button>`).join('')}</div>${tasks.length?'<h3 style="font-family:var(--head);margin-bottom:8px">Tasks</h3>'+taskList(tasks)+'<div style="height:16px"></div>':''}<div id="nh-sp-board"></div>`;mkPinboard(postits,document.getElementById('nh-sp-board'))}
 function rCol(ft='all'){let it=[...D.col].sort((a,b)=>new Date(b.created)-new Date(a.created));if(ft!=='all')it=it.filter(m=>m.type===ft);const postits=it.filter(m=>m.type!=='task');const tasks=it.filter(m=>m.type==='task');const el=document.getElementById('nh-p-collection');el.innerHTML=`<div class="tabs">${[['all','All'],['note','Notes'],['quote','Quotes'],['question','Questions'],['task','Tasks'],['image','Images'],['link','Links']].map(([k,l])=>`<button class="tab${ft===k?' on':''}" onclick="rCol('${k}')">${l}</button>`).join('')}</div>${ft==='task'?taskList(tasks,true):'<div id="nh-col-board"></div>'+(tasks.length&&ft==='all'?'<h3 style="font-family:var(--head);margin:20px 0 8px">Tasks</h3>'+taskList(tasks,true):'')}${!postits.length&&ft!=='task'?'<div class="empty"><h3>No materials</h3></div>':''}`;if(ft!=='task'&&postits.length)mkPinboard(postits,document.getElementById('nh-col-board'))}
-function nhColM(item,preTid,preSP){const m=item||{};const tOps=D.topics.map(t=>'<option value="'+t.id+'" '+((m.topicId||preTid)===t.id?'selected':'')+'>'+esc(t.title)+'</option>').join('');const selT=D.topics.find(t=>t.id===(m.topicId||preTid));const spOps=(selT?.schwerpunkte||[]).map(sp=>'<option value="'+esc(sp.name)+'" '+((m.schwerpunkt||preSP)===sp.name?'selected':'')+'>'+esc(sp.name)+'</option>').join('');nhOpenM(m.id?'Edit':'New Material',`<div class="g2"><div class="fg"><label>Type</label><select class="fc" id="fc-ty"><option value="note" ${m.type==='note'?'selected':''}>Note</option><option value="quote" ${m.type==='quote'?'selected':''}>Quote</option><option value="question" ${m.type==='question'?'selected':''}>Question</option><option value="task" ${m.type==='task'?'selected':''}>Task</option><option value="image" ${m.type==='image'?'selected':''}>Image</option><option value="link" ${m.type==='link'?'selected':''}>Link</option></select></div><div class="fg"><label>Topic</label><select class="fc" id="fc-tp"><option value="">—</option>${tOps}</select></div></div><div class="fg"><label>Focus Area</label><select class="fc" id="fc-sp"><option value="">—</option>${spOps}</select></div><div class="fg"><label>Title</label><input class="fc" id="fc-t" value="${esc(m.title||'')}"/></div><div class="fg"><label>Content</label><textarea class="fc" id="fc-c" rows="4">${esc(m.content||'')}</textarea></div><div class="fg"><label>Source / URL</label><input class="fc" id="fc-s" value="${esc(m.source||'')}"/></div>`,`<button class="btn" onclick="nhCloseM()">Cancel</button><button class="btn btn-p" onclick="nhSaveCol('${m.id||''}')">Save</button>`)}
-function nhSaveCol(eid){const t=document.getElementById('fc-t').value.trim();if(!t)return nhToastMsg('Title required');const type=document.getElementById('fc-ty').value;const o={id:eid||uid(),title:t,type,topicId:document.getElementById('fc-tp').value||null,schwerpunkt:document.getElementById('fc-sp').value||null,content:document.getElementById('fc-c').value.trim(),source:document.getElementById('fc-s').value.trim(),due:type==='task'?null:null,done:eid?(D.col.find(c=>c.id===eid)||{}).done||false:false,created:eid?(D.col.find(c=>c.id===eid)||{}).created||iso():iso(),updated:iso()};if(eid){const i=D.col.findIndex(c=>c.id===eid);if(i>=0)D.col[i]={...D.col[i],...o}}else D.col.push(o);saveData();nhCloseM();render(curP);nhToastMsg('✓')}
+function nhColM(item,preTid,preSP){const m=item||{};const tOps=D.topics.map(t=>'<option value="'+t.id+'" '+((m.topicId||preTid)===t.id?'selected':'')+'>'+esc(t.title)+'</option>').join('');const selT=D.topics.find(t=>t.id===(m.topicId||preTid));const spOps=(selT?.schwerpunkte||[]).map(sp=>'<option value="'+esc(sp.name)+'" '+((m.schwerpunkt||preSP)===sp.name?'selected':'')+'>'+esc(sp.name)+'</option>').join('');window._nhPendingDocs=[...(m.documents||[])];nhOpenM(m.id?'Edit':'New Material',`<div class="g2"><div class="fg"><label>Type</label><select class="fc" id="fc-ty"><option value="note" ${m.type==='note'?'selected':''}>Note</option><option value="quote" ${m.type==='quote'?'selected':''}>Quote</option><option value="question" ${m.type==='question'?'selected':''}>Question</option><option value="task" ${m.type==='task'?'selected':''}>Task</option><option value="image" ${m.type==='image'?'selected':''}>Image</option><option value="link" ${m.type==='link'?'selected':''}>Link</option></select></div><div class="fg"><label>Topic</label><select class="fc" id="fc-tp"><option value="">—</option>${tOps}</select></div></div><div class="fg"><label>Focus Area</label><select class="fc" id="fc-sp"><option value="">—</option>${spOps}</select></div><div class="fg"><label>Title</label><input class="fc" id="fc-t" value="${esc(m.title||'')}"/></div><div class="fg"><label>Content</label><textarea class="fc" id="fc-c" rows="4">${esc(m.content||'')}</textarea></div><div class="fg"><label>Source / URL</label><input class="fc" id="fc-s" value="${esc(m.source||'')}"/></div><div class="fg"><label>📎 Dokumente</label><div id="nh-docs">${nhRenderDocs(window._nhPendingDocs)}</div><div onclick="document.getElementById('nh-doc-input').click()" style="padding:14px;border:2px dashed rgba(99,102,241,.3);border-radius:8px;background:rgba(99,102,241,.04);text-align:center;cursor:pointer;margin-top:6px"><div style="font-size:22px;margin-bottom:4px">📎</div><div style="font-size:12px;font-weight:600">Klicken um Dokumente hinzuzufügen</div><div style="font-size:10.5px;color:var(--ink4);margin-top:3px">PDFs, Bilder, Dokumente (max 5MB)</div></div><input type="file" id="nh-doc-input" multiple style="display:none" onchange="nhHandleDocs(event)"/></div>`,`<button class="btn" onclick="nhCloseM()">Cancel</button><button class="btn btn-p" onclick="nhSaveCol('${m.id||''}')">Save</button>`)}
+function nhRenderDocs(docs){if(!docs||docs.length===0)return'';return docs.map((d,idx)=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:7px;margin-bottom:5px;font-size:12px"><span>${d.type?.startsWith('image/')?'🖼️':d.type?.includes('pdf')?'📕':'📄'}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name||'Datei')}</span><span style="color:var(--ink4);font-size:10.5px">${d.size?(d.size/1024).toFixed(0)+' KB':''}</span>${d.dataUrl?`<button class="btn" onclick="nhDownloadDoc(${idx})" style="font-size:10.5px;padding:3px 8px">↓</button>`:''}<button class="btn" onclick="nhRemoveDoc(${idx})" style="font-size:10.5px;padding:3px 8px;background:rgba(239,68,68,.12);color:#f87171">×</button></div>`).join('')}
+async function nhHandleDocs(event){const files=Array.from(event.target.files||[]);if(files.length===0)return;for(const f of files){if(f.size>5*1024*1024){nhToastMsg('⚠️ '+f.name+' ist über 5MB');continue}try{const dataUrl=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)});window._nhPendingDocs.push({id:'doc_'+uid(),name:f.name,type:f.type,size:f.size,dataUrl,uploadedAt:iso()})}catch(e){console.error('Doc upload:',e)}}const w=document.getElementById('nh-docs');if(w)w.innerHTML=nhRenderDocs(window._nhPendingDocs);event.target.value='';nhToastMsg('📎 '+files.length+' Datei(en)')}
+function nhRemoveDoc(idx){if(!confirm('Dokument entfernen?'))return;window._nhPendingDocs.splice(idx,1);const w=document.getElementById('nh-docs');if(w)w.innerHTML=nhRenderDocs(window._nhPendingDocs)}
+function nhDownloadDoc(idx){const doc=window._nhPendingDocs[idx];if(!doc?.dataUrl)return;const a=document.createElement('a');a.href=doc.dataUrl;a.download=doc.name||'datei';document.body.appendChild(a);a.click();setTimeout(()=>document.body.removeChild(a),100)}
+function nhSaveCol(eid){const t=document.getElementById('fc-t').value.trim();if(!t)return nhToastMsg('Title required');const type=document.getElementById('fc-ty').value;const o={id:eid||uid(),title:t,type,topicId:document.getElementById('fc-tp').value||null,schwerpunkt:document.getElementById('fc-sp').value||null,content:document.getElementById('fc-c').value.trim(),source:document.getElementById('fc-s').value.trim(),documents:window._nhPendingDocs||[],due:type==='task'?null:null,done:eid?(D.col.find(c=>c.id===eid)||{}).done||false:false,created:eid?(D.col.find(c=>c.id===eid)||{}).created||iso():iso(),updated:iso()};if(eid){const i=D.col.findIndex(c=>c.id===eid);if(i>=0)D.col[i]={...D.col[i],...o}}else D.col.push(o);saveData();nhCloseM();window._nhPendingDocs=null;render(curP);nhToastMsg('✓')}
 function nhTransfer(tid){const t=D.topics.find(x=>x.id===tid);if(!t)return;const mats=D.col.filter(m=>m.topicId===tid);let body='';const types={note:'NOTES',quote:'QUOTES',question:'QUESTIONS'};for(const[type,label]of Object.entries(types)){const items=mats.filter(m=>m.type===type);if(items.length){body+=`\n=== ${label} ===\n`;items.forEach(m=>{body+=`\n▸ ${m.title}\n${m.content||''}${m.source?'\n['+m.source+']':''}\n`})}}D.ed={tid,fmt:'article',title:t.title,body:body.trim(),status:'draft',social:D.ed.social||{instagram:'',linkedin:'',x:''},script:D.ed.script||''};saveData();document.getElementById('nh-nav-ed').style.display='';nhNav('editor');nhToastMsg('→ Editor')}
 function rEd(){const e=D.ed;const t=D.topics.find(x=>x.id===e.tid);const mats=e.tid?D.col.filter(m=>m.topicId===e.tid):[];document.getElementById('nh-p-editor').innerHTML=`<div class="ed-wrap"><div class="ed-side"><div class="ed-side-h"><span>Materials</span><button class="btn btn-sm" onclick="if(vTopic)nhOpenTopic(vTopic);else nhNav('topics')">← Back</button></div><div class="ed-mat">${mats.length?mats.map(m=>'<div class="ed-mat-item" data-id="'+m.id+'" onclick="nhInsert(\''+m.id+'\')"><span>'+TI[m.type]+'</span><div><b>'+esc(m.title)+'</b></div></div>').join(''):'<div style="padding:16px;font-size:11px;color:var(--ink4);text-align:center">No materials</div>'}</div></div><div class="ed-main"><div class="ed-main-inner"><div style="display:flex;align-items:center;gap:8px;margin-bottom:16px"><h2 style="font-family:var(--head);font-size:22px;flex:1">${esc(e.title||'Untitled')}</h2>${['article','video','social'].map(f=>'<button class="btn btn-sm'+(e.fmt===f?' btn-p':'')+'" onclick="D.ed.fmt=\''+f+'\';saveData();rEd()">'+{article:'Article',video:'Video',social:'Social'}[f]+'</button>').join('')}<button class="btn btn-p btn-sm" onclick="nhExport()">📤 Export</button></div><div id="nh-ed-content"></div></div></div></div>`;const ec=document.getElementById('nh-ed-content');if(e.fmt==='article'){ec.innerHTML=`<textarea class="script-textarea" id="nh-ed-b" placeholder="Write your article…" style="min-height:400px">${esc(e.body||'')}</textarea>`;document.getElementById('nh-ed-b').addEventListener('input',()=>{D.ed.body=document.getElementById('nh-ed-b').value;saveData()})}else if(e.fmt==='social'){const platforms=[{key:'instagram',name:'Instagram',icon:'📸',limit:60},{key:'linkedin',name:'LinkedIn',icon:'💼',limit:400},{key:'x',name:'X (Twitter)',icon:'𝕏',limit:50}];ec.innerHTML=platforms.map(p=>`<div class="social-card"><div class="social-card-head"><h4>${p.icon} ${p.name}</h4><span style="font-size:11px;color:var(--ink4)">~${p.limit} words</span></div><textarea class="social-textarea" id="nh-soc-${p.key}" placeholder="${p.name} post…">${esc((e.social||{})[p.key]||'')}</textarea><div class="word-count" id="nh-wc-${p.key}">${wc((e.social||{})[p.key]||'')} / ${p.limit}</div></div>`).join('');platforms.forEach(p=>{document.getElementById('nh-soc-'+p.key)?.addEventListener('input',function(){if(!D.ed.social)D.ed.social={};D.ed.social[p.key]=this.value;saveData();const c=wc(this.value);document.getElementById('nh-wc-'+p.key).textContent=c+' / '+p.limit;document.getElementById('nh-wc-'+p.key).className='word-count '+(c>p.limit?'over':c>0?'ok':'')})})}}
 function nhInsert(mid){const m=D.col.find(c=>c.id===mid);if(!m)return;const ta=document.getElementById('nh-ed-b');if(ta){ta.value+=`\n\n▸ ${m.title}\n${m.content||''}`;D.ed.body=ta.value;saveData();nhToastMsg('Inserted')}}
@@ -63272,7 +65101,7 @@ document.getElementById('nh-gs').addEventListener('input',function(){const q=thi
 if(D.ed?.tid)document.getElementById('nh-nav-ed').style.display='';
 
 // Export to window
-const _exp={nhNav,nhOpenM,nhCloseM,nhClosePD,nhOpenPD,nhUpdPD,nhToRecall,nhTranslatePD,nhAutoRC,toast,render,rDash,rNews,nhNewsM,nhSaveNews,nhToggleStar,nhMarkRead,nhOpenNewsReader,rNewsReader,nhCtxNews,nhQTrSel,nhNewsToLibrary,rIdeas,nhIdeaM,nhSaveIdea,rFW,nhFWM,nhSaveFW,rTopics,nhTopicM,nhSaveTopic,nhOpenTopic,rTopic,nhSPM,nhSaveSP,nhOpenSP,rSP,rCol,nhColM,nhSaveCol,nhTransfer,rEd,nhInsert,nhExport,rOut,rLib,nhPasteM,nhSvPaste,nhDelArt,nhOpenReader,rReader,nhCtxR,nhAddAnn,nhQTr,rDict,nhQTrDi,nhDictM,nhAutoTr,nhSvDi,rRecall,nhRCM,nhSvRC,nhPromote,nhDel,nhToggleTask,nhBadges,mkPinboard,taskList,mkTI,uid,iso,esc,tr,fd,fdt,wc,gRL,sRL,ensDk,gSet,sSet,callGPT,saveData,loadData,D,_sel,_selA};
+const _exp={nhNav,nhOpenM,nhCloseM,nhClosePD,nhOpenPD,nhUpdPD,nhToRecall,nhTranslatePD,nhAutoRC,toast,render,rDash,rNews,nhNewsM,nhSaveNews,nhToggleStar,nhMarkRead,nhOpenNewsReader,rNewsReader,nhCtxNews,nhQTrSel,nhNewsToLibrary,rIdeas,nhIdeaM,nhSaveIdea,rFW,nhFWM,nhSaveFW,rTopics,nhTopicM,nhSaveTopic,nhOpenTopic,rTopic,nhSPM,nhSaveSP,nhOpenSP,rSP,rCol,nhColM,nhSaveCol,nhTransfer,rEd,nhInsert,nhExport,rOut,rLib,nhPasteM,nhSvPaste,nhDelArt,nhOpenReader,rReader,nhCtxR,nhAddAnn,nhQTr,rDict,nhQTrDi,nhDictM,nhAutoTr,nhSvDi,rRecall,nhRCM,nhSvRC,nhPromote,nhDel,nhToggleTask,nhBadges,mkPinboard,taskList,mkTI,uid,iso,esc,tr,fd,fdt,wc,gRL,sRL,ensDk,gSet,sSet,callGPT,saveData,loadData,D,_sel,_selA,nhHandleDocs,nhRemoveDoc,nhDownloadDoc,nhRenderDocs};
 let _pR,_pT;
 function _act(){_pR=window.render;_pT=window.toast;for(const[k,v]of Object.entries(_exp))window[k]=v;window.D=D}
 function _deact(){if(_pR)window.render=_pR;if(_pT)window.toast=_pT}
