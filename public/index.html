@@ -18951,6 +18951,9 @@ function viewProjectDetail(id) {
           <div class="comments">${commentsHtml}</div>
         </div>
         
+        <!-- 📓 Notizbuch direkt unter Kommentaren -->
+        ${renderProjectNotebookSection(p, id)}
+        
         <div class="card mb-4">
           <h3>⏱️ Projektzeit erfassen</h3>
           ${projectTimerRunning ? `
@@ -19004,8 +19007,7 @@ function viewProjectDetail(id) {
           ${(p.thoughts||[]).slice().reverse().map(t => '<div style="padding:8px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.1);border-radius:10px;margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><span style="flex-shrink:0;font-size:14px">' + "\u{1F4AD}" + '</span><div style="flex:1;min-width:0"><div style="font-size:13px;line-height:1.5;white-space:pre-wrap">' + esc(t.text) + '</div><div style="font-size:10px;color:var(--muted);margin-top:4px">' + new Date(t.createdAt).toLocaleDateString("de-CH") + ' \u00B7 ' + new Date(t.createdAt).toLocaleTimeString("de-CH",{hour:'2-digit',minute:'2-digit'}) + '</div></div><button class="btn sm ghost danger" data-action="delete-project-thought" data-id="' + id + '" data-thought-id="' + t.id + '" style="flex-shrink:0;font-size:10px">' + "\u{1F5D1}" + '</button></div>').join('') || '<div class="mini" style="opacity:.5">Noch keine Gedanken zu diesem Projekt.</div>'}
         </div>
         
-        <!-- 📓 Notizbuch (wie im Lernprojekt) -->
-        ${renderProjectNotebookSection(p, id)}
+        ${renderFileAttachments("project", id)}
         
         ${renderFileAttachments("project", id)}
         
@@ -19199,18 +19201,19 @@ function renderCustom_PRJ88QB4(id, p) {
     .pb88-chip:hover { border-color:rgba(168,85,247,.4); }
     .pb88-chip.active { background:linear-gradient(135deg,#6366f1,#a855f7); border-color:transparent; color:#fff; }
     .pb88-search { flex:1; min-width:180px; padding:7px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:8px; color:var(--text); font-size:12px; }
-    /* Pinnboard Grid — kleinere Mindestbreite damit mehr Karten pro Reihe */
-    .pb88-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:10px; }
-    @media (min-width: 1400px) { .pb88-grid { grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); } }
-    .pb88-postit { position:relative; padding:12px 12px 30px; border-radius:8px; box-shadow:0 6px 14px rgba(0,0,0,.18); cursor:pointer; transition:transform .15s, box-shadow .15s; min-height:140px; }
-    .pb88-postit:hover { transform:translateY(-3px) rotate(-.5deg); box-shadow:0 10px 22px rgba(0,0,0,.25); }
-    .pb88-postit-icon { font-size:18px; margin-bottom:6px; }
-    .pb88-postit-title { font-weight:800; font-size:13px; line-height:1.3; margin-bottom:6px; padding-right:22px; word-break:break-word; }
-    .pb88-postit-content { font-size:11px; line-height:1.5; opacity:.85; max-height:60px; overflow:hidden; }
-    .pb88-postit-meta { position:absolute; bottom:8px; left:12px; right:12px; display:flex; gap:6px; align-items:center; font-size:10px; opacity:.7; }
-    .pb88-postit-del { position:absolute; top:6px; right:6px; width:22px; height:22px; border-radius:50%; border:0; background:rgba(0,0,0,.15); color:inherit; cursor:pointer; font-size:11px; opacity:0; transition:opacity .15s; }
+    /* Pinnboard Grid — größere Karten von Anfang an */
+    .pb88-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px; }
+    @media (min-width: 1400px) { .pb88-grid { grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); } }
+    @media (min-width: 1700px) { .pb88-grid { grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); } }
+    .pb88-postit { position:relative; padding:16px 16px 36px; border-radius:10px; box-shadow:0 8px 18px rgba(0,0,0,.2); cursor:pointer; transition:transform .15s, box-shadow .15s; min-height:170px; }
+    .pb88-postit:hover { transform:translateY(-3px) rotate(-.5deg); box-shadow:0 12px 26px rgba(0,0,0,.28); }
+    .pb88-postit-icon { font-size:22px; margin-bottom:8px; }
+    .pb88-postit-title { font-weight:800; font-size:14.5px; line-height:1.3; margin-bottom:8px; padding-right:24px; word-break:break-word; }
+    .pb88-postit-content { font-size:12.5px; line-height:1.55; opacity:.85; max-height:80px; overflow:hidden; }
+    .pb88-postit-meta { position:absolute; bottom:10px; left:16px; right:16px; display:flex; gap:6px; align-items:center; font-size:10.5px; opacity:.7; }
+    .pb88-postit-del { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%; border:0; background:rgba(0,0,0,.15); color:inherit; cursor:pointer; font-size:12px; opacity:0; transition:opacity .15s; }
     .pb88-postit:hover .pb88-postit-del { opacity:1; }
-    .pb88-postit-docs { display:inline-flex; align-items:center; gap:3px; padding:2px 6px; border-radius:5px; background:rgba(0,0,0,.1); font-weight:700; }
+    .pb88-postit-docs { display:inline-flex; align-items:center; gap:3px; padding:2px 7px; border-radius:5px; background:rgba(0,0,0,.1); font-weight:700; }
     .pb88-postit.done .pb88-postit-title { text-decoration:line-through; opacity:.55; }
     .pb88-empty { text-align:center; padding:40px 20px; color:var(--muted); }
     
@@ -19295,31 +19298,56 @@ function renderPb88Board(id, pb, TI, TL, TC) {
   }
   
   return `
-    <div class="pb88-filters">
-      ${types.map(t => {
-        const icon = t === 'all' ? '🌐' : TI[t];
-        const label = t === 'all' ? 'Alle' : TL[t];
-        const count = t === 'all' ? (pb.items||[]).length : (pb.items||[]).filter(i=>i.type===t).length;
-        return `<span class="pb88-chip ${(pb.filterType||'all')===t?'active':''}" onclick="pb88FilterType('${id}','${t}')">${icon} ${label}${count > 0 ? ` <strong>(${count})</strong>` : ''}</span>`;
-      }).join('')}
-      <input type="text" class="pb88-search" placeholder="🔍 Suchen..." value="${esc(pb.filterSearch||'')}" oninput="pb88FilterSearch('${id}',this.value)" />
-      <button class="pb88-btn primary" onclick="pb88OpenItem('${id}',null)" style="font-size:11.5px;padding:7px 13px">+ Neues Item</button>
+    <!-- Quick-Add-Bar: 1 Button pro Typ -->
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">
+      ${['note','quote','question','task','image','link'].map(t => `
+        <button onclick="pb88QuickCreate('${id}','${t}')" 
+                style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:11px;color:var(--text);cursor:pointer;font-size:11.5px;font-weight:600;transition:all .15s;text-align:center"
+                onmouseover="this.style.background='rgba(168,85,247,.1)';this.style.borderColor='rgba(168,85,247,.3)';this.style.transform='translateY(-2px)'"
+                onmouseout="this.style.background='rgba(255,255,255,.03)';this.style.borderColor='rgba(255,255,255,.08)';this.style.transform='translateY(0)'">
+          <span style="font-size:22px">${TI[t]}</span>
+          <span>+ ${TL[t]}</span>
+        </button>
+      `).join('')}
     </div>
     
-    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px">
+    <!-- Filter-Bar: kompakt -->
+    <div class="pb88-filters">
+      <span class="pb88-chip ${(pb.filterType||'all')==='all'?'active':''}" onclick="pb88FilterType('${id}','all')">🌐 Alle (${(pb.items||[]).length})</span>
+      ${['note','quote','question','task','image','link'].filter(t => (pb.items||[]).filter(i=>i.type===t).length > 0).map(t => {
+        const count = (pb.items||[]).filter(i=>i.type===t).length;
+        return `<span class="pb88-chip ${(pb.filterType||'all')===t?'active':''}" onclick="pb88FilterType('${id}','${t}')">${TI[t]} ${TL[t]} (${count})</span>`;
+      }).join('')}
+      <input type="text" class="pb88-search" placeholder="🔍 Suchen..." value="${esc(pb.filterSearch||'')}" oninput="pb88FilterSearch('${id}',this.value)" />
+    </div>
+    
+    <!-- Themen-Bar mit direktem Erstell-Button -->
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
       <span class="pb88-chip ${!pb.filterTopicId?'active':''}" onclick="pb88FilterTopic('${id}',null)">📂 Alle Themen</span>
       ${(pb.topics||[]).map(t => {
         const count = (pb.items||[]).filter(i => i.topicId === t.id).length;
         return `<span class="pb88-chip ${pb.filterTopicId === t.id ? 'active' : ''}" onclick="pb88FilterTopic('${id}','${t.id}')">${esc(t.title)}${count > 0 ? ` (${count})` : ''}</span>`;
       }).join('')}
+      <button onclick="pb88QuickCreateTopic('${id}')" 
+              style="padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px dashed rgba(168,85,247,.4);background:rgba(168,85,247,.06);color:#d8b4fe;transition:all .15s"
+              onmouseover="this.style.background='rgba(168,85,247,.15)';this.style.borderStyle='solid'"
+              onmouseout="this.style.background='rgba(168,85,247,.06)';this.style.borderStyle='dashed'">
+        + Neues Thema
+      </button>
+      ${pb.filterTopicId ? `<button onclick="pb88QuickCreateFocus('${id}','${pb.filterTopicId}')" 
+              style="padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px dashed rgba(236,72,153,.4);background:rgba(236,72,153,.06);color:#f9a8d4;transition:all .15s"
+              onmouseover="this.style.background='rgba(236,72,153,.15)';this.style.borderStyle='solid'"
+              onmouseout="this.style.background='rgba(236,72,153,.06)';this.style.borderStyle='dashed'">
+        ◆ Neuer Schwerpunkt
+      </button>` : ''}
     </div>
     ${focusAreasHtml}
     
     ${items.length === 0 ? `
-      <div class="pb88-empty">
-        <div style="font-size:42px;margin-bottom:10px">📌</div>
-        <div style="font-weight:600;margin-bottom:5px">${(pb.items||[]).length === 0 ? 'Noch keine Items' : 'Keine Treffer'}</div>
-        <div style="font-size:11.5px">${(pb.items||[]).length === 0 ? 'Klicke "+ Neues Item" um zu starten.' : 'Andere Filter probieren.'}</div>
+      <div class="pb88-empty" style="min-height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div style="font-size:48px;margin-bottom:10px">📌</div>
+        <div style="font-weight:600;margin-bottom:5px;font-size:14px">${(pb.items||[]).length === 0 ? 'Noch keine Items' : 'Keine Treffer'}</div>
+        <div style="font-size:12px">${(pb.items||[]).length === 0 ? 'Klicke oben einen Quick-Button um zu starten.' : 'Andere Filter probieren.'}</div>
       </div>
     ` : `
       <div class="pb88-grid">
@@ -19503,6 +19531,43 @@ window.pb88RemoveFA = function(id, topicId, name) {
 // ════════ Item Editor Modal ════════
 let _pb88EditId = null;
 
+// Quick-Create: Item mit vorgewähltem Typ
+window.pb88QuickCreate = function(id, type) {
+  const pb = pb88Pb(id); if (!pb) return;
+  window._pb88PreType = type;
+  pb88OpenItem(id, null);
+};
+
+window.pb88QuickCreateTopic = function(id) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const title = prompt("Name des neuen Themas?");
+  if (!title || !title.trim()) return;
+  if (!Array.isArray(pb.topics)) pb.topics = [];
+  const newTopic = { id: "topic_" + Math.random().toString(36).slice(2,10), title: title.trim(), schwerpunkte: [] };
+  pb.topics.push(newTopic);
+  pb.filterTopicId = newTopic.id;  // Direkt aktivieren
+  pb88Save();
+  toast("ok", "📂 Thema erstellt", title.trim());
+  render();
+};
+
+window.pb88QuickCreateFocus = function(id, topicId) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
+  const name = prompt(`Schwerpunkt für "${t.title}"?`);
+  if (!name || !name.trim()) return;
+  if (!Array.isArray(t.schwerpunkte)) t.schwerpunkte = [];
+  if (t.schwerpunkte.some(sp => sp.name === name.trim())) {
+    toast("warn", "Existiert bereits");
+    return;
+  }
+  t.schwerpunkte.push({ name: name.trim() });
+  pb.filterFocusArea = name.trim();  // Direkt aktivieren
+  pb88Save();
+  toast("ok", "◆ Schwerpunkt erstellt", name.trim());
+  render();
+};
+
 window.pb88OpenItem = function(id, itemId) {
   const pb = pb88Pb(id); if (!pb) return;
   _pb88EditId = itemId;
@@ -19512,7 +19577,9 @@ window.pb88OpenItem = function(id, itemId) {
     item = (pb.items||[]).find(x => x.id === itemId);
     if (!item) return;
   } else {
-    item = { type: 'note', title: '', content: '', source: '', topicId: pb.filterTopicId || null, focusArea: pb.filterFocusArea || null, done: false, documents: [] };
+    const preType = window._pb88PreType || 'note';
+    window._pb88PreType = null;
+    item = { type: preType, title: '', content: '', source: '', topicId: pb.filterTopicId || null, focusArea: pb.filterFocusArea || null, done: false, documents: [] };
   }
   
   let overlay = document.getElementById('pb88ItemModal');
