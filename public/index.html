@@ -17923,6 +17923,50 @@ window.scrollToProjectTimeBudget = function(id) {
 // ═══════════════════════════════════════════════════════════════════════
 // 📊 Projekt-Bewertungsmatrix (analog Decisions)
 // ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════
+// 📑 Collapsible Sections für Projekt-Detail
+// ════════════════════════════════════════════════════════════════════════
+function renderCollapsibleSection(opts) {
+  const { id, icon, title, subtitle, defaultOpen, content } = opts;
+  
+  // Persistent open/close state
+  if (!window._collapsibleStates) {
+    window._collapsibleStates = {};
+    try {
+      const saved = localStorage.getItem('quantus_collapsible_states');
+      if (saved) window._collapsibleStates = JSON.parse(saved);
+    } catch(_) {}
+  }
+  
+  const isOpen = window._collapsibleStates[id] !== undefined 
+    ? window._collapsibleStates[id] 
+    : defaultOpen;
+  
+  return `<div class="card mb-4" style="padding:0;overflow:hidden">
+    <div onclick="toggleCollapsible('${id}')" 
+         style="display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;background:rgba(255,255,255,.02);border-bottom:${isOpen ? '1px solid rgba(255,255,255,.06)' : '0'};transition:background .15s"
+         onmouseover="this.style.background='rgba(255,255,255,.04)'"
+         onmouseout="this.style.background='rgba(255,255,255,.02)'">
+      <span style="font-size:20px;flex-shrink:0">${icon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:700;color:var(--text)">${title}</div>
+        ${subtitle ? `<div style="font-size:11.5px;color:var(--muted);margin-top:2px">${subtitle}</div>` : ''}
+      </div>
+      <span style="font-size:14px;color:var(--muted);transition:transform .2s;${isOpen ? 'transform:rotate(180deg)' : ''}">▼</span>
+    </div>
+    ${isOpen ? `<div style="padding:16px">${content}</div>` : ''}
+  </div>`;
+}
+
+window.toggleCollapsible = function(sectionId) {
+  if (!window._collapsibleStates) window._collapsibleStates = {};
+  window._collapsibleStates[sectionId] = !window._collapsibleStates[sectionId];
+  try {
+    localStorage.setItem('quantus_collapsible_states', JSON.stringify(window._collapsibleStates));
+  } catch(_) {}
+  render();
+};
+
 function renderProjectMatrix(p, id) {
   const criteria = p.matrixCriteria || [];
   const scores = criteria.map(c => parseFloat(c.score)).filter(s => !isNaN(s) && s > 0);
@@ -18838,18 +18882,59 @@ function viewProjectDetail(id) {
         
         ${renderCustomProjectFeatures(id)}
         
-        <!-- 📊 Bewertungsmatrix + 🕒 Zeitvoranschlag -->
-        <div class="card mb-4">
-          ${renderProjectMatrix(p, id)}
-        </div>
-        <div class="card mb-4">
-          ${renderProjectTimeBudget(p, id)}
-        </div>
+        <!-- 📊 Bewertungsmatrix (einklappbar) -->
+        ${renderCollapsibleSection({
+          id: 'matrix-' + id,
+          icon: '📊',
+          title: 'Bewertungsmatrix',
+          subtitle: (() => {
+            const scs = (p.matrixCriteria || []).map(c => parseFloat(c.score)).filter(s => !isNaN(s) && s > 0);
+            const avg = scs.length ? (scs.reduce((a,b)=>a+b,0)/scs.length).toFixed(1) : null;
+            if (!p.matrixEnabled) return 'Nicht aktiv';
+            return scs.length + '/' + (p.matrixCriteria || []).length + ' bewertet' + (avg ? ' · Ø ' + avg : '');
+          })(),
+          defaultOpen: !!(p.matrixEnabled && (p.matrixCriteria || []).filter(c => c.score).length >= 5),
+          content: renderProjectMatrix(p, id),
+        })}
         
-        <!-- 🎯 SWOT + Risks + Milestones + Sub-Goals -->
-        <div class="card mb-4">
-          ${renderProjectPlannerTabs(p, id)}
-        </div>
+        <!-- 🕒 Zeitvoranschlag (einklappbar) -->
+        ${renderCollapsibleSection({
+          id: 'timebudget-' + id,
+          icon: '🕒',
+          title: 'Zeitvoranschlag',
+          subtitle: (() => {
+            const phases = p.timeBudget?.phases || [];
+            if (phases.length === 0) return 'Keine Phasen erfasst';
+            const totalEst = phases.reduce((s, ph) => s + (parseFloat(ph.estimatedHours)||0), 0);
+            const totalAct = phases.reduce((s, ph) => s + (parseFloat(ph.actualHours)||0), 0);
+            return phases.length + ' Phasen · ' + totalEst.toFixed(1) + 'h geplant / ' + totalAct.toFixed(1) + 'h tatsächlich';
+          })(),
+          defaultOpen: (p.timeBudget?.phases || []).length > 0,
+          content: renderProjectTimeBudget(p, id),
+        })}
+        
+        <!-- 🎯 SWOT + Risks + Milestones + Sub-Goals (einklappbar) -->
+        ${renderCollapsibleSection({
+          id: 'planner-' + id,
+          icon: '🎯',
+          title: 'SWOT · Risiken · Milestones · Sub-Goals',
+          subtitle: (() => {
+            const sw = ((p.swot?.strengths||[]).length + (p.swot?.weaknesses||[]).length + (p.swot?.opportunities||[]).length + (p.swot?.threats||[]).length);
+            const rk = (p.risks||[]).length;
+            const ms = (p.milestones||[]).length;
+            const sg = (p.subGoals||[]).length;
+            const total = sw + rk + ms + sg;
+            if (total === 0) return 'Noch nichts erfasst';
+            const parts = [];
+            if (sw) parts.push(sw + ' SWOT');
+            if (rk) parts.push(rk + ' Risiken');
+            if (ms) parts.push(ms + ' Milestones');
+            if (sg) parts.push(sg + ' Sub-Goals');
+            return parts.join(' · ');
+          })(),
+          defaultOpen: ((p.swot?.strengths||[]).length + (p.swot?.weaknesses||[]).length + (p.swot?.opportunities||[]).length + (p.swot?.threats||[]).length + (p.risks||[]).length + (p.milestones||[]).length + (p.subGoals||[]).length) > 0,
+          content: renderProjectPlannerTabs(p, id),
+        })}
         
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
@@ -18919,6 +19004,9 @@ function viewProjectDetail(id) {
           ${(p.thoughts||[]).slice().reverse().map(t => '<div style="padding:8px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.1);border-radius:10px;margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><span style="flex-shrink:0;font-size:14px">' + "\u{1F4AD}" + '</span><div style="flex:1;min-width:0"><div style="font-size:13px;line-height:1.5;white-space:pre-wrap">' + esc(t.text) + '</div><div style="font-size:10px;color:var(--muted);margin-top:4px">' + new Date(t.createdAt).toLocaleDateString("de-CH") + ' \u00B7 ' + new Date(t.createdAt).toLocaleTimeString("de-CH",{hour:'2-digit',minute:'2-digit'}) + '</div></div><button class="btn sm ghost danger" data-action="delete-project-thought" data-id="' + id + '" data-thought-id="' + t.id + '" style="flex-shrink:0;font-size:10px">' + "\u{1F5D1}" + '</button></div>').join('') || '<div class="mini" style="opacity:.5">Noch keine Gedanken zu diesem Projekt.</div>'}
         </div>
         
+        <!-- 📓 Notizbuch (wie im Lernprojekt) -->
+        ${renderProjectNotebookSection(p, id)}
+        
         ${renderFileAttachments("project", id)}
         
         <div class="card">
@@ -18930,22 +19018,93 @@ function viewProjectDetail(id) {
         </div>
       </div>
     </div>
+    
+    ${(p.externalId === 'PRJ-88QB4') ? `<div style="margin-top:20px">${renderCustom_PRJ88QB4_Standalone(id, p)}</div>` : ''}
   `;
 }
 
+// Pinnboard ohne grid-Embedding (für Full-Width)
+function renderCustom_PRJ88QB4_Standalone(id, p) {
+  return renderCustom_PRJ88QB4(id, p);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
-// 🎯 CUSTOM PROJECT FEATURES
+// 📓 Project Notebook Section (wie im Lernprojekt)
 // ════════════════════════════════════════════════════════════════════════════
-// Massgeschneiderte Erweiterungen pro Projekt-ID.
-// Jeder Block ist ein if (p.externalId === 'PRJ-XXXXX') der zusätzliche
-// Cards zurückgibt. Die Daten werden in p._custom gespeichert.
-//
-// HOWTO für die KI:
-// 1. Neue Funktion: renderCustom_PRJXXXXX(id, p)  — gibt HTML-String zurück
-// 2. Daten initialisieren: if (!p._custom) p._custom = {}; …
-// 3. Aktionen: window._cpXXX = function(id, …) { … updateEntity(); render(); }
-// 4. Im switch unten den externalId-Case registrieren
-// ════════════════════════════════════════════════════════════════════════════
+function renderProjectNotebookSection(p, id) {
+  const e = APP.state.data.entities;
+  const notebook = p.notebookId ? e.notebooks?.[p.notebookId] : null;
+  const notebookNotes = notebook ? (notebook.notes || []).map(nid => e.notes?.[nid]).filter(Boolean) : [];
+  
+  if (!notebook) {
+    return `<div class="card mb-4">
+      <h3 style="margin:0 0 8px;display:flex;align-items:center;gap:8px">📓 Notizbuch</h3>
+      <div class="mini mb-2">Noch kein Notizbuch verknüpft.</div>
+      <button class="btn sm primary" onclick="window.projCreateNotebook('${id}')">+ Notizbuch erstellen</button>
+    </div>`;
+  }
+  
+  return `<div class="card mb-4">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 style="margin:0;display:flex;align-items:center;gap:8px">📓 Notizbuch <span style="font-size:11px;color:var(--muted);font-weight:400">(${notebookNotes.length})</span></h3>
+      <div style="display:flex;gap:6px">
+        <button class="btn sm ghost" onclick="navigate('notebooks','${notebook.id}')" title="In Notes-App öffnen">↗</button>
+        <button class="btn sm primary" onclick="window.lpNewInlineNote('${id}')">➕ Neue Notiz</button>
+      </div>
+    </div>
+    <div style="max-height:500px;overflow-y:auto">
+      ${notebookNotes.slice().sort((a,b) => (b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')).map(n => `
+        <details class="mb-2" style="border:1px solid var(--border);border-radius:8px">
+          <summary style="cursor:pointer;padding:8px 12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
+            📝 ${esc(n.title || 'Notiz')}
+            <span style="margin-left:auto;font-size:10px;color:var(--muted);font-weight:400">${fmtDate(n.updatedAt || n.createdAt)}</span>
+          </summary>
+          <div style="padding:8px 12px;border-top:1px solid var(--border)">
+            <input type="text" value="${esc(n.title || '')}" placeholder="Titel" style="width:100%;font-size:13px;padding:6px 9px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);margin-bottom:6px;font-weight:600" onchange="window.lpSaveInlineNoteTitle('${n.id}',this.value)" />
+            <textarea style="width:100%;min-height:140px;font-size:12.5px;line-height:1.6;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;color:var(--text);font-family:inherit" placeholder="Inhalt..." onchange="window.lpSaveInlineNote('${n.id}',this.value)">${esc(n.content || '')}</textarea>
+            <div style="display:flex;gap:5px;margin-top:6px;justify-content:flex-end">
+              <button class="btn sm ghost" onclick="navigate('notes','${n.id}')" title="Volle Notiz öffnen" style="font-size:10.5px">↗ Voll öffnen</button>
+              <button class="btn sm ghost danger" onclick="window.projDeleteNote('${id}','${n.id}')" style="font-size:10.5px">🗑</button>
+            </div>
+          </div>
+        </details>
+      `).join('') || '<div class="mini" style="padding:14px;text-align:center;background:rgba(255,255,255,.02);border-radius:8px">Noch keine Notizen. Klick "+ Neue Notiz".</div>'}
+    </div>
+  </div>`;
+}
+
+window.projCreateNotebook = function(projectId) {
+  const p = APP.state.data.entities.projects[projectId];
+  if (!p) return;
+  if (p.notebookId) { toast("warn", "Bereits vorhanden"); return; }
+  
+  const nbId = createEntity("notebook", { 
+    title: "📓 " + (p.title || "Projekt"), 
+    notes: [],
+    linkedProjectId: projectId,
+  });
+  p.notebookId = nbId;
+  scheduleSave();
+  toast("ok", "📓 Notizbuch erstellt");
+  render();
+};
+
+window.projDeleteNote = function(projectId, noteId) {
+  if (!confirm("Notiz wirklich löschen?")) return;
+  const p = APP.state.data.entities.projects[projectId];
+  if (p?.notebookId) {
+    const nb = APP.state.data.entities.notebooks?.[p.notebookId];
+    if (nb && Array.isArray(nb.notes)) {
+      nb.notes = nb.notes.filter(nid => nid !== noteId);
+    }
+  }
+  if (APP.state.data.entities.notes?.[noteId]) {
+    delete APP.state.data.entities.notes[noteId];
+  }
+  scheduleSave();
+  toast("ok", "🗑 Gelöscht");
+  render();
+};
 
 function renderCustomProjectFeatures(id) {
   const p = APP.state.data.entities.projects[id];
@@ -18961,16 +19120,10 @@ function renderCustomProjectFeatures(id) {
     .toUpperCase().trim();
   
   // PRJ-88QB4 — Newsroom-Pinnboard für Projekt
+  // (Wird AUSSERHALB der grid-12 als Full-Width-Section gerendert,
+  // hier nur leer zurückgeben damit nicht doppelt)
   if (normalized === 'PRJ-88QB4') {
-    try { 
-      const result = renderCustom_PRJ88QB4(id, p);
-      if (!result || result.trim().length < 50) {
-        return '<div style="padding:14px;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.2);border-radius:10px;color:#f87171">Pinnboard leer geliefert.</div>';
-      }
-      return result;
-    } catch(e) { 
-      return '<div style="padding:14px;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.2);border-radius:10px;color:#f87171"><strong>Fehler PRJ-88QB4:</strong> ' + esc(e.message) + '</div>';
-    }
+    return '';
   }
   
   // PRJ-NFYW5
@@ -19046,13 +19199,15 @@ function renderCustom_PRJ88QB4(id, p) {
     .pb88-chip:hover { border-color:rgba(168,85,247,.4); }
     .pb88-chip.active { background:linear-gradient(135deg,#6366f1,#a855f7); border-color:transparent; color:#fff; }
     .pb88-search { flex:1; min-width:180px; padding:7px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:8px; color:var(--text); font-size:12px; }
-    .pb88-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px; }
-    .pb88-postit { position:relative; padding:13px 13px 32px; border-radius:8px; box-shadow:0 6px 14px rgba(0,0,0,.18); cursor:pointer; transition:transform .15s, box-shadow .15s; min-height:130px; }
+    /* Pinnboard Grid — kleinere Mindestbreite damit mehr Karten pro Reihe */
+    .pb88-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:10px; }
+    @media (min-width: 1400px) { .pb88-grid { grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); } }
+    .pb88-postit { position:relative; padding:12px 12px 30px; border-radius:8px; box-shadow:0 6px 14px rgba(0,0,0,.18); cursor:pointer; transition:transform .15s, box-shadow .15s; min-height:140px; }
     .pb88-postit:hover { transform:translateY(-3px) rotate(-.5deg); box-shadow:0 10px 22px rgba(0,0,0,.25); }
     .pb88-postit-icon { font-size:18px; margin-bottom:6px; }
-    .pb88-postit-title { font-weight:800; font-size:13.5px; line-height:1.3; margin-bottom:6px; padding-right:22px; word-break:break-word; }
-    .pb88-postit-content { font-size:11.5px; line-height:1.5; opacity:.85; max-height:64px; overflow:hidden; }
-    .pb88-postit-meta { position:absolute; bottom:8px; left:13px; right:13px; display:flex; gap:6px; align-items:center; font-size:10px; opacity:.7; }
+    .pb88-postit-title { font-weight:800; font-size:13px; line-height:1.3; margin-bottom:6px; padding-right:22px; word-break:break-word; }
+    .pb88-postit-content { font-size:11px; line-height:1.5; opacity:.85; max-height:60px; overflow:hidden; }
+    .pb88-postit-meta { position:absolute; bottom:8px; left:12px; right:12px; display:flex; gap:6px; align-items:center; font-size:10px; opacity:.7; }
     .pb88-postit-del { position:absolute; top:6px; right:6px; width:22px; height:22px; border-radius:50%; border:0; background:rgba(0,0,0,.15); color:inherit; cursor:pointer; font-size:11px; opacity:0; transition:opacity .15s; }
     .pb88-postit:hover .pb88-postit-del { opacity:1; }
     .pb88-postit-docs { display:inline-flex; align-items:center; gap:3px; padding:2px 6px; border-radius:5px; background:rgba(0,0,0,.1); font-weight:700; }
@@ -19089,7 +19244,7 @@ function renderCustom_PRJ88QB4(id, p) {
     .pb88-upload-zone:hover { background:rgba(168,85,247,.08); }
   </style>
   
-  <div class="pb88-wrap">
+  <div class="pb88-wrap" style="width:100%">
     <div class="pb88-head">
       <div>
         <h3 style="margin:0;display:flex;align-items:center;gap:8px;font-size:18px">📌 Pinnboard</h3>
@@ -34355,7 +34510,8 @@ document.addEventListener("click", function(e) {
     "create-goal", "create-goal-submit", "link-entity", "close-modal",
     "open-link-modal", "unlink-entity", "quick-task", "quick-task-submit",
     "global-task-submit",
-    "add-quick-todo", "add-quick-todo-today", "toggle-quick-todo", "toggle-quick-todo-cb", "delete-quick-todo"
+    "add-quick-todo", "add-quick-todo-today", "toggle-quick-todo", "toggle-quick-todo-cb", "delete-quick-todo",
+    "add-project-thought", "delete-project-thought"
   ];
   
   if (!handledActions.includes(action)) {
