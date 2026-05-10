@@ -18132,12 +18132,30 @@ function renderProjectTimeBudget(p, id) {
   const pct = totalEstimated > 0 ? Math.round((totalActual / totalEstimated) * 100) : 0;
   const isOver = totalActual > totalEstimated && totalEstimated > 0;
   
+  // Workflow-Schritte für Dropdown
+  const workflowSteps = (p.workflow || []);
+  const workflowOpts = workflowSteps.map((step, i) => 
+    `<option value="${step.id}">${i+1}. ${esc((step.title || 'Schritt ' + (i+1)).slice(0,40))}${step.status === 'done' ? ' ✓' : ''}</option>`
+  ).join('');
+  
   const phasesHtml = phases.map((ph, idx) => {
     const phPct = ph.estimatedHours > 0 ? Math.round(((ph.actualHours || 0) / ph.estimatedHours) * 100) : 0;
     const phOver = (ph.actualHours || 0) > (ph.estimatedHours || 0);
-    return `<div style="display:grid;grid-template-columns:1fr 90px 90px 90px 30px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
-      <input type="text" value="${esc(ph.name)}" placeholder="Phase / Aufgabe..." oninput="prjUpdateTimePhase('${id}','${ph.id}','name',this.value)" 
-             style="padding:6px 9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:var(--text);font-size:12.5px" />
+    const linkedStep = ph.workflowStepId ? workflowSteps.find(s => s.id === ph.workflowStepId) : null;
+    
+    return `<div style="display:grid;grid-template-columns:1fr 130px 80px 80px 70px 30px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <input type="text" value="${esc(ph.name)}" placeholder="Phase / Aufgabe..." oninput="prjUpdateTimePhase('${id}','${ph.id}','name',this.value)" 
+               style="padding:6px 9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:var(--text);font-size:12.5px" />
+        ${linkedStep ? `<div style="font-size:10px;color:#a5b4fc;padding:0 4px">🔗 Workflow: ${esc(linkedStep.title || 'Schritt')}</div>` : ''}
+      </div>
+      <select onchange="prjUpdateTimePhase('${id}','${ph.id}','workflowStepId',this.value)" 
+              style="padding:6px 9px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.2);border-radius:6px;color:var(--text);font-size:11px">
+        <option value="">— Schritt —</option>
+        ${workflowSteps.map((step, i) => 
+          `<option value="${step.id}" ${ph.workflowStepId === step.id ? 'selected' : ''}>${i+1}. ${esc((step.title || 'Schritt ' + (i+1)).slice(0,30))}${step.status === 'done' ? ' ✓' : ''}</option>`
+        ).join('')}
+      </select>
       <input type="number" min="0" step="0.5" value="${ph.estimatedHours || ''}" placeholder="0" oninput="prjUpdateTimePhase('${id}','${ph.id}','estimatedHours',this.value)" 
              style="padding:6px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.2);border-radius:6px;color:var(--text);font-size:12.5px;text-align:center" />
       <input type="number" min="0" step="0.5" value="${ph.actualHours || ''}" placeholder="0" oninput="prjUpdateTimePhase('${id}','${ph.id}','actualHours',this.value)" 
@@ -18170,8 +18188,9 @@ function renderProjectTimeBudget(p, id) {
     </div>
     
     ${phases.length > 0 ? `
-      <div style="display:grid;grid-template-columns:1fr 90px 90px 90px 30px;gap:8px;padding:6px 0;border-bottom:2px solid rgba(255,255,255,.08);font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700">
+      <div style="display:grid;grid-template-columns:1fr 130px 80px 80px 70px 30px;gap:8px;padding:6px 0;border-bottom:2px solid rgba(255,255,255,.08);font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700">
         <div>Phase / Aufgabe</div>
+        <div>🔗 Workflow-Schritt</div>
         <div style="text-align:center">Geplant (h)</div>
         <div style="text-align:center">Tats. (h)</div>
         <div style="text-align:center">%</div>
@@ -18180,7 +18199,10 @@ function renderProjectTimeBudget(p, id) {
       ${phasesHtml}
     ` : `<div style="padding:18px;text-align:center;color:var(--muted);font-size:12px">Noch keine Phasen erfasst</div>`}
     
-    <button class="btn sm" onclick="prjAddTimePhase('${id}')" style="margin-top:10px;font-size:11px;padding:6px 11px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac">+ Phase hinzufügen</button>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn sm" onclick="prjAddTimePhase('${id}')" style="font-size:11px;padding:6px 11px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac">+ Phase hinzufügen</button>
+      ${workflowSteps.length > 0 ? `<button class="btn sm" onclick="prjImportWorkflowAsPhases('${id}')" style="font-size:11px;padding:6px 11px;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);color:#a5b4fc">↓ Workflow als Phasen importieren (${workflowSteps.length})</button>` : `<span style="font-size:11px;color:var(--muted);padding:6px 11px">💡 Tipp: Erstelle Workflow-Schritte rechts → kannst sie hier als Phasen importieren</span>`}
+    </div>
     
     ${(p.linkedTaskIds || []).length > 0 || true ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.05)">
@@ -18224,6 +18246,16 @@ window.prjUpdateTimePhase = function(id, phId, field, value) {
   if (!ph) return;
   if (field === "estimatedHours" || field === "actualHours") {
     ph[field] = parseFloat(value) || 0;
+  } else if (field === "workflowStepId") {
+    ph[field] = value || null;
+    // Wenn Phasen-Name leer und ein Step verknüpft → Name automatisch übernehmen
+    if (value && !ph.name?.trim()) {
+      const step = (p.workflow || []).find(s => s.id === value);
+      if (step?.title) ph.name = step.title;
+    }
+    scheduleSave();
+    render();
+    return;
   } else {
     ph[field] = value;
   }
@@ -18237,6 +18269,45 @@ window.prjRemoveTimePhase = function(id, phId) {
   if (!confirm("Phase entfernen?")) return;
   p.timeBudget.phases = p.timeBudget.phases.filter(x => x.id !== phId);
   scheduleSave(); render();
+};
+
+// Importiert die Workflow-Schritte des Projekts als Phasen (mit automatischer Verknüpfung)
+window.prjImportWorkflowAsPhases = function(id) {
+  const p = APP.state.data.entities.projects[id];
+  if (!p) return;
+  const workflowSteps = p.workflow || [];
+  if (workflowSteps.length === 0) {
+    toast("warn", "Keine Workflow-Schritte", "Erstelle zuerst Schritte rechts in der Workflow-Karte.");
+    return;
+  }
+  
+  if (!p.timeBudget) p.timeBudget = { phases: [] };
+  if (!Array.isArray(p.timeBudget.phases)) p.timeBudget.phases = [];
+  
+  // Bereits verknüpfte Step-IDs
+  const existingStepIds = new Set(p.timeBudget.phases.map(ph => ph.workflowStepId).filter(Boolean));
+  
+  let added = 0;
+  workflowSteps.forEach((step, i) => {
+    if (existingStepIds.has(step.id)) return;  // Skip bereits verknüpfte
+    p.timeBudget.phases.push({
+      id: "ph_" + Math.random().toString(36).slice(2, 8),
+      name: step.title || `Schritt ${i + 1}`,
+      estimatedHours: 0,
+      actualHours: 0,
+      workflowStepId: step.id,
+    });
+    added++;
+  });
+  
+  if (added === 0) {
+    toast("warn", "Bereits importiert", "Alle Workflow-Schritte sind schon als Phasen erfasst.");
+    return;
+  }
+  
+  scheduleSave();
+  render();
+  toast("ok", "↓ Importiert", added + " Phase(n) aus Workflow erstellt");
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -19622,7 +19693,7 @@ window.pb88OpenItem = function(id, itemId) {
           </div>
         </div>
         
-        <div id="pb88FAWrap">
+        <div id="pb88FAWrap" style="${(selT?.schwerpunkte||[]).length === 0 ? 'display:none' : ''}">
           <label class="pb88-label">Schwerpunkt / Focus Area</label>
           <select id="pb88FA" class="pb88-select">
             <option value="">— Kein Schwerpunkt —</option>
@@ -19757,9 +19828,18 @@ window.pb88RefreshFA = function(id) {
   const pb = pb88Pb(id); if (!pb) return;
   const t = (pb.topics||[]).find(x => x.id === topicId);
   const faSel = document.getElementById('pb88FA');
-  if (!faSel) return;
-  faSel.innerHTML = '<option value="">— Kein Schwerpunkt —</option>' + 
-    ((t?.schwerpunkte||[]).map(sp => `<option value="${esc(sp.name)}">${esc(sp.name)}</option>`).join(''));
+  const faWrap = document.getElementById('pb88FAWrap');
+  if (!faSel || !faWrap) return;
+  
+  const sps = t?.schwerpunkte || [];
+  if (sps.length === 0) {
+    faWrap.style.display = 'none';
+    faSel.value = '';
+  } else {
+    faWrap.style.display = '';
+    faSel.innerHTML = '<option value="">— Kein Schwerpunkt —</option>' + 
+      sps.map(sp => `<option value="${esc(sp.name)}">${esc(sp.name)}</option>`).join('');
+  }
 };
 
 window.pb88CloseItem = function() {
@@ -19799,8 +19879,12 @@ window.pb88SaveItem = function(id) {
   
   pb88Save();
   pb88CloseItem();
-  toast('ok', '✓ Gespeichert', title);
-  render();
+  
+  // Wackel-Fix: rAF damit Modal-Close fertig ist bevor render() den Body verändert
+  requestAnimationFrame(() => {
+    render();
+    toast('ok', '✓ Gespeichert', title);
+  });
 };
 
 window.pb88DeleteItem = function(id, itemId, fromModal) {
@@ -19811,8 +19895,10 @@ window.pb88DeleteItem = function(id, itemId, fromModal) {
   pb.items = pb.items.filter(x => x.id !== itemId);
   pb88Save();
   if (fromModal) pb88CloseItem();
-  toast('ok', '🗑 Gelöscht', it.title);
-  render();
+  requestAnimationFrame(() => {
+    render();
+    toast('ok', '🗑 Gelöscht', it.title);
+  });
 };
 
 
