@@ -6576,6 +6576,8 @@ function emptyData() {
       emails: {},
       persons: {},
       protocols: {},
+      workflows: {},
+      workflowPrograms: {},
     },
     timers: {},
     pinnedItems: [], // ["task:id", "project:id", ...]
@@ -6715,6 +6717,50 @@ function normalizeData(data) {
     pr.createdAt = pr.createdAt || nowIso();
     pr.updatedAt = pr.updatedAt || nowIso();
   }
+  // Normalize workflows
+  e.workflows = e.workflows || {};
+  for (const wf of Object.values(e.workflows)) {
+    wf.title = wf.title || "Unbenannter Workflow";
+    wf.rules = wf.rules || "";  // Prozess-spezifische Regeln
+    wf.steps = Array.isArray(wf.steps) ? wf.steps : [];
+    wf.steps.forEach(st => {
+      st.id = st.id || ("step_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5));
+      st.title = st.title || "";
+      st.program = st.program || "";  // Programmname (aus Quantus oder Workflow-eigenem Pool)
+      st.description = st.description || "";
+      st.notes = st.notes || "";  // Prompts/Hinweise
+      st.links = Array.isArray(st.links) ? st.links : [];
+      st.codeSnippets = Array.isArray(st.codeSnippets) ? st.codeSnippets : [];
+      st.codeSnippets.forEach(cs => {
+        cs.id = cs.id || ("snip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5));
+        cs.title = cs.title || "Snippet";
+        cs.code = cs.code || "";
+      });
+      st.improvements = Array.isArray(st.improvements) ? st.improvements : [];
+      // Quantus-Verknüpfungen
+      st.linkedNotes = Array.isArray(st.linkedNotes) ? st.linkedNotes : [];
+      st.linkedTasks = Array.isArray(st.linkedTasks) ? st.linkedTasks : [];
+      st.linkedProjects = Array.isArray(st.linkedProjects) ? st.linkedProjects : [];
+      st.linkedPersons = Array.isArray(st.linkedPersons) ? st.linkedPersons : [];
+      st.linkedEmails = Array.isArray(st.linkedEmails) ? st.linkedEmails : [];
+      st.linkedProtocols = Array.isArray(st.linkedProtocols) ? st.linkedProtocols : [];
+    });
+    wf.linkedProjectId = wf.linkedProjectId || null;  // Optional an Projekt geknüpft
+    wf.tags = Array.isArray(wf.tags) ? wf.tags : [];
+    wf.createdAt = wf.createdAt || nowIso();
+    wf.updatedAt = wf.updatedAt || nowIso();
+  }
+  // Normalize workflowPrograms
+  e.workflowPrograms = e.workflowPrograms || {};
+  for (const wp of Object.values(e.workflowPrograms)) {
+    wp.name = wp.name || "Unbenannt";
+    wp.icon = wp.icon || "🔧";
+    wp.description = wp.description || "";
+    wp.createdAt = wp.createdAt || nowIso();
+  }
+  // Globale Workflow-Regeln (dailyBriefing.workflowRules)
+  if (!d.dailyBriefing) d.dailyBriefing = {};
+  d.dailyBriefing.workflowGlobalRules = d.dailyBriefing.workflowGlobalRules || "";
   
   // Normalize updates
 e.updates = e.updates || {};
@@ -10277,6 +10323,7 @@ function buildFullContextPrompt() {
 • E-Mails: ${Object.keys(e.emails || {}).length} im Mail Hub
 • Personen: ${Object.keys(e.persons || {}).length} Kontakte
 • Protokolle: ${Object.keys(e.protocols || {}).length} (mit Volltext-Zugriff für KI)
+• Workflows: ${Object.keys(e.workflows || {}).length} dokumentierte Prozesse
 • Kontakte: ${contacts.length}
 • Habits: ${habits.length}
 • Offene Updates: ${openUpdates.length}
@@ -10796,6 +10843,54 @@ Nutze dieses Wissen um:
           ? pr.extractedText 
           : pr.extractedText.slice(0, 4000) + "\n...[Protokoll gekürzt — Volltext " + pr.extractedText.length.toLocaleString() + " Zeichen verfügbar]";
         context += `  Inhalt aus PDF:\n  ${txt.split("\n").join("\n  ")}\n`;
+      }
+    });
+  }
+  
+  // ========== ALLE WORKFLOWS ==========
+  const workflows = Object.values(e.workflows || {});
+  const wfGlobalRules = APP.state.data.dailyBriefing?.workflowGlobalRules || "";
+  if (workflows.length > 0 || wfGlobalRules) {
+    context += `\n=== ALLE WORKFLOWS / PROZESSE (${workflows.length}) ===\n`;
+    if (wfGlobalRules) {
+      context += `Globale Workflow-Regeln:\n${wfGlobalRules}\n\n`;
+    }
+    workflows.slice().sort((a,b) => (b.updatedAt || "").localeCompare(a.updatedAt || "")).forEach(w => {
+      const proj = w.linkedProjectId ? (e.projects?.[w.linkedProjectId]?.title || "") : "";
+      context += `\n⚙️ "${w.title}"${proj ? ` (Projekt: ${proj})` : ""}\n`;
+      if (w.rules) context += `  Regeln: ${w.rules}\n`;
+      const steps = w.steps || [];
+      if (steps.length > 0) {
+        context += `  Schritte (${steps.length}):\n`;
+        steps.forEach((s, i) => {
+          context += `    ${i + 1}. ${s.title || "(unbenannt)"}`;
+          if (s.program) context += ` [${s.program}]`;
+          context += "\n";
+          if (s.description) context += `       ${s.description.slice(0, 150)}\n`;
+          if (s.notes) context += `       💡 ${s.notes.slice(0, 200)}\n`;
+          
+          // Verknüpfungen
+          const links = [];
+          if (s.linkedNotes?.length) {
+            const titles = s.linkedNotes.map(nid => e.notes?.[nid]?.title).filter(Boolean);
+            if (titles.length) links.push(`Notizen: ${titles.join(", ")}`);
+          }
+          if (s.linkedTasks?.length) {
+            const titles = s.linkedTasks.map(tid => e.tasks?.[tid]?.title).filter(Boolean);
+            if (titles.length) links.push(`Tasks: ${titles.join(", ")}`);
+          }
+          if (s.linkedPersons?.length) {
+            const names = s.linkedPersons.map(pid => e.persons?.[pid]?.name).filter(Boolean);
+            if (names.length) links.push(`Personen: ${names.join(", ")}`);
+          }
+          if (links.length) context += `       Verknüpft: ${links.join(" | ")}\n`;
+          
+          if (s.codeSnippets?.length) {
+            s.codeSnippets.filter(c => c.code).forEach(c => {
+              context += `       💻 ${c.title}: ${c.code.slice(0, 200)}\n`;
+            });
+          }
+        });
       }
     });
   }
@@ -12314,6 +12409,7 @@ function renderAppNav() {
     {key:"mailhub", icon:"📬", label:"Mail Hub"},
     {key:"persons", icon:"👤", label:"Personen"},
     {key:"protocols", icon:"📜", label:"Protokolle"},
+    {key:"workflows", icon:"⚙️", label:"Workflows"},
     {key:"updates", icon:"🔧", label:t("updates")},
     {key:"learn", icon:"📚", label:"RecallLab"},
     {key:"calendar", icon:"📅", label:t("calendar")},
@@ -12480,6 +12576,7 @@ function getAllApps() {
     {key:"mailhub", icon:"📬", label:"Mail Hub", desc:getLang()==="de"?"E-Mails, Korrespondenz & Personen":"Emails, correspondence & people"},
     {key:"persons", icon:"👤", label:"Personen", desc:getLang()==="de"?"Kontaktverwaltung":"Contact management"},
     {key:"protocols", icon:"📜", label:"Protokolle", desc:getLang()==="de"?"PDF-Protokolle mit Text-Extraktion":"PDF protocols with text extraction"},
+    {key:"workflows", icon:"⚙️", label:"Workflows", desc:getLang()==="de"?"Prozesse, Schritte & Automatisierung":"Processes, steps & automation"},
     {key:"articles", icon:"📰", label:"Newsroom Hub", desc:getLang()==="de"?"Redaktion, Artikel, Recherche & RecallLab":"Newsroom, articles, research & RecallLab"},
     {key:"knowledge", icon:"🧠", label:t("knowledge"), desc:getLang()==="de"?"Wissensdatenbank":"Knowledge base"},
     {key:"time", icon:"⏱️", label:t("time"), desc:getLang()==="de"?"Zeit tracken":"Track time"},
@@ -12823,6 +12920,7 @@ function renderMain() {
     case "mailhub": html = id ? viewEmailDetail(id) : viewMailHub(); break;
     case "persons": html = id ? viewPersonDetail(id) : viewPersons(); break;
     case "protocols": html = id ? viewProtocolDetail(id) : viewProtocols(); break;
+    case "workflows": html = id ? viewWorkflowDetail(id) : viewWorkflows(); break;
     case "journal": openJournalBooklet(); return;
     case "settings": { openSettings(); return; }
 
@@ -64950,6 +65048,17 @@ function buildSpotlightItems() {
     });
   });
   
+  // Workflows
+  Object.values(e.workflows || {}).forEach(w => {
+    items.push({
+      kind: 'workflow', icon: '⚙️', id: w.id,
+      title: w.title || 'Unbenannter Workflow',
+      sub: (w.steps || []).length + ' Schritte',
+      route: '#/workflows/' + w.id,
+      open: () => { window.location.hash = '#/workflows/' + w.id; }
+    });
+  });
+  
   // Meetings
   Object.values(e.meetings || {}).forEach(m => {
     if (m.archived) return;
@@ -65043,6 +65152,7 @@ function buildSpotlightItems() {
       { icon: '📬', title: 'Mail Hub', sub: 'E-Mails, Personen, Korrespondenz', open: () => { window.location.hash = '#/mailhub'; } },
       { icon: '👤', title: 'Personen', sub: 'Kontaktverwaltung', open: () => { window.location.hash = '#/persons'; } },
       { icon: '📜', title: 'Protokolle', sub: 'PDF-Protokolle mit Text-Extraktion', open: () => { window.location.hash = '#/protocols'; } },
+      { icon: '⚙️', title: 'Workflows', sub: 'Prozesse, Schritte & Automatisierung', open: () => { window.location.hash = '#/workflows'; } },
       { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
         if (typeof window.openReadlist === 'function') window.openReadlist();
       }},
@@ -73310,6 +73420,1173 @@ console.log('📚 Leseliste geladen');
 })();
 </script>
 <!-- ═══ END PROTOKOLLE ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ═══ WORKFLOWS / PROCESS-DOCUMENTATION                                ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<style id="workflowsStyles">
+.wf-container { padding:24px; max-width:1400px; margin:0 auto; }
+.wf-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+.wf-title { font-size:24px; font-weight:700; display:flex; align-items:center; gap:10px; }
+.wf-stats { display:flex; gap:16px; font-size:12px; color:var(--muted); flex-wrap:wrap; }
+.wf-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.wf-search { flex:1; min-width:240px; padding:9px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:10px; color:var(--text); font-size:13px; }
+.wf-search:focus { outline:none; border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,0.15); }
+.wf-add-btn { padding:9px 16px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; border:0; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer; box-shadow:0 4px 12px rgba(99,102,241,0.3); }
+.wf-add-btn:hover { box-shadow:0 6px 18px rgba(99,102,241,0.45); }
+.wf-list { display:flex; flex-direction:column; gap:10px; }
+.wf-card { display:flex; gap:14px; padding:16px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; cursor:pointer; transition:all .15s; }
+.wf-card:hover { background:rgba(99,102,241,0.05); border-color:rgba(99,102,241,0.25); }
+.wf-card-icon { flex-shrink:0; width:46px; height:46px; border-radius:11px; background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(139,92,246,0.08)); display:flex; align-items:center; justify-content:center; font-size:22px; }
+.wf-card-body { flex:1; min-width:0; }
+.wf-card-title { font-size:15px; font-weight:700; color:var(--text); margin-bottom:4px; }
+.wf-card-meta { font-size:11.5px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; }
+.wf-empty { text-align:center; padding:60px 20px; color:var(--muted); }
+.wf-empty-icon { font-size:48px; margin-bottom:14px; }
+
+/* Detail / Editor */
+.wf-detail { padding:24px; max-width:1400px; margin:0 auto; }
+.wf-toolbar-tab { display:inline-flex; gap:0; padding:3px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:9px; }
+.wf-tab { padding:7px 14px; border:0; background:transparent; color:var(--muted); font-size:12px; font-weight:600; cursor:pointer; border-radius:7px; transition:all .15s; }
+.wf-tab.active { background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; }
+.wf-card-block { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:16px; margin-bottom:14px; }
+.wf-card-block h3 { margin:0 0 10px; font-size:14px; font-weight:700; color:var(--text); }
+.wf-input, .wf-textarea, .wf-select { width:100%; padding:10px 13px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:9px; color:var(--text); font-size:13.5px; font-family:inherit; }
+.wf-input:focus, .wf-textarea:focus, .wf-select:focus { outline:none; border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,0.15); }
+.wf-input.title-big { font-size:18px; font-weight:700; padding:12px 14px; }
+.wf-textarea { min-height:80px; resize:vertical; line-height:1.6; }
+.wf-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.wf-btn { padding:8px 14px; border-radius:8px; font-size:12.5px; font-weight:600; cursor:pointer; border:0; }
+.wf-btn.primary { background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; }
+.wf-btn.ghost { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:var(--text); }
+.wf-btn.danger { background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); color:#f87171; }
+.wf-btn.success { background:linear-gradient(135deg,#22c55e,#16a34a); color:#fff; }
+.wf-btn:hover { transform:translateY(-1px); }
+
+/* Step Cards */
+.wf-step-card {
+  background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07);
+  border-radius:13px; padding:16px; margin-bottom:12px; position:relative;
+  transition:all .15s;
+}
+.wf-step-card.dragging { opacity:0.5; transform:scale(0.98); }
+.wf-step-card.drag-over { border-top:3px solid #6366f1; }
+.wf-step-num {
+  position:absolute; top:14px; left:-13px; width:28px; height:28px;
+  background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
+  border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:800; box-shadow:0 4px 12px rgba(99,102,241,0.4);
+}
+.wf-step-handle { cursor:grab; color:var(--muted); user-select:none; padding:4px; }
+.wf-step-handle:active { cursor:grabbing; }
+.wf-step-row { display:flex; align-items:center; gap:8px; margin-bottom:10px; padding-left:24px; }
+.wf-step-content { padding-left:24px; }
+.wf-step-section { margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.05); }
+.wf-step-section h5 { margin:0 0 6px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:flex; justify-content:space-between; align-items:center; }
+.wf-step-section h5 button { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:var(--text); font-size:11px; padding:3px 8px; border-radius:6px; cursor:pointer; }
+.wf-step-section h5 button:hover { background:rgba(99,102,241,0.2); border-color:rgba(99,102,241,0.4); }
+.wf-snippet { background:#0f0f10; border:1px solid rgba(255,255,255,0.08); border-radius:7px; padding:8px; margin-bottom:6px; }
+.wf-snippet input { background:#1a1a1c !important; border:0 !important; color:#fff !important; font-size:12px !important; }
+.wf-snippet textarea { background:#0a0a0b !important; color:#86efac !important; font-family:'Monaco','Consolas',monospace !important; font-size:12px !important; line-height:1.5 !important; min-height:80px !important; }
+
+/* Link Pills */
+.wf-link-pill { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:999px; font-size:11.5px; cursor:pointer; transition:all .15s; }
+.wf-link-pill:hover { background:rgba(99,102,241,0.15); border-color:rgba(99,102,241,0.3); }
+.wf-link-pill button { background:none; border:0; color:#f87171; cursor:pointer; font-size:13px; line-height:1; padding:0; }
+.wf-link-pill.note { background:rgba(168,85,247,0.1); border-color:rgba(168,85,247,0.25); color:#d8b4fe; }
+.wf-link-pill.task { background:rgba(34,197,94,0.1); border-color:rgba(34,197,94,0.25); color:#86efac; }
+.wf-link-pill.project { background:rgba(99,102,241,0.1); border-color:rgba(99,102,241,0.25); color:#a5b4fc; }
+.wf-link-pill.person { background:rgba(99,102,241,0.1); border-color:rgba(99,102,241,0.25); color:#a5b4fc; }
+.wf-link-pill.email { background:rgba(168,85,247,0.1); border-color:rgba(168,85,247,0.25); color:#d8b4fe; }
+.wf-link-pill.protocol { background:rgba(245,158,11,0.1); border-color:rgba(245,158,11,0.25); color:#fbbf24; }
+
+/* Modal */
+.wf-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); z-index:10500; display:none; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto; }
+.wf-modal-overlay.show { display:flex; }
+.wf-modal { background:#0a0a0b; border:1px solid rgba(255,255,255,0.08); border-radius:16px; max-width:680px; width:100%; max-height:calc(100vh - 64px); display:flex; flex-direction:column; overflow:hidden; box-shadow:0 30px 60px rgba(0,0,0,0.5); }
+.wf-modal-head { padding:18px 22px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.wf-modal-title { font-size:16px; font-weight:700; }
+.wf-modal-close { margin-left:auto; background:none; border:0; color:var(--muted); font-size:22px; cursor:pointer; padding:0 4px; }
+.wf-modal-body { padding:22px; flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:14px; }
+.wf-modal-foot { padding:14px 22px; border-top:1px solid rgba(255,255,255,0.06); display:flex; gap:8px; justify-content:flex-end; flex-shrink:0; }
+
+/* Picker */
+.wf-picker-search { padding:10px 14px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:9px; color:var(--text); font-size:13px; }
+.wf-picker-list { max-height:380px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; }
+.wf-picker-item { padding:10px 14px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05); border-radius:8px; cursor:pointer; display:flex; align-items:center; gap:10px; font-size:13px; transition:all .15s; }
+.wf-picker-item:hover { background:rgba(99,102,241,0.1); border-color:rgba(99,102,241,0.3); }
+.wf-picker-item-meta { color:var(--muted); font-size:11.5px; margin-left:auto; }
+
+/* Workflow View */
+.wf-workflow-view { overflow-x:auto; padding-bottom:20px; }
+.wf-workflow-strip { display:flex; gap:24px; min-width:max-content; padding:8px 0; }
+.wf-workflow-step { width:300px; flex-shrink:0; padding:14px; background:rgba(255,255,255,0.03); border:1px solid rgba(99,102,241,0.25); border-radius:11px; position:relative; }
+.wf-workflow-step:not(:last-child)::after { content:'→'; position:absolute; top:50%; right:-22px; font-size:24px; color:#6366f1; transform:translateY(-50%); }
+</style>
+
+<script id="workflowsScript">
+(function() {
+  "use strict";
+  
+  function wfEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+  
+  function wfId(prefix) {
+    return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  }
+  
+  function wfData() { return APP?.state?.data?.entities; }
+  function wfWorkflows() { return wfData()?.workflows || {}; }
+  function wfPrograms() { return wfData()?.workflowPrograms || {}; }
+  function wfQuantusPrograms() { return wfData()?.programs || {}; }
+  
+  function wfSave() {
+    if (typeof scheduleSave === "function") scheduleSave();
+    else if (typeof window.scheduleSave === "function") window.scheduleSave();
+  }
+  
+  function wfRender() {
+    if (typeof window.render === "function") window.render();
+  }
+  
+  function wfToast(kind, title, body) {
+    if (typeof toast === "function") toast(kind, title, body);
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Liste
+  // ═══════════════════════════════════════════════════════════════════════
+  let _wfSearch = "";
+  
+  window.wfSearchInput = function(v) {
+    _wfSearch = v;
+    const list = document.getElementById("wfList");
+    if (list) list.innerHTML = renderWorkflowsList();
+  };
+  
+  function renderWorkflowsList() {
+    let workflows = Object.values(wfWorkflows());
+    
+    if (_wfSearch) {
+      const q = _wfSearch.toLowerCase();
+      workflows = workflows.filter(w => 
+        (w.title || "").toLowerCase().includes(q) ||
+        (w.steps || []).some(s => 
+          (s.title || "").toLowerCase().includes(q) ||
+          (s.description || "").toLowerCase().includes(q) ||
+          (s.notes || "").toLowerCase().includes(q)
+        )
+      );
+    }
+    
+    workflows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+    
+    if (workflows.length === 0) {
+      return `<div class="wf-empty">
+        <div class="wf-empty-icon">⚙️</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px">${_wfSearch ? "Keine Treffer" : "Noch keine Workflows"}</div>
+        <div style="font-size:12.5px">${_wfSearch ? "Andere Suche probieren" : 'Klicke "+ Neuer Workflow" um deinen ersten Prozess zu dokumentieren.'}</div>
+      </div>`;
+    }
+    
+    const ents = wfData();
+    return workflows.map(w => {
+      const stepCount = (w.steps || []).length;
+      const projTitle = w.linkedProjectId ? ents.projects?.[w.linkedProjectId]?.title : null;
+      const totalLinks = (w.steps || []).reduce((sum, s) => sum + 
+        (s.linkedNotes?.length || 0) + (s.linkedTasks?.length || 0) + 
+        (s.linkedProjects?.length || 0) + (s.linkedPersons?.length || 0) + 
+        (s.linkedEmails?.length || 0) + (s.linkedProtocols?.length || 0), 0);
+      
+      return `<div class="wf-card" onclick="navigate('workflows','${w.id}')">
+        <div class="wf-card-icon">⚙️</div>
+        <div class="wf-card-body">
+          <div class="wf-card-title">${wfEsc(w.title)}</div>
+          <div class="wf-card-meta">
+            <span>${stepCount} Schritte</span>
+            ${projTitle ? `<span>📦 ${wfEsc(projTitle)}</span>` : ""}
+            ${totalLinks > 0 ? `<span style="color:#a5b4fc">🔗 ${totalLinks} Verknüpfungen</span>` : ""}
+            ${w.rules ? `<span>📋 Regeln</span>` : ""}
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  
+  window.viewWorkflows = function() {
+    const all = Object.values(wfWorkflows());
+    const totalSteps = all.reduce((s, w) => s + (w.steps || []).length, 0);
+    const programs = Object.values(wfPrograms());
+    const quantusProgs = Object.values(wfQuantusPrograms());
+    
+    return `<div class="wf-container">
+      <div class="wf-header">
+        <div>
+          <div class="wf-title">⚙️ Workflows</div>
+          <div class="wf-stats">
+            <span>${all.length} Prozesse</span>
+            <span>${totalSteps} Schritte total</span>
+            <span style="color:#a5b4fc">${programs.length} eigene + ${quantusProgs.length} Quantus-Programme</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="wf-btn ghost" onclick="wfOpenSettingsModal()">⚙ Einstellungen</button>
+          <button class="wf-btn ghost" onclick="wfOpenGlobalRules()">📋 Globale Regeln</button>
+          <button class="wf-add-btn" onclick="wfNewWorkflow()">+ Neuer Workflow</button>
+        </div>
+      </div>
+      
+      <div class="wf-toolbar">
+        <input type="text" class="wf-search" placeholder="🔍 In Workflows suchen (Titel, Schritte, Notizen)..." 
+               oninput="wfSearchInput(this.value)" value="${wfEsc(_wfSearch)}" />
+      </div>
+      
+      <div id="wfList" class="wf-list">${renderWorkflowsList()}</div>
+    </div>`;
+  };
+  
+  window.wfNewWorkflow = function() {
+    const id = wfId("wf");
+    const now = new Date().toISOString();
+    APP.state.data.entities.workflows[id] = {
+      id, title: "Neuer Workflow", rules: "", steps: [],
+      linkedProjectId: null, tags: [],
+      createdAt: now, updatedAt: now,
+    };
+    wfSave();
+    window.navigate("workflows", id);
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Detail / Editor
+  // ═══════════════════════════════════════════════════════════════════════
+  let _wfMode = {}; // {workflowId: 'manual'|'workflow'}
+  
+  window.wfSetMode = function(wid, mode) {
+    _wfMode[wid] = mode;
+    wfRender();
+  };
+  
+  window.viewWorkflowDetail = function(id) {
+    const w = wfWorkflows()[id];
+    if (!w) return `<div class="wf-empty"><div class="wf-empty-icon">❓</div>Workflow nicht gefunden.<br><button class="wf-btn primary" onclick="navigate('workflows')" style="margin-top:14px">Zurück</button></div>`;
+    
+    const mode = _wfMode[id] || "manual";
+    const ents = wfData();
+    const projects = Object.values(ents.projects || {}).filter(p => p.status !== "archived");
+    
+    return `<div class="wf-detail">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+        <div style="flex:1;min-width:280px">
+          <button class="wf-btn ghost" onclick="navigate('workflows')" style="margin-bottom:10px">← Zurück</button>
+          <input type="text" class="wf-input title-big" value="${wfEsc(w.title)}" 
+                 oninput="wfUpdateField('${id}','title',this.value)" placeholder="Workflow-Titel" />
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div class="wf-toolbar-tab">
+            <button class="wf-tab ${mode==='manual'?'active':''}" onclick="wfSetMode('${id}','manual')">📝 Editor</button>
+            <button class="wf-tab ${mode==='workflow'?'active':''}" onclick="wfSetMode('${id}','workflow')">🔁 Flow</button>
+            <button class="wf-tab ${mode==='print'?'active':''}" onclick="wfSetMode('${id}','print')">🖨 Übersicht</button>
+          </div>
+          <button class="wf-btn ghost" onclick="wfDuplicate('${id}')">📋 Duplizieren</button>
+          <button class="wf-btn ghost" onclick="wfExportJSON('${id}')">💾 JSON</button>
+          <button class="wf-btn danger" onclick="wfDelete('${id}')">🗑 Löschen</button>
+        </div>
+      </div>
+      
+      <div class="wf-card-block">
+        <div class="wf-row">
+          <div>
+            <h3>📦 Verknüpftes Projekt (optional)</h3>
+            <select class="wf-select" onchange="wfUpdateField('${id}','linkedProjectId',this.value || null)">
+              <option value="">— Kein Projekt —</option>
+              ${projects.map(p => `<option value="${p.id}" ${w.linkedProjectId === p.id ? 'selected' : ''}>${wfEsc(p.title)}</option>`).join("")}
+            </select>
+          </div>
+          <div>
+            <h3>📋 Spezifische Regeln</h3>
+            <textarea class="wf-textarea" placeholder="Nur für diesen Workflow gültige Regeln (z.B. Genehmigungsgrenzen)..." 
+                      oninput="wfUpdateField('${id}','rules',this.value)">${wfEsc(w.rules)}</textarea>
+          </div>
+        </div>
+      </div>
+      
+      ${mode === "manual" ? renderManualMode(w) : 
+        mode === "workflow" ? renderWorkflowMode(w) : 
+        renderPrintMode(w)}
+      
+      ${mode !== "print" ? `<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="wf-btn primary" onclick="wfAddStep('${id}')">+ Schritt hinzufügen</button>
+        <button class="wf-btn success" onclick="wfAskAIForStep('${id}')">✨ KI-Hilfe für nächsten Schritt</button>
+      </div>` : ""}
+    </div>`;
+  };
+  
+  function renderManualMode(w) {
+    if (!w.steps || w.steps.length === 0) {
+      return `<div class="wf-card-block" style="text-align:center;padding:40px 20px">
+        <div style="font-size:36px;margin-bottom:10px">📝</div>
+        <div style="color:var(--muted)">Noch keine Schritte. Klicke "+ Schritt hinzufügen" um zu starten.</div>
+      </div>`;
+    }
+    return w.steps.map((s, idx) => renderStepCard(w, s, idx)).join("");
+  }
+  
+  function renderStepCard(w, step, idx) {
+    const ents = wfData();
+    const allPrograms = [
+      ...Object.values(wfPrograms()).map(p => ({...p, source: "workflows"})),
+      ...Object.values(wfQuantusPrograms() || {}).map(p => ({id: p.id, name: p.title || p.name, icon: "📦", source: "quantus"})),
+    ];
+    
+    // Linked entities pills
+    const noteLinks = (step.linkedNotes || []).map(nid => {
+      const n = ents.notes?.[nid]; if (!n) return "";
+      return `<span class="wf-link-pill note" onclick="event.stopPropagation();navigate('notes','${nid}')">📝 ${wfEsc((n.title || "Notiz").slice(0, 30))}<button onclick="event.stopPropagation();wfRemoveLink('${w.id}','${step.id}','linkedNotes','${nid}')">×</button></span>`;
+    }).join("");
+    
+    const taskLinks = (step.linkedTasks || []).map(tid => {
+      const t = ents.tasks?.[tid]; if (!t) return "";
+      return `<span class="wf-link-pill task" onclick="event.stopPropagation();navigate('tasks','${tid}')">${t.status === "done" ? "✓" : "◯"} ${wfEsc((t.title || "").slice(0, 30))}<button onclick="event.stopPropagation();wfRemoveLink('${w.id}','${step.id}','linkedTasks','${tid}')">×</button></span>`;
+    }).join("");
+    
+    const projLinks = (step.linkedProjects || []).map(pid => {
+      const p = ents.projects?.[pid]; if (!p) return "";
+      return `<span class="wf-link-pill project" onclick="event.stopPropagation();navigate('projects','${pid}')">📦 ${wfEsc((p.title || "").slice(0, 30))}<button onclick="event.stopPropagation();wfRemoveLink('${w.id}','${step.id}','linkedProjects','${pid}')">×</button></span>`;
+    }).join("");
+    
+    const personLinks = (step.linkedPersons || []).map(prid => {
+      const p = ents.persons?.[prid]; if (!p) return "";
+      return `<span class="wf-link-pill person" onclick="event.stopPropagation();navigate('persons','${prid}')">👤 ${wfEsc(p.name)}<button onclick="event.stopPropagation();wfRemoveLink('${w.id}','${step.id}','linkedPersons','${prid}')">×</button></span>`;
+    }).join("");
+    
+    const emailLinks = (step.linkedEmails || []).map(eid => {
+      const e = ents.emails?.[eid]; if (!e) return "";
+      return `<span class="wf-link-pill email" onclick="event.stopPropagation();navigate('mailhub','${eid}')">📬 ${wfEsc((e.subject || "Mail").slice(0, 30))}<button onclick="event.stopPropagation();wfRemoveLink('${w.id}','${step.id}','linkedEmails','${eid}')">×</button></span>`;
+    }).join("");
+    
+    const protLinks = (step.linkedProtocols || []).map(pid => {
+      const p = ents.protocols?.[pid]; if (!p) return "";
+      return `<span class="wf-link-pill protocol" onclick="event.stopPropagation();navigate('protocols','${pid}')">📜 ${wfEsc((p.title || "Protokoll").slice(0, 30))}<button onclick="event.stopPropagation();wfRemoveLink('${w.id}','${step.id}','linkedProtocols','${pid}')">×</button></span>`;
+    }).join("");
+    
+    const linksList = (step.links || []).map((url, lidx) => `
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+        <input type="url" value="${wfEsc(url)}" placeholder="https://..." 
+               oninput="wfUpdateLink('${w.id}','${step.id}',${lidx},this.value)"
+               style="flex:1;padding:6px 10px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:6px;color:var(--text);font-size:12px" />
+        <button onclick="wfRemoveLinkUrl('${w.id}','${step.id}',${lidx})" style="background:none;border:0;color:#f87171;cursor:pointer;padding:4px 8px">×</button>
+      </div>
+    `).join("");
+    
+    const codeSnippets = (step.codeSnippets || []).map((cs, csIdx) => `
+      <div class="wf-snippet">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <input type="text" value="${wfEsc(cs.title)}" placeholder="Snippet-Titel" 
+                 oninput="wfUpdateSnippet('${w.id}','${step.id}',${csIdx},'title',this.value)"
+                 style="flex:1;padding:5px 9px;border-radius:5px" />
+          <button onclick="wfRemoveSnippet('${w.id}','${step.id}',${csIdx})" style="background:none;border:0;color:#f87171;cursor:pointer">×</button>
+        </div>
+        <textarea placeholder="Code, Prompt, Befehl..." 
+                  oninput="wfUpdateSnippet('${w.id}','${step.id}',${csIdx},'code',this.value)"
+                  style="width:100%;padding:8px;border-radius:5px">${wfEsc(cs.code)}</textarea>
+      </div>
+    `).join("");
+    
+    const improvements = (step.improvements || []).map(imp => `
+      <div style="padding:8px 10px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:6px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:start;font-size:12px">
+        <div><span style="font-weight:700;color:#fbbf24">${wfEsc(imp.category || "")}${imp.status ? ` (${wfEsc(imp.status)})` : ""}:</span> ${wfEsc(imp.idea || "")}</div>
+        <button onclick="wfRemoveImprovement('${w.id}','${step.id}','${imp.id}')" style="background:none;border:0;color:#f87171;cursor:pointer">×</button>
+      </div>
+    `).join("");
+    
+    return `<div class="wf-step-card" data-step-id="${step.id}" data-wf-id="${w.id}" draggable="true"
+                 ondragstart="wfDragStart(event)" ondragend="wfDragEnd(event)" 
+                 ondragover="wfDragOver(event)" ondragleave="wfDragLeave(event)" ondrop="wfDrop(event)">
+      <div class="wf-step-num">${idx + 1}</div>
+      
+      <div class="wf-step-row">
+        <span class="wf-step-handle" title="Zum Verschieben ziehen">⋮⋮</span>
+        <input type="text" class="wf-input" value="${wfEsc(step.title)}" 
+               oninput="wfUpdateStep('${w.id}','${step.id}','title',this.value)"
+               placeholder="Schritt-Titel" style="flex:1;font-weight:600;font-size:14px" />
+        <button class="wf-btn ghost" onclick="wfAskAIForThisStep('${w.id}','${step.id}')" title="KI-Hilfe für diesen Schritt">✨ AI</button>
+        <button class="wf-btn danger" onclick="wfRemoveStep('${w.id}','${step.id}')" style="padding:5px 10px">🗑</button>
+      </div>
+      
+      <div class="wf-step-content">
+        <div class="wf-row" style="margin-bottom:10px">
+          <div>
+            <h5 style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin:0 0 5px">Programm / Schnittstelle</h5>
+            <select class="wf-select" onchange="wfUpdateStep('${w.id}','${step.id}','program',this.value)" style="font-size:12.5px;padding:7px 10px">
+              <option value="">— Kein Programm —</option>
+              ${allPrograms.map(p => `<option value="${wfEsc(p.name)}" ${step.program === p.name ? 'selected' : ''}>${p.icon || ""} ${wfEsc(p.name)} ${p.source === "quantus" ? "(Quantus)" : ""}</option>`).join("")}
+            </select>
+          </div>
+          <div>
+            <h5 style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin:0 0 5px">Beschreibung</h5>
+            <textarea class="wf-textarea" placeholder="Was passiert in diesem Schritt?" 
+                      oninput="wfUpdateStep('${w.id}','${step.id}','description',this.value)"
+                      style="min-height:50px;font-size:12.5px;padding:7px 10px">${wfEsc(step.description)}</textarea>
+          </div>
+        </div>
+        
+        <div class="wf-step-section">
+          <h5>📝 Notizen / Prompts <button onclick="wfPickNoteForPrompt('${w.id}','${step.id}')">📋 Aus Notiz</button></h5>
+          <textarea class="wf-textarea" placeholder="Hinweise, Prompts, Anweisungen..." 
+                    oninput="wfUpdateStep('${w.id}','${step.id}','notes',this.value)"
+                    style="min-height:60px;font-size:12.5px">${wfEsc(step.notes)}</textarea>
+        </div>
+        
+        <div class="wf-step-section">
+          <h5>🔗 Verknüpfungen</h5>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">
+            ${noteLinks}${taskLinks}${projLinks}${personLinks}${emailLinks}${protLinks}
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px">
+            <button class="wf-btn ghost" onclick="wfPickEntity('${w.id}','${step.id}','linkedNotes')" style="font-size:11px;padding:4px 9px">+ Notiz</button>
+            <button class="wf-btn ghost" onclick="wfPickEntity('${w.id}','${step.id}','linkedTasks')" style="font-size:11px;padding:4px 9px">+ Aufgabe</button>
+            <button class="wf-btn ghost" onclick="wfPickEntity('${w.id}','${step.id}','linkedProjects')" style="font-size:11px;padding:4px 9px">+ Projekt</button>
+            <button class="wf-btn ghost" onclick="wfPickEntity('${w.id}','${step.id}','linkedPersons')" style="font-size:11px;padding:4px 9px">+ Person</button>
+            <button class="wf-btn ghost" onclick="wfPickEntity('${w.id}','${step.id}','linkedEmails')" style="font-size:11px;padding:4px 9px">+ E-Mail</button>
+            <button class="wf-btn ghost" onclick="wfPickEntity('${w.id}','${step.id}','linkedProtocols')" style="font-size:11px;padding:4px 9px">+ Protokoll</button>
+          </div>
+        </div>
+        
+        ${(step.links || []).length > 0 || true ? `
+        <div class="wf-step-section">
+          <h5>🌐 Externe Links <button onclick="wfAddLinkUrl('${w.id}','${step.id}')">+ Link</button></h5>
+          ${linksList}
+        </div>` : ""}
+        
+        ${(step.codeSnippets || []).length > 0 || true ? `
+        <div class="wf-step-section">
+          <h5>💻 Code / Prompts <button onclick="wfAddSnippet('${w.id}','${step.id}')">+ Snippet</button></h5>
+          ${codeSnippets}
+        </div>` : ""}
+        
+        <div class="wf-step-section">
+          <h5>💡 Verbesserungs-Ideen <button onclick="wfPromptImprovement('${w.id}','${step.id}')">+ Idee</button></h5>
+          ${improvements || `<div style="font-size:11.5px;color:var(--muted);padding:4px 0">Keine Ideen erfasst</div>`}
+        </div>
+      </div>
+    </div>`;
+  }
+  
+  function renderWorkflowMode(w) {
+    if (!w.steps || w.steps.length === 0) {
+      return `<div class="wf-card-block" style="text-align:center;padding:40px 20px;color:var(--muted)">Keine Schritte. Wechsle zu Editor um Schritte hinzuzufügen.</div>`;
+    }
+    return `<div class="wf-card-block">
+      <div class="wf-workflow-view">
+        <div class="wf-workflow-strip">
+          ${w.steps.map((s, idx) => `
+            <div class="wf-workflow-step">
+              <div style="font-size:22px;font-weight:800;color:#6366f1;margin-bottom:6px">${idx + 1}.</div>
+              <div style="font-size:14px;font-weight:700;margin-bottom:8px">${wfEsc(s.title || "Schritt " + (idx + 1))}</div>
+              ${s.program ? `<div style="font-size:11px;color:var(--muted);margin-bottom:6px">⚙️ ${wfEsc(s.program)}</div>` : ""}
+              ${s.description ? `<div style="font-size:12px;line-height:1.5;color:var(--text);margin-bottom:8px">${wfEsc(s.description)}</div>` : ""}
+              ${s.notes ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;padding:6px;background:rgba(255,255,255,0.03);border-radius:5px">💡 ${wfEsc(s.notes.slice(0, 200))}</div>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </div>`;
+  }
+  
+  function renderPrintMode(w) {
+    if (!w.steps || w.steps.length === 0) {
+      return `<div class="wf-card-block" style="text-align:center;padding:40px 20px;color:var(--muted)">Keine Schritte vorhanden.</div>`;
+    }
+    return `<div class="wf-card-block">
+      ${w.rules ? `<div style="padding:12px;background:rgba(99,102,241,0.06);border-left:3px solid #6366f1;border-radius:6px;margin-bottom:16px"><strong>Regeln:</strong><br>${wfEsc(w.rules)}</div>` : ""}
+      <ol style="padding-left:0;list-style:none">
+        ${w.steps.map((s, idx) => `
+          <li style="margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid rgba(255,255,255,0.06)">
+            <div style="font-size:18px;font-weight:700;margin-bottom:6px">${idx + 1}. ${wfEsc(s.title || "")}</div>
+            ${s.program ? `<div style="font-size:12px;color:#a5b4fc;margin-bottom:6px">⚙️ ${wfEsc(s.program)}</div>` : ""}
+            ${s.description ? `<div style="font-size:14px;line-height:1.6;margin-bottom:8px">${wfEsc(s.description)}</div>` : ""}
+            ${s.notes ? `<div style="font-size:12.5px;line-height:1.6;color:var(--muted);font-style:italic;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:8px">📝 ${wfEsc(s.notes)}</div>` : ""}
+            ${(s.codeSnippets || []).filter(c => c.code).map(c => `
+              <div style="margin-top:8px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">${wfEsc(c.title)}</div><pre style="background:#0a0a0b;color:#86efac;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;font-family:'Monaco','Consolas',monospace">${wfEsc(c.code)}</pre></div>
+            `).join("")}
+          </li>
+        `).join("")}
+      </ol>
+      <button class="wf-btn ghost" onclick="window.print()" style="margin-top:14px">🖨 Drucken / PDF</button>
+    </div>`;
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Mutations
+  // ═══════════════════════════════════════════════════════════════════════
+  window.wfUpdateField = function(wid, field, value) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    w[field] = value;
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+  };
+  
+  window.wfUpdateStep = function(wid, sid, field, value) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    s[field] = value;
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+  };
+  
+  window.wfAddStep = function(wid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    if (!Array.isArray(w.steps)) w.steps = [];
+    w.steps.push({
+      id: wfId("step"), title: "", program: "", description: "", notes: "",
+      links: [], codeSnippets: [], improvements: [],
+      linkedNotes: [], linkedTasks: [], linkedProjects: [],
+      linkedPersons: [], linkedEmails: [], linkedProtocols: [],
+    });
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfRemoveStep = function(wid, sid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid);
+    if (!confirm(`Schritt "${s?.title || 'Unbenannt'}" wirklich löschen?`)) return;
+    w.steps = (w.steps || []).filter(x => x.id !== sid);
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfAddSnippet = function(wid, sid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    if (!Array.isArray(s.codeSnippets)) s.codeSnippets = [];
+    s.codeSnippets.push({ id: wfId("snip"), title: "Snippet", code: "" });
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfUpdateSnippet = function(wid, sid, idx, field, value) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    if (s.codeSnippets?.[idx]) {
+      s.codeSnippets[idx][field] = value;
+      w.updatedAt = new Date().toISOString();
+      wfSave();
+    }
+  };
+  
+  window.wfRemoveSnippet = function(wid, sid, idx) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    s.codeSnippets = (s.codeSnippets || []).filter((_, i) => i !== idx);
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfAddLinkUrl = function(wid, sid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    if (!Array.isArray(s.links)) s.links = [];
+    s.links.push("");
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfUpdateLink = function(wid, sid, idx, value) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    if (s.links) s.links[idx] = value;
+    wfSave();
+  };
+  
+  window.wfRemoveLinkUrl = function(wid, sid, idx) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    s.links = (s.links || []).filter((_, i) => i !== idx);
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfRemoveLink = function(wid, sid, field, entityId) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    s[field] = (s[field] || []).filter(x => x !== entityId);
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfPromptImprovement = function(wid, sid) {
+    const cat = prompt("Kategorie? (z.B. Automatisierung, Qualität, Risiko)", "Automatisierung");
+    if (cat === null) return;
+    const idea = prompt("Was kann verbessert werden?");
+    if (!idea) return;
+    const status = prompt("Status? (Idee, Geplant, Umgesetzt)", "Idee") || "Idee";
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    if (!Array.isArray(s.improvements)) s.improvements = [];
+    s.improvements.push({ id: wfId("imp"), category: cat, idea, status });
+    wfSave();
+    wfRender();
+  };
+  
+  window.wfRemoveImprovement = function(wid, sid, impId) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    s.improvements = (s.improvements || []).filter(x => x.id !== impId);
+    wfSave();
+    wfRender();
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Drag & Drop für Schritte
+  // ═══════════════════════════════════════════════════════════════════════
+  let _wfDragData = null;
+  
+  window.wfDragStart = function(e) {
+    _wfDragData = { stepId: e.currentTarget.dataset.stepId, wfId: e.currentTarget.dataset.wfId };
+    e.currentTarget.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+  };
+  
+  window.wfDragEnd = function(e) {
+    e.currentTarget.classList.remove("dragging");
+    document.querySelectorAll(".wf-step-card.drag-over").forEach(el => el.classList.remove("drag-over"));
+    _wfDragData = null;
+  };
+  
+  window.wfDragOver = function(e) {
+    e.preventDefault();
+    if (!_wfDragData) return;
+    const target = e.currentTarget;
+    if (target.dataset.stepId !== _wfDragData.stepId) {
+      target.classList.add("drag-over");
+    }
+  };
+  
+  window.wfDragLeave = function(e) {
+    e.currentTarget.classList.remove("drag-over");
+  };
+  
+  window.wfDrop = function(e) {
+    e.preventDefault();
+    e.currentTarget.classList.remove("drag-over");
+    if (!_wfDragData) return;
+    const targetId = e.currentTarget.dataset.stepId;
+    const sourceId = _wfDragData.stepId;
+    if (sourceId === targetId) return;
+    
+    const w = wfWorkflows()[_wfDragData.wfId]; if (!w) return;
+    const steps = w.steps || [];
+    const srcIdx = steps.findIndex(s => s.id === sourceId);
+    const tgtIdx = steps.findIndex(s => s.id === targetId);
+    if (srcIdx === -1 || tgtIdx === -1) return;
+    
+    const [moved] = steps.splice(srcIdx, 1);
+    steps.splice(tgtIdx, 0, moved);
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+    wfRender();
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Entity Pickers (Notiz, Task, Projekt, Person, E-Mail, Protokoll)
+  // ═══════════════════════════════════════════════════════════════════════
+  let _wfPickerSearch = "";
+  
+  window.wfPickEntity = function(wid, sid, field) {
+    _wfPickerSearch = "";
+    const map = {
+      linkedNotes: { kind: "notes", title: "📝 Notiz auswählen", titleField: "title", subField: "content" },
+      linkedTasks: { kind: "tasks", title: "✅ Aufgabe auswählen", titleField: "title", subField: "description" },
+      linkedProjects: { kind: "projects", title: "📦 Projekt auswählen", titleField: "title", subField: "description" },
+      linkedPersons: { kind: "persons", title: "👤 Person auswählen", titleField: "name", subField: "role" },
+      linkedEmails: { kind: "emails", title: "📬 E-Mail auswählen", titleField: "subject", subField: "summary" },
+      linkedProtocols: { kind: "protocols", title: "📜 Protokoll auswählen", titleField: "title", subField: "summary" },
+    };
+    const cfg = map[field]; if (!cfg) return;
+    
+    let overlay = document.getElementById("wfPickerOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "wfPickerOverlay";
+      overlay.className = "wf-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    overlay.innerHTML = `<div class="wf-modal" onclick="event.stopPropagation()">
+      <div class="wf-modal-head">
+        <span class="wf-modal-title">${cfg.title}</span>
+        <button class="wf-modal-close" onclick="wfClosePicker()">×</button>
+      </div>
+      <div class="wf-modal-body">
+        <input type="text" class="wf-picker-search" id="wfPickerSearchInput" placeholder="Suchen..." 
+               oninput="wfFilterPicker('${wid}','${sid}','${field}','${cfg.kind}','${cfg.titleField}','${cfg.subField}', this.value)" />
+        <div id="wfPickerList" class="wf-picker-list">${renderPickerList(wid, sid, field, cfg.kind, cfg.titleField, cfg.subField, "")}</div>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) wfClosePicker(); };
+    setTimeout(() => document.getElementById("wfPickerSearchInput")?.focus(), 50);
+  };
+  
+  function renderPickerList(wid, sid, field, kind, titleField, subField, query) {
+    const ents = wfData();
+    const map = ents[kind] || {};
+    const w = wfWorkflows()[wid]; if (!w) return "";
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return "";
+    const alreadyLinked = new Set(s[field] || []);
+    
+    let items = Object.values(map).filter(it => !alreadyLinked.has(it.id));
+    if (kind === "tasks") items = items.filter(it => it.status !== "done" || query); // Done nur bei Suche
+    
+    const q = (query || "").toLowerCase().trim();
+    if (q) {
+      items = items.filter(it => 
+        ((it[titleField] || "") + " " + (it[subField] || "")).toLowerCase().includes(q)
+      );
+    }
+    items = items.slice(0, 50);
+    
+    if (items.length === 0) {
+      return `<div style="text-align:center;padding:24px;color:var(--muted)">Keine Treffer</div>`;
+    }
+    
+    return items.map(it => {
+      const title = (it[titleField] || "Unbenannt").slice(0, 80);
+      const sub = (it[subField] || "").slice(0, 100);
+      return `<div class="wf-picker-item" onclick="wfPickEntityConfirm('${wid}','${sid}','${field}','${it.id}')">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600">${wfEsc(title)}</div>
+          ${sub ? `<div style="font-size:11.5px;color:var(--muted);margin-top:2px">${wfEsc(sub)}</div>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+  }
+  
+  window.wfFilterPicker = function(wid, sid, field, kind, titleField, subField, query) {
+    const list = document.getElementById("wfPickerList");
+    if (list) list.innerHTML = renderPickerList(wid, sid, field, kind, titleField, subField, query);
+  };
+  
+  window.wfPickEntityConfirm = function(wid, sid, field, entityId) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    if (!Array.isArray(s[field])) s[field] = [];
+    if (!s[field].includes(entityId)) s[field].push(entityId);
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+    wfClosePicker();
+    wfRender();
+  };
+  
+  window.wfClosePicker = function() {
+    document.getElementById("wfPickerOverlay")?.classList.remove("show");
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Notiz-Inhalt in Prompt-Feld einfügen
+  // ═══════════════════════════════════════════════════════════════════════
+  window.wfPickNoteForPrompt = function(wid, sid) {
+    let overlay = document.getElementById("wfPickerOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "wfPickerOverlay";
+      overlay.className = "wf-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    const notes = Object.values(wfData().notes || {}).filter(n => !n.archived);
+    
+    overlay.innerHTML = `<div class="wf-modal" onclick="event.stopPropagation()">
+      <div class="wf-modal-head">
+        <span class="wf-modal-title">📋 Notiz-Inhalt einfügen</span>
+        <button class="wf-modal-close" onclick="wfClosePicker()">×</button>
+      </div>
+      <div class="wf-modal-body">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Wähle eine Notiz aus — der Inhalt wird in das Notizen/Prompts-Feld dieses Schritts eingefügt.</div>
+        <input type="text" class="wf-picker-search" id="wfNotePickerInput" placeholder="Notiz suchen..." 
+               oninput="wfFilterNoteForPrompt('${wid}','${sid}', this.value)" />
+        <div id="wfNotePickerList" class="wf-picker-list">${renderNotePromptList(wid, sid, "")}</div>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) wfClosePicker(); };
+    setTimeout(() => document.getElementById("wfNotePickerInput")?.focus(), 50);
+  };
+  
+  function renderNotePromptList(wid, sid, query) {
+    const notes = Object.values(wfData().notes || {}).filter(n => !n.archived);
+    const q = (query || "").toLowerCase().trim();
+    let filtered = notes;
+    if (q) filtered = notes.filter(n => 
+      ((n.title || "") + " " + (n.content || "")).toLowerCase().includes(q)
+    );
+    filtered.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+    filtered = filtered.slice(0, 50);
+    
+    if (filtered.length === 0) return `<div style="text-align:center;padding:24px;color:var(--muted)">Keine Notizen</div>`;
+    
+    return filtered.map(n => `
+      <div class="wf-picker-item" onclick="wfApplyNoteContent('${wid}','${sid}','${n.id}')">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600">${wfEsc(n.title || "Unbenannte Notiz")}</div>
+          <div style="font-size:11.5px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${wfEsc((n.content || "").slice(0, 120))}</div>
+        </div>
+      </div>
+    `).join("");
+  }
+  
+  window.wfFilterNoteForPrompt = function(wid, sid, query) {
+    const list = document.getElementById("wfNotePickerList");
+    if (list) list.innerHTML = renderNotePromptList(wid, sid, query);
+  };
+  
+  window.wfApplyNoteContent = function(wid, sid, noteId) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    const note = wfData().notes?.[noteId]; if (!note) return;
+    
+    // Append (nicht ersetzen) — User entscheidet
+    const newContent = s.notes 
+      ? s.notes + "\n\n--- Aus Notiz: " + (note.title || "") + " ---\n" + (note.content || "")
+      : (note.content || "");
+    
+    s.notes = newContent;
+    
+    // Auch als verknüpfte Notiz hinzufügen
+    if (!Array.isArray(s.linkedNotes)) s.linkedNotes = [];
+    if (!s.linkedNotes.includes(noteId)) s.linkedNotes.push(noteId);
+    
+    w.updatedAt = new Date().toISOString();
+    wfSave();
+    wfClosePicker();
+    wfToast("ok", "📋 Eingefügt", "Inhalt aus '" + (note.title || "Notiz") + "'");
+    wfRender();
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // KI-Hilfe (nutzt Quick Assistant Pipeline)
+  // ═══════════════════════════════════════════════════════════════════════
+  window.wfAskAIForStep = async function(wid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const stepCount = (w.steps || []).length;
+    const userInput = prompt(`KI-Hilfe für nächsten Schritt in "${w.title}".\nWas willst du wissen / tun?`, 
+      stepCount === 0 ? "Schlage mir die ersten 3 Schritte für diesen Workflow vor." : "Was wäre ein logischer nächster Schritt?");
+    if (!userInput) return;
+    
+    const ctx = `Workflow: "${w.title}"\n${w.rules ? "Regeln: " + w.rules + "\n" : ""}Bisherige Schritte (${stepCount}):\n` +
+      (w.steps || []).map((s, i) => `${i+1}. ${s.title}${s.program ? " (" + s.program + ")" : ""}${s.description ? " — " + s.description.slice(0, 100) : ""}`).join("\n");
+    
+    await wfRunAI(`Kontext:\n${ctx}\n\nFrage: ${userInput}`, "Workflow-Assistent");
+  };
+  
+  window.wfAskAIForThisStep = async function(wid, sid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const s = (w.steps || []).find(x => x.id === sid); if (!s) return;
+    const userInput = prompt(`KI-Hilfe für Schritt "${s.title || 'Unbenannt'}".\nWas willst du wissen?`, 
+      "Erkläre mir diesen Schritt detaillierter und schlage Verbesserungen vor.");
+    if (!userInput) return;
+    
+    const ctx = `Workflow: "${w.title}"\nSchritt: "${s.title}"${s.program ? " (Programm: " + s.program + ")" : ""}\n` +
+      (s.description ? "Beschreibung: " + s.description + "\n" : "") +
+      (s.notes ? "Notizen: " + s.notes + "\n" : "");
+    
+    await wfRunAI(`Kontext:\n${ctx}\n\nFrage: ${userInput}`, "Schritt-Assistent");
+  };
+  
+  async function wfRunAI(prompt, label) {
+    if (typeof window.sendChatMessage !== "function") {
+      wfToast("err", "Keine KI verfügbar", "sendChatMessage fehlt");
+      return;
+    }
+    wfToast("ok", "✨ " + label, "KI denkt nach...");
+    try {
+      const response = await window.sendChatMessage(prompt);
+      // Antwort in Modal anzeigen
+      let overlay = document.getElementById("wfAiResponseOverlay");
+      if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "wfAiResponseOverlay";
+        overlay.className = "wf-modal-overlay";
+        document.body.appendChild(overlay);
+      }
+      overlay.innerHTML = `<div class="wf-modal" onclick="event.stopPropagation()">
+        <div class="wf-modal-head">
+          <span class="wf-modal-title">✨ KI-Antwort: ${wfEsc(label)}</span>
+          <button class="wf-modal-close" onclick="document.getElementById('wfAiResponseOverlay').classList.remove('show')">×</button>
+        </div>
+        <div class="wf-modal-body">
+          <div style="font-size:13px;line-height:1.7;white-space:pre-wrap">${wfEsc(response)}</div>
+        </div>
+        <div class="wf-modal-foot">
+          <button class="wf-btn ghost" onclick="navigator.clipboard.writeText(document.getElementById('wfAiResponseOverlay').querySelector('.wf-modal-body div').textContent);wfToast&&wfToast('ok','📋 Kopiert')">📋 Kopieren</button>
+          <button class="wf-btn primary" onclick="document.getElementById('wfAiResponseOverlay').classList.remove('show')">Schliessen</button>
+        </div>
+      </div>`;
+      overlay.classList.add("show");
+      overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove("show"); };
+    } catch (err) {
+      wfToast("err", "KI-Fehler", err.message);
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Settings (Programme verwalten)
+  // ═══════════════════════════════════════════════════════════════════════
+  window.wfOpenSettingsModal = function() {
+    let overlay = document.getElementById("wfSettingsOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "wfSettingsOverlay";
+      overlay.className = "wf-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    const ownPrograms = Object.values(wfPrograms());
+    const quantusProgs = Object.values(wfQuantusPrograms() || {});
+    
+    overlay.innerHTML = `<div class="wf-modal" onclick="event.stopPropagation()">
+      <div class="wf-modal-head">
+        <span class="wf-modal-title">⚙️ Workflow-Einstellungen</span>
+        <button class="wf-modal-close" onclick="document.getElementById('wfSettingsOverlay').classList.remove('show')">×</button>
+      </div>
+      <div class="wf-modal-body">
+        <div style="margin-bottom:18px">
+          <h3 style="font-size:14px;margin:0 0 8px">📦 Quantus-Programme (verwalten in App "Programme")</h3>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Diese stehen automatisch in jedem Schritt-Dropdown zur Verfügung.</div>
+          ${quantusProgs.length === 0 
+            ? `<div style="padding:14px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.1);border-radius:8px;color:var(--muted);font-size:12px;text-align:center">Keine Quantus-Programme. <a onclick="navigate('programs');document.getElementById('wfSettingsOverlay').classList.remove('show')" style="color:#a5b4fc;cursor:pointer">→ Zur App "Programme"</a></div>`
+            : `<div style="display:flex;flex-wrap:wrap;gap:5px">${quantusProgs.map(p => `<span class="wf-link-pill project">📦 ${wfEsc(p.title || p.name)}</span>`).join("")}</div>`}
+        </div>
+        
+        <div>
+          <h3 style="font-size:14px;margin:0 0 8px">⚙️ Workflow-eigene Programme</h3>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Programme die nur in Workflows verwendet werden (z.B. spezielle Tools, Skripte).</div>
+          
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">
+            ${ownPrograms.map(p => `
+              <span class="wf-link-pill" style="background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.25);color:#a5b4fc">
+                ${wfEsc(p.icon)} ${wfEsc(p.name)}
+                <button onclick="wfDeleteProgram('${p.id}')">×</button>
+              </span>
+            `).join("")}
+          </div>
+          
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="wfNewProgramIcon" maxlength="2" placeholder="🔧" 
+                   style="width:50px;padding:9px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:7px;color:var(--text);font-size:14px;text-align:center" value="🔧" />
+            <input type="text" id="wfNewProgramName" placeholder="Programm-Name (z.B. Excel, Outlook, Slack...)" 
+                   style="flex:1;padding:9px 13px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:7px;color:var(--text);font-size:13px"
+                   onkeydown="if(event.key==='Enter'){wfAddProgram();}" />
+            <button class="wf-btn primary" onclick="wfAddProgram()">+ Hinzufügen</button>
+          </div>
+        </div>
+      </div>
+      <div class="wf-modal-foot">
+        <button class="wf-btn primary" onclick="document.getElementById('wfSettingsOverlay').classList.remove('show')">Schliessen</button>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove("show"); };
+  };
+  
+  window.wfAddProgram = function() {
+    const name = document.getElementById("wfNewProgramName")?.value.trim();
+    if (!name) { wfToast("warn", "Name leer"); return; }
+    const icon = (document.getElementById("wfNewProgramIcon")?.value || "🔧").trim() || "🔧";
+    const id = wfId("wp");
+    APP.state.data.entities.workflowPrograms[id] = {
+      id, name, icon, description: "", createdAt: new Date().toISOString(),
+    };
+    wfSave();
+    wfToast("ok", "✓ Programm hinzugefügt", name);
+    wfOpenSettingsModal();  // Refresh
+  };
+  
+  window.wfDeleteProgram = function(id) {
+    const p = wfPrograms()[id]; if (!p) return;
+    if (!confirm(`Programm "${p.name}" löschen?`)) return;
+    delete APP.state.data.entities.workflowPrograms[id];
+    wfSave();
+    wfOpenSettingsModal();
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Globale Regeln
+  // ═══════════════════════════════════════════════════════════════════════
+  window.wfOpenGlobalRules = function() {
+    let overlay = document.getElementById("wfGlobalRulesOverlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "wfGlobalRulesOverlay";
+      overlay.className = "wf-modal-overlay";
+      document.body.appendChild(overlay);
+    }
+    
+    const rules = APP.state.data.dailyBriefing?.workflowGlobalRules || "";
+    
+    overlay.innerHTML = `<div class="wf-modal" onclick="event.stopPropagation()">
+      <div class="wf-modal-head">
+        <span class="wf-modal-title">📋 Globale Workflow-Regeln</span>
+        <button class="wf-modal-close" onclick="document.getElementById('wfGlobalRulesOverlay').classList.remove('show')">×</button>
+      </div>
+      <div class="wf-modal-body">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Diese Regeln gelten für ALLE Workflows. Spezifische Regeln pro Workflow direkt im Workflow setzen.</div>
+        <textarea id="wfGlobalRulesInput" class="wf-textarea" style="min-height:300px;font-size:13px" 
+                  placeholder="Beispiel:&#10;1. Jeder Prozessschritt muss einem Programm zugeordnet werden.&#10;2. Automatisierungsideen nach MoSCoW priorisieren (Must, Should, Could, Won't).&#10;3. Bei sensiblen Daten: 4-Augen-Prinzip.">${wfEsc(rules)}</textarea>
+      </div>
+      <div class="wf-modal-foot">
+        <button class="wf-btn ghost" onclick="document.getElementById('wfGlobalRulesOverlay').classList.remove('show')">Abbrechen</button>
+        <button class="wf-btn primary" onclick="wfSaveGlobalRules()">💾 Speichern</button>
+      </div>
+    </div>`;
+    overlay.classList.add("show");
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove("show"); };
+  };
+  
+  window.wfSaveGlobalRules = function() {
+    const val = document.getElementById("wfGlobalRulesInput")?.value || "";
+    if (!APP.state.data.dailyBriefing) APP.state.data.dailyBriefing = {};
+    APP.state.data.dailyBriefing.workflowGlobalRules = val;
+    wfSave();
+    wfToast("ok", "✓ Regeln gespeichert");
+    document.getElementById("wfGlobalRulesOverlay").classList.remove("show");
+  };
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // Misc (Duplizieren, Exportieren, Löschen)
+  // ═══════════════════════════════════════════════════════════════════════
+  window.wfDuplicate = function(wid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const newId = wfId("wf");
+    const now = new Date().toISOString();
+    APP.state.data.entities.workflows[newId] = {
+      ...JSON.parse(JSON.stringify(w)),
+      id: newId,
+      title: w.title + " (Kopie)",
+      createdAt: now, updatedAt: now,
+    };
+    // Neue Step-IDs
+    APP.state.data.entities.workflows[newId].steps.forEach(s => { s.id = wfId("step"); });
+    wfSave();
+    wfToast("ok", "📋 Dupliziert", w.title);
+    window.navigate("workflows", newId);
+  };
+  
+  window.wfExportJSON = function(wid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    const blob = new Blob([JSON.stringify(w, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "workflow_" + (w.title || "export").replace(/[^\w]+/g, "_") + ".json";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+    wfToast("ok", "💾 Exportiert");
+  };
+  
+  window.wfDelete = function(wid) {
+    const w = wfWorkflows()[wid]; if (!w) return;
+    if (!confirm(`Workflow "${w.title}" wirklich löschen? (${(w.steps || []).length} Schritte)`)) return;
+    delete APP.state.data.entities.workflows[wid];
+    wfSave();
+    wfToast("ok", "🗑 Gelöscht", w.title);
+    window.navigate("workflows");
+  };
+  
+  console.log("⚙️ Workflows geladen");
+  
+  // ═══════════════════════════════════════════════════════════════════════
+  // KI-Context: Workflows + Auto-Inject Box auf Detail-Pages
+  // ═══════════════════════════════════════════════════════════════════════
+  
+  window.wfGetLinkedWorkflows = function(entityKind, entityId) {
+    if (!entityKind || !entityId) return [];
+    return Object.values(wfWorkflows()).filter(w => {
+      if (entityKind === "project") {
+        if (w.linkedProjectId === entityId) return true;
+        return (w.steps || []).some(s => (s.linkedProjects || []).includes(entityId));
+      }
+      const map = { task: "linkedTasks", note: "linkedNotes", person: "linkedPersons", email: "linkedEmails", protocol: "linkedProtocols", organization: null };
+      const field = map[entityKind];
+      if (!field) return false;
+      return (w.steps || []).some(s => (s[field] || []).includes(entityId));
+    });
+  };
+  
+  function wfRenderLinkedWorkflowsBox(entityKind, entityId) {
+    const wfs = window.wfGetLinkedWorkflows(entityKind, entityId);
+    if (wfs.length === 0) return "";
+    return `<div style="margin-top:24px">
+      <h3 style="margin:0 0 12px;font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px">⚙️ Workflows <span style="font-size:11px;background:rgba(99,102,241,0.15);color:#a5b4fc;padding:2px 9px;border-radius:999px">${wfs.length}</span></h3>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${wfs.map(w => `
+          <div class="wf-card" style="padding:10px 14px" onclick="navigate('workflows','${w.id}')">
+            <div class="wf-card-icon" style="width:32px;height:32px;font-size:14px">⚙️</div>
+            <div class="wf-card-body">
+              <div style="font-size:13px;font-weight:600">${wfEsc(w.title)}</div>
+              <div style="font-size:11.5px;color:var(--muted)">${(w.steps || []).length} Schritte</div>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </div>`;
+  }
+  window.wfRenderLinkedWorkflowsBox = wfRenderLinkedWorkflowsBox;
+  
+  // Auto-Inject in Detail-Pages
+  function wfInjectBox() {
+    const hash = window.location.hash || "";
+    const m = hash.match(/^#\/(\w+)\/([a-zA-Z0-9_-]+)/);
+    if (!m) return;
+    
+    const map = { tasks: "task", projects: "project", organizations: "organization", notes: "note", persons: "person", mailhub: "email", protocols: "protocol" };
+    const entityKind = map[m[1]];
+    if (!entityKind) return;
+    
+    if (document.getElementById("wfAutoInjectedBox")) return;
+    
+    const target = document.getElementById("pageContent") || document.querySelector("#main");
+    if (!target) return;
+    
+    const html = wfRenderLinkedWorkflowsBox(entityKind, m[2]);
+    if (!html) return;
+    
+    const wrapper = document.createElement("div");
+    wrapper.id = "wfAutoInjectedBox";
+    wrapper.className = "card";
+    wrapper.style.cssText = "margin-top:16px";
+    wrapper.innerHTML = html;
+    target.appendChild(wrapper);
+  }
+  
+  let _wfInjectTimer = null;
+  function wfScheduleInject() {
+    clearTimeout(_wfInjectTimer);
+    _wfInjectTimer = setTimeout(() => { try { wfInjectBox(); } catch(e) {} }, 300);
+  }
+  
+  window.addEventListener("hashchange", wfScheduleInject);
+  setTimeout(() => {
+    const target = document.getElementById("pageContent") || document.querySelector("#main");
+    if (target) {
+      const obs = new MutationObserver(() => {
+        if (!document.getElementById("wfAutoInjectedBox")) wfScheduleInject();
+      });
+      obs.observe(target, { childList: true, subtree: false });
+    }
+  }, 1800);
+  setTimeout(wfScheduleInject, 2000);
+})();
+</script>
+<!-- ═══ END WORKFLOWS ═══ -->
 
 </body>
 </html>
