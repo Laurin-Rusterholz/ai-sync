@@ -6848,6 +6848,10 @@ for (const u of Object.values(e.updates)) {
     dc.decidedAt = dc.decidedAt || null;
     dc.mode = dc.mode || "yesno"; // "yesno", "open", "custom"
     dc.customOptions = dc.customOptions || []; // ["Option A", "Option B", ...]
+    // Bewertungsmatrix (#75 Integration)
+    dc.matrixEnabled = dc.matrixEnabled || false;
+    dc.matrixCriteria = Array.isArray(dc.matrixCriteria) ? dc.matrixCriteria : [];  // [{id, title, sub, score, note}]
+    dc.matrixSummary = dc.matrixSummary || "";
     dc.createdAt = dc.createdAt || nowIso();
     dc.updatedAt = dc.updatedAt || nowIso();
   }
@@ -10594,9 +10598,32 @@ function buildFullContextPrompt() {
         const rated = Object.entries(r.ratings).filter(([k,v]) => v > 0 && rl[k]);
         if (rated.length) context += `  Bewertungen: ${rated.map(([k,v]) => `${rl[k]}=${v}/10`).join(", ")}\n`;
       }
+      if (r.mood) context += `  Stimmung: ${r.mood}/10\n`;
+      if (r.didWell) context += `  ✅ Was lief gut: ${r.didWell.slice(0,300)}\n`;
+      if (r.didBetter) context += `  🔧 Was kann besser: ${r.didBetter.slice(0,300)}\n`;
+      if (r.learnedToday) context += `  📚 Gelernt: ${r.learnedToday.slice(0,300)}\n`;
+      if (r.grateful) context += `  💝 Dankbar: ${r.grateful.slice(0,300)}\n`;
+      if (r.focusTomorrow) context += `  🎯 Fokus morgen: ${r.focusTomorrow}\n`;
+      if (r.category) context += `  🏷️ Kategorie: ${r.category}\n`;
       if (r.learnings && r.learnings.length) {
         r.learnings.forEach(l => { context += `  💡 "${l.title}"${l.description ? ": " + l.description.slice(0,100) : ""}\n`; });
       }
+    });
+  }
+  
+  // ========== ENTSCHEIDUNGEN MIT BEWERTUNGSMATRIX ==========
+  const allDecisions = Object.values(e.decisions || {});
+  const matrixDecisions = allDecisions.filter(d => d.matrixEnabled && d.matrixCriteria?.length);
+  if (matrixDecisions.length > 0) {
+    context += `\n=== ENTSCHEIDUNGEN MIT BEWERTUNGSMATRIX (${matrixDecisions.length}) ===\n`;
+    matrixDecisions.forEach(d => {
+      const scs = d.matrixCriteria.map(c => parseFloat(c.score)).filter(s => !isNaN(s) && s > 0);
+      const avg = scs.length ? (scs.reduce((a,b) => a+b, 0) / scs.length).toFixed(1) : "–";
+      context += `\n📊 "${d.title}" [${d.status}] · Ø ${avg}/10 (${scs.length}/${d.matrixCriteria.length} bewertet)\n`;
+      d.matrixCriteria.forEach(c => {
+        if (c.score) context += `  • ${c.title}: ${c.score}/10${c.note ? " — " + c.note.slice(0, 100) : ""}\n`;
+      });
+      if (d.matrixSummary) context += `  📝 Erkenntnis: ${d.matrixSummary.slice(0, 250)}\n`;
     });
   }
 
@@ -14499,6 +14526,14 @@ function viewDecisions() {
               ${resultBadge}
               ${thoughtCount ? `<span style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:3px">💭 ${thoughtCount}</span>` : ""}
               ${totalV > 0 ? `<span style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">${miniBar} <span>👍${yesV} 👎${noV}</span></span>` : ""}
+              ${(() => {
+                if (!d.matrixEnabled || !d.matrixCriteria?.length) return "";
+                const scs = d.matrixCriteria.map(c => parseFloat(c.score)).filter(s => !isNaN(s) && s > 0);
+                if (scs.length === 0) return `<span style="font-size:11px;color:#a5b4fc;background:rgba(99,102,241,.12);padding:2px 8px;border-radius:6px">📊 Matrix</span>`;
+                const avg = (scs.reduce((a,b) => a+b, 0) / scs.length).toFixed(1);
+                const cl = avg >= 7.5 ? "#22c55e" : avg >= 5 ? "#eab308" : "#ef4444";
+                return `<span style="font-size:11px;color:${cl};background:${cl}20;padding:2px 8px;border-radius:6px;font-weight:700">📊 Ø ${avg}</span>`;
+              })()}
               ${sourceName ? `<span style="font-size:11px;color:var(--muted);padding:2px 6px;background:rgba(255,255,255,.05);border-radius:4px">← ${esc(sourceName)}</span>` : ""}
             </div>
           </div>
@@ -14825,9 +14860,217 @@ function viewDecisionDetail(id) {
       </div>
     </div>
 
+    ${renderDecisionScoringMatrix(dc, id)}
+    
     ${renderLinkedEntitiesSection("decision", id)}
   `;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 📊 Decision Scoring-Matrix (Integration aus Datei #75)
+// ═══════════════════════════════════════════════════════════════════════
+function renderDecisionScoringMatrix(dc, id) {
+  if (!dc.matrixEnabled) {
+    return `<div style="margin-top:18px;padding:18px;background:rgba(99,102,241,.04);border:1px dashed rgba(99,102,241,.25);border-radius:12px;text-align:center">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px">📊 Bewertungsmatrix</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Bewerte diese Entscheidung systematisch nach 15 Standard-Kriterien (Zeitaufwand, Kosten, Motivation, Risiko, etc.) auf einer Skala von 1-10.</div>
+      <button class="btn primary" onclick="dcEnableMatrix('${id}')" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);font-size:12px">+ Bewertungsmatrix aktivieren</button>
+    </div>`;
+  }
+  
+  const criteria = dc.matrixCriteria || [];
+  const scores = criteria.map(c => parseFloat(c.score)).filter(s => !isNaN(s) && s > 0);
+  const avg = scores.length ? (scores.reduce((a,b) => a+b, 0) / scores.length) : 0;
+  const completedCount = scores.length;
+  
+  let avgColor = "#6b7280";
+  if (avg > 0) {
+    if (avg >= 7.5) avgColor = "#22c55e";
+    else if (avg >= 5) avgColor = "#eab308";
+    else avgColor = "#ef4444";
+  }
+  
+  const rowsHtml = criteria.map((c, idx) => `
+    <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+      <td style="padding:10px 8px;vertical-align:top">
+        <input type="text" value="${esc(c.title)}" oninput="dcUpdateMatrixCrit('${id}',${idx},'title',this.value)" 
+               style="width:100%;padding:5px 8px;background:transparent;border:0;color:var(--text);font-size:13px;font-weight:600"
+               placeholder="Kriterium..." />
+        <input type="text" value="${esc(c.sub || '')}" oninput="dcUpdateMatrixCrit('${id}',${idx},'sub',this.value)" 
+               style="width:100%;padding:3px 8px;background:transparent;border:0;color:var(--muted);font-size:11px"
+               placeholder="Beschreibung..." />
+      </td>
+      <td style="padding:10px 8px;width:80px;text-align:center;vertical-align:top">
+        <input type="number" min="1" max="10" value="${c.score || ''}" 
+               oninput="dcUpdateMatrixCrit('${id}',${idx},'score',this.value)" 
+               style="width:60px;padding:8px;text-align:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;color:var(--text);font-size:15px;font-weight:700"
+               placeholder="-" />
+      </td>
+      <td style="padding:10px 8px;vertical-align:top">
+        <textarea oninput="dcUpdateMatrixCrit('${id}',${idx},'note',this.value)" 
+                  rows="1" placeholder="Notiz..." 
+                  style="width:100%;padding:6px 9px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:6px;color:var(--text);font-size:12px;font-family:inherit;resize:vertical;min-height:32px">${esc(c.note || '')}</textarea>
+      </td>
+      <td style="padding:10px 8px;width:36px;vertical-align:top;text-align:center">
+        <button onclick="dcRemoveMatrixCrit('${id}','${c.id}')" title="Kriterium entfernen" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:14px;padding:4px 8px">×</button>
+      </td>
+    </tr>
+  `).join('');
+  
+  return `<div style="margin-top:18px;padding:20px;background:linear-gradient(135deg,rgba(99,102,241,.04),rgba(139,92,246,.04));border:1px solid rgba(99,102,241,.2);border-radius:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px">📊 Bewertungsmatrix</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-top:3px">${completedCount} von ${criteria.length} Kriterien bewertet · Skala 1-10</div>
+      </div>
+      <div style="display:flex;gap:14px;align-items:center">
+        <div style="text-align:center;padding:10px 18px;background:rgba(255,255,255,.05);border-radius:10px;border:1px solid ${avgColor}40">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700">Ø Score</div>
+          <div style="font-size:26px;font-weight:800;color:${avgColor};font-variant-numeric:tabular-nums">${avg ? avg.toFixed(1) : "–"}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <button class="btn sm" onclick="dcResetMatrix('${id}')" style="font-size:10.5px;padding:5px 10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)">↻ 15 Standard-Kriterien</button>
+          <button class="btn sm" onclick="dcDisableMatrix('${id}')" style="font-size:10.5px;padding:5px 10px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);color:#f87171">Matrix deaktivieren</button>
+        </div>
+      </div>
+    </div>
+    
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="border-bottom:2px solid rgba(255,255,255,.08)">
+          <th style="text-align:left;padding:8px;font-size:10.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Kriterium</th>
+          <th style="text-align:center;padding:8px;font-size:10.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em;width:80px">Score</th>
+          <th style="text-align:left;padding:8px;font-size:10.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em">Notiz</th>
+          <th style="width:36px"></th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn sm" onclick="dcAddMatrixCrit('${id}')" style="font-size:11px;padding:6px 12px;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);color:#a5b4fc">+ Eigenes Kriterium</button>
+    </div>
+    
+    <div style="margin-top:14px">
+      <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:5px;display:block">📝 Zusammenfassung / Erkenntnis</label>
+      <textarea oninput="dcUpdateMatrixSummary('${id}',this.value)" 
+                placeholder="Fasse hier deine Erkenntnis aus der Bewertung zusammen..." 
+                rows="3" style="width:100%;padding:10px 13px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">${esc(dc.matrixSummary || '')}</textarea>
+    </div>
+  </div>`;
+}
+
+// 15 Standard-Kriterien aus Datei #75
+function dcStandardCriteria() {
+  const list = [
+    { title: "Zeitaufwand", sub: "Benötigte Zeit" },
+    { title: "Kosten / Ressourcen", sub: "Finanzielle & materielle Mittel" },
+    { title: "Motivation", sub: "Innere Motivation" },
+    { title: "Energie", sub: "Körperliche & mentale Kraft" },
+    { title: "Fachwissen / Können", sub: "Kenntnisse oder lernbar" },
+    { title: "Abhängigkeit von anderen", sub: "Benötigte Unterstützung" },
+    { title: "Umwelt / Rahmenbedingungen", sub: "Unterstützt dein Umfeld?" },
+    { title: "Priorität / Wichtigkeit", sub: "Relevanz für deine Ziele" },
+    { title: "Risiko / negative Konsequenzen", sub: "Mögliche Nachteile" },
+    { title: "Emotionale Belastung", sub: "Emotionaler Aufwand" },
+    { title: "Kontinuität / Nachhaltigkeit", sub: "Über längere Zeit durchführbar" },
+    { title: "Langfristigkeit", sub: "Beitrag zu langfristigen Zielen" },
+    { title: "Werte & Prinzipien", sub: "Passt zur eigenen Haltung" },
+    { title: "Anspruchsniveau", sub: "Realistische Standards" },
+    { title: "Handlungsfeld", sub: "Fallbearbeitung & Zukunft" },
+  ];
+  return list.map(c => ({
+    id: "crit_" + Math.random().toString(36).slice(2, 8),
+    title: c.title, sub: c.sub, score: "", note: ""
+  }));
+}
+
+window.dcEnableMatrix = function(id) {
+  const dc = getEntity("decision", id);
+  if (!dc) return;
+  dc.matrixEnabled = true;
+  if (!dc.matrixCriteria || dc.matrixCriteria.length === 0) {
+    dc.matrixCriteria = dcStandardCriteria();
+  }
+  dc.updatedAt = nowIso();
+  scheduleSave();
+  render();
+  toast("ok", "📊 Matrix aktiviert", "15 Standard-Kriterien geladen");
+};
+
+window.dcDisableMatrix = function(id) {
+  const dc = getEntity("decision", id);
+  if (!dc) return;
+  if (!confirm("Bewertungsmatrix wirklich deaktivieren? Die Bewertungen bleiben gespeichert (nur ausgeblendet).")) return;
+  dc.matrixEnabled = false;
+  dc.updatedAt = nowIso();
+  scheduleSave();
+  render();
+};
+
+window.dcResetMatrix = function(id) {
+  const dc = getEntity("decision", id);
+  if (!dc) return;
+  if (!confirm("Alle Kriterien auf die 15 Standard-Kriterien zurücksetzen? Bestehende Bewertungen gehen verloren.")) return;
+  dc.matrixCriteria = dcStandardCriteria();
+  dc.updatedAt = nowIso();
+  scheduleSave();
+  render();
+  toast("ok", "↻ Zurückgesetzt", "15 Standard-Kriterien geladen");
+};
+
+window.dcUpdateMatrixCrit = function(id, idx, field, value) {
+  const dc = getEntity("decision", id);
+  if (!dc || !dc.matrixCriteria || !dc.matrixCriteria[idx]) return;
+  if (field === "score") {
+    const num = parseFloat(value);
+    if (value === "" || (!isNaN(num) && num >= 1 && num <= 10)) {
+      dc.matrixCriteria[idx].score = value;
+    }
+  } else {
+    dc.matrixCriteria[idx][field] = value;
+  }
+  dc.updatedAt = nowIso();
+  if (window._dcMatrixSaveTimer) clearTimeout(window._dcMatrixSaveTimer);
+  window._dcMatrixSaveTimer = setTimeout(() => {
+    scheduleSave();
+    if (field === "score") render();  // Re-render für Avg-Update
+  }, field === "score" ? 100 : 800);
+};
+
+window.dcAddMatrixCrit = function(id) {
+  const dc = getEntity("decision", id);
+  if (!dc) return;
+  if (!Array.isArray(dc.matrixCriteria)) dc.matrixCriteria = [];
+  dc.matrixCriteria.push({
+    id: "crit_" + Math.random().toString(36).slice(2, 8),
+    title: "", sub: "", score: "", note: ""
+  });
+  dc.updatedAt = nowIso();
+  scheduleSave();
+  render();
+};
+
+window.dcRemoveMatrixCrit = function(id, critId) {
+  const dc = getEntity("decision", id);
+  if (!dc || !Array.isArray(dc.matrixCriteria)) return;
+  const c = dc.matrixCriteria.find(x => x.id === critId);
+  if (!c) return;
+  if (!confirm(`Kriterium "${c.title || 'Unbenannt'}" entfernen?`)) return;
+  dc.matrixCriteria = dc.matrixCriteria.filter(x => x.id !== critId);
+  dc.updatedAt = nowIso();
+  scheduleSave();
+  render();
+};
+
+window.dcUpdateMatrixSummary = function(id, value) {
+  const dc = getEntity("decision", id);
+  if (!dc) return;
+  dc.matrixSummary = value;
+  dc.updatedAt = nowIso();
+  if (window._dcSummarySaveTimer) clearTimeout(window._dcSummarySaveTimer);
+  window._dcSummarySaveTimer = setTimeout(() => scheduleSave(), 800);
+};
 
 // Decision daily reminder check
 // Decision reminders now shown in Daily Briefing auto-briefing
@@ -15512,6 +15755,9 @@ function viewReflecta() {
   const reflections = (APP.state.data.reflections || []).sort((a,b) => b.date.localeCompare(a.date));
   const today = todayYmd();
   
+  // Heutige Reflexion (oder leer)
+  const todayRefl = reflections.find(r => r.date === today);
+  
   // Stats
   const totalReflections = reflections.length;
   const totalLearnings = reflections.reduce((sum, r) => sum + (r.learnings || []).length, 0);
@@ -15584,6 +15830,56 @@ function viewReflecta() {
       <div class="rfa-stat"><div class="val">${last30.length}</div><div class="lbl">30 Tage</div></div>
     </div>
     
+    <!-- ═══ HEUTIGER EINTRAG (Daily Editor) ═══ -->
+    <div class="rfa-card" style="border:2px solid rgba(139,92,246,.3);background:linear-gradient(135deg,rgba(99,102,241,.04),rgba(167,139,250,.04))">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <h3 style="margin:0">🌟 Heutiger Eintrag <span style="font-size:12px;color:var(--muted);font-weight:400">(${today})</span></h3>
+        ${todayRefl ? `<span style="font-size:11px;background:rgba(34,197,94,.15);color:#86efac;padding:3px 10px;border-radius:999px;font-weight:600">✓ Bereits erfasst</span>` : `<span style="font-size:11px;background:rgba(245,158,11,.15);color:#fbbf24;padding:3px 10px;border-radius:999px;font-weight:600">Noch offen</span>`}
+      </div>
+      
+      <!-- Stimmung 1-10 -->
+      <div style="margin-bottom:14px">
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px;display:block">😊 Stimmung heute (1-10)</label>
+        <div style="display:flex;gap:4px;flex-wrap:wrap" id="rfMoodRow">
+          ${[1,2,3,4,5,6,7,8,9,10].map(n => {
+            const isActive = todayRefl?.mood === n;
+            const colors = ['#ef4444','#f87171','#f59e0b','#fbbf24','#eab308','#84cc16','#22c55e','#10b981','#14b8a6','#06b6d4'];
+            return `<button onclick="rfSetMood(${n})" style="flex:1;min-width:28px;padding:8px 4px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:${isActive?colors[n-1]:'rgba(255,255,255,.04)'};color:${isActive?'#fff':'var(--text)'};cursor:pointer;font-weight:700;font-size:13px;transition:all .15s">${n}</button>`;
+          }).join('')}
+        </div>
+      </div>
+      
+      <!-- 5 Felder aus Tagebuch-App -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#86efac;margin-bottom:4px;display:block">✅ Was lief gut?</label>
+          <textarea id="rfDidWell" placeholder="2-3 konkrete Situationen, Fortschritte..." rows="3" style="width:100%;padding:9px 12px;background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.2);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">${esc(todayRefl?.didWell || '')}</textarea>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#fbbf24;margin-bottom:4px;display:block">🔧 Was kann besser?</label>
+          <textarea id="rfDidBetter" placeholder="1-2 Punkte mit kurzer Beobachtung..." rows="3" style="width:100%;padding:9px 12px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">${esc(todayRefl?.didBetter || '')}</textarea>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#a5b4fc;margin-bottom:4px;display:block">📚 Was gelernt?</label>
+          <textarea id="rfLearnedToday" placeholder="Fachlich oder persönlich..." rows="2" style="width:100%;padding:9px 12px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.2);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">${esc(todayRefl?.learnedToday || '')}</textarea>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#f472b6;margin-bottom:4px;display:block">💝 Dankbar für</label>
+          <textarea id="rfGrateful" placeholder="Kleine Dinge, die den Tag positiv gemacht haben..." rows="2" style="width:100%;padding:9px 12px;background:rgba(236,72,153,.05);border:1px solid rgba(236,72,153,.2);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">${esc(todayRefl?.grateful || '')}</textarea>
+        </div>
+        <div style="grid-column:1/3">
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c084fc;margin-bottom:4px;display:block">🎯 Fokus für morgen</label>
+          <input type="text" id="rfFocusTomorrow" placeholder="1 konkreter Vorsatz oder Zielpunkt..." value="${esc(todayRefl?.focusTomorrow || '')}" style="width:100%;padding:9px 12px;background:rgba(168,85,247,.05);border:1px solid rgba(168,85,247,.2);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit" />
+        </div>
+        <div style="grid-column:1/3">
+          <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:4px;display:block">🏷️ Kategorie</label>
+          <input type="text" id="rfCategory" placeholder="z.B. Arbeit, Lernen, Fitness, Freizeit..." value="${esc(todayRefl?.category || '')}" style="width:100%;padding:9px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit" />
+        </div>
+      </div>
+      
+      <button onclick="rfSaveDailyEditor()" style="width:100%;padding:11px;border-radius:10px;border:0;background:linear-gradient(135deg,#6366f1,#a78bfa);color:#fff;cursor:pointer;font-weight:700;font-size:13px;letter-spacing:.05em">💾 Heutigen Eintrag speichern</button>
+    </div>
+    
     ${reflections.length > 0 ? `
     <div class="rfa-card">
       <h3>📊 Bewertungen (30 Tage)</h3>
@@ -15635,11 +15931,17 @@ function viewReflecta() {
       ${reflections.length ? reflections.slice(0, 50).map(r => {
         const learnings = r.learnings || [];
         const hasRatings = r.ratings && Object.values(r.ratings).some(v => v > 0);
+        const hasJournal = r.didWell || r.didBetter || r.learnedToday || r.grateful || r.focusTomorrow;
         return `
         <div class="rfa-entry" data-action="rf-show-detail" data-date="${r.date}">
-          <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
             <div class="rfa-entry-date">${r.date} · ${new Date(r.date+"T00:00:00").toLocaleDateString("de-CH",{weekday:"long"})}</div>
-            ${hasRatings ? '<span style="font-size:10px;color:#6366f1;background:rgba(99,102,241,.1);padding:2px 8px;border-radius:8px">Bewertet</span>' : ""}
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              ${r.mood ? `<span style="font-size:10px;color:#a78bfa;background:rgba(167,139,250,.12);padding:2px 8px;border-radius:8px;font-weight:600">😊 ${r.mood}/10</span>` : ""}
+              ${hasRatings ? '<span style="font-size:10px;color:#6366f1;background:rgba(99,102,241,.1);padding:2px 8px;border-radius:8px">Bewertet</span>' : ""}
+              ${hasJournal ? '<span style="font-size:10px;color:#86efac;background:rgba(34,197,94,.1);padding:2px 8px;border-radius:8px">📔 Tagebuch</span>' : ""}
+              ${r.category ? `<span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,.04);padding:2px 8px;border-radius:8px">🏷️ ${esc(r.category)}</span>` : ""}
+            </div>
           </div>
           ${learnings.length ? `<div style="margin-top:8px">${learnings.map(l => '<span class="rfa-tag">💡 ' + esc(l.title) + '</span>').join("")}</div>` : ""}
         </div>`;
@@ -15679,6 +15981,48 @@ document.addEventListener("click", function(e) {
     if (window.render) window.render();
     if (typeof toast === "function") toast("ok", "Reflecta", "Learning gespeichert!");
   }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Reflecta Daily-Editor Save-Funktionen (Datei #80 Integration)
+// ═══════════════════════════════════════════════════════════════════════
+window.rfEnsureToday = function() {
+  var today = window.todayYmd ? window.todayYmd() : new Date().toISOString().slice(0,10);
+  if (!Array.isArray(APP.state.data.reflections)) APP.state.data.reflections = [];
+  var existing = APP.state.data.reflections.find(function(r){return r.date === today});
+  if (!existing) {
+    existing = { id: "ref_" + Date.now().toString(36), date: today, ratings: {}, learnings: [], openQuestions: {}, carryover: [], carryoverFromPrev: [] };
+    APP.state.data.reflections.push(existing);
+  }
+  return existing;
+};
+
+window.rfSetMood = function(n) {
+  var refl = window.rfEnsureToday();
+  refl.mood = n;
+  if (window.scheduleSave) window.scheduleSave();
+  if (window.render) window.render();
+};
+
+window.rfSaveDailyEditor = function() {
+  var refl = window.rfEnsureToday();
+  var didWell = document.getElementById("rfDidWell");
+  var didBetter = document.getElementById("rfDidBetter");
+  var learnedToday = document.getElementById("rfLearnedToday");
+  var grateful = document.getElementById("rfGrateful");
+  var focusTomorrow = document.getElementById("rfFocusTomorrow");
+  var category = document.getElementById("rfCategory");
+  
+  if (didWell) refl.didWell = didWell.value.trim();
+  if (didBetter) refl.didBetter = didBetter.value.trim();
+  if (learnedToday) refl.learnedToday = learnedToday.value.trim();
+  if (grateful) refl.grateful = grateful.value.trim();
+  if (focusTomorrow) refl.focusTomorrow = focusTomorrow.value.trim();
+  if (category) refl.category = category.value.trim();
+  
+  if (window.scheduleSave) window.scheduleSave();
+  if (window.render) window.render();
+  if (typeof toast === "function") toast("ok", "✓ Reflecta", "Heutiger Eintrag gespeichert");
+};
   
   if (action === "rf-show-detail") {
     e.preventDefault();
@@ -15706,6 +16050,13 @@ document.addEventListener("click", function(e) {
       '<button onclick="document.getElementById(\'rfDetailOverlay\').style.display=\'none\'" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">✕</button>' +
       '</div>' +
       (ratingsHtml ? '<div style="margin-bottom:16px"><div style="font-weight:700;margin-bottom:8px">Bewertungen</div>' + ratingsHtml + '</div>' : '') +
+      (refl.mood ? '<div style="margin-bottom:16px"><div style="font-weight:700;margin-bottom:8px">😊 Stimmung</div><div style="font-size:24px;font-weight:800;color:#a78bfa">' + refl.mood + '/10</div></div>' : '') +
+      (refl.didWell ? '<div style="margin-bottom:14px;padding:12px;background:rgba(34,197,94,.06);border-left:3px solid #22c55e;border-radius:6px"><div style="font-weight:700;margin-bottom:6px;color:#86efac">✅ Was lief gut</div><div style="white-space:pre-wrap;font-size:13px">' + (typeof esc === "function" ? esc(refl.didWell) : refl.didWell) + '</div></div>' : '') +
+      (refl.didBetter ? '<div style="margin-bottom:14px;padding:12px;background:rgba(245,158,11,.06);border-left:3px solid #f59e0b;border-radius:6px"><div style="font-weight:700;margin-bottom:6px;color:#fbbf24">🔧 Was kann besser</div><div style="white-space:pre-wrap;font-size:13px">' + (typeof esc === "function" ? esc(refl.didBetter) : refl.didBetter) + '</div></div>' : '') +
+      (refl.learnedToday ? '<div style="margin-bottom:14px;padding:12px;background:rgba(99,102,241,.06);border-left:3px solid #6366f1;border-radius:6px"><div style="font-weight:700;margin-bottom:6px;color:#a5b4fc">📚 Was gelernt</div><div style="white-space:pre-wrap;font-size:13px">' + (typeof esc === "function" ? esc(refl.learnedToday) : refl.learnedToday) + '</div></div>' : '') +
+      (refl.grateful ? '<div style="margin-bottom:14px;padding:12px;background:rgba(236,72,153,.06);border-left:3px solid #ec4899;border-radius:6px"><div style="font-weight:700;margin-bottom:6px;color:#f472b6">💝 Dankbar für</div><div style="white-space:pre-wrap;font-size:13px">' + (typeof esc === "function" ? esc(refl.grateful) : refl.grateful) + '</div></div>' : '') +
+      (refl.focusTomorrow ? '<div style="margin-bottom:14px;padding:12px;background:rgba(168,85,247,.06);border-left:3px solid #a855f7;border-radius:6px"><div style="font-weight:700;margin-bottom:6px;color:#c084fc">🎯 Fokus morgen</div><div style="font-size:13px">' + (typeof esc === "function" ? esc(refl.focusTomorrow) : refl.focusTomorrow) + '</div></div>' : '') +
+      (refl.category ? '<div style="margin-bottom:14px"><span style="font-size:11px;background:rgba(255,255,255,.05);padding:4px 10px;border-radius:999px;color:var(--muted)">🏷️ ' + (typeof esc === "function" ? esc(refl.category) : refl.category) + '</span></div>' : '') +
       (learningsHtml ? '<div style="margin-bottom:16px"><div style="font-weight:700;margin-bottom:8px">Learnings</div>' + learningsHtml + '</div>' : '') +
       ((refl.carryover||[]).length ? '<div><div style="font-weight:700;margin-bottom:8px">Übertrag</div>' + refl.carryover.map(function(c){return '<div style="padding:4px 0">' + (typeof esc === "function" ? esc(c.text || c) : c) + '</div>'}).join("") + '</div>' : '') +
       '</div>';
