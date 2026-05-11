@@ -6897,6 +6897,7 @@ function normalizeData(data) {
     
     // Versionen (Snapshots)
     c.versions = Array.isArray(c.versions) ? c.versions : [];           // [{id, ts, label, snapshot}]
+    c.measures = Array.isArray(c.measures) ? c.measures : [];           // 🚨 Massnahmen
     
     // Conversion-Tracking
     c.convertedToProjectId = c.convertedToProjectId || null;
@@ -7076,6 +7077,7 @@ for (const u of Object.values(e.updates)) {
     t.recurrence = t.recurrence || null; // null, daily, weekly, monthly, yearly
     t.recurrenceEndDate = t.recurrenceEndDate || null;
     t.programButtons = t.programButtons || []; // [{programId, buttonId}]
+    t.measures = Array.isArray(t.measures) ? t.measures : []; // 🚨 Massnahmen: [{id, text, effectiveDate, status:"planned"|"active"|"done", createdAt}]
   }
   
   // Normalize each project
@@ -7159,6 +7161,9 @@ for (const u of Object.values(e.updates)) {
     // 🏁 Definition of Done: [{id, text, done}]
     p.definitionOfDone = Array.isArray(p.definitionOfDone) ? p.definitionOfDone : [];
     
+    // 🚨 Massnahmen: [{id, text, effectiveDate, status, createdAt}]
+    p.measures = Array.isArray(p.measures) ? p.measures : [];
+    
     // 🔁 Retrospektive: { good[], bad[], learnings[], doDifferently[] }
     if (!p.retro || typeof p.retro !== "object") {
       p.retro = { good: [], bad: [], learnings: [], doDifferently: [] };
@@ -7221,6 +7226,7 @@ for (const u of Object.values(e.updates)) {
     s.status = s.status || "active";
     s.milestones = s.milestones || [];
     s.deadline = s.deadline || null;
+    s.measures = Array.isArray(s.measures) ? s.measures : []; // 🚨 Massnahmen
   }
   
   // Normalize programs
@@ -12885,6 +12891,7 @@ function getAllApps() {
     {key:"habits", icon:"🔁", label:"Habits", desc:getLang()==="de"?"Routinen tracken, Streaks aufbauen":"Track routines, build streaks"},
     {key:"concepts", icon:"🧩", label:"Konzeptor", desc:getLang()==="de"?"Konzepte strukturiert ausarbeiten und in Projekte überführen":"Develop structured concepts and turn them into projects"},
     {key:"workload", icon:"⏱️", label:"Workload", desc:getLang()==="de"?"Zeitvoranschlag aller Aufgaben & Auslastung":"Time estimates across all tasks & capacity"},
+    {key:"measures", icon:"🚨", label:"Massnahmen", desc:getLang()==="de"?"Alle aktiven Massnahmen aus Projekten, Aufgaben, Konzepten & Strategien":"All active measures across projects, tasks, concepts & strategies"},
     {key:"decisions", icon:"⚖️", label:"Decisions", desc:getLang()==="de"?"Entscheidungen treffen & verfolgen":"Make & track decisions"},
     {key:"journal", icon:"✍️", label:"Journal Booklet", desc:getLang()==="de"?"Tagebuch, Briefe, Zeitkapsel & Schreibumgebung":"Diary, letters, time capsule & writing environment"},
   ];
@@ -13244,6 +13251,7 @@ function renderMain() {
     case "habits": html = viewHabits(); break;
     case "concepts": html = id ? viewConceptDetail(id) : viewConcepts(); break;
     case "workload": html = viewWorkload(); break;
+    case "measures": html = viewMeasures(); break;
     case "decisions": html = id ? viewDecisionDetail(id) : viewDecisions(); break;
     case "mailhub": html = id ? viewEmailDetail(id) : viewMailHub(); break;
     case "persons": html = id ? viewPersonDetail(id) : viewPersons(); break;
@@ -13516,6 +13524,35 @@ function viewDailyBriefing() {
       <h3>` + "\u{1F48E}" + ` Glaubenss\u00e4tze</h3>
       ${beliefs.length ? beliefs.map((b, i) => '<div class="db-item"><span style="font-size:14px">' + "\u{1F48E}" + '</span><span class="title">' + esc(b.text) + '</span><button onclick="var db=APP.state.data.dailyBriefing;if(db&&db.beliefs){db.beliefs=db.beliefs.filter(function(x){return x.id!==\'' + b.id + '\'});scheduleSave();render();}" class="btn sm ghost danger" style="padding:2px 8px">' + "\u00D7" + '</button></div>').join("") : '<div class="mini" style="opacity:.5">Keine Glaubenss\u00e4tze.</div>'}
       ${'<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px"><div class="db-add-row"><input type="text" id="dbNewBelief" placeholder="Neuen Glaubenssatz..." onkeydown="if(event.key===\'Enter\'){document.getElementById(\'dbAddBeliefBtn\').click()}" /><button id="dbAddBeliefBtn" onclick="var inp=document.getElementById(\'dbNewBelief\');var t=(inp?.value||\'\').trim();if(!t)return;var db=APP.state.data.dailyBriefing;if(!db){db={beliefs:[]};APP.state.data.dailyBriefing=db;}db.beliefs=db.beliefs||[];db.beliefs.push({id:Date.now().toString(36),text:t,createdAt:new Date().toISOString()});inp.value=\'\';scheduleSave();render();">+ Glaubenssatz</button></div></div>'}
+    </div>
+    
+    <!-- Aktive Massnahmen -->
+    <div class="db-section">
+      <h3>🚨 Aktive Massnahmen ${(() => { try { const ms = getAllActiveMeasures().filter(m => m.status === 'active'); return ms.length ? '<span style="font-size:12px;color:var(--muted)">(' + ms.length + ')</span>' : ''; } catch(e) { return ''; } })()}</h3>
+      ${(() => {
+        try {
+          const all = getAllActiveMeasures();
+          const active = all.filter(m => m.status === 'active');
+          if (active.length === 0) {
+            return '<div class="mini" style="opacity:.5">Keine aktiven Massnahmen. Füge Massnahmen in Projekten, Aufgaben, Konzepten oder Strategien hinzu.</div>';
+          }
+          // Sortierung: nach Quelle
+          active.sort((a, b) => (a.parentKind || '').localeCompare(b.parentKind || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+          return active.map(m => {
+            const dateStr = m.effectiveDate ? new Date(m.effectiveDate).toLocaleDateString('de-CH', { day: '2-digit', month: 'short' }) : '';
+            return '<div class="db-item" onclick="navigate(\'' + m.route + '\',\'' + m.parentId + '\')" style="cursor:pointer;border-left:3px solid #fb923c">' +
+              '<span style="font-size:14px">🚨</span>' +
+              '<div style="flex:1;min-width:0">' +
+                '<div class="title" style="font-size:13px;font-weight:600">' + esc(m.text) + '</div>' +
+                '<div style="font-size:10.5px;color:var(--muted);margin-top:2px">' +
+                  '<span style="color:' + m.parentColor + '">' + m.parentIcon + ' ' + esc(m.parentTitle) + '</span>' +
+                  (dateStr ? ' · seit ' + dateStr : '') +
+                '</div>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        } catch(e) { console.error('Measures DB error:', e); return ''; }
+      })()}
     </div>
     
     <!-- Auto-Briefing: Konsolidierte Erinnerungen -->
@@ -17855,6 +17892,316 @@ window.saveWorkloadCapacity = function() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 🚨 MASSNAHMEN — Generisches Modul für Projekte/Tasks/Konzepte/Strategien
+// ═══════════════════════════════════════════════════════════════════════════
+// Schema: { id, text, effectiveDate, status: "planned"|"active"|"done", createdAt }
+// - "planned" = Eintreffdatum in Zukunft
+// - "active"  = Eintreffdatum erreicht, Massnahme in Kraft
+// - "done"    = manuell erledigt/abgeschlossen
+
+// Mapping kind → entity-collection
+const MEASURE_ENTITY_MAP = {
+  project: "projects",
+  task: "tasks",
+  concept: "concepts",
+  strategy: "strategies",
+};
+
+function _getMeasureEntity(kind, id) {
+  const coll = MEASURE_ENTITY_MAP[kind];
+  if (!coll) return null;
+  const obj = APP.state.data.entities[coll]?.[id];
+  if (!obj) return null;
+  if (!Array.isArray(obj.measures)) obj.measures = [];
+  return obj;
+}
+
+// Status automatisch berechnen anhand effectiveDate (für Anzeige)
+function getMeasureStatus(m) {
+  if (m.status === "done") return "done";
+  if (!m.effectiveDate) return "active";  // Kein Datum = sofort aktiv
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const eff = new Date(m.effectiveDate);
+  return eff <= today ? "active" : "planned";
+}
+
+// Render-Funktion: kompletter Block mit Eingabefeld + Liste
+function renderMeasuresBlock(kind, id, opts) {
+  opts = opts || {};
+  const entity = _getMeasureEntity(kind, id);
+  if (!entity) return '';
+  const measures = entity.measures || [];
+  const compact = !!opts.compact;
+  
+  // Sortierung: aktive zuerst, dann geplante (nach Datum), dann erledigte
+  const sorted = measures.slice().sort((a, b) => {
+    const sa = getMeasureStatus(a);
+    const sb = getMeasureStatus(b);
+    const order = { active: 0, planned: 1, done: 2 };
+    if (order[sa] !== order[sb]) return order[sa] - order[sb];
+    if (sa === "planned") return (a.effectiveDate || '').localeCompare(b.effectiveDate || '');
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+  
+  const today = new Date().toISOString().slice(0, 10);
+  const accent = '#fb923c';
+  
+  return `<div class="measures-block" style="background:rgba(251,146,60,.04);border:1px solid rgba(251,146,60,.15);border-radius:10px;padding:14px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:${compact ? '8' : '12'}px">
+      <span style="font-size:18px">🚨</span>
+      <h4 style="margin:0;font-size:14px;font-weight:700;flex:1">Massnahmen${measures.length > 0 ? ` <span style="color:var(--muted);font-weight:400;font-size:12px">(${measures.length})</span>` : ''}</h4>
+    </div>
+    
+    <!-- Eingabefeld -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:${measures.length > 0 ? '10' : '0'}px">
+      <input type="text" 
+             id="measureText_${kind}_${id}" 
+             placeholder="Neue Massnahme..." 
+             onkeydown="if(event.key==='Enter'){addMeasure('${kind}','${id}')}"
+             style="flex:1;min-width:200px;padding:8px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:7px;color:var(--text);font-size:13px" />
+      <input type="date" 
+             id="measureDate_${kind}_${id}" 
+             title="In Kraft ab (leer = sofort)"
+             style="padding:8px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:7px;color:var(--text);font-size:13px;width:150px" />
+      <button onclick="addMeasure('${kind}','${id}')" 
+              style="padding:8px 14px;background:linear-gradient(135deg,#fb923c,#f97316);border:0;color:#fff;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700">+ Hinzufügen</button>
+    </div>
+    
+    ${measures.length === 0 ? '' : `
+      <div style="display:flex;flex-direction:column;gap:5px">
+        ${sorted.map(m => {
+          const status = getMeasureStatus(m);
+          const dateStr = m.effectiveDate ? new Date(m.effectiveDate).toLocaleDateString('de-CH', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+          const colors = {
+            active: { bg: 'rgba(34,197,94,.08)', border: 'rgba(34,197,94,.3)', color: '#86efac', label: '✓ Aktiv' },
+            planned: { bg: 'rgba(99,102,241,.06)', border: 'rgba(99,102,241,.25)', color: '#a5b4fc', label: '⏳ Geplant' },
+            done: { bg: 'rgba(255,255,255,.02)', border: 'rgba(255,255,255,.08)', color: 'var(--muted)', label: '✔︎ Erledigt' },
+          };
+          const c = colors[status];
+          return `<div style="display:flex;align-items:center;gap:8px;padding:8px 11px;background:${c.bg};border:1px solid ${c.border};border-radius:6px;${status === 'done' ? 'opacity:.55' : ''}">
+            <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;background:${c.color}22;color:${c.color};white-space:nowrap;flex-shrink:0">${c.label}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12.5px;${status === 'done' ? 'text-decoration:line-through' : ''};line-height:1.4">${esc(m.text)}</div>
+              ${dateStr ? `<div style="font-size:10.5px;color:var(--muted);margin-top:2px">📅 ${status === 'planned' ? 'In Kraft ab' : 'Eingeführt'} ${dateStr}</div>` : ''}
+            </div>
+            ${status !== 'done' ? `<button onclick="toggleMeasureDone('${kind}','${id}','${m.id}')" title="Als erledigt markieren" style="background:rgba(34,197,94,.1);border:0;color:#86efac;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;flex-shrink:0">✓</button>` : `<button onclick="toggleMeasureDone('${kind}','${id}','${m.id}')" title="Wieder aktivieren" style="background:rgba(255,255,255,.06);border:0;color:var(--muted);padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;flex-shrink:0">↺</button>`}
+            <button onclick="removeMeasure('${kind}','${id}','${m.id}')" title="Löschen" style="background:rgba(239,68,68,.1);border:0;color:#f87171;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:11px;flex-shrink:0">×</button>
+          </div>`;
+        }).join('')}
+      </div>
+    `}
+  </div>`;
+}
+
+window.renderMeasuresBlock = renderMeasuresBlock;
+
+window.addMeasure = function(kind, id) {
+  const entity = _getMeasureEntity(kind, id);
+  if (!entity) return;
+  const text = document.getElementById(`measureText_${kind}_${id}`)?.value?.trim();
+  const dateInput = document.getElementById(`measureDate_${kind}_${id}`)?.value || '';
+  if (!text) { toast('warn', 'Massnahme erforderlich'); return; }
+  
+  if (!Array.isArray(entity.measures)) entity.measures = [];
+  entity.measures.push({
+    id: 'msr_' + Math.random().toString(36).slice(2, 10),
+    text,
+    effectiveDate: dateInput || '',
+    status: 'planned',  // wird durch getMeasureStatus dynamisch berechnet
+    createdAt: new Date().toISOString(),
+  });
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave();
+  render();
+  toast('ok', '🚨 Massnahme hinzugefügt');
+};
+
+window.removeMeasure = function(kind, id, measureId) {
+  const entity = _getMeasureEntity(kind, id);
+  if (!entity) return;
+  entity.measures = (entity.measures || []).filter(m => m.id !== measureId);
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave(); render();
+};
+
+window.toggleMeasureDone = function(kind, id, measureId) {
+  const entity = _getMeasureEntity(kind, id);
+  if (!entity) return;
+  const m = (entity.measures || []).find(x => x.id === measureId);
+  if (!m) return;
+  m.status = m.status === 'done' ? 'planned' : 'done';
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave(); render();
+};
+
+// Sammelt alle aktiven Massnahmen aus allen Entities für globale Übersichten
+function getAllActiveMeasures() {
+  const items = [];
+  const collect = (kind, coll, route) => {
+    Object.values(APP.state.data.entities[coll] || {}).forEach(entity => {
+      const list = entity.measures || [];
+      list.forEach(m => {
+        const status = getMeasureStatus(m);
+        items.push({
+          id: m.id, text: m.text, effectiveDate: m.effectiveDate, createdAt: m.createdAt,
+          status,
+          parentKind: kind,
+          parentId: entity.id,
+          parentTitle: entity.title || entity.name || entity.id,
+          parentIcon: entity.icon || (kind === 'task' ? '✅' : kind === 'project' ? '📁' : kind === 'concept' ? '🧩' : '🧭'),
+          parentColor: entity.color || (kind === 'task' ? '#22c55e' : kind === 'project' ? '#6366f1' : kind === 'concept' ? '#a855f7' : '#0ea5e9'),
+          route,
+        });
+      });
+    });
+  };
+  collect('task', 'tasks', 'tasks');
+  collect('project', 'projects', 'projects');
+  collect('concept', 'concepts', 'concepts');
+  collect('strategy', 'strategies', 'strategies');
+  return items;
+}
+window.getAllActiveMeasures = getAllActiveMeasures;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🚨 MASSNAHMEN-APP — Globale Übersicht aller Massnahmen
+// ═══════════════════════════════════════════════════════════════════════════
+
+function viewMeasures() {
+  const all = getAllActiveMeasures();
+  const filter = APP.state.ui?.measuresFilter || 'active';  // active|planned|done|all
+  const kindFilter = APP.state.ui?.measuresKind || 'all';
+  
+  let filtered = all;
+  if (filter !== 'all') filtered = filtered.filter(m => m.status === filter);
+  if (kindFilter !== 'all') filtered = filtered.filter(m => m.parentKind === kindFilter);
+  
+  // Sortierung: aktive nach createdAt desc, geplante nach effectiveDate asc, erledigte nach createdAt desc
+  filtered.sort((a, b) => {
+    if (a.status !== b.status) {
+      const order = { active: 0, planned: 1, done: 2 };
+      return order[a.status] - order[b.status];
+    }
+    if (a.status === 'planned') return (a.effectiveDate || '').localeCompare(b.effectiveDate || '');
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+  
+  // Counts
+  const counts = {
+    all: all.length,
+    active: all.filter(m => m.status === 'active').length,
+    planned: all.filter(m => m.status === 'planned').length,
+    done: all.filter(m => m.status === 'done').length,
+  };
+  const kindCounts = {
+    all: all.length,
+    task: all.filter(m => m.parentKind === 'task').length,
+    project: all.filter(m => m.parentKind === 'project').length,
+    concept: all.filter(m => m.parentKind === 'concept').length,
+    strategy: all.filter(m => m.parentKind === 'strategy').length,
+  };
+  
+  return `
+    <style>
+      .ms-wrap { max-width: 1100px; margin: 0 auto; padding: 20px 0; }
+      .ms-hero { padding: 0 0 18px; }
+      .ms-hero h2 { font-size: 26px; font-weight: 800; margin: 0 0 4px; background: linear-gradient(135deg,#fb923c,#f97316); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+      .ms-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+      .ms-stat-card { padding: 14px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; text-align: center; }
+      .ms-stat-card .val { font-size: 26px; font-weight: 800; }
+      .ms-stat-card .lbl { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
+      .ms-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 14px; background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06); border-radius: 11px; margin-bottom: 14px; align-items: center; }
+      .ms-chip { padding: 5px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); color: var(--muted); }
+      .ms-chip.active { background: linear-gradient(135deg,#fb923c,#f97316); color: #fff; border-color: transparent; }
+      .ms-item { padding: 12px 14px; background: var(--panel); border: 1px solid rgba(255,255,255,.06); border-radius: 10px; margin-bottom: 8px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: all .15s; }
+      .ms-item:hover { border-color: rgba(251,146,60,.3); }
+      .ms-item.done { opacity: .6; }
+      .ms-status-pill { padding: 3px 9px; border-radius: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; flex-shrink: 0; }
+    </style>
+    
+    <div class="ms-wrap">
+      <div class="ms-hero">
+        <h2>🚨 Massnahmen</h2>
+        <p style="color:var(--muted);font-size:13px;margin:0">Alle Massnahmen aus Projekten, Aufgaben, Konzepten & Strategien</p>
+      </div>
+      
+      <!-- Stat-Karten -->
+      <div class="ms-stat-grid">
+        <div class="ms-stat-card"><div class="val" style="color:#86efac">${counts.active}</div><div class="lbl">Aktiv</div></div>
+        <div class="ms-stat-card"><div class="val" style="color:#a5b4fc">${counts.planned}</div><div class="lbl">Geplant</div></div>
+        <div class="ms-stat-card"><div class="val" style="color:var(--muted)">${counts.done}</div><div class="lbl">Erledigt</div></div>
+        <div class="ms-stat-card"><div class="val">${counts.all}</div><div class="lbl">Gesamt</div></div>
+      </div>
+      
+      <!-- Filter Status -->
+      <div class="ms-filter-bar">
+        <span style="font-size:11.5px;color:var(--muted);font-weight:600;margin-right:4px">Status:</span>
+        <span class="ms-chip ${filter === 'active' ? 'active' : ''}" onclick="setMeasureFilter('active')">✓ Aktiv (${counts.active})</span>
+        <span class="ms-chip ${filter === 'planned' ? 'active' : ''}" onclick="setMeasureFilter('planned')">⏳ Geplant (${counts.planned})</span>
+        <span class="ms-chip ${filter === 'done' ? 'active' : ''}" onclick="setMeasureFilter('done')">✔︎ Erledigt (${counts.done})</span>
+        <span class="ms-chip ${filter === 'all' ? 'active' : ''}" onclick="setMeasureFilter('all')">Alle (${counts.all})</span>
+      </div>
+      
+      <!-- Filter Kind -->
+      <div class="ms-filter-bar">
+        <span style="font-size:11.5px;color:var(--muted);font-weight:600;margin-right:4px">Quelle:</span>
+        <span class="ms-chip ${kindFilter === 'all' ? 'active' : ''}" onclick="setMeasureKind('all')">Alle (${kindCounts.all})</span>
+        <span class="ms-chip ${kindFilter === 'project' ? 'active' : ''}" onclick="setMeasureKind('project')">📁 Projekte (${kindCounts.project})</span>
+        <span class="ms-chip ${kindFilter === 'task' ? 'active' : ''}" onclick="setMeasureKind('task')">✅ Aufgaben (${kindCounts.task})</span>
+        <span class="ms-chip ${kindFilter === 'concept' ? 'active' : ''}" onclick="setMeasureKind('concept')">🧩 Konzepte (${kindCounts.concept})</span>
+        <span class="ms-chip ${kindFilter === 'strategy' ? 'active' : ''}" onclick="setMeasureKind('strategy')">🧭 Strategien (${kindCounts.strategy})</span>
+      </div>
+      
+      ${filtered.length === 0 ? `<div style="text-align:center;padding:60px 20px;color:var(--muted)">
+        <div style="font-size:64px;margin-bottom:14px">🚨</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Keine Massnahmen ${filter !== 'all' ? `mit Status "${filter === 'active' ? 'aktiv' : filter === 'planned' ? 'geplant' : 'erledigt'}"` : ''}</div>
+        <div style="font-size:13px;max-width:440px;margin:0 auto;line-height:1.5">Füge Massnahmen direkt in Projekten, Aufgaben, Konzepten oder Strategien hinzu. Sie erscheinen dann hier in der Übersicht.</div>
+      </div>` : `
+      
+      <div>
+        ${filtered.map(m => {
+          const colors = {
+            active: { bg: 'rgba(34,197,94,.06)', border: 'rgba(34,197,94,.25)', color: '#86efac', label: '✓ Aktiv' },
+            planned: { bg: 'rgba(99,102,241,.04)', border: 'rgba(99,102,241,.2)', color: '#a5b4fc', label: '⏳ Geplant' },
+            done: { bg: 'rgba(255,255,255,.02)', border: 'rgba(255,255,255,.06)', color: 'var(--muted)', label: '✔︎ Erledigt' },
+          };
+          const c = colors[m.status];
+          const dateStr = m.effectiveDate ? new Date(m.effectiveDate).toLocaleDateString('de-CH', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+          return `<div class="ms-item ${m.status === 'done' ? 'done' : ''}" style="border-left:3px solid ${c.color}" onclick="navigate('${m.route}','${m.parentId}')">
+            <span class="ms-status-pill" style="background:${c.color}22;color:${c.color}">${c.label}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13.5px;font-weight:600;line-height:1.4;${m.status === 'done' ? 'text-decoration:line-through' : ''}">${esc(m.text)}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap">
+                <span style="color:${m.parentColor}">${m.parentIcon} ${esc(m.parentTitle)}</span>
+                ${dateStr ? `<span>· 📅 ${m.status === 'planned' ? 'Ab' : 'Seit'} ${dateStr}</span>` : ''}
+              </div>
+            </div>
+            <div style="display:flex;gap:4px;flex-shrink:0" onclick="event.stopPropagation()">
+              ${m.status !== 'done' ? `<button onclick="toggleMeasureDone('${m.parentKind}','${m.parentId}','${m.id}')" title="Als erledigt markieren" style="background:rgba(34,197,94,.1);border:0;color:#86efac;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px">✓</button>` : `<button onclick="toggleMeasureDone('${m.parentKind}','${m.parentId}','${m.id}')" title="Wieder aktivieren" style="background:rgba(255,255,255,.06);border:0;color:var(--muted);padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px">↺</button>`}
+              <button onclick="if(confirm('Massnahme wirklich löschen?'))removeMeasure('${m.parentKind}','${m.parentId}','${m.id}')" title="Löschen" style="background:rgba(239,68,68,.1);border:0;color:#f87171;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px">×</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      `}
+    </div>
+  `;
+}
+window.viewMeasures = viewMeasures;
+
+window.setMeasureFilter = function(f) {
+  if (!APP.state.ui) APP.state.ui = {};
+  APP.state.ui.measuresFilter = f;
+  render();
+};
+window.setMeasureKind = function(k) {
+  if (!APP.state.ui) APP.state.ui = {};
+  APP.state.ui.measuresKind = k;
+  render();
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 🧩 KONZEPTOR — Umfassende Konzept-App
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -18171,6 +18518,8 @@ window.viewConceptDetail = function(id) {
       <div class="cd-tabs">
         ${tabs.map(t => `<button class="cd-tab ${tab === t.key ? 'active' : ''}" onclick="setConceptTab('${t.key}')">${t.label}</button>`).join('')}
       </div>
+      
+      ${renderMeasuresBlock('concept', c.id)}
       
       ${renderConceptTabContent(c, tab)}
     </div>
@@ -20781,6 +21130,8 @@ function viewTaskDetail(id) {
           </div>
         </div>
         
+        ${renderMeasuresBlock('task', id)}
+        
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
           <div class="tags mb-3">${tagsHtml}</div>
@@ -22385,6 +22736,8 @@ function viewProjectDetail(id) {
           defaultOpen: ((p.stakeholders||[]).length + (p.deadlines||[]).length + (p.statusUpdates||[]).length + (p.resources||[]).length + (p.learningGoals||[]).length) > 0,
           content: renderProjectHubTabs(p, id),
         })}
+        
+        ${renderMeasuresBlock('project', id)}
         
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
@@ -30903,6 +31256,8 @@ function viewStrategyDetail(id) {
           </div>
         </div>
         
+        ${renderMeasuresBlock('strategy', id)}
+        
         <div class="card mb-4">
           <h3>🎯 Meilensteine & Schritte (${milestones.length})</h3>
           <div class="subtitle">Definiere Meilensteine mit Deadlines. Deadlines erscheinen im Kalender.</div>
@@ -35108,7 +35463,59 @@ window._appPinSetupFirst = null;  // Erste Eingabe bei PIN-Setup (für Bestätig
 window._lockingApp = null;        // Welche App will gerade entsperrt werden
 
 // Liste der locked apps lesen
+// Storage-Strategie:
+// PRIMARY: APP.state.data.appLock = { pinHash, lockedApps[] } ← in Blob (cross-device)
+// MIRROR:  localStorage["quantus_app_pin"/"quantus_locked_apps"] ← schneller Zugriff vor Blob-Load
+// Wenn keine Daten in APP.state aber localStorage hat etwas → migriere
+
+function _getAppLockState() {
+  // Lazy-init der Struktur
+  if (!APP.state.data) APP.state.data = {};
+  if (!APP.state.data.appLock) APP.state.data.appLock = { pinHash: null, lockedApps: [] };
+  return APP.state.data.appLock;
+}
+
+function _mirrorToLocal(state) {
+  // Mirror nach localStorage damit beim nächsten Page-Load vor Blob-Sync schon was da ist
+  try {
+    if (state.pinHash) localStorage.setItem("quantus_app_pin", state.pinHash);
+    else localStorage.removeItem("quantus_app_pin");
+    localStorage.setItem("quantus_locked_apps", JSON.stringify(state.lockedApps || []));
+  } catch(e) {}
+}
+
+// Migration: falls localStorage Daten hat aber APP.state nicht, übernehmen
+function _migrateAppLockFromLocal() {
+  if (!APP.state.data) return;
+  const state = _getAppLockState();
+  let changed = false;
+  if (!state.pinHash) {
+    const lsPin = localStorage.getItem("quantus_app_pin");
+    if (lsPin) { state.pinHash = lsPin; changed = true; }
+  }
+  if (!Array.isArray(state.lockedApps) || state.lockedApps.length === 0) {
+    try {
+      const raw = localStorage.getItem("quantus_locked_apps");
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr) && arr.length > 0) { state.lockedApps = arr; changed = true; }
+      }
+    } catch(e) {}
+  }
+  if (changed) scheduleSave();
+}
+// Beim Laden migrieren (sobald APP.state.data verfügbar)
+if (typeof window !== 'undefined') {
+  // Defer bis APP.state.data sicher existiert
+  setTimeout(() => { try { _migrateAppLockFromLocal(); } catch(e) {} }, 100);
+}
+
 function getLockedApps() {
+  // Primary: APP.state.data; Fallback: localStorage (z.B. wenn Blob noch nicht geladen)
+  try {
+    const state = _getAppLockState();
+    if (Array.isArray(state.lockedApps)) return state.lockedApps;
+  } catch(e) {}
   try {
     const raw = localStorage.getItem("quantus_locked_apps");
     if (!raw) return [];
@@ -35118,11 +35525,42 @@ function getLockedApps() {
 }
 
 function setLockedApps(arr) {
-  localStorage.setItem("quantus_locked_apps", JSON.stringify(arr || []));
+  const state = _getAppLockState();
+  state.lockedApps = arr || [];
+  _mirrorToLocal(state);
+  scheduleSave();
 }
 
 function hasAppPin() {
+  try {
+    const state = _getAppLockState();
+    if (state.pinHash) return true;
+  } catch(e) {}
+  // Fallback localStorage
   return !!localStorage.getItem("quantus_app_pin");
+}
+
+function getStoredPinHash() {
+  try {
+    const state = _getAppLockState();
+    if (state.pinHash) return state.pinHash;
+  } catch(e) {}
+  return localStorage.getItem("quantus_app_pin");
+}
+
+function setStoredPinHash(hash) {
+  const state = _getAppLockState();
+  state.pinHash = hash || null;
+  _mirrorToLocal(state);
+  scheduleSave();
+}
+
+function clearStoredPin() {
+  const state = _getAppLockState();
+  state.pinHash = null;
+  state.lockedApps = [];
+  _mirrorToLocal(state);
+  scheduleSave();
 }
 
 // Prüft: ist App gesperrt UND noch nicht entsperrt UND PIN existiert?
@@ -35196,7 +35634,7 @@ window.appPinDigit = function(appKey, d) {
   window._appPinInput = (window._appPinInput || "") + d;
   
   if (window._appPinInput.length === 4) {
-    const storedPin = localStorage.getItem("quantus_app_pin");
+    const storedPin = getStoredPinHash();
     const inputHash = hashPin(window._appPinInput);
     
     if (storedPin === inputHash) {
@@ -35293,11 +35731,11 @@ window.appPinSetupDigit = function(d) {
     window._appPinSetupConfirm = next;
     if (next.length === 4) {
       if (next === window._appPinSetupFirst) {
-        localStorage.setItem("quantus_app_pin", hashPin(next));
+        setStoredPinHash(hashPin(next));
         window._appPinSetupFirst = null;
         window._appPinSetupConfirm = null;
         closeAppPinSetup();
-        toast("ok", "🔒 PIN gesetzt", "Du kannst jetzt Apps schützen");
+        toast("ok", "🔒 PIN gesetzt", "Synchronisiert über alle Geräte");
         render();
       } else {
         toast("warn", "PINs stimmen nicht überein");
@@ -35336,8 +35774,7 @@ window.closeAppPinSetup = function() {
 // PIN zurücksetzen
 window.resetAppPin = function() {
   if (!confirm("PIN wirklich zurücksetzen?\n\nAlle App-Sperren werden deaktiviert und du musst einen neuen PIN festlegen, wenn du wieder Apps schützen willst. Deine Daten bleiben erhalten.")) return;
-  localStorage.removeItem("quantus_app_pin");
-  localStorage.removeItem("quantus_locked_apps");
+  clearStoredPin();
   window._unlockedApps = new Set();
   toast("ok", "🔄 PIN zurückgesetzt");
   render();
@@ -35348,7 +35785,7 @@ window.changeAppPin = function() {
   if (!hasAppPin()) { openAppPinSetup(); return; }
   const oldPin = prompt("Aktuellen PIN eingeben:");
   if (!oldPin) return;
-  if (hashPin(oldPin) !== localStorage.getItem("quantus_app_pin")) {
+  if (hashPin(oldPin) !== getStoredPinHash()) {
     toast("warn", "Falscher PIN");
     return;
   }
@@ -35416,7 +35853,7 @@ window.renderSecuritySettingsTab = function() {
       <div style="margin-top:14px;padding:10px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15);border-radius:8px;font-size:11.5px;color:var(--muted);line-height:1.6">
         💡 <strong style="color:var(--text)">Hinweise:</strong>
         <ul style="margin:6px 0 0 18px;padding:0">
-          <li>PIN wird lokal in deinem Browser gespeichert (nicht in der Cloud-Sync enthalten)</li>
+          <li>PIN und Sperren werden in der Cloud-Sync gespeichert und sind auf allen Geräten gleich</li>
           <li>Dashboard, Apps-Übersicht und Einstellungen sind nie sperrbar</li>
           <li>Bei Verlust des PINs kannst du ihn zurücksetzen — deine Daten bleiben erhalten</li>
           <li>Das alte Budget-PIN-System (falls separat gesetzt) läuft parallel weiter</li>
@@ -78906,6 +79343,29 @@ console.log('📚 Leseliste geladen');
   window.mhCloseEditor = function() {
     const overlay = document.getElementById("mhEditorOverlay");
     if (overlay) overlay.classList.remove("show");
+    
+    // Cleanup: Orphan-Files aufräumen wenn Editor ohne Save geschlossen wird
+    // Vergleiche aktuellen Editor-State mit gespeicherter Email
+    if (_mhEditing) {
+      const savedEmail = APP.state.data.entities.emails?.[_mhEditing];
+      const savedPaths = new Set((savedEmail?.files || []).map(f => f.storagePath).filter(Boolean));
+      
+      _mhFiles.forEach(f => {
+        // Datei wurde hochgeladen aber ist nicht in der gespeicherten Email → Orphan
+        if (f.storagePath && !savedPaths.has(f.storagePath) && typeof window.deleteFromFirebase === "function") {
+          window.deleteFromFirebase(f.storagePath).catch(() => {});
+        }
+      });
+    }
+    // Reset state für nächstes Mal
+    _mhEditing = null;
+    _mhFiles = [];
+    _mhFromPersonId = null;
+    _mhToPersonIds = [];
+    _mhCcPersonIds = [];
+    _mhLinkedTasks = [];
+    _mhLinkedProjects = [];
+    _mhLinkedOrgs = [];
   };
   
   function renderSinglePersonPicker(slot, currentId) {
@@ -79073,34 +79533,109 @@ console.log('📚 Leseliste geladen');
   
   // ─── Files ───
   function renderFilesList() {
-    return _mhFiles.map((f, i) => 
-      `<div class="mh-link-pill" style="justify-content:space-between">
-        <span>📎 ${mhEsc(f.name)} <span style="color:var(--muted);font-size:11px">${f.size ? "("+(f.size/1024).toFixed(1)+" KB)" : ""}</span></span>
-        <button onclick="mhRemoveFile(${i})" style="background:none;border:0;color:#f87171;cursor:pointer">×</button>
-      </div>`
-    ).join("");
+    return _mhFiles.map((f, i) => {
+      const isUploading = f._uploading;
+      const pct = f._uploadProgress;
+      const hasFailed = !f._uploading && !f.url && !f.storagePath;
+      const sizeKB = f.size ? (f.size/1024).toFixed(1)+" KB" : "";
+      return `<div class="mh-link-pill" style="justify-content:space-between;${isUploading ? 'opacity:.7' : ''}${hasFailed ? 'border-color:#f87171' : ''}">
+        <span>${isUploading ? '⏳' : (hasFailed ? '⚠️' : '📎')} ${mhEsc(f.name)} 
+          <span style="color:var(--muted);font-size:11px">
+            ${sizeKB ? '('+sizeKB+')' : ''}
+            ${isUploading ? '<span style="color:#a5b4fc"> • lädt'+(pct!=null ? ' '+pct+'%' : '...')+'</span>' : ''}
+            ${hasFailed ? '<span style="color:#f87171"> • Fehler</span>' : ''}
+            ${!isUploading && f.url ? '<span style="color:#86efac"> ✓</span>' : ''}
+          </span>
+        </span>
+        <button onclick="mhRemoveFile(${i})" style="background:none;border:0;color:#f87171;cursor:pointer" ${isUploading ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>×</button>
+      </div>`;
+    }).join("");
   }
   
   window.mhHandleFileSelect = async function(e) {
     const files = Array.from(e.target.files || []);
-    for (const file of files) {
-      try {
-        const path = "mailhub/" + Date.now() + "_" + file.name.replace(/[^\w.-]/g, "_");
-        let url = null;
-        if (typeof window.uploadToFirebase === "function" && window.firebaseStorage) {
-          url = await window.uploadToFirebase(file, path);
-        }
-        _mhFiles.push({ name: file.name, size: file.size, type: file.type, url: url || null, storagePath: url ? path : null });
-      } catch(err) {
-        console.warn("Upload failed for", file.name, err);
-        _mhFiles.push({ name: file.name, size: file.size, type: file.type, url: null });
-      }
+    e.target.value = "";  // Sofort zurücksetzen für erneute Auswahl
+    
+    if (files.length === 0) return;
+    
+    // Firebase verfügbar?
+    if (!window.firebaseStorage || typeof window.uploadToFirebase !== "function") {
+      mhToast("error", "Firebase nicht verfügbar", "Datei kann nicht hochgeladen werden. Lade die Seite neu oder prüfe die Internetverbindung.");
+      return;
     }
-    e.target.value = "";
-    document.getElementById("mhFilesList").innerHTML = renderFilesList();
+    
+    // Stelle sicher dass wir eine Email-ID haben — auch bei neuen Emails (für saubere Pfad-Zuordnung)
+    if (!_mhEditing) {
+      _mhEditing = mhId("eml");
+    }
+    const emailId = _mhEditing;
+    
+    // UI: Upload-Indicator
+    const listEl = document.getElementById("mhFilesList");
+    
+    for (const file of files) {
+      // Max 50 MB
+      if (file.size > 50 * 1024 * 1024) {
+        mhToast("error", "Zu groß", file.name + " überschreitet 50 MB");
+        continue;
+      }
+      
+      // Dedup: gleiche Datei (Name+Size) innerhalb der letzten 5 Sek nicht doppelt
+      const dup = _mhFiles.find(f => f.name === file.name && f.size === file.size && f.uploadedAt && (Date.now() - new Date(f.uploadedAt).getTime() < 5000));
+      if (dup) {
+        console.warn("[mhUpload] Duplikat übersprungen:", file.name);
+        continue;
+      }
+      
+      const fileId = "f_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+      const safeName = file.name.replace(/[^\w.-]/g, "_");
+      const path = "attachments/email/" + emailId + "/" + fileId + "_" + safeName;
+      
+      // Platzhalter in der Liste mit Status "Uploading..."
+      const placeholderIdx = _mhFiles.length;
+      _mhFiles.push({
+        id: fileId,
+        name: file.name,
+        originalName: file.name,
+        size: file.size,
+        type: file.type || "application/octet-stream",
+        storagePath: path,
+        url: null,
+        uploadedAt: new Date().toISOString(),
+        _uploading: true,
+      });
+      if (listEl) listEl.innerHTML = renderFilesList();
+      
+      try {
+        const url = await window.uploadToFirebase(file, path, (pct) => {
+          // Optional: Progress in Liste anzeigen
+          const f = _mhFiles[placeholderIdx];
+          if (f) f._uploadProgress = pct;
+          if (listEl) listEl.innerHTML = renderFilesList();
+        });
+        
+        // Erfolg
+        _mhFiles[placeholderIdx].url = url;
+        _mhFiles[placeholderIdx]._uploading = false;
+        delete _mhFiles[placeholderIdx]._uploadProgress;
+        mhToast("ok", "📎 Hochgeladen", file.name);
+      } catch(err) {
+        console.error("[mhUpload] Fehlgeschlagen für", file.name, err);
+        // Fehlgeschlagen: Eintrag rausnehmen
+        _mhFiles.splice(placeholderIdx, 1);
+        mhToast("error", "Upload fehlgeschlagen", file.name + ": " + (err?.message || "Unbekannter Fehler"));
+      }
+      if (listEl) listEl.innerHTML = renderFilesList();
+    }
   };
   
   window.mhRemoveFile = function(idx) {
+    const f = _mhFiles[idx];
+    if (!f) return;
+    // Aus Firebase löschen falls hochgeladen
+    if (f.storagePath && typeof window.deleteFromFirebase === "function") {
+      window.deleteFromFirebase(f.storagePath).catch(err => console.warn("Firebase delete failed:", err));
+    }
     _mhFiles.splice(idx, 1);
     document.getElementById("mhFilesList").innerHTML = renderFilesList();
   };
@@ -79118,9 +79653,24 @@ console.log('📚 Leseliste geladen');
       return;
     }
     
+    // Falls noch Uploads laufen → blockieren
+    const stillUploading = _mhFiles.some(f => f._uploading);
+    if (stillUploading) {
+      mhToast("warn", "Upload läuft noch", "Bitte warte bis alle Dateien hochgeladen sind");
+      return;
+    }
+    
+    // Files säubern: _uploading/_uploadProgress entfernen, fehlgeschlagene rausfiltern
+    const cleanFiles = _mhFiles
+      .filter(f => f.url && f.storagePath)  // Nur erfolgreich hochgeladene
+      .map(f => {
+        const { _uploading, _uploadProgress, ...clean } = f;
+        return clean;
+      });
+    
     const now = new Date().toISOString();
     const id = _mhEditing || mhId("eml");
-    const isNew = !_mhEditing;
+    const isNew = !APP.state.data.entities.emails[id];
     
     APP.state.data.entities.emails[id] = {
       ...(APP.state.data.entities.emails[id] || {}),
@@ -79134,7 +79684,7 @@ console.log('📚 Leseliste geladen');
       linkedNotes: APP.state.data.entities.emails[id]?.linkedNotes || [],
       linkedIdeas: APP.state.data.entities.emails[id]?.linkedIdeas || [],
       tags: APP.state.data.entities.emails[id]?.tags || [],
-      files: [..._mhFiles],
+      files: cleanFiles,
       read: isNew ? false : (APP.state.data.entities.emails[id]?.read !== false),
       archived: APP.state.data.entities.emails[id]?.archived || false,
       starred: APP.state.data.entities.emails[id]?.starred || false,
