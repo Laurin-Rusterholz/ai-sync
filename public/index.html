@@ -13183,6 +13183,21 @@ function renderMain() {
     if (route !== "journal") { const c = document.getElementById("journalBookletContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
   } catch(e) {}
   
+  // ═══ Globaler App-Lock-Check ═══
+  // Wenn App in der locked-Liste ist UND PIN gesetzt UND App noch nicht entsperrt → Lock-Screen
+  if (route !== "settings" && route !== "dashboard" && route !== "apps") {
+    try {
+      if (typeof isAppLocked === "function" && isAppLocked(route)) {
+        html = renderAppLockScreen(route, false);
+        const pageContent = document.getElementById("pageContent") || document.querySelector("#main");
+        if (pageContent) pageContent.innerHTML = html;
+        if (typeof renderSidebar === "function") renderSidebar();
+        if (typeof renderAppNav === "function") renderAppNav();
+        return;
+      }
+    } catch(e) { console.error("App-lock check error:", e); }
+  }
+  
   switch (route) {
     case "dashboard": html = viewDashboard(); break;
     case "apps": html = viewApps(); break;
@@ -35083,6 +35098,377 @@ window.budgetLock = function() {
   render();
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔒 GENERIC APP LOCK — Settings-konfigurierbarer PIN-Schutz für Apps
+// ═══════════════════════════════════════════════════════════════════════════
+
+window._unlockedApps = new Set();  // Session-only unlock-Status
+window._appPinInput = "";
+window._appPinSetupFirst = null;  // Erste Eingabe bei PIN-Setup (für Bestätigung)
+window._lockingApp = null;        // Welche App will gerade entsperrt werden
+
+// Liste der locked apps lesen
+function getLockedApps() {
+  try {
+    const raw = localStorage.getItem("quantus_locked_apps");
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch(e) { return []; }
+}
+
+function setLockedApps(arr) {
+  localStorage.setItem("quantus_locked_apps", JSON.stringify(arr || []));
+}
+
+function hasAppPin() {
+  return !!localStorage.getItem("quantus_app_pin");
+}
+
+// Prüft: ist App gesperrt UND noch nicht entsperrt UND PIN existiert?
+window.isAppLocked = function(appKey) {
+  if (!hasAppPin()) return false;
+  const locked = getLockedApps();
+  if (!locked.includes(appKey)) return false;
+  return !window._unlockedApps.has(appKey);
+};
+
+// Toggle App-Lock im Settings
+window.toggleAppLock = function(appKey) {
+  // Beim ersten Aktivieren muss ein PIN gesetzt werden
+  if (!hasAppPin()) {
+    toast("warn", "PIN erforderlich", "Lege erst einen PIN fest");
+    openAppPinSetup();
+    return;
+  }
+  const locked = getLockedApps();
+  const idx = locked.indexOf(appKey);
+  if (idx >= 0) {
+    locked.splice(idx, 1);
+    window._unlockedApps.delete(appKey);
+  } else {
+    locked.push(appKey);
+  }
+  setLockedApps(locked);
+  render();
+};
+
+// Lock-Screen für beliebige App (universal)
+window.renderAppLockScreen = function(appKey, wrongAttempt) {
+  const allApps = getAllApps();
+  const app = allApps.find(a => a.key === appKey) || { icon: "🔒", label: appKey };
+  const pinDigits = (window._appPinInput || "").length;
+  
+  return `<div style="min-height:calc(100vh - 100px);display:flex;align-items:center;justify-content:center;padding:24px">
+    <div style="max-width:380px;width:100%;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:32px;text-align:center">
+      <div style="font-size:54px;margin-bottom:14px">🔒</div>
+      <div style="font-size:34px;margin-bottom:8px">${app.icon}</div>
+      <h1 style="font-size:20px;font-weight:700;margin:0 0 6px;letter-spacing:-.02em">${esc(app.label)} gesperrt</h1>
+      <p style="font-size:12.5px;color:var(--muted);margin:0 0 22px;line-height:1.5">Gib deinen 4-stelligen PIN ein um diese App zu öffnen.</p>
+      
+      <div style="display:flex;gap:10px;justify-content:center;margin-bottom:${wrongAttempt ? "10" : "22"}px">
+        ${[0,1,2,3].map(i => `<div style="width:46px;height:54px;border-radius:10px;background:${pinDigits > i ? 'linear-gradient(135deg,#a855f7,#ec4899)' : 'rgba(255,255,255,.04)'};border:1px solid ${pinDigits > i ? '#a855f7' : 'rgba(255,255,255,.1)'};display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff">${pinDigits > i ? '●' : ''}</div>`).join('')}
+      </div>
+      
+      ${wrongAttempt ? `<div style="color:#f87171;font-size:12.5px;margin-bottom:14px;animation:shake .4s">⚠️ Falscher PIN</div>` : ""}
+      
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+        ${[1,2,3,4,5,6,7,8,9].map(n => `<button onclick="appPinDigit('${appKey}',${n})" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:22px;font-weight:600;cursor:pointer">${n}</button>`).join('')}
+        <button onclick="appPinClear('${appKey}')" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:13px;cursor:pointer">CLR</button>
+        <button onclick="appPinDigit('${appKey}',0)" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:22px;font-weight:600;cursor:pointer">0</button>
+        <button onclick="appPinBackspace('${appKey}')" style="padding:18px 0;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:16px;cursor:pointer">⌫</button>
+      </div>
+      
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;font-size:11.5px">
+        <button onclick="navigate('dashboard')" style="background:none;border:0;color:var(--muted);cursor:pointer;text-decoration:underline">← Zum Dashboard</button>
+        <span style="color:var(--muted)">·</span>
+        <button onclick="navigate('settings')" style="background:none;border:0;color:var(--muted);cursor:pointer;text-decoration:underline">⚙️ Einstellungen</button>
+      </div>
+    </div>
+  </div>
+  <style>
+    @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+  </style>`;
+};
+
+window.appPinDigit = function(appKey, d) {
+  if ((window._appPinInput || "").length >= 4) return;
+  window._appPinInput = (window._appPinInput || "") + d;
+  
+  if (window._appPinInput.length === 4) {
+    const storedPin = localStorage.getItem("quantus_app_pin");
+    const inputHash = hashPin(window._appPinInput);
+    
+    if (storedPin === inputHash) {
+      window._unlockedApps.add(appKey);
+      window._appPinInput = "";
+      toast("ok", "🔓 Entsperrt");
+      render();
+    } else {
+      window._appPinInput = "";
+      const main = document.getElementById("pageContent") || document.querySelector("#main");
+      if (main) main.innerHTML = renderAppLockScreen(appKey, true);
+      setTimeout(() => {
+        const m2 = document.getElementById("pageContent") || document.querySelector("#main");
+        if (m2) m2.innerHTML = renderAppLockScreen(appKey, false);
+      }, 1200);
+    }
+  } else {
+    const main = document.getElementById("pageContent") || document.querySelector("#main");
+    if (main) main.innerHTML = renderAppLockScreen(appKey, false);
+  }
+};
+
+window.appPinBackspace = function(appKey) {
+  window._appPinInput = (window._appPinInput || "").slice(0, -1);
+  const main = document.getElementById("pageContent") || document.querySelector("#main");
+  if (main) main.innerHTML = renderAppLockScreen(appKey, false);
+};
+
+window.appPinClear = function(appKey) {
+  window._appPinInput = "";
+  const main = document.getElementById("pageContent") || document.querySelector("#main");
+  if (main) main.innerHTML = renderAppLockScreen(appKey, false);
+};
+
+// PIN-Setup-Modal (für erstmalige Konfiguration oder Reset)
+window.openAppPinSetup = function() {
+  window._appPinSetupFirst = null;
+  window._appPinSetupConfirm = null;
+  let overlay = document.getElementById("appPinSetupOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "appPinSetupOverlay";
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(9,9,11,.85);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(8px);padding:20px";
+    document.body.appendChild(overlay);
+  }
+  renderAppPinSetupModal();
+  overlay.onclick = (e) => { if (e.target === overlay) closeAppPinSetup(); };
+};
+
+function renderAppPinSetupModal() {
+  const overlay = document.getElementById("appPinSetupOverlay");
+  if (!overlay) return;
+  
+  const firstFull = (window._appPinSetupFirst || "").length === 4;
+  const step = firstFull ? "confirm" : "first";
+  const currentInput = firstFull ? (window._appPinSetupConfirm || "") : (window._appPinSetupFirst || "");
+  const digits = currentInput.length;
+  
+  overlay.innerHTML = `<div style="background:#0f0f17;border:1px solid rgba(168,85,247,.3);border-radius:18px;max-width:380px;width:100%;padding:28px;text-align:center" onclick="event.stopPropagation()">
+    <div style="font-size:48px;margin-bottom:10px">🔒</div>
+    <h2 style="font-size:18px;font-weight:800;margin:0 0 6px">${step === "confirm" ? "PIN bestätigen" : "PIN festlegen"}</h2>
+    <p style="font-size:12.5px;color:var(--muted);margin:0 0 22px;line-height:1.5">${step === "confirm" ? "Gib denselben PIN nochmal ein zur Bestätigung." : "Wähle einen 4-stelligen PIN um deine geschützten Apps zu sperren."}</p>
+    
+    <div style="display:flex;gap:10px;justify-content:center;margin-bottom:22px">
+      ${[0,1,2,3].map(i => `<div style="width:46px;height:54px;border-radius:10px;background:${digits > i ? 'linear-gradient(135deg,#a855f7,#ec4899)' : 'rgba(255,255,255,.04)'};border:1px solid ${digits > i ? '#a855f7' : 'rgba(255,255,255,.1)'};display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff">${digits > i ? '●' : ''}</div>`).join('')}
+    </div>
+    
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+      ${[1,2,3,4,5,6,7,8,9].map(n => `<button onclick="appPinSetupDigit(${n})" style="padding:16px 0;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:20px;font-weight:600;cursor:pointer">${n}</button>`).join('')}
+      <button onclick="appPinSetupClear()" style="padding:16px 0;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:12px;cursor:pointer">CLR</button>
+      <button onclick="appPinSetupDigit(0)" style="padding:16px 0;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--text);font-size:20px;font-weight:600;cursor:pointer">0</button>
+      <button onclick="appPinSetupBackspace()" style="padding:16px 0;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--muted);font-size:14px;cursor:pointer">⌫</button>
+    </div>
+    
+    <button onclick="closeAppPinSetup()" style="background:none;border:0;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline">Abbrechen</button>
+  </div>`;
+}
+
+window.appPinSetupDigit = function(d) {
+  // Logik: Solange _appPinSetupFirst weniger als 4 Zeichen hat → an _appPinSetupFirst anhängen
+  //        Sobald 4 Zeichen → in confirm-Phase, _appPinSetupConfirm sammelt
+  const firstFull = (window._appPinSetupFirst || "").length === 4;
+  
+  if (!firstFull) {
+    const next = (window._appPinSetupFirst || "") + d;
+    window._appPinSetupFirst = next;
+    if (next.length === 4) {
+      window._appPinSetupConfirm = "";
+    }
+    renderAppPinSetupModal();
+  } else {
+    const next = (window._appPinSetupConfirm || "") + d;
+    if (next.length > 4) return;
+    window._appPinSetupConfirm = next;
+    if (next.length === 4) {
+      if (next === window._appPinSetupFirst) {
+        localStorage.setItem("quantus_app_pin", hashPin(next));
+        window._appPinSetupFirst = null;
+        window._appPinSetupConfirm = null;
+        closeAppPinSetup();
+        toast("ok", "🔒 PIN gesetzt", "Du kannst jetzt Apps schützen");
+        render();
+      } else {
+        toast("warn", "PINs stimmen nicht überein");
+        window._appPinSetupFirst = null;
+        window._appPinSetupConfirm = null;
+        renderAppPinSetupModal();
+      }
+    } else {
+      renderAppPinSetupModal();
+    }
+  }
+};
+
+window.appPinSetupBackspace = function() {
+  const firstFull = (window._appPinSetupFirst || "").length === 4;
+  if (!firstFull) {
+    window._appPinSetupFirst = (window._appPinSetupFirst || "").slice(0, -1);
+  } else {
+    window._appPinSetupConfirm = (window._appPinSetupConfirm || "").slice(0, -1);
+  }
+  renderAppPinSetupModal();
+};
+
+window.appPinSetupClear = function() {
+  window._appPinSetupFirst = null;
+  window._appPinSetupConfirm = null;
+  renderAppPinSetupModal();
+};
+
+window.closeAppPinSetup = function() {
+  document.getElementById("appPinSetupOverlay")?.remove();
+  window._appPinSetupFirst = null;
+  window._appPinSetupConfirm = null;
+};
+
+// PIN zurücksetzen
+window.resetAppPin = function() {
+  if (!confirm("PIN wirklich zurücksetzen?\n\nAlle App-Sperren werden deaktiviert und du musst einen neuen PIN festlegen, wenn du wieder Apps schützen willst. Deine Daten bleiben erhalten.")) return;
+  localStorage.removeItem("quantus_app_pin");
+  localStorage.removeItem("quantus_locked_apps");
+  window._unlockedApps = new Set();
+  toast("ok", "🔄 PIN zurückgesetzt");
+  render();
+};
+
+// PIN ändern (mit Abfrage des alten PINs)
+window.changeAppPin = function() {
+  if (!hasAppPin()) { openAppPinSetup(); return; }
+  const oldPin = prompt("Aktuellen PIN eingeben:");
+  if (!oldPin) return;
+  if (hashPin(oldPin) !== localStorage.getItem("quantus_app_pin")) {
+    toast("warn", "Falscher PIN");
+    return;
+  }
+  openAppPinSetup();
+};
+
+// Alle Apps wieder sperren (Session-Lock)
+window.lockAllApps = function() {
+  window._unlockedApps = new Set();
+  toast("ok", "🔒 Alle Apps gesperrt");
+  render();
+};
+
+// Settings-UI für Passwortschutz
+window.renderSecuritySettingsTab = function() {
+  const allApps = typeof getAllApps === "function" ? getAllApps() : [];
+  const lockedKeys = getLockedApps();
+  const unlockedCount = window._unlockedApps.size;
+  const hasPin = hasAppPin();
+  
+  // Dashboard, Apps und Settings sind nie sperrbar
+  const lockable = allApps.filter(a => !["dashboard", "apps", "settings"].includes(a.key));
+  
+  // Suche-Filter
+  const search = (window._securitySearch || "").toLowerCase();
+  const filtered = search ? lockable.filter(a => 
+    a.key.toLowerCase().includes(search) || 
+    (a.label || "").toLowerCase().includes(search) ||
+    (a.desc || "").toLowerCase().includes(search)
+  ) : lockable;
+  
+  return `
+    <div class="form">
+      <h4 style="margin-bottom:8px;display:flex;align-items:center;gap:8px">🔒 Passwortschutz <span style="font-size:11px;font-weight:400;color:var(--muted);background:rgba(168,85,247,.1);padding:2px 8px;border-radius:8px">${lockedKeys.length} App${lockedKeys.length !== 1 ? "s" : ""} geschützt</span></h4>
+      <div class="mini mb-3" style="line-height:1.5">Wähle Apps die nur nach PIN-Eingabe geöffnet werden können. Der PIN gilt für alle geschützten Apps. Eine einmal entsperrte App bleibt bis zum Neuladen entsperrt.</div>
+      
+      <!-- PIN-Status -->
+      <div style="padding:14px;background:${hasPin ? 'rgba(34,197,94,.05)' : 'rgba(251,191,36,.05)'};border:1px solid ${hasPin ? 'rgba(34,197,94,.2)' : 'rgba(251,191,36,.3)'};border-radius:10px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:24px">${hasPin ? '✅' : '⚠️'}</span>
+          <div style="flex:1;min-width:200px">
+            <div style="font-weight:700;font-size:13px">${hasPin ? "PIN ist gesetzt" : "Kein PIN festgelegt"}</div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:2px">${hasPin ? "Du kannst Apps unten zum Sperren auswählen." : "Lege erst einen PIN fest um Apps zu schützen."}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${hasPin ? `
+              <button class="btn sm" onclick="changeAppPin()">🔄 PIN ändern</button>
+              <button class="btn sm" onclick="lockAllApps()" ${unlockedCount === 0 ? 'disabled style="opacity:.5"' : ''}>🔒 Alle sperren${unlockedCount > 0 ? ` (${unlockedCount})` : ''}</button>
+              <button class="btn sm" style="background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.3)" onclick="resetAppPin()">🗑 PIN zurücksetzen</button>
+            ` : `
+              <button class="btn primary" onclick="openAppPinSetup()">+ PIN festlegen</button>
+            `}
+          </div>
+        </div>
+      </div>
+      
+      <!-- Suche -->
+      ${lockable.length > 8 ? `
+        <input type="text" placeholder="🔍 App suchen..." value="${esc(window._securitySearch || '')}" oninput="window._securitySearch=this.value;document.getElementById('securityAppList').innerHTML=renderSecurityAppList()" style="width:100%;padding:9px 14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:10px;box-sizing:border-box" />
+      ` : ''}
+      
+      <!-- App-Liste -->
+      <div id="securityAppList">${renderSecurityAppList()}</div>
+      
+      <div style="margin-top:14px;padding:10px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15);border-radius:8px;font-size:11.5px;color:var(--muted);line-height:1.6">
+        💡 <strong style="color:var(--text)">Hinweise:</strong>
+        <ul style="margin:6px 0 0 18px;padding:0">
+          <li>PIN wird lokal in deinem Browser gespeichert (nicht in der Cloud-Sync enthalten)</li>
+          <li>Dashboard, Apps-Übersicht und Einstellungen sind nie sperrbar</li>
+          <li>Bei Verlust des PINs kannst du ihn zurücksetzen — deine Daten bleiben erhalten</li>
+          <li>Das alte Budget-PIN-System (falls separat gesetzt) läuft parallel weiter</li>
+        </ul>
+      </div>
+    </div>
+  `;
+};
+
+window.renderSecurityAppList = function() {
+  const allApps = typeof getAllApps === "function" ? getAllApps() : [];
+  const lockedKeys = getLockedApps();
+  const unlockedSet = window._unlockedApps || new Set();
+  const hasPin = hasAppPin();
+  const search = (window._securitySearch || "").toLowerCase();
+  
+  const lockable = allApps.filter(a => !["dashboard", "apps", "settings"].includes(a.key));
+  const filtered = search ? lockable.filter(a => 
+    a.key.toLowerCase().includes(search) || 
+    (a.label || "").toLowerCase().includes(search) ||
+    (a.desc || "").toLowerCase().includes(search)
+  ) : lockable;
+  
+  // Sortierung: gesperrte zuerst, dann alphabetisch
+  filtered.sort((a, b) => {
+    const aLocked = lockedKeys.includes(a.key) ? 0 : 1;
+    const bLocked = lockedKeys.includes(b.key) ? 0 : 1;
+    if (aLocked !== bLocked) return aLocked - bLocked;
+    return (a.label || "").localeCompare(b.label || "");
+  });
+  
+  if (filtered.length === 0) {
+    return '<div style="text-align:center;padding:30px;color:var(--muted);font-size:13px">Keine Apps gefunden</div>';
+  }
+  
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;max-height:420px;overflow-y:auto;padding-right:4px">
+    ${filtered.map(app => {
+      const isLocked = lockedKeys.includes(app.key);
+      const isUnlocked = unlockedSet.has(app.key);
+      return `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:${isLocked ? 'rgba(168,85,247,.06)' : 'rgba(255,255,255,.02)'};border:1px solid ${isLocked ? 'rgba(168,85,247,.25)' : 'rgba(255,255,255,.06)'};border-radius:8px;cursor:${hasPin ? 'pointer' : 'not-allowed'};opacity:${hasPin ? '1' : '.5'};transition:all .15s">
+        <input type="checkbox" ${isLocked ? 'checked' : ''} ${hasPin ? '' : 'disabled'} onchange="toggleAppLock('${app.key}')" style="cursor:${hasPin ? 'pointer' : 'not-allowed'};flex-shrink:0" />
+        <span style="font-size:20px;flex-shrink:0">${app.icon}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px;line-height:1.2">${esc(app.label)}</div>
+          ${app.desc ? `<div style="font-size:10.5px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(app.desc)}</div>` : ''}
+        </div>
+        ${isLocked ? `<span style="font-size:10px;font-weight:700;padding:3px 7px;border-radius:8px;background:${isUnlocked ? 'rgba(34,197,94,.15)' : 'rgba(168,85,247,.15)'};color:${isUnlocked ? '#86efac' : '#d8b4fe'};flex-shrink:0">${isUnlocked ? '🔓 offen' : '🔒'}</span>` : ''}
+      </label>`;
+    }).join('')}
+  </div>`;
+};
+
 function renderBudgetPinConfirm() {
   const pinDigits = (window._budgetPinInput || "").length;
   
@@ -47971,6 +48357,7 @@ async function init() {
     <div class="tab" data-tab="notifications">🔔 ${t("notifications")}</div>
     <div class="tab" data-tab="workschedule">⏰ ${t("work_schedule")}</div>
     <div class="tab" data-tab="shortcuts">⌨️ ${t("shortcuts")}</div>
+    <div class="tab" data-tab="security">🔒 Passwortschutz</div>
     <div class="tab" data-tab="importexport">📦 ${t("import_export")}</div>
     <div class="tab" data-tab="language">🌐 ${t("language")}</div>
   </div>
@@ -48307,6 +48694,11 @@ async function init() {
         </div>
       </div>
     </div>
+    
+    <div id="securityTab" class="settings-tab-content hidden">
+      ${renderSecuritySettingsTab()}
+    </div>
+    
     <div id="importexportTab" class="settings-tab-content hidden">
       <div class="form">
         <div class="col-12">
