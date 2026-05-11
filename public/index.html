@@ -7227,6 +7227,7 @@ for (const u of Object.values(e.updates)) {
     s.milestones = s.milestones || [];
     s.deadline = s.deadline || null;
     s.measures = Array.isArray(s.measures) ? s.measures : []; // 🚨 Massnahmen
+    s.notebookId = s.notebookId || null; // 📓 Verknüpftes Notizbuch
   }
   
   // Normalize programs
@@ -23411,6 +23412,97 @@ window.projDeleteNote = function(projectId, noteId) {
   render();
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 📓 STRATEGY NOTEBOOK — Notizen direkt in Strategien
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderStrategyNotebookSection(s, id) {
+  const e = APP.state.data.entities;
+  const notebook = s.notebookId ? e.notebooks?.[s.notebookId] : null;
+  const notebookNotes = notebook ? (notebook.notes || []).map(nid => e.notes?.[nid]).filter(Boolean) : [];
+  
+  if (!notebook) {
+    return `<div class="card mb-4">
+      <h3 style="margin:0 0 8px;display:flex;align-items:center;gap:8px">📓 Notizbuch</h3>
+      <div class="mini mb-2">Noch kein Notizbuch verknüpft.</div>
+      <button class="btn sm primary" onclick="window.strategyCreateNotebook('${id}')">+ Notizbuch erstellen</button>
+    </div>`;
+  }
+  
+  return `<div class="card mb-4">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 style="margin:0;display:flex;align-items:center;gap:8px">📓 Notizbuch <span style="font-size:11px;color:var(--muted);font-weight:400">(${notebookNotes.length})</span></h3>
+      <div style="display:flex;gap:6px">
+        <button class="btn sm ghost" onclick="navigate('notebooks','${notebook.id}')" title="In Notes-App öffnen">↗</button>
+        <button class="btn sm primary" onclick="window.strategyNewInlineNote('${id}')">➕ Neue Notiz</button>
+      </div>
+    </div>
+    <div style="max-height:500px;overflow-y:auto">
+      ${notebookNotes.slice().sort((a,b) => (b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')).map(n => `
+        <details class="mb-2" style="border:1px solid var(--border);border-radius:8px">
+          <summary style="cursor:pointer;padding:8px 12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
+            📝 ${esc(n.title || 'Notiz')}
+            <span style="margin-left:auto;font-size:10px;color:var(--muted);font-weight:400">${fmtDate(n.updatedAt || n.createdAt)}</span>
+          </summary>
+          <div style="padding:8px 12px;border-top:1px solid var(--border)">
+            <input type="text" value="${esc(n.title || '')}" placeholder="Titel" style="width:100%;font-size:13px;padding:6px 9px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);margin-bottom:6px;font-weight:600" onchange="window.lpSaveInlineNoteTitle('${n.id}',this.value)" />
+            <textarea style="width:100%;min-height:140px;font-size:12.5px;line-height:1.6;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;color:var(--text);font-family:inherit" placeholder="Inhalt..." onchange="window.lpSaveInlineNote('${n.id}',this.value)">${esc(n.content || '')}</textarea>
+            <div style="display:flex;gap:5px;margin-top:6px;justify-content:flex-end">
+              <button class="btn sm ghost" onclick="navigate('notes','${n.id}')" title="Volle Notiz öffnen" style="font-size:10.5px">↗ Voll öffnen</button>
+              <button class="btn sm ghost danger" onclick="window.strategyDeleteNote('${id}','${n.id}')" style="font-size:10.5px">🗑</button>
+            </div>
+          </div>
+        </details>
+      `).join('') || '<div class="mini" style="padding:14px;text-align:center;background:rgba(255,255,255,.02);border-radius:8px">Noch keine Notizen. Klick "+ Neue Notiz".</div>'}
+    </div>
+  </div>`;
+}
+
+window.strategyCreateNotebook = function(strategyId) {
+  const s = APP.state.data.entities.strategies[strategyId];
+  if (!s) return;
+  if (s.notebookId) { toast("warn", "Bereits vorhanden"); return; }
+  
+  const nbId = createEntity("notebook", { 
+    title: "📓 " + (s.title || s.name || "Strategie"), 
+    notes: [],
+    linkedStrategyId: strategyId,
+  });
+  s.notebookId = nbId;
+  scheduleSave();
+  toast("ok", "📓 Notizbuch erstellt");
+  render();
+};
+
+window.strategyNewInlineNote = function(strategyId) {
+  const s = APP.state.data.entities.strategies[strategyId];
+  if (!s || !s.notebookId) return;
+  const nb = APP.state.data.entities.notebooks?.[s.notebookId];
+  if (!nb) return;
+  const noteId = createEntity("note", { title: "Notiz – " + todayYmd(), content: "", notebookId: s.notebookId });
+  if (!nb.notes) nb.notes = [];
+  nb.notes.push(noteId);
+  scheduleSave(); render();
+  toast("ok", "Notiz", "Neue Notiz erstellt");
+};
+
+window.strategyDeleteNote = function(strategyId, noteId) {
+  if (!confirm("Notiz wirklich löschen?")) return;
+  const s = APP.state.data.entities.strategies[strategyId];
+  if (s?.notebookId) {
+    const nb = APP.state.data.entities.notebooks?.[s.notebookId];
+    if (nb && Array.isArray(nb.notes)) {
+      nb.notes = nb.notes.filter(nid => nid !== noteId);
+    }
+  }
+  if (APP.state.data.entities.notes?.[noteId]) {
+    delete APP.state.data.entities.notes[noteId];
+  }
+  scheduleSave();
+  toast("ok", "🗑 Gelöscht");
+  render();
+};
+
 function renderCustomProjectFeatures(id) {
   const p = APP.state.data.entities.projects[id];
   if (!p) return '';
@@ -31255,6 +31347,8 @@ function viewStrategyDetail(id) {
         </div>
         
         ${renderMeasuresBlock('strategy', id)}
+        
+        ${renderStrategyNotebookSection(s, id)}
         
         <div class="card mb-4">
           <h3>🎯 Meilensteine & Schritte (${milestones.length})</h3>
