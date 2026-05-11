@@ -6683,6 +6683,7 @@ function normalizeData(data) {
     m.linkedOrganizations = m.linkedOrganizations || [];
     m.linkedCalendarEvents = m.linkedCalendarEvents || [];
     m.linkedMeetings = m.linkedMeetings || [];
+    m.estimatedMinutes = m.estimatedMinutes ?? null;  // Vorbereitungs-Zeit (Meeting-Dauer wird aus startTime/endTime berechnet)
     m.createdAt = m.createdAt || nowIso();
     m.updatedAt = m.updatedAt || nowIso();
   }
@@ -6969,6 +6970,7 @@ for (const u of Object.values(e.updates)) {
     i.linkedStrategies = i.linkedStrategies || [];
     i.linkedGoals = i.linkedGoals || [];
     i.linkedIdeas = i.linkedIdeas || [];
+    i.estimatedMinutes = i.estimatedMinutes ?? null;  // Zeitvoranschlag
     i.createdAt = i.createdAt || nowIso();
     i.updatedAt = i.updatedAt || nowIso();
   }
@@ -6982,6 +6984,7 @@ for (const u of Object.values(e.updates)) {
     dc.thoughts = dc.thoughts || []; // [{id, text, createdAt}]
     dc.votes = dc.votes || []; // [{id, vote: "yes"|"no"|"maybe", note, createdAt}]
     dc.tags = dc.tags || [];
+    dc.estimatedMinutes = dc.estimatedMinutes ?? null;  // Zeitvoranschlag
     dc.linkedTasks = dc.linkedTasks || [];
     dc.linkedProjects = dc.linkedProjects || [];
     dc.linkedOrganizations = dc.linkedOrganizations || [];
@@ -7198,6 +7201,7 @@ for (const u of Object.values(e.updates)) {
     n.notebookId = n.notebookId || Object.keys(e.notebooks)[0];
     n.order = n.order ?? 0;
     n.summary = n.summary || null;
+    n.estimatedMinutes = n.estimatedMinutes ?? null;  // Zeitvoranschlag
   }
   
   // Normalize goals
@@ -12880,6 +12884,7 @@ function getAllApps() {
     {key:"reflecta", icon:"🪞", label:"Reflecta", desc:getLang()==="de"?"Reflexionen, Learnings & Statistiken":"Reflections, learnings & statistics"},
     {key:"habits", icon:"🔁", label:"Habits", desc:getLang()==="de"?"Routinen tracken, Streaks aufbauen":"Track routines, build streaks"},
     {key:"concepts", icon:"🧩", label:"Konzeptor", desc:getLang()==="de"?"Konzepte strukturiert ausarbeiten und in Projekte überführen":"Develop structured concepts and turn them into projects"},
+    {key:"workload", icon:"⏱️", label:"Workload", desc:getLang()==="de"?"Zeitvoranschlag aller Aufgaben & Auslastung":"Time estimates across all tasks & capacity"},
     {key:"decisions", icon:"⚖️", label:"Decisions", desc:getLang()==="de"?"Entscheidungen treffen & verfolgen":"Make & track decisions"},
     {key:"journal", icon:"✍️", label:"Journal Booklet", desc:getLang()==="de"?"Tagebuch, Briefe, Zeitkapsel & Schreibumgebung":"Diary, letters, time capsule & writing environment"},
   ];
@@ -13223,6 +13228,7 @@ function renderMain() {
     case "reflecta": html = viewReflecta(); break;
     case "habits": html = viewHabits(); break;
     case "concepts": html = id ? viewConceptDetail(id) : viewConcepts(); break;
+    case "workload": html = viewWorkload(); break;
     case "decisions": html = id ? viewDecisionDetail(id) : viewDecisions(); break;
     case "mailhub": html = id ? viewEmailDetail(id) : viewMailHub(); break;
     case "persons": html = id ? viewPersonDetail(id) : viewPersons(); break;
@@ -15112,6 +15118,9 @@ function viewDecisionDetail(id) {
                 <option value="yes" ${dc.result === "yes" ? "selected" : ""}>✅ Ja</option>
                 <option value="no" ${dc.result === "no" ? "selected" : ""}>❌ Nein</option>
               </select>
+            </label>
+            <label>⏱️ Zeitvoranschlag (Minuten)
+              <input type="number" min="0" id="dcEstimate" value="${dc.estimatedMinutes || ''}" placeholder="z.B. 30 = halbe Stunde fürs Entscheiden" />
             </label>
             <button class="btn primary" data-action="save-decision" data-id="${id}" style="margin-top:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;width:100%;padding:10px">💾 Speichern</button>
           </div>
@@ -17440,6 +17449,395 @@ window.closeHabitHistory = function() {
   const overlay = document.getElementById('habitHistoryOverlay');
   if (overlay) overlay.remove();
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⏱️ WORKLOAD — Globale Zeitvoranschlag- & Auslastungs-Übersicht
+// ═══════════════════════════════════════════════════════════════════════════
+
+function getAllWorkloadItems() {
+  const e = APP.state.data.entities;
+  const items = [];
+  
+  // Tasks
+  Object.values(e.tasks || {}).forEach(t => {
+    if (t.status === 'done') return;
+    if (!t.estimatedMinutes) return;
+    items.push({
+      id: t.id,
+      kind: 'task',
+      icon: '✅',
+      title: t.title || 'Unbenannte Aufgabe',
+      estimatedMinutes: t.estimatedMinutes || 0,
+      projectId: t.projectId || null,
+      status: t.status || 'todo',
+      dueDate: t.dueDate || null,
+      priority: t.priority || 'medium',
+      route: 'tasks',
+      color: '#22c55e',
+    });
+  });
+  
+  // Decisions
+  Object.values(e.decisions || {}).forEach(d => {
+    if (d.status === 'cancelled' || d.status === 'decided') return;
+    if (!d.estimatedMinutes) return;
+    items.push({
+      id: d.id,
+      kind: 'decision',
+      icon: '⚖️',
+      title: d.title || 'Decision',
+      estimatedMinutes: d.estimatedMinutes || 0,
+      projectId: null,
+      status: d.status || 'open',
+      dueDate: d.deadline || null,
+      priority: 'medium',
+      route: 'decisions',
+      color: '#ec4899',
+    });
+  });
+  
+  // Ideas (status != 'done'/'archived')
+  Object.values(e.ideas || {}).forEach(i => {
+    if (!i.estimatedMinutes) return;
+    if (i.status === 'archived' || i.status === 'done') return;
+    items.push({
+      id: i.id,
+      kind: 'idea',
+      icon: '💡',
+      title: i.title || 'Idee',
+      estimatedMinutes: i.estimatedMinutes || 0,
+      projectId: null,
+      status: i.status || 'idea',
+      dueDate: null,
+      priority: 'medium',
+      route: 'ideas',
+      color: '#fb923c',
+    });
+  });
+  
+  // Notes (nur die mit estimate)
+  Object.values(e.notes || {}).forEach(n => {
+    if (!n.estimatedMinutes) return;
+    items.push({
+      id: n.id,
+      kind: 'note',
+      icon: '📝',
+      title: n.title || 'Notiz',
+      estimatedMinutes: n.estimatedMinutes || 0,
+      projectId: null,
+      status: 'note',
+      dueDate: null,
+      priority: 'low',
+      route: 'notes',
+      color: '#fbbf24',
+    });
+  });
+  
+  // Meetings: Dauer = endTime - startTime + estimatedMinutes (Vorbereitung)
+  Object.values(e.meetings || {}).forEach(m => {
+    let durationMin = 0;
+    if (m.startTime && m.endTime) {
+      try {
+        const [sh, sm] = m.startTime.split(':').map(Number);
+        const [eh, em] = m.endTime.split(':').map(Number);
+        durationMin = (eh * 60 + em) - (sh * 60 + sm);
+        if (durationMin < 0) durationMin = 0;
+      } catch(err) {}
+    }
+    const prep = m.estimatedMinutes || 0;
+    const total = durationMin + prep;
+    if (total === 0) return;
+    // Nur künftige Meetings + welche mit estimate
+    if (m.date) {
+      try {
+        const md = new Date(m.date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (md < today) return;  // vergangene Meetings raus
+      } catch(err) {}
+    }
+    items.push({
+      id: m.id,
+      kind: 'meeting',
+      icon: '📅',
+      title: m.title || 'Meeting',
+      estimatedMinutes: total,
+      estimatedBreakdown: { meeting: durationMin, prep },
+      projectId: m.projectId || null,
+      status: 'scheduled',
+      dueDate: m.date || null,
+      priority: 'medium',
+      route: 'meetings',
+      color: '#a855f7',
+    });
+  });
+  
+  // Projekt-Phasen (Zeitvoranschlag) — offene Stunden
+  Object.values(e.projects || {}).forEach(p => {
+    if (p.status === 'archived' || p.status === 'done') return;
+    const phases = p.timeBudget?.phases || [];
+    phases.forEach(ph => {
+      const est = parseFloat(ph.estimatedHours) || 0;
+      const act = parseFloat(ph.actualHours) || 0;
+      const remaining = Math.max(0, est - act);
+      if (remaining === 0) return;
+      items.push({
+        id: `${p.id}_${ph.id}`,
+        kind: 'phase',
+        icon: '🕒',
+        title: `${p.title || p.name}: ${ph.name || 'Phase'}`,
+        estimatedMinutes: Math.round(remaining * 60),
+        projectId: p.id,
+        status: 'phase',
+        dueDate: null,
+        priority: 'medium',
+        route: 'projects',
+        routeId: p.id,
+        color: '#6366f1',
+      });
+    });
+  });
+  
+  return items;
+}
+
+function viewWorkload() {
+  const items = getAllWorkloadItems();
+  const e = APP.state.data.entities;
+  const groupBy = APP.state.ui?.workloadGroup || 'kind';
+  
+  // Sortier-Helfer
+  const totalMin = items.reduce((s, it) => s + it.estimatedMinutes, 0);
+  const totalHours = (totalMin / 60).toFixed(1);
+  
+  // Gruppierung
+  const groups = {};
+  items.forEach(it => {
+    let key, label, color;
+    if (groupBy === 'kind') {
+      key = it.kind;
+      const labels = { task: '✅ Aufgaben', decision: '⚖️ Entscheidungen', idea: '💡 Ideen', note: '📝 Notizen', meeting: '📅 Meetings', phase: '🕒 Projekt-Phasen' };
+      label = labels[it.kind] || it.kind;
+      color = it.color;
+    } else if (groupBy === 'project') {
+      const p = it.projectId ? e.projects?.[it.projectId] : null;
+      key = it.projectId || '_none';
+      label = p ? `📁 ${p.title || p.name}` : '— Kein Projekt —';
+      color = p?.color || '#6b7280';
+    } else if (groupBy === 'priority') {
+      key = it.priority;
+      const labels = { high: '🔴 Hoch', medium: '🟡 Mittel', low: '🟢 Niedrig' };
+      label = labels[it.priority] || it.priority;
+      color = it.priority === 'high' ? '#ef4444' : it.priority === 'low' ? '#86efac' : '#fbbf24';
+    } else if (groupBy === 'week') {
+      if (!it.dueDate) { key = '_nodate'; label = '— Kein Datum —'; color = '#6b7280'; }
+      else {
+        try {
+          const d = new Date(it.dueDate);
+          const today = new Date(); today.setHours(0,0,0,0);
+          const diffDays = Math.floor((d - today) / 86400000);
+          if (diffDays < 0) { key = 'overdue'; label = '⚠️ Überfällig'; color = '#ef4444'; }
+          else if (diffDays <= 7) { key = 'thisweek'; label = '📌 Diese Woche'; color = '#fbbf24'; }
+          else if (diffDays <= 14) { key = 'nextweek'; label = '📅 Nächste Woche'; color = '#a5b4fc'; }
+          else if (diffDays <= 30) { key = 'thismonth'; label = '🗓 Dieser Monat'; color = '#86efac'; }
+          else { key = 'later'; label = '🔮 Später'; color = '#a855f7'; }
+        } catch(err) { key = '_nodate'; label = '— Kein Datum —'; color = '#6b7280'; }
+      }
+    }
+    if (!groups[key]) groups[key] = { label, color, items: [] };
+    groups[key].items.push(it);
+  });
+  
+  // Total pro Gruppe + sortieren
+  Object.values(groups).forEach(g => {
+    g.totalMin = g.items.reduce((s, it) => s + it.estimatedMinutes, 0);
+    g.items.sort((a, b) => b.estimatedMinutes - a.estimatedMinutes);
+  });
+  
+  const sortedGroups = Object.entries(groups).sort((a, b) => b[1].totalMin - a[1].totalMin);
+  
+  // Capacity: aus dailyBriefing oder global
+  const weeklyCapacityHours = APP.state.data.workloadCapacityWeekly || 40;
+  const capacityMin = weeklyCapacityHours * 60;
+  const utilizationPct = capacityMin > 0 ? Math.min(200, Math.round((totalMin / capacityMin) * 100)) : 0;
+  const capColor = utilizationPct > 100 ? '#ef4444' : utilizationPct > 80 ? '#fbbf24' : '#22c55e';
+  
+  return `
+    <style>
+      .wl-wrap { max-width: 1200px; margin: 0 auto; padding: 20px 0; }
+      .wl-hero { display: flex; align-items: center; justify-content: space-between; padding: 0 0 18px; flex-wrap: wrap; gap: 14px; }
+      .wl-hero h2 { font-size: 26px; font-weight: 800; margin: 0 0 4px; background: linear-gradient(135deg,#6366f1,#a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+      .wl-capacity-card { background: linear-gradient(135deg, ${capColor}11, transparent); border: 1px solid ${capColor}44; border-radius: 14px; padding: 18px 22px; margin-bottom: 18px; }
+      .wl-cap-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+      .wl-cap-circle { width: 90px; height: 90px; border-radius: 50%; border: 4px solid ${capColor}; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; }
+      .wl-cap-circle .pct { font-size: 22px; font-weight: 800; color: ${capColor}; line-height: 1 }
+      .wl-cap-circle .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
+      .wl-cap-bar { flex: 1; min-width: 240px; }
+      .wl-cap-bar-track { height: 12px; background: rgba(0,0,0,.3); border-radius: 6px; overflow: hidden; margin-top: 6px; position: relative; }
+      .wl-cap-bar-fill { height: 100%; background: linear-gradient(90deg, #22c55e 0%, #fbbf24 80%, #ef4444 100%); transition: width .3s; }
+      .wl-cap-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; margin-top: 14px; }
+      .wl-cap-stat { padding: 8px 12px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06); border-radius: 8px; text-align: center; }
+      .wl-cap-stat .val { font-size: 18px; font-weight: 800; }
+      .wl-cap-stat .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+      .wl-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 14px; background: rgba(255,255,255,.02); border: 1px solid rgba(255,255,255,.06); border-radius: 11px; margin-bottom: 16px; }
+      .wl-chip { padding: 5px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 600; cursor: pointer; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); color: var(--muted); transition: all .15s; }
+      .wl-chip.active { background: linear-gradient(135deg,#6366f1,#a855f7); color: #fff; border-color: transparent; }
+      .wl-group { background: var(--panel); border: 1px solid rgba(255,255,255,.06); border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+      .wl-group-head { padding: 12px 16px; display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,.02); border-bottom: 1px solid rgba(255,255,255,.06); }
+      .wl-group-title { font-weight: 700; font-size: 14px; flex: 1; }
+      .wl-group-meta { font-size: 12px; color: var(--muted); }
+      .wl-item { padding: 10px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,.03); transition: background .15s; cursor: pointer; }
+      .wl-item:last-child { border-bottom: none; }
+      .wl-item:hover { background: rgba(168,85,247,.04); }
+      .wl-item-icon { font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }
+      .wl-item-title { flex: 1; min-width: 0; font-size: 13px; }
+      .wl-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+      .wl-item-time { font-size: 13px; font-weight: 700; color: #a5b4fc; flex-shrink: 0; min-width: 64px; text-align: right; }
+    </style>
+    
+    <div class="wl-wrap">
+      <div class="wl-hero">
+        <div>
+          <h2>⏱️ Workload</h2>
+          <p style="color:var(--muted);font-size:13px;margin:0">Zeitvoranschlag aller offenen Aufgaben & Auslastung</p>
+        </div>
+        <button onclick="openWorkloadSettings()" style="padding:8px 14px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);color:#a5b4fc;border-radius:8px;font-weight:600;font-size:12.5px;cursor:pointer">⚙️ Kapazität anpassen</button>
+      </div>
+      
+      <!-- Capacity Card -->
+      <div class="wl-capacity-card">
+        <div class="wl-cap-row">
+          <div class="wl-cap-circle">
+            <div class="pct">${utilizationPct}%</div>
+            <div class="lbl">Auslastung</div>
+          </div>
+          <div class="wl-cap-bar">
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:14px;font-weight:700">${(totalMin/60).toFixed(1)}h geplant <span style="color:var(--muted);font-weight:400;font-size:12px">von ${weeklyCapacityHours}h Wochenkapazität</span></span>
+              <span style="font-size:12px;color:${capColor};font-weight:700">${utilizationPct > 100 ? '⚠️ Überlastet' : utilizationPct > 80 ? '🟡 Voll' : '🟢 OK'}</span>
+            </div>
+            <div class="wl-cap-bar-track">
+              <div class="wl-cap-bar-fill" style="width:${Math.min(100, utilizationPct)}%"></div>
+              <div style="position:absolute;top:0;bottom:0;left:80%;width:1px;background:rgba(255,255,255,.3)"></div>
+            </div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Linie bei 80% = empfohlene Maximal-Auslastung</div>
+          </div>
+        </div>
+        
+        <div class="wl-cap-stats">
+          <div class="wl-cap-stat"><div class="val" style="color:#22c55e">${items.filter(it => it.kind === 'task').length}</div><div class="lbl">Aufgaben</div></div>
+          <div class="wl-cap-stat"><div class="val" style="color:#ec4899">${items.filter(it => it.kind === 'decision').length}</div><div class="lbl">Entscheidungen</div></div>
+          <div class="wl-cap-stat"><div class="val" style="color:#fb923c">${items.filter(it => it.kind === 'idea').length}</div><div class="lbl">Ideen</div></div>
+          <div class="wl-cap-stat"><div class="val" style="color:#fbbf24">${items.filter(it => it.kind === 'note').length}</div><div class="lbl">Notizen</div></div>
+          <div class="wl-cap-stat"><div class="val" style="color:#a855f7">${items.filter(it => it.kind === 'meeting').length}</div><div class="lbl">Meetings</div></div>
+          <div class="wl-cap-stat"><div class="val" style="color:#6366f1">${items.filter(it => it.kind === 'phase').length}</div><div class="lbl">Phasen</div></div>
+          <div class="wl-cap-stat"><div class="val">${totalHours}h</div><div class="lbl">Total</div></div>
+        </div>
+      </div>
+      
+      <!-- Filter -->
+      <div class="wl-filter-bar">
+        <span style="font-size:11.5px;color:var(--muted);font-weight:600;align-self:center;margin-right:4px">Gruppieren:</span>
+        <span class="wl-chip ${groupBy === 'kind' ? 'active' : ''}" onclick="setWorkloadGroup('kind')">Nach Typ</span>
+        <span class="wl-chip ${groupBy === 'project' ? 'active' : ''}" onclick="setWorkloadGroup('project')">Nach Projekt</span>
+        <span class="wl-chip ${groupBy === 'priority' ? 'active' : ''}" onclick="setWorkloadGroup('priority')">Nach Priorität</span>
+        <span class="wl-chip ${groupBy === 'week' ? 'active' : ''}" onclick="setWorkloadGroup('week')">Nach Termin</span>
+      </div>
+      
+      ${items.length === 0 ? `<div style="text-align:center;padding:60px 20px;color:var(--muted)">
+        <div style="font-size:64px;margin-bottom:14px">⏱️</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Noch keine Zeitvoranschläge</div>
+        <div style="font-size:13px">Erfasse Zeitvoranschläge bei deinen Aufgaben, Decisions, Ideen, Notizen, Meetings und Projekt-Phasen. Sie erscheinen dann hier zur Übersicht.</div>
+      </div>` : `
+      
+      ${sortedGroups.map(([key, g]) => `
+        <div class="wl-group">
+          <div class="wl-group-head" style="border-left:4px solid ${g.color}">
+            <span class="wl-group-title">${g.label}</span>
+            <span class="wl-group-meta">${g.items.length} Items · ${(g.totalMin/60).toFixed(1)}h</span>
+          </div>
+          ${g.items.map(it => {
+            const projName = it.projectId ? (e.projects?.[it.projectId]?.title || e.projects?.[it.projectId]?.name) : null;
+            const dueLabel = it.dueDate ? new Date(it.dueDate).toLocaleDateString('de-CH', { day: '2-digit', month: 'short' }) : '';
+            const isOverdue = it.dueDate && new Date(it.dueDate) < new Date(new Date().setHours(0,0,0,0));
+            return `<div class="wl-item" onclick="navigate('${it.route}','${it.routeId || it.id}')">
+              <div class="wl-item-icon" style="color:${it.color}">${it.icon}</div>
+              <div style="flex:1;min-width:0">
+                <div class="wl-item-title">${esc(it.title)}</div>
+                <div class="wl-item-meta">
+                  ${projName ? `📁 ${esc(projName)}` : ''}
+                  ${projName && dueLabel ? ' · ' : ''}
+                  ${dueLabel ? `<span style="${isOverdue ? 'color:#f87171' : ''}">📅 ${dueLabel}${isOverdue ? ' ⚠️' : ''}</span>` : ''}
+                  ${it.estimatedBreakdown ? ` · 🛠 ${it.estimatedBreakdown.prep}min Vorb. + ${it.estimatedBreakdown.meeting}min` : ''}
+                </div>
+              </div>
+              <div class="wl-item-time">${formatWorkloadTime(it.estimatedMinutes)}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      `).join('')}
+      `}
+    </div>
+  `;
+}
+
+function formatWorkloadTime(min) {
+  if (min < 60) return min + 'min';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m === 0 ? h + 'h' : h + 'h ' + m + 'min';
+}
+
+window.viewWorkload = viewWorkload;
+
+window.setWorkloadGroup = function(g) {
+  if (!APP.state.ui) APP.state.ui = {};
+  APP.state.ui.workloadGroup = g;
+  render();
+};
+
+window.openWorkloadSettings = function() {
+  const current = APP.state.data.workloadCapacityWeekly || 40;
+  let overlay = document.getElementById('workloadSettingsOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'workloadSettingsOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(9,9,11,.85);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(8px);padding:20px';
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `<div style="background:#0f0f17;border:1px solid rgba(99,102,241,.3);border-radius:14px;max-width:420px;width:100%;padding:24px" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+      <span style="font-size:24px">⚙️</span>
+      <div style="flex:1;font-size:16px;font-weight:800">Wochenkapazität</div>
+      <button onclick="closeWorkloadSettings()" style="background:none;border:0;color:var(--muted);font-size:22px;cursor:pointer">×</button>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:600;margin-bottom:5px">Stunden pro Woche</label>
+      <input type="number" id="wlCapInput" min="1" max="168" value="${current}" style="width:100%;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--text);font-size:14px;box-sizing:border-box" />
+      <div style="font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.5">Wieviele Stunden hast du pro Woche zur Verfügung für die in Quantus erfassten Aufgaben? Standard 40h. Bei Mobiliar-Lehre vermutlich eher 8-12h für persönliches/Vereine.</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="closeWorkloadSettings()" style="padding:9px 14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text);border-radius:7px;cursor:pointer;font-size:12px">Abbrechen</button>
+      <button onclick="saveWorkloadCapacity()" style="padding:9px 16px;background:linear-gradient(135deg,#6366f1,#a855f7);border:0;color:#fff;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700">✓ Speichern</button>
+    </div>
+  </div>`;
+  overlay.onclick = (e) => { if (e.target === overlay) closeWorkloadSettings(); };
+  setTimeout(() => document.getElementById('wlCapInput')?.focus(), 50);
+};
+
+window.closeWorkloadSettings = function() {
+  document.getElementById('workloadSettingsOverlay')?.remove();
+};
+
+window.saveWorkloadCapacity = function() {
+  const v = parseFloat(document.getElementById('wlCapInput')?.value) || 40;
+  APP.state.data.workloadCapacityWeekly = v;
+  scheduleSave();
+  closeWorkloadSettings();
+  render();
+  toast('ok', '✓ Kapazität gespeichert', v + 'h/Woche');
+};
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🧩 KONZEPTOR — Umfassende Konzept-App
@@ -30320,6 +30718,9 @@ function viewIdeaDetail(id) {
             </select>
           </label>
           <label class="col-6">Kategorie<input type="text" id="ideaCategory" value="${esc(idea.category || "")}" placeholder="z.B. Feature, Bug, Verbesserung" /></label>
+          <label class="col-12">⏱️ Zeitvoranschlag (Minuten, optional)
+            <input type="number" min="0" id="ideaEstimate" value="${idea.estimatedMinutes || ''}" placeholder="z.B. 60 = 1h" />
+          </label>
         </div>
         <button class="btn primary mt-3" data-action="save-idea" data-id="${id}">💾 Speichern</button>
       </div>
@@ -36066,6 +36467,9 @@ function viewMeetingDetail(id) {
             </select>
           </label>
           <label class="col-12">Beschreibung<textarea id="meetingDesc" style="min-height:80px">${esc(meeting.description || "")}</textarea></label>
+          <label class="col-12">⏱️ Vorbereitungs-Zeit (Minuten, optional)
+            <input type="number" min="0" id="meetingEstimate" value="${meeting.estimatedMinutes || ''}" placeholder="z.B. 15 = 15min Vorbereitung. Meeting-Dauer wird aus Start/Ende berechnet." />
+          </label>
           <label class="col-12">Notizen (im Notizbuch „Meetings“)
             <textarea id="meetingProtocol" style="min-height:160px" placeholder="Protokoll / Notizen...">${esc(protocolNote?.content || "")}</textarea>
             ${protocolNote ? `<div class="mini mt-1"><button class="btn sm" data-action="open-entity" data-kind="note" data-id="${protocolNote.id}">📓 Im Notizbuch öffnen</button></div>` : ""}
@@ -43533,6 +43937,8 @@ Fragen sollen spezifisch zur Beschreibung sein, nicht generisch.`;
       idea.text = ($("#ideaText")?.value || "").trim();
       idea.status = $("#ideaStatus")?.value || "open";
       idea.category = ($("#ideaCategory")?.value || "").trim() || null;
+      const estVal = $("#ideaEstimate")?.value;
+      idea.estimatedMinutes = estVal ? (parseInt(estVal) || null) : null;
       idea.updatedAt = nowIso();
       scheduleSave();
       toast("ok", t("saved"), "Idee aktualisiert");
@@ -46752,6 +47158,8 @@ case "ideas-clear-filter": {
       dc.deadline = document.getElementById("dcDeadline")?.value || null;
       dc.status = document.getElementById("dcStatus")?.value || dc.status;
       dc.result = document.getElementById("dcResult")?.value || null;
+      const estVal = document.getElementById("dcEstimate")?.value;
+      dc.estimatedMinutes = estVal ? (parseInt(estVal) || null) : null;
       if (dc.status === "decided" && oldStatus !== "decided") dc.decidedAt = nowIso();
       dc.updatedAt = nowIso();
       scheduleSave();
@@ -56184,6 +56592,8 @@ if (action === "open-entity"){
     meeting.organizationId = orgVal && orgVal !== "" ? orgVal : null;
     meeting.projectId = projVal && projVal !== "" ? projVal : null;
     meeting.description = ($("#meetingDesc")?.value || "").trim();
+    const mEstVal = $("#meetingEstimate")?.value;
+    meeting.estimatedMinutes = mEstVal ? (parseInt(mEstVal) || null) : null;
     // Inline Meeting-Notizen → Notiz im Notebook "Meetings"
     const protoText = $("#meetingProtocol")?.value ?? "";
     const protoNote = ensureMeetingProtocolNote(id);
