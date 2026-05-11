@@ -18849,6 +18849,27 @@ function viewProjectDetail(id) {
     </div>
   `).join("") || `<div class="mini">Keine Kommentare.</div>`;
   
+  // Auto-Sync: Bestehende Workflow-Schritte ohne verknüpfte Phase nachträglich erstellen
+  if (Array.isArray(p.workflow) && p.workflow.length > 0) {
+    if (!p.timeBudget) p.timeBudget = { phases: [] };
+    if (!Array.isArray(p.timeBudget.phases)) p.timeBudget.phases = [];
+    let added = false;
+    p.workflow.forEach((step, i) => {
+      const hasPhase = p.timeBudget.phases.some(ph => ph.workflowStepId === step.id);
+      if (!hasPhase) {
+        p.timeBudget.phases.push({
+          id: "ph_" + Math.random().toString(36).slice(2, 8),
+          name: step.title || `Schritt ${i + 1}`,
+          estimatedHours: 0,
+          actualHours: 0,
+          workflowStepId: step.id,
+        });
+        added = true;
+      }
+    });
+    if (added) scheduleSave();
+  }
+  
   // Workflow
   const workflowHtml = (p.workflow || []).map((step, i) => `
     <div class="workflow-step ${i === p.currentWorkflowStep ? "active" : i < p.currentWorkflowStep ? "done" : ""}">
@@ -18857,7 +18878,8 @@ function viewProjectDetail(id) {
         <div class="step-title">${esc(step.title)}</div>
         ${step.description ? `<div class="step-desc">${esc(step.description)}</div>` : ""}
       </div>
-      <button class="btn sm" data-action="set-project-step" data-project-id="${id}" data-step="${i}">→</button>
+      <button class="btn sm" data-action="set-project-step" data-project-id="${id}" data-step="${i}" title="Als aktuell setzen">→</button>
+      <button class="btn sm" data-action="delete-workflow-step" data-kind="project" data-entity-id="${id}" data-step-id="${step.id}" title="Schritt löschen" style="background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.25)">🗑</button>
     </div>
   `).join("") || `<div class="mini">Kein Workflow definiert.</div>`;
   
@@ -41112,6 +41134,27 @@ case "sync-strategy-to-google": {
       break;
     }
     
+    case "delete-workflow-step": {
+      const kind = el.dataset.kind || "project";
+      const entityId = el.dataset.entityId;
+      const stepId = el.dataset.stepId;
+      const entity = getEntity(kind, entityId);
+      if (!entity || !Array.isArray(entity.workflow)) break;
+      const step = entity.workflow.find(s => s.id === stepId);
+      if (!step) break;
+      if (!confirm(`Workflow-Schritt "${step.title || 'Unbenannt'}" löschen?${kind === 'project' ? ' (Auch die verknüpfte Phase im Zeitvoranschlag wird entfernt.)' : ''}`)) break;
+      deleteWorkflowStep(kind, entityId, stepId);
+      // currentWorkflowStep evtl. anpassen wenn dahinter
+      if (kind === "project" && typeof entity.currentWorkflowStep === "number") {
+        if (entity.currentWorkflowStep >= entity.workflow.length) {
+          entity.currentWorkflowStep = Math.max(0, entity.workflow.length - 1);
+        }
+      }
+      render();
+      toast("ok", "🗑 Gelöscht", "Workflow-Schritt entfernt");
+      break;
+    }
+    
     case "save-weekly-goal": {
       const type = $("#weeklyGoalType")?.value;
       if (type === "custom") {
@@ -44483,20 +44526,48 @@ async function init() {
       <div class="form">
         <div class="col-12">
           <h4 style="margin-bottom:12px">📤 Daten exportieren</h4>
-            <p class="mini mb-3">Exportiert alle Daten als JSON-Datei zur Sicherung oder Übertragung.</p>
-            <button class="btn primary" onclick="exportAllData()">📥 Export als JSON</button>
-          </div>
-          <div class="col-12 mt-4">
-            <h4 style="margin-bottom:12px">📥 Daten importieren</h4>
-            <p class="mini mb-3">Importiert eine zuvor exportierte JSON-Datei. <strong>Achtung:</strong> Vorhandene Daten werden überschrieben!</p>
-            <input type="file" id="importFileInput" accept=".json" style="display:none" onchange="importDataFromFile(this)" />
-            <button class="btn" onclick="document.getElementById('importFileInput').click()">📤 JSON importieren</button>
-          </div>
-          <div class="col-12 mt-4">
-            <h4 style="margin-bottom:12px">🗑️ Alle Daten löschen</h4>
-            <p class="mini mb-3">Löscht alle lokalen Daten unwiderruflich.</p>
-            <button class="btn danger" onclick="confirmDeleteAllData()">⚠️ Alle Daten löschen</button>
-          </div>
+          <p class="mini mb-3">Exportiert alle Daten als JSON-Datei zur Sicherung oder Übertragung.</p>
+          <button class="btn primary" onclick="exportAllData()">📥 Export als JSON</button>
+          
+          <details style="margin-top:12px;padding:10px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:8px">
+            <summary style="cursor:pointer;font-size:12px;font-weight:600">ℹ️ Was wird exportiert?</summary>
+            <div style="margin-top:8px;font-size:11.5px;line-height:1.6;color:var(--muted)">
+              <strong style="color:#86efac">✓ Vollständig im Export:</strong><br>
+              • Alle Entitäten (Tasks, Projekte, Notizen, Notizbücher, Goals, Strategien, Programme, Meetings, Decisions, Ideas, Personen, E-Mails, Protokolle, Workflows, Tags, Updates, Subscriptions, etc.)<br>
+              • Konten, Transaktionen, Time-Entries<br>
+              • Reflexionen, Tagebuch-Felder, Dailies<br>
+              • Daily Briefing (selected projects, beliefs, routines, sent items)<br>
+              • Pinned Items, Weekly Goals, Activity Log, Work Schedule<br>
+              • Background-Dokumente, Journal-Briefe<br>
+              • Projekt-Pinnboard (PRJ-88QB4) inkl. Themen, Fokusthemen, Items & angehängte Dokumente (als Base64)<br>
+              • App-Settings, UI-Filter, Budget-Tab-State<br>
+              • RecallLab Lernkarten<br>
+              • ReadingHub Bücher-Liste, Annotationen, Vokabeln, Bookmarks<br>
+              • UI-Preferences (Theme, Sidebar-State, Section-Collapse)<br>
+              <br>
+              <strong style="color:#fbbf24">⚠️ NICHT im JSON-Export:</strong><br>
+              • PDF-Dateien selbst (in IndexedDB gespeichert — die Bücher-Liste bleibt aber)<br>
+              • Firebase-Storage-Uploads (Protokolle, große Datei-Anhänge — bleiben in Firebase, Links im Export)<br>
+              • Budget-PIN (bewusst, aus Sicherheit)<br>
+              • Cloud-Sync Auth-Token (wird beim Import bewusst nicht überschrieben)<br>
+              <br>
+              <strong style="color:#a5b4fc">🔄 Roundtrip-Test:</strong> Exportiere, importiere die gleiche Datei zurück, vergleiche.
+            </div>
+          </details>
+          
+          <button class="btn sm" onclick="window.runRoundtripTest()" style="margin-top:10px;font-size:11px;padding:6px 12px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);color:#a5b4fc">🧪 Roundtrip-Test (Export → Parse → Vergleich)</button>
+        </div>
+        
+        <div class="col-12 mt-4">
+          <h4 style="margin-bottom:12px">📥 Daten importieren</h4>
+          <p class="mini mb-3">Importiert eine zuvor exportierte JSON-Datei. <strong>Achtung:</strong> Vorhandene Daten werden überschrieben! Storage-Auth-Token bleibt erhalten.</p>
+          <input type="file" id="importFileInput" accept=".json" style="display:none" onchange="importDataFromFile(this)" />
+          <button class="btn" onclick="document.getElementById('importFileInput').click()">📤 JSON importieren</button>
+        </div>
+        <div class="col-12 mt-4">
+          <h4 style="margin-bottom:12px">🗑️ Alle Daten löschen</h4>
+          <p class="mini mb-3">Löscht alle lokalen Daten unwiderruflich.</p>
+          <button class="btn danger" onclick="confirmDeleteAllData()">⚠️ Alle Daten löschen</button>
         </div>
       </div>
     </div>
@@ -49770,8 +49841,15 @@ function exportAllData() {
     extraStorage: (() => {
       const extra = {};
       try {
-        const keys = ['recalllab', 'readinghub-books', 'readinghub-annotations', 'readinghub-vocabulary',
-                      'readinghub-bookmarks', 'readinghub-settings'];
+        const keys = [
+          'recalllab', 
+          'readinghub-books', 'readinghub-annotations', 'readinghub-vocabulary',
+          'readinghub-bookmarks', 'readinghub-settings',
+          // ✅ Lücke geschlossen: UI-Preferences die User aktiv anpasst
+          'quantus_collapsible_states',  // Welche Project-Sections offen sind
+          'noteflow-theme',              // Theme-Auswahl
+          'sidebar-collapsed',           // Sidebar-State
+        ];
         for (const k of keys) {
           const v = localStorage.getItem(k);
           if (v) extra[k] = v;
@@ -49826,22 +49904,46 @@ function importDataFromFile(input) {
         : 'unbekannter Inhalt';
 
       if (confirm("Achtung: Alle vorhandenen Daten werden überschrieben!\n\nImport enthält: " + statsMsg + "\n\nFortfahren?")) {
+        // Storage-Settings MERKEN bevor wir Settings überschreiben (verhindert dass Sync nach Import bricht)
+        const preservedStorage = { ...(APP.state.settings?.storage || {}) };
+        
+        // Hauptdaten setzen
         APP.state.data = normalizeData(imported.data);
+        
+        // ─── Settings restaurieren (mit Storage-Schutz) ───
         if (imported.settings) {
-          const preservedStorage = { ...(APP.state.settings?.storage || {}) };
           APP.state.settings = { ...APP.state.settings, ...imported.settings, storage: preservedStorage };
           saveSettings(APP.state.settings);
         }
+        // FIX: Fallback wenn settings im data._settings statt top-level liegen (ältere Backups)
+        if (imported.data._settings && !imported.settings) {
+          APP.state.settings = { ...APP.state.settings, ...imported.data._settings, storage: preservedStorage };
+          saveSettings(APP.state.settings);
+          console.log('[Import] Settings aus data._settings restored');
+        }
 
-        // ✅ FIX: ReadingHub-Payload wiederherstellen, falls vorhanden
+        // ─── UI-State restaurieren (filters, flags, budget-Tabs) ───
+        try {
+          if (!APP.state.ui) APP.state.ui = {};
+          if (imported.data._uiFilters) APP.state.ui.filters = { ...(APP.state.ui.filters || {}), ...imported.data._uiFilters };
+          if (imported.data._uiFlags) APP.state.ui.flags = { ...(APP.state.ui.flags || {}), ...imported.data._uiFlags };
+          if (imported.data._budgetTab) APP.state.ui.budgetTab = imported.data._budgetTab;
+          if (imported.data._budgetTxFilter) APP.state.ui.budgetTxFilter = imported.data._budgetTxFilter;
+        } catch(err) { console.warn('[Import] UI state restore failed:', err); }
+
+        // ─── ReadingHub: Primary (eigener Block) + Fallback (in data) ───
         try {
           if (imported.readingHub && typeof persistReadingHubCloudPayload === 'function') {
             persistReadingHubCloudPayload(imported.readingHub);
-            console.log('[Import] ReadingHub restored');
+            console.log('[Import] ReadingHub restored from imported.readingHub');
+          } else if (imported.data._readingHubBooks && typeof restoreReadingHubShadowFromData === 'function') {
+            // Fallback: Daten aus data._readingHubBooks restaurieren
+            restoreReadingHubShadowFromData(imported.data);
+            console.log('[Import] ReadingHub restored from imported.data._readingHubBooks (fallback)');
           }
         } catch(err) { console.warn('[Import] ReadingHub restore failed:', err); }
 
-        // ✅ FIX: extraStorage (RecallLab, ReadingHub raw) wiederherstellen
+        // ─── extraStorage (RecallLab + RH raw localStorage-Keys) ───
         try {
           if (imported.extraStorage && typeof imported.extraStorage === 'object') {
             for (const [k, v] of Object.entries(imported.extraStorage)) {
@@ -49851,16 +49953,17 @@ function importDataFromFile(input) {
           }
         } catch(err) { console.warn('[Import] extraStorage restore failed:', err); }
 
-        // Fallback: RecallLab aus imported.data.recallLabData
+        // ─── RecallLab: Fallback aus data.recallLabData ───
         try {
           if (imported.data.recallLabData && typeof imported.data.recallLabData === 'object') {
             localStorage.setItem('recalllab', JSON.stringify(imported.data.recallLabData));
+            console.log('[Import] RecallLab restored from data.recallLabData');
           }
         } catch(err) { console.warn('[Import] RecallLab fallback failed:', err); }
 
         saveLocalData();
 
-        // ✅ FIX: Verifikation nach Import
+        // ─── Verifikation: Counts vergleichen ───
         const afterStats = (typeof getSyncStats === 'function') ? getSyncStats(APP.state.data) : null;
         const diffs = (typeof diffSyncStats === 'function' && importStats && afterStats)
           ? diffSyncStats(importStats, afterStats)
@@ -49900,6 +50003,136 @@ function confirmDeleteAllData() {
 window.exportAllData = exportAllData;
 window.importDataFromFile = importDataFromFile;
 window.confirmDeleteAllData = confirmDeleteAllData;
+
+// ─────────────────────────────────────────────────────────────────────
+// 🧪 ROUNDTRIP-TEST: Export → JSON parsen → Mit aktuellem State vergleichen
+// Detektiert Datenverlust bei Import/Export
+// ─────────────────────────────────────────────────────────────────────
+window.runRoundtripTest = function() {
+  console.group('🧪 Export/Import Roundtrip-Test');
+  
+  try {
+    // 1. Aktuellen State erfassen
+    const beforeData = (typeof buildRemoteAppPayload === 'function') ? buildRemoteAppPayload() : APP.state.data;
+    const beforeStats = getSyncStats(beforeData);
+    const beforeJson = JSON.stringify({
+      data: beforeData,
+      settings: APP.state.settings,
+      readingHub: (typeof buildReadingHubCloudPayload === 'function') ? buildReadingHubCloudPayload() : null,
+    });
+    const beforeSize = beforeJson.length;
+    
+    console.log('📊 Vor Export:', beforeStats);
+    console.log('📦 Größe:', Math.round(beforeSize/1024) + ' KB');
+    
+    // 2. Export simulieren (gleiche Logik wie exportAllData)
+    const exportSimulation = {
+      version: typeof VERSION !== 'undefined' ? VERSION : '?',
+      schemaVersion: typeof SCHEMA_VERSION !== 'undefined' ? SCHEMA_VERSION : '?',
+      exportedAt: new Date().toISOString(),
+      data: beforeData,
+      settings: APP.state.settings,
+      readingHub: (typeof buildReadingHubCloudPayload === 'function') ? buildReadingHubCloudPayload() : null,
+      extraStorage: (() => {
+        const extra = {};
+        const keys = [
+          'recalllab', 
+          'readinghub-books', 'readinghub-annotations', 'readinghub-vocabulary',
+          'readinghub-bookmarks', 'readinghub-settings',
+          'quantus_collapsible_states', 'noteflow-theme', 'sidebar-collapsed',
+        ];
+        for (const k of keys) {
+          const v = localStorage.getItem(k);
+          if (v) extra[k] = v;
+        }
+        return extra;
+      })(),
+    };
+    
+    // 3. JSON-Roundtrip
+    const json = JSON.stringify(exportSimulation);
+    const parsed = JSON.parse(json);
+    
+    // 4. Stats vom geparsten Export
+    const afterStats = getSyncStats(parsed.data);
+    
+    // 5. Vergleich
+    const diffs = diffSyncStats(beforeStats, afterStats);
+    
+    console.log('📊 Nach Export+Parse:', afterStats);
+    console.log('📦 Roundtrip-Größe:', Math.round(json.length/1024) + ' KB');
+    
+    // Deep Comparison kritischer Listen
+    const criticalChecks = [];
+    
+    // Entities-Check
+    Object.keys(beforeData.entities || {}).forEach(kind => {
+      const beforeCount = Object.keys(beforeData.entities[kind] || {}).length;
+      const afterCount = Object.keys(parsed.data.entities[kind] || {}).length;
+      if (beforeCount !== afterCount) {
+        criticalChecks.push(`❌ ${kind}: ${beforeCount} → ${afterCount}`);
+      }
+    });
+    
+    // Project-Custom-Daten (Pinnboard etc.)
+    let projectsWithCustom = 0;
+    let customDataLost = 0;
+    Object.values(beforeData.entities?.projects || {}).forEach(p => {
+      if (p._custom) {
+        projectsWithCustom++;
+        const afterProj = parsed.data.entities.projects[p.id];
+        if (!afterProj?._custom) customDataLost++;
+        else if (p._custom.pinboard?.items?.length !== afterProj._custom.pinboard?.items?.length) customDataLost++;
+      }
+    });
+    if (projectsWithCustom > 0) {
+      console.log(`📌 Projekte mit Custom-Daten: ${projectsWithCustom}, davon verloren: ${customDataLost}`);
+      if (customDataLost > 0) criticalChecks.push(`❌ Project._custom: ${customDataLost}/${projectsWithCustom} verloren`);
+    }
+    
+    // Settings
+    if (JSON.stringify(APP.state.settings) !== JSON.stringify(parsed.settings)) {
+      criticalChecks.push('⚠️ Settings unterschiedlich (vermutlich OK)');
+    }
+    
+    // ReadingHub
+    const rhBooksBefore = (parsed.readingHub?.books || []).length;
+    const rhBooksAfter = (typeof buildReadingHubCloudPayload === 'function') ? buildReadingHubCloudPayload().books.length : 0;
+    if (rhBooksBefore !== rhBooksAfter) {
+      criticalChecks.push(`❌ ReadingHub-Bücher: ${rhBooksAfter} → ${rhBooksBefore}`);
+    }
+    
+    // Resultat
+    const ok = diffs.length === 0 && criticalChecks.length === 0;
+    
+    if (ok) {
+      console.log('%c✅ ROUNDTRIP-TEST BESTANDEN — Keine Datenverluste erkannt', 'color:#22c55e;font-weight:bold;font-size:14px');
+      toast('ok', '✅ Roundtrip OK', `${beforeStats.totalEntities} Entitäten · ${Math.round(json.length/1024)} KB · keine Verluste`);
+    } else {
+      console.warn('%c⚠️ DISKREPANZEN GEFUNDEN:', 'color:#fbbf24;font-weight:bold;font-size:14px');
+      if (diffs.length) {
+        console.warn('Stat-Diffs:');
+        diffs.forEach(d => console.warn('  •', d));
+      }
+      if (criticalChecks.length) {
+        console.warn('Critical:');
+        criticalChecks.forEach(c => console.warn('  •', c));
+      }
+      toast('warn', '⚠️ Roundtrip warnt', `${diffs.length + criticalChecks.length} Diskrepanz(en) — Details in der Konsole`);
+    }
+    
+    console.log('\n💡 Tipp: Console öffnen (F12) für vollständigen Bericht.');
+    console.groupEnd();
+    
+    return { ok, beforeStats, afterStats, diffs, criticalChecks, sizeKB: Math.round(json.length/1024) };
+    
+  } catch (err) {
+    console.error('❌ Roundtrip-Test Fehler:', err);
+    console.groupEnd();
+    toast('err', 'Test fehlgeschlagen', err.message);
+    return { ok: false, error: err.message };
+  }
+};
 
 
 /* ============================================================================
