@@ -5516,7 +5516,7 @@ function isImageFile(filename) {
 
 function renderFileAttachments(kind, entityId) {
   const e = APP.state.data.entities;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails' };
   const entity = e[kindMap[kind]]?.[entityId];
   if (!entity) return '';
   const files = entity.files || [];
@@ -5634,7 +5634,7 @@ window._uploadLocks = window._uploadLocks || {};
 window._handleFileSelect = async function(fileList, kind, entityId, folderId) {
   if (!fileList || fileList.length === 0) return;
   if (!firebaseStorage) { toast('error', 'Firebase', 'Firebase SDK nicht geladen – Adblocker deaktivieren oder auf Netlify deployen'); return; }
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.files) entity.files = [];
@@ -5769,7 +5769,7 @@ window._toggleFileFolder = function(kind, entityId, folderId) {
 window._createFileFolder = function(kind, entityId) {
   const name = prompt('Ordnername:');
   if (!name || !name.trim()) return;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.fileFolders) entity.fileFolders = [];
@@ -5781,7 +5781,7 @@ window._createFileFolder = function(kind, entityId) {
 };
 
 window._renameFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -5796,7 +5796,7 @@ window._renameFileFolder = function(kind, entityId, folderId) {
 };
 
 window._deleteFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -5816,7 +5816,7 @@ window._deleteFileFolder = function(kind, entityId, folderId) {
 };
 
 window._moveFileToFolder = function(kind, entityId, fileIdx, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   if (folderId) {
@@ -5848,7 +5848,7 @@ window._dropFileOnFolder = function(e, kind, entityId, folderId) {
 };
 
 function openFilePreview(kind, entityId, fileIdx) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   const f = entity.files[fileIdx];
@@ -22809,8 +22809,6 @@ function viewProjectDetail(id) {
           </div>
           ${(p.thoughts||[]).slice().reverse().map(t => '<div style="padding:8px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.1);border-radius:10px;margin-bottom:6px;display:flex;align-items:flex-start;gap:8px"><span style="flex-shrink:0;font-size:14px">' + "\u{1F4AD}" + '</span><div style="flex:1;min-width:0"><div style="font-size:13px;line-height:1.5;white-space:pre-wrap">' + esc(t.text) + '</div><div style="font-size:10px;color:var(--muted);margin-top:4px">' + new Date(t.createdAt).toLocaleDateString("de-CH") + ' \u00B7 ' + new Date(t.createdAt).toLocaleTimeString("de-CH",{hour:'2-digit',minute:'2-digit'}) + '</div></div><button class="btn sm ghost danger" data-action="delete-project-thought" data-id="' + id + '" data-thought-id="' + t.id + '" style="flex-shrink:0;font-size:10px">' + "\u{1F5D1}" + '</button></div>').join('') || '<div class="mini" style="opacity:.5">Noch keine Gedanken zu diesem Projekt.</div>'}
         </div>
-        
-        ${renderFileAttachments("project", id)}
         
         ${renderFileAttachments("project", id)}
         
@@ -79083,10 +79081,10 @@ console.log('📚 Leseliste geladen');
   }
   
   window.viewMailHub = function() {
-    const all = Object.values(mhEmails()).filter(m => !m.archived);
+    const all = Object.values(mhEmails()).filter(m => !m.archived && !m._isDraft);
     const unreadCount = all.filter(m => !m.read).length;
-    const starredCount = Object.values(mhEmails()).filter(m => m.starred).length;
-    const archivedCount = Object.values(mhEmails()).filter(m => m.archived).length;
+    const starredCount = Object.values(mhEmails()).filter(m => m.starred && !m._isDraft).length;
+    const archivedCount = Object.values(mhEmails()).filter(m => m.archived && !m._isDraft).length;
     const personsCount = Object.keys(mhPersons()).length;
     
     return `<div class="mh-container">
@@ -79344,20 +79342,35 @@ console.log('📚 Leseliste geladen');
     const overlay = document.getElementById("mhEditorOverlay");
     if (overlay) overlay.classList.remove("show");
     
-    // Cleanup: Orphan-Files aufräumen wenn Editor ohne Save geschlossen wird
-    // Vergleiche aktuellen Editor-State mit gespeicherter Email
-    if (_mhEditing) {
-      const savedEmail = APP.state.data.entities.emails?.[_mhEditing];
-      const savedPaths = new Set((savedEmail?.files || []).map(f => f.storagePath).filter(Boolean));
-      
-      _mhFiles.forEach(f => {
-        // Datei wurde hochgeladen aber ist nicht in der gespeicherten Email → Orphan
-        if (f.storagePath && !savedPaths.has(f.storagePath) && typeof window.deleteFromFirebase === "function") {
-          window.deleteFromFirebase(f.storagePath).catch(() => {});
-        }
-      });
+    // Cleanup: Wenn Email noch ein Draft ist (nie gespeichert), Files aus Firebase löschen
+    // und Draft-Entity entfernen
+    if (_mhEditing && APP.state.data.entities.emails?.[_mhEditing]) {
+      const e = APP.state.data.entities.emails[_mhEditing];
+      if (e._isDraft) {
+        // Files aus Firebase löschen
+        (e.files || []).forEach(f => {
+          if (f.storagePath && typeof window.deleteFromFirebase === "function") {
+            window.deleteFromFirebase(f.storagePath).catch(() => {});
+          }
+        });
+        // Draft-Entity entfernen
+        delete APP.state.data.entities.emails[_mhEditing];
+      } else {
+        // Bestehende Email: nur Orphan-Files entfernen (hochgeladen, aber nicht in _mhFiles)
+        const editorPaths = new Set(_mhFiles.map(f => f.storagePath).filter(Boolean));
+        const entityFiles = e.files || [];
+        // Wenn entity.files mehr enthält als _mhFiles (zwischenzeitliche Uploads die nicht im Editor sind)
+        // → diese Files aus Firebase löschen
+        entityFiles.forEach(f => {
+          if (f.storagePath && !editorPaths.has(f.storagePath) && typeof window.deleteFromFirebase === "function") {
+            window.deleteFromFirebase(f.storagePath).catch(() => {});
+          }
+        });
+        // Reset auf den Stand vor Editor (entity.files wird beim nächsten Save überschrieben sowieso)
+      }
     }
-    // Reset state für nächstes Mal
+    
+    // Reset state
     _mhEditing = null;
     _mhFiles = [];
     _mhFromPersonId = null;
@@ -79534,99 +79547,53 @@ console.log('📚 Leseliste geladen');
   // ─── Files ───
   function renderFilesList() {
     return _mhFiles.map((f, i) => {
-      const isUploading = f._uploading;
-      const pct = f._uploadProgress;
-      const hasFailed = !f._uploading && !f.url && !f.storagePath;
       const sizeKB = f.size ? (f.size/1024).toFixed(1)+" KB" : "";
-      return `<div class="mh-link-pill" style="justify-content:space-between;${isUploading ? 'opacity:.7' : ''}${hasFailed ? 'border-color:#f87171' : ''}">
-        <span>${isUploading ? '⏳' : (hasFailed ? '⚠️' : '📎')} ${mhEsc(f.name)} 
+      return `<div class="mh-link-pill" style="justify-content:space-between">
+        <span>📎 ${mhEsc(f.name)} 
           <span style="color:var(--muted);font-size:11px">
             ${sizeKB ? '('+sizeKB+')' : ''}
-            ${isUploading ? '<span style="color:#a5b4fc"> • lädt'+(pct!=null ? ' '+pct+'%' : '...')+'</span>' : ''}
-            ${hasFailed ? '<span style="color:#f87171"> • Fehler</span>' : ''}
-            ${!isUploading && f.url ? '<span style="color:#86efac"> ✓</span>' : ''}
+            ${f.url ? '<span style="color:#86efac"> ✓</span>' : '<span style="color:#f87171"> ⚠️</span>'}
           </span>
         </span>
-        <button onclick="mhRemoveFile(${i})" style="background:none;border:0;color:#f87171;cursor:pointer" ${isUploading ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>×</button>
+        <button onclick="mhRemoveFile(${i})" style="background:none;border:0;color:#f87171;cursor:pointer">×</button>
       </div>`;
     }).join("");
   }
   
   window.mhHandleFileSelect = async function(e) {
     const files = Array.from(e.target.files || []);
-    e.target.value = "";  // Sofort zurücksetzen für erneute Auswahl
-    
+    e.target.value = "";
     if (files.length === 0) return;
     
-    // Firebase verfügbar?
     if (!window.firebaseStorage || typeof window.uploadToFirebase !== "function") {
-      mhToast("error", "Firebase nicht verfügbar", "Datei kann nicht hochgeladen werden. Lade die Seite neu oder prüfe die Internetverbindung.");
+      mhToast("error", "Firebase nicht verfügbar", "Datei kann nicht hochgeladen werden");
       return;
     }
     
-    // Stelle sicher dass wir eine Email-ID haben — auch bei neuen Emails (für saubere Pfad-Zuordnung)
+    // Stelle sicher dass Email-Entity existiert (als Draft, wird beim Save überschrieben)
     if (!_mhEditing) {
       _mhEditing = mhId("eml");
     }
-    const emailId = _mhEditing;
-    
-    // UI: Upload-Indicator
-    const listEl = document.getElementById("mhFilesList");
-    
-    for (const file of files) {
-      // Max 50 MB
-      if (file.size > 50 * 1024 * 1024) {
-        mhToast("error", "Zu groß", file.name + " überschreitet 50 MB");
-        continue;
-      }
-      
-      // Dedup: gleiche Datei (Name+Size) innerhalb der letzten 5 Sek nicht doppelt
-      const dup = _mhFiles.find(f => f.name === file.name && f.size === file.size && f.uploadedAt && (Date.now() - new Date(f.uploadedAt).getTime() < 5000));
-      if (dup) {
-        console.warn("[mhUpload] Duplikat übersprungen:", file.name);
-        continue;
-      }
-      
-      const fileId = "f_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
-      const safeName = file.name.replace(/[^\w.-]/g, "_");
-      const path = "attachments/email/" + emailId + "/" + fileId + "_" + safeName;
-      
-      // Platzhalter in der Liste mit Status "Uploading..."
-      const placeholderIdx = _mhFiles.length;
-      _mhFiles.push({
-        id: fileId,
-        name: file.name,
-        originalName: file.name,
-        size: file.size,
-        type: file.type || "application/octet-stream",
-        storagePath: path,
-        url: null,
-        uploadedAt: new Date().toISOString(),
-        _uploading: true,
-      });
-      if (listEl) listEl.innerHTML = renderFilesList();
-      
-      try {
-        const url = await window.uploadToFirebase(file, path, (pct) => {
-          // Optional: Progress in Liste anzeigen
-          const f = _mhFiles[placeholderIdx];
-          if (f) f._uploadProgress = pct;
-          if (listEl) listEl.innerHTML = renderFilesList();
-        });
-        
-        // Erfolg
-        _mhFiles[placeholderIdx].url = url;
-        _mhFiles[placeholderIdx]._uploading = false;
-        delete _mhFiles[placeholderIdx]._uploadProgress;
-        mhToast("ok", "📎 Hochgeladen", file.name);
-      } catch(err) {
-        console.error("[mhUpload] Fehlgeschlagen für", file.name, err);
-        // Fehlgeschlagen: Eintrag rausnehmen
-        _mhFiles.splice(placeholderIdx, 1);
-        mhToast("error", "Upload fehlgeschlagen", file.name + ": " + (err?.message || "Unbekannter Fehler"));
-      }
-      if (listEl) listEl.innerHTML = renderFilesList();
+    if (!APP.state.data.entities.emails) APP.state.data.entities.emails = {};
+    if (!APP.state.data.entities.emails[_mhEditing]) {
+      const now = new Date().toISOString();
+      APP.state.data.entities.emails[_mhEditing] = {
+        id: _mhEditing, subject: "", body: "", summary: "", date: now.slice(0,10),
+        direction: "incoming", fromPersonId: null, toPersonIds: [], ccPersonIds: [],
+        linkedTasks: [], linkedProjects: [], linkedOrganizations: [],
+        linkedNotes: [], linkedIdeas: [], tags: [], files: [],
+        read: false, archived: false, starred: false, _isDraft: true,
+        createdAt: now, updatedAt: now,
+      };
     }
+    
+    // Nutze die generische Upload-Logik (gleicher Code wie bei Projekten etc.)
+    // Diese schreibt direkt in APP.state.data.entities.emails[_mhEditing].files
+    await window._handleFileSelect(files, "email", _mhEditing, "");
+    
+    // Synce Editor-Buffer mit dem was jetzt in der Entity ist
+    _mhFiles = [...(APP.state.data.entities.emails[_mhEditing].files || [])];
+    document.getElementById("mhFilesList").innerHTML = renderFilesList();
   };
   
   window.mhRemoveFile = function(idx) {
@@ -79637,6 +79604,10 @@ console.log('📚 Leseliste geladen');
       window.deleteFromFirebase(f.storagePath).catch(err => console.warn("Firebase delete failed:", err));
     }
     _mhFiles.splice(idx, 1);
+    // Sync mit Entity wenn vorhanden
+    if (_mhEditing && APP.state.data.entities.emails?.[_mhEditing]) {
+      APP.state.data.entities.emails[_mhEditing].files = [..._mhFiles];
+    }
     document.getElementById("mhFilesList").innerHTML = renderFilesList();
   };
   
@@ -79654,26 +79625,25 @@ console.log('📚 Leseliste geladen');
     }
     
     // Falls noch Uploads laufen → blockieren
-    const stillUploading = _mhFiles.some(f => f._uploading);
-    if (stillUploading) {
-      mhToast("warn", "Upload läuft noch", "Bitte warte bis alle Dateien hochgeladen sind");
-      return;
+    // (generischer Upload-Handler hat keinen _uploading-Flag, aber wir prüfen via Lock)
+    if (window._uploadLocks) {
+      const stillUploading = Object.keys(window._uploadLocks).some(k => k.startsWith('email_' + _mhEditing));
+      if (stillUploading) {
+        mhToast("warn", "Upload läuft noch", "Bitte warte bis alle Dateien hochgeladen sind");
+        return;
+      }
     }
     
-    // Files säubern: _uploading/_uploadProgress entfernen, fehlgeschlagene rausfiltern
-    const cleanFiles = _mhFiles
-      .filter(f => f.url && f.storagePath)  // Nur erfolgreich hochgeladene
-      .map(f => {
-        const { _uploading, _uploadProgress, ...clean } = f;
-        return clean;
-      });
+    // Files säubern: nur erfolgreich hochgeladene (mit url) speichern
+    const cleanFiles = _mhFiles.filter(f => f.url && f.storagePath);
     
     const now = new Date().toISOString();
     const id = _mhEditing || mhId("eml");
-    const isNew = !APP.state.data.entities.emails[id];
+    const existing = APP.state.data.entities.emails[id];
+    const isNew = !existing || existing._isDraft;
     
     APP.state.data.entities.emails[id] = {
-      ...(APP.state.data.entities.emails[id] || {}),
+      ...(existing || {}),
       id, subject, body, summary, date, direction,
       fromPersonId: _mhFromPersonId,
       toPersonIds: [..._mhToPersonIds],
@@ -79681,16 +79651,18 @@ console.log('📚 Leseliste geladen');
       linkedTasks: [..._mhLinkedTasks],
       linkedProjects: [..._mhLinkedProjects],
       linkedOrganizations: [..._mhLinkedOrgs],
-      linkedNotes: APP.state.data.entities.emails[id]?.linkedNotes || [],
-      linkedIdeas: APP.state.data.entities.emails[id]?.linkedIdeas || [],
-      tags: APP.state.data.entities.emails[id]?.tags || [],
+      linkedNotes: existing?.linkedNotes || [],
+      linkedIdeas: existing?.linkedIdeas || [],
+      tags: existing?.tags || [],
       files: cleanFiles,
-      read: isNew ? false : (APP.state.data.entities.emails[id]?.read !== false),
-      archived: APP.state.data.entities.emails[id]?.archived || false,
-      starred: APP.state.data.entities.emails[id]?.starred || false,
-      createdAt: APP.state.data.entities.emails[id]?.createdAt || now,
+      read: isNew ? false : (existing?.read !== false),
+      archived: existing?.archived || false,
+      starred: existing?.starred || false,
+      createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
+    // Draft-Flag entfernen
+    delete APP.state.data.entities.emails[id]._isDraft;
     
     mhSave();
     mhCloseEditor();
@@ -79821,7 +79793,7 @@ console.log('📚 Leseliste geladen');
   
   function countMailsForPerson(pid) {
     return Object.values(mhEmails()).filter(m => 
-      m.fromPersonId === pid || (m.toPersonIds || []).includes(pid) || (m.ccPersonIds || []).includes(pid)
+      !m._isDraft && (m.fromPersonId === pid || (m.toPersonIds || []).includes(pid) || (m.ccPersonIds || []).includes(pid))
     ).length;
   }
   
