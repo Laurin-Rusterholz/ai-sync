@@ -6714,6 +6714,63 @@ function normalizeData(data) {
     p.notes = p.notes || "";
     p.organizationId = p.organizationId || null;
     p.tags = Array.isArray(p.tags) ? p.tags : [];
+    
+    // ── Erweiterte persönliche Daten ──
+    p.firstName = p.firstName || "";
+    p.lastName = p.lastName || "";
+    p.nickname = p.nickname || "";
+    p.title = p.title || "";  // Dr., Prof., etc.
+    p.birthday = p.birthday || "";  // YYYY-MM-DD
+    p.gender = p.gender || "";  // "m"|"f"|"d"|""
+    p.pronouns = p.pronouns || "";  // "er/ihm", "sie/ihr", etc.
+    p.languages = Array.isArray(p.languages) ? p.languages : [];  // ["Deutsch", "Englisch"]
+    p.nationality = p.nationality || "";
+    
+    // ── Adresse ──
+    p.address = p.address || { street: "", zip: "", city: "", country: "" };
+    if (typeof p.address !== "object") p.address = { street: "", zip: "", city: "", country: "" };
+    p.address.street = p.address.street || "";
+    p.address.zip = p.address.zip || "";
+    p.address.city = p.address.city || "";
+    p.address.country = p.address.country || "";
+    
+    // ── Beruf ──
+    p.company = p.company || "";  // String falls keine Organization verknüpft
+    p.department = p.department || "";
+    p.website = p.website || "";
+    
+    // ── Beziehung zu mir ──
+    p.relationshipType = p.relationshipType || "";  // "kollege"|"freund"|"familie"|"kunde"|"mentor"|...
+    p.relationshipSince = p.relationshipSince || "";  // YYYY-MM-DD wann kennengelernt
+    p.howWeMet = p.howWeMet || "";  // Kontext wie kennengelernt
+    p.importance = p.importance || 0;  // 0-5 (Wichtigkeitsskala)
+    p.lastContact = p.lastContact || "";  // Datum letzter Kontakt
+    p.contactFrequency = p.contactFrequency || "";  // "weekly"|"monthly"|"quarterly"|"yearly"|""
+    
+    // ── Social Media ──
+    p.social = p.social || { linkedin: "", twitter: "", instagram: "", facebook: "", github: "", other: "" };
+    if (typeof p.social !== "object") p.social = { linkedin: "", twitter: "", instagram: "", facebook: "", github: "", other: "" };
+    
+    // ── Persönliches ──
+    p.interests = Array.isArray(p.interests) ? p.interests : [];  // ["Schach", "Kochen"]
+    p.skills = Array.isArray(p.skills) ? p.skills : [];  // ["Python", "Public Speaking"]
+    p.familyMembers = p.familyMembers || "";  // Frei-Text "Frau Anna, Kinder Max (10), Lisa (8)"
+    p.preferredGifts = p.preferredGifts || "";  // Geschenkideen
+    p.foodPreferences = p.foodPreferences || "";  // "vegetarisch", "Allergien: Nüsse"
+    
+    // ── Verknüpfungen ──
+    p.linkedProjects = Array.isArray(p.linkedProjects) ? p.linkedProjects : [];
+    p.linkedTasks = Array.isArray(p.linkedTasks) ? p.linkedTasks : [];
+    p.linkedNotes = Array.isArray(p.linkedNotes) ? p.linkedNotes : [];
+    p.linkedMeetings = Array.isArray(p.linkedMeetings) ? p.linkedMeetings : [];
+    p.linkedDecisions = Array.isArray(p.linkedDecisions) ? p.linkedDecisions : [];
+    p.linkedIdeas = Array.isArray(p.linkedIdeas) ? p.linkedIdeas : [];
+    p.linkedGoals = Array.isArray(p.linkedGoals) ? p.linkedGoals : [];
+    p.relatedPersons = Array.isArray(p.relatedPersons) ? p.relatedPersons : [];  // [{personId, relation: "ehepartner"|"kind"|"kollege"|...}]
+    
+    // ── Historie (Auto-Log) ──
+    p.interactions = Array.isArray(p.interactions) ? p.interactions : [];  // [{id, date, type:"meeting"|"call"|"email"|"chat"|"event", note}]
+    
     p.createdAt = p.createdAt || nowIso();
     p.updatedAt = p.updatedAt || nowIso();
   }
@@ -75057,19 +75114,32 @@ console.log('📚 Leseliste geladen');
       <div class="mh-persons-grid">
         ${list.map(p => {
           const orgName = p.organizationId ? mhData().organizations?.[p.organizationId]?.name : "";
+          const linkedCount = (p.linkedProjects?.length || 0) + (p.linkedTasks?.length || 0) + (p.linkedNotes?.length || 0) + (p.linkedMeetings?.length || 0);
+          const importanceStars = p.importance ? '★'.repeat(p.importance) : '';
+          // Geburtstag-Check
+          let bdayBadge = '';
+          if (p.birthday) {
+            try {
+              const bd = new Date(p.birthday);
+              const today = new Date();
+              if (bd.getMonth() === today.getMonth() && bd.getDate() === today.getDate()) bdayBadge = '🎂';
+            } catch(e) {}
+          }
           return `<div class="mh-person-card" onclick="navigate('persons','${p.id}')">
             <div class="mh-person-card-head">
               <div class="mh-person-card-avatar">${mhEsc(mhInitials(p.name))}</div>
-              <div>
-                <div class="mh-person-card-name">${mhEsc(p.name)}</div>
+              <div style="flex:1;min-width:0">
+                <div class="mh-person-card-name">${bdayBadge} ${mhEsc(p.name)}${importanceStars ? ` <span style="color:#fbbf24;font-size:11px">${importanceStars}</span>` : ''}</div>
                 ${p.role ? `<div class="mh-person-card-role">${mhEsc(p.role)}</div>` : ""}
+                ${p.relationshipType ? `<div style="font-size:10.5px;color:#d8b4fe;margin-top:2px;text-transform:capitalize">🤝 ${mhEsc(p.relationshipType)}</div>` : ""}
               </div>
             </div>
-            ${p.emails?.[0] ? `<div style="font-size:12px;color:#a5b4fc;margin-bottom:4px">📧 ${mhEsc(p.emails[0])}</div>` : ""}
-            ${orgName ? `<div style="font-size:12px;color:var(--muted)">🏛️ ${mhEsc(orgName)}</div>` : ""}
+            ${p.emails?.[0] ? `<div style="font-size:12px;color:#a5b4fc;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📧 ${mhEsc(p.emails[0])}</div>` : ""}
+            ${orgName ? `<div style="font-size:12px;color:var(--muted)">🏛️ ${mhEsc(orgName)}</div>` : (p.company ? `<div style="font-size:12px;color:var(--muted)">🏛️ ${mhEsc(p.company)}</div>` : "")}
             <div class="mh-person-card-meta">
               ${p.phones?.length ? `<span>📞 ${p.phones.length}</span>` : ""}
-              <span>📬 ${countMailsForPerson(p.id)} Mails</span>
+              <span>📬 ${countMailsForPerson(p.id)}</span>
+              ${linkedCount > 0 ? `<span>🔗 ${linkedCount}</span>` : ''}
             </div>
           </div>`;
         }).join("")}
@@ -75092,37 +75162,142 @@ console.log('📚 Leseliste geladen');
     ).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     
     const orgName = p.organizationId ? mhData().organizations?.[p.organizationId]?.name : "";
+    const addr = p.address || {};
+    const soc = p.social || {};
+    const hasAddr = addr.street || addr.zip || addr.city || addr.country;
+    const hasSocial = soc.linkedin || soc.twitter || soc.instagram || soc.facebook || soc.github || soc.other;
+    
+    // Verknüpfungs-Listen aufbauen
+    const linkedProjects = (p.linkedProjects || []).map(pid => mhData().projects?.[pid]).filter(Boolean);
+    const linkedTasks = (p.linkedTasks || []).map(tid => mhData().tasks?.[tid]).filter(Boolean);
+    const linkedNotes = (p.linkedNotes || []).map(nid => mhData().notes?.[nid]).filter(Boolean);
+    const linkedMeetings = (p.linkedMeetings || []).map(mid => mhData().meetings?.[mid]).filter(Boolean);
+    const linkedDecisions = (p.linkedDecisions || []).map(did => mhData().decisions?.[did]).filter(Boolean);
+    const linkedIdeas = (p.linkedIdeas || []).map(iid => mhData().ideas?.[iid]).filter(Boolean);
+    const linkedGoals = (p.linkedGoals || []).map(gid => mhData().goals?.[gid]).filter(Boolean);
+    const related = (p.relatedPersons || []).map(rp => ({...rp, person: mhPersons()?.[rp.personId]})).filter(rp => rp.person);
+    
+    // Alter aus Geburtstag berechnen
+    let ageStr = "";
+    if (p.birthday) {
+      try {
+        const bd = new Date(p.birthday);
+        const today = new Date();
+        let age = today.getFullYear() - bd.getFullYear();
+        const m = today.getMonth() - bd.getMonth();
+        if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) age--;
+        ageStr = ` · ${age} J.`;
+        // Geburtstag heute?
+        if (bd.getMonth() === today.getMonth() && bd.getDate() === today.getDate()) {
+          ageStr += " 🎂";
+        }
+      } catch(e) {}
+    }
+    
+    // Importance Sterne
+    const importanceStars = '★'.repeat(p.importance || 0) + '☆'.repeat(5 - (p.importance || 0));
     
     return `<div class="mh-detail">
-      <div style="margin-bottom:18px">
+      <div style="margin-bottom:18px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="mh-btn ghost" onclick="navigate('persons')">← Zurück</button>
-        <button class="mh-btn ghost" onclick="mhOpenPersonEditor('${id}')" style="margin-left:8px">✏️ Bearbeiten</button>
-        <button class="mh-btn danger" onclick="mhDeletePerson('${id}')" style="margin-left:8px;float:right">🗑 Löschen</button>
+        <button class="mh-btn ghost" onclick="mhOpenPersonEditor('${id}')">✏️ Bearbeiten</button>
+        <button class="mh-btn danger" onclick="mhDeletePerson('${id}')" style="margin-left:auto">🗑 Löschen</button>
       </div>
       
-      <div class="mh-detail-head" style="display:flex;align-items:center;gap:18px">
-        <div class="mh-person-card-avatar" style="width:64px;height:64px;font-size:22px">${mhEsc(mhInitials(p.name))}</div>
-        <div>
-          <h1 class="mh-detail-subject">${mhEsc(p.name)}</h1>
-          ${p.role ? `<div style="color:var(--muted);font-size:14px">${mhEsc(p.role)}</div>` : ""}
+      <div class="mh-detail-head" style="display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap">
+        <div class="mh-person-card-avatar" style="width:80px;height:80px;font-size:26px;flex-shrink:0">${mhEsc(mhInitials(p.name))}</div>
+        <div style="flex:1;min-width:200px">
+          <h1 class="mh-detail-subject" style="margin:0 0 4px">${p.title ? mhEsc(p.title) + ' ' : ''}${mhEsc(p.name)}${p.nickname ? ` <span style="color:var(--muted);font-weight:400;font-size:18px">„${mhEsc(p.nickname)}"</span>` : ''}</h1>
+          ${p.role ? `<div style="color:var(--muted);font-size:14px">${mhEsc(p.role)}${orgName ? ' bei ' + mhEsc(orgName) : (p.company ? ' bei ' + mhEsc(p.company) : '')}</div>` : ''}
+          <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--muted)">
+            ${p.birthday ? `<span>🎂 ${mhFmtDate(p.birthday)}${ageStr}</span>` : ''}
+            ${p.pronouns ? `<span>· ${mhEsc(p.pronouns)}</span>` : ''}
+            ${p.nationality ? `<span>· 🌍 ${mhEsc(p.nationality)}</span>` : ''}
+            ${p.languages?.length ? `<span>· 🗣 ${p.languages.map(mhEsc).join(', ')}</span>` : ''}
+          </div>
+          ${p.importance ? `<div style="margin-top:6px;font-size:14px;color:#fbbf24">${importanceStars}</div>` : ''}
         </div>
+        ${p.relationshipType || p.contactFrequency ? `<div style="background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.2);border-radius:8px;padding:10px 14px;font-size:11.5px;color:var(--muted);min-width:140px">
+          ${p.relationshipType ? `<div style="font-weight:700;color:#d8b4fe">🤝 ${mhEsc(p.relationshipType.charAt(0).toUpperCase() + p.relationshipType.slice(1))}</div>` : ''}
+          ${p.contactFrequency ? `<div style="margin-top:4px">📞 ${{weekly:'wöchentl.',biweekly:'2-wöchentl.',monthly:'monatl.',quarterly:'quartalsweise',yearly:'jährlich'}[p.contactFrequency] || p.contactFrequency}</div>` : ''}
+          ${p.lastContact ? `<div style="margin-top:4px">Zuletzt: ${mhFmtDate(p.lastContact)}</div>` : ''}
+        </div>` : ''}
       </div>
       
-      ${p.emails?.length ? `<div class="mh-detail-section"><h4>📧 E-Mail-Adressen</h4>
-        ${p.emails.map(e => `<div style="margin-bottom:4px"><a href="mailto:${mhEsc(e)}" style="color:#a5b4fc">${mhEsc(e)}</a></div>`).join("")}
-      </div>` : ""}
+      ${p.tags?.length ? `<div class="mh-detail-section" style="padding-top:6px">
+        ${p.tags.map(t => `<span style="display:inline-block;padding:3px 9px;margin:2px;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.3);border-radius:10px;font-size:11px;color:#d8b4fe">${mhEsc(t)}</span>`).join('')}
+      </div>` : ''}
       
-      ${p.phones?.length ? `<div class="mh-detail-section"><h4>📞 Telefon</h4>
-        ${p.phones.map(ph => `<div style="margin-bottom:4px"><a href="tel:${mhEsc(ph)}" style="color:#a5b4fc">${mhEsc(ph)}</a></div>`).join("")}
-      </div>` : ""}
+      ${p.emails?.length || p.phones?.length || hasAddr ? `<div class="mh-detail-section"><h4>📞 Kontakt</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div>
+            ${p.emails?.length ? `<div style="margin-bottom:6px"><strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">E-Mail</strong></div>${p.emails.map(e => `<div style="margin-bottom:3px"><a href="mailto:${mhEsc(e)}" style="color:#a5b4fc">${mhEsc(e)}</a></div>`).join('')}` : ''}
+            ${p.phones?.length ? `<div style="margin-top:10px;margin-bottom:6px"><strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Telefon</strong></div>${p.phones.map(ph => `<div style="margin-bottom:3px"><a href="tel:${mhEsc(ph)}" style="color:#a5b4fc">${mhEsc(ph)}</a></div>`).join('')}` : ''}
+          </div>
+          ${hasAddr ? `<div>
+            <strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">🏠 Adresse</strong>
+            <div style="margin-top:6px;font-size:13px;line-height:1.6">
+              ${addr.street ? mhEsc(addr.street) + '<br>' : ''}
+              ${addr.zip || addr.city ? `${mhEsc(addr.zip)} ${mhEsc(addr.city)}<br>` : ''}
+              ${addr.country ? mhEsc(addr.country) : ''}
+            </div>
+          </div>` : ''}
+        </div>
+      </div>` : ''}
       
-      ${orgName ? `<div class="mh-detail-section"><h4>🏛️ Organisation</h4>
-        <span class="mh-link-pill" onclick="navigate('organizations','${p.organizationId}')">🏛️ ${mhEsc(orgName)}</span>
-      </div>` : ""}
+      ${hasSocial || p.website ? `<div class="mh-detail-section"><h4>🌐 Social & Web</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          ${p.website ? `<a href="${mhEsc(p.website)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:14px;font-size:12px;color:#a5b4fc;text-decoration:none">🌐 Website</a>` : ''}
+          ${soc.linkedin ? `<a href="${soc.linkedin.startsWith('http') ? mhEsc(soc.linkedin) : 'https://linkedin.com/in/' + mhEsc(soc.linkedin)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(10,102,194,.1);border:1px solid rgba(10,102,194,.3);border-radius:14px;font-size:12px;color:#7ab8ff;text-decoration:none">💼 LinkedIn</a>` : ''}
+          ${soc.twitter ? `<a href="${soc.twitter.startsWith('http') ? mhEsc(soc.twitter) : 'https://twitter.com/' + mhEsc(soc.twitter.replace('@', ''))}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.2);border-radius:14px;font-size:12px;color:#fff;text-decoration:none">𝕏 ${mhEsc(soc.twitter)}</a>` : ''}
+          ${soc.instagram ? `<a href="${soc.instagram.startsWith('http') ? mhEsc(soc.instagram) : 'https://instagram.com/' + mhEsc(soc.instagram.replace('@', ''))}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(236,72,153,.1);border:1px solid rgba(236,72,153,.3);border-radius:14px;font-size:12px;color:#f9a8d4;text-decoration:none">📷 Instagram</a>` : ''}
+          ${soc.github ? `<a href="${soc.github.startsWith('http') ? mhEsc(soc.github) : 'https://github.com/' + mhEsc(soc.github)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.2);border-radius:14px;font-size:12px;color:#fff;text-decoration:none">🐱 GitHub</a>` : ''}
+          ${soc.facebook ? `<a href="${soc.facebook.startsWith('http') ? mhEsc(soc.facebook) : 'https://facebook.com/' + mhEsc(soc.facebook)}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(24,119,242,.1);border:1px solid rgba(24,119,242,.3);border-radius:14px;font-size:12px;color:#7ab8ff;text-decoration:none">f Facebook</a>` : ''}
+          ${soc.other ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);border-radius:14px;font-size:12px">🔗 ${mhEsc(soc.other)}</span>` : ''}
+        </div>
+      </div>` : ''}
+      
+      ${orgName || p.company || p.department || p.skills?.length ? `<div class="mh-detail-section"><h4>💼 Beruf</h4>
+        ${orgName ? `<div style="margin-bottom:6px"><span class="mh-link-pill" onclick="navigate('organizations','${p.organizationId}')">🏛️ ${mhEsc(orgName)}</span></div>` : (p.company ? `<div style="margin-bottom:6px;font-size:13px">🏛️ ${mhEsc(p.company)}</div>` : '')}
+        ${p.department ? `<div style="font-size:13px;margin-bottom:6px;color:var(--muted)">Abteilung: ${mhEsc(p.department)}</div>` : ''}
+        ${p.skills?.length ? `<div style="margin-top:8px"><strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Skills</strong><br>${p.skills.map(s => `<span style="display:inline-block;padding:3px 9px;margin:3px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:10px;font-size:11px;color:#86efac">${mhEsc(s)}</span>`).join('')}</div>` : ''}
+      </div>` : ''}
+      
+      ${p.howWeMet || p.relationshipSince ? `<div class="mh-detail-section"><h4>🤝 Wie wir uns kennen</h4>
+        ${p.relationshipSince ? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Seit ${mhFmtDate(p.relationshipSince)}</div>` : ''}
+        ${p.howWeMet ? `<div class="mh-body-content">${mhEsc(p.howWeMet)}</div>` : ''}
+      </div>` : ''}
+      
+      ${p.interests?.length || p.familyMembers || p.preferredGifts || p.foodPreferences ? `<div class="mh-detail-section"><h4>🎂 Persönlich</h4>
+        ${p.interests?.length ? `<div style="margin-bottom:10px"><strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Interessen:</strong><br>${p.interests.map(i => `<span style="display:inline-block;padding:3px 9px;margin:3px;background:rgba(251,146,60,.08);border:1px solid rgba(251,146,60,.25);border-radius:10px;font-size:11px;color:#fdba74">${mhEsc(i)}</span>`).join('')}</div>` : ''}
+        ${p.familyMembers ? `<div style="margin-bottom:10px"><strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">👨‍👩‍👧 Familie:</strong><div style="font-size:13px;margin-top:4px;line-height:1.5">${mhEsc(p.familyMembers)}</div></div>` : ''}
+        ${p.preferredGifts ? `<div style="margin-bottom:10px"><strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">🎁 Geschenkideen:</strong><div style="font-size:13px;margin-top:4px;line-height:1.5">${mhEsc(p.preferredGifts)}</div></div>` : ''}
+        ${p.foodPreferences ? `<div><strong style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">🍽 Essen:</strong> <span style="font-size:13px">${mhEsc(p.foodPreferences)}</span></div>` : ''}
+      </div>` : ''}
       
       ${p.notes ? `<div class="mh-detail-section"><h4>📝 Notizen</h4>
-        <div class="mh-body-content">${mhEsc(p.notes)}</div>
-      </div>` : ""}
+        <div class="mh-body-content" style="white-space:pre-wrap">${mhEsc(p.notes)}</div>
+      </div>` : ''}
+      
+      ${related.length ? `<div class="mh-detail-section"><h4>👥 Verwandte Personen</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          ${related.map(rp => `<span class="mh-link-pill" onclick="navigate('persons','${rp.personId}')" style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.3);border-radius:14px;font-size:12.5px;color:#d8b4fe;cursor:pointer">
+            👤 ${mhEsc(rp.person.name)}${rp.relation ? ` <span style="color:var(--muted);font-size:11px">(${mhEsc(rp.relation)})</span>` : ''}
+          </span>`).join('')}
+        </div>
+      </div>` : ''}
+      
+      ${linkedProjects.length || linkedTasks.length || linkedNotes.length || linkedMeetings.length || linkedDecisions.length || linkedIdeas.length || linkedGoals.length ? `<div class="mh-detail-section"><h4>🔗 Verknüpfungen</h4>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${linkedProjects.length ? `<div><strong style="font-size:11.5px;color:#a5b4fc;text-transform:uppercase;letter-spacing:.08em">📁 Projekte (${linkedProjects.length})</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">${linkedProjects.map(pr => `<span onclick="navigate('projects','${pr.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:13px;font-size:12px;color:#a5b4fc;cursor:pointer">📁 ${mhEsc(pr.title || pr.name || pr.id)}</span>`).join('')}</div></div>` : ''}
+          ${linkedTasks.length ? `<div><strong style="font-size:11.5px;color:#86efac;text-transform:uppercase;letter-spacing:.08em">✅ Tasks (${linkedTasks.length})</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">${linkedTasks.map(t => `<span onclick="navigate('tasks','${t.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:13px;font-size:12px;color:#86efac;cursor:pointer">${t.status==='done'?'☑':'▢'} ${mhEsc((t.title || t.id).slice(0,40))}</span>`).join('')}</div></div>` : ''}
+          ${linkedNotes.length ? `<div><strong style="font-size:11.5px;color:#fcd34d;text-transform:uppercase;letter-spacing:.08em">📝 Notizen (${linkedNotes.length})</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">${linkedNotes.map(n => `<span onclick="navigate('notes','${n.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:13px;font-size:12px;color:#fcd34d;cursor:pointer">📝 ${mhEsc((n.title || n.id).slice(0,40))}</span>`).join('')}</div></div>` : ''}
+          ${linkedMeetings.length ? `<div><strong style="font-size:11.5px;color:#d8b4fe;text-transform:uppercase;letter-spacing:.08em">📅 Meetings (${linkedMeetings.length})</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">${linkedMeetings.map(m => `<span onclick="navigate('meetings','${m.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.3);border-radius:13px;font-size:12px;color:#d8b4fe;cursor:pointer">📅 ${mhEsc((m.title || m.id).slice(0,40))}</span>`).join('')}</div></div>` : ''}
+          ${linkedDecisions.length ? `<div><strong style="font-size:11.5px;color:#f9a8d4;text-transform:uppercase;letter-spacing:.08em">🎯 Decisions (${linkedDecisions.length})</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">${linkedDecisions.map(d => `<span onclick="navigate('decisions','${d.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:rgba(236,72,153,.1);border:1px solid rgba(236,72,153,.3);border-radius:13px;font-size:12px;color:#f9a8d4;cursor:pointer">🎯 ${mhEsc((d.title || d.id).slice(0,40))}</span>`).join('')}</div></div>` : ''}
+          ${linkedIdeas.length ? `<div><strong style="font-size:11.5px;color:#fdba74;text-transform:uppercase;letter-spacing:.08em">💡 Ideen (${linkedIdeas.length})</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">${linkedIdeas.map(i => `<span onclick="navigate('ideas','${i.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.3);border-radius:13px;font-size:12px;color:#fdba74;cursor:pointer">💡 ${mhEsc((i.title || i.id).slice(0,40))}</span>`).join('')}</div></div>` : ''}
+          ${linkedGoals.length ? `<div><strong style="font-size:11.5px;color:#5eead4;text-transform:uppercase;letter-spacing:.08em">🎯 Ziele (${linkedGoals.length})</strong><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px">${linkedGoals.map(g => `<span onclick="navigate('goals','${g.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;background:rgba(20,184,166,.1);border:1px solid rgba(20,184,166,.3);border-radius:13px;font-size:12px;color:#5eead4;cursor:pointer">🎯 ${mhEsc((g.title || g.id).slice(0,40))}</span>`).join('')}</div></div>` : ''}
+        </div>
+      </div>` : ''}
       
       <div class="mh-detail-section">
         <h4>📬 E-Mails (${mails.length})</h4>
@@ -75144,7 +75319,7 @@ console.log('📚 Leseliste geladen');
     </div>`;
   };
   
-  // Person Editor
+  // Person Editor mit Tabs (Basis · Kontakt · Beruf · Beziehung · Persönlich · Verknüpfungen)
   window.mhOpenPersonEditor = function(personId) {
     const p = personId ? mhPersons()[personId] : null;
     
@@ -75157,44 +75332,372 @@ console.log('📚 Leseliste geladen');
     }
     
     const orgs = Object.values(mhData().organizations || {});
+    const allPersons = Object.values(mhPersons() || {}).filter(x => x.id !== personId);
     
-    overlay.innerHTML = `<div class="mh-modal" onclick="event.stopPropagation()">
+    const tab = window._mhPersonTab || "basic";
+    const setTab = (t) => `onclick="window._mhPersonTab='${t}';mhOpenPersonEditor('${personId || ''}')"`;
+    
+    const addr = p?.address || { street: "", zip: "", city: "", country: "" };
+    const soc = p?.social || { linkedin: "", twitter: "", instagram: "", facebook: "", github: "", other: "" };
+    
+    overlay.innerHTML = `<div class="mh-modal" onclick="event.stopPropagation()" style="max-width:720px">
       <div class="mh-modal-head">
         <span class="mh-modal-title">👤 ${p ? "Person bearbeiten" : "Neue Person"}</span>
         <button class="mh-modal-close" onclick="mhClosePersonEditor()">×</button>
       </div>
-      <div class="mh-modal-body">
-        <div class="mh-field">
-          <label class="mh-label">Name *</label>
-          <input type="text" id="mhpName" class="mh-input" placeholder="Vor- und Nachname" value="${mhEsc(p?.name || "")}" />
+      
+      <!-- Tab-Navigation -->
+      <div style="display:flex;gap:2px;padding:0 16px;border-bottom:1px solid rgba(255,255,255,.08);overflow-x:auto;flex-shrink:0">
+        ${[
+          ['basic', '👤 Basis'],
+          ['contact', '📧 Kontakt'],
+          ['work', '💼 Beruf'],
+          ['relationship', '🤝 Beziehung'],
+          ['personal', '🎂 Persönlich'],
+          ['links', '🔗 Verknüpfungen'],
+        ].map(([key, label]) => `
+          <button ${setTab(key)} style="padding:10px 14px;background:${tab===key?'rgba(168,85,247,.15)':'transparent'};border:0;border-bottom:2px solid ${tab===key?'#a855f7':'transparent'};color:${tab===key?'#d8b4fe':'var(--muted)'};cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;transition:all .15s">${label}</button>
+        `).join('')}
+      </div>
+      
+      <div class="mh-modal-body" style="max-height:60vh">
+      
+      ${tab === 'basic' ? `
+        <div class="mh-field"><label class="mh-label">Anrede</label>
+          <input type="text" id="mhpTitle" class="mh-input" placeholder="z.B. Dr., Prof." value="${mhEsc(p?.title || '')}" />
         </div>
-        <div class="mh-field">
-          <label class="mh-label">Rolle / Position</label>
-          <input type="text" id="mhpRole" class="mh-input" placeholder="z.B. Projektleiter, Berater" value="${mhEsc(p?.role || "")}" />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="mh-field"><label class="mh-label">Vorname</label>
+            <input type="text" id="mhpFirstName" class="mh-input" placeholder="Max" value="${mhEsc(p?.firstName || '')}" />
+          </div>
+          <div class="mh-field"><label class="mh-label">Nachname</label>
+            <input type="text" id="mhpLastName" class="mh-input" placeholder="Mustermann" value="${mhEsc(p?.lastName || '')}" />
+          </div>
         </div>
-        <div class="mh-field">
-          <label class="mh-label">E-Mail-Adressen (eine pro Zeile)</label>
-          <textarea id="mhpEmails" class="mh-textarea" placeholder="z.B. max@example.com">${mhEsc((p?.emails || []).join("\n"))}</textarea>
+        <div class="mh-field"><label class="mh-label">Anzeigename (vollständig) *</label>
+          <input type="text" id="mhpName" class="mh-input" placeholder="Wie soll Person angezeigt werden?" value="${mhEsc(p?.name || '')}" />
         </div>
-        <div class="mh-field">
-          <label class="mh-label">Telefon-Nummern (eine pro Zeile)</label>
+        <div class="mh-field"><label class="mh-label">Spitzname</label>
+          <input type="text" id="mhpNickname" class="mh-input" placeholder="optional" value="${mhEsc(p?.nickname || '')}" />
+        </div>
+        <div class="mh-field"><label class="mh-label">Pronomen</label>
+          <input type="text" id="mhpPronouns" class="mh-input" placeholder="z.B. er/ihm, sie/ihr" value="${mhEsc(p?.pronouns || '')}" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="mh-field"><label class="mh-label">Geburtstag</label>
+            <input type="date" id="mhpBirthday" class="mh-input" value="${mhEsc(p?.birthday || '')}" />
+          </div>
+          <div class="mh-field"><label class="mh-label">Nationalität</label>
+            <input type="text" id="mhpNationality" class="mh-input" placeholder="z.B. Schweiz" value="${mhEsc(p?.nationality || '')}" />
+          </div>
+        </div>
+        <div class="mh-field"><label class="mh-label">Sprachen (Komma-getrennt)</label>
+          <input type="text" id="mhpLanguages" class="mh-input" placeholder="z.B. Deutsch, Englisch, Französisch" value="${mhEsc((p?.languages || []).join(', '))}" />
+        </div>
+      
+      ` : tab === 'contact' ? `
+        <div class="mh-field"><label class="mh-label">📧 E-Mail-Adressen (eine pro Zeile)</label>
+          <textarea id="mhpEmails" class="mh-textarea" placeholder="max@example.com">${mhEsc((p?.emails || []).join("\n"))}</textarea>
+        </div>
+        <div class="mh-field"><label class="mh-label">📞 Telefon-Nummern (eine pro Zeile)</label>
           <textarea id="mhpPhones" class="mh-textarea" placeholder="+41 79 ...">${mhEsc((p?.phones || []).join("\n"))}</textarea>
         </div>
-        <div class="mh-field">
-          <label class="mh-label">Organisation</label>
+        
+        <h4 style="margin:18px 0 8px;font-size:13px;color:#a5b4fc">🏠 Adresse</h4>
+        <div class="mh-field"><label class="mh-label">Straße & Hausnummer</label>
+          <input type="text" id="mhpStreet" class="mh-input" value="${mhEsc(addr.street)}" />
+        </div>
+        <div style="display:grid;grid-template-columns:120px 1fr;gap:10px">
+          <div class="mh-field"><label class="mh-label">PLZ</label>
+            <input type="text" id="mhpZip" class="mh-input" value="${mhEsc(addr.zip)}" />
+          </div>
+          <div class="mh-field"><label class="mh-label">Ort</label>
+            <input type="text" id="mhpCity" class="mh-input" value="${mhEsc(addr.city)}" />
+          </div>
+        </div>
+        <div class="mh-field"><label class="mh-label">Land</label>
+          <input type="text" id="mhpCountry" class="mh-input" value="${mhEsc(addr.country)}" />
+        </div>
+        
+        <h4 style="margin:18px 0 8px;font-size:13px;color:#a5b4fc">🌐 Social Media</h4>
+        <div class="mh-field"><label class="mh-label">LinkedIn</label>
+          <input type="text" id="mhpLinkedin" class="mh-input" placeholder="linkedin.com/in/..." value="${mhEsc(soc.linkedin)}" />
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="mh-field"><label class="mh-label">Twitter/X</label>
+            <input type="text" id="mhpTwitter" class="mh-input" placeholder="@..." value="${mhEsc(soc.twitter)}" />
+          </div>
+          <div class="mh-field"><label class="mh-label">Instagram</label>
+            <input type="text" id="mhpInstagram" class="mh-input" placeholder="@..." value="${mhEsc(soc.instagram)}" />
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="mh-field"><label class="mh-label">GitHub</label>
+            <input type="text" id="mhpGithub" class="mh-input" placeholder="github.com/..." value="${mhEsc(soc.github)}" />
+          </div>
+          <div class="mh-field"><label class="mh-label">Facebook</label>
+            <input type="text" id="mhpFacebook" class="mh-input" placeholder="facebook.com/..." value="${mhEsc(soc.facebook)}" />
+          </div>
+        </div>
+        <div class="mh-field"><label class="mh-label">Sonstige</label>
+          <input type="text" id="mhpSocialOther" class="mh-input" placeholder="z.B. Mastodon, Bluesky" value="${mhEsc(soc.other)}" />
+        </div>
+        <div class="mh-field"><label class="mh-label">🌐 Webseite</label>
+          <input type="text" id="mhpWebsite" class="mh-input" placeholder="https://..." value="${mhEsc(p?.website || '')}" />
+        </div>
+      
+      ` : tab === 'work' ? `
+        <div class="mh-field"><label class="mh-label">Rolle / Position</label>
+          <input type="text" id="mhpRole" class="mh-input" placeholder="z.B. Projektleiter, Berater" value="${mhEsc(p?.role || '')}" />
+        </div>
+        <div class="mh-field"><label class="mh-label">Organisation (verknüpft)</label>
           <select id="mhpOrg" class="mh-select">
             <option value="">— Keine —</option>
-            ${orgs.map(o => `<option value="${o.id}" ${p?.organizationId === o.id ? "selected" : ""}>${mhEsc(o.name)}</option>`).join("")}
+            ${orgs.map(o => `<option value="${o.id}" ${p?.organizationId === o.id ? 'selected' : ''}>${mhEsc(o.name)}</option>`).join('')}
           </select>
         </div>
-        <div class="mh-field">
-          <label class="mh-label">Notizen</label>
-          <textarea id="mhpNotes" class="mh-textarea" placeholder="Beliebige Notizen zur Person...">${mhEsc(p?.notes || "")}</textarea>
+        <div class="mh-field"><label class="mh-label">Firma (Freitext, falls keine Org verknüpft)</label>
+          <input type="text" id="mhpCompany" class="mh-input" value="${mhEsc(p?.company || '')}" />
         </div>
+        <div class="mh-field"><label class="mh-label">Abteilung / Team</label>
+          <input type="text" id="mhpDepartment" class="mh-input" placeholder="z.B. Marketing" value="${mhEsc(p?.department || '')}" />
+        </div>
+        <div class="mh-field"><label class="mh-label">Skills (Komma-getrennt)</label>
+          <input type="text" id="mhpSkills" class="mh-input" placeholder="z.B. Python, Public Speaking" value="${mhEsc((p?.skills || []).join(', '))}" />
+        </div>
+      
+      ` : tab === 'relationship' ? `
+        <div class="mh-field"><label class="mh-label">Beziehungstyp</label>
+          <select id="mhpRelationshipType" class="mh-select">
+            <option value="">— Wähle —</option>
+            ${['kollege','freund','familie','partner','kunde','mentor','schueler','nachbar','bekannter','dienstleister','sonstige'].map(rt => 
+              `<option value="${rt}" ${p?.relationshipType === rt ? 'selected' : ''}>${rt.charAt(0).toUpperCase()+rt.slice(1)}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="mh-field"><label class="mh-label">Kennengelernt seit</label>
+            <input type="date" id="mhpRelationshipSince" class="mh-input" value="${mhEsc(p?.relationshipSince || '')}" />
+          </div>
+          <div class="mh-field"><label class="mh-label">Letzter Kontakt</label>
+            <input type="date" id="mhpLastContact" class="mh-input" value="${mhEsc(p?.lastContact || '')}" />
+          </div>
+        </div>
+        <div class="mh-field"><label class="mh-label">Wie kennengelernt</label>
+          <textarea id="mhpHowWeMet" class="mh-textarea" placeholder="Kontext, gemeinsame Bekannte, etc.">${mhEsc(p?.howWeMet || '')}</textarea>
+        </div>
+        <div class="mh-field"><label class="mh-label">Wichtigkeit (0-5)</label>
+          <div style="display:flex;gap:4px;margin-top:4px">
+            ${[0,1,2,3,4,5].map(n => `
+              <button type="button" onclick="document.getElementById('mhpImportance').value=${n};this.parentElement.querySelectorAll('button').forEach(b=>b.style.background='rgba(255,255,255,.04)');this.style.background='linear-gradient(135deg,#6366f1,#a855f7)'" 
+                      style="flex:1;padding:8px;border:1px solid rgba(255,255,255,.1);border-radius:6px;background:${(p?.importance || 0) === n ? 'linear-gradient(135deg,#6366f1,#a855f7)' : 'rgba(255,255,255,.04)'};color:var(--text);cursor:pointer;font-size:13px;font-weight:700">${n}</button>
+            `).join('')}
+          </div>
+          <input type="hidden" id="mhpImportance" value="${p?.importance || 0}" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">0 = Bekannter · 5 = sehr wichtig</div>
+        </div>
+        <div class="mh-field"><label class="mh-label">Bevorzugte Kontakt-Frequenz</label>
+          <select id="mhpContactFrequency" class="mh-select">
+            <option value="">— Keine Vorgabe —</option>
+            <option value="weekly" ${p?.contactFrequency === 'weekly' ? 'selected' : ''}>Wöchentlich</option>
+            <option value="biweekly" ${p?.contactFrequency === 'biweekly' ? 'selected' : ''}>Alle 2 Wochen</option>
+            <option value="monthly" ${p?.contactFrequency === 'monthly' ? 'selected' : ''}>Monatlich</option>
+            <option value="quarterly" ${p?.contactFrequency === 'quarterly' ? 'selected' : ''}>Quartalsweise</option>
+            <option value="yearly" ${p?.contactFrequency === 'yearly' ? 'selected' : ''}>Jährlich</option>
+          </select>
+        </div>
+      
+      ` : tab === 'personal' ? `
+        <div class="mh-field"><label class="mh-label">🎯 Interessen / Hobbys (Komma-getrennt)</label>
+          <input type="text" id="mhpInterests" class="mh-input" placeholder="z.B. Schach, Kochen, Wandern" value="${mhEsc((p?.interests || []).join(', '))}" />
+        </div>
+        <div class="mh-field"><label class="mh-label">👨‍👩‍👧 Familie</label>
+          <textarea id="mhpFamilyMembers" class="mh-textarea" placeholder="z.B. Frau Anna, Kinder Max (10) und Lisa (8)">${mhEsc(p?.familyMembers || '')}</textarea>
+        </div>
+        <div class="mh-field"><label class="mh-label">🎁 Geschenkideen</label>
+          <textarea id="mhpPreferredGifts" class="mh-textarea" placeholder="Was hat die Person erwähnt? Was würde sie freuen?">${mhEsc(p?.preferredGifts || '')}</textarea>
+        </div>
+        <div class="mh-field"><label class="mh-label">🍽 Essens-Präferenzen / Allergien</label>
+          <input type="text" id="mhpFoodPreferences" class="mh-input" placeholder="z.B. vegetarisch, Nuss-Allergie" value="${mhEsc(p?.foodPreferences || '')}" />
+        </div>
+        <div class="mh-field"><label class="mh-label">📝 Notizen (frei)</label>
+          <textarea id="mhpNotes" class="mh-textarea" placeholder="Beliebige Notizen zur Person..." style="min-height:100px">${mhEsc(p?.notes || '')}</textarea>
+        </div>
+        <div class="mh-field"><label class="mh-label">🏷 Tags (Komma-getrennt)</label>
+          <input type="text" id="mhpTags" class="mh-input" placeholder="z.B. VIP, Netzwerk, Konferenz-Bekanntschaft" value="${mhEsc((p?.tags || []).join(', '))}" />
+        </div>
+      
+      ` : tab === 'links' ? `
+        <div class="mh-field">
+          <label class="mh-label">🤝 Verwandte Personen</label>
+          <div id="mhpRelatedPersonsList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+            ${(p?.relatedPersons || []).map((rp, idx) => {
+              const rel = (mhPersons() || {})[rp.personId];
+              if (!rel) return '';
+              return `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:6px">
+                <span style="flex:1;font-size:13px">${mhEsc(rel.name)}</span>
+                <input type="text" data-idx="${idx}" class="mh-input mhp-rel-relation" placeholder="z.B. Ehepartner, Kollege" value="${mhEsc(rp.relation || '')}" style="flex:1;font-size:12px;padding:4px 8px" />
+                <input type="hidden" class="mhp-rel-id" data-idx="${idx}" value="${rp.personId}" />
+                <button type="button" onclick="this.parentElement.remove()" style="background:rgba(239,68,68,.15);border:0;color:#f87171;padding:4px 8px;border-radius:4px;cursor:pointer">×</button>
+              </div>`;
+            }).join('')}
+          </div>
+          <select onchange="if(this.value){window._mhpAddRelatedPerson(this.value);this.value=''}" class="mh-select" style="font-size:12px">
+            <option value="">+ Person hinzufügen…</option>
+            ${allPersons.filter(ap => !(p?.relatedPersons || []).some(rp => rp.personId === ap.id)).map(ap => 
+              `<option value="${ap.id}">${mhEsc(ap.name)}</option>`
+            ).join('')}
+          </select>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">📁 Verknüpfte Projekte</label>
+          <div id="mhpLinkedProjectsList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+            ${(p?.linkedProjects || []).map(pid => {
+              const proj = (mhData().projects || {})[pid];
+              if (!proj) return '';
+              return `<span class="mhp-link-pill" data-id="${pid}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);border-radius:14px;font-size:12px;color:#a5b4fc">
+                📁 ${mhEsc(proj.title || proj.name || pid)}
+                <button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>
+              </span>`;
+            }).join('')}
+          </div>
+          <select onchange="if(this.value){window._mhpAddLink('Projects',this.value,this.options[this.selectedIndex].text);this.value=''}" class="mh-select" style="font-size:12px">
+            <option value="">+ Projekt hinzufügen…</option>
+            ${Object.values(mhData().projects || {}).filter(pr => !(p?.linkedProjects || []).includes(pr.id)).map(pr => 
+              `<option value="${pr.id}">${mhEsc(pr.title || pr.name || pr.id)}</option>`
+            ).join('')}
+          </select>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">✅ Verknüpfte Tasks</label>
+          <div id="mhpLinkedTasksList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+            ${(p?.linkedTasks || []).map(tid => {
+              const t = (mhData().tasks || {})[tid];
+              if (!t) return '';
+              return `<span class="mhp-link-pill" data-id="${tid}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);border-radius:14px;font-size:12px;color:#86efac">
+                ✅ ${mhEsc((t.title || tid).slice(0,40))}
+                <button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>
+              </span>`;
+            }).join('')}
+          </div>
+          <select onchange="if(this.value){window._mhpAddLink('Tasks',this.value,this.options[this.selectedIndex].text);this.value=''}" class="mh-select" style="font-size:12px">
+            <option value="">+ Task hinzufügen…</option>
+            ${Object.values(mhData().tasks || {}).filter(t => !(p?.linkedTasks || []).includes(t.id) && t.status !== 'done').slice(0, 100).map(t => 
+              `<option value="${t.id}">${mhEsc((t.title || t.id).slice(0,60))}</option>`
+            ).join('')}
+          </select>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">📝 Verknüpfte Notizen</label>
+          <div id="mhpLinkedNotesList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+            ${(p?.linkedNotes || []).map(nid => {
+              const n = (mhData().notes || {})[nid];
+              if (!n) return '';
+              return `<span class="mhp-link-pill" data-id="${nid}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);border-radius:14px;font-size:12px;color:#fcd34d">
+                📝 ${mhEsc((n.title || nid).slice(0,40))}
+                <button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>
+              </span>`;
+            }).join('')}
+          </div>
+          <select onchange="if(this.value){window._mhpAddLink('Notes',this.value,this.options[this.selectedIndex].text);this.value=''}" class="mh-select" style="font-size:12px">
+            <option value="">+ Notiz hinzufügen…</option>
+            ${Object.values(mhData().notes || {}).filter(n => !(p?.linkedNotes || []).includes(n.id)).slice(0, 100).map(n => 
+              `<option value="${n.id}">${mhEsc((n.title || n.id).slice(0,60))}</option>`
+            ).join('')}
+          </select>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">📅 Verknüpfte Meetings</label>
+          <div id="mhpLinkedMeetingsList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+            ${(p?.linkedMeetings || []).map(mid => {
+              const m = (mhData().meetings || {})[mid];
+              if (!m) return '';
+              return `<span class="mhp-link-pill" data-id="${mid}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(168,85,247,.12);border:1px solid rgba(168,85,247,.3);border-radius:14px;font-size:12px;color:#d8b4fe">
+                📅 ${mhEsc((m.title || mid).slice(0,40))}
+                <button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>
+              </span>`;
+            }).join('')}
+          </div>
+          <select onchange="if(this.value){window._mhpAddLink('Meetings',this.value,this.options[this.selectedIndex].text);this.value=''}" class="mh-select" style="font-size:12px">
+            <option value="">+ Meeting hinzufügen…</option>
+            ${Object.values(mhData().meetings || {}).filter(m => !(p?.linkedMeetings || []).includes(m.id)).slice(0, 100).map(m => 
+              `<option value="${m.id}">${mhEsc((m.title || m.id).slice(0,60))}</option>`
+            ).join('')}
+          </select>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">🎯 Verknüpfte Decisions</label>
+          <div id="mhpLinkedDecisionsList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+            ${(p?.linkedDecisions || []).map(did => {
+              const d = (mhData().decisions || {})[did];
+              if (!d) return '';
+              return `<span class="mhp-link-pill" data-id="${did}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(236,72,153,.12);border:1px solid rgba(236,72,153,.3);border-radius:14px;font-size:12px;color:#f9a8d4">
+                🎯 ${mhEsc((d.title || did).slice(0,40))}
+                <button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>
+              </span>`;
+            }).join('')}
+          </div>
+          <select onchange="if(this.value){window._mhpAddLink('Decisions',this.value,this.options[this.selectedIndex].text);this.value=''}" class="mh-select" style="font-size:12px">
+            <option value="">+ Decision hinzufügen…</option>
+            ${Object.values(mhData().decisions || {}).filter(d => !(p?.linkedDecisions || []).includes(d.id)).slice(0, 100).map(d => 
+              `<option value="${d.id}">${mhEsc((d.title || d.id).slice(0,60))}</option>`
+            ).join('')}
+          </select>
+        </div>
+        
+        <div class="mh-field">
+          <label class="mh-label">💡 Verknüpfte Ideen & 🎯 Ziele</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <div id="mhpLinkedIdeasList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+                ${(p?.linkedIdeas || []).map(iid => {
+                  const i = (mhData().ideas || {})[iid];
+                  if (!i) return '';
+                  return `<span class="mhp-link-pill" data-id="${iid}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(251,146,60,.12);border:1px solid rgba(251,146,60,.3);border-radius:14px;font-size:12px;color:#fdba74">
+                    💡 ${mhEsc((i.title || iid).slice(0,30))}
+                    <button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>
+                  </span>`;
+                }).join('')}
+              </div>
+              <select onchange="if(this.value){window._mhpAddLink('Ideas',this.value,this.options[this.selectedIndex].text);this.value=''}" class="mh-select" style="font-size:11px">
+                <option value="">+ Idee…</option>
+                ${Object.values(mhData().ideas || {}).filter(i => !(p?.linkedIdeas || []).includes(i.id)).slice(0, 50).map(i => 
+                  `<option value="${i.id}">${mhEsc((i.title || i.id).slice(0,40))}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div>
+              <div id="mhpLinkedGoalsList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+                ${(p?.linkedGoals || []).map(gid => {
+                  const g = (mhData().goals || {})[gid];
+                  if (!g) return '';
+                  return `<span class="mhp-link-pill" data-id="${gid}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(20,184,166,.12);border:1px solid rgba(20,184,166,.3);border-radius:14px;font-size:12px;color:#5eead4">
+                    🎯 ${mhEsc((g.title || gid).slice(0,30))}
+                    <button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>
+                  </span>`;
+                }).join('')}
+              </div>
+              <select onchange="if(this.value){window._mhpAddLink('Goals',this.value,this.options[this.selectedIndex].text);this.value=''}" class="mh-select" style="font-size:11px">
+                <option value="">+ Ziel…</option>
+                ${Object.values(mhData().goals || {}).filter(g => !(p?.linkedGoals || []).includes(g.id)).slice(0, 50).map(g => 
+                  `<option value="${g.id}">${mhEsc((g.title || g.id).slice(0,40))}</option>`
+                ).join('')}
+              </select>
+            </div>
+          </div>
+        </div>
+      
+      ` : ''}
+      
       </div>
       <div class="mh-modal-foot">
         <button class="mh-btn ghost" onclick="mhClosePersonEditor()">Abbrechen</button>
-        <button class="mh-btn primary" onclick="mhSavePerson('${personId || ""}')">${p ? "Aktualisieren" : "Speichern"}</button>
+        <button class="mh-btn primary" onclick="mhSavePerson('${personId || ''}')">${p ? "Aktualisieren" : "Speichern"}</button>
       </div>
     </div>`;
     overlay.classList.add("show");
@@ -75203,38 +75706,177 @@ console.log('📚 Leseliste geladen');
     setTimeout(() => document.getElementById("mhpName")?.focus(), 50);
   };
   
+  // Helper für dynamisches Hinzufügen
+  window._mhpAddLink = function(kind, id, label) {
+    const list = document.getElementById(`mhpLinked${kind}List`);
+    if (!list) return;
+    const colors = {
+      Projects: { bg: 'rgba(99,102,241,.15)', border: 'rgba(99,102,241,.3)', text: '#a5b4fc', icon: '📁' },
+      Tasks: { bg: 'rgba(34,197,94,.12)', border: 'rgba(34,197,94,.3)', text: '#86efac', icon: '✅' },
+      Notes: { bg: 'rgba(251,191,36,.12)', border: 'rgba(251,191,36,.3)', text: '#fcd34d', icon: '📝' },
+      Meetings: { bg: 'rgba(168,85,247,.12)', border: 'rgba(168,85,247,.3)', text: '#d8b4fe', icon: '📅' },
+      Decisions: { bg: 'rgba(236,72,153,.12)', border: 'rgba(236,72,153,.3)', text: '#f9a8d4', icon: '🎯' },
+      Ideas: { bg: 'rgba(251,146,60,.12)', border: 'rgba(251,146,60,.3)', text: '#fdba74', icon: '💡' },
+      Goals: { bg: 'rgba(20,184,166,.12)', border: 'rgba(20,184,166,.3)', text: '#5eead4', icon: '🎯' },
+    };
+    const c = colors[kind] || colors.Projects;
+    const span = document.createElement('span');
+    span.className = 'mhp-link-pill';
+    span.setAttribute('data-id', id);
+    span.style.cssText = `display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${c.bg};border:1px solid ${c.border};border-radius:14px;font-size:12px;color:${c.text}`;
+    span.innerHTML = `${c.icon} ${(label || id).replace(/^[+-\s]+/, '').slice(0,40)}<button type="button" onclick="this.parentElement.remove()" style="background:none;border:0;color:#f87171;cursor:pointer;padding:0;font-size:14px">×</button>`;
+    list.appendChild(span);
+  };
+  
+  window._mhpAddRelatedPerson = function(personId) {
+    const list = document.getElementById('mhpRelatedPersonsList');
+    if (!list) return;
+    const rel = (mhPersons() || {})[personId];
+    if (!rel) return;
+    const idx = list.querySelectorAll('.mhp-rel-id').length;
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:6px';
+    div.innerHTML = `
+      <span style="flex:1;font-size:13px">${mhEsc(rel.name)}</span>
+      <input type="text" data-idx="${idx}" class="mh-input mhp-rel-relation" placeholder="z.B. Ehepartner, Kollege" value="" style="flex:1;font-size:12px;padding:4px 8px" />
+      <input type="hidden" class="mhp-rel-id" data-idx="${idx}" value="${personId}" />
+      <button type="button" onclick="this.parentElement.remove()" style="background:rgba(239,68,68,.15);border:0;color:#f87171;padding:4px 8px;border-radius:4px;cursor:pointer">×</button>
+    `;
+    list.appendChild(div);
+  };
+  
   window.mhClosePersonEditor = function() {
     const overlay = document.getElementById("mhPersonEditorOverlay");
     if (overlay) overlay.classList.remove("show");
   };
   
   window.mhSavePerson = function(existingId) {
-    const name = document.getElementById("mhpName")?.value.trim();
+    // Helper: liest nur wenn Element existiert (Tab kann gerade nicht aktiv sein)
+    const $v = (id) => document.getElementById(id)?.value?.trim() || "";
+    const $vRaw = (id) => document.getElementById(id)?.value || "";  // ohne trim für Textareas
+    
+    // Name ist Pflicht — auto-bilden aus firstName/lastName falls leer
+    let name = $v("mhpName");
+    const firstName = $v("mhpFirstName");
+    const lastName = $v("mhpLastName");
+    if (!name && (firstName || lastName)) name = [firstName, lastName].filter(Boolean).join(" ");
     if (!name) { mhToast("warn", "Name erforderlich"); return; }
     
-    const role = document.getElementById("mhpRole")?.value.trim() || "";
-    const emails = (document.getElementById("mhpEmails")?.value || "").split("\n").map(s => s.trim()).filter(Boolean);
-    const phones = (document.getElementById("mhpPhones")?.value || "").split("\n").map(s => s.trim()).filter(Boolean);
-    const orgId = document.getElementById("mhpOrg")?.value || null;
-    const notes = document.getElementById("mhpNotes")?.value.trim() || "";
-    
+    const existing = APP.state.data.entities.persons[existingId] || {};
     const now = new Date().toISOString();
     const id = existingId || mhId("prs");
     const isNew = !existingId;
     
+    // Sammle Werte aller Tabs (nur überschreiben wenn Tab aktiv war, sonst existing-Wert behalten)
+    const wasTab = window._mhPersonTab || "basic";
+    
+    // Helper: nur überschreiben wenn das Feld im DOM existiert
+    const merge = (field, val, fallback) => document.getElementById('mhp' + field) ? val : (existing[fallback || field.charAt(0).toLowerCase() + field.slice(1)] !== undefined ? existing[fallback || field.charAt(0).toLowerCase() + field.slice(1)] : '');
+    
+    // Basis
+    const title = document.getElementById("mhpTitle") ? $v("mhpTitle") : (existing.title || "");
+    const nickname = document.getElementById("mhpNickname") ? $v("mhpNickname") : (existing.nickname || "");
+    const pronouns = document.getElementById("mhpPronouns") ? $v("mhpPronouns") : (existing.pronouns || "");
+    const birthday = document.getElementById("mhpBirthday") ? $v("mhpBirthday") : (existing.birthday || "");
+    const nationality = document.getElementById("mhpNationality") ? $v("mhpNationality") : (existing.nationality || "");
+    const languages = document.getElementById("mhpLanguages") 
+      ? $v("mhpLanguages").split(",").map(s => s.trim()).filter(Boolean) 
+      : (existing.languages || []);
+    
+    // Kontakt
+    const emails = document.getElementById("mhpEmails") 
+      ? $vRaw("mhpEmails").split("\n").map(s => s.trim()).filter(Boolean) 
+      : (existing.emails || []);
+    const phones = document.getElementById("mhpPhones") 
+      ? $vRaw("mhpPhones").split("\n").map(s => s.trim()).filter(Boolean) 
+      : (existing.phones || []);
+    const address = document.getElementById("mhpStreet") ? {
+      street: $v("mhpStreet"),
+      zip: $v("mhpZip"),
+      city: $v("mhpCity"),
+      country: $v("mhpCountry"),
+    } : (existing.address || { street: "", zip: "", city: "", country: "" });
+    const social = document.getElementById("mhpLinkedin") ? {
+      linkedin: $v("mhpLinkedin"),
+      twitter: $v("mhpTwitter"),
+      instagram: $v("mhpInstagram"),
+      facebook: $v("mhpFacebook"),
+      github: $v("mhpGithub"),
+      other: $v("mhpSocialOther"),
+    } : (existing.social || { linkedin: "", twitter: "", instagram: "", facebook: "", github: "", other: "" });
+    const website = document.getElementById("mhpWebsite") ? $v("mhpWebsite") : (existing.website || "");
+    
+    // Beruf
+    const role = document.getElementById("mhpRole") ? $v("mhpRole") : (existing.role || "");
+    const organizationId = document.getElementById("mhpOrg") ? (document.getElementById("mhpOrg").value || null) : (existing.organizationId || null);
+    const company = document.getElementById("mhpCompany") ? $v("mhpCompany") : (existing.company || "");
+    const department = document.getElementById("mhpDepartment") ? $v("mhpDepartment") : (existing.department || "");
+    const skills = document.getElementById("mhpSkills") 
+      ? $v("mhpSkills").split(",").map(s => s.trim()).filter(Boolean) 
+      : (existing.skills || []);
+    
+    // Beziehung
+    const relationshipType = document.getElementById("mhpRelationshipType") ? (document.getElementById("mhpRelationshipType").value || "") : (existing.relationshipType || "");
+    const relationshipSince = document.getElementById("mhpRelationshipSince") ? $v("mhpRelationshipSince") : (existing.relationshipSince || "");
+    const lastContact = document.getElementById("mhpLastContact") ? $v("mhpLastContact") : (existing.lastContact || "");
+    const howWeMet = document.getElementById("mhpHowWeMet") ? $vRaw("mhpHowWeMet").trim() : (existing.howWeMet || "");
+    const importance = document.getElementById("mhpImportance") ? parseInt(document.getElementById("mhpImportance").value) || 0 : (existing.importance || 0);
+    const contactFrequency = document.getElementById("mhpContactFrequency") ? (document.getElementById("mhpContactFrequency").value || "") : (existing.contactFrequency || "");
+    
+    // Persönlich
+    const interests = document.getElementById("mhpInterests") 
+      ? $v("mhpInterests").split(",").map(s => s.trim()).filter(Boolean) 
+      : (existing.interests || []);
+    const familyMembers = document.getElementById("mhpFamilyMembers") ? $vRaw("mhpFamilyMembers").trim() : (existing.familyMembers || "");
+    const preferredGifts = document.getElementById("mhpPreferredGifts") ? $vRaw("mhpPreferredGifts").trim() : (existing.preferredGifts || "");
+    const foodPreferences = document.getElementById("mhpFoodPreferences") ? $v("mhpFoodPreferences") : (existing.foodPreferences || "");
+    const notes = document.getElementById("mhpNotes") ? $vRaw("mhpNotes").trim() : (existing.notes || "");
+    const tags = document.getElementById("mhpTags") 
+      ? $v("mhpTags").split(",").map(s => s.trim()).filter(Boolean) 
+      : (existing.tags || []);
+    
+    // Verknüpfungen
+    const getLinkedIds = (listId) => {
+      const list = document.getElementById(listId);
+      if (!list) return null;  // signal: not loaded
+      return Array.from(list.querySelectorAll('[data-id]')).map(el => el.getAttribute('data-id'));
+    };
+    const linkedProjects = getLinkedIds('mhpLinkedProjectsList') || existing.linkedProjects || [];
+    const linkedTasks = getLinkedIds('mhpLinkedTasksList') || existing.linkedTasks || [];
+    const linkedNotes = getLinkedIds('mhpLinkedNotesList') || existing.linkedNotes || [];
+    const linkedMeetings = getLinkedIds('mhpLinkedMeetingsList') || existing.linkedMeetings || [];
+    const linkedDecisions = getLinkedIds('mhpLinkedDecisionsList') || existing.linkedDecisions || [];
+    const linkedIdeas = getLinkedIds('mhpLinkedIdeasList') || existing.linkedIdeas || [];
+    const linkedGoals = getLinkedIds('mhpLinkedGoalsList') || existing.linkedGoals || [];
+    
+    // Verwandte Personen
+    let relatedPersons = existing.relatedPersons || [];
+    const relList = document.getElementById('mhpRelatedPersonsList');
+    if (relList) {
+      const ids = Array.from(relList.querySelectorAll('.mhp-rel-id')).map(el => el.value);
+      const rels = Array.from(relList.querySelectorAll('.mhp-rel-relation')).map(el => el.value.trim());
+      relatedPersons = ids.map((pid, i) => ({ personId: pid, relation: rels[i] || "" })).filter(r => r.personId);
+    }
+    
     APP.state.data.entities.persons[id] = {
-      ...(APP.state.data.entities.persons[id] || {}),
-      id, name, role, emails, phones,
-      organizationId: orgId || null,
-      notes,
-      tags: APP.state.data.entities.persons[id]?.tags || [],
-      createdAt: APP.state.data.entities.persons[id]?.createdAt || now,
+      ...existing,
+      id, name, firstName, lastName, title, nickname, pronouns, birthday, nationality, languages,
+      emails, phones, address, social, website,
+      role, organizationId, company, department, skills,
+      relationshipType, relationshipSince, lastContact, howWeMet, importance, contactFrequency,
+      interests, familyMembers, preferredGifts, foodPreferences,
+      notes, tags,
+      linkedProjects, linkedTasks, linkedNotes, linkedMeetings, linkedDecisions, linkedIdeas, linkedGoals,
+      relatedPersons,
+      interactions: existing.interactions || [],
+      createdAt: existing.createdAt || now,
       updatedAt: now,
     };
     
     mhSave();
     mhClosePersonEditor();
     mhToast("ok", "👤 Gespeichert", name);
+    window._mhPersonTab = "basic";  // Reset für nächstes Öffnen
     if (isNew) window.navigate("persons", id);
     else mhRender();
   };
