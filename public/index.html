@@ -3235,7 +3235,7 @@ textarea::placeholder, input::placeholder {
 </style>
   <!-- Google Script entfernt - eigener Kalender wird verwendet -->
   
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <!-- mammoth.js wird bei Bedarf dynamisch über loadMammoth() geladen (mit CDN-Fallbacks) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
 
@@ -5362,6 +5362,12 @@ async function netlifyBlobPut(key, data, options = {}) {
 }
 async function firebaseJsonGet(key, options = {}) {
   if (!shouldTryCloudProvider('firebase', options)) return { ok: false, skipped: true, provider: 'firebase' };
+  
+  // Wenn diese Session schon CORS-Fehler erkannt → Firebase komplett überspringen
+  if (window._firebaseCorsBlocked) {
+    return { ok: false, skipped: true, provider: 'firebase', corsBlocked: true };
+  }
+  
   try {
     const ref = firebaseStorage.ref(getFirebaseShadowPath(key));
     const url = await ref.getDownloadURL();
@@ -5381,13 +5387,24 @@ async function firebaseJsonGet(key, options = {}) {
     return { ok: true, data, provider: 'firebase' };
   } catch(e) {
     const code = String(e?.code || '');
+    const errMsg = String(e?.message || e || '');
     const status = code.includes('object-not-found') ? 404 : 0;
+    
+    // CORS oder retry-limit erkennen → Session-weit blockieren um Spam-Retries zu stoppen
+    if (/retry-limit-exceeded|CORS|Access-Control|preflight/i.test(errMsg) || code === 'storage/retry-limit-exceeded') {
+      window._firebaseCorsBlocked = true;
+      console.warn('[CloudSync] Firebase CORS-blockiert — für diese Session deaktiviert. Bucket-CORS muss vom Admin konfiguriert werden.');
+      rememberCloudFailure('firebase', { status: 0, error: 'CORS' });
+      return { ok: false, status: 0, error: 'CORS-Block', provider: 'firebase' };
+    }
+    
     if (status !== 404) rememberCloudFailure('firebase', { status, error: e });
     return { ok: false, status, error: e, provider: 'firebase' };
   }
 }
 async function firebaseJsonPut(key, data, options = {}) {
   if (!shouldTryCloudProvider('firebase', options)) return { ok: false, skipped: true, provider: 'firebase' };
+  if (window._firebaseCorsBlocked) return { ok: false, skipped: true, provider: 'firebase', corsBlocked: true };
   let payload = data;
   try {
     if (typeof options.mergeFn === 'function') {
@@ -5415,6 +5432,11 @@ async function firebaseJsonPut(key, data, options = {}) {
     rememberCloudSuccess('firebase');
     return { ok: true, status: 200, provider: 'firebase', url: downloadUrl, data: payload };
   } catch(e) {
+    const errMsg = String(e?.message || e || '');
+    if (/retry-limit-exceeded|CORS|Access-Control|preflight/i.test(errMsg)) {
+      window._firebaseCorsBlocked = true;
+      console.warn('[CloudSync] Firebase CORS-blockiert beim Schreiben.');
+    }
     rememberCloudFailure('firebase', { error: e });
     return { ok: false, error: e, provider: 'firebase' };
   }
@@ -5909,12 +5931,10 @@ function openFilePreview(kind, entityId, fileIdx) {
     (async () => {
       const container = overlay.querySelector('#wordPreviewContainer');
       try {
-        // Load mammoth.js if not already loaded
+        // Load mammoth.js with CDN fallbacks
         if (!window.mammoth) {
-          const script = document.createElement('script');
-          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
-          document.head.appendChild(script);
-          await new Promise((res, rej) => { script.onload = res; script.onerror = rej; setTimeout(rej, 10000); });
+          const loaded = await loadMammothLibrary();
+          if (!loaded) throw new Error("Konnte mammoth.js nicht laden — Netzwerk blockiert vermutlich CDN-Zugriff.");
         }
         const resp = await fetch(f.url);
         const arrayBuffer = await resp.arrayBuffer();
@@ -9599,14 +9619,30 @@ function addWorkflowStep(kind, id, title, description = "") {
   const entity = getEntity(kind, id);
   if (!entity) return;
   
-  entity.workflow = entity.workflow || [];
-  entity.workflow.push({
+  const newStep = {
     id: uuid(),
     title,
     description,
-    status: entity.workflow.length === 0 ? "active" : "pending",
-  });
+    status: entity.workflow?.length === 0 ? "active" : "pending",
+  };
+  
+  entity.workflow = entity.workflow || [];
+  entity.workflow.push(newStep);
   entity.updatedAt = nowIso();
+  
+  // Auto-Sync: Bei Projekten automatisch eine Phase im Zeitvoranschlag anlegen
+  if (kind === "project") {
+    if (!entity.timeBudget) entity.timeBudget = { phases: [] };
+    if (!Array.isArray(entity.timeBudget.phases)) entity.timeBudget.phases = [];
+    entity.timeBudget.phases.push({
+      id: "ph_" + Math.random().toString(36).slice(2, 8),
+      name: title,
+      estimatedHours: 0,
+      actualHours: 0,
+      workflowStepId: newStep.id,
+    });
+  }
+  
   scheduleSave();
 }
 
@@ -9618,6 +9654,13 @@ function updateWorkflowStep(kind, entityId, stepId, updates) {
   if (step) {
     Object.assign(step, updates);
     entity.updatedAt = nowIso();
+    
+    // Sync: Wenn Workflow-Title geändert UND Phase verknüpft + Name passt → Phase-Name aktualisieren
+    if (kind === "project" && updates.title !== undefined && entity.timeBudget?.phases) {
+      const linkedPhase = entity.timeBudget.phases.find(ph => ph.workflowStepId === stepId);
+      if (linkedPhase) linkedPhase.name = updates.title;
+    }
+    
     scheduleSave();
   }
 }
@@ -9627,6 +9670,12 @@ function deleteWorkflowStep(kind, entityId, stepId) {
   if (!entity || !entity.workflow) return;
   
   entity.workflow = entity.workflow.filter(s => s.id !== stepId);
+  
+  // Auto-Sync: Verknüpfte Phase ebenfalls entfernen
+  if (kind === "project" && entity.timeBudget?.phases) {
+    entity.timeBudget.phases = entity.timeBudget.phases.filter(ph => ph.workflowStepId !== stepId);
+  }
+  
   entity.updatedAt = nowIso();
   scheduleSave();
 }
@@ -13510,12 +13559,32 @@ document.addEventListener("input", function(e) {
 
 // ========== PDF Export: Daily Dossier ==========
 async function dbExportPdf() {
-  // Load jsPDF
+  // Load jsPDF mit CDN-Fallbacks (für Geschäfts-Netzwerke die cdnjs blockieren)
   if (!window.jspdf) {
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-    document.head.appendChild(script);
-    await new Promise((res, rej) => { script.onload = res; script.onerror = rej; });
+    const urls = [
+      "https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js",
+      "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+    ];
+    let loaded = false;
+    for (const url of urls) {
+      try {
+        await new Promise((res, rej) => {
+          const script = document.createElement("script");
+          script.src = url;
+          script.crossOrigin = "anonymous";
+          script.onload = res;
+          script.onerror = rej;
+          setTimeout(() => rej(new Error("Timeout")), 8000);
+          document.head.appendChild(script);
+        });
+        if (window.jspdf) { loaded = true; break; }
+      } catch(e) { console.warn("jsPDF Fallback:", url); }
+    }
+    if (!loaded) {
+      toast("err", "❌ jsPDF nicht geladen", "Dein Netzwerk blockiert CDN-Zugriff. Versuche es zuhause.");
+      return;
+    }
   }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -18199,9 +18268,9 @@ function renderProjectTimeBudget(p, id) {
       ${phasesHtml}
     ` : `<div style="padding:18px;text-align:center;color:var(--muted);font-size:12px">Noch keine Phasen erfasst</div>`}
     
-    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
       <button class="btn sm" onclick="prjAddTimePhase('${id}')" style="font-size:11px;padding:6px 11px;background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac">+ Phase hinzufügen</button>
-      ${workflowSteps.length > 0 ? `<button class="btn sm" onclick="prjImportWorkflowAsPhases('${id}')" style="font-size:11px;padding:6px 11px;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);color:#a5b4fc">↓ Workflow als Phasen importieren (${workflowSteps.length})</button>` : `<span style="font-size:11px;color:var(--muted);padding:6px 11px">💡 Tipp: Erstelle Workflow-Schritte rechts → kannst sie hier als Phasen importieren</span>`}
+      <span style="font-size:11px;color:var(--muted)">💡 Workflow-Schritte werden automatisch als Phasen erfasst</span>
     </div>
     
     ${(p.linkedTaskIds || []).length > 0 || true ? `
@@ -19236,17 +19305,59 @@ function renderCustom_PRJ88QB4(id, p) {
   if (!p._custom) p._custom = {};
   if (!p._custom.pinboard) {
     p._custom.pinboard = {
-      activeTab: "board",           // "board" | "topics" | "stats"
+      activeTab: "board",
       filterType: "all",
       filterTopicId: null,
-      filterFocusArea: null,
+      filterFocusAreaId: null,
       filterSearch: "",
-      topics: [],                   // [{id, title, schwerpunkte:[{name}]}]
-      items: [],                    // [{id, type, title, content, source, topicId, focusArea, done, documents[], created, updated}]
+      groupBy: "focusArea",   // "focusArea" | "topic" | "type" | "none"
+      topics: [],             // [{id, title}]
+      focusAreas: [],         // [{id, title, color}]  — eigene unabhängige Liste
+      items: [],              // [{id, type, title, content, source, topicId, focusAreaId, done, documents[], created, updated}]
     };
   }
   
+  // Migration: Alte focusArea-Strings + schwerpunkte zu eigenen focusAreas migrieren
   const pb = p._custom.pinboard;
+  if (!Array.isArray(pb.focusAreas)) pb.focusAreas = [];
+  if (!Array.isArray(pb.topics)) pb.topics = [];
+  if (!pb.groupBy) pb.groupBy = "focusArea";
+  
+  // Migration 1: Alte topics.schwerpunkte → eigene focusAreas
+  pb.topics.forEach(t => {
+    if (Array.isArray(t.schwerpunkte) && t.schwerpunkte.length > 0) {
+      t.schwerpunkte.forEach(sp => {
+        if (!pb.focusAreas.some(fa => fa.title === sp.name)) {
+          pb.focusAreas.push({
+            id: "fa_" + Math.random().toString(36).slice(2,10),
+            title: sp.name,
+          });
+        }
+      });
+      t.schwerpunkte = [];  // Migrated
+    }
+  });
+  
+  // Migration 2: items.focusArea (String) → items.focusAreaId
+  (pb.items || []).forEach(item => {
+    if (item.focusArea && !item.focusAreaId) {
+      let fa = pb.focusAreas.find(f => f.title === item.focusArea);
+      if (!fa) {
+        fa = { id: "fa_" + Math.random().toString(36).slice(2,10), title: item.focusArea };
+        pb.focusAreas.push(fa);
+      }
+      item.focusAreaId = fa.id;
+      delete item.focusArea;
+    }
+  });
+  
+  // Migration 3: filterFocusArea (String) → filterFocusAreaId
+  if (pb.filterFocusArea && !pb.filterFocusAreaId) {
+    const fa = pb.focusAreas.find(f => f.title === pb.filterFocusArea);
+    if (fa) pb.filterFocusAreaId = fa.id;
+    delete pb.filterFocusArea;
+  }
+  
   const tab = pb.activeTab || "board";
   
   const TYPE_ICONS = {note:'📝', quote:'💬', question:'❓', task:'☑️', image:'🖼️', link:'🔗'};
@@ -19272,20 +19383,24 @@ function renderCustom_PRJ88QB4(id, p) {
     .pb88-chip:hover { border-color:rgba(168,85,247,.4); }
     .pb88-chip.active { background:linear-gradient(135deg,#6366f1,#a855f7); border-color:transparent; color:#fff; }
     .pb88-search { flex:1; min-width:180px; padding:7px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:8px; color:var(--text); font-size:12px; }
-    /* Pinnboard Grid — größere Karten von Anfang an */
-    .pb88-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px; }
-    @media (min-width: 1400px) { .pb88-grid { grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); } }
-    @media (min-width: 1700px) { .pb88-grid { grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); } }
-    .pb88-postit { position:relative; padding:16px 16px 36px; border-radius:10px; box-shadow:0 8px 18px rgba(0,0,0,.2); cursor:pointer; transition:transform .15s, box-shadow .15s; min-height:170px; }
-    .pb88-postit:hover { transform:translateY(-3px) rotate(-.5deg); box-shadow:0 12px 26px rgba(0,0,0,.28); }
-    .pb88-postit-icon { font-size:22px; margin-bottom:8px; }
-    .pb88-postit-title { font-weight:800; font-size:14.5px; line-height:1.3; margin-bottom:8px; padding-right:24px; word-break:break-word; }
-    .pb88-postit-content { font-size:12.5px; line-height:1.55; opacity:.85; max-height:80px; overflow:hidden; }
-    .pb88-postit-meta { position:absolute; bottom:10px; left:16px; right:16px; display:flex; gap:6px; align-items:center; font-size:10.5px; opacity:.7; }
-    .pb88-postit-del { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%; border:0; background:rgba(0,0,0,.15); color:inherit; cursor:pointer; font-size:12px; opacity:0; transition:opacity .15s; }
-    .pb88-postit:hover .pb88-postit-del { opacity:1; }
-    .pb88-postit-docs { display:inline-flex; align-items:center; gap:3px; padding:2px 7px; border-radius:5px; background:rgba(0,0,0,.1); font-weight:700; }
-    .pb88-postit.done .pb88-postit-title { text-decoration:line-through; opacity:.55; }
+    /* Pinnboard: Spalten-Layout (Kanban-Style) */
+    .pb88-columns { display:flex; gap:14px; overflow-x:auto; padding:4px 4px 14px; scroll-snap-type:x proximity; }
+    .pb88-column { flex:0 0 320px; min-width:280px; max-width:340px; background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.06); border-radius:12px; display:flex; flex-direction:column; scroll-snap-align:start; max-height:75vh; }
+    .pb88-column-head { padding:12px 14px; display:flex; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid rgba(255,255,255,.06); position:sticky; top:0; background:rgba(15,15,17,.95); backdrop-filter:blur(8px); border-radius:12px 12px 0 0; z-index:1; }
+    .pb88-column-body { padding:10px; display:flex; flex-direction:column; gap:8px; overflow-y:auto; flex:1; }
+    
+    /* Karten im Spalten-Layout — clean, kompakt */
+    .pb88-col-card { padding:10px 12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); border-radius:8px; cursor:pointer; transition:all .15s; position:relative; }
+    .pb88-col-card:hover { background:rgba(255,255,255,.07); transform:translateY(-1px); box-shadow:0 4px 10px rgba(0,0,0,.2); }
+    .pb88-col-card.done { opacity:.6; }
+    .pb88-col-card.done .pb88-col-card-title { text-decoration:line-through; }
+    .pb88-col-card-head { display:flex; align-items:flex-start; gap:7px; }
+    .pb88-col-card-title { flex:1; font-weight:700; font-size:12.5px; line-height:1.35; word-break:break-word; padding-right:18px; }
+    .pb88-col-card-del { position:absolute; top:8px; right:8px; width:20px; height:20px; border:0; border-radius:50%; background:rgba(239,68,68,.1); color:#f87171; cursor:pointer; font-size:11px; opacity:0; transition:opacity .15s; }
+    .pb88-col-card:hover .pb88-col-card-del { opacity:1; }
+    .pb88-col-card-content { font-size:11.5px; line-height:1.5; color:var(--muted); margin-top:6px; }
+    .pb88-col-card-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; font-size:10px; font-weight:600; }
+    .pb88-col-card-meta > span { padding:2px 6px; background:rgba(0,0,0,.2); border-radius:5px; }
     .pb88-empty { text-align:center; padding:40px 20px; color:var(--muted); }
     
     /* Item-Modal */
@@ -19326,7 +19441,7 @@ function renderCustom_PRJ88QB4(id, p) {
       </div>
       <div class="pb88-tabs">
         <button class="pb88-tab ${tab==='board'?'active':''}" onclick="pb88SetTab('${id}','board')">📌 Board</button>
-        <button class="pb88-tab ${tab==='topics'?'active':''}" onclick="pb88SetTab('${id}','topics')">📂 Themen & Schwerpunkte</button>
+        <button class="pb88-tab ${tab==='topics'?'active':''}" onclick="pb88SetTab('${id}','topics')">📂 Themen & Fokusthemen</button>
         <button class="pb88-tab ${tab==='stats'?'active':''}" onclick="pb88SetTab('${id}','stats')">📊 Statistik</button>
       </div>
     </div>
@@ -19339,13 +19454,12 @@ function renderCustom_PRJ88QB4(id, p) {
 }
 
 function renderPb88Board(id, pb, TI, TL, TC) {
-  const types = ['all','note','quote','question','task','image','link'];
   let items = pb.items || [];
   
-  // Filter
+  // Filter anwenden
   if (pb.filterType && pb.filterType !== 'all') items = items.filter(i => i.type === pb.filterType);
   if (pb.filterTopicId) items = items.filter(i => i.topicId === pb.filterTopicId);
-  if (pb.filterFocusArea) items = items.filter(i => i.focusArea === pb.filterFocusArea);
+  if (pb.filterFocusAreaId) items = items.filter(i => i.focusAreaId === pb.filterFocusAreaId);
   if (pb.filterSearch) {
     const q = pb.filterSearch.toLowerCase();
     items = items.filter(i => 
@@ -19355,18 +19469,6 @@ function renderPb88Board(id, pb, TI, TL, TC) {
     );
   }
   items.sort((a,b) => (b.updated||'').localeCompare(a.updated||''));
-  
-  // Focus Areas dynamisch aus selected topic
-  let focusAreasHtml = '';
-  if (pb.filterTopicId) {
-    const t = (pb.topics||[]).find(t => t.id === pb.filterTopicId);
-    if (t && (t.schwerpunkte||[]).length > 0) {
-      focusAreasHtml = `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px">
-        <span class="pb88-chip ${!pb.filterFocusArea ? 'active' : ''}" onclick="pb88FilterFocus('${id}',null)">Alle Schwerpunkte</span>
-        ${t.schwerpunkte.map(sp => `<span class="pb88-chip ${pb.filterFocusArea === sp.name ? 'active' : ''}" onclick="pb88FilterFocus('${id}','${esc(sp.name).replace(/'/g,"\\'")}')">${esc(sp.name)}</span>`).join('')}
-      </div>`;
-    }
-  }
   
   return `
     <!-- Quick-Add-Bar: 1 Button pro Typ -->
@@ -19382,37 +19484,55 @@ function renderPb88Board(id, pb, TI, TL, TC) {
       `).join('')}
     </div>
     
-    <!-- Filter-Bar: kompakt -->
-    <div class="pb88-filters">
+    <!-- Toolbar: Filter + GroupBy + Search -->
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:10px">
+      <div style="display:flex;gap:3px;padding:2px;background:rgba(0,0,0,.2);border-radius:7px">
+        <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:var(--muted);padding:5px 8px">Gruppieren:</span>
+        <button onclick="pb88SetGroupBy('${id}','focusArea')" style="padding:5px 10px;border:0;border-radius:5px;background:${pb.groupBy==='focusArea'?'linear-gradient(135deg,#6366f1,#a855f7)':'transparent'};color:${pb.groupBy==='focusArea'?'#fff':'var(--muted)'};cursor:pointer;font-size:11px;font-weight:600">◆ Fokusthema</button>
+        <button onclick="pb88SetGroupBy('${id}','topic')" style="padding:5px 10px;border:0;border-radius:5px;background:${pb.groupBy==='topic'?'linear-gradient(135deg,#6366f1,#a855f7)':'transparent'};color:${pb.groupBy==='topic'?'#fff':'var(--muted)'};cursor:pointer;font-size:11px;font-weight:600">📂 Thema</button>
+        <button onclick="pb88SetGroupBy('${id}','type')" style="padding:5px 10px;border:0;border-radius:5px;background:${pb.groupBy==='type'?'linear-gradient(135deg,#6366f1,#a855f7)':'transparent'};color:${pb.groupBy==='type'?'#fff':'var(--muted)'};cursor:pointer;font-size:11px;font-weight:600">🗂 Typ</button>
+        <button onclick="pb88SetGroupBy('${id}','none')" style="padding:5px 10px;border:0;border-radius:5px;background:${pb.groupBy==='none'?'linear-gradient(135deg,#6366f1,#a855f7)':'transparent'};color:${pb.groupBy==='none'?'#fff':'var(--muted)'};cursor:pointer;font-size:11px;font-weight:600">Alle</button>
+      </div>
+      <input type="text" class="pb88-search" placeholder="🔍 Suchen..." value="${esc(pb.filterSearch||'')}" oninput="pb88FilterSearch('${id}',this.value)" style="flex:1;min-width:160px" />
+      ${(pb.filterTopicId || pb.filterFocusAreaId || (pb.filterType && pb.filterType !== 'all')) ? `<button onclick="pb88ClearFilters('${id}')" style="padding:5px 11px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);color:#f87171;font-size:11px;cursor:pointer">✕ Filter löschen</button>` : ''}
+    </div>
+    
+    <!-- Typ-Filter (kompakt) -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
       <span class="pb88-chip ${(pb.filterType||'all')==='all'?'active':''}" onclick="pb88FilterType('${id}','all')">🌐 Alle (${(pb.items||[]).length})</span>
       ${['note','quote','question','task','image','link'].filter(t => (pb.items||[]).filter(i=>i.type===t).length > 0).map(t => {
         const count = (pb.items||[]).filter(i=>i.type===t).length;
         return `<span class="pb88-chip ${(pb.filterType||'all')===t?'active':''}" onclick="pb88FilterType('${id}','${t}')">${TI[t]} ${TL[t]} (${count})</span>`;
       }).join('')}
-      <input type="text" class="pb88-search" placeholder="🔍 Suchen..." value="${esc(pb.filterSearch||'')}" oninput="pb88FilterSearch('${id}',this.value)" />
     </div>
     
-    <!-- Themen-Bar mit direktem Erstell-Button -->
-    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
-      <span class="pb88-chip ${!pb.filterTopicId?'active':''}" onclick="pb88FilterTopic('${id}',null)">📂 Alle Themen</span>
+    <!-- Fokusthemen-Bar (eigene Liste, unabhängig von Themen) -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+      <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:#d8b4fe;margin-right:4px">◆ Fokusthemen:</span>
+      <span class="pb88-chip ${!pb.filterFocusAreaId?'active':''}" onclick="pb88FilterFA('${id}',null)">Alle</span>
+      ${(pb.focusAreas||[]).map(fa => {
+        const count = (pb.items||[]).filter(i => i.focusAreaId === fa.id).length;
+        return `<span class="pb88-chip ${pb.filterFocusAreaId === fa.id ? 'active' : ''}" onclick="pb88FilterFA('${id}','${fa.id}')">${esc(fa.title)}${count > 0 ? ` (${count})` : ''}</span>`;
+      }).join('')}
+      <button onclick="pb88QuickCreateFA('${id}')" 
+              style="padding:5px 11px;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;border:1px dashed rgba(236,72,153,.4);background:rgba(236,72,153,.06);color:#f9a8d4">
+        + Fokusthema
+      </button>
+    </div>
+    
+    <!-- Themen-Bar (separat) -->
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+      <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;color:#a5b4fc;margin-right:4px">📂 Themen:</span>
+      <span class="pb88-chip ${!pb.filterTopicId?'active':''}" onclick="pb88FilterTopic('${id}',null)">Alle</span>
       ${(pb.topics||[]).map(t => {
         const count = (pb.items||[]).filter(i => i.topicId === t.id).length;
         return `<span class="pb88-chip ${pb.filterTopicId === t.id ? 'active' : ''}" onclick="pb88FilterTopic('${id}','${t.id}')">${esc(t.title)}${count > 0 ? ` (${count})` : ''}</span>`;
       }).join('')}
       <button onclick="pb88QuickCreateTopic('${id}')" 
-              style="padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px dashed rgba(168,85,247,.4);background:rgba(168,85,247,.06);color:#d8b4fe;transition:all .15s"
-              onmouseover="this.style.background='rgba(168,85,247,.15)';this.style.borderStyle='solid'"
-              onmouseout="this.style.background='rgba(168,85,247,.06)';this.style.borderStyle='dashed'">
-        + Neues Thema
+              style="padding:5px 11px;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;border:1px dashed rgba(99,102,241,.4);background:rgba(99,102,241,.06);color:#a5b4fc">
+        + Thema
       </button>
-      ${pb.filterTopicId ? `<button onclick="pb88QuickCreateFocus('${id}','${pb.filterTopicId}')" 
-              style="padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px dashed rgba(236,72,153,.4);background:rgba(236,72,153,.06);color:#f9a8d4;transition:all .15s"
-              onmouseover="this.style.background='rgba(236,72,153,.15)';this.style.borderStyle='solid'"
-              onmouseout="this.style.background='rgba(236,72,153,.06)';this.style.borderStyle='dashed'">
-        ◆ Neuer Schwerpunkt
-      </button>` : ''}
     </div>
-    ${focusAreasHtml}
     
     ${items.length === 0 ? `
       <div class="pb88-empty" style="min-height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center">
@@ -19420,62 +19540,155 @@ function renderPb88Board(id, pb, TI, TL, TC) {
         <div style="font-weight:600;margin-bottom:5px;font-size:14px">${(pb.items||[]).length === 0 ? 'Noch keine Items' : 'Keine Treffer'}</div>
         <div style="font-size:12px">${(pb.items||[]).length === 0 ? 'Klicke oben einen Quick-Button um zu starten.' : 'Andere Filter probieren.'}</div>
       </div>
-    ` : `
-      <div class="pb88-grid">
-        ${items.map(it => {
-          const c = TC[it.type] || TC.note;
-          const topic = (pb.topics||[]).find(t => t.id === it.topicId);
-          const docs = (it.documents||[]).length;
-          return `<div class="pb88-postit ${it.done?'done':''}" style="background:${c.bg};color:${c.color}" onclick="pb88OpenItem('${id}','${it.id}')">
-            <button class="pb88-postit-del" onclick="event.stopPropagation();pb88DeleteItem('${id}','${it.id}')">✕</button>
-            <div class="pb88-postit-icon">${TI[it.type] || '📄'}</div>
-            <div class="pb88-postit-title">${esc(it.title)}</div>
-            ${it.content ? `<div class="pb88-postit-content">${esc(it.content)}</div>` : ''}
-            <div class="pb88-postit-meta">
-              ${it.focusArea ? `<span>◆ ${esc(it.focusArea)}</span>` : (topic ? `<span>📂 ${esc(topic.title)}</span>` : '')}
-              ${docs > 0 ? `<span class="pb88-postit-docs">📎 ${docs}</span>` : ''}
-              ${it.type === 'task' && it.done ? '<span>✓</span>' : ''}
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-    `}
+    ` : renderPb88Columns(id, items, pb, TI, TL, TC)}
   `;
+}
+
+// ═══ Spalten-Layout (Kanban-Style) ═══
+function renderPb88Columns(id, items, pb, TI, TL, TC) {
+  const groupBy = pb.groupBy || 'focusArea';
+  
+  // Gruppierungs-Logik
+  let groups = [];
+  
+  if (groupBy === 'none') {
+    // Eine große Spalte mit allen Items
+    groups = [{ id: 'all', title: '📌 Alle Items', items, color: '#a5b4fc' }];
+  } else if (groupBy === 'focusArea') {
+    // Pro Fokusthema eine Spalte + "Ohne Fokusthema"
+    (pb.focusAreas || []).forEach(fa => {
+      const groupItems = items.filter(i => i.focusAreaId === fa.id);
+      groups.push({ id: fa.id, title: `◆ ${fa.title}`, items: groupItems, color: '#d8b4fe' });
+    });
+    const noFA = items.filter(i => !i.focusAreaId);
+    if (noFA.length > 0) groups.push({ id: 'no-fa', title: 'Ohne Fokusthema', items: noFA, color: '#94a3b8' });
+  } else if (groupBy === 'topic') {
+    (pb.topics || []).forEach(t => {
+      const groupItems = items.filter(i => i.topicId === t.id);
+      groups.push({ id: t.id, title: `📂 ${t.title}`, items: groupItems, color: '#a5b4fc' });
+    });
+    const noTopic = items.filter(i => !i.topicId);
+    if (noTopic.length > 0) groups.push({ id: 'no-topic', title: 'Ohne Thema', items: noTopic, color: '#94a3b8' });
+  } else if (groupBy === 'type') {
+    ['note','quote','question','task','image','link'].forEach(t => {
+      const groupItems = items.filter(i => i.type === t);
+      if (groupItems.length > 0) groups.push({ id: t, title: `${TI[t]} ${TL[t]}`, items: groupItems, color: TC[t].color });
+    });
+  }
+  
+  // Nur Gruppen mit Items zeigen (außer "Alle")
+  if (groupBy !== 'none') {
+    groups = groups.filter(g => g.items.length > 0);
+  }
+  
+  if (groups.length === 0) {
+    return `<div class="pb88-empty" style="min-height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center">
+      <div style="font-size:48px;margin-bottom:10px">📌</div>
+      <div style="font-weight:600;font-size:14px">Keine Gruppen vorhanden</div>
+    </div>`;
+  }
+  
+  return `<div class="pb88-columns">
+    ${groups.map(g => `
+      <div class="pb88-column">
+        <div class="pb88-column-head" style="border-left:3px solid ${g.color}">
+          <div style="font-size:13px;font-weight:700">${esc(g.title)}</div>
+          <span style="font-size:11px;color:var(--muted);background:rgba(255,255,255,.05);padding:2px 8px;border-radius:8px;font-weight:600">${g.items.length}</span>
+        </div>
+        <div class="pb88-column-body">
+          ${g.items.map(it => {
+            const c = TC[it.type] || TC.note;
+            const topic = (pb.topics||[]).find(t => t.id === it.topicId);
+            const focusArea = (pb.focusAreas||[]).find(f => f.id === it.focusAreaId);
+            const docs = (it.documents||[]).length;
+            const contentPreview = (it.content || '').slice(0, 120);
+            
+            return `<div class="pb88-col-card ${it.done?'done':''}" style="border-left:3px solid ${c.color}" onclick="pb88OpenItem('${id}','${it.id}')">
+              <div class="pb88-col-card-head">
+                <span style="font-size:14px">${TI[it.type] || '📄'}</span>
+                <span class="pb88-col-card-title">${esc(it.title)}</span>
+                <button class="pb88-col-card-del" onclick="event.stopPropagation();pb88DeleteItem('${id}','${it.id}')">✕</button>
+              </div>
+              ${contentPreview ? `<div class="pb88-col-card-content">${esc(contentPreview)}${(it.content||'').length > 120 ? '…' : ''}</div>` : ''}
+              ${(focusArea || topic || docs > 0 || it.source) ? `
+                <div class="pb88-col-card-meta">
+                  ${focusArea && groupBy !== 'focusArea' ? `<span style="color:#d8b4fe">◆ ${esc(focusArea.title)}</span>` : ''}
+                  ${topic && groupBy !== 'topic' ? `<span style="color:#a5b4fc">📂 ${esc(topic.title)}</span>` : ''}
+                  ${docs > 0 ? `<span style="color:#fbbf24">📎 ${docs}</span>` : ''}
+                  ${it.type === 'task' && it.done ? '<span style="color:#86efac">✓ Erledigt</span>' : ''}
+                </div>
+              ` : ''}
+            </div>`;
+          }).join('')}
+          <button onclick="pb88QuickAddInColumn('${id}','${groupBy}','${g.id}')" 
+                  style="width:100%;padding:8px;background:transparent;border:1px dashed rgba(255,255,255,.1);border-radius:8px;color:var(--muted);font-size:11px;cursor:pointer;margin-top:4px;transition:all .15s"
+                  onmouseover="this.style.background='rgba(168,85,247,.06)';this.style.borderColor='rgba(168,85,247,.3)';this.style.color='#d8b4fe'"
+                  onmouseout="this.style.background='transparent';this.style.borderColor='rgba(255,255,255,.1)';this.style.color='var(--muted)'">
+            + Item
+          </button>
+        </div>
+      </div>
+    `).join('')}
+  </div>`;
 }
 
 function renderPb88Topics(id, pb) {
   return `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h4 style="margin:0;font-size:14px">📂 Themen & Schwerpunkte</h4>
-      <button class="pb88-btn primary" onclick="pb88AddTopic('${id}')" style="font-size:11.5px;padding:6px 12px">+ Neues Thema</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      
+      <!-- Fokusthemen -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h4 style="margin:0;font-size:14px;color:#d8b4fe">◆ Fokusthemen</h4>
+          <button class="pb88-btn primary" onclick="pb88AddFocusArea('${id}')" style="font-size:11px;padding:5px 10px;background:linear-gradient(135deg,#ec4899,#a855f7)">+ Fokusthema</button>
+        </div>
+        ${(pb.focusAreas||[]).length === 0 ? `
+          <div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;background:rgba(168,85,247,.04);border:1px dashed rgba(168,85,247,.2);border-radius:10px">
+            <div style="font-size:32px;margin-bottom:6px">◆</div>
+            <div style="font-weight:600">Keine Fokusthemen</div>
+            <div style="font-size:11px;margin-top:4px">Unabhängige Kategorien<br>zur Gruppierung</div>
+          </div>
+        ` : (pb.focusAreas||[]).map(fa => {
+          const count = (pb.items||[]).filter(i => i.focusAreaId === fa.id).length;
+          return `<div style="padding:10px 12px;background:rgba(168,85,247,.04);border:1px solid rgba(168,85,247,.15);border-radius:8px;margin-bottom:6px;display:flex;align-items:center;gap:8px">
+            <span style="color:#d8b4fe;font-size:14px">◆</span>
+            <input type="text" value="${esc(fa.title)}" oninput="pb88UpdateFocusArea('${id}','${fa.id}','title',this.value)"
+                   style="flex:1;padding:4px 8px;background:transparent;border:0;color:var(--text);font-size:13px;font-weight:600" />
+            ${count > 0 ? `<span style="font-size:10px;color:#d8b4fe;background:rgba(168,85,247,.15);padding:2px 7px;border-radius:5px;font-weight:600">${count}</span>` : ''}
+            <button onclick="pb88DeleteFocusArea('${id}','${fa.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:14px;padding:2px 6px">×</button>
+          </div>`;
+        }).join('')}
+      </div>
+      
+      <!-- Themen -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h4 style="margin:0;font-size:14px;color:#a5b4fc">📂 Themen</h4>
+          <button class="pb88-btn primary" onclick="pb88AddTopic('${id}')" style="font-size:11px;padding:5px 10px;background:linear-gradient(135deg,#6366f1,#3b82f6)">+ Thema</button>
+        </div>
+        ${(pb.topics||[]).length === 0 ? `
+          <div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;background:rgba(99,102,241,.04);border:1px dashed rgba(99,102,241,.2);border-radius:10px">
+            <div style="font-size:32px;margin-bottom:6px">📂</div>
+            <div style="font-weight:600">Keine Themen</div>
+            <div style="font-size:11px;margin-top:4px">Übergreifende Kategorien<br>für Items</div>
+          </div>
+        ` : (pb.topics||[]).map(t => {
+          const count = (pb.items||[]).filter(i => i.topicId === t.id).length;
+          return `<div style="padding:10px 12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15);border-radius:8px;margin-bottom:6px;display:flex;align-items:center;gap:8px">
+            <span style="color:#a5b4fc;font-size:14px">📂</span>
+            <input type="text" value="${esc(t.title)}" oninput="pb88UpdateTopic('${id}','${t.id}','title',this.value)"
+                   style="flex:1;padding:4px 8px;background:transparent;border:0;color:var(--text);font-size:13px;font-weight:600" />
+            ${count > 0 ? `<span style="font-size:10px;color:#a5b4fc;background:rgba(99,102,241,.15);padding:2px 7px;border-radius:5px;font-weight:600">${count}</span>` : ''}
+            <button onclick="pb88DeleteTopic('${id}','${t.id}')" style="background:none;border:0;color:#f87171;cursor:pointer;font-size:14px;padding:2px 6px">×</button>
+          </div>`;
+        }).join('')}
+      </div>
+      
     </div>
     
-    ${(pb.topics||[]).length === 0 ? `
-      <div class="pb88-empty">
-        <div style="font-size:42px;margin-bottom:10px">📂</div>
-        <div style="font-weight:600;margin-bottom:5px">Noch keine Themen</div>
-        <div style="font-size:11.5px">Themen helfen dabei, Items zu gruppieren.</div>
-      </div>
-    ` : (pb.topics||[]).map(t => `
-      <div class="pb88-topic-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <input type="text" value="${esc(t.title)}" oninput="pb88UpdateTopic('${id}','${t.id}','title',this.value)"
-                 style="flex:1;padding:6px 10px;background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.1);color:var(--text);font-size:14px;font-weight:700" />
-          <button class="pb88-btn danger" onclick="pb88DeleteTopic('${id}','${t.id}')" style="font-size:11px;padding:4px 10px;margin-left:8px">🗑 Thema</button>
-        </div>
-        <div style="margin-top:8px">
-          <div class="pb88-label">Schwerpunkte / Focus Areas</div>
-          <div style="display:flex;flex-wrap:wrap;align-items:center;margin-bottom:6px">
-            ${(t.schwerpunkte||[]).map(sp => `
-              <span class="pb88-fa-pill">${esc(sp.name)} <button onclick="pb88RemoveFA('${id}','${t.id}','${esc(sp.name).replace(/'/g,"\\'")}')">×</button></span>
-            `).join('')}
-          </div>
-          <input type="text" placeholder="+ Schwerpunkt hinzufügen (Enter)" 
-                 onkeydown="if(event.key==='Enter'){event.preventDefault();pb88AddFA('${id}','${t.id}',this.value);this.value=''}"
-                 style="width:100%;padding:6px 10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);font-size:12px" />
-        </div>
-      </div>
-    `).join('')}
+    <div style="margin-top:14px;padding:11px 14px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:9px;font-size:11.5px;color:var(--muted);line-height:1.5">
+      💡 <strong>Fokusthemen</strong> sind unabhängige Tags die du Items zuweisen kannst (z.B. "Recherche", "Konzept"). <strong>Themen</strong> sind übergreifende Kategorien (z.B. "Versicherungstheorie"). Beide sind parallel und können gleichzeitig pro Item gesetzt werden.
+    </div>
   `;
 }
 
@@ -19488,7 +19701,7 @@ function renderPb88Stats(id, pb, TI, TL) {
   const tasksTotal = byType.task;
   const totalDocs = items.reduce((s,i)=>s+(i.documents||[]).length, 0);
   const topicsCount = (pb.topics||[]).length;
-  const focusAreasCount = (pb.topics||[]).reduce((s,t)=>s+(t.schwerpunkte||[]).length, 0);
+  const focusAreasCount = (pb.focusAreas||[]).length;
   
   return `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px">
@@ -19502,7 +19715,7 @@ function renderPb88Stats(id, pb, TI, TL) {
       </div>
       <div style="padding:12px;background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.2);border-radius:9px;text-align:center">
         <div style="font-size:24px;font-weight:800;color:#f9a8d4">${focusAreasCount}</div>
-        <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Schwerpunkte</div>
+        <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Fokusthemen</div>
       </div>
       <div style="padding:12px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:9px;text-align:center">
         <div style="font-size:24px;font-weight:800;color:#86efac">${tasksDone}/${tasksTotal}</div>
@@ -19544,11 +19757,11 @@ window.pb88FilterType = function(id, type) {
 };
 window.pb88FilterTopic = function(id, topicId) {
   const pb = pb88Pb(id); if (!pb) return;
-  pb.filterTopicId = topicId; pb.filterFocusArea = null; pb88Save(); render();
+  pb.filterTopicId = topicId; pb88Save(); render();
 };
-window.pb88FilterFocus = function(id, fa) {
+window.pb88FilterFA = function(id, faId) {
   const pb = pb88Pb(id); if (!pb) return;
-  pb.filterFocusArea = fa; pb88Save(); render();
+  pb.filterFocusAreaId = faId; pb88Save(); render();
 };
 window.pb88FilterSearch = function(id, v) {
   const pb = pb88Pb(id); if (!pb) return;
@@ -19556,13 +19769,26 @@ window.pb88FilterSearch = function(id, v) {
   if (window._pb88SearchTimer) clearTimeout(window._pb88SearchTimer);
   window._pb88SearchTimer = setTimeout(() => { pb88Save(); render(); }, 300);
 };
+window.pb88SetGroupBy = function(id, groupBy) {
+  const pb = pb88Pb(id); if (!pb) return;
+  pb.groupBy = groupBy; pb88Save(); render();
+};
+window.pb88ClearFilters = function(id) {
+  const pb = pb88Pb(id); if (!pb) return;
+  pb.filterType = 'all';
+  pb.filterTopicId = null;
+  pb.filterFocusAreaId = null;
+  pb.filterSearch = '';
+  pb88Save(); render();
+};
 
+// ═══ Themen-Verwaltung ═══
 window.pb88AddTopic = function(id) {
   const pb = pb88Pb(id); if (!pb) return;
   const title = prompt("Name des Themas?");
   if (!title || !title.trim()) return;
   if (!Array.isArray(pb.topics)) pb.topics = [];
-  pb.topics.push({ id: "topic_" + Math.random().toString(36).slice(2,10), title: title.trim(), schwerpunkte: [] });
+  pb.topics.push({ id: "topic_" + Math.random().toString(36).slice(2,10), title: title.trim() });
   pb88Save(); render();
 };
 
@@ -19577,25 +19803,36 @@ window.pb88UpdateTopic = function(id, topicId, field, value) {
 window.pb88DeleteTopic = function(id, topicId) {
   const pb = pb88Pb(id); if (!pb) return;
   const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
-  if (!confirm(`Thema "${t.title}" löschen? Items behalten den Thema-Verweis, aber das Thema selbst wird entfernt.`)) return;
+  if (!confirm(`Thema "${t.title}" löschen? Items behalten den Verweis, aber das Thema selbst wird entfernt.`)) return;
   pb.topics = pb.topics.filter(x => x.id !== topicId);
+  if (pb.filterTopicId === topicId) pb.filterTopicId = null;
   pb88Save(); render();
 };
 
-window.pb88AddFA = function(id, topicId, value) {
-  value = (value||'').trim(); if (!value) return;
+// ═══ Fokusthemen-Verwaltung (eigene Liste, unabhängig von Themen) ═══
+window.pb88AddFocusArea = function(id) {
   const pb = pb88Pb(id); if (!pb) return;
-  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
-  if (!Array.isArray(t.schwerpunkte)) t.schwerpunkte = [];
-  if (t.schwerpunkte.some(sp => sp.name === value)) return;
-  t.schwerpunkte.push({ name: value });
+  const title = prompt("Name des Fokusthemas?");
+  if (!title || !title.trim()) return;
+  if (!Array.isArray(pb.focusAreas)) pb.focusAreas = [];
+  pb.focusAreas.push({ id: "fa_" + Math.random().toString(36).slice(2,10), title: title.trim() });
   pb88Save(); render();
 };
 
-window.pb88RemoveFA = function(id, topicId, name) {
+window.pb88UpdateFocusArea = function(id, faId, field, value) {
   const pb = pb88Pb(id); if (!pb) return;
-  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
-  t.schwerpunkte = (t.schwerpunkte||[]).filter(sp => sp.name !== name);
+  const fa = (pb.focusAreas||[]).find(x => x.id === faId); if (!fa) return;
+  fa[field] = value;
+  if (window._pb88FASaveTimer) clearTimeout(window._pb88FASaveTimer);
+  window._pb88FASaveTimer = setTimeout(() => pb88Save(), 600);
+};
+
+window.pb88DeleteFocusArea = function(id, faId) {
+  const pb = pb88Pb(id); if (!pb) return;
+  const fa = (pb.focusAreas||[]).find(x => x.id === faId); if (!fa) return;
+  if (!confirm(`Fokusthema "${fa.title}" löschen? Items behalten den Verweis, aber das Fokusthema wird entfernt.`)) return;
+  pb.focusAreas = pb.focusAreas.filter(x => x.id !== faId);
+  if (pb.filterFocusAreaId === faId) pb.filterFocusAreaId = null;
   pb88Save(); render();
 };
 
@@ -19609,33 +19846,50 @@ window.pb88QuickCreate = function(id, type) {
   pb88OpenItem(id, null);
 };
 
+// Quick-Add direkt in einer Spalte (übernimmt Group-Wert)
+window.pb88QuickAddInColumn = function(id, groupBy, groupId) {
+  const pb = pb88Pb(id); if (!pb) return;
+  window._pb88PreType = 'note';
+  
+  if (groupBy === 'focusArea' && groupId !== 'no-fa') {
+    window._pb88PreFAId = groupId;
+  } else if (groupBy === 'topic' && groupId !== 'no-topic') {
+    window._pb88PreTopicId = groupId;
+  } else if (groupBy === 'type') {
+    window._pb88PreType = groupId;
+  }
+  
+  pb88OpenItem(id, null);
+};
+
 window.pb88QuickCreateTopic = function(id) {
   const pb = pb88Pb(id); if (!pb) return;
   const title = prompt("Name des neuen Themas?");
   if (!title || !title.trim()) return;
   if (!Array.isArray(pb.topics)) pb.topics = [];
-  const newTopic = { id: "topic_" + Math.random().toString(36).slice(2,10), title: title.trim(), schwerpunkte: [] };
+  const newTopic = { id: "topic_" + Math.random().toString(36).slice(2,10), title: title.trim() };
   pb.topics.push(newTopic);
-  pb.filterTopicId = newTopic.id;  // Direkt aktivieren
+  pb.filterTopicId = newTopic.id;
   pb88Save();
   toast("ok", "📂 Thema erstellt", title.trim());
   render();
 };
 
-window.pb88QuickCreateFocus = function(id, topicId) {
+// Fokusthema direkt anlegen (unabhängig von Themen)
+window.pb88QuickCreateFA = function(id) {
   const pb = pb88Pb(id); if (!pb) return;
-  const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
-  const name = prompt(`Schwerpunkt für "${t.title}"?`);
-  if (!name || !name.trim()) return;
-  if (!Array.isArray(t.schwerpunkte)) t.schwerpunkte = [];
-  if (t.schwerpunkte.some(sp => sp.name === name.trim())) {
+  const title = prompt("Name des neuen Fokusthemas?");
+  if (!title || !title.trim()) return;
+  if (!Array.isArray(pb.focusAreas)) pb.focusAreas = [];
+  if (pb.focusAreas.some(fa => fa.title === title.trim())) {
     toast("warn", "Existiert bereits");
     return;
   }
-  t.schwerpunkte.push({ name: name.trim() });
-  pb.filterFocusArea = name.trim();  // Direkt aktivieren
+  const newFA = { id: "fa_" + Math.random().toString(36).slice(2,10), title: title.trim() };
+  pb.focusAreas.push(newFA);
+  pb.filterFocusAreaId = newFA.id;
   pb88Save();
-  toast("ok", "◆ Schwerpunkt erstellt", name.trim());
+  toast("ok", "◆ Fokusthema erstellt", title.trim());
   render();
 };
 
@@ -19649,8 +19903,12 @@ window.pb88OpenItem = function(id, itemId) {
     if (!item) return;
   } else {
     const preType = window._pb88PreType || 'note';
+    const preTopicId = window._pb88PreTopicId !== undefined ? window._pb88PreTopicId : (pb.filterTopicId || null);
+    const preFAId = window._pb88PreFAId !== undefined ? window._pb88PreFAId : (pb.filterFocusAreaId || null);
     window._pb88PreType = null;
-    item = { type: preType, title: '', content: '', source: '', topicId: pb.filterTopicId || null, focusArea: pb.filterFocusArea || null, done: false, documents: [] };
+    window._pb88PreTopicId = undefined;
+    window._pb88PreFAId = undefined;
+    item = { type: preType, title: '', content: '', source: '', topicId: preTopicId, focusAreaId: preFAId, done: false, documents: [] };
   }
   
   let overlay = document.getElementById('pb88ItemModal');
@@ -19662,8 +19920,7 @@ window.pb88OpenItem = function(id, itemId) {
   }
   
   const topicOpts = (pb.topics||[]).map(t => `<option value="${t.id}" ${item.topicId === t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
-  const selT = (pb.topics||[]).find(t => t.id === item.topicId);
-  const faOpts = (selT?.schwerpunkte||[]).map(sp => `<option value="${esc(sp.name)}" ${item.focusArea === sp.name ? 'selected' : ''}>${esc(sp.name)}</option>`).join('');
+  const faOpts = (pb.focusAreas||[]).map(fa => `<option value="${fa.id}" ${item.focusAreaId === fa.id ? 'selected' : ''}>${esc(fa.title)}</option>`).join('');
   
   overlay.innerHTML = `
     <div class="pb88-modal" onclick="event.stopPropagation()">
@@ -19672,33 +19929,33 @@ window.pb88OpenItem = function(id, itemId) {
         <button onclick="pb88CloseItem()" style="margin-left:auto;background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer">×</button>
       </div>
       <div class="pb88-modal-body">
+        <div>
+          <label class="pb88-label">Typ</label>
+          <select id="pb88Type" class="pb88-select">
+            <option value="note" ${item.type==='note'?'selected':''}>📝 Notiz</option>
+            <option value="quote" ${item.type==='quote'?'selected':''}>💬 Zitat</option>
+            <option value="question" ${item.type==='question'?'selected':''}>❓ Frage</option>
+            <option value="task" ${item.type==='task'?'selected':''}>☑️ Aufgabe</option>
+            <option value="image" ${item.type==='image'?'selected':''}>🖼️ Bild</option>
+            <option value="link" ${item.type==='link'?'selected':''}>🔗 Link</option>
+          </select>
+        </div>
+        
         <div class="pb88-row">
           <div>
-            <label class="pb88-label">Typ</label>
-            <select id="pb88Type" class="pb88-select" onchange="pb88RefreshFA('${id}')">
-              <option value="note" ${item.type==='note'?'selected':''}>📝 Notiz</option>
-              <option value="quote" ${item.type==='quote'?'selected':''}>💬 Zitat</option>
-              <option value="question" ${item.type==='question'?'selected':''}>❓ Frage</option>
-              <option value="task" ${item.type==='task'?'selected':''}>☑️ Aufgabe</option>
-              <option value="image" ${item.type==='image'?'selected':''}>🖼️ Bild</option>
-              <option value="link" ${item.type==='link'?'selected':''}>🔗 Link</option>
+            <label class="pb88-label">◆ Fokusthema <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(unabhängig)</span></label>
+            <select id="pb88FA" class="pb88-select">
+              <option value="">— Kein Fokusthema —</option>
+              ${faOpts}
             </select>
           </div>
           <div>
-            <label class="pb88-label">Thema</label>
-            <select id="pb88Topic" class="pb88-select" onchange="pb88RefreshFA('${id}')">
+            <label class="pb88-label">📂 Thema <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+            <select id="pb88Topic" class="pb88-select">
               <option value="">— Kein Thema —</option>
               ${topicOpts}
             </select>
           </div>
-        </div>
-        
-        <div id="pb88FAWrap" style="${(selT?.schwerpunkte||[]).length === 0 ? 'display:none' : ''}">
-          <label class="pb88-label">Schwerpunkt / Focus Area</label>
-          <select id="pb88FA" class="pb88-select">
-            <option value="">— Kein Schwerpunkt —</option>
-            ${faOpts}
-          </select>
         </div>
         
         <div>
@@ -19824,22 +20081,7 @@ window.pb88DownloadDoc = function(idx) {
 };
 
 window.pb88RefreshFA = function(id) {
-  const topicId = document.getElementById('pb88Topic')?.value;
-  const pb = pb88Pb(id); if (!pb) return;
-  const t = (pb.topics||[]).find(x => x.id === topicId);
-  const faSel = document.getElementById('pb88FA');
-  const faWrap = document.getElementById('pb88FAWrap');
-  if (!faSel || !faWrap) return;
-  
-  const sps = t?.schwerpunkte || [];
-  if (sps.length === 0) {
-    faWrap.style.display = 'none';
-    faSel.value = '';
-  } else {
-    faWrap.style.display = '';
-    faSel.innerHTML = '<option value="">— Kein Schwerpunkt —</option>' + 
-      sps.map(sp => `<option value="${esc(sp.name)}">${esc(sp.name)}</option>`).join('');
-  }
+  // Deprecated — FA ist jetzt unabhängig vom Topic, keine Refresh nötig.
 };
 
 window.pb88CloseItem = function() {
@@ -19855,7 +20097,7 @@ window.pb88SaveItem = function(id) {
   
   const type = document.getElementById('pb88Type').value;
   const topicId = document.getElementById('pb88Topic').value || null;
-  const focusArea = document.getElementById('pb88FA').value || null;
+  const focusAreaId = document.getElementById('pb88FA').value || null;
   const content = document.getElementById('pb88Content').value.trim();
   const source = document.getElementById('pb88Source').value.trim();
   const done = type === 'task' ? !!document.getElementById('pb88Done')?.checked : false;
@@ -19866,12 +20108,12 @@ window.pb88SaveItem = function(id) {
   if (_pb88EditId) {
     const item = pb.items.find(x => x.id === _pb88EditId);
     if (item) {
-      Object.assign(item, { type, title, content, source, topicId, focusArea, done, documents: window._pb88PendingDocs || [], updated: now });
+      Object.assign(item, { type, title, content, source, topicId, focusAreaId, done, documents: window._pb88PendingDocs || [], updated: now });
     }
   } else {
     pb.items.push({
       id: 'pbi_' + Math.random().toString(36).slice(2,10),
-      type, title, content, source, topicId, focusArea, done,
+      type, title, content, source, topicId, focusAreaId, done,
       documents: window._pb88PendingDocs || [],
       created: now, updated: now,
     });
@@ -30608,9 +30850,11 @@ async function extractTextFromKnowledgeFile(file) {
 async function loadPDFLibrary() {
   if (window.pdfjsLib) return true;
   
+  // Reihenfolge: unpkg → jsdelivr → cdnjs (cdnjs wird oft blockiert)
   const urls = [
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js",
-    "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.js"
+    "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.js",
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"
   ];
   
   for (const url of urls) {
@@ -30618,6 +30862,7 @@ async function loadPDFLibrary() {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
         script.src = url;
+        script.crossOrigin = "anonymous";
         script.onload = resolve;
         script.onerror = reject;
         document.head.appendChild(script);
@@ -30635,13 +30880,15 @@ async function loadPDFLibrary() {
   return false;
 }
 
-// Mammoth.js dynamisch laden
+// Mammoth.js dynamisch laden mit mehreren CDN-Fallbacks (für Firmen-Netzwerke mit Tracking-Prevention)
 async function loadMammothLibrary() {
   if (window.mammoth) return true;
   
+  // Reihenfolge: unpkg → jsdelivr → cdnjs. cdnjs wird oft von Tracking-Prevention geblockt
   const urls = [
-    "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js",
-    "https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"
+    "https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js",
+    "https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"
   ];
   
   for (const url of urls) {
@@ -30649,16 +30896,23 @@ async function loadMammothLibrary() {
       await new Promise((resolve, reject) => {
         const script = document.createElement("script");
         script.src = url;
+        script.crossOrigin = "anonymous";
         script.onload = resolve;
         script.onerror = reject;
+        // Timeout damit es nicht ewig hängt
+        setTimeout(() => reject(new Error("Timeout")), 8000);
         document.head.appendChild(script);
       });
       
-      if (window.mammoth) return true;
+      if (window.mammoth) {
+        console.log("✓ mammoth.js geladen von:", url);
+        return true;
+      }
     } catch (e) {
-      console.warn("Mammoth.js laden fehlgeschlagen:", url);
+      console.warn("Mammoth.js Fallback:", url, "→ blockiert/timeout");
     }
   }
+  console.error("❌ Konnte mammoth.js von keinem CDN laden. Prüfe Netzwerk-/Tracking-Einstellungen.");
   return false;
 }
 
@@ -43908,6 +44162,28 @@ async function init() {
               <div id="diagnoseResult" style="margin-top:10px;font-size:12px;font-family:monospace;color:var(--muted)"></div>
             </div>
             
+            ${window._firebaseCorsBlocked ? `
+            <div class="card" style="padding:14px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.05);margin-bottom:14px">
+              <div style="font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;color:#f87171">⚠️ Firebase CORS-Problem erkannt</div>
+              <div style="font-size:12.5px;line-height:1.6;color:var(--muted)">
+                Dein Browser blockiert Firebase Storage wegen fehlender CORS-Header. <strong>App funktioniert lokal weiter</strong>, aber Cloud-Sync via Firebase ist deaktiviert. Um das zu beheben, musst du am <strong>Firebase Storage Bucket</strong> CORS konfigurieren:
+                <div style="margin-top:10px;padding:10px;background:rgba(0,0,0,0.3);border-radius:6px;font-family:monospace;font-size:11px;color:#86efac">
+                  # 1. cors.json erstellen mit:<br>
+                  <span style="color:#fbbf24">[{</span><br>
+                  &nbsp;&nbsp;<span style="color:#a5b4fc">"origin"</span>: [<span style="color:#86efac">"https://management-xo2-pro.netlify.app"</span>],<br>
+                  &nbsp;&nbsp;<span style="color:#a5b4fc">"method"</span>: [<span style="color:#86efac">"GET"</span>, <span style="color:#86efac">"PUT"</span>, <span style="color:#86efac">"POST"</span>, <span style="color:#86efac">"DELETE"</span>, <span style="color:#86efac">"HEAD"</span>],<br>
+                  &nbsp;&nbsp;<span style="color:#a5b4fc">"responseHeader"</span>: [<span style="color:#86efac">"Content-Type"</span>],<br>
+                  &nbsp;&nbsp;<span style="color:#a5b4fc">"maxAgeSeconds"</span>: <span style="color:#fbbf24">3600</span><br>
+                  <span style="color:#fbbf24">}]</span><br><br>
+                  # 2. Mit gsutil setzen:<br>
+                  gsutil cors set cors.json gs://jupidu-36804.firebasestorage.app
+                </div>
+                <div style="margin-top:8px">Bis dahin nutzt die App nur <strong>Netlify-Sync</strong>. Wenn der auch fehlschlägt (401), prüfe den Auth-Token unten.</div>
+                <button type="button" class="btn sm" onclick="window._firebaseCorsBlocked=false;render();toast('ok','🔄 Firebase reaktiviert')" style="margin-top:10px;font-size:11px;padding:5px 11px;background:rgba(34,197,94,0.1);color:#86efac;border:1px solid rgba(34,197,94,0.3)">🔄 Erneut versuchen</button>
+              </div>
+            </div>
+            ` : ''}
+            
             <label class="col-12">Blob Key<input type="text" id="setBlobKey" value="${esc(APP.state.settings.storage.blobKey)}" /></label>
             <label class="col-12">GET URL<input type="text" id="setGetUrl" value="${esc(APP.state.settings.storage.getUrl)}" /></label>
             <label class="col-12">PUT URL<input type="text" id="setPutUrl" value="${esc(APP.state.settings.storage.putUrl)}" /></label>
@@ -50787,6 +51063,7 @@ function processICSContent(content, shouldSave = true) {
 }
 
 // Hilfs-Funktion zum dynamischen Laden von Scripts
+// Universal script loader mit automatischen CDN-Fallbacks für Firmen-Netzwerke
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector(`script[src="${src}"]`);
@@ -50794,11 +51071,42 @@ function loadScript(src) {
       resolve();
       return;
     }
-    const script = document.createElement('script');
-    script.src = src;
-    script.onload = resolve;
-    script.onerror = () => reject(new Error(`Konnte ${src} nicht laden`));
-    document.head.appendChild(script);
+    
+    // Auto-generierte Fallback-Liste — wenn src ein bekanntes CDN ist, weitere CDNs versuchen
+    const fallbacks = [src];
+    if (src.includes("cdnjs.cloudflare.com/ajax/libs/")) {
+      // cdnjs URL → unpkg + jsdelivr versuchen (Beispiel: /ajax/libs/jszip/3.10.1/jszip.min.js)
+      const m = src.match(/cdnjs\.cloudflare\.com\/ajax\/libs\/([^/]+)\/([^/]+)\/(.+)$/);
+      if (m) {
+        const [, pkg, ver, file] = m;
+        // jszip kennt unpkg/jsdelivr Pfade meist als dist/...
+        fallbacks.unshift(`https://unpkg.com/${pkg}@${ver}/dist/${file}`);
+        fallbacks.unshift(`https://cdn.jsdelivr.net/npm/${pkg}@${ver}/dist/${file}`);
+      }
+    }
+    
+    // Probiere Fallbacks der Reihe nach
+    (async () => {
+      for (const url of fallbacks) {
+        try {
+          await new Promise((res, rej) => {
+            const script = document.createElement('script');
+            script.src = url;
+            script.crossOrigin = "anonymous";
+            script.onload = () => res();
+            script.onerror = () => rej(new Error("loaderror"));
+            setTimeout(() => rej(new Error("timeout")), 8000);
+            document.head.appendChild(script);
+          });
+          console.log("✓ Script geladen:", url);
+          resolve();
+          return;
+        } catch (e) {
+          console.warn("Script-Fallback nicht erfolgreich:", url);
+        }
+      }
+      reject(new Error(`Alle CDN-Fallbacks fehlgeschlagen für ${src}`));
+    })();
   });
 }
 window.importICSFile = importICSFile;
@@ -53654,10 +53962,10 @@ document.addEventListener("drop", function(e) {
 
 /* ===== v6 Patch (Ideas+Tags+Meetings+Agenda+Calendar) ===== */
 try{
-  // PDF.js Worker (fix)
+  // PDF.js Worker (fix) — unpkg statt cdnjs (oft von Tracking-Prevention blockiert)
   if (window.pdfjsLib && (!pdfjsLib.GlobalWorkerOptions || !pdfjsLib.GlobalWorkerOptions.workerSrc)){
     pdfjsLib.GlobalWorkerOptions = pdfjsLib.GlobalWorkerOptions || {};
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js";
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.worker.min.js";
   }
 }catch(e){}
 
@@ -55146,9 +55454,9 @@ window.searchAllData = searchAllData;
   async function __v7_ensurePdfJs(){
     if (window.pdfjsLib) return true;
     const urls = [
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js",
+      "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.js",
       "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.js",
-      "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.js"
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"
     ];
     for (const u of urls){
       const ok = await __v7_loadScript(u);
@@ -65070,12 +65378,11 @@ select.jb-select option{background:#18181b;color:#fff}
     if (!doc) return;
     // Check if html2pdf is available
     if (typeof html2pdf === "undefined") {
-      // Try loading it
-      const script = document.createElement("script");
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-      script.onload = () => _jbDoPDF(doc);
-      document.head.appendChild(script);
       jbToast("PDF-Bibliothek wird geladen...");
+      // Mit Fallback-Loader (probiert unpkg/jsdelivr falls cdnjs blockiert)
+      loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js")
+        .then(() => _jbDoPDF(doc))
+        .catch(err => jbToast("❌ PDF-Bibliothek nicht ladbar: " + err.message));
       return;
     }
     _jbDoPDF(doc);
