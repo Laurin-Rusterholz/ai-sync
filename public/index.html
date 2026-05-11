@@ -7119,6 +7119,28 @@ for (const u of Object.values(e.updates)) {
     // 📅 Deadlines: [{id, title, date, done, notify}]
     p.deadlines = Array.isArray(p.deadlines) ? p.deadlines : [];
     
+    // ── Migration: Milestones (Planner) → Deadlines (Hub) ──
+    // Schema mapping: completed → done, sonst identisch
+    if (Array.isArray(p.milestones) && p.milestones.length > 0 && !p._milestonesMigrated) {
+      const existingTitles = new Set(p.deadlines.map(d => (d.title || '').trim().toLowerCase()).filter(Boolean));
+      for (const m of p.milestones) {
+        const title = (m.title || '').trim();
+        if (!title) continue;
+        // Duplikate (gleicher Titel) überspringen
+        if (existingTitles.has(title.toLowerCase())) continue;
+        p.deadlines.push({
+          id: m.id || ("dl_" + Math.random().toString(36).slice(2, 8)),
+          title,
+          date: m.date || m.dueDate || "",
+          done: !!(m.completed || m.done),
+        });
+        existingTitles.add(title.toLowerCase());
+      }
+      p._milestonesMigrated = true;
+      // p.milestones bleibt vorerst erhalten für ppMilestone-Handler (Personality-Projects)
+      // Bei Normal-Projekten wird p.milestones einfach nicht mehr im Planner-Tab gerendert
+    }
+    
     // 💰 Budget-Posten: [{id, label, planned, actual, category, date}]
     p.budgetItems = Array.isArray(p.budgetItems) ? p.budgetItems : [];
     
@@ -21224,11 +21246,15 @@ window.prjSetPlannerTab = function(id, tab) {
 };
 
 function renderProjectPlannerTabs(p, id) {
-  const tab = window._prjPlannerTab[id] || "swot";
+  let tab = window._prjPlannerTab[id] || "swot";
+  // Falls jemand noch auf "milestones" steht (Tab wurde entfernt) → auf swot zurücksetzen
+  if (tab === "milestones") {
+    tab = "swot";
+    window._prjPlannerTab[id] = "swot";
+  }
   const swotCount = ((p.swot?.strengths || []).length + (p.swot?.weaknesses || []).length + 
                      (p.swot?.opportunities || []).length + (p.swot?.threats || []).length);
   const risksCount = (p.risks || []).length;
-  const milestonesCount = (p.milestones || []).length;
   const subGoalsCount = (p.subGoals || []).length;
   
   return `<div>
@@ -21237,7 +21263,6 @@ function renderProjectPlannerTabs(p, id) {
       ${[
         {id:"swot", label:"📊 SWOT", count: swotCount, color:"#a78bfa"},
         {id:"risks", label:"⚠️ Risiken", count: risksCount, color:"#f87171"},
-        {id:"milestones", label:"🚩 Milestones", count: milestonesCount, color:"#fbbf24"},
         {id:"subgoals", label:"🎯 Sub-Goals", count: subGoalsCount, color:"#86efac"},
       ].map(t => {
         const isActive = tab === t.id;
@@ -21252,7 +21277,6 @@ function renderProjectPlannerTabs(p, id) {
     <!-- Tab Content -->
     ${tab === "swot" ? renderSWOTTab(p, id) : ""}
     ${tab === "risks" ? renderRisksTab(p, id) : ""}
-    ${tab === "milestones" ? renderMilestonesTab(p, id) : ""}
     ${tab === "subgoals" ? renderSubGoalsTab(p, id) : ""}
   </div>`;
 }
@@ -21913,22 +21937,20 @@ function viewProjectDetail(id) {
         ${renderCollapsibleSection({
           id: 'planner-' + id,
           icon: '🎯',
-          title: 'SWOT · Risiken · Milestones · Sub-Goals',
+          title: 'SWOT · Risiken · Sub-Goals',
           subtitle: (() => {
             const sw = ((p.swot?.strengths||[]).length + (p.swot?.weaknesses||[]).length + (p.swot?.opportunities||[]).length + (p.swot?.threats||[]).length);
             const rk = (p.risks||[]).length;
-            const ms = (p.milestones||[]).length;
             const sg = (p.subGoals||[]).length;
-            const total = sw + rk + ms + sg;
+            const total = sw + rk + sg;
             if (total === 0) return 'Noch nichts erfasst';
             const parts = [];
             if (sw) parts.push(sw + ' SWOT');
             if (rk) parts.push(rk + ' Risiken');
-            if (ms) parts.push(ms + ' Milestones');
             if (sg) parts.push(sg + ' Sub-Goals');
             return parts.join(' · ');
           })(),
-          defaultOpen: ((p.swot?.strengths||[]).length + (p.swot?.weaknesses||[]).length + (p.swot?.opportunities||[]).length + (p.swot?.threats||[]).length + (p.risks||[]).length + (p.milestones||[]).length + (p.subGoals||[]).length) > 0,
+          defaultOpen: ((p.swot?.strengths||[]).length + (p.swot?.weaknesses||[]).length + (p.swot?.opportunities||[]).length + (p.swot?.threats||[]).length + (p.risks||[]).length + (p.subGoals||[]).length) > 0,
           content: renderProjectPlannerTabs(p, id),
         })}
         
@@ -22132,7 +22154,8 @@ function renderProjectHubTabs(p, id) {
   ];
   
   const tabBar = `
-    <div style="display:flex;gap:2px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08);overflow-x:auto">
+    <div class="prj-hub-tabbar" style="display:flex;gap:2px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.08);overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none">
+      <style>.prj-hub-tabbar::-webkit-scrollbar{display:none;width:0;height:0}</style>
       ${tabs.map(t => {
         const active = tab === t.key;
         return `<button onclick="prjSetHubTab('${id}','${t.key}')" 
