@@ -35680,6 +35680,7 @@ window.toggleAppLock = function(appKey) {
     locked.push(appKey);
   }
   setLockedApps(locked);
+  refreshSecurityTab();
   render();
 };
 
@@ -35828,6 +35829,7 @@ window.appPinSetupDigit = function(d) {
         window._appPinSetupConfirm = null;
         closeAppPinSetup();
         toast("ok", "🔒 PIN gesetzt", "Synchronisiert über alle Geräte");
+        refreshSecurityTab();
         render();
       } else {
         toast("warn", "PINs stimmen nicht überein");
@@ -35869,6 +35871,7 @@ window.resetAppPin = function() {
   clearStoredPin();
   window._unlockedApps = new Set();
   toast("ok", "🔄 PIN zurückgesetzt");
+  refreshSecurityTab();
   render();
 };
 
@@ -35888,7 +35891,16 @@ window.changeAppPin = function() {
 window.lockAllApps = function() {
   window._unlockedApps = new Set();
   toast("ok", "🔒 Alle Apps gesperrt");
+  refreshSecurityTab();
   render();
+};
+
+// Helper: Settings-Tab "Passwortschutz" neu rendern wenn offen
+window.refreshSecurityTab = function() {
+  const tab = document.getElementById("securityTab");
+  if (tab && typeof renderSecuritySettingsTab === "function") {
+    tab.innerHTML = renderSecuritySettingsTab();
+  }
 };
 
 // Settings-UI für Passwortschutz
