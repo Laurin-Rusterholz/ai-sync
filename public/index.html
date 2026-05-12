@@ -13205,20 +13205,18 @@ function renderMain() {
   
   // ═══ Globaler App-Lock-Check ═══
   // Wenn App in der locked-Liste ist UND PIN gesetzt UND App noch nicht entsperrt → Lock-Screen
+  // statt App-Inhalt rendern. WICHTIG: html setzen und switch komplett überspringen.
+  let _isLocked = false;
   if (route !== "settings" && route !== "dashboard" && route !== "apps") {
     try {
       if (typeof isAppLocked === "function" && isAppLocked(route)) {
         html = renderAppLockScreen(route, false);
-        const pageContent = document.getElementById("pageContent") || document.querySelector("#main");
-        if (pageContent) pageContent.innerHTML = html;
-        if (typeof renderSidebar === "function") renderSidebar();
-        if (typeof renderAppNav === "function") renderAppNav();
-        return;
+        _isLocked = true;
       }
     } catch(e) { console.error("App-lock check error:", e); }
   }
   
-  switch (route) {
+  if (!_isLocked) switch (route) {
     case "dashboard": html = viewDashboard(); break;
     case "apps": html = viewApps(); break;
     case "visionboard": openVisionBoard(); return; // Öffnet VisionBoard 2026
