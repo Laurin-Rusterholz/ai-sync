@@ -7245,11 +7245,23 @@ for (const u of Object.values(e.updates)) {
   e.accounts = e.accounts || {};
   for (const a of Object.values(e.accounts)) {
     a.name = a.name || "Konto";
-    a.type = a.type || "bank"; // bank, cash, savings
+    a.type = a.type || "bank"; // bank, cash, savings, credit
     a.balance = a.balance ?? 0;
     a.currency = a.currency || "CHF";
     a.color = a.color || "#4a90d9";
     a.icon = a.icon || "🏦";
+    // 🏛 Bankdaten (optional)
+    a.bankName = a.bankName || "";        // z.B. "Raiffeisenbank Appenzell"
+    a.iban = a.iban || "";                 // z.B. "CH93 0076 2011 6238 5295 7"
+    a.bic = a.bic || "";                   // z.B. "RAIFCH22"
+    a.accountNumber = a.accountNumber || ""; // alternative Kto-Nr falls keine IBAN
+    a.accountHolder = a.accountHolder || ""; // Inhaber
+    a.notes = a.notes || "";               // freie Notizen
+    // 💳 Karten-Daten (für Debit/Bankkarten zum Konto, optional)
+    a.cardNumber = a.cardNumber || "";       // letzten 4 Ziffern oder vollständig
+    a.cardExpiry = a.cardExpiry || "";       // MM/YY
+    a.cardCvv = a.cardCvv || "";             // ⚠️ Sicherheitscode — eigene Verantwortung
+    a.archived = !!a.archived;
   }
 
   // Normalize transactions (Budget)
@@ -35424,6 +35436,114 @@ async function aiAssessPurchaseProposal(proposalId) {
 window._budgetUnlocked = false;
 window._budgetPinInput = "";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 💳 KARTEN-DATEN HELFER (Ablauf-Validation + Format)
+// ═══════════════════════════════════════════════════════════════════════════
+window.normalizeCardExpiry = function(v) {
+  // Normalisiert "0329", "3/29", "03-29", "03/29" → "03/29"
+  const digits = (v || "").replace(/\D/g, '');
+  if (digits.length === 0) return "";
+  if (digits.length === 1) return digits;
+  if (digits.length === 2) return digits;
+  if (digits.length === 3) return digits.slice(0, 1) + "/" + digits.slice(1);
+  // 4 oder mehr
+  return digits.slice(0, 2) + "/" + digits.slice(2, 4);
+};
+
+window.validateCardExpiry = function(v) {
+  // Erwartet "MM/YY"
+  if (!v) return { valid: false, error: "Leer" };
+  const match = v.match(/^(\d{2})\/(\d{2})$/);
+  if (!match) return { valid: false, error: "Format: MM/YY" };
+  const month = parseInt(match[1], 10);
+  const yy = parseInt(match[2], 10);
+  if (month < 1 || month > 12) return { valid: false, error: "Monat 01-12" };
+  // Aktuelle Zeit für Ablauf-Check
+  const now = new Date();
+  const curYy = now.getFullYear() % 100;
+  const curMo = now.getMonth() + 1;
+  // Wenn yy weit zurück liegt (>50 Jahre Differenz), nicht warnen — eventuell legitim
+  if (yy < curYy || (yy === curYy && month < curMo)) {
+    return { valid: true, expired: true, error: "Karte ist abgelaufen" };
+  }
+  // Innerhalb von 3 Monaten zum Ablauf?
+  const monthsLeft = (yy - curYy) * 12 + (month - curMo);
+  if (monthsLeft <= 3) {
+    return { valid: true, expiringSoon: true, warning: `Läuft in ${monthsLeft} Monat${monthsLeft !== 1 ? 'en' : ''} ab` };
+  }
+  return { valid: true };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🏛 IBAN-VALIDATION (Modulo-97-Check nach ISO 13616)
+// ═══════════════════════════════════════════════════════════════════════════
+window.validateIban = function(iban) {
+  if (!iban) return { valid: false, error: "Leer" };
+  const clean = iban.replace(/\s/g, '').toUpperCase();
+  // Länder-spezifische Längen (Auswahl der häufigsten)
+  const COUNTRY_LENGTHS = {
+    CH: 21, AT: 20, DE: 22, FR: 27, IT: 27, LI: 21, LU: 20, NL: 18, BE: 16,
+    GB: 22, ES: 24, PT: 25, IE: 22, FI: 18, SE: 24, DK: 18, NO: 15, PL: 28,
+    CZ: 24, SK: 24, HU: 28, RO: 24, BG: 22, HR: 21, SI: 19, EE: 20, LV: 21, LT: 20,
+    GR: 27, CY: 28, MT: 31, IS: 26, MC: 27, SM: 27, AD: 24, VA: 22, IL: 23, SA: 24, AE: 23, TR: 26
+  };
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(clean)) {
+    return { valid: false, error: "Ungültiges Format" };
+  }
+  const country = clean.slice(0, 2);
+  const expectedLen = COUNTRY_LENGTHS[country];
+  if (expectedLen && clean.length !== expectedLen) {
+    return { valid: false, error: `${country}-IBAN muss ${expectedLen} Zeichen haben (du hast ${clean.length})` };
+  }
+  // Modulo-97-Check: Move first 4 chars to end, replace letters with numbers, check mod 97 === 1
+  const rearranged = clean.slice(4) + clean.slice(0, 4);
+  const numeric = rearranged.replace(/[A-Z]/g, c => (c.charCodeAt(0) - 55).toString());
+  // BigInt-Modulo schrittweise (numeric kann sehr lang sein)
+  let remainder = 0;
+  for (const ch of numeric) {
+    remainder = (remainder * 10 + parseInt(ch, 10)) % 97;
+  }
+  if (remainder !== 1) {
+    return { valid: false, error: "Prüfsumme ungültig (Tippfehler?)" };
+  }
+  return { valid: true, country };
+};
+
+window.copyIbanToClipboard = async function(accountId) {
+  const a = APP.state.data.entities.accounts?.[accountId];
+  if (!a?.iban) { toast("warn", "Keine IBAN"); return; }
+  const iban = a.iban.replace(/\s/g, '');
+  try {
+    await navigator.clipboard.writeText(iban);
+    toast("ok", "📋 IBAN kopiert", iban);
+  } catch(e) {
+    // Fallback: alten input-trick
+    const ta = document.createElement("textarea");
+    ta.value = iban;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); toast("ok", "📋 IBAN kopiert"); } catch(e2) { toast("error", "Kopieren fehlgeschlagen"); }
+    ta.remove();
+  }
+};
+
+// CVV temporär sichtbar machen (5 Sek), dann wieder maskieren
+window.toggleCvvVisibility = function(elementId, realCvv) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  // Wenn aktuell sichtbar (kein Bullet), maskieren
+  if (el.textContent === realCvv) {
+    el.textContent = realCvv.replace(/./g, '•');
+    return;
+  }
+  el.textContent = realCvv;
+  setTimeout(() => {
+    if (el && el.textContent === realCvv) {
+      el.textContent = realCvv.replace(/./g, '•');
+    }
+  }, 5000);
+};
+
 function hashPin(pin) {
   // Einfacher Hash, ausreichend für lokalen Schutz
   let h = 0;
@@ -35549,10 +35669,63 @@ window.budgetLock = function() {
 // 🔒 GENERIC APP LOCK — Settings-konfigurierbarer PIN-Schutz für Apps
 // ═══════════════════════════════════════════════════════════════════════════
 
-window._unlockedApps = new Set();  // Session-only unlock-Status
+window._unlockedApps = new Map();  // { appKey: timestampOfLastActivity }
+window._lastUserActivity = Date.now();
+window.APP_LOCK_TIMEOUT_MS = 15 * 60 * 1000;  // 15 Minuten Inaktivität → wieder sperren
 window._appPinInput = "";
 window._appPinSetupFirst = null;  // Erste Eingabe bei PIN-Setup (für Bestätigung)
 window._lockingApp = null;        // Welche App will gerade entsperrt werden
+
+// User-Activity tracken (mouse/touch/key) — refresht alle entsperrten Apps
+if (typeof document !== "undefined" && !window._appLockActivityListenerAttached) {
+  const refreshActivity = () => {
+    const now = Date.now();
+    window._lastUserActivity = now;
+    // Refresh timestamps für alle entsperrten Apps
+    window._unlockedApps.forEach((_, key) => {
+      window._unlockedApps.set(key, now);
+    });
+  };
+  ["mousedown", "keydown", "touchstart", "scroll"].forEach(ev => {
+    document.addEventListener(ev, refreshActivity, { passive: true, capture: true });
+  });
+  window._appLockActivityListenerAttached = true;
+  
+  // Periodischer Check: wenn ein entsperrter Eintrag zu alt ist → entfernen + re-render
+  setInterval(() => {
+    if (window._unlockedApps.size === 0) return;
+    const now = Date.now();
+    let changed = false;
+    window._unlockedApps.forEach((ts, key) => {
+      if (now - ts > window.APP_LOCK_TIMEOUT_MS) {
+        window._unlockedApps.delete(key);
+        changed = true;
+      }
+    });
+    if (changed) {
+      // Wenn aktuell eine jetzt gesperrte App angezeigt wird → neu rendern (zeigt Lock-Screen)
+      if (typeof render === "function") render();
+      if (typeof refreshSecurityTab === "function") refreshSecurityTab();
+    }
+  }, 30000);  // alle 30 Sek prüfen
+  
+  // Tab-Switch / Window-Focus: bei Rückkehr Timeout prüfen (setInterval läuft bei verstecktem Tab unzuverlässig)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    const now = Date.now();
+    let changed = false;
+    window._unlockedApps.forEach((ts, key) => {
+      if (now - ts > window.APP_LOCK_TIMEOUT_MS) {
+        window._unlockedApps.delete(key);
+        changed = true;
+      }
+    });
+    if (changed) {
+      if (typeof render === "function") render();
+      if (typeof refreshSecurityTab === "function") refreshSecurityTab();
+    }
+  });
+}
 
 // Liste der locked apps lesen
 // Storage-Strategie:
@@ -35563,9 +35736,34 @@ window._lockingApp = null;        // Welche App will gerade entsperrt werden
 function _getAppLockState() {
   // Lazy-init der Struktur
   if (!APP.state.data) APP.state.data = {};
-  if (!APP.state.data.appLock) APP.state.data.appLock = { pinHash: null, lockedApps: [] };
+  if (!APP.state.data.appLock) APP.state.data.appLock = { pinHash: null, lockedApps: [], timeoutMs: 15 * 60 * 1000 };
+  if (typeof APP.state.data.appLock.timeoutMs !== "number") APP.state.data.appLock.timeoutMs = 15 * 60 * 1000;
+  // Sync ins Window
+  if (window.APP_LOCK_TIMEOUT_MS !== APP.state.data.appLock.timeoutMs && APP.state.data.appLock.timeoutMs != null) {
+    window.APP_LOCK_TIMEOUT_MS = APP.state.data.appLock.timeoutMs;
+  }
   return APP.state.data.appLock;
 }
+
+window.setAppLockTimeout = function(ms) {
+  const v = parseInt(ms, 10);
+  // -1 = "bis Reload" = sehr hohe Zahl
+  const effective = v < 0 ? Number.MAX_SAFE_INTEGER : v;
+  window.APP_LOCK_TIMEOUT_MS = effective;
+  const state = _getAppLockState();
+  state.timeoutMs = effective;
+  _mirrorToLocal(state);
+  scheduleSave();
+  
+  // Bei "Immer sperren (sofort)" → alle Apps direkt sperren
+  if (v === 0) {
+    window._unlockedApps = new Map();
+    render();
+  }
+  refreshSecurityTab();
+  const label = v === 0 ? "sofort sperren" : v < 0 ? "bis Reload" : Math.round(v / 60000) + " Minuten";
+  toast("ok", "⏱ Timeout", "Auto-Sperre: " + label);
+};
 
 function _mirrorToLocal(state) {
   // Mirror nach localStorage damit beim nächsten Page-Load vor Blob-Sync schon was da ist
@@ -35573,6 +35771,9 @@ function _mirrorToLocal(state) {
     if (state.pinHash) localStorage.setItem("quantus_app_pin", state.pinHash);
     else localStorage.removeItem("quantus_app_pin");
     localStorage.setItem("quantus_locked_apps", JSON.stringify(state.lockedApps || []));
+    if (typeof state.timeoutMs === "number") {
+      localStorage.setItem("quantus_app_lock_timeout", String(state.timeoutMs));
+    }
   } catch(e) {}
 }
 
@@ -35594,6 +35795,19 @@ function _migrateAppLockFromLocal() {
       }
     } catch(e) {}
   }
+  // Timeout aus localStorage übernehmen (oder Default 15 min)
+  try {
+    const lsTimeout = localStorage.getItem("quantus_app_lock_timeout");
+    if (lsTimeout) {
+      const v = parseInt(lsTimeout, 10);
+      if (!isNaN(v)) {
+        state.timeoutMs = v;
+        window.APP_LOCK_TIMEOUT_MS = v;
+      }
+    } else if (typeof state.timeoutMs === "number") {
+      window.APP_LOCK_TIMEOUT_MS = state.timeoutMs;
+    }
+  } catch(e) {}
   if (changed) scheduleSave();
 }
 // Beim Laden migrieren (sobald APP.state.data verfügbar)
@@ -35660,7 +35874,15 @@ window.isAppLocked = function(appKey) {
   if (!hasAppPin()) return false;
   const locked = getLockedApps();
   if (!locked.includes(appKey)) return false;
-  return !window._unlockedApps.has(appKey);
+  // Check Unlock-Timestamp: nur wenn innerhalb des Timeouts entsperrt → offen
+  const unlockedAt = window._unlockedApps.get(appKey);
+  if (!unlockedAt) return true;  // nie entsperrt
+  if (Date.now() - unlockedAt > window.APP_LOCK_TIMEOUT_MS) {
+    // Abgelaufen → aus Map entfernen
+    window._unlockedApps.delete(appKey);
+    return true;
+  }
+  return false;
 };
 
 // Toggle App-Lock im Settings
@@ -35731,7 +35953,7 @@ window.appPinDigit = function(appKey, d) {
     const inputHash = hashPin(window._appPinInput);
     
     if (storedPin === inputHash) {
-      window._unlockedApps.add(appKey);
+      window._unlockedApps.set(appKey, Date.now());
       window._appPinInput = "";
       toast("ok", "🔓 Entsperrt");
       render();
@@ -35869,7 +36091,7 @@ window.closeAppPinSetup = function() {
 window.resetAppPin = function() {
   if (!confirm("PIN wirklich zurücksetzen?\n\nAlle App-Sperren werden deaktiviert und du musst einen neuen PIN festlegen, wenn du wieder Apps schützen willst. Deine Daten bleiben erhalten.")) return;
   clearStoredPin();
-  window._unlockedApps = new Set();
+  window._unlockedApps = new Map();
   toast("ok", "🔄 PIN zurückgesetzt");
   refreshSecurityTab();
   render();
@@ -35889,7 +36111,7 @@ window.changeAppPin = function() {
 
 // Alle Apps wieder sperren (Session-Lock)
 window.lockAllApps = function() {
-  window._unlockedApps = new Set();
+  window._unlockedApps = new Map();
   toast("ok", "🔒 Alle Apps gesperrt");
   refreshSecurityTab();
   render();
@@ -35924,7 +36146,7 @@ window.renderSecuritySettingsTab = function() {
   return `
     <div class="form">
       <h4 style="margin-bottom:8px;display:flex;align-items:center;gap:8px">🔒 Passwortschutz <span style="font-size:11px;font-weight:400;color:var(--muted);background:rgba(168,85,247,.1);padding:2px 8px;border-radius:8px">${lockedKeys.length} App${lockedKeys.length !== 1 ? "s" : ""} geschützt</span></h4>
-      <div class="mini mb-3" style="line-height:1.5">Wähle Apps die nur nach PIN-Eingabe geöffnet werden können. Der PIN gilt für alle geschützten Apps. Eine einmal entsperrte App bleibt bis zum Neuladen entsperrt.</div>
+      <div class="mini mb-3" style="line-height:1.5">Wähle Apps die nur nach PIN-Eingabe geöffnet werden können. Der PIN gilt für alle geschützten Apps. Nach Inaktivität wird der PIN automatisch wieder verlangt.</div>
       
       <!-- PIN-Status -->
       <div style="padding:14px;background:${hasPin ? 'rgba(34,197,94,.05)' : 'rgba(251,191,36,.05)'};border:1px solid ${hasPin ? 'rgba(34,197,94,.2)' : 'rgba(251,191,36,.3)'};border-radius:10px;margin-bottom:14px">
@@ -35946,6 +36168,26 @@ window.renderSecuritySettingsTab = function() {
         </div>
       </div>
       
+      <!-- Timeout-Konfiguration -->
+      ${hasPin ? `
+        <div style="padding:12px 14px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15);border-radius:10px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:18px">⏱</span>
+          <div style="flex:1;min-width:180px">
+            <div style="font-weight:600;font-size:12.5px">Auto-Sperre nach Inaktivität</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:1px">PIN wird nach dieser Zeit ohne Aktivität wieder verlangt</div>
+          </div>
+          <select onchange="setAppLockTimeout(this.value)" style="padding:6px 10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.15);border-radius:7px;color:var(--text);font-size:12px;cursor:pointer">
+            <option value="0" ${window.APP_LOCK_TIMEOUT_MS === 0 ? 'selected' : ''}>Immer sperren (sofort)</option>
+            <option value="60000" ${window.APP_LOCK_TIMEOUT_MS === 60000 ? 'selected' : ''}>1 Minute</option>
+            <option value="300000" ${window.APP_LOCK_TIMEOUT_MS === 300000 ? 'selected' : ''}>5 Minuten</option>
+            <option value="900000" ${window.APP_LOCK_TIMEOUT_MS === 900000 ? 'selected' : ''}>15 Minuten (Standard)</option>
+            <option value="1800000" ${window.APP_LOCK_TIMEOUT_MS === 1800000 ? 'selected' : ''}>30 Minuten</option>
+            <option value="3600000" ${window.APP_LOCK_TIMEOUT_MS === 3600000 ? 'selected' : ''}>1 Stunde</option>
+            <option value="-1" ${window.APP_LOCK_TIMEOUT_MS < 0 ? 'selected' : ''}>Bis Reload (alte Logik)</option>
+          </select>
+        </div>
+      ` : ''}
+      
       <!-- Suche -->
       ${lockable.length > 8 ? `
         <input type="text" placeholder="🔍 App suchen..." value="${esc(window._securitySearch || '')}" oninput="window._securitySearch=this.value;document.getElementById('securityAppList').innerHTML=renderSecurityAppList()" style="width:100%;padding:9px 14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--text);font-size:13px;margin-bottom:10px;box-sizing:border-box" />
@@ -35959,8 +36201,9 @@ window.renderSecuritySettingsTab = function() {
         <ul style="margin:6px 0 0 18px;padding:0">
           <li>PIN und Sperren werden in der Cloud-Sync gespeichert und sind auf allen Geräten gleich</li>
           <li>Dashboard, Apps-Übersicht und Einstellungen sind nie sperrbar</li>
+          <li>Nach der eingestellten Zeit ohne Aktivität (Mausbewegung, Tastendruck, Scrollen) wird die App wieder gesperrt</li>
+          <li>Tab-Wechsel oder Reload sperrt ebenfalls (Aktivität wird nicht im Hintergrund-Tab gemessen)</li>
           <li>Bei Verlust des PINs kannst du ihn zurücksetzen — deine Daten bleiben erhalten</li>
-          <li>Das alte Budget-PIN-System (falls separat gesetzt) läuft parallel weiter</li>
         </ul>
       </div>
     </div>
@@ -36400,16 +36643,47 @@ function viewBudget() {
     <div class="grid grid-3 mb-4">
       ${accounts.map(a => {
         const acctTx = transactions.filter(t => t.accountId === a.id).sort((x, y) => (y.date || "").localeCompare(x.date || "")).slice(0, 5);
+        const typeLabels = { bank: "Bankkonto", cash: "Bargeld", savings: "Sparkonto", credit: "Kreditkarte" };
+        const hasBankData = !!(a.iban || a.bic || a.bankName || a.accountNumber);
         return `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
             <div><span style="font-size:24px">${a.icon || "🏦"}</span> <strong>${esc(a.name)}</strong></div>
-            <button class="btn sm" data-action="edit-account" data-id="${a.id}">✏️</button>
+            <div style="display:flex;gap:4px">
+              ${a.iban ? `<button class="btn sm" onclick="copyIbanToClipboard('${a.id}')" title="IBAN kopieren" style="padding:4px 8px">📋</button>` : ''}
+              <button class="btn sm" data-action="edit-account" data-id="${a.id}">✏️</button>
+            </div>
           </div>
           <div class="stat-card ${a.balance >= 0 ? "" : "danger"}" style="padding:12px;margin-bottom:12px;text-align:center">
             <div class="value">${formatMoney(a.balance)} ${a.currency}</div>
-            <div class="mini">${a.type === "bank" ? "Bankkonto" : a.type === "cash" ? "Bargeld" : "Sparkonto"}</div>
+            <div class="mini">${typeLabels[a.type] || "Konto"}</div>
           </div>
+          ${hasBankData ? `
+            <details style="margin-bottom:10px;padding:8px 10px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.12);border-radius:6px">
+              <summary style="cursor:pointer;font-size:11px;font-weight:600;color:#a5b4fc">🏛 Bankdaten</summary>
+              <div style="margin-top:8px;font-size:11px;line-height:1.6">
+                ${a.bankName ? `<div><span style="color:var(--muted)">Bank:</span> ${esc(a.bankName)}</div>` : ''}
+                ${a.accountHolder ? `<div><span style="color:var(--muted)">Inhaber:</span> ${esc(a.accountHolder)}</div>` : ''}
+                ${a.iban ? `<div><span style="color:var(--muted)">IBAN:</span> <span style="font-family:'SF Mono',Menlo,monospace;letter-spacing:.4px">${esc(a.iban)}</span></div>` : ''}
+                ${a.bic ? `<div><span style="color:var(--muted)">BIC:</span> <span style="font-family:'SF Mono',Menlo,monospace">${esc(a.bic)}</span></div>` : ''}
+                ${a.accountNumber ? `<div><span style="color:var(--muted)">Konto-Nr:</span> ${esc(a.accountNumber)}</div>` : ''}
+                ${a.notes ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(99,102,241,.15);color:var(--muted);white-space:pre-wrap">${esc(a.notes)}</div>` : ''}
+              </div>
+            </details>
+          ` : ''}
+          ${(a.cardNumber || a.cardExpiry) ? (() => {
+            const expCheck = a.cardExpiry ? window.validateCardExpiry(a.cardExpiry) : null;
+            const expColor = expCheck?.expired ? '#f87171' : expCheck?.expiringSoon ? '#fbbf24' : 'var(--muted)';
+            const expWarning = expCheck?.expired ? ' ⚠️ Abgelaufen' : expCheck?.expiringSoon ? ' ⚠️ ' + (expCheck.warning || '') : '';
+            return `<details style="margin-bottom:10px;padding:8px 10px;background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.12);border-radius:6px">
+              <summary style="cursor:pointer;font-size:11px;font-weight:600;color:#fca5a5">💳 Karte${expCheck?.expired ? ' ⚠️' : ''}</summary>
+              <div style="margin-top:8px;font-size:11px;line-height:1.6">
+                ${a.cardNumber ? `<div><span style="color:var(--muted)">Nummer:</span> <span style="font-family:'SF Mono',Menlo,monospace;letter-spacing:1px">${esc(a.cardNumber)}</span></div>` : ''}
+                ${a.cardExpiry ? `<div><span style="color:var(--muted)">Gültig bis:</span> <span style="font-family:'SF Mono',Menlo,monospace;color:${expColor}">${esc(a.cardExpiry)}${expWarning}</span></div>` : ''}
+                ${a.cardCvv ? `<div><span style="color:var(--muted)">CVV:</span> <span style="font-family:'SF Mono',Menlo,monospace;letter-spacing:2px">${esc(a.cardCvv).replace(/./g, '•')}</span> <button onclick="event.stopPropagation();this.previousElementSibling.textContent='${esc(a.cardCvv)}';setTimeout(()=>this.previousElementSibling.textContent='${esc(a.cardCvv).replace(/./g, '•')}',5000)" style="background:rgba(255,255,255,.06);border:0;color:var(--muted);padding:2px 6px;border-radius:3px;cursor:pointer;font-size:10px;margin-left:4px">👁 zeigen</button></div>` : ''}
+              </div>
+            </details>`;
+          })() : ''}
           <div class="mini mb-1" style="font-weight:600">Letzte Buchungen</div>
           <div class="list" style="font-size:13px">
             ${acctTx.length ? acctTx.map(t => `
@@ -38764,24 +39038,64 @@ function openSyncLogbookModal() {
 
 // ==================== BUDGET MODALS ====================
 function openCreateAccountModal() {
-  openModal("New Account", `
+  openModal("Neues Konto", `
     <div class="form">
       <label>Name *<input type="text" id="newAccountName" placeholder="z.B. Sparkonto, Portemonnaie" /></label>
-      <label>Typ<select id="newAccountType">
-        <option value="bank">Bankkonto</option>
-        <option value="cash">Bargeld</option>
-        <option value="savings">Sparkonto</option>
-      </select></label>
-      <label>Anfangsbestand<input type="number" step="0.01" id="newAccountBalance" value="0" /></label>
-      <label>Währung<select id="newAccountCurrency">
-        <option value="CHF" selected>CHF</option>
-        <option value="EUR">EUR</option>
-        <option value="USD">USD</option>
-      </select></label>
-      <label>Icon<input type="text" id="newAccountIcon" value="🏦" maxlength="2" /></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label>Typ<select id="newAccountType">
+          <option value="bank">🏦 Bankkonto</option>
+          <option value="savings">💰 Sparkonto</option>
+          <option value="cash">💵 Bargeld</option>
+          <option value="credit">💳 Kreditkarte</option>
+        </select></label>
+        <label>Währung<select id="newAccountCurrency">
+          <option value="CHF" selected>CHF</option>
+          <option value="EUR">EUR</option>
+          <option value="USD">USD</option>
+          <option value="GBP">GBP</option>
+        </select></label>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 90px;gap:10px">
+        <label>Anfangsbestand<input type="number" step="0.01" id="newAccountBalance" value="0" /></label>
+        <label>Icon<input type="text" id="newAccountIcon" value="🏦" maxlength="2" style="text-align:center;font-size:18px" /></label>
+      </div>
+      
+      <details style="padding:12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15);border-radius:10px">
+        <summary style="cursor:pointer;font-weight:700;font-size:13px;color:#a5b4fc">🏛 Bankdaten (optional, später ergänzbar)</summary>
+        <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
+          <label>Bank-Name<input type="text" id="newAccountBankName" placeholder="z.B. Raiffeisenbank Appenzell" /></label>
+          <label>Kontoinhaber<input type="text" id="newAccountHolder" placeholder="z.B. Laurin Rusterholz" /></label>
+          <label>IBAN
+            <input type="text" id="newAccountIban" placeholder="CH93 0076 2011 6238 5295 7" style="font-family:'SF Mono',Menlo,monospace;letter-spacing:.5px;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" />
+            <div id="newIbanValidation" class="mini" style="margin-top:4px"></div>
+          </label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label>BIC / SWIFT<input type="text" id="newAccountBic" placeholder="RAIFCH22" style="font-family:'SF Mono',Menlo,monospace;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" /></label>
+            <label>Konto-Nr. (alt)<input type="text" id="newAccountNumber" placeholder="optional" /></label>
+          </div>
+        </div>
+      </details>
     </div>
   `, `<button class="btn" data-action="close-modal">Abbrechen</button>
       <button class="btn primary" data-action="create-account-submit">💰 Erstellen</button>`);
+  
+  // IBAN-Live-Validierung
+  setTimeout(() => {
+    const ibanInput = document.getElementById("newAccountIban");
+    if (ibanInput) {
+      const validate = () => {
+        const v = ibanInput.value.trim();
+        const valEl = document.getElementById("newIbanValidation");
+        if (!valEl) return;
+        if (!v) { valEl.innerHTML = ''; return; }
+        const result = window.validateIban(v);
+        valEl.innerHTML = result.valid 
+          ? `<span style="color:#86efac">✓ Gültige IBAN${result.country ? ' (' + result.country + ')' : ''}</span>`
+          : `<span style="color:#f87171">⚠️ ${result.error}</span>`;
+      };
+      ibanInput.addEventListener("input", validate);
+    }
+  }, 50);
 }
 
 function openCreateSubscriptionModal() {
@@ -38857,13 +39171,13 @@ function openCreateTransactionModal() {
 function openCreateCreditCardModal() {
   const accounts = Object.values(APP.state.data.entities.accounts || {});
   const accountOptions = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
-  openModal("New Credit Card", `
+  openModal("Neue Kreditkarte", `
     <div class="form">
       <label>Name *<input type="text" id="newCCName" placeholder="z.B. Visa, Mastercard" /></label>
       <label>Kreditlimit<input type="number" step="0.01" id="newCCLimit" value="5000" /></label>
       <label>Abrechnungstag (1-28)<input type="number" min="1" max="28" id="newCCBillingDay" value="1" /></label>
       <label>Verknüpftes Bankkonto<select id="newCCAccount">
-        <option value="">-- Kein Konto (manuelle Abrechnung) --</option>
+        <option value="">— Kein Konto (manuelle Abrechnung) —</option>
         ${accountOptions}
       </select></label>
       <label>Icon<input type="text" id="newCCIcon" value="💳" maxlength="2" /></label>
@@ -46924,6 +47238,9 @@ case "quick-idea-save": {
       e.preventDefault();
       const name = $("#newAccountName")?.value?.trim();
       if (!name) { toast("warn", "Fehler", "Name erforderlich"); return; }
+      // IBAN normalisieren (mit Vierergruppen) wenn vorhanden
+      const ibanRaw = ($("#newAccountIban")?.value || "").replace(/\s/g, '').toUpperCase();
+      const ibanFormatted = ibanRaw ? ibanRaw.match(/.{1,4}/g).join(' ') : "";
       createEntity("account", {
         name,
         type: $("#newAccountType")?.value || "bank",
@@ -46931,8 +47248,14 @@ case "quick-idea-save": {
         currency: $("#newAccountCurrency")?.value || "CHF",
         icon: $("#newAccountIcon")?.value || "🏦",
         color: $("#newAccountColor")?.value || "#4a90d9",
+        bankName: ($("#newAccountBankName")?.value || "").trim(),
+        accountHolder: ($("#newAccountHolder")?.value || "").trim(),
+        iban: ibanFormatted,
+        bic: ($("#newAccountBic")?.value || "").replace(/\s/g, '').toUpperCase(),
+        accountNumber: ($("#newAccountNumber")?.value || "").trim(),
+        notes: "",
       });
-      toast("ok", "Created", "Account created");
+      toast("ok", "Erstellt", "Konto angelegt");
       closeModal();
       scheduleSave();
       render();
@@ -47026,20 +47349,94 @@ case "quick-idea-save": {
       const id = el.dataset.id;
       const account = getEntity("account", id);
       if (!account) return;
-      openModal("Edit Account", `
+      openModal("Konto bearbeiten", `
         <div class="form">
           <label>Name *<input type="text" id="editAccountName" value="${esc(account.name)}" /></label>
-          <label>Typ<select id="editAccountType">
-            <option value="bank" ${account.type === "bank" ? "selected" : ""}>Bankkonto</option>
-            <option value="cash" ${account.type === "cash" ? "selected" : ""}>Bargeld</option>
-            <option value="savings" ${account.type === "savings" ? "selected" : ""}>Sparkonto</option>
-          </select></label>
-          <label>Kontostand<input type="number" step="0.01" id="editAccountBalance" value="${account.balance || 0}" /></label>
-          <label>Icon<input type="text" id="editAccountIcon" value="${esc(account.icon || "🏦")}" /></label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <label>Typ<select id="editAccountType">
+              <option value="bank" ${account.type === "bank" ? "selected" : ""}>🏦 Bankkonto</option>
+              <option value="savings" ${account.type === "savings" ? "selected" : ""}>💰 Sparkonto</option>
+              <option value="cash" ${account.type === "cash" ? "selected" : ""}>💵 Bargeld</option>
+              <option value="credit" ${account.type === "credit" ? "selected" : ""}>💳 Kreditkarte</option>
+            </select></label>
+            <label>Währung<select id="editAccountCurrency">
+              <option value="CHF" ${account.currency === "CHF" ? "selected" : ""}>CHF</option>
+              <option value="EUR" ${account.currency === "EUR" ? "selected" : ""}>EUR</option>
+              <option value="USD" ${account.currency === "USD" ? "selected" : ""}>USD</option>
+              <option value="GBP" ${account.currency === "GBP" ? "selected" : ""}>GBP</option>
+            </select></label>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 100px 100px;gap:10px">
+            <label>Kontostand<input type="number" step="0.01" id="editAccountBalance" value="${account.balance || 0}" /></label>
+            <label>Icon<input type="text" id="editAccountIcon" value="${esc(account.icon || "🏦")}" maxlength="2" style="text-align:center;font-size:18px" /></label>
+            <label>Farbe<input type="color" id="editAccountColor" value="${esc(account.color || "#4a90d9")}" style="height:38px;cursor:pointer" /></label>
+          </div>
+          
+          <details ${(account.iban || account.bic || account.bankName || account.accountNumber || account.accountHolder) ? 'open' : ''} style="margin-top:8px;padding:12px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.15);border-radius:10px">
+            <summary style="cursor:pointer;font-weight:700;font-size:13px;color:#a5b4fc">🏛 Bankdaten (optional)</summary>
+            <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
+              <label>Bank-Name<input type="text" id="editAccountBankName" value="${esc(account.bankName || "")}" placeholder="z.B. Raiffeisenbank Appenzell" /></label>
+              <label>Kontoinhaber<input type="text" id="editAccountHolder" value="${esc(account.accountHolder || "")}" placeholder="z.B. ${esc(account.accountHolder || "Laurin Rusterholz")}" /></label>
+              <label>IBAN
+                <input type="text" id="editAccountIban" value="${esc(account.iban || "")}" placeholder="CH93 0076 2011 6238 5295 7" style="font-family:'SF Mono',Menlo,monospace;letter-spacing:.5px;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" />
+                <div id="ibanValidation" class="mini" style="margin-top:4px"></div>
+              </label>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <label>BIC / SWIFT<input type="text" id="editAccountBic" value="${esc(account.bic || "")}" placeholder="RAIFCH22" style="font-family:'SF Mono',Menlo,monospace;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" /></label>
+                <label>Konto-Nr. (alt)<input type="text" id="editAccountNumber" value="${esc(account.accountNumber || "")}" placeholder="optional" /></label>
+              </div>
+              <label>Notizen<textarea id="editAccountNotes" placeholder="z.B. Online-Banking-Zugangsdaten — siehe Passwort-Manager" style="min-height:60px;resize:vertical">${esc(account.notes || "")}</textarea></label>
+              ${account.iban ? `
+                <button class="btn sm" type="button" onclick="window.copyIbanToClipboard('${id}')" style="align-self:flex-start">📋 IBAN kopieren</button>
+              ` : ''}
+            </div>
+          </details>
+          
+          <details ${(account.cardNumber || account.cardExpiry || account.cardCvv) ? 'open' : ''} style="margin-top:8px;padding:12px;background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.15);border-radius:10px">
+            <summary style="cursor:pointer;font-weight:700;font-size:13px;color:#f87171">💳 Karten-Daten (Debit-/Bankkarte, optional)</summary>
+            <div style="margin-top:8px;padding:8px 10px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:6px;font-size:11px;line-height:1.5;color:#fbbf24">
+              ⚠️ <strong>Sicherheitshinweis:</strong> Speichere niemals die <strong>vollständige</strong> Kartennummer und CVV/Prüfziffer zusammen. Empfehlung: <strong>nur die letzten 4 Ziffern</strong> der Kartennummer zur Identifikation, CVV besser im Passwort-Manager oder gar nicht digital ablegen.
+            </div>
+            <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px">
+                <label>Kartennummer (empfohlen: letzte 4)<input type="text" id="editAccountCardNumber" value="${esc(account.cardNumber || "")}" placeholder="**** **** **** 5295" style="font-family:'SF Mono',Menlo,monospace;letter-spacing:.4px" autocomplete="off" /></label>
+                <label>Ablauf (MM/YY)<input type="text" id="editAccountCardExpiry" value="${esc(account.cardExpiry || "")}" placeholder="03/29" maxlength="5" style="font-family:'SF Mono',Menlo,monospace" autocomplete="off" /></label>
+              </div>
+              <label>Prüfziffer / CVV <span style="color:#fbbf24;font-size:10px">(heikel — überleg dir, ob du sie wirklich digital speichern willst)</span>
+                <input type="text" id="editAccountCardCvv" value="${esc(account.cardCvv || "")}" placeholder="leer lassen empfohlen" maxlength="4" style="font-family:'SF Mono',Menlo,monospace;letter-spacing:2px" autocomplete="off" />
+              </label>
+            </div>
+          </details>
         </div>
-      `, `<button class="btn danger" data-action="delete-account" data-id="${id}">Löschen</button>
+      `, `<button class="btn danger" data-action="delete-account" data-id="${id}">🗑 Löschen</button>
           <button class="btn" data-action="close-modal">Abbrechen</button>
-          <button class="btn primary" data-action="save-account" data-id="${id}">Speichern</button>`);
+          <button class="btn primary" data-action="save-account" data-id="${id}">💾 Speichern</button>`);
+      
+      // IBAN-Live-Validierung
+      const ibanInput = document.getElementById("editAccountIban");
+      if (ibanInput) {
+        const validate = () => {
+          const v = ibanInput.value.trim();
+          const valEl = document.getElementById("ibanValidation");
+          if (!valEl) return;
+          if (!v) { valEl.innerHTML = ''; return; }
+          const result = window.validateIban(v);
+          valEl.innerHTML = result.valid 
+            ? `<span style="color:#86efac">✓ Gültige IBAN${result.country ? ' (' + result.country + ')' : ''}</span>`
+            : `<span style="color:#f87171">⚠️ ${result.error}</span>`;
+        };
+        ibanInput.addEventListener("input", validate);
+        validate();  // initial check
+      }
+      
+      // Expiry-Live-Format + Validation
+      const expInput = document.getElementById("editAccountCardExpiry");
+      if (expInput) {
+        expInput.addEventListener("input", (ev) => {
+          const formatted = window.normalizeCardExpiry(ev.target.value);
+          if (formatted !== ev.target.value) ev.target.value = formatted;
+        });
+      }
       break;
     }
 
@@ -47049,10 +47446,25 @@ case "quick-idea-save": {
       if (!account) return;
       account.name = $("#editAccountName")?.value?.trim() || account.name;
       account.type = $("#editAccountType")?.value || account.type;
+      account.currency = $("#editAccountCurrency")?.value || account.currency;
       account.balance = parseFloat($("#editAccountBalance")?.value) ?? account.balance;
       account.icon = $("#editAccountIcon")?.value || account.icon;
+      account.color = $("#editAccountColor")?.value || account.color;
+      // Bankdaten
+      account.bankName = ($("#editAccountBankName")?.value || "").trim();
+      account.accountHolder = ($("#editAccountHolder")?.value || "").trim();
+      const ibanRaw = ($("#editAccountIban")?.value || "").replace(/\s/g, '').toUpperCase();
+      // Speichere mit Standard-Formatierung (Vierergruppen)
+      account.iban = ibanRaw ? ibanRaw.match(/.{1,4}/g).join(' ') : "";
+      account.bic = ($("#editAccountBic")?.value || "").replace(/\s/g, '').toUpperCase();
+      account.accountNumber = ($("#editAccountNumber")?.value || "").trim();
+      account.notes = ($("#editAccountNotes")?.value || "").trim();
+      // Karten-Daten
+      account.cardNumber = ($("#editAccountCardNumber")?.value || "").trim();
+      account.cardExpiry = window.normalizeCardExpiry($("#editAccountCardExpiry")?.value || "");
+      account.cardCvv = ($("#editAccountCardCvv")?.value || "").trim();
       account.updatedAt = nowIso();
-      toast("ok", t("saved"), "Account updated");
+      toast("ok", t("saved"), "Konto aktualisiert");
       closeModal();
       scheduleSave();
       render();
@@ -47261,7 +47673,7 @@ case "quick-idea-save": {
         icon: $("#newCCIcon")?.value || "💳",
         isActive: true,
       });
-      toast("ok", "Created", "Credit card created");
+      toast("ok", "Erstellt", "Kreditkarte angelegt");
       closeModal(); scheduleSave(); render();
       break;
     }
@@ -47271,13 +47683,13 @@ case "quick-idea-save": {
       if (!cc) return;
       const accounts = Object.values(APP.state.data.entities.accounts || {});
       const accountOptions = accounts.map(a => `<option value="${a.id}" ${cc.linkedAccountId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
-      openModal("Edit Credit Card", `
+      openModal("Kreditkarte bearbeiten", `
         <div class="form">
           <label>Name *<input type="text" id="editCCName" value="${esc(cc.name)}" /></label>
           <label>Kreditlimit<input type="number" step="0.01" id="editCCLimit" value="${cc.limit || 5000}" /></label>
           <label>Aktueller Saldo<input type="number" step="0.01" id="editCCBalance" value="${cc.usedBalance || 0}" /></label>
           <label>Abrechnungstag<input type="number" min="1" max="28" id="editCCBillingDay" value="${cc.billingDay || 1}" /></label>
-          <label>Verknüpftes Konto<select id="editCCAccount"><option value="">-- Kein Konto --</option>${accountOptions}</select></label>
+          <label>Verknüpftes Konto<select id="editCCAccount"><option value="">— Kein Konto —</option>${accountOptions}</select></label>
           <label>Icon<input type="text" id="editCCIcon" value="${esc(cc.icon || "💳")}" maxlength="2" /></label>
         </div>
       `, `<button class="btn danger" data-action="delete-creditcard" data-id="${id}">Löschen</button>
@@ -47296,7 +47708,7 @@ case "quick-idea-save": {
       cc.linkedAccountId = $("#editCCAccount")?.value || null;
       cc.icon = $("#editCCIcon")?.value || cc.icon;
       cc.updatedAt = nowIso();
-      toast("ok", "Saved", "Credit card updated");
+      toast("ok", "Gespeichert", "Kreditkarte aktualisiert");
       closeModal(); scheduleSave(); render();
       break;
     }
