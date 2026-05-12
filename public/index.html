@@ -6942,8 +6942,13 @@ function normalizeData(data) {
     th.abstract = th.abstract || "";
     th.deadline = th.deadline || null;
     th.targetWords = th.targetWords ?? 20000;
-    // Kapitel: Hierarchie [{id, title, content, words, order, parentId, status: "draft"|"writing"|"review"|"final"}]
+    // Kapitel: Hierarchie [{id, title, content, words, order, parentId, status, format: "text"|"html", inlineImages: [{id, url, path, addedAt}]}]
     th.chapters = Array.isArray(th.chapters) ? th.chapters : [];
+    // Migration: format-Feld + inlineImages für alte Kapitel
+    th.chapters.forEach(c => {
+      if (!c.format) c.format = 'text'; // alte Kapitel bleiben plain-text
+      if (!Array.isArray(c.inlineImages)) c.inlineImages = [];
+    });
     // Quick-Gedanken (sidebar): [{id, text, createdAt, tags, linkedChapterId}]
     th.thoughts = Array.isArray(th.thoughts) ? th.thoughts : [];
     // Quellen / Bibliographie: [{id, type, authors, year, title, source, pages, url, doi, isbn, notes, addedAt}]
@@ -18319,7 +18324,37 @@ window._thsId = function(prefix) {
 
 function thsCountWords(text) {
   if (!text) return 0;
-  return text.trim().split(/\s+/).filter(Boolean).length;
+  // Strip HTML tags wenn vorhanden
+  let cleaned = String(text);
+  if (cleaned.indexOf('<') !== -1) {
+    // Bilder, blockquotes etc. werden nicht als Worte gezählt
+    cleaned = cleaned.replace(/<[^>]*>/g, ' ');
+    // HTML-Entities decodieren
+    cleaned = cleaned.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+  }
+  return cleaned.trim().split(/\s+/).filter(Boolean).length;
+}
+
+// Extrahiert puren Text aus HTML oder gibt Plain-Text unverändert zurück
+// Bilder werden zu [Bild: alt-text] Platzhaltern für AI-Kontext
+function thsExtractText(content) {
+  if (!content) return '';
+  if (content.indexOf('<') === -1) return content;
+  // Bilder als Platzhalter
+  let s = content.replace(/<img[^>]*alt="([^"]*)"[^>]*>/g, '\n[Bild: $1]\n');
+  s = s.replace(/<img[^>]*>/g, '\n[Bild]\n');
+  // Listen-Items als •/Nummern
+  s = s.replace(/<li[^>]*>/g, '\n• ').replace(/<\/li>/g, '');
+  // Block-Elemente als Zeilenumbrüche
+  s = s.replace(/<\/(div|p|h[1-6]|blockquote|ul|ol)>/g, '\n');
+  s = s.replace(/<br[^>]*>/g, '\n');
+  // Alle übrigen Tags entfernen
+  s = s.replace(/<[^>]*>/g, '');
+  // HTML-Entities
+  s = s.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+  // Mehrere Newlines zu max. zwei
+  s = s.replace(/\n{3,}/g, '\n\n');
+  return s.trim();
 }
 
 function thsReadingMinutes(words) {
@@ -18538,9 +18573,9 @@ window.thsCreate = function() {
     deadline: document.getElementById('thsNewDeadline')?.value || null,
     targetWords: parseInt(document.getElementById('thsNewTargetWords')?.value) || 20000,
     chapters: [
-      { id: introId, title: 'Einleitung', content: '', words: 0, order: 0, parentId: null, status: 'draft' },
-      { id: mainId, title: 'Hauptteil', content: '', words: 0, order: 1, parentId: null, status: 'draft' },
-      { id: concId, title: 'Fazit', content: '', words: 0, order: 2, parentId: null, status: 'draft' },
+      { id: introId, title: 'Einleitung', content: '', words: 0, order: 0, parentId: null, status: 'draft', format: 'html', inlineImages: [] },
+      { id: mainId, title: 'Hauptteil', content: '', words: 0, order: 1, parentId: null, status: 'draft', format: 'html', inlineImages: [] },
+      { id: concId, title: 'Fazit', content: '', words: 0, order: 2, parentId: null, status: 'draft', format: 'html', inlineImages: [] },
     ],
     thoughts: [],
     sources: [],
@@ -18938,16 +18973,75 @@ function renderThesisWriteTab(th, state) {
           </div>
         </div>
         
-        <!-- Editor -->
-        <div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px 28px">
-          <textarea 
+        <!-- Editor (contenteditable, mit Bild-Support) -->
+        <div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px 28px;position:relative">
+          <!-- Mini-Formatleiste -->
+          <div style="display:flex;gap:4px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center">
+            <button onclick="window.thsFormat('bold')" class="ths-quick-btn" style="font-weight:700;min-width:32px" title="Fett (Cmd+B)">B</button>
+            <button onclick="window.thsFormat('italic')" class="ths-quick-btn" style="font-style:italic;min-width:32px" title="Kursiv (Cmd+I)"><em>I</em></button>
+            <button onclick="window.thsFormat('underline')" class="ths-quick-btn" style="text-decoration:underline;min-width:32px" title="Unterstrichen">U</button>
+            <div style="width:1px;background:var(--border);margin:0 4px;align-self:stretch"></div>
+            <button onclick="window.thsFormat('insertUnorderedList')" class="ths-quick-btn" title="Aufzählung">•</button>
+            <button onclick="window.thsFormat('insertOrderedList')" class="ths-quick-btn" title="Nummeriert">1.</button>
+            <button onclick="window.thsFormat('formatBlock','blockquote')" class="ths-quick-btn" title="Zitat-Block">❝</button>
+            <div style="width:1px;background:var(--border);margin:0 4px;align-self:stretch"></div>
+            <button onclick="window.thsInsertImage('${th.id}','${chapter.id}')" class="ths-quick-btn" title="Bild / Screenshot einfügen (oder Bild reinpasten)" style="background:linear-gradient(135deg,rgba(34,197,94,.1),rgba(99,102,241,.05));border-color:rgba(34,197,94,.25);color:#86efac;font-weight:700">🖼 Bild</button>
+            <button onclick="window.thsFormat('removeFormat')" class="ths-quick-btn" title="Formatierung entfernen">⌫</button>
+            <div style="flex:1"></div>
+            <span style="font-size:10.5px;color:var(--muted)">💡 Cmd+V für Screenshot-Paste</span>
+          </div>
+          
+          <div 
             id="thsEditor_${chapter.id}"
-            placeholder="Schreib hier dein Kapitel. Nimm dir Zeit. Atme. Lass die Worte fließen."
-            style="width:100%;min-height:540px;background:none;border:0;outline:none;resize:vertical;color:var(--text);font-family:${fontFamily};font-size:${fontSize}px;line-height:${lineHeight};box-sizing:border-box"
-            oninput="window.thsLiveWordCount(this,'${chapter.id}')"
-            onchange="window.thsSaveChapterContent('${th.id}','${chapter.id}',this.value)"
-            onblur="window.thsTrackSession('${th.id}','${chapter.id}',this.value)"
-          >${esc(chapter.content || '')}</textarea>
+            contenteditable="true"
+            data-placeholder="Schreib hier dein Kapitel. Nimm dir Zeit. Atme. Lass die Worte fließen."
+            style="width:100%;min-height:540px;background:none;border:0;outline:none;color:var(--text);font-family:${fontFamily};font-size:${fontSize}px;line-height:${lineHeight};box-sizing:border-box"
+            oninput="window.thsLiveWordCount(this,'${chapter.id}');window.thsScheduleAutoSave('${th.id}','${chapter.id}')"
+            onblur="window.thsSaveChapterContentHtml('${th.id}','${chapter.id}',this.innerHTML);window.thsTrackSession('${th.id}','${chapter.id}',this.innerText)"
+            onpaste="window.thsHandlePaste(event,'${th.id}','${chapter.id}')"
+            ondrop="window.thsHandleDrop(event,'${th.id}','${chapter.id}')"
+            ondragover="event.preventDefault();this.style.boxShadow='inset 0 0 0 2px #22c55e'"
+            ondragleave="this.style.boxShadow='none'"
+          >${chapter.format === 'html' ? (chapter.content || '') : ('<div>' + esc(chapter.content || '').replace(/\n/g, '</div><div>') + '</div>')}</div>
+          
+          <style>
+            #thsEditor_${chapter.id}:empty:before {
+              content: attr(data-placeholder);
+              color: var(--muted);
+              opacity: .5;
+            }
+            #thsEditor_${chapter.id} img {
+              max-width: 100%;
+              height: auto;
+              border-radius: 8px;
+              margin: 12px 0;
+              cursor: pointer;
+              box-shadow: 0 2px 8px rgba(0,0,0,.2);
+              transition: transform .15s, box-shadow .15s;
+            }
+            #thsEditor_${chapter.id} img:hover {
+              transform: scale(1.01);
+              box-shadow: 0 4px 16px rgba(0,0,0,.3);
+            }
+            #thsEditor_${chapter.id} img.ths-uploading {
+              opacity: .5;
+              filter: grayscale(.5);
+            }
+            #thsEditor_${chapter.id} blockquote {
+              border-left: 3px solid #a855f7;
+              padding-left: 14px;
+              margin: 12px 0;
+              color: var(--muted);
+              font-style: italic;
+            }
+            #thsEditor_${chapter.id} ul, #thsEditor_${chapter.id} ol {
+              padding-left: 28px;
+              margin: 8px 0;
+            }
+            #thsEditor_${chapter.id} li {
+              margin: 4px 0;
+            }
+          </style>
         </div>
         
         <!-- Toolbar -->
@@ -19487,6 +19581,25 @@ function renderThesisFocusMode(th, chapterId) {
         color: #e8e8ec;
         caret-color: #a855f7;
       }
+      .ths-focus-textarea:empty:before {
+        content: attr(data-placeholder);
+        color: var(--muted);
+        opacity: .4;
+      }
+      .ths-focus-textarea img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 8px;
+        margin: 16px 0;
+        box-shadow: 0 4px 14px rgba(0,0,0,.4);
+      }
+      .ths-focus-textarea blockquote {
+        border-left: 3px solid #a855f7;
+        padding-left: 16px;
+        margin: 14px 0;
+        font-style: italic;
+        color: #b4b4c0;
+      }
       .ths-focus-status {
         position: fixed;
         bottom: 0; left: 0; right: 0;
@@ -19528,15 +19641,17 @@ function renderThesisFocusMode(th, chapterId) {
       <div class="ths-focus-editor-wrap">
         <div class="ths-focus-editor">
           <h1>${esc(chapter.title)}</h1>
-          <textarea 
+          <div 
             id="thsFocusEditor"
             class="ths-focus-textarea"
-            placeholder="Atme. Schreib."
-            oninput="window.thsLiveWordCount(this,'${chapter.id}')"
-            onchange="window.thsSaveChapterContent('${th.id}','${chapter.id}',this.value)"
-            onblur="window.thsTrackSession('${th.id}','${chapter.id}',this.value)"
-            autofocus
-          >${esc(chapter.content || '')}</textarea>
+            contenteditable="true"
+            data-placeholder="Atme. Schreib."
+            oninput="window.thsLiveWordCount(this,'${chapter.id}');window.thsScheduleAutoSave('${th.id}','${chapter.id}')"
+            onblur="window.thsSaveChapterContentHtml('${th.id}','${chapter.id}',this.innerHTML);window.thsTrackSession('${th.id}','${chapter.id}',this.innerText)"
+            onpaste="window.thsHandlePaste(event,'${th.id}','${chapter.id}')"
+            ondrop="window.thsHandleDrop(event,'${th.id}','${chapter.id}')"
+            ondragover="event.preventDefault()"
+          >${chapter.format === 'html' ? (chapter.content || '') : ('<div>' + esc(chapter.content || '').replace(/\n/g, '</div><div>') + '</div>')}</div>
         </div>
       </div>
       
@@ -21430,7 +21545,7 @@ ${th.thesisStatement ? `Kern-These der Arbeit: "${th.thesisStatement}"` : ''}
 ${sourcesCtx ? `\nVorhandene Quellen:\n${sourcesCtx}` : ''}
 
 Kapitel "${c.title}":
-${c.content.slice(0, 4500)}
+${thsExtractText(c.content).slice(0, 4500)}
 
 Analysiere kritisch und antworte strukturiert:
 
@@ -21532,8 +21647,36 @@ window.thsSaveChapterContent = function(thId, chId, content) {
   scheduleSave();
 };
 
-window.thsLiveWordCount = function(textarea, chId) {
-  const words = thsCountWords(textarea.value);
+// HTML-aware Speichern (für contenteditable Editor)
+window.thsSaveChapterContentHtml = function(thId, chId, html) {
+  const th = APP.state.data.entities.theses?.[thId];
+  if (!th) return;
+  const c = th.chapters?.find(x => x.id === chId);
+  if (!c) return;
+  c.content = html;
+  c.format = 'html';
+  // Word-count vom puren Text
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  c.words = thsCountWords(tmp.innerText || tmp.textContent || '');
+  c.lastEdited = nowIso();
+  th.updatedAt = nowIso();
+  scheduleSave();
+};
+
+// Debounced auto-save während des Tippens (1.5s)
+window.thsScheduleAutoSave = function(thId, chId) {
+  if (window._thsAutoSaveTimer) clearTimeout(window._thsAutoSaveTimer);
+  window._thsAutoSaveTimer = setTimeout(() => {
+    const el = document.getElementById('thsEditor_' + chId);
+    if (el) window.thsSaveChapterContentHtml(thId, chId, el.innerHTML);
+  }, 1500);
+};
+
+window.thsLiveWordCount = function(el, chId) {
+  // el kann textarea (value) oder contenteditable (innerText) sein
+  const text = el.value !== undefined ? el.value : (el.innerText || el.textContent || '');
+  const words = thsCountWords(text);
   // Sidebar counter
   const sidebarEl = document.querySelector(`[data-chapter-id="${chId}"] .ths-chapter-words`);
   if (sidebarEl) sidebarEl.textContent = words;
@@ -21541,6 +21684,170 @@ window.thsLiveWordCount = function(textarea, chId) {
   const focusCount = document.getElementById('thsFocusWordCount');
   if (focusCount) focusCount.textContent = words;
 };
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🖼 INLINE-BILDER im Kapitel-Editor (Firebase Storage)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Rich-Text-Formatierung (Bold/Italic/Listen/Zitat)
+window.thsFormat = function(command, value) {
+  document.execCommand(command, false, value || null);
+  // re-focus auf den aktiven editor
+  const focused = document.activeElement;
+  if (focused?.id?.startsWith('thsEditor_')) focused.focus();
+};
+
+// Bild via File-Picker einfügen
+window.thsInsertImage = function(thId, chId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = (ev) => {
+    const file = ev.target.files?.[0];
+    if (file) window._thsUploadImageToEditor(thId, chId, file);
+  };
+  input.click();
+};
+
+// Paste-Handler: ⌘V mit Bild → Auto-Upload
+window.thsHandlePaste = function(event, thId, chId) {
+  const items = event.clipboardData?.items || [];
+  for (const item of items) {
+    if (item.type.indexOf('image') === 0) {
+      event.preventDefault();
+      const file = item.getAsFile();
+      if (file) window._thsUploadImageToEditor(thId, chId, file);
+      return;
+    }
+  }
+  // Wenn Text gepastet wird: Plain-Text statt formatiertem HTML einfügen
+  // (verhindert Stil-Müll aus Word/Browser)
+  const text = event.clipboardData?.getData('text/plain');
+  if (text) {
+    event.preventDefault();
+    document.execCommand('insertText', false, text);
+  }
+};
+
+// Drop-Handler: Bild auf Editor ziehen → Upload
+window.thsHandleDrop = function(event, thId, chId) {
+  event.preventDefault();
+  const el = event.currentTarget;
+  if (el) el.style.boxShadow = 'none';
+  const file = event.dataTransfer?.files?.[0];
+  if (file && file.type.startsWith('image/')) {
+    window._thsUploadImageToEditor(thId, chId, file);
+  }
+};
+
+// Eigentlicher Upload zu Firebase Storage + Inline-Einfügung
+window._thsUploadImageToEditor = async function(thId, chId, file) {
+  const th = APP.state.data.entities.theses?.[thId];
+  const c = th?.chapters?.find(x => x.id === chId);
+  if (!c) return;
+  
+  // Firebase-Check
+  if (typeof firebaseStorage === 'undefined' || !firebaseStorage) {
+    toast('error', '⚠️ Firebase nicht verbunden', 'Bilder können nicht hochgeladen werden.');
+    return;
+  }
+  
+  // Max 10 MB
+  if (file.size > 10 * 1024 * 1024) {
+    toast('error', 'Datei zu groß', 'Max. 10 MB pro Bild.');
+    return;
+  }
+  
+  // Placeholder mit data-URL und Lade-Indikator ins Editor einfügen
+  const reader = new FileReader();
+  const tempId = 'thsImg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  
+  reader.onload = async (e) => {
+    const dataUrl = e.target.result;
+    const editorEl = document.getElementById('thsEditor_' + chId);
+    if (!editorEl) return;
+    
+    // Bild als Placeholder einfügen (data-URL temporär)
+    editorEl.focus();
+    const imgHtml = `<img id="${tempId}" src="${dataUrl}" alt="Wird hochgeladen..." class="ths-uploading" data-uploading="1" />`;
+    document.execCommand('insertHTML', false, imgHtml + '<br>');
+    
+    // Toast mit Progress
+    toast('info', '🖼 Lade Bild hoch...', file.name);
+    
+    try {
+      const safeName = file.name.replace(/[^\w.-]/g, '_').slice(0, 60);
+      const path = `thesis-images/${thId}/${chId}/${Date.now()}_${safeName}`;
+      const url = await uploadToFirebase(file, path);
+      
+      // Bild im DOM aktualisieren: data-URL → Firebase-URL
+      const imgEl = document.getElementById(tempId);
+      if (imgEl) {
+        imgEl.src = url;
+        imgEl.alt = file.name;
+        imgEl.classList.remove('ths-uploading');
+        imgEl.removeAttribute('data-uploading');
+        imgEl.dataset.imgId = tempId;
+        imgEl.dataset.storagePath = path;
+      }
+      
+      // Im Schema tracken (für späteren Cleanup beim Löschen)
+      if (!c.inlineImages) c.inlineImages = [];
+      c.inlineImages.push({
+        id: tempId,
+        url: url,
+        path: path,
+        name: file.name,
+        size: file.size,
+        addedAt: nowIso(),
+      });
+      
+      // Inhalt sofort speichern (damit Bild persistiert auch ohne blur)
+      window.thsSaveChapterContentHtml(thId, chId, editorEl.innerHTML);
+      toast('ok', '✓ Bild eingefügt', file.name);
+    } catch (err) {
+      console.error('Image upload failed', err);
+      const imgEl = document.getElementById(tempId);
+      if (imgEl) imgEl.remove();
+      toast('error', 'Upload fehlgeschlagen', err?.message || 'unbekannter Fehler');
+    }
+  };
+  reader.readAsDataURL(file);
+};
+
+// Bild im Lightbox öffnen (Klick auf Bild im Editor öffnet groß)
+window._thsBindEditorImageClicks = function() {
+  document.querySelectorAll('[id^="thsEditor_"] img').forEach(img => {
+    if (img.dataset.thsLightboxBound) return;
+    img.dataset.thsLightboxBound = '1';
+    img.addEventListener('click', (e) => {
+      // Wenn Editor im Focus ist und User klickt → kein Lightbox (sondern Cursor)
+      // Lightbox nur bei Doppelklick oder wenn Editor nicht-aktiv
+      if (e.detail < 2) return;
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:999999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:30px';
+      overlay.onclick = () => overlay.remove();
+      overlay.innerHTML = `<img src="${img.src}" style="max-width:95%;max-height:95%;object-fit:contain;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)" />`;
+      document.body.appendChild(overlay);
+    });
+  });
+};
+
+// Wird nach jedem render() aufgerufen über MutationObserver wäre overkill — wir hookens an thsLiveWordCount
+// (alternativ: setInterval, aber dann viele Calls). Pragmatisch: bei jedem render() in setTimeout.
+(function() {
+  const origRender = window.render;
+  if (origRender && !window._thsRenderHookInstalled) {
+    window.render = function(...args) {
+      const result = origRender.apply(this, args);
+      setTimeout(() => window._thsBindEditorImageClicks(), 50);
+      return result;
+    };
+    window._thsRenderHookInstalled = true;
+  }
+})();
+
 
 window.thsTrackSession = function(thId, chId, content) {
   const th = APP.state.data.entities.theses?.[thId];
@@ -21615,6 +21922,8 @@ window.thsAddChapter = function(thId) {
     order: (th.chapters || []).length,
     parentId: null,
     status: 'draft',
+    format: 'html',
+    inlineImages: [],
   };
   th.chapters.push(newCh);
   th.updatedAt = nowIso();
@@ -21637,6 +21946,16 @@ window.thsDeleteChapter = function(thId, chId) {
   th.chapters = th.chapters.filter(x => x.id !== chId);
   // Versionen mitlöschen
   th.versions = (th.versions || []).filter(v => v.chapterId !== chId);
+  // Inline-Bilder aus Firebase Storage löschen
+  if (Array.isArray(c.inlineImages) && c.inlineImages.length > 0) {
+    (async () => {
+      for (const img of c.inlineImages) {
+        if (img.path) {
+          try { await deleteFromFirebase(img.path); } catch(e) {}
+        }
+      }
+    })();
+  }
   // Verlinkte Gedanken entkoppeln (nicht löschen, nur Verknüpfung entfernen)
   (th.thoughts || []).forEach(t => {
     if (t.linkedChapterId === chId) t.linkedChapterId = null;
@@ -22035,13 +22354,13 @@ window.thsAiHelper = async function(thId, chId, action) {
   const prompts = {
     'brainstorm': `Brainstorme zu folgendem Kapitel einer ${th.degree}-Arbeit "${th.title}".
 Kapitel: "${c.title}"
-${c.content ? `Bisheriger Inhalt:\n${c.content.slice(0, 2000)}\n\n` : ''}
+${c.content ? `Bisheriger Inhalt:\n${thsExtractText(c.content).slice(0, 2000)}\n\n` : ''}
 Gib 5-7 konkrete Ideen, Argumentationsstränge oder Aspekte, die in diesem Kapitel behandelt werden sollten. Format: Bullet-Liste, prägnant.`,
     
     'outline': `Schlage eine sinnvolle Gliederung für folgendes Kapitel vor:
 Arbeit: "${th.title}" (${th.degree})
 Kapitel: "${c.title}"
-${c.content ? `Vorhandener Text:\n${c.content.slice(0, 2000)}\n\n` : ''}
+${c.content ? `Vorhandener Text:\n${thsExtractText(c.content).slice(0, 2000)}\n\n` : ''}
 Gib eine hierarchische Gliederung mit 3-5 Hauptpunkten und je 2-3 Unterpunkten. Akademisch fundiert.`,
     
     'style-check': `Prüfe den akademischen Stil des folgenden Textes. Hauptkriterien: 
@@ -22051,12 +22370,12 @@ Gib eine hierarchische Gliederung mit 3-5 Hauptpunkten und je 2-3 Unterpunkten. 
 - Argumentationsstärke
 
 Text:
-${c.content.slice(0, 3000)}
+${thsExtractText(c.content).slice(0, 3000)}
 
 Gib konkrete Verbesserungsvorschläge mit Beispielen (Vorher / Nachher). Max. 5 Hauptpunkte.`,
     
     'argumentation': `Analysiere die Argumentation im folgenden Text:
-${c.content.slice(0, 3000)}
+${thsExtractText(c.content).slice(0, 3000)}
 
 Antworte auf:
 1. Welche Thesen werden aufgestellt?
@@ -22069,13 +22388,13 @@ Antworte auf:
 Gib drei Varianten: (1) sachlicher, (2) prägnanter, (3) eleganter.
 
 Text:
-${c.content.slice(0, 2000)}`,
+${thsExtractText(c.content).slice(0, 2000)}`,
     
     'summarize': `Fasse folgendes Kapitel in 5-7 Sätzen zusammen. Erfasse die Hauptaussagen, nicht die Details. Format: durchgehender Fließtext, akademischer Stil.
 
 Kapitel: "${c.title}"
 Text:
-${c.content.slice(0, 4000)}`,
+${thsExtractText(c.content).slice(0, 4000)}`,
   };
   
   const prompt = prompts[action] || prompts.brainstorm;
@@ -22141,7 +22460,28 @@ window.thsExport = function(thId, format) {
     content += `\n**Autor:** ${th.author || '—'}\n**Betreuung:** ${th.advisor || '—'}\n**Institution:** ${th.institution || '—'}\n**Typ:** ${th.degree}\n**Datum:** ${new Date().toLocaleDateString('de-CH')}\n\n---\n\n`;
     if (th.abstract) content += `## Abstract\n\n${th.abstract}\n\n---\n\n`;
     chapters.forEach((c, i) => {
-      content += `\n## ${i+1}. ${c.title}\n\n${c.content || ''}\n\n`;
+      // Bei HTML-Content: zu Markdown-style konvertieren mit eingebetteten Bildern
+      let chapterMd = '';
+      if (c.format === 'html' && c.content?.indexOf('<') !== -1) {
+        // Bilder als Markdown-Bild-Syntax behalten
+        chapterMd = c.content
+          .replace(/<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*>/g, '\n\n![$2]($1)\n\n')
+          .replace(/<img[^>]*src="([^"]*)"[^>]*>/g, '\n\n![]($1)\n\n')
+          .replace(/<\/(div|p|h[1-6]|blockquote|ul|ol)>/g, '\n')
+          .replace(/<br[^>]*>/g, '\n')
+          .replace(/<strong[^>]*>(.*?)<\/strong>/g, '**$1**')
+          .replace(/<b[^>]*>(.*?)<\/b>/g, '**$1**')
+          .replace(/<em[^>]*>(.*?)<\/em>/g, '*$1*')
+          .replace(/<i[^>]*>(.*?)<\/i>/g, '*$1*')
+          .replace(/<li[^>]*>/g, '\n- ').replace(/<\/li>/g, '')
+          .replace(/<blockquote[^>]*>/g, '\n> ')
+          .replace(/<[^>]*>/g, '')
+          .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+          .replace(/\n{3,}/g, '\n\n').trim();
+      } else {
+        chapterMd = c.content || '';
+      }
+      content += `\n## ${i+1}. ${c.title}\n\n${chapterMd}\n\n`;
     });
     if (th.sources?.length) {
       content += `\n---\n\n## Bibliographie\n\n`;
@@ -22152,14 +22492,19 @@ window.thsExport = function(thId, format) {
     ext = 'md';
     mime = 'text/markdown';
   } else if (format === 'html') {
-    content = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(th.title)}</title><style>body{font-family:Georgia,serif;max-width:760px;margin:40px auto;padding:0 20px;line-height:1.7;color:#222}h1{font-size:32px;margin-bottom:6px}h2{margin-top:40px;border-bottom:1px solid #ddd;padding-bottom:6px}.meta{color:#666;font-size:14px}.abstract{font-style:italic;background:#f5f5f5;padding:14px 18px;border-left:3px solid #6366f1;margin:20px 0}</style></head><body>`;
+    content = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(th.title)}</title><style>body{font-family:Georgia,serif;max-width:760px;margin:40px auto;padding:0 20px;line-height:1.7;color:#222}h1{font-size:32px;margin-bottom:6px}h2{margin-top:40px;border-bottom:1px solid #ddd;padding-bottom:6px}.meta{color:#666;font-size:14px}.abstract{font-style:italic;background:#f5f5f5;padding:14px 18px;border-left:3px solid #6366f1;margin:20px 0}img{max-width:100%;height:auto;border-radius:6px;margin:14px 0;box-shadow:0 2px 8px rgba(0,0,0,.1)}blockquote{border-left:3px solid #6366f1;padding-left:14px;margin:14px 0;color:#555;font-style:italic}ul,ol{padding-left:28px}</style></head><body>`;
     content += `<h1>${esc(th.title)}</h1>`;
     if (th.subtitle) content += `<p style="font-size:18px;color:#555;font-style:italic">${esc(th.subtitle)}</p>`;
     content += `<p class="meta">${esc(th.author || '')} · ${esc(th.degree)} · ${esc(th.institution || '')}</p>`;
     if (th.abstract) content += `<div class="abstract"><strong>Abstract:</strong><br>${esc(th.abstract).replace(/\n/g,'<br>')}</div>`;
     chapters.forEach((c, i) => {
       content += `<h2>${i+1}. ${esc(c.title)}</h2>`;
-      content += `<div>${esc(c.content || '').replace(/\n/g,'<br>')}</div>`;
+      // Bei HTML-Content: direkt einbetten (Bilder werden mit-exportiert via Firebase URL)
+      if (c.format === 'html' && c.content?.indexOf('<') !== -1) {
+        content += `<div>${c.content || ''}</div>`;
+      } else {
+        content += `<div>${esc(c.content || '').replace(/\n/g,'<br>')}</div>`;
+      }
     });
     if (th.sources?.length) {
       content += `<h2>Bibliographie</h2><ul>`;
@@ -22189,7 +22534,20 @@ window.thsDeleteThesis = function(thId) {
   const th = APP.state.data.entities.theses?.[thId];
   if (!th) return;
   const totalWords = (th.chapters || []).reduce((s, c) => s + thsCountWords(c.content || ''), 0);
-  if (!confirm(`Arbeit "${th.title}" wirklich löschen?\n\n${(th.chapters||[]).length} Kapitel, ${totalWords} Wörter, ${(th.sources||[]).length} Quellen werden gelöscht.\n\nDies kann nicht rückgängig gemacht werden.`)) return;
+  const totalImages = (th.chapters || []).reduce((s, c) => s + ((c.inlineImages || []).length), 0);
+  if (!confirm(`Arbeit "${th.title}" wirklich löschen?\n\n${(th.chapters||[]).length} Kapitel, ${totalWords} Wörter, ${(th.sources||[]).length} Quellen${totalImages > 0 ? ', ' + totalImages + ' Bilder' : ''} werden gelöscht.\n\nDies kann nicht rückgängig gemacht werden.`)) return;
+  // Inline-Bilder aller Kapitel aus Firebase löschen (async, im Hintergrund)
+  if (totalImages > 0) {
+    (async () => {
+      for (const c of (th.chapters || [])) {
+        for (const img of (c.inlineImages || [])) {
+          if (img.path) {
+            try { await deleteFromFirebase(img.path); } catch(e) {}
+          }
+        }
+      }
+    })();
+  }
   delete APP.state.data.entities.theses[thId];
   thsSetState({ currentChapterId: null, currentTab: 'write', focusMode: false });
   scheduleSave();
@@ -32002,7 +32360,7 @@ window.lpSummarizeDoc = async function(projectId, docId) {
   const doc = (p?.documents || []).find(d => d.id === docId);
   if (!doc || !doc.content) return;
   toast("info", "KI", "Zusammenfassung wird erstellt...");
-  const prompt = `Fasse den folgenden Lerntext für einen Deutschschweizer Studierenden zusammen. Erstelle eine strukturierte Zusammenfassung mit den wichtigsten Konzepten, Definitionen und Kernaussagen. Antworte auf Deutsch.\n\nText:\n${doc.content.slice(0, 8000)}`;
+  const prompt = `Fasse den folgenden Lerntext für einen Deutschschweizer Studierenden zusammen. Erstelle eine strukturierte Zusammenfassung mit den wichtigsten Konzepten, Definitionen und Kernaussagen. Antworte auf Deutsch.\n\nText:\n${dothsExtractText(c.content).slice(0, 8000)}`;
   const result = await sendChatMessage(prompt);
   if (result) {
     doc.summary = result;
@@ -32031,7 +32389,7 @@ window.lpAskDocSubmit = async function(projectId, docId) {
   if (!doc || !question) return;
   const el = document.getElementById('lpDocAnswer');
   if (el) el.innerHTML = '<span style="color:var(--muted)">Denke nach...</span>';
-  const prompt = `Beantworte die folgende Frage basierend auf dem Lerntext. Erkläre verständlich auf Deutsch für einen Deutschschweizer Studierenden.\n\nText:\n${doc.content.slice(0, 6000)}\n\nFrage: ${question}`;
+  const prompt = `Beantworte die folgende Frage basierend auf dem Lerntext. Erkläre verständlich auf Deutsch für einen Deutschschweizer Studierenden.\n\nText:\n${dothsExtractText(c.content).slice(0, 6000)}\n\nFrage: ${question}`;
   const result = await sendChatMessage(prompt);
   if (el) el.innerHTML = result ? '<div style="padding:10px;background:var(--panel2);border-radius:8px;font-size:13px;line-height:1.6">' + esc(result).replace(/\n/g, '<br>') + '</div>' : '<span style="color:var(--danger)">Fehler</span>';
 };
@@ -75959,7 +76317,7 @@ function buildDataSnapshot(ctx){
 
   if(nhCol.length){
     s += `═══ RESEARCH HUB — SAMMLUNG (${nhCol.length}) ═══\n`;
-    nhCol.slice(0,15).forEach(c => { s += `  📦 [${c.type||"?"}] ${c.title}${c.topicId?" | Topic: "+c.topicId.slice(0,8):""}${c.content?" | "+c.content.slice(0,80):""}\n`; });
+    nhCol.slice(0,15).forEach(c => { s += `  📦 [${c.type||"?"}] ${c.title}${c.topicId?" | Topic: "+c.topicId.slice(0,8):""}${c.content?" | "+thsExtractText(c.content).slice(0, 80):""}\n`; });
     s += "\n";
   }
 
