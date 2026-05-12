@@ -5562,6 +5562,7 @@ function renderFileAttachments(kind, entityId) {
       </div>
       <div class="file-actions">
         ${folders.length > 0 ? `<select title="In Ordner verschieben" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:10px;padding:2px 4px;border-radius:6px;cursor:pointer;max-width:80px" onchange="window._moveFileToFolder('${kind}','${entityId}',${idx},this.value)"><option value="">📂 …</option>${folders.map(fo => `<option value="${fo.id}" ${f.folderId === fo.id ? 'selected' : ''}>${esc(fo.name)}</option>`).join('')}</select>` : ''}
+        <button onclick="window._renameFile('${kind}','${entityId}',${idx})" title="Umbenennen">✏️</button>
         <button data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="Preview">👁</button>
         <button data-action="download-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="Download">⬇️</button>
         <button data-action="delete-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="Delete" style="color:var(--danger)">🗑</button>
@@ -5810,6 +5811,27 @@ window._renameFileFolder = function(kind, entityId, folderId) {
   scheduleSave();
   render();
   toast('ok', '📁', 'Ordner umbenannt');
+};
+
+window._renameFile = function(kind, entityId, idx) {
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  if (!entity || !entity.files) return;
+  const file = entity.files[idx];
+  if (!file) return;
+  // Trenne Name vom Extension damit User die Endung nicht versehentlich ändert
+  const dotPos = file.name.lastIndexOf('.');
+  const baseName = dotPos > 0 ? file.name.slice(0, dotPos) : file.name;
+  const ext = dotPos > 0 ? file.name.slice(dotPos) : '';
+  const newBase = prompt('Neuer Dateiname (ohne Endung):', baseName);
+  if (newBase === null) return; // Abbruch
+  const trimmed = newBase.trim();
+  if (!trimmed) { toast('warn', 'Name darf nicht leer sein'); return; }
+  file.name = trimmed + ext;
+  entity.updatedAt = new Date().toISOString();
+  scheduleSave();
+  render();
+  toast('ok', '✏️', 'Datei umbenannt');
 };
 
 window._deleteFileFolder = function(kind, entityId, folderId) {
