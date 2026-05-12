@@ -6898,6 +6898,7 @@ function normalizeData(data) {
     // Versionen (Snapshots)
     c.versions = Array.isArray(c.versions) ? c.versions : [];           // [{id, ts, label, snapshot}]
     c.measures = Array.isArray(c.measures) ? c.measures : [];           // 🚨 Massnahmen
+    c.notebookId = c.notebookId || null;                                  // 📓 Verknüpftes Notizbuch
     
     // Conversion-Tracking
     c.convertedToProjectId = c.convertedToProjectId || null;
@@ -18404,16 +18405,25 @@ window.openConceptTemplatePicker = function() {
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(9,9,11,.85);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(8px);padding:20px';
     document.body.appendChild(overlay);
   }
+  // Reset Auswahl
+  window._selectedConceptTemplate = null;
+  renderConceptTemplatePickerStep1();
+  overlay.onclick = (e) => { if (e.target === overlay) closeConceptTplPicker(); };
+};
+
+function renderConceptTemplatePickerStep1() {
+  const overlay = document.getElementById('conceptTplPickerOverlay');
+  if (!overlay) return;
   overlay.innerHTML = `
     <div style="background:#0f0f17;border:1px solid rgba(168,85,247,.3);border-radius:16px;max-width:680px;width:100%;max-height:90vh;overflow-y:auto;padding:28px" onclick="event.stopPropagation()">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:22px">
         <span style="font-size:28px">🧩</span>
-        <div style="flex:1"><div style="font-size:18px;font-weight:800">Neues Konzept</div><div style="font-size:12.5px;color:var(--muted)">Wähle ein Template</div></div>
+        <div style="flex:1"><div style="font-size:18px;font-weight:800">Neues Konzept</div><div style="font-size:12.5px;color:var(--muted)">Schritt 1 von 2 · Wähle ein Template</div></div>
         <button onclick="closeConceptTplPicker()" style="background:none;border:0;color:var(--muted);font-size:24px;cursor:pointer">×</button>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
         ${Object.entries(CONCEPT_TEMPLATES).map(([key, tpl]) => `
-          <button onclick="createConceptFromTemplate('${key}')" style="padding:18px 16px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;cursor:pointer;text-align:left;color:var(--text)" onmouseover="this.style.background='rgba(168,85,247,.08)';this.style.borderColor='rgba(168,85,247,.3)'" onmouseout="this.style.background='rgba(255,255,255,.03)';this.style.borderColor='rgba(255,255,255,.08)'">
+          <button onclick="selectConceptTemplate('${key}')" style="padding:18px 16px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;cursor:pointer;text-align:left;color:var(--text)" onmouseover="this.style.background='rgba(168,85,247,.08)';this.style.borderColor='rgba(168,85,247,.3)'" onmouseout="this.style.background='rgba(255,255,255,.03)';this.style.borderColor='rgba(255,255,255,.08)'">
             <div style="font-size:32px;margin-bottom:8px">${tpl.icon}</div>
             <div style="font-weight:700;font-size:14px;margin-bottom:4px">${tpl.label}</div>
             <div style="font-size:11.5px;color:var(--muted);line-height:1.4">${tpl.description}</div>
@@ -18421,11 +18431,56 @@ window.openConceptTemplatePicker = function() {
         `).join('')}
       </div>
     </div>`;
-  overlay.onclick = (e) => { if (e.target === overlay) closeConceptTplPicker(); };
-};
-window.closeConceptTplPicker = function() { document.getElementById('conceptTplPickerOverlay')?.remove(); };
+}
 
-window.createConceptFromTemplate = function(templateKey) {
+window.selectConceptTemplate = function(templateKey) {
+  window._selectedConceptTemplate = templateKey;
+  const tpl = CONCEPT_TEMPLATES[templateKey];
+  const overlay = document.getElementById('conceptTplPickerOverlay');
+  if (!overlay) return;
+  overlay.innerHTML = `
+    <div style="background:#0f0f17;border:1px solid rgba(168,85,247,.3);border-radius:16px;max-width:520px;width:100%;padding:28px" onclick="event.stopPropagation()">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+        <button onclick="renderConceptTemplatePickerStep1()" style="background:none;border:0;color:var(--muted);font-size:18px;cursor:pointer" title="Zurück">←</button>
+        <span style="font-size:28px">${tpl.icon}</span>
+        <div style="flex:1"><div style="font-size:18px;font-weight:800">${esc(tpl.label)}</div><div style="font-size:12.5px;color:var(--muted)">Schritt 2 von 2 · Titel eingeben</div></div>
+        <button onclick="closeConceptTplPicker()" style="background:none;border:0;color:var(--muted);font-size:24px;cursor:pointer">×</button>
+      </div>
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Titel deines Konzepts</label>
+      <input type="text" id="conceptCreateTitle" placeholder="z.B. ${esc(tpl.label)} für SP AR Mitgliederausbau" 
+        style="width:100%;padding:12px 14px;background:rgba(255,255,255,.04);border:1px solid rgba(168,85,247,.3);border-radius:10px;color:var(--text);font-size:15px;font-weight:600;box-sizing:border-box"
+        onkeydown="if(event.key==='Enter')window.createConceptFromTemplateWithTitle()" />
+      <div style="font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.5">${esc(tpl.description)}</div>
+      
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:22px">
+        <button class="btn" onclick="renderConceptTemplatePickerStep1()">← Andere Vorlage</button>
+        <button class="btn primary" onclick="createConceptFromTemplateWithTitle()" style="background:linear-gradient(135deg,#a855f7,#ec4899);border:0;font-weight:700;padding:10px 18px">${tpl.icon} Konzept erstellen</button>
+      </div>
+    </div>`;
+  // Focus aufs Titel-Feld
+  setTimeout(() => document.getElementById('conceptCreateTitle')?.focus(), 50);
+};
+
+window.createConceptFromTemplateWithTitle = function() {
+  const templateKey = window._selectedConceptTemplate;
+  if (!templateKey) return;
+  const titleInput = document.getElementById('conceptCreateTitle');
+  const title = (titleInput?.value || "").trim();
+  if (!title) {
+    titleInput?.focus();
+    titleInput?.style.setProperty('border-color', '#f87171');
+    toast('warn', 'Titel erforderlich');
+    return;
+  }
+  window.createConceptFromTemplate(templateKey, title);
+};
+
+window.closeConceptTplPicker = function() { 
+  document.getElementById('conceptTplPickerOverlay')?.remove();
+  window._selectedConceptTemplate = null;
+};
+
+window.createConceptFromTemplate = function(templateKey, customTitle) {
   const tpl = CONCEPT_TEMPLATES[templateKey];
   const id = "cpt_" + Math.random().toString(36).slice(2, 10);
   if (!APP.state.data.entities.concepts) APP.state.data.entities.concepts = {};
@@ -18434,8 +18489,9 @@ window.createConceptFromTemplate = function(templateKey) {
     ...s,
     id: "s_" + Math.random().toString(36).slice(2, 8),
   }));
+  const title = (customTitle || "").trim() || ("Neues " + (tpl?.label || "Konzept"));
   APP.state.data.entities.concepts[id] = {
-    id, title: "Neues " + (tpl?.label || "Konzept"), icon: tpl?.icon || "💡", color: "#a855f7",
+    id, title, icon: tpl?.icon || "💡", color: "#a855f7",
     template: templateKey, status: "draft", tags: [],
     summary: "", vision: "", problem: "", solution: "", targetGroup: "", valueProposition: "", context: "",
     objectives: [], successCriteria: [], assumptions: [], risks: [], stakeholders: [],
@@ -18445,10 +18501,11 @@ window.createConceptFromTemplate = function(templateKey) {
     budget: { total: 0, currency: "CHF", items: [] },
     linkedPersons: [], linkedProjects: [], linkedGoals: [], linkedIdeas: [], linkedNotes: [], linkedDecisions: [], linkedOrganizations: [],
     versions: [], convertedToProjectId: null,
+    notebookId: null,  // 📓 Verknüpftes Notizbuch
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
   scheduleSave(); closeConceptTplPicker(); navigate('concepts', id);
-  toast('ok', '🧩 Konzept erstellt');
+  toast('ok', '🧩 Konzept erstellt', title);
 };
 
 // ═══ DETAIL ═══
@@ -18531,6 +18588,8 @@ window.viewConceptDetail = function(id) {
       </div>
       
       ${renderMeasuresBlock('concept', c.id)}
+      
+      ${renderConceptNotebookSection(c, c.id)}
       
       ${renderConceptTabContent(c, tab)}
     </div>
@@ -23369,8 +23428,8 @@ function renderProjectNotebookSection(p, id) {
       </div>
     </div>
     <div style="max-height:500px;overflow-y:auto">
-      ${notebookNotes.slice().sort((a,b) => (b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')).map(n => `
-        <details class="mb-2" style="border:1px solid var(--border);border-radius:8px">
+      ${notebookNotes.slice().sort((a,b) => (b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')).map((n, idx) => `
+        <details class="mb-2" style="border:1px solid var(--border);border-radius:8px" ${idx === 0 ? 'open' : ''}>
           <summary style="cursor:pointer;padding:8px 12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
             📝 ${esc(n.title || 'Notiz')}
             <span style="margin-left:auto;font-size:10px;color:var(--muted);font-weight:400">${fmtDate(n.updatedAt || n.createdAt)}</span>
@@ -23448,8 +23507,8 @@ function renderStrategyNotebookSection(s, id) {
       </div>
     </div>
     <div style="max-height:500px;overflow-y:auto">
-      ${notebookNotes.slice().sort((a,b) => (b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')).map(n => `
-        <details class="mb-2" style="border:1px solid var(--border);border-radius:8px">
+      ${notebookNotes.slice().sort((a,b) => (b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')).map((n, idx) => `
+        <details class="mb-2" style="border:1px solid var(--border);border-radius:8px" ${idx === 0 ? 'open' : ''}>
           <summary style="cursor:pointer;padding:8px 12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
             📝 ${esc(n.title || 'Notiz')}
             <span style="margin-left:auto;font-size:10px;color:var(--muted);font-weight:400">${fmtDate(n.updatedAt || n.createdAt)}</span>
@@ -23508,6 +23567,103 @@ window.strategyDeleteNote = function(strategyId, noteId) {
   if (APP.state.data.entities.notes?.[noteId]) {
     delete APP.state.data.entities.notes[noteId];
   }
+  scheduleSave();
+  toast("ok", "🗑 Gelöscht");
+  render();
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 📓 CONCEPT NOTEBOOK — Notizen direkt in Konzepten
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderConceptNotebookSection(c, id) {
+  const e = APP.state.data.entities;
+  const notebook = c.notebookId ? e.notebooks?.[c.notebookId] : null;
+  const notebookNotes = notebook ? (notebook.notes || []).map(nid => e.notes?.[nid]).filter(Boolean) : [];
+  
+  if (!notebook) {
+    return `<div style="background:rgba(168,85,247,.04);border:1px solid rgba(168,85,247,.15);border-radius:10px;padding:14px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:18px">📓</span>
+        <h4 style="margin:0;font-size:14px;font-weight:700;flex:1">Notizbuch</h4>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Noch kein Notizbuch verknüpft.</div>
+      <button onclick="window.conceptCreateNotebook('${id}')" style="padding:6px 12px;background:linear-gradient(135deg,#a855f7,#ec4899);border:0;color:#fff;border-radius:7px;cursor:pointer;font-size:11.5px;font-weight:700">+ Notizbuch erstellen</button>
+    </div>`;
+  }
+  
+  return `<div style="background:rgba(168,85,247,.04);border:1px solid rgba(168,85,247,.15);border-radius:10px;padding:14px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h4 style="margin:0;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700">📓 Notizbuch <span style="font-size:11px;color:var(--muted);font-weight:400">(${notebookNotes.length})</span></h4>
+      <div style="display:flex;gap:6px">
+        <button onclick="navigate('notebooks','${notebook.id}')" title="In Notes-App öffnen" style="background:rgba(255,255,255,.06);border:0;color:var(--muted);padding:5px 10px;border-radius:5px;cursor:pointer;font-size:11px">↗</button>
+        <button onclick="window.conceptNewInlineNote('${id}')" style="padding:5px 12px;background:linear-gradient(135deg,#a855f7,#ec4899);border:0;color:#fff;border-radius:6px;cursor:pointer;font-size:11.5px;font-weight:700">➕ Neue Notiz</button>
+      </div>
+    </div>
+    <div style="max-height:500px;overflow-y:auto">
+      ${notebookNotes.slice().sort((a,b) => (b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')).map((n, idx) => `
+        <details class="mb-2" style="border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(0,0,0,.15)" ${idx === 0 ? 'open' : ''}>
+          <summary style="cursor:pointer;padding:8px 12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
+            📝 ${esc(n.title || 'Notiz')}
+            <span style="margin-left:auto;font-size:10px;color:var(--muted);font-weight:400">${fmtDate(n.updatedAt || n.createdAt)}</span>
+          </summary>
+          <div style="padding:8px 12px;border-top:1px solid rgba(255,255,255,.06)">
+            <input type="text" value="${esc(n.title || '')}" placeholder="Titel" style="width:100%;font-size:13px;padding:6px 9px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);margin-bottom:6px;font-weight:600;box-sizing:border-box" onchange="window.lpSaveInlineNoteTitle('${n.id}',this.value)" />
+            <textarea style="width:100%;min-height:140px;font-size:12.5px;line-height:1.6;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:8px;resize:vertical;color:var(--text);font-family:inherit;box-sizing:border-box" placeholder="Inhalt..." onchange="window.lpSaveInlineNote('${n.id}',this.value)">${esc(n.content || '')}</textarea>
+            <div style="display:flex;gap:5px;margin-top:6px;justify-content:flex-end">
+              <button onclick="navigate('notes','${n.id}')" title="Volle Notiz öffnen" style="background:rgba(255,255,255,.06);border:0;color:var(--muted);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:10.5px">↗ Voll öffnen</button>
+              <button onclick="window.conceptDeleteNote('${id}','${n.id}')" style="background:rgba(239,68,68,.1);border:0;color:#f87171;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:10.5px">🗑</button>
+            </div>
+          </div>
+        </details>
+      `).join('') || '<div style="font-size:12px;color:var(--muted);padding:14px;text-align:center;background:rgba(0,0,0,.15);border-radius:8px">Noch keine Notizen. Klick "+ Neue Notiz".</div>'}
+    </div>
+  </div>`;
+}
+
+window.conceptCreateNotebook = function(conceptId) {
+  const c = APP.state.data.entities.concepts?.[conceptId];
+  if (!c) return;
+  if (c.notebookId) { toast("warn", "Bereits vorhanden"); return; }
+  
+  const nbId = createEntity("notebook", { 
+    title: "🧩 " + (c.title || "Konzept"), 
+    notes: [],
+    linkedConceptId: conceptId,
+  });
+  c.notebookId = nbId;
+  c.updatedAt = new Date().toISOString();
+  scheduleSave();
+  toast("ok", "📓 Notizbuch erstellt");
+  render();
+};
+
+window.conceptNewInlineNote = function(conceptId) {
+  const c = APP.state.data.entities.concepts?.[conceptId];
+  if (!c || !c.notebookId) return;
+  const nb = APP.state.data.entities.notebooks?.[c.notebookId];
+  if (!nb) return;
+  const noteId = createEntity("note", { title: "Notiz – " + todayYmd(), content: "", notebookId: c.notebookId });
+  if (!nb.notes) nb.notes = [];
+  nb.notes.push(noteId);
+  c.updatedAt = new Date().toISOString();
+  scheduleSave(); render();
+  toast("ok", "Notiz", "Neue Notiz erstellt");
+};
+
+window.conceptDeleteNote = function(conceptId, noteId) {
+  if (!confirm("Notiz wirklich löschen?")) return;
+  const c = APP.state.data.entities.concepts?.[conceptId];
+  if (c?.notebookId) {
+    const nb = APP.state.data.entities.notebooks?.[c.notebookId];
+    if (nb && Array.isArray(nb.notes)) {
+      nb.notes = nb.notes.filter(nid => nid !== noteId);
+    }
+  }
+  if (APP.state.data.entities.notes?.[noteId]) {
+    delete APP.state.data.entities.notes[noteId];
+  }
+  if (c) c.updatedAt = new Date().toISOString();
   scheduleSave();
   toast("ok", "🗑 Gelöscht");
   render();
