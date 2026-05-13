@@ -7017,6 +7017,10 @@ function normalizeData(data) {
   if (!d.dailyBriefing) d.dailyBriefing = {};
   d.dailyBriefing.workflowGlobalRules = d.dailyBriefing.workflowGlobalRules || "";
   
+  // 📖 Handbuch: user-defined notes pro app-key
+  // Struktur: { appKey: { workflow: "...", notes: "...", updatedAt: ... } }
+  d.handbook = d.handbook || {};
+  
   // Normalize updates
 e.updates = e.updates || {};
 for (const u of Object.values(e.updates)) {
@@ -13016,6 +13020,7 @@ function getAllApps() {
     {key:"thesis", icon:"📚", label:"ThesisStudio", desc:getLang()==="de"?"Akademische Schreibumgebung für Master- und Bachelorarbeiten":"Academic writing environment for theses"},
     {key:"decisions", icon:"⚖️", label:"Decisions", desc:getLang()==="de"?"Entscheidungen treffen & verfolgen":"Make & track decisions"},
     {key:"journal", icon:"✍️", label:"Journal Booklet", desc:getLang()==="de"?"Tagebuch, Briefe, Zeitkapsel & Schreibumgebung":"Diary, letters, time capsule & writing environment"},
+    {key:"handbook", icon:"📖", label:"Handbuch", desc:getLang()==="de"?"Übersicht aller Apps mit eigenen Notizen & Arbeitsbeschreibungen":"Overview of all apps with personal notes & workflows"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -13373,6 +13378,7 @@ function renderMain() {
     case "workload": html = viewWorkload(); break;
     case "measures": html = viewMeasures(); break;
     case "thesis": html = id ? window.viewThesisDetail(id) : window.viewTheses(); break;
+    case "handbook": html = window.viewHandbook ? window.viewHandbook() : '<div style="padding:40px;text-align:center">Lade Handbuch...</div>'; break;
     case "decisions": html = id ? viewDecisionDetail(id) : viewDecisions(); break;
     case "mailhub": html = id ? viewEmailDetail(id) : viewMailHub(); break;
     case "persons": html = id ? viewPersonDetail(id) : viewPersons(); break;
@@ -18401,6 +18407,353 @@ function thsSetState(patch) {
 // ───────────────────────────────────────────────────────────────────────────
 // LISTE: viewTheses
 // ───────────────────────────────────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 📖 HANDBUCH — Übersicht aller Apps mit eigenen Notizen
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Beschreibungen pro App (zentral, kann hier ergänzt werden)
+window._HANDBOOK_DESCRIPTIONS = {
+  dashboard: { icon: "🏠", label: "Dashboard", category: "Übersicht", 
+    desc: "Startseite mit Übersicht aller wichtigen Informationen, Schnellzugriff auf Apps und aktive Massnahmen." },
+  tasks: { icon: "✅", label: "Aufgaben", category: "Produktivität",
+    desc: "Aufgabenverwaltung mit Priorität, Fälligkeitsdatum, Status und Zuordnung zu Projekten. Unterstützt Sub-Tasks und Zeitschätzungen." },
+  projects: { icon: "📦", label: "Projekte", category: "Produktivität",
+    desc: "Projektmanagement mit Phasen, Meilensteinen, Aufgabenlisten, Notizbüchern und Dokumentenanhängen." },
+  programs: { icon: "🧩", label: "Programme", category: "Produktivität",
+    desc: "Über-Strukturen für mehrere zusammenhängende Projekte (Programm-Management)." },
+  goals: { icon: "🎯", label: "Ziele", category: "Strategie",
+    desc: "Persönliche und berufliche Ziele mit Sub-Zielen, Status-Tracking und Verknüpfung zu Projekten." },
+  strategies: { icon: "🧭", label: "Strategien", category: "Strategie",
+    desc: "Strategische Planung mit verknüpften Notizbüchern. Längerfristige Ausrichtung." },
+  concepts: { icon: "🧩", label: "Konzeptor", category: "Strategie",
+    desc: "Konzepte strukturiert ausarbeiten mit Templates (Pitch, Politisch, Bildung, Produkt, Recherche). Reife-Score, Stakeholder, Risiken, kann in Projekte überführt werden." },
+  ideas: { icon: "💡", label: "Ideen", category: "Strategie",
+    desc: "Schnelle Ideensammlung mit Tags, Bewertung und Konvertierung zu Konzepten oder Projekten." },
+  decisions: { icon: "⚖️", label: "Decisions", category: "Strategie",
+    desc: "Strukturierte Entscheidungsfindung mit Optionen, Pro/Contra, Bewertung und Nachverfolgung." },
+  calendar: { icon: "📅", label: "Kalender", category: "Organisation",
+    desc: "Termine, Events, wiederkehrende Erinnerungen. Mit Tages-, Wochen- und Monatsansicht." },
+  meetings: { icon: "🤝", label: "Besprechungen", category: "Organisation",
+    desc: "Meeting-Verwaltung mit Agenda, Teilnehmern, Protokollen und Aufgaben-Verknüpfung." },
+  habits: { icon: "🔁", label: "Habits", category: "Selbstführung",
+    desc: "Routinen tracken, Streaks aufbauen. Tägliche / wöchentliche Gewohnheiten mit Visualisierung." },
+  time: { icon: "⏱️", label: "Zeit", category: "Produktivität",
+    desc: "Zeit-Tracking pro Projekt / Aufgabe. Detail-Auswertung der investierten Zeit." },
+  workload: { icon: "⏱️", label: "Workload", category: "Produktivität",
+    desc: "Auslastungsanalyse: Summe aller Zeitschätzungen aus Aufgaben, Verteilung über Wochen." },
+  measures: { icon: "🚨", label: "Massnahmen", category: "Produktivität",
+    desc: "Übergreifende Massnahmen-Liste aus Projekten, Aufgaben, Konzepten und Strategien. Direkter Zugriff auf alles Aktuelle." },
+  organizations: { icon: "🏛️", label: "Organisationen", category: "Beziehungen",
+    desc: "Firmen und Institutionen verwalten, mit Kontakten, Notizen und Dokumenten." },
+  persons: { icon: "👤", label: "Personen", category: "Beziehungen",
+    desc: "Kontaktverwaltung mit Beziehungs-Notizen, letzten Interaktionen und Verknüpfung zu Projekten." },
+  mailhub: { icon: "📬", label: "Mail Hub", category: "Beziehungen",
+    desc: "E-Mail-Korrespondenz und Personen-Verknüpfung. Mit Firebase-Upload für Anhänge." },
+  messages: { icon: "📨", label: "Geplante Nachrichten", category: "Beziehungen",
+    desc: "Erinnerungen für Nachrichten an Personen (z.B. nachfassen in 2 Wochen)." },
+  notes: { icon: "📝", label: "NoteFlow", category: "Wissen",
+    desc: "Notizen, Dokumente, Notizbücher. Markdown-fähig, mit Tags und Verknüpfungen zu anderen Entitäten." },
+  knowledge: { icon: "🧠", label: "Wissensdatenbank", category: "Wissen",
+    desc: "Strukturiertes Wissen mit Verknüpfungen — wie ein persönliches Wiki." },
+  learn: { icon: "📚", label: "RecallLab", category: "Wissen",
+    desc: "Lernkarten mit Spaced Repetition (SM-2-Algorithmus). Decks pro Fach, Statistik, Heatmap." },
+  readinghub: { icon: "📖", label: "ReadingHub", category: "Wissen",
+    desc: "Bücher lesen und annotieren — PDF-Reader mit Markierungen und Notizen, die in Lernkarten konvertiert werden können." },
+  articles: { icon: "📰", label: "Newsroom Hub", category: "Wissen",
+    desc: "Redaktion: Artikel schreiben, Recherche organisieren, mit RecallLab-Integration." },
+  thesis: { icon: "📚", label: "ThesisStudio", category: "Wissen",
+    desc: "Akademische Schreibumgebung für Master-/Bachelorarbeiten. Kapitel, Gedanken-Pool, Quellen, Argumentations-Karten, Fokus-Modus, AI-Coach, Inline-Bilder, Claude-Export." },
+  protocols: { icon: "📜", label: "Protokolle", category: "Wissen",
+    desc: "PDF-Protokolle einlesen mit automatischer Text-Extraktion und Suche." },
+  budget: { icon: "💰", label: "Budget", category: "Finanzen",
+    desc: "Einnahmen, Ausgaben, Konten. Monatliche Übersicht und Kategorisierung." },
+  reports: { icon: "🤖", label: "KI-Berichte", category: "Analyse",
+    desc: "Automatische Berichte über deine Daten via KI — Wochenrückblick, Monatsanalyse, Themen-Cluster." },
+  statistics: { icon: "📊", label: "Statistiken", category: "Analyse",
+    desc: "Auswertungen über Aufgaben, Zeit, Projekte. Visualisierung von Trends." },
+  reflecta: { icon: "🪞", label: "Reflecta", category: "Selbstführung",
+    desc: "Reflexionen, Learnings, persönliche Statistiken. Tages-, Wochen- und Monatsrückblicke." },
+  dailybriefing: { icon: "📋", label: "Daily Briefing", category: "Selbstführung",
+    desc: "Tagesplanung mit allen offenen Aufgaben, Terminen, Workflow-Regeln. Exportierbar als Dossier." },
+  journal: { icon: "✍️", label: "Journal Booklet", category: "Selbstführung",
+    desc: "Tagebuch, Briefe, Zeitkapsel. Verschiedene Schreibumgebungen für persönliches Schreiben." },
+  rules: { icon: "⚖️", label: "Rules", category: "Selbstführung",
+    desc: "Persönliche Gesetzbücher und Prinzipien — selbst-formulierte Leitlinien für Entscheidungen." },
+  workflows: { icon: "⚙️", label: "Workflows", category: "Selbstführung",
+    desc: "Prozesse mit Schritten definieren — z.B. Onboarding, Rechnungsstellung. Wiederverwendbar." },
+  chat: { icon: "💬", label: "Chat", category: "Werkzeuge",
+    desc: "Direkter Chat mit KI für allgemeine Fragen und Brainstorming." },
+  updates: { icon: "🔧", label: "Updates", category: "Werkzeuge",
+    desc: "Wünsche und Verbesserungsvorschläge für die App selbst." },
+};
+
+window.viewHandbook = function() {
+  const desc = window._HANDBOOK_DESCRIPTIONS;
+  const handbookData = APP.state.data.handbook || {};
+  const allApps = getAllApps();
+  
+  // Apps gruppieren nach Kategorie
+  const byCategory = {};
+  allApps.forEach(app => {
+    const meta = desc[app.key];
+    const cat = meta?.category || (app.isCustomPage ? 'Eigene Seiten' : 'Sonstiges');
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push({ ...app, ...meta });
+  });
+  
+  const categoryOrder = ['Übersicht', 'Produktivität', 'Strategie', 'Wissen', 'Selbstführung', 'Organisation', 'Beziehungen', 'Analyse', 'Finanzen', 'Werkzeuge', 'Eigene Seiten', 'Sonstiges'];
+  const sortedCats = Object.keys(byCategory).sort((a, b) => {
+    const ai = categoryOrder.indexOf(a);
+    const bi = categoryOrder.indexOf(b);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
+  
+  const search = (APP.state.ui?.handbookSearch || '').trim().toLowerCase();
+  
+  return `
+    <style>
+      .hb-wrap { max-width: 1200px; margin: 0 auto; padding: 8px 0; }
+      .hb-hero {
+        background: linear-gradient(135deg, rgba(99,102,241,.08), rgba(168,85,247,.04));
+        border: 1px solid rgba(99,102,241,.18);
+        border-radius: 14px;
+        padding: 22px 26px;
+        margin-bottom: 18px;
+      }
+      .hb-hero h2 { font-size: 22px; font-weight: 800; margin: 0 0 6px; font-family: Georgia, serif; }
+      .hb-search {
+        width: 100%;
+        padding: 11px 16px 11px 40px;
+        background: rgba(255,255,255,.04);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        color: var(--text);
+        font-size: 13px;
+        box-sizing: border-box;
+      }
+      .hb-search-wrap { position: relative; margin-top: 12px; }
+      .hb-search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; opacity: .5; }
+      .hb-cat {
+        margin-bottom: 22px;
+      }
+      .hb-cat-title {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .1em;
+        color: var(--muted);
+        margin-bottom: 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border);
+      }
+      .hb-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 10px;
+      }
+      .hb-card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 11px;
+        padding: 14px 16px;
+        transition: all .15s;
+        position: relative;
+      }
+      .hb-card:hover {
+        border-color: rgba(99,102,241,.3);
+        background: rgba(99,102,241,.03);
+      }
+      .hb-card-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        cursor: pointer;
+      }
+      .hb-card-icon { font-size: 24px; flex-shrink: 0; }
+      .hb-card-title { font-weight: 700; font-size: 14px; flex: 1; min-width: 0; }
+      .hb-card-link {
+        font-size: 11px;
+        padding: 3px 9px;
+        background: linear-gradient(135deg, #6366f1, #a855f7);
+        color: #fff;
+        border-radius: 6px;
+        font-weight: 600;
+        flex-shrink: 0;
+      }
+      .hb-card-desc {
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--muted);
+        margin-bottom: 10px;
+      }
+      .hb-personal {
+        background: rgba(168,85,247,.04);
+        border: 1px solid rgba(168,85,247,.18);
+        border-radius: 7px;
+        padding: 8px 10px;
+        margin-top: 8px;
+      }
+      .hb-personal-label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: #c4b5fd;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      .hb-personal-text {
+        font-size: 11.5px;
+        line-height: 1.5;
+        color: var(--text);
+        white-space: pre-wrap;
+        font-family: Georgia, serif;
+      }
+      .hb-edit-btn {
+        background: none;
+        border: 0;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 11px;
+        padding: 4px 8px;
+        border-radius: 5px;
+        transition: all .15s;
+      }
+      .hb-edit-btn:hover { color: var(--text); background: rgba(255,255,255,.05); }
+    </style>
+    
+    <div class="hb-wrap">
+      <div class="hb-hero">
+        <h2>📖 Handbuch</h2>
+        <p style="color:var(--muted);font-size:13px;margin:0;line-height:1.55">Übersicht aller Apps mit kurzer Beschreibung und Platz für deine eigenen Notizen und Arbeitsabläufe. Klick auf eine App um direkt dorthin zu navigieren.</p>
+        <div class="hb-search-wrap">
+          <span class="hb-search-icon">🔍</span>
+          <input type="text" class="hb-search" placeholder="App oder Beschreibung suchen..." 
+                 value="${esc(search)}" 
+                 oninput="window._hbSearch(this.value)" />
+        </div>
+      </div>
+      
+      ${sortedCats.map(cat => {
+        const apps = byCategory[cat];
+        // Filter nach Suche
+        const filtered = search ? apps.filter(a => 
+          (a.label || '').toLowerCase().includes(search) ||
+          (a.desc || '').toLowerCase().includes(search) ||
+          (handbookData[a.key]?.workflow || '').toLowerCase().includes(search) ||
+          (handbookData[a.key]?.notes || '').toLowerCase().includes(search)
+        ) : apps;
+        if (filtered.length === 0) return '';
+        
+        return `
+        <div class="hb-cat">
+          <div class="hb-cat-title">${esc(cat)} <span style="opacity:.5;margin-left:6px;font-weight:500;text-transform:none;letter-spacing:0">${filtered.length}</span></div>
+          <div class="hb-grid">
+            ${filtered.map(app => {
+              const personal = handbookData[app.key] || {};
+              return `<div class="hb-card">
+                <div class="hb-card-head" onclick="navigate('${app.key}')">
+                  <span class="hb-card-icon">${app.icon || '📄'}</span>
+                  <span class="hb-card-title">${esc(app.label || app.key)}</span>
+                  <span class="hb-card-link">Öffnen →</span>
+                </div>
+                <div class="hb-card-desc">${esc(app.desc || (app.isCustomPage ? 'Eigene Seite' : '—'))}</div>
+                
+                ${(personal.workflow || personal.notes) ? `
+                  <div class="hb-personal">
+                    ${personal.workflow ? `
+                      <div class="hb-personal-label">⚙️ Mein Arbeitsablauf</div>
+                      <div class="hb-personal-text" style="margin-bottom:${personal.notes ? '8px' : '0'}">${esc(personal.workflow)}</div>
+                    ` : ''}
+                    ${personal.notes ? `
+                      <div class="hb-personal-label">📝 Notizen</div>
+                      <div class="hb-personal-text">${esc(personal.notes)}</div>
+                    ` : ''}
+                  </div>
+                ` : ''}
+                
+                <div style="display:flex;gap:4px;margin-top:8px">
+                  <button class="hb-edit-btn" onclick="window._hbEdit('${app.key}')">${(personal.workflow || personal.notes) ? '✏️ Bearbeiten' : '＋ Notizen hinzufügen'}</button>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }).filter(Boolean).join('') || '<div style="text-align:center;padding:40px;color:var(--muted)">Keine Treffer für "' + esc(search) + '"</div>'}
+    </div>
+  `;
+};
+
+window._hbSearch = function(v) {
+  if (!APP.state.ui) APP.state.ui = {};
+  APP.state.ui.handbookSearch = v;
+  if (window._hbSearchTimer) clearTimeout(window._hbSearchTimer);
+  window._hbSearchTimer = setTimeout(() => render(), 200);
+};
+
+window._hbEdit = function(appKey) {
+  if (!APP.state.data.handbook) APP.state.data.handbook = {};
+  const current = APP.state.data.handbook[appKey] || {};
+  const meta = window._HANDBOOK_DESCRIPTIONS[appKey];
+  const allApps = getAllApps();
+  const app = allApps.find(a => a.key === appKey);
+  
+  openModal(`📖 ${meta?.icon || app?.icon || '📄'} ${esc(meta?.label || app?.label || appKey)}`, `
+    <div class="form">
+      <div style="background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.15);border-radius:8px;padding:10px 13px;font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px">
+        ${esc(meta?.desc || app?.desc || 'Keine Standardbeschreibung verfügbar.')}
+      </div>
+      
+      <label>
+        <span style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:4px">⚙️ Mein Arbeitsablauf</span>
+        <textarea id="hbWorkflow" rows="5" placeholder="z.B.: Jeden Montag morgen schaue ich hier alle offenen Aufgaben durch und priorisiere. Donnerstags Wochenabschluss mit Reflexion."
+                  style="width:100%;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;box-sizing:border-box">${esc(current.workflow || '')}</textarea>
+      </label>
+      
+      <label>
+        <span style="display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:4px">📝 Notizen / Tipps</span>
+        <textarea id="hbNotes" rows="4" placeholder="z.B.: Tags konsequent mit kleinen Buchstaben. Hashtag #urgent für alle kritischen Aufgaben."
+                  style="width:100%;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;box-sizing:border-box">${esc(current.notes || '')}</textarea>
+      </label>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+      ${(current.workflow || current.notes) ? `<button class="btn" onclick="window._hbDelete('${appKey}')" style="color:#f87171">🗑 Löschen</button>` : ''}
+      <button class="btn primary" onclick="window._hbSave('${appKey}')" style="background:linear-gradient(135deg,#6366f1,#a855f7);border:0">💾 Speichern</button>`);
+  setTimeout(() => document.getElementById('hbWorkflow')?.focus(), 50);
+};
+
+window._hbSave = function(appKey) {
+  if (!APP.state.data.handbook) APP.state.data.handbook = {};
+  const workflow = document.getElementById('hbWorkflow')?.value?.trim() || '';
+  const notes = document.getElementById('hbNotes')?.value?.trim() || '';
+  if (!workflow && !notes) {
+    delete APP.state.data.handbook[appKey];
+  } else {
+    APP.state.data.handbook[appKey] = {
+      workflow,
+      notes,
+      updatedAt: nowIso(),
+    };
+  }
+  closeModal();
+  scheduleSave();
+  render();
+  toast('ok', '💾 Notizen gespeichert');
+};
+
+window._hbDelete = function(appKey) {
+  if (!confirm('Eigene Notizen für diese App löschen?')) return;
+  if (APP.state.data.handbook) {
+    delete APP.state.data.handbook[appKey];
+  }
+  closeModal();
+  scheduleSave();
+  render();
+  toast('ok', '🗑 Gelöscht');
+};
+
 
 window.viewTheses = function() {
   const all = Object.values(APP.state.data.entities.theses || {}).sort((a, b) => 
