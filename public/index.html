@@ -5745,49 +5745,122 @@ window._extractTextFromFile = async function(file) {
       const arrayBuffer = await file.arrayBuffer();
       console.log('[TextExtract] arrayBuffer:', arrayBuffer.byteLength, 'bytes — starte Extraktion');
       
-      // 1. Versuch: extractRawText (schnell, gut für reinen Fließtext)
-      let result = await mammoth.extractRawText({ arrayBuffer });
-      let text = (result.value || '').trim();
-      console.log('[TextExtract] extractRawText:', text.length, 'Zeichen');
+      let text = '';
+      let mammothFailed = false;
       
-      // 2. Fallback: convertToHtml wenn extractRawText zu wenig liefert
-      // (oft besser bei Tabellen-lastigen DOCX wie Formularen)
-      if (text.length < 50) {
+      // 1. Versuch: extractRawText (schnell, gut für reinen Fließtext)
+      try {
+        let result = await mammoth.extractRawText({ arrayBuffer });
+        text = (result.value || '').trim();
+        console.log('[TextExtract] extractRawText:', text.length, 'Zeichen');
+        if (result.messages && result.messages.length > 0) {
+          console.log('[TextExtract] mammoth messages:', result.messages.slice(0, 5));
+        }
+      } catch (e) {
+        console.warn('[TextExtract] extractRawText crash:', e?.message);
+        mammothFailed = true;
+      }
+      
+      // 2. Fallback: convertToHtml wenn extractRawText zu wenig liefert oder gecrasht ist
+      if (text.length < 50 && !mammothFailed) {
         console.log('[TextExtract] Zu wenig Text aus extractRawText, versuche convertToHtml...');
         try {
-          const htmlResult = await mammoth.convertToHtml({ arrayBuffer });
+          // arrayBuffer NEU lesen — manche mammoth-Versionen konsumieren den Buffer
+          const ab2 = await file.arrayBuffer();
+          const htmlResult = await mammoth.convertToHtml({ arrayBuffer: ab2 });
           if (htmlResult?.value) {
-            // HTML zu Plain-Text mit String-Replacements (kein DOM-Manipulation)
             let html = htmlResult.value;
-            // Tabellen-Cells als | getrennt
             html = html.replace(/<\/(td|th)>\s*<(td|th)[^>]*>/gi, ' | ');
-            // Tabellen-Zeilen mit Newline
             html = html.replace(/<\/tr>/gi, '\n');
-            // Block-Elemente als Newlines
             html = html.replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '\n');
             html = html.replace(/<br[^>]*\/?>/gi, '\n');
-            // List-Items als •
             html = html.replace(/<li[^>]*>/gi, '• ');
-            // Alle übrigen Tags entfernen
             html = html.replace(/<[^>]+>/g, '');
-            // HTML-Entities decodieren
             html = html.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
                        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
                        .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
                        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
                        .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)));
-            // Mehrfach-Newlines reduzieren
             text = html.replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
             console.log('[TextExtract] convertToHtml-Variante:', text.length, 'Zeichen');
           }
         } catch (htmlErr) {
-          console.warn('[TextExtract] convertToHtml fehlgeschlagen:', htmlErr?.message);
+          console.warn('[TextExtract] convertToHtml crash:', htmlErr?.message);
+          mammothFailed = true;
         }
       }
       
-      if (result.messages && result.messages.length > 0) {
-        console.log('[TextExtract] mammoth messages:', result.messages.slice(0, 5));
+      // 3. NUCLEAR FALLBACK: DOCX als ZIP öffnen und document.xml direkt lesen
+      // Funktioniert auch wenn mammoth.js die Datei nicht versteht
+      if (text.length < 50) {
+        console.log('[TextExtract] mammoth liefert zu wenig — versuche ZIP-Fallback...');
+        try {
+          if (typeof JSZip === 'undefined') {
+            console.log('[TextExtract] Lade JSZip...');
+            await new Promise((res, rej) => {
+              const s = document.createElement('script');
+              s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+              s.onload = res;
+              s.onerror = rej;
+              setTimeout(() => rej(new Error('JSZip Timeout')), 10000);
+              document.head.appendChild(s);
+            });
+          }
+          
+          const ab3 = await file.arrayBuffer();
+          const zip = await JSZip.loadAsync(ab3);
+          console.log('[TextExtract] ZIP geöffnet, Dateien:', Object.keys(zip.files).slice(0, 10).join(', '));
+          
+          // Lies document.xml + alle weiteren XML-Files mit Text
+          const xmlFiles = ['word/document.xml', 'word/header1.xml', 'word/header2.xml', 'word/footer1.xml', 'word/footer2.xml', 'word/footnotes.xml', 'word/endnotes.xml'];
+          const allTexts = [];
+          
+          for (const fname of xmlFiles) {
+            const zipFile = zip.file(fname);
+            if (zipFile) {
+              const xmlContent = await zipFile.async('text');
+              // Extrahiere alle <w:t>-Tags (Word-Text-Elemente)
+              const matches = xmlContent.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [];
+              const textParts = matches.map(m => {
+                const inner = m.match(/<w:t[^>]*>([^<]*)<\/w:t>/);
+                return inner ? inner[1] : '';
+              });
+              // Tabellen-Cells / Zeilen mit Newlines markieren — durch <w:p> (paragraph) und <w:tr> (row)
+              // Wir fügen Newlines an Stellen ein wo neue Paragraphen / Zeilen kommen
+              // Vereinfacht: ein Paragraph pro <w:p>
+              const paragraphs = xmlContent.split(/<w:p[ >]/).slice(1).map(pp => {
+                const ms = pp.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [];
+                return ms.map(m => {
+                  const inner = m.match(/<w:t[^>]*>([^<]*)<\/w:t>/);
+                  return inner ? inner[1] : '';
+                }).join('');
+              }).filter(Boolean);
+              
+              if (paragraphs.length > 0) {
+                allTexts.push('--- ' + fname + ' ---\n' + paragraphs.join('\n'));
+              } else if (textParts.length > 0) {
+                allTexts.push('--- ' + fname + ' ---\n' + textParts.join(' '));
+              }
+            }
+          }
+          
+          if (allTexts.length > 0) {
+            const rawText = allTexts.join('\n\n');
+            // HTML-Entities dekodieren
+            text = rawText.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                          .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+                          .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+                          .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)))
+                          .replace(/\n{3,}/g, '\n\n').trim();
+            console.log('[TextExtract] ZIP-Fallback erfolgreich:', text.length, 'Zeichen');
+          } else {
+            console.warn('[TextExtract] ZIP-Fallback fand keine Text-Tags');
+          }
+        } catch (zipErr) {
+          console.warn('[TextExtract] ZIP-Fallback crash:', zipErr?.message);
+        }
       }
+      
       return text;
     }
     
