@@ -5636,6 +5636,7 @@ function renderFileAttachments(kind, entityId) {
     </div>
   `;
 }
+window.renderFileAttachments = renderFileAttachments;
 
 window._handleFileDrop = function(e, kind, entityId, folderId) {
   // Check if this is an internal file drag (existing file being moved)
@@ -84704,7 +84705,7 @@ console.log('📚 Leseliste geladen');
       ${linkedHtml.join("")}
       
       <div style="margin-top:18px">
-        ${renderFileAttachments("email", id)}
+        ${window.renderFileAttachments ? window.renderFileAttachments("email", id) : ''}
       </div>
     </div>`;
   };
