@@ -6230,16 +6230,46 @@ window._aggregateAttachmentTexts = async function(kind, entityId, files) {
   if (!Array.isArray(files) || files.length === 0) return [];
   const results = [];
   for (const f of files) {
-    if (!f.textExtracted || !f.textKey) continue;
-    const text = await window._loadExtractedText(kind, entityId, f.id);
+    if (!f.textExtracted) continue;
+    // Lade mit dem gespeicherten textKey oder konstruiere neu
+    let text = null;
+    
+    // 1. Versuch: f.textKey direkt verwenden (am robustesten)
+    if (f.textKey && typeof netlifyBlobGet === 'function') {
+      try {
+        const r = await netlifyBlobGet(f.textKey, { force: true });
+        if (r?.ok && r.data?.text) text = r.data.text;
+      } catch (e) {}
+      
+      // Direkt-fetch wenn netlifyBlobGet failed
+      if (!text) {
+        try {
+          const s = APP.state.settings.storage;
+          if (s?.getUrl) {
+            const url = s.getUrl.replace('{key}', encodeURIComponent(f.textKey));
+            const resp = await fetch(url);
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data?.text) text = data.text;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    
+    // 2. Fallback: über _loadExtractedText (probiert mehrere Key-Varianten)
+    if (!text) text = await window._loadExtractedText(kind, entityId, f.id);
+    
     if (text) {
       results.push({
         name: f.name,
         size: f.size,
         chars: f.textChars || text.length,
         text: text,
-        isTranscript: !!f.isTranscript,  // 🎙 Markierung übernehmen
+        isTranscript: !!f.isTranscript,
       });
+    } else {
+      console.warn('[Aggregate] Text nicht gefunden für', f.name, '(textKey=' + (f.textKey || 'NONE') + ')');
     }
   }
   return results;
@@ -6276,6 +6306,9 @@ window._aiCollectEntityContext = async function(kind, entityId) {
   }
   
   if (kind === 'organization') {
+    const aiS = APP.state.data.aiAssistantSettings || {};
+    const sliceIf = (arr, n) => (n > 0 ? arr.slice(0, n) : arr);
+    
     // ─── Meetings dieser Org ───
     const meetings = Object.values(e.meetings || {});
     const orgMeetings = meetings.filter(m => 
@@ -6283,32 +6316,48 @@ window._aiCollectEntityContext = async function(kind, entityId) {
       (Array.isArray(m.linkedOrganizations) && m.linkedOrganizations.includes(entityId)) ||
       m.orgId === entityId
     );
-    // sortiere nach Datum, neueste zuerst
     orgMeetings.sort((a, b) => (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''));
-    ctx.relatedMeetings = orgMeetings.slice(0, 20); // letzte 20
+    ctx.relatedMeetings = sliceIf(orgMeetings, aiS.maxMeetings);
     
-    // Anhang-Texte aus Meetings auch sammeln
-    for (const m of ctx.relatedMeetings.slice(0, 10)) {
+    for (const m of ctx.relatedMeetings) {
       if (Array.isArray(m.files) && m.files.length > 0) {
         const meetingTexts = await window._aggregateAttachmentTexts('meeting', m.id, m.files);
         meetingTexts.forEach(t => {
-          ctx.fileTexts.push({ ...t, source: `Meeting: ${m.title || m.subject || 'Ohne Titel'}` });
+          ctx.fileTexts.push({ ...t, source: `Meeting: ${m.title || m.subject || 'Ohne Titel'}`, sourceDate: m.date || m.createdAt });
         });
       }
     }
     
     // ─── E-Mails ───
     const emails = Object.values(e.emails || {});
-    ctx.relatedEmails = emails.filter(m => 
+    ctx.relatedEmails = sliceIf(emails.filter(m => 
       Array.isArray(m.linkedOrganizations) && m.linkedOrganizations.includes(entityId)
-    ).sort((a,b) => (b.date || '').localeCompare(a.date || '')).slice(0, 15);
+    ).sort((a,b) => (b.date || '').localeCompare(a.date || '')), aiS.maxEmails);
+    
+    for (const em of ctx.relatedEmails) {
+      if (Array.isArray(em.files) && em.files.length > 0) {
+        const emailTexts = await window._aggregateAttachmentTexts('email', em.id, em.files);
+        emailTexts.forEach(t => {
+          ctx.fileTexts.push({ ...t, source: `Mail: ${em.subject || 'Ohne Betreff'}`, sourceDate: em.date });
+        });
+      }
+    }
     
     // ─── Tasks ───
     const tasks = Object.values(e.tasks || {});
-    ctx.relatedTasks = tasks.filter(t => 
+    ctx.relatedTasks = sliceIf(tasks.filter(t => 
       t.organizationId === entityId || 
       (Array.isArray(t.linkedOrganizations) && t.linkedOrganizations.includes(entityId))
-    ).sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 20);
+    ).sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')), aiS.maxTasks);
+    
+    for (const t of ctx.relatedTasks) {
+      if (Array.isArray(t.files) && t.files.length > 0) {
+        const taskTexts = await window._aggregateAttachmentTexts('task', t.id, t.files);
+        taskTexts.forEach(x => {
+          ctx.fileTexts.push({ ...x, source: `Aufgabe: ${t.title || 'Ohne Titel'}`, sourceDate: t.updatedAt });
+        });
+      }
+    }
     
     // ─── Personen ───
     const persons = Object.values(e.persons || {});
@@ -6316,10 +6365,28 @@ window._aiCollectEntityContext = async function(kind, entityId) {
     
     // ─── Notizen ───
     const notes = Object.values(e.notes || {});
-    ctx.relatedNotes = notes.filter(n => 
+    ctx.relatedNotes = sliceIf(notes.filter(n => 
       n.organizationId === entityId ||
       (Array.isArray(n.linkedOrganizations) && n.linkedOrganizations.includes(entityId))
-    ).sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 10);
+    ).sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')), aiS.maxNotes);
+    
+    for (const n of ctx.relatedNotes) {
+      if (Array.isArray(n.files) && n.files.length > 0) {
+        const noteTexts = await window._aggregateAttachmentTexts('note', n.id, n.files);
+        noteTexts.forEach(x => {
+          ctx.fileTexts.push({ ...x, source: `Notiz: ${n.title || 'Ohne Titel'}`, sourceDate: n.updatedAt });
+        });
+      }
+    }
+    
+    ctx.fileTexts.sort((a, b) => (b.sourceDate || '').localeCompare(a.sourceDate || ''));
+    
+    console.log('[AI Context] Org "' + ctx.name + '":', 
+      ctx.relatedMeetings.length + ' Meetings, ' +
+      ctx.relatedEmails.length + ' E-Mails, ' +
+      ctx.relatedTasks.length + ' Tasks, ' +
+      ctx.relatedNotes.length + ' Notes, ' +
+      ctx.fileTexts.length + ' Anhang-Texte');
   }
   
   if (kind === 'meeting') {
@@ -6328,6 +6395,16 @@ window._aiCollectEntityContext = async function(kind, entityId) {
     ctx.relatedTasks = tasks.filter(t => t.meetingId === entityId || 
       (Array.isArray(t.linkedMeetings) && t.linkedMeetings.includes(entityId))
     ).slice(0, 20);
+    
+    // ✅ Anhang-Texte aus Tasks sammeln
+    for (const t of ctx.relatedTasks.slice(0, 10)) {
+      if (Array.isArray(t.files) && t.files.length > 0) {
+        const taskTexts = await window._aggregateAttachmentTexts('task', t.id, t.files);
+        taskTexts.forEach(x => {
+          ctx.fileTexts.push({ ...x, source: `Aufgabe: ${t.title || 'Ohne Titel'}` });
+        });
+      }
+    }
     
     // ─── Teilnehmer als Personen ───
     if (Array.isArray(entity.attendeeIds)) {
@@ -6340,6 +6417,8 @@ window._aiCollectEntityContext = async function(kind, entityId) {
       const orgId = entity.organizationId || entity.orgId;
       ctx.organization = e.organizations?.[orgId];
     }
+    
+    console.log('[AI Context] Meeting "' + ctx.name + '" — gesammelt:', ctx.fileTexts.length, 'Anhang-Texte');
   }
   
   return ctx;
@@ -6348,6 +6427,7 @@ window._aiCollectEntityContext = async function(kind, entityId) {
 // Baut den AI-Prompt aus dem Kontext
 window._aiBuildEntityPrompt = function(ctx, userQuestion) {
   const lines = [];
+  const aiS = APP.state.data.aiAssistantSettings || {};
   
   if (ctx.kind === 'organization') {
     lines.push(`Du bist ein persönlicher Assistent von Laurin. Du analysierst Informationen über die Organisation "${ctx.name}".`);
@@ -6377,9 +6457,9 @@ window._aiBuildEntityPrompt = function(ctx, userQuestion) {
     lines.push(`\n## Letzte Meetings (${ctx.relatedMeetings.length})`);
     ctx.relatedMeetings.forEach(m => {
       lines.push(`\n### ${m.date || 'kein Datum'} — ${m.title || m.subject || 'Ohne Titel'}`);
-      if (m.notes || m.summary) lines.push(`Beschreibung: ${(m.notes || m.summary).slice(0, 300)}`);
-      if (m.minutes) lines.push(`Protokoll: ${m.minutes.slice(0, 600)}`);
-      if (m.agenda) lines.push(`Agenda: ${m.agenda.slice(0, 300)}`);
+      if (m.notes || m.summary) lines.push(`Beschreibung: ${(m.notes || m.summary).slice(0, aiS.meetingDescriptionChars || 1500)}`);
+      if (m.minutes) lines.push(`Protokoll: ${m.minutes.slice(0, aiS.meetingMinutesChars || 3000)}`);
+      if (m.agenda) lines.push(`Agenda: ${m.agenda.slice(0, aiS.meetingDescriptionChars || 1500)}`);
     });
   }
   
@@ -6390,7 +6470,7 @@ window._aiBuildEntityPrompt = function(ctx, userQuestion) {
       const dir = { incoming: '📥', outgoing: '📤', internal: '🔄' }[em.direction] || '';
       lines.push(`\n### ${em.date || 'kein Datum'} ${dir} ${em.subject || 'Ohne Betreff'}`);
       if (em.summary) lines.push(`Zusammenfassung: ${em.summary}`);
-      if (em.body) lines.push(`Inhalt: ${em.body.slice(0, 400)}`);
+      if (em.body) lines.push(`Inhalt: ${em.body.slice(0, aiS.emailBodyChars || 2000)}`);
     });
   }
   
@@ -6399,7 +6479,7 @@ window._aiBuildEntityPrompt = function(ctx, userQuestion) {
     lines.push(`\n## Aufgaben (${ctx.relatedTasks.length})`);
     ctx.relatedTasks.forEach(t => {
       const status = t.status === 'done' ? '✅' : t.status === 'doing' ? '⏳' : '○';
-      lines.push(`${status} ${t.title}${t.dueDate ? ' (fällig ' + t.dueDate + ')' : ''}${t.description ? ' — ' + t.description.slice(0, 100) : ''}`);
+      lines.push(`${status} ${t.title}${t.dueDate ? ' (fällig ' + t.dueDate + ')' : ''}${t.description ? ' — ' + t.description.slice(0, aiS.taskDescriptionChars || 400) : ''}`);
     });
   }
   
@@ -6408,7 +6488,7 @@ window._aiBuildEntityPrompt = function(ctx, userQuestion) {
     lines.push(`\n## Notizen (${ctx.relatedNotes.length})`);
     ctx.relatedNotes.forEach(n => {
       lines.push(`\n### ${n.title || 'Ohne Titel'} (${n.updatedAt?.slice(0,10) || ''})`);
-      if (n.content) lines.push(n.content.slice(0, 500));
+      if (n.content) lines.push(n.content.slice(0, aiS.noteContentChars || 2500));
     });
   }
   
@@ -6421,11 +6501,11 @@ window._aiBuildEntityPrompt = function(ctx, userQuestion) {
     if (regular.length > 0) {
       lines.push(`\n## Inhalte aus angehängten Dokumenten (${regular.length})`);
       let charsUsed = 0;
-      const maxCharsPerFile = 4000;
-      const totalMaxChars = 18000;
+      const maxCharsPerFile = aiS.maxCharsPerDocument || 25000;
+      const totalMaxChars = aiS.totalMaxCharsDocuments || 250000;
       for (const f of regular) {
         if (charsUsed >= totalMaxChars) {
-          lines.push(`\n[... weitere Dokumente nicht eingebunden — Limit erreicht ...]`);
+          lines.push(`\n[... ${regular.length - regular.indexOf(f)} weitere Dokumente nicht eingebunden — Token-Budget erreicht ...]`);
           break;
         }
         lines.push(`\n### 📄 ${f.name}${f.source ? ' (' + f.source + ')' : ''}`);
@@ -6445,11 +6525,11 @@ window._aiBuildEntityPrompt = function(ctx, userQuestion) {
       lines.push(`- Dialekt (Schweizerdeutsch) und Eigenheiten der Sprecher können zu Verständnisproblemen führen`);
       lines.push(`\nBenutze die Inhalte als **inhaltliche Orientierung**, aber kennzeichne unklare Stellen mit "(im Transkript unklar)" und verlass dich bei wichtigen Daten/Zahlen nicht blind auf die Transkription. Bei Unsicherheit sag es ehrlich.\n`);
       let tCharsUsed = 0;
-      const maxTPerFile = 5500;
-      const totalTMax = 14000;
+      const maxTPerFile = aiS.maxCharsPerTranscript || 50000;
+      const totalTMax = aiS.totalMaxCharsTranscripts || 200000;
       for (const f of transcripts) {
         if (tCharsUsed >= totalTMax) {
-          lines.push(`\n[... weitere Transkripte nicht eingebunden — Limit erreicht ...]`);
+          lines.push(`\n[... ${transcripts.length - transcripts.indexOf(f)} weitere Transkripte nicht eingebunden — Token-Budget erreicht ...]`);
           break;
         }
         lines.push(`\n### 🎙 Transkript: ${f.name}${f.source ? ' (' + f.source + ')' : ''}`);
@@ -6651,6 +6731,124 @@ window._programCreateMeeting = function(programId) {
   toast('ok', '🤝', 'Meeting erstellt');
 };
 
+// ⚙️ KI-Assistent Settings UI
+window._aiOpenSettings = function() {
+  const aiS = APP.state.data.aiAssistantSettings || {};
+  
+  const presets = [
+    { name: 'Sparsam', desc: 'Wenig Token, schnell', maxCharsPerDocument: 5000, maxCharsPerTranscript: 10000, totalMaxCharsDocuments: 30000, totalMaxCharsTranscripts: 30000, meetingMinutesChars: 600, meetingDescriptionChars: 300, emailBodyChars: 400, taskDescriptionChars: 100, noteContentChars: 500, maxMeetings: 10, maxEmails: 10, maxTasks: 10, maxNotes: 5 },
+    { name: 'Mittel', desc: 'Ausgewogen', maxCharsPerDocument: 12000, maxCharsPerTranscript: 25000, totalMaxCharsDocuments: 100000, totalMaxCharsTranscripts: 80000, meetingMinutesChars: 1500, meetingDescriptionChars: 800, emailBodyChars: 1000, taskDescriptionChars: 200, noteContentChars: 1200, maxMeetings: 20, maxEmails: 25, maxTasks: 20, maxNotes: 10 },
+    { name: 'Großzügig', desc: 'Standard — viel Kontext', maxCharsPerDocument: 25000, maxCharsPerTranscript: 50000, totalMaxCharsDocuments: 250000, totalMaxCharsTranscripts: 200000, meetingMinutesChars: 3000, meetingDescriptionChars: 1500, emailBodyChars: 2000, taskDescriptionChars: 400, noteContentChars: 2500, maxMeetings: 0, maxEmails: 0, maxTasks: 0, maxNotes: 0 },
+    { name: 'Maximal', desc: 'Sonnet 4 Limit', maxCharsPerDocument: 80000, maxCharsPerTranscript: 100000, totalMaxCharsDocuments: 400000, totalMaxCharsTranscripts: 300000, meetingMinutesChars: 10000, meetingDescriptionChars: 5000, emailBodyChars: 5000, taskDescriptionChars: 1000, noteContentChars: 8000, maxMeetings: 0, maxEmails: 0, maxTasks: 0, maxNotes: 0 },
+  ];
+  
+  const charField = (key, label, hint) => `
+    <label style="display:flex;flex-direction:column;gap:3px">
+      <span style="font-size:11px;color:var(--muted);font-weight:600">${label} <span style="opacity:.6">(${hint || 'Zeichen'})</span></span>
+      <input type="number" id="aiSet_${key}" value="${aiS[key] || 0}" min="0" step="500"
+             style="padding:7px 10px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px;width:100%;box-sizing:border-box" />
+    </label>
+  `;
+  
+  const countField = (key, label) => `
+    <label style="display:flex;flex-direction:column;gap:3px">
+      <span style="font-size:11px;color:var(--muted);font-weight:600">${label} <span style="opacity:.6">(0 = unbegrenzt)</span></span>
+      <input type="number" id="aiSet_${key}" value="${aiS[key] || 0}" min="0" step="5"
+             style="padding:7px 10px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px;width:100%;box-sizing:border-box" />
+    </label>
+  `;
+  
+  closeModal();
+  setTimeout(() => {
+    openModal('⚙️ KI-Assistent — Einstellungen', `
+      <div class="form" style="max-height:65vh;overflow-y:auto;padding-right:8px">
+        <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55">
+          Hier kannst du steuern, wie viel Daten der KI-Assistent verarbeitet. Mehr = präzisere Antworten, aber langsamer und teurer (mehr Tokens). Sonnet 4 hat ~200k Tokens Kontextfenster (≈600k Zeichen).
+        </p>
+        
+        <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:700;margin-bottom:8px">🎯 Schnell-Voreinstellung</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px">
+            ${presets.map((p, i) => `
+              <button onclick="window._aiApplyPreset(${i})" style="padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:7px;color:var(--text);cursor:pointer;text-align:left">
+                <div style="font-size:12.5px;font-weight:700;margin-bottom:2px">${p.name}</div>
+                <div style="font-size:10.5px;color:var(--muted)">${p.desc}</div>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+        
+        <h4 style="font-size:13px;margin:14px 0 8px;font-weight:700">📄 Dokumente</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          ${charField('maxCharsPerDocument', 'Pro Dokument', 'Zeichen')}
+          ${charField('totalMaxCharsDocuments', 'Gesamt Dokumente', 'Zeichen')}
+        </div>
+        
+        <h4 style="font-size:13px;margin:14px 0 8px;font-weight:700">🎙 Transkripte</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          ${charField('maxCharsPerTranscript', 'Pro Transkript', 'Zeichen')}
+          ${charField('totalMaxCharsTranscripts', 'Gesamt Transkripte', 'Zeichen')}
+        </div>
+        
+        <h4 style="font-size:13px;margin:14px 0 8px;font-weight:700">📋 Entity-Inhalte</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          ${charField('meetingMinutesChars', 'Meeting-Protokoll')}
+          ${charField('meetingDescriptionChars', 'Meeting-Beschr./Agenda')}
+          ${charField('emailBodyChars', 'E-Mail-Inhalt')}
+          ${charField('taskDescriptionChars', 'Aufgaben-Beschr.')}
+          ${charField('noteContentChars', 'Notiz-Inhalt')}
+        </div>
+        
+        <h4 style="font-size:13px;margin:14px 0 8px;font-weight:700">🔢 Anzahl-Limits (Organisation-AI)</h4>
+        <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Wie viele Einträge max. einbezogen werden. 0 = alle.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          ${countField('maxMeetings', 'Max Meetings')}
+          ${countField('maxEmails', 'Max E-Mails')}
+          ${countField('maxTasks', 'Max Aufgaben')}
+          ${countField('maxNotes', 'Max Notizen')}
+        </div>
+        
+        <div style="font-size:11px;color:var(--muted);background:rgba(255,255,255,.03);border-left:3px solid var(--border);padding:10px 14px;margin-top:8px;line-height:1.55">
+          <strong style="color:var(--text)">💡 Tipp:</strong> Bei langen Sitzungs-Transkripten lohnt es sich "Pro Transkript" hoch zu setzen (z.B. 80'000). Bei vielen kleinen Notizen → "Gesamt Notizen" hoch + "Pro Notiz" niedrig.
+        </div>
+      </div>
+    `, `<button class="btn" data-action="close-modal">Abbrechen</button>
+        <button class="btn primary" onclick="window._aiSaveSettings()" style="background:linear-gradient(135deg,#6366f1,#a855f7);border:0">💾 Speichern</button>`);
+  }, 100);
+};
+
+window._aiApplyPreset = function(i) {
+  const presets = [
+    { maxCharsPerDocument: 5000, maxCharsPerTranscript: 10000, totalMaxCharsDocuments: 30000, totalMaxCharsTranscripts: 30000, meetingMinutesChars: 600, meetingDescriptionChars: 300, emailBodyChars: 400, taskDescriptionChars: 100, noteContentChars: 500, maxMeetings: 10, maxEmails: 10, maxTasks: 10, maxNotes: 5 },
+    { maxCharsPerDocument: 12000, maxCharsPerTranscript: 25000, totalMaxCharsDocuments: 100000, totalMaxCharsTranscripts: 80000, meetingMinutesChars: 1500, meetingDescriptionChars: 800, emailBodyChars: 1000, taskDescriptionChars: 200, noteContentChars: 1200, maxMeetings: 20, maxEmails: 25, maxTasks: 20, maxNotes: 10 },
+    { maxCharsPerDocument: 25000, maxCharsPerTranscript: 50000, totalMaxCharsDocuments: 250000, totalMaxCharsTranscripts: 200000, meetingMinutesChars: 3000, meetingDescriptionChars: 1500, emailBodyChars: 2000, taskDescriptionChars: 400, noteContentChars: 2500, maxMeetings: 0, maxEmails: 0, maxTasks: 0, maxNotes: 0 },
+    { maxCharsPerDocument: 80000, maxCharsPerTranscript: 100000, totalMaxCharsDocuments: 400000, totalMaxCharsTranscripts: 300000, meetingMinutesChars: 10000, meetingDescriptionChars: 5000, emailBodyChars: 5000, taskDescriptionChars: 1000, noteContentChars: 8000, maxMeetings: 0, maxEmails: 0, maxTasks: 0, maxNotes: 0 },
+  ];
+  const p = presets[i];
+  if (!p) return;
+  Object.keys(p).forEach(k => {
+    const el = document.getElementById('aiSet_' + k);
+    if (el) el.value = p[k];
+  });
+  toast('ok', '🎯 Voreinstellung übernommen — bitte speichern');
+};
+
+window._aiSaveSettings = function() {
+  if (!APP.state.data.aiAssistantSettings) APP.state.data.aiAssistantSettings = {};
+  const aiS = APP.state.data.aiAssistantSettings;
+  const fields = ['maxCharsPerDocument','maxCharsPerTranscript','totalMaxCharsDocuments','totalMaxCharsTranscripts','meetingMinutesChars','meetingDescriptionChars','emailBodyChars','taskDescriptionChars','noteContentChars','maxMeetings','maxEmails','maxTasks','maxNotes'];
+  for (const f of fields) {
+    const el = document.getElementById('aiSet_' + f);
+    if (el) {
+      const v = parseInt(el.value, 10);
+      if (!isNaN(v) && v >= 0) aiS[f] = v;
+    }
+  }
+  scheduleSave();
+  closeModal();
+  toast('ok', '💾 Einstellungen gespeichert');
+};
+
 window.openEntityAi = async function(kind, entityId) {
   const e = APP.state.data.entities;
   const entity = (kind === 'organization' ? e.organizations : e.meetings)?.[entityId];
@@ -6675,7 +6873,8 @@ window.openEntityAi = async function(kind, entityId) {
         </div>
       </div>
     </div>
-  `, `<button class="btn" data-action="close-modal">Schließen</button>`);
+  `, `<button class="btn" onclick="window._aiOpenSettings()" title="Einstellungen für Token-Budget & Datenmenge">⚙️ Einstellungen</button>
+      <button class="btn" data-action="close-modal">Schließen</button>`);
   
   // Async: Kontext sammeln
   const ctx = await window._aiCollectEntityContext(kind, entityId);
@@ -8203,6 +8402,27 @@ function normalizeData(data) {
   // 📖 Handbuch: user-defined notes pro app-key
   // Struktur: { appKey: { workflow: "...", notes: "...", updatedAt: ... } }
   d.handbook = d.handbook || {};
+  
+  // 🤖 KI-Assistent Settings — vom User konfigurierbar
+  d.aiAssistantSettings = d.aiAssistantSettings || {};
+  const aiS = d.aiAssistantSettings;
+  // Pro-Datei-Limits (Zeichen)
+  aiS.maxCharsPerDocument = typeof aiS.maxCharsPerDocument === 'number' ? aiS.maxCharsPerDocument : 25000;
+  aiS.maxCharsPerTranscript = typeof aiS.maxCharsPerTranscript === 'number' ? aiS.maxCharsPerTranscript : 50000;
+  // Gesamt-Limits (Zeichen)
+  aiS.totalMaxCharsDocuments = typeof aiS.totalMaxCharsDocuments === 'number' ? aiS.totalMaxCharsDocuments : 250000;
+  aiS.totalMaxCharsTranscripts = typeof aiS.totalMaxCharsTranscripts === 'number' ? aiS.totalMaxCharsTranscripts : 200000;
+  // Entity-Felder Limits (Zeichen)
+  aiS.meetingMinutesChars = typeof aiS.meetingMinutesChars === 'number' ? aiS.meetingMinutesChars : 3000;
+  aiS.meetingDescriptionChars = typeof aiS.meetingDescriptionChars === 'number' ? aiS.meetingDescriptionChars : 1500;
+  aiS.emailBodyChars = typeof aiS.emailBodyChars === 'number' ? aiS.emailBodyChars : 2000;
+  aiS.taskDescriptionChars = typeof aiS.taskDescriptionChars === 'number' ? aiS.taskDescriptionChars : 400;
+  aiS.noteContentChars = typeof aiS.noteContentChars === 'number' ? aiS.noteContentChars : 2500;
+  // Anzahl-Limits (0 = unbegrenzt)
+  aiS.maxMeetings = typeof aiS.maxMeetings === 'number' ? aiS.maxMeetings : 0;
+  aiS.maxEmails = typeof aiS.maxEmails === 'number' ? aiS.maxEmails : 0;
+  aiS.maxTasks = typeof aiS.maxTasks === 'number' ? aiS.maxTasks : 0;
+  aiS.maxNotes = typeof aiS.maxNotes === 'number' ? aiS.maxNotes : 0;
   
   // Normalize updates
 e.updates = e.updates || {};
