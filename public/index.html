@@ -5767,10 +5767,40 @@ window._saveExtractedText = async function(kind, entityId, fileId, text) {
       text: text,
       chars: text.length,
       extractedAt: new Date().toISOString(),
-    });
-    console.log('[TextExtract] PUT-Result:', result);
+    }, { force: true });  // 🔑 force=true umgeht Backoff/Pause
+    console.log('[TextExtract] PUT-Result detailliert:', JSON.stringify({
+      ok: result?.ok,
+      status: result?.status,
+      skipped: result?.skipped,
+      provider: result?.provider,
+      error: result?.error?.message || result?.error || null,
+    }));
     if (result?.ok === true) return true;
-    console.warn('[TextExtract] PUT nicht ok:', result);
+    
+    // Falls geskippt wegen Backoff: trotzdem direkt aufrufen
+    if (result?.skipped) {
+      console.warn('[TextExtract] Backoff aktiv — versuche direkt');
+      // Manueller Direkt-Call ohne shouldTryCloudProvider
+      try {
+        const s = APP.state.settings.storage;
+        if (!s?.putUrl) return false;
+        const url = s.putUrl.replace('{key}', encodeURIComponent(key));
+        const resp = await fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, chars: text.length, extractedAt: new Date().toISOString() }),
+        });
+        if (resp.ok) {
+          console.log('[TextExtract] Direkt-PUT erfolgreich');
+          return true;
+        }
+        console.warn('[TextExtract] Direkt-PUT fehlgeschlagen:', resp.status);
+      } catch (directErr) {
+        console.warn('[TextExtract] Direkt-PUT exception:', directErr?.message);
+      }
+    }
+    
+    console.warn('[TextExtract] PUT nicht ok — Status:', result?.status, 'Skipped:', result?.skipped, 'Error:', result?.error);
     return false;
   } catch (err) {
     console.warn('[TextExtract] Save failed:', err);
@@ -5782,15 +5812,27 @@ window._saveExtractedText = async function(kind, entityId, fileId, text) {
 window._loadExtractedText = async function(kind, entityId, fileId) {
   if (typeof netlifyBlobGet !== 'function') return null;
   const key = _textBlobKey(kind, entityId, fileId);
-  // Backwards-compat: alte Keys mit Doppelpunkten auch versuchen
   const oldKey = `attachment-text:${kind}:${entityId}:${fileId}`;
   for (const k of [key, oldKey]) {
     try {
-      const result = await netlifyBlobGet(k);
+      const result = await netlifyBlobGet(k, { force: true });
       if (result?.ok && result.data?.text) return result.data.text;
     } catch (err) {
       // weiter zum nächsten
     }
+  }
+  // Direkt-Fallback wenn Backoff aktiv
+  try {
+    const s = APP.state.settings.storage;
+    if (!s?.getUrl) return null;
+    const url = s.getUrl.replace('{key}', encodeURIComponent(key));
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data?.text) return data.text;
+    }
+  } catch (err) {
+    // Ignorieren
   }
   return null;
 };
