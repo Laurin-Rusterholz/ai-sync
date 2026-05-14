@@ -5723,13 +5723,53 @@ window._extractTextFromFile = async function(file) {
     
     // ─── Word .docx ───
     if (lowerName.endsWith('.docx') || type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-      if (typeof loadMammothLibrary === 'function') {
-        const loaded = await loadMammothLibrary();
-        if (!loaded || !window.mammoth) throw new Error('mammoth.js nicht verfügbar');
-        const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        return (result.value || '').trim();
+      console.log('[TextExtract] DOCX erkannt:', file.name, '(' + file.size + ' bytes)');
+      if (typeof loadMammothLibrary !== 'function') {
+        console.error('[TextExtract] loadMammothLibrary nicht verfügbar');
+        throw new Error('Mammoth-Loader nicht verfügbar');
       }
+      const loaded = await loadMammothLibrary();
+      if (!loaded || !window.mammoth) {
+        console.error('[TextExtract] mammoth.js konnte nicht geladen werden');
+        throw new Error('mammoth.js Download blockiert (Adblocker?)');
+      }
+      console.log('[TextExtract] mammoth.js bereit, lese arrayBuffer...');
+      const arrayBuffer = await file.arrayBuffer();
+      console.log('[TextExtract] arrayBuffer:', arrayBuffer.byteLength, 'bytes — starte Extraktion');
+      
+      // 1. Versuch: extractRawText (schnell, gut für reinen Fließtext)
+      let result = await mammoth.extractRawText({ arrayBuffer });
+      let text = (result.value || '').trim();
+      console.log('[TextExtract] extractRawText:', text.length, 'Zeichen');
+      
+      // 2. Fallback: convertToHtml wenn extractRawText zu wenig liefert
+      // (oft besser bei Tabellen-lastigen DOCX wie Formularen)
+      if (text.length < 50) {
+        console.log('[TextExtract] Zu wenig Text aus extractRawText, versuche convertToHtml...');
+        try {
+          const htmlResult = await mammoth.convertToHtml({ arrayBuffer });
+          if (htmlResult?.value) {
+            // HTML zu Plain-Text konvertieren mit Struktur-Erhalt
+            const tmp = document.createElement('div');
+            tmp.innerHTML = htmlResult.value;
+            // Tabellen-Cells als | getrennt, Rows als Newline
+            tmp.querySelectorAll('td, th').forEach(cell => { cell.textContent = cell.textContent + ' | '; });
+            tmp.querySelectorAll('tr').forEach(row => { row.textContent = row.textContent + '\n'; });
+            tmp.querySelectorAll('p, div, h1, h2, h3, h4, li, br').forEach(el => { 
+              if (el.nextSibling) el.appendChild(document.createTextNode('\n'));
+            });
+            text = tmp.textContent.replace(/\| \n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+            console.log('[TextExtract] convertToHtml-Variante:', text.length, 'Zeichen');
+          }
+        } catch (htmlErr) {
+          console.warn('[TextExtract] convertToHtml fehlgeschlagen:', htmlErr?.message);
+        }
+      }
+      
+      if (result.messages && result.messages.length > 0) {
+        console.log('[TextExtract] mammoth messages:', result.messages.slice(0, 5));
+      }
+      return text;
     }
     
     // ─── Plain Text / Markdown / CSV ───
@@ -5936,9 +5976,55 @@ window._reindexAllFiles = async function(kind, entityId) {
 // Verhindert Browser-Überlastung bei mehreren Uploads gleichzeitig
 window._extractQueue = window._extractQueue || [];
 window._extractQueueRunning = false;
+// 🔔 Globaler "Indexierung läuft"-Indikator (oben rechts, immer sichtbar)
+window._updateGlobalQueueIndicator = function() {
+  let el = document.getElementById('globalExtractIndicator');
+  const queueLen = window._extractQueue.length;
+  const running = window._extractQueueRunning;
+  
+  if (!running && queueLen === 0) {
+    if (el) el.remove();
+    return;
+  }
+  
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'globalExtractIndicator';
+    el.style.cssText = 'position:fixed;top:14px;right:14px;z-index:99999;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;padding:8px 14px;border-radius:24px;font-size:12px;font-weight:600;box-shadow:0 4px 14px rgba(99,102,241,.4);display:flex;align-items:center;gap:8px;cursor:default;pointer-events:auto;animation:globalIndicFadeIn .3s ease-out';
+    el.innerHTML = `
+      <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:thsSpin .9s linear infinite"></span>
+      <span id="globalExtractText">Indexierung läuft...</span>
+    `;
+    if (!document.getElementById('globalIndicFadeKeyframes')) {
+      const st = document.createElement('style');
+      st.id = 'globalIndicFadeKeyframes';
+      st.textContent = '@keyframes globalIndicFadeIn { from { opacity:0; transform: translateY(-8px) } to { opacity:1; transform: translateY(0) } }';
+      document.head.appendChild(st);
+    }
+    document.body.appendChild(el);
+  }
+  
+  const total = queueLen + (running ? 1 : 0);
+  const textEl = el.querySelector('#globalExtractText');
+  if (textEl) {
+    textEl.textContent = total === 1 ? '🧠 Indexiere 1 Datei...' : `🧠 Indexiere ${total} Dateien...`;
+  }
+};
+
+// 🚨 Warnung bei Tab-Schließen wenn Queue noch was hat
+window.addEventListener('beforeunload', (e) => {
+  if (window._extractQueueRunning || window._extractQueue.length > 0) {
+    const msg = 'Die Indexierung läuft noch. Wenn du jetzt schließt, geht der Fortschritt verloren — Dateien können danach manuell re-indexiert werden.';
+    e.preventDefault();
+    e.returnValue = msg;
+    return msg;
+  }
+});
+
 window._extractQueueProcess = async function() {
   if (window._extractQueueRunning) return;
   window._extractQueueRunning = true;
+  window._updateGlobalQueueIndicator();
   
   while (window._extractQueue.length > 0) {
     const job = window._extractQueue.shift();
@@ -5946,6 +6032,7 @@ window._extractQueueProcess = async function() {
     
     // Status updaten: gerade dran
     fileObj.textExtractStatus = 'pending';
+    window._updateGlobalQueueIndicator();
     const indicator = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
     if (indicator) {
       indicator.style.color = 'var(--muted)';
@@ -5953,19 +6040,35 @@ window._extractQueueProcess = async function() {
     }
     
     try {
-      // ⏱ Extraktion mit Timeout (60 Sekunden)
+      // ⏱ Extraktion mit Timeout (180 Sekunden für große Dateien)
       const text = await Promise.race([
         window._extractTextFromFile(originalFile),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout nach 60s')), 60000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout nach 180s — Datei zu groß?')), 180000))
       ]);
       
-      if (!text || text.length < 10) {
+      console.log('[TextExtract] Ergebnis für', fileObj.name, ': text =', text === null ? 'NULL' : text === undefined ? 'UNDEFINED' : `"${text.slice(0,80)}..." (${text.length} Zeichen)`);
+      
+      if (text === null || text === undefined) {
+        // Wirklich nicht extrahierbar (Bild, unbekanntes Format)
         fileObj.textExtractStatus = 'skipped';
         if (typeof scheduleSave === 'function') scheduleSave();
-        if (indicator) {
-          indicator.style.color = 'var(--muted)';
-          indicator.style.opacity = '.7';
-          indicator.innerHTML = '○ Format nicht indexierbar';
+        const ind = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+        if (ind) {
+          ind.style.color = 'var(--muted)';
+          ind.style.opacity = '.7';
+          ind.innerHTML = '○ Format nicht indexierbar';
+        }
+        continue;
+      }
+      
+      if (text.length < 10) {
+        // Text wurde extrahiert, ist aber leer/sehr kurz
+        fileObj.textExtractStatus = 'failed';
+        if (typeof scheduleSave === 'function') scheduleSave();
+        const ind = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+        if (ind) {
+          ind.style.color = '#fbbf24';
+          ind.innerHTML = '⚠️ Nur ' + text.length + ' Zeichen gefunden — DOCX evtl. leer/bildbasiert <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut</button>';
         }
         continue;
       }
@@ -5977,34 +6080,41 @@ window._extractQueueProcess = async function() {
         fileObj.textKey = _textBlobKey(kind, entityId, fileObj.id);
         fileObj.textExtractStatus = 'done';
         if (typeof scheduleSave === 'function') scheduleSave();
-        if (indicator) {
-          indicator.style.color = '#86efac';
-          indicator.innerHTML = '📄 ' + (text.length > 1000 ? Math.round(text.length/100)/10 + 'k' : text.length) + ' Zeichen indexiert';
+        const ind = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+        if (ind) {
+          ind.style.color = '#86efac';
+          ind.innerHTML = '📄 ' + (text.length > 1000 ? Math.round(text.length/100)/10 + 'k' : text.length) + ' Zeichen indexiert';
         }
+        // Wenn Toast verfügbar: Mini-Benachrichtigung
+        if (typeof toast === 'function') toast('ok', '✓ Indexiert', fileObj.name);
         console.log('[TextExtract] OK', fileObj.name, '→', text.length, 'Zeichen');
       } else {
         fileObj.textExtractStatus = 'failed';
         if (typeof scheduleSave === 'function') scheduleSave();
-        if (indicator) {
-          indicator.style.color = '#f87171';
-          indicator.innerHTML = '⚠️ Speichern fehlgeschlagen <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
+        const ind = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+        if (ind) {
+          ind.style.color = '#f87171';
+          ind.innerHTML = '⚠️ Speichern fehlgeschlagen <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
         }
       }
     } catch (err) {
       console.warn('[TextExtract] Pipeline error:', fileObj.name, err?.message || err);
       fileObj.textExtractStatus = 'failed';
       if (typeof scheduleSave === 'function') scheduleSave();
-      if (indicator) {
-        indicator.style.color = '#f87171';
-        indicator.innerHTML = '⚠️ ' + esc(err?.message || 'Fehler') + ' <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
+      const ind = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+      if (ind) {
+        ind.style.color = '#f87171';
+        ind.innerHTML = '⚠️ ' + esc(err?.message || 'Fehler') + ' <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
       }
     }
     
+    window._updateGlobalQueueIndicator();
     // Kleine Pause zwischen Files damit der Browser atmen kann
     await new Promise(r => setTimeout(r, 100));
   }
   
   window._extractQueueRunning = false;
+  window._updateGlobalQueueIndicator();
 };
 
 window._extractAndStoreTextForFile = function(kind, entityId, fileObj, originalFile) {
@@ -41160,8 +41270,8 @@ async function loadMammothLibrary() {
         script.crossOrigin = "anonymous";
         script.onload = resolve;
         script.onerror = reject;
-        // Timeout damit es nicht ewig hängt
-        setTimeout(() => reject(new Error("Timeout")), 8000);
+        // Timeout damit es nicht ewig hängt (15s — manche Verbindungen brauchen länger)
+        setTimeout(() => reject(new Error("Timeout")), 15000);
         document.head.appendChild(script);
       });
       
