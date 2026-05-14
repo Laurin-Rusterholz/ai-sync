@@ -5749,20 +5749,29 @@ window._extractTextFromFile = async function(file) {
 };
 
 // Speichere extrahierten Text in Netlify Blob
+// Generiert sicheren Blob-Key (keine Sonderzeichen außer _ und -)
+function _textBlobKey(kind, entityId, fileId) {
+  return `attachment-text__${kind}__${entityId}__${fileId}`;
+}
+
 window._saveExtractedText = async function(kind, entityId, fileId, text) {
   if (!text || text.length < 10) return false;
   if (typeof netlifyBlobPut !== 'function') {
     console.warn('[TextExtract] netlifyBlobPut nicht verfügbar');
     return false;
   }
-  const key = `attachment-text:${kind}:${entityId}:${fileId}`;
+  const key = _textBlobKey(kind, entityId, fileId);
+  console.log('[TextExtract] Speichere unter key:', key, '— ', text.length, 'Zeichen');
   try {
     const result = await netlifyBlobPut(key, {
       text: text,
       chars: text.length,
       extractedAt: new Date().toISOString(),
     });
-    return result?.ok === true;
+    console.log('[TextExtract] PUT-Result:', result);
+    if (result?.ok === true) return true;
+    console.warn('[TextExtract] PUT nicht ok:', result);
+    return false;
   } catch (err) {
     console.warn('[TextExtract] Save failed:', err);
     return false;
@@ -5772,12 +5781,16 @@ window._saveExtractedText = async function(kind, entityId, fileId, text) {
 // Lade extrahierten Text wieder
 window._loadExtractedText = async function(kind, entityId, fileId) {
   if (typeof netlifyBlobGet !== 'function') return null;
-  const key = `attachment-text:${kind}:${entityId}:${fileId}`;
-  try {
-    const result = await netlifyBlobGet(key);
-    if (result?.ok && result.data?.text) return result.data.text;
-  } catch (err) {
-    console.warn('[TextExtract] Load failed:', err);
+  const key = _textBlobKey(kind, entityId, fileId);
+  // Backwards-compat: alte Keys mit Doppelpunkten auch versuchen
+  const oldKey = `attachment-text:${kind}:${entityId}:${fileId}`;
+  for (const k of [key, oldKey]) {
+    try {
+      const result = await netlifyBlobGet(k);
+      if (result?.ok && result.data?.text) return result.data.text;
+    } catch (err) {
+      // weiter zum nächsten
+    }
   }
   return null;
 };
@@ -5919,7 +5932,7 @@ window._extractQueueProcess = async function() {
       if (saved) {
         fileObj.textExtracted = true;
         fileObj.textChars = text.length;
-        fileObj.textKey = `attachment-text:${kind}:${entityId}:${fileObj.id}`;
+        fileObj.textKey = _textBlobKey(kind, entityId, fileObj.id);
         fileObj.textExtractStatus = 'done';
         if (typeof scheduleSave === 'function') scheduleSave();
         if (indicator) {
