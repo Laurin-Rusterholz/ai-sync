@@ -6746,6 +6746,7 @@ function normalizeData(data) {
     m.linkedIdeas = Array.isArray(m.linkedIdeas) ? m.linkedIdeas : [];
     m.tags = Array.isArray(m.tags) ? m.tags : [];
     m.files = Array.isArray(m.files) ? m.files : [];
+    m.fileFolders = Array.isArray(m.fileFolders) ? m.fileFolders : [];
     m.read = m.read !== false;
     m.archived = !!m.archived;
     m.starred = !!m.starred;
@@ -84702,14 +84703,9 @@ console.log('📚 Leseliste geladen');
       
       ${linkedHtml.join("")}
       
-      ${mail.files?.length ? `<div class="mh-detail-section">
-        <h4>📎 Anhänge (${mail.files.length})</h4>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          ${mail.files.map((f,i) => `<div class="mh-link-pill" onclick="mhOpenAttachment('${id}',${i})">
-            📎 ${mhEsc(f.name || "Datei")} ${f.size ? `<span style="color:var(--muted);font-size:11px">(${(f.size/1024).toFixed(1)} KB)</span>` : ""}
-          </div>`).join("")}
-        </div>
-      </div>` : ""}
+      <div style="margin-top:18px">
+        ${renderFileAttachments("email", id)}
+      </div>
     </div>`;
   };
   
@@ -84811,7 +84807,16 @@ console.log('📚 Leseliste geladen');
           <label class="mh-label">Anhänge</label>
           <div id="mhFilesList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">${renderFilesList()}</div>
           <input type="file" id="mhFileInput" multiple style="display:none" onchange="mhHandleFileSelect(event)" />
-          <button class="mh-btn ghost" onclick="document.getElementById('mhFileInput').click()" style="font-size:12px">+ Datei hinzufügen</button>
+          <div id="mhDropZone" 
+               style="border:2px dashed var(--border);border-radius:8px;padding:14px;text-align:center;cursor:pointer;transition:all .15s;background:rgba(255,255,255,.02)"
+               onclick="document.getElementById('mhFileInput').click()"
+               ondragover="event.preventDefault();this.style.borderColor='#22c55e';this.style.background='rgba(34,197,94,.06)'"
+               ondragleave="this.style.borderColor='var(--border)';this.style.background='rgba(255,255,255,.02)'"
+               ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='rgba(255,255,255,.02)';window.mhHandleDrop(event)">
+            <div style="font-size:22px;margin-bottom:4px;opacity:.6">📎</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5">PDFs, Bilder, Word-Dateien hier <strong style="color:var(--text)">ablegen</strong><br>oder <strong style="color:var(--text)">klicken</strong> zum Auswählen</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:6px;opacity:.7">Upload zu Firebase Storage</div>
+          </div>
         </div>
       </div>
       <div class="mh-modal-foot">
@@ -85050,6 +85055,16 @@ console.log('📚 Leseliste geladen');
   window.mhHandleFileSelect = async function(e) {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
+    await window._mhUploadFiles(files);
+  };
+  
+  window.mhHandleDrop = async function(e) {
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length === 0) return;
+    await window._mhUploadFiles(files);
+  };
+  
+  window._mhUploadFiles = async function(files) {
     if (files.length === 0) return;
     
     if (!window.firebaseStorage || typeof window.uploadToFirebase !== "function") {
@@ -85068,14 +85083,13 @@ console.log('📚 Leseliste geladen');
         id: _mhEditing, subject: "", body: "", summary: "", date: now.slice(0,10),
         direction: "incoming", fromPersonId: null, toPersonIds: [], ccPersonIds: [],
         linkedTasks: [], linkedProjects: [], linkedOrganizations: [],
-        linkedNotes: [], linkedIdeas: [], tags: [], files: [],
+        linkedNotes: [], linkedIdeas: [], tags: [], files: [], fileFolders: [],
         read: false, archived: false, starred: false, _isDraft: true,
         createdAt: now, updatedAt: now,
       };
     }
     
     // Nutze die generische Upload-Logik (gleicher Code wie bei Projekten etc.)
-    // Diese schreibt direkt in APP.state.data.entities.emails[_mhEditing].files
     await window._handleFileSelect(files, "email", _mhEditing, "");
     
     // Synce Editor-Buffer mit dem was jetzt in der Entity ist
