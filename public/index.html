@@ -5559,7 +5559,34 @@ function renderFileAttachments(kind, entityId) {
       <div class="file-info">
         <div class="file-name" data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="${esc(f.name)}">${esc(f.name)}</div>
         <div class="file-meta">${formatFileSize(f.size)} · ${ext.toUpperCase()}${f.uploadedAt ? ' · ' + new Date(f.uploadedAt).toLocaleDateString('de-CH') : ''}</div>
-        ${f.textExtracted ? `<div data-text-extract="${f.id}" style="font-size:10px;color:#86efac;margin-top:1px">📄 ${f.textChars > 1000 ? Math.round(f.textChars/100)/10 + 'k' : f.textChars} Zeichen indexiert</div>` : (f.textExtractStatus === 'pending' ? `<div data-text-extract="${f.id}" style="font-size:10px;color:var(--muted);margin-top:1px">⏳ Text wird extrahiert...</div>` : (f.textExtractStatus === 'skipped' || f.textExtractStatus === 'failed' ? '' : ''))}
+        ${(() => {
+          const extractable = ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes(ext);
+          if (f.textExtracted) {
+            return `<div data-text-extract="${f.id}" style="font-size:10px;color:#86efac;margin-top:1px">📄 ${f.textChars > 1000 ? Math.round(f.textChars/100)/10 + 'k' : f.textChars} Zeichen indexiert</div>`;
+          }
+          if (f.textExtractStatus === 'queued') {
+            return `<div data-text-extract="${f.id}" style="font-size:10px;color:var(--muted);margin-top:1px">⏸ In Warteschlange</div>`;
+          }
+          if (f.textExtractStatus === 'pending') {
+            // Falls "pending" älter als 5min — als hängend behandeln und Re-Try anbieten
+            const uploadAge = f.uploadedAt ? Date.now() - new Date(f.uploadedAt).getTime() : 0;
+            if (uploadAge > 5 * 60 * 1000) {
+              return `<div data-text-extract="${f.id}" style="font-size:10px;color:#fbbf24;margin-top:1px">⚠️ Indexierung steckt fest <button onclick="window._reindexFile('${kind}','${entityId}','${f.id}')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button></div>`;
+            }
+            return `<div data-text-extract="${f.id}" style="font-size:10px;color:var(--muted);margin-top:1px">⏳ Text wird extrahiert...</div>`;
+          }
+          if (f.textExtractStatus === 'failed') {
+            return `<div data-text-extract="${f.id}" style="font-size:10px;color:#f87171;margin-top:1px">⚠️ Extraktion fehlgeschlagen <button onclick="window._reindexFile('${kind}','${entityId}','${f.id}')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button></div>`;
+          }
+          if (f.textExtractStatus === 'skipped') {
+            return `<div data-text-extract="${f.id}" style="font-size:10px;color:var(--muted);margin-top:1px;opacity:.7">○ Format nicht indexierbar</div>`;
+          }
+          // status undefined (alte Datei vor dem Update) + extrahierbar
+          if (extractable) {
+            return `<div data-text-extract="${f.id}" style="font-size:10px;color:#fbbf24;margin-top:1px">⚡ Noch nicht indexiert <button onclick="window._reindexFile('${kind}','${entityId}','${f.id}')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">jetzt indexieren</button></div>`;
+          }
+          return '';
+        })()}
       </div>
       <div class="file-actions">
         ${folders.length > 0 ? `<select title="In Ordner verschieben" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:10px;padding:2px 4px;border-radius:6px;cursor:pointer;max-width:80px" onchange="window._moveFileToFolder('${kind}','${entityId}',${idx},this.value)"><option value="">📂 …</option>${folders.map(fo => `<option value="${fo.id}" ${f.folderId === fo.id ? 'selected' : ''}>${esc(fo.name)}</option>`).join('')}</select>` : ''}
@@ -5624,11 +5651,18 @@ function renderFileAttachments(kind, entityId) {
       ${unsorted.length > 0 ? unsorted.map(x => renderFileItem(x.f, x.i)).join('') : '<div style="padding:6px 12px;font-size:11px;color:var(--muted);text-align:center">📄 Unsortierte Dateien — hierher ziehen zum Entfernen aus Ordner</div>'}
     </div>` : (unsorted.length > 0 ? `<div class="file-list" style="margin-top:8px">${unsorted.map(x => renderFileItem(x.f, x.i)).join('')}</div>` : '');
 
+  // Counts für Bulk-Button
+  const unindexedCount = files.filter(f => !f.textExtracted && f.textExtractStatus !== 'skipped' && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes((f.name || '').split('.').pop().toLowerCase())).length;
+  const indexedCount = files.filter(f => f.textExtracted).length;
+
   return `
     <div class="card mb-4">
-      <h3 style="display:flex;align-items:center;justify-content:space-between">
-        <span>📎 Dokumente (${files.length})</span>
-        <button onclick="window._createFileFolder('${kind}','${entityId}')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:4px;transition:all .15s" title="Neuen Ordner erstellen">📁+ Ordner</button>
+      <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span>📎 Dokumente (${files.length})${indexedCount > 0 ? ` <span style="font-size:11px;font-weight:400;color:#86efac;margin-left:6px">· ${indexedCount} indexiert</span>` : ''}</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${unindexedCount >= 1 ? `<button onclick="window._reindexAllFiles('${kind}','${entityId}')" style="background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.25);color:#c4b5fd;cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px" title="Text aus ${unindexedCount} Datei(en) extrahieren">🧠 ${unindexedCount} indexieren</button>` : ''}
+          <button onclick="window._createFileFolder('${kind}','${entityId}')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:4px;transition:all .15s" title="Neuen Ordner erstellen">📁+ Ordner</button>
+        </div>
       </h3>
       ${!fbOk ? `<div style="padding:8px 12px;margin-bottom:10px;background:rgba(255,159,10,.1);border:1px solid rgba(255,159,10,.3);border-radius:8px;font-size:11px;color:var(--warn)">⚠️ Firebase nicht geladen — stelle sicher, dass kein Adblocker Firebase blockiert. Auf Netlify deployen damit es funktioniert.</div>` : ''}
       ${renderUploadZone('')}
@@ -5748,42 +5782,159 @@ window._loadExtractedText = async function(kind, entityId, fileId) {
   return null;
 };
 
-// Wrapper der nach Upload aufgerufen wird — kein await nötig (läuft im Hintergrund)
-window._extractAndStoreTextForFile = function(kind, entityId, fileObj, originalFile) {
-  // Markiere als "in progress" im fileObj
-  fileObj.textExtractStatus = 'pending';
+// 🔄 Manuelle Re-Indexierung einer bereits hochgeladenen Datei
+// Lädt sie aus Firebase, extrahiert den Text und speichert ihn in Netlify Blob
+window._reindexFile = async function(kind, entityId, fileId) {
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  if (!entity) return;
+  const fileObj = (entity.files || []).find(f => f.id === fileId);
+  if (!fileObj) return;
+  if (!fileObj.url) { toast('error', 'Kein Download-URL', 'Datei kann nicht neu geladen werden'); return; }
   
-  // Im Hintergrund laufen lassen
-  (async () => {
+  // Status zurücksetzen
+  delete fileObj.textExtracted;
+  delete fileObj.textChars;
+  delete fileObj.textKey;
+  fileObj.textExtractStatus = window._extractQueueRunning ? 'queued' : 'pending';
+  
+  const indicator = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+  if (indicator) {
+    indicator.style.color = 'var(--muted)';
+    indicator.innerHTML = window._extractQueueRunning ? '⏸ In Warteschlange (' + (window._extractQueue.length + 1) + ')' : '⏳ Lade Datei...';
+  }
+  
+  toast('info', '🧠 Indexierung gestartet', fileObj.name);
+  
+  // Datei aus Firebase neu holen — als Blob → File-Objekt
+  let file;
+  try {
+    const resp = await fetch(fileObj.url);
+    if (!resp.ok) throw new Error('Download fehlgeschlagen: ' + resp.status);
+    const blob = await resp.blob();
+    file = new File([blob], fileObj.name, { type: fileObj.type || blob.type });
+  } catch (err) {
+    console.error('[Re-Index] Download failed:', err);
+    fileObj.textExtractStatus = 'failed';
+    if (indicator) {
+      indicator.style.color = '#f87171';
+      indicator.innerHTML = '⚠️ Download fehlgeschlagen <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
+    }
+    scheduleSave();
+    toast('error', 'Download fehlgeschlagen', err?.message || 'unbekannt');
+    return;
+  }
+  
+  // Über Queue extrahieren (mit Timeout, einer nach dem anderen)
+  window._extractQueue.push({ kind, entityId, fileObj, originalFile: file });
+  window._extractQueueProcess();
+};
+
+// 🔄 Alle nicht-indexierten Dateien einer Entity re-indexieren
+window._reindexAllFiles = async function(kind, entityId) {
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  if (!entity || !Array.isArray(entity.files)) return;
+  const toIndex = entity.files.filter(f => !f.textExtracted && f.textExtractStatus !== 'skipped' && f.url);
+  if (toIndex.length === 0) { toast('info', 'Alle indexiert', 'Keine Dateien zu indexieren'); return; }
+  if (!confirm(`${toIndex.length} Datei(en) re-indexieren?\n\nDas kann je nach Größe einige Sekunden bis Minuten dauern. Du kannst weiterarbeiten — läuft im Hintergrund.`)) return;
+  toast('info', '🔄 Re-Index gestartet', toIndex.length + ' Dateien werden nacheinander verarbeitet');
+  for (const f of toIndex) {
+    // Nicht awaiten — Queue macht das schon sequentiell
+    window._reindexFile(kind, entityId, f.id);
+  }
+};
+
+// Wrapper der nach Upload aufgerufen wird — kein await nötig (läuft im Hintergrund)
+// 🚦 Globale Extraktion-Queue: eine Datei nach der anderen
+// Verhindert Browser-Überlastung bei mehreren Uploads gleichzeitig
+window._extractQueue = window._extractQueue || [];
+window._extractQueueRunning = false;
+window._extractQueueProcess = async function() {
+  if (window._extractQueueRunning) return;
+  window._extractQueueRunning = true;
+  
+  while (window._extractQueue.length > 0) {
+    const job = window._extractQueue.shift();
+    const { kind, entityId, fileObj, originalFile } = job;
+    
+    // Status updaten: gerade dran
+    fileObj.textExtractStatus = 'pending';
+    const indicator = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+    if (indicator) {
+      indicator.style.color = 'var(--muted)';
+      indicator.innerHTML = '⏳ Text wird extrahiert...';
+    }
+    
     try {
-      const text = await window._extractTextFromFile(originalFile);
+      // ⏱ Extraktion mit Timeout (60 Sekunden)
+      const text = await Promise.race([
+        window._extractTextFromFile(originalFile),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout nach 60s')), 60000))
+      ]);
+      
       if (!text || text.length < 10) {
         fileObj.textExtractStatus = 'skipped';
-        return;
+        if (typeof scheduleSave === 'function') scheduleSave();
+        if (indicator) {
+          indicator.style.color = 'var(--muted)';
+          indicator.style.opacity = '.7';
+          indicator.innerHTML = '○ Format nicht indexierbar';
+        }
+        continue;
       }
+      
       const saved = await window._saveExtractedText(kind, entityId, fileObj.id, text);
       if (saved) {
         fileObj.textExtracted = true;
         fileObj.textChars = text.length;
         fileObj.textKey = `attachment-text:${kind}:${entityId}:${fileObj.id}`;
         fileObj.textExtractStatus = 'done';
-        // Schedule a save damit Metadaten gespeichert sind
         if (typeof scheduleSave === 'function') scheduleSave();
-        // Visuelles Update wenn UI sichtbar ist
-        const indicator = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
         if (indicator) {
-          indicator.textContent = '📄 ' + (text.length > 1000 ? Math.round(text.length/100)/10 + 'k' : text.length) + ' Zeichen extrahiert';
           indicator.style.color = '#86efac';
+          indicator.innerHTML = '📄 ' + (text.length > 1000 ? Math.round(text.length/100)/10 + 'k' : text.length) + ' Zeichen indexiert';
         }
         console.log('[TextExtract] OK', fileObj.name, '→', text.length, 'Zeichen');
       } else {
         fileObj.textExtractStatus = 'failed';
+        if (typeof scheduleSave === 'function') scheduleSave();
+        if (indicator) {
+          indicator.style.color = '#f87171';
+          indicator.innerHTML = '⚠️ Speichern fehlgeschlagen <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
+        }
       }
     } catch (err) {
-      console.warn('[TextExtract] Pipeline error:', err);
+      console.warn('[TextExtract] Pipeline error:', fileObj.name, err?.message || err);
       fileObj.textExtractStatus = 'failed';
+      if (typeof scheduleSave === 'function') scheduleSave();
+      if (indicator) {
+        indicator.style.color = '#f87171';
+        indicator.innerHTML = '⚠️ ' + esc(err?.message || 'Fehler') + ' <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
+      }
     }
-  })();
+    
+    // Kleine Pause zwischen Files damit der Browser atmen kann
+    await new Promise(r => setTimeout(r, 100));
+  }
+  
+  window._extractQueueRunning = false;
+};
+
+window._extractAndStoreTextForFile = function(kind, entityId, fileObj, originalFile) {
+  // Markiere als "queued" wenn schon was läuft, sonst direkt "pending"
+  fileObj.textExtractStatus = window._extractQueueRunning ? 'queued' : 'pending';
+  
+  const indicator = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+  if (indicator && fileObj.textExtractStatus === 'queued') {
+    indicator.style.color = 'var(--muted)';
+    indicator.innerHTML = '⏸ In Warteschlange (' + (window._extractQueue.length + 1) + ')';
+  }
+  
+  // In Queue stellen
+  window._extractQueue.push({ kind, entityId, fileObj, originalFile });
+  // Worker anstossen (falls noch nicht läuft)
+  window._extractQueueProcess();
 };
 
 // Aggregator: Hol alle extrahierten Texte für eine Liste von Files
