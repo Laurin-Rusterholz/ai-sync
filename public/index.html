@@ -5579,9 +5579,13 @@ function renderFileAttachments(kind, entityId) {
             return `<div data-text-extract="${f.id}" style="font-size:10px;color:#f87171;margin-top:1px">⚠️ Extraktion fehlgeschlagen <button onclick="window._reindexFile('${kind}','${entityId}','${f.id}')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button></div>`;
           }
           if (f.textExtractStatus === 'skipped') {
+            // Für extrahierbare Formate trotzdem Retry erlauben — z.B. nach Code-Updates
+            if (extractable) {
+              return `<div data-text-extract="${f.id}" style="font-size:10px;color:var(--muted);margin-top:1px;opacity:.85">○ Wurde übersprungen <button onclick="window._reindexFile('${kind}','${entityId}','${f.id}')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button></div>`;
+            }
             return `<div data-text-extract="${f.id}" style="font-size:10px;color:var(--muted);margin-top:1px;opacity:.7">○ Format nicht indexierbar</div>`;
           }
-          // status undefined (alte Datei vor dem Update) + extrahierbar
+          // CATCH-ALL: extrahierbar aber kein bekannter Status — zeige immer Indexieren-Button
           if (extractable) {
             return `<div data-text-extract="${f.id}" style="font-size:10px;color:#fbbf24;margin-top:1px">⚡ Noch nicht indexiert <button onclick="window._reindexFile('${kind}','${entityId}','${f.id}')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">jetzt indexieren</button></div>`;
           }
@@ -5589,6 +5593,10 @@ function renderFileAttachments(kind, entityId) {
         })()}
       </div>
       <div class="file-actions">
+        ${(() => {
+          const isExtractable = ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes(ext);
+          return isExtractable ? `<button onclick="window._reindexFile('${kind}','${entityId}','${f.id}')" title="Text neu indexieren" style="color:#a5b4fc">🧠</button>` : '';
+        })()}
         ${folders.length > 0 ? `<select title="In Ordner verschieben" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:10px;padding:2px 4px;border-radius:6px;cursor:pointer;max-width:80px" onchange="window._moveFileToFolder('${kind}','${entityId}',${idx},this.value)"><option value="">📂 …</option>${folders.map(fo => `<option value="${fo.id}" ${f.folderId === fo.id ? 'selected' : ''}>${esc(fo.name)}</option>`).join('')}</select>` : ''}
         <button onclick="window._renameFile('${kind}','${entityId}',${idx})" title="Umbenennen">✏️</button>
         <button data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="Preview">👁</button>
@@ -5652,7 +5660,7 @@ function renderFileAttachments(kind, entityId) {
     </div>` : (unsorted.length > 0 ? `<div class="file-list" style="margin-top:8px">${unsorted.map(x => renderFileItem(x.f, x.i)).join('')}</div>` : '');
 
   // Counts für Bulk-Button
-  const unindexedCount = files.filter(f => !f.textExtracted && f.textExtractStatus !== 'skipped' && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes((f.name || '').split('.').pop().toLowerCase())).length;
+  const unindexedCount = files.filter(f => !f.textExtracted && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes((f.name || '').split('.').pop().toLowerCase())).length;
   const indexedCount = files.filter(f => f.textExtracted).length;
 
   return `
@@ -5749,16 +5757,27 @@ window._extractTextFromFile = async function(file) {
         try {
           const htmlResult = await mammoth.convertToHtml({ arrayBuffer });
           if (htmlResult?.value) {
-            // HTML zu Plain-Text konvertieren mit Struktur-Erhalt
-            const tmp = document.createElement('div');
-            tmp.innerHTML = htmlResult.value;
-            // Tabellen-Cells als | getrennt, Rows als Newline
-            tmp.querySelectorAll('td, th').forEach(cell => { cell.textContent = cell.textContent + ' | '; });
-            tmp.querySelectorAll('tr').forEach(row => { row.textContent = row.textContent + '\n'; });
-            tmp.querySelectorAll('p, div, h1, h2, h3, h4, li, br').forEach(el => { 
-              if (el.nextSibling) el.appendChild(document.createTextNode('\n'));
-            });
-            text = tmp.textContent.replace(/\| \n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+            // HTML zu Plain-Text mit String-Replacements (kein DOM-Manipulation)
+            let html = htmlResult.value;
+            // Tabellen-Cells als | getrennt
+            html = html.replace(/<\/(td|th)>\s*<(td|th)[^>]*>/gi, ' | ');
+            // Tabellen-Zeilen mit Newline
+            html = html.replace(/<\/tr>/gi, '\n');
+            // Block-Elemente als Newlines
+            html = html.replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '\n');
+            html = html.replace(/<br[^>]*\/?>/gi, '\n');
+            // List-Items als •
+            html = html.replace(/<li[^>]*>/gi, '• ');
+            // Alle übrigen Tags entfernen
+            html = html.replace(/<[^>]+>/g, '');
+            // HTML-Entities decodieren
+            html = html.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+                       .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                       .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+                       .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+                       .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num, 10)));
+            // Mehrfach-Newlines reduzieren
+            text = html.replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
             console.log('[TextExtract] convertToHtml-Variante:', text.length, 'Zeichen');
           }
         } catch (htmlErr) {
@@ -5961,7 +5980,7 @@ window._reindexAllFiles = async function(kind, entityId) {
   const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !Array.isArray(entity.files)) return;
-  const toIndex = entity.files.filter(f => !f.textExtracted && f.textExtractStatus !== 'skipped' && f.url);
+  const toIndex = entity.files.filter(f => !f.textExtracted && f.url && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes((f.name || '').split('.').pop().toLowerCase()));
   if (toIndex.length === 0) { toast('info', 'Alle indexiert', 'Keine Dateien zu indexieren'); return; }
   if (!confirm(`${toIndex.length} Datei(en) re-indexieren?\n\nDas kann je nach Größe einige Sekunden bis Minuten dauern. Du kannst weiterarbeiten — läuft im Hintergrund.`)) return;
   toast('info', '🔄 Re-Index gestartet', toIndex.length + ' Dateien werden nacheinander verarbeitet');
