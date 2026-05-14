@@ -5790,7 +5790,7 @@ window._reindexFile = async function(kind, entityId, fileId) {
   if (!entity) return;
   const fileObj = (entity.files || []).find(f => f.id === fileId);
   if (!fileObj) return;
-  if (!fileObj.url) { toast('error', 'Kein Download-URL', 'Datei kann nicht neu geladen werden'); return; }
+  if (!fileObj.storagePath && !fileObj.url) { toast('error', 'Kein Storage-Pfad', 'Datei kann nicht neu geladen werden'); return; }
   
   // Status zurücksetzen
   delete fileObj.textExtracted;
@@ -5806,26 +5806,57 @@ window._reindexFile = async function(kind, entityId, fileId) {
   
   toast('info', '🧠 Indexierung gestartet', fileObj.name);
   
-  // Datei aus Firebase neu holen — als Blob → File-Objekt
+  // Datei laden — mit mehreren Strategien wegen CORS
   let file;
   try {
-    const resp = await fetch(fileObj.url);
-    if (!resp.ok) throw new Error('Download fehlgeschlagen: ' + resp.status);
-    const blob = await resp.blob();
+    let blob = null;
+    
+    // Strategie 1: Firebase SDK mit frischer Download-URL (umgeht CORS-Cache)
+    if (fileObj.storagePath && typeof firebaseStorage !== 'undefined' && firebaseStorage) {
+      try {
+        // Hole frische URL die explizit CORS-Header zurückgibt
+        const ref = firebaseStorage.ref(fileObj.storagePath);
+        const freshUrl = await ref.getDownloadURL();
+        const resp = await fetch(freshUrl);
+        if (resp.ok) blob = await resp.blob();
+      } catch (e) {
+        console.warn('[Re-Index] SDK-URL Strategie failed:', e?.message);
+      }
+    }
+    
+    // Strategie 2: XHR mit Firebase-URL (XHR umgeht manchmal CORS wo fetch failed)
+    if (!blob && fileObj.url) {
+      try {
+        blob = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', fileObj.url);
+          xhr.responseType = 'blob';
+          xhr.timeout = 30000;
+          xhr.onload = () => xhr.status === 200 ? resolve(xhr.response) : reject(new Error('XHR ' + xhr.status));
+          xhr.onerror = () => reject(new Error('XHR Netzwerkfehler'));
+          xhr.ontimeout = () => reject(new Error('XHR Timeout'));
+          xhr.send();
+        });
+      } catch (e) {
+        console.warn('[Re-Index] XHR Strategie failed:', e?.message);
+      }
+    }
+    
+    if (!blob) throw new Error('CORS blockt Download — bitte Datei neu hochladen für Indexierung');
     file = new File([blob], fileObj.name, { type: fileObj.type || blob.type });
   } catch (err) {
     console.error('[Re-Index] Download failed:', err);
     fileObj.textExtractStatus = 'failed';
     if (indicator) {
       indicator.style.color = '#f87171';
-      indicator.innerHTML = '⚠️ Download fehlgeschlagen <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
+      indicator.innerHTML = '⚠️ ' + esc(err?.message || 'Download fehlgeschlagen') + ' <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:#a5b4fc;cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
     }
     scheduleSave();
-    toast('error', 'Download fehlgeschlagen', err?.message || 'unbekannt');
+    toast('error', 'CORS-Block', 'Bitte Datei neu hochladen — bestehende kann nicht indexiert werden');
     return;
   }
   
-  // Über Queue extrahieren (mit Timeout, einer nach dem anderen)
+  // Über Queue extrahieren
   window._extractQueue.push({ kind, entityId, fileObj, originalFile: file });
   window._extractQueueProcess();
 };
