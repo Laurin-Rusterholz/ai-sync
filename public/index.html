@@ -5559,6 +5559,7 @@ function renderFileAttachments(kind, entityId) {
       <div class="file-info">
         <div class="file-name" data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="${esc(f.name)}">${esc(f.name)}</div>
         <div class="file-meta">${formatFileSize(f.size)} · ${ext.toUpperCase()}${f.uploadedAt ? ' · ' + new Date(f.uploadedAt).toLocaleDateString('de-CH') : ''}</div>
+        ${f.textExtracted ? `<div data-text-extract="${f.id}" style="font-size:10px;color:#86efac;margin-top:1px">📄 ${f.textChars > 1000 ? Math.round(f.textChars/100)/10 + 'k' : f.textChars} Zeichen indexiert</div>` : (f.textExtractStatus === 'pending' ? `<div data-text-extract="${f.id}" style="font-size:10px;color:var(--muted);margin-top:1px">⏳ Text wird extrahiert...</div>` : (f.textExtractStatus === 'skipped' || f.textExtractStatus === 'failed' ? '' : ''))}
       </div>
       <div class="file-actions">
         ${folders.length > 0 ? `<select title="In Ordner verschieben" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);font-size:10px;padding:2px 4px;border-radius:6px;cursor:pointer;max-width:80px" onchange="window._moveFileToFolder('${kind}','${entityId}',${idx},this.value)"><option value="">📂 …</option>${folders.map(fo => `<option value="${fo.id}" ${f.folderId === fo.id ? 'selected' : ''}>${esc(fo.name)}</option>`).join('')}</select>` : ''}
@@ -5650,6 +5651,741 @@ window._handleFileDrop = function(e, kind, entityId, folderId) {
 };
 
 window._uploadLocks = window._uploadLocks || {};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 📄 ATTACHMENT TEXT EXTRACTION — Anhänge zu Text für AI
+// ═══════════════════════════════════════════════════════════════════════════
+// 
+// Funktion: Beim Upload eines Anhangs (PDF/Word/TXT) wird im Hintergrund
+// der Text extrahiert und in Netlify Blob gespeichert.
+// Schema: blob-Key = `attachment-text:{kind}:{entityId}:{fileId}`
+// File-Objekt bekommt: { textExtracted: true, textChars: N, textKey: "..." }
+
+window._extractTextFromFile = async function(file) {
+  const lowerName = (file.name || '').toLowerCase();
+  const type = file.type || '';
+  
+  try {
+    // ─── PDF ───
+    if (lowerName.endsWith('.pdf') || type === 'application/pdf') {
+      if (typeof loadPDFLibrary === 'function') {
+        const loaded = await loadPDFLibrary();
+        if (!loaded || !window.pdfjsLib) throw new Error('PDF.js nicht verfügbar');
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer, disableWorker: true }).promise;
+        const pages = [];
+        const maxPages = Math.min(pdf.numPages, 80); // Limit für Performance
+        for (let i = 1; i <= maxPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map(it => it.str).join(' ');
+          pages.push(pageText);
+        }
+        let text = pages.join('\n\n');
+        if (pdf.numPages > maxPages) text += `\n\n[... ${pdf.numPages - maxPages} weitere Seiten nicht extrahiert ...]`;
+        return text.trim();
+      }
+    }
+    
+    // ─── Word .docx ───
+    if (lowerName.endsWith('.docx') || type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      if (typeof loadMammothLibrary === 'function') {
+        const loaded = await loadMammothLibrary();
+        if (!loaded || !window.mammoth) throw new Error('mammoth.js nicht verfügbar');
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        return (result.value || '').trim();
+      }
+    }
+    
+    // ─── Plain Text / Markdown / CSV ───
+    if (lowerName.endsWith('.txt') || lowerName.endsWith('.md') || lowerName.endsWith('.csv') || 
+        lowerName.endsWith('.json') || lowerName.endsWith('.html') || lowerName.endsWith('.xml') ||
+        type.startsWith('text/')) {
+      const text = await file.text();
+      return text.trim();
+    }
+    
+    // ─── Sonst: kein automatisches Extrahieren ───
+    return null;
+  } catch (err) {
+    console.warn('[TextExtract]', file.name, 'failed:', err?.message || err);
+    return null;
+  }
+};
+
+// Speichere extrahierten Text in Netlify Blob
+window._saveExtractedText = async function(kind, entityId, fileId, text) {
+  if (!text || text.length < 10) return false;
+  if (typeof netlifyBlobPut !== 'function') {
+    console.warn('[TextExtract] netlifyBlobPut nicht verfügbar');
+    return false;
+  }
+  const key = `attachment-text:${kind}:${entityId}:${fileId}`;
+  try {
+    const result = await netlifyBlobPut(key, {
+      text: text,
+      chars: text.length,
+      extractedAt: new Date().toISOString(),
+    });
+    return result?.ok === true;
+  } catch (err) {
+    console.warn('[TextExtract] Save failed:', err);
+    return false;
+  }
+};
+
+// Lade extrahierten Text wieder
+window._loadExtractedText = async function(kind, entityId, fileId) {
+  if (typeof netlifyBlobGet !== 'function') return null;
+  const key = `attachment-text:${kind}:${entityId}:${fileId}`;
+  try {
+    const result = await netlifyBlobGet(key);
+    if (result?.ok && result.data?.text) return result.data.text;
+  } catch (err) {
+    console.warn('[TextExtract] Load failed:', err);
+  }
+  return null;
+};
+
+// Wrapper der nach Upload aufgerufen wird — kein await nötig (läuft im Hintergrund)
+window._extractAndStoreTextForFile = function(kind, entityId, fileObj, originalFile) {
+  // Markiere als "in progress" im fileObj
+  fileObj.textExtractStatus = 'pending';
+  
+  // Im Hintergrund laufen lassen
+  (async () => {
+    try {
+      const text = await window._extractTextFromFile(originalFile);
+      if (!text || text.length < 10) {
+        fileObj.textExtractStatus = 'skipped';
+        return;
+      }
+      const saved = await window._saveExtractedText(kind, entityId, fileObj.id, text);
+      if (saved) {
+        fileObj.textExtracted = true;
+        fileObj.textChars = text.length;
+        fileObj.textKey = `attachment-text:${kind}:${entityId}:${fileObj.id}`;
+        fileObj.textExtractStatus = 'done';
+        // Schedule a save damit Metadaten gespeichert sind
+        if (typeof scheduleSave === 'function') scheduleSave();
+        // Visuelles Update wenn UI sichtbar ist
+        const indicator = document.querySelector(`[data-text-extract="${fileObj.id}"]`);
+        if (indicator) {
+          indicator.textContent = '📄 ' + (text.length > 1000 ? Math.round(text.length/100)/10 + 'k' : text.length) + ' Zeichen extrahiert';
+          indicator.style.color = '#86efac';
+        }
+        console.log('[TextExtract] OK', fileObj.name, '→', text.length, 'Zeichen');
+      } else {
+        fileObj.textExtractStatus = 'failed';
+      }
+    } catch (err) {
+      console.warn('[TextExtract] Pipeline error:', err);
+      fileObj.textExtractStatus = 'failed';
+    }
+  })();
+};
+
+// Aggregator: Hol alle extrahierten Texte für eine Liste von Files
+window._aggregateAttachmentTexts = async function(kind, entityId, files) {
+  if (!Array.isArray(files) || files.length === 0) return [];
+  const results = [];
+  for (const f of files) {
+    if (!f.textExtracted || !f.textKey) continue;
+    const text = await window._loadExtractedText(kind, entityId, f.id);
+    if (text) {
+      results.push({
+        name: f.name,
+        size: f.size,
+        chars: f.textChars || text.length,
+        text: text,
+        isTranscript: !!f.isTranscript,  // 🎙 Markierung übernehmen
+      });
+    }
+  }
+  return results;
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🤖 ENTITY AI ASSISTANT — Zusammenfassung & Q&A für Organisationen / Meetings
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Sammelt allen verfügbaren Kontext für eine Entity (org / meeting)
+window._aiCollectEntityContext = async function(kind, entityId) {
+  const e = APP.state.data.entities;
+  const entity = (kind === 'organization' ? e.organizations : e.meetings)?.[entityId];
+  if (!entity) return null;
+  
+  const ctx = {
+    kind,
+    name: entity.name || entity.title || 'Unbekannt',
+    entity: entity,
+    files: [],
+    fileTexts: [],
+    relatedMeetings: [],
+    relatedEmails: [],
+    relatedTasks: [],
+    relatedNotes: [],
+    relatedPersons: [],
+  };
+  
+  // ─── Anhang-Texte (vom Entity selbst) ───
+  if (Array.isArray(entity.files) && entity.files.length > 0) {
+    ctx.files = entity.files.map(f => ({ name: f.name, size: f.size, hasText: !!f.textExtracted }));
+    ctx.fileTexts = await window._aggregateAttachmentTexts(kind === 'organization' ? 'organization' : 'meeting', entityId, entity.files);
+  }
+  
+  if (kind === 'organization') {
+    // ─── Meetings dieser Org ───
+    const meetings = Object.values(e.meetings || {});
+    const orgMeetings = meetings.filter(m => 
+      m.organizationId === entityId || 
+      (Array.isArray(m.linkedOrganizations) && m.linkedOrganizations.includes(entityId)) ||
+      m.orgId === entityId
+    );
+    // sortiere nach Datum, neueste zuerst
+    orgMeetings.sort((a, b) => (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''));
+    ctx.relatedMeetings = orgMeetings.slice(0, 20); // letzte 20
+    
+    // Anhang-Texte aus Meetings auch sammeln
+    for (const m of ctx.relatedMeetings.slice(0, 10)) {
+      if (Array.isArray(m.files) && m.files.length > 0) {
+        const meetingTexts = await window._aggregateAttachmentTexts('meeting', m.id, m.files);
+        meetingTexts.forEach(t => {
+          ctx.fileTexts.push({ ...t, source: `Meeting: ${m.title || m.subject || 'Ohne Titel'}` });
+        });
+      }
+    }
+    
+    // ─── E-Mails ───
+    const emails = Object.values(e.emails || {});
+    ctx.relatedEmails = emails.filter(m => 
+      Array.isArray(m.linkedOrganizations) && m.linkedOrganizations.includes(entityId)
+    ).sort((a,b) => (b.date || '').localeCompare(a.date || '')).slice(0, 15);
+    
+    // ─── Tasks ───
+    const tasks = Object.values(e.tasks || {});
+    ctx.relatedTasks = tasks.filter(t => 
+      t.organizationId === entityId || 
+      (Array.isArray(t.linkedOrganizations) && t.linkedOrganizations.includes(entityId))
+    ).sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 20);
+    
+    // ─── Personen ───
+    const persons = Object.values(e.persons || {});
+    ctx.relatedPersons = persons.filter(p => p.organizationId === entityId);
+    
+    // ─── Notizen ───
+    const notes = Object.values(e.notes || {});
+    ctx.relatedNotes = notes.filter(n => 
+      n.organizationId === entityId ||
+      (Array.isArray(n.linkedOrganizations) && n.linkedOrganizations.includes(entityId))
+    ).sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 10);
+  }
+  
+  if (kind === 'meeting') {
+    // ─── Aufgaben des Meetings ───
+    const tasks = Object.values(e.tasks || {});
+    ctx.relatedTasks = tasks.filter(t => t.meetingId === entityId || 
+      (Array.isArray(t.linkedMeetings) && t.linkedMeetings.includes(entityId))
+    ).slice(0, 20);
+    
+    // ─── Teilnehmer als Personen ───
+    if (Array.isArray(entity.attendeeIds)) {
+      const persons = e.persons || {};
+      ctx.relatedPersons = entity.attendeeIds.map(pid => persons[pid]).filter(Boolean);
+    }
+    
+    // ─── Organisation (falls verknüpft) ───
+    if (entity.organizationId || entity.orgId) {
+      const orgId = entity.organizationId || entity.orgId;
+      ctx.organization = e.organizations?.[orgId];
+    }
+  }
+  
+  return ctx;
+};
+
+// Baut den AI-Prompt aus dem Kontext
+window._aiBuildEntityPrompt = function(ctx, userQuestion) {
+  const lines = [];
+  
+  if (ctx.kind === 'organization') {
+    lines.push(`Du bist ein persönlicher Assistent von Laurin. Du analysierst Informationen über die Organisation "${ctx.name}".`);
+    if (ctx.entity.industry) lines.push(`Branche: ${ctx.entity.industry}`);
+    if (ctx.entity.notes) lines.push(`Notizen: ${ctx.entity.notes}`);
+    if (ctx.entity.website) lines.push(`Website: ${ctx.entity.website}`);
+  } else if (ctx.kind === 'meeting') {
+    lines.push(`Du bist ein persönlicher Assistent von Laurin. Du analysierst das Meeting "${ctx.name}".`);
+    if (ctx.entity.date) lines.push(`Datum: ${ctx.entity.date}`);
+    if (ctx.entity.location) lines.push(`Ort: ${ctx.entity.location}`);
+    if (ctx.entity.notes || ctx.entity.summary) lines.push(`Beschreibung: ${ctx.entity.notes || ctx.entity.summary}`);
+    if (ctx.entity.agenda) lines.push(`Agenda: ${ctx.entity.agenda}`);
+    if (ctx.entity.minutes) lines.push(`Protokoll: ${ctx.entity.minutes}`);
+    if (ctx.organization) lines.push(`Organisation: ${ctx.organization.name}`);
+  }
+  
+  // ─── Beteiligte Personen ───
+  if (ctx.relatedPersons.length > 0) {
+    lines.push(`\n## Beteiligte Personen (${ctx.relatedPersons.length})`);
+    ctx.relatedPersons.slice(0, 15).forEach(p => {
+      lines.push(`- ${p.name}${p.role ? ' (' + p.role + ')' : ''}${p.notes ? ' — ' + p.notes.slice(0, 80) : ''}`);
+    });
+  }
+  
+  // ─── Meetings ───
+  if (ctx.relatedMeetings && ctx.relatedMeetings.length > 0) {
+    lines.push(`\n## Letzte Meetings (${ctx.relatedMeetings.length})`);
+    ctx.relatedMeetings.forEach(m => {
+      lines.push(`\n### ${m.date || 'kein Datum'} — ${m.title || m.subject || 'Ohne Titel'}`);
+      if (m.notes || m.summary) lines.push(`Beschreibung: ${(m.notes || m.summary).slice(0, 300)}`);
+      if (m.minutes) lines.push(`Protokoll: ${m.minutes.slice(0, 600)}`);
+      if (m.agenda) lines.push(`Agenda: ${m.agenda.slice(0, 300)}`);
+    });
+  }
+  
+  // ─── E-Mails ───
+  if (ctx.relatedEmails && ctx.relatedEmails.length > 0) {
+    lines.push(`\n## Letzte E-Mails (${ctx.relatedEmails.length})`);
+    ctx.relatedEmails.forEach(em => {
+      const dir = { incoming: '📥', outgoing: '📤', internal: '🔄' }[em.direction] || '';
+      lines.push(`\n### ${em.date || 'kein Datum'} ${dir} ${em.subject || 'Ohne Betreff'}`);
+      if (em.summary) lines.push(`Zusammenfassung: ${em.summary}`);
+      if (em.body) lines.push(`Inhalt: ${em.body.slice(0, 400)}`);
+    });
+  }
+  
+  // ─── Aufgaben ───
+  if (ctx.relatedTasks && ctx.relatedTasks.length > 0) {
+    lines.push(`\n## Aufgaben (${ctx.relatedTasks.length})`);
+    ctx.relatedTasks.forEach(t => {
+      const status = t.status === 'done' ? '✅' : t.status === 'doing' ? '⏳' : '○';
+      lines.push(`${status} ${t.title}${t.dueDate ? ' (fällig ' + t.dueDate + ')' : ''}${t.description ? ' — ' + t.description.slice(0, 100) : ''}`);
+    });
+  }
+  
+  // ─── Notizen ───
+  if (ctx.relatedNotes && ctx.relatedNotes.length > 0) {
+    lines.push(`\n## Notizen (${ctx.relatedNotes.length})`);
+    ctx.relatedNotes.forEach(n => {
+      lines.push(`\n### ${n.title || 'Ohne Titel'} (${n.updatedAt?.slice(0,10) || ''})`);
+      if (n.content) lines.push(n.content.slice(0, 500));
+    });
+  }
+  
+  // ─── Anhang-Texte ───
+  if (ctx.fileTexts && ctx.fileTexts.length > 0) {
+    // Trenne Transkripte von normalen Dokumenten — Transkripte brauchen Warnhinweis
+    const transcripts = ctx.fileTexts.filter(f => f.isTranscript);
+    const regular = ctx.fileTexts.filter(f => !f.isTranscript);
+    
+    if (regular.length > 0) {
+      lines.push(`\n## Inhalte aus angehängten Dokumenten (${regular.length})`);
+      let charsUsed = 0;
+      const maxCharsPerFile = 4000;
+      const totalMaxChars = 18000;
+      for (const f of regular) {
+        if (charsUsed >= totalMaxChars) {
+          lines.push(`\n[... weitere Dokumente nicht eingebunden — Limit erreicht ...]`);
+          break;
+        }
+        lines.push(`\n### 📄 ${f.name}${f.source ? ' (' + f.source + ')' : ''}`);
+        const chunk = f.text.slice(0, maxCharsPerFile);
+        lines.push(chunk);
+        if (f.text.length > maxCharsPerFile) lines.push(`[gekürzt — ${f.text.length - maxCharsPerFile} weitere Zeichen]`);
+        charsUsed += chunk.length;
+      }
+    }
+    
+    if (transcripts.length > 0) {
+      lines.push(`\n## 🎙 MEETING-TRANSKRIPTE (${transcripts.length})`);
+      lines.push(`\n⚠️ **WICHTIG:** Die folgenden Texte sind **automatisch erstellte Sprach-Transkripte** und können Fehler enthalten:`);
+      lines.push(`- Namen, Eigennamen und Fachbegriffe können falsch transkribiert sein`);
+      lines.push(`- Zahlen, Datumsangaben und Beträge sind oft unzuverlässig`);
+      lines.push(`- Satzgrenzen und Sprecherwechsel sind nicht immer korrekt`);
+      lines.push(`- Dialekt (Schweizerdeutsch) und Eigenheiten der Sprecher können zu Verständnisproblemen führen`);
+      lines.push(`\nBenutze die Inhalte als **inhaltliche Orientierung**, aber kennzeichne unklare Stellen mit "(im Transkript unklar)" und verlass dich bei wichtigen Daten/Zahlen nicht blind auf die Transkription. Bei Unsicherheit sag es ehrlich.\n`);
+      let tCharsUsed = 0;
+      const maxTPerFile = 5500;
+      const totalTMax = 14000;
+      for (const f of transcripts) {
+        if (tCharsUsed >= totalTMax) {
+          lines.push(`\n[... weitere Transkripte nicht eingebunden — Limit erreicht ...]`);
+          break;
+        }
+        lines.push(`\n### 🎙 Transkript: ${f.name}${f.source ? ' (' + f.source + ')' : ''}`);
+        const chunk = f.text.slice(0, maxTPerFile);
+        lines.push(chunk);
+        if (f.text.length > maxTPerFile) lines.push(`[Transkript gekürzt — ${f.text.length - maxTPerFile} weitere Zeichen]`);
+        tCharsUsed += chunk.length;
+      }
+    }
+  }
+  
+  // ─── User-Anfrage ───
+  if (userQuestion) {
+    lines.push(`\n---\n\n## Anfrage von Laurin\n\n${userQuestion}\n\nBitte beantworte präzise auf Deutsch, basierend NUR auf den oben gegebenen Informationen. Falls Informationen fehlen, sag das ehrlich.`);
+  } else {
+    lines.push(`\n---\n\n## Aufgabe\n\nErstelle eine strukturierte Zusammenfassung mit folgenden Abschnitten:\n\n1. **🎯 Status** — Wo stehen wir aktuell?\n2. **📅 Letzte Aktivitäten** — Was ist in den letzten Wochen passiert (Meetings, E-Mails, Aufgaben)?\n3. **✅ Offene Punkte** — Was steht noch aus?\n4. **⚠️ Auffälligkeiten** — Patterns, ungelöste Themen, Konflikte\n5. **💡 Empfehlung** — Was sollte als nächstes geschehen?\n\nSei konkret, nenne Daten, Namen, Themen. Auf Deutsch, sachlich aber freundlich.`);
+  }
+  
+  return lines.join('\n');
+};
+
+// Hauptfunktion: AI-Modal öffnen
+// 🎙 Transkript-Funktionen
+window._uploadTranscript = function(meetingId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.txt,.md,.docx,.pdf,.vtt,.srt,.html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain';
+  input.onchange = async (ev) => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    
+    if (!window.firebaseStorage || typeof uploadToFirebase !== 'function') {
+      toast('error', 'Firebase', 'Firebase SDK nicht verfügbar');
+      return;
+    }
+    
+    const meeting = APP.state.data.entities.meetings?.[meetingId];
+    if (!meeting) return;
+    if (!Array.isArray(meeting.files)) meeting.files = [];
+    if (!Array.isArray(meeting.transcripts)) meeting.transcripts = [];
+    
+    toast('info', '🎙 Transkript-Upload', file.name);
+    
+    const fileId = 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6);
+    const storagePath = `attachments/meeting/${meetingId}/${fileId}_${file.name}`;
+    
+    try {
+      const downloadUrl = await uploadToFirebase(file, storagePath);
+      const fileObj = {
+        id: fileId,
+        name: file.name,
+        originalName: file.name,
+        size: file.size,
+        type: file.type,
+        storagePath,
+        url: downloadUrl,
+        uploadedAt: new Date().toISOString(),
+        isTranscript: true,  // 🎙 Markierung als Transkript
+      };
+      meeting.files.push(fileObj);
+      
+      // In transcripts-Array eintragen
+      meeting.transcripts.push({
+        id: 't_' + Date.now().toString(36),
+        name: file.name,
+        fileId: fileId,
+        addedAt: new Date().toISOString(),
+        source: 'manual-upload',
+        language: 'de',
+      });
+      
+      meeting.updatedAt = new Date().toISOString();
+      scheduleSave();
+      render();
+      toast('ok', '🎙 Transkript hochgeladen', 'Text wird im Hintergrund extrahiert');
+      
+      // Text-Extraktion im Hintergrund
+      if (typeof window._extractAndStoreTextForFile === 'function') {
+        window._extractAndStoreTextForFile('meeting', meetingId, fileObj, file);
+      }
+    } catch(err) {
+      console.error('Transkript-Upload failed:', err);
+      toast('error', 'Upload-Fehler', err?.message || 'unbekannt');
+    }
+  };
+  input.click();
+};
+
+window._transcriptPreview = async function(meetingId, transcriptId) {
+  const meeting = APP.state.data.entities.meetings?.[meetingId];
+  if (!meeting) return;
+  const t = meeting.transcripts?.find(x => x.id === transcriptId);
+  if (!t) return;
+  const file = (meeting.files || []).find(f => f.id === t.fileId);
+  if (!file) { toast('warn', 'Datei nicht gefunden'); return; }
+  
+  openModal(`🎙 ${esc(t.name)}`, `
+    <div style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.55;margin-bottom:12px">
+      <strong>⚠️ Hinweis:</strong> Dies ist ein automatisches Transkript. Wörter, Namen und Zahlen können falsch erkannt sein.
+    </div>
+    <div id="transcriptPreviewBody" style="font-size:13px;line-height:1.6;max-height:60vh;overflow-y:auto;background:rgba(0,0,0,.15);padding:14px;border-radius:8px;font-family:Georgia,serif;white-space:pre-wrap">⏳ Lade Text...</div>
+  `, `<button class="btn" data-action="close-modal">Schließen</button>
+      ${file.url ? `<a class="btn" href="${file.url}" target="_blank">⬇ Original-Datei</a>` : ''}`);
+  
+  // Text laden
+  if (file.textExtracted && typeof window._loadExtractedText === 'function') {
+    const text = await window._loadExtractedText('meeting', meetingId, file.id);
+    const body = document.getElementById('transcriptPreviewBody');
+    if (body) body.textContent = text || '(kein extrahierter Text verfügbar)';
+  } else {
+    const body = document.getElementById('transcriptPreviewBody');
+    if (body) body.innerHTML = '<span style="color:var(--muted)">Text noch nicht extrahiert. Bitte gleich nochmal versuchen.</span>';
+  }
+};
+
+window._transcriptRemove = function(meetingId, transcriptId) {
+  const meeting = APP.state.data.entities.meetings?.[meetingId];
+  if (!meeting) return;
+  const t = meeting.transcripts?.find(x => x.id === transcriptId);
+  if (!t) return;
+  if (!confirm(`Transkript "${t.name}" wirklich entfernen?\n\nDie Datei selbst bleibt im Anhang (Firebase). Nur die Transkript-Markierung wird entfernt.`)) return;
+  meeting.transcripts = meeting.transcripts.filter(x => x.id !== transcriptId);
+  // Markierung am File-Objekt entfernen
+  const file = (meeting.files || []).find(f => f.id === t.fileId);
+  if (file) delete file.isTranscript;
+  meeting.updatedAt = new Date().toISOString();
+  scheduleSave();
+  render();
+  toast('ok', 'Transkript-Markierung entfernt');
+};
+
+// Programm-Meeting-Verknüpfung
+window._programLinkMeeting = function(programId) {
+  const e = APP.state.data.entities;
+  const program = e.programs?.[programId];
+  if (!program) return;
+  if (!program.linkedMeetings) program.linkedMeetings = [];
+  
+  // Alle nicht-verknüpften Meetings sammeln
+  const available = Object.values(e.meetings || {})
+    .filter(m => m.programId !== programId && !program.linkedMeetings.includes(m.id))
+    .sort((a,b) => (b.date || '').localeCompare(a.date || ''));
+  
+  if (available.length === 0) { toast('warn', 'Keine Meetings', 'Alle vorhandenen Meetings sind bereits verknüpft.'); return; }
+  
+  openModal('🤝 Meeting verknüpfen', `
+    <div class="form">
+      <p style="font-size:12.5px;color:var(--muted);margin:0 0 12px">Wähle ein bestehendes Meeting das mit diesem Programm verknüpft werden soll.</p>
+      <div style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px">
+        ${available.map(m => `
+          <button onclick="window._programDoLinkMeeting('${programId}','${m.id}')" style="text-align:left;padding:10px 14px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:7px;color:var(--text);cursor:pointer;font-size:13px">
+            <div style="font-weight:600">${esc(m.title)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${m.date || 'kein Datum'}${m.startTime ? ' · ' + m.startTime : ''}</div>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>`);
+};
+
+window._programDoLinkMeeting = function(programId, meetingId) {
+  const e = APP.state.data.entities;
+  const program = e.programs?.[programId];
+  const meeting = e.meetings?.[meetingId];
+  if (!program || !meeting) return;
+  if (!program.linkedMeetings) program.linkedMeetings = [];
+  if (!program.linkedMeetings.includes(meetingId)) program.linkedMeetings.push(meetingId);
+  meeting.programId = programId;
+  program.updatedAt = nowIso();
+  meeting.updatedAt = nowIso();
+  scheduleSave();
+  closeModal();
+  render();
+  toast('ok', '🤝', 'Meeting verknüpft');
+};
+
+window._programCreateMeeting = function(programId) {
+  const e = APP.state.data.entities;
+  const program = e.programs?.[programId];
+  if (!program) return;
+  const title = prompt('Titel des neuen Meetings:', 'Meeting — ' + (program.title || 'Programm'));
+  if (!title) return;
+  const id = 'meet_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  e.meetings[id] = {
+    id, title: title.trim(), date: new Date().toISOString().slice(0,10),
+    startTime: '', endTime: '', description: '',
+    organizationId: null, projectId: null, programId: programId,
+    transcripts: [], agendaItems: [], tags: [],
+    linkedTasks: [], linkedProjects: [], linkedNotes: [], linkedOrganizations: [],
+    linkedCalendarEvents: [], linkedMeetings: [],
+    files: [], fileFolders: [],
+    estimatedMinutes: null,
+    createdAt: nowIso(), updatedAt: nowIso(),
+  };
+  if (!program.linkedMeetings) program.linkedMeetings = [];
+  program.linkedMeetings.push(id);
+  scheduleSave();
+  navigate('meetings', id);
+  toast('ok', '🤝', 'Meeting erstellt');
+};
+
+window.openEntityAi = async function(kind, entityId) {
+  const e = APP.state.data.entities;
+  const entity = (kind === 'organization' ? e.organizations : e.meetings)?.[entityId];
+  if (!entity) return;
+  const name = entity.name || entity.title || 'Unbekannt';
+  
+  // Modal öffnen mit Loading-State
+  openModal(`🤖 KI-Assistent · ${esc(name)}`, `
+    <div id="aiAssistantBody" style="min-height:300px;display:flex;flex-direction:column;gap:14px">
+      <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:12px 14px;font-size:12.5px;color:var(--muted);line-height:1.55">
+        Der KI-Assistent analysiert alle verfügbaren Informationen zu <strong style="color:var(--text)">${esc(name)}</strong> — Meetings, E-Mails, Aufgaben, Notizen, Personen und <strong style="color:var(--text)">extrahierten Text aus Dokumenten</strong> (PDFs, Word).
+      </div>
+      <div id="aiContextStats" style="font-size:12px;color:var(--muted)">Sammle Kontext...</div>
+      <div id="aiActionButtons" style="display:none;flex-wrap:wrap;gap:6px"></div>
+      <div id="aiChatHistory" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div id="aiInputArea" style="display:none;padding-top:6px;border-top:1px solid var(--border)">
+        <textarea id="aiQuestionInput" rows="3" placeholder="Stelle eine Frage zu ${esc(name)}... (z.B. 'Was war beim letzten Meeting?', 'Wer sind die wichtigsten Personen?', 'Welche Aufgaben sind noch offen?')"
+                  style="width:100%;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box;font-family:inherit"
+                  onkeydown="if(event.key==='Enter' && (event.ctrlKey || event.metaKey)) window._aiAskQuestion('${kind}','${entityId}')"></textarea>
+        <div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">
+          <button onclick="window._aiAskQuestion('${kind}','${entityId}')" style="padding:8px 16px;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:0;border-radius:7px;cursor:pointer;font-weight:600;font-size:12.5px">🤖 Fragen (⌘+↵)</button>
+        </div>
+      </div>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Schließen</button>`);
+  
+  // Async: Kontext sammeln
+  const ctx = await window._aiCollectEntityContext(kind, entityId);
+  if (!ctx) return;
+  
+  // Stats anzeigen
+  const stats = [];
+  if (ctx.relatedMeetings?.length) stats.push(`📅 ${ctx.relatedMeetings.length} Meetings`);
+  if (ctx.relatedEmails?.length) stats.push(`📬 ${ctx.relatedEmails.length} E-Mails`);
+  if (ctx.relatedTasks?.length) stats.push(`✅ ${ctx.relatedTasks.length} Aufgaben`);
+  if (ctx.relatedPersons?.length) stats.push(`👤 ${ctx.relatedPersons.length} Personen`);
+  if (ctx.relatedNotes?.length) stats.push(`📝 ${ctx.relatedNotes.length} Notizen`);
+  if (ctx.fileTexts?.length) {
+    const transcriptCount = ctx.fileTexts.filter(f => f.isTranscript).length;
+    const docCount = ctx.fileTexts.length - transcriptCount;
+    if (docCount > 0) stats.push(`📄 ${docCount} Dokument${docCount > 1 ? 'e' : ''}`);
+    if (transcriptCount > 0) stats.push(`🎙 ${transcriptCount} Transkript${transcriptCount > 1 ? 'e' : ''}`);
+  }
+  
+  const statsEl = document.getElementById('aiContextStats');
+  if (statsEl) {
+    statsEl.innerHTML = stats.length > 0 
+      ? `<strong style="color:var(--text)">Kontext bereit:</strong> ${stats.join(' · ')}`
+      : `<span style="color:#fbbf24">⚠️ Nur Basis-Daten verfügbar — wenig zum Analysieren.</span>`;
+  }
+  
+  // Speichere Kontext für späteren Re-Use
+  window._aiCurrentCtx = ctx;
+  window._aiChatHistory = [];
+  
+  // Action-Buttons
+  const actionsEl = document.getElementById('aiActionButtons');
+  if (actionsEl) {
+    actionsEl.style.display = 'flex';
+    actionsEl.innerHTML = `
+      <button onclick="window._aiAction('${kind}','${entityId}','summary')" style="padding:8px 14px;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:0;border-radius:7px;cursor:pointer;font-weight:600;font-size:12px">🤖 Zusammenfassung erstellen</button>
+      <button onclick="window._aiAction('${kind}','${entityId}','status')" style="padding:8px 14px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--text);border-radius:7px;cursor:pointer;font-size:12px">🎯 Aktueller Status</button>
+      <button onclick="window._aiAction('${kind}','${entityId}','next-steps')" style="padding:8px 14px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--text);border-radius:7px;cursor:pointer;font-size:12px">🚀 Nächste Schritte</button>
+      <button onclick="window._aiAction('${kind}','${entityId}','timeline')" style="padding:8px 14px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--text);border-radius:7px;cursor:pointer;font-size:12px">📅 Zeitverlauf</button>
+      ${kind === 'organization' ? `<button onclick="window._aiAction('${kind}','${entityId}','people')" style="padding:8px 14px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--text);border-radius:7px;cursor:pointer;font-size:12px">👤 Schlüssel-Personen</button>` : ''}
+    `;
+  }
+  
+  // Input-Area zeigen
+  const inputEl = document.getElementById('aiInputArea');
+  if (inputEl) inputEl.style.display = 'block';
+};
+
+// Action-Handler
+window._aiAction = async function(kind, entityId, action) {
+  let question = null;
+  if (action === 'summary') question = null; // null → Standard-Zusammenfassung
+  else if (action === 'status') question = 'Gib mir nur einen prägnanten Status-Update in 3-5 Sätzen: wo stehen wir aktuell?';
+  else if (action === 'next-steps') question = 'Welche konkreten nächsten Schritte solltest ich angehen? Liste mit Priorität.';
+  else if (action === 'timeline') question = 'Erstelle einen chronologischen Zeitverlauf der wichtigsten Ereignisse mit Datum.';
+  else if (action === 'people') question = 'Wer sind die wichtigsten Personen in dieser Organisation? Welche Rolle spielen sie und wie sollte ich sie behandeln?';
+  
+  await window._aiRunQuery(kind, entityId, question);
+};
+
+// User-Frage
+window._aiAskQuestion = async function(kind, entityId) {
+  const input = document.getElementById('aiQuestionInput');
+  const q = input?.value?.trim();
+  if (!q) return;
+  input.value = '';
+  await window._aiRunQuery(kind, entityId, q);
+};
+
+// AI-Call ausführen + Chat-UI aktualisieren
+window._aiRunQuery = async function(kind, entityId, question) {
+  if (typeof callAI !== 'function') {
+    toast('error', 'AI nicht verfügbar', 'callAI Funktion fehlt');
+    return;
+  }
+  
+  let ctx = window._aiCurrentCtx;
+  if (!ctx) {
+    ctx = await window._aiCollectEntityContext(kind, entityId);
+    window._aiCurrentCtx = ctx;
+  }
+  
+  // History für Chat-Modus
+  if (!window._aiChatHistory) window._aiChatHistory = [];
+  
+  // Question-Bubble einfügen
+  const histEl = document.getElementById('aiChatHistory');
+  const queryLabel = question || '🤖 Vollständige Zusammenfassung';
+  if (histEl) {
+    const qBubble = document.createElement('div');
+    qBubble.style.cssText = 'background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(168,85,247,.06));border:1px solid rgba(99,102,241,.25);border-radius:10px;padding:10px 14px;align-self:flex-end;max-width:85%';
+    qBubble.innerHTML = `<div style="font-size:10px;color:#a5b4fc;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:3px">Du</div><div style="font-size:13px;line-height:1.5;white-space:pre-wrap">${esc(queryLabel)}</div>`;
+    histEl.appendChild(qBubble);
+    
+    const aBubble = document.createElement('div');
+    aBubble.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:12px 16px;align-self:flex-start;max-width:90%';
+    aBubble.innerHTML = `<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:4px">🤖 KI</div><div class="ai-response" style="font-size:13px;line-height:1.6;white-space:pre-wrap;color:var(--text)"><span style="opacity:.5">Analysiere...</span><span style="display:inline-block;width:8px;height:8px;border:2px solid rgba(168,85,247,.3);border-top-color:#a855f7;border-radius:50%;animation:thsSpin 1s linear infinite;margin-left:6px;vertical-align:middle"></span></div>`;
+    histEl.appendChild(aBubble);
+    aBubble.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+  
+  const prompt = window._aiBuildEntityPrompt(ctx, question);
+  
+  try {
+    const response = await callAI(prompt);
+    window._aiChatHistory.push({ q: queryLabel, a: response });
+    
+    // Antwort in Bubble einfügen
+    const bubbles = histEl?.querySelectorAll('.ai-response');
+    const lastBubble = bubbles?.[bubbles.length - 1];
+    if (lastBubble) {
+      lastBubble.innerHTML = esc(response).replace(/\n/g, '<br>') +
+        `<div style="margin-top:10px;display:flex;gap:5px;flex-wrap:wrap">
+          <button onclick="navigator.clipboard.writeText(${JSON.stringify(response).replace(/'/g, "&apos;")}).then(()=>toast('ok','📋','Kopiert'))" style="padding:4px 10px;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--muted);border-radius:5px;cursor:pointer;font-size:10.5px">📋 Kopieren</button>
+          <button onclick="window._aiSaveAsNote('${kind}','${entityId}', ${JSON.stringify(response).replace(/'/g, "&apos;")})" style="padding:4px 10px;background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.25);color:#c4b5fd;border-radius:5px;cursor:pointer;font-size:10.5px">📝 Als Notiz speichern</button>
+        </div>`;
+    }
+    if (lastBubble) lastBubble.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  } catch (err) {
+    const bubbles = histEl?.querySelectorAll('.ai-response');
+    const lastBubble = bubbles?.[bubbles.length - 1];
+    if (lastBubble) {
+      lastBubble.innerHTML = `<span style="color:#f87171">⚠️ Fehler: ${esc(err?.message || 'unbekannt')}</span>`;
+    }
+  }
+};
+
+// Antwort als Notiz speichern
+window._aiSaveAsNote = function(kind, entityId, content) {
+  const e = APP.state.data.entities;
+  if (!e.notes) e.notes = {};
+  const entity = (kind === 'organization' ? e.organizations : e.meetings)?.[entityId];
+  if (!entity) return;
+  const name = entity.name || entity.title || 'Eintrag';
+  const noteId = 'note_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  e.notes[noteId] = {
+    id: noteId,
+    title: `🤖 KI-Analyse: ${name}`,
+    content: content,
+    organizationId: kind === 'organization' ? entityId : (entity.organizationId || null),
+    linkedOrganizations: kind === 'organization' ? [entityId] : [],
+    tags: ['ai-analyse'],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (typeof scheduleSave === 'function') scheduleSave();
+  toast('ok', '📝 Als Notiz gespeichert');
+};
+
 window._handleFileSelect = async function(fileList, kind, entityId, folderId) {
   if (!fileList || fileList.length === 0) return;
   if (!firebaseStorage) { toast('error', 'Firebase', 'Firebase SDK nicht geladen – Adblocker deaktivieren oder auf Netlify deployen'); return; }
@@ -5698,6 +6434,10 @@ window._handleFileSelect = async function(fileList, kind, entityId, folderId) {
         };
         if (folderId) fileObj.folderId = folderId;
         entity.files.push(fileObj);
+        // 📄 Im Hintergrund Text extrahieren und in Netlify Blob speichern
+        if (typeof window._extractAndStoreTextForFile === 'function') {
+          window._extractAndStoreTextForFile(kind, entityId, fileObj, file);
+        }
         toast('ok', 'Uploaded', file.name);
       } catch(err) {
         toast('error', 'Upload failed', err.message);
@@ -6715,6 +7455,8 @@ function normalizeData(data) {
     m.description = m.description || "";
     m.organizationId = m.organizationId || null;
     m.projectId = m.projectId || null;
+    m.programId = m.programId || null;  // 🧩 Programm-Verknüpfung
+    m.transcripts = Array.isArray(m.transcripts) ? m.transcripts : [];  // 🎙 Transkripte: [{id, name, fileId, addedAt, source, language}]
     m.agendaItems = m.agendaItems || [];
     m.tags = m.tags || [];
     m.linkedTasks = m.linkedTasks || [];
@@ -7349,6 +8091,7 @@ for (const u of Object.values(e.updates)) {
     p.tags = p.tags || [];
     p.externalLinks = p.externalLinks || [];
     p.linkedProjects = p.linkedProjects || [];
+    p.linkedMeetings = p.linkedMeetings || [];  // 🤝 Verlinkte Meetings
     p.linkedOrganizations = p.linkedOrganizations || [];
     p.status = p.status || "active";
     p.category = p.category || "Allgemein"; // Kategorie für Programme
@@ -33464,6 +34207,7 @@ function viewOrgDetail(id) {
       </div>
       <div class="page-actions">
         <button class="btn sm" data-action="go-back">← ${t("back")}</button>
+        <button class="btn" onclick="window.openEntityAi('organization','${id}')" style="background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;font-weight:700">🤖 KI-Assistent</button>
         <button class="btn danger" data-action="delete-entity" data-kind="organization" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('organization','${id}')">📄 PDF</button>
         <button class="btn" onclick="window.openDeckblatt('organization','${id}')">📋 Deckblatt</button>
@@ -36841,6 +37585,31 @@ function viewProgramDetail(id) {
     `;
   }).join("") || `<div class="mini text-center">Keine Projekte verknüpft. Klicke unten auf "Projekt verknüpfen".</div>`;
   
+  // 🤝 Meetings: aus linkedMeetings + meetings.programId === id (beide Wege)
+  const meetingIds = new Set([
+    ...((p.linkedMeetings || [])),
+    ...(Object.values(e.meetings || {}).filter(m => m.programId === id).map(m => m.id))
+  ]);
+  const linkedMeetings = [...meetingIds].map(mid => e.meetings?.[mid]).filter(Boolean)
+    .sort((a,b) => (b.date || '').localeCompare(a.date || ''));
+  const meetingsHtml = linkedMeetings.map(m => {
+    const statusIcon = m.status === 'completed' ? '✅' : m.status === 'in_progress' ? '🔴' : '📅';
+    const tCount = (m.transcripts || []).length;
+    return `
+      <div class="list-item" data-action="open-entity" data-kind="meeting" data-id="${m.id}">
+        <div class="item-icon">${statusIcon}</div>
+        <div class="item-body">
+          <div class="item-title"><span class="name">${esc(m.title)}</span></div>
+          <div class="item-meta">
+            <span>${m.date || 'kein Datum'}</span>
+            ${m.startTime ? `<span>${m.startTime}${m.endTime ? '–' + m.endTime : ''}</span>` : ''}
+            ${tCount > 0 ? `<span class="pill" style="background:rgba(168,85,247,.15);color:#c4b5fd">🎙 ${tCount} Transkript${tCount > 1 ? 'e' : ''}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("") || `<div class="mini text-center">Keine Meetings verknüpft.</div>`;
+  
   const tagsHtml = (p.tags || []).map(tag => 
     `<span class="tag">${esc(tag)}<span class="remove" data-action="remove-tag" data-kind="program" data-id="${id}" data-tag="${esc(tag)}">×</span></span>`
   ).join("");
@@ -36944,6 +37713,16 @@ function viewProgramDetail(id) {
           <div class="flex gap-2">
             <button class="btn sm primary" data-action="open-link-modal" data-kind="program" data-id="${id}">➕ Projekt verknüpfen</button>
             <button class="btn sm" data-action="create-project-for" data-kind="program" data-id="${id}">📦 Neues Projekt erstellen</button>
+          </div>
+        </div>
+        
+        <div class="card mt-4">
+          <h3>🤝 Meetings (${linkedMeetings.length})</h3>
+          <div class="sep"></div>
+          <div class="list mb-3">${meetingsHtml}</div>
+          <div class="flex gap-2">
+            <button class="btn sm primary" onclick="window._programLinkMeeting('${id}')">➕ Meeting verknüpfen</button>
+            <button class="btn sm" onclick="window._programCreateMeeting('${id}')">🤝 Neues Meeting erstellen</button>
           </div>
         </div>
       </div>
@@ -42596,6 +43375,7 @@ function viewMeetingDetail(id) {
       </div>
       <div class="page-actions">
         <button class="btn" data-action="nav" data-route="meetings">← ${t("back")}</button>
+        <button class="btn" onclick="window.openEntityAi('meeting','${id}')" style="background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;font-weight:700">🤖 KI-Assistent</button>
         ${statusActions}
         <button class="btn danger" data-action="delete-meeting" data-id="${id}">🗑</button>
         <button class="btn" onclick="window.exportEntityPDF('meeting','${id}')">📄 PDF</button>
@@ -42636,6 +43416,12 @@ function viewMeetingDetail(id) {
             <select id="meetingProject">
               <option value="">— Keins —</option>
               ${Object.values(e.projects || {}).map(p => `<option value="${p.id}" ${meeting.projectId === p.id ? "selected" : ""}>${esc(p.title)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="col-6">🧩 Programm
+            <select id="meetingProgram">
+              <option value="">— Keins —</option>
+              ${Object.values(e.programs || {}).map(p => `<option value="${p.id}" ${meeting.programId === p.id ? "selected" : ""}>${esc(p.title || p.name || 'Programm')}</option>`).join("")}
             </select>
           </label>
           <label class="col-12">Beschreibung<textarea id="meetingDesc" style="min-height:80px">${esc(meeting.description || "")}</textarea></label>
@@ -42725,6 +43511,45 @@ function viewMeetingDetail(id) {
       <div style="white-space:pre-wrap">${esc(meeting.report)}</div>
     </div>
     ` : ""}
+    
+    ${(() => {
+      const transcripts = meeting.transcripts || [];
+      return `
+    <div class="card mt-4" id="transcriptCard_${id}">
+      <h3 style="display:flex;align-items:center;gap:8px">🎙 Transkripte ${transcripts.length > 0 ? `<span style="font-size:12px;color:var(--muted)">(${transcripts.length})</span>` : ''}</h3>
+      <div style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text);line-height:1.55;margin-bottom:14px">
+        <strong>⚠️ Wichtig:</strong> Transkripte werden automatisch erstellt und können <strong>Fehler enthalten</strong> — falsch erkannte Wörter, Namen, Zahlen. Die KI weiß das und berücksichtigt es bei Analysen.
+      </div>
+      
+      <div id="transcriptList_${id}" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+        ${transcripts.map((t, idx) => {
+          const file = (meeting.files || []).find(f => f.id === t.fileId);
+          const charText = file?.textChars ? Math.round(file.textChars / 100) / 10 + 'k Zeichen' : 'kein Text';
+          return `<div style="display:flex;gap:10px;align-items:center;padding:10px 12px;background:rgba(168,85,247,.04);border:1px solid rgba(168,85,247,.18);border-radius:8px">
+            <span style="font-size:22px;flex-shrink:0">🎙</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px">${esc(t.name)}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">
+                ${t.addedAt ? new Date(t.addedAt).toLocaleDateString('de-CH') : ''}
+                ${t.source ? ' · ' + esc(t.source) : ''}
+                ${t.language ? ' · 🌐 ' + esc(t.language) : ''}
+                · 📄 ${charText}${file?.textExtracted ? ' indexiert ✓' : ' nicht indexiert'}
+              </div>
+            </div>
+            <div style="display:flex;gap:4px">
+              ${file ? `<button onclick="window._transcriptPreview('${id}','${t.id}')" class="btn sm" title="Inhalt ansehen">👁</button>` : ''}
+              <button onclick="window._transcriptRemove('${id}','${t.id}')" class="btn sm danger" title="Löschen">🗑</button>
+            </div>
+          </div>`;
+        }).join('') || '<div class="mini" style="text-align:center;padding:12px;opacity:.6">Noch kein Transkript hochgeladen.</div>'}
+      </div>
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn primary" onclick="window._uploadTranscript('${id}')" style="background:linear-gradient(135deg,#a855f7,#6366f1);border:0">📤 Transkript hochladen</button>
+        <span style="font-size:11px;color:var(--muted)">Unterstützt: .txt, .docx, .pdf, .vtt, .srt — Text wird im Hintergrund indexiert</span>
+      </div>
+    </div>`;
+    })()}
     
     ${renderFileAttachments("meeting", id)}
   `;
@@ -62252,13 +63077,19 @@ window.handleClick = function(e){
     const fKind = el.dataset.kind;
     const fId = el.dataset.id;
     const fIdx = parseInt(el.dataset.fileIdx, 10);
-    const _km3 = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
+    const _km3 = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
     const _entDel = APP.state.data.entities[_km3[fKind]]?.[fId];
     if (!_entDel || !_entDel.files?.[fIdx]) return;
-    const fName = _entDel.files[fIdx].name;
+    const fileObj = _entDel.files[fIdx];
+    const fName = fileObj.name;
     if (!confirm('Datei "' + fName + '" wirklich löschen?')) return;
-    const sPath = _entDel.files[fIdx].storagePath;
+    const sPath = fileObj.storagePath;
     if (sPath) deleteFromFirebase(sPath);
+    // Text-Blob (Netlify) löschen falls extrahiert
+    if (fileObj.textExtracted && fileObj.textKey && typeof netlifyBlobPut === 'function') {
+      // Wir überschreiben mit leerem Objekt — kein Delete-Endpoint
+      netlifyBlobPut(fileObj.textKey, { text: '', deleted: true, deletedAt: new Date().toISOString() }).catch(() => {});
+    }
     _entDel.files.splice(fIdx, 1);
     _entDel.updatedAt = new Date().toISOString();
     scheduleSave();
@@ -62905,8 +63736,10 @@ if (action === "open-entity"){
     meeting.endTime = $("#meetingEnd")?.value || "";
     const orgVal = $("#meetingOrg")?.value;
     const projVal = $("#meetingProject")?.value;
+    const progVal = $("#meetingProgram")?.value;
     meeting.organizationId = orgVal && orgVal !== "" ? orgVal : null;
     meeting.projectId = projVal && projVal !== "" ? projVal : null;
+    meeting.programId = progVal && progVal !== "" ? progVal : null;
     meeting.description = ($("#meetingDesc")?.value || "").trim();
     const mEstVal = $("#meetingEstimate")?.value;
     meeting.estimatedMinutes = mEstVal ? (parseInt(mEstVal) || null) : null;
@@ -85039,7 +85872,10 @@ console.log('📚 Leseliste geladen');
   
   // ─── Files ───
   function renderFilesList() {
-    return _mhFiles.map((f, i) => {
+    // ⚠️ Immer LIVE aus Entity lesen, nicht aus _mhFiles (das wird async geupdated)
+    const liveFiles = (_mhEditing && APP.state.data.entities.emails?.[_mhEditing]?.files) || _mhFiles || [];
+    if (liveFiles.length === 0) return '';
+    return liveFiles.map((f, i) => {
       const sizeKB = f.size ? (f.size/1024).toFixed(1)+" KB" : "";
       return `<div class="mh-link-pill" style="justify-content:space-between">
         <span>📎 ${mhEsc(f.name)} 
@@ -85090,12 +85926,55 @@ console.log('📚 Leseliste geladen');
       };
     }
     
-    // Nutze die generische Upload-Logik (gleicher Code wie bei Projekten etc.)
-    await window._handleFileSelect(files, "email", _mhEditing, "");
+    console.log('[MH Upload] Start für', files.length, 'Files, _mhEditing=', _mhEditing);
     
-    // Synce Editor-Buffer mit dem was jetzt in der Entity ist
-    _mhFiles = [...(APP.state.data.entities.emails[_mhEditing].files || [])];
-    document.getElementById("mhFilesList").innerHTML = renderFilesList();
+    // 🎨 Sofortiges UI-Feedback: Lade-Placeholder pro Datei
+    const listEl = document.getElementById("mhFilesList");
+    if (listEl) {
+      files.forEach(f => {
+        const sizeKB = (f.size/1024).toFixed(1);
+        const placeholder = document.createElement("div");
+        placeholder.className = "mh-link-pill";
+        placeholder.style.cssText = "justify-content:space-between;opacity:.65;animation:mhPulse 1.4s ease-in-out infinite";
+        placeholder.dataset.uploading = f.name;
+        placeholder.innerHTML = `<span>⏳ ${mhEsc(f.name)} <span style="color:var(--muted);font-size:11px">(${sizeKB} KB) — wird hochgeladen...</span></span>`;
+        listEl.appendChild(placeholder);
+      });
+      if (!document.getElementById("mhPulseStyle")) {
+        const st = document.createElement("style");
+        st.id = "mhPulseStyle";
+        st.textContent = "@keyframes mhPulse { 0%,100%{opacity:.5} 50%{opacity:.9} }";
+        document.head.appendChild(st);
+      }
+    } else {
+      console.warn('[MH Upload] mhFilesList nicht im DOM gefunden!');
+    }
+    
+    try {
+      await window._handleFileSelect(files, "email", _mhEditing, "");
+      const entityFiles = APP.state.data.entities.emails[_mhEditing]?.files || [];
+      console.log('[MH Upload] Done. entity.files=', entityFiles.length, 'files');
+    } catch(err) {
+      console.error("Mail upload error:", err);
+      mhToast("error", "Upload-Fehler", err?.message || "unbekannt");
+    }
+    
+    // Synce + force re-render mit retry (falls Modal-DOM gerade neu erstellt wird)
+    _mhFiles = [...(APP.state.data.entities.emails[_mhEditing]?.files || [])];
+    
+    const updateList = () => {
+      const el = document.getElementById("mhFilesList");
+      if (el) {
+        el.innerHTML = renderFilesList();
+        console.log('[MH Upload] Liste aktualisiert mit', _mhFiles.length, 'Files');
+        return true;
+      }
+      return false;
+    };
+    // Sofort versuchen + nach 50ms + nach 200ms (für nach render() Re-Renders)
+    if (!updateList()) setTimeout(updateList, 50);
+    setTimeout(updateList, 200);
+    setTimeout(updateList, 500);
   };
   
   window.mhRemoveFile = function(idx) {
