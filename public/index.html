@@ -44792,6 +44792,7 @@ window.calendarCleanAll = function() {
 // BELEG-IMPORT (SP AR Portal)
 // ============================================================================
 window.BELEG_PORTAL_URL = 'https://sp-ar-belege.netlify.app';
+window.BUCHHALTUNG_PORTAL_URL = 'https://buchhaltung-sp-ar.netlify.app';
 
 window.fetchBelege = async function(showToast) {
   if (window._fetchingBelege) return 0;
@@ -44864,7 +44865,7 @@ window.fetchBelege = async function(showToast) {
       // Skip if already imported (any check)
       if (imported.includes(b.id)) continue;
       if (existingBelegIds.has(b.id)) { imported.push(b.id); continue; }
-      if (b.status === 'importiert' || b.status === 'verarbeitet') { imported.push(b.id); continue; }
+      if (b.status === 'importiert' || b.status === 'verarbeitet' || b.status === 'abgeschlossen') { imported.push(b.id); continue; }
       
       // Generate beleg number
       const belegNr = 'BEL-' + String(APP.state.data._nextBelegNr).padStart(4, '0');
@@ -44922,6 +44923,12 @@ window.fetchBelege = async function(showToast) {
         ? "\n📎 Beleg-Dokument siehe 'Dokumente'-Sektion unten."
         : "\n(Kein Dokument angehängt)");
       
+      // Direct deep-link in die Buchhaltung-Inbox. Solange noch keine Buchung
+      // existiert, öffnet der Link den Verbuchen-Vorschlag (Pop-up).
+      // Sobald die Buchung erfasst wurde, zeigt der gleiche Link die verbuchte
+      // Buchung im Pop-up und erlaubt den Sprung in die Buchungsliste.
+      const buchungsLink = window.BUCHHALTUNG_PORTAL_URL + '/#inbox?beleg=' + encodeURIComponent(b.id);
+
       // Create task
       createEntity("task", {
         title: taskTitle,
@@ -44936,6 +44943,14 @@ window.fetchBelege = async function(showToast) {
         // "Dokumente"-Sektion in Tasks rendert (renderFileAttachments).
         files: belegFiles,
         fileFolders: [],
+        // Direct-Link auf die Buchung in der Buchhaltung — wird in der
+        // "Verknüpfungen"-Sektion der Aufgabe als anklickbarer Chip gerendert.
+        externalLinks: [{
+          id: 'el_buchhaltung_' + b.id,
+          label: 'In Buchhaltung öffnen',
+          url: buchungsLink,
+          createdAt: new Date().toISOString(),
+        }],
         belegData: {
           name: b.name,
           amount: b.amount || 0,
@@ -44947,12 +44962,13 @@ window.fetchBelege = async function(showToast) {
           firebaseUrl: b.firebaseUrl || null,
           firebasePath: b.firebasePath || null,
           portalId: b.id,
+          buchhaltungUrl: buchungsLink,
         },
       });
-      
+
       imported.push(b.id);
       count++;
-      
+
       // Mark on portal
       try {
         await fetch(window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list?action=mark', {
@@ -44962,11 +44978,51 @@ window.fetchBelege = async function(showToast) {
         });
       } catch(e) { console.warn('Mark beleg failed:', e); }
     }
-    
-    if (count > 0) {
+
+    // ✅ NEU: Schon bekannte Belege auf Status-Änderung prüfen.
+    // Wenn die Buchhaltung einen Beleg als "abgeschlossen" markiert hat
+    // (Buchung verbucht & bezahlt), wird die Quantus-Aufgabe automatisch
+    // auf "done" gesetzt. Zusätzlich wird der Buchhaltungs-Link nachträglich
+    // ergänzt, falls eine alte Aufgabe noch keinen hat (Migration).
+    let autoCompleted = 0;
+    const portalById = {};
+    for (const b of belege) portalById[b.id] = b;
+    for (const t of Object.values(APP.state.data.entities.tasks || {})) {
+      if (!t.belegId) continue;
+      const p = portalById[t.belegId];
+      if (!p) continue;
+      // Migration: fehlenden Direkt-Link nachtragen
+      if (!Array.isArray(t.externalLinks)) t.externalLinks = [];
+      const hasLink = t.externalLinks.some(l => l.url && l.url.includes('/#inbox?beleg=' + t.belegId));
+      if (!hasLink) {
+        t.externalLinks.push({
+          id: 'el_buchhaltung_' + t.belegId,
+          label: 'In Buchhaltung öffnen',
+          url: window.BUCHHALTUNG_PORTAL_URL + '/#inbox?beleg=' + encodeURIComponent(t.belegId),
+          createdAt: new Date().toISOString(),
+        });
+      }
+      // Auto-Abschluss wenn Buchhaltung abgeschlossen meldet
+      if (p.status === 'abgeschlossen' && t.status !== 'done') {
+        t.status = 'done';
+        t.completedAt = new Date().toISOString();
+        t.updatedAt = new Date().toISOString();
+        // Tag aktualisieren falls Bezahlt-Status sich geändert hat
+        if (Array.isArray(t.tags)) {
+          t.tags = t.tags.filter(tag => tag !== 'offen');
+          if (!t.tags.includes('bezahlt')) t.tags.push('bezahlt');
+        }
+        autoCompleted++;
+      }
+    }
+
+    if (count > 0 || autoCompleted > 0) {
       scheduleSave();
       render();
-      toast("ok", "Belege", count + " neue Belege importiert als Aufgaben");
+      const msg = [];
+      if (count > 0) msg.push(count + ' neue Belege importiert');
+      if (autoCompleted > 0) msg.push(autoCompleted + ' Aufgabe(n) automatisch abgeschlossen');
+      toast("ok", "Belege", msg.join(' · '));
     } else if (showToast) {
       toast("info", "Belege", "Keine neuen Belege");
     }
