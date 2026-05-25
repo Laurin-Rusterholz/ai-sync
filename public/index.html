@@ -16748,8 +16748,8 @@ function viewDecisionDetail(id) {
             <span style="font-size:15px;font-weight:700">Decision Paper</span>
           </div>
           <div class="form">
-            <label>Titel<input type="text" id="dcTitle" value="${esc(dc.title || "")}" style="font-weight:600;font-size:14px" /></label>
-            <label>Beschreibung / Kontext<textarea id="dcDesc" style="min-height:140px;line-height:1.6">${esc(dc.description || "")}</textarea></label>
+            <label class="col-12">Titel<input type="text" id="dcTitle" value="${esc(dc.title || "")}" style="font-weight:600;font-size:15px;padding:12px 14px" /></label>
+            <label class="col-12">Beschreibung / Kontext<textarea id="dcDesc" style="min-height:200px;line-height:1.6;font-size:14px;padding:12px 14px">${esc(dc.description || "")}</textarea></label>
           </div>
         </div>
         
@@ -16778,35 +16778,39 @@ function viewDecisionDetail(id) {
             <span style="font-size:16px">⚙️</span>
             <span style="font-size:14px;font-weight:700">Status & Deadline</span>
           </div>
-          <div class="form">
-            <label style="margin-bottom:6px">Deadline</label>
-            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,1)}'" style="font-size:10px;padding:3px 8px">Morgen</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,3)}'" style="font-size:10px;padding:3px 8px">3d</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,7)}'" style="font-size:10px;padding:3px 8px">1W</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,14)}'" style="font-size:10px;padding:3px 8px">2W</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,30)}'" style="font-size:10px;padding:3px 8px">1M</button>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <div style="font-size:12px;color:var(--muted);font-weight:700;margin-bottom:6px">Deadline</div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,1)}'" style="font-size:11px;padding:4px 10px">Morgen</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,3)}'" style="font-size:11px;padding:4px 10px">3d</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,7)}'" style="font-size:11px;padding:4px 10px">1W</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,14)}'" style="font-size:11px;padding:4px 10px">2W</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,30)}'" style="font-size:11px;padding:4px 10px">1M</button>
+              </div>
+              <input type="date" id="dcDeadline" value="${dc.deadline || ""}" />
             </div>
-            <input type="date" id="dcDeadline" value="${dc.deadline || ""}" style="margin-bottom:8px" />
-            <label>Status
-              <select id="dcStatus">
-                <option value="open" ${dc.status === "open" ? "selected" : ""}>🟣 Offen</option>
-                <option value="decided" ${dc.status === "decided" ? "selected" : ""}>✅ Entschieden</option>
-                <option value="deferred" ${dc.status === "deferred" ? "selected" : ""}>⏸ Aufgeschoben</option>
-                <option value="cancelled" ${dc.status === "cancelled" ? "selected" : ""}>❌ Abgebrochen</option>
-              </select>
-            </label>
-            <label>Entscheid
-              <select id="dcResult">
-                <option value="" ${!dc.result ? "selected" : ""}>— Offen</option>
-                <option value="yes" ${dc.result === "yes" ? "selected" : ""}>✅ Ja</option>
-                <option value="no" ${dc.result === "no" ? "selected" : ""}>❌ Nein</option>
-              </select>
-            </label>
-            <label>⏱️ Zeitvoranschlag (Minuten)
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:700">Status
+                <select id="dcStatus">
+                  <option value="open" ${dc.status === "open" ? "selected" : ""}>🟣 Offen</option>
+                  <option value="decided" ${dc.status === "decided" ? "selected" : ""}>✅ Entschieden</option>
+                  <option value="deferred" ${dc.status === "deferred" ? "selected" : ""}>⏸ Aufgeschoben</option>
+                  <option value="cancelled" ${dc.status === "cancelled" ? "selected" : ""}>❌ Abgebrochen</option>
+                </select>
+              </label>
+              <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:700">Entscheid
+                <select id="dcResult">
+                  <option value="" ${!dc.result ? "selected" : ""}>— Offen</option>
+                  <option value="yes" ${dc.result === "yes" ? "selected" : ""}>✅ Ja</option>
+                  <option value="no" ${dc.result === "no" ? "selected" : ""}>❌ Nein</option>
+                </select>
+              </label>
+            </div>
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:700">⏱️ Zeitvoranschlag (Minuten)
               <input type="number" min="0" id="dcEstimate" value="${dc.estimatedMinutes || ''}" placeholder="z.B. 30 = halbe Stunde fürs Entscheiden" />
             </label>
-            <button class="btn primary" data-action="save-decision" data-id="${id}" style="margin-top:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;width:100%;padding:10px">💾 Speichern</button>
+            <button class="btn primary" data-action="save-decision" data-id="${id}" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;width:100%;padding:12px;font-size:14px">💾 Speichern</button>
           </div>
         </div>
 
