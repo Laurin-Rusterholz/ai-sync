@@ -4,6 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Quantus</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
+  <link rel="mask-icon" href="/favicon.svg" color="#7c3aed" />
+  <meta name="theme-color" content="#7c3aed" />
+  <meta name="apple-mobile-web-app-title" content="Quantus" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
     :root{
@@ -8028,6 +8035,7 @@ function emptyData() {
     dayTracker: { daysStarted: [], daysCompleted: [] }, // Track started/completed days
     dailyBriefing: { 
       selectedProjects: [], // Project IDs to show
+      selectedPrograms: [], // Program IDs to show
       hiddenGoals: [], // Goal IDs to hide
       beliefs: [], // [{id, text, createdAt}] - Glaubenssätze
       routines: [], // [{id, text, createdAt}] - Routinen
@@ -8529,7 +8537,8 @@ for (const u of Object.values(e.updates)) {
   if (!d.dayTracker) d.dayTracker = { daysStarted: [], daysCompleted: [] };
   if (!d.dayTracker.daysStarted) d.dayTracker.daysStarted = [];
   if (!d.dayTracker.daysCompleted) d.dayTracker.daysCompleted = [];
-  if (!d.dailyBriefing) d.dailyBriefing = { selectedProjects: [], hiddenGoals: [], beliefs: [], routines: [], sentItems: [], mode: "planning", timeBlocks: {}, customRoutines: [] };
+  if (!d.dailyBriefing) d.dailyBriefing = { selectedProjects: [], selectedPrograms: [], hiddenGoals: [], beliefs: [], routines: [], sentItems: [], mode: "planning", timeBlocks: {}, customRoutines: [] };
+  if (!Array.isArray(d.dailyBriefing.selectedPrograms)) d.dailyBriefing.selectedPrograms = [];
   if (!d.dailyBriefing.timeBlocks) d.dailyBriefing.timeBlocks = {};
   if (!d.dailyBriefing.customRoutines) d.dailyBriefing.customRoutines = d.dailyBriefing.morningRoutine?.steps?.length ? [{ id: "rt_morning", name: "Morgenroutine", icon: "🌅", steps: d.dailyBriefing.morningRoutine.steps }] : [];
   if (!d.dailyBriefing.selectedProjects) d.dailyBriefing.selectedProjects = [];
@@ -9572,8 +9581,9 @@ function mergeData(local, remote) {
   
   // ── Merge dailyBriefing ──
   if (remote.dailyBriefing) {
-    merged.dailyBriefing = merged.dailyBriefing || { selectedProjects: [], hiddenGoals: [], beliefs: [], routines: [], sentItems: [], mode: "planning", timeBlocks: {}, customRoutines: [], dailyLog: {} };
+    merged.dailyBriefing = merged.dailyBriefing || { selectedProjects: [], selectedPrograms: [], hiddenGoals: [], beliefs: [], routines: [], sentItems: [], mode: "planning", timeBlocks: {}, customRoutines: [], dailyLog: {} };
     merged.dailyBriefing.selectedProjects = [...new Set([...(merged.dailyBriefing.selectedProjects || []), ...(remote.dailyBriefing.selectedProjects || [])])];
+    merged.dailyBriefing.selectedPrograms = [...new Set([...(merged.dailyBriefing.selectedPrograms || []), ...(remote.dailyBriefing.selectedPrograms || [])])];
     merged.dailyBriefing.hiddenGoals = [...new Set([...(merged.dailyBriefing.hiddenGoals || []), ...(remote.dailyBriefing.hiddenGoals || [])])];
     // Merge beliefs/routines/sentItems by ID
     const mergeById = (local, remote) => { const map = {}; [...(local||[]), ...(remote||[])].forEach(i => { if(i&&i.id) map[i.id]=map[i.id]?((new Date(i.createdAt||0))>(new Date(map[i.id].createdAt||0))?i:map[i.id]):i; }); return Object.values(map); };
@@ -14987,7 +14997,11 @@ function viewDailyBriefing() {
   const allProjects = Object.values(APP.state.data.entities.projects || {}).filter(p => p.status === "active" || p.status === "planning");
   const selectedProjectIds = db.selectedProjects || [];
   const selectedProjects = allProjects.filter(p => selectedProjectIds.includes(p.id));
-  
+
+  const allPrograms = Object.values(APP.state.data.entities.programs || {}).filter(p => p.status !== "archived" && p.status !== "done");
+  const selectedProgramIds = db.selectedPrograms || [];
+  const selectedPrograms = allPrograms.filter(p => selectedProgramIds.includes(p.id));
+
   const dailyGoals = APP.state.data.dailyGoals?.[selectedDate] || [];
   const allGoals = Object.values(APP.state.data.entities.goals || {}).filter(g => g.status !== "done" && g.status !== "archived");
   const hiddenGoalIds = db.hiddenGoals || [];
@@ -15411,7 +15425,18 @@ function viewDailyBriefing() {
       ${selectedProjects.length ? selectedProjects.map(p => { const pt = allTasks.filter(t => t.projectId === p.id && t.status !== "done"); return '<div style="background:var(--panel2);border-radius:10px;padding:12px;margin-bottom:8px;cursor:pointer" data-action="open-entity" data-kind="project" data-id="' + p.id + '"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:16px">' + "\u{1F4E6}" + '</span><span style="font-weight:600">' + esc(p.title) + '</span><span style="font-size:11px;color:var(--muted);margin-left:auto">' + pt.length + ' offen</span></div></div>'; }).join("") : '<div class="mini" style="opacity:.5">Keine Projekte.</div>'}
       ${isPlanning ? '<div style="margin-top:8px"><div class="db-project-selector">' + allProjects.map(p => '<div class="db-project-chip ' + (selectedProjectIds.includes(p.id) ? "selected" : "") + '" data-action="db-toggle-project" data-id="' + p.id + '">' + esc(p.title) + '</div>').join("") + '</div></div>' : ""}
     </div>
-    
+
+    <!-- Programme -->
+    <div class="db-section">
+      <h3>` + "\u{1F9E9}" + ` Programme <span style="font-size:12px;color:var(--muted)">(${selectedPrograms.length})</span></h3>
+      ${selectedPrograms.length ? selectedPrograms.map(p => {
+        const linkedTasks = allTasks.filter(t => (t.linkedPrograms || []).includes(p.id) && t.status !== "done");
+        const icon = p.icon || "\u{1F9E9}";
+        return '<div style="background:var(--panel2);border-radius:10px;padding:12px;margin-bottom:8px;cursor:pointer" data-action="open-entity" data-kind="program" data-id="' + p.id + '"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:16px">' + icon + '</span><span style="font-weight:600">' + esc(p.title || p.name || "Programm") + '</span>' + (linkedTasks.length ? '<span style="font-size:11px;color:var(--muted);margin-left:auto">' + linkedTasks.length + ' offen</span>' : '') + '</div>' + (p.description ? '<div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5">' + esc(p.description.slice(0, 140)) + '</div>' : '') + '</div>';
+      }).join("") : '<div class="mini" style="opacity:.5">Keine Programme ausgewählt.</div>'}
+      ${isPlanning ? '<div style="margin-top:8px"><div class="db-project-selector">' + allPrograms.map(p => '<div class="db-project-chip ' + (selectedProgramIds.includes(p.id) ? "selected" : "") + '" data-action="db-toggle-program" data-id="' + p.id + '">' + (p.icon || '\u{1F9E9}') + ' ' + esc(p.title || p.name || 'Programm') + '</div>').join("") + '</div></div>' : ""}
+    </div>
+
     <!-- Meetings -->
     <div class="db-section">
       <h3>` + "\u{1F91D}" + ` Meetings <span style="font-size:12px;color:var(--muted)">(7 Tage)</span></h3>
@@ -37962,7 +37987,7 @@ function viewPrograms() {
   // Ordner rendern
   const foldersHtml = folders.map(folder => {
     const folderLinks = links.filter(l => l.folderId === folder.id).sort((a, b) => (a.order || 0) - (b.order || 0));
-    const isExpanded = APP.state.ui.expandedFolders?.[folder.id] ?? true;
+    const isExpanded = APP.state.ui.expandedFolders?.[folder.id] ?? false;
     
     return `
       <div class="program-folder ${isExpanded ? 'expanded' : ''}" data-folder-id="${folder.id}">
@@ -74954,6 +74979,16 @@ document.addEventListener("click", function(e) {
       if (window.render) window.render();
       break;
     }
+    case "db-toggle-program": {
+      var pgid = el.dataset.id;
+      if (!Array.isArray(db.selectedPrograms)) db.selectedPrograms = [];
+      var pgidx = db.selectedPrograms.indexOf(pgid);
+      if (pgidx >= 0) db.selectedPrograms.splice(pgidx, 1);
+      else db.selectedPrograms.push(pgid);
+      if (window.scheduleSave) window.scheduleSave();
+      if (window.render) window.render();
+      break;
+    }
     case "db-toggle-project": {
       var pid = el.dataset.id;
       var idx = db.selectedProjects.indexOf(pid);
@@ -75873,6 +75908,16 @@ document.addEventListener("click", function(e) {
       if (!db.dailyLog[tcDate]) db.dailyLog[tcDate] = { routineChecks: {}, notes: "" };
       var key = tcRi + "_" + tcSi;
       db.dailyLog[tcDate].routineChecks[key] = !db.dailyLog[tcDate].routineChecks[key];
+      if (window.scheduleSave) window.scheduleSave();
+      if (window.render) window.render();
+      break;
+    }
+    case "db-toggle-program": {
+      var pgid = el.dataset.id;
+      if (!Array.isArray(db.selectedPrograms)) db.selectedPrograms = [];
+      var pgidx = db.selectedPrograms.indexOf(pgid);
+      if (pgidx >= 0) db.selectedPrograms.splice(pgidx, 1);
+      else db.selectedPrograms.push(pgid);
       if (window.scheduleSave) window.scheduleSave();
       if (window.render) window.render();
       break;
@@ -83783,10 +83828,28 @@ function activateTab(tabId) {
   if (_activeTabId === tabId) return;
   console.log('[activateTab]', t.kind, t.ref, 'title:', t.title);
   _activeTabId = tabId;
+  t.lastUsedAt = Date.now();
   saveTabs();
   renderTabs();
   applyView(t);
 }
+
+// Schließt Tabs, die >10 Min nicht aktiv waren. Pinned/aktiver Tab bleiben.
+function autoCloseIdleTabs() {
+  const TIMEOUT_MS = 10 * 60 * 1000;
+  const now = Date.now();
+  const toClose = _tabs.filter(t =>
+    !t.pinned &&
+    t.id !== _activeTabId &&
+    t.lastUsedAt &&
+    (now - t.lastUsedAt) > TIMEOUT_MS
+  ).map(t => t.id);
+  if (toClose.length === 0) return;
+  console.log('[autoCloseIdleTabs] schließe', toClose.length, 'Tabs');
+  toClose.forEach(id => closeTab(id));
+}
+// Alle 60s prüfen
+setInterval(autoCloseIdleTabs, 60 * 1000);
 
 function bootstrapInitialTab() {
   const v = detectCurrentView();
@@ -83838,6 +83901,7 @@ function onViewChange() {
   const existing = _tabs.find(t => t.kind === v.kind && t.ref === v.ref);
   if (existing) {
     _activeTabId = existing.id;
+    existing.lastUsedAt = Date.now();
     // Title/Icon aktualisieren falls sie sich geändert haben
     if (existing.title !== v.title || existing.icon !== v.icon) {
       existing.title = v.title; existing.icon = v.icon;
@@ -83847,7 +83911,7 @@ function onViewChange() {
   }
 
   // Sonst: neuen Tab erstellen
-  const tab = { id: genTabId(), ...v };
+  const tab = { id: genTabId(), ...v, lastUsedAt: Date.now() };
   _tabs.push(tab);
   _activeTabId = tab.id;
   saveTabs();
