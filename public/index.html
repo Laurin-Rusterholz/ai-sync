@@ -44792,6 +44792,7 @@ window.calendarCleanAll = function() {
 // BELEG-IMPORT (SP AR Portal)
 // ============================================================================
 window.BELEG_PORTAL_URL = 'https://sp-ar-belege.netlify.app';
+window.BUCHHALTUNG_PORTAL_URL = 'https://buchhaltung-sp-ar.netlify.app';
 
 window.fetchBelege = async function(showToast) {
   if (window._fetchingBelege) return 0;
@@ -44864,7 +44865,7 @@ window.fetchBelege = async function(showToast) {
       // Skip if already imported (any check)
       if (imported.includes(b.id)) continue;
       if (existingBelegIds.has(b.id)) { imported.push(b.id); continue; }
-      if (b.status === 'importiert' || b.status === 'verarbeitet') { imported.push(b.id); continue; }
+      if (b.status === 'importiert' || b.status === 'verarbeitet' || b.status === 'abgeschlossen') { imported.push(b.id); continue; }
       
       // Generate beleg number
       const belegNr = 'BEL-' + String(APP.state.data._nextBelegNr).padStart(4, '0');
@@ -44922,6 +44923,12 @@ window.fetchBelege = async function(showToast) {
         ? "\n📎 Beleg-Dokument siehe 'Dokumente'-Sektion unten."
         : "\n(Kein Dokument angehängt)");
       
+      // Direct deep-link in die Buchhaltung-Inbox. Solange noch keine Buchung
+      // existiert, öffnet der Link den Verbuchen-Vorschlag (Pop-up).
+      // Sobald die Buchung erfasst wurde, zeigt der gleiche Link die verbuchte
+      // Buchung im Pop-up und erlaubt den Sprung in die Buchungsliste.
+      const buchungsLink = window.BUCHHALTUNG_PORTAL_URL + '/#inbox?beleg=' + encodeURIComponent(b.id);
+
       // Create task
       createEntity("task", {
         title: taskTitle,
@@ -44936,6 +44943,14 @@ window.fetchBelege = async function(showToast) {
         // "Dokumente"-Sektion in Tasks rendert (renderFileAttachments).
         files: belegFiles,
         fileFolders: [],
+        // Direct-Link auf die Buchung in der Buchhaltung — wird in der
+        // "Verknüpfungen"-Sektion der Aufgabe als anklickbarer Chip gerendert.
+        externalLinks: [{
+          id: 'el_buchhaltung_' + b.id,
+          label: 'In Buchhaltung öffnen',
+          url: buchungsLink,
+          createdAt: new Date().toISOString(),
+        }],
         belegData: {
           name: b.name,
           amount: b.amount || 0,
@@ -44947,12 +44962,13 @@ window.fetchBelege = async function(showToast) {
           firebaseUrl: b.firebaseUrl || null,
           firebasePath: b.firebasePath || null,
           portalId: b.id,
+          buchhaltungUrl: buchungsLink,
         },
       });
-      
+
       imported.push(b.id);
       count++;
-      
+
       // Mark on portal
       try {
         await fetch(window.BELEG_PORTAL_URL + '/.netlify/functions/beleg-list?action=mark', {
@@ -44962,11 +44978,51 @@ window.fetchBelege = async function(showToast) {
         });
       } catch(e) { console.warn('Mark beleg failed:', e); }
     }
-    
-    if (count > 0) {
+
+    // ✅ NEU: Schon bekannte Belege auf Status-Änderung prüfen.
+    // Wenn die Buchhaltung einen Beleg als "abgeschlossen" markiert hat
+    // (Buchung verbucht & bezahlt), wird die Quantus-Aufgabe automatisch
+    // auf "done" gesetzt. Zusätzlich wird der Buchhaltungs-Link nachträglich
+    // ergänzt, falls eine alte Aufgabe noch keinen hat (Migration).
+    let autoCompleted = 0;
+    const portalById = {};
+    for (const b of belege) portalById[b.id] = b;
+    for (const t of Object.values(APP.state.data.entities.tasks || {})) {
+      if (!t.belegId) continue;
+      const p = portalById[t.belegId];
+      if (!p) continue;
+      // Migration: fehlenden Direkt-Link nachtragen
+      if (!Array.isArray(t.externalLinks)) t.externalLinks = [];
+      const hasLink = t.externalLinks.some(l => l.url && l.url.includes('/#inbox?beleg=' + t.belegId));
+      if (!hasLink) {
+        t.externalLinks.push({
+          id: 'el_buchhaltung_' + t.belegId,
+          label: 'In Buchhaltung öffnen',
+          url: window.BUCHHALTUNG_PORTAL_URL + '/#inbox?beleg=' + encodeURIComponent(t.belegId),
+          createdAt: new Date().toISOString(),
+        });
+      }
+      // Auto-Abschluss wenn Buchhaltung abgeschlossen meldet
+      if (p.status === 'abgeschlossen' && t.status !== 'done') {
+        t.status = 'done';
+        t.completedAt = new Date().toISOString();
+        t.updatedAt = new Date().toISOString();
+        // Tag aktualisieren falls Bezahlt-Status sich geändert hat
+        if (Array.isArray(t.tags)) {
+          t.tags = t.tags.filter(tag => tag !== 'offen');
+          if (!t.tags.includes('bezahlt')) t.tags.push('bezahlt');
+        }
+        autoCompleted++;
+      }
+    }
+
+    if (count > 0 || autoCompleted > 0) {
       scheduleSave();
       render();
-      toast("ok", "Belege", count + " neue Belege importiert als Aufgaben");
+      const msg = [];
+      if (count > 0) msg.push(count + ' neue Belege importiert');
+      if (autoCompleted > 0) msg.push(autoCompleted + ' Aufgabe(n) automatisch abgeschlossen');
+      toast("ok", "Belege", msg.join(' · '));
     } else if (showToast) {
       toast("info", "Belege", "Keine neuen Belege");
     }
@@ -44983,6 +45039,148 @@ window.fetchBelege = async function(showToast) {
 // Auto-check: 10s nach Start, dann alle 10 Minuten
 setTimeout(() => { window.fetchBelege(false); }, 10000);
 setInterval(() => { window.fetchBelege(false); }, 10 * 60 * 1000);
+
+// ============================================================================
+// RECHNUNGS-IMPORT (Outgoing-Invoices aus buchhaltung-sp-ar)
+// ============================================================================
+// Buchhaltung erstellt eine Rechnung → POSTet an sp-ar-belege/rechnung-submit.
+// Quantus pollt rechnung-list und erstellt eine Aufgabe pro Rechnung.
+// Wenn der User die Aufgabe abschliesst, markieren wir die Rechnung im Portal
+// als "bezahlt" – buchhaltung erstellt dann automatisch die Zahlungsbuchung.
+window.fetchRechnungen = async function(showToast) {
+  if (window._fetchingRechnungen) return 0;
+  if (location.protocol === 'file:') return 0;
+  window._fetchingRechnungen = true;
+  try {
+    const url = window.BELEG_PORTAL_URL + '/.netlify/functions/rechnung-list';
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const rechnungen = data.rechnungen || [];
+
+    if (!APP.state.data._importedRechnungen) APP.state.data._importedRechnungen = [];
+    const imported = APP.state.data._importedRechnungen;
+
+    const existingRechnungIds = new Set();
+    const taskByRechnungId = {};
+    for (const t of Object.values(APP.state.data.entities.tasks || {})) {
+      if (t.rechnungId) {
+        existingRechnungIds.add(t.rechnungId);
+        taskByRechnungId[t.rechnungId] = t;
+      }
+    }
+
+    let count = 0;
+    let completedOutbound = 0;
+    let reopened = 0;
+
+    for (const re of rechnungen) {
+      // 1. Neue Rechnung → Aufgabe erstellen
+      if (!existingRechnungIds.has(re.id) && !imported.includes(re.id) && re.status !== 'bezahlt') {
+        const buchhaltungLink = re.rechnungUrl || (window.BUCHHALTUNG_PORTAL_URL + '/#rechnungen?id=' + encodeURIComponent(re.id));
+        const taskTitle = "🧾 " + re.nummer + ": " + re.empfaenger_name
+          + (re.betrag ? " (CHF " + Number(re.betrag).toFixed(2) + ")" : "");
+        const descLines = [
+          "Rechnung an: " + re.empfaenger_name,
+          "Betrag: CHF " + Number(re.betrag || 0).toFixed(2),
+          "Rechnungsdatum: " + (re.datum || '—'),
+          "Fällig am: " + (re.faellig_am || '—'),
+          "",
+          "👉 Sobald die Zahlung eingegangen ist, diese Aufgabe abschliessen.",
+          "→ Die Zahlungsbuchung (Bank an Forderung) wird dann automatisch in der",
+          "   Buchhaltung erstellt, ohne dass du sie öffnen musst.",
+        ];
+        createEntity("task", {
+          title: taskTitle,
+          description: descLines.join("\n"),
+          status: "todo",
+          priority: 2,
+          dueDate: re.faellig_am || null,
+          tags: ["rechnung", "sp-ar", "offen"],
+          rechnungId: re.id,
+          rechnungNummer: re.nummer,
+          externalLinks: [{
+            id: 'el_rechnung_' + re.id,
+            label: 'Rechnung in Buchhaltung öffnen',
+            url: buchhaltungLink,
+            createdAt: new Date().toISOString(),
+          }],
+          rechnungData: {
+            empfaenger_name: re.empfaenger_name,
+            empfaenger_typ: re.empfaenger_typ,
+            betrag: re.betrag,
+            datum: re.datum,
+            faellig_am: re.faellig_am,
+            buchungId: re.buchungId,
+            buchungJahr: re.buchungJahr,
+          },
+        });
+        imported.push(re.id);
+        count++;
+        continue;
+      }
+
+      // 2. Bestehende Aufgabe → Status syncen
+      const existingTask = taskByRechnungId[re.id];
+      if (!existingTask) continue;
+
+      // 2a. Wenn Aufgabe done und Portal noch nicht "bezahlt" → ans Portal melden
+      if (existingTask.status === 'done' && re.status !== 'bezahlt') {
+        try {
+          await fetch(window.BELEG_PORTAL_URL + '/.netlify/functions/rechnung-list?action=mark', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: re.id, status: 'bezahlt' }),
+          });
+          completedOutbound++;
+          // Tags aktualisieren
+          if (Array.isArray(existingTask.tags)) {
+            existingTask.tags = existingTask.tags.filter(t => t !== 'offen');
+            if (!existingTask.tags.includes('bezahlt')) existingTask.tags.push('bezahlt');
+          }
+        } catch (err) {
+          console.warn('Rechnung als bezahlt markieren fehlgeschlagen:', err);
+        }
+      }
+
+      // 2b. Wenn Portal "bezahlt" und Aufgabe noch nicht done → automatisch abschliessen
+      // (passiert wenn jemand die Rechnung direkt in der Buchhaltung als bezahlt markiert)
+      if (re.status === 'bezahlt' && existingTask.status !== 'done') {
+        existingTask.status = 'done';
+        existingTask.completedAt = new Date().toISOString();
+        existingTask.updatedAt = new Date().toISOString();
+        if (Array.isArray(existingTask.tags)) {
+          existingTask.tags = existingTask.tags.filter(t => t !== 'offen');
+          if (!existingTask.tags.includes('bezahlt')) existingTask.tags.push('bezahlt');
+        }
+        reopened++;  // wird hier eigentlich als "auto-closed" gezählt
+      }
+    }
+
+    if (count > 0 || completedOutbound > 0 || reopened > 0) {
+      scheduleSave();
+      render();
+      const msg = [];
+      if (count > 0) msg.push(count + ' neue Rechnung(en)');
+      if (completedOutbound > 0) msg.push(completedOutbound + ' als bezahlt gemeldet');
+      if (reopened > 0) msg.push(reopened + ' Aufgabe(n) auto-abgeschlossen');
+      toast("ok", "Rechnungen", msg.join(' · '));
+    } else if (showToast) {
+      toast("info", "Rechnungen", "Keine neuen Rechnungen");
+    }
+    window._fetchingRechnungen = false;
+    return count;
+  } catch (err) {
+    console.error('Rechnung fetch error:', err);
+    if (showToast) toast("danger", "Fehler", "Rechnungen laden fehlgeschlagen: " + err.message);
+    window._fetchingRechnungen = false;
+    return 0;
+  }
+};
+
+// Auto-check: 12s nach Start, dann alle 10 Minuten (versetzt zu fetchBelege)
+setTimeout(() => { window.fetchRechnungen(false); }, 12000);
+setInterval(() => { window.fetchRechnungen(false); }, 10 * 60 * 1000);
 
 // ═══════════════════════════════════════════════════════════════
 // 📡 EXTERNAL PROJECT INBOX – Cross-Program Integration
@@ -83767,6 +83965,10 @@ button[onclick*="openReadlist"].primary {
     <span class="icon">📄</span>
     <span>Belege abrufen</span>
   </button>
+  <button class="cp-item" data-cp-action="rechnungen">
+    <span class="icon">🧾</span>
+    <span>Rechnungen abrufen</span>
+  </button>
   <button class="cp-item" data-cp-action="inbox">
     <span class="icon">📡</span>
     <span>Externe Inbox</span>
@@ -83896,6 +84098,9 @@ document.addEventListener('click', (e) => {
       break;
     case 'belege':
       if (typeof window.fetchBelege === 'function') window.fetchBelege(true);
+      break;
+    case 'rechnungen':
+      if (typeof window.fetchRechnungen === 'function') window.fetchRechnungen(true);
       break;
     case 'inbox':
       if (typeof window.fetchExternalInbox === 'function') window.fetchExternalInbox(true);
