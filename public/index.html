@@ -14425,6 +14425,7 @@ function getAllApps() {
     {key:"decisions", icon:"⚖️", label:"Decisions", desc:getLang()==="de"?"Entscheidungen treffen & verfolgen":"Make & track decisions"},
     {key:"journal", icon:"✍️", label:"Journal Booklet", desc:getLang()==="de"?"Tagebuch, Briefe, Zeitkapsel & Schreibumgebung":"Diary, letters, time capsule & writing environment"},
     {key:"handbook", icon:"📖", label:"Handbuch", desc:getLang()==="de"?"Übersicht aller Apps mit eigenen Notizen & Arbeitsbeschreibungen":"Overview of all apps with personal notes & workflows"},
+    {key:"passwordmanager", icon:"🔐", label:"Password Manager", desc:getLang()==="de"?"Sichere Passwörter speichern, generieren & verwalten":"Securely store, generate & manage passwords"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -14789,6 +14790,7 @@ function renderMain() {
     case "protocols": html = id ? viewProtocolDetail(id) : viewProtocols(); break;
     case "workflows": html = id ? viewWorkflowDetail(id) : viewWorkflows(); break;
     case "journal": openJournalBooklet(); return;
+    case "passwordmanager": html = viewPasswordManager(); break;
     case "settings": { openSettings(); return; }
 
     default: {
@@ -90166,6 +90168,463 @@ console.log('📚 Leseliste geladen');
 })();
 </script>
 <!-- ═══ END WORKFLOWS ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ═══ PASSWORD MANAGER                                                  ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<style id="pwdManagerStyles">
+.pwd-container { padding:4px 0 24px; }
+.pwd-security-banner { display:flex; align-items:center; gap:14px; padding:14px 18px; margin-bottom:18px; background:linear-gradient(135deg,rgba(245,158,11,.10),rgba(245,158,11,.03)); border:1px solid rgba(245,158,11,.25); border-radius:12px; }
+.pwd-security-banner-icon { font-size:24px; flex-shrink:0; }
+.pwd-security-banner-text { flex:1; font-size:13px; color:var(--text); line-height:1.5; }
+.pwd-security-banner-text strong { color:#fbbf24; }
+.pwd-security-banner button { white-space:nowrap; }
+.pwd-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
+.pwd-stat-card { padding:14px; border-radius:12px; text-align:center; }
+.pwd-stat-num { font-size:24px; font-weight:800; line-height:1; margin-bottom:4px; }
+.pwd-stat-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+.pwd-toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+.pwd-search { flex:1; min-width:220px; padding:9px 14px; background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:10px; color:var(--text); font-size:13px; }
+.pwd-search:focus { outline:none; border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.15); }
+.pwd-cat-filter { padding:9px 14px; background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:10px; color:var(--text); font-size:13px; }
+.pwd-list { display:flex; flex-direction:column; gap:10px; }
+.pwd-card { display:flex; align-items:center; gap:14px; padding:14px 16px; background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:12px; transition:all .15s; }
+.pwd-card:hover { background:rgba(255,255,255,.05); border-color:rgba(99,102,241,.3); }
+.pwd-card-icon { width:42px; height:42px; flex-shrink:0; border-radius:10px; background:linear-gradient(135deg,#6366f1,#8b5cf6); display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; color:#fff; text-transform:uppercase; }
+.pwd-card-body { flex:1; min-width:0; }
+.pwd-card-title { font-weight:700; font-size:14px; color:var(--text); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pwd-card-meta { display:flex; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--muted); align-items:center; }
+.pwd-card-username { font-family:'SF Mono',Menlo,monospace; }
+.pwd-card-pwd-row { display:flex; align-items:center; gap:6px; margin-top:6px; }
+.pwd-mask { font-family:'SF Mono',Menlo,monospace; font-size:12.5px; color:var(--text2); padding:3px 8px; background:rgba(255,255,255,.04); border-radius:6px; letter-spacing:1px; }
+.pwd-card-actions { display:flex; gap:4px; flex-shrink:0; }
+.pwd-icon-btn { width:32px; height:32px; border:1px solid var(--border); background:rgba(255,255,255,.03); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--text2); transition:all .15s; }
+.pwd-icon-btn:hover { background:rgba(99,102,241,.15); border-color:rgba(99,102,241,.4); color:var(--text); }
+.pwd-icon-btn.danger:hover { background:rgba(239,68,68,.15); border-color:rgba(239,68,68,.4); color:#f87171; }
+.pwd-empty { padding:60px 24px; text-align:center; color:var(--muted); }
+.pwd-empty-icon { font-size:48px; margin-bottom:12px; opacity:.5; }
+.pwd-gen-row { display:flex; gap:6px; align-items:center; margin-top:6px; }
+.pwd-gen-display { flex:1; padding:8px 10px; background:rgba(0,0,0,.25); border:1px solid var(--border); border-radius:8px; font-family:'SF Mono',Menlo,monospace; font-size:13px; color:#a5b4fc; word-break:break-all; }
+.pwd-strength-bar { height:4px; border-radius:2px; background:rgba(255,255,255,.05); overflow:hidden; margin-top:6px; }
+.pwd-strength-fill { height:100%; transition:all .3s; border-radius:2px; }
+.pwd-cat-chip { font-size:11px; padding:2px 8px; border-radius:6px; background:rgba(99,102,241,.12); color:#a5b4fc; font-weight:600; }
+@media (max-width:640px) {
+  .pwd-stats { grid-template-columns:repeat(2,1fr); }
+}
+</style>
+
+<script id="pwdManagerScript">
+(function(){
+  "use strict";
+
+  const PWD_CATEGORIES = [
+    { key:"login", label:"Login", icon:"🔑", color:"#6366f1" },
+    { key:"banking", label:"Banking", icon:"🏦", color:"#10b981" },
+    { key:"social", label:"Social", icon:"💬", color:"#3b82f6" },
+    { key:"work", label:"Arbeit", icon:"💼", color:"#f59e0b" },
+    { key:"email", label:"Email", icon:"📧", color:"#ec4899" },
+    { key:"shopping", label:"Shopping", icon:"🛒", color:"#a855f7" },
+    { key:"other", label:"Sonstiges", icon:"📌", color:"#64748b" },
+  ];
+
+  function _esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+  }
+
+  function _uid() {
+    return "pwd_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+  }
+
+  function _nowIso() { return new Date().toISOString(); }
+
+  function _ensureStore() {
+    if (!window.APP || !APP.state || !APP.state.data) return null;
+    if (!APP.state.data.entities) APP.state.data.entities = {};
+    if (!APP.state.data.entities.passwords) APP.state.data.entities.passwords = {};
+    return APP.state.data.entities.passwords;
+  }
+
+  function _getCat(key) {
+    return PWD_CATEGORIES.find(c => c.key === key) || PWD_CATEGORIES[PWD_CATEGORIES.length-1];
+  }
+
+  // ── Password strength (0-4) ──
+  function _strength(pwd) {
+    if (!pwd) return { score:0, label:"–", color:"#64748b" };
+    let s = 0;
+    if (pwd.length >= 8) s++;
+    if (pwd.length >= 12) s++;
+    if (/[A-Z]/.test(pwd) && /[a-z]/.test(pwd)) s++;
+    if (/[0-9]/.test(pwd) && /[^A-Za-z0-9]/.test(pwd)) s++;
+    const labels = ["Sehr schwach","Schwach","Mittel","Stark","Sehr stark"];
+    const colors = ["#ef4444","#f97316","#f59e0b","#10b981","#22c55e"];
+    return { score:s, label:labels[s], color:colors[s] };
+  }
+
+  // ── Password generator ──
+  window.pwdGenerate = function(opts) {
+    opts = opts || {};
+    const length = Math.max(4, Math.min(64, opts.length || 20));
+    const useLower = opts.lower !== false;
+    const useUpper = opts.upper !== false;
+    const useDigits = opts.digits !== false;
+    const useSymbols = opts.symbols !== false;
+    const noAmbig = opts.noAmbig === true;
+
+    let lower = "abcdefghijklmnopqrstuvwxyz";
+    let upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let digits = "0123456789";
+    let symbols = "!@#$%^&*()-_=+[]{};:,.<>?";
+    if (noAmbig) {
+      lower = lower.replace(/[ilo]/g,"");
+      upper = upper.replace(/[ILO]/g,"");
+      digits = digits.replace(/[01]/g,"");
+    }
+    let pool = "";
+    const required = [];
+    if (useLower) { pool += lower; required.push(lower); }
+    if (useUpper) { pool += upper; required.push(upper); }
+    if (useDigits) { pool += digits; required.push(digits); }
+    if (useSymbols) { pool += symbols; required.push(symbols); }
+    if (!pool) pool = lower + upper + digits;
+
+    const buf = new Uint32Array(length);
+    crypto.getRandomValues(buf);
+    let out = "";
+    for (let i = 0; i < length; i++) out += pool[buf[i] % pool.length];
+    // Ensure at least one of each required class
+    required.forEach((cls, i) => {
+      if (!new RegExp("[" + cls.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "]").test(out)) {
+        const rnd = new Uint32Array(2); crypto.getRandomValues(rnd);
+        const pos = rnd[0] % length;
+        const ch = cls[rnd[1] % cls.length];
+        out = out.slice(0,pos) + ch + out.slice(pos+1);
+      }
+    });
+    return out;
+  };
+
+  // ── Clipboard with auto-clear ──
+  window.pwdCopy = async function(text, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      if (typeof toast === "function") toast("ok", "Kopiert", (label || "In Zwischenablage") + " · wird in 30s gelöscht");
+      setTimeout(async () => {
+        try {
+          const cur = await navigator.clipboard.readText();
+          if (cur === text) await navigator.clipboard.writeText("");
+        } catch(e) {}
+      }, 30000);
+    } catch(e) {
+      if (typeof toast === "function") toast("err", "Fehler", "Konnte nicht kopieren");
+    }
+  };
+
+  // ── Toggle visible / hidden ──
+  window._pwdRevealed = new Set();
+  window.pwdToggleReveal = function(id) {
+    if (window._pwdRevealed.has(id)) window._pwdRevealed.delete(id);
+    else window._pwdRevealed.add(id);
+    if (typeof render === "function") render();
+  };
+
+  // ── Delete ──
+  window.pwdDelete = function(id) {
+    const store = _ensureStore();
+    if (!store || !store[id]) return;
+    const title = store[id].title || "Eintrag";
+    if (!confirm("Eintrag \"" + title + "\" wirklich löschen?")) return;
+    delete store[id];
+    window._pwdRevealed.delete(id);
+    if (typeof scheduleSave === "function") scheduleSave();
+    if (typeof render === "function") render();
+    if (typeof toast === "function") toast("ok", "Gelöscht", title);
+  };
+
+  // ── Open editor modal (create or edit) ──
+  window.pwdOpenEditor = function(id) {
+    const store = _ensureStore();
+    if (!store) return;
+    const isEdit = !!(id && store[id]);
+    const entry = isEdit ? store[id] : { id:"", title:"", username:"", password:"", url:"", notes:"", category:"login" };
+
+    const catOptions = PWD_CATEGORIES.map(c =>
+      '<option value="' + c.key + '"' + (entry.category === c.key ? " selected" : "") + '>' + c.icon + " " + c.label + '</option>'
+    ).join("");
+
+    const modalHtml =
+      '<div class="form" style="display:flex;flex-direction:column;gap:10px">' +
+        '<label>Titel <span style="color:#f87171">*</span><input type="text" id="pwdEditTitle" placeholder="z.B. GitHub, Gmail, Bank XY" value="' + _esc(entry.title) + '" /></label>' +
+        '<label>Kategorie<select id="pwdEditCategory">' + catOptions + '</select></label>' +
+        '<label>Benutzername / Email<input type="text" id="pwdEditUsername" placeholder="benutzer@example.com" value="' + _esc(entry.username) + '" autocomplete="off" /></label>' +
+        '<label>Passwort <span style="color:#f87171">*</span>' +
+          '<div style="display:flex;gap:6px;align-items:stretch">' +
+            '<input type="text" id="pwdEditPassword" placeholder="Passwort" value="' + _esc(entry.password) + '" autocomplete="off" style="flex:1;font-family:SF Mono,Menlo,monospace" />' +
+            '<button type="button" class="btn sm" onclick="pwdInsertGenerated()" title="Generieren" style="padding:0 12px">🎲</button>' +
+          '</div>' +
+          '<div id="pwdEditStrength" style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px"></div>' +
+        '</label>' +
+        '<details style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:8px 12px">' +
+          '<summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2)">⚙️ Generator-Optionen</summary>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;font-size:12px">' +
+            '<label style="display:flex;align-items:center;gap:6px">Länge <input type="number" id="pwdGenLen" min="8" max="64" value="20" style="width:64px" /></label>' +
+            '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pwdGenLower" checked /> a-z</label>' +
+            '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pwdGenUpper" checked /> A-Z</label>' +
+            '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pwdGenDigits" checked /> 0-9</label>' +
+            '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pwdGenSymbols" checked /> Symbole</label>' +
+            '<label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pwdGenNoAmbig" /> Ohne 0/O/l/1</label>' +
+          '</div>' +
+        '</details>' +
+        '<label>URL / Website<input type="url" id="pwdEditUrl" placeholder="https://..." value="' + _esc(entry.url) + '" /></label>' +
+        '<label>Notizen<textarea id="pwdEditNotes" rows="3" placeholder="Optional: Hinweise, Sicherheitsfragen, ...">' + _esc(entry.notes) + '</textarea></label>' +
+        '<div style="display:flex;gap:8px;margin-top:6px;justify-content:flex-end">' +
+          '<button class="btn" onclick="closeModal()">Abbrechen</button>' +
+          '<button class="btn primary" id="pwdEditSaveBtn" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700">' + (isEdit ? "💾 Speichern" : "🔐 Hinzufügen") + '</button>' +
+        '</div>' +
+      '</div>';
+
+    openModal((isEdit ? "🔐 Eintrag bearbeiten" : "🔐 Neuer Passwort-Eintrag"), modalHtml);
+
+    setTimeout(() => {
+      const pwdInput = document.getElementById("pwdEditPassword");
+      const strengthEl = document.getElementById("pwdEditStrength");
+      function updateStrength() {
+        const s = _strength(pwdInput?.value || "");
+        if (strengthEl) {
+          strengthEl.innerHTML =
+            '<div style="flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.05);overflow:hidden">' +
+              '<div style="height:100%;width:' + (s.score*25) + '%;background:' + s.color + ';transition:all .2s"></div>' +
+            '</div>' +
+            '<span style="color:' + s.color + ';font-weight:600;min-width:80px;text-align:right">' + s.label + '</span>';
+        }
+      }
+      if (pwdInput) {
+        pwdInput.addEventListener("input", updateStrength);
+        updateStrength();
+      }
+      const saveBtn = document.getElementById("pwdEditSaveBtn");
+      if (saveBtn) saveBtn.onclick = () => {
+        const title = document.getElementById("pwdEditTitle")?.value?.trim();
+        const password = document.getElementById("pwdEditPassword")?.value || "";
+        if (!title) { if (typeof toast === "function") toast("warn", "Fehlt", "Titel ist erforderlich"); return; }
+        if (!password) { if (typeof toast === "function") toast("warn", "Fehlt", "Passwort ist erforderlich"); return; }
+        const _store = _ensureStore();
+        if (!_store) return;
+        const finalId = isEdit ? id : _uid();
+        _store[finalId] = {
+          id: finalId,
+          title,
+          username: document.getElementById("pwdEditUsername")?.value?.trim() || "",
+          password,
+          url: document.getElementById("pwdEditUrl")?.value?.trim() || "",
+          notes: document.getElementById("pwdEditNotes")?.value?.trim() || "",
+          category: document.getElementById("pwdEditCategory")?.value || "login",
+          createdAt: isEdit ? (entry.createdAt || _nowIso()) : _nowIso(),
+          updatedAt: _nowIso(),
+        };
+        if (typeof scheduleSave === "function") scheduleSave();
+        closeModal();
+        if (typeof render === "function") render();
+        if (typeof toast === "function") toast("ok", isEdit ? "Gespeichert" : "Hinzugefügt", title);
+      };
+    }, 50);
+  };
+
+  window.pwdInsertGenerated = function() {
+    const len = parseInt(document.getElementById("pwdGenLen")?.value || "20", 10);
+    const pwd = pwdGenerate({
+      length: len,
+      lower:  document.getElementById("pwdGenLower")?.checked !== false,
+      upper:  document.getElementById("pwdGenUpper")?.checked !== false,
+      digits: document.getElementById("pwdGenDigits")?.checked !== false,
+      symbols:document.getElementById("pwdGenSymbols")?.checked !== false,
+      noAmbig:document.getElementById("pwdGenNoAmbig")?.checked === true,
+    });
+    const inp = document.getElementById("pwdEditPassword");
+    if (inp) {
+      inp.value = pwd;
+      inp.dispatchEvent(new Event("input"));
+    }
+  };
+
+  // ── Main view ──
+  window.viewPasswordManager = function() {
+    const store = _ensureStore() || {};
+    const entries = Object.values(store).sort((a,b) => (a.title || "").localeCompare(b.title || ""));
+
+    const ui = APP.state.ui = APP.state.ui || {};
+    ui.flags = ui.flags || {};
+    const query = (ui.flags.pwdSearchQuery || "").toLowerCase().trim();
+    const filterCat = ui.flags.pwdFilterCategory || "all";
+
+    const filtered = entries.filter(e => {
+      if (filterCat !== "all" && e.category !== filterCat) return false;
+      if (!query) return true;
+      return (
+        (e.title || "").toLowerCase().includes(query) ||
+        (e.username || "").toLowerCase().includes(query) ||
+        (e.url || "").toLowerCase().includes(query) ||
+        (e.notes || "").toLowerCase().includes(query)
+      );
+    });
+
+    // Stats
+    const total = entries.length;
+    const weak = entries.filter(e => _strength(e.password).score < 2).length;
+    const strong = entries.filter(e => _strength(e.password).score >= 3).length;
+    const duplicates = (() => {
+      const counts = {};
+      entries.forEach(e => { if (e.password) counts[e.password] = (counts[e.password] || 0) + 1; });
+      return Object.values(counts).filter(c => c > 1).length;
+    })();
+
+    // App-Lock banner
+    const hasLockFn = typeof window.hasAppPin === "function";
+    const lockedListFn = typeof window.getLockedApps === "function" ? window.getLockedApps : null;
+    const lockedList = lockedListFn ? lockedListFn() : (JSON.parse(localStorage.getItem("quantus_locked_apps") || "[]") || []);
+    const isLocked = lockedList.indexOf("passwordmanager") >= 0;
+    const hasPin = hasLockFn ? window.hasAppPin() : !!localStorage.getItem("quantus_app_pin");
+
+    let lockBanner = "";
+    if (!isLocked || !hasPin) {
+      lockBanner =
+        '<div class="pwd-security-banner">' +
+          '<div class="pwd-security-banner-icon">⚠️</div>' +
+          '<div class="pwd-security-banner-text">' +
+            '<strong>Sicherheitshinweis:</strong> ' +
+            (!hasPin
+              ? 'Lege in den <a href="#/settings" style="color:#fbbf24;font-weight:600">Einstellungen → Sicherheit</a> einen App-PIN fest, um diese App zu schützen.'
+              : 'Diese App ist noch nicht mit dem App-Lock geschützt. Aktiviere den Lock in den <a href="#/settings" style="color:#fbbf24;font-weight:600">Einstellungen → Sicherheit</a>.') +
+          '</div>' +
+        '</div>';
+    }
+
+    // Stats panel
+    const statsHtml = total > 0 ?
+      '<div class="pwd-stats">' +
+        '<div class="pwd-stat-card" style="background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(99,102,241,.05));border:1px solid rgba(99,102,241,.2)">' +
+          '<div class="pwd-stat-num" style="color:#818cf8">' + total + '</div>' +
+          '<div class="pwd-stat-label">Einträge</div>' +
+        '</div>' +
+        '<div class="pwd-stat-card" style="background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(16,185,129,.05));border:1px solid rgba(16,185,129,.2)">' +
+          '<div class="pwd-stat-num" style="color:#34d399">' + strong + '</div>' +
+          '<div class="pwd-stat-label">Stark</div>' +
+        '</div>' +
+        '<div class="pwd-stat-card" style="background:linear-gradient(135deg,rgba(239,68,68,.15),rgba(239,68,68,.05));border:1px solid rgba(239,68,68,.2)">' +
+          '<div class="pwd-stat-num" style="color:#f87171">' + weak + '</div>' +
+          '<div class="pwd-stat-label">Schwach</div>' +
+        '</div>' +
+        '<div class="pwd-stat-card" style="background:linear-gradient(135deg,rgba(245,158,11,.15),rgba(245,158,11,.05));border:1px solid rgba(245,158,11,.2)">' +
+          '<div class="pwd-stat-num" style="color:#fbbf24">' + duplicates + '</div>' +
+          '<div class="pwd-stat-label">Wiederverw.</div>' +
+        '</div>' +
+      '</div>' : "";
+
+    // Category options
+    const catOptions = '<option value="all">Alle Kategorien</option>' + PWD_CATEGORIES.map(c =>
+      '<option value="' + c.key + '"' + (filterCat === c.key ? " selected" : "") + '>' + c.icon + " " + c.label + '</option>'
+    ).join("");
+
+    // Entry cards
+    let listHtml = "";
+    if (filtered.length === 0 && entries.length === 0) {
+      listHtml =
+        '<div class="pwd-empty">' +
+          '<div class="pwd-empty-icon">🔐</div>' +
+          '<div style="font-size:16px;font-weight:600;color:var(--text2);margin-bottom:6px">Noch keine Einträge</div>' +
+          '<div style="font-size:13px;margin-bottom:16px">Füge dein erstes Passwort hinzu, um loszulegen.</div>' +
+          '<button class="btn primary" onclick="pwdOpenEditor()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700">🔐 Ersten Eintrag erstellen</button>' +
+        '</div>';
+    } else if (filtered.length === 0) {
+      listHtml = '<div class="pwd-empty"><div class="pwd-empty-icon">🔍</div><div>Keine Einträge gefunden</div></div>';
+    } else {
+      listHtml = '<div class="pwd-list">' + filtered.map(e => {
+        const cat = _getCat(e.category);
+        const initial = (e.title || "?").trim().charAt(0).toUpperCase();
+        const revealed = window._pwdRevealed.has(e.id);
+        const pwdMask = revealed ? _esc(e.password) : "•".repeat(Math.min(12, Math.max(8, (e.password || "").length)));
+        const strength = _strength(e.password);
+        const urlHost = (() => {
+          try { return e.url ? new URL(e.url).hostname.replace(/^www\./, "") : ""; }
+          catch(_) { return e.url || ""; }
+        })();
+        const escPwd = _esc(e.password).replace(/'/g,"\\'");
+        const escUser = _esc(e.username).replace(/'/g,"\\'");
+        return (
+          '<div class="pwd-card" data-id="' + e.id + '">' +
+            '<div class="pwd-card-icon" style="background:linear-gradient(135deg,' + cat.color + ',' + cat.color + 'cc)">' + (initial || "?") + '</div>' +
+            '<div class="pwd-card-body">' +
+              '<div class="pwd-card-title">' + _esc(e.title) + '</div>' +
+              '<div class="pwd-card-meta">' +
+                '<span class="pwd-cat-chip" style="background:' + cat.color + '22;color:' + cat.color + '">' + cat.icon + " " + _esc(cat.label) + '</span>' +
+                (e.username ? '<span class="pwd-card-username">👤 ' + _esc(e.username) + '</span>' : "") +
+                (urlHost ? '<span>🌐 <a href="' + _esc(e.url) + '" target="_blank" rel="noopener" style="color:var(--muted);text-decoration:none">' + _esc(urlHost) + '</a></span>' : "") +
+              '</div>' +
+              '<div class="pwd-card-pwd-row">' +
+                '<span class="pwd-mask">' + pwdMask + '</span>' +
+                '<span style="font-size:10px;font-weight:600;color:' + strength.color + ';padding:2px 6px;background:' + strength.color + '22;border-radius:5px">' + strength.label + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div class="pwd-card-actions">' +
+              (e.username ? '<button class="pwd-icon-btn" onclick="pwdCopy(\'' + escUser + '\',\'Benutzername\')" title="Benutzername kopieren">👤</button>' : "") +
+              '<button class="pwd-icon-btn" onclick="pwdCopy(\'' + escPwd + '\',\'Passwort\')" title="Passwort kopieren">📋</button>' +
+              '<button class="pwd-icon-btn" onclick="pwdToggleReveal(\'' + e.id + '\')" title="' + (revealed ? "Verstecken" : "Anzeigen") + '">' + (revealed ? "🙈" : "👁") + '</button>' +
+              '<button class="pwd-icon-btn" onclick="pwdOpenEditor(\'' + e.id + '\')" title="Bearbeiten">✏️</button>' +
+              '<button class="pwd-icon-btn danger" onclick="pwdDelete(\'' + e.id + '\')" title="Löschen">🗑</button>' +
+            '</div>' +
+          '</div>'
+        );
+      }).join("") + '</div>';
+    }
+
+    const toolbarHtml = entries.length > 0 ?
+      '<div class="pwd-toolbar">' +
+        '<input type="text" class="pwd-search" id="pwdSearchInput" placeholder="🔍 Suche nach Titel, Username, URL..." value="' + _esc(query) + '" oninput="pwdSetSearch(this.value)" />' +
+        '<select class="pwd-cat-filter" onchange="pwdSetCategoryFilter(this.value)">' + catOptions + '</select>' +
+      '</div>' : "";
+
+    return (
+      '<div class="page-header">' +
+        '<div class="page-title">' +
+          '<h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">🔐</span> Password Manager</h2>' +
+          '<p>' + total + ' Einträge · ' + strong + ' stark · ' + weak + ' schwach</p>' +
+        '</div>' +
+        '<div class="page-actions">' +
+          '<button class="btn primary" onclick="pwdOpenEditor()" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;padding:10px 20px">🔐 Neuer Eintrag</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="pwd-container">' +
+        lockBanner +
+        statsHtml +
+        toolbarHtml +
+        listHtml +
+      '</div>'
+    );
+  };
+
+  window.pwdSetSearch = function(v) {
+    const ui = APP.state.ui = APP.state.ui || {};
+    ui.flags = ui.flags || {};
+    ui.flags.pwdSearchQuery = v || "";
+    if (typeof render === "function") render();
+    setTimeout(() => {
+      const inp = document.getElementById("pwdSearchInput");
+      if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    }, 0);
+  };
+
+  window.pwdSetCategoryFilter = function(v) {
+    const ui = APP.state.ui = APP.state.ui || {};
+    ui.flags = ui.flags || {};
+    ui.flags.pwdFilterCategory = v || "all";
+    if (typeof render === "function") render();
+  };
+
+})();
+</script>
+<!-- ═══ END PASSWORD MANAGER ═══ -->
 
 </body>
 </html>
