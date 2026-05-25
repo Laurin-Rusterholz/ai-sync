@@ -9206,6 +9206,83 @@ async function syncFreshness(reason) {
   return _syncFreshnessPromise;
 }
 
+// ─── Pull-Before-Push ────────────────────────────────────────────
+// Vor jedem Remote-PUT prüfen, ob ein anderes Gerät seit unserem letzten
+// Sync gespeichert hat. Falls ja → erst mergen, dann pushen. Schützt vor
+// "Stale Tab überschreibt frische Daten" — das klassische Multi-Device-Problem.
+// Der bestehende ETag-412-Handler in doSave() bleibt als zweite Sicherung.
+let _prePushPullPromise = null;
+async function pullAndMergeBeforeSave(reason) {
+  if (_prePushPullPromise) return _prePushPullPromise;
+  _prePushPullPromise = (async () => {
+    try {
+      if (!navigator.onLine) return { ok: true, merged: false, reason: 'offline' };
+      if (!isAutoSyncEnabled()) return { ok: true, merged: false, reason: 'autosync_off' };
+      if (!hasAnyCloudProviderAvailable()) return { ok: true, merged: false, reason: 'no_provider' };
+
+      const result = await remoteGet({ force: true });
+      _lastRemoteCheckAt = Date.now();
+      if (!result.ok || !result.data) return { ok: true, merged: false, reason: 'no_remote' };
+
+      const myDevice = getOrCreateDeviceId();
+      const remoteDevice = result.data?.meta?.lastSavedBy || '';
+      const remoteTs = new Date(result.data?.meta?.updatedAt || 0).getTime();
+      const localTs = new Date(APP.state.data?.meta?.updatedAt || 0).getTime();
+      const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
+
+      // Merge nur wenn Remote von einem ANDEREN Gerät ist
+      // UND der Remote-Stand neuer ist als das, was wir zuletzt gesehen haben.
+      // 500ms Toleranz für Uhren-Drift zwischen Geräten.
+      const isOtherDevice = remoteDevice && remoteDevice !== myDevice;
+      const remoteUnseen = remoteTs > lastSeen + 500;
+
+      if (!isOtherDevice || !remoteUnseen) {
+        return { ok: true, merged: false, reason: 'no_conflict' };
+      }
+
+      // Backup vor Merge — falls etwas schiefgeht, kann via Logbook restored werden
+      try {
+        if (Math.abs(remoteTs - localTs) > 5000) {
+          await idbBackup(APP.state.data, 'pre_push_merge_' + Date.now());
+        }
+      } catch(e) {}
+
+      console.log('[Sync] ' + (reason || 'pre_push') + ': merging remote from device ' +
+                  String(remoteDevice).slice(-6) + ' (remote=' + new Date(remoteTs).toISOString() +
+                  ', local=' + new Date(localTs).toISOString() + ')');
+
+      APP.state.data = mergeData(APP.state.data, normalizeData(result.data));
+      try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
+
+      // Settings/UI-State aus Remote übernehmen (analog zu syncFreshness)
+      try {
+        if (result.data._settings) {
+          APP.state.settings = { ...APP.state.settings, ...result.data._settings, storage: APP.state.settings.storage };
+          saveSettings(APP.state.settings);
+        }
+        if (result.data._uiFilters) APP.state.ui.filters = { ...APP.state.ui.filters, ...result.data._uiFilters };
+        if (result.data._uiFlags) {
+          APP.state.ui.flags = APP.state.ui.flags || {};
+          Object.assign(APP.state.ui.flags, result.data._uiFlags);
+        }
+      } catch(e) {}
+
+      saveLocalData();
+      try { if (typeof render === 'function') render(); } catch(e) {}
+
+      return { ok: true, merged: true, remoteDevice, remoteTs, localTs };
+    } catch(e) {
+      console.warn('[Sync] pre-push pull failed:', e);
+      // Fail-safe: lieber speichern als blockieren. Der ETag-412-Handler im
+      // remotePut fängt verbliebene Konflikte ab.
+      return { ok: false, error: e, merged: false };
+    } finally {
+      _prePushPullPromise = null;
+    }
+  })();
+  return _prePushPullPromise;
+}
+
 // List all IDB backups (for logbook UI)
 async function idbListBackups() {
   try {
@@ -10630,7 +10707,27 @@ async function doSave(silent = false) {
   APP.state.storage.status = "saving";
   APP.state.storage.message = t("syncing");
   updateSyncChip();
-  
+
+  // ─── PULL-BEFORE-PUSH ─────────────────────────────────────────
+  // Verhindert, dass veraltete lokale Daten neuere Änderungen von einem
+  // anderen Gerät überschreiben. Wenn Remote von einem anderen Device ist
+  // und neuer als unser letzter gesehener Stand → erst mergen, dann pushen.
+  let _preMergeHappened = false;
+  try {
+    const preMerge = await pullAndMergeBeforeSave('pre_push');
+    if (preMerge.merged) {
+      _preMergeHappened = true;
+      APP.state.storage.message = "Merge…";
+      updateSyncChip();
+    }
+  } catch(e) {
+    console.warn('[Sync] pre-push merge threw, continuing with PUT:', e);
+  }
+
+  // meta.updatedAt nach möglichem Merge neu setzen, damit unser Push
+  // den vereinigten Stand als aktuellste Version markiert.
+  if (!APP.state.data.meta) APP.state.data.meta = {};
+  APP.state.data.meta.updatedAt = new Date().toISOString();
   const payload = buildRemoteAppPayload();
 
   // Save to remote
@@ -10639,7 +10736,11 @@ async function doSave(silent = false) {
   if (result.ok) {
     APP.state.storage.status = "saved";
     APP.state.storage.message = t("saved");
-    if (!silent) toast("ok", t("saved"), getLang()==="en"?"Data synced successfully":"Daten erfolgreich synchronisiert");
+    if (_preMergeHappened) {
+      toast("ok", "Gemerged", "Änderungen von anderem Gerät übernommen — keine Daten verloren");
+    } else if (!silent) {
+      toast("ok", t("saved"), getLang()==="en"?"Data synced successfully":"Daten erfolgreich synchronisiert");
+    }
   } else if (result.status === 412) {
     // CONFLICT: Load remote, merge, retry save
     APP.state.storage.status = "saving";
