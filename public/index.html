@@ -4819,9 +4819,7 @@ textarea::placeholder, input::placeholder {
         </div>
         <button class="topbar-btn" id="btnSpotlight" title="Schnellsuche (⌘+K)" onclick="window.openSpotlight()">🔍</button>
         <button class="topbar-btn" id="btnDailyWrap" title="Tag abschließen" onclick="window.openDailyWrap()">🌙</button>
-        <button class="topbar-btn" id="btnSave" title="Lokal speichern (⌘+S)">💾</button>
-        <button class="topbar-btn" id="btnTransfer" title="In die Cloud übertragen">☁️</button>
-        <button class="topbar-btn" id="btnReceive" title="Cloud-Version übernehmen">📥</button>
+        <button class="topbar-btn" id="btnSave" title="Jetzt speichern & synchronisieren (⌘+S)">💾</button>
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
         <button class="topbar-btn" id="btnSettings" title="Einstellungen">⚙️</button>
@@ -9206,6 +9204,83 @@ async function syncFreshness(reason) {
   return _syncFreshnessPromise;
 }
 
+// ─── Pull-Before-Push ────────────────────────────────────────────
+// Vor jedem Remote-PUT prüfen, ob ein anderes Gerät seit unserem letzten
+// Sync gespeichert hat. Falls ja → erst mergen, dann pushen. Schützt vor
+// "Stale Tab überschreibt frische Daten" — das klassische Multi-Device-Problem.
+// Der bestehende ETag-412-Handler in doSave() bleibt als zweite Sicherung.
+let _prePushPullPromise = null;
+async function pullAndMergeBeforeSave(reason) {
+  if (_prePushPullPromise) return _prePushPullPromise;
+  _prePushPullPromise = (async () => {
+    try {
+      if (!navigator.onLine) return { ok: true, merged: false, reason: 'offline' };
+      if (!isAutoSyncEnabled()) return { ok: true, merged: false, reason: 'autosync_off' };
+      if (!hasAnyCloudProviderAvailable()) return { ok: true, merged: false, reason: 'no_provider' };
+
+      const result = await remoteGet({ force: true });
+      _lastRemoteCheckAt = Date.now();
+      if (!result.ok || !result.data) return { ok: true, merged: false, reason: 'no_remote' };
+
+      const myDevice = getOrCreateDeviceId();
+      const remoteDevice = result.data?.meta?.lastSavedBy || '';
+      const remoteTs = new Date(result.data?.meta?.updatedAt || 0).getTime();
+      const localTs = new Date(APP.state.data?.meta?.updatedAt || 0).getTime();
+      const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
+
+      // Merge nur wenn Remote von einem ANDEREN Gerät ist
+      // UND der Remote-Stand neuer ist als das, was wir zuletzt gesehen haben.
+      // 500ms Toleranz für Uhren-Drift zwischen Geräten.
+      const isOtherDevice = remoteDevice && remoteDevice !== myDevice;
+      const remoteUnseen = remoteTs > lastSeen + 500;
+
+      if (!isOtherDevice || !remoteUnseen) {
+        return { ok: true, merged: false, reason: 'no_conflict' };
+      }
+
+      // Backup vor Merge — falls etwas schiefgeht, kann via Logbook restored werden
+      try {
+        if (Math.abs(remoteTs - localTs) > 5000) {
+          await idbBackup(APP.state.data, 'pre_push_merge_' + Date.now());
+        }
+      } catch(e) {}
+
+      console.log('[Sync] ' + (reason || 'pre_push') + ': merging remote from device ' +
+                  String(remoteDevice).slice(-6) + ' (remote=' + new Date(remoteTs).toISOString() +
+                  ', local=' + new Date(localTs).toISOString() + ')');
+
+      APP.state.data = mergeData(APP.state.data, normalizeData(result.data));
+      try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
+
+      // Settings/UI-State aus Remote übernehmen (analog zu syncFreshness)
+      try {
+        if (result.data._settings) {
+          APP.state.settings = { ...APP.state.settings, ...result.data._settings, storage: APP.state.settings.storage };
+          saveSettings(APP.state.settings);
+        }
+        if (result.data._uiFilters) APP.state.ui.filters = { ...APP.state.ui.filters, ...result.data._uiFilters };
+        if (result.data._uiFlags) {
+          APP.state.ui.flags = APP.state.ui.flags || {};
+          Object.assign(APP.state.ui.flags, result.data._uiFlags);
+        }
+      } catch(e) {}
+
+      saveLocalData();
+      try { if (typeof render === 'function') render(); } catch(e) {}
+
+      return { ok: true, merged: true, remoteDevice, remoteTs, localTs };
+    } catch(e) {
+      console.warn('[Sync] pre-push pull failed:', e);
+      // Fail-safe: lieber speichern als blockieren. Der ETag-412-Handler im
+      // remotePut fängt verbliebene Konflikte ab.
+      return { ok: false, error: e, merged: false };
+    } finally {
+      _prePushPullPromise = null;
+    }
+  })();
+  return _prePushPullPromise;
+}
+
 // List all IDB backups (for logbook UI)
 async function idbListBackups() {
   try {
@@ -9423,8 +9498,9 @@ function mergeData(local, remote) {
   }
   
   // ── Merge top-level arrays ──
-  const arrayKeys = ['reflections', 'quickTodos', 'pinnedItems', 'weeklyGoals', 'activityLog', 
-                     'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots'];
+  const arrayKeys = ['reflections', 'quickTodos', 'pinnedItems', 'weeklyGoals', 'activityLog',
+                     'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots',
+                     'aiChats'];
   
   for (const key of arrayKeys) {
     const localArr = local[key];
@@ -9615,9 +9691,9 @@ function defaultSettings() {
       getUrl: "/.netlify/functions/blob-get?key={key}",
       putUrl: "/.netlify/functions/blob-put?key={key}",
       authToken: "",
-      autoSave: false,
-      autoSync: false,
-      manualTransferMode: true,
+      autoSave: true,
+      autoSync: true,
+      manualTransferMode: false,
     },
     openai: {
       mode: "local",
@@ -9668,7 +9744,7 @@ function loadSettings() {
     return {
       ...defaults,
       ...parsed,
-      storage: { ...defaults.storage, ...(parsed.storage || {}), autoSave: false, autoSync: false, manualTransferMode: true },
+      storage: { ...defaults.storage, ...(parsed.storage || {}) },
       openai: { ...defaults.openai, ...(parsed.openai || {}) },
       ui: { ...defaults.ui, ...(parsed.ui || {}) },
       shortcuts: mergedShortcuts,
@@ -9680,7 +9756,7 @@ function loadSettings() {
 
 function saveSettings(s) {
   try {
-    s.storage = { ...(s.storage || {}), autoSave: false, autoSync: false, manualTransferMode: true };
+    s.storage = { ...(s.storage || {}) };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
     // Embed in data for remote sync (saveLocalData will pick this up)
     if (APP.state.data) {
@@ -10630,7 +10706,27 @@ async function doSave(silent = false) {
   APP.state.storage.status = "saving";
   APP.state.storage.message = t("syncing");
   updateSyncChip();
-  
+
+  // ─── PULL-BEFORE-PUSH ─────────────────────────────────────────
+  // Verhindert, dass veraltete lokale Daten neuere Änderungen von einem
+  // anderen Gerät überschreiben. Wenn Remote von einem anderen Device ist
+  // und neuer als unser letzter gesehener Stand → erst mergen, dann pushen.
+  let _preMergeHappened = false;
+  try {
+    const preMerge = await pullAndMergeBeforeSave('pre_push');
+    if (preMerge.merged) {
+      _preMergeHappened = true;
+      APP.state.storage.message = "Merge…";
+      updateSyncChip();
+    }
+  } catch(e) {
+    console.warn('[Sync] pre-push merge threw, continuing with PUT:', e);
+  }
+
+  // meta.updatedAt nach möglichem Merge neu setzen, damit unser Push
+  // den vereinigten Stand als aktuellste Version markiert.
+  if (!APP.state.data.meta) APP.state.data.meta = {};
+  APP.state.data.meta.updatedAt = new Date().toISOString();
   const payload = buildRemoteAppPayload();
 
   // Save to remote
@@ -10639,7 +10735,11 @@ async function doSave(silent = false) {
   if (result.ok) {
     APP.state.storage.status = "saved";
     APP.state.storage.message = t("saved");
-    if (!silent) toast("ok", t("saved"), getLang()==="en"?"Data synced successfully":"Daten erfolgreich synchronisiert");
+    if (_preMergeHappened) {
+      toast("ok", "Gemerged", "Änderungen von anderem Gerät übernommen — keine Daten verloren");
+    } else if (!silent) {
+      toast("ok", t("saved"), getLang()==="en"?"Data synced successfully":"Daten erfolgreich synchronisiert");
+    }
   } else if (result.status === 412) {
     // CONFLICT: Load remote, merge, retry save
     APP.state.storage.status = "saving";
@@ -16649,8 +16749,8 @@ function viewDecisionDetail(id) {
             <span style="font-size:15px;font-weight:700">Decision Paper</span>
           </div>
           <div class="form">
-            <label>Titel<input type="text" id="dcTitle" value="${esc(dc.title || "")}" style="font-weight:600;font-size:14px" /></label>
-            <label>Beschreibung / Kontext<textarea id="dcDesc" style="min-height:140px;line-height:1.6">${esc(dc.description || "")}</textarea></label>
+            <label class="col-12">Titel<input type="text" id="dcTitle" value="${esc(dc.title || "")}" style="font-weight:600;font-size:15px;padding:12px 14px" /></label>
+            <label class="col-12">Beschreibung / Kontext<textarea id="dcDesc" style="min-height:200px;line-height:1.6;font-size:14px;padding:12px 14px">${esc(dc.description || "")}</textarea></label>
           </div>
         </div>
         
@@ -16679,35 +16779,39 @@ function viewDecisionDetail(id) {
             <span style="font-size:16px">⚙️</span>
             <span style="font-size:14px;font-weight:700">Status & Deadline</span>
           </div>
-          <div class="form">
-            <label style="margin-bottom:6px">Deadline</label>
-            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,1)}'" style="font-size:10px;padding:3px 8px">Morgen</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,3)}'" style="font-size:10px;padding:3px 8px">3d</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,7)}'" style="font-size:10px;padding:3px 8px">1W</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,14)}'" style="font-size:10px;padding:3px 8px">2W</button>
-              <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,30)}'" style="font-size:10px;padding:3px 8px">1M</button>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+              <div style="font-size:12px;color:var(--muted);font-weight:700;margin-bottom:6px">Deadline</div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,1)}'" style="font-size:11px;padding:4px 10px">Morgen</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,3)}'" style="font-size:11px;padding:4px 10px">3d</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,7)}'" style="font-size:11px;padding:4px 10px">1W</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,14)}'" style="font-size:11px;padding:4px 10px">2W</button>
+                <button class="btn sm" onclick="document.getElementById('dcDeadline').value='${addDaysYmd(today,30)}'" style="font-size:11px;padding:4px 10px">1M</button>
+              </div>
+              <input type="date" id="dcDeadline" value="${dc.deadline || ""}" />
             </div>
-            <input type="date" id="dcDeadline" value="${dc.deadline || ""}" style="margin-bottom:8px" />
-            <label>Status
-              <select id="dcStatus">
-                <option value="open" ${dc.status === "open" ? "selected" : ""}>🟣 Offen</option>
-                <option value="decided" ${dc.status === "decided" ? "selected" : ""}>✅ Entschieden</option>
-                <option value="deferred" ${dc.status === "deferred" ? "selected" : ""}>⏸ Aufgeschoben</option>
-                <option value="cancelled" ${dc.status === "cancelled" ? "selected" : ""}>❌ Abgebrochen</option>
-              </select>
-            </label>
-            <label>Entscheid
-              <select id="dcResult">
-                <option value="" ${!dc.result ? "selected" : ""}>— Offen</option>
-                <option value="yes" ${dc.result === "yes" ? "selected" : ""}>✅ Ja</option>
-                <option value="no" ${dc.result === "no" ? "selected" : ""}>❌ Nein</option>
-              </select>
-            </label>
-            <label>⏱️ Zeitvoranschlag (Minuten)
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:700">Status
+                <select id="dcStatus">
+                  <option value="open" ${dc.status === "open" ? "selected" : ""}>🟣 Offen</option>
+                  <option value="decided" ${dc.status === "decided" ? "selected" : ""}>✅ Entschieden</option>
+                  <option value="deferred" ${dc.status === "deferred" ? "selected" : ""}>⏸ Aufgeschoben</option>
+                  <option value="cancelled" ${dc.status === "cancelled" ? "selected" : ""}>❌ Abgebrochen</option>
+                </select>
+              </label>
+              <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:700">Entscheid
+                <select id="dcResult">
+                  <option value="" ${!dc.result ? "selected" : ""}>— Offen</option>
+                  <option value="yes" ${dc.result === "yes" ? "selected" : ""}>✅ Ja</option>
+                  <option value="no" ${dc.result === "no" ? "selected" : ""}>❌ Nein</option>
+                </select>
+              </label>
+            </div>
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:700">⏱️ Zeitvoranschlag (Minuten)
               <input type="number" min="0" id="dcEstimate" value="${dc.estimatedMinutes || ''}" placeholder="z.B. 30 = halbe Stunde fürs Entscheiden" />
             </label>
-            <button class="btn primary" data-action="save-decision" data-id="${id}" style="margin-top:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;width:100%;padding:10px">💾 Speichern</button>
+            <button class="btn primary" data-action="save-decision" data-id="${id}" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;font-weight:700;width:100%;padding:12px;font-size:14px">💾 Speichern</button>
           </div>
         </div>
 
@@ -47929,7 +48033,20 @@ function init() {
   // Load data
   APP.state.data = loadLocalData();
   APP.state.settings = loadSettings();
-  
+
+  // One-shot migration: Manual-Transfer-Mode wurde entfernt zugunsten von Auto-Sync.
+  // Alte Profile mit manualTransferMode=true werden auf Auto-Sync umgestellt.
+  try {
+    const st = APP.state.settings?.storage;
+    if (st && (st.manualTransferMode === true || st.autoSave === false || st.autoSync === false)) {
+      st.manualTransferMode = false;
+      st.autoSave = true;
+      st.autoSync = true;
+      saveSettings(APP.state.settings);
+      console.log('[Migration] Manual-Transfer-Mode → Auto-Sync aktiviert');
+    }
+  } catch(e) { console.warn('[Migration] failed:', e); }
+
   // Setup event listeners
   window.addEventListener("hashchange", handleHashChange);
   
@@ -55799,10 +55916,6 @@ async function init() {
     // Save button
     const btnSave = $("#btnSave");
     if (btnSave) btnSave.addEventListener("click", () => doSave(false));
-    const btnTransfer = $("#btnTransfer");
-    if (btnTransfer) btnTransfer.addEventListener("click", () => manualTransferPush(false));
-    const btnReceive = $("#btnReceive");
-    if (btnReceive) btnReceive.addEventListener("click", () => manualTransferPull(false));
   
   // Quick Action Buttons - ALLE ÖFFNEN MODALS
   const btnQuickNote = $("#btnQuickNote");
@@ -56012,24 +56125,21 @@ async function init() {
             <label class="col-12">PUT URL<input type="text" id="setPutUrl" value="${esc(APP.state.settings.storage.putUrl)}" /></label>
             <label class="col-12">Auth Token<input type="text" id="setAuthToken" value="${esc(APP.state.settings.storage.authToken)}" placeholder="Leer lassen falls SYNC_AUTH_TOKEN nicht gesetzt" /></label>
             <div class="mini" style="color:var(--muted);margin:-6px 0 14px">Token muss <strong>exakt</strong> mit der <code>SYNC_AUTH_TOKEN</code>-Env-Variable in Netlify übereinstimmen. "Bearer "-Prefix nicht nötig.</div>
-            <div class="card" style="padding:12px;border:1px solid var(--border);background:var(--panel2);margin:8px 0 14px">
-              <div style="font-weight:700;margin-bottom:6px">🧭 Manueller Geräte-Transfer aktiv</div>
-              <div class="mini" style="color:var(--muted)">💾 Speichern = lokale Version fixieren · ☁️ Übertragen = diese Version in die Cloud schreiben · 📥 Übernehmen = neueste Cloud-Version vollständig lokal übernehmen.</div>
+            <div class="card" style="padding:12px;border:1px solid rgba(16,185,129,.25);background:rgba(16,185,129,.06);margin:8px 0 14px">
+              <div style="font-weight:700;margin-bottom:6px;color:#34d399">☁️ Auto-Sync aktiv</div>
+              <div class="mini" style="color:var(--muted)">Änderungen werden alle paar Sekunden automatisch lokal & in die Cloud gespeichert. Vor jedem Upload wird der Server-Stand geprüft und ggf. gemerged — keine Datenverluste mehr bei Multi-Device-Nutzung.</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-                <button type="button" class="btn primary" onclick="doSave(false)">💾 Speichern</button>
-                <button type="button" class="btn" onclick="manualTransferPush(false)">☁️ Übertragen</button>
-                <button type="button" class="btn" onclick="manualTransferPull(false)">📥 Übernehmen</button>
+                <button type="button" class="btn primary" onclick="doSave(false)">💾 Jetzt speichern</button>
               </div>
-              ${getManualTransferInfoHtml()}
             </div>
             <div class="sep"></div>
             <label class="col-12" style="display:flex;align-items:center;gap:10px">
-              <input type="checkbox" id="setAutoSave" disabled style="width:auto" />
-              Automatisch speichern (deaktiviert – manueller Modus)
+              <input type="checkbox" id="setAutoSave" ${APP.state.settings.storage.autoSave !== false ? 'checked' : ''} style="width:auto" />
+              Automatisch lokal speichern
             </label>
             <label class="col-12" style="display:flex;align-items:center;gap:10px">
-              <input type="checkbox" id="setAutoSync" disabled style="width:auto" />
-              Automatisch synchronisieren (deaktiviert – manueller Modus)
+              <input type="checkbox" id="setAutoSync" ${APP.state.settings.storage.autoSync !== false ? 'checked' : ''} style="width:auto" />
+              Automatisch mit Cloud synchronisieren
             </label>
           </div>
         </div>
@@ -61447,9 +61557,9 @@ window.saveSettingsModal = function() {
   APP.state.settings.storage.getUrl = $("#setGetUrl")?.value || "";
   APP.state.settings.storage.putUrl = $("#setPutUrl")?.value || "";
   APP.state.settings.storage.authToken = $("#setAuthToken")?.value || "";
-  APP.state.settings.storage.autoSave = false;
-  APP.state.settings.storage.autoSync = false;
-  APP.state.settings.storage.manualTransferMode = true;
+  APP.state.settings.storage.autoSave = $("#setAutoSave")?.checked !== false;
+  APP.state.settings.storage.autoSync = $("#setAutoSync")?.checked !== false;
+  APP.state.settings.storage.manualTransferMode = false;
   if (typeof resetCloudSyncHealth === 'function') resetCloudSyncHealth();
   APP.state.settings.openai.mode = $("#setAiMode")?.value || "local";
   APP.state.settings.openai.apiKey = $("#setOpenAIKey")?.value || "";
