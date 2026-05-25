@@ -83185,21 +83185,19 @@ function onViewChange() {
   }
   
   // Wenn diese View bereits in einem anderen Tab existiert → den aktivieren
-  // (Das verhindert Duplikate wenn z.B. Spotlight zur gleichen Stelle navigiert)
-  // ABER: für Projekt-Detail-Pages und ähnliches werden bewusst neue Tabs erlaubt
-  // → Wir machen Duplikat-Prävention nur für Apps und Top-Level-Routes
-  const isAppView = v.kind === 'newsroom' || v.kind === 'readinghub';
-  const isTopLevel = v.kind === 'hash' && v.ref.split('/').length <= 2; // #/notes etc.
-  
-  if (isAppView || isTopLevel) {
-    const existing = _tabs.find(t => t.kind === v.kind && t.ref === v.ref);
-    if (existing) {
-      _activeTabId = existing.id;
-      saveTabs(); renderTabs();
-      return;
+  // (Verhindert Duplikate sowohl für Apps/Top-Level als auch für Entity-Detail-Pages
+  //  wie #/notes/abc123, #/tasks/xyz etc. — entspricht Browser-Tab-Verhalten)
+  const existing = _tabs.find(t => t.kind === v.kind && t.ref === v.ref);
+  if (existing) {
+    _activeTabId = existing.id;
+    // Title/Icon aktualisieren falls sie sich geändert haben
+    if (existing.title !== v.title || existing.icon !== v.icon) {
+      existing.title = v.title; existing.icon = v.icon;
     }
+    saveTabs(); renderTabs();
+    return;
   }
-  
+
   // Sonst: neuen Tab erstellen
   const tab = { id: genTabId(), ...v };
   _tabs.push(tab);
