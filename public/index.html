@@ -18691,6 +18691,22 @@ function getCompletionForDate(habit, dateStr) {
   return (habit.completions || []).filter(c => c.date === dateStr).reduce((sum, c) => sum + (c.value || 1), 0);
 }
 
+function isSubUnitDone(habit, subUnitName, dateStr) {
+  return (habit.subCompletions || []).some(c => c.date === dateStr && c.subUnitName === subUnitName);
+}
+
+function areAllSubUnitsDone(habit, dateStr) {
+  if (!Array.isArray(habit.subUnits) || habit.subUnits.length === 0) return false;
+  return habit.subUnits.every(u => isSubUnitDone(habit, u.name, dateStr));
+}
+
+function isHabitDoneOnDate(habit, dateStr) {
+  if (Array.isArray(habit.subUnits) && habit.subUnits.length > 0) {
+    return areAllSubUnitsDone(habit, dateStr);
+  }
+  return getCompletionForDate(habit, dateStr) >= (habit.target || 1);
+}
+
 // Berechnet Streak — wie viele aufeinanderfolgende geplante Tage erfüllt wurden
 function calcHabitStreak(habit) {
   if ((habit.completions || []).length === 0) return 0;
@@ -18754,14 +18770,14 @@ function viewHabits() {
   
   // Heute zu erledigen
   const dueToday = habits.filter(h => isHabitDueOnDate(h, today));
-  const completedToday = dueToday.filter(h => getCompletionForDate(h, today) >= (h.target || 1));
-  
+  const completedToday = dueToday.filter(h => isHabitDoneOnDate(h, today));
+
   // Beste Streaks
   const habitsWithStats = habits.map(h => ({
     h,
     streak: calcHabitStreak(h),
     stats30: getHabitStats(h, 30),
-    todayDone: getCompletionForDate(h, today) >= (h.target || 1),
+    todayDone: isHabitDoneOnDate(h, today),
     todayValue: getCompletionForDate(h, today),
     isDueToday: isHabitDueOnDate(h, today),
   }));
@@ -18853,10 +18869,27 @@ function viewHabits() {
             
             ${streak > 0 ? `<div><span class="ht-streak">🔥 ${streak}-Tage-Streak</span></div>` : ''}
             
-            ${target > 1 && isDueToday ? `<div class="ht-progress-row">
+            ${target > 1 && isDueToday && !(h.subUnits && h.subUnits.length) ? `<div class="ht-progress-row">
               <div class="ht-progress-bar"><div class="ht-progress-fill" style="width:${todayPct}%;background:${accentColor}"></div></div>
               <span style="color:${accentColor};font-weight:700;min-width:40px;text-align:right">${todayValue}/${target}</span>
               ${isDueToday ? `<button onclick="incHabitToday('${h.id}')" style="padding:3px 9px;background:${accentColor}33;border:1px solid ${accentColor};color:${accentColor};border-radius:5px;cursor:pointer;font-size:12px;font-weight:700">+1</button>` : ''}
+            </div>` : ''}
+
+            ${Array.isArray(h.subUnits) && h.subUnits.length > 0 && isDueToday ? `<div style="margin:8px 0;padding:10px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);border-radius:8px">
+              <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+                <span>Sub-Einheiten</span>
+                <span style="color:${accentColor};font-weight:700;font-size:11px">${h.subUnits.filter(u => isSubUnitDone(h, u.name, today)).length}/${h.subUnits.length}</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                ${h.subUnits.map(u => {
+                  const done = isSubUnitDone(h, u.name, today);
+                  return `<button onclick="toggleHabitSubUnit('${h.id}', ${JSON.stringify(u.name)})" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:${done ? accentColor + '22' : 'rgba(255,255,255,.04)'};border:1px solid ${done ? accentColor + '88' : 'rgba(255,255,255,.08)'};border-radius:6px;cursor:pointer;text-align:left;width:100%;color:${done ? accentColor : 'var(--text)'};font-size:12.5px;transition:all .15s">
+                    <span style="font-size:14px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;border:1.5px solid ${done ? accentColor : 'rgba(255,255,255,.25)'};border-radius:4px;background:${done ? accentColor : 'transparent'};color:#fff;font-weight:700;flex-shrink:0">${done ? '✓' : ''}</span>
+                    ${u.icon ? `<span style="font-size:14px;flex-shrink:0">${u.icon}</span>` : ''}
+                    <span style="flex:1;text-decoration:${done ? 'line-through' : 'none'};opacity:${done ? '.7' : '1'}">${esc(u.name)}</span>
+                  </button>`;
+                }).join('')}
+              </div>
             </div>` : ''}
             
             <div>
@@ -18924,9 +18957,35 @@ window.incHabitToday = function(habitId) {
   const h = habits.find(r => r.id === habitId);
   if (!h) return;
   const today = new Date().toISOString().slice(0, 10);
-  
+
   if (!Array.isArray(h.completions)) h.completions = [];
   h.completions.push({ id: 'hc_' + Math.random().toString(36).slice(2, 8), date: today, value: 1 });
+  scheduleSave();
+  render();
+};
+
+window.toggleHabitSubUnit = function(habitId, subUnitName) {
+  const habits = getHabits();
+  const h = habits.find(r => r.id === habitId);
+  if (!h) return;
+  if (!Array.isArray(h.subCompletions)) h.subCompletions = [];
+  const today = new Date().toISOString().slice(0, 10);
+  const existingIdx = h.subCompletions.findIndex(c => c.date === today && c.subUnitName === subUnitName);
+  if (existingIdx >= 0) {
+    h.subCompletions.splice(existingIdx, 1);
+  } else {
+    h.subCompletions.push({ id: 'sc_' + Math.random().toString(36).slice(2, 8), date: today, subUnitName, completedAt: new Date().toISOString() });
+  }
+  // Auto: wenn ALLE Sub-Units heute abgehakt, einen completions-Eintrag setzen (für Streaks/Stats);
+  // wenn nicht mehr alle abgehakt, den Auto-Eintrag wieder entfernen.
+  if (!Array.isArray(h.completions)) h.completions = [];
+  const allDone = (h.subUnits || []).length > 0 && (h.subUnits || []).every(u => h.subCompletions.some(c => c.date === today && c.subUnitName === u.name));
+  const hadAuto = h.completions.some(c => c.date === today && c.autoFromSubUnits);
+  if (allDone && !hadAuto) {
+    h.completions.push({ id: 'hc_' + Math.random().toString(36).slice(2, 8), date: today, value: h.target || 1, autoFromSubUnits: true });
+  } else if (!allDone && hadAuto) {
+    h.completions = h.completions.filter(c => !(c.date === today && c.autoFromSubUnits));
+  }
   scheduleSave();
   render();
 };
@@ -19008,6 +19067,26 @@ window.openHabitEditor = function(habitId) {
           <input id="heUnit" type="text" value="${esc(h?.unit || '')}" placeholder="z.B. Min, Seiten, Glas" style="width:100%;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:7px;color:var(--text);font-size:13px;box-sizing:border-box" />
         </div>
       </div>
+
+      <div style="margin-bottom:14px;padding:12px;background:rgba(168,85,247,.06);border:1px solid rgba(168,85,247,.18);border-radius:9px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <label style="font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Sub-Einheiten (optional)</label>
+          <button onclick="window._heAddUnit()" type="button" style="padding:4px 10px;background:rgba(168,85,247,.18);border:1px solid rgba(168,85,247,.35);color:#d8b4fe;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700">+ Einheit</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">
+          Mehrere Sub-Schritte einer Routine, die einzeln abgehakt werden können (z.B. „Aufstehen", „Zähne putzen", „Sport"). Lässt du die Liste leer, zählt nur die Anzahl/Tag oben.
+        </div>
+        <div id="heSubUnits" style="display:flex;flex-direction:column;gap:6px">
+          ${(h?.subUnits || []).map((u, idx) => `
+            <div class="he-subunit-row" data-idx="${idx}" style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:14px;flex-shrink:0;color:var(--muted)">${idx + 1}.</span>
+              <input class="he-subunit-input" type="text" value="${esc(u.name || u)}" placeholder="Sub-Einheit Name" style="flex:1;padding:8px 10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);font-size:13px;box-sizing:border-box" />
+              <input class="he-subunit-icon" type="text" value="${esc(u.icon || '')}" maxlength="2" placeholder="📍" style="width:42px;padding:8px 6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);font-size:14px;text-align:center;box-sizing:border-box" />
+              <button onclick="this.closest('.he-subunit-row').remove()" type="button" style="width:28px;height:28px;padding:0;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#f87171;border-radius:6px;cursor:pointer;font-size:14px;flex-shrink:0">×</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
       
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
         ${h ? `<button onclick="archiveHabit('${h.id}')" style="padding:9px 14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:#fbbf24;border-radius:7px;cursor:pointer;font-size:12px">📦 Archivieren</button>` : ''}
@@ -19049,14 +19128,41 @@ window.closeHabitEditor = function() {
   if (overlay) overlay.remove();
 };
 
+window._heAddUnit = function() {
+  const list = document.getElementById('heSubUnits');
+  if (!list) return;
+  const idx = list.querySelectorAll('.he-subunit-row').length;
+  const row = document.createElement('div');
+  row.className = 'he-subunit-row';
+  row.dataset.idx = idx;
+  row.style.cssText = 'display:flex;align-items:center;gap:6px';
+  row.innerHTML = `
+    <span style="font-size:14px;flex-shrink:0;color:var(--muted)">${idx + 1}.</span>
+    <input class="he-subunit-input" type="text" placeholder="Sub-Einheit Name" style="flex:1;padding:8px 10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);font-size:13px;box-sizing:border-box" />
+    <input class="he-subunit-icon" type="text" maxlength="2" placeholder="📍" style="width:42px;padding:8px 6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:var(--text);font-size:14px;text-align:center;box-sizing:border-box" />
+    <button onclick="this.closest('.he-subunit-row').remove()" type="button" style="width:28px;height:28px;padding:0;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#f87171;border-radius:6px;cursor:pointer;font-size:14px;flex-shrink:0">×</button>
+  `;
+  list.appendChild(row);
+  row.querySelector('.he-subunit-input')?.focus();
+};
+
 window.saveHabit = function(existingId) {
   const text = document.getElementById('heText')?.value.trim();
   if (!text) { toast('warn', 'Name erforderlich'); return; }
-  
+
+  // Sub-Einheiten einsammeln
+  const subUnits = [];
+  document.querySelectorAll('#heSubUnits .he-subunit-row').forEach(row => {
+    const name = row.querySelector('.he-subunit-input')?.value.trim();
+    const icon = row.querySelector('.he-subunit-icon')?.value.trim();
+    if (name) subUnits.push({ name, icon: icon || '' });
+  });
+
   const habits = getHabits();
   const isNew = !existingId;
   const id = existingId || ('rt_' + Math.random().toString(36).slice(2, 10));
-  
+  const existing = habits.find(h => h.id === id);
+
   const data = {
     id,
     text,
@@ -19066,17 +19172,18 @@ window.saveHabit = function(existingId) {
     customDays: (document.getElementById('heCustomDays')?.value || '').split(',').filter(x => x !== '').map(Number),
     target: parseInt(document.getElementById('heTarget')?.value) || 1,
     unit: document.getElementById('heUnit')?.value.trim() || '',
+    subUnits,
     archived: false,
-    createdAt: isNew ? new Date().toISOString() : (habits.find(h => h.id === id)?.createdAt || new Date().toISOString()),
-    completions: habits.find(h => h.id === id)?.completions || [],
+    createdAt: isNew ? new Date().toISOString() : (existing?.createdAt || new Date().toISOString()),
+    completions: existing?.completions || [],
   };
-  
+
   if (isNew) habits.push(data);
   else {
     const idx = habits.findIndex(h => h.id === id);
     if (idx >= 0) habits[idx] = { ...habits[idx], ...data };
   }
-  
+
   scheduleSave();
   closeHabitEditor();
   render();
@@ -80649,9 +80756,24 @@ function buildSpotlightItems() {
   try {
     const APPS_LIST = [
       { icon: '◫', title: 'Dashboard', sub: 'Startseite', open: () => { window.location.hash = '#/dashboard'; } },
+      { icon: '📱', title: 'Apps', sub: 'App-Übersicht & Hub', open: () => { window.location.hash = '#/apps'; } },
       { icon: '☀️', title: 'Heute', sub: 'Tagesübersicht', open: () => { window.location.hash = '#/today'; } },
+      { icon: '🌅', title: 'Daily Briefing', sub: 'Morgenplanung & Tagesplan', open: () => { window.location.hash = '#/dailybriefing'; } },
       { icon: '✓', title: 'Aufgaben', sub: 'Alle Tasks', open: () => { window.location.hash = '#/tasks'; } },
       { icon: '📦', title: 'Projekte', sub: 'Projekt-Übersicht', open: () => { window.location.hash = '#/projects'; } },
+      { icon: '🏛️', title: 'Organisationen', sub: 'Firmen, Vereine, Schulen', open: () => { window.location.hash = '#/organizations'; } },
+      { icon: '🧩', title: 'Programme', sub: 'Programme & Links-Sammlung', open: () => { window.location.hash = '#/programs'; } },
+      { icon: '💬', title: 'Messages', sub: 'Geplante Nachrichten', open: () => { window.location.hash = '#/messages'; } },
+      { icon: '🔁', title: 'Routinen', sub: 'Habits & Daily Tracking', open: () => { window.location.hash = '#/habits'; } },
+      { icon: '🌙', title: 'Reflecta', sub: 'Abend-Reflexion', open: () => { window.location.hash = '#/reflecta'; } },
+      { icon: '🧠', title: 'Konzepte', sub: 'Concept-Sammlung', open: () => { window.location.hash = '#/concepts'; } },
+      { icon: '🤔', title: 'Decisions', sub: 'Entscheidungs-Tracker', open: () => { window.location.hash = '#/decisions'; } },
+      { icon: '📋', title: 'Updates', sub: 'Status-Updates', open: () => { window.location.hash = '#/updates'; } },
+      { icon: '📜', title: 'Regeln', sub: 'Rules & Constraints', open: () => { window.location.hash = '#/rules'; } },
+      { icon: '🎓', title: 'Theses', sub: 'Maturarbeit / Thesen', open: () => { window.location.hash = '#/thesis'; } },
+      { icon: '⚖️', title: 'Workload', sub: 'Auslastung', open: () => { window.location.hash = '#/workload'; } },
+      { icon: '🚨', title: 'Maßnahmen', sub: 'Measures', open: () => { window.location.hash = '#/measures'; } },
+      { icon: '💰', title: 'Budget', sub: 'Konten, Buchungen, Rechnungen', open: () => { window.location.hash = '#/budget'; } },
       { icon: '📝', title: 'NoteFlow', sub: 'Notizen & Notizbücher', open: () => { window.location.hash = '#/notes'; } },
       { icon: '💡', title: 'Ideen', sub: 'Idea-Inbox', open: () => { window.location.hash = '#/ideas'; } },
       { icon: '🤝', title: 'Meetings', sub: 'Termine & Sitzungen', open: () => { window.location.hash = '#/meetings'; } },
