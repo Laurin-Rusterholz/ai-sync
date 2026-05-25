@@ -5531,7 +5531,7 @@ function isImageFile(filename) {
 
 function renderFileAttachments(kind, entityId) {
   const e = APP.state.data.entities;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = e[kindMap[kind]]?.[entityId];
   if (!entity) return '';
   const files = entity.files || [];
@@ -5970,7 +5970,7 @@ window._loadExtractedText = async function(kind, entityId, fileId) {
 // 🔄 Manuelle Re-Indexierung einer bereits hochgeladenen Datei
 // Lädt sie aus Firebase, extrahiert den Text und speichert ihn in Netlify Blob
 window._reindexFile = async function(kind, entityId, fileId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const fileObj = (entity.files || []).find(f => f.id === fileId);
@@ -6048,7 +6048,7 @@ window._reindexFile = async function(kind, entityId, fileId) {
 
 // 🔄 Alle nicht-indexierten Dateien einer Entity re-indexieren
 window._reindexAllFiles = async function(kind, entityId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !Array.isArray(entity.files)) return;
   const toIndex = entity.files.filter(f => !f.textExtracted && f.url && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes((f.name || '').split('.').pop().toLowerCase()));
@@ -7025,7 +7025,7 @@ window._aiSaveAsNote = function(kind, entityId, content) {
 window._handleFileSelect = async function(fileList, kind, entityId, folderId) {
   if (!fileList || fileList.length === 0) return;
   if (!firebaseStorage) { toast('error', 'Firebase', 'Firebase SDK nicht geladen – Adblocker deaktivieren oder auf Netlify deployen'); return; }
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.files) entity.files = [];
@@ -7164,7 +7164,7 @@ window._toggleFileFolder = function(kind, entityId, folderId) {
 window._createFileFolder = function(kind, entityId) {
   const name = prompt('Ordnername:');
   if (!name || !name.trim()) return;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.fileFolders) entity.fileFolders = [];
@@ -7176,7 +7176,7 @@ window._createFileFolder = function(kind, entityId) {
 };
 
 window._renameFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -7191,7 +7191,7 @@ window._renameFileFolder = function(kind, entityId, folderId) {
 };
 
 window._renameFile = function(kind, entityId, idx) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files) return;
   const file = entity.files[idx];
@@ -7212,7 +7212,7 @@ window._renameFile = function(kind, entityId, idx) {
 };
 
 window._deleteFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -7232,7 +7232,7 @@ window._deleteFileFolder = function(kind, entityId, folderId) {
 };
 
 window._moveFileToFolder = function(kind, entityId, fileIdx, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   if (folderId) {
@@ -7264,7 +7264,7 @@ window._dropFileOnFolder = function(e, kind, entityId, folderId) {
 };
 
 function openFilePreview(kind, entityId, fileIdx) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
+  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   const f = entity.files[fileIdx];
@@ -8015,6 +8015,7 @@ function emptyData() {
       workflows: {},
       workflowPrograms: {},
       concepts: {},
+      invoices: {},
     },
     timers: {},
     pinnedItems: [], // ["task:id", "project:id", ...]
@@ -8863,6 +8864,28 @@ for (const u of Object.values(e.updates)) {
     pp.reminderShown = pp.reminderShown ?? false;
     pp.linkedAccountId = pp.linkedAccountId || null;
     pp.linkedCreditCardId = pp.linkedCreditCardId || null;
+  }
+
+  // Normalize invoices (Rechnungen mit KI-Analyse)
+  e.invoices = e.invoices || {};
+  for (const inv of Object.values(e.invoices)) {
+    inv.files = Array.isArray(inv.files) ? inv.files : [];
+    inv.status = inv.status || "uploaded"; // uploaded | analyzing | analyzed | paid | error
+    inv.vendor = inv.vendor || "";
+    inv.amount = inv.amount ?? null;
+    inv.currency = inv.currency || "CHF";
+    inv.dueDate = inv.dueDate || null;            // YYYY-MM-DD
+    inv.invoiceDate = inv.invoiceDate || null;
+    inv.invoiceNumber = inv.invoiceNumber || "";
+    inv.iban = inv.iban || "";
+    inv.reference = inv.reference || "";
+    inv.description = inv.description || "";
+    inv.category = inv.category || "Rechnung";
+    inv.aiNotes = inv.aiNotes || "";
+    inv.aiError = inv.aiError || "";
+    inv.linkedTransactionId = inv.linkedTransactionId || null;
+    inv.linkedTaskId = inv.linkedTaskId || null;
+    inv.accountId = inv.accountId || null;
   }
 
   // Normalize sync conflict log (Logbuch)
@@ -10862,6 +10885,7 @@ function getEntityMap(kind) {
     monthlyAiReport: e.monthlyAiReports,
     syncConflict: e.syncConflicts,
     decision: e.decisions,
+    invoice: e.invoices,
   };
   return maps[kind] || null;
 }
@@ -42870,6 +42894,430 @@ setTimeout(() => {
   if (target) observer.observe(target, { childList: true });
 }, 1500);
 
+// ════════════════════════════════════════════════════════════════════════════
+// INVOICES (Rechnungen) — Upload, KI-Analyse, Auto-Buchung, Auto-Task
+// ════════════════════════════════════════════════════════════════════════════
+
+function renderInvoicesTab() {
+  const invoices = Object.values(APP.state.data.entities.invoices || {})
+    .sort((a, b) => {
+      // unbezahlte & fällige zuerst, dann nach updatedAt desc
+      const ax = a.status === "paid" ? 9 : (a.status === "error" ? 1 : 0);
+      const bx = b.status === "paid" ? 9 : (b.status === "error" ? 1 : 0);
+      if (ax !== bx) return ax - bx;
+      const ad = a.dueDate || "9999-12-31";
+      const bd = b.dueDate || "9999-12-31";
+      if (ad !== bd) return ad.localeCompare(bd);
+      return (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "");
+    });
+
+  const today = todayYmd();
+  const overdue = invoices.filter(i => i.status !== "paid" && i.dueDate && i.dueDate < today);
+  const dueSoon = invoices.filter(i => i.status !== "paid" && i.dueDate && i.dueDate >= today && i.dueDate <= addDaysYmd(today, 14));
+  const open = invoices.filter(i => i.status !== "paid").length;
+  const totalOpen = invoices.filter(i => i.status !== "paid" && typeof i.amount === "number").reduce((s, i) => s + i.amount, 0);
+  const fbOk = !!window.firebaseStorage;
+
+  const statusBadge = (inv) => {
+    if (inv.status === "analyzing") return `<span class="inv-badge inv-badge-analyzing">🤖 Analysiert…</span>`;
+    if (inv.status === "error") return `<span class="inv-badge inv-badge-error">⚠️ Fehler</span>`;
+    if (inv.status === "uploaded") return `<span class="inv-badge inv-badge-uploaded">⏳ Wartet</span>`;
+    if (inv.status === "paid") return `<span class="inv-badge inv-badge-paid">✓ Bezahlt</span>`;
+    if (inv.dueDate && inv.dueDate < today) return `<span class="inv-badge inv-badge-overdue">⏰ Überfällig</span>`;
+    if (inv.dueDate && inv.dueDate <= addDaysYmd(today, 7)) return `<span class="inv-badge inv-badge-duesoon">🔔 Bald fällig</span>`;
+    return `<span class="inv-badge inv-badge-analyzed">✓ Analysiert</span>`;
+  };
+
+  const card = (inv) => {
+    const file = inv.files?.[0];
+    const isUnanalyzed = inv.status === "uploaded" || inv.status === "error";
+    const dueLabel = inv.dueDate ? `<span class="inv-meta-strong">📅 ${inv.dueDate}</span>` : `<span class="inv-meta-warn">Kein Datum</span>`;
+    const amountLabel = (typeof inv.amount === "number") ? `<span class="inv-amount">${formatMoney(inv.amount)} ${esc(inv.currency)}</span>` : `<span class="inv-meta-warn">Kein Betrag</span>`;
+    const linkedTx = inv.linkedTransactionId ? APP.state.data.entities.transactions?.[inv.linkedTransactionId] : null;
+    const linkedTask = inv.linkedTaskId ? APP.state.data.entities.tasks?.[inv.linkedTaskId] : null;
+
+    return `
+      <div class="inv-card" data-id="${inv.id}">
+        <div class="inv-card-head">
+          <div class="inv-card-head-left">
+            <div class="inv-vendor">${esc(inv.vendor || "Unbekannter Rechnungssteller")}</div>
+            <div class="inv-meta-row">
+              ${statusBadge(inv)}
+              ${dueLabel}
+              ${amountLabel}
+              ${inv.invoiceNumber ? `<span class="inv-meta">Nr. ${esc(inv.invoiceNumber)}</span>` : ""}
+              ${inv.category ? `<span class="inv-meta">${esc(inv.category)}</span>` : ""}
+            </div>
+            ${inv.description ? `<div class="inv-desc">${esc(inv.description)}</div>` : ""}
+            ${inv.aiNotes ? `<div class="inv-ai-notes">🤖 ${esc(inv.aiNotes)}</div>` : ""}
+            ${inv.aiError ? `<div class="inv-ai-error">⚠️ ${esc(inv.aiError)}</div>` : ""}
+          </div>
+          ${file ? `<button class="inv-file-thumb" data-action="invoice-open-file" data-id="${inv.id}" title="Rechnung öffnen">
+            <div class="inv-file-icon">${file.type?.includes("pdf") || file.name?.toLowerCase().endsWith(".pdf") ? "📄" : "🖼"}</div>
+            <div class="inv-file-name">${esc((file.name || "").slice(0, 22))}</div>
+          </button>` : ""}
+        </div>
+
+        ${(linkedTx || linkedTask) ? `
+        <div class="inv-links-row">
+          ${linkedTx ? `<a class="inv-link inv-link-tx" href="#/budget" title="Geplante Buchung">📅 Buchung erstellt für ${linkedTx.scheduledDate || linkedTx.date}</a>` : ""}
+          ${linkedTask ? `<a class="inv-link inv-link-task" href="#/tasks/${linkedTask.id}" title="Verknüpfte Aufgabe öffnen">✓ Aufgabe: ${esc((linkedTask.title || "").slice(0, 40))}</a>` : ""}
+        </div>` : ""}
+
+        <div class="inv-actions">
+          ${inv.status === "analyzing" ? `<button class="fin-action-btn" disabled>🤖 KI arbeitet…</button>` : ""}
+          ${isUnanalyzed && inv.files?.length ? `<button class="fin-action-btn primary" data-action="invoice-analyze" data-id="${inv.id}">🤖 Mit KI analysieren</button>` : ""}
+          ${inv.status === "analyzed" && (!inv.linkedTransactionId || !inv.linkedTaskId) && inv.dueDate ? `<button class="fin-action-btn primary" data-action="invoice-create-links" data-id="${inv.id}">📅 Buchung + Aufgabe erstellen</button>` : ""}
+          ${inv.status === "analyzed" || inv.status === "uploaded" ? `<button class="fin-action-btn" data-action="invoice-edit-due" data-id="${inv.id}">✏️ Daten korrigieren</button>` : ""}
+          ${inv.status !== "paid" && inv.status !== "uploaded" ? `<button class="fin-action-btn" data-action="invoice-mark-paid" data-id="${inv.id}">✓ Als bezahlt markieren</button>` : ""}
+          <button class="fin-action-btn" data-action="invoice-delete" data-id="${inv.id}" style="color:#ff6b6b">🗑 Löschen</button>
+        </div>
+      </div>`;
+  };
+
+  const overdueSection = overdue.length ? `
+    <div class="inv-section">
+      <div class="inv-section-title" style="color:#ff375f">⏰ Überfällig (${overdue.length})</div>
+      ${overdue.map(card).join("")}
+    </div>` : "";
+
+  const dueSoonSection = dueSoon.length ? `
+    <div class="inv-section">
+      <div class="inv-section-title" style="color:#ff9f0a">🔔 Bald fällig (nächste 14 Tage)</div>
+      ${dueSoon.map(card).join("")}
+    </div>` : "";
+
+  const allOthers = invoices.filter(i => !overdue.includes(i) && !dueSoon.includes(i));
+  const othersSection = allOthers.length ? `
+    <div class="inv-section">
+      <div class="inv-section-title">Alle Rechnungen</div>
+      ${allOthers.map(card).join("")}
+    </div>` : "";
+
+  const emptyState = invoices.length === 0 ? `
+    <div class="inv-empty">
+      <div class="inv-empty-icon">🧾</div>
+      <div class="inv-empty-title">Noch keine Rechnungen</div>
+      <div class="inv-empty-sub">Lade eine Rechnung (PDF oder Foto) hoch — die KI extrahiert Empfänger, Betrag und Fälligkeit, erstellt automatisch eine geplante Buchung und eine Aufgabe für die Fälligkeit.</div>
+    </div>` : "";
+
+  return `
+    <input type="file" id="invoicePickerInput" multiple accept="application/pdf,image/*" style="display:none"
+           onchange="window._uploadInvoiceFiles(this.files)" />
+
+    <div class="inv-stats">
+      <div class="fin-glass-card">
+        <div class="fin-stat-val">${open}</div>
+        <div class="fin-stat-lbl">Offene Rechnungen</div>
+      </div>
+      <div class="fin-glass-card">
+        <div class="fin-stat-val" style="color:${overdue.length ? '#ff375f' : '#a1a1aa'}">${overdue.length}</div>
+        <div class="fin-stat-lbl">Überfällig</div>
+      </div>
+      <div class="fin-glass-card">
+        <div class="fin-stat-val">${formatMoney(totalOpen)} CHF</div>
+        <div class="fin-stat-lbl">Offener Betrag</div>
+      </div>
+    </div>
+
+    <div class="inv-upload-zone ${fbOk ? "" : "disabled"}"
+         ondragover="event.preventDefault();this.classList.add('dragging')"
+         ondragleave="this.classList.remove('dragging')"
+         ondrop="event.preventDefault();this.classList.remove('dragging');window._uploadInvoiceFiles(event.dataTransfer.files)"
+         data-action="invoice-pick-files">
+      <div class="inv-upload-icon">${fbOk ? "📤" : "🔒"}</div>
+      <div class="inv-upload-title">${fbOk ? "Rechnung hochladen" : "Firebase nicht verfügbar"}</div>
+      <div class="inv-upload-sub">${fbOk ? "PDF oder Foto · KI extrahiert Daten und erstellt Buchung + Aufgabe automatisch" : "Adblocker deaktivieren oder Firebase konfigurieren"}</div>
+    </div>
+
+    ${emptyState}
+    ${overdueSection}
+    ${dueSoonSection}
+    ${othersSection}
+  `;
+}
+
+// ── Upload-Handler ──────────────────────────────────────────────────────────
+window._uploadInvoiceFiles = async function(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  if (!window.firebaseStorage) { toast("error", "Firebase", "Upload nicht verfügbar"); return; }
+
+  for (let i = 0; i < fileList.length; i++) {
+    const file = fileList[i];
+    if (file.size > 50 * 1024 * 1024) { toast("error", "Zu gross", `${file.name} > 50 MB`); continue; }
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isImg = (file.type || "").startsWith("image/");
+    if (!isPdf && !isImg) { toast("error", "Format", `${file.name} ist kein PDF/Bild`); continue; }
+
+    // 1) Invoice-Entity erstellen
+    const invoiceId = createEntity("invoice", {
+      vendor: file.name.replace(/\.(pdf|png|jpg|jpeg|webp|heic)$/i, "").slice(0, 60),
+      status: "uploaded",
+      files: [],
+    });
+    toast("ok", "Hochgeladen", file.name);
+
+    // 2) Datei zu Firebase
+    const fileId = "f_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+    const storagePath = `attachments/invoice/${invoiceId}/${fileId}_${file.name}`;
+    try {
+      const downloadUrl = await uploadToFirebase(file, storagePath, null);
+      const inv = APP.state.data.entities.invoices[invoiceId];
+      if (!inv) continue;
+      inv.files = [{
+        id: fileId,
+        name: file.name,
+        originalName: file.name,
+        size: file.size,
+        type: file.type,
+        storagePath,
+        url: downloadUrl,
+        uploadedAt: nowIso(),
+      }];
+      inv.updatedAt = nowIso();
+      scheduleSave();
+      render();
+
+      // 3) KI-Analyse direkt starten
+      analyzeInvoice(invoiceId);
+    } catch (err) {
+      console.error("[Invoice upload]", err);
+      const inv = APP.state.data.entities.invoices[invoiceId];
+      if (inv) { inv.status = "error"; inv.aiError = "Upload fehlgeschlagen: " + (err.message || err); }
+      toast("error", "Upload", err.message || "Fehler");
+      scheduleSave(); render();
+    }
+  }
+};
+
+// ── KI-Analyse ─────────────────────────────────────────────────────────────
+async function analyzeInvoice(invoiceId) {
+  const inv = APP.state.data.entities.invoices?.[invoiceId];
+  if (!inv || !inv.files?.[0]) { toast("warn", "Keine Datei"); return; }
+
+  const apiKey = APP.state.settings?.anthropicApiKey || APP.state.settings?.apiKey;
+  if (!apiKey) {
+    inv.status = "error";
+    inv.aiError = "Claude API Key fehlt (Einstellungen)";
+    toast("error", "API Key", "Bitte Claude API Key in den Einstellungen hinterlegen");
+    scheduleSave(); render();
+    return;
+  }
+
+  inv.status = "analyzing";
+  inv.aiError = "";
+  inv.updatedAt = nowIso();
+  scheduleSave(); render();
+
+  const file = inv.files[0];
+  try {
+    const resp = await fetch(file.url);
+    if (!resp.ok) throw new Error("Datei konnte nicht von Firebase geladen werden (" + resp.status + ")");
+    const blob = await resp.blob();
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(",")[1]);
+      r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+
+    const isPdf = (file.type === "application/pdf") || file.name?.toLowerCase().endsWith(".pdf");
+    const isImg = (file.type || "").startsWith("image/");
+    const content = [];
+    if (isPdf) {
+      content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } });
+    } else if (isImg) {
+      const mediaType = file.type && file.type.startsWith("image/") ? file.type : "image/jpeg";
+      content.push({ type: "image", source: { type: "base64", media_type: mediaType, data: b64 } });
+    } else {
+      throw new Error("Format wird nicht unterstützt (nur PDF und Bilder)");
+    }
+
+    const today = todayYmd();
+    content.push({ type: "text", text:
+      "Du bist ein Experte für die Analyse von Schweizer/europäischen Rechnungen. " +
+      "Analysiere die beigefügte Rechnung und antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt " +
+      "(KEIN Markdown-Code-Block, KEIN Text davor oder danach).\n\n" +
+      "Heutiges Datum: " + today + "\n\n" +
+      "JSON-Schema:\n" +
+      "{\n" +
+      '  "vendor": string,            // Name des Rechnungsstellers (Firma/Person)\n' +
+      '  "amount": number,            // Rechnungsbetrag als Zahl, immer positiv\n' +
+      '  "currency": "CHF"|"EUR"|"USD",\n' +
+      '  "dueDate": "YYYY-MM-DD"|null,// Fälligkeitsdatum. Falls nicht angegeben aber Rechnungsdatum: invoiceDate + 30 Tage. Sonst null.\n' +
+      '  "invoiceDate": "YYYY-MM-DD"|null,\n' +
+      '  "invoiceNumber": string,     // Rechnungs-/Beleg-Nr., "" wenn nicht erkennbar\n' +
+      '  "iban": string,              // IBAN oder Kontonummer, "" wenn nicht erkennbar\n' +
+      '  "reference": string,         // QR-/ESR-Referenz, "" wenn nicht erkennbar\n' +
+      '  "description": string,       // Kurze Leistungsbeschreibung, max 120 Zeichen\n' +
+      '  "category": string,          // Eine Kategorie aus: "Miete", "Versicherung", "Strom", "Wasser", "Internet/Telefon", "Software", "Steuern", "Krankenkasse", "Auto", "Lebensmittel", "Dienstleistung", "Sonstiges"\n' +
+      '  "notes": string              // Auffälligkeiten: Skonto, Mahnung, ungewöhnliche Posten. Max 200 Zeichen. "" wenn nichts.\n' +
+      "}\n\n" +
+      "Gib NUR das JSON-Objekt aus."
+    });
+
+    const aiResp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1500,
+        messages: [{ role: "user", content }]
+      })
+    });
+    if (!aiResp.ok) {
+      const txt = await aiResp.text();
+      throw new Error("Claude " + aiResp.status + ": " + txt.slice(0, 200));
+    }
+    const data = await aiResp.json();
+    const rawText = (data.content || []).map(c => c.text || "").join("").trim();
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("Keine JSON-Antwort von KI: " + rawText.slice(0, 200));
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    inv.vendor = parsed.vendor || inv.vendor || "Unbekannt";
+    if (typeof parsed.amount === "number" && isFinite(parsed.amount)) inv.amount = Math.abs(parsed.amount);
+    inv.currency = parsed.currency || inv.currency || "CHF";
+    if (parsed.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dueDate)) inv.dueDate = parsed.dueDate;
+    if (parsed.invoiceDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.invoiceDate)) inv.invoiceDate = parsed.invoiceDate;
+    inv.invoiceNumber = parsed.invoiceNumber || "";
+    inv.iban = parsed.iban || "";
+    inv.reference = parsed.reference || "";
+    inv.description = (parsed.description || "").slice(0, 200);
+    inv.category = parsed.category || "Sonstiges";
+    inv.aiNotes = (parsed.notes || "").slice(0, 300);
+    inv.aiError = "";
+    inv.status = "analyzed";
+    inv.updatedAt = nowIso();
+
+    // Auto: Buchung + Task erstellen, wenn dueDate vorhanden
+    if (inv.dueDate) createInvoiceLinks(invoiceId, /*silent*/ true);
+
+    toast("ok", "Rechnung analysiert", inv.vendor + (inv.dueDate ? " · fällig " + inv.dueDate : ""));
+    scheduleSave(); render();
+  } catch (err) {
+    console.error("[Invoice AI]", err);
+    inv.status = "error";
+    inv.aiError = (err.message || String(err)).slice(0, 300);
+    toast("error", "KI-Analyse", inv.aiError.slice(0, 100));
+    scheduleSave(); render();
+  }
+}
+
+// ── Buchung + Aufgabe erstellen ────────────────────────────────────────────
+function createInvoiceLinks(invoiceId, silent) {
+  const inv = APP.state.data.entities.invoices?.[invoiceId];
+  if (!inv) return;
+  if (!inv.dueDate) {
+    if (!silent) toast("warn", "Kein Fälligkeitsdatum", "Bitte zuerst Daten korrigieren");
+    return;
+  }
+  const today = todayYmd();
+  const isFuture = inv.dueDate >= today;
+
+  // Future-Transaction
+  if (!inv.linkedTransactionId && typeof inv.amount === "number") {
+    const txId = createEntity("transaction", {
+      amount: Math.abs(inv.amount),
+      type: "expense",
+      category: inv.category || "Rechnung",
+      description: `Rechnung ${inv.vendor}${inv.invoiceNumber ? " (Nr. " + inv.invoiceNumber + ")" : ""}`,
+      date: inv.dueDate,
+      scheduledDate: isFuture ? inv.dueDate : null,
+      accountId: inv.accountId || null,
+      isFuture: isFuture,
+      invoiceId: inv.id,
+    });
+    inv.linkedTransactionId = txId;
+  }
+
+  // Task mit Anhang
+  if (!inv.linkedTaskId) {
+    const filesCopy = (inv.files || []).map(f => ({ ...f }));
+    const taskDesc = [
+      "Fälligkeit: " + inv.dueDate,
+      typeof inv.amount === "number" ? "Betrag: " + formatMoney(inv.amount) + " " + inv.currency : null,
+      inv.invoiceNumber ? "Rechnungs-Nr.: " + inv.invoiceNumber : null,
+      inv.iban ? "IBAN: " + inv.iban : null,
+      inv.reference ? "Referenz: " + inv.reference : null,
+      inv.aiNotes ? "\nKI-Anmerkung: " + inv.aiNotes : null,
+    ].filter(Boolean).join("\n");
+
+    const taskId = createEntity("task", {
+      title: `Rechnung bezahlen: ${inv.vendor}${typeof inv.amount === "number" ? " (" + formatMoney(inv.amount) + " " + inv.currency + ")" : ""}`,
+      description: taskDesc,
+      dueDate: inv.dueDate,
+      priority: 2,
+      status: "todo",
+      tags: ["Rechnung"],
+      files: filesCopy,
+      invoiceId: inv.id,
+    });
+    inv.linkedTaskId = taskId;
+  }
+
+  inv.updatedAt = nowIso();
+  if (!silent) {
+    toast("ok", "Erstellt", "Buchung und Aufgabe verknüpft");
+    scheduleSave(); render();
+  }
+}
+
+// ── Als bezahlt markieren ──────────────────────────────────────────────────
+function markInvoicePaid(invoiceId) {
+  const inv = APP.state.data.entities.invoices?.[invoiceId];
+  if (!inv) return;
+  inv.status = "paid";
+  inv.paidAt = nowIso();
+  inv.updatedAt = nowIso();
+
+  // Verknüpfte Future-Tx als bezahlt = isFuture:false (wird wirksam)
+  const tx = inv.linkedTransactionId ? APP.state.data.entities.transactions?.[inv.linkedTransactionId] : null;
+  if (tx && tx.isFuture) {
+    tx.isFuture = false;
+    tx.scheduledDate = null;
+    tx.date = todayYmd();
+    tx.updatedAt = nowIso();
+  }
+  // Verknüpfte Task als done
+  const task = inv.linkedTaskId ? APP.state.data.entities.tasks?.[inv.linkedTaskId] : null;
+  if (task && task.status !== "done") {
+    task.status = "done";
+    task.completedAt = nowIso();
+    task.updatedAt = nowIso();
+  }
+
+  toast("ok", "Bezahlt", inv.vendor);
+  scheduleSave(); render();
+}
+
+// ── Daten korrigieren (manueller Edit-Dialog) ──────────────────────────────
+function editInvoiceDueDate(invoiceId) {
+  const inv = APP.state.data.entities.invoices?.[invoiceId];
+  if (!inv) return;
+  const vendor = prompt("Rechnungssteller:", inv.vendor || "");
+  if (vendor === null) return;
+  const amountStr = prompt("Betrag (Zahl, z.B. 199.50):", inv.amount ?? "");
+  if (amountStr === null) return;
+  const dueDate = prompt("Fälligkeitsdatum (YYYY-MM-DD):", inv.dueDate || todayYmd());
+  if (dueDate === null) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) { toast("warn", "Ungültiges Datum"); return; }
+
+  inv.vendor = vendor.trim() || inv.vendor;
+  const num = parseFloat(amountStr);
+  if (isFinite(num)) inv.amount = Math.abs(num);
+  inv.dueDate = dueDate;
+  if (inv.status === "error" || inv.status === "uploaded") inv.status = "analyzed";
+  inv.updatedAt = nowIso();
+  scheduleSave(); render();
+  toast("ok", "Aktualisiert");
+}
+
 function viewBudget() {
   const accounts = Object.values(APP.state.data.entities.accounts || {});
   const allTransactions = Object.values(APP.state.data.entities.transactions || {});
@@ -42951,6 +43399,7 @@ function viewBudget() {
     { key: "creditcards", icon: "💳", label: "Kreditkarten" },
     { key: "transactions", icon: "📜", label: "Transaktionen" },
     { key: "future", icon: "📅", label: "Geplant" },
+    { key: "invoices", icon: "🧾", label: "Rechnungen" },
     { key: "goals", icon: "🎯", label: "Sparziele" },
     { key: "proposals", icon: "🛒", label: "Kaufvorschläge" },
     { key: "analytics", icon: "📈", label: "Analyse" },
@@ -43726,6 +44175,7 @@ function viewBudget() {
     creditcards: creditCardsTab,
     transactions: transactionsTab,
     future: futureTab,
+    invoices: renderInvoicesTab(),
     goals: goalsTab,
     proposals: proposalsTab,
     analytics: analyticsTab,
@@ -43750,6 +44200,52 @@ function viewBudget() {
       .fin-tab:hover{color:var(--text);background:rgba(255,255,255,0.04)}
       .fin-tab.active{background:rgba(255,255,255,0.1);color:#fff;font-weight:600}
       .fin-tab .fin-tab-dot{width:7px;height:7px;border-radius:50%;background:var(--danger);position:absolute;top:8px;right:8px;animation:pulse 2s infinite}
+
+      /* Invoices Tab */
+      .inv-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+      .inv-upload-zone{border:2px dashed rgba(168,85,247,0.4);border-radius:18px;padding:32px 20px;text-align:center;cursor:pointer;background:rgba(168,85,247,0.04);transition:all .2s;margin-bottom:20px}
+      .inv-upload-zone:hover,.inv-upload-zone.dragging{border-color:rgba(168,85,247,0.8);background:rgba(168,85,247,0.10);transform:translateY(-1px)}
+      .inv-upload-zone.disabled{opacity:.5;cursor:not-allowed;border-color:rgba(255,255,255,0.15);background:transparent}
+      .inv-upload-icon{font-size:34px;line-height:1;margin-bottom:8px}
+      .inv-upload-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px}
+      .inv-upload-sub{font-size:12px;color:var(--muted);line-height:1.5;max-width:480px;margin:0 auto}
+      .inv-section{margin-bottom:24px}
+      .inv-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:10px;padding:0 4px}
+      .inv-empty{text-align:center;padding:32px 20px;color:var(--muted)}
+      .inv-empty-icon{font-size:40px;margin-bottom:10px}
+      .inv-empty-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px}
+      .inv-empty-sub{font-size:13px;line-height:1.6;max-width:480px;margin:0 auto}
+      .inv-card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px;margin-bottom:10px;transition:border-color .2s}
+      .inv-card:hover{border-color:rgba(255,255,255,0.15)}
+      .inv-card-head{display:flex;gap:14px;align-items:flex-start}
+      .inv-card-head-left{flex:1;min-width:0}
+      .inv-vendor{font-size:16px;font-weight:700;color:var(--text);letter-spacing:-0.01em;margin-bottom:6px}
+      .inv-meta-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
+      .inv-meta{font-size:11.5px;color:var(--muted);padding:2px 8px;background:rgba(255,255,255,0.04);border-radius:6px}
+      .inv-meta-strong{font-size:12px;color:var(--text);padding:2px 8px;background:rgba(255,255,255,0.06);border-radius:6px;font-weight:600}
+      .inv-meta-warn{font-size:12px;color:#ff9f0a;padding:2px 8px;background:rgba(255,159,10,0.10);border-radius:6px;font-weight:600}
+      .inv-amount{font-size:13px;font-weight:700;color:#a855f7;padding:2px 10px;background:rgba(168,85,247,0.12);border-radius:6px;letter-spacing:-0.01em}
+      .inv-desc{font-size:13px;color:var(--text);opacity:0.85;line-height:1.5;margin-top:4px}
+      .inv-ai-notes{font-size:12px;color:#c4b5fd;background:rgba(99,102,241,0.08);border-left:3px solid #6366f1;padding:8px 10px;border-radius:8px;margin-top:8px;line-height:1.5}
+      .inv-ai-error{font-size:12px;color:#fca5a5;background:rgba(239,68,68,0.08);border-left:3px solid #ef4444;padding:8px 10px;border-radius:8px;margin-top:8px;line-height:1.5}
+      .inv-badge{font-size:10.5px;font-weight:700;letter-spacing:0.04em;padding:3px 9px;border-radius:999px;text-transform:uppercase}
+      .inv-badge-analyzing{background:rgba(99,102,241,0.18);color:#a5b4fc}
+      .inv-badge-analyzed{background:rgba(34,197,94,0.16);color:#4ade80}
+      .inv-badge-error{background:rgba(239,68,68,0.18);color:#f87171}
+      .inv-badge-uploaded{background:rgba(255,159,10,0.15);color:#ff9f0a}
+      .inv-badge-paid{background:rgba(168,85,247,0.18);color:#d8b4fe}
+      .inv-badge-overdue{background:rgba(239,68,68,0.22);color:#f87171}
+      .inv-badge-duesoon{background:rgba(255,159,10,0.22);color:#ff9f0a}
+      .inv-file-thumb{flex-shrink:0;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:90px;cursor:pointer;transition:all .2s}
+      .inv-file-thumb:hover{background:rgba(255,255,255,0.07);border-color:rgba(255,255,255,0.18)}
+      .inv-file-icon{font-size:24px;line-height:1}
+      .inv-file-name{font-size:10px;color:var(--muted);text-align:center;word-break:break-all;line-height:1.3;max-width:80px}
+      .inv-links-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.08)}
+      .inv-link{font-size:11.5px;padding:5px 10px;border-radius:8px;text-decoration:none;font-weight:600}
+      .inv-link-tx{background:rgba(99,102,241,0.10);color:#a5b4fc;border:1px solid rgba(99,102,241,0.2)}
+      .inv-link-task{background:rgba(34,197,94,0.10);color:#86efac;border:1px solid rgba(34,197,94,0.2)}
+      .inv-link:hover{filter:brightness(1.2)}
+      .inv-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
 
       /* Glass Cards */
       .fin-glass-card{position:relative;background:rgba(255,255,255,0.03);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:20px;overflow:hidden;transition:all 0.3s}
@@ -54741,6 +55237,48 @@ case "quick-idea-save": {
 
     // ==================== AI ANALYSIS HANDLER ====================
     case "run-budget-ai-analysis": { runBudgetAiAnalysis(); break; }
+
+    // ==================== INVOICES HANDLERS ====================
+    case "invoice-pick-files": {
+      const input = document.getElementById("invoicePickerInput");
+      if (input) input.click();
+      break;
+    }
+    case "invoice-analyze": {
+      const id = e.target.closest("[data-id]")?.dataset.id;
+      if (id) analyzeInvoice(id);
+      break;
+    }
+    case "invoice-create-links": {
+      const id = e.target.closest("[data-id]")?.dataset.id;
+      if (id) createInvoiceLinks(id);
+      break;
+    }
+    case "invoice-mark-paid": {
+      const id = e.target.closest("[data-id]")?.dataset.id;
+      if (id) markInvoicePaid(id);
+      break;
+    }
+    case "invoice-delete": {
+      const id = e.target.closest("[data-id]")?.dataset.id;
+      if (id && confirm("Rechnung löschen? Verknüpfte Buchung und Aufgabe bleiben erhalten.")) {
+        deleteEntity("invoice", id);
+        scheduleSave(); render();
+      }
+      break;
+    }
+    case "invoice-open-file": {
+      const id = e.target.closest("[data-id]")?.dataset.id;
+      const inv = APP.state.data.entities.invoices?.[id];
+      const file = inv?.files?.[0];
+      if (file?.url) window.open(file.url, "_blank");
+      break;
+    }
+    case "invoice-edit-due": {
+      const id = e.target.closest("[data-id]")?.dataset.id;
+      if (id) editInvoiceDueDate(id);
+      break;
+    }
 
     // ==================== MESSAGES EVENT HANDLERS ====================
     case "create-message-submit": {
