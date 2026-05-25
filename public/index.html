@@ -9498,8 +9498,9 @@ function mergeData(local, remote) {
   }
   
   // ── Merge top-level arrays ──
-  const arrayKeys = ['reflections', 'quickTodos', 'pinnedItems', 'weeklyGoals', 'activityLog', 
-                     'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots'];
+  const arrayKeys = ['reflections', 'quickTodos', 'pinnedItems', 'weeklyGoals', 'activityLog',
+                     'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots',
+                     'aiChats'];
   
   for (const key of arrayKeys) {
     const localArr = local[key];
