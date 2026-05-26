@@ -56821,6 +56821,24 @@ async function init() {
           <div class="form">
             <h4 style="margin-bottom:12px">☁️ Cloud-Synchronisation</h4>
             
+            <div class="card" style="padding:14px;border:1px solid rgba(34,197,94,0.3);background:rgba(34,197,94,0.05);margin-bottom:14px">
+              <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:14px">💾 Manueller Backup / Import</div>
+              <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
+                Auto-Sync läuft im Hintergrund weiter (alle Änderungen werden automatisch hochgeladen).
+                Diese Buttons geben dir zusätzlich die volle Kontrolle: lade jederzeit eine JSON-Sicherung herunter oder stelle eine ältere Version wieder her.
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="btn primary" style="background:linear-gradient(135deg,#22c55e,#16a34a)" onclick="window.exportAllData()">📥 Jetzt herunterladen</button>
+                <input type="file" id="manualImportFileInput" accept=".json" style="display:none" onchange="window.importDataFromFile(this)" />
+                <button type="button" class="btn" onclick="document.getElementById('manualImportFileInput').click()">📤 JSON-Datei importieren</button>
+                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="if(typeof doSave==='function'){doSave(false).then(()=>toast('ok','✓ Manuell gepusht','Daten zum Server hochgeladen'));}else{toast('warn','doSave fehlt');}">☁️ Jetzt zum Server pushen</button>
+                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="if(typeof remoteGet==='function'){toast('ok','Pull läuft…');remoteGet().then(r=>{if(r&&r.ok){toast('ok','✓ Pull fertig','Daten vom Server geladen');}else{toast('warn','Pull fehlgeschlagen');}});}else if(typeof window.pullAndMergeBeforeSave==='function'){window.pullAndMergeBeforeSave('manual').then(()=>toast('ok','✓ Pull fertig')).catch(e=>toast('error','Pull-Fehler',e.message));}else{toast('warn','Funktion nicht verfügbar');}">⬇️ Vom Server pullen</button>
+              </div>
+              <div class="mini" style="color:var(--muted);margin-top:10px;font-size:11px;line-height:1.5">
+                <strong>Hinweis Import:</strong> Vorhandene Daten werden überschrieben. Auth-Token und Sync-URLs bleiben erhalten.
+              </div>
+            </div>
+
             <div class="card" style="padding:14px;border:1px solid rgba(168,85,247,0.35);background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(99,102,241,0.05));margin-bottom:14px">
               <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:14px">📱 Mit Mobile-App verbinden</div>
               <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
