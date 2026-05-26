@@ -10448,6 +10448,70 @@ window._resetStorageDefaults = function() {
   toast('ok', '⟳ Zurückgesetzt', 'Storage-URLs sind wieder auf Standard. Versuche jetzt Pull/Import.');
 };
 
+// ─── Mit Mobile-App verbinden ──────────────────────────────────────────────
+// Stellt die Sync-URLs auf eine externe Netlify-Domain um (typisch:
+// management-xo2-pro.netlify.app, wo das mobile-management-Repo deployt ist)
+// und triggert sofort einen Push, damit alle aktuellen Daten dort landen.
+window._connectToMobile = async function() {
+  const inputEl = document.getElementById('mobileConnectUrl');
+  const resultEl = document.getElementById('mobileConnectResult');
+  if (!inputEl) return;
+  let base = (inputEl.value || '').trim().replace(/\/+$/, '');
+  if (!base) { toast('warn', 'URL fehlt', 'Bitte Mobile-Domain angeben'); return; }
+  if (!base.startsWith('http://') && !base.startsWith('https://')) base = 'https://' + base;
+
+  const newGet = base + '/.netlify/functions/blob-get?key={key}';
+  const newPut = base + '/.netlify/functions/blob-put?key={key}';
+  const key = APP.state.settings.storage.blobKey || 'app-data.json';
+
+  if (resultEl) resultEl.innerHTML = '<div style="color:#a5b4fc">🔄 Setze URLs und teste Verbindung…</div>';
+
+  // 1) URLs übernehmen
+  APP.state.settings.storage.getUrl = newGet;
+  APP.state.settings.storage.putUrl = newPut;
+  if (!APP.state.settings.storage.autoSave) APP.state.settings.storage.autoSave = true;
+  saveSettings(APP.state.settings);
+  localStorage.setItem('quantus-mobile-base', base);
+  // Inputs aktualisieren falls sichtbar
+  const gi = document.getElementById('setGetUrl'); if (gi) gi.value = newGet;
+  const pi = document.getElementById('setPutUrl'); if (pi) pi.value = newPut;
+
+  // 2) Verbindung testen
+  let connectivityOk = false;
+  try {
+    const testUrl = base + '/.netlify/functions/blob-get?key=' + encodeURIComponent(key) + '&_ts=' + Date.now();
+    const r = await fetch(testUrl, { method: 'GET', cache: 'no-store' });
+    if (r.ok || r.status === 404) connectivityOk = true;
+    if (resultEl) {
+      resultEl.innerHTML = `<div style="color:${connectivityOk ? '#86efac' : '#fca5a5'}">${connectivityOk ? '✓' : '✗'} Server antwortet mit HTTP ${r.status}</div>`;
+    }
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = `<div style="color:#fca5a5">✗ Netzwerk-Fehler: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  if (!connectivityOk) {
+    if (resultEl) resultEl.innerHTML += '<div style="color:#fbbf24;margin-top:6px">URL stimmt nicht. Prüfe die Domain.</div>';
+    return;
+  }
+
+  // 3) Sofort pushen
+  if (resultEl) resultEl.innerHTML += '<div style="color:#a5b4fc;margin-top:6px">📤 Pushe alle aktuellen Daten…</div>';
+  try {
+    if (typeof doSave === 'function') {
+      await doSave(false);
+      const tasks = Object.keys(APP.state.data.entities.tasks || {}).length;
+      const notes = Object.keys(APP.state.data.entities.notes || {}).length;
+      if (resultEl) resultEl.innerHTML += `<div style="color:#86efac;margin-top:6px">✓ Push fertig — ${tasks} Tasks · ${notes} Notes übertragen</div><div style="margin-top:8px;color:#a1a1aa">In der Mobile-App jetzt einmal Pull-to-Refresh oder Mehr → 🔄 Jetzt synchronisieren.</div>`;
+      toast('ok', '🔗 Verbunden', 'Mobile-App sollte jetzt Daten zeigen');
+    } else {
+      if (resultEl) resultEl.innerHTML += '<div style="color:#fbbf24;margin-top:6px">⚠ doSave nicht verfügbar — Sync manuell anstoßen</div>';
+    }
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML += `<div style="color:#fca5a5;margin-top:6px">✗ Push fehlgeschlagen: ${esc(e.message)}</div>`;
+  }
+};
+
 console.log('💡 Tipp: Führe "diagnoseSync()" in der Console aus oder gehe zu Settings → Storage');
 
 // ===== MOBILE-DELTA für RecallLab =====
@@ -56757,6 +56821,18 @@ async function init() {
           <div class="form">
             <h4 style="margin-bottom:12px">☁️ Cloud-Synchronisation</h4>
             
+            <div class="card" style="padding:14px;border:1px solid rgba(168,85,247,0.35);background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(99,102,241,0.05));margin-bottom:14px">
+              <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:14px">📱 Mit Mobile-App verbinden</div>
+              <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
+                Wenn deine Mobile-App auf einer anderen Netlify-Domain läuft als Quantus, müssen beide auf denselben Blob-Store zeigen. Standard-Mobile-Domain: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;font-size:11px">management-xo2-pro.netlify.app</code>.
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <input type="text" id="mobileConnectUrl" value="${esc(localStorage.getItem('quantus-mobile-base') || 'https://management-xo2-pro.netlify.app')}" placeholder="https://..." style="flex:1;min-width:220px;padding:8px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(168,85,247,0.3);border-radius:8px;color:var(--text);font-size:12.5px;font-family:monospace;outline:none" />
+                <button type="button" class="btn primary" style="background:linear-gradient(135deg,#a855f7,#6366f1)" onclick="window._connectToMobile()">🔗 Verbinden & Sofort pushen</button>
+              </div>
+              <div id="mobileConnectResult" style="margin-top:10px;font-size:12px;font-family:monospace;color:var(--muted)"></div>
+            </div>
+
             <div class="card" style="padding:12px;border:1px solid rgba(99,102,241,0.3);background:rgba(99,102,241,0.05);margin-bottom:14px">
               <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px">🩺 Sync-Diagnose</div>
               <div class="mini" style="color:var(--muted);margin-bottom:8px">Testet, ob Netlify-Functions erreichbar sind und der Auth-Token stimmt.</div>
