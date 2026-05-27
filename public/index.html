@@ -20881,7 +20881,10 @@ window.viewThesisDetail = function(id) {
         margin-bottom: 22px;
         border-bottom: 1px solid var(--border);
         overflow-x: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
       }
+      .ths-tabs::-webkit-scrollbar { display: none; }
       .ths-tab {
         background: none;
         border: 0;
