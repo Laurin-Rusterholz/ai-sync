@@ -40470,51 +40470,323 @@ function checkCapacityWarning(dueDate, taskCategory) {
   }
 }
 
-// Tägliche Erinnerung für Projekte ohne Aufgaben
+// Tägliche Erinnerung für Projekte ohne Aufgaben — DEPRECATED.
+// Frühere Version hat pro leerem Projekt eine eigene Message pro Tag erzeugt
+// (33+ Inbox-Einträge in einer Woche). Ersetzt durch generateDailyDigest(),
+// das ein einziges aggregiertes Briefing pro Tag erstellt und inline
+// Voting-Aktionen für Decisions und Kaufentscheide enthält.
 function checkEmptyProjectsReminder() {
-  const e = APP.state.data.entities;
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const projects = Object.values(e.projects || {});
-  const tasks = Object.values(e.tasks || {});
-  
-  for (const p of projects) {
-    if (p.status === "done" || p.status === "archived") continue;
-    
-    // Aufgaben zählen: linkedTasks ODER tasks mit projectId
-    const linkedCount = (p.linkedTasks || []).filter(tid => e.tasks[tid]).length;
-    const assignedCount = tasks.filter(t => t.projectId === p.id).length;
-    const totalTasks = Math.max(linkedCount, assignedCount);
-    
-    if (totalTasks > 0) continue;
-    
-    // Prüfe ob heute schon eine Erinnerung existiert
-    const alreadySent = Object.values(e.scheduledMessages || {}).find(m =>
-      m._emptyProjectReminder === p.id && m._reminderDate === todayStr
-    );
-    if (alreadySent) continue;
-    
-    // Erinnerung erstellen
-    const msgId = uuid();
-    e.scheduledMessages[msgId] = {
-      id: msgId,
-      title: "📦 Projekt ohne Aufgaben: " + (p.title || "(Ohne Titel)"),
-      content: "Das Projekt \"" + (p.title || "") + "\" hat noch keine Aufgaben. Erstelle Aufgaben, um Fortschritt zu verfolgen.",
-      deliverAt: nowIso(),
-      isDelivered: true,
-      deliveredAt: nowIso(),
-      isRead: false,
-      linkedProjects: [p.id],
-      linkedTasks: [],
-      priority: 3,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      _emptyProjectReminder: p.id,
-      _reminderDate: todayStr
-    };
-  }
-  
-  scheduleSave();
+  // No-op — ersetzt durch generateDailyDigest()
+  return;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// DAILY DIGEST — Aggregiertes Tagesbriefing 1× pro Tag (≥ 04:00 Europe/Zurich)
+// ─────────────────────────────────────────────────────────────────────────
+
+function zurichDateString(d = new Date()) {
+  // ISO-Datum (YYYY-MM-DD) für Europe/Zurich, robust gegen DST.
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Zurich',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(d);
+  const get = k => parts.find(p => p.type === k)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function zurichHour(d = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Zurich', hour: '2-digit', hour12: false,
+  }).formatToParts(d);
+  return parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+}
+
+function shouldRunDailyDigest() {
+  const e = APP.state.data.entities;
+  const today = zurichDateString();
+  const hour = zurichHour();
+  // Heute >= 04:00 und heute kein Digest? → erstellen.
+  // Vor 04:00 wird nicht generiert, damit gestern's Digest die Nacht überlebt.
+  if (hour < 4) return false;
+  const exists = Object.values(e.scheduledMessages || {}).some(m =>
+    m._dailyDigest === today
+  );
+  return !exists;
+}
+
+function generateDailyDigest() {
+  if (!shouldRunDailyDigest()) return null;
+
+  const e = APP.state.data.entities;
+  const today = zurichDateString();
+  const todayLocal = new Date().toISOString().slice(0, 10);
+  const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+
+  // Tasks: overdue + heute + nächste 3 Tage, max 25
+  const allTasks = Object.values(e.tasks || {}).filter(t => !t.archived && t.status !== 'done');
+  const taskDate = t => t.dueDate || null;
+  const overdueTasks = allTasks.filter(t => taskDate(t) && taskDate(t) < todayLocal)
+    .sort((a, b) => (taskDate(a) || '').localeCompare(taskDate(b) || ''));
+  const todayTasks = allTasks.filter(t => taskDate(t) === todayLocal);
+  const upcomingTasks = allTasks.filter(t => taskDate(t) && taskDate(t) > todayLocal && taskDate(t) <= in3Days)
+    .sort((a, b) => (taskDate(a) || '').localeCompare(taskDate(b) || ''));
+
+  // Pending Decisions
+  const pendingDecisions = Object.values(e.decisions || {}).filter(d =>
+    !d.archived && (d.status === 'pending' || d.status === 'open' || !d.decision)
+  ).slice(0, 15);
+
+  // Pending Purchase Decisions (vom Mobile-Stand synced) UND Quantus' purchaseProposals
+  const pendingPurchases = Object.values(e.purchaseDecisions || {}).filter(p =>
+    !p.deleted && p.status === 'pending'
+  );
+  const pendingProposals = Object.values(e.purchaseProposals || {}).filter(p =>
+    p.status === 'pending'
+  );
+
+  // Leere Projekte
+  const tasksByProject = {};
+  allTasks.forEach(t => { if (t.projectId) tasksByProject[t.projectId] = (tasksByProject[t.projectId] || 0) + 1; });
+  const emptyProjects = Object.values(e.projects || {})
+    .filter(p => p.status !== 'done' && p.status !== 'archived')
+    .filter(p => {
+      const linked = (p.linkedTasks || []).filter(tid => e.tasks?.[tid] && !e.tasks[tid].archived).length;
+      return Math.max(linked, tasksByProject[p.id] || 0) === 0;
+    })
+    .slice(0, 10);
+
+  const digestPayload = {
+    date: today,
+    overdueTaskIds: overdueTasks.slice(0, 10).map(t => t.id),
+    todayTaskIds: todayTasks.slice(0, 10).map(t => t.id),
+    upcomingTaskIds: upcomingTasks.slice(0, 8).map(t => t.id),
+    pendingDecisionIds: pendingDecisions.map(d => d.id),
+    pendingPurchaseIds: pendingPurchases.map(p => p.id),
+    pendingProposalIds: pendingProposals.map(p => p.id),
+    emptyProjectIds: emptyProjects.map(p => p.id),
+  };
+
+  const totalItems = overdueTasks.length + todayTasks.length + pendingDecisions.length
+    + pendingPurchases.length + pendingProposals.length + emptyProjects.length;
+  if (totalItems === 0) return null;
+
+  const msgId = uuid();
+  e.scheduledMessages[msgId] = {
+    id: msgId,
+    title: `🌅 Tagesbriefing — ${new Date().toLocaleDateString('de-CH', { weekday: 'long', day: '2-digit', month: 'long' })}`,
+    content: `${overdueTasks.length} überfällig · ${todayTasks.length} heute · ${pendingDecisions.length} Entscheide · ${pendingPurchases.length + pendingProposals.length} Kaufentscheide · ${emptyProjects.length} leere Projekte`,
+    deliverAt: nowIso(),
+    isDelivered: true,
+    deliveredAt: nowIso(),
+    isRead: false,
+    isPinned: true, // automatisch pinnen für Sichtbarkeit
+    linkedProjects: emptyProjects.map(p => p.id),
+    linkedTasks: [...overdueTasks.slice(0, 5).map(t => t.id), ...todayTasks.slice(0, 5).map(t => t.id)],
+    priority: overdueTasks.length > 0 ? 1 : 3,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    type: 'daily-digest',
+    digestPayload,
+    _dailyDigest: today,
+  };
+
+  scheduleSave();
+  return msgId;
+}
+
+// Periodischer Check + initialer Check beim App-Start.
+let _dailyDigestTimer = null;
+function startDailyDigestScheduler() {
+  if (_dailyDigestTimer) return;
+  // Initial: einmal sofort prüfen
+  try { generateDailyDigest(); } catch(e) { console.warn('[DailyDigest]', e); }
+  // Danach alle 5 Minuten — solange App offen ist
+  _dailyDigestTimer = setInterval(() => {
+    try { generateDailyDigest(); } catch(e) { console.warn('[DailyDigest]', e); }
+  }, 5 * 60 * 1000);
+}
+
+// ─── Daily-Digest Modal mit Inline-Voting ───────────────────────────────
+window.openDailyDigestModal = function(msgId) {
+  const e = APP.state.data.entities;
+  const msg = e.scheduledMessages?.[msgId];
+  if (!msg || msg.type !== 'daily-digest') return;
+  const p = msg.digestPayload || {};
+
+  const taskRow = (tid, label) => {
+    const t = e.tasks?.[tid];
+    if (!t) return '';
+    const pri = t.priority === 1 ? '🔴' : t.priority === 5 ? '🟢' : '🟡';
+    const due = t.dueDate ? new Date(t.dueDate).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' }) : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border-radius:8px;margin-bottom:5px">
+      <span>${pri}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.title || 'Ohne Titel')}</div>
+        ${due ? `<div style="font-size:11px;color:${label==='overdue'?'#f87171':'var(--muted)'}">${label==='overdue'?'⏰ Überfällig · ':'📅 '}${due}</div>` : ''}
+      </div>
+      <button class="btn sm" onclick="closeModal();window.location.hash='#/tasks/${t.id}'">→</button>
+    </div>`;
+  };
+
+  const decisionBlock = (did) => {
+    const d = e.decisions?.[did];
+    if (!d) return '';
+    const yesV = (d.votes || []).filter(v => v.vote === 'yes').length;
+    const noV = (d.votes || []).filter(v => v.vote === 'no').length;
+    const maybeV = (d.votes || []).filter(v => v.vote === 'maybe').length;
+    return `<div style="padding:12px;background:var(--panel2);border-left:3px solid #a855f7;border-radius:8px;margin-bottom:10px">
+      <div style="display:flex;align-items:start;gap:10px;margin-bottom:8px">
+        <span style="font-size:18px">⚖️</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13.5px;line-height:1.4">${esc(d.title || d.question || 'Entscheidung')}</div>
+          ${d.question && d.question !== d.title ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${esc(d.question)}</div>` : ''}
+          <div style="font-size:10.5px;color:var(--muted);margin-top:6px">✓ ${yesV} · ✗ ${noV} · ? ${maybeV}</div>
+        </div>
+        <button class="btn sm" onclick="closeModal();navigate('decisions','${d.id}')">→</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn sm" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac" onclick="window._digestVoteDecision('${msgId}','${d.id}','yes')">👍 Ja</button>
+        <button class="btn sm" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#f87171" onclick="window._digestVoteDecision('${msgId}','${d.id}','no')">👎 Nein</button>
+        <button class="btn sm" style="background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.3);color:#d8b4fe" onclick="window._digestVoteDecision('${msgId}','${d.id}','maybe')">🤔 Vielleicht</button>
+        <input type="text" placeholder="Begründung (optional)" id="digest-decision-note-${d.id}" style="flex:1;min-width:120px;padding:6px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px" />
+      </div>
+    </div>`;
+  };
+
+  const purchaseBlock = (pid, kind) => {
+    const isProposal = kind === 'proposal';
+    const pd = isProposal ? e.purchaseProposals?.[pid] : e.purchaseDecisions?.[pid];
+    if (!pd) return '';
+    const title = pd.title || pd.name || 'Artikel';
+    const price = pd.price ?? pd.amount;
+    const priceStr = price != null ? Math.round(price) + ' ' + (pd.currency || 'CHF') : '';
+    const pros = (pd.pros || pd.reason ? [pd.reason].filter(Boolean) : []);
+    const cons = (pd.cons || []);
+    return `<div style="padding:12px;background:var(--panel2);border-left:3px solid #fbbf24;border-radius:8px;margin-bottom:10px">
+      <div style="display:flex;align-items:start;gap:10px;margin-bottom:8px">
+        <span style="font-size:18px">🛒</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13.5px;line-height:1.4">${esc(title)}${priceStr ? ` <span style="color:#d8b4fe;font-weight:800">· ${esc(priceStr)}</span>` : ''}</div>
+          ${pd.category ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${esc(pd.category)}</div>` : ''}
+          ${pd.notes || pd.reason ? `<div style="font-size:12px;color:var(--text);margin-top:6px;opacity:.85;line-height:1.5">${esc((pd.notes || pd.reason || '').slice(0, 200))}</div>` : ''}
+          ${pros.length || cons.length ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;font-size:11px">
+            <div style="color:#86efac">✓ ${pros.map(p => esc(p)).join(', ') || '—'}</div>
+            <div style="color:#f87171">✗ ${cons.map(c => esc(c)).join(', ') || '—'}</div>
+          </div>` : ''}
+        </div>
+        <button class="btn sm" onclick="closeModal();navigate('budget')">→</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn sm" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:#86efac" onclick="window._digestVotePurchase('${msgId}','${pid}','${kind}','approved')">✓ Kaufen</button>
+        <button class="btn sm" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#f87171" onclick="window._digestVotePurchase('${msgId}','${pid}','${kind}','rejected')">✗ Verzichten</button>
+        <input type="text" placeholder="Begründung" id="digest-purchase-note-${pid}" style="flex:1;min-width:120px;padding:6px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px" />
+      </div>
+    </div>`;
+  };
+
+  const projectRow = (proid) => {
+    const p = e.projects?.[proid];
+    if (!p) return '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--panel2);border-radius:8px;margin-bottom:5px">
+      <span>📦</span>
+      <div style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.title || 'Projekt')}</div>
+      <button class="btn sm" onclick="closeModal();navigate('projects','${p.id}')">→ Aufgaben hinzufügen</button>
+    </div>`;
+  };
+
+  const sec = (title, rows, emptyMsg) => {
+    if (!rows.length) return '';
+    return `<div style="margin-bottom:18px">
+      <h4 style="margin:0 0 8px 0;font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">${title}</h4>
+      ${rows.join('')}
+    </div>`;
+  };
+
+  const html = `
+    <div class="mini mb-2">${esc(msg.content || '')}</div>
+    <div class="sep"></div>
+    ${sec(`⏰ Überfällig (${p.overdueTaskIds?.length || 0})`, (p.overdueTaskIds || []).map(id => taskRow(id, 'overdue')))}
+    ${sec(`📅 Heute (${p.todayTaskIds?.length || 0})`, (p.todayTaskIds || []).map(id => taskRow(id, 'today')))}
+    ${sec(`🔜 Demnächst (${p.upcomingTaskIds?.length || 0})`, (p.upcomingTaskIds || []).map(id => taskRow(id, 'upcoming')))}
+    ${sec(`⚖️ Offene Entscheidungen (${p.pendingDecisionIds?.length || 0})`, (p.pendingDecisionIds || []).map(decisionBlock))}
+    ${sec(`🛒 Kaufentscheide (${(p.pendingPurchaseIds?.length || 0) + (p.pendingProposalIds?.length || 0)})`, [
+      ...(p.pendingPurchaseIds || []).map(id => purchaseBlock(id, 'decision')),
+      ...(p.pendingProposalIds || []).map(id => purchaseBlock(id, 'proposal')),
+    ])}
+    ${sec(`📦 Leere Projekte (${p.emptyProjectIds?.length || 0})`, (p.emptyProjectIds || []).map(projectRow))}
+  `;
+
+  openModal(`🌅 ${esc(msg.title)}`, html, `<button class="btn danger" data-action="delete-message" data-id="${msgId}">🗑 Löschen</button><button class="btn" data-action="close-modal">Schliessen</button>`);
+};
+
+window._digestVoteDecision = function(msgId, decisionId, vote) {
+  const e = APP.state.data.entities;
+  const d = e.decisions?.[decisionId];
+  if (!d) { toast('warn', 'Entscheidung nicht gefunden'); return; }
+  if (!Array.isArray(d.votes)) d.votes = [];
+  const noteInput = document.getElementById('digest-decision-note-' + decisionId);
+  const note = (noteInput?.value || '').trim();
+  d.votes.push({
+    id: 'v_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    vote,
+    note,
+    createdAt: nowIso(),
+    source: 'daily-digest',
+    sourceMsgId: msgId,
+  });
+  d.updatedAt = nowIso();
+  scheduleSave();
+  if (noteInput) noteInput.value = '';
+  toast('ok', vote === 'yes' ? '👍 Zugestimmt' : vote === 'no' ? '👎 Abgelehnt' : '🤔 Vielleicht', note || 'Stimme erfasst');
+  // Modal refreshen damit Counts aktualisiert sind
+  setTimeout(() => window.openDailyDigestModal(msgId), 200);
+};
+
+window._digestVotePurchase = function(msgId, purchaseId, kind, status) {
+  const e = APP.state.data.entities;
+  const isProposal = kind === 'proposal';
+  const pd = isProposal ? e.purchaseProposals?.[purchaseId] : e.purchaseDecisions?.[purchaseId];
+  if (!pd) { toast('warn', 'Eintrag nicht gefunden'); return; }
+  const noteInput = document.getElementById('digest-purchase-note-' + purchaseId);
+  const note = (noteInput?.value || '').trim();
+  pd.status = status;
+  pd.updatedAt = nowIso();
+  pd.decidedAt = nowIso();
+  if (note) {
+    if (!Array.isArray(pd.digestComments)) pd.digestComments = [];
+    pd.digestComments.push({
+      id: 'c_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      status,
+      note,
+      createdAt: nowIso(),
+      source: 'daily-digest',
+      sourceMsgId: msgId,
+    });
+  }
+  // Bei purchaseProposal-Format kompatibel mitschreiben
+  if (isProposal) { pd.decision = status; pd.decisionDate = todayYmd(); }
+  scheduleSave();
+  if (noteInput) noteInput.value = '';
+  toast('ok', status === 'approved' ? '✓ Genehmigt' : '✗ Abgelehnt', pd.title || pd.name || '');
+  setTimeout(() => window.openDailyDigestModal(msgId), 200);
+};
+
+window.generateDailyDigest = generateDailyDigest;
+
+// Aufräumen: alte _emptyProjectReminder-Messages entfernen (einmaliger Cleanup)
+window.cleanupEmptyProjectReminders = function() {
+  const e = APP.state.data.entities;
+  if (!e.scheduledMessages) return 0;
+  const before = Object.keys(e.scheduledMessages).length;
+  const toDelete = Object.values(e.scheduledMessages)
+    .filter(m => m._emptyProjectReminder)
+    .map(m => m.id);
+  toDelete.forEach(id => delete e.scheduledMessages[id]);
+  scheduleSave();
+  if (typeof render === 'function') render();
+  toast('ok', '🧹 Aufgeräumt', toDelete.length + ' alte Erinnerungen gelöscht');
+  return toDelete.length;
+};
 
 function openAddProgramToTaskModal(taskId) {
   const e = APP.state.data.entities;
@@ -41616,6 +41888,8 @@ function viewMessages() {
         <p>${messages.length} Nachrichten, ${unread.length} ungelesen, ${pinned.length} angepinnt</p>
       </div>
       <div class="page-actions">
+        <button class="btn sm" onclick="if(confirm('Alle alten \"Projekt ohne Aufgaben\"-Erinnerungen löschen? (Die werden ab jetzt durch ein tägliches Briefing ersetzt.)')) window.cleanupEmptyProjectReminders();">🧹 Alte Spam-Nachrichten aufräumen</button>
+        <button class="btn sm" onclick="window.generateDailyDigest && (window.generateDailyDigest(), render(), toast('ok','Briefing erstellt','Im Inbox sichtbar'))">🌅 Briefing jetzt erstellen</button>
         <button class="btn sm" data-action="mark-all-read">✓ Alle gelesen</button>
         <button class="btn primary" data-action="create-message-standalone">📝 Neue Nachricht</button>
       </div>
@@ -49791,12 +50065,18 @@ case "open-message": {
   const msgId = el.dataset.id;
   const msg = getEntity("scheduledMessage", msgId);
   if (!msg) break;
-  
+
   if (!msg.isRead) {
     updateEntity("scheduledMessage", msgId, { isRead: true });
     scheduleSave();
   }
-  
+
+  // Daily Digest hat eigene rich-View
+  if (msg.type === 'daily-digest' && msg.digestPayload) {
+    openDailyDigestModal(msgId);
+    break;
+  }
+
   let _dcLinkHtml = "";
   if (msg.decisionId) {
     const _dc = getEntity("decision", msg.decisionId);
@@ -57545,7 +57825,7 @@ async function init() {
   hideLoadingOverlayNow();
   
   // Tägliche Checks
-  try { checkEmptyProjectsReminder(); } catch(e) { console.warn("Empty projects check failed:", e); }
+  try { startDailyDigestScheduler(); } catch(e) { console.warn("Daily digest scheduler failed:", e); }
   
   setTimeout(() => initLaunchScreen(), 500);
   
