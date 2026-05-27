@@ -56897,10 +56897,10 @@ async function init() {
             <div class="card" style="padding:14px;border:1px solid rgba(168,85,247,0.35);background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(99,102,241,0.05));margin-bottom:14px">
               <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:14px">📱 Mit Mobile-App verbinden</div>
               <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
-                Wenn deine Mobile-App auf einer anderen Netlify-Domain läuft als Quantus, müssen beide auf denselben Blob-Store zeigen. Standard-Mobile-Domain: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;font-size:11px">mobile-management.netlify.app</code>.
+                Quantus pusht standardmäßig auf seine eigene Netlify-Domain. Die Mobile-App pullt von derselben Domain. Falls Mobile auf eine andere URL zeigen soll (z.B. wenn du Quantus separat hostest), trage hier die Quantus-Domain ein. Aktuelle Quantus-Domain: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;font-size:11px">${esc(window.location.host || 'management-xo2-pro.netlify.app')}</code>.
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                <input type="text" id="mobileConnectUrl" value="${esc(localStorage.getItem('quantus-mobile-base') || 'https://mobile-management.netlify.app')}" placeholder="https://..." style="flex:1;min-width:220px;padding:8px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(168,85,247,0.3);border-radius:8px;color:var(--text);font-size:12.5px;font-family:monospace;outline:none" />
+                <input type="text" id="mobileConnectUrl" value="${esc(localStorage.getItem('quantus-mobile-base') || window.location.origin || 'https://management-xo2-pro.netlify.app')}" placeholder="https://..." style="flex:1;min-width:220px;padding:8px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(168,85,247,0.3);border-radius:8px;color:var(--text);font-size:12.5px;font-family:monospace;outline:none" />
                 <button type="button" class="btn primary" style="background:linear-gradient(135deg,#a855f7,#6366f1)" onclick="window._connectToMobile()">🔗 Verbinden & Sofort pushen</button>
               </div>
               <div id="mobileConnectResult" style="margin-top:10px;font-size:12px;font-family:monospace;color:var(--muted)"></div>
