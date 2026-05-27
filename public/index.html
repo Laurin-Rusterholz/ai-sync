@@ -4829,9 +4829,6 @@ textarea::placeholder, input::placeholder {
         <button class="topbar-btn" id="btnSave" title="Jetzt speichern & synchronisieren (⌘+S)">💾</button>
         <button class="topbar-btn" id="btnManualPush" title="Manueller Push zum Server" onclick="window._headerPush()">☁️↑</button>
         <button class="topbar-btn" id="btnManualPull" title="Manueller Pull vom Server" onclick="window._manualPullFromServer()">☁️↓</button>
-        <button class="topbar-btn" id="btnExportData" title="JSON-Sicherung herunterladen" onclick="window.exportAllData()">📥</button>
-        <button class="topbar-btn" id="btnImportData" title="JSON-Datei importieren" onclick="document.getElementById('headerImportFileInput')?.click()">📤</button>
-        <input type="file" id="headerImportFileInput" accept=".json" style="display:none" onchange="window.importDataFromFile(this)" />
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
         <button class="topbar-btn" id="btnSettings" title="Einstellungen">⚙️</button>
