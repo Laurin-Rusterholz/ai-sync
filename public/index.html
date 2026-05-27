@@ -10448,6 +10448,37 @@ window._resetStorageDefaults = function() {
   toast('ok', '⟳ Zurückgesetzt', 'Storage-URLs sind wieder auf Standard. Versuche jetzt Pull/Import.');
 };
 
+// Manueller Pull mit Merge — nutzt dieselbe Pipeline wie der Auto-Sync,
+// damit der lokale State nach dem Pull konsistent ist.
+window._manualPullFromServer = async function() {
+  toast('ok', 'Pull läuft…', 'Hole aktuellen Server-Stand');
+  try {
+    if (typeof pullAndMergeBeforeSave === 'function') {
+      const r = await pullAndMergeBeforeSave('manual_pull');
+      if (r?.merged) toast('ok', '✓ Pull fertig', 'Server-Änderungen übernommen');
+      else if (r?.ok || r?.reason === 'no_remote_change') toast('ok', '✓ Pull fertig', 'Bereits aktuell');
+      else toast('warn', 'Pull-Status unklar', r?.reason || '');
+      if (typeof render === 'function') render();
+    } else if (typeof remoteGet === 'function') {
+      const r = await remoteGet();
+      if (r && (r.ok || r.data)) {
+        if (r.data && typeof normalizeData === 'function') {
+          APP.state.data = normalizeData(r.data);
+          if (typeof saveLocalData === 'function') saveLocalData();
+        }
+        toast('ok', '✓ Pull fertig', 'Daten geladen');
+        if (typeof render === 'function') render();
+      } else {
+        toast('warn', 'Pull fehlgeschlagen', r?.reason || r?.status || 'unbekannt');
+      }
+    } else {
+      toast('warn', 'Sync-Funktion nicht verfügbar');
+    }
+  } catch (e) {
+    toast('error', 'Pull-Fehler', e.message || String(e));
+  }
+};
+
 // ─── Mit Mobile-App verbinden ──────────────────────────────────────────────
 // Stellt die Sync-URLs auf eine externe Netlify-Domain um (typisch:
 // management-xo2-pro.netlify.app, wo das mobile-management-Repo deployt ist)
@@ -19246,6 +19277,13 @@ window.saveHabit = function(existingId) {
   else {
     const idx = habits.findIndex(h => h.id === id);
     if (idx >= 0) habits[idx] = { ...habits[idx], ...data };
+  }
+
+  // Orphaned subCompletions aufräumen: Einträge für nicht mehr existierende Sub-Einheiten entfernen
+  const persisted = habits.find(h => h.id === id);
+  if (persisted && Array.isArray(persisted.subCompletions)) {
+    const validNames = new Set(subUnits.map(u => u.name));
+    persisted.subCompletions = persisted.subCompletions.filter(c => validNames.has(c.subUnitName));
   }
 
   scheduleSave();
@@ -56832,7 +56870,7 @@ async function init() {
                 <input type="file" id="manualImportFileInput" accept=".json" style="display:none" onchange="window.importDataFromFile(this)" />
                 <button type="button" class="btn" onclick="document.getElementById('manualImportFileInput').click()">📤 JSON-Datei importieren</button>
                 <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="if(typeof doSave==='function'){doSave(false).then(()=>toast('ok','✓ Manuell gepusht','Daten zum Server hochgeladen'));}else{toast('warn','doSave fehlt');}">☁️ Jetzt zum Server pushen</button>
-                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="if(typeof remoteGet==='function'){toast('ok','Pull läuft…');remoteGet().then(r=>{if(r&&r.ok){toast('ok','✓ Pull fertig','Daten vom Server geladen');}else{toast('warn','Pull fehlgeschlagen');}});}else if(typeof window.pullAndMergeBeforeSave==='function'){window.pullAndMergeBeforeSave('manual').then(()=>toast('ok','✓ Pull fertig')).catch(e=>toast('error','Pull-Fehler',e.message));}else{toast('warn','Funktion nicht verfügbar');}">⬇️ Vom Server pullen</button>
+                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="window._manualPullFromServer()">⬇️ Vom Server pullen</button>
               </div>
               <div class="mini" style="color:var(--muted);margin-top:10px;font-size:11px;line-height:1.5">
                 <strong>Hinweis Import:</strong> Vorhandene Daten werden überschrieben. Auth-Token und Sync-URLs bleiben erhalten.
@@ -56842,10 +56880,10 @@ async function init() {
             <div class="card" style="padding:14px;border:1px solid rgba(168,85,247,0.35);background:linear-gradient(135deg,rgba(168,85,247,0.10),rgba(99,102,241,0.05));margin-bottom:14px">
               <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:14px">📱 Mit Mobile-App verbinden</div>
               <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
-                Wenn deine Mobile-App auf einer anderen Netlify-Domain läuft als Quantus, müssen beide auf denselben Blob-Store zeigen. Standard-Mobile-Domain: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;font-size:11px">management-xo2-pro.netlify.app</code>.
+                Wenn deine Mobile-App auf einer anderen Netlify-Domain läuft als Quantus, müssen beide auf denselben Blob-Store zeigen. Standard-Mobile-Domain: <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;font-size:11px">mobile-management.netlify.app</code>.
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                <input type="text" id="mobileConnectUrl" value="${esc(localStorage.getItem('quantus-mobile-base') || 'https://management-xo2-pro.netlify.app')}" placeholder="https://..." style="flex:1;min-width:220px;padding:8px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(168,85,247,0.3);border-radius:8px;color:var(--text);font-size:12.5px;font-family:monospace;outline:none" />
+                <input type="text" id="mobileConnectUrl" value="${esc(localStorage.getItem('quantus-mobile-base') || 'https://mobile-management.netlify.app')}" placeholder="https://..." style="flex:1;min-width:220px;padding:8px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(168,85,247,0.3);border-radius:8px;color:var(--text);font-size:12.5px;font-family:monospace;outline:none" />
                 <button type="button" class="btn primary" style="background:linear-gradient(135deg,#a855f7,#6366f1)" onclick="window._connectToMobile()">🔗 Verbinden & Sofort pushen</button>
               </div>
               <div id="mobileConnectResult" style="margin-top:10px;font-size:12px;font-family:monospace;color:var(--muted)"></div>
