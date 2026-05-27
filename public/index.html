@@ -4827,6 +4827,11 @@ textarea::placeholder, input::placeholder {
         <button class="topbar-btn" id="btnSpotlight" title="Schnellsuche (⌘+K)" onclick="window.openSpotlight()">🔍</button>
         <button class="topbar-btn" id="btnDailyWrap" title="Tag abschließen" onclick="window.openDailyWrap()">🌙</button>
         <button class="topbar-btn" id="btnSave" title="Jetzt speichern & synchronisieren (⌘+S)">💾</button>
+        <button class="topbar-btn" id="btnManualPush" title="Manueller Push zum Server" onclick="window._headerPush()">☁️↑</button>
+        <button class="topbar-btn" id="btnManualPull" title="Manueller Pull vom Server" onclick="window._manualPullFromServer()">☁️↓</button>
+        <button class="topbar-btn" id="btnExportData" title="JSON-Sicherung herunterladen" onclick="window.exportAllData()">📥</button>
+        <button class="topbar-btn" id="btnImportData" title="JSON-Datei importieren" onclick="document.getElementById('headerImportFileInput')?.click()">📤</button>
+        <input type="file" id="headerImportFileInput" accept=".json" style="display:none" onchange="window.importDataFromFile(this)" />
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
         <button class="topbar-btn" id="btnSettings" title="Einstellungen">⚙️</button>
@@ -10450,6 +10455,18 @@ window._resetStorageDefaults = function() {
 
 // Manueller Pull mit Merge — nutzt dieselbe Pipeline wie der Auto-Sync,
 // damit der lokale State nach dem Pull konsistent ist.
+// Header-Push — forciert sofortigen Remote-Save unabhängig vom Throttle.
+window._headerPush = async function() {
+  if (typeof doSave !== 'function') { toast('warn', 'doSave fehlt'); return; }
+  toast('ok', '☁️ Push läuft…');
+  try {
+    await doSave(false);
+    toast('ok', '✓ Gepusht', 'Daten zum Server hochgeladen');
+  } catch (e) {
+    toast('error', 'Push-Fehler', e.message || String(e));
+  }
+};
+
 window._manualPullFromServer = async function() {
   toast('ok', 'Pull läuft…', 'Hole aktuellen Server-Stand');
   try {
