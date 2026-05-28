@@ -5095,7 +5095,11 @@ function getFirebaseShadowPath(key) {
   return 'cloud-sync/' + sanitizeCloudKey(key);
 }
 function isManualTransferMode() {
-  return APP?.state?.settings?.storage?.manualTransferMode !== false;
+  // Auto-Sync ist Default. Nur explizit gesetztes true aktiviert Manual-Mode.
+  // (Früher: !== false — das hat Profile mit undefined fälschlich in den
+  // Manual-Mode gesteckt, sodass doSave nur lokal speicherte und nie zum
+  // Server pushte → "Upload" war leer, Download zeigte nichts.)
+  return APP?.state?.settings?.storage?.manualTransferMode === true;
 }
 function isAutoSyncEnabled() {
   if (isManualTransferMode()) return false;
@@ -10503,12 +10507,31 @@ window._replaceFromServer = async function() {
       toast('warn', 'Kein Server-Stand', result.reason || result.status || 'Server hat keine Daten geliefert');
       return;
     }
+    const countEntities = obj => {
+      const ent = obj?.entities || {};
+      return Object.values(ent).reduce((sum, coll) => sum + (coll && typeof coll === 'object' ? Object.keys(coll).length : 0), 0);
+    };
+    const remoteCount = countEntities(result.data);
+    const localCount = countEntities(APP.state.data);
+
+    // DATENVERLUST-SCHUTZ: Server-Stand ist (fast) leer, lokal aber Daten?
+    // Dann NICHT blind ersetzen — sehr wahrscheinlich wurde nie erfolgreich
+    // hochgeladen. Klar warnen.
+    if (remoteCount === 0 && localCount > 0) {
+      toast('error', '⚠️ Abgebrochen — Server ist leer', `Lokal hast du ${localCount} Einträge, der Server 0. Es wurde offenbar nie erfolgreich hochgeladen. Lade zuerst hoch (☁️↑), bevor du ersetzt.`, 9000);
+      return;
+    }
+    if (remoteCount < localCount * 0.5 && localCount >= 4) {
+      if (!confirm(`Achtung: Der Server hat nur ${remoteCount} Einträge, lokal hast du ${localCount}.\n\nWenn du jetzt ersetzt, verlierst du ${localCount - remoteCount} Einträge. Trotzdem den Server-Stand übernehmen?`)) {
+        toast('warn', 'Abgebrochen', 'Lokale Daten unverändert');
+        return;
+      }
+    }
+
     // Sicherheits-Backup des aktuellen lokalen Stands
     try { await idbBackup(APP.state.data, 'pre_replace_' + Date.now()); } catch(e) {}
     APP.state.data = normalizeData(result.data);
     try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
-    // lastRemoteSeenAt aktualisieren, damit ein direkt folgender Auto-Push
-    // nicht fälschlich einen Konflikt-Merge auslöst
     try {
       APP.state.storage.lastRemoteSeenAt = new Date(result.data?.meta?.updatedAt || Date.now()).getTime();
     } catch(e) {}
@@ -10578,13 +10601,23 @@ window._resetStorageDefaults = function() {
 
 // Manueller Pull mit Merge — nutzt dieselbe Pipeline wie der Auto-Sync,
 // damit der lokale State nach dem Pull konsistent ist.
-// Header-Push — forciert sofortigen Remote-Save unabhängig vom Throttle.
+// Header-Push — forciert sofortigen Remote-Save, unabhängig vom
+// manualTransferMode (doSave würde im Manual-Mode nur lokal speichern).
 window._headerPush = async function() {
-  if (typeof doSave !== 'function') { toast('warn', 'doSave fehlt'); return; }
   toast('ok', '☁️ Push läuft…');
   try {
-    await doSave(false);
-    toast('ok', '✓ Gepusht', 'Daten zum Server hochgeladen');
+    saveLocalData();
+    const payload = (typeof buildRemoteAppPayload === 'function') ? buildRemoteAppPayload() : APP.state.data;
+    if (!APP.state.data.meta) APP.state.data.meta = {};
+    APP.state.data.meta.updatedAt = new Date().toISOString();
+    const result = await remotePut(payload, { force: true });
+    if (result && result.ok) {
+      try { APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now(); } catch(e) {}
+      const stats = getSyncStats ? getSyncStats(APP.state.data) : null;
+      toast('ok', '✓ Hochgeladen', stats && formatSyncStatsShort ? formatSyncStatsShort(stats) : 'Daten zum Server übertragen');
+    } else {
+      toast('error', 'Upload fehlgeschlagen', result?.reason || result?.status || result?.error?.message || 'unbekannt — Sync-Diagnose prüfen');
+    }
   } catch (e) {
     toast('error', 'Push-Fehler', e.message || String(e));
   }
@@ -49194,12 +49227,14 @@ function init() {
   // Alte Profile mit manualTransferMode=true werden auf Auto-Sync umgestellt.
   try {
     const st = APP.state.settings?.storage;
-    if (st && (st.manualTransferMode === true || st.autoSave === false || st.autoSync === false)) {
+    // Auch undefined (nie explizit gesetzt) auf Auto-Sync normalisieren —
+    // sonst landeten solche Profile im Manual-Mode und pushten nie zum Server.
+    if (st && (st.manualTransferMode !== false || st.autoSave !== true || st.autoSync !== true)) {
       st.manualTransferMode = false;
       st.autoSave = true;
       st.autoSync = true;
       saveSettings(APP.state.settings);
-      console.log('[Migration] Manual-Transfer-Mode → Auto-Sync aktiviert');
+      console.log('[Migration] Auto-Sync sichergestellt (manualTransferMode=false)');
     }
   } catch(e) { console.warn('[Migration] failed:', e); }
 
