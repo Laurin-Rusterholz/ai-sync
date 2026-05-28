@@ -4906,7 +4906,7 @@ textarea::placeholder, input::placeholder {
         <button class="topbar-btn" id="btnDailyWrap" title="Tag abschließen" onclick="window.openDailyWrap()">🌙</button>
         <button class="topbar-btn" id="btnSave" title="Jetzt speichern & synchronisieren (⌘+S)">💾</button>
         <button class="topbar-btn" id="btnManualPush" title="Manueller Push zum Server" onclick="window._headerPush()">☁️↑</button>
-        <button class="topbar-btn" id="btnManualPull" title="Manueller Pull vom Server" onclick="window._manualPullFromServer()">☁️↓</button>
+        <button class="topbar-btn" id="btnManualPull" title="Vom Server herunterladen" onclick="window._openPullChoiceModal()">☁️↓</button>
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
         <button class="topbar-btn" id="btnSettings" title="Einstellungen">⚙️</button>
@@ -10490,6 +10490,54 @@ window.diagnoseSync = async function() {
     out.innerHTML = lines.map(l => '<div style="margin:2px 0">' + esc(l) + '</div>').join('');
   }
   toast('info', 'Diagnose fertig', 'Details in Settings + Console (F12)', 6000);
+};
+
+// Holt den Server-Stand und ERSETZT den lokalen komplett (kein Merge).
+// Für den Geräte-Wechsel-Workflow: PC pusht → Laptop übernimmt 1:1.
+// Vorher Backup, damit nichts unwiederbringlich verloren geht.
+window._replaceFromServer = async function() {
+  toast('ok', 'Lade Server-Stand…');
+  try {
+    const result = await remoteGet({ force: true });
+    if (!result.ok || !result.data) {
+      toast('warn', 'Kein Server-Stand', result.reason || result.status || 'Server hat keine Daten geliefert');
+      return;
+    }
+    // Sicherheits-Backup des aktuellen lokalen Stands
+    try { await idbBackup(APP.state.data, 'pre_replace_' + Date.now()); } catch(e) {}
+    APP.state.data = normalizeData(result.data);
+    try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
+    // lastRemoteSeenAt aktualisieren, damit ein direkt folgender Auto-Push
+    // nicht fälschlich einen Konflikt-Merge auslöst
+    try {
+      APP.state.storage.lastRemoteSeenAt = new Date(result.data?.meta?.updatedAt || Date.now()).getTime();
+    } catch(e) {}
+    saveLocalData();
+    if (typeof render === 'function') render();
+    const stats = getSyncStats(APP.state.data);
+    toast('ok', '✓ Server-Stand übernommen', formatSyncStatsShort ? formatSyncStatsShort(stats) : 'Lokale Daten ersetzt');
+  } catch (e) {
+    toast('error', 'Fehler', e.message || String(e));
+  }
+};
+
+// Auswahl-Dialog beim manuellen Download: Zusammenführen vs. Ersetzen
+window._openPullChoiceModal = function() {
+  const e = APP.state.data.entities || {};
+  const localTasks = Object.values(e.tasks || {}).filter(t => !t.archived && !t.deleted).length;
+  openModal('⬇️ Vom Server herunterladen', `
+    <div class="mini mb-3">Aktuell lokal: <strong>${localTasks} Aufgaben</strong>. Wie sollen die Server-Daten übernommen werden?</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn" style="text-align:left;padding:12px 14px;height:auto" onclick="closeModal(); window._replaceFromServer();">
+        <div style="font-weight:700;font-size:14px;margin-bottom:3px">⬇️ Server-Stand übernehmen <span style="color:var(--accent)">(empfohlen)</span></div>
+        <div class="mini" style="opacity:.8">Ersetzt die lokalen Daten 1:1 durch den Server. Nutze das beim Geräte-Wechsel (z.B. PC → Laptop). Auf anderen Geräten gelöschte Aufgaben verschwinden korrekt.</div>
+      </button>
+      <button class="btn" style="text-align:left;padding:12px 14px;height:auto" onclick="closeModal(); window._manualPullFromServer();">
+        <div style="font-weight:700;font-size:14px;margin-bottom:3px">🔀 Zusammenführen (Merge)</div>
+        <div class="mini" style="opacity:.8">Kombiniert lokale und Server-Daten. Behält auf beiden Seiten neue Einträge — kann aber anderswo gelöschte Aufgaben zurückbringen.</div>
+      </button>
+    </div>
+  `, `<button class="btn" data-action="close-modal">Abbrechen</button>`);
 };
 
 window._autoSetupEndpoints = function() {
@@ -57254,7 +57302,7 @@ async function init() {
                 <input type="file" id="manualImportFileInput" accept=".json" style="display:none" onchange="window.importDataFromFile(this)" />
                 <button type="button" class="btn" onclick="document.getElementById('manualImportFileInput').click()">📤 JSON-Datei importieren</button>
                 <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="if(typeof doSave==='function'){doSave(false).then(()=>toast('ok','✓ Manuell gepusht','Daten zum Server hochgeladen'));}else{toast('warn','doSave fehlt');}">☁️ Jetzt zum Server pushen</button>
-                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="window._manualPullFromServer()">⬇️ Vom Server pullen</button>
+                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="window._openPullChoiceModal()">⬇️ Vom Server pullen</button>
               </div>
               <div class="mini" style="color:var(--muted);margin-top:10px;font-size:11px;line-height:1.5">
                 <strong>Hinweis Import:</strong> Vorhandene Daten werden überschrieben. Auth-Token und Sync-URLs bleiben erhalten.
