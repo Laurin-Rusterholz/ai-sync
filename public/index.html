@@ -5374,6 +5374,81 @@ function restoreReadingHubShadowFromData(data) {
     console.warn('ReadingHub restore failed:', e);
   }
 }
+// ── Zusätzliche App-Daten, die mit in die Cloud sollen ──────────────────────
+// Alles ausser Dateien (laufen über Firebase) und Browser-Tabs wird mit-
+// synchronisiert. Sync-interne bzw. geräte-spezifische Keys (Device-ID,
+// Sync-Health, lokale Backups, Migrations-Flags, Sync-URLs) sind bewusst NICHT
+// dabei — die MÜSSEN pro Gerät bleiben, sonst bricht die Synchronisation.
+const SYNCED_EXTRA_LOCAL_KEYS = [
+  // PINs / App-Sperren
+  'quantus_app_pin', 'quantus_budget_pin', 'quantus_locked_apps', 'quantus_app_lock_timeout',
+  // Reader-Einstellungen
+  'reader-prefs', 'nh-reader-prefs',
+  // ResearchHub-Einstellungen
+  'research_hub_settings',
+  // Readlist (Lese-Liste): Artikel, Prefs, Highlights, Lese-Fortschritt
+  'readlist-v1', 'readlist-prefs-v1', 'readlist-highlights-v1', 'readlist-progress-v1',
+  // Übersetzer-Verlauf
+  'translator-history-v1',
+  // Theme / UI-Zustände
+  'noteflow-theme', 'sidebar-collapsed', 'quantus_collapsible_states',
+];
+function collectExtraLocalKeys() {
+  const out = {};
+  for (const k of SYNCED_EXTRA_LOCAL_KEYS) {
+    try { const v = localStorage.getItem(k); if (v != null) out[k] = v; } catch(e) {}
+  }
+  return out;
+}
+// Mergt einen einzelnen Extra-Key verlustfrei wo möglich (Arrays/Objekte mit
+// IDs werden vereint), sonst gewinnt der Remote-Wert. replace=true → immer Remote.
+function mergeExtraLocalValue(key, localRaw, remoteRaw, replace) {
+  if (remoteRaw == null) return localRaw;
+  if (localRaw == null || replace) return remoteRaw;
+  if (localRaw === remoteRaw) return localRaw;
+  let loc, rem;
+  try { loc = JSON.parse(localRaw); rem = JSON.parse(remoteRaw); } catch(e) { return remoteRaw; }
+  try {
+    // Readlist-Artikel: Union per id (Artikel beider Geräte behalten)
+    if (key === 'readlist-v1' && Array.isArray(loc?.articles) && Array.isArray(rem?.articles)) {
+      const map = {};
+      for (const a of [...rem.articles, ...loc.articles]) { if (a && a.id != null && !map[a.id]) map[a.id] = a; }
+      return JSON.stringify({ ...rem, ...loc, articles: Object.values(map) });
+    }
+    // Übersetzer-Verlauf: Union per ts, neueste zuerst, max 30
+    if (key === 'translator-history-v1' && Array.isArray(loc) && Array.isArray(rem)) {
+      const map = {};
+      for (const it of [...loc, ...rem]) { if (it) map[it.ts != null ? it.ts : JSON.stringify(it)] = it; }
+      return JSON.stringify(Object.values(map).sort((a, b) => (b?.ts || 0) - (a?.ts || 0)).slice(0, 30));
+    }
+    // Highlights/Lese-Fortschritt: Objekt-Maps pro Artikel-ID zusammenführen
+    if ((key === 'readlist-highlights-v1' || key === 'readlist-progress-v1') &&
+        loc && typeof loc === 'object' && !Array.isArray(loc) && rem && typeof rem === 'object') {
+      return JSON.stringify({ ...rem, ...loc });
+    }
+  } catch(e) { /* Fallback unten */ }
+  return remoteRaw; // PINs, Prefs, Theme, Settings: Remote gewinnt (last-write-wins)
+}
+// Schreibt die mit-synchronisierten Extra-Keys aus einem Cloud-Stand zurück.
+// Nur Keys, die im Remote vorhanden sind, werden angefasst (entfernt nie etwas
+// lokal — sicher für PINs etc.). Gibt die Anzahl geschriebener Keys zurück.
+function restoreExtraLocalKeys(remoteData, opts = {}) {
+  const extra = remoteData && remoteData._extraLocal;
+  if (!extra || typeof extra !== 'object') return 0;
+  let n = 0;
+  for (const k of SYNCED_EXTRA_LOCAL_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(extra, k)) continue;
+    const remoteRaw = extra[k];
+    if (remoteRaw == null) continue;
+    let localRaw = null;
+    try { localRaw = localStorage.getItem(k); } catch(e) {}
+    const finalRaw = mergeExtraLocalValue(k, localRaw, remoteRaw, !!opts.replace);
+    if (finalRaw != null && finalRaw !== localRaw) {
+      try { localStorage.setItem(k, finalRaw); n++; } catch(e) {}
+    }
+  }
+  return n;
+}
 function buildLocalAppSnapshot() {
   const snapshot = { ...(APP.state.data || {}) };
   if (APP.state.settings) snapshot._settings = APP.state.settings;
@@ -5382,6 +5457,7 @@ function buildLocalAppSnapshot() {
   if (APP.state.ui?.budgetTab) snapshot._budgetTab = APP.state.ui.budgetTab;
   if (APP.state.ui?.budgetTxFilter) snapshot._budgetTxFilter = APP.state.ui.budgetTxFilter;
   delete snapshot.recallLabData;
+  delete snapshot._extraLocal;
   delete snapshot._readingHubAnnotations;
   delete snapshot._readingHubVocabulary;
   delete snapshot._readingHubBookmarks;
@@ -5399,6 +5475,8 @@ function buildRemoteAppPayload() {
     const rlData = safeJsonParse(localStorage.getItem('recalllab') || 'null', null);
     if (rlData) payload.recallLabData = rlData;
   } catch(e) {}
+  // Extra App-Daten (PINs, Reader, ResearchHub, Readlist, Übersetzer-Verlauf, Theme)
+  payload._extraLocal = collectExtraLocalKeys();
   if (!payload.meta) payload.meta = {};
   payload.meta.updatedAt = new Date().toISOString();
   payload.meta.lastSavedBy = getOrCreateDeviceId();
@@ -9280,6 +9358,7 @@ async function syncFreshness(reason) {
 
         APP.state.data = mergeData(APP.state.data, normalizeData(result.data));
         restoreReadingHubShadowFromData(result.data);
+        try { restoreExtraLocalKeys(result.data); } catch(e) {}
         try {
           if (result.data._settings) {
             APP.state.settings = { ...APP.state.settings, ...result.data._settings, storage: APP.state.settings.storage };
@@ -9367,6 +9446,7 @@ async function pullAndMergeBeforeSave(reason) {
 
       APP.state.data = mergeData(APP.state.data, normalizeData(result.data));
       try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
+      try { restoreExtraLocalKeys(result.data); } catch(e) {}
 
       // Settings/UI-State aus Remote übernehmen (analog zu syncFreshness)
       try {
@@ -9499,6 +9579,11 @@ function getSyncStats(data) {
     if (Array.isArray(data?.[k])) stats.arrays[k] = data[k].length;
   }
   if (data?.dailyGoals) stats.arrays.dailyGoals = Object.keys(data.dailyGoals).length;
+  // Habits (Routinen) + Glaubenssätze leben unter dailyBriefing — explizit mitzählen,
+  // damit Push/Pull-Verifikation und Toast-Feedback sie abdecken (sonst sind Habits
+  // im Sync "unsichtbar" und ein Habit-Verlust würde nicht erkannt).
+  if (Array.isArray(data?.dailyBriefing?.routines)) stats.arrays.habits = data.dailyBriefing.routines.length;
+  if (Array.isArray(data?.dailyBriefing?.beliefs)) stats.arrays.beliefs = data.dailyBriefing.beliefs.length;
   // Kurzer Hash der Statistik für einen quick-equality-check
   try {
     const s = JSON.stringify({ e: stats.entities, a: stats.arrays, r: stats.readingHubBooks });
@@ -9539,6 +9624,7 @@ function formatSyncStatsShort(stats) {
   const t = stats.entities?.tasks || 0;
   const p = stats.entities?.projects || 0;
   parts.push(t + ' Tasks, ' + p + ' Projekte, ' + n + ' Notizen');
+  if (stats.arrays?.habits) parts.push(stats.arrays.habits + ' Habits');
   if (stats.readingHubBooks) parts.push(stats.readingHubBooks + ' Bücher');
   return parts.join(' · ');
 }
@@ -9671,8 +9757,37 @@ function mergeData(local, remote) {
     merged.dailyBriefing.hiddenGoals = [...new Set([...(merged.dailyBriefing.hiddenGoals || []), ...(remote.dailyBriefing.hiddenGoals || [])])];
     // Merge beliefs/routines/sentItems by ID
     const mergeById = (local, remote) => { const map = {}; [...(local||[]), ...(remote||[])].forEach(i => { if(i&&i.id) map[i.id]=map[i.id]?((new Date(i.createdAt||0))>(new Date(map[i.id].createdAt||0))?i:map[i.id]):i; }); return Object.values(map); };
+    // Habits/Routinen speziell mergen: Vereinigung per ID, aber completions/subCompletions
+    // von BEIDEN Geräten behalten. Sonst würde beim Merge der Abhak-Fortschritt eines
+    // Geräts verloren gehen (Habits tragen kein updatedAt, nur createdAt — ein reines
+    // mergeById nach createdAt verwirft die completions des "Verlierers").
+    const mergeRoutinesById = (localArr, remoteArr) => {
+      const unionBy = (a, b, keyFn) => {
+        const seen = new Set(); const out = [];
+        for (const x of [...(a || []), ...(b || [])]) {
+          if (!x) continue;
+          const k = keyFn(x);
+          if (seen.has(k)) continue;
+          seen.add(k); out.push(x);
+        }
+        return out;
+      };
+      const map = {};
+      for (const r of [...(localArr || []), ...(remoteArr || [])]) {
+        if (!r || !r.id) continue;
+        const ex = map[r.id];
+        if (!ex) { map[r.id] = { ...r }; continue; }
+        const exTs = new Date(ex.updatedAt || ex.createdAt || 0).getTime();
+        const rTs = new Date(r.updatedAt || r.createdAt || 0).getTime();
+        const base = rTs > exTs ? { ...ex, ...r } : { ...r, ...ex };
+        base.completions = unionBy(ex.completions, r.completions, c => c.id || (c.date + '|' + (c.value || '') + '|' + (c.autoFromSubUnits ? 'a' : '')));
+        base.subCompletions = unionBy(ex.subCompletions, r.subCompletions, c => c.id || (c.date + '|' + c.subUnitName));
+        map[r.id] = base;
+      }
+      return Object.values(map);
+    };
     merged.dailyBriefing.beliefs = mergeById(merged.dailyBriefing.beliefs, remote.dailyBriefing.beliefs);
-    merged.dailyBriefing.routines = mergeById(merged.dailyBriefing.routines, remote.dailyBriefing.routines);
+    merged.dailyBriefing.routines = mergeRoutinesById(merged.dailyBriefing.routines, remote.dailyBriefing.routines);
     merged.dailyBriefing.sentItems = mergeById(merged.dailyBriefing.sentItems, remote.dailyBriefing.sentItems);
     // Merge customRoutines by ID
     merged.dailyBriefing.customRoutines = mergeById(merged.dailyBriefing.customRoutines || [], remote.dailyBriefing.customRoutines || []);
@@ -10372,6 +10487,9 @@ async function manualTransferPull(silent = false) {
     if (chosenRh && chosenRh.data) persistReadingHubCloudPayload(chosenRh.data);
     else restoreReadingHubShadowFromData(chosen.data);
 
+    // Extra App-Daten (PINs, Reader, ResearchHub, Readlist, Übersetzer, Theme) — Replace: 1:1 übernehmen.
+    try { restoreExtraLocalKeys(chosen.data, { replace: true }); } catch(e) {}
+
     if (incoming._settings) {
       const preservedStorage = { ...(APP.state.settings?.storage || {}) };
       APP.state.settings = { ...APP.state.settings, ...incoming._settings, storage: preservedStorage };
@@ -10507,12 +10625,27 @@ window._replaceFromServer = async function() {
       toast('warn', 'Kein Server-Stand', result.reason || result.status || 'Server hat keine Daten geliefert');
       return;
     }
-    const countEntities = obj => {
+    // Zählt ALLE Nutzerdaten — inkl. Habits/Routinen (dailyBriefing.routines).
+    // Vorher wurden nur entities gezählt; ein Server-Stand mit Habits aber wenig/keinen
+    // Entities galt fälschlich als "leer" → Download wurde abgebrochen und die Habits
+    // kamen nie an.
+    const countAllItems = obj => {
+      let n = 0;
       const ent = obj?.entities || {};
-      return Object.values(ent).reduce((sum, coll) => sum + (coll && typeof coll === 'object' ? Object.keys(coll).length : 0), 0);
+      for (const coll of Object.values(ent)) {
+        if (coll && typeof coll === 'object' && !Array.isArray(coll)) n += Object.keys(coll).length;
+      }
+      const db = obj?.dailyBriefing || {};
+      if (Array.isArray(db.routines)) n += db.routines.length;
+      if (Array.isArray(db.beliefs)) n += db.beliefs.length;
+      for (const k of ['reflections', 'quickTodos', 'weeklyGoals', 'pinnedItems']) {
+        if (Array.isArray(obj?.[k])) n += obj[k].length;
+      }
+      if (obj?.dailyGoals && typeof obj.dailyGoals === 'object') n += Object.keys(obj.dailyGoals).length;
+      return n;
     };
-    const remoteCount = countEntities(result.data);
-    const localCount = countEntities(APP.state.data);
+    const remoteCount = countAllItems(result.data);
+    const localCount = countAllItems(APP.state.data);
 
     // DATENVERLUST-SCHUTZ: Server-Stand ist (fast) leer, lokal aber Daten?
     // Dann NICHT blind ersetzen — sehr wahrscheinlich wurde nie erfolgreich
@@ -10532,6 +10665,16 @@ window._replaceFromServer = async function() {
     try { await idbBackup(APP.state.data, 'pre_replace_' + Date.now()); } catch(e) {}
     APP.state.data = normalizeData(result.data);
     try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
+    // ReadingHub-Volldaten (Notizen/Vokabeln/Lesezeichen) aus dem separaten Blob holen.
+    try {
+      const rhCands = await fetchRemoteCandidates('readinghub-data.json');
+      const rhChosen = pickLatestRemoteCandidate(rhCands);
+      if (rhChosen && rhChosen.data) persistReadingHubCloudPayload(rhChosen.data);
+    } catch(e) {}
+    // RecallLab (Karteikarten) aus dem Cloud-Stand wiederherstellen.
+    try { if (result.data.recallLabData && typeof result.data.recallLabData === 'object') localStorage.setItem('recalllab', JSON.stringify(result.data.recallLabData)); } catch(e) {}
+    // Extra App-Daten (PINs, Reader, ResearchHub, Readlist, Übersetzer, Theme) — Replace: 1:1 übernehmen.
+    try { restoreExtraLocalKeys(result.data, { replace: true }); } catch(e) {}
     try {
       APP.state.storage.lastRemoteSeenAt = new Date(result.data?.meta?.updatedAt || Date.now()).getTime();
     } catch(e) {}
@@ -10548,16 +10691,17 @@ window._replaceFromServer = async function() {
 window._openPullChoiceModal = function() {
   const e = APP.state.data.entities || {};
   const localTasks = Object.values(e.tasks || {}).filter(t => !t.archived && !t.deleted).length;
+  const localHabits = (APP.state.data.dailyBriefing?.routines || []).filter(r => !r.archived).length;
   openModal('⬇️ Vom Server herunterladen', `
-    <div class="mini mb-3">Aktuell lokal: <strong>${localTasks} Aufgaben</strong>. Wie sollen die Server-Daten übernommen werden?</div>
+    <div class="mini mb-3">Aktuell lokal: <strong>${localTasks} Aufgaben</strong>, <strong>${localHabits} Habits</strong>. Wie sollen die Server-Daten übernommen werden?</div>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="btn" style="text-align:left;padding:12px 14px;height:auto" onclick="closeModal(); window._replaceFromServer();">
-        <div style="font-weight:700;font-size:14px;margin-bottom:3px">⬇️ Server-Stand übernehmen <span style="color:var(--accent)">(empfohlen)</span></div>
-        <div class="mini" style="opacity:.8">Ersetzt die lokalen Daten 1:1 durch den Server. Nutze das beim Geräte-Wechsel (z.B. PC → Laptop). Auf anderen Geräten gelöschte Aufgaben verschwinden korrekt.</div>
-      </button>
       <button class="btn" style="text-align:left;padding:12px 14px;height:auto" onclick="closeModal(); window._manualPullFromServer();">
-        <div style="font-weight:700;font-size:14px;margin-bottom:3px">🔀 Zusammenführen (Merge)</div>
-        <div class="mini" style="opacity:.8">Kombiniert lokale und Server-Daten. Behält auf beiden Seiten neue Einträge — kann aber anderswo gelöschte Aufgaben zurückbringen.</div>
+        <div style="font-weight:700;font-size:14px;margin-bottom:3px">🔀 Zusammenführen (Merge) <span style="color:var(--accent)">(empfohlen)</span></div>
+        <div class="mini" style="opacity:.8">Kombiniert lokale und Server-Daten — Habits &amp; Einträge von BEIDEN Geräten bleiben erhalten. Ideal, wenn du auf mehreren Geräten etwas erstellt hast.</div>
+      </button>
+      <button class="btn" style="text-align:left;padding:12px 14px;height:auto" onclick="closeModal(); window._replaceFromServer();">
+        <div style="font-weight:700;font-size:14px;margin-bottom:3px">⬇️ Server-Stand übernehmen (Ersetzen)</div>
+        <div class="mini" style="opacity:.8">Ersetzt die lokalen Daten 1:1 durch den Server. Nutze das beim Geräte-Wechsel (z.B. PC → Laptop). Auf anderen Geräten gelöschte Einträge verschwinden korrekt.</div>
       </button>
     </div>
   `, `<button class="btn" data-action="close-modal">Abbrechen</button>`);
@@ -10613,8 +10757,30 @@ window._headerPush = async function() {
     const result = await remotePut(payload, { force: true });
     if (result && result.ok) {
       try { APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now(); } catch(e) {}
-      const stats = getSyncStats ? getSyncStats(APP.state.data) : null;
-      toast('ok', '✓ Hochgeladen', stats && formatSyncStatsShort ? formatSyncStatsShort(stats) : 'Daten zum Server übertragen');
+      // ReadingHub (Notizen/Vokabeln/Lesezeichen/Bücher-Liste) liegt in einem eigenen
+      // Blob — ohne dies würden diese Daten beim manuellen Push NICHT hochgeladen.
+      try {
+        const rhPayload = buildReadingHubCloudPayload();
+        rhPayload.updatedAt = new Date().toISOString();
+        await remotePutByKey('readinghub-data.json', rhPayload, { force: true });
+      } catch(e) { console.warn('[HeaderPush] ReadingHub-Push übersprungen:', e); }
+      const localStats = getSyncStats ? getSyncStats(payload) : null;
+      // Verifikation: Server-Stand zurücklesen und mit dem Push vergleichen, damit
+      // "Hochgeladen" wirklich heisst, dass die Daten (inkl. Habits) auch ankamen.
+      let verifyNote = '';
+      try {
+        const back = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+        const latest = pickLatestRemoteCandidate(back);
+        if (latest && latest.data) {
+          const diffs = diffSyncStats(localStats, getSyncStats(latest.data));
+          if (diffs.length) verifyNote = ' ⚠️ Server weicht ab: ' + diffs.slice(0, 3).join(', ');
+        } else {
+          verifyNote = ' ⚠️ Rücklesen fehlgeschlagen';
+        }
+      } catch(e) { /* Verifikation ist best-effort */ }
+      const statsStr = localStats && formatSyncStatsShort ? formatSyncStatsShort(localStats) : 'Daten zum Server übertragen';
+      if (verifyNote) toast('warn', 'Hochgeladen (Warnung)', statsStr + verifyNote, 9000);
+      else toast('ok', '✓ Hochgeladen & verifiziert', statsStr);
     } else {
       toast('error', 'Upload fehlgeschlagen', result?.reason || result?.status || result?.error?.message || 'unbekannt — Sync-Diagnose prüfen');
     }
@@ -10626,28 +10792,62 @@ window._headerPush = async function() {
 window._manualPullFromServer = async function() {
   toast('ok', 'Pull läuft…', 'Hole aktuellen Server-Stand');
   try {
-    if (typeof pullAndMergeBeforeSave === 'function') {
-      const r = await pullAndMergeBeforeSave('manual_pull');
-      if (r?.merged) toast('ok', '✓ Pull fertig', 'Server-Änderungen übernommen');
-      else if (r?.ok || r?.reason === 'no_remote_change') toast('ok', '✓ Pull fertig', 'Bereits aktuell');
-      else toast('warn', 'Pull-Status unklar', r?.reason || '');
-      if (typeof render === 'function') render();
-    } else if (typeof remoteGet === 'function') {
-      const r = await remoteGet();
-      if (r && (r.ok || r.data)) {
-        if (r.data && typeof normalizeData === 'function') {
-          APP.state.data = normalizeData(r.data);
-          if (typeof saveLocalData === 'function') saveLocalData();
-        }
-        toast('ok', '✓ Pull fertig', 'Daten geladen');
-        if (typeof render === 'function') render();
-      } else {
-        toast('warn', 'Pull fehlgeschlagen', r?.reason || r?.status || 'unbekannt');
-      }
-    } else {
-      toast('warn', 'Sync-Funktion nicht verfügbar');
+    if (!navigator.onLine) { toast('warn', 'Offline', 'Keine Cloud-Verbindung'); return; }
+    // WICHTIG: NICHT über pullAndMergeBeforeSave gehen — das bricht im Manual-Modus
+    // (autoSync aus) sofort ab und tut NICHTS, meldet aber "fertig". Stattdessen hier
+    // direkt holen + mergen, damit der Download in JEDEM Modus funktioniert.
+    const candidates = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+    const chosen = pickLatestRemoteCandidate(candidates);
+    if (!chosen || !chosen.data) {
+      const errs = (candidates._errors || []).map(e => {
+        const prov = cloudProviderLabel(e.provider || '?');
+        if (e.skipped) return prov + ': nicht konfiguriert';
+        if (e.status === 404) return prov + ': keine Daten';
+        if (e.status) return prov + ': HTTP ' + e.status;
+        return prov + ': Fehler';
+      });
+      toast('warn', 'Kein Server-Stand', errs.length ? errs.join(' · ') : 'Bitte zuerst auf dem anderen Gerät hochladen (☁️↑)');
+      return;
     }
+    try { await idbBackup(APP.state.data, 'pre_manual_merge_' + Date.now()); } catch(e) {}
+    const before = getSyncStats(APP.state.data);
+    // Kompletter Merge inkl. Habits (dailyBriefing.routines) via mergeData
+    APP.state.data = mergeData(APP.state.data, normalizeData(chosen.data));
+    // Merge-Ergebnis lokal als aktuellsten Stand markieren, damit ein anschliessender
+    // Push (☁️↑) die Vereinigung auch wieder zum Server bringt (→ anderes Gerät bekommt sie).
+    if (!APP.state.data.meta) APP.state.data.meta = {};
+    APP.state.data.meta.updatedAt = new Date().toISOString();
+    APP.state.data.meta.lastSavedBy = getOrCreateDeviceId();
+    // RecallLab + ReadingHub aus dem Cloud-Stand wiederherstellen
+    try { if (chosen.data.recallLabData && typeof chosen.data.recallLabData === 'object') localStorage.setItem('recalllab', JSON.stringify(chosen.data.recallLabData)); } catch(e) {}
+    try {
+      const rhCands = await fetchRemoteCandidates('readinghub-data.json');
+      const rhChosen = pickLatestRemoteCandidate(rhCands);
+      if (rhChosen && rhChosen.data) persistReadingHubCloudPayload(rhChosen.data);
+      else restoreReadingHubShadowFromData(chosen.data);
+    } catch(e) {}
+    // Extra App-Daten (PINs, Reader, ResearchHub, Readlist, Übersetzer, Theme) — Merge: verlustfrei vereinen.
+    try { restoreExtraLocalKeys(chosen.data); } catch(e) {}
+    // Settings (ohne lokale Storage-URLs zu überschreiben)
+    try {
+      if (chosen.data._settings) {
+        const preservedStorage = { ...(APP.state.settings?.storage || {}) };
+        APP.state.settings = { ...APP.state.settings, ...chosen.data._settings, storage: preservedStorage };
+        saveSettings(APP.state.settings);
+      }
+    } catch(e) {}
+    try {
+      APP.state.storage.lastRemoteSeenAt = getDataTimestamp(chosen.data) || Date.now();
+      APP.state.storage.lastRemoteProvider = chosen.provider;
+      APP.state.storage.status = 'saved';
+    } catch(e) {}
+    saveLocalData();
+    if (typeof render === 'function') render();
+    const after = getSyncStats(APP.state.data);
+    const gained = (after.arrays?.habits || 0) - (before.arrays?.habits || 0);
+    toast('ok', '✓ Zusammengeführt', formatSyncStatsShort(after) + ' · von ' + cloudProviderLabel(chosen.provider) + (gained > 0 ? ' (+' + gained + ' Habits)' : ''));
   } catch (e) {
+    console.warn('[ManualPull/Merge] failed:', e);
     toast('error', 'Pull-Fehler', e.message || String(e));
   }
 };
@@ -57449,7 +57649,7 @@ async function init() {
                 <button type="button" class="btn primary" style="background:linear-gradient(135deg,#22c55e,#16a34a)" onclick="window.exportAllData()">📥 Jetzt herunterladen</button>
                 <input type="file" id="manualImportFileInput" accept=".json" style="display:none" onchange="window.importDataFromFile(this)" />
                 <button type="button" class="btn" onclick="document.getElementById('manualImportFileInput').click()">📤 JSON-Datei importieren</button>
-                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="if(typeof doSave==='function'){doSave(false).then(()=>toast('ok','✓ Manuell gepusht','Daten zum Server hochgeladen'));}else{toast('warn','doSave fehlt');}">☁️ Jetzt zum Server pushen</button>
+                <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="window._headerPush()">☁️ Jetzt zum Server pushen</button>
                 <button type="button" class="btn" style="background:rgba(99,102,241,0.15);color:#a5b4fc;border:1px solid rgba(99,102,241,0.3)" onclick="window._openPullChoiceModal()">⬇️ Vom Server pullen</button>
               </div>
               <div class="mini" style="color:var(--muted);margin-top:10px;font-size:11px;line-height:1.5">
@@ -57919,9 +58119,10 @@ async function init() {
           }
           
           APP.state.data = mergeData(APP.state.data, normalizeData(result.data));
-          
+
           restoreReadingHubShadowFromData(result.data);
-          
+          try { restoreExtraLocalKeys(result.data); } catch(e) {}
+
           if (APP.state.data._settings) {
             APP.state.settings = { ...APP.state.settings, ...APP.state.data._settings, storage: APP.state.settings.storage };
             saveSettings(APP.state.settings);
@@ -63119,13 +63320,12 @@ function exportAllData() {
       const extra = {};
       try {
         const keys = [
-          'recalllab', 
+          'recalllab',
           'readinghub-books', 'readinghub-annotations', 'readinghub-vocabulary',
           'readinghub-bookmarks', 'readinghub-settings',
-          // ✅ Lücke geschlossen: UI-Preferences die User aktiv anpasst
-          'quantus_collapsible_states',  // Welche Project-Sections offen sind
-          'noteflow-theme',              // Theme-Auswahl
-          'sidebar-collapsed',           // Sidebar-State
+          // Alle mit-synchronisierten Extra-Keys (PINs, Reader, ResearchHub,
+          // Readlist, Übersetzer-Verlauf, Theme/UI) — zentrale Allowlist.
+          ...((typeof SYNCED_EXTRA_LOCAL_KEYS !== 'undefined') ? SYNCED_EXTRA_LOCAL_KEYS : []),
         ];
         for (const k of keys) {
           const v = localStorage.getItem(k);
