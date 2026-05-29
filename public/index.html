@@ -10582,6 +10582,14 @@ window._replaceFromServer = async function() {
     try { await idbBackup(APP.state.data, 'pre_replace_' + Date.now()); } catch(e) {}
     APP.state.data = normalizeData(result.data);
     try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
+    // ReadingHub-Volldaten (Notizen/Vokabeln/Lesezeichen) aus dem separaten Blob holen.
+    try {
+      const rhCands = await fetchRemoteCandidates('readinghub-data.json');
+      const rhChosen = pickLatestRemoteCandidate(rhCands);
+      if (rhChosen && rhChosen.data) persistReadingHubCloudPayload(rhChosen.data);
+    } catch(e) {}
+    // RecallLab (Karteikarten) aus dem Cloud-Stand wiederherstellen.
+    try { if (result.data.recallLabData && typeof result.data.recallLabData === 'object') localStorage.setItem('recalllab', JSON.stringify(result.data.recallLabData)); } catch(e) {}
     try {
       APP.state.storage.lastRemoteSeenAt = new Date(result.data?.meta?.updatedAt || Date.now()).getTime();
     } catch(e) {}
@@ -10664,6 +10672,13 @@ window._headerPush = async function() {
     const result = await remotePut(payload, { force: true });
     if (result && result.ok) {
       try { APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now(); } catch(e) {}
+      // ReadingHub (Notizen/Vokabeln/Lesezeichen/Bücher-Liste) liegt in einem eigenen
+      // Blob — ohne dies würden diese Daten beim manuellen Push NICHT hochgeladen.
+      try {
+        const rhPayload = buildReadingHubCloudPayload();
+        rhPayload.updatedAt = new Date().toISOString();
+        await remotePutByKey('readinghub-data.json', rhPayload, { force: true });
+      } catch(e) { console.warn('[HeaderPush] ReadingHub-Push übersprungen:', e); }
       const localStats = getSyncStats ? getSyncStats(payload) : null;
       // Verifikation: Server-Stand zurücklesen und mit dem Push vergleichen, damit
       // "Hochgeladen" wirklich heisst, dass die Daten (inkl. Habits) auch ankamen.
