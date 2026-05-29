@@ -12335,28 +12335,94 @@ async function testOpenAIConnection(apiKey, _unused, model) {
 ============================================================================ */
 
 async function sendChatMessage(prompt, options = {}) {
-  const s = (APP.state.settings && APP.state.settings.openai) ? APP.state.settings.openai : {};
-  const apiKey = s.apiKey || APP.state.settings?.openaiApiKey;
-  
-  if (!apiKey) {
-    throw new Error("Kein API-Key konfiguriert. Bitte in den Einstellungen hinterlegen.");
-  }
-  
   // Umfassenden Kontext aus allen Daten erstellen
   const systemPrompt = options.systemPrompt || buildFullContextPrompt();
 
-  console.log("Sende Anfrage an OpenAI API...");
-  const res = await callOpenAI(
-    [{ role: "user", content: prompt }],
-    systemPrompt,
-    { ...options }
-  );
-  
-  if (!res) {
-    throw new Error("Keine Antwort von der API erhalten.");
+  // Bevorzugt Google Gemini — riesiges Context-Window (1M+ Token), damit die
+  // KI wirklich auf ALLE Daten zugreifen kann. Fallback auf OpenAI, dann Anthropic.
+  const geminiKey = APP.state.settings?.geminiApiKey || APP.state.data?.journal?.settings?.geminiApiKey;
+  const openaiKey = APP.state.settings?.openai?.apiKey || APP.state.settings?.openaiApiKey;
+  const anthropicKey = APP.state.settings?.anthropicApiKey || APP.state.settings?.apiKey;
+
+  if (geminiKey) {
+    try {
+      const res = await callGemini(prompt, systemPrompt, { geminiKey, ...options });
+      if (res) return res;
+    } catch (e) {
+      console.warn("Gemini fehlgeschlagen, Fallback:", e.message);
+    }
   }
-  
-  return res;
+
+  if (openaiKey) {
+    console.log("Sende Anfrage an OpenAI API...");
+    const res = await callOpenAI([{ role: "user", content: prompt }], systemPrompt, { ...options });
+    if (res) return res;
+  }
+
+  if (anthropicKey) {
+    try {
+      const res = await callAnthropicChat(prompt, systemPrompt, { anthropicKey, ...options });
+      if (res) return res;
+    } catch (e) {
+      console.warn("Anthropic fehlgeschlagen:", e.message);
+    }
+  }
+
+  throw new Error("Kein API-Key konfiguriert. Hinterlege einen Gemini-, OpenAI- oder Anthropic-Key in den Einstellungen.");
+}
+
+// Google Gemini — großes Context-Window für vollständigen Datenzugriff
+async function callGemini(prompt, systemPrompt, options = {}) {
+  const key = options.geminiKey;
+  if (!key) return null;
+  const model = options.geminiModel || "gemini-2.5-flash";
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: options.maxTokens ?? 4000,
+        temperature: options.temperature ?? 0.3,
+      },
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error("Gemini " + resp.status + ": " + t.slice(0, 200));
+  }
+  const data = await resp.json();
+  const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim();
+  return text || null;
+}
+
+// Anthropic Claude — Fallback-Chat-Provider
+async function callAnthropicChat(prompt, systemPrompt, options = {}) {
+  const key = options.anthropicKey;
+  if (!key) return null;
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: options.anthropicModel || "claude-sonnet-4-20250514",
+      max_tokens: options.maxTokens ?? 4000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error("Anthropic " + resp.status + ": " + t.slice(0, 200));
+  }
+  const data = await resp.json();
+  return (data.content || []).map(c => c.text || "").join("").trim() || null;
 }
 
 // Erstellt einen umfassenden Kontext aus allen Daten
@@ -12501,8 +12567,16 @@ function buildFullContextPrompt() {
   // ========== ALLE KONTAKTE ==========
   const contacts = Object.values(e.contacts || {});
   
-  // ========== ALLE HABITS ==========
-  const habits = Object.values(e.habits || {});
+  // ========== ALLE HABITS / ROUTINEN ==========
+  // WICHTIG: echte Habits liegen in dailyBriefing.routines, NICHT in e.habits
+  const habits = (APP.state.data.dailyBriefing?.routines || []).filter(h => !h.archived);
+
+  // ========== BUDGET / FINANZEN ==========
+  const accounts = Object.values(e.accounts || {});
+  const transactions = Object.values(e.transactions || {});
+  const purchaseDecisions = Object.values(e.purchaseDecisions || {}).filter(p => !p.deleted);
+  const purchaseProposals = Object.values(e.purchaseProposals || {});
+  const subscriptions = Object.values(e.subscriptions || {}).filter(s => s.isActive);
   
   // ========== ALLE RESSOURCEN ==========
   const resources = Object.values(e.resources || {});
@@ -12618,16 +12692,55 @@ function buildFullContextPrompt() {
     });
   }
   
-  // ========== ALLE HABITS ==========
+  // ========== ALLE HABITS / ROUTINEN ==========
   if (habits.length > 0) {
-    context += `\n=== ALLE HABITS (${habits.length}) ===\n`;
+    context += `\n=== HABITS / ROUTINEN (${habits.length}) ===\n`;
+    const todayYmdStr = new Date().toISOString().slice(0, 10);
     habits.forEach(h => {
-      context += `• "${h.title}" [${h.frequency || "täglich"}]`;
-      if (h.streak) context += ` | Streak: ${h.streak} Tage`;
+      const doneToday = (h.completions || []).filter(c => c.date === todayYmdStr).reduce((s, c) => s + (c.value || 1), 0);
+      const target = h.target || 1;
+      context += `• "${h.text || h.title || 'Routine'}" [${h.frequency || "täglich"}]`;
+      if (target > 1) context += ` | Ziel: ${target}/Tag${h.unit ? ' ' + h.unit : ''} | heute: ${doneToday}/${target}`;
+      else context += ` | heute: ${doneToday > 0 ? 'erledigt ✓' : 'offen'}`;
+      if (Array.isArray(h.subUnits) && h.subUnits.length) {
+        const subDone = h.subUnits.filter(u => (h.subCompletions || []).some(c => c.date === todayYmdStr && c.subUnitName === u.name)).length;
+        context += ` | Sub-Einheiten: ${h.subUnits.map(u => u.name).join(', ')} (${subDone}/${h.subUnits.length} heute)`;
+      }
       context += `\n`;
     });
   }
-  
+
+  // ========== BUDGET / FINANZEN ==========
+  if (accounts.length || transactions.length || purchaseDecisions.length || purchaseProposals.length) {
+    const totalBalance = accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
+    context += `\n=== BUDGET / FINANZEN ===\n`;
+    if (accounts.length) context += `• Konten: ${accounts.length} · Gesamtsaldo ${Math.round(totalBalance)} CHF\n`;
+    accounts.forEach(a => { context += `  – ${a.name || 'Konto'}: ${Math.round(a.balance || 0)} ${a.currency || 'CHF'}\n`; });
+    if (subscriptions.length) {
+      const monthlyExp = subscriptions.filter(s => s.type === 'expense').reduce((sum, s) => sum + (s.amount || 0), 0);
+      context += `• Aktive Abos: ${subscriptions.length} · ~${Math.round(monthlyExp)} CHF/Monat Ausgaben\n`;
+    }
+    const pendingPd = purchaseDecisions.filter(p => p.status === 'pending');
+    if (pendingPd.length) {
+      context += `• Offene Kaufentscheide (${pendingPd.length}):\n`;
+      pendingPd.forEach(p => {
+        context += `  – "${p.title || 'Artikel'}" ${p.price != null ? Math.round(p.price) + ' ' + (p.currency || 'CHF') : ''}${p.category ? ' [' + p.category + ']' : ''}`;
+        if (Array.isArray(p.pros) && p.pros.length) context += ` | Pro: ${p.pros.join(', ')}`;
+        if (Array.isArray(p.cons) && p.cons.length) context += ` | Contra: ${p.cons.join(', ')}`;
+        context += `\n`;
+      });
+    }
+    const pendingProp = purchaseProposals.filter(p => p.status === 'pending');
+    if (pendingProp.length) {
+      context += `• Offene Kaufvorschläge (${pendingProp.length}): ${pendingProp.map(p => '"' + (p.name || '') + '" ' + Math.round(p.amount || 0) + ' CHF').join(', ')}\n`;
+    }
+    if (transactions.length) {
+      const month = new Date().toISOString().slice(0, 7);
+      const monthSpend = transactions.filter(t => (t.date || '').startsWith(month) && t.type === 'expense').reduce((s, t) => s + (t.amount || 0), 0);
+      context += `• Ausgaben diesen Monat: ${Math.round(monthSpend)} CHF (${transactions.length} Buchungen total)\n`;
+    }
+  }
+
   // ========== ALLE RESSOURCEN ==========
   if (resources.length > 0) {
     context += `\n=== ALLE RESSOURCEN (${resources.length}) ===\n`;
@@ -57439,7 +57552,7 @@ async function init() {
             </label>
             <label class="col-12">OpenAI API Key<input type="password" id="setOpenAIKey" value="${esc(APP.state.settings.openai.apiKey)}" placeholder="sk-..." /></label>
             <label class="col-12">Anthropic API Key <span style="font-size:11px;color:#6e6e73">(für schnelle PDF-Extraktion)</span><input type="password" id="setAnthropicKey" value="${esc(APP.state.settings.anthropicApiKey || '')}" placeholder="sk-ant-api03-..." /></label>
-            <label class="col-12">Gemini API Key <span style="font-size:11px;color:#6e6e73">(für Übersetzungen & ReadingHub · Modell: gemini-2.5-flash)</span><input type="password" id="setGeminiKey" value="${esc(APP.state.settings.geminiApiKey || '')}" placeholder="AIza..." /></label>
+            <label class="col-12">Gemini API Key <span style="font-size:11px;color:#6e6e73">(AI-Chat mit Zugriff auf ALLE Daten · Übersetzungen · ReadingHub · Modell: gemini-2.5-flash)</span><input type="password" id="setGeminiKey" value="${esc(APP.state.settings.geminiApiKey || '')}" placeholder="AIza..." /></label>
             <label class="col-6">OpenAI Model<input type="text" id="setOpenAIModel" value="${esc(APP.state.settings.openai.model)}" /></label>
             <label class="col-6">Temperature<input type="number" id="setOpenAITemp" value="${APP.state.settings.openai.temperature}" step="0.1" min="0" max="2" /></label>
             
