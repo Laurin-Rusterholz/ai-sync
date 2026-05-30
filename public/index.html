@@ -16126,6 +16126,7 @@ window.viewDailyBriefing = viewDailyBriefing;
 // Auto-save daily notes on input
 document.addEventListener("input", function(e) {
   if (e.target && e.target.id === "dbDailyNotes") {
+    if (!window.APP || !APP.state || !APP.state.data) return;
     var dbx = window.APP.state.data.dailyBriefing;
     if (!dbx) return;
     var curDate = window._dbDate || (window.todayYmd ? window.todayYmd() : new Date().toLocaleDateString("sv-SE"));
@@ -49898,6 +49899,9 @@ document.addEventListener("click", function(e) {
 // ============================================================================
 document.addEventListener("keydown", function(e) {
   // Global shortcuts – dynamisch aus Settings
+  // Null-safe: Listener ist beim Parsen registriert und kann feuern, BEVOR
+  // init() APP.state.settings gesetzt hat (Tastendruck während des Ladens).
+  if (!APP.state.settings) return;
   const _sc = APP.state.settings.shortcuts || {};
   function _matchSC(name, ev) {
     const s = _sc[name];
