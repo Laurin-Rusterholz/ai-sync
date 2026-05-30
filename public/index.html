@@ -21127,8 +21127,10 @@ window.viewTheses = function() {
 // ───────────────────────────────────────────────────────────────────────────
 
 window.thsOpenCreate = function() {
+  // Nur aktive/in Planung befindliche Projekte — erledigte, pausierte und
+  // archivierte ausblenden, damit die Liste nicht mit alten Projekten zugemüllt ist.
   const projects = Object.values(APP.state.data.entities.projects || {})
-    .filter(p => !p.archived)
+    .filter(p => !p.archived && p.status !== 'done' && p.status !== 'archived' && p.status !== 'paused')
     .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
   
   openModal("📚 Neue Arbeit", `
@@ -23946,8 +23948,11 @@ window._thsStartSprintTimer = function(thId) {
     }
     const left = Math.max(0, sprintEndsAt - Date.now());
     const c = th2.chapters?.find(x => x.id === th2.activeSprint.chapterId);
-    const currentWords = c ? thsCountWords(c.content || '') : th2.activeSprint.startWords;
-    const writtenWords = currentWords - th2.activeSprint.startWords;
+    // Live aus dem Fokus-Editor lesen (aktualisiert sofort), sonst gespeicherter Stand
+    const liveEl = document.getElementById('thsFocusEditor');
+    const currentText = liveEl ? (liveEl.innerText || liveEl.textContent || '') : (c ? (c.content || '') : '');
+    const currentWords = liveEl ? thsCountWords(currentText) : (c ? thsCountWords(c.content || '') : th2.activeSprint.startWords);
+    const writtenWords = Math.max(0, currentWords - th2.activeSprint.startWords);
     
     if (left === 0) {
       // Sprint Ende
@@ -24300,7 +24305,8 @@ window.thsSaveChapterContentHtml = function(thId, chId, html) {
 window.thsScheduleAutoSave = function(thId, chId) {
   if (window._thsAutoSaveTimer) clearTimeout(window._thsAutoSaveTimer);
   window._thsAutoSaveTimer = setTimeout(() => {
-    const el = document.getElementById('thsEditor_' + chId);
+    // Normaler Editor ODER Fokus-/Sprint-Editor (thsFocusEditor)
+    const el = document.getElementById('thsEditor_' + chId) || document.getElementById('thsFocusEditor');
     if (el) window.thsSaveChapterContentHtml(thId, chId, el.innerHTML);
   }, 1500);
 };
