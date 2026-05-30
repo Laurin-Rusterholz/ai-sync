@@ -3317,6 +3317,55 @@ textarea::placeholder, input::placeholder {
 .dd-btn.maybe{background:rgba(168,85,247,0.10);border-color:rgba(168,85,247,0.25);color:#d8b4fe}
 .dd-btn.maybe:hover{background:rgba(168,85,247,0.20)}
 
+/* ─── Thesis Research Panel ───────────────────────────────────────────── */
+.tr-hero{
+  background:linear-gradient(135deg,rgba(99,102,241,0.10),rgba(168,85,247,0.06));
+  border:1px solid rgba(99,102,241,0.22);
+  border-radius:14px;padding:16px 18px;margin-bottom:16px;
+}
+.tr-hero h4{margin:0 0 4px;font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:8px}
+.tr-hero p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
+.tr-quick-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.tr-quick-btn{
+  flex:1;min-width:140px;padding:10px 12px;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+  color:var(--text);border-radius:9px;cursor:pointer;
+  font-size:12px;font-weight:600;text-align:left;
+  display:flex;flex-direction:column;gap:3px;line-height:1.4;
+  transition:all .15s;
+}
+.tr-quick-btn:hover{background:rgba(99,102,241,0.10);border-color:rgba(99,102,241,0.3)}
+.tr-quick-btn small{font-size:10.5px;color:var(--muted);font-weight:400}
+
+.tr-qa-box{
+  background:var(--panel);border:1px solid var(--border);
+  border-left:3px solid #6366f1;border-radius:10px;padding:14px 16px;margin-bottom:16px;
+}
+.tr-qa-box h4{margin:0 0 8px;font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px}
+.tr-qa-input-row{display:flex;gap:8px}
+.tr-qa-input{flex:1;padding:9px 12px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none}
+.tr-qa-input:focus{border-color:#6366f1}
+.tr-qa-send{padding:9px 16px;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:0;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:700;white-space:nowrap}
+.tr-qa-send:disabled{opacity:.5;cursor:wait}
+.tr-qa-answer{margin-top:10px;padding:10px 12px;background:rgba(99,102,241,0.05);border:1px solid rgba(99,102,241,0.18);border-radius:8px;font-size:12.5px;line-height:1.6;color:var(--text);white-space:pre-wrap}
+.tr-qa-citations{margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;font-size:11px}
+.tr-qa-cite{padding:2px 8px;background:rgba(168,85,247,0.12);color:#d8b4fe;border-radius:5px;font-weight:600}
+
+.tr-src-actions{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.tr-src-act{padding:4px 9px;background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.22);color:#a5b4fc;border-radius:5px;cursor:pointer;font-size:10.5px;font-weight:600}
+.tr-src-act:hover{background:rgba(99,102,241,0.20)}
+.tr-src-act.busy{opacity:.5;cursor:wait}
+.tr-src-ai{margin-top:8px;padding:10px 12px;background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.18);border-radius:8px}
+.tr-src-ai-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#a5b4fc;margin-bottom:4px;display:flex;align-items:center;gap:5px}
+.tr-src-ai-text{font-size:12px;color:var(--text);line-height:1.55;white-space:pre-wrap}
+.tr-src-quote{
+  margin-top:6px;padding:8px 10px;
+  background:rgba(255,255,255,0.025);border-left:2px solid #a855f7;
+  border-radius:0 6px 6px 0;font-size:11.5px;line-height:1.5;color:var(--text);
+  font-style:italic;
+}
+.tr-src-quote-meta{font-size:10px;color:var(--muted);font-style:normal;margin-top:3px}
+
 </style>
   <!-- Google Script entfernt - eigener Kalender wird verwendet -->
   
@@ -8524,8 +8573,14 @@ function normalizeData(data) {
     });
     // Quick-Gedanken (sidebar): [{id, text, createdAt, tags, linkedChapterId}]
     th.thoughts = Array.isArray(th.thoughts) ? th.thoughts : [];
-    // Quellen / Bibliographie: [{id, type, authors, year, title, source, pages, url, doi, isbn, notes, addedAt}]
+    // Quellen / Bibliographie: [{id, type, authors, year, title, source, pages, url, doi, isbn, notes, addedAt,
+    //                            aiSummary, aiTags[], keyQuotes[{text,page,note}], researchOrigin, fullTextChars}]
     th.sources = Array.isArray(th.sources) ? th.sources : [];
+    th.sources.forEach(s => {
+      if (s.aiSummary == null) s.aiSummary = '';
+      if (!Array.isArray(s.aiTags)) s.aiTags = [];
+      if (!Array.isArray(s.keyQuotes)) s.keyQuotes = [];
+    });
     // Argumente: [{id, thesis, supports: [{id, text, sourceIds[]}], objections: [...], chapterId}]
     th.arguments = Array.isArray(th.arguments) ? th.arguments : [];
     // Anhänge: Bilder, PDFs (über generic file-attachment)
@@ -21789,23 +21844,54 @@ function renderThesisSourcesTab(th) {
     other: { icon: '📚', label: 'Andere' },
   };
   
+  const lastQA = th._researchQA || null;
+
   return `
     <div style="max-width:920px;margin:0 auto">
-      <div style="background:linear-gradient(135deg,rgba(34,197,94,.06),rgba(99,102,241,.04));border:1px solid rgba(34,197,94,.18);border-radius:12px;padding:16px 18px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-        <div>
-          <h3 style="margin:0 0 4px;font-size:16px;font-weight:700">📚 Quellen & Bibliographie</h3>
-          <p style="margin:0;color:var(--muted);font-size:12.5px">${sources.length} ${sources.length === 1 ? 'Quelle' : 'Quellen'} erfasst</p>
+      <div class="tr-hero">
+        <h4>🔬 Recherche-Hub
+          <span style="margin-left:auto;font-size:11px;font-weight:500;color:var(--muted)">${sources.length} ${sources.length === 1 ? 'Quelle' : 'Quellen'}</span>
+        </h4>
+        <p>Quellen mit KI erfassen, zusammenfassen, Schlüsselzitate extrahieren — und frag die KI über deine gesamte Bibliothek.</p>
+        <div class="tr-quick-row">
+          <button class="tr-quick-btn" onclick="window.thsResearchFromUrlOrText('${th.id}')">
+            🌐 Aus URL oder Text
+            <small>KI extrahiert Metadaten, Zusammenfassung, Zitate</small>
+          </button>
+          <button class="tr-quick-btn" onclick="document.getElementById('thsResearchPdfInput_${th.id}').click()">
+            📄 Aus PDF importieren
+            <small>Claude liest PDF · Gemini destilliert Quelle</small>
+          </button>
+          <button class="tr-quick-btn" onclick="window.thsOpenSourceQuickAdd('${th.id}')">
+            ✍️ Manuell erfassen
+            <small>Klassisches Formular: Titel, Autor, Jahr…</small>
+          </button>
+          <input type="file" id="thsResearchPdfInput_${th.id}" accept="application/pdf" style="display:none" onchange="window.thsResearchFromPdf('${th.id}', this.files && this.files[0]); this.value=''" />
         </div>
-        <div style="display:flex;gap:6px">
-          <button onclick="window.thsOpenSourceQuickAdd('${th.id}')" style="padding:8px 14px;background:linear-gradient(135deg,#22c55e,#6366f1);border:0;color:#fff;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700">+ Quelle hinzufügen</button>
-          <button onclick="window.thsExportBibFormats('${th.id}')" style="padding:8px 14px;background:linear-gradient(135deg,rgba(34,197,94,.15),rgba(99,102,241,.1));border:1px solid rgba(34,197,94,.25);color:#86efac;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600">📚 Format wählen (APA/MLA/BibTeX...)</button>
-          <button onclick="window.thsExportBibliography('${th.id}')" style="padding:8px 14px;background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--text);border-radius:8px;cursor:pointer;font-size:12px">📤 Schnell-Export</button>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          <button onclick="window.thsExportBibFormats('${th.id}')" style="padding:6px 12px;background:rgba(34,197,94,0.10);border:1px solid rgba(34,197,94,0.22);color:#86efac;border-radius:7px;cursor:pointer;font-size:11.5px;font-weight:600">📚 Bibliographie exportieren</button>
+          <button onclick="window.thsExportBibliography('${th.id}')" style="padding:6px 12px;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);border-radius:7px;cursor:pointer;font-size:11.5px">📤 Schnell-Export</button>
         </div>
       </div>
-      
+
+      <div class="tr-qa-box">
+        <h4>💬 Frag die KI über alle Quellen</h4>
+        <div class="tr-qa-input-row">
+          <input type="text" class="tr-qa-input" id="thsResearchQA_${th.id}" placeholder="z.B. Was sagen meine Quellen zum Thema X? Wo gibt es Widersprüche?" onkeydown="if(event.key==='Enter'){event.preventDefault();window.thsResearchAsk('${th.id}')}" />
+          <button class="tr-qa-send" onclick="window.thsResearchAsk('${th.id}')">Fragen</button>
+        </div>
+        ${lastQA ? `
+          <div class="tr-qa-answer">${esc(lastQA.answer || '')}</div>
+          ${(lastQA.citations || []).length ? `<div class="tr-qa-citations">${lastQA.citations.map(c => `<span class="tr-qa-cite">${esc(c)}</span>`).join('')}</div>` : ''}
+          <div style="font-size:10.5px;color:var(--muted);margin-top:6px">Frage: „${esc(lastQA.question || '')}" · ${esc(lastQA.timestamp ? new Date(lastQA.timestamp).toLocaleString('de-CH') : '')}</div>
+        ` : sources.length === 0 ? '<div style="font-size:11px;color:var(--muted);margin-top:6px">Erfasse zuerst Quellen, dann kann die KI sie durchsuchen.</div>' : ''}
+      </div>
+
       <div style="display:flex;flex-direction:column;gap:8px">
         ${sources.map(s => {
           const t = types[s.type] || types.other;
+          const aiSum = s.aiSummary || '';
+          const quotes = Array.isArray(s.keyQuotes) ? s.keyQuotes : [];
           return `<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;gap:14px">
             <span style="font-size:24px;flex-shrink:0">${t.icon}</span>
             <div style="flex:1;min-width:0">
@@ -21815,11 +21901,25 @@ function renderThesisSourcesTab(th) {
               ${s.source ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">${esc(s.source)}${s.pages ? `, S. ${esc(s.pages)}` : ''}</div>` : ''}
               <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;font-size:10.5px;color:var(--muted);align-items:center">
                 <span style="padding:1px 7px;background:rgba(255,255,255,.05);border-radius:5px;font-weight:600">${t.label}</span>
-                ${s.url ? `<a href="${esc(s.url)}" target="_blank" style="color:#a5b4fc;text-decoration:none">🔗 Link</a>` : ''}
+                ${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener" style="color:#a5b4fc;text-decoration:none">🔗 Link</a>` : ''}
                 ${s.doi ? `<span>DOI: ${esc(s.doi)}</span>` : ''}
                 ${s.isbn ? `<span>ISBN: ${esc(s.isbn)}</span>` : ''}
+                ${s.aiTags && s.aiTags.length ? s.aiTags.slice(0,5).map(tag => `<span style="padding:1px 7px;background:rgba(168,85,247,0.10);color:#d8b4fe;border-radius:5px">${esc(tag)}</span>`).join('') : ''}
               </div>
               ${s.notes ? `<div style="margin-top:8px;padding:8px 10px;background:rgba(255,255,255,.02);border-left:2px solid rgba(99,102,241,.3);border-radius:4px;font-size:11.5px;line-height:1.5;color:var(--muted);white-space:pre-wrap">${esc(s.notes)}</div>` : ''}
+              ${aiSum ? `<div class="tr-src-ai">
+                <div class="tr-src-ai-label">🤖 KI-Zusammenfassung</div>
+                <div class="tr-src-ai-text">${esc(aiSum)}</div>
+              </div>` : ''}
+              ${quotes.length ? `<div class="tr-src-ai">
+                <div class="tr-src-ai-label">💬 Schlüsselzitate (${quotes.length})</div>
+                ${quotes.map(q => `<div class="tr-src-quote">„${esc(q.text || '')}"${q.page || q.note ? `<div class="tr-src-quote-meta">${q.page ? 'S. ' + esc(q.page) : ''}${q.page && q.note ? ' · ' : ''}${q.note ? esc(q.note) : ''}</div>` : ''}</div>`).join('')}
+              </div>` : ''}
+              <div class="tr-src-actions">
+                <button class="tr-src-act" onclick="window.thsAISummarizeSource('${th.id}','${s.id}', this)" title="KI fasst Quelle zusammen">🤖 ${aiSum ? 'Neu zusammenfassen' : 'KI-Zusammenfassung'}</button>
+                <button class="tr-src-act" onclick="window.thsAIExtractQuotes('${th.id}','${s.id}', this)">💬 Zitate extrahieren</button>
+                <button class="tr-src-act" onclick="window.thsAIExtractArgs('${th.id}','${s.id}', this)" title="Argumente ins Argumente-Register">🎯 Argumente</button>
+              </div>
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
               <button onclick="window.thsEditSource('${th.id}','${s.id}')" style="background:rgba(255,255,255,.04);border:0;color:var(--text);padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px">✏️</button>
@@ -21827,7 +21927,7 @@ function renderThesisSourcesTab(th) {
               <button onclick="window.thsDeleteSource('${th.id}','${s.id}')" style="background:rgba(239,68,68,.08);border:0;color:#f87171;padding:5px 9px;border-radius:5px;cursor:pointer;font-size:11px">🗑</button>
             </div>
           </div>`;
-        }).join('') || '<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:42px;opacity:.4;margin-bottom:10px">📚</div>Noch keine Quellen. Klick oben "+ Quelle hinzufügen".</div>'}
+        }).join('') || '<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:42px;opacity:.4;margin-bottom:10px">📚</div>Noch keine Quellen. Nutze oben „🌐 Aus URL oder Text" oder „📄 Aus PDF importieren".</div>'}
       </div>
     </div>
   `;
@@ -24854,6 +24954,365 @@ window.thsDeleteSource = function(thId, sId) {
   th.updatedAt = nowIso();
   scheduleSave();
   render();
+};
+
+// ════════════════════════════════════════════════════════════════════════
+// THESIS — Embedded Research (URL/Text/PDF → Quelle + AI-Anreicherung)
+// ════════════════════════════════════════════════════════════════════════
+
+function thsGetGeminiKey() {
+  return APP.state.settings?.geminiApiKey
+    || APP.state.data?.journal?.settings?.geminiApiKey
+    || APP.state.data?.settings?.geminiApiKey
+    || '';
+}
+
+async function thsCallGeminiJSON(systemPrompt, userPrompt, opts) {
+  opts = opts || {};
+  const key = thsGetGeminiKey();
+  if (!key) throw new Error('Gemini-API-Key fehlt. In den Einstellungen hinterlegen.');
+  const model = opts.model || 'gemini-2.5-flash';
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const body = {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+    generationConfig: {
+      maxOutputTokens: opts.maxTokens || 6000,
+      temperature: opts.temperature ?? 0.2,
+      responseMimeType: 'application/json',
+    },
+  };
+  if (opts.tools) body.tools = opts.tools;
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error('Gemini ' + resp.status + ': ' + t.slice(0, 200));
+  }
+  const data = await resp.json();
+  const raw = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Keine JSON-Antwort: ' + raw.slice(0, 120));
+  return JSON.parse(match[0]);
+}
+
+async function thsCallGeminiText(systemPrompt, userPrompt, opts) {
+  opts = opts || {};
+  const key = thsGetGeminiKey();
+  if (!key) throw new Error('Gemini-API-Key fehlt. In den Einstellungen hinterlegen.');
+  const model = opts.model || 'gemini-2.5-flash';
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      generationConfig: {
+        maxOutputTokens: opts.maxTokens || 4000,
+        temperature: opts.temperature ?? 0.3,
+      },
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error('Gemini ' + resp.status + ': ' + t.slice(0, 200));
+  }
+  const data = await resp.json();
+  return (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+}
+
+// ─── Aus URL oder Text-Paste ─────────────────────────────────────────────
+window.thsResearchFromUrlOrText = function(thId) {
+  const th = APP.state.data.entities.theses?.[thId];
+  if (!th) return;
+  openModal('🌐 Quelle aus URL oder Text', `
+    <div class="form">
+      <label>URL (optional)<input type="url" id="thsRsUrl" placeholder="https://…" /></label>
+      <label>ODER: Volltext / Abstract eintippen oder einfügen
+        <textarea id="thsRsText" rows="10" placeholder="Hier den Artikeltext, Abstract oder Auszug einfügen — die KI extrahiert Titel, Autor, Jahr, Zusammenfassung und Schlüsselzitate."></textarea>
+      </label>
+      <div class="mini" style="color:var(--muted);font-size:11.5px;line-height:1.5">
+        Tipp: Bei einer URL versucht die KI den Inhalt selbst zu lesen (Gemini · url_context). Klappt das nicht, kopiere den Text manuell ins Feld unten.
+      </div>
+    </div>
+  `, `
+    <button class="btn" data-action="close-modal">Abbrechen</button>
+    <button class="btn primary" onclick="window._thsResearchFromUrlOrTextSubmit('${thId}', this)">🤖 KI analysiert & erstellt Quelle</button>
+  `);
+};
+
+window._thsResearchFromUrlOrTextSubmit = async function(thId, btn) {
+  const url = (document.getElementById('thsRsUrl')?.value || '').trim();
+  const text = (document.getElementById('thsRsText')?.value || '').trim();
+  if (!url && !text) { toast('warn', 'URL oder Text erforderlich'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 KI analysiert…'; }
+  const th = APP.state.data.entities.theses?.[thId];
+  if (!th) return;
+
+  const systemPrompt = `Du bist ein wissenschaftlicher Recherche-Assistent. Du erhältst ${url ? 'eine URL und ggf. den dazugehörigen Text' : 'einen Textauszug'} einer Quelle.
+Extrahiere die bibliografischen Daten und destilliere den Inhalt für eine wissenschaftliche Arbeit.
+
+Antworte AUSSCHLIESSLICH als JSON mit diesem Schema:
+{
+  "type": "book|article|journal|web|interview|document|other",
+  "title": "Titel der Quelle",
+  "authors": "Autor:innen (Nachname, Vorname; mehrere mit ';' getrennt)",
+  "year": "Erscheinungsjahr (4-stellig) oder leer",
+  "source": "Publikationsort: Verlag, Zeitschrift, Website-Name",
+  "pages": "Seitenangabe oder leer",
+  "doi": "DOI oder leer",
+  "isbn": "ISBN oder leer",
+  "url": "URL oder leer",
+  "aiSummary": "Klare, prägnante Zusammenfassung in 3-5 Sätzen, was die Quelle aussagt und für eine Arbeit relevant macht",
+  "aiTags": ["Schlagwort1", "Schlagwort2", "Schlagwort3"],
+  "keyQuotes": [
+    { "text": "Wörtliches Zitat (max 280 Zeichen)", "page": "Seitenzahl falls erkennbar", "note": "Warum dieses Zitat wichtig ist" }
+  ],
+  "notes": "Methodische Anmerkungen, Limitationen, Verbindungen zu anderen Quellen"
+}
+
+Wenn ein Feld nicht ermittelbar ist, leer lassen. keyQuotes: 2-5 Stück.`;
+
+  const userPrompt = url
+    ? `URL: ${url}\n\n${text ? 'Zusätzlicher Text/Abstract:\n' + text : 'Lies die URL und extrahiere die Quelle.'}`
+    : text;
+
+  try {
+    // Wenn URL angegeben, Gemini-URL-Context-Tool aktivieren
+    const tools = url ? [{ urlContext: {} }] : undefined;
+    let parsed;
+    try {
+      parsed = await thsCallGeminiJSON(systemPrompt, userPrompt, { tools });
+    } catch (e) {
+      // Fallback ohne url_context (falls Tool nicht verfügbar)
+      if (url && /400|404|tool/i.test(e.message)) {
+        parsed = await thsCallGeminiJSON(systemPrompt, userPrompt);
+      } else { throw e; }
+    }
+
+    if (!th.sources) th.sources = [];
+    const src = {
+      id: window._thsId('src'),
+      addedAt: nowIso(),
+      type: parsed.type || (url ? 'web' : 'other'),
+      title: parsed.title || 'Unbenannt',
+      authors: parsed.authors || '',
+      year: parsed.year || '',
+      source: parsed.source || '',
+      pages: parsed.pages || '',
+      doi: parsed.doi || '',
+      isbn: parsed.isbn || '',
+      url: parsed.url || url || '',
+      notes: parsed.notes || '',
+      aiSummary: parsed.aiSummary || '',
+      aiTags: Array.isArray(parsed.aiTags) ? parsed.aiTags : [],
+      keyQuotes: Array.isArray(parsed.keyQuotes) ? parsed.keyQuotes.filter(q => q && q.text) : [],
+      researchOrigin: url ? 'url' : 'text',
+    };
+    th.sources.push(src);
+    th.updatedAt = nowIso();
+    scheduleSave();
+    closeModal();
+    render();
+    toast('ok', '🤖 Quelle erstellt', src.title);
+  } catch (e) {
+    console.error('[Research]', e);
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 KI analysiert & erstellt Quelle'; }
+    toast('error', 'Recherche fehlgeschlagen', e.message || String(e));
+  }
+};
+
+// ─── Aus PDF ─────────────────────────────────────────────────────────────
+window.thsResearchFromPdf = async function(thId, file) {
+  if (!file) return;
+  const th = APP.state.data.entities.theses?.[thId];
+  if (!th) return;
+  if (file.size > 25 * 1024 * 1024) { toast('warn', 'PDF zu groß', 'max. 25 MB'); return; }
+
+  toast('ok', '📄 PDF wird gelesen…', file.name);
+  try {
+    // 1) PDF-Text mit Claude extrahieren (bestehende Funktion nutzt window-Toasts)
+    const text = await extractPDF(file);
+    if (!text) { toast('error', 'PDF-Extraktion fehlgeschlagen'); return; }
+
+    // 2) Gemini destilliert Quelle
+    toast('ok', '🤖 KI strukturiert…');
+    const systemPrompt = `Du erhältst den extrahierten Volltext eines wissenschaftlichen PDFs. Erstelle daraus einen Quellen-Eintrag für eine wissenschaftliche Arbeit.
+Antworte AUSSCHLIESSLICH als JSON:
+{
+  "type": "book|article|journal|document|other",
+  "title": "Titel", "authors": "Nachname, Vorname; …", "year": "YYYY",
+  "source": "Verlag/Zeitschrift", "pages": "S. … oder Bandangabe", "doi": "", "isbn": "",
+  "aiSummary": "3-6 Sätze: Inhalt + warum relevant",
+  "aiTags": ["3-6 Schlagworte"],
+  "keyQuotes": [{ "text": "Wörtliches Zitat (max 280 Zeichen)", "page": "Seitenzahl falls auffindbar", "note": "kurze Begründung" }],
+  "notes": "Methodik, Limitationen"
+}
+Wähle 3-6 keyQuotes. Bei type bevorzugt 'article' wenn aus Zeitschrift, 'book' bei Monografie.`;
+    const truncated = text.length > 60000 ? text.slice(0, 60000) + '\n\n[…gekürzt]' : text;
+    const parsed = await thsCallGeminiJSON(systemPrompt, truncated);
+
+    if (!th.sources) th.sources = [];
+    const src = {
+      id: window._thsId('src'),
+      addedAt: nowIso(),
+      type: parsed.type || 'document',
+      title: parsed.title || file.name.replace(/\.pdf$/i, ''),
+      authors: parsed.authors || '',
+      year: parsed.year || '',
+      source: parsed.source || '',
+      pages: parsed.pages || '',
+      doi: parsed.doi || '',
+      isbn: parsed.isbn || '',
+      url: '',
+      notes: parsed.notes || '',
+      aiSummary: parsed.aiSummary || '',
+      aiTags: Array.isArray(parsed.aiTags) ? parsed.aiTags : [],
+      keyQuotes: Array.isArray(parsed.keyQuotes) ? parsed.keyQuotes.filter(q => q && q.text) : [],
+      researchOrigin: 'pdf',
+      fullTextChars: text.length,
+    };
+    th.sources.push(src);
+    th.updatedAt = nowIso();
+    scheduleSave();
+    render();
+    toast('ok', '✓ Quelle aus PDF erstellt', src.title);
+  } catch (e) {
+    console.error('[Research PDF]', e);
+    toast('error', 'PDF-Recherche fehlgeschlagen', e.message || String(e));
+  }
+};
+
+// ─── Pro Quelle: AI-Zusammenfassung nachträglich generieren ─────────────
+window.thsAISummarizeSource = async function(thId, sId, btn) {
+  const th = APP.state.data.entities.theses?.[thId];
+  const s = th?.sources?.find(x => x.id === sId);
+  if (!s) return;
+  if (btn) { btn.classList.add('busy'); btn.textContent = '🤖 …'; }
+  try {
+    const ctx = `Titel: ${s.title}\nAutor:innen: ${s.authors || '—'}\nJahr: ${s.year || '—'}\nQuelle/Verlag: ${s.source || '—'}\n${s.url ? 'URL: ' + s.url + '\n' : ''}${s.notes ? 'Notizen: ' + s.notes + '\n' : ''}`;
+    const text = await thsCallGeminiText(
+      'Du bist ein wissenschaftlicher Recherche-Assistent. Fasse die folgende Quelle in 3-5 prägnanten Sätzen für eine wissenschaftliche Arbeit zusammen. Nur die Zusammenfassung, kein Markdown, keine Aufzählung.',
+      ctx + (s.url ? '\n\nWenn du den Inhalt nicht kennst, formuliere die Zusammenfassung anhand des Titels, der Notizen und ggf. der URL — bleib präzise und ehrlich, was vermutet vs. belegt ist.' : '')
+    );
+    s.aiSummary = text;
+    th.updatedAt = nowIso();
+    scheduleSave();
+    render();
+    toast('ok', '🤖 Zusammenfassung aktualisiert');
+  } catch (e) {
+    if (btn) { btn.classList.remove('busy'); }
+    toast('error', 'Fehler', e.message || String(e));
+  }
+};
+
+window.thsAIExtractQuotes = async function(thId, sId, btn) {
+  const th = APP.state.data.entities.theses?.[thId];
+  const s = th?.sources?.find(x => x.id === sId);
+  if (!s) return;
+  if (!s.notes && !s.aiSummary && !s.url) {
+    toast('warn', 'Zu wenig Material', 'Füge Notizen oder URL hinzu, dann kann die KI Zitate vorschlagen.');
+    return;
+  }
+  if (btn) { btn.classList.add('busy'); btn.textContent = '💬 …'; }
+  try {
+    const ctx = `Quelle: ${s.authors || '—'} (${s.year || '—'}): ${s.title}\n${s.source ? s.source + '\n' : ''}${s.url ? 'URL: ' + s.url + '\n' : ''}${s.aiSummary ? '\nZusammenfassung:\n' + s.aiSummary + '\n' : ''}${s.notes ? '\nNotizen/Auszüge:\n' + s.notes : ''}`;
+    const parsed = await thsCallGeminiJSON(
+      'Schlage 3-6 wörtliche Schlüsselzitate aus dieser Quelle vor, die in einer wissenschaftlichen Arbeit zitierfähig sind. Antworte als JSON: { "quotes": [{ "text": "…(max 280 Zeichen)", "page": "Seite falls bekannt", "note": "kurze Begründung warum wichtig" }] }. Wenn dir keine echten wörtlichen Zitate vorliegen, kennzeichne sie als "(paraphrasiert)" im note-Feld.',
+      ctx
+    );
+    const quotes = Array.isArray(parsed.quotes) ? parsed.quotes.filter(q => q && q.text) : [];
+    s.keyQuotes = quotes;
+    th.updatedAt = nowIso();
+    scheduleSave();
+    render();
+    toast('ok', '💬 ' + quotes.length + ' Zitate vorgeschlagen');
+  } catch (e) {
+    if (btn) { btn.classList.remove('busy'); }
+    toast('error', 'Fehler', e.message || String(e));
+  }
+};
+
+window.thsAIExtractArgs = async function(thId, sId, btn) {
+  const th = APP.state.data.entities.theses?.[thId];
+  const s = th?.sources?.find(x => x.id === sId);
+  if (!s) return;
+  if (btn) { btn.classList.add('busy'); btn.textContent = '🎯 …'; }
+  try {
+    const ctx = `Quelle: ${s.authors || '—'} (${s.year || '—'}): ${s.title}\n${s.aiSummary ? 'Zusammenfassung: ' + s.aiSummary + '\n' : ''}${s.notes ? 'Notizen: ' + s.notes : ''}\n\nThesis-Kontext: ${th.title}${th.thesisStatement ? '\nLeit-These: ' + th.thesisStatement : ''}`;
+    const parsed = await thsCallGeminiJSON(
+      'Extrahiere aus dieser Quelle die zentralen Argumente, die für die Arbeit relevant sein können. Antworte als JSON: { "arguments": [{ "claim": "Kernbehauptung in einem Satz", "support": "Begründung/Beleg aus der Quelle", "objection": "möglicher Einwand oder Limitation" }] }. 1-4 Argumente, prägnant.',
+      ctx
+    );
+    const args = Array.isArray(parsed.arguments) ? parsed.arguments.filter(a => a && a.claim) : [];
+    if (!args.length) { toast('warn', 'Keine Argumente erkannt'); if (btn) btn.classList.remove('busy'); return; }
+    if (!Array.isArray(th.arguments)) th.arguments = [];
+    args.forEach(a => {
+      th.arguments.push({
+        id: window._thsId('arg'),
+        thesis: a.claim,
+        supports: a.support ? [{ id: window._thsId('sup'), text: a.support + ' (Quelle: ' + (s.authors || s.title) + ')' }] : [],
+        objections: a.objection ? [{ id: window._thsId('obj'), text: a.objection }] : [],
+        chapterId: null,
+        sourceId: s.id,
+        createdAt: nowIso(),
+      });
+    });
+    th.updatedAt = nowIso();
+    scheduleSave();
+    render();
+    toast('ok', '🎯 ' + args.length + ' Argument(e) hinzugefügt', 'siehe Argumente-Tab');
+  } catch (e) {
+    if (btn) { btn.classList.remove('busy'); }
+    toast('error', 'Fehler', e.message || String(e));
+  }
+};
+
+// ─── Recherche-Q&A über alle Quellen ────────────────────────────────────
+window.thsResearchAsk = async function(thId) {
+  const th = APP.state.data.entities.theses?.[thId];
+  if (!th) return;
+  const input = document.getElementById('thsResearchQA_' + thId);
+  const question = (input?.value || '').trim();
+  if (!question) { toast('warn', 'Frage eingeben'); return; }
+  const sources = th.sources || [];
+  if (!sources.length) { toast('warn', 'Keine Quellen', 'Erfasse zuerst Quellen, dann kann die KI sie durchsuchen.'); return; }
+
+  toast('ok', '🤖 Recherche läuft…');
+  try {
+    const sourcesContext = sources.map((s, i) => {
+      const cite = (s.authors || 'Unbekannt') + ' ' + (s.year ? '(' + s.year + ')' : '');
+      const q = (s.keyQuotes || []).map(q => '   „' + (q.text || '').slice(0, 240) + '"' + (q.page ? ' (S. ' + q.page + ')' : '')).join('\n');
+      return `[Q${i+1}] ${cite}: ${s.title}\n   Zusammenfassung: ${s.aiSummary || s.notes || '—'}${q ? '\n   Zitate:\n' + q : ''}`;
+    }).join('\n\n');
+
+    const systemPrompt = `Du bist Recherche-Assistent für eine wissenschaftliche Arbeit.
+Arbeit: "${th.title}"${th.thesisStatement ? '\nLeit-These: ' + th.thesisStatement : ''}
+
+Beantworte die Frage des Nutzers ausschliesslich anhand der unten gelisteten Quellen. Wenn die Quellen keine Antwort hergeben, sag das ehrlich. Zitiere die Quelle in Klammern, z.B. (Q1) oder (Q3, S. 42).
+
+Antworte als JSON: { "answer": "deine Antwort in ausführlichem Fließtext (3-12 Sätze)", "citations": ["Q1", "Q3"] }`;
+
+    const parsed = await thsCallGeminiJSON(systemPrompt, `Frage: ${question}\n\nQuellen:\n${sourcesContext}`);
+    th._researchQA = {
+      question,
+      answer: parsed.answer || '(keine Antwort)',
+      citations: Array.isArray(parsed.citations) ? parsed.citations : [],
+      timestamp: nowIso(),
+    };
+    th.updatedAt = nowIso();
+    scheduleSave();
+    if (input) input.value = '';
+    render();
+    toast('ok', '🤖 Antwort bereit');
+  } catch (e) {
+    console.error('[ResearchQA]', e);
+    toast('error', 'Q&A fehlgeschlagen', e.message || String(e));
+  }
 };
 
 window.thsCopyCitation = async function(thId, sId) {
