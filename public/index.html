@@ -22264,6 +22264,14 @@ function renderThesisFocusMode(th, chapterId) {
   return `
     <style>
       body.thesis-focus { overflow: hidden; }
+      /* Alle App-Chrome-Elemente im Fokus-Modus ausblenden, damit der
+         Sprint wirklich fokussiert ist. */
+      body.thesis-focus #browserTabBar,
+      body.thesis-focus .topbar,
+      body.thesis-focus .app-nav,
+      body.thesis-focus header,
+      body.thesis-focus .sidebar { display: none !important; }
+      body.thesis-focus .main { padding: 0 !important; margin: 0 !important; }
       .ths-focus-overlay {
         position: fixed;
         inset: 0;
@@ -22365,7 +22373,10 @@ function renderThesisFocusMode(th, chapterId) {
       }
     </style>
     
-    <div class="ths-focus-overlay" id="thsFocusOverlay">
+    <div class="ths-focus-overlay" id="thsFocusOverlay"
+         data-session-start="${words}"
+         data-today-base="${todayWords}"
+         data-target="${target}">
       <div class="ths-focus-topbar">
         <button onclick="window.thsToggleFocus()" style="background:rgba(255,255,255,.06);border:0;color:var(--text);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">← Verlassen (Esc)</button>
         <div style="flex:1;text-align:center;font-size:12px;color:var(--muted)">${esc(th.title)} · ${esc(chapter.title)}</div>
@@ -22392,9 +22403,9 @@ function renderThesisFocusMode(th, chapterId) {
       
       <div class="ths-focus-status">
         <span><span id="thsFocusWordCount">${words}</span> Wörter</span>
-        <span>${pct}% des Tagesziels (${todayWords}/${target})</span>
+        <span><span id="thsFocusDailyPct">${pct}</span>% des Tagesziels (<span id="thsFocusTodayWords">${todayWords}</span>/<span id="thsFocusTarget">${target}</span>)</span>
       </div>
-      <div class="ths-focus-progress" style="width:${pct}%"></div>
+      <div class="ths-focus-progress" id="thsFocusProgressBar" style="width:${pct}%"></div>
     </div>
   `;
 }
@@ -24419,9 +24430,22 @@ window.thsLiveWordCount = function(el, chId) {
   // Sidebar counter
   const sidebarEl = document.querySelector(`[data-chapter-id="${chId}"] .ths-chapter-words`);
   if (sidebarEl) sidebarEl.textContent = words;
-  // Focus mode word count
+  // Focus/Sprint Wortzähler
   const focusCount = document.getElementById('thsFocusWordCount');
   if (focusCount) focusCount.textContent = words;
+  // Tagesziel live: gespeicherte heutige Wörter + (aktuell - Session-Start)
+  const overlay = document.getElementById('thsFocusOverlay');
+  if (overlay) {
+    const start = parseInt(overlay.dataset.sessionStart || '0', 10) || 0;
+    const base = parseInt(overlay.dataset.todayBase || '0', 10) || 0;
+    const target = parseInt(overlay.dataset.target || '500', 10) || 500;
+    const added = Math.max(0, words - start);
+    const today = base + added;
+    const pct = Math.min(100, Math.round(today / target * 100));
+    const todayEl = document.getElementById('thsFocusTodayWords'); if (todayEl) todayEl.textContent = today;
+    const pctEl = document.getElementById('thsFocusDailyPct'); if (pctEl) pctEl.textContent = pct;
+    const bar = document.getElementById('thsFocusProgressBar'); if (bar) bar.style.width = pct + '%';
+  }
 };
 
 
