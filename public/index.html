@@ -3239,6 +3239,11 @@ textarea::placeholder, input::placeholder {
 .file-preview-body iframe{width:100%;height:70vh;border:none;border-radius:8px}
 .file-preview-body .no-preview{text-align:center;color:var(--muted);padding:40px}
 
+/* Sprint-Banner gehört zum Fokus-Modus. Ausserhalb des Fokus-Modus
+   ausblenden, falls er nach einem Reload oder Modus-Wechsel als verwaistes
+   Element im DOM stehen geblieben ist. */
+body:not(.thesis-focus) #thsSprintBanner { display: none !important; }
+
 /* ─── Daily Digest Modal ──────────────────────────────────────────────── */
 .dd-summary{font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.5}
 .dd-section{margin-bottom:22px}
@@ -21300,10 +21305,20 @@ window.viewThesisDetail = function(id) {
   if (!th) return `<div style="text-align:center;padding:60px"><div style="font-size:48px">❓</div><div style="margin:14px 0">Arbeit nicht gefunden.</div><button class="btn" onclick="navigate('thesis')">← Zurück zur Liste</button></div>`;
   
   const state = thsGetState();
-  
+
   // Im Focus-Modus alles ausblenden außer Editor
   if (state.focusMode && state.currentChapterId) {
     return renderThesisFocusMode(th, state.currentChapterId);
+  }
+
+  // Defensiv: kein Sprint aktiv → verwaisten Banner entfernen (z.B. nach Reload).
+  if (!th.activeSprint) {
+    const stale = document.getElementById('thsSprintBanner');
+    if (stale) stale.remove();
+    if (window._thsSprintInterval) {
+      clearInterval(window._thsSprintInterval);
+      window._thsSprintInterval = null;
+    }
   }
   
   // Berechnungen
@@ -24661,6 +24676,9 @@ window.thsToggleFocus = function() {
     document.body.classList.remove('thesis-focus');
     window.thsStopSoundscape();
     window.thsStopPomodoro();
+    // Sprint-Banner aus dem DOM entfernen — falls noch ein Sprint aktiv ist,
+    // erzeugt das Timer-Interval ihn beim Wieder-Eintritt neu.
+    document.getElementById('thsSprintBanner')?.remove();
     // Browser-Vollbild beim Verlassen des Fokus-Modus mit beenden
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
