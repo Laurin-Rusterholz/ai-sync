@@ -24670,9 +24670,13 @@ window.thsToggleSidebar = function() {
 
 window.thsToggleFocus = function() {
   const state = thsGetState();
-  const willEnterFocus = !state.focusMode;
-  thsSetState({ focusMode: !state.focusMode });
-  if (state.focusMode) {  // wird ausgeschaltet
+  // WICHTIG: state ist eine Live-Referenz auf APP.state.ui.thesis.
+  // Nach thsSetState ist state.focusMode bereits der NEUE Wert.
+  // Den alten Wert daher VOR dem Toggle in lokale Konstanten kopieren.
+  const wasFocusMode = state.focusMode;
+  const willEnterFocus = !wasFocusMode;
+  thsSetState({ focusMode: willEnterFocus });
+  if (wasFocusMode) {  // wird ausgeschaltet
     document.body.classList.remove('thesis-focus');
     window.thsStopSoundscape();
     window.thsStopPomodoro();
