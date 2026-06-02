@@ -12853,13 +12853,12 @@ function buildFullContextPrompt() {
   const weekSeconds = times.filter(t => t.startTs >= weekIso).reduce((sum, t) => sum + (t.durationSec || 0), 0);
   
   // ========== KONTEXT ERSTELLEN ==========
-  let context = `Du bist ein hilfreicher Assistent für das AI Management Pro System. Du hast NUR LESE-Zugriff auf ALLE Daten des Nutzers — die komplette Wissensbasis.
+  let context = `Du bist ein hilfreicher Assistent für das AI Management Pro System. Du hast VOLLSTÄNDIGEN Lese-Zugriff auf ALLE Daten des Nutzers.
 
-WICHTIG — Was du NICHT kannst:
-- Du kannst NICHTS löschen, ändern, hinzufügen oder verschieben.
-- Du kannst keine Aufgaben/Notizen/Habits erstellen oder modifizieren.
-- Wenn der Nutzer um eine Änderung bittet (z.B. "lösche das", "räume auf"), sag ehrlich: du hast keine Schreibrechte und nenne den passenden Ort/Button in der App (z.B. "Im Habit-Tracker gibt es einen Button '🧹 Duplikate zusammenführen'").
-- Antworte NIEMALS so, als hättest du etwas gelöscht/erstellt/geändert.
+WICHTIG — diese Chat-View ist für Konversation und Analyse, nicht für direkte Aktionen:
+- Wenn der Nutzer eine Aktion ausführen möchte (löschen, erstellen, aufräumen, ändern), verweise ihn auf den "Quick Assistent" (lila Glühbirne unten rechts) — der hat Schreibrechte und kann Befehle ausführen.
+- ODER nenne den passenden Ort/Button in der App (z.B. "Im Habit-Tracker gibt es 🧹 Duplikate zusammenführen").
+- Behaupte NIEMALS, du hättest etwas gelöscht/erstellt/geändert. Du kannst aus dieser View heraus nichts modifizieren.
 
 
 === ÜBERSICHT (${today}) ===
@@ -81458,6 +81457,25 @@ Beispiel: {{UPDATE|goal|def456|progress:75|status:active}}
 ## Zur Seite navigieren
 {{NAVIGATE|route}} oder {{NAVIGATE|route/id}}
 
+## Habits / Routinen
+KRITISCH: Wenn der Nutzer um Aufräumen, Löschen oder Bearbeiten von Routinen bittet — FÜHRE den Befehl aus. Behaupte NIE, du hättest etwas getan, ohne einen dieser Befehle zu verwenden.
+
+{{DEDUP_HABITS}} — Doppelte Routinen (gleicher Name) zusammenführen, ohne Datenverlust.
+  Beispiel-Nutzeranfrage: "die habits sind doppelt" → emittiere {{DEDUP_HABITS}}
+
+{{DELETE_HABIT|Name oder ID}} — Routine komplett löschen.
+  Beispiel: {{DELETE_HABIT|Morgenroutine}} oder {{DELETE_HABIT|rt_abc123}}
+
+{{ARCHIVE_HABIT|Name oder ID}} — Routine archivieren (taucht im Tracker nicht mehr auf, bleibt für Statistiken).
+  Beispiel: {{ARCHIVE_HABIT|Abendroutine}}
+
+{{TOGGLE_HABIT_TODAY|Name oder ID}} — Routine für heute als erledigt/offen umschalten.
+  Beispiel: {{TOGGLE_HABIT_TODAY|Sport}}
+
+## Inbox-Aufräumen
+{{CLEANUP_EMPTY_PROJECT_REMINDERS}} — alte automatisch generierte "Projekt ohne Aufgaben"-Erinnerungen löschen.
+  Beispiel-Nutzeranfrage: "die alten Nachrichten weg" → emittiere {{CLEANUP_EMPTY_PROJECT_REMINDERS}}
+
 ## Tagesplanung / Daily Briefing
 KRITISCH: Wenn der Nutzer Tagespläne kopieren, hinzufügen, löschen oder ändern möchte, NUTZE diese Commands.
 
@@ -81814,6 +81832,67 @@ function processCommands(text){
     const id = window.createEntity("note",{title:title.trim(),content:content.trim(),tags:[]});
     changed=true;
     return `📝 Notiz erstellt: [${title.trim()}](nav:notes/${id})`;
+  });
+
+  // ── DEDUP_HABITS ──
+  out = out.replace(/\{\{DEDUP_HABITS\}\}/g, ()=>{
+    const removed = typeof window.dedupHabits === 'function' ? window.dedupHabits() : 0;
+    changed = removed > 0;
+    return removed > 0
+      ? `🧹 ${removed} doppelte Routine(n) zusammengeführt — Completions vereint, kein Datenverlust.`
+      : `ℹ️ Keine doppelten Routinen erkannt.`;
+  });
+
+  // ── DELETE_HABIT|nameOderId ──
+  out = out.replace(/\{\{DELETE_HABIT\|([^}]+)\}\}/g, (_, keyRaw)=>{
+    const key = keyRaw.trim().toLowerCase();
+    if (!APP.state.data.dailyBriefing) APP.state.data.dailyBriefing = { routines: [] };
+    const routines = APP.state.data.dailyBriefing.routines || [];
+    const idx = routines.findIndex(r => r.id === keyRaw.trim() || (r.text || '').trim().toLowerCase() === key);
+    if (idx < 0) return `⚠️ Routine "${keyRaw}" nicht gefunden`;
+    const removed = routines[idx];
+    routines.splice(idx, 1);
+    changed = true;
+    return `🗑️ Routine "${removed.text || keyRaw}" gelöscht`;
+  });
+
+  // ── ARCHIVE_HABIT|nameOderId ──
+  out = out.replace(/\{\{ARCHIVE_HABIT\|([^}]+)\}\}/g, (_, keyRaw)=>{
+    const key = keyRaw.trim().toLowerCase();
+    const routines = APP.state.data.dailyBriefing?.routines || [];
+    const r = routines.find(r => r.id === keyRaw.trim() || (r.text || '').trim().toLowerCase() === key);
+    if (!r) return `⚠️ Routine "${keyRaw}" nicht gefunden`;
+    r.archived = true;
+    r.updatedAt = new Date().toISOString();
+    changed = true;
+    return `📦 Routine "${r.text}" archiviert`;
+  });
+
+  // ── TOGGLE_HABIT_TODAY|nameOderId ──
+  out = out.replace(/\{\{TOGGLE_HABIT_TODAY\|([^}]+)\}\}/g, (_, keyRaw)=>{
+    const key = keyRaw.trim().toLowerCase();
+    const routines = APP.state.data.dailyBriefing?.routines || [];
+    const r = routines.find(rt => rt.id === keyRaw.trim() || (rt.text || '').trim().toLowerCase() === key);
+    if (!r) return `⚠️ Routine "${keyRaw}" nicht gefunden`;
+    if (typeof window.toggleHabitToday === 'function') {
+      window.toggleHabitToday(r.id);
+      changed = true;
+      return `✓ "${r.text}" für heute umgeschaltet`;
+    }
+    return `⚠️ Toggle-Funktion nicht verfügbar`;
+  });
+
+  // ── CLEANUP_EMPTY_PROJECT_REMINDERS ──
+  out = out.replace(/\{\{CLEANUP_EMPTY_PROJECT_REMINDERS\}\}/g, ()=>{
+    if (typeof window.cleanupEmptyProjectReminders !== 'function') {
+      return `⚠️ Cleanup-Funktion nicht verfügbar`;
+    }
+    const before = Object.keys(APP.state.data.entities.scheduledMessages || {}).length;
+    window.cleanupEmptyProjectReminders();
+    const after = Object.keys(APP.state.data.entities.scheduledMessages || {}).length;
+    const removed = before - after;
+    if (removed > 0) { changed = true; return `🧹 ${removed} alte Erinnerungs-Nachricht(en) gelöscht`; }
+    return `ℹ️ Keine alten Erinnerungs-Nachrichten gefunden`;
   });
 
   // ── CREATE_PROJECT ──
