@@ -19525,7 +19525,11 @@ function viewHabits() {
               <div style="display:flex;flex-direction:column;gap:5px">
                 ${h.subUnits.map(u => {
                   const done = isSubUnitDone(h, u.name, today);
-                  return `<button onclick="toggleHabitSubUnit('${h.id}', ${JSON.stringify(u.name)})" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:${done ? accentColor + '22' : 'rgba(255,255,255,.04)'};border:1px solid ${done ? accentColor + '88' : 'rgba(255,255,255,.08)'};border-radius:6px;cursor:pointer;text-align:left;width:100%;color:${done ? accentColor : 'var(--text)'};font-size:12.5px;transition:all .15s">
+                  // Sub-Unit-Name für inline onclick safe escapen:
+                  // 1) JSON.stringify quotet + escapet Sonderzeichen
+                  // 2) Doppel-Quotes → &quot;, damit sie nicht das onclick-Attribut brechen
+                  const nameArg = JSON.stringify(u.name || '').replace(/"/g, '&quot;');
+                  return `<button onclick="toggleHabitSubUnit('${h.id}', ${nameArg})" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:${done ? accentColor + '22' : 'rgba(255,255,255,.04)'};border:1px solid ${done ? accentColor + '88' : 'rgba(255,255,255,.08)'};border-radius:6px;cursor:pointer;text-align:left;width:100%;color:${done ? accentColor : 'var(--text)'};font-size:12.5px;transition:all .15s">
                     <span style="font-size:14px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;border:1.5px solid ${done ? accentColor : 'rgba(255,255,255,.25)'};border-radius:4px;background:${done ? accentColor : 'transparent'};color:#fff;font-weight:700;flex-shrink:0">${done ? '✓' : ''}</span>
                     ${u.icon ? `<span style="font-size:14px;flex-shrink:0">${u.icon}</span>` : ''}
                     <span style="flex:1;text-decoration:${done ? 'line-through' : 'none'};opacity:${done ? '.7' : '1'}">${esc(u.name)}</span>
