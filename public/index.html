@@ -12853,7 +12853,14 @@ function buildFullContextPrompt() {
   const weekSeconds = times.filter(t => t.startTs >= weekIso).reduce((sum, t) => sum + (t.durationSec || 0), 0);
   
   // ========== KONTEXT ERSTELLEN ==========
-  let context = `Du bist ein hilfreicher Assistent für das AI Management Pro System. Du hast VOLLSTÄNDIGEN Zugriff auf ALLE Daten des Nutzers - die komplette Wissensbasis.
+  let context = `Du bist ein hilfreicher Assistent für das AI Management Pro System. Du hast NUR LESE-Zugriff auf ALLE Daten des Nutzers — die komplette Wissensbasis.
+
+WICHTIG — Was du NICHT kannst:
+- Du kannst NICHTS löschen, ändern, hinzufügen oder verschieben.
+- Du kannst keine Aufgaben/Notizen/Habits erstellen oder modifizieren.
+- Wenn der Nutzer um eine Änderung bittet (z.B. "lösche das", "räume auf"), sag ehrlich: du hast keine Schreibrechte und nenne den passenden Ort/Button in der App (z.B. "Im Habit-Tracker gibt es einen Button '🧹 Duplikate zusammenführen'").
+- Antworte NIEMALS so, als hättest du etwas gelöscht/erstellt/geändert.
+
 
 === ÜBERSICHT (${today}) ===
 • Aufgaben: ${openTasks.length} offen, ${doneTasks.length} erledigt, ${overdueTasks.length} überfällig
@@ -19312,6 +19319,82 @@ function getHabits() {
   return APP.state.data.dailyBriefing.routines;
 }
 
+// Erkennt Duplikate (gleicher text, normalisiert: trim + lowercase).
+// Returnt Array von Gruppen mit ≥ 2 Einträgen.
+function getDuplicateHabitGroups() {
+  const routines = getHabits().filter(r => !r.archived);
+  const byKey = new Map();
+  for (const r of routines) {
+    const key = String(r.text || '').trim().toLowerCase();
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(r);
+  }
+  return [...byKey.values()].filter(group => group.length > 1);
+}
+
+// Merged jede Duplikat-Gruppe zu einem einzigen Habit:
+// - Behält den ältesten (createdAt) als Basis, übernimmt aber bevorzugt
+//   subUnits/frequency vom neuesten (jüngstes updatedAt) falls vorhanden.
+// - Vereint completions und subCompletions per ID (oder date+subUnitName).
+// - Löscht die anderen aus dailyBriefing.routines.
+// Returnt Anzahl entfernter Duplikate.
+window.getDuplicateHabitGroups = getDuplicateHabitGroups;
+
+window.dedupHabits = function() {
+  const routines = getHabits();
+  const groups = getDuplicateHabitGroups();
+  if (groups.length === 0) return 0;
+
+  const unionBy = (a, b, keyFn) => {
+    const seen = new Set(); const out = [];
+    for (const x of [...(a || []), ...(b || [])]) {
+      if (!x) continue;
+      const k = keyFn(x);
+      if (seen.has(k)) continue;
+      seen.add(k); out.push(x);
+    }
+    return out;
+  };
+
+  const idsToRemove = new Set();
+  for (const group of groups) {
+    // Älteste zuerst (Basis)
+    group.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+    const base = group[0];
+    const newest = group.slice().sort((a, b) =>
+      new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)
+    )[0];
+    // Aktuellste Stamm-Eigenschaften vom neuesten übernehmen (Icon, Farbe etc.)
+    if (newest && newest !== base) {
+      base.icon = newest.icon || base.icon;
+      base.color = newest.color || base.color;
+      base.frequency = newest.frequency || base.frequency;
+      base.customDays = Array.isArray(newest.customDays) && newest.customDays.length ? newest.customDays : base.customDays;
+      base.target = newest.target || base.target;
+      base.unit = newest.unit || base.unit;
+      // SubUnits: bevorzugt aus dem neuesten, falls dort vorhanden
+      if (Array.isArray(newest.subUnits) && newest.subUnits.length) base.subUnits = newest.subUnits;
+    }
+    // Completions & SubCompletions aus allen Duplikaten vereinen
+    let allComps = base.completions || [];
+    let allSubComps = base.subCompletions || [];
+    for (let i = 1; i < group.length; i++) {
+      const dup = group[i];
+      allComps = unionBy(allComps, dup.completions, c => c.id || (c.date + '|' + (c.value || '') + '|' + (c.autoFromSubUnits ? 'a' : '')));
+      allSubComps = unionBy(allSubComps, dup.subCompletions, c => c.id || (c.date + '|' + c.subUnitName));
+      idsToRemove.add(dup.id);
+    }
+    base.completions = allComps;
+    base.subCompletions = allSubComps;
+    base.updatedAt = new Date().toISOString();
+  }
+
+  // Duplikate aus dem Array entfernen
+  APP.state.data.dailyBriefing.routines = routines.filter(r => !idsToRemove.has(r.id));
+  return idsToRemove.size;
+};
+
 // Prüft ob Habit für gegebenes Datum geplant ist (basierend auf frequency)
 function isHabitDueOnDate(habit, dateStr) {
   const d = new Date(dateStr + 'T12:00:00');
@@ -19468,7 +19551,22 @@ function viewHabits() {
           <button onclick="navigate('dailybriefing')" style="padding:9px 16px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);color:#a5b4fc;border-radius:10px;font-weight:600;font-size:12.5px;cursor:pointer">📋 In Daily Briefing öffnen</button>
         </div>
       </div>
-      
+
+      ${(() => {
+        const dups = getDuplicateHabitGroups();
+        if (!dups.length) return '';
+        const total = dups.reduce((s, g) => s + (g.length - 1), 0);
+        const names = dups.map(g => esc(g[0].text || '?')).slice(0, 4).join(', ');
+        return `<div style="margin-bottom:18px;padding:14px 18px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.28);border-left:3px solid #fbbf24;border-radius:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="font-weight:700;font-size:13.5px;color:#fbbf24;margin-bottom:3px">⚠️ ${total} doppelte Routine${total > 1 ? 'n' : ''} erkannt</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5">Mehrfach vorhandene Routinen: <strong>${names}</strong>${dups.length > 4 ? ' …' : ''}. Beim Aufräumen werden Completions zusammengeführt — keine Daten gehen verloren.</div>
+          </div>
+          <button onclick="window._cleanupDuplicateHabits()" style="padding:8px 16px;background:linear-gradient(135deg,#fbbf24,#f97316);color:#000;border:0;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:700;white-space:nowrap">🧹 Duplikate zusammenführen</button>
+        </div>`;
+      })()}
+
+
       ${dueToday.length > 0 ? `<div class="ht-progress-banner">
         <div class="ht-progress-circle" style="background: ${completedToday.length === dueToday.length ? 'linear-gradient(135deg,#22c55e,#16a34a)' : 'linear-gradient(135deg,#a855f7,#ec4899)'};color:#fff">${completedToday.length}/${dueToday.length}</div>
         <div style="flex:1">
@@ -19576,6 +19674,20 @@ function viewHabits() {
 window.viewHabits = viewHabits;
 
 // ─── Habit Mutations ───
+window._cleanupDuplicateHabits = function() {
+  const groups = getDuplicateHabitGroups();
+  if (!groups.length) { toast('ok', 'Keine Duplikate'); return; }
+  const total = groups.reduce((s, g) => s + (g.length - 1), 0);
+  const names = groups.map(g => `• "${g[0].text}" (${g.length}×)`).join('\n');
+  if (!confirm(`${total} doppelte Routine${total > 1 ? 'n' : ''} zusammenführen?\n\n${names}\n\nCompletions und Sub-Häkchen aller Duplikate werden vereint, danach bleibt pro Name genau eine Routine. Keine Daten gehen verloren.`)) return;
+  const removed = window.dedupHabits();
+  if (removed > 0) {
+    scheduleSave();
+    if (typeof render === 'function') render();
+    toast('ok', '🧹 Aufgeräumt', removed + ' Duplikat(e) zusammengeführt');
+  }
+};
+
 window.toggleHabitToday = function(habitId) {
   const habits = getHabits();
   const h = habits.find(r => r.id === habitId);
