@@ -15809,8 +15809,61 @@ function viewDailyBriefing() {
       <h3>` + "\u{1F504}" + ` Routinen</h3>
       ${(() => {
         const crs = db.customRoutines || [];
-        if (!crs.length) return '<div class="mini" style="opacity:.5">Keine Routinen.' + (isToday ? ' Erstelle im Planning-Modus.' : '') + '</div>';
+        // Echte Habits aus dem Habit-Tracker (dailyBriefing.routines) — die andere
+        // Datenstruktur. Anzeigen für selectedDate, wenn frequency passt.
+        const habits = (db.routines || []).filter(h => !h.archived && (
+          typeof isHabitDueOnDate === 'function' ? isHabitDueOnDate(h, selectedDate) : true
+        ));
         let out = "";
+
+        if (habits.length > 0) {
+          habits.forEach(h => {
+            const accent = h.color || '#a855f7';
+            const hasSubs = Array.isArray(h.subUnits) && h.subUnits.length > 0;
+            // Heutiger Status
+            const doneToday = (h.completions || []).filter(c => c.date === selectedDate).reduce((s, c) => s + (c.value || 1), 0);
+            const target = h.target || 1;
+            let subDone = 0;
+            if (hasSubs) {
+              subDone = h.subUnits.filter(u => (h.subCompletions || []).some(c => c.date === selectedDate && c.subUnitName === u.name)).length;
+            }
+            const totalSteps = hasSubs ? h.subUnits.length : target;
+            const checkedSteps = hasSubs ? subDone : Math.min(doneToday, target);
+            const allDone = checkedSteps >= totalSteps && totalSteps > 0;
+            out += '<div style="margin-bottom:16px;background:var(--panel2);border-radius:12px;padding:14px;border-left:3px solid ' + (allDone ? 'var(--ok)' : accent) + '">';
+            out += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:18px">' + (h.icon || "\u{1F504}") + '</span><span style="font-weight:700;font-size:14px;flex:1">' + esc(h.text || 'Routine') + '</span><span style="font-size:11px;color:' + (allDone ? 'var(--ok)' : 'var(--muted)') + ';font-weight:600">' + checkedSteps + '/' + totalSteps + '</span>';
+            if (isToday) {
+              // Quick-Toggle für den ganzen Tag (wenn keine subUnits)
+              if (!hasSubs) {
+                out += '<button onclick="window.toggleHabitToday(\'' + h.id + '\')" class="btn sm ghost" style="padding:2px 10px;font-size:11px;color:' + accent + '">' + (allDone ? '✓ erledigt' : '○ offen') + '</button>';
+              }
+            }
+            out += '</div>';
+            if (hasSubs) {
+              h.subUnits.forEach(u => {
+                const isDone = (h.subCompletions || []).some(c => c.date === selectedDate && c.subUnitName === u.name);
+                const nameArg = JSON.stringify(u.name || '').replace(/"/g, '&quot;');
+                const clickAttr = isToday ? ' onclick="window.toggleHabitSubUnit(\'' + h.id + '\', ' + nameArg + ')"' : '';
+                out += '<div class="db-routine-step ' + (isDone ? 'checked' : '') + '" style="cursor:' + (isToday ? 'pointer' : 'default') + '"' + clickAttr + '><div class="check ' + (isDone ? 'done' : '') + '" style="' + (isDone ? 'background:' + accent + ';border-color:' + accent : '') + '">' + (isDone ? '✓' : '') + '</div>';
+                if (u.icon) out += '<span style="font-size:14px;flex-shrink:0">' + esc(u.icon) + '</span>';
+                out += '<span style="flex:1">' + esc(u.name) + '</span>';
+                out += '</div>';
+              });
+            } else if (target > 1 && isToday) {
+              // Mehrfach-Ziel: +1-Button
+              out += '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><div style="flex:1;height:6px;background:rgba(255,255,255,0.04);border-radius:3px;overflow:hidden"><div style="height:100%;width:' + Math.min(100, Math.round(doneToday/target*100)) + '%;background:' + accent + '"></div></div>';
+              out += '<span style="font-size:11px;color:var(--muted)">' + doneToday + '/' + target + (h.unit ? ' ' + esc(h.unit) : '') + '</span>';
+              out += '<button onclick="window.incHabitToday(\'' + h.id + '\')" class="btn sm" style="padding:3px 10px;font-size:11px;background:' + accent + '22;color:' + accent + ';border:1px solid ' + accent + '88">+1</button></div>';
+            }
+            out += '</div>';
+          });
+        }
+
+        if (!crs.length && habits.length === 0) {
+          return '<div class="mini" style="opacity:.5">Keine Routinen.' + (isToday ? ' Erstelle eine im Habit-Tracker oder im Planning-Modus.' : '') + '</div>';
+        }
+        if (!crs.length) return out;
+
         crs.forEach((routine, ri) => {
           const totalSteps = (routine.steps || []).length;
           const checkedSteps = (routine.steps || []).filter((s, si) => (dayLog.routineChecks || {})[ri + "_" + si]).length;
