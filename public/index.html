@@ -93485,10 +93485,9 @@ console.log('📚 Leseliste geladen');
 (function(){
   "use strict";
 
-  // ⚠️ EXAKTE Realtime-Database-URL eintragen – identisch zu firebaseConfig.databaseURL
-  //    im Communicator-Pro-Repo (gleiches Firebase-Projekt jupidu-36804).
-  //    z.B. "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app"
-  var DB_URL = "https://jupidu-36804-default-rtdb.firebaseio.com";
+  // Realtime-Database-URL (EU-Region, gleiches Firebase-Projekt jupidu-36804) –
+  // identisch zu firebaseConfig.databaseURL im Communicator-Pro-Repo.
+  var DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
   var INBOX_PATH = "quantus_task_inbox";
   var PROCESSED_KEY = "__quantus_task_inbox_processed";
 
