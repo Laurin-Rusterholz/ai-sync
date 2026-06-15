@@ -3377,6 +3377,7 @@ body:not(.thesis-focus) #thsSprintBanner { display: none !important; }
   <!-- mammoth.js wird bei Bedarf dynamisch über loadMammoth() geladen (mit CDN-Fallbacks) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
 
 
 
@@ -93472,6 +93473,108 @@ console.log('📚 Leseliste geladen');
 })();
 </script>
 <!-- ═══ END PASSWORD MANAGER ═══ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!--  COMMUNICATOR → QUANTUS  Task-Importer                                    -->
+<!--  Liest die RTDB-Queue 'quantus_task_inbox' (vom Communicator-Pro-Repo     -->
+<!--  befüllt) und legt pro Eintrag über das bestehende createEntity('task')   -->
+<!--  einen echten Task an. Vollständig gekapselt & abgesichert – kann den     -->
+<!--  App-Boot nicht beeinflussen.                                             -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  "use strict";
+
+  // ⚠️ EXAKTE Realtime-Database-URL eintragen – identisch zu firebaseConfig.databaseURL
+  //    im Communicator-Pro-Repo (gleiches Firebase-Projekt jupidu-36804).
+  //    z.B. "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app"
+  var DB_URL = "https://jupidu-36804-default-rtdb.firebaseio.com";
+  var INBOX_PATH = "quantus_task_inbox";
+  var PROCESSED_KEY = "__quantus_task_inbox_processed";
+
+  function loadProcessed(){ try { return JSON.parse(localStorage.getItem(PROCESSED_KEY) || "[]") || []; } catch(e){ return []; } }
+  function markProcessed(k){
+    try { var a = loadProcessed(); if (a.indexOf(k) < 0){ a.push(k); if (a.length > 500) a = a.slice(-500); localStorage.setItem(PROCESSED_KEY, JSON.stringify(a)); } } catch(e){}
+  }
+  function taskExistsForKey(k){
+    try {
+      var tasks = window.APP && APP.state && APP.state.data && APP.state.data.entities && APP.state.data.entities.tasks;
+      if (!tasks) return false;
+      for (var id in tasks){ if (tasks[id] && tasks[id].commSourceKey === k) return true; }
+      return false;
+    } catch(e){ return false; }
+  }
+
+  function importItem(snap){
+    var key = snap.key, v = snap.val() || {};
+    try {
+      if (loadProcessed().indexOf(key) >= 0 || taskExistsForKey(key)){ try { snap.ref.remove(); } catch(e){} return; }
+
+      var title = String(v.title || v.text || "WhatsApp-Aufgabe").slice(0, 200);
+      var desc  = v.description ? String(v.description) : "";
+      if (!desc){
+        var parts = [];
+        if (v.text) parts.push(String(v.text));
+        var meta = [];
+        if (v.name) meta.push("Von: " + v.name);
+        if (v.from) meta.push("WhatsApp: " + v.from);
+        if (meta.length) parts.push("\n" + meta.join("  ·  "));
+        desc = parts.join("\n");
+      }
+      var prio = (typeof v.priority === "number") ? v.priority : 3;
+      var st   = (v.status === "done" || v.status === "doing") ? v.status : "todo";
+
+      var taskId = window.createEntity("task", {
+        title: title,
+        description: desc,
+        status: st,
+        priority: prio,
+        dueDate: v.dueDate || null,
+        tags: Array.isArray(v.tags) ? v.tags : ["WhatsApp"],
+        source: v.source || "communicator",
+        commSourceKey: key,
+        commFrom: v.from || null,
+        commName: v.name || null
+      });
+
+      markProcessed(key);
+      try { snap.ref.remove(); } catch(e){}
+      console.log("📥 [Quantus] Task aus Communicator importiert:", taskId, "—", title);
+      if (typeof window.toast === "function") { try { window.toast("Neue Aufgabe aus Communicator: " + title); } catch(e){} }
+    } catch(e){
+      console.warn("[Quantus] Task-Import fehlgeschlagen:", e && e.message);
+    }
+  }
+
+  var started = false;
+  function start(){
+    if (started) return true;
+    if (typeof firebase === "undefined" || !firebase.app) return false;       // Firebase noch nicht da
+    if (typeof window.createEntity !== "function") return false;              // App noch nicht bereit
+    if (!(window.APP && APP.state && APP.state.data && APP.state.data.entities)) return false;
+    var db;
+    try {
+      db = firebase.app().database(DB_URL);                                    // explizite URL → kein databaseURL in Config nötig
+    } catch(e){
+      console.warn("[Quantus] Task-Importer: RTDB nicht verfügbar (DB_URL prüfen):", e && e.message);
+      started = true; return true;                                            // nicht weiter pollen
+    }
+    started = true;
+    try {
+      db.ref(INBOX_PATH).on("child_added", importItem, function(err){
+        console.warn("[Quantus] task-inbox Listener-Fehler:", err && err.message);
+      });
+      console.log("🔥 [Quantus] Communicator-Task-Importer aktiv (" + INBOX_PATH + ")");
+    } catch(e){
+      console.warn("[Quantus] Importer-Start fehlgeschlagen:", e && e.message);
+    }
+    return true;
+  }
+
+  var tries = 0;
+  var iv = setInterval(function(){ tries++; if (start() || tries > 150) clearInterval(iv); }, 300);
+})();
+</script>
 
 </body>
 </html>
