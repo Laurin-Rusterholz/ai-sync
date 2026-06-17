@@ -15208,6 +15208,7 @@ function getAllApps() {
     {key:"journal", icon:"✍️", label:"Journal Booklet", desc:getLang()==="de"?"Tagebuch, Briefe, Zeitkapsel & Schreibumgebung":"Diary, letters, time capsule & writing environment"},
     {key:"handbook", icon:"📖", label:"Handbuch", desc:getLang()==="de"?"Übersicht aller Apps mit eigenen Notizen & Arbeitsbeschreibungen":"Overview of all apps with personal notes & workflows"},
     {key:"passwordmanager", icon:"🔐", label:"Password Manager", desc:getLang()==="de"?"Sichere Passwörter speichern, generieren & verwalten":"Securely store, generate & manage passwords"},
+    {key:"googlecalendar", icon:"📆", label:"Google Calendar", desc:getLang()==="de"?"Google-Kalender anzeigen, Events erstellen, bearbeiten & löschen":"View Google Calendar, create, edit & delete events"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -15573,6 +15574,7 @@ function renderMain() {
     case "workflows": html = id ? viewWorkflowDetail(id) : viewWorkflows(); break;
     case "journal": openJournalBooklet(); return;
     case "passwordmanager": html = viewPasswordManager(); break;
+    case "googlecalendar": html = (typeof viewGoogleCalendar === "function" ? viewGoogleCalendar() : '<div style="padding:40px;text-align:center">Lade Google Calendar…</div>'); break;
     case "settings": { openSettings(); return; }
 
     default: {
@@ -93572,6 +93574,454 @@ console.log('📚 Leseliste geladen');
 
   var tries = 0;
   var iv = setInterval(function(){ tries++; if (start() || tries > 150) clearInterval(iv); }, 300);
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ═══ GOOGLE CALENDAR                                                   ═══ -->
+<!-- ═══  OAuth-Login + Live-Anbindung an die Google Calendar API v3.       ═══ -->
+<!-- ═══  Tokens liegen serverseitig (Netlify Functions + Blob), nie im      ═══ -->
+<!-- ═══  Frontend. Kalenderdaten werden live aus der Google API geladen.    ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<style id="gcalStyles">
+.gcal-toolbar { display:flex; flex-wrap:wrap; gap:14px; align-items:center; justify-content:space-between; margin:4px 0 18px; }
+.gcal-cal-chips { display:flex; flex-wrap:wrap; gap:8px; }
+.gcal-cal-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 12px; border-radius:999px; border:1px solid var(--border); background:rgba(255,255,255,.03); color:var(--text2); font-size:12.5px; font-weight:600; cursor:pointer; transition:all .15s; opacity:.55; }
+.gcal-cal-chip:hover { background:rgba(255,255,255,.06); }
+.gcal-cal-chip.on { opacity:1; color:var(--text); border-color:rgba(10,132,255,.4); background:rgba(10,132,255,.10); }
+.gcal-dot { width:11px; height:11px; border-radius:50%; flex-shrink:0; display:inline-block; }
+.gcal-cal-name { max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gcal-ro { font-size:11px; opacity:.7; }
+.gcal-weeks { display:flex; gap:4px; }
+.gcal-week-btn { padding:7px 11px; border-radius:9px; border:1px solid var(--border); background:rgba(255,255,255,.03); color:var(--text2); font-size:12px; font-weight:600; cursor:pointer; }
+.gcal-week-btn.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+.gcal-day { margin-bottom:22px; }
+.gcal-day-head { font-size:13px; font-weight:700; color:var(--text2); text-transform:capitalize; padding:6px 0; margin-bottom:8px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
+.gcal-day-head.today { color:var(--accent,#0a84ff); }
+.gcal-today-badge { font-size:10px; font-weight:700; background:var(--accent,#0a84ff); color:#fff; padding:2px 8px; border-radius:999px; text-transform:none; }
+.gcal-ev { display:flex; align-items:stretch; gap:12px; padding:11px 14px; margin-bottom:8px; background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:12px; transition:all .15s; }
+.gcal-ev:hover { background:rgba(255,255,255,.06); border-color:rgba(10,132,255,.3); }
+.gcal-ev-time { flex-shrink:0; width:104px; font-size:12.5px; font-weight:600; color:var(--text2); font-variant-numeric:tabular-nums; padding-top:1px; }
+.gcal-ev-bar { width:4px; border-radius:3px; flex-shrink:0; }
+.gcal-ev-main { flex:1; min-width:0; }
+.gcal-ev-title { font-weight:700; font-size:14px; color:var(--text); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gcal-ev-meta { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+.gcal-ev-loc, .gcal-ev-guests { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px; }
+.gcal-ev-actions { display:flex; gap:4px; flex-shrink:0; align-items:center; }
+.gcal-icon-btn { width:32px; height:32px; border:1px solid var(--border); background:rgba(255,255,255,.03); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--text2); text-decoration:none; transition:all .15s; }
+.gcal-icon-btn:hover { background:rgba(10,132,255,.15); border-color:rgba(10,132,255,.4); color:var(--text); }
+.gcal-icon-btn.danger:hover { background:rgba(255,69,58,.15); border-color:rgba(255,69,58,.4); color:#ff453a; }
+.gcal-empty, .gcal-loading { padding:56px 24px; text-align:center; color:var(--muted); }
+.gcal-empty p, .gcal-loading { font-size:14px; }
+.gcal-empty p { margin:10px 0 18px; }
+.gcal-connect-card { text-align:center; padding:48px 24px; background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:18px; max-width:620px; margin:20px auto; }
+@media (max-width:640px){ .gcal-ev-time { width:80px; } .gcal-cal-name { max-width:110px; } }
+</style>
+
+<script id="gcalScript">
+(function(){
+  "use strict";
+
+  var PREFS_KEY = "gcal-prefs-v1";
+  var GC = {
+    status: undefined,   // undefined = unknown | {connected, email, ...}
+    calendars: [],       // calendarList items
+    selected: new Set(), // selected calendar ids
+    events: [],          // merged events across selected calendars
+    loading: false,
+    error: null,
+    weeks: 4,
+    booted: false,
+    _statusLoading: false,
+    _connectHandled: false,
+    _editing: null,
+  };
+
+  function esc(s){ return (window.esc ? window.esc(s) : String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;")); }
+  function jsStr(s){ return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'"); }
+  function pad(n){ return String(n).padStart(2,"0"); }
+  function toDateVal(d){ return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+  function toTimeVal(d){ return pad(d.getHours())+":"+pad(d.getMinutes()); }
+  function fmtTime(d){ try { return d.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}); } catch(e){ return toTimeVal(d); } }
+  function dayKey(d){ return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+  function toast(t,a,b){ if(typeof window.toast==="function") try{ window.toast(t,a,b); }catch(e){} }
+
+  function gcalRoute(){ try { return (location.hash||"").slice(2).split("/")[0].split("?")[0]; } catch(e){ return ""; } }
+  function rerender(){ if (gcalRoute()==="googlecalendar" && typeof window.render==="function"){ try { window.render(); } catch(e){} } }
+
+  // ── Prefs (selected calendars + week range) in localStorage ──
+  function loadPrefs(){ try { return JSON.parse(localStorage.getItem(PREFS_KEY)||"{}")||{}; } catch(e){ return {}; } }
+  function savePrefs(){ try { localStorage.setItem(PREFS_KEY, JSON.stringify({ selectedCalendars:[...GC.selected], weeks:GC.weeks })); } catch(e){} }
+  GC.weeks = loadPrefs().weeks || 4;
+
+  // ── Auth header: reuse the existing cloud-sync token (if configured) ──
+  function authHeaders(){
+    var h = {};
+    try {
+      var t = window.APP && APP.state && APP.state.settings && APP.state.settings.storage && APP.state.settings.storage.authToken;
+      if (t){ var s = String(t).trim(); h["Authorization"] = s.toLowerCase().startsWith("bearer ") ? s : ("Bearer "+s); }
+    } catch(e){}
+    return h;
+  }
+
+  async function gcAuth(action){
+    var r = await fetch("/.netlify/functions/gcal-auth?action="+encodeURIComponent(action), { headers: authHeaders() });
+    var d = await r.json().catch(function(){ return {}; });
+    if (!r.ok){ var e = new Error(d.error || ("HTTP "+r.status)); e.status = r.status; e.data = d; throw e; }
+    return d;
+  }
+
+  // ── Calendar API proxy ──
+  async function gcApi(method, path, opts){
+    opts = opts || {};
+    var headers = Object.assign({ "Content-Type":"application/json" }, authHeaders());
+    var r = await fetch("/.netlify/functions/gcal-api", {
+      method:"POST", headers:headers,
+      body: JSON.stringify({ method:method, path:path, query:opts.query||null, body:opts.body||null })
+    });
+    var d = await r.json().catch(function(){ return null; });
+    if (!r.ok){ var e = new Error((d && (d.error||d.message)) || ("HTTP "+r.status)); e.status = r.status; e.data = d; throw e; }
+    return d;
+  }
+
+  // ── Event helpers ──
+  function isAllDay(ev){ return !!(ev.start && ev.start.date && !ev.start.dateTime); }
+  function evStart(ev){ var s = ev.start||{}; return s.dateTime ? new Date(s.dateTime) : (s.date ? new Date(s.date+"T00:00:00") : new Date(0)); }
+  function evEnd(ev){ var e = ev.end||{}; return e.dateTime ? new Date(e.dateTime) : (e.date ? new Date(e.date+"T00:00:00") : evStart(ev)); }
+  function calById(id){ return GC.calendars.find(function(c){ return c.id===id; }) || null; }
+  function calWritable(id){ var c = calById(id); return !!(c && (c.accessRole==="owner" || c.accessRole==="writer")); }
+
+  // ── Loaders ──
+  async function loadStatus(){
+    try { GC.status = await gcAuth("status"); }
+    catch(e){ GC.status = { connected:false, error: e.status===401 ? "Zugriff nicht autorisiert – bitte Sync-Token in den Einstellungen prüfen." : (e.message||null) }; }
+  }
+
+  function restoreSelection(){
+    var prefs = loadPrefs();
+    var ids = null;
+    if (prefs.selectedCalendars && prefs.selectedCalendars.length){
+      ids = prefs.selectedCalendars.filter(function(id){ return GC.calendars.some(function(c){ return c.id===id; }); });
+    }
+    if (!ids || !ids.length){
+      ids = GC.calendars.filter(function(c){ return c.selected || c.primary; }).map(function(c){ return c.id; });
+      if (!ids.length && GC.calendars.length) ids = [GC.calendars[0].id];
+    }
+    GC.selected = new Set(ids);
+    savePrefs();
+  }
+
+  async function loadEvents(){
+    var sel = [...GC.selected];
+    var timeMin = new Date(); timeMin.setHours(0,0,0,0);
+    var timeMax = new Date(timeMin.getTime() + GC.weeks*7*24*3600*1000);
+    var all = [];
+    await Promise.all(sel.map(async function(calId){
+      try {
+        var res = await gcApi("GET", "/calendars/"+encodeURIComponent(calId)+"/events", { query:{
+          timeMin: timeMin.toISOString(), timeMax: timeMax.toISOString(),
+          singleEvents: "true", orderBy: "startTime", maxResults: "250"
+        }});
+        var cal = calById(calId) || {};
+        (res.items||[]).forEach(function(ev){
+          if (ev.status === "cancelled") return;
+          ev._calId = calId; ev._calSummary = cal.summaryOverride||cal.summary||calId; ev._calColor = cal.backgroundColor || "#0a84ff";
+          all.push(ev);
+        });
+      } catch(e){ console.warn("[gcal] events laden fehlgeschlagen für", calId, e.message); }
+    }));
+    all.sort(function(a,b){ return evStart(a)-evStart(b); });
+    GC.events = all;
+  }
+
+  async function loadAll(){
+    GC.loading = true; GC.error = null; rerender();
+    try {
+      var list = await gcApi("GET", "/users/me/calendarList");
+      GC.calendars = (list.items||[]);
+      restoreSelection();
+      await loadEvents();
+    } catch(e){
+      if (e.status===401 || (e.data && e.data.error==="NOT_CONNECTED")){ GC.status = { connected:false }; }
+      else { GC.error = e.message || "Fehler beim Laden"; }
+    } finally {
+      GC.loading = false; GC.booted = true; rerender();
+    }
+  }
+
+  async function reloadEvents(){
+    GC.loading = true; rerender();
+    try { await loadEvents(); }
+    catch(e){ GC.error = e.message; }
+    finally { GC.loading = false; rerender(); }
+  }
+
+  // ── Rendering ──
+  function shellLoading(msg){
+    return '<div class="page-header"><div class="page-title"><h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">📆</span> Google Calendar</h2></div></div>'
+      + '<div class="gcal-loading">⏳ '+esc(msg||"Wird geladen…")+'</div>';
+  }
+
+  function shellConnect(){
+    var err = (GC.status && GC.status.error) ? '<p style="color:#ff453a;font-size:13px;margin-top:14px">'+esc(GC.status.error)+'</p>' : "";
+    return ''
+      + '<div class="page-header"><div class="page-title"><h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">📆</span> Google Calendar</h2>'
+      + '<p>Verbinde dein Google-Konto, um Termine zu sehen und vollständig zu verwalten</p></div></div>'
+      + '<div class="gcal-connect-card">'
+      +   '<div style="font-size:54px;margin-bottom:10px">📆</div>'
+      +   '<h3 style="margin:0 0 8px">Mit Google verbinden</h3>'
+      +   '<p style="color:var(--muted);max-width:470px;margin:0 auto;line-height:1.6">Du meldest dich sicher über den Google-Anmeldebildschirm an. Quantus sieht weder dein Passwort noch das Google-Secret – die Tokens werden ausschliesslich serverseitig verwaltet (Netlify Functions).</p>'
+      +   '<div style="margin-top:20px"><button class="btn primary" style="font-weight:700;padding:12px 24px;font-size:15px" onclick="gcalConnect()">🔐 Mit Google anmelden</button></div>'
+      +   err
+      + '</div>';
+  }
+
+  function renderEventItem(ev){
+    var writable = calWritable(ev._calId);
+    var time = isAllDay(ev) ? "Ganztägig" : (fmtTime(evStart(ev))+"–"+fmtTime(evEnd(ev)));
+    var color = ev._calColor || "#0a84ff";
+    var loc = ev.location ? '<span class="gcal-ev-loc">📍 '+esc(ev.location)+'</span>' : "";
+    var guests = (ev.attendees && ev.attendees.length) ? '<span class="gcal-ev-guests">👥 '+ev.attendees.length+'</span>' : "";
+    var ids = "'"+jsStr(ev._calId)+"','"+jsStr(ev.id)+"'";
+    var actions = writable
+      ? '<button class="gcal-icon-btn" title="Bearbeiten" onclick="event.stopPropagation();gcalOpenEditor('+ids+')">✏️</button>'
+        + '<button class="gcal-icon-btn danger" title="Löschen" onclick="event.stopPropagation();gcalDeleteEvent('+ids+')">🗑</button>'
+      : (ev.htmlLink ? '<a class="gcal-icon-btn" target="_blank" rel="noopener" title="In Google öffnen" href="'+esc(ev.htmlLink)+'" onclick="event.stopPropagation()">↗</a>' : "");
+    var click = writable ? (' onclick="gcalOpenEditor('+ids+')" style="cursor:pointer"') : "";
+    return '<div class="gcal-ev"'+click+'>'
+      + '<span class="gcal-ev-time">'+esc(time)+'</span>'
+      + '<span class="gcal-ev-bar" style="background:'+color+'"></span>'
+      + '<div class="gcal-ev-main"><div class="gcal-ev-title">'+esc(ev.summary||"(ohne Titel)")+'</div>'
+      +   '<div class="gcal-ev-meta"><span class="gcal-dot" style="background:'+color+'"></span><span>'+esc(ev._calSummary||"")+'</span>'+loc+guests+'</div>'
+      + '</div>'
+      + '<div class="gcal-ev-actions">'+actions+'</div>'
+      + '</div>';
+  }
+
+  function renderEventList(){
+    if (!GC.events.length){
+      return '<div class="gcal-empty"><div style="font-size:44px">📭</div><p>Keine Termine im gewählten Zeitraum.</p><button class="btn primary" onclick="gcalOpenEditor()">➕ Event erstellen</button></div>';
+    }
+    var groups = {}, order = [];
+    GC.events.forEach(function(ev){ var k = dayKey(evStart(ev)); if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(ev); });
+    var todayKey = dayKey(new Date());
+    return order.map(function(k){
+      var d = new Date(k+"T00:00:00");
+      var head = d.toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long"});
+      var isToday = k===todayKey;
+      return '<div class="gcal-day"><div class="gcal-day-head'+(isToday?" today":"")+'">'+esc(head)+(isToday?' <span class="gcal-today-badge">Heute</span>':"")+'</div>'
+        + groups[k].map(renderEventItem).join("") + '</div>';
+    }).join("");
+  }
+
+  function shellMain(){
+    var s = GC.status || {};
+    var acct = s.email ? esc(s.email) : "verbunden";
+    var calChips = GC.calendars.map(function(c){
+      var on = GC.selected.has(c.id);
+      var ro = !(c.accessRole==="owner" || c.accessRole==="writer");
+      return '<button type="button" class="gcal-cal-chip'+(on?" on":"")+'" onclick="gcalToggleCal(\''+jsStr(c.id)+'\')" title="'+esc(c.summary||c.id)+(ro?" (nur lesen)":"")+'">'
+        + '<span class="gcal-dot" style="background:'+(c.backgroundColor||"#0a84ff")+'"></span>'
+        + '<span class="gcal-cal-name">'+esc(c.summaryOverride||c.summary||c.id)+'</span>'
+        + (ro?'<span class="gcal-ro">📖</span>':"")
+        + '</button>';
+    }).join("");
+    var weeksSel = [1,2,4,8].map(function(n){ return '<button type="button" class="gcal-week-btn'+(GC.weeks===n?" on":"")+'" onclick="gcalSetWeeks('+n+')">'+n+' Wo.</button>'; }).join("");
+    var body;
+    if (GC.loading) body = '<div class="gcal-loading">⏳ Lade Termine…</div>';
+    else if (GC.error) body = '<div class="gcal-empty"><div style="font-size:44px">⚠️</div><p>'+esc(GC.error)+'</p><button class="btn primary" onclick="gcalRefresh()">Erneut versuchen</button></div>';
+    else body = renderEventList();
+    return ''
+      + '<div class="page-header"><div class="page-title">'
+      +   '<h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">📆</span> Google Calendar</h2>'
+      +   '<p>'+acct+' · '+GC.events.length+' Termine in den nächsten '+GC.weeks+' Wochen</p>'
+      + '</div><div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">'
+      +   '<button class="btn" onclick="gcalRefresh()">🔄 Aktualisieren</button>'
+      +   '<button class="btn primary" onclick="gcalOpenEditor()">➕ Neues Event</button>'
+      +   '<button class="btn" onclick="gcalDisconnect()" title="Google-Konto trennen">🔌 Trennen</button>'
+      + '</div></div>'
+      + '<div class="gcal-toolbar"><div class="gcal-cal-chips">'+(calChips||'<span style="color:var(--muted);font-size:13px">Keine Kalender gefunden</span>')+'</div><div class="gcal-weeks">'+weeksSel+'</div></div>'
+      + '<div class="gcal-body">'+body+'</div>';
+  }
+
+  // ── Main view entry (called by the router) ──
+  window.viewGoogleCalendar = function(){
+    // Handle the post-OAuth bounce (?gcal=connected before the hash).
+    try {
+      var q = new URLSearchParams(location.search);
+      if (q.get("gcal")==="connected" && !GC._connectHandled){
+        GC._connectHandled = true;
+        GC.status = undefined; GC.booted = false;
+        try { history.replaceState(null, "", location.pathname + location.hash); } catch(e){}
+        toast("ok","Verbunden","Google-Kalender erfolgreich verbunden");
+      }
+    } catch(e){}
+
+    if (GC.status === undefined){
+      if (!GC._statusLoading){
+        GC._statusLoading = true;
+        loadStatus().then(function(){ GC._statusLoading = false; rerender(); });
+      }
+      return shellLoading("Verbindung wird geprüft…");
+    }
+    if (!GC.status.connected) return shellConnect();
+    if (!GC.booted && !GC.loading){ loadAll(); }
+    return shellMain();
+  };
+
+  // ── Actions (global handlers used in onclick) ──
+  window.gcalConnect = function(){ window.location.href = "/.netlify/functions/gcal-auth?action=login"; };
+
+  window.gcalDisconnect = async function(){
+    if (!confirm("Google-Konto trennen? Die gespeicherten Tokens werden serverseitig gelöscht.")) return;
+    try { await gcAuth("logout"); } catch(e){}
+    GC.status = { connected:false }; GC.events = []; GC.calendars = []; GC.selected = new Set(); GC.booted = false;
+    toast("ok","Getrennt","Google-Konto wurde getrennt");
+    rerender();
+  };
+
+  window.gcalRefresh = function(){ loadAll(); };
+
+  window.gcalToggleCal = function(id){
+    if (GC.selected.has(id)) GC.selected.delete(id); else GC.selected.add(id);
+    savePrefs(); reloadEvents();
+  };
+
+  window.gcalSetWeeks = function(n){ GC.weeks = n; savePrefs(); reloadEvents(); };
+
+  window.gcalToggleAllDay = function(){
+    var a = document.getElementById("gcalEvAllDay"); if (!a) return;
+    var on = a.checked;
+    var st = document.getElementById("gcalStartTimeWrap"), et = document.getElementById("gcalEndTimeWrap");
+    if (st) st.style.display = on ? "none" : "";
+    if (et) et.style.display = on ? "none" : "";
+  };
+
+  window.gcalOpenEditor = function(calId, eventId){
+    var ev = null;
+    if (eventId){ ev = GC.events.find(function(e){ return e.id===eventId && e._calId===calId; }) || null; }
+    var forEdit = !!ev;
+    GC._editing = ev ? { calId: ev._calId, eventId: ev.id } : null;
+
+    var writable = GC.calendars.filter(function(c){ return c.accessRole==="owner" || c.accessRole==="writer"; });
+    if (!forEdit && !writable.length){ toast("err","Nicht möglich","Kein beschreibbarer Kalender vorhanden."); return; }
+
+    var title="", loc="", desc="", guests="", allDay=false, sDate, sTime, eDate, eTime;
+    if (ev){
+      title = ev.summary||""; loc = ev.location||""; desc = ev.description||"";
+      guests = (ev.attendees||[]).map(function(a){ return a.email; }).filter(Boolean).join(", ");
+      allDay = isAllDay(ev);
+      var s = evStart(ev), e = evEnd(ev);
+      sDate = toDateVal(s); sTime = toTimeVal(s);
+      if (allDay){ var eIncl = new Date(e.getTime()-24*3600*1000); eDate = toDateVal(eIncl); eTime = "10:00"; }
+      else { eDate = toDateVal(e); eTime = toTimeVal(e); }
+    } else {
+      var ns = new Date(); ns.setMinutes(0,0,0); ns.setHours(ns.getHours()+1);
+      var ne = new Date(ns.getTime()+60*60*1000);
+      sDate = toDateVal(ns); sTime = toTimeVal(ns); eDate = toDateVal(ne); eTime = toTimeVal(ne);
+    }
+
+    var defCal = forEdit ? ev._calId : ((writable.find(function(c){ return c.primary; })||writable[0]||{}).id);
+    var calSource = forEdit ? [calById(ev._calId)||{ id:ev._calId, summary:ev._calSummary }] : writable;
+    var calOptions = calSource.map(function(c){ return '<option value="'+esc(c.id)+'"'+(c.id===defCal?" selected":"")+'>'+esc(c.summaryOverride||c.summary||c.id)+'</option>'; }).join("");
+
+    var inp = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"';
+    function field(label, inner){ return '<label style="display:block;margin-bottom:12px"><span style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600">'+label+'</span>'+inner+'</label>'; }
+
+    var html = ""
+      + field("Titel *", '<input id="gcalEvTitle" type="text" '+inp+' value="'+esc(title)+'" placeholder="Worum geht es?">')
+      + '<label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer"><input id="gcalEvAllDay" type="checkbox" '+(allDay?"checked":"")+' onchange="gcalToggleAllDay()"> <span style="font-size:13px">Ganztägig</span></label>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+      +   field("Beginn", '<input id="gcalEvStartDate" type="date" '+inp+' value="'+sDate+'">')
+      +   '<div id="gcalStartTimeWrap">'+field("Startzeit", '<input id="gcalEvStartTime" type="time" '+inp+' value="'+sTime+'">')+'</div>'
+      +   field("Ende", '<input id="gcalEvEndDate" type="date" '+inp+' value="'+eDate+'">')
+      +   '<div id="gcalEndTimeWrap">'+field("Endzeit", '<input id="gcalEvEndTime" type="time" '+inp+' value="'+eTime+'">')+'</div>'
+      + '</div>'
+      + field("Kalender", '<select id="gcalEvCal" '+inp+(forEdit?" disabled":"")+'>'+calOptions+'</select>')
+      + field("Ort", '<input id="gcalEvLocation" type="text" '+inp+' value="'+esc(loc)+'" placeholder="Adresse oder Ort (optional)">')
+      + field("Beschreibung", '<textarea id="gcalEvDesc" rows="3" '+inp+' placeholder="Notizen (optional)">'+esc(desc)+'</textarea>')
+      + field("Gäste", '<input id="gcalEvGuests" type="text" '+inp+' value="'+esc(guests)+'" placeholder="email1@x.com, email2@y.com (optional)">')
+      + '<label style="display:flex;align-items:center;gap:8px;margin-top:2px;cursor:pointer"><input id="gcalEvNotify" type="checkbox" checked> <span style="font-size:13px">Gäste per E-Mail benachrichtigen</span></label>';
+
+    var footer = '<button class="btn" onclick="closeModal()">Abbrechen</button>'
+      + '<button id="gcalSaveBtn" class="btn primary" onclick="gcalSaveEvent()">'+(forEdit?"Speichern":"Erstellen")+'</button>';
+
+    if (typeof window.openModal === "function"){
+      window.openModal(forEdit ? "✏️ Event bearbeiten" : "➕ Neues Event", html, footer);
+      window.gcalToggleAllDay();
+    }
+  };
+
+  function readForm(){
+    var g = function(id){ return document.getElementById(id); };
+    var title = (g("gcalEvTitle").value||"").trim();
+    if (!title) return { error:"Bitte einen Titel eingeben." };
+    var allDay = g("gcalEvAllDay").checked;
+    var sDate = g("gcalEvStartDate").value;
+    var eDate = g("gcalEvEndDate").value || sDate;
+    if (!sDate) return { error:"Bitte ein Startdatum wählen." };
+    var loc = (g("gcalEvLocation").value||"").trim();
+    var desc = g("gcalEvDesc").value||"";
+    var notify = g("gcalEvNotify") ? g("gcalEvNotify").checked : false;
+    var calSel = g("gcalEvCal");
+    var calId = calSel ? calSel.value : null;
+    var attendees = (g("gcalEvGuests").value||"").split(/[\s,;]+/).map(function(x){ return x.trim(); })
+      .filter(Boolean).filter(function(e){ return /.+@.+\..+/.test(e); }).map(function(e){ return { email:e }; });
+
+    var start, end;
+    if (allDay){
+      start = { date: sDate };
+      var ed = new Date(eDate+"T00:00:00"); ed.setDate(ed.getDate()+1); // Google end.date is exclusive
+      end = { date: toDateVal(ed) };
+    } else {
+      var sTime = g("gcalEvStartTime").value, eTime = g("gcalEvEndTime").value;
+      if (!sTime || !eTime) return { error:"Bitte Start- und Endzeit angeben." };
+      var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      var startDt = sDate+"T"+sTime+":00", endDt = eDate+"T"+eTime+":00";
+      if (new Date(endDt) <= new Date(startDt)) return { error:"Das Ende muss nach dem Beginn liegen." };
+      start = { dateTime: startDt, timeZone: tz };
+      end = { dateTime: endDt, timeZone: tz };
+    }
+    var resource = { summary:title, location:loc, description:desc, start:start, end:end };
+    if (attendees.length) resource.attendees = attendees;
+    return { resource:resource, calId:calId, notify:notify };
+  }
+
+  window.gcalSaveEvent = async function(){
+    var f = readForm();
+    if (f.error){ toast("err","Ungültige Eingabe", f.error); return; }
+    var btn = document.getElementById("gcalSaveBtn");
+    if (btn){ btn.disabled = true; btn.textContent = "Speichert…"; }
+    try {
+      var editing = GC._editing;
+      var query = { sendUpdates: f.notify ? "all" : "none" };
+      if (editing && editing.eventId){
+        await gcApi("PATCH", "/calendars/"+encodeURIComponent(editing.calId)+"/events/"+encodeURIComponent(editing.eventId), { query:query, body:f.resource });
+        toast("ok","Gespeichert","Event wurde aktualisiert");
+      } else {
+        await gcApi("POST", "/calendars/"+encodeURIComponent(f.calId)+"/events", { query:query, body:f.resource });
+        toast("ok","Erstellt","Event wurde erstellt");
+      }
+      if (typeof window.closeModal === "function") window.closeModal();
+      GC._editing = null;
+      await reloadEvents();
+    } catch(e){
+      toast("err","Fehler", e.message || "Speichern fehlgeschlagen");
+      if (btn){ btn.disabled = false; btn.textContent = (GC._editing && GC._editing.eventId) ? "Speichern" : "Erstellen"; }
+    }
+  };
+
+  window.gcalDeleteEvent = async function(calId, eventId){
+    if (!confirm("Dieses Event wirklich löschen?")) return;
+    try {
+      await gcApi("DELETE", "/calendars/"+encodeURIComponent(calId)+"/events/"+encodeURIComponent(eventId), { query:{ sendUpdates:"all" } });
+      toast("ok","Gelöscht","Event wurde gelöscht");
+      await reloadEvents();
+    } catch(e){
+      toast("err","Fehler", e.message || "Löschen fehlgeschlagen");
+    }
+  };
+
 })();
 </script>
 
