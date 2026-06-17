@@ -10,7 +10,11 @@
 //    path   : e.g. "/users/me/calendarList"
 //             "/calendars/<encodedId>/events"
 //             "/calendars/<encodedId>/events/<encodedEventId>"
-//    query  : object of query params (timeMin, timeMax, sendUpdates, …)
+//             "/calendars/<encodedId>/events/<encodedEventId>/move"
+//             "/calendars/<encodedId>/events/<encodedEventId>/instances"
+//             "/calendars/<encodedId>/events/quickAdd"
+//             "/freeBusy"   "/colors"
+//    query  : object of query params (timeMin, timeMax, sendUpdates, destination, …)
 //    body   : JSON body for POST/PUT/PATCH
 // ============================================================================
 import {
@@ -20,7 +24,10 @@ import {
 const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 // Whitelist of Calendar API paths we are willing to proxy (calendar ids and
 // event ids are URL-encoded by the frontend, so they contain no raw slashes).
-const ALLOWED_PATH = /^\/(users\/me\/calendarList(\/[^/?#]+)?|calendars\/[^/?#]+(\/events(\/[^/?#]+)?)?|colors)$/;
+// Besides the basic calendarList/events/colors routes this also allows the
+// per-event sub-actions move + instances (and the events/quickAdd shortcut,
+// which matches the generic /events/<id> form) plus the top-level /freeBusy.
+const ALLOWED_PATH = /^\/(users\/me\/calendarList(\/[^/?#]+)?|calendars\/[^/?#]+(\/events(\/[^/?#]+(\/(move|instances))?)?)?|freeBusy|colors)$/;
 
 async function callGoogle(method, fullUrl, bodyObj, token) {
   const init = {
