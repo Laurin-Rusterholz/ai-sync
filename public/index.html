@@ -15209,6 +15209,7 @@ function getAllApps() {
     {key:"handbook", icon:"📖", label:"Handbuch", desc:getLang()==="de"?"Übersicht aller Apps mit eigenen Notizen & Arbeitsbeschreibungen":"Overview of all apps with personal notes & workflows"},
     {key:"passwordmanager", icon:"🔐", label:"Password Manager", desc:getLang()==="de"?"Sichere Passwörter speichern, generieren & verwalten":"Securely store, generate & manage passwords"},
     {key:"googlecalendar", icon:"📆", label:"Google Calendar", desc:getLang()==="de"?"Google-Kalender anzeigen, Events erstellen, bearbeiten & löschen":"View Google Calendar, create, edit & delete events"},
+    {key:"gmail", icon:"📧", label:"Gmail", desc:getLang()==="de"?"Gmail-Posteingang lesen, schreiben, antworten & verwalten":"Read, compose, reply to & manage your Gmail inbox"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -15575,6 +15576,7 @@ function renderMain() {
     case "journal": openJournalBooklet(); return;
     case "passwordmanager": html = viewPasswordManager(); break;
     case "googlecalendar": html = (typeof viewGoogleCalendar === "function" ? viewGoogleCalendar() : '<div style="padding:40px;text-align:center">Lade Google Calendar…</div>'); break;
+    case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
     case "settings": { openSettings(); return; }
 
     default: {
@@ -94687,6 +94689,535 @@ console.log('📚 Leseliste geladen');
     if (changed && gcalRoute()==="googlecalendar"){ try { reloadEvents(); } catch(e){} }
     return out;
   };
+
+})();
+</script>
+
+<style id="gmailStyles">
+/* ═══ Gmail-App — Namespace gml-* ═══ */
+.gml-connect-card { text-align:center; padding:48px 24px; background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:18px; max-width:620px; margin:20px auto; }
+.gml-empty, .gml-loading { padding:48px 24px; text-align:center; color:var(--muted); font-size:14px; }
+.gml-empty p { margin:10px 0 18px; }
+
+.gml-searchbar { display:flex; gap:8px; align-items:center; margin:4px 0 14px; }
+.gml-search { flex:1; background:var(--panel2); border:1px solid var(--border); color:var(--text); padding:10px 14px; border-radius:11px; font-size:13.5px; box-sizing:border-box; }
+.gml-search:focus { outline:none; border-color:var(--accent); }
+
+.gml-layout { display:grid; grid-template-columns:212px 1fr; gap:16px; align-items:start; }
+.gml-sidebar { display:flex; flex-direction:column; gap:2px; position:sticky; top:8px; }
+.gml-label { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:8px 11px; border:none; background:transparent; color:var(--text2); border-radius:9px; cursor:pointer; font-size:13.5px; transition:background .12s; }
+.gml-label:hover { background:rgba(255,255,255,.05); color:var(--text); }
+.gml-label.on { background:var(--accent); color:#fff; font-weight:600; }
+.gml-label-ic { width:18px; text-align:center; flex-shrink:0; }
+.gml-label-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gml-badge { font-size:11px; font-weight:700; background:rgba(255,255,255,.14); color:inherit; padding:1px 7px; border-radius:999px; flex-shrink:0; }
+.gml-label.on .gml-badge { background:rgba(255,255,255,.28); }
+.gml-label-sep { font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; padding:12px 11px 5px; }
+
+.gml-main { min-width:0; border:1px solid var(--border); border-radius:14px; background:var(--panel); overflow:hidden; }
+.gml-listhead { display:flex; align-items:center; justify-content:space-between; padding:11px 16px; border-bottom:1px solid var(--border); font-weight:700; font-size:13.5px; color:var(--text); }
+.gml-listcount { font-size:11.5px; color:var(--muted); font-weight:600; }
+.gml-list { display:flex; flex-direction:column; }
+.gml-row { display:flex; align-items:baseline; gap:12px; padding:11px 16px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .1s; }
+.gml-row:last-child { border-bottom:none; }
+.gml-row:hover { background:rgba(255,255,255,.04); }
+.gml-row.unread { background:rgba(10,132,255,.05); }
+.gml-row-who { flex-shrink:0; width:172px; font-size:13.5px; color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gml-row.unread .gml-row-who { color:var(--text); font-weight:700; }
+.gml-row-star { margin-right:5px; }
+.gml-row-mid { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px; }
+.gml-row-subj { color:var(--text2); }
+.gml-row.unread .gml-row-subj { color:var(--text); font-weight:700; }
+.gml-row-snip { color:var(--muted); }
+.gml-row-date { flex-shrink:0; width:78px; text-align:right; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.gml-row.unread .gml-row-date { color:var(--text2); font-weight:600; }
+
+.gml-msgtop { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:11px 16px; border-bottom:1px solid var(--border); }
+.gml-msghead { padding:16px 18px 6px; }
+.gml-subject { font-size:19px; font-weight:700; color:var(--text); margin:0 0 14px; line-height:1.3; }
+.gml-msgmeta { display:flex; align-items:flex-start; gap:12px; }
+.gml-avatar { width:40px; height:40px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:17px; flex-shrink:0; }
+.gml-msgfrom { flex:1; min-width:0; }
+.gml-fromname { font-size:14px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; }
+.gml-fromaddr { font-weight:400; color:var(--muted); font-size:12.5px; }
+.gml-addr { font-size:12.5px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; }
+.gml-addr span { color:var(--text2); font-weight:600; }
+.gml-msgdate { font-size:12px; color:var(--muted); flex-shrink:0; text-align:right; max-width:200px; }
+.gml-bodywrap { padding:6px 18px 20px; }
+.gml-bodyframe { width:100%; border:none; background:#fff; border-radius:10px; min-height:240px; display:block; }
+@media (max-width:820px){
+  .gml-layout { grid-template-columns:1fr; }
+  .gml-sidebar { flex-direction:row; flex-wrap:wrap; position:static; gap:4px; }
+  .gml-label { width:auto; }
+  .gml-label-sep { width:100%; padding:6px 6px 2px; }
+  .gml-row-who { width:120px; }
+  .gml-row-date { width:56px; }
+  .gml-msgmeta { flex-wrap:wrap; }
+}
+</style>
+
+<script id="gmailScript">
+(function(){
+  "use strict";
+
+  // ── State ──
+  var GM = {
+    status: undefined,        // undefined = unknown | { connected, gmail, email, scope, ... }
+    profile: null,            // { emailAddress, messagesTotal, threadsTotal }
+    labels: [],               // users.labels.list result
+    selectedLabel: "INBOX",
+    query: "",                // free-text search (overrides label when set)
+    messages: [],             // hydrated metadata rows for the current list
+    nextPageToken: null,
+    listLoading: false,
+    listError: null,
+    open: null,               // currently opened full message
+    openLoading: false,
+    booted: false,
+    _statusLoading: false,
+    _connectHandled: false,
+    _composeBusy: false,
+    _composeCtx: null,
+  };
+
+  var SYS_LABELS = [
+    { id:"INBOX",     icon:"📥", name:"Posteingang" },
+    { id:"STARRED",   icon:"⭐", name:"Markiert" },
+    { id:"IMPORTANT", icon:"❗", name:"Wichtig" },
+    { id:"SENT",      icon:"📤", name:"Gesendet" },
+    { id:"DRAFT",     icon:"📝", name:"Entwürfe" },
+    { id:"SPAM",      icon:"🚫", name:"Spam" },
+    { id:"TRASH",     icon:"🗑", name:"Papierkorb" },
+  ];
+
+  // ── Small helpers (mirror the calendar module) ──
+  function esc(s){ return (window.esc ? window.esc(s) : String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;")); }
+  function jsStr(s){ return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'"); }
+  function toast(t,a,b){ if(typeof window.toast==="function") try{ window.toast(t,a,b); }catch(e){} }
+  function gmRoute(){ try { return (location.hash||"").slice(2).split("/")[0].split("?")[0]; } catch(e){ return ""; } }
+  function rerender(){ if (gmRoute()==="gmail" && typeof window.render==="function"){ try { window.render(); } catch(e){} } }
+  function authHeaders(){ var h={}; try { var t=window.APP&&APP.state&&APP.state.settings&&APP.state.settings.storage&&APP.state.settings.storage.authToken; if(t){ var s=String(t).trim(); h["Authorization"]=s.toLowerCase().startsWith("bearer ")?s:("Bearer "+s);} }catch(e){} return h; }
+
+  // ── Auth (shared gcal-auth endpoint) + Gmail proxy ──
+  async function gmAuthCall(action){
+    var r = await fetch("/.netlify/functions/gcal-auth?action="+encodeURIComponent(action), { headers: authHeaders() });
+    var d = await r.json().catch(function(){ return {}; });
+    if (!r.ok){ var e=new Error(d.error||("HTTP "+r.status)); e.status=r.status; e.data=d; throw e; }
+    return d;
+  }
+  async function gmApi(method, path, opts){
+    opts = opts||{};
+    var headers = Object.assign({ "Content-Type":"application/json" }, authHeaders());
+    var r = await fetch("/.netlify/functions/gmail-api", { method:"POST", headers:headers, body: JSON.stringify({ method:method, path:path, query:opts.query||null, body:opts.body||null }) });
+    var d = await r.json().catch(function(){ return null; });
+    if (!r.ok){ var e=new Error((d&&(d.error||d.message))||("HTTP "+r.status)); e.status=r.status; e.data=d; throw e; }
+    return d;
+  }
+
+  function hasGmailScope(st){ return !!(st && st.scope && /gmail/i.test(st.scope)); }
+  async function loadStatus(){
+    try { var st = await gmAuthCall("status"); st.gmail = hasGmailScope(st); GM.status = st; }
+    catch(e){ GM.status = { connected:false, error: e.status===401 ? "Zugriff nicht autorisiert – bitte Sync-Token in den Einstellungen prüfen." : (e.message||null) }; }
+  }
+
+  // ── Loaders ──
+  async function loadProfile(){ try { GM.profile = await gmApi("GET","/users/me/profile"); } catch(e){ GM.profile=null; } }
+  async function loadLabels(){ try { var r = await gmApi("GET","/users/me/labels"); GM.labels = (r.labels||[]); } catch(e){ GM.labels=[]; } rerender(); }
+
+  async function loadMessages(reset){
+    GM.listLoading = true; GM.listError = null;
+    if (reset){ GM.messages=[]; GM.nextPageToken=null; }
+    rerender();
+    try {
+      var query = { maxResults:"25" };
+      if (GM.query && GM.query.trim()) query.q = GM.query.trim();
+      else query.labelIds = [GM.selectedLabel];
+      if (!reset && GM.nextPageToken) query.pageToken = GM.nextPageToken;
+      var list = await gmApi("GET","/users/me/messages", { query: query });
+      GM.nextPageToken = list.nextPageToken || null;
+      var ids = (list.messages||[]).map(function(m){ return m.id; });
+      var metas = await Promise.all(ids.map(function(id){
+        return gmApi("GET","/users/me/messages/"+encodeURIComponent(id), { query:{ format:"metadata", metadataHeaders:["From","To","Cc","Subject","Date"] } }).catch(function(){ return null; });
+      }));
+      var rows = metas.filter(Boolean).map(parseMeta);
+      GM.messages = reset ? rows : GM.messages.concat(rows);
+    } catch(e){
+      if (e.status===401 || (e.data && e.data.error==="NOT_CONNECTED")){ GM.status={connected:false}; }
+      else { GM.listError = e.message||"Fehler beim Laden"; }
+    } finally { GM.listLoading=false; GM.booted=true; rerender(); }
+  }
+
+  async function openMessageById(id){
+    GM.open = null; GM.openLoading = true; rerender();
+    try {
+      var msg = await gmApi("GET","/users/me/messages/"+encodeURIComponent(id), { query:{ format:"full" } });
+      var h = headerMap(msg.payload);
+      var bodies = extractBodies(msg.payload);
+      var wasUnread = (msg.labelIds||[]).indexOf("UNREAD")>=0;
+      GM.open = {
+        id: msg.id, threadId: msg.threadId, labelIds: msg.labelIds||[], unread: wasUnread,
+        from: h.from||"", to: h.to||"", cc: h.cc||"", subject: h.subject||"(kein Betreff)",
+        internalDate: parseInt(msg.internalDate||"0",10) || Date.parse(h.date||"") || 0,
+        messageId: h["message-id"]||"", references: h.references||"",
+        html: bodies.html, text: bodies.text,
+      };
+      if (wasUnread) markReadById(msg.id, true, true); // auto-mark read on open
+    } catch(e){ GM.open = { error: e.message||"Nachricht konnte nicht geladen werden" }; }
+    finally { GM.openLoading=false; rerender(); }
+  }
+
+  function adjustUnreadCounts(labelIds, delta){
+    (labelIds||[]).forEach(function(lid){
+      if (lid==="UNREAD") return;
+      var l = GM.labels.find(function(x){ return x.id===lid; });
+      if (l && typeof l.messagesUnread==="number") l.messagesUnread = Math.max(0, l.messagesUnread + delta);
+    });
+  }
+  async function markReadById(id, read, silent){
+    var src = GM.messages.find(function(m){ return m.id===id; }) || ((GM.open&&GM.open.id===id)?GM.open:null);
+    var msgLabels = (src && src.labelIds) ? src.labelIds.slice() : [];
+    var wasUnread = msgLabels.indexOf("UNREAD")>=0;
+    try {
+      await gmApi("POST","/users/me/messages/"+encodeURIComponent(id)+"/modify", { body: read ? { removeLabelIds:["UNREAD"] } : { addLabelIds:["UNREAD"] } });
+      var row = GM.messages.find(function(m){ return m.id===id; });
+      if (row){ row.unread=!read; row.labelIds = read ? row.labelIds.filter(function(l){return l!=="UNREAD";}) : (row.labelIds.indexOf("UNREAD")<0 ? row.labelIds.concat(["UNREAD"]) : row.labelIds); }
+      if (GM.open && GM.open.id===id) GM.open.unread = !read;
+      // Update unread badges locally (no labels.list refetch) — only when the
+      // UNREAD state actually flipped, so counts can't drift.
+      if (read && wasUnread) adjustUnreadCounts(msgLabels, -1);
+      else if (!read && !wasUnread) adjustUnreadCounts(msgLabels, +1);
+      if (!silent) toast("ok", read?"Als gelesen markiert":"Als ungelesen markiert", "");
+      rerender();
+    } catch(e){ if(!silent) toast("err","Fehler", e.message||"Status konnte nicht geändert werden"); }
+  }
+
+  // ── Parsing / formatting ──
+  function headerMap(payload){ var m={}; ((payload&&payload.headers)||[]).forEach(function(h){ if(h&&h.name) m[h.name.toLowerCase()] = h.value; }); return m; }
+  function parseMeta(msg){
+    var h = headerMap(msg.payload), labels = msg.labelIds||[];
+    return {
+      id: msg.id, threadId: msg.threadId, labelIds: labels,
+      unread: labels.indexOf("UNREAD")>=0, starred: labels.indexOf("STARRED")>=0,
+      snippet: decodeEntities(msg.snippet||""),
+      from: h.from||"", to: h.to||"", cc: h.cc||"", subject: h.subject||"(kein Betreff)",
+      internalDate: parseInt(msg.internalDate||"0",10) || Date.parse(h.date||"") || 0,
+    };
+  }
+  function decodeEntities(s){ try { var d=new DOMParser().parseFromString(String(s),"text/html"); return d.body.textContent||s; } catch(e){ return s; } }
+  function parseAddr(s){ s=String(s||"").trim(); var m=/^(.*?)\s*<([^>]+)>\s*$/.exec(s); if(m){ var n=m[1].trim().replace(/^"|"$/g,""); return { name:n||m[2], email:m[2] }; } return { name:s, email:s }; }
+  function splitAddrs(s){ return String(s||"").split(",").map(function(x){ return parseAddr(x.trim()); }).filter(function(a){ return a.email; }); }
+
+  function fmtDate(ms){
+    if (!ms) return "";
+    var d=new Date(ms), now=new Date();
+    try {
+      if (d.toDateString()===now.toDateString()) return d.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"});
+      if (new Date(now.getTime()-86400000).toDateString()===d.toDateString()) return "Gestern";
+      if (d.getFullYear()===now.getFullYear()) return d.toLocaleDateString("de-DE",{day:"numeric",month:"short"});
+      return d.toLocaleDateString("de-DE",{day:"numeric",month:"short",year:"numeric"});
+    } catch(e){ return ""; }
+  }
+  function fmtDateFull(ms){ if(!ms) return ""; try { return new Date(ms).toLocaleString("de-DE",{weekday:"short",day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"}); } catch(e){ return ""; } }
+
+  // ── Body extraction (base64url decode, recursive walk) ──
+  function b64urlDecode(data){
+    if (!data) return "";
+    var s=String(data).replace(/-/g,"+").replace(/_/g,"/"); while (s.length%4) s+="=";
+    try { return decodeURIComponent(escape(window.atob(s))); } catch(e){ try { return window.atob(s); } catch(_){ return ""; } }
+  }
+  function extractBodies(payload){
+    var out={ html:"", text:"" };
+    (function walk(p){
+      if (!p) return;
+      var mime=(p.mimeType||"").toLowerCase();
+      if (p.body && p.body.data){
+        if (mime==="text/html" && !out.html) out.html=b64urlDecode(p.body.data);
+        else if (mime==="text/plain" && !out.text) out.text=b64urlDecode(p.body.data);
+      }
+      if (p.parts && p.parts.length) p.parts.forEach(walk);
+    })(payload);
+    return out;
+  }
+  function htmlToText(html){ if(!html) return ""; try { var doc=new DOMParser().parseFromString(String(html),"text/html"); doc.querySelectorAll("script,style").forEach(function(n){ n.remove(); }); return (doc.body.textContent||"").replace(/\n{3,}/g,"\n\n").trim(); } catch(e){ return ""; } }
+
+  // ── Safe HTML rendering: sandboxed, script-disabled iframe ──
+  function bodyIframe(html, text){
+    var content;
+    if (html && html.trim()){
+      var safe = String(html).replace(/<script[\s\S]*?<\/script>/gi,""); // defence-in-depth; sandbox already blocks JS
+      content = '<!doctype html><html><head><meta charset="utf-8">'
+        + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src http: https: data: cid:; style-src \'unsafe-inline\' http: https:; font-src http: https: data:; script-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">'
+        + '<base target="_blank">'
+        + '<style>html,body{margin:0;padding:14px;background:#fff;color:#111;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.5;overflow-wrap:anywhere}img{max-width:100%;height:auto}a{color:#0a66ff}table{max-width:100%}</style>'
+        + '</head><body>'+safe+'</body></html>';
+    } else {
+      content = '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'none\'; style-src \'unsafe-inline\'"><base target="_blank">'
+        + '<style>html,body{margin:0;padding:14px;background:#fff;color:#111;font-family:-apple-system,system-ui,sans-serif;font-size:14px;line-height:1.55}a{color:#0a66ff}</style>'
+        + '</head><body><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;margin:0">'+esc(text||"(Kein Textinhalt)")+'</pre></body></html>';
+    }
+    // sandbox WITHOUT allow-scripts → e-mail JS can never run. allow-same-origin
+    // is granted only so our own onload handler can auto-size the frame; without
+    // allow-scripts the e-mail itself still cannot read cookies or storage.
+    return '<iframe class="gml-bodyframe" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" onload="gmailFitFrame(this)" srcdoc="'+esc(content)+'"></iframe>';
+  }
+  window.gmailFitFrame = function(frame){
+    try {
+      var doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+      if (!doc) return;
+      var h = Math.max(doc.body?doc.body.scrollHeight:0, doc.documentElement?doc.documentElement.scrollHeight:0);
+      frame.style.height = Math.min(Math.max(h+28, 240), 20000) + "px";
+    } catch(e){ frame.style.height = "70vh"; }
+  };
+
+  // ── Rendering ──
+  function titleHeader(){ return '<div class="page-header"><div class="page-title"><h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">📧</span> Gmail</h2><p>Dein Gmail-Posteingang in Quantus</p></div></div>'; }
+  function shellLoading(msg){ return titleHeader() + '<div class="gml-loading">⏳ '+esc(msg||"Wird geladen…")+'</div>'; }
+
+  function shellConnect(){
+    var st = GM.status||{};
+    var connectedNoScope = !!st.connected && !st.gmail;
+    var err = st.error ? '<p style="color:#ff453a;font-size:13px;margin-top:14px">'+esc(st.error)+'</p>' : "";
+    var heading = connectedNoScope ? "Gmail-Zugriff freischalten" : "Mit Google verbinden";
+    var lead = connectedNoScope
+      ? "Dein Google-Konto ist bereits verbunden, aber Quantus hat noch keine Gmail-Berechtigung. Bestätige den Zugriff einmal – dein Google Calendar bleibt dabei verbunden."
+      : "Du meldest dich sicher über den Google-Anmeldebildschirm an. Quantus sieht weder dein Passwort noch das Google-Secret – die Tokens werden ausschliesslich serverseitig verwaltet (Netlify Functions).";
+    var btn = connectedNoScope ? "🔓 Gmail-Zugriff freischalten" : "🔐 Mit Google anmelden";
+    return titleHeader()
+      + '<div class="gml-connect-card">'
+      +   '<div style="font-size:54px;margin-bottom:10px">📧</div>'
+      +   '<h3 style="margin:0 0 8px">'+esc(heading)+'</h3>'
+      +   '<p style="color:var(--muted);max-width:480px;margin:0 auto;line-height:1.6">'+esc(lead)+'</p>'
+      +   '<div style="margin-top:20px"><button class="btn primary" style="font-weight:700;padding:12px 24px;font-size:15px" onclick="gmailConnect()">'+btn+'</button></div>'
+      +   err
+      + '</div>';
+  }
+
+  function labelName(id){ var s=SYS_LABELS.find(function(l){return l.id===id;}); if(s) return s.name; var u=GM.labels.find(function(l){return l.id===id;}); return (u&&u.name)||id; }
+  var NO_UNREAD_BADGE = { SENT:1, DRAFT:1, TRASH:1, SPAM:1 }; // an "unread" count is meaningless / misleading on these
+  function renderLabelList(){
+    function unreadOf(id){ if (NO_UNREAD_BADGE[id]) return 0; var l=GM.labels.find(function(x){return x.id===id;}); return (l && l.messagesUnread) || 0; }
+    function item(id,icon,name){
+      var active=(!GM.query && GM.selectedLabel===id);
+      var u=unreadOf(id);
+      return '<button class="gml-label'+(active?" on":"")+'" onclick="gmailSelectLabel(\''+jsStr(id)+'\')"><span class="gml-label-ic">'+icon+'</span><span class="gml-label-name">'+esc(name)+'</span>'+(u?'<span class="gml-badge">'+u+'</span>':'')+'</button>';
+    }
+    var html = SYS_LABELS.map(function(l){ return item(l.id,l.icon,l.name); }).join("");
+    var userLabels = GM.labels.filter(function(l){ return l.type==="user"; }).sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
+    if (userLabels.length){
+      html += '<div class="gml-label-sep">Labels</div>';
+      html += userLabels.map(function(l){ return item(l.id,"🏷️",l.name); }).join("");
+    }
+    return html;
+  }
+
+  function renderRow(m){
+    var sentView = (!GM.query && (GM.selectedLabel==="SENT" || GM.selectedLabel==="DRAFT"));
+    var a = parseAddr(sentView ? m.to : m.from);
+    var who = (sentView?"An: ":"") + esc(a.name||a.email||"(unbekannt)");
+    var star = m.starred ? '<span class="gml-row-star">⭐</span>' : '';
+    return '<div class="gml-row'+(m.unread?" unread":"")+'" onclick="gmailOpenMessage(\''+jsStr(m.id)+'\')">'
+      + '<div class="gml-row-who">'+star+who+'</div>'
+      + '<div class="gml-row-mid"><span class="gml-row-subj">'+esc(m.subject||"(kein Betreff)")+'</span> <span class="gml-row-snip">'+(m.snippet?"– "+esc(m.snippet):"")+'</span></div>'
+      + '<div class="gml-row-date">'+esc(fmtDate(m.internalDate))+'</div>'
+      + '</div>';
+  }
+
+  function renderListPane(){
+    if (GM.listLoading && !GM.messages.length) return '<div class="gml-loading">⏳ Lade Nachrichten…</div>';
+    if (GM.listError) return '<div class="gml-empty"><div style="font-size:44px">⚠️</div><p>'+esc(GM.listError)+'</p><button class="btn primary" onclick="gmailRefresh()">Erneut versuchen</button></div>';
+    var title = GM.query ? ('Suche: '+esc(GM.query)) : esc(labelName(GM.selectedLabel));
+    var head = '<div class="gml-listhead"><span>'+title+'</span><span class="gml-listcount">'+GM.messages.length+(GM.nextPageToken?"+":"")+' Nachrichten</span></div>';
+    if (!GM.messages.length) return head + '<div class="gml-empty"><div style="font-size:44px">📭</div><p>Keine Nachrichten gefunden.</p></div>';
+    var more = GM.nextPageToken ? '<div style="text-align:center;padding:14px"><button class="btn" onclick="gmailLoadMore()"'+(GM.listLoading?" disabled":"")+'>'+(GM.listLoading?"Lädt…":"Mehr laden")+'</button></div>' : "";
+    return head + '<div class="gml-list">'+GM.messages.map(renderRow).join("")+'</div>' + more;
+  }
+
+  function renderMessageView(){
+    if (GM.openLoading) return '<div class="gml-msgtop"><button class="btn" onclick="gmailBackToList()">← Zurück</button></div><div class="gml-loading">⏳ Lade Nachricht…</div>';
+    var o = GM.open; if (!o) return renderListPane();
+    if (o.error) return '<div class="gml-msgtop"><button class="btn" onclick="gmailBackToList()">← Zurück</button></div><div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(o.error)+'</p></div>';
+    var fromA = parseAddr(o.from);
+    var ccLine = o.cc ? '<div class="gml-addr"><span>Cc:</span> '+esc(o.cc)+'</div>' : "";
+    return ''
+      + '<div class="gml-msgtop">'
+      +   '<button class="btn" onclick="gmailBackToList()">← Zurück</button>'
+      +   '<div style="flex:1"></div>'
+      +   '<button class="btn" onclick="gmailReply()">↩️ Antworten</button>'
+      +   '<button class="btn" onclick="gmailReplyAll()">↩️↩️ Allen antworten</button>'
+      +   '<button class="btn" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Gelesen":"📬 Ungelesen")+'</button>'
+      + '</div>'
+      + '<div class="gml-msghead">'
+      +   '<h2 class="gml-subject">'+esc(o.subject||"(kein Betreff)")+'</h2>'
+      +   '<div class="gml-msgmeta">'
+      +     '<div class="gml-avatar">'+esc((fromA.name||fromA.email||"?").slice(0,1).toUpperCase())+'</div>'
+      +     '<div class="gml-msgfrom"><div class="gml-fromname">'+esc(fromA.name||fromA.email)+' <span class="gml-fromaddr">&lt;'+esc(fromA.email)+'&gt;</span></div>'
+      +       '<div class="gml-addr"><span>An:</span> '+esc(o.to||"")+'</div>'+ccLine+'</div>'
+      +     '<div class="gml-msgdate">'+esc(fmtDateFull(o.internalDate))+'</div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="gml-bodywrap">'+bodyIframe(o.html, o.text)+'</div>';
+  }
+
+  function shellMain(){
+    var st = GM.status||{};
+    var acct = (GM.profile&&GM.profile.emailAddress) || st.email || "verbunden";
+    return ''
+      + '<div class="page-header"><div class="page-title">'
+      +   '<h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">📧</span> Gmail</h2>'
+      +   '<p>'+esc(acct)+(GM.profile&&GM.profile.messagesTotal?(' · '+GM.profile.messagesTotal+' Nachrichten'):'')+'</p>'
+      + '</div><div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">'
+      +   '<button class="btn primary" onclick="gmailCompose()">✏️ Verfassen</button>'
+      +   '<button class="btn" onclick="gmailRefresh()">🔄 Aktualisieren</button>'
+      +   '<button class="btn" onclick="gmailDisconnect()" title="Google-Konto trennen">🔌 Trennen</button>'
+      + '</div></div>'
+      + '<div class="gml-searchbar">'
+      +   '<input id="gmlSearchInput" class="gml-search" type="text" placeholder="🔎 Suchen (z. B. from:anna rechnung) – Enter" value="'+esc(GM.query||"")+'" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmailSearch(this.value);}">'
+      +   (GM.query ? '<button class="btn" onclick="gmailClearSearch()">✕ Suche</button>' : '')
+      + '</div>'
+      + '<div class="gml-layout">'
+      +   '<div class="gml-sidebar">'+renderLabelList()+'</div>'
+      +   '<div class="gml-main">'+((GM.open||GM.openLoading) ? renderMessageView() : renderListPane())+'</div>'
+      + '</div>';
+  }
+
+  // ── Compose / Reply / Send ──
+  window.gmailCompose = function(prefill){
+    prefill = prefill||{};
+    var inp = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"';
+    var ta  = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box;resize:vertical;min-height:200px;font-family:inherit;line-height:1.5"';
+    function field(label, inner){ return '<label style="display:block;margin-bottom:12px"><span style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600">'+label+'</span>'+inner+'</label>'; }
+    var html = ''
+      + field("An *", '<input id="gmlTo" type="text" '+inp+' value="'+esc(prefill.to||"")+'" placeholder="empfaenger@example.com, weitere@…">')
+      + field("Cc", '<input id="gmlCc" type="text" '+inp+' value="'+esc(prefill.cc||"")+'" placeholder="optional">')
+      + field("Betreff", '<input id="gmlSubject" type="text" '+inp+' value="'+esc(prefill.subject||"")+'" placeholder="Betreff">')
+      + field("Nachricht", '<textarea id="gmlBody" rows="12" '+ta+'>'+esc(prefill.body||"")+'</textarea>');
+    var footer = '<button class="btn" onclick="closeModal()">Abbrechen</button><button id="gmlSendBtn" class="btn primary" onclick="gmailSend()">📤 Senden</button>';
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null };
+    if (typeof window.openModal==="function") window.openModal(prefill.title||"✏️ Neue E-Mail", html, footer);
+  };
+
+  function buildQuote(o){
+    var fromA = parseAddr(o.from);
+    var bodyText = o.text || htmlToText(o.html) || "";
+    var q = bodyText.split("\n").map(function(l){ return "> "+l; }).join("\n");
+    return "Am "+fmtDateFull(o.internalDate)+" schrieb "+(fromA.name||fromA.email)+":\n"+q;
+  }
+  function replyInternal(all){
+    var o = GM.open; if (!o) return;
+    var fromA = parseAddr(o.from);
+    var me = ((GM.profile&&GM.profile.emailAddress)||"").toLowerCase();
+    var cc = [];
+    if (all){
+      // Dedup case-insensitively; never Cc the sender or ourselves.
+      var seen = {}; seen[fromA.email.toLowerCase()] = 1; if (me) seen[me] = 1;
+      splitAddrs(o.to).concat(splitAddrs(o.cc)).forEach(function(ad){
+        var em=ad.email.toLowerCase();
+        if (em && !seen[em]){ seen[em]=1; cc.push(ad.email); }
+      });
+    }
+    var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+    window.gmailCompose({
+      title: all?"↩️ Allen antworten":"↩️ Antworten",
+      to: fromA.email, cc: cc.join(", "), subject: subject, body: "\n\n"+buildQuote(o),
+      threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
+    });
+  }
+  window.gmailReply = function(){ replyInternal(false); };
+  window.gmailReplyAll = function(){ replyInternal(true); };
+
+  function encodeHeaderWord(s){ s=String(s==null?"":s); if (/^[\x00-\x7F]*$/.test(s)) return s; return "=?UTF-8?B?"+window.btoa(unescape(encodeURIComponent(s)))+"?="; }
+  // Encode an address list ("Name <a@b>, c@d") — RFC2047 on non-ASCII display
+  // names while keeping the addresses themselves intact.
+  function encodeAddressList(s){
+    if (!s) return "";
+    return String(s).split(",").map(function(part){
+      part = part.trim(); if (!part) return "";
+      var m = /^(.*?)\s*<([^>]+)>\s*$/.exec(part);
+      if (m){ var name=m[1].trim().replace(/^"|"$/g,""); return (name?encodeHeaderWord(name)+" ":"")+"<"+m[2]+">"; }
+      return part; // bare address
+    }).filter(Boolean).join(", ");
+  }
+  function buildMime(o){
+    var bodyB64 = window.btoa(unescape(encodeURIComponent(o.body||""))).replace(/.{76}/g,"$&\r\n");
+    var lines = [
+      "To: "+encodeAddressList(o.to),
+      o.cc ? "Cc: "+encodeAddressList(o.cc) : null,
+      "Subject: "+encodeHeaderWord(o.subject||""),
+      o.inReplyTo ? "In-Reply-To: "+o.inReplyTo : null,
+      o.references ? "References: "+o.references : null,
+      "MIME-Version: 1.0",
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+    ].filter(Boolean);
+    return lines.join("\r\n") + "\r\n\r\n" + bodyB64;
+  }
+  // UTF-8-safe base64url of the whole message, so btoa never throws on any
+  // non-ASCII that slips past the per-header encoding above.
+  function buildRaw(o){ return window.btoa(unescape(encodeURIComponent(buildMime(o)))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+
+  window.gmailSend = async function(){
+    if (GM._composeBusy) return;
+    var g=function(id){ return document.getElementById(id); };
+    var to=(g("gmlTo")&&g("gmlTo").value||"").trim();
+    var cc=(g("gmlCc")&&g("gmlCc").value||"").trim();
+    var subject=(g("gmlSubject")&&g("gmlSubject").value||"").trim();
+    var body=(g("gmlBody")&&g("gmlBody").value||"");
+    if (!to){ toast("err","Empfänger fehlt","Bitte mindestens eine An-Adresse angeben."); return; }
+    GM._composeBusy=true; var sb=g("gmlSendBtn"); if(sb){ sb.disabled=true; sb.textContent="Sende…"; }
+    try {
+      var ctx = GM._composeCtx||{};
+      var payload = { raw: buildRaw({ to:to, cc:cc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references }) };
+      if (ctx.threadId) payload.threadId = ctx.threadId;
+      await gmApi("POST","/users/me/messages/send", { body: payload });
+      if (window.closeModal) window.closeModal();
+      toast("ok","Gesendet","E-Mail an "+to+" gesendet.");
+      GM.open=null; loadMessages(true); loadLabels();
+    } catch(e){ toast("err","Senden fehlgeschlagen", e.message||"Unbekannter Fehler"); }
+    finally { GM._composeBusy=false; var b=document.getElementById("gmlSendBtn"); if(b){ b.disabled=false; b.textContent="📤 Senden"; } }
+  };
+
+  // ── Router entry + actions ──
+  window.viewGmail = function(){
+    try {
+      var q = new URLSearchParams(location.search);
+      if (q.get("gcal")==="connected" && !GM._connectHandled){
+        GM._connectHandled = true; GM.status=undefined; GM.booted=false;
+        try { history.replaceState(null,"",location.pathname+location.hash); } catch(e){}
+        toast("ok","Verbunden","Gmail erfolgreich verbunden");
+      }
+    } catch(e){}
+    if (GM.status===undefined){
+      if (!GM._statusLoading){ GM._statusLoading=true; loadStatus().then(function(){ GM._statusLoading=false; rerender(); }); }
+      return shellLoading("Verbindung wird geprüft…");
+    }
+    if (!GM.status.connected || !GM.status.gmail) return shellConnect();
+    if (!GM.booted && !GM.listLoading){ bootData(); }
+    return shellMain();
+  };
+  async function bootData(){
+    GM.booted = true;        // guard against re-entry while loading
+    GM.listLoading = true;   // show the list spinner immediately (no empty flash)
+    // All three load in parallel; awaiting the profile here guarantees GM.profile
+    // is set before the user can open a thread and hit reply-all (self-exclusion).
+    await Promise.all([ loadProfile(), loadLabels(), loadMessages(true) ]);
+  }
+
+  window.gmailConnect = function(){ window.location.href = "/.netlify/functions/gcal-auth?action=login&return=gmail"; };
+  window.gmailDisconnect = async function(){
+    if (!confirm("Google-Konto trennen?\n\nDas trennt die GESAMTE Google-Verbindung – auch Google Calendar – und löscht die serverseitig gespeicherten Tokens.")) return;
+    try { await gmAuthCall("logout"); } catch(e){}
+    GM.status={connected:false}; GM.messages=[]; GM.labels=[]; GM.open=null; GM.booted=false; GM.profile=null;
+    toast("ok","Getrennt","Google-Konto wurde getrennt");
+    rerender();
+  };
+  window.gmailRefresh = function(){ GM.open=null; loadProfile(); loadLabels(); loadMessages(true); };
+  window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.open=null; loadMessages(true); };
+  window.gmailOpenMessage = function(id){ openMessageById(id); };
+  window.gmailBackToList = function(){ GM.open=null; rerender(); };
+  window.gmailLoadMore = function(){ loadMessages(false); };
+  window.gmailSearch = function(v){ GM.query=(v||"").trim(); GM.open=null; loadMessages(true); };
+  window.gmailClearSearch = function(){ GM.query=""; GM.open=null; loadMessages(true); };
+  window.gmailToggleReadOpen = function(){ if (GM.open) markReadById(GM.open.id, GM.open.unread===true, false); };
 
 })();
 </script>

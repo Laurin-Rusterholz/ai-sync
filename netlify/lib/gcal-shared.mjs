@@ -20,9 +20,23 @@ export const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 export const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 export const CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3";
-// Only the Calendar scope is requested (per spec). The user's account e-mail is
-// read from the primary calendar instead of asking for extra openid/email scopes.
-export const SCOPE = "https://www.googleapis.com/auth/calendar";
+export const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
+
+// OAuth scopes requested from Google. ONE Google connection (a single stored
+// refresh token) is granted every scope in this list, so the Calendar and the
+// Gmail app share the exact same authorisation. To wire up another Google API
+// later, just append its scope here — nothing else in the OAuth flow changes.
+//
+// gmail.modify is a superset that already covers reading messages/threads/
+// labels, changing labels (e.g. read/unread) AND sending mail (users.messages.
+// send accepts gmail.modify), so no separate gmail.readonly / gmail.send scope
+// is required. The account e-mail is read from the primary calendar / Gmail
+// profile instead of asking for extra openid/email scopes.
+export const SCOPES = [
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/gmail.modify",
+];
+export const SCOPE = SCOPES.join(" ");
 
 export const CORS = {
   "Access-Control-Allow-Origin": "*",
