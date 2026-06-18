@@ -32,10 +32,12 @@ const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 // raw slash ("[^/?#]+"). Covered (exactly the endpoints the Gmail app needs):
 //   users.getProfile         GET    /users/me/profile
 //   users.labels.list/get    GET    /users/me/labels[/<id>]
+//   users.labels.create      POST   /users/me/labels            (Quantus/Erledigt, Quantus/Blockiert)
 //   users.messages.list      GET    /users/me/messages
-//   users.messages.get       GET    /users/me/messages/<id>
+//   users.messages.get       GET    /users/me/messages/<id>     (auch format=raw → Export)
 //   users.messages.send      POST   /users/me/messages/send
 //   users.messages.modify    POST   /users/me/messages/<id>/modify
+//   users.messages.batchModify POST /users/me/messages/batchModify  (Bulk Erledigt/Blockieren)
 //   users.threads.list/get   GET    /users/me/threads[/<id>]
 //   users.threads.modify     POST   /users/me/threads/<id>/modify
 // The "(?!send\/)" guard keeps the literal send endpoint from also matching the
