@@ -23,6 +23,21 @@ function randomState() {
   return Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Where the browser is bounced back to after the OAuth dance. Whitelisted so a
+// crafted ?return= value can never redirect into an arbitrary in-app route.
+const RETURN_ROUTES = new Set(["googlecalendar", "gmail"]);
+function sanitizeReturn(raw) {
+  const r = String(raw || "").toLowerCase().replace(/[^a-z]/g, "");
+  return RETURN_ROUTES.has(r) ? r : "googlecalendar";
+}
+// The OAuth state carries the CSRF nonce AND the return route ("<nonce>.<route>")
+// so the callback knows which app initiated the connect — no schema change to
+// the stored state blob is needed and old "<nonce>" states still validate.
+function returnFromState(state) {
+  const route = String(state || "").split(".")[1];
+  return RETURN_ROUTES.has(route) ? route : "googlecalendar";
+}
+
 function htmlError(message, appOrigin) {
   const safe = String(message).replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return new Response(
@@ -81,11 +96,13 @@ export default async (req) => {
       await saveTokens(tokens);
       await ensureEmail(tokens);
 
-      // Bounce back into the app. The query stays BEFORE the hash so the
-      // app's parseHash() (which splits the hash on "/") sees a clean route.
+      // Bounce back into the app, onto whichever app started the connect. The
+      // query stays BEFORE the hash so the app's parseHash() (which splits the
+      // hash on "/") sees a clean route.
+      const ret = returnFromState(state);
       return new Response(null, {
         status: 302,
-        headers: { Location: `${appOrigin}/?gcal=connected#/googlecalendar`, ...CORS },
+        headers: { Location: `${appOrigin}/?gcal=connected#/${ret}`, ...CORS },
       });
     } catch (e) {
       return htmlError(e.message || String(e), appOrigin);
@@ -96,7 +113,9 @@ export default async (req) => {
   if (action === "login") {
     try {
       const { clientId } = getOAuthConfig();
-      const state = randomState();
+      // Fold the desired return route into the CSRF state so the callback can
+      // send the user back to the app that initiated the connect.
+      const state = randomState() + "." + sanitizeReturn(url.searchParams.get("return"));
       await saveState(state);
       const params = new URLSearchParams({
         client_id: clientId,
