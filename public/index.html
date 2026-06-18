@@ -36476,9 +36476,14 @@ function viewOrgDetail(id) {
               Beschreibung
               <textarea data-action="field-edit" data-kind="organization" data-id="${id}" data-field="description">${esc(o.description || "")}</textarea>
             </label>
+            <label class="col-12">
+              📧 E-Mail-Anweisungen (KI)
+              <textarea data-field="emailInstructions" onchange="if(window.orgSaveEmailInstructions)window.orgSaveEmailInstructions('${id}', this.value)" placeholder="Wie soll die KI E-Mails dieser Organisation behandeln? z.B. Tonfall, Sprache, Standardfloskeln, an wen weiterleiten, was niemals tun." style="min-height:96px">${esc(o.emailInstructions || "")}</textarea>
+              <span style="display:block;font-size:11.5px;color:var(--muted);margin-top:4px">Fliesst in die KI-Antwort-Entwürfe ein (n8n + In-App-Assistent) und wird in die RTDB synchronisiert.</span>
+            </label>
           </div>
         </div>
-        
+
         <div class="card mb-4">
           <h3>📦 Projekte (${projects.length})</h3>
           <div class="list mb-3">${projectsHtml}</div>
@@ -94777,6 +94782,9 @@ console.log('📚 Leseliste geladen');
 .gml-draft-prev { font-size:12.5px; color:var(--muted); line-height:1.55; margin-bottom:11px; white-space:pre-wrap; max-height:84px; overflow:hidden; }
 .gml-draft-actions { display:flex; gap:8px; }
 .gml-draft-actions .btn.sm { padding:5px 12px; font-size:12.5px; }
+.gml-org-badge { display:inline-block; font-size:11px; font-weight:700; color:#0a84ff; background:rgba(10,132,255,.12); padding:2px 9px; border-radius:999px; margin-bottom:8px; }
+.gml-org-badge.muted { color:var(--muted); background:rgba(255,255,255,.05); font-weight:600; }
+.gml-compose-note { font-size:12.5px; padding:8px 11px; border-radius:9px; background:rgba(10,132,255,.1); color:var(--text2); margin-bottom:12px; border:1px solid rgba(10,132,255,.25); line-height:1.5; }
 @media (max-width:820px){
   .gml-layout { grid-template-columns:1fr; }
   .gml-sidebar { flex-direction:row; flex-wrap:wrap; position:static; gap:4px; }
@@ -95162,7 +95170,7 @@ console.log('📚 Leseliste geladen');
     var inp = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"';
     var ta  = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box;resize:vertical;min-height:200px;font-family:inherit;line-height:1.5"';
     function field(label, inner){ return '<label style="display:block;margin-bottom:12px"><span style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600">'+label+'</span>'+inner+'</label>'; }
-    var html = ''
+    var html = (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + field("An *", '<input id="gmlTo" type="text" '+inp+' value="'+esc(prefill.to||"")+'" placeholder="empfaenger@example.com, weitere@…">')
       + field("Cc", '<input id="gmlCc" type="text" '+inp+' value="'+esc(prefill.cc||"")+'" placeholder="optional">')
       + field("Betreff", '<input id="gmlSubject" type="text" '+inp+' value="'+esc(prefill.subject||"")+'" placeholder="Betreff">')
@@ -95462,9 +95470,12 @@ console.log('📚 Leseliste geladen');
   function renderDraftRow(d){
     var who = esc(d.toName || d.to || "(Empfänger?)");
     var preview = esc((d.draftBody||"").replace(/\s+/g," ").trim().slice(0,180));
+    var org = findOrgForEmail(d.to||"");
+    var orgBadge = org ? '<div class="gml-org-badge'+(orgInstructions(org)?'':' muted')+'" title="'+(orgInstructions(org)?"KI-Anweisungen dieser Organisation werden angewendet":"Erkannte Organisation – keine E-Mail-Anweisungen hinterlegt")+'">🏢 '+esc(org.name||"Organisation")+(orgInstructions(org)?' · Anweisungen aktiv':'')+'</div>' : '';
     return '<div class="gml-draft">'
       + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(d.to&&d.toName?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(d.to)+'&gt;</span>':'')+'</span><span class="gml-draft-date">🤖 '+esc(fmtDate(draftTs(d)))+'</span></div>'
       + '<div class="gml-draft-subj">'+esc(d.subject||"(kein Betreff)")+'</div>'
+      + orgBadge
       + '<div class="gml-draft-prev">'+(preview||'<span style="color:var(--muted)">(leerer Entwurf)</span>')+'</div>'
       + '<div class="gml-draft-actions"><button class="btn primary sm" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')">✏️ Prüfen &amp; senden</button><button class="btn sm" onclick="gmailDismissDraft(\''+jsStr(d._key)+'\')">🗑 Verwerfen</button></div>'
       + '</div>';
@@ -95473,16 +95484,68 @@ console.log('📚 Leseliste geladen');
   window.gmailOpenDraft = function(key){
     var d=(GM.drafts||[]).find(function(x){return x._key===key;});
     if (!d){ toast("err","Entwurf nicht mehr da",""); return; }
+    var org=findOrgForEmail(d.to||"");
+    var note = org ? ('🏢 Organisation erkannt: <b>'+esc(org.name||"")+'</b>'+(orgInstructions(org)?' – deren KI-Anweisungen wurden beim Entwurf berücksichtigt.':' (keine E-Mail-Anweisungen hinterlegt).')) : '';
     // Prefill the existing compose dialog. threadId keeps it in the right Gmail
     // thread; the user reviews, edits and sends MANUALLY (no auto-send). On send,
     // gmailSend marks the draft "used" via the draftKey in the compose context.
-    window.gmailCompose({ title:"🤖 KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key });
+    window.gmailCompose({ title:"🤖 KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key, note:note });
   };
   window.gmailDismissDraft = async function(key){
     if (!confirm("Diesen KI-Entwurf verwerfen? (Status wird auf 'dismissed' gesetzt, nichts wird gesendet.)")) return;
     GM.drafts=(GM.drafts||[]).filter(function(x){return x._key!==key;}); rerender();
     await setDraftStatus(key, "dismissed");
     toast("ok","Verworfen","Entwurf als 'dismissed' markiert");
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Org-spezifische E-Mail-Anweisungen (KI) — pro Organisation hinterlegt,
+  //  in die RTDB gespiegelt (damit der n8n-Workflow sie beim Erstellen der
+  //  Entwürfe berücksichtigen kann) und im In-App-KI-Kontext berücksichtigt.
+  // ════════════════════════════════════════════════════════════════════
+  var FREEMAIL = new Set(["gmail.com","googlemail.com","outlook.com","hotmail.com","hotmail.de","live.com","yahoo.com","yahoo.de","yahoo.co.uk","icloud.com","me.com","gmx.ch","gmx.de","gmx.net","web.de","bluewin.ch","hispeed.ch","sunrise.ch","protonmail.com","proton.me","aol.com"]);
+  function orgsAll(){ try { return (window.APP&&APP.state&&APP.state.data&&APP.state.data.entities&&APP.state.data.entities.organizations)||{}; } catch(e){ return {}; } }
+  function orgEmailList(o){ var a=[]; if(o&&o.email) a.push(String(o.email).toLowerCase()); if(o&&o.emails) o.emails.forEach(function(e){ if(e) a.push(String(e).toLowerCase()); }); return a; }
+  function domainOf(email){ return String(email||"").split("@")[1]||""; }
+  // Match an incoming sender to a Quantus org: exact e-mail wins, else a
+  // (non-freemail) domain match on org.email / org.emails[].
+  function findOrgForEmail(email){
+    email=String(email||"").trim().toLowerCase(); if(!email) return null;
+    var dom=domainOf(email), orgs=orgsAll(), domHit=null;
+    for (var id in orgs){ var o=orgs[id]; if(!o) continue; var ems=orgEmailList(o);
+      if (ems.indexOf(email)>=0) return o;
+      if (dom && !FREEMAIL.has(dom) && !domHit && ems.some(function(e){ return domainOf(e)===dom; })) domHit=o;
+    }
+    return domHit;
+  }
+  window.gmailFindOrgForEmail = findOrgForEmail; // exposed for reuse
+  function orgDomains(o){ var s=new Set(); orgEmailList(o).forEach(function(e){ var d=domainOf(e); if(d && !FREEMAIL.has(d)) s.add(d); }); return Array.from(s); }
+  function orgInstructions(o){ return o ? String(o.emailInstructions||"").trim() : ""; }
+
+  // Mirror one org's mail-relevant fields to the RTDB so n8n can match an
+  // incoming sender and apply the instructions. Empty instructions → remove node.
+  async function publishOrgMail(id){
+    try {
+      var o=entityOf("organization", id); if(!o) return;
+      var url=RTDB_URL+"/orgMailInstructions/"+encodeURIComponent(id)+".json";
+      var instr=orgInstructions(o);
+      if (!instr){ try { await fetch(url, { method:"DELETE" }); } catch(e){} return; }
+      var emails=orgEmailList(o);
+      var payload={ id:id, name:o.name||"", email:o.email||"", emails:emails, domains:orgDomains(o), emailInstructions:instr, updatedAt:Date.now() };
+      await fetch(url, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+    } catch(e){ /* best effort — entity save already happened */ }
+  }
+  // Called by the org-detail textarea (onchange): persist like other fields +
+  // sync to RTDB. NO auto-send anywhere — instructions only influence drafting.
+  window.orgSaveEmailInstructions = function(id, value){
+    try {
+      var o=entityOf("organization", id); if(!o) return;
+      o.emailInstructions=String(value==null?"":value);
+      if (typeof window.updateEntity==="function") window.updateEntity("organization", id, { emailInstructions:o.emailInstructions });
+      else if (typeof window.scheduleSave==="function") window.scheduleSave();
+      publishOrgMail(id);
+      toast("ok","Gespeichert","E-Mail-Anweisungen aktualisiert");
+    } catch(e){ toast("err","Fehler", e.message||""); }
   };
 
   // ════════════════════════════════════════════════════════════════════
@@ -95494,13 +95557,16 @@ console.log('📚 Leseliste geladen');
       if (!GM.status || !GM.status.connected || !GM.status.gmail) return "\n\n# GMAIL\nNicht verbunden — Mail-Befehle ({{GMAIL_*}}) sind nicht verfügbar.";
       var idx = (APP.state.data.gmailIndex||[]).slice(0,15);
       var lines = idx.map(function(m){ return "- ["+m.id+"] "+new Date(m.date).toISOString().slice(0,10)+" "+(m.fromName||m.fromEmail)+": "+(m.subject||"(ohne Betreff)"); }).join("\n");
+      var orgLines=[]; var orgs=orgsAll(); Object.keys(orgs).forEach(function(oid){ var o=orgs[oid]; var ins=orgInstructions(o); if(ins){ orgLines.push("- "+(o.name||"Org")+" ["+orgEmailList(o).join(", ")+"]: "+ins.replace(/\s+/g," ")); } });
+      var orgBlock = orgLines.length ? ("Org-spezifische E-Mail-Anweisungen — beim Beantworten von Mails dieser Absender/Domains ZWINGEND befolgen:\n"+orgLines.join("\n")+"\n\n") : "";
       return "\n\n# GMAIL (verbunden: "+((GM.profile&&GM.profile.emailAddress)||GM.status.email||"")+")\n"
         + "Du hast vollen Zugriff auf alle Mails über diese Befehle (eine Aktion pro Zeile):\n"
         + "{{GMAIL_SEARCH|gmail-query}} — Mails suchen (Gmail-Syntax, z.B. from:anna newer_than:7d).\n"
         + "{{GMAIL_READ|id-oder-suchbegriff}} — Inhalt einer Mail lesen.\n"
         + "{{GMAIL_SEND|to|betreff|text}} — Mail senden (Nutzer bestätigt im UI).\n"
         + "{{GMAIL_DONE|id-oder-suchbegriff}} — Mail als erledigt markieren.\n"
-        + "{{GMAIL_BLOCK|email}} — Absender blockieren (Nutzer bestätigt im UI).\n"
+        + "{{GMAIL_BLOCK|email}} — Absender blockieren (Nutzer bestätigt im UI).\n\n"
+        + orgBlock
         + "Letzte Mails (Format [id] Datum Absender: Betreff):\n" + (lines||"(Index noch leer — bitte Gmail einmal öffnen)");
     } catch(e){ return ""; }
   };
