@@ -12869,7 +12869,6 @@ WICHTIG — diese Chat-View ist für Konversation und Analyse, nicht für direkt
 • Ideen: ${ideas.length}
 • Ziele: ${goals.length} (${goals.filter(g => g.status === "active").length} aktiv)
 • Meetings: ${meetings.length}
-• E-Mails: ${Object.keys(e.emails || {}).length} im Mail Hub
 • Personen: ${Object.keys(e.persons || {}).length} Kontakte
 • Protokolle: ${Object.keys(e.protocols || {}).length} (mit Volltext-Zugriff für KI)
 • Workflows: ${Object.keys(e.workflows || {}).length} dokumentierte Prozesse
@@ -15017,8 +15016,8 @@ function renderAppNav() {
     {key:"notes", icon:"📝", label:t("notes")},
     {key:"projects", icon:"📦", label:t("projects")},
     {key:"ideas", icon:"💡", label:t("ideas")},
-    {key:"mailhub", icon:"📬", label:"Mail Hub"},
-    {key:"persons", icon:"👤", label:"Personen"},
+    {key:"gmail", icon:"📧", label:"Gmail"},
+  {key:"persons", icon:"👤", label:"Personen"},
     {key:"protocols", icon:"📜", label:"Protokolle"},
     {key:"workflows", icon:"⚙️", label:"Workflows"},
     {key:"updates", icon:"🔧", label:t("updates")},
@@ -15184,7 +15183,6 @@ function getAllApps() {
     {key:"strategies", icon:"🧭", label:t("strategies"), desc:getLang()==="de"?"Strategische Planung":"Strategic planning"},
     {key:"ideas", icon:"💡", label:t("ideas"), desc:getLang()==="de"?"Ideensammlung":"Idea collection"},
     {key:"meetings", icon:"🤝", label:t("meetings"), desc:getLang()==="de"?"Besprechungen":"Meetings"},
-    {key:"mailhub", icon:"📬", label:"Mail Hub", desc:getLang()==="de"?"E-Mails, Korrespondenz & Personen":"Emails, correspondence & people"},
     {key:"persons", icon:"👤", label:"Personen", desc:getLang()==="de"?"Kontaktverwaltung":"Contact management"},
     {key:"protocols", icon:"📜", label:"Protokolle", desc:getLang()==="de"?"PDF-Protokolle mit Text-Extraktion":"PDF protocols with text extraction"},
     {key:"workflows", icon:"⚙️", label:"Workflows", desc:getLang()==="de"?"Prozesse, Schritte & Automatisierung":"Processes, steps & automation"},
@@ -15569,7 +15567,7 @@ function renderMain() {
     case "thesis": html = id ? window.viewThesisDetail(id) : window.viewTheses(); break;
     case "handbook": html = window.viewHandbook ? window.viewHandbook() : '<div style="padding:40px;text-align:center">Lade Handbuch...</div>'; break;
     case "decisions": html = id ? viewDecisionDetail(id) : viewDecisions(); break;
-    case "mailhub": html = id ? viewEmailDetail(id) : viewMailHub(); break;
+    case "mailhub": location.hash = "#/gmail"; return; // Mail Hub entfernt → Gmail
     case "persons": html = id ? viewPersonDetail(id) : viewPersons(); break;
     case "protocols": html = id ? viewProtocolDetail(id) : viewProtocols(); break;
     case "workflows": html = id ? viewWorkflowDetail(id) : viewWorkflows(); break;
@@ -20937,8 +20935,8 @@ window._HANDBOOK_DESCRIPTIONS = {
     desc: "Firmen und Institutionen verwalten, mit Kontakten, Notizen und Dokumenten." },
   persons: { icon: "👤", label: "Personen", category: "Beziehungen",
     desc: "Kontaktverwaltung mit Beziehungs-Notizen, letzten Interaktionen und Verknüpfung zu Projekten." },
-  mailhub: { icon: "📬", label: "Mail Hub", category: "Beziehungen",
-    desc: "E-Mail-Korrespondenz und Personen-Verknüpfung. Mit Firebase-Upload für Anhänge." },
+  gmail: { icon: "📧", label: "Gmail", category: "Beziehungen",
+    desc: "Gmail-Posteingang in Quantus: lesen, schreiben, antworten, Personen/Organisationen/Projekte verknüpfen." },
   messages: { icon: "📨", label: "Geplante Nachrichten", category: "Beziehungen",
     desc: "Erinnerungen für Nachrichten an Personen (z.B. nachfassen in 2 Wochen)." },
   notes: { icon: "📝", label: "NoteFlow", category: "Wissen",
@@ -81599,7 +81597,7 @@ Du hast Zugriff auf die vollständigen Reflektionen des Nutzers (Fragen, Bewertu
 - Carryover-Items sind offene Punkte die noch erledigt werden müssen
 
 # DATEN
-${dataSnapshot}${(typeof window.gcalAIContext === "function" ? (window.gcalAIContext() || "") : "")}`;
+${dataSnapshot}${(typeof window.gcalAIContext === "function" ? (window.gcalAIContext() || "") : "")}${(typeof window.gmailAIContext === "function" ? (window.gmailAIContext() || "") : "")}`;
 }
 
 // ═══════════════════════════════════════
@@ -82130,6 +82128,7 @@ async function doSend(){
     // processCommands() pass handles the local {{...}} entity commands.
     let processed = raw;
     try { if (typeof window.gcalAIProcess === "function") processed = await window.gcalAIProcess(processed); } catch(e){ /* ignore – fall back to raw */ }
+    try { if (typeof window.gmailAIProcess === "function") processed = await window.gmailAIProcess(processed); } catch(e){ /* ignore – fall back to raw */ }
     processed = processCommands(processed);
     addMsg("a", processed);
 
@@ -82672,16 +82671,14 @@ function buildSpotlightItems() {
     });
   });
   
-  // E-Mails (Mail Hub)
-  Object.values(e.emails || {}).forEach(m => {
-    if (m.archived) return;
-    const fromName = m.fromPersonId ? (e.persons?.[m.fromPersonId]?.name || '') : '';
+  // E-Mails (Gmail-Index — schlanker Index, gepflegt vom Gmail-Modul)
+  (APP.state.data.gmailIndex || []).forEach(m => {
     items.push({
-      kind: 'email', icon: '📬', id: m.id,
+      kind: 'email', icon: '📧', id: m.id,
       title: m.subject || '(Kein Betreff)',
-      sub: (fromName ? fromName + ' · ' : '') + (m.summary || (m.body || '').slice(0, 80)),
-      route: '#/mailhub/' + m.id,
-      open: () => { window.location.hash = '#/mailhub/' + m.id; }
+      sub: (m.fromName ? m.fromName + ' · ' : '') + (m.snippet || ''),
+      route: '#/gmail',
+      open: () => { if (typeof window.gmailOpenFromExternal === 'function') window.gmailOpenFromExternal(m.id); else window.location.hash = '#/gmail'; }
     });
   });
   
@@ -82824,7 +82821,7 @@ function buildSpotlightItems() {
         if (typeof window.openReadingHub === 'function') window.openReadingHub();
         else window.location.hash = '#/readinghub';
       }},
-      { icon: '📬', title: 'Mail Hub', sub: 'E-Mails, Personen, Korrespondenz', open: () => { window.location.hash = '#/mailhub'; } },
+      { icon: '📧', title: 'Gmail', sub: 'Posteingang, Personen, Organisationen', open: () => { window.location.hash = '#/gmail'; } },
       { icon: '👤', title: 'Personen', sub: 'Kontaktverwaltung', open: () => { window.location.hash = '#/persons'; } },
       { icon: '📜', title: 'Protokolle', sub: 'PDF-Protokolle mit Text-Extraktion', open: () => { window.location.hash = '#/protocols'; } },
       { icon: '⚙️', title: 'Workflows', sub: 'Prozesse, Schritte & Automatisierung', open: () => { window.location.hash = '#/workflows'; } },
@@ -90932,6 +90929,7 @@ console.log('📚 Leseliste geladen');
   }
   
   function injectMailBox() {
+    return; // Mail Hub entfernt — Org/Projekt-Inbox wird jetzt vom Gmail-Modul injiziert
     const ctx = detectEntityFromHash();
     if (!ctx) return;
     
@@ -94745,6 +94743,31 @@ console.log('📚 Leseliste geladen');
 .gml-msgdate { font-size:12px; color:var(--muted); flex-shrink:0; text-align:right; max-width:200px; }
 .gml-bodywrap { padding:6px 18px 20px; }
 .gml-bodyframe { width:100%; border:none; background:#fff; border-radius:10px; min-height:240px; display:block; }
+.gml-compose-btn { width:100%; padding:10px; margin-bottom:8px; border:none; border-radius:11px; background:var(--accent); color:#fff; font-weight:700; font-size:14px; cursor:pointer; }
+.gml-compose-btn:hover { filter:brightness(1.08); }
+.gml-nav-sep { font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; padding:12px 11px 5px; }
+.gml-row { align-items:center; }
+.gml-row.done { opacity:.6; }
+.gml-row.done .gml-row-subj { text-decoration:line-through; }
+.gml-check { flex-shrink:0; cursor:pointer; font-size:15px; line-height:1; user-select:none; opacity:.8; }
+.gml-check:hover { opacity:1; transform:scale(1.12); }
+.gml-row-click { display:flex; align-items:baseline; gap:12px; flex:1; min-width:0; cursor:pointer; }
+.gml-row-x { flex-shrink:0; cursor:pointer; opacity:0; font-size:13px; transition:opacity .12s; }
+.gml-row:hover .gml-row-x { opacity:.5; }
+.gml-row-x:hover { opacity:1; }
+.gml-person-dot { color:#30d158; font-size:9px; margin-right:5px; vertical-align:middle; }
+.gml-known { font-size:11px; font-weight:700; color:#30d158; background:rgba(48,209,88,.14); padding:1px 8px; border-radius:999px; white-space:nowrap; }
+.gml-mini { font-size:11.5px; padding:3px 9px; border:1px solid var(--border); background:rgba(255,255,255,.03); color:var(--text2); border-radius:8px; cursor:pointer; }
+.gml-mini:hover { background:rgba(255,255,255,.07); color:var(--text); }
+.gml-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:8px; background:rgba(255,255,255,.05); border:1px solid var(--border); font-size:12.5px; color:var(--text2); }
+.gml-chip a { color:#ff453a; cursor:pointer; text-decoration:none; font-weight:700; }
+.gml-ei-list { display:flex; flex-direction:column; gap:1px; }
+.gml-ei-row { display:flex; align-items:baseline; gap:10px; padding:7px 8px; border-radius:7px; cursor:pointer; font-size:13px; }
+.gml-ei-row:hover { background:rgba(255,255,255,.05); }
+.gml-ei-row.unread { font-weight:700; }
+.gml-ei-from { flex-shrink:0; width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text2); }
+.gml-ei-subj { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gml-ei-date { flex-shrink:0; font-size:11.5px; color:var(--muted); }
 @media (max-width:820px){
   .gml-layout { grid-template-columns:1fr; }
   .gml-sidebar { flex-direction:row; flex-wrap:wrap; position:static; gap:4px; }
@@ -94778,6 +94801,11 @@ console.log('📚 Leseliste geladen');
     _connectHandled: false,
     _composeBusy: false,
     _composeCtx: null,
+    smart: null,            // null | "personen" | "spam" | "erledigt" | "blocked"
+    labelIds: { done:null, blocked:null }, // resolved ids of Quantus/Erledigt & Quantus/Blockiert
+    _personIdx: null,       // { set:Set, byEmail:Map } built from Quantus persons
+    _blockSet: null,        // Set of blocked sender e-mails (lowercased)
+    entityInbox: {},        // "kind:id" → { loading, error, rows, addresses, query }
   };
 
   var SYS_LABELS = [
@@ -94824,14 +94852,25 @@ console.log('📚 Leseliste geladen');
   async function loadProfile(){ try { GM.profile = await gmApi("GET","/users/me/profile"); } catch(e){ GM.profile=null; } }
   async function loadLabels(){ try { var r = await gmApi("GET","/users/me/labels"); GM.labels = (r.labels||[]); } catch(e){ GM.labels=[]; } rerender(); }
 
+  // Build the Gmail list request + optional client-side filter for the active view.
+  function buildListSpec(){
+    if (GM.query && GM.query.trim()) return { query:{ q:GM.query.trim() }, title:"Suche: "+GM.query.trim() };
+    if (GM.smart==="personen") return { query:{ labelIds:["INBOX"], maxResults:"50" }, clientFilter:fromPerson, title:"Von Personen" };
+    if (GM.smart==="spam")     return { query:{ labelIds:["SPAM"],  maxResults:"50" }, clientFilter:notFromPerson, title:"Spam (Fremde)" };
+    if (GM.smart==="erledigt") return { query: GM.labelIds.done    ? { labelIds:[GM.labelIds.done] }    : { q:"label:Quantus/Erledigt" }, title:"Erledigt" };
+    if (GM.smart==="blocked")  return { query: GM.labelIds.blocked ? { labelIds:[GM.labelIds.blocked] } : { q:"label:Quantus/Blockiert" }, title:"Blockiert" };
+    return { query:{ labelIds:[GM.selectedLabel] }, title: labelName(GM.selectedLabel) };
+  }
+  function fromPerson(m){ return !!personOf(m.from) && !isBlocked(addrOf(m.from)); }
+  function notFromPerson(m){ return !personOf(m.from); }
+
   async function loadMessages(reset){
     GM.listLoading = true; GM.listError = null;
     if (reset){ GM.messages=[]; GM.nextPageToken=null; }
     rerender();
     try {
-      var query = { maxResults:"25" };
-      if (GM.query && GM.query.trim()) query.q = GM.query.trim();
-      else query.labelIds = [GM.selectedLabel];
+      var spec = buildListSpec();
+      var query = Object.assign({ maxResults:"25" }, spec.query||{});
       if (!reset && GM.nextPageToken) query.pageToken = GM.nextPageToken;
       var list = await gmApi("GET","/users/me/messages", { query: query });
       GM.nextPageToken = list.nextPageToken || null;
@@ -94840,7 +94879,11 @@ console.log('📚 Leseliste geladen');
         return gmApi("GET","/users/me/messages/"+encodeURIComponent(id), { query:{ format:"metadata", metadataHeaders:["From","To","Cc","Subject","Date"] } }).catch(function(){ return null; });
       }));
       var rows = metas.filter(Boolean).map(parseMeta);
+      // Globally hide blocked senders everywhere EXCEPT the explicit "Blockiert" view.
+      if (GM.smart!=="blocked") rows = rows.filter(function(m){ return !isBlocked(addrOf(m.from)); });
+      if (spec.clientFilter) rows = rows.filter(spec.clientFilter);
       GM.messages = reset ? rows : GM.messages.concat(rows);
+      syncIndex(rows);
     } catch(e){
       if (e.status===401 || (e.data && e.data.error==="NOT_CONNECTED")){ GM.status={connected:false}; }
       else { GM.listError = e.message||"Fehler beim Laden"; }
@@ -94994,39 +95037,53 @@ console.log('📚 Leseliste geladen');
 
   function labelName(id){ var s=SYS_LABELS.find(function(l){return l.id===id;}); if(s) return s.name; var u=GM.labels.find(function(l){return l.id===id;}); return (u&&u.name)||id; }
   var NO_UNREAD_BADGE = { SENT:1, DRAFT:1, TRASH:1, SPAM:1 }; // an "unread" count is meaningless / misleading on these
-  function renderLabelList(){
-    function unreadOf(id){ if (NO_UNREAD_BADGE[id]) return 0; var l=GM.labels.find(function(x){return x.id===id;}); return (l && l.messagesUnread) || 0; }
-    function item(id,icon,name){
-      var active=(!GM.query && GM.selectedLabel===id);
-      var u=unreadOf(id);
-      return '<button class="gml-label'+(active?" on":"")+'" onclick="gmailSelectLabel(\''+jsStr(id)+'\')"><span class="gml-label-ic">'+icon+'</span><span class="gml-label-name">'+esc(name)+'</span>'+(u?'<span class="gml-badge">'+u+'</span>':'')+'</button>';
-    }
-    var html = SYS_LABELS.map(function(l){ return item(l.id,l.icon,l.name); }).join("");
-    var userLabels = GM.labels.filter(function(l){ return l.type==="user"; }).sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
-    if (userLabels.length){
-      html += '<div class="gml-label-sep">Labels</div>';
-      html += userLabels.map(function(l){ return item(l.id,"🏷️",l.name); }).join("");
-    }
-    return html;
+  function unreadOf(id){ if (NO_UNREAD_BADGE[id]) return 0; var l=GM.labels.find(function(x){return x.id===id;}); return (l && l.messagesUnread) || 0; }
+  function navBtn(active, icon, name, onclick, badge){
+    return '<button class="gml-label'+(active?" on":"")+'" onclick="'+onclick+'"><span class="gml-label-ic">'+icon+'</span><span class="gml-label-name">'+esc(name)+'</span>'+(badge?'<span class="gml-badge">'+badge+'</span>':'')+'</button>';
+  }
+  function renderNav(){
+    var labelActive = function(id){ return !GM.query && !GM.smart && GM.selectedLabel===id; };
+    var smart = navBtn(GM.smart==="personen","👤","Von Personen","gmailSelectSmart('personen')")
+      + navBtn(GM.smart==="spam","🟥","Spam (Fremde)","gmailSelectSmart('spam')")
+      + navBtn(GM.smart==="erledigt","✅","Erledigt","gmailSelectSmart('erledigt')");
+    var std = SYS_LABELS.map(function(l){ return navBtn(labelActive(l.id), l.icon, l.name, "gmailSelectLabel('"+jsStr(l.id)+"')", unreadOf(l.id)); }).join("");
+    var userLabels = GM.labels.filter(function(l){ return l.type==="user" && l.name!=="Quantus/Erledigt" && l.name!=="Quantus/Blockiert"; }).sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
+    var userHtml = userLabels.length ? ('<div class="gml-nav-sep">Labels</div>'+userLabels.map(function(l){ return navBtn(labelActive(l.id), "🏷️", l.name.replace(/^Quantus\//,""), "gmailSelectLabel('"+jsStr(l.id)+"')", unreadOf(l.id)); }).join("")) : "";
+    return '<button class="gml-compose-btn" onclick="gmailCompose()">✏️ Verfassen</button>'
+      + '<div class="gml-nav-sep">Smart</div>' + smart
+      + '<div class="gml-nav-sep">Postfächer</div>' + std
+      + userHtml
+      + '<div class="gml-nav-sep">Verwaltung</div>'
+      + navBtn(GM.smart==="blocked","⛔","Blockiert","gmailSelectSmart('blocked')");
   }
 
+  function isDoneMsg(m){ return !!(GM.labelIds.done && (m.labelIds||[]).indexOf(GM.labelIds.done)>=0); }
   function renderRow(m){
-    var sentView = (!GM.query && (GM.selectedLabel==="SENT" || GM.selectedLabel==="DRAFT"));
+    var sentView = (!GM.query && !GM.smart && (GM.selectedLabel==="SENT" || GM.selectedLabel==="DRAFT"));
     var a = parseAddr(sentView ? m.to : m.from);
+    var person = !sentView && personOf(m.from);
     var who = (sentView?"An: ":"") + esc(a.name||a.email||"(unbekannt)");
     var star = m.starred ? '<span class="gml-row-star">⭐</span>' : '';
-    return '<div class="gml-row'+(m.unread?" unread":"")+'" onclick="gmailOpenMessage(\''+jsStr(m.id)+'\')">'
-      + '<div class="gml-row-who">'+star+who+'</div>'
-      + '<div class="gml-row-mid"><span class="gml-row-subj">'+esc(m.subject||"(kein Betreff)")+'</span> <span class="gml-row-snip">'+(m.snippet?"– "+esc(m.snippet):"")+'</span></div>'
-      + '<div class="gml-row-date">'+esc(fmtDate(m.internalDate))+'</div>'
+    var pdot = person ? '<span class="gml-person-dot" title="Bekannte Person: '+esc(person.name||"")+'">●</span>' : '';
+    var done = isDoneMsg(m);
+    var chk = '<span class="gml-check'+(done?" on":"")+'" title="'+(done?"Erledigt – zurücklegen":"Abhaken (erledigt)")+'" onclick="event.stopPropagation();gmailToggleDone(\''+jsStr(m.id)+'\')">'+(done?"✅":"⬜")+'</span>';
+    return '<div class="gml-row'+(m.unread?" unread":"")+(done?" done":"")+'">'
+      + chk
+      + '<div class="gml-row-click" onclick="gmailOpenMessage(\''+jsStr(m.id)+'\')">'
+      +   '<div class="gml-row-who">'+star+pdot+who+'</div>'
+      +   '<div class="gml-row-mid"><span class="gml-row-subj">'+esc(m.subject||"(kein Betreff)")+'</span> <span class="gml-row-snip">'+(m.snippet?"– "+esc(m.snippet):"")+'</span></div>'
+      +   '<div class="gml-row-date">'+esc(fmtDate(m.internalDate))+'</div>'
+      + '</div>'
+      + '<span class="gml-row-x" title="Absender blockieren" onclick="event.stopPropagation();gmailBlockSenderOf(\''+jsStr(m.id)+'\')">⛔</span>'
       + '</div>';
   }
 
   function renderListPane(){
     if (GM.listLoading && !GM.messages.length) return '<div class="gml-loading">⏳ Lade Nachrichten…</div>';
     if (GM.listError) return '<div class="gml-empty"><div style="font-size:44px">⚠️</div><p>'+esc(GM.listError)+'</p><button class="btn primary" onclick="gmailRefresh()">Erneut versuchen</button></div>';
-    var title = GM.query ? ('Suche: '+esc(GM.query)) : esc(labelName(GM.selectedLabel));
-    var head = '<div class="gml-listhead"><span>'+title+'</span><span class="gml-listcount">'+GM.messages.length+(GM.nextPageToken?"+":"")+' Nachrichten</span></div>';
+    var spec = buildListSpec();
+    var exportBtn = GM.messages.length ? '<button class="gml-mini" title="Diese Liste als CSV exportieren" onclick="gmailExportList()">⤓ CSV</button>' : '';
+    var head = '<div class="gml-listhead"><span>'+esc(spec.title)+'</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+GM.messages.length+(GM.nextPageToken?"+":"")+'</span>'+exportBtn+'</span></div>';
     if (!GM.messages.length) return head + '<div class="gml-empty"><div style="font-size:44px">📭</div><p>Keine Nachrichten gefunden.</p></div>';
     var more = GM.nextPageToken ? '<div style="text-align:center;padding:14px"><button class="btn" onclick="gmailLoadMore()"'+(GM.listLoading?" disabled":"")+'>'+(GM.listLoading?"Lädt…":"Mehr laden")+'</button></div>' : "";
     return head + '<div class="gml-list">'+GM.messages.map(renderRow).join("")+'</div>' + more;
@@ -95038,19 +95095,25 @@ console.log('📚 Leseliste geladen');
     if (o.error) return '<div class="gml-msgtop"><button class="btn" onclick="gmailBackToList()">← Zurück</button></div><div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(o.error)+'</p></div>';
     var fromA = parseAddr(o.from);
     var ccLine = o.cc ? '<div class="gml-addr"><span>Cc:</span> '+esc(o.cc)+'</div>' : "";
+    var done = isDoneMsg(o);
+    var person = personOf(o.from);
+    var personBadge = person ? '<span class="gml-known" title="Bekannte Person">👤 '+esc(person.name||"")+'</span>' : '';
     return ''
       + '<div class="gml-msgtop">'
       +   '<button class="btn" onclick="gmailBackToList()">← Zurück</button>'
       +   '<div style="flex:1"></div>'
       +   '<button class="btn" onclick="gmailReply()">↩️ Antworten</button>'
-      +   '<button class="btn" onclick="gmailReplyAll()">↩️↩️ Allen antworten</button>'
+      +   '<button class="btn" onclick="gmailReplyAll()">↩️↩️ Allen</button>'
+      +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')">'+(done?"↩️ Zurücklegen":"✅ Erledigt")+'</button>'
       +   '<button class="btn" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Gelesen":"📬 Ungelesen")+'</button>'
+      +   '<button class="btn" onclick="gmailExportMessage(\''+jsStr(o.id)+'\')" title="Als .eml exportieren">⤓</button>'
+      +   '<button class="btn" onclick="gmailBlockSenderOf(\''+jsStr(o.id)+'\')" title="Absender blockieren">⛔</button>'
       + '</div>'
       + '<div class="gml-msghead">'
       +   '<h2 class="gml-subject">'+esc(o.subject||"(kein Betreff)")+'</h2>'
       +   '<div class="gml-msgmeta">'
       +     '<div class="gml-avatar">'+esc((fromA.name||fromA.email||"?").slice(0,1).toUpperCase())+'</div>'
-      +     '<div class="gml-msgfrom"><div class="gml-fromname">'+esc(fromA.name||fromA.email)+' <span class="gml-fromaddr">&lt;'+esc(fromA.email)+'&gt;</span></div>'
+      +     '<div class="gml-msgfrom"><div class="gml-fromname">'+esc(fromA.name||fromA.email)+' <span class="gml-fromaddr">&lt;'+esc(fromA.email)+'&gt;</span> '+personBadge+'</div>'
       +       '<div class="gml-addr"><span>An:</span> '+esc(o.to||"")+'</div>'+ccLine+'</div>'
       +     '<div class="gml-msgdate">'+esc(fmtDateFull(o.internalDate))+'</div>'
       +   '</div>'
@@ -95066,16 +95129,16 @@ console.log('📚 Leseliste geladen');
       +   '<h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">📧</span> Gmail</h2>'
       +   '<p>'+esc(acct)+(GM.profile&&GM.profile.messagesTotal?(' · '+GM.profile.messagesTotal+' Nachrichten'):'')+'</p>'
       + '</div><div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">'
-      +   '<button class="btn primary" onclick="gmailCompose()">✏️ Verfassen</button>'
       +   '<button class="btn" onclick="gmailRefresh()">🔄 Aktualisieren</button>'
       +   '<button class="btn" onclick="gmailDisconnect()" title="Google-Konto trennen">🔌 Trennen</button>'
       + '</div></div>'
       + '<div class="gml-searchbar">'
-      +   '<input id="gmlSearchInput" class="gml-search" type="text" placeholder="🔎 Suchen (z. B. from:anna rechnung) – Enter" value="'+esc(GM.query||"")+'" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmailSearch(this.value);}">'
-      +   (GM.query ? '<button class="btn" onclick="gmailClearSearch()">✕ Suche</button>' : '')
+      +   '<input id="gmlSearchInput" class="gml-search" type="text" placeholder="🔎 Alle Mails durchsuchen (z. B. from:anna rechnung) – Enter" value="'+esc(GM.query||"")+'" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmailSearch(this.value);}">'
+      +   (GM.query ? '<button class="btn" onclick="gmailClearSearch()">✕</button>' : '')
+      +   (GM.query ? '<button class="btn" title="In Gmail-Web öffnen" onclick="gmailOpenInGmailWeb(\''+jsStr(GM.query)+'\')">↗ Gmail</button>' : '')
       + '</div>'
       + '<div class="gml-layout">'
-      +   '<div class="gml-sidebar">'+renderLabelList()+'</div>'
+      +   '<div class="gml-sidebar">'+renderNav()+'</div>'
       +   '<div class="gml-main">'+((GM.open||GM.openLoading) ? renderMessageView() : renderListPane())+'</div>'
       + '</div>';
   }
@@ -95197,9 +95260,11 @@ console.log('📚 Leseliste geladen');
   async function bootData(){
     GM.booted = true;        // guard against re-entry while loading
     GM.listLoading = true;   // show the list spinner immediately (no empty flash)
-    // All three load in parallel; awaiting the profile here guarantees GM.profile
-    // is set before the user can open a thread and hit reply-all (self-exclusion).
-    await Promise.all([ loadProfile(), loadLabels(), loadMessages(true) ]);
+    refreshPersonIndex(); loadBlocklist();
+    // All load in parallel; awaiting the profile guarantees GM.profile is set
+    // before reply-all (self-exclusion). Quantus labels are resolved after the
+    // label list loads (used for the Erledigt state on rows).
+    await Promise.all([ loadProfile(), loadLabels().then(resolveQuantusLabels), loadMessages(true) ]);
   }
 
   window.gmailConnect = function(){ window.location.href = "/.netlify/functions/gcal-auth?action=login&return=gmail"; };
@@ -95210,14 +95275,316 @@ console.log('📚 Leseliste geladen');
     toast("ok","Getrennt","Google-Konto wurde getrennt");
     rerender();
   };
-  window.gmailRefresh = function(){ GM.open=null; loadProfile(); loadLabels(); loadMessages(true); };
-  window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.open=null; loadMessages(true); };
+  window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); loadProfile(); loadLabels().then(resolveQuantusLabels); loadMessages(true); };
+  window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.smart=null; GM.open=null; loadMessages(true); };
+  window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; loadMessages(true); };
   window.gmailOpenMessage = function(id){ openMessageById(id); };
   window.gmailBackToList = function(){ GM.open=null; rerender(); };
   window.gmailLoadMore = function(){ loadMessages(false); };
-  window.gmailSearch = function(v){ GM.query=(v||"").trim(); GM.open=null; loadMessages(true); };
+  window.gmailSearch = function(v){ GM.query=(v||"").trim(); GM.smart=null; GM.open=null; loadMessages(true); };
   window.gmailClearSearch = function(){ GM.query=""; GM.open=null; loadMessages(true); };
   window.gmailToggleReadOpen = function(){ if (GM.open) markReadById(GM.open.id, GM.open.unread===true, false); };
+  window.gmailOpenInGmailWeb = function(q){ try { window.open("https://mail.google.com/mail/u/0/#search/"+encodeURIComponent(q||""), "_blank", "noopener"); } catch(e){} };
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Quantus-Integration: Personen-Index · Blockliste · Erledigt · Export
+  //  · Spotlight-Index · KI-Zugriff · Org/Projekt-Inbox
+  // ════════════════════════════════════════════════════════════════════
+  var QDONE = "Quantus/Erledigt", QBLOCK = "Quantus/Blockiert";
+
+  // ── Persons index (match Gmail senders to Quantus contacts) ──
+  function qPersons(){ try { return (window.APP&&APP.state&&APP.state.data&&APP.state.data.entities&&APP.state.data.entities.persons)||{}; } catch(e){ return {}; } }
+  function refreshPersonIndex(){
+    var set=new Set(), byEmail=new Map(), ps=qPersons();
+    Object.keys(ps).forEach(function(id){ var p=ps[id]; (p&&p.emails||[]).forEach(function(em){ if(em){ var k=String(em).toLowerCase(); set.add(k); if(!byEmail.has(k)) byEmail.set(k,{id:id,name:p.name||p.firstName||em}); } }); });
+    GM._personIdx = { set:set, byEmail:byEmail };
+    return GM._personIdx;
+  }
+  function addrOf(h){ return parseAddr(h||"").email.toLowerCase(); }
+  function personOf(h){ var idx=GM._personIdx||refreshPersonIndex(); return idx.byEmail.get(addrOf(h))||null; }
+
+  // ── Blocklist (persisted in APP.state.data.gmailBlocklist) ──
+  function loadBlocklist(){ try { var arr=(window.APP&&APP.state&&APP.state.data&&APP.state.data.gmailBlocklist)||[]; GM._blockSet=new Set(arr.map(function(x){return String(x).toLowerCase();})); } catch(e){ GM._blockSet=new Set(); } return GM._blockSet; }
+  function saveBlocklist(){ try { APP.state.data.gmailBlocklist = Array.from(GM._blockSet||[]); if(typeof window.scheduleSave==="function") window.scheduleSave(); } catch(e){} }
+  function isBlocked(email){ if(!GM._blockSet) loadBlocklist(); return GM._blockSet.has(String(email||"").toLowerCase()); }
+
+  // ── Resolve / create the Quantus labels ──
+  function resolveQuantusLabels(){
+    GM.labelIds.done = (GM.labels.find(function(l){return l.name===QDONE;})||{}).id || GM.labelIds.done || null;
+    GM.labelIds.blocked = (GM.labels.find(function(l){return l.name===QBLOCK;})||{}).id || GM.labelIds.blocked || null;
+  }
+  async function ensureLabel(name){
+    var existing = GM.labels.find(function(l){ return l.name===name; });
+    if (existing) return existing.id;
+    var lab = await gmApi("POST","/users/me/labels", { body:{ name:name, labelListVisibility:"labelShow", messageListVisibility:"show" } });
+    if (lab && lab.id){ GM.labels.push(lab); resolveQuantusLabels(); return lab.id; }
+    throw new Error("Label konnte nicht erstellt werden");
+  }
+
+  // ── Abhaken / Erledigt (label + aus Posteingang nehmen, NICHTS löschen) ──
+  window.gmailToggleDone = async function(id){
+    try {
+      var done = await ensureLabel(QDONE);
+      var src = GM.messages.find(function(m){return m.id===id;}) || ((GM.open&&GM.open.id===id)?GM.open:null);
+      var isDone = src ? ((src.labelIds||[]).indexOf(done)>=0) : false;
+      var body = isDone ? { addLabelIds:["INBOX"], removeLabelIds:[done] } : { addLabelIds:[done], removeLabelIds:["INBOX"] };
+      await gmApi("POST","/users/me/messages/"+encodeURIComponent(id)+"/modify", { body:body });
+      // local update
+      function apply(o){ if(!o) return; var s=new Set(o.labelIds||[]); if(isDone){ s.add("INBOX"); s.delete(done); } else { s.add(done); s.delete("INBOX"); } o.labelIds=Array.from(s); }
+      apply(GM.messages.find(function(m){return m.id===id;})); apply(GM.open&&GM.open.id===id?GM.open:null);
+      // Drop the row from the current list when it no longer belongs there.
+      var inInboxView = GM.smart==="personen" || (!GM.smart && GM.selectedLabel==="INBOX");
+      if (!isDone && inInboxView) GM.messages = GM.messages.filter(function(m){return m.id!==id;});
+      if (isDone && GM.smart==="erledigt") GM.messages = GM.messages.filter(function(m){return m.id!==id;});
+      toast("ok", isDone?"Zurückgelegt":"Erledigt", isDone?"Mail zurück im Posteingang":"Mail in 'Erledigt' (nicht gelöscht)");
+      rerender();
+    } catch(e){ toast("err","Fehler", e.message||"Konnte nicht abhaken"); }
+  };
+
+  // ── Absender blockieren (lokale Blockliste + Label, nichts löschen) ──
+  window.gmailBlockSenderOf = async function(id){
+    var src = GM.messages.find(function(m){return m.id===id;}) || ((GM.open&&GM.open.id===id)?GM.open:null);
+    var email = src ? addrOf(src.from) : "";
+    if (!email){ toast("err","Kein Absender",""); return; }
+    if (!confirm("Absender blockieren?\n\n"+email+"\n\nKünftige Mails werden in deinen Quantus-Ansichten ausgeblendet und vorhandene mit '"+QBLOCK+"' aus dem Posteingang genommen. Es wird nichts gelöscht.")) return;
+    try {
+      GM._blockSet.add(email); saveBlocklist();
+      var blk = await ensureLabel(QBLOCK);
+      var res = await gmApi("GET","/users/me/messages", { query:{ q:"from:"+email, maxResults:"100" } });
+      var ids = (res.messages||[]).map(function(m){return m.id;});
+      if (ids.length) await gmApi("POST","/users/me/messages/batchModify", { body:{ ids:ids, addLabelIds:[blk], removeLabelIds:["INBOX"] } });
+      GM.messages = GM.messages.filter(function(m){ return addrOf(m.from)!==email; });
+      if (GM.open && addrOf(GM.open.from)===email) GM.open=null;
+      toast("ok","Blockiert", email+" – "+ids.length+" Mail(s) aus Posteingang genommen");
+      rerender();
+    } catch(e){ toast("err","Fehler", e.message||"Blockieren fehlgeschlagen"); }
+  };
+  window.gmailUnblock = async function(email){
+    email=String(email||"").toLowerCase(); if(!email) return;
+    GM._blockSet.delete(email); saveBlocklist();
+    try {
+      var blk = GM.labelIds.blocked; if (blk){ var res=await gmApi("GET","/users/me/messages",{query:{q:"from:"+email+" label:Quantus-Blockiert",maxResults:"100"}}); var ids=(res.messages||[]).map(function(m){return m.id;}); if(ids.length) await gmApi("POST","/users/me/messages/batchModify",{body:{ids:ids,addLabelIds:["INBOX"],removeLabelIds:[blk]}}); }
+    } catch(e){}
+    toast("ok","Entsperrt", email); if (GM.smart==="blocked") loadMessages(true); else rerender();
+  };
+
+  // ── Export ──
+  window.gmailExportMessage = async function(id){
+    try {
+      var msg = await gmApi("GET","/users/me/messages/"+encodeURIComponent(id), { query:{ format:"raw" } });
+      var name = "mail-"+id+".eml";
+      downloadBlob(b64urlToBytes(msg.raw||""), name, "message/rfc822"); // byte-exact (keeps attachments intact)
+      toast("ok","Exportiert", name);
+    } catch(e){ toast("err","Export fehlgeschlagen", e.message||""); }
+  };
+  window.gmailExportList = function(){
+    if (!GM.messages.length){ toast("info","Nichts zu exportieren",""); return; }
+    var rows = [["Datum","Von","Email","Betreff","Snippet","Ungelesen"]].concat(GM.messages.map(function(m){ var a=parseAddr(m.from); return [fmtDateFull(m.internalDate), a.name||"", a.email||"", m.subject||"", (m.snippet||"").slice(0,200), m.unread?"ja":"nein"]; }));
+    var csv = rows.map(function(r){ return r.map(function(c){ return '"'+String(c==null?"":c).replace(/"/g,'""')+'"'; }).join(","); }).join("\r\n");
+    downloadBlob("﻿"+csv, "gmail-export-"+new Date().toISOString().slice(0,10)+".csv", "text/csv;charset=utf-8");
+    toast("ok","Exportiert", GM.messages.length+" Mails als CSV");
+  };
+  function b64urlToBytes(s){ s=String(s||"").replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4) s+="="; var bin=window.atob(s); var arr=new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); return arr; }
+  function downloadBlob(content, filename, type){
+    try { var blob=new Blob([content],{type:type||"application/octet-stream"}); var url=URL.createObjectURL(blob); var a=document.createElement("a"); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function(){ URL.revokeObjectURL(url); },1000); } catch(e){ toast("err","Download fehlgeschlagen", e.message||""); }
+  }
+
+  // ── Light index for the global spotlight search (capped, persisted) ──
+  function syncIndex(rows){
+    try {
+      if (!Array.isArray(rows) || !rows.length) return;
+      var idx = (APP.state.data.gmailIndex && Array.isArray(APP.state.data.gmailIndex)) ? APP.state.data.gmailIndex : [];
+      var byId = {}, added=false; idx.forEach(function(it){ byId[it.id]=it; });
+      rows.forEach(function(m){ var a=parseAddr(m.from); if(!byId[m.id]) added=true; byId[m.id]={ id:m.id, fromName:a.name||a.email||"", fromEmail:a.email||"", subject:m.subject||"", snippet:(m.snippet||"").slice(0,140), date:m.internalDate||0 }; });
+      var merged = Object.keys(byId).map(function(k){ return byId[k]; }).sort(function(x,y){ return (y.date||0)-(x.date||0); }).slice(0,300);
+      APP.state.data.gmailIndex = merged;
+      // Only persist when something new was indexed — avoids a full save on every label switch.
+      if (added && typeof window.scheduleSave==="function") window.scheduleSave();
+    } catch(e){}
+  }
+
+  // ── Open a message from outside the Gmail app (spotlight, entity inbox) ──
+  window.gmailOpenFromExternal = function(id){
+    if (gmRoute()!=="gmail") location.hash = "#/gmail";
+    setTimeout(function(){ try { openMessageById(id); } catch(e){} }, gmRoute()==="gmail"?0:120);
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  //  KI-Zugriff — {{GMAIL_*}} Tokens über dieselbe Proxy-Schicht
+  // ════════════════════════════════════════════════════════════════════
+  window.gmailAIContext = function(){
+    try {
+      if (GM.status===undefined){ if(!GM._statusLoading){ GM._statusLoading=true; loadStatus().then(function(){ GM._statusLoading=false; }); } return ""; }
+      if (!GM.status || !GM.status.connected || !GM.status.gmail) return "\n\n# GMAIL\nNicht verbunden — Mail-Befehle ({{GMAIL_*}}) sind nicht verfügbar.";
+      var idx = (APP.state.data.gmailIndex||[]).slice(0,15);
+      var lines = idx.map(function(m){ return "- ["+m.id+"] "+new Date(m.date).toISOString().slice(0,10)+" "+(m.fromName||m.fromEmail)+": "+(m.subject||"(ohne Betreff)"); }).join("\n");
+      return "\n\n# GMAIL (verbunden: "+((GM.profile&&GM.profile.emailAddress)||GM.status.email||"")+")\n"
+        + "Du hast vollen Zugriff auf alle Mails über diese Befehle (eine Aktion pro Zeile):\n"
+        + "{{GMAIL_SEARCH|gmail-query}} — Mails suchen (Gmail-Syntax, z.B. from:anna newer_than:7d).\n"
+        + "{{GMAIL_READ|id-oder-suchbegriff}} — Inhalt einer Mail lesen.\n"
+        + "{{GMAIL_SEND|to|betreff|text}} — Mail senden (Nutzer bestätigt im UI).\n"
+        + "{{GMAIL_DONE|id-oder-suchbegriff}} — Mail als erledigt markieren.\n"
+        + "{{GMAIL_BLOCK|email}} — Absender blockieren (Nutzer bestätigt im UI).\n"
+        + "Letzte Mails (Format [id] Datum Absender: Betreff):\n" + (lines||"(Index noch leer — bitte Gmail einmal öffnen)");
+    } catch(e){ return ""; }
+  };
+  async function gmailEnsureReady(){ if (GM.status===undefined) await loadStatus(); if (!GM._personIdx) refreshPersonIndex(); if (!GM._blockSet) loadBlocklist(); if (!GM.labels.length){ try{ await loadLabels(); resolveQuantusLabels(); }catch(e){} } }
+  async function aiResolveMsg(q){
+    q=(q||"").trim(); if(!q) return null;
+    if (/^[0-9a-f]{8,}$/i.test(q)){ try { var m=await gmApi("GET","/users/me/messages/"+encodeURIComponent(q),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}); return m; } catch(e){} }
+    var res = await gmApi("GET","/users/me/messages", { query:{ q:q, maxResults:"1" } });
+    var id=(res.messages&&res.messages[0]&&res.messages[0].id); if(!id) return null;
+    return await gmApi("GET","/users/me/messages/"+encodeURIComponent(id),{query:{format:"full"}});
+  }
+  async function gmailAIExec(cmd, a){
+    if (cmd==="SEARCH"){
+      var res=await gmApi("GET","/users/me/messages",{query:{q:(a[0]||"").trim(),maxResults:"12"}});
+      var ids=(res.messages||[]).map(function(m){return m.id;});
+      if(!ids.length) return "🔎 Keine Treffer für: "+(a[0]||"");
+      var metas=await Promise.all(ids.map(function(id){return gmApi("GET","/users/me/messages/"+encodeURIComponent(id),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
+      return "🔎 Treffer für \""+(a[0]||"")+"\":\n"+metas.filter(Boolean).map(function(m){var h=headerMap(m.payload);return "- ["+m.id+"] "+(h.date||"")+" "+(h.from||"")+": "+(h.subject||"(ohne Betreff)");}).join("\n");
+    }
+    if (cmd==="READ"){
+      var msg=await aiResolveMsg(a[0]); if(!msg) return "❌ Mail nicht gefunden: "+(a[0]||"");
+      var h=headerMap(msg.payload); var b=extractBodies(msg.payload); var text=(b.text||htmlToText(b.html)||msg.snippet||"").slice(0,1500);
+      return "📧 Von: "+(h.from||"")+"\nBetreff: "+(h.subject||"")+"\nDatum: "+(h.date||"")+"\n\n"+text;
+    }
+    if (cmd==="SEND"){
+      var to=(a[0]||"").trim(), subj=(a[1]||"").trim(), body=(a[2]||"").trim();
+      if(!to) return "❌ Kein Empfänger";
+      if(!confirm("Der KI-Assistent möchte eine E-Mail senden:\n\nAn: "+to+"\nBetreff: "+subj+"\n\n"+body+"\n\nSenden?")) return "↩️ Senden abgebrochen";
+      await gmApi("POST","/users/me/messages/send",{body:{raw:buildRaw({to:to,subject:subj,body:body})}});
+      return "✅ Mail an "+to+" gesendet";
+    }
+    if (cmd==="DONE"){
+      var m2=await aiResolveMsg(a[0]); if(!m2) return "❌ Mail nicht gefunden: "+(a[0]||"");
+      var done=await ensureLabel(QDONE);
+      await gmApi("POST","/users/me/messages/"+encodeURIComponent(m2.id)+"/modify",{body:{addLabelIds:[done],removeLabelIds:["INBOX"]}});
+      var hh=headerMap(m2.payload); return "✅ Erledigt: "+(hh.subject||m2.id);
+    }
+    if (cmd==="BLOCK"){
+      var email=(a[0]||"").trim().toLowerCase(); if(!email) return "❌ Keine E-Mail-Adresse";
+      if(!confirm("Der KI-Assistent möchte den Absender blockieren:\n\n"+email+"\n\nBlockieren?")) return "↩️ Abgebrochen";
+      GM._blockSet.add(email); saveBlocklist();
+      var blk=await ensureLabel(QBLOCK); var r=await gmApi("GET","/users/me/messages",{query:{q:"from:"+email,maxResults:"100"}}); var ids2=(r.messages||[]).map(function(m){return m.id;});
+      if(ids2.length) await gmApi("POST","/users/me/messages/batchModify",{body:{ids:ids2,addLabelIds:[blk],removeLabelIds:["INBOX"]}});
+      return "⛔ Blockiert: "+email+" ("+ids2.length+" Mail(s))";
+    }
+    return "❓ Unbekannter Mail-Befehl: "+cmd;
+  }
+  window.gmailAIProcess = async function(text){
+    if (!text || text.indexOf("{{GMAIL_")<0) return text;
+    await gmailEnsureReady();
+    if (!GM.status || !GM.status.connected || !GM.status.gmail) return text.replace(/\{\{GMAIL_[^}]*\}\}/g,"⚠️ (Gmail nicht verbunden)");
+    var re=/\{\{GMAIL_([A-Z]+)\|?([^}]*)\}\}/g, tokens=[], m;
+    while((m=re.exec(text))) tokens.push(m);
+    var out=text, changed=false;
+    for (var i=0;i<tokens.length;i++){
+      var t=tokens[i], res;
+      try { res=await gmailAIExec(t[1], (t[2]||"").split("|")); changed=true; }
+      catch(e){ res="❌ "+((e&&e.message)||"Mail-Fehler"); }
+      out=out.split(t[0]).join(res);
+    }
+    if (changed && gmRoute()==="gmail"){ try { loadMessages(true); } catch(e){} }
+    return out;
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  //  Org/Projekt-Inbox — injiziert auf Detailseiten von #/organizations & #/projects
+  // ════════════════════════════════════════════════════════════════════
+  function entityOf(kind,id){ try { var key=kind==="organization"?"organizations":"projects"; return APP.state.data.entities[key][id]; } catch(e){ return null; } }
+  function entityAddresses(kind,id){
+    var ent=entityOf(kind,id); if(!ent) return [];
+    var emails=new Set(); var ps=qPersons();
+    (ent.mailPersonIds||[]).forEach(function(pid){ var p=ps[pid]; if(p) (p.emails||[]).forEach(function(e){ if(e) emails.add(String(e).toLowerCase()); }); });
+    // auto-include linked persons: org via person.organizationId, project via person.linkedProjects
+    Object.keys(ps).forEach(function(pid){ var p=ps[pid]; if(!p) return; var linked = kind==="organization" ? (p.organizationId===id) : (Array.isArray(p.linkedProjects)&&p.linkedProjects.indexOf(id)>=0); if(linked) (p.emails||[]).forEach(function(e){ if(e) emails.add(String(e).toLowerCase()); }); });
+    (ent.mailEmails||[]).forEach(function(e){ if(e) emails.add(String(e).toLowerCase()); });
+    return Array.from(emails).filter(function(e){ return !isBlocked(e); });
+  }
+  function entityQuery(kind,id){ var ad=entityAddresses(kind,id); return ad.length ? ("from:("+ad.map(function(e){return e;}).join(" OR ")+")") : ""; }
+
+  function gmailDetectEntity(){
+    var mm=(location.hash||"").match(/^#\/(organizations|projects)\/([a-zA-Z0-9_-]+)/); if(!mm) return null;
+    var kind=mm[1]==="organizations"?"organization":"project", id=mm[2];
+    if(!entityOf(kind,id)) return null;
+    return { kind:kind, id:id };
+  }
+  function gmailInjectEntityInbox(){
+    var ctx=gmailDetectEntity(); if(!ctx) return;
+    if (document.getElementById("gmlEntityInbox")) return;
+    var target=document.querySelector("#main .page")||document.getElementById("pageContent")||document.querySelector("#main"); if(!target) return;
+    var wrap=document.createElement("div"); wrap.id="gmlEntityInbox"; wrap.className="card"; wrap.style.cssText="margin-top:16px"; wrap.setAttribute("data-k",ctx.kind); wrap.setAttribute("data-i",ctx.id);
+    wrap.innerHTML = renderEntityInbox(ctx.kind, ctx.id);
+    target.appendChild(wrap);
+    loadEntityInbox(ctx.kind, ctx.id);
+  }
+  function renderEntityInbox(kind,id){
+    var ad=entityAddresses(kind,id);
+    var st=GM.entityInbox[kind+":"+id]||{};
+    var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Gmail-Inbox</span>'
+      +'<span style="display:flex;gap:6px">'
+      +'<button class="btn sm" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">⚙️ Personen/E-Mails</button>'
+      +(ad.length?'<button class="btn sm" onclick="gmailOpenInGmailWeb(\''+jsStr(entityQuery(kind,id))+'\')" title="In Gmail filtern">↗ Gmail</button>':'')
+      +'</span></h3>';
+    if (!ad.length) return head+'<div style="color:var(--muted);font-size:13px;padding:6px 2px">Noch keine Personen oder E-Mail-Adressen zugeordnet. Über „⚙️ Personen/E-Mails" hinzufügen.</div>';
+    var bodyHtml;
+    if (st.loading) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">⏳ Lade Mails…</div>';
+    else if (st.error) bodyHtml='<div style="color:#ff453a;font-size:13px;padding:8px 2px">'+esc(st.error)+'</div>';
+    else if (!st.rows || !st.rows.length) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">Keine Mails von '+ad.length+' Adresse(n) gefunden.</div>';
+    else bodyHtml='<div class="gml-ei-list">'+st.rows.map(function(m){ var a=parseAddr(m.from); return '<div class="gml-ei-row'+(m.unread?" unread":"")+'" onclick="gmailOpenFromExternal(\''+jsStr(m.id)+'\')"><span class="gml-ei-from">'+esc(a.name||a.email)+'</span><span class="gml-ei-subj">'+esc(m.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(fmtDate(m.internalDate))+'</span></div>'; }).join("")+'</div>';
+    return head+'<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px">'+ad.length+' Adresse(n) · '+(st.rows?st.rows.length:0)+' Mail(s)</div>'+bodyHtml;
+  }
+  function refreshEntityInboxDom(kind,id){
+    var el=document.getElementById("gmlEntityInbox");
+    if (el && el.getAttribute("data-k")===kind && el.getAttribute("data-i")===id) el.innerHTML=renderEntityInbox(kind,id);
+  }
+  async function loadEntityInbox(kind,id){
+    var key=kind+":"+id, ad=entityAddresses(kind,id);
+    if (!ad.length){ refreshEntityInboxDom(kind,id); return; }
+    GM.entityInbox[key]={ loading:true }; refreshEntityInboxDom(kind,id);
+    try {
+      await gmailEnsureReady();
+      var q="from:("+ad.join(" OR ")+")";
+      var res=await gmApi("GET","/users/me/messages",{query:{q:q,maxResults:"15"}});
+      var ids=(res.messages||[]).map(function(m){return m.id;});
+      var metas=await Promise.all(ids.map(function(mid){return gmApi("GET","/users/me/messages/"+encodeURIComponent(mid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
+      GM.entityInbox[key]={ rows:metas.filter(Boolean).map(parseMeta) };
+    } catch(e){ GM.entityInbox[key]={ error:e.message||"Fehler beim Laden" }; }
+    refreshEntityInboxDom(kind,id);
+  }
+
+  window.gmailManageEntityMails = function(kind,id){
+    var ent=entityOf(kind,id); if(!ent) return;
+    var ps=qPersons();
+    ent.mailPersonIds=ent.mailPersonIds||[]; ent.mailEmails=ent.mailEmails||[];
+    var personChips=ent.mailPersonIds.map(function(pid){ var p=ps[pid]; return '<span class="gml-chip">'+esc(p?(p.name||"Person"):"(gelöscht)")+' <a onclick="gmailEntPersonRemove(\''+kind+'\',\''+jsStr(id)+'\',\''+jsStr(pid)+'\')">×</a></span>'; }).join("")||'<span style="color:var(--muted);font-size:12px">keine</span>';
+    var emailChips=ent.mailEmails.map(function(em){ return '<span class="gml-chip">'+esc(em)+' <a onclick="gmailEntEmailRemove(\''+kind+'\',\''+jsStr(id)+'\',\''+jsStr(em)+'\')">×</a></span>'; }).join("")||'<span style="color:var(--muted);font-size:12px">keine</span>';
+    var opts='<option value="">+ Person hinzufügen…</option>'+Object.keys(ps).sort(function(x,y){return (ps[x].name||"").localeCompare(ps[y].name||"");}).map(function(pid){ return '<option value="'+esc(pid)+'">'+esc(ps[pid].name||pid)+(ps[pid].emails&&ps[pid].emails[0]?" · "+esc(ps[pid].emails[0]):"")+'</option>'; }).join("");
+    var sel='style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:9px;font-size:13.5px;box-sizing:border-box"';
+    var html='<div style="margin-bottom:14px"><div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">Personen</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="gmlEntPersons">'+personChips+'</div>'
+      +'<select '+sel+' onchange="gmailEntPersonAdd(\''+kind+'\',\''+jsStr(id)+'\',this.value);this.value=\'\'">'+opts+'</select></div>'
+      +'<div><div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">Zusätzliche E-Mail-Adressen</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="gmlEntEmails">'+emailChips+'</div>'
+      +'<div style="display:flex;gap:8px"><input id="gmlEntEmailInput" type="text" '+sel+' placeholder="adresse@example.com" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmailEntEmailAdd(\''+kind+'\',\''+jsStr(id)+'\');}"><button class="btn" onclick="gmailEntEmailAdd(\''+kind+'\',\''+jsStr(id)+'\')">+</button></div></div>';
+    if (window.openModal) window.openModal("⚙️ Inbox-Zuordnung", html, '<button class="btn primary" onclick="closeModal()">Fertig</button>');
+  };
+  // The entity object is mutated in place above; updateEntity bumps updatedAt and
+  // saves, and scheduleSave is a belt-and-suspenders fallback so the change always persists.
+  function persistEntity(kind,id){ try { if(typeof window.updateEntity==="function") window.updateEntity(kind,id,{}); } catch(e){} if(typeof window.scheduleSave==="function") window.scheduleSave(); }
+  function reopenManage(kind,id){ window.gmailManageEntityMails(kind,id); loadEntityInbox(kind,id); }
+  window.gmailEntPersonAdd=function(kind,id,pid){ if(!pid) return; var e=entityOf(kind,id); if(!e) return; e.mailPersonIds=e.mailPersonIds||[]; if(e.mailPersonIds.indexOf(pid)<0) e.mailPersonIds.push(pid); persistEntity(kind,id); reopenManage(kind,id); };
+  window.gmailEntPersonRemove=function(kind,id,pid){ var e=entityOf(kind,id); if(!e) return; e.mailPersonIds=(e.mailPersonIds||[]).filter(function(x){return x!==pid;}); persistEntity(kind,id); reopenManage(kind,id); };
+  window.gmailEntEmailAdd=function(kind,id){ var inp=document.getElementById("gmlEntEmailInput"); var v=(inp&&inp.value||"").trim().toLowerCase(); if(!/.+@.+\..+/.test(v)){ toast("err","Ungültig","Bitte gültige E-Mail eingeben"); return; } var e=entityOf(kind,id); if(!e) return; e.mailEmails=e.mailEmails||[]; if(e.mailEmails.indexOf(v)<0) e.mailEmails.push(v); persistEntity(kind,id); reopenManage(kind,id); };
+  window.gmailEntEmailRemove=function(kind,id,em){ var e=entityOf(kind,id); if(!e) return; e.mailEmails=(e.mailEmails||[]).filter(function(x){return x!==em;}); persistEntity(kind,id); reopenManage(kind,id); };
+
+  // Inject org/project inbox on navigation + when Quantus re-renders the page.
+  var _gmlInjTimer=null;
+  function gmlScheduleInject(){ clearTimeout(_gmlInjTimer); _gmlInjTimer=setTimeout(function(){ try{ gmailInjectEntityInbox(); }catch(e){} },200); }
+  window.addEventListener("hashchange", gmlScheduleInject);
+  setTimeout(function(){ try {
+    var tgt=document.getElementById("pageContent")||document.querySelector("#main");
+    if (tgt){ new MutationObserver(function(){ if(!document.getElementById("gmlEntityInbox") && gmailDetectEntity()) gmlScheduleInject(); }).observe(tgt,{childList:true,subtree:false}); }
+  } catch(e){} }, 1500);
 
 })();
 </script>
