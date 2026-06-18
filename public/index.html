@@ -93659,7 +93659,7 @@ console.log('📚 Leseliste geladen');
 /* Month grid */
 .gcv-month { display:grid; grid-template-columns:repeat(7,1fr); gap:1px; background:var(--border); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
 .gcv-month-wd { background:var(--panel); padding:7px 8px; font-size:11px; font-weight:700; color:var(--muted); text-align:center; text-transform:uppercase; letter-spacing:.4px; }
-.gcv-month-cell { background:var(--panel); min-height:104px; padding:5px 6px; cursor:pointer; transition:background .12s; display:flex; flex-direction:column; gap:3px; }
+.gcv-month-cell { background:var(--panel); min-height:90px; padding:5px 6px; cursor:pointer; transition:background .12s; display:flex; flex-direction:column; gap:3px; }
 .gcv-month-cell:hover { background:var(--panel2); }
 .gcv-month-cell.dim { opacity:.45; }
 .gcv-cell-num { font-size:12.5px; font-weight:600; color:var(--text2); width:24px; height:24px; display:flex; align-items:center; justify-content:center; border-radius:50%; align-self:flex-start; }
@@ -93685,7 +93685,7 @@ console.log('📚 Leseliste geladen');
 .gcv-allday-row { border-bottom:1px solid var(--border); min-height:24px; max-height:96px; overflow-y:auto; }
 .gcv-allday-gutter { border-right:1px solid var(--border); font-size:10px; color:var(--muted); padding:4px; display:flex; align-items:center; }
 .gcv-allday-cell { border-left:1px solid var(--border); padding:3px; display:flex; flex-direction:column; gap:2px; min-height:24px; }
-.gcv-scroll { overflow-y:auto; max-height:calc(100vh - 300px); position:relative; }
+.gcv-scroll { overflow-y:auto; max-height:calc(100vh - 250px); position:relative; }
 .gcv-timegrid { display:grid; position:relative; }
 .gcv-timecol { border-right:1px solid var(--border); position:relative; }
 .gcv-tlabel { height:var(--gcv-hh,46px); position:relative; }
@@ -93732,7 +93732,32 @@ console.log('📚 Leseliste geladen');
 .gcv-rsvp.needsAction { background:rgba(142,142,147,.18); color:var(--muted); }
 .gcv-linkchip { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:8px; background:rgba(255,255,255,.04); border:1px solid var(--border); font-size:12.5px; color:var(--text2); }
 .gcv-linkchip a { color:var(--accent); text-decoration:none; cursor:pointer; }
-@media (max-width:760px){ .gcv-scroll { max-height:calc(100vh - 240px); } .gcv-title { font-size:15px; min-width:0; } }
+
+/* Layout mit Mini-Kalender-Seitenleiste */
+.gcv-layout { display:grid; grid-template-columns:212px 1fr; gap:16px; align-items:start; }
+.gcv-sidebar { display:flex; flex-direction:column; gap:14px; position:sticky; top:8px; }
+.gcv-main { min-width:0; }
+.gcv-side-cals { display:flex; flex-direction:column; gap:6px; }
+.gcv-side-h { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+.gcv-side-cals .gcal-cal-chip { width:100%; justify-content:flex-start; }
+.gcv-mini { background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:12px; padding:10px; }
+.gcv-mini-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.gcv-mini-title { font-size:12.5px; font-weight:700; color:var(--text); text-transform:capitalize; }
+.gcv-mini-nav { width:24px; height:24px; border:none; background:transparent; color:var(--text2); cursor:pointer; border-radius:6px; font-size:14px; line-height:1; }
+.gcv-mini-nav:hover { background:rgba(255,255,255,.08); }
+.gcv-mini-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:1px; }
+.gcv-mini-wd { font-size:9.5px; color:var(--muted); text-align:center; padding:2px 0; font-weight:600; }
+.gcv-mini-day { aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--text2); border-radius:50%; cursor:pointer; position:relative; }
+.gcv-mini-day:hover { background:rgba(255,255,255,.10); }
+.gcv-mini-day.dim { opacity:.32; }
+.gcv-mini-day.sel { box-shadow:inset 0 0 0 1.5px var(--accent); color:var(--text); }
+.gcv-mini-day.today { background:var(--accent); color:#fff; font-weight:700; }
+.gcv-mini-dots { position:absolute; bottom:1px; left:0; right:0; display:flex; gap:2px; justify-content:center; }
+.gcv-mini-dot { width:3px; height:3px; border-radius:50%; }
+.gcv-mini-day.today .gcv-mini-dot { background:#fff !important; }
+
+@media (max-width:860px){ .gcv-layout { grid-template-columns:1fr; } .gcv-sidebar { position:static; flex-direction:row; flex-wrap:wrap; align-items:flex-start; } .gcv-mini { width:240px; } .gcv-side-cals { flex:1; min-width:200px; } }
+@media (max-width:760px){ .gcv-scroll { max-height:calc(100vh - 230px); } .gcv-title { font-size:15px; min-width:0; } }
 </style>
 
 <script id="gcalScript">
@@ -94080,7 +94105,7 @@ console.log('📚 Leseliste geladen');
     return html + '</div>';
   }
 
-  var GCV_HH = 46; // px per hour in week/day grid (keep in sync with CSS --gcv-hh)
+  var GCV_HH = 34; // px per hour in week/day grid (keep in sync with CSS --gcv-hh)
   function renderTimedEvent(it, key){
     var ev = it.ev, top = it.sMin*GCV_HH/60, height = Math.max(16,(it.eMin-it.sMin)*GCV_HH/60);
     var laneW = 100/(it.lanes||1), left = (it.lane||0)*laneW, bg = evColorBg(ev), writable = calWritable(ev._calId);
@@ -94130,6 +94155,33 @@ console.log('📚 Leseliste geladen');
   function renderDay(){ return renderTimeGrid([startOfDay(GC.cursor)]); }
   function scrollGridToWork(){ var el = document.getElementById("gcvScroll"); if (el) el.scrollTop = 7*GCV_HH - 12; }
 
+  // ── Mini-Monatskalender (Navigator) ──
+  function miniDots(mStart, mEnd){
+    var evDays = {}, taskDays = {};
+    GC.events.forEach(function(ev){ var s = evStart(ev); if (s >= mStart && s < mEnd) evDays[dayKey(s)] = true; });
+    if (GC.showTasks){
+      try { var tasks = qEntities("tasks"); Object.keys(tasks).forEach(function(id){ var t = tasks[id]; if (!t || !t.dueDate || t.status==="done") return; var d = new Date(t.dueDate+"T00:00:00"); if (!isNaN(d) && d >= mStart && d < mEnd) taskDays[dayKey(d)] = true; }); } catch(e){}
+    }
+    return { evDays:evDays, taskDays:taskDays };
+  }
+  function renderMiniCal(){
+    var mc = GC.miniCursor || startOfMonth(GC.cursor);
+    var gridStart = startOfWeek(startOfMonth(mc)), today = new Date();
+    var dots = miniDots(gridStart, addDays(gridStart,42));
+    var title = mc.toLocaleDateString("de-DE",{month:"long",year:"numeric"});
+    var html = '<div class="gcv-mini"><div class="gcv-mini-head"><button class="gcv-mini-nav" title="Zurück" onclick="gcalMiniNav(-1)">‹</button><span class="gcv-mini-title">'+esc(title)+'</span><button class="gcv-mini-nav" title="Vor" onclick="gcalMiniNav(1)">›</button></div><div class="gcv-mini-grid">';
+    html += WD_SHORT.map(function(w){ return '<div class="gcv-mini-wd">'+w.charAt(0)+'</div>'; }).join("");
+    for (var i=0;i<42;i++){
+      var d = addDays(gridStart,i), key = dayKey(d);
+      var dim = d.getMonth()!==mc.getMonth(), isToday = sameDay(d,today), isSel = sameDay(d,GC.cursor);
+      var dd = "";
+      if (dots.evDays[key]) dd += '<span class="gcv-mini-dot" style="background:var(--accent)"></span>';
+      if (dots.taskDays[key]) dd += '<span class="gcv-mini-dot" style="background:var(--warn,#ff9f0a)"></span>';
+      html += '<div class="gcv-mini-day'+(dim?" dim":"")+(isToday?" today":(isSel?" sel":""))+'" title="'+esc(d.toLocaleDateString("de-DE"))+'" onclick="gcalMiniPick(\''+key+'\')">'+d.getDate()+(dd?'<span class="gcv-mini-dots">'+dd+'</span>':"")+'</div>';
+    }
+    return html + '</div></div>';
+  }
+
   function shellMain(){
     var s = GC.status || {};
     var acct = s.email ? esc(s.email) : "verbunden";
@@ -94168,9 +94220,15 @@ console.log('📚 Leseliste geladen');
       +   '<button class="gcv-today" onclick="gcalToday()">Heute</button>'
       +   '<span class="gcv-title">'+esc(viewTitle())+'</span>'
       + '</div><div class="gcv-views">'+views+'</div></div>'
-      + '<div class="gcal-toolbar"><div class="gcal-cal-chips">'+(calChips||'<span style="color:var(--muted);font-size:13px">Keine Kalender gefunden</span>')+'</div>'
-      +   '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">'+taskToggle+weeksSel+'</div></div>'
-      + '<div class="gcal-body">'+body+'</div>';
+      + '<div class="gcv-layout">'
+      +   '<aside class="gcv-sidebar">'
+      +     renderMiniCal()
+      +     '<div class="gcv-side-cals"><div class="gcv-side-h">Meine Kalender</div>'+(calChips||'<span style="color:var(--muted);font-size:12px">Keine Kalender gefunden</span>')+'</div>'
+      +     '<div>'+taskToggle+'</div>'
+      +     (weeksSel?('<div>'+weeksSel+'</div>'):'')
+      +   '</aside>'
+      +   '<main class="gcv-main"><div class="gcal-body">'+body+'</div></main>'
+      + '</div>';
   }
 
   // ── Main view entry (called by the router) ──
@@ -94491,13 +94549,17 @@ console.log('📚 Leseliste geladen');
     else if (GC.view==="week") c = addDays(c, dir*7);
     else if (GC.view==="day") c = addDays(c, dir);
     else { reloadEvents(); return; }
-    GC.cursor = c; GC._needScroll = true; savePrefs(); reloadEvents();
+    GC.cursor = c; GC.miniCursor = startOfMonth(c); GC._needScroll = true; savePrefs(); reloadEvents();
   };
-  window.gcalToday = function(){ GC.cursor = new Date(); GC._needScroll = true; reloadEvents(); };
+  window.gcalToday = function(){ GC.cursor = new Date(); GC.miniCursor = startOfMonth(GC.cursor); GC._needScroll = true; reloadEvents(); };
   window.gcalSetView = function(v){ if (GC.view===v) return; GC.view = v; GC._needScroll = true; savePrefs(); reloadEvents(); };
   window.gcalToggleTasks = function(){ GC.showTasks = !GC.showTasks; savePrefs(); rerender(); };
-  window.gcalGotoDay = function(key){ GC.cursor = new Date(key+"T00:00:00"); GC.view = "day"; GC._needScroll = true; savePrefs(); reloadEvents(); };
+  window.gcalGotoDay = function(key){ GC.cursor = new Date(key+"T00:00:00"); GC.miniCursor = startOfMonth(GC.cursor); GC.view = "day"; GC._needScroll = true; savePrefs(); reloadEvents(); };
   window.gcalCreateAt = function(dateKey, time){ gcalOpenEditor(null, null, { date: dateKey, time: time||null }); };
+  // Mini-calendar navigator: paging only re-renders (uses cached events + local
+  // task data); picking a day moves the main view's cursor and reloads.
+  window.gcalMiniNav = function(dir){ var m = GC.miniCursor ? new Date(GC.miniCursor) : startOfMonth(GC.cursor); m.setMonth(m.getMonth()+dir); GC.miniCursor = startOfMonth(m); rerender(); };
+  window.gcalMiniPick = function(key){ GC.cursor = new Date(key+"T00:00:00"); GC.miniCursor = startOfMonth(GC.cursor); GC._needScroll = true; savePrefs(); reloadEvents(); };
 
   // ── Task interactions (Quantus integration) ──
   window.gcalOpenTask = function(taskId){
