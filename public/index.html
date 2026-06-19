@@ -8424,7 +8424,10 @@ function normalizeData(data) {
     
     // ── Historie (Auto-Log) ──
     p.interactions = Array.isArray(p.interactions) ? p.interactions : [];  // [{id, date, type:"meeting"|"call"|"email"|"chat"|"event", note}]
-    
+
+    // ── KI-Anreicherungen (n8n entityInbox) — read-only Provenienz ──
+    p.aiEnrichments = Array.isArray(p.aiEnrichments) ? p.aiEnrichments : [];  // [{field, value, source, sourceUrl, date}]
+
     p.createdAt = p.createdAt || nowIso();
     p.updatedAt = p.updatedAt || nowIso();
   }
@@ -36372,6 +36375,30 @@ function viewOrganizations() {
   `;
 }
 
+// Read-only Anzeige der von der KI (n8n entityInbox) ergänzten Infos mit Quelle
+// + Datum. Genutzt in der Personen- UND Organisations-Detailansicht (C2/C3).
+function renderAiEnrichmentsBox(list) {
+  if (!Array.isArray(list) || !list.length) return "";
+  const esc2 = window.esc || (s => String(s == null ? "" : s));
+  const rows = list.slice().reverse().slice(0, 100).map(en => {
+    let d = "";
+    try { if (en.date) d = new Date(en.date).toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" }); } catch (e) {}
+    const src = en.sourceUrl
+      ? `<a href="${esc2(en.sourceUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc2(en.source || "Quelle")}</a>`
+      : esc2(en.source || "");
+    return `<div style="display:flex;gap:10px;padding:6px 0;border-top:1px solid var(--border);font-size:12.5px">
+      <span style="min-width:130px;color:var(--muted)">${esc2(en.field || "")}</span>
+      <span style="flex:1;color:var(--text);word-break:break-word">${esc2(en.value || "")}</span>
+      <span style="color:var(--muted);white-space:nowrap;flex-shrink:0">${src}${d ? " · " + esc2(d) : ""}</span>
+    </div>`;
+  }).join("");
+  return `<div style="margin:14px 0;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:rgba(127,148,176,.06)">
+    <h4 style="margin:0 0 4px;font-size:13px;display:flex;align-items:center;gap:6px">🤖 Von der KI ergänzt</h4>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Automatisch hinterlegte Infos (read-only) — mit Quelle &amp; Datum.</div>
+    ${rows}
+  </div>`;
+}
+
 function viewOrgDetail(id) {
   if (id === "new") return viewOrgCreate();
   
@@ -36524,6 +36551,8 @@ function viewOrgDetail(id) {
           <button class="btn sm" data-action="create-note-from" data-kind="organization" data-id="${id}">📝 Notiz erstellen</button>
         </div>
         
+        ${(typeof renderAiEnrichmentsBox === "function" ? renderAiEnrichmentsBox(o.aiEnrichments) : "")}
+
         ${renderLinkedEntitiesSection("organization", id)}
         
         <div class="card mb-4">
@@ -89997,6 +90026,8 @@ console.log('📚 Leseliste geladen');
         ${p.tags.map(t => `<span style="display:inline-block;padding:3px 9px;margin:2px;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.3);border-radius:10px;font-size:11px;color:#d8b4fe">${mhEsc(t)}</span>`).join('')}
       </div>` : ''}
       
+      ${(typeof renderAiEnrichmentsBox === "function" ? renderAiEnrichmentsBox(p.aiEnrichments) : "")}
+
       ${p.emails?.length || p.phones?.length || hasAddr ? `<div class="mh-detail-section"><h4>📞 Kontakt</h4>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div>
@@ -93597,6 +93628,148 @@ console.log('📚 Leseliste geladen');
       console.log("🔥 [Quantus] Communicator-Task-Importer aktiv (" + INBOX_PATH + ")");
     } catch(e){
       console.warn("[Quantus] Importer-Start fehlgeschlagen:", e && e.message);
+    }
+    return true;
+  }
+
+  var tries = 0;
+  var iv = setInterval(function(){ tries++; if (start() || tries > 150) clearInterval(iv); }, 300);
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!--  ENTITY-INBOX VERARBEITER                                                -->
+<!--  Liest die RTDB-Queue 'entityInbox' (von n8n befuellt) und legt pro      -->
+<!--  Eintrag eine Person/Organisation an ODER ergaenzt einen vorhandenen     -->
+<!--  Datensatz (Matching per E-Mail, dann Name/Geburtsdatum). Fuellt nur     -->
+<!--  leere Felder und protokolliert jede KI-Info als aiEnrichments-Eintrag   -->
+<!--  (Quelle + Datum). Nutzt die bestehenden Funktionen mhFindOrCreatePerson -->
+<!--  und createEntity('organization') — keine neue Datenstruktur, kein       -->
+<!--  Loeschen. Vollstaendig gekapselt, kann den App-Boot nicht beeinflussen. -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  "use strict";
+
+  // Gleiche RTDB-Instanz wie der Communicator-Task-Importer (Region europe-west1).
+  var DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+  var INBOX_PATH = "entityInbox";
+  var PROCESSED_KEY = "__quantus_entity_inbox_processed";
+
+  function loadProcessed(){ try { return JSON.parse(localStorage.getItem(PROCESSED_KEY) || "[]") || []; } catch(e){ return []; } }
+  function markProcessed(k){ try { var a = loadProcessed(); if (a.indexOf(k) < 0){ a.push(k); if (a.length > 1000) a = a.slice(-1000); localStorage.setItem(PROCESSED_KEY, JSON.stringify(a)); } } catch(e){} }
+
+  function lc(s){ return String(s == null ? "" : s).trim().toLowerCase(); }
+  function persons(){ try { return APP.state.data.entities.persons || {}; } catch(e){ return {}; } }
+  function orgs(){ try { return APP.state.data.entities.organizations || {}; } catch(e){ return {}; } }
+  function collectEmails(d){ var out = []; if (d.email) out.push(d.email); if (Array.isArray(d.emails)) d.emails.forEach(function(e){ if (e) out.push(e); }); return out.map(lc).filter(Boolean); }
+
+  // ── Matching: E-Mail zuerst, dann firstName+lastName(+birthday), dann voller Name ──
+  function matchPerson(d){
+    var ps = persons(), emails = collectEmails(d), id;
+    if (emails.length){ for (id in ps){ var pe = (ps[id].emails || []).map(lc); if (pe.some(function(e){ return emails.indexOf(e) >= 0; })) return ps[id]; } }
+    var fn = lc(d.firstName), ln = lc(d.lastName);
+    if (fn && ln){ var cand = null; for (id in ps){ var p = ps[id]; if (lc(p.firstName) === fn && lc(p.lastName) === ln){ if (d.birthday && p.birthday){ if (lc(p.birthday) === lc(d.birthday)) return p; } else cand = cand || p; } } if (cand) return cand; }
+    if (d.name){ var nm = lc(d.name); for (id in ps){ if (lc(ps[id].name) === nm) return ps[id]; } }
+    return null;
+  }
+  function matchOrg(d){
+    var os = orgs(), emails = collectEmails(d), id;
+    if (emails.length){ for (id in os){ var oe = []; if (os[id].email) oe.push(lc(os[id].email)); (os[id].emails || []).forEach(function(e){ oe.push(lc(e)); }); if (oe.some(function(e){ return emails.indexOf(e) >= 0; })) return os[id]; } }
+    if (d.name){ var nm = lc(d.name); for (id in os){ if (lc(os[id].name) === nm) return os[id]; } }
+    return null;
+  }
+
+  // ── Ergaenzen: nur leere Felder fuellen, jede KI-Info als aiEnrichments loggen ──
+  var ARRAY_FIELDS = { emails:1, phones:1, tags:1, languages:1, interests:1, skills:1 };
+  var SKIP_FIELDS = { id:1, createdAt:1, updatedAt:1, aiEnrichments:1, interactions:1, comments:1 };
+  function augment(ent, d, src){
+    ent.aiEnrichments = Array.isArray(ent.aiEnrichments) ? ent.aiEnrichments : [];
+    function enrich(field, value){ ent.aiEnrichments.push({ field: field, value: String(value), source: src.source, sourceUrl: src.sourceUrl || "", date: src.date }); }
+    Object.keys(d).forEach(function(field){
+      if (SKIP_FIELDS[field]) return;
+      var val = d[field];
+      if (val == null || val === "") return;
+      if (Array.isArray(val)){
+        if (ARRAY_FIELDS[field]){
+          ent[field] = Array.isArray(ent[field]) ? ent[field] : [];
+          var existing = ent[field].map(lc);
+          val.forEach(function(v){ if (v != null && v !== "" && existing.indexOf(lc(v)) < 0){ ent[field].push(v); existing.push(lc(v)); enrich(field, v); } });
+        }
+        return;
+      }
+      if (typeof val === "object"){
+        if (typeof ent[field] !== "object" || !ent[field]) ent[field] = {};
+        Object.keys(val).forEach(function(sub){ var sv = val[sub]; if (sv == null || sv === "") return; if (ent[field][sub] == null || ent[field][sub] === ""){ ent[field][sub] = sv; enrich(field + "." + sub, sv); } else if (lc(ent[field][sub]) !== lc(sv)) enrich(field + "." + sub, sv); });
+        return;
+      }
+      if (ent[field] == null || ent[field] === ""){ ent[field] = val; enrich(field, val); }
+      else if (lc(ent[field]) !== lc(val)) enrich(field, val); // belegtes Feld nicht ueberschreiben, aber KI-Vorschlag protokollieren
+    });
+    ent.updatedAt = new Date().toISOString();
+  }
+
+  function processEntry(snap){
+    var key = snap.key, v = snap.val() || {};
+    try {
+      if (loadProcessed().indexOf(key) >= 0) return;
+      if (v.status === "processed" || v.status === "dismissed"){ markProcessed(key); return; }
+      var type = lc(v.type), d = v.data || {};
+      if (type !== "person" && type !== "org" && type !== "organization"){ markProcessed(key); return; }
+      var src = { source: v.sourceMail || v.sourceMessageId || "n8n-ai", sourceUrl: v.sourceUrl || "", date: v.createdAt || new Date().toISOString() };
+      var resultKind, resultId, matched, name;
+
+      if (type === "person"){
+        resultKind = "person";
+        var pm = matchPerson(d);
+        if (pm){ augment(pm, d, src); resultId = pm.id; matched = true; name = pm.name; }
+        else {
+          var pname = (d.name || [d.firstName, d.lastName].filter(Boolean).join(" ") || collectEmails(d)[0] || "Unbekannt").trim();
+          var np = window.mhFindOrCreatePerson(pname);   // legt minimal an ODER findet per Name → keine Namensduplikate
+          if (!np) { markProcessed(key); return; }
+          augment(np, d, src); resultId = np.id; matched = false; name = np.name;
+        }
+      } else {
+        resultKind = "org";
+        var om = matchOrg(d);
+        if (om){ augment(om, d, src); resultId = om.id; matched = true; name = om.name; }
+        else {
+          var oname = (d.name || collectEmails(d)[0] || "Organisation").trim();
+          var oid = window.createEntity("organization", { name: oname });
+          var oent = orgs()[oid];
+          if (!oent) { markProcessed(key); return; }
+          augment(oent, d, src); resultId = oid; matched = false; name = oname;
+        }
+      }
+
+      if (typeof window.scheduleSave === "function") window.scheduleSave();
+      markProcessed(key);
+      // Status zurueck in die RTDB (kein Loeschen) → Feedback fuer n8n.
+      try { snap.ref.update({ status: "processed", processedAt: Date.now(), resultKind: resultKind, resultId: resultId || null, matched: !!matched }); } catch(e){}
+      if (typeof window.toast === "function") { try { window.toast("ok", (resultKind === "person" ? "👤 " : "🏢 ") + (matched ? "KI-Info ergaenzt" : "Neu aus KI"), name || ""); } catch(e){} }
+      if (typeof window.render === "function") { try { window.render(); } catch(e){} }
+    } catch(e){
+      console.warn("[Quantus] entityInbox-Verarbeitung fehlgeschlagen:", e && e.message);
+    }
+  }
+
+  var started = false;
+  function start(){
+    if (started) return true;
+    if (typeof firebase === "undefined" || !firebase.app) return false;
+    if (typeof window.mhFindOrCreatePerson !== "function" || typeof window.createEntity !== "function") return false;
+    if (!(window.APP && APP.state && APP.state.data && APP.state.data.entities)) return false;
+    var db;
+    try { db = firebase.app().database(DB_URL); }
+    catch(e){ console.warn("[Quantus] entityInbox: RTDB nicht verfuegbar (DB_URL pruefen):", e && e.message); started = true; return true; }
+    started = true;
+    try {
+      db.ref(INBOX_PATH).on("child_added", processEntry, function(err){
+        console.warn("[Quantus] entityInbox Listener-Fehler:", err && err.message);
+      });
+      console.log("🔥 [Quantus] entityInbox-Verarbeiter aktiv (" + INBOX_PATH + ")");
+    } catch(e){
+      console.warn("[Quantus] entityInbox-Start fehlgeschlagen:", e && e.message);
     }
     return true;
   }
