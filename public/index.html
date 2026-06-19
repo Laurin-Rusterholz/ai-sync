@@ -93721,6 +93721,10 @@ console.log('📚 Leseliste geladen');
 
       if (type === "person"){
         resultKind = "person";
+        // Personen haben kein Skalar-Feld `email` (kanonisch: `emails[]`). Eine
+        // mitgelieferte `data.email` in `emails[]` falten, damit kein Fremdfeld
+        // entsteht. (Für Orgs bleibt `email` das kanonische Primärfeld.)
+        if (d.email){ d.emails = Array.isArray(d.emails) ? d.emails : []; if (d.emails.map(lc).indexOf(lc(d.email)) < 0) d.emails.push(d.email); delete d.email; }
         var pm = matchPerson(d);
         if (pm){ augment(pm, d, src); resultId = pm.id; matched = true; name = pm.name; }
         else {
