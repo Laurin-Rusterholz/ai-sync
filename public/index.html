@@ -94955,6 +94955,18 @@ console.log('📚 Leseliste geladen');
 .gml-draft-prev { font-size:12.5px; color:var(--muted); line-height:1.55; margin-bottom:11px; white-space:pre-wrap; max-height:84px; overflow:hidden; }
 .gml-draft-actions { display:flex; gap:8px; }
 .gml-draft-actions .btn.sm { padding:5px 12px; font-size:12.5px; }
+.gml-prio { display:inline-block; min-width:15px; text-align:center; font-size:10px; font-weight:800; padding:1px 5px; border-radius:5px; margin-right:7px; vertical-align:middle; }
+.gml-prio.p1 { background:rgba(255,69,58,.18); color:#ff453a; }
+.gml-prio.p2 { background:rgba(255,159,10,.18); color:#ff9f0a; }
+.gml-prio.p3 { background:rgba(142,142,147,.16); color:var(--muted); }
+.gml-sug-list { display:flex; flex-direction:column; gap:10px; padding:10px 14px 16px; }
+.gml-sug { border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:rgba(255,255,255,.02); }
+.gml-sug-title { font-weight:700; font-size:14px; color:var(--text); margin-bottom:5px; }
+.gml-sug-desc { font-size:12.5px; color:var(--text2); line-height:1.5; margin-bottom:6px; white-space:pre-wrap; max-height:84px; overflow:hidden; }
+.gml-sug-meta { font-size:12px; color:var(--muted); margin-bottom:9px; }
+.gml-sug-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.gml-sug-actions .btn.sm { padding:5px 12px; font-size:12.5px; }
+.gml-sug-actions select { background:var(--panel2); border:1px solid var(--border); color:var(--text); padding:6px 9px; border-radius:8px; font-size:12.5px; max-width:240px; }
 .gml-org-badge { display:inline-block; font-size:11px; font-weight:700; color:#0a84ff; background:rgba(10,132,255,.12); padding:2px 9px; border-radius:999px; margin-bottom:8px; }
 .gml-org-badge.muted { color:var(--muted); background:rgba(255,255,255,.05); font-weight:600; }
 .gml-compose-note { font-size:12.5px; padding:8px 11px; border-radius:9px; background:rgba(10,132,255,.1); color:var(--text2); margin-bottom:12px; border:1px solid rgba(10,132,255,.25); line-height:1.5; }
@@ -94999,6 +95011,12 @@ console.log('📚 Leseliste geladen');
     drafts: [],             // KI-Antwort-Entwürfe aus der RTDB (n8n „GmailQuantusAIDraft")
     draftsLoading: false,
     draftsError: null,
+    classifications: {},    // gmailClassifications/<messageId> → { category, priority, done, … } (n8n)
+    _classLoaded: false,
+    taskSuggestions: [],    // taskSuggestions (status=ready) — Mail→Aufgabe
+    tsLoading: false, tsError: null,
+    orgSuggestions: [],     // suggestions (assign-org, status=open)
+    osLoading: false, osError: null,
   };
 
   var SYS_LABELS = [
@@ -95054,14 +95072,15 @@ console.log('📚 Leseliste geladen');
     if (GM.smart==="blocked")  return { query: GM.labelIds.blocked ? { labelIds:[GM.labelIds.blocked] } : { q:"label:Quantus/Blockiert" }, title:"Blockiert" };
     return { query:{ labelIds:[GM.selectedLabel] }, title: labelName(GM.selectedLabel) };
   }
-  function fromPerson(m){ return !!personOf(m.from) && !isBlocked(addrOf(m.from)); }
-  function notFromPerson(m){ return !personOf(m.from); }
+  function fromPerson(m){ if (isBlocked(addrOf(m.from)) || isDoneCls(m)) return false; var c=clsOf(m); return !!personOf(m.from) || !!(c && (c.category==="person" || c.isFromKnownPerson)); }
+  function notFromPerson(m){ var c=clsOf(m); if (c && c.category==="person") return false; return !personOf(m.from); }
 
   async function loadMessages(reset){
     GM.listLoading = true; GM.listError = null;
     if (reset){ GM.messages=[]; GM.nextPageToken=null; }
     rerender();
     try {
+      await ensureClassifications();
       var spec = buildListSpec();
       var query = Object.assign({ maxResults:"25" }, spec.query||{});
       if (!reset && GM.nextPageToken) query.pageToken = GM.nextPageToken;
@@ -95247,6 +95266,9 @@ console.log('📚 Leseliste geladen');
       + '<div class="gml-nav-sep">Smart</div>' + smart
       + '<div class="gml-nav-sep">Postfächer</div>' + std
       + userHtml
+      + '<div class="gml-nav-sep">Assistent</div>'
+      + navBtn(GM.smart==="tasksuggest","📋","Aufgaben-Vorschläge","gmailSelectSmart('tasksuggest')", (GM.taskSuggestions&&GM.taskSuggestions.length)||0)
+      + navBtn(GM.smart==="orgsuggest","💡","Vorschläge","gmailSelectSmart('orgsuggest')", (GM.orgSuggestions&&GM.orgSuggestions.length)||0)
       + '<div class="gml-nav-sep">Verwaltung</div>'
       + navBtn(GM.smart==="blocked","⛔","Blockiert","gmailSelectSmart('blocked')");
   }
@@ -95265,7 +95287,7 @@ console.log('📚 Leseliste geladen');
       + chk
       + '<div class="gml-row-click" onclick="gmailOpenMessage(\''+jsStr(m.id)+'\')">'
       +   '<div class="gml-row-who">'+star+pdot+who+'</div>'
-      +   '<div class="gml-row-mid"><span class="gml-row-subj">'+esc(m.subject||"(kein Betreff)")+'</span> <span class="gml-row-snip">'+(m.snippet?"– "+esc(m.snippet):"")+'</span></div>'
+      +   '<div class="gml-row-mid">'+prioBadge(m)+'<span class="gml-row-subj">'+esc(m.subject||"(kein Betreff)")+'</span> <span class="gml-row-snip">'+(m.snippet?"– "+esc(m.snippet):"")+'</span></div>'
       +   '<div class="gml-row-date">'+esc(fmtDate(m.internalDate))+'</div>'
       + '</div>'
       + '<span class="gml-row-x" title="Absender blockieren" onclick="event.stopPropagation();gmailBlockSenderOf(\''+jsStr(m.id)+'\')">⛔</span>'
@@ -95298,6 +95320,7 @@ console.log('📚 Leseliste geladen');
       +   '<div style="flex:1"></div>'
       +   '<button class="btn" onclick="gmailReply()">↩️ Antworten</button>'
       +   '<button class="btn" onclick="gmailReplyAll()">↩️↩️ Allen</button>'
+      +   '<button class="btn" onclick="gmailCreateTaskRequest()" title="n8n erstellt einen Aufgaben-Vorschlag aus dieser Mail">📋 Aufgabe</button>'
       +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')">'+(done?"↩️ Zurücklegen":"✅ Erledigt")+'</button>'
       +   '<button class="btn" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Gelesen":"📬 Ungelesen")+'</button>'
       +   '<button class="btn" onclick="gmailExportMessage(\''+jsStr(o.id)+'\')" title="Als .eml exportieren">⤓</button>'
@@ -95333,7 +95356,7 @@ console.log('📚 Leseliste geladen');
       + '</div>'
       + '<div class="gml-layout">'
       +   '<div class="gml-sidebar">'+renderNav()+'</div>'
-      +   '<div class="gml-main">'+((GM.open||GM.openLoading) ? renderMessageView() : (GM.smart==="entwuerfe" ? renderDraftsPane() : renderListPane()))+'</div>'
+      +   '<div class="gml-main">'+renderMainPane()+'</div>'
       + '</div>';
   }
 
@@ -95457,7 +95480,7 @@ console.log('📚 Leseliste geladen');
     GM.booted = true;        // guard against re-entry while loading
     GM.listLoading = true;   // show the list spinner immediately (no empty flash)
     refreshPersonIndex(); loadBlocklist();
-    loadDrafts(); // KI-Entwürfe aus RTDB für das Nav-Badge (fire-and-forget)
+    loadDrafts(); loadClassifications(); loadTaskSuggestions(); loadOrgSuggestions(); // RTDB-Quellen + Nav-Badges (fire-and-forget)
     // All load in parallel; awaiting the profile guarantees GM.profile is set
     // before reply-all (self-exclusion). Quantus labels are resolved after the
     // label list loads (used for the Erledigt state on rows).
@@ -95472,9 +95495,9 @@ console.log('📚 Leseliste geladen');
     toast("ok","Getrennt","Google-Konto wurde getrennt");
     rerender();
   };
-  window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else loadMessages(true); };
+  window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); GM._classLoaded=false; loadClassifications(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else if(GM.smart==="tasksuggest") loadTaskSuggestions(); else if(GM.smart==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
   window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.smart=null; GM.open=null; loadMessages(true); };
-  window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else loadMessages(true); };
+  window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else if(s==="tasksuggest") loadTaskSuggestions(); else if(s==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
   window.gmailOpenMessage = function(id){ openMessageById(id); };
   window.gmailBackToList = function(){ GM.open=null; rerender(); };
   window.gmailLoadMore = function(){ loadMessages(false); };
@@ -95529,6 +95552,11 @@ console.log('📚 Leseliste geladen');
       // local update
       function apply(o){ if(!o) return; var s=new Set(o.labelIds||[]); if(isDone){ s.add("INBOX"); s.delete(done); } else { s.add(done); s.delete("INBOX"); } o.labelIds=Array.from(s); }
       apply(GM.messages.find(function(m){return m.id===id;})); apply(GM.open&&GM.open.id===id?GM.open:null);
+      // Mirror the manual done state to the RTDB classification (done ist KEIN
+      // KI-Feld; nur der Nutzer schreibt es). Auch lokal abgleichen, damit die
+      // Smart-View-Filter konsistent bleiben.
+      try { var cc=GM.classifications[id]; if(!cc){ cc={}; GM.classifications[id]=cc; } cc.done=!isDone; } catch(e){}
+      rtdbPut("gmailClassifications/"+encodeURIComponent(id)+"/done", !isDone);
       // Drop the row from the current list when it no longer belongs there.
       var inInboxView = GM.smart==="personen" || (!GM.smart && GM.selectedLabel==="INBOX");
       if (!isDone && inInboxView) GM.messages = GM.messages.filter(function(m){return m.id!==id;});
@@ -95670,6 +95698,132 @@ console.log('📚 Leseliste geladen');
     await setDraftStatus(key, "dismissed");
     toast("ok","Verworfen","Entwurf als 'dismissed' markiert");
   };
+
+  // ════════════════════════════════════════════════════════════════════
+  //  n8n-RTDB-Quellen: Klassifizierung/Priorität · Mail→Aufgabe · Vorschläge
+  //  Alles read-only gespiegelt + Statuspflege. Kein Auto-Versand, keine
+  //  destruktiven Löschungen, keine Berechtigungsänderungen.
+  // ════════════════════════════════════════════════════════════════════
+  async function rtdbGet(path){ var r=await fetch(RTDB_URL+"/"+path+".json",{cache:"no-store"}); if(!r.ok) throw new Error("RTDB HTTP "+r.status); return await r.json(); }
+  function rtdbPut(path,value){ return fetch(RTDB_URL+"/"+path+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)}).catch(function(){}); }
+  function rtdbPatch(path,obj){ return fetch(RTDB_URL+"/"+path+".json",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}).catch(function(){}); }
+  function rtdbPost(path,obj){ return fetch(RTDB_URL+"/"+path+".json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); }
+
+  // ── 1) Klassifizierung (gmailClassifications/<messageId>) ──
+  async function loadClassifications(){
+    try { var data=await rtdbGet("gmailClassifications"); GM.classifications=(data&&typeof data==="object")?data:{}; }
+    catch(e){ GM.classifications=GM.classifications||{}; }
+    GM._classLoaded=true; rerender();
+  }
+  async function ensureClassifications(){ if(GM._classLoaded) return; try { await loadClassifications(); } catch(e){ GM._classLoaded=true; } }
+  function clsOf(m){ return (m && GM.classifications && GM.classifications[m.id]) || null; }
+  function isDoneCls(m){ var c=clsOf(m); return !!(c && c.done===true); }
+  function prioBadge(m){ var c=clsOf(m); var p=c&&c.priority; if(!p) return ""; var lbl={1:"Hoch",2:"Mittel",3:"Niedrig"}[p]||("P"+p); return '<span class="gml-prio p'+p+'" title="Priorität: '+lbl+'">'+p+'</span>'; }
+
+  // ── 2) Mail → Aufgabe (taskRequests / taskSuggestions) ──
+  window.gmailCreateTaskRequest = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    try {
+      var a=parseAddr(o.from); var body=(o.text||htmlToText(o.html)||"").slice(0,5000);
+      await rtdbPost("taskRequests", { messageId:o.id, threadId:o.threadId||"", from:a.email||"", fromName:a.name||"", subject:o.subject||"", body:body, status:"pending", createdAt:Date.now() });
+      toast("ok","Aufgabe angefragt","n8n bereitet einen Vorschlag vor — erscheint unter 'Aufgaben-Vorschläge'.");
+    } catch(e){ toast("err","Fehler", e.message||"Anfrage fehlgeschlagen"); }
+  };
+  async function loadTaskSuggestions(){
+    GM.tsLoading=true; GM.tsError=null; rerender();
+    try { var data=await rtdbGet("taskSuggestions"); var arr=[]; if(data&&typeof data==="object"){ Object.keys(data).forEach(function(k){ var d=data[k]; if(d&&typeof d==="object"){ d._key=k; arr.push(d); } }); } GM.taskSuggestions=arr.filter(function(d){ return (d.status||"ready")==="ready"; }); }
+    catch(e){ GM.tsError=e.message||"Fehler beim Laden"; }
+    finally { GM.tsLoading=false; rerender(); }
+  }
+  window.gmailRefreshTaskSuggest = function(){ loadTaskSuggestions(); };
+  function renderTaskSuggestPane(){
+    if (GM.tsLoading && !(GM.taskSuggestions||[]).length) return '<div class="gml-loading">⏳ Lade Aufgaben-Vorschläge…</div>';
+    var n=(GM.taskSuggestions||[]).length;
+    var head='<div class="gml-listhead"><span>📋 Aufgaben-Vorschläge</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+n+'</span><button class="gml-mini" title="Aktualisieren" onclick="gmailRefreshTaskSuggest()">🔄</button></span></div>';
+    if (GM.tsError) return head+'<div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(GM.tsError)+'</p></div>';
+    if (!n) return head+'<div class="gml-empty"><div style="font-size:44px">📋</div><p>Keine offenen Aufgaben-Vorschläge.</p><p style="font-size:12px;color:var(--muted)">In einer Mail „📋 Aufgabe" klicken — n8n bereitet einen Vorschlag vor.</p></div>';
+    return head+'<div class="gml-sug-list">'+GM.taskSuggestions.map(renderTaskSugRow).join("")+'</div>';
+  }
+  function renderTaskSugRow(s){
+    var meta=[]; if(typeof s.priority==="number") meta.push("Priorität "+s.priority); if(s.dueHint) meta.push("⏰ "+s.dueHint);
+    return '<div class="gml-sug"><div class="gml-sug-title">📋 '+esc(s.title||"(ohne Titel)")+'</div>'
+      + (s.description?'<div class="gml-sug-desc">'+esc(String(s.description).slice(0,300))+'</div>':'')
+      + (meta.length?'<div class="gml-sug-meta">'+esc(meta.join(" · "))+'</div>':'')
+      + '<div class="gml-sug-actions"><button class="btn primary sm" onclick="gmailAdoptTaskSuggestion(\''+jsStr(s._key)+'\')">✅ Als Aufgabe übernehmen</button><button class="btn sm" onclick="gmailDismissTaskSuggestion(\''+jsStr(s._key)+'\')">Verwerfen</button></div></div>';
+  }
+  window.gmailAdoptTaskSuggestion = function(key){
+    var s=(GM.taskSuggestions||[]).find(function(x){return x._key===key;}); if(!s) return;
+    if (typeof window.createEntity!=="function"){ toast("err","Nicht verfügbar","Task-Modul nicht geladen"); return; }
+    var desc=String(s.description||""); if(s.dueHint) desc+=(desc?"\n\n":"")+"Fällig (Hinweis): "+s.dueHint; if(s.sourceMessageId) desc+="\n\n[Quelle: Gmail-Mail]";
+    window.createEntity("task", { title:String(s.title||"Aufgabe aus E-Mail").slice(0,200), description:desc, status:"todo", priority:(typeof s.priority==="number"?s.priority:3), tags:["Gmail"], source:"gmail-ai", sourceMessageId:s.sourceMessageId||null });
+    GM.taskSuggestions=(GM.taskSuggestions||[]).filter(function(x){return x._key!==key;});
+    rtdbPatch("taskSuggestions/"+encodeURIComponent(key), { status:"done" });
+    toast("ok","Aufgabe erstellt","Als Quantus-Aufgabe übernommen.");
+    rerender();
+  };
+  window.gmailDismissTaskSuggestion = function(key){
+    GM.taskSuggestions=(GM.taskSuggestions||[]).filter(function(x){return x._key!==key;}); rerender();
+    rtdbPatch("taskSuggestions/"+encodeURIComponent(key), { status:"dismissed" });
+    toast("ok","Verworfen","");
+  };
+
+  // ── 3) Vorschläge (suggestions/<key>, type assign-org) ──
+  function gmlOrgsMap(){ try { return (window.APP&&APP.state&&APP.state.data&&APP.state.data.entities&&APP.state.data.entities.organizations)||{}; } catch(e){ return {}; } }
+  async function loadOrgSuggestions(){
+    GM.osLoading=true; GM.osError=null; rerender();
+    try { var data=await rtdbGet("suggestions"); var arr=[]; if(data&&typeof data==="object"){ Object.keys(data).forEach(function(k){ var d=data[k]; if(d&&typeof d==="object"){ d._key=k; arr.push(d); } }); } GM.orgSuggestions=arr.filter(function(d){ return (d.status||"open")==="open" && (!d.type||d.type==="assign-org"); }); }
+    catch(e){ GM.osError=e.message||"Fehler beim Laden"; }
+    finally { GM.osLoading=false; rerender(); }
+  }
+  window.gmailRefreshOrgSuggest = function(){ loadOrgSuggestions(); };
+  function renderOrgSuggestPane(){
+    if (GM.osLoading && !(GM.orgSuggestions||[]).length) return '<div class="gml-loading">⏳ Lade Vorschläge…</div>';
+    var n=(GM.orgSuggestions||[]).length;
+    var head='<div class="gml-listhead"><span>💡 Vorschläge</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+n+'</span><button class="gml-mini" title="Aktualisieren" onclick="gmailRefreshOrgSuggest()">🔄</button></span></div>';
+    if (GM.osError) return head+'<div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(GM.osError)+'</p></div>';
+    if (!n) return head+'<div class="gml-empty"><div style="font-size:44px">💡</div><p>Keine offenen Vorschläge.</p><p style="font-size:12px;color:var(--muted)">n8n schlägt hier z. B. vor, Absender einer Organisation zuzuordnen.</p></div>';
+    return head+'<div class="gml-sug-list">'+GM.orgSuggestions.map(renderOrgSugRow).join("")+'</div>';
+  }
+  function renderOrgSugRow(s){
+    var orgs=gmlOrgsMap(); var keys=Object.keys(orgs).sort(function(a,b){return (orgs[a].name||"").localeCompare(orgs[b].name||"");});
+    var opts='<option value="">Organisation wählen…</option>'+keys.map(function(oid){ return '<option value="'+esc(oid)+'">'+esc(orgs[oid].name||oid)+'</option>'; }).join("");
+    var who=esc(s.fromName||s.email||"Absender");
+    var meta=[]; if(s.email) meta.push(s.email); if(s.domain) meta.push(s.domain); if(s.isFreemail) meta.push("Freemail"); if(typeof s.mailCount!=="undefined") meta.push(s.mailCount+" Mails");
+    return '<div class="gml-sug"><div class="gml-sug-title">🏢 '+who+' einer Organisation zuweisen</div>'
+      + '<div class="gml-sug-meta">'+esc(meta.join(" · "))+'</div>'
+      + '<div class="gml-sug-actions"><select id="gmlOrgSel_'+esc(s._key)+'">'+opts+'</select>'
+      +   '<button class="btn primary sm" onclick="gmailAssignSenderToOrg(\''+jsStr(s._key)+'\')">Zuweisen</button>'
+      +   '<button class="btn sm" onclick="gmailDismissOrgSuggestion(\''+jsStr(s._key)+'\')">Verwerfen</button></div></div>';
+  }
+  window.gmailAssignSenderToOrg = function(key){
+    var s=(GM.orgSuggestions||[]).find(function(x){return x._key===key;}); if(!s) return;
+    var sel=document.getElementById("gmlOrgSel_"+key); var orgId=sel?sel.value:"";
+    if(!orgId){ toast("err","Keine Org gewählt","Bitte eine Organisation im Dropdown wählen."); return; }
+    var orgs=gmlOrgsMap(); var o=orgs[orgId]; if(!o){ toast("err","Org nicht gefunden",""); return; }
+    var email=String(s.email||"").trim();
+    if(email){ o.emails=Array.isArray(o.emails)?o.emails:[]; var low=email.toLowerCase();
+      if(o.emails.map(function(x){return String(x).toLowerCase();}).indexOf(low)<0) o.emails.push(email);
+      if(typeof window.updateEntity==="function") window.updateEntity("organization", orgId, { emails:o.emails }); else if(typeof window.scheduleSave==="function") window.scheduleSave();
+    }
+    GM.orgSuggestions=(GM.orgSuggestions||[]).filter(function(x){return x._key!==key;});
+    rtdbPatch("suggestions/"+encodeURIComponent(key), { status:"done" });
+    toast("ok","Zugewiesen", (email||"Absender")+" → "+(o.name||"Organisation"));
+    rerender();
+  };
+  window.gmailDismissOrgSuggestion = function(key){
+    GM.orgSuggestions=(GM.orgSuggestions||[]).filter(function(x){return x._key!==key;}); rerender();
+    rtdbPatch("suggestions/"+encodeURIComponent(key), { status:"dismissed" });
+    toast("ok","Verworfen","");
+  };
+
+  // Dispatch für den Hauptbereich (inkl. der neuen Vorschlags-Ansichten).
+  function renderMainPane(){
+    if (GM.open||GM.openLoading) return renderMessageView();
+    if (GM.smart==="entwuerfe") return renderDraftsPane();
+    if (GM.smart==="tasksuggest") return renderTaskSuggestPane();
+    if (GM.smart==="orgsuggest") return renderOrgSuggestPane();
+    return renderListPane();
+  }
 
   // ════════════════════════════════════════════════════════════════════
   //  Org-spezifische E-Mail-Anweisungen (KI) — pro Organisation hinterlegt,
