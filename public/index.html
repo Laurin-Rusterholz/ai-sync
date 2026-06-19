@@ -8424,7 +8424,10 @@ function normalizeData(data) {
     
     // ── Historie (Auto-Log) ──
     p.interactions = Array.isArray(p.interactions) ? p.interactions : [];  // [{id, date, type:"meeting"|"call"|"email"|"chat"|"event", note}]
-    
+
+    // ── KI-Anreicherungen (n8n entityInbox) — read-only Provenienz ──
+    p.aiEnrichments = Array.isArray(p.aiEnrichments) ? p.aiEnrichments : [];  // [{field, value, source, sourceUrl, date}]
+
     p.createdAt = p.createdAt || nowIso();
     p.updatedAt = p.updatedAt || nowIso();
   }
@@ -36372,6 +36375,30 @@ function viewOrganizations() {
   `;
 }
 
+// Read-only Anzeige der von der KI (n8n entityInbox) ergänzten Infos mit Quelle
+// + Datum. Genutzt in der Personen- UND Organisations-Detailansicht (C2/C3).
+function renderAiEnrichmentsBox(list) {
+  if (!Array.isArray(list) || !list.length) return "";
+  const esc2 = window.esc || (s => String(s == null ? "" : s));
+  const rows = list.slice().reverse().slice(0, 100).map(en => {
+    let d = "";
+    try { if (en.date) d = new Date(en.date).toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" }); } catch (e) {}
+    const src = en.sourceUrl
+      ? `<a href="${esc2(en.sourceUrl)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc2(en.source || "Quelle")}</a>`
+      : esc2(en.source || "");
+    return `<div style="display:flex;gap:10px;padding:6px 0;border-top:1px solid var(--border);font-size:12.5px">
+      <span style="min-width:130px;color:var(--muted)">${esc2(en.field || "")}</span>
+      <span style="flex:1;color:var(--text);word-break:break-word">${esc2(en.value || "")}</span>
+      <span style="color:var(--muted);white-space:nowrap;flex-shrink:0">${src}${d ? " · " + esc2(d) : ""}</span>
+    </div>`;
+  }).join("");
+  return `<div style="margin:14px 0;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:rgba(127,148,176,.06)">
+    <h4 style="margin:0 0 4px;font-size:13px;display:flex;align-items:center;gap:6px">🤖 Von der KI ergänzt</h4>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Automatisch hinterlegte Infos (read-only) — mit Quelle &amp; Datum.</div>
+    ${rows}
+  </div>`;
+}
+
 function viewOrgDetail(id) {
   if (id === "new") return viewOrgCreate();
   
@@ -36476,9 +36503,14 @@ function viewOrgDetail(id) {
               Beschreibung
               <textarea data-action="field-edit" data-kind="organization" data-id="${id}" data-field="description">${esc(o.description || "")}</textarea>
             </label>
+            <label class="col-12">
+              📧 E-Mail-Anweisungen (KI)
+              <textarea data-field="emailInstructions" onchange="if(window.orgSaveEmailInstructions)window.orgSaveEmailInstructions('${id}', this.value)" placeholder="Wie soll die KI E-Mails dieser Organisation behandeln? z.B. Tonfall, Sprache, Standardfloskeln, an wen weiterleiten, was niemals tun." style="min-height:96px">${esc(o.emailInstructions || "")}</textarea>
+              <span style="display:block;font-size:11.5px;color:var(--muted);margin-top:4px">Fliesst in die KI-Antwort-Entwürfe ein (n8n + In-App-Assistent) und wird in die RTDB synchronisiert.</span>
+            </label>
           </div>
         </div>
-        
+
         <div class="card mb-4">
           <h3>📦 Projekte (${projects.length})</h3>
           <div class="list mb-3">${projectsHtml}</div>
@@ -36519,6 +36551,8 @@ function viewOrgDetail(id) {
           <button class="btn sm" data-action="create-note-from" data-kind="organization" data-id="${id}">📝 Notiz erstellen</button>
         </div>
         
+        ${(typeof renderAiEnrichmentsBox === "function" ? renderAiEnrichmentsBox(o.aiEnrichments) : "")}
+
         ${renderLinkedEntitiesSection("organization", id)}
         
         <div class="card mb-4">
@@ -89992,6 +90026,8 @@ console.log('📚 Leseliste geladen');
         ${p.tags.map(t => `<span style="display:inline-block;padding:3px 9px;margin:2px;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.3);border-radius:10px;font-size:11px;color:#d8b4fe">${mhEsc(t)}</span>`).join('')}
       </div>` : ''}
       
+      ${(typeof renderAiEnrichmentsBox === "function" ? renderAiEnrichmentsBox(p.aiEnrichments) : "")}
+
       ${p.emails?.length || p.phones?.length || hasAddr ? `<div class="mh-detail-section"><h4>📞 Kontakt</h4>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div>
@@ -93602,6 +93638,148 @@ console.log('📚 Leseliste geladen');
 </script>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!--  ENTITY-INBOX VERARBEITER                                                -->
+<!--  Liest die RTDB-Queue 'entityInbox' (von n8n befuellt) und legt pro      -->
+<!--  Eintrag eine Person/Organisation an ODER ergaenzt einen vorhandenen     -->
+<!--  Datensatz (Matching per E-Mail, dann Name/Geburtsdatum). Fuellt nur     -->
+<!--  leere Felder und protokolliert jede KI-Info als aiEnrichments-Eintrag   -->
+<!--  (Quelle + Datum). Nutzt die bestehenden Funktionen mhFindOrCreatePerson -->
+<!--  und createEntity('organization') — keine neue Datenstruktur, kein       -->
+<!--  Loeschen. Vollstaendig gekapselt, kann den App-Boot nicht beeinflussen. -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  "use strict";
+
+  // Gleiche RTDB-Instanz wie der Communicator-Task-Importer (Region europe-west1).
+  var DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+  var INBOX_PATH = "entityInbox";
+  var PROCESSED_KEY = "__quantus_entity_inbox_processed";
+
+  function loadProcessed(){ try { return JSON.parse(localStorage.getItem(PROCESSED_KEY) || "[]") || []; } catch(e){ return []; } }
+  function markProcessed(k){ try { var a = loadProcessed(); if (a.indexOf(k) < 0){ a.push(k); if (a.length > 1000) a = a.slice(-1000); localStorage.setItem(PROCESSED_KEY, JSON.stringify(a)); } } catch(e){} }
+
+  function lc(s){ return String(s == null ? "" : s).trim().toLowerCase(); }
+  function persons(){ try { return APP.state.data.entities.persons || {}; } catch(e){ return {}; } }
+  function orgs(){ try { return APP.state.data.entities.organizations || {}; } catch(e){ return {}; } }
+  function collectEmails(d){ var out = []; if (d.email) out.push(d.email); if (Array.isArray(d.emails)) d.emails.forEach(function(e){ if (e) out.push(e); }); return out.map(lc).filter(Boolean); }
+
+  // ── Matching: E-Mail zuerst, dann firstName+lastName(+birthday), dann voller Name ──
+  function matchPerson(d){
+    var ps = persons(), emails = collectEmails(d), id;
+    if (emails.length){ for (id in ps){ var pe = (ps[id].emails || []).map(lc); if (pe.some(function(e){ return emails.indexOf(e) >= 0; })) return ps[id]; } }
+    var fn = lc(d.firstName), ln = lc(d.lastName);
+    if (fn && ln){ var cand = null; for (id in ps){ var p = ps[id]; if (lc(p.firstName) === fn && lc(p.lastName) === ln){ if (d.birthday && p.birthday){ if (lc(p.birthday) === lc(d.birthday)) return p; } else cand = cand || p; } } if (cand) return cand; }
+    if (d.name){ var nm = lc(d.name); for (id in ps){ if (lc(ps[id].name) === nm) return ps[id]; } }
+    return null;
+  }
+  function matchOrg(d){
+    var os = orgs(), emails = collectEmails(d), id;
+    if (emails.length){ for (id in os){ var oe = []; if (os[id].email) oe.push(lc(os[id].email)); (os[id].emails || []).forEach(function(e){ oe.push(lc(e)); }); if (oe.some(function(e){ return emails.indexOf(e) >= 0; })) return os[id]; } }
+    if (d.name){ var nm = lc(d.name); for (id in os){ if (lc(os[id].name) === nm) return os[id]; } }
+    return null;
+  }
+
+  // ── Ergaenzen: nur leere Felder fuellen, jede KI-Info als aiEnrichments loggen ──
+  var ARRAY_FIELDS = { emails:1, phones:1, tags:1, languages:1, interests:1, skills:1 };
+  var SKIP_FIELDS = { id:1, createdAt:1, updatedAt:1, aiEnrichments:1, interactions:1, comments:1 };
+  function augment(ent, d, src){
+    ent.aiEnrichments = Array.isArray(ent.aiEnrichments) ? ent.aiEnrichments : [];
+    function enrich(field, value){ ent.aiEnrichments.push({ field: field, value: String(value), source: src.source, sourceUrl: src.sourceUrl || "", date: src.date }); }
+    Object.keys(d).forEach(function(field){
+      if (SKIP_FIELDS[field]) return;
+      var val = d[field];
+      if (val == null || val === "") return;
+      if (Array.isArray(val)){
+        if (ARRAY_FIELDS[field]){
+          ent[field] = Array.isArray(ent[field]) ? ent[field] : [];
+          var existing = ent[field].map(lc);
+          val.forEach(function(v){ if (v != null && v !== "" && existing.indexOf(lc(v)) < 0){ ent[field].push(v); existing.push(lc(v)); enrich(field, v); } });
+        }
+        return;
+      }
+      if (typeof val === "object"){
+        if (typeof ent[field] !== "object" || !ent[field]) ent[field] = {};
+        Object.keys(val).forEach(function(sub){ var sv = val[sub]; if (sv == null || sv === "") return; if (ent[field][sub] == null || ent[field][sub] === ""){ ent[field][sub] = sv; enrich(field + "." + sub, sv); } else if (lc(ent[field][sub]) !== lc(sv)) enrich(field + "." + sub, sv); });
+        return;
+      }
+      if (ent[field] == null || ent[field] === ""){ ent[field] = val; enrich(field, val); }
+      else if (lc(ent[field]) !== lc(val)) enrich(field, val); // belegtes Feld nicht ueberschreiben, aber KI-Vorschlag protokollieren
+    });
+    ent.updatedAt = new Date().toISOString();
+  }
+
+  function processEntry(snap){
+    var key = snap.key, v = snap.val() || {};
+    try {
+      if (loadProcessed().indexOf(key) >= 0) return;
+      if (v.status === "processed" || v.status === "dismissed"){ markProcessed(key); return; }
+      var type = lc(v.type), d = v.data || {};
+      if (type !== "person" && type !== "org" && type !== "organization"){ markProcessed(key); return; }
+      var src = { source: v.sourceMail || v.sourceMessageId || "n8n-ai", sourceUrl: v.sourceUrl || "", date: v.createdAt || new Date().toISOString() };
+      var resultKind, resultId, matched, name;
+
+      if (type === "person"){
+        resultKind = "person";
+        var pm = matchPerson(d);
+        if (pm){ augment(pm, d, src); resultId = pm.id; matched = true; name = pm.name; }
+        else {
+          var pname = (d.name || [d.firstName, d.lastName].filter(Boolean).join(" ") || collectEmails(d)[0] || "Unbekannt").trim();
+          var np = window.mhFindOrCreatePerson(pname);   // legt minimal an ODER findet per Name → keine Namensduplikate
+          if (!np) { markProcessed(key); return; }
+          augment(np, d, src); resultId = np.id; matched = false; name = np.name;
+        }
+      } else {
+        resultKind = "org";
+        var om = matchOrg(d);
+        if (om){ augment(om, d, src); resultId = om.id; matched = true; name = om.name; }
+        else {
+          var oname = (d.name || collectEmails(d)[0] || "Organisation").trim();
+          var oid = window.createEntity("organization", { name: oname });
+          var oent = orgs()[oid];
+          if (!oent) { markProcessed(key); return; }
+          augment(oent, d, src); resultId = oid; matched = false; name = oname;
+        }
+      }
+
+      if (typeof window.scheduleSave === "function") window.scheduleSave();
+      markProcessed(key);
+      // Status zurueck in die RTDB (kein Loeschen) → Feedback fuer n8n.
+      try { snap.ref.update({ status: "processed", processedAt: Date.now(), resultKind: resultKind, resultId: resultId || null, matched: !!matched }); } catch(e){}
+      if (typeof window.toast === "function") { try { window.toast("ok", (resultKind === "person" ? "👤 " : "🏢 ") + (matched ? "KI-Info ergaenzt" : "Neu aus KI"), name || ""); } catch(e){} }
+      if (typeof window.render === "function") { try { window.render(); } catch(e){} }
+    } catch(e){
+      console.warn("[Quantus] entityInbox-Verarbeitung fehlgeschlagen:", e && e.message);
+    }
+  }
+
+  var started = false;
+  function start(){
+    if (started) return true;
+    if (typeof firebase === "undefined" || !firebase.app) return false;
+    if (typeof window.mhFindOrCreatePerson !== "function" || typeof window.createEntity !== "function") return false;
+    if (!(window.APP && APP.state && APP.state.data && APP.state.data.entities)) return false;
+    var db;
+    try { db = firebase.app().database(DB_URL); }
+    catch(e){ console.warn("[Quantus] entityInbox: RTDB nicht verfuegbar (DB_URL pruefen):", e && e.message); started = true; return true; }
+    started = true;
+    try {
+      db.ref(INBOX_PATH).on("child_added", processEntry, function(err){
+        console.warn("[Quantus] entityInbox Listener-Fehler:", err && err.message);
+      });
+      console.log("🔥 [Quantus] entityInbox-Verarbeiter aktiv (" + INBOX_PATH + ")");
+    } catch(e){
+      console.warn("[Quantus] entityInbox-Start fehlgeschlagen:", e && e.message);
+    }
+    return true;
+  }
+
+  var tries = 0;
+  var iv = setInterval(function(){ tries++; if (start() || tries > 150) clearInterval(iv); }, 300);
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- ═══ GOOGLE CALENDAR                                                   ═══ -->
 <!-- ═══  OAuth-Login + Live-Anbindung an die Google Calendar API v3.       ═══ -->
 <!-- ═══  Tokens liegen serverseitig (Netlify Functions + Blob), nie im      ═══ -->
@@ -94789,6 +94967,9 @@ console.log('📚 Leseliste geladen');
 .gml-sug-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .gml-sug-actions .btn.sm { padding:5px 12px; font-size:12.5px; }
 .gml-sug-actions select { background:var(--panel2); border:1px solid var(--border); color:var(--text); padding:6px 9px; border-radius:8px; font-size:12.5px; max-width:240px; }
+.gml-org-badge { display:inline-block; font-size:11px; font-weight:700; color:#0a84ff; background:rgba(10,132,255,.12); padding:2px 9px; border-radius:999px; margin-bottom:8px; }
+.gml-org-badge.muted { color:var(--muted); background:rgba(255,255,255,.05); font-weight:600; }
+.gml-compose-note { font-size:12.5px; padding:8px 11px; border-radius:9px; background:rgba(10,132,255,.1); color:var(--text2); margin-bottom:12px; border:1px solid rgba(10,132,255,.25); line-height:1.5; }
 @media (max-width:820px){
   .gml-layout { grid-template-columns:1fr; }
   .gml-sidebar { flex-direction:row; flex-wrap:wrap; position:static; gap:4px; }
@@ -95185,7 +95366,7 @@ console.log('📚 Leseliste geladen');
     var inp = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"';
     var ta  = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box;resize:vertical;min-height:200px;font-family:inherit;line-height:1.5"';
     function field(label, inner){ return '<label style="display:block;margin-bottom:12px"><span style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600">'+label+'</span>'+inner+'</label>'; }
-    var html = ''
+    var html = (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + field("An *", '<input id="gmlTo" type="text" '+inp+' value="'+esc(prefill.to||"")+'" placeholder="empfaenger@example.com, weitere@…">')
       + field("Cc", '<input id="gmlCc" type="text" '+inp+' value="'+esc(prefill.cc||"")+'" placeholder="optional">')
       + field("Betreff", '<input id="gmlSubject" type="text" '+inp+' value="'+esc(prefill.subject||"")+'" placeholder="Betreff">')
@@ -95490,9 +95671,12 @@ console.log('📚 Leseliste geladen');
   function renderDraftRow(d){
     var who = esc(d.toName || d.to || "(Empfänger?)");
     var preview = esc((d.draftBody||"").replace(/\s+/g," ").trim().slice(0,180));
+    var org = findOrgForEmail(d.to||"");
+    var orgBadge = org ? '<div class="gml-org-badge'+(orgInstructions(org)?'':' muted')+'" title="'+(orgInstructions(org)?"KI-Anweisungen dieser Organisation werden angewendet":"Erkannte Organisation – keine E-Mail-Anweisungen hinterlegt")+'">🏢 '+esc(org.name||"Organisation")+(orgInstructions(org)?' · Anweisungen aktiv':'')+'</div>' : '';
     return '<div class="gml-draft">'
       + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(d.to&&d.toName?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(d.to)+'&gt;</span>':'')+'</span><span class="gml-draft-date">🤖 '+esc(fmtDate(draftTs(d)))+'</span></div>'
       + '<div class="gml-draft-subj">'+esc(d.subject||"(kein Betreff)")+'</div>'
+      + orgBadge
       + '<div class="gml-draft-prev">'+(preview||'<span style="color:var(--muted)">(leerer Entwurf)</span>')+'</div>'
       + '<div class="gml-draft-actions"><button class="btn primary sm" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')">✏️ Prüfen &amp; senden</button><button class="btn sm" onclick="gmailDismissDraft(\''+jsStr(d._key)+'\')">🗑 Verwerfen</button></div>'
       + '</div>';
@@ -95501,10 +95685,12 @@ console.log('📚 Leseliste geladen');
   window.gmailOpenDraft = function(key){
     var d=(GM.drafts||[]).find(function(x){return x._key===key;});
     if (!d){ toast("err","Entwurf nicht mehr da",""); return; }
+    var org=findOrgForEmail(d.to||"");
+    var note = org ? ('🏢 Organisation erkannt: <b>'+esc(org.name||"")+'</b>'+(orgInstructions(org)?' – deren KI-Anweisungen wurden beim Entwurf berücksichtigt.':' (keine E-Mail-Anweisungen hinterlegt).')) : '';
     // Prefill the existing compose dialog. threadId keeps it in the right Gmail
     // thread; the user reviews, edits and sends MANUALLY (no auto-send). On send,
     // gmailSend marks the draft "used" via the draftKey in the compose context.
-    window.gmailCompose({ title:"🤖 KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key });
+    window.gmailCompose({ title:"🤖 KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key, note:note });
   };
   window.gmailDismissDraft = async function(key){
     if (!confirm("Diesen KI-Entwurf verwerfen? (Status wird auf 'dismissed' gesetzt, nichts wird gesendet.)")) return;
@@ -95640,6 +95826,56 @@ console.log('📚 Leseliste geladen');
   }
 
   // ════════════════════════════════════════════════════════════════════
+  //  Org-spezifische E-Mail-Anweisungen (KI) — pro Organisation hinterlegt,
+  //  in die RTDB gespiegelt (damit der n8n-Workflow sie beim Erstellen der
+  //  Entwürfe berücksichtigen kann) und im In-App-KI-Kontext berücksichtigt.
+  // ════════════════════════════════════════════════════════════════════
+  var FREEMAIL = new Set(["gmail.com","googlemail.com","outlook.com","hotmail.com","hotmail.de","live.com","yahoo.com","yahoo.de","yahoo.co.uk","icloud.com","me.com","gmx.ch","gmx.de","gmx.net","web.de","bluewin.ch","hispeed.ch","sunrise.ch","protonmail.com","proton.me","aol.com"]);
+  function orgsAll(){ try { return (window.APP&&APP.state&&APP.state.data&&APP.state.data.entities&&APP.state.data.entities.organizations)||{}; } catch(e){ return {}; } }
+  function orgEmailList(o){ var a=[]; if(o&&o.email) a.push(String(o.email).toLowerCase()); if(o&&o.emails) o.emails.forEach(function(e){ if(e) a.push(String(e).toLowerCase()); }); return a; }
+  function domainOf(email){ return String(email||"").split("@")[1]||""; }
+  // Match an incoming sender to a Quantus org: exact e-mail wins, else a
+  // (non-freemail) domain match on org.email / org.emails[].
+  function findOrgForEmail(email){
+    email=String(email||"").trim().toLowerCase(); if(!email) return null;
+    var dom=domainOf(email), orgs=orgsAll(), domHit=null;
+    for (var id in orgs){ var o=orgs[id]; if(!o) continue; var ems=orgEmailList(o);
+      if (ems.indexOf(email)>=0) return o;
+      if (dom && !FREEMAIL.has(dom) && !domHit && ems.some(function(e){ return domainOf(e)===dom; })) domHit=o;
+    }
+    return domHit;
+  }
+  window.gmailFindOrgForEmail = findOrgForEmail; // exposed for reuse
+  function orgDomains(o){ var s=new Set(); orgEmailList(o).forEach(function(e){ var d=domainOf(e); if(d && !FREEMAIL.has(d)) s.add(d); }); return Array.from(s); }
+  function orgInstructions(o){ return o ? String(o.emailInstructions||"").trim() : ""; }
+
+  // Mirror one org's mail-relevant fields to the RTDB so n8n can match an
+  // incoming sender and apply the instructions. Empty instructions → remove node.
+  async function publishOrgMail(id){
+    try {
+      var o=entityOf("organization", id); if(!o) return;
+      var url=RTDB_URL+"/orgMailInstructions/"+encodeURIComponent(id)+".json";
+      var instr=orgInstructions(o);
+      if (!instr){ try { await fetch(url, { method:"DELETE" }); } catch(e){} return; }
+      var emails=orgEmailList(o);
+      var payload={ id:id, name:o.name||"", email:o.email||"", emails:emails, domains:orgDomains(o), emailInstructions:instr, updatedAt:Date.now() };
+      await fetch(url, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+    } catch(e){ /* best effort — entity save already happened */ }
+  }
+  // Called by the org-detail textarea (onchange): persist like other fields +
+  // sync to RTDB. NO auto-send anywhere — instructions only influence drafting.
+  window.orgSaveEmailInstructions = function(id, value){
+    try {
+      var o=entityOf("organization", id); if(!o) return;
+      o.emailInstructions=String(value==null?"":value);
+      if (typeof window.updateEntity==="function") window.updateEntity("organization", id, { emailInstructions:o.emailInstructions });
+      else if (typeof window.scheduleSave==="function") window.scheduleSave();
+      publishOrgMail(id);
+      toast("ok","Gespeichert","E-Mail-Anweisungen aktualisiert");
+    } catch(e){ toast("err","Fehler", e.message||""); }
+  };
+
+  // ════════════════════════════════════════════════════════════════════
   //  KI-Zugriff — {{GMAIL_*}} Tokens über dieselbe Proxy-Schicht
   // ════════════════════════════════════════════════════════════════════
   window.gmailAIContext = function(){
@@ -95648,13 +95884,16 @@ console.log('📚 Leseliste geladen');
       if (!GM.status || !GM.status.connected || !GM.status.gmail) return "\n\n# GMAIL\nNicht verbunden — Mail-Befehle ({{GMAIL_*}}) sind nicht verfügbar.";
       var idx = (APP.state.data.gmailIndex||[]).slice(0,15);
       var lines = idx.map(function(m){ return "- ["+m.id+"] "+new Date(m.date).toISOString().slice(0,10)+" "+(m.fromName||m.fromEmail)+": "+(m.subject||"(ohne Betreff)"); }).join("\n");
+      var orgLines=[]; var orgs=orgsAll(); Object.keys(orgs).forEach(function(oid){ var o=orgs[oid]; var ins=orgInstructions(o); if(ins){ orgLines.push("- "+(o.name||"Org")+" ["+orgEmailList(o).join(", ")+"]: "+ins.replace(/\s+/g," ")); } });
+      var orgBlock = orgLines.length ? ("Org-spezifische E-Mail-Anweisungen — beim Beantworten von Mails dieser Absender/Domains ZWINGEND befolgen:\n"+orgLines.join("\n")+"\n\n") : "";
       return "\n\n# GMAIL (verbunden: "+((GM.profile&&GM.profile.emailAddress)||GM.status.email||"")+")\n"
         + "Du hast vollen Zugriff auf alle Mails über diese Befehle (eine Aktion pro Zeile):\n"
         + "{{GMAIL_SEARCH|gmail-query}} — Mails suchen (Gmail-Syntax, z.B. from:anna newer_than:7d).\n"
         + "{{GMAIL_READ|id-oder-suchbegriff}} — Inhalt einer Mail lesen.\n"
         + "{{GMAIL_SEND|to|betreff|text}} — Mail senden (Nutzer bestätigt im UI).\n"
         + "{{GMAIL_DONE|id-oder-suchbegriff}} — Mail als erledigt markieren.\n"
-        + "{{GMAIL_BLOCK|email}} — Absender blockieren (Nutzer bestätigt im UI).\n"
+        + "{{GMAIL_BLOCK|email}} — Absender blockieren (Nutzer bestätigt im UI).\n\n"
+        + orgBlock
         + "Letzte Mails (Format [id] Datum Absender: Betreff):\n" + (lines||"(Index noch leer — bitte Gmail einmal öffnen)");
     } catch(e){ return ""; }
   };
