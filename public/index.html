@@ -6,41 +6,99 @@
   <title>Quantus</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
-  <link rel="mask-icon" href="/favicon.svg" color="#7c3aed" />
-  <meta name="theme-color" content="#7c3aed" />
+  <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
+  <meta name="theme-color" content="#262a2e" />
   <meta name="apple-mobile-web-app-title" content="Quantus" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script>
+  /* Theme früh anwenden (kein FOUC) — „Schiefer" (dark, Default) / „Leinen" (light), an themeMode. */
+  (function(){ try {
+    var m = localStorage.getItem("quantus_themeMode") || "dark";
+    var light = m==="light" || (m==="auto" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+    var de = document.documentElement; de.classList.toggle("theme-light", light); de.classList.toggle("theme-dark", !light);
+  } catch(e){} })();
+  window.applyThemeMode = function(mode){
+    try {
+      mode = mode || (window.APP && APP.state && APP.state.settings && APP.state.settings.ui && APP.state.settings.ui.themeMode) || "dark";
+      try { localStorage.setItem("quantus_themeMode", mode); } catch(e){}
+      var light = mode==="light" || (mode==="auto" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+      var de = document.documentElement; de.classList.toggle("theme-light", light); de.classList.toggle("theme-dark", !light);
+    } catch(e){}
+  };
+  window.setThemePref = function(mode){
+    try { if(window.APP && APP.state && APP.state.settings){ APP.state.settings.ui = APP.state.settings.ui || {}; APP.state.settings.ui.themeMode = mode; if(typeof window.scheduleSave==="function") window.scheduleSave(); } } catch(e){}
+    window.applyThemeMode(mode);
+  };
+  /* Canvas-/JS-Farben theme-aware aus den CSS-Tokens lesen (für den Canvas-Refactor). */
+  window.themeColor = function(token, fallback){ try { var v=getComputedStyle(document.documentElement).getPropertyValue(token); return (v&&v.trim())||fallback||"#86a895"; } catch(e){ return fallback||"#86a895"; } };
+  try { if(window.matchMedia) matchMedia("(prefers-color-scheme: light)").addEventListener("change", function(){ try { if(window.APP && APP.state && APP.state.settings && APP.state.settings.ui && APP.state.settings.ui.themeMode==="auto") window.applyThemeMode("auto"); } catch(e){} }); } catch(e){}
+  </script>
   <style>
     :root{
-      /* Apple-inspired Dark Mode */
-      --bg:#000000;
-      --panel:#1c1c1e;
-      --panel2:#2c2c2e;
-      --panel3:#3a3a3c;
-      --muted:#8e8e93;
-      --text:#ffffff;
-      --text2:#ebebf5;
-      --border:rgba(255,255,255,.1);
-      --border2:rgba(255,255,255,.18);
-      --accent:#0a84ff;
-      --accent2:#30d158;
-      --accent3:#5e5ce6;
-      --warn:#ff9f0a;
-      --danger:#ff453a;
-      --ok:#30d158;
-      --pink:#ff375f;
-      --orange:#ff9500;
-      --teal:#64d2ff;
-      --shadow: 0 8px 32px rgba(0,0,0,.4);
-      --shadow-lg: 0 16px 48px rgba(0,0,0,.5);
+      /* ═══ Design-System „Schiefer" (Dark, Default) — matt, kein reines #000/#fff ═══ */
+      --surface-base:#262a2e;        /* Seite */
+      --surface-raised:#2d3237;      /* Karten/Sidebar/Panels */
+      --surface-overlay:#353b41;     /* Modal/Dropdown/Toast */
+      --border:#3c434a;
+      --border2:#454c54;
+      --text-primary:#dadbde;
+      --text-muted:#878d96;
+      --accent:#86a895;
+      --accent-soft:#324039;
+      --on-accent:#1d2622;
+      --danger:#c8836f;
+      --warning:#c2a866;
+      --success:#86a895;
+      --info:#7e94b0;
+      /* ── Legacy-Aliase: bestehende var()-Nutzungen (3374×) auf die matte Palette mappen ── */
+      --bg:var(--surface-base);
+      --panel:var(--surface-raised);
+      --panel2:var(--surface-overlay);
+      --panel3:var(--border2);
+      --muted:var(--text-muted);
+      --text:var(--text-primary);
+      --text2:#b9bcc1;
+      --accent2:var(--success);
+      --accent3:var(--info);
+      --warn:var(--warning);
+      --danger:var(--danger);
+      --ok:var(--success);
+      --pink:#c08aa0;
+      --orange:var(--warning);
+      --teal:var(--info);
+      --neon:var(--accent);
+      --neon-glow:var(--accent-soft);
+      --shadow: 0 4px 14px rgba(0,0,0,.06);
+      --shadow-lg: 0 8px 24px rgba(0,0,0,.08);
       --radius: 14px;
       --radius-sm: 10px;
       --radius-lg: 20px;
       --mono: ui-monospace, SF Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      --sans: -apple-system, BlinkMacSystemFont, SF Pro Display, SF Pro Text, Helvetica Neue, Arial, sans-serif;
-      --transition: all 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+      --sans: Inter, -apple-system, BlinkMacSystemFont, SF Pro Text, Helvetica Neue, Arial, sans-serif;
+      --transition: all 0.16s cubic-bezier(0.25, 0.1, 0.25, 1);
+    }
+    /* ═══ „Leinen" (Light) — umschaltbar über themeMode; Aliase erben automatisch ═══ */
+    html.theme-light{
+      --surface-base:#d8d3c7;
+      --surface-raised:#e3dfd5;
+      --surface-overlay:#ebe7de;
+      --border:#c6c0b2;
+      --border2:#bcb6a6;
+      --text-primary:#3a3733;
+      --text-muted:#8a8478;
+      --accent:#5a7d70;
+      --accent-soft:#cdd8d1;
+      --on-accent:#eef2ef;
+      --danger:#b06a52;
+      --warning:#a8852f;
+      --success:#5a7d70;
+      --info:#4f6f8a;
+      --text2:#55514a;
+      --pink:#9d6a7e;
+      --shadow: 0 4px 14px rgba(58,55,51,.07);
+      --shadow-lg: 0 8px 24px rgba(58,55,51,.09);
     }
 
     /* ═══════ GLOBAL MODERNIZATION ═══════ */
@@ -58058,6 +58116,7 @@ async function init() {
   try {
     // Load settings and data from localStorage first (offline-first)
     APP.state.settings = loadSettings();
+    try { if(window.applyThemeMode) window.applyThemeMode((APP.state.settings&&APP.state.settings.ui&&APP.state.settings.ui.themeMode)||"dark"); } catch(e){}
     APP.state.data = loadLocalData();
     _initProtectionUntil = Date.now() + 10000; // Protect local data for 10s
     console.log('[Init] Local data loaded:', countEntities(APP.state.data), 'entities');
@@ -58557,7 +58616,7 @@ async function init() {
             <label class="col-12">Workspace Name<input type="text" id="setWorkspaceName" value="${esc(APP.state.data.meta.workspaceName)}" /></label>
             <label class="col-6">
               Design-Modus
-              <select id="setThemeMode">
+              <select id="setThemeMode" onchange="window.setThemePref(this.value)">
                 <option value="dark" ${(APP.state.settings.ui.themeMode || "dark") === "dark" ? "selected" : ""}>Dunkel (Apple)</option>
                 <option value="light" ${APP.state.settings.ui.themeMode === "light" ? "selected" : ""}>Hell</option>
                 <option value="auto" ${APP.state.settings.ui.themeMode === "auto" ? "selected" : ""}>System</option>
@@ -86483,344 +86542,31 @@ console.log('🌐 Tabs + Translator + Spotlight-Apps geladen');
    ═══════════════════════════════════════════════════════════════════════ -->
 
 <style id="neonVioletTheme">
-/* ── Color Override: Neon-Violett überall ────────────────────── */
-:root {
-  --accent: #a855f7 !important;       /* Violet-500 — Neon */
-  --accent2: #c084fc !important;      /* Violet-400 */
-  --accent3: #7c3aed !important;      /* Violet-600 — tiefer */
-  --neon: #c084fc !important;
-  --neon-glow: rgba(168, 85, 247, 0.4) !important;
-}
-
-/* Sidebar — aktive Items leuchten neon-violett */
+/* ── Vormals „Neon-Violett-Override" — jetzt matt (Schiefer/Leinen) ──
+   Der frühere :root{--accent:#a855f7 !important;…}-Override ist entfernt,
+   damit die matten Tokens aus dem Haupt-:root gewinnen. Nur die strukturellen
+   Akzent-Regeln bleiben, in Tokens. ────────────────────────────────────── */
 .sidebar-item.active,
 .sidebar-nav-item.active,
 .nav-item.active {
-  background: linear-gradient(135deg, rgba(168,85,247,0.18), rgba(124,58,237,0.10)) !important;
-  color: #d8b4fe !important;
-  border-left: 2px solid #a855f7 !important;
+  background: var(--accent-soft) !important;
+  color: var(--text-primary) !important;
+  border-left: 2px solid var(--accent) !important;
 }
-
-/* Buttons primary → neon */
-.btn.primary,
-.btn-primary,
-button.primary,
-.btn.btn-primary,
-button.btn.primary {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-  color: #fff !important;
-  border-color: transparent !important;
-  box-shadow: 0 4px 14px rgba(168,85,247,0.35) !important;
-}
-.btn.primary:hover,
-.btn-primary:hover,
-button.primary:hover {
-  background: linear-gradient(135deg, #b765f8, #8b3df0) !important;
-  box-shadow: 0 6px 18px rgba(168,85,247,0.5) !important;
-}
-
-/* Dashboard quick-action buttons (Aufgabe, Pomodoro etc.) Action-Bar im Dashboard-Header */
-.dashboard-actions .btn.primary,
-.db-actions .btn.primary,
-.card-actions .btn.primary,
-.section-header .btn.primary,
-.toolbar .btn.primary {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-}
-
-/* "+ Neue Aufgabe" und ähnliche im Dashboard-Header */
-button[data-action="quick-task"].primary,
-button[data-action="create-task"].primary,
-button[data-action="quick-note"].primary,
-button[data-action="quick-idea"].primary,
+.btn.primary, .btn-primary, button.primary, .btn.btn-primary, button.btn.primary,
+.dashboard-actions .btn.primary, .db-actions .btn.primary, .card-actions .btn.primary,
+.section-header .btn.primary, .toolbar .btn.primary,
+button[data-action="quick-task"].primary, button[data-action="create-task"].primary,
+button[data-action="quick-note"].primary, button[data-action="quick-idea"].primary,
 button[data-action="quick-project"].primary {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-  color: #fff !important;
-  box-shadow: 0 4px 12px rgba(168,85,247,0.35) !important;
-}
-
-/* Stat-card Werte die Akzent verwenden */
-.stat-card .value,
-.stat-value {
-  /* Default bleibt — nur wenn .accent oder .primary, dann violett */
-}
-.stat-card.accent .value,
-.stat-card.primary .value,
-.stat-value.accent {
-  color: #c084fc !important;
-}
-
-/* Plus-Knöpfe / FABs */
-.fab, .floating-action-button, button.add-btn {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-  box-shadow: 0 8px 24px rgba(168,85,247,0.45) !important;
-}
-
-/* Header Quick-Action Buttons — farbig hervorgehoben */
-#btnQuickTask {
-  background: linear-gradient(135deg, rgba(34,197,94,0.18), rgba(34,197,94,0.08)) !important;
-  border: 1px solid rgba(34,197,94,0.35) !important;
-  color: #4ade80 !important;
-  border-radius: 9px !important;
-  padding: 6px 10px !important;
-  font-size: 14px !important;
-  width: auto !important;
-  display: inline-flex !important;
-  align-items: center;
-  gap: 4px;
-}
-#btnQuickTask::after {
-  content: attr(data-count);
-  font-size: 11px;
-  font-weight: 700;
-  margin-left: 2px;
-}
-#btnQuickNote {
-  background: linear-gradient(135deg, rgba(96,165,250,0.18), rgba(96,165,250,0.08)) !important;
-  border: 1px solid rgba(96,165,250,0.35) !important;
-  color: #93c5fd !important;
-  border-radius: 9px !important;
-  padding: 6px 10px !important;
-  font-size: 14px !important;
-  width: auto !important;
-}
-#btnQuickIdea {
-  background: linear-gradient(135deg, rgba(251,191,36,0.18), rgba(251,191,36,0.08)) !important;
-  border: 1px solid rgba(251,191,36,0.35) !important;
-  color: #fcd34d !important;
-  border-radius: 9px !important;
-  padding: 6px 10px !important;
-  font-size: 14px !important;
-  width: auto !important;
-}
-#btnDailyWrap {
-  background: linear-gradient(135deg, rgba(168,85,247,0.18), rgba(168,85,247,0.08)) !important;
-  border: 1px solid rgba(168,85,247,0.35) !important;
-  color: #d8b4fe !important;
-  border-radius: 9px !important;
-  padding: 6px 10px !important;
-  font-size: 14px !important;
-  width: auto !important;
-}
-
-/* Quick-Action Buttons hover */
-#btnQuickTask:hover, #btnQuickNote:hover, #btnQuickIdea:hover, #btnDailyWrap:hover {
-  filter: brightness(1.2);
-  transform: translateY(-1px);
-}
-
-/* Logo & Brand — neon glow */
-.sidebar-brand .logo,
-.brand .logo {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-  box-shadow: 0 4px 14px rgba(168,85,247,0.4) !important;
-}
-
-/* Tab-Bar Active-Tab Indicator → neon */
-.bt-tab.active::before {
-  background: linear-gradient(90deg, #a855f7, #c084fc) !important;
-}
-.bt-tab.active {
-  background: linear-gradient(180deg, rgba(168,85,247,0.22) 0%, #1f1f23 100%) !important;
-  border-color: rgba(168,85,247,0.35) !important;
-}
-.bt-tab.pinned {
-  background: rgba(168,85,247,0.10) !important;
-  border-color: rgba(168,85,247,0.22) !important;
-}
-
-/* Spotlight Search Highlight */
-.spotlight-result.selected {
-  background: linear-gradient(90deg, rgba(168,85,247,0.18), rgba(168,85,247,0.04)) !important;
-  border-left: 2px solid #a855f7 !important;
-}
-
-/* Search-Input fokussiert */
-input[type=text]:focus, textarea:focus, select:focus {
-  border-color: rgba(168,85,247,0.5) !important;
-}
-.universal-search:focus-within {
-  box-shadow: 0 0 0 3px rgba(168,85,247,0.15) !important;
-  border-color: rgba(168,85,247,0.4) !important;
-}
-
-/* Translator: Akzent-Farbe */
-.tr-bar button:not(.ghost) {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-}
-.tr-input:focus {
-  border-color: #a855f7 !important;
-  background: rgba(168,85,247,0.06) !important;
-  box-shadow: 0 0 0 3px rgba(168,85,247,0.12) !important;
-}
-
-/* ── Sidebar: Neuer "+ NEU ERSTELLEN" Button (versteckt alten Schnellzugriff) ── */
-#sidebarQuick { display: none !important; } /* Alten Schnellzugriff ausblenden */
-
-#sidebarCreateBtn {
-  margin: 12px 14px 16px;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, #a855f7, #7c3aed);
-  color: #fff;
-  border: 0;
-  border-radius: 12px;
-  font-size: 13.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  cursor: pointer;
-  box-shadow: 0 4px 16px rgba(168,85,247,0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  transition: all 0.18s;
-  width: calc(100% - 28px);
-}
-#sidebarCreateBtn:hover {
-  background: linear-gradient(135deg, #b765f8, #8b3df0);
-  box-shadow: 0 6px 22px rgba(168,85,247,0.55);
-  transform: translateY(-1px);
-}
-#sidebarCreateBtn:active {
-  transform: translateY(0);
-}
-#sidebarCreateBtn .plus {
-  width: 20px; height: 20px; border-radius: 50%;
-  background: rgba(255,255,255,0.22);
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 14px; font-weight: 700; line-height: 1;
-}
-
-/* Popup-Menü */
-#createPopup {
-  position: fixed;
-  background: #1a1a1d;
-  border: 1px solid rgba(168,85,247,0.25);
-  border-radius: 14px;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(168,85,247,0.12);
-  padding: 6px;
-  min-width: 220px;
-  z-index: 99999;
-  display: none;
-  animation: cpFadeIn 0.16s ease-out;
-  backdrop-filter: blur(20px);
-}
-@keyframes cpFadeIn {
-  from { opacity: 0; transform: translateY(8px) scale(0.96); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-#createPopup.show { display: block; }
-.cp-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  border-radius: 9px;
-  cursor: pointer;
-  font-size: 13.5px;
-  font-weight: 500;
-  color: #e4e4e7;
-  transition: all 0.12s;
-  user-select: none;
-  background: transparent;
-  border: 0;
-  width: 100%;
-  text-align: left;
-  font-family: inherit;
-  letter-spacing: -0.005em;
-}
-.cp-item:hover {
-  background: rgba(168,85,247,0.14);
-  color: #d8b4fe;
-}
-.cp-item .icon {
-  width: 28px; height: 28px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 16px;
-  background: rgba(168,85,247,0.12);
-  border-radius: 7px;
-  flex-shrink: 0;
-}
-.cp-divider {
-  height: 1px;
-  background: rgba(255,255,255,0.06);
-  margin: 4px 8px;
-}
-.cp-shortcut {
-  margin-left: auto;
-  font-size: 10px;
-  color: #71717a;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  font-family: ui-monospace, monospace;
-  padding: 2px 6px;
-  background: rgba(255,255,255,0.04);
-  border-radius: 4px;
-}
-
-/* Tab-bar pinned tab in violet */
-.bt-tab.pinned:hover {
-  background: rgba(168,85,247,0.18) !important;
-}
-
-/* Filter-Chips active → violett */
-.filter-chip.active {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  background: var(--accent) !important;
+  color: var(--on-accent) !important;
   border-color: transparent !important;
-  box-shadow: 0 4px 12px rgba(168,85,247,0.35) !important;
+  box-shadow: none !important;
 }
-
-/* Scroll-bar tint */
-::-webkit-scrollbar-thumb {
-  background: rgba(168,85,247,0.25) !important;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(168,85,247,0.4) !important;
-}
-
-/* Stat cards accent value → violett */
-.stat-card.accent .value { color: #c084fc !important; }
-
-/* Dashboard "Aufgaben Total" und "Offen" sollen violett sein, nicht grün/blau */
-.stat-card .label { color: var(--muted) !important; }
-/* Einzelne Stat-cards die "neutrale Counter" sind aber bisher grün/blau angezeigt wurden */
-.stat-card:not(.ok):not(.danger):not(.warn) .value {
-  color: #c084fc !important;
-}
-
-/* Generelle Quick-Action-Buttons im Dashboard: alle Aktion-Buttons auf neon */
-.btn.primary,
-button.btn.primary,
-.btn[data-action="quick-task"],
-.btn[data-action="create-task"],
-.btn[data-action="quick-note"],
-.btn[data-action="quick-idea"],
-.btn[data-action="quick-project"],
-button[onclick*="openReadlist"].primary {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-  color: #fff !important;
-  border-color: transparent !important;
-  box-shadow: 0 4px 12px rgba(168,85,247,0.35) !important;
-}
-
-/* Mute green & blue buttons that aren't semantic-success — set them to neon */
-.btn.green:not([data-action="toggle-task"]):not(.task-done) {
-  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
-}
-
-/* Dashboard cards Karten-Hover violett */
-.card:hover { border-color: rgba(168,85,247,0.18); }
-
-/* "Schnellvorlagen" cards violett-tinted (siehe Bild 2) */
-.card[onclick*="sendQuickTemplate"], 
-[data-action*="template"], 
-.template-card {
-  border-color: rgba(168,85,247,0.18) !important;
-}
-.card[onclick*="sendQuickTemplate"]:hover,
-.template-card:hover {
-  background: linear-gradient(135deg, rgba(168,85,247,0.08), rgba(0,0,0,0)) !important;
+.btn.primary:hover, .btn-primary:hover, button.primary:hover {
+  filter: brightness(1.06);
+  box-shadow: none !important;
 }
 </style>
 
