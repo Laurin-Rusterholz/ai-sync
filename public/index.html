@@ -94830,7 +94830,19 @@ console.log('📚 Leseliste geladen');
     if (GM.smart==="blocked")  return { query: GM.labelIds.blocked ? { labelIds:[GM.labelIds.blocked] } : { q:"label:Quantus/Blockiert" }, title:"Blockiert" };
     return { query:{ labelIds:[GM.selectedLabel] }, title: labelName(GM.selectedLabel) };
   }
-  function fromPerson(m){ if (isBlocked(addrOf(m.from)) || isDoneCls(m)) return false; var c=clsOf(m); return !!personOf(m.from) || !!(c && (c.category==="person" || c.isFromKnownPerson)); }
+  // „Von Personen": ausschließlich Mails, die die KI-Klassifizierung
+  // (/gmailClassifications/<messageId>, via clsOf → GM.classifications[m.id]) als echte
+  // Person markiert: isPerson===true bzw. category==='person'. Existiert für die messageId
+  // noch KEINE Klassifizierung (null), wird die Mail vorerst AUSGEBLENDET, damit keine
+  // unklassifizierten Bots/Newsletter/Dienste durchrutschen. Blockierte/erledigte Mails
+  // bleiben wie bisher außen vor. (Klassifizierungen sind vor dem Filtern geladen:
+  // loadMessages → await ensureClassifications().)
+  function fromPerson(m){
+    if (isBlocked(addrOf(m.from)) || isDoneCls(m)) return false;
+    var c = clsOf(m);
+    if (!c) return false;                                  // noch nicht klassifiziert → ausblenden
+    return c.isPerson===true || c.category==="person";     // nur echte Menschen
+  }
   function notFromPerson(m){ var c=clsOf(m); if (c && c.category==="person") return false; return !personOf(m.from); }
 
   async function loadMessages(reset){
