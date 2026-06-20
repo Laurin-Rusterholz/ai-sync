@@ -94716,6 +94716,16 @@ console.log('📚 Leseliste geladen');
 .gml-org-badge { display:inline-block; font-size:11px; font-weight:700; color:#0a84ff; background:rgba(10,132,255,.12); padding:2px 9px; border-radius:999px; margin-bottom:8px; }
 .gml-org-badge.muted { color:var(--muted); background:rgba(255,255,255,.05); font-weight:600; }
 .gml-compose-note { font-size:12.5px; padding:8px 11px; border-radius:9px; background:rgba(10,132,255,.1); color:var(--text2); margin-bottom:12px; border:1px solid rgba(10,132,255,.25); line-height:1.5; }
+/* Read-only „Antwort auf"-Block über dem Verfassen-Feld (Original-Mail-Kontext) */
+.gml-orig { border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:9px; background:var(--panel2); padding:10px 12px; margin-bottom:14px; }
+.gml-orig-loading { color:var(--muted); font-size:12.5px; font-style:italic; }
+.gml-orig-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; }
+.gml-orig-label { font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); }
+.gml-orig-date { font-size:11px; color:var(--muted); flex-shrink:0; }
+.gml-orig-from { font-size:12.5px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; }
+.gml-orig-addr { font-weight:400; color:var(--muted); }
+.gml-orig-subj { font-size:12.5px; color:var(--text2); margin-top:2px; }
+.gml-orig-body { font-size:12.5px; color:var(--text2); line-height:1.5; white-space:pre-wrap; word-break:break-word; max-height:160px; overflow:auto; margin-top:7px; padding-top:7px; border-top:1px solid var(--border); }
 @media (max-width:820px){
   .gml-layout { grid-template-columns:1fr; }
   .gml-sidebar { flex-direction:row; flex-wrap:wrap; position:static; gap:4px; }
@@ -94859,7 +94869,7 @@ console.log('📚 Leseliste geladen');
         id: msg.id, threadId: msg.threadId, labelIds: msg.labelIds||[], unread: wasUnread,
         from: h.from||"", to: h.to||"", cc: h.cc||"", subject: h.subject||"(kein Betreff)",
         internalDate: parseInt(msg.internalDate||"0",10) || Date.parse(h.date||"") || 0,
-        messageId: h["message-id"]||"", references: h.references||"",
+        messageId: h["message-id"]||"", references: h.references||"", inReplyTo: h["in-reply-to"]||"",
         html: bodies.html, text: bodies.text,
       };
       if (wasUnread) markReadById(msg.id, true, true); // auto-mark read on open
@@ -95058,12 +95068,14 @@ console.log('📚 Leseliste geladen');
     var fromA = parseAddr(o.from);
     var ccLine = o.cc ? '<div class="gml-addr"><span>Cc:</span> '+esc(o.cc)+'</div>' : "";
     var done = isDoneMsg(o);
+    var isDraft = (o.labelIds||[]).indexOf("DRAFT")>=0;
     var person = personOf(o.from);
     var personBadge = person ? '<span class="gml-known" title="Bekannte Person">👤 '+esc(person.name||"")+'</span>' : '';
     return ''
       + '<div class="gml-msgtop">'
       +   '<button class="btn" onclick="gmailBackToList()">← Zurück</button>'
       +   '<div style="flex:1"></div>'
+      +   (isDraft ? '<button class="btn primary" onclick="gmailSendOpenDraft()" title="Diesen Entwurf prüfen und senden">📤 Prüfen &amp; senden</button>' : '')
       +   '<button class="btn" onclick="gmailReply()">↩️ Antworten</button>'
       +   '<button class="btn" onclick="gmailReplyAll()">↩️↩️ Allen</button>'
       +   '<button class="btn" onclick="gmailCreateTaskRequest()" title="n8n erstellt einen Aufgaben-Vorschlag aus dieser Mail">📋 Aufgabe</button>'
@@ -95107,12 +95119,69 @@ console.log('📚 Leseliste geladen');
   }
 
   // ── Compose / Reply / Send ──
+  // Read-only „Antwort auf"-Block: zeigt die Original-Mail (Absender, Betreff,
+  // gekürzter/scrollbarer Body) über dem Antwort-Textfeld. Rein additiv — der
+  // Versand-Pfad (gmailSend) bleibt unverändert.
+  function renderComposeOriginal(orig){
+    if (!orig) return '<div id="gmlOrigBox"></div>';
+    if (orig.loading) return '<div id="gmlOrigBox" class="gml-orig gml-orig-loading">⏳ Lade Original-Mail…</div>';
+    if (orig.empty || (!orig.from && !orig.subject && !orig.body)) return '<div id="gmlOrigBox"></div>';
+    var fa = parseAddr(orig.from||"");
+    var who = esc(fa.name||fa.email||"(unbekannt)")
+      + (fa.email && fa.name && fa.name!==fa.email ? ' <span class="gml-orig-addr">&lt;'+esc(fa.email)+'&gt;</span>' : '');
+    var dateStr = orig.date ? esc(fmtDateFull(orig.date)) : '';
+    var bodyTxt = String(orig.body||"").trim();
+    return '<div id="gmlOrigBox" class="gml-orig">'
+      + '<div class="gml-orig-head"><span class="gml-orig-label">↩︎ Antwort auf</span>'+(dateStr?'<span class="gml-orig-date">'+dateStr+'</span>':'')+'</div>'
+      + '<div class="gml-orig-from">'+who+'</div>'
+      + (orig.subject ? '<div class="gml-orig-subj">'+esc(orig.subject)+'</div>' : '')
+      + '<div class="gml-orig-body">'+(bodyTxt?esc(bodyTxt):'<span style="color:var(--muted)">(kein Textinhalt)</span>')+'</div>'
+      + '</div>';
+  }
+  // Ersetzt den Platzhalter im offenen Modal durch die geladene Original-Mail.
+  window.gmailFillOriginal = function(orig){
+    var box=document.getElementById("gmlOrigBox");
+    if (box) box.outerHTML = renderComposeOriginal(orig || { empty:true });
+  };
+  // Ermittelt die Original-Mail (read-only Kontext) für das Verfassen-Modal:
+  // bevorzugt eine explizite messageId, sonst die neueste eingehende Nachricht
+  // im Thread (eigene Nachrichten + Entwürfe + optional ausgeschlossene id werden
+  // übersprungen). Best-effort, wirft nie. Liefert {from,subject,body,date}|null.
+  async function gmailResolveOriginal(opts){
+    opts = opts||{};
+    try {
+      var msg = null;
+      if (opts.messageId){
+        msg = await gmApi("GET","/users/me/messages/"+encodeURIComponent(opts.messageId), { query:{ format:"full" } });
+      } else if (opts.threadId){
+        var th = await gmApi("GET","/users/me/threads/"+encodeURIComponent(opts.threadId), { query:{ format:"full" } });
+        var msgs = (th && th.messages) || [];
+        var me = ((GM.profile&&GM.profile.emailAddress)||"").toLowerCase();
+        for (var i=msgs.length-1;i>=0;i--){
+          var m=msgs[i];
+          if (opts.excludeId && m.id===opts.excludeId) continue;
+          if ((m.labelIds||[]).indexOf("DRAFT")>=0) continue;
+          var hh=headerMap(m.payload); var fa=parseAddr(hh.from||"");
+          if (me && (fa.email||"").toLowerCase()===me) continue;
+          msg=m; break;
+        }
+        // Fallback: neueste nicht-ausgeschlossene Nachricht, auch wenn von uns.
+        if (!msg){ for (var j=msgs.length-1;j>=0;j--){ if (opts.excludeId && msgs[j].id===opts.excludeId) continue; if ((msgs[j].labelIds||[]).indexOf("DRAFT")>=0) continue; msg=msgs[j]; break; } }
+      }
+      if (!msg) return null;
+      var h = headerMap(msg.payload);
+      var bodies = extractBodies(msg.payload);
+      var text = bodies.text || htmlToText(bodies.html) || "";
+      return { from:h.from||"", subject:h.subject||"", body:text, date: parseInt(msg.internalDate||"0",10)||Date.parse(h.date||"")||0 };
+    } catch(e){ return null; }
+  }
   window.gmailCompose = function(prefill){
     prefill = prefill||{};
     var inp = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"';
     var ta  = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box;resize:vertical;min-height:200px;font-family:inherit;line-height:1.5"';
     function field(label, inner){ return '<label style="display:block;margin-bottom:12px"><span style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600">'+label+'</span>'+inner+'</label>'; }
     var html = (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
+      + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + field("An *", '<input id="gmlTo" type="text" '+inp+' value="'+esc(prefill.to||"")+'" placeholder="empfaenger@example.com, weitere@…">')
       + field("Cc", '<input id="gmlCc" type="text" '+inp+' value="'+esc(prefill.cc||"")+'" placeholder="optional">')
       + field("Betreff", '<input id="gmlSubject" type="text" '+inp+' value="'+esc(prefill.subject||"")+'" placeholder="Betreff">')
@@ -95146,10 +95215,32 @@ console.log('📚 Leseliste geladen');
       title: all?"↩️ Allen antworten":"↩️ Antworten",
       to: fromA.email, cc: cc.join(", "), subject: subject, body: "\n\n"+buildQuote(o),
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
+      original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
     });
   }
   window.gmailReply = function(){ replyInternal(false); };
   window.gmailReplyAll = function(){ replyInternal(true); };
+
+  // ── Entwürfe-Postfach (Gmail-DRAFT-Label): „Prüfen & senden" ──
+  // Öffnet den vorhandenen Verfassen-Dialog mit dem Inhalt des geöffneten Gmail-
+  // Entwurfs und nutzt denselben manuellen Versand (gmailSend → messages.send)
+  // wie bei den KI-Entwürfen. Rein additiv: kein neuer API-Pfad, keine Logik-
+  // änderung am Versand. Hinweis: messages.send erstellt eine neue Nachricht im
+  // selben Thread; der ursprüngliche Gmail-Entwurf bleibt in „Entwürfe" stehen
+  // (drafts.send wäre nötig, um ihn automatisch zu entfernen — separater Backend-
+  // Endpunkt, daher hier bewusst nicht).
+  window.gmailSendOpenDraft = function(){
+    var o = GM.open; if (!o){ toast("info","Kein Entwurf offen",""); return; }
+    var body = o.text || htmlToText(o.html) || "";
+    window.gmailCompose({
+      title:"📤 Entwurf prüfen & senden",
+      to:o.to||"", cc:o.cc||"", subject:o.subject||"", body:body,
+      threadId:o.threadId||null, inReplyTo:o.inReplyTo||null, references:o.references||null,
+      original: o.threadId ? { loading:true } : undefined,
+    });
+    // Die Mail, auf die der Entwurf antwortet (neueste andere Nachricht im Thread).
+    if (o.threadId){ gmailResolveOriginal({ threadId:o.threadId, excludeId:o.id }).then(function(orig){ window.gmailFillOriginal(orig); }); }
+  };
 
   function encodeHeaderWord(s){ s=String(s==null?"":s); if (/^[\x00-\x7F]*$/.test(s)) return s; return "=?UTF-8?B?"+window.btoa(unescape(encodeURIComponent(s)))+"?="; }
   // Encode an address list ("Name <a@b>, c@d") — RFC2047 on non-ASCII display
@@ -95433,10 +95524,19 @@ console.log('📚 Leseliste geladen');
     if (!d){ toast("err","Entwurf nicht mehr da",""); return; }
     var org=findOrgForEmail(d.to||"");
     var note = org ? ('🏢 Organisation erkannt: <b>'+esc(org.name||"")+'</b>'+(orgInstructions(org)?' – deren KI-Anweisungen wurden beim Entwurf berücksichtigt.':' (keine E-Mail-Anweisungen hinterlegt).')) : '';
+    // Original-Mail (auf die geantwortet wird) read-only über dem Entwurf zeigen.
+    // Quelle: vom n8n-Draft mitgelieferte Felder ODER per messageId/threadId
+    // nachgeladen. Wird progressiv eingefügt, damit das Modal sofort öffnet.
+    var hasSource = !!(d.originalBody || d.originalSubject || d.originalFrom || d.messageId || d.threadId);
     // Prefill the existing compose dialog. threadId keeps it in the right Gmail
     // thread; the user reviews, edits and sends MANUALLY (no auto-send). On send,
     // gmailSend marks the draft "used" via the draftKey in the compose context.
-    window.gmailCompose({ title:"🤖 KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key, note:note });
+    window.gmailCompose({ title:"🤖 KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key, note:note, original: hasSource ? { loading:true } : undefined });
+    if (d.originalBody || d.originalSubject || d.originalFrom){
+      window.gmailFillOriginal({ from:d.originalFrom||d.from||"", subject:d.originalSubject||"", body:d.originalBody||"", date:d.originalDate||0 });
+    } else if (d.messageId || d.threadId){
+      gmailResolveOriginal({ messageId:d.messageId||null, threadId:d.threadId||null }).then(function(orig){ window.gmailFillOriginal(orig); });
+    }
   };
   window.gmailDismissDraft = async function(key){
     if (!confirm("Diesen KI-Entwurf verwerfen? (Status wird auf 'dismissed' gesetzt, nichts wird gesendet.)")) return;
