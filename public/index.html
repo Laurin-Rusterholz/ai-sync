@@ -89703,9 +89703,15 @@ console.log('📚 Leseliste geladen');
     const p = mhPersons()[id];
     if (!p) return `<div class="mh-empty"><div class="mh-empty-icon">❓</div>Person nicht gefunden.<br><button class="mh-btn primary" onclick="navigate('persons')" style="margin-top:14px">Zurück</button></div>`;
     
-    const mails = Object.values(mhEmails()).filter(m => 
-      m.fromPersonId === id || (m.toPersonIds || []).includes(id) || (m.ccPersonIds || []).includes(id)
-    ).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    // E-Mails dieser Person aus dem Gmail-Index (echte messageId → echter Gmail-Reader),
+    // statt lokaler Mail-Hub-Einträge ohne messageId. Abgleich über die E-Mail-Adressen der
+    // Person (der Gmail-Index führt den Absender als fromEmail).
+    const personMailSet = new Set((p.emails || []).map(e => String(e || "").trim().toLowerCase()).filter(Boolean));
+    const gmailIdx = Array.isArray(APP?.state?.data?.gmailIndex) ? APP.state.data.gmailIndex : [];
+    const mails = personMailSet.size
+      ? gmailIdx.filter(m => personMailSet.has(String(m.fromEmail || "").trim().toLowerCase()))
+                .sort((a, b) => (b.date || 0) - (a.date || 0))
+      : [];
     
     const orgName = p.organizationId ? mhData().organizations?.[p.organizationId]?.name : "";
     const addr = p.address || {};
@@ -89849,15 +89855,15 @@ console.log('📚 Leseliste geladen');
       
       <div class="mh-detail-section">
         <h4>📬 E-Mails (${mails.length})</h4>
-        ${mails.length === 0 ? `<div style="color:var(--muted);font-size:13px">Keine E-Mails verknüpft.</div>` : `
+        ${mails.length === 0 ? `<div style="color:var(--muted);font-size:13px">Keine Gmail-Nachrichten dieser Person im Index.</div>` : `
         <div style="display:flex;flex-direction:column;gap:8px">
           ${mails.slice(0, 20).map(m => {
-            const role = m.fromPersonId === id ? "Von" : (m.toPersonIds || []).includes(id) ? "An" : "CC";
-            return `<div class="mh-mail-card" onclick="navigate('mailhub','${m.id}')">
-              <div class="mh-mail-icon" style="width:32px;height:32px;font-size:11px">${role}</div>
+            // Klick öffnet GENAU diese Mail im Gmail-Reader (per messageId), statt nur nach /#/gmail.
+            return `<div class="mh-mail-card" onclick="gmailOpenFromExternal('${m.id}')" title="Im Gmail-Reader öffnen" style="cursor:pointer">
+              <div class="mh-mail-icon" style="width:32px;height:32px;font-size:14px">📧</div>
               <div class="mh-mail-body">
                 <div style="font-size:13.5px;font-weight:600;margin-bottom:3px">${mhEsc(m.subject || "(Kein Betreff)")}</div>
-                <div style="font-size:11px;color:var(--muted)">${mhFmtDate(m.date)}</div>
+                <div style="font-size:11px;color:var(--muted)">${mhFmtDate(m.date)}${m.snippet ? " · " + mhEsc(String(m.snippet).slice(0, 80)) : ""}</div>
               </div>
             </div>`;
           }).join("")}
@@ -95495,15 +95501,35 @@ console.log('📚 Leseliste geladen');
   // Gleiche RTDB-Instanz wie der Communicator-Task-Importer (Region europe-west1).
   var RTDB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
   function draftTs(d){ var c=d&&d.createdAt; if(typeof c==="number") return c<1e12?c*1000:c; var p=Date.parse(c||""); return isNaN(p)?0:p; }
+  // Verknüpft einen KI-Entwurf mit seiner KI-Klassifizierung (/gmailClassifications/<messageId>,
+  // gespiegelt in GM.classifications). Der Entwurf trägt die Quell-messageId i. d. R. als
+  // d.messageId; als Fallback werden gängige Alias-Felder sowie der RTDB-Key geprüft (einige
+  // n8n-Setups schlüsseln Entwürfe direkt nach messageId). Da GM.classifications ausschließlich
+  // nach messageId indiziert ist, kann der Fallback nie falsch-positiv treffen.
+  function draftClsOf(d){
+    if (!d || !GM.classifications) return null;
+    var ids = [d.messageId, d.msgId, d.sourceMessageId, d.originalMessageId, d.id, d._key];
+    for (var i=0;i<ids.length;i++){ var k=ids[i]; if (k && GM.classifications[k]) return GM.classifications[k]; }
+    return null;
+  }
+  // „KI-Entwürfe" zeigt – analog zum fromPerson-Fix – NUR Entwürfe für echte Personen:
+  // die KI-Klassifizierung muss isPerson===true bzw. generateDraft===true (alt. category==='person')
+  // melden. Ohne vorhandene Klassifizierung oder bei Bot/Spam/Newsletter wird der Entwurf ausgeblendet.
+  function draftIsFromPerson(d){
+    var c = draftClsOf(d);
+    if (!c) return false;
+    return c.isPerson===true || c.generateDraft===true || c.category==="person";
+  }
   async function loadDrafts(){
     GM.draftsLoading=true; GM.draftsError=null; rerender();
     try {
+      await ensureClassifications();   // Personen-Filter braucht die Klassifizierung (RTDB)
       var r = await fetch(RTDB_URL + "/gmailDrafts.json", { cache:"no-store" });
       if (!r.ok) throw new Error("RTDB HTTP "+r.status);
       var data = await r.json();
       var arr = [];
       if (data && typeof data==="object"){ Object.keys(data).forEach(function(k){ var d=data[k]; if(d && typeof d==="object"){ d._key=k; arr.push(d); } }); }
-      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending"; }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
+      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending" && draftIsFromPerson(d); }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
     } catch(e){ GM.draftsError = e.message||"Entwürfe konnten nicht geladen werden"; }
     finally { GM.draftsLoading=false; rerender(); }
   }
