@@ -1,0 +1,11 @@
+{
+  "name": "ai-sync",
+  "version": "1.0.0",
+  "description": "Quantus — personal management app (Netlify functions backend)",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@netlify/blobs": "^10.7.9",
+    "pdf-lib": "^1.17.1"
+  }
+}

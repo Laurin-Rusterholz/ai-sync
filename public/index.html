@@ -15271,6 +15271,7 @@ function getAllApps() {
     {key:"passwordmanager", icon:"🔐", label:"Password Manager", desc:getLang()==="de"?"Sichere Passwörter speichern, generieren & verwalten":"Securely store, generate & manage passwords"},
     {key:"googlecalendar", icon:"📆", label:"Google Calendar", desc:getLang()==="de"?"Google-Kalender anzeigen, Events erstellen, bearbeiten & löschen":"View Google Calendar, create, edit & delete events"},
     {key:"gmail", icon:"📧", label:"Gmail", desc:getLang()==="de"?"Gmail-Posteingang lesen, schreiben, antworten & verwalten":"Read, compose, reply to & manage your Gmail inbox"},
+    {key:"briefings", icon:"📬", label:"Briefings", desc:getLang()==="de"?"Zugestellte Briefing-PDFs (z.B. Morning-Briefing aus n8n) ansehen & herunterladen":"View & download delivered briefing PDFs (e.g. morning briefing from n8n)"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -15638,6 +15639,7 @@ function renderMain() {
     case "passwordmanager": html = viewPasswordManager(); break;
     case "googlecalendar": html = (typeof viewGoogleCalendar === "function" ? viewGoogleCalendar() : '<div style="padding:40px;text-align:center">Lade Google Calendar…</div>'); break;
     case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
+    case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
     case "settings": { openSettings(); return; }
 
     default: {
@@ -95941,6 +95943,163 @@ console.log('📚 Leseliste geladen');
     if (tgt){ new MutationObserver(function(){ if(!document.getElementById("gmlEntityInbox") && gmailDetectEntity()) gmlScheduleInject(); }).observe(tgt,{childList:true,subtree:false}); }
   } catch(e){} }, 1500);
 
+})();
+</script>
+
+<script>
+/* ============================================================================
+   BRIEFINGS — In-app mailbox for delivered briefing PDFs
+   ----------------------------------------------------------------------------
+   Backend: netlify/functions/briefing-put | briefing-list | briefing-get
+   PDFs are stored as binary Netlify Blobs (store "briefings"). This view lists
+   them, opens / downloads the binary (fetched WITH the auth header → object
+   URL, so the token never sits in a plain <a>/<iframe> src) and deletes them.
+   Read-state is kept locally per browser (localStorage).
+   ============================================================================ */
+(function(){
+  var FN = "/.netlify/functions";
+  var READ_KEY = "quantus_briefings_read";
+  var _items = [];
+  var _error = null;
+
+  function authHeaders(){
+    var h = {};
+    try {
+      var t = window.APP && APP.state && APP.state.settings && APP.state.settings.storage && APP.state.settings.storage.authToken;
+      if (t){ var s = String(t).trim(); h["Authorization"] = s.toLowerCase().indexOf("bearer ") === 0 ? s : ("Bearer " + s); }
+    } catch(e){}
+    return h;
+  }
+  function bToast(kind, title, msg){ try { if (typeof toast === "function") return toast(kind, title, msg); } catch(e){} try { console.log("[briefings]", kind, title, msg); } catch(e){} }
+  function readSet(){ try { return new Set(JSON.parse(localStorage.getItem(READ_KEY) || "[]")); } catch(e){ return new Set(); } }
+  function markRead(id){ try { var s = readSet(); s.add(id); localStorage.setItem(READ_KEY, JSON.stringify(Array.from(s))); } catch(e){} }
+  function fmtSize(n){ n = Number(n) || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n/1024).toFixed(1) + " KB"; return (n/1048576).toFixed(2) + " MB"; }
+  function fmtWhen(iso, date){ try { if (iso) return new Date(iso).toLocaleString("de-CH", { dateStyle:"medium", timeStyle:"short" }); } catch(e){} return date || ""; }
+  function putEndpoint(){ var o = ""; try { o = window.location.origin; } catch(e){} return o + FN + "/briefing-put"; }
+
+  function endpointInfoHtml(){
+    var hasTok = false;
+    try { hasTok = !!(window.APP && APP.state && APP.state.settings && APP.state.settings.storage && APP.state.settings.storage.authToken); } catch(e){}
+    return '<div id="briefingHelp" style="display:none;margin:0 0 16px;padding:14px 16px;background:var(--panel2,rgba(255,255,255,.03));border:1px solid var(--border,rgba(255,255,255,.1));border-radius:12px;font-size:12.5px;line-height:1.65">'
+      + '<div style="font-weight:700;margin-bottom:6px">📤 Zustellung (für n8n / externe Jobs)</div>'
+      + '<div style="color:var(--muted)">PDF per <code>POST</code> senden — entweder als <b>roher Binärbody</b> mit <code>Content-Type: application/pdf</code> oder als JSON <code>{ "pdfBase64": "…", "title": "…", "date": "YYYY-MM-DD" }</code>. Metadaten (<code>title</code>, <code>date</code>, <code>filename</code>) gehen auch als Query-Parameter.</div>'
+      + '<div style="margin:8px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+        + '<code style="background:rgba(0,0,0,.3);padding:4px 8px;border-radius:6px;font-size:11.5px;word-break:break-all">POST ' + esc(putEndpoint()) + '?title=Morning%20Briefing&amp;date=2026-06-20</code>'
+        + '<button class="btn" onclick="briefingCopyEndpoint()" style="font-size:11px;padding:4px 10px">Kopieren</button>'
+      + '</div>'
+      + '<div style="color:var(--muted)">Auth: ' + (hasTok
+          ? 'Header <code>Authorization: Bearer &lt;SYNC_AUTH_TOKEN&gt;</code> erforderlich (Token ist in den Sync-Einstellungen hinterlegt).'
+          : 'Aktuell kein Token nötig. Sobald <code>SYNC_AUTH_TOKEN</code> in Netlify gesetzt ist, Header <code>Authorization: Bearer &lt;token&gt;</code> mitsenden.') + '</div>'
+      + '</div>';
+  }
+
+  window.briefingToggleHelp = function(){ var el = document.getElementById("briefingHelp"); if (el) el.style.display = (el.style.display === "none" ? "block" : "none"); };
+  window.briefingCopyEndpoint = function(){ var u = putEndpoint(); try { navigator.clipboard.writeText(u); bToast("ok", "Kopiert", u); } catch(e){ bToast("err", "Kopieren fehlgeschlagen", String(e)); } };
+
+  window.viewBriefings = function(){
+    setTimeout(function(){ window._briefingsLoad(); }, 0);
+    return ''
+      + '<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+        + '<h1 style="margin:0">📬 Briefings</h1>'
+        + '<div style="display:flex;gap:8px">'
+          + '<button class="btn" onclick="briefingToggleHelp()">ℹ️ Zustellung</button>'
+          + '<button class="btn" onclick="window._briefingsLoad()">↻ Aktualisieren</button>'
+        + '</div>'
+      + '</div>'
+      + endpointInfoHtml()
+      + '<div id="briefingsListBox"><div style="padding:40px;text-align:center;color:var(--muted)">Lade Briefings…</div></div>';
+  };
+
+  window._briefingsLoad = async function(){
+    var box = document.getElementById("briefingsListBox");
+    if (!box) return;
+    _error = null;
+    box.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">Lade Briefings…</div>';
+    try {
+      var r = await fetch(FN + "/briefing-list", { headers: authHeaders(), cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status + (r.status === 401 ? " — Auth-Token prüfen" : ""));
+      var data = await r.json();
+      _items = (data && Array.isArray(data.items)) ? data.items : [];
+    } catch(e){ _error = e.message || String(e); _items = []; }
+    renderList();
+  };
+
+  function renderList(){
+    var box = document.getElementById("briefingsListBox");
+    if (!box) return;
+    if (_error){
+      box.innerHTML = '<div style="padding:28px;text-align:center;color:#f87171;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);border-radius:12px">⚠️ ' + esc(_error) + '</div>';
+      return;
+    }
+    if (!_items.length){
+      box.innerHTML = '<div style="padding:48px 24px;text-align:center;color:var(--muted)">'
+        + '<div style="font-size:40px;margin-bottom:10px">📭</div>'
+        + '<div style="font-weight:600;margin-bottom:4px">Noch keine Briefings</div>'
+        + '<div style="font-size:12.5px">Sobald dein Morgen-Job ein PDF zustellt, erscheint es hier. Endpunkt via „ℹ️ Zustellung".</div>'
+        + '</div>';
+      return;
+    }
+    var reads = readSet();
+    var html = '<div style="display:flex;flex-direction:column;gap:10px">';
+    _items.forEach(function(it){
+      var unread = !reads.has(it.id);
+      html += '<div class="card" style="display:flex;align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--border,rgba(255,255,255,.1));border-radius:12px;background:var(--panel,rgba(255,255,255,.02))">'
+        + '<div style="font-size:26px;line-height:1">' + (unread ? "🆕" : "📄") + '</div>'
+        + '<div style="flex:1;min-width:0">'
+          + '<div style="font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + esc(it.title || "Briefing")
+            + (unread ? '<span style="font-size:9px;font-weight:800;letter-spacing:.05em;background:#3b82f6;color:#fff;padding:2px 6px;border-radius:6px">NEU</span>' : '')
+          + '</div>'
+          + '<div style="font-size:12px;color:var(--muted);margin-top:2px">' + esc(fmtWhen(it.createdAt, it.date)) + ' · ' + esc(fmtSize(it.size)) + (it.filename ? ' · ' + esc(it.filename) : '') + '</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:6px;flex-shrink:0">'
+          + '<button class="btn primary" onclick="briefingOpen(\'' + esc(it.id) + '\')" style="font-size:12px;padding:6px 12px">Öffnen</button>'
+          + '<button class="btn" onclick="briefingDownload(\'' + esc(it.id) + '\')" style="font-size:12px;padding:6px 12px" title="Herunterladen">⬇</button>'
+          + '<button class="btn" onclick="briefingDelete(\'' + esc(it.id) + '\')" style="font-size:12px;padding:6px 10px" title="Löschen">🗑</button>'
+        + '</div>'
+      + '</div>';
+    });
+    html += '</div>';
+    box.innerHTML = html;
+  }
+
+  async function fetchBlob(id){
+    var r = await fetch(FN + "/briefing-get?id=" + encodeURIComponent(id), { headers: authHeaders(), cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.blob();
+  }
+
+  window.briefingOpen = async function(id){
+    try {
+      var blob = await fetchBlob(id);
+      var url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener");
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+      markRead(id); renderList();
+    } catch(e){ bToast("err", "Öffnen fehlgeschlagen", e.message || String(e)); }
+  };
+
+  window.briefingDownload = async function(id){
+    try {
+      var it = _items.find(function(x){ return x.id === id; }) || {};
+      var blob = await fetchBlob(id);
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = it.filename || (id + ".pdf");
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+      markRead(id); renderList();
+    } catch(e){ bToast("err", "Download fehlgeschlagen", e.message || String(e)); }
+  };
+
+  window.briefingDelete = async function(id){
+    if (!confirm("Dieses Briefing löschen?")) return;
+    try {
+      var r = await fetch(FN + "/briefing-list?id=" + encodeURIComponent(id), { method: "DELETE", headers: authHeaders() });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      bToast("ok", "Gelöscht", "Briefing entfernt");
+      window._briefingsLoad();
+    } catch(e){ bToast("err", "Löschen fehlgeschlagen", e.message || String(e)); }
+  };
 })();
 </script>
 
