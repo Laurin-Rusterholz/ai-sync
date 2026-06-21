@@ -95946,6 +95946,776 @@ console.log('📚 Leseliste geladen');
 })();
 </script>
 
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ═══ NEWSROOM HUB — NEWS-EINGANG (News-Eingang / Bild-Cards / Posts)   ═══ -->
+<!-- ═══  Eigenstaendiges, ans Ende angehaengtes IIFE-Modul. Erweitert den   ═══ -->
+<!-- ═══  Newsroom Hub (openResearchHub) per Monkey-Patch, ohne bestehenden  ═══ -->
+<!-- ═══  Code zu veraendern. Daten: APP.state.data.entities.nhInbox.        ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+/* ===================================================================== */
+/* ===== NEWSROOM HUB — NEWS-EINGANG (B1–B4)                        ===== */
+/* ===================================================================== */
+/*  Eigenstaendiges, ans Ende angehaengtes IIFE-Modul. Erweitert den      */
+/*  Newsroom Hub (openResearchHub) um einen "News-Eingang", OHNE          */
+/*  bestehenden Code zu veraendern:                                       */
+/*   - View "inbox" wird per Monkey-Patch von window.nhNav +              */
+/*     window.openResearchHub ergaenzt (Nav-Item + Panel injiziert).      */
+/*   - Top-Level-App "newsroom-inbox" via Wrapper um getAllApps /         */
+/*     buildSpotlightItems + Route-Listener (#/newsroom-inbox).           */
+/*  Datenquelle: n8n schreibt taeglich nach Firebase RTDB                 */
+/*    …/newsroom_inbox.json (HTTP GET ohne Auth, gleiches Muster wie      */
+/*    entityInbox). Persistenz in APP.state.data.entities.nhInbox         */
+/*    (keyed Map), Sync via scheduleSave() (Firebase Storage Blob).       */
+(function(){
+"use strict";
+
+/* ── Konstanten ── */
+var DB_URL    = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+var INBOX_URL = DB_URL + "/newsroom_inbox.json";
+var APP_KEY   = "newsroom-inbox";
+var ROUTE     = "newsroom-inbox";
+
+var STATUS = {
+  neu:       { label: "Neu",       cls: "nhi-s-neu" },
+  in_arbeit: { label: "In Arbeit", cls: "nhi-s-arbeit" },
+  gepostet:  { label: "Gepostet",  cls: "nhi-s-gepostet" },
+  verworfen: { label: "Verworfen", cls: "nhi-s-verworfen" }
+};
+
+/* Canvas-Themes (live gemessen, exakt uebernommen) */
+var THEMES = {
+  schiefer: { bgA:"#2b3138", bgB:"#3a424b", text:"#eef1f4", sub:"#aab4bf", accent:"#7fa7c4", footRule:"rgba(255,255,255,0.14)" },
+  leinen:   { bgA:"#ece6da", bgB:"#ddd4c4", text:"#2a2722", sub:"#6b6357", accent:"#9c7a4f", footRule:"rgba(0,0,0,0.12)" }
+};
+
+/* ── Helfer (lokal — analog zu den bestehenden angehaengten Modulen) ── */
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+function iso(){ return new Date().toISOString(); }
+function trunc(s,n){ s=String(s==null?"":s); return s.length<=n ? s : s.slice(0,n).replace(/\s+\S*$/,"")+"…"; }
+function toastMsg(type,title,msg){
+  try{
+    /* Innerhalb des Hub-Overlays (z-index 999999) liegt der globale Toast
+       (#toasts, z-index 200) dahinter  daher den Hub-eigenen Toast-Container
+       #nh-tc verwenden (analog nhToastMsg). Ausserhalb: globales toast(). */
+    var hub=document.getElementById("researchHubContainer");
+    var tc=document.getElementById("nh-tc");
+    if(hub && hub.classList.contains("active") && tc){
+      var t=document.createElement("div");
+      t.className="toast";
+      t.textContent=(title?title+": ":"")+(msg||"");
+      tc.appendChild(t);
+      setTimeout(function(){ try{ t.remove(); }catch(e){} },3200);
+      return;
+    }
+    if(typeof window.toast==="function") window.toast(type,title,msg);
+  }catch(e){}
+}
+function save(){ try{ if(typeof window.scheduleSave==="function") window.scheduleSave(); }catch(e){} }
+function fmtDate(d){ if(!d) return ""; try{ return new Date(d).toLocaleDateString("de-CH",{day:"2-digit",month:"short",year:"numeric"}); }catch(e){ return ""; } }
+
+function appReady(){ return !!(window.APP && window.APP.state && window.APP.state.data); }
+function entities(){
+  if(!appReady()) return null;
+  window.APP.state.data.entities = window.APP.state.data.entities || {};
+  return window.APP.state.data.entities;
+}
+function box(){
+  var e = entities();
+  if(!e) return {};
+  if(!e.nhInbox || typeof e.nhInbox !== "object") e.nhInbox = {};
+  return e.nhInbox;
+}
+function items(){ var b=box(); return Object.keys(b).map(function(k){ return b[k]; }).filter(Boolean); }
+
+/* ── Daten-Modell ────────────────────────────────────────────────── */
+/* Client-Felder werden ergaenzt, OHNE die Originalfelder zu ueberschreiben. */
+function normalizeItem(raw){
+  return {
+    id:          String(raw.id),
+    headline:    raw.headline || "",
+    summary:     raw.summary || "",
+    caption:     raw.caption || "",
+    hashtags:    Array.isArray(raw.hashtags) ? raw.hashtags.slice() : [],
+    topic:       raw.topic || "",
+    sourceName:  raw.sourceName || "",
+    sourceUrl:   raw.sourceUrl || "",
+    publishedAt: raw.publishedAt || "",
+    /* Client-Felder */
+    status:         "neu",
+    editedHeadline: "",
+    editedCaption:  "",
+    cardConfig:     { theme:"schiefer", format:"1:1", handle:"" },
+    postedAt:       null,
+    addedAt:        iso()
+  };
+}
+/* Bestehender Eintrag: nur Server-Felder aktualisieren, Status/Edits bewahren. */
+function applyServer(ex, raw){
+  if(raw.headline    != null) ex.headline    = raw.headline;
+  if(raw.summary     != null) ex.summary     = raw.summary;
+  if(raw.caption     != null) ex.caption     = raw.caption;
+  if(Array.isArray(raw.hashtags)) ex.hashtags = raw.hashtags.slice();
+  if(raw.topic       != null) ex.topic       = raw.topic;
+  if(raw.sourceName  != null) ex.sourceName  = raw.sourceName;
+  if(raw.sourceUrl   != null) ex.sourceUrl   = raw.sourceUrl;
+  if(raw.publishedAt != null) ex.publishedAt = raw.publishedAt;
+  /* status / editedHeadline / editedCaption / cardConfig / postedAt: unveraendert */
+  return ex;
+}
+function captionText(it){
+  if(it.editedCaption && it.editedCaption.trim()) return it.editedCaption;
+  var base = it.caption || "";
+  var tags = (it.hashtags||[]).map(function(h){ h=String(h||"").trim(); if(!h) return ""; return h.charAt(0)==="#" ? h : "#"+h; }).filter(Boolean).join(" ");
+  return base + (tags ? (base ? "\n\n" : "") + tags : "");
+}
+
+/* ── B1: Aktualisieren (GET + Merge) ─────────────────────────────── */
+var _refreshing = false;
+function setRefreshBtn(loading){
+  var b = document.getElementById("nhi-refresh");
+  if(!b) return;
+  b.textContent = loading ? "… Lädt" : "↻ Aktualisieren";
+  b.style.opacity = loading ? ".6" : "";
+  b.style.pointerEvents = loading ? "none" : "";
+}
+function refresh(){
+  if(_refreshing) return;
+  if(!entities()){ toastMsg("warn","News-Eingang","App noch nicht bereit"); return; }
+  _refreshing = true;
+  setRefreshBtn(true);
+  toastMsg("info","News-Eingang","Aktualisiere…");
+  fetch(INBOX_URL, { cache:"no-store" }).then(function(r){
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }).then(function(data){
+    var list = (data && Array.isArray(data.items)) ? data.items : [];
+    var b = box(), added = 0;
+    list.forEach(function(raw){
+      if(!raw || raw.id == null) return;
+      var id = String(raw.id);
+      if(b[id]) applyServer(b[id], raw);
+      else { b[id] = normalizeItem(raw); added++; }
+    });
+    save();
+    refreshBadge();
+    renderInbox();
+    toastMsg("ok","News-Eingang", added > 0 ? (added + (added===1 ? " neuer Beitrag" : " neue Beiträge")) : "Keine neuen Beiträge (" + list.length + " geprüft)");
+  }).catch(function(e){
+    toastMsg("error","News-Eingang","Laden fehlgeschlagen: " + (e && e.message || e));
+  }).then(function(){
+    _refreshing = false;
+    setRefreshBtn(false);
+  });
+}
+
+/* ── Filter / Sortierung ─────────────────────────────────────────── */
+var _filterStatus = "aktiv";   // aktiv | neu | in_arbeit | gepostet | verworfen | alle
+var _filterTopic  = "";
+function allTopics(){
+  var set = {};
+  items().forEach(function(it){ if(it.topic) set[it.topic] = 1; });
+  return Object.keys(set).sort();
+}
+function countByFilter(){
+  var c = { aktiv:0, neu:0, in_arbeit:0, gepostet:0, verworfen:0, alle:0 };
+  items().forEach(function(it){
+    var s = it.status || "neu"; c.alle++;
+    if(s==="neu"){ c.neu++; c.aktiv++; }
+    else if(s==="in_arbeit"){ c.in_arbeit++; c.aktiv++; }
+    else if(s==="gepostet"){ c.gepostet++; }
+    else if(s==="verworfen"){ c.verworfen++; }
+  });
+  return c;
+}
+function visibleItems(){
+  var arr = items().slice();
+  if(_filterTopic) arr = arr.filter(function(it){ return (it.topic||"") === _filterTopic; });
+  arr = arr.filter(function(it){
+    var s = it.status || "neu";
+    switch(_filterStatus){
+      case "aktiv":     return s==="neu" || s==="in_arbeit";
+      case "neu":       return s==="neu";
+      case "in_arbeit": return s==="in_arbeit";
+      case "gepostet":  return s==="gepostet";
+      case "verworfen": return s==="verworfen";
+      case "alle":      return true;
+      default:          return s!=="verworfen";
+    }
+  });
+  arr.sort(function(a,b){
+    var ax = a.publishedAt || a.addedAt || "", bx = b.publishedAt || b.addedAt || "";
+    return ax < bx ? 1 : (ax > bx ? -1 : 0);
+  });
+  return arr;
+}
+
+/* ── B2: Canvas-Renderer (Bild-Card mit Schrift) ─────────────────── */
+function wrapText(ctx, text, maxW){
+  var words = String(text||"").split(/\s+/).filter(Boolean);
+  var lines = [], cur = "";
+  for(var i=0;i<words.length;i++){
+    var w = words[i];
+    var test = cur ? cur + " " + w : w;
+    if(ctx.measureText(test).width <= maxW || !cur) cur = test;
+    else { lines.push(cur); cur = w; }
+  }
+  if(cur) lines.push(cur);
+  if(lines.length === 0) lines = [""];
+  return lines;
+}
+function clampText(ctx, text, maxW){
+  text = String(text||"");
+  if(ctx.measureText(text).width <= maxW) return text;
+  var t = text;
+  while(t.length > 1 && ctx.measureText(t + "…").width > maxW) t = t.slice(0,-1);
+  return t + "…";
+}
+function drawCard(canvas, it){
+  var cfg    = it.cardConfig || (it.cardConfig = { theme:"schiefer", format:"1:1", handle:"" });
+  var theme  = THEMES[cfg.theme] || THEMES.schiefer;
+  var format = cfg.format || "1:1";
+  var W = 1080, H = format === "4:5" ? 1350 : 1080;
+  canvas.width = W; canvas.height = H;
+  var ctx = canvas.getContext("2d");
+
+  /* Hintergrund: diagonaler Verlauf bgA -> bgB */
+  var g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, theme.bgA);
+  g.addColorStop(1, theme.bgB);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  /* Dezente horizontale Linien-Textur */
+  ctx.save();
+  ctx.globalAlpha = cfg.theme === "leinen" ? 0.04 : 0.05;
+  ctx.strokeStyle = theme.text;
+  ctx.lineWidth = 1;
+  for(var y = 0; y < H; y += 14){
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(W, y + 0.5);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  var PAD = 96, contentW = W - 2 * PAD;
+
+  /* Akzentbalken oben */
+  ctx.fillStyle = theme.accent;
+  ctx.fillRect(PAD, PAD, 90, 10);
+
+  /* Headline (Text aus editedHeadline, sonst headline) — auto-skaliert */
+  var headline = (it.editedHeadline && it.editedHeadline.trim()) ? it.editedHeadline : (it.headline || "");
+  var headTop  = PAD + 60, footH = 120;
+  var maxH     = H - headTop - footH - PAD;
+  var fs       = format === "4:5" ? 96 : 88;
+  var lines;
+  while(true){
+    ctx.font = "700 " + fs + "px Georgia, serif";
+    lines = wrapText(ctx, headline, contentW);
+    if((lines.length * fs * 1.14 <= maxH && lines.length <= 7) || fs <= 34) break;
+    fs -= 3;
+  }
+  if(fs < 34) fs = 34;
+  ctx.font = "700 " + fs + "px Georgia, serif";
+  ctx.fillStyle = theme.text;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  var lineHeight = fs * 1.14;
+  lines.forEach(function(ln, i){ ctx.fillText(ln, PAD, headTop + i * lineHeight); });
+
+  /* Fusszeile: Trennlinie, links Quelle · Datum, rechts Handle */
+  var fy = H - PAD - 40;
+  ctx.strokeStyle = theme.footRule;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(PAD, fy - 30);
+  ctx.lineTo(W - PAD, fy - 30);
+  ctx.stroke();
+
+  ctx.textBaseline = "alphabetic";
+  ctx.font = "400 30px Georgia, serif";
+  ctx.fillStyle = theme.sub;
+  ctx.textAlign = "left";
+  var foot = [it.sourceName || "", fmtDate(it.publishedAt)].filter(Boolean).join("  ·  ");
+  ctx.fillText(clampText(ctx, foot, contentW * 0.62), PAD, fy);
+
+  var handle = (it.cardConfig && it.cardConfig.handle) ? it.cardConfig.handle : "";
+  if(handle){
+    ctx.textAlign = "right";
+    ctx.fillStyle = theme.accent;
+    ctx.fillText(clampText(ctx, handle, contentW * 0.34), W - PAD, fy);
+    ctx.textAlign = "left";
+  }
+}
+function updatePreview(it){
+  var c = document.getElementById("nhi-canvas");
+  if(c) drawCard(c, it);
+}
+function downloadCard(it){
+  try{
+    var c = document.createElement("canvas");
+    drawCard(c, it);
+    var url = c.toDataURL("image/png");
+    var a = document.createElement("a");
+    a.href = url;
+    var slug = (((it.editedHeadline && it.editedHeadline.trim()) ? it.editedHeadline : it.headline) || "news-card")
+      .toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,40) || "news-card";
+    a.download = slug + ".png";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toastMsg("ok","Bild-Card","PNG heruntergeladen");
+  }catch(e){
+    toastMsg("error","Bild-Card","Export fehlgeschlagen: " + (e && e.message || e));
+  }
+}
+
+/* ── B3: in den Newsroom-Editor senden (bestehende nhEd/D.ed-Logik) ─ */
+function toEditor(it){
+  try{
+    var D = window.D;
+    if(D && D.ed){
+      D.ed.title = (it.editedHeadline && it.editedHeadline.trim()) ? it.editedHeadline : (it.headline || "");
+      var body = it.summary || "";
+      var cap  = captionText(it);
+      if(cap) body += "\n\n— Caption —\n" + cap;
+      if(it.sourceUrl) body += "\n\nQuelle: " + it.sourceUrl;
+      D.ed.body = body;
+      D.ed.fmt  = D.ed.fmt || "article";
+      if(typeof window.saveData === "function") window.saveData();
+    }
+    if((it.status||"neu") === "neu"){ it.status = "in_arbeit"; }
+    save();
+    refreshBadge();
+    var navEd = document.getElementById("nh-nav-ed");
+    if(navEd) navEd.style.display = "";
+    if(typeof window.nhNav === "function") window.nhNav("editor");
+    toastMsg("ok","Editor","In den Newsroom-Editor übernommen");
+  }catch(e){
+    toastMsg("error","Editor","Übergabe fehlgeschlagen: " + (e && e.message || e));
+  }
+}
+
+/* ── B3: Caption kopieren ────────────────────────────────────────── */
+function fallbackCopy(text){
+  try{
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    toastMsg("ok","Caption","In Zwischenablage kopiert");
+  }catch(e){
+    toastMsg("error","Caption","Kopieren nicht möglich");
+  }
+}
+function copyCaption(id){
+  var ta = document.getElementById("nhi-caption");
+  var it = box()[id] || {};
+  var text = ta ? ta.value : captionText(it);
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(function(){
+      toastMsg("ok","Caption","In Zwischenablage kopiert");
+    }, function(){ fallbackCopy(text); });
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+/* ── Rendering: Liste (B1) ───────────────────────────────────────── */
+function cardHTML(it){
+  var s    = it.status || "neu";
+  var st   = STATUS[s] || STATUS.neu;
+  var head = (it.editedHeadline && it.editedHeadline.trim()) ? it.editedHeadline : (it.headline || "(Ohne Titel)");
+  var meta = [it.sourceName || "", fmtDate(it.publishedAt)].filter(Boolean).join(" · ");
+  return `<div class="nhi-card${s==="neu"?" is-neu":""}" data-nhi-act="open" data-nhi-id="${esc(it.id)}">`
+    + (s==="neu" ? `<span class="nhi-new-dot" title="Neu"></span>` : ``)
+    + `<div class="nhi-h">${esc(trunc(head,90))}</div>`
+    + (it.summary ? `<div class="nhi-sum">${esc(trunc(it.summary,150))}</div>` : ``)
+    + `<div class="nhi-meta">`
+      + `<span class="nhi-badge ${st.cls}">${esc(st.label)}</span>`
+      + (it.topic ? `<span>📑 ${esc(it.topic)}</span>` : ``)
+      + (meta ? `<span style="margin-left:auto">${esc(meta)}</span>` : ``)
+    + `</div></div>`;
+}
+function renderList(panel){
+  var topics = allTopics();
+  var counts = countByFilter();
+  var tabs = [
+    { k:"aktiv",     l:"Aktiv" },
+    { k:"neu",       l:"Neu" },
+    { k:"in_arbeit", l:"In Arbeit" },
+    { k:"gepostet",  l:"Archiv" },
+    { k:"verworfen", l:"Verworfen" },
+    { k:"alle",      l:"Alle" }
+  ];
+  var bar = `<div class="nhi-bar"><div class="nhi-tabs">`
+    + tabs.map(function(t){
+        return `<div class="nhi-tab${_filterStatus===t.k?" on":""}" data-nhi-act="filter-status" data-nhi-v="${t.k}">${esc(t.l)} <span style="opacity:.55">${counts[t.k]||0}</span></div>`;
+      }).join("")
+    + `</div>`
+    + `<select class="fc nhi-sel" data-nhi-act="filter-topic" style="width:auto;min-width:150px;margin-left:4px">`
+      + `<option value="">Alle Themen</option>`
+      + topics.map(function(t){ return `<option value="${esc(t)}"${_filterTopic===t?" selected":""}>${esc(t)}</option>`; }).join("")
+    + `</select>`
+    + `<button class="btn nhi-pri" id="nhi-refresh" data-nhi-act="refresh" style="margin-left:auto">↻ Aktualisieren</button>`
+    + `</div>`;
+
+  var all = items(), vis = visibleItems(), body;
+  if(all.length === 0){
+    body = `<div class="empty"><h3>Noch keine News</h3><p style="margin-top:8px;font-size:12.5px;max-width:420px;margin-left:auto;margin-right:auto">Klicke auf „Aktualisieren", um den täglichen n8n-Batch aus der Firebase-Datenbank zu laden.</p></div>`;
+  } else if(vis.length === 0){
+    body = `<div class="empty"><h3>Keine Treffer</h3><p style="margin-top:8px;font-size:12.5px">Für diesen Filter gibt es aktuell keine Beiträge.</p></div>`;
+  } else {
+    body = `<div class="nhi-grid">` + vis.map(cardHTML).join("") + `</div>`;
+  }
+  panel.innerHTML = bar + body;
+}
+
+/* ── Rendering: Detail / Post-Ansicht (B3) ───────────────────────── */
+function renderDetail(panel, it){
+  var s   = it.status || "neu";
+  var st  = STATUS[s] || STATUS.neu;
+  var cfg = it.cardConfig || (it.cardConfig = { theme:"schiefer", format:"1:1", handle:"" });
+  var displayHead = (it.editedHeadline && it.editedHeadline.trim()) ? it.editedHeadline : (it.headline || "(Ohne Titel)");
+  var metaLine = [it.sourceName || "", fmtDate(it.publishedAt)].filter(Boolean).join("  ·  ");
+  var capVal = (it.editedCaption != null && it.editedCaption !== "") ? it.editedCaption : captionText(it);
+
+  var html = `<div class="nhi-bar">`
+      + `<button class="btn" data-nhi-act="back">← Zurück</button>`
+      + `<span class="nhi-badge ${st.cls}" style="margin-left:2px">${esc(st.label)}</span>`
+      + (it.topic ? `<span style="font-size:12px;color:#8794a0">📑 ${esc(it.topic)}</span>` : ``)
+    + `</div>`
+    + `<div class="nhi-detail">`
+      /* ── LINKS: Text + Caption + Aktionen ── */
+      + `<div class="nhi-col-l">`
+        + `<div class="nhi-h" style="font-size:22px">${esc(displayHead)}</div>`
+        + (metaLine ? `<div style="font-size:11px;color:#8794a0">${esc(metaLine)}</div>` : ``)
+        + `<div class="nhi-fullsum">${esc(it.summary || "—")}</div>`
+        + (it.sourceUrl ? `<div><button class="btn btn-sm" data-nhi-act="open-source" data-nhi-id="${esc(it.id)}">🔗 Quelle öffnen</button></div>` : ``)
+        + `<div class="fg" style="margin-top:4px"><label>Headline (für Bild-Card)</label>`
+          + `<input class="fc" id="nhi-headline" data-nhi-field="editedHeadline" data-nhi-id="${esc(it.id)}" placeholder="${esc(it.headline||"")}" value="${esc(it.editedHeadline||"")}"></div>`
+        + `<div class="fg"><label>Caption (inkl. Hashtags)</label>`
+          + `<textarea class="fc" id="nhi-caption" data-nhi-field="editedCaption" data-nhi-id="${esc(it.id)}" rows="6">${esc(capVal)}</textarea></div>`
+        + `<div class="nhi-actions">`
+          + `<button class="btn btn-sm" data-nhi-act="copy-caption" data-nhi-id="${esc(it.id)}">📋 Caption kopieren</button>`
+          + `<button class="btn btn-sm" data-nhi-act="to-editor" data-nhi-id="${esc(it.id)}">✏️ In Newsroom-Editor senden</button>`
+        + `</div>`
+        + `<div class="nhi-actions" style="margin-top:2px">`
+          + (s!=="gepostet" ? `<button class="btn btn-sm nhi-pri" data-nhi-act="mark-posted" data-nhi-id="${esc(it.id)}">✓ Als gepostet markieren</button>` : ``)
+          + (s!=="verworfen" ? `<button class="btn btn-sm btn-red" data-nhi-act="discard" data-nhi-id="${esc(it.id)}">Verwerfen</button>` : ``)
+          + (s==="verworfen" ? `<button class="btn btn-sm" data-nhi-act="restore" data-nhi-id="${esc(it.id)}">↩︎ Wiederherstellen</button>` : ``)
+        + `</div>`
+        + (it.postedAt ? `<div style="font-size:11px;color:#8794a0">Gepostet am ${esc(fmtDate(it.postedAt))}</div>` : ``)
+      + `</div>`
+      /* ── RECHTS: Bild-Card-Vorschau + Optionen + Download ── */
+      + `<div class="nhi-col-r">`
+        + `<div class="nhi-label">Bild-Card · Live-Vorschau</div>`
+        + `<div class="nhi-canvas-wrap"><canvas id="nhi-canvas"></canvas></div>`
+        + `<div class="nhi-opts">`
+          + `<span class="nhi-label" style="align-self:center">Stil</span>`
+          + `<div class="nhi-opt${cfg.theme==="schiefer"?" on":""}" data-nhi-act="set-theme" data-nhi-id="${esc(it.id)}" data-nhi-v="schiefer">Schiefer</div>`
+          + `<div class="nhi-opt${cfg.theme==="leinen"?" on":""}" data-nhi-act="set-theme" data-nhi-id="${esc(it.id)}" data-nhi-v="leinen">Leinen</div>`
+        + `</div>`
+        + `<div class="nhi-opts">`
+          + `<span class="nhi-label" style="align-self:center">Format</span>`
+          + `<div class="nhi-opt${cfg.format==="1:1"?" on":""}" data-nhi-act="set-format" data-nhi-id="${esc(it.id)}" data-nhi-v="1:1">1080×1080</div>`
+          + `<div class="nhi-opt${cfg.format==="4:5"?" on":""}" data-nhi-act="set-format" data-nhi-id="${esc(it.id)}" data-nhi-v="4:5">1080×1350</div>`
+        + `</div>`
+        + `<div class="fg" style="margin:2px 0 0"><label>Handle / Logo-Text</label>`
+          + `<input class="fc" id="nhi-handle" data-nhi-field="handle" data-nhi-id="${esc(it.id)}" placeholder="z.B. @deinkanal" value="${esc(cfg.handle||"")}"></div>`
+        + `<button class="btn nhi-pri" data-nhi-act="download" data-nhi-id="${esc(it.id)}">⬇︎ Bild herunterladen (PNG)</button>`
+      + `</div>`
+    + `</div>`;
+
+  panel.innerHTML = html;
+  var canvas = document.getElementById("nhi-canvas");
+  if(canvas) drawCard(canvas, it);
+}
+
+var _view = { mode:"list", id:null };
+function renderInbox(){
+  var panel = document.getElementById("nh-p-inbox");
+  if(!panel) return;
+  if(_view.mode === "detail" && _view.id && box()[_view.id]) renderDetail(panel, box()[_view.id]);
+  else { _view = { mode:"list", id:null }; renderList(panel); }
+}
+
+/* ── B4: Badge-Zaehler (analog nhBadges) ─────────────────────────── */
+function refreshBadge(){
+  var b = document.getElementById("nhi-badge");
+  if(!b) return;
+  var n = items().filter(function(it){ return (it.status||"neu") === "neu"; }).length;
+  b.textContent = n;
+  b.style.display = n > 0 ? "" : "none";
+}
+
+/* ── Event-Delegation (data-nhi-act / data-nhi-field) ────────────── */
+var _saveTimer = null;
+function debouncedSave(){ clearTimeout(_saveTimer); _saveTimer = setTimeout(save, 700); }
+
+function onPanelClick(e){
+  var el = e.target.closest("[data-nhi-act]");
+  if(!el) return;
+  var act = el.getAttribute("data-nhi-act");
+  var id  = el.getAttribute("data-nhi-id");
+  var v   = el.getAttribute("data-nhi-v");
+  if(act === "filter-topic") return; /* via change behandelt */
+  if(act === "refresh"){ refresh(); return; }
+  if(act === "filter-status"){ _filterStatus = v; renderInbox(); return; }
+  if(act === "open"){ _view = { mode:"detail", id:id }; renderInbox(); return; }
+  if(act === "back"){ _view = { mode:"list", id:null }; renderInbox(); return; }
+
+  var it = id ? box()[id] : null;
+  if(!it) return;
+  if(act === "open-source"){
+    if(it.sourceUrl) window.open(it.sourceUrl, "_blank", "noopener");
+    else toastMsg("warn","Quelle","Keine URL hinterlegt");
+    return;
+  }
+  if(act === "copy-caption"){ copyCaption(id); return; }
+  if(act === "to-editor"){ toEditor(it); return; }
+  if(act === "mark-posted"){
+    it.status = "gepostet"; it.postedAt = iso(); save(); refreshBadge();
+    toastMsg("ok","News-Eingang","Als gepostet markiert · im Archiv");
+    _view = { mode:"list", id:null }; renderInbox(); return;
+  }
+  if(act === "discard"){
+    it.status = "verworfen"; save(); refreshBadge();
+    toastMsg("ok","News-Eingang","Beitrag verworfen");
+    _view = { mode:"list", id:null }; renderInbox(); return;
+  }
+  if(act === "restore"){
+    it.status = "neu"; it.postedAt = null; save(); refreshBadge();
+    toastMsg("ok","News-Eingang","Wiederhergestellt");
+    renderInbox(); return;
+  }
+  if(act === "set-theme"){ it.cardConfig = it.cardConfig || {}; it.cardConfig.theme = v; save(); renderInbox(); return; }
+  if(act === "set-format"){ it.cardConfig = it.cardConfig || {}; it.cardConfig.format = v; save(); renderInbox(); return; }
+  if(act === "download"){ downloadCard(it); return; }
+}
+function onPanelInput(e){
+  var el = e.target.closest("[data-nhi-field]");
+  if(!el) return;
+  var id = el.getAttribute("data-nhi-id");
+  var field = el.getAttribute("data-nhi-field");
+  var it = id ? box()[id] : null;
+  if(!it) return;
+  if(field === "editedHeadline"){ it.editedHeadline = el.value; updatePreview(it); }
+  else if(field === "editedCaption"){ it.editedCaption = el.value; }
+  else if(field === "handle"){ it.cardConfig = it.cardConfig || {}; it.cardConfig.handle = el.value; updatePreview(it); }
+  debouncedSave();
+}
+function onPanelChange(e){
+  var el = e.target.closest("[data-nhi-act='filter-topic']");
+  if(!el) return;
+  _filterTopic = el.value || "";
+  renderInbox();
+}
+
+/* ── Styles (matte Schiefer-Optik, scoped auf #nh-p-inbox) ───────── */
+function ensureStyles(){
+  if(document.getElementById("nhi-styles")) return;
+  var st = document.createElement("style");
+  st.id = "nhi-styles";
+  st.textContent =
+    "#nh-p-inbox{--nhi-ink:#e7ebef;--nhi-sub:#aab4bf;--nhi-accent:#7fa7c4;}"
+  + "#nh-p-inbox .nhi-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:18px;}"
+  + "#nh-p-inbox .nhi-tabs{display:flex;gap:4px;flex-wrap:wrap;}"
+  + "#nh-p-inbox .nhi-tab{padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);color:var(--nhi-sub);transition:all .12s;}"
+  + "#nh-p-inbox .nhi-tab:hover{color:var(--nhi-ink);border-color:rgba(127,167,196,.4);}"
+  + "#nh-p-inbox .nhi-tab.on{background:rgba(127,167,196,.14);color:#dbe6ef;border-color:rgba(127,167,196,.45);}"
+  + "#nh-p-inbox .nhi-sel{height:auto;}"
+  + "#nh-p-inbox .nhi-pri{background:var(--nhi-accent);color:#11171c !important;border:1px solid var(--nhi-accent);font-weight:700;}"
+  + "#nh-p-inbox .nhi-pri:hover{background:#93b6cf;box-shadow:0 0 16px rgba(127,167,196,.25);}"
+  + "#nh-p-inbox .nhi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;}"
+  + "#nh-p-inbox .nhi-card{background:linear-gradient(145deg,#262b31,#2b3138);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;cursor:pointer;transition:all .15s;display:flex;flex-direction:column;gap:8px;position:relative;min-height:120px;}"
+  + "#nh-p-inbox .nhi-card:hover{border-color:rgba(127,167,196,.45);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.28);}"
+  + "#nh-p-inbox .nhi-card.is-neu{border-left:3px solid var(--nhi-accent);}"
+  + "#nh-p-inbox .nhi-h{font-family:Georgia,'Times New Roman',serif;font-size:16px;font-weight:700;line-height:1.3;color:var(--nhi-ink);}"
+  + "#nh-p-inbox .nhi-sum{font-size:12.5px;color:var(--nhi-sub);line-height:1.5;}"
+  + "#nh-p-inbox .nhi-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:11px;color:#8794a0;margin-top:auto;}"
+  + "#nh-p-inbox .nhi-badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.3px;}"
+  + "#nh-p-inbox .nhi-new-dot{position:absolute;top:13px;right:13px;width:8px;height:8px;border-radius:50%;background:var(--nhi-accent);box-shadow:0 0 8px rgba(127,167,196,.7);}"
+  + ".nhi-s-neu{background:rgba(127,167,196,.16);color:#bcd3e6;border:1px solid rgba(127,167,196,.3);}"
+  + ".nhi-s-arbeit{background:rgba(214,178,102,.14);color:#e3c889;border:1px solid rgba(214,178,102,.3);}"
+  + ".nhi-s-gepostet{background:rgba(122,178,140,.14);color:#a9d6b6;border:1px solid rgba(122,178,140,.3);}"
+  + ".nhi-s-verworfen{background:rgba(255,255,255,.05);color:#8a929b;border:1px solid rgba(255,255,255,.1);}"
+  + "#nh-p-inbox .nhi-detail{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;}"
+  + "#nh-p-inbox .nhi-col-l{flex:1 1 340px;min-width:280px;display:flex;flex-direction:column;gap:13px;}"
+  + "#nh-p-inbox .nhi-col-r{flex:0 1 420px;min-width:280px;display:flex;flex-direction:column;gap:11px;}"
+  + "#nh-p-inbox .nhi-canvas-wrap{background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px;}"
+  + "#nh-p-inbox #nhi-canvas{width:100%;height:auto;display:block;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.35);}"
+  + "#nh-p-inbox .nhi-opts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}"
+  + "#nh-p-inbox .nhi-opt{padding:6px 12px;border-radius:8px;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);color:var(--nhi-sub);transition:all .12s;}"
+  + "#nh-p-inbox .nhi-opt:hover{color:var(--nhi-ink);border-color:rgba(127,167,196,.4);}"
+  + "#nh-p-inbox .nhi-opt.on{background:rgba(127,167,196,.16);color:#dbe6ef;border-color:rgba(127,167,196,.45);}"
+  + "#nh-p-inbox .nhi-actions{display:flex;flex-wrap:wrap;gap:8px;}"
+  + "#nh-p-inbox .nhi-fullsum{font-size:13.5px;line-height:1.6;color:#cdd5dd;white-space:pre-wrap;}"
+  + "#nh-p-inbox .nhi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7e8893;}";
+  (document.head || document.documentElement).appendChild(st);
+}
+
+/* ── Hub-Integration: Nav-Item + Panel injizieren ────────────────── */
+function ensureUI(){
+  var c = document.getElementById("researchHubContainer");
+  if(!c) return;
+  var nav  = c.querySelector(".side-nav");
+  var main = c.querySelector(".main");
+  if(nav && !document.getElementById("nhi-nav")){
+    var newsItem = nav.querySelector('.ni[data-p="news"]');
+    var el = document.createElement("div");
+    el.className = "ni";
+    el.id = "nhi-nav";
+    el.setAttribute("data-p", "inbox");
+    el.innerHTML = '📥 News-Eingang<span class="bd" id="nhi-badge">0</span>';
+    el.addEventListener("click", function(){
+      if(typeof window.nhNav === "function") window.nhNav("inbox");
+      else showInbox();
+    });
+    if(newsItem && newsItem.parentNode) newsItem.parentNode.insertBefore(el, newsItem.nextSibling);
+    else nav.appendChild(el);
+  }
+  if(main && !document.getElementById("nh-p-inbox")){
+    var pg = document.createElement("div");
+    pg.className = "cnt page";
+    pg.id = "nh-p-inbox";
+    pg.addEventListener("click", onPanelClick);
+    pg.addEventListener("input", onPanelInput);
+    pg.addEventListener("change", onPanelChange);
+    main.appendChild(pg);
+  }
+  refreshBadge();
+}
+
+var _autoRefreshed = false;
+function showInbox(){
+  ensureStyles();
+  ensureUI();
+  var ni = document.querySelectorAll("#researchHubContainer .ni");
+  for(var i=0;i<ni.length;i++){ ni[i].classList.toggle("act", ni[i].getAttribute("data-p") === "inbox"); }
+  var pages = document.querySelectorAll("#researchHubContainer .page");
+  for(var j=0;j<pages.length;j++){ pages[j].classList.remove("on"); }
+  var p = document.getElementById("nh-p-inbox");
+  if(p) p.classList.add("on");
+  var pt = document.getElementById("nh-pt"); if(pt) pt.textContent = "News-Eingang";
+  var ta = document.getElementById("nh-ta"); if(ta) ta.innerHTML = "";
+  var cr = document.getElementById("nh-crumb"); if(cr) cr.innerHTML = "";
+  renderInbox();
+  refreshBadge();
+  if(!_autoRefreshed){ _autoRefreshed = true; if(items().length === 0) refresh(); }
+}
+
+/* ── Monkey-Patch: window.nhNav (Original fuer andere Views) ─────── */
+function wrapNhNav(){
+  var cur = window.nhNav;
+  if(typeof cur !== "function" || cur.__nhiWrapped) return;
+  var orig = cur;
+  function wrapped(p){
+    if(p === "inbox"){ showInbox(); return; }
+    return orig.apply(this, arguments);
+  }
+  wrapped.__nhiWrapped = true;
+  window.nhNav = wrapped;
+}
+
+/* ── Monkey-Patch: window.openResearchHub (UI sicherstellen) ─────── */
+(function(){
+  var orig = window.openResearchHub;
+  window.openResearchHub = function(){
+    var r = (typeof orig === "function") ? orig.apply(this, arguments) : undefined;
+    try{ ensureStyles(); ensureUI(); wrapNhNav(); refreshBadge(); }
+    catch(e){ if(window.console) console.warn("[NHI] openResearchHub-Hook:", e && e.message); }
+    return r;
+  };
+})();
+
+/* ── Monkey-Patch: getAllApps (Top-Level-App) ────────────────────── */
+(function(){
+  var orig = window.getAllApps;
+  window.getAllApps = function(){
+    var apps = (typeof orig === "function") ? (orig.apply(this, arguments) || []) : [];
+    if(!apps.some(function(a){ return a && a.key === APP_KEY; })){
+      var entry = { key:APP_KEY, icon:"📥", label:"News-Eingang", desc:"KI-News-Eingang: Karten, Bild-Cards & Posts" };
+      var idx = -1;
+      for(var i=0;i<apps.length;i++){ if(apps[i] && apps[i].key === "articles"){ idx = i; break; } }
+      if(idx >= 0) apps.splice(idx + 1, 0, entry);
+      else apps.push(entry);
+    }
+    return apps;
+  };
+})();
+
+/* ── Monkey-Patch: buildSpotlightItems (Spotlight) ───────────────── */
+(function(){
+  var orig = window.buildSpotlightItems;
+  window.buildSpotlightItems = function(){
+    var arr = (typeof orig === "function") ? (orig.apply(this, arguments) || []) : [];
+    arr.push({
+      kind:"app", icon:"📥", id:"app-news-eingang",
+      title:"News-Eingang", sub:"KI-News & Bild-Cards",
+      open:function(){ window.location.hash = "#/" + ROUTE; }
+    });
+    return arr;
+  };
+})();
+
+/* ── Route-Listener: #/newsroom-inbox ────────────────────────────── */
+function routeName(){
+  var h = String(window.location.hash || "").replace(/^#\/?/, "");
+  return h.split(/[\/?]/)[0];
+}
+function inboxShown(){
+  var c = document.getElementById("researchHubContainer");
+  var p = document.getElementById("nh-p-inbox");
+  return !!(c && c.classList.contains("active") && p && p.classList.contains("on"));
+}
+function gotoInbox(){
+  if(inboxShown()) return;
+  if(!appReady()) return;
+  var c = document.getElementById("researchHubContainer");
+  if(!c || !c.classList.contains("active")){
+    if(typeof window.openResearchHub === "function") window.openResearchHub();
+  }
+  ensureStyles();
+  ensureUI();
+  if(typeof window.nhNav === "function") window.nhNav("inbox");
+  else showInbox();
+}
+window.addEventListener("hashchange", function(){
+  if(routeName() === ROUTE){
+    /* sofort + verzoegert (besiegt das debounced renderMain, das den Hub bei
+       route!=="articles" schliesst — siehe renderMain). */
+    gotoInbox();
+    setTimeout(gotoInbox, 0);
+    setTimeout(gotoInbox, 90);
+  }
+});
+
+/* ── Initialer Deep-Link auf #/newsroom-inbox ────────────────────── */
+(function(){
+  if(routeName() !== ROUTE) return;
+  var t = 0;
+  var iv = setInterval(function(){
+    t++;
+    if(appReady() && typeof window.openResearchHub === "function"){
+      clearInterval(iv);
+      gotoInbox();
+      setTimeout(gotoInbox, 150);
+    } else if(t > 80){
+      clearInterval(iv);
+    }
+  }, 250);
+})();
+
+})();
+</script>
+
 <script>
 /* ============================================================================
    BRIEFINGS — In-app mailbox for delivered briefing PDFs
