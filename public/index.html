@@ -89711,13 +89711,17 @@ console.log('📚 Leseliste geladen');
     const p = mhPersons()[id];
     if (!p) return `<div class="mh-empty"><div class="mh-empty-icon">❓</div>Person nicht gefunden.<br><button class="mh-btn primary" onclick="navigate('persons')" style="margin-top:14px">Zurück</button></div>`;
     
-    // E-Mails dieser Person aus dem Gmail-Index (echte messageId → echter Gmail-Reader),
-    // statt lokaler Mail-Hub-Einträge ohne messageId. Abgleich über die E-Mail-Adressen der
-    // Person (der Gmail-Index führt den Absender als fromEmail).
-    const personMailSet = new Set((p.emails || []).map(e => String(e || "").trim().toLowerCase()).filter(Boolean));
+    // E-Mails dieser Person aus dem Gmail-Index (echte messageId → echter Gmail-Reader).
+    // Robuster Abgleich: bare Adresse (auch aus "Name <addr>"), lowercase + getrimmt — auf
+    // BEIDEN Seiten (Person-Adressen & Index-fromEmail). So matchen auch Gross-/Kleinschreibung
+    // und in spitzen Klammern gespeicherte Adressen. Der Index führt nur die ~300 zuletzt
+    // geladenen Mails; für ältere gibt es unten den „In Gmail suchen"-Fallback.
+    const bareEmail = (s) => { s = String(s || "").trim().toLowerCase(); const mm = s.match(/<([^>]+)>/); return (mm ? mm[1] : s).trim(); };
+    const personMailSet = new Set((p.emails || []).map(bareEmail).filter(Boolean));
+    const personMailAddr = [...personMailSet][0] || "";
     const gmailIdx = Array.isArray(APP?.state?.data?.gmailIndex) ? APP.state.data.gmailIndex : [];
     const mails = personMailSet.size
-      ? gmailIdx.filter(m => personMailSet.has(String(m.fromEmail || "").trim().toLowerCase()))
+      ? gmailIdx.filter(m => personMailSet.has(bareEmail(m.fromEmail)))
                 .sort((a, b) => (b.date || 0) - (a.date || 0))
       : [];
     
@@ -89862,8 +89866,11 @@ console.log('📚 Leseliste geladen');
       </div>` : ''}
       
       <div class="mh-detail-section">
-        <h4>📬 E-Mails (${mails.length})</h4>
-        ${mails.length === 0 ? `<div style="color:var(--muted);font-size:13px">Keine Gmail-Nachrichten dieser Person im Index.</div>` : `
+        <h4 style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span>📬 E-Mails (${mails.length})</span>
+          ${personMailAddr ? `<button class="mh-btn ghost" style="font-size:11px;padding:5px 11px;font-weight:600" onclick="window.gmailSearchExternal && window.gmailSearchExternal('from:${personMailAddr}')" title="Alle Mails dieser Person direkt in Gmail suchen (auch ältere, nicht im Index)">🔍 In Gmail suchen</button>` : ""}
+        </h4>
+        ${mails.length === 0 ? `<div style="color:var(--muted);font-size:13px">Keine Mails dieser Person im lokalen Index (nur die ~300 zuletzt geladenen Gmail-Nachrichten).${personMailAddr ? ` Über „🔍 In Gmail suchen" oben siehst du alle Mails von <strong>${mhEsc(personMailAddr)}</strong>.` : (p.emails && p.emails.length ? "" : " Für diese Person ist keine E-Mail-Adresse hinterlegt – ergänze sie im Personen-Editor.")}</div>` : `
         <div style="display:flex;flex-direction:column;gap:8px">
           ${mails.slice(0, 20).map(m => {
             // Klick öffnet GENAU diese Mail im Gmail-Reader (per messageId), statt nur nach /#/gmail.
@@ -94721,6 +94728,19 @@ console.log('📚 Leseliste geladen');
 .gml-prio.p1 { background:rgba(255,69,58,.18); color:var(--danger); }
 .gml-prio.p2 { background:rgba(255,159,10,.18); color:var(--warn); }
 .gml-prio.p3 { background:rgba(142,142,147,.16); color:var(--muted); }
+/* KI-Panel (Klassifizierung/Zusammenfassung) oben im Mail-Reader */
+.gml-ki { margin:0 18px 12px; padding:12px 14px; border:1px solid var(--accent-soft); border-left:3px solid var(--accent); border-radius:10px; background:var(--accent-soft); }
+.gml-ki-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:7px; }
+.gml-ki-badge { font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); display:inline-flex; align-items:center; gap:5px; }
+.gml-ki-chips { display:flex; gap:6px; flex-wrap:wrap; }
+.gml-ki-chip { font-size:11px; font-weight:600; color:var(--text2); background:var(--panel); border:1px solid var(--border); padding:2px 9px; border-radius:999px; }
+.gml-ki-chip.p1 { color:var(--danger); }
+.gml-ki-chip.p2 { color:var(--warn); }
+.gml-ki-text { font-size:13px; line-height:1.55; color:var(--text); white-space:pre-wrap; word-break:break-word; }
+.gml-ki-text.gml-ki-muted { color:var(--muted); font-style:italic; font-size:12.5px; }
+/* „+ Label erstellen"-Button in der Labels-Sektion der Sidebar */
+.gml-nav-add { display:block; width:calc(100% - 16px); margin:5px 8px 2px; padding:7px 11px; font-size:12px; font-weight:600; text-align:left; color:var(--accent); background:transparent; border:1px dashed var(--border); border-radius:9px; cursor:pointer; }
+.gml-nav-add:hover { background:var(--accent-soft); border-color:var(--accent); }
 .gml-sug-list { display:flex; flex-direction:column; gap:10px; padding:10px 14px 16px; }
 .gml-sug { border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:var(--hover); }
 .gml-sug-title { font-weight:700; font-size:14px; color:var(--text); margin-bottom:5px; }
@@ -95095,7 +95115,10 @@ console.log('📚 Leseliste geladen');
       + navBtn(GM.smart==="erledigt","✅","Erledigt","gmailSelectSmart('erledigt')");
     var std = SYS_LABELS.map(function(l){ return navBtn(labelActive(l.id), l.icon, l.name, "gmailSelectLabel('"+jsStr(l.id)+"')", unreadOf(l.id)); }).join("");
     var userLabels = GM.labels.filter(function(l){ return l.type==="user" && l.name!=="Quantus/Erledigt" && l.name!=="Quantus/Blockiert"; }).sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
-    var userHtml = userLabels.length ? ('<div class="gml-nav-sep">Labels</div>'+userLabels.map(function(l){ return navBtn(labelActive(l.id), "🏷️", l.name.replace(/^Quantus\//,""), "gmailSelectLabel('"+jsStr(l.id)+"')", unreadOf(l.id)); }).join("")) : "";
+    // Echte Gmail-Labels des Nutzers (aus GM.labels via loadLabels) + „+ Label erstellen".
+    var labelItems = userLabels.map(function(l){ return navBtn(labelActive(l.id), "🏷️", l.name.replace(/^Quantus\//,""), "gmailSelectLabel('"+jsStr(l.id)+"')", unreadOf(l.id)); }).join("");
+    var userHtml = '<div class="gml-nav-sep">Labels</div>' + labelItems
+      + '<button class="gml-nav-add" onclick="gmailCreateLabel()" title="Neues Gmail-Label erstellen – wird via Gmail-API wirklich in Gmail angelegt">+ Label erstellen</button>';
     return '<button class="gml-compose-btn" onclick="gmailCompose()">✏️ Verfassen</button>'
       + '<div class="gml-nav-sep">Smart</div>' + smart
       + '<div class="gml-nav-sep">Postfächer</div>' + std
@@ -95171,6 +95194,7 @@ console.log('📚 Leseliste geladen');
       +     '<div class="gml-msgdate">'+esc(fmtDateFull(o.internalDate))+'</div>'
       +   '</div>'
       + '</div>'
+      + renderKiPanel(o)
       + '<div class="gml-bodywrap">'+bodyIframe(o.html, o.text)+'</div>';
   }
 
@@ -95512,6 +95536,19 @@ console.log('📚 Leseliste geladen');
   };
   window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); GM._classLoaded=false; loadClassifications(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else if(GM.smart==="tasksuggest") loadTaskSuggestions(); else if(GM.smart==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
   window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.smart=null; GM.open=null; loadMessages(true); };
+  // Neues echtes Gmail-Label anlegen — nutzt den bestehenden Erstell-Pfad (ensureLabel →
+  // gmApi POST /users/me/labels). Der OAuth-Scope gmail.modify deckt das bereits ab; kein
+  // Backend-/Scope-Umbau. Smart-Views bleiben unberührt.
+  window.gmailCreateLabel = async function(){
+    var name = window.prompt('Name des neuen Gmail-Labels:', '');
+    if (name==null) return; name = String(name).trim(); if (!name) return;
+    if (GM.labels.find(function(l){ return (l.name||'').toLowerCase()===name.toLowerCase(); })){ toast('info','Bereits vorhanden','Ein Gmail-Label mit diesem Namen existiert schon.'); return; }
+    try {
+      await ensureLabel(name);
+      toast('ok','Label erstellt','"'+name+'" wurde in Gmail angelegt.');
+      rerender();
+    } catch(e){ toast('err','Fehler', e.message||'Label konnte nicht erstellt werden'); }
+  };
   window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else if(s==="tasksuggest") loadTaskSuggestions(); else if(s==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
   window.gmailOpenMessage = function(id){ openMessageById(id); };
   window.gmailBackToList = function(){ GM.open=null; rerender(); };
@@ -95648,6 +95685,13 @@ console.log('📚 Leseliste geladen');
     if (gmRoute()!=="gmail") location.hash = "#/gmail";
     setTimeout(function(){ try { openMessageById(id); } catch(e){} }, gmRoute()==="gmail"?0:120);
   };
+  // ── Run a Gmail search from outside (z. B. „In Gmail suchen" in der Personenansicht) ──
+  // Navigiert nach #/gmail und setzt die Suchanfrage (GM.query → messages.list q), sodass
+  // ALLE Mails einer Person sichtbar werden – auch ältere, die nicht im lokalen Index sind.
+  window.gmailSearchExternal = function(q){
+    if (gmRoute()!=="gmail") location.hash = "#/gmail";
+    setTimeout(function(){ try { window.gmailSearch(q); } catch(e){} }, gmRoute()==="gmail"?0:160);
+  };
 
   // ════════════════════════════════════════════════════════════════════
   //  KI-Antwort-Entwürfe — vom n8n-Workflow „GmailQuantusAIDraft" in der
@@ -95670,13 +95714,14 @@ console.log('📚 Leseliste geladen');
     for (var i=0;i<ids.length;i++){ var k=ids[i]; if (k && GM.classifications[k]) return GM.classifications[k]; }
     return null;
   }
-  // „KI-Entwürfe" zeigt – analog zum fromPerson-Fix – NUR Entwürfe für echte Personen:
-  // die KI-Klassifizierung muss isPerson===true bzw. generateDraft===true (alt. category==='person')
-  // melden. Ohne vorhandene Klassifizierung oder bei Bot/Spam/Newsletter wird der Entwurf ausgeblendet.
+  // „KI-Entwürfe" zeigt STRIKT nur Entwürfe, für die die KI-Klassifizierung
+  // (/gmailClassifications/<messageId>) generateDraft===true meldet. isPerson allein genügt
+  // NICHT: eine rein informative Mail einer Person (kein Antwortbedarf) bekommt damit keinen
+  // Entwurf. Ohne Klassifizierung oder bei generateDraft!=true wird der Entwurf ausgeblendet.
   function draftIsFromPerson(d){
     var c = draftClsOf(d);
     if (!c) return false;
-    return c.isPerson===true || c.generateDraft===true || c.category==="person";
+    return c.generateDraft===true;
   }
   async function loadDrafts(){
     GM.draftsLoading=true; GM.draftsError=null; rerender();
@@ -95763,15 +95808,53 @@ console.log('📚 Leseliste geladen');
   function clsOf(m){ return (m && GM.classifications && GM.classifications[m.id]) || null; }
   function isDoneCls(m){ var c=clsOf(m); return !!(c && c.done===true); }
   function prioBadge(m){ var c=clsOf(m); var p=c&&c.priority; if(!p) return ""; var lbl={1:"Hoch",2:"Mittel",3:"Niedrig"}[p]||("P"+p); return '<span class="gml-prio p'+p+'" title="Priorität: '+lbl+'">'+p+'</span>'; }
+  // KI-Panel oben im Reader: zeigt – falls vorhanden – die KI-Zusammenfassung (Feld summary
+  // bzw. reason) sowie Kategorie/Priorität/Person/Antwort-Empfehlung aus der Klassifizierung
+  // (/gmailClassifications/<messageId> via clsOf). Liest nur, ändert nichts. Leer, wenn die
+  // messageId nicht klassifiziert ist oder die Klassifizierung nichts Anzeigbares enthält.
+  function renderKiPanel(o){
+    var c = clsOf(o); if (!c) return "";
+    var summary = String(c.summary || c.reason || "").trim();
+    var cat = String(c.category || "").trim();
+    var p = c.priority;
+    var prioLbl = {1:"Hoch",2:"Mittel",3:"Niedrig"}[p] || (p?("P"+p):"");
+    var chips = "";
+    if (cat) chips += '<span class="gml-ki-chip">'+esc(cat)+'</span>';
+    if (p) chips += '<span class="gml-ki-chip p'+esc(String(p))+'">Priorität: '+esc(prioLbl)+'</span>';
+    if (c.isPerson===true) chips += '<span class="gml-ki-chip">👤 Person</span>';
+    if (c.generateDraft===true) chips += '<span class="gml-ki-chip">↩︎ Antwort empfohlen</span>';
+    if (!summary && !chips) return "";
+    return '<div class="gml-ki">'
+      + '<div class="gml-ki-head"><span class="gml-ki-badge">🤖 KI-Zusammenfassung</span>'+(chips?'<span class="gml-ki-chips">'+chips+'</span>':'')+'</div>'
+      + (summary
+          ? '<div class="gml-ki-text">'+esc(summary)+'</div>'
+          : '<div class="gml-ki-text gml-ki-muted">Noch keine Zusammenfassung hinterlegt – sobald der n8n-Flow ein Feld <code>summary</code> (oder <code>reason</code>) unter /gmailClassifications/&lt;messageId&gt; schreibt, erscheint es hier.</div>')
+      + '</div>';
+  }
 
   // ── 2) Mail → Aufgabe (taskRequests / taskSuggestions) ──
   window.gmailCreateTaskRequest = async function(){
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
     try {
       var a=parseAddr(o.from); var body=(o.text||htmlToText(o.html)||"").slice(0,5000);
-      await rtdbPost("taskRequests", { messageId:o.id, threadId:o.threadId||"", from:a.email||"", fromName:a.name||"", subject:o.subject||"", body:body, status:"pending", createdAt:Date.now() });
-      toast("ok","Aufgabe angefragt","n8n bereitet einen Vorschlag vor — erscheint unter 'Aufgaben-Vorschläge'.");
-    } catch(e){ toast("err","Fehler", e.message||"Anfrage fehlgeschlagen"); }
+      // 1) n8n-Anfrage (unverändert) — falls ein n8n-Flow den Vorschlag verfeinern soll.
+      rtdbPost("taskRequests", { messageId:o.id, threadId:o.threadId||"", from:a.email||"", fromName:a.name||"", subject:o.subject||"", body:body, status:"pending", createdAt:Date.now() });
+      // 2) Sofort-Vorschlag direkt in /taskSuggestions — funktioniert auch OHNE n8n und
+      //    erscheint unmittelbar in der „Aufgaben-Vorschläge"-Liste. Priorität, falls von der
+      //    KI klassifiziert, sonst Standard 3. Gleiche Felder, die renderTaskSugRow/adopt nutzen.
+      var c = clsOf(o);
+      var prev = String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim().slice(0,500);
+      await rtdbPost("taskSuggestions", {
+        title: String(o.subject||"Aufgabe aus E-Mail").slice(0,200),
+        description: prev,
+        priority: (c && typeof c.priority==="number") ? c.priority : 3,
+        sourceMessageId: o.id, threadId: o.threadId||"",
+        from: a.email||"", fromName: a.name||"",
+        status:"ready", origin:"frontend", createdAt:Date.now()
+      });
+      toast("ok","Aufgaben-Vorschlag erstellt","Erscheint unter 'Aufgaben-Vorschläge'.");
+      GM.smart="tasksuggest"; GM.query=""; GM.open=null; loadTaskSuggestions();
+    } catch(e){ toast("err","Fehler", e.message||"Vorschlag konnte nicht erstellt werden"); }
   };
   async function loadTaskSuggestions(){
     GM.tsLoading=true; GM.tsError=null; rerender();
