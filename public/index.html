@@ -38,22 +38,23 @@
   </script>
   <style>
     :root{
-      /* ═══ Design-System „Schiefer" (Dark, Default) — matt, kein reines Schwarz/Weiss ═══ */
-      --surface-base:#262a2e;        /* Seite */
-      --surface-raised:#2d3237;      /* Karten/Sidebar/Panels */
-      --surface-overlay:#353b41;     /* Modal/Dropdown/Toast */
-      --border:#3c434a;
-      --border2:#454c54;
-      --hover:rgba(218,219,222,.06);   /* subtiles Hover-/Zebra-Overlay (theme-aware) */
-      --text-primary:#dadbde;
-      --text-muted:#878d96;
-      --accent:#86a895;
-      --accent-soft:#324039;
-      --on-accent:#1d2622;
-      --danger:#c8836f;
-      --warning:#c2a866;
-      --success:#86a895;
-      --info:#7e94b0;
+      /* ═══ Design-System „Schiefer" v2 (Dark, Default) — matt & erdig, aber mit Tiefe/Kontrast ═══ */
+      --surface-base:#1b1f23;        /* Seite — tiefer, damit Karten/Panels sich abheben */
+      --surface-raised:#262c32;      /* Karten/Sidebar/Panels */
+      --surface-overlay:#323a43;     /* Modal/Dropdown/Toast */
+      --border:#3a424c;
+      --border2:#4c545f;
+      --hover:rgba(224,226,232,.07);   /* subtiles Hover-/Zebra-Overlay (theme-aware) */
+      --text-primary:#e9eaed;
+      --text-muted:#8e949e;
+      --accent:#7cba9b;
+      --accent-deep:#58997c;         /* dunklere Akzentstufe für Gradient/Hover/Glow */
+      --accent-soft:#2c3f37;
+      --on-accent:#0f201a;
+      --danger:#d68a70;
+      --warning:#cdac63;
+      --success:#7cba9b;
+      --info:#8198b6;
       /* ── Legacy-Aliase: bestehende var()-Nutzungen (3374×) auf die matte Palette mappen ── */
       --bg:var(--surface-base);
       --panel:var(--surface-raised);
@@ -61,19 +62,19 @@
       --panel3:var(--border2);
       --muted:var(--text-muted);
       --text:var(--text-primary);
-      --text2:#b9bcc1;
+      --text2:#c3c5cb;
       --accent2:var(--success);
       --accent3:var(--info);
       --warn:var(--warning);
       --danger:var(--danger);
       --ok:var(--success);
-      --pink:#c08aa0;
+      --pink:#cb90a8;
       --orange:var(--warning);
       --teal:var(--info);
       --neon:var(--accent);
       --neon-glow:var(--accent-soft);
-      --shadow: 0 4px 14px rgba(0,0,0,.06);
-      --shadow-lg: 0 8px 24px rgba(0,0,0,.08);
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 6px 18px rgba(0,0,0,.26);
+      --shadow-lg: 0 8px 22px rgba(0,0,0,.36), 0 22px 56px rgba(0,0,0,.32);
       --radius: 14px;
       --radius-sm: 10px;
       --radius-lg: 20px;
@@ -87,25 +88,26 @@
     }
     /* ═══ „Leinen" (Light) — umschaltbar über themeMode; Aliase erben automatisch ═══ */
     html.theme-light{
-      --surface-base:#d8d3c7;
-      --surface-raised:#e3dfd5;
-      --surface-overlay:#ebe7de;
-      --border:#c6c0b2;
-      --border2:#bcb6a6;
-      --hover:rgba(58,55,51,.06);
-      --text-primary:#3a3733;
-      --text-muted:#8a8478;
-      --accent:#5a7d70;
-      --accent-soft:#cdd8d1;
-      --on-accent:#eef2ef;
-      --danger:#b06a52;
-      --warning:#a8852f;
-      --success:#5a7d70;
-      --info:#4f6f8a;
-      --text2:#55514a;
-      --pink:#9d6a7e;
-      --shadow: 0 4px 14px rgba(58,55,51,.07);
-      --shadow-lg: 0 8px 24px rgba(58,55,51,.09);
+      --surface-base:#d2ccbe;
+      --surface-raised:#eae5da;
+      --surface-overlay:#f3efe6;
+      --border:#c3bcab;
+      --border2:#b1a994;
+      --hover:rgba(58,55,51,.07);
+      --text-primary:#322e29;
+      --text-muted:#847e6d;
+      --accent:#4d8a73;
+      --accent-deep:#3b7460;
+      --accent-soft:#cddbd2;
+      --on-accent:#f4f7f2;
+      --danger:#a85f47;
+      --warning:#9c7a26;
+      --success:#4d8a73;
+      --info:#476887;
+      --text2:#534f47;
+      --pink:#985f74;
+      --shadow: 0 1px 2px rgba(52,46,38,.14), 0 6px 18px rgba(52,46,38,.10);
+      --shadow-lg: 0 8px 22px rgba(52,46,38,.16), 0 22px 56px rgba(52,46,38,.13);
     }
 
     /* ═══════ Schiefer/Leinen — Chrome-Politur (durchgängig, additiv; kein Layout-Reflow) ═══════ */
@@ -86583,15 +86585,61 @@ console.log('🌐 Tabs + Translator + Spotlight-Apps geladen');
 button[data-action="quick-task"].primary, button[data-action="create-task"].primary,
 button[data-action="quick-note"].primary, button[data-action="quick-idea"].primary,
 button[data-action="quick-project"].primary {
-  background: var(--accent) !important;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 86%, #fff 14%), var(--accent-deep, var(--accent))) !important;
   color: var(--on-accent) !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
+  border: none !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 1px 2px rgba(0,0,0,.3), 0 4px 12px color-mix(in oklab, var(--accent) 40%, transparent) !important;
+  font-weight: 700 !important;
 }
 .btn.primary:hover, .btn-primary:hover, button.primary:hover {
-  filter: brightness(1.06);
-  box-shadow: none !important;
+  filter: none;
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 2px 4px rgba(0,0,0,.32), 0 8px 20px color-mix(in oklab, var(--accent) 55%, transparent) !important;
 }
+.btn.primary:active, .btn-primary:active, button.primary:active {
+  transform: translateY(0) !important;
+}
+</style>
+
+<style id="schieferLeinenV2">
+/* ═══════════════════════════════════════════════════════════════════════
+   Schiefer/Leinen v2 — Tiefe, Kontrast, Buttons, Typografie, Rhythmus.
+   Rein visuell (CSS). Spät platziert, damit generische Basis-Regeln gewinnen;
+   komponenten-gescopte Styles bleiben unberührt.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Karten/Panels: klare Abhebung durch Hairline-Border + lesbaren Schatten ── */
+.card{ border:1px solid var(--border); box-shadow:var(--shadow); padding:18px; }
+.card:hover{ border-color:var(--border2); }
+.stat-card{ background:var(--panel); border:1px solid var(--border); box-shadow:var(--shadow); }
+
+/* ── Basis-Buttons: Definition, Tiefe, echtes Hover-Feedback ── */
+.btn{ border:1px solid var(--border); background:var(--panel2); box-shadow:0 1px 1px rgba(0,0,0,.18); font-weight:600; }
+.btn:hover{ background:var(--border); border-color:var(--border2); transform:translateY(-1px); }
+.btn:active{ transform:translateY(0); }
+.btn.ghost{ border-color:transparent; background:transparent; box-shadow:none; }
+.btn.ghost:hover{ background:var(--hover); border-color:var(--border); }
+.btn-icon{ border:1px solid var(--border); }
+
+/* ── Inline-Akzent-Gradient-Buttons (durch Token-Sweep flach geworden) aufwerten ── */
+[style*="135deg,var(--accent),var(--accent)"]{
+  background-image:linear-gradient(135deg, color-mix(in oklab, var(--accent) 88%, #fff 12%), var(--accent-deep, var(--accent))) !important;
+  color:var(--on-accent) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16), 0 2px 10px color-mix(in oklab, var(--accent) 40%, transparent) !important;
+}
+
+/* ── Akzent-Präsenz: aktives Sidebar-Item bekommt eine Akzentkante ── */
+.sidebar-item.active{ box-shadow:inset 2px 0 0 var(--accent); }
+
+/* ── Typografie: klarere Hierarchie (rein visuell, Fließtext-Größe unverändert) ── */
+h1{ font-weight:800; letter-spacing:-0.022em; }
+h2{ font-weight:750; letter-spacing:-0.017em; }
+h3{ font-weight:700; letter-spacing:-0.012em; }
+.page-title h2{ font-size:23px; letter-spacing:-0.02em; }
+
+/* ── Rhythmus: etwas mehr Luft im Hauptbereich ── */
+.main{ padding:22px 26px 48px; }
+.grid-2,.grid-3{ gap:16px; }
 </style>
 
 <!-- Popup-Menü (Container) -->
