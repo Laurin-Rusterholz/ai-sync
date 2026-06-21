@@ -94678,7 +94678,16 @@ console.log('📚 Leseliste geladen');
 .gml-row.unread .gml-row-date { color:var(--text2); font-weight:600; }
 
 .gml-msgtop { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:11px 16px; border-bottom:1px solid var(--border); }
-.gml-msghead { padding:16px 18px 6px; }
+.gml-msgtop-primary { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.gml-btn-icon { min-width:40px; padding-left:11px; padding-right:11px; }
+.gml-more { position:relative; }
+.gml-more > summary { list-style:none; cursor:pointer; }
+.gml-more > summary::-webkit-details-marker { display:none; }
+.gml-more[open] > summary { background:var(--hover); }
+.gml-more-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:215px; background:var(--panel); border:1px solid var(--border); border-radius:11px; box-shadow:0 12px 30px rgba(0,0,0,.3); padding:6px; display:flex; flex-direction:column; gap:2px; }
+.gml-more-item { display:block; width:100%; text-align:left; padding:9px 11px; font-size:13px; font-weight:500; color:var(--text); background:transparent; border:none; border-radius:8px; cursor:pointer; white-space:nowrap; }
+.gml-more-item:hover { background:var(--hover); }
+.gml-msghead { padding:18px 20px 18px; }
 .gml-subject { font-size:19px; font-weight:700; color:var(--text); margin:0 0 14px; line-height:1.3; }
 .gml-msgmeta { display:flex; align-items:flex-start; gap:12px; }
 .gml-avatar { width:40px; height:40px; border-radius:50%; background:var(--accent); color:var(--text); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:17px; flex-shrink:0; }
@@ -94688,7 +94697,7 @@ console.log('📚 Leseliste geladen');
 .gml-addr { font-size:12.5px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; }
 .gml-addr span { color:var(--text2); font-weight:600; }
 .gml-msgdate { font-size:12px; color:var(--muted); flex-shrink:0; text-align:right; max-width:200px; }
-.gml-bodywrap { padding:6px 18px 20px; }
+.gml-bodywrap { padding:16px 20px 24px; }
 .gml-bodyframe { width:100%; border:none; background:var(--text); border-radius:10px; min-height:240px; display:block; }
 .gml-compose-btn { width:100%; padding:10px; margin-bottom:8px; border:none; border-radius:11px; background:var(--accent); color:var(--text); font-weight:700; font-size:14px; cursor:pointer; }
 .gml-compose-btn:hover { filter:brightness(1.08); }
@@ -95174,16 +95183,24 @@ console.log('📚 Leseliste geladen');
     var personBadge = person ? '<span class="gml-known" title="Bekannte Person">👤 '+esc(person.name||"")+'</span>' : '';
     return ''
       + '<div class="gml-msgtop">'
-      +   '<button class="btn" onclick="gmailBackToList()">← Zurück</button>'
+      +   '<button class="btn gml-btn-icon" onclick="gmailBackToList()" title="Zurück zur Liste">←</button>'
+      +   '<div class="gml-msgtop-primary">'
+      +     (isDraft ? '<button class="btn primary" onclick="gmailSendOpenDraft()" title="Diesen Entwurf prüfen und senden">📤 Prüfen &amp; senden</button>' : '')
+      +     '<button class="btn primary" onclick="gmailReply()" title="Antworten">↩︎ Antworten</button>'
+      +     '<button class="btn" onclick="gmailReplyAll()" title="Allen antworten">Allen</button>'
+      +     '<button class="btn" onclick="gmailRequestDraft()" title="KI-Antwortentwurf für diese Mail erstellen (Taste: D)">✨ KI-Entwurf</button>'
+      +     '<button class="btn" onclick="gmailCreateTaskRequest()" title="Aufgaben-Vorschlag aus dieser Mail erstellen">📋 Aufgabe</button>'
+      +   '</div>'
       +   '<div style="flex:1"></div>'
-      +   (isDraft ? '<button class="btn primary" onclick="gmailSendOpenDraft()" title="Diesen Entwurf prüfen und senden">📤 Prüfen &amp; senden</button>' : '')
-      +   '<button class="btn" onclick="gmailReply()">↩️ Antworten</button>'
-      +   '<button class="btn" onclick="gmailReplyAll()">↩️↩️ Allen</button>'
-      +   '<button class="btn" onclick="gmailCreateTaskRequest()" title="n8n erstellt einen Aufgaben-Vorschlag aus dieser Mail">📋 Aufgabe</button>'
-      +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')">'+(done?"↩️ Zurücklegen":"✅ Erledigt")+'</button>'
-      +   '<button class="btn" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Gelesen":"📬 Ungelesen")+'</button>'
-      +   '<button class="btn" onclick="gmailExportMessage(\''+jsStr(o.id)+'\')" title="Als .eml exportieren">⤓</button>'
-      +   '<button class="btn" onclick="gmailBlockSenderOf(\''+jsStr(o.id)+'\')" title="Absender blockieren">⛔</button>'
+      +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')" title="'+(done?"Zurück in den Posteingang":"Als erledigt markieren")+'">'+(done?"↩︎ Zurücklegen":"✅ Erledigt")+'</button>'
+      +   '<details class="gml-more">'
+      +     '<summary class="btn gml-btn-icon" title="Weitere Aktionen">⋯</summary>'
+      +     '<div class="gml-more-menu">'
+      +       '<button class="gml-more-item" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Als gelesen markieren":"📬 Als ungelesen markieren")+'</button>'
+      +       '<button class="gml-more-item" onclick="gmailExportMessage(\''+jsStr(o.id)+'\')">⤓ Als .eml exportieren</button>'
+      +       '<button class="gml-more-item" onclick="gmailBlockSenderOf(\''+jsStr(o.id)+'\')">⛔ Absender blockieren</button>'
+      +     '</div>'
+      +   '</details>'
       + '</div>'
       + '<div class="gml-msghead">'
       +   '<h2 class="gml-subject">'+esc(o.subject||"(kein Betreff)")+'</h2>'
@@ -95732,7 +95749,10 @@ console.log('📚 Leseliste geladen');
       var data = await r.json();
       var arr = [];
       if (data && typeof data==="object"){ Object.keys(data).forEach(function(k){ var d=data[k]; if(d && typeof d==="object"){ d._key=k; arr.push(d); } }); }
-      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending" && draftIsFromPerson(d); }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
+      // Anzeige: pending-Entwürfe, die ENTWEDER von der KI für Antwort markiert sind
+      // (draftIsFromPerson → generateDraft===true) ODER manuell on-demand angefordert wurden
+      // (source:"manual" / manual:true). Letztere erscheinen so unabhängig von generateDraft.
+      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending" && (draftIsFromPerson(d) || d.source==="manual" || d.manual===true); }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
     } catch(e){ GM.draftsError = e.message||"Entwürfe konnten nicht geladen werden"; }
     finally { GM.draftsLoading=false; rerender(); }
   }
@@ -95856,6 +95876,45 @@ console.log('📚 Leseliste geladen');
       GM.smart="tasksuggest"; GM.query=""; GM.open=null; loadTaskSuggestions();
     } catch(e){ toast("err","Fehler", e.message||"Vorschlag konnte nicht erstellt werden"); }
   };
+
+  // ── On-Demand-KI-Entwurf für die offene Mail (Button „✨ KI-Entwurf" + Taste D) ──
+  // Schreibt – analog zum Aufgaben-Button (/taskRequests) – eine Entwurfs-Anfrage in die
+  // NEUE RTDB-Warteschlange /draftRequests. Der bestehende n8n-Flow („KI: Entwurf generieren"
+  // → „Entwurf in Quantus speichern") konsumiert sie und legt den fertigen Entwurf wie gewohnt
+  // unter /gmailDrafts ab. Mit source:"manual" markiert, damit der Entwurf unabhängig von der
+  // automatischen generateDraft-Klassifizierung in „KI-Entwürfe" erscheint (siehe loadDrafts).
+  // Rein Frontend: ein RTDB-POST; bestehende Pfade/IDs/Funktionen unverändert.
+  window.gmailRequestDraft = async function(){
+    var o = GM.open; if (!o || !o.id){ toast("info","Keine Mail offen","Öffne zuerst eine Mail."); return; }
+    if (GM._draftReqBusy) return; GM._draftReqBusy = true;
+    toast("info","Entwurf wird erstellt…","Die KI verfasst einen Antwortentwurf — er erscheint unter 'KI-Entwürfe'.");
+    try {
+      var a = parseAddr(o.from);
+      var body = (o.text || htmlToText(o.html) || "").slice(0,5000);
+      await rtdbPost("draftRequests", {
+        messageId:o.id, threadId:o.threadId||"",
+        from:a.email||"", fromName:a.name||"", to:o.to||"",
+        subject:o.subject||"", body:body,
+        source:"manual", status:"pending", createdAt:Date.now()
+      });
+    } catch(e){ toast("err","Fehler", e.message||"Entwurf konnte nicht angefordert werden"); }
+    finally { GM._draftReqBusy = false; }
+  };
+  // Tastatur-Shortcut „D": fordert für die offene Mail einen KI-Entwurf an — nur in der
+  // Gmail-Ansicht, wenn eine Mail offen ist, kein Modal offen ist und der Fokus NICHT in
+  // einem Eingabefeld liegt. Einmalig registriert (IIFE läuft einmal).
+  document.addEventListener("keydown", function(e){
+    if (e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    if ((e.key||"").toLowerCase() !== "d") return;
+    if (gmRoute() !== "gmail" || !GM.open || !GM.open.id) return;
+    var mb = document.getElementById("modalBackdrop");
+    if (mb && mb.classList.contains("open")) return;
+    var el = document.activeElement, tag = el && el.tagName;
+    if (tag==="INPUT" || tag==="TEXTAREA" || tag==="SELECT" || (el && el.isContentEditable)) return;
+    e.preventDefault();
+    if (typeof window.gmailRequestDraft==="function") window.gmailRequestDraft();
+  });
+
   async function loadTaskSuggestions(){
     GM.tsLoading=true; GM.tsError=null; rerender();
     try { var data=await rtdbGet("taskSuggestions"); var arr=[]; if(data&&typeof data==="object"){ Object.keys(data).forEach(function(k){ var d=data[k]; if(d&&typeof d==="object"){ d._key=k; arr.push(d); } }); } GM.taskSuggestions=arr.filter(function(d){ return (d.status||"ready")==="ready"; }); }
