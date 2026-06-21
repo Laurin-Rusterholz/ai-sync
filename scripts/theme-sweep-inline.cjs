@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 /* ============================================================================
- * Teil A — Schiefer/Leinen Literal-Sweep (NUR <style>-Blöcke = die echte CSS).
- * Ersetzt globale UI-Chrome-Farbliterale durch var(--token). Komponenten-
- * spezifische Paletten (Syntax-Highlighting, Neon-Terminal, Deep-Blue-Widgets,
- * Pergament, Erd-/Dunkelgrün) bleiben bewusst erhalten. Kein Canvas (PDF.js).
+ * Teil B — Schiefer/Leinen Inline-Style-Sweep.
+ * Fortsetzung von theme-sweep.cjs (Teil A behandelte die <style>-Blöcke).
+ * Dieser Pass tokenisiert die UI-Chrome-Farbliterale in INLINE-`style="…"`-
+ * Attributen (inkl. JS-generierter Templates) → var(--token). Damit erhält die
+ * gesamte App durchgängig die matte Schiefer/Leinen-Palette statt Neon.
+ *
+ * Sicherheitsregeln:
+ *   • NUR Inhalt von style="…" / style='…' wird angefasst (kein <style>-Block,
+ *     kein JS-Logik-Code, kein Markup).
+ *   • Spans innerhalb von ${…}-Interpolationen werden ÜBERSPRUNGEN
+ *     (schützt z.B. `${h.color||'#a855f7'}33` und `${shade('#6366f1',…)}`).
+ *   • Reines Weiß/Schwarz (#fff/#000/white/black) bleibt unangetastet
+ *     (themeneutral, Kontrast-/Kontext-Risiko bei Button-Text).
+ *   • Komponenten-Paletten (Dracula, Galaxy, Erd-/Holztöne, Pergament, Neon-
+ *     Terminal) bleiben via EXCLUDE erhalten — identisch zu Teil A.
+ *   • 7-/8-stellige Hex (#rrggbbaa) und 4-stellige (#rgba) bleiben unangetastet.
  * Dry-run per default; mit `--write` wird public/index.html überschrieben.
  * ==========================================================================*/
 const fs = require("fs");
@@ -21,7 +33,7 @@ function rgbToHsl(r,g,b){ r/=255;g/=255;b/=255; const mx=Math.max(r,g,b),mn=Math
     if(mx===r) h=((g-b)/d+(g<b?6:0)); else if(mx===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; }
   return { h, s, l }; }
 
-// ── Komponenten-Paletten, die NICHT angefasst werden (Identität bewahren) ──
+// ── Komponenten-Paletten, die NICHT angefasst werden (identisch zu Teil A) ──
 const EXCLUDE = new Set([
   // Dracula / Code-Syntax-Highlighting
   "#50fa7b","#8be9fd","#f1fa8c","#bd93f9","#ff79c6","#ffb86c","#6272a4",
@@ -39,35 +51,43 @@ const EXCLUDE = new Set([
   "#262a2e","#2d3237","#353b41","#3c434a","#454c54","#dadbde","#878d96","#86a895","#324039","#1d2622","#c8836f","#c2a866","#7e94b0","#b9bcc1","#c08aa0","#d8d3c7","#e3dfd5","#ebe7de","#c6c0b2","#bcb6a6","#3a3733","#8a8478","#cdd8d1","#eef2ef","#b06a52","#a8852f","#4f6f8a","#55514a","#9d6a7e",
 ]);
 
-// ── Explizite chromatische Chrome-Zuordnung ──
+// reines Weiß/Schwarz bewusst auslassen (themeneutral, kontextabhängig)
+const SKIP_LITERAL = new Set(["#fff","#ffffff","#000","#000000","white","black"]);
+
+// ── Explizite chromatische Chrome-Zuordnung (identisch zu Teil A) ──
 const CHROMA = {
-  // Neon-Indigo/Violett → Akzent (kein Neon mehr)
   "#6366f1":"--accent","#5558e3":"--accent","#5e5ce6":"--accent","#818cf8":"--accent",
   "#7c3aed":"--accent","#8b5cf6":"--accent","#a78bfa":"--accent","#a5b4fc":"--accent",
   "#a855f7":"--accent","#c084fc":"--accent","#c4b5fd":"--accent","#c7d2fe":"--accent",
   "#d8b4fe":"--accent","#bf5af2":"--accent","#9333ea":"--accent","#7e22ce":"--accent",
-  // Aktions-Blau → Akzent
   "#0a84ff":"--accent","#0070e0":"--accent","#0077ed":"--accent","#0a66ff":"--accent",
-  "#1d4ed8":"--accent","#2563eb":"--accent","#3b82f6":"--accent","#0070e0":"--accent",
-  // Hell-/Himmelblau → Info
+  "#1d4ed8":"--accent","#2563eb":"--accent","#3b82f6":"--accent",
   "#38bdf8":"--info","#5ac8fa":"--info","#60a5fa":"--info","#70d7ff":"--info","#4da6ff":"--info","#64d2ff":"--teal","#06b6d4":"--teal",
-  // Rot → Danger
   "#ff453a":"--danger","#ef4444":"--danger","#f87171":"--danger","#dc2626":"--danger",
   "#b91c1c":"--danger","#c0392b":"--danger","#fca5a5":"--danger","#fecaca":"--danger",
   "#ff5555":"--danger","#ff6b6b":"--danger","#ff6b60":"--danger","#f43f5e":"--danger",
   "#ff3b5c":"--danger","#ee5a24":"--danger","#d4556b":"--danger","#ff6482":"--danger",
-  // Pink/Magenta → Pink
   "#ff375f":"--pink","#ec4899":"--pink","#f472b6":"--pink","#f9a8d4":"--pink","#8e4585":"--pink",
-  // Amber/Orange/Gold → Warn
   "#ff9f0a":"--warn","#f59e0b":"--warn","#fbbf24":"--warn","#d97706":"--warn","#fb923c":"--warn",
   "#f97316":"--warn","#ff8c00":"--warn","#ffb347":"--warn","#ffb340":"--warn","#fcd34d":"--warn",
   "#ffe066":"--warn","#fef3c7":"--warn","#c9a962":"--warn","#b8944d":"--warn","#ff9500":"--warn","#fb8c00":"--warn","#ffb800":"--warn",
-  // Grün → OK/Success
   "#30d158":"--ok","#22c55e":"--ok","#16a34a":"--ok","#34d399":"--ok","#4ade80":"--ok",
   "#86efac":"--ok","#2bd4a8":"--ok","#10b981":"--ok","#34c759":"--ok","#4cd964":"--ok","#d1fae5":"--ok",
 };
 
-// ── Graustufen-Zuordnung nach Helligkeit (sat<0.10) ──
+// ── Bekannte kühle Neutral-Rampen (Tailwind Slate/Zinc/Gray, Apple-Grautöne) ──
+// leicht getönte UI-Grautöne, die der reine Sättigungsfilter (<0.10) verfehlt.
+const NEUTRAL = new Set([
+  // Slate
+  "#f8fafc","#f1f5f9","#e2e8f0","#cbd5e1","#94a3b8","#64748b","#475569","#334155","#1e293b","#0f172a",
+  // Zinc/Neutral/Gray (kühl)
+  "#fafafa","#f4f4f5","#e4e4e7","#d4d4d8","#a1a1aa","#71717a","#52525b","#3f3f46","#27272a","#18181b",
+  "#e5e7eb","#9ca3af","#6b7280","#4b5563","#374151","#1f2937","#111827",
+  // diverse kühl getönte Grautöne, die in der App vorkommen
+  "#99a3b8","#8794a0","#6b7480","#1a1a24","#f5f5f7","#fafbfc","#e4e4eb","#f5f5f7",
+]);
+
+// ── Graustufen-Zuordnung nach Helligkeit (identisch zu Teil A) ──
 function grayToken(l){
   if(l<0.085) return "--bg";
   if(l<0.16)  return "--panel";
@@ -78,7 +98,6 @@ function grayToken(l){
   return "--text";
 }
 
-// rgba/rgb/hsl: nur ein paar eindeutige Overlay-Fälle behandeln, Rest lassen.
 function mapAlpha(raw){
   const m = raw.match(/^rgba?\(([^)]*)\)$/i); if(!m) return null;
   const parts = m[1].split(",").map(s=>s.trim());
@@ -94,59 +113,72 @@ function mapAlpha(raw){
     if(EXCLUDE.has(hx)) return null;
     return CHROMA[hx] ? "var("+CHROMA[hx]+")" : null;
   }
-  // Weiß-Overlays → theme-aware Border/Hover (kein reines Weiß mehr)
   if(white){ if(a<=0.07) return "var(--hover)"; if(a<=0.14) return "var(--border)"; return "var(--border2)"; }
-  // Schwarz-Overlays (Schatten/Scrim) bleiben — in beiden Themes dunkel = ok.
-  if(black) return null;
-  // Neon-Indigo/Violett- & Aktions-Blau-Tints → weicher Akzent
+  if(black) return null; // Schwarz-Overlays (Schatten/Scrim) bleiben
   const {h,s}=rgbToHsl(r,g,b);
-  if(s>0.25 && h>=200 && h<=290) return "var(--accent-soft)";
+  if(s>0.25 && h>=200 && h<=290) return "var(--accent-soft)"; // Neon-Indigo/Violett-Tints
   return null; // andere farbige Tints (Status) unangetastet lassen
 }
 
-// ── Bekannte kühle Neutral-Rampen (Tailwind Slate/Zinc/Gray, Apple-Grautöne) ──
-// leicht getönte UI-Grautöne, die der reine Sättigungsfilter (<0.10) verfehlt.
-const NEUTRAL = new Set([
-  "#f8fafc","#f1f5f9","#e2e8f0","#cbd5e1","#94a3b8","#64748b","#475569","#334155","#1e293b","#0f172a",
-  "#fafafa","#f4f4f5","#e4e4e7","#d4d4d8","#a1a1aa","#71717a","#52525b","#3f3f46","#27272a","#18181b",
-  "#e5e7eb","#9ca3af","#6b7280","#4b5563","#374151","#1f2937","#111827",
-  "#99a3b8","#8794a0","#6b7480","#f5f5f7","#fafbfc","#e4e4eb",
-]);
-
 function mapColor(raw){
   const c = raw.toLowerCase().replace(/\s+/g,"");
+  if(SKIP_LITERAL.has(c)) return null;
   if(/^rgba?\(/.test(c) || /^hsla?\(/.test(c)) return mapAlpha(c);
-  // hex
   const hx = expand3(c);
-  if(!/^#[0-9a-f]{6}$/.test(hx)) return null; // 8-stellige / ungültige lassen
+  if(!/^#[0-9a-f]{6}$/.test(hx)) return null; // 4-/7-/8-stellige & ungültige lassen
   if(EXCLUDE.has(hx) || EXCLUDE.has(c)) return null;
   if(CHROMA[hx]) return "var("+CHROMA[hx]+")";
   const {r,g,b}=hexToRgb(hx); const {s,l}=rgbToHsl(r,g,b);
-  if(s<0.10) return "var("+grayToken(l)+")"; // Graustufe
-  if(NEUTRAL.has(hx)) return "var("+grayToken(l)+")"; // bekannte kühle Neutral-Rampe
+  if(s<0.10) return "var("+grayToken(l)+")";            // echte Graustufe
+  if(NEUTRAL.has(hx)) return "var("+grayToken(l)+")";   // bekannte kühle Neutral-Rampe
   return null; // chromatische Nicht-Chrome-Farbe → bewahren
 }
 
-// ── Sweep nur in <style>-Blöcken ──
+// ── Inline-style-Wert verarbeiten: ${…}-Spans überspringen ──
 const colorRe = /#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/g;
-let src = fs.readFileSync(FILE,"utf8");
 let replaced=0, left=0; const leftCounts={}; const samples=[];
-const out = src.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (m,open,body,close)=>{
-  const nb = body.replace(colorRe, (col)=>{
-    // 8-stellige Hex (#rrggbbaa) nie anfassen
-    if(/^#[0-9a-fA-F]{7,8}$/.test(col)) { left++; leftCounts[col.toLowerCase()]=(leftCounts[col.toLowerCase()]||0)+1; return col; }
+
+function transformCssSpan(text){
+  return text.replace(colorRe, (col)=>{
+    if(/^#[0-9a-fA-F]{7,8}$/.test(col)){ left++; tally(col); return col; } // #rrggbb(aa) alpha
     const mapped = mapColor(col);
-    if(mapped){ replaced++; if(samples.length<30 && Math.random()<0.04) samples.push(col+" → "+mapped); return mapped; }
-    left++; const k=col.toLowerCase().replace(/\s+/g,""); leftCounts[k]=(leftCounts[k]||0)+1; return col;
+    if(mapped){ replaced++; if(samples.length<40 && Math.random()<0.06) samples.push(col+" → "+mapped); return mapped; }
+    left++; tally(col); return col;
   });
-  return open+nb+close;
+}
+function tally(col){ const k=col.toLowerCase().replace(/\s+/g,""); leftCounts[k]=(leftCounts[k]||0)+1; }
+
+// Wert in CSS- und ${…}-Interpolations-Segmente zerlegen; nur CSS transformieren.
+function transformStyleValue(val){
+  let out="", i=0, n=val.length;
+  while(i<n){
+    const dollar = val.indexOf("${", i);
+    if(dollar===-1){ out += transformCssSpan(val.slice(i)); break; }
+    out += transformCssSpan(val.slice(i, dollar));      // CSS vor der Interpolation
+    // balancierte ${…}-Span finden
+    let depth=0, j=dollar+1;
+    for(; j<n; j++){ const ch=val[j]; if(ch==="{") depth++; else if(ch==="}"){ depth--; if(depth===0){ j++; break; } } }
+    out += val.slice(dollar, j);                         // Interpolation unverändert
+    i = j;
+  }
+  return out;
+}
+
+// ── Nur Inline-style-Attribute treffen (doppelt & einfach gequotet) ──
+let src = fs.readFileSync(FILE,"utf8");
+const attrRe = /style=("(?:[^"]*)"|'(?:[^']*)')/g;
+const out = src.replace(attrRe, (m, q)=>{
+  const quote = q[0];
+  const inner = q.slice(1, -1);
+  const nv = transformStyleValue(inner);
+  return "style="+quote+nv+quote;
 });
 
 console.log("Replaced literals:", replaced);
 console.log("Left untouched   :", left);
 console.log("\nSample replacements:");
 samples.forEach(s=>console.log("  "+s));
-console.log("\nTop 30 LEFT (untouched) literals — verify these are component/intentional:");
+console.log("\nTop 30 LEFT (untouched) literals — verify these are component/intentional/white-black:");
 Object.entries(leftCounts).sort((a,b)=>b[1]-a[1]).slice(0,30).forEach(([c,n])=>console.log("  "+String(n).padStart(4)+" "+c));
 
 if(WRITE){ fs.writeFileSync(FILE, out); console.log("\n✓ WROTE "+FILE); }
