@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Quantus</title>
+  <meta name="quantus-build" content="briefing-5p-autofit+messages · 2026-06-21" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -51386,7 +51387,12 @@ case "open-message": {
     ? '<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">' + _msgFiles.map((f, i) => {
         const ext = (f.name || '').split('.').pop()?.toUpperCase() || 'FILE';
         const sizeStr = f.size ? (f.size > 1048576 ? (f.size/1048576).toFixed(1)+' MB' : (f.size/1024).toFixed(0)+' KB') : '';
-        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:12px"><span style="font-size:16px">📎</span><div style="flex:1;min-width:0;overflow:hidden"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(f.name) + '</div><div style="font-size:10px;color:var(--muted)">' + ext + (sizeStr?' · '+sizeStr:'') + '</div></div><a href="' + esc(f.url) + '" target="_blank" rel="noopener" class="btn sm" style="text-decoration:none">⬇️</a><button class="btn sm ghost danger" data-action="delete-message-file" data-id="' + msgId + '" data-file-idx="' + i + '">🗑</button></div>';
+        // Briefing attachments open via the auth-aware briefingOpen() (same PDF as the Briefings app);
+        // ordinary uploads keep the plain download link.
+        const _openBtn = f.briefingId
+          ? '<button class="btn sm" onclick="briefingOpen(\'' + esc(f.briefingId) + '\')" title="Öffnen" style="white-space:nowrap">📄 Öffnen</button>'
+          : '<a href="' + esc(f.url) + '" target="_blank" rel="noopener" class="btn sm" style="text-decoration:none">⬇️</a>';
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:12px"><span style="font-size:16px">📎</span><div style="flex:1;min-width:0;overflow:hidden"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(f.name) + '</div><div style="font-size:10px;color:var(--muted)">' + ext + (sizeStr?' · '+sizeStr:'') + '</div></div>' + _openBtn + '<button class="btn sm ghost danger" data-action="delete-message-file" data-id="' + msgId + '" data-file-idx="' + i + '">🗑</button></div>';
       }).join('') + '</div>'
     : '<div class="mini" style="opacity:.5;margin-top:6px">Keine Anhänge.</div>';
   
@@ -96941,6 +96947,7 @@ window.addEventListener("hashchange", function(){
       var data = await r.json();
       _items = (data && Array.isArray(data.items)) ? data.items : [];
     } catch(e){ _error = e.message || String(e); _items = []; }
+    try { syncToMessages(_items); } catch(e){}
     renderList();
   };
 
@@ -97020,6 +97027,76 @@ window.addEventListener("hashchange", function(){
       window._briefingsLoad();
     } catch(e){ bToast("err", "Löschen fehlgeschlagen", e.message || String(e)); }
   };
+
+  // ── Auto-import delivered briefings into the Messages app (like an inbox) ──
+  // Each briefing also surfaces as a native message whose PDF attachment opens
+  // via the auth-aware briefingOpen() — the exact same PDF as the Briefings app.
+  // Idempotent: keyed by briefing id; a localStorage set prevents re-creating a
+  // message the user has deleted.
+  var MSG_IMPORTED_KEY = "quantus_briefings_msgimported";
+  function importedSet(){ try { return new Set(JSON.parse(localStorage.getItem(MSG_IMPORTED_KEY) || "[]")); } catch(e){ return new Set(); } }
+  function markImported(ids){ try { var s = importedSet(); ids.forEach(function(id){ s.add(id); }); localStorage.setItem(MSG_IMPORTED_KEY, JSON.stringify(Array.from(s))); } catch(e){} }
+  function fmtDateForTitle(date){ var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(date || "")); return m ? (m[3] + "." + m[2] + "." + m[1]) : (date || ""); }
+
+  function syncToMessages(items){
+    try {
+      if (!window.APP || !APP.state || !APP.state.data || !APP.state.data.entities) return 0;
+      var e = APP.state.data.entities;
+      if (!e.scheduledMessages) e.scheduledMessages = {};
+      var imported = importedSet();
+      var added = [];
+      (items || []).forEach(function(b){
+        if (!b || !b.id) return;
+        var msgId = "briefmsg_" + b.id;
+        if (e.scheduledMessages[msgId]) return;   // message already exists
+        if (imported.has(b.id)) return;           // previously imported (respect user deletion)
+        var when = b.createdAt || new Date().toISOString();
+        var dateLabel = fmtDateForTitle(b.date);
+        var fname = b.filename || ("briefing-" + (b.date || "") + ".pdf");
+        e.scheduledMessages[msgId] = {
+          id: msgId,
+          title: (b.title || "Morning Briefing") + (dateLabel ? " " + dateLabel : ""),
+          content: "Dein Morning Briefing ist eingetroffen. Öffne das PDF (5 Seiten) über den Anhang unten.",
+          scheduledAt: when, deliverAt: when, deliveredAt: when,
+          isDelivered: true, isRead: false, isPinned: false, recurrence: "none",
+          priority: 2, type: "morning-briefing", sourceType: "Morning Briefing",
+          createdAt: when,
+          files: [{
+            id: "bf_" + b.id, name: fname, originalName: fname,
+            size: b.size || 0, type: b.contentType || "application/pdf",
+            url: FN + "/briefing-get?id=" + encodeURIComponent(b.id),
+            briefingId: b.id, isBriefing: true, uploadedAt: when
+          }],
+          linkedTasks: [], linkedProjects: [], linkedOrganizations: [], linkedNotes: [], linkedGoals: [],
+          tags: ["briefing", "morning-briefing"]
+        };
+        added.push(b.id);
+      });
+      if (added.length){
+        markImported(added);
+        try { if (typeof scheduleSave === "function") scheduleSave(); } catch(e){}
+        try { if (typeof render === "function") render(); } catch(e){}
+      }
+      return added.length;
+    } catch(err){ try { console.warn("[briefings] syncToMessages failed", err); } catch(e){} return 0; }
+  }
+  window.briefingSyncToMessages = syncToMessages;
+
+  // Run once shortly after boot (waits until app state is loaded) so delivered
+  // briefings show up in Messages even without opening the Briefings app.
+  function bootSyncMessages(tries){
+    tries = tries || 0;
+    var ready = false;
+    try { ready = !!(window.APP && APP.state && APP.state.data && APP.state.data.entities); } catch(e){}
+    if (!ready){ if (tries < 20) setTimeout(function(){ bootSyncMessages(tries + 1); }, 1500); return; }
+    fetch(FN + "/briefing-list", { headers: authHeaders(), cache: "no-store" })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(data){ if (data && Array.isArray(data.items)) syncToMessages(data.items); })
+      .catch(function(){});
+  }
+  try { setTimeout(function(){ bootSyncMessages(0); }, 3500); } catch(e){}
+
+  try { console.info("%cQuantus build", "color:#C9A227;font-weight:700", "briefing-5p-autofit+messages · 2026-06-21"); } catch(e){}
 })();
 </script>
 

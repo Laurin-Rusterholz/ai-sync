@@ -4,14 +4,18 @@
 //  Pure-JS, dependency-light renderer (pdf-lib + StandardFonts only — no font
 //  files on disk, no native bindings → robust to bundle in a Netlify Function).
 //
-//  Produces a fixed, print-ready briefing PDF (A4):
+//  Produces a fixed, print-ready briefing PDF (A4) that ALWAYS fills EXACTLY
+//  5 pages, regardless of how long or short the text is:
 //    • dark-blue header band on every page
 //    • golden accent line directly beneath the header
 //    • golden vertical accent bar on the left of every page
-//    • calm typography (Helvetica display / Times body), generous leading
-//    • the 9th section is the centerpiece: its own page, centered & vertically
-//      balanced, set in larger type for emphasis (the "longest & central" one)
-//    • always at least 5 pages (short briefings get trailing template pages)
+//    • calm typography (Helvetica display / Times body)
+//    • AUTO-FIT: a binary search picks the body font size (9–13pt) and a
+//      line-height / spacing "stretch" so the whole text fills the 5 pages
+//      evenly — short text is set larger & airier, long text more compact.
+//      No forced page breaks, so no half-empty pages.
+//    • the 9th section gets a subtle inline accent (gold rule + centered
+//      heading) WITHOUT a page break.
 //
 //  Input: plain text. Sections are separated by BLANK LINES. A section may begin
 //  with a short heading line (<= 64 chars, not ending in . ! ?). Lines that
@@ -39,13 +43,13 @@ const CONTENT_L = 76;
 const CONTENT_R = PAGE_W - 56;
 const CONTENT_W = CONTENT_R - CONTENT_L;
 const CONTENT_BOTTOM = 72;
-const MIN_PAGES = 5;
 
-// ── typography ──
-const BODY_SIZE = 11, BODY_LEAD = 16.5;
-const HEAD_SIZE = 13.5;
-const SECTION_GAP = 15;
-const FEATURE_HEAD = 18, FEATURE_BODY = 13, FEATURE_LEAD = 21;
+// ── auto-fit bounds ──
+const TARGET_PAGES = 5;
+const SIZE_MIN = 9, SIZE_MAX = 14;   // 9–13 is the sweet spot; 14 gives a little headroom to fill short briefings
+const SIZE_EMERGENCY_MIN = 5;        // only used for pathologically long input
+const STRETCH_MIN = 1.0, STRETCH_MAX = 2.6;
+const LEAD_RATIO = 1.5;
 const BULLET = "•";
 
 const MONTHS_DE = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
@@ -150,9 +154,6 @@ export async function renderBriefingPdf({ briefingText, date, title } = {}) {
   const fontBody  = await doc.embedFont(StandardFonts.TimesRoman);
   const fontMeta  = await doc.embedFont(StandardFonts.Helvetica);
 
-  const pages = [];
-  const ctx = { page: null, y: 0 };
-
   function drawTemplate(page, isFirst) {
     const headerH = isFirst ? HEADER_H_FIRST : HEADER_H_REST;
     page.drawRectangle({ x: 0, y: PAGE_H - headerH, width: PAGE_W, height: headerH, color: DARK_BLUE });
@@ -179,93 +180,140 @@ export async function renderBriefingPdf({ briefingText, date, title } = {}) {
 
   function contentTop(isFirst) { return PAGE_H - (isFirst ? HEADER_H_FIRST : HEADER_H_REST) - ACCENT_H - 30; }
 
-  function newPage() {
-    const isFirst = pages.length === 0;
-    const page = doc.addPage([PAGE_W, PAGE_H]);
-    drawTemplate(page, isFirst);
-    pages.push(page);
-    ctx.page = page;
-    ctx.y = contentTop(isFirst);
-  }
-
-  function ensureSpace(h) { if (ctx.y - h < CONTENT_BOTTOM) newPage(); }
-
-  function drawWrapped(text, font, size, leading, color, align) {
-    for (const ln of wrapLine(text, font, size, CONTENT_W)) {
-      ensureSpace(leading);
-      let x = CONTENT_L;
-      if (align === "center") x = CONTENT_L + (CONTENT_W - font.widthOfTextAtSize(ln, size)) / 2;
-      ctx.page.drawText(ln, { x, y: ctx.y - size, size, font, color });
-      ctx.y -= leading;
-    }
-  }
-
-  function drawHeading(text, size) {
-    ctx.y -= 4;
-    drawWrapped(text, fontHead, size, size + 5, GOLD, "left");
-    ctx.y -= 4;
-  }
-
-  function drawItems(items, { bodySize, bodyLead, align }) {
-    for (const it of items) {
-      if (it.type === "li" && align !== "center") {
-        const indent = 16;
-        const lines = wrapLine(it.text, fontBody, bodySize, CONTENT_W - indent);
-        ensureSpace(bodyLead);
-        ctx.page.drawText(BULLET, { x: CONTENT_L + 2, y: ctx.y - bodySize, size: bodySize, font: fontBody, color: GOLD });
-        lines.forEach((ln, idx) => {
-          if (idx > 0) ensureSpace(bodyLead);
-          ctx.page.drawText(ln, { x: CONTENT_L + indent, y: ctx.y - bodySize, size: bodySize, font: fontBody, color: INK });
-          ctx.y -= bodyLead;
-        });
-        ctx.y -= 2;
-      } else {
-        const text = (it.type === "li" ? BULLET + " " : "") + it.text;
-        drawWrapped(text, fontBody, bodySize, bodyLead, INK, align);
-        ctx.y -= 6;
-      }
-    }
-  }
-
-  function featureHeight(sec) {
-    let h = 16;
-    if (sec.heading) h += wrapLine(sec.heading, fontHead, FEATURE_HEAD, CONTENT_W).length * (FEATURE_HEAD + 6) + 10;
-    for (const it of sec.items) {
-      const text = (it.type === "li" ? BULLET + " " : "") + it.text;
-      h += wrapLine(text, fontBody, FEATURE_BODY, CONTENT_W).length * FEATURE_LEAD + 6;
-    }
-    return h;
-  }
-
-  function renderFeature(sec) {
-    newPage();
-    const top = ctx.y;
-    const avail = top - CONTENT_BOTTOM;
-    const blockH = featureHeight(sec);
-    if (blockH < avail) ctx.y = top - (avail - blockH) / 2;
-    const ruleW = 64;
-    ctx.page.drawRectangle({ x: CONTENT_L + (CONTENT_W - ruleW) / 2, y: ctx.y + 4, width: ruleW, height: 2, color: GOLD });
-    ctx.y -= 18;
-    if (sec.heading) { drawWrapped(sec.heading, fontHead, FEATURE_HEAD, FEATURE_HEAD + 6, DARK_BLUE, "center"); ctx.y -= 8; }
-    drawItems(sec.items, { bodySize: FEATURE_BODY, bodyLead: FEATURE_LEAD, align: "center" });
-  }
-
   const sections = parseSections(briefingText);
-  newPage(); // page 1
 
-  sections.forEach((sec, i) => {
-    if (i === 8) { renderFeature(sec); return; } // 9th section = centerpiece
-    if (sec.heading) drawHeading(sec.heading, HEAD_SIZE);
-    drawItems(sec.items, { bodySize: BODY_SIZE, bodyLead: BODY_LEAD, align: "left" });
-    ctx.y -= SECTION_GAP;
-  });
+  // Build a flat list of layout "atoms" for a given body size + stretch factor.
+  // Atom: { h: vertical advance, gap?: true, draw?: (page, yTop) => void }.
+  // Gaps at the very top of a fresh page are dropped, so pages have no wasted
+  // top space. Every atom is a single line / small gap → fine-grained
+  // pagination, which lets the stretch search fill pages precisely.
+  function buildAtoms(size, stretch) {
+    const lead     = size * LEAD_RATIO * stretch;
+    const hSize    = size + 2.5;
+    const hLead    = hSize * 1.35 * stretch;
+    const gSection = size * 1.10 * stretch;
+    const gHeadTop = size * 0.45 * stretch;
+    const gHeadBot = size * 0.30 * stretch;
+    const gPara    = size * 0.55 * stretch;
+    const gBullet  = size * 0.18 * stretch;
+    const ruleH    = size * 0.90 * stretch;
+    const indent   = Math.max(14, size * 1.5);
+    const atoms = [];
+    const gap = (h) => atoms.push({ h, gap: true });
 
-  while (pages.length < MIN_PAGES) newPage();
+    sections.forEach((sec, si) => {
+      if (si > 0) gap(gSection);
+      const isFeature = (si === 8); // 9th section: subtle inline accent (no break)
 
-  // footer pass (total page count is now known)
-  const total = pages.length;
+      if (isFeature) {
+        gap(gHeadTop);
+        atoms.push({ h: ruleH, draw: (page, y) => {
+          const w = 64;
+          page.drawRectangle({ x: CONTENT_L + (CONTENT_W - w) / 2, y: y - ruleH * 0.5, width: w, height: 2, color: GOLD });
+        }});
+      }
+
+      if (sec.heading) {
+        if (!isFeature) gap(gHeadTop);
+        const hs = isFeature ? hSize + 1.5 : hSize;
+        const hColor = isFeature ? DARK_BLUE : GOLD;
+        const center = isFeature;
+        for (const ln of wrapLine(sec.heading, fontHead, hs, CONTENT_W)) {
+          atoms.push({ h: hLead, draw: (page, y) => {
+            let x = CONTENT_L;
+            if (center) x = CONTENT_L + (CONTENT_W - fontHead.widthOfTextAtSize(ln, hs)) / 2;
+            page.drawText(ln, { x, y: y - hs, size: hs, font: fontHead, color: hColor });
+          }});
+        }
+        gap(gHeadBot);
+      }
+
+      sec.items.forEach((it) => {
+        if (it.type === "li") {
+          const lines = wrapLine(it.text, fontBody, size, CONTENT_W - indent);
+          lines.forEach((ln, idx) => {
+            atoms.push({ h: lead, draw: (page, y) => {
+              if (idx === 0) page.drawText(BULLET, { x: CONTENT_L + 2, y: y - size, size, font: fontBody, color: GOLD });
+              page.drawText(ln, { x: CONTENT_L + indent, y: y - size, size, font: fontBody, color: INK });
+            }});
+          });
+          gap(gBullet);
+        } else {
+          for (const ln of wrapLine(it.text, fontBody, size, CONTENT_W)) {
+            atoms.push({ h: lead, draw: (page, y) => {
+              page.drawText(ln, { x: CONTENT_L, y: y - size, size, font: fontBody, color: INK });
+            }});
+          }
+          gap(gPara);
+        }
+      });
+    });
+
+    while (atoms.length && atoms[atoms.length - 1].gap) atoms.pop();
+    return atoms;
+  }
+
+  // Paginate atoms. Returns the page count; when commit=true, also draws.
+  // Measurement and committing share this exact logic, so the page count is
+  // identical between the dry-run search and the final render.
+  function layout(atoms, commit) {
+    let pageCount = 0, y = 0, page = null, atTop = true;
+    const startPage = () => {
+      pageCount++;
+      const isFirst = pageCount === 1;
+      if (commit) { page = doc.addPage([PAGE_W, PAGE_H]); drawTemplate(page, isFirst); }
+      y = contentTop(isFirst);
+      atTop = true;
+    };
+    startPage();
+    for (const a of atoms) {
+      if (a.gap) {
+        if (atTop) continue;
+        if (y - a.h < CONTENT_BOTTOM) { startPage(); continue; }
+        y -= a.h; continue;
+      }
+      if (y - a.h < CONTENT_BOTTOM) startPage();
+      if (commit) a.draw(page, y);
+      y -= a.h;
+      atTop = false;
+    }
+    return pageCount;
+  }
+
+  const fits = (sz, st) => layout(buildAtoms(sz, st), false) <= TARGET_PAGES;
+
+  // ── Auto-fit step 1: largest body size that fits in <= 5 pages ──
+  let size;
+  if (fits(SIZE_MAX, STRETCH_MIN)) {
+    size = SIZE_MAX;
+  } else {
+    let lo, hi;
+    if (fits(SIZE_MIN, STRETCH_MIN)) { lo = SIZE_MIN; hi = SIZE_MAX; }      // normal: shrink within 9–13
+    else { lo = SIZE_EMERGENCY_MIN; hi = SIZE_MIN; }                         // pathological: shrink below 9
+    size = lo;
+    for (let i = 0; i < 14; i++) { const m = (lo + hi) / 2; if (fits(m, STRETCH_MIN)) { size = m; lo = m; } else hi = m; }
+  }
+
+  // ── Auto-fit step 2: largest stretch that still fits in <= 5 pages (fills them) ──
+  let stretch = STRETCH_MIN;
+  if (fits(size, STRETCH_MAX)) {
+    stretch = STRETCH_MAX;
+  } else {
+    let lo = STRETCH_MIN, hi = STRETCH_MAX;
+    for (let i = 0; i < 16; i++) { const m = (lo + hi) / 2; if (fits(size, m)) { stretch = m; lo = m; } else hi = m; }
+  }
+
+  // ── commit ──
+  let pageCount = layout(buildAtoms(size, stretch), true);
+  // Guarantee EXACTLY 5 pages. (Padding only triggers for near-empty input that
+  // even the maximum stretch cannot fill; the template still renders fully.)
+  while (pageCount < TARGET_PAGES) { drawTemplate(doc.addPage([PAGE_W, PAGE_H]), false); pageCount++; }
+
+  // footer pass (page x / total)
+  const all = doc.getPages();
+  const total = all.length;
   const footerMeta = safeTitle + (safeDate ? "  ·  " + formatDateLong(safeDate) : "");
-  pages.forEach((page, idx) => {
+  all.forEach((page, idx) => {
     page.drawRectangle({ x: CONTENT_L, y: 58, width: CONTENT_W, height: 0.6, color: HAIRLINE });
     page.drawText(footerMeta, { x: CONTENT_L, y: 44, size: 9, font: fontMeta, color: MUTED });
     const label = "Seite " + (idx + 1) + " / " + total;
