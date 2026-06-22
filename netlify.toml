@@ -12,3 +12,16 @@
     Access-Control-Allow-Methods = "GET, PUT, OPTIONS"
     Access-Control-Allow-Headers = "Content-Type, Authorization, If-Match"
     Access-Control-Expose-Headers = "ETag"
+
+# ES-Module (.mjs) müssen mit JS-MIME-Type ausgeliefert werden, sonst lehnt der
+# Browser den dynamischen import() ab. Vendored PDF.js (Tracking-Prevention-sicher).
+[[headers]]
+  for = "/vendor/pdfjs/*"
+  [headers.values]
+    Content-Type = "text/javascript; charset=utf-8"
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/vendor/pdf-lib.min.js"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

@@ -43504,33 +43504,28 @@ async function extractTextFromKnowledgeFile(file) {
 
 // PDF.js dynamisch laden
 async function loadPDFLibrary() {
-  if (window.pdfjsLib) return true;
-  
-  // Reihenfolge: unpkg → jsdelivr → cdnjs (cdnjs wird oft blockiert)
-  const urls = [
-    "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.js",
-    "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"
+  if (window.pdfjsLib && window.pdfjsLib.getDocument) return true;
+
+  // PDF.js v4 ist ein ES-Modul (.mjs). Reihenfolge: lokal (same-origin, immer
+  // erreichbar — kein CDN/Tracking-Prevention-Problem) → unpkg → jsdelivr.
+  const sources = [
+    { js: "/vendor/pdfjs/pdf.min.mjs",                                        worker: "/vendor/pdfjs/pdf.worker.min.mjs" },
+    { js: "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.mjs",            worker: "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.worker.min.mjs" },
+    { js: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.mjs", worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.worker.min.mjs" }
   ];
-  
-  for (const url of urls) {
+
+  for (const src of sources) {
     try {
-      await new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = url;
-        script.crossOrigin = "anonymous";
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-      });
-      
-      if (window.pdfjsLib) {
-        pdfjsLib.GlobalWorkerOptions = pdfjsLib.GlobalWorkerOptions || {};
-        pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+      const mod = await import(/* webpackIgnore: true */ src.js);
+      const lib = (mod && mod.getDocument) ? mod : (mod && mod.default && mod.default.getDocument ? mod.default : null);
+      if (lib && lib.getDocument) {
+        window.pdfjsLib = lib;
+        try { lib.GlobalWorkerOptions.workerSrc = src.worker; } catch (e) {}
+        console.log("✓ PDF.js geladen von:", src.js);
         return true;
       }
     } catch (e) {
-      console.warn("PDF.js laden fehlgeschlagen:", url);
+      console.warn("PDF.js laden fehlgeschlagen:", src.js, e && e.message);
     }
   }
   return false;
@@ -68528,10 +68523,9 @@ document.addEventListener("drop", function(e) {
 
 /* ===== v6 Patch (Ideas+Tags+Meetings+Agenda+Calendar) ===== */
 try{
-  // PDF.js Worker (fix) — unpkg statt cdnjs (oft von Tracking-Prevention blockiert)
-  if (window.pdfjsLib && (!pdfjsLib.GlobalWorkerOptions || !pdfjsLib.GlobalWorkerOptions.workerSrc)){
-    pdfjsLib.GlobalWorkerOptions = pdfjsLib.GlobalWorkerOptions || {};
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.worker.min.js";
+  // PDF.js Worker (fix) — lokal/vendored statt CDN (Tracking-Prevention-sicher)
+  if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc){
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
   }
 }catch(e){}
 
@@ -70018,17 +70012,10 @@ window.searchAllData = searchAllData;
     });
   }
   async function __v7_ensurePdfJs(){
-    if (window.pdfjsLib) return true;
-    const urls = [
-      "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.js",
-      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js"
-    ];
-    for (const u of urls){
-      const ok = await __v7_loadScript(u);
-      if (ok && window.pdfjsLib) return true;
-    }
-    return !!window.pdfjsLib;
+    if (window.pdfjsLib && window.pdfjsLib.getDocument) return true;
+    // Auf den zentralen Loader stützen (lokal/vendored ESM zuerst, dann CDN)
+    if (typeof loadPDFLibrary === "function") { try { return await loadPDFLibrary(); } catch(e){} }
+    return !!(window.pdfjsLib && window.pdfjsLib.getDocument);
   }
   // Override extractTextFromFile to always use disableWorker (fix for local files)
   try{
@@ -98339,14 +98326,15 @@ window.addEventListener("hashchange", function(){
   async function ensurePdfJs(){ if (window.pdfjsLib) return true; if (typeof window.loadPDFLibrary === "function"){ try { return await window.loadPDFLibrary(); } catch(e){} } return !!window.pdfjsLib; }
   async function ensurePdfLib(){
     if (window.PDFLib) return true;
+    // Lokal (same-origin) zuerst — unabhängig von CDN/Tracking-Prevention; danach CDN-Fallback.
     const urls = [
+      "/vendor/pdf-lib.min.js",
       "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js",
-      "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"
+      "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"
     ];
     for (const url of urls){
       try {
-        await new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=url; s.crossOrigin="anonymous"; s.onload=res; s.onerror=rej; setTimeout(()=>rej(new Error("timeout")), 15000); document.head.appendChild(s); });
+        await new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=url; if(/^https?:/.test(url)) s.crossOrigin="anonymous"; s.onload=res; s.onerror=rej; setTimeout(()=>rej(new Error("timeout")), 15000); document.head.appendChild(s); });
         if (window.PDFLib) return true;
       } catch(e){ console.warn("pdf-lib laden fehlgeschlagen:", url); }
     }
