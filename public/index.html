@@ -43506,14 +43506,13 @@ async function extractTextFromKnowledgeFile(file) {
 async function loadPDFLibrary() {
   if (window.pdfjsLib && window.pdfjsLib.getDocument) return true;
 
-  // PDF.js v4 ist ein ES-Modul; via import() ist die Datei-Endung egal. Wir nutzen
-  // bevorzugt .js, weil Netlify .js GARANTIERT als text/javascript ausliefert —
-  // .mjs bekommt dort teils einen falschen MIME-Type, sodass das Modul trotz
-  // HTTP 200 nicht ausgeführt wird (window.pdfjsLib bliebe undefined). Reihenfolge:
-  // lokal .js → lokal .mjs → CDN.
+  // PDF.js v4 ist ein ES-Modul; via import() ist die Datei-Endung egal. Wir laden
+  // aus dem frischen, nie zuvor angefragten Pfad /vendor/pdf/ (.js → Netlify liefert
+  // GARANTIERT text/javascript; kein gecachter 404 wie zuvor unter /vendor/pdfjs/).
+  // Reihenfolge: /vendor/pdf/ → alter Pfad (Fallback) → CDN.
   const sources = [
+    { js: "/vendor/pdf/pdf.min.js",                                           worker: "/vendor/pdf/pdf.worker.min.js" },
     { js: "/vendor/pdfjs/pdf.min.js",                                         worker: "/vendor/pdfjs/pdf.worker.min.js" },
-    { js: "/vendor/pdfjs/pdf.min.mjs",                                        worker: "/vendor/pdfjs/pdf.worker.min.mjs" },
     { js: "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.mjs",            worker: "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.worker.min.mjs" },
     { js: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.mjs", worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.worker.min.mjs" }
   ];
@@ -68527,9 +68526,9 @@ document.addEventListener("drop", function(e) {
 
 /* ===== v6 Patch (Ideas+Tags+Meetings+Agenda+Calendar) ===== */
 try{
-  // PDF.js Worker (fix) — lokal/vendored .js (Netlify-MIME-sicher) statt CDN
+  // PDF.js Worker (fix) — frischer lokaler .js-Pfad (Netlify-MIME-sicher, kein gecachter 404)
   if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc){
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.js";
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf/pdf.worker.min.js";
   }
 }catch(e){}
 
@@ -98293,7 +98292,7 @@ window.addEventListener("hashchange", function(){
   }
   try { setTimeout(function(){ bootSyncMessages(0); }, 3500); } catch(e){}
 
-  try { console.info("%cQuantus build", "color:#C9A227;font-weight:700", "briefing-5p-autofit+messages · 2026-06-21"); } catch(e){}
+  try { console.info("%cQuantus build", "color:#C9A227;font-weight:700", "pdf-editor+vendored-/vendor/pdf/ · 2026-06-22"); } catch(e){}
 })();
 </script>
 
@@ -98330,8 +98329,9 @@ window.addEventListener("hashchange", function(){
   async function ensurePdfJs(){ if (window.pdfjsLib) return true; if (typeof window.loadPDFLibrary === "function"){ try { return await window.loadPDFLibrary(); } catch(e){} } return !!window.pdfjsLib; }
   async function ensurePdfLib(){
     if (window.PDFLib) return true;
-    // Lokal (same-origin) zuerst — beide Pfade abdecken; danach CDN-Fallback.
+    // Frischer Pfad zuerst (kein gecachter 404), dann alte Pfade, dann CDN.
     const urls = [
+      "/vendor/pdf/pdf-lib.min.js",
       "/vendor/pdfjs/pdf-lib.min.js",
       "/vendor/pdf-lib.min.js",
       "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js",
