@@ -713,6 +713,20 @@
     .breadcrumb-sep{color:var(--muted);opacity:.5;user-select:none}
     .breadcrumb-current{color:var(--text);font-weight:700;padding:2px 6px;max-width:48ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+    /* Reusable Skeleton-Loader (Platzhalter während Inhalte laden) */
+    .skeleton{
+      position:relative;overflow:hidden;border-radius:8px;
+      background:var(--panel2);
+    }
+    .skeleton::after{
+      content:"";position:absolute;inset:0;transform:translateX(-100%);
+      background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);
+      animation:skeleton-shimmer 1.3s infinite;
+    }
+    @keyframes skeleton-shimmer{100%{transform:translateX(100%)}}
+    .skeleton-line{height:12px;margin:8px 0;border-radius:6px}
+    .skeleton-card{height:96px;margin:0 0 12px 0;border-radius:12px}
+
     /* Page Header */
     .page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
     .page-title h2{font-size:20px;font-weight:950;margin:0 0 4px 0;line-height:1.2;letter-spacing:.2px}
@@ -61559,6 +61573,24 @@ function initRecallLabApp() {
     rlNavigate("rl-browse");
   };
   
+  // Menschenlesbares "nächste Wiederholung"-Label pro Karte (SRS-Transparenz)
+  function rlNextReviewLabel(c) {
+    if (!c.srs || c.srs.phase === "new" || !c.srs.nextReview) return "🆕 Neu";
+    const ms = c.srs.nextReview - Date.now();
+    if (ms <= 0) return "🔴 Jetzt fällig";
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return "🟡 in " + mins + " Min";
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return "🟡 in " + hrs + " Std";
+    const days = Math.round(hrs / 24);
+    if (days === 1) return "📅 morgen";
+    if (days < 14) return "📅 in " + days + " Tagen";
+    const wks = Math.round(days / 7);
+    if (wks < 9) return "📅 in " + wks + " Wochen";
+    return "📅 in " + Math.round(days / 30) + " Monaten";
+  }
+  window.rlNextReviewLabel = rlNextReviewLabel;
+
   // Browse
   function renderRLBrowse(container) {
     container.innerHTML = `
@@ -61575,7 +61607,7 @@ function initRecallLabApp() {
                 <div class="rl-list-item">
                   <div style="flex:1;min-width:0">
                     <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rlEsc(c.front || "")}</div>
-                    <div style="font-size:11px;color:var(--muted)">${deck?.name || "-"} · ${c.srs ? Math.round(c.srs.intervalDays) + "d" : "Neu"}</div>
+                    <div style="font-size:11px;color:var(--muted)">${deck?.name || "-"} · ${rlNextReviewLabel(c)}</div>
                   </div>
                   <button class="rl-btn rl-btn-sm rl-btn-secondary" onclick="window.rlCreateTaskFromCard('${c.id}')" title="Aufgabe erstellen">✅</button>
                   <button class="rl-btn rl-btn-sm rl-btn-secondary" onclick="window.rlNavigate('rl-editor', {cardId:'${c.id}'})">✏️</button>
@@ -61601,7 +61633,7 @@ function initRecallLabApp() {
         <div class="rl-list-item">
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rlEsc(c.front || "")}</div>
-            <div style="font-size:11px;color:var(--muted)">${deck?.name || "-"}</div>
+            <div style="font-size:11px;color:var(--muted)">${deck?.name || "-"} · ${rlNextReviewLabel(c)}</div>
           </div>
           <button class="rl-btn rl-btn-sm rl-btn-secondary" onclick="window.rlCreateTaskFromCard('${c.id}')" title="Aufgabe erstellen">✅</button>
           <button class="rl-btn rl-btn-sm rl-btn-secondary" onclick="window.rlNavigate('rl-editor', {cardId:'${c.id}'})">✏️</button>
@@ -62001,8 +62033,24 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
   // Stats
   function renderRLStats(container) {
     const total = rlState.cards.length;
-    const reviews = rlState.reviewLogs.length;
-    
+    const logs = rlState.reviewLogs || [];
+    const reviews = logs.length;
+    const correct = logs.filter(l => l.rating && l.rating !== "again").length;
+    const successRate = reviews ? Math.round(correct / reviews * 100) : 0;
+    // Verteilung der nächsten Wiederholungen (Transparenz des SRS-Algorithmus)
+    const now = Date.now();
+    const dayMs = 86400000;
+    const endTomorrow = new Date(); endTomorrow.setHours(23, 59, 59, 999); endTomorrow.setDate(endTomorrow.getDate() + 1);
+    const endTomorrowMs = endTomorrow.getTime();
+    let dueNow = 0, dueTomorrow = 0, dueWeek = 0, neu = 0;
+    rlState.cards.forEach(c => {
+      const nr = c.srs && c.srs.nextReview;
+      if (!c.srs || c.srs.phase === "new" || !nr) { neu++; return; }
+      if (nr <= now) dueNow++;
+      else if (nr <= endTomorrowMs) dueTomorrow++;
+      else if (nr <= now + 7 * dayMs) dueWeek++;
+    });
+
     container.innerHTML = `
       <div class="rl-stats-grid">
         <div class="rl-stat-card">
@@ -62016,6 +62064,11 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
           <div class="rl-stat-label">Reviews Total</div>
         </div>
         <div class="rl-stat-card">
+          <div class="rl-stat-icon">✅</div>
+          <div class="rl-stat-value" style="color:var(--ok)">${successRate}%</div>
+          <div class="rl-stat-label">Erfolgsquote</div>
+        </div>
+        <div class="rl-stat-card">
           <div class="rl-stat-icon">🔥</div>
           <div class="rl-stat-value">${rlState.user.streak}</div>
           <div class="rl-stat-label">Streak</div>
@@ -62024,6 +62077,15 @@ Wie viele Kantone hat die Schweiz? | 26"></textarea>
           <div class="rl-stat-icon">⭐</div>
           <div class="rl-stat-value">${rlState.user.xp}</div>
           <div class="rl-stat-label">XP</div>
+        </div>
+      </div>
+      <div class="rl-card" style="margin-bottom:16px">
+        <div class="rl-card-title">📅 Nächste Wiederholungen</div>
+        <div class="rl-stats-grid" style="margin-top:12px">
+          <div class="rl-stat-card"><div class="rl-stat-value" style="color:#ffd60a">${dueNow}</div><div class="rl-stat-label">Jetzt fällig</div></div>
+          <div class="rl-stat-card"><div class="rl-stat-value">${dueTomorrow}</div><div class="rl-stat-label">Bis morgen</div></div>
+          <div class="rl-stat-card"><div class="rl-stat-value">${dueWeek}</div><div class="rl-stat-label">Diese Woche</div></div>
+          <div class="rl-stat-card"><div class="rl-stat-value" style="color:var(--accent)">${neu}</div><div class="rl-stat-label">Neu</div></div>
         </div>
       </div>
       <div class="rl-card">
@@ -75734,7 +75796,11 @@ Beginne direkt mit dem Text:`
     const content = document.getElementById('rhAnnotationsPanelContent');
     
     if (annotations.length === 0) {
-      content.innerHTML = `<div class="rh-empty-state" style="padding:20px"><div class="rh-empty-state-text">Keine Annotationen vorhanden.</div></div>`;
+      content.innerHTML = `<div class="rh-empty-state" style="padding:28px 16px">
+        <div class="rh-empty-state-icon">✍️</div>
+        <div class="rh-empty-state-title">Noch keine Annotationen</div>
+        <div class="rh-empty-state-text">Markiere Textstellen beim Lesen, um Notizen, Zitate und Vokabeln zu sammeln – sie erscheinen dann hier.</div>
+      </div>`;
       return;
     }
     
@@ -76590,8 +76656,11 @@ Antworte NUR als JSON:
         setupFileUpload();
         uploadSetupDone = true;
       }
-      
-      rhNavigateTo('library');
+
+      // Skeleton-Platzhalter zeigen, während die Bibliothek aufgebaut wird
+      const _grid = document.getElementById('rhBooksGrid');
+      if (_grid) _grid.innerHTML = '<div class="skeleton skeleton-card"></div>'.repeat(4);
+      requestAnimationFrame(() => rhNavigateTo('library'));
     }
   }
   window.openReadingHub = openReadingHub;
@@ -76607,7 +76676,24 @@ Antworte NUR als JSON:
     }
     
     console.log('Upload-Elemente gefunden');
-    
+
+    // Zentrale Validierung (Format + Größe) mit klaren Fehlermeldungen
+    const RH_MAX_PDF_MB = 30;
+    const handlePickedFile = (file) => {
+      if (!file) { rhToast('Keine Datei erkannt.', 'error'); return; }
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      if (!isPdf) { rhToast('Ungültiges Format — bitte eine PDF-Datei wählen.', 'error'); return; }
+      if (!file.size) { rhToast('Die Datei ist leer.', 'error'); return; }
+      if (file.size > RH_MAX_PDF_MB * 1024 * 1024) {
+        rhToast(`Datei zu groß (${(file.size / 1024 / 1024).toFixed(1)} MB) — maximal ${RH_MAX_PDF_MB} MB.`, 'error');
+        return;
+      }
+      rhProcessPDF(file).catch(err => {
+        console.error('rhProcessPDF Fehler:', err);
+        rhToast('Fehler bei der Verarbeitung: ' + (err?.message || err), 'error');
+      });
+    };
+
     // Click auf Upload-Zone
     uploadZone.onclick = function(e) {
       e.preventDefault();
@@ -76643,21 +76729,9 @@ Antworte NUR als JSON:
         return;
       }
       
-      const file = files[0];
-      console.log('Datei:', file.name, 'Typ:', file.type, 'Größe:', file.size);
-      
-      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-        console.log('PDF erkannt - starte Verarbeitung');
-        rhProcessPDF(file).catch(err => {
-          console.error('rhProcessPDF Fehler:', err);
-          rhToast('Fehler bei der Verarbeitung: ' + err.message, 'error');
-        });
-      } else {
-        console.warn('Keine PDF-Datei:', file.type);
-        rhToast('Bitte nur PDF-Dateien hochladen.', 'error');
-      }
+      handlePickedFile(files[0]);
     };
-    
+
     // File Input Change
     fileInput.onchange = function(e) {
       console.log('=== File Input Change ===');
@@ -76669,20 +76743,8 @@ Antworte NUR als JSON:
         return;
       }
       
-      const file = files[0];
-      console.log('Datei:', file.name, 'Typ:', file.type, 'Größe:', file.size);
-      
-      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-        console.log('PDF erkannt - starte Verarbeitung');
-        rhProcessPDF(file).catch(err => {
-          console.error('rhProcessPDF Fehler:', err);
-          rhToast('Fehler bei der Verarbeitung: ' + err.message, 'error');
-        });
-      } else {
-        console.warn('Keine PDF-Datei:', file.type);
-        rhToast('Bitte nur PDF-Dateien hochladen.', 'error');
-      }
-      
+      handlePickedFile(files[0]);
+
       // Reset für erneutes Hochladen derselben Datei
       fileInput.value = '';
     };
