@@ -98402,6 +98402,7 @@ window.addEventListener("hashchange", function(){
     scale:1.15, rotation:0, page:1, mode:"continuous", dark:false,
     tool:"select", color:"#ffd400", stroke:2,
     annots:{}, _draw:null, history:[], dirty:false, onSave:null,
+    selected:null,
     pendingSignature:null, pendingImage:null,
     search:{ term:"", hits:[], idx:-1 }, io:null, thumbIo:null,
   };
@@ -98470,6 +98471,13 @@ window.addEventListener("hashchange", function(){
     .pdfed-annot{position:absolute;box-sizing:border-box}
     .pdfed-annot .del{position:absolute;top:-10px;right:-10px;width:20px;height:20px;border-radius:50%;background:var(--danger,#e5765a);color:#fff;border:none;cursor:pointer;font-size:12px;line-height:18px;display:none;z-index:5;padding:0}
     .pdfed-annot:hover .del{display:block}
+    .pdfed-annot.sel{outline:2px dashed var(--accent,#45c198);outline-offset:2px;z-index:4}
+    .pdfed-annot.sel .del{display:block}
+    .pdfed-annot.text.editing{outline:2px solid var(--accent,#45c198);cursor:text;background:rgba(69,193,152,.06)}
+    .pdfed-notepop{position:fixed;z-index:100003;width:260px;background:var(--panel,#212830);border:1px solid var(--border,#3b4550);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:10px}
+    .pdfed-notepop textarea{width:100%;height:90px;resize:vertical;background:var(--panel2,#2d3640);color:var(--text,#eef0f2);border:1px solid var(--border,#3b4550);border-radius:7px;padding:8px;font-size:13px;font-family:var(--sans,Inter,sans-serif)}
+    .pdfed-notepop .row{display:flex;justify-content:space-between;gap:8px;margin-top:8px}
+    .pdfed-btn.sm{padding:5px 9px;font-size:12px}
     .pdfed-annot.movable{cursor:move}
     .pdfed-annot.note{width:24px;height:24px;border-radius:5px 5px 5px 0;display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,.4)}
     .pdfed-annot.stamp{display:flex;align-items:center;justify-content:center;font-weight:800;letter-spacing:.5px;border:2px solid;border-radius:8px;text-transform:uppercase;padding:2px 8px;font-size:13px;opacity:.85;transform:rotate(-8deg)}
@@ -98479,6 +98487,7 @@ window.addEventListener("hashchange", function(){
     .pdfed-rsz{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;border-radius:3px;background:var(--accent,#45c198);border:2px solid #fff;cursor:nwse-resize;display:none;z-index:5}
     .pdfed-annot:hover .pdfed-rsz{display:block}
     .pdfed-vec{position:absolute;left:0;top:0}
+    .pdfed-vec g.vecsel{filter:drop-shadow(0 0 1px var(--accent,#45c198)) drop-shadow(0 0 4px var(--accent,#45c198))}
     .pdfed-thumb{position:relative;margin-bottom:10px;border:2px solid transparent;border-radius:6px;cursor:pointer;background:var(--panel2,#2d3640);padding:5px}
     .pdfed-thumb.active{border-color:var(--accent,#45c198)}
     .pdfed-thumb canvas{display:block;width:100%;border-radius:3px;background:#fff}
@@ -98611,8 +98620,8 @@ window.addEventListener("hashchange", function(){
     on("pdfedPrint","click",printDoc);
     on("pdfedDark","click",()=>{ ED.dark=!ED.dark; qs("#pdfedPages").classList.toggle("dark",ED.dark); qs("#pdfedDark").classList.toggle("active",ED.dark); });
     on("pdfedFull","click",toggleFullscreen);
-    on("pdfedColor","input",(e)=>{ ED.color=e.target.value; });
-    on("pdfedStroke","change",(e)=>{ ED.stroke=+e.target.value; });
+    on("pdfedColor","input",(e)=>{ ED.color=e.target.value; const s=getSelected(); if(s){ s.a.color=e.target.value; renderOverlay(s.page); ED.dirty=true; } });
+    on("pdfedStroke","change",(e)=>{ ED.stroke=+e.target.value; const s=getSelected(); if(s && s.a.stroke!=null){ s.a.stroke=+e.target.value; renderOverlay(s.page); ED.dirty=true; } });
     on("pdfedZIn","click",()=>setScale(ED.scale*1.2));
     on("pdfedZOut","click",()=>setScale(ED.scale/1.2));
     on("pdfedFitW","click",fitWidth);
@@ -98634,6 +98643,9 @@ window.addEventListener("hashchange", function(){
     main.addEventListener("pointerdown",(e)=>{ if(ED.tool!=="hand") return; pan={x:e.clientX,y:e.clientY,l:main.scrollLeft,t:main.scrollTop}; main.setPointerCapture(e.pointerId); });
     main.addEventListener("pointermove",(e)=>{ if(!pan) return; main.scrollLeft=pan.l-(e.clientX-pan.x); main.scrollTop=pan.t-(e.clientY-pan.y); });
     main.addEventListener("pointerup",()=>{ pan=null; });
+    // Klick ins Leere (Auswahl-Werkzeug) hebt Auswahl auf — Anmerkungen stoppen die
+    // Propagation, daher feuert dies nur bei Klicks NEBEN einer Anmerkung.
+    main.addEventListener("pointerdown",(e)=>{ if(ED.tool!=="select") return; if(e.target.closest(".pdfed-annot")||e.target.closest("g[data-id]")||e.target.closest("#pdfedNotePop")) return; deselectAnnot(); closeNotePopup(); });
     // Ctrl/Cmd + Scrollrad → Zoom (zur Cursor-Position); Browser-Zoom unterdrücken.
     // (Trackpad-Pinch erzeugt ebenfalls wheel-Events mit ctrlKey → Pinch-Zoom inklusive.)
     let _zoomRaf=0, _zoomDelta=0, _zoomXY=null;
@@ -98649,7 +98661,24 @@ window.addEventListener("hashchange", function(){
     main.addEventListener("dragover",(e)=>{ e.preventDefault(); });
     main.addEventListener("drop",(e)=>{ e.preventDefault(); const f=e.dataTransfer?.files?.[0]; if(f) loadSource(f,{name:f.name}); });
     // Tastatur
-    document.addEventListener("keydown",(e)=>{ if(!ED.open) return; if(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable) return; if(e.key==="ArrowRight"||e.key==="PageDown"){ gotoPage(ED.page+1); } else if(e.key==="ArrowLeft"||e.key==="PageUp"){ gotoPage(ED.page-1); } else if(e.key==="+"){ setScale(ED.scale*1.2); } else if(e.key==="-"){ setScale(ED.scale/1.2); } else if(e.key==="Escape"){ if(!document.querySelector(".pdfed-modal")) closeEditor(); } });
+    document.addEventListener("keydown",(e)=>{
+      if(!ED.open) return;
+      // Escape: erst Notiz-Popup schliessen, dann Textbearbeitung beenden, dann Auswahl aufheben, dann Editor schliessen
+      if(e.key==="Escape"){
+        if(qs("#pdfedNotePop")){ closeNotePopup(); return; }
+        const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("editing")){ ae.blur(); return; }
+        if(ED.selected!=null){ deselectAnnot(); return; }
+        if(!document.querySelector(".pdfed-modal")) closeEditor();
+        return;
+      }
+      const inField = (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) || (e.target && e.target.isContentEditable);
+      if(inField) return;
+      if((e.key==="Delete"||e.key==="Backspace") && ED.selected!=null){ e.preventDefault(); delAnnot(ED.selected); return; }
+      if(e.key==="ArrowRight"||e.key==="PageDown"){ gotoPage(ED.page+1); }
+      else if(e.key==="ArrowLeft"||e.key==="PageUp"){ gotoPage(ED.page-1); }
+      else if(e.key==="+"){ setScale(ED.scale*1.2); }
+      else if(e.key==="-"){ setScale(ED.scale/1.2); }
+    });
   }
 
   // ─────────────────────────── Laden ───────────────────────────
@@ -98820,7 +98849,9 @@ window.addEventListener("hashchange", function(){
   // ─────────────────────────── Annotation-Overlay ───────────────────────────
   function attachOverlay(ov, i){
     ov.addEventListener("pointerdown",(e)=>{
-      if (ED.tool==="select" || ED.tool==="hand") return;
+      // Klick ins Leere (Auswahl-Werkzeug) hebt die Auswahl auf
+      if (ED.tool==="select"){ if(e.target===ov){ deselectAnnot(); closeNotePopup(); } return; }
+      if (ED.tool==="hand") return;
       if (e.target!==ov) return;
       e.preventDefault();
       const r=ov.getBoundingClientRect();
@@ -98837,24 +98868,66 @@ window.addEventListener("hashchange", function(){
 
   function finalizeDraw(i){
     const d=ED._draw; ED._draw=null; if(!d) return;
+    // Hervorheben: über Text gezogen → an Textzeilen einrasten (Marker); sonst freies Rechteck
+    if (d.t==="highlight"){
+      const rx=Math.min(d.sx,d.ex), ry=Math.min(d.sy,d.ey), rw=Math.abs(d.ex-d.sx), rh=Math.abs(d.ey-d.sy);
+      if (rw<0.003 && rh<0.003){ renderOverlay(i); return; }
+      const tl=qs(`#pdfedPages .pdfed-page[data-page="${i}"] .pdfed-textlayer`);
+      const made=[];
+      if (tl){ const W=tl.clientWidth||1, H=tl.clientHeight||1;
+        tl.querySelectorAll("span").forEach(sp=>{ if(!sp.textContent.trim()) return; const sx=sp.offsetLeft/W, sy=sp.offsetTop/H, sw=sp.offsetWidth/W, sh=sp.offsetHeight/H; const ix=Math.min(rx+rw,sx+sw)-Math.max(rx,sx); const iy=Math.min(ry+rh,sy+sh)-Math.max(ry,sy); if(ix>0 && iy>sh*0.2){ made.push({ id:uid(), page:i, type:"highlight", color:d.color, x:sx, y:sy, w:sw, h:sh }); } });
+      }
+      if (made.length){ (ED.annots[i]=ED.annots[i]||[]).push(...made); }
+      else { (ED.annots[i]=ED.annots[i]||[]).push({ id:uid(), page:i, type:"highlight", color:d.color, x:rx, y:ry, w:rw, h:rh }); }
+      ED.dirty=true; renderOverlay(i); refreshComments(); setTool("select"); return;
+    }
     const a={ id:uid(), page:i, type:d.t, color:d.color, stroke:d.stroke };
     if (d.t==="ink"){ if(d.pts.length<2){ renderOverlay(i); return; } a.pts=d.pts.slice(); }
     else if (d.t==="line"||d.t==="arrow"){ a.x0=d.sx; a.y0=d.sy; a.x1=d.ex; a.y1=d.ey; if(Math.hypot(a.x1-a.x0,a.y1-a.y0)<0.004){ renderOverlay(i); return; } }
     else { const x=Math.min(d.sx,d.ex), y=Math.min(d.sy,d.ey), w=Math.abs(d.ex-d.sx), h=Math.abs(d.ey-d.sy); if(w<0.004||h<0.004){ renderOverlay(i); return; } a.x=x; a.y=y; a.w=w; a.h=h; }
-    (ED.annots[i]=ED.annots[i]||[]).push(a); ED.dirty=true; renderOverlay(i); refreshComments();
-    setTool("select");
+    (ED.annots[i]=ED.annots[i]||[]).push(a); ED.dirty=true; ED.selected=a.id; renderOverlay(i); refreshComments();
+    setTool("select"); syncToolbarToSelection();
   }
 
   function placeClick(i, nx, ny, t){
-    if (t==="text"){ const a={ id:uid(), page:i, type:"text", color:ED.color, x:nx, y:ny, size:14, text:"Text" }; pushAnnot(i,a); renderOverlay(i); setTimeout(()=>{ const el=qs(`.pdfed-annot[data-id="${a.id}"]`); if(el){ el.focus(); document.execCommand && document.getSelection().selectAllChildren(el); } },30); return; }
-    if (t==="note"){ const txt=prompt("Notiz:",""); if(txt==null) return; pushAnnot(i,{ id:uid(), page:i, type:"note", color:ED.color, x:nx, y:ny, text:txt }); renderOverlay(i); refreshComments(); return; }
-    if (t==="stamp"){ chooseStamp((txt,col)=>{ if(!txt) return; pushAnnot(i,{ id:uid(), page:i, type:"stamp", color:col||"#d9694a", x:nx, y:ny, w:0.18, h:0.05, text:txt }); renderOverlay(i); refreshComments(); }); return; }
-    if (t==="signature"){ if(ED.pendingSignature){ pushAnnot(i,{ id:uid(), page:i, type:"signature", x:nx, y:ny, w:0.22, h:0.09, dataUrl:ED.pendingSignature }); renderOverlay(i); refreshComments(); } else { openSignaturePad(()=>placeClick(i,nx,ny,t)); } return; }
-    if (t==="image"){ if(ED.pendingImage){ const r=ED.pendingImage.w/ED.pendingImage.h; pushAnnot(i,{ id:uid(), page:i, type:"image", x:nx, y:ny, w:0.3, h:0.3/(r||1), dataUrl:ED.pendingImage.dataUrl }); ED.pendingImage=null; renderOverlay(i); refreshComments(); } else { pickFile("image/*", async (f)=>{ ED.pendingImage=await fileToPng(f); placeClick(i,nx,ny,t); }); } return; }
+    if (t==="text"){ const a={ id:uid(), page:i, type:"text", color:ED.color, x:nx, y:ny, size:16, text:"" }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); setTool("select"); setTimeout(()=>startTextEdit(a.id),30); return; }
+    if (t==="note"){ const a={ id:uid(), page:i, type:"note", color:ED.color, x:nx, y:ny, text:"" }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); setTimeout(()=>openNotePopup(a),30); return; }
+    if (t==="stamp"){ chooseStamp((txt,col)=>{ if(!txt) return; const a={ id:uid(), page:i, type:"stamp", color:col||"#d9694a", x:nx, y:ny, w:0.18, h:0.05, text:txt }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); }); return; }
+    if (t==="signature"){ if(ED.pendingSignature){ const a={ id:uid(), page:i, type:"signature", x:nx, y:ny, w:0.22, h:0.09, dataUrl:ED.pendingSignature }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); } else { openSignaturePad(()=>placeClick(i,nx,ny,t)); } return; }
+    if (t==="image"){ if(ED.pendingImage){ const r=ED.pendingImage.w/ED.pendingImage.h; const a={ id:uid(), page:i, type:"image", x:nx, y:ny, w:0.3, h:0.3/(r||1), dataUrl:ED.pendingImage.dataUrl }; pushAnnot(i,a); ED.pendingImage=null; ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); } else { pickFile("image/*", async (f)=>{ ED.pendingImage=await fileToPng(f); placeClick(i,nx,ny,t); }); } return; }
   }
+  // Textfeld in den Bearbeiten-Modus versetzen (Cursor rein, alles markieren)
+  function startTextEdit(id){ const el=qs(`.pdfed-annot[data-id="${id}"]`); if(!el) return; el.contentEditable="true"; el.classList.add("editing"); el.focus(); try { const sel=window.getSelection(); sel.removeAllRanges(); const rng=document.createRange(); rng.selectNodeContents(el); sel.addRange(rng); } catch(e){} }
   function pushAnnot(i,a){ (ED.annots[i]=ED.annots[i]||[]).push(a); ED.dirty=true; }
 
-  function delAnnot(id){ for(const k in ED.annots){ const arr=ED.annots[k]; const idx=arr.findIndex(a=>a.id===id); if(idx>=0){ arr.splice(idx,1); renderOverlay(+k); refreshComments(); return; } } }
+  function delAnnot(id){ for(const k in ED.annots){ const arr=ED.annots[k]; const idx=arr.findIndex(a=>a.id===id); if(idx>=0){ arr.splice(idx,1); if(ED.selected===id) ED.selected=null; renderOverlay(+k); refreshComments(); return; } } }
+
+  // ── Auswahl (bleibt aktiv bis Escape/Klick ins Leere; Entf löscht) ──
+  function getSelected(){ if(ED.selected==null) return null; for(const k in ED.annots){ const a=(ED.annots[k]||[]).find(x=>x.id===ED.selected); if(a) return { a, page:+k }; } return null; }
+  function pageOfAnnot(id){ for(const k in ED.annots){ if((ED.annots[k]||[]).some(x=>x.id===id)) return +k; } return null; }
+  // Auswahl in-place umschalten (KEIN Neuaufbau → laufender Drag bleibt gültig)
+  function applySel(){ const pe=qs("#pdfedPages"); if(!pe) return; pe.querySelectorAll(".pdfed-annot").forEach(el=> el.classList.toggle("sel", el.dataset.id===ED.selected)); pe.querySelectorAll(".pdfed-vec g[data-id]").forEach(g=> g.classList.toggle("vecsel", g.dataset.id===ED.selected)); }
+  function selectAnnot(id){ ED.selected=id; applySel(); syncToolbarToSelection(); }
+  function deselectAnnot(){ if(ED.selected==null) return; ED.selected=null; applySel(); }
+  function rerenderSelectedPage(){ const s=getSelected(); if(s) renderOverlay(s.page); }
+  // Werte aus der ausgewählten Anmerkung in Farb-/Stärke-Picker spiegeln
+  function syncToolbarToSelection(){ const s=getSelected(); if(!s) return; try { if(s.a.color){ const c=qs("#pdfedColor"); if(c) c.value=/^#/.test(s.a.color)?s.a.color:c.value; } if(s.a.stroke){ const st=qs("#pdfedStroke"); if(st) st.value=String(s.a.stroke); } } catch(e){} }
+
+  // ── Notiz-Popup (statt prompt) ──
+  function closeNotePopup(){ const p=qs("#pdfedNotePop"); if(p) p.remove(); }
+  function openNotePopup(a){
+    closeNotePopup();
+    const root=document.getElementById("pdfedRoot"); if(!root) return;
+    const pop=document.createElement("div"); pop.className="pdfed-notepop"; pop.id="pdfedNotePop";
+    pop.innerHTML=`<textarea placeholder="Notiz eingeben …"></textarea><div class="row"><button class="pdfed-btn sm" data-a="del">🗑️ Löschen</button><button class="pdfed-btn sm primary" data-a="ok">Fertig</button></div>`;
+    root.appendChild(pop);
+    const ta=pop.querySelector("textarea"); ta.value=a.text||"";
+    const place=()=>{ const m=qs(`.pdfed-annot[data-id="${a.id}"]`); if(!m) return; const r=m.getBoundingClientRect(); pop.style.left=Math.max(8,Math.min(window.innerWidth-272, r.left))+"px"; pop.style.top=Math.min(window.innerHeight-170, r.bottom+6)+"px"; };
+    place(); setTimeout(()=>ta.focus(),20);
+    ta.addEventListener("input",()=>{ a.text=ta.value; const m=qs(`.pdfed-annot[data-id="${a.id}"]`); if(m) m.title=ta.value; });
+    pop.querySelector('[data-a="ok"]').addEventListener("click",()=>{ closeNotePopup(); refreshComments(); });
+    pop.querySelector('[data-a="del"]').addEventListener("click",()=>{ closeNotePopup(); delAnnot(a.id); });
+  }
 
   function renderOverlay(i){
     const ov=qs(`#pdfedPages .pdfed-annots[data-page="${i}"]`); if(!ov) return;
@@ -98876,23 +98949,28 @@ window.addEventListener("hashchange", function(){
       if (g.firstChild){ const hit=g.firstChild.cloneNode(true); hit.setAttribute("stroke","transparent"); hit.setAttribute("stroke-width", Math.max(14, sw+12)); hit.setAttribute("fill","none"); g.insertBefore(hit, g.firstChild); }
       g.style.pointerEvents="stroke"; g.style.cursor = (ED.tool==="eraser") ? "cell" : "pointer";
       g.querySelectorAll("*").forEach(el=>el.style.pointerEvents="stroke");
-      g.addEventListener("click",(e)=>{ e.stopPropagation(); if(ED.tool==="eraser"){ delAnnot(a.id); } else if(ED.tool==="select"){ if(confirm("Diese Anmerkung löschen?")) delAnnot(a.id); } });
+      g.addEventListener("click",(e)=>{ e.stopPropagation(); if(ED.tool==="eraser"){ delAnnot(a.id); } else if(ED.tool==="select"){ selectAnnot(a.id); } });
       g.addEventListener("pointerdown",(e)=>{ if(ED.tool==="eraser"){ e.stopPropagation(); delAnnot(a.id); } });
       g.addEventListener("pointerenter",()=>{ if(_erasing && ED.tool==="eraser") delAnnot(a.id); });
+      g.dataset.id=a.id; if(a.id===ED.selected) g.classList.add("vecsel");
     }
     return g;
   }
 
   function buildAnnotEl(a,W,H,i){
-    const el=document.createElement("div"); el.className="pdfed-annot "+a.type; el.dataset.id=a.id;
+    const el=document.createElement("div"); el.className="pdfed-annot "+a.type+(a.id===ED.selected?" sel":""); el.dataset.id=a.id;
     const setBox=(x,y,w,h)=>{ el.style.left=(x*W)+"px"; el.style.top=(y*H)+"px"; if(w!=null) el.style.width=(w*W)+"px"; if(h!=null) el.style.height=(h*H)+"px"; };
     if (a.type==="highlight"){ setBox(a.x,a.y,a.w,a.h); el.style.background=hexA(a.color,0.4); el.classList.add("movable"); }
     else if (a.type==="redact"){ setBox(a.x,a.y,a.w,a.h); el.style.background="#000"; el.classList.add("movable"); }
     else if (a.type==="rect"){ setBox(a.x,a.y,a.w,a.h); el.style.border=`${a.stroke||2}px solid ${a.color}`; el.classList.add("movable"); }
     else if (a.type==="ellipse"){ setBox(a.x,a.y,a.w,a.h); el.style.border=`${a.stroke||2}px solid ${a.color}`; el.style.borderRadius="50%"; el.classList.add("movable"); }
-    else if (a.type==="note"){ setBox(a.x,a.y); el.style.background=a.color||"#ffd400"; el.textContent="📝"; el.title=a.text||""; el.classList.add("movable"); el.addEventListener("dblclick",()=>{ const t=prompt("Notiz:",a.text||""); if(t!=null){ a.text=t; el.title=t; refreshComments(); } }); }
+    else if (a.type==="note"){ setBox(a.x,a.y); el.style.background=a.color||"#ffd400"; el.textContent="📝"; el.title=a.text||""; el.classList.add("movable"); el.addEventListener("click",(e)=>{ if(ED.tool==="select"){ e.stopPropagation(); selectAnnot(a.id); openNotePopup(a); } }); }
     else if (a.type==="stamp"){ setBox(a.x,a.y,a.w,a.h); el.style.color=a.color; el.style.borderColor=a.color; el.textContent=a.text; el.classList.add("movable"); }
-    else if (a.type==="text"){ setBox(a.x,a.y); el.style.color=a.color; el.style.fontSize=((a.size||14)*ED.scale)+"px"; el.contentEditable=true; el.textContent=a.text||""; el.classList.add("movable"); el.addEventListener("input",()=>{ a.text=el.textContent; }); el.addEventListener("blur",()=> refreshComments()); }
+    else if (a.type==="text"){ setBox(a.x,a.y); el.style.color=a.color; el.style.fontSize=((a.size||16)*ED.scale)+"px"; el.textContent=a.text||""; el.classList.add("movable"); el.style.whiteSpace="pre-wrap";
+      el.addEventListener("input",()=>{ a.text=el.textContent; });
+      el.addEventListener("dblclick",(e)=>{ e.stopPropagation(); startTextEdit(a.id); });
+      el.addEventListener("blur",()=>{ el.contentEditable="false"; el.classList.remove("editing"); a.text=el.textContent; if(!String(a.text).trim()){ delAnnot(a.id); } else refreshComments(); });
+    }
     else if (a.type==="signature"||a.type==="image"){ setBox(a.x,a.y,a.w,a.h); const img=document.createElement("img"); img.src=a.dataUrl; el.appendChild(img); el.classList.add("movable"); const rsz=document.createElement("div"); rsz.className="pdfed-rsz"; el.appendChild(rsz); enableResize(rsz, el, a, W, H, i); }
     // Löschen-Knopf
     const del=document.createElement("button"); del.className="del"; del.textContent="✕"; del.addEventListener("pointerdown",(e)=>e.stopPropagation()); del.addEventListener("click",(e)=>{ e.stopPropagation(); delAnnot(a.id); }); el.appendChild(del);
@@ -98904,9 +98982,9 @@ window.addEventListener("hashchange", function(){
   }
 
   function enableMove(el,a,W,H,i){
-    el.addEventListener("pointerdown",(e)=>{ if(ED.tool!=="select") return; if(a.type==="text" && el.isContentEditable && document.activeElement===el) return; if(e.target.classList.contains("pdfed-rsz")||e.target.classList.contains("del")) return; e.stopPropagation(); const sx=e.clientX, sy=e.clientY, ox=a.x, oy=a.y; try{el.setPointerCapture(e.pointerId);}catch(_){}
-      const mv=(ev)=>{ a.x=clamp(ox+(ev.clientX-sx)/W); a.y=clamp(oy+(ev.clientY-sy)/H); el.style.left=(a.x*W)+"px"; el.style.top=(a.y*H)+"px"; };
-      const up=()=>{ el.removeEventListener("pointermove",mv); el.removeEventListener("pointerup",up); ED.dirty=true; };
+    el.addEventListener("pointerdown",(e)=>{ if(ED.tool!=="select") return; if(el.classList.contains("editing") && document.activeElement===el) return; if(e.target.classList.contains("pdfed-rsz")||e.target.classList.contains("del")) return; selectAnnot(a.id); e.stopPropagation(); const sx=e.clientX, sy=e.clientY, ox=a.x, oy=a.y; let moved=false; try{el.setPointerCapture(e.pointerId);}catch(_){}
+      const mv=(ev)=>{ moved=true; a.x=clamp(ox+(ev.clientX-sx)/W); a.y=clamp(oy+(ev.clientY-sy)/H); el.style.left=(a.x*W)+"px"; el.style.top=(a.y*H)+"px"; };
+      const up=()=>{ el.removeEventListener("pointermove",mv); el.removeEventListener("pointerup",up); if(moved) ED.dirty=true; };
       el.addEventListener("pointermove",mv); el.addEventListener("pointerup",up);
     });
   }
@@ -98927,7 +99005,8 @@ window.addEventListener("hashchange", function(){
   }
 
   // ─────────────────────────── Werkzeuge / Cursor ───────────────────────────
-  function setTool(t){ ED.tool=t; qs("#pdfedToolbar").querySelectorAll(".tool").forEach(b=> b.classList.toggle("active", b.dataset.tool===t)); applyToolCursor();
+  function setTool(t){ ED.tool=t; qs("#pdfedToolbar").querySelectorAll(".tool").forEach(b=> b.classList.toggle("active", b.dataset.tool===t)); applyToolCursor(); closeNotePopup();
+    if (t!=="select") deselectAnnot();
     if (t==="signature" && !ED.pendingSignature){ openSignaturePad(); }
   }
   function applyToolCursor(){ const drawing = !["select","hand","eraser"].includes(ED.tool); qs("#pdfedPages").querySelectorAll(".pdfed-annots").forEach(ov=>{ ov.style.pointerEvents = drawing ? "auto" : "none"; ov.style.cursor = drawing ? "crosshair" : "default"; ov.querySelectorAll(".pdfed-annot").forEach(el=>el.style.pointerEvents="auto"); }); const main=qs("#pdfedMain"); if(main) main.style.cursor = ED.tool==="hand" ? "grab" : (ED.tool==="eraser" ? "cell" : "default"); }
