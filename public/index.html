@@ -86640,6 +86640,25 @@ h3{ font-weight:700; letter-spacing:-0.012em; }
 /* ── Rhythmus: etwas mehr Luft im Hauptbereich ── */
 .main{ padding:22px 26px 48px; }
 .grid-2,.grid-3{ gap:16px; }
+
+/* ── Modul-Primär-Buttons an die v2-Akzentsprache angleichen ──
+   Befund beim Durchklicken: mehrere Module setzen Text auf dem Akzent falsch
+   (color:white / var(--text) / var(--bg)) und ihr Hover-Glow nutzt das jetzt
+   dunkle --accent-soft → praktisch unsichtbar. Hier zentral korrigiert
+   (Kontrast = --on-accent, echter Akzent-Verlauf, sichtbarer Glow). Rein visuell. */
+.rl-btn-primary,.nf-btn-primary,.fin-btn-glow,.pill-btn.active{
+  color:var(--on-accent) !important;
+}
+.rl-btn-primary,.fin-btn-glow{
+  background:linear-gradient(135deg, color-mix(in oklab, var(--accent) 88%, #fff 12%), var(--accent-deep)) !important;
+}
+.rl-btn-primary:hover,.nf-btn-primary:hover,.fin-btn-glow:hover{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16), 0 3px 14px color-mix(in oklab, var(--accent) 42%, transparent) !important;
+}
+/* Gold-Primärbutton (RecallHub): dunkle Tinte für Kontrast in beiden Themes,
+   Hover-Glow aus dem Warning-Token statt veralteter hartcodierter Goldfarbe. */
+.rh-btn-primary{ color:color-mix(in oklab, var(--warning) 20%, #000) !important; }
+.rh-btn-primary:hover{ box-shadow:0 3px 14px color-mix(in oklab, var(--warning) 34%, transparent) !important; }
 </style>
 
 <!-- Popup-Menü (Container) -->
