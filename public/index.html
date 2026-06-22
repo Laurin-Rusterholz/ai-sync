@@ -43506,25 +43506,30 @@ async function extractTextFromKnowledgeFile(file) {
 async function loadPDFLibrary() {
   if (window.pdfjsLib && window.pdfjsLib.getDocument) return true;
 
-  // PDF.js v4 ist ein ES-Modul; via import() ist die Datei-Endung egal. Wir laden
-  // aus dem frischen, nie zuvor angefragten Pfad /vendor/pdf/ (.js → Netlify liefert
-  // GARANTIERT text/javascript; kein gecachter 404 wie zuvor unter /vendor/pdfjs/).
-  // Reihenfolge: /vendor/pdf/ → alter Pfad (Fallback) → CDN.
+  // pdfjs-dist v4 ist ESM-only (kein UMD/Global-Build) — als klassisches <script>
+  // geladen wirft die .mjs-Kopie "Unexpected token 'export'". Wir verwenden daher
+  // den UMD-Build (pdf.js v3.11.174), der als ganz normales <script> ein globales
+  // window.pdfjsLib setzt — kein import(), keine .mjs-MIME-Abhängigkeit.
+  // Reihenfolge: lokal /vendor/pdf/ → CDN (UMD v3).
   const sources = [
-    { js: "/vendor/pdf/pdf.min.js",                                           worker: "/vendor/pdf/pdf.worker.min.js" },
-    { js: "/vendor/pdfjs/pdf.min.js",                                         worker: "/vendor/pdfjs/pdf.worker.min.js" },
-    { js: "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.min.mjs",            worker: "https://unpkg.com/pdfjs-dist@4.2.67/build/pdf.worker.min.mjs" },
-    { js: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.min.mjs", worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.2.67/build/pdf.worker.min.mjs" }
+    { js: "/vendor/pdf/pdf.min.js",                                          worker: "/vendor/pdf/pdf.worker.min.js" },
+    { js: "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js",            worker: "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js" },
+    { js: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js", worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js" }
   ];
 
   for (const src of sources) {
     try {
-      const mod = await import(/* webpackIgnore: true */ src.js);
-      const lib = (mod && mod.getDocument) ? mod : (mod && mod.default && mod.default.getDocument ? mod.default : null);
-      if (lib && lib.getDocument) {
-        window.pdfjsLib = lib;
-        try { lib.GlobalWorkerOptions.workerSrc = src.worker; } catch (e) {}
-        console.log("✓ PDF.js geladen von:", src.js);
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src.js;
+        if (/^https?:/.test(src.js)) s.crossOrigin = "anonymous";
+        s.onload = resolve;
+        s.onerror = () => reject(new Error("script onerror"));
+        document.head.appendChild(s);
+      });
+      if (window.pdfjsLib && window.pdfjsLib.getDocument) {
+        try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = src.worker; } catch (e) {}
+        console.log("✓ PDF.js (UMD) geladen von:", src.js);
         return true;
       }
     } catch (e) {
@@ -98292,7 +98297,7 @@ window.addEventListener("hashchange", function(){
   }
   try { setTimeout(function(){ bootSyncMessages(0); }, 3500); } catch(e){}
 
-  try { console.info("%cQuantus build", "color:#C9A227;font-weight:700", "pdf-editor+vendored-/vendor/pdf/ · 2026-06-22"); } catch(e){}
+  try { console.info("%cQuantus build", "color:#C9A227;font-weight:700", "pdf-editor+pdfjs-v3-UMD · 2026-06-22"); } catch(e){}
 })();
 </script>
 
