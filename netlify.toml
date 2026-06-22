@@ -13,15 +13,11 @@
     Access-Control-Allow-Headers = "Content-Type, Authorization, If-Match"
     Access-Control-Expose-Headers = "ETag"
 
-# ES-Module (.mjs) müssen mit JS-MIME-Type ausgeliefert werden, sonst lehnt der
-# Browser den dynamischen import() ab. Vendored PDF.js (Tracking-Prevention-sicher).
+# Vendored PDF-Libraries: KEIN langes/immutable Caching, sonst kann ein einmal
+# ausgelieferter 404 (oder eine alte Version) dauerhaft im Browser/CDN hängen
+# bleiben. must-revalidate erzwingt, dass nach jedem Deploy die aktuelle Datei
+# geholt wird. (.js liefert Netlify ohnehin als text/javascript aus.)
 [[headers]]
-  for = "/vendor/pdfjs/*"
+  for = "/vendor/*"
   [headers.values]
-    Content-Type = "text/javascript; charset=utf-8"
-    Cache-Control = "public, max-age=31536000, immutable"
-
-[[headers]]
-  for = "/vendor/pdf-lib.min.js"
-  [headers.values]
-    Cache-Control = "public, max-age=31536000, immutable"
+    Cache-Control = "public, max-age=0, must-revalidate"
