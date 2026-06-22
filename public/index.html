@@ -7999,7 +7999,7 @@ const TRANSLATIONS = {
 
 function t(key) {
   const lang = getLang();
-  return TRANSLATIONS[lang]?.[key] || TRANSLATIONS["de"]?.[key] || key;
+  return TRANSLATIONS[lang]?.[key] || TRANSLATIONS["de"]?.[key] || TRANSLATIONS["en"]?.[key] || key;
 }
 window.t = t;
 
