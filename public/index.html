@@ -1230,7 +1230,7 @@
       background:var(--border);
     }
     .task-mini-card.overdue{
-      border-left:3px solid var(--danger);
+      border:1.5px solid var(--danger);background:rgba(255,85,114,.12);
     }
     .task-mini-title{
       font-size:12px;font-weight:600;margin-bottom:4px;
@@ -1254,10 +1254,17 @@
       border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);
     }
     .task-card.overdue{
-      border-left:4px solid var(--danger);
+      border:1.5px solid var(--danger);
+      box-shadow:0 0 0 1px rgba(255,85,114,.25), 0 6px 18px rgba(255,85,114,.12);
+      background:linear-gradient(180deg, rgba(255,85,114,.10), var(--accent-soft));
+    }
+    .task-card.overdue::before{
+      content:"⚠ Überfällig";position:absolute;top:-9px;left:12px;
+      background:var(--danger);color:#fff;font-size:9px;font-weight:800;
+      letter-spacing:.4px;padding:2px 7px;border-radius:6px;z-index:1;
     }
     .task-card-header{
-      display:flex;align-items:center;gap:8px;margin-bottom:10px;
+      display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-right:24px;
     }
     .task-status-icon{
       font-size:16px;
@@ -1289,6 +1296,42 @@
     .task-card-actions .btn{
       flex:1;font-size:11px;padding:6px 10px;
     }
+
+    /* === Tasks: Inline-Bearbeitung (Datum/Priorität direkt in der Karte) === */
+    .task-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+    .task-inline select,.task-inline input{
+      font-size:10px;padding:3px 6px;border-radius:6px;max-width:140px;
+      background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;
+    }
+    .task-inline select:hover,.task-inline input:hover{border-color:var(--accent)}
+    .task-inline .ti-overdue{border-color:var(--danger);color:var(--danger)}
+
+    /* === Tasks: Mehrfachauswahl & Bulk-Aktionen === */
+    .task-select{
+      position:absolute;top:12px;right:12px;width:18px;height:18px;
+      cursor:pointer;z-index:3;accent-color:var(--accent)
+    }
+    .task-card.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+    .task-bulk-bar{
+      display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+      background:var(--panel2);border:1px solid var(--accent);border-radius:12px;
+      padding:10px 14px;margin-bottom:14px;position:sticky;top:6px;z-index:30;
+      box-shadow:0 6px 20px rgba(0,0,0,.18);
+    }
+    .task-bulk-bar .tb-count{font-weight:800;color:var(--accent)}
+    .task-bulk-bar select,.task-bulk-bar input{
+      font-size:12px;padding:5px 8px;border-radius:8px;
+      background:var(--panel);border:1px solid var(--border);color:var(--text);
+    }
+
+    /* === Eisenhower: Drag & Drop zwischen Quadranten === */
+    .task-mini-card[draggable="true"]{cursor:grab}
+    .task-mini-card.dragging{opacity:.4;border:1px dashed var(--accent)}
+    .quadrant-tasks.drag-over{
+      outline:2px dashed var(--accent);outline-offset:3px;border-radius:8px;
+      background:var(--accent-soft);min-height:60px;
+    }
+    .matrix-quadrant.drag-over{box-shadow:inset 0 0 0 2px var(--accent)}
 
     /* =========================
        PROJECT CARDS & TIMELINE
@@ -28519,6 +28562,14 @@ function viewDashboard() {
 // ============================================================================
 function viewTasks() {
   const e = APP.state.data.entities;
+  APP.state.ui.filters = APP.state.ui.filters || {};
+  // Persistente Task-Filter aus localStorage wiederherstellen (überleben Reload)
+  if (!APP.state.ui.filters.tasks || Object.keys(APP.state.ui.filters.tasks).length === 0) {
+    try {
+      const _savedTF = JSON.parse(localStorage.getItem("taskFilters") || "null");
+      if (_savedTF && typeof _savedTF === "object") APP.state.ui.filters.tasks = _savedTF;
+    } catch (e2) {}
+  }
   const filters = APP.state.ui.filters.tasks || {};
   // Load persisted startFilter if not set in current session
   if (!filters.startFilter && APP.state.data.settings?.taskStartFilter) {
@@ -28560,8 +28611,12 @@ function viewTasks() {
     tasks = tasks.filter(t => t.startDate && t.startDate > today);
   }
   
-  // Sort by due date first (most urgent first), then priority
+  // Sort: überfällige Aufgaben zuerst, dann nach Fälligkeit, dann Priorität
+  const _sortToday = todayYmd();
+  const _isOverdue = (t) => t.dueDate && t.dueDate < _sortToday && t.status !== "done";
   tasks.sort((a, b) => {
+    const oa = _isOverdue(a) ? 0 : 1, ob = _isOverdue(b) ? 0 : 1;
+    if (oa !== ob) return oa - ob;
     const dateA = a.dueDate || "9999";
     const dateB = b.dueDate || "9999";
     if (dateA !== dateB) return dateA.localeCompare(dateB);
@@ -28650,9 +28705,10 @@ function viewTasks() {
     
     if (compact) {
       return `
-        <div class="task-mini-card ${overdue ? 'overdue' : ''}" data-action="open-entity" data-kind="task" data-id="${t.id}">
+        <div class="task-mini-card ${overdue ? 'overdue' : ''}" draggable="true" data-action="open-entity" data-kind="task" data-id="${t.id}" ondragstart="window.matrixDragStart(event,'${t.id}')" ondragend="window.matrixDragEnd(event)">
           <div class="task-mini-title">${esc(t.title.slice(0, 35))}${t.title.length > 35 ? '...' : ''}</div>
           <div class="task-mini-meta">
+            ${t.recurrence && t.recurrence !== 'none' ? '<span title="Wiederkehrend">🔄</span>' : ''}
             ${t.dueDate ? `<span class="${overdue ? 'text-danger' : ''}">${fmtDate(t.dueDate)}</span>` : ''}
             ${project ? `<span class="text-accent">${esc(project.title.slice(0, 10))}</span>` : ''}
           </div>
@@ -28660,18 +28716,26 @@ function viewTasks() {
       `;
     }
     
+    const selected = (APP.state.ui.taskSelection || []).includes(t.id);
     return `
-      <div class="task-card ${pinned ? "pinned" : ""} ${overdue ? "overdue" : ""}" data-action="open-entity" data-kind="task" data-id="${t.id}" style="border-left-color:${getTaskCategoryColor(t.category)}">
+      <div class="task-card ${pinned ? "pinned" : ""} ${overdue ? "overdue" : ""} ${selected ? "selected" : ""}" data-action="open-entity" data-kind="task" data-id="${t.id}" style="border-left-color:${getTaskCategoryColor(t.category)}">
+        <input type="checkbox" class="task-select" title="Für Bulk-Aktion auswählen" ${selected ? "checked" : ""} onclick="event.stopPropagation()" onchange="window.toggleTaskSelect('${t.id}', this.checked)" />
         <div class="task-card-header">
           <span class="task-status-icon">${t.status === "done" ? "✅" : t.status === "doing" ? "🔵" : "⚪"}</span>
           <span class="task-priority p${t.priority || 3}">P${t.priority || 3}</span>
+          ${t.recurrence && t.recurrence !== "none" ? `<span class="pill accent" title="Wiederkehrend: ${esc((RECURRENCE_OPTIONS.find(o => o.value === t.recurrence) || {}).label || t.recurrence)}" style="font-size:10px;padding:2px 6px">🔄</span>` : ''}
           ${pinned ? '<span class="task-pinned">📌</span>' : ''}
         </div>
         <h4 class="task-card-title">${esc(t.title)}</h4>
+        <div class="task-inline" onclick="event.stopPropagation()">
+          <select title="Priorität direkt ändern" onchange="window.inlineTaskPriority('${t.id}', this.value)">
+            ${[1,2,3,4,5].map(p => `<option value="${p}" ${(t.priority || 3) === p ? "selected" : ""}>P${p}</option>`).join("")}
+          </select>
+          <input type="date" class="${overdue ? 'ti-overdue' : ''}" title="Fälligkeitsdatum direkt ändern" value="${t.dueDate || ''}" onchange="window.inlineTaskDue('${t.id}', this.value)" />
+        </div>
         <div class="task-card-meta">
           ${t.category ? `<span class="pill" style="background:${getTaskCategoryColor(t.category)}22;color:${getTaskCategoryColor(t.category)};border:1px solid ${getTaskCategoryColor(t.category)}44">${getTaskCategoryIcon(t.category)} ${getTaskCategoryLabel(t.category)}</span>` : ''}
           ${t.startDate && t.startDate > todayYmd() ? `<span class="pill" style="background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-soft)">▶ ${fmtDate(t.startDate)}</span>` : ''}
-          ${t.dueDate ? `<span class="pill ${overdue ? 'danger' : t.dueDate === todayYmd() ? 'warn' : ''}">📅 ${fmtDate(t.dueDate)}</span>` : ''}
           ${project ? `<span class="pill accent">📦 ${esc(project.title).slice(0, 12)}</span>` : ''}
           ${timeSpent > 0 ? `<span class="pill">⏱️ ${fmtDurationShort(timeSpent)}</span>` : ''}
         </div>
@@ -28695,27 +28759,51 @@ function viewTasks() {
         <div class="matrix-label-side">WICHTIG</div>
         <div class="matrix-quadrant do">
           <div class="quadrant-header">🔥 ERLEDIGEN (${urgentImportant.length})</div>
-          <div class="quadrant-tasks">${urgentImportant.slice(0, 5).map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Keine</div>'}</div>
+          <div class="quadrant-tasks" data-quadrant="do" ondragover="window.matrixDragOver(event)" ondragleave="window.matrixDragLeave(event)" ondrop="window.matrixDrop(event,'do')">${urgentImportant.map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Hierher ziehen</div>'}</div>
         </div>
         <div class="matrix-quadrant schedule">
           <div class="quadrant-header">📅 PLANEN (${notUrgentImportant.length})</div>
-          <div class="quadrant-tasks">${notUrgentImportant.slice(0, 5).map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Keine</div>'}</div>
+          <div class="quadrant-tasks" data-quadrant="schedule" ondragover="window.matrixDragOver(event)" ondragleave="window.matrixDragLeave(event)" ondrop="window.matrixDrop(event,'schedule')">${notUrgentImportant.map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Hierher ziehen</div>'}</div>
         </div>
       </div>
       <div class="matrix-row">
         <div class="matrix-label-side">NICHT WICHTIG</div>
         <div class="matrix-quadrant delegate">
           <div class="quadrant-header">👥 DELEGIEREN (${urgentNotImportant.length})</div>
-          <div class="quadrant-tasks">${urgentNotImportant.slice(0, 5).map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Keine</div>'}</div>
+          <div class="quadrant-tasks" data-quadrant="delegate" ondragover="window.matrixDragOver(event)" ondragleave="window.matrixDragLeave(event)" ondrop="window.matrixDrop(event,'delegate')">${urgentNotImportant.map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Hierher ziehen</div>'}</div>
         </div>
         <div class="matrix-quadrant eliminate">
           <div class="quadrant-header">🗑️ ELIMINIEREN (${notUrgentNotImportant.length})</div>
-          <div class="quadrant-tasks">${notUrgentNotImportant.slice(0, 5).map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Keine</div>'}</div>
+          <div class="quadrant-tasks" data-quadrant="eliminate" ondragover="window.matrixDragOver(event)" ondragleave="window.matrixDragLeave(event)" ondrop="window.matrixDrop(event,'eliminate')">${notUrgentNotImportant.map(t => renderTaskCard(t, true)).join('') || '<div class="mini">Hierher ziehen</div>'}</div>
         </div>
       </div>
     </div>
   `;
   
+  // Bulk-Aktions-Leiste (erscheint bei Mehrfachauswahl)
+  const _sel = (APP.state.ui.taskSelection || []).filter(id => e.tasks[id]);
+  const bulkBarHtml = _sel.length ? `
+    <div class="task-bulk-bar">
+      <span class="tb-count">${_sel.length}</span><span>ausgewählt</span>
+      <select title="Status für alle ändern" onchange="if(this.value){window.bulkTaskAction('status', this.value);this.selectedIndex=0}">
+        <option value="">Status ändern…</option>
+        ${TASK_STATUS.map(s => `<option value="${s}">${esc(t(s))}</option>`).join("")}
+      </select>
+      <select title="Priorität für alle ändern" onchange="if(this.value){window.bulkTaskAction('priority', this.value);this.selectedIndex=0}">
+        <option value="">Priorität ändern…</option>
+        ${[1,2,3,4,5].map(p => `<option value="${p}">P${p}</option>`).join("")}
+      </select>
+      <input type="date" title="Fälligkeitsdatum für alle setzen" onchange="if(this.value){window.bulkTaskAction('dueDate', this.value)}" />
+      <select title="Kategorie für alle ändern" onchange="if(this.value){window.bulkTaskAction('category', this.value);this.selectedIndex=0}">
+        <option value="">Kategorie ändern…</option>
+        ${TASK_CATEGORIES.map(c => `<option value="${c.value}">${c.icon} ${c.label}</option>`).join("")}
+      </select>
+      <button class="btn sm good" onclick="window.bulkTaskAction('complete')">✓ Erledigen</button>
+      <button class="btn sm danger" onclick="window.bulkTaskAction('delete')">🗑️ Löschen</button>
+      <button class="btn sm ghost" onclick="window.clearTaskSelection()" style="margin-left:auto">Auswahl aufheben</button>
+    </div>
+  ` : "";
+
   // Liste View
   const listHtml = `
     <div class="tasks-grid">
@@ -28797,6 +28885,7 @@ function viewTasks() {
         </div>
       </div>
       <div class="sep"></div>
+      ${bulkBarHtml}
       ${viewMode === 'matrix' ? matrixHtml : listHtml}
     </div>
   `;
@@ -48079,7 +48168,16 @@ function openGlobalTaskModal(prefill = {}) {
               ${TASK_CATEGORIES.map(c => `<option value="${c.value}" ${prefill.category === c.value ? "selected" : ""}>${c.icon} ${c.label}</option>`).join("")}
             </select>
           </label>
-          <div></div><div></div>
+          <label>
+            <span class="label-text">🔄 Wiederholung</span>
+            <select id="globalTaskRecurrence">
+              ${RECURRENCE_OPTIONS.map(opt => `<option value="${opt.value}" ${(prefill.recurrence || "none") === opt.value ? "selected" : ""}>${opt.label}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span class="label-text">Wiederholung bis</span>
+            <input type="date" id="globalTaskRecurrenceEnd" value="${prefill.recurrenceEndDate || ""}" placeholder="Optional" />
+          </label>
         </div>
         <label>
           <span class="label-text">Tags (Komma-getrennt)</span>
@@ -49006,6 +49104,108 @@ function handleRecurringTaskCompletion(taskId) {
     toast("ok", "Wiederkehrend", `Nächste Aufgabe erstellt für ${fmtDate(getEntity("task", newTaskId)?.dueDate)}`);
   }
 }
+
+// ============================================================================
+// TASK: Inline-Bearbeitung, Mehrfachauswahl/Bulk, Eisenhower Drag & Drop
+// ============================================================================
+// Inline-Bearbeitung direkt in der Aufgabenkarte
+window.inlineTaskPriority = function (id, value) {
+  updateEntity("task", id, { priority: parseInt(value) || 3 });
+  render();
+};
+window.inlineTaskDue = function (id, value) {
+  updateEntity("task", id, { dueDate: value || null });
+  render();
+};
+
+// Mehrfachauswahl
+window.toggleTaskSelect = function (id, checked) {
+  const set = new Set(APP.state.ui.taskSelection || []);
+  if (checked) set.add(id); else set.delete(id);
+  APP.state.ui.taskSelection = [...set];
+  render();
+};
+window.clearTaskSelection = function () {
+  APP.state.ui.taskSelection = [];
+  render();
+};
+
+// Bulk-Aktionen auf alle markierten Aufgaben
+window.bulkTaskAction = function (field, value) {
+  const ids = (APP.state.ui.taskSelection || []).filter(id => getEntity("task", id));
+  if (!ids.length) { toast("warn", "Keine Auswahl", "Bitte zuerst Aufgaben markieren"); return; }
+  if (field === "delete") {
+    if (!confirm(`${ids.length} Aufgabe(n) wirklich löschen?`)) return;
+    ids.forEach(id => deleteEntity("task", id));
+    APP.state.ui.taskSelection = [];
+    toast("ok", "Gelöscht", `${ids.length} Aufgabe(n) gelöscht`);
+    render();
+    return;
+  }
+  ids.forEach(id => {
+    if (field === "complete") {
+      updateEntity("task", id, { status: "done", completedAt: nowIso() });
+      handleRecurringTaskCompletion(id);
+    } else if (field === "status") {
+      const patch = { status: value };
+      if (value === "done") patch.completedAt = nowIso();
+      updateEntity("task", id, patch);
+      if (value === "done") handleRecurringTaskCompletion(id);
+    } else if (field === "priority") {
+      updateEntity("task", id, { priority: parseInt(value) || 3 });
+    } else if (field === "dueDate") {
+      updateEntity("task", id, { dueDate: value || null });
+    } else if (field === "category") {
+      updateEntity("task", id, { category: value });
+    }
+  });
+  toast("ok", "Aktualisiert", `${ids.length} Aufgabe(n) geändert`);
+  render();
+};
+
+// Eisenhower-Matrix: Drag & Drop zwischen Quadranten (passt Priorität/Fälligkeit an)
+window.matrixDragStart = function (ev, id) {
+  window._matrixDragId = id;
+  try { ev.dataTransfer.setData("text/plain", id); ev.dataTransfer.effectAllowed = "move"; } catch (e) {}
+  const card = ev.target.closest(".task-mini-card");
+  if (card) card.classList.add("dragging");
+};
+window.matrixDragEnd = function (ev) {
+  const card = ev.target.closest(".task-mini-card");
+  if (card) card.classList.remove("dragging");
+  document.querySelectorAll(".quadrant-tasks.drag-over").forEach(el => el.classList.remove("drag-over"));
+};
+window.matrixDragOver = function (ev) {
+  ev.preventDefault();
+  try { ev.dataTransfer.dropEffect = "move"; } catch (e) {}
+  if (ev.currentTarget) ev.currentTarget.classList.add("drag-over");
+};
+window.matrixDragLeave = function (ev) {
+  const z = ev.currentTarget;
+  if (z && !z.contains(ev.relatedTarget)) z.classList.remove("drag-over");
+};
+window.matrixDrop = function (ev, quadrant) {
+  ev.preventDefault();
+  if (ev.currentTarget) ev.currentTarget.classList.remove("drag-over");
+  const id = window._matrixDragId || (ev.dataTransfer && ev.dataTransfer.getData("text/plain"));
+  window._matrixDragId = null;
+  if (!id) return;
+  const tk = getEntity("task", id);
+  if (!tk) return;
+  const today = todayYmd();
+  const within = addDaysYmd(today, 1);   // dringend → fällig in Window
+  const beyond = addDaysYmd(today, 7);   // nicht dringend → ausserhalb Window
+  const isUrgentNow = tk.dueDate && tk.dueDate <= addDaysYmd(today, 3);
+  const important = (quadrant === "do" || quadrant === "schedule");
+  const urgent = (quadrant === "do" || quadrant === "delegate");
+  const patch = {};
+  patch.priority = important ? 1 : ((tk.priority || 3) <= 1 ? 3 : (tk.priority || 3));
+  if (urgent) { if (!isUrgentNow) patch.dueDate = within; }
+  else { if (isUrgentNow) patch.dueDate = beyond; }
+  updateEntity("task", id, patch);
+  render();
+  toast("ok", "Verschoben", `Priorität auf P${patch.priority} angepasst`);
+};
 
 
 // Funktion um Meilenstein-Deadlines für Kalender zu holen
@@ -50112,6 +50312,8 @@ document.addEventListener("click", function(e) {
       const value = e.target.value;
       APP.state.ui.filters.tasks = APP.state.ui.filters.tasks || {};
       APP.state.ui.filters.tasks[field] = value;
+      // Filter sofort in localStorage persistieren (überleben Reload)
+      try { localStorage.setItem("taskFilters", JSON.stringify(APP.state.ui.filters.tasks)); } catch (e) {}
       // Persist filters
       APP.state.data._uiFilters = APP.state.ui.filters;
       scheduleSave();
@@ -50127,6 +50329,7 @@ document.addEventListener("click", function(e) {
 
     case "clear-task-filters": {
       APP.state.ui.filters.tasks = {};
+      try { localStorage.removeItem("taskFilters"); } catch (e) {}
       APP.state.data._uiFilters = APP.state.ui.filters;
       scheduleSave();
       // Don't clear persisted startFilter on reset
@@ -56273,6 +56476,7 @@ case "quick-idea-save": {
     
         case "clear-task-filters": {
       APP.state.ui.filters.tasks = {};
+      try { localStorage.removeItem("taskFilters"); } catch (e) {}
       render();
       break;
     }
@@ -57822,9 +58026,11 @@ case "ideas-clear-filter": {
         projectId: $("#globalTaskProject")?.value || null,
         organizationId: $("#globalTaskOrg")?.value || null,
         tags: ($("#globalTaskTags")?.value || "").split(",").map(t => t.trim()).filter(Boolean),
-        category: $("#globalTaskCategory")?.value || ""
+        category: $("#globalTaskCategory")?.value || "",
+        recurrence: $("#globalTaskRecurrence")?.value || "none",
+        recurrenceEndDate: $("#globalTaskRecurrenceEnd")?.value || null
       };
-      
+
       const taskId = createEntity("task", taskData);
       
       // Verknüpfe mit Quelle falls vorhanden
