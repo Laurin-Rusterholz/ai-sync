@@ -96101,10 +96101,10 @@ console.log('📚 Leseliste geladen');
     for (var i=0;i<ids.length;i++){ var k=ids[i]; if (k && GM.classifications[k]) return GM.classifications[k]; }
     return null;
   }
-  // „KI-Entwürfe" zeigt STRIKT nur Entwürfe, für die die KI-Klassifizierung
-  // (/gmailClassifications/<messageId>) generateDraft===true meldet. isPerson allein genügt
-  // NICHT: eine rein informative Mail einer Person (kein Antwortbedarf) bekommt damit keinen
-  // Entwurf. Ohne Klassifizierung oder bei generateDraft!=true wird der Entwurf ausgeblendet.
+  // Hinweis: draftClsOf/draftIsFromPerson gehörten zum früheren selektiven Filter (generateDraft
+  // ===true, PR #16/#23). Die KI-Entwürfe-Liste filtert NICHT mehr darüber — n8n schreibt bereits
+  // selektiv nur nötige Entwürfe nach /gmailDrafts, daher zeigt die Liste alle status==="pending"
+  // (siehe loadDrafts). Beibehalten (nicht umbenannt/entfernt) für mögliche spätere Wiederverwendung.
   function draftIsFromPerson(d){
     var c = draftClsOf(d);
     if (!c) return false;
@@ -96113,21 +96113,21 @@ console.log('📚 Leseliste geladen');
   async function loadDrafts(){
     GM.draftsLoading=true; GM.draftsError=null; rerender();
     try {
-      await ensureClassifications();   // Personen-Filter braucht die Klassifizierung (RTDB)
-      var r = await fetch(RTDB_URL + "/gmailDrafts.json", { cache:"no-store" });
-      if (!r.ok) throw new Error("RTDB HTTP "+r.status);
-      var data = await r.json();
+      await ensureClassifications();   // KI-Felder für den Reader (renderKiPanel); keine Filter-Voraussetzung mehr
+      var data = await rtdbGet("gmailDrafts");   // RTDB-SDK-Client statt REST-.json (CORS-fest)
       var arr = [];
       if (data && typeof data==="object"){ Object.keys(data).forEach(function(k){ var d=data[k]; if(d && typeof d==="object"){ d._key=k; arr.push(d); } }); }
-      // Anzeige: pending-Entwürfe, die ENTWEDER von der KI für Antwort markiert sind
-      // (draftIsFromPerson → generateDraft===true) ODER manuell on-demand angefordert wurden
-      // (source:"manual" / manual:true). Letztere erscheinen so unabhängig von generateDraft.
-      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending" && (draftIsFromPerson(d) || d.source==="manual" || d.manual===true); }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
+      // Bug-Fix: n8n schreibt Entwürfe bereits SELEKTIV (nur wenn nötig, source:"n8n-ai") nach
+      // /gmailDrafts — die Auswahl passiert also im Workflow. Die Ansicht zeigt daher GENAU die
+      // offenen Entwürfe (status==="pending"); die frühere generateDraft===true-Hürde (PR #16/#23)
+      // blendete alle n8n-Entwürfe aus, weil das Flag nur in der Klassifizierung, nicht im Entwurf
+      // steht. Manuelle On-Demand-Entwürfe (PR #24, ebenfalls status:"pending") erscheinen weiterhin.
+      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending"; }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
     } catch(e){ GM.draftsError = e.message||"Entwürfe konnten nicht geladen werden"; }
     finally { GM.draftsLoading=false; rerender(); }
   }
   async function setDraftStatus(key, status){
-    try { await fetch(RTDB_URL + "/gmailDrafts/"+encodeURIComponent(key)+".json", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ status:status, updatedAt:Date.now() }) }); }
+    try { await rtdbPatch("gmailDrafts/"+key, { status:status, updatedAt:Date.now() }); }   // SDK-Client, gleicher Pfad (pending→used/dismissed)
     catch(e){ /* best effort — UI state already updated */ }
   }
 
@@ -96183,10 +96183,21 @@ console.log('📚 Leseliste geladen');
   //  Alles read-only gespiegelt + Statuspflege. Kein Auto-Versand, keine
   //  destruktiven Löschungen, keine Berechtigungsänderungen.
   // ════════════════════════════════════════════════════════════════════
-  async function rtdbGet(path){ var r=await fetch(RTDB_URL+"/"+path+".json",{cache:"no-store"}); if(!r.ok) throw new Error("RTDB HTTP "+r.status); return await r.json(); }
-  function rtdbPut(path,value){ return fetch(RTDB_URL+"/"+path+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)}).catch(function(){}); }
-  function rtdbPatch(path,obj){ return fetch(RTDB_URL+"/"+path+".json",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}).catch(function(){}); }
-  function rtdbPost(path,obj){ return fetch(RTDB_URL+"/"+path+".json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); }
+  // RTDB-Zugriff über den Firebase-SDK-Client (firebase.app().database(URL)) — identisch zum
+  // bereits laufenden Communicator-Task-Importer (oben, ~„firebase.app().database(DB_URL)").
+  // Der SDK-Client nutzt WebSocket/Long-Polling und umgeht damit die CORS-Beschränkungen der
+  // REST-„.json"-Endpunkte (Ursache, weshalb KI-Entwürfe/Klassifizierungen im Browser nicht
+  // geladen wurden). Gleiche RTDB-Instanz (RTDB_URL) und exakt dieselben Pfade; die REST-Form
+  // bleibt nur als Fallback, falls das Firebase-SDK ausnahmsweise fehlt.
+  function rtdbDb(){ try { if (typeof firebase==="undefined" || !firebase.app) return null; return firebase.app().database(RTDB_URL); } catch(e){ return null; } }
+  async function rtdbGet(path){
+    var db=rtdbDb();
+    if (db){ var snap=await db.ref(path).once("value"); return snap.val(); }
+    var r=await fetch(RTDB_URL+"/"+path+".json",{cache:"no-store"}); if(!r.ok) throw new Error("RTDB HTTP "+r.status); return await r.json();
+  }
+  function rtdbPut(path,value){ var db=rtdbDb(); if (db) return db.ref(path).set(value).catch(function(){}); return fetch(RTDB_URL+"/"+path+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)}).catch(function(){}); }
+  function rtdbPatch(path,obj){ var db=rtdbDb(); if (db) return db.ref(path).update(obj).catch(function(){}); return fetch(RTDB_URL+"/"+path+".json",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}).catch(function(){}); }
+  function rtdbPost(path,obj){ var db=rtdbDb(); if (db) return db.ref(path).push(obj); return fetch(RTDB_URL+"/"+path+".json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); }
 
   // ── 1) Klassifizierung (gmailClassifications/<messageId>) ──
   async function loadClassifications(){
