@@ -38,22 +38,23 @@
   </script>
   <style>
     :root{
-      /* ═══ Design-System „Schiefer" (Dark, Default) — matt, kein reines Schwarz/Weiss ═══ */
-      --surface-base:#262a2e;        /* Seite */
-      --surface-raised:#2d3237;      /* Karten/Sidebar/Panels */
-      --surface-overlay:#353b41;     /* Modal/Dropdown/Toast */
-      --border:#3c434a;
-      --border2:#454c54;
-      --hover:rgba(218,219,222,.06);   /* subtiles Hover-/Zebra-Overlay (theme-aware) */
-      --text-primary:#dadbde;
-      --text-muted:#878d96;
-      --accent:#86a895;
-      --accent-soft:#324039;
-      --on-accent:#1d2622;
-      --danger:#c8836f;
-      --warning:#c2a866;
-      --success:#86a895;
-      --info:#7e94b0;
+      /* ═══ Design-System „Schiefer" v2 (Dark, Default) — matt & erdig, aber mit Tiefe/Kontrast ═══ */
+      --surface-base:#171c20;        /* Seite — tief & leicht kühl, lässt Akzente leuchten */
+      --surface-raised:#212830;      /* Karten/Sidebar/Panels */
+      --surface-overlay:#2d3640;     /* Modal/Dropdown/Toast */
+      --border:#3b4550;
+      --border2:#4f5a66;
+      --hover:rgba(224,226,232,.08);   /* subtiles Hover-/Zebra-Overlay (theme-aware) */
+      --text-primary:#eef0f2;
+      --text-muted:#929aa4;
+      --accent:#45c198;
+      --accent-deep:#2ea27b;         /* dunklere Akzentstufe für Gradient/Hover/Glow */
+      --accent-soft:color-mix(in oklab, var(--accent) 24%, transparent); /* transluzent: dient zugleich als sanfte Tönung UND als sichtbarer Glow/Fokus-Ring */
+      --on-accent:#04140d;
+      --danger:#e5765a;
+      --warning:#e3b048;
+      --success:#45c198;
+      --info:#6aa3de;
       /* ── Legacy-Aliase: bestehende var()-Nutzungen (3374×) auf die matte Palette mappen ── */
       --bg:var(--surface-base);
       --panel:var(--surface-raised);
@@ -61,19 +62,19 @@
       --panel3:var(--border2);
       --muted:var(--text-muted);
       --text:var(--text-primary);
-      --text2:#b9bcc1;
+      --text2:#cccfd5;
       --accent2:var(--success);
       --accent3:var(--info);
       --warn:var(--warning);
       --danger:var(--danger);
       --ok:var(--success);
-      --pink:#c08aa0;
+      --pink:#d885a6;
       --orange:var(--warning);
       --teal:var(--info);
       --neon:var(--accent);
       --neon-glow:var(--accent-soft);
-      --shadow: 0 4px 14px rgba(0,0,0,.06);
-      --shadow-lg: 0 8px 24px rgba(0,0,0,.08);
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 6px 18px rgba(0,0,0,.26);
+      --shadow-lg: 0 8px 22px rgba(0,0,0,.36), 0 22px 56px rgba(0,0,0,.32);
       --radius: 14px;
       --radius-sm: 10px;
       --radius-lg: 20px;
@@ -87,25 +88,26 @@
     }
     /* ═══ „Leinen" (Light) — umschaltbar über themeMode; Aliase erben automatisch ═══ */
     html.theme-light{
-      --surface-base:#d8d3c7;
-      --surface-raised:#e3dfd5;
-      --surface-overlay:#ebe7de;
-      --border:#c6c0b2;
-      --border2:#bcb6a6;
-      --hover:rgba(58,55,51,.06);
-      --text-primary:#3a3733;
-      --text-muted:#8a8478;
-      --accent:#5a7d70;
-      --accent-soft:#cdd8d1;
-      --on-accent:#eef2ef;
-      --danger:#b06a52;
-      --warning:#a8852f;
-      --success:#5a7d70;
-      --info:#4f6f8a;
-      --text2:#55514a;
-      --pink:#9d6a7e;
-      --shadow: 0 4px 14px rgba(58,55,51,.07);
-      --shadow-lg: 0 8px 24px rgba(58,55,51,.09);
+      --surface-base:#cdc6b6;
+      --surface-raised:#e9e3d5;
+      --surface-overlay:#f2ede1;
+      --border:#bcb4a0;
+      --border2:#a89d82;
+      --hover:rgba(48,42,34,.08);
+      --text-primary:#2a2620;
+      --text-muted:#7a7463;
+      --accent:#1f8a66;
+      --accent-deep:#15704f;
+      --accent-soft:color-mix(in oklab, var(--accent) 22%, transparent);
+      --on-accent:#f4f8f4;
+      --danger:#b34d2c;
+      --warning:#977211;
+      --success:#1f8a66;
+      --info:#2c6499;
+      --text2:#4d493f;
+      --pink:#974e69;
+      --shadow: 0 1px 2px rgba(52,46,38,.14), 0 6px 18px rgba(52,46,38,.10);
+      --shadow-lg: 0 8px 22px rgba(52,46,38,.16), 0 22px 56px rgba(52,46,38,.13);
     }
 
     /* ═══════ Schiefer/Leinen — Chrome-Politur (durchgängig, additiv; kein Layout-Reflow) ═══════ */
@@ -16233,7 +16235,7 @@ function viewDailyBriefing() {
       return '<div class="db-section" style="border:2px solid var(--accent-soft);background:linear-gradient(135deg,var(--accent-soft),transparent)">' +
         '<h3>' + "\u{1F6CB}\uFE0F" + ' Reflexionsfragen</h3>' +
         ppProjects.map(proj => {
-          return '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--accent-soft);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">' + esc(proj.title) + '</div>' +
+          return '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">' + esc(proj.title) + '</div>' +
           (proj.reflectionQuestions || []).map(q => {
             const lastAnswer = (q.answers || []).slice(-1)[0];
             const answeredToday = lastAnswer && lastAnswer.date === selectedDate;
@@ -19093,7 +19095,7 @@ function renderReviewWizard() {
           <span style="color:var(--accent);font-weight:700">${progress}%</span>
         </div>
         <div style="height:4px;background:rgba(0,0,0,.3);border-radius:2px;overflow:hidden">
-          <div style="height:100%;width:${progress}%;background:linear-gradient(90deg,var(--accent),var(--accent));transition:width .3s"></div>
+          <div style="height:100%;width:${progress}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));transition:width .3s"></div>
         </div>
       </div>
       
@@ -21143,7 +21145,7 @@ window.viewHandbook = function() {
       .hb-card-link {
         font-size: 11px;
         padding: 3px 9px;
-        background: linear-gradient(135deg, var(--accent), var(--accent));
+        background: linear-gradient(135deg, var(--accent), var(--accent-deep));
         color: var(--text);
         border-radius: 6px;
         font-weight: 600;
@@ -21340,7 +21342,7 @@ window.viewTheses = function() {
         font-size: 28px;
         font-weight: 800;
         margin: 0 0 6px;
-        background: linear-gradient(135deg, var(--accent), var(--accent));
+        background: linear-gradient(135deg, var(--accent), var(--accent-deep));
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-family: Georgia, serif;
@@ -21381,7 +21383,7 @@ window.viewTheses = function() {
       }
       .ths-card-progress-bar {
         height: 100%;
-        background: linear-gradient(90deg, var(--accent), var(--accent));
+        background: linear-gradient(90deg, var(--accent), var(--accent-deep));
         transition: width .3s;
       }
     </style>
@@ -22625,7 +22627,7 @@ function renderThesisFocusMode(th, chapterId) {
         position: fixed;
         bottom: 0; left: 0;
         height: 2px;
-        background: linear-gradient(90deg, var(--accent), var(--accent));
+        background: linear-gradient(90deg, var(--accent), var(--accent-deep));
         transition: width .3s;
       }
       .ths-focus-pomodoro {
@@ -22787,7 +22789,7 @@ function renderThesisBriefingTab(th) {
             <span style="font-size:13px;color:var(--muted)">/ ${th.targetWords.toLocaleString('de-CH')}</span>
           </div>
           <div style="height:6px;background:var(--hover);border-radius:3px;overflow:hidden;margin-top:8px">
-            <div style="height:100%;width:${targetPct}%;background:linear-gradient(90deg,var(--accent),var(--accent));transition:width .3s"></div>
+            <div style="height:100%;width:${targetPct}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));transition:width .3s"></div>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:6px">${targetPct}% des Gesamtziels</div>
         </div>
@@ -28049,7 +28051,7 @@ function viewDashboard() {
           <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Bücher ${new Date().getFullYear()}</div>
           <div style="font-size:22px;font-weight:800;color:var(--accent);margin:4px 0">${readingWidget.completedThisYear}/${readingWidget.goals.yearlyBooks}</div>
           <div style="height:4px;background:rgba(0,0,0,.3);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${readingWidget.yearProgress}%;background:linear-gradient(90deg,var(--accent),var(--accent))"></div>
+            <div style="height:100%;width:${readingWidget.yearProgress}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep))"></div>
           </div>
         </div>
         <div style="padding:10px 12px;background:rgba(251,191,36,.05);border:1px solid rgba(251,191,36,.15);border-radius:8px">
@@ -31085,7 +31087,7 @@ function renderProjectHubTabs(p, id) {
           <span style="font-weight:700;font-size:14px;color:${pct === 100 ? '#86efac' : pct > 50 ? '#fbbf24' : '#a5b4fc'}">${doneCount}/${dod.length} (${pct}%)</span>
         </div>
         <div style="height:6px;background:rgba(0,0,0,.3);border-radius:3px;overflow:hidden">
-          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--accent));transition:width .3s"></div>
+          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));transition:width .3s"></div>
         </div>
       </div>` : ''}
       
@@ -32021,7 +32023,7 @@ function renderPb88Stats(id, pb, TI, TL) {
       return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <div style="width:120px;font-size:12px;display:flex;gap:5px;align-items:center">${TI[type]} ${TL[type]}</div>
         <div style="flex:1;height:8px;background:var(--hover);border-radius:4px;overflow:hidden">
-          <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent));width:${pct}%;border-radius:4px"></div>
+          <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));width:${pct}%;border-radius:4px"></div>
         </div>
         <div style="width:80px;text-align:right;font-size:11.5px;color:var(--muted)">${count} (${pct}%)</div>
       </div>`;
@@ -34456,7 +34458,7 @@ function _kvShowCardModal() {
   
   openModal(`📇 Karte ${s.index + 1} / ${s.total}`, `
     <div style="margin-bottom:14px;height:6px;background:var(--panel2);border-radius:3px;overflow:hidden">
-      <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent));width:${pct}%;transition:width 0.3s"></div>
+      <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));width:${pct}%;transition:width 0.3s"></div>
     </div>
     <div style="background:var(--panel2);border:1px solid var(--border);border-radius:14px;padding:24px;text-align:center;min-height:160px;cursor:${s.revealed?'default':'pointer'}" id="kvCardBody" ${!s.revealed?`onclick="window._kvRevealCard()"`:''}>
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">${s.revealed ? 'Antwort' : 'Frage'}</div>
@@ -35459,7 +35461,7 @@ function viewPersonalityProjectDetail(id) {
     <div style="background:linear-gradient(135deg, var(--accent-soft), rgba(236,72,153,.08), var(--accent-soft));border:1px solid var(--accent-soft);border-radius:16px;padding:24px;margin-bottom:20px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
         <div>
-          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent-soft);font-weight:700;margin-bottom:6px">Persönlichkeitsprojekt</div>
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-weight:700;margin-bottom:6px">Persönlichkeitsprojekt</div>
           <h2 style="margin:0;font-size:24px">🌱 ${esc(p.title)}</h2>
           <p style="margin:6px 0 0;font-size:13px;color:var(--muted)">Erstellt ${fmtDateTime(p.createdAt)}${p.description ? ' · ' + esc(p.description.slice(0, 80)) : ''}</p>
           ${p.externalId ? `<div style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:5px 10px;background:rgba(100,210,255,.08);border:1px solid rgba(100,210,255,.25);border-radius:8px;cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')" title="Klicken zum Kopieren"><span style="font-size:11px;color:var(--muted)">📡</span><code style="font-size:12px;font-weight:700;color:var(--teal);letter-spacing:1px">${p.externalId}</code><span style="font-size:11px;color:var(--muted)">📋</span></div>` : ''}
@@ -35484,7 +35486,7 @@ function viewPersonalityProjectDetail(id) {
         </div>
         <div style="display:flex;gap:24px;flex-wrap:wrap">
           <div><div style="font-size:22px;font-weight:800">${doneMilestones}/${milestones.length}</div><div style="font-size:11px;color:var(--muted)">Meilensteine</div></div>
-          <div><div style="font-size:22px;font-weight:800;color:var(--accent-soft)">${reflections.length}</div><div style="font-size:11px;color:var(--muted)">Reflexionsfragen</div></div>
+          <div><div style="font-size:22px;font-weight:800;color:var(--accent)">${reflections.length}</div><div style="font-size:11px;color:var(--muted)">Reflexionsfragen</div></div>
           <div><div style="font-size:22px;font-weight:800;color:var(--accent)">${habits.length}</div><div style="font-size:11px;color:var(--muted)">Habits</div></div>
           <div><div style="font-size:22px;font-weight:800;color:var(--teal)">${beliefs.length}</div><div style="font-size:11px;color:var(--muted)">Glaubenssätze</div></div>
         </div>
@@ -38752,13 +38754,13 @@ function viewGoals() {
       
       // Personality project milestones
       if (ppProjects.length) {
-        html += '<h4 style="font-size:13px;color:var(--accent-soft);margin-bottom:10px">🌱 Meilensteine</h4><div class="grid grid-2" style="gap:12px">';
+        html += '<h4 style="font-size:13px;color:var(--accent);margin-bottom:10px">🌱 Meilensteine</h4><div class="grid grid-2" style="gap:12px">';
         ppProjects.forEach(proj => {
           const ms = proj.milestones || [];
           const done = ms.filter(m => m.done).length;
           const pct = ms.length ? Math.round(done / ms.length * 100) : 0;
           html += '<div style="padding:14px;background:var(--panel2);border-radius:12px;border-left:3px solid var(--accent-soft);cursor:pointer" onclick="navigate(\'projects\',\'' + proj.id + '\')">';
-          html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong style="font-size:13px">' + esc(proj.title) + '</strong><span style="font-size:12px;color:var(--accent-soft);font-weight:700">' + pct + '%</span></div>';
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong style="font-size:13px">' + esc(proj.title) + '</strong><span style="font-size:12px;color:var(--accent);font-weight:700">' + pct + '%</span></div>';
           html += '<div style="background:var(--border);height:5px;border-radius:3px;margin-bottom:8px"><div style="background:var(--accent-soft);height:5px;border-radius:3px;width:' + pct + '%;transition:width .3s"></div></div>';
           ms.slice(0, 4).forEach(m => {
             html += '<div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0">' + (m.done ? '✅' : '🏁') + ' <span style="' + (m.done ? 'text-decoration:line-through;opacity:.5' : '') + '">' + esc(m.title) + '</span>' + (m.dueDate ? '<span style="margin-left:auto;font-size:10px;color:var(--muted)">' + m.dueDate + '</span>' : '') + '</div>';
@@ -82649,7 +82651,7 @@ setInterval(()=>{
 .nh-reader-theme-sepia .nh-reader-content { background: #f4ecd8; color: #2d2418; }
 .nh-reader-theme-light .nh-reader-content { background: var(--text); color: var(--panel); padding: 30px 40px; border-radius: 8px; }
 .nh-reader-progress {
-  position: fixed; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent));
+  position: fixed; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   width: 0%; transition: width 0.1s; z-index: 100;
 }
 .nh-reader-meta {
@@ -84335,7 +84337,7 @@ body.nh-rdr-focus .nh .main { width: 100% !important; max-width: 100% !important
 
 .nh-rdr-progress {
   position: fixed; bottom: 0; left: 0; height: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--accent));
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   width: 0%; transition: width 0.1s; z-index: 100; pointer-events: none;
 }
 
@@ -85255,7 +85257,7 @@ body.tabs-on .topbar { top: 38px !important; }
 }
 .bt-tab.active::before {
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent));
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   border-radius: 2px 2px 0 0;
 }
 .bt-tab-icon { font-size: 14px; flex-shrink: 0; line-height: 1; }
@@ -85324,7 +85326,7 @@ body.tabs-on .jb-container.active {
 
 /* ─── Quick Assistant: Neon-Violett Override ──────────── */
 #qc-fab {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   box-shadow: 0 4px 20px var(--accent-soft) !important;
 }
 #qc-fab:hover {
@@ -85334,7 +85336,7 @@ body.tabs-on .jb-container.active {
   background: linear-gradient(135deg, var(--accent-soft), var(--accent-soft)) !important;
 }
 .qc-hdr-icon {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   box-shadow: 0 2px 8px var(--accent-soft) !important;
 }
 .qc-act:hover {
@@ -85343,7 +85345,7 @@ body.tabs-on .jb-container.active {
   color: var(--accent) !important;
 }
 .qc-m.u {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   color: var(--text) !important;
 }
 .qc-m.a strong {
@@ -85360,7 +85362,7 @@ body.tabs-on .jb-container.active {
   box-shadow: 0 0 0 3px var(--accent-soft) !important;
 }
 .qc-send-btn, #qc-send {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   box-shadow: 0 2px 8px var(--accent-soft) !important;
 }
 
@@ -85408,7 +85410,7 @@ body:not(.tabs-on) #browserTabBar, body:not(.tabs-on) #btToggleHint { display: n
 }
 #translatorBox header .ico {
   width: 32px; height: 32px; border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), var(--accent));
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   display: flex; align-items: center; justify-content: center; font-size: 16px;
   box-shadow: 0 4px 12px var(--accent-soft);
 }
@@ -86583,14 +86585,87 @@ console.log('🌐 Tabs + Translator + Spotlight-Apps geladen');
 button[data-action="quick-task"].primary, button[data-action="create-task"].primary,
 button[data-action="quick-note"].primary, button[data-action="quick-idea"].primary,
 button[data-action="quick-project"].primary {
-  background: var(--accent) !important;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 86%, #fff 14%), var(--accent-deep, var(--accent))) !important;
   color: var(--on-accent) !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
+  border: none !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 1px 2px rgba(0,0,0,.3), 0 4px 12px color-mix(in oklab, var(--accent) 40%, transparent) !important;
+  font-weight: 700 !important;
 }
 .btn.primary:hover, .btn-primary:hover, button.primary:hover {
-  filter: brightness(1.06);
-  box-shadow: none !important;
+  filter: none;
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 2px 4px rgba(0,0,0,.32), 0 8px 20px color-mix(in oklab, var(--accent) 55%, transparent) !important;
+}
+.btn.primary:active, .btn-primary:active, button.primary:active {
+  transform: translateY(0) !important;
+}
+</style>
+
+<style id="schieferLeinenV2">
+/* ═══════════════════════════════════════════════════════════════════════
+   Schiefer/Leinen v2 — Tiefe, Kontrast, Buttons, Typografie, Rhythmus.
+   Rein visuell (CSS). Spät platziert, damit generische Basis-Regeln gewinnen;
+   komponenten-gescopte Styles bleiben unberührt.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Karten/Panels: klare Abhebung durch Hairline-Border + lesbaren Schatten ── */
+.card{ border:1px solid var(--border); box-shadow:var(--shadow); padding:18px; }
+.card:hover{ border-color:var(--border2); }
+.stat-card{ background:var(--panel); border:1px solid var(--border); box-shadow:var(--shadow); }
+
+/* ── Basis-Buttons: Definition, Tiefe, echtes Hover-Feedback ── */
+.btn{ border:1px solid var(--border); background:var(--panel2); box-shadow:0 1px 1px rgba(0,0,0,.18); font-weight:600; }
+.btn:hover{ background:var(--border); border-color:var(--border2); transform:translateY(-1px); }
+.btn:active{ transform:translateY(0); }
+.btn.ghost{ border-color:transparent; background:transparent; box-shadow:none; }
+.btn.ghost:hover{ background:var(--hover); border-color:var(--border); }
+.btn-icon{ border:1px solid var(--border); }
+
+/* ── Inline-Akzent-Gradient-Buttons (durch Token-Sweep flach geworden) aufwerten ── */
+[style*="135deg,var(--accent),var(--accent)"]{
+  background-image:linear-gradient(135deg, color-mix(in oklab, var(--accent) 88%, #fff 12%), var(--accent-deep, var(--accent))) !important;
+  color:var(--on-accent) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16), 0 2px 10px color-mix(in oklab, var(--accent) 40%, transparent) !important;
+}
+
+/* ── Akzent-Präsenz: aktives Sidebar-Item bekommt eine Akzentkante ── */
+.sidebar-item.active{ box-shadow:inset 2px 0 0 var(--accent); }
+
+/* ── Typografie: klarere Hierarchie (rein visuell, Fließtext-Größe unverändert) ── */
+h1{ font-weight:800; letter-spacing:-0.022em; }
+h2{ font-weight:750; letter-spacing:-0.017em; }
+h3{ font-weight:700; letter-spacing:-0.012em; }
+.page-title h2{ font-size:23px; letter-spacing:-0.02em; }
+
+/* ── Rhythmus: etwas mehr Luft im Hauptbereich ── */
+.main{ padding:22px 26px 48px; }
+.grid-2,.grid-3{ gap:16px; }
+
+/* ── Modul-Primär-Buttons an die v2-Akzentsprache angleichen ──
+   Befund beim Durchklicken: mehrere Module setzen Text auf dem Akzent falsch
+   (color:white / var(--text) / var(--bg)) und ihr Hover-Glow nutzt das jetzt
+   dunkle --accent-soft → praktisch unsichtbar. Hier zentral korrigiert
+   (Kontrast = --on-accent, echter Akzent-Verlauf, sichtbarer Glow). Rein visuell. */
+.rl-btn-primary,.nf-btn-primary,.fin-btn-glow,.pill-btn.active{
+  color:var(--on-accent) !important;
+}
+.rl-btn-primary,.fin-btn-glow{
+  background:linear-gradient(135deg, color-mix(in oklab, var(--accent) 88%, #fff 12%), var(--accent-deep)) !important;
+}
+.rl-btn-primary:hover,.nf-btn-primary:hover,.fin-btn-glow:hover{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16), 0 3px 14px color-mix(in oklab, var(--accent) 42%, transparent) !important;
+}
+/* Gold-Primärbutton (RecallHub): dunkle Tinte für Kontrast in beiden Themes,
+   Hover-Glow aus dem Warning-Token statt veralteter hartcodierter Goldfarbe. */
+.rh-btn-primary{ color:color-mix(in oklab, var(--warning) 20%, #000) !important; }
+.rh-btn-primary:hover{ box-shadow:0 3px 14px color-mix(in oklab, var(--warning) 34%, transparent) !important; }
+
+/* Gefüllte Akzent-Buttons/Chips aus Stylesheets (vom Inline-Gradient-Override
+   nicht erfasst): lesbarer Text (--on-accent) + v2-Tiefenverlauf statt flachem
+   einfarbigem Verlauf bzw. hellem Text auf Jade. */
+.mh-add-btn,.wf-add-btn,.rl-chip.active{
+  color:var(--on-accent) !important;
+  background:linear-gradient(135deg, color-mix(in oklab, var(--accent) 88%, #fff 12%), var(--accent-deep)) !important;
 }
 </style>
 
@@ -86868,7 +86943,7 @@ body.tabs-on #readlistContainer.active {
 }
 .rl-logo {
   width: 36px; height: 36px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--accent), var(--accent));
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   display: flex; align-items: center; justify-content: center;
   font-size: 18px;
   box-shadow: 0 6px 16px var(--accent-soft);
@@ -86894,7 +86969,7 @@ body.tabs-on #readlistContainer.active {
 }
 .rl-btn:hover { background: var(--border); }
 .rl-btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   border-color: transparent !important;
   color: var(--text) !important;
   box-shadow: 0 4px 14px var(--accent-soft);
@@ -86935,7 +87010,7 @@ body.tabs-on #readlistContainer.active {
 }
 .rl-chip:hover { background: var(--border); }
 .rl-chip.active {
-  background: linear-gradient(135deg, var(--accent), var(--accent));
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: var(--text); border-color: transparent;
   box-shadow: 0 4px 12px var(--accent-soft);
 }
@@ -87287,7 +87362,7 @@ body.tabs-on #rlReader.show { top: 38px !important; height: calc(100vh - 38px) !
 .rlrd-progress {
   position: fixed; bottom: 0; left: 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--accent));
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   width: 0%;
   z-index: 8600;
   transition: width 0.1s linear;
@@ -87415,7 +87490,7 @@ body.tabs-on .rlrd-side { top: 38px; height: calc(100vh - 38px); }
       <input type="text" class="rl-input" id="rlInputPdfTitle" placeholder="Titel (optional, sonst aus Dateiname)" style="margin-top:14px" />
       <div id="rlPdfStatus" style="margin-top:10px;font-size:12px;color:var(--text2);display:none"></div>
       <div id="rlPdfProgress" style="margin-top:8px;height:4px;background:var(--hover);border-radius:2px;overflow:hidden;display:none">
-        <div id="rlPdfProgressBar" style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent));width:0%;transition:width 0.3s"></div>
+        <div id="rlPdfProgressBar" style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));width:0%;transition:width 0.3s"></div>
       </div>
     </div>
     
@@ -88666,7 +88741,7 @@ console.log('📚 Leseliste geladen');
 }
 .mh-mail-card:hover { background:var(--accent-soft); border-color:var(--accent-soft); }
 .mh-mail-card.unread { background:var(--accent-soft); border-color:var(--accent-soft); }
-.mh-mail-card.unread::before { content:''; position:absolute; left:-2px; top:14px; bottom:14px; width:3px; background:linear-gradient(180deg,var(--accent),var(--accent)); border-radius:2px; }
+.mh-mail-card.unread::before { content:''; position:absolute; left:-2px; top:14px; bottom:14px; width:3px; background:linear-gradient(180deg,var(--accent),var(--accent-deep)); border-radius:2px; }
 .mh-mail-icon { flex-shrink:0; width:42px; height:42px; border-radius:50%; background:linear-gradient(135deg,var(--accent-soft),var(--accent-soft)); display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; color:var(--accent); }
 .mh-mail-body { flex:1; min-width:0; }
 .mh-mail-row1 { display:flex; align-items:baseline; gap:10px; margin-bottom:4px; }
