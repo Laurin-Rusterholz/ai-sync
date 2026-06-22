@@ -39,22 +39,22 @@
   <style>
     :root{
       /* ═══ Design-System „Schiefer" v2 (Dark, Default) — matt & erdig, aber mit Tiefe/Kontrast ═══ */
-      --surface-base:#1b1f23;        /* Seite — tiefer, damit Karten/Panels sich abheben */
-      --surface-raised:#262c32;      /* Karten/Sidebar/Panels */
-      --surface-overlay:#323a43;     /* Modal/Dropdown/Toast */
-      --border:#3a424c;
-      --border2:#4c545f;
-      --hover:rgba(224,226,232,.07);   /* subtiles Hover-/Zebra-Overlay (theme-aware) */
-      --text-primary:#e9eaed;
-      --text-muted:#8e949e;
-      --accent:#7cba9b;
-      --accent-deep:#58997c;         /* dunklere Akzentstufe für Gradient/Hover/Glow */
-      --accent-soft:#2c3f37;
-      --on-accent:#0f201a;
-      --danger:#d68a70;
-      --warning:#cdac63;
-      --success:#7cba9b;
-      --info:#8198b6;
+      --surface-base:#171c20;        /* Seite — tief & leicht kühl, lässt Akzente leuchten */
+      --surface-raised:#212830;      /* Karten/Sidebar/Panels */
+      --surface-overlay:#2d3640;     /* Modal/Dropdown/Toast */
+      --border:#3b4550;
+      --border2:#4f5a66;
+      --hover:rgba(224,226,232,.08);   /* subtiles Hover-/Zebra-Overlay (theme-aware) */
+      --text-primary:#eef0f2;
+      --text-muted:#929aa4;
+      --accent:#45c198;
+      --accent-deep:#2ea27b;         /* dunklere Akzentstufe für Gradient/Hover/Glow */
+      --accent-soft:#173a30;
+      --on-accent:#04140d;
+      --danger:#e5765a;
+      --warning:#e3b048;
+      --success:#45c198;
+      --info:#6aa3de;
       /* ── Legacy-Aliase: bestehende var()-Nutzungen (3374×) auf die matte Palette mappen ── */
       --bg:var(--surface-base);
       --panel:var(--surface-raised);
@@ -62,13 +62,13 @@
       --panel3:var(--border2);
       --muted:var(--text-muted);
       --text:var(--text-primary);
-      --text2:#c3c5cb;
+      --text2:#cccfd5;
       --accent2:var(--success);
       --accent3:var(--info);
       --warn:var(--warning);
       --danger:var(--danger);
       --ok:var(--success);
-      --pink:#cb90a8;
+      --pink:#d885a6;
       --orange:var(--warning);
       --teal:var(--info);
       --neon:var(--accent);
@@ -88,24 +88,24 @@
     }
     /* ═══ „Leinen" (Light) — umschaltbar über themeMode; Aliase erben automatisch ═══ */
     html.theme-light{
-      --surface-base:#d2ccbe;
-      --surface-raised:#eae5da;
-      --surface-overlay:#f3efe6;
-      --border:#c3bcab;
-      --border2:#b1a994;
-      --hover:rgba(58,55,51,.07);
-      --text-primary:#322e29;
-      --text-muted:#847e6d;
-      --accent:#4d8a73;
-      --accent-deep:#3b7460;
-      --accent-soft:#cddbd2;
-      --on-accent:#f4f7f2;
-      --danger:#a85f47;
-      --warning:#9c7a26;
-      --success:#4d8a73;
-      --info:#476887;
-      --text2:#534f47;
-      --pink:#985f74;
+      --surface-base:#cdc6b6;
+      --surface-raised:#e9e3d5;
+      --surface-overlay:#f2ede1;
+      --border:#bcb4a0;
+      --border2:#a89d82;
+      --hover:rgba(48,42,34,.08);
+      --text-primary:#2a2620;
+      --text-muted:#7a7463;
+      --accent:#1f8a66;
+      --accent-deep:#15704f;
+      --accent-soft:#c0dacc;
+      --on-accent:#f4f8f4;
+      --danger:#b34d2c;
+      --warning:#977211;
+      --success:#1f8a66;
+      --info:#2c6499;
+      --text2:#4d493f;
+      --pink:#974e69;
       --shadow: 0 1px 2px rgba(52,46,38,.14), 0 6px 18px rgba(52,46,38,.10);
       --shadow-lg: 0 8px 22px rgba(52,46,38,.16), 0 22px 56px rgba(52,46,38,.13);
     }
