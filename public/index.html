@@ -1255,7 +1255,7 @@
     
     /* Task Cards Grid */
     .tasks-grid{
-      display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:16px;
     }
     .task-card{
       background:var(--accent-soft);border:1px solid var(--border);border-radius:14px;
@@ -1347,6 +1347,18 @@
     }
     .matrix-quadrant.drag-over{box-shadow:inset 0 0 0 2px var(--accent)}
 
+    /* === Responsive: Überlauf auf kleinen Viewports sauber abfangen === */
+    @media (max-width: 760px){
+      /* Eisenhower-Matrix horizontal scrollbar statt rechts abschneiden */
+      .eisenhower-matrix{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px}
+      .matrix-row,.matrix-labels-top{min-width:560px}
+      /* Filter-/Aktionsleisten umbrechen lassen, Eingaben flexibel */
+      .page-actions{width:100%}
+      .task-bulk-bar{overflow-x:auto}
+    }
+    /* Eingaben in Filterzeilen nie über den Container hinaus */
+    .card .flex input.input, .card .flex select.input{max-width:100%}
+
     /* === Dashboard: klickbarer Wochenkalender === */
     .wk-strip{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
     .wk-day{
@@ -1395,7 +1407,7 @@
        PROJECT CARDS & TIMELINE
        ========================= */
     .projects-grid{
-      display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:16px;
     }
     .project-card{
       background:var(--accent-soft);border:1px solid var(--border);border-radius:14px;
@@ -5143,6 +5155,7 @@ body:not(.thesis-focus) #thsSprintBanner { display: none !important; }
           </div>
         </div>
         <button class="topbar-btn" id="btnSpotlight" title="Schnellsuche (⌘+K)" onclick="window.openSpotlight()">🔍</button>
+        <button class="topbar-btn" id="btnShortcuts" title="Tastatur-Shortcuts (⌘+/ oder ?)" onclick="window.openShortcutsHelp()">⌨️</button>
         <button class="topbar-btn" id="btnDailyWrap" title="Tag abschließen" onclick="window.openDailyWrap()">🌙</button>
         <button class="topbar-btn" id="btnSave" title="Jetzt speichern & synchronisieren (⌘+S)">💾</button>
         <button class="topbar-btn" id="btnManualPush" title="Manueller Push zum Server" onclick="window._headerPush()">☁️↑</button>
@@ -7985,15 +7998,22 @@ const TRANSLATIONS = {
 };
 
 function t(key) {
-  let lang = "en";
-  try { if (typeof APP !== "undefined" && APP && APP.state && APP.state.settings) lang = APP.state.settings.language || "en"; } catch(e) {}
+  const lang = getLang();
   return TRANSLATIONS[lang]?.[key] || TRANSLATIONS["de"]?.[key] || key;
 }
 window.t = t;
 
 function getLang() {
-  // Quantus is now English-only
-  return "en";
+  // Einheitliche Sprache: folgt der Nutzereinstellung, Standard Deutsch
+  // (die App ist durchgehend deutsch beschriftet). Verhindert das Mischen
+  // von Deutsch/Englisch, das durch ein erzwungenes "en" entstand.
+  let lang = "de";
+  try {
+    if (typeof APP !== "undefined" && APP && APP.state && APP.state.settings && APP.state.settings.language) {
+      lang = APP.state.settings.language;
+    }
+  } catch (e) {}
+  return lang === "en" ? "en" : "de";
 }
 
 function getLocale() {
@@ -8040,7 +8060,16 @@ const TASK_CATEGORIES = [
   { value: "creative", label: "Creative & Writing", color: "#bf5af2", icon: "✍️" },
   { value: "rest", label: "Other", color: "#8e8e93", icon: "📋" }
 ];
-function getTaskCategoryLabel(val) { return (TASK_CATEGORIES.find(c => c.value === val) || { label: val || "—" }).label; }
+const TASK_CATEGORY_LABELS_DE = {
+  eigene_projekte: "Eigene Projekte", org_projekte: "Org-Projekte", lernen: "Lernen",
+  admin: "Admin & Finanzen", health: "Gesundheit & Fitness", social: "Soziales & Events",
+  creative: "Kreativ & Schreiben", rest: "Sonstiges",
+};
+function getTaskCategoryLabel(val) {
+  const c = TASK_CATEGORIES.find(c => c.value === val);
+  if (!c) return val || "—";
+  return getLang() === "de" ? (TASK_CATEGORY_LABELS_DE[val] || c.label) : c.label;
+}
 function getTaskCategoryColor(val) { return (TASK_CATEGORIES.find(c => c.value === val) || { color: "#99a3b8" }).color; }
 function getTaskCategoryIcon(val) { return (TASK_CATEGORIES.find(c => c.value === val) || { icon: "📋" }).icon; }
 
@@ -15760,6 +15789,7 @@ function renderMain() {
     case "visionboard": openVisionBoard(); return; // Öffnet VisionBoard 2026
     case "today": html = viewToday(); break;
     case "learn": openRecallLab(); return; // Öffnet RecallLab Flashcards
+    case "recall": openRecallLab(); return; // Alias (z.B. aus globaler Suche)
     case "readinghub": openReadingHub(); return; // Öffnet ReadingHub
     case "weekplanning": html = viewWeekPlanning(); break;
     case "tasks": html = id ? viewTaskDetail(id) : viewTasks(); break;
@@ -50760,6 +50790,61 @@ document.addEventListener("click", function(e) {
 });
 
 // ============================================================================
+// TASTATUR-SHORTCUT-ÜBERSICHT (⌘/ oder ?)
+// ============================================================================
+window.openShortcutsHelp = function () {
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
+  const mod = isMac ? "⌘" : "Strg";
+  const sc = (APP.state.settings && APP.state.settings.shortcuts) || {};
+  const fmt = (s) => {
+    if (!s || !s.key) return "";
+    const parts = [];
+    if (s.ctrl) parts.push(mod);
+    if (s.shift) parts.push("⇧");
+    parts.push(s.key.toUpperCase());
+    return parts.join(" + ");
+  };
+  // Konfigurierbare Shortcuts (aus Einstellungen) + feste, global belegte
+  const configured = [
+    ["save", "Speichern & synchronisieren"],
+    ["undo", "Rückgängig"],
+    ["search", "Schnellsuche (Topbar)"],
+    ["quickNote", "Schnellnotiz"],
+    ["quickTask", "Schnellaufgabe"],
+    ["focusIdeas", "Schnellidee"],
+    ["focusUpdate", "Update erfassen"],
+    ["gotoDash", "Zum Dashboard"],
+    ["gotoTasks", "Zu den Aufgaben"],
+    ["gotoNotes", "Zu den Notizen"],
+    ["gotoProjects", "Zu den Projekten"],
+    ["gotoPrograms", "Zu den Programmen"],
+  ].filter(([k]) => sc[k] && sc[k].key).map(([k, label]) => [fmt(sc[k]), label]);
+  const fixed = [
+    [`${mod} + K`, "Globale Suche / Befehlspalette"],
+    [`${mod} + T`, "Neuer Tab / Suche"],
+    [`${mod} + W`, "Tab schließen"],
+    [`${mod} + ⇧ + T`, "Übersetzer / Tab wiederherstellen"],
+    [`${mod} + Enter`, "KI-Frage senden (in Textfeldern)"],
+    ["Esc", "Dialog / Panel schließen"],
+    [`${mod} + /  ·  ?`, "Diese Shortcut-Übersicht"],
+  ];
+  const rowsHtml = (arr) => arr.map(([k, label]) =>
+    `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:13px;color:var(--text)">${esc(label)}</span>
+      <kbd style="font-family:ui-monospace,monospace;font-size:12px;font-weight:700;background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:2px 8px;white-space:nowrap">${esc(k)}</kbd>
+    </div>`).join("");
+  openModal("⌨️ Tastatur-Shortcuts", `
+    <div style="max-height:60vh;overflow-y:auto">
+      <div style="font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--muted);margin:4px 0 2px">NAVIGATION & AKTIONEN</div>
+      ${rowsHtml(configured)}
+      <div style="font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--muted);margin:16px 0 2px">GLOBAL</div>
+      ${rowsHtml(fixed)}
+      <p style="font-size:11px;color:var(--muted);margin-top:14px">Navigations- & Aktions-Shortcuts lassen sich in den Einstellungen anpassen.</p>
+    </div>
+  `, `<button class="btn primary" data-action="close-modal">Schließen</button>`);
+};
+
+// ============================================================================
 // INPUT EVENT HANDLERS
 // ============================================================================
 document.addEventListener("keydown", function(e) {
@@ -50809,17 +50894,28 @@ document.addEventListener("keydown", function(e) {
     if (input) input.focus();
     return;
   } else if (_matchSC("gotoDash", e)) {
-    e.preventDefault(); location.hash = "#dashboard"; return;
+    e.preventDefault(); location.hash = "#/dashboard"; return;
   } else if (_matchSC("gotoTasks", e)) {
-    e.preventDefault(); location.hash = "#tasks"; return;
+    e.preventDefault(); location.hash = "#/tasks"; return;
   } else if (_matchSC("gotoNotes", e)) {
-    e.preventDefault(); location.hash = "#notes"; return;
+    e.preventDefault(); location.hash = "#/notes"; return;
   } else if (_matchSC("gotoProjects", e)) {
-    e.preventDefault(); location.hash = "#projects"; return;
+    e.preventDefault(); location.hash = "#/projects"; return;
   } else if (_matchSC("gotoPrograms", e)) {
-    e.preventDefault(); location.hash = "#programs"; return;
+    e.preventDefault(); location.hash = "#/programs"; return;
   }
-  
+
+  // Shortcut-Übersicht: Cmd/Ctrl + /  oder  "?" (ausserhalb von Eingabefeldern)
+  {
+    const _tag = (e.target.tagName || "").toLowerCase();
+    const _inField = _tag === "input" || _tag === "textarea" || e.target.isContentEditable;
+    if (!_inField && (((e.ctrlKey || e.metaKey) && e.key === "/") || (e.key === "?" && !e.ctrlKey && !e.metaKey))) {
+      e.preventDefault();
+      if (typeof window.openShortcutsHelp === "function") window.openShortcutsHelp();
+      return;
+    }
+  }
+
   // Escape: Modal oder SlidePanel schließen
   if (e.key === "Escape") {
     const modal = document.getElementById("modalBackdrop");
@@ -86998,7 +87094,7 @@ function initTabs() {
     const norm = rawHash.replace(/^#\/?/, '');
     const top = (norm.split('/')[0] || '').trim();
     if (top && top !== 'dashboard') {
-      const HUB_ROUTE_KIND = { learn: 'recalllab', readinghub: 'readinghub', notes: 'noteflow', articles: 'newsroom', readlist: 'readlist' };
+      const HUB_ROUTE_KIND = { learn: 'recalllab', recall: 'recalllab', readinghub: 'readinghub', notes: 'noteflow', articles: 'newsroom', readlist: 'readlist' };
       const hubKind = HUB_ROUTE_KIND[top];
       let target;
       if (hubKind) {
