@@ -1333,6 +1333,50 @@
     }
     .matrix-quadrant.drag-over{box-shadow:inset 0 0 0 2px var(--accent)}
 
+    /* === Dashboard: klickbarer Wochenkalender === */
+    .wk-strip{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+    .wk-day{
+      display:flex;flex-direction:column;align-items:center;gap:2px;
+      padding:8px 4px 6px;border-radius:10px;cursor:pointer;
+      background:var(--panel2);border:1px solid var(--border);color:var(--text);
+      transition:all .15s;position:relative;
+    }
+    .wk-day:hover{border-color:var(--accent);transform:translateY(-1px)}
+    .wk-day.today{border-color:var(--accent)}
+    .wk-day.sel{background:var(--accent-soft);border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+    .wk-dow{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase}
+    .wk-day.today .wk-dow{color:var(--accent)}
+    .wk-num{font-size:16px;font-weight:800;line-height:1}
+    .wk-badge{
+      min-width:16px;height:16px;border-radius:8px;font-size:9px;font-weight:800;
+      display:flex;align-items:center;justify-content:center;
+      background:var(--accent);color:#fff;padding:0 4px;
+    }
+    .wk-badge.empty{background:transparent;color:transparent}
+
+    /* === Dashboard: Widget-Anpassung (Drag & Drop + Ein/Ausblenden) === */
+    body.dash-edit #dashWidgets > [data-widget]{
+      position:relative;outline:2px dashed var(--border2);outline-offset:3px;
+      border-radius:14px;transition:outline-color .15s;cursor:grab;
+    }
+    body.dash-edit #dashWidgets > [data-widget].drop-target{outline-color:var(--accent)}
+    body.dash-edit #dashWidgets > [data-widget].dragging{opacity:.4}
+    /* Im Edit-Modus Widget-Inhalt nicht klickbar (versehentliche Navigation verhindern), Werkzeugleiste aktiv */
+    body.dash-edit #dashWidgets > [data-widget] > *:not(.dash-wtools){pointer-events:none}
+    body.dash-edit #dashWidgets > [data-widget] > .dash-wtools{pointer-events:auto}
+    #dashWidgets > [data-widget].dash-widget-hidden{opacity:.5}
+    .dash-wtools{
+      position:absolute;top:-12px;right:10px;z-index:6;display:flex;gap:6px;align-items:center;
+      background:var(--panel);border:1px solid var(--accent);border-radius:9px;
+      padding:3px 8px;box-shadow:0 4px 14px rgba(0,0,0,.25);
+    }
+    .dash-wtools .dw-handle{font-size:11px;font-weight:700;color:var(--muted);cursor:grab;white-space:nowrap}
+    .dash-wtools .dw-hide{
+      font-size:11px;padding:3px 8px;border-radius:7px;cursor:pointer;
+      background:var(--panel2);border:1px solid var(--border);color:var(--text);
+    }
+    .dash-wtools .dw-hide:hover{border-color:var(--accent)}
+
     /* =========================
        PROJECT CARDS & TIMELINE
        ========================= */
@@ -12302,12 +12346,33 @@ function convertTaskToProject(taskId) {
 // ============================================================================
 // TIME TRACKING & STATISTICS
 // ============================================================================
+// Verstrichene Sekunden einer aktuell laufenden Pomodoro-Session (beide
+// Implementierungen: Dashboard-Pomodoro + Fokus-Modus). Erlaubt der
+// "Zeit heute"-Anzeige live mitzuzählen, statt erst nach Abschluss.
+function getRunningPomodoroSeconds(sinceMs) {
+  let s = 0;
+  const now = Date.now();
+  try {
+    const p = APP.state.ui && APP.state.ui.pomodoro;
+    if (p && p.running && p.type === "work") {
+      const start = p.startedMs || (p.endTime ? p.endTime - 25 * 60 * 1000 : null);
+      if (start && start >= (sinceMs || 0)) s += Math.max(0, Math.round((now - start) / 1000));
+    }
+  } catch (e) {}
+  try {
+    if (window._thsPomodoroInterval && window._thsPomodoroStartMs && window._thsPomodoroStartMs >= (sinceMs || 0)) {
+      s += Math.max(0, Math.round((now - window._thsPomodoroStartMs) / 1000));
+    }
+  } catch (e) {}
+  return s;
+}
+
 function getTodaySeconds() {
   const e = APP.state.data.entities;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayMs = today.getTime();
-  
+
   let sum = 0;
   for (const te of Object.values(e.timeEntries)) {
     const st = new Date(te.startTs).getTime();
@@ -12315,7 +12380,7 @@ function getTodaySeconds() {
       sum += (te.durationSec || 0);
     }
   }
-  
+
   // Add running timers
   for (const [taskId, timer] of Object.entries(APP.state.data.timers)) {
     if (!timer || !timer.startTs) continue;
@@ -12324,7 +12389,10 @@ function getTodaySeconds() {
       sum += Math.max(0, Math.round((Date.now() - st) / 1000));
     }
   }
-  
+
+  // Laufende Pomodoro-Session live mitzählen
+  sum += getRunningPomodoroSeconds(todayMs);
+
   return sum;
 }
 
@@ -12348,7 +12416,10 @@ function getWeekSeconds() {
       sum += Math.max(0, Math.round((Date.now() - st) / 1000));
     }
   }
-  
+
+  // Laufende Pomodoro-Session live mitzählen
+  sum += getRunningPomodoroSeconds(weekStartMs);
+
   return sum;
 }
 
@@ -15756,6 +15827,8 @@ function renderMain() {
         old.parentNode.replaceChild(s, old);
       });
     }
+    // Dashboard: gespeicherte Widget-Reihenfolge/-Sichtbarkeit anwenden
+    if (route === "dashboard") { try { applyDashboardLayout(); } catch (e) {} }
   }
 }
 
@@ -26125,6 +26198,7 @@ window.thsTogglePomodoro = function() {
   }
   // 25 min Pomodoro
   window._thsPomodoroEndsAt = Date.now() + 25 * 60 * 1000;
+  window._thsPomodoroStartMs = Date.now();
   display.style.display = 'inline-block';
   
   const tick = () => {
@@ -26146,6 +26220,22 @@ window.thsStopPomodoro = function() {
   if (window._thsPomodoroInterval) {
     clearInterval(window._thsPomodoroInterval);
     window._thsPomodoroInterval = null;
+    // Verstrichene Fokuszeit als TimeEntry erfassen (zählt in "Zeit heute")
+    try {
+      const startMs = window._thsPomodoroStartMs;
+      if (startMs && typeof createEntity === "function") {
+        const elapsed = Math.max(0, Math.round((Date.now() - startMs) / 1000));
+        if (elapsed >= 60) {
+          createEntity("timeEntry", {
+            taskId: null, projectId: null,
+            startTs: new Date(startMs).toISOString(), endTs: nowIso(),
+            durationSec: elapsed, note: "🍅 Pomodoro", category: "Pomodoro", billable: false,
+          });
+          if (typeof scheduleSave === "function") scheduleSave();
+        }
+      }
+    } catch (e) {}
+    window._thsPomodoroStartMs = null;
   }
   const display = document.getElementById('thsPomodoroDisplay');
   if (display) display.style.display = 'none';
@@ -27766,7 +27856,8 @@ function viewDashboard() {
   const stats = getTaskStats();
   const projectStats = getProjectStats();
   const overdue = getOverdueTasks();
-  const upcoming = getUpcomingTasks(3);
+  const upcomingDays = (APP.state.data.settings && APP.state.data.settings.upcomingDays) || 3;
+  const upcoming = getUpcomingTasks(upcomingDays);
   const weeklyGoals = getWeeklyGoals();
   const pinnedItems = APP.state.data.pinnedItems;
   
@@ -28193,9 +28284,10 @@ function viewDashboard() {
       <div class="page-actions">
         <button class="btn primary" data-action="quick-task">➕ Neue Aufgabe</button>
         <button class="btn" data-action="nav" data-route="chat">🤖 KI-Assistent</button>
+        <button class="btn" onclick="window.toggleDashEdit()" title="Widgets anordnen & ein-/ausblenden">🎛️ Anpassen</button>
       </div>
     </div>
-    
+
     ${renderProgramLinksWidget("dashboard")}
     
     ${(() => {
@@ -28228,6 +28320,7 @@ function viewDashboard() {
       return "";
     })()}
     
+    <div id="dashWidgets">
     <!-- Stats Row -->
     <div class="grid grid-4 mb-4">
       <div class="card stat-card">
@@ -28304,6 +28397,51 @@ function viewDashboard() {
       </div>
     </div>
     
+    ${(() => {
+      // Klickbarer Wochenkalender: Tag anklicken → fällige Aufgaben/Termine aufklappen
+      const _ty = todayYmd();
+      const _t = new Date(); _t.setHours(0, 0, 0, 0);
+      const dow = (_t.getDay() + 6) % 7; // Mo = 0
+      const mon = new Date(_t); mon.setDate(_t.getDate() - dow);
+      const pad = n => String(n).padStart(2, "0");
+      const ymdOf = d => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      const names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+      const allT = Object.values(APP.state.data.entities.tasks || {});
+      const allE = Object.values(APP.state.data.entities.calendarEvents || {});
+      const sel = APP.state.ui.dashWeekDay || _ty;
+      const dueOf = ymd => allT.filter(t => t.dueDate === ymd && t.status !== "done");
+      const evOf = ymd => allE.filter(ev => ev.date === ymd);
+      const days = [];
+      for (let i = 0; i < 7; i++) { const d = new Date(mon); d.setDate(mon.getDate() + i); days.push(d); }
+      const strip = days.map((d, i) => {
+        const ymd = ymdOf(d);
+        const total = dueOf(ymd).length + evOf(ymd).length;
+        return `<button class="wk-day ${ymd === _ty ? "today" : ""} ${ymd === sel ? "sel" : ""}" data-action="dash-week-day" data-ymd="${ymd}">
+          <span class="wk-dow">${names[i]}</span>
+          <span class="wk-num">${d.getDate()}</span>
+          ${total ? `<span class="wk-badge">${total}</span>` : `<span class="wk-badge empty"></span>`}
+        </button>`;
+      }).join("");
+      const selTasks = dueOf(sel).sort((a, b) => (a.priority || 3) - (b.priority || 3));
+      const selEvents = evOf(sel).sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
+      const selLabel = new Date(sel + "T00:00:00").toLocaleDateString("de-CH", { weekday: "long", day: "numeric", month: "long" });
+      let body;
+      if (!selTasks.length && !selEvents.length) {
+        body = `<div class="mini" style="opacity:.6;padding:8px 2px">Keine Aufgaben oder Termine an diesem Tag. 🎉</div>`;
+      } else {
+        body = selEvents.map(ev => `<div class="list-item" data-action="nav" data-route="calendar"><div class="item-icon">📅</div><div class="item-body"><div class="item-title"><span class="name">${esc(ev.title || "Termin")}</span></div><div class="item-meta">${ev.startTime ? `<span class="pill accent">${esc(ev.startTime)}</span>` : ""}</div></div></div>`).join("")
+          + selTasks.map(t => `<div class="list-item" data-action="open-entity" data-kind="task" data-id="${t.id}"><div class="item-icon">${t.dueDate < _ty ? "⚠️" : "✅"}</div><div class="item-body"><div class="item-title"><span class="name">${esc(t.title)}</span></div><div class="item-meta"><span class="pill">P${t.priority || 3}</span></div></div></div>`).join("");
+      }
+      return `
+      <div class="card mb-4">
+        <h3 style="margin:0 0 8px 0">🗓️ Diese Woche</h3>
+        <div class="wk-strip">${strip}</div>
+        <div class="sep"></div>
+        <div style="font-size:12px;font-weight:800;margin:8px 0 4px;text-transform:capitalize">${selLabel}</div>
+        <div class="list">${body}</div>
+      </div>`;
+    })()}
+
     <div class="grid grid-2 mb-4">
       <div class="card">
         <h3>⚠️ Überfällig (${overdue.length})</h3>
@@ -28311,7 +28449,12 @@ function viewDashboard() {
         <div class="list">${overdueHtml}</div>
       </div>
       <div class="card">
-        <h3>📅 Anstehend (3 Tage)</h3>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+          <h3 style="margin:0;flex:1">📅 Anstehend</h3>
+          <select title="Zeitraum wählen" onchange="window.setUpcomingDays(this.value)" style="font-size:11px;padding:3px 6px;border-radius:7px;background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer">
+            ${[3,7,14,30].map(d => `<option value="${d}" ${upcomingDays === d ? "selected" : ""}>${d} Tage</option>`).join("")}
+          </select>
+        </div>
         <div class="sep"></div>
         <div class="list">${upcomingHtml}</div>
       </div>
@@ -28553,6 +28696,7 @@ function viewDashboard() {
           '</div>';
         }).join("")}
       </div>
+    </div>
     </div>
   `;
 }
@@ -49207,6 +49351,118 @@ window.matrixDrop = function (ev, quadrant) {
   toast("ok", "Verschoben", `Priorität auf P${patch.priority} angepasst`);
 };
 
+// Dashboard: "Anstehend"-Zeitraum als persistente Nutzereinstellung
+window.setUpcomingDays = function (value) {
+  const n = parseInt(value) || 3;
+  APP.state.data.settings = APP.state.data.settings || {};
+  APP.state.data.settings.upcomingDays = n;
+  scheduleSave();
+  render();
+};
+
+// ============================================================================
+// DASHBOARD: Widgets anordnen (Drag & Drop) + ein-/ausblenden
+// Reihenfolge der Widgets entspricht IMMER der Template-Ausgabe von
+// viewDashboard(); daher können stabile Keys per Index zugewiesen werden.
+// ============================================================================
+const DASH_WIDGETS = [
+  { key: "stats",     label: "Statistik-Übersicht" },
+  { key: "quickgrid", label: "Quick ToDo & Inbox" },
+  { key: "thoughts",  label: "Gedanken-Schnellnotiz" },
+  { key: "week",      label: "Wochenkalender" },
+  { key: "overdue",   label: "Überfällig & Anstehend" },
+  { key: "readlist",  label: "Leseliste" },
+  { key: "decisions", label: "Entscheidungen & Kategorien" },
+  { key: "statsmini", label: "Schnell-Statistik" },
+  { key: "statistik", label: "Statistiken & Projekte" },
+  { key: "thoughts2", label: "Gedanken & Fragen" },
+  { key: "apps",      label: "Alle Apps" },
+];
+
+function applyDashboardLayout() {
+  const container = document.getElementById("dashWidgets");
+  if (!container) return;
+  const s = APP.state.data.settings || {};
+  const hidden = s.dashboardHidden || [];
+  const order = s.dashboardOrder || [];
+  const editMode = document.body.classList.contains("dash-edit");
+
+  const kids = [...container.children];
+  // Frischer Render: DOM ist in Default-Reihenfolge → Keys per Index zuweisen
+  if (kids.some(el => !el.dataset.widget)) {
+    kids.forEach((el, i) => {
+      const d = DASH_WIDGETS[i];
+      if (d) { el.dataset.widget = d.key; el.dataset.wlabel = d.label; }
+    });
+  }
+
+  const byKey = {};
+  kids.forEach(el => { if (el.dataset.widget) byKey[el.dataset.widget] = el; });
+
+  // Gespeicherte Reihenfolge anwenden (fehlende Keys hinten anhängen)
+  const orderedKeys = [
+    ...order.filter(k => byKey[k]),
+    ...DASH_WIDGETS.map(d => d.key).filter(k => byKey[k] && !order.includes(k)),
+  ];
+  orderedKeys.forEach(k => container.appendChild(byKey[k]));
+
+  // Sichtbarkeit + Edit-Werkzeuge
+  Object.keys(byKey).forEach(key => {
+    const el = byKey[key];
+    const isHidden = hidden.includes(key);
+    el.style.display = (isHidden && !editMode) ? "none" : "";
+    el.classList.toggle("dash-widget-hidden", isHidden);
+    let bar = el.querySelector(":scope > .dash-wtools");
+    if (editMode) {
+      el.setAttribute("draggable", "true");
+      if (!bar) { bar = document.createElement("div"); bar.className = "dash-wtools"; el.appendChild(bar); }
+      bar.innerHTML =
+        `<span class="dw-handle" title="Ziehen zum Anordnen">⠿ ${esc(el.dataset.wlabel || key)}</span>` +
+        `<button class="dw-hide">${isHidden ? "👁 Einblenden" : "🙈 Ausblenden"}</button>`;
+      bar.querySelector(".dw-hide").onclick = (ev) => { ev.stopPropagation(); window.toggleDashWidget(key); };
+      el.ondragstart = (ev) => { ev.dataTransfer.setData("text/plain", key); ev.dataTransfer.effectAllowed = "move"; el.classList.add("dragging"); };
+      el.ondragend = () => el.classList.remove("dragging");
+      el.ondragover = (ev) => { ev.preventDefault(); el.classList.add("drop-target"); };
+      el.ondragleave = () => el.classList.remove("drop-target");
+      el.ondrop = (ev) => { ev.preventDefault(); el.classList.remove("drop-target"); window.reorderDashWidget(ev.dataTransfer.getData("text/plain"), key); };
+    } else {
+      el.setAttribute("draggable", "false");
+      if (bar) bar.remove();
+      el.ondragstart = el.ondragend = el.ondragover = el.ondragleave = el.ondrop = null;
+    }
+  });
+}
+window.applyDashboardLayout = applyDashboardLayout;
+
+window.toggleDashEdit = function () {
+  document.body.classList.toggle("dash-edit");
+  const on = document.body.classList.contains("dash-edit");
+  applyDashboardLayout();
+  toast("info", "Dashboard", on ? "Anpassen aktiv — Widgets ziehen oder aus-/einblenden" : "Anpassen beendet");
+};
+
+window.toggleDashWidget = function (key) {
+  const s = (APP.state.data.settings = APP.state.data.settings || {});
+  const hidden = new Set(s.dashboardHidden || []);
+  hidden.has(key) ? hidden.delete(key) : hidden.add(key);
+  s.dashboardHidden = [...hidden];
+  scheduleSave();
+  applyDashboardLayout();
+};
+
+window.reorderDashWidget = function (fromKey, toKey) {
+  if (!fromKey || fromKey === toKey) return;
+  const s = (APP.state.data.settings = APP.state.data.settings || {});
+  let order = (s.dashboardOrder && s.dashboardOrder.length) ? [...s.dashboardOrder] : DASH_WIDGETS.map(d => d.key);
+  DASH_WIDGETS.forEach(d => { if (!order.includes(d.key)) order.push(d.key); });
+  order = order.filter(k => k !== fromKey);
+  const idx = order.indexOf(toKey);
+  order.splice(idx < 0 ? order.length : idx, 0, fromKey);
+  s.dashboardOrder = order;
+  scheduleSave();
+  applyDashboardLayout();
+};
+
 
 // Funktion um Meilenstein-Deadlines für Kalender zu holen
 function getStrategyMilestoneEvents() {
@@ -51456,15 +51712,25 @@ case "start-pomodoro": {
   const pomoState = APP.state.ui.pomodoro || { running: false };
   
   if (pomoState.running) {
-    // Stop pomodoro
+    // Stop pomodoro — verstrichene Zeit auch bei vorzeitigem Stopp erfassen,
+    // damit "Zeit heute" die Fokuszeit zählt.
     clearInterval(APP.state.ui.pomoInterval);
+    const startMs = pomoState.startedMs || (pomoState.endTime ? pomoState.endTime - 25 * 60 * 1000 : Date.now());
+    const elapsed = Math.max(0, Math.round((Date.now() - startMs) / 1000));
+    if (pomoState.type === "work" && elapsed >= 60) {
+      createEntity("timeEntry", {
+        taskId: null, projectId: null,
+        startTs: new Date(startMs).toISOString(), endTs: nowIso(),
+        durationSec: elapsed, note: "🍅 Pomodoro (Teilsession)", category: "Pomodoro", billable: false,
+      });
+    }
     APP.state.ui.pomodoro = { running: false };
-    toast("info", "Pomodoro", "Timer gestoppt");
+    toast("info", "Pomodoro", elapsed >= 60 ? `Timer gestoppt — ${Math.round(elapsed / 60)} Min erfasst` : "Timer gestoppt");
   } else {
     // Start pomodoro (25 min)
     const endTime = Date.now() + 25 * 60 * 1000;
-    APP.state.ui.pomodoro = { running: true, endTime, type: "work" };
-    
+    APP.state.ui.pomodoro = { running: true, endTime, type: "work", startedMs: Date.now() };
+
     const startTime = nowIso();
     APP.state.ui.pomoInterval = setInterval(() => {
       const remaining = APP.state.ui.pomodoro.endTime - Date.now();
@@ -51498,6 +51764,12 @@ case "start-pomodoro": {
     toast("ok", "🍅 Pomodoro", "25 Minuten Timer gestartet!");
   }
   render();
+  break;
+}
+
+case "dash-week-day": {
+  const ymd = el.dataset.ymd;
+  if (ymd) { APP.state.ui.dashWeekDay = ymd; render(); }
   break;
 }
 
