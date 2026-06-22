@@ -94839,6 +94839,35 @@ console.log('📚 Leseliste geladen');
 .gml-row:hover .gml-row-x { opacity:.5; }
 .gml-row-x:hover { opacity:1; }
 .gml-person-dot { color:var(--ok); font-size:9px; margin-right:5px; vertical-align:middle; }
+/* ── Mail-Features (Chips, Bulk, Shortcuts, Threads, Vorlagen, Dichte) ── */
+.gml-chips { display:flex; gap:7px; flex-wrap:wrap; margin:0 0 12px; }
+.gml-fchip { font-size:12px; font-weight:600; padding:5px 11px; border-radius:999px; border:1px solid var(--border); background:var(--hover); color:var(--text2); cursor:pointer; }
+.gml-fchip:hover { color:var(--text); border-color:var(--accent); }
+.gml-fchip.on { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+.gml-toolrow { display:flex; align-items:center; gap:6px; }
+.gml-toolbtn { font-size:11.5px; font-weight:600; padding:4px 9px; border-radius:8px; border:1px solid var(--border); background:var(--hover); color:var(--text2); cursor:pointer; }
+.gml-toolbtn:hover { color:var(--text); border-color:var(--accent); }
+.gml-toolbtn.on { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+.gml-bulkbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:9px 16px; border-bottom:1px solid var(--border); background:var(--accent-soft); }
+.gml-bulk-count { font-weight:700; font-size:13px; color:var(--text); margin-right:2px; }
+.gml-bulk-btn { font-size:12.5px; font-weight:600; padding:5px 11px; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text2); cursor:pointer; }
+.gml-bulk-btn:hover { color:var(--text); border-color:var(--accent); }
+.gml-bulk-btn.ghost { background:transparent; }
+.gml-selbox { flex-shrink:0; width:17px; height:17px; border:1.5px solid var(--border); border-radius:5px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; font-size:11px; line-height:1; color:var(--text); background:var(--panel2); user-select:none; }
+.gml-selbox.on { background:var(--accent); border-color:var(--accent); }
+.gml-row.selected { background:var(--accent-soft); }
+.gml-row.cursor { box-shadow:inset 3px 0 0 var(--accent); }
+.gml-unread-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent); margin-right:7px; flex-shrink:0; vertical-align:middle; }
+.gml-thread-badge { font-size:10.5px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:1px 7px; border-radius:999px; margin-left:7px; }
+.gml-list.compact .gml-row { padding-top:6px; padding-bottom:6px; }
+.gml-list.compact .gml-row-snip { display:none; }
+.gml-help-ov { position:fixed; inset:0; z-index:1600; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; padding:24px; }
+.gml-help-card { background:var(--panel); border:1px solid var(--border); border-radius:16px; box-shadow:0 24px 64px rgba(0,0,0,.5); max-width:440px; width:100%; padding:22px 24px; }
+.gml-help-card h3 { margin:0 0 14px; font-size:16px; color:var(--text); display:flex; justify-content:space-between; align-items:center; }
+.gml-help-row { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:7px 0; border-bottom:1px solid var(--border); font-size:13.5px; color:var(--text2); }
+.gml-help-row:last-child { border-bottom:none; }
+.gml-kbd { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; font-weight:700; padding:2px 8px; border-radius:6px; background:var(--hover); border:1px solid var(--border); color:var(--text); }
+.gmlc-tpl { margin-left:auto; font-size:12.5px; padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel2); color:var(--text2); cursor:pointer; font-family:inherit; }
 .gml-known { font-size:11px; font-weight:700; color:var(--ok); background:rgba(48,209,88,.14); padding:1px 8px; border-radius:999px; white-space:nowrap; }
 .gml-mini { font-size:11.5px; padding:3px 9px; border:1px solid var(--border); background:var(--hover); color:var(--text2); border-radius:8px; cursor:pointer; }
 .gml-mini:hover { background:var(--hover); color:var(--text); }
@@ -94995,6 +95024,11 @@ console.log('📚 Leseliste geladen');
     tsLoading: false, tsError: null,
     orgSuggestions: [],     // suggestions (assign-org, status=open)
     osLoading: false, osError: null,
+    selected: {},           // Bulk-Auswahl: { messageId: true }
+    cursor: -1,             // Tastatur-Cursor (Index in der angezeigten Liste)
+    threadGroup: false,     // Thread-/Konversations-Gruppierung an/aus
+    density: (function(){ try { return localStorage.getItem("gmlDensity")||"comfortable"; } catch(e){ return "comfortable"; } })(),
+    helpOpen: false,        // Shortcut-Hilfe-Overlay
   };
 
   var SYS_LABELS = [
@@ -95048,6 +95082,7 @@ console.log('📚 Leseliste geladen');
     if (GM.smart==="spam")     return { query:{ labelIds:["SPAM"],  maxResults:"50" }, clientFilter:notFromPerson, title:"Spam (Fremde)" };
     if (GM.smart==="erledigt") return { query: GM.labelIds.done    ? { labelIds:[GM.labelIds.done] }    : { q:"label:Quantus/Erledigt" }, title:"Erledigt" };
     if (GM.smart==="blocked")  return { query: GM.labelIds.blocked ? { labelIds:[GM.labelIds.blocked] } : { q:"label:Quantus/Blockiert" }, title:"Blockiert" };
+    if (GM.smart==="later")    return { query:{ q:"label:Later" }, title:"Später (Later)" };   // Punkt 7
     return { query:{ labelIds:[GM.selectedLabel] }, title: labelName(GM.selectedLabel) };
   }
   // „Von Personen": ausschließlich Mails, die die KI-Klassifizierung
@@ -95067,7 +95102,7 @@ console.log('📚 Leseliste geladen');
 
   async function loadMessages(reset){
     GM.listLoading = true; GM.listError = null;
-    if (reset){ GM.messages=[]; GM.nextPageToken=null; }
+    if (reset){ GM.messages=[]; GM.nextPageToken=null; GM.selected={}; GM.cursor=-1; }  // Bulk/Cursor zurücksetzen
     rerender();
     try {
       await ensureClassifications();
@@ -95245,8 +95280,11 @@ console.log('📚 Leseliste geladen');
   }
   function renderNav(){
     var labelActive = function(id){ return !GM.query && !GM.smart && GM.selectedLabel===id; };
-    var smart = navBtn(GM.smart==="personen","👤","Von Personen","gmailSelectSmart('personen')")
+    // Punkt 9: Live-Badge „Von Personen" = ungelesene Personen-Mails aus den geladenen Daten.
+    var personUnread = (GM.messages||[]).filter(function(m){ return m.unread && fromPerson(m); }).length;
+    var smart = navBtn(GM.smart==="personen","👤","Von Personen","gmailSelectSmart('personen')", personUnread)
       + navBtn(GM.smart==="entwuerfe","🤖","KI-Entwürfe","gmailSelectSmart('entwuerfe')", (GM.drafts&&GM.drafts.length)||0)
+      + navBtn(GM.smart==="later","⏰","Später","gmailSelectSmart('later')")
       + navBtn(GM.smart==="spam","🟥","Spam (Fremde)","gmailSelectSmart('spam')")
       + navBtn(GM.smart==="erledigt","✅","Erledigt","gmailSelectSmart('erledigt')");
     var std = SYS_LABELS.map(function(l){ return navBtn(labelActive(l.id), l.icon, l.name, "gmailSelectLabel('"+jsStr(l.id)+"')", unreadOf(l.id)); }).join("");
@@ -95267,20 +95305,25 @@ console.log('📚 Leseliste geladen');
   }
 
   function isDoneMsg(m){ return !!(GM.labelIds.done && (m.labelIds||[]).indexOf(GM.labelIds.done)>=0); }
-  function renderRow(m){
+  function renderRow(m, idx){
     var sentView = (!GM.query && !GM.smart && (GM.selectedLabel==="SENT" || GM.selectedLabel==="DRAFT"));
     var a = parseAddr(sentView ? m.to : m.from);
     var person = !sentView && personOf(m.from);
     var who = (sentView?"An: ":"") + esc(a.name||a.email||"(unbekannt)");
     var star = m.starred ? '<span class="gml-row-star">⭐</span>' : '';
+    var dot = m.unread ? '<span class="gml-unread-dot" title="Ungelesen"></span>' : '';   // Punkt 10
     var pdot = person ? '<span class="gml-person-dot" title="Bekannte Person: '+esc(person.name||"")+'">●</span>' : '';
     var done = isDoneMsg(m);
+    var sel = !!GM.selected[m.id];
+    var selbox = '<span class="gml-selbox'+(sel?" on":"")+'" title="Für Sammelaktion auswählen" onclick="event.stopPropagation();gmailToggleSelect(\''+jsStr(m.id)+'\')">'+(sel?"✓":"")+'</span>'; // Punkt 2
     var chk = '<span class="gml-check'+(done?" on":"")+'" title="'+(done?"Erledigt – zurücklegen":"Abhaken (erledigt)")+'" onclick="event.stopPropagation();gmailToggleDone(\''+jsStr(m.id)+'\')">'+(done?"✅":"⬜")+'</span>';
-    return '<div class="gml-row'+(m.unread?" unread":"")+(done?" done":"")+'">'
+    var tbadge = (m._tcount>1) ? '<span class="gml-thread-badge" title="'+m._tcount+' geladene Nachrichten in diesem Thread">💬 '+m._tcount+'</span>' : ''; // Punkt 4
+    return '<div class="gml-row'+(m.unread?" unread":"")+(done?" done":"")+(sel?" selected":"")+(idx===GM.cursor?" cursor":"")+'">'
+      + selbox
       + chk
       + '<div class="gml-row-click" onclick="gmailOpenMessage(\''+jsStr(m.id)+'\')">'
-      +   '<div class="gml-row-who">'+star+pdot+who+'</div>'
-      +   '<div class="gml-row-mid">'+prioBadge(m)+'<span class="gml-row-subj">'+esc(m.subject||"(kein Betreff)")+'</span> <span class="gml-row-snip">'+(m.snippet?"– "+esc(m.snippet):"")+'</span></div>'
+      +   '<div class="gml-row-who">'+dot+star+pdot+who+'</div>'
+      +   '<div class="gml-row-mid">'+prioBadge(m)+'<span class="gml-row-subj">'+esc(m.subject||"(kein Betreff)")+'</span>'+tbadge+' <span class="gml-row-snip">'+(m.snippet?"– "+esc(m.snippet):"")+'</span></div>'
       +   '<div class="gml-row-date">'+esc(fmtDate(m.internalDate))+'</div>'
       + '</div>'
       + '<span class="gml-row-x" title="Absender blockieren" onclick="event.stopPropagation();gmailBlockSenderOf(\''+jsStr(m.id)+'\')">⛔</span>'
@@ -95291,11 +95334,30 @@ console.log('📚 Leseliste geladen');
     if (GM.listLoading && !GM.messages.length) return '<div class="gml-loading">⏳ Lade Nachrichten…</div>';
     if (GM.listError) return '<div class="gml-empty"><div style="font-size:44px">⚠️</div><p>'+esc(GM.listError)+'</p><button class="btn primary" onclick="gmailRefresh()">Erneut versuchen</button></div>';
     var spec = buildListSpec();
+    var rows = displayedMessages();   // Punkt 4: ggf. nach Thread gruppiert
     var exportBtn = GM.messages.length ? '<button class="gml-mini" title="Diese Liste als CSV exportieren" onclick="gmailExportList()">⤓ CSV</button>' : '';
-    var head = '<div class="gml-listhead"><span>'+esc(spec.title)+'</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+GM.messages.length+(GM.nextPageToken?"+":"")+'</span>'+exportBtn+'</span></div>';
+    // Punkt 4/10/2: Werkzeugleiste (Threads gruppieren · Dichte · Alle auswählen)
+    var toolrow = '<span class="gml-toolrow">'
+      + '<button class="gml-toolbtn'+(GM.threadGroup?" on":"")+'" onclick="gmailToggleThreadGroup()" title="Konversationen mit gleichem Thread gruppieren">💬 Threads</button>'
+      + '<button class="gml-toolbtn'+(GM.density==="compact"?" on":"")+'" onclick="gmailToggleDensity()" title="Listendichte umschalten (Kompakt/Komfortabel)">'+(GM.density==="compact"?"☰ Kompakt":"≡ Komfort")+'</button>'
+      + (GM.messages.length ? '<button class="gml-toolbtn" onclick="gmailSelectAllVisible()" title="Alle sichtbaren auswählen/abwählen">☑ Alle</button>' : '')
+      + exportBtn
+      + '</span>';
+    var head = '<div class="gml-listhead"><span>'+esc(spec.title)+'</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+GM.messages.length+(GM.nextPageToken?"+":"")+'</span>'+toolrow+'</span></div>';
     if (!GM.messages.length) return head + '<div class="gml-empty"><div style="font-size:44px">📭</div><p>Keine Nachrichten gefunden.</p></div>';
+    // Punkt 2: Bulk-Aktionsleiste (nur bei Auswahl; KEINE permanente Löschung)
+    var selN = selCount();
+    var bulk = selN ? ('<div class="gml-bulkbar">'
+      + '<span class="gml-bulk-count">'+selN+' ausgewählt</span>'
+      + '<button class="gml-bulk-btn" onclick="gmailBulkRead(true)" title="Als gelesen markieren">Gelesen</button>'
+      + '<button class="gml-bulk-btn" onclick="gmailBulkRead(false)" title="Als ungelesen markieren">Ungelesen</button>'
+      + '<button class="gml-bulk-btn" onclick="gmailBulkArchive()" title="Aus dem Posteingang archivieren">Archivieren</button>'
+      + '<button class="gml-bulk-btn" onclick="gmailBulkLabel()" title="Label setzen (bestehend oder neu)">Label…</button>'
+      + '<button class="gml-bulk-btn" onclick="gmailBulkDone()" title="Als erledigt markieren">Erledigt</button>'
+      + '<button class="gml-bulk-btn ghost" onclick="gmailClearSelection()">Abbrechen</button>'
+      + '</div>') : '';
     var more = GM.nextPageToken ? '<div style="text-align:center;padding:14px"><button class="btn" onclick="gmailLoadMore()"'+(GM.listLoading?" disabled":"")+'>'+(GM.listLoading?"Lädt…":"Mehr laden")+'</button></div>' : "";
-    return head + '<div class="gml-list">'+GM.messages.map(renderRow).join("")+'</div>' + more;
+    return head + bulk + '<div class="gml-list'+(GM.density==="compact"?" compact":"")+'">'+rows.map(function(m,i){ return renderRow(m,i); }).join("")+'</div>' + more;
   }
 
   function renderMessageView(){
@@ -95316,13 +95378,14 @@ console.log('📚 Leseliste geladen');
       +     '<button class="btn primary" onclick="gmailReply()" title="Antworten">↩︎ Antworten</button>'
       +     '<button class="btn" onclick="gmailReplyAll()" title="Allen antworten">Allen</button>'
       +     '<button class="btn" onclick="gmailRequestDraft()" title="KI-Antwortentwurf für diese Mail erstellen (Taste: D)">✨ KI-Entwurf</button>'
-      +     '<button class="btn" onclick="gmailCreateTaskRequest()" title="Aufgaben-Vorschlag aus dieser Mail erstellen">📋 Aufgabe</button>'
+      +     '<button class="btn" onclick="gmailCreateTaskRequest()" title="Aus dieser Mail eine Quantus-Aufgabe erstellen">📋 Aufgabe</button>'
       +   '</div>'
       +   '<div style="flex:1"></div>'
       +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')" title="'+(done?"Zurück in den Posteingang":"Als erledigt markieren")+'">'+(done?"↩︎ Zurücklegen":"✅ Erledigt")+'</button>'
       +   '<details class="gml-more">'
       +     '<summary class="btn gml-btn-icon" title="Weitere Aktionen">⋯</summary>'
       +     '<div class="gml-more-menu">'
+      +       '<button class="gml-more-item" onclick="gmailSnoozeLater(\''+jsStr(o.id)+'\')">⏰ Später (in „Later", aus dem Posteingang)</button>'
       +       '<button class="gml-more-item" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Als gelesen markieren":"📬 Als ungelesen markieren")+'</button>'
       +       '<button class="gml-more-item" onclick="gmailExportMessage(\''+jsStr(o.id)+'\')">⤓ Als .eml exportieren</button>'
       +       '<button class="gml-more-item" onclick="gmailBlockSenderOf(\''+jsStr(o.id)+'\')">⛔ Absender blockieren</button>'
@@ -95350,18 +95413,21 @@ console.log('📚 Leseliste geladen');
       +   '<h2 style="display:flex;align-items:center;gap:10px"><span style="font-size:28px">📧</span> Gmail</h2>'
       +   '<p>'+esc(acct)+(GM.profile&&GM.profile.messagesTotal?(' · '+GM.profile.messagesTotal+' Nachrichten'):'')+'</p>'
       + '</div><div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">'
+      +   '<button class="btn" onclick="gmailToggleHelp()" title="Tastatur-Shortcuts (Taste: ?)">⌨ Shortcuts</button>'
       +   '<button class="btn" onclick="gmailRefresh()">🔄 Aktualisieren</button>'
       +   '<button class="btn" onclick="gmailDisconnect()" title="Google-Konto trennen">🔌 Trennen</button>'
       + '</div></div>'
       + '<div class="gml-searchbar">'
-      +   '<input id="gmlSearchInput" class="gml-search" type="text" placeholder="🔎 Alle Mails durchsuchen (z. B. from:anna rechnung) – Enter" value="'+esc(GM.query||"")+'" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmailSearch(this.value);}">'
+      +   '<input id="gmlSearchInput" class="gml-search" type="text" placeholder="🔎 Alle Mails durchsuchen (z. B. from:anna rechnung) – Enter · / fokussiert" value="'+esc(GM.query||"")+'" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmailSearch(this.value);}">'
       +   (GM.query ? '<button class="btn" onclick="gmailClearSearch()">✕</button>' : '')
       +   (GM.query ? '<button class="btn" title="In Gmail-Web öffnen" onclick="gmailOpenInGmailWeb(\''+jsStr(GM.query)+'\')">↗ Gmail</button>' : '')
       + '</div>'
+      + '<div class="gml-chips">' + GML_CHIPS.map(function(c){ var on=(c.q==="__personen__")?(GM.smart==="personen"):(GM.query===c.q); return '<button class="gml-fchip'+(on?" on":"")+'" onclick="gmailChip(\''+jsStr(c.q)+'\')">'+esc(c.label)+'</button>'; }).join("") + '</div>'
       + '<div class="gml-layout">'
       +   '<div class="gml-sidebar">'+renderNav()+'</div>'
       +   '<div class="gml-main">'+renderMainPane()+'</div>'
-      + '</div>';
+      + '</div>'
+      + (GM.helpOpen ? renderHelpOverlay() : '');
   }
 
   // ── Compose / Reply / Send ──
@@ -95462,6 +95528,10 @@ console.log('📚 Leseliste geladen');
       + tbtn('ul','Aufzählung',SVG.ul) + tbtn('ol','Nummerierte Liste',SVG.ol)
       + '<span class="gmlc-tool-sep"></span>'
       + tbtn('link','Link einfügen',SVG.link) + tbtn('quote','Zitat',SVG.quote)
+      + '<select class="gmlc-tpl" title="Schnellantwort-Vorlage einfügen" onchange="gmlInsertTemplate(this.value);this.selectedIndex=0;">'
+      +   '<option value="">⚡ Vorlage…</option>'
+      +   GML_TEMPLATES.map(function(t,i){ return '<option value="'+i+'">'+esc(t.label)+'</option>'; }).join("")
+      + '</select>'
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" placeholder="Nachricht verfassen…">'+esc(prefill.body||"")+'</textarea></div>';
     var html = '<div class="gml-compose-modal">'
@@ -95837,6 +95907,160 @@ console.log('📚 Leseliste geladen');
     setTimeout(function(){ try { window.gmailSearch(q); } catch(e){} }, gmRoute()==="gmail"?0:160);
   };
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  Mail-Features: Quick-Filter-Chips · Bulk · Shortcuts · Threads ·
+  //  Schnellantwort-Vorlagen · Snooze/Später · Dichte. Rein Frontend, nutzt
+  //  bestehende gmApi/Labels/loadMessages; keine neuen Pfade/Dependencies.
+  // ══════════════════════════════════════════════════════════════════════
+  // Punkt 6: Schnellantwort-Vorlagen (im Code, einfach erweiterbar).
+  var GML_TEMPLATES = [
+    { label:"Danke, melde mich", text:"Vielen Dank für Ihre Nachricht. Ich schaue mir das an und melde mich in Kürze bei Ihnen.\n\nBeste Grüsse" },
+    { label:"Termin bestätigt", text:"Gerne bestätige ich den Termin – vielen Dank. Ich freue mich darauf.\n\nBeste Grüsse" },
+    { label:"Bitte um Unterlagen", text:"Könnten Sie mir dazu bitte die relevanten Unterlagen zukommen lassen? Besten Dank im Voraus.\n\nBeste Grüsse" },
+    { label:"Kurze Rückfrage", text:"Besten Dank für Ihre Nachricht. Eine kurze Rückfrage dazu:\n\n\nBeste Grüsse" }
+  ];
+  // Punkt 1: Quick-Filter-Chips → setzen Gmail-Suchoperatoren (bzw. Smart-View).
+  var GML_CHIPS = [
+    { label:"Ungelesen", q:"is:unread" },
+    { label:"Mit Anhang", q:"has:attachment" },
+    { label:"Von Personen", q:"__personen__" },
+    { label:"Heute", q:"newer_than:1d" },
+    { label:"7 Tage", q:"newer_than:7d" }
+  ];
+
+  // ── Anzeige-Liste (Punkt 4: Thread-Gruppierung) ──
+  // Bei aktivem threadGroup: ein Eintrag pro threadId (neueste Mail als Repräsentant,
+  // GM.messages ist bereits newest-first), mit Zähler _tcount der geladenen Thread-Mails.
+  function displayedMessages(){
+    var msgs = GM.messages || [];
+    if (!GM.threadGroup) return msgs;
+    var seen = {}, out = [];
+    msgs.forEach(function(m){
+      var t = m.threadId || m.id;
+      if (seen[t] != null){ out[seen[t]]._tcount = (out[seen[t]]._tcount||1) + 1; return; }
+      seen[t] = out.length; var c = Object.assign({}, m); c._tcount = 1; out.push(c);
+    });
+    return out;
+  }
+  function selCount(){ return Object.keys(GM.selected||{}).length; }
+  function activeMsg(){ if (GM.open) return GM.open; var r = displayedMessages(); return (GM.cursor>=0 && GM.cursor<r.length) ? r[GM.cursor] : null; }
+  function moveCursor(delta){
+    var rows = displayedMessages(); if (!rows.length) return;
+    var cur = GM.cursor<0 ? (delta>0?-1:0) : GM.cursor;
+    GM.cursor = Math.max(0, Math.min(rows.length-1, cur+delta));
+    rerender();
+    setTimeout(function(){ var el=document.querySelector(".gml-row.cursor"); if (el&&el.scrollIntoView) el.scrollIntoView({block:"nearest"}); }, 0);
+  }
+
+  // ── Punkt 1: Chip-Klick ──
+  window.gmailChip = function(q){
+    if (q==="__personen__"){ if (GM.smart==="personen") window.gmailSelectSmart(null); else window.gmailSelectSmart('personen'); return; }
+    if (GM.query===q){ window.gmailClearSearch(); return; }   // Toggle aus
+    window.gmailSearch(q);
+  };
+
+  // ── Punkt 2: Bulk-Auswahl & -Aktionen (keine permanente Löschung) ──
+  window.gmailToggleSelect = function(id){ if (GM.selected[id]) delete GM.selected[id]; else GM.selected[id]=true; rerender(); };
+  window.gmailSelectAllVisible = function(){
+    var rows = displayedMessages();
+    var all = rows.length && rows.every(function(m){ return GM.selected[m.id]; });
+    GM.selected = {};
+    if (!all) rows.forEach(function(m){ GM.selected[m.id]=true; });
+    rerender();
+  };
+  window.gmailClearSelection = function(){ GM.selected={}; rerender(); };
+  async function bulkModify(body, okTitle){
+    var ids = Object.keys(GM.selected||{}); if (!ids.length) return;
+    try {
+      await gmApi("POST","/users/me/messages/batchModify", { body: Object.assign({ ids:ids }, body) });
+      toast("ok", okTitle, ids.length+" Mails");
+      GM.selected={}; loadMessages(true);
+    } catch(e){ toast("err","Fehler", e.message||"Sammelaktion fehlgeschlagen"); }
+  }
+  window.gmailBulkRead = function(read){ bulkModify(read?{ removeLabelIds:["UNREAD"] }:{ addLabelIds:["UNREAD"] }, read?"Als gelesen markiert":"Als ungelesen markiert"); };
+  window.gmailBulkArchive = function(){ bulkModify({ removeLabelIds:["INBOX"] }, "Archiviert"); };
+  window.gmailBulkDone = async function(){
+    var ids = Object.keys(GM.selected||{}); if (!ids.length) return;
+    try {
+      var done = await ensureLabel(QDONE);
+      await gmApi("POST","/users/me/messages/batchModify", { body:{ ids:ids, addLabelIds:[done], removeLabelIds:["INBOX"] } });
+      ids.forEach(function(id){ try { var cc=GM.classifications[id]||(GM.classifications[id]={}); cc.done=true; rtdbPut("gmailClassifications/"+encodeURIComponent(id)+"/done", true); } catch(e){} });
+      toast("ok","Erledigt", ids.length+" Mails in 'Erledigt' (nicht gelöscht)");
+      GM.selected={}; loadMessages(true);
+    } catch(e){ toast("err","Fehler", e.message||"Sammel-Erledigt fehlgeschlagen"); }
+  };
+  window.gmailBulkLabel = async function(){
+    var ids = Object.keys(GM.selected||{}); if (!ids.length) return;
+    var name = window.prompt("Label setzen (bestehend oder neu):", ""); if (name==null) return; name=name.trim(); if (!name) return;
+    try {
+      var lid = await ensureLabel(name);
+      await gmApi("POST","/users/me/messages/batchModify", { body:{ ids:ids, addLabelIds:[lid] } });
+      toast("ok","Label gesetzt","'"+name+"' auf "+ids.length+" Mails"); GM.selected={}; loadMessages(true);
+    } catch(e){ toast("err","Fehler", e.message||"Label konnte nicht gesetzt werden"); }
+  };
+
+  // ── Punkt 4 & 10: Thread-Gruppierung & Dichte (Pref in localStorage) ──
+  window.gmailToggleThreadGroup = function(){ GM.threadGroup=!GM.threadGroup; GM.cursor=-1; rerender(); };
+  window.gmailToggleDensity = function(){ GM.density = (GM.density==="compact")?"comfortable":"compact"; try { localStorage.setItem("gmlDensity", GM.density); } catch(e){} rerender(); };
+
+  // ── Punkt 7: Snooze/Später über das bestehende „Later"-Label ──
+  async function laterLabelId(){
+    var l = (GM.labels||[]).find(function(x){ return (x.name||"").toLowerCase()==="later"; });
+    return l ? l.id : await ensureLabel("Later");
+  }
+  window.gmailSnoozeLater = async function(id){
+    id = id || (GM.open && GM.open.id); if (!id) return;
+    try {
+      var lid = await laterLabelId();
+      await gmApi("POST","/users/me/messages/"+encodeURIComponent(id)+"/modify", { body:{ addLabelIds:[lid], removeLabelIds:["INBOX"] } });
+      GM.messages = GM.messages.filter(function(m){ return m.id!==id; });
+      if (GM.open && GM.open.id===id) GM.open=null;
+      toast("ok","Später","Mail nach 'Later' verschoben (aus dem Posteingang, nichts gelöscht).");
+      rerender();
+    } catch(e){ toast("err","Fehler", e.message||"Konnte nicht nach 'Later' verschieben"); }
+  };
+
+  // ── Punkt 6: Vorlage in den Verfassen-Body einfügen ──
+  window.gmlInsertTemplate = function(i){
+    i = parseInt(i,10); var t = GML_TEMPLATES[i]; if (!t) return;
+    var ta = document.getElementById("gmlBody"); if (!ta) return;
+    var s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+    ta.value = v.slice(0,s) + t.text + v.slice(e);
+    var pos = s + t.text.length; ta.focus(); try { ta.setSelectionRange(pos,pos); } catch(_){}
+  };
+
+  // ── Punkt 3: Shortcut-Hilfe-Overlay ──
+  window.gmailToggleHelp = function(){ GM.helpOpen=!GM.helpOpen; rerender(); };
+  function renderHelpOverlay(){
+    var rows = [["j / k","Nächste / vorherige Mail"],["Enter","Mail öffnen"],["e","Erledigt (Umschalten)"],["u","Ungelesen (Umschalten)"],["r","Antworten (offene Mail)"],["d","KI-Entwurf anfordern"],["/","Suche fokussieren"],["?","Diese Hilfe schliessen/öffnen"]];
+    return '<div class="gml-help-ov" onclick="if(event.target===this)gmailToggleHelp()">'
+      + '<div class="gml-help-card">'
+      +   '<h3>Tastatur-Shortcuts <button class="gml-toolbtn" onclick="gmailToggleHelp()" aria-label="Schliessen">✕</button></h3>'
+      +   rows.map(function(r){ return '<div class="gml-help-row"><span>'+esc(r[1])+'</span><span class="gml-kbd">'+esc(r[0])+'</span></div>'; }).join("")
+      + '</div></div>';
+  }
+  // ── Punkt 3: Tastatur-Shortcuts (Gmail-Stil). Nur in der Gmail-Ansicht, ohne
+  // Modifier, kein offenes Modal; Tipp-Konflikte vermieden (Fokus in Feldern).
+  // Die „d"-Taste bleibt im separaten PR-#24-Listener (KI-Entwurf).
+  document.addEventListener("keydown", function(e){
+    if (gmRoute()!=="gmail" || e.ctrlKey || e.metaKey || e.altKey) return;
+    var mb = document.getElementById("modalBackdrop"); if (mb && mb.classList.contains("open")) return;
+    var el = document.activeElement, tag = el && el.tagName;
+    var inField = (tag==="INPUT" || tag==="TEXTAREA" || tag==="SELECT" || (el && el.isContentEditable));
+    var k = e.key;
+    if (GM.helpOpen && (k==="Escape" || k==="?")){ e.preventDefault(); GM.helpOpen=false; rerender(); return; }
+    if (k==="/"){ if (inField) return; e.preventDefault(); var s=document.getElementById("gmlSearchInput"); if (s){ s.focus(); try{ s.select(); }catch(_){} } return; }
+    if (inField) return;
+    if (k==="?"){ e.preventDefault(); GM.helpOpen=true; rerender(); return; }
+    if (e.repeat) return;
+    if (k==="j"){ if (!GM.open){ e.preventDefault(); moveCursor(1); } return; }
+    if (k==="k"){ if (!GM.open){ e.preventDefault(); moveCursor(-1); } return; }
+    if (k==="Enter"){ if (!GM.open){ var mo=activeMsg(); if (mo){ e.preventDefault(); openMessageById(mo.id); } } return; }
+    if (k==="e"){ var me=activeMsg(); if (me){ e.preventDefault(); window.gmailToggleDone(me.id); } return; }
+    if (k==="u"){ var mu=activeMsg(); if (mu){ e.preventDefault(); markReadById(mu.id, mu.unread===true, false); } return; }
+    if (k==="r"){ if (GM.open){ e.preventDefault(); window.gmailReply(); } return; }
+  });
+
   // ════════════════════════════════════════════════════════════════════
   //  KI-Antwort-Entwürfe — vom n8n-Workflow „GmailQuantusAIDraft" in der
   //  Firebase RTDB unter /gmailDrafts abgelegt. Wir LESEN sie (REST GET),
@@ -95973,35 +96197,34 @@ console.log('📚 Leseliste geladen');
     if (!summary && !chips) return "";
     return '<div class="gml-ki">'
       + '<div class="gml-ki-head"><span class="gml-ki-badge">🤖 KI-Zusammenfassung</span>'+(chips?'<span class="gml-ki-chips">'+chips+'</span>':'')+'</div>'
-      + (summary
-          ? '<div class="gml-ki-text">'+esc(summary)+'</div>'
-          : '<div class="gml-ki-text gml-ki-muted">Noch keine Zusammenfassung hinterlegt – sobald der n8n-Flow ein Feld <code>summary</code> (oder <code>reason</code>) unter /gmailClassifications/&lt;messageId&gt; schreibt, erscheint es hier.</div>')
+      + (summary ? '<div class="gml-ki-text">'+esc(summary)+'</div>' : '')
       + '</div>';
   }
 
   // ── 2) Mail → Aufgabe (taskRequests / taskSuggestions) ──
-  window.gmailCreateTaskRequest = async function(){
+  // Punkt 8: „Aufgabe" erstellt direkt eine echte Quantus-Aufgabe (createEntity → bestehender
+  // Tasks-Pfad APP.state.data.entities.tasks, gleiche Struktur wie sonst), mit Betreff als Titel,
+  // Absender + Mail-Bezug (sourceMessageId/threadId) in der Beschreibung. Kein neuer Pfad; die
+  // KI-Entwurf-/Sende-/Verwerfen-Logik (PR #24) bleibt unberührt.
+  window.gmailCreateTaskRequest = function(){
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
-    try {
-      var a=parseAddr(o.from); var body=(o.text||htmlToText(o.html)||"").slice(0,5000);
-      // 1) n8n-Anfrage (unverändert) — falls ein n8n-Flow den Vorschlag verfeinern soll.
-      rtdbPost("taskRequests", { messageId:o.id, threadId:o.threadId||"", from:a.email||"", fromName:a.name||"", subject:o.subject||"", body:body, status:"pending", createdAt:Date.now() });
-      // 2) Sofort-Vorschlag direkt in /taskSuggestions — funktioniert auch OHNE n8n und
-      //    erscheint unmittelbar in der „Aufgaben-Vorschläge"-Liste. Priorität, falls von der
-      //    KI klassifiziert, sonst Standard 3. Gleiche Felder, die renderTaskSugRow/adopt nutzen.
-      var c = clsOf(o);
-      var prev = String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim().slice(0,500);
-      await rtdbPost("taskSuggestions", {
-        title: String(o.subject||"Aufgabe aus E-Mail").slice(0,200),
-        description: prev,
-        priority: (c && typeof c.priority==="number") ? c.priority : 3,
-        sourceMessageId: o.id, threadId: o.threadId||"",
-        from: a.email||"", fromName: a.name||"",
-        status:"ready", origin:"frontend", createdAt:Date.now()
-      });
-      toast("ok","Aufgaben-Vorschlag erstellt","Erscheint unter 'Aufgaben-Vorschläge'.");
-      GM.smart="tasksuggest"; GM.query=""; GM.open=null; loadTaskSuggestions();
-    } catch(e){ toast("err","Fehler", e.message||"Vorschlag konnte nicht erstellt werden"); }
+    if (typeof window.createEntity!=="function"){ toast("err","Nicht verfügbar","Aufgaben-Modul nicht geladen."); return; }
+    var a=parseAddr(o.from);
+    var c=clsOf(o);
+    var prev=String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim().slice(0,500);
+    var sender=(a.name ? a.name+" <"+(a.email||"")+">" : (a.email||"(unbekannt)"));
+    var desc="Aus E-Mail\nVon: "+sender+"\nBetreff: "+(o.subject||"(kein Betreff)")
+      + "\nÖffnen: Quantus → Gmail (Mail-ID "+o.id+")"
+      + (prev ? "\n\n"+prev : "");
+    var id=window.createEntity("task", {
+      title: String(o.subject||"Aufgabe aus E-Mail").slice(0,200),
+      description: desc, status:"todo",
+      priority:(c&&typeof c.priority==="number")?c.priority:3,
+      tags:["Gmail"], source:"gmail",
+      sourceMessageId:o.id, sourceThreadId:o.threadId||""
+    });
+    if (id) toast("ok","Aufgabe erstellt","Betreff + Absender als Quantus-Aufgabe angelegt.");
+    else toast("err","Fehler","Aufgabe konnte nicht erstellt werden");
   };
 
   // ── On-Demand-KI-Entwurf für die offene Mail (Button „✨ KI-Entwurf" + Taste D) ──
