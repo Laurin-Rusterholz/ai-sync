@@ -19095,7 +19095,7 @@ function renderReviewWizard() {
           <span style="color:var(--accent);font-weight:700">${progress}%</span>
         </div>
         <div style="height:4px;background:rgba(0,0,0,.3);border-radius:2px;overflow:hidden">
-          <div style="height:100%;width:${progress}%;background:linear-gradient(90deg,var(--accent),var(--accent));transition:width .3s"></div>
+          <div style="height:100%;width:${progress}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));transition:width .3s"></div>
         </div>
       </div>
       
@@ -21145,7 +21145,7 @@ window.viewHandbook = function() {
       .hb-card-link {
         font-size: 11px;
         padding: 3px 9px;
-        background: linear-gradient(135deg, var(--accent), var(--accent));
+        background: linear-gradient(135deg, var(--accent), var(--accent-deep));
         color: var(--text);
         border-radius: 6px;
         font-weight: 600;
@@ -21342,7 +21342,7 @@ window.viewTheses = function() {
         font-size: 28px;
         font-weight: 800;
         margin: 0 0 6px;
-        background: linear-gradient(135deg, var(--accent), var(--accent));
+        background: linear-gradient(135deg, var(--accent), var(--accent-deep));
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-family: Georgia, serif;
@@ -21383,7 +21383,7 @@ window.viewTheses = function() {
       }
       .ths-card-progress-bar {
         height: 100%;
-        background: linear-gradient(90deg, var(--accent), var(--accent));
+        background: linear-gradient(90deg, var(--accent), var(--accent-deep));
         transition: width .3s;
       }
     </style>
@@ -22627,7 +22627,7 @@ function renderThesisFocusMode(th, chapterId) {
         position: fixed;
         bottom: 0; left: 0;
         height: 2px;
-        background: linear-gradient(90deg, var(--accent), var(--accent));
+        background: linear-gradient(90deg, var(--accent), var(--accent-deep));
         transition: width .3s;
       }
       .ths-focus-pomodoro {
@@ -22789,7 +22789,7 @@ function renderThesisBriefingTab(th) {
             <span style="font-size:13px;color:var(--muted)">/ ${th.targetWords.toLocaleString('de-CH')}</span>
           </div>
           <div style="height:6px;background:var(--hover);border-radius:3px;overflow:hidden;margin-top:8px">
-            <div style="height:100%;width:${targetPct}%;background:linear-gradient(90deg,var(--accent),var(--accent));transition:width .3s"></div>
+            <div style="height:100%;width:${targetPct}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));transition:width .3s"></div>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-top:6px">${targetPct}% des Gesamtziels</div>
         </div>
@@ -28051,7 +28051,7 @@ function viewDashboard() {
           <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Bücher ${new Date().getFullYear()}</div>
           <div style="font-size:22px;font-weight:800;color:var(--accent);margin:4px 0">${readingWidget.completedThisYear}/${readingWidget.goals.yearlyBooks}</div>
           <div style="height:4px;background:rgba(0,0,0,.3);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${readingWidget.yearProgress}%;background:linear-gradient(90deg,var(--accent),var(--accent))"></div>
+            <div style="height:100%;width:${readingWidget.yearProgress}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep))"></div>
           </div>
         </div>
         <div style="padding:10px 12px;background:rgba(251,191,36,.05);border:1px solid rgba(251,191,36,.15);border-radius:8px">
@@ -31087,7 +31087,7 @@ function renderProjectHubTabs(p, id) {
           <span style="font-weight:700;font-size:14px;color:${pct === 100 ? '#86efac' : pct > 50 ? '#fbbf24' : '#a5b4fc'}">${doneCount}/${dod.length} (${pct}%)</span>
         </div>
         <div style="height:6px;background:rgba(0,0,0,.3);border-radius:3px;overflow:hidden">
-          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--accent));transition:width .3s"></div>
+          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));transition:width .3s"></div>
         </div>
       </div>` : ''}
       
@@ -32023,7 +32023,7 @@ function renderPb88Stats(id, pb, TI, TL) {
       return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <div style="width:120px;font-size:12px;display:flex;gap:5px;align-items:center">${TI[type]} ${TL[type]}</div>
         <div style="flex:1;height:8px;background:var(--hover);border-radius:4px;overflow:hidden">
-          <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent));width:${pct}%;border-radius:4px"></div>
+          <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));width:${pct}%;border-radius:4px"></div>
         </div>
         <div style="width:80px;text-align:right;font-size:11.5px;color:var(--muted)">${count} (${pct}%)</div>
       </div>`;
@@ -34458,7 +34458,7 @@ function _kvShowCardModal() {
   
   openModal(`📇 Karte ${s.index + 1} / ${s.total}`, `
     <div style="margin-bottom:14px;height:6px;background:var(--panel2);border-radius:3px;overflow:hidden">
-      <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent));width:${pct}%;transition:width 0.3s"></div>
+      <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));width:${pct}%;transition:width 0.3s"></div>
     </div>
     <div style="background:var(--panel2);border:1px solid var(--border);border-radius:14px;padding:24px;text-align:center;min-height:160px;cursor:${s.revealed?'default':'pointer'}" id="kvCardBody" ${!s.revealed?`onclick="window._kvRevealCard()"`:''}>
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">${s.revealed ? 'Antwort' : 'Frage'}</div>
@@ -82651,7 +82651,7 @@ setInterval(()=>{
 .nh-reader-theme-sepia .nh-reader-content { background: #f4ecd8; color: #2d2418; }
 .nh-reader-theme-light .nh-reader-content { background: var(--text); color: var(--panel); padding: 30px 40px; border-radius: 8px; }
 .nh-reader-progress {
-  position: fixed; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent));
+  position: fixed; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   width: 0%; transition: width 0.1s; z-index: 100;
 }
 .nh-reader-meta {
@@ -84337,7 +84337,7 @@ body.nh-rdr-focus .nh .main { width: 100% !important; max-width: 100% !important
 
 .nh-rdr-progress {
   position: fixed; bottom: 0; left: 0; height: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--accent));
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   width: 0%; transition: width 0.1s; z-index: 100; pointer-events: none;
 }
 
@@ -85257,7 +85257,7 @@ body.tabs-on .topbar { top: 38px !important; }
 }
 .bt-tab.active::before {
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent));
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   border-radius: 2px 2px 0 0;
 }
 .bt-tab-icon { font-size: 14px; flex-shrink: 0; line-height: 1; }
@@ -85326,7 +85326,7 @@ body.tabs-on .jb-container.active {
 
 /* ─── Quick Assistant: Neon-Violett Override ──────────── */
 #qc-fab {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   box-shadow: 0 4px 20px var(--accent-soft) !important;
 }
 #qc-fab:hover {
@@ -85336,7 +85336,7 @@ body.tabs-on .jb-container.active {
   background: linear-gradient(135deg, var(--accent-soft), var(--accent-soft)) !important;
 }
 .qc-hdr-icon {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   box-shadow: 0 2px 8px var(--accent-soft) !important;
 }
 .qc-act:hover {
@@ -85345,7 +85345,7 @@ body.tabs-on .jb-container.active {
   color: var(--accent) !important;
 }
 .qc-m.u {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   color: var(--text) !important;
 }
 .qc-m.a strong {
@@ -85362,7 +85362,7 @@ body.tabs-on .jb-container.active {
   box-shadow: 0 0 0 3px var(--accent-soft) !important;
 }
 .qc-send-btn, #qc-send {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   box-shadow: 0 2px 8px var(--accent-soft) !important;
 }
 
@@ -85410,7 +85410,7 @@ body:not(.tabs-on) #browserTabBar, body:not(.tabs-on) #btToggleHint { display: n
 }
 #translatorBox header .ico {
   width: 32px; height: 32px; border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), var(--accent));
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   display: flex; align-items: center; justify-content: center; font-size: 16px;
   box-shadow: 0 4px 12px var(--accent-soft);
 }
@@ -86943,7 +86943,7 @@ body.tabs-on #readlistContainer.active {
 }
 .rl-logo {
   width: 36px; height: 36px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--accent), var(--accent));
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   display: flex; align-items: center; justify-content: center;
   font-size: 18px;
   box-shadow: 0 6px 16px var(--accent-soft);
@@ -86969,7 +86969,7 @@ body.tabs-on #readlistContainer.active {
 }
 .rl-btn:hover { background: var(--border); }
 .rl-btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent)) !important;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep)) !important;
   border-color: transparent !important;
   color: var(--text) !important;
   box-shadow: 0 4px 14px var(--accent-soft);
@@ -87010,7 +87010,7 @@ body.tabs-on #readlistContainer.active {
 }
 .rl-chip:hover { background: var(--border); }
 .rl-chip.active {
-  background: linear-gradient(135deg, var(--accent), var(--accent));
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: var(--text); border-color: transparent;
   box-shadow: 0 4px 12px var(--accent-soft);
 }
@@ -87362,7 +87362,7 @@ body.tabs-on #rlReader.show { top: 38px !important; height: calc(100vh - 38px) !
 .rlrd-progress {
   position: fixed; bottom: 0; left: 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--accent));
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
   width: 0%;
   z-index: 8600;
   transition: width 0.1s linear;
@@ -87490,7 +87490,7 @@ body.tabs-on .rlrd-side { top: 38px; height: calc(100vh - 38px); }
       <input type="text" class="rl-input" id="rlInputPdfTitle" placeholder="Titel (optional, sonst aus Dateiname)" style="margin-top:14px" />
       <div id="rlPdfStatus" style="margin-top:10px;font-size:12px;color:var(--text2);display:none"></div>
       <div id="rlPdfProgress" style="margin-top:8px;height:4px;background:var(--hover);border-radius:2px;overflow:hidden;display:none">
-        <div id="rlPdfProgressBar" style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent));width:0%;transition:width 0.3s"></div>
+        <div id="rlPdfProgressBar" style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-deep));width:0%;transition:width 0.3s"></div>
       </div>
     </div>
     
@@ -88741,7 +88741,7 @@ console.log('📚 Leseliste geladen');
 }
 .mh-mail-card:hover { background:var(--accent-soft); border-color:var(--accent-soft); }
 .mh-mail-card.unread { background:var(--accent-soft); border-color:var(--accent-soft); }
-.mh-mail-card.unread::before { content:''; position:absolute; left:-2px; top:14px; bottom:14px; width:3px; background:linear-gradient(180deg,var(--accent),var(--accent)); border-radius:2px; }
+.mh-mail-card.unread::before { content:''; position:absolute; left:-2px; top:14px; bottom:14px; width:3px; background:linear-gradient(180deg,var(--accent),var(--accent-deep)); border-radius:2px; }
 .mh-mail-icon { flex-shrink:0; width:42px; height:42px; border-radius:50%; background:linear-gradient(135deg,var(--accent-soft),var(--accent-soft)); display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; color:var(--accent); }
 .mh-mail-body { flex:1; min-width:0; }
 .mh-mail-row1 { display:flex; align-items:baseline; gap:10px; margin-bottom:4px; }
