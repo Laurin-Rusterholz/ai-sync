@@ -43549,6 +43549,10 @@ function ensurePdfWorkerSrc(){
   } catch(e){}
 }
 window.ensurePdfWorkerSrc = ensurePdfWorkerSrc;
+// WICHTIG: loadPDFLibrary ist in diesem IIFE-Scope definiert und war bisher NICHT
+// global. Andere Module (PDF-Editor, Newsroom …) rufen window.loadPDFLibrary auf —
+// ohne diesen Export war das undefined, weshalb PDF.js dort nie geladen wurde.
+window.loadPDFLibrary = loadPDFLibrary;
 
 // Mammoth.js dynamisch laden mit mehreren CDN-Fallbacks (für Firmen-Netzwerke mit Tracking-Prevention)
 async function loadMammothLibrary() {
