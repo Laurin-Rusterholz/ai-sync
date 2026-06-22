@@ -43504,7 +43504,7 @@ async function extractTextFromKnowledgeFile(file) {
 
 // PDF.js dynamisch laden
 async function loadPDFLibrary() {
-  if (window.pdfjsLib && window.pdfjsLib.getDocument) return true;
+  if (window.pdfjsLib && window.pdfjsLib.getDocument) { ensurePdfWorkerSrc(); return true; }
 
   // pdfjs-dist v4 ist ESM-only (kein UMD/Global-Build) — als klassisches <script>
   // geladen wirft die .mjs-Kopie "Unexpected token 'export'". Wir verwenden daher
@@ -43538,6 +43538,17 @@ async function loadPDFLibrary() {
   }
   return false;
 }
+
+// Setzt den PDF.js-Worker zuverlässig auf die lokale, same-origin Datei.
+// Ohne gesetztes workerSrc lädt PDF.js v3 den Worker vom CDN (oft blockiert) →
+// "PDF.js konnte nicht geladen werden". Nur setzen, wenn noch leer.
+function ensurePdfWorkerSrc(){
+  try {
+    var g = window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions;
+    if (g && !g.workerSrc) g.workerSrc = "/vendor/pdf/pdf.worker.min.js";
+  } catch(e){}
+}
+window.ensurePdfWorkerSrc = ensurePdfWorkerSrc;
 
 // Mammoth.js dynamisch laden mit mehreren CDN-Fallbacks (für Firmen-Netzwerke mit Tracking-Prevention)
 async function loadMammothLibrary() {
@@ -98297,7 +98308,7 @@ window.addEventListener("hashchange", function(){
   }
   try { setTimeout(function(){ bootSyncMessages(0); }, 3500); } catch(e){}
 
-  try { console.info("%cQuantus build", "color:#C9A227;font-weight:700", "pdf-editor+pdfjs-v3-UMD · 2026-06-22"); } catch(e){}
+  try { console.info("%cQuantus build", "color:#C9A227;font-weight:700", "pdf-editor+pdfjs-v3-UMD+workerfix · 2026-06-22"); } catch(e){}
 })();
 </script>
 
@@ -98331,7 +98342,18 @@ window.addEventListener("hashchange", function(){
   async function dataUrlToBytes(d){ const r=await fetch(d); return new Uint8Array(await r.arrayBuffer()); }
 
   // ─────────────────────────── Bibliotheken ───────────────────────────
-  async function ensurePdfJs(){ if (window.pdfjsLib) return true; if (typeof window.loadPDFLibrary === "function"){ try { return await window.loadPDFLibrary(); } catch(e){} } return !!window.pdfjsLib; }
+  // Editor nutzt immer den lokalen v3-UMD-Build → Worker fest auf die lokale Datei
+  // setzen: auf genau DER pdfjsLib-Instanz, die der Editor rendert, NACHDEM der
+  // UMD-Build geladen ist und BEVOR getDocument läuft. Sonst leeres workerSrc →
+  // CDN-Worker-Fallback (blockiert) → "PDF.js konnte nicht geladen werden".
+  function setPdfWorker(){ try { if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf/pdf.worker.min.js"; } catch(e){} }
+  async function ensurePdfJs(){
+    let ok = !!(window.pdfjsLib && window.pdfjsLib.getDocument);
+    if (!ok && typeof window.loadPDFLibrary === "function"){ try { ok = await window.loadPDFLibrary(); } catch(e){} }
+    ok = ok || !!(window.pdfjsLib && window.pdfjsLib.getDocument);
+    setPdfWorker();
+    return ok;
+  }
   async function ensurePdfLib(){
     if (window.PDFLib) return true;
     // Frischer Pfad zuerst (kein gecachter 404), dann alte Pfade, dann CDN.
@@ -98635,6 +98657,7 @@ window.addEventListener("hashchange", function(){
 
   async function loadViewOnly(url){
     try {
+      setPdfWorker();
       const task=window.pdfjsLib.getDocument({ url, disableWorker:true });
       ED.pdfDoc=await task.promise; ED.numPages=ED.pdfDoc.numPages; ED.bytes=null; ED.viewOnly=true; ED.annots={}; ED.textCache={};
       await cacheSizes();
@@ -98656,6 +98679,7 @@ window.addEventListener("hashchange", function(){
     ED.bytes=bytes; ED.viewOnly=false;
     const prevPage=ED.page;
     if (ED.pdfDoc){ try { ED.pdfDoc.destroy && ED.pdfDoc.destroy(); } catch(e){} }
+    setPdfWorker();
     const task=window.pdfjsLib.getDocument({ data: bytes.slice(0), disableWorker:true });
     ED.pdfDoc=await task.promise; ED.numPages=ED.pdfDoc.numPages; ED.textCache={};
     await cacheSizes();
