@@ -98531,7 +98531,7 @@ window.addEventListener("hashchange", function(){
         </select>
         <div class="pdfed-spacer"></div>
         <button class="pdfed-btn icon" id="pdfedZOut" title="Verkleinern">➖</button>
-        <span id="pdfedZoom" style="font-size:12px;min-width:42px;text-align:center">115%</span>
+        <span id="pdfedZoom" title="Ctrl/Cmd + Scrollrad zum Zoomen" style="font-size:12px;min-width:42px;text-align:center;cursor:help">115%</span>
         <button class="pdfed-btn icon" id="pdfedZIn" title="Vergrössern">➕</button>
         <button class="pdfed-btn" id="pdfedFitW" title="Breite">↔ Breite</button>
         <button class="pdfed-btn" id="pdfedFitP" title="Seite">⤢ Seite</button>
@@ -98594,6 +98594,17 @@ window.addEventListener("hashchange", function(){
     main.addEventListener("pointerdown",(e)=>{ if(ED.tool!=="hand") return; pan={x:e.clientX,y:e.clientY,l:main.scrollLeft,t:main.scrollTop}; main.setPointerCapture(e.pointerId); });
     main.addEventListener("pointermove",(e)=>{ if(!pan) return; main.scrollLeft=pan.l-(e.clientX-pan.x); main.scrollTop=pan.t-(e.clientY-pan.y); });
     main.addEventListener("pointerup",()=>{ pan=null; });
+    // Ctrl/Cmd + Scrollrad → Zoom (zur Cursor-Position); Browser-Zoom unterdrücken.
+    // (Trackpad-Pinch erzeugt ebenfalls wheel-Events mit ctrlKey → Pinch-Zoom inklusive.)
+    let _zoomRaf=0, _zoomDelta=0, _zoomXY=null;
+    main.addEventListener("wheel",(e)=>{
+      if(!(e.ctrlKey||e.metaKey)) return;
+      e.preventDefault();
+      _zoomDelta += e.deltaY;
+      _zoomXY = { x:e.clientX, y:e.clientY };
+      if(_zoomRaf) return;
+      _zoomRaf = requestAnimationFrame(()=>{ _zoomRaf=0; const f=Math.exp(-_zoomDelta*0.0015); _zoomDelta=0; if(_zoomXY) zoomAt(ED.scale*f, _zoomXY.x, _zoomXY.y); });
+    }, { passive:false });
     // Drag&Drop auf Hauptbereich
     main.addEventListener("dragover",(e)=>{ e.preventDefault(); });
     main.addEventListener("drop",(e)=>{ e.preventDefault(); const f=e.dataTransfer?.files?.[0]; if(f) loadSource(f,{name:f.name}); });
@@ -98846,6 +98857,19 @@ window.addEventListener("hashchange", function(){
 
   // ─────────────────────────── Zoom / Ansicht ───────────────────────────
   function setScale(s){ ED.scale=Math.max(0.25, Math.min(5, s)); renderViewer(); updateChrome(); }
+  // Zoom mit Verankerung am Cursor: der Punkt unter der Maus bleibt an Ort und Stelle.
+  function zoomAt(newScale, clientX, clientY){
+    const main=qs("#pdfedMain"); if(!main || !ED.pdfDoc) return;
+    newScale=Math.max(0.25, Math.min(5, newScale));
+    if(Math.abs(newScale-ED.scale)<0.0005) return;
+    const rect=main.getBoundingClientRect();
+    const ox=(clientX!=null)?(clientX-rect.left):main.clientWidth/2;
+    const oy=(clientY!=null)?(clientY-rect.top):main.clientHeight/2;
+    const cx=main.scrollLeft+ox, cy=main.scrollTop+oy;     // Punkt in Inhaltskoordinaten (alte Skalierung)
+    const factor=newScale/ED.scale;
+    ED.scale=newScale; renderViewer(); updateChrome();
+    main.scrollLeft=cx*factor-ox; main.scrollTop=cy*factor-oy;  // gleichen Punkt wieder unter den Cursor schieben
+  }
   function fitWidth(){ const main=qs("#pdfedMain"); const sz=ED.sizes[ED.page]||ED.sizes[1]; if(!sz) return; const odd=(ED.rotation%180)!==0; const w=odd?sz.h:sz.w; setScale((main.clientWidth-72)/w); }
   function fitPage(){ const main=qs("#pdfedMain"); const sz=ED.sizes[ED.page]||ED.sizes[1]; if(!sz) return; const odd=(ED.rotation%180)!==0; const w=odd?sz.h:sz.w, h=odd?sz.w:sz.h; setScale(Math.min((main.clientWidth-72)/w, (main.clientHeight-72)/h)); }
   function toggleMode(){ ED.mode = ED.mode==="continuous" ? "single" : "continuous"; qs("#pdfedMode").textContent = ED.mode==="continuous" ? "▤ Fortlaufend" : "▢ Einzelseite"; renderViewer(); }
