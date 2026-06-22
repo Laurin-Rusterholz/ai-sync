@@ -7591,7 +7591,16 @@ function openFilePreview(kind, entityId, fileIdx) {
 
   // PDFs werden im vollwertigen PDF-Editor/Reader geöffnet (statt nur iframe-Preview)
   if (ext === 'pdf' && typeof window.openPdfEditor === 'function') {
-    window.openPdfEditor(f.url, { name: f.name });
+    // Aus Firebase geöffnet → "Speichern" lädt die bearbeitete PDF zurück nach
+    // Firebase (überschreibt dieselbe Datei) statt sie herunterzuladen.
+    const canFb = !!(f.storagePath && firebaseStorage);
+    const onSave = canFb ? (async (bytes) => {
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const url = await uploadToFirebase(blob, f.storagePath);
+      f.url = url; f.size = blob.size; f.uploadedAt = new Date().toISOString();
+      if (typeof scheduleSave === 'function') scheduleSave();
+    }) : null;
+    window.openPdfEditor(f.url, { name: f.name, onSave, kind, entityId, fileIdx, storagePath: f.storagePath });
     return;
   }
 
@@ -7709,6 +7718,9 @@ function openFilePreview(kind, entityId, fileIdx) {
     })();
   }
 }
+// Global verfügbar machen, damit der PDF-Editor "zuletzt geöffnete" Dateien
+// (mit voller Firebase-Speichern-Verdrahtung) wieder öffnen kann.
+window.openFilePreview = openFilePreview;
 
 // ============================================================================
 // i18n TRANSLATION SYSTEM
@@ -98405,6 +98417,28 @@ window.addEventListener("hashchange", function(){
     search:{ term:"", hits:[], idx:-1 }, io:null, thumbIo:null,
   };
   window.pdfEditorState = ED;
+  let _erasing = false;   // Radiergummi: Maustaste gedrückt (Ziehen löscht)
+
+  // ── Zuletzt geöffnete PDFs (localStorage) ──────────────────────────────
+  const PDFED_RECENT_KEY = "pdfed_recent_v1";
+  function getRecents(){ try { const a=JSON.parse(localStorage.getItem(PDFED_RECENT_KEY)||"[]"); return Array.isArray(a)?a:[]; } catch(e){ return []; } }
+  function addRecent(entry){
+    if(!entry || !entry.url) return;   // nur wiederöffenbare (URL-basierte) Einträge merken
+    try {
+      let list = getRecents().filter(r => !(r.url===entry.url));
+      list.unshift({ name: entry.name||"Dokument.pdf", url: entry.url, kind: entry.kind, entityId: entry.entityId, fileIdx: entry.fileIdx, storagePath: entry.storagePath, ts: Date.now() });
+      list = list.slice(0, 12);
+      localStorage.setItem(PDFED_RECENT_KEY, JSON.stringify(list));
+    } catch(e){}
+  }
+  function reopenRecent(r){
+    if (r.kind!=null && r.entityId!=null && r.fileIdx!=null && typeof window.openFilePreview==="function"){
+      window.openFilePreview(r.kind, r.entityId, r.fileIdx);   // volle Firebase-Verdrahtung (Speichern)
+    } else if (r.url){
+      openPdfEditor(r.url, { name:r.name });
+    }
+  }
+  function relTime(ts){ const s=Math.floor((Date.now()-ts)/1000); if(s<60)return "gerade eben"; const m=Math.floor(s/60); if(m<60)return m+" Min."; const h=Math.floor(m/60); if(h<24)return h+" Std."; const d=Math.floor(h/24); return d+" Tg."; }
 
   // ─────────────────────────── CSS ───────────────────────────
   function injectCss(){
@@ -98501,6 +98535,7 @@ window.addEventListener("hashchange", function(){
     root.innerHTML = `
       <div class="pdfed-bar">
         <button class="pdfed-btn icon" id="pdfedBurger" title="Seitenleiste">☰</button>
+        <button class="pdfed-btn" id="pdfedBack" title="Zurück zur App">← Zurück</button>
         <div class="pdfed-title"><span>📄</span><span id="pdfedName">Dokument.pdf</span><span id="pdfedRO" style="display:none;font-size:10px;color:var(--warn)">· Nur-Lesen</span></div>
         <div class="pdfed-sep"></div>
         <button class="pdfed-btn" id="pdfedOpen">📂 Öffnen</button>
@@ -98535,6 +98570,7 @@ window.addEventListener("hashchange", function(){
         <button class="pdfed-btn icon tool" data-tool="signature" title="Unterschrift">✍️</button>
         <button class="pdfed-btn icon tool" data-tool="image" title="Bild einfügen">🖼️</button>
         <button class="pdfed-btn icon tool" data-tool="redact" title="Schwärzen">⬛</button>
+        <button class="pdfed-btn icon tool" data-tool="eraser" title="Radiergummi — Anmerkungen löschen (klicken oder ziehen)">🧽</button>
         <div class="pdfed-sep"></div>
         <input type="color" class="pdfed-swatch" id="pdfedColor" value="#ffd400" title="Farbe">
         <select class="pdfed-btn" id="pdfedStroke" title="Linienstärke" style="padding:6px 8px">
@@ -98575,7 +98611,11 @@ window.addEventListener("hashchange", function(){
   function wireUI(){
     const on=(id,ev,fn)=>{ const e=qs("#"+id); if(e) e.addEventListener(ev,fn); };
     on("pdfedClose","click",closeEditor);
+    on("pdfedBack","click",closeEditor);
     on("pdfedBurger","click",()=>{ qs("#pdfedSide").classList.toggle("collapsed"); });
+    // Radiergummi: Ziehen löscht Anmerkungen, über die der Cursor fährt (bei gedrückter Maus)
+    document.addEventListener("pointerdown",()=>{ if(ED.open && ED.tool==="eraser") _erasing=true; });
+    document.addEventListener("pointerup",()=>{ _erasing=false; });
     on("pdfedOpen","click",()=> pickFile(".pdf,application/pdf",(f)=>loadSource(f,{name:f.name})));
     on("pdfedSave","click",saveDownload);
     on("pdfedUndo","click",undo);
@@ -98628,12 +98668,19 @@ window.addEventListener("hashchange", function(){
     meta = meta || {};
     buildUI();
     ED.open = true;
-    ED.onSave = meta.onSave || null;
-    if (meta.name) ED.name = meta.name;
     document.getElementById("pdfedRoot").classList.add("active");
     document.documentElement.style.overflow="hidden";
+    if (source == null){
+      // Kein neues Dokument übergeben (z. B. erneuter Routen-Render der App):
+      // ein bereits geöffnetes Dokument NICHT verwerfen — sonst leert sich der
+      // Editor von selbst. Startbildschirm nur zeigen, wenn nichts geladen ist.
+      if (!ED.pdfDoc) showEmpty();
+      updateChrome();
+      return;
+    }
+    ED.onSave = meta.onSave || null;   // onSave nur bei echtem neuem Dokument setzen/zurücksetzen
+    if (meta.name) ED.name = meta.name;
     updateChrome();
-    if (source == null){ showEmpty(); return; }
     await loadSource(source, meta);
   }
 
@@ -98641,12 +98688,30 @@ window.addEventListener("hashchange", function(){
     ED.pdfDoc=null; ED.numPages=0; ED.bytes=null;
     qs("#pdfedPages").innerHTML="";
     const em=qs("#pdfedEmpty"); em.style.display="flex";
+    const recents = getRecents();
+    const recentHtml = recents.length ? `
+      <div style="width:100%;max-width:560px;margin-top:6px;text-align:left">
+        <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+          <span>🕘 Zuletzt geöffnet</span>
+          <button class="pdfed-btn" id="pdfedRecentClear" style="font-size:10px;padding:3px 8px">Liste leeren</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${recents.map((r,idx)=>`<button class="pdfed-recent" data-idx="${idx}" style="display:flex;align-items:center;gap:10px;text-align:left;background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;cursor:pointer;color:var(--text)">
+            <span style="font-size:18px;flex-shrink:0">📄</span>
+            <span style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div><div style="font-size:11px;color:var(--muted)">${r.storagePath?"Firebase · ":""}vor ${relTime(r.ts)}</div></span>
+            <span style="font-size:14px;color:var(--muted);flex-shrink:0">↗</span>
+          </button>`).join("")}
+        </div>
+      </div>` : "";
     em.innerHTML = `
       <div style="font-size:46px">📄</div>
       <div style="font-size:18px;font-weight:700;color:var(--text)">PDF-Editor &amp; Reader</div>
       <div style="max-width:420px;font-size:13px">Öffne ein PDF zum Lesen, Annotieren und Bearbeiten — oder erstelle ein neues PDF aus Bildern.</div>
       <div class="pdfed-drop" id="pdfedDrop"><div style="font-size:30px;margin-bottom:8px">⬆️</div>PDF hierher ziehen<br>oder klicken zum Auswählen</div>
-      <div style="display:flex;gap:10px"><button class="pdfed-btn" id="pdfedImgPdf">🖼️ PDF aus Bildern</button></div>`;
+      <div style="display:flex;gap:10px"><button class="pdfed-btn" id="pdfedImgPdf">🖼️ PDF aus Bildern</button></div>
+      ${recentHtml}`;
+    em.querySelectorAll(".pdfed-recent").forEach(btn=> btn.addEventListener("click",()=>{ const r=getRecents()[+btn.dataset.idx]; if(r) reopenRecent(r); }));
+    const clearBtn=qs("#pdfedRecentClear"); if(clearBtn) clearBtn.addEventListener("click",()=>{ try{ localStorage.removeItem(PDFED_RECENT_KEY); }catch(e){} showEmpty(); });
     const drop=qs("#pdfedDrop");
     drop.addEventListener("click",()=> pickFile(".pdf,application/pdf",(f)=>loadSource(f,{name:f.name})));
     drop.addEventListener("dragover",(e)=>{ e.preventDefault(); drop.classList.add("over"); });
@@ -98671,6 +98736,7 @@ window.addEventListener("hashchange", function(){
       else if (source instanceof Uint8Array){ bytes=source; }
       else if (typeof source === "string"){
         ED.name = meta.name || ED.name;
+        addRecent({ name: ED.name, url: source, kind: meta.kind, entityId: meta.entityId, fileIdx: meta.fileIdx, storagePath: meta.storagePath });
         try { const r=await fetch(source); if(!r.ok) throw new Error("HTTP "+r.status); bytes=new Uint8Array(await r.arrayBuffer()); }
         catch(e){ console.warn("Direkter Abruf fehlgeschlagen, Nur-Lese-Modus:", e.message); await loadViewOnly(source); return; }
       }
@@ -98816,7 +98882,15 @@ window.addEventListener("hashchange", function(){
     if (a.type==="ink"){ const p=document.createElementNS(SVGNS,"polyline"); p.setAttribute("points", a.pts.map(pt=>`${pt.x*W},${pt.y*H}`).join(" ")); p.setAttribute("fill","none"); p.setAttribute("stroke",col); p.setAttribute("stroke-width",sw); p.setAttribute("stroke-linejoin","round"); p.setAttribute("stroke-linecap","round"); g.appendChild(p); }
     else { const x0=a.x0*W,y0=a.y0*H,x1=a.x1*W,y1=a.y1*H; const l=document.createElementNS(SVGNS,"line"); l.setAttribute("x1",x0); l.setAttribute("y1",y0); l.setAttribute("x2",x1); l.setAttribute("y2",y1); l.setAttribute("stroke",col); l.setAttribute("stroke-width",sw); l.setAttribute("stroke-linecap","round"); g.appendChild(l);
       if (a.type==="arrow"){ const ang=Math.atan2(y1-y0,x1-x0); const hl=Math.max(8,sw*4); [-1,1].forEach(s=>{ const hx2=x1-hl*Math.cos(ang - s*0.45), hy2=y1-hl*Math.sin(ang - s*0.45); const h=document.createElementNS(SVGNS,"line"); h.setAttribute("x1",x1); h.setAttribute("y1",y1); h.setAttribute("x2",hx2); h.setAttribute("y2",hy2); h.setAttribute("stroke",col); h.setAttribute("stroke-width",sw); h.setAttribute("stroke-linecap","round"); g.appendChild(h); }); } }
-    if (!temp && a.id){ g.style.pointerEvents="stroke"; g.style.cursor="pointer"; g.querySelectorAll("*").forEach(el=>el.style.pointerEvents="stroke"); g.addEventListener("click",(e)=>{ e.stopPropagation(); if(ED.tool==="select"){ if(confirm("Diese Anmerkung löschen?")) delAnnot(a.id); } }); }
+    if (!temp && a.id){
+      // breiter, unsichtbarer Treffer-Pfad → thin strokes leichter anklicken/radieren
+      if (g.firstChild){ const hit=g.firstChild.cloneNode(true); hit.setAttribute("stroke","transparent"); hit.setAttribute("stroke-width", Math.max(14, sw+12)); hit.setAttribute("fill","none"); g.insertBefore(hit, g.firstChild); }
+      g.style.pointerEvents="stroke"; g.style.cursor = (ED.tool==="eraser") ? "cell" : "pointer";
+      g.querySelectorAll("*").forEach(el=>el.style.pointerEvents="stroke");
+      g.addEventListener("click",(e)=>{ e.stopPropagation(); if(ED.tool==="eraser"){ delAnnot(a.id); } else if(ED.tool==="select"){ if(confirm("Diese Anmerkung löschen?")) delAnnot(a.id); } });
+      g.addEventListener("pointerdown",(e)=>{ if(ED.tool==="eraser"){ e.stopPropagation(); delAnnot(a.id); } });
+      g.addEventListener("pointerenter",()=>{ if(_erasing && ED.tool==="eraser") delAnnot(a.id); });
+    }
     return g;
   }
 
@@ -98833,6 +98907,9 @@ window.addEventListener("hashchange", function(){
     else if (a.type==="signature"||a.type==="image"){ setBox(a.x,a.y,a.w,a.h); const img=document.createElement("img"); img.src=a.dataUrl; el.appendChild(img); el.classList.add("movable"); const rsz=document.createElement("div"); rsz.className="pdfed-rsz"; el.appendChild(rsz); enableResize(rsz, el, a, W, H, i); }
     // Löschen-Knopf
     const del=document.createElement("button"); del.className="del"; del.textContent="✕"; del.addEventListener("pointerdown",(e)=>e.stopPropagation()); del.addEventListener("click",(e)=>{ e.stopPropagation(); delAnnot(a.id); }); el.appendChild(del);
+    // Radiergummi: klicken oder bei gedrückter Maus drüberziehen löscht die Anmerkung
+    el.addEventListener("pointerdown",(e)=>{ if(ED.tool==="eraser"){ e.stopPropagation(); delAnnot(a.id); } });
+    el.addEventListener("pointerenter",()=>{ if(_erasing && ED.tool==="eraser") delAnnot(a.id); });
     enableMove(el, a, W, H, i);
     return el;
   }
@@ -98864,7 +98941,7 @@ window.addEventListener("hashchange", function(){
   function setTool(t){ ED.tool=t; qs("#pdfedToolbar").querySelectorAll(".tool").forEach(b=> b.classList.toggle("active", b.dataset.tool===t)); applyToolCursor();
     if (t==="signature" && !ED.pendingSignature){ openSignaturePad(); }
   }
-  function applyToolCursor(){ const drawing = !["select","hand"].includes(ED.tool); qs("#pdfedPages").querySelectorAll(".pdfed-annots").forEach(ov=>{ ov.style.pointerEvents = drawing ? "auto" : "none"; ov.style.cursor = drawing ? "crosshair" : "default"; ov.querySelectorAll(".pdfed-annot").forEach(el=>el.style.pointerEvents="auto"); }); const main=qs("#pdfedMain"); if(main) main.style.cursor = ED.tool==="hand" ? "grab" : "default"; }
+  function applyToolCursor(){ const drawing = !["select","hand","eraser"].includes(ED.tool); qs("#pdfedPages").querySelectorAll(".pdfed-annots").forEach(ov=>{ ov.style.pointerEvents = drawing ? "auto" : "none"; ov.style.cursor = drawing ? "crosshair" : "default"; ov.querySelectorAll(".pdfed-annot").forEach(el=>el.style.pointerEvents="auto"); }); const main=qs("#pdfedMain"); if(main) main.style.cursor = ED.tool==="hand" ? "grab" : (ED.tool==="eraser" ? "cell" : "default"); }
 
   // ─────────────────────────── Zoom / Ansicht ───────────────────────────
   function setScale(s){ ED.scale=Math.max(0.25, Math.min(5, s)); renderViewer(); updateChrome(); }
@@ -99088,7 +99165,27 @@ window.addEventListener("hashchange", function(){
   async function imagesToPdf(){ pickFiles("image/*", async (files)=>{ if(!await ensurePdfLib()) return; note("info","Erstelle PDF aus "+files.length+" Bild(ern) …"); try { const out=await window.PDFLib.PDFDocument.create(); for(const f of files){ const png=await fileToPng(f); const img=await out.embedPng(png.bytes); const p=out.addPage([png.w,png.h]); p.drawImage(img,{x:0,y:0,width:png.w,height:png.h}); } const bytes=await out.save(); ED.name="Bilder.pdf"; ED.history=[]; await loadBytes(bytes); note("ok","PDF aus Bildern erstellt"); } catch(e){ note("danger",e.message); } }); }
 
   // Speichern / Drucken
-  async function saveDownload(){ if(ED.viewOnly||!ED.bytes){ note("warn","Nur-Lese-Modus — kein Speichern möglich"); return; } let out=ED.bytes; const has=Object.values(ED.annots).some(a=>a&&a.length); if(has){ out=await bakeBytes(); } downloadBytes(out, baseName()+".pdf"); if(typeof ED.onSave==="function"){ try{ ED.onSave(out, ED.name); }catch(e){} } ED.dirty=false; note("ok","PDF gespeichert"); }
+  async function saveDownload(){
+    if(ED.viewOnly||!ED.bytes){ note("warn","Nur-Lese-Modus — kein Speichern möglich"); return; }
+    let out=ED.bytes;
+    const has=Object.values(ED.annots).some(a=>a&&a.length);
+    if(has){ out=await bakeBytes(); }
+    const btn=qs("#pdfedSave");
+    if(typeof ED.onSave==="function"){
+      // Aus Firebase geöffnet → zurück nach Firebase speichern (kein Download)
+      try {
+        if(btn){ btn.disabled=true; btn.textContent="⏳ Speichert…"; }
+        await ED.onSave(out, ED.name);
+        ED.dirty=false;
+        note("ok","In Firebase gespeichert");
+      } catch(e){ console.error(e); note("danger","Speichern fehlgeschlagen: "+(e.message||e)); }
+      finally { if(btn){ btn.disabled=false; btn.innerHTML="💾 Speichern"; } }
+      return;
+    }
+    // Sonst: als Datei herunterladen
+    downloadBytes(out, baseName()+".pdf");
+    ED.dirty=false; note("ok","PDF heruntergeladen");
+  }
   async function printDoc(){ try { let bytes=ED.bytes; if(!bytes){ note("warn","Drucken im Nur-Lese-Modus nicht verfügbar"); return; } const has=Object.values(ED.annots).some(a=>a&&a.length); if(has) bytes=await bakeBytes(); const url=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"})); const w=window.open(url); if(w){ w.addEventListener("load",()=>{ try{w.print();}catch(e){} }); } setTimeout(()=>URL.revokeObjectURL(url),60000); } catch(e){ note("danger",e.message); } }
 
   // ─────────────────────────── Signatur-Pad / Modals ───────────────────────────
