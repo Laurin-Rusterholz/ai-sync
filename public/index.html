@@ -706,6 +706,13 @@
     .main{grid-column:2;grid-row:2;overflow-y:auto;overflow-x:hidden;padding:16px 20px 40px}
     .page{max-width:1400px;margin:0 auto}
 
+    /* Breadcrumb */
+    .breadcrumb{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin:0 0 12px 0;font-size:12px;line-height:1.4;color:var(--muted);min-width:0}
+    .breadcrumb-item{color:var(--muted);text-decoration:none;padding:2px 6px;border-radius:6px;white-space:nowrap;transition:background .15s,color .15s}
+    .breadcrumb-item:hover{background:var(--accent-soft);color:var(--text)}
+    .breadcrumb-sep{color:var(--muted);opacity:.5;user-select:none}
+    .breadcrumb-current{color:var(--text);font-weight:700;padding:2px 6px;max-width:48ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
     /* Page Header */
     .page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
     .page-title h2{font-size:20px;font-weight:950;margin:0 0 4px 0;line-height:1.2;letter-spacing:.2px}
@@ -15571,6 +15578,27 @@ window.clearWorkSchedule = function() {
   }
 };
 
+// Breadcrumb: zeigt bei tiefen Ansichten deterministisch den Pfad
+// (z.B. 🏠 Dashboard › ✅ Aufgaben › «Task-Titel»). Klickbar.
+function renderBreadcrumb(route, id) {
+  if (!route || route === "dashboard" || route === "apps" || route === "settings") return "";
+  const meta = (h) => {
+    try { if (typeof inferHashTitle === "function") return inferHashTitle(h); } catch (e) {}
+    const r = h.replace(/^#\/?/, "").split("/")[0];
+    return { title: r ? r.charAt(0).toUpperCase() + r.slice(1) : "", icon: "◫" };
+  };
+  const sec = meta("#/" + route);
+  let crumbs = `<a class="breadcrumb-item" href="#/dashboard">🏠 Dashboard</a>`;
+  if (id) {
+    const det = meta("#/" + route + "/" + id);
+    crumbs += `<span class="breadcrumb-sep">›</span><a class="breadcrumb-item" href="#/${route}">${sec.icon || ""} ${esc(sec.title)}</a>`;
+    crumbs += `<span class="breadcrumb-sep">›</span><span class="breadcrumb-current" title="${esc(det.title)}">${esc(det.title)}</span>`;
+  } else {
+    crumbs += `<span class="breadcrumb-sep">›</span><span class="breadcrumb-current">${sec.icon || ""} ${esc(sec.title)}</span>`;
+  }
+  return `<nav class="breadcrumb" aria-label="Breadcrumb">${crumbs}</nav>`;
+}
+
 function renderMain() {
   const { route, id } = parseHash();
   let html = "";
@@ -15673,7 +15701,9 @@ function renderMain() {
   
   const mainEl = $("#main");
   if (mainEl) {
-    mainEl.innerHTML = `<div class="page">${html}</div>`;
+    let _crumb = "";
+    try { _crumb = renderBreadcrumb(route, id); } catch (e) { _crumb = ""; }
+    mainEl.innerHTML = `<div class="page">${_crumb}${html}</div>`;
 // Activate scripts in custom pages (wrapped to avoid global conflicts)
     if ((APP.state.data.customPages || []).some(p => p.key === route)) {
       mainEl.querySelectorAll(".custom-page-body script").forEach(old => {
@@ -86417,7 +86447,41 @@ function initTabs() {
       _activeTabId = _tabs[0].id;
     }
   }
-  
+
+  // ─── URL-Hash hat beim Laden Vorrang vor persistiertem Hub-Tab ───
+  // Direktaufruf/Bookmark einer Seite (z.B. #/tasks) darf NICHT von einem
+  // zuletzt aktiven Hub-Overlay (ReadingHub/RecallLab/NoteFlow…) überlagert
+  // werden. Die URL ist die Quelle der Wahrheit: aktiven Tab deterministisch
+  // auf die angeforderte Seite ziehen, statt den letzten Tab wiederherzustellen.
+  try {
+    const rawHash = window.location.hash || '';
+    const norm = rawHash.replace(/^#\/?/, '');
+    const top = (norm.split('/')[0] || '').trim();
+    if (top && top !== 'dashboard') {
+      const HUB_ROUTE_KIND = { learn: 'recalllab', readinghub: 'readinghub', notes: 'noteflow', articles: 'newsroom', readlist: 'readlist' };
+      const hubKind = HUB_ROUTE_KIND[top];
+      let target;
+      if (hubKind) {
+        target = _tabs.find(t => t.kind === hubKind);
+        if (!target) {
+          const HUB_TITLE = { recalllab: { title: 'RecallLab', icon: '🧠' }, readinghub: { title: 'ReadingHub', icon: '📚' }, noteflow: { title: 'NoteFlow', icon: '📝' }, newsroom: { title: 'Newsroom', icon: '📰' }, readlist: { title: 'Leseliste', icon: '📖' } };
+          const ti = HUB_TITLE[hubKind] || { title: top, icon: '◫' };
+          target = { id: genTabId(), kind: hubKind, ref: '', title: ti.title, icon: ti.icon, lastUsedAt: Date.now() };
+          _tabs.push(target);
+        }
+      } else {
+        const wantRef = '#/' + norm;
+        target = _tabs.find(t => t.kind === 'hash' && t.ref === wantRef);
+        if (!target) {
+          const info = inferHashTitle(wantRef);
+          target = { id: genTabId(), kind: 'hash', ref: wantRef, title: info.title, icon: info.icon, lastUsedAt: Date.now() };
+          _tabs.push(target);
+        }
+      }
+      if (target) _activeTabId = target.id;
+    }
+  } catch (e) {}
+
   setTabsEnabled(tabsEnabled());
   saveTabs();
   renderTabs();
