@@ -49,7 +49,7 @@
       --text-muted:#929aa4;
       --accent:#45c198;
       --accent-deep:#2ea27b;         /* dunklere Akzentstufe für Gradient/Hover/Glow */
-      --accent-soft:#173a30;
+      --accent-soft:color-mix(in oklab, var(--accent) 24%, transparent); /* transluzent: dient zugleich als sanfte Tönung UND als sichtbarer Glow/Fokus-Ring */
       --on-accent:#04140d;
       --danger:#e5765a;
       --warning:#e3b048;
@@ -98,7 +98,7 @@
       --text-muted:#7a7463;
       --accent:#1f8a66;
       --accent-deep:#15704f;
-      --accent-soft:#c0dacc;
+      --accent-soft:color-mix(in oklab, var(--accent) 22%, transparent);
       --on-accent:#f4f8f4;
       --danger:#b34d2c;
       --warning:#977211;
@@ -16235,7 +16235,7 @@ function viewDailyBriefing() {
       return '<div class="db-section" style="border:2px solid var(--accent-soft);background:linear-gradient(135deg,var(--accent-soft),transparent)">' +
         '<h3>' + "\u{1F6CB}\uFE0F" + ' Reflexionsfragen</h3>' +
         ppProjects.map(proj => {
-          return '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--accent-soft);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">' + esc(proj.title) + '</div>' +
+          return '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">' + esc(proj.title) + '</div>' +
           (proj.reflectionQuestions || []).map(q => {
             const lastAnswer = (q.answers || []).slice(-1)[0];
             const answeredToday = lastAnswer && lastAnswer.date === selectedDate;
@@ -35461,7 +35461,7 @@ function viewPersonalityProjectDetail(id) {
     <div style="background:linear-gradient(135deg, var(--accent-soft), rgba(236,72,153,.08), var(--accent-soft));border:1px solid var(--accent-soft);border-radius:16px;padding:24px;margin-bottom:20px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
         <div>
-          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent-soft);font-weight:700;margin-bottom:6px">Persönlichkeitsprojekt</div>
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);font-weight:700;margin-bottom:6px">Persönlichkeitsprojekt</div>
           <h2 style="margin:0;font-size:24px">🌱 ${esc(p.title)}</h2>
           <p style="margin:6px 0 0;font-size:13px;color:var(--muted)">Erstellt ${fmtDateTime(p.createdAt)}${p.description ? ' · ' + esc(p.description.slice(0, 80)) : ''}</p>
           ${p.externalId ? `<div style="display:inline-flex;align-items:center;gap:8px;margin-top:6px;padding:5px 10px;background:rgba(100,210,255,.08);border:1px solid rgba(100,210,255,.25);border-radius:8px;cursor:pointer" onclick="window.copyExternalProjectId('${p.externalId}')" title="Klicken zum Kopieren"><span style="font-size:11px;color:var(--muted)">📡</span><code style="font-size:12px;font-weight:700;color:var(--teal);letter-spacing:1px">${p.externalId}</code><span style="font-size:11px;color:var(--muted)">📋</span></div>` : ''}
@@ -35486,7 +35486,7 @@ function viewPersonalityProjectDetail(id) {
         </div>
         <div style="display:flex;gap:24px;flex-wrap:wrap">
           <div><div style="font-size:22px;font-weight:800">${doneMilestones}/${milestones.length}</div><div style="font-size:11px;color:var(--muted)">Meilensteine</div></div>
-          <div><div style="font-size:22px;font-weight:800;color:var(--accent-soft)">${reflections.length}</div><div style="font-size:11px;color:var(--muted)">Reflexionsfragen</div></div>
+          <div><div style="font-size:22px;font-weight:800;color:var(--accent)">${reflections.length}</div><div style="font-size:11px;color:var(--muted)">Reflexionsfragen</div></div>
           <div><div style="font-size:22px;font-weight:800;color:var(--accent)">${habits.length}</div><div style="font-size:11px;color:var(--muted)">Habits</div></div>
           <div><div style="font-size:22px;font-weight:800;color:var(--teal)">${beliefs.length}</div><div style="font-size:11px;color:var(--muted)">Glaubenssätze</div></div>
         </div>
@@ -38754,13 +38754,13 @@ function viewGoals() {
       
       // Personality project milestones
       if (ppProjects.length) {
-        html += '<h4 style="font-size:13px;color:var(--accent-soft);margin-bottom:10px">🌱 Meilensteine</h4><div class="grid grid-2" style="gap:12px">';
+        html += '<h4 style="font-size:13px;color:var(--accent);margin-bottom:10px">🌱 Meilensteine</h4><div class="grid grid-2" style="gap:12px">';
         ppProjects.forEach(proj => {
           const ms = proj.milestones || [];
           const done = ms.filter(m => m.done).length;
           const pct = ms.length ? Math.round(done / ms.length * 100) : 0;
           html += '<div style="padding:14px;background:var(--panel2);border-radius:12px;border-left:3px solid var(--accent-soft);cursor:pointer" onclick="navigate(\'projects\',\'' + proj.id + '\')">';
-          html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong style="font-size:13px">' + esc(proj.title) + '</strong><span style="font-size:12px;color:var(--accent-soft);font-weight:700">' + pct + '%</span></div>';
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><strong style="font-size:13px">' + esc(proj.title) + '</strong><span style="font-size:12px;color:var(--accent);font-weight:700">' + pct + '%</span></div>';
           html += '<div style="background:var(--border);height:5px;border-radius:3px;margin-bottom:8px"><div style="background:var(--accent-soft);height:5px;border-radius:3px;width:' + pct + '%;transition:width .3s"></div></div>';
           ms.slice(0, 4).forEach(m => {
             html += '<div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:2px 0">' + (m.done ? '✅' : '🏁') + ' <span style="' + (m.done ? 'text-decoration:line-through;opacity:.5' : '') + '">' + esc(m.title) + '</span>' + (m.dueDate ? '<span style="margin-left:auto;font-size:10px;color:var(--muted)">' + m.dueDate + '</span>' : '') + '</div>';
@@ -86659,6 +86659,14 @@ h3{ font-weight:700; letter-spacing:-0.012em; }
    Hover-Glow aus dem Warning-Token statt veralteter hartcodierter Goldfarbe. */
 .rh-btn-primary{ color:color-mix(in oklab, var(--warning) 20%, #000) !important; }
 .rh-btn-primary:hover{ box-shadow:0 3px 14px color-mix(in oklab, var(--warning) 34%, transparent) !important; }
+
+/* Gefüllte Akzent-Buttons/Chips aus Stylesheets (vom Inline-Gradient-Override
+   nicht erfasst): lesbarer Text (--on-accent) + v2-Tiefenverlauf statt flachem
+   einfarbigem Verlauf bzw. hellem Text auf Jade. */
+.mh-add-btn,.wf-add-btn,.rl-chip.active{
+  color:var(--on-accent) !important;
+  background:linear-gradient(135deg, color-mix(in oklab, var(--accent) 88%, #fff 12%), var(--accent-deep)) !important;
+}
 </style>
 
 <!-- Popup-Menü (Container) -->
