@@ -98725,6 +98725,21 @@ window.addEventListener("hashchange", function(){
     });
   }
 
+  // Editor exakt unter die App-Tab-Leiste setzen (oder ganz nach oben, wenn keine
+  // Tabs aktiv sind). Inline-Styles wirken zusätzlich zur CSS-Regel und decken auch
+  // abweichende Leisten-Höhen ab.
+  function _pdfedFitBelowTabBar(){
+    const root=document.getElementById("pdfedRoot");
+    if(!root || !ED.open) return;
+    const bar=document.getElementById("browserTabBar");
+    const visible = bar && getComputedStyle(bar).display!=="none" && bar.offsetHeight>0;
+    const h = visible ? bar.offsetHeight : 0;
+    root.style.top = h+"px";
+    root.style.bottom = "0";
+    root.style.height = "auto";
+  }
+  window.addEventListener("resize", _pdfedFitBelowTabBar);
+
   // ─────────────────────────── Laden ───────────────────────────
   async function openPdfEditor(source, meta){
     meta = meta || {};
@@ -98732,6 +98747,11 @@ window.addEventListener("hashchange", function(){
     ED.open = true;
     document.getElementById("pdfedRoot").classList.add("active");
     document.documentElement.style.overflow="hidden";
+    // Editor unterhalb der App-Tab-Leiste ausrichten, damit die Editor-Kopfleiste
+    // (mit Schliessen-Button) nicht hinter den immer obenliegenden Tabs verschwindet.
+    // Zusätzliche Absicherung zur CSS-Regel (body.tabs-on #pdfedRoot): misst die
+    // echte Höhe der Tab-Leiste und reagiert auf Fenster-/Tab-Änderungen.
+    _pdfedFitBelowTabBar();
     if (source == null){
       // Kein neues Dokument übergeben (z. B. erneuter Routen-Render der App):
       // ein bereits geöffnetes Dokument NICHT verwerfen — sonst leert sich der
