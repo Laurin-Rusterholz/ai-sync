@@ -11181,14 +11181,21 @@ window.isFirebaseCloudAvailable = isFirebaseCloudAvailable;
 window.isAutoSyncEnabled = isAutoSyncEnabled;
 
 // ── Universal API Key accessors (used by all modules) ──
+// Entfernt ALLE Whitespace-Zeichen (Leerzeichen, Tabs, Zeilenumbrüche, geschützte
+// Leerzeichen, Zero-Width-Spaces). API-Keys (sk-ant-…, sk-…, AIza…) enthalten nie
+// Whitespace — kopiert man sie aus umgebrochenem Text/E-Mails, schleichen sich aber
+// oft unsichtbare Zeichen ein, die sonst zu "invalid x-api-key" (401) führen.
+function sanitizeApiKey(k) {
+  return String(k || "").replace(/[\s ​-‍﻿]/g, "");
+}
 function getApiKey() {
-  return APP.state.settings?.openai?.apiKey || "";
+  return sanitizeApiKey(APP.state.settings?.openai?.apiKey);
 }
 function getGeminiKey() {
-  return APP.state.settings?.geminiApiKey || "";
+  return sanitizeApiKey(APP.state.settings?.geminiApiKey);
 }
 function getAnthropicKey() {
-  return APP.state.settings?.anthropicApiKey || "";
+  return sanitizeApiKey(APP.state.settings?.anthropicApiKey);
 }
 
 // ── Quick Push/Pull für API-Keys (nutzt bestehenden manualTransfer-Mechanismus) ──
@@ -11200,9 +11207,9 @@ window.apiKeysQuickPush = async function() {
     const opIn = document.getElementById('setOpenAIKey');
     const anIn = document.getElementById('setAnthropicKey');
     const gmIn = document.getElementById('setGeminiKey');
-    if (opIn) APP.state.settings.openai.apiKey = opIn.value || '';
-    if (anIn) APP.state.settings.anthropicApiKey = anIn.value || '';
-    if (gmIn) APP.state.settings.geminiApiKey = gmIn.value || '';
+    if (opIn) APP.state.settings.openai.apiKey = sanitizeApiKey(opIn.value);
+    if (anIn) APP.state.settings.anthropicApiKey = sanitizeApiKey(anIn.value);
+    if (gmIn) APP.state.settings.geminiApiKey = sanitizeApiKey(gmIn.value);
     saveSettings(APP.state.settings);
     // saveSettings setzt APP.state.data._settings; jetzt manualTransferPush aufrufen
     if (typeof manualTransferPush !== 'function') {
@@ -12718,15 +12725,21 @@ async function sendChatMessage(prompt, options = {}) {
     if (res) return res;
   }
 
+  let lastError = null;
   if (anthropicKey) {
     try {
       const res = await callAnthropicChat(prompt, systemPrompt, { anthropicKey, ...options });
       if (res) return res;
     } catch (e) {
       console.warn("Anthropic fehlgeschlagen:", e.message);
+      lastError = e;
     }
   }
 
+  if (lastError) {
+    // Es war ein Key hinterlegt, der Aufruf ist aber fehlgeschlagen → echten Grund zeigen
+    throw new Error(lastError.message || "KI-Anfrage fehlgeschlagen.");
+  }
   throw new Error("Kein API-Key konfiguriert. Hinterlege einen Gemini-, OpenAI- oder Anthropic-Key in den Einstellungen.");
 }
 
@@ -12759,7 +12772,7 @@ async function callGemini(prompt, systemPrompt, options = {}) {
 
 // Anthropic Claude — Fallback-Chat-Provider
 async function callAnthropicChat(prompt, systemPrompt, options = {}) {
-  const key = options.anthropicKey;
+  const key = (typeof sanitizeApiKey === 'function' ? sanitizeApiKey(options.anthropicKey) : options.anthropicKey);
   if (!key) return null;
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -12778,7 +12791,12 @@ async function callAnthropicChat(prompt, systemPrompt, options = {}) {
   });
   if (!resp.ok) {
     const t = await resp.text();
-    throw new Error("Anthropic " + resp.status + ": " + t.slice(0, 200));
+    let msg = t.slice(0, 200);
+    try { msg = JSON.parse(t).error?.message || msg; } catch {}
+    if (resp.status === 401) msg = "Anthropic API-Key ungültig oder abgelaufen. Erzeuge einen neuen Key (sk-ant-…) auf console.anthropic.com.";
+    else if (resp.status === 400 && /credit|balance/i.test(msg)) msg = "Anthropic-Guthaben aufgebraucht. Lade Guthaben unter console.anthropic.com → Billing auf.";
+    else if (resp.status === 429) msg = "Anthropic Rate-Limit erreicht. Bitte kurz warten.";
+    throw new Error(msg);
   }
   const data = await resp.json();
   return (data.content || []).map(c => c.text || "").join("").trim() || null;
@@ -64021,11 +64039,11 @@ window.saveSettingsModal = function() {
   APP.state.settings.storage.manualTransferMode = false;
   if (typeof resetCloudSyncHealth === 'function') resetCloudSyncHealth();
   APP.state.settings.openai.mode = $("#setAiMode")?.value || "local";
-  APP.state.settings.openai.apiKey = $("#setOpenAIKey")?.value || "";
+  APP.state.settings.openai.apiKey = sanitizeApiKey($("#setOpenAIKey")?.value);
   APP.state.settings.openai.model = $("#setOpenAIModel")?.value || "gpt-4o";
   APP.state.settings.openai.temperature = parseFloat($("#setOpenAITemp")?.value) || 0.3;
-  APP.state.settings.anthropicApiKey = $("#setAnthropicKey")?.value || "";
-  APP.state.settings.geminiApiKey = $("#setGeminiKey")?.value || "";
+  APP.state.settings.anthropicApiKey = sanitizeApiKey($("#setAnthropicKey")?.value);
+  APP.state.settings.geminiApiKey = sanitizeApiKey($("#setGeminiKey")?.value);
   APP.state.settings.language = $("#setLanguage")?.value || "de";
   APP.state.settings.ui.sidebarMode = $("#setSidebarMode")?.value || "auto";
   APP.state.settings.ui.edgeReveal = $("#setEdgeReveal")?.checked || false;
@@ -72021,10 +72039,13 @@ Beginne mit den kritischen/hohen Prioritäten.`;
   // ========== API TEST HANDLERS ==========
   if (action === "test-anthropic-api") {
     e.preventDefault(); e.stopPropagation();
-    const key = (document.getElementById("setAnthropicKey")?.value || "").trim();
+    const rawKey = document.getElementById("setAnthropicKey")?.value || "";
+    const key = (typeof sanitizeApiKey === 'function' ? sanitizeApiKey(rawKey) : rawKey.replace(/\s+/g, ""));
     const rd = document.getElementById("apiTestResult");
     if (!rd) return;
     if (!key) { rd.style.display="block"; rd.style.background="rgba(255,85,114,.15)"; rd.style.border="1px solid rgba(255,85,114,.3)"; rd.innerHTML='<div style="color:#ff5572;font-weight:600">❌ Kein Anthropic API-Key</div>'; return; }
+    // Wenn beim Bereinigen Zeichen entfernt wurden, war der eingefügte Key "verschmutzt" → Feld korrigieren
+    if (key !== rawKey.trim() && document.getElementById("setAnthropicKey")) { document.getElementById("setAnthropicKey").value = key; }
     rd.style.display="block"; rd.style.background="rgba(191,90,242,.15)"; rd.style.border="1px solid var(--accent-soft)"; rd.innerHTML='<div style="color:var(--accent)">🔄 Teste Anthropic...</div>';
     (async()=>{
       try {
@@ -72033,8 +72054,18 @@ Beginne mit den kritischen/hohen Prioritäten.`;
           body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:50,messages:[{role:"user",content:"Say OK"}]})
         });
         if(r.ok){rd.style.background="rgba(43,212,168,.15)";rd.style.border="1px solid rgba(43,212,168,.3)";rd.innerHTML='<div style="color:var(--ok);font-weight:600">✅ Anthropic API funktioniert!</div>';toast("ok","API OK","Anthropic verbunden");}
-        else{const d=await r.json().catch(()=>({}));rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ Fehler ${r.status}</div><div class="mini">${d.error?.message||"Unbekannt"}</div>`;}
-      }catch(err){rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ ${err.message}</div>`;}
+        else{
+          const d=await r.json().catch(()=>({}));
+          const msg = d.error?.message || "Unbekannt";
+          let hint = "";
+          if(r.status===401) hint = "💡 Key ungültig/abgelaufen. Erzeuge auf console.anthropic.com → Settings → API Keys einen NEUEN Key (beginnt mit sk-ant-) und kopiere ihn vollständig.";
+          else if(r.status===400 && /credit|balance/i.test(msg)) hint = "💡 Dein Anthropic-Guthaben ist leer. Lade unter console.anthropic.com → Billing Guthaben auf.";
+          else if(r.status===403) hint = "💡 Dieser Key hat keine Berechtigung für dieses Modell.";
+          else if(r.status===429) hint = "💡 Rate-Limit erreicht – kurz warten und erneut testen.";
+          rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";
+          rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ Fehler ${r.status}</div><div class="mini">${esc(msg)}</div>`+(hint?`<div class="mini" style="margin-top:6px;opacity:.9">${esc(hint)}</div>`:"");
+        }
+      }catch(err){rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ ${esc(err.message)}</div><div class="mini" style="margin-top:6px;opacity:.9">💡 Verbindungs-/Netzwerkfehler – evtl. Browser-Erweiterung (Adblocker/Privacy) oder fehlendes Netz.</div>`;}
     })();
     return;
   }
@@ -74173,11 +74204,12 @@ document.addEventListener("DOMContentLoaded", function() {
   
   // Anthropic API Key holen
   function getAnthropicKey() {
+    const clean = (k) => (typeof sanitizeApiKey === 'function' ? sanitizeApiKey(k) : String(k || '').replace(/\s+/g, ''));
     if (typeof APP !== 'undefined' && APP.state?.settings?.anthropicApiKey) {
-      return APP.state.settings.anthropicApiKey;
+      return clean(APP.state.settings.anthropicApiKey);
     }
     if (rhState.settings?.anthropicKey) {
-      return rhState.settings.anthropicKey;
+      return clean(rhState.settings.anthropicKey);
     }
     return null;
   }
