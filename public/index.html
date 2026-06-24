@@ -69801,6 +69801,9 @@ window.createEntity = createEntity;
 window.updateEntity = updateEntity;
 window.deleteEntity = deleteEntity;
 window.getEntityMap = getEntityMap;
+window.togglePin = togglePin;
+window.isPinned = isPinned;
+window.getEntityDisplayName = getEntityDisplayName;
 window.openSlidePanel = openSlidePanel;
 window.closeSlidePanel = closeSlidePanel;
 window.endDayAndBackup = endDayAndBackup;
@@ -99353,6 +99356,313 @@ window.addEventListener("hashchange", function(){
   // ─────────────────────────── Export der API ───────────────────────────
   window.openPdfEditor = openPdfEditor;
   window.closePdfEditor = closeEditor;
+})();
+</script>
+
+<!-- ============================================================
+     QUANTUS UNIVERSAL CONTEXT MENU
+     Einheitliches Rechtsklick-Menü für ALLE Apps.
+     - Auf Entitäten (data-kind/data-id): Öffnen, Bearbeiten,
+       Verknüpfen, Anpinnen, Duplizieren, Kopieren, Löschen
+     - Auf markiertem Text: Kopieren, Web-Suche, → Notiz/Aufgabe
+     - Auf App-Hintergrund: app-spezifisches "Neu" + Schnellaktionen
+     ============================================================ -->
+<script>
+(function(){
+  "use strict";
+
+  // Entity-Kind → navigierbare Detail-Route
+  const NAV_KINDS = {
+    task:"tasks", project:"projects", note:"notes", goal:"goals",
+    strategy:"strategies", idea:"ideas", meeting:"meetings",
+    organization:"organizations", program:"programs", decision:"decisions",
+    article:"articles", update:"updates", contact:"persons", person:"persons",
+    calendarEvent:"calendar", deck:"learn"
+  };
+  // Kinds mit Verknüpfungs-Modal
+  const LINK_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","organization","program","calendarEvent","decision"]);
+  // Kinds, für die generisches Duplizieren sicher ist
+  const DUP_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","decision","update"]);
+  // Kinds mit Schnellansicht (openSlidePanel)
+  const SLIDE_KINDS = new Set(["task","project","note","organization"]);
+
+  const KIND_LABEL = {
+    task:"Aufgabe", project:"Projekt", note:"Notiz", goal:"Ziel", strategy:"Strategie",
+    idea:"Idee", meeting:"Meeting", organization:"Organisation", program:"Programm",
+    decision:"Entscheidung", article:"Artikel", update:"Update", contact:"Kontakt",
+    person:"Person", calendarEvent:"Termin", deck:"Deck", annotation:"Anmerkung",
+    thought:"Gedanke", notebook:"Notizbuch"
+  };
+  const DEFAULT_TITLE = {
+    task:"Neue Aufgabe", project:"Neues Projekt", note:"Neue Notiz", goal:"Neues Ziel",
+    strategy:"Neue Strategie", idea:"Neue Idee", meeting:"Neues Meeting",
+    decision:"Neue Entscheidung", program:"Neues Programm", organization:"Neue Organisation"
+  };
+  // Route → bestehende Schnell-Erstellen-Aktion (öffnet schönes Modal)
+  const ROUTE_QUICK = {
+    tasks:"open-quick-task", today:"open-quick-task", dashboard:"open-quick-task",
+    weekplanning:"open-quick-task", notes:"open-quick-note", projects:"open-quick-project",
+    ideas:"open-quick-idea"
+  };
+
+  // ── kleine Helfer (greifen auf globale App-Funktionen zu) ───────────────
+  function safe(fn){ try { return fn(); } catch(e){ console.error("[ctx]", e); return undefined; } }
+  function curRoute(){ return safe(()=> (window.parseHash ? window.parseHash().route : (window.APP?.state?.ui?.route))) || ""; }
+  function curEntityId(){ return safe(()=> (window.parseHash ? window.parseHash().id : (window.APP?.state?.ui?.entityId))); }
+  function rerender(){ if(typeof window.render === "function") safe(()=>window.render()); }
+  function notify(type,a,b){ if(typeof window.toast === "function") safe(()=>window.toast(type,a,b)); }
+  function appLabel(route){
+    const all = (typeof window.getAllApps === "function") ? safe(()=>window.getAllApps()) : null;
+    const app = all && all.find(x=>x.key===route);
+    return app ? (app.icon + " " + app.label) : "Quantus";
+  }
+  async function copyText(text){
+    if(!text) return;
+    try {
+      if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); }
+      else {
+        const ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+        document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+      }
+      notify("ok","Kopiert", text.length>60 ? text.slice(0,60)+"…" : text);
+    } catch(e){ notify("warn","Fehler","Konnte nicht kopieren"); }
+  }
+  // Bestehende data-action-Handler wiederverwenden (z.B. open-quick-task)
+  function fireAction(action, data){
+    if(typeof window.handleClick !== "function") return;
+    const el=document.createElement("div");
+    el.dataset.action=action;
+    if(data) Object.keys(data).forEach(k=>{ el.dataset[k]=data[k]; });
+    safe(()=>window.handleClick({ target:el, preventDefault(){}, stopPropagation(){} }));
+  }
+
+  function navKindRoute(kind){ return NAV_KINDS[kind] || null; }
+  function isPinnedSafe(kind,id){ return (typeof window.isPinned==="function") ? safe(()=>window.isPinned(kind,id)) : false; }
+
+  function duplicateEntity(kind,id){
+    if(typeof window.getEntity!=="function" || typeof window.createEntity!=="function") return;
+    const src=safe(()=>window.getEntity(kind,id));
+    if(!src){ notify("warn","Fehler","Element nicht gefunden"); return; }
+    const clone=JSON.parse(JSON.stringify(src));
+    delete clone.id; delete clone.createdAt; delete clone.updatedAt;
+    if(clone.title) clone.title=clone.title+" (Kopie)";
+    else if(clone.name) clone.name=clone.name+" (Kopie)";
+    const newId=safe(()=>window.createEntity(kind, clone));
+    rerender();
+    notify("ok","Dupliziert", (KIND_LABEL[kind]||kind)+" wurde kopiert");
+    return newId;
+  }
+
+  function deleteWithConfirm(kind,id){
+    if(typeof window.deleteEntity!=="function") return;
+    const label=KIND_LABEL[kind]||kind;
+    if(!confirm(label+" wirklich löschen?")) return;
+    const onDetail = curRoute()===navKindRoute(kind) && curEntityId()===id;
+    safe(()=>window.deleteEntity(kind,id));
+    if(onDetail && navKindRoute(kind) && typeof window.navigate==="function") safe(()=>window.navigate(navKindRoute(kind)));
+    else rerender();
+    notify("ok","Gelöscht", label+" wurde gelöscht");
+  }
+
+  // ── Menü-CSS (Quantus-Look) ─────────────────────────────────────────────
+  function injectCss(){
+    if(document.getElementById("qCtxStyle")) return;
+    const s=document.createElement("style");
+    s.id="qCtxStyle";
+    s.textContent=`
+      .q-ctx{position:fixed;z-index:100000;min-width:212px;max-width:300px;padding:6px;
+        background:var(--panel,#1e242b);border:1px solid var(--border,#3b4550);border-radius:14px;
+        box-shadow:0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(12px);
+        font-family:inherit;font-size:14px;color:var(--text,#fff);animation:qCtxIn .12s ease;}
+      @keyframes qCtxIn{from{opacity:0;transform:scale(.97) translateY(-4px)}to{opacity:1;transform:none}}
+      .q-ctx-head{padding:9px 12px 8px;border-bottom:1px solid var(--border,#3b4550);margin-bottom:6px}
+      .q-ctx-head .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:800;color:var(--muted,#8b97a3)}
+      .q-ctx-head .n{font-size:13px;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .q-ctx-item{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;cursor:pointer;
+        transition:background .12s;line-height:1.2;user-select:none}
+      .q-ctx-item:hover{background:var(--panel2,#262d35)}
+      .q-ctx-item .ico{font-size:15px;width:18px;text-align:center;flex:0 0 auto}
+      .q-ctx-item.danger{color:var(--danger,#e5765a)}
+      .q-ctx-item.danger:hover{background:rgba(229,118,90,.13)}
+      .q-ctx-sep{height:1px;background:var(--border,#3b4550);margin:6px 4px}
+    `;
+    document.head.appendChild(s);
+  }
+
+  // ── Menü rendern ─────────────────────────────────────────────────────────
+  let activeMenu=null;
+  function closeMenu(){
+    if(activeMenu){ activeMenu.remove(); activeMenu=null; }
+    document.removeEventListener("mousedown", onDocDown, true);
+    document.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("blur", closeMenu);
+    document.removeEventListener("scroll", closeMenu, true);
+  }
+  function onDocDown(e){ if(activeMenu && !activeMenu.contains(e.target)) closeMenu(); }
+  function onKey(e){ if(e.key==="Escape") closeMenu(); }
+
+  function showMenu(x,y,header,items){
+    injectCss();
+    closeMenu();
+    const menu=document.createElement("div");
+    menu.className="q-ctx";
+    let html="";
+    if(header){
+      html+=`<div class="q-ctx-head"><div class="k">${esc(header.kind)}</div><div class="n">${esc(header.name)}</div></div>`;
+    }
+    items.forEach((it,i)=>{
+      if(it.sep){ html+=`<div class="q-ctx-sep"></div>`; return; }
+      html+=`<div class="q-ctx-item${it.danger?" danger":""}" data-i="${i}"><span class="ico">${it.icon||""}</span><span>${esc(it.label)}</span></div>`;
+    });
+    menu.innerHTML=html;
+    document.body.appendChild(menu);
+    // Klicks an Items binden
+    items.forEach((it,i)=>{
+      if(it.sep || !it.onClick) return;
+      const node=menu.querySelector(`.q-ctx-item[data-i="${i}"]`);
+      if(node) node.addEventListener("click", ()=>{ closeMenu(); safe(it.onClick); });
+    });
+    // Viewport-Clamping
+    const r=menu.getBoundingClientRect();
+    let nx=x, ny=y;
+    if(nx + r.width > window.innerWidth - 8) nx = Math.max(8, window.innerWidth - r.width - 8);
+    if(ny + r.height > window.innerHeight - 8) ny = Math.max(8, window.innerHeight - r.height - 8);
+    menu.style.left=nx+"px"; menu.style.top=ny+"px";
+    activeMenu=menu;
+    setTimeout(()=>{
+      document.addEventListener("mousedown", onDocDown, true);
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener("blur", closeMenu);
+      document.addEventListener("scroll", closeMenu, true);
+    },0);
+  }
+  // esc() lokal (falls global nicht im Scope)
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+  // ── Menü-Inhalte ──────────────────────────────────────────────────────────
+  function entityItems(kind,id){
+    const name = (typeof window.getEntity==="function" && typeof window.getEntityDisplayName==="function")
+      ? safe(()=>window.getEntityDisplayName(kind, window.getEntity(kind,id))) : null;
+    const items=[];
+    if(navKindRoute(kind)) items.push({icon:"🔍",label:"Öffnen", onClick:()=> window.navigate && window.navigate(navKindRoute(kind), id)});
+    if(SLIDE_KINDS.has(kind) && typeof window.openSlidePanel==="function")
+      items.push({icon:"👁",label:"Schnellansicht", onClick:()=> window.openSlidePanel(kind,id)});
+    if(LINK_KINDS.has(kind) && typeof window.openLinkModal==="function")
+      items.push({icon:"🔗",label:"Verknüpfen", onClick:()=> window.openLinkModal(kind,id)});
+    if(typeof window.togglePin==="function"){
+      const pinned=isPinnedSafe(kind,id);
+      items.push({icon:pinned?"📍":"📌",label:pinned?"Lösen":"Anpinnen", onClick:()=>{ window.togglePin(kind,id); rerender(); notify("ok", pinned?"Gelöst":"Angepinnt", KIND_LABEL[kind]||kind); }});
+    }
+    if(DUP_KINDS.has(kind))
+      items.push({icon:"📋",label:"Duplizieren", onClick:()=> duplicateEntity(kind,id)});
+    if(name)
+      items.push({icon:"⧉",label:"Namen kopieren", onClick:()=> copyText(name)});
+    items.push({sep:true});
+    items.push({icon:"🗑️",label:"Löschen", danger:true, onClick:()=> deleteWithConfirm(kind,id)});
+    return { header:{ kind:KIND_LABEL[kind]||kind, name: name||"(Ohne Titel)" }, items };
+  }
+
+  function selectionItems(text){
+    const t=text.trim();
+    const short = t.length>48 ? t.slice(0,48)+"…" : t;
+    const items=[
+      {icon:"⧉",label:"Kopieren", onClick:()=> copyText(t)},
+      {icon:"🔎",label:"Im Web suchen", onClick:()=> window.open("https://www.google.com/search?q="+encodeURIComponent(t), "_blank")},
+      {sep:true},
+      {icon:"📝",label:"Als Notiz speichern", onClick:()=>{
+        if(typeof window.createEntity!=="function") return;
+        const firstLine=(t.split("\n")[0]||"Notiz").slice(0,80);
+        safe(()=>window.createEntity("note",{ title:firstLine, content:t }));
+        rerender(); notify("ok","Notiz erstellt", firstLine);
+      }},
+      {icon:"✅",label:"Als Aufgabe erstellen", onClick:()=>{
+        if(typeof window.createEntity!=="function") return;
+        safe(()=>window.createEntity("task",{ title:t.slice(0,120), status:"todo", priority:3 }));
+        rerender(); notify("ok","Aufgabe erstellt", short);
+      }},
+    ];
+    return { header:{ kind:"Auswahl", name:short }, items };
+  }
+
+  function appItems(route){
+    const items=[];
+    // App-spezifisches "Neu"
+    if(ROUTE_QUICK[route]){
+      const map={ "open-quick-task":["✅","Neue Aufgabe"], "open-quick-note":["📝","Neue Notiz"],
+                  "open-quick-project":["📦","Neues Projekt"], "open-quick-idea":["💡","Neue Idee"] };
+      const m=map[ROUTE_QUICK[route]];
+      items.push({icon:m[0],label:m[1], onClick:()=> fireAction(ROUTE_QUICK[route])});
+    } else {
+      // generisches Erstellen, wenn Route einem Kind entspricht
+      const kind=Object.keys(NAV_KINDS).find(k=>NAV_KINDS[k]===route && DEFAULT_TITLE[k]);
+      if(kind && typeof window.createEntity==="function"){
+        items.push({icon:"➕",label:DEFAULT_TITLE[kind], onClick:()=>{
+          const newId=safe(()=>window.createEntity(kind,{ title:DEFAULT_TITLE[kind] }));
+          if(newId && navKindRoute(kind) && typeof window.navigate==="function") safe(()=>window.navigate(navKindRoute(kind), newId));
+          else rerender();
+          notify("ok","Erstellt", DEFAULT_TITLE[kind]);
+        }});
+      }
+    }
+    if(items.length) items.push({sep:true});
+    // globale Schnellaktionen — in jeder App verfügbar
+    items.push({icon:"✅",label:"Schnelle Aufgabe", onClick:()=> fireAction("open-quick-task")});
+    items.push({icon:"📝",label:"Schnelle Notiz", onClick:()=> fireAction("open-quick-note")});
+    items.push({icon:"💡",label:"Schnelle Idee", onClick:()=> fireAction("open-quick-idea")});
+    items.push({icon:"💭",label:"Gedanke notieren", onClick:()=> fireAction("open-quick-thought")});
+    items.push({sep:true});
+    items.push({icon:"🔄",label:"Aktualisieren", onClick:()=> rerender()});
+    items.push({icon:"🔲",label:"Alle Apps", onClick:()=> window.navigate && window.navigate("apps")});
+    items.push({icon:"🏠",label:"Dashboard", onClick:()=> window.navigate && window.navigate("dashboard")});
+    items.push({icon:"⚙️",label:"Einstellungen", onClick:()=> window.navigate && window.navigate("settings")});
+    return { header:{ kind:"App", name: appLabel(route) }, items };
+  }
+
+  // ── Globaler Rechtsklick-Listener ────────────────────────────────────────
+  document.addEventListener("contextmenu", function(e){
+    // Spezialmenüs / native Eingabefelder nicht stören
+    if(e.defaultPrevented) return;
+    const tgt=e.target;
+    if(!tgt || !tgt.closest) return;
+    // Eingabefelder: natives Browser-Menü (Einfügen etc.) behalten
+    if(tgt.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
+    // Bereiche mit eigenem Rechtsklick-Handler überspringen
+    if(tgt.closest('[oncontextmenu], .gcal-event, .rh-context-menu, .q-ctx, #calEventContextMenu')) return;
+    // ReadingHub / NoteFlow haben eigene Textauswahl-Menüs
+    const inSpecialReader = tgt.closest('#readingHubContainer, #noteflowContainer, #pdfedRoot');
+
+    // 1) Entität unter dem Cursor?
+    const entEl = tgt.closest('[data-kind][data-id]');
+    if(entEl){
+      const kind=entEl.getAttribute("data-kind");
+      const id=entEl.getAttribute("data-id");
+      if(kind && id && (typeof window.getEntity==="function") && window.getEntity(kind,id)){
+        e.preventDefault();
+        const { header, items }=entityItems(kind,id);
+        showMenu(e.clientX, e.clientY, header, items);
+        return;
+      }
+    }
+
+    // 2) Markierter Text?
+    const sel = window.getSelection && window.getSelection();
+    const selText = sel ? String(sel).trim() : "";
+    if(selText && selText.length>1 && !inSpecialReader){
+      e.preventDefault();
+      const { header, items }=selectionItems(selText);
+      showMenu(e.clientX, e.clientY, header, items);
+      return;
+    }
+    if(inSpecialReader) return; // sonst Reader-eigenes Verhalten lassen
+
+    // 3) App-Hintergrund
+    e.preventDefault();
+    const { header, items }=appItems(curRoute());
+    showMenu(e.clientX, e.clientY, header, items);
+  }, false);
+
+  // API
+  window.QuantusContextMenu = { close: closeMenu, show: showMenu };
 })();
 </script>
 
