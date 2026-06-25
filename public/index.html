@@ -28741,6 +28741,7 @@ function viewTasks() {
       <div class="page-actions">
         <button class="btn ${viewMode === 'matrix' ? 'active' : ''}" data-action="tasks-view-matrix">📊 Matrix</button>
         <button class="btn ${viewMode === 'list' ? 'active' : ''}" data-action="tasks-view-list">📋 Liste</button>
+        <button class="btn" onclick="window.aiPrioritizeTasks()" title="KI ordnet die offenen Aufgaben nach Eisenhower & Score">🧠 KI-Priorisierung</button>
         <button class="btn primary" data-action="create-task">➕ Neue Aufgabe</button>
       </div>
     </div>
@@ -42892,6 +42893,8 @@ function viewToday() {
     })()}
     </div>
     
+    ${(typeof window.buildTodayFocusHtml === "function" ? window.buildTodayFocusHtml() : "")}
+
     <div class="stats-compact-row mb-3" style="display:flex;gap:12px;flex-wrap:wrap;padding:12px;background:var(--card-bg);border-radius:12px;border:1px solid var(--border)">
       <div class="stat-pill" style="flex:1;min-width:140px;text-align:center;padding:8px 12px;background:var(--accent-soft);border-radius:8px;cursor:pointer" data-action="edit-today-time" title="Klicken zum Bearbeiten">
         <div style="font-size:20px;font-weight:700;color:var(--accent)">${fmtDurationShort(todaySeconds)}</div>
@@ -94840,6 +94843,16 @@ console.log('📚 Leseliste geladen');
   // Pre-processes the assistant's raw reply: executes any {{GCAL_*}} tokens
   // (async, via the proxy) and substitutes a human-readable result. Called by
   // doSend BEFORE the synchronous processCommands() pass.
+  // Paket 2: strukturierte Termine eines Tages (Heute-Fokus / Tagesagenda). Read-only, kein Schreiben.
+  window.gcalEventsForDay = function(ymd){
+    try {
+      if (!GC || !GC.events || !GC.events.length) return [];
+      return GC.events.filter(function(ev){ return toDateVal(evStart(ev)) === ymd; })
+        .sort(function(a,b){ return evStart(a) - evStart(b); })
+        .map(function(ev){ return { id:ev.id, title:ev.summary||"(ohne Titel)", allDay:isAllDay(ev), time:isAllDay(ev)?"ganztägig":fmtTime(evStart(ev)) }; });
+    } catch(e){ return []; }
+  };
+
   window.gcalAIProcess = async function(text){
     if (!text || text.indexOf("{{GCAL_") < 0) return text;
     if (!GC.status || !GC.status.connected){ if (GC.status===undefined){ try { await loadStatus(); } catch(e){} } }
@@ -96327,6 +96340,11 @@ console.log('📚 Leseliste geladen');
       + '</div>';
   }
   window.gmailRefreshDrafts = function(){ loadDrafts(); };
+  // Paket 2: offene KI-Entwürfe (read-only) für Heute-Fokus.
+  window.gmailOpenDrafts = function(){
+    try { return (GM.drafts||[]).filter(function(d){ return (d.status||"pending")==="pending"; }).map(function(d){ return { subject:d.subject||"(ohne Betreff)", to:d.toName||d.to||"" }; }); }
+    catch(e){ return []; }
+  };
   window.gmailOpenDraft = function(key){
     var d=(GM.drafts||[]).find(function(x){return x._key===key;});
     if (!d){ toast("err","Entwurf nicht mehr da",""); return; }
@@ -99953,6 +99971,176 @@ window.addEventListener("hashchange", function(){
 
   // API
   window.QuantusContextMenu = { close: closeMenu, show: showMenu };
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   PAKET 2 — Aufgaben & Produktivität (selbst-enthalten; nutzt window.*-Helfer:
+   createEntity/updateEntity, callAI, openModal/closeModal, toast, render,
+   todayYmd; sowie die Read-Accessoren gcalEventsForDay/gmailOpenDrafts).
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+  function _today(){ return window.todayYmd ? window.todayYmd() : new Date().toISOString().slice(0,10); }
+  function _esc(s){ return window.esc ? window.esc(s) : String(s==null?"":s); }
+  function _tasks(){ try { return Object.values(window.APP.state.data.entities.tasks||{}); } catch(e){ return []; } }
+  function _parseJsonArray(raw){
+    if(!raw) return [];
+    var s=String(raw).trim().replace(/^```(?:json)?/i,"").replace(/```$/,"").trim();
+    var i=s.indexOf("["), j=s.lastIndexOf("]"); if(i>=0&&j>i) s=s.slice(i,j+1);
+    try{ var a=JSON.parse(s); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+  }
+
+  // ── #6 Quick-Capture: ein Eingabefeld → Aufgabe / Notiz / Idee ──
+  window.openQuickCapture = function(kind){
+    window._qcapKind = kind || "task";
+    var html = '<div class="form">'
+      + '<div class="flex gap-2 mb-2" id="qcapKinds">'
+      +   '<button type="button" class="btn sm" data-qcap="task">✅ Aufgabe</button>'
+      +   '<button type="button" class="btn sm" data-qcap="note">📝 Notiz</button>'
+      +   '<button type="button" class="btn sm" data-qcap="idea">💡 Idee</button>'
+      + '</div>'
+      + '<label class="col-12">Text<textarea id="qcapText" style="min-height:120px" placeholder="Erste Zeile = Titel, Rest = Beschreibung/Inhalt"></textarea></label>'
+      + '</div>';
+    window.openModal("⚡ Quick-Capture", html, '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window.quickCaptureSubmit()">Erfassen</button>');
+    setTimeout(function(){
+      var box=document.getElementById("qcapKinds");
+      if(box){ box.querySelectorAll("[data-qcap]").forEach(function(b){
+        if(b.dataset.qcap===window._qcapKind) b.classList.add("primary");
+        b.onclick=function(){ window._qcapKind=b.dataset.qcap; box.querySelectorAll("[data-qcap]").forEach(function(x){x.classList.remove("primary");}); b.classList.add("primary"); };
+      }); }
+      var ta=document.getElementById("qcapText"); if(ta) ta.focus();
+    },30);
+  };
+  window.quickCaptureSubmit = function(){
+    var ta=document.getElementById("qcapText"); var txt=(ta&&ta.value||"").trim();
+    if(!txt){ window.toast("warn","Quick-Capture","Bitte etwas eingeben"); return; }
+    var k=window._qcapKind||"task";
+    var lines=txt.split("\n"); var title=lines[0].slice(0,200); var body=lines.slice(1).join("\n").trim();
+    var id, label;
+    if(k==="note"){ id=window.createEntity("note",{ title:title, content:txt, tags:[] }); label="Notiz"; }
+    else if(k==="idea"){ id=window.createEntity("idea",{ title:title, description:body, content:txt }); label="Idee"; }
+    else { id=window.createEntity("task",{ title:title, description:body, status:"todo", priority:3, tags:["Quick"] }); label="Aufgabe"; }
+    if(window.closeModal) window.closeModal();
+    if(id){ window.toast("ok","Erfasst", label+" angelegt."); if(window.render) window.render(); }
+    else window.toast("err","Fehler", label+" konnte nicht angelegt werden");
+  };
+
+  // ── #9 Fokus-Timer: Start / Pause / Reset + Sitzungszähler (eigenständig, kein Eingriff in Pomodoro) ──
+  var FT = { running:false, paused:false, remaining:25*60, len:25*60, sessions:0, iv:null };
+  function ftFmt(s){ var m=Math.floor(s/60), x=s%60; return String(m).padStart(2,"0")+":"+String(x).padStart(2,"0"); }
+  function ftRender(){
+    var el=document.getElementById("ftBox"); if(!el) return;
+    var a=el.querySelector("#ftTime"); if(a) a.textContent=ftFmt(FT.remaining);
+    var b=el.querySelector("#ftState"); if(b) b.textContent = FT.running?(FT.paused?"pausiert":"läuft"):"bereit";
+    var c=el.querySelector("#ftCount"); if(c) c.textContent = FT.sessions;
+    var pb=el.querySelector("#ftPause"); if(pb) pb.textContent = FT.paused?"▶️ Weiter":"⏸ Pause";
+  }
+  function ftTick(){
+    if(!FT.running||FT.paused) return;
+    FT.remaining--;
+    if(FT.remaining<=0){
+      FT.running=false; if(FT.iv){clearInterval(FT.iv);FT.iv=null;} FT.sessions++; FT.remaining=FT.len;
+      window.toast("ok","🎯 Fokus","Fokus-Block geschafft! ("+FT.sessions+" heute)");
+    }
+    ftRender();
+  }
+  window.openFocusTimer = function(){
+    var html='<div id="ftBox" style="text-align:center;padding:10px 6px">'
+      + '<div style="font-size:46px;font-weight:700;font-family:monospace" id="ftTime">'+ftFmt(FT.remaining)+'</div>'
+      + '<div class="mini text-muted" style="margin:4px 0 14px">Status: <span id="ftState">bereit</span> · Fokus-Blöcke heute: <span id="ftCount">'+FT.sessions+'</span></div>'
+      + '<div class="flex gap-2" style="justify-content:center;flex-wrap:wrap">'
+      +   '<button class="btn primary" onclick="window.focusTimerStart()">▶️ Start</button>'
+      +   '<button class="btn" id="ftPause" onclick="window.focusTimerPause()">⏸ Pause</button>'
+      +   '<button class="btn" onclick="window.focusTimerReset()">↺ Reset</button>'
+      + '</div>'
+      + '<div class="flex gap-2 mt-2" style="justify-content:center;flex-wrap:wrap">'
+      +   '<button class="btn sm" onclick="window.focusTimerSet(25)">25 Min</button>'
+      +   '<button class="btn sm" onclick="window.focusTimerSet(15)">15 Min</button>'
+      +   '<button class="btn sm" onclick="window.focusTimerSet(45)">45 Min</button>'
+      + '</div></div>';
+    window.openModal("🎯 Fokus-Timer", html, '<button class="btn" data-action="close-modal">Schließen</button>');
+    setTimeout(ftRender,30);
+  };
+  window.focusTimerSet = function(min){ if(FT.running) return; FT.len=min*60; FT.remaining=min*60; ftRender(); };
+  window.focusTimerStart = function(){ FT.running=true; FT.paused=false; if(!FT.iv) FT.iv=setInterval(ftTick,1000); ftRender(); };
+  window.focusTimerPause = function(){ if(!FT.running) return; FT.paused=!FT.paused; ftRender(); };
+  window.focusTimerReset = function(){ FT.running=false; FT.paused=false; if(FT.iv){clearInterval(FT.iv);FT.iv=null;} FT.remaining=FT.len; ftRender(); };
+
+  // ── #7 KI-Priorisierung (Eisenhower + Score) über die offenen Aufgaben ──
+  window.aiPrioritizeTasks = async function(){
+    var open=_tasks().filter(function(t){return t.status!=="done";});
+    if(!open.length){ window.toast("info","KI-Priorisierung","Keine offenen Aufgaben"); return; }
+    var list=open.slice(0,40).map(function(t){ return { id:t.id, title:t.title, due:t.dueDate||"", prio:t.priority||3 }; });
+    window.toast("ok","KI","Priorisiere "+list.length+" Aufgaben …");
+    var sys='Du priorisierst Aufgaben nach der Eisenhower-Matrix. Antworte AUSSCHLIESSLICH als JSON-Array von {"id":"<id>","quadrant":"do|plan|delegate|drop","score":1-100,"reason":"kurz"} – hoechstens so viele Objekte wie Eingaben, keine weiteren Zeichen. do=wichtig+dringend, plan=wichtig+nicht dringend, delegate=dringend+nicht wichtig, drop=keins.';
+    var raw;
+    try{ raw=await window.callAI("Heute: "+_today()+"\nAufgaben:\n"+JSON.stringify(list), {systemPrompt:sys, maxTokens:1500}); }
+    catch(e){ window.toast("err","KI-Fehler", (e&&e.message)||""); return; }
+    var arr=_parseJsonArray(raw);
+    if(!arr.length){ window.toast("warn","KI","Keine Priorisierung erhalten (API-Key?)"); return; }
+    var byId={}; open.forEach(function(t){byId[t.id]=t;});
+    var Q={ do:{l:"🔴 Sofort (wichtig & dringend)",p:1,items:[]}, plan:{l:"🟢 Einplanen (wichtig)",p:2,items:[]}, delegate:{l:"🟡 Delegieren (dringend)",p:3,items:[]}, drop:{l:"⚪ Zurückstellen",p:5,items:[]} };
+    var apply=[];
+    arr.forEach(function(r){ var t=byId[r.id]; if(!t) return; var q=Q[r.quadrant]||Q.plan; q.items.push({t:t,score:r.score||0,reason:r.reason||""}); apply.push({id:t.id, priority:q.p}); });
+    window._p2Apply=apply;
+    var html=Object.keys(Q).map(function(k){ var q=Q[k]; if(!q.items.length) return ""; q.items.sort(function(a,b){return (b.score||0)-(a.score||0);});
+      return '<div style="margin-bottom:10px"><div style="font-weight:700;margin-bottom:4px">'+q.l+'</div>'+q.items.map(function(it){ return '<div style="padding:6px 8px;background:var(--panel);border-radius:8px;margin-bottom:4px"><strong>'+_esc(it.t.title)+'</strong> <span class="mini text-muted">· Score '+(it.score||0)+(it.reason?(" · "+_esc(it.reason)):"")+'</span></div>'; }).join("")+'</div>'; }).join("");
+    window.openModal("🧠 KI-Priorisierung (Eisenhower)", html || '<div class="mini text-muted">Keine Zuordnung.</div>',
+      '<button class="btn" data-action="close-modal">Schließen</button>'+(apply.length?'<button class="btn primary" onclick="window.applyAiPriorities()">Prioritäten übernehmen ('+apply.length+')</button>':''));
+  };
+  window.applyAiPriorities = function(){
+    var apply=window._p2Apply||[]; if(!apply.length){ if(window.closeModal)window.closeModal(); return; }
+    if(!confirm("Der KI-Assistent möchte die Priorität von "+apply.length+" Aufgabe(n) anpassen (Eisenhower-Quadrant → Priorität). Übernehmen?")) return;
+    var n=0; apply.forEach(function(a){ if(window.updateEntity("task",a.id,{priority:a.priority})) n++; });
+    if(window.closeModal) window.closeModal(); if(window.render) window.render();
+    window.toast("ok","Übernommen", n+" Aufgaben-Prioritäten aktualisiert.");
+  };
+
+  // ── #8 Wiederkehrende Aufgaben – Übersicht (Engine calculateNextRecurrence/createNextRecurringTask existiert bereits) ──
+  window.showRecurringOverview = function(){
+    var map={daily:"täglich",weekly:"wöchentlich",monthly:"monatlich",yearly:"jährlich"};
+    var tasks=_tasks().filter(function(t){ return t.recurrence && t.recurrence!=="none" && t.status!=="done"; })
+      .sort(function(a,b){ return (a.dueDate||"9999").localeCompare(b.dueDate||"9999"); });
+    var html = tasks.length ? '<div>'+tasks.map(function(t){ return '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 9px;background:var(--panel);border-radius:8px;margin-bottom:5px"><span><strong>'+_esc(t.title)+'</strong> <span class="mini text-muted">· 🔄 '+(map[t.recurrence]||t.recurrence)+'</span></span><span class="mini text-muted">'+(t.dueDate?("nächste Fälligkeit: "+_esc(t.dueDate)):"—")+'</span></div>'; }).join("")+'</div>'
+      : '<div class="mini text-muted">Keine wiederkehrenden Aufgaben. Wiederholung im Aufgaben-Detail setzen.</div>';
+    window.openModal("🔄 Wiederkehrende Aufgaben", html, '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // ── #10 Heute-Fokus: fällige Aufgaben + heutige Termine + offene KI-Entwürfe ──
+  window.buildTodayFocusHtml = function(){
+    try {
+      var today=_today();
+      var tasks=_tasks().filter(function(t){ return t.status!=="done" && t.dueDate && t.dueDate<=today; })
+        .sort(function(a,b){ return (a.dueDate||"").localeCompare(b.dueDate||""); }).slice(0,8);
+      var evs = (typeof window.gcalEventsForDay==="function") ? window.gcalEventsForDay(today) : [];
+      var drafts = (typeof window.gmailOpenDrafts==="function") ? window.gmailOpenDrafts() : [];
+      function col(title, inner){ return '<div style="flex:1;min-width:180px"><div style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:6px">'+title+'</div>'+inner+'</div>'; }
+      var tHtml = tasks.length ? tasks.map(function(t){ var od=t.dueDate<today; return '<div style="padding:5px 8px;background:var(--panel);border-radius:7px;margin-bottom:4px;font-size:13px">'+(od?"⚠️ ":"")+_esc(t.title)+'</div>'; }).join("") : '<div class="mini text-muted">Nichts fällig 🎉</div>';
+      var eHtml = evs.length ? evs.slice(0,8).map(function(ev){ return '<div style="padding:5px 8px;background:var(--panel);border-radius:7px;margin-bottom:4px;font-size:13px">🕒 '+_esc(ev.time)+' · '+_esc(ev.title)+'</div>'; }).join("") : '<div class="mini text-muted">Keine Termine (Kalender ggf. nicht geöffnet)</div>';
+      var dHtml = drafts.length ? drafts.slice(0,6).map(function(d){ return '<div style="padding:5px 8px;background:var(--panel);border-radius:7px;margin-bottom:4px;font-size:13px" title="'+_esc(d.to)+'">✉️ '+_esc(d.subject)+'</div>'; }).join("") : '<div class="mini text-muted">Keine offenen Entwürfe</div>';
+      return '<div class="card mb-3" style="padding:14px;border:1px solid var(--accent-soft)">'
+        + '<div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">'
+        +   '<h3 style="margin:0">🎯 Heute im Fokus</h3>'
+        +   '<div class="flex gap-2" style="flex-wrap:wrap">'
+        +     '<button class="btn sm" onclick="window.openQuickCapture()">⚡ Quick-Capture</button>'
+        +     '<button class="btn sm" onclick="window.openFocusTimer()">🎯 Fokus-Timer</button>'
+        +     '<button class="btn sm" onclick="window.showRecurringOverview()">🔄 Wiederkehrend</button>'
+        +   '</div>'
+        + '</div>'
+        + '<div class="flex gap-2" style="flex-wrap:wrap">'+ col("Fällige Aufgaben", tHtml) + col("Heutige Termine", eHtml) + col("Offene KI-Entwürfe", dHtml) +'</div>'
+        + '</div>';
+    } catch(e){ return ""; }
+  };
+
+  // ── #6 globaler Shortcut: Alt+N → Quick-Capture ──
+  document.addEventListener("keydown", function(e){
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key==="n"||e.key==="N")){
+      e.preventDefault();
+      window.openQuickCapture();
+    }
+  });
 })();
 </script>
 
