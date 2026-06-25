@@ -94404,8 +94404,12 @@ console.log('📚 Leseliste geladen');
       var pp = (ev.extendedProperties && ev.extendedProperties.private) || {};
       ed.links.meeting = pp.qMeeting||""; ed.links.tasks=(pp.qTasks||"").split(",").filter(Boolean); ed.links.projects=(pp.qProjects||"").split(",").filter(Boolean); ed.links.persons=(pp.qPersons||"").split(",").filter(Boolean);
     } else {
-      if (prefill.date){ sDate=prefill.date; eDate=prefill.date; if (prefill.time){ sTime=prefill.time; var ph=parseInt(prefill.time.slice(0,2),10); eTime=pad(Math.min(23,ph+1))+":"+prefill.time.slice(3); } else { sTime="09:00"; eTime="10:00"; } if (prefill.allDay) allDay=true; }
+      if (prefill.date){ sDate=prefill.date; eDate=prefill.endDate||prefill.date; if (prefill.time){ sTime=prefill.time; var ph=parseInt(prefill.time.slice(0,2),10); eTime=prefill.endTime || (pad(Math.min(23,ph+1))+":"+prefill.time.slice(3)); } else { sTime="09:00"; eTime="10:00"; } if (prefill.allDay) allDay=true; }
       else { var ns=new Date(); ns.setMinutes(0,0,0); ns.setHours(ns.getHours()+1); var ne=new Date(ns.getTime()+3600000); sDate=toDateVal(ns); sTime=toTimeVal(ns); eDate=toDateVal(ne); eTime=toTimeVal(ne); }
+      // Additive Prefill-Felder (z. B. aus dem Gmail-Termin-Vorschlag) — Titel/Ort/Beschreibung.
+      if (prefill.title) title = String(prefill.title);
+      if (prefill.location) loc = String(prefill.location);
+      if (prefill.desc) desc = String(prefill.desc);
     }
     GC._edit = ed;
 
@@ -94715,6 +94719,17 @@ console.log('📚 Leseliste geladen');
     })();
   };
 
+  // Wie gcalQuickCreate, aber OHNE Navigation: lädt bei Bedarf Status/Kalender (gcalEnsureLoaded)
+  // und öffnet den vorbefüllten Editor über der aktuellen Ansicht (z. B. aus dem Gmail-Reader).
+  // Liefert true, wenn der Editor geöffnet wurde; false bei „nicht verbunden / kein beschreibbarer
+  // Kalender" — der Aufrufer kann dann auf den Google-Calendar-Vorlage-Link ausweichen.
+  window.gcalQuickCreateInline = async function(prefill){
+    try { await gcalEnsureLoaded(); } catch(e){}
+    var writable = (GC.calendars||[]).filter(function(c){ return c.accessRole==="owner"||c.accessRole==="writer"; });
+    if (GC.status && GC.status.connected && writable.length){ gcalOpenEditor(null, null, prefill||{}); return true; }
+    return false;
+  };
+
   // ══════════════════════════════════════════════════════════════════
   //  KI-ASSISTENT — Kalender-Aktionen über dieselbe gcal-api-Proxyschicht
   // ══════════════════════════════════════════════════════════════════
@@ -94892,6 +94907,14 @@ console.log('📚 Leseliste geladen');
 .gml-addr span { color:var(--text2); font-weight:600; }
 .gml-msgdate { font-size:12px; color:var(--muted); flex-shrink:0; text-align:right; max-width:200px; }
 .gml-bodywrap { padding:16px 20px 24px; }
+/* „Termin erkannt"-Karte im Reader (Google-Kalender-Vorschlag) */
+.gml-appt { display:flex; align-items:center; gap:12px; margin:0 18px 12px; padding:11px 14px; border:1px solid var(--accent-soft); border-left:3px solid var(--accent); border-radius:10px; background:var(--accent-soft); flex-wrap:wrap; }
+.gml-appt-ic { width:34px; height:34px; flex-shrink:0; border-radius:9px; background:var(--panel); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:18px; }
+.gml-appt-body { flex:1; min-width:170px; }
+.gml-appt-label { font-size:10.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); }
+.gml-appt-title { font-size:14px; font-weight:700; color:var(--text); margin:1px 0; overflow:hidden; text-overflow:ellipsis; }
+.gml-appt-when { font-size:12.5px; color:var(--text2); }
+.gml-appt .btn { flex-shrink:0; }
 .gml-bodyframe { width:100%; border:none; background:var(--text); border-radius:10px; min-height:240px; display:block; }
 .gml-compose-btn { width:100%; padding:10px; margin-bottom:8px; border:none; border-radius:11px; background:var(--accent); color:var(--text); font-weight:700; font-size:14px; cursor:pointer; }
 .gml-compose-btn:hover { filter:brightness(1.08); }
@@ -95469,6 +95492,7 @@ console.log('📚 Leseliste geladen');
       +   '</div>'
       + '</div>'
       + renderKiPanel(o)
+      + renderApptCard(o)
       + '<div class="gml-bodywrap">'+bodyIframe(o.html, o.text)+'</div>';
   }
 
@@ -96278,6 +96302,148 @@ console.log('📚 Leseliste geladen');
       + (summary ? '<div class="gml-ki-text">'+esc(summary)+'</div>' : '')
       + '</div>';
   }
+
+  // ── Termin-Erkennung im Reader → Google-Kalender-Vorschlag ──────────────────
+  // Beim Anzeigen einer Mail wird EINMAL pro messageId geprüft (Cache GM._apptCache), ob ein
+  // Termin enthalten ist. Reihenfolge: günstiger Datums-Hinweis (Regex) als Vorfilter → nur dann
+  // window.callAI für präzise JSON-Extraktion; bei KI-Fehler/kein Key → Regex-Fallback. Lieber
+  // kein Vorschlag als ein falscher. Zeitzone Europe/Zürich. Eintragen über die bestehende
+  // Kalender-Logik (gcalQuickCreateInline → gcalOpenEditor/gcApi) bzw. Vorlage-Link als Fallback.
+  function apptPad(n){ return (n<10?"0":"")+n; }
+  function apptIsoLocal(d){ return d.getFullYear()+"-"+apptPad(d.getMonth()+1)+"-"+apptPad(d.getDate())+"T"+apptPad(d.getHours())+":"+apptPad(d.getMinutes()); }
+  function apptTodayZurich(){ try { return new Date().toLocaleDateString("sv-SE",{ timeZone:"Europe/Zurich" }); } catch(e){ return apptIsoLocal(new Date()).slice(0,10); } }
+  function apptHasDateHint(s){ s=String(s||"");
+    return /\b\d{1,2}\.\d{1,2}\.(\d{2,4})?/.test(s)
+      || /\b\d{1,2}\.?\s*(jan(uar)?|feb(ruar)?|mär(z)?|apr(il)?|mai|jun(i)?|jul(i)?|aug(ust)?|sep(t(ember)?)?|okt(ober)?|nov(ember)?|dez(ember)?)\b/i.test(s)
+      || /\b\d{1,2}:\d{2}\b/.test(s) || /\b\d{1,2}\s*uhr\b/i.test(s)
+      || /\b(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)\b/i.test(s)
+      || /\b(morgen|übermorgen|heute|nächste[nrs]?|kommende[nrs]?)\b/i.test(s);
+  }
+  var APPT_MONTHS = { januar:1,februar:2,"märz":3,maerz:3,april:4,mai:5,juni:6,juli:7,august:8,september:9,oktober:10,november:11,dezember:12, jan:1,feb:2,"mär":3,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,sept:9,okt:10,nov:11,dez:12 };
+  function ruleDetectAppt(subject, text){
+    var s = String(subject||"")+"\n"+String(text||"");
+    var d=null,mo=null,y=null;
+    var m1 = /\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/.exec(s) || /\b(\d{1,2})\.(\d{1,2})\.(\d{2})\b/.exec(s);
+    if (m1){ d=+m1[1]; mo=+m1[2]; y=+m1[3]; if (y<100) y+=2000; }
+    else { var m2=/\b(\d{1,2})\.?\s+([A-Za-zäöüÄÖÜ]+)\s+(\d{4})\b/.exec(s); if (m2){ var mm=APPT_MONTHS[m2[2].toLowerCase()]; if (mm){ d=+m2[1]; mo=mm; y=+m2[3]; } } }
+    if (!d){ var m3=/\b(\d{1,2})\.(\d{1,2})\.(?!\s*\d)/.exec(s); if (m3){ d=+m3[1]; mo=+m3[2]; var ny=new Date(); y=ny.getFullYear(); var cand=new Date(y+"-"+apptPad(mo)+"-"+apptPad(d)+"T12:00:00"); if (!isNaN(cand) && cand.getTime() < ny.getTime()-86400000) y+=1; } }  // „5.7." ohne Jahr → aktuelles/nächstes Jahr
+    if (!d || !mo || !y || mo<1 || mo>12 || d<1 || d>31) return null;
+    var hh=null, mi=0;
+    var t1=/\b(\d{1,2}):(\d{2})\b/.exec(s); if (t1){ hh=+t1[1]; mi=+t1[2]; }
+    else { var t2=/\b(\d{1,2})\s*uhr\b/i.exec(s); if (t2){ hh=+t2[1]; mi=0; } }
+    if (hh!=null && (hh<0||hh>23||mi>59)){ hh=null; mi=0; }
+    var allDay = (hh===null);
+    var startISO = y+"-"+apptPad(mo)+"-"+apptPad(d)+"T"+apptPad(allDay?9:hh)+":"+apptPad(mi);
+    if (isNaN(new Date(startISO))) return null;
+    var endISO = allDay ? startISO : (y+"-"+apptPad(mo)+"-"+apptPad(d)+"T"+apptPad(Math.min(23,hh+1))+":"+apptPad(mi));
+    return { hasDate:true, title:String(subject||"Termin").slice(0,120), startISO:startISO, endISO:endISO, allDay:allDay, location:"", notes:"" };
+  }
+  function apptParseJson(txt){
+    if (!txt || typeof txt!=="string") return null;
+    var s = txt.replace(/```json/gi,"").replace(/```/g,"").trim();
+    var a=s.indexOf("{"), b=s.lastIndexOf("}"); if (a<0||b<a) return null;
+    try { return JSON.parse(s.slice(a,b+1)); } catch(e){ return null; }
+  }
+  function apptNormalize(obj){
+    var startISO = String((obj&&obj.startISO)||"").trim().slice(0,16);
+    if (!startISO || isNaN(new Date(startISO))) return { hasDate:false };
+    var allDay = obj.allDay===true || !/T\d{2}:\d{2}/.test(startISO);
+    var endISO = String(obj.endISO||"").trim().slice(0,16);
+    if (!endISO || isNaN(new Date(endISO))){ endISO = allDay ? startISO : apptIsoLocal(new Date(new Date(startISO).getTime()+3600000)); }
+    return { hasDate:true, title:String(obj.title||"Termin").slice(0,120), startISO:startISO, endISO:endISO, allDay:allDay, location:String(obj.location||""), notes:String(obj.notes||"") };
+  }
+  async function aiDetectAppt(subject, text){
+    if (typeof window.callAI!=="function") return null;
+    var sys = "Du extrahierst Termine aus E-Mails. Antworte AUSSCHLIESSLICH mit EINEM JSON-Objekt, ohne Markdown/Erklärung. "
+      + "Schema: {\"hasDate\":boolean,\"title\":string,\"startISO\":string,\"endISO\":string,\"allDay\":boolean,\"location\":string,\"notes\":string}. "
+      + "startISO/endISO als \"YYYY-MM-DDTHH:MM\" in lokaler Zeit (Europe/Zurich, ohne Zeitzonen-Offset). "
+      + "Ohne erkennbare Endzeit: endISO = startISO + 1 Stunde. allDay=true nur ohne Uhrzeit. "
+      + "Heute ist "+apptTodayZurich()+" (zur Auflösung von 'nächsten Dienstag' etc.). "
+      + "Bei Unsicherheit hasDate=false — lieber kein Termin als ein falscher.";
+    var prompt = "Betreff: "+String(subject||"")+"\n\nText:\n"+String(text||"").slice(0,3500)+"\n\nGib das JSON zurück.";
+    try {
+      var txt = await window.callAI(prompt, { systemPrompt:sys, maxTokens:300 });
+      var obj = apptParseJson(txt);
+      if (!obj || typeof obj.hasDate==="undefined") return null;   // unparsebar → Regex-Fallback
+      if (obj.hasDate!==true) return { hasDate:false };            // KI: kein Termin → vertrauen
+      return apptNormalize(obj);
+    } catch(e){ return null; }   // kein Key / Fehler → Regex-Fallback
+  }
+  function gmailDetectAppointment(o){
+    if (!o || !o.id) return;
+    GM._apptCache = GM._apptCache || {};
+    if (GM._apptCache.hasOwnProperty(o.id)) return;   // genau EIN Lauf pro messageId
+    GM._apptCache[o.id] = { loading:true };
+    var subject = o.subject||"";
+    var text = (o.text || htmlToText(o.html) || "").slice(0,4000);
+    if (!apptHasDateHint(subject+"\n"+text)){ GM._apptCache[o.id] = null; return; }  // kein Datum → kein KI-Aufruf
+    Promise.resolve(aiDetectAppt(subject, text)).then(function(ai){
+      var res = (ai!==null) ? (ai.hasDate ? ai : null) : ruleDetectAppt(subject, text);
+      GM._apptCache[o.id] = (res && res.hasDate) ? res : null;
+      rerender();
+    });
+  }
+  function apptWhenText(a){
+    try {
+      var s = new Date(a.startISO);
+      var ds = s.toLocaleDateString("de-CH", { weekday:"short", day:"2-digit", month:"short", year:"numeric" });
+      if (a.allDay) return ds+" · ganztägig";
+      return ds+" um "+s.toLocaleTimeString("de-CH", { hour:"2-digit", minute:"2-digit" })+" Uhr";
+    } catch(e){ return a.startISO||""; }
+  }
+  function renderApptCard(o){
+    if (!o || !o.id) return "";
+    GM._apptCache = GM._apptCache || {};
+    var a = GM._apptCache[o.id];
+    if (a===undefined){ gmailDetectAppointment(o); return ""; }   // einmalig anstossen
+    if (!a || a.loading || !a.hasDate) return "";                 // läuft / kein Termin
+    return '<div class="gml-appt">'
+      + '<div class="gml-appt-ic">📅</div>'
+      + '<div class="gml-appt-body">'
+      +   '<div class="gml-appt-label">Termin erkannt</div>'
+      +   '<div class="gml-appt-title">'+esc(a.title||"Termin")+'</div>'
+      +   '<div class="gml-appt-when">'+esc(apptWhenText(a))+(a.location?' · '+esc(a.location):'')+'</div>'
+      + '</div>'
+      + '<button class="btn primary" onclick="gmailAddDetectedToCalendar(\''+jsStr(o.id)+'\')" title="Im Google-Kalender-Editor vorausgefüllt öffnen – Titel/Datum/Zeit vor dem Speichern bearbeitbar">+ In Google Kalender eintragen</button>'
+      + '</div>';
+  }
+  function apptToPrefill(a, desc){
+    var sd=a.startISO.slice(0,10), st=a.startISO.slice(11,16);
+    var ed=(a.endISO||a.startISO).slice(0,10), et=(a.endISO||"").slice(11,16);
+    return { title:a.title||"Termin", date:sd, time:a.allDay?null:st, endDate:ed, endTime:a.allDay?null:et, allDay:!!a.allDay, location:a.location||"", desc:desc };
+  }
+  function apptGcalStamp(iso){ var x=iso.replace(/[-:]/g,""); if (/T\d{4}$/.test(x)) x+="00"; return x; }
+  function gmailOpenCalendarLink(a, desc){
+    var p = "https://calendar.google.com/calendar/render?action=TEMPLATE&text="+encodeURIComponent(a.title||"Termin");
+    if (a.allDay){
+      var sd=a.startISO.slice(0,10).replace(/-/g,"");
+      var nx=new Date(a.startISO.slice(0,10)+"T00:00:00"); nx.setDate(nx.getDate()+1);
+      p += "&dates="+sd+"/"+apptIsoLocal(nx).slice(0,10).replace(/-/g,"");
+    } else {
+      p += "&dates="+apptGcalStamp(a.startISO)+"/"+apptGcalStamp(a.endISO||a.startISO)+"&ctz=Europe/Zurich";
+    }
+    if (desc) p += "&details="+encodeURIComponent(desc);
+    if (a.location) p += "&location="+encodeURIComponent(a.location);
+    try { window.open(p, "_blank", "noopener"); toast("info","Google Kalender","Termin im Browser-Tab vorausgefüllt – dort bestätigen."); }
+    catch(e){ toast("err","Fehler","Konnte Google Kalender nicht öffnen"); }
+  }
+  // Klick „+ In Google Kalender eintragen": bevorzugt den bestehenden In-App-Editor
+  // (gcalQuickCreateInline → vorbefüllt, bearbeitbar, speichert via gcApi). Nicht verbunden /
+  // kein Kalender → Fallback: Google-Calendar-Vorlage-Link im neuen Tab.
+  window.gmailAddDetectedToCalendar = function(id){
+    var a = (GM._apptCache && GM._apptCache[id]) || null;
+    if (!a || !a.hasDate){ toast("info","Kein Termin",""); return; }
+    var o = (GM.open && GM.open.id===id) ? GM.open : null;
+    var addr = o ? parseAddr(o.from) : { name:"", email:"" };
+    var sender = addr.name ? addr.name+" <"+(addr.email||"")+">" : (addr.email||"");
+    var desc = "Aus E-Mail" + (sender?"\nVon: "+sender:"") + (o&&o.subject?"\nBetreff: "+o.subject:"")
+      + (o&&o.id?"\nMail-ID: "+o.id:"") + (o&&o.threadId?"\nThread: "+o.threadId:"")
+      + (a.notes?"\n\n"+a.notes:"");
+    var prefill = apptToPrefill(a, desc);
+    if (typeof window.gcalQuickCreateInline==="function"){
+      Promise.resolve(window.gcalQuickCreateInline(prefill)).then(function(ok){ if (!ok) gmailOpenCalendarLink(a, desc); }).catch(function(){ gmailOpenCalendarLink(a, desc); });
+    } else { gmailOpenCalendarLink(a, desc); }
+  };
 
   // ── 2) Mail → Aufgabe (taskRequests / taskSuggestions) ──
   // Punkt 8: „Aufgabe" erstellt direkt eine echte Quantus-Aufgabe (createEntity → bestehender
