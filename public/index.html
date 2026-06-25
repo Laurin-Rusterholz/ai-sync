@@ -94921,6 +94921,11 @@ console.log('📚 Leseliste geladen');
 .gml-addr span { color:var(--text2); font-weight:600; }
 .gml-msgdate { font-size:12px; color:var(--muted); flex-shrink:0; text-align:right; max-width:200px; }
 .gml-bodywrap { padding:16px 20px 24px; }
+/* Folge-Aktionen nach dem Senden (kompakter Dialog) */
+.gml-postsend { text-align:center; padding:8px 6px 4px; }
+.gml-postsend-icon { width:54px; height:54px; margin:0 auto 14px; border-radius:50%; background:var(--accent-soft); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:26px; font-weight:800; }
+.gml-postsend-title { font-size:17px; font-weight:700; color:var(--text); margin-bottom:6px; }
+.gml-postsend-sub { font-size:13.5px; color:var(--muted); line-height:1.55; }
 /* „Termin erkannt"-Karte im Reader (Google-Kalender-Vorschlag) */
 .gml-appt { display:flex; align-items:center; gap:12px; margin:0 18px 12px; padding:11px 14px; border:1px solid var(--accent-soft); border-left:3px solid var(--accent); border-radius:10px; background:var(--accent-soft); flex-wrap:wrap; }
 .gml-appt-ic { width:34px; height:34px; flex-shrink:0; border-radius:9px; background:var(--panel); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:18px; }
@@ -95652,7 +95657,7 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-footer-spacer"></span>'
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null };
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
   };
 
@@ -95735,6 +95740,7 @@ console.log('📚 Leseliste geladen');
       to: fromA.email, cc: cc.join(", "), subject: subject, body: "\n\n"+buildQuote(o),
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
+      source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
     });
   }
   window.gmailReply = function(){ replyInternal(false); };
@@ -95756,6 +95762,7 @@ console.log('📚 Leseliste geladen');
       to:o.to||"", cc:o.cc||"", subject:o.subject||"", body:body,
       threadId:o.threadId||null, inReplyTo:o.inReplyTo||null, references:o.references||null,
       original: o.threadId ? { loading:true } : undefined,
+      source: { id:"", threadId:o.threadId||"", from:o.to||"", subject:o.subject||"", body:body },
     });
     // Die Mail, auf die der Entwurf antwortet (neueste andere Nachricht im Thread).
     if (o.threadId){ gmailResolveOriginal({ threadId:o.threadId, excludeId:o.id }).then(function(orig){ window.gmailFillOriginal(orig); }); }
@@ -95812,9 +95819,91 @@ console.log('📚 Leseliste geladen');
       // If this was an n8n KI-Entwurf, mark it as used (not before the manual send).
       if (ctx.draftKey){ setDraftStatus(ctx.draftKey, "used"); GM.drafts=(GM.drafts||[]).filter(function(d){return d._key!==ctx.draftKey;}); }
       GM.open=null; loadMessages(true); loadLabels();
+      // Folge-Aktionen nach dem Senden (Mail erledigen / Aufgabe erstellen) — beide Sendepfade.
+      GM._postSend = { source: ctx.source||null, sent: { to:to, subject:subject, body:body } };
+      gmailShowPostSend();
     } catch(e){ toast("err","Senden fehlgeschlagen", e.message||"Unbekannter Fehler"); }
     finally { GM._composeBusy=false; var b=document.getElementById("gmlSendBtn"); if(b){ b.disabled=false; b.textContent="Senden"; } }
   };
+
+  // ── Folge-Aktionen nach dem Senden (Mail erledigen / Aufgabe erstellen) ──
+  // Erscheint nach erfolgreichem Versand (Verfassen, Antworten, KI-Entwurf). Nutzt die
+  // bestehende Erledigt-Logik (gmailToggleDone: Quantus/Erledigt-Label + raus aus INBOX, KEINE
+  // Löschung) und das bestehende Mail→Aufgabe-Muster (createEntity("task", …) wie PR #28).
+  function gmailShowPostSend(){
+    if (typeof window.openModal!=="function") return;
+    var ps = GM._postSend||{}; var src = ps.source||null;
+    var hasSrc = !!(src && src.id);
+    var html = '<div class="gml-postsend">'
+      + '<div class="gml-postsend-icon">✓</div>'
+      + '<div class="gml-postsend-title">E-Mail gesendet</div>'
+      + '<div class="gml-postsend-sub">Möchtest du eine Folge-Aktion ausführen?'+(hasSrc?'':' (Keine zugeordnete Original-Mail – „Mail erledigen" entfällt.)')+'</div>'
+      + '</div>';
+    var footer = (hasSrc ? '<button class="btn" onclick="gmailPostSendDone()" title="Original-Mail in den Erledigt-Ordner verschieben (nicht löschen)">✅ Mail erledigen</button>' : '')
+      + '<button class="btn primary" onclick="gmailPostSendTask()" title="Aufgabe aus der Mail erstellen (KI-vorbefüllt)'+(hasSrc?' und Mail erledigen':'')+'">📋 Aufgabe erstellen</button>'
+      + '<button class="btn" onclick="closeModal()">Schliessen</button>';
+    window.openModal("E-Mail gesendet", html, footer);
+  }
+  // „Mail erledigen": Original-Mail über die bestehende Erledigt-Logik verschieben (kein Delete).
+  window.gmailPostSendDone = function(){
+    var src = (GM._postSend && GM._postSend.source) || null;
+    if (!src || !src.id){ toast("info","Keine Original-Mail","Diese Mail hat keine zugeordnete Eingangs-Mail."); return; }
+    if (window.closeModal) window.closeModal();
+    if (GM.classifications[src.id] && GM.classifications[src.id].done){ toast("info","Bereits erledigt",""); return; }
+    window.gmailToggleDone(src.id);
+  };
+  // „Aufgabe erstellen": KI-vorbefüllte Aufgabe (Titel + Beschreibung/nächste Schritte) mit
+  // verknüpfter Original-Mail (Betreff, Absender, messageId/threadId, Mail-Text). Danach wird
+  // die Mail – sofern eine Original-Mail bekannt ist – ebenfalls als erledigt markiert.
+  window.gmailPostSendTask = async function(){
+    if (GM._postSendBusy) return; GM._postSendBusy = true;
+    if (window.closeModal) window.closeModal();
+    try {
+      if (typeof window.createEntity!=="function"){ toast("err","Nicht verfügbar","Aufgaben-Modul nicht geladen."); return; }
+      var ps = GM._postSend||{}; var src = ps.source||null; var sent = ps.sent||{};
+      var subj = (src&&src.subject) || sent.subject || "(kein Betreff)";
+      var fromRaw = (src&&src.from) || "";
+      var fromA = parseAddr(fromRaw);
+      var bodyTxt = String((src&&src.body) || sent.body || "").replace(/\s+/g," ").trim();
+      var msgId = (src&&src.id) || ""; var thrId = (src&&src.threadId) || "";
+      toast("info","Aufgabe wird erstellt…","KI bereitet Titel & nächste Schritte vor.");
+      var ai = await aiPrefillTask({ subject:subj, from:fromRaw, body:bodyTxt });   // {title,description} | null
+      var sender = (fromA.name ? fromA.name+" <"+(fromA.email||"")+">" : (fromA.email||fromRaw||"(unbekannt)"));
+      var ref = "Aus E-Mail\nVon: "+sender+"\nBetreff: "+subj
+        + (msgId ? "\nMail-ID: "+msgId : "") + (thrId ? "\nThread: "+thrId : "")
+        + "\nÖffnen: Quantus → Gmail";
+      var excerpt = bodyTxt ? "\n\nMail-Auszug: "+bodyTxt.slice(0,500) : "";
+      var title, desc;
+      if (ai && ai.title){ title = ai.title; desc = (ai.description ? ai.description+"\n\n" : "") + ref + excerpt; }
+      else { title = ("Re: "+subj).slice(0,200); desc = ref + excerpt; }
+      var id = window.createEntity("task", {
+        title: String(title).slice(0,200), description: desc, status:"todo", priority:3,
+        tags:["Gmail"], source:"gmail", sourceMessageId: msgId, sourceThreadId: thrId
+      });
+      if (!id){ toast("err","Fehler","Aufgabe konnte nicht erstellt werden"); return; }
+      toast("ok","Aufgabe erstellt", (ai? "KI-vorbefüllt" : "Vorbefüllt")+" – du kannst sie ergänzen.");
+      if (msgId && !(GM.classifications[msgId] && GM.classifications[msgId].done)) window.gmailToggleDone(msgId);
+    } catch(e){ toast("err","Fehler", e.message||"Aufgabe konnte nicht erstellt werden"); }
+    finally { GM._postSendBusy = false; }
+  };
+  // KI-Vorbefüllung über den bestehenden callAI-Weg (Gemini→OpenAI→Anthropic mit dem in den
+  // Einstellungen hinterlegten Key — derselbe Weg wie alle KI-Features). Liefert {title,
+  // description} oder null (kein Key/Fehler) → der Aufrufer füllt dann regelbasiert vor.
+  async function aiPrefillTask(m){
+    if (typeof window.callAI!=="function") return null;
+    var prompt = "E-Mail:\nVon: "+(m.from||"")+"\nBetreff: "+(m.subject||"")+"\nInhalt:\n"+String(m.body||"").slice(0,2500)
+      + "\n\nLeite daraus eine kurze, umsetzbare Aufgabe für mein To-do-Tool ab.";
+    var sys = "Du bist ein Assistent, der aus einer E-Mail eine knappe Aufgabe ableitet. Antworte AUSSCHLIESSLICH "
+      + "in genau diesem Format (Deutsch), ohne weitere Zeilen:\nTITEL: <max. 8 Wörter>\nBESCHREIBUNG: <2–4 Sätze: worum es geht und die nächsten Schritte>";
+    try {
+      var txt = await window.callAI(prompt, { systemPrompt: sys, maxTokens: 400 });
+      if (!txt || typeof txt!=="string") return null;
+      var t = (txt.match(/TITEL\s*:\s*(.+)/i)||[])[1];
+      var d = (txt.match(/BESCHREIBUNG\s*:\s*([\s\S]+)/i)||[])[1];
+      if (!t && !d) return null;
+      return { title:(t||"").trim(), description:(d||"").trim() };
+    } catch(e){ return null; }
+  }
 
   // ── Router entry + actions ──
   window.viewGmail = function(){
@@ -96250,7 +96339,8 @@ console.log('📚 Leseliste geladen');
     // Prefill the existing compose dialog. threadId keeps it in the right Gmail
     // thread; the user reviews, edits and sends MANUALLY (no auto-send). On send,
     // gmailSend marks the draft "used" via the draftKey in the compose context.
-    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key, note:note, original: hasSource ? { loading:true } : undefined });
+    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key, note:note, original: hasSource ? { loading:true } : undefined,
+      source: { id:d.messageId||"", threadId:d.threadId||"", from:d.originalFrom||d.from||"", subject:d.originalSubject||d.subject||"", body:d.originalBody||"" } });
     if (d.originalBody || d.originalSubject || d.originalFrom){
       window.gmailFillOriginal({ from:d.originalFrom||d.from||"", subject:d.originalSubject||"", body:d.originalBody||"", date:d.originalDate||0 });
     } else if (d.messageId || d.threadId){
