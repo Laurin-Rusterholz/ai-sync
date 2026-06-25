@@ -94303,6 +94303,11 @@ console.log('📚 Leseliste geladen');
       + '</div><div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">'
       +   '<button class="btn" onclick="gcalRefresh()">🔄 Aktualisieren</button>'
       +   '<button class="btn primary" onclick="gcalOpenEditor()">➕ Neues Event</button>'
+      +   '<button class="btn" onclick="window.gcalTodayAgenda()" title="Heutige Termine kompakt">📋 Tagesagenda</button>'
+      +   '<button class="btn" onclick="window.gcalSuggestFromText()" title="Termin aus Freitext – Vorschau vor dem Eintragen">✨ Termin aus Text</button>'
+      +   '<button class="btn" onclick="window.gcalFindFreeSlots()" title="Freie Zeitfenster finden">🕓 Freie Slots</button>'
+      +   '<button class="btn" onclick="window.gcalMeetingPrep()" title="KI sammelt Notizen/Mails zum Termin">📑 Meeting-Vorbereitung</button>'
+      +   '<button class="btn" onclick="window.gcalWeekReview()" title="KI-Zusammenfassung der kommenden Woche">🗓️ Wochen-Review</button>'
       +   '<button class="btn" onclick="gcalDisconnect()" title="Google-Konto trennen">🔌 Trennen</button>'
       + '</div></div>'
       + '<div class="gcv-head"><div class="gcv-headL">'
@@ -94765,6 +94770,105 @@ console.log('📚 Leseliste geladen');
     }
     return slots;
   }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  PAKET 5 — Kalender & Planung (im gcal-Modul; nutzt GC, gcApi, gcalFreeSlots,
+  //  evStart/isAllDay/fmtTime/toDateVal, gcalOpenEditor, window.callAI/getNotesContext/APP).
+  //  Schreiben NUR mit Bestätigung: Termin-Vorschlag öffnet den Editor (Speichern = User).
+  // ════════════════════════════════════════════════════════════════════
+  function _p5PrimaryCal(){ var w=(GC.calendars||[]).filter(function(c){ return c.accessRole==="owner"||c.accessRole==="writer"; }); return ((w.find(function(c){ return c.primary; })||w[0]||{}).id); }
+  function _p5Today(){ return toDateVal(new Date()); }
+
+  // #21 Tagesagenda – heutige Termine kompakt
+  window.gcalTodayAgenda = function(){
+    try { gcalEnsureLoaded(); } catch(e){}
+    var today=_p5Today();
+    var evs=(GC.events||[]).filter(function(e){ return toDateVal(evStart(e))===today; }).sort(function(a,b){ return evStart(a)-evStart(b); });
+    var html = evs.length ? '<div>'+evs.map(function(e){ var t=isAllDay(e)?"ganztägig":fmtTime(evStart(e)); return '<div style="display:flex;gap:10px;padding:8px 10px;background:var(--panel);border-radius:8px;margin-bottom:5px"><span style="font-weight:700;min-width:74px;font-variant-numeric:tabular-nums">'+esc(t)+'</span><span>'+esc(e.summary||"(ohne Titel)")+(e.location?' · <span class="mini text-muted">'+esc(e.location)+'</span>':'')+'</span></div>'; }).join("")+'</div>' : '<div class="mini text-muted">Heute keine Termine.</div>';
+    window.openModal("📋 Tagesagenda – heute", html, '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // #22 KI-Terminvorschlag aus Freitext → Vorschau → Editor (Schreiben nur per Speichern)
+  window.gcalSuggestFromText = function(){
+    window.openModal("✨ Termin aus Freitext",
+      '<div class="form"><label class="col-12">Beschreibung<input id="p5ApptText" type="text" placeholder="z.B. nächsten Di 15 Uhr Call mit Anna"></label><div id="p5ApptPrev" class="mini text-muted" style="margin-top:8px"></div></div>',
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window._p5ParseAppt()">Vorschlag erstellen</button>');
+    setTimeout(function(){ var i=document.getElementById("p5ApptText"); if(i) i.focus(); },30);
+  };
+  window._p5ParseAppt = async function(){
+    var el=document.getElementById("p5ApptText"), prev=document.getElementById("p5ApptPrev");
+    var txt=(el&&el.value||"").trim(); if(!txt){ if(prev) prev.textContent="Bitte etwas eingeben."; return; }
+    if(prev) prev.textContent="⏳ Analysiere …";
+    var sys='Extrahiere einen Kalendertermin aus dem Text. Heute ist '+_p5Today()+' (Zeitzone Europe/Zürich). Antworte AUSSCHLIESSLICH als JSON {"title":"...","date":"YYYY-MM-DD","start":"HH:MM","end":"HH:MM","location":""} ohne weitere Zeichen. Ohne Uhrzeit start/end leer lassen.';
+    var raw; try{ raw=await window.callAI(txt, {systemPrompt:sys, maxTokens:200}); }catch(e){ if(prev) prev.textContent="Fehler: "+((e&&e.message)||""); return; }
+    var o=null; try{ var s=String(raw||"").replace(/^```(?:json)?/i,"").replace(/```$/,"").trim(); var i=s.indexOf("{"),j=s.lastIndexOf("}"); if(i>=0&&j>i)s=s.slice(i,j+1); o=JSON.parse(s); }catch(e){}
+    if(!o||!o.date||!/^\d{4}-\d{2}-\d{2}$/.test(o.date)){ if(prev) prev.textContent="Konnte keinen Termin erkennen. Bitte konkreter formulieren."; return; }
+    window._p5Appt=o;
+    var when=o.start?(o.start+(o.end?("–"+o.end):"")+" Uhr"):"ganztägig";
+    if(prev) prev.innerHTML='<div style="background:var(--panel);border-radius:8px;padding:8px;margin-top:6px"><strong>'+esc(o.title||"Termin")+'</strong><br>'+esc(o.date)+' · '+esc(when)+(o.location?(' · '+esc(o.location)):'')+'</div><button class="btn primary" style="margin-top:8px" onclick="window._p5OpenApptEditor()">📅 Im Kalender-Editor öffnen (Vorschau & Speichern)</button>';
+  };
+  window._p5OpenApptEditor = function(){
+    var o=window._p5Appt; if(!o) return;
+    if(window.closeModal) window.closeModal();
+    var prefill={ title:o.title||"Termin", date:o.date, time:o.start||"", endTime:o.end||"", allDay:!o.start, location:o.location||"" };
+    try { gcalOpenEditor(null, null, prefill); } catch(e){ toast("err","Kalender","Editor konnte nicht geöffnet werden"); }
+  };
+
+  // #23 Freie-Slots-Finder (Tag + Mindestdauer)
+  window.gcalFindFreeSlots = function(){
+    window.openModal("🕓 Freie Slots finden",
+      '<div class="form"><label class="col-12">Tag<input id="p5SlotDay" type="date" value="'+_p5Today()+'"></label><label class="col-12">Mindestdauer (Min)<input id="p5SlotDur" type="number" value="30" min="15" step="15"></label><div id="p5SlotRes" class="mini text-muted" style="margin-top:8px"></div></div>',
+      '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window._p5RunSlots()">Suchen</button>');
+  };
+  window._p5RunSlots = async function(){
+    var day=(document.getElementById("p5SlotDay")||{}).value, dur=parseInt((document.getElementById("p5SlotDur")||{}).value,10)||30, res=document.getElementById("p5SlotRes");
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(day||"")){ if(res) res.textContent="Bitte gültigen Tag wählen."; return; }
+    if(res) res.textContent="⏳ Suche …";
+    try { await gcalEnsureLoaded(); var cal=_p5PrimaryCal();
+      var fb=await gcApi("POST","/freeBusy", { body:{ timeMin:new Date(day+"T00:00:00").toISOString(), timeMax:new Date(day+"T23:59:59").toISOString(), items:[{ id:cal }] } });
+      var busy=((fb.calendars&&fb.calendars[cal]&&fb.calendars[cal].busy)||[]).map(function(b){ return [new Date(b.start), new Date(b.end)]; });
+      var slots=gcalFreeSlots(day, busy, dur);
+      if(res) res.innerHTML = slots.length ? '<div style="margin-top:6px">Freie Fenster (≥ '+dur+' Min, 08–20 Uhr):</div><div class="flex flex-wrap gap-2" style="margin-top:6px">'+slots.map(function(s){ return '<span class="btn sm">'+esc(s)+'</span>'; }).join("")+'</div>' : 'Keine freien Fenster gefunden.';
+    } catch(e){ if(res) res.textContent="Fehler: "+((e&&e.message)||"freeBusy fehlgeschlagen"); }
+  };
+
+  // #24 Meeting-Vorbereitung: KI sammelt relevante Notizen/Mails zum Termin-Titel
+  window.gcalMeetingPrep = function(presetTitle){
+    var nextTitle = presetTitle || (function(){ var now=Date.now(); var up=(GC.events||[]).filter(function(e){ return evStart(e).getTime()>=now-3600000; }).sort(function(a,b){ return evStart(a)-evStart(b); })[0]; return up?(up.summary||""):""; })();
+    window.openModal("📑 Meeting-Vorbereitung",
+      '<div class="form"><label class="col-12">Meeting/Termin-Titel<input id="p5MeetTitle" type="text" value="'+esc(nextTitle||"")+'" placeholder="Titel des Termins"></label><div id="p5MeetRes" class="mini text-muted" style="margin-top:8px"></div></div>',
+      '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window._p5RunPrep()">Vorbereiten</button>');
+  };
+  window._p5RunPrep = async function(){
+    var title=((document.getElementById("p5MeetTitle")||{}).value||"").trim(), res=document.getElementById("p5MeetRes");
+    if(!title){ if(res) res.textContent="Bitte einen Titel eingeben."; return; }
+    if(res) res.textContent="⏳ Sammle Notizen & Mails …";
+    var kw=title.toLowerCase().split(/[^a-zäöüß0-9]+/).filter(function(w){ return w.length>=4; });
+    function hit(s){ s=String(s||"").toLowerCase(); return kw.some(function(w){ return s.indexOf(w)>=0; }); }
+    var notes=(typeof window.getNotesContext==="function"?window.getNotesContext():[]).filter(function(n){ return hit(n.title)||hit(n.content); }).slice(0,6);
+    var mails=((window.APP.state.data.gmailIndex)||[]).filter(function(m){ return hit(m.subject)||hit(m.fromName)||hit(m.snippet); }).slice(0,6);
+    if(!notes.length && !mails.length){ if(res) res.innerHTML="Keine passenden Notizen/Mails zu „"+esc(title)+"“ gefunden."; return; }
+    var ctx="Meeting: "+title+"\n\nNotizen:\n"+(notes.map(function(n){return "- "+(n.title||"")+": "+String(n.content||"").slice(0,200);}).join("\n")||"(keine)")+"\n\nMails:\n"+(mails.map(function(m){return "- "+(m.subject||"")+" ("+(m.fromName||m.fromEmail||"")+")";}).join("\n")||"(keine)");
+    var sys="Erstelle eine knappe Meeting-Vorbereitung auf Deutsch: 3–5 Stichpunkte (relevante Punkte aus den Notizen/Mails) + offene Fragen. Nur auf Basis des Kontexts, keine Erfindungen.";
+    try { var ans=await window.callAI(ctx, {systemPrompt:sys, maxTokens:600});
+      if(res) res.innerHTML = '<div style="white-space:pre-wrap;background:var(--panel);border-radius:8px;padding:8px;margin-top:6px">'+esc(ans||"(kein Ergebnis)")+'</div><div class="mini text-muted" style="margin-top:6px">Quellen: '+notes.length+' Notiz(en), '+mails.length+' Mail(s)</div>';
+    } catch(e){ if(res) res.textContent="Fehler: "+((e&&e.message)||""); }
+  };
+
+  // #25 Wochen-Review: KI fasst kommende Woche (Termine + fällige Aufgaben) zusammen
+  window.gcalWeekReview = async function(){
+    try { await gcalEnsureLoaded(); } catch(e){}
+    var now=new Date(), end=new Date(now.getTime()+7*86400000);
+    var evs=(GC.events||[]).filter(function(e){ var s=evStart(e); return s>=now && s<=end; }).sort(function(a,b){ return evStart(a)-evStart(b); }).slice(0,40);
+    var tasks=Object.values((window.APP.state.data.entities.tasks)||{}).filter(function(t){ return t.status!=="done" && t.dueDate && t.dueDate>=toDateVal(now) && t.dueDate<=toDateVal(end); }).sort(function(a,b){ return (a.dueDate||"").localeCompare(b.dueDate||""); });
+    if(!evs.length && !tasks.length){ toast("info","Wochen-Review","Keine Termine/fälligen Aufgaben in den nächsten 7 Tagen."); return; }
+    toast("ok","KI","Erstelle Wochen-Review …");
+    var ctx="Termine (7 Tage):\n"+(evs.map(function(e){ return "- "+toDateVal(evStart(e))+" "+(isAllDay(e)?"ganztägig":fmtTime(evStart(e)))+" "+(e.summary||""); }).join("\n")||"(keine)")+"\n\nFällige Aufgaben:\n"+(tasks.map(function(t){ return "- "+(t.dueDate||"")+" "+t.title; }).join("\n")||"(keine)");
+    var sys="Fasse die kommende Woche auf Deutsch knapp zusammen: Schwerpunkte, mögliche Engpass-Tage (viele Termine + Deadlines), 1–2 Empfehlungen. Nur auf Basis des Kontexts.";
+    var ans; try{ ans=await window.callAI(ctx, {systemPrompt:sys, maxTokens:600}); }catch(e){ toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    if(!ans){ toast("warn","KI","Kein Ergebnis (API-Key?)"); return; }
+    window.openModal("🗓️ Wochen-Review", '<div style="white-space:pre-wrap;line-height:1.6;font-size:14px">'+esc(ans)+'</div><div class="mini text-muted" style="margin-top:8px">'+evs.length+' Termin(e) · '+tasks.length+' fällige Aufgabe(n)</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
 
   async function gcalAIExec(cmd, a){
     var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
