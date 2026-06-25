@@ -95488,6 +95488,8 @@ console.log('📚 Leseliste geladen');
       +     '<button class="btn" onclick="gmailReplyAll()" title="Allen antworten">Allen</button>'
       +     '<button class="btn" onclick="gmailRequestDraft()" title="KI-Antwortentwurf für diese Mail erstellen (Taste: D)">✨ KI-Entwurf</button>'
       +     '<button class="btn" onclick="gmailCreateTaskRequest()" title="Aus dieser Mail eine Quantus-Aufgabe erstellen">📋 Aufgabe</button>'
+      +     '<button class="btn" onclick="window.gmailTldr()" title="KI-Kurzzusammenfassung dieser Mail (TL;DR)">📝 TL;DR</button>'
+      +     '<button class="btn" onclick="window.gmailReplyVariants()" title="3 KI-Antwortvorschläge (kurz/neutral/ausführlich)">✍️ 3 Antworten</button>'
       +   '</div>'
       +   '<div style="flex:1"></div>'
       +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')" title="'+(done?"Zurück in den Posteingang":"Als erledigt markieren")+'">'+(done?"↩︎ Zurücklegen":"✅ Erledigt")+'</button>'
@@ -95495,6 +95497,9 @@ console.log('📚 Leseliste geladen');
       +     '<summary class="btn gml-btn-icon" title="Weitere Aktionen">⋯</summary>'
       +     '<div class="gml-more-menu">'
       +       '<button class="gml-more-item" onclick="gmailSnoozeLater(\''+jsStr(o.id)+'\')">⏰ Später (in „Later", aus dem Posteingang)</button>'
+      +       '<button class="gml-more-item" onclick="window.gmailSnoozeRemind(\'1h\')">⏰ Später + Erinnerung in 1 h</button>'
+      +       '<button class="gml-more-item" onclick="window.gmailSnoozeRemind(\'3h\')">⏰ Später + Erinnerung in 3 h</button>'
+      +       '<button class="gml-more-item" onclick="window.gmailSnoozeRemind(\'morgen\')">⏰ Später + Erinnerung morgen früh</button>'
       +       '<button class="gml-more-item" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Als gelesen markieren":"📬 Als ungelesen markieren")+'</button>'
       +       '<button class="gml-more-item" onclick="gmailExportMessage(\''+jsStr(o.id)+'\')">⤓ Als .eml exportieren</button>'
       +       '<button class="gml-more-item" onclick="gmailBlockSenderOf(\''+jsStr(o.id)+'\')">⛔ Absender blockieren</button>'
@@ -95641,6 +95646,8 @@ console.log('📚 Leseliste geladen');
       + '<select class="gmlc-tpl" title="Schnellantwort-Vorlage einfügen" onchange="gmlInsertTemplate(this.value);this.selectedIndex=0;">'
       +   '<option value="">⚡ Vorlage…</option>'
       +   GML_TEMPLATES.map(function(t,i){ return '<option value="'+i+'">'+esc(t.label)+'</option>'; }).join("")
+      +   (((window.APP.state.data.mailTemplates)||[]).length ? '<option value="" disabled>── Eigene ──</option>'+((window.APP.state.data.mailTemplates)||[]).map(function(t){ return '<option value="u:'+esc(t.id)+'">'+esc(t.label)+'</option>'; }).join("") : '')
+      +   '<option value="__manage__">⚙️ Vorlagen verwalten…</option>'
       + '</select>'
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" placeholder="Nachricht verfassen…">'+esc(prefill.body||"")+'</textarea></div>';
@@ -96214,13 +96221,107 @@ console.log('📚 Leseliste geladen');
     } catch(e){ toast("err","Fehler", e.message||"Konnte nicht nach 'Later' verschieben"); }
   };
 
-  // ── Punkt 6: Vorlage in den Verfassen-Body einfügen ──
+  // ── Punkt 6: Vorlage in den Verfassen-Body einfügen (Built-in oder eigene; + Verwalten) ──
   window.gmlInsertTemplate = function(i){
-    i = parseInt(i,10); var t = GML_TEMPLATES[i]; if (!t) return;
+    if (i==="__manage__"){ if (typeof window.gmailManageTemplates==="function") window.gmailManageTemplates(); return; }
+    var t;
+    if (typeof i==="string" && i.indexOf("u:")===0){ var uid=i.slice(2); t=((window.APP.state.data.mailTemplates)||[]).find(function(x){ return x.id===uid; }); }
+    else { t = GML_TEMPLATES[parseInt(i,10)]; }
+    if (!t) return;
     var ta = document.getElementById("gmlBody"); if (!ta) return;
     var s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
     ta.value = v.slice(0,s) + t.text + v.slice(e);
     var pos = s + t.text.length; ta.focus(); try { ta.setSelectionRange(pos,pos); } catch(_){}
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  //  PAKET 4 — Mail-Produktivität (im Gmail-Modul; nutzt GM.open, gmApi,
+  //  htmlToText, window.callAI, window.gmailCompose, openModal/toast).
+  //  Rein additiv — Versand-/Klassifizierungs-/RTDB-Pfade unverändert.
+  // ════════════════════════════════════════════════════════════════════
+
+  // #16 On-Demand-TL;DR der geöffneten Mail
+  window.gmailTldr = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    var body=String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim();
+    if(!body){ toast("warn","TL;DR","Kein Textinhalt"); return; }
+    toast("ok","KI","Fasse Mail zusammen …");
+    var sys="Fasse die E-Mail in 2–3 knappen Stichpunkten (TL;DR) auf Deutsch zusammen und nenne – falls vorhanden – die geforderte Aktion/Frist. Antworte nur mit den Stichpunkten.";
+    var res; try { res=await window.callAI("Betreff: "+(o.subject||"")+"\nVon: "+(o.from||"")+"\n\n"+body.slice(0,4000), {systemPrompt:sys, maxTokens:300}); }
+    catch(e){ toast("err","KI-Fehler", (e&&e.message)||""); return; }
+    if(!res){ toast("warn","KI","Kein Ergebnis (API-Key in Einstellungen?)"); return; }
+    window.openModal("📝 TL;DR – "+(o.subject||""), '<div style="white-space:pre-wrap;line-height:1.6;font-size:14px">'+esc(res)+'</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // #17 Drei KI-Antwortvorschläge (kurz/neutral/ausführlich) → Auswahl öffnet Verfassen-Modal
+  window.gmailReplyVariants = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    var body=String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim();
+    toast("ok","KI","Erstelle Antwortvorschläge …");
+    var sys='Formuliere drei Antwort-Entwürfe auf die E-Mail (Deutsch, passende Anrede und Grußformel). Antworte AUSSCHLIESSLICH als JSON {"kurz":"...","neutral":"...","ausfuehrlich":"..."} ohne weitere Zeichen.';
+    var raw; try { raw=await window.callAI("Betreff: "+(o.subject||"")+"\nVon: "+(o.from||"")+"\n\n"+body.slice(0,3000), {systemPrompt:sys, maxTokens:1200}); }
+    catch(e){ toast("err","KI-Fehler", (e&&e.message)||""); return; }
+    var obj=null; try { var s=String(raw||"").replace(/^```(?:json)?/i,"").replace(/```$/,"").trim(); var i=s.indexOf("{"),j=s.lastIndexOf("}"); if(i>=0&&j>i) s=s.slice(i,j+1); obj=JSON.parse(s); } catch(e){}
+    if(!obj){ toast("warn","KI","Keine Vorschläge erhalten (API-Key?)"); return; }
+    GM._replyVariants=obj;
+    function card(key,label,txt){ if(!txt) return ""; return '<div style="margin-bottom:10px"><div style="font-weight:700;margin-bottom:4px">'+label+'</div><div style="white-space:pre-wrap;font-size:13px;background:var(--panel);border-radius:8px;padding:8px;max-height:160px;overflow:auto">'+esc(txt)+'</div><button class="btn sm primary" style="margin-top:6px" onclick="window.gmailUseReplyVariant(\''+key+'\')">Diese verwenden</button></div>'; }
+    window.openModal("✍️ Antwortvorschläge", card("kurz","Kurz",obj.kurz)+card("neutral","Neutral",obj.neutral)+card("ausfuehrlich","Ausführlich",obj.ausfuehrlich) || '<div class="mini">Keine Vorschläge.</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+  window.gmailUseReplyVariant = function(key){
+    var o=GM.open, v=GM._replyVariants && GM._replyVariants[key]; if(!o||!v) return;
+    if(window.closeModal) window.closeModal();
+    var email=(String(o.from||"").match(/<([^>]+)>/)||[])[1] || o.from || "";
+    var subj=/^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+    window.gmailCompose({ title:"Antwort", to:email, subject:subj, body:v, threadId:o.threadId||null, inReplyTo:o.messageId||null, references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null, source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:(o.text||htmlToText(o.html)||"") } });
+  };
+
+  // #19 Snooze mit Erinnerungszeit (nutzt die bestehende gmailSnoozeLater-Logik + lokalen Reminder)
+  window.gmailSnoozeRemind = function(kind){
+    var o=GM.open; if(!o||!o.id){ toast("info","Keine Mail offen",""); return; }
+    var now=Date.now(), wake;
+    if(kind==="1h") wake=now+3600000; else if(kind==="3h") wake=now+3*3600000;
+    else { var dd=new Date(now+86400000); dd.setHours(8,0,0,0); wake=dd.getTime(); }
+    var d=window.APP.state.data; if(!Array.isArray(d.mailSnoozes)) d.mailSnoozes=[];
+    d.mailSnoozes.push({ id:o.id, subject:o.subject||"(kein Betreff)", wakeTs:wake, reminded:false });
+    if(window.scheduleSave) window.scheduleSave();
+    toast("ok","Snooze","Erinnerung "+(kind==="morgen"?"morgen früh":("in "+kind))+" gesetzt.");
+    window.gmailSnoozeLater(o.id);
+  };
+  function _p4CheckSnoozes(){
+    try {
+      var d=window.APP.state.data, arr=d&&d.mailSnoozes; if(!Array.isArray(arr)||!arr.length) return;
+      var now=Date.now(), changed=false;
+      arr.forEach(function(s){ if(s && !s.reminded && s.wakeTs<=now){ s.reminded=true; changed=true; toast("info","⏰ Mail-Erinnerung", (s.subject||"Mail")+" ist wieder fällig."); } });
+      if(changed && window.scheduleSave) window.scheduleSave();
+    } catch(e){}
+  }
+  setTimeout(_p4CheckSnoozes, 4000);
+  setInterval(_p4CheckSnoozes, 60000);
+
+  // #20 Eigene Sende-Vorlagen verwalten (in APP.state.data.mailTemplates)
+  window.gmailManageTemplates = function(){
+    var arr=(window.APP.state.data.mailTemplates)||[];
+    var list = arr.length ? arr.map(function(t){ return '<div style="display:flex;gap:8px;align-items:center;padding:6px;background:var(--panel);border-radius:8px;margin-bottom:5px"><div style="flex:1;min-width:0"><strong>'+esc(t.label)+'</strong><div class="mini text-muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(t.text)+'</div></div><button class="btn sm" onclick="window.gmailEditTemplate(\''+jsStr(t.id)+'\')">✏️</button><button class="btn sm danger" onclick="window.gmailDeleteTemplate(\''+jsStr(t.id)+'\')">🗑</button></div>'; }).join("") : '<div class="mini text-muted">Noch keine eigenen Vorlagen.</div>';
+    window.openModal("⚙️ Eigene Sende-Vorlagen", list+'<div class="sep"></div><div class="form"><label class="col-12">Bezeichnung<input id="tplLabel" type="text" placeholder="z.B. Terminbestätigung"></label><label class="col-12">Text<textarea id="tplText" style="min-height:100px"></textarea></label></div>', '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window.gmailAddTemplate()">Hinzufügen</button>');
+  };
+  window.gmailAddTemplate = function(){
+    var l=((document.getElementById("tplLabel")||{}).value||"").trim(), x=((document.getElementById("tplText")||{}).value||"").trim();
+    if(!l||!x){ toast("warn","Vorlage","Bezeichnung und Text nötig"); return; }
+    if(!Array.isArray(window.APP.state.data.mailTemplates)) window.APP.state.data.mailTemplates=[];
+    window.APP.state.data.mailTemplates.push({ id:"tpl_"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), label:l.slice(0,60), text:x });
+    if(window.scheduleSave) window.scheduleSave();
+    toast("ok","Vorlage gespeichert",""); window.gmailManageTemplates();
+  };
+  window.gmailEditTemplate = function(id){
+    var t=((window.APP.state.data.mailTemplates)||[]).find(function(x){ return x.id===id; }); if(!t) return;
+    var nl=prompt("Bezeichnung:", t.label); if(nl===null) return;
+    var nx=prompt("Text:", t.text); if(nx===null) return;
+    t.label=(nl||"").trim()||t.label; t.text=(nx||"").trim()||t.text; if(window.scheduleSave) window.scheduleSave(); window.gmailManageTemplates();
+  };
+  window.gmailDeleteTemplate = function(id){
+    if(!confirm("Diese Vorlage löschen?")) return;
+    window.APP.state.data.mailTemplates=((window.APP.state.data.mailTemplates)||[]).filter(function(x){ return x.id!==id; });
+    if(window.scheduleSave) window.scheduleSave(); window.gmailManageTemplates();
   };
 
   // ── Punkt 3: Shortcut-Hilfe-Overlay ──
