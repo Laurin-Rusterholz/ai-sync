@@ -81742,8 +81742,9 @@ Diese Befehle wirken auf den ECHTEN Google-Kalender des Nutzers. Für „query" 
 {{GCAL_CREATE|Titel|YYYY-MM-DD|StartHH:MM|EndeHH:MM|Ort|gast1@x.com,gast2@y.com}}
   Zeiten/Ort/Gäste sind optional (Felder leer lassen). Ohne Start-/Endzeit → ganztägiger Termin.
   Beispiel "erstelle morgen 14 Uhr Meeting mit Anna" → {{GCAL_CREATE|Meeting mit Anna|2026-06-18|14:00|15:00||}}
-{{GCAL_UPDATE|query|title:Neuer Titel|location:Ort|description:Text}} — Felder eines Termins ändern.
-{{GCAL_MOVE|query|YYYY-MM-DD|HH:MM}} — Termin verschieben (Dauer bleibt erhalten; Uhrzeit optional).
+  Vor dem tatsächlichen Eintragen bestätigt der Nutzer eine Vorschau im UI (er kann abbrechen → Antwort enthält "abgebrochen").
+{{GCAL_UPDATE|query|title:Neuer Titel|location:Ort|description:Text}} — Felder eines Termins ändern. Der Nutzer bestätigt die Änderung im UI.
+{{GCAL_MOVE|query|YYYY-MM-DD|HH:MM}} — Termin verschieben (Dauer bleibt erhalten; Uhrzeit optional). Der Nutzer bestätigt im UI.
 {{GCAL_DELETE|query}} — Termin löschen. Der Nutzer wird im UI um eine kurze Bestätigung gebeten.
 {{GCAL_FREE|YYYY-MM-DD|DauerMinuten}} — freie Zeitfenster an dem Tag finden.
 {{GCAL_SUMMARY|VonYYYY-MM-DD|BisYYYY-MM-DD}} — Termine im Zeitraum zusammenfassen.
@@ -94780,6 +94781,14 @@ console.log('📚 Leseliste geladen');
       if (loc) body.location = loc;
       var att = guests.split(/[\s,;]+/).filter(function(x){ return /.+@.+\..+/.test(x); }).map(function(em){ return { email:em }; });
       if (att.length) body.attendees = att;
+      // Schreib-Bestätigung: nichts ohne Rückfrage in den Kalender schreiben — Vorschau vor dem Schreiben
+      // (gleiches Muster wie {{GCAL_DELETE}} / {{GMAIL_SEND}}).
+      var _when = st ? (st+"–"+et+" Uhr") : "ganztägig";
+      var _prev = "Der KI-Assistent möchte folgenden Termin in deinen Google Kalender eintragen:\n\n"
+        + "Titel: "+title+"\nDatum: "+date+"\nZeit: "+_when+"\n"
+        + (loc?("Ort: "+loc+"\n"):"") + (att.length?("Gäste: "+att.map(function(x){return x.email;}).join(", ")+"\n"):"")
+        + "\nJetzt eintragen?";
+      if (!confirm(_prev)) return "↩️ Termin \""+title+"\" nicht eingetragen (abgebrochen)";
       await gcApi("POST","/calendars/"+encodeURIComponent(cal)+"/events", { query:{ sendUpdates: att.length?"all":"none" }, body:body });
       return "✅ Termin \""+title+"\" am "+date+(st?" um "+st:" (ganztägig)")+" erstellt"+(att.length?" · "+att.length+" Gäste eingeladen":"");
     }
@@ -94787,6 +94796,9 @@ console.log('📚 Leseliste geladen');
       var ev=resolveEvent(a[0]); if (!ev) return "❌ Termin nicht gefunden: "+(a[0]||"");
       var patch={}; for (var i=1;i<a.length;i++){ var p=a[i].split(":"); var k=(p.shift()||"").trim(); var v=p.join(":").trim(); if (k==="title"||k==="summary") patch.summary=v; else if (k==="location") patch.location=v; else if (k==="description") patch.description=v; }
       if (!Object.keys(patch).length) return "❌ Keine gültigen Felder zum Ändern";
+      // Schreib-Bestätigung vor dem Ändern (nichts ohne Rückfrage).
+      var _chg = Object.keys(patch).map(function(k){ return "• "+k+": "+patch[k]; }).join("\n");
+      if (!confirm("Der KI-Assistent möchte diesen Termin ändern:\n\n\""+(ev.summary||"")+"\"\n\n"+_chg+"\n\nJetzt ändern?")) return "↩️ Änderung abgebrochen";
       await gcApi("PATCH","/calendars/"+encodeURIComponent(ev._calId)+"/events/"+encodeURIComponent(ev.id), { query:{ sendUpdates:"none" }, body:patch });
       return "✏️ \""+(ev.summary||"")+"\" aktualisiert";
     }
@@ -94796,6 +94808,8 @@ console.log('📚 Leseliste geladen');
       var s=evStart(ev2), e=evEnd(ev2), dur=Math.max(15,(e-s)/60000), body2;
       if (isAllDay(ev2)) body2 = { start:{ date:nd2 }, end:{ date: toDateVal(addDays(new Date(nd2+"T00:00:00"),1)) } };
       else { if (!nt) nt=toTimeVal(s); var sdt=new Date(nd2+"T"+nt+":00"); body2={ start:{ dateTime:toLocalIso(sdt), timeZone:tz }, end:{ dateTime:toLocalIso(new Date(sdt.getTime()+dur*60000)), timeZone:tz } }; }
+      // Schreib-Bestätigung vor dem Verschieben (nichts ohne Rückfrage).
+      if (!confirm("Der KI-Assistent möchte diesen Termin verschieben:\n\n\""+(ev2.summary||"")+"\"\n\nNeu: "+nd2+(nt?" "+nt+" Uhr":"")+"\n\nJetzt verschieben?")) return "↩️ Verschieben abgebrochen";
       await gcApi("PATCH","/calendars/"+encodeURIComponent(ev2._calId)+"/events/"+encodeURIComponent(ev2.id), { query:{ sendUpdates:"none" }, body:body2 });
       return "📆 \""+(ev2.summary||"")+"\" verschoben auf "+nd2+(nt?" "+nt:"");
     }
@@ -96669,6 +96683,7 @@ console.log('📚 Leseliste geladen');
       return "\n\n# GMAIL (verbunden: "+((GM.profile&&GM.profile.emailAddress)||GM.status.email||"")+")\n"
         + "Du hast vollen Zugriff auf alle Mails über diese Befehle (eine Aktion pro Zeile):\n"
         + "{{GMAIL_SEARCH|gmail-query}} — Mails suchen (Gmail-Syntax, z.B. from:anna newer_than:7d).\n"
+        + "{{GMAIL_RECENT|absender|anzahl}} — die letzten Mails (absender optional: Name oder E-Mail; anzahl optional, Standard 10). Für \"zeig mir die letzten Mails von X\".\n"
         + "{{GMAIL_READ|id-oder-suchbegriff}} — Inhalt einer Mail lesen.\n"
         + "{{GMAIL_SEND|to|betreff|text}} — Mail senden (Nutzer bestätigt im UI).\n"
         + "{{GMAIL_DONE|id-oder-suchbegriff}} — Mail als erledigt markieren.\n"
@@ -96692,6 +96707,17 @@ console.log('📚 Leseliste geladen');
       if(!ids.length) return "🔎 Keine Treffer für: "+(a[0]||"");
       var metas=await Promise.all(ids.map(function(id){return gmApi("GET","/users/me/messages/"+encodeURIComponent(id),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
       return "🔎 Treffer für \""+(a[0]||"")+"\":\n"+metas.filter(Boolean).map(function(m){var h=headerMap(m.payload);return "- ["+m.id+"] "+(h.date||"")+" "+(h.from||"")+": "+(h.subject||"(ohne Betreff)");}).join("\n");
+    }
+    if (cmd==="RECENT"){
+      // Letzte N Mails (optional von einer Person/E-Mail). Wrappt dieselbe gmApi-Suche wie SEARCH;
+      // Gmail liefert standardmäßig neueste zuerst. "absender" matcht Name ODER Adresse via from:.
+      var who=(a[0]||"").trim(), lim=Math.max(1,Math.min(25, parseInt(a[1],10)||10));
+      var rq = who ? ("from:"+who) : "in:inbox";
+      var rres=await gmApi("GET","/users/me/messages",{query:{q:rq,maxResults:String(lim)}});
+      var rids=(rres.messages||[]).map(function(m){return m.id;});
+      if(!rids.length) return "📭 Keine Mails"+(who?(" von "+who):"")+" gefunden";
+      var rmetas=await Promise.all(rids.map(function(id){return gmApi("GET","/users/me/messages/"+encodeURIComponent(id),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
+      return "📨 Letzte "+rids.length+" Mail(s)"+(who?(" von "+who):"")+":\n"+rmetas.filter(Boolean).map(function(m){var h=headerMap(m.payload);return "- ["+m.id+"] "+(h.date||"")+" "+(h.from||"")+": "+(h.subject||"(ohne Betreff)");}).join("\n");
     }
     if (cmd==="READ"){
       var msg=await aiResolveMsg(a[0]); if(!msg) return "❌ Mail nicht gefunden: "+(a[0]||"");
