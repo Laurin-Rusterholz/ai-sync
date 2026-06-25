@@ -11181,14 +11181,21 @@ window.isFirebaseCloudAvailable = isFirebaseCloudAvailable;
 window.isAutoSyncEnabled = isAutoSyncEnabled;
 
 // ── Universal API Key accessors (used by all modules) ──
+// Entfernt ALLE Whitespace-Zeichen (Leerzeichen, Tabs, Zeilenumbrüche, geschützte
+// Leerzeichen, Zero-Width-Spaces). API-Keys (sk-ant-…, sk-…, AIza…) enthalten nie
+// Whitespace — kopiert man sie aus umgebrochenem Text/E-Mails, schleichen sich aber
+// oft unsichtbare Zeichen ein, die sonst zu "invalid x-api-key" (401) führen.
+function sanitizeApiKey(k) {
+  return String(k || "").replace(/[\s ​-‍﻿]/g, "");
+}
 function getApiKey() {
-  return APP.state.settings?.openai?.apiKey || "";
+  return sanitizeApiKey(APP.state.settings?.openai?.apiKey);
 }
 function getGeminiKey() {
-  return APP.state.settings?.geminiApiKey || "";
+  return sanitizeApiKey(APP.state.settings?.geminiApiKey);
 }
 function getAnthropicKey() {
-  return APP.state.settings?.anthropicApiKey || "";
+  return sanitizeApiKey(APP.state.settings?.anthropicApiKey);
 }
 
 // ── Quick Push/Pull für API-Keys (nutzt bestehenden manualTransfer-Mechanismus) ──
@@ -11200,9 +11207,9 @@ window.apiKeysQuickPush = async function() {
     const opIn = document.getElementById('setOpenAIKey');
     const anIn = document.getElementById('setAnthropicKey');
     const gmIn = document.getElementById('setGeminiKey');
-    if (opIn) APP.state.settings.openai.apiKey = opIn.value || '';
-    if (anIn) APP.state.settings.anthropicApiKey = anIn.value || '';
-    if (gmIn) APP.state.settings.geminiApiKey = gmIn.value || '';
+    if (opIn) APP.state.settings.openai.apiKey = sanitizeApiKey(opIn.value);
+    if (anIn) APP.state.settings.anthropicApiKey = sanitizeApiKey(anIn.value);
+    if (gmIn) APP.state.settings.geminiApiKey = sanitizeApiKey(gmIn.value);
     saveSettings(APP.state.settings);
     // saveSettings setzt APP.state.data._settings; jetzt manualTransferPush aufrufen
     if (typeof manualTransferPush !== 'function') {
@@ -12718,15 +12725,21 @@ async function sendChatMessage(prompt, options = {}) {
     if (res) return res;
   }
 
+  let lastError = null;
   if (anthropicKey) {
     try {
       const res = await callAnthropicChat(prompt, systemPrompt, { anthropicKey, ...options });
       if (res) return res;
     } catch (e) {
       console.warn("Anthropic fehlgeschlagen:", e.message);
+      lastError = e;
     }
   }
 
+  if (lastError) {
+    // Es war ein Key hinterlegt, der Aufruf ist aber fehlgeschlagen → echten Grund zeigen
+    throw new Error(lastError.message || "KI-Anfrage fehlgeschlagen.");
+  }
   throw new Error("Kein API-Key konfiguriert. Hinterlege einen Gemini-, OpenAI- oder Anthropic-Key in den Einstellungen.");
 }
 
@@ -12759,7 +12772,7 @@ async function callGemini(prompt, systemPrompt, options = {}) {
 
 // Anthropic Claude — Fallback-Chat-Provider
 async function callAnthropicChat(prompt, systemPrompt, options = {}) {
-  const key = options.anthropicKey;
+  const key = (typeof sanitizeApiKey === 'function' ? sanitizeApiKey(options.anthropicKey) : options.anthropicKey);
   if (!key) return null;
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -12770,7 +12783,7 @@ async function callAnthropicChat(prompt, systemPrompt, options = {}) {
       "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
-      model: options.anthropicModel || "claude-sonnet-4-20250514",
+      model: options.anthropicModel || "claude-sonnet-4-6",
       max_tokens: options.maxTokens ?? 4000,
       system: systemPrompt,
       messages: [{ role: "user", content: prompt }],
@@ -12778,7 +12791,12 @@ async function callAnthropicChat(prompt, systemPrompt, options = {}) {
   });
   if (!resp.ok) {
     const t = await resp.text();
-    throw new Error("Anthropic " + resp.status + ": " + t.slice(0, 200));
+    let msg = t.slice(0, 200);
+    try { msg = JSON.parse(t).error?.message || msg; } catch {}
+    if (resp.status === 401) msg = "Anthropic API-Key ungültig oder abgelaufen. Erzeuge einen neuen Key (sk-ant-…) auf console.anthropic.com.";
+    else if (resp.status === 400 && /credit|balance/i.test(msg)) msg = "Anthropic-Guthaben aufgebraucht. Lade Guthaben unter console.anthropic.com → Billing auf.";
+    else if (resp.status === 429) msg = "Anthropic Rate-Limit erreicht. Bitte kurz warten.";
+    throw new Error(msg);
   }
   const data = await resp.json();
   return (data.content || []).map(c => c.text || "").join("").trim() || null;
@@ -45038,7 +45056,7 @@ async function analyzeInvoice(invoiceId) {
         "anthropic-dangerous-direct-browser-access": "true"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1500,
         messages: [{ role: "user", content }]
       })
@@ -62966,7 +62984,7 @@ function initNoteFlow() {
           const resp = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-            body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, messages: [{ role: "user", content: prompt + ctx.text }] })
+            body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, messages: [{ role: "user", content: prompt + ctx.text }] })
           });
           const data = await resp.json();
           aiResult = data.content?.[0]?.text || "Keine Antwort";
@@ -64021,11 +64039,11 @@ window.saveSettingsModal = function() {
   APP.state.settings.storage.manualTransferMode = false;
   if (typeof resetCloudSyncHealth === 'function') resetCloudSyncHealth();
   APP.state.settings.openai.mode = $("#setAiMode")?.value || "local";
-  APP.state.settings.openai.apiKey = $("#setOpenAIKey")?.value || "";
+  APP.state.settings.openai.apiKey = sanitizeApiKey($("#setOpenAIKey")?.value);
   APP.state.settings.openai.model = $("#setOpenAIModel")?.value || "gpt-4o";
   APP.state.settings.openai.temperature = parseFloat($("#setOpenAITemp")?.value) || 0.3;
-  APP.state.settings.anthropicApiKey = $("#setAnthropicKey")?.value || "";
-  APP.state.settings.geminiApiKey = $("#setGeminiKey")?.value || "";
+  APP.state.settings.anthropicApiKey = sanitizeApiKey($("#setAnthropicKey")?.value);
+  APP.state.settings.geminiApiKey = sanitizeApiKey($("#setGeminiKey")?.value);
   APP.state.settings.language = $("#setLanguage")?.value || "de";
   APP.state.settings.ui.sidebarMode = $("#setSidebarMode")?.value || "auto";
   APP.state.settings.ui.edgeReveal = $("#setEdgeReveal")?.checked || false;
@@ -69783,6 +69801,9 @@ window.createEntity = createEntity;
 window.updateEntity = updateEntity;
 window.deleteEntity = deleteEntity;
 window.getEntityMap = getEntityMap;
+window.togglePin = togglePin;
+window.isPinned = isPinned;
+window.getEntityDisplayName = getEntityDisplayName;
 window.openSlidePanel = openSlidePanel;
 window.closeSlidePanel = closeSlidePanel;
 window.endDayAndBackup = endDayAndBackup;
@@ -72021,20 +72042,33 @@ Beginne mit den kritischen/hohen Prioritäten.`;
   // ========== API TEST HANDLERS ==========
   if (action === "test-anthropic-api") {
     e.preventDefault(); e.stopPropagation();
-    const key = (document.getElementById("setAnthropicKey")?.value || "").trim();
+    const rawKey = document.getElementById("setAnthropicKey")?.value || "";
+    const key = (typeof sanitizeApiKey === 'function' ? sanitizeApiKey(rawKey) : rawKey.replace(/\s+/g, ""));
     const rd = document.getElementById("apiTestResult");
     if (!rd) return;
     if (!key) { rd.style.display="block"; rd.style.background="rgba(255,85,114,.15)"; rd.style.border="1px solid rgba(255,85,114,.3)"; rd.innerHTML='<div style="color:#ff5572;font-weight:600">❌ Kein Anthropic API-Key</div>'; return; }
+    // Wenn beim Bereinigen Zeichen entfernt wurden, war der eingefügte Key "verschmutzt" → Feld korrigieren
+    if (key !== rawKey.trim() && document.getElementById("setAnthropicKey")) { document.getElementById("setAnthropicKey").value = key; }
     rd.style.display="block"; rd.style.background="rgba(191,90,242,.15)"; rd.style.border="1px solid var(--accent-soft)"; rd.innerHTML='<div style="color:var(--accent)">🔄 Teste Anthropic...</div>';
     (async()=>{
       try {
         const r = await fetch("https://api.anthropic.com/v1/messages", {
           method:"POST", headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-          body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:50,messages:[{role:"user",content:"Say OK"}]})
+          body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:50,messages:[{role:"user",content:"Say OK"}]})
         });
         if(r.ok){rd.style.background="rgba(43,212,168,.15)";rd.style.border="1px solid rgba(43,212,168,.3)";rd.innerHTML='<div style="color:var(--ok);font-weight:600">✅ Anthropic API funktioniert!</div>';toast("ok","API OK","Anthropic verbunden");}
-        else{const d=await r.json().catch(()=>({}));rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ Fehler ${r.status}</div><div class="mini">${d.error?.message||"Unbekannt"}</div>`;}
-      }catch(err){rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ ${err.message}</div>`;}
+        else{
+          const d=await r.json().catch(()=>({}));
+          const msg = d.error?.message || "Unbekannt";
+          let hint = "";
+          if(r.status===401) hint = "💡 Key ungültig/abgelaufen. Erzeuge auf console.anthropic.com → Settings → API Keys einen NEUEN Key (beginnt mit sk-ant-) und kopiere ihn vollständig.";
+          else if(r.status===400 && /credit|balance/i.test(msg)) hint = "💡 Dein Anthropic-Guthaben ist leer. Lade unter console.anthropic.com → Billing Guthaben auf.";
+          else if(r.status===403) hint = "💡 Dieser Key hat keine Berechtigung für dieses Modell.";
+          else if(r.status===429) hint = "💡 Rate-Limit erreicht – kurz warten und erneut testen.";
+          rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";
+          rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ Fehler ${r.status}</div><div class="mini">${esc(msg)}</div>`+(hint?`<div class="mini" style="margin-top:6px;opacity:.9">${esc(hint)}</div>`:"");
+        }
+      }catch(err){rd.style.background="rgba(255,85,114,.15)";rd.style.border="1px solid rgba(255,85,114,.3)";rd.innerHTML=`<div style="color:#ff5572;font-weight:600">❌ ${esc(err.message)}</div><div class="mini" style="margin-top:6px;opacity:.9">💡 Verbindungs-/Netzwerkfehler – evtl. Browser-Erweiterung (Adblocker/Privacy) oder fehlendes Netz.</div>`;}
     })();
     return;
   }
@@ -74173,11 +74207,12 @@ document.addEventListener("DOMContentLoaded", function() {
   
   // Anthropic API Key holen
   function getAnthropicKey() {
+    const clean = (k) => (typeof sanitizeApiKey === 'function' ? sanitizeApiKey(k) : String(k || '').replace(/\s+/g, ''));
     if (typeof APP !== 'undefined' && APP.state?.settings?.anthropicApiKey) {
-      return APP.state.settings.anthropicApiKey;
+      return clean(APP.state.settings.anthropicApiKey);
     }
     if (rhState.settings?.anthropicKey) {
-      return rhState.settings.anthropicKey;
+      return clean(rhState.settings.anthropicKey);
     }
     return null;
   }
@@ -74201,7 +74236,7 @@ document.addEventListener("DOMContentLoaded", function() {
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 64000,
           messages: [{
             role: 'user',
@@ -80472,8 +80507,8 @@ function ensDk(rl,id,name){if(!rl.decks.find(d=>d.id===id))rl.decks.push({id,nam
 /* ── Settings & API ── */
 function gSet(){try{const s=JSON.parse(localStorage.getItem(SKEY)||'{}');if(!s.apiKey&&window.APP?.state?.data?.settings?.claudeApiKey)s.apiKey=window.APP.state.data.settings.claudeApiKey;if(!s.openaiKey&&window.APP?.state?.settings?.openai?.apiKey?.trim())s.openaiKey=window.APP.state.settings.openai.apiKey.trim();if(!s.apiKey&&window.APP?.state?.settings?.anthropicApiKey?.trim())s.apiKey=window.APP.state.settings.anthropicApiKey.trim();return s}catch{return{}}}
 function sSet(d){localStorage.setItem(SKEY,JSON.stringify(d))}
-async function callGPT(prompt,mt){const s=gSet();const gk=APP?.state?.settings?.geminiApiKey||s.geminiKey||'';if(gk){try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+gk,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});if(r.ok){const d=await r.json();const t=d.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||null;if(t)return t}}catch(e){console.log('Gemini callGPT failed:',e)}}const ok=s.openaiKey;if(ok){try{const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ok},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.choices?.[0]?.message?.content?.trim()||null}}catch(e){}}const ck=s.apiKey;if(ck){try{const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ck,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.content?.map(c=>c.text||'').join('').trim()||null}}catch(e){}}nhToastMsg('API Key fehlt (Gemini/OpenAI/Anthropic)');return null}
-async function extractPDF(file){const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)});const k=gSet().apiKey;if(!k){nhToastMsg('Claude API Key fehlt');return null}nhToastMsg('PDF wird extrahiert…');try{const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:8000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:'Extract the complete text from this PDF. Return ONLY the raw text, no comments. Keep paragraphs.'}]}]})});if(!resp.ok){nhToastMsg('PDF Fehler');return null}const d=await resp.json();nhToastMsg('✓ PDF extrahiert');return d.content?.map(c=>c.text||'').join('').trim();}catch(e){nhToastMsg(e.message);return null}}
+async function callGPT(prompt,mt){const s=gSet();const gk=APP?.state?.settings?.geminiApiKey||s.geminiKey||'';if(gk){try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+gk,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});if(r.ok){const d=await r.json();const t=d.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||null;if(t)return t}}catch(e){console.log('Gemini callGPT failed:',e)}}const ok=s.openaiKey;if(ok){try{const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ok},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.choices?.[0]?.message?.content?.trim()||null}}catch(e){}}const ck=s.apiKey;if(ck){try{const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ck,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.content?.map(c=>c.text||'').join('').trim()||null}}catch(e){}}nhToastMsg('API Key fehlt (Gemini/OpenAI/Anthropic)');return null}
+async function extractPDF(file){const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)});const k=gSet().apiKey;if(!k){nhToastMsg('Claude API Key fehlt');return null}nhToastMsg('PDF wird extrahiert…');try{const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:8000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:'Extract the complete text from this PDF. Return ONLY the raw text, no comments. Keep paragraphs.'}]}]})});if(!resp.ok){nhToastMsg('PDF Fehler');return null}const d=await resp.json();nhToastMsg('✓ PDF extrahiert');return d.content?.map(c=>c.text||'').join('').trim();}catch(e){nhToastMsg(e.message);return null}}
 
 /* ── Cloud — handled by main app's scheduleSave(), no separate sync ── */
 /* All NH data is stored in APP.state.data.entities (nhNews, nhTopics etc.)
@@ -85332,7 +85367,8 @@ body.tabs-on .topbar { top: 38px !important; }
 body.tabs-on .noteflow-container,
 body.tabs-on .recalllab-container,
 body.tabs-on .readinghub-container,
-body.tabs-on .nh {
+body.tabs-on .nh,
+body.tabs-on #pdfedRoot {
   top: 38px !important;
   height: calc(100vh - 38px) !important;
   inset: 38px 0 0 0 !important;
@@ -94368,8 +94404,12 @@ console.log('📚 Leseliste geladen');
       var pp = (ev.extendedProperties && ev.extendedProperties.private) || {};
       ed.links.meeting = pp.qMeeting||""; ed.links.tasks=(pp.qTasks||"").split(",").filter(Boolean); ed.links.projects=(pp.qProjects||"").split(",").filter(Boolean); ed.links.persons=(pp.qPersons||"").split(",").filter(Boolean);
     } else {
-      if (prefill.date){ sDate=prefill.date; eDate=prefill.date; if (prefill.time){ sTime=prefill.time; var ph=parseInt(prefill.time.slice(0,2),10); eTime=pad(Math.min(23,ph+1))+":"+prefill.time.slice(3); } else { sTime="09:00"; eTime="10:00"; } if (prefill.allDay) allDay=true; }
+      if (prefill.date){ sDate=prefill.date; eDate=prefill.endDate||prefill.date; if (prefill.time){ sTime=prefill.time; var ph=parseInt(prefill.time.slice(0,2),10); eTime=prefill.endTime || (pad(Math.min(23,ph+1))+":"+prefill.time.slice(3)); } else { sTime="09:00"; eTime="10:00"; } if (prefill.allDay) allDay=true; }
       else { var ns=new Date(); ns.setMinutes(0,0,0); ns.setHours(ns.getHours()+1); var ne=new Date(ns.getTime()+3600000); sDate=toDateVal(ns); sTime=toTimeVal(ns); eDate=toDateVal(ne); eTime=toTimeVal(ne); }
+      // Additive Prefill-Felder (z. B. aus dem Gmail-Termin-Vorschlag) — Titel/Ort/Beschreibung.
+      if (prefill.title) title = String(prefill.title);
+      if (prefill.location) loc = String(prefill.location);
+      if (prefill.desc) desc = String(prefill.desc);
     }
     GC._edit = ed;
 
@@ -94679,6 +94719,17 @@ console.log('📚 Leseliste geladen');
     })();
   };
 
+  // Wie gcalQuickCreate, aber OHNE Navigation: lädt bei Bedarf Status/Kalender (gcalEnsureLoaded)
+  // und öffnet den vorbefüllten Editor über der aktuellen Ansicht (z. B. aus dem Gmail-Reader).
+  // Liefert true, wenn der Editor geöffnet wurde; false bei „nicht verbunden / kein beschreibbarer
+  // Kalender" — der Aufrufer kann dann auf den Google-Calendar-Vorlage-Link ausweichen.
+  window.gcalQuickCreateInline = async function(prefill){
+    try { await gcalEnsureLoaded(); } catch(e){}
+    var writable = (GC.calendars||[]).filter(function(c){ return c.accessRole==="owner"||c.accessRole==="writer"; });
+    if (GC.status && GC.status.connected && writable.length){ gcalOpenEditor(null, null, prefill||{}); return true; }
+    return false;
+  };
+
   // ══════════════════════════════════════════════════════════════════
   //  KI-ASSISTENT — Kalender-Aktionen über dieselbe gcal-api-Proxyschicht
   // ══════════════════════════════════════════════════════════════════
@@ -94861,6 +94912,14 @@ console.log('📚 Leseliste geladen');
 .gml-postsend-icon { width:54px; height:54px; margin:0 auto 14px; border-radius:50%; background:var(--accent-soft); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:26px; font-weight:800; }
 .gml-postsend-title { font-size:17px; font-weight:700; color:var(--text); margin-bottom:6px; }
 .gml-postsend-sub { font-size:13.5px; color:var(--muted); line-height:1.55; }
+/* „Termin erkannt"-Karte im Reader (Google-Kalender-Vorschlag) */
+.gml-appt { display:flex; align-items:center; gap:12px; margin:0 18px 12px; padding:11px 14px; border:1px solid var(--accent-soft); border-left:3px solid var(--accent); border-radius:10px; background:var(--accent-soft); flex-wrap:wrap; }
+.gml-appt-ic { width:34px; height:34px; flex-shrink:0; border-radius:9px; background:var(--panel); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:18px; }
+.gml-appt-body { flex:1; min-width:170px; }
+.gml-appt-label { font-size:10.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); }
+.gml-appt-title { font-size:14px; font-weight:700; color:var(--text); margin:1px 0; overflow:hidden; text-overflow:ellipsis; }
+.gml-appt-when { font-size:12.5px; color:var(--text2); }
+.gml-appt .btn { flex-shrink:0; }
 .gml-bodyframe { width:100%; border:none; background:var(--text); border-radius:10px; min-height:240px; display:block; }
 .gml-compose-btn { width:100%; padding:10px; margin-bottom:8px; border:none; border-radius:11px; background:var(--accent); color:var(--text); font-weight:700; font-size:14px; cursor:pointer; }
 .gml-compose-btn:hover { filter:brightness(1.08); }
@@ -95438,6 +95497,7 @@ console.log('📚 Leseliste geladen');
       +   '</div>'
       + '</div>'
       + renderKiPanel(o)
+      + renderApptCard(o)
       + '<div class="gml-bodywrap">'+bodyIframe(o.html, o.text)+'</div>';
   }
 
@@ -96332,6 +96392,148 @@ console.log('📚 Leseliste geladen');
       + (summary ? '<div class="gml-ki-text">'+esc(summary)+'</div>' : '')
       + '</div>';
   }
+
+  // ── Termin-Erkennung im Reader → Google-Kalender-Vorschlag ──────────────────
+  // Beim Anzeigen einer Mail wird EINMAL pro messageId geprüft (Cache GM._apptCache), ob ein
+  // Termin enthalten ist. Reihenfolge: günstiger Datums-Hinweis (Regex) als Vorfilter → nur dann
+  // window.callAI für präzise JSON-Extraktion; bei KI-Fehler/kein Key → Regex-Fallback. Lieber
+  // kein Vorschlag als ein falscher. Zeitzone Europe/Zürich. Eintragen über die bestehende
+  // Kalender-Logik (gcalQuickCreateInline → gcalOpenEditor/gcApi) bzw. Vorlage-Link als Fallback.
+  function apptPad(n){ return (n<10?"0":"")+n; }
+  function apptIsoLocal(d){ return d.getFullYear()+"-"+apptPad(d.getMonth()+1)+"-"+apptPad(d.getDate())+"T"+apptPad(d.getHours())+":"+apptPad(d.getMinutes()); }
+  function apptTodayZurich(){ try { return new Date().toLocaleDateString("sv-SE",{ timeZone:"Europe/Zurich" }); } catch(e){ return apptIsoLocal(new Date()).slice(0,10); } }
+  function apptHasDateHint(s){ s=String(s||"");
+    return /\b\d{1,2}\.\d{1,2}\.(\d{2,4})?/.test(s)
+      || /\b\d{1,2}\.?\s*(jan(uar)?|feb(ruar)?|mär(z)?|apr(il)?|mai|jun(i)?|jul(i)?|aug(ust)?|sep(t(ember)?)?|okt(ober)?|nov(ember)?|dez(ember)?)\b/i.test(s)
+      || /\b\d{1,2}:\d{2}\b/.test(s) || /\b\d{1,2}\s*uhr\b/i.test(s)
+      || /\b(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)\b/i.test(s)
+      || /\b(morgen|übermorgen|heute|nächste[nrs]?|kommende[nrs]?)\b/i.test(s);
+  }
+  var APPT_MONTHS = { januar:1,februar:2,"märz":3,maerz:3,april:4,mai:5,juni:6,juli:7,august:8,september:9,oktober:10,november:11,dezember:12, jan:1,feb:2,"mär":3,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,sept:9,okt:10,nov:11,dez:12 };
+  function ruleDetectAppt(subject, text){
+    var s = String(subject||"")+"\n"+String(text||"");
+    var d=null,mo=null,y=null;
+    var m1 = /\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/.exec(s) || /\b(\d{1,2})\.(\d{1,2})\.(\d{2})\b/.exec(s);
+    if (m1){ d=+m1[1]; mo=+m1[2]; y=+m1[3]; if (y<100) y+=2000; }
+    else { var m2=/\b(\d{1,2})\.?\s+([A-Za-zäöüÄÖÜ]+)\s+(\d{4})\b/.exec(s); if (m2){ var mm=APPT_MONTHS[m2[2].toLowerCase()]; if (mm){ d=+m2[1]; mo=mm; y=+m2[3]; } } }
+    if (!d){ var m3=/\b(\d{1,2})\.(\d{1,2})\.(?!\s*\d)/.exec(s); if (m3){ d=+m3[1]; mo=+m3[2]; var ny=new Date(); y=ny.getFullYear(); var cand=new Date(y+"-"+apptPad(mo)+"-"+apptPad(d)+"T12:00:00"); if (!isNaN(cand) && cand.getTime() < ny.getTime()-86400000) y+=1; } }  // „5.7." ohne Jahr → aktuelles/nächstes Jahr
+    if (!d || !mo || !y || mo<1 || mo>12 || d<1 || d>31) return null;
+    var hh=null, mi=0;
+    var t1=/\b(\d{1,2}):(\d{2})\b/.exec(s); if (t1){ hh=+t1[1]; mi=+t1[2]; }
+    else { var t2=/\b(\d{1,2})\s*uhr\b/i.exec(s); if (t2){ hh=+t2[1]; mi=0; } }
+    if (hh!=null && (hh<0||hh>23||mi>59)){ hh=null; mi=0; }
+    var allDay = (hh===null);
+    var startISO = y+"-"+apptPad(mo)+"-"+apptPad(d)+"T"+apptPad(allDay?9:hh)+":"+apptPad(mi);
+    if (isNaN(new Date(startISO))) return null;
+    var endISO = allDay ? startISO : (y+"-"+apptPad(mo)+"-"+apptPad(d)+"T"+apptPad(Math.min(23,hh+1))+":"+apptPad(mi));
+    return { hasDate:true, title:String(subject||"Termin").slice(0,120), startISO:startISO, endISO:endISO, allDay:allDay, location:"", notes:"" };
+  }
+  function apptParseJson(txt){
+    if (!txt || typeof txt!=="string") return null;
+    var s = txt.replace(/```json/gi,"").replace(/```/g,"").trim();
+    var a=s.indexOf("{"), b=s.lastIndexOf("}"); if (a<0||b<a) return null;
+    try { return JSON.parse(s.slice(a,b+1)); } catch(e){ return null; }
+  }
+  function apptNormalize(obj){
+    var startISO = String((obj&&obj.startISO)||"").trim().slice(0,16);
+    if (!startISO || isNaN(new Date(startISO))) return { hasDate:false };
+    var allDay = obj.allDay===true || !/T\d{2}:\d{2}/.test(startISO);
+    var endISO = String(obj.endISO||"").trim().slice(0,16);
+    if (!endISO || isNaN(new Date(endISO))){ endISO = allDay ? startISO : apptIsoLocal(new Date(new Date(startISO).getTime()+3600000)); }
+    return { hasDate:true, title:String(obj.title||"Termin").slice(0,120), startISO:startISO, endISO:endISO, allDay:allDay, location:String(obj.location||""), notes:String(obj.notes||"") };
+  }
+  async function aiDetectAppt(subject, text){
+    if (typeof window.callAI!=="function") return null;
+    var sys = "Du extrahierst Termine aus E-Mails. Antworte AUSSCHLIESSLICH mit EINEM JSON-Objekt, ohne Markdown/Erklärung. "
+      + "Schema: {\"hasDate\":boolean,\"title\":string,\"startISO\":string,\"endISO\":string,\"allDay\":boolean,\"location\":string,\"notes\":string}. "
+      + "startISO/endISO als \"YYYY-MM-DDTHH:MM\" in lokaler Zeit (Europe/Zurich, ohne Zeitzonen-Offset). "
+      + "Ohne erkennbare Endzeit: endISO = startISO + 1 Stunde. allDay=true nur ohne Uhrzeit. "
+      + "Heute ist "+apptTodayZurich()+" (zur Auflösung von 'nächsten Dienstag' etc.). "
+      + "Bei Unsicherheit hasDate=false — lieber kein Termin als ein falscher.";
+    var prompt = "Betreff: "+String(subject||"")+"\n\nText:\n"+String(text||"").slice(0,3500)+"\n\nGib das JSON zurück.";
+    try {
+      var txt = await window.callAI(prompt, { systemPrompt:sys, maxTokens:300 });
+      var obj = apptParseJson(txt);
+      if (!obj || typeof obj.hasDate==="undefined") return null;   // unparsebar → Regex-Fallback
+      if (obj.hasDate!==true) return { hasDate:false };            // KI: kein Termin → vertrauen
+      return apptNormalize(obj);
+    } catch(e){ return null; }   // kein Key / Fehler → Regex-Fallback
+  }
+  function gmailDetectAppointment(o){
+    if (!o || !o.id) return;
+    GM._apptCache = GM._apptCache || {};
+    if (GM._apptCache.hasOwnProperty(o.id)) return;   // genau EIN Lauf pro messageId
+    GM._apptCache[o.id] = { loading:true };
+    var subject = o.subject||"";
+    var text = (o.text || htmlToText(o.html) || "").slice(0,4000);
+    if (!apptHasDateHint(subject+"\n"+text)){ GM._apptCache[o.id] = null; return; }  // kein Datum → kein KI-Aufruf
+    Promise.resolve(aiDetectAppt(subject, text)).then(function(ai){
+      var res = (ai!==null) ? (ai.hasDate ? ai : null) : ruleDetectAppt(subject, text);
+      GM._apptCache[o.id] = (res && res.hasDate) ? res : null;
+      rerender();
+    });
+  }
+  function apptWhenText(a){
+    try {
+      var s = new Date(a.startISO);
+      var ds = s.toLocaleDateString("de-CH", { weekday:"short", day:"2-digit", month:"short", year:"numeric" });
+      if (a.allDay) return ds+" · ganztägig";
+      return ds+" um "+s.toLocaleTimeString("de-CH", { hour:"2-digit", minute:"2-digit" })+" Uhr";
+    } catch(e){ return a.startISO||""; }
+  }
+  function renderApptCard(o){
+    if (!o || !o.id) return "";
+    GM._apptCache = GM._apptCache || {};
+    var a = GM._apptCache[o.id];
+    if (a===undefined){ gmailDetectAppointment(o); return ""; }   // einmalig anstossen
+    if (!a || a.loading || !a.hasDate) return "";                 // läuft / kein Termin
+    return '<div class="gml-appt">'
+      + '<div class="gml-appt-ic">📅</div>'
+      + '<div class="gml-appt-body">'
+      +   '<div class="gml-appt-label">Termin erkannt</div>'
+      +   '<div class="gml-appt-title">'+esc(a.title||"Termin")+'</div>'
+      +   '<div class="gml-appt-when">'+esc(apptWhenText(a))+(a.location?' · '+esc(a.location):'')+'</div>'
+      + '</div>'
+      + '<button class="btn primary" onclick="gmailAddDetectedToCalendar(\''+jsStr(o.id)+'\')" title="Im Google-Kalender-Editor vorausgefüllt öffnen – Titel/Datum/Zeit vor dem Speichern bearbeitbar">+ In Google Kalender eintragen</button>'
+      + '</div>';
+  }
+  function apptToPrefill(a, desc){
+    var sd=a.startISO.slice(0,10), st=a.startISO.slice(11,16);
+    var ed=(a.endISO||a.startISO).slice(0,10), et=(a.endISO||"").slice(11,16);
+    return { title:a.title||"Termin", date:sd, time:a.allDay?null:st, endDate:ed, endTime:a.allDay?null:et, allDay:!!a.allDay, location:a.location||"", desc:desc };
+  }
+  function apptGcalStamp(iso){ var x=iso.replace(/[-:]/g,""); if (/T\d{4}$/.test(x)) x+="00"; return x; }
+  function gmailOpenCalendarLink(a, desc){
+    var p = "https://calendar.google.com/calendar/render?action=TEMPLATE&text="+encodeURIComponent(a.title||"Termin");
+    if (a.allDay){
+      var sd=a.startISO.slice(0,10).replace(/-/g,"");
+      var nx=new Date(a.startISO.slice(0,10)+"T00:00:00"); nx.setDate(nx.getDate()+1);
+      p += "&dates="+sd+"/"+apptIsoLocal(nx).slice(0,10).replace(/-/g,"");
+    } else {
+      p += "&dates="+apptGcalStamp(a.startISO)+"/"+apptGcalStamp(a.endISO||a.startISO)+"&ctz=Europe/Zurich";
+    }
+    if (desc) p += "&details="+encodeURIComponent(desc);
+    if (a.location) p += "&location="+encodeURIComponent(a.location);
+    try { window.open(p, "_blank", "noopener"); toast("info","Google Kalender","Termin im Browser-Tab vorausgefüllt – dort bestätigen."); }
+    catch(e){ toast("err","Fehler","Konnte Google Kalender nicht öffnen"); }
+  }
+  // Klick „+ In Google Kalender eintragen": bevorzugt den bestehenden In-App-Editor
+  // (gcalQuickCreateInline → vorbefüllt, bearbeitbar, speichert via gcApi). Nicht verbunden /
+  // kein Kalender → Fallback: Google-Calendar-Vorlage-Link im neuen Tab.
+  window.gmailAddDetectedToCalendar = function(id){
+    var a = (GM._apptCache && GM._apptCache[id]) || null;
+    if (!a || !a.hasDate){ toast("info","Kein Termin",""); return; }
+    var o = (GM.open && GM.open.id===id) ? GM.open : null;
+    var addr = o ? parseAddr(o.from) : { name:"", email:"" };
+    var sender = addr.name ? addr.name+" <"+(addr.email||"")+">" : (addr.email||"");
+    var desc = "Aus E-Mail" + (sender?"\nVon: "+sender:"") + (o&&o.subject?"\nBetreff: "+o.subject:"")
+      + (o&&o.id?"\nMail-ID: "+o.id:"") + (o&&o.threadId?"\nThread: "+o.threadId:"")
+      + (a.notes?"\n\n"+a.notes:"");
+    var prefill = apptToPrefill(a, desc);
+    if (typeof window.gcalQuickCreateInline==="function"){
+      Promise.resolve(window.gcalQuickCreateInline(prefill)).then(function(ok){ if (!ok) gmailOpenCalendarLink(a, desc); }).catch(function(){ gmailOpenCalendarLink(a, desc); });
+    } else { gmailOpenCalendarLink(a, desc); }
+  };
 
   // ── 2) Mail → Aufgabe (taskRequests / taskSuggestions) ──
   // Punkt 8: „Aufgabe" erstellt direkt eine echte Quantus-Aufgabe (createEntity → bestehender
@@ -98762,25 +98964,45 @@ window.addEventListener("hashchange", function(){
     main.addEventListener("dragover",(e)=>{ e.preventDefault(); });
     main.addEventListener("drop",(e)=>{ e.preventDefault(); const f=e.dataTransfer?.files?.[0]; if(f) loadSource(f,{name:f.name}); });
     // Tastatur
+    // Capture-Phase: läuft VOR den globalen App-Shortcuts. Solange der Editor offen
+    // ist, „besitzt" er die Tastatur — App-Shortcuts (z. B. Quick-Note auf Einzeltaste)
+    // dürfen nicht über dem Editor auslösen. Tippen in Editor-Feldern bleibt unberührt.
     document.addEventListener("keydown",(e)=>{
       if(!ED.open) return;
-      // Escape: erst Notiz-Popup schliessen, dann Textbearbeitung beenden, dann Auswahl aufheben, dann Editor schliessen
+      const blockApp=()=>{ if(!(e.ctrlKey||e.metaKey||e.altKey)) e.stopPropagation(); };
+      // Escape: Notiz-Popup → Textbearbeitung → Auswahl → Editor schliessen
       if(e.key==="Escape"){
-        if(qs("#pdfedNotePop")){ closeNotePopup(); return; }
-        const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("editing")){ ae.blur(); return; }
-        if(ED.selected!=null){ deselectAnnot(); return; }
+        if(qs("#pdfedNotePop")){ closeNotePopup(); blockApp(); return; }
+        const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("editing")){ ae.blur(); blockApp(); return; }
+        if(ED.selected!=null){ deselectAnnot(); blockApp(); return; }
         if(!document.querySelector(".pdfed-modal")) closeEditor();
-        return;
+        blockApp(); return;
       }
       const inField = (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) || (e.target && e.target.isContentEditable);
-      if(inField) return;
-      if((e.key==="Delete"||e.key==="Backspace") && ED.selected!=null){ e.preventDefault(); delAnnot(ED.selected); return; }
-      if(e.key==="ArrowRight"||e.key==="PageDown"){ gotoPage(ED.page+1); }
+      if(inField) return;   // in Editor-Feldern: nicht eingreifen (eigene Listener/Default behalten)
+      if((e.key==="Delete"||e.key==="Backspace") && ED.selected!=null){ e.preventDefault(); delAnnot(ED.selected); }
+      else if(e.key==="ArrowRight"||e.key==="PageDown"){ gotoPage(ED.page+1); }
       else if(e.key==="ArrowLeft"||e.key==="PageUp"){ gotoPage(ED.page-1); }
       else if(e.key==="+"){ setScale(ED.scale*1.2); }
       else if(e.key==="-"){ setScale(ED.scale/1.2); }
-    });
+      blockApp();   // alle übrigen Einzeltasten verschlucken → keine App-Shortcuts über dem Editor
+    }, true);
   }
+
+  // Editor exakt unter die App-Tab-Leiste setzen (oder ganz nach oben, wenn keine
+  // Tabs aktiv sind). Inline-Styles wirken zusätzlich zur CSS-Regel und decken auch
+  // abweichende Leisten-Höhen ab.
+  function _pdfedFitBelowTabBar(){
+    const root=document.getElementById("pdfedRoot");
+    if(!root || !ED.open) return;
+    const bar=document.getElementById("browserTabBar");
+    const visible = bar && getComputedStyle(bar).display!=="none" && bar.offsetHeight>0;
+    const h = visible ? bar.offsetHeight : 0;
+    root.style.top = h+"px";
+    root.style.bottom = "0";
+    root.style.height = "auto";
+  }
+  window.addEventListener("resize", _pdfedFitBelowTabBar);
 
   // ─────────────────────────── Laden ───────────────────────────
   async function openPdfEditor(source, meta){
@@ -98789,6 +99011,11 @@ window.addEventListener("hashchange", function(){
     ED.open = true;
     document.getElementById("pdfedRoot").classList.add("active");
     document.documentElement.style.overflow="hidden";
+    // Editor unterhalb der App-Tab-Leiste ausrichten, damit die Editor-Kopfleiste
+    // (mit Schliessen-Button) nicht hinter den immer obenliegenden Tabs verschwindet.
+    // Zusätzliche Absicherung zur CSS-Regel (body.tabs-on #pdfedRoot): misst die
+    // echte Höhe der Tab-Leiste und reagiert auf Fenster-/Tab-Änderungen.
+    _pdfedFitBelowTabBar();
     if (source == null){
       // Kein neues Dokument übergeben (z. B. erneuter Routen-Render der App):
       // ein bereits geöffnetes Dokument NICHT verwerfen — sonst leert sich der
@@ -98950,6 +99177,8 @@ window.addEventListener("hashchange", function(){
   // ─────────────────────────── Annotation-Overlay ───────────────────────────
   function attachOverlay(ov, i){
     ov.addEventListener("pointerdown",(e)=>{
+      // Laufende Textbearbeitung zuerst beenden — dieser Klick erzeugt dann NICHTS Neues
+      const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("editing")){ ae.blur(); return; }
       // Klick ins Leere (Auswahl-Werkzeug) hebt die Auswahl auf
       if (ED.tool==="select"){ if(e.target===ov){ deselectAnnot(); closeNotePopup(); } return; }
       if (ED.tool==="hand") return;
@@ -98980,22 +99209,23 @@ window.addEventListener("hashchange", function(){
       }
       if (made.length){ (ED.annots[i]=ED.annots[i]||[]).push(...made); }
       else { (ED.annots[i]=ED.annots[i]||[]).push({ id:uid(), page:i, type:"highlight", color:d.color, x:rx, y:ry, w:rw, h:rh }); }
-      ED.dirty=true; renderOverlay(i); refreshComments(); setTool("select"); return;
+      ED.dirty=true; renderOverlay(i); refreshComments(); return;   // Werkzeug bleibt aktiv (sticky)
     }
     const a={ id:uid(), page:i, type:d.t, color:d.color, stroke:d.stroke };
     if (d.t==="ink"){ if(d.pts.length<2){ renderOverlay(i); return; } a.pts=d.pts.slice(); }
     else if (d.t==="line"||d.t==="arrow"){ a.x0=d.sx; a.y0=d.sy; a.x1=d.ex; a.y1=d.ey; if(Math.hypot(a.x1-a.x0,a.y1-a.y0)<0.004){ renderOverlay(i); return; } }
     else { const x=Math.min(d.sx,d.ex), y=Math.min(d.sy,d.ey), w=Math.abs(d.ex-d.sx), h=Math.abs(d.ey-d.sy); if(w<0.004||h<0.004){ renderOverlay(i); return; } a.x=x; a.y=y; a.w=w; a.h=h; }
-    (ED.annots[i]=ED.annots[i]||[]).push(a); ED.dirty=true; ED.selected=a.id; renderOverlay(i); refreshComments();
-    setTool("select"); syncToolbarToSelection();
+    (ED.annots[i]=ED.annots[i]||[]).push(a); ED.dirty=true; renderOverlay(i); refreshComments();
+    // Werkzeug bleibt aktiv (sticky) — so kann man mehrere Elemente hintereinander zeichnen
   }
 
   function placeClick(i, nx, ny, t){
-    if (t==="text"){ const a={ id:uid(), page:i, type:"text", color:ED.color, x:nx, y:ny, size:16, text:"" }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); setTool("select"); setTimeout(()=>startTextEdit(a.id),30); return; }
-    if (t==="note"){ const a={ id:uid(), page:i, type:"note", color:ED.color, x:nx, y:ny, text:"" }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); setTimeout(()=>openNotePopup(a),30); return; }
-    if (t==="stamp"){ chooseStamp((txt,col)=>{ if(!txt) return; const a={ id:uid(), page:i, type:"stamp", color:col||"#d9694a", x:nx, y:ny, w:0.18, h:0.05, text:txt }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); }); return; }
-    if (t==="signature"){ if(ED.pendingSignature){ const a={ id:uid(), page:i, type:"signature", x:nx, y:ny, w:0.22, h:0.09, dataUrl:ED.pendingSignature }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); } else { openSignaturePad(()=>placeClick(i,nx,ny,t)); } return; }
-    if (t==="image"){ if(ED.pendingImage){ const r=ED.pendingImage.w/ED.pendingImage.h; const a={ id:uid(), page:i, type:"image", x:nx, y:ny, w:0.3, h:0.3/(r||1), dataUrl:ED.pendingImage.dataUrl }; pushAnnot(i,a); ED.pendingImage=null; ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); } else { pickFile("image/*", async (f)=>{ ED.pendingImage=await fileToPng(f); placeClick(i,nx,ny,t); }); } return; }
+    // Werkzeuge bleiben nach dem Platzieren aktiv (sticky)
+    if (t==="text"){ const a={ id:uid(), page:i, type:"text", color:ED.color, x:nx, y:ny, size:16, text:"" }; pushAnnot(i,a); renderOverlay(i); setTimeout(()=>startTextEdit(a.id),30); return; }
+    if (t==="note"){ const a={ id:uid(), page:i, type:"note", color:ED.color, x:nx, y:ny, text:"" }; pushAnnot(i,a); renderOverlay(i); refreshComments(); setTimeout(()=>openNotePopup(a),30); return; }
+    if (t==="stamp"){ chooseStamp((txt,col)=>{ if(!txt) return; const a={ id:uid(), page:i, type:"stamp", color:col||"#d9694a", x:nx, y:ny, w:0.18, h:0.05, text:txt }; pushAnnot(i,a); renderOverlay(i); refreshComments(); }); return; }
+    if (t==="signature"){ if(ED.pendingSignature){ const a={ id:uid(), page:i, type:"signature", x:nx, y:ny, w:0.22, h:0.09, dataUrl:ED.pendingSignature }; pushAnnot(i,a); renderOverlay(i); refreshComments(); } else { openSignaturePad(()=>placeClick(i,nx,ny,t)); } return; }
+    if (t==="image"){ if(ED.pendingImage){ const r=ED.pendingImage.w/ED.pendingImage.h; const a={ id:uid(), page:i, type:"image", x:nx, y:ny, w:0.3, h:0.3/(r||1), dataUrl:ED.pendingImage.dataUrl }; pushAnnot(i,a); ED.pendingImage=null; renderOverlay(i); refreshComments(); } else { pickFile("image/*", async (f)=>{ ED.pendingImage=await fileToPng(f); placeClick(i,nx,ny,t); }); } return; }
   }
   // Textfeld in den Bearbeiten-Modus versetzen (Cursor rein, alles markieren)
   function startTextEdit(id){ const el=qs(`.pdfed-annot[data-id="${id}"]`); if(!el) return; el.contentEditable="true"; el.classList.add("editing"); el.focus(); try { const sel=window.getSelection(); sel.removeAllRanges(); const rng=document.createRange(); rng.selectNodeContents(el); sel.addRange(rng); } catch(e){} }
@@ -99390,6 +99620,313 @@ window.addEventListener("hashchange", function(){
   // ─────────────────────────── Export der API ───────────────────────────
   window.openPdfEditor = openPdfEditor;
   window.closePdfEditor = closeEditor;
+})();
+</script>
+
+<!-- ============================================================
+     QUANTUS UNIVERSAL CONTEXT MENU
+     Einheitliches Rechtsklick-Menü für ALLE Apps.
+     - Auf Entitäten (data-kind/data-id): Öffnen, Bearbeiten,
+       Verknüpfen, Anpinnen, Duplizieren, Kopieren, Löschen
+     - Auf markiertem Text: Kopieren, Web-Suche, → Notiz/Aufgabe
+     - Auf App-Hintergrund: app-spezifisches "Neu" + Schnellaktionen
+     ============================================================ -->
+<script>
+(function(){
+  "use strict";
+
+  // Entity-Kind → navigierbare Detail-Route
+  const NAV_KINDS = {
+    task:"tasks", project:"projects", note:"notes", goal:"goals",
+    strategy:"strategies", idea:"ideas", meeting:"meetings",
+    organization:"organizations", program:"programs", decision:"decisions",
+    article:"articles", update:"updates", contact:"persons", person:"persons",
+    calendarEvent:"calendar", deck:"learn"
+  };
+  // Kinds mit Verknüpfungs-Modal
+  const LINK_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","organization","program","calendarEvent","decision"]);
+  // Kinds, für die generisches Duplizieren sicher ist
+  const DUP_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","decision","update"]);
+  // Kinds mit Schnellansicht (openSlidePanel)
+  const SLIDE_KINDS = new Set(["task","project","note","organization"]);
+
+  const KIND_LABEL = {
+    task:"Aufgabe", project:"Projekt", note:"Notiz", goal:"Ziel", strategy:"Strategie",
+    idea:"Idee", meeting:"Meeting", organization:"Organisation", program:"Programm",
+    decision:"Entscheidung", article:"Artikel", update:"Update", contact:"Kontakt",
+    person:"Person", calendarEvent:"Termin", deck:"Deck", annotation:"Anmerkung",
+    thought:"Gedanke", notebook:"Notizbuch"
+  };
+  const DEFAULT_TITLE = {
+    task:"Neue Aufgabe", project:"Neues Projekt", note:"Neue Notiz", goal:"Neues Ziel",
+    strategy:"Neue Strategie", idea:"Neue Idee", meeting:"Neues Meeting",
+    decision:"Neue Entscheidung", program:"Neues Programm", organization:"Neue Organisation"
+  };
+  // Route → bestehende Schnell-Erstellen-Aktion (öffnet schönes Modal)
+  const ROUTE_QUICK = {
+    tasks:"open-quick-task", today:"open-quick-task", dashboard:"open-quick-task",
+    weekplanning:"open-quick-task", notes:"open-quick-note", projects:"open-quick-project",
+    ideas:"open-quick-idea"
+  };
+
+  // ── kleine Helfer (greifen auf globale App-Funktionen zu) ───────────────
+  function safe(fn){ try { return fn(); } catch(e){ console.error("[ctx]", e); return undefined; } }
+  function curRoute(){ return safe(()=> (window.parseHash ? window.parseHash().route : (window.APP?.state?.ui?.route))) || ""; }
+  function curEntityId(){ return safe(()=> (window.parseHash ? window.parseHash().id : (window.APP?.state?.ui?.entityId))); }
+  function rerender(){ if(typeof window.render === "function") safe(()=>window.render()); }
+  function notify(type,a,b){ if(typeof window.toast === "function") safe(()=>window.toast(type,a,b)); }
+  function appLabel(route){
+    const all = (typeof window.getAllApps === "function") ? safe(()=>window.getAllApps()) : null;
+    const app = all && all.find(x=>x.key===route);
+    return app ? (app.icon + " " + app.label) : "Quantus";
+  }
+  async function copyText(text){
+    if(!text) return;
+    try {
+      if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); }
+      else {
+        const ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+        document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+      }
+      notify("ok","Kopiert", text.length>60 ? text.slice(0,60)+"…" : text);
+    } catch(e){ notify("warn","Fehler","Konnte nicht kopieren"); }
+  }
+  // Bestehende data-action-Handler wiederverwenden (z.B. open-quick-task)
+  function fireAction(action, data){
+    if(typeof window.handleClick !== "function") return;
+    const el=document.createElement("div");
+    el.dataset.action=action;
+    if(data) Object.keys(data).forEach(k=>{ el.dataset[k]=data[k]; });
+    safe(()=>window.handleClick({ target:el, preventDefault(){}, stopPropagation(){} }));
+  }
+
+  function navKindRoute(kind){ return NAV_KINDS[kind] || null; }
+  function isPinnedSafe(kind,id){ return (typeof window.isPinned==="function") ? safe(()=>window.isPinned(kind,id)) : false; }
+
+  function duplicateEntity(kind,id){
+    if(typeof window.getEntity!=="function" || typeof window.createEntity!=="function") return;
+    const src=safe(()=>window.getEntity(kind,id));
+    if(!src){ notify("warn","Fehler","Element nicht gefunden"); return; }
+    const clone=JSON.parse(JSON.stringify(src));
+    delete clone.id; delete clone.createdAt; delete clone.updatedAt;
+    if(clone.title) clone.title=clone.title+" (Kopie)";
+    else if(clone.name) clone.name=clone.name+" (Kopie)";
+    const newId=safe(()=>window.createEntity(kind, clone));
+    rerender();
+    notify("ok","Dupliziert", (KIND_LABEL[kind]||kind)+" wurde kopiert");
+    return newId;
+  }
+
+  function deleteWithConfirm(kind,id){
+    if(typeof window.deleteEntity!=="function") return;
+    const label=KIND_LABEL[kind]||kind;
+    if(!confirm(label+" wirklich löschen?")) return;
+    const onDetail = curRoute()===navKindRoute(kind) && curEntityId()===id;
+    safe(()=>window.deleteEntity(kind,id));
+    if(onDetail && navKindRoute(kind) && typeof window.navigate==="function") safe(()=>window.navigate(navKindRoute(kind)));
+    else rerender();
+    notify("ok","Gelöscht", label+" wurde gelöscht");
+  }
+
+  // ── Menü-CSS (Quantus-Look) ─────────────────────────────────────────────
+  function injectCss(){
+    if(document.getElementById("qCtxStyle")) return;
+    const s=document.createElement("style");
+    s.id="qCtxStyle";
+    s.textContent=`
+      .q-ctx{position:fixed;z-index:100000;min-width:212px;max-width:300px;padding:6px;
+        background:var(--panel,#1e242b);border:1px solid var(--border,#3b4550);border-radius:14px;
+        box-shadow:0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(12px);
+        font-family:inherit;font-size:14px;color:var(--text,#fff);animation:qCtxIn .12s ease;}
+      @keyframes qCtxIn{from{opacity:0;transform:scale(.97) translateY(-4px)}to{opacity:1;transform:none}}
+      .q-ctx-head{padding:9px 12px 8px;border-bottom:1px solid var(--border,#3b4550);margin-bottom:6px}
+      .q-ctx-head .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:800;color:var(--muted,#8b97a3)}
+      .q-ctx-head .n{font-size:13px;font-weight:600;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .q-ctx-item{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;cursor:pointer;
+        transition:background .12s;line-height:1.2;user-select:none}
+      .q-ctx-item:hover{background:var(--panel2,#262d35)}
+      .q-ctx-item .ico{font-size:15px;width:18px;text-align:center;flex:0 0 auto}
+      .q-ctx-item.danger{color:var(--danger,#e5765a)}
+      .q-ctx-item.danger:hover{background:rgba(229,118,90,.13)}
+      .q-ctx-sep{height:1px;background:var(--border,#3b4550);margin:6px 4px}
+    `;
+    document.head.appendChild(s);
+  }
+
+  // ── Menü rendern ─────────────────────────────────────────────────────────
+  let activeMenu=null;
+  function closeMenu(){
+    if(activeMenu){ activeMenu.remove(); activeMenu=null; }
+    document.removeEventListener("mousedown", onDocDown, true);
+    document.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("blur", closeMenu);
+    document.removeEventListener("scroll", closeMenu, true);
+  }
+  function onDocDown(e){ if(activeMenu && !activeMenu.contains(e.target)) closeMenu(); }
+  function onKey(e){ if(e.key==="Escape") closeMenu(); }
+
+  function showMenu(x,y,header,items){
+    injectCss();
+    closeMenu();
+    const menu=document.createElement("div");
+    menu.className="q-ctx";
+    let html="";
+    if(header){
+      html+=`<div class="q-ctx-head"><div class="k">${esc(header.kind)}</div><div class="n">${esc(header.name)}</div></div>`;
+    }
+    items.forEach((it,i)=>{
+      if(it.sep){ html+=`<div class="q-ctx-sep"></div>`; return; }
+      html+=`<div class="q-ctx-item${it.danger?" danger":""}" data-i="${i}"><span class="ico">${it.icon||""}</span><span>${esc(it.label)}</span></div>`;
+    });
+    menu.innerHTML=html;
+    document.body.appendChild(menu);
+    // Klicks an Items binden
+    items.forEach((it,i)=>{
+      if(it.sep || !it.onClick) return;
+      const node=menu.querySelector(`.q-ctx-item[data-i="${i}"]`);
+      if(node) node.addEventListener("click", ()=>{ closeMenu(); safe(it.onClick); });
+    });
+    // Viewport-Clamping
+    const r=menu.getBoundingClientRect();
+    let nx=x, ny=y;
+    if(nx + r.width > window.innerWidth - 8) nx = Math.max(8, window.innerWidth - r.width - 8);
+    if(ny + r.height > window.innerHeight - 8) ny = Math.max(8, window.innerHeight - r.height - 8);
+    menu.style.left=nx+"px"; menu.style.top=ny+"px";
+    activeMenu=menu;
+    setTimeout(()=>{
+      document.addEventListener("mousedown", onDocDown, true);
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener("blur", closeMenu);
+      document.addEventListener("scroll", closeMenu, true);
+    },0);
+  }
+  // esc() lokal (falls global nicht im Scope)
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+  // ── Menü-Inhalte ──────────────────────────────────────────────────────────
+  function entityItems(kind,id){
+    const name = (typeof window.getEntity==="function" && typeof window.getEntityDisplayName==="function")
+      ? safe(()=>window.getEntityDisplayName(kind, window.getEntity(kind,id))) : null;
+    const items=[];
+    if(navKindRoute(kind)) items.push({icon:"🔍",label:"Öffnen", onClick:()=> window.navigate && window.navigate(navKindRoute(kind), id)});
+    if(SLIDE_KINDS.has(kind) && typeof window.openSlidePanel==="function")
+      items.push({icon:"👁",label:"Schnellansicht", onClick:()=> window.openSlidePanel(kind,id)});
+    if(LINK_KINDS.has(kind) && typeof window.openLinkModal==="function")
+      items.push({icon:"🔗",label:"Verknüpfen", onClick:()=> window.openLinkModal(kind,id)});
+    if(typeof window.togglePin==="function"){
+      const pinned=isPinnedSafe(kind,id);
+      items.push({icon:pinned?"📍":"📌",label:pinned?"Lösen":"Anpinnen", onClick:()=>{ window.togglePin(kind,id); rerender(); notify("ok", pinned?"Gelöst":"Angepinnt", KIND_LABEL[kind]||kind); }});
+    }
+    if(DUP_KINDS.has(kind))
+      items.push({icon:"📋",label:"Duplizieren", onClick:()=> duplicateEntity(kind,id)});
+    if(name)
+      items.push({icon:"⧉",label:"Namen kopieren", onClick:()=> copyText(name)});
+    items.push({sep:true});
+    items.push({icon:"🗑️",label:"Löschen", danger:true, onClick:()=> deleteWithConfirm(kind,id)});
+    return { header:{ kind:KIND_LABEL[kind]||kind, name: name||"(Ohne Titel)" }, items };
+  }
+
+  function selectionItems(text){
+    const t=text.trim();
+    const short = t.length>48 ? t.slice(0,48)+"…" : t;
+    const items=[
+      {icon:"⧉",label:"Kopieren", onClick:()=> copyText(t)},
+      {icon:"🔎",label:"Im Web suchen", onClick:()=> window.open("https://www.google.com/search?q="+encodeURIComponent(t), "_blank")},
+      {sep:true},
+      {icon:"📝",label:"Als Notiz speichern", onClick:()=>{
+        if(typeof window.createEntity!=="function") return;
+        const firstLine=(t.split("\n")[0]||"Notiz").slice(0,80);
+        safe(()=>window.createEntity("note",{ title:firstLine, content:t }));
+        rerender(); notify("ok","Notiz erstellt", firstLine);
+      }},
+      {icon:"✅",label:"Als Aufgabe erstellen", onClick:()=>{
+        if(typeof window.createEntity!=="function") return;
+        safe(()=>window.createEntity("task",{ title:t.slice(0,120), status:"todo", priority:3 }));
+        rerender(); notify("ok","Aufgabe erstellt", short);
+      }},
+    ];
+    return { header:{ kind:"Auswahl", name:short }, items };
+  }
+
+  function appItems(route){
+    const items=[];
+    // App-spezifisches "Neu"
+    if(ROUTE_QUICK[route]){
+      const map={ "open-quick-task":["✅","Neue Aufgabe"], "open-quick-note":["📝","Neue Notiz"],
+                  "open-quick-project":["📦","Neues Projekt"], "open-quick-idea":["💡","Neue Idee"] };
+      const m=map[ROUTE_QUICK[route]];
+      items.push({icon:m[0],label:m[1], onClick:()=> fireAction(ROUTE_QUICK[route])});
+    } else {
+      // generisches Erstellen, wenn Route einem Kind entspricht
+      const kind=Object.keys(NAV_KINDS).find(k=>NAV_KINDS[k]===route && DEFAULT_TITLE[k]);
+      if(kind && typeof window.createEntity==="function"){
+        items.push({icon:"➕",label:DEFAULT_TITLE[kind], onClick:()=>{
+          const newId=safe(()=>window.createEntity(kind,{ title:DEFAULT_TITLE[kind] }));
+          if(newId && navKindRoute(kind) && typeof window.navigate==="function") safe(()=>window.navigate(navKindRoute(kind), newId));
+          else rerender();
+          notify("ok","Erstellt", DEFAULT_TITLE[kind]);
+        }});
+      }
+    }
+    if(items.length) items.push({sep:true});
+    // globale Schnellaktionen — in jeder App verfügbar
+    items.push({icon:"✅",label:"Schnelle Aufgabe", onClick:()=> fireAction("open-quick-task")});
+    items.push({icon:"📝",label:"Schnelle Notiz", onClick:()=> fireAction("open-quick-note")});
+    items.push({icon:"💡",label:"Schnelle Idee", onClick:()=> fireAction("open-quick-idea")});
+    items.push({icon:"💭",label:"Gedanke notieren", onClick:()=> fireAction("open-quick-thought")});
+    items.push({sep:true});
+    items.push({icon:"🔄",label:"Aktualisieren", onClick:()=> rerender()});
+    items.push({icon:"🔲",label:"Alle Apps", onClick:()=> window.navigate && window.navigate("apps")});
+    items.push({icon:"🏠",label:"Dashboard", onClick:()=> window.navigate && window.navigate("dashboard")});
+    items.push({icon:"⚙️",label:"Einstellungen", onClick:()=> window.navigate && window.navigate("settings")});
+    return { header:{ kind:"App", name: appLabel(route) }, items };
+  }
+
+  // ── Globaler Rechtsklick-Listener ────────────────────────────────────────
+  document.addEventListener("contextmenu", function(e){
+    // Spezialmenüs / native Eingabefelder nicht stören
+    if(e.defaultPrevented) return;
+    const tgt=e.target;
+    if(!tgt || !tgt.closest) return;
+    // Eingabefelder: natives Browser-Menü (Einfügen etc.) behalten
+    if(tgt.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
+    // Bereiche mit eigenem Rechtsklick-Handler überspringen
+    if(tgt.closest('[oncontextmenu], .gcal-event, .rh-context-menu, .q-ctx, #calEventContextMenu')) return;
+    // ReadingHub / NoteFlow haben eigene Textauswahl-Menüs
+    const inSpecialReader = tgt.closest('#readingHubContainer, #noteflowContainer, #pdfedRoot');
+
+    // 1) Entität unter dem Cursor?
+    const entEl = tgt.closest('[data-kind][data-id]');
+    if(entEl){
+      const kind=entEl.getAttribute("data-kind");
+      const id=entEl.getAttribute("data-id");
+      if(kind && id && (typeof window.getEntity==="function") && window.getEntity(kind,id)){
+        e.preventDefault();
+        const { header, items }=entityItems(kind,id);
+        showMenu(e.clientX, e.clientY, header, items);
+        return;
+      }
+    }
+
+    // 2) Markierter Text?
+    const sel = window.getSelection && window.getSelection();
+    const selText = sel ? String(sel).trim() : "";
+    if(selText && selText.length>1 && !inSpecialReader){
+      e.preventDefault();
+      const { header, items }=selectionItems(selText);
+      showMenu(e.clientX, e.clientY, header, items);
+      return;
+    }
+    if(inSpecialReader) return; // sonst Reader-eigenes Verhalten lassen
+
+    // 3) App-Hintergrund
+    e.preventDefault();
+    const { header, items }=appItems(curRoute());
+    showMenu(e.clientX, e.clientY, header, items);
+  }, false);
+
+  // API
+  window.QuantusContextMenu = { close: closeMenu, show: showMenu };
 })();
 </script>
 
