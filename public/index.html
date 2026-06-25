@@ -28159,9 +28159,11 @@ function viewDashboard() {
       <div class="page-actions">
         <button class="btn primary" data-action="quick-task">➕ Neue Aufgabe</button>
         <button class="btn" data-action="nav" data-route="chat">🤖 KI-Assistent</button>
+        <button class="btn" onclick="window.showProductivityStats()" title="Produktivitäts-Statistiken (Woche)">📊 Statistiken</button>
+        <button class="btn" onclick="window.aiSuggestWeeklyGoals()" title="KI schlägt Wochenziele vor">🎯 KI-Wochenziele</button>
       </div>
     </div>
-    
+
     ${renderProgramLinksWidget("dashboard")}
     
     ${(() => {
@@ -65154,6 +65156,7 @@ function viewNotesWorkspace(noteId){
             <button class="btn sm" data-action="toggle-note-fullscreen" title="Vollbild">⛶</button>
             <button class="btn sm" data-action="toggle-pin" data-kind="note" data-id="${openNote.id}">${pinned?"📌":"📍"}</button>
             <button class="btn sm" data-action="note-download-pdf" data-id="${openNote.id}" title="Als PDF">📄 PDF</button>
+            <button class="btn sm" onclick="window.exportNoteText('${openNote.id}','md')" title="Als Markdown herunterladen">⤓ MD</button>
             <button class="btn sm primary" data-action="ai-note-enhance" data-id="${openNote.id}">🤖 KI</button>
             <button class="btn sm danger" data-action="delete-entity" data-kind="note" data-id="${openNote.id}">🗑</button>
           </div>
@@ -99953,6 +99956,125 @@ window.addEventListener("hashchange", function(){
 
   // API
   window.QuantusContextMenu = { close: closeMenu, show: showMenu };
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   PAKET 6 — Komfort & Insights (selbst-enthalten; nutzt window.*-Helfer:
+   navigate, getAllApps, getTaskStats, startOfWeek, addWeeklyGoal, getEntity,
+   callAI, openModal/closeModal, toast, render, APP).
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+  function _esc(s){ return window.esc ? window.esc(s) : String(s==null?"":s); }
+
+  // ── #26 Command-Palette (Ctrl/Cmd+K) ──
+  function _p6Commands(){
+    var cmds=[];
+    var apps=(typeof getAllApps==="function")?getAllApps():[];
+    apps.forEach(function(a){ if(a&&a.key) cmds.push({ icon:a.icon||"→", label:"Gehe zu: "+(a.label||a.name||a.key), run:function(){ window.navigate(a.key); } }); });
+    cmds.push({ icon:"📊", label:"Produktivitäts-Statistiken", run:function(){ window.showProductivityStats(); } });
+    cmds.push({ icon:"🎯", label:"KI-Wochenziele vorschlagen", run:function(){ window.aiSuggestWeeklyGoals(); } });
+    cmds.push({ icon:"⌨", label:"Tastenkürzel-Übersicht", run:function(){ window.showShortcutsOverlay(); } });
+    cmds.push({ icon:"⤓", label:"Offene Notiz als Markdown exportieren", run:function(){ window.exportCurrentNote("md"); } });
+    cmds.push({ icon:"⤓", label:"Offene Notiz als Text exportieren", run:function(){ window.exportCurrentNote("txt"); } });
+    if(typeof window.openGlobalTaskModal==="function") cmds.push({ icon:"➕", label:"Neue Aufgabe", run:function(){ window.openGlobalTaskModal(); } });
+    return cmds;
+  }
+  window.openCommandPalette = function(){
+    window._p6Cmds=_p6Commands();
+    window.openModal("⌘ Befehle & Navigation",
+      '<input id="p6PalInput" type="text" placeholder="Tippe einen Befehl oder eine Seite…" style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"><div id="p6PalList" class="list" style="max-height:340px;overflow:auto;margin-top:10px"></div>',
+      '<button class="btn" data-action="close-modal">Schließen</button>');
+    setTimeout(function(){
+      var inp=document.getElementById("p6PalInput"); _p6RenderPal("");
+      if(inp){ inp.focus(); inp.addEventListener("input", function(){ _p6RenderPal(inp.value); });
+        inp.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); var first=document.querySelector("#p6PalList [data-pi]"); if(first) window._p6RunCmd(parseInt(first.dataset.pi,10)); } }); }
+    },30);
+  };
+  function _p6RenderPal(q){
+    var list=document.getElementById("p6PalList"); if(!list) return;
+    var ql=(q||"").toLowerCase();
+    var items=(window._p6Cmds||[]).map(function(c,i){ return {c:c,i:i}; }).filter(function(x){ return !ql || x.c.label.toLowerCase().indexOf(ql)>=0; }).slice(0,40);
+    list.innerHTML = items.length ? items.map(function(x){ return '<div class="list-item" data-pi="'+x.i+'" style="cursor:pointer" onclick="window._p6RunCmd('+x.i+')"><div class="item-icon">'+x.c.icon+'</div><div class="item-body"><div class="item-title"><span class="name">'+_esc(x.c.label)+'</span></div></div></div>'; }).join("") : '<div class="mini text-center">Keine Treffer.</div>';
+  }
+  window._p6RunCmd = function(i){ var c=window._p6Cmds&&window._p6Cmds[i]; if(window.closeModal) window.closeModal(); if(c&&c.run){ try{ c.run(); }catch(e){ if(window.toast) window.toast("err","Fehler",(e&&e.message)||""); } } };
+
+  // ── #27 Produktivitäts-Statistiken (Woche) ──
+  window.showProductivityStats = function(){
+    var d=window.APP.state.data, now=Date.now();
+    var weekStartMs=(typeof startOfWeek==="function")?startOfWeek(new Date()).getTime():(now-7*86400000);
+    var tasks=Object.values(d.entities.tasks||{});
+    var doneWeek=tasks.filter(function(t){ var u=Date.parse(t.updatedAt); return t.status==="done" && !isNaN(u) && u>=weekStartMs; }).length;
+    var notesWeek=Object.values(d.entities.notes||{}).filter(function(n){ var u=Date.parse(n.updatedAt||n.createdAt); return !isNaN(u)&&u>=weekStartMs; }).length;
+    var open=tasks.filter(function(t){ return t.status!=="done"; }).length;
+    var streak=(d.dayTracker&&d.dayTracker.daysCompleted)||0;
+    var mailActs=(d.activityLog||[]).filter(function(a){ var ts=Date.parse(a.ts); return !isNaN(ts)&&ts>=weekStartMs && /mail|gmail|gesendet|sent|antwort/i.test(((a.action||"")+(a.entityKind||"")+(a.details||""))); }).length;
+    function stat(v,l){ return '<div style="flex:1;min-width:120px;text-align:center;padding:12px;background:var(--panel);border-radius:10px"><div style="font-size:26px;font-weight:800;color:var(--accent)">'+v+'</div><div class="mini text-muted" style="margin-top:2px">'+l+'</div></div>'; }
+    window.openModal("📊 Produktivität – diese Woche",
+      '<div class="flex gap-2" style="flex-wrap:wrap">'+stat(doneWeek,"✅ Aufgaben erledigt")+stat(notesWeek,"📝 Notizen bearbeitet")+stat(mailActs,"✉️ Mail-Aktionen")+stat(open,"📋 offen")+stat(streak,"🔥 Streak (Tage)")+'</div><div class="mini text-muted" style="margin-top:8px">„Mail-Aktionen" = protokollierte Mail-Ereignisse dieser Woche.</div>',
+      '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // ── #28 KI-Wochenziele setzen (Speicherung über bestehendes addWeeklyGoal) ──
+  window.aiSuggestWeeklyGoals = async function(){
+    var d=window.APP.state.data;
+    var openTasks=Object.values(d.entities.tasks||{}).filter(function(t){ return t.status!=="done"; }).slice(0,30).map(function(t){ return t.title; });
+    var projects=Object.values(d.entities.projects||{}).filter(function(p){ return p.status==="active"; }).map(function(p){ return p.title; });
+    window.toast("ok","KI","Schlage Wochenziele vor …");
+    var sys='Schlage 3–5 konkrete, erreichbare Wochenziele vor (Deutsch, je max. 10 Wörter). Antworte AUSSCHLIESSLICH als JSON-Array von Strings, ohne weitere Zeichen.';
+    var raw; try{ raw=await window.callAI("Offene Aufgaben:\n"+openTasks.join("\n")+"\n\nAktive Projekte:\n"+projects.join("\n"), {systemPrompt:sys, maxTokens:300}); }
+    catch(e){ window.toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    var arr=[]; try{ var s=String(raw||"").replace(/^```(?:json)?/i,"").replace(/```$/,"").trim(); var i=s.indexOf("["),j=s.lastIndexOf("]"); if(i>=0&&j>i)s=s.slice(i,j+1); var a=JSON.parse(s); if(Array.isArray(a)) arr=a.map(function(x){ return String(x).trim(); }).filter(Boolean); }catch(e){}
+    if(!arr.length){ window.toast("warn","KI","Keine Vorschläge (API-Key in Einstellungen?)"); return; }
+    window._p6Goals=arr;
+    window.openModal("🎯 KI-Wochenziele", '<div class="mini text-muted mb-2">Wähle die Ziele für diese Woche:</div>'+arr.map(function(g,k){ return '<label style="display:flex;gap:8px;align-items:center;padding:6px 0;cursor:pointer"><input type="checkbox" checked data-p6goal="'+k+'"> '+_esc(g)+'</label>'; }).join(""),
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window._p6AddGoals()">Ziele übernehmen</button>');
+  };
+  window._p6AddGoals = function(){
+    var arr=window._p6Goals||[]; var chosen=[]; document.querySelectorAll('[data-p6goal]').forEach(function(cb){ if(cb.checked) chosen.push(arr[parseInt(cb.dataset.p6goal,10)]); });
+    if(!chosen.length){ window.toast("warn","","Nichts ausgewählt"); return; }
+    if(!confirm("Diese "+chosen.length+" Wochenziele setzen?\n\n"+chosen.join("\n"))) return;
+    var n=0; chosen.forEach(function(g){ if(typeof addWeeklyGoal==="function"){ addWeeklyGoal("custom",1,g); n++; } });
+    if(window.closeModal) window.closeModal(); if(window.render) window.render();
+    window.toast("ok","Wochenziele gesetzt", n+" Ziel(e) hinzugefügt (im Dashboard sichtbar).");
+  };
+
+  // ── #29 Tastenkürzel-Übersicht (?-Overlay) ──
+  window.showShortcutsOverlay = function(){
+    var sc=(window.APP.state.settings&&window.APP.state.settings.shortcuts)||{};
+    function row(label,combo){ return '<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--border)"><span>'+_esc(label)+'</span><kbd style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:1px 7px;font-size:12px">'+_esc(combo)+'</kbd></div>'; }
+    var rows=Object.keys(sc).map(function(k){ var s=sc[k]; if(!s||!s.key) return ""; var combo=(s.ctrl?"Ctrl+":"")+(s.shift?"Shift+":"")+String(s.key).toUpperCase(); return row(s.label||k, combo); }).filter(Boolean).join("");
+    rows += row("Befehls-Palette","Ctrl/Cmd+K") + row("Diese Übersicht","?");
+    window.openModal("⌨ Tastenkürzel", rows || '<div class="mini">Keine Shortcuts definiert.</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // ── #30 Export einer Notiz als Markdown/Text (Download nur auf User-Klick) ──
+  window.exportNoteText = function(noteId, fmt){
+    var note=(typeof window.getEntity==="function")?window.getEntity("note",noteId):null;
+    if(!note){ window.toast("warn","Export","Notiz nicht gefunden"); return; }
+    var ext=(fmt==="txt")?"txt":"md";
+    var content=(ext==="md") ? ("# "+(note.title||"Notiz")+"\n\n"+(note.content||"")) : ((note.title||"Notiz")+"\n\n"+(note.content||""));
+    var blob=new Blob([content], {type:"text/"+(ext==="md"?"markdown":"plain")+";charset=utf-8"});
+    var url=URL.createObjectURL(blob); var a=document.createElement("a");
+    a.href=url; a.download=(String(note.title||"Notiz").replace(/[^a-zA-Z0-9äöüÄÖÜß \-_]/g,"_").trim()||"Notiz")+"."+ext;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+    window.toast("ok","Export","Notiz als ."+ext+" heruntergeladen.");
+  };
+  window.exportCurrentNote = function(fmt){
+    var ed=document.getElementById("noteContentEditor"); var id=ed&&ed.getAttribute("data-id");
+    if(!id){ var sel=document.querySelector('[data-action="note-download-pdf"]'); id=sel&&sel.getAttribute("data-id"); }
+    if(!id){ window.toast("info","Export","Bitte zuerst eine Notiz öffnen."); return; }
+    window.exportNoteText(id, fmt||"md");
+  };
+
+  // ── globale Shortcuts: Ctrl/Cmd+K (Palette) · ? (Übersicht) ──
+  document.addEventListener("keydown", function(e){
+    var k=(e.key||"").toLowerCase();
+    if((e.ctrlKey||e.metaKey) && !e.shiftKey && !e.altKey && k==="k"){ e.preventDefault(); e.stopImmediatePropagation(); window.openCommandPalette(); return; }
+    if(k==="?" ){ var tn=((e.target&&e.target.tagName)||"").toLowerCase(); if(tn==="input"||tn==="textarea"||tn==="select"||(e.target&&e.target.isContentEditable)) return; e.preventDefault(); window.showShortcutsOverlay(); }
+  }, true);
 })();
 </script>
 
