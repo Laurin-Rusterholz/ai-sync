@@ -98661,24 +98661,29 @@ window.addEventListener("hashchange", function(){
     main.addEventListener("dragover",(e)=>{ e.preventDefault(); });
     main.addEventListener("drop",(e)=>{ e.preventDefault(); const f=e.dataTransfer?.files?.[0]; if(f) loadSource(f,{name:f.name}); });
     // Tastatur
+    // Capture-Phase: läuft VOR den globalen App-Shortcuts. Solange der Editor offen
+    // ist, „besitzt" er die Tastatur — App-Shortcuts (z. B. Quick-Note auf Einzeltaste)
+    // dürfen nicht über dem Editor auslösen. Tippen in Editor-Feldern bleibt unberührt.
     document.addEventListener("keydown",(e)=>{
       if(!ED.open) return;
-      // Escape: erst Notiz-Popup schliessen, dann Textbearbeitung beenden, dann Auswahl aufheben, dann Editor schliessen
+      const blockApp=()=>{ if(!(e.ctrlKey||e.metaKey||e.altKey)) e.stopPropagation(); };
+      // Escape: Notiz-Popup → Textbearbeitung → Auswahl → Editor schliessen
       if(e.key==="Escape"){
-        if(qs("#pdfedNotePop")){ closeNotePopup(); return; }
-        const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("editing")){ ae.blur(); return; }
-        if(ED.selected!=null){ deselectAnnot(); return; }
+        if(qs("#pdfedNotePop")){ closeNotePopup(); blockApp(); return; }
+        const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("editing")){ ae.blur(); blockApp(); return; }
+        if(ED.selected!=null){ deselectAnnot(); blockApp(); return; }
         if(!document.querySelector(".pdfed-modal")) closeEditor();
-        return;
+        blockApp(); return;
       }
       const inField = (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) || (e.target && e.target.isContentEditable);
-      if(inField) return;
-      if((e.key==="Delete"||e.key==="Backspace") && ED.selected!=null){ e.preventDefault(); delAnnot(ED.selected); return; }
-      if(e.key==="ArrowRight"||e.key==="PageDown"){ gotoPage(ED.page+1); }
+      if(inField) return;   // in Editor-Feldern: nicht eingreifen (eigene Listener/Default behalten)
+      if((e.key==="Delete"||e.key==="Backspace") && ED.selected!=null){ e.preventDefault(); delAnnot(ED.selected); }
+      else if(e.key==="ArrowRight"||e.key==="PageDown"){ gotoPage(ED.page+1); }
       else if(e.key==="ArrowLeft"||e.key==="PageUp"){ gotoPage(ED.page-1); }
       else if(e.key==="+"){ setScale(ED.scale*1.2); }
       else if(e.key==="-"){ setScale(ED.scale/1.2); }
-    });
+      blockApp();   // alle übrigen Einzeltasten verschlucken → keine App-Shortcuts über dem Editor
+    }, true);
   }
 
   // ─────────────────────────── Laden ───────────────────────────
@@ -98849,6 +98854,8 @@ window.addEventListener("hashchange", function(){
   // ─────────────────────────── Annotation-Overlay ───────────────────────────
   function attachOverlay(ov, i){
     ov.addEventListener("pointerdown",(e)=>{
+      // Laufende Textbearbeitung zuerst beenden — dieser Klick erzeugt dann NICHTS Neues
+      const ae=document.activeElement; if(ae && ae.classList && ae.classList.contains("editing")){ ae.blur(); return; }
       // Klick ins Leere (Auswahl-Werkzeug) hebt die Auswahl auf
       if (ED.tool==="select"){ if(e.target===ov){ deselectAnnot(); closeNotePopup(); } return; }
       if (ED.tool==="hand") return;
@@ -98879,22 +98886,23 @@ window.addEventListener("hashchange", function(){
       }
       if (made.length){ (ED.annots[i]=ED.annots[i]||[]).push(...made); }
       else { (ED.annots[i]=ED.annots[i]||[]).push({ id:uid(), page:i, type:"highlight", color:d.color, x:rx, y:ry, w:rw, h:rh }); }
-      ED.dirty=true; renderOverlay(i); refreshComments(); setTool("select"); return;
+      ED.dirty=true; renderOverlay(i); refreshComments(); return;   // Werkzeug bleibt aktiv (sticky)
     }
     const a={ id:uid(), page:i, type:d.t, color:d.color, stroke:d.stroke };
     if (d.t==="ink"){ if(d.pts.length<2){ renderOverlay(i); return; } a.pts=d.pts.slice(); }
     else if (d.t==="line"||d.t==="arrow"){ a.x0=d.sx; a.y0=d.sy; a.x1=d.ex; a.y1=d.ey; if(Math.hypot(a.x1-a.x0,a.y1-a.y0)<0.004){ renderOverlay(i); return; } }
     else { const x=Math.min(d.sx,d.ex), y=Math.min(d.sy,d.ey), w=Math.abs(d.ex-d.sx), h=Math.abs(d.ey-d.sy); if(w<0.004||h<0.004){ renderOverlay(i); return; } a.x=x; a.y=y; a.w=w; a.h=h; }
-    (ED.annots[i]=ED.annots[i]||[]).push(a); ED.dirty=true; ED.selected=a.id; renderOverlay(i); refreshComments();
-    setTool("select"); syncToolbarToSelection();
+    (ED.annots[i]=ED.annots[i]||[]).push(a); ED.dirty=true; renderOverlay(i); refreshComments();
+    // Werkzeug bleibt aktiv (sticky) — so kann man mehrere Elemente hintereinander zeichnen
   }
 
   function placeClick(i, nx, ny, t){
-    if (t==="text"){ const a={ id:uid(), page:i, type:"text", color:ED.color, x:nx, y:ny, size:16, text:"" }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); setTool("select"); setTimeout(()=>startTextEdit(a.id),30); return; }
-    if (t==="note"){ const a={ id:uid(), page:i, type:"note", color:ED.color, x:nx, y:ny, text:"" }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); setTimeout(()=>openNotePopup(a),30); return; }
-    if (t==="stamp"){ chooseStamp((txt,col)=>{ if(!txt) return; const a={ id:uid(), page:i, type:"stamp", color:col||"#d9694a", x:nx, y:ny, w:0.18, h:0.05, text:txt }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); }); return; }
-    if (t==="signature"){ if(ED.pendingSignature){ const a={ id:uid(), page:i, type:"signature", x:nx, y:ny, w:0.22, h:0.09, dataUrl:ED.pendingSignature }; pushAnnot(i,a); ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); } else { openSignaturePad(()=>placeClick(i,nx,ny,t)); } return; }
-    if (t==="image"){ if(ED.pendingImage){ const r=ED.pendingImage.w/ED.pendingImage.h; const a={ id:uid(), page:i, type:"image", x:nx, y:ny, w:0.3, h:0.3/(r||1), dataUrl:ED.pendingImage.dataUrl }; pushAnnot(i,a); ED.pendingImage=null; ED.selected=a.id; renderOverlay(i); refreshComments(); setTool("select"); } else { pickFile("image/*", async (f)=>{ ED.pendingImage=await fileToPng(f); placeClick(i,nx,ny,t); }); } return; }
+    // Werkzeuge bleiben nach dem Platzieren aktiv (sticky)
+    if (t==="text"){ const a={ id:uid(), page:i, type:"text", color:ED.color, x:nx, y:ny, size:16, text:"" }; pushAnnot(i,a); renderOverlay(i); setTimeout(()=>startTextEdit(a.id),30); return; }
+    if (t==="note"){ const a={ id:uid(), page:i, type:"note", color:ED.color, x:nx, y:ny, text:"" }; pushAnnot(i,a); renderOverlay(i); refreshComments(); setTimeout(()=>openNotePopup(a),30); return; }
+    if (t==="stamp"){ chooseStamp((txt,col)=>{ if(!txt) return; const a={ id:uid(), page:i, type:"stamp", color:col||"#d9694a", x:nx, y:ny, w:0.18, h:0.05, text:txt }; pushAnnot(i,a); renderOverlay(i); refreshComments(); }); return; }
+    if (t==="signature"){ if(ED.pendingSignature){ const a={ id:uid(), page:i, type:"signature", x:nx, y:ny, w:0.22, h:0.09, dataUrl:ED.pendingSignature }; pushAnnot(i,a); renderOverlay(i); refreshComments(); } else { openSignaturePad(()=>placeClick(i,nx,ny,t)); } return; }
+    if (t==="image"){ if(ED.pendingImage){ const r=ED.pendingImage.w/ED.pendingImage.h; const a={ id:uid(), page:i, type:"image", x:nx, y:ny, w:0.3, h:0.3/(r||1), dataUrl:ED.pendingImage.dataUrl }; pushAnnot(i,a); ED.pendingImage=null; renderOverlay(i); refreshComments(); } else { pickFile("image/*", async (f)=>{ ED.pendingImage=await fileToPng(f); placeClick(i,nx,ny,t); }); } return; }
   }
   // Textfeld in den Bearbeiten-Modus versetzen (Cursor rein, alles markieren)
   function startTextEdit(id){ const el=qs(`.pdfed-annot[data-id="${id}"]`); if(!el) return; el.contentEditable="true"; el.classList.add("editing"); el.focus(); try { const sel=window.getSelection(); sel.removeAllRanges(); const rng=document.createRange(); rng.selectNodeContents(el); sel.addRange(rng); } catch(e){} }
