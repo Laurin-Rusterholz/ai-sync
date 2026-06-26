@@ -96890,6 +96890,7 @@ console.log('📚 Leseliste geladen');
       +   '<div class="gml-appt-title">'+esc(a.title||"Termin")+'</div>'
       +   '<div class="gml-appt-when">'+esc(apptWhenText(a))+(a.location?' · '+esc(a.location):'')+'</div>'
       + '</div>'
+      + '<button class="btn" onclick="window.gmailEditDetectedAppt(\''+jsStr(o.id)+'\')" title="Erkannten Termin korrigieren (Titel/Datum/Zeit/Ort), falls die KI etwas falsch erkannt hat">✏️ Korrigieren</button>'
       + '<button class="btn primary" onclick="gmailAddDetectedToCalendar(\''+jsStr(o.id)+'\')" title="Im Google-Kalender-Editor vorausgefüllt öffnen – Titel/Datum/Zeit vor dem Speichern bearbeitbar">+ In Google Kalender eintragen</button>'
       + '</div>';
   }
@@ -96929,6 +96930,56 @@ console.log('📚 Leseliste geladen');
     if (typeof window.gcalQuickCreateInline==="function"){
       Promise.resolve(window.gcalQuickCreateInline(prefill)).then(function(ok){ if (!ok) gmailOpenCalendarLink(a, desc); }).catch(function(){ gmailOpenCalendarLink(a, desc); });
     } else { gmailOpenCalendarLink(a, desc); }
+  };
+
+  // Korrektur des erkannten Termin-Vorschlags (falls die KI etwas falsch erkannt hat).
+  // Bearbeitet nur den gecachten Vorschlag (GM._apptCache); das Eintragen passiert weiterhin
+  // erst über „In Google Kalender eintragen" (gcalQuickCreateInline → Editor, Speichern = Nutzer).
+  window.gmailEditDetectedAppt = function(id){
+    var a = (GM._apptCache && GM._apptCache[id]) || null;
+    if (!a || !a.hasDate){ toast("info","Kein Termin",""); return; }
+    var date = (a.startISO||"").slice(0,10);
+    var st = a.allDay ? "09:00" : ((a.startISO||"").slice(11,16) || "09:00");
+    var et = a.allDay ? "10:00" : ((a.endISO||"").slice(11,16) || "10:00");
+    var inp = 'style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"';
+    var html = '<div class="form">'
+      + '<label class="col-12" style="display:block;margin-bottom:10px">Titel<input id="apptEdTitle" type="text" '+inp+' value="'+esc(a.title||"")+'"></label>'
+      + '<label class="col-12" style="display:block;margin-bottom:10px">Datum<input id="apptEdDate" type="date" '+inp+' value="'+esc(date)+'"></label>'
+      + '<label style="display:flex;align-items:center;gap:8px;margin:8px 0"><input id="apptEdAllday" type="checkbox" '+(a.allDay?"checked":"")+' onchange="var d=this.checked;var s=document.getElementById(\'apptEdStart\'),e=document.getElementById(\'apptEdEnd\');if(s)s.disabled=d;if(e)e.disabled=d;"> ganztägig</label>'
+      + '<div style="display:flex;gap:8px;margin-bottom:10px">'
+      +   '<label style="flex:1">Start<input id="apptEdStart" type="time" '+inp+' value="'+esc(st)+'"'+(a.allDay?" disabled":"")+'></label>'
+      +   '<label style="flex:1">Ende<input id="apptEdEnd" type="time" '+inp+' value="'+esc(et)+'"'+(a.allDay?" disabled":"")+'></label>'
+      + '</div>'
+      + '<label class="col-12" style="display:block">Ort<input id="apptEdLoc" type="text" '+inp+' value="'+esc(a.location||"")+'" placeholder="(optional)"></label>'
+      + '</div>';
+    window.openModal("✏️ Termin korrigieren", html,
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window.gmailSaveDetectedAppt(\''+jsStr(id)+'\')">Übernehmen</button>');
+  };
+  window.gmailSaveDetectedAppt = function(id){
+    var a = (GM._apptCache && GM._apptCache[id]) || null; if(!a){ return; }
+    var g=function(x){ return document.getElementById(x); };
+    var title=((g("apptEdTitle")||{}).value||"Termin").trim() || "Termin";
+    var date=((g("apptEdDate")||{}).value||"").trim();
+    var allDay=!!(g("apptEdAllday") && g("apptEdAllday").checked);
+    var st=((g("apptEdStart")||{}).value||"").trim();
+    var et=((g("apptEdEnd")||{}).value||"").trim();
+    var loc=((g("apptEdLoc")||{}).value||"").trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){ toast("err","Ungültig","Bitte ein gültiges Datum wählen."); return; }
+    var startISO, endISO;
+    if(allDay){ startISO=date; endISO=date; }
+    else {
+      if(!/^\d{2}:\d{2}$/.test(st)) st="09:00";
+      startISO=date+"T"+st;
+      var sdt=new Date(startISO);
+      if(/^\d{2}:\d{2}$/.test(et) && new Date(date+"T"+et) > sdt){ endISO=date+"T"+et; }
+      else { endISO=apptIsoLocal(new Date(sdt.getTime()+3600000)); }
+    }
+    var norm = apptNormalize({ title:title, startISO:startISO, endISO:endISO, allDay:allDay, location:loc, notes:a.notes||"" });
+    if(!norm.hasDate){ toast("err","Ungültig","Termin konnte nicht übernommen werden."); return; }
+    GM._apptCache[id] = norm;
+    if(window.closeModal) window.closeModal();
+    rerender();
+    toast("ok","Korrigiert","Termin-Vorschlag aktualisiert.");
   };
 
   // ── 2) Mail → Aufgabe (taskRequests / taskSuggestions) ──
