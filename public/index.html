@@ -5590,6 +5590,7 @@ function buildLocalAppSnapshot() {
   if (APP.state.ui?.budgetTxFilter) snapshot._budgetTxFilter = APP.state.ui.budgetTxFilter;
   delete snapshot.recallLabData;
   delete snapshot._extraLocal;
+  delete snapshot._deleteLog;
   delete snapshot._readingHubAnnotations;
   delete snapshot._readingHubVocabulary;
   delete snapshot._readingHubBookmarks;
@@ -5609,6 +5610,9 @@ function buildRemoteAppPayload() {
   } catch(e) {}
   // Extra App-Daten (PINs, Reader, ResearchHub, Readlist, Übersetzer-Verlauf, Theme)
   payload._extraLocal = collectExtraLocalKeys();
+  // Tombstones mitsenden, damit echte Löschungen über alle Geräte propagieren
+  // (sonst "Geister-Wiederauferstehung" gelöschter Items auf Geräten ohne Tombstone).
+  try { payload._deleteLog = getDeleteLog(); } catch(e) {}
   if (!payload.meta) payload.meta = {};
   payload.meta.updatedAt = new Date().toISOString();
   payload.meta.lastSavedBy = getOrCreateDeviceId();
@@ -9694,6 +9698,43 @@ function logDeletion(entityType, id) {
   }
   try { localStorage.setItem('_delete_log', JSON.stringify(log)); } catch(e) {}
 }
+// Vereint einen Remote-Tombstone-Log (aus payload._deleteLog) mit dem lokalen
+// _delete_log (max-Zeitstempel pro id gewinnt), pruned >30 Tage, persistiert und
+// gibt das vereinte Log zurück. So propagieren echte Löschungen über alle Geräte.
+function mergeAndPersistDeleteLog(remoteLog) {
+  const local = getDeleteLog();
+  if (remoteLog && typeof remoteLog === 'object') {
+    for (const [type, bucket] of Object.entries(remoteLog)) {
+      if (!bucket || typeof bucket !== 'object') continue;
+      if (!local[type]) local[type] = {};
+      for (const [id, ts] of Object.entries(bucket)) {
+        const t = Number(ts) || 0;
+        if (!local[type][id] || t > local[type][id]) local[type][id] = t;
+      }
+    }
+  }
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  for (const type of Object.keys(local)) {
+    for (const [id, ts] of Object.entries(local[type])) if (ts < cutoff) delete local[type][id];
+    if (Object.keys(local[type]).length === 0) delete local[type];
+  }
+  try { localStorage.setItem('_delete_log', JSON.stringify(local)); } catch(e) {}
+  return local;
+}
+// Baut aus einem (verschachtelten) Delete-Log eine flache id→Zeitstempel-Map.
+// Wichtig: umgeht das Singular/Plural-Bucket-Problem (logDeletion speichert mal
+// 'task', mal 'nhNews') — beim Merge zählt nur die id, nicht der Bucket-Name.
+function flattenDeleteLog(log) {
+  const flat = {};
+  for (const bucket of Object.values(log || {})) {
+    if (!bucket || typeof bucket !== 'object') continue;
+    for (const [id, ts] of Object.entries(bucket)) {
+      const t = Number(ts) || 0;
+      if (!flat[id] || t > flat[id]) flat[id] = t;
+    }
+  }
+  return flat;
+}
 
 // ── Field-level merge for individual entities ──
 // Count total entities across all collections (for sync safety checks)
@@ -9788,13 +9829,20 @@ function formatSyncStatsShort(stats) {
   return parts.join(' · ');
 }
 
+// Einheitlicher Zeitstempel eines Items — deckt ALLE Feldnamen-Konventionen ab
+// (Haupt-Entities: createdAt/updatedAt; NewsroomHub: created/updated). Fehlt
+// jeder Zeitstempel → 0 (gilt als "unbekannt" und wird im Merge sicher behalten).
+function entityTimestamp(item) {
+  if (!item || typeof item !== 'object') return 0;
+  return new Date(item.updatedAt || item.updated || item.createdAt || item.created || 0).getTime() || 0;
+}
 function mergeEntity(local, remote) {
   if (!local) return remote;
   if (!remote) return local;
-  
-  const localTs = new Date(local.updatedAt || local.updated || local.createdAt || local.created || 0).getTime() || 0;
-  const remoteTs = new Date(remote.updatedAt || remote.updated || remote.createdAt || remote.created || 0).getTime() || 0;
-  
+
+  const localTs = entityTimestamp(local);
+  const remoteTs = entityTimestamp(remote);
+
   // Simple: take the NEWER version. No field merging, no array accumulation.
   return remoteTs > localTs ? JSON.parse(JSON.stringify(remote)) : local;
 }
@@ -9813,8 +9861,12 @@ function mergeData(local, remote) {
   if (!local || !local.entities) return normalizeData(remote);
   
   const merged = JSON.parse(JSON.stringify(local));
-  const deleteLog = getDeleteLog();
-  
+  // Tombstones beider Seiten vereinen (Remote bringt payload._deleteLog mit) und
+  // persistieren → echte Löschungen propagieren über alle Geräte (keine Geister-
+  // Wiederauferstehung). Danach flache id→ts-Map (umgeht Singular/Plural-Buckets).
+  const combinedDeleteLog = mergeAndPersistDeleteLog(remote._deleteLog);
+  const tombstones = flattenDeleteLog(combinedDeleteLog);
+
   // ── Merge entity collections ──
   const allEntityKeys = new Set([
     ...Object.keys(local.entities || {}),
@@ -9828,32 +9880,30 @@ function mergeData(local, remote) {
     if (typeof remoteCol !== 'object' || remoteCol === null || Array.isArray(remoteCol)) continue;
     
     if (!merged.entities[key]) merged.entities[key] = {};
-    const deletedIds = deleteLog[key] || {};
-    
+
     const allIds = new Set([...Object.keys(localCol), ...Object.keys(remoteCol)]);
-    
+
     for (const id of allIds) {
       const localItem = localCol[id];
       const remoteItem = remoteCol[id];
-      
-      // Skip if deliberately deleted locally
-      if (deletedIds[id]) {
-        // But only if the remote version isn't newer than the deletion
-        const remoteTs = remoteItem ? new Date(remoteItem.updatedAt || remoteItem.createdAt || 0).getTime() : 0;
-        if (remoteTs > deletedIds[id]) {
-          // Remote was updated AFTER local deletion → keep remote (user re-created or edited elsewhere)
-          merged.entities[key][id] = remoteItem;
-        } else {
-          // Deletion is newer → keep deleted
-          delete merged.entities[key][id];
-          continue;
-        }
-      } else if (localItem && !remoteItem) {
-        merged.entities[key][id] = localItem;
-      } else if (!localItem && remoteItem) {
-        merged.entities[key][id] = remoteItem;
-      } else if (localItem && remoteItem) {
-        merged.entities[key][id] = mergeEntity(localItem, remoteItem);
+
+      // 1) Union per id + neuere Version gewinnt. Dedupe ist INHÄRENT: die
+      //    Collection ist ein nach id indiziertes Objekt — pro id genau EIN
+      //    Schlüssel, doppelte Einträge sind strukturell unmöglich.
+      let winner;
+      if (localItem && remoteItem) winner = mergeEntity(localItem, remoteItem);
+      else winner = localItem || remoteItem;
+      if (!winner) { delete merged.entities[key][id]; continue; }
+
+      // 2) Tombstone wirkt NUR, wenn ein gültiger Lösch-Zeitstempel ECHT NEUER
+      //    ist als der (neueste) Item-Zeitstempel. Beides muss > 0 sein; fehlt
+      //    der Item-Zeitstempel, wird im Zweifel BEHALTEN (kein Datenverlust).
+      const tombTs = tombstones[id] || 0;
+      const itemTs = entityTimestamp(winner);
+      if (tombTs > 0 && itemTs > 0 && tombTs > itemTs) {
+        delete merged.entities[key][id];   // echte, neuere Löschung gewinnt
+      } else {
+        merged.entities[key][id] = winner; // behalten (Union, neuere Version)
       }
     }
   }
@@ -28159,9 +28209,11 @@ function viewDashboard() {
       <div class="page-actions">
         <button class="btn primary" data-action="quick-task">➕ Neue Aufgabe</button>
         <button class="btn" data-action="nav" data-route="chat">🤖 KI-Assistent</button>
+        <button class="btn" onclick="window.showProductivityStats()" title="Produktivitäts-Statistiken (Woche)">📊 Statistiken</button>
+        <button class="btn" onclick="window.aiSuggestWeeklyGoals()" title="KI schlägt Wochenziele vor">🎯 KI-Wochenziele</button>
       </div>
     </div>
-    
+
     ${renderProgramLinksWidget("dashboard")}
     
     ${(() => {
@@ -65162,6 +65214,7 @@ function viewNotesWorkspace(noteId){
             <button class="btn sm" data-action="toggle-note-fullscreen" title="Vollbild">⛶</button>
             <button class="btn sm" data-action="toggle-pin" data-kind="note" data-id="${openNote.id}">${pinned?"📌":"📍"}</button>
             <button class="btn sm" data-action="note-download-pdf" data-id="${openNote.id}" title="Als PDF">📄 PDF</button>
+            <button class="btn sm" onclick="window.exportNoteText('${openNote.id}','md')" title="Als Markdown herunterladen">⤓ MD</button>
             <button class="btn sm primary" data-action="ai-note-enhance" data-id="${openNote.id}">🤖 KI</button>
             <button class="btn sm danger" data-action="delete-entity" data-kind="note" data-id="${openNote.id}">🗑</button>
           </div>
@@ -65188,6 +65241,15 @@ function viewNotesWorkspace(noteId){
               <button class="btn sm" data-action="ai-translate-note" data-id="${openNote.id}">🌍 Übersetzen</button>
               <button class="btn sm" data-action="ai-expand-note" data-id="${openNote.id}">📖 Erweitern</button>
               <button class="btn sm" data-action="ai-suggest-links" data-kind="note" data-id="${openNote.id}">🔗 KI-Verknüpfung</button>
+            </div>
+            <div class="sep"></div>
+            <div class="mini text-muted mb-1">✍️ Schreibassistenz (wirkt auf markierten Text – ohne Auswahl auf die ganze Notiz):</div>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn sm" data-action="ai-p1-formal" data-id="${openNote.id}" title="Formeller umformulieren">🎩 Formeller</button>
+              <button class="btn sm" data-action="ai-p1-casual" data-id="${openNote.id}" title="Lockerer umformulieren">😊 Lockerer</button>
+              <button class="btn sm" data-action="ai-p1-shorten" data-id="${openNote.id}" title="Kürzer & prägnanter">✂️ Kürzer</button>
+              <button class="btn sm" data-action="ai-p1-proofread" data-id="${openNote.id}" title="Nur Rechtschreibung/Grammatik – Stil unverändert">📐 Korrektur</button>
+              <button class="btn sm" data-action="ai-p1-nextsteps" data-id="${openNote.id}" title="Nächste Schritte ableiten und als Aufgaben anlegen">➡️ Nächste Schritte → Aufgaben</button>
             </div>
             <div class="sep"></div>
             <div class="mini text-muted mb-1">🔎 Wissen & Suche:</div>
@@ -71241,10 +71303,92 @@ Analyse:`;
       aiNoteEnhance(id);
       return;
     }
-    
+
+    // ── Paket 1: KI-Schreibassistenz ──
+    if (action === "ai-p1-formal"){ e.preventDefault(); _p1Rewrite(id, "Formeller", "Formuliere den folgenden Text in einem formellen, professionellen Ton um. Behalte Sprache und inhaltliche Aussage bei. Antworte NUR mit dem umformulierten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-casual"){ e.preventDefault(); _p1Rewrite(id, "Lockerer", "Formuliere den folgenden Text in einem lockeren, freundlichen Ton um. Behalte Sprache und inhaltliche Aussage bei. Antworte NUR mit dem umformulierten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-shorten"){ e.preventDefault(); _p1Rewrite(id, "Kürzer fassen", "Fasse den folgenden Text deutlich kürzer und prägnanter, ohne wichtige Information zu verlieren. Behalte die Sprache bei. Antworte NUR mit dem gekürzten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-proofread"){ e.preventDefault(); _p1Rewrite(id, "Rechtschreibung & Grammatik", "Korrigiere ausschließlich Rechtschreibung, Grammatik und Zeichensetzung im folgenden Text. Ändere NICHT Stil, Wortwahl, Satzbau oder Inhalt. Behalte die Sprache bei. Antworte NUR mit dem korrigierten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-nextsteps"){ e.preventDefault(); _p1NextSteps(id); return; }
+
     return __v11_prev_handleClick ? __v11_prev_handleClick(e) : undefined;
   };
-  
+
+  // ════════════════════════════════════════════════════════════════════
+  //  PAKET 1 — KI-Schreibassistenz für Notizen (nutzt window.callAI)
+  //  Operiert auf dem im Editor (#noteContentEditor) markierten Text, sonst
+  //  auf dem ganzen Notizinhalt. Schreibt erst nach „Übernehmen" zurück;
+  //  „Nächste Schritte" legt Aufgaben erst nach Bestätigung (confirm) an.
+  // ════════════════════════════════════════════════════════════════════
+  function _p1Sel(noteId){
+    var ta = document.getElementById("noteContentEditor");
+    if (ta && ta.selectionStart != null && ta.selectionEnd > ta.selectionStart){
+      return { text: ta.value.substring(ta.selectionStart, ta.selectionEnd), sel:true, start:ta.selectionStart, end:ta.selectionEnd };
+    }
+    var note = getEntity("note", noteId);
+    return { text: (ta ? ta.value : ((note && note.content) || "")), sel:false };
+  }
+  async function _p1Rewrite(noteId, label, sys){
+    var g = _p1Sel(noteId);
+    if (!g.text || !g.text.trim()){ toast("warn","KI", (g.sel ? "Markierter Text" : "Notiz") + " ist leer"); return; }
+    toast("ok","KI", label + " …");
+    var result;
+    try { result = await window.callAI(g.text, { systemPrompt: sys, maxTokens: 1500 }); }
+    catch(err){ toast("danger","KI-Fehler", (err && err.message) || "Aufruf fehlgeschlagen"); return; }
+    if (!result){ toast("warn","KI","Kein Ergebnis – API-Key in den Einstellungen hinterlegt?"); return; }
+    window._p1Pending = { noteId:noteId, sel:g.sel, start:g.start, end:g.end };
+    openModal(label,
+      '<div class="form"><label class="col-12">Ergebnis ' + (g.sel ? "(ersetzt die Auswahl)" : "(ersetzt den Notizinhalt)") + '<textarea id="p1Result" style="min-height:280px">' + esc(result) + '</textarea></label></div>',
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn" onclick="p1CopyResult()">📋 Kopieren</button><button class="btn primary" onclick="p1ApplyResult()">Übernehmen</button>');
+  }
+  window.p1CopyResult = function(){ var t=document.getElementById("p1Result"); if(t && navigator.clipboard){ navigator.clipboard.writeText(t.value); toast("ok","Kopiert",""); } };
+  window.p1ApplyResult = function(){
+    var t=document.getElementById("p1Result"), p=window._p1Pending; if(!t || !p) return;
+    var note=getEntity("note", p.noteId); if(!note) return;
+    var ta=document.getElementById("noteContentEditor");
+    if (p.sel && ta){ note.content = ta.value.slice(0, p.start) + t.value + ta.value.slice(p.end); }
+    else { note.content = t.value; }
+    note.updatedAt = nowIso(); scheduleSave(); closeModal(); render();
+    toast("ok","Übernommen","Notiztext aktualisiert");
+  };
+  function _p1ParseSteps(raw){
+    if(!raw) return [];
+    var s=String(raw).trim().replace(/^```(?:json)?/i,"").replace(/```$/,"").trim();
+    try { var arr=JSON.parse(s); if(Array.isArray(arr)) return arr.filter(function(x){return x && x.title;}).map(function(x){return { title:String(x.title).slice(0,200), description:String(x.description||"") };}); } catch(e){}
+    return s.split(/\n+/).map(function(l){return l.replace(/^[-*\d.\)\s]+/,"").trim();}).filter(Boolean).slice(0,6).map(function(l){return { title:l.slice(0,200), description:"" };});
+  }
+  async function _p1NextSteps(noteId){
+    var note=getEntity("note", noteId), src=(note && note.content) || "";
+    if(!src.trim()){ toast("warn","KI","Notiz ist leer"); return; }
+    toast("ok","KI","Leite nächste Schritte ab …");
+    var sys='Leite aus dem Text konkrete, umsetzbare nächste Schritte als Aufgaben ab. Antworte AUSSCHLIESSLICH als JSON-Array von Objekten {"title":"kurzer Titel","description":"1 Satz"} (höchstens 6), ohne Markdown, ohne weitere Zeichen.';
+    var raw;
+    try { raw=await window.callAI(src, { systemPrompt:sys, maxTokens:900 }); }
+    catch(err){ toast("danger","KI-Fehler", (err && err.message) || ""); return; }
+    var items=_p1ParseSteps(raw);
+    if(!items.length){ toast("warn","KI","Keine Schritte erkannt"); return; }
+    window._p1Steps = { noteId:noteId, items:items };
+    var listHtml=items.map(function(it,i){ return '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;cursor:pointer"><input type="checkbox" checked data-p1step="'+i+'" style="margin-top:3px"><span><strong>'+esc(it.title)+'</strong>'+(it.description?'<br><span class="mini text-muted">'+esc(it.description)+'</span>':'')+'</span></label>'; }).join("");
+    openModal("Nächste Schritte → Aufgaben",
+      '<div class="mini text-muted mb-2">Aus der Notiz abgeleitet. Wähle aus, was angelegt werden soll:</div>'+listHtml,
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="p1CreateSteps()">Aufgaben anlegen</button>');
+  }
+  window.p1CreateSteps = function(){
+    var st=window._p1Steps; if(!st) return;
+    var chosen=[]; document.querySelectorAll('[data-p1step]').forEach(function(cb){ if(cb.checked) chosen.push(st.items[parseInt(cb.dataset.p1step,10)]); });
+    if(!chosen.length){ toast("warn","","Nichts ausgewählt"); return; }
+    if(!confirm("Der KI-Assistent möchte "+chosen.length+" Aufgabe(n) anlegen:\n\n"+chosen.map(function(c){return "• "+c.title;}).join("\n")+"\n\nAnlegen?")) return;
+    var note=getEntity("note", st.noteId), n=0;
+    chosen.forEach(function(c){
+      var ref = note ? ("\n\nAus Notiz: "+(note.title||"(ohne Titel)")) : "";
+      var tid = window.createEntity("task", { title:c.title, description:(c.description||"")+ref, status:"todo", priority:3, tags:["Notiz"], source:"note", sourceNoteId: st.noteId });
+      if(tid){ n++; if(note){ note.linkedTasks = note.linkedTasks||[]; note.linkedTasks.push(tid); } }
+    });
+    if(note) note.updatedAt = nowIso();
+    scheduleSave(); closeModal(); render();
+    toast("ok","Aufgaben erstellt", n+" Aufgabe(n) aus den nächsten Schritten angelegt.");
+  };
+
   // KI-Zugriff auf alle Notizen für Chat
   window.getNotesContext = function() {
     const notes = Object.values(APP.state.data.entities.notes || {});
@@ -94318,6 +94462,11 @@ console.log('📚 Leseliste geladen');
       + '</div><div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">'
       +   '<button class="btn" onclick="gcalRefresh()">🔄 Aktualisieren</button>'
       +   '<button class="btn primary" onclick="gcalOpenEditor()">➕ Neues Event</button>'
+      +   '<button class="btn" onclick="window.gcalTodayAgenda()" title="Heutige Termine kompakt">📋 Tagesagenda</button>'
+      +   '<button class="btn" onclick="window.gcalSuggestFromText()" title="Termin aus Freitext – Vorschau vor dem Eintragen">✨ Termin aus Text</button>'
+      +   '<button class="btn" onclick="window.gcalFindFreeSlots()" title="Freie Zeitfenster finden">🕓 Freie Slots</button>'
+      +   '<button class="btn" onclick="window.gcalMeetingPrep()" title="KI sammelt Notizen/Mails zum Termin">📑 Meeting-Vorbereitung</button>'
+      +   '<button class="btn" onclick="window.gcalWeekReview()" title="KI-Zusammenfassung der kommenden Woche">🗓️ Wochen-Review</button>'
       +   '<button class="btn" onclick="gcalDisconnect()" title="Google-Konto trennen">🔌 Trennen</button>'
       + '</div></div>'
       + '<div class="gcv-head"><div class="gcv-headL">'
@@ -94780,6 +94929,105 @@ console.log('📚 Leseliste geladen');
     }
     return slots;
   }
+
+  // ════════════════════════════════════════════════════════════════════
+  //  PAKET 5 — Kalender & Planung (im gcal-Modul; nutzt GC, gcApi, gcalFreeSlots,
+  //  evStart/isAllDay/fmtTime/toDateVal, gcalOpenEditor, window.callAI/getNotesContext/APP).
+  //  Schreiben NUR mit Bestätigung: Termin-Vorschlag öffnet den Editor (Speichern = User).
+  // ════════════════════════════════════════════════════════════════════
+  function _p5PrimaryCal(){ var w=(GC.calendars||[]).filter(function(c){ return c.accessRole==="owner"||c.accessRole==="writer"; }); return ((w.find(function(c){ return c.primary; })||w[0]||{}).id); }
+  function _p5Today(){ return toDateVal(new Date()); }
+
+  // #21 Tagesagenda – heutige Termine kompakt
+  window.gcalTodayAgenda = function(){
+    try { gcalEnsureLoaded(); } catch(e){}
+    var today=_p5Today();
+    var evs=(GC.events||[]).filter(function(e){ return toDateVal(evStart(e))===today; }).sort(function(a,b){ return evStart(a)-evStart(b); });
+    var html = evs.length ? '<div>'+evs.map(function(e){ var t=isAllDay(e)?"ganztägig":fmtTime(evStart(e)); return '<div style="display:flex;gap:10px;padding:8px 10px;background:var(--panel);border-radius:8px;margin-bottom:5px"><span style="font-weight:700;min-width:74px;font-variant-numeric:tabular-nums">'+esc(t)+'</span><span>'+esc(e.summary||"(ohne Titel)")+(e.location?' · <span class="mini text-muted">'+esc(e.location)+'</span>':'')+'</span></div>'; }).join("")+'</div>' : '<div class="mini text-muted">Heute keine Termine.</div>';
+    window.openModal("📋 Tagesagenda – heute", html, '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // #22 KI-Terminvorschlag aus Freitext → Vorschau → Editor (Schreiben nur per Speichern)
+  window.gcalSuggestFromText = function(){
+    window.openModal("✨ Termin aus Freitext",
+      '<div class="form"><label class="col-12">Beschreibung<input id="p5ApptText" type="text" placeholder="z.B. nächsten Di 15 Uhr Call mit Anna"></label><div id="p5ApptPrev" class="mini text-muted" style="margin-top:8px"></div></div>',
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window._p5ParseAppt()">Vorschlag erstellen</button>');
+    setTimeout(function(){ var i=document.getElementById("p5ApptText"); if(i) i.focus(); },30);
+  };
+  window._p5ParseAppt = async function(){
+    var el=document.getElementById("p5ApptText"), prev=document.getElementById("p5ApptPrev");
+    var txt=(el&&el.value||"").trim(); if(!txt){ if(prev) prev.textContent="Bitte etwas eingeben."; return; }
+    if(prev) prev.textContent="⏳ Analysiere …";
+    var sys='Extrahiere einen Kalendertermin aus dem Text. Heute ist '+_p5Today()+' (Zeitzone Europe/Zürich). Antworte AUSSCHLIESSLICH als JSON {"title":"...","date":"YYYY-MM-DD","start":"HH:MM","end":"HH:MM","location":""} ohne weitere Zeichen. Ohne Uhrzeit start/end leer lassen.';
+    var raw; try{ raw=await window.callAI(txt, {systemPrompt:sys, maxTokens:200}); }catch(e){ if(prev) prev.textContent="Fehler: "+((e&&e.message)||""); return; }
+    var o=null; try{ var s=String(raw||"").replace(/^```(?:json)?/i,"").replace(/```$/,"").trim(); var i=s.indexOf("{"),j=s.lastIndexOf("}"); if(i>=0&&j>i)s=s.slice(i,j+1); o=JSON.parse(s); }catch(e){}
+    if(!o||!o.date||!/^\d{4}-\d{2}-\d{2}$/.test(o.date)){ if(prev) prev.textContent="Konnte keinen Termin erkennen. Bitte konkreter formulieren."; return; }
+    window._p5Appt=o;
+    var when=o.start?(o.start+(o.end?("–"+o.end):"")+" Uhr"):"ganztägig";
+    if(prev) prev.innerHTML='<div style="background:var(--panel);border-radius:8px;padding:8px;margin-top:6px"><strong>'+esc(o.title||"Termin")+'</strong><br>'+esc(o.date)+' · '+esc(when)+(o.location?(' · '+esc(o.location)):'')+'</div><button class="btn primary" style="margin-top:8px" onclick="window._p5OpenApptEditor()">📅 Im Kalender-Editor öffnen (Vorschau & Speichern)</button>';
+  };
+  window._p5OpenApptEditor = function(){
+    var o=window._p5Appt; if(!o) return;
+    if(window.closeModal) window.closeModal();
+    var prefill={ title:o.title||"Termin", date:o.date, time:o.start||"", endTime:o.end||"", allDay:!o.start, location:o.location||"" };
+    try { gcalOpenEditor(null, null, prefill); } catch(e){ toast("err","Kalender","Editor konnte nicht geöffnet werden"); }
+  };
+
+  // #23 Freie-Slots-Finder (Tag + Mindestdauer)
+  window.gcalFindFreeSlots = function(){
+    window.openModal("🕓 Freie Slots finden",
+      '<div class="form"><label class="col-12">Tag<input id="p5SlotDay" type="date" value="'+_p5Today()+'"></label><label class="col-12">Mindestdauer (Min)<input id="p5SlotDur" type="number" value="30" min="15" step="15"></label><div id="p5SlotRes" class="mini text-muted" style="margin-top:8px"></div></div>',
+      '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window._p5RunSlots()">Suchen</button>');
+  };
+  window._p5RunSlots = async function(){
+    var day=(document.getElementById("p5SlotDay")||{}).value, dur=parseInt((document.getElementById("p5SlotDur")||{}).value,10)||30, res=document.getElementById("p5SlotRes");
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(day||"")){ if(res) res.textContent="Bitte gültigen Tag wählen."; return; }
+    if(res) res.textContent="⏳ Suche …";
+    try { await gcalEnsureLoaded(); var cal=_p5PrimaryCal();
+      var fb=await gcApi("POST","/freeBusy", { body:{ timeMin:new Date(day+"T00:00:00").toISOString(), timeMax:new Date(day+"T23:59:59").toISOString(), items:[{ id:cal }] } });
+      var busy=((fb.calendars&&fb.calendars[cal]&&fb.calendars[cal].busy)||[]).map(function(b){ return [new Date(b.start), new Date(b.end)]; });
+      var slots=gcalFreeSlots(day, busy, dur);
+      if(res) res.innerHTML = slots.length ? '<div style="margin-top:6px">Freie Fenster (≥ '+dur+' Min, 08–20 Uhr):</div><div class="flex flex-wrap gap-2" style="margin-top:6px">'+slots.map(function(s){ return '<span class="btn sm">'+esc(s)+'</span>'; }).join("")+'</div>' : 'Keine freien Fenster gefunden.';
+    } catch(e){ if(res) res.textContent="Fehler: "+((e&&e.message)||"freeBusy fehlgeschlagen"); }
+  };
+
+  // #24 Meeting-Vorbereitung: KI sammelt relevante Notizen/Mails zum Termin-Titel
+  window.gcalMeetingPrep = function(presetTitle){
+    var nextTitle = presetTitle || (function(){ var now=Date.now(); var up=(GC.events||[]).filter(function(e){ return evStart(e).getTime()>=now-3600000; }).sort(function(a,b){ return evStart(a)-evStart(b); })[0]; return up?(up.summary||""):""; })();
+    window.openModal("📑 Meeting-Vorbereitung",
+      '<div class="form"><label class="col-12">Meeting/Termin-Titel<input id="p5MeetTitle" type="text" value="'+esc(nextTitle||"")+'" placeholder="Titel des Termins"></label><div id="p5MeetRes" class="mini text-muted" style="margin-top:8px"></div></div>',
+      '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window._p5RunPrep()">Vorbereiten</button>');
+  };
+  window._p5RunPrep = async function(){
+    var title=((document.getElementById("p5MeetTitle")||{}).value||"").trim(), res=document.getElementById("p5MeetRes");
+    if(!title){ if(res) res.textContent="Bitte einen Titel eingeben."; return; }
+    if(res) res.textContent="⏳ Sammle Notizen & Mails …";
+    var kw=title.toLowerCase().split(/[^a-zäöüß0-9]+/).filter(function(w){ return w.length>=4; });
+    function hit(s){ s=String(s||"").toLowerCase(); return kw.some(function(w){ return s.indexOf(w)>=0; }); }
+    var notes=(typeof window.getNotesContext==="function"?window.getNotesContext():[]).filter(function(n){ return hit(n.title)||hit(n.content); }).slice(0,6);
+    var mails=((window.APP.state.data.gmailIndex)||[]).filter(function(m){ return hit(m.subject)||hit(m.fromName)||hit(m.snippet); }).slice(0,6);
+    if(!notes.length && !mails.length){ if(res) res.innerHTML="Keine passenden Notizen/Mails zu „"+esc(title)+"“ gefunden."; return; }
+    var ctx="Meeting: "+title+"\n\nNotizen:\n"+(notes.map(function(n){return "- "+(n.title||"")+": "+String(n.content||"").slice(0,200);}).join("\n")||"(keine)")+"\n\nMails:\n"+(mails.map(function(m){return "- "+(m.subject||"")+" ("+(m.fromName||m.fromEmail||"")+")";}).join("\n")||"(keine)");
+    var sys="Erstelle eine knappe Meeting-Vorbereitung auf Deutsch: 3–5 Stichpunkte (relevante Punkte aus den Notizen/Mails) + offene Fragen. Nur auf Basis des Kontexts, keine Erfindungen.";
+    try { var ans=await window.callAI(ctx, {systemPrompt:sys, maxTokens:600});
+      if(res) res.innerHTML = '<div style="white-space:pre-wrap;background:var(--panel);border-radius:8px;padding:8px;margin-top:6px">'+esc(ans||"(kein Ergebnis)")+'</div><div class="mini text-muted" style="margin-top:6px">Quellen: '+notes.length+' Notiz(en), '+mails.length+' Mail(s)</div>';
+    } catch(e){ if(res) res.textContent="Fehler: "+((e&&e.message)||""); }
+  };
+
+  // #25 Wochen-Review: KI fasst kommende Woche (Termine + fällige Aufgaben) zusammen
+  window.gcalWeekReview = async function(){
+    try { await gcalEnsureLoaded(); } catch(e){}
+    var now=new Date(), end=new Date(now.getTime()+7*86400000);
+    var evs=(GC.events||[]).filter(function(e){ var s=evStart(e); return s>=now && s<=end; }).sort(function(a,b){ return evStart(a)-evStart(b); }).slice(0,40);
+    var tasks=Object.values((window.APP.state.data.entities.tasks)||{}).filter(function(t){ return t.status!=="done" && t.dueDate && t.dueDate>=toDateVal(now) && t.dueDate<=toDateVal(end); }).sort(function(a,b){ return (a.dueDate||"").localeCompare(b.dueDate||""); });
+    if(!evs.length && !tasks.length){ toast("info","Wochen-Review","Keine Termine/fälligen Aufgaben in den nächsten 7 Tagen."); return; }
+    toast("ok","KI","Erstelle Wochen-Review …");
+    var ctx="Termine (7 Tage):\n"+(evs.map(function(e){ return "- "+toDateVal(evStart(e))+" "+(isAllDay(e)?"ganztägig":fmtTime(evStart(e)))+" "+(e.summary||""); }).join("\n")||"(keine)")+"\n\nFällige Aufgaben:\n"+(tasks.map(function(t){ return "- "+(t.dueDate||"")+" "+t.title; }).join("\n")||"(keine)");
+    var sys="Fasse die kommende Woche auf Deutsch knapp zusammen: Schwerpunkte, mögliche Engpass-Tage (viele Termine + Deadlines), 1–2 Empfehlungen. Nur auf Basis des Kontexts.";
+    var ans; try{ ans=await window.callAI(ctx, {systemPrompt:sys, maxTokens:600}); }catch(e){ toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    if(!ans){ toast("warn","KI","Kein Ergebnis (API-Key?)"); return; }
+    window.openModal("🗓️ Wochen-Review", '<div style="white-space:pre-wrap;line-height:1.6;font-size:14px">'+esc(ans)+'</div><div class="mini text-muted" style="margin-top:8px">'+evs.length+' Termin(e) · '+tasks.length+' fällige Aufgabe(n)</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
 
   async function gcalAIExec(cmd, a){
     var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -95503,6 +95751,8 @@ console.log('📚 Leseliste geladen');
       +     '<button class="btn" onclick="gmailReplyAll()" title="Allen antworten">Allen</button>'
       +     '<button class="btn" onclick="gmailRequestDraft()" title="KI-Antwortentwurf für diese Mail erstellen (Taste: D)">✨ KI-Entwurf</button>'
       +     '<button class="btn" onclick="gmailCreateTaskRequest()" title="Aus dieser Mail eine Quantus-Aufgabe erstellen">📋 Aufgabe</button>'
+      +     '<button class="btn" onclick="window.gmailTldr()" title="KI-Kurzzusammenfassung dieser Mail (TL;DR)">📝 TL;DR</button>'
+      +     '<button class="btn" onclick="window.gmailReplyVariants()" title="3 KI-Antwortvorschläge (kurz/neutral/ausführlich)">✍️ 3 Antworten</button>'
       +   '</div>'
       +   '<div style="flex:1"></div>'
       +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')" title="'+(done?"Zurück in den Posteingang":"Als erledigt markieren")+'">'+(done?"↩︎ Zurücklegen":"✅ Erledigt")+'</button>'
@@ -95510,6 +95760,9 @@ console.log('📚 Leseliste geladen');
       +     '<summary class="btn gml-btn-icon" title="Weitere Aktionen">⋯</summary>'
       +     '<div class="gml-more-menu">'
       +       '<button class="gml-more-item" onclick="gmailSnoozeLater(\''+jsStr(o.id)+'\')">⏰ Später (in „Later", aus dem Posteingang)</button>'
+      +       '<button class="gml-more-item" onclick="window.gmailSnoozeRemind(\'1h\')">⏰ Später + Erinnerung in 1 h</button>'
+      +       '<button class="gml-more-item" onclick="window.gmailSnoozeRemind(\'3h\')">⏰ Später + Erinnerung in 3 h</button>'
+      +       '<button class="gml-more-item" onclick="window.gmailSnoozeRemind(\'morgen\')">⏰ Später + Erinnerung morgen früh</button>'
       +       '<button class="gml-more-item" onclick="gmailToggleReadOpen()">'+(o.unread?"📭 Als gelesen markieren":"📬 Als ungelesen markieren")+'</button>'
       +       '<button class="gml-more-item" onclick="gmailExportMessage(\''+jsStr(o.id)+'\')">⤓ Als .eml exportieren</button>'
       +       '<button class="gml-more-item" onclick="gmailBlockSenderOf(\''+jsStr(o.id)+'\')">⛔ Absender blockieren</button>'
@@ -95656,6 +95909,8 @@ console.log('📚 Leseliste geladen');
       + '<select class="gmlc-tpl" title="Schnellantwort-Vorlage einfügen" onchange="gmlInsertTemplate(this.value);this.selectedIndex=0;">'
       +   '<option value="">⚡ Vorlage…</option>'
       +   GML_TEMPLATES.map(function(t,i){ return '<option value="'+i+'">'+esc(t.label)+'</option>'; }).join("")
+      +   (((window.APP.state.data.mailTemplates)||[]).length ? '<option value="" disabled>── Eigene ──</option>'+((window.APP.state.data.mailTemplates)||[]).map(function(t){ return '<option value="u:'+esc(t.id)+'">'+esc(t.label)+'</option>'; }).join("") : '')
+      +   '<option value="__manage__">⚙️ Vorlagen verwalten…</option>'
       + '</select>'
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" placeholder="Nachricht verfassen…">'+esc(prefill.body||"")+'</textarea></div>';
@@ -96229,13 +96484,107 @@ console.log('📚 Leseliste geladen');
     } catch(e){ toast("err","Fehler", e.message||"Konnte nicht nach 'Later' verschieben"); }
   };
 
-  // ── Punkt 6: Vorlage in den Verfassen-Body einfügen ──
+  // ── Punkt 6: Vorlage in den Verfassen-Body einfügen (Built-in oder eigene; + Verwalten) ──
   window.gmlInsertTemplate = function(i){
-    i = parseInt(i,10); var t = GML_TEMPLATES[i]; if (!t) return;
+    if (i==="__manage__"){ if (typeof window.gmailManageTemplates==="function") window.gmailManageTemplates(); return; }
+    var t;
+    if (typeof i==="string" && i.indexOf("u:")===0){ var uid=i.slice(2); t=((window.APP.state.data.mailTemplates)||[]).find(function(x){ return x.id===uid; }); }
+    else { t = GML_TEMPLATES[parseInt(i,10)]; }
+    if (!t) return;
     var ta = document.getElementById("gmlBody"); if (!ta) return;
     var s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
     ta.value = v.slice(0,s) + t.text + v.slice(e);
     var pos = s + t.text.length; ta.focus(); try { ta.setSelectionRange(pos,pos); } catch(_){}
+  };
+
+  // ════════════════════════════════════════════════════════════════════
+  //  PAKET 4 — Mail-Produktivität (im Gmail-Modul; nutzt GM.open, gmApi,
+  //  htmlToText, window.callAI, window.gmailCompose, openModal/toast).
+  //  Rein additiv — Versand-/Klassifizierungs-/RTDB-Pfade unverändert.
+  // ════════════════════════════════════════════════════════════════════
+
+  // #16 On-Demand-TL;DR der geöffneten Mail
+  window.gmailTldr = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    var body=String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim();
+    if(!body){ toast("warn","TL;DR","Kein Textinhalt"); return; }
+    toast("ok","KI","Fasse Mail zusammen …");
+    var sys="Fasse die E-Mail in 2–3 knappen Stichpunkten (TL;DR) auf Deutsch zusammen und nenne – falls vorhanden – die geforderte Aktion/Frist. Antworte nur mit den Stichpunkten.";
+    var res; try { res=await window.callAI("Betreff: "+(o.subject||"")+"\nVon: "+(o.from||"")+"\n\n"+body.slice(0,4000), {systemPrompt:sys, maxTokens:300}); }
+    catch(e){ toast("err","KI-Fehler", (e&&e.message)||""); return; }
+    if(!res){ toast("warn","KI","Kein Ergebnis (API-Key in Einstellungen?)"); return; }
+    window.openModal("📝 TL;DR – "+(o.subject||""), '<div style="white-space:pre-wrap;line-height:1.6;font-size:14px">'+esc(res)+'</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // #17 Drei KI-Antwortvorschläge (kurz/neutral/ausführlich) → Auswahl öffnet Verfassen-Modal
+  window.gmailReplyVariants = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    var body=String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim();
+    toast("ok","KI","Erstelle Antwortvorschläge …");
+    var sys='Formuliere drei Antwort-Entwürfe auf die E-Mail (Deutsch, passende Anrede und Grußformel). Antworte AUSSCHLIESSLICH als JSON {"kurz":"...","neutral":"...","ausfuehrlich":"..."} ohne weitere Zeichen.';
+    var raw; try { raw=await window.callAI("Betreff: "+(o.subject||"")+"\nVon: "+(o.from||"")+"\n\n"+body.slice(0,3000), {systemPrompt:sys, maxTokens:1200}); }
+    catch(e){ toast("err","KI-Fehler", (e&&e.message)||""); return; }
+    var obj=null; try { var s=String(raw||"").replace(/^```(?:json)?/i,"").replace(/```$/,"").trim(); var i=s.indexOf("{"),j=s.lastIndexOf("}"); if(i>=0&&j>i) s=s.slice(i,j+1); obj=JSON.parse(s); } catch(e){}
+    if(!obj){ toast("warn","KI","Keine Vorschläge erhalten (API-Key?)"); return; }
+    GM._replyVariants=obj;
+    function card(key,label,txt){ if(!txt) return ""; return '<div style="margin-bottom:10px"><div style="font-weight:700;margin-bottom:4px">'+label+'</div><div style="white-space:pre-wrap;font-size:13px;background:var(--panel);border-radius:8px;padding:8px;max-height:160px;overflow:auto">'+esc(txt)+'</div><button class="btn sm primary" style="margin-top:6px" onclick="window.gmailUseReplyVariant(\''+key+'\')">Diese verwenden</button></div>'; }
+    window.openModal("✍️ Antwortvorschläge", card("kurz","Kurz",obj.kurz)+card("neutral","Neutral",obj.neutral)+card("ausfuehrlich","Ausführlich",obj.ausfuehrlich) || '<div class="mini">Keine Vorschläge.</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+  window.gmailUseReplyVariant = function(key){
+    var o=GM.open, v=GM._replyVariants && GM._replyVariants[key]; if(!o||!v) return;
+    if(window.closeModal) window.closeModal();
+    var email=(String(o.from||"").match(/<([^>]+)>/)||[])[1] || o.from || "";
+    var subj=/^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+    window.gmailCompose({ title:"Antwort", to:email, subject:subj, body:v, threadId:o.threadId||null, inReplyTo:o.messageId||null, references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null, source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:(o.text||htmlToText(o.html)||"") } });
+  };
+
+  // #19 Snooze mit Erinnerungszeit (nutzt die bestehende gmailSnoozeLater-Logik + lokalen Reminder)
+  window.gmailSnoozeRemind = function(kind){
+    var o=GM.open; if(!o||!o.id){ toast("info","Keine Mail offen",""); return; }
+    var now=Date.now(), wake;
+    if(kind==="1h") wake=now+3600000; else if(kind==="3h") wake=now+3*3600000;
+    else { var dd=new Date(now+86400000); dd.setHours(8,0,0,0); wake=dd.getTime(); }
+    var d=window.APP.state.data; if(!Array.isArray(d.mailSnoozes)) d.mailSnoozes=[];
+    d.mailSnoozes.push({ id:o.id, subject:o.subject||"(kein Betreff)", wakeTs:wake, reminded:false });
+    if(window.scheduleSave) window.scheduleSave();
+    toast("ok","Snooze","Erinnerung "+(kind==="morgen"?"morgen früh":("in "+kind))+" gesetzt.");
+    window.gmailSnoozeLater(o.id);
+  };
+  function _p4CheckSnoozes(){
+    try {
+      var d=window.APP.state.data, arr=d&&d.mailSnoozes; if(!Array.isArray(arr)||!arr.length) return;
+      var now=Date.now(), changed=false;
+      arr.forEach(function(s){ if(s && !s.reminded && s.wakeTs<=now){ s.reminded=true; changed=true; toast("info","⏰ Mail-Erinnerung", (s.subject||"Mail")+" ist wieder fällig."); } });
+      if(changed && window.scheduleSave) window.scheduleSave();
+    } catch(e){}
+  }
+  setTimeout(_p4CheckSnoozes, 4000);
+  setInterval(_p4CheckSnoozes, 60000);
+
+  // #20 Eigene Sende-Vorlagen verwalten (in APP.state.data.mailTemplates)
+  window.gmailManageTemplates = function(){
+    var arr=(window.APP.state.data.mailTemplates)||[];
+    var list = arr.length ? arr.map(function(t){ return '<div style="display:flex;gap:8px;align-items:center;padding:6px;background:var(--panel);border-radius:8px;margin-bottom:5px"><div style="flex:1;min-width:0"><strong>'+esc(t.label)+'</strong><div class="mini text-muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(t.text)+'</div></div><button class="btn sm" onclick="window.gmailEditTemplate(\''+jsStr(t.id)+'\')">✏️</button><button class="btn sm danger" onclick="window.gmailDeleteTemplate(\''+jsStr(t.id)+'\')">🗑</button></div>'; }).join("") : '<div class="mini text-muted">Noch keine eigenen Vorlagen.</div>';
+    window.openModal("⚙️ Eigene Sende-Vorlagen", list+'<div class="sep"></div><div class="form"><label class="col-12">Bezeichnung<input id="tplLabel" type="text" placeholder="z.B. Terminbestätigung"></label><label class="col-12">Text<textarea id="tplText" style="min-height:100px"></textarea></label></div>', '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window.gmailAddTemplate()">Hinzufügen</button>');
+  };
+  window.gmailAddTemplate = function(){
+    var l=((document.getElementById("tplLabel")||{}).value||"").trim(), x=((document.getElementById("tplText")||{}).value||"").trim();
+    if(!l||!x){ toast("warn","Vorlage","Bezeichnung und Text nötig"); return; }
+    if(!Array.isArray(window.APP.state.data.mailTemplates)) window.APP.state.data.mailTemplates=[];
+    window.APP.state.data.mailTemplates.push({ id:"tpl_"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), label:l.slice(0,60), text:x });
+    if(window.scheduleSave) window.scheduleSave();
+    toast("ok","Vorlage gespeichert",""); window.gmailManageTemplates();
+  };
+  window.gmailEditTemplate = function(id){
+    var t=((window.APP.state.data.mailTemplates)||[]).find(function(x){ return x.id===id; }); if(!t) return;
+    var nl=prompt("Bezeichnung:", t.label); if(nl===null) return;
+    var nx=prompt("Text:", t.text); if(nx===null) return;
+    t.label=(nl||"").trim()||t.label; t.text=(nx||"").trim()||t.text; if(window.scheduleSave) window.scheduleSave(); window.gmailManageTemplates();
+  };
+  window.gmailDeleteTemplate = function(id){
+    if(!confirm("Diese Vorlage löschen?")) return;
+    window.APP.state.data.mailTemplates=((window.APP.state.data.mailTemplates)||[]).filter(function(x){ return x.id!==id; });
+    if(window.scheduleSave) window.scheduleSave(); window.gmailManageTemplates();
   };
 
   // ── Punkt 3: Shortcut-Hilfe-Overlay ──
@@ -99968,6 +100317,125 @@ window.addEventListener("hashchange", function(){
 
   // API
   window.QuantusContextMenu = { close: closeMenu, show: showMenu };
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   PAKET 6 — Komfort & Insights (selbst-enthalten; nutzt window.*-Helfer:
+   navigate, getAllApps, getTaskStats, startOfWeek, addWeeklyGoal, getEntity,
+   callAI, openModal/closeModal, toast, render, APP).
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+  function _esc(s){ return window.esc ? window.esc(s) : String(s==null?"":s); }
+
+  // ── #26 Command-Palette (Ctrl/Cmd+K) ──
+  function _p6Commands(){
+    var cmds=[];
+    var apps=(typeof getAllApps==="function")?getAllApps():[];
+    apps.forEach(function(a){ if(a&&a.key) cmds.push({ icon:a.icon||"→", label:"Gehe zu: "+(a.label||a.name||a.key), run:function(){ window.navigate(a.key); } }); });
+    cmds.push({ icon:"📊", label:"Produktivitäts-Statistiken", run:function(){ window.showProductivityStats(); } });
+    cmds.push({ icon:"🎯", label:"KI-Wochenziele vorschlagen", run:function(){ window.aiSuggestWeeklyGoals(); } });
+    cmds.push({ icon:"⌨", label:"Tastenkürzel-Übersicht", run:function(){ window.showShortcutsOverlay(); } });
+    cmds.push({ icon:"⤓", label:"Offene Notiz als Markdown exportieren", run:function(){ window.exportCurrentNote("md"); } });
+    cmds.push({ icon:"⤓", label:"Offene Notiz als Text exportieren", run:function(){ window.exportCurrentNote("txt"); } });
+    if(typeof window.openGlobalTaskModal==="function") cmds.push({ icon:"➕", label:"Neue Aufgabe", run:function(){ window.openGlobalTaskModal(); } });
+    return cmds;
+  }
+  window.openCommandPalette = function(){
+    window._p6Cmds=_p6Commands();
+    window.openModal("⌘ Befehle & Navigation",
+      '<input id="p6PalInput" type="text" placeholder="Tippe einen Befehl oder eine Seite…" style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:9px;font-size:14px;box-sizing:border-box"><div id="p6PalList" class="list" style="max-height:340px;overflow:auto;margin-top:10px"></div>',
+      '<button class="btn" data-action="close-modal">Schließen</button>');
+    setTimeout(function(){
+      var inp=document.getElementById("p6PalInput"); _p6RenderPal("");
+      if(inp){ inp.focus(); inp.addEventListener("input", function(){ _p6RenderPal(inp.value); });
+        inp.addEventListener("keydown", function(e){ if(e.key==="Enter"){ e.preventDefault(); var first=document.querySelector("#p6PalList [data-pi]"); if(first) window._p6RunCmd(parseInt(first.dataset.pi,10)); } }); }
+    },30);
+  };
+  function _p6RenderPal(q){
+    var list=document.getElementById("p6PalList"); if(!list) return;
+    var ql=(q||"").toLowerCase();
+    var items=(window._p6Cmds||[]).map(function(c,i){ return {c:c,i:i}; }).filter(function(x){ return !ql || x.c.label.toLowerCase().indexOf(ql)>=0; }).slice(0,40);
+    list.innerHTML = items.length ? items.map(function(x){ return '<div class="list-item" data-pi="'+x.i+'" style="cursor:pointer" onclick="window._p6RunCmd('+x.i+')"><div class="item-icon">'+x.c.icon+'</div><div class="item-body"><div class="item-title"><span class="name">'+_esc(x.c.label)+'</span></div></div></div>'; }).join("") : '<div class="mini text-center">Keine Treffer.</div>';
+  }
+  window._p6RunCmd = function(i){ var c=window._p6Cmds&&window._p6Cmds[i]; if(window.closeModal) window.closeModal(); if(c&&c.run){ try{ c.run(); }catch(e){ if(window.toast) window.toast("err","Fehler",(e&&e.message)||""); } } };
+
+  // ── #27 Produktivitäts-Statistiken (Woche) ──
+  window.showProductivityStats = function(){
+    var d=window.APP.state.data, now=Date.now();
+    var weekStartMs=(typeof startOfWeek==="function")?startOfWeek(new Date()).getTime():(now-7*86400000);
+    var tasks=Object.values(d.entities.tasks||{});
+    var doneWeek=tasks.filter(function(t){ var u=Date.parse(t.updatedAt); return t.status==="done" && !isNaN(u) && u>=weekStartMs; }).length;
+    var notesWeek=Object.values(d.entities.notes||{}).filter(function(n){ var u=Date.parse(n.updatedAt||n.createdAt); return !isNaN(u)&&u>=weekStartMs; }).length;
+    var open=tasks.filter(function(t){ return t.status!=="done"; }).length;
+    var streak=(d.dayTracker&&d.dayTracker.daysCompleted)||0;
+    var mailActs=(d.activityLog||[]).filter(function(a){ var ts=Date.parse(a.ts); return !isNaN(ts)&&ts>=weekStartMs && /mail|gmail|gesendet|sent|antwort/i.test(((a.action||"")+(a.entityKind||"")+(a.details||""))); }).length;
+    function stat(v,l){ return '<div style="flex:1;min-width:120px;text-align:center;padding:12px;background:var(--panel);border-radius:10px"><div style="font-size:26px;font-weight:800;color:var(--accent)">'+v+'</div><div class="mini text-muted" style="margin-top:2px">'+l+'</div></div>'; }
+    window.openModal("📊 Produktivität – diese Woche",
+      '<div class="flex gap-2" style="flex-wrap:wrap">'+stat(doneWeek,"✅ Aufgaben erledigt")+stat(notesWeek,"📝 Notizen bearbeitet")+stat(mailActs,"✉️ Mail-Aktionen")+stat(open,"📋 offen")+stat(streak,"🔥 Streak (Tage)")+'</div><div class="mini text-muted" style="margin-top:8px">„Mail-Aktionen" = protokollierte Mail-Ereignisse dieser Woche.</div>',
+      '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // ── #28 KI-Wochenziele setzen (Speicherung über bestehendes addWeeklyGoal) ──
+  window.aiSuggestWeeklyGoals = async function(){
+    var d=window.APP.state.data;
+    var openTasks=Object.values(d.entities.tasks||{}).filter(function(t){ return t.status!=="done"; }).slice(0,30).map(function(t){ return t.title; });
+    var projects=Object.values(d.entities.projects||{}).filter(function(p){ return p.status==="active"; }).map(function(p){ return p.title; });
+    window.toast("ok","KI","Schlage Wochenziele vor …");
+    var sys='Schlage 3–5 konkrete, erreichbare Wochenziele vor (Deutsch, je max. 10 Wörter). Antworte AUSSCHLIESSLICH als JSON-Array von Strings, ohne weitere Zeichen.';
+    var raw; try{ raw=await window.callAI("Offene Aufgaben:\n"+openTasks.join("\n")+"\n\nAktive Projekte:\n"+projects.join("\n"), {systemPrompt:sys, maxTokens:300}); }
+    catch(e){ window.toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    var arr=[]; try{ var s=String(raw||"").replace(/^```(?:json)?/i,"").replace(/```$/,"").trim(); var i=s.indexOf("["),j=s.lastIndexOf("]"); if(i>=0&&j>i)s=s.slice(i,j+1); var a=JSON.parse(s); if(Array.isArray(a)) arr=a.map(function(x){ return String(x).trim(); }).filter(Boolean); }catch(e){}
+    if(!arr.length){ window.toast("warn","KI","Keine Vorschläge (API-Key in Einstellungen?)"); return; }
+    window._p6Goals=arr;
+    window.openModal("🎯 KI-Wochenziele", '<div class="mini text-muted mb-2">Wähle die Ziele für diese Woche:</div>'+arr.map(function(g,k){ return '<label style="display:flex;gap:8px;align-items:center;padding:6px 0;cursor:pointer"><input type="checkbox" checked data-p6goal="'+k+'"> '+_esc(g)+'</label>'; }).join(""),
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window._p6AddGoals()">Ziele übernehmen</button>');
+  };
+  window._p6AddGoals = function(){
+    var arr=window._p6Goals||[]; var chosen=[]; document.querySelectorAll('[data-p6goal]').forEach(function(cb){ if(cb.checked) chosen.push(arr[parseInt(cb.dataset.p6goal,10)]); });
+    if(!chosen.length){ window.toast("warn","","Nichts ausgewählt"); return; }
+    if(!confirm("Diese "+chosen.length+" Wochenziele setzen?\n\n"+chosen.join("\n"))) return;
+    var n=0; chosen.forEach(function(g){ if(typeof addWeeklyGoal==="function"){ addWeeklyGoal("custom",1,g); n++; } });
+    if(window.closeModal) window.closeModal(); if(window.render) window.render();
+    window.toast("ok","Wochenziele gesetzt", n+" Ziel(e) hinzugefügt (im Dashboard sichtbar).");
+  };
+
+  // ── #29 Tastenkürzel-Übersicht (?-Overlay) ──
+  window.showShortcutsOverlay = function(){
+    var sc=(window.APP.state.settings&&window.APP.state.settings.shortcuts)||{};
+    function row(label,combo){ return '<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--border)"><span>'+_esc(label)+'</span><kbd style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:1px 7px;font-size:12px">'+_esc(combo)+'</kbd></div>'; }
+    var rows=Object.keys(sc).map(function(k){ var s=sc[k]; if(!s||!s.key) return ""; var combo=(s.ctrl?"Ctrl+":"")+(s.shift?"Shift+":"")+String(s.key).toUpperCase(); return row(s.label||k, combo); }).filter(Boolean).join("");
+    rows += row("Befehls-Palette","Ctrl/Cmd+K") + row("Diese Übersicht","?");
+    window.openModal("⌨ Tastenkürzel", rows || '<div class="mini">Keine Shortcuts definiert.</div>', '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+
+  // ── #30 Export einer Notiz als Markdown/Text (Download nur auf User-Klick) ──
+  window.exportNoteText = function(noteId, fmt){
+    var note=(typeof window.getEntity==="function")?window.getEntity("note",noteId):null;
+    if(!note){ window.toast("warn","Export","Notiz nicht gefunden"); return; }
+    var ext=(fmt==="txt")?"txt":"md";
+    var content=(ext==="md") ? ("# "+(note.title||"Notiz")+"\n\n"+(note.content||"")) : ((note.title||"Notiz")+"\n\n"+(note.content||""));
+    var blob=new Blob([content], {type:"text/"+(ext==="md"?"markdown":"plain")+";charset=utf-8"});
+    var url=URL.createObjectURL(blob); var a=document.createElement("a");
+    a.href=url; a.download=(String(note.title||"Notiz").replace(/[^a-zA-Z0-9äöüÄÖÜß \-_]/g,"_").trim()||"Notiz")+"."+ext;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+    window.toast("ok","Export","Notiz als ."+ext+" heruntergeladen.");
+  };
+  window.exportCurrentNote = function(fmt){
+    var ed=document.getElementById("noteContentEditor"); var id=ed&&ed.getAttribute("data-id");
+    if(!id){ var sel=document.querySelector('[data-action="note-download-pdf"]'); id=sel&&sel.getAttribute("data-id"); }
+    if(!id){ window.toast("info","Export","Bitte zuerst eine Notiz öffnen."); return; }
+    window.exportNoteText(id, fmt||"md");
+  };
+
+  // ── globale Shortcuts: Ctrl/Cmd+K (Palette) · ? (Übersicht) ──
+  document.addEventListener("keydown", function(e){
+    var k=(e.key||"").toLowerCase();
+    if((e.ctrlKey||e.metaKey) && !e.shiftKey && !e.altKey && k==="k"){ e.preventDefault(); e.stopImmediatePropagation(); window.openCommandPalette(); return; }
+    if(k==="?" ){ var tn=((e.target&&e.target.tagName)||"").toLowerCase(); if(tn==="input"||tn==="textarea"||tn==="select"||(e.target&&e.target.isContentEditable)) return; e.preventDefault(); window.showShortcutsOverlay(); }
+  }, true);
 })();
 </script>
 
