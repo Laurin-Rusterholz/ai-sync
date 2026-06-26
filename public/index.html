@@ -42909,6 +42909,7 @@ function viewToday() {
           <button class="btn" data-action="start-planning-timer">▶️ Planung starten</button>
         `}
         <button class="btn" data-action="start-pomodoro">🍅 Pomodoro</button>
+        <button class="btn" onclick="window.aiDailyReview()" title="KI fasst die heutigen Aktivitäten zusammen">📒 Tagesrückblick</button>
         <button class="btn primary" data-action="quick-task">➕ Aufgabe</button>
       </div>
     </div>
@@ -64984,6 +64985,7 @@ function openUniversalSearchModal(initialQuery=""){
             <option value="task">Aufgaben</option>
             <option value="project">Projekte</option>
             <option value="note">Notizen</option>
+            <option value="mail">✉️ Mails</option>
             <option value="flashcard">🧠 Recall Lab</option>
             <option value="organization">Organisationen</option>
             <option value="strategy">Strategien</option>
@@ -65010,24 +65012,30 @@ function openUniversalSearchModal(initialQuery=""){
     const renderResults = () => {
       const q = input.value || "";
       const k = kindSel?.value || "";
-      const items = q.trim() ? searchIndex(q, k || null) : [];
       if (!q.trim()){
         results.innerHTML = `<div class="mini text-center">Tippe oben etwas ein…</div>`;
         return;
       }
+      // Entities über bestehendes searchIndex; Mails additiv aus gmailIndex; Treffer gruppiert nach Typ (Paket 3).
+      let items = (k && k !== "mail") ? searchIndex(q, k) : searchIndex(q, null);
+      if ((!k || k === "mail") && typeof window._p3SearchMails === "function") items = items.concat(window._p3SearchMails(q));
+      if (k === "mail") items = items.filter(it => it.kind === "mail");
       if (items.length === 0){
         results.innerHTML = `<div class="mini text-center">Keine Treffer.</div>`;
         return;
       }
-      results.innerHTML = items.map(it => `
-        <div class="list-item" data-action="open-entity" data-kind="${it.kind}" data-id="${it.id}">
-          <div class="item-icon">${kindIcon(it.kind)}</div>
-          <div class="item-body">
-            <div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">${it.kind}</span></div>
-            <div class="item-meta"><span>${esc(it.subtitle)}</span></div>
-          </div>
-        </div>
-      `).join("");
+      const groups = {};
+      items.forEach(it => { (groups[it.kind] = groups[it.kind] || []).push(it); });
+      const order = ["task","note","mail","project","goal","strategy","program","organization","flashcard"];
+      const kinds = Object.keys(groups).sort((a,b) => { const ia=order.indexOf(a), ib=order.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib); });
+      const label = (kind) => (typeof window._p3KindLabel === "function" ? window._p3KindLabel(kind) : kind);
+      results.innerHTML = kinds.map(kind => {
+        const rows = groups[kind].map(it => kind === "mail"
+          ? `<div class="list-item" onclick="window.openMailFromSearch('${it.id}')"><div class="item-icon">✉️</div><div class="item-body"><div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">mail</span></div><div class="item-meta"><span>${esc(it.subtitle)}</span></div></div></div>`
+          : `<div class="list-item" data-action="open-entity" data-kind="${it.kind}" data-id="${it.id}"><div class="item-icon">${kindIcon(it.kind)}</div><div class="item-body"><div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">${it.kind}</span></div><div class="item-meta"><span>${esc(it.subtitle)}</span></div></div></div>`
+        ).join("");
+        return `<div class="mini text-muted" style="margin:8px 0 4px;font-weight:700">${label(kind)} (${groups[kind].length})</div>${rows}`;
+      }).join("");
     };
 
     input.addEventListener("input", renderResults);
@@ -65242,6 +65250,13 @@ function viewNotesWorkspace(noteId){
               <button class="btn sm" data-action="ai-p1-shorten" data-id="${openNote.id}" title="Kürzer & prägnanter">✂️ Kürzer</button>
               <button class="btn sm" data-action="ai-p1-proofread" data-id="${openNote.id}" title="Nur Rechtschreibung/Grammatik – Stil unverändert">📐 Korrektur</button>
               <button class="btn sm" data-action="ai-p1-nextsteps" data-id="${openNote.id}" title="Nächste Schritte ableiten und als Aufgaben anlegen">➡️ Nächste Schritte → Aufgaben</button>
+            </div>
+            <div class="sep"></div>
+            <div class="mini text-muted mb-1">🔎 Wissen & Suche:</div>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn sm" onclick="window.askYourNotes()" title="Frage in natürlicher Sprache über alle deine Notizen">💬 Notizen fragen</button>
+              <button class="btn sm" onclick="window.aiSuggestNoteTags('${openNote.id}')" title="KI schlägt Tags/Kategorie für diese Notiz vor">🏷️ KI-Tags vorschlagen</button>
+              <button class="btn sm" onclick="window.showRelatedNotes('${openNote.id}')" title="Ähnliche Notizen nach Stichwörtern">🪢 Verwandte Notizen</button>
             </div>
             ${openNote.summary ? `
               <div class="sep"></div>
@@ -100421,6 +100436,121 @@ window.addEventListener("hashchange", function(){
     if((e.ctrlKey||e.metaKey) && !e.shiftKey && !e.altKey && k==="k"){ e.preventDefault(); e.stopImmediatePropagation(); window.openCommandPalette(); return; }
     if(k==="?" ){ var tn=((e.target&&e.target.tagName)||"").toLowerCase(); if(tn==="input"||tn==="textarea"||tn==="select"||(e.target&&e.target.isContentEditable)) return; e.preventDefault(); window.showShortcutsOverlay(); }
   }, true);
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   PAKET 3 — Wissen & Suche (selbst-enthalten; nutzt window.*-Helfer:
+   callAI, getEntity/updateEntity, createEntity, openModal/closeModal, toast,
+   navigate, esc, todayYmd, getNotesContext).
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+  function _esc(s){ return window.esc ? window.esc(s) : String(s==null?"":s); }
+  function _today(){ return window.todayYmd ? window.todayYmd() : new Date().toISOString().slice(0,10); }
+  function _notes(){ try { return Object.values(window.APP.state.data.entities.notes||{}); } catch(e){ return []; } }
+
+  // ── #11 Hilfen: Mail-Suche + Gruppen-Label (vom universalen Such-Modal genutzt) ──
+  window._p3SearchMails = function(q){
+    try {
+      var idx = window.APP.state.data.gmailIndex || [];
+      var ql = String(q||"").trim().toLowerCase(); if(!ql) return [];
+      return idx.filter(function(m){ return (m.subject||"").toLowerCase().indexOf(ql)>=0 || (m.fromName||"").toLowerCase().indexOf(ql)>=0 || (m.fromEmail||"").toLowerCase().indexOf(ql)>=0 || (m.snippet||"").toLowerCase().indexOf(ql)>=0; })
+        .slice(0,12).map(function(m){ return { kind:"mail", id:m.id, title:m.subject||"(ohne Betreff)", subtitle:(m.fromName||m.fromEmail||"")+" · "+String(m.date||"").slice(0,10) }; });
+    } catch(e){ return []; }
+  };
+  window._p3KindLabel = function(kind){ return ({task:"✅ Aufgaben",note:"📝 Notizen",mail:"✉️ Mails",project:"📦 Projekte",goal:"🎯 Ziele",strategy:"♟️ Strategien",program:"📚 Programme",organization:"🏢 Organisationen",flashcard:"🧠 Recall Lab"})[kind] || kind; };
+  window.openMailFromSearch = function(id){ if(window.closeModal) window.closeModal(); try { window.navigate("gmail"); } catch(e){} setTimeout(function(){ try { if(typeof window.gmailOpenFromExternal==="function") window.gmailOpenFromExternal(id); } catch(e){} }, 220); };
+
+  // ── #12 KI-Q&A über die eigenen Notizen ──
+  window.askYourNotes = function(){
+    window.openModal("💬 Notizen fragen",
+      '<div class="form"><label class="col-12">Deine Frage<input id="p3qaQ" type="text" placeholder="z.B. Was habe ich zu Projekt X notiert?"></label><div id="p3qaA" class="mini text-muted" style="margin-top:10px">Antwort erscheint hier …</div></div>',
+      '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window._p3RunAsk()">Fragen</button>');
+    setTimeout(function(){ var i=document.getElementById("p3qaQ"); if(i){ i.focus(); i.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); window._p3RunAsk(); } }); } },30);
+  };
+  window._p3RunAsk = async function(){
+    var qel=document.getElementById("p3qaQ"), ael=document.getElementById("p3qaA");
+    var q=(qel&&qel.value||"").trim(); if(!q){ if(ael) ael.textContent="Bitte eine Frage eingeben."; return; }
+    var notes = (typeof window.getNotesContext==="function") ? window.getNotesContext() : _notes().map(function(n){return {title:n.title,content:(n.content||"").slice(0,500),tags:n.tags};});
+    if(!notes.length){ if(ael) ael.textContent="Keine Notizen vorhanden."; return; }
+    if(ael) ael.textContent="⏳ Durchsuche deine Notizen …";
+    var ctx = notes.slice(0,40).map(function(n,i){ return "["+(i+1)+"] "+(n.title||"(ohne Titel)")+"\n"+String(n.content||"").slice(0,400); }).join("\n\n");
+    var sys="Beantworte die Frage AUSSCHLIESSLICH auf Basis der folgenden Notizen des Nutzers. Wenn die Antwort nicht in den Notizen steht, sage das ehrlich. Antworte knapp auf Deutsch und nenne relevante Notiz-Titel.";
+    try { var ans=await window.callAI("NOTIZEN:\n"+ctx+"\n\nFRAGE: "+q, {systemPrompt:sys, maxTokens:700});
+      if(ael) ael.innerHTML = ans ? _esc(ans).replace(/\n/g,"<br>") : "Keine Antwort (API-Key in Einstellungen?).";
+    } catch(e){ if(ael) ael.textContent="Fehler: "+((e&&e.message)||"KI-Aufruf fehlgeschlagen"); }
+  };
+
+  // ── #13 Auto-Tagging: KI schlägt Tags/Kategorie für eine Notiz vor ──
+  window.aiSuggestNoteTags = async function(noteId){
+    var note=window.getEntity("note", noteId); if(!note){ return; }
+    var src=((note.title||"")+"\n"+(note.content||"")).trim();
+    if(!src){ window.toast("warn","KI","Notiz ist leer"); return; }
+    window.toast("ok","KI","Schlage Tags vor …");
+    var sys='Schlage 3–6 prägnante Schlagwörter/Tags (einzelne Wörter oder kurze Begriffe, kleingeschrieben) für die Notiz vor. Antworte AUSSCHLIESSLICH als JSON-Array von Strings, ohne weitere Zeichen.';
+    var raw; try { raw=await window.callAI(src.slice(0,3000), {systemPrompt:sys, maxTokens:200}); } catch(e){ window.toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    var tags=[]; try { var s=String(raw||"").replace(/^```(?:json)?/i,"").replace(/```$/,"").trim(); var i=s.indexOf("["),j=s.lastIndexOf("]"); if(i>=0&&j>i)s=s.slice(i,j+1); var a=JSON.parse(s); if(Array.isArray(a)) tags=a.map(function(x){return String(x).trim().toLowerCase();}).filter(Boolean); } catch(e){}
+    if(!tags.length){ window.toast("warn","KI","Keine Tags erkannt"); return; }
+    var existing=(note.tags||[]).map(function(t){return String(t).toLowerCase();});
+    var fresh=tags.filter(function(t){return existing.indexOf(t)<0;});
+    window._p3Tags={ noteId:noteId, tags:fresh };
+    window.openModal("🏷️ KI-Tag-Vorschläge",
+      '<div class="mini text-muted mb-2">Vorgeschlagene Tags – wähle aus:</div><div class="flex flex-wrap gap-2">'+ (fresh.length?fresh.map(function(t,k){return '<label class="btn sm" style="cursor:pointer"><input type="checkbox" checked data-p3tag="'+k+'" style="margin-right:6px">'+_esc(t)+'</label>';}).join("") : '<div class="mini">Alle Vorschläge sind bereits gesetzt.</div>') +'</div>',
+      '<button class="btn" data-action="close-modal">Abbrechen</button>'+(fresh.length?'<button class="btn primary" onclick="window._p3ApplyTags()">Tags übernehmen</button>':''));
+  };
+  window._p3ApplyTags = function(){
+    var st=window._p3Tags; if(!st) return;
+    var chosen=[]; document.querySelectorAll('[data-p3tag]').forEach(function(cb){ if(cb.checked) chosen.push(st.tags[parseInt(cb.dataset.p3tag,10)]); });
+    if(!chosen.length){ window.toast("warn","","Nichts ausgewählt"); return; }
+    if(!confirm("Diese Tags zur Notiz hinzufügen?\n\n"+chosen.join(", "))) return;
+    var note=window.getEntity("note", st.noteId); if(!note) return;
+    var merged=(note.tags||[]).slice(); chosen.forEach(function(t){ if(merged.map(function(x){return String(x).toLowerCase();}).indexOf(t)<0) merged.push(t); });
+    window.updateEntity("note", st.noteId, { tags:merged });
+    if(window.closeModal) window.closeModal(); if(window.render) window.render();
+    window.toast("ok","Tags übernommen", chosen.length+" Tag(s) hinzugefügt.");
+  };
+
+  // ── #14 Verwandte Notizen (Stichwort-Ähnlichkeit, ohne API) ──
+  var _STOP = {der:1,die:1,das:1,und:1,oder:1,ein:1,eine:1,einen:1,einem:1,für:1,mit:1,von:1,den:1,dem:1,ist:1,sind:1,auf:1,aus:1,nicht:1,auch:1,wird:1,werden:1,hat:1,haben:1,this:1,that:1,with:1,from:1,have:1,were:1,will:1,about:1,which:1,their:1,there:1};
+  function _toks(s){ var seen={}, out=[]; String(s||"").toLowerCase().split(/[^a-zäöüß0-9]+/).forEach(function(w){ if(w.length>=4 && !_STOP[w] && !seen[w]){ seen[w]=1; out.push(w); } }); return out; }
+  window.showRelatedNotes = function(noteId){
+    var note=window.getEntity("note", noteId); if(!note) return;
+    var base=_toks((note.title||"")+" "+(note.content||"")); var baseSet={}; base.forEach(function(w){baseSet[w]=1;});
+    var scored=_notes().filter(function(n){return n.id!==noteId;}).map(function(n){
+      var t=_toks((n.title||"")+" "+(n.content||"")); var ov=0; t.forEach(function(w){ if(baseSet[w]) ov++; });
+      return { n:n, score:ov };
+    }).filter(function(x){return x.score>0;}).sort(function(a,b){return b.score-a.score;}).slice(0,6);
+    var html = scored.length ? '<div>'+scored.map(function(x){ return '<div class="list-item" style="cursor:pointer" onclick="window._p3OpenNote(\''+x.n.id+'\')"><div class="item-body"><div class="item-title"><span class="name">'+_esc(x.n.title||"(ohne Titel)")+'</span><span class="pill">'+x.score+' gemeinsam</span></div><div class="item-meta"><span>'+_esc(String(x.n.content||"").slice(0,90))+'</span></div></div></div>'; }).join("")+'</div>'
+      : '<div class="mini text-muted">Keine verwandten Notizen mit gemeinsamen Stichwörtern gefunden.</div>';
+    window.openModal("🪢 Verwandte Notizen", html, '<button class="btn" data-action="close-modal">Schließen</button>');
+  };
+  window._p3OpenNote = function(id){ if(window.closeModal) window.closeModal(); try { window.navigate("notes", id); } catch(e){} };
+
+  // ── #15 Tagesrückblick: KI fasst heutige Aktivitäten zusammen ──
+  window.aiDailyReview = async function(){
+    var today=_today(); var d=window.APP.state.data;
+    var doneToday=Object.values(d.entities.tasks||{}).filter(function(t){ return t.status==="done" && String(t.updatedAt||"").slice(0,10)===today; }).map(function(t){return t.title;});
+    var notesToday=Object.values(d.entities.notes||{}).filter(function(n){ return String(n.updatedAt||n.createdAt||"").slice(0,10)===today; }).map(function(n){return n.title;});
+    var acts=(d.activityLog||[]).filter(function(a){ return String(a.ts||"").slice(0,10)===today; }).slice(0,40).map(function(a){ return (a.action||"")+" "+(a.entityKind||"")+(a.details?(" – "+a.details):""); });
+    if(!doneToday.length && !notesToday.length && !acts.length){ window.toast("info","Tagesrückblick","Heute noch keine erfassten Aktivitäten."); return; }
+    window.toast("ok","KI","Erstelle Tagesrückblick …");
+    var ctx="Datum: "+today+"\nErledigte Aufgaben:\n"+(doneToday.map(function(x){return "- "+x;}).join("\n")||"(keine)")+"\n\nBearbeitete Notizen:\n"+(notesToday.map(function(x){return "- "+x;}).join("\n")||"(keine)")+"\n\nAktivitäten:\n"+(acts.join("\n")||"(keine)");
+    var sys="Fasse die heutigen Aktivitäten als motivierenden, knappen Tagesrückblick auf Deutsch zusammen (3–5 Sätze): was wurde geschafft, ein roter Faden, optional ein Hinweis für morgen. Keine Erfindungen.";
+    var ans; try { ans=await window.callAI(ctx, {systemPrompt:sys, maxTokens:500}); } catch(e){ window.toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    if(!ans){ window.toast("warn","KI","Kein Ergebnis (API-Key?)"); return; }
+    window._p3Review={ today:today, text:ans };
+    window.openModal("📒 Tagesrückblick "+today,
+      '<div style="line-height:1.6;font-size:14px;white-space:pre-wrap">'+_esc(ans)+'</div><div class="mini text-muted" style="margin-top:10px">Erledigt: '+doneToday.length+' Aufgabe(n) · '+notesToday.length+' Notiz(en) · '+acts.length+' Aktivität(en)</div>',
+      '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window._p3SaveReview()">📝 Als Notiz speichern</button>');
+  };
+  window._p3SaveReview = function(){
+    var r=window._p3Review; if(!r) return;
+    var id=window.createEntity("note", { title:"Tagesrückblick "+r.today, content:r.text, tags:["tagesrückblick"] });
+    if(window.closeModal) window.closeModal(); if(window.render) window.render();
+    window.toast(id?"ok":"err", id?"Gespeichert":"Fehler", id?"Tagesrückblick als Notiz gespeichert.":"Konnte nicht gespeichert werden");
+  };
 })();
 </script>
 
