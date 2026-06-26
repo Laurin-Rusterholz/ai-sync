@@ -5458,6 +5458,7 @@ function buildLocalAppSnapshot() {
   if (APP.state.ui?.budgetTxFilter) snapshot._budgetTxFilter = APP.state.ui.budgetTxFilter;
   delete snapshot.recallLabData;
   delete snapshot._extraLocal;
+  delete snapshot._deleteLog;
   delete snapshot._readingHubAnnotations;
   delete snapshot._readingHubVocabulary;
   delete snapshot._readingHubBookmarks;
@@ -5477,6 +5478,9 @@ function buildRemoteAppPayload() {
   } catch(e) {}
   // Extra App-Daten (PINs, Reader, ResearchHub, Readlist, Übersetzer-Verlauf, Theme)
   payload._extraLocal = collectExtraLocalKeys();
+  // Tombstones mitsenden, damit echte Löschungen über alle Geräte propagieren
+  // (sonst "Geister-Wiederauferstehung" gelöschter Items auf Geräten ohne Tombstone).
+  try { payload._deleteLog = getDeleteLog(); } catch(e) {}
   if (!payload.meta) payload.meta = {};
   payload.meta.updatedAt = new Date().toISOString();
   payload.meta.lastSavedBy = getOrCreateDeviceId();
@@ -9535,6 +9539,43 @@ function logDeletion(entityType, id) {
   }
   try { localStorage.setItem('_delete_log', JSON.stringify(log)); } catch(e) {}
 }
+// Vereint einen Remote-Tombstone-Log (aus payload._deleteLog) mit dem lokalen
+// _delete_log (max-Zeitstempel pro id gewinnt), pruned >30 Tage, persistiert und
+// gibt das vereinte Log zurück. So propagieren echte Löschungen über alle Geräte.
+function mergeAndPersistDeleteLog(remoteLog) {
+  const local = getDeleteLog();
+  if (remoteLog && typeof remoteLog === 'object') {
+    for (const [type, bucket] of Object.entries(remoteLog)) {
+      if (!bucket || typeof bucket !== 'object') continue;
+      if (!local[type]) local[type] = {};
+      for (const [id, ts] of Object.entries(bucket)) {
+        const t = Number(ts) || 0;
+        if (!local[type][id] || t > local[type][id]) local[type][id] = t;
+      }
+    }
+  }
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  for (const type of Object.keys(local)) {
+    for (const [id, ts] of Object.entries(local[type])) if (ts < cutoff) delete local[type][id];
+    if (Object.keys(local[type]).length === 0) delete local[type];
+  }
+  try { localStorage.setItem('_delete_log', JSON.stringify(local)); } catch(e) {}
+  return local;
+}
+// Baut aus einem (verschachtelten) Delete-Log eine flache id→Zeitstempel-Map.
+// Wichtig: umgeht das Singular/Plural-Bucket-Problem (logDeletion speichert mal
+// 'task', mal 'nhNews') — beim Merge zählt nur die id, nicht der Bucket-Name.
+function flattenDeleteLog(log) {
+  const flat = {};
+  for (const bucket of Object.values(log || {})) {
+    if (!bucket || typeof bucket !== 'object') continue;
+    for (const [id, ts] of Object.entries(bucket)) {
+      const t = Number(ts) || 0;
+      if (!flat[id] || t > flat[id]) flat[id] = t;
+    }
+  }
+  return flat;
+}
 
 // ── Field-level merge for individual entities ──
 // Count total entities across all collections (for sync safety checks)
@@ -9629,13 +9670,20 @@ function formatSyncStatsShort(stats) {
   return parts.join(' · ');
 }
 
+// Einheitlicher Zeitstempel eines Items — deckt ALLE Feldnamen-Konventionen ab
+// (Haupt-Entities: createdAt/updatedAt; NewsroomHub: created/updated). Fehlt
+// jeder Zeitstempel → 0 (gilt als "unbekannt" und wird im Merge sicher behalten).
+function entityTimestamp(item) {
+  if (!item || typeof item !== 'object') return 0;
+  return new Date(item.updatedAt || item.updated || item.createdAt || item.created || 0).getTime() || 0;
+}
 function mergeEntity(local, remote) {
   if (!local) return remote;
   if (!remote) return local;
-  
-  const localTs = new Date(local.updatedAt || local.updated || local.createdAt || local.created || 0).getTime() || 0;
-  const remoteTs = new Date(remote.updatedAt || remote.updated || remote.createdAt || remote.created || 0).getTime() || 0;
-  
+
+  const localTs = entityTimestamp(local);
+  const remoteTs = entityTimestamp(remote);
+
   // Simple: take the NEWER version. No field merging, no array accumulation.
   return remoteTs > localTs ? JSON.parse(JSON.stringify(remote)) : local;
 }
@@ -9654,8 +9702,12 @@ function mergeData(local, remote) {
   if (!local || !local.entities) return normalizeData(remote);
   
   const merged = JSON.parse(JSON.stringify(local));
-  const deleteLog = getDeleteLog();
-  
+  // Tombstones beider Seiten vereinen (Remote bringt payload._deleteLog mit) und
+  // persistieren → echte Löschungen propagieren über alle Geräte (keine Geister-
+  // Wiederauferstehung). Danach flache id→ts-Map (umgeht Singular/Plural-Buckets).
+  const combinedDeleteLog = mergeAndPersistDeleteLog(remote._deleteLog);
+  const tombstones = flattenDeleteLog(combinedDeleteLog);
+
   // ── Merge entity collections ──
   const allEntityKeys = new Set([
     ...Object.keys(local.entities || {}),
@@ -9669,32 +9721,30 @@ function mergeData(local, remote) {
     if (typeof remoteCol !== 'object' || remoteCol === null || Array.isArray(remoteCol)) continue;
     
     if (!merged.entities[key]) merged.entities[key] = {};
-    const deletedIds = deleteLog[key] || {};
-    
+
     const allIds = new Set([...Object.keys(localCol), ...Object.keys(remoteCol)]);
-    
+
     for (const id of allIds) {
       const localItem = localCol[id];
       const remoteItem = remoteCol[id];
-      
-      // Skip if deliberately deleted locally
-      if (deletedIds[id]) {
-        // But only if the remote version isn't newer than the deletion
-        const remoteTs = remoteItem ? new Date(remoteItem.updatedAt || remoteItem.createdAt || 0).getTime() : 0;
-        if (remoteTs > deletedIds[id]) {
-          // Remote was updated AFTER local deletion → keep remote (user re-created or edited elsewhere)
-          merged.entities[key][id] = remoteItem;
-        } else {
-          // Deletion is newer → keep deleted
-          delete merged.entities[key][id];
-          continue;
-        }
-      } else if (localItem && !remoteItem) {
-        merged.entities[key][id] = localItem;
-      } else if (!localItem && remoteItem) {
-        merged.entities[key][id] = remoteItem;
-      } else if (localItem && remoteItem) {
-        merged.entities[key][id] = mergeEntity(localItem, remoteItem);
+
+      // 1) Union per id + neuere Version gewinnt. Dedupe ist INHÄRENT: die
+      //    Collection ist ein nach id indiziertes Objekt — pro id genau EIN
+      //    Schlüssel, doppelte Einträge sind strukturell unmöglich.
+      let winner;
+      if (localItem && remoteItem) winner = mergeEntity(localItem, remoteItem);
+      else winner = localItem || remoteItem;
+      if (!winner) { delete merged.entities[key][id]; continue; }
+
+      // 2) Tombstone wirkt NUR, wenn ein gültiger Lösch-Zeitstempel ECHT NEUER
+      //    ist als der (neueste) Item-Zeitstempel. Beides muss > 0 sein; fehlt
+      //    der Item-Zeitstempel, wird im Zweifel BEHALTEN (kein Datenverlust).
+      const tombTs = tombstones[id] || 0;
+      const itemTs = entityTimestamp(winner);
+      if (tombTs > 0 && itemTs > 0 && tombTs > itemTs) {
+        delete merged.entities[key][id];   // echte, neuere Löschung gewinnt
+      } else {
+        merged.entities[key][id] = winner; // behalten (Union, neuere Version)
       }
     }
   }
