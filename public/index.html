@@ -65184,6 +65184,15 @@ function viewNotesWorkspace(noteId){
               <button class="btn sm" data-action="ai-expand-note" data-id="${openNote.id}">📖 Erweitern</button>
               <button class="btn sm" data-action="ai-suggest-links" data-kind="note" data-id="${openNote.id}">🔗 KI-Verknüpfung</button>
             </div>
+            <div class="sep"></div>
+            <div class="mini text-muted mb-1">✍️ Schreibassistenz (wirkt auf markierten Text – ohne Auswahl auf die ganze Notiz):</div>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn sm" data-action="ai-p1-formal" data-id="${openNote.id}" title="Formeller umformulieren">🎩 Formeller</button>
+              <button class="btn sm" data-action="ai-p1-casual" data-id="${openNote.id}" title="Lockerer umformulieren">😊 Lockerer</button>
+              <button class="btn sm" data-action="ai-p1-shorten" data-id="${openNote.id}" title="Kürzer & prägnanter">✂️ Kürzer</button>
+              <button class="btn sm" data-action="ai-p1-proofread" data-id="${openNote.id}" title="Nur Rechtschreibung/Grammatik – Stil unverändert">📐 Korrektur</button>
+              <button class="btn sm" data-action="ai-p1-nextsteps" data-id="${openNote.id}" title="Nächste Schritte ableiten und als Aufgaben anlegen">➡️ Nächste Schritte → Aufgaben</button>
+            </div>
             ${openNote.summary ? `
               <div class="sep"></div>
               <div class="mini text-muted mb-1">📋 Zusammenfassung:</div>
@@ -71229,10 +71238,92 @@ Analyse:`;
       aiNoteEnhance(id);
       return;
     }
-    
+
+    // ── Paket 1: KI-Schreibassistenz ──
+    if (action === "ai-p1-formal"){ e.preventDefault(); _p1Rewrite(id, "Formeller", "Formuliere den folgenden Text in einem formellen, professionellen Ton um. Behalte Sprache und inhaltliche Aussage bei. Antworte NUR mit dem umformulierten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-casual"){ e.preventDefault(); _p1Rewrite(id, "Lockerer", "Formuliere den folgenden Text in einem lockeren, freundlichen Ton um. Behalte Sprache und inhaltliche Aussage bei. Antworte NUR mit dem umformulierten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-shorten"){ e.preventDefault(); _p1Rewrite(id, "Kürzer fassen", "Fasse den folgenden Text deutlich kürzer und prägnanter, ohne wichtige Information zu verlieren. Behalte die Sprache bei. Antworte NUR mit dem gekürzten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-proofread"){ e.preventDefault(); _p1Rewrite(id, "Rechtschreibung & Grammatik", "Korrigiere ausschließlich Rechtschreibung, Grammatik und Zeichensetzung im folgenden Text. Ändere NICHT Stil, Wortwahl, Satzbau oder Inhalt. Behalte die Sprache bei. Antworte NUR mit dem korrigierten Text, ohne Erklärungen."); return; }
+    if (action === "ai-p1-nextsteps"){ e.preventDefault(); _p1NextSteps(id); return; }
+
     return __v11_prev_handleClick ? __v11_prev_handleClick(e) : undefined;
   };
-  
+
+  // ════════════════════════════════════════════════════════════════════
+  //  PAKET 1 — KI-Schreibassistenz für Notizen (nutzt window.callAI)
+  //  Operiert auf dem im Editor (#noteContentEditor) markierten Text, sonst
+  //  auf dem ganzen Notizinhalt. Schreibt erst nach „Übernehmen" zurück;
+  //  „Nächste Schritte" legt Aufgaben erst nach Bestätigung (confirm) an.
+  // ════════════════════════════════════════════════════════════════════
+  function _p1Sel(noteId){
+    var ta = document.getElementById("noteContentEditor");
+    if (ta && ta.selectionStart != null && ta.selectionEnd > ta.selectionStart){
+      return { text: ta.value.substring(ta.selectionStart, ta.selectionEnd), sel:true, start:ta.selectionStart, end:ta.selectionEnd };
+    }
+    var note = getEntity("note", noteId);
+    return { text: (ta ? ta.value : ((note && note.content) || "")), sel:false };
+  }
+  async function _p1Rewrite(noteId, label, sys){
+    var g = _p1Sel(noteId);
+    if (!g.text || !g.text.trim()){ toast("warn","KI", (g.sel ? "Markierter Text" : "Notiz") + " ist leer"); return; }
+    toast("ok","KI", label + " …");
+    var result;
+    try { result = await window.callAI(g.text, { systemPrompt: sys, maxTokens: 1500 }); }
+    catch(err){ toast("danger","KI-Fehler", (err && err.message) || "Aufruf fehlgeschlagen"); return; }
+    if (!result){ toast("warn","KI","Kein Ergebnis – API-Key in den Einstellungen hinterlegt?"); return; }
+    window._p1Pending = { noteId:noteId, sel:g.sel, start:g.start, end:g.end };
+    openModal(label,
+      '<div class="form"><label class="col-12">Ergebnis ' + (g.sel ? "(ersetzt die Auswahl)" : "(ersetzt den Notizinhalt)") + '<textarea id="p1Result" style="min-height:280px">' + esc(result) + '</textarea></label></div>',
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn" onclick="p1CopyResult()">📋 Kopieren</button><button class="btn primary" onclick="p1ApplyResult()">Übernehmen</button>');
+  }
+  window.p1CopyResult = function(){ var t=document.getElementById("p1Result"); if(t && navigator.clipboard){ navigator.clipboard.writeText(t.value); toast("ok","Kopiert",""); } };
+  window.p1ApplyResult = function(){
+    var t=document.getElementById("p1Result"), p=window._p1Pending; if(!t || !p) return;
+    var note=getEntity("note", p.noteId); if(!note) return;
+    var ta=document.getElementById("noteContentEditor");
+    if (p.sel && ta){ note.content = ta.value.slice(0, p.start) + t.value + ta.value.slice(p.end); }
+    else { note.content = t.value; }
+    note.updatedAt = nowIso(); scheduleSave(); closeModal(); render();
+    toast("ok","Übernommen","Notiztext aktualisiert");
+  };
+  function _p1ParseSteps(raw){
+    if(!raw) return [];
+    var s=String(raw).trim().replace(/^```(?:json)?/i,"").replace(/```$/,"").trim();
+    try { var arr=JSON.parse(s); if(Array.isArray(arr)) return arr.filter(function(x){return x && x.title;}).map(function(x){return { title:String(x.title).slice(0,200), description:String(x.description||"") };}); } catch(e){}
+    return s.split(/\n+/).map(function(l){return l.replace(/^[-*\d.\)\s]+/,"").trim();}).filter(Boolean).slice(0,6).map(function(l){return { title:l.slice(0,200), description:"" };});
+  }
+  async function _p1NextSteps(noteId){
+    var note=getEntity("note", noteId), src=(note && note.content) || "";
+    if(!src.trim()){ toast("warn","KI","Notiz ist leer"); return; }
+    toast("ok","KI","Leite nächste Schritte ab …");
+    var sys='Leite aus dem Text konkrete, umsetzbare nächste Schritte als Aufgaben ab. Antworte AUSSCHLIESSLICH als JSON-Array von Objekten {"title":"kurzer Titel","description":"1 Satz"} (höchstens 6), ohne Markdown, ohne weitere Zeichen.';
+    var raw;
+    try { raw=await window.callAI(src, { systemPrompt:sys, maxTokens:900 }); }
+    catch(err){ toast("danger","KI-Fehler", (err && err.message) || ""); return; }
+    var items=_p1ParseSteps(raw);
+    if(!items.length){ toast("warn","KI","Keine Schritte erkannt"); return; }
+    window._p1Steps = { noteId:noteId, items:items };
+    var listHtml=items.map(function(it,i){ return '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;cursor:pointer"><input type="checkbox" checked data-p1step="'+i+'" style="margin-top:3px"><span><strong>'+esc(it.title)+'</strong>'+(it.description?'<br><span class="mini text-muted">'+esc(it.description)+'</span>':'')+'</span></label>'; }).join("");
+    openModal("Nächste Schritte → Aufgaben",
+      '<div class="mini text-muted mb-2">Aus der Notiz abgeleitet. Wähle aus, was angelegt werden soll:</div>'+listHtml,
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="p1CreateSteps()">Aufgaben anlegen</button>');
+  }
+  window.p1CreateSteps = function(){
+    var st=window._p1Steps; if(!st) return;
+    var chosen=[]; document.querySelectorAll('[data-p1step]').forEach(function(cb){ if(cb.checked) chosen.push(st.items[parseInt(cb.dataset.p1step,10)]); });
+    if(!chosen.length){ toast("warn","","Nichts ausgewählt"); return; }
+    if(!confirm("Der KI-Assistent möchte "+chosen.length+" Aufgabe(n) anlegen:\n\n"+chosen.map(function(c){return "• "+c.title;}).join("\n")+"\n\nAnlegen?")) return;
+    var note=getEntity("note", st.noteId), n=0;
+    chosen.forEach(function(c){
+      var ref = note ? ("\n\nAus Notiz: "+(note.title||"(ohne Titel)")) : "";
+      var tid = window.createEntity("task", { title:c.title, description:(c.description||"")+ref, status:"todo", priority:3, tags:["Notiz"], source:"note", sourceNoteId: st.noteId });
+      if(tid){ n++; if(note){ note.linkedTasks = note.linkedTasks||[]; note.linkedTasks.push(tid); } }
+    });
+    if(note) note.updatedAt = nowIso();
+    scheduleSave(); closeModal(); render();
+    toast("ok","Aufgaben erstellt", n+" Aufgabe(n) aus den nächsten Schritten angelegt.");
+  };
+
   // KI-Zugriff auf alle Notizen für Chat
   window.getNotesContext = function() {
     const notes = Object.values(APP.state.data.entities.notes || {});
