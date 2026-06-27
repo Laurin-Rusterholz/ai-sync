@@ -96982,30 +96982,42 @@ console.log('📚 Leseliste geladen');
     toast("ok","Korrigiert","Termin-Vorschlag aktualisiert.");
   };
 
-  // ── 2) Mail → Aufgabe (taskRequests / taskSuggestions) ──
-  // Punkt 8: „Aufgabe" erstellt direkt eine echte Quantus-Aufgabe (createEntity → bestehender
-  // Tasks-Pfad APP.state.data.entities.tasks, gleiche Struktur wie sonst), mit Betreff als Titel,
-  // Absender + Mail-Bezug (sourceMessageId/threadId) in der Beschreibung. Kein neuer Pfad; die
-  // KI-Entwurf-/Sende-/Verwerfen-Logik (PR #24) bleibt unberührt.
-  window.gmailCreateTaskRequest = function(){
+  // ── 2) Mail → Aufgabe: KI-Vorschlag nach /taskSuggestions (Fix B, ohne n8n-Abhängigkeit) ──
+  // „📋 Aufgabe" schreibt einen KI-vorbefüllten Vorschlag (status:"ready") client-seitig direkt in
+  // den bestehenden RTDB-Store /taskSuggestions (rtdbPost) — denselben Store, den loadTaskSuggestions
+  // liest und gmailAdoptTaskSuggestion (Annehmen) per createEntity zur echten Aufgabe macht. So
+  // erscheint der Vorschlag SOFORT unter „📋 Aufgaben-Vorschläge". Frühere Variante schrieb nie nach
+  // /taskSuggestions (legte direkt eine Aufgabe an) → Ansicht blieb leer. Schreib-Aktion nur nach
+  // window.confirm; KI-Vorbefüllung via aiPrefillTask (→ callAI), Fallback regelbasiert.
+  window.gmailCreateTaskRequest = async function(){
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
-    if (typeof window.createEntity!=="function"){ toast("err","Nicht verfügbar","Aufgaben-Modul nicht geladen."); return; }
-    var a=parseAddr(o.from);
-    var c=clsOf(o);
-    var prev=String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim().slice(0,500);
-    var sender=(a.name ? a.name+" <"+(a.email||"")+">" : (a.email||"(unbekannt)"));
-    var desc="Aus E-Mail\nVon: "+sender+"\nBetreff: "+(o.subject||"(kein Betreff)")
-      + "\nÖffnen: Quantus → Gmail (Mail-ID "+o.id+")"
-      + (prev ? "\n\n"+prev : "");
-    var id=window.createEntity("task", {
-      title: String(o.subject||"Aufgabe aus E-Mail").slice(0,200),
-      description: desc, status:"todo",
-      priority:(c&&typeof c.priority==="number")?c.priority:3,
-      tags:["Gmail"], source:"gmail",
-      sourceMessageId:o.id, sourceThreadId:o.threadId||""
-    });
-    if (id) toast("ok","Aufgabe erstellt","Betreff + Absender als Quantus-Aufgabe angelegt.");
-    else toast("err","Fehler","Aufgabe konnte nicht erstellt werden");
+    if (GM._taskReqBusy) return;
+    var a=parseAddr(o.from), c=clsOf(o);
+    if (!window.confirm("Aus dieser Mail einen Aufgaben-Vorschlag erstellen?\n\nBetreff: "+(o.subject||"(kein Betreff)")+"\n\nDer Vorschlag erscheint unter Aufgaben-Vorschläge und kann dort als Aufgabe übernommen werden.")) return;
+    GM._taskReqBusy = true;
+    toast("info","Vorschlag wird erstellt…","Die KI bereitet einen Aufgaben-Vorschlag vor — er erscheint unter Aufgaben-Vorschläge.");
+    try {
+      var body = String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim();
+      var sender = a.name ? a.name+" <"+(a.email||"")+">" : (a.email||"(unbekannt)");
+      var ai = await aiPrefillTask({ subject:o.subject||"", from:sender, body:body });   // {title,description} | null
+      var title = (ai && ai.title) ? ai.title : ("Re: "+(o.subject||"E-Mail"));
+      var ref = "Aus E-Mail\nVon: "+sender+"\nBetreff: "+(o.subject||"(kein Betreff)")+"\nMail-ID: "+o.id;
+      var desc = (ai && ai.description ? ai.description+"\n\n" : "") + ref + (body ? "\n\nMail-Auszug: "+body.slice(0,500) : "");
+      await rtdbPost("taskSuggestions", {
+        title: String(title).slice(0,200),
+        description: desc,
+        priority: (c && typeof c.priority==="number") ? c.priority : 3,
+        status: "ready",
+        source: "gmail-ai",
+        sourceMessageId: o.id,
+        sourceThreadId: o.threadId||"",
+        createdAt: Date.now()
+      });
+      toast("ok","Vorschlag erstellt", (ai?"KI-vorbefüllt — ":"")+"unter 📋 Aufgaben-Vorschläge verfügbar (dort übernehmen).");
+      try { await loadTaskSuggestions(); } catch(e){}   // Badge/Liste sofort aktualisieren
+    } catch(e){
+      toast("err","Fehler", (e&&e.message)||"Vorschlag konnte nicht erstellt werden");
+    } finally { GM._taskReqBusy = false; }
   };
 
   // ── On-Demand-KI-Entwurf für die offene Mail (Button „✨ KI-Entwurf" + Taste D) ──
