@@ -95530,6 +95530,7 @@ console.log('📚 Leseliste geladen');
         internalDate: parseInt(msg.internalDate||"0",10) || Date.parse(h.date||"") || 0,
         messageId: h["message-id"]||"", references: h.references||"", inReplyTo: h["in-reply-to"]||"",
         html: bodies.html, text: bodies.text,
+        attachText: extractInlineAttachText(msg.payload), attachRefs: collectAttachmentRefs(msg.payload),
       };
       if (wasUnread) markReadById(msg.id, true, true); // auto-mark read on open
     } catch(e){ GM.open = { error: e.message||"Nachricht konnte nicht geladen werden" }; }
@@ -95595,6 +95596,71 @@ console.log('📚 Leseliste geladen');
     var s=String(data).replace(/-/g,"+").replace(/_/g,"/"); while (s.length%4) s+="=";
     try { return decodeURIComponent(escape(window.atob(s))); } catch(e){ try { return window.atob(s); } catch(_){ return ""; } }
   }
+
+  // ── Anhang-Inhalt für Termin-Erkennung / Entwurfs-Kontext ──
+  // Inline-Teile (.ics text/calendar, inline .txt) kommen ohne Backend direkt aus dem
+  // schon geladenen Payload. Echte Anhänge (PDF/Text) werden – nur auf Bedarf – über die
+  // bestehende gmApi-Proxyschicht (messages.attachments.get, Scope gmail.modify) geladen
+  // und client-seitig per pdfjsLib (loadPDFLibrary) zu Text extrahiert. Grössen-/Seitenlimit.
+  function collectAttachmentRefs(payload){
+    var refs=[];
+    (function walk(p){ if(!p) return;
+      if (p.body && p.body.attachmentId && p.filename){ refs.push({ attachmentId:p.body.attachmentId, filename:p.filename, mimeType:(p.mimeType||"").toLowerCase(), size:p.body.size||0 }); }
+      if (p.parts && p.parts.length) p.parts.forEach(walk);
+    })(payload);
+    return refs;
+  }
+  function extractInlineAttachText(payload){
+    var out=[];
+    (function walk(p){ if(!p) return;
+      var mime=(p.mimeType||"").toLowerCase();
+      if (p.body && p.body.data && (mime.indexOf("calendar")>=0 || (mime.indexOf("text/")===0 && p.filename))){
+        var t=b64urlDecode(p.body.data); if(t) out.push((p.filename?("["+p.filename+"]\n"):"")+t);
+      }
+      if (p.parts && p.parts.length) p.parts.forEach(walk);
+    })(payload);
+    return out.join("\n\n").slice(0,8000);
+  }
+  function gmailB64urlToBytes(b64url){
+    var s=String(b64url||"").replace(/-/g,"+").replace(/_/g,"/"); while (s.length%4) s+="=";
+    var bin=window.atob(s), bytes=new Uint8Array(bin.length);
+    for (var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    return bytes;
+  }
+  async function gmailPdfToText(b64url){
+    try {
+      if (typeof loadPDFLibrary==="function") await loadPDFLibrary();
+      if (!window.pdfjsLib || !window.pdfjsLib.getDocument) return "";
+      var pdf = await window.pdfjsLib.getDocument({ data: gmailB64urlToBytes(b64url), disableWorker:true }).promise;
+      var out="", pages=Math.min(pdf.numPages||0, 10);   // max 10 Seiten
+      for (var p=1;p<=pages;p++){ var page=await pdf.getPage(p); var tc=await page.getTextContent(); out += tc.items.map(function(it){return it.str;}).join(" ")+"\n"; if (out.length>12000) break; }
+      return out.slice(0,12000);
+    } catch(e){ return ""; }
+  }
+  async function gmailExtractAttachment(msgId, ref){
+    try {
+      var mime=(ref.mimeType||"").toLowerCase(), fn=(ref.filename||"").toLowerCase();
+      var isPdf = mime.indexOf("pdf")>=0 || /\.pdf$/.test(fn);
+      var isText = mime.indexOf("text/")===0 || mime.indexOf("calendar")>=0 || /\.(txt|csv|md|ics|json)$/.test(fn);
+      if (!isPdf && !isText) return "";
+      if (ref.size && ref.size > 8*1024*1024) return "";   // >8 MB überspringen
+      var res = await gmApi("GET","/users/me/messages/"+encodeURIComponent(msgId)+"/attachments/"+encodeURIComponent(ref.attachmentId));
+      var data = res && res.data; if (!data) return "";
+      if (isPdf) return await gmailPdfToText(data);
+      return b64urlDecode(data).slice(0,8000);
+    } catch(e){ return ""; }
+  }
+  async function gmailGatherAttachText(o){
+    if (!o) return "";
+    if (o._attachTextResolved != null) return o._attachTextResolved;   // pro Mail nur einmal
+    var parts=[];
+    if (o.attachText) parts.push(o.attachText);                        // inline (sync, ohne Backend)
+    var refs=(o.attachRefs||[]).slice(0,5);                            // max 5 Anhänge
+    for (var i=0;i<refs.length;i++){ var t=await gmailExtractAttachment(o.id, refs[i]); if(t) parts.push("["+refs[i].filename+"]\n"+t); }
+    o._attachTextResolved = parts.join("\n\n").slice(0,14000);
+    return o._attachTextResolved;
+  }
+
   function extractBodies(payload){
     var out={ html:"", text:"" };
     (function walk(p){
@@ -96843,21 +96909,32 @@ console.log('📚 Leseliste geladen');
     if (!endISO || isNaN(new Date(endISO))){ endISO = allDay ? startISO : apptIsoLocal(new Date(new Date(startISO).getTime()+3600000)); }
     return { hasDate:true, title:String(obj.title||"Termin").slice(0,120), startISO:startISO, endISO:endISO, allDay:allDay, location:String(obj.location||""), notes:String(obj.notes||"") };
   }
+  // Tolerantes Parsen eines JSON-ARRAYS (mehrere Termine). Fällt auf ein Einzelobjekt
+  // zurück (Rückwärtskompat) und liefert null nur bei wirklich unparsebarer Antwort.
+  function apptParseJsonArray(txt){
+    if (!txt || typeof txt!=="string") return null;
+    var s = txt.replace(/```json/gi,"").replace(/```/g,"").trim();
+    var a = s.indexOf("["), b = s.lastIndexOf("]");
+    if (a>=0 && b>a){ try { var arr = JSON.parse(s.slice(a,b+1)); if (Array.isArray(arr)) return arr; } catch(e){} }
+    var single = apptParseJson(txt);              // ein Objekt → in Array packen
+    if (single && typeof single==="object"){ return (single.hasDate===false) ? [] : [single]; }
+    return null;
+  }
+  // Erkennt MEHRERE Termine pro Mail → Array normalisierter Termine ([] = keiner, null = Fehler/Fallback).
   async function aiDetectAppt(subject, text){
     if (typeof window.callAI!=="function") return null;
-    var sys = "Du extrahierst Termine aus E-Mails. Antworte AUSSCHLIESSLICH mit EINEM JSON-Objekt, ohne Markdown/Erklärung. "
-      + "Schema: {\"hasDate\":boolean,\"title\":string,\"startISO\":string,\"endISO\":string,\"allDay\":boolean,\"location\":string,\"notes\":string}. "
-      + "startISO/endISO als \"YYYY-MM-DDTHH:MM\" in lokaler Zeit (Europe/Zurich, ohne Zeitzonen-Offset). "
+    var sys = "Du extrahierst ALLE Termine aus E-Mails (auch mehrere). Antworte AUSSCHLIESSLICH mit EINEM JSON-ARRAY von Termin-Objekten, ohne Markdown/Erklärung. "
+      + "Objekt-Schema: {\"title\":string,\"startISO\":string,\"endISO\":string,\"allDay\":boolean,\"location\":string,\"notes\":string}. "
+      + "Leeres Array [] wenn kein Termin. startISO/endISO als \"YYYY-MM-DDTHH:MM\" in lokaler Zeit (Europe/Zurich, ohne Zeitzonen-Offset). "
       + "Ohne erkennbare Endzeit: endISO = startISO + 1 Stunde. allDay=true nur ohne Uhrzeit. "
       + "Heute ist "+apptTodayZurich()+" (zur Auflösung von 'nächsten Dienstag' etc.). "
-      + "Bei Unsicherheit hasDate=false — lieber kein Termin als ein falscher.";
-    var prompt = "Betreff: "+String(subject||"")+"\n\nText:\n"+String(text||"").slice(0,3500)+"\n\nGib das JSON zurück.";
+      + "Im Zweifel weglassen — lieber kein Termin als ein falscher.";
+    var prompt = "Betreff: "+String(subject||"")+"\n\nText:\n"+String(text||"").slice(0,6000)+"\n\nGib das JSON-Array zurück.";
     try {
-      var txt = await window.callAI(prompt, { systemPrompt:sys, maxTokens:300 });
-      var obj = apptParseJson(txt);
-      if (!obj || typeof obj.hasDate==="undefined") return null;   // unparsebar → Regex-Fallback
-      if (obj.hasDate!==true) return { hasDate:false };            // KI: kein Termin → vertrauen
-      return apptNormalize(obj);
+      var txt = await window.callAI(prompt, { systemPrompt:sys, maxTokens:600 });
+      var arr = apptParseJsonArray(txt);
+      if (arr===null) return null;                                 // unparsebar → Regex-Fallback
+      return arr.map(apptNormalize).filter(function(x){ return x && x.hasDate; });
     } catch(e){ return null; }   // kein Key / Fehler → Regex-Fallback
   }
   function gmailDetectAppointment(o){
@@ -96865,14 +96942,25 @@ console.log('📚 Leseliste geladen');
     GM._apptCache = GM._apptCache || {};
     if (GM._apptCache.hasOwnProperty(o.id)) return;   // genau EIN Lauf pro messageId
     GM._apptCache[o.id] = { loading:true };
+    var mid = o.id;
     var subject = o.subject||"";
-    var text = (o.text || htmlToText(o.html) || "").slice(0,4000);
-    if (!apptHasDateHint(subject+"\n"+text)){ GM._apptCache[o.id] = null; return; }  // kein Datum → kein KI-Aufruf
-    Promise.resolve(aiDetectAppt(subject, text)).then(function(ai){
-      var res = (ai!==null) ? (ai.hasDate ? ai : null) : ruleDetectAppt(subject, text);
-      GM._apptCache[o.id] = (res && res.hasDate) ? res : null;
-      rerender();
-    });
+    var bodyText = (o.text || htmlToText(o.html) || "");
+    var hasAtt = !!((o.attachRefs && o.attachRefs.length) || (o.attachText && o.attachText.length));
+    // Vorfilter: kein Datums-Hinweis im Body UND keine Anhänge → gar kein Fetch-/KI-Aufwand.
+    if (!apptHasDateHint(subject+"\n"+bodyText) && !hasAtt){ GM._apptCache[mid] = null; return; }
+    // Erst Anhang-Inhalt sammeln (inline sofort + PDF/Text via Proxy+pdfjs), dann erkennen.
+    Promise.resolve(gmailGatherAttachText(o)).then(function(attachText){
+      var text = (bodyText + (attachText ? ("\n\n[Anhang-Inhalt]\n"+attachText) : "")).slice(0,9000);
+      if (!apptHasDateHint(subject+"\n"+text)){ GM._apptCache[mid] = null; rerender(); return; }  // kein Datum → kein KI-Aufruf
+      return Promise.resolve(aiDetectAppt(subject, text)).then(function(ai){
+        var list;
+        if (ai!==null) list = ai;                                                  // Array (evtl. leer)
+        else { var r = ruleDetectAppt(subject, text); list = (r && r.hasDate) ? [r] : []; }   // Regex-Fallback: Einzeltreffer → Array
+        list = (list||[]).filter(function(x){ return x && x.hasDate; });
+        GM._apptCache[mid] = list.length ? list : null;
+        rerender();
+      });
+    }).catch(function(){ GM._apptCache[mid] = null; rerender(); });
   }
   function apptWhenText(a){
     try {
@@ -96882,22 +96970,29 @@ console.log('📚 Leseliste geladen');
       return ds+" um "+s.toLocaleTimeString("de-CH", { hour:"2-digit", minute:"2-digit" })+" Uhr";
     } catch(e){ return a.startISO||""; }
   }
+  // Liste der erkannten Termine einer Mail (Rückwärtskompat: Einzelobjekt → 1er-Array).
+  function _apptList(id){ var a = GM._apptCache && GM._apptCache[id]; if (Array.isArray(a)) return a; return (a && a.hasDate) ? [a] : []; }
+  function _apptAt(id, idx){ var l=_apptList(id); return l[parseInt(idx,10)||0] || null; }
   function renderApptCard(o){
     if (!o || !o.id) return "";
     GM._apptCache = GM._apptCache || {};
     var a = GM._apptCache[o.id];
     if (a===undefined){ gmailDetectAppointment(o); return ""; }   // einmalig anstossen
-    if (!a || a.loading || !a.hasDate) return "";                 // läuft / kein Termin
-    return '<div class="gml-appt">'
-      + '<div class="gml-appt-ic">📅</div>'
-      + '<div class="gml-appt-body">'
-      +   '<div class="gml-appt-label">Termin erkannt</div>'
-      +   '<div class="gml-appt-title">'+esc(a.title||"Termin")+'</div>'
-      +   '<div class="gml-appt-when">'+esc(apptWhenText(a))+(a.location?' · '+esc(a.location):'')+'</div>'
-      + '</div>'
-      + '<button class="btn" onclick="window.gmailEditDetectedAppt(\''+jsStr(o.id)+'\')" title="Erkannten Termin korrigieren (Titel/Datum/Zeit/Ort), falls die KI etwas falsch erkannt hat">✏️ Korrigieren</button>'
-      + '<button class="btn primary" onclick="gmailAddDetectedToCalendar(\''+jsStr(o.id)+'\')" title="Im Google-Kalender-Editor vorausgefüllt öffnen – Titel/Datum/Zeit vor dem Speichern bearbeitbar">+ In Google Kalender eintragen</button>'
-      + '</div>';
+    if (!a || a.loading) return "";                               // läuft
+    var list = _apptList(o.id); if (!list.length) return "";      // kein Termin
+    var multi = list.length>1;
+    return list.map(function(appt, idx){
+      return '<div class="gml-appt">'
+        + '<div class="gml-appt-ic">📅</div>'
+        + '<div class="gml-appt-body">'
+        +   '<div class="gml-appt-label">'+(multi?("Termin "+(idx+1)+" von "+list.length+" erkannt"):"Termin erkannt")+'</div>'
+        +   '<div class="gml-appt-title">'+esc(appt.title||"Termin")+'</div>'
+        +   '<div class="gml-appt-when">'+esc(apptWhenText(appt))+(appt.location?' · '+esc(appt.location):'')+'</div>'
+        + '</div>'
+        + '<button class="btn" onclick="window.gmailEditDetectedAppt(\''+jsStr(o.id)+'\','+idx+')" title="Erkannten Termin korrigieren (Titel/Datum/Zeit/Ort), falls die KI etwas falsch erkannt hat">✏️ Korrigieren</button>'
+        + '<button class="btn primary" onclick="gmailAddDetectedToCalendar(\''+jsStr(o.id)+'\','+idx+')" title="Im Google-Kalender-Editor vorausgefüllt öffnen – Titel/Datum/Zeit vor dem Speichern bearbeitbar">+ In Google Kalender eintragen</button>'
+        + '</div>';
+    }).join("");
   }
   function apptToPrefill(a, desc){
     var sd=a.startISO.slice(0,10), st=a.startISO.slice(11,16);
@@ -96922,8 +97017,8 @@ console.log('📚 Leseliste geladen');
   // Klick „+ In Google Kalender eintragen": bevorzugt den bestehenden In-App-Editor
   // (gcalQuickCreateInline → vorbefüllt, bearbeitbar, speichert via gcApi). Nicht verbunden /
   // kein Kalender → Fallback: Google-Calendar-Vorlage-Link im neuen Tab.
-  window.gmailAddDetectedToCalendar = function(id){
-    var a = (GM._apptCache && GM._apptCache[id]) || null;
+  window.gmailAddDetectedToCalendar = function(id, idx){
+    var a = _apptAt(id, idx);
     if (!a || !a.hasDate){ toast("info","Kein Termin",""); return; }
     var o = (GM.open && GM.open.id===id) ? GM.open : null;
     var addr = o ? parseAddr(o.from) : { name:"", email:"" };
@@ -96940,8 +97035,8 @@ console.log('📚 Leseliste geladen');
   // Korrektur des erkannten Termin-Vorschlags (falls die KI etwas falsch erkannt hat).
   // Bearbeitet nur den gecachten Vorschlag (GM._apptCache); das Eintragen passiert weiterhin
   // erst über „In Google Kalender eintragen" (gcalQuickCreateInline → Editor, Speichern = Nutzer).
-  window.gmailEditDetectedAppt = function(id){
-    var a = (GM._apptCache && GM._apptCache[id]) || null;
+  window.gmailEditDetectedAppt = function(id, idx){
+    var a = _apptAt(id, idx);
     if (!a || !a.hasDate){ toast("info","Kein Termin",""); return; }
     var date = (a.startISO||"").slice(0,10);
     var st = a.allDay ? "09:00" : ((a.startISO||"").slice(11,16) || "09:00");
@@ -96958,10 +97053,10 @@ console.log('📚 Leseliste geladen');
       + '<label class="col-12" style="display:block">Ort<input id="apptEdLoc" type="text" '+inp+' value="'+esc(a.location||"")+'" placeholder="(optional)"></label>'
       + '</div>';
     window.openModal("✏️ Termin korrigieren", html,
-      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window.gmailSaveDetectedAppt(\''+jsStr(id)+'\')">Übernehmen</button>');
+      '<button class="btn" data-action="close-modal">Abbrechen</button><button class="btn primary" onclick="window.gmailSaveDetectedAppt(\''+jsStr(id)+'\','+(parseInt(idx,10)||0)+')">Übernehmen</button>');
   };
-  window.gmailSaveDetectedAppt = function(id){
-    var a = (GM._apptCache && GM._apptCache[id]) || null; if(!a){ return; }
+  window.gmailSaveDetectedAppt = function(id, idx){
+    var a = _apptAt(id, idx); if(!a){ return; }
     var g=function(x){ return document.getElementById(x); };
     var title=((g("apptEdTitle")||{}).value||"Termin").trim() || "Termin";
     var date=((g("apptEdDate")||{}).value||"").trim();
@@ -96981,7 +97076,8 @@ console.log('📚 Leseliste geladen');
     }
     var norm = apptNormalize({ title:title, startISO:startISO, endISO:endISO, allDay:allDay, location:loc, notes:a.notes||"" });
     if(!norm.hasDate){ toast("err","Ungültig","Termin konnte nicht übernommen werden."); return; }
-    GM._apptCache[id] = norm;
+    var cur = GM._apptCache[id];
+    if (Array.isArray(cur)) cur[parseInt(idx,10)||0] = norm; else GM._apptCache[id] = [norm];
     if(window.closeModal) window.closeModal();
     rerender();
     toast("ok","Korrigiert","Termin-Vorschlag aktualisiert.");
@@ -97039,6 +97135,9 @@ console.log('📚 Leseliste geladen');
     try {
       var a = parseAddr(o.from);
       var body = (o.text || htmlToText(o.html) || "").slice(0,5000);
+      // Anhang-Inhalt (inline .ics/.txt + PDF/Text via Proxy+pdfjs) client-seitig in den
+      // Entwurfs-Kontext mitgeben (n8n-Flow nutzt unverändert das Feld „body").
+      try { var att = await gmailGatherAttachText(o); if (att) body = (body + "\n\n[Anhang-Inhalt]\n" + att).slice(0,9000); } catch(e){}
       await rtdbPost("draftRequests", {
         messageId:o.id, threadId:o.threadId||"",
         from:a.email||"", fromName:a.name||"", to:o.to||"",
