@@ -27800,7 +27800,7 @@ function viewDashboard() {
         <div class="item-meta"><span class="pill">${fmtDate(n.updatedAt || n.createdAt)}</span></div>
       </div>
       <div class="item-actions">
-        <button class="btn sm ghost" data-action="assign-note-to-notebook" data-id="${n.id}" title="Zuweisen" onclick="event.stopPropagation()">📂</button>
+        <button class="btn sm ghost" data-action="assign-note-to-notebook" data-id="${n.id}" title="Zuweisen">📂</button>
       </div>
     </div>
   `).join("") : `<div class="mini text-center">Inbox leer! 🎉</div>`;
@@ -28316,7 +28316,7 @@ function viewDashboard() {
               <div style="font-size:13px;line-height:1.5">${esc(t.text)}</div>
               <div class="item-meta"><span>${new Date(t.createdAt).toLocaleDateString("de-CH")}</span></div>
             </div>
-            <button class="btn sm ghost danger" data-action="delete-thought" data-id="${t.id}" onclick="event.stopPropagation()">🗑</button>
+            <button class="btn sm ghost danger" data-action="delete-thought" data-id="${t.id}">🗑</button>
           </div>
         `).join("") || '<div class="mini" style="opacity:.5">Noch keine Gedanken notiert</div>'}
       </div>
@@ -28737,8 +28737,8 @@ function viewTasks() {
           ${timeSpent > 0 ? `<span class="pill">⏱️ ${fmtDurationShort(timeSpent)}</span>` : ''}
         </div>
         <div class="task-card-actions">
-          <button class="btn sm good" data-action="quick-complete-task" data-id="${t.id}" onclick="event.stopPropagation()">✓</button>
-          <button class="btn sm" data-action="start-timer" data-task-id="${t.id}" onclick="event.stopPropagation()">▶</button>
+          <button class="btn sm good" data-action="quick-complete-task" data-id="${t.id}">✓</button>
+          <button class="btn sm" data-action="start-timer" data-task-id="${t.id}">▶</button>
         </div>
       </div>
     `;
@@ -39172,8 +39172,8 @@ function viewIdeasLegacy() {
       </div>
       <div class="item-actions">
         <span class="badge">${ideas.filter(i => (i.tags || []).includes(t.name)).length}</span>
-        <button class="btn sm ghost" data-action="edit-tag" data-id="${t.id}" onclick="event.stopPropagation()">✏️</button>
-        <button class="btn sm ghost danger" data-action="delete-tag" data-id="${t.id}" onclick="event.stopPropagation()">🗑</button>
+        <button class="btn sm ghost" data-action="edit-tag" data-id="${t.id}">✏️</button>
+        <button class="btn sm ghost danger" data-action="delete-tag" data-id="${t.id}">🗑</button>
       </div>
     </div>
   `).join("") || `<div class="mini">Keine Tags erstellt.</div>`;
@@ -39186,8 +39186,8 @@ function viewIdeasLegacy() {
     return `
       <div class="postit" style="${postitVars(idea.id)}" data-action="open-entity" data-kind="idea" data-id="${idea.id}">
         <div class="postit-actions">
-          <button class="btn sm good" data-action="process-idea" data-id="${idea.id}" onclick="event.stopPropagation()" title="Verarbeiten">⚡</button>
-          <button class="btn sm ghost danger" data-action="delete-idea" data-id="${idea.id}" onclick="event.stopPropagation()" title="Löschen">🗑</button>
+          <button class="btn sm good" data-action="process-idea" data-id="${idea.id}" title="Verarbeiten">⚡</button>
+          <button class="btn sm ghost danger" data-action="delete-idea" data-id="${idea.id}" title="Löschen">🗑</button>
         </div>
         <div class="postit-title">${esc(idea.title || idea.text?.slice(0, 50) || "(Ohne Titel)")}</div>
         ${snippet ? `<div class="mini">${snippet}</div>` : ""}
@@ -43050,7 +43050,7 @@ function viewToday() {
           <div class="list-item" style="padding:6px 0;border-bottom:1px solid var(--border)">
             <div class="item-icon" style="font-size:13px">💭</div>
             <div class="item-body"><div style="font-size:12px;line-height:1.4">${esc(t.text.length > 120 ? t.text.slice(0,120)+"…" : t.text)}</div></div>
-            <button class="btn sm ghost danger" data-action="delete-thought" data-id="${t.id}" onclick="event.stopPropagation()" style="font-size:10px">🗑</button>
+            <button class="btn sm ghost danger" data-action="delete-thought" data-id="${t.id}" style="font-size:10px">🗑</button>
           </div>
         `).join("") || '<div class="mini" style="opacity:.5">Noch keine Gedanken</div>'}
       </div>
@@ -43277,8 +43277,8 @@ function viewMessages() {
           </div>
         </div>
         <div class="item-actions">
-          ${showPin ? `<button class="btn sm ghost" data-action="toggle-pin-message" data-id="${m.id}" onclick="event.stopPropagation()">${m.isPinned ? "📌" : "📍"}</button>` : ""}
-          <button class="btn sm ghost danger" data-action="delete-message" data-id="${m.id}" onclick="event.stopPropagation()">🗑</button>
+          ${showPin ? `<button class="btn sm ghost" data-action="toggle-pin-message" data-id="${m.id}">${m.isPinned ? "📌" : "📍"}</button>` : ""}
+          <button class="btn sm ghost danger" data-action="delete-message" data-id="${m.id}">🗑</button>
         </div>
       </div>
     `;
@@ -46399,9 +46399,9 @@ function viewMeetings(id) {
           </div>
         </div>
         <div class="item-actions">
-          ${m.status === "planned" ? `<button class="btn sm good" data-action="start-meeting" data-id="${m.id}" onclick="event.stopPropagation()">▶️ Starten</button>` : ""}
-          ${m.status === "in_progress" ? `<button class="btn sm danger" data-action="end-meeting" data-id="${m.id}" onclick="event.stopPropagation()">⏹ Beenden</button>` : ""}
-          <button class="btn sm ghost danger" data-action="delete-meeting" data-id="${m.id}" onclick="event.stopPropagation()">🗑</button>
+          ${m.status === "planned" ? `<button class="btn sm good" data-action="start-meeting" data-id="${m.id}">▶️ Starten</button>` : ""}
+          ${m.status === "in_progress" ? `<button class="btn sm danger" data-action="end-meeting" data-id="${m.id}">⏹ Beenden</button>` : ""}
+          <button class="btn sm ghost danger" data-action="delete-meeting" data-id="${m.id}">🗑</button>
         </div>
       </div>
     `;
@@ -46525,7 +46525,7 @@ function viewMeetingDetail(id) {
               <label class="mini">Aufgaben</label>
               <textarea class="textarea" data-action="agenda-field" data-meeting-id="${id}" data-idx="${idx}" data-field="tasks" placeholder="Eine Aufgabe pro Zeile...">${esc(item.tasks || "")}</textarea>
               <div class="mini mt-1">
-                <button class="btn sm" data-action="agenda-tasks-to-todos" data-meeting-id="${id}" data-idx="${idx}" onclick="event.stopPropagation()">✅ Aufgaben als To-dos</button>
+                <button class="btn sm" data-action="agenda-tasks-to-todos" data-meeting-id="${id}" data-idx="${idx}">✅ Aufgaben als To-dos</button>
               </div>
             </div>
             <div>
@@ -46541,7 +46541,7 @@ function viewMeetingDetail(id) {
         </div>
 
         <div class="flex" style="gap:6px;flex-shrink:0">
-          <button class="btn sm ghost danger" data-action="delete-agenda-item" data-id="${id}" data-idx="${idx}" onclick="event.stopPropagation()">🗑</button>
+          <button class="btn sm ghost danger" data-action="delete-agenda-item" data-id="${id}" data-idx="${idx}">🗑</button>
         </div>
       </div>
     </div>
@@ -66002,7 +66002,7 @@ try {
           <div class="item-meta"><span class="pill danger">${fmtDate(t.dueDate)}</span><span class="pill">${t.status}</span></div>
         </div>
         <div class="item-actions">
-          <button class="btn sm good" data-action="quick-complete-task" data-id="${t.id}" title="Erledigen" onclick="event.stopPropagation()">✓</button>
+          <button class="btn sm good" data-action="quick-complete-task" data-id="${t.id}" title="Erledigen">✓</button>
         </div>
       </div>
     `).join("") || `<div class="mini text-center">🎉 Keine überfälligen Aufgaben!</div>`;
@@ -66015,7 +66015,7 @@ try {
           <div class="item-meta"><span class="pill">${fmtDate(t.dueDate)}</span><span class="pill">${t.status}</span></div>
         </div>
         <div class="item-actions">
-          <button class="btn sm good" data-action="quick-complete-task" data-id="${t.id}" title="Erledigen" onclick="event.stopPropagation()">✓</button>
+          <button class="btn sm good" data-action="quick-complete-task" data-id="${t.id}" title="Erledigen">✓</button>
         </div>
       </div>
     `).join("") || `<div class="mini text-center">Keine Aufgaben in den nächsten 3 Tagen.</div>`;
