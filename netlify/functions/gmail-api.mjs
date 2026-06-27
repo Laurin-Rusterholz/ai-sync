@@ -42,7 +42,10 @@ const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 //   users.threads.modify     POST   /users/me/threads/<id>/modify
 // The "(?!send\/)" guard keeps the literal send endpoint from also matching the
 // "<id>/modify" shape, so a bogus "/messages/send/modify" is rejected up front.
-const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify)?)?|threads(\/[^/?#]+(\/modify)?)?)$/;
+// messages/<id>/attachments/<attachmentId> (GET, read-only) ergänzt — für Anhang-Inhalt
+// (Termin-Erkennung / Entwurfs-Kontext). Vom bestehenden Scope gmail.modify abgedeckt,
+// kein neuer OAuth-Scope, keine weiteren Pfade.
+const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify|\/attachments\/[^/?#]+)?)?|threads(\/[^/?#]+(\/modify)?)?)$/;
 
 async function callGoogle(method, fullUrl, bodyObj, token) {
   const init = {
