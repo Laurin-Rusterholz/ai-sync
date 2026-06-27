@@ -29067,6 +29067,7 @@ function viewTaskDetail(id) {
         <button class="btn" data-action="send-to-briefing" data-type="task" data-id="${id}" data-title="${esc(t.title)}">📋 Briefing</button>
         <button class="btn" data-action="create-decision-from" data-kind="task" data-id="${id}">⚖️ Entscheidung</button>
         <button class="btn" data-action="create-idea-for" data-kind="task" data-id="${id}">💡 Idee</button>
+        <button class="btn" onclick="window.gmailComposeToEntity('task','${id}')" title="Mail an die zugehörigen Personen (aus Projekt/Organisation der Aufgabe)">✉️ Mail an Personen</button>
         <button class="btn danger" data-action="delete-entity" data-kind="task" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('task','${id}')">📄 PDF</button>
       </div>
@@ -30563,6 +30564,7 @@ function viewProjectDetail(id) {
         <button class="btn ${pinned ? "primary" : ""}" data-action="toggle-pin" data-kind="project" data-id="${id}">
           📌 ${pinned ? "Angepinnt" : "Anpinnen"}
         </button>
+        <button class="btn" onclick="window.gmailComposeToEntity('project','${id}')" title="Mail an die zugeordneten Personen dieses Projekts">✉️ Mail an Personen</button>
         <button class="btn danger" data-action="delete-entity" data-kind="project" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('project','${id}')">📄 PDF</button>
         <button class="btn" onclick="window.openDeckblatt('project','${id}')">📋 Deckblatt</button>
@@ -36636,6 +36638,7 @@ function viewOrgDetail(id) {
       <div class="page-actions">
         <button class="btn sm" data-action="go-back">← ${t("back")}</button>
         <button class="btn" onclick="window.openEntityAi('organization','${id}')" style="background:linear-gradient(135deg,var(--accent),var(--accent));color:#fff;font-weight:700">🤖 KI-Assistent</button>
+        <button class="btn" onclick="window.gmailComposeToEntity('organization','${id}')" title="Mail an die zugeordneten Personen dieser Organisation">✉️ Mail an Personen</button>
         <button class="btn danger" data-action="delete-entity" data-kind="organization" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('organization','${id}')">📄 PDF</button>
         <button class="btn" onclick="window.openDeckblatt('organization','${id}')">📋 Deckblatt</button>
@@ -97456,6 +97459,18 @@ console.log('📚 Leseliste geladen');
     return Array.from(emails).filter(function(e){ return !isBlocked(e); });
   }
   function entityQuery(kind,id){ var ad=entityAddresses(kind,id); return ad.length ? ("from:("+ad.map(function(e){return e;}).join(" OR ")+")") : ""; }
+
+  // Verfassen-Modal aus einer Element-Detailseite (Projekt/Org/Aufgabe) heraus, vorbefüllt mit
+  // den E-Mail-Adressen der zugehörigen Personen (entityAddresses). Öffnet NUR den Composer;
+  // gesendet wird erst über den bestehenden „Senden"-Klick (gmailSend) — kein Auto-Versand.
+  window.gmailComposeToEntity = function(kind, id){
+    var ad = entityAddresses(kind, id);
+    if (!ad.length){ toast("info","Keine Personen","Diesem Element sind keine Personen/E-Mails mit Adresse zugeordnet."); return; }
+    var ent = (kind==="task") ? ((APP.state.data.entities.tasks||{})[id]) : entityOf(kind, id);
+    var titleTxt = ent ? String(ent.title||ent.name||"") : "";
+    if (typeof window.gmailCompose!=="function"){ toast("err","Nicht verfügbar","Gmail-Modul nicht geladen."); return; }
+    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: "✉️ Mail an "+ad.length+" Person(en)" });
+  };
 
   function gmailDetectEntity(){
     var mm=(location.hash||"").match(/^#\/(organizations|projects|tasks|persons)\/([a-zA-Z0-9_-]+)/); if(!mm) return null;
