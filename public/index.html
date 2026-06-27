@@ -97288,10 +97288,31 @@ console.log('📚 Leseliste geladen');
   };
 
   // ════════════════════════════════════════════════════════════════════
-  //  Org/Projekt-Inbox — injiziert auf Detailseiten von #/organizations & #/projects
+  //  Entity-Inbox — injiziert auf Detailseiten von #/organizations, #/projects, #/tasks & #/persons
   // ════════════════════════════════════════════════════════════════════
-  function entityOf(kind,id){ try { var key=kind==="organization"?"organizations":"projects"; return APP.state.data.entities[key][id]; } catch(e){ return null; } }
+  function entityOf(kind,id){ try { var key={ organization:"organizations", project:"projects", task:"tasks", person:"persons" }[kind]; return key ? APP.state.data.entities[key][id] : null; } catch(e){ return null; } }
   function entityAddresses(kind,id){
+    if (kind==="task"){
+      // Aufgaben haben keinen direkten Personenbezug → Adressen aus Projekt(en)/Org(s) der Aufgabe
+      // zusammenführen, plus optionale aufgaben-eigene mailPersonIds/mailEmails.
+      var tk=(APP.state.data.entities.tasks||{})[id]; if(!tk) return [];
+      var tset=new Set(), tps=qPersons();
+      var projIds=(tk.projectId?[tk.projectId]:[]).concat(tk.linkedProjects||[]);
+      var orgIds=(tk.organizationId?[tk.organizationId]:[]).concat(tk.linkedOrganizations||[]);
+      projIds.forEach(function(pid){ entityAddresses("project", pid).forEach(function(e){ tset.add(e); }); });
+      orgIds.forEach(function(oid){ entityAddresses("organization", oid).forEach(function(e){ tset.add(e); }); });
+      (tk.mailPersonIds||[]).forEach(function(pid){ var p=tps[pid]; if(p)(p.emails||[]).forEach(function(e){ if(e) tset.add(String(e).toLowerCase()); }); });
+      (tk.mailEmails||[]).forEach(function(e){ if(e) tset.add(String(e).toLowerCase()); });
+      return Array.from(tset).filter(function(e){ return !isBlocked(e); });
+    }
+    if (kind==="person"){
+      // Eine Person → ihre eigenen E-Mail-Adressen (plus optionale Zusatzadressen mailEmails).
+      var pr=(APP.state.data.entities.persons||{})[id]; if(!pr) return [];
+      var pset=new Set();
+      (pr.emails||[]).forEach(function(e){ if(e) pset.add(String(e).toLowerCase()); });
+      (pr.mailEmails||[]).forEach(function(e){ if(e) pset.add(String(e).toLowerCase()); });
+      return Array.from(pset).filter(function(e){ return !isBlocked(e); });
+    }
     var ent=entityOf(kind,id); if(!ent) return [];
     var emails=new Set(); var ps=qPersons();
     (ent.mailPersonIds||[]).forEach(function(pid){ var p=ps[pid]; if(p) (p.emails||[]).forEach(function(e){ if(e) emails.add(String(e).toLowerCase()); }); });
@@ -97303,8 +97324,8 @@ console.log('📚 Leseliste geladen');
   function entityQuery(kind,id){ var ad=entityAddresses(kind,id); return ad.length ? ("from:("+ad.map(function(e){return e;}).join(" OR ")+")") : ""; }
 
   function gmailDetectEntity(){
-    var mm=(location.hash||"").match(/^#\/(organizations|projects)\/([a-zA-Z0-9_-]+)/); if(!mm) return null;
-    var kind=mm[1]==="organizations"?"organization":"project", id=mm[2];
+    var mm=(location.hash||"").match(/^#\/(organizations|projects|tasks|persons)\/([a-zA-Z0-9_-]+)/); if(!mm) return null;
+    var kind={ organizations:"organization", projects:"project", tasks:"task", persons:"person" }[mm[1]], id=mm[2];
     if(!entityOf(kind,id)) return null;
     return { kind:kind, id:id };
   }
@@ -97375,7 +97396,7 @@ console.log('📚 Leseliste geladen');
   window.gmailEntEmailAdd=function(kind,id){ var inp=document.getElementById("gmlEntEmailInput"); var v=(inp&&inp.value||"").trim().toLowerCase(); if(!/.+@.+\..+/.test(v)){ toast("err","Ungültig","Bitte gültige E-Mail eingeben"); return; } var e=entityOf(kind,id); if(!e) return; e.mailEmails=e.mailEmails||[]; if(e.mailEmails.indexOf(v)<0) e.mailEmails.push(v); persistEntity(kind,id); reopenManage(kind,id); };
   window.gmailEntEmailRemove=function(kind,id,em){ var e=entityOf(kind,id); if(!e) return; e.mailEmails=(e.mailEmails||[]).filter(function(x){return x!==em;}); persistEntity(kind,id); reopenManage(kind,id); };
 
-  // Inject org/project inbox on navigation + when Quantus re-renders the page.
+  // Inject entity inbox (org/project/task/person) on navigation + when Quantus re-renders the page.
   var _gmlInjTimer=null;
   function gmlScheduleInject(){ clearTimeout(_gmlInjTimer); _gmlInjTimer=setTimeout(function(){ try{ gmailInjectEntityInbox(); }catch(e){} },200); }
   window.addEventListener("hashchange", gmlScheduleInject);
