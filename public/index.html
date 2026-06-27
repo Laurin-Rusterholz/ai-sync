@@ -29067,7 +29067,6 @@ function viewTaskDetail(id) {
         <button class="btn" data-action="send-to-briefing" data-type="task" data-id="${id}" data-title="${esc(t.title)}">📋 Briefing</button>
         <button class="btn" data-action="create-decision-from" data-kind="task" data-id="${id}">⚖️ Entscheidung</button>
         <button class="btn" data-action="create-idea-for" data-kind="task" data-id="${id}">💡 Idee</button>
-        <button class="btn" onclick="window.gmailComposeToEntity('task','${id}')" title="Mail an die zugehörigen Personen (aus Projekt/Organisation der Aufgabe)">✉️ Mail an Personen</button>
         <button class="btn danger" data-action="delete-entity" data-kind="task" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('task','${id}')">📄 PDF</button>
       </div>
@@ -30564,7 +30563,6 @@ function viewProjectDetail(id) {
         <button class="btn ${pinned ? "primary" : ""}" data-action="toggle-pin" data-kind="project" data-id="${id}">
           📌 ${pinned ? "Angepinnt" : "Anpinnen"}
         </button>
-        <button class="btn" onclick="window.gmailComposeToEntity('project','${id}')" title="Mail an die zugeordneten Personen dieses Projekts">✉️ Mail an Personen</button>
         <button class="btn danger" data-action="delete-entity" data-kind="project" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('project','${id}')">📄 PDF</button>
         <button class="btn" onclick="window.openDeckblatt('project','${id}')">📋 Deckblatt</button>
@@ -36638,7 +36636,6 @@ function viewOrgDetail(id) {
       <div class="page-actions">
         <button class="btn sm" data-action="go-back">← ${t("back")}</button>
         <button class="btn" onclick="window.openEntityAi('organization','${id}')" style="background:linear-gradient(135deg,var(--accent),var(--accent));color:#fff;font-weight:700">🤖 KI-Assistent</button>
-        <button class="btn" onclick="window.gmailComposeToEntity('organization','${id}')" title="Mail an die zugeordneten Personen dieser Organisation">✉️ Mail an Personen</button>
         <button class="btn danger" data-action="delete-entity" data-kind="organization" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('organization','${id}')">📄 PDF</button>
         <button class="btn" onclick="window.openDeckblatt('organization','${id}')">📋 Deckblatt</button>
@@ -97491,11 +97488,12 @@ console.log('📚 Leseliste geladen');
     var ad=entityAddresses(kind,id);
     var st=GM.entityInbox[kind+":"+id]||{};
     var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Gmail-Inbox</span>'
-      +'<span style="display:flex;gap:6px">'
+      +'<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'
+      +(ad.length?'<button class="btn sm primary" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail an die zugeordneten Personen schreiben (Adressen sind vorbefüllt)">✉️ Mail schreiben</button>':'')
       +'<button class="btn sm" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">⚙️ Personen/E-Mails</button>'
       +(ad.length?'<button class="btn sm" onclick="gmailOpenInGmailWeb(\''+jsStr(entityQuery(kind,id))+'\')" title="In Gmail filtern">↗ Gmail</button>':'')
       +'</span></h3>';
-    if (!ad.length) return head+'<div style="color:var(--muted);font-size:13px;padding:6px 2px">Noch keine Personen oder E-Mail-Adressen zugeordnet. Über „⚙️ Personen/E-Mails" hinzufügen.</div>';
+    if (!ad.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen oder E-Mail-Adressen zugeordnet — ordne welche zu, um Mails zu sehen und zu schreiben.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
     var bodyHtml;
     if (st.loading) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">⏳ Lade Mails…</div>';
     else if (st.error) bodyHtml='<div style="color:var(--danger);font-size:13px;padding:8px 2px">'+esc(st.error)+'</div>';
