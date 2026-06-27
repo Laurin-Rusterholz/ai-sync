@@ -96363,13 +96363,31 @@ console.log('📚 Leseliste geladen');
       if (!Array.isArray(rows) || !rows.length) return;
       var idx = (APP.state.data.gmailIndex && Array.isArray(APP.state.data.gmailIndex)) ? APP.state.data.gmailIndex : [];
       var byId = {}, added=false; idx.forEach(function(it){ byId[it.id]=it; });
-      rows.forEach(function(m){ var a=parseAddr(m.from); if(!byId[m.id]) added=true; byId[m.id]={ id:m.id, fromName:a.name||a.email||"", fromEmail:a.email||"", subject:m.subject||"", snippet:(m.snippet||"").slice(0,140), date:m.internalDate||0 }; });
-      var merged = Object.keys(byId).map(function(k){ return byId[k]; }).sort(function(x,y){ return (y.date||0)-(x.date||0); }).slice(0,300);
+      rows.forEach(function(m){
+        var a=parseAddr(m.from); var prev=byId[m.id];
+        // Neu ODER altes Index-Schema (ohne threadId) → upgraden & einmal persistieren.
+        if (!prev || prev.threadId===undefined) added=true;
+        // Additiv: threadId, to (Roh-Header, gekappt) und unread ergänzt; fromEmail kleingeschrieben
+        // (für Adress-Matching). Bestehende Felder (id/fromName/fromEmail/subject/snippet/date) bleiben.
+        byId[m.id]={ id:m.id, threadId:m.threadId||"", fromName:a.name||a.email||"", fromEmail:(a.email||"").toLowerCase(), to:String(m.to||"").slice(0,200), subject:m.subject||"", snippet:(m.snippet||"").slice(0,140), date:m.internalDate||0, unread:!!m.unread };
+      });
+      var merged = Object.keys(byId).map(function(k){ return byId[k]; }).sort(function(x,y){ return (y.date||0)-(x.date||0); }).slice(0,1000);
       APP.state.data.gmailIndex = merged;
-      // Only persist when something new was indexed — avoids a full save on every label switch.
+      // Only persist when something new/upgraded was indexed — avoids a full save on every label switch.
       if (added && typeof window.scheduleSave==="function") window.scheduleSave();
     } catch(e){}
   }
+  // Persistenten Index nach Adressen durchsuchen (Personen-Zuordnung) OHNE Live-Query an Gmail —
+  // matcht Absender (fromEmail) UND Empfänger (to). Liefert Index-Einträge (neueste zuerst).
+  window.gmailIndexByAddresses = function(addrs){
+    var set = {}; (addrs||[]).forEach(function(a){ if(a) set[String(a).toLowerCase()] = 1; });
+    var keys = Object.keys(set); if (!keys.length) return [];
+    return (APP.state.data.gmailIndex||[]).filter(function(m){
+      if (m.fromEmail && set[String(m.fromEmail).toLowerCase()]) return true;
+      var to = String(m.to||"").toLowerCase();
+      return keys.some(function(a){ return to.indexOf(a)>=0; });
+    });
+  };
 
   // ── Open a message from outside the Gmail app (spotlight, entity inbox) ──
   window.gmailOpenFromExternal = function(id){
