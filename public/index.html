@@ -29030,8 +29030,11 @@ function viewTaskDetail(id) {
   );
   
   const remindersHtml = taskReminders.length ? `
-    <div class="card mb-4" style="background:linear-gradient(135deg,rgba(255,85,114,.15),rgba(255,152,0,.1));border:1px solid rgba(255,85,114,.3)">
-      <h3>🔔 Aktive Erinnerungen (${taskReminders.length})</h3>
+    <details class="card mb-4 reminders-details" style="background:linear-gradient(135deg,rgba(255,85,114,.15),rgba(255,152,0,.1));border:1px solid rgba(255,85,114,.3)">
+      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px">
+        <span class="reminders-caret" style="transition:transform .15s;display:inline-block">▶</span>
+        <h3 style="margin:0">🔔 Aktive Erinnerungen (${taskReminders.length})</h3>
+      </summary>
       <div class="sep"></div>
       ${taskReminders.map(r => `
         <div class="list-item" style="padding:10px;margin-bottom:6px;background:var(--panel);border-radius:8px;display:flex;align-items:center;gap:10px">
@@ -29043,7 +29046,7 @@ function viewTaskDetail(id) {
           <button class="btn sm" data-action="mark-reminder-read" data-id="${r.id}">✓ Gelesen</button>
         </div>
       `).join("")}
-    </div>
+    </details>
   ` : "";
   
   return `
@@ -95183,6 +95186,8 @@ console.log('📚 Leseliste geladen');
 .gml-more > summary { list-style:none; cursor:pointer; }
 .gml-more > summary::-webkit-details-marker { display:none; }
 .gml-more[open] > summary { background:var(--hover); }
+.reminders-details > summary::-webkit-details-marker { display:none; }
+.reminders-details[open] > summary .reminders-caret { transform:rotate(90deg); }
 .gml-more-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:215px; background:var(--panel); border:1px solid var(--border); border-radius:11px; box-shadow:0 12px 30px rgba(0,0,0,.3); padding:6px; display:flex; flex-direction:column; gap:2px; }
 .gml-more-item { display:block; width:100%; text-align:left; padding:9px 11px; font-size:13px; font-weight:500; color:var(--text); background:transparent; border:none; border-radius:8px; cursor:pointer; white-space:nowrap; }
 .gml-more-item:hover { background:var(--hover); }
