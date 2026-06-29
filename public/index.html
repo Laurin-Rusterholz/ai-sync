@@ -95385,6 +95385,8 @@ console.log('📚 Leseliste geladen');
 .gmlc-ai-input:focus { border-color:var(--accent); }
 .gmlc-ai-status { flex-basis:100%; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
 .gmlc-ai-status:empty { display:none; }
+.gmlc-ai-undo { background:none; border:none; padding:0; font:inherit; font-size:12px; font-weight:600; color:var(--accent); cursor:pointer; text-decoration:underline; }
+.gmlc-ai-undo:hover { filter:brightness(1.15); }
 .gmlc-ai-status .gmlc-ai-spin { width:13px; height:13px; border:2px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color:var(--accent); border-radius:50%; animation:gmlcSpin .7s linear infinite; }
 @keyframes gmlcSpin { to { transform:rotate(360deg); } }
 
@@ -96069,6 +96071,7 @@ console.log('📚 Leseliste geladen');
       ['shorten','✂️ Kürzer','','Knapper formulieren'],
       ['friendly','😊 Freundlicher','','Wärmeren, freundlicheren Ton'],
       ['formal','👔 Formeller','','Formelleren, professionellen Ton'],
+      ['translate','🌐 Übersetzen','','Den Entwurf in eine andere Sprache übersetzen'],
     ];
     var aibar = '<div class="gmlc-aibar" role="toolbar" aria-label="KI-Assistenz">'
       + '<span class="gmlc-ai-title">✨ KI</span>'
@@ -96092,6 +96095,7 @@ console.log('📚 Leseliste geladen');
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
     GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, quote: prefill.quote||null };
+    GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
   };
 
@@ -96151,6 +96155,12 @@ console.log('📚 Leseliste geladen');
       if (!instr){ toast("info","Keine Anweisung","Bitte links eine Anweisung für die KI eingeben."); return; }
       sys = "Du bist ein E-Mail-Assistent. Setze die Anweisung des Nutzers um und schreibe den resultierenden deutschen E-Mail-Text (passende Anrede & Grußformel, sofern es eine vollständige Mail ist). Antworte NUR mit dem E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
       user = (origCtx?origCtx+"\n\n":"") + (draft?("Aktueller Entwurf:\n"+draft+"\n\n"):"") + "Anweisung: "+instr;
+    } else if (action==="translate"){
+      if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben."); return; }
+      var lang = window.prompt("In welche Sprache übersetzen?", "Englisch");
+      if (lang==null) return; lang = String(lang).trim() || "Englisch";
+      sys = "Du bist ein professioneller Übersetzer. Übersetze die folgende E-Mail nach "+lang+". Bewahre Ton, Anrede, Absätze und Grußformel. Antworte NUR mit dem übersetzten Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = "Text:\n"+draft;
     } else {
       if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben oder „✨ Entwerfen“ nutzen."); return; }
       var how = {
@@ -96163,15 +96173,26 @@ console.log('📚 Leseliste geladen');
       sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
       user = (origCtx?("Kontext – "+origCtx+"\n\n"):"") + "Text:\n"+draft;
     }
-    gmlAiBusy(true, action==="draft"?"Entwerfe Antwort …":(action==="custom"?"Setze Anweisung um …":"Überarbeite …"));
+    var busyLbl = action==="draft" ? "Entwerfe Antwort …" : action==="custom" ? "Setze Anweisung um …" : action==="translate" ? "Übersetze …" : "Überarbeite …";
+    gmlAiBusy(true, busyLbl);
     var res;
     try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:1100 }); }
     catch(e){ gmlAiBusy(false,""); toast("err","KI-Fehler",(e&&e.message)||""); return; }
     if (!res){ gmlAiBusy(false,""); toast("warn","KI","Kein Ergebnis (API-Key in den Einstellungen?)"); return; }
     res = String(res).replace(/^```(?:\w+)?\s*/,"").replace(/```\s*$/,"").trim();
+    GM._aiUndo = ta.value;  // einstufiges Rückgängig: vorigen Text merken (Toggle)
     ta.value = res; ta.focus(); try { ta.setSelectionRange(res.length, res.length); } catch(_){}
-    gmlAiBusy(false, "✓ aktualisiert");
-    setTimeout(function(){ var st=document.getElementById("gmlAiStatus"); if(st) st.textContent=""; }, 2500);
+    gmlAiBusy(false, "");
+    var st = document.getElementById("gmlAiStatus");
+    if (st) st.innerHTML = '✓ aktualisiert · <button type="button" class="gmlc-ai-undo" onclick="gmlAiUndo()">↩︎ Rückgängig</button>';
+  };
+  // Einstufiges Undo/Redo für KI-Änderungen: tauscht aktuellen Text mit dem
+  // gemerkten Vortext (gmlAI speichert ihn vor jeder Änderung in GM._aiUndo).
+  window.gmlAiUndo = function(){
+    var ta = document.getElementById("gmlBody"); if (!ta || GM._aiUndo==null) return;
+    var cur = ta.value; ta.value = GM._aiUndo; GM._aiUndo = cur; ta.focus();
+    var st = document.getElementById("gmlAiStatus");
+    if (st) st.innerHTML = '↪︎ wiederhergestellt · <button type="button" class="gmlc-ai-undo" onclick="gmlAiUndo()">↩︎ Erneut</button>';
   };
   // Cc/Bcc ein-/ausblenden (Gmail-Toggle). Beim Ausblenden wird der Inhalt geleert,
   // damit nichts „Verstecktes" mitgesendet wird.
