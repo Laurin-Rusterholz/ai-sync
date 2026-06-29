@@ -95359,6 +95359,13 @@ console.log('📚 Leseliste geladen');
 .gml-prevmail-subj { font-size:12.5px; color:var(--text2); margin-top:2px; }
 .gml-prevmail-body { font-size:12.5px; color:var(--text2); line-height:1.55; white-space:pre-wrap; word-break:break-word; max-height:240px; overflow:auto; margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
 .gml-prevmail-loading { color:var(--muted); font-style:italic; font-size:12.5px; margin-top:8px; }
+/* Vollständiger Thread-Verlauf unter dem Schreibfeld */
+.gml-prevmail-thread .gml-thread-list { max-height:320px; overflow:auto; margin-top:8px; }
+.gml-thread-msg { padding:9px 0; border-top:1px solid var(--border); }
+.gml-thread-msg:first-child { border-top:0; padding-top:2px; }
+.gml-thread-msg-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.gml-thread-from { font-size:12.5px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; }
+.gml-thread-body { font-size:12.5px; color:var(--text2); line-height:1.55; white-space:pre-wrap; word-break:break-word; margin-top:5px; }
 
 /* Empfänger-Zeilen (An/Cc/Bcc/Betreff): randlose Inputs, klare 44px-Klickflächen */
 .gmlc-fields { flex-shrink:0; }
@@ -96007,6 +96014,44 @@ console.log('📚 Leseliste geladen');
     var box2=document.getElementById("gmlPrevMail");
     if (box2) box2.outerHTML = renderPrevMail(orig || { empty:true });
   };
+  // Eine einzelne Verlaufs-Nachricht (Absender, Datum, Text) für den Thread-Verlauf.
+  function renderThreadMsg(m){
+    var fa = parseAddr(m.from||"");
+    var who = esc(fa.name||fa.email||"(unbekannt)")
+      + (fa.email && fa.name && fa.name!==fa.email ? ' <span class="gml-prevmail-addr">&lt;'+esc(fa.email)+'&gt;</span>' : '');
+    var dateStr = m.date ? esc(fmtDateFull(m.date)) : '';
+    var bodyTxt = String(m.body||"").trim();
+    return '<div class="gml-thread-msg">'
+      + '<div class="gml-thread-msg-head"><span class="gml-thread-from">'+who+'</span>'+(dateStr?'<span class="gml-prevmail-date">'+dateStr+'</span>':'')+'</div>'
+      + '<div class="gml-thread-body">'+(bodyTxt?esc(bodyTxt):'<span style="color:var(--muted)">(kein Textinhalt)</span>')+'</div>'
+      + '</div>';
+  }
+  // Kompletter Gesprächsverlauf (alle Thread-Nachrichten, neueste zuerst) UNTER dem Schreibfeld.
+  function renderPrevMailHistory(items){
+    if (!items || !items.length) return '<div id="gmlPrevMail"></div>';
+    var ordered = items.slice().sort(function(a,b){ return (b.date||0)-(a.date||0); });
+    return '<div id="gmlPrevMail" class="gml-prevmail gml-prevmail-thread">'
+      + '<div class="gml-prevmail-head">↩︎ Bisheriger Verlauf ('+ordered.length+')</div>'
+      + '<div class="gml-thread-list">'+ordered.map(renderThreadMsg).join('')+'</div>'
+      + '</div>';
+  }
+  // Lädt den vollständigen Thread und ersetzt die Einzel-Vorschau durch den ganzen
+  // Verlauf. Best-effort: schlägt der Abruf fehl, bleibt die bereits gezeigte
+  // Einzel-Nachricht unverändert stehen.
+  window.gmailRenderThreadInto = async function(threadId){
+    if (!threadId) return;
+    try {
+      var th = await gmApi("GET","/users/me/threads/"+encodeURIComponent(threadId), { query:{ format:"full" } });
+      var msgs = (th && th.messages) || [];
+      var items = msgs.filter(function(m){ return (m.labelIds||[]).indexOf("DRAFT") < 0; }).map(function(m){
+        var h = headerMap(m.payload), b = extractBodies(m.payload);
+        return { from:h.from||"", subject:h.subject||"", body:(b.text||htmlToText(b.html)||""), date: parseInt(m.internalDate||"0",10) || Date.parse(h.date||"") || 0 };
+      });
+      if (items.length < 2) return;  // nur 1 Nachricht → Einzel-Vorschau genügt
+      var box = document.getElementById("gmlPrevMail");
+      if (box) box.outerHTML = renderPrevMailHistory(items);
+    } catch(e){ /* Einzel-Vorschau bleibt bestehen */ }
+  };
   // Ermittelt die Original-Mail (read-only Kontext) für das Verfassen-Modal:
   // bevorzugt eine explizite messageId, sonst die neueste eingehende Nachricht
   // im Thread (eigene Nachrichten + Entwürfe + optional ausgeschlossene id werden
@@ -96342,6 +96387,8 @@ console.log('📚 Leseliste geladen');
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
       source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
     });
+    // Unten den vollständigen Gesprächsverlauf nachladen (ersetzt die Einzel-Vorschau).
+    if (o.threadId) window.gmailRenderThreadInto(o.threadId);
   }
   window.gmailReply = function(){ replyInternal(false); };
   window.gmailReplyAll = function(){ replyInternal(true); };
