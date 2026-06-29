@@ -95380,7 +95380,11 @@ console.log('📚 Leseliste geladen');
 .gmlc-ai.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
 .gmlc-ai.primary:hover { filter:brightness(1.08); }
 .gmlc-ai:disabled { opacity:.5; cursor:default; }
-.gmlc-ai-status { font-size:12px; color:var(--muted); margin-left:auto; display:inline-flex; align-items:center; gap:6px; }
+.gmlc-ai-input { flex:1 1 200px; min-width:150px; padding:6px 11px; font-size:12.5px; border-radius:8px; font-family:inherit; background:var(--panel); color:var(--text); border:1px solid color-mix(in srgb, var(--accent) 24%, var(--border)); outline:none; }
+.gmlc-ai-input::placeholder { color:var(--muted); }
+.gmlc-ai-input:focus { border-color:var(--accent); }
+.gmlc-ai-status { flex-basis:100%; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+.gmlc-ai-status:empty { display:none; }
 .gmlc-ai-status .gmlc-ai-spin { width:13px; height:13px; border:2px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color:var(--accent); border-radius:50%; animation:gmlcSpin .7s linear infinite; }
 @keyframes gmlcSpin { to { transform:rotate(360deg); } }
 
@@ -95988,6 +95992,24 @@ console.log('📚 Leseliste geladen');
       return { from:h.from||"", subject:h.subject||"", body:text, date: parseInt(msg.internalDate||"0",10)||Date.parse(h.date||"")||0 };
     } catch(e){ return null; }
   }
+  // Bekannte Kontakte für die Empfänger-Autovervollständigung: Personen + Organisationen
+  // (gepflegte Adressen) sowie zuletzt im Gmail-Index gesehene Absender. Dedupliziert,
+  // gekappt. Best-effort, wirft nie.
+  function gmlContactOptions(){
+    var seen={}, out=[];
+    function add(email,name){ if(!email) return; var k=String(email).toLowerCase(); if(seen[k]) return; seen[k]=1; out.push({ email:email, name:name||"" }); }
+    try {
+      var ents=(window.APP&&APP.state&&APP.state.data&&APP.state.data.entities)||{};
+      var ps=ents.persons||{}; Object.keys(ps).forEach(function(id){ var p=ps[id]||{}; (p.emails||[]).forEach(function(em){ add(em, p.name||p.firstName||""); }); });
+      var os=ents.organizations||{}; Object.keys(os).forEach(function(id){ var o=os[id]||{}; if(o.email) add(o.email,o.name||""); (o.emails||[]).forEach(function(em){ add(em,o.name||""); }); });
+      var idx=(APP.state.data.gmailIndex)||[]; for (var i=0;i<idx.length && out.length<500;i++){ add(idx[i].fromEmail, idx[i].fromName||""); }
+    } catch(e){}
+    return out.slice(0,500);
+  }
+  // ⌘/Strg+Enter sendet aus jedem Eingabefeld des Verfassen-Modals.
+  window.gmlComposeKey = function(e){
+    if ((e.metaKey||e.ctrlKey) && (e.key==="Enter" || e.keyCode===13)){ e.preventDefault(); if (typeof window.gmailSend==="function") window.gmailSend(); }
+  };
   window.gmailCompose = function(prefill){
     prefill = prefill||{};
     // Toolbar-Icons (currentColor, kein Emoji, ruhig). Reine Optik.
@@ -96003,7 +96025,7 @@ console.log('📚 Leseliste geladen');
     function row(id,label,value,o){ o=o||{};
       return '<div class="gmlc-row"'+(o.rowId?' id="'+o.rowId+'"':'')+(o.hidden?' hidden':'')+'>'
         + '<label class="gmlc-label" for="'+id+'">'+label+'</label>'
-        + '<input id="'+id+'" class="gmlc-input" type="text" autocomplete="off" value="'+esc(value||"")+'" placeholder="'+esc(o.ph||"")+'">'
+        + '<input id="'+id+'" class="gmlc-input" type="text" autocomplete="off" value="'+esc(value||"")+'" placeholder="'+esc(o.ph||"")+'"'+(o.attrs?' '+o.attrs:'')+'>'
         + (o.tail||'')
         + '</div>';
     }
@@ -96012,12 +96034,18 @@ console.log('📚 Leseliste geladen');
       + '<button type="button" class="gmlc-toggle'+(ccShown?' active':'')+'" id="gmlCcToggle" onclick="gmlToggleField(\'cc\')">Cc</button>'
       + '<button type="button" class="gmlc-toggle" id="gmlBccToggle" onclick="gmlToggleField(\'bcc\')">Bcc</button>'
       + '</div>';
+    var recipAttrs = 'list="gmlContacts" onkeydown="gmlComposeKey(event)"';
     var fields = '<div class="gmlc-fields">'
-      + row('gmlTo','An',prefill.to,{ ph:'empfaenger@example.com, weitere@…', tail:toggles })
-      + row('gmlCc','Cc',prefill.cc,{ rowId:'gmlCcRow', hidden:!ccShown, ph:'Cc-Empfänger' })
-      + row('gmlBcc','Bcc','',{ rowId:'gmlBccRow', hidden:true, ph:'Bcc-Empfänger' })
-      + row('gmlSubject','Betreff',prefill.subject,{ ph:'Betreff' })
+      + row('gmlTo','An',prefill.to,{ ph:'empfaenger@example.com, weitere@…', tail:toggles, attrs:recipAttrs })
+      + row('gmlCc','Cc',prefill.cc,{ rowId:'gmlCcRow', hidden:!ccShown, ph:'Cc-Empfänger', attrs:recipAttrs })
+      + row('gmlBcc','Bcc','',{ rowId:'gmlBccRow', hidden:true, ph:'Bcc-Empfänger', attrs:recipAttrs })
+      + row('gmlSubject','Betreff',prefill.subject,{ ph:'Betreff', attrs:'onkeydown="gmlComposeKey(event)"' })
       + '</div>';
+    // Empfänger-Autovervollständigung aus bekannten Kontakten (Personen, Organisationen,
+    // zuletzt im Gmail-Index gesehene Absender). Nativ über <datalist>, rein additiv.
+    var datalist = '<datalist id="gmlContacts">'
+      + gmlContactOptions().map(function(c){ return '<option value="'+esc(c.email)+'">'+esc(c.name||c.email)+'</option>'; }).join('')
+      + '</datalist>';
     var toolbar = '<div class="gmlc-toolbar" role="toolbar" aria-label="Formatierung">'
       + tbtn('bold','Fett','<b>B</b>') + tbtn('italic','Kursiv','<i>I</i>') + tbtn('underline','Unterstrichen','<u>U</u>')
       + '<span class="gmlc-tool-sep"></span>'
@@ -96045,13 +96073,15 @@ console.log('📚 Leseliste geladen');
     var aibar = '<div class="gmlc-aibar" role="toolbar" aria-label="KI-Assistenz">'
       + '<span class="gmlc-ai-title">✨ KI</span>'
       + aiBtns.map(function(b){ return '<button type="button" class="gmlc-ai'+(b[2]?' '+b[2]:'')+'" id="gmlAi_'+b[0]+'" onclick="gmlAI(\''+b[0]+'\')" title="'+esc(b[3])+'">'+b[1]+'</button>'; }).join('')
+      + '<input id="gmlAiInstruct" class="gmlc-ai-input" type="text" placeholder="Eigene Anweisung an die KI… (z. B. „höflich absagen“, Enter)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmlAI(\'custom\');}">'
+      + '<button type="button" class="gmlc-ai" onclick="gmlAI(\'custom\')" title="Eigene Anweisung umsetzen">Anwenden</button>'
       + '<span class="gmlc-ai-status" id="gmlAiStatus"></span>'
       + '</div>';
-    var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen">'+esc(prefill.body||"")+'</textarea></div>';
+    var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" onkeydown="gmlComposeKey(event)" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen  ·  ⌘/Strg+Enter sendet">'+esc(prefill.body||"")+'</textarea></div>';
     var html = '<div class="gml-compose-modal">'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
-      + fields + toolbar + aibar + msg
+      + fields + datalist + toolbar + aibar + msg
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
@@ -96116,6 +96146,11 @@ console.log('📚 Leseliste geladen');
     if (action==="draft"){
       sys = "Du bist ein hilfreicher E-Mail-Assistent. Formuliere eine vollständige, natürliche Antwort-E-Mail auf Deutsch: passende Anrede"+(greetName?(" (Empfänger: "+greetName+")"):"")+", klarer Hauptteil, höfliche Grußformel. Schreibe NUR den E-Mail-Text – kein Betreff, keine Erklärungen, keine Markdown-Codeblöcke.";
       user = (origCtx?origCtx+"\n\n":"") + (draft ? ("Berücksichtige diese Stichpunkte/Wünsche für die Antwort:\n"+draft) : "Verfasse eine angemessene, höfliche Antwort.");
+    } else if (action==="custom"){
+      var instr = String((document.getElementById("gmlAiInstruct")||{}).value||"").trim();
+      if (!instr){ toast("info","Keine Anweisung","Bitte links eine Anweisung für die KI eingeben."); return; }
+      sys = "Du bist ein E-Mail-Assistent. Setze die Anweisung des Nutzers um und schreibe den resultierenden deutschen E-Mail-Text (passende Anrede & Grußformel, sofern es eine vollständige Mail ist). Antworte NUR mit dem E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?origCtx+"\n\n":"") + (draft?("Aktueller Entwurf:\n"+draft+"\n\n"):"") + "Anweisung: "+instr;
     } else {
       if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben oder „✨ Entwerfen“ nutzen."); return; }
       var how = {
@@ -96128,7 +96163,7 @@ console.log('📚 Leseliste geladen');
       sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
       user = (origCtx?("Kontext – "+origCtx+"\n\n"):"") + "Text:\n"+draft;
     }
-    gmlAiBusy(true, action==="draft"?"Entwerfe Antwort …":"Überarbeite …");
+    gmlAiBusy(true, action==="draft"?"Entwerfe Antwort …":(action==="custom"?"Setze Anweisung um …":"Überarbeite …"));
     var res;
     try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:1100 }); }
     catch(e){ gmlAiBusy(false,""); toast("err","KI-Fehler",(e&&e.message)||""); return; }
