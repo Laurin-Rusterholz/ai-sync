@@ -90081,12 +90081,23 @@ console.log('📚 Leseliste geladen');
     // geladenen Mails; für ältere gibt es unten den „In Gmail suchen"-Fallback.
     const bareEmail = (s) => { s = String(s || "").trim().toLowerCase(); const mm = s.match(/<([^>]+)>/); return (mm ? mm[1] : s).trim(); };
     const personMailSet = new Set((p.emails || []).map(bareEmail).filter(Boolean));
-    const personMailAddr = [...personMailSet][0] || "";
+    const personMailAddrs = [...personMailSet];
+    const personMailAddr = personMailAddrs[0] || "";
     const gmailIdx = Array.isArray(APP?.state?.data?.gmailIndex) ? APP.state.data.gmailIndex : [];
-    const mails = personMailSet.size
-      ? gmailIdx.filter(m => personMailSet.has(bareEmail(m.fromEmail)))
-                .sort((a, b) => (b.date || 0) - (a.date || 0))
+    // Lokaler Index: ALLE Adressen der Person berücksichtigen und sowohl Absender (fromEmail)
+    // als auch Empfänger (to) matchen, damit die komplette Konversation erscheint – nicht nur
+    // empfangene Mails. Nutzt den gemeinsamen Helper (Fallback: nur fromEmail), neueste zuerst.
+    const mails = personMailAddrs.length
+      ? (window.gmailIndexByAddresses
+          ? window.gmailIndexByAddresses(personMailAddrs)
+          : gmailIdx.filter(m => personMailSet.has(bareEmail(m.fromEmail))))
+        .slice().sort((a, b) => (b.date || 0) - (a.date || 0))
       : [];
+    // Gmail-Suchanfrage über ALLE Adressen und beide Richtungen (from & to), sodass auch
+    // ältere Mails ausserhalb des lokalen Index gefunden werden.
+    const personMailQuery = personMailAddrs.length
+      ? `from:(${personMailAddrs.join(" OR ")}) OR to:(${personMailAddrs.join(" OR ")})`
+      : "";
     
     const orgName = p.organizationId ? mhData().organizations?.[p.organizationId]?.name : "";
     const addr = p.address || {};
@@ -90231,7 +90242,7 @@ console.log('📚 Leseliste geladen');
       <div class="mh-detail-section">
         <h4 style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <span>📬 E-Mails (${mails.length})</span>
-          ${personMailAddr ? `<button class="mh-btn ghost" style="font-size:11px;padding:5px 11px;font-weight:600" onclick="window.gmailSearchExternal && window.gmailSearchExternal('from:${personMailAddr}')" title="Alle Mails dieser Person direkt in Gmail suchen (auch ältere, nicht im Index)">🔍 In Gmail suchen</button>` : ""}
+          ${personMailQuery ? `<button class="mh-btn ghost" style="font-size:11px;padding:5px 11px;font-weight:600" onclick="window.gmailSearchExternal && window.gmailSearchExternal('${personMailQuery.replace(/'/g, "\\'")}')" title="Alle Mails dieser Person direkt in Gmail suchen (alle Adressen, gesendet &amp; empfangen, auch ältere ausserhalb des Index)">🔍 In Gmail suchen</button>` : ""}
         </h4>
         ${mails.length === 0 ? `<div style="color:var(--muted);font-size:13px">Keine Mails dieser Person im lokalen Index (nur die ~300 zuletzt geladenen Gmail-Nachrichten).${personMailAddr ? ` Über „🔍 In Gmail suchen" oben siehst du alle Mails von <strong>${mhEsc(personMailAddr)}</strong>.` : (p.emails && p.emails.length ? "" : " Für diese Person ist keine E-Mail-Adresse hinterlegt – ergänze sie im Personen-Editor.")}</div>` : `
         <div style="display:flex;flex-direction:column;gap:8px">
@@ -90706,14 +90717,19 @@ console.log('📚 Leseliste geladen');
     const $v = (id) => document.getElementById(id)?.value?.trim() || "";
     const $vRaw = (id) => document.getElementById(id)?.value || "";  // ohne trim für Textareas
     
-    // Name ist Pflicht — auto-bilden aus firstName/lastName falls leer
-    let name = $v("mhpName");
-    const firstName = $v("mhpFirstName");
-    const lastName = $v("mhpLastName");
+    const existing = APP.state.data.entities.persons[existingId] || {};
+
+    // Name ist Pflicht — auto-bilden aus firstName/lastName falls leer.
+    // WICHTIG: Felder des Basis-Tabs nur lesen, wenn dieser Tab im DOM ist.
+    // Sonst (z.B. beim Erfassen einer E-Mail im Kontakt-Tab) würden Name &
+    // Co. überschrieben/gelöscht — bestehende Werte müssen erhalten bleiben.
+    const basicLoaded = !!document.getElementById("mhpName");
+    let name = basicLoaded ? $v("mhpName") : (existing.name || "");
+    const firstName = basicLoaded ? $v("mhpFirstName") : (existing.firstName || "");
+    const lastName = basicLoaded ? $v("mhpLastName") : (existing.lastName || "");
     if (!name && (firstName || lastName)) name = [firstName, lastName].filter(Boolean).join(" ");
     if (!name) { mhToast("warn", "Name erforderlich"); return; }
-    
-    const existing = APP.state.data.entities.persons[existingId] || {};
+
     const now = new Date().toISOString();
     const id = existingId || mhId("prs");
     const isNew = !existingId;
