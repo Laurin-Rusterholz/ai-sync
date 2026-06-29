@@ -95414,6 +95414,9 @@ console.log('📚 Leseliste geladen');
 .gmlc-msg-wrap { flex:1 1 auto; display:flex; min-height:340px; }
 .gml-compose-modal .gmlc-textarea { flex:1; width:100%; min-height:340px; border:none; background:transparent; color:var(--text); font-size:14px; line-height:1.6; resize:none; outline:none; font-family:inherit; padding:4px 2px; box-sizing:border-box; }
 .gml-compose-modal .gmlc-textarea::placeholder { color:var(--muted); }
+/* Antwortmodus: Schreibfeld kompakter, damit die „Bisherige Nachricht" unten sichtbar bleibt */
+.gml-has-prev .gmlc-msg-wrap { min-height:170px; }
+.gml-has-prev .gmlc-textarea { min-height:170px; }
 
 /* Fusszeile: Senden prominent links, Icon-Aktionen rechts (Gmail-Anordnung) */
 .gmlc-footer { display:flex; align-items:center; gap:8px; width:100%; }
@@ -96124,7 +96127,10 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" onkeydown="gmlComposeKey(event)" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen  ·  ⌘/Strg+Enter sendet">'+esc(prefill.body||"")+'</textarea></div>';
     var attachList = '<div id="gmlAttachList" class="gmlc-attachlist"></div>';
-    var html = '<div class="gml-compose-modal">'
+    // Im Antwortmodus (Original vorhanden) das Schreibfeld kompakter halten, damit die
+    // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
+    var hasPrev = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
+    var html = '<div class="gml-compose-modal'+(hasPrev?' gml-has-prev':'')+'">'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + fields + datalist + toolbar + aibar + msg + attachList
