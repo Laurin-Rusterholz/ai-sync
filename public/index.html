@@ -96193,6 +96193,9 @@ console.log('📚 Leseliste geladen');
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
+    // Cursor oben ins Schreibfeld setzen (über dem evtl. eingefügten Zitat),
+    // damit man direkt lostippen kann und das Zitat darunter sichtbar bleibt.
+    setTimeout(function(){ var ta=document.getElementById("gmlBody"); if(ta){ try { ta.focus(); ta.setSelectionRange(0,0); ta.scrollTop=0; } catch(_){} } }, 30);
   };
 
   // ── Verfassen-Modal: additive UI-Helfer (verändern Versand/Feldnamen/IDs nicht) ──
@@ -96376,13 +96379,15 @@ console.log('📚 Leseliste geladen');
       });
     }
     var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
-    // Body bleibt leer (Gmail-Stil): Das Zitat wird NICHT mehr in das Schreibfeld
-    // gekippt, sondern bleibt im eingeklappten „Ursprüngliche Nachricht"-Block sichtbar
-    // und wird erst beim Senden (gmailSend) wieder angehängt (ctx.quote).
+    // Das Zitat der bisherigen Nachricht steht sichtbar & editierbar direkt im
+    // Schreibfeld (klassischer Mail-Stil): So sieht man beim Antworten unten, was
+    // geschrieben wurde, und es wird unverändert mitgesendet. Der Cursor startet
+    // oben über dem Zitat (zwei Leerzeilen). Zusätzlich gibt es unten die
+    // read-only Verlaufs-Vorschau (gmailRenderThreadInto).
     window.gmailCompose({
       title: all?"Allen antworten":"Antworten",
-      to: fromA.email, cc: cc.join(", "), subject: subject, body: "",
-      quote: buildQuote(o),
+      to: fromA.email, cc: cc.join(", "), subject: subject,
+      body: "\n\n" + buildQuote(o),
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
       source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
