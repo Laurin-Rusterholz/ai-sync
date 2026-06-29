@@ -95390,6 +95390,16 @@ console.log('📚 Leseliste geladen');
 .gmlc-ai-status .gmlc-ai-spin { width:13px; height:13px; border:2px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color:var(--accent); border-radius:50%; animation:gmlcSpin .7s linear infinite; }
 @keyframes gmlcSpin { to { transform:rotate(360deg); } }
 
+/* Anhang-Liste unter dem Nachrichtenfeld */
+.gmlc-attachlist { display:flex; flex-wrap:wrap; align-items:center; gap:8px; flex-shrink:0; }
+.gmlc-attachlist:not(:empty) { padding:10px 0 2px; margin-top:6px; border-top:1px solid var(--border); }
+.gmlc-attach { display:inline-flex; align-items:center; gap:7px; max-width:260px; padding:6px 9px; border-radius:9px; background:var(--panel2); border:1px solid var(--border); font-size:12.5px; }
+.gmlc-attach-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+.gmlc-attach-size { color:var(--muted); flex-shrink:0; font-size:11.5px; }
+.gmlc-attach-x { flex-shrink:0; width:18px; height:18px; line-height:1; display:inline-flex; align-items:center; justify-content:center; border:none; background:none; color:var(--muted); cursor:pointer; border-radius:5px; font-size:15px; padding:0; }
+.gmlc-attach-x:hover { background:var(--hover); color:var(--danger); }
+.gmlc-attach-total { font-size:11.5px; color:var(--muted); margin-left:2px; }
+
 /* Nachrichtenfeld: füllt die verbleibende Höhe und wächst mit dem Modal */
 .gmlc-msg-wrap { flex:1 1 auto; display:flex; min-height:340px; }
 .gml-compose-modal .gmlc-textarea { flex:1; width:100%; min-height:340px; border:none; background:transparent; color:var(--text); font-size:14px; line-height:1.6; resize:none; outline:none; font-family:inherit; padding:4px 2px; box-sizing:border-box; }
@@ -96081,10 +96091,11 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-ai-status" id="gmlAiStatus"></span>'
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" onkeydown="gmlComposeKey(event)" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen  ·  ⌘/Strg+Enter sendet">'+esc(prefill.body||"")+'</textarea></div>';
+    var attachList = '<div id="gmlAttachList" class="gmlc-attachlist"></div>';
     var html = '<div class="gml-compose-modal">'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
-      + fields + datalist + toolbar + aibar + msg
+      + fields + datalist + toolbar + aibar + msg + attachList
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
@@ -96096,6 +96107,7 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, quote: prefill.quote||null };
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
+    GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
   };
 
@@ -96211,10 +96223,51 @@ console.log('📚 Leseliste geladen');
     var box = document.getElementById("gmlOrigBox");
     if (box) box.classList.toggle("gml-orig-collapsed");
   };
-  // Anhang-Affordanz: echte Anhänge erfordern eine Änderung am Versand (multipart),
-  // die hier bewusst unterbleibt — daher klarer Hinweis statt stiller Fehlfunktion.
+  // ── Echte Datei-Anhänge: ausgewählte Dateien werden base64-kodiert in
+  //    GM._attachments gehalten und in buildMime als multipart/mixed gesendet. ──
+  function gmlFmtSize(bytes){
+    bytes = +bytes || 0;
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(bytes<10240?1:0) + " KB";
+    return (bytes/1048576).toFixed(1) + " MB";
+  }
+  window.gmlRenderAttachments = function(){
+    var box = document.getElementById("gmlAttachList"); if (!box) return;
+    var atts = GM._attachments || [];
+    if (!atts.length){ box.innerHTML = ""; return; }
+    var total = atts.reduce(function(s,a){ return s + (a.size||0); }, 0);
+    box.innerHTML = atts.map(function(a,i){
+      return '<span class="gmlc-attach"><span class="gmlc-attach-name" title="'+esc(a.name)+'">📎 '+esc(a.name)+'</span>'
+        + '<span class="gmlc-attach-size">'+gmlFmtSize(a.size)+'</span>'
+        + '<button type="button" class="gmlc-attach-x" title="Entfernen" onclick="gmlRemoveAttach('+i+')">×</button></span>';
+    }).join("") + '<span class="gmlc-attach-total">Gesamt: '+gmlFmtSize(total)+'</span>';
+  };
+  window.gmlRemoveAttach = function(i){
+    if (!GM._attachments) return;
+    GM._attachments.splice(i, 1);
+    window.gmlRenderAttachments();
+  };
   window.gmlAttach = function(){
-    if (window.toast) window.toast("info","Anhänge","Datei-Anhänge sind in diesem Postfach noch nicht verfügbar.");
+    var inp = document.createElement("input");
+    inp.type = "file"; inp.multiple = true;
+    inp.onchange = function(){
+      var files = Array.prototype.slice.call(inp.files || []);
+      var MAX = 25 * 1024 * 1024;  // ~Gmail-Grenze pro Datei
+      files.forEach(function(f){
+        if (f.size > MAX){ if (window.toast) toast("warn","Datei zu groß", (f.name||"Datei")+" überschreitet 25 MB und wurde übersprungen."); return; }
+        var r = new FileReader();
+        r.onload = function(){
+          var res = String(r.result || ""); var c = res.indexOf(","); var b64 = c >= 0 ? res.slice(c+1) : "";
+          if (!b64) return;
+          GM._attachments = GM._attachments || [];
+          GM._attachments.push({ name: f.name || "datei", type: f.type || "application/octet-stream", size: f.size || 0, data: b64 });
+          window.gmlRenderAttachments();
+        };
+        r.onerror = function(){ if (window.toast) toast("err","Anhang", (f.name||"Datei")+" konnte nicht gelesen werden."); };
+        r.readAsDataURL(f);
+      });
+    };
+    inp.click();
   };
   // Verwerfen = Verfassen abbrechen (entspricht dem bisherigen „Abbrechen").
   window.gmlDiscard = function(){ if (window.closeModal) window.closeModal(); };
@@ -96318,8 +96371,22 @@ console.log('📚 Leseliste geladen');
   }
   // Erkennt, ob der Entwurf Formatierungs-Marker enthält (dann zusätzlich HTML senden).
   function gmlHasFormatting(text){ return /\*\*[^*]+\*\*|__[^_\n]+__|(^|[^*])\*[^*\n]+\*|^\s*•\s|^\s*\d+\.\s|^\s*>\s|https?:\/\//m.test(String(text||"")); }
+  function gmlB64(s){ return window.btoa(unescape(encodeURIComponent(s||""))).replace(/.{76}/g,"$&\r\n"); }
+  function gmlMimeBoundary(tag){ return "=_"+tag+"_" + Date.now().toString(36) + "_" + (GM._mimeSeq = (GM._mimeSeq||0) + 1); }
+  // Inhalts-Entität (ohne Top-Header): reiner Text oder multipart/alternative
+  // (Plain als Fallback + echtes HTML). Beginnt mit der eigenen Content-Type-Zeile.
+  function gmlBodyEntity(o){
+    var text = o.body||"";
+    if (!gmlHasFormatting(text)){
+      return 'Content-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text);
+    }
+    var alt = gmlMimeBoundary("alt");
+    return 'Content-Type: multipart/alternative; boundary="'+alt+'"\r\n\r\n'
+      + "--"+alt+'\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text) + "\r\n"
+      + "--"+alt+'\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(gmlMdToHtml(text)) + "\r\n"
+      + "--"+alt+"--";
+  }
   function buildMime(o){
-    var b64 = function(s){ return window.btoa(unescape(encodeURIComponent(s||""))).replace(/.{76}/g,"$&\r\n"); };
     var head = [
       "To: "+encodeAddressList(o.to),
       o.cc ? "Cc: "+encodeAddressList(o.cc) : null,
@@ -96329,26 +96396,25 @@ console.log('📚 Leseliste geladen');
       o.references ? "References: "+o.references : null,
       "MIME-Version: 1.0",
     ].filter(Boolean);
-    // Ohne Formatierung: unveränderter reiner Text-Versand (wie bisher).
-    if (!gmlHasFormatting(o.body||"")){
-      head.push('Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64");
-      return head.join("\r\n") + "\r\n\r\n" + b64(o.body||"");
+    var atts = o.attachments || [];
+    // Ohne Anhänge: die Body-Entität liefert direkt die Content-Type-Zeile(n).
+    if (!atts.length){
+      return head.join("\r\n") + "\r\n" + gmlBodyEntity(o);
     }
-    // Mit Formatierung: multipart/alternative (Plain als Fallback + echtes HTML).
-    var boundary = "=_qb_" + Date.now().toString(36) + "_" + (GM._mimeSeq = (GM._mimeSeq||0) + 1);
-    head.push('Content-Type: multipart/alternative; boundary="'+boundary+'"');
-    var body = [
-      "--"+boundary,
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64", "",
-      b64(o.body||""),
-      "--"+boundary,
-      'Content-Type: text/html; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64", "",
-      b64(gmlMdToHtml(o.body||"")),
-      "--"+boundary+"--", ""
-    ].join("\r\n");
-    return head.join("\r\n") + "\r\n\r\n" + body;
+    // Mit Anhängen: multipart/mixed { Body-Entität, Anhang-Teile … }.
+    var mix = gmlMimeBoundary("mix");
+    head.push('Content-Type: multipart/mixed; boundary="'+mix+'"');
+    var parts = "--"+mix+"\r\n" + gmlBodyEntity(o) + "\r\n";
+    atts.forEach(function(a){
+      var fn = encodeHeaderWord(a.name||"datei");
+      parts += "--"+mix+"\r\n"
+        + 'Content-Type: '+(a.type||"application/octet-stream")+'; name="'+fn+'"\r\n'
+        + "Content-Transfer-Encoding: base64\r\n"
+        + 'Content-Disposition: attachment; filename="'+fn+'"\r\n\r\n'
+        + String(a.data||"").replace(/.{76}/g,"$&\r\n") + "\r\n";
+    });
+    parts += "--"+mix+"--";
+    return head.join("\r\n") + "\r\n\r\n" + parts;
   }
   // UTF-8-safe base64url of the whole message, so btoa never throws on any
   // non-ASCII that slips past the per-header encoding above.
@@ -96369,7 +96435,7 @@ console.log('📚 Leseliste geladen');
       // Zitat der Original-Mail beim Senden anhängen (im Schreibfeld wurde es bewusst
       // ausgeblendet). Doppelung vermeiden, falls der Text es bereits enthält.
       if (ctx.quote && body.indexOf(ctx.quote) < 0){ body = (body.replace(/\s+$/,"") + "\n\n" + ctx.quote); }
-      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references }) };
+      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]) }) };
       if (ctx.threadId) payload.threadId = ctx.threadId;
       await gmApi("POST","/users/me/messages/send", { body: payload });
       if (window.closeModal) window.closeModal();
