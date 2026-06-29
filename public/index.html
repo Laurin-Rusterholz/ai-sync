@@ -95366,6 +95366,37 @@ console.log('📚 Leseliste geladen');
 .gmlc-tool svg { width:17px; height:17px; display:block; }
 .gmlc-tool-sep { width:1px; align-self:stretch; background:var(--border); margin:5px 7px; }
 
+/* KI-Assistenzleiste über dem Nachrichtenfeld */
+.gmlc-aibar { display:flex; align-items:center; gap:6px; padding:8px 10px; margin:2px 0 10px; flex-wrap:wrap; flex-shrink:0; border-radius:11px;
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+  border:1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); }
+.gmlc-ai-title { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); margin-right:2px; }
+.gmlc-ai { display:inline-flex; align-items:center; gap:5px; padding:6px 11px; font-size:12.5px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;
+  background:var(--panel); color:var(--text); border:1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); transition:all .12s; }
+.gmlc-ai:hover { background:var(--accent-soft); border-color:var(--accent); color:var(--text); }
+.gmlc-ai.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.gmlc-ai.primary:hover { filter:brightness(1.08); }
+.gmlc-ai:disabled { opacity:.5; cursor:default; }
+.gmlc-ai-input { flex:1 1 200px; min-width:150px; padding:6px 11px; font-size:12.5px; border-radius:8px; font-family:inherit; background:var(--panel); color:var(--text); border:1px solid color-mix(in srgb, var(--accent) 24%, var(--border)); outline:none; }
+.gmlc-ai-input::placeholder { color:var(--muted); }
+.gmlc-ai-input:focus { border-color:var(--accent); }
+.gmlc-ai-status { flex-basis:100%; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+.gmlc-ai-status:empty { display:none; }
+.gmlc-ai-undo { background:none; border:none; padding:0; font:inherit; font-size:12px; font-weight:600; color:var(--accent); cursor:pointer; text-decoration:underline; }
+.gmlc-ai-undo:hover { filter:brightness(1.15); }
+.gmlc-ai-status .gmlc-ai-spin { width:13px; height:13px; border:2px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color:var(--accent); border-radius:50%; animation:gmlcSpin .7s linear infinite; }
+@keyframes gmlcSpin { to { transform:rotate(360deg); } }
+
+/* Anhang-Liste unter dem Nachrichtenfeld */
+.gmlc-attachlist { display:flex; flex-wrap:wrap; align-items:center; gap:8px; flex-shrink:0; }
+.gmlc-attachlist:not(:empty) { padding:10px 0 2px; margin-top:6px; border-top:1px solid var(--border); }
+.gmlc-attach { display:inline-flex; align-items:center; gap:7px; max-width:260px; padding:6px 9px; border-radius:9px; background:var(--panel2); border:1px solid var(--border); font-size:12.5px; }
+.gmlc-attach-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+.gmlc-attach-size { color:var(--muted); flex-shrink:0; font-size:11.5px; }
+.gmlc-attach-x { flex-shrink:0; width:18px; height:18px; line-height:1; display:inline-flex; align-items:center; justify-content:center; border:none; background:none; color:var(--muted); cursor:pointer; border-radius:5px; font-size:15px; padding:0; }
+.gmlc-attach-x:hover { background:var(--hover); color:var(--danger); }
+.gmlc-attach-total { font-size:11.5px; color:var(--muted); margin-left:2px; }
+
 /* Nachrichtenfeld: füllt die verbleibende Höhe und wächst mit dem Modal */
 .gmlc-msg-wrap { flex:1 1 auto; display:flex; min-height:340px; }
 .gml-compose-modal .gmlc-textarea { flex:1; width:100%; min-height:340px; border:none; background:transparent; color:var(--text); font-size:14px; line-height:1.6; resize:none; outline:none; font-family:inherit; padding:4px 2px; box-sizing:border-box; }
@@ -95970,6 +96001,24 @@ console.log('📚 Leseliste geladen');
       return { from:h.from||"", subject:h.subject||"", body:text, date: parseInt(msg.internalDate||"0",10)||Date.parse(h.date||"")||0 };
     } catch(e){ return null; }
   }
+  // Bekannte Kontakte für die Empfänger-Autovervollständigung: Personen + Organisationen
+  // (gepflegte Adressen) sowie zuletzt im Gmail-Index gesehene Absender. Dedupliziert,
+  // gekappt. Best-effort, wirft nie.
+  function gmlContactOptions(){
+    var seen={}, out=[];
+    function add(email,name){ if(!email) return; var k=String(email).toLowerCase(); if(seen[k]) return; seen[k]=1; out.push({ email:email, name:name||"" }); }
+    try {
+      var ents=(window.APP&&APP.state&&APP.state.data&&APP.state.data.entities)||{};
+      var ps=ents.persons||{}; Object.keys(ps).forEach(function(id){ var p=ps[id]||{}; (p.emails||[]).forEach(function(em){ add(em, p.name||p.firstName||""); }); });
+      var os=ents.organizations||{}; Object.keys(os).forEach(function(id){ var o=os[id]||{}; if(o.email) add(o.email,o.name||""); (o.emails||[]).forEach(function(em){ add(em,o.name||""); }); });
+      var idx=(APP.state.data.gmailIndex)||[]; for (var i=0;i<idx.length && out.length<500;i++){ add(idx[i].fromEmail, idx[i].fromName||""); }
+    } catch(e){}
+    return out.slice(0,500);
+  }
+  // ⌘/Strg+Enter sendet aus jedem Eingabefeld des Verfassen-Modals.
+  window.gmlComposeKey = function(e){
+    if ((e.metaKey||e.ctrlKey) && (e.key==="Enter" || e.keyCode===13)){ e.preventDefault(); if (typeof window.gmailSend==="function") window.gmailSend(); }
+  };
   window.gmailCompose = function(prefill){
     prefill = prefill||{};
     // Toolbar-Icons (currentColor, kein Emoji, ruhig). Reine Optik.
@@ -95985,7 +96034,7 @@ console.log('📚 Leseliste geladen');
     function row(id,label,value,o){ o=o||{};
       return '<div class="gmlc-row"'+(o.rowId?' id="'+o.rowId+'"':'')+(o.hidden?' hidden':'')+'>'
         + '<label class="gmlc-label" for="'+id+'">'+label+'</label>'
-        + '<input id="'+id+'" class="gmlc-input" type="text" autocomplete="off" value="'+esc(value||"")+'" placeholder="'+esc(o.ph||"")+'">'
+        + '<input id="'+id+'" class="gmlc-input" type="text" autocomplete="off" value="'+esc(value||"")+'" placeholder="'+esc(o.ph||"")+'"'+(o.attrs?' '+o.attrs:'')+'>'
         + (o.tail||'')
         + '</div>';
     }
@@ -95994,12 +96043,18 @@ console.log('📚 Leseliste geladen');
       + '<button type="button" class="gmlc-toggle'+(ccShown?' active':'')+'" id="gmlCcToggle" onclick="gmlToggleField(\'cc\')">Cc</button>'
       + '<button type="button" class="gmlc-toggle" id="gmlBccToggle" onclick="gmlToggleField(\'bcc\')">Bcc</button>'
       + '</div>';
+    var recipAttrs = 'list="gmlContacts" onkeydown="gmlComposeKey(event)"';
     var fields = '<div class="gmlc-fields">'
-      + row('gmlTo','An',prefill.to,{ ph:'empfaenger@example.com, weitere@…', tail:toggles })
-      + row('gmlCc','Cc',prefill.cc,{ rowId:'gmlCcRow', hidden:!ccShown, ph:'Cc-Empfänger' })
-      + row('gmlBcc','Bcc','',{ rowId:'gmlBccRow', hidden:true, ph:'Bcc-Empfänger' })
-      + row('gmlSubject','Betreff',prefill.subject,{ ph:'Betreff' })
+      + row('gmlTo','An',prefill.to,{ ph:'empfaenger@example.com, weitere@…', tail:toggles, attrs:recipAttrs })
+      + row('gmlCc','Cc',prefill.cc,{ rowId:'gmlCcRow', hidden:!ccShown, ph:'Cc-Empfänger', attrs:recipAttrs })
+      + row('gmlBcc','Bcc','',{ rowId:'gmlBccRow', hidden:true, ph:'Bcc-Empfänger', attrs:recipAttrs })
+      + row('gmlSubject','Betreff',prefill.subject,{ ph:'Betreff', attrs:'onkeydown="gmlComposeKey(event)"' })
       + '</div>';
+    // Empfänger-Autovervollständigung aus bekannten Kontakten (Personen, Organisationen,
+    // zuletzt im Gmail-Index gesehene Absender). Nativ über <datalist>, rein additiv.
+    var datalist = '<datalist id="gmlContacts">'
+      + gmlContactOptions().map(function(c){ return '<option value="'+esc(c.email)+'">'+esc(c.name||c.email)+'</option>'; }).join('')
+      + '</datalist>';
     var toolbar = '<div class="gmlc-toolbar" role="toolbar" aria-label="Formatierung">'
       + tbtn('bold','Fett','<b>B</b>') + tbtn('italic','Kursiv','<i>I</i>') + tbtn('underline','Unterstrichen','<u>U</u>')
       + '<span class="gmlc-tool-sep"></span>'
@@ -96013,11 +96068,31 @@ console.log('📚 Leseliste geladen');
       +   '<option value="__manage__">⚙️ Vorlagen verwalten…</option>'
       + '</select>'
       + '</div>';
-    var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" placeholder="Nachricht verfassen…">'+esc(prefill.body||"")+'</textarea></div>';
+    // KI-Assistenzleiste: arbeitet direkt am Entwurf (gmlBody) und nutzt – falls
+    // vorhanden – die Original-Mail (prefill.source) als Kontext. Reine Frontend-
+    // Funktion über window.callAI; verändert keinen Versand-/API-Pfad.
+    var aiBtns = [
+      ['draft','✨ Entwerfen','primary','Eine vollständige Antwort aus der Original-Mail entwerfen'],
+      ['improve','✏️ Verbessern','','Formulierung, Klarheit & Stil verbessern'],
+      ['fix','✓ Korrigieren','','Rechtschreibung & Grammatik korrigieren'],
+      ['shorten','✂️ Kürzer','','Knapper formulieren'],
+      ['friendly','😊 Freundlicher','','Wärmeren, freundlicheren Ton'],
+      ['formal','👔 Formeller','','Formelleren, professionellen Ton'],
+      ['translate','🌐 Übersetzen','','Den Entwurf in eine andere Sprache übersetzen'],
+    ];
+    var aibar = '<div class="gmlc-aibar" role="toolbar" aria-label="KI-Assistenz">'
+      + '<span class="gmlc-ai-title">✨ KI</span>'
+      + aiBtns.map(function(b){ return '<button type="button" class="gmlc-ai'+(b[2]?' '+b[2]:'')+'" id="gmlAi_'+b[0]+'" onclick="gmlAI(\''+b[0]+'\')" title="'+esc(b[3])+'">'+b[1]+'</button>'; }).join('')
+      + '<input id="gmlAiInstruct" class="gmlc-ai-input" type="text" placeholder="Eigene Anweisung an die KI… (z. B. „höflich absagen“, Enter)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmlAI(\'custom\');}">'
+      + '<button type="button" class="gmlc-ai" onclick="gmlAI(\'custom\')" title="Eigene Anweisung umsetzen">Anwenden</button>'
+      + '<span class="gmlc-ai-status" id="gmlAiStatus"></span>'
+      + '</div>';
+    var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" onkeydown="gmlComposeKey(event)" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen  ·  ⌘/Strg+Enter sendet">'+esc(prefill.body||"")+'</textarea></div>';
+    var attachList = '<div id="gmlAttachList" class="gmlc-attachlist"></div>';
     var html = '<div class="gml-compose-modal">'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
-      + fields + toolbar + msg
+      + fields + datalist + toolbar + aibar + msg + attachList
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
@@ -96027,7 +96102,9 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-footer-spacer"></span>'
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, quote: prefill.quote||null };
+    GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
+    GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
   };
 
@@ -96060,6 +96137,72 @@ console.log('📚 Leseliste geladen');
     }
     ta.value = out; ta.focus(); try { ta.setSelectionRange(ns, ne); } catch(_){}
   };
+
+  // ── KI-Assistenz direkt im Verfassen-Modal ──
+  // Entwirft bzw. überarbeitet den Text im Schreibfeld (gmlBody) und nutzt – falls
+  // vorhanden – die Original-Mail (GM._composeCtx.source) als Kontext. Reine Frontend-
+  // Funktion über window.callAI; Versand bleibt text/plain, kein neuer API-Pfad.
+  function gmlAiBusy(on, label){
+    var st = document.getElementById("gmlAiStatus");
+    if (st) st.innerHTML = on ? '<span class="gmlc-ai-spin"></span>'+esc(label||"KI arbeitet …") : (label?esc(label):"");
+    Array.prototype.forEach.call(document.querySelectorAll(".gmlc-ai"), function(b){ b.disabled = !!on; });
+  }
+  window.gmlAI = async function(action){
+    if (typeof window.callAI !== "function"){ toast("warn","KI nicht verfügbar","Bitte einen API-Key in den Einstellungen hinterlegen."); return; }
+    var ta = document.getElementById("gmlBody"); if (!ta) return;
+    var draft = String(ta.value||"").trim();
+    var ctx = GM._composeCtx||{}, src = ctx.source||{};
+    var origFrom = src.from ? parseAddr(src.from) : null;
+    var greetName = origFrom ? String(origFrom.name||"").split(" ")[0] : "";
+    var origCtx = src.body ? ("Ursprüngliche Nachricht von "+(origFrom?(origFrom.name||origFrom.email):"(unbekannt)")+":\nBetreff: "+(src.subject||"")+"\n\n"+String(src.body).replace(/\s+/g," ").slice(0,3000)) : "";
+    var sys, user;
+    if (action==="draft"){
+      sys = "Du bist ein hilfreicher E-Mail-Assistent. Formuliere eine vollständige, natürliche Antwort-E-Mail auf Deutsch: passende Anrede"+(greetName?(" (Empfänger: "+greetName+")"):"")+", klarer Hauptteil, höfliche Grußformel. Schreibe NUR den E-Mail-Text – kein Betreff, keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?origCtx+"\n\n":"") + (draft ? ("Berücksichtige diese Stichpunkte/Wünsche für die Antwort:\n"+draft) : "Verfasse eine angemessene, höfliche Antwort.");
+    } else if (action==="custom"){
+      var instr = String((document.getElementById("gmlAiInstruct")||{}).value||"").trim();
+      if (!instr){ toast("info","Keine Anweisung","Bitte links eine Anweisung für die KI eingeben."); return; }
+      sys = "Du bist ein E-Mail-Assistent. Setze die Anweisung des Nutzers um und schreibe den resultierenden deutschen E-Mail-Text (passende Anrede & Grußformel, sofern es eine vollständige Mail ist). Antworte NUR mit dem E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?origCtx+"\n\n":"") + (draft?("Aktueller Entwurf:\n"+draft+"\n\n"):"") + "Anweisung: "+instr;
+    } else if (action==="translate"){
+      if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben."); return; }
+      var lang = window.prompt("In welche Sprache übersetzen?", "Englisch");
+      if (lang==null) return; lang = String(lang).trim() || "Englisch";
+      sys = "Du bist ein professioneller Übersetzer. Übersetze die folgende E-Mail nach "+lang+". Bewahre Ton, Anrede, Absätze und Grußformel. Antworte NUR mit dem übersetzten Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = "Text:\n"+draft;
+    } else {
+      if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben oder „✨ Entwerfen“ nutzen."); return; }
+      var how = {
+        improve:  "Verbessere Formulierung, Klarheit und Lesefluss, ohne Inhalt oder Aussage zu verändern.",
+        fix:      "Korrigiere ausschließlich Rechtschreibung, Grammatik und Zeichensetzung. Inhalt und Stil bleiben unverändert.",
+        shorten:  "Fasse den Text deutlich knapper, aber höflich und vollständig.",
+        friendly: "Formuliere den Text wärmer, freundlicher und persönlicher, ohne unprofessionell zu wirken.",
+        formal:   "Formuliere den Text formeller und professioneller (Sie-Form, sachlich).",
+      }[action] || "Verbessere den Text.";
+      sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?("Kontext – "+origCtx+"\n\n"):"") + "Text:\n"+draft;
+    }
+    var busyLbl = action==="draft" ? "Entwerfe Antwort …" : action==="custom" ? "Setze Anweisung um …" : action==="translate" ? "Übersetze …" : "Überarbeite …";
+    gmlAiBusy(true, busyLbl);
+    var res;
+    try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:1100 }); }
+    catch(e){ gmlAiBusy(false,""); toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    if (!res){ gmlAiBusy(false,""); toast("warn","KI","Kein Ergebnis (API-Key in den Einstellungen?)"); return; }
+    res = String(res).replace(/^```(?:\w+)?\s*/,"").replace(/```\s*$/,"").trim();
+    GM._aiUndo = ta.value;  // einstufiges Rückgängig: vorigen Text merken (Toggle)
+    ta.value = res; ta.focus(); try { ta.setSelectionRange(res.length, res.length); } catch(_){}
+    gmlAiBusy(false, "");
+    var st = document.getElementById("gmlAiStatus");
+    if (st) st.innerHTML = '✓ aktualisiert · <button type="button" class="gmlc-ai-undo" onclick="gmlAiUndo()">↩︎ Rückgängig</button>';
+  };
+  // Einstufiges Undo/Redo für KI-Änderungen: tauscht aktuellen Text mit dem
+  // gemerkten Vortext (gmlAI speichert ihn vor jeder Änderung in GM._aiUndo).
+  window.gmlAiUndo = function(){
+    var ta = document.getElementById("gmlBody"); if (!ta || GM._aiUndo==null) return;
+    var cur = ta.value; ta.value = GM._aiUndo; GM._aiUndo = cur; ta.focus();
+    var st = document.getElementById("gmlAiStatus");
+    if (st) st.innerHTML = '↪︎ wiederhergestellt · <button type="button" class="gmlc-ai-undo" onclick="gmlAiUndo()">↩︎ Erneut</button>';
+  };
   // Cc/Bcc ein-/ausblenden (Gmail-Toggle). Beim Ausblenden wird der Inhalt geleert,
   // damit nichts „Verstecktes" mitgesendet wird.
   window.gmlToggleField = function(which){
@@ -96077,10 +96220,51 @@ console.log('📚 Leseliste geladen');
     var box = document.getElementById("gmlOrigBox");
     if (box) box.classList.toggle("gml-orig-collapsed");
   };
-  // Anhang-Affordanz: echte Anhänge erfordern eine Änderung am Versand (multipart),
-  // die hier bewusst unterbleibt — daher klarer Hinweis statt stiller Fehlfunktion.
+  // ── Echte Datei-Anhänge: ausgewählte Dateien werden base64-kodiert in
+  //    GM._attachments gehalten und in buildMime als multipart/mixed gesendet. ──
+  function gmlFmtSize(bytes){
+    bytes = +bytes || 0;
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(bytes<10240?1:0) + " KB";
+    return (bytes/1048576).toFixed(1) + " MB";
+  }
+  window.gmlRenderAttachments = function(){
+    var box = document.getElementById("gmlAttachList"); if (!box) return;
+    var atts = GM._attachments || [];
+    if (!atts.length){ box.innerHTML = ""; return; }
+    var total = atts.reduce(function(s,a){ return s + (a.size||0); }, 0);
+    box.innerHTML = atts.map(function(a,i){
+      return '<span class="gmlc-attach"><span class="gmlc-attach-name" title="'+esc(a.name)+'">📎 '+esc(a.name)+'</span>'
+        + '<span class="gmlc-attach-size">'+gmlFmtSize(a.size)+'</span>'
+        + '<button type="button" class="gmlc-attach-x" title="Entfernen" onclick="gmlRemoveAttach('+i+')">×</button></span>';
+    }).join("") + '<span class="gmlc-attach-total">Gesamt: '+gmlFmtSize(total)+'</span>';
+  };
+  window.gmlRemoveAttach = function(i){
+    if (!GM._attachments) return;
+    GM._attachments.splice(i, 1);
+    window.gmlRenderAttachments();
+  };
   window.gmlAttach = function(){
-    if (window.toast) window.toast("info","Anhänge","Datei-Anhänge sind in diesem Postfach noch nicht verfügbar.");
+    var inp = document.createElement("input");
+    inp.type = "file"; inp.multiple = true;
+    inp.onchange = function(){
+      var files = Array.prototype.slice.call(inp.files || []);
+      var MAX = 25 * 1024 * 1024;  // ~Gmail-Grenze pro Datei
+      files.forEach(function(f){
+        if (f.size > MAX){ if (window.toast) toast("warn","Datei zu groß", (f.name||"Datei")+" überschreitet 25 MB und wurde übersprungen."); return; }
+        var r = new FileReader();
+        r.onload = function(){
+          var res = String(r.result || ""); var c = res.indexOf(","); var b64 = c >= 0 ? res.slice(c+1) : "";
+          if (!b64) return;
+          GM._attachments = GM._attachments || [];
+          GM._attachments.push({ name: f.name || "datei", type: f.type || "application/octet-stream", size: f.size || 0, data: b64 });
+          window.gmlRenderAttachments();
+        };
+        r.onerror = function(){ if (window.toast) toast("err","Anhang", (f.name||"Datei")+" konnte nicht gelesen werden."); };
+        r.readAsDataURL(f);
+      });
+    };
+    inp.click();
   };
   // Verwerfen = Verfassen abbrechen (entspricht dem bisherigen „Abbrechen").
   window.gmlDiscard = function(){ if (window.closeModal) window.closeModal(); };
@@ -96105,9 +96289,13 @@ console.log('📚 Leseliste geladen');
       });
     }
     var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+    // Body bleibt leer (Gmail-Stil): Das Zitat wird NICHT mehr in das Schreibfeld
+    // gekippt, sondern bleibt im eingeklappten „Ursprüngliche Nachricht"-Block sichtbar
+    // und wird erst beim Senden (gmailSend) wieder angehängt (ctx.quote).
     window.gmailCompose({
       title: all?"Allen antworten":"Antworten",
-      to: fromA.email, cc: cc.join(", "), subject: subject, body: "\n\n"+buildQuote(o),
+      to: fromA.email, cc: cc.join(", "), subject: subject, body: "",
+      quote: buildQuote(o),
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
       source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
@@ -96150,9 +96338,53 @@ console.log('📚 Leseliste geladen');
       return part; // bare address
     }).filter(Boolean).join(", ");
   }
+  // ── Plain-Text-Marker (von der Toolbar erzeugt) → echtes HTML für den Versand ──
+  // Wandelt **fett**, *kursiv*, __unterstrichen__, „• "-/„1. "-Listen, „> "-Zitate und
+  // URLs in semantisches HTML um. Eingaben werden zuvor HTML-escaped (kein Injection).
+  function gmlEscHtml(t){ return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function gmlMdInline(s){
+    // s ist bereits HTML-escaped. URLs zuerst „parken", damit Inline-Marker (*, _)
+    // innerhalb einer URL diese nicht zerlegen; am Ende als Links wiederherstellen.
+    var urls = [];
+    s = s.replace(/(https?:\/\/[^\s<]+)/g, function(u){ urls.push(u); return "\u0000"+(urls.length-1)+"\u0000"; });
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/__([^_\n]+)__/g, "<u>$1</u>");
+    s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    s = s.replace(/\u0000(\d+)\u0000/g, function(_, n){ var u = urls[+n]; return '<a href="'+u+'">'+u+'</a>'; });
+    return s;
+  }
+  function gmlMdToHtml(text){
+    var lines = String(text||"").split(/\r?\n/), out = "", i = 0;
+    function list(tag, items){ return '<'+tag+' style="margin:4px 0 4px 1.3em;padding:0">'+items.map(function(it){ return "<li>"+gmlMdInline(gmlEscHtml(it))+"</li>"; }).join("")+'</'+tag+'>'; }
+    while (i < lines.length){
+      var ln = lines[i];
+      if (/^\s*•\s+/.test(ln)){ var ul=[]; while (i<lines.length && /^\s*•\s+/.test(lines[i])){ ul.push(lines[i].replace(/^\s*•\s+/,"")); i++; } out += list("ul", ul); continue; }
+      if (/^\s*\d+\.\s+/.test(ln)){ var ol=[]; while (i<lines.length && /^\s*\d+\.\s+/.test(lines[i])){ ol.push(lines[i].replace(/^\s*\d+\.\s+/,"")); i++; } out += list("ol", ol); continue; }
+      if (/^\s*>\s?/.test(ln)){ var bq=[]; while (i<lines.length && /^\s*>\s?/.test(lines[i])){ bq.push(lines[i].replace(/^\s*>\s?/,"")); i++; } out += '<blockquote style="margin:4px 0;padding-left:.8em;border-left:2px solid #cbd5e1;color:#64748b">'+bq.map(function(b){ return gmlMdInline(gmlEscHtml(b)); }).join("<br>")+"</blockquote>"; continue; }
+      if (ln.trim()===""){ out += "<br>"; i++; continue; }
+      out += "<div>"+gmlMdInline(gmlEscHtml(ln))+"</div>"; i++;
+    }
+    return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#202124;white-space:normal">'+out+"</div>";
+  }
+  // Erkennt, ob der Entwurf Formatierungs-Marker enthält (dann zusätzlich HTML senden).
+  function gmlHasFormatting(text){ return /\*\*[^*]+\*\*|__[^_\n]+__|(^|[^*])\*[^*\n]+\*|^\s*•\s|^\s*\d+\.\s|^\s*>\s|https?:\/\//m.test(String(text||"")); }
+  function gmlB64(s){ return window.btoa(unescape(encodeURIComponent(s||""))).replace(/.{76}/g,"$&\r\n"); }
+  function gmlMimeBoundary(tag){ return "=_"+tag+"_" + Date.now().toString(36) + "_" + (GM._mimeSeq = (GM._mimeSeq||0) + 1); }
+  // Inhalts-Entität (ohne Top-Header): reiner Text oder multipart/alternative
+  // (Plain als Fallback + echtes HTML). Beginnt mit der eigenen Content-Type-Zeile.
+  function gmlBodyEntity(o){
+    var text = o.body||"";
+    if (!gmlHasFormatting(text)){
+      return 'Content-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text);
+    }
+    var alt = gmlMimeBoundary("alt");
+    return 'Content-Type: multipart/alternative; boundary="'+alt+'"\r\n\r\n'
+      + "--"+alt+'\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text) + "\r\n"
+      + "--"+alt+'\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(gmlMdToHtml(text)) + "\r\n"
+      + "--"+alt+"--";
+  }
   function buildMime(o){
-    var bodyB64 = window.btoa(unescape(encodeURIComponent(o.body||""))).replace(/.{76}/g,"$&\r\n");
-    var lines = [
+    var head = [
       "To: "+encodeAddressList(o.to),
       o.cc ? "Cc: "+encodeAddressList(o.cc) : null,
       o.bcc ? "Bcc: "+encodeAddressList(o.bcc) : null,
@@ -96160,10 +96392,26 @@ console.log('📚 Leseliste geladen');
       o.inReplyTo ? "In-Reply-To: "+o.inReplyTo : null,
       o.references ? "References: "+o.references : null,
       "MIME-Version: 1.0",
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64",
     ].filter(Boolean);
-    return lines.join("\r\n") + "\r\n\r\n" + bodyB64;
+    var atts = o.attachments || [];
+    // Ohne Anhänge: die Body-Entität liefert direkt die Content-Type-Zeile(n).
+    if (!atts.length){
+      return head.join("\r\n") + "\r\n" + gmlBodyEntity(o);
+    }
+    // Mit Anhängen: multipart/mixed { Body-Entität, Anhang-Teile … }.
+    var mix = gmlMimeBoundary("mix");
+    head.push('Content-Type: multipart/mixed; boundary="'+mix+'"');
+    var parts = "--"+mix+"\r\n" + gmlBodyEntity(o) + "\r\n";
+    atts.forEach(function(a){
+      var fn = encodeHeaderWord(a.name||"datei");
+      parts += "--"+mix+"\r\n"
+        + 'Content-Type: '+(a.type||"application/octet-stream")+'; name="'+fn+'"\r\n'
+        + "Content-Transfer-Encoding: base64\r\n"
+        + 'Content-Disposition: attachment; filename="'+fn+'"\r\n\r\n'
+        + String(a.data||"").replace(/.{76}/g,"$&\r\n") + "\r\n";
+    });
+    parts += "--"+mix+"--";
+    return head.join("\r\n") + "\r\n\r\n" + parts;
   }
   // UTF-8-safe base64url of the whole message, so btoa never throws on any
   // non-ASCII that slips past the per-header encoding above.
@@ -96181,7 +96429,10 @@ console.log('📚 Leseliste geladen');
     GM._composeBusy=true; var sb=g("gmlSendBtn"); if(sb){ sb.disabled=true; sb.textContent="Sende…"; }
     try {
       var ctx = GM._composeCtx||{};
-      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references }) };
+      // Zitat der Original-Mail beim Senden anhängen (im Schreibfeld wurde es bewusst
+      // ausgeblendet). Doppelung vermeiden, falls der Text es bereits enthält.
+      if (ctx.quote && body.indexOf(ctx.quote) < 0){ body = (body.replace(/\s+$/,"") + "\n\n" + ctx.quote); }
+      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]) }) };
       if (ctx.threadId) payload.threadId = ctx.threadId;
       await gmApi("POST","/users/me/messages/send", { body: payload });
       if (window.closeModal) window.closeModal();
