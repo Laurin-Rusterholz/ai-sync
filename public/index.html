@@ -96176,6 +96176,7 @@ console.log('📚 Leseliste geladen');
     // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
     var hasPrev = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var html = '<div class="gml-compose-modal'+(hasPrev?' gml-has-prev':'')+'">'
+      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-06-29 · Verlauf-Vorschau v9</div>'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + fields + datalist + toolbar + aibar + msg + attachList
