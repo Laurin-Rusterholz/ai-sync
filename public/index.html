@@ -96189,7 +96189,7 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-footer-spacer"></span>'
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, quote: prefill.quote||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null };
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
@@ -96379,15 +96379,14 @@ console.log('📚 Leseliste geladen');
       });
     }
     var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
-    // Das Zitat der bisherigen Nachricht steht sichtbar & editierbar direkt im
-    // Schreibfeld (klassischer Mail-Stil): So sieht man beim Antworten unten, was
-    // geschrieben wurde, und es wird unverändert mitgesendet. Der Cursor startet
-    // oben über dem Zitat (zwei Leerzeilen). Zusätzlich gibt es unten die
-    // read-only Verlaufs-Vorschau (gmailRenderThreadInto).
+    // Schreibfeld bleibt SAUBER (keine „> "-Zeilen). Die bisherige Mail sieht man
+    // unten in der lesbaren Vorschau. Beim Senden wird sie als professionelles,
+    // eingerücktes Zitat angehängt (replyQuote → buildMime), ganz ohne „>"-Zeichen.
     window.gmailCompose({
       title: all?"Allen antworten":"Antworten",
       to: fromA.email, cc: cc.join(", "), subject: subject,
-      body: "\n\n" + buildQuote(o),
+      body: "",
+      replyQuote: { fromName: (fromA.name||fromA.email||""), date: o.internalDate||0, text: (o.text||htmlToText(o.html)||"") },
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
       source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
@@ -96464,17 +96463,37 @@ console.log('📚 Leseliste geladen');
   function gmlHasFormatting(text){ return /\*\*[^*]+\*\*|__[^_\n]+__|(^|[^*])\*[^*\n]+\*|^\s*•\s|^\s*\d+\.\s|^\s*>\s|https?:\/\//m.test(String(text||"")); }
   function gmlB64(s){ return window.btoa(unescape(encodeURIComponent(s||""))).replace(/.{76}/g,"$&\r\n"); }
   function gmlMimeBoundary(tag){ return "=_"+tag+"_" + Date.now().toString(36) + "_" + (GM._mimeSeq = (GM._mimeSeq||0) + 1); }
+  // Professionelles Zitat der bisherigen Mail – OHNE „>"-Zeichen.
+  // Plain-Text: Kopfzeile + Originaltext (eingerückt mit schmalem Geviert).
+  function gmlQuotePlain(q){
+    if (!q) return "";
+    var head = "Am " + fmtDateFull(q.date) + " schrieb " + (q.fromName||"") + ":";
+    var body = String(q.text||"").split(/\r?\n/).map(function(l){ return " " + l; }).join("\n");
+    return head + "\n\n" + body;
+  }
+  // HTML: Kopfzeile + eingerücktes blockquote (linker Balken, gedämpfte Farbe).
+  function gmlQuoteHtml(q){
+    if (!q) return "";
+    var head = '<div style="color:#5f6368;margin:12px 0 4px">Am ' + gmlEscHtml(fmtDateFull(q.date)) + ' schrieb ' + gmlEscHtml(q.fromName||"") + ':</div>';
+    var inner = String(q.text||"").split(/\r?\n/).map(function(l){ return l.trim() ? '<div>'+gmlMdInline(gmlEscHtml(l))+'</div>' : '<br>'; }).join("");
+    return head + '<blockquote style="margin:0;padding:0 0 0 14px;border-left:2px solid #dadce0;color:#5f6368">' + inner + '</blockquote>';
+  }
   // Inhalts-Entität (ohne Top-Header): reiner Text oder multipart/alternative
   // (Plain als Fallback + echtes HTML). Beginnt mit der eigenen Content-Type-Zeile.
+  // Ist ein Zitat (o.quote) vorhanden, wird IMMER HTML mitgesendet, damit das
+  // eingerückte Zitat sauber dargestellt wird.
   function gmlBodyEntity(o){
     var text = o.body||"";
-    if (!gmlHasFormatting(text)){
+    var q = o.quote && (o.quote.text || o.quote.fromName) ? o.quote : null;
+    if (!q && !gmlHasFormatting(text)){
       return 'Content-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text);
     }
+    var plain = q ? (text + (text?"\n\n":"") + gmlQuotePlain(q)) : text;
+    var html = q ? (gmlMdToHtml(text) + gmlQuoteHtml(q)) : gmlMdToHtml(text);
     var alt = gmlMimeBoundary("alt");
     return 'Content-Type: multipart/alternative; boundary="'+alt+'"\r\n\r\n'
-      + "--"+alt+'\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text) + "\r\n"
-      + "--"+alt+'\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(gmlMdToHtml(text)) + "\r\n"
+      + "--"+alt+'\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(plain) + "\r\n"
+      + "--"+alt+'\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(html) + "\r\n"
       + "--"+alt+"--";
   }
   function buildMime(o){
@@ -96523,10 +96542,10 @@ console.log('📚 Leseliste geladen');
     GM._composeBusy=true; var sb=g("gmlSendBtn"); if(sb){ sb.disabled=true; sb.textContent="Sende…"; }
     try {
       var ctx = GM._composeCtx||{};
-      // Zitat der Original-Mail beim Senden anhängen (im Schreibfeld wurde es bewusst
-      // ausgeblendet). Doppelung vermeiden, falls der Text es bereits enthält.
-      if (ctx.quote && body.indexOf(ctx.quote) < 0){ body = (body.replace(/\s+$/,"") + "\n\n" + ctx.quote); }
-      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]) }) };
+      // Das Zitat der bisherigen Mail wird – falls vorhanden – beim Senden als
+      // professionelles, eingerücktes Zitat angehängt (ohne „>"-Zeichen). Das
+      // übernimmt buildMime über das strukturierte ctx.replyQuote.
+      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]), quote:(ctx.replyQuote||null) }) };
       if (ctx.threadId) payload.threadId = ctx.threadId;
       await gmApi("POST","/users/me/messages/send", { body: payload });
       if (window.closeModal) window.closeModal();
