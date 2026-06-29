@@ -95350,6 +95350,16 @@ console.log('📚 Leseliste geladen');
 .gml-orig-collapsed .gml-orig-subj,
 .gml-orig-collapsed .gml-orig-body { display:none; }
 
+/* Schreibgeschützte Vorschau der bisherigen Nachricht UNTER dem Schreibfeld */
+.gml-prevmail { flex-shrink:0; margin-top:14px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); padding:11px 13px; }
+.gml-prevmail-head { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--muted); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.gml-prevmail-date { font-size:11px; color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0; flex-shrink:0; }
+.gml-prevmail-meta { font-size:12.5px; font-weight:600; color:var(--text); margin-top:8px; overflow:hidden; text-overflow:ellipsis; }
+.gml-prevmail-addr { font-weight:400; color:var(--muted); }
+.gml-prevmail-subj { font-size:12.5px; color:var(--text2); margin-top:2px; }
+.gml-prevmail-body { font-size:12.5px; color:var(--text2); line-height:1.55; white-space:pre-wrap; word-break:break-word; max-height:240px; overflow:auto; margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
+.gml-prevmail-loading { color:var(--muted); font-style:italic; font-size:12.5px; margin-top:8px; }
+
 /* Empfänger-Zeilen (An/Cc/Bcc/Betreff): randlose Inputs, klare 44px-Klickflächen */
 .gmlc-fields { flex-shrink:0; }
 .gmlc-row { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--border); }
@@ -95967,10 +95977,32 @@ console.log('📚 Leseliste geladen');
       + '<div class="gml-orig-body">'+(bodyTxt?esc(bodyTxt):'<span style="color:var(--muted)">(kein Textinhalt)</span>')+'</div>'
       + '</div>';
   }
-  // Ersetzt den Platzhalter im offenen Modal durch die geladene Original-Mail.
+  // Schreibgeschützte Vorschau der bisherigen Nachricht UNTERHALB des Schreibfelds
+  // (ausgeklappt). Ergänzt den kompakten, einklappbaren Block oben, damit man beim
+  // Verfassen die Mail, auf die man antwortet, durchgehend lesen kann.
+  function renderPrevMail(orig){
+    if (!orig) return '<div id="gmlPrevMail"></div>';
+    if (orig.loading) return '<div id="gmlPrevMail" class="gml-prevmail"><div class="gml-prevmail-head">↩︎ Bisherige Nachricht</div><div class="gml-prevmail-loading">Lade Original-Mail…</div></div>';
+    if (orig.empty || (!orig.from && !orig.subject && !orig.body)) return '<div id="gmlPrevMail"></div>';
+    var fa = parseAddr(orig.from||"");
+    var who = esc(fa.name||fa.email||"(unbekannt)")
+      + (fa.email && fa.name && fa.name!==fa.email ? ' <span class="gml-prevmail-addr">&lt;'+esc(fa.email)+'&gt;</span>' : '');
+    var dateStr = orig.date ? esc(fmtDateFull(orig.date)) : '';
+    var bodyTxt = String(orig.body||"").trim();
+    return '<div id="gmlPrevMail" class="gml-prevmail">'
+      + '<div class="gml-prevmail-head">↩︎ Bisherige Nachricht'+(dateStr?'<span class="gml-prevmail-date">'+dateStr+'</span>':'')+'</div>'
+      + '<div class="gml-prevmail-meta">'+who+'</div>'
+      + (orig.subject ? '<div class="gml-prevmail-subj">'+esc(orig.subject)+'</div>' : '')
+      + '<div class="gml-prevmail-body">'+(bodyTxt?esc(bodyTxt):'<span style="color:var(--muted)">(kein Textinhalt)</span>')+'</div>'
+      + '</div>';
+  }
+  // Ersetzt die Platzhalter im offenen Modal durch die geladene Original-Mail
+  // (kompakter Block oben + ausgeklappte Vorschau unten).
   window.gmailFillOriginal = function(orig){
     var box=document.getElementById("gmlOrigBox");
     if (box) box.outerHTML = renderComposeOriginal(orig || { empty:true });
+    var box2=document.getElementById("gmlPrevMail");
+    if (box2) box2.outerHTML = renderPrevMail(orig || { empty:true });
   };
   // Ermittelt die Original-Mail (read-only Kontext) für das Verfassen-Modal:
   // bevorzugt eine explizite messageId, sonst die neueste eingehende Nachricht
@@ -96096,6 +96128,7 @@ console.log('📚 Leseliste geladen');
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + fields + datalist + toolbar + aibar + msg + attachList
+      + (prefill.original !== undefined ? renderPrevMail(prefill.original) : '')
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
