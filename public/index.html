@@ -95369,6 +95369,21 @@ console.log('📚 Leseliste geladen');
 .gmlc-tool svg { width:17px; height:17px; display:block; }
 .gmlc-tool-sep { width:1px; align-self:stretch; background:var(--border); margin:5px 7px; }
 
+/* KI-Assistenzleiste über dem Nachrichtenfeld */
+.gmlc-aibar { display:flex; align-items:center; gap:6px; padding:8px 10px; margin:2px 0 10px; flex-wrap:wrap; flex-shrink:0; border-radius:11px;
+  background:linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+  border:1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); }
+.gmlc-ai-title { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); margin-right:2px; }
+.gmlc-ai { display:inline-flex; align-items:center; gap:5px; padding:6px 11px; font-size:12.5px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;
+  background:var(--panel); color:var(--text); border:1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); transition:all .12s; }
+.gmlc-ai:hover { background:var(--accent-soft); border-color:var(--accent); color:var(--text); }
+.gmlc-ai.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.gmlc-ai.primary:hover { filter:brightness(1.08); }
+.gmlc-ai:disabled { opacity:.5; cursor:default; }
+.gmlc-ai-status { font-size:12px; color:var(--muted); margin-left:auto; display:inline-flex; align-items:center; gap:6px; }
+.gmlc-ai-status .gmlc-ai-spin { width:13px; height:13px; border:2px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color:var(--accent); border-radius:50%; animation:gmlcSpin .7s linear infinite; }
+@keyframes gmlcSpin { to { transform:rotate(360deg); } }
+
 /* Nachrichtenfeld: füllt die verbleibende Höhe und wächst mit dem Modal */
 .gmlc-msg-wrap { flex:1 1 auto; display:flex; min-height:340px; }
 .gml-compose-modal .gmlc-textarea { flex:1; width:100%; min-height:340px; border:none; background:transparent; color:var(--text); font-size:14px; line-height:1.6; resize:none; outline:none; font-family:inherit; padding:4px 2px; box-sizing:border-box; }
@@ -96016,11 +96031,27 @@ console.log('📚 Leseliste geladen');
       +   '<option value="__manage__">⚙️ Vorlagen verwalten…</option>'
       + '</select>'
       + '</div>';
-    var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" placeholder="Nachricht verfassen…">'+esc(prefill.body||"")+'</textarea></div>';
+    // KI-Assistenzleiste: arbeitet direkt am Entwurf (gmlBody) und nutzt – falls
+    // vorhanden – die Original-Mail (prefill.source) als Kontext. Reine Frontend-
+    // Funktion über window.callAI; verändert keinen Versand-/API-Pfad.
+    var aiBtns = [
+      ['draft','✨ Entwerfen','primary','Eine vollständige Antwort aus der Original-Mail entwerfen'],
+      ['improve','✏️ Verbessern','','Formulierung, Klarheit & Stil verbessern'],
+      ['fix','✓ Korrigieren','','Rechtschreibung & Grammatik korrigieren'],
+      ['shorten','✂️ Kürzer','','Knapper formulieren'],
+      ['friendly','😊 Freundlicher','','Wärmeren, freundlicheren Ton'],
+      ['formal','👔 Formeller','','Formelleren, professionellen Ton'],
+    ];
+    var aibar = '<div class="gmlc-aibar" role="toolbar" aria-label="KI-Assistenz">'
+      + '<span class="gmlc-ai-title">✨ KI</span>'
+      + aiBtns.map(function(b){ return '<button type="button" class="gmlc-ai'+(b[2]?' '+b[2]:'')+'" id="gmlAi_'+b[0]+'" onclick="gmlAI(\''+b[0]+'\')" title="'+esc(b[3])+'">'+b[1]+'</button>'; }).join('')
+      + '<span class="gmlc-ai-status" id="gmlAiStatus"></span>'
+      + '</div>';
+    var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen">'+esc(prefill.body||"")+'</textarea></div>';
     var html = '<div class="gml-compose-modal">'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
-      + fields + toolbar + msg
+      + fields + toolbar + aibar + msg
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
@@ -96030,7 +96061,7 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-footer-spacer"></span>'
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, quote: prefill.quote||null };
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
   };
 
@@ -96062,6 +96093,50 @@ console.log('📚 Leseliste geladen');
       default: return;
     }
     ta.value = out; ta.focus(); try { ta.setSelectionRange(ns, ne); } catch(_){}
+  };
+
+  // ── KI-Assistenz direkt im Verfassen-Modal ──
+  // Entwirft bzw. überarbeitet den Text im Schreibfeld (gmlBody) und nutzt – falls
+  // vorhanden – die Original-Mail (GM._composeCtx.source) als Kontext. Reine Frontend-
+  // Funktion über window.callAI; Versand bleibt text/plain, kein neuer API-Pfad.
+  function gmlAiBusy(on, label){
+    var st = document.getElementById("gmlAiStatus");
+    if (st) st.innerHTML = on ? '<span class="gmlc-ai-spin"></span>'+esc(label||"KI arbeitet …") : (label?esc(label):"");
+    Array.prototype.forEach.call(document.querySelectorAll(".gmlc-ai"), function(b){ b.disabled = !!on; });
+  }
+  window.gmlAI = async function(action){
+    if (typeof window.callAI !== "function"){ toast("warn","KI nicht verfügbar","Bitte einen API-Key in den Einstellungen hinterlegen."); return; }
+    var ta = document.getElementById("gmlBody"); if (!ta) return;
+    var draft = String(ta.value||"").trim();
+    var ctx = GM._composeCtx||{}, src = ctx.source||{};
+    var origFrom = src.from ? parseAddr(src.from) : null;
+    var greetName = origFrom ? String(origFrom.name||"").split(" ")[0] : "";
+    var origCtx = src.body ? ("Ursprüngliche Nachricht von "+(origFrom?(origFrom.name||origFrom.email):"(unbekannt)")+":\nBetreff: "+(src.subject||"")+"\n\n"+String(src.body).replace(/\s+/g," ").slice(0,3000)) : "";
+    var sys, user;
+    if (action==="draft"){
+      sys = "Du bist ein hilfreicher E-Mail-Assistent. Formuliere eine vollständige, natürliche Antwort-E-Mail auf Deutsch: passende Anrede"+(greetName?(" (Empfänger: "+greetName+")"):"")+", klarer Hauptteil, höfliche Grußformel. Schreibe NUR den E-Mail-Text – kein Betreff, keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?origCtx+"\n\n":"") + (draft ? ("Berücksichtige diese Stichpunkte/Wünsche für die Antwort:\n"+draft) : "Verfasse eine angemessene, höfliche Antwort.");
+    } else {
+      if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben oder „✨ Entwerfen“ nutzen."); return; }
+      var how = {
+        improve:  "Verbessere Formulierung, Klarheit und Lesefluss, ohne Inhalt oder Aussage zu verändern.",
+        fix:      "Korrigiere ausschließlich Rechtschreibung, Grammatik und Zeichensetzung. Inhalt und Stil bleiben unverändert.",
+        shorten:  "Fasse den Text deutlich knapper, aber höflich und vollständig.",
+        friendly: "Formuliere den Text wärmer, freundlicher und persönlicher, ohne unprofessionell zu wirken.",
+        formal:   "Formuliere den Text formeller und professioneller (Sie-Form, sachlich).",
+      }[action] || "Verbessere den Text.";
+      sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?("Kontext – "+origCtx+"\n\n"):"") + "Text:\n"+draft;
+    }
+    gmlAiBusy(true, action==="draft"?"Entwerfe Antwort …":"Überarbeite …");
+    var res;
+    try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:1100 }); }
+    catch(e){ gmlAiBusy(false,""); toast("err","KI-Fehler",(e&&e.message)||""); return; }
+    if (!res){ gmlAiBusy(false,""); toast("warn","KI","Kein Ergebnis (API-Key in den Einstellungen?)"); return; }
+    res = String(res).replace(/^```(?:\w+)?\s*/,"").replace(/```\s*$/,"").trim();
+    ta.value = res; ta.focus(); try { ta.setSelectionRange(res.length, res.length); } catch(_){}
+    gmlAiBusy(false, "✓ aktualisiert");
+    setTimeout(function(){ var st=document.getElementById("gmlAiStatus"); if(st) st.textContent=""; }, 2500);
   };
   // Cc/Bcc ein-/ausblenden (Gmail-Toggle). Beim Ausblenden wird der Inhalt geleert,
   // damit nichts „Verstecktes" mitgesendet wird.
@@ -96108,9 +96183,13 @@ console.log('📚 Leseliste geladen');
       });
     }
     var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+    // Body bleibt leer (Gmail-Stil): Das Zitat wird NICHT mehr in das Schreibfeld
+    // gekippt, sondern bleibt im eingeklappten „Ursprüngliche Nachricht"-Block sichtbar
+    // und wird erst beim Senden (gmailSend) wieder angehängt (ctx.quote).
     window.gmailCompose({
       title: all?"Allen antworten":"Antworten",
-      to: fromA.email, cc: cc.join(", "), subject: subject, body: "\n\n"+buildQuote(o),
+      to: fromA.email, cc: cc.join(", "), subject: subject, body: "",
+      quote: buildQuote(o),
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
       source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
@@ -96184,6 +96263,9 @@ console.log('📚 Leseliste geladen');
     GM._composeBusy=true; var sb=g("gmlSendBtn"); if(sb){ sb.disabled=true; sb.textContent="Sende…"; }
     try {
       var ctx = GM._composeCtx||{};
+      // Zitat der Original-Mail beim Senden anhängen (im Schreibfeld wurde es bewusst
+      // ausgeblendet). Doppelung vermeiden, falls der Text es bereits enthält.
+      if (ctx.quote && body.indexOf(ctx.quote) < 0){ body = (body.replace(/\s+$/,"") + "\n\n" + ctx.quote); }
       var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references }) };
       if (ctx.threadId) payload.threadId = ctx.threadId;
       await gmApi("POST","/users/me/messages/send", { body: payload });
