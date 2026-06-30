@@ -96209,21 +96209,24 @@ console.log('📚 Leseliste geladen');
     if (GM.classifications[src.id] && GM.classifications[src.id].done){ toast("info","Bereits erledigt",""); return; }
     window.gmailToggleDone(src.id);
   };
-  // „Aufgabe erstellen": KI-vorbefüllte Aufgabe (Titel + Beschreibung/nächste Schritte) mit
-  // verknüpfter Original-Mail (Betreff, Absender, messageId/threadId, Mail-Text). Danach wird
-  // die Mail – sofern eine Original-Mail bekannt ist – ebenfalls als erledigt markiert.
+  // „Aufgabe erstellen": öffnet das bestehende, bearbeitbare Aufgaben-Formular
+  // (openGlobalTaskModal), KI-vorbefüllt (Titel + Beschreibung/nächste Schritte, Mail-Referenz
+  // in der Beschreibung). Der Nutzer passt an und legt selbst per „✓ Aufgabe erstellen" an.
+  // Die Original-Mail wird – sofern bekannt – wie bisher als erledigt markiert (reversibel).
   window.gmailPostSendTask = async function(){
     if (GM._postSendBusy) return; GM._postSendBusy = true;
     if (window.closeModal) window.closeModal();
     try {
-      if (typeof window.createEntity!=="function"){ toast("err","Nicht verfügbar","Aufgaben-Modul nicht geladen."); return; }
+      if (typeof window.openGlobalTaskModal!=="function"){ toast("err","Nicht verfügbar","Aufgaben-Formular nicht geladen."); return; }
       var ps = GM._postSend||{}; var src = ps.source||null; var sent = ps.sent||{};
       var subj = (src&&src.subject) || sent.subject || "(kein Betreff)";
       var fromRaw = (src&&src.from) || "";
       var fromA = parseAddr(fromRaw);
       var bodyTxt = String((src&&src.body) || sent.body || "").replace(/\s+/g," ").trim();
       var msgId = (src&&src.id) || ""; var thrId = (src&&src.threadId) || "";
-      toast("info","Aufgabe wird erstellt…","KI bereitet Titel & nächste Schritte vor.");
+      // Original-Mail (sofern bekannt) wie bisher als erledigt markieren — reversibel über „Zurücklegen".
+      if (msgId && !(GM.classifications[msgId] && GM.classifications[msgId].done)) window.gmailToggleDone(msgId);
+      toast("info","Aufgabe wird vorbereitet…","KI füllt Titel & nächste Schritte vor — du kannst alles anpassen, bevor du speicherst.");
       var ai = await aiPrefillTask({ subject:subj, from:fromRaw, body:bodyTxt });   // {title,description} | null
       var sender = (fromA.name ? fromA.name+" <"+(fromA.email||"")+">" : (fromA.email||fromRaw||"(unbekannt)"));
       var ref = "Aus E-Mail\nVon: "+sender+"\nBetreff: "+subj
@@ -96233,13 +96236,9 @@ console.log('📚 Leseliste geladen');
       var title, desc;
       if (ai && ai.title){ title = ai.title; desc = (ai.description ? ai.description+"\n\n" : "") + ref + excerpt; }
       else { title = ("Re: "+subj).slice(0,200); desc = ref + excerpt; }
-      var id = window.createEntity("task", {
-        title: String(title).slice(0,200), description: desc, status:"todo", priority:3,
-        tags:["Gmail"], source:"gmail", sourceMessageId: msgId, sourceThreadId: thrId
+      window.openGlobalTaskModal({
+        title: String(title).slice(0,200), description: desc, priority: 3, tags:["Gmail"]
       });
-      if (!id){ toast("err","Fehler","Aufgabe konnte nicht erstellt werden"); return; }
-      toast("ok","Aufgabe erstellt", (ai? "KI-vorbefüllt" : "Vorbefüllt")+" – du kannst sie ergänzen.");
-      if (msgId && !(GM.classifications[msgId] && GM.classifications[msgId].done)) window.gmailToggleDone(msgId);
     } catch(e){ toast("err","Fehler", e.message||"Aufgabe konnte nicht erstellt werden"); }
     finally { GM._postSendBusy = false; }
   };
@@ -97104,20 +97103,20 @@ console.log('📚 Leseliste geladen');
     toast("ok","Korrigiert","Termin-Vorschlag aktualisiert.");
   };
 
-  // ── 2) Mail → Aufgabe: KI-Vorschlag nach /taskSuggestions (Fix B, ohne n8n-Abhängigkeit) ──
-  // „📋 Aufgabe" schreibt einen KI-vorbefüllten Vorschlag (status:"ready") client-seitig direkt in
-  // den bestehenden RTDB-Store /taskSuggestions (rtdbPost) — denselben Store, den loadTaskSuggestions
-  // liest und gmailAdoptTaskSuggestion (Annehmen) per createEntity zur echten Aufgabe macht. So
-  // erscheint der Vorschlag SOFORT unter „📋 Aufgaben-Vorschläge". Frühere Variante schrieb nie nach
-  // /taskSuggestions (legte direkt eine Aufgabe an) → Ansicht blieb leer. Schreib-Aktion nur nach
-  // window.confirm; KI-Vorbefüllung via aiPrefillTask (→ callAI), Fallback regelbasiert.
+  // ── 2) Mail → Aufgabe: bearbeitbares Formular direkt öffnen (KI-vorbefüllt) ──
+  // „📋 Aufgabe" öffnet jetzt direkt das bestehende, bearbeitbare Aufgaben-Formular
+  // (openGlobalTaskModal) — KI-vorbefüllt (Titel/Beschreibung via aiPrefillTask) und mit
+  // Mail-Referenz in der Beschreibung. Der Nutzer kann ALLES anpassen und legt die Aufgabe
+  // selbst per „✓ Aufgabe erstellen" an (= die Schreib-Aktion; daher kein window.confirm beim
+  // bloßen Öffnen des Formulars). Kein /taskSuggestions-Umweg und kein stilles Anlegen mehr;
+  // der Store /taskSuggestions samt „Aufgaben-Vorschläge"-Ansicht bleibt für n8n-Vorschläge.
   window.gmailCreateTaskRequest = async function(){
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
     if (GM._taskReqBusy) return;
-    var a=parseAddr(o.from), c=clsOf(o);
-    if (!window.confirm("Aus dieser Mail einen Aufgaben-Vorschlag erstellen?\n\nBetreff: "+(o.subject||"(kein Betreff)")+"\n\nDer Vorschlag erscheint unter Aufgaben-Vorschläge und kann dort als Aufgabe übernommen werden.")) return;
+    if (typeof window.openGlobalTaskModal!=="function"){ toast("err","Nicht verfügbar","Aufgaben-Formular nicht geladen."); return; }
     GM._taskReqBusy = true;
-    toast("info","Vorschlag wird erstellt…","Die KI bereitet einen Aufgaben-Vorschlag vor — er erscheint unter Aufgaben-Vorschläge.");
+    var a=parseAddr(o.from), c=clsOf(o);
+    toast("info","Aufgabe wird vorbereitet…","KI füllt Titel & Beschreibung vor — du kannst alles anpassen, bevor du speicherst.");
     try {
       var body = String(o.text||htmlToText(o.html)||"").replace(/\s+/g," ").trim();
       var sender = a.name ? a.name+" <"+(a.email||"")+">" : (a.email||"(unbekannt)");
@@ -97125,20 +97124,14 @@ console.log('📚 Leseliste geladen');
       var title = (ai && ai.title) ? ai.title : ("Re: "+(o.subject||"E-Mail"));
       var ref = "Aus E-Mail\nVon: "+sender+"\nBetreff: "+(o.subject||"(kein Betreff)")+"\nMail-ID: "+o.id;
       var desc = (ai && ai.description ? ai.description+"\n\n" : "") + ref + (body ? "\n\nMail-Auszug: "+body.slice(0,500) : "");
-      await rtdbPost("taskSuggestions", {
+      window.openGlobalTaskModal({
         title: String(title).slice(0,200),
         description: desc,
         priority: (c && typeof c.priority==="number") ? c.priority : 3,
-        status: "ready",
-        source: "gmail-ai",
-        sourceMessageId: o.id,
-        sourceThreadId: o.threadId||"",
-        createdAt: Date.now()
+        tags: ["Gmail"]
       });
-      toast("ok","Vorschlag erstellt", (ai?"KI-vorbefüllt — ":"")+"unter 📋 Aufgaben-Vorschläge verfügbar (dort übernehmen).");
-      try { await loadTaskSuggestions(); } catch(e){}   // Badge/Liste sofort aktualisieren
     } catch(e){
-      toast("err","Fehler", (e&&e.message)||"Vorschlag konnte nicht erstellt werden");
+      toast("err","Fehler", (e&&e.message)||"Aufgabe konnte nicht vorbereitet werden");
     } finally { GM._taskReqBusy = false; }
   };
 
@@ -97195,7 +97188,7 @@ console.log('📚 Leseliste geladen');
     var n=(GM.taskSuggestions||[]).length;
     var head='<div class="gml-listhead"><span>📋 Aufgaben-Vorschläge</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+n+'</span><button class="gml-mini" title="Aktualisieren" onclick="gmailRefreshTaskSuggest()">🔄</button></span></div>';
     if (GM.tsError) return head+'<div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(GM.tsError)+'</p></div>';
-    if (!n) return head+'<div class="gml-empty"><div style="font-size:44px">📋</div><p>Keine offenen Aufgaben-Vorschläge.</p><p style="font-size:12px;color:var(--muted)">In einer Mail „📋 Aufgabe" klicken — n8n bereitet einen Vorschlag vor.</p></div>';
+    if (!n) return head+'<div class="gml-empty"><div style="font-size:44px">📋</div><p>Keine offenen Aufgaben-Vorschläge.</p><p style="font-size:12px;color:var(--muted)">Vorschläge erscheinen hier automatisch (z. B. via n8n). Eine Aufgabe aus einer Mail legst du direkt über „📋 Aufgabe" im Reader an — bearbeitbar vor dem Speichern.</p></div>';
     return head+'<div class="gml-sug-list">'+GM.taskSuggestions.map(renderTaskSugRow).join("")+'</div>';
   }
   function renderTaskSugRow(s){
