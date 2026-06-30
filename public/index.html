@@ -95347,6 +95347,23 @@ console.log('📚 Leseliste geladen');
 .gml-orig-collapsed .gml-orig-subj,
 .gml-orig-collapsed .gml-orig-body { display:none; }
 
+/* Schreibgeschützte Vorschau der bisherigen Nachricht UNTER dem Schreibfeld */
+.gml-prevmail { flex-shrink:0; margin-top:14px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); padding:11px 13px; }
+.gml-prevmail-head { font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--muted); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.gml-prevmail-date { font-size:11px; color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0; flex-shrink:0; }
+.gml-prevmail-meta { font-size:12.5px; font-weight:600; color:var(--text); margin-top:8px; overflow:hidden; text-overflow:ellipsis; }
+.gml-prevmail-addr { font-weight:400; color:var(--muted); }
+.gml-prevmail-subj { font-size:12.5px; color:var(--text2); margin-top:2px; }
+.gml-prevmail-body { font-size:12.5px; color:var(--text2); line-height:1.55; white-space:pre-wrap; word-break:break-word; max-height:240px; overflow:auto; margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
+.gml-prevmail-loading { color:var(--muted); font-style:italic; font-size:12.5px; margin-top:8px; }
+/* Vollständiger Thread-Verlauf unter dem Schreibfeld */
+.gml-prevmail-thread .gml-thread-list { max-height:320px; overflow:auto; margin-top:8px; }
+.gml-thread-msg { padding:9px 0; border-top:1px solid var(--border); }
+.gml-thread-msg:first-child { border-top:0; padding-top:2px; }
+.gml-thread-msg-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.gml-thread-from { font-size:12.5px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; }
+.gml-thread-body { font-size:12.5px; color:var(--text2); line-height:1.55; white-space:pre-wrap; word-break:break-word; margin-top:5px; }
+
 /* Empfänger-Zeilen (An/Cc/Bcc/Betreff): randlose Inputs, klare 44px-Klickflächen */
 .gmlc-fields { flex-shrink:0; }
 .gmlc-row { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--border); }
@@ -95401,6 +95418,9 @@ console.log('📚 Leseliste geladen');
 .gmlc-msg-wrap { flex:1 1 auto; display:flex; min-height:340px; }
 .gml-compose-modal .gmlc-textarea { flex:1; width:100%; min-height:340px; border:none; background:transparent; color:var(--text); font-size:14px; line-height:1.6; resize:none; outline:none; font-family:inherit; padding:4px 2px; box-sizing:border-box; }
 .gml-compose-modal .gmlc-textarea::placeholder { color:var(--muted); }
+/* Antwortmodus: Schreibfeld kompakter, damit die „Bisherige Nachricht" unten sichtbar bleibt */
+.gml-has-prev .gmlc-msg-wrap { min-height:170px; }
+.gml-has-prev .gmlc-textarea { min-height:170px; }
 
 /* Fusszeile: Senden prominent links, Icon-Aktionen rechts (Gmail-Anordnung) */
 .gmlc-footer { display:flex; align-items:center; gap:8px; width:100%; }
@@ -95964,10 +95984,70 @@ console.log('📚 Leseliste geladen');
       + '<div class="gml-orig-body">'+(bodyTxt?esc(bodyTxt):'<span style="color:var(--muted)">(kein Textinhalt)</span>')+'</div>'
       + '</div>';
   }
-  // Ersetzt den Platzhalter im offenen Modal durch die geladene Original-Mail.
+  // Schreibgeschützte Vorschau der bisherigen Nachricht UNTERHALB des Schreibfelds
+  // (ausgeklappt). Ergänzt den kompakten, einklappbaren Block oben, damit man beim
+  // Verfassen die Mail, auf die man antwortet, durchgehend lesen kann.
+  function renderPrevMail(orig){
+    if (!orig) return '<div id="gmlPrevMail"></div>';
+    if (orig.loading) return '<div id="gmlPrevMail" class="gml-prevmail"><div class="gml-prevmail-head">↩︎ Bisherige Nachricht</div><div class="gml-prevmail-loading">Lade Original-Mail…</div></div>';
+    if (orig.empty || (!orig.from && !orig.subject && !orig.body)) return '<div id="gmlPrevMail"></div>';
+    var fa = parseAddr(orig.from||"");
+    var who = esc(fa.name||fa.email||"(unbekannt)")
+      + (fa.email && fa.name && fa.name!==fa.email ? ' <span class="gml-prevmail-addr">&lt;'+esc(fa.email)+'&gt;</span>' : '');
+    var dateStr = orig.date ? esc(fmtDateFull(orig.date)) : '';
+    var bodyTxt = String(orig.body||"").trim();
+    return '<div id="gmlPrevMail" class="gml-prevmail">'
+      + '<div class="gml-prevmail-head">↩︎ Bisherige Nachricht'+(dateStr?'<span class="gml-prevmail-date">'+dateStr+'</span>':'')+'</div>'
+      + '<div class="gml-prevmail-meta">'+who+'</div>'
+      + (orig.subject ? '<div class="gml-prevmail-subj">'+esc(orig.subject)+'</div>' : '')
+      + '<div class="gml-prevmail-body">'+(bodyTxt?esc(bodyTxt):'<span style="color:var(--muted)">(kein Textinhalt)</span>')+'</div>'
+      + '</div>';
+  }
+  // Ersetzt die Platzhalter im offenen Modal durch die geladene Original-Mail
+  // (kompakter Block oben + ausgeklappte Vorschau unten).
   window.gmailFillOriginal = function(orig){
     var box=document.getElementById("gmlOrigBox");
     if (box) box.outerHTML = renderComposeOriginal(orig || { empty:true });
+    var box2=document.getElementById("gmlPrevMail");
+    if (box2) box2.outerHTML = renderPrevMail(orig || { empty:true });
+  };
+  // Eine einzelne Verlaufs-Nachricht (Absender, Datum, Text) für den Thread-Verlauf.
+  function renderThreadMsg(m){
+    var fa = parseAddr(m.from||"");
+    var who = esc(fa.name||fa.email||"(unbekannt)")
+      + (fa.email && fa.name && fa.name!==fa.email ? ' <span class="gml-prevmail-addr">&lt;'+esc(fa.email)+'&gt;</span>' : '');
+    var dateStr = m.date ? esc(fmtDateFull(m.date)) : '';
+    var bodyTxt = String(m.body||"").trim();
+    return '<div class="gml-thread-msg">'
+      + '<div class="gml-thread-msg-head"><span class="gml-thread-from">'+who+'</span>'+(dateStr?'<span class="gml-prevmail-date">'+dateStr+'</span>':'')+'</div>'
+      + '<div class="gml-thread-body">'+(bodyTxt?esc(bodyTxt):'<span style="color:var(--muted)">(kein Textinhalt)</span>')+'</div>'
+      + '</div>';
+  }
+  // Kompletter Gesprächsverlauf (alle Thread-Nachrichten, neueste zuerst) UNTER dem Schreibfeld.
+  function renderPrevMailHistory(items){
+    if (!items || !items.length) return '<div id="gmlPrevMail"></div>';
+    var ordered = items.slice().sort(function(a,b){ return (b.date||0)-(a.date||0); });
+    return '<div id="gmlPrevMail" class="gml-prevmail gml-prevmail-thread">'
+      + '<div class="gml-prevmail-head">↩︎ Bisheriger Verlauf ('+ordered.length+')</div>'
+      + '<div class="gml-thread-list">'+ordered.map(renderThreadMsg).join('')+'</div>'
+      + '</div>';
+  }
+  // Lädt den vollständigen Thread und ersetzt die Einzel-Vorschau durch den ganzen
+  // Verlauf. Best-effort: schlägt der Abruf fehl, bleibt die bereits gezeigte
+  // Einzel-Nachricht unverändert stehen.
+  window.gmailRenderThreadInto = async function(threadId){
+    if (!threadId) return;
+    try {
+      var th = await gmApi("GET","/users/me/threads/"+encodeURIComponent(threadId), { query:{ format:"full" } });
+      var msgs = (th && th.messages) || [];
+      var items = msgs.filter(function(m){ return (m.labelIds||[]).indexOf("DRAFT") < 0; }).map(function(m){
+        var h = headerMap(m.payload), b = extractBodies(m.payload);
+        return { from:h.from||"", subject:h.subject||"", body:(b.text||htmlToText(b.html)||""), date: parseInt(m.internalDate||"0",10) || Date.parse(h.date||"") || 0 };
+      });
+      if (items.length < 2) return;  // nur 1 Nachricht → Einzel-Vorschau genügt
+      var box = document.getElementById("gmlPrevMail");
+      if (box) box.outerHTML = renderPrevMailHistory(items);
+    } catch(e){ /* Einzel-Vorschau bleibt bestehen */ }
   };
   // Ermittelt die Original-Mail (read-only Kontext) für das Verfassen-Modal:
   // bevorzugt eine explizite messageId, sonst die neueste eingehende Nachricht
@@ -96089,10 +96169,15 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" onkeydown="gmlComposeKey(event)" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen  ·  ⌘/Strg+Enter sendet">'+esc(prefill.body||"")+'</textarea></div>';
     var attachList = '<div id="gmlAttachList" class="gmlc-attachlist"></div>';
-    var html = '<div class="gml-compose-modal">'
+    // Im Antwortmodus (Original vorhanden) das Schreibfeld kompakter halten, damit die
+    // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
+    var hasPrev = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
+    var html = '<div class="gml-compose-modal'+(hasPrev?' gml-has-prev':'')+'">'
+      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-06-29 · Verlauf-Vorschau v9</div>'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + fields + datalist + toolbar + aibar + msg + attachList
+      + (prefill.original !== undefined ? renderPrevMail(prefill.original) : '')
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
@@ -96102,10 +96187,13 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-footer-spacer"></span>'
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, quote: prefill.quote||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null };
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
+    // Cursor oben ins Schreibfeld setzen (über dem evtl. eingefügten Zitat),
+    // damit man direkt lostippen kann und das Zitat darunter sichtbar bleibt.
+    setTimeout(function(){ var ta=document.getElementById("gmlBody"); if(ta){ try { ta.focus(); ta.setSelectionRange(0,0); ta.scrollTop=0; } catch(_){} } }, 30);
   };
 
   // ── Verfassen-Modal: additive UI-Helfer (verändern Versand/Feldnamen/IDs nicht) ──
@@ -96289,17 +96377,20 @@ console.log('📚 Leseliste geladen');
       });
     }
     var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
-    // Body bleibt leer (Gmail-Stil): Das Zitat wird NICHT mehr in das Schreibfeld
-    // gekippt, sondern bleibt im eingeklappten „Ursprüngliche Nachricht"-Block sichtbar
-    // und wird erst beim Senden (gmailSend) wieder angehängt (ctx.quote).
+    // Schreibfeld bleibt SAUBER (keine „> "-Zeilen). Die bisherige Mail sieht man
+    // unten in der lesbaren Vorschau. Beim Senden wird sie als professionelles,
+    // eingerücktes Zitat angehängt (replyQuote → buildMime), ganz ohne „>"-Zeichen.
     window.gmailCompose({
       title: all?"Allen antworten":"Antworten",
-      to: fromA.email, cc: cc.join(", "), subject: subject, body: "",
-      quote: buildQuote(o),
+      to: fromA.email, cc: cc.join(", "), subject: subject,
+      body: "",
+      replyQuote: { fromName: (fromA.name||fromA.email||""), date: o.internalDate||0, text: (o.text||htmlToText(o.html)||"") },
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
       source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
     });
+    // Unten den vollständigen Gesprächsverlauf nachladen (ersetzt die Einzel-Vorschau).
+    if (o.threadId) window.gmailRenderThreadInto(o.threadId);
   }
   window.gmailReply = function(){ replyInternal(false); };
   window.gmailReplyAll = function(){ replyInternal(true); };
@@ -96370,17 +96461,37 @@ console.log('📚 Leseliste geladen');
   function gmlHasFormatting(text){ return /\*\*[^*]+\*\*|__[^_\n]+__|(^|[^*])\*[^*\n]+\*|^\s*•\s|^\s*\d+\.\s|^\s*>\s|https?:\/\//m.test(String(text||"")); }
   function gmlB64(s){ return window.btoa(unescape(encodeURIComponent(s||""))).replace(/.{76}/g,"$&\r\n"); }
   function gmlMimeBoundary(tag){ return "=_"+tag+"_" + Date.now().toString(36) + "_" + (GM._mimeSeq = (GM._mimeSeq||0) + 1); }
+  // Professionelles Zitat der bisherigen Mail – OHNE „>"-Zeichen.
+  // Plain-Text: Kopfzeile + Originaltext (eingerückt mit schmalem Geviert).
+  function gmlQuotePlain(q){
+    if (!q) return "";
+    var head = "Am " + fmtDateFull(q.date) + " schrieb " + (q.fromName||"") + ":";
+    var body = String(q.text||"").split(/\r?\n/).map(function(l){ return " " + l; }).join("\n");
+    return head + "\n\n" + body;
+  }
+  // HTML: Kopfzeile + eingerücktes blockquote (linker Balken, gedämpfte Farbe).
+  function gmlQuoteHtml(q){
+    if (!q) return "";
+    var head = '<div style="color:#5f6368;margin:12px 0 4px">Am ' + gmlEscHtml(fmtDateFull(q.date)) + ' schrieb ' + gmlEscHtml(q.fromName||"") + ':</div>';
+    var inner = String(q.text||"").split(/\r?\n/).map(function(l){ return l.trim() ? '<div>'+gmlMdInline(gmlEscHtml(l))+'</div>' : '<br>'; }).join("");
+    return head + '<blockquote style="margin:0;padding:0 0 0 14px;border-left:2px solid #dadce0;color:#5f6368">' + inner + '</blockquote>';
+  }
   // Inhalts-Entität (ohne Top-Header): reiner Text oder multipart/alternative
   // (Plain als Fallback + echtes HTML). Beginnt mit der eigenen Content-Type-Zeile.
+  // Ist ein Zitat (o.quote) vorhanden, wird IMMER HTML mitgesendet, damit das
+  // eingerückte Zitat sauber dargestellt wird.
   function gmlBodyEntity(o){
     var text = o.body||"";
-    if (!gmlHasFormatting(text)){
+    var q = o.quote && (o.quote.text || o.quote.fromName) ? o.quote : null;
+    if (!q && !gmlHasFormatting(text)){
       return 'Content-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text);
     }
+    var plain = q ? (text + (text?"\n\n":"") + gmlQuotePlain(q)) : text;
+    var html = q ? (gmlMdToHtml(text) + gmlQuoteHtml(q)) : gmlMdToHtml(text);
     var alt = gmlMimeBoundary("alt");
     return 'Content-Type: multipart/alternative; boundary="'+alt+'"\r\n\r\n'
-      + "--"+alt+'\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(text) + "\r\n"
-      + "--"+alt+'\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(gmlMdToHtml(text)) + "\r\n"
+      + "--"+alt+'\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(plain) + "\r\n"
+      + "--"+alt+'\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n' + gmlB64(html) + "\r\n"
       + "--"+alt+"--";
   }
   function buildMime(o){
@@ -96429,10 +96540,10 @@ console.log('📚 Leseliste geladen');
     GM._composeBusy=true; var sb=g("gmlSendBtn"); if(sb){ sb.disabled=true; sb.textContent="Sende…"; }
     try {
       var ctx = GM._composeCtx||{};
-      // Zitat der Original-Mail beim Senden anhängen (im Schreibfeld wurde es bewusst
-      // ausgeblendet). Doppelung vermeiden, falls der Text es bereits enthält.
-      if (ctx.quote && body.indexOf(ctx.quote) < 0){ body = (body.replace(/\s+$/,"") + "\n\n" + ctx.quote); }
-      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]) }) };
+      // Das Zitat der bisherigen Mail wird – falls vorhanden – beim Senden als
+      // professionelles, eingerücktes Zitat angehängt (ohne „>"-Zeichen). Das
+      // übernimmt buildMime über das strukturierte ctx.replyQuote.
+      var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]), quote:(ctx.replyQuote||null) }) };
       if (ctx.threadId) payload.threadId = ctx.threadId;
       await gmApi("POST","/users/me/messages/send", { body: payload });
       if (window.closeModal) window.closeModal();
