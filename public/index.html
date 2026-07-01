@@ -48174,6 +48174,8 @@ function openGlobalTaskModal(prefill = {}) {
       </div>
       <input type="hidden" id="globalTaskSource" value="${esc(prefill.source || "")}" />
       <input type="hidden" id="globalTaskSourceId" value="${esc(prefill.sourceId || "")}" />
+      <input type="hidden" id="globalTaskMailEmails" value="${esc((prefill.mailEmails || []).join(","))}" />
+      <input type="hidden" id="globalTaskSourceMsg" value="${esc(prefill.sourceMessageId || "")}" />
     </div>
   `, `
     <button class="btn ghost" data-action="close-modal">Abbrechen</button>
@@ -57910,7 +57912,14 @@ case "ideas-clear-filter": {
         tags: ($("#globalTaskTags")?.value || "").split(",").map(t => t.trim()).filter(Boolean),
         category: $("#globalTaskCategory")?.value || ""
       };
-      
+
+      // Mail-Verknüpfung: aus einer Mail erstellte Aufgaben bekommen die Absender-Adresse
+      // (→ entityAddresses/Inbox-Karte zeigt die Mail) und die Quell-Message-ID.
+      const _mailEmails = ($("#globalTaskMailEmails")?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (_mailEmails.length) taskData.mailEmails = _mailEmails;
+      const _sourceMsg = $("#globalTaskSourceMsg")?.value || "";
+      if (_sourceMsg) taskData.sourceMessageId = _sourceMsg;
+
       const taskId = createEntity("task", taskData);
       
       // Verknüpfe mit Quelle falls vorhanden
@@ -96962,7 +96971,8 @@ console.log('📚 Leseliste geladen');
       if (ai && ai.title){ title = ai.title; desc = (ai.description ? ai.description+"\n\n" : "") + ref + excerpt; }
       else { title = ("Re: "+subj).slice(0,200); desc = ref + excerpt; }
       window.openGlobalTaskModal({
-        title: String(title).slice(0,200), description: desc, priority: 3, tags:["Gmail"]
+        title: String(title).slice(0,200), description: desc, priority: 3, tags:["Gmail"],
+        mailEmails: (fromA.email ? [fromA.email] : []), sourceMessageId: msgId || undefined
       });
     } catch(e){ toast("err","Fehler", e.message||"Aufgabe konnte nicht erstellt werden"); }
     finally { GM._postSendBusy = false; }
@@ -97853,7 +97863,9 @@ console.log('📚 Leseliste geladen');
         title: String(title).slice(0,200),
         description: desc,
         priority: (c && typeof c.priority==="number") ? c.priority : 3,
-        tags: ["Gmail"]
+        tags: ["Gmail"],
+        mailEmails: (a.email ? [a.email] : []),
+        sourceMessageId: o.id
       });
     } catch(e){
       toast("err","Fehler", (e&&e.message)||"Aufgabe konnte nicht vorbereitet werden");
