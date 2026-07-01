@@ -95386,6 +95386,17 @@ console.log('📚 Leseliste geladen');
 .gmlc-toggle { background:none; border:none; color:var(--muted); font-size:13px; font-weight:600; cursor:pointer; padding:7px 10px; border-radius:8px; }
 .gmlc-toggle:hover { background:var(--hover); color:var(--text); }
 .gmlc-toggle.active { color:var(--accent); background:var(--accent-soft); }
+/* Empfänger-Autovervollständigung (Personen + Organisationen + Gmail-Kontakte) */
+.gmlc-inwrap { position:relative; flex:1; min-width:0; display:flex; }
+.gmlc-inwrap .gmlc-input { flex:1; width:100%; }
+.gmlc-ac { position:absolute; left:0; right:0; top:calc(100% + 3px); z-index:60; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,.3); padding:5px; max-height:262px; overflow-y:auto; }
+.gmlc-ac[hidden] { display:none; }
+.gmlc-ac-item { display:flex; align-items:center; gap:9px; padding:7px 9px; border-radius:8px; cursor:pointer; }
+.gmlc-ac-item.active, .gmlc-ac-item:hover { background:var(--hover); }
+.gmlc-ac-av { width:26px; height:26px; flex-shrink:0; border-radius:50%; background:var(--accent); color:var(--text); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; }
+.gmlc-ac-meta { min-width:0; flex:1; }
+.gmlc-ac-name { font-size:13px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gmlc-ac-email { font-size:11.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* Formatierungs-Toolbar über dem Nachrichtenfeld */
 .gmlc-toolbar { display:flex; align-items:center; gap:1px; padding:9px 0 7px; flex-wrap:wrap; flex-shrink:0; }
@@ -96157,6 +96168,7 @@ console.log('📚 Leseliste geladen');
   };
   window.gmailCompose = function(prefill){
     prefill = prefill||{};
+    GM._acContacts = null;   // Empfänger-Kontaktliste pro Verfassen-Vorgang neu aufbauen
     // Toolbar-Icons (currentColor, kein Emoji, ruhig). Reine Optik.
     var SVG = {
       ul:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.4" fill="currentColor" stroke="none"/></svg>',
@@ -96168,9 +96180,13 @@ console.log('📚 Leseliste geladen');
     };
     function tbtn(cmd,label,inner){ return '<button type="button" class="gmlc-tool" onclick="gmlFmt(\''+cmd+'\')" title="'+label+'" aria-label="'+label+'">'+inner+'</button>'; }
     function row(id,label,value,o){ o=o||{};
+      var input = '<input id="'+id+'" class="gmlc-input" type="text" autocomplete="off" value="'+esc(value||"")+'" placeholder="'+esc(o.ph||"")+'"'+(o.attrs?' '+o.attrs:'')
+        + (o.ac ? ' role="combobox" aria-autocomplete="list" aria-expanded="false" oninput="gmlAcInput(\''+id+'\')" onkeydown="gmlAcKey(event,\''+id+'\')" onblur="gmlAcBlur(\''+id+'\')"' : '')
+        + '>';
+      if (o.ac) input = '<div class="gmlc-inwrap">'+input+'<div class="gmlc-ac" id="'+id+'_ac" role="listbox" hidden></div></div>';
       return '<div class="gmlc-row"'+(o.rowId?' id="'+o.rowId+'"':'')+(o.hidden?' hidden':'')+'>'
         + '<label class="gmlc-label" for="'+id+'">'+label+'</label>'
-        + '<input id="'+id+'" class="gmlc-input" type="text" autocomplete="off" value="'+esc(value||"")+'" placeholder="'+esc(o.ph||"")+'"'+(o.attrs?' '+o.attrs:'')+'>'
+        + input
         + (o.tail||'')
         + '</div>';
     }
@@ -96179,18 +96195,12 @@ console.log('📚 Leseliste geladen');
       + '<button type="button" class="gmlc-toggle'+(ccShown?' active':'')+'" id="gmlCcToggle" onclick="gmlToggleField(\'cc\')">Cc</button>'
       + '<button type="button" class="gmlc-toggle" id="gmlBccToggle" onclick="gmlToggleField(\'bcc\')">Bcc</button>'
       + '</div>';
-    var recipAttrs = 'list="gmlContacts" onkeydown="gmlComposeKey(event)"';
     var fields = '<div class="gmlc-fields">'
-      + row('gmlTo','An',prefill.to,{ ph:'empfaenger@example.com, weitere@…', tail:toggles, attrs:recipAttrs })
-      + row('gmlCc','Cc',prefill.cc,{ rowId:'gmlCcRow', hidden:!ccShown, ph:'Cc-Empfänger', attrs:recipAttrs })
-      + row('gmlBcc','Bcc','',{ rowId:'gmlBccRow', hidden:true, ph:'Bcc-Empfänger', attrs:recipAttrs })
+      + row('gmlTo','An',prefill.to,{ ph:'Name oder E-Mail eingeben…', tail:toggles, ac:true })
+      + row('gmlCc','Cc',prefill.cc,{ rowId:'gmlCcRow', hidden:!ccShown, ph:'Cc-Empfänger', ac:true })
+      + row('gmlBcc','Bcc','',{ rowId:'gmlBccRow', hidden:true, ph:'Bcc-Empfänger', ac:true })
       + row('gmlSubject','Betreff',prefill.subject,{ ph:'Betreff', attrs:'onkeydown="gmlComposeKey(event)"' })
       + '</div>';
-    // Empfänger-Autovervollständigung aus bekannten Kontakten (Personen, Organisationen,
-    // zuletzt im Gmail-Index gesehene Absender). Nativ über <datalist>, rein additiv.
-    var datalist = '<datalist id="gmlContacts">'
-      + gmlContactOptions().map(function(c){ return '<option value="'+esc(c.email)+'">'+esc(c.name||c.email)+'</option>'; }).join('')
-      + '</datalist>';
     var toolbar = '<div class="gmlc-toolbar" role="toolbar" aria-label="Formatierung">'
       + tbtn('bold','Fett','<b>B</b>') + tbtn('italic','Kursiv','<i>I</i>') + tbtn('underline','Unterstrichen','<u>U</u>')
       + '<span class="gmlc-tool-sep"></span>'
@@ -96232,7 +96242,7 @@ console.log('📚 Leseliste geladen');
       + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-06-29 · Verlauf-Vorschau v9</div>'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
-      + fields + datalist + toolbar + aibar + msg + attachList
+      + fields + toolbar + aibar + msg + attachList
       + (prefill.original !== undefined ? renderPrevMail(prefill.original) : '')
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
@@ -96412,6 +96422,74 @@ console.log('📚 Leseliste geladen');
   };
   // Verwerfen = Verfassen abbrechen (entspricht dem bisherigen „Abbrechen").
   window.gmlDiscard = function(){ if (window.closeModal) window.closeModal(); };
+
+  // ── Empfänger-Autovervollständigung (An/Cc/Bcc) ───────────────────────────
+  // Ersetzt das bisherige native <datalist>: matcht Namen UND E-Mail und ersetzt nur
+  // das aktuelle Empfänger-Token (funktioniert mit MEHREREN Empfängern, z. B. „Rechnung
+  // an Sektionen"). Datenquelle wiederverwendet: gmlContactOptions() (Personen +
+  // Organisationen + Gmail-Index). Blockierte raus. Auswahl fügt „Name <email>, " ein
+  // (encodeAddressList kodiert Namen/Umlaute beim Senden korrekt). Strg/⌘+Enter wird an
+  // gmlComposeKey (Senden) weitergereicht.
+  function gmlContacts(){
+    if (GM._acContacts) return GM._acContacts;
+    var out=[], seen=Object.create(null);
+    var src=(typeof gmlContactOptions==="function") ? gmlContactOptions() : [];
+    src.forEach(function(c){
+      var e=String(c&&c.email||"").trim(), key=e.toLowerCase();
+      if (!key || key.indexOf("@")<0 || seen[key]) return;
+      if (typeof isBlocked==="function" && isBlocked(key)) return;
+      seen[key]=1; out.push({ name:String(c.name||"").trim(), email:e });
+    });
+    GM._acContacts=out; return out;
+  }
+  function gmlAcHide(id){ var box=document.getElementById(id+"_ac"); if(box){ box.hidden=true; box.innerHTML=""; } var inp=document.getElementById(id); if(inp) inp.setAttribute("aria-expanded","false"); if(GM._ac && GM._ac.id===id) GM._ac=null; }
+  window.gmlAcInput = function(id){
+    var inp=document.getElementById(id), box=document.getElementById(id+"_ac"); if(!inp||!box) return;
+    var v=inp.value, token=v.slice(v.lastIndexOf(",")+1).trim().toLowerCase();
+    if (token.length < 1){ gmlAcHide(id); return; }
+    var scored=[]; gmlContacts().forEach(function(c){
+      var nm=(c.name||"").toLowerCase(), em=c.email.toLowerCase(), s=-1;
+      if (nm.indexOf(token)===0) s=0; else if (em.indexOf(token)===0) s=1;
+      else if (nm.indexOf(token)>=0) s=2; else if (em.indexOf(token)>=0) s=3;
+      if (s>=0) scored.push({ c:c, s:s });
+    });
+    scored.sort(function(a,b){ return a.s-b.s; });
+    var items=scored.slice(0,8).map(function(x){ return x.c; });
+    if (!items.length){ gmlAcHide(id); return; }
+    GM._ac={ id:id, items:items, active:0 };
+    box.innerHTML=items.map(function(c,i){
+      var initial=(c.name||c.email).slice(0,1).toUpperCase();
+      return '<div class="gmlc-ac-item'+(i===0?" active":"")+'" role="option" data-i="'+i+'" onmousedown="gmlAcPick(event,'+i+')">'
+        + '<span class="gmlc-ac-av">'+esc(initial)+'</span>'
+        + '<span class="gmlc-ac-meta"><span class="gmlc-ac-name">'+esc(c.name||c.email)+'</span>'+(c.name?'<span class="gmlc-ac-email">'+esc(c.email)+'</span>':'')+'</span>'
+        + '</div>';
+    }).join("");
+    box.hidden=false; inp.setAttribute("aria-expanded","true");
+  };
+  window.gmlAcPick = function(ev, i){
+    if (ev && ev.preventDefault) ev.preventDefault();   // Fokus im Feld halten (mousedown vor blur)
+    var st=GM._ac; if(!st) return; var c=st.items[i]; var inp=document.getElementById(st.id); if(!c||!inp) return;
+    var v=inp.value, before=v.slice(0, v.lastIndexOf(",")+1);
+    var formatted=c.name ? (c.name+" <"+c.email+">") : c.email;
+    inp.value=(before ? before.replace(/\s*$/,"")+" " : "")+formatted+", ";
+    gmlAcHide(st.id); inp.focus();
+    try { var p=inp.value.length; inp.setSelectionRange(p,p); } catch(e){}
+  };
+  window.gmlAcKey = function(ev, id){
+    var box=document.getElementById(id+"_ac"), st=GM._ac;
+    if (box && !box.hidden && st && st.id===id){
+      var k=ev.key;
+      if (k==="ArrowDown" || k==="ArrowUp"){
+        ev.preventDefault(); var n=st.items.length; st.active=(st.active+(k==="ArrowDown"?1:-1)+n)%n;
+        Array.prototype.forEach.call(box.children, function(el,idx){ el.classList.toggle("active", idx===st.active); });
+        var act=box.children[st.active]; if (act && act.scrollIntoView) act.scrollIntoView({ block:"nearest" }); return;
+      }
+      if (k==="Enter"){ ev.preventDefault(); gmlAcPick(null, st.active); return; }
+      if (k==="Escape"){ gmlAcHide(id); return; }
+    }
+    if (typeof gmlComposeKey==="function") gmlComposeKey(ev);   // Strg/⌘+Enter → senden
+  };
+  window.gmlAcBlur = function(id){ setTimeout(function(){ gmlAcHide(id); }, 160); };
 
   function buildQuote(o){
     var fromA = parseAddr(o.from);
