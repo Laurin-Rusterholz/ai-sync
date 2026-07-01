@@ -10209,36 +10209,46 @@ function saveSettings(s) {
 }
 
 function loadLocalData() {
+  let loaded = null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       // Sanity check: must have entities object
       if (parsed && parsed.entities && typeof parsed.entities === 'object') {
-        return normalizeData(parsed);
+        loaded = normalizeData(parsed);
       }
     }
   } catch(e) {
-    console.error("Local load failed, trying IndexedDB recovery:", e);
+    console.error("Local load failed:", e);
   }
-  // Try IndexedDB recovery
-  // (async recovery happens in background, for now return empty)
-  idbRestore('before_close').then(data => {
-    if (data && data.entities) {
-      console.log("Recovered data from IndexedDB backup!");
-      APP.state.data = normalizeData(data);
-      saveLocalData();
-      if (typeof render === 'function') render();
-    }
-  }).catch(() => {});
-  idbRestore('periodic').then(data => {
-    if (data && data.entities && !APP.state.data?.entities?.tasks) {
-      APP.state.data = normalizeData(data);
-      saveLocalData();
-      if (typeof render === 'function') render();
-    }
-  }).catch(() => {});
-  return normalizeData(emptyData());
+  // ── IndexedDB-Wiederherstellung — Fix: neue Geräte behielten nur eine Teil-Kopie ──
+  // localStorage ist auf ~5 MB begrenzt; große Datensätze passen dort NICHT vollständig
+  // hinein → saveLocalData läuft über und sichert die volle Fassung nach IndexedDB
+  // ('localStorage_overflow'), zusätzlich zu den regelmäßigen 'periodic'/'before_close'-
+  // Sicherungen. Früher wurde IndexedDB nur geprüft, wenn localStorage LEER/kaputt war —
+  // bei einer gültigen, aber unvollständigen localStorage-Kopie blieb das Gerät dauerhaft
+  // bei „der Hälfte". Jetzt IMMER die Sicherungen prüfen und die beste übernehmen, wenn sie
+  // NEUER — oder gleich alt, aber VOLLSTÄNDIGER — ist. Läuft asynchron; ersetzt APP.state.data
+  // nur, wenn es echt besser ist (kein Überschreiben neuerer Daten, kein Datenverlust).
+  (async function(){
+    try {
+      const cands = [];
+      for (const key of ['localStorage_overflow','periodic','before_close']) {
+        try { const d = await idbRestore(key); if (d && d.entities) cands.push(d); } catch(e){}
+      }
+      if (!cands.length) return;
+      const score = (d) => { let ts = 0, n = 0; try { ts = new Date((d && d.meta && d.meta.updatedAt) || 0).getTime() || 0; n = (getSyncStats(d) || {}).totalEntities || 0; } catch(e){} return { ts, n }; };
+      cands.sort((a, b) => { const A = score(a), B = score(b); return (B.ts - A.ts) || (B.n - A.n); });
+      const best = cands[0], b = score(best), cur = score(APP.state.data || loaded || {});
+      if (b.ts > cur.ts || (b.ts >= cur.ts && b.n > cur.n)) {
+        APP.state.data = normalizeData(best);
+        console.log('[Load] Vollständigere Fassung aus IndexedDB wiederhergestellt (' + b.n + ' Objekte; localStorage hatte ' + cur.n + ').');
+        if (typeof render === 'function') render();
+      }
+    } catch(e){}
+  })();
+  return loaded || normalizeData(emptyData());
 }
 
 function saveLocalData() {
