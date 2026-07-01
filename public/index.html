@@ -95206,6 +95206,15 @@ console.log('📚 Leseliste geladen');
 .reminders-details[open] > summary .reminders-caret { transform:rotate(90deg); }
 .gml-more-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:215px; background:var(--panel); border:1px solid var(--border); border-radius:11px; box-shadow:0 12px 30px rgba(0,0,0,.3); padding:6px; display:flex; flex-direction:column; gap:2px; }
 .gml-more-item { display:block; width:100%; text-align:left; padding:9px 11px; font-size:13px; font-weight:500; color:var(--text); background:transparent; border:none; border-radius:8px; cursor:pointer; white-space:nowrap; }
+/* 🔗 Quantus & KI — Aktionsmenü im Reader */
+.gml-qa-grid { display:flex; flex-direction:column; gap:4px; }
+.gml-qa-sec { font-size:10.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin:8px 2px 2px; }
+.gml-qa { display:flex; align-items:center; gap:11px; width:100%; text-align:left; padding:9px 11px; background:var(--panel2); border:1px solid var(--border); border-radius:9px; cursor:pointer; color:var(--text); }
+.gml-qa:hover { background:var(--hover); border-color:var(--accent-soft); }
+.gml-qa-ic { font-size:18px; flex-shrink:0; width:24px; text-align:center; }
+.gml-qa-tx { display:flex; flex-direction:column; min-width:0; }
+.gml-qa-t { font-size:13.5px; font-weight:600; color:var(--text); }
+.gml-qa-d { font-size:11.5px; color:var(--muted); }
 .gml-more-item:hover { background:var(--hover); }
 .gml-msghead { padding:18px 20px 18px; }
 .gml-subject { font-size:19px; font-weight:700; color:var(--text); margin:0 0 14px; line-height:1.3; }
@@ -95926,6 +95935,7 @@ console.log('📚 Leseliste geladen');
       +     '<button class="btn" onclick="gmailCreateTaskRequest()" title="Aus dieser Mail eine Quantus-Aufgabe erstellen">📋 Aufgabe</button>'
       +     '<button class="btn" onclick="window.gmailTldr()" title="KI-Kurzzusammenfassung dieser Mail (TL;DR)">📝 TL;DR</button>'
       +     '<button class="btn" onclick="window.gmailReplyVariants()" title="3 KI-Antwortvorschläge (kurz/neutral/ausführlich)">✍️ 3 Antworten</button>'
+      +     '<button class="btn" onclick="window.gmailQuantusMenu()" title="Mail mit Quantus &amp; KI verbinden (Notiz, Idee, Person, Antwort mit Kontext, Rechnung …)">🔗 Quantus</button>'
       +   '</div>'
       +   '<div style="flex:1"></div>'
       +   '<button class="btn'+(done?" primary":"")+'" onclick="gmailToggleDone(\''+jsStr(o.id)+'\')" title="'+(done?"Zurück in den Posteingang":"Als erledigt markieren")+'">'+(done?"↩︎ Zurücklegen":"✅ Erledigt")+'</button>'
@@ -96422,6 +96432,212 @@ console.log('📚 Leseliste geladen');
   };
   // Verwerfen = Verfassen abbrechen (entspricht dem bisherigen „Abbrechen").
   window.gmlDiscard = function(){ if (window.closeModal) window.closeModal(); };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  Mail ↔ Quantus & KI — 10 Funktionen, erreichbar über „🔗 Quantus" im Reader.
+  //  Reine Frontend-Logik; wiederverwendet callAI, createEntity, gmailCompose,
+  //  rtdbPost, personOf, gmailIndexByAddresses, gmailGatherAttachText, parseAddr/
+  //  htmlToText/esc/jsStr/toast, openModal/closeModal. Schreib-Aktionen NUR nach
+  //  window.confirm bzw. Nutzer-Klick — kein Auto-Send, kein stilles Schreiben.
+  // ══════════════════════════════════════════════════════════════════════════
+  function gmlEnt(plural){ try { return (window.APP&&APP.state&&APP.state.data&&APP.state.data.entities&&APP.state.data.entities[plural])||{}; } catch(e){ return {}; } }
+  function gmlCe(kind,data){ return (typeof window.createEntity==="function") ? window.createEntity(kind,data) : null; }
+  function gmlBodyText(o){ return String((o&&o.text) || (o&&htmlToText(o.html)) || "").replace(/\s+/g," ").trim(); }
+  function gmlSenderStr(o){ var a=parseAddr((o&&o.from)||""); return a.name ? a.name+" <"+(a.email||"")+">" : (a.email||"(unbekannt)"); }
+  function gmlMailRef(o){ return "\n\n— Aus E-Mail von "+gmlSenderStr(o)+"\nBetreff: "+((o&&o.subject)||"(kein Betreff)")+"\nMail-ID: "+((o&&o.id)||""); }
+  function gmlJsonArray(t){ try { var m=String(t||"").match(/\[[\s\S]*\]/); return m ? (JSON.parse(m[0])||[]) : []; } catch(e){ return []; } }
+  function gmlJsonObj(t){ try { var m=String(t||"").match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : null; } catch(e){ return null; } }
+  async function gmlAI(instruction, o, opts){
+    opts=opts||{};
+    if (typeof window.callAI!=="function") return null;
+    var body=(opts.body!=null?opts.body:gmlBodyText(o)).slice(0, opts.max||2800);
+    var prompt="E-Mail:\nVon: "+gmlSenderStr(o)+"\nBetreff: "+((o&&o.subject)||"")+"\nInhalt:\n"+body+"\n\n"+instruction;
+    try { var t=await window.callAI(prompt, { systemPrompt: opts.sys||"Du bist ein präziser Assistent für ein Produktivitäts-Tool. Antworte knapp auf Deutsch.", maxTokens: opts.tokens||600 }); return (t&&typeof t==="string") ? t.trim() : null; }
+    catch(e){ return null; }
+  }
+  // Personen liegen in entities.persons (kein getEntityMap-Eintrag) → direkter Insert wie createEntity.
+  function gmlCreatePerson(data){
+    try {
+      var ents=(window.APP&&APP.state&&APP.state.data&&APP.state.data.entities); if(!ents) return null;
+      if(!ents.persons) ents.persons={};
+      var id=(typeof uuid==="function"?uuid():"p"+((typeof Date!=="undefined")?Date.now():0));
+      var now=(typeof nowIso==="function"?nowIso():new Date().toISOString());
+      ents.persons[id]=Object.assign({ id:id, createdAt:now, updatedAt:now }, data);
+      if (typeof window.scheduleSave==="function") window.scheduleSave();
+      if (typeof refreshPersonIndex==="function") refreshPersonIndex();
+      return id;
+    } catch(e){ return null; }
+  }
+
+  // 1) Mail → Notiz (KI-Zusammenfassung)
+  window.gmailToNote = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (typeof window.createEntity!=="function"){ toast("err","Nicht verfügbar","Quantus-Modul nicht geladen."); return; }
+    if (!window.confirm("Aus dieser Mail eine Quantus-Notiz erstellen?")) return;
+    toast("info","Notiz wird erstellt…","KI fasst zusammen.");
+    var ai=await gmlAI("Fasse den Kern dieser E-Mail als kompakte Notiz zusammen (Stichpunkte, Deutsch).", o, { tokens:500 });
+    var id=gmlCe("note", { title:("📧 "+((o.subject)||"Notiz aus Mail")).slice(0,90), content:(ai||gmlBodyText(o).slice(0,1500))+gmlMailRef(o), tags:["Gmail"] });
+    toast(id?"ok":"err", id?"Notiz erstellt":"Fehler", id?(ai?"KI-zusammengefasst":"Text übernommen"):"Notiz konnte nicht erstellt werden");
+  };
+  // 2) Mail → Idee
+  window.gmailToIdea = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (!window.confirm("Aus dieser Mail eine Idee erstellen?")) return;
+    toast("info","Idee wird erstellt…","KI formuliert.");
+    var ai=await gmlAI("Formuliere aus dieser E-Mail EINE konkrete Idee oder Chance in 1-3 Sätzen (Deutsch).", o, { tokens:300 });
+    var id=gmlCe("idea", { title:("💡 "+((o.subject)||"Idee aus Mail")).slice(0,90), text:(ai||gmlBodyText(o).slice(0,800))+gmlMailRef(o), status:"idea", tags:["Gmail"] });
+    toast(id?"ok":"err", id?"Idee erstellt":"Fehler", id?(ai?"KI-formuliert":"Text übernommen"):"");
+  };
+  // 3) Mail → Entscheidung
+  window.gmailToDecision = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (!window.confirm("Aus dieser Mail eine offene Entscheidung erstellen?")) return;
+    toast("info","Entscheidung wird erstellt…","KI bereitet vor.");
+    var ai=await gmlAI("Formuliere die zu treffende Entscheidung aus dieser E-Mail als prägnante Frage plus 1-2 Sätze Kontext (Deutsch).", o, { tokens:300 });
+    var id=gmlCe("decision", { title:("⚖️ "+((o.subject)||"Entscheidung aus Mail")).slice(0,90), description:(ai||gmlBodyText(o).slice(0,800))+gmlMailRef(o), status:"open", tags:["Gmail"] });
+    toast(id?"ok":"err", id?"Entscheidung erstellt":"Fehler", id?(ai?"KI-vorbereitet":"Text übernommen"):"");
+  };
+  // 4) Absender → Person anlegen (KI-Signatur-Extraktion)
+  window.gmailToPerson = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    var a=parseAddr(o.from||""); if(!a.email){ toast("info","Keine Adresse","Absender hat keine E-Mail-Adresse."); return; }
+    if (typeof personOf==="function" && personOf(o.from)){ toast("info","Bereits vorhanden","Diese Person existiert schon in Quantus."); return; }
+    if (!window.confirm("Absender "+(a.name||a.email)+" als Person in Quantus anlegen?")) return;
+    toast("info","Person wird erstellt…","KI liest die Signatur.");
+    var extra={};
+    var obj=gmlJsonObj(await gmlAI("Extrahiere aus der E-Mail-Signatur Firma, Rolle und Telefon. Antworte NUR als JSON: {company, role, phone} (leere Strings wenn unbekannt).", o, { tokens:200 }));
+    if(obj){ if(obj.company) extra.company=String(obj.company).slice(0,120); if(obj.role) extra.role=String(obj.role).slice(0,120); if(obj.phone) extra.phone=String(obj.phone).slice(0,60); }
+    var id=gmlCreatePerson(Object.assign({ name:a.name||a.email, emails:[a.email], tags:["Gmail"], source:"gmail" }, extra));
+    toast(id?"ok":"err", id?"Person erstellt":"Fehler", id?(a.name||a.email):"Person konnte nicht erstellt werden");
+  };
+  // 5) Absender-Kontext (Quantus-Daten + letzte Mails)
+  window.gmailSenderContext = function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (typeof window.openModal!=="function") return;
+    var a=parseAddr(o.from||""); var p=(typeof personOf==="function")?personOf(o.from):null;
+    var pf=(p&&p.id)?gmlEnt("persons")[p.id]:null;
+    var html='<div style="font-size:13px;line-height:1.5">'
+      + '<div style="margin-bottom:10px"><strong>'+esc(a.name||a.email)+'</strong> <span style="color:var(--muted)">'+esc(a.email)+'</span></div>';
+    if (pf){
+      var meta=[]; if(pf.role) meta.push(esc(pf.role)); if(pf.company) meta.push(esc(pf.company)); if(pf.phone) meta.push(esc(pf.phone));
+      html+='<div style="margin-bottom:8px;color:var(--muted)">👤 Bekannte Person'+(meta.length?' · '+meta.join(' · '):'')+'</div>'
+        + '<button class="btn sm" onclick="closeModal();location.hash=\'#/persons/'+jsStr(p.id)+'\'">👤 Person öffnen</button>';
+    } else {
+      html+='<div style="margin-bottom:8px;color:var(--muted)">Noch keine Quantus-Person zu dieser Adresse.</div>'
+        + '<button class="btn sm" onclick="closeModal();window.gmailToPerson()">+ Person anlegen</button>';
+    }
+    var mails=(typeof window.gmailIndexByAddresses==="function") ? window.gmailIndexByAddresses([a.email]).slice(0,8) : [];
+    html+='<div style="margin-top:12px;font-weight:600">Letzte Mails ('+mails.length+')</div>'
+      + (mails.length ? mails.map(function(m){ return '<div style="padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="closeModal();gmailOpenFromExternal(\''+jsStr(m.id)+'\')">'+esc(m.subject||"(kein Betreff)")+'</div>'; }).join('') : '<div style="color:var(--muted)">Keine im Index.</div>')
+      + '</div>';
+    window.openModal("Kontext: "+(a.name||a.email), html, '<button class="btn" onclick="closeModal()">Schliessen</button>');
+  };
+  // 6) Mail an Projekt/Org/Person heften (Adresse → mailEmails → erscheint in Inbox-Karte)
+  window.gmailLinkToEntity = function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    var a=parseAddr(o.from||""); if(!a.email){ toast("info","Keine Adresse",""); return; }
+    if (typeof window.openModal!=="function") return;
+    function list(plural,kind){ var m=gmlEnt(plural); return Object.keys(m).map(function(id){ var e=m[id]||{}; return '<button class="gml-more-item" onclick="gmailDoLinkMail(\''+kind+'\',\''+jsStr(id)+'\')">'+esc(e.name||e.title||id)+'</button>'; }).join('') || '<div style="color:var(--muted);font-size:12px;padding:4px 2px">—</div>'; }
+    var html='<div style="max-height:52vh;overflow:auto">'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">'+esc(a.email)+' wird der gewählten Entität zugeordnet — deren Mails erscheinen danach in der Inbox-Karte.</div>'
+      + '<div class="gml-qa-sec">Organisationen</div>'+list("organizations","organization")
+      + '<div class="gml-qa-sec">Projekte</div>'+list("projects","project")
+      + '<div class="gml-qa-sec">Personen</div>'+list("persons","person")
+      + '</div>';
+    window.openModal("🔗 Mail verknüpfen mit…", html, '<button class="btn" onclick="closeModal()">Abbrechen</button>');
+  };
+  window.gmailDoLinkMail = function(kind, id){
+    var o=GM.open; if(!o) return; var a=parseAddr(o.from||""); if(!a.email) return;
+    var plural=(kind==="organization")?"organizations":(kind==="project"?"projects":"persons");
+    var e=gmlEnt(plural)[id]; if(!e){ toast("err","Nicht gefunden",""); return; }
+    e.mailEmails=Array.isArray(e.mailEmails)?e.mailEmails:[];
+    var lc=a.email.toLowerCase();
+    if (e.mailEmails.map(function(x){return String(x).toLowerCase();}).indexOf(lc)<0) e.mailEmails.push(a.email);
+    e.updatedAt=(typeof nowIso==="function"?nowIso():new Date().toISOString());
+    if (typeof window.scheduleSave==="function") window.scheduleSave();
+    if (window.closeModal) window.closeModal();
+    toast("ok","Verknüpft", (e.name||e.title||"")+" — Adresse zugeordnet");
+  };
+  // 7) KI-Antwort mit Quantus-Kontext (öffnet Composer, kein Auto-Send)
+  window.gmailReplyWithContext = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (typeof window.gmailCompose!=="function"){ toast("err","Nicht verfügbar",""); return; }
+    var a=parseAddr(o.from||"");
+    toast("info","KI-Antwort mit Kontext…","Sammle Quantus-Kontext.");
+    var ctx=""; var p=(typeof personOf==="function")?personOf(o.from):null; var pf=(p&&p.id)?gmlEnt("persons")[p.id]:null;
+    if (pf){ ctx+="Kontakt: "+(pf.name||"")+(pf.company?" ("+pf.company+")":"")+(pf.role?", "+pf.role:"")+"\n"; }
+    var mails=(typeof window.gmailIndexByAddresses==="function") ? window.gmailIndexByAddresses([a.email]).slice(0,5) : [];
+    var subs=mails.map(function(m){ return m.subject; }).filter(Boolean);
+    if (subs.length) ctx+="Bisheriger Mailverlauf (Betreffzeilen): "+subs.join("; ")+"\n";
+    var draft=await gmlAI("Verfasse einen höflichen, präzisen Antwort-Entwurf auf Deutsch."+(ctx?" Berücksichtige diesen Kontext aus meinem System:\n"+ctx:""), o, { tokens:700 });
+    window.gmailCompose({ title:"KI-Antwort mit Kontext", to:a.email, subject:"Re: "+((o.subject)||""), body:draft||"", threadId:o.threadId||null, inReplyTo:o.messageId||null, references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null, source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:gmlBodyText(o) } });
+  };
+  // 8) KI: Aktionen extrahieren → mehrere Aufgaben-Vorschläge
+  window.gmailExtractActions = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (!window.confirm("KI: konkrete Aufgaben aus dieser Mail extrahieren? (Sie erscheinen unter Aufgaben-Vorschläge)")) return;
+    toast("info","KI extrahiert Aufgaben…","");
+    var arr=gmlJsonArray(await gmlAI("Extrahiere alle konkreten To-dos/Handlungsschritte aus dieser E-Mail als JSON-Array von kurzen Aufgabentiteln (Deutsch). Keine Aufgaben → []. Antworte NUR mit dem JSON-Array.", o, { tokens:400 }))
+      .map(function(x){ return String(x||"").trim(); }).filter(Boolean).slice(0,10);
+    if (!arr.length){ toast("info","Nichts gefunden","Keine klaren Aufgaben erkannt."); return; }
+    if (typeof rtdbPost!=="function"){ toast("err","Nicht verfügbar",""); return; }
+    var ref=gmlMailRef(o), done=0;
+    for (var i=0;i<arr.length;i++){ try { await rtdbPost("taskSuggestions", { title:arr[i].slice(0,200), description:ref, priority:3, status:"ready", source:"gmail-ai", sourceMessageId:o.id, sourceThreadId:o.threadId||"", createdAt:(typeof Date!=="undefined"?Date.now():0) }); done++; } catch(e){} }
+    toast("ok", done+" Aufgaben-Vorschläge", "Unter 📋 Aufgaben-Vorschläge verfügbar.");
+    if (typeof loadTaskSuggestions==="function"){ try { await loadTaskSuggestions(); } catch(e){} }
+  };
+  // 9) KI-Briefing (inkl. Anhänge) → Notiz
+  window.gmailThreadBriefing = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (!window.confirm("KI-Briefing aus dieser Mail als Notiz erstellen?")) return;
+    toast("info","Briefing wird erstellt…","KI fasst zusammen (inkl. Anhänge).");
+    var att=""; try { if (typeof gmailGatherAttachText==="function") att=await gmailGatherAttachText(o); } catch(e){}
+    var body=(gmlBodyText(o)+(att?"\n[Anhang-Inhalt]\n"+att:"")).slice(0,6000);
+    var brief=await gmlAI("Erstelle ein kompaktes Briefing zur Vorbereitung: 1) Worum geht es, 2) offene Punkte/Fragen, 3) empfohlene nächste Schritte. Stichpunkte, Deutsch.", o, { body:body, tokens:800 });
+    var id=gmlCe("note", { title:("📋 Briefing: "+((o.subject)||"Mail")).slice(0,90), content:(brief||body.slice(0,1500))+gmlMailRef(o), tags:["Gmail","Briefing"] });
+    toast(id?"ok":"err", id?"Briefing erstellt":"Fehler", id?"Als Notiz gespeichert":"");
+  };
+  // 10) KI: Rechnung erkennen → Buchung + Zahlungs-Aufgabe
+  window.gmailInvoiceToFinance = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    if (!window.confirm("KI: Rechnung erkennen und als Buchung + Aufgabe anlegen?")) return;
+    toast("info","KI liest Rechnung…","inkl. Anhänge.");
+    var att=""; try { if (typeof gmailGatherAttachText==="function") att=await gmailGatherAttachText(o); } catch(e){}
+    var body=(gmlBodyText(o)+(att?"\n[Anhang]\n"+att:"")).slice(0,6000);
+    var d=gmlJsonObj(await gmlAI("Erkenne Rechnungsdaten. Antworte NUR als JSON: {amount:Zahl oder null, currency:Text, dueDate:JJJJ-MM-TT oder null, vendor:Text, invoiceNumber:Text oder null}. Wenn keine Rechnung erkennbar: amount null.", o, { body:body, tokens:250, sys:"Du extrahierst strukturierte Rechnungsdaten. Antworte ausschließlich mit gültigem JSON." }));
+    if (!d || typeof d.amount!=="number" || !(d.amount>0)){ toast("info","Keine Rechnung","Kein eindeutiger Betrag erkannt."); return; }
+    var vendor=String(d.vendor||parseAddr(o.from||"").name||"Unbekannt").slice(0,80);
+    var cur=String(d.currency||"CHF").slice(0,8);
+    var due=(/^\d{4}-\d{2}-\d{2}$/.test(String(d.dueDate||"")))?d.dueDate:null;
+    var today=(typeof todayYmd==="function")?todayYmd():new Date().toISOString().slice(0,10);
+    var isFuture=due?(due>=today):false;
+    var txId=gmlCe("transaction", { amount:Math.abs(d.amount), type:"expense", category:"Rechnung", description:("Rechnung "+vendor+(d.invoiceNumber?" (Nr. "+d.invoiceNumber+")":"")).slice(0,160), date:due||today, scheduledDate:isFuture?due:null, isFuture:isFuture });
+    var taskId=gmlCe("task", { title:("Rechnung bezahlen: "+vendor+" ("+Math.abs(d.amount)+" "+cur+")").slice(0,200), description:("Betrag: "+Math.abs(d.amount)+" "+cur+(due?"\nFällig: "+due:"")+(d.invoiceNumber?"\nNr.: "+d.invoiceNumber:"")+gmlMailRef(o)), dueDate:due, priority:2, status:"todo", tags:["Gmail","Finanzen"] });
+    toast((txId||taskId)?"ok":"err", (txId||taskId)?"Buchung + Aufgabe erstellt":"Fehler", (txId||taskId)?(vendor+" · "+Math.abs(d.amount)+" "+cur):"");
+  };
+  // Menü: bündelt die 10 Aktionen (Button „🔗 Quantus" im Reader)
+  window.gmailQuantusMenu = function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen","Öffne zuerst eine Mail."); return; }
+    if (typeof window.openModal!=="function") return;
+    function it(fn,ic,label,desc){ return '<button class="gml-qa" onclick="closeModal();window.'+fn+'()"><span class="gml-qa-ic">'+ic+'</span><span class="gml-qa-tx"><span class="gml-qa-t">'+label+'</span><span class="gml-qa-d">'+desc+'</span></span></button>'; }
+    var html='<div class="gml-qa-grid">'
+      + '<div class="gml-qa-sec">Erstellen</div>'
+      + it("gmailToNote","🗒️","Notiz","KI-Zusammenfassung als Notiz")
+      + it("gmailToIdea","💡","Idee","Als Idee festhalten")
+      + it("gmailToDecision","⚖️","Entscheidung","Offene Entscheidung anlegen")
+      + it("gmailToPerson","👤","Person","Absender als Person speichern")
+      + '<div class="gml-qa-sec">Kontext</div>'
+      + it("gmailSenderContext","🔍","Absender-Kontext","Bekannte Daten + letzte Mails")
+      + it("gmailLinkToEntity","🔗","Verknüpfen","Mail an Projekt/Org/Person heften")
+      + '<div class="gml-qa-sec">KI</div>'
+      + it("gmailReplyWithContext","↩︎","Antwort mit Kontext","Entwurf mit Quantus-Wissen")
+      + it("gmailExtractActions","✅","Aktionen extrahieren","To-dos → Aufgaben-Vorschläge")
+      + it("gmailThreadBriefing","📋","Meeting-Briefing","Briefing als Notiz")
+      + '<div class="gml-qa-sec">Finanzen</div>'
+      + it("gmailInvoiceToFinance","🧾","Rechnung → Buchung","Betrag/Fälligkeit → Buchung + Aufgabe")
+      + '</div>';
+    window.openModal("🔗 Mail ↔ Quantus & KI", html, '<button class="btn" onclick="closeModal()">Schliessen</button>');
+  };
 
   // ── Empfänger-Autovervollständigung (An/Cc/Bcc) ───────────────────────────
   // Ersetzt das bisherige native <datalist>: matcht Namen UND E-Mail und ersetzt nur
