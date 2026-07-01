@@ -101533,6 +101533,8 @@ window.addEventListener("hashchange", function(){
     cmds.push({ icon:"⤓", label:"Offene Notiz als Markdown exportieren", run:function(){ window.exportCurrentNote("md"); } });
     cmds.push({ icon:"⤓", label:"Offene Notiz als Text exportieren", run:function(){ window.exportCurrentNote("txt"); } });
     if(typeof window.openGlobalTaskModal==="function") cmds.push({ icon:"➕", label:"Neue Aufgabe", run:function(){ window.openGlobalTaskModal(); } });
+    // Zusätzliche Befehle aus Erweiterungsmodulen (z. B. Produktivitäts-Paket)
+    if(Array.isArray(window._p6Extra)) window._p6Extra.forEach(function(c){ if(c&&c.label&&typeof c.run==="function") cmds.push(c); });
     return cmds;
   }
   window.openCommandPalette = function(){
@@ -101628,6 +101630,229 @@ window.addEventListener("hashchange", function(){
     if((e.ctrlKey||e.metaKey) && !e.shiftKey && !e.altKey && k==="k"){ e.preventDefault(); e.stopImmediatePropagation(); window.openCommandPalette(); return; }
     if(k==="?" ){ var tn=((e.target&&e.target.tagName)||"").toLowerCase(); if(tn==="input"||tn==="textarea"||tn==="select"||(e.target&&e.target.isContentEditable)) return; e.preventDefault(); window.showShortcutsOverlay(); }
   }, true);
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   PRODUKTIVITÄTS-PAKET — 20 Befehle für die Command-Palette (Ctrl/Cmd+K).
+   Self-contained; registriert sich in window._p6Extra (die Palette liest das).
+   Nutzt bestehende window.*-Helfer defensiv (typeof-Guards): createEntity,
+   updateEntity, navigate, openModal/closeModal, toast, callAI, setThemePref,
+   scheduleSave, render, todayYmd, esc. Schreib-Aktionen nur nach Nutzer-Aktion.
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  function pxToast(a,b,c){ if(typeof window.toast==="function") window.toast(a,b,c); }
+  function pxRender(){ if(typeof window.render==="function") window.render(); }
+  function pxSave(){ if(typeof window.scheduleSave==="function") window.scheduleSave(); }
+  function pxData(){ try { return (window.APP&&APP.state&&APP.state.data)||{entities:{}}; } catch(e){ return {entities:{}}; } }
+  function pxTasks(){ try { return Object.values((pxData().entities&&pxData().entities.tasks)||{}); } catch(e){ return []; } }
+  function pxOpen(){ return pxTasks().filter(function(t){ return t && t.status!=="done"; }); }
+  function pxCe(kind,data){ return (typeof window.createEntity==="function") ? window.createEntity(kind,data) : null; }
+  function pxYmd(dt){ var y=dt.getFullYear(), m=dt.getMonth()+1, da=dt.getDate(); return y+"-"+(m<10?"0":"")+m+"-"+(da<10?"0":"")+da; }
+  function pxToday(){ try { return (typeof window.todayYmd==="function")?window.todayYmd():pxYmd(new Date()); } catch(e){ return pxYmd(new Date()); } }
+  function _pxEscHtml(s){ return (window.esc?window.esc(s):String(s==null?"":s).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; })); }
+  function _pxEsc(s){ return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'"); }
+  function pxGoto(kind,id){ var route={task:"tasks",note:"notes",project:"projects",organization:"organizations",person:"persons",idea:"ideas",goal:"goals"}[kind]||(kind+"s"); if(typeof window.navigate==="function") window.navigate(route,id); else location.hash="#/"+route+"/"+id; }
+  window.pxOpenTask = function(id){ pxGoto("task",id); };
+  window.pxOpenKind = function(kind,id){ pxGoto(kind,id); };
+
+  // Deutsche natürlichsprachliche Datumserkennung → {date, title(ohne Datumsphrase)}
+  function pxParseDate(text){
+    var t=String(text||""), low=t.toLowerCase(), d=new Date(), found=null, re=null, m;
+    if(/\bheute\b/.test(low)){ found=pxYmd(d); re=/\bheute\b/i; }
+    else if(/übermorgen/i.test(low)){ d.setDate(d.getDate()+2); found=pxYmd(d); re=/übermorgen/i; }
+    else if(/\bmorgen\b/.test(low)){ d.setDate(d.getDate()+1); found=pxYmd(d); re=/\bmorgen\b/i; }
+    else if((m=low.match(/\bin\s+(\d+)\s+tag(?:en)?\b/))){ d.setDate(d.getDate()+parseInt(m[1],10)); found=pxYmd(d); re=/\bin\s+\d+\s+tag(?:en)?\b/i; }
+    else if(/\bnächste\s+woche\b/.test(low)){ d.setDate(d.getDate()+7); found=pxYmd(d); re=/\bnächste\s+woche\b/i; }
+    else {
+      var wd=["sonntag","montag","dienstag","mittwoch","donnerstag","freitag","samstag"];
+      for(var i=0;i<wd.length;i++){ if(new RegExp("\\b"+wd[i]+"\\b").test(low)){ var add=(i-d.getDay()+7)%7; if(add===0) add=7; d.setDate(d.getDate()+add); found=pxYmd(d); re=new RegExp("\\b"+wd[i]+"\\b","i"); break; } }
+      if(!found && (m=low.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})?/))){ var yy=m[3]?(m[3].length===2?2000+parseInt(m[3],10):parseInt(m[3],10)):d.getFullYear(); var dt=new Date(yy,parseInt(m[2],10)-1,parseInt(m[1],10)); if(!isNaN(dt.getTime())){ found=pxYmd(dt); re=/\b\d{1,2}\.\d{1,2}\.(\d{2,4})?/i; } }
+    }
+    var title=re?t.replace(re,"").replace(/\s{2,}/g," ").trim():t.trim();
+    return { date:found, title:title||t.trim() };
+  }
+  function pxCopy(text, okMsg){
+    function fb(){ try { var ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); pxToast("ok","Kopiert",okMsg||""); } catch(e){ if(typeof window.openModal==="function") window.openModal("Kopieren",'<textarea style="width:100%;height:200px">'+_pxEscHtml(text)+'</textarea>','<button class="btn" data-action="close-modal">Schliessen</button>'); } }
+    try { if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(function(){ pxToast("ok","Kopiert",okMsg||""); }).catch(fb); } else fb(); } catch(e){ fb(); }
+  }
+  async function pxReadClipboard(){ try { if(navigator.clipboard&&navigator.clipboard.readText) return await navigator.clipboard.readText(); } catch(e){} return window.prompt("Text einfügen (Zwischenablage nicht direkt lesbar):",""); }
+  function pxListModal(title, tasks, emptyMsg){
+    if(typeof window.openModal!=="function") return;
+    var today=pxToday();
+    var html = tasks.length ? '<div style="max-height:52vh;overflow:auto">'+tasks.slice(0,60).map(function(t){
+      var od = t.dueDate && String(t.dueDate)<today;
+      return '<div style="display:flex;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer" onclick="closeModal();window.pxOpenTask(\''+_pxEsc(t.id)+'\')"><span style="color:'+(od?"var(--danger)":"var(--muted)")+';font-size:11.5px;min-width:84px">'+(_pxEscHtml(t.dueDate||"—"))+'</span><span style="flex:1;min-width:0">'+_pxEscHtml(t.title||"(ohne Titel)")+'</span><span style="color:var(--muted);font-size:11px">P'+(t.priority||3)+'</span></div>';
+    }).join('')+'</div>' : '<div style="color:var(--muted);padding:10px 2px">'+_pxEscHtml(emptyMsg)+'</div>';
+    window.openModal(title, html, '<button class="btn" data-action="close-modal">Schliessen</button>');
+  }
+
+  // 1) Schnelle Aufgabe mit Datum aus Text
+  window.pxQuickTask = function(){
+    var s=window.prompt("Neue Aufgabe (Datum aus Text, z. B. Bericht morgen  ·  Rechnung in 3 tagen  ·  Anruf freitag):",""); if(s==null) return; s=s.trim(); if(!s) return;
+    var p=pxParseDate(s);
+    var id=pxCe("task", { title:p.title.slice(0,200), status:"todo", priority:3, dueDate:p.date||null, startDate:pxToday(), tags:["Schnell"] });
+    pxToast(id?"ok":"err", id?"Aufgabe erstellt":"Fehler", id?(p.date?("Fällig "+p.date):"ohne Datum"):""); if(id) pxRender();
+  };
+  // 2) Schnelle Notiz
+  window.pxQuickNote = function(){
+    var s=window.prompt("Neue Notiz:",""); if(s==null) return; s=s.trim(); if(!s) return;
+    var id=pxCe("note", { title:(s.split(/\n/)[0]||"Notiz").slice(0,80), content:s, tags:["Schnell"] });
+    pxToast(id?"ok":"err", id?"Notiz erstellt":"Fehler",""); if(id) pxRender();
+  };
+  // 3) Schnelle Idee
+  window.pxQuickIdea = function(){
+    var s=window.prompt("Neue Idee:",""); if(s==null) return; s=s.trim(); if(!s) return;
+    var id=pxCe("idea", { title:s.slice(0,120), text:s, status:"idea", tags:["Schnell"] });
+    pxToast(id?"ok":"err", id?"Idee erstellt":"Fehler",""); if(id) pxRender();
+  };
+  // 4) Fokus-Timer (Pomodoro)
+  window.pxFocusTimer = function(mins){
+    mins=mins||25; if(window._pxTimer) clearTimeout(window._pxTimer);
+    pxToast("ok","Fokus gestartet", mins+" Minuten — dranbleiben. 🎯");
+    window._pxTimer=setTimeout(function(){ window._pxTimer=null; pxToast("ok","Fokus-Zeit vorbei", mins+" Min geschafft. Kurze Pause? ⏰"); }, mins*60000);
+  };
+  // 5) Pause-Timer
+  window.pxBreakTimer = function(){
+    if(window._pxBreak) clearTimeout(window._pxBreak);
+    pxToast("ok","Pause","5 Minuten durchatmen. ☕");
+    window._pxBreak=setTimeout(function(){ window._pxBreak=null; pxToast("ok","Pause vorbei","Weiter geht's. 💪"); }, 5*60000);
+  };
+  // 6) Zufällige offene Aufgabe
+  window.pxRandomTask = function(){
+    var o=pxOpen(); if(!o.length){ pxToast("info","Keine offenen Aufgaben",""); return; }
+    var t=o[Math.floor(Math.random()*o.length)]; pxGoto("task",t.id); pxToast("ok","Los geht's", String(t.title||"").slice(0,60));
+  };
+  // 7) Nächste fällige Aufgabe öffnen
+  window.pxNextDue = function(){
+    var due=pxOpen().filter(function(t){return t.dueDate;}).sort(function(a,b){return String(a.dueDate).localeCompare(String(b.dueDate));});
+    if(!due.length){ pxToast("info","Keine fälligen Aufgaben",""); return; }
+    pxGoto("task",due[0].id); pxToast("ok","Nächste fällig", due[0].dueDate+" · "+String(due[0].title||"").slice(0,50));
+  };
+  // 8) Wichtigste Aufgabe öffnen
+  window.pxTopPriority = function(){
+    var o=pxOpen().slice().sort(function(a,b){return (a.priority||3)-(b.priority||3);});
+    if(!o.length){ pxToast("info","Keine offenen Aufgaben",""); return; }
+    pxGoto("task",o[0].id); pxToast("ok","Wichtigste Aufgabe", String(o[0].title||"").slice(0,60));
+  };
+  // 9) Heute-Fokus
+  window.pxTodayFocus = function(){
+    var today=pxToday();
+    var list=pxOpen().filter(function(t){return t.dueDate && String(t.dueDate)<=today;}).sort(function(a,b){return String(a.dueDate).localeCompare(String(b.dueDate));});
+    pxListModal("🎯 Heute & Überfällig", list, "Nichts fällig — frei! 🎉");
+  };
+  // 10) Überfällige
+  window.pxOverdue = function(){
+    var today=pxToday();
+    var list=pxOpen().filter(function(t){return t.dueDate && String(t.dueDate)<today;}).sort(function(a,b){return String(a.dueDate).localeCompare(String(b.dueDate));});
+    pxListModal("⚠️ Überfällige Aufgaben", list, "Nichts überfällig — top! ✅");
+  };
+  // 11) Diese Woche fällig
+  window.pxThisWeek = function(){
+    var today=pxToday(), d=new Date(); d.setDate(d.getDate()+7); var wk=pxYmd(d);
+    var list=pxOpen().filter(function(t){return t.dueDate && String(t.dueDate)>=today && String(t.dueDate)<=wk;}).sort(function(a,b){return String(a.dueDate).localeCompare(String(b.dueDate));});
+    pxListModal("📅 Diese Woche fällig", list, "Diese Woche nichts fällig.");
+  };
+  // 12) Offene Aufgaben als Checkliste kopieren
+  window.pxCopyChecklist = function(){
+    var o=pxOpen().slice().sort(function(a,b){return (a.priority||3)-(b.priority||3);});
+    if(!o.length){ pxToast("info","Keine offenen Aufgaben",""); return; }
+    var txt=o.slice(0,120).map(function(t){ return "- [ ] "+(t.title||"")+(t.dueDate?(" (fällig "+t.dueDate+")"):""); }).join("\n");
+    pxCopy(txt, o.length+" Aufgaben als Checkliste kopiert");
+  };
+  // 13) Überfällige auf heute verschieben
+  window.pxRescheduleOverdue = function(){
+    var today=pxToday(); var list=pxOpen().filter(function(t){return t.dueDate && String(t.dueDate)<today;});
+    if(!list.length){ pxToast("info","Nichts überfällig",""); return; }
+    if(!window.confirm(list.length+" überfällige Aufgabe(n) auf heute ("+today+") verschieben?")) return;
+    var n=0; list.forEach(function(t){ if(typeof window.updateEntity==="function") window.updateEntity("task",t.id,{dueDate:today}); else t.dueDate=today; n++; });
+    pxSave(); pxRender(); pxToast("ok","Verschoben", n+" Aufgabe(n) auf heute gesetzt.");
+  };
+  // 14) Zwischenablage → Aufgabe
+  window.pxClipboardToTask = async function(){
+    var text=await pxReadClipboard(); if(text==null) return; text=String(text).trim(); if(!text){ pxToast("info","Zwischenablage leer",""); return; }
+    var first=text.split(/\n/)[0]; var p=pxParseDate(first);
+    var id=pxCe("task", { title:(p.title||first).slice(0,200), description:(text.length>first.length?text:""), status:"todo", priority:3, dueDate:p.date||null, tags:["Zwischenablage"] });
+    pxToast(id?"ok":"err", id?"Aufgabe aus Zwischenablage":"Fehler",""); if(id) pxRender();
+  };
+  // 15) Zwischenablage → Notiz
+  window.pxClipboardToNote = async function(){
+    var text=await pxReadClipboard(); if(text==null) return; text=String(text).trim(); if(!text){ pxToast("info","Zwischenablage leer",""); return; }
+    var id=pxCe("note", { title:(text.split(/\n/)[0]||"Notiz").slice(0,80), content:text, tags:["Zwischenablage"] });
+    pxToast(id?"ok":"err", id?"Notiz aus Zwischenablage":"Fehler",""); if(id) pxRender();
+  };
+  // 16) Zuletzt bearbeitet
+  window.pxRecent = function(){
+    if(typeof window.openModal!=="function") return;
+    var d=pxData(), all=[], icon={task:"✅",note:"📝",project:"📦",idea:"💡"};
+    [["tasks","task"],["notes","note"],["projects","project"],["ideas","idea"]].forEach(function(pair){
+      var m=(d.entities&&d.entities[pair[0]])||{}; Object.keys(m).forEach(function(id){ var e=m[id]; if(e) all.push({ id:id, kind:pair[1], title:e.title||e.name||"", ts:Date.parse(e.updatedAt||e.createdAt||0)||0 }); });
+    });
+    all.sort(function(a,b){return b.ts-a.ts;}); var top=all.slice(0,20);
+    if(!top.length){ pxToast("info","Nichts gefunden",""); return; }
+    var html='<div style="max-height:52vh;overflow:auto">'+top.map(function(e){ return '<div style="display:flex;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer" onclick="closeModal();window.pxOpenKind(\''+e.kind+'\',\''+_pxEsc(e.id)+'\')"><span>'+(icon[e.kind]||"•")+'</span><span style="flex:1;min-width:0">'+_pxEscHtml(e.title||"(ohne Titel)")+'</span></div>'; }).join('')+'</div>';
+    window.openModal("🕘 Zuletzt bearbeitet", html, '<button class="btn" data-action="close-modal">Schliessen</button>');
+  };
+  // 17) Rechner (streng validiert)
+  window.pxCalc = function(){
+    var s=window.prompt("Rechnen (z. B. 12*3+5  ·  (100-20)/4):",""); if(s==null) return; s=s.trim(); if(!s) return;
+    if(!/^[0-9+\-*/%.,() \t]+$/.test(s)){ pxToast("warn","Rechner","Nur Zahlen und + - * / % ( ) erlaubt."); return; }
+    var res; try { res=Function('"use strict";return ('+s.replace(/,/g,".")+')')(); } catch(e){ res=null; }
+    if(res==null||typeof res!=="number"||!isFinite(res)){ pxToast("warn","Rechner","Ungültiger Ausdruck."); return; }
+    var out=Math.round(res*1e6)/1e6; pxToast("ok", s+" = "+out, "Ergebnis wird kopiert"); pxCopy(String(out), "Ergebnis kopiert: "+out);
+  };
+  // 18) Theme wechseln
+  window.pxToggleTheme = function(){
+    var isLight=false; try { isLight=document.documentElement.classList.contains("theme-light"); } catch(e){}
+    var mode=isLight?"dark":"light";
+    if(typeof window.setThemePref==="function") window.setThemePref(mode); else pxToast("info","Theme","Theme-Umschaltung nicht verfügbar.");
+    pxToast("ok","Theme", mode==="light"?"Hell":"Dunkel");
+  };
+  // 19) KI: Tages-Zusammenfassung
+  window.pxDailySummary = async function(){
+    if(typeof window.callAI!=="function"){ pxToast("info","KI nicht verfügbar",""); return; }
+    var today=pxToday();
+    var due=pxOpen().filter(function(t){return t.dueDate && String(t.dueDate)<=today;});
+    var lines=due.slice(0,25).map(function(t){ return "- "+(t.title||"")+(t.dueDate?(" (fällig "+t.dueDate+")"):""); }).join("\n") || "(keine fälligen Aufgaben)";
+    pxToast("ok","KI","Erstelle Tages-Zusammenfassung …");
+    var txt; try { txt=await window.callAI("Heutige/überfällige Aufgaben:\n"+lines+"\n\nErstelle eine kurze Tagesplanung (Deutsch): 1) Fokus des Tages, 2) empfohlene Reihenfolge (3-5 Punkte), 3) ein Satz Motivation.", { systemPrompt:"Du bist ein knapper, motivierender Produktivitäts-Coach.", maxTokens:500 }); } catch(e){ txt=null; }
+    if(!txt){ pxToast("warn","KI","Keine Antwort (API-Key in den Einstellungen?)"); return; }
+    if(typeof window.openModal==="function") window.openModal("🌅 Tages-Zusammenfassung", '<div style="font-size:13px;line-height:1.55;white-space:pre-wrap">'+_pxEscHtml(txt)+'</div>', '<button class="btn" data-action="close-modal">Schliessen</button>');
+  };
+  // 20) Nächste fällige Aufgabe abschließen
+  window.pxCompleteNextDue = function(){
+    var due=pxOpen().filter(function(t){return t.dueDate;}).sort(function(a,b){return String(a.dueDate).localeCompare(String(b.dueDate));});
+    var t=due[0]||pxOpen().slice().sort(function(a,b){return (a.priority||3)-(b.priority||3);})[0];
+    if(!t){ pxToast("info","Keine offene Aufgabe",""); return; }
+    if(!window.confirm("Aufgabe als erledigt markieren?\n\n"+String(t.title||"").slice(0,90))) return;
+    if(typeof window.updateEntity==="function") window.updateEntity("task",t.id,{status:"done"}); else t.status="done";
+    pxSave(); pxRender(); pxToast("ok","Erledigt ✅", String(t.title||"").slice(0,60));
+  };
+
+  // Registrierung in der Command-Palette (window._p6Extra)
+  window._p6Extra = (window._p6Extra||[]).concat([
+    { icon:"➕", label:"Schnelle Aufgabe (Datum aus Text)", run:window.pxQuickTask },
+    { icon:"📝", label:"Schnelle Notiz", run:window.pxQuickNote },
+    { icon:"💡", label:"Schnelle Idee", run:window.pxQuickIdea },
+    { icon:"🎯", label:"Fokus-Timer starten (25 Min)", run:function(){ window.pxFocusTimer(25); } },
+    { icon:"☕", label:"Pause starten (5 Min)", run:window.pxBreakTimer },
+    { icon:"🎲", label:"Was jetzt? — zufällige Aufgabe", run:window.pxRandomTask },
+    { icon:"⏭️", label:"Nächste fällige Aufgabe öffnen", run:window.pxNextDue },
+    { icon:"⭐", label:"Wichtigste Aufgabe öffnen", run:window.pxTopPriority },
+    { icon:"📅", label:"Heute-Fokus (heute & überfällig)", run:window.pxTodayFocus },
+    { icon:"⚠️", label:"Überfällige Aufgaben anzeigen", run:window.pxOverdue },
+    { icon:"🗓️", label:"Diese Woche fällig", run:window.pxThisWeek },
+    { icon:"📋", label:"Offene Aufgaben als Checkliste kopieren", run:window.pxCopyChecklist },
+    { icon:"↪️", label:"Überfällige auf heute verschieben", run:window.pxRescheduleOverdue },
+    { icon:"📥", label:"Zwischenablage → Aufgabe", run:window.pxClipboardToTask },
+    { icon:"📥", label:"Zwischenablage → Notiz", run:window.pxClipboardToNote },
+    { icon:"🕘", label:"Zuletzt bearbeitet öffnen", run:window.pxRecent },
+    { icon:"🧮", label:"Rechner", run:window.pxCalc },
+    { icon:"🌓", label:"Theme wechseln (hell/dunkel)", run:window.pxToggleTheme },
+    { icon:"🌅", label:"KI: Tages-Zusammenfassung", run:window.pxDailySummary },
+    { icon:"✅", label:"Nächste fällige Aufgabe abschließen", run:window.pxCompleteNextDue }
+  ]);
 })();
 </script>
 
