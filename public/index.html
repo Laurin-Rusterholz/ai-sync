@@ -5189,6 +5189,11 @@ try {
 } catch(e) {
   console.warn('⚠️ Firebase Init fehlgeschlagen:', e.message);
 }
+// Export für Module ausserhalb dieses IIFE (z. B. PDF-Editor, Protokolle):
+// mehrere Aufrufstellen prüfen window.firebaseStorage/window.uploadToFirebase —
+// ohne diesen Export waren sie immer undefined und die Firebase-Pfade tot.
+window.firebaseStorage = firebaseStorage;
+window.uploadToFirebase = uploadToFirebase;
 
 async function uploadToFirebase(file, path, onProgress) {
   if (!firebaseStorage) throw new Error('Firebase SDK nicht geladen');
@@ -7763,16 +7768,22 @@ function openFilePreview(kind, entityId, fileIdx) {
 
   // PDFs werden im vollwertigen PDF-Editor/Reader geöffnet (statt nur iframe-Preview)
   if (ext === 'pdf' && typeof window.openPdfEditor === 'function') {
-    // Aus Firebase geöffnet → "Speichern" lädt die bearbeitete PDF zurück nach
-    // Firebase (überschreibt dieselbe Datei) statt sie herunterzuladen.
-    const canFb = !!(f.storagePath && firebaseStorage);
+    // "Speichern" lädt die bearbeitete PDF zurück nach Firebase (überschreibt
+    // dieselbe Datei) statt sie herunterzuladen. Fehlt storagePath (ältere
+    // Uploads), wird er aus der Download-URL abgeleitet oder neu nach der
+    // attachments/-Konvention vergeben.
+    const urlPathMatch = String(f.url || '').match(/firebasestorage\.googleapis\.com\/v0\/b\/[^\/]+\/o\/([^?]+)/);
+    let derivedPath = null;
+    try { derivedPath = urlPathMatch ? decodeURIComponent(urlPathMatch[1]) : null; } catch(e) {}
+    const fbPath = f.storagePath || derivedPath || ('attachments/' + kind + '/' + entityId + '/' + (f.id || ('f_' + Date.now().toString(36))) + '_' + (f.name || 'datei.pdf'));
+    const canFb = !!firebaseStorage;
     const onSave = canFb ? (async (bytes) => {
       const blob = new Blob([bytes], { type: 'application/pdf' });
-      const url = await uploadToFirebase(blob, f.storagePath);
-      f.url = url; f.size = blob.size; f.uploadedAt = new Date().toISOString();
+      const url = await uploadToFirebase(blob, fbPath);
+      f.storagePath = fbPath; f.url = url; f.size = blob.size; f.uploadedAt = new Date().toISOString();
       if (typeof scheduleSave === 'function') scheduleSave();
     }) : null;
-    window.openPdfEditor(f.url, { name: f.name, onSave, kind, entityId, fileIdx, storagePath: f.storagePath });
+    window.openPdfEditor(f.url, { name: f.name, onSave, kind, entityId, fileIdx, storagePath: fbPath });
     return;
   }
 
@@ -100544,6 +100555,7 @@ window.addEventListener("hashchange", function(){
     scale:1.15, rotation:0, page:1, mode:"continuous", dark:false,
     tool:"select", color:"#ffd400", stroke:2,
     annots:{}, _draw:null, history:[], dirty:false, onSave:null,
+    srcUrl:null, storagePath:null,
     selected:null,
     pendingSignature:null, pendingImage:null,
     search:{ term:"", hits:[], idx:-1 }, io:null, thumbIo:null,
@@ -100567,7 +100579,7 @@ window.addEventListener("hashchange", function(){
     if (r.kind!=null && r.entityId!=null && r.fileIdx!=null && typeof window.openFilePreview==="function"){
       window.openFilePreview(r.kind, r.entityId, r.fileIdx);   // volle Firebase-Verdrahtung (Speichern)
     } else if (r.url){
-      openPdfEditor(r.url, { name:r.name });
+      openPdfEditor(r.url, { name:r.name, storagePath:r.storagePath });
     }
   }
   function relTime(ts){ const s=Math.floor((Date.now()-ts)/1000); if(s<60)return "gerade eben"; const m=Math.floor(s/60); if(m<60)return m+" Min."; const h=Math.floor(m/60); if(h<24)return h+" Std."; const d=Math.floor(h/24); return d+" Tg."; }
@@ -100680,7 +100692,8 @@ window.addEventListener("hashchange", function(){
         <div class="pdfed-title"><span>📄</span><span id="pdfedName">Dokument.pdf</span><span id="pdfedRO" style="display:none;font-size:10px;color:var(--warn)">· Nur-Lesen</span></div>
         <div class="pdfed-sep"></div>
         <button class="pdfed-btn" id="pdfedOpen">📂 Öffnen</button>
-        <button class="pdfed-btn primary" id="pdfedSave">💾 Speichern</button>
+        <button class="pdfed-btn primary" id="pdfedSave" title="In Firebase speichern">💾 Speichern</button>
+        <button class="pdfed-btn icon" id="pdfedDl" title="Als Datei herunterladen">⬇️</button>
         <button class="pdfed-btn icon" id="pdfedUndo" title="Rückgängig">↶</button>
         <button class="pdfed-btn icon" id="pdfedPrint" title="Drucken">🖨️</button>
         <div class="pdfed-spacer"></div>
@@ -100759,6 +100772,7 @@ window.addEventListener("hashchange", function(){
     document.addEventListener("pointerup",()=>{ _erasing=false; });
     on("pdfedOpen","click",()=> pickFile(".pdf,application/pdf",(f)=>loadSource(f,{name:f.name})));
     on("pdfedSave","click",saveDownload);
+    on("pdfedDl","click",downloadCopy);
     on("pdfedUndo","click",undo);
     on("pdfedPrint","click",printDoc);
     on("pdfedDark","click",()=>{ ED.dark=!ED.dark; qs("#pdfedPages").classList.toggle("dark",ED.dark); qs("#pdfedDark").classList.toggle("active",ED.dark); });
@@ -100864,7 +100878,8 @@ window.addEventListener("hashchange", function(){
       updateChrome();
       return;
     }
-    ED.onSave = meta.onSave || null;   // onSave nur bei echtem neuem Dokument setzen/zurücksetzen
+    // Speicher-Verdrahtung (onSave/storagePath/srcUrl) wird in loadSource an das
+    // NEUE Dokument gebunden — gilt so auch für Direktaufrufe (Drop/Datei-Picker).
     if (meta.name) ED.name = meta.name;
     updateChrome();
     await loadSource(source, meta);
@@ -100912,6 +100927,11 @@ window.addEventListener("hashchange", function(){
 
   async function loadSource(source, meta){
     meta=meta||{};
+    // Speicher-Ziel an das NEUE Dokument binden (sonst könnte "Speichern" ein
+    // zuvor geöffnetes Firebase-Ziel mit dem neuen Dokument überschreiben).
+    ED.onSave = meta.onSave || null;
+    ED.storagePath = meta.storagePath || null;
+    ED.srcUrl = (typeof source === "string") ? source : null;
     showLoading();
     const ok = await ensurePdfJs();
     if (!ok){ showError("PDF.js konnte nicht geladen werden (Netzwerk blockiert evtl. CDN-Zugriff)."); return; }
@@ -100923,8 +100943,14 @@ window.addEventListener("hashchange", function(){
       else if (typeof source === "string"){
         ED.name = meta.name || ED.name;
         addRecent({ name: ED.name, url: source, kind: meta.kind, entityId: meta.entityId, fileIdx: meta.fileIdx, storagePath: meta.storagePath });
-        try { const r=await fetch(source); if(!r.ok) throw new Error("HTTP "+r.status); bytes=new Uint8Array(await r.arrayBuffer()); }
-        catch(e){ console.warn("Direkter Abruf fehlgeschlagen, Nur-Lese-Modus:", e.message); await loadViewOnly(source); return; }
+        if (source.indexOf("rtdb://") === 0){
+          // In der Realtime Database gespeicherte PDF (Fallback-Ablage) wieder laden
+          bytes = await rtdbLoadPdf(source);
+          if (!bytes){ showError("PDF nicht in Firebase (RTDB) gefunden."); return; }
+        } else {
+          try { const r=await fetch(source); if(!r.ok) throw new Error("HTTP "+r.status); bytes=new Uint8Array(await r.arrayBuffer()); }
+          catch(e){ console.warn("Direkter Abruf fehlgeschlagen, Nur-Lese-Modus:", e.message); await loadViewOnly(source); return; }
+        }
       }
       if (meta.name) ED.name=meta.name;
       if (!bytes){ showError("Unbekannte PDF-Quelle."); return; }
@@ -101404,26 +101430,85 @@ window.addEventListener("hashchange", function(){
   async function imagesToPdf(){ pickFiles("image/*", async (files)=>{ if(!await ensurePdfLib()) return; note("info","Erstelle PDF aus "+files.length+" Bild(ern) …"); try { const out=await window.PDFLib.PDFDocument.create(); for(const f of files){ const png=await fileToPng(f); const img=await out.embedPng(png.bytes); const p=out.addPage([png.w,png.h]); p.drawImage(img,{x:0,y:0,width:png.w,height:png.h}); } const bytes=await out.save(); ED.name="Bilder.pdf"; ED.history=[]; await loadBytes(bytes); note("ok","PDF aus Bildern erstellt"); } catch(e){ note("danger",e.message); } }); }
 
   // Speichern / Drucken
+  // ── In Firebase speichern (Storage; RTDB als Fallback, da nicht CORS-geblockt) ──
+  const PDFED_RTDB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+  function pdfedPathFromUrl(u){ const m=String(u||"").match(/firebasestorage\.googleapis\.com\/v0\/b\/[^\/]+\/o\/([^?]+)/); try { return m ? decodeURIComponent(m[1]) : null; } catch(e){ return null; } }
+  function pdfedSafeName(n){ const s=String(n||"Dokument.pdf").replace(/[\/\\#?%*:|"<>]+/g,"_").slice(0,90); return s || "Dokument.pdf"; }
+  function pdfedRtdbKey(n){ return pdfedSafeName(n).replace(/[.#$\[\]]/g,"_"); }
+  function bytesToB64(bytes){ let s=""; const CH=0x8000; for(let i=0;i<bytes.length;i+=CH){ s+=String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i+CH, bytes.length))); } return btoa(s); }
+  function b64ToBytes(b64){ const bin=atob(b64); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return u; }
+  function rtdbPdfRef(key){ try { if (window.firebase && firebase.app) return firebase.app().database(PDFED_RTDB_URL).ref("pdfFiles/"+key); } catch(e){} return null; }
+  async function rtdbLoadPdf(rtdbUrl){
+    const key = String(rtdbUrl).replace("rtdb://pdfFiles/","");
+    let wrap = null;
+    const ref = rtdbPdfRef(key);
+    if (ref){ const snap = await ref.once("value"); wrap = (snap && snap.exists()) ? snap.val() : null; }
+    else { const r = await fetch(PDFED_RTDB_URL+"/pdfFiles/"+encodeURIComponent(key)+".json"); wrap = r.ok ? await r.json() : null; }
+    return (wrap && wrap.b64) ? b64ToBytes(wrap.b64) : null;
+  }
+  async function savePdfToFirebase(out){
+    let lastErr = null;
+    // 1) Entity-Verdrahtung (openFilePreview): lädt zurück und aktualisiert den Datei-Eintrag
+    if (typeof ED.onSave === "function"){
+      try { await ED.onSave(out, ED.name); return { via:"Storage" }; }
+      catch(e){ lastErr = e; console.warn("[pdfed] onSave fehlgeschlagen — versuche Fallbacks:", e && e.message); }
+    }
+    // 2) Firebase Storage direkt: gleicher Pfad wie die Quelle, sonst pdf-editor/<Name>
+    if (typeof window.uploadToFirebase === "function" && window.firebaseStorage){
+      try {
+        const path = ED.storagePath || pdfedPathFromUrl(ED.srcUrl) || ("pdf-editor/" + pdfedSafeName(ED.name));
+        const blob = new Blob([out], { type:"application/pdf" });
+        const url = await window.uploadToFirebase(blob, path);
+        ED.storagePath = path; ED.srcUrl = url;
+        addRecent({ name: ED.name||"Dokument.pdf", url: url, storagePath: path });
+        return { via:"Storage" };
+      } catch(e){ lastErr = e; console.warn("[pdfed] Storage-Upload fehlgeschlagen — versuche RTDB:", e && e.message); }
+    }
+    // 3) RTDB-Fallback (kein CORS-Problem). Base64 wächst ~33% — Limit 16 MB/Write.
+    if (window.firebase && firebase.app){
+      if (out.length > 11*1024*1024) throw (lastErr || new Error("PDF zu gross für RTDB-Ablage (max. ~11 MB)"));
+      const key = pdfedRtdbKey(ED.name);
+      const wrap = { name: ED.name||"Dokument.pdf", mime:"application/pdf", size: out.length, savedAt: Date.now(), b64: bytesToB64(out) };
+      const ref = rtdbPdfRef(key);
+      if (ref){ await ref.set(wrap); }
+      else {
+        const r = await fetch(PDFED_RTDB_URL+"/pdfFiles/"+encodeURIComponent(key)+".json", { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(wrap) });
+        if (!r.ok) throw new Error("RTDB HTTP "+r.status);
+      }
+      const rurl = "rtdb://pdfFiles/"+key;
+      ED.srcUrl = rurl; ED.storagePath = null;
+      addRecent({ name: ED.name||"Dokument.pdf", url: rurl });
+      return { via:"RTDB" };
+    }
+    throw (lastErr || new Error("Firebase nicht verfügbar"));
+  }
   async function saveDownload(){
     if(ED.viewOnly||!ED.bytes){ note("warn","Nur-Lese-Modus — kein Speichern möglich"); return; }
     let out=ED.bytes;
     const has=Object.values(ED.annots).some(a=>a&&a.length);
     if(has){ out=await bakeBytes(); }
     const btn=qs("#pdfedSave");
-    if(typeof ED.onSave==="function"){
-      // Aus Firebase geöffnet → zurück nach Firebase speichern (kein Download)
-      try {
-        if(btn){ btn.disabled=true; btn.textContent="⏳ Speichert…"; }
-        await ED.onSave(out, ED.name);
-        ED.dirty=false;
-        note("ok","In Firebase gespeichert");
-      } catch(e){ console.error(e); note("danger","Speichern fehlgeschlagen: "+(e.message||e)); }
-      finally { if(btn){ btn.disabled=false; btn.innerHTML="💾 Speichern"; } }
-      return;
-    }
-    // Sonst: als Datei herunterladen
+    if(btn){ btn.disabled=true; btn.textContent="⏳ Speichert…"; }
+    try {
+      // Speichern heisst: nach Firebase — nicht herunterladen.
+      const r = await savePdfToFirebase(out);
+      ED.dirty=false;
+      note("ok", r.via==="RTDB" ? "In Firebase gespeichert (RTDB)" : "In Firebase gespeichert");
+    } catch(e){
+      console.error(e);
+      // Letzter Ausweg: lokaler Download, damit keine Änderung verloren geht
+      try { downloadBytes(out, baseName()+".pdf"); ED.dirty=false; note("warn","Firebase nicht erreichbar — PDF stattdessen heruntergeladen ("+(e.message||e)+")"); }
+      catch(e2){ note("danger","Speichern fehlgeschlagen: "+(e.message||e)); }
+    } finally { if(btn){ btn.disabled=false; btn.innerHTML="💾 Speichern"; } }
+  }
+  // Bewusster lokaler Download (eigener ⬇️-Button) — Speichern lädt nicht mehr herunter.
+  async function downloadCopy(){
+    if(!ED.bytes){ note("warn","Kein Dokument geladen"); return; }
+    let out=ED.bytes;
+    const has=Object.values(ED.annots).some(a=>a&&a.length);
+    if(has){ out=await bakeBytes(); }
     downloadBytes(out, baseName()+".pdf");
-    ED.dirty=false; note("ok","PDF heruntergeladen");
+    note("ok","PDF heruntergeladen");
   }
   async function printDoc(){ try { let bytes=ED.bytes; if(!bytes){ note("warn","Drucken im Nur-Lese-Modus nicht verfügbar"); return; } const has=Object.values(ED.annots).some(a=>a&&a.length); if(has) bytes=await bakeBytes(); const url=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"})); const w=window.open(url); if(w){ w.addEventListener("load",()=>{ try{w.print();}catch(e){} }); } setTimeout(()=>URL.revokeObjectURL(url),60000); } catch(e){ note("danger",e.message); } }
 
