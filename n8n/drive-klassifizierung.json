@@ -1,0 +1,329 @@
+{
+  "name": "Quantus Drive — Klassifizierung (RTDB-Queue)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Quantus Drive — Klassifizierung\n\n**Muster wie entityInbox/draftRequests: KEIN Webhook.**\nDas Frontend (public/drive.html) schreibt pro Upload einen Eintrag nach `driveInbox/<docId>` (status `pending`, inkl. bereits clientseitig extrahiertem Text — die Datei wird hier NICHT neu geladen).\n\nDieser Workflow konsumiert die Queue per Poll (alle 60 s; n8n-Core hat keinen push-basierten RTDB-Trigger), klassifiziert mit Claude (claude-sonnet-4-6) und schreibt Vorschlag + Status nach `driveDocs/<docId>` zurück.\n\n**Statusfluss:** driveDocs: eingang → wird_klassifiziert → klassifiziert | review_noetig · driveInbox: pending → processing → processed | error\n\n**Credentials (nur Platzhalter im Export, nach Import zuweisen):**\n1. *Google Service-Konto (RTDB)* — Google-API-Credential (Service Account) mit Scopes `https://www.googleapis.com/auth/userinfo.email` + `https://www.googleapis.com/auth/firebase.database`; wird von allen RTDB-HTTP-Nodes verwendet (Service-Konto umgeht die auth!=null-Regeln).\n2. *Anthropic API-Key* — Header-Auth-Credential, Header-Name `x-api-key`, Wert = Claude-API-Key.",
+        "height": 540,
+        "width": 420
+      },
+      "id": "sticky-doku",
+      "name": "Doku",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-560, -180]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "node-trigger",
+      "name": "Alle 60 s (Queue-Poll)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-80, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveInbox.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {}
+      },
+      "id": "node-inbox-lesen",
+      "name": "driveInbox lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [140, 0],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// driveInbox-Objekt -> ein Item pro Eintrag mit status 'pending'.\n// Verarbeitete Eintraege bleiben stehen (Muster entityInbox: Status-Feld, kein Loeschen),\n// daher ist der Poll idempotent.\nlet daten = null;\ntry { daten = $input.first().json; } catch (e) { /* leerer Lauf */ }\nif (daten && typeof daten === 'object' && !Array.isArray(daten) && Object.keys(daten).length === 1 && 'data' in daten) daten = daten.data;\nif (!daten || typeof daten !== 'object' || Array.isArray(daten)) return [];\n\nconst items = [];\nfor (const [key, v] of Object.entries(daten)) {\n  if (!v || v.status !== 'pending') continue;\n  items.push({ json: {\n    docId: v.docId || key,\n    inboxKey: key,\n    dateiname: v.dateiname || '',\n    mimeType: v.mimeType || '',\n    hash: v.hash || '',\n    duplikat_verdacht: v.duplikat_verdacht === true,\n    // Text kommt aus dem Queue-Eintrag (clientseitig extrahiert) — Datei wird NICHT neu geladen.\n    text: String(v.text || '').slice(0, 6000)\n  }});\n}\nreturn items;"
+      },
+      "id": "node-pending-filtern",
+      "name": "Pending filtern",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 0]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveDocs/{{ $json.docId }}.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'wird_klassifiziert', aktualisiert: $now.toISO() }) }}",
+        "options": {}
+      },
+      "id": "node-doc-wird-klassifiziert",
+      "name": "Doc → wird_klassifiziert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [580, 0],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveInbox/{{ $('Pending filtern').item.json.inboxKey }}.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'processing' }) }}",
+        "options": {}
+      },
+      "id": "node-inbox-processing",
+      "name": "Inbox → processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 0],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Baut den Claude-Request. System-Prompt woertlich gemaess Vorgabe.\nconst q = $('Pending filtern').item.json;\n\nconst SYSTEM_PROMPT = 'Du bist ein Ablage-Assistent. Ordne das Dokument in die vorgegebene Taxonomie ein. Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, ohne Markdown, ohne Vorwort. Waehle bereich und unterordner NUR aus der Taxonomie. thema nur setzen, wenn eindeutig; sonst leer. tags: 2-5 kleingeschriebene Schlagworte. titel_vorschlag: sauberer Dateiname (Thema + Kurzbeschreibung + Jahr, mit Original-Endung). confidence: 0-1. begruendung: max. 1 Satz. Bei Unsicherheit Bereich Eingang und niedrige confidence.';\n\nconst TAXONOMIE = [\n  'TAXONOMIE (bereich: unterordner):',\n  '1 Organisationen: EBS, Jupidu, Operation Libero, Reformplattform, SP AR, SP Herisau, Synode, YES (je optional \"Archiv\")',\n  '2 Projekte: Persönliche Projekte, Projekte in Organisationen, Monetarisierung',\n  '3 Wissen & Recherche: Recherchen laufend, Recherchen abgeschlossen, Factsheets, Artikel, plus Themenordner (z. B. Cybersicherheit CH, Sudan-Konflikt) — jedes Thema existiert NUR EINMAL',\n  '4 Bildung & Beruf: Schule, Writing, Versicherungen, Lernen EBMP/VWL',\n  '5 Persönlich: Steuern, Lohnabrechnungen, Fotobücher, Private Dokumente',\n  '6 Vorlagen: alle Templates zentral',\n  '7 System/Meta: SKILL.md, Prozessdoku, Programme/index.html',\n  '8 Eingang: Fallback',\n  '',\n  'REGELN:',\n  '- Doppelte Themen NIE duplizieren — kanonischer Ort ist \"Wissen & Recherche\".',\n  '- Jede Vorlage → \"Vorlagen\".',\n  '- Lohnabrechnungen → \"Persönlich\".',\n  '- Kopien/Exporte (\"Kopie\", \"Hochladen\", \"Hochladen 2\") → Original-Thema, duplikat_verdacht pruefen.',\n  '- Unklarer Bereich → \"Eingang\" mit confidence < 0.6.',\n  '',\n  'Antworte exakt in diesem JSON-Schema:',\n  '{\"bereich\":\"...\",\"unterordner\":\"...\",\"thema\":\"...\",\"tags\":[],\"titel_vorschlag\":\"...\",\"confidence\":0.0,\"begruendung\":\"...\",\"duplikat_verdacht\":false}'\n].join('\\n');\n\nconst nutzer = 'Dateiname: ' + q.dateiname\n  + '\\nMIME-Typ: ' + (q.mimeType || 'unbekannt')\n  + '\\nDuplikat-Verdacht (Hash-Abgleich des Frontends): ' + (q.duplikat_verdacht ? 'ja' : 'nein')\n  + '\\n\\n' + TAXONOMIE\n  + '\\n\\nDOKUMENTTEXT (Auszug, max. 6000 Zeichen):\\n'\n  + (q.text || '(kein Text extrahierbar — nur anhand des Dateinamens einordnen)');\n\nreturn { json: {\n  docId: q.docId,\n  inboxKey: q.inboxKey,\n  dateiname: q.dateiname,\n  duplikat_verdacht: q.duplikat_verdacht,\n  anthropicBody: {\n    model: 'claude-sonnet-4-6',\n    max_tokens: 1024,\n    system: SYSTEM_PROMPT,\n    messages: [{ role: 'user', content: nutzer }]\n  }\n}};"
+      },
+      "id": "node-request-bauen",
+      "name": "Claude-Request bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1020, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.anthropicBody) }}",
+        "options": {}
+      },
+      "id": "node-claude",
+      "name": "Claude klassifizieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1240, 0],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Anthropic API-Key (Header x-api-key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Striktes JSON parsen + Confidence-Gate.\n// Parse-Fehler ODER confidence < 0.6 -> status 'review_noetig' (normaler Pfad, Inbox 'processed').\n// Harter API-/HTTP-Fehler -> ok:false (Fehlerpfad: Doc 'review_noetig' + Fehlertext, Inbox 'error').\nconst meta = $('Claude-Request bauen').item.json;\nconst resp = $json;\nconst jetzt = $now.toISO();\n\nconst antwortText = (resp && Array.isArray(resp.content) && resp.content[0] && typeof resp.content[0].text === 'string')\n  ? resp.content[0].text : null;\n\nif (!antwortText) {\n  const fehler = 'Claude-API-Fehler: ' + JSON.stringify((resp && (resp.error || resp)) || 'keine Antwort').slice(0, 500);\n  return { json: { ok: false, docId: meta.docId, inboxKey: meta.inboxKey, status: 'review_noetig', vorschlag: null, fehler: fehler, aktualisiert: jetzt } };\n}\n\nlet parsed = null, parseFehler = null;\ntry {\n  let t = antwortText.trim();\n  const zaun = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (zaun) t = zaun[1].trim();\n  parsed = JSON.parse(t);\n} catch (e) { parseFehler = 'JSON-Parse-Fehler: ' + e.message; }\n\nif (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {\n  return { json: { ok: true, docId: meta.docId, inboxKey: meta.inboxKey, status: 'review_noetig', vorschlag: null, fehler: parseFehler || 'Antwort war kein JSON-Objekt', aktualisiert: jetzt } };\n}\n\nconst conf = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));\nconst vorschlag = {\n  bereich: String(parsed.bereich || 'Eingang'),\n  unterordner: String(parsed.unterordner || ''),\n  thema: String(parsed.thema || ''),\n  tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 5).map(t => String(t).toLowerCase()) : [],\n  titel_vorschlag: String(parsed.titel_vorschlag || meta.dateiname || ''),\n  confidence: conf,\n  begruendung: String(parsed.begruendung || ''),\n  duplikat_verdacht: parsed.duplikat_verdacht === true || meta.duplikat_verdacht === true\n};\nconst status = conf >= 0.6 ? 'klassifiziert' : 'review_noetig';\n\nreturn { json: { ok: true, docId: meta.docId, inboxKey: meta.inboxKey, status: status, vorschlag: vorschlag, fehler: null, aktualisiert: jetzt } };"
+      },
+      "id": "node-parsen",
+      "name": "Antwort parsen & prüfen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1460, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-erfolg",
+      "name": "API-Aufruf erfolgreich?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1680, 0]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveDocs/{{ $json.docId }}.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ vorschlag: $json.vorschlag, status: $json.status, fehler: $json.fehler, aktualisiert: $json.aktualisiert }) }}",
+        "options": {}
+      },
+      "id": "node-doc-ergebnis",
+      "name": "Doc: Vorschlag speichern",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, -100],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveInbox/{{ $('Antwort parsen & prüfen').item.json.inboxKey }}.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'processed', verarbeitet: $now.toISO() }) }}",
+        "options": {}
+      },
+      "id": "node-inbox-processed",
+      "name": "Inbox → processed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2120, -100],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveDocs/{{ $json.docId }}.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'review_noetig', fehler: $json.fehler, aktualisiert: $json.aktualisiert }) }}",
+        "options": {}
+      },
+      "id": "node-doc-fehler",
+      "name": "Doc: review_noetig (Fehler)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, 120],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveInbox/{{ $('Antwort parsen & prüfen').item.json.inboxKey }}.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'error', fehler: $('Antwort parsen & prüfen').item.json.fehler }) }}",
+        "options": {}
+      },
+      "id": "node-inbox-error",
+      "name": "Inbox → error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2120, 120],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Alle 60 s (Queue-Poll)": {
+      "main": [[{ "node": "driveInbox lesen", "type": "main", "index": 0 }]]
+    },
+    "driveInbox lesen": {
+      "main": [[{ "node": "Pending filtern", "type": "main", "index": 0 }]]
+    },
+    "Pending filtern": {
+      "main": [[{ "node": "Doc → wird_klassifiziert", "type": "main", "index": 0 }]]
+    },
+    "Doc → wird_klassifiziert": {
+      "main": [[{ "node": "Inbox → processing", "type": "main", "index": 0 }]]
+    },
+    "Inbox → processing": {
+      "main": [[{ "node": "Claude-Request bauen", "type": "main", "index": 0 }]]
+    },
+    "Claude-Request bauen": {
+      "main": [[{ "node": "Claude klassifizieren", "type": "main", "index": 0 }]]
+    },
+    "Claude klassifizieren": {
+      "main": [[{ "node": "Antwort parsen & prüfen", "type": "main", "index": 0 }]]
+    },
+    "Antwort parsen & prüfen": {
+      "main": [[{ "node": "API-Aufruf erfolgreich?", "type": "main", "index": 0 }]]
+    },
+    "API-Aufruf erfolgreich?": {
+      "main": [
+        [{ "node": "Doc: Vorschlag speichern", "type": "main", "index": 0 }],
+        [{ "node": "Doc: review_noetig (Fehler)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Doc: Vorschlag speichern": {
+      "main": [[{ "node": "Inbox → processed", "type": "main", "index": 0 }]]
+    },
+    "Doc: review_noetig (Fehler)": {
+      "main": [[{ "node": "Inbox → error", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
