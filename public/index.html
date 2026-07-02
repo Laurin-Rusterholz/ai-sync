@@ -10320,6 +10320,15 @@ function loadLocalData() {
   return loaded || normalizeData(emptyData());
 }
 
+// Gedrosselte Nutzer-Warnung bei localStorage-Ueberlauf (Daten bleiben sicher in IndexedDB).
+function notifyStorageOverflow() {
+  try {
+    var now = Date.now();
+    if (now - (window._lastStorageWarn || 0) < 600000) return;   // max. alle 10 Minuten
+    window._lastStorageWarn = now;
+    if (typeof toast === "function") toast("warn", "Lokaler Speicher voll", "Deine Daten sind sehr groß für den localStorage-Schnellspeicher. Sie werden sicher in IndexedDB gehalten und beim Start wiederhergestellt. Auf einem neuen Gerät die Seite nach dem ersten Laden einmal neu laden.");
+  } catch(e) {}
+}
 function saveLocalData() {
   try {
     // Always embed settings and UI state before saving
@@ -10340,8 +10349,11 @@ function saveLocalData() {
     // Notify other tabs
     broadcastUpdate();
   } catch (e) {
-    console.error("Local save error:", e);
+    console.error("Local save error (localStorage voll?):", e);
+    // Volle Fassung sicher in IndexedDB (kein 5-MB-Limit) — loadLocalData stellt sie beim
+    // Start wieder her. Danach große Redundanz-Kopien (_backup*) freigeben und erneut versuchen.
     idbBackup(APP.state.data, 'localStorage_overflow');
+    let persisted = false;
     try {
       const keysToRemove = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -10349,8 +10361,11 @@ function saveLocalData() {
         if (k && (k.startsWith('_backup') || k.startsWith('_delete_log'))) keysToRemove.push(k);
       }
       for (const k of keysToRemove) localStorage.removeItem(k);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(APP.state.data));
-    } catch(e2) { console.error("Save completely failed:", e2); }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(buildLocalAppSnapshot()));
+      persisted = true;
+    } catch(e2) { console.error("Save completely failed (localStorage quota) — Daten liegen sicher in IndexedDB:", e2); }
+    // Statt still zu scheitern: den Nutzer gedrosselt informieren.
+    if (!persisted) notifyStorageOverflow();
   }
 }
 
@@ -59345,7 +59360,24 @@ async function init() {
   
   // Daily IndexedDB full backup
   setInterval(() => { idbBackup(APP.state.data, 'periodic'); }, 3600000);
-  
+
+  // Persistenten Speicher anfordern: verhindert, dass der Browser IndexedDB/localStorage
+  // unter Speicherdruck automatisch löscht — schützt die lokale Voll-Sicherung, aus der
+  // große Datensätze beim Start wiederhergestellt werden. Zusätzlich Belegung protokollieren.
+  try {
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persisted().then(function(p){
+        if (!p) navigator.storage.persist().then(function(granted){ console.log('[Storage] Persistenter Speicher:', granted ? 'gewährt' : 'abgelehnt'); }).catch(function(){});
+        else console.log('[Storage] Persistenter Speicher bereits aktiv.');
+      }).catch(function(){});
+    }
+    if (navigator.storage && navigator.storage.estimate) {
+      navigator.storage.estimate().then(function(est){
+        if (est && est.quota) { var pct = Math.round((est.usage||0) / est.quota * 100); if (pct >= 90) console.warn('[Storage] Speicher zu ' + pct + '% belegt (' + Math.round((est.usage||0)/1048576) + '/' + Math.round(est.quota/1048576) + ' MB).'); }
+      }).catch(function(){});
+    }
+  } catch(e) {}
+
   // Timer update interval
   setInterval(() => {
     const timers = getRunningTimers();
