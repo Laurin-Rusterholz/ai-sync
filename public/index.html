@@ -10249,16 +10249,31 @@ function loadSettings() {
 }
 
 function saveSettings(s) {
+  // Einstellungen (inkl. API-Keys) IMMER in die Hauptdaten einbetten — die werden robust
+  // via IndexedDB (loadLocalData) und Remote (Netlify) persistiert. So überleben sie auch,
+  // wenn localStorage voll ist und der separate SETTINGS_KEY-Write unten fehlschlägt.
+  try { if (APP.state.data) APP.state.data._settings = s; } catch(e0) {}
   try {
     s.storage = { ...(s.storage || {}) };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-    // Embed in data for remote sync (saveLocalData will pick this up)
-    if (APP.state.data) {
-      APP.state.data._settings = s;
-    }
   } catch (e) {
-    console.error("Settings save error:", e);
+    console.error("Settings save error (localStorage voll?):", e);
+    // localStorage voll → zusätzlich in IndexedDB sichern und den Nutzer informieren.
+    try { if (typeof idbBackup === "function") idbBackup(s, 'settings'); } catch(e2) {}
+    if (typeof notifyStorageOverflow === "function") notifyStorageOverflow();
   }
+}
+// Fehlende Einstellungen/API-Keys aus der robust persistierten eingebetteten Kopie
+// (APP.state.data._settings bzw. IndexedDB) übernehmen — überschreibt NIE vorhandene Werte.
+function applyEmbeddedSettings(emb) {
+  try {
+    if (!emb || typeof emb !== "object" || !APP.state.settings) return;
+    var s = APP.state.settings;
+    if (!s.geminiApiKey && emb.geminiApiKey) s.geminiApiKey = emb.geminiApiKey;
+    if (!s.anthropicApiKey && emb.anthropicApiKey) s.anthropicApiKey = emb.anthropicApiKey;
+    s.openai = s.openai || {};
+    if (!s.openai.apiKey && emb.openai && emb.openai.apiKey) s.openai.apiKey = emb.openai.apiKey;
+  } catch(e) {}
 }
 
 function loadLocalData() {
@@ -10296,6 +10311,7 @@ function loadLocalData() {
       const best = cands[0], b = score(best), cur = score(APP.state.data || loaded || {});
       if (b.ts > cur.ts || (b.ts >= cur.ts && b.n > cur.n)) {
         APP.state.data = normalizeData(best);
+        try { applyEmbeddedSettings(best._settings); } catch(e) {}   // API-Keys aus der IDB-Fassung nachziehen
         console.log('[Load] Vollständigere Fassung aus IndexedDB wiederhergestellt (' + b.n + ' Objekte; localStorage hatte ' + cur.n + ').');
         if (typeof render === 'function') render();
       }
@@ -50547,6 +50563,9 @@ function init() {
   // Load data
   APP.state.data = loadLocalData();
   APP.state.settings = loadSettings();
+  // API-Keys/Einstellungen aus den Hauptdaten übernehmen, falls der separate SETTINGS_KEY
+  // bei vollem localStorage nicht geschrieben werden konnte (nur fehlende Werte ergänzen).
+  try { applyEmbeddedSettings(APP.state.data && APP.state.data._settings); } catch(e) {}
 
   // One-shot migration: Manual-Transfer-Mode wurde entfernt zugunsten von Auto-Sync.
   // Alte Profile mit manualTransferMode=true werden auf Auto-Sync umgestellt.
