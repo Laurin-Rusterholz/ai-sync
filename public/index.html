@@ -5216,6 +5216,7 @@ const RH_CLOUD_SHADOW_KEY = 'readinghub-cloud-shadow';
 let _cloudHealth = loadCloudHealth();
 let _lastRemoteCheckAt = 0;
 let _lastFirebaseShadowWriteAt = 0;
+let _lastShadowWriteAt = 0;
 let _syncFreshnessPromise = null;
 const _remoteEtags = Object.create(null);
 
@@ -5238,7 +5239,8 @@ function loadCloudHealth() {
   const fallback = {
     lastGoodProvider: '',
     netlify: { failCount: 0, backoffUntil: 0, lastError: '', lastStatus: 0, lastWarnAt: 0 },
-    firebase: { failCount: 0, backoffUntil: 0, lastError: '', lastStatus: 0, lastWarnAt: 0 }
+    firebase: { failCount: 0, backoffUntil: 0, lastError: '', lastStatus: 0, lastWarnAt: 0 },
+    rtdb: { failCount: 0, backoffUntil: 0, lastError: '', lastStatus: 0, lastWarnAt: 0 }
   };
   try {
     const parsed = safeJsonParse(localStorage.getItem(CLOUD_SYNC_HEALTH_KEY), null);
@@ -5246,7 +5248,8 @@ function loadCloudHealth() {
     return {
       lastGoodProvider: parsed.lastGoodProvider || '',
       netlify: { ...fallback.netlify, ...(parsed.netlify || {}) },
-      firebase: { ...fallback.firebase, ...(parsed.firebase || {}) }
+      firebase: { ...fallback.firebase, ...(parsed.firebase || {}) },
+      rtdb: { ...fallback.rtdb, ...(parsed.rtdb || {}) }
     };
   } catch(e) {
     return fallback;
@@ -5263,6 +5266,7 @@ function resetCloudSyncHealth(provider = null) {
     _cloudHealth.lastGoodProvider = '';
     _cloudHealth.netlify = { failCount: 0, backoffUntil: 0, lastError: '', lastStatus: 0, lastWarnAt: 0 };
     _cloudHealth.firebase = { failCount: 0, backoffUntil: 0, lastError: '', lastStatus: 0, lastWarnAt: 0 };
+    _cloudHealth.rtdb = { failCount: 0, backoffUntil: 0, lastError: '', lastStatus: 0, lastWarnAt: 0 };
   }
   persistCloudHealth();
 }
@@ -5307,10 +5311,28 @@ function isBlobSyncConfigured() {
 function isFirebaseCloudAvailable() {
   return !!firebaseStorage;
 }
+// Firebase Realtime Database (RTDB): nicht CORS-geblockt, kein ~5-MB-Limit.
+// Verfügbar, sobald das Firebase-SDK geladen ist und nicht explizit deaktiviert.
+function isRtdbCloudAvailable() {
+  try {
+    if (APP?.state?.settings?.storage?.rtdbSync === false) return false;
+    return !!(window.firebase && firebase.app);
+  } catch(e) { return false; }
+}
+// Bevorzugter (primärer) Cloud-Provider für den App-Datensatz. Default: RTDB,
+// sobald verfügbar (kein 5-MB-localStorage-Limit, kein CORS-Problem), sonst
+// Netlify. Über storage.primaryProvider umstellbar (Rollback auf 'netlify').
+function primaryCloudProvider() {
+  const p = APP?.state?.settings?.storage?.primaryProvider;
+  if (p === 'netlify' || p === 'firebase') return p;
+  if (p === 'rtdb' && isRtdbCloudAvailable()) return 'rtdb';
+  return isRtdbCloudAvailable() ? 'rtdb' : 'netlify';
+}
 function shouldTryCloudProvider(provider, options = {}) {
   const force = !!options.force;
   if (provider === 'netlify' && !isBlobSyncConfigured()) return false;
   if (provider === 'firebase' && !isFirebaseCloudAvailable()) return false;
+  if (provider === 'rtdb' && !isRtdbCloudAvailable()) return false;
   if (!force && !isAutoSyncEnabled()) return false;
   // Even with force, respect backoff for network/CORS errors (prevents spam)
   const state = _cloudHealth[provider] || {};
@@ -5325,7 +5347,7 @@ function shouldTryCloudProvider(provider, options = {}) {
   return true;
 }
 function hasAnyCloudProviderAvailable(options = {}) {
-  return shouldTryCloudProvider('netlify', options) || shouldTryCloudProvider('firebase', options);
+  return shouldTryCloudProvider('netlify', options) || shouldTryCloudProvider('firebase', options) || shouldTryCloudProvider('rtdb', options);
 }
 function rememberCloudSuccess(provider) {
   if (!_cloudHealth[provider]) return;
@@ -5814,11 +5836,91 @@ async function firebaseJsonPut(key, data, options = {}) {
     return { ok: false, error: e, provider: 'firebase' };
   }
 }
+// ── Firebase Realtime Database (RTDB) als Cloud-Provider ──
+// RTDB ist NICHT CORS-geblockt und hat kein ~5-MB-localStorage-Limit (bis 16 MB
+// pro Schreibvorgang). Ablage: appStore/<sanitizedKey> als
+// { data: <JSON-String des App-Payloads>, updatedAt, savedAt, savedBy }.
+// Gleiches Ablageformat wie die manuelle opt-in-Speicherung (fbStore*), damit
+// Auto-Sync und manuelle Buttons denselben Knoten lesen/schreiben.
+const RTDB_DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+const RTDB_NODE = "appStore";
+function rtdbNodeKey(key) {
+  return String(key || 'app-data.json').replace(/[.#$\[\]\/]/g, '_');
+}
+function rtdbDbRef(path) {
+  try { if (window.firebase && firebase.app) return firebase.app().database(RTDB_DB_URL).ref(path); } catch(e) {}
+  return null;
+}
+async function rtdbJsonGet(key, options = {}) {
+  if (!shouldTryCloudProvider('rtdb', options)) return { ok: false, skipped: true, provider: 'rtdb' };
+  const path = RTDB_NODE + '/' + rtdbNodeKey(key);
+  try {
+    let wrap = null;
+    const ref = rtdbDbRef(path);
+    if (ref) {
+      const snap = await ref.once('value');
+      wrap = (snap && snap.exists()) ? snap.val() : null;
+    } else {
+      const resp = await fetchWithTimeout(RTDB_DB_URL + '/' + path + '.json?_ts=' + Date.now(), { headers: { 'Cache-Control': 'no-cache' } }, 12000);
+      if (!resp.ok) { rememberCloudFailure('rtdb', { status: resp.status }); return { ok: false, status: resp.status, provider: 'rtdb' }; }
+      wrap = await resp.json();
+    }
+    if (!wrap || !wrap.data) { rememberCloudFailure('rtdb', { status: 404 }); return { ok: false, status: 404, provider: 'rtdb' }; }
+    let data;
+    try { data = JSON.parse(wrap.data); } catch(e) { rememberCloudFailure('rtdb', { error: e }); return { ok: false, error: e, provider: 'rtdb' }; }
+    if (key === (APP.state.settings?.storage?.blobKey || 'app-data.json')) {
+      APP.state.storage.lastRemoteSeenAt = getDataTimestamp(data);
+      APP.state.storage.lastRemoteProvider = 'rtdb';
+      APP.state.storage.etag = null;
+    }
+    rememberCloudSuccess('rtdb');
+    return { ok: true, data, provider: 'rtdb' };
+  } catch(e) {
+    rememberCloudFailure('rtdb', { error: e });
+    return { ok: false, error: e, provider: 'rtdb' };
+  }
+}
+async function rtdbJsonPut(key, data, options = {}) {
+  if (!shouldTryCloudProvider('rtdb', options)) return { ok: false, skipped: true, provider: 'rtdb' };
+  let payload = data;
+  try {
+    if (typeof options.mergeFn === 'function') {
+      const remote = await rtdbJsonGet(key, { force: options.force });
+      if (remote.ok && remote.data) {
+        const remoteTs = getDataTimestamp(remote.data);
+        const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
+        const remoteDevice = remote.data?.meta?.lastSavedBy || '';
+        const localDevice = data?.meta?.lastSavedBy || getOrCreateDeviceId();
+        const shouldMerge = !!options.alwaysMergeRemote || (!!remoteDevice && remoteDevice !== localDevice && remoteTs > lastSeen + 500);
+        if (shouldMerge) payload = options.mergeFn(data, remote.data);
+      }
+    }
+    const wrap = { data: JSON.stringify(payload), updatedAt: (payload && payload.meta && payload.meta.updatedAt) || new Date().toISOString(), savedAt: Date.now(), savedBy: getOrCreateDeviceId() };
+    const path = RTDB_NODE + '/' + rtdbNodeKey(key);
+    const ref = rtdbDbRef(path);
+    if (ref) {
+      await ref.set(wrap);
+    } else {
+      const resp = await fetchWithTimeout(RTDB_DB_URL + '/' + path + '.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wrap) }, 15000);
+      if (!resp.ok) { rememberCloudFailure('rtdb', { status: resp.status }); return { ok: false, status: resp.status, provider: 'rtdb' }; }
+    }
+    if (key === (APP.state.settings?.storage?.blobKey || 'app-data.json')) {
+      APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now();
+      APP.state.storage.lastRemoteProvider = 'rtdb';
+      APP.state.storage.etag = null;
+    }
+    rememberCloudSuccess('rtdb');
+    return { ok: true, status: 200, provider: 'rtdb', data: payload };
+  } catch(e) {
+    rememberCloudFailure('rtdb', { error: e });
+    return { ok: false, error: e, provider: 'rtdb' };
+  }
+}
 function getCloudProviderOrder(preferProvider) {
   const order = [];
   if (preferProvider) order.push(preferProvider);
   if (_cloudHealth.lastGoodProvider) order.push(_cloudHealth.lastGoodProvider);
-  order.push('netlify', 'firebase');
+  order.push('rtdb', 'netlify', 'firebase');
   return Array.from(new Set(order));
 }
 async function remoteGetByKey(key, options = {}) {
@@ -5826,7 +5928,9 @@ async function remoteGetByKey(key, options = {}) {
   let last = null;
   for (const provider of getCloudProviderOrder(options.preferProvider)) {
     if (!shouldTryCloudProvider(provider, options)) continue;
-    const res = provider === 'firebase' ? await firebaseJsonGet(key, options) : await netlifyBlobGet(key, options);
+    const res = provider === 'rtdb' ? await rtdbJsonGet(key, options)
+      : provider === 'firebase' ? await firebaseJsonGet(key, options)
+      : await netlifyBlobGet(key, options);
     if (res.ok) return res;
     last = res;
     if (res.status === 412) return res;
@@ -5838,14 +5942,25 @@ async function remotePutByKey(key, data, options = {}) {
   let last = null;
   for (const provider of getCloudProviderOrder(options.preferProvider)) {
     if (!shouldTryCloudProvider(provider, options)) continue;
-    const res = provider === 'firebase' ? await firebaseJsonPut(key, data, options) : await netlifyBlobPut(key, data, options);
+    const res = provider === 'rtdb' ? await rtdbJsonPut(key, data, options)
+      : provider === 'firebase' ? await firebaseJsonPut(key, data, options)
+      : await netlifyBlobPut(key, data, options);
     if (res.ok) {
-      if (options.shadowToFirebase && provider !== 'firebase' && isFirebaseCloudAvailable()) {
+      // Shadow-Write: den erfolgreichen Datensatz zusätzlich an die ANDEREN
+      // verfügbaren Provider schreiben (gedrosselt, fire-and-forget), damit sie
+      // warm bleiben und ein Rückschalten (z. B. RTDB → Netlify) verlustfrei ist.
+      if (options.shadowToOthers && isAutoSyncEnabled()) {
         const now = Date.now();
-        if (now - _lastFirebaseShadowWriteAt > (options.shadowIntervalMs || 45000)) {
-          _lastFirebaseShadowWriteAt = now;
-          firebaseJsonPut(key, res.data || data, { force: true }).catch(e => {
-            console.warn('[CloudSync] Firebase shadow write failed:', e?.message || e);
+        if (now - _lastShadowWriteAt > (options.shadowIntervalMs || 45000)) {
+          _lastShadowWriteAt = now;
+          const shadowData = res.data || data;
+          ['rtdb', 'netlify', 'firebase'].forEach(other => {
+            if (other === provider) return;
+            if (!shouldTryCloudProvider(other, { force: true })) return;
+            const putFn = other === 'rtdb' ? rtdbJsonPut : other === 'firebase' ? firebaseJsonPut : netlifyBlobPut;
+            Promise.resolve().then(() => putFn(key, shadowData, { force: true })).catch(e => {
+              console.warn('[CloudSync] Shadow-Write (' + other + ') fehlgeschlagen:', e?.message || e);
+            });
           });
         }
       }
@@ -9577,7 +9692,7 @@ async function syncFreshness(reason) {
         try { restoreExtraLocalKeys(result.data); } catch(e) {}
         try {
           if (result.data._settings) {
-            APP.state.settings = { ...APP.state.settings, ...result.data._settings, storage: APP.state.settings.storage };
+            APP.state.settings = mergeRemoteSettings(APP.state.settings, result.data._settings);
             saveSettings(APP.state.settings);
           }
           if (result.data._uiFilters) APP.state.ui.filters = { ...APP.state.ui.filters, ...result.data._uiFilters };
@@ -9667,7 +9782,7 @@ async function pullAndMergeBeforeSave(reason) {
       // Settings/UI-State aus Remote übernehmen (analog zu syncFreshness)
       try {
         if (result.data._settings) {
-          APP.state.settings = { ...APP.state.settings, ...result.data._settings, storage: APP.state.settings.storage };
+          APP.state.settings = mergeRemoteSettings(APP.state.settings, result.data._settings);
           saveSettings(APP.state.settings);
         }
         if (result.data._uiFilters) APP.state.ui.filters = { ...APP.state.ui.filters, ...result.data._uiFilters };
@@ -9898,6 +10013,30 @@ function mergeEntity(local, remote) {
 
   // Simple: take the NEWER version. No field merging, no array accumulation.
   return remoteTs > localTs ? JSON.parse(JSON.stringify(remote)) : local;
+}
+
+// Übernimmt Remote-Settings beim Sync, schützt aber vorhandene lokale API-Keys:
+// ein LEERER Remote-Key darf einen NICHT-leeren lokalen Key niemals überschreiben.
+// Das war die Wurzel von "meine API-Keys werden nie gespeichert" — ein Gerät ohne
+// Keys hat beim Multi-Device-Sync leere _settings hochgeladen, die beim Pull die
+// echten Keys des Haupt-Geräts überschrieben haben. Lokale Storage-Config bleibt
+// immer erhalten (wird nie aus Remote übernommen).
+function mergeRemoteSettings(local, remote) {
+  local = local || {};
+  const merged = { ...local, ...(remote || {}), storage: local.storage };
+  const keepNonEmpty = (localVal, mergedVal) => {
+    const l = (typeof localVal === 'string' ? localVal : '').trim();
+    const m = (typeof mergedVal === 'string' ? mergedVal : '').trim();
+    return (l && !m) ? localVal : mergedVal;
+  };
+  ['geminiApiKey', 'anthropicApiKey', 'openaiApiKey', 'openaiKey', 'claudeApiKey', 'apiKey'].forEach(k => {
+    merged[k] = keepNonEmpty(local[k], merged[k]);
+  });
+  if (local.openai || (remote && remote.openai)) {
+    merged.openai = { ...(local.openai || {}), ...((remote && remote.openai) || {}) };
+    merged.openai.apiKey = keepNonEmpty(local.openai && local.openai.apiKey, merged.openai.apiKey);
+  }
+  return merged;
 }
 
 // ── Main merge function ──
@@ -10373,11 +10512,11 @@ function saveLocalData() {
 // REMOTE STORAGE ADAPTER
 // ============================================================================
 async function remoteGet(options = {}) {
-  return remoteGetByKey(APP.state.settings.storage.blobKey, { preferProvider: 'netlify', ...options });
+  return remoteGetByKey(APP.state.settings.storage.blobKey, { preferProvider: primaryCloudProvider(), ...options });
 }
 
 async function remotePut(data, options = {}) {
-  return remotePutByKey(APP.state.settings.storage.blobKey, data, { preferProvider: 'netlify', shadowToFirebase: true, mergeFn: mergeData, ...options });
+  return remotePutByKey(APP.state.settings.storage.blobKey, data, { preferProvider: primaryCloudProvider(), shadowToOthers: true, mergeFn: mergeData, ...options });
 }
 
 function buildManualVersionId(prefix = 'v') {
@@ -10422,6 +10561,7 @@ async function fetchRemoteCandidates(key) {
   const results = [];
   const errors = [];
   const collect = (res) => { if (res && res.ok && res.data) results.push(res); else if (res) errors.push(res); };
+  try { collect(await rtdbJsonGet(key, { force: true })); } catch(e) { errors.push({ provider: 'rtdb', error: e, ok: false }); console.warn('[fetchRemoteCandidates] RTDB error:', e); }
   try { collect(await netlifyBlobGet(key, { force: true })); } catch(e) { errors.push({ provider: 'netlify', error: e, ok: false }); console.warn('[fetchRemoteCandidates] Netlify error:', e); }
   try { collect(await firebaseJsonGet(key, { force: true })); } catch(e) { errors.push({ provider: 'firebase', error: e, ok: false }); console.warn('[fetchRemoteCandidates] Firebase error:', e); }
   if (results.length === 0 && errors.length > 0) {
@@ -10437,11 +10577,12 @@ async function fetchRemoteCandidates(key) {
   return results;
 }
 function pickLatestRemoteCandidate(results) {
+  const prio = { rtdb: 0, netlify: 1, firebase: 2 };
   return [...(results || [])].sort((a, b) => {
     const diff = getDataTimestamp(b?.data) - getDataTimestamp(a?.data);
     if (diff) return diff;
     if (a?.provider === b?.provider) return 0;
-    return a?.provider === 'netlify' ? -1 : 1;
+    return (prio[a?.provider] ?? 9) - (prio[b?.provider] ?? 9);
   })[0] || null;
 }
 let _transferInProgress = false;
@@ -10794,8 +10935,7 @@ async function manualTransferPull(silent = false) {
     try { restoreExtraLocalKeys(chosen.data, { replace: true }); } catch(e) {}
 
     if (incoming._settings) {
-      const preservedStorage = { ...(APP.state.settings?.storage || {}) };
-      APP.state.settings = { ...APP.state.settings, ...incoming._settings, storage: preservedStorage };
+      APP.state.settings = mergeRemoteSettings(APP.state.settings, incoming._settings);
       saveSettings(APP.state.settings);
     }
     if (incoming._uiFilters) APP.state.ui.filters = { ...APP.state.ui.filters, ...incoming._uiFilters };
@@ -11134,8 +11274,7 @@ window._manualPullFromServer = async function() {
     // Settings (ohne lokale Storage-URLs zu überschreiben)
     try {
       if (chosen.data._settings) {
-        const preservedStorage = { ...(APP.state.settings?.storage || {}) };
-        APP.state.settings = { ...APP.state.settings, ...chosen.data._settings, storage: preservedStorage };
+        APP.state.settings = mergeRemoteSettings(APP.state.settings, chosen.data._settings);
         saveSettings(APP.state.settings);
       }
     } catch(e) {}
@@ -58775,11 +58914,15 @@ async function init() {
               </div>
             </div>
             <div class="card" style="padding:12px;border:1px solid var(--accent-soft);background:var(--accent-soft);margin:8px 0 14px">
-              <div style="font-weight:700;margin-bottom:6px;color:var(--accent)">🔥 Firebase-Speicherung (RTDB) — opt-in</div>
-              <div class="mini" style="color:var(--muted)">Sichert den <strong>kompletten Datensatz</strong> in die Firebase Realtime Database — <strong>ohne 5-MB-localStorage-Limit</strong> und ohne das Storage-CORS-Problem. Manuell (kein Auto-Sync). ⚠️ Enthält auch API-Keys — nur mit gesicherten RTDB-Regeln nutzen (siehe <code>docs/firebase-rtdb-storage.md</code>).</div>
+              <div style="font-weight:700;margin-bottom:6px;color:var(--accent)">🔥 Firebase-Speicherung (RTDB) — Auto-Sync-Primär</div>
+              <div class="mini" style="color:var(--muted)">Sichert den <strong>kompletten Datensatz</strong> automatisch in die Firebase Realtime Database — <strong>ohne 5-MB-localStorage-Limit</strong> und ohne das Storage-CORS-Problem. Netlify bleibt als Fallback/Shadow warm. ⚠️ Enthält auch API-Keys — nur mit <strong>gesicherten RTDB-Regeln</strong> nutzen (siehe <code>docs/firebase-rtdb-storage.md</code>).</div>
+              <label style="display:flex;align-items:center;gap:10px;margin-top:12px">
+                <input type="checkbox" id="setRtdbPrimary" ${(typeof primaryCloudProvider === 'function' && primaryCloudProvider() === 'rtdb') ? 'checked' : ''} onchange="fbStoreSetPrimary(this)" style="width:auto" />
+                <span>RTDB als <strong>primären</strong> Auto-Sync verwenden (empfohlen — sonst Netlify)</span>
+              </label>
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-                <button type="button" class="btn" onclick="fbStoreSaveNow()">☁️ In Firebase sichern</button>
-                <button type="button" class="btn" onclick="fbStoreLoadNow()">⬇️ Aus Firebase laden</button>
+                <button type="button" class="btn" onclick="fbStoreSaveNow()">☁️ Jetzt sichern</button>
+                <button type="button" class="btn" onclick="fbStoreLoadNow()">⬇️ Jetzt laden</button>
                 <button type="button" class="btn sm" onclick="fbStoreStatus()">Status</button>
               </div>
             </div>
@@ -102319,6 +102462,18 @@ window.addEventListener("hashchange", function(){
     tt("info","Firebase-RTDB","Prüfe …");
     try { var r = await window.fbStoreGet(); var n = (r && r.entities && r.entities.tasks) ? Object.keys(r.entities.tasks).length : 0; tt(r?"ok":"info","Firebase-RTDB", r?("Datensatz vorhanden · "+n+" Aufgaben"):"Noch kein Datensatz in RTDB."); }
     catch(e){ tt("err","Firebase-RTDB",(e&&e.message)||"nicht erreichbar (RTDB-Regeln/Netz?)"); }
+  };
+  // Umschalten: RTDB (Default) vs. Netlify als primärer Auto-Sync-Provider.
+  window.fbStoreSetPrimary = function(cb){
+    try {
+      var on = cb ? !!cb.checked : true;
+      if (window.APP && APP.state && APP.state.settings){
+        APP.state.settings.storage = APP.state.settings.storage || {};
+        APP.state.settings.storage.primaryProvider = on ? "rtdb" : "netlify";
+        if (typeof saveSettings==="function") saveSettings(APP.state.settings);
+      }
+      tt("ok","Auto-Sync", on ? "RTDB ist jetzt primär (Netlify als Fallback)." : "Netlify ist jetzt primär (RTDB als Fallback).");
+    } catch(e){ tt("err","Auto-Sync",(e&&e.message)||String(e)); }
   };
 })();
 </script>
