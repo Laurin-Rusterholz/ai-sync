@@ -1,0 +1,1606 @@
+<!DOCTYPE html>
+<html lang="de" class="theme-dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Quantus · DocStudio</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+/* Theme frueh anwenden (kein FOUC) — gleicher localStorage-Key wie Quantus-Hauptapp. */
+(function(){ try {
+  var m = localStorage.getItem("quantus_themeMode") || "dark";
+  var light = m==="light" || (m==="auto" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+  var de = document.documentElement; de.classList.toggle("theme-light", light); de.classList.toggle("theme-dark", !light);
+} catch(e){} })();
+</script>
+<style>
+:root{
+  /* ═══ Design-System „Schiefer" (Dark, Default) — identisch zur Quantus-Hauptapp ═══ */
+  --surface-base:#171c20;
+  --surface-raised:#212830;
+  --surface-overlay:#2d3640;
+  --border:#3b4550;
+  --border2:#4f5a66;
+  --hover:rgba(224,226,232,.08);
+  --text-primary:#eef0f2;
+  --text-muted:#929aa4;
+  --accent:#45c198;
+  --accent-deep:#2ea27b;
+  --accent-soft:color-mix(in oklab, var(--accent) 24%, transparent);
+  --on-accent:#04140d;
+  --danger:#e5765a;
+  --warning:#e3b048;
+  --success:#45c198;
+  --info:#6aa3de;
+  --bg:var(--surface-base);
+  --panel:var(--surface-raised);
+  --panel2:var(--surface-overlay);
+  --muted:var(--text-muted);
+  --text:var(--text-primary);
+  --text2:#cccfd5;
+  --shadow: 0 1px 2px rgba(0,0,0,.35), 0 6px 18px rgba(0,0,0,.26);
+  --shadow-lg: 0 8px 22px rgba(0,0,0,.36), 0 22px 56px rgba(0,0,0,.32);
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-lg: 20px;
+  --mono: ui-monospace, SF Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, SF Pro Text, Helvetica Neue, Arial, sans-serif;
+  --transition: all 0.16s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+/* ═══ „Leinen" (Light) ═══ */
+html.theme-light{
+  --surface-base:#cdc6b6;
+  --surface-raised:#e9e3d5;
+  --surface-overlay:#f2ede1;
+  --border:#bcb4a0;
+  --border2:#a89d82;
+  --hover:rgba(48,42,34,.08);
+  --text-primary:#2a2620;
+  --text-muted:#7a7463;
+  --accent:#1f8a66;
+  --accent-deep:#15704f;
+  --accent-soft:color-mix(in oklab, var(--accent) 22%, transparent);
+  --on-accent:#f4f8f4;
+  --danger:#b34d2c;
+  --warning:#977211;
+  --success:#1f8a66;
+  --info:#2c6499;
+  --text2:#4d493f;
+  --shadow: 0 1px 2px rgba(52,46,38,.14), 0 6px 18px rgba(52,46,38,.10);
+  --shadow-lg: 0 8px 22px rgba(52,46,38,.16), 0 22px 56px rgba(52,46,38,.13);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scrollbar-color:var(--border2) transparent;scrollbar-width:thin}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+::selection{background:var(--accent-soft);color:var(--text)}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;min-height:100vh;font-kerning:normal}
+h1,h2,h3{letter-spacing:-0.012em}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:13.5px;color:var(--text);background:var(--surface-base);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 11px;outline:none;transition:var(--transition);width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+input[type=color]{padding:2px;height:36px;width:44px;cursor:pointer}
+input[type=checkbox]{width:auto}
+input[type=range]{padding:0;border:none;accent-color:var(--accent);background:transparent;box-shadow:none}
+textarea{resize:vertical;min-height:64px;line-height:1.55}
+label{font-size:12px;font-weight:600;color:var(--muted);display:block;margin:0 0 4px}
+a{color:var(--accent)}
+
+/* ── Topbar ── */
+.topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:10px;padding:10px 18px;background:color-mix(in oklab, var(--surface-raised) 88%, transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:baseline;gap:8px;margin-right:10px;white-space:nowrap}
+.brand .q{font-family:'Playfair Display',serif;font-size:19px;font-weight:700}
+.brand .sub{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.tabs{display:flex;gap:4px;flex:1;overflow-x:auto}
+.tab{border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;padding:8px 13px;border-radius:var(--radius-sm);transition:var(--transition);white-space:nowrap}
+.tab:hover{background:var(--hover);color:var(--text)}
+.tab.on{background:var(--accent-soft);color:var(--accent)}
+.iconbtn{border:1px solid var(--border);background:var(--surface-raised);color:var(--text);border-radius:var(--radius-sm);padding:7px 10px;font-size:14px;transition:var(--transition)}
+.iconbtn:hover{border-color:var(--border2);background:var(--hover)}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);background:var(--surface-overlay);color:var(--text);font-size:13px;font-weight:600;padding:8px 15px;border-radius:var(--radius-sm);transition:var(--transition)}
+.btn:hover{border-color:var(--border2);background:var(--hover)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.primary:hover{background:var(--accent-deep)}
+.btn.danger{color:var(--danger);border-color:color-mix(in oklab, var(--danger) 40%, transparent)}
+.btn.danger:hover{background:color-mix(in oklab, var(--danger) 14%, transparent)}
+.btn.sm{padding:5px 10px;font-size:12px}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── Layout ── */
+.wrap{max-width:1240px;margin:0 auto;padding:22px 18px 80px}
+.viewhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.viewhead h1{font-family:'Playfair Display',serif;font-size:24px;font-weight:600;flex:1;min-width:180px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:14px}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.mono{font-family:var(--mono)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.hr{border:none;border-top:1px solid var(--border);margin:14px 0}
+.hidden{display:none !important}
+.empty{padding:44px 20px;text-align:center;color:var(--muted)}
+.empty .big{font-size:40px;margin-bottom:8px}
+
+/* ── Chips / Status ── */
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);background:var(--surface-overlay);border-radius:20px;padding:4px 12px;font-size:12px;font-weight:600;color:var(--text2);transition:var(--transition);cursor:pointer;user-select:none}
+.chip:hover{border-color:var(--border2)}
+.chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.statuschip{display:inline-block;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;letter-spacing:.02em}
+.statuschip.entwurf{background:color-mix(in oklab, var(--warning) 16%, transparent);color:var(--warning)}
+.statuschip.final{background:color-mix(in oklab, var(--success) 16%, transparent);color:var(--success)}
+.statuschip.pending{background:color-mix(in oklab, var(--info) 16%, transparent);color:var(--info)}
+.statuschip.error{background:color-mix(in oklab, var(--danger) 16%, transparent);color:var(--danger)}
+.orgdot{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid rgba(0,0,0,.2);flex:none}
+
+/* ── Dokumentliste ── */
+.filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.filterbar select,.filterbar input{width:auto;min-width:130px}
+.filterbar input[type=search]{flex:1;min-width:180px}
+.doclist{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.doccard{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);cursor:pointer;transition:var(--transition);display:flex;flex-direction:column;gap:8px}
+.doccard:hover{border-color:var(--border2);transform:translateY(-1px);box-shadow:var(--shadow-lg)}
+.doccard .t{font-weight:600;font-size:14.5px;line-height:1.35}
+.doccard .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.doccard .actions{display:flex;gap:6px;margin-top:auto;padding-top:6px;border-top:1px solid var(--border)}
+
+/* ── Generator ── */
+.genlayout{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:16px;align-items:start}
+.typegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:8px}
+.typecard{border:1px solid var(--border);background:var(--surface-overlay);border-radius:var(--radius-sm);padding:11px 8px;text-align:center;cursor:pointer;transition:var(--transition)}
+.typecard:hover{border-color:var(--border2)}
+.typecard.on{border-color:var(--accent);background:var(--accent-soft)}
+.typecard .ic{font-size:21px}
+.typecard .lb{font-size:12px;font-weight:600;margin-top:4px}
+.fieldgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fieldgrid .full{grid-column:1/-1}
+.gsec{margin-bottom:16px}
+.gsec h3{font-size:13px;font-weight:700;color:var(--text2);margin-bottom:9px;display:flex;align-items:center;gap:7px}
+.gsec h3 .n{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:11px}
+.gtable{width:100%;border-collapse:collapse;font-size:13px}
+.gtable th{text-align:left;font-size:11px;color:var(--muted);font-weight:600;padding:4px 6px 4px 0}
+.gtable td{padding:3px 6px 3px 0;vertical-align:top}
+.gtable input,.gtable textarea{padding:6px 8px;font-size:13px}
+.gtable textarea{min-height:40px}
+.gtable .calc{padding-top:10px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--text2)}
+.rowdel{border:none;background:transparent;color:var(--muted);font-size:15px;padding:6px 4px}
+.rowdel:hover{color:var(--danger)}
+.totals{margin-top:8px;font-size:13px;display:grid;grid-template-columns:1fr auto;gap:3px 18px;max-width:320px;margin-left:auto;font-variant-numeric:tabular-nums}
+.totals .sum{font-weight:700;border-top:1px solid var(--border);padding-top:4px}
+.sliderrow{display:grid;grid-template-columns:86px 1fr 86px;gap:8px;align-items:center;font-size:11.5px;color:var(--muted);margin-bottom:7px}
+.sliderrow span:last-child{text-align:right}
+.ctxitem{border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;margin-bottom:8px;background:var(--surface-base)}
+.ctxitem .h{display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:12.5px;font-weight:600}
+.ctxitem textarea{min-height:56px;font-size:12.5px}
+.exrow{display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.exrow:last-child{border-bottom:none}
+
+/* ── Organisationen ── */
+.orggrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.orgcard{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:9px}
+.orgcard .head{display:flex;align-items:center;gap:10px}
+.orgcard .logo{width:42px;height:42px;border-radius:9px;background:var(--surface-overlay);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex:none}
+.orgcard .logo img{max-width:100%;max-height:100%;object-fit:contain}
+.orgcard .swatches{display:flex;gap:5px}
+.orgcard .swatches i{width:18px;height:18px;border-radius:5px;border:1px solid rgba(0,0,0,.25)}
+.orgcard .actions{display:flex;gap:6px;margin-top:auto;padding-top:8px;border-top:1px solid var(--border)}
+
+/* ── Modal ── */
+.modal-back{position:fixed;inset:0;background:rgba(10,13,16,.62);z-index:60;display:flex;align-items:flex-start;justify-content:center;padding:4vh 14px;overflow-y:auto;backdrop-filter:blur(3px)}
+.modal{background:var(--surface-overlay);border:1px solid var(--border2);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);width:100%;max-width:720px;padding:20px}
+.modal.wide{max-width:860px}
+.modal h2{font-family:'Playfair Display',serif;font-size:19px;margin-bottom:14px}
+.modal .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+.picklist{max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-base)}
+.pickrow{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:var(--transition)}
+.pickrow:hover{background:var(--hover)}
+.pickrow:last-child{border-bottom:none}
+.pickrow input{margin-top:3px}
+.pickrow .t{font-weight:600;font-size:13px}
+.pickrow .s{font-size:11.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+/* ── Editor ── */
+.edbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;box-shadow:var(--shadow);position:sticky;top:60px;z-index:30}
+.edstage{margin-top:16px;background:color-mix(in oklab, var(--surface-base) 70%, black 6%);border:1px solid var(--border);border-radius:var(--radius);padding:28px 10px;overflow:auto;min-height:420px;text-align:center}
+.edframewrap{display:inline-block;transform-origin:top center;box-shadow:0 10px 34px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.3);border-radius:3px;background:#fff}
+.edframewrap.editing{outline:3px dashed var(--accent);outline-offset:5px}
+#edframe{display:block;width:210mm;min-height:297mm;border:none;background:#fff;border-radius:3px}
+.revbar{display:flex;gap:8px;margin-top:14px;align-items:flex-end}
+.revbar textarea{min-height:44px;max-height:130px}
+.revlog{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.revmsg{align-self:flex-end;max-width:75%;background:var(--accent-soft);color:var(--text);border-radius:12px 12px 3px 12px;padding:7px 12px;font-size:12.5px}
+.revmsg.sys{align-self:flex-start;background:var(--surface-overlay);border:1px solid var(--border);border-radius:12px 12px 12px 3px;color:var(--muted)}
+.edpanel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:13px;margin-top:12px}
+.verrow{display:flex;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border);font-size:12.5px}
+.verrow:last-child{border-bottom:none}
+
+/* ── Toasts / Busy / Skeleton ── */
+#toasts{position:fixed;top:14px;right:14px;z-index:100;display:flex;flex-direction:column;gap:8px;max-width:min(360px,90vw)}
+.toast{background:var(--surface-overlay);border:1px solid var(--border2);border-left:4px solid var(--info);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:10px 14px;transition:all .3s;animation:tin .22s ease}
+.toast.ok{border-left-color:var(--success)}
+.toast.err,.toast.error{border-left-color:var(--danger)}
+.toast.warn{border-left-color:var(--warning)}
+.toast-title{font-weight:700;font-size:13px}
+.toast-msg{font-size:12.5px;color:var(--muted);margin-top:2px}
+@keyframes tin{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+.busy{position:fixed;inset:0;z-index:90;background:rgba(10,13,16,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center}
+.busy .box{background:var(--surface-overlay);border:1px solid var(--border2);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);padding:30px 38px;text-align:center;max-width:420px}
+.spinner{width:38px;height:38px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;margin:0 auto 16px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.skel{background:linear-gradient(90deg,var(--surface-overlay) 25%,var(--hover) 50%,var(--surface-overlay) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:var(--radius-sm);border:1px solid var(--border)}
+@keyframes shimmer{to{background-position:-200% 0}}
+
+@media (max-width: 860px){
+  .genlayout{grid-template-columns:1fr}
+  .fieldgrid{grid-template-columns:1fr}
+  .edbar{position:static}
+  #edframe{width:100%;min-height:60vh}
+  .edstage{padding:14px 4px}
+  .wrap{padding:14px 10px 70px}
+}
+@media print{ body>*{display:none !important} }
+</style>
+</head>
+<body>
+<div id="toasts"></div>
+<header class="topbar">
+  <div class="brand"><span class="q">Quantus</span><span class="sub">DocStudio</span></div>
+  <nav class="tabs" id="tabs">
+    <button class="tab" data-action="nav" data-view="docs">📄 Dokumente</button>
+    <button class="tab" data-action="nav" data-view="new">✨ Erstellen</button>
+    <button class="tab" data-action="nav" data-view="orgs">🏢 Organisationen</button>
+    <button class="tab" data-action="nav" data-view="examples">🎨 Beispiele</button>
+  </nav>
+  <a class="iconbtn" href="index.html" title="Zurueck zu Quantus" style="text-decoration:none">⌂</a>
+  <button class="iconbtn" data-action="toggle-theme" title="Hell/Dunkel wechseln">◐</button>
+</header>
+<main class="wrap" id="view"></main>
+<div id="modal-root"></div>
+<div id="busy" class="busy hidden"><div class="box"><div class="spinner"></div><div id="busy-title" style="font-weight:700;font-size:15px">Bitte warten…</div><div id="busy-msg" class="muted small" style="margin-top:6px"></div></div></div>
+<input type="file" id="file-logo" class="hidden" accept="image/png,image/jpeg,image/svg+xml,image/webp">
+<input type="file" id="file-example" class="hidden" accept=".pdf,.docx,.doc,image/png,image/jpeg,image/webp">
+
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ════════════════════════════════════════════════════════════════════════
+   QUANTUS DOCSTUDIO — Dokumente generieren, bearbeiten, exportieren.
+
+   Datenmodell (Firebase Realtime Database, REST via .json-Endpunkte):
+     docOrgs/<id>       Organisationsprofil (Farben, Schriften, Absender, Bank …)
+     docExamples/<id>   Beispieldokument (Storage-URL, extrahierter Text, Stilanalyse)
+     docDocuments/<id>  Generiertes Dokument inkl. versions[]-Array (Rollback)
+   Original-Dateien (Logos, Beispiele) liegen in Firebase Storage unter docstudio/…
+
+   Einstieg aus anderen Quantus-Modulen (vorbefuellter Kontext):
+     docstudio.html?context=<entityId>&type=<projects|tasks|notes|persons>
+   Fertiger Button-Snippet fuer Projekt-/Aufgaben-Detailansichten:
+     <button class="btn sm" onclick="window.open('docstudio.html?context='
+       + encodeURIComponent(item.id) + '&type=projects', '_blank')">
+       📄 Dokument erstellen</button>
+   (siehe docs/docstudio-integration.md fuer Details)
+
+   n8n-Webhooks (Antwort = reines HTML bzw. JSON, siehe callWebhook):
+     POST <BASE>/quantus-doc-generate  {org, docType, fields, style, context, examples, wishes, contract}
+     POST <BASE>/quantus-doc-revise    {html, instruction, org}
+     POST <BASE>/quantus-doc-example   {org, fileUrl, fileName, mimeType}  → {text, styleAnalysis}
+   Alle mit Header  x-quantus-key: <WEBHOOK_KEY>
+   ════════════════════════════════════════════════════════════════════════ */
+
+var CONFIG = {
+  // TODO(Laurin): DB-URL mit bestehendem Quantus-Config-Muster bestaetigen (index.html: RTDB_DB_URL)
+  RTDB_URL: "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app",
+  // TODO(Laurin): Pfadnamen bestaetigen/anpassen
+  PATH_ORGS: "docOrgs",
+  PATH_EXAMPLES: "docExamples",
+  PATH_DOCUMENTS: "docDocuments",
+  // Quantus-Hauptdaten fuer den Kontext-Picker: appStore/<sanitisierter blobKey>,
+  // wrap.data = JSON-String, Entities unter data.entities.{projects,tasks,notes,persons}
+  // TODO(Laurin): falls dein blobKey nicht "app-data.json" ist, hier den RTDB-Knoten anpassen
+  APP_BLOB_PATH: "appStore/app-data_json",
+  STORAGE_DIR: "docstudio",
+  // TODO(Laurin): Webhook-Basis-URL bestaetigen (n8n.srv1757990.hstgr.cloud/webhook/…)
+  WEBHOOK_BASE: "https://n8n.srv1757990.hstgr.cloud/webhook",
+  // TODO(Laurin): x-quantus-key aus dem bestehenden Quantus-Config-Muster eintragen
+  WEBHOOK_KEY: "",
+  WH_GENERATE: "quantus-doc-generate",
+  WH_REVISE: "quantus-doc-revise",
+  // TODO(Laurin): Webhook-Namen fuer die Beispiel-Extraktion (Text + Stilanalyse) in n8n anlegen
+  WH_EXAMPLE: "quantus-doc-example",
+  GENERATE_TIMEOUT_MS: 150000,   // Generierung kann 30–60 s dauern
+  RTDB_TIMEOUT_MS: 15000,
+  MAX_VERSIONS: 25
+};
+
+// Gleiche Firebase-App wie die Quantus-Hauptapp (nur Storage wird benutzt).
+var FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC6xVo-wmXC4JjG7qMQnOExIJU-UDvBluE",
+  authDomain: "jupidu-36804.firebaseapp.com",
+  projectId: "jupidu-36804",
+  storageBucket: "jupidu-36804.firebasestorage.app",
+  messagingSenderId: "11390726952",
+  appId: "1:11390726952:web:aba2f101b6c5ca2bc5561d"
+};
+
+// CSS-Variablen-Vertrag fuer generierte Dokumente: die Schnellregler im Editor
+// (Farbe/Schrift nachtraeglich) setzen genau diese Variablen. Der n8n-Prompt
+// muss Claude anweisen, alle Farben/Schriften ueber diese :root-Variablen zu nutzen.
+var DOC_CSS_CONTRACT = {
+  primary: "--doc-primary", secondary: "--doc-secondary", accent: "--doc-accent",
+  text: "--doc-text", fontHead: "--doc-font-head", fontBody: "--doc-font-body"
+};
+
+/* ── Utils ─────────────────────────────────────────────────────────────── */
+function $(s, r){ return (r||document).querySelector(s); }
+function $$(s, r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+function todayIso(){ return new Date().toISOString().slice(0,10); }
+function fmtDate(ts){ try { var d = new Date(ts); return d.toLocaleDateString("de-CH",{day:"2-digit",month:"2-digit",year:"numeric"}) + " " + d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"}); } catch(e){ return ""; } }
+function r2(n){ return Math.round((Number(n)||0)*100)/100; }
+function chf(n){ return (Number(n)||0).toLocaleString("de-CH",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function stripHtml(s){ var d=document.createElement("div"); d.innerHTML=String(s||""); return (d.textContent||"").replace(/\s+/g," ").trim(); }
+function debounce(fn, ms){ var t; return function(){ var a=arguments,c=this; clearTimeout(t); t=setTimeout(function(){ fn.apply(c,a); }, ms); }; }
+
+function toast(type, title, message, duration){
+  var c = $("#toasts"); if (!c) return;
+  var el = document.createElement("div");
+  el.className = "toast " + (type||"info");
+  el.innerHTML = '<div class="toast-title">'+esc(title)+'</div>' + (message ? '<div class="toast-msg">'+esc(message)+'</div>' : '');
+  c.appendChild(el);
+  setTimeout(function(){ el.style.opacity="0"; el.style.transform="translateX(100%)"; setTimeout(function(){ el.remove(); }, 300); }, duration||4200);
+}
+
+var _busyTimer = null;
+function busy(title, msg){
+  var b = $("#busy");
+  if (!title){ b.classList.add("hidden"); clearInterval(_busyTimer); _busyTimer=null; return; }
+  $("#busy-title").textContent = title;
+  $("#busy-msg").textContent = msg||"";
+  b.classList.remove("hidden");
+}
+function busyWithClock(title, msg){
+  busy(title, msg);
+  var t0 = Date.now();
+  clearInterval(_busyTimer);
+  _busyTimer = setInterval(function(){
+    var s = Math.round((Date.now()-t0)/1000);
+    $("#busy-msg").textContent = msg + " · " + s + " s";
+  }, 1000);
+}
+
+function fetchWithTimeout(url, opts, ms){
+  var ctrl = new AbortController();
+  var t = setTimeout(function(){ ctrl.abort(); }, ms || CONFIG.RTDB_TIMEOUT_MS);
+  return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(function(){ clearTimeout(t); });
+}
+
+/* ── Firebase Storage ─────────────────────────────────────────────────── */
+var fbStorage = null;
+try {
+  if (typeof firebase !== "undefined"){ firebase.initializeApp(FIREBASE_CONFIG); fbStorage = firebase.storage(); }
+} catch(e){ console.warn("[DocStudio] Firebase Init fehlgeschlagen:", e && e.message); }
+
+function uploadToStorage(file, path, onProgress){
+  if (!fbStorage) return Promise.reject(new Error("Firebase SDK nicht geladen — Adblocker deaktivieren oder auf Netlify deployen"));
+  var ref = fbStorage.ref(path);
+  var task = ref.put(file, { contentType: file.type || "application/octet-stream" });
+  return new Promise(function(resolve, reject){
+    task.on("state_changed",
+      function(s){ if (onProgress) onProgress(Math.round(s.bytesTransferred/s.totalBytes*100)); },
+      reject,
+      function(){ task.snapshot.ref.getDownloadURL().then(resolve, reject); });
+  });
+}
+
+// Logo als Base64 (fuer Einbettung im generierten Dokument): grosse Bilder auf max 600px verkleinern.
+function fileToBase64Logo(file){
+  return new Promise(function(resolve, reject){
+    var rd = new FileReader();
+    rd.onerror = function(){ reject(new Error("Datei konnte nicht gelesen werden")); };
+    rd.onload = function(){
+      var dataUrl = rd.result;
+      if (file.type === "image/svg+xml" || dataUrl.length < 250000) return resolve(dataUrl);
+      var img = new Image();
+      img.onload = function(){
+        var scale = Math.min(1, 600/img.width);
+        var cv = document.createElement("canvas");
+        cv.width = Math.round(img.width*scale); cv.height = Math.round(img.height*scale);
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv.toDataURL("image/png"));
+      };
+      img.onerror = function(){ resolve(dataUrl); };
+      img.src = dataUrl;
+    };
+    rd.readAsDataURL(file);
+  });
+}
+
+/* ── RTDB REST ────────────────────────────────────────────────────────── */
+function rtdbUrl(path){ return CONFIG.RTDB_URL + "/" + path + ".json"; }
+async function rtdbGet(path){
+  var r = await fetchWithTimeout(rtdbUrl(path) + "?_ts=" + Date.now(), { headers: { "Cache-Control": "no-cache" } });
+  if (!r.ok) throw new Error("RTDB GET " + path + " → HTTP " + r.status);
+  return r.json();
+}
+async function rtdbPut(path, data){
+  var r = await fetchWithTimeout(rtdbUrl(path), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  if (!r.ok) throw new Error("RTDB PUT " + path + " → HTTP " + r.status);
+  return r.json();
+}
+async function rtdbPatch(path, data){
+  var r = await fetchWithTimeout(rtdbUrl(path), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  if (!r.ok) throw new Error("RTDB PATCH " + path + " → HTTP " + r.status);
+  return r.json();
+}
+async function rtdbDelete(path){
+  var r = await fetchWithTimeout(rtdbUrl(path), { method: "DELETE" });
+  if (!r.ok) throw new Error("RTDB DELETE " + path + " → HTTP " + r.status);
+}
+
+/* ── n8n-Webhooks ─────────────────────────────────────────────────────── */
+async function callWebhook(name, payload, timeoutMs){
+  if (!CONFIG.WEBHOOK_KEY) toast("warn", "Webhook-Key fehlt", "x-quantus-key in CONFIG setzen (// TODO(Laurin))");
+  var url = CONFIG.WEBHOOK_BASE.replace(/\/$/, "") + "/" + name;
+  var r;
+  try {
+    r = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-quantus-key": CONFIG.WEBHOOK_KEY },
+      body: JSON.stringify(payload)
+    }, timeoutMs || CONFIG.GENERATE_TIMEOUT_MS);
+  } catch(e){
+    if (e && e.name === "AbortError") throw new Error("Zeitueberschreitung — n8n hat nicht rechtzeitig geantwortet");
+    throw new Error("n8n nicht erreichbar (" + (e && e.message || "Netzwerkfehler") + ")");
+  }
+  if (!r.ok) throw new Error("n8n-Webhook „" + name + "“ antwortete mit HTTP " + r.status);
+  var text = await r.text();
+  return text;
+}
+// Antwort darf reines HTML ODER JSON ({html:…} / {output:…}) sein.
+function extractHtml(raw){
+  var s = String(raw||"").trim();
+  if (s.charAt(0) === "{" || s.charAt(0) === "["){
+    try { var j = JSON.parse(s); if (Array.isArray(j)) j = j[0] || {}; s = j.html || j.output || j.text || j.data || ""; } catch(e){}
+  }
+  s = String(s).trim();
+  // Claude liefert gelegentlich Markdown-Fences drumherum
+  s = s.replace(/^```(?:html)?\s*/i, "").replace(/\s*```$/, "");
+  if (!/<!doctype html|<html[\s>]/i.test(s)) return null;
+  return s;
+}
+function extractJson(raw){
+  var s = String(raw||"").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try { var j = JSON.parse(s); return Array.isArray(j) ? (j[0]||null) : j; } catch(e){ return null; }
+}
+
+/* ── Stammdaten: Dokumenttypen, Stilpresets, Schriften ────────────────── */
+var DOC_TYPES = {
+  rechnung: { label: "Rechnung", icon: "🧾", fields: [
+    { k:"empfaenger", label:"Empfaenger (Name & Adresse)", type:"textarea", full:1, req:1, ph:"Muster AG\nMusterstrasse 1\n9000 St. Gallen" },
+    { k:"nummer", label:"Rechnungsnummer", type:"text", autoInvoiceNo:1 },
+    { k:"datum", label:"Rechnungsdatum", type:"date", defToday:1 },
+    { k:"frist", label:"Zahlungsfrist (Tage)", type:"number", def:30 },
+    { k:"positionen", label:"Positionen", type:"table", full:1, cols:[
+      { k:"bezeichnung", label:"Bezeichnung", type:"text", w:"46%" },
+      { k:"menge", label:"Menge", type:"number", w:"13%" },
+      { k:"preis", label:"Einzelpreis CHF", type:"number", w:"20%" },
+      { k:"betrag", label:"Betrag", type:"calc", w:"15%" } ] },
+    { k:"rabatt", label:"Rabatt in % (optional)", type:"number" },
+    { k:"mwst", label:"MWST ausweisen", type:"check" },
+    { k:"mwstSatz", label:"MWST-Satz (%)", type:"number", def:8.1, showIf:"mwst" }
+  ]},
+  einladung: { label: "Einladung", icon: "💌", fields: [
+    { k:"anlass", label:"Anlass", type:"text", full:1, req:1 },
+    { k:"datum", label:"Datum", type:"date" },
+    { k:"zeit", label:"Zeit", type:"text", ph:"18:30–21:00 Uhr" },
+    { k:"ort", label:"Ort", type:"text", full:1 },
+    { k:"programm", label:"Programm", type:"table", full:1, cols:[
+      { k:"zeit", label:"Zeit", type:"text", w:"22%" },
+      { k:"punkt", label:"Programmpunkt", type:"text", w:"72%" } ] },
+    { k:"anmeldefrist", label:"Anmeldefrist", type:"date" },
+    { k:"anmeldekontakt", label:"Anmeldung Kontakt", type:"text", ph:"E-Mail oder Telefon" },
+    { k:"anmeldelink", label:"Anmeldelink", type:"text", ph:"https://…" },
+    { k:"zielgruppe", label:"Zielgruppe", type:"text" }
+  ]},
+  factsheet: { label: "Factsheet", icon: "📊", fields: [
+    { k:"thema", label:"Thema", type:"text", full:1, req:1 },
+    { k:"kernbotschaften", label:"Kernbotschaften (eine pro Zeile)", type:"textarea", full:1, lines:1 },
+    { k:"fakten", label:"Zahlen & Fakten", type:"table", full:1, cols:[
+      { k:"wert", label:"Zahl/Wert", type:"text", w:"28%" },
+      { k:"beschreibung", label:"Beschreibung", type:"text", w:"66%" } ] },
+    { k:"cta", label:"Call-to-Action", type:"text", full:1 },
+    { k:"layout", label:"Layout", type:"select", opts:["einspaltig","zweispaltig"] }
+  ]},
+  brief: { label: "Brief", icon: "✉️", fields: [
+    { k:"empfaenger", label:"Empfaengeradresse", type:"textarea", full:1, req:1 },
+    { k:"betreff", label:"Betreff", type:"text", full:1, req:1 },
+    { k:"anliegen", label:"Anliegen / Inhalt", type:"textarea", full:1, req:1, rows:5 },
+    { k:"laenge", label:"Laenge", type:"select", opts:["kurz (halbe Seite)","mittel (ca. 1 Seite)","ausfuehrlich (1–2 Seiten)"] },
+    { k:"gruss", label:"Grussformel", type:"text", def:"Freundliche Gruesse" }
+  ]},
+  bericht: { label: "Bericht", icon: "📑", fields: [
+    { k:"titel", label:"Titel", type:"text", full:1, req:1 },
+    { k:"zeitraum", label:"Zeitraum", type:"text", ph:"z.B. Januar–Juni 2026" },
+    { k:"zielpublikum", label:"Zielpublikum", type:"text" },
+    { k:"kapitel", label:"Kapitel-Stichworte (eines pro Zeile)", type:"textarea", full:1, lines:1, rows:5 }
+  ]},
+  protokoll: { label: "Protokoll", icon: "📝", fields: [
+    { k:"gremium", label:"Gremium", type:"text", full:1, req:1 },
+    { k:"datum", label:"Datum", type:"date" },
+    { k:"ort", label:"Ort", type:"text" },
+    { k:"teilnehmende", label:"Teilnehmende", type:"textarea" },
+    { k:"entschuldigt", label:"Entschuldigt", type:"textarea" },
+    { k:"vorprotokoll", label:"Vorprotokoll (nur Traktanden, leere Beschlussfelder)", type:"check", full:1 },
+    { k:"traktanden", label:"Traktanden", type:"table", full:1, cols:[
+      { k:"titel", label:"Traktandum", type:"text", w:"30%" },
+      { k:"diskussion", label:"Diskussion", type:"textarea", w:"32%" },
+      { k:"beschluss", label:"Beschluss", type:"textarea", w:"32%" } ] }
+  ]},
+  frei: { label: "Frei", icon: "🪄", fields: [
+    { k:"titel", label:"Titel", type:"text", full:1, req:1 },
+    { k:"beschreibung", label:"Beschreibung", type:"textarea", full:1, req:1, rows:6 }
+  ]}
+};
+
+var STYLE_PRESETS = [
+  { k:"amtlich",   label:"Amtlich / Klassisch", desc:"Nuechtern, behoerdlich, klare Hierarchie, Serifenschrift-Anmutung" },
+  { k:"corporate", label:"Corporate / Clean",   desc:"Modern-geschaeftlich, viel Weissraum, klare Linien, dezente Farbflaechen" },
+  { k:"editorial", label:"Editorial / Magazin", desc:"Grosszuegige Titel, Spalten, Zitate, magazinartige Typografie" },
+  { k:"verspielt", label:"Verspielt",           desc:"Freundlich, runde Formen, kraeftige Akzente, illustrative Elemente" },
+  { k:"minimal",   label:"Minimal",             desc:"Maximal reduziert, feine Typografie, viel Luft, kaum Deko" }
+];
+
+var FONT_CHOICES = ["Inter","Roboto","Open Sans","Lato","Montserrat","Work Sans","Karla","PT Sans","IBM Plex Sans","Source Sans 3","Merriweather","Lora","Playfair Display","Source Serif 4","Libre Baskerville","IBM Plex Serif","Georgia","Times New Roman","Helvetica","Arial"];
+
+// TODO(Laurin): Farben/Logos der Seed-Organisationen pruefen — das sind Platzhalter.
+var SEED_ORGS = [
+  { name:"Die Mobiliar", shortName:"Mobiliar", colors:{ primary:"#da291c", secondary:"#5b6770", accent:"#f5b7b1", text:"#1a1a1a" }, fonts:{ head:"Montserrat", body:"Inter" }, stylePreset:"corporate", tone:"Professionell, verbindlich, kundennah." },
+  { name:"SP Appenzell Ausserrhoden", shortName:"SP AR", colors:{ primary:"#e3000f", secondary:"#3d3d3d", accent:"#ffd6d9", text:"#1a1a1a" }, fonts:{ head:"Work Sans", body:"Open Sans" }, stylePreset:"editorial", tone:"Politisch engagiert, klar, buergernah, motivierend." },
+  { name:"Spielgruppe JUPIDU", shortName:"JUPIDU", colors:{ primary:"#f59e0b", secondary:"#2e86ab", accent:"#ffd166", text:"#33312c" }, fonts:{ head:"Karla", body:"Lato" }, stylePreset:"verspielt", tone:"Herzlich, verspielt, familiaer, einfach verstaendlich." },
+  { name:"Kirche / Synode", shortName:"Kirche", colors:{ primary:"#1e3a5f", secondary:"#8c7851", accent:"#c9b48a", text:"#232323" }, fonts:{ head:"Source Serif 4", body:"Source Sans 3" }, stylePreset:"amtlich", tone:"Wuerdevoll, klar, wertschaetzend, traditionsbewusst." },
+  { name:"Privat (Laurin Rusterholz)", shortName:"Privat", colors:{ primary:"#37474f", secondary:"#78909c", accent:"#80cbc4", text:"#212121" }, fonts:{ head:"Inter", body:"Inter" }, stylePreset:"minimal", tone:"Persoenlich, direkt, unkompliziert." }
+];
+
+var CTX_SOURCES = [
+  { k:"projects", label:"Projekte", icon:"📦", single:"Projekt" },
+  { k:"tasks",    label:"Aufgaben", icon:"✅", single:"Aufgabe" },
+  { k:"notes",    label:"Notizen",  icon:"📝", single:"Notiz" },
+  { k:"persons",  label:"Kontakte", icon:"👤", single:"Kontakt" }
+];
+
+function emptyOrg(){
+  return { id:"", name:"", shortName:"", logoUrl:"", logoBase64:"",
+    colors:{ primary:"#45c198", secondary:"#5b6770", accent:"#e3b048", text:"#1a1a1a" },
+    fonts:{ head:"Inter", body:"Inter" },
+    sender:{ address:"", phone:"", email:"", website:"" },
+    footer:"", bank:{ iban:"", qrIban:"", bankName:"", vatNo:"" },
+    tone:"", stylePreset:"corporate", createdAt:Date.now(), updatedAt:Date.now() };
+}
+function emptyGen(){
+  return { orgId:"", docType:"", fields:{}, preset:"", sliders:{ serioesVerspielt:50, dichtLuftig:50, klassischModern:50 },
+    styleText:"", exampleIds:[], context:[], wishes:"", title:"" };
+}
+
+/* ── Zustand ──────────────────────────────────────────────────────────── */
+var S = {
+  view: "docs",
+  loading: { orgs:true, docs:true, examples:true },
+  orgs: {}, examples: {}, docs: {},
+  quantus: null, quantusLoading: false, quantusError: null,
+  gen: emptyGen(),
+  filters: { org:"", type:"", project:"", status:"", q:"" },
+  exOrgId: "",
+  editor: { docId:"", zoom:1, editing:false, quickOpen:false, versionsOpen:false, revising:false, revlog:[] },
+  ctxModal: null
+};
+
+/* ── Datenzugriff ─────────────────────────────────────────────────────── */
+async function loadAll(){
+  var jobs = [
+    rtdbGet(CONFIG.PATH_ORGS).then(function(d){ S.orgs = d||{}; }).catch(function(e){ toast("err","Organisationen laden fehlgeschlagen", e.message); }),
+    rtdbGet(CONFIG.PATH_DOCUMENTS).then(function(d){ S.docs = d||{}; }).catch(function(e){ toast("err","Dokumente laden fehlgeschlagen", e.message); }),
+    rtdbGet(CONFIG.PATH_EXAMPLES).then(function(d){ S.examples = d||{}; }).catch(function(e){ toast("err","Beispiele laden fehlgeschlagen", e.message); })
+  ];
+  await Promise.all(jobs);
+  S.loading = { orgs:false, docs:false, examples:false };
+  render();
+}
+async function saveOrg(org){ org.updatedAt = Date.now(); S.orgs[org.id] = org; await rtdbPut(CONFIG.PATH_ORGS + "/" + org.id, org); }
+async function saveDoc(doc){ doc.updatedAt = Date.now(); S.docs[doc.id] = doc; await rtdbPut(CONFIG.PATH_DOCUMENTS + "/" + doc.id, doc); }
+async function saveExample(ex){ S.examples[ex.id] = ex; await rtdbPut(CONFIG.PATH_EXAMPLES + "/" + ex.id, ex); }
+
+// Quantus-Hauptdaten (Kontext-Picker): App-Blob lesen und entpacken.
+async function loadQuantusData(){
+  if (S.quantus || S.quantusLoading) return S.quantus;
+  S.quantusLoading = true; S.quantusError = null;
+  try {
+    var wrap = await rtdbGet(CONFIG.APP_BLOB_PATH);
+    if (!wrap || !wrap.data) throw new Error("Kein Quantus-Datenblob unter " + CONFIG.APP_BLOB_PATH);
+    var data = JSON.parse(wrap.data);
+    S.quantus = data.entities ? data : (data.data && data.data.entities ? data.data : null);
+    if (!S.quantus) throw new Error("Unerwartetes Blob-Format (entities fehlen)");
+  } catch(e){
+    S.quantusError = e.message || "Quantus-Daten nicht ladbar";
+  } finally {
+    S.quantusLoading = false;
+  }
+  return S.quantus;
+}
+function quantusEntities(sourceKey){
+  var ents = S.quantus && S.quantus.entities;
+  if (!ents) return [];
+  var map = ents[sourceKey] || {};
+  return Object.keys(map).map(function(id){ var e = map[id]||{}; if (!e.id) e.id = id; return e; });
+}
+function entityTitle(e){ return e.title || e.name || "(ohne Titel)"; }
+function entityToContext(sourceKey, e){
+  var src = CTX_SOURCES.find(function(s){ return s.k === sourceKey; }) || { single: sourceKey };
+  var parts = [];
+  if (e.description) parts.push(stripHtml(e.description));
+  if (e.content) parts.push(stripHtml(e.content));
+  if (typeof e.notes === "string" && e.notes) parts.push(stripHtml(e.notes));
+  if (e.status) parts.push("Status: " + e.status);
+  if (e.dueDate || e.due) parts.push("Faellig: " + (e.dueDate || e.due));
+  if (sourceKey === "persons"){
+    if (Array.isArray(e.emails) && e.emails.length) parts.push("E-Mail: " + e.emails.join(", "));
+    if (Array.isArray(e.phones) && e.phones.length) parts.push("Telefon: " + e.phones.join(", "));
+    if (e.address) parts.push("Adresse: " + stripHtml(typeof e.address === "string" ? e.address : JSON.stringify(e.address)));
+    if (e.organization) parts.push("Organisation: " + stripHtml(String(e.organization)));
+  }
+  var content = parts.join("\n").slice(0, 2500);
+  return { source: src.single, sourceKey: sourceKey, id: e.id, title: entityTitle(e), content: content || entityTitle(e) };
+}
+
+/* ── Router ───────────────────────────────────────────────────────────── */
+function nav(view, arg){
+  location.hash = "#/" + view + (arg ? "/" + arg : "");
+}
+function onHashChange(){
+  var h = (location.hash || "#/docs").replace(/^#\//, "");
+  var parts = h.split("/");
+  var v = parts[0] || "docs";
+  if (v === "editor"){ S.editor.docId = parts[1] || ""; S.editor.editing = false; S.editor.quickOpen = false; S.editor.versionsOpen = false; S.editor.revlog = []; _quickVals = null; }
+  S.view = ["docs","new","orgs","examples","editor"].indexOf(v) >= 0 ? v : "docs";
+  render();
+}
+
+/* ── Rendering ────────────────────────────────────────────────────────── */
+function render(){
+  $$("#tabs .tab").forEach(function(t){ t.classList.toggle("on", t.dataset.view === S.view || (S.view==="editor" && t.dataset.view==="docs")); });
+  var v = $("#view");
+  switch (S.view){
+    case "docs": v.innerHTML = renderDocs(); break;
+    case "new": v.innerHTML = renderGenerator(); break;
+    case "orgs": v.innerHTML = renderOrgs(); break;
+    case "examples": v.innerHTML = renderExamples(); break;
+    case "editor": v.innerHTML = renderEditor(); afterEditorRender(); break;
+  }
+}
+function skeletons(n, h){
+  var out = ""; for (var i=0;i<n;i++) out += '<div class="skel" style="height:'+(h||92)+'px"></div>'; return out;
+}
+function orgOf(id){ return S.orgs[id] || null; }
+function orgName(id){ var o = orgOf(id); return o ? (o.shortName || o.name) : "?"; }
+function orgDot(id){ var o = orgOf(id); return '<span class="orgdot" style="background:'+esc(o && o.colors && o.colors.primary || "#888")+'"></span>'; }
+function docList(){ return Object.values(S.docs || {}).filter(Boolean).sort(function(a,b){ return (b.updatedAt||0)-(a.updatedAt||0); }); }
+function exList(orgId){ return Object.values(S.examples || {}).filter(function(e){ return e && (!orgId || e.orgId === orgId); }).sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); }); }
+function currentVersion(doc){ var v = doc && doc.versions; return (v && v.length) ? v[v.length-1] : null; }
+
+/* ── Ansicht: Dokumentliste ───────────────────────────────────────────── */
+function renderDocs(){
+  var f = S.filters;
+  var head = '<div class="viewhead"><h1>Dokumente</h1><button class="btn primary" data-action="nav" data-view="new">✨ Neues Dokument</button></div>';
+  if (S.loading.docs) return head + '<div class="doclist">' + skeletons(6, 130) + '</div>';
+  var docs = docList();
+  var linkedProjects = {};
+  docs.forEach(function(d){ (d.linkedContext||[]).forEach(function(c){ if (c.sourceKey === "projects") linkedProjects[c.id] = c.title; }); });
+  var bar = '<div class="filterbar">'
+    + '<select data-filter="org"><option value="">Alle Organisationen</option>' + Object.values(S.orgs).filter(Boolean).map(function(o){ return '<option value="'+esc(o.id)+'"'+(f.org===o.id?" selected":"")+'>'+esc(o.shortName||o.name)+'</option>'; }).join("") + '</select>'
+    + '<select data-filter="type"><option value="">Alle Typen</option>' + Object.keys(DOC_TYPES).map(function(k){ return '<option value="'+k+'"'+(f.type===k?" selected":"")+'>'+esc(DOC_TYPES[k].label)+'</option>'; }).join("") + '</select>'
+    + '<select data-filter="project"><option value="">Alle Projekte</option>' + Object.keys(linkedProjects).map(function(id){ return '<option value="'+esc(id)+'"'+(f.project===id?" selected":"")+'>'+esc(linkedProjects[id])+'</option>'; }).join("") + '</select>'
+    + '<select data-filter="status"><option value="">Alle Status</option><option value="entwurf"'+(f.status==="entwurf"?" selected":"")+'>Entwurf</option><option value="final"'+(f.status==="final"?" selected":"")+'>Final</option></select>'
+    + '<input type="search" placeholder="Suchen…" value="'+esc(f.q)+'" data-filter="q">'
+    + '</div>';
+  var q = (f.q||"").toLowerCase();
+  var filtered = docs.filter(function(d){
+    if (f.org && d.orgId !== f.org) return false;
+    if (f.type && d.docType !== f.type) return false;
+    if (f.status && (d.status||"entwurf") !== f.status) return false;
+    if (f.project && !(d.linkedContext||[]).some(function(c){ return c.sourceKey==="projects" && c.id===f.project; })) return false;
+    if (q && (d.title||"").toLowerCase().indexOf(q) < 0 && orgName(d.orgId).toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+  if (!filtered.length) return head + bar + '<div class="empty"><div class="big">📄</div><p>' + (docs.length ? "Keine Dokumente passen zu den Filtern." : "Noch keine Dokumente — erstelle dein erstes.") + '</p></div>';
+  return head + bar + '<div class="doclist">' + filtered.map(function(d){
+    var t = DOC_TYPES[d.docType] || { label:d.docType, icon:"📄" };
+    return '<div class="doccard" data-action="open-doc" data-id="'+esc(d.id)+'">'
+      + '<div class="row" style="gap:7px">' + orgDot(d.orgId) + '<span class="small muted">'+esc(orgName(d.orgId))+'</span><span class="spacer"></span><span class="statuschip '+((d.status||"entwurf"))+'">'+((d.status==="final")?"Final":"Entwurf")+'</span></div>'
+      + '<div class="t">'+t.icon+' '+esc(d.title||"(ohne Titel)")+'</div>'
+      + '<div class="meta"><span>'+esc(t.label)+'</span><span>·</span><span>'+esc(fmtDate(d.updatedAt))+'</span><span>·</span><span>'+((d.versions||[]).length)+' Version'+(((d.versions||[]).length)===1?"":"en")+'</span></div>'
+      + ((d.linkedContext||[]).length ? '<div class="meta">🔗 ' + d.linkedContext.map(function(c){ return esc(c.title); }).join(", ").slice(0,90) + '</div>' : "")
+      + '<div class="actions">'
+      + '<button class="btn sm" data-action="open-doc" data-id="'+esc(d.id)+'">Oeffnen</button>'
+      + '<button class="btn sm ghost" data-action="doc-template" data-id="'+esc(d.id)+'" title="Als Vorlage in den Generator laden">Als Vorlage</button>'
+      + '<span class="spacer"></span>'
+      + '<button class="btn sm ghost danger" data-action="delete-doc" data-id="'+esc(d.id)+'">🗑</button>'
+      + '</div></div>';
+  }).join("") + '</div>';
+}
+
+/* ── Ansicht: Generator ───────────────────────────────────────────────── */
+function renderGenerator(){
+  var g = S.gen;
+  var orgOpts = Object.values(S.orgs).filter(Boolean).map(function(o){ return '<option value="'+esc(o.id)+'"'+(g.orgId===o.id?" selected":"")+'>'+esc(o.name)+'</option>'; }).join("");
+  var head = '<div class="viewhead"><h1>Dokument erstellen</h1></div>';
+  if (S.loading.orgs) return head + skeletons(3, 120);
+  if (!Object.keys(S.orgs).length){
+    return head + '<div class="empty"><div class="big">🏢</div><p>Zuerst brauchst du mindestens ein Organisationsprofil.</p><p style="margin-top:12px"><button class="btn primary" data-action="nav" data-view="orgs">Organisationen verwalten</button></p></div>';
+  }
+  var org = orgOf(g.orgId);
+  var left = '<div>'
+    + '<div class="card gsec"><h3><span class="n">1</span>Organisation & Dokumentart</h3>'
+    + '<div class="fieldgrid"><div class="full"><label>Organisation</label><select id="gen-org"><option value="">— waehlen —</option>'+orgOpts+'</select></div></div>'
+    + '<div style="margin-top:11px"><label>Dokumentart</label><div class="typegrid">'
+    + Object.keys(DOC_TYPES).map(function(k){ var t=DOC_TYPES[k]; return '<div class="typecard'+(g.docType===k?" on":"")+'" data-action="gen-type" data-type="'+k+'"><div class="ic">'+t.icon+'</div><div class="lb">'+esc(t.label)+'</div></div>'; }).join("")
+    + '</div></div></div>'
+    + '<div class="card gsec"><h3><span class="n">2</span>Inhalt</h3><div id="gen-fields">' + renderGenFields() + '</div>'
+    + '<div style="margin-top:11px"><label>Weitere Wuensche / Inhalte</label><textarea data-gen="wishes" rows="3" placeholder="Alles, was sonst noch ins Dokument soll oder beachtet werden muss …">'+esc(g.wishes)+'</textarea></div>'
+    + '<div style="margin-top:11px"><label>Dokumenttitel (intern, optional)</label><input type="text" data-gen="title" value="'+esc(g.title)+'" placeholder="wird sonst automatisch vergeben"></div>'
+    + '</div></div>';
+
+  var exs = g.orgId ? exList(g.orgId).filter(function(e){ return e.status === "ok"; }) : [];
+  var right = '<div>'
+    + '<div class="card gsec"><h3><span class="n">3</span>Stil</h3>'
+    + '<div class="row" style="gap:6px;margin-bottom:12px">' + STYLE_PRESETS.map(function(p){ return '<span class="chip'+(g.preset===p.k?" on":"")+'" data-action="gen-preset" data-preset="'+p.k+'" title="'+esc(p.desc)+'">'+esc(p.label)+'</span>'; }).join("") + '</div>'
+    + '<div class="sliderrow"><span>serioes</span><input type="range" min="0" max="100" value="'+g.sliders.serioesVerspielt+'" data-slider="serioesVerspielt"><span>verspielt</span></div>'
+    + '<div class="sliderrow"><span>dicht</span><input type="range" min="0" max="100" value="'+g.sliders.dichtLuftig+'" data-slider="dichtLuftig"><span>luftig</span></div>'
+    + '<div class="sliderrow"><span>klassisch</span><input type="range" min="0" max="100" value="'+g.sliders.klassischModern+'" data-slider="klassischModern"><span>modern</span></div>'
+    + '<div style="margin-top:9px"><label>Gestaltungswuensche (frei)</label><textarea data-gen="styleText" rows="2" placeholder="z.B. grosse Titelzeile, Fusszeile mit Logo, dezente Linien …">'+esc(g.styleText)+'</textarea></div>'
+    + '</div>'
+    + '<div class="card gsec"><h3><span class="n">4</span>Beispieldokumente</h3>'
+    + (!g.orgId ? '<p class="muted small">Zuerst Organisation waehlen.</p>'
+       : (!exs.length ? '<p class="muted small">Keine analysierten Beispiele fuer diese Organisation. <a href="#/examples">Beispiele hochladen</a></p>'
+       : exs.map(function(e){ var on = g.exampleIds.indexOf(e.id)>=0; return '<div class="exrow"><input type="checkbox" data-example="'+esc(e.id)+'"'+(on?" checked":"")+' style="margin-top:2px"><div><div style="font-weight:600">'+esc(e.fileName)+'</div><div class="small muted">'+esc(String(e.styleAnalysis||"").slice(0,110))+'…</div></div></div>'; }).join("")))
+    + '</div>'
+    + '<div class="card gsec"><h3><span class="n">5</span>Kontext aus Quantus</h3>'
+    + '<div id="gen-ctx">' + renderCtxItems() + '</div>'
+    + '<button class="btn sm" data-action="ctx-open">➕ Kontext hinzufuegen</button>'
+    + '</div>'
+    + '<button class="btn primary" data-action="generate" style="width:100%;justify-content:center;padding:12px;font-size:14.5px">🪄 Dokument generieren</button>'
+    + (org ? '<p class="small muted" style="margin-top:8px;text-align:center">Erzeugt via n8n → Claude · dauert 30–60 s</p>' : "")
+    + '</div>';
+  return head + '<div class="genlayout">' + left + right + '</div>';
+}
+
+function renderCtxItems(){
+  var g = S.gen;
+  if (!g.context.length) return '<p class="muted small" style="margin-bottom:8px">Noch kein Kontext ausgewaehlt. Ausgewaehlte Projekte, Aufgaben, Notizen oder Kontakte fliessen als editierbarer Text in den Prompt.</p>';
+  return g.context.map(function(c, i){
+    return '<div class="ctxitem"><div class="h"><span>'+esc(c.source)+':</span><span style="flex:1">'+esc(c.title)+'</span>'
+      + '<button class="rowdel" data-action="ctx-remove" data-idx="'+i+'" title="Entfernen">✕</button></div>'
+      + '<textarea data-ctx-idx="'+i+'">'+esc(c.content)+'</textarea></div>';
+  }).join("");
+}
+
+function renderGenFields(){
+  var g = S.gen;
+  if (!g.docType) return '<p class="muted small">Zuerst Dokumentart waehlen.</p>';
+  var spec = DOC_TYPES[g.docType];
+  var out = '<div class="fieldgrid">';
+  spec.fields.forEach(function(f){
+    if (f.showIf && !g.fields[f.showIf]) return;
+    var v = g.fields[f.k];
+    if (v === undefined){
+      v = f.def !== undefined ? f.def : (f.defToday ? todayIso() : (f.type === "table" ? [{},{},{}] : (f.type === "check" ? false : "")));
+      if (f.autoInvoiceNo && g.orgId) v = nextInvoiceNo(g.orgId);
+      g.fields[f.k] = v;
+    }
+    var cell = '<div' + (f.full ? ' class="full"' : "") + '><label>' + esc(f.label) + (f.req ? ' *' : "") + '</label>';
+    if (f.type === "text") cell += '<input type="text" data-gf="'+f.k+'" value="'+esc(v)+'"'+(f.ph?' placeholder="'+esc(f.ph)+'"':"")+'>';
+    else if (f.type === "number") cell += '<input type="number" step="any" data-gf="'+f.k+'" value="'+esc(v)+'">';
+    else if (f.type === "date") cell += '<input type="date" data-gf="'+f.k+'" value="'+esc(v)+'">';
+    else if (f.type === "textarea") cell += '<textarea data-gf="'+f.k+'" rows="'+(f.rows||3)+'"'+(f.ph?' placeholder="'+esc(f.ph)+'"':"")+'>'+esc(v)+'</textarea>';
+    else if (f.type === "select") cell += '<select data-gf="'+f.k+'">'+f.opts.map(function(o){ return '<option'+(v===o?" selected":"")+'>'+esc(o)+'</option>'; }).join("")+'</select>';
+    else if (f.type === "check") cell = '<div'+(f.full?' class="full"':"")+' style="display:flex;align-items:center;gap:8px;padding-top:18px"><input type="checkbox" data-gf="'+f.k+'" data-gf-check="1"'+(v?" checked":"")+' id="gf-'+f.k+'"><label for="gf-'+f.k+'" style="margin:0;cursor:pointer">'+esc(f.label)+'</label>';
+    else if (f.type === "table") cell += renderGenTable(f, v);
+    cell += '</div>';
+    out += cell;
+  });
+  out += '</div>';
+  if (g.docType === "rechnung") out += renderInvoiceTotals();
+  if (g.docType === "rechnung" && g.orgId){
+    var o = orgOf(g.orgId);
+    out += '<p class="small muted" style="margin-top:8px">' + (o && o.bank && o.bank.qrIban
+      ? "✅ QR-IBAN hinterlegt — das Dokument enthaelt eine Schweizer QR-Rechnung (via JS-Library im Dokument, bleibt standalone editierbar)."
+      : "ℹ️ Keine QR-IBAN im Organisationsprofil — es wird keine QR-Rechnung eingebettet.") + '</p>';
+  }
+  return out;
+}
+function renderGenTable(f, rows){
+  rows = Array.isArray(rows) ? rows : [];
+  var out = '<table class="gtable"><thead><tr>' + f.cols.map(function(c){ return '<th style="width:'+c.w+'">'+esc(c.label)+'</th>'; }).join("") + '<th></th></tr></thead><tbody>';
+  rows.forEach(function(row, ri){
+    out += '<tr>';
+    f.cols.forEach(function(c){
+      var cv = row[c.k] !== undefined ? row[c.k] : "";
+      if (c.type === "calc"){
+        var amt = (parseFloat(row.menge)||0) * (parseFloat(row.preis)||0);
+        out += '<td class="calc" data-calc-row="'+ri+'">'+chf(amt)+'</td>';
+      } else if (c.type === "textarea"){
+        out += '<td><textarea data-gt="'+f.k+'" data-row="'+ri+'" data-col="'+c.k+'" rows="2">'+esc(cv)+'</textarea></td>';
+      } else {
+        out += '<td><input type="'+(c.type==="number"?"number":"text")+'"'+(c.type==="number"?' step="any"':"")+' data-gt="'+f.k+'" data-row="'+ri+'" data-col="'+c.k+'" value="'+esc(cv)+'"></td>';
+      }
+    });
+    out += '<td><button class="rowdel" data-action="row-del" data-field="'+f.k+'" data-row="'+ri+'" title="Zeile loeschen">✕</button></td></tr>';
+  });
+  out += '</tbody></table><button class="btn sm ghost" data-action="row-add" data-field="'+f.k+'" style="margin-top:6px">➕ Zeile</button>';
+  return out;
+}
+function invoiceTotals(fields){
+  var rows = (fields.positionen||[]).filter(function(r){ return r && (r.bezeichnung || r.menge || r.preis); });
+  var sub = 0; rows.forEach(function(r){ sub += (parseFloat(r.menge)||0)*(parseFloat(r.preis)||0); });
+  var rabatt = parseFloat(fields.rabatt)||0;
+  var rabattBetrag = sub*rabatt/100;
+  var netto = sub - rabattBetrag;
+  var satz = fields.mwst ? (parseFloat(fields.mwstSatz)||8.1) : 0;
+  var mwstBetrag = netto*satz/100;
+  return { zwischensumme:r2(sub), rabattProzent:rabatt, rabattBetrag:r2(rabattBetrag), netto:r2(netto), mwstSatz:satz, mwstBetrag:r2(mwstBetrag), total:r2(netto+mwstBetrag) };
+}
+function renderInvoiceTotals(){
+  var t = invoiceTotals(S.gen.fields);
+  var out = '<div class="totals" id="inv-totals"><span>Zwischensumme</span><span>CHF '+chf(t.zwischensumme)+'</span>';
+  if (t.rabattProzent) out += '<span>Rabatt '+t.rabattProzent+'%</span><span>− CHF '+chf(t.rabattBetrag)+'</span>';
+  if (t.mwstSatz) out += '<span>MWST '+t.mwstSatz+'%</span><span>CHF '+chf(t.mwstBetrag)+'</span>';
+  out += '<span class="sum">Total</span><span class="sum">CHF '+chf(t.total)+'</span></div>';
+  return out;
+}
+function nextInvoiceNo(orgId){
+  var year = new Date().getFullYear();
+  var max = 0;
+  docList().forEach(function(d){
+    if (d.orgId !== orgId || d.docType !== "rechnung") return;
+    var no = d.gen && d.gen.fields && d.gen.fields.nummer || "";
+    var m = String(no).match(new RegExp("^" + year + "-(\\d{3,})$"));
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return year + "-" + String(max+1).padStart(3, "0");
+}
+
+/* ── Kontext-Picker (Modal) ───────────────────────────────────────────── */
+function openCtxModal(){
+  S.ctxModal = { tab: "projects", q: "", sel: {} };
+  S.gen.context.forEach(function(c){ S.ctxModal.sel[c.sourceKey + ":" + c.id] = true; });
+  renderCtxModal();
+  loadQuantusData().then(function(){ renderCtxModal(); });
+}
+function renderCtxModal(){
+  var m = S.ctxModal; if (!m) { $("#modal-root").innerHTML = ""; return; }
+  var body;
+  if (S.quantusLoading) body = '<div class="grid">' + skeletons(5, 42) + '</div>';
+  else if (S.quantusError) body = '<div class="empty"><div class="big">⚠️</div><p>'+esc(S.quantusError)+'</p><p class="small muted" style="margin-top:6px">RTDB-Pfad in CONFIG.APP_BLOB_PATH pruefen.</p></div>';
+  else {
+    var q = m.q.toLowerCase();
+    var items = quantusEntities(m.tab).filter(function(e){
+      if (!q) return true;
+      return (entityTitle(e) + " " + stripHtml(e.description||e.content||"")).toLowerCase().indexOf(q) >= 0;
+    }).sort(function(a,b){ return String(entityTitle(a)).localeCompare(String(entityTitle(b)), "de"); }).slice(0, 200);
+    body = '<div class="picklist">' + (items.length ? items.map(function(e){
+      var key = m.tab + ":" + e.id;
+      return '<div class="pickrow" data-action="ctx-toggle" data-key="'+esc(key)+'"><input type="checkbox"'+(m.sel[key]?" checked":"")+' tabindex="-1"><div><div class="t">'+esc(entityTitle(e))+'</div><div class="s">'+esc(stripHtml(e.description||e.content||e.status||"").slice(0,150))+'</div></div></div>';
+    }).join("") : '<div class="empty">Nichts gefunden.</div>') + '</div>';
+  }
+  $("#modal-root").innerHTML = '<div class="modal-back" data-action="ctx-close"><div class="modal wide">'
+    + '<h2>Kontext aus Quantus waehlen</h2>'
+    + '<div class="row" style="margin-bottom:10px">' + CTX_SOURCES.map(function(s){ return '<span class="chip'+(m.tab===s.k?" on":"")+'" data-action="ctx-tab" data-tab="'+s.k+'">'+s.icon+' '+s.label+'</span>'; }).join("") + '</div>'
+    + '<input type="search" id="ctx-search" placeholder="Suchen…" value="'+esc(m.q)+'" style="margin-bottom:10px">'
+    + body
+    + '<div class="foot"><button class="btn" data-action="ctx-close">Abbrechen</button><button class="btn primary" data-action="ctx-apply">Uebernehmen ('+Object.keys(m.sel).filter(function(k){ return m.sel[k]; }).length+')</button></div>'
+    + '</div></div>';
+  var si = $("#ctx-search"); if (si){ si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+}
+function applyCtxModal(){
+  var m = S.ctxModal; if (!m) return;
+  var kept = S.gen.context.filter(function(c){ return m.sel[c.sourceKey + ":" + c.id]; });
+  var have = {}; kept.forEach(function(c){ have[c.sourceKey + ":" + c.id] = true; });
+  Object.keys(m.sel).forEach(function(key){
+    if (!m.sel[key] || have[key]) return;
+    var i = key.indexOf(":"), sk = key.slice(0,i), id = key.slice(i+1);
+    var ent = quantusEntities(sk).find(function(e){ return e.id === id; });
+    if (ent) kept.push(entityToContext(sk, ent));
+  });
+  S.gen.context = kept;
+  S.ctxModal = null;
+  $("#modal-root").innerHTML = "";
+  var host = $("#gen-ctx"); if (host) host.innerHTML = renderCtxItems();
+}
+
+/* ── Generierung ──────────────────────────────────────────────────────── */
+function buildFieldsPayload(){
+  var g = S.gen, spec = DOC_TYPES[g.docType], out = {};
+  spec.fields.forEach(function(f){
+    var v = g.fields[f.k];
+    if (f.showIf && !g.fields[f.showIf]) return;
+    if (f.type === "table"){
+      out[f.k] = (Array.isArray(v)?v:[]).filter(function(r){ return r && f.cols.some(function(c){ return c.type!=="calc" && String(r[c.k]||"").trim(); }); })
+        .map(function(r){ var o={}; f.cols.forEach(function(c){ if (c.type==="calc") o[c.k]=r2((parseFloat(r.menge)||0)*(parseFloat(r.preis)||0)); else o[c.k]=r[c.k]!==undefined?r[c.k]:""; }); return o; });
+    } else if (f.lines){
+      out[f.k] = String(v||"").split("\n").map(function(s){ return s.trim(); }).filter(Boolean);
+    } else out[f.k] = v !== undefined ? v : "";
+  });
+  if (g.docType === "rechnung"){
+    out.totals = invoiceTotals(g.fields);
+    var o = orgOf(g.orgId);
+    out.qrRechnung = !!(o && o.bank && o.bank.qrIban);
+  }
+  return out;
+}
+function validateGen(){
+  var g = S.gen;
+  if (!g.orgId) return "Bitte eine Organisation waehlen.";
+  if (!g.docType) return "Bitte eine Dokumentart waehlen.";
+  var spec = DOC_TYPES[g.docType];
+  for (var i=0;i<spec.fields.length;i++){
+    var f = spec.fields[i];
+    if (f.req && !String(g.fields[f.k]||"").trim()) return "Pflichtfeld fehlt: " + f.label;
+  }
+  return null;
+}
+function deriveTitle(){
+  var g = S.gen, f = g.fields;
+  if (g.title.trim()) return g.title.trim();
+  var t = DOC_TYPES[g.docType].label;
+  switch (g.docType){
+    case "rechnung": return "Rechnung " + (f.nummer||"") + (f.empfaenger ? " · " + String(f.empfaenger).split("\n")[0] : "");
+    case "einladung": return "Einladung · " + (f.anlass||"");
+    case "factsheet": return "Factsheet · " + (f.thema||"");
+    case "brief": return "Brief · " + (f.betreff||"");
+    case "bericht": return f.titel || "Bericht";
+    case "protokoll": return (f.vorprotokoll ? "Vorprotokoll" : "Protokoll") + " · " + (f.gremium||"") + (f.datum ? " · " + f.datum : "");
+    case "frei": return f.titel || "Dokument";
+  }
+  return t;
+}
+function buildGeneratePayload(){
+  var g = S.gen;
+  var org = JSON.parse(JSON.stringify(orgOf(g.orgId)));
+  var preset = STYLE_PRESETS.find(function(p){ return p.k === g.preset; });
+  return {
+    org: org,   // komplettes Profil inkl. logoUrl + logoBase64 (als <img src=data:…> einbetten)
+    docType: g.docType,
+    fields: buildFieldsPayload(),
+    style: {
+      preset: g.preset || org.stylePreset || "corporate",
+      presetBeschreibung: preset ? preset.desc : "",
+      sliders: g.sliders,   // 0–100: serioesVerspielt, dichtLuftig, klassischModern
+      freitext: g.styleText
+    },
+    context: g.context.map(function(c){ return { source: c.source, title: c.title, content: c.content }; }),
+    examples: g.exampleIds.map(function(id){ var e = S.examples[id]; return e ? { styleAnalysis: e.styleAnalysis||"", excerpt: String(e.text||"").slice(0,1500) } : null; }).filter(Boolean),
+    wishes: g.wishes,
+    // Vertrag fuers generierte HTML: standalone, A4/@page/print-Media-Queries, alle
+    // Styles im style-Block, Logo als Base64-img, Farben/Schriften als :root-Variablen.
+    contract: { cssVars: DOC_CSS_CONTRACT, format: "A4", standalone: true }
+  };
+}
+async function generateDocument(){
+  var err = validateGen();
+  if (err) return toast("warn", "Unvollstaendig", err);
+  var g = S.gen;
+  busyWithClock("Dokument wird gestaltet…", "n8n → Claude generiert dein Layout — das kann 30–60 s dauern");
+  try {
+    var raw = await callWebhook(CONFIG.WH_GENERATE, buildGeneratePayload());
+    var html = extractHtml(raw);
+    if (!html) throw new Error("Ungueltige Antwort — kein vollstaendiges HTML-Dokument erhalten");
+    var doc = {
+      id: uid(), orgId: g.orgId, docType: g.docType, title: deriveTitle(),
+      status: "entwurf",
+      linkedContext: g.context.map(function(c){ return { sourceKey: c.sourceKey||"", id: c.id||"", title: c.title, source: c.source }; }),
+      gen: { docType: g.docType, fields: JSON.parse(JSON.stringify(g.fields)), preset: g.preset, sliders: g.sliders, styleText: g.styleText, wishes: g.wishes, exampleIds: g.exampleIds },
+      createdAt: Date.now(), updatedAt: Date.now(),
+      versions: [{ ts: Date.now(), note: "Erstgenerierung", html: html }]
+    };
+    await saveDoc(doc);
+    S.gen = emptyGen();
+    toast("ok", "Dokument erstellt", doc.title);
+    nav("editor", doc.id);
+  } catch(e){
+    toast("err", "Generierung fehlgeschlagen", e.message||String(e), 7000);
+  } finally { busy(null); }
+}
+
+/* ── Ansicht: Organisationen ──────────────────────────────────────────── */
+function renderOrgs(){
+  var head = '<div class="viewhead"><h1>Organisationen</h1><button class="btn primary" data-action="new-org">➕ Neue Organisation</button></div>';
+  if (S.loading.orgs) return head + '<div class="orggrid">' + skeletons(4, 150) + '</div>';
+  var orgs = Object.values(S.orgs).filter(Boolean).sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"de"); });
+  if (!orgs.length) return head + '<div class="empty"><div class="big">🏢</div><p>Noch keine Organisationsprofile.</p><p style="margin-top:12px"><button class="btn" data-action="seed-orgs">Standard-Organisationen anlegen (Mobiliar, SP AR, JUPIDU, Kirche, privat)</button></p></div>';
+  return head + '<div class="orggrid">' + orgs.map(function(o){
+    var c = o.colors||{};
+    return '<div class="orgcard">'
+      + '<div class="head"><div class="logo">' + (o.logoBase64||o.logoUrl ? '<img src="'+esc(o.logoBase64||o.logoUrl)+'" alt="">' : '🏢') + '</div>'
+      + '<div><div style="font-weight:700">'+esc(o.name)+'</div><div class="small muted">'+esc(o.shortName||"")+'</div></div></div>'
+      + '<div class="swatches">' + ["primary","secondary","accent","text"].map(function(k){ return '<i style="background:'+esc(c[k]||"#888")+'" title="'+k+'"></i>'; }).join("") + '</div>'
+      + '<div class="small muted">'+esc(o.fonts&&o.fonts.head||"")+' / '+esc(o.fonts&&o.fonts.body||"")+' · '+esc((STYLE_PRESETS.find(function(p){return p.k===o.stylePreset;})||{}).label||"")+'</div>'
+      + (o.bank && o.bank.qrIban ? '<div class="small" style="color:var(--success)">✅ QR-IBAN hinterlegt</div>' : "")
+      + '<div class="actions"><button class="btn sm" data-action="edit-org" data-id="'+esc(o.id)+'">Bearbeiten</button>'
+      + '<button class="btn sm ghost" data-action="dup-org" data-id="'+esc(o.id)+'">Duplizieren</button><span class="spacer"></span>'
+      + '<button class="btn sm ghost danger" data-action="delete-org" data-id="'+esc(o.id)+'">🗑</button></div>'
+      + '</div>';
+  }).join("") + '</div>';
+}
+
+var _editOrg = null;   // Arbeitskopie im Modal
+function openOrgModal(org){
+  _editOrg = JSON.parse(JSON.stringify(org));
+  renderOrgModal();
+}
+function renderOrgModal(){
+  var o = _editOrg; if (!o){ $("#modal-root").innerHTML = ""; return; }
+  function inp(path, label, ph, type){
+    var v = path.split(".").reduce(function(a,k){ return a && a[k]; }, o) || "";
+    return '<div><label>'+esc(label)+'</label><input type="'+(type||"text")+'" data-org="'+path+'" value="'+esc(v)+'"'+(ph?' placeholder="'+esc(ph)+'"':"")+'></div>';
+  }
+  function colorInp(key, label){
+    var v = (o.colors&&o.colors[key]) || "#888888";
+    return '<div><label>'+esc(label)+'</label><div class="row" style="flex-wrap:nowrap"><input type="color" data-org="colors.'+key+'" value="'+esc(v)+'"><input type="text" data-org="colors.'+key+'" value="'+esc(v)+'" class="mono" style="flex:1"></div></div>';
+  }
+  function fontSel(key, label){
+    var v = (o.fonts&&o.fonts[key]) || "Inter";
+    return '<div><label>'+esc(label)+'</label><select data-org="fonts.'+key+'">'+FONT_CHOICES.map(function(f){ return '<option'+(f===v?" selected":"")+'>'+f+'</option>'; }).join("")+'</select></div>';
+  }
+  $("#modal-root").innerHTML = '<div class="modal-back"><div class="modal wide">'
+    + '<h2>'+(S.orgs[o.id] ? "Organisation bearbeiten" : "Neue Organisation")+'</h2>'
+    + '<div class="fieldgrid">'
+    + inp("name","Name","z.B. Spielgruppe JUPIDU") + inp("shortName","Kurzname","z.B. JUPIDU")
+    + '<div class="full"><label>Logo (wird im Dokument als Base64 eingebettet)</label><div class="row">'
+    + '<div class="logo" style="width:52px;height:52px;border:1px solid var(--border);border-radius:9px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--surface-base)">'
+    + ((o.logoBase64||o.logoUrl) ? '<img src="'+esc(o.logoBase64||o.logoUrl)+'" style="max-width:100%;max-height:100%;object-fit:contain">' : '🏢') + '</div>'
+    + '<button class="btn sm" data-action="org-logo-pick">📤 Logo hochladen</button>'
+    + (o.logoUrl||o.logoBase64 ? '<button class="btn sm ghost danger" data-action="org-logo-clear">Entfernen</button>' : "")
+    + '</div></div>'
+    + colorInp("primary","Primaerfarbe") + colorInp("secondary","Sekundaerfarbe") + colorInp("accent","Akzentfarbe") + colorInp("text","Textfarbe")
+    + fontSel("head","Schrift Ueberschriften") + fontSel("body","Schrift Fliesstext")
+    + '<div class="full"><label>Absenderadresse</label><textarea data-org="sender.address" rows="2">'+esc(o.sender&&o.sender.address||"")+'</textarea></div>'
+    + inp("sender.phone","Telefon") + inp("sender.email","E-Mail")
+    + inp("sender.website","Website","https://…")
+    + inp("bank.bankName","Bank")
+    + inp("bank.iban","IBAN","CH…") + inp("bank.qrIban","QR-IBAN (aktiviert QR-Rechnung)","CH…")
+    + inp("bank.vatNo","MWST-Nr","CHE-…")
+    + '<div class="full"><label>Fusszeilentext</label><input type="text" data-org="footer" value="'+esc(o.footer||"")+'"></div>'
+    + '<div class="full"><label>Tonalitaet (Freitext, fliesst in jeden Prompt)</label><textarea data-org="tone" rows="2">'+esc(o.tone||"")+'</textarea></div>'
+    + '<div class="full"><label>Standard-Stilpreset</label><div class="row" style="gap:6px">'+STYLE_PRESETS.map(function(p){ return '<span class="chip'+(o.stylePreset===p.k?" on":"")+'" data-action="org-preset" data-preset="'+p.k+'">'+esc(p.label)+'</span>'; }).join("")+'</div></div>'
+    + '</div>'
+    + '<div class="foot"><button class="btn" data-action="org-cancel">Abbrechen</button><button class="btn primary" data-action="org-save">💾 Speichern</button></div>'
+    + '</div></div>';
+}
+async function handleLogoFile(file){
+  if (!file || !_editOrg) return;
+  if (file.size > 4*1024*1024) return toast("warn","Logo zu gross","Bitte Bild unter 4 MB verwenden");
+  busy("Logo wird hochgeladen…", file.name);
+  try {
+    var b64 = await fileToBase64Logo(file);
+    var url = "";
+    try { url = await uploadToStorage(file, CONFIG.STORAGE_DIR + "/logos/" + (_editOrg.id||uid()) + "_" + file.name.replace(/[^a-zA-Z0-9._-]/g,"_")); }
+    catch(e){ toast("warn","Storage-Upload fehlgeschlagen","Logo wird nur als Base64 gespeichert ("+(e.message||"")+")"); }
+    _editOrg.logoBase64 = b64;
+    _editOrg.logoUrl = url;
+    renderOrgModal();
+  } catch(e){ toast("err","Logo-Upload fehlgeschlagen", e.message); }
+  finally { busy(null); }
+}
+
+/* ── Ansicht: Beispiele ───────────────────────────────────────────────── */
+function renderExamples(){
+  var head = '<div class="viewhead"><h1>Beispieldokumente</h1></div>';
+  if (S.loading.examples || S.loading.orgs) return head + skeletons(3, 90);
+  var orgs = Object.values(S.orgs).filter(Boolean);
+  if (!orgs.length) return head + '<div class="empty"><div class="big">🏢</div><p>Zuerst Organisationen anlegen.</p></div>';
+  if (!S.exOrgId || !S.orgs[S.exOrgId]) S.exOrgId = orgs[0].id;
+  var list = exList(S.exOrgId);
+  return head
+    + '<div class="filterbar"><select id="ex-org">' + orgs.map(function(o){ return '<option value="'+esc(o.id)+'"'+(S.exOrgId===o.id?" selected":"")+'>'+esc(o.name)+'</option>'; }).join("") + '</select>'
+    + '<button class="btn primary" data-action="ex-upload">📤 Beispiel hochladen (PDF/DOCX/Bild)</button></div>'
+    + '<p class="small muted" style="margin-bottom:14px">Hochgeladene Beispiele werden via n8n analysiert: Text-Extraktion + kurze Stilanalyse (Aufbau, Tonalitaet, Typografie). Beim Generieren waehlst du 0–n Beispiele als Stilreferenz an.</p>'
+    + (!list.length ? '<div class="empty"><div class="big">🎨</div><p>Noch keine Beispiele fuer diese Organisation.</p></div>'
+    : '<div class="grid">' + list.map(function(e){
+      var st = e.status === "ok" ? '<span class="statuschip final">Analysiert</span>' : e.status === "pending" ? '<span class="statuschip pending">Wird analysiert…</span>' : '<span class="statuschip error">Fehler</span>';
+      return '<div class="card"><div class="row"><strong>📎 '+esc(e.fileName)+'</strong>'+st+'<span class="spacer"></span><span class="small muted">'+esc(fmtDate(e.createdAt))+'</span>'
+        + (e.status==="error" ? '<button class="btn sm" data-action="ex-retry" data-id="'+esc(e.id)+'">🔄 Erneut analysieren</button>' : "")
+        + '<button class="btn sm ghost danger" data-action="ex-delete" data-id="'+esc(e.id)+'">🗑</button></div>'
+        + (e.styleAnalysis ? '<div class="hr"></div><div class="small"><strong>Stilanalyse:</strong> '+esc(e.styleAnalysis)+'</div>' : "")
+        + (e.text ? '<div class="small muted" style="margin-top:6px"><strong>Textauszug:</strong> '+esc(String(e.text).slice(0,220))+'…</div>' : "")
+        + (e.error ? '<div class="small" style="color:var(--danger);margin-top:6px">'+esc(e.error)+'</div>' : "")
+        + '</div>';
+    }).join("") + '</div>');
+}
+async function handleExampleFile(file){
+  if (!file) return;
+  if (file.size > 15*1024*1024) return toast("warn","Datei zu gross","Bitte unter 15 MB");
+  var orgId = S.exOrgId;
+  busy("Beispiel wird hochgeladen…", file.name);
+  var ex = { id: uid(), orgId: orgId, fileName: file.name, fileUrl: "", mimeType: file.type||"", status: "pending", text: "", styleAnalysis: "", createdAt: Date.now() };
+  try {
+    ex.fileUrl = await uploadToStorage(file, CONFIG.STORAGE_DIR + "/examples/" + orgId + "/" + Date.now() + "_" + file.name.replace(/[^a-zA-Z0-9._-]/g,"_"));
+    await saveExample(ex);
+    render();
+    busyWithClock("Beispiel wird analysiert…", "n8n extrahiert Text und Claude erstellt eine Stilanalyse");
+    await analyzeExample(ex);
+  } catch(e){
+    ex.status = "error"; ex.error = e.message||String(e);
+    try { await saveExample(ex); } catch(e2){}
+    toast("err","Beispiel-Upload fehlgeschlagen", ex.error, 7000);
+  } finally { busy(null); render(); }
+}
+async function analyzeExample(ex){
+  var org = orgOf(ex.orgId) || {};
+  var raw = await callWebhook(CONFIG.WH_EXAMPLE, { org: { id: org.id, name: org.name }, fileUrl: ex.fileUrl, fileName: ex.fileName, mimeType: ex.mimeType });
+  var j = extractJson(raw);
+  if (!j || (!j.text && !j.styleAnalysis)) throw new Error("Ungueltige Antwort der Beispiel-Analyse (erwartet JSON {text, styleAnalysis})");
+  ex.text = String(j.text||"");
+  ex.styleAnalysis = String(j.styleAnalysis||"");
+  ex.status = "ok"; ex.error = "";
+  await saveExample(ex);
+  toast("ok","Beispiel analysiert", ex.fileName);
+}
+
+/* ── Ansicht: Editor ──────────────────────────────────────────────────── */
+function renderEditor(){
+  var doc = S.docs[S.editor.docId];
+  if (S.loading.docs) return skeletons(1, 60) + '<div class="skel" style="height:70vh;margin-top:14px"></div>';
+  if (!doc) return '<div class="empty"><div class="big">🤷</div><p>Dokument nicht gefunden.</p><p style="margin-top:10px"><button class="btn" data-action="nav" data-view="docs">Zur Liste</button></p></div>';
+  var ed = S.editor;
+  var ver = currentVersion(doc);
+  var t = DOC_TYPES[doc.docType] || { label: doc.docType, icon:"📄" };
+  var zoomPct = Math.round(ed.zoom*100);
+  return '<div class="viewhead"><button class="iconbtn" data-action="nav" data-view="docs" title="Zurueck">←</button>'
+    + '<h1 style="font-size:19px">'+t.icon+' '+esc(doc.title)+'</h1>' + orgDot(doc.orgId) + '<span class="small muted">'+esc(orgName(doc.orgId))+'</span>'
+    + '<button class="statuschip '+((doc.status||"entwurf"))+'" data-action="ed-status" style="border:none;cursor:pointer" title="Status umschalten">'+((doc.status==="final")?"Final":"Entwurf")+'</button></div>'
+    + '<div class="edbar">'
+    + '<button class="iconbtn" data-action="ed-zoom-out" title="Verkleinern">−</button><span class="small mono" style="min-width:44px;text-align:center">'+zoomPct+'%</span><button class="iconbtn" data-action="ed-zoom-in" title="Vergroessern">+</button>'
+    + '<span class="spacer"></span>'
+    + '<button class="btn sm'+(ed.editing?" primary":"")+'" data-action="ed-edit-toggle">'+(ed.editing?"💾 Bearbeitung speichern":"✏️ Direkt bearbeiten")+'</button>'
+    + '<button class="btn sm'+(ed.quickOpen?" primary":"")+'" data-action="ed-quick-toggle">🎨 Schnellregler</button>'
+    + '<button class="btn sm'+(ed.versionsOpen?" primary":"")+'" data-action="ed-versions-toggle">🕘 Versionen ('+(doc.versions||[]).length+')</button>'
+    + '<span class="spacer"></span>'
+    + '<button class="btn sm" data-action="ed-print">🖨 PDF / Drucken</button>'
+    + '<button class="btn sm" data-action="ed-download">⬇ HTML</button>'
+    + '<button class="btn sm" data-action="doc-template" data-id="'+esc(doc.id)+'">📋 Als Vorlage duplizieren</button>'
+    + '</div>'
+    + (ed.quickOpen ? renderQuickPanel(doc) : "")
+    + (ed.versionsOpen ? renderVersionsPanel(doc) : "")
+    + '<div class="edstage"><div class="edframewrap'+(ed.editing?" editing":"")+'" id="edwrap"><iframe id="edframe" sandbox="allow-same-origin allow-scripts allow-modals" title="Dokumentvorschau"></iframe></div></div>'
+    + '<div class="revlog" id="revlog">' + ed.revlog.map(function(m){ return '<div class="revmsg'+(m.sys?" sys":"")+'">'+esc(m.text)+'</div>'; }).join("") + '</div>'
+    + '<div class="revbar"><textarea id="rev-input" placeholder="Revisionsanweisung an Claude … z.B. „Titel groesser, Fusszeile dezenter, Abschnitt X umformulieren“ (Enter = senden)"></textarea>'
+    + '<button class="btn primary" data-action="ed-revise" '+(ed.revising?"disabled":"")+'>'+(ed.revising?"⏳":"➤ Senden")+'</button></div>';
+}
+function renderQuickPanel(doc){
+  var org = orgOf(doc.orgId) || emptyOrg();
+  var v = _quickVals || { primary: org.colors.primary, fontHead: org.fonts.head, fontBody: org.fonts.body };
+  return '<div class="edpanel"><div class="row">'
+    + '<div><label>Primaerfarbe</label><input type="color" data-quick="primary" value="'+esc(v.primary)+'"></div>'
+    + '<div><label>Schrift Ueberschriften</label><select data-quick="fontHead">'+FONT_CHOICES.map(function(f){ return '<option'+(f===v.fontHead?" selected":"")+'>'+f+'</option>'; }).join("")+'</select></div>'
+    + '<div><label>Schrift Fliesstext</label><select data-quick="fontBody">'+FONT_CHOICES.map(function(f){ return '<option'+(f===v.fontBody?" selected":"")+'>'+f+'</option>'; }).join("")+'</select></div>'
+    + '<span class="spacer"></span><button class="btn sm primary" data-action="ed-quick-save">💾 Als Version speichern</button></div>'
+    + '<p class="small muted" style="margin-top:8px">Wirkt live ueber die :root-CSS-Variablen des Dokuments ('+esc(DOC_CSS_CONTRACT.primary)+' …). Speichern legt eine neue Version an.</p></div>';
+}
+function renderVersionsPanel(doc){
+  var vs = (doc.versions||[]).slice().reverse();
+  return '<div class="edpanel">' + vs.map(function(v, ri){
+    var idx = doc.versions.length - 1 - ri;
+    var cur = idx === doc.versions.length - 1;
+    return '<div class="verrow"><span class="mono small">#'+(idx+1)+'</span><span>'+esc(fmtDate(v.ts))+'</span><span class="muted">'+esc(v.note||"")+'</span><span class="spacer"></span>'
+      + (cur ? '<span class="statuschip final">Aktuell</span>' : '<button class="btn sm" data-action="ed-rollback" data-idx="'+idx+'">↩ Auf diese Version zurueck</button>')
+      + '</div>';
+  }).join("") + '</div>';
+}
+var _quickVals = null;
+function afterEditorRender(){
+  var doc = S.docs[S.editor.docId];
+  var frame = $("#edframe");
+  if (!doc || !frame) return;
+  var ver = currentVersion(doc);
+  frame.onload = function(){
+    try {
+      var d = frame.contentDocument;
+      frame.style.height = Math.max(d.documentElement.scrollHeight, d.body ? d.body.scrollHeight : 0, 1123) + "px";
+      if (S.editor.editing) d.designMode = "on";
+      applyQuickLive();
+    } catch(e){}
+  };
+  frame.srcdoc = ver ? ver.html : "<html><body><p style='font-family:sans-serif;padding:40px'>Keine Version vorhanden.</p></body></html>";
+  applyZoom();
+  var ri = $("#rev-input");
+  if (ri) ri.addEventListener("keydown", function(e){ if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); reviseDocument(); } });
+}
+function applyZoom(){
+  var w = $("#edwrap"); if (w) w.style.transform = "scale(" + S.editor.zoom + ")";
+}
+function applyQuickLive(){
+  if (!_quickVals) return;
+  try {
+    var root = $("#edframe").contentDocument.documentElement;
+    root.style.setProperty(DOC_CSS_CONTRACT.primary, _quickVals.primary);
+    root.style.setProperty(DOC_CSS_CONTRACT.fontHead, "'" + _quickVals.fontHead + "', sans-serif");
+    root.style.setProperty(DOC_CSS_CONTRACT.fontBody, "'" + _quickVals.fontBody + "', sans-serif");
+  } catch(e){}
+}
+function injectOverrides(html, vals){
+  var css = ":root{" + DOC_CSS_CONTRACT.primary + ":" + vals.primary + " !important;"
+    + DOC_CSS_CONTRACT.fontHead + ":'" + vals.fontHead + "', sans-serif !important;"
+    + DOC_CSS_CONTRACT.fontBody + ":'" + vals.fontBody + "', sans-serif !important;}";
+  var block = '<style id="q-overrides">' + css + '</style>';
+  if (/<style id="q-overrides">[\s\S]*?<\/style>/.test(html)) return html.replace(/<style id="q-overrides">[\s\S]*?<\/style>/, block);
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, block + "</head>");
+  return block + html;
+}
+async function pushVersion(doc, html, note){
+  doc.versions = doc.versions || [];
+  doc.versions.push({ ts: Date.now(), note: note||"", html: html });
+  if (doc.versions.length > CONFIG.MAX_VERSIONS) doc.versions = doc.versions.slice(-CONFIG.MAX_VERSIONS);
+  await saveDoc(doc);
+}
+function getFrameHtml(){
+  var d = $("#edframe").contentDocument;
+  return "<!DOCTYPE html>\n" + d.documentElement.outerHTML;
+}
+async function toggleDirectEdit(){
+  var ed = S.editor, doc = S.docs[ed.docId];
+  if (!doc) return;
+  if (!ed.editing){
+    ed.editing = true;
+    try { $("#edframe").contentDocument.designMode = "on"; } catch(e){ toast("err","Bearbeitung nicht moeglich", e.message); ed.editing = false; }
+    $("#edwrap").classList.toggle("editing", ed.editing);
+    render(); afterEditorRenderKeepFrame(doc);
+  } else {
+    var html;
+    try { $("#edframe").contentDocument.designMode = "off"; html = getFrameHtml(); }
+    catch(e){ return toast("err","Speichern fehlgeschlagen", e.message); }
+    ed.editing = false;
+    busy("Version wird gespeichert…");
+    try { await pushVersion(doc, html, "Direktbearbeitung"); toast("ok","Gespeichert","Direktbearbeitung als neue Version abgelegt"); }
+    catch(e){ toast("err","Speichern fehlgeschlagen", e.message); }
+    finally { busy(null); render(); afterEditorRender(); }
+  }
+}
+// Re-Render ohne das iframe neu zu laden (fuer Toggle-Zustaende waehrend der Bearbeitung).
+function afterEditorRenderKeepFrame(doc){
+  // Bearbeitungsmodus: iframe darf NICHT neu geladen werden, sonst gehen Aenderungen verloren.
+  // render() hat das iframe ersetzt — Inhalt wieder herstellen ist zu riskant, daher:
+  // wir laden die aktuelle Version und schalten designMode direkt wieder ein (frischer Zustand).
+  afterEditorRender();
+}
+async function reviseDocument(){
+  var ed = S.editor, doc = S.docs[ed.docId];
+  var input = $("#rev-input");
+  var instruction = input && input.value.trim();
+  if (!doc || !instruction) return;
+  if (ed.editing) return toast("warn","Zuerst Bearbeitung speichern","Direktbearbeitung ist aktiv");
+  ed.revising = true; ed.revlog.push({ text: instruction });
+  render(); afterEditorRender();
+  busyWithClock("Revision laeuft…", "Claude ueberarbeitet dein Dokument");
+  try {
+    var org = orgOf(doc.orgId) || {};
+    var raw = await callWebhook(CONFIG.WH_REVISE, { html: currentVersion(doc).html, instruction: instruction, org: org });
+    var html = extractHtml(raw);
+    if (!html) throw new Error("Ungueltige Antwort — kein HTML erhalten");
+    await pushVersion(doc, html, "Revision: " + instruction.slice(0, 80));
+    ed.revlog.push({ sys: true, text: "✅ Revision umgesetzt (Version #" + doc.versions.length + ")" });
+    toast("ok","Revision umgesetzt","Neue Version gespeichert");
+  } catch(e){
+    ed.revlog.push({ sys: true, text: "⚠️ " + (e.message||"Fehler") });
+    toast("err","Revision fehlgeschlagen", e.message||String(e), 7000);
+  } finally {
+    ed.revising = false; busy(null); render(); afterEditorRender();
+  }
+}
+async function rollbackTo(idx){
+  var doc = S.docs[S.editor.docId];
+  if (!doc || !doc.versions || !doc.versions[idx]) return;
+  busy("Rollback…");
+  try {
+    await pushVersion(doc, doc.versions[idx].html, "Rollback auf Version #" + (idx+1) + " (" + fmtDate(doc.versions[idx].ts) + ")");
+    toast("ok","Rollback ausgefuehrt","Version #" + (idx+1) + " ist wieder aktuell (als neue Version)");
+  } catch(e){ toast("err","Rollback fehlgeschlagen", e.message); }
+  finally { busy(null); render(); afterEditorRender(); }
+}
+function downloadHtml(doc){
+  var ver = currentVersion(doc); if (!ver) return;
+  var blob = new Blob([ver.html], { type: "text/html;charset=utf-8" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = String(doc.title||"dokument").replace(/[^a-zA-Z0-9aeoeueAeOeUe _-]/g,"").trim().replace(/\s+/g,"-").toLowerCase() + ".html";
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
+}
+function loadAsTemplate(docId){
+  var doc = S.docs[docId];
+  if (!doc || !doc.gen) return toast("warn","Keine Vorlagedaten","Dieses Dokument hat keinen gespeicherten Generator-Zustand");
+  S.gen = emptyGen();
+  S.gen.orgId = doc.orgId;
+  S.gen.docType = doc.gen.docType;
+  S.gen.fields = JSON.parse(JSON.stringify(doc.gen.fields||{}));
+  S.gen.preset = doc.gen.preset||"";
+  S.gen.sliders = Object.assign(S.gen.sliders, doc.gen.sliders||{});
+  S.gen.styleText = doc.gen.styleText||"";
+  S.gen.wishes = doc.gen.wishes||"";
+  S.gen.exampleIds = (doc.gen.exampleIds||[]).filter(function(id){ return S.examples[id]; });
+  if (S.gen.docType === "rechnung") S.gen.fields.nummer = nextInvoiceNo(S.gen.orgId);
+  toast("ok","Vorlage geladen","Generator mit den Angaben von „"+ (doc.title||"") +"“ vorbefuellt");
+  nav("new");
+}
+
+/* ── Event-Delegation ─────────────────────────────────────────────────── */
+document.addEventListener("click", function(e){
+  var el = e.target.closest("[data-action]");
+  if (!el) return;
+  var a = el.dataset.action, id = el.dataset.id;
+  switch (a){
+    case "nav": nav(el.dataset.view); break;
+    case "toggle-theme": {
+      var light = !document.documentElement.classList.contains("theme-light");
+      document.documentElement.classList.toggle("theme-light", light);
+      document.documentElement.classList.toggle("theme-dark", !light);
+      try { localStorage.setItem("quantus_themeMode", light ? "light" : "dark"); } catch(err){}
+      break;
+    }
+    // Dokumente
+    case "open-doc": nav("editor", id); break;
+    case "delete-doc": {
+      e.stopPropagation();
+      var d = S.docs[id]; if (!d) break;
+      if (!confirm("Dokument „" + (d.title||"") + "“ endgueltig loeschen?")) break;
+      rtdbDelete(CONFIG.PATH_DOCUMENTS + "/" + id).then(function(){ delete S.docs[id]; toast("ok","Geloescht", d.title); if (S.view==="editor") nav("docs"); else render(); })
+        .catch(function(err){ toast("err","Loeschen fehlgeschlagen", err.message); });
+      break;
+    }
+    case "doc-template": e.stopPropagation(); loadAsTemplate(id); break;
+    // Generator
+    case "gen-type": {
+      S.gen.docType = el.dataset.type;
+      S.gen.fields = {};
+      render();
+      break;
+    }
+    case "gen-preset": S.gen.preset = (S.gen.preset === el.dataset.preset) ? "" : el.dataset.preset; render(); break;
+    case "row-add": {
+      var fld = el.dataset.field;
+      (S.gen.fields[fld] = S.gen.fields[fld] || []).push({});
+      $("#gen-fields").innerHTML = renderGenFields();
+      break;
+    }
+    case "row-del": {
+      var fld2 = el.dataset.field;
+      (S.gen.fields[fld2]||[]).splice(parseInt(el.dataset.row,10), 1);
+      $("#gen-fields").innerHTML = renderGenFields();
+      break;
+    }
+    case "generate": generateDocument(); break;
+    // Kontext-Picker
+    case "ctx-open": openCtxModal(); break;
+    case "ctx-close": if (e.target === el || el.tagName === "BUTTON"){ S.ctxModal = null; $("#modal-root").innerHTML = ""; } break;
+    case "ctx-tab": S.ctxModal.tab = el.dataset.tab; renderCtxModal(); break;
+    case "ctx-toggle": {
+      var key = el.dataset.key;
+      S.ctxModal.sel[key] = !S.ctxModal.sel[key];
+      var cb = el.querySelector("input"); if (cb) cb.checked = S.ctxModal.sel[key];
+      var applyBtn = $('[data-action="ctx-apply"]');
+      if (applyBtn) applyBtn.textContent = "Uebernehmen (" + Object.keys(S.ctxModal.sel).filter(function(k){ return S.ctxModal.sel[k]; }).length + ")";
+      break;
+    }
+    case "ctx-apply": applyCtxModal(); break;
+    case "ctx-remove": {
+      S.gen.context.splice(parseInt(el.dataset.idx,10), 1);
+      $("#gen-ctx").innerHTML = renderCtxItems();
+      break;
+    }
+    // Organisationen
+    case "new-org": { var o = emptyOrg(); o.id = uid(); openOrgModal(o); break; }
+    case "edit-org": openOrgModal(S.orgs[id]); break;
+    case "dup-org": {
+      var src = S.orgs[id]; if (!src) break;
+      var cp = JSON.parse(JSON.stringify(src)); cp.id = uid(); cp.name = src.name + " (Kopie)"; cp.createdAt = Date.now();
+      saveOrg(cp).then(function(){ toast("ok","Dupliziert", cp.name); render(); }).catch(function(err){ toast("err","Duplizieren fehlgeschlagen", err.message); });
+      break;
+    }
+    case "delete-org": {
+      var od = S.orgs[id]; if (!od) break;
+      if (!confirm("Organisation „" + od.name + "“ loeschen? Dokumente bleiben erhalten.")) break;
+      rtdbDelete(CONFIG.PATH_ORGS + "/" + id).then(function(){ delete S.orgs[id]; toast("ok","Geloescht", od.name); render(); })
+        .catch(function(err){ toast("err","Loeschen fehlgeschlagen", err.message); });
+      break;
+    }
+    case "seed-orgs": {
+      busy("Organisationen werden angelegt…");
+      Promise.all(SEED_ORGS.map(function(t){
+        var o = Object.assign(emptyOrg(), JSON.parse(JSON.stringify(t))); o.id = uid();
+        return saveOrg(o);
+      })).then(function(){ toast("ok","Angelegt", SEED_ORGS.length + " Organisationsprofile — bitte Logos/Daten ergaenzen"); })
+        .catch(function(err){ toast("err","Anlegen fehlgeschlagen", err.message); })
+        .finally(function(){ busy(null); render(); });
+      break;
+    }
+    case "org-preset": _editOrg.stylePreset = el.dataset.preset; renderOrgModal(); break;
+    case "org-logo-pick": $("#file-logo").click(); break;
+    case "org-logo-clear": _editOrg.logoUrl = ""; _editOrg.logoBase64 = ""; renderOrgModal(); break;
+    case "org-cancel": _editOrg = null; $("#modal-root").innerHTML = ""; break;
+    case "org-save": {
+      if (!String(_editOrg.name||"").trim()) return toast("warn","Name fehlt","Bitte einen Organisationsnamen eingeben");
+      busy("Wird gespeichert…");
+      saveOrg(_editOrg).then(function(){ toast("ok","Gespeichert", _editOrg.name); _editOrg = null; $("#modal-root").innerHTML = ""; render(); })
+        .catch(function(err){ toast("err","Speichern fehlgeschlagen", err.message); })
+        .finally(function(){ busy(null); });
+      break;
+    }
+    // Beispiele
+    case "ex-upload": {
+      if (!S.exOrgId) return toast("warn","Organisation waehlen","");
+      $("#file-example").click(); break;
+    }
+    case "ex-delete": {
+      var ex = S.examples[id]; if (!ex) break;
+      if (!confirm("Beispiel „" + ex.fileName + "“ loeschen?")) break;
+      rtdbDelete(CONFIG.PATH_EXAMPLES + "/" + id).then(function(){ delete S.examples[id]; render(); })
+        .catch(function(err){ toast("err","Loeschen fehlgeschlagen", err.message); });
+      break;
+    }
+    case "ex-retry": {
+      var ex2 = S.examples[id]; if (!ex2) break;
+      busyWithClock("Beispiel wird analysiert…", "n8n extrahiert Text und Claude erstellt eine Stilanalyse");
+      analyzeExample(ex2).catch(function(err){ ex2.status = "error"; ex2.error = err.message; saveExample(ex2); toast("err","Analyse fehlgeschlagen", err.message, 7000); })
+        .finally(function(){ busy(null); render(); });
+      break;
+    }
+    // Editor
+    case "ed-zoom-in": S.editor.zoom = Math.min(1.5, r2(S.editor.zoom + 0.15)); render(); afterEditorRender(); break;
+    case "ed-zoom-out": S.editor.zoom = Math.max(0.4, r2(S.editor.zoom - 0.15)); render(); afterEditorRender(); break;
+    case "ed-edit-toggle": toggleDirectEdit(); break;
+    case "ed-quick-toggle": {
+      S.editor.quickOpen = !S.editor.quickOpen;
+      if (S.editor.quickOpen && !_quickVals){
+        var org2 = orgOf((S.docs[S.editor.docId]||{}).orgId) || emptyOrg();
+        _quickVals = { primary: org2.colors.primary, fontHead: org2.fonts.head, fontBody: org2.fonts.body };
+      }
+      render(); afterEditorRender();
+      break;
+    }
+    case "ed-quick-save": {
+      var doc2 = S.docs[S.editor.docId]; if (!doc2 || !_quickVals) break;
+      busy("Version wird gespeichert…");
+      pushVersion(doc2, injectOverrides(currentVersion(doc2).html, _quickVals), "Schnellregler: Farbe/Schrift")
+        .then(function(){ toast("ok","Gespeichert","Anpassungen als neue Version abgelegt"); })
+        .catch(function(err){ toast("err","Speichern fehlgeschlagen", err.message); })
+        .finally(function(){ busy(null); render(); afterEditorRender(); });
+      break;
+    }
+    case "ed-versions-toggle": S.editor.versionsOpen = !S.editor.versionsOpen; render(); afterEditorRender(); break;
+    case "ed-rollback": rollbackTo(parseInt(el.dataset.idx,10)); break;
+    case "ed-revise": reviseDocument(); break;
+    case "ed-print": {
+      try { var fr = $("#edframe"); fr.contentWindow.focus(); fr.contentWindow.print(); }
+      catch(err){ toast("err","Drucken fehlgeschlagen", err.message); }
+      break;
+    }
+    case "ed-download": { var d3 = S.docs[S.editor.docId]; if (d3) downloadHtml(d3); break; }
+    case "ed-status": {
+      var d4 = S.docs[S.editor.docId]; if (!d4) break;
+      d4.status = (d4.status === "final") ? "entwurf" : "final";
+      saveDoc(d4).then(function(){ render(); afterEditorRender(); }).catch(function(err){ toast("err","Status nicht gespeichert", err.message); });
+      break;
+    }
+  }
+});
+
+document.addEventListener("change", function(e){
+  var t = e.target;
+  if (t.id === "gen-org"){
+    S.gen.orgId = t.value;
+    var o = orgOf(t.value);
+    if (o && !S.gen.preset) S.gen.preset = o.stylePreset || "";
+    if (S.gen.docType === "rechnung") S.gen.fields.nummer = nextInvoiceNo(t.value);
+    render();
+    return;
+  }
+  if (t.id === "ex-org"){ S.exOrgId = t.value; render(); return; }
+  if (t.dataset.filter !== undefined && t.tagName === "SELECT"){ S.filters[t.dataset.filter] = t.value; render(); return; }
+  if (t.dataset.example !== undefined){
+    var id = t.dataset.example, arr = S.gen.exampleIds, i = arr.indexOf(id);
+    if (t.checked && i<0) arr.push(id); else if (!t.checked && i>=0) arr.splice(i,1);
+    return;
+  }
+  if (t.dataset.gfCheck !== undefined){
+    S.gen.fields[t.dataset.gf] = t.checked;
+    $("#gen-fields").innerHTML = renderGenFields();   // showIf-Felder + Totals aktualisieren
+    return;
+  }
+  if (t.dataset.gf !== undefined && t.tagName === "SELECT"){ S.gen.fields[t.dataset.gf] = t.value; return; }
+  if (t.dataset.org !== undefined && _editOrg){
+    // Colorpicker + Hexfeld synchron halten
+    setDeep(_editOrg, t.dataset.org, t.value);
+    if (t.type === "color" || /^colors\./.test(t.dataset.org)){
+      $$('[data-org="'+t.dataset.org+'"]').forEach(function(el){ if (el !== t) el.value = t.value; });
+    }
+    return;
+  }
+  if (t.dataset.quick !== undefined && _quickVals){ _quickVals[t.dataset.quick] = t.value; applyQuickLive(); return; }
+  if (t.id === "file-logo"){ handleLogoFile(t.files[0]); t.value = ""; return; }
+  if (t.id === "file-example"){ handleExampleFile(t.files[0]); t.value = ""; return; }
+});
+
+document.addEventListener("input", function(e){
+  var t = e.target;
+  if (t.dataset.gen !== undefined){ S.gen[t.dataset.gen] = t.value; return; }
+  if (t.dataset.slider !== undefined){ S.gen.sliders[t.dataset.slider] = parseInt(t.value,10); return; }
+  if (t.dataset.gf !== undefined && t.dataset.gfCheck === undefined){ S.gen.fields[t.dataset.gf] = t.value; if (S.gen.docType==="rechnung" && (t.dataset.gf==="rabatt"||t.dataset.gf==="mwstSatz")) refreshInvoiceTotals(); return; }
+  if (t.dataset.gt !== undefined){
+    var rows = S.gen.fields[t.dataset.gt] = S.gen.fields[t.dataset.gt] || [];
+    var r = rows[parseInt(t.dataset.row,10)] = rows[parseInt(t.dataset.row,10)] || {};
+    r[t.dataset.col] = t.value;
+    if (t.dataset.gt === "positionen"){
+      var cell = $('[data-calc-row="'+t.dataset.row+'"]');
+      if (cell) cell.textContent = chf((parseFloat(r.menge)||0)*(parseFloat(r.preis)||0));
+      refreshInvoiceTotals();
+    }
+    return;
+  }
+  if (t.dataset.ctxIdx !== undefined){ var c = S.gen.context[parseInt(t.dataset.ctxIdx,10)]; if (c) c.content = t.value; return; }
+  if (t.dataset.org !== undefined && _editOrg){
+    setDeep(_editOrg, t.dataset.org, t.value);
+    if (t.type === "color"){ $$('[data-org="'+t.dataset.org+'"]').forEach(function(el){ if (el !== t) el.value = t.value; }); }
+    return;
+  }
+  if (t.dataset.quick !== undefined && _quickVals){ _quickVals[t.dataset.quick] = t.value; applyQuickLive(); return; }
+  if (t.id === "ctx-search" && S.ctxModal){ S.ctxModal.q = t.value; debouncedCtxRender(); return; }
+  if (t.dataset.filter === "q"){ S.filters.q = t.value; debouncedDocsRender(); return; }
+});
+var debouncedCtxRender = debounce(renderCtxModal, 200);
+var debouncedDocsRender = debounce(render, 220);
+function refreshInvoiceTotals(){ var el = $("#inv-totals"); if (el) el.outerHTML = renderInvoiceTotals(); }
+function setDeep(obj, path, val){
+  var ks = path.split("."), o = obj;
+  for (var i=0;i<ks.length-1;i++){ o = o[ks[i]] = o[ks[i]] || {}; }
+  o[ks[ks.length-1]] = val;
+}
+
+/* ── Boot ─────────────────────────────────────────────────────────────── */
+async function boot(){
+  window.addEventListener("hashchange", onHashChange);
+  // Einstieg aus anderen Modulen: ?context=<entityId>&type=<projects|tasks|notes|persons>
+  var params = new URLSearchParams(location.search);
+  var ctxId = params.get("context"), ctxType = params.get("type");
+  onHashChange();
+  await loadAll();
+  if (ctxId && ctxType){
+    var map = { project:"projects", task:"tasks", note:"notes", person:"persons", contact:"persons" };
+    var sk = map[ctxType] || ctxType;
+    if (CTX_SOURCES.some(function(s){ return s.k === sk; })){
+      await loadQuantusData();
+      var ent = quantusEntities(sk).find(function(e){ return e.id === ctxId; });
+      if (ent){
+        S.gen.context.push(entityToContext(sk, ent));
+        toast("ok", "Kontext uebernommen", entityTitle(ent));
+        nav("new");
+      } else toast("warn", "Kontext nicht gefunden", ctxType + "/" + ctxId);
+    } else toast("warn", "Unbekannter Kontext-Typ", ctxType);
+    // Parameter aus der URL entfernen, damit ein Reload den Kontext nicht doppelt anlegt
+    try { history.replaceState(null, "", location.pathname + location.hash); } catch(e){}
+  }
+}
+boot();
+
+})();
+</script>
+</body>
+</html>
