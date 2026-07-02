@@ -58739,6 +58739,15 @@ async function init() {
                 <button type="button" class="btn primary" onclick="doSave(false)">💾 Jetzt speichern</button>
               </div>
             </div>
+            <div class="card" style="padding:12px;border:1px solid var(--accent-soft);background:var(--accent-soft);margin:8px 0 14px">
+              <div style="font-weight:700;margin-bottom:6px;color:var(--accent)">🔥 Firebase-Speicherung (RTDB) — opt-in</div>
+              <div class="mini" style="color:var(--muted)">Sichert den <strong>kompletten Datensatz</strong> in die Firebase Realtime Database — <strong>ohne 5-MB-localStorage-Limit</strong> und ohne das Storage-CORS-Problem. Manuell (kein Auto-Sync). ⚠️ Enthält auch API-Keys — nur mit gesicherten RTDB-Regeln nutzen (siehe <code>docs/firebase-rtdb-storage.md</code>).</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+                <button type="button" class="btn" onclick="fbStoreSaveNow()">☁️ In Firebase sichern</button>
+                <button type="button" class="btn" onclick="fbStoreLoadNow()">⬇️ Aus Firebase laden</button>
+                <button type="button" class="btn sm" onclick="fbStoreStatus()">Status</button>
+              </div>
+            </div>
             <div class="sep"></div>
             <label class="col-12" style="display:flex;align-items:center;gap:10px">
               <input type="checkbox" id="setAutoSave" ${APP.state.settings.storage.autoSave !== false ? 'checked' : ''} style="width:auto" />
@@ -102191,6 +102200,73 @@ window.addEventListener("hashchange", function(){
       window.openQuickCapture();
     }
   });
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   FIREBASE-RTDB-SPEICHERUNG (opt-in, manuell) — Vorbereitung.
+   Sichert/lädt den KOMPLETTEN App-Datensatz in/aus Firebase Realtime Database
+   (Knoten: appStore/<blobKey>). Umgeht das ~5-MB-localStorage-Limit UND das
+   Firebase-Storage-CORS-Problem (RTDB nutzt einen anderen, nicht CORS-geblockten
+   Endpoint). Nutzt das bereits geladene Firebase-SDK (database-compat) mit REST-
+   Fallback. Rein additiv; kein Auto-Sync, keine Änderung an Netlify/localStorage.
+   Aktionen nur nach Bestätigung. SICHERHEIT: Datensatz enthält API-Keys — RTDB-Regeln
+   müssen den Zugriff einschränken (siehe docs/firebase-rtdb-storage.md).
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  var DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+  var NODE = "appStore";
+  function fbKey(){ try { return String((window.APP&&APP.state&&APP.state.settings&&APP.state.settings.storage&&APP.state.settings.storage.blobKey)||"app-data.json").replace(/[.#$\[\]\/]/g,"_"); } catch(e){ return "main"; } }
+  function fbDb(){ try { if (window.firebase && firebase.app) return firebase.app().database(DB_URL); } catch(e){} return null; }
+  function tt(t,a,b){ if (typeof window.toast==="function") window.toast(t,a,b); }
+
+  // Voller App-Snapshot -> RTDB (SDK, sonst REST). Promise<bool>.
+  window.fbStorePut = async function(){
+    var payload = (typeof buildRemoteAppPayload==="function") ? buildRemoteAppPayload() : (window.APP&&APP.state&&APP.state.data);
+    if (!payload) return false;
+    var wrap = { data: JSON.stringify(payload), updatedAt: (payload.meta&&payload.meta.updatedAt)||new Date().toISOString(), savedAt: Date.now() };
+    var db = fbDb();
+    if (db){ await db.ref(NODE+"/"+fbKey()).set(wrap); return true; }
+    var res = await fetch(DB_URL+"/"+NODE+"/"+fbKey()+".json", { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(wrap) });
+    return !!(res && res.ok);
+  };
+  // RTDB -> geparster App-Datensatz (oder null).
+  window.fbStoreGet = async function(){
+    var db = fbDb(), wrap = null;
+    if (db){ var snap = await db.ref(NODE+"/"+fbKey()).once("value"); wrap = (snap && snap.exists()) ? snap.val() : null; }
+    else { var res = await fetch(DB_URL+"/"+NODE+"/"+fbKey()+".json?_ts="+Date.now()); wrap = (res && res.ok) ? await res.json() : null; }
+    if (!wrap || !wrap.data) return null;
+    try { return JSON.parse(wrap.data); } catch(e){ return null; }
+  };
+  // Manuell sichern (Bestätigung).
+  window.fbStoreSaveNow = async function(){
+    if (!window.confirm("Kompletten Datensatz in Firebase (RTDB) sichern?\n\nDer Datensatz enthält auch Einstellungen/API-Keys — die RTDB-Regeln müssen gesichert sein.")) return;
+    tt("info","Firebase","Sichere Daten in RTDB …");
+    try { var ok = await window.fbStorePut(); tt(ok?"ok":"err", ok?"In Firebase gesichert":"Fehler", ok?"Voller Datensatz in RTDB gespeichert.":"Konnte nicht speichern (RTDB-Regeln?)."); }
+    catch(e){ tt("err","Firebase-Fehler",(e&&e.message)||String(e)); }
+  };
+  // Manuell laden + mergen (Bestätigung).
+  window.fbStoreLoadNow = async function(){
+    if (!window.confirm("Datensatz aus Firebase (RTDB) laden und mit dem lokalen Stand zusammenführen?")) return;
+    tt("info","Firebase","Lade Daten aus RTDB …");
+    try {
+      var remote = await window.fbStoreGet();
+      if (!remote || !remote.entities){ tt("warn","Firebase","Kein Datensatz in RTDB gefunden."); return; }
+      if (typeof mergeData==="function" && window.APP && APP.state && APP.state.data) APP.state.data = mergeData(APP.state.data, (typeof normalizeData==="function"?normalizeData(remote):remote));
+      else if (window.APP && APP.state) APP.state.data = (typeof normalizeData==="function"?normalizeData(remote):remote);
+      try { if (remote._settings && APP.state.settings){ var st=APP.state.settings.storage; APP.state.settings = Object.assign({}, APP.state.settings, remote._settings, { storage: st }); if (typeof saveSettings==="function") saveSettings(APP.state.settings); } } catch(e){}
+      if (typeof saveLocalData==="function") saveLocalData();
+      if (typeof render==="function") render();
+      tt("ok","Aus Firebase geladen","Datensatz zusammengeführt.");
+    } catch(e){ tt("err","Firebase-Fehler",(e&&e.message)||String(e)); }
+  };
+  // Status/Diagnose.
+  window.fbStoreStatus = async function(){
+    tt("info","Firebase-RTDB","Prüfe …");
+    try { var r = await window.fbStoreGet(); var n = (r && r.entities && r.entities.tasks) ? Object.keys(r.entities.tasks).length : 0; tt(r?"ok":"info","Firebase-RTDB", r?("Datensatz vorhanden · "+n+" Aufgaben"):"Noch kein Datensatz in RTDB."); }
+    catch(e){ tt("err","Firebase-RTDB",(e&&e.message)||"nicht erreichbar (RTDB-Regeln/Netz?)"); }
+  };
 })();
 </script>
 
