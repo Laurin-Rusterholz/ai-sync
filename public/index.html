@@ -3448,6 +3448,59 @@ body:not(.thesis-focus) #thsSprintBanner { display: none !important; }
 }
 .tr-src-quote-meta{font-size:10px;color:var(--muted);font-style:normal;margin-top:3px}
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   VISUELLE VERBESSERUNGEN (v1) — additiv, nur bestehende Theme-Variablen,
+   barrierefrei. Bewusst KEINE Hintergrund-/Farb-Overrides (kollidieren sonst mit
+   spaeteren Komponenten-Styles); nur Transform/Fokus/Caret/accent-color/Animation.
+   Vorhandenes (::selection, Scrollbars, .btn-Transition, Toast-Animation) bleibt.
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* 1) Sichtbarer Tastatur-Fokus-Ring (a11y); Eingabefelder zeigen ihn auch bei Klick */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+/* 2) Buttons heben sich beim Hover sanft an … */
+.btn:hover:not(:disabled){transform:translateY(-1px)}
+/* 3) … und druecken sich beim Klick minimal ein (taktiles Feedback) */
+button:active,.btn:active{transform:translateY(1px)}
+/* 4) Deaktivierte Steuerelemente einheitlich */
+button:disabled,.btn:disabled,input:disabled,textarea:disabled,select:disabled,[disabled]{opacity:.55;cursor:not-allowed}
+/* 5) Cursor-Farbe in Eingabefeldern = Akzent */
+input,textarea{caret-color:var(--accent)}
+/* 6) Native Steuerelemente (Checkbox/Radio/Range/Progress) in Theme-Farbe */
+input[type=checkbox],input[type=radio],input[type=range],progress{accent-color:var(--accent)}
+/* 7) Formular-Steuerelemente erben die App-Schrift */
+button,input,select,textarea{font-family:inherit}
+/* 8) Karten heben sich beim Hover sanft an */
+.card{transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+.card:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.20)}
+/* 9) Karten: dezenter Rahmen bei Tastatur-Fokus innerhalb */
+.card:focus-within{border-color:var(--accent-soft)}
+/* 10) Tabellenzeilen: Hover-Hervorhebung */
+tbody tr{transition:background-color .12s ease}
+tbody tr:hover{background:var(--hover)}
+/* 11) Modal-Backdrop blendet sanft ein */
+@keyframes vpFade{from{opacity:0}to{opacity:1}}
+.modal-backdrop.open{animation:vpFade .18s ease}
+/* 12) Modal-Inhalt skaliert sanft auf */
+@keyframes vpPop{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+.modal-backdrop.open .modal{animation:vpPop .2s cubic-bezier(.2,.8,.2,1)}
+/* 13) Weiches Scrollen zu Ankern/Abschnitten */
+html{scroll-behavior:smooth}
+/* 14) Platzhalter etwas ruhiger */
+::placeholder{opacity:.72}
+/* 15) Zusammenklappbares: klarer Zeiger */
+summary{cursor:pointer}
+/* 16) Bilder nie ueber ihren Container hinaus */
+img{max-width:100%}
+/* 17) Kein blauer Tap-Blitz auf Touch-Geraeten */
+*{-webkit-tap-highlight-color:transparent}
+/* 18) Dropdowns bekommen den Zeiger-Cursor */
+select{cursor:pointer}
+/* 19) Echte Inhalts-Links: dezenter Hover-Unterstrich (Buttons/Nav mit Klasse bleiben) */
+a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
+/* 20) Barrierefreiheit: „Reduzierte Bewegung" respektieren — Animationen/Transitions aus */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+
 </style>
   <!-- Google Script entfernt - eigener Kalender wird verwendet -->
   
