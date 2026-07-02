@@ -58724,7 +58724,7 @@ async function init() {
               <div id="diagnoseResult" style="margin-top:10px;font-size:12px;font-family:monospace;color:var(--muted)"></div>
             </div>
             
-            ${window._firebaseCorsBlocked ? `
+            ${window._firebaseCorsBlocked && !(window.localStorage && localStorage.getItem('_fbCorsDismissed')) ? `
             <div class="card" style="padding:14px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.05);margin-bottom:14px">
               <div style="font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;color:var(--danger)">⚠️ Firebase CORS-Problem erkannt</div>
               <div style="font-size:12.5px;line-height:1.6;color:var(--muted)">
@@ -58740,8 +58740,9 @@ async function init() {
                   # 2. Mit gsutil setzen:<br>
                   gsutil cors set cors.json gs://jupidu-36804.firebasestorage.app
                 </div>
-                <div style="margin-top:8px">Bis dahin nutzt die App nur <strong>Netlify-Sync</strong>. Wenn der auch fehlschlägt (401), prüfe den Auth-Token unten.</div>
+                <div style="margin-top:8px"><strong>Kein Datenverlust:</strong> der Cloud-Sync läuft über <strong>Netlify</strong> unverändert weiter — nur die Firebase-Redundanz pausiert. Fertige Config im Repo: <code>firebase/cors.json</code> + <code>bash scripts/set-firebase-cors.sh</code>. Falls auch Netlify fehlschlägt (401), prüfe den Auth-Token unten.</div>
                 <button type="button" class="btn sm" onclick="window._firebaseCorsBlocked=false;render();toast('ok','🔄 Firebase reaktiviert')" style="margin-top:10px;font-size:11px;padding:5px 11px;background:rgba(34,197,94,0.1);color:var(--ok);border:1px solid rgba(34,197,94,0.3)">🔄 Erneut versuchen</button>
+                <button type="button" class="btn sm" onclick="try{localStorage.setItem('_fbCorsDismissed','1')}catch(e){}; render(); toast('ok','Ausgeblendet','Firebase-Hinweis dauerhaft ausgeblendet')" style="margin-top:10px;margin-left:6px;font-size:11px;padding:5px 11px">Ausblenden</button>
               </div>
             </div>
             ` : ''}
