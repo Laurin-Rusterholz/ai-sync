@@ -1,0 +1,123 @@
+# Quantus No-Braine — Weekly Meal Planner
+
+Single-File-Modul **`public/nobraine.html`** (CSS + JS inline, kein Build, keine
+Frameworks ausser dem Firebase-SDK via CDN). Der Wochen-Menüplaner verwaltet
+eine durchsuchbare Rezept-Bibliothek, plant Frühstück/Mittag/Abend über die
+Woche, aggregiert daraus eine Einkaufsliste und stösst die automatische
+Wochen-Generierung über einen **n8n-Webhook** an. Alle Daten liegen unter dem
+RTDB-Pfad-Root **`/nobraine/`**.
+
+Konventionen exakt wie `public/drive.html`: IIFE-Scope (kein globaler
+Namespace), Event-Delegation über `data-action`-Attribute, `toast()` für
+sämtliches Feedback, Design-System „Schiefer/Leinen", Firebase compat v10.8.0,
+Anonymous Auth, Sprache Hochdeutsch mit Schweizer Schreibweise (ss statt ß),
+responsive & mobile-first.
+
+- Firebase-Projekt: `jupidu-36804`
+- RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
+- SDK: Firebase **compat v10.8.0** (`app`, `auth`, `database`)
+- Auth: **Anonymous Auth** (`firebase.auth().signInAnonymously()`), Regel-Gate `auth != null`
+- Navigation: registriert in `public/index.html` unter `getAllApps()`
+  (`key: "nobraine"`, Icon 🍽️, Label „No-Braine") sowie im Routing-`switch`
+  von `renderMain()` (`case "nobraine": window.location.href = "nobraine.html"`).
+
+## Datenmodell (RTDB)
+
+| Pfad | Inhalt |
+|---|---|
+| `nobraine/recipes/<id>` | `{ name, kategorie ("fruehstueck"\|"mittag"\|"abend"\|"snack"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
+| `nobraine/plans/<weekKey>/<dayKey>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Slot |
+| `nobraine/shopping/<weekKey>/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
+| `nobraine/generation/<weekKey>` | `{ status ("pending"\|"running"\|"done"\|"error"), typ ("woche"\|"slot"), angefragt, finishedAt, message, tag?, slot? }` |
+
+- `weekKey`: ISO-Woche, Format `YYYY-Www` (z. B. `2026-W27`). Wochenbeginn Montag.
+- `dayKey`: `d0` (Montag) … `d6` (Sonntag).
+- `slotKey`: `fruehstueck` · `mittag` · `abend` (ASCII-Keys; Anzeige mit Umlaut).
+
+### Ableitungen im Frontend (kein zusätzlicher Persistenz-Zweig)
+
+- **Einkaufsliste** wird bei jedem Render aus dem Wochenplan berechnet: alle
+  Zutaten der eingeplanten Rezepte werden nach `Name + Einheit` **dedupliziert**
+  und die Mengen summiert (`num()`-Parser inkl. Komma und Brüchen wie `1/2`).
+  Persistiert wird nur der Abhak-Zustand (`checked`) je aggregiertem Schlüssel
+  sowie manuell ergänzte Artikel (`manuell: true`).
+- **`lastUsed`** wird beim Einplanen auf das Datum des jeweiligen Slots gesetzt.
+  Die Bibliothek sortiert selten/nie verwendete Rezepte nach vorne und markiert
+  kürzlich (≤ 10 Tage) verwendete rot — so werden Wiederholungen sichtbar
+  vermieden. Im Tausch-/Slot-Dialog erscheinen zur Slot-Kategorie passende
+  Rezepte zuerst.
+
+## Generierung via n8n-Webhook
+
+Im Gegensatz zum Drive-Modul (RTDB-Queue) nutzt No-Braine einen **push-basierten
+Webhook**. Die Konstante `WEBHOOK_URL` in `nobraine.html` ist ein **Platzhalter**
+und muss auf den eigenen n8n-Webhook gesetzt werden.
+
+Ablauf „Woche generieren" bzw. „Slot neu generieren":
+
+1. Frontend schreibt `nobraine/generation/<weekKey>` mit `status: "pending"`.
+2. Frontend `POST`et an `WEBHOOK_URL` mit JSON-Payload:
+   - Woche: `{ weekKey, startDatum, tage: 7, slots: ["fruehstueck","mittag","abend"], typ: "woche" }`
+   - Einzelner Slot: `{ …, typ: "slot", tag: <0-6>, slot: "<slotKey>", tagName }`
+3. n8n verarbeitet die Anfrage, wählt/erzeugt Rezepte, schreibt sie nach
+   `nobraine/plans/<weekKey>/…` (fehlende Rezepte zusätzlich nach
+   `nobraine/recipes`) und aktualisiert `generation/<weekKey>` auf `running`
+   und schliesslich `done` (mit `finishedAt`).
+4. Das Frontend zeigt den Fortschritt live über `on('value')` auf `plans`,
+   `recipes` und `generation` — Ladezustand (Spinner + Statuszeile) inklusive.
+
+Schlägt der `POST` fehl (z. B. weil `WEBHOOK_URL` noch der Platzhalter ist),
+setzt das Frontend `generation.status = "error"` mit erklärender `message` und
+zeigt einen Toast — nichts bleibt stumm hängen. Der Service-Account von n8n
+umgeht die `auth != null`-Regeln; das Frontend meldet sich anonym an.
+
+## Firebase-Security-Rules
+
+Block aus `firebase/database.rules.json` übernehmen. Der gesamte
+`nobraine`-Teilbaum wird mit `auth != null` gegated (analog zum Drive-Block).
+Wie dort gilt: **kein** `.read`/`.write` auf Wurzelebene stehen lassen — eine
+Erlaubnis am Elternknoten vererbt sich in der RTDB nach unten und würde das Gate
+aushebeln. `nobraine/recipes` trägt `.indexOn: ["kategorie","lastUsed"]` als
+Vorbereitung für spätere gefilterte REST-Queries.
+
+**Anonymous Auth** muss im Firebase-Projekt aktiviert sein (Konsole →
+Authentication → Sign-in method → „Anonym"). Ohne diesen Schritt bleibt das
+Modul bei „Anmeldung fehlgeschlagen" stehen.
+
+## Erst-Seed der Bibliothek
+
+Beim allerersten Start (nur falls `nobraine/recipes` **leer** ist) legt das
+Frontend einmalig neun Starter-Rezepte an (Frühstück/Mittag/Abend/Snack, je mit
+Zutaten samt Mengen und Schritten). Bestehende Daten werden nie überschrieben
+oder migriert.
+
+## Sicherheit
+
+- Im Frontend liegt ausschliesslich die öffentliche Firebase-Web-Config (wie in
+  `index.html`/`drive.html`); es gibt keine Secrets im Client.
+- Der n8n-Webhook-Endpunkt (`WEBHOOK_URL`) und dessen Service-Account/API-Keys
+  existieren nur in n8n, nicht im Repo.
+
+## Testanleitung
+
+1. `public/nobraine.html` öffnen (lokal via `npx serve public` oder über das
+   Netlify-Deployment; oder in der Hauptapp über die App „No-Braine"). Unten
+   links muss „Verbunden (anonym)" mit grünem Punkt stehen. Beim ersten Start
+   erscheinen die Starter-Rezepte in der Bibliothek.
+2. **Rezepte:** In „Rezepte" ein Rezept anklicken → Drawer mit vollständigem
+   Rezept (Zutaten mit Mengen, nummerierte Schritte, Portionen, Kochzeit).
+   Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen. „＋ Neues Rezept"
+   anlegen und wieder bearbeiten/löschen.
+3. **Wochenplan:** Leeren Slot antippen → Rezept aus der Bibliothek wählen
+   (passende Kategorie zuerst) oder „Slot generieren". Gefüllten Slot antippen →
+   Drawer mit „Rezept tauschen", „Neu generieren", „Aus Plan entfernen".
+   Wochennavigation (‹ ›, „Aktuelle Woche") prüfen — Plan/Einkauf/Status folgen
+   der gewählten Woche live.
+4. **Generierung:** „🎲 Woche generieren" → Statuszeile „Anfrage gesendet …"
+   und `generation/<weekKey>.status == "pending"` in der RTDB. Mit gesetztem
+   `WEBHOOK_URL` schreibt n8n den Plan; das Gitter aktualisiert sich live. Ohne
+   gültige URL erscheint der Fehlerhinweis (kein stilles Verschlucken).
+5. **Einkaufsliste:** Nach dem Befüllen des Plans zeigt „Einkaufsliste" die
+   aggregierte, deduplizierte Wochenliste. Positionen abhaken (Zustand
+   persistiert, Badge in der Navigation zählt offene Posten), manuell Artikel
+   ergänzen (Enter oder „＋ Hinzufügen"), „Erledigte entfernen".

@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quantus · No-Braine</title>
+<link rel="icon" href="favicon.svg">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   QUANTUS NO-BRAINE — Design „Schiefer/Leinen"
+   Mattes Schiefer-Anthrazit + warmes Greige · Akzente Coral/Teal/Sand
+   Redaktionelle Typografie, grosszügiger Weissraum · Mobile-first
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --schiefer:      #2b3134;
+  --schiefer-tief: #23282b;
+  --schiefer-hell: #3a4145;
+  --leinen:        #efeae1;
+  --leinen-hell:   #f7f3ec;
+  --leinen-tief:   #e4ded1;
+  --linie:         #d9d1c2;
+  --linie-dunkel:  #4a5155;
+  --tinte:         #2b3134;
+  --muted:         #6d6b64;
+  --muted-hell:    #a6a39a;
+  --coral:         #d96c57;
+  --coral-tief:    #b9503c;
+  --teal:          #3e8e87;
+  --teal-tief:     #2f6d68;
+  --sand:          #c9a876;
+  --sand-tief:     #a9884f;
+  --gruen:         #5d8a5e;
+  --radius:        12px;
+  --radius-sm:     9px;
+  --schatten:      0 2px 12px rgba(43,49,52,.10);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--leinen);
+  color: var(--tinte);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; cursor: pointer; }
+input, select, textarea { font: inherit; }
+::selection { background: var(--sand); color: var(--schiefer); }
+
+/* Redaktionelle Serifen-Titel */
+h1, h2, .redaktionell {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  letter-spacing: -.2px;
+}
+
+#app { display:flex; height:100vh; overflow:hidden; }
+
+/* ── Sidebar (Schiefer) ─────────────────────────────────────────────────── */
+#sidebar {
+  width: 258px; min-width: 258px;
+  background: var(--schiefer);
+  color: var(--leinen);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+}
+.sb-brand {
+  padding: 22px 20px 16px;
+  font-size: 19px; font-weight: 700; letter-spacing: .2px;
+  border-bottom: 1px solid var(--linie-dunkel);
+  font-family: Georgia, serif;
+}
+.sb-brand small { display:block; font-size:10.5px; font-weight:500; color:var(--muted-hell); letter-spacing:1.6px; text-transform:uppercase; margin-top:3px; font-family:-apple-system,sans-serif; }
+#nav { flex:1; overflow-y:auto; padding: 12px 12px; }
+.nav-item {
+  display:flex; align-items:center; gap:11px;
+  padding: 11px 13px; border-radius: var(--radius-sm); cursor:pointer;
+  color: var(--leinen); font-size: 14.5px; font-weight:500;
+  user-select:none; margin-bottom: 3px;
+}
+.nav-item .ic { font-size:17px; width:20px; text-align:center; flex:none; }
+.nav-item:hover { background: var(--schiefer-hell); }
+.nav-item.aktiv { background: var(--schiefer-hell); box-shadow: inset 3px 0 0 var(--coral); }
+.nav-item .zahl { margin-left:auto; font-size:11px; background:var(--coral); color:#fff; border-radius:9px; padding:1px 8px; font-weight:700; }
+.sb-fuss {
+  padding: 12px 16px; border-top: 1px solid var(--linie-dunkel);
+  font-size: 11.5px; color: var(--muted-hell);
+  display:flex; align-items:center; gap:7px;
+}
+.sb-fuss .punkt { width:8px; height:8px; border-radius:50%; background:var(--muted-hell); flex:none; }
+.sb-fuss .punkt.online { background: var(--teal); }
+
+/* ── Hauptbereich (Leinen) ──────────────────────────────────────────────── */
+#haupt { flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative; }
+#kopf {
+  padding: 18px 26px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  border-bottom: 1px solid var(--linie); background: var(--leinen-hell);
+}
+#kopfTitel { flex:1; min-width:180px; }
+#kopfTitel h1 { font-size: 23px; font-weight: 700; line-height:1.2; }
+#kopfTitel .unter { font-size: 13px; color: var(--muted); margin-top:2px; }
+#inhalt { flex:1; overflow-y:auto; padding: 22px 26px 60px; }
+
+/* ── Wochen-Navigation ──────────────────────────────────────────────────── */
+.wochen-leiste { display:flex; align-items:center; gap:10px; }
+.wpfeil {
+  width:36px; height:36px; border-radius:50%; border:1px solid var(--linie);
+  background:#fff; color:var(--tinte); font-size:16px; display:grid; place-items:center;
+}
+.wpfeil:hover { background: var(--leinen-tief); }
+.woche-label { font-weight:650; font-size:14.5px; text-align:center; min-width:150px; }
+.woche-label small { display:block; font-size:11.5px; color:var(--muted); font-weight:500; }
+.btn-heute { font-size:12.5px; padding:6px 12px; border:1px solid var(--linie); background:#fff; border-radius:20px; color:var(--muted); font-weight:600; }
+.btn-heute:hover { color:var(--tinte); background:var(--leinen-tief); }
+
+/* ── Generier-Karte ─────────────────────────────────────────────────────── */
+.gen-karte {
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  background: var(--schiefer); color: var(--leinen);
+  border-radius: var(--radius); padding: 16px 20px; margin-bottom: 22px;
+  box-shadow: var(--schatten);
+}
+.gen-karte .gk-text { flex:1; min-width:180px; }
+.gen-karte .gk-text b { font-size:15px; }
+.gen-karte .gk-text span { display:block; font-size:12.5px; color:var(--muted-hell); margin-top:2px; }
+.btn-gen {
+  padding:11px 20px; border:0; border-radius: var(--radius-sm);
+  background: var(--coral); color:#fff; font-weight:700; font-size:14.5px;
+  display:inline-flex; align-items:center; gap:9px; transition: background .15s, opacity .15s;
+}
+.btn-gen:hover { background: var(--coral-tief); }
+.btn-gen[disabled] { opacity:.6; cursor:default; }
+.spinner {
+  width:15px; height:15px; border:2px solid rgba(255,255,255,.35); border-top-color:#fff;
+  border-radius:50%; animation: dreh .7s linear infinite; flex:none;
+}
+@keyframes dreh { to { transform: rotate(360deg); } }
+.gen-status { font-size:12.5px; font-weight:600; display:inline-flex; align-items:center; gap:8px; }
+
+/* ── Wochenplan-Gitter ──────────────────────────────────────────────────── */
+.wochen-grid { display:grid; gap:16px; grid-template-columns: 1fr; }
+@media (min-width:640px)  { .wochen-grid { grid-template-columns: repeat(2,1fr); } }
+@media (min-width:1080px) { .wochen-grid { grid-template-columns: repeat(3,1fr); } }
+@media (min-width:1480px) { .wochen-grid { grid-template-columns: repeat(4,1fr); } }
+.tag-karte {
+  background: var(--leinen-hell); border:1px solid var(--linie); border-radius: var(--radius);
+  padding: 14px 15px 15px; box-shadow: var(--schatten); display:flex; flex-direction:column;
+}
+.tag-karte.heute { border-color: var(--teal); box-shadow: 0 0 0 2px rgba(62,142,135,.18); }
+.tk-kopf { display:flex; align-items:baseline; gap:8px; margin-bottom:12px; }
+.tk-kopf .tag { font-weight:700; font-size:15.5px; font-family:Georgia,serif; }
+.tk-kopf .datum { font-size:12px; color:var(--muted); margin-left:auto; }
+.tk-kopf .heute-chip { font-size:10px; letter-spacing:.6px; text-transform:uppercase; color:#fff; background:var(--teal); border-radius:20px; padding:2px 8px; font-weight:700; }
+.slot {
+  border:1px solid var(--linie); border-radius: var(--radius-sm); padding:10px 12px;
+  margin-bottom:9px; background:#fff; cursor:pointer; transition: border-color .12s, box-shadow .12s;
+}
+.slot:last-child { margin-bottom:0; }
+.slot:hover { border-color: var(--sand); box-shadow: 0 1px 6px rgba(43,49,52,.08); }
+.slot .s-label { font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); font-weight:700; display:flex; align-items:center; gap:6px; }
+.slot .s-rezept { font-weight:600; font-size:14px; margin-top:4px; word-break:break-word; }
+.slot .s-meta { font-size:11.5px; color:var(--muted); margin-top:2px; display:flex; gap:10px; flex-wrap:wrap; }
+.slot.leer { border-style:dashed; background:transparent; }
+.slot.leer .s-rezept { color: var(--muted-hell); font-weight:500; }
+
+/* ── Bibliothek ─────────────────────────────────────────────────────────── */
+.werkzeug-leiste { display:flex; gap:12px; align-items:center; margin-bottom:20px; flex-wrap:wrap; }
+.sucheInput {
+  flex:1; min-width:180px; max-width:420px; padding: 10px 15px;
+  border: 1px solid var(--linie); border-radius: 24px; background:#fff; color:var(--tinte); outline:none;
+}
+.sucheInput:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(62,142,135,.15); }
+.kat-filter { display:flex; gap:6px; flex-wrap:wrap; }
+.kat-chip { padding:7px 14px; border:1px solid var(--linie); border-radius:20px; background:#fff; color:var(--muted); font-size:12.5px; font-weight:600; }
+.kat-chip.aktiv { background: var(--schiefer); border-color: var(--schiefer); color: var(--leinen); }
+.btn-primaer {
+  padding:10px 18px; border:0; border-radius: var(--radius-sm); background: var(--teal); color:#fff;
+  font-weight:700; font-size:14px; display:inline-flex; align-items:center; gap:7px;
+}
+.btn-primaer:hover { background: var(--teal-tief); }
+
+.rezept-grid { display:grid; gap:14px; grid-template-columns: 1fr; }
+@media (min-width:620px)  { .rezept-grid { grid-template-columns: repeat(2,1fr); } }
+@media (min-width:1000px) { .rezept-grid { grid-template-columns: repeat(3,1fr); } }
+@media (min-width:1400px) { .rezept-grid { grid-template-columns: repeat(4,1fr); } }
+.rezept-karte {
+  background: var(--leinen-hell); border:1px solid var(--linie); border-radius: var(--radius);
+  padding: 15px 16px; box-shadow: var(--schatten); cursor:pointer; display:flex; flex-direction:column; gap:8px;
+  transition: transform .12s, box-shadow .12s;
+}
+.rezept-karte:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(43,49,52,.12); }
+.rk-kopf { display:flex; align-items:flex-start; gap:10px; }
+.rk-titel { font-weight:700; font-size:16px; line-height:1.25; flex:1; font-family:Georgia,serif; }
+.kat-badge { font-size:10px; letter-spacing:.6px; text-transform:uppercase; font-weight:700; padding:3px 9px; border-radius:20px; flex:none; }
+.kat-fruehstueck { background: rgba(201,168,118,.22); color: var(--sand-tief); }
+.kat-mittag      { background: rgba(62,142,135,.18); color: var(--teal-tief); }
+.kat-abend       { background: rgba(217,108,87,.16); color: var(--coral-tief); }
+.kat-snack       { background: rgba(93,138,94,.18); color: var(--gruen); }
+.rk-meta { font-size:12.5px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap; }
+.rk-tags { display:flex; gap:6px; flex-wrap:wrap; }
+.tag-pille { font-size:11px; background: var(--leinen-tief); color: var(--muted); border-radius:12px; padding:2px 9px; }
+.rk-lastused { font-size:11.5px; color: var(--muted-hell); }
+.rk-lastused.frisch { color: var(--coral-tief); font-weight:600; }
+
+.leer-hinweis { text-align:center; padding:60px 20px; color:var(--muted); }
+.leer-hinweis .gross { font-size:40px; margin-bottom:12px; }
+
+/* ── Einkaufsliste ──────────────────────────────────────────────────────── */
+.einkauf-wrap { max-width: 720px; }
+.einkauf-add { display:flex; gap:9px; margin-bottom:20px; flex-wrap:wrap; }
+.einkauf-add input { padding:10px 13px; border:1px solid var(--linie); border-radius:var(--radius-sm); background:#fff; outline:none; }
+.einkauf-add input:focus { border-color: var(--teal); }
+.ea-menge { width:80px; } .ea-einheit { width:90px; } .ea-name { flex:1; min-width:140px; }
+.einkauf-gruppe { margin-bottom:22px; }
+.einkauf-gruppe h3 { font-size:12px; letter-spacing:1.2px; text-transform:uppercase; color:var(--muted); margin-bottom:9px; font-family:-apple-system,sans-serif; font-weight:700; }
+.ek-zeile {
+  display:flex; align-items:center; gap:12px; padding:11px 14px; background:var(--leinen-hell);
+  border:1px solid var(--linie); border-radius:var(--radius-sm); margin-bottom:7px;
+}
+.ek-zeile.ab { opacity:.55; }
+.ek-check {
+  width:22px; height:22px; border-radius:6px; border:2px solid var(--linie); background:#fff;
+  flex:none; display:grid; place-items:center; font-size:13px; color:#fff;
+}
+.ek-zeile.ab .ek-check { background: var(--teal); border-color: var(--teal); }
+.ek-name { flex:1; font-weight:600; font-size:14.5px; }
+.ek-zeile.ab .ek-name { text-decoration: line-through; }
+.ek-menge { font-size:13px; color:var(--muted); font-weight:600; }
+.ek-manuell { font-size:10px; color:var(--sand-tief); background:rgba(201,168,118,.2); padding:2px 7px; border-radius:12px; }
+.ek-del { border:0; background:transparent; color:var(--muted-hell); font-size:16px; padding:2px 6px; border-radius:6px; }
+.ek-del:hover { color: var(--coral-tief); background: rgba(217,108,87,.1); }
+.einkauf-fuss { display:flex; gap:10px; margin-top:6px; flex-wrap:wrap; }
+
+/* ── Drawer (Rezept-Detail) ─────────────────────────────────────────────── */
+#drawer {
+  position: fixed; top:0; right:0; bottom:0; width: min(560px, 94vw);
+  background: var(--leinen-hell); border-left: 1px solid var(--linie);
+  box-shadow: -8px 0 34px rgba(43,49,52,.20);
+  transform: translateX(105%); transition: transform .2s ease-out;
+  display:flex; flex-direction:column; z-index: 40;
+}
+#drawer.offen { transform: translateX(0); }
+.dr-kopf { padding: 18px 22px; border-bottom:1px solid var(--linie); display:flex; align-items:flex-start; gap:12px; }
+.dr-kopf h2 { font-size: 20px; line-height:1.25; flex:1; word-break:break-word; }
+.dr-schliessen { border:0; background:transparent; font-size:22px; color:var(--muted); padding:2px 6px; border-radius:6px; line-height:1; }
+.dr-schliessen:hover { background: var(--leinen-tief); color: var(--tinte); }
+.dr-inhalt { flex:1; overflow-y:auto; padding: 20px 22px 40px; }
+.dr-meta-reihe { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
+.meta-pille { background:#fff; border:1px solid var(--linie); border-radius:20px; padding:6px 13px; font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:6px; }
+.dr-aktionen { display:flex; flex-wrap:wrap; gap:9px; margin-bottom:22px; }
+.dr-abschnitt { margin-bottom:24px; }
+.dr-abschnitt h4 { font-size:12px; letter-spacing:1.2px; text-transform:uppercase; color:var(--muted); margin-bottom:11px; font-weight:700; }
+.zutat-liste { list-style:none; }
+.zutat-liste li { display:flex; gap:12px; padding:8px 0; border-bottom:1px dashed var(--linie); font-size:14.5px; }
+.zutat-liste li:last-child { border-bottom:0; }
+.zutat-menge { font-weight:700; color:var(--teal-tief); min-width:82px; flex:none; }
+.schritt-liste { list-style:none; counter-reset: schritt; }
+.schritt-liste li { position:relative; padding: 4px 0 16px 42px; font-size:14.5px; counter-increment: schritt; }
+.schritt-liste li::before {
+  content: counter(schritt); position:absolute; left:0; top:2px;
+  width:28px; height:28px; border-radius:50%; background:var(--schiefer); color:var(--leinen);
+  display:grid; place-items:center; font-weight:700; font-size:13px; font-family:Georgia,serif;
+}
+.dr-tags { display:flex; gap:7px; flex-wrap:wrap; }
+.hinweis-box { background: rgba(217,108,87,.1); border:1px solid rgba(217,108,87,.35); color:var(--coral-tief); border-radius:8px; padding:10px 13px; font-size:13px; margin-bottom:16px; }
+
+/* ── Buttons (Drawer/Modal) ─────────────────────────────────────────────── */
+.btn {
+  padding: 9px 16px; border-radius: var(--radius-sm); border: 1px solid var(--linie);
+  background: #fff; color: var(--tinte); font-weight: 600; font-size: 13.5px;
+}
+.btn:hover { background: var(--leinen-tief); }
+.btn.primaer { background: var(--teal); border-color: var(--teal); color:#fff; }
+.btn.primaer:hover { background: var(--teal-tief); }
+.btn.akzent { background: var(--coral); border-color: var(--coral); color:#fff; }
+.btn.akzent:hover { background: var(--coral-tief); }
+.btn.gefahr { color: var(--coral-tief); border-color: rgba(217,108,87,.5); }
+.btn.gefahr:hover { background: rgba(217,108,87,.1); }
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
+#modalHintergrund {
+  position: fixed; inset:0; background: rgba(43,49,52,.48);
+  display:none; align-items:center; justify-content:center; z-index: 60; padding: 20px;
+}
+#modalHintergrund.offen { display:flex; }
+#modalBox {
+  background: var(--leinen-hell); border-radius: 16px; box-shadow: 0 20px 64px rgba(0,0,0,.32);
+  width: min(520px, 100%); max-height: 90vh; overflow-y:auto; padding: 24px 26px;
+}
+#modalBox h3 { font-size: 19px; margin-bottom: 6px; }
+#modalBox .modal-unter { font-size:13px; color:var(--muted); margin-bottom:16px; }
+#modalBox label { display:block; font-size: 12.5px; color: var(--muted); font-weight:600; margin: 14px 0 5px; }
+#modalBox input[type=text], #modalBox input[type=number], #modalBox select, #modalBox textarea {
+  width:100%; padding: 10px 13px; border:1px solid var(--linie); border-radius: var(--radius-sm); background:#fff; outline:none; color:var(--tinte);
+}
+#modalBox textarea { resize: vertical; min-height:72px; line-height:1.5; }
+#modalBox input:focus, #modalBox select:focus, #modalBox textarea:focus { border-color: var(--teal); }
+.feld-hint { font-size:11.5px; color:var(--muted-hell); margin-top:4px; }
+.feld-reihe { display:flex; gap:12px; }
+.feld-reihe > div { flex:1; }
+.modal-aktionen { display:flex; justify-content:flex-end; gap: 10px; margin-top: 22px; }
+
+/* Rezept-Auswahl im Tausch-Modal */
+.auswahl-liste { max-height: 46vh; overflow-y:auto; margin: 4px -4px 0; }
+.auswahl-zeile {
+  display:flex; align-items:center; gap:12px; padding:11px 12px; border-radius:var(--radius-sm);
+  cursor:pointer; border:1px solid transparent;
+}
+.auswahl-zeile:hover { background:#fff; border-color:var(--linie); }
+.auswahl-zeile .az-name { flex:1; font-weight:600; font-size:14px; }
+.auswahl-zeile .az-meta { font-size:11.5px; color:var(--muted); }
+.auswahl-zeile .az-meta.frisch { color: var(--coral-tief); font-weight:600; }
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--schiefer); color: var(--leinen);
+  padding: 11px 22px; border-radius: 26px; font-size: 14px; font-weight: 600;
+  box-shadow: 0 8px 26px rgba(0,0,0,.32); opacity: 0; pointer-events: none;
+  transition: opacity .18s, transform .18s; z-index: 100; max-width: 88vw; text-align:center;
+}
+#toast.sichtbar { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── Mobile ─────────────────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  #app { flex-direction: column; }
+  #sidebar {
+    width:100%; min-width:0; flex-direction:row; align-items:center;
+    height:auto; overflow-x:auto;
+  }
+  .sb-brand { border-bottom:0; border-right:1px solid var(--linie-dunkel); padding:14px 16px; font-size:16px; white-space:nowrap; }
+  .sb-brand small { display:none; }
+  #nav { display:flex; flex:1; padding:8px; gap:4px; overflow-x:auto; }
+  .nav-item { margin-bottom:0; white-space:nowrap; padding:9px 12px; }
+  .nav-item .txt { display:none; }
+  .nav-item .ic { font-size:19px; }
+  .nav-item.aktiv { box-shadow: inset 0 -3px 0 var(--coral); }
+  .sb-fuss { display:none; }
+  #kopf { padding:14px 16px; }
+  #kopfTitel h1 { font-size:20px; }
+  #inhalt { padding:16px 16px 60px; }
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar">
+    <div class="sb-brand">🍽️ No-Braine <small>Quantus · Wochenplaner</small></div>
+    <nav id="nav"></nav>
+    <div class="sb-fuss"><span class="punkt" id="authPunkt"></span><span id="authText">Verbinde …</span></div>
+  </aside>
+
+  <main id="haupt">
+    <div id="kopf">
+      <div id="kopfTitel"></div>
+      <div id="kopfAktion"></div>
+    </div>
+    <div id="inhalt"></div>
+  </main>
+</div>
+
+<div id="drawer">
+  <div class="dr-kopf">
+    <h2 id="drTitel"></h2>
+    <button class="dr-schliessen" data-action="drawer-schliessen" title="Schliessen">✕</button>
+  </div>
+  <div class="dr-inhalt" id="drInhalt"></div>
+</div>
+
+<div id="modalHintergrund" data-action="modal-hintergrund">
+  <div id="modalBox"></div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Firebase compat-SDK v10.8.0 — identisch zur Hauptapp (index.html), plus Auth für anonyme Anmeldung -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+
+<script>
+(function () {
+"use strict";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KONFIGURATION — Werte identisch zu public/index.html und public/drive.html
+// ═══════════════════════════════════════════════════════════════════════════
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC6xVo-wmXC4JjG7qMQnOExIJU-UDvBluE",
+  authDomain: "jupidu-36804.firebaseapp.com",
+  projectId: "jupidu-36804",
+  storageBucket: "jupidu-36804.firebasestorage.app",
+  messagingSenderId: "11390726952",
+  appId: "1:11390726952:web:aba2f101b6c5ca2bc5561d",
+  measurementId: "G-LT97CCT5DF"
+};
+// RTDB-Instanz explizit (europe-west1) — wie in index.html, kein databaseURL in der Config nötig.
+const RTDB_DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+
+// Pfad-Root /nobraine/
+const P_ROOT     = "nobraine";
+const P_RECIPES  = P_ROOT + "/recipes";
+const P_PLANS    = P_ROOT + "/plans";        // /plans/<weekKey>/<dayKey>/<slotKey> = recipeId
+const P_SHOPPING = P_ROOT + "/shopping";     // /shopping/<weekKey>/<key> = { checked, ... }
+const P_GEN      = P_ROOT + "/generation";   // /generation/<weekKey> = { status, ... }
+
+// n8n-Webhook — Platzhalter. Vom eigenen n8n-Workflow ersetzen (POST empfängt {weekKey, typ, ...}).
+const WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-generate";
+
+const TAGE_LANG  = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
+const SLOTS = [
+  { key: "fruehstueck", label: "Frühstück",    icon: "☕" },
+  { key: "mittag",      label: "Mittagessen",  icon: "🥗" },
+  { key: "abend",       label: "Abendessen",   icon: "🍲" }
+];
+const KATEGORIEN = [
+  { key: "fruehstueck", label: "Frühstück" },
+  { key: "mittag",      label: "Mittag" },
+  { key: "abend",       label: "Abend" },
+  { key: "snack",       label: "Snack" }
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIREBASE-SETUP + ANONYME ANMELDUNG
+// ═══════════════════════════════════════════════════════════════════════════
+let db = null, auth = null;
+try {
+  firebase.initializeApp(FIREBASE_CONFIG);
+  auth = firebase.auth();
+  db   = firebase.app().database(RTDB_DB_URL);
+} catch (e) {
+  console.error("Firebase Init fehlgeschlagen:", e);
+}
+
+const S = {
+  bereit: false,
+  recipes: {},              // /nobraine/recipes
+  plan: {},                 // /nobraine/plans/<weekKey> → { dayKey: { slotKey: recipeId } }
+  shopping: {},             // /nobraine/shopping/<weekKey>
+  generation: {},           // /nobraine/generation/<weekKey>
+  ansicht: "plan",          // plan | bibliothek | einkauf
+  suche: "",
+  katFilter: "alle",
+  drawer: null,             // { recipeId, tag, slot } — tag/slot nur bei Slot-Kontext
+  weekMonday: mondayOf(new Date()),
+  _planRef: null, _shopRef: null, _genRef: null
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WOCHEN- & DATUMS-HELFER
+// ═══════════════════════════════════════════════════════════════════════════
+function mondayOf(d) {
+  const m = new Date(d);
+  const versatz = (m.getDay() + 6) % 7; // Mo=0 … So=6
+  m.setDate(m.getDate() - versatz);
+  m.setHours(0, 0, 0, 0);
+  return m;
+}
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const tag = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - tag);
+  const jahrStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const woche = Math.ceil((((t - jahrStart) / 86400000) + 1) / 7);
+  return { jahr: t.getUTCFullYear(), woche: woche };
+}
+function weekKeyOf(monday) {
+  const w = isoWeek(monday);
+  return w.jahr + "-W" + String(w.woche).padStart(2, "0");
+}
+function tageDerWoche(monday) {
+  const arr = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(d.getDate() + i);
+    arr.push(d);
+  }
+  return arr;
+}
+function isoDatum(d) { return new Date(d).toISOString().slice(0, 10); }
+function heuteIso() { return isoDatum(new Date()); }
+function fmtKurz(d) { return new Date(d).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit" }); }
+function fmtLang(d) { return new Date(d).toLocaleDateString("de-CH", { day: "2-digit", month: "long", year: "numeric" }); }
+function tageSeit(iso) {
+  if (!iso) return null;
+  const a = new Date(iso + "T00:00:00"); const b = new Date(heuteIso() + "T00:00:00");
+  return Math.round((b - a) / 86400000);
+}
+
+const dayKeyOf = (i) => "d" + i;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ALLGEMEINE HELFER
+// ═══════════════════════════════════════════════════════════════════════════
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("sichtbar");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { el.classList.remove("sichtbar"); }, 3500);
+}
+function lc(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
+function slug(s) { return lc(s).replace(/[^a-z0-9äöü]+/g, "_").replace(/^_+|_+$/g, "") || "x"; }
+function katLabel(k) { const f = KATEGORIEN.find(function (x) { return x.key === k; }); return f ? f.label : "Mahlzeit"; }
+function neueId(praefix) {
+  const ref = db.ref(P_RECIPES).push();
+  return ref.key || (praefix + "_" + Date.now());
+}
+function num(v) {
+  const s = String(v == null ? "" : v).replace(",", ".").trim();
+  if (s.indexOf("/") > -1) { const p = s.split("/"); const a = parseFloat(p[0]), b = parseFloat(p[1]); if (b) return a / b; }
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+function mengeStr(n) {
+  if (n == null) return "";
+  const r = Math.round(n * 100) / 100;
+  return String(r);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOOT & LISTENER
+// ═══════════════════════════════════════════════════════════════════════════
+function boot() {
+  if (!auth) { toast("Firebase SDK nicht geladen — Adblocker prüfen"); return; }
+  auth.onAuthStateChanged(function (user) {
+    const punkt = document.getElementById("authPunkt");
+    const text  = document.getElementById("authText");
+    if (user) {
+      punkt.classList.add("online");
+      text.textContent = "Verbunden (anonym)";
+      if (!S.bereit) {
+        S.bereit = true;
+        db.ref(P_RECIPES).on("value", function (snap) {
+          S.recipes = snap.val() || {};
+          rezepteSeedFallsLeer();
+          render();
+        });
+        wochenListenerAktualisieren();
+      }
+    } else {
+      punkt.classList.remove("online");
+      text.textContent = "Melde an …";
+      auth.signInAnonymously().catch(function (e) {
+        text.textContent = "Anmeldung fehlgeschlagen";
+        console.error("Anonyme Anmeldung fehlgeschlagen:", e);
+        toast("Anmeldung fehlgeschlagen — ist Anonymous Auth im Firebase-Projekt aktiviert?");
+      });
+    }
+  });
+}
+
+// Woche-abhängige Listener (plan / shopping / generation) neu binden
+function wochenListenerAktualisieren() {
+  if (!S.bereit) return;
+  const wk = weekKeyOf(S.weekMonday);
+  if (S._planRef) S._planRef.off();
+  if (S._shopRef) S._shopRef.off();
+  if (S._genRef)  S._genRef.off();
+  S._planRef = db.ref(P_PLANS + "/" + wk);
+  S._shopRef = db.ref(P_SHOPPING + "/" + wk);
+  S._genRef  = db.ref(P_GEN + "/" + wk);
+  S._planRef.on("value", function (snap) { S.plan = snap.val() || {}; render(); });
+  S._shopRef.on("value", function (snap) { S.shopping = snap.val() || {}; render(); });
+  S._genRef.on("value",  function (snap) { S.generation = snap.val() || {}; render(); });
+}
+
+function wocheWechseln(deltaWochen) {
+  const m = new Date(S.weekMonday);
+  m.setDate(m.getDate() + deltaWochen * 7);
+  S.weekMonday = mondayOf(m);
+  S.plan = {}; S.shopping = {}; S.generation = {};
+  wochenListenerAktualisieren();
+  render();
+}
+function zuHeute() {
+  S.weekMonday = mondayOf(new Date());
+  S.plan = {}; S.shopping = {}; S.generation = {};
+  wochenListenerAktualisieren();
+  render();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ERST-SEED DER REZEPT-BIBLIOTHEK (nur falls komplett leer)
+// ═══════════════════════════════════════════════════════════════════════════
+let _seedLaeuft = false;
+function rezepteSeedFallsLeer() {
+  if (_seedLaeuft) return;
+  if (S.recipes && Object.keys(S.recipes).length > 0) return;
+  _seedLaeuft = true;
+  const now = new Date().toISOString();
+  const updates = {};
+  STARTER_REZEPTE.forEach(function (r) {
+    const key = db.ref(P_RECIPES).push().key;
+    updates[key] = Object.assign({ lastUsed: null, erstellt: now, aktualisiert: now }, r);
+  });
+  db.ref(P_RECIPES).update(updates).catch(function (e) {
+    console.error("Seed fehlgeschlagen:", e);
+    _seedLaeuft = false;
+  });
+}
+
+const STARTER_REZEPTE = [
+  { name: "Birchermüesli", kategorie: "fruehstueck", portionen: 2, kochzeitMin: 10, tags: ["vegetarisch","klassisch"],
+    zutaten: [
+      { menge: 100, einheit: "g", name: "Haferflocken" },
+      { menge: 2,   einheit: "dl", name: "Milch" },
+      { menge: 150, einheit: "g", name: "Naturjoghurt" },
+      { menge: 1,   einheit: "Stk", name: "Apfel" },
+      { menge: 30,  einheit: "g", name: "Baumnüsse" },
+      { menge: 1,   einheit: "EL", name: "Honig" }
+    ],
+    schritte: [
+      "Haferflocken mit der Milch in einer Schüssel verrühren und 5 Minuten quellen lassen.",
+      "Apfel raffeln und sofort daruntermischen, damit er nicht braun wird.",
+      "Joghurt und Honig unterrühren.",
+      "Mit grob gehackten Baumnüssen bestreuen und servieren."
+    ] },
+  { name: "Rührei mit Vollkornbrot", kategorie: "fruehstueck", portionen: 2, kochzeitMin: 12, tags: ["proteinreich","schnell"],
+    zutaten: [
+      { menge: 4, einheit: "Stk", name: "Eier" },
+      { menge: 2, einheit: "EL", name: "Milch" },
+      { menge: 1, einheit: "EL", name: "Butter" },
+      { menge: 2, einheit: "Scheiben", name: "Vollkornbrot" },
+      { menge: 1, einheit: "Prise", name: "Salz und Pfeffer" },
+      { menge: 1, einheit: "EL", name: "Schnittlauch" }
+    ],
+    schritte: [
+      "Eier mit Milch, Salz und Pfeffer verquirlen.",
+      "Butter in einer beschichteten Pfanne bei mittlerer Hitze schmelzen.",
+      "Eiermasse zugeben und mit dem Spachtel langsam zusammenschieben, bis sie cremig gestockt ist.",
+      "Mit Schnittlauch bestreuen und mit dem Vollkornbrot servieren."
+    ] },
+  { name: "Overnight Oats mit Beeren", kategorie: "fruehstueck", portionen: 2, kochzeitMin: 5, tags: ["mealprep","vegan-möglich"],
+    zutaten: [
+      { menge: 120, einheit: "g", name: "Haferflocken" },
+      { menge: 2.5, einheit: "dl", name: "Milch oder Hafermilch" },
+      { menge: 2,   einheit: "EL", name: "Chiasamen" },
+      { menge: 150, einheit: "g", name: "gemischte Beeren" },
+      { menge: 1,   einheit: "EL", name: "Ahornsirup" }
+    ],
+    schritte: [
+      "Haferflocken, Chiasamen, Milch und Ahornsirup in einem Glas verrühren.",
+      "Zugedeckt über Nacht in den Kühlschrank stellen.",
+      "Am Morgen umrühren und mit den Beeren toppen."
+    ] },
+  { name: "Älplermagronen", kategorie: "abend", portionen: 2, kochzeitMin: 35, tags: ["schweizer-klassiker","comfort"],
+    zutaten: [
+      { menge: 250, einheit: "g", name: "Hörnli" },
+      { menge: 300, einheit: "g", name: "festkochende Kartoffeln" },
+      { menge: 1.5, einheit: "dl", name: "Rahm" },
+      { menge: 100, einheit: "g", name: "geriebener Käse" },
+      { menge: 2,   einheit: "Stk", name: "Zwiebeln" },
+      { menge: 1,   einheit: "Portion", name: "Apfelmus zum Servieren" }
+    ],
+    schritte: [
+      "Kartoffeln schälen und würfeln. In Salzwasser 5 Minuten vorkochen.",
+      "Hörnli zugeben und gemeinsam garen, bis beides weich ist. Abgiessen.",
+      "Zwiebelringe in Butter goldbraun rösten.",
+      "Rahm erwärmen, Käse einrühren, mit Kartoffeln und Hörnli mischen.",
+      "Mit Röstzwiebeln bestreuen und mit Apfelmus servieren."
+    ] },
+  { name: "Gemüse-Reis-Pfanne mit Poulet", kategorie: "mittag", portionen: 2, kochzeitMin: 25, tags: ["ausgewogen","one-pot"],
+    zutaten: [
+      { menge: 200, einheit: "g", name: "Pouletbrust" },
+      { menge: 150, einheit: "g", name: "Basmatireis" },
+      { menge: 1,   einheit: "Stk", name: "Peperoni" },
+      { menge: 1,   einheit: "Stk", name: "Zucchetti" },
+      { menge: 2,   einheit: "EL", name: "Sojasauce" },
+      { menge: 1,   einheit: "EL", name: "Bratbutter" }
+    ],
+    schritte: [
+      "Reis nach Packungsangabe garen.",
+      "Poulet in Streifen schneiden und in der Bratbutter kräftig anbraten.",
+      "Gewürfeltes Gemüse zugeben und 6–8 Minuten mitbraten.",
+      "Reis untermischen, mit Sojasauce abschmecken und servieren."
+    ] },
+  { name: "Linseneintopf", kategorie: "mittag", portionen: 3, kochzeitMin: 40, tags: ["vegan","proteinreich"],
+    zutaten: [
+      { menge: 200, einheit: "g", name: "braune Linsen" },
+      { menge: 2,   einheit: "Stk", name: "Karotten" },
+      { menge: 2,   einheit: "Stk", name: "Sellerie-Stangen" },
+      { menge: 1,   einheit: "Stk", name: "Zwiebel" },
+      { menge: 8,   einheit: "dl", name: "Gemüsebouillon" },
+      { menge: 1,   einheit: "EL", name: "Tomatenpüree" }
+    ],
+    schritte: [
+      "Zwiebel, Karotten und Sellerie fein würfeln und in Olivenöl andünsten.",
+      "Tomatenpüree kurz mitrösten.",
+      "Linsen und Bouillon zugeben und zugedeckt 25–30 Minuten köcheln.",
+      "Mit Salz, Pfeffer und einem Spritzer Essig abschmecken."
+    ] },
+  { name: "Ofengemüse mit Feta", kategorie: "abend", portionen: 2, kochzeitMin: 35, tags: ["vegetarisch","einfach"],
+    zutaten: [
+      { menge: 400, einheit: "g", name: "gemischtes Gemüse" },
+      { menge: 200, einheit: "g", name: "Feta" },
+      { menge: 2,   einheit: "EL", name: "Olivenöl" },
+      { menge: 1,   einheit: "TL", name: "Kräuter der Provence" },
+      { menge: 1,   einheit: "Stk", name: "Knoblauchzehe" }
+    ],
+    schritte: [
+      "Ofen auf 200 °C vorheizen.",
+      "Gemüse in mundgerechte Stücke schneiden, mit Öl, Knoblauch und Kräutern mischen.",
+      "Auf ein Blech geben, Feta darüber bröseln.",
+      "25–30 Minuten backen, bis das Gemüse weich und leicht gebräunt ist."
+    ] },
+  { name: "Spaghetti Napoli", kategorie: "abend", portionen: 2, kochzeitMin: 20, tags: ["vegetarisch","schnell","klassisch"],
+    zutaten: [
+      { menge: 200, einheit: "g", name: "Spaghetti" },
+      { menge: 400, einheit: "g", name: "gehackte Tomaten" },
+      { menge: 1,   einheit: "Stk", name: "Zwiebel" },
+      { menge: 1,   einheit: "Stk", name: "Knoblauchzehe" },
+      { menge: 1,   einheit: "Handvoll", name: "Basilikum" },
+      { menge: 2,   einheit: "EL", name: "Olivenöl" }
+    ],
+    schritte: [
+      "Spaghetti in reichlich Salzwasser al dente kochen.",
+      "Zwiebel und Knoblauch fein hacken und in Olivenöl glasig dünsten.",
+      "Tomaten zugeben und 10 Minuten einköcheln, mit Salz und Pfeffer abschmecken.",
+      "Sauce mit den abgetropften Spaghetti mischen und mit Basilikum servieren."
+    ] },
+  { name: "Hummus mit Gemüsesticks", kategorie: "snack", portionen: 4, kochzeitMin: 10, tags: ["vegan","fingerfood"],
+    zutaten: [
+      { menge: 240, einheit: "g", name: "Kichererbsen (abgetropft)" },
+      { menge: 2,   einheit: "EL", name: "Tahini" },
+      { menge: 1,   einheit: "Stk", name: "Zitrone (Saft)" },
+      { menge: 1,   einheit: "Stk", name: "Knoblauchzehe" },
+      { menge: 3,   einheit: "EL", name: "Olivenöl" },
+      { menge: 300, einheit: "g", name: "Rüebli und Gurke" }
+    ],
+    schritte: [
+      "Kichererbsen, Tahini, Zitronensaft, Knoblauch und Öl fein pürieren.",
+      "Mit etwas Wasser auf cremige Konsistenz bringen, salzen.",
+      "Gemüse in Sticks schneiden und zum Dippen servieren."
+    ] }
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════════════════
+function render() {
+  renderNav();
+  renderKopf();
+  renderInhalt();
+  renderDrawer();
+}
+
+function renderNav() {
+  const eintraege = [
+    { key: "plan",       ic: "🗓️", label: "Wochenplan" },
+    { key: "bibliothek", ic: "📖", label: "Rezepte" },
+    { key: "einkauf",    ic: "🛒", label: "Einkaufsliste" }
+  ];
+  const offen = offeneEinkauf();
+  document.getElementById("nav").innerHTML = eintraege.map(function (e) {
+    const aktiv = S.ansicht === e.key ? " aktiv" : "";
+    const zahl = (e.key === "einkauf" && offen > 0) ? '<span class="zahl">' + offen + "</span>" : "";
+    return '<div class="nav-item' + aktiv + '" data-action="ansicht" data-art="' + e.key + '">' +
+      '<span class="ic">' + e.ic + '</span><span class="txt">' + esc(e.label) + "</span>" + zahl + "</div>";
+  }).join("");
+}
+
+function renderKopf() {
+  const titelEl = document.getElementById("kopfTitel");
+  const aktionEl = document.getElementById("kopfAktion");
+  if (S.ansicht === "plan") {
+    const tage = tageDerWoche(S.weekMonday);
+    titelEl.innerHTML =
+      '<div class="wochen-leiste">' +
+        '<button class="wpfeil" data-action="woche-zurueck" title="Vorherige Woche">‹</button>' +
+        '<div class="woche-label">' + esc(weekKeyOf(S.weekMonday)) +
+          '<small>' + fmtKurz(tage[0]) + " – " + fmtKurz(tage[6]) + "</small></div>" +
+        '<button class="wpfeil" data-action="woche-vor" title="Nächste Woche">›</button>' +
+      "</div>";
+    aktionEl.innerHTML = '<button class="btn-heute" data-action="zu-heute">Aktuelle Woche</button>';
+  } else if (S.ansicht === "bibliothek") {
+    const anz = Object.keys(S.recipes).length;
+    titelEl.innerHTML = "<h1>Rezept-Bibliothek</h1><div class='unter'>" + anz + " Rezept" + (anz === 1 ? "" : "e") + "</div>";
+    aktionEl.innerHTML = '<button class="btn-primaer" data-action="rezept-neu">＋ Neues Rezept</button>';
+  } else {
+    titelEl.innerHTML = "<h1>Einkaufsliste</h1><div class='unter'>Woche " + esc(weekKeyOf(S.weekMonday)) + "</div>";
+    aktionEl.innerHTML = "";
+  }
+}
+
+function renderInhalt() {
+  const el = document.getElementById("inhalt");
+  if (S.ansicht === "plan") el.innerHTML = viewPlan();
+  else if (S.ansicht === "bibliothek") el.innerHTML = viewBibliothek();
+  else el.innerHTML = viewEinkauf();
+}
+
+// ── Wochenplan ────────────────────────────────────────────────────────────
+function genLaeuft() {
+  const st = S.generation && S.generation.status;
+  return st === "pending" || st === "running";
+}
+function viewPlan() {
+  const tage = tageDerWoche(S.weekMonday);
+  const heute = heuteIso();
+  const laeuft = genLaeuft();
+  const gStatus = S.generation && S.generation.status;
+
+  let statusHtml = "";
+  if (laeuft) {
+    statusHtml = '<span class="gen-status"><span class="spinner"></span>' +
+      (gStatus === "running" ? "n8n generiert die Woche …" : "Anfrage gesendet …") + "</span>";
+  } else if (gStatus === "done" && S.generation.finishedAt) {
+    statusHtml = '<span class="gen-status">✓ Zuletzt generiert: ' + fmtKurz(S.generation.finishedAt) + "</span>";
+  } else if (gStatus === "error") {
+    statusHtml = '<span class="gen-status">⚠︎ ' + esc(S.generation.message || "Fehler bei der Generierung") + "</span>";
+  }
+
+  let html =
+    '<div class="gen-karte">' +
+      '<div class="gk-text"><b>Woche automatisch planen</b>' +
+        "<span>Startet den n8n-Workflow und füllt leere Slots per KI. Manuelle Rezepte bleiben erhalten.</span></div>" +
+      statusHtml +
+      '<button class="btn-gen" data-action="woche-generieren"' + (laeuft ? " disabled" : "") + ">" +
+        (laeuft ? '<span class="spinner"></span>Generiere …' : "🎲 Woche generieren") + "</button>" +
+    "</div>";
+
+  html += '<div class="wochen-grid">';
+  tage.forEach(function (d, i) {
+    const istHeute = isoDatum(d) === heute;
+    const dk = dayKeyOf(i);
+    const tagPlan = S.plan[dk] || {};
+    html += '<div class="tag-karte' + (istHeute ? " heute" : "") + '">' +
+      '<div class="tk-kopf"><span class="tag">' + TAGE_LANG[i] + "</span>" +
+        (istHeute ? '<span class="heute-chip">Heute</span>' : "") +
+        '<span class="datum">' + fmtKurz(d) + "</span></div>";
+    SLOTS.forEach(function (slot) {
+      const rid = tagPlan[slot.key];
+      const r = rid && S.recipes[rid];
+      if (r) {
+        html += '<div class="slot" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
+          '<div class="s-label">' + slot.icon + " " + slot.label + "</div>" +
+          '<div class="s-rezept">' + esc(r.name) + "</div>" +
+          '<div class="s-meta"><span>⏱ ' + (r.kochzeitMin || "–") + " min</span><span>🍽 " + (r.portionen || "–") + " Port.</span></div>" +
+        "</div>";
+      } else {
+        html += '<div class="slot leer" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
+          '<div class="s-label">' + slot.icon + " " + slot.label + "</div>" +
+          '<div class="s-rezept">＋ hinzufügen</div>' +
+        "</div>";
+      }
+    });
+    html += "</div>";
+  });
+  html += "</div>";
+  return html;
+}
+
+// ── Bibliothek ────────────────────────────────────────────────────────────
+function gefilterteRezepte() {
+  const q = lc(S.suche);
+  return Object.keys(S.recipes).filter(function (id) {
+    const r = S.recipes[id]; if (!r) return false;
+    if (S.katFilter !== "alle" && r.kategorie !== S.katFilter) return false;
+    if (!q) return true;
+    const heu = lc(r.name) + " " + (r.tags || []).join(" ").toLowerCase() + " " +
+      (r.zutaten || []).map(function (z) { return z.name; }).join(" ").toLowerCase();
+    return heu.indexOf(q) > -1;
+  }).sort(function (a, b) {
+    // Zuletzt verwendete nach hinten (verhindert Wiederholungen), sonst alphabetisch
+    const la = S.recipes[a].lastUsed || "", lb = S.recipes[b].lastUsed || "";
+    if (la !== lb) return la.localeCompare(lb);
+    return S.recipes[a].name.localeCompare(S.recipes[b].name, "de");
+  });
+}
+function viewBibliothek() {
+  const chips = [{ key: "alle", label: "Alle" }].concat(KATEGORIEN);
+  let html = '<div class="werkzeug-leiste">' +
+    '<input class="sucheInput" id="sucheInput" type="search" placeholder="Rezept, Zutat oder Tag suchen …" value="' + esc(S.suche) + '">' +
+    '<div class="kat-filter">' +
+      chips.map(function (c) {
+        return '<button class="kat-chip' + (S.katFilter === c.key ? " aktiv" : "") + '" data-action="kat-filter" data-kat="' + c.key + '">' + esc(c.label) + "</button>";
+      }).join("") +
+    "</div></div>";
+
+  const ids = gefilterteRezepte();
+  if (ids.length === 0) {
+    html += '<div class="leer-hinweis"><div class="gross">🍳</div>' +
+      (Object.keys(S.recipes).length === 0
+        ? "Noch keine Rezepte. Lege dein erstes Rezept an."
+        : "Keine Rezepte für diese Suche.") + "</div>";
+    return html;
+  }
+
+  html += '<div class="rezept-grid">';
+  ids.forEach(function (id) {
+    const r = S.recipes[id];
+    const seit = tageSeit(r.lastUsed);
+    let luHtml;
+    if (seit == null) luHtml = '<div class="rk-lastused">Noch nie verwendet</div>';
+    else {
+      const frisch = seit <= 10;
+      luHtml = '<div class="rk-lastused' + (frisch ? " frisch" : "") + '">' +
+        (seit === 0 ? "Heute verwendet" : "Zuletzt vor " + seit + " Tag" + (seit === 1 ? "" : "en")) + "</div>";
+    }
+    html += '<div class="rezept-karte" data-action="rezept-oeffnen" data-id="' + esc(id) + '">' +
+      '<div class="rk-kopf"><div class="rk-titel">' + esc(r.name) + "</div>" +
+        '<span class="kat-badge kat-' + esc(r.kategorie || "mittag") + '">' + esc(katLabel(r.kategorie)) + "</span></div>" +
+      '<div class="rk-meta"><span>⏱ ' + (r.kochzeitMin || "–") + " min</span><span>🍽 " + (r.portionen || "–") + " Portionen</span><span>🧾 " + ((r.zutaten || []).length) + " Zutaten</span></div>" +
+      ((r.tags || []).length ? '<div class="rk-tags">' + r.tags.slice(0, 4).map(function (t) { return '<span class="tag-pille">' + esc(t) + "</span>"; }).join("") + "</div>" : "") +
+      luHtml +
+    "</div>";
+  });
+  html += "</div>";
+  return html;
+}
+
+// ── Einkaufsliste ─────────────────────────────────────────────────────────
+// Aggregiert alle Zutaten der Wochen-Rezepte (dedupliziert nach Name+Einheit),
+// summiert Mengen, mischt manuell ergänzte Einträge und persistierte Check-Zustände.
+function einkaufAggregiert() {
+  const agg = {}; // key -> { name, einheit, menge(nummerisch|null), stk, checked, manuell }
+  // 1) aus dem Wochenplan
+  Object.keys(S.plan).forEach(function (dk) {
+    const tagPlan = S.plan[dk] || {};
+    Object.keys(tagPlan).forEach(function (slotKey) {
+      const r = S.recipes[tagPlan[slotKey]];
+      if (!r || !r.zutaten) return;
+      r.zutaten.forEach(function (z) {
+        const key = "auto_" + slug(z.name) + "__" + slug(z.einheit || "");
+        if (!agg[key]) agg[key] = { name: z.name, einheit: z.einheit || "", menge: 0, unbekannt: false, checked: false, manuell: false, key: key };
+        const n = num(z.menge);
+        if (n == null) agg[key].unbekannt = true; else agg[key].menge += n;
+      });
+    });
+  });
+  // 2) manuelle Einträge + Check-Zustände aus Firebase
+  Object.keys(S.shopping || {}).forEach(function (key) {
+    const v = S.shopping[key] || {};
+    if (v.manuell) {
+      agg[key] = { name: v.name || "", einheit: v.einheit || "", menge: num(v.menge), unbekannt: num(v.menge) == null && !!v.menge === false, checked: !!v.checked, manuell: true, key: key };
+    } else if (agg[key]) {
+      agg[key].checked = !!v.checked;
+    }
+  });
+  return Object.keys(agg).map(function (k) { return agg[k]; }).sort(function (a, b) {
+    if (a.checked !== b.checked) return a.checked ? 1 : -1;
+    return a.name.localeCompare(b.name, "de");
+  });
+}
+function offeneEinkauf() {
+  if (!S.bereit) return 0;
+  return einkaufAggregiert().filter(function (x) { return !x.checked; }).length;
+}
+function viewEinkauf() {
+  const items = einkaufAggregiert();
+  let html = '<div class="einkauf-wrap">' +
+    '<div class="einkauf-add">' +
+      '<input class="ea-menge"   id="ekMenge"   type="text" placeholder="Menge">' +
+      '<input class="ea-einheit" id="ekEinheit" type="text" placeholder="Einheit">' +
+      '<input class="ea-name"    id="ekName"    type="text" placeholder="Artikel manuell ergänzen …">' +
+      '<button class="btn-primaer" data-action="einkauf-add">＋ Hinzufügen</button>' +
+    "</div>";
+
+  if (items.length === 0) {
+    html += '<div class="leer-hinweis"><div class="gross">🛒</div>Noch nichts geplant. Fülle den Wochenplan oder ergänze Artikel manuell.</div></div>';
+    return html;
+  }
+
+  const offen = items.filter(function (x) { return !x.checked; });
+  const erledigt = items.filter(function (x) { return x.checked; });
+
+  function zeile(x) {
+    const menge = x.unbekannt ? "" : (x.menge != null && x.menge !== 0 ? mengeStr(x.menge) + " " + esc(x.einheit) : (x.einheit ? esc(x.einheit) : ""));
+    return '<div class="ek-zeile' + (x.checked ? " ab" : "") + '">' +
+      '<div class="ek-check" data-action="einkauf-toggle" data-key="' + esc(x.key) + '" data-name="' + esc(x.name) + '" data-einheit="' + esc(x.einheit) + '" data-menge="' + esc(x.menge == null ? "" : mengeStr(x.menge)) + '">' + (x.checked ? "✓" : "") + "</div>" +
+      '<div class="ek-name">' + esc(x.name) + (x.manuell ? ' <span class="ek-manuell">manuell</span>' : "") + "</div>" +
+      (menge ? '<div class="ek-menge">' + menge + "</div>" : "") +
+      (x.manuell ? '<button class="ek-del" data-action="einkauf-loeschen" data-key="' + esc(x.key) + '" title="Entfernen">✕</button>' : "") +
+    "</div>";
+  }
+
+  html += '<div class="einkauf-gruppe"><h3>Offen · ' + offen.length + "</h3>" +
+    (offen.length ? offen.map(zeile).join("") : '<div style="color:var(--muted);font-size:13.5px">Alles erledigt 🎉</div>') + "</div>";
+  if (erledigt.length) {
+    html += '<div class="einkauf-gruppe"><h3>Erledigt · ' + erledigt.length + "</h3>" + erledigt.map(zeile).join("") + "</div>";
+    html += '<div class="einkauf-fuss"><button class="btn" data-action="einkauf-erledigt-loeschen">Erledigte entfernen</button></div>';
+  }
+  html += "</div>";
+  return html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DRAWER — Rezept-Detail (+ Slot-Kontext)
+// ═══════════════════════════════════════════════════════════════════════════
+function renderDrawer() {
+  const dr = document.getElementById("drawer");
+  if (!S.drawer) { dr.classList.remove("offen"); return; }
+  const r = S.recipes[S.drawer.recipeId];
+  if (!r) { S.drawer = null; dr.classList.remove("offen"); return; }
+  const imSlot = S.drawer.tag != null && S.drawer.slot != null;
+
+  document.getElementById("drTitel").textContent = r.name;
+
+  let aktionen = "";
+  if (imSlot) {
+    const slotLabel = (SLOTS.find(function (s) { return s.key === S.drawer.slot; }) || {}).label || "";
+    aktionen += '<button class="btn primaer" data-action="slot-tauschen" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">↔ Rezept tauschen</button>';
+    aktionen += '<button class="btn akzent" data-action="slot-generieren" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Neu generieren</button>";
+    aktionen += '<button class="btn gefahr" data-action="slot-entfernen" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">Aus Plan entfernen</button>';
+  } else {
+    aktionen += '<button class="btn primaer" data-action="rezept-einplanen" data-id="' + esc(S.drawer.recipeId) + '">🗓️ In Plan setzen</button>';
+  }
+  aktionen += '<button class="btn" data-action="rezept-bearbeiten" data-id="' + esc(S.drawer.recipeId) + '">✎ Bearbeiten</button>';
+  aktionen += '<button class="btn gefahr" data-action="rezept-loeschen" data-id="' + esc(S.drawer.recipeId) + '">Löschen</button>';
+
+  const seit = tageSeit(r.lastUsed);
+  let hinweis = "";
+  if (imSlot && seit != null && seit <= 7 && seit >= 0) {
+    hinweis = '<div class="hinweis-box">Dieses Rezept wurde vor ' + (seit === 0 ? "0 Tagen (heute)" : seit + " Tag" + (seit === 1 ? "" : "en")) + " schon eingeplant — evtl. abwechseln.</div>";
+  }
+
+  let html = hinweis +
+    '<div class="dr-meta-reihe">' +
+      '<span class="meta-pille kat-badge kat-' + esc(r.kategorie || "mittag") + '" style="border:0">' + esc(katLabel(r.kategorie)) + "</span>" +
+      '<span class="meta-pille">⏱ ' + (r.kochzeitMin || "–") + " min</span>" +
+      '<span class="meta-pille">🍽 ' + (r.portionen || "–") + " Portionen</span>" +
+      (seit != null ? '<span class="meta-pille">🕑 ' + (seit === 0 ? "heute" : "vor " + seit + " T") + "</span>" : "") +
+    "</div>" +
+    '<div class="dr-aktionen">' + aktionen + "</div>";
+
+  html += '<div class="dr-abschnitt"><h4>Zutaten</h4><ul class="zutat-liste">' +
+    (r.zutaten || []).map(function (z) {
+      const m = [z.menge, z.einheit].filter(function (x) { return x != null && x !== ""; }).join(" ");
+      return "<li><span class='zutat-menge'>" + esc(m || "—") + "</span><span>" + esc(z.name) + "</span></li>";
+    }).join("") + "</ul></div>";
+
+  html += '<div class="dr-abschnitt"><h4>Zubereitung</h4><ol class="schritt-liste">' +
+    (r.schritte || []).map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + "</ol></div>";
+
+  if ((r.tags || []).length) {
+    html += '<div class="dr-abschnitt"><h4>Tags</h4><div class="dr-tags">' +
+      r.tags.map(function (t) { return '<span class="tag-pille">' + esc(t) + "</span>"; }).join("") + "</div></div>";
+  }
+
+  document.getElementById("drInhalt").innerHTML = html;
+  dr.classList.add("offen");
+}
+function drawerSchliessen() { S.drawer = null; renderDrawer(); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AKTIONEN — Plan / Slots
+// ═══════════════════════════════════════════════════════════════════════════
+function slotKlick(tag, slot) {
+  const dk = dayKeyOf(tag);
+  const rid = (S.plan[dk] || {})[slot];
+  if (rid && S.recipes[rid]) {
+    S.drawer = { recipeId: rid, tag: tag, slot: slot };
+    renderDrawer();
+  } else {
+    rezeptWaehlenDialog(tag, slot);
+  }
+}
+
+async function slotSetzen(tag, slot, recipeId) {
+  const dk = dayKeyOf(tag);
+  const datum = isoDatum(tageDerWoche(S.weekMonday)[tag]);
+  try {
+    await db.ref(P_PLANS + "/" + weekKeyOf(S.weekMonday) + "/" + dk + "/" + slot).set(recipeId);
+    // lastUsed auf das Datum dieses Slots setzen (verhindert Wiederholungen)
+    await db.ref(P_RECIPES + "/" + recipeId + "/lastUsed").set(datum);
+    toast("Eingeplant: " + (S.recipes[recipeId] ? S.recipes[recipeId].name : ""));
+  } catch (e) { toast("Fehler: " + (e && e.message)); }
+}
+async function slotEntfernen(tag, slot) {
+  const dk = dayKeyOf(tag);
+  try {
+    await db.ref(P_PLANS + "/" + weekKeyOf(S.weekMonday) + "/" + dk + "/" + slot).remove();
+    toast("Aus dem Plan entfernt");
+    drawerSchliessen();
+  } catch (e) { toast("Fehler: " + (e && e.message)); }
+}
+
+function rezeptWaehlenDialog(tag, slot) {
+  const slotObj = SLOTS.find(function (s) { return s.key === slot; }) || {};
+  const state = { q: "" };
+  function liste() {
+    const q = lc(state.q);
+    const ids = Object.keys(S.recipes).filter(function (id) {
+      const r = S.recipes[id]; if (!r) return false;
+      if (!q) return true;
+      return lc(r.name).indexOf(q) > -1 || (r.tags || []).join(" ").toLowerCase().indexOf(q) > -1;
+    }).sort(function (a, b) {
+      const ra = S.recipes[a], rb = S.recipes[b];
+      // Passende Kategorie zuerst, dann selten verwendete zuerst
+      const pa = ra.kategorie === slot ? 0 : 1, pb = rb.kategorie === slot ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      const la = ra.lastUsed || "", lb = rb.lastUsed || "";
+      if (la !== lb) return la.localeCompare(lb);
+      return ra.name.localeCompare(rb.name, "de");
+    });
+    return ids.map(function (id) {
+      const r = S.recipes[id];
+      const seit = tageSeit(r.lastUsed);
+      const meta = seit == null ? "noch nie" : (seit === 0 ? "heute geplant" : "vor " + seit + " T");
+      const frisch = seit != null && seit <= 10;
+      return '<div class="auswahl-zeile" data-action="waehlen-rezept" data-id="' + esc(id) + '" data-tag="' + tag + '" data-slot="' + slot + '">' +
+        '<span class="kat-badge kat-' + esc(r.kategorie || "mittag") + '">' + esc(katLabel(r.kategorie)) + "</span>" +
+        '<span class="az-name">' + esc(r.name) + "</span>" +
+        '<span class="az-meta' + (frisch ? " frisch" : "") + '">' + meta + "</span></div>";
+    }).join("") || '<div style="padding:16px;color:var(--muted)">Keine Rezepte gefunden.</div>';
+  }
+  modalOeffnen(
+    "<h3>" + (slotObj.icon || "") + " " + esc(slotObj.label || "Mahlzeit") + " · " + TAGE_LANG[tag] + "</h3>" +
+    '<div class="modal-unter">Rezept aus der Bibliothek wählen oder diesen Slot per KI generieren.</div>' +
+    '<input type="text" id="mSuche" placeholder="Rezept suchen …" style="margin-bottom:10px">' +
+    '<div class="auswahl-liste" id="mListe">' + liste() + "</div>" +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      '<button class="btn akzent" data-action="slot-generieren" data-tag="' + tag + '" data-slot="' + slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Slot generieren</button>" +
+    "</div>",
+    null
+  );
+  const sucheEl = document.getElementById("mSuche");
+  sucheEl.addEventListener("input", function () { state.q = sucheEl.value; document.getElementById("mListe").innerHTML = liste(); });
+}
+
+function rezeptEinplanenDialog(recipeId) {
+  const r = S.recipes[recipeId]; if (!r) return;
+  const tage = tageDerWoche(S.weekMonday);
+  let tagOpt = tage.map(function (d, i) { return '<option value="' + i + '">' + TAGE_LANG[i] + ", " + fmtKurz(d) + "</option>"; }).join("");
+  let slotOpt = SLOTS.map(function (s) { return '<option value="' + s.key + '"' + (s.key === r.kategorie ? " selected" : "") + ">" + s.label + "</option>"; }).join("");
+  modalOeffnen(
+    "<h3>„" + esc(r.name) + "“ einplanen</h3>" +
+    '<div class="modal-unter">Woche ' + esc(weekKeyOf(S.weekMonday)) + "</div>" +
+    '<div class="feld-reihe"><div><label>Tag</label><select id="mpTag">' + tagOpt + "</select></div>" +
+    '<div><label>Mahlzeit</label><select id="mpSlot">' + slotOpt + "</select></div></div>" +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      '<button class="btn primaer" data-action="modal-ok">Einplanen</button></div>',
+    async function () {
+      const tag = parseInt(document.getElementById("mpTag").value, 10);
+      const slot = document.getElementById("mpSlot").value;
+      await slotSetzen(tag, slot, recipeId);
+      drawerSchliessen();
+    }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AKTIONEN — Generierung via n8n-Webhook
+// ═══════════════════════════════════════════════════════════════════════════
+async function generieren(payloadExtra, hinweis) {
+  const wk = weekKeyOf(S.weekMonday);
+  const payload = Object.assign({
+    weekKey: wk,
+    startDatum: isoDatum(S.weekMonday),
+    tage: 7,
+    slots: SLOTS.map(function (s) { return s.key; })
+  }, payloadExtra || {});
+  try {
+    await db.ref(P_GEN + "/" + wk).set({
+      status: "pending",
+      typ: payload.typ || "woche",
+      angefragt: new Date().toISOString(),
+      message: null
+    });
+    toast(hinweis || "Generierung gestartet …");
+    // Webhook anstossen. n8n aktualisiert Status + Plan live über die RTDB-Listener.
+    const res = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error("Webhook-Status " + res.status);
+  } catch (e) {
+    console.error("Webhook fehlgeschlagen:", e);
+    await db.ref(P_GEN + "/" + wk).update({
+      status: "error",
+      message: "Webhook nicht erreichbar (WEBHOOK_URL noch Platzhalter?)"
+    }).catch(function () {});
+    toast("Webhook nicht erreichbar — WEBHOOK_URL im Code setzen.");
+  }
+}
+function wocheGenerieren() {
+  if (genLaeuft()) return;
+  generieren({ typ: "woche" }, "Woche wird generiert …");
+}
+function slotGenerieren(tag, slot) {
+  if (genLaeuft()) return;
+  modalSchliessen();
+  generieren({ typ: "slot", tag: tag, slot: slot, tagName: TAGE_LANG[tag] }, "Slot wird generiert …");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AKTIONEN — Einkaufsliste
+// ═══════════════════════════════════════════════════════════════════════════
+async function einkaufToggle(el) {
+  const key = el.getAttribute("data-key");
+  const wk = weekKeyOf(S.weekMonday);
+  const ref = db.ref(P_SHOPPING + "/" + wk + "/" + key);
+  const snap = await ref.once("value");
+  const cur = snap.val();
+  if (cur && cur.manuell) {
+    await ref.update({ checked: !cur.checked });
+  } else {
+    // Auto-Eintrag: Check-Zustand persistieren (mit Referenzdaten)
+    const neu = !(cur && cur.checked);
+    await ref.set({
+      checked: neu, manuell: false,
+      name: el.getAttribute("data-name"),
+      einheit: el.getAttribute("data-einheit"),
+      menge: el.getAttribute("data-menge")
+    });
+  }
+}
+async function einkaufHinzufuegen() {
+  const name = document.getElementById("ekName").value.trim();
+  if (!name) { toast("Bitte einen Artikel eingeben."); return; }
+  const menge = document.getElementById("ekMenge").value.trim();
+  const einheit = document.getElementById("ekEinheit").value.trim();
+  const wk = weekKeyOf(S.weekMonday);
+  await db.ref(P_SHOPPING + "/" + wk).push({
+    name: name, menge: menge, einheit: einheit, manuell: true, checked: false, erstellt: new Date().toISOString()
+  });
+  toast("Hinzugefügt: " + name);
+}
+async function einkaufLoeschen(key) {
+  await db.ref(P_SHOPPING + "/" + weekKeyOf(S.weekMonday) + "/" + key).remove();
+}
+async function einkaufErledigteLoeschen() {
+  const wk = weekKeyOf(S.weekMonday);
+  const updates = {};
+  Object.keys(S.shopping || {}).forEach(function (k) {
+    const v = S.shopping[k];
+    if (v && v.checked) {
+      updates[k] = v.manuell ? null : Object.assign({}, v, { checked: false });
+    }
+  });
+  if (Object.keys(updates).length === 0) { toast("Nichts zu entfernen."); return; }
+  await db.ref(P_SHOPPING + "/" + wk).update(updates);
+  toast("Erledigte Einträge entfernt");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AKTIONEN — Rezept anlegen / bearbeiten / löschen
+// ═══════════════════════════════════════════════════════════════════════════
+function zutatenZuText(zutaten) {
+  return (zutaten || []).map(function (z) {
+    return [z.menge, z.einheit, z.name].filter(function (x) { return x != null && x !== ""; }).join(" ");
+  }).join("\n");
+}
+function textZuZutaten(text) {
+  return String(text || "").split("\n").map(function (l) { return l.trim(); }).filter(Boolean).map(function (l) {
+    // „200 g Mehl" | „2 Eier" | „Salz"
+    let m = l.match(/^([\d.,\/]+)\s+(\S+)\s+(.+)$/);
+    if (m && num(m[1]) != null) return { menge: m[1].replace(",", "."), einheit: m[2], name: m[3] };
+    m = l.match(/^([\d.,\/]+)\s+(.+)$/);
+    if (m && num(m[1]) != null) return { menge: m[1].replace(",", "."), einheit: "", name: m[2] };
+    return { menge: "", einheit: "", name: l };
+  });
+}
+function rezeptFormular(recipeId) {
+  const r = recipeId ? S.recipes[recipeId] : null;
+  const katOpt = KATEGORIEN.map(function (k) {
+    return '<option value="' + k.key + '"' + (r && r.kategorie === k.key ? " selected" : "") + ">" + k.label + "</option>";
+  }).join("");
+  modalOeffnen(
+    "<h3>" + (r ? "Rezept bearbeiten" : "Neues Rezept") + "</h3>" +
+    '<label>Name</label><input type="text" id="rfName" value="' + esc(r ? r.name : "") + '" placeholder="z. B. Kürbisrisotto">' +
+    '<div class="feld-reihe">' +
+      '<div><label>Kategorie</label><select id="rfKat">' + katOpt + "</select></div>" +
+      '<div><label>Portionen</label><input type="number" id="rfPort" min="1" value="' + esc(r ? (r.portionen || "") : "2") + '"></div>' +
+      '<div><label>Kochzeit (min)</label><input type="number" id="rfZeit" min="0" value="' + esc(r ? (r.kochzeitMin || "") : "20") + '"></div>' +
+    "</div>" +
+    '<label>Zutaten <span class="feld-hint">— eine pro Zeile, z. B. „200 g Mehl", „2 Eier", „Salz"</span></label>' +
+    '<textarea id="rfZutaten" rows="6" placeholder="200 g Mehl\n2 Eier\nSalz">' + esc(r ? zutatenZuText(r.zutaten) : "") + "</textarea>" +
+    '<label>Zubereitung <span class="feld-hint">— ein Schritt pro Zeile</span></label>' +
+    '<textarea id="rfSchritte" rows="6" placeholder="Ofen vorheizen …\nGemüse rüsten …">' + esc(r ? (r.schritte || []).join("\n") : "") + "</textarea>" +
+    '<label>Tags <span class="feld-hint">— mit Komma getrennt</span></label>' +
+    '<input type="text" id="rfTags" value="' + esc(r ? (r.tags || []).join(", ") : "") + '" placeholder="vegetarisch, schnell">' +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      '<button class="btn primaer" data-action="modal-ok">' + (r ? "Speichern" : "Anlegen") + "</button></div>",
+    async function () {
+      const name = document.getElementById("rfName").value.trim();
+      if (!name) { toast("Bitte einen Namen eingeben."); throw new Error("kein Name"); }
+      const daten = {
+        name: name,
+        kategorie: document.getElementById("rfKat").value,
+        portionen: parseInt(document.getElementById("rfPort").value, 10) || null,
+        kochzeitMin: parseInt(document.getElementById("rfZeit").value, 10) || null,
+        zutaten: textZuZutaten(document.getElementById("rfZutaten").value),
+        schritte: String(document.getElementById("rfSchritte").value || "").split("\n").map(function (s) { return s.trim(); }).filter(Boolean),
+        tags: String(document.getElementById("rfTags").value || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean),
+        aktualisiert: new Date().toISOString()
+      };
+      if (r) {
+        await db.ref(P_RECIPES + "/" + recipeId).update(daten);
+        toast("Gespeichert: " + name);
+      } else {
+        const id = db.ref(P_RECIPES).push().key;
+        await db.ref(P_RECIPES + "/" + id).set(Object.assign({ lastUsed: null, erstellt: new Date().toISOString() }, daten));
+        toast("Angelegt: " + name);
+      }
+    }
+  );
+}
+function rezeptLoeschenDialog(recipeId) {
+  const r = S.recipes[recipeId]; if (!r) return;
+  modalOeffnen(
+    "<h3>Rezept löschen?</h3>" +
+    '<div class="modal-unter">„' + esc(r.name) + "“ wird aus der Bibliothek entfernt. Bereits eingeplante Slots dieser Woche werden ebenfalls geleert.</div>" +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      '<button class="btn gefahr" data-action="modal-ok">Endgültig löschen</button></div>',
+    async function () {
+      // Slots dieser Woche, die auf das Rezept zeigen, leeren
+      const wk = weekKeyOf(S.weekMonday);
+      const planUpdates = {};
+      Object.keys(S.plan).forEach(function (dk) {
+        const tp = S.plan[dk] || {};
+        Object.keys(tp).forEach(function (sk) { if (tp[sk] === recipeId) planUpdates[dk + "/" + sk] = null; });
+      });
+      if (Object.keys(planUpdates).length) await db.ref(P_PLANS + "/" + wk).update(planUpdates);
+      await db.ref(P_RECIPES + "/" + recipeId).remove();
+      toast("Gelöscht: " + r.name);
+      drawerSchliessen();
+    }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODAL-HELFER
+// ═══════════════════════════════════════════════════════════════════════════
+let _modalOk = null;
+function modalOeffnen(html, okCallback) {
+  _modalOk = okCallback || null;
+  document.getElementById("modalBox").innerHTML = html;
+  document.getElementById("modalHintergrund").classList.add("offen");
+}
+function modalSchliessen() {
+  _modalOk = null;
+  document.getElementById("modalHintergrund").classList.remove("offen");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVENT-DELEGATION (data-action)
+// ═══════════════════════════════════════════════════════════════════════════
+document.addEventListener("click", function (e) {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const aktion = el.getAttribute("data-action");
+  const id = el.getAttribute("data-id");
+  const tag = el.getAttribute("data-tag") != null ? parseInt(el.getAttribute("data-tag"), 10) : null;
+  const slot = el.getAttribute("data-slot");
+
+  switch (aktion) {
+    case "ansicht":         S.ansicht = el.getAttribute("data-art"); S.drawer = null; render(); break;
+    case "woche-zurueck":   wocheWechseln(-1); break;
+    case "woche-vor":       wocheWechseln(1); break;
+    case "zu-heute":        zuHeute(); break;
+
+    case "slot-klick":      slotKlick(tag, slot); break;
+    case "slot-tauschen":   drawerSchliessen(); rezeptWaehlenDialog(tag, slot); break;
+    case "slot-entfernen":  slotEntfernen(tag, slot); break;
+    case "slot-generieren": slotGenerieren(tag, slot); break;
+    case "waehlen-rezept":  modalSchliessen(); slotSetzen(tag, slot, id); break;
+    case "woche-generieren": wocheGenerieren(); break;
+
+    case "kat-filter":      S.katFilter = el.getAttribute("data-kat"); renderInhalt(); break;
+    case "rezept-neu":      rezeptFormular(null); break;
+    case "rezept-oeffnen":  S.drawer = { recipeId: id, tag: null, slot: null }; renderDrawer(); break;
+    case "rezept-bearbeiten": rezeptFormular(id); break;
+    case "rezept-loeschen": rezeptLoeschenDialog(id); break;
+    case "rezept-einplanen": rezeptEinplanenDialog(id); break;
+
+    case "einkauf-add":     einkaufHinzufuegen(); break;
+    case "einkauf-toggle":  einkaufToggle(el); break;
+    case "einkauf-loeschen": einkaufLoeschen(el.getAttribute("data-key")); break;
+    case "einkauf-erledigt-loeschen": einkaufErledigteLoeschen(); break;
+
+    case "drawer-schliessen": drawerSchliessen(); break;
+    case "modal-schliessen":  modalSchliessen(); break;
+    case "modal-hintergrund": if (e.target === el) modalSchliessen(); break;
+    case "modal-ok":
+      (function () {
+        const cb = _modalOk;
+        Promise.resolve(cb ? cb() : null)
+          .then(function () { modalSchliessen(); })
+          .catch(function (err) { if (err && err.message !== "kein Name") toast("Fehler: " + (err && err.message)); });
+      })();
+      break;
+  }
+});
+
+// Suche in der Bibliothek (Live)
+document.addEventListener("input", function (e) {
+  if (e.target && e.target.id === "sucheInput") { S.suche = e.target.value; renderInhalt(); }
+});
+// Enter im manuellen Einkauf-Feld
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Enter" && e.target && e.target.id === "ekName") { e.preventDefault(); einkaufHinzufuegen(); }
+});
+
+render();
+boot();
+})();
+</script>
+</body>
+</html>

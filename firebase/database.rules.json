@@ -25,6 +25,26 @@
     //  ▲▲▲ ENDE ZUSATZ-BLOCK „QUANTUS DRIVE" ▲▲▲
     // ═════════════════════════════════════════════════════════════════════
 
+    // ═════════════════════════════════════════════════════════════════════
+    //  ▼▼▼ ZUSATZ-BLOCK „NO-BRAINE WEEKLY PLANNER" (NEU) ▼▼▼
+    //  Gesamter /nobraine-Teilbaum wird mit auth != null gegated. Das
+    //  Frontend (public/nobraine.html) meldet sich anonym an
+    //  (signInAnonymously) und erfüllt die Bedingung; der n8n-Workflow
+    //  schreibt Plan + Generierungsstatus per Service-Konto (umgeht die
+    //  Regeln). Wie beim Drive-Block: NICHT auf Wurzelebene erlauben,
+    //  sonst vererbt sich die Erlaubnis nach unten und hebelt das Gate aus.
+    // ═════════════════════════════════════════════════════════════════════
+    "nobraine": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "recipes": {
+        ".indexOn": ["kategorie", "lastUsed"]
+      }
+    },
+    // ═════════════════════════════════════════════════════════════════════
+    //  ▲▲▲ ENDE ZUSATZ-BLOCK „NO-BRAINE WEEKLY PLANNER" ▲▲▲
+    // ═════════════════════════════════════════════════════════════════════
+
     // BESTAND: "$andere" matcht alle übrigen Top-Level-Pfade (appStore,
     // entityInbox, gmailClassifications, draftRequests, taskSuggestions,
     // orgMailInstructions, News-Batch, …) und repliziert deren bisheriges
