@@ -94894,7 +94894,14 @@ console.log('📚 Leseliste geladen');
     }
     GC._edit = ed;
 
-    var defCal = forEdit ? ev._calId : ((writable.find(function(c){ return c.primary; })||writable[0]||{}).id);
+    // Neuen Termin bevorzugt in einen SICHTBAREN (ausgewählten) beschreibbaren Kalender legen,
+    // damit er nach dem Erstellen auch in der Ansicht erscheint. Fallback: Primär, dann erster.
+    var defCal = forEdit ? ev._calId : (
+        writable.find(function(c){ return c.primary && GC.selected && GC.selected.has(c.id); })
+        || writable.find(function(c){ return GC.selected && GC.selected.has(c.id); })
+        || writable.find(function(c){ return c.primary; })
+        || writable[0] || {}
+      ).id;
     var calList = writable.slice();
     if (forEdit && !calList.some(function(c){ return c.id===ev._calId; })) calList.unshift(calById(ev._calId)||{ id:ev._calId, summary:ev._calSummary });
     var calOptions = calList.map(function(c){ return '<option value="'+esc(c.id)+'"'+(c.id===defCal?" selected":"")+'>'+esc(c.summaryOverride||c.summary||c.id)+'</option>'; }).join("");
@@ -95092,6 +95099,10 @@ console.log('📚 Leseliste geladen');
       try { gcalWriteBackrefs(f.links, f.calId || (editing&&editing.calId), (saved&&saved.id) || (editing&&editing.eventId), saved); } catch(e){}
       if (typeof window.closeModal === "function") window.closeModal();
       GC._editing = null; GC._edit = null;
+      // Zielkalender sichtbar machen — sonst wäre der eben erstellte/verschobene Termin zwar
+      // in Google vorhanden, aber ausgeblendet (häufigste Ursache für „erstellt, aber nicht sichtbar").
+      var targetCal = f.calId || (editing && editing.calId);
+      if (targetCal && GC.selected && !GC.selected.has(targetCal)){ GC.selected.add(targetCal); savePrefs(); }
       await reloadEvents();
     } catch(e){
       toast("err","Fehler", e.message || "Speichern fehlgeschlagen");
