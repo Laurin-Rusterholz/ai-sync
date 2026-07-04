@@ -94894,7 +94894,14 @@ console.log('📚 Leseliste geladen');
     }
     GC._edit = ed;
 
-    var defCal = forEdit ? ev._calId : ((writable.find(function(c){ return c.primary; })||writable[0]||{}).id);
+    // Neuen Termin bevorzugt in einen SICHTBAREN (ausgewählten) beschreibbaren Kalender legen,
+    // damit er nach dem Erstellen auch in der Ansicht erscheint. Fallback: Primär, dann erster.
+    var defCal = forEdit ? ev._calId : (
+        writable.find(function(c){ return c.primary && GC.selected && GC.selected.has(c.id); })
+        || writable.find(function(c){ return GC.selected && GC.selected.has(c.id); })
+        || writable.find(function(c){ return c.primary; })
+        || writable[0] || {}
+      ).id;
     var calList = writable.slice();
     if (forEdit && !calList.some(function(c){ return c.id===ev._calId; })) calList.unshift(calById(ev._calId)||{ id:ev._calId, summary:ev._calSummary });
     var calOptions = calList.map(function(c){ return '<option value="'+esc(c.id)+'"'+(c.id===defCal?" selected":"")+'>'+esc(c.summaryOverride||c.summary||c.id)+'</option>'; }).join("");
@@ -95092,6 +95099,10 @@ console.log('📚 Leseliste geladen');
       try { gcalWriteBackrefs(f.links, f.calId || (editing&&editing.calId), (saved&&saved.id) || (editing&&editing.eventId), saved); } catch(e){}
       if (typeof window.closeModal === "function") window.closeModal();
       GC._editing = null; GC._edit = null;
+      // Zielkalender sichtbar machen — sonst wäre der eben erstellte/verschobene Termin zwar
+      // in Google vorhanden, aber ausgeblendet (häufigste Ursache für „erstellt, aber nicht sichtbar").
+      var targetCal = f.calId || (editing && editing.calId);
+      if (targetCal && GC.selected && !GC.selected.has(targetCal)){ GC.selected.add(targetCal); savePrefs(); }
       await reloadEvents();
     } catch(e){
       toast("err","Fehler", e.message || "Speichern fehlgeschlagen");
@@ -95598,6 +95609,8 @@ console.log('📚 Leseliste geladen');
 .gml-ei-row:hover { background:var(--hover); }
 .gml-ei-row.unread { font-weight:700; }
 .gml-ei-from { flex-shrink:0; width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text2); }
+.gml-ei-subhead { font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin:6px 2px 3px; }
+.gml-ei-drafts { margin-bottom:6px; }
 .gml-ei-subj { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gml-ei-date { flex-shrink:0; font-size:11.5px; color:var(--muted); }
 .gml-draft-list { display:flex; flex-direction:column; gap:10px; padding:10px 14px 16px; }
@@ -95752,6 +95765,10 @@ console.log('📚 Leseliste geladen');
 .gmlc-footer-spacer { flex:1; }
 .modal-footer .gmlc-send { padding:11px 28px; font-size:14.5px; font-weight:700; border-radius:10px; }
 .modal-footer .gmlc-savedraft { padding:11px 18px; font-size:13.5px; font-weight:600; border-radius:10px; }
+.gmlc-linkbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:2px 0 8px; padding:7px 10px; background:var(--panel2,rgba(127,127,127,.06)); border:1px solid var(--border); border-radius:9px; }
+.gmlc-linklabel { font-size:12.5px; font-weight:600; color:var(--text2); }
+.gmlc-linksel { flex:1; min-width:160px; background:var(--panel); border:1px solid var(--border); color:var(--text); padding:6px 9px; border-radius:8px; font-size:13px; }
+.gmlc-linkhint { font-size:11.5px; color:var(--muted); }
 .gmlc-iconbtn { width:40px; height:40px; display:inline-flex; align-items:center; justify-content:center; background:none; border:1px solid var(--border); color:var(--text2); cursor:pointer; border-radius:9px; padding:0; }
 .gmlc-iconbtn:hover { background:var(--hover); color:var(--text); }
 .gmlc-iconbtn svg { width:18px; height:18px; display:block; }
@@ -96541,6 +96558,17 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" onkeydown="gmlComposeKey(event)" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen  ·  ⌘/Strg+Enter sendet">'+esc(prefill.body||"")+'</textarea></div>';
     var attachList = '<div id="gmlAttachList" class="gmlc-attachlist"></div>';
+    // Verknüpfung mit einem Element (Aufgabe/Projekt/Org/Person): Wird beim Senden bzw.
+    // beim Entwurf-Speichern mitgeführt. Beim Senden bindet gmailSend den entstehenden
+    // Thread an das Element (mailThreadIds) → Antworten erscheinen dort in der Inbox-Karte.
+    var le0 = prefill.linkedEntity || null;
+    var linkBar = '<div class="gmlc-linkbar">'
+      + '<span class="gmlc-linklabel">🔗 Verknüpfen:</span>'
+      + '<select id="gmlLinkSel" class="gmlc-linksel" onchange="gmlComposeSetLinkFromSel(this.value)">'
+      +   gmlEntityOptions(le0 && le0.kind, le0 && le0.id)
+      + '</select>'
+      + '<span class="gmlc-linkhint" id="gmlLinkHint">'+(le0 ? 'Antworten landen in diesem Element' : 'optional – Antworten landen dann im Element')+'</span>'
+      + '</div>';
     // Im Antwortmodus (Original vorhanden) das Schreibfeld kompakter halten, damit die
     // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
     var hasPrev = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
@@ -96548,7 +96576,7 @@ console.log('📚 Leseliste geladen');
       + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-06-29 · Verlauf-Vorschau v9</div>'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
-      + fields + toolbar + aibar + msg + attachList
+      + fields + linkBar + toolbar + aibar + msg + attachList
       + (prefill.original !== undefined ? renderPrevMail(prefill.original) : '')
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
@@ -96560,13 +96588,39 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-footer-spacer"></span>'
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null, linkedEntity: (prefill.linkedEntity && prefill.linkedEntity.kind && prefill.linkedEntity.id) ? { kind:prefill.linkedEntity.kind, id:prefill.linkedEntity.id } : null };
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
     // Cursor oben ins Schreibfeld setzen (über dem evtl. eingefügten Zitat),
     // damit man direkt lostippen kann und das Zitat darunter sichtbar bleibt.
     setTimeout(function(){ var ta=document.getElementById("gmlBody"); if(ta){ try { ta.focus(); ta.setSelectionRange(0,0); ta.scrollTop=0; } catch(_){} } }, 30);
+  };
+
+  // ── Element-Verknüpfung im Verfassen-Dialog ──
+  // Baut die <select>-Optionen (Aufgaben/Projekte/Organisationen/Personen) für die
+  // Verknüpfungsleiste. Reine UI; setzt beim Ändern GM._composeCtx.linkedEntity.
+  function gmlEntityOptions(selKind, selId){
+    var groups=[["tasks","task","📋 Aufgaben"],["projects","project","📦 Projekte"],["organizations","organization","🏢 Organisationen"],["persons","person","👤 Personen"]];
+    var html='<option value="">— nicht verknüpft —</option>';
+    groups.forEach(function(g){
+      var m=gmlEnt(g[0]); var ids=Object.keys(m); if(!ids.length) return;
+      ids.sort(function(a,b){ return String(m[a].title||m[a].name||"").localeCompare(String(m[b].title||m[b].name||"")); });
+      html+='<optgroup label="'+esc(g[2])+'">';
+      ids.forEach(function(id){
+        var lbl=String(m[id].title||m[id].name||id);
+        var sel=(selKind===g[1] && String(selId)===String(id))?' selected':'';
+        html+='<option value="'+esc(g[1]+":"+id)+'"'+sel+'>'+esc(lbl)+'</option>';
+      });
+      html+='</optgroup>';
+    });
+    return html;
+  }
+  window.gmlComposeSetLinkFromSel = function(v){
+    var ctx=GM._composeCtx||(GM._composeCtx={});
+    if(!v){ ctx.linkedEntity=null; }
+    else { var i=String(v).indexOf(":"); ctx.linkedEntity={ kind:String(v).slice(0,i), id:String(v).slice(i+1) }; }
+    var h=document.getElementById("gmlLinkHint"); if(h) h.textContent = ctx.linkedEntity ? "Antworten landen in diesem Element" : "optional – Antworten landen dann im Element";
   };
 
   // ── Verfassen-Modal: additive UI-Helfer (verändern Versand/Feldnamen/IDs nicht) ──
@@ -96832,28 +96886,33 @@ console.log('📚 Leseliste geladen');
   // 6) Mail an Projekt/Org/Person heften (Adresse → mailEmails → erscheint in Inbox-Karte)
   window.gmailLinkToEntity = function(){
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
-    var a=parseAddr(o.from||""); if(!a.email){ toast("info","Keine Adresse",""); return; }
     if (typeof window.openModal!=="function") return;
-    function list(plural,kind){ var m=gmlEnt(plural); return Object.keys(m).map(function(id){ var e=m[id]||{}; return '<button class="gml-more-item" onclick="gmailDoLinkMail(\''+kind+'\',\''+jsStr(id)+'\')">'+esc(e.name||e.title||id)+'</button>'; }).join('') || '<div style="color:var(--muted);font-size:12px;padding:4px 2px">—</div>'; }
+    function list(plural,kind){ var m=gmlEnt(plural); return Object.keys(m).sort(function(a,b){ return String(m[a].title||m[a].name||"").localeCompare(String(m[b].title||m[b].name||"")); }).map(function(id){ var e=m[id]||{}; return '<button class="gml-more-item" onclick="gmailDoLinkMail(\''+kind+'\',\''+jsStr(id)+'\')">'+esc(e.title||e.name||id)+'</button>'; }).join('') || '<div style="color:var(--muted);font-size:12px;padding:4px 2px">—</div>'; }
     var html='<div style="max-height:52vh;overflow:auto">'
-      + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">'+esc(a.email)+' wird der gewählten Entität zugeordnet — deren Mails erscheinen danach in der Inbox-Karte.</div>'
-      + '<div class="gml-qa-sec">Organisationen</div>'+list("organizations","organization")
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Diese Mail bzw. ihr gesamter Thread wird dem gewählten Element zugeordnet — die Absender-Adresse und alle Antworten des Threads erscheinen danach in dessen Inbox-Karte.</div>'
+      + '<div class="gml-qa-sec">Aufgaben</div>'+list("tasks","task")
       + '<div class="gml-qa-sec">Projekte</div>'+list("projects","project")
+      + '<div class="gml-qa-sec">Organisationen</div>'+list("organizations","organization")
       + '<div class="gml-qa-sec">Personen</div>'+list("persons","person")
       + '</div>';
     window.openModal("🔗 Mail verknüpfen mit…", html, '<button class="btn" onclick="closeModal()">Abbrechen</button>');
   };
   window.gmailDoLinkMail = function(kind, id){
-    var o=GM.open; if(!o) return; var a=parseAddr(o.from||""); if(!a.email) return;
-    var plural=(kind==="organization")?"organizations":(kind==="project"?"projects":"persons");
-    var e=gmlEnt(plural)[id]; if(!e){ toast("err","Nicht gefunden",""); return; }
-    e.mailEmails=Array.isArray(e.mailEmails)?e.mailEmails:[];
-    var lc=a.email.toLowerCase();
-    if (e.mailEmails.map(function(x){return String(x).toLowerCase();}).indexOf(lc)<0) e.mailEmails.push(a.email);
-    e.updatedAt=(typeof nowIso==="function"?nowIso():new Date().toISOString());
-    if (typeof window.scheduleSave==="function") window.scheduleSave();
+    var o=GM.open; if(!o) return;
+    var e=entityOf(kind,id); if(!e){ toast("err","Nicht gefunden",""); return; }
+    var a=parseAddr(o.from||"");
+    // 1) Absender-Adresse binden (wie bisher)
+    if (a.email){
+      e.mailEmails=Array.isArray(e.mailEmails)?e.mailEmails:[];
+      var lc=a.email.toLowerCase();
+      if (e.mailEmails.map(function(x){return String(x).toLowerCase();}).indexOf(lc)<0) e.mailEmails.push(a.email);
+    }
+    // 2) Thread binden → alle Antworten dieses Threads landen im Element
+    if (o.threadId){ gmlLinkThreadToEntity(kind, id, o.threadId); }
+    else { persistEntity(kind,id); }
     if (window.closeModal) window.closeModal();
-    toast("ok","Verknüpft", (e.name||e.title||"")+" — Adresse zugeordnet");
+    toast("ok","Verknüpft", (e.title||e.name||"")+(o.threadId?" — Thread & Adresse zugeordnet":" — Adresse zugeordnet"));
+    try { if (document.getElementById("gmlEntityInbox")) loadEntityInbox(kind,id); } catch(_){}
   };
   // 7) KI-Antwort mit Quantus-Kontext (öffnet Composer, kein Auto-Send)
   window.gmailReplyWithContext = async function(){
@@ -97236,6 +97295,8 @@ console.log('📚 Leseliste geladen');
       });
     }
     var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+    // Ist der Thread bereits mit einem Element verknüpft, die Antwort daran gebunden lassen.
+    var linkedEnts = o.threadId ? gmlEntitiesForThread(o.threadId) : [];
     // Schreibfeld bleibt SAUBER (keine „> "-Zeilen). Die bisherige Mail sieht man
     // unten in der lesbaren Vorschau. Beim Senden wird sie als professionelles,
     // eingerücktes Zitat angehängt (replyQuote → buildMime), ganz ohne „>"-Zeichen.
@@ -97247,6 +97308,7 @@ console.log('📚 Leseliste geladen');
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
       original: { from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||""), date:o.internalDate||0 },
       source: { id:o.id||"", threadId:o.threadId||"", from:o.from||"", subject:o.subject||"", body:(o.text||htmlToText(o.html)||"") },
+      linkedEntity: linkedEnts.length ? linkedEnts[0] : null,
     });
     // Unten den vollständigen Gesprächsverlauf nachladen (ersetzt die Einzel-Vorschau).
     if (o.threadId) window.gmailRenderThreadInto(o.threadId);
@@ -97404,9 +97466,18 @@ console.log('📚 Leseliste geladen');
       // übernimmt buildMime über das strukturierte ctx.replyQuote.
       var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]), quote:(ctx.replyQuote||null) }) };
       if (ctx.threadId) payload.threadId = ctx.threadId;
-      await gmApi("POST","/users/me/messages/send", { body: payload });
+      var sentMsg = await gmApi("POST","/users/me/messages/send", { body: payload });
       if (window.closeModal) window.closeModal();
       toast("ok","Gesendet","E-Mail an "+to+" gesendet.");
+      // Verknüpftes Element: entstehenden Thread binden, damit Antworten dort landen.
+      if (ctx.linkedEntity && ctx.linkedEntity.kind && ctx.linkedEntity.id){
+        var thrId = (sentMsg && sentMsg.threadId) || ctx.threadId || null;
+        if (thrId && gmlLinkThreadToEntity(ctx.linkedEntity.kind, ctx.linkedEntity.id, thrId)){
+          var lbl = gmlEntityLabel(ctx.linkedEntity.kind, ctx.linkedEntity.id);
+          toast("ok","Verknüpft","Antworten erscheinen in „"+(lbl||"dem Element")+"“.");
+          try { if (document.getElementById("gmlEntityInbox")) loadEntityInbox(ctx.linkedEntity.kind, ctx.linkedEntity.id); } catch(_){}
+        }
+      }
       // If this was an n8n KI-Entwurf, mark it as used (not before the manual send).
       if (ctx.draftKey){ setDraftStatus(ctx.draftKey, "used"); GM.drafts=(GM.drafts||[]).filter(function(d){return d._key!==ctx.draftKey;}); }
       GM.open=null; loadMessages(true); loadLabels();
@@ -97437,6 +97508,7 @@ console.log('📚 Leseliste geladen');
       var ctx = GM._composeCtx||{};
       var src = ctx.source||{};
       var toA = parseAddr(to);
+      var le = (ctx.linkedEntity && ctx.linkedEntity.kind && ctx.linkedEntity.id) ? ctx.linkedEntity : null;
       var draft = {
         to:to, cc:cc, bcc:bcc, subject:subject,
         toName: toA.name || "",
@@ -97448,6 +97520,7 @@ console.log('📚 Leseliste geladen');
         originalFrom: src.from||"",
         originalSubject: src.subject||"",
         originalBody: src.body||"",
+        linkedEntity: le ? { kind:le.kind, id:le.id, title: gmlEntityLabel(le.kind, le.id) } : null,
         source: "manual-draft",
         status: "pending",
         updatedAt: Date.now()
@@ -97461,9 +97534,10 @@ console.log('📚 Leseliste geladen');
         await rtdbPost("gmailDrafts", draft);
       }
       if (window.closeModal) window.closeModal();
-      toast("ok","Entwurf gespeichert","Der Entwurf liegt unter „KI-Entwürfe“ bereit.");
+      toast("ok","Entwurf gespeichert", le ? ("Verknüpft mit „"+(gmlEntityLabel(le.kind,le.id)||"Element")+"“ · unter „KI-Entwürfe“ bereit.") : "Der Entwurf liegt unter „KI-Entwürfe“ bereit.");
       GM.open=null;
       if (typeof loadDrafts==="function") loadDrafts();
+      try { if (le && document.getElementById("gmlEntityInbox")) loadEntityInbox(le.kind, le.id); } catch(_){}
     } catch(e){ toast("err","Speichern fehlgeschlagen", e.message||"Unbekannter Fehler"); }
     finally { GM._composeBusy=false; var b=document.getElementById("gmlSaveDraftBtn"); if(b){ b.disabled=false; b.textContent="💾 Entwurf speichern"; } }
   };
@@ -98088,6 +98162,7 @@ console.log('📚 Leseliste geladen');
   };
   window.gmailOpenDraft = function(key){
     var d=(GM.drafts||[]).find(function(x){return x._key===key;});
+    if (!d && GM.entityDrafts){ Object.keys(GM.entityDrafts).forEach(function(k){ if(!d) d=(GM.entityDrafts[k]||[]).find(function(x){return x._key===key;}); }); }
     if (!d){ toast("err","Entwurf nicht mehr da",""); return; }
     var org=findOrgForEmail(d.to||"");
     var note = org ? ('🏢 Organisation erkannt: <b>'+esc(org.name||"")+'</b>'+(orgInstructions(org)?' – deren KI-Anweisungen wurden beim Entwurf berücksichtigt.':' (keine E-Mail-Anweisungen hinterlegt).')) : '';
@@ -98098,7 +98173,7 @@ console.log('📚 Leseliste geladen');
     // Prefill the existing compose dialog. threadId keeps it in the right Gmail
     // thread; the user reviews, edits and sends MANUALLY (no auto-send). On send,
     // gmailSend marks the draft "used" via the draftKey in the compose context.
-    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, inReplyTo:d.inReplyTo||null, references:d.references||null, draftKey:key, note:note, original: hasSource ? { loading:true } : undefined,
+    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, inReplyTo:d.inReplyTo||null, references:d.references||null, draftKey:key, note:note, linkedEntity:d.linkedEntity||null, original: hasSource ? { loading:true } : undefined,
       source: { id:d.messageId||"", threadId:d.threadId||"", from:d.originalFrom||d.from||"", subject:d.originalSubject||d.subject||"", body:d.originalBody||"" } });
     if (d.originalBody || d.originalSubject || d.originalFrom){
       window.gmailFillOriginal({ from:d.originalFrom||d.from||"", subject:d.originalSubject||"", body:d.originalBody||"", date:d.originalDate||0 });
@@ -98741,6 +98816,30 @@ console.log('📚 Leseliste geladen');
   }
   function entityQuery(kind,id){ var ad=entityAddresses(kind,id); return ad.length ? ("from:("+ad.map(function(e){return e;}).join(" OR ")+")") : ""; }
 
+  // ── Mail↔Element-Thread-Verknüpfung (Antworten landen im Element) ──
+  // Zusätzlich zur adressbasierten Zuordnung (mailEmails) binden wir konkrete Gmail-Threads
+  // per threadId an ein Element (mailThreadIds). Dadurch erscheinen ALLE Nachrichten des
+  // Threads in der Element-Inbox — auch Antworten von Adressen, die sonst nicht hinterlegt sind.
+  var ENT_PLURAL = { organization:"organizations", project:"projects", task:"tasks", person:"persons" };
+  function gmlEntityLabel(kind,id){ var e=entityOf(kind,id); return e ? String(e.title||e.name||"") : ""; }
+  function gmlLinkThreadToEntity(kind,id,threadId){
+    if(!threadId) return false;
+    var e=entityOf(kind,id); if(!e) return false;
+    e.mailThreadIds=Array.isArray(e.mailThreadIds)?e.mailThreadIds:[];
+    if (e.mailThreadIds.indexOf(threadId)<0) e.mailThreadIds.push(threadId);
+    persistEntity(kind,id);
+    return true;
+  }
+  // Alle Elemente, die den gegebenen Thread verknüpft haben (für Reply-Propagierung).
+  function gmlEntitiesForThread(threadId){
+    var out=[]; if(!threadId) return out;
+    Object.keys(ENT_PLURAL).forEach(function(kind){
+      var m=gmlEnt(ENT_PLURAL[kind]);
+      Object.keys(m).forEach(function(id){ var e=m[id]; if(e && Array.isArray(e.mailThreadIds) && e.mailThreadIds.indexOf(threadId)>=0) out.push({ kind:kind, id:id }); });
+    });
+    return out;
+  }
+
   // Verfassen-Modal aus einer Element-Detailseite (Projekt/Org/Aufgabe) heraus, vorbefüllt mit
   // den E-Mail-Adressen der zugehörigen Personen (entityAddresses). Öffnet NUR den Composer;
   // gesendet wird erst über den bestehenden „Senden"-Klick (gmailSend) — kein Auto-Versand.
@@ -98750,7 +98849,7 @@ console.log('📚 Leseliste geladen');
     var ent = (kind==="task") ? ((APP.state.data.entities.tasks||{})[id]) : entityOf(kind, id);
     var titleTxt = ent ? String(ent.title||ent.name||"") : "";
     if (typeof window.gmailCompose!=="function"){ toast("err","Nicht verfügbar","Gmail-Modul nicht geladen."); return; }
-    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: "✉️ Mail an "+ad.length+" Person(en)" });
+    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: "✉️ Mail an "+ad.length+" Person(en)", linkedEntity:{ kind:kind, id:id } });
   };
 
   function gmailDetectEntity(){
@@ -98770,20 +98869,28 @@ console.log('📚 Leseliste geladen');
   }
   function renderEntityInbox(kind,id){
     var ad=entityAddresses(kind,id);
+    var ent=entityOf(kind,id);
+    var threadN=(ent && Array.isArray(ent.mailThreadIds)) ? ent.mailThreadIds.length : 0;
+    var drafts=(GM.entityDrafts && GM.entityDrafts[kind+":"+id]) || [];
     var st=GM.entityInbox[kind+":"+id]||{};
     var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Gmail-Inbox</span>'
       +'<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'
-      +(ad.length?'<button class="btn sm primary" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail an die zugeordneten Personen schreiben (Adressen sind vorbefüllt)">✉️ Mail schreiben</button>':'')
+      +(ad.length?'<button class="btn sm primary" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail an die zugeordneten Personen schreiben (Adressen sind vorbefüllt, Verknüpfung ist gesetzt)">✉️ Mail schreiben</button>':'')
       +'<button class="btn sm" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">⚙️ Personen/E-Mails</button>'
       +(ad.length?'<button class="btn sm" onclick="gmailOpenInGmailWeb(\''+jsStr(entityQuery(kind,id))+'\')" title="In Gmail filtern">↗ Gmail</button>':'')
       +'</span></h3>';
-    if (!ad.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen oder E-Mail-Adressen zugeordnet — ordne welche zu, um Mails zu sehen und zu schreiben.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
+    // Verknüpfte Entwürfe (RTDB) — anklickbar, öffnen den Verfassen-Dialog vorbefüllt.
+    var draftsHtml = drafts.length ? ('<div class="gml-ei-drafts"><div class="gml-ei-subhead">✏️ Entwürfe ('+drafts.length+')</div><div class="gml-ei-list">'
+      + drafts.map(function(d){ return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">Entwurf</span></div>'; }).join("")
+      + '</div></div>') : '';
+    if (!ad.length && !threadN && !drafts.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen, Adressen oder Mail-Threads zugeordnet — ordne welche zu oder verknüpfe eine Mail (🔗 in der Mail-Ansicht), um Mails hier zu sehen.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
     var bodyHtml;
     if (st.loading) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">⏳ Lade Mails…</div>';
     else if (st.error) bodyHtml='<div style="color:var(--danger);font-size:13px;padding:8px 2px">'+esc(st.error)+'</div>';
-    else if (!st.rows || !st.rows.length) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">Keine Mails von '+ad.length+' Adresse(n) gefunden.</div>';
+    else if (!st.rows || !st.rows.length) bodyHtml=(ad.length||threadN)?'<div style="color:var(--muted);font-size:13px;padding:8px 2px">Noch keine Mails gefunden.</div>':'';
     else bodyHtml='<div class="gml-ei-list">'+st.rows.map(function(m){ var a=parseAddr(m.from); return '<div class="gml-ei-row'+(m.unread?" unread":"")+'" onclick="gmailOpenFromExternal(\''+jsStr(m.id)+'\')"><span class="gml-ei-from">'+esc(a.name||a.email)+'</span><span class="gml-ei-subj">'+esc(m.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(fmtDate(m.internalDate))+'</span></div>'; }).join("")+'</div>';
-    return head+'<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px">'+ad.length+' Adresse(n) · '+(st.rows?st.rows.length:0)+' Mail(s)</div>'+bodyHtml;
+    var meta=ad.length+' Adresse(n)'+(threadN?' · '+threadN+' Thread(s)':'')+(drafts.length?' · '+drafts.length+' Entwurf/Entwürfe':'')+' · '+(st.rows?st.rows.length:0)+' Mail(s)';
+    return head+'<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px">'+meta+'</div>'+draftsHtml+bodyHtml;
   }
   function refreshEntityInboxDom(kind,id){
     var el=document.getElementById("gmlEntityInbox");
@@ -98791,16 +98898,48 @@ console.log('📚 Leseliste geladen');
   }
   async function loadEntityInbox(kind,id){
     var key=kind+":"+id, ad=entityAddresses(kind,id);
-    if (!ad.length){ refreshEntityInboxDom(kind,id); return; }
+    var ent=entityOf(kind,id);
+    var threadIds=(ent && Array.isArray(ent.mailThreadIds)) ? ent.mailThreadIds : [];
+    // Verknüpfte Entwürfe (RTDB) für dieses Element laden — best effort, blockiert die Mail-Liste nicht.
+    loadEntityDrafts(kind,id);
+    if (!ad.length && !threadIds.length){ refreshEntityInboxDom(kind,id); return; }
     GM.entityInbox[key]={ loading:true }; refreshEntityInboxDom(kind,id);
     try {
       await gmailEnsureReady();
-      var q="from:("+ad.join(" OR ")+")";
-      var res=await gmApi("GET","/users/me/messages",{query:{q:q,maxResults:"15"}});
-      var ids=(res.messages||[]).map(function(m){return m.id;});
-      var metas=await Promise.all(ids.map(function(mid){return gmApi("GET","/users/me/messages/"+encodeURIComponent(mid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
-      GM.entityInbox[key]={ rows:metas.filter(Boolean).map(parseMeta) };
+      var byId={};
+      // 1) Adressbasiert (from:(…)) — wie bisher
+      if (ad.length){
+        var q="from:("+ad.join(" OR ")+")";
+        var res=await gmApi("GET","/users/me/messages",{query:{q:q,maxResults:"15"}});
+        var ids=(res.messages||[]).map(function(m){return m.id;});
+        var metas=await Promise.all(ids.map(function(mid){return gmApi("GET","/users/me/messages/"+encodeURIComponent(mid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
+        metas.filter(Boolean).map(parseMeta).forEach(function(r){ byId[r.id]=r; });
+      }
+      // 2) Verknüpfte Threads (mailThreadIds) — Antworten landen hier, auch ohne Adress-Match
+      if (threadIds.length){
+        var thrs=await Promise.all(threadIds.slice(0,20).map(function(tid){ return gmApi("GET","/users/me/threads/"+encodeURIComponent(tid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;}); }));
+        thrs.filter(Boolean).forEach(function(t){ (t.messages||[]).forEach(function(msg){ try { var r=parseMeta(msg); byId[r.id]=r; } catch(_){} }); });
+      }
+      var rows=Object.keys(byId).map(function(k){return byId[k];}).sort(function(a,b){ return (b.internalDate||0)-(a.internalDate||0); });
+      GM.entityInbox[key]={ rows:rows };
     } catch(e){ GM.entityInbox[key]={ error:e.message||"Fehler beim Laden" }; }
+    refreshEntityInboxDom(kind,id);
+  }
+  // Verknüpfte Entwürfe für ein Element aus /gmailDrafts lesen (linkedEntity == {kind,id}, status pending).
+  async function loadEntityDrafts(kind,id){
+    var key=kind+":"+id;
+    try {
+      var dd=await rtdbGet("gmailDrafts"); var dl=[];
+      if (dd && typeof dd==="object"){
+        Object.keys(dd).forEach(function(k){
+          var d=dd[k]; if(!d || typeof d!=="object") return;
+          var le=d.linkedEntity; if(!le || le.kind!==kind || String(le.id)!==String(id)) return;
+          if ((d.status||"pending")!=="pending") return;
+          d._key=k; dl.push(d);
+        });
+      }
+      GM.entityDrafts=GM.entityDrafts||{}; GM.entityDrafts[key]=dl.sort(function(a,b){ return draftTs(b)-draftTs(a); });
+    } catch(_){ GM.entityDrafts=GM.entityDrafts||{}; GM.entityDrafts[key]=GM.entityDrafts[key]||[]; }
     refreshEntityInboxDom(kind,id);
   }
 
