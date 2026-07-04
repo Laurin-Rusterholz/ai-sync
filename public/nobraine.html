@@ -166,6 +166,25 @@ h1, h2, .redaktionell {
 .slot.frei .s-rezept { color: var(--sand-tief); font-weight:600; }
 .slot.frei .frei-grund { color: var(--muted); font-weight:500; }
 
+/* Tages-Agenda (Kalender) im Fuss der Tages-Karte */
+.tag-agenda { margin-top:11px; padding-top:11px; border-top:1px dashed var(--linie); display:flex; flex-direction:column; gap:5px; }
+.agenda-eintrag { display:flex; align-items:center; gap:8px; padding:5px 7px; border-radius:8px; cursor:pointer; transition:background .12s; }
+.agenda-eintrag:hover { background:#fff; }
+.agenda-check {
+  width:19px; height:19px; flex:none; border-radius:6px; border:2px solid var(--linie); background:#fff;
+  color:#fff; font-size:11px; font-weight:700; display:grid; place-items:center;
+}
+.agenda-eintrag.erledigt .agenda-check { background:var(--teal); border-color:var(--teal); }
+.agenda-zeit { flex:none; font-size:12px; font-weight:700; color:var(--teal-tief); min-width:38px; }
+.agenda-zeit.ganztags { color:var(--muted-hell); text-align:center; }
+.agenda-titel { flex:1; font-size:13px; font-weight:500; word-break:break-word; }
+.agenda-eintrag.erledigt .agenda-titel { text-decoration:line-through; color:var(--muted-hell); }
+.agenda-add {
+  align-self:flex-start; margin-top:2px; padding:4px 9px; font-size:12px; font-weight:600;
+  border:1px dashed var(--linie); border-radius:8px; background:transparent; color:var(--muted);
+}
+.agenda-add:hover { color:var(--tinte); border-color:var(--sand); }
+
 /* ── Bibliothek ─────────────────────────────────────────────────────────── */
 .werkzeug-leiste { display:flex; gap:12px; align-items:center; margin-bottom:20px; flex-wrap:wrap; }
 .sucheInput {
@@ -330,7 +349,7 @@ h1, h2, .redaktionell {
 #modalBox h3 { font-size: 19px; margin-bottom: 6px; }
 #modalBox .modal-unter { font-size:13px; color:var(--muted); margin-bottom:16px; }
 #modalBox label { display:block; font-size: 12.5px; color: var(--muted); font-weight:600; margin: 14px 0 5px; }
-#modalBox input[type=text], #modalBox input[type=number], #modalBox select, #modalBox textarea {
+#modalBox input[type=text], #modalBox input[type=number], #modalBox input[type=time], #modalBox select, #modalBox textarea {
   width:100%; padding: 10px 13px; border:1px solid var(--linie); border-radius: var(--radius-sm); background:#fff; outline:none; color:var(--tinte);
 }
 #modalBox textarea { resize: vertical; min-height:72px; line-height:1.5; }
@@ -447,6 +466,7 @@ const P_HABITS    = P_ROOT + "/habits";                               // /habits
 const P_HABITDEFS = P_ROOT + "/habitdefs";                            // /habitdefs/<id> = { name, icon, sort, aktiv, erstellt }
 const P_WEEKS     = P_ROOT + "/weeks";                                // /weeks/<weekKey>/…
 function mealsPath(wk) { return P_WEEKS + "/" + wk + "/meals"; }        // /meals/<tag>/<mittag|abend> = recipeId
+function calPath(wk)   { return P_WEEKS + "/" + wk + "/calendar"; }     // /calendar/<tag>/<id> = { zeit, titel, notiz, erledigt }
 function freePath(wk)  { return P_WEEKS + "/" + wk + "/freeblocks"; }   // /freeblocks/<tag>/<slot> = { label, erstellt }
 function shopPath(wk)  { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
 function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /generation = { status, … }
@@ -484,6 +504,7 @@ const S = {
   habitDefs: {},            // /nobraine/habitdefs → { id: { name, icon, sort, aktiv } }
   habitLog: {},             // /nobraine/habits → { datum: { habitId: true } }
   meals: {},                // /nobraine/weeks/<wk>/meals → { tag: { slot: recipeId } }
+  calendar: {},             // /nobraine/weeks/<wk>/calendar → { tag: { id: { zeit, titel, … } } }
   free: {},                 // /nobraine/weeks/<wk>/freeblocks → { tag: { slot: { label } } }
   shopping: {},             // /nobraine/weeks/<wk>/shoppinglist
   generation: {},           // /nobraine/weeks/<wk>/generation
@@ -492,7 +513,7 @@ const S = {
   katFilter: "alle",
   drawer: null,             // { recipeId, tag, slot } — tag/slot nur bei Slot-Kontext
   weekMonday: mondayOf(new Date()),
-  _mealsRef: null, _freeRef: null, _shopRef: null, _genRef: null
+  _mealsRef: null, _calRef: null, _freeRef: null, _shopRef: null, _genRef: null
 };
 
 // Vorschläge für den Grund eines Freiblocks (frei editierbar)
@@ -623,20 +644,23 @@ function wochenListenerAktualisieren() {
   if (!S.bereit) return;
   const wk = weekKeyOf(S.weekMonday);
   if (S._mealsRef) S._mealsRef.off();
+  if (S._calRef)   S._calRef.off();
   if (S._freeRef)  S._freeRef.off();
   if (S._shopRef)  S._shopRef.off();
   if (S._genRef)   S._genRef.off();
   S._mealsRef = db.ref(mealsPath(wk));
+  S._calRef   = db.ref(calPath(wk));
   S._freeRef  = db.ref(freePath(wk));
   S._shopRef  = db.ref(shopPath(wk));
   S._genRef   = db.ref(genPath(wk));
   S._mealsRef.on("value", function (snap) { S.meals = snap.val() || {}; render(); });
+  S._calRef.on("value",   function (snap) { S.calendar = snap.val() || {}; render(); });
   S._freeRef.on("value",  function (snap) { S.free = snap.val() || {}; render(); });
   S._shopRef.on("value",  function (snap) { S.shopping = snap.val() || {}; render(); });
   S._genRef.on("value",   function (snap) { S.generation = snap.val() || {}; render(); });
 }
 
-function wocheZuruecksetzen() { S.meals = {}; S.free = {}; S.shopping = {}; S.generation = {}; }
+function wocheZuruecksetzen() { S.meals = {}; S.calendar = {}; S.free = {}; S.shopping = {}; S.generation = {}; }
 function wocheWechseln(deltaWochen) {
   const m = new Date(S.weekMonday);
   m.setDate(m.getDate() + deltaWochen * 7);
@@ -978,8 +1002,34 @@ function viewPlan() {
         "</div>";
       }
     });
+    html += agendaHtml(i, dk);
     html += "</div>";
   });
+  html += "</div>";
+  return html;
+}
+
+// ── Tages-Agenda (Kalender) im Tages-Karten-Fuss ──────────────────────────
+function kalenderEintraege(dk) {
+  const eintraege = S.calendar[dk] || {};
+  return Object.keys(eintraege).map(function (id) {
+    return Object.assign({ id: id }, eintraege[id]);
+  }).sort(function (a, b) {
+    const za = a.zeit || "~", zb = b.zeit || "~"; // ohne Zeit ans Ende
+    if (za !== zb) return za < zb ? -1 : 1;
+    return String(a.titel || "").localeCompare(String(b.titel || ""), "de");
+  });
+}
+function agendaHtml(i, dk) {
+  const eintraege = kalenderEintraege(dk);
+  let html = '<div class="tag-agenda">';
+  eintraege.forEach(function (e) {
+    html += '<div class="agenda-eintrag' + (e.erledigt ? " erledigt" : "") + '" data-action="kalender-oeffnen" data-tag="' + i + '" data-id="' + esc(e.id) + '">' +
+      '<button class="agenda-check" data-action="kalender-toggle" data-tag="' + i + '" data-id="' + esc(e.id) + '" title="Erledigt">' + (e.erledigt ? "✓" : "") + "</button>" +
+      (e.zeit ? '<span class="agenda-zeit">' + esc(e.zeit) + "</span>" : '<span class="agenda-zeit ganztags">•</span>') +
+      '<span class="agenda-titel">' + esc(e.titel || "(ohne Titel)") + "</span></div>";
+  });
+  html += '<button class="agenda-add" data-action="kalender-neu" data-tag="' + i + '">＋ Termin</button>';
   html += "</div>";
   return html;
 }
@@ -1450,6 +1500,63 @@ function rezeptEinplanenDialog(recipeId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AKTIONEN — Kalender / Tages-Agenda
+// ═══════════════════════════════════════════════════════════════════════════
+async function kalenderToggle(tag, id) {
+  const dk = dayKeyOf(tag);
+  const e = (S.calendar[dk] || {})[id];
+  if (!e) return;
+  try {
+    await db.ref(calPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + id + "/erledigt").set(!e.erledigt);
+  } catch (err) { toast("Fehler: " + (err && err.message)); }
+}
+function kalenderDialog(tag, id) {
+  const dk = dayKeyOf(tag);
+  const e = id ? (S.calendar[dk] || {})[id] : null;
+  const datum = tageDerWoche(S.weekMonday)[tag];
+  modalOeffnen(
+    "<h3>" + (e ? "Termin bearbeiten" : "Neuer Termin") + "</h3>" +
+    '<div class="modal-unter">' + TAGE_LANG[tag] + ", " + fmtLang(datum) + "</div>" +
+    '<div class="feld-reihe">' +
+      '<div style="flex:0 0 120px"><label>Zeit</label><input type="time" id="calZeit" value="' + esc(e ? (e.zeit || "") : "") + '"></div>' +
+      '<div><label>Titel</label><input type="text" id="calTitel" value="' + esc(e ? (e.titel || "") : "") + '" placeholder="z. B. Zahnarzt"></div>' +
+    "</div>" +
+    '<label>Notiz (optional)</label><textarea id="calNotiz" rows="3" placeholder="Ort, Details …">' + esc(e ? (e.notiz || "") : "") + "</textarea>" +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      (e ? '<button class="btn gefahr" data-action="kalender-loeschen" data-tag="' + tag + '" data-id="' + esc(id) + '">Löschen</button>' : "") +
+      '<button class="btn primaer" data-action="modal-ok">' + (e ? "Speichern" : "Anlegen") + "</button>" +
+    "</div>",
+    async function () {
+      const titel = document.getElementById("calTitel").value.trim();
+      if (!titel) { toast("Bitte einen Titel eingeben."); throw new Error("kein Titel"); }
+      const daten = {
+        zeit: document.getElementById("calZeit").value || "",
+        titel: titel,
+        notiz: document.getElementById("calNotiz").value.trim()
+      };
+      const wk = weekKeyOf(S.weekMonday);
+      if (e) {
+        await db.ref(calPath(wk) + "/" + dk + "/" + id).update(daten);
+        toast("Gespeichert: " + titel);
+      } else {
+        const key = db.ref(calPath(wk) + "/" + dk).push().key;
+        await db.ref(calPath(wk) + "/" + dk + "/" + key).set(Object.assign({ erledigt: false, erstellt: new Date().toISOString() }, daten));
+        toast("Termin hinzugefügt");
+      }
+    }
+  );
+}
+async function kalenderLoeschen(tag, id) {
+  const dk = dayKeyOf(tag);
+  try {
+    await db.ref(calPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + id).remove();
+    toast("Termin gelöscht");
+    modalSchliessen();
+  } catch (err) { toast("Fehler: " + (err && err.message)); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AKTIONEN — Generierung via n8n-Webhook
 // ═══════════════════════════════════════════════════════════════════════════
 async function generieren(payloadExtra, hinweis) {
@@ -1676,6 +1783,10 @@ document.addEventListener("click", function (e) {
     case "slot-entfernen":  slotEntfernen(tag, slot); break;
     case "slot-generieren": slotGenerieren(tag, slot); break;
     case "slot-freihalten": modalSchliessen(); drawerSchliessen(); freihaltenDialog(tag, slot); break;
+    case "kalender-neu":    kalenderDialog(tag, null); break;
+    case "kalender-oeffnen": if (!e.target.closest('[data-action="kalender-toggle"]')) kalenderDialog(tag, id); break;
+    case "kalender-toggle": e.stopPropagation(); kalenderToggle(tag, id); break;
+    case "kalender-loeschen": kalenderLoeschen(tag, id); break;
     case "frei-preset":     { const inp = document.getElementById("fhGrund"); if (inp) inp.value = el.getAttribute("data-label"); break; }
     case "frei-aufheben":   freiblockAufheben(tag, slot); break;
     case "waehlen-rezept":  modalSchliessen(); slotSetzen(tag, slot, id); break;

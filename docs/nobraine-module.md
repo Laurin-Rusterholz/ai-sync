@@ -4,7 +4,8 @@ Single-File-Modul **`public/nobraine.html`** (CSS + JS inline, kein Build, keine
 Frameworks ausser dem Firebase-SDK via CDN). Der Wochen-Menüplaner verwaltet
 eine durchsuchbare Rezept-Bibliothek, plant je Wochentag Mittag- und
 Abendessen (Frühstück bleibt Routine), aggregiert daraus eine Einkaufsliste,
-trackt tägliche Gewohnheiten und stösst die automatische
+führt je Tag eine Termin-Agenda, trackt tägliche Gewohnheiten und stösst die
+automatische
 Wochen-Generierung über einen **n8n-Webhook** an. Alle Daten liegen unter dem
 RTDB-Pfad-Root **`/nobraine/`**.
 
@@ -35,6 +36,7 @@ gruppiert.
 | `nobraine/habitdefs/<id>` | `{ name, icon, sort, aktiv, erstellt }` — Definition einer Gewohnheit |
 | `nobraine/habits/<datum>/<habitId>` | `true` — Tages-Log: an diesem Tag (ISO-Datum `YYYY-MM-DD`) erledigte Gewohnheit |
 | `nobraine/weeks/<weekKey>/meals/<tag>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Mahlzeiten-Slot |
+| `nobraine/weeks/<weekKey>/calendar/<tag>/<id>` | `{ zeit, titel, notiz, erledigt, erstellt }` — Termin/Agenda-Eintrag des Tages (Zeit optional = ganztags) |
 | `nobraine/weeks/<weekKey>/freeblocks/<tag>/<slotKey>` | `{ label, erstellt }` — bewusst freigehaltener Slot (auswärts, Resten, kein Kochen); wird bei der Generierung übersprungen und liefert nichts an die Einkaufsliste |
 | `nobraine/weeks/<weekKey>/shoppinglist/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
 | `nobraine/weeks/<weekKey>/generation` | `{ status ("pending"\|"running"\|"done"\|"error"), typ ("woche"\|"slot"), angefragt, finishedAt, message, tag?, slot? }` |
@@ -61,6 +63,10 @@ gruppiert.
   (das Setzen des einen entfernt das andere). Freigehaltene Slots werden im
   Generierungs-Payload (`freeblocks: [{ tag, slot, label }]`) mitgeschickt, von
   n8n übersprungen und tragen nichts zur Einkaufsliste bei.
+- **Termin-Agenda** je Tag: im Fuss jeder Tages-Karte des Wochenplans liegt eine
+  kleine Agenda. Einträge (`{ zeit, titel, notiz, erledigt }`) werden nach Zeit
+  sortiert (ohne Zeit = ganztags, ans Ende), lassen sich abhaken, anklicken zum
+  Bearbeiten und löschen. So vereint der Wochenplan Mahlzeiten und Termine je Tag.
 - **Gewohnheiten** sind ein tagesbasierter Habit-Tracker, unabhängig vom
   Menüplan. Die Ansicht zeigt eine Matrix (Zeilen = Gewohnheiten, Spalten = Mo–So
   der gewählten Woche); eine Zelle abhaken schreibt `habits/<datum>/<habitId> =
@@ -136,7 +142,9 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
    (passende Kategorie zuerst), „🚫 Freihalten" oder „Slot generieren". Gefüllten
    Slot antippen → Drawer mit „Rezept tauschen", „Neu generieren", „Freihalten",
    „Aus Plan entfernen". Wochennavigation (‹ ›, „Aktuelle Woche") prüfen —
-   Plan/Einkauf/Status folgen der gewählten Woche live.
+   Plan/Einkauf/Status folgen der gewählten Woche live. Im Fuss jeder Tages-Karte
+   „＋ Termin" anlegen (Zeit optional, Titel, Notiz) → nach Zeit sortiert;
+   abhaken, anklicken zum Bearbeiten/Löschen.
 4. **Freiblöcke:** Slot freihalten (Grund per Preset oder frei eingeben) → Slot
    zeigt „🚫 Frei · <Grund>". Erneut antippen öffnet den Dialog zum Ändern oder
    „Freigabe aufheben". Ein danach gesetztes Rezept ersetzt den Freiblock und
