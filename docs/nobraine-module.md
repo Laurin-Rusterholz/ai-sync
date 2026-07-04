@@ -3,8 +3,8 @@
 Single-File-Modul **`public/nobraine.html`** (CSS + JS inline, kein Build, keine
 Frameworks ausser dem Firebase-SDK via CDN). Der Wochen-Menüplaner verwaltet
 eine durchsuchbare Rezept-Bibliothek, plant je Wochentag Mittag- und
-Abendessen (Frühstück bleibt Routine), aggregiert daraus eine Einkaufsliste
-und stösst die automatische
+Abendessen (Frühstück bleibt Routine), aggregiert daraus eine Einkaufsliste,
+trackt tägliche Gewohnheiten und stösst die automatische
 Wochen-Generierung über einen **n8n-Webhook** an. Alle Daten liegen unter dem
 RTDB-Pfad-Root **`/nobraine/`**.
 
@@ -24,12 +24,16 @@ responsive & mobile-first.
 
 ## Datenmodell (RTDB)
 
-Rezepte liegen global unter `nobraine/recipes`; alle wochenbezogenen Daten sind
-je Kalenderwoche unter `nobraine/weeks/<jahr-kw>/` gruppiert.
+Rezepte (`nobraine/recipes`), Gewohnheits-Definitionen (`nobraine/habitdefs`)
+und das tägliche Gewohnheits-Log (`nobraine/habits`) liegen global; alle
+wochenbezogenen Daten sind je Kalenderwoche unter `nobraine/weeks/<jahr-kw>/`
+gruppiert.
 
 | Pfad | Inhalt |
 |---|---|
 | `nobraine/recipes/<id>` | `{ name, kategorie ("mittag"\|"abend"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
+| `nobraine/habitdefs/<id>` | `{ name, icon, sort, aktiv, erstellt }` — Definition einer Gewohnheit |
+| `nobraine/habits/<datum>/<habitId>` | `true` — Tages-Log: an diesem Tag (ISO-Datum `YYYY-MM-DD`) erledigte Gewohnheit |
 | `nobraine/weeks/<weekKey>/meals/<tag>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Mahlzeiten-Slot |
 | `nobraine/weeks/<weekKey>/freeblocks/<tag>/<slotKey>` | `{ label, erstellt }` — bewusst freigehaltener Slot (auswärts, Resten, kein Kochen); wird bei der Generierung übersprungen und liefert nichts an die Einkaufsliste |
 | `nobraine/weeks/<weekKey>/shoppinglist/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
@@ -57,6 +61,14 @@ je Kalenderwoche unter `nobraine/weeks/<jahr-kw>/` gruppiert.
   (das Setzen des einen entfernt das andere). Freigehaltene Slots werden im
   Generierungs-Payload (`freeblocks: [{ tag, slot, label }]`) mitgeschickt, von
   n8n übersprungen und tragen nichts zur Einkaufsliste bei.
+- **Gewohnheiten** sind ein tagesbasierter Habit-Tracker, unabhängig vom
+  Menüplan. Die Ansicht zeigt eine Matrix (Zeilen = Gewohnheiten, Spalten = Mo–So
+  der gewählten Woche); eine Zelle abhaken schreibt `habits/<datum>/<habitId> =
+  true`, erneutes Tippen entfernt den Eintrag. Je Gewohnheit wird die aktuelle
+  Serie (aufeinanderfolgende erledigte Tage bis heute, `🔥 N`) aus dem Log
+  berechnet. Gewohnheiten sind frei anlegbar/bearbeitbar/löschbar (`habitdefs`);
+  beim Löschen werden auch die zugehörigen Tages-Log-Einträge aufgeräumt. Beim
+  ersten Start werden vier Standard-Gewohnheiten geseedet (nur falls leer).
 
 ## Generierung via n8n-Webhook
 
@@ -137,3 +149,8 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
    aggregierte, deduplizierte Wochenliste. Positionen abhaken (Zustand
    persistiert, Badge in der Navigation zählt offene Posten), manuell Artikel
    ergänzen (Enter oder „＋ Hinzufügen"), „Erledigte entfernen".
+7. **Gewohnheiten:** In „Gewohnheiten" erscheinen die Standard-Gewohnheiten als
+   Matrix über die Woche. Zellen abhaken (Schreiben nach `habits/<datum>/…`,
+   Serie `🔥 N` aktualisiert sich), „＋ Gewohnheit" anlegen (Name + Symbol),
+   Namen anklicken zum Bearbeiten/Löschen. Wochennavigation (‹ ›) blättert die
+   Matrix durch die Wochen.

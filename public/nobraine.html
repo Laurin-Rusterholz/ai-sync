@@ -234,6 +234,43 @@ h1, h2, .redaktionell {
 .ek-del:hover { color: var(--coral-tief); background: rgba(217,108,87,.1); }
 .einkauf-fuss { display:flex; gap:10px; margin-top:6px; flex-wrap:wrap; }
 
+/* ── Gewohnheiten (Habit-Matrix) ────────────────────────────────────────── */
+.habit-matrix-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:4px; }
+.habit-matrix { border-collapse:separate; border-spacing:0; width:100%; min-width:520px; }
+.habit-matrix th, .habit-matrix td { padding:0; text-align:center; }
+.habit-matrix thead th {
+  font-size:11px; font-weight:700; color:var(--muted); padding:6px 4px 12px;
+  text-transform:uppercase; letter-spacing:.5px;
+}
+.habit-matrix thead th span { display:block; font-size:10.5px; font-weight:500; letter-spacing:0; text-transform:none; margin-top:2px; }
+.habit-matrix th.hm-namecol { text-align:left; padding-left:6px; }
+.habit-matrix th.hm-tag.heute { color:var(--teal-tief); }
+.habit-matrix th.hm-tag.zukunft { color:var(--muted-hell); }
+.habit-matrix th.hm-streak { color:var(--muted); }
+.hm-namecol, .hm-name { position:sticky; left:0; background:var(--leinen); z-index:1; }
+.habit-matrix tbody tr { border-radius:var(--radius-sm); }
+.hm-name {
+  text-align:left; padding:9px 14px 9px 6px; cursor:pointer; white-space:nowrap;
+  display:flex; align-items:center; gap:9px; min-width:150px;
+}
+.hm-name:hover .hm-label { text-decoration:underline; }
+.hm-icon { font-size:18px; flex:none; }
+.hm-label { font-weight:600; font-size:14.5px; }
+.hm-cell { padding:4px; }
+.hm-toggle {
+  width:34px; height:34px; border-radius:9px; border:2px solid var(--linie); background:#fff;
+  color:#fff; font-size:16px; font-weight:700; display:grid; place-items:center; margin:0 auto;
+  transition: background .12s, border-color .12s, transform .08s;
+}
+.hm-toggle:hover { border-color:var(--teal); }
+.hm-toggle:active { transform:scale(.9); }
+.hm-toggle.done { background:var(--teal); border-color:var(--teal); }
+.hm-toggle.zukunft { opacity:.55; }
+.hm-streak { font-size:13px; font-weight:700; color:var(--coral-tief); white-space:nowrap; padding:0 8px; }
+.habit-hinweis { font-size:12.5px; color:var(--muted); margin-top:16px; }
+.emoji-chip { padding:6px 9px; border:1px solid var(--linie); border-radius:9px; background:#fff; font-size:17px; line-height:1; }
+.emoji-chip:hover { background:var(--leinen-tief); border-color:var(--sand); }
+
 /* ── Drawer (Rezept-Detail) ─────────────────────────────────────────────── */
 #drawer {
   position: fixed; top:0; right:0; bottom:0; width: min(560px, 94vw);
@@ -404,9 +441,11 @@ const RTDB_DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedata
 // Pfad-Root /nobraine/
 // Global:            /nobraine/recipes/<id>
 // Woche <jahr-kw>:   /nobraine/weeks/<weekKey>/{ plan, shoppinglist, generation }
-const P_ROOT    = "nobraine";
-const P_RECIPES = P_ROOT + "/recipes";
-const P_WEEKS   = P_ROOT + "/weeks";                                  // /weeks/<weekKey>/…
+const P_ROOT      = "nobraine";
+const P_RECIPES   = P_ROOT + "/recipes";                              // /recipes/<id> (Bibliothek, mit lastUsed)
+const P_HABITS    = P_ROOT + "/habits";                               // /habits/<datum>/<habitId> = true (Tages-Log)
+const P_HABITDEFS = P_ROOT + "/habitdefs";                            // /habitdefs/<id> = { name, icon, sort, aktiv, erstellt }
+const P_WEEKS     = P_ROOT + "/weeks";                                // /weeks/<weekKey>/…
 function mealsPath(wk) { return P_WEEKS + "/" + wk + "/meals"; }        // /meals/<tag>/<mittag|abend> = recipeId
 function freePath(wk)  { return P_WEEKS + "/" + wk + "/freeblocks"; }   // /freeblocks/<tag>/<slot> = { label, erstellt }
 function shopPath(wk)  { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
@@ -416,6 +455,7 @@ function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /gene
 const WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-generate";
 
 const TAGE_LANG  = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
+const TAG_KURZ   = ["Mo","Di","Mi","Do","Fr","Sa","So"];
 // Nur Mittag- und Abendessen werden geplant (Frühstück bleibt Routine).
 const SLOTS = [
   { key: "mittag", label: "Mittagessen", icon: "🥗" },
@@ -441,6 +481,8 @@ try {
 const S = {
   bereit: false,
   recipes: {},              // /nobraine/recipes
+  habitDefs: {},            // /nobraine/habitdefs → { id: { name, icon, sort, aktiv } }
+  habitLog: {},             // /nobraine/habits → { datum: { habitId: true } }
   meals: {},                // /nobraine/weeks/<wk>/meals → { tag: { slot: recipeId } }
   free: {},                 // /nobraine/weeks/<wk>/freeblocks → { tag: { slot: { label } } }
   shopping: {},             // /nobraine/weeks/<wk>/shoppinglist
@@ -553,6 +595,15 @@ function boot() {
           rezepteSeedFallsLeer();
           render();
         });
+        db.ref(P_HABITDEFS).on("value", function (snap) {
+          S.habitDefs = snap.val() || {};
+          habitsSeedFallsLeer();
+          render();
+        });
+        db.ref(P_HABITS).on("value", function (snap) {
+          S.habitLog = snap.val() || {};
+          render();
+        });
         wochenListenerAktualisieren();
       }
     } else {
@@ -618,6 +669,30 @@ function rezepteSeedFallsLeer() {
   db.ref(P_RECIPES).update(updates).catch(function (e) {
     console.error("Seed fehlgeschlagen:", e);
     _seedLaeuft = false;
+  });
+}
+
+// Erst-Seed einiger Standard-Gewohnheiten (nur falls habitdefs leer)
+const STARTER_HABITS = [
+  { name: "Wasser trinken", icon: "💧" },
+  { name: "Bewegung", icon: "🏃" },
+  { name: "Lesen", icon: "📖" },
+  { name: "Früh schlafen", icon: "🌙" }
+];
+let _habitSeedLaeuft = false;
+function habitsSeedFallsLeer() {
+  if (_habitSeedLaeuft) return;
+  if (S.habitDefs && Object.keys(S.habitDefs).length > 0) return;
+  _habitSeedLaeuft = true;
+  const now = new Date().toISOString();
+  const updates = {};
+  STARTER_HABITS.forEach(function (h, i) {
+    const key = db.ref(P_HABITDEFS).push().key;
+    updates[key] = { name: h.name, icon: h.icon, sort: i, aktiv: true, erstellt: now };
+  });
+  db.ref(P_HABITDEFS).update(updates).catch(function (e) {
+    console.error("Habit-Seed fehlgeschlagen:", e);
+    _habitSeedLaeuft = false;
   });
 }
 
@@ -788,7 +863,8 @@ function renderNav() {
   const eintraege = [
     { key: "plan",       ic: "🗓️", label: "Wochenplan" },
     { key: "bibliothek", ic: "📖", label: "Rezepte" },
-    { key: "einkauf",    ic: "🛒", label: "Einkaufsliste" }
+    { key: "einkauf",    ic: "🛒", label: "Einkaufsliste" },
+    { key: "habits",     ic: "🔁", label: "Gewohnheiten" }
   ];
   const offen = offeneEinkauf();
   document.getElementById("nav").innerHTML = eintraege.map(function (e) {
@@ -816,6 +892,15 @@ function renderKopf() {
     const anz = Object.keys(S.recipes).length;
     titelEl.innerHTML = "<h1>Rezept-Bibliothek</h1><div class='unter'>" + anz + " Rezept" + (anz === 1 ? "" : "e") + "</div>";
     aktionEl.innerHTML = '<button class="btn-primaer" data-action="rezept-neu">＋ Neues Rezept</button>';
+  } else if (S.ansicht === "habits") {
+    const tage = tageDerWoche(S.weekMonday);
+    titelEl.innerHTML =
+      '<div class="wochen-leiste">' +
+        '<button class="wpfeil" data-action="woche-zurueck" title="Vorherige Woche">‹</button>' +
+        '<div class="woche-label">Gewohnheiten<small>' + fmtKurz(tage[0]) + " – " + fmtKurz(tage[6]) + "</small></div>" +
+        '<button class="wpfeil" data-action="woche-vor" title="Nächste Woche">›</button>' +
+      "</div>";
+    aktionEl.innerHTML = '<button class="btn-primaer" data-action="habit-neu">＋ Gewohnheit</button>';
   } else {
     titelEl.innerHTML = "<h1>Einkaufsliste</h1><div class='unter'>Woche " + esc(weekKeyOf(S.weekMonday)) + "</div>";
     aktionEl.innerHTML = "";
@@ -826,6 +911,7 @@ function renderInhalt() {
   const el = document.getElementById("inhalt");
   if (S.ansicht === "plan") el.innerHTML = viewPlan();
   else if (S.ansicht === "bibliothek") el.innerHTML = viewBibliothek();
+  else if (S.ansicht === "habits") el.innerHTML = viewHabits();
   else el.innerHTML = viewEinkauf();
 }
 
@@ -1030,6 +1116,125 @@ function viewEinkauf() {
   }
   html += "</div>";
   return html;
+}
+
+// ── Gewohnheiten (Habit-Tracker) ──────────────────────────────────────────
+// Matrix: Zeilen = Gewohnheiten, Spalten = Mo–So der gewählten Woche.
+// Tages-Log unter /nobraine/habits/<datum>/<habitId> = true.
+function sortierteHabits() {
+  return Object.keys(S.habitDefs).filter(function (id) {
+    return S.habitDefs[id] && S.habitDefs[id].aktiv !== false;
+  }).sort(function (a, b) {
+    const sa = S.habitDefs[a].sort, sb = S.habitDefs[b].sort;
+    if (sa !== sb) return (sa || 0) - (sb || 0);
+    return String(S.habitDefs[a].name).localeCompare(String(S.habitDefs[b].name), "de");
+  });
+}
+function habitErledigt(habitId, datum) {
+  return !!((S.habitLog[datum] || {})[habitId]);
+}
+// Aktuelle Serie (aufeinanderfolgende erledigte Tage bis heute)
+function habitStreak(habitId) {
+  let n = 0;
+  const d = new Date(heuteIso() + "T00:00:00");
+  for (let i = 0; i < 400; i++) {
+    if (habitErledigt(habitId, isoDatum(d))) { n++; d.setDate(d.getDate() - 1); }
+    else break;
+  }
+  return n;
+}
+function viewHabits() {
+  const habits = sortierteHabits();
+  const tage = tageDerWoche(S.weekMonday);
+  const heute = heuteIso();
+
+  if (habits.length === 0) {
+    return '<div class="leer-hinweis"><div class="gross">🔁</div>Noch keine Gewohnheiten. Lege deine erste an.</div>';
+  }
+
+  let kopf = '<tr><th class="hm-namecol">Gewohnheit</th>';
+  tage.forEach(function (d, i) {
+    const istHeute = isoDatum(d) === heute;
+    const zukunft = isoDatum(d) > heute;
+    kopf += '<th class="hm-tag' + (istHeute ? " heute" : "") + (zukunft ? " zukunft" : "") + '">' +
+      TAG_KURZ[i] + "<span>" + fmtKurz(d) + "</span></th>";
+  });
+  kopf += '<th class="hm-streak">Serie</th></tr>';
+
+  let zeilen = "";
+  habits.forEach(function (id) {
+    const h = S.habitDefs[id];
+    const streak = habitStreak(id);
+    zeilen += '<tr><td class="hm-name" data-action="habit-bearbeiten" data-id="' + esc(id) + '">' +
+      '<span class="hm-icon">' + esc(h.icon || "🔁") + "</span><span class='hm-label'>" + esc(h.name) + "</span></td>";
+    tage.forEach(function (d, i) {
+      const datum = isoDatum(d);
+      const erledigt = habitErledigt(id, datum);
+      const zukunft = datum > heute;
+      zeilen += '<td class="hm-cell">' +
+        '<button class="hm-toggle' + (erledigt ? " done" : "") + (zukunft ? " zukunft" : "") + '" ' +
+        'data-action="habit-toggle" data-habit="' + esc(id) + '" data-datum="' + datum + '" ' +
+        'title="' + TAGE_LANG[i] + ", " + fmtKurz(d) + '">' + (erledigt ? "✓" : "") + "</button></td>";
+    });
+    zeilen += '<td class="hm-streak">' + (streak > 0 ? "🔥 " + streak : "–") + "</td></tr>";
+  });
+
+  return '<div class="habit-matrix-wrap"><table class="habit-matrix"><thead>' + kopf +
+    "</thead><tbody>" + zeilen + "</tbody></table></div>" +
+    '<div class="habit-hinweis">Tippe auf eine Zelle, um den Tag abzuhaken. Klicke auf den Namen zum Bearbeiten.</div>';
+}
+
+async function habitToggle(habitId, datum) {
+  const ref = db.ref(P_HABITS + "/" + datum + "/" + habitId);
+  const snap = await ref.once("value");
+  if (snap.val()) await ref.remove();
+  else await ref.set(true);
+}
+function habitFormular(id) {
+  const h = id ? S.habitDefs[id] : null;
+  const emojis = ["🔁","💧","🏃","📖","🌙","🧘","🥗","💊","✍️","☀️","🦷","🚭"];
+  const chips = emojis.map(function (em) {
+    return '<button type="button" class="emoji-chip" data-action="habit-emoji" data-emoji="' + em + '">' + em + "</button>";
+  }).join("");
+  modalOeffnen(
+    "<h3>" + (h ? "Gewohnheit bearbeiten" : "Neue Gewohnheit") + "</h3>" +
+    '<label>Name</label><input type="text" id="hbName" value="' + esc(h ? h.name : "") + '" placeholder="z. B. Meditieren">' +
+    '<label>Symbol</label><input type="text" id="hbIcon" value="' + esc(h ? (h.icon || "🔁") : "🔁") + '" maxlength="4" style="width:80px">' +
+    '<div class="kat-filter" style="margin-top:8px">' + chips + "</div>" +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      (h ? '<button class="btn gefahr" data-action="habit-loeschen" data-id="' + esc(id) + '">Löschen</button>' : "") +
+      '<button class="btn primaer" data-action="modal-ok">' + (h ? "Speichern" : "Anlegen") + "</button>" +
+    "</div>",
+    async function () {
+      const name = document.getElementById("hbName").value.trim();
+      if (!name) { toast("Bitte einen Namen eingeben."); throw new Error("kein Name"); }
+      const icon = document.getElementById("hbIcon").value.trim() || "🔁";
+      if (h) {
+        await db.ref(P_HABITDEFS + "/" + id).update({ name: name, icon: icon });
+        toast("Gespeichert: " + name);
+      } else {
+        const anz = Object.keys(S.habitDefs).length;
+        const key = db.ref(P_HABITDEFS).push().key;
+        await db.ref(P_HABITDEFS + "/" + key).set({ name: name, icon: icon, sort: anz, aktiv: true, erstellt: new Date().toISOString() });
+        toast("Angelegt: " + name);
+      }
+    }
+  );
+}
+async function habitLoeschen(id) {
+  const h = S.habitDefs[id];
+  // Definition entfernen und Log-Einträge dieser Gewohnheit über alle Tage aufräumen
+  const logUpdates = {};
+  Object.keys(S.habitLog || {}).forEach(function (datum) {
+    if ((S.habitLog[datum] || {})[id] != null) logUpdates[datum + "/" + id] = null;
+  });
+  try {
+    if (Object.keys(logUpdates).length) await db.ref(P_HABITS).update(logUpdates);
+    await db.ref(P_HABITDEFS + "/" + id).remove();
+    toast("Gelöscht: " + (h ? h.name : "Gewohnheit"));
+    modalSchliessen();
+  } catch (e) { toast("Fehler: " + (e && e.message)); }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1482,6 +1687,12 @@ document.addEventListener("click", function (e) {
     case "rezept-bearbeiten": rezeptFormular(id); break;
     case "rezept-loeschen": rezeptLoeschenDialog(id); break;
     case "rezept-einplanen": rezeptEinplanenDialog(id); break;
+
+    case "habit-toggle":    habitToggle(el.getAttribute("data-habit"), el.getAttribute("data-datum")); break;
+    case "habit-neu":       habitFormular(null); break;
+    case "habit-bearbeiten": habitFormular(id); break;
+    case "habit-loeschen":  habitLoeschen(id); break;
+    case "habit-emoji":     { const inp = document.getElementById("hbIcon"); if (inp) inp.value = el.getAttribute("data-emoji"); break; }
 
     case "einkauf-add":     einkaufHinzufuegen(); break;
     case "einkauf-toggle":  einkaufToggle(el); break;
