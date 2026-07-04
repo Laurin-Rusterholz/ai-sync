@@ -23,14 +23,17 @@ responsive & mobile-first.
 
 ## Datenmodell (RTDB)
 
+Rezepte liegen global unter `nobraine/recipes`; alle wochenbezogenen Daten sind
+je Kalenderwoche unter `nobraine/weeks/<jahr-kw>/` gruppiert.
+
 | Pfad | Inhalt |
 |---|---|
 | `nobraine/recipes/<id>` | `{ name, kategorie ("fruehstueck"\|"mittag"\|"abend"\|"snack"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
-| `nobraine/plans/<weekKey>/<dayKey>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Slot |
-| `nobraine/shopping/<weekKey>/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
-| `nobraine/generation/<weekKey>` | `{ status ("pending"\|"running"\|"done"\|"error"), typ ("woche"\|"slot"), angefragt, finishedAt, message, tag?, slot? }` |
+| `nobraine/weeks/<weekKey>/plan/<dayKey>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Slot |
+| `nobraine/weeks/<weekKey>/shoppinglist/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
+| `nobraine/weeks/<weekKey>/generation` | `{ status ("pending"\|"running"\|"done"\|"error"), typ ("woche"\|"slot"), angefragt, finishedAt, message, tag?, slot? }` |
 
-- `weekKey`: ISO-Woche, Format `YYYY-Www` (z. B. `2026-W27`). Wochenbeginn Montag.
+- `weekKey` (= `<jahr-kw>`): ISO-Woche, Format `YYYY-Www` (z. B. `2026-W27`). Wochenbeginn Montag.
 - `dayKey`: `d0` (Montag) … `d6` (Sonntag).
 - `slotKey`: `fruehstueck` · `mittag` · `abend` (ASCII-Keys; Anzeige mit Umlaut).
 
@@ -55,16 +58,17 @@ und muss auf den eigenen n8n-Webhook gesetzt werden.
 
 Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
-1. Frontend schreibt `nobraine/generation/<weekKey>` mit `status: "pending"`.
+1. Frontend schreibt `nobraine/weeks/<weekKey>/generation` mit `status: "pending"`.
 2. Frontend `POST`et an `WEBHOOK_URL` mit JSON-Payload:
    - Woche: `{ weekKey, startDatum, tage: 7, slots: ["fruehstueck","mittag","abend"], typ: "woche" }`
    - Einzelner Slot: `{ …, typ: "slot", tag: <0-6>, slot: "<slotKey>", tagName }`
 3. n8n verarbeitet die Anfrage, wählt/erzeugt Rezepte, schreibt sie nach
-   `nobraine/plans/<weekKey>/…` (fehlende Rezepte zusätzlich nach
-   `nobraine/recipes`) und aktualisiert `generation/<weekKey>` auf `running`
-   und schliesslich `done` (mit `finishedAt`).
-4. Das Frontend zeigt den Fortschritt live über `on('value')` auf `plans`,
-   `recipes` und `generation` — Ladezustand (Spinner + Statuszeile) inklusive.
+   `nobraine/weeks/<weekKey>/plan/…` (fehlende Rezepte zusätzlich nach
+   `nobraine/recipes`) und aktualisiert `nobraine/weeks/<weekKey>/generation`
+   auf `running` und schliesslich `done` (mit `finishedAt`).
+4. Das Frontend zeigt den Fortschritt live über `on('value')` auf `plan`,
+   `recipes` und `generation` der aktiven Woche — Ladezustand (Spinner +
+   Statuszeile) inklusive.
 
 Schlägt der `POST` fehl (z. B. weil `WEBHOOK_URL` noch der Platzhalter ist),
 setzt das Frontend `generation.status = "error"` mit erklärender `message` und
@@ -114,7 +118,7 @@ oder migriert.
    Wochennavigation (‹ ›, „Aktuelle Woche") prüfen — Plan/Einkauf/Status folgen
    der gewählten Woche live.
 4. **Generierung:** „🎲 Woche generieren" → Statuszeile „Anfrage gesendet …"
-   und `generation/<weekKey>.status == "pending"` in der RTDB. Mit gesetztem
+   und `nobraine/weeks/<weekKey>/generation.status == "pending"` in der RTDB. Mit gesetztem
    `WEBHOOK_URL` schreibt n8n den Plan; das Gitter aktualisiert sich live. Ohne
    gültige URL erscheint der Fehlerhinweis (kein stilles Verschlucken).
 5. **Einkaufsliste:** Nach dem Befüllen des Plans zeigt „Einkaufsliste" die

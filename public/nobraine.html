@@ -399,11 +399,14 @@ const FIREBASE_CONFIG = {
 const RTDB_DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
 
 // Pfad-Root /nobraine/
-const P_ROOT     = "nobraine";
-const P_RECIPES  = P_ROOT + "/recipes";
-const P_PLANS    = P_ROOT + "/plans";        // /plans/<weekKey>/<dayKey>/<slotKey> = recipeId
-const P_SHOPPING = P_ROOT + "/shopping";     // /shopping/<weekKey>/<key> = { checked, ... }
-const P_GEN      = P_ROOT + "/generation";   // /generation/<weekKey> = { status, ... }
+// Global:            /nobraine/recipes/<id>
+// Woche <jahr-kw>:   /nobraine/weeks/<weekKey>/{ plan, shoppinglist, generation }
+const P_ROOT    = "nobraine";
+const P_RECIPES = P_ROOT + "/recipes";
+const P_WEEKS   = P_ROOT + "/weeks";                                  // /weeks/<weekKey>/…
+function planPath(wk) { return P_WEEKS + "/" + wk + "/plan"; }        // /plan/<dayKey>/<slotKey> = recipeId
+function shopPath(wk) { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
+function genPath(wk)  { return P_WEEKS + "/" + wk + "/generation"; }   // /generation = { status, … }
 
 // n8n-Webhook — Platzhalter. Vom eigenen n8n-Workflow ersetzen (POST empfängt {weekKey, typ, ...}).
 const WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-generate";
@@ -563,9 +566,9 @@ function wochenListenerAktualisieren() {
   if (S._planRef) S._planRef.off();
   if (S._shopRef) S._shopRef.off();
   if (S._genRef)  S._genRef.off();
-  S._planRef = db.ref(P_PLANS + "/" + wk);
-  S._shopRef = db.ref(P_SHOPPING + "/" + wk);
-  S._genRef  = db.ref(P_GEN + "/" + wk);
+  S._planRef = db.ref(planPath(wk));
+  S._shopRef = db.ref(shopPath(wk));
+  S._genRef  = db.ref(genPath(wk));
   S._planRef.on("value", function (snap) { S.plan = snap.val() || {}; render(); });
   S._shopRef.on("value", function (snap) { S.shopping = snap.val() || {}; render(); });
   S._genRef.on("value",  function (snap) { S.generation = snap.val() || {}; render(); });
@@ -1067,7 +1070,7 @@ async function slotSetzen(tag, slot, recipeId) {
   const dk = dayKeyOf(tag);
   const datum = isoDatum(tageDerWoche(S.weekMonday)[tag]);
   try {
-    await db.ref(P_PLANS + "/" + weekKeyOf(S.weekMonday) + "/" + dk + "/" + slot).set(recipeId);
+    await db.ref(planPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).set(recipeId);
     // lastUsed auf das Datum dieses Slots setzen (verhindert Wiederholungen)
     await db.ref(P_RECIPES + "/" + recipeId + "/lastUsed").set(datum);
     toast("Eingeplant: " + (S.recipes[recipeId] ? S.recipes[recipeId].name : ""));
@@ -1076,7 +1079,7 @@ async function slotSetzen(tag, slot, recipeId) {
 async function slotEntfernen(tag, slot) {
   const dk = dayKeyOf(tag);
   try {
-    await db.ref(P_PLANS + "/" + weekKeyOf(S.weekMonday) + "/" + dk + "/" + slot).remove();
+    await db.ref(planPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).remove();
     toast("Aus dem Plan entfernt");
     drawerSchliessen();
   } catch (e) { toast("Fehler: " + (e && e.message)); }
@@ -1160,7 +1163,7 @@ async function generieren(payloadExtra, hinweis) {
     slots: SLOTS.map(function (s) { return s.key; })
   }, payloadExtra || {});
   try {
-    await db.ref(P_GEN + "/" + wk).set({
+    await db.ref(genPath(wk)).set({
       status: "pending",
       typ: payload.typ || "woche",
       angefragt: new Date().toISOString(),
@@ -1176,7 +1179,7 @@ async function generieren(payloadExtra, hinweis) {
     if (!res.ok) throw new Error("Webhook-Status " + res.status);
   } catch (e) {
     console.error("Webhook fehlgeschlagen:", e);
-    await db.ref(P_GEN + "/" + wk).update({
+    await db.ref(genPath(wk)).update({
       status: "error",
       message: "Webhook nicht erreichbar (WEBHOOK_URL noch Platzhalter?)"
     }).catch(function () {});
@@ -1199,7 +1202,7 @@ function slotGenerieren(tag, slot) {
 async function einkaufToggle(el) {
   const key = el.getAttribute("data-key");
   const wk = weekKeyOf(S.weekMonday);
-  const ref = db.ref(P_SHOPPING + "/" + wk + "/" + key);
+  const ref = db.ref(shopPath(wk) + "/" + key);
   const snap = await ref.once("value");
   const cur = snap.val();
   if (cur && cur.manuell) {
@@ -1221,13 +1224,13 @@ async function einkaufHinzufuegen() {
   const menge = document.getElementById("ekMenge").value.trim();
   const einheit = document.getElementById("ekEinheit").value.trim();
   const wk = weekKeyOf(S.weekMonday);
-  await db.ref(P_SHOPPING + "/" + wk).push({
+  await db.ref(shopPath(wk)).push({
     name: name, menge: menge, einheit: einheit, manuell: true, checked: false, erstellt: new Date().toISOString()
   });
   toast("Hinzugefügt: " + name);
 }
 async function einkaufLoeschen(key) {
-  await db.ref(P_SHOPPING + "/" + weekKeyOf(S.weekMonday) + "/" + key).remove();
+  await db.ref(shopPath(weekKeyOf(S.weekMonday)) + "/" + key).remove();
 }
 async function einkaufErledigteLoeschen() {
   const wk = weekKeyOf(S.weekMonday);
@@ -1239,7 +1242,7 @@ async function einkaufErledigteLoeschen() {
     }
   });
   if (Object.keys(updates).length === 0) { toast("Nichts zu entfernen."); return; }
-  await db.ref(P_SHOPPING + "/" + wk).update(updates);
+  await db.ref(shopPath(wk)).update(updates);
   toast("Erledigte Einträge entfernt");
 }
 
@@ -1323,7 +1326,7 @@ function rezeptLoeschenDialog(recipeId) {
         const tp = S.plan[dk] || {};
         Object.keys(tp).forEach(function (sk) { if (tp[sk] === recipeId) planUpdates[dk + "/" + sk] = null; });
       });
-      if (Object.keys(planUpdates).length) await db.ref(P_PLANS + "/" + wk).update(planUpdates);
+      if (Object.keys(planUpdates).length) await db.ref(planPath(wk)).update(planUpdates);
       await db.ref(P_RECIPES + "/" + recipeId).remove();
       toast("Gelöscht: " + r.name);
       drawerSchliessen();
