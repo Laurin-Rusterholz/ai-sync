@@ -96554,7 +96554,7 @@ console.log('📚 Leseliste geladen');
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
       + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()">Senden</button>'
-      + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe")">💾 Entwurf speichern</button>'
+      + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe“)">💾 Entwurf speichern</button>'
       + '<button type="button" class="gmlc-iconbtn" onclick="gmlAttach()" title="Datei anhängen" aria-label="Datei anhängen">'+SVG.attach+'</button>'
       + (hasOrig ? '<button type="button" class="gmlc-iconbtn" onclick="gmlToggleQuote()" title="Zitat ein-/ausblenden" aria-label="Zitat ein-/ausblenden">'+SVG.quote+'</button>' : '')
       + '<span class="gmlc-footer-spacer"></span>'
@@ -97461,7 +97461,7 @@ console.log('📚 Leseliste geladen');
         await rtdbPost("gmailDrafts", draft);
       }
       if (window.closeModal) window.closeModal();
-      toast("ok","Entwurf gespeichert","Der Entwurf liegt unter „KI-Entwürfe" bereit.");
+      toast("ok","Entwurf gespeichert","Der Entwurf liegt unter „KI-Entwürfe“ bereit.");
       GM.open=null;
       if (typeof loadDrafts==="function") loadDrafts();
     } catch(e){ toast("err","Speichern fehlgeschlagen", e.message||"Unbekannter Fehler"); }
