@@ -404,24 +404,22 @@ const RTDB_DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedata
 const P_ROOT    = "nobraine";
 const P_RECIPES = P_ROOT + "/recipes";
 const P_WEEKS   = P_ROOT + "/weeks";                                  // /weeks/<weekKey>/…
-function planPath(wk) { return P_WEEKS + "/" + wk + "/plan"; }        // /plan/<dayKey>/<slotKey> = recipeId
-function shopPath(wk) { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
-function genPath(wk)  { return P_WEEKS + "/" + wk + "/generation"; }   // /generation = { status, … }
+function mealsPath(wk) { return P_WEEKS + "/" + wk + "/meals"; }        // /meals/<tag>/<mittag|abend> = recipeId
+function shopPath(wk)  { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
+function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /generation = { status, … }
 
 // n8n-Webhook — Platzhalter. Vom eigenen n8n-Workflow ersetzen (POST empfängt {weekKey, typ, ...}).
 const WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-generate";
 
 const TAGE_LANG  = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
+// Nur Mittag- und Abendessen werden geplant (Frühstück bleibt Routine).
 const SLOTS = [
-  { key: "fruehstueck", label: "Frühstück",    icon: "☕" },
-  { key: "mittag",      label: "Mittagessen",  icon: "🥗" },
-  { key: "abend",       label: "Abendessen",   icon: "🍲" }
+  { key: "mittag", label: "Mittagessen", icon: "🥗" },
+  { key: "abend",  label: "Abendessen",  icon: "🍲" }
 ];
 const KATEGORIEN = [
-  { key: "fruehstueck", label: "Frühstück" },
-  { key: "mittag",      label: "Mittag" },
-  { key: "abend",       label: "Abend" },
-  { key: "snack",       label: "Snack" }
+  { key: "mittag", label: "Mittag" },
+  { key: "abend",  label: "Abend" }
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -491,7 +489,9 @@ function tageSeit(iso) {
   return Math.round((b - a) / 86400000);
 }
 
-const dayKeyOf = (i) => "d" + i;
+// Tag-Schlüssel für /meals/<tag>/… — lesbare Wochentags-Keys (Montag = Index 0)
+const TAG_KEYS = ["montag","dienstag","mittwoch","donnerstag","freitag","samstag","sonntag"];
+const dayKeyOf = (i) => TAG_KEYS[i];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ALLGEMEINE HELFER
@@ -566,7 +566,7 @@ function wochenListenerAktualisieren() {
   if (S._planRef) S._planRef.off();
   if (S._shopRef) S._shopRef.off();
   if (S._genRef)  S._genRef.off();
-  S._planRef = db.ref(planPath(wk));
+  S._planRef = db.ref(mealsPath(wk));
   S._shopRef = db.ref(shopPath(wk));
   S._genRef  = db.ref(genPath(wk));
   S._planRef.on("value", function (snap) { S.plan = snap.val() || {}; render(); });
@@ -610,48 +610,80 @@ function rezepteSeedFallsLeer() {
 }
 
 const STARTER_REZEPTE = [
-  { name: "Birchermüesli", kategorie: "fruehstueck", portionen: 2, kochzeitMin: 10, tags: ["vegetarisch","klassisch"],
+  { name: "Gemüse-Reis-Pfanne mit Poulet", kategorie: "mittag", portionen: 2, kochzeitMin: 25, tags: ["ausgewogen","one-pot"],
     zutaten: [
-      { menge: 100, einheit: "g", name: "Haferflocken" },
-      { menge: 2,   einheit: "dl", name: "Milch" },
-      { menge: 150, einheit: "g", name: "Naturjoghurt" },
-      { menge: 1,   einheit: "Stk", name: "Apfel" },
-      { menge: 30,  einheit: "g", name: "Baumnüsse" },
-      { menge: 1,   einheit: "EL", name: "Honig" }
+      { menge: 200, einheit: "g", name: "Pouletbrust" },
+      { menge: 150, einheit: "g", name: "Basmatireis" },
+      { menge: 1,   einheit: "Stk", name: "Peperoni" },
+      { menge: 1,   einheit: "Stk", name: "Zucchetti" },
+      { menge: 2,   einheit: "EL", name: "Sojasauce" },
+      { menge: 1,   einheit: "EL", name: "Bratbutter" }
     ],
     schritte: [
-      "Haferflocken mit der Milch in einer Schüssel verrühren und 5 Minuten quellen lassen.",
-      "Apfel raffeln und sofort daruntermischen, damit er nicht braun wird.",
-      "Joghurt und Honig unterrühren.",
-      "Mit grob gehackten Baumnüssen bestreuen und servieren."
+      "Reis nach Packungsangabe garen.",
+      "Poulet in Streifen schneiden und in der Bratbutter kräftig anbraten.",
+      "Gewürfeltes Gemüse zugeben und 6\u20138 Minuten mitbraten.",
+      "Reis untermischen, mit Sojasauce abschmecken und servieren."
     ] },
-  { name: "Rührei mit Vollkornbrot", kategorie: "fruehstueck", portionen: 2, kochzeitMin: 12, tags: ["proteinreich","schnell"],
+  { name: "Linseneintopf", kategorie: "mittag", portionen: 3, kochzeitMin: 40, tags: ["vegan","proteinreich"],
     zutaten: [
-      { menge: 4, einheit: "Stk", name: "Eier" },
-      { menge: 2, einheit: "EL", name: "Milch" },
-      { menge: 1, einheit: "EL", name: "Butter" },
-      { menge: 2, einheit: "Scheiben", name: "Vollkornbrot" },
-      { menge: 1, einheit: "Prise", name: "Salz und Pfeffer" },
-      { menge: 1, einheit: "EL", name: "Schnittlauch" }
+      { menge: 200, einheit: "g", name: "braune Linsen" },
+      { menge: 2,   einheit: "Stk", name: "Karotten" },
+      { menge: 2,   einheit: "Stk", name: "Sellerie-Stangen" },
+      { menge: 1,   einheit: "Stk", name: "Zwiebel" },
+      { menge: 8,   einheit: "dl", name: "Gemüsebouillon" },
+      { menge: 1,   einheit: "EL", name: "Tomatenpüree" }
     ],
     schritte: [
-      "Eier mit Milch, Salz und Pfeffer verquirlen.",
-      "Butter in einer beschichteten Pfanne bei mittlerer Hitze schmelzen.",
-      "Eiermasse zugeben und mit dem Spachtel langsam zusammenschieben, bis sie cremig gestockt ist.",
-      "Mit Schnittlauch bestreuen und mit dem Vollkornbrot servieren."
+      "Zwiebel, Karotten und Sellerie fein würfeln und in Olivenöl andünsten.",
+      "Tomatenpüree kurz mitrösten.",
+      "Linsen und Bouillon zugeben und zugedeckt 25\u201330 Minuten köcheln.",
+      "Mit Salz, Pfeffer und einem Spritzer Essig abschmecken."
     ] },
-  { name: "Overnight Oats mit Beeren", kategorie: "fruehstueck", portionen: 2, kochzeitMin: 5, tags: ["mealprep","vegan-möglich"],
+  { name: "Kürbis-Risotto", kategorie: "mittag", portionen: 2, kochzeitMin: 35, tags: ["vegetarisch","herbst"],
     zutaten: [
-      { menge: 120, einheit: "g", name: "Haferflocken" },
-      { menge: 2.5, einheit: "dl", name: "Milch oder Hafermilch" },
-      { menge: 2,   einheit: "EL", name: "Chiasamen" },
-      { menge: 150, einheit: "g", name: "gemischte Beeren" },
-      { menge: 1,   einheit: "EL", name: "Ahornsirup" }
+      { menge: 180, einheit: "g", name: "Risottoreis" },
+      { menge: 300, einheit: "g", name: "Kürbis (Butternut)" },
+      { menge: 1,   einheit: "Stk", name: "Zwiebel" },
+      { menge: 1,   einheit: "dl", name: "Weisswein" },
+      { menge: 8,   einheit: "dl", name: "Gemüsebouillon" },
+      { menge: 40,  einheit: "g", name: "geriebener Sbrinz" }
     ],
     schritte: [
-      "Haferflocken, Chiasamen, Milch und Ahornsirup in einem Glas verrühren.",
-      "Zugedeckt über Nacht in den Kühlschrank stellen.",
-      "Am Morgen umrühren und mit den Beeren toppen."
+      "Kürbis fein würfeln, Zwiebel hacken und in Olivenöl andünsten.",
+      "Reis zugeben, kurz mitdünsten, mit Weisswein ablöschen.",
+      "Nach und nach heisse Bouillon zugeben und rührend 18\u201320 Minuten köcheln.",
+      "Kürbis mitgaren, bis er weich ist; mit Sbrinz und Butter vollenden."
+    ] },
+  { name: "Griechischer Bauernsalat mit Fladenbrot", kategorie: "mittag", portionen: 2, kochzeitMin: 15, tags: ["vegetarisch","schnell","sommer"],
+    zutaten: [
+      { menge: 3,   einheit: "Stk", name: "Tomaten" },
+      { menge: 1,   einheit: "Stk", name: "Gurke" },
+      { menge: 150, einheit: "g", name: "Feta" },
+      { menge: 1,   einheit: "Stk", name: "rote Zwiebel" },
+      { menge: 60,  einheit: "g", name: "Oliven" },
+      { menge: 2,   einheit: "Stk", name: "Fladenbrote" }
+    ],
+    schritte: [
+      "Tomaten und Gurke in grobe Stücke, Zwiebel in feine Ringe schneiden.",
+      "Mit Oliven in einer Schüssel mischen.",
+      "Mit Olivenöl, Rotweinessig, Oregano, Salz und Pfeffer marinieren.",
+      "Feta darüber bröseln und mit angewärmtem Fladenbrot servieren."
+    ] },
+  { name: "Gemüse-Wähe", kategorie: "mittag", portionen: 4, kochzeitMin: 45, tags: ["vegetarisch","schweizer-klassiker"],
+    zutaten: [
+      { menge: 1,   einheit: "Stk", name: "Kuchenteig rund" },
+      { menge: 400, einheit: "g", name: "gemischtes Gemüse (Lauch, Karotte)" },
+      { menge: 2,   einheit: "dl", name: "Rahm" },
+      { menge: 2,   einheit: "Stk", name: "Eier" },
+      { menge: 50,  einheit: "g", name: "geriebener Käse" },
+      { menge: 1,   einheit: "Prise", name: "Muskatnuss" }
+    ],
+    schritte: [
+      "Ofen auf 200 \u00b0C vorheizen. Teig in ein Blech legen und einstechen.",
+      "Gemüse in dünne Streifen schneiden und darauf verteilen.",
+      "Rahm, Eier, Käse und Muskatnuss verquirlen und darübergiessen.",
+      "30\u201335 Minuten backen, bis der Guss goldgelb gestockt ist."
     ] },
   { name: "Älplermagronen", kategorie: "abend", portionen: 2, kochzeitMin: 35, tags: ["schweizer-klassiker","comfort"],
     zutaten: [
@@ -669,36 +701,6 @@ const STARTER_REZEPTE = [
       "Rahm erwärmen, Käse einrühren, mit Kartoffeln und Hörnli mischen.",
       "Mit Röstzwiebeln bestreuen und mit Apfelmus servieren."
     ] },
-  { name: "Gemüse-Reis-Pfanne mit Poulet", kategorie: "mittag", portionen: 2, kochzeitMin: 25, tags: ["ausgewogen","one-pot"],
-    zutaten: [
-      { menge: 200, einheit: "g", name: "Pouletbrust" },
-      { menge: 150, einheit: "g", name: "Basmatireis" },
-      { menge: 1,   einheit: "Stk", name: "Peperoni" },
-      { menge: 1,   einheit: "Stk", name: "Zucchetti" },
-      { menge: 2,   einheit: "EL", name: "Sojasauce" },
-      { menge: 1,   einheit: "EL", name: "Bratbutter" }
-    ],
-    schritte: [
-      "Reis nach Packungsangabe garen.",
-      "Poulet in Streifen schneiden und in der Bratbutter kräftig anbraten.",
-      "Gewürfeltes Gemüse zugeben und 6–8 Minuten mitbraten.",
-      "Reis untermischen, mit Sojasauce abschmecken und servieren."
-    ] },
-  { name: "Linseneintopf", kategorie: "mittag", portionen: 3, kochzeitMin: 40, tags: ["vegan","proteinreich"],
-    zutaten: [
-      { menge: 200, einheit: "g", name: "braune Linsen" },
-      { menge: 2,   einheit: "Stk", name: "Karotten" },
-      { menge: 2,   einheit: "Stk", name: "Sellerie-Stangen" },
-      { menge: 1,   einheit: "Stk", name: "Zwiebel" },
-      { menge: 8,   einheit: "dl", name: "Gemüsebouillon" },
-      { menge: 1,   einheit: "EL", name: "Tomatenpüree" }
-    ],
-    schritte: [
-      "Zwiebel, Karotten und Sellerie fein würfeln und in Olivenöl andünsten.",
-      "Tomatenpüree kurz mitrösten.",
-      "Linsen und Bouillon zugeben und zugedeckt 25–30 Minuten köcheln.",
-      "Mit Salz, Pfeffer und einem Spritzer Essig abschmecken."
-    ] },
   { name: "Ofengemüse mit Feta", kategorie: "abend", portionen: 2, kochzeitMin: 35, tags: ["vegetarisch","einfach"],
     zutaten: [
       { menge: 400, einheit: "g", name: "gemischtes Gemüse" },
@@ -708,10 +710,10 @@ const STARTER_REZEPTE = [
       { menge: 1,   einheit: "Stk", name: "Knoblauchzehe" }
     ],
     schritte: [
-      "Ofen auf 200 °C vorheizen.",
+      "Ofen auf 200 \u00b0C vorheizen.",
       "Gemüse in mundgerechte Stücke schneiden, mit Öl, Knoblauch und Kräutern mischen.",
       "Auf ein Blech geben, Feta darüber bröseln.",
-      "25–30 Minuten backen, bis das Gemüse weich und leicht gebräunt ist."
+      "25\u201330 Minuten backen, bis das Gemüse weich und leicht gebräunt ist."
     ] },
   { name: "Spaghetti Napoli", kategorie: "abend", portionen: 2, kochzeitMin: 20, tags: ["vegetarisch","schnell","klassisch"],
     zutaten: [
@@ -728,19 +730,35 @@ const STARTER_REZEPTE = [
       "Tomaten zugeben und 10 Minuten einköcheln, mit Salz und Pfeffer abschmecken.",
       "Sauce mit den abgetropften Spaghetti mischen und mit Basilikum servieren."
     ] },
-  { name: "Hummus mit Gemüsesticks", kategorie: "snack", portionen: 4, kochzeitMin: 10, tags: ["vegan","fingerfood"],
+  { name: "Zürcher Geschnetzeltes mit Rösti", kategorie: "abend", portionen: 2, kochzeitMin: 40, tags: ["schweizer-klassiker"],
     zutaten: [
-      { menge: 240, einheit: "g", name: "Kichererbsen (abgetropft)" },
-      { menge: 2,   einheit: "EL", name: "Tahini" },
-      { menge: 1,   einheit: "Stk", name: "Zitrone (Saft)" },
-      { menge: 1,   einheit: "Stk", name: "Knoblauchzehe" },
-      { menge: 3,   einheit: "EL", name: "Olivenöl" },
-      { menge: 300, einheit: "g", name: "Rüebli und Gurke" }
+      { menge: 300, einheit: "g", name: "Kalbfleisch geschnetzelt" },
+      { menge: 200, einheit: "g", name: "Champignons" },
+      { menge: 1.5, einheit: "dl", name: "Rahm" },
+      { menge: 1,   einheit: "dl", name: "Weisswein" },
+      { menge: 600, einheit: "g", name: "Rösti-Kartoffeln (gekocht)" },
+      { menge: 1,   einheit: "Stk", name: "Zwiebel" }
     ],
     schritte: [
-      "Kichererbsen, Tahini, Zitronensaft, Knoblauch und Öl fein pürieren.",
-      "Mit etwas Wasser auf cremige Konsistenz bringen, salzen.",
-      "Gemüse in Sticks schneiden und zum Dippen servieren."
+      "Kartoffeln raffeln und portionenweise zu goldbrauner Rösti braten.",
+      "Fleisch kurz scharf anbraten, herausnehmen.",
+      "Zwiebel und Champignons andünsten, mit Weisswein ablöschen.",
+      "Rahm zugeben, einköcheln, Fleisch zurückgeben und mit Rösti servieren."
+    ] },
+  { name: "Gemüse-Curry mit Reis", kategorie: "abend", portionen: 3, kochzeitMin: 30, tags: ["vegan","würzig"],
+    zutaten: [
+      { menge: 500, einheit: "g", name: "gemischtes Gemüse" },
+      { menge: 4,   einheit: "dl", name: "Kokosmilch" },
+      { menge: 2,   einheit: "EL", name: "rote Currypaste" },
+      { menge: 200, einheit: "g", name: "Basmatireis" },
+      { menge: 1,   einheit: "Stk", name: "Zwiebel" },
+      { menge: 1,   einheit: "EL", name: "Erdnussöl" }
+    ],
+    schritte: [
+      "Reis nach Packungsangabe garen.",
+      "Zwiebel in Erdnussöl andünsten, Currypaste kurz mitrösten.",
+      "Gemüse zugeben und anbraten, mit Kokosmilch ablöschen.",
+      "10\u201312 Minuten köcheln, mit Salz und Limettensaft abschmecken, zum Reis servieren."
     ] }
 ];
 
@@ -1070,7 +1088,7 @@ async function slotSetzen(tag, slot, recipeId) {
   const dk = dayKeyOf(tag);
   const datum = isoDatum(tageDerWoche(S.weekMonday)[tag]);
   try {
-    await db.ref(planPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).set(recipeId);
+    await db.ref(mealsPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).set(recipeId);
     // lastUsed auf das Datum dieses Slots setzen (verhindert Wiederholungen)
     await db.ref(P_RECIPES + "/" + recipeId + "/lastUsed").set(datum);
     toast("Eingeplant: " + (S.recipes[recipeId] ? S.recipes[recipeId].name : ""));
@@ -1079,7 +1097,7 @@ async function slotSetzen(tag, slot, recipeId) {
 async function slotEntfernen(tag, slot) {
   const dk = dayKeyOf(tag);
   try {
-    await db.ref(planPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).remove();
+    await db.ref(mealsPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).remove();
     toast("Aus dem Plan entfernt");
     drawerSchliessen();
   } catch (e) { toast("Fehler: " + (e && e.message)); }
@@ -1326,7 +1344,7 @@ function rezeptLoeschenDialog(recipeId) {
         const tp = S.plan[dk] || {};
         Object.keys(tp).forEach(function (sk) { if (tp[sk] === recipeId) planUpdates[dk + "/" + sk] = null; });
       });
-      if (Object.keys(planUpdates).length) await db.ref(planPath(wk)).update(planUpdates);
+      if (Object.keys(planUpdates).length) await db.ref(mealsPath(wk)).update(planUpdates);
       await db.ref(P_RECIPES + "/" + recipeId).remove();
       toast("Gelöscht: " + r.name);
       drawerSchliessen();

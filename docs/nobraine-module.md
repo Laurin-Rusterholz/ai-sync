@@ -2,8 +2,9 @@
 
 Single-File-Modul **`public/nobraine.html`** (CSS + JS inline, kein Build, keine
 Frameworks ausser dem Firebase-SDK via CDN). Der Wochen-Menüplaner verwaltet
-eine durchsuchbare Rezept-Bibliothek, plant Frühstück/Mittag/Abend über die
-Woche, aggregiert daraus eine Einkaufsliste und stösst die automatische
+eine durchsuchbare Rezept-Bibliothek, plant je Wochentag Mittag- und
+Abendessen (Frühstück bleibt Routine), aggregiert daraus eine Einkaufsliste
+und stösst die automatische
 Wochen-Generierung über einen **n8n-Webhook** an. Alle Daten liegen unter dem
 RTDB-Pfad-Root **`/nobraine/`**.
 
@@ -28,14 +29,14 @@ je Kalenderwoche unter `nobraine/weeks/<jahr-kw>/` gruppiert.
 
 | Pfad | Inhalt |
 |---|---|
-| `nobraine/recipes/<id>` | `{ name, kategorie ("fruehstueck"\|"mittag"\|"abend"\|"snack"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
-| `nobraine/weeks/<weekKey>/plan/<dayKey>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Slot |
+| `nobraine/recipes/<id>` | `{ name, kategorie ("mittag"\|"abend"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
+| `nobraine/weeks/<weekKey>/meals/<tag>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Mahlzeiten-Slot |
 | `nobraine/weeks/<weekKey>/shoppinglist/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
 | `nobraine/weeks/<weekKey>/generation` | `{ status ("pending"\|"running"\|"done"\|"error"), typ ("woche"\|"slot"), angefragt, finishedAt, message, tag?, slot? }` |
 
 - `weekKey` (= `<jahr-kw>`): ISO-Woche, Format `YYYY-Www` (z. B. `2026-W27`). Wochenbeginn Montag.
-- `dayKey`: `d0` (Montag) … `d6` (Sonntag).
-- `slotKey`: `fruehstueck` · `mittag` · `abend` (ASCII-Keys; Anzeige mit Umlaut).
+- `<tag>`: Wochentags-Key `montag` … `sonntag`.
+- `slotKey`: `mittag` · `abend` — nur Mittag- und Abendessen werden geplant.
 
 ### Ableitungen im Frontend (kein zusätzlicher Persistenz-Zweig)
 
@@ -60,10 +61,10 @@ Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
 1. Frontend schreibt `nobraine/weeks/<weekKey>/generation` mit `status: "pending"`.
 2. Frontend `POST`et an `WEBHOOK_URL` mit JSON-Payload:
-   - Woche: `{ weekKey, startDatum, tage: 7, slots: ["fruehstueck","mittag","abend"], typ: "woche" }`
+   - Woche: `{ weekKey, startDatum, tage: 7, slots: ["mittag","abend"], typ: "woche" }`
    - Einzelner Slot: `{ …, typ: "slot", tag: <0-6>, slot: "<slotKey>", tagName }`
 3. n8n verarbeitet die Anfrage, wählt/erzeugt Rezepte, schreibt sie nach
-   `nobraine/weeks/<weekKey>/plan/…` (fehlende Rezepte zusätzlich nach
+   `nobraine/weeks/<weekKey>/meals/…` (fehlende Rezepte zusätzlich nach
    `nobraine/recipes`) und aktualisiert `nobraine/weeks/<weekKey>/generation`
    auf `running` und schliesslich `done` (mit `finishedAt`).
 4. Das Frontend zeigt den Fortschritt live über `on('value')` auf `plan`,
@@ -91,9 +92,9 @@ Modul bei „Anmeldung fehlgeschlagen" stehen.
 ## Erst-Seed der Bibliothek
 
 Beim allerersten Start (nur falls `nobraine/recipes` **leer** ist) legt das
-Frontend einmalig neun Starter-Rezepte an (Frühstück/Mittag/Abend/Snack, je mit
-Zutaten samt Mengen und Schritten). Bestehende Daten werden nie überschrieben
-oder migriert.
+Frontend einmalig zehn Starter-Rezepte an (je fünf Mittag- und Abendgerichte,
+mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
+überschrieben oder migriert.
 
 ## Sicherheit
 
