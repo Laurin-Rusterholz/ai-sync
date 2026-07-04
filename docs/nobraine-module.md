@@ -31,6 +31,7 @@ je Kalenderwoche unter `nobraine/weeks/<jahr-kw>/` gruppiert.
 |---|---|
 | `nobraine/recipes/<id>` | `{ name, kategorie ("mittag"\|"abend"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
 | `nobraine/weeks/<weekKey>/meals/<tag>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Mahlzeiten-Slot |
+| `nobraine/weeks/<weekKey>/freeblocks/<tag>/<slotKey>` | `{ label, erstellt }` — bewusst freigehaltener Slot (auswärts, Resten, kein Kochen); wird bei der Generierung übersprungen und liefert nichts an die Einkaufsliste |
 | `nobraine/weeks/<weekKey>/shoppinglist/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
 | `nobraine/weeks/<weekKey>/generation` | `{ status ("pending"\|"running"\|"done"\|"error"), typ ("woche"\|"slot"), angefragt, finishedAt, message, tag?, slot? }` |
 
@@ -50,6 +51,12 @@ je Kalenderwoche unter `nobraine/weeks/<jahr-kw>/` gruppiert.
   kürzlich (≤ 10 Tage) verwendete rot — so werden Wiederholungen sichtbar
   vermieden. Im Tausch-/Slot-Dialog erscheinen zur Slot-Kategorie passende
   Rezepte zuerst.
+- **Freiblöcke** sind der dritte Slot-Zustand neben „Rezept" und „leer": ein
+  Slot lässt sich bewusst freihalten (auswärts, Resten, Einladung, kein Kochen;
+  Grund frei editierbar). Rezept und Freiblock schliessen sich gegenseitig aus
+  (das Setzen des einen entfernt das andere). Freigehaltene Slots werden im
+  Generierungs-Payload (`freeblocks: [{ tag, slot, label }]`) mitgeschickt, von
+  n8n übersprungen und tragen nichts zur Einkaufsliste bei.
 
 ## Generierung via n8n-Webhook
 
@@ -61,7 +68,7 @@ Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
 1. Frontend schreibt `nobraine/weeks/<weekKey>/generation` mit `status: "pending"`.
 2. Frontend `POST`et an `WEBHOOK_URL` mit JSON-Payload:
-   - Woche: `{ weekKey, startDatum, tage: 7, slots: ["mittag","abend"], typ: "woche" }`
+   - Woche: `{ weekKey, startDatum, tage: 7, slots: ["mittag","abend"], freeblocks: [{ tag, slot, label }], typ: "woche" }`
    - Einzelner Slot: `{ …, typ: "slot", tag: <0-6>, slot: "<slotKey>", tagName }`
 3. n8n verarbeitet die Anfrage, wählt/erzeugt Rezepte, schreibt sie nach
    `nobraine/weeks/<weekKey>/meals/…` (fehlende Rezepte zusätzlich nach
@@ -114,15 +121,19 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
    Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen. „＋ Neues Rezept"
    anlegen und wieder bearbeiten/löschen.
 3. **Wochenplan:** Leeren Slot antippen → Rezept aus der Bibliothek wählen
-   (passende Kategorie zuerst) oder „Slot generieren". Gefüllten Slot antippen →
-   Drawer mit „Rezept tauschen", „Neu generieren", „Aus Plan entfernen".
-   Wochennavigation (‹ ›, „Aktuelle Woche") prüfen — Plan/Einkauf/Status folgen
-   der gewählten Woche live.
-4. **Generierung:** „🎲 Woche generieren" → Statuszeile „Anfrage gesendet …"
+   (passende Kategorie zuerst), „🚫 Freihalten" oder „Slot generieren". Gefüllten
+   Slot antippen → Drawer mit „Rezept tauschen", „Neu generieren", „Freihalten",
+   „Aus Plan entfernen". Wochennavigation (‹ ›, „Aktuelle Woche") prüfen —
+   Plan/Einkauf/Status folgen der gewählten Woche live.
+4. **Freiblöcke:** Slot freihalten (Grund per Preset oder frei eingeben) → Slot
+   zeigt „🚫 Frei · <Grund>". Erneut antippen öffnet den Dialog zum Ändern oder
+   „Freigabe aufheben". Ein danach gesetztes Rezept ersetzt den Freiblock und
+   umgekehrt; freigehaltene Slots erscheinen nicht in der Einkaufsliste.
+5. **Generierung:** „🎲 Woche generieren" → Statuszeile „Anfrage gesendet …"
    und `nobraine/weeks/<weekKey>/generation.status == "pending"` in der RTDB. Mit gesetztem
    `WEBHOOK_URL` schreibt n8n den Plan; das Gitter aktualisiert sich live. Ohne
    gültige URL erscheint der Fehlerhinweis (kein stilles Verschlucken).
-5. **Einkaufsliste:** Nach dem Befüllen des Plans zeigt „Einkaufsliste" die
+6. **Einkaufsliste:** Nach dem Befüllen des Plans zeigt „Einkaufsliste" die
    aggregierte, deduplizierte Wochenliste. Positionen abhaken (Zustand
    persistiert, Badge in der Navigation zählt offene Posten), manuell Artikel
    ergänzen (Enter oder „＋ Hinzufügen"), „Erledigte entfernen".

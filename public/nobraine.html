@@ -162,6 +162,9 @@ h1, h2, .redaktionell {
 .slot .s-meta { font-size:11.5px; color:var(--muted); margin-top:2px; display:flex; gap:10px; flex-wrap:wrap; }
 .slot.leer { border-style:dashed; background:transparent; }
 .slot.leer .s-rezept { color: var(--muted-hell); font-weight:500; }
+.slot.frei { background: var(--leinen-tief); border-style:dashed; border-color: var(--sand); }
+.slot.frei .s-rezept { color: var(--sand-tief); font-weight:600; }
+.slot.frei .frei-grund { color: var(--muted); font-weight:500; }
 
 /* ── Bibliothek ─────────────────────────────────────────────────────────── */
 .werkzeug-leiste { display:flex; gap:12px; align-items:center; margin-bottom:20px; flex-wrap:wrap; }
@@ -405,6 +408,7 @@ const P_ROOT    = "nobraine";
 const P_RECIPES = P_ROOT + "/recipes";
 const P_WEEKS   = P_ROOT + "/weeks";                                  // /weeks/<weekKey>/…
 function mealsPath(wk) { return P_WEEKS + "/" + wk + "/meals"; }        // /meals/<tag>/<mittag|abend> = recipeId
+function freePath(wk)  { return P_WEEKS + "/" + wk + "/freeblocks"; }   // /freeblocks/<tag>/<slot> = { label, erstellt }
 function shopPath(wk)  { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
 function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /generation = { status, … }
 
@@ -437,16 +441,20 @@ try {
 const S = {
   bereit: false,
   recipes: {},              // /nobraine/recipes
-  plan: {},                 // /nobraine/plans/<weekKey> → { dayKey: { slotKey: recipeId } }
-  shopping: {},             // /nobraine/shopping/<weekKey>
-  generation: {},           // /nobraine/generation/<weekKey>
+  meals: {},                // /nobraine/weeks/<wk>/meals → { tag: { slot: recipeId } }
+  free: {},                 // /nobraine/weeks/<wk>/freeblocks → { tag: { slot: { label } } }
+  shopping: {},             // /nobraine/weeks/<wk>/shoppinglist
+  generation: {},           // /nobraine/weeks/<wk>/generation
   ansicht: "plan",          // plan | bibliothek | einkauf
   suche: "",
   katFilter: "alle",
   drawer: null,             // { recipeId, tag, slot } — tag/slot nur bei Slot-Kontext
   weekMonday: mondayOf(new Date()),
-  _planRef: null, _shopRef: null, _genRef: null
+  _mealsRef: null, _freeRef: null, _shopRef: null, _genRef: null
 };
+
+// Vorschläge für den Grund eines Freiblocks (frei editierbar)
+const FREI_PRESETS = ["Auswärts", "Resten", "Einladung", "Kein Kochen"];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WOCHEN- & DATUMS-HELFER
@@ -559,32 +567,36 @@ function boot() {
   });
 }
 
-// Woche-abhängige Listener (plan / shopping / generation) neu binden
+// Woche-abhängige Listener (meals / freeblocks / shopping / generation) neu binden
 function wochenListenerAktualisieren() {
   if (!S.bereit) return;
   const wk = weekKeyOf(S.weekMonday);
-  if (S._planRef) S._planRef.off();
-  if (S._shopRef) S._shopRef.off();
-  if (S._genRef)  S._genRef.off();
-  S._planRef = db.ref(mealsPath(wk));
-  S._shopRef = db.ref(shopPath(wk));
-  S._genRef  = db.ref(genPath(wk));
-  S._planRef.on("value", function (snap) { S.plan = snap.val() || {}; render(); });
-  S._shopRef.on("value", function (snap) { S.shopping = snap.val() || {}; render(); });
-  S._genRef.on("value",  function (snap) { S.generation = snap.val() || {}; render(); });
+  if (S._mealsRef) S._mealsRef.off();
+  if (S._freeRef)  S._freeRef.off();
+  if (S._shopRef)  S._shopRef.off();
+  if (S._genRef)   S._genRef.off();
+  S._mealsRef = db.ref(mealsPath(wk));
+  S._freeRef  = db.ref(freePath(wk));
+  S._shopRef  = db.ref(shopPath(wk));
+  S._genRef   = db.ref(genPath(wk));
+  S._mealsRef.on("value", function (snap) { S.meals = snap.val() || {}; render(); });
+  S._freeRef.on("value",  function (snap) { S.free = snap.val() || {}; render(); });
+  S._shopRef.on("value",  function (snap) { S.shopping = snap.val() || {}; render(); });
+  S._genRef.on("value",   function (snap) { S.generation = snap.val() || {}; render(); });
 }
 
+function wocheZuruecksetzen() { S.meals = {}; S.free = {}; S.shopping = {}; S.generation = {}; }
 function wocheWechseln(deltaWochen) {
   const m = new Date(S.weekMonday);
   m.setDate(m.getDate() + deltaWochen * 7);
   S.weekMonday = mondayOf(m);
-  S.plan = {}; S.shopping = {}; S.generation = {};
+  wocheZuruecksetzen();
   wochenListenerAktualisieren();
   render();
 }
 function zuHeute() {
   S.weekMonday = mondayOf(new Date());
-  S.plan = {}; S.shopping = {}; S.generation = {};
+  wocheZuruecksetzen();
   wochenListenerAktualisieren();
   render();
 }
@@ -841,7 +853,7 @@ function viewPlan() {
   let html =
     '<div class="gen-karte">' +
       '<div class="gk-text"><b>Woche automatisch planen</b>' +
-        "<span>Startet den n8n-Workflow und füllt leere Slots per KI. Manuelle Rezepte bleiben erhalten.</span></div>" +
+        "<span>Startet den n8n-Workflow und füllt leere Slots per KI. Manuelle Rezepte und freigehaltene Slots bleiben unangetastet.</span></div>" +
       statusHtml +
       '<button class="btn-gen" data-action="woche-generieren"' + (laeuft ? " disabled" : "") + ">" +
         (laeuft ? '<span class="spinner"></span>Generiere …' : "🎲 Woche generieren") + "</button>" +
@@ -851,7 +863,8 @@ function viewPlan() {
   tage.forEach(function (d, i) {
     const istHeute = isoDatum(d) === heute;
     const dk = dayKeyOf(i);
-    const tagPlan = S.plan[dk] || {};
+    const tagPlan = S.meals[dk] || {};
+    const tagFree = S.free[dk] || {};
     html += '<div class="tag-karte' + (istHeute ? " heute" : "") + '">' +
       '<div class="tk-kopf"><span class="tag">' + TAGE_LANG[i] + "</span>" +
         (istHeute ? '<span class="heute-chip">Heute</span>' : "") +
@@ -859,11 +872,18 @@ function viewPlan() {
     SLOTS.forEach(function (slot) {
       const rid = tagPlan[slot.key];
       const r = rid && S.recipes[rid];
+      const fb = tagFree[slot.key];
       if (r) {
         html += '<div class="slot" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
           '<div class="s-label">' + slot.icon + " " + slot.label + "</div>" +
           '<div class="s-rezept">' + esc(r.name) + "</div>" +
           '<div class="s-meta"><span>⏱ ' + (r.kochzeitMin || "–") + " min</span><span>🍽 " + (r.portionen || "–") + " Port.</span></div>" +
+        "</div>";
+      } else if (fb) {
+        const grund = (fb.label && fb.label !== "Frei") ? " · " + esc(fb.label) : "";
+        html += '<div class="slot frei" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
+          '<div class="s-label">' + slot.icon + " " + slot.label + "</div>" +
+          '<div class="s-rezept">🚫 Frei<span class="frei-grund">' + grund + "</span></div>" +
         "</div>";
       } else {
         html += '<div class="slot leer" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
@@ -943,8 +963,8 @@ function viewBibliothek() {
 function einkaufAggregiert() {
   const agg = {}; // key -> { name, einheit, menge(nummerisch|null), stk, checked, manuell }
   // 1) aus dem Wochenplan
-  Object.keys(S.plan).forEach(function (dk) {
-    const tagPlan = S.plan[dk] || {};
+  Object.keys(S.meals).forEach(function (dk) {
+    const tagPlan = S.meals[dk] || {};
     Object.keys(tagPlan).forEach(function (slotKey) {
       const r = S.recipes[tagPlan[slotKey]];
       if (!r || !r.zutaten) return;
@@ -1029,6 +1049,7 @@ function renderDrawer() {
     const slotLabel = (SLOTS.find(function (s) { return s.key === S.drawer.slot; }) || {}).label || "";
     aktionen += '<button class="btn primaer" data-action="slot-tauschen" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">↔ Rezept tauschen</button>';
     aktionen += '<button class="btn akzent" data-action="slot-generieren" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Neu generieren</button>";
+    aktionen += '<button class="btn" data-action="slot-freihalten" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">🚫 Freihalten</button>';
     aktionen += '<button class="btn gefahr" data-action="slot-entfernen" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">Aus Plan entfernen</button>';
   } else {
     aktionen += '<button class="btn primaer" data-action="rezept-einplanen" data-id="' + esc(S.drawer.recipeId) + '">🗓️ In Plan setzen</button>';
@@ -1075,10 +1096,12 @@ function drawerSchliessen() { S.drawer = null; renderDrawer(); }
 // ═══════════════════════════════════════════════════════════════════════════
 function slotKlick(tag, slot) {
   const dk = dayKeyOf(tag);
-  const rid = (S.plan[dk] || {})[slot];
+  const rid = (S.meals[dk] || {})[slot];
   if (rid && S.recipes[rid]) {
     S.drawer = { recipeId: rid, tag: tag, slot: slot };
     renderDrawer();
+  } else if ((S.free[dk] || {})[slot]) {
+    freihaltenDialog(tag, slot);          // bestehenden Freiblock bearbeiten/aufheben
   } else {
     rezeptWaehlenDialog(tag, slot);
   }
@@ -1086,9 +1109,12 @@ function slotKlick(tag, slot) {
 
 async function slotSetzen(tag, slot, recipeId) {
   const dk = dayKeyOf(tag);
+  const wk = weekKeyOf(S.weekMonday);
   const datum = isoDatum(tageDerWoche(S.weekMonday)[tag]);
   try {
-    await db.ref(mealsPath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).set(recipeId);
+    await db.ref(mealsPath(wk) + "/" + dk + "/" + slot).set(recipeId);
+    // ein Rezept und ein Freiblock schliessen sich gegenseitig aus
+    await db.ref(freePath(wk) + "/" + dk + "/" + slot).remove();
     // lastUsed auf das Datum dieses Slots setzen (verhindert Wiederholungen)
     await db.ref(P_RECIPES + "/" + recipeId + "/lastUsed").set(datum);
     toast("Eingeplant: " + (S.recipes[recipeId] ? S.recipes[recipeId].name : ""));
@@ -1101,6 +1127,54 @@ async function slotEntfernen(tag, slot) {
     toast("Aus dem Plan entfernt");
     drawerSchliessen();
   } catch (e) { toast("Fehler: " + (e && e.message)); }
+}
+
+// ── Freiblöcke (Slot bewusst freihalten: auswärts, Resten, kein Kochen …) ──
+async function slotFreihalten(tag, slot, label) {
+  const dk = dayKeyOf(tag);
+  const wk = weekKeyOf(S.weekMonday);
+  try {
+    await db.ref(freePath(wk) + "/" + dk + "/" + slot).set({
+      label: (label || "Frei").trim() || "Frei",
+      erstellt: new Date().toISOString()
+    });
+    // Freiblock verdrängt ein evtl. gesetztes Rezept
+    await db.ref(mealsPath(wk) + "/" + dk + "/" + slot).remove();
+    toast("Slot freigehalten");
+  } catch (e) { toast("Fehler: " + (e && e.message)); }
+}
+async function freiblockAufheben(tag, slot) {
+  const dk = dayKeyOf(tag);
+  try {
+    await db.ref(freePath(weekKeyOf(S.weekMonday)) + "/" + dk + "/" + slot).remove();
+    toast("Freigabe aufgehoben");
+    modalSchliessen();
+  } catch (e) { toast("Fehler: " + (e && e.message)); }
+}
+
+function freihaltenDialog(tag, slot) {
+  const dk = dayKeyOf(tag);
+  const slotObj = SLOTS.find(function (s) { return s.key === slot; }) || {};
+  const bestehend = (S.free[dk] || {})[slot];
+  const wert = bestehend && bestehend.label ? bestehend.label : "Frei";
+  const chips = FREI_PRESETS.map(function (p) {
+    return '<button type="button" class="kat-chip" data-action="frei-preset" data-label="' + esc(p) + '">' + esc(p) + "</button>";
+  }).join("");
+  modalOeffnen(
+    "<h3>🚫 Slot freihalten</h3>" +
+    '<div class="modal-unter">' + TAGE_LANG[tag] + " · " + esc(slotObj.label || "") + " — kein Kochen einplanen (wird bei der Generierung übersprungen und taucht nicht in der Einkaufsliste auf).</div>" +
+    '<label>Grund (optional)</label><input type="text" id="fhGrund" value="' + esc(wert) + '">' +
+    '<div class="kat-filter" style="margin-top:8px">' + chips + "</div>" +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      (bestehend ? '<button class="btn gefahr" data-action="frei-aufheben" data-tag="' + tag + '" data-slot="' + slot + '">Freigabe aufheben</button>' : "") +
+      '<button class="btn primaer" data-action="modal-ok">' + (bestehend ? "Speichern" : "Freihalten") + "</button>" +
+    "</div>",
+    async function () {
+      const grund = document.getElementById("fhGrund").value;
+      await slotFreihalten(tag, slot, grund);
+    }
+  );
 }
 
 function rezeptWaehlenDialog(tag, slot) {
@@ -1134,11 +1208,12 @@ function rezeptWaehlenDialog(tag, slot) {
   }
   modalOeffnen(
     "<h3>" + (slotObj.icon || "") + " " + esc(slotObj.label || "Mahlzeit") + " · " + TAGE_LANG[tag] + "</h3>" +
-    '<div class="modal-unter">Rezept aus der Bibliothek wählen oder diesen Slot per KI generieren.</div>' +
+    '<div class="modal-unter">Rezept aus der Bibliothek wählen, Slot freihalten oder per KI generieren.</div>' +
     '<input type="text" id="mSuche" placeholder="Rezept suchen …" style="margin-bottom:10px">' +
     '<div class="auswahl-liste" id="mListe">' + liste() + "</div>" +
     '<div class="modal-aktionen">' +
       '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      '<button class="btn" data-action="slot-freihalten" data-tag="' + tag + '" data-slot="' + slot + '">🚫 Freihalten</button>' +
       '<button class="btn akzent" data-action="slot-generieren" data-tag="' + tag + '" data-slot="' + slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Slot generieren</button>" +
     "</div>",
     null
@@ -1174,11 +1249,19 @@ function rezeptEinplanenDialog(recipeId) {
 // ═══════════════════════════════════════════════════════════════════════════
 async function generieren(payloadExtra, hinweis) {
   const wk = weekKeyOf(S.weekMonday);
+  // Freigehaltene Slots mitschicken, damit n8n sie überspringt
+  const freeblocks = [];
+  Object.keys(S.free || {}).forEach(function (dk) {
+    Object.keys(S.free[dk] || {}).forEach(function (sk) {
+      freeblocks.push({ tag: dk, slot: sk, label: (S.free[dk][sk] || {}).label || "Frei" });
+    });
+  });
   const payload = Object.assign({
     weekKey: wk,
     startDatum: isoDatum(S.weekMonday),
     tage: 7,
-    slots: SLOTS.map(function (s) { return s.key; })
+    slots: SLOTS.map(function (s) { return s.key; }),
+    freeblocks: freeblocks
   }, payloadExtra || {});
   try {
     await db.ref(genPath(wk)).set({
@@ -1340,8 +1423,8 @@ function rezeptLoeschenDialog(recipeId) {
       // Slots dieser Woche, die auf das Rezept zeigen, leeren
       const wk = weekKeyOf(S.weekMonday);
       const planUpdates = {};
-      Object.keys(S.plan).forEach(function (dk) {
-        const tp = S.plan[dk] || {};
+      Object.keys(S.meals).forEach(function (dk) {
+        const tp = S.meals[dk] || {};
         Object.keys(tp).forEach(function (sk) { if (tp[sk] === recipeId) planUpdates[dk + "/" + sk] = null; });
       });
       if (Object.keys(planUpdates).length) await db.ref(mealsPath(wk)).update(planUpdates);
@@ -1387,6 +1470,9 @@ document.addEventListener("click", function (e) {
     case "slot-tauschen":   drawerSchliessen(); rezeptWaehlenDialog(tag, slot); break;
     case "slot-entfernen":  slotEntfernen(tag, slot); break;
     case "slot-generieren": slotGenerieren(tag, slot); break;
+    case "slot-freihalten": modalSchliessen(); drawerSchliessen(); freihaltenDialog(tag, slot); break;
+    case "frei-preset":     { const inp = document.getElementById("fhGrund"); if (inp) inp.value = el.getAttribute("data-label"); break; }
+    case "frei-aufheben":   freiblockAufheben(tag, slot); break;
     case "waehlen-rezept":  modalSchliessen(); slotSetzen(tag, slot, id); break;
     case "woche-generieren": wocheGenerieren(); break;
 
