@@ -47,10 +47,10 @@
       --hover:rgba(224,226,232,.08);   /* subtiles Hover-/Zebra-Overlay (theme-aware) */
       --text-primary:#eef0f2;
       --text-muted:#929aa4;
-      --accent:#45c198;
-      --accent-deep:#2ea27b;         /* dunklere Akzentstufe für Gradient/Hover/Glow */
+      --accent:#a78bfa;              /* Violett statt Grün (Marken-Akzent) */
+      --accent-deep:#8b5cf6;         /* dunklere Akzentstufe für Gradient/Hover/Glow */
       --accent-soft:color-mix(in oklab, var(--accent) 24%, transparent); /* transluzent: dient zugleich als sanfte Tönung UND als sichtbarer Glow/Fokus-Ring */
-      --on-accent:#04140d;
+      --on-accent:#160d29;
       --danger:#e5765a;
       --warning:#e3b048;
       --success:#45c198;
@@ -96,10 +96,10 @@
       --hover:rgba(48,42,34,.08);
       --text-primary:#2a2620;
       --text-muted:#7a7463;
-      --accent:#1f8a66;
-      --accent-deep:#15704f;
+      --accent:#6b46c1;              /* Violett statt Grün (Marken-Akzent, Light) */
+      --accent-deep:#553c9a;
       --accent-soft:color-mix(in oklab, var(--accent) 22%, transparent);
-      --on-accent:#f4f8f4;
+      --on-accent:#f7f4fc;
       --danger:#b34d2c;
       --warning:#977211;
       --success:#1f8a66;
@@ -69640,7 +69640,14 @@ window.viewRules = viewRules;
 function updateHeaderTimer() {
   const indicator = document.getElementById('headerTimerIndicator');
   if (!indicator) return;
-  
+
+  // Läuft per setInterval jede Sekunde — beim App-Start / während eines Syncs
+  // kann APP.state.data noch null sein. Dann Indicator verstecken statt crashen.
+  if (typeof APP === 'undefined' || !APP.state || !APP.state.data) {
+    indicator.style.display = 'none';
+    return;
+  }
+
   const timers = APP.state.data.timers || {};
   const running = Object.entries(timers).filter(([, t]) => t && t.startTs);
   
@@ -100582,9 +100589,9 @@ window.addEventListener("hashchange", function(){
     .pdfed-title{font-weight:700;font-size:14px;max-width:30vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:8px}
     .pdfed-spacer{flex:1}
     .pdfed-btn{display:inline-flex;align-items:center;gap:6px;background:var(--panel2,#2d3640);color:var(--text,#eef0f2);border:1px solid var(--border,#3b4550);border-radius:9px;padding:7px 11px;font-size:13px;cursor:pointer;transition:all .14s;white-space:nowrap;line-height:1}
-    .pdfed-btn:hover{border-color:var(--accent,#45c198);background:var(--hover,rgba(255,255,255,.06))}
-    .pdfed-btn.primary{background:var(--accent,#45c198);color:var(--on-accent,#04140d);border-color:var(--accent,#45c198);font-weight:600}
-    .pdfed-btn.active{background:var(--accent-soft,rgba(69,193,152,.24));border-color:var(--accent,#45c198);color:var(--text,#eef0f2)}
+    .pdfed-btn:hover{border-color:var(--accent,#a78bfa);background:var(--hover,rgba(255,255,255,.06))}
+    .pdfed-btn.primary{background:var(--accent,#a78bfa);color:var(--on-accent,#04140d);border-color:var(--accent,#a78bfa);font-weight:600}
+    .pdfed-btn.active{background:var(--accent-soft,rgba(167,139,250,.24));border-color:var(--accent,#a78bfa);color:var(--text,#eef0f2)}
     .pdfed-btn[disabled]{opacity:.4;pointer-events:none}
     .pdfed-btn.icon{padding:7px 9px}
     .pdfed-sep{width:1px;align-self:stretch;background:var(--border,#3b4550);margin:2px 2px}
@@ -100597,7 +100604,7 @@ window.addEventListener("hashchange", function(){
     .pdfed-side.collapsed{width:0;overflow:hidden;border:none}
     .pdfed-tabs{display:flex;border-bottom:1px solid var(--border,#3b4550);flex-shrink:0}
     .pdfed-tab{flex:1;padding:9px 4px;text-align:center;font-size:11px;cursor:pointer;color:var(--muted,#929aa4);border-bottom:2px solid transparent;user-select:none}
-    .pdfed-tab.active{color:var(--text,#eef0f2);border-bottom-color:var(--accent,#45c198)}
+    .pdfed-tab.active{color:var(--text,#eef0f2);border-bottom-color:var(--accent,#a78bfa)}
     .pdfed-tabbody{flex:1;overflow:auto;padding:10px}
     .pdfed-main{flex:1;overflow:auto;background:var(--bg2,#0e0e14);position:relative}
     #pdfedPages{padding:24px;display:flex;flex-direction:column;align-items:center;gap:18px;min-height:100%}
@@ -100608,15 +100615,15 @@ window.addEventListener("hashchange", function(){
     .pdfed-textlayer{position:absolute;inset:0;overflow:hidden;opacity:1;line-height:1;z-index:2}
     .pdfed-textlayer span{position:absolute;white-space:pre;transform-origin:0 0;color:transparent;cursor:text}
     .pdfed-textlayer span.hit{background:rgba(255,210,0,.5);color:transparent;border-radius:2px}
-    .pdfed-textlayer ::selection{background:rgba(69,193,152,.55)}
-    .pdfed-textlayer span::selection{background:rgba(69,193,152,.55)}
+    .pdfed-textlayer ::selection{background:rgba(167,139,250,.55)}
+    .pdfed-textlayer span::selection{background:rgba(167,139,250,.55)}
     .pdfed-annots{position:absolute;inset:0;z-index:3}
     .pdfed-annot{position:absolute;box-sizing:border-box}
     .pdfed-annot .del{position:absolute;top:-10px;right:-10px;width:20px;height:20px;border-radius:50%;background:var(--danger,#e5765a);color:#fff;border:none;cursor:pointer;font-size:12px;line-height:18px;display:none;z-index:5;padding:0}
     .pdfed-annot:hover .del{display:block}
-    .pdfed-annot.sel{outline:2px dashed var(--accent,#45c198);outline-offset:2px;z-index:4}
+    .pdfed-annot.sel{outline:2px dashed var(--accent,#a78bfa);outline-offset:2px;z-index:4}
     .pdfed-annot.sel .del{display:block}
-    .pdfed-annot.text.editing{outline:2px solid var(--accent,#45c198);cursor:text;background:rgba(69,193,152,.06)}
+    .pdfed-annot.text.editing{outline:2px solid var(--accent,#a78bfa);cursor:text;background:rgba(167,139,250,.06)}
     .pdfed-notepop{position:fixed;z-index:100003;width:260px;background:var(--panel,#212830);border:1px solid var(--border,#3b4550);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:10px}
     .pdfed-notepop textarea{width:100%;height:90px;resize:vertical;background:var(--panel2,#2d3640);color:var(--text,#eef0f2);border:1px solid var(--border,#3b4550);border-radius:7px;padding:8px;font-size:13px;font-family:var(--sans,Inter,sans-serif)}
     .pdfed-notepop .row{display:flex;justify-content:space-between;gap:8px;margin-top:8px}
@@ -100625,22 +100632,22 @@ window.addEventListener("hashchange", function(){
     .pdfed-annot.note{width:24px;height:24px;border-radius:5px 5px 5px 0;display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,.4)}
     .pdfed-annot.stamp{display:flex;align-items:center;justify-content:center;font-weight:800;letter-spacing:.5px;border:2px solid;border-radius:8px;text-transform:uppercase;padding:2px 8px;font-size:13px;opacity:.85;transform:rotate(-8deg)}
     .pdfed-annot.text{padding:1px 2px;outline:none;min-width:30px;overflow:visible;white-space:pre-wrap}
-    .pdfed-annot.text:focus{box-shadow:0 0 0 1px var(--accent,#45c198)}
+    .pdfed-annot.text:focus{box-shadow:0 0 0 1px var(--accent,#a78bfa)}
     .pdfed-annot img{width:100%;height:100%;display:block;pointer-events:none}
-    .pdfed-rsz{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;border-radius:3px;background:var(--accent,#45c198);border:2px solid #fff;cursor:nwse-resize;display:none;z-index:5}
+    .pdfed-rsz{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;border-radius:3px;background:var(--accent,#a78bfa);border:2px solid #fff;cursor:nwse-resize;display:none;z-index:5}
     .pdfed-annot:hover .pdfed-rsz{display:block}
     .pdfed-vec{position:absolute;left:0;top:0}
-    .pdfed-vec g.vecsel{filter:drop-shadow(0 0 1px var(--accent,#45c198)) drop-shadow(0 0 4px var(--accent,#45c198))}
+    .pdfed-vec g.vecsel{filter:drop-shadow(0 0 1px var(--accent,#a78bfa)) drop-shadow(0 0 4px var(--accent,#a78bfa))}
     .pdfed-thumb{position:relative;margin-bottom:10px;border:2px solid transparent;border-radius:6px;cursor:pointer;background:var(--panel2,#2d3640);padding:5px}
-    .pdfed-thumb.active{border-color:var(--accent,#45c198)}
+    .pdfed-thumb.active{border-color:var(--accent,#a78bfa)}
     .pdfed-thumb canvas{display:block;width:100%;border-radius:3px;background:#fff}
     .pdfed-thumb .tlabel{text-align:center;font-size:11px;color:var(--muted,#929aa4);margin-top:3px}
     .pdfed-thumb .tools{position:absolute;top:7px;right:7px;display:none;gap:3px}
     .pdfed-thumb:hover .tools{display:flex}
     .pdfed-thumb .tools button{width:22px;height:22px;border-radius:5px;border:none;background:rgba(0,0,0,.65);color:#fff;cursor:pointer;font-size:11px;padding:0}
-    .pdfed-thumb.dragover{border-color:var(--accent,#45c198);border-style:dashed}
+    .pdfed-thumb.dragover{border-color:var(--accent,#a78bfa);border-style:dashed}
     .pdfed-cmt{display:flex;gap:8px;padding:8px;border:1px solid var(--border,#3b4550);border-radius:8px;margin-bottom:7px;cursor:pointer;font-size:12px;align-items:flex-start}
-    .pdfed-cmt:hover{border-color:var(--accent,#45c198)}
+    .pdfed-cmt:hover{border-color:var(--accent,#a78bfa)}
     .pdfed-cmt .ico{font-size:15px}
     .pdfed-cmt .meta{flex:1;min-width:0}
     .pdfed-cmt .meta b{font-size:12px}
@@ -100651,14 +100658,14 @@ window.addEventListener("hashchange", function(){
     .pdfed-grp h4{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#929aa4);margin:0 0 7px;display:flex;align-items:center;gap:6px}
     .pdfed-grp .dot{width:8px;height:8px;border-radius:50%}
     .pdfed-act{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:var(--panel2,#2d3640);border:1px solid var(--border,#3b4550);border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;color:var(--text,#eef0f2);font-size:12.5px}
-    .pdfed-act:hover{border-color:var(--accent,#45c198)}
+    .pdfed-act:hover{border-color:var(--accent,#a78bfa)}
     .pdfed-act.info{opacity:.72;cursor:help}
     .pdfed-act .ai{font-size:14px}
     .pdfed-act .ad{font-size:10.5px;color:var(--muted,#929aa4);margin-top:1px}
     .pdfed-act .tag{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:.05em;padding:2px 6px;border-radius:5px;background:var(--hover,rgba(255,255,255,.08));color:var(--muted,#929aa4);flex-shrink:0}
     .pdfed-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;color:var(--muted,#929aa4);text-align:center;padding:40px}
     .pdfed-drop{border:2px dashed var(--border2,#4f5a66);border-radius:16px;padding:46px 60px;transition:all .15s;cursor:pointer}
-    .pdfed-drop.over{border-color:var(--accent,#45c198);background:var(--accent-soft,rgba(69,193,152,.18))}
+    .pdfed-drop.over{border-color:var(--accent,#a78bfa);background:var(--accent-soft,rgba(167,139,250,.18))}
     .pdfed-modal{position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px}
     .pdfed-modal .box{background:var(--panel,#212830);border:1px solid var(--border,#3b4550);border-radius:14px;padding:18px;max-width:540px;width:100%;max-height:88vh;overflow:auto}
     .pdfed-pad{background:#fff;border-radius:8px;touch-action:none;cursor:crosshair;width:100%}
@@ -102475,6 +102482,450 @@ window.addEventListener("hashchange", function(){
       tt("ok","Auto-Sync", on ? "RTDB ist jetzt primär (Netlify als Fallback)." : "Netlify ist jetzt primär (RTDB als Fallback).");
     } catch(e){ tt("err","Auto-Sync",(e&&e.message)||String(e)); }
   };
+})();
+</script>
+
+<style id="grafikPaket">
+/* ════════════════════════════════════════════════════════════════════
+   GRAFIK-PAKET — 30 visuelle Verbesserungen (rein additiv, kein Reflow).
+   #1 Dark-Akzent Violett statt Grün   → direkt in :root umgesetzt
+   #2 Light-Akzent Violett statt Grün  → direkt in html.theme-light umgesetzt
+   #3 PDF-Editor-Grün-Fallbacks auf Violett → direkt in .pdfed-* umgesetzt
+   #4–#30 folgen hier.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* #4 Sichtbarer Tastatur-Fokus (Accessibility) */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* #5 Native Controls (Checkbox/Radio/Range/Progress) in Akzentfarbe */
+input[type=checkbox],input[type=radio],input[type=range],progress{accent-color:var(--accent)}
+
+/* #6 Text-Cursor in Akzentfarbe */
+input,textarea,[contenteditable]{caret-color:var(--accent)}
+
+/* #7 Taktiles Button-Feedback (Druck-Effekt) */
+.btn{transition:transform .12s ease,background .15s ease,border-color .15s ease,box-shadow .15s ease}
+.btn:active{transform:scale(.97)}
+
+/* #8 Primär-Buttons: Violett-Gradient + lesbarer Kontrast + Hover-Glow */
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:var(--on-accent)}
+.btn.primary:hover{background:linear-gradient(135deg,var(--accent),var(--accent-deep));box-shadow:0 0 0 3px var(--accent-soft)}
+
+/* #9 Aktive Navigation: lesbarer Kontrast auf Akzentfläche */
+.sidebar-item.active,.app-nav-item.active,.nav-item.active,.topbar-btn.active{color:var(--on-accent)}
+
+/* #10 Aktives Sidebar-Item: Gradient + linke Indikator-Kante */
+.sidebar-item.active{background:linear-gradient(90deg,var(--accent-deep),var(--accent));box-shadow:inset 3px 0 0 var(--accent-deep)}
+
+/* #11 Karten: sanfte Hover-Kante */
+.card{transition:border-color .15s ease,box-shadow .2s ease}
+.card:hover{border-color:var(--border2)}
+
+/* #12 Themen-Scrollbars (WebKit) */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:var(--accent);border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+
+/* #13 Tabellen: Zeilen-Hover */
+tbody tr{transition:background .12s ease}
+tbody tr:hover td{background:var(--hover)}
+
+/* #14 Fortschrittsbalken: Gradient + animierte Breite */
+.progress .bar{background:linear-gradient(90deg,var(--accent-deep),var(--accent));transition:width .45s cubic-bezier(.25,.1,.25,1)}
+
+/* #15 Chart-Balken: vertikaler Gradient + runde Kappe */
+.chart-bar{background:linear-gradient(180deg,var(--accent),var(--accent-deep))!important;border-radius:4px 4px 0 0}
+
+/* #16 Kennzahlen & Timer: tabellarische Ziffern (kein Zittern beim Ticken) */
+.stat-card .value,.timer-widget .timer-time,#headerTimerTime{font-variant-numeric:tabular-nums}
+
+/* #17 Header-Timer: pulsierender Aufnahme-Punkt */
+#headerTimerIndicator::before{content:"";width:8px;height:8px;margin-right:2px;border-radius:50%;background:var(--accent);flex:0 0 auto;animation:gpPulse 1.6s ease-in-out infinite}
+@keyframes gpPulse{0%,100%{opacity:1;box-shadow:0 0 0 0 var(--accent-soft)}50%{opacity:.55;box-shadow:0 0 0 5px transparent}}
+
+/* #18 Task-Karten: Hover-Lift */
+.task-card{transition:transform .15s ease,box-shadow .2s ease,border-color .15s ease}
+.task-card:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+
+/* #19 Eingabefelder: Hover-Kante + weicher Fokus-Übergang */
+input,select,textarea{transition:border-color .15s ease,box-shadow .15s ease,background .15s ease}
+input:hover:not(:focus),select:hover:not(:focus),textarea:hover:not(:focus){border-color:var(--border2)}
+
+/* #20 Einheitliche <kbd>-Optik (Shortcut-Anzeigen) */
+kbd{background:var(--panel2);border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font-size:12px;font-family:var(--mono)}
+
+/* #21 Toasts: Glas-Effekt + kräftigerer Schatten */
+.toast{backdrop-filter:blur(8px);box-shadow:var(--shadow-lg)}
+
+/* #22 Modals: stärkerer Backdrop-Blur + klarere Kante */
+.modal-backdrop{backdrop-filter:blur(7px)}
+.modal{border-color:var(--border2)}
+
+/* #23 Header-Dropdowns: mehr Tiefe */
+#pinnedDropdown{box-shadow:var(--shadow-lg)}
+
+/* #24 Universalsuche: weicher violetter Fokus-Ring statt harter Kante */
+.universal-search:focus-within{box-shadow:0 0 0 3px var(--accent-soft)}
+
+/* #25 Topbar-Buttons: sanfte Hover-Anhebung */
+.topbar-btn{transition:transform .12s ease,background .15s ease,color .15s ease}
+.topbar-btn:hover{transform:translateY(-1px)}
+
+/* #26 Datei-Vorschauen: dezenter Hover-Zoom */
+.file-thumb{transition:transform .15s ease}
+.file-thumb:hover{transform:scale(1.04)}
+
+/* #27 Sanftes Scrollen bei Anker-Navigation */
+html{scroll-behavior:smooth}
+
+/* #28 Barrierefreiheit: Animationen respektieren die Systemeinstellung */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+  html{scroll-behavior:auto}
+}
+
+/* #29 Mobile: kein grauer Tap-Blitz, schnellere Taps */
+*{-webkit-tap-highlight-color:transparent}
+.btn,button{touch-action:manipulation}
+
+/* #30 Druck: nur Inhalt drucken (Navigation/Toasts/Modals ausblenden) */
+@media print{
+  .sidebar,.topbar,.toast-wrap,#toastWrap,.modal-backdrop,#pinnedDropdown,#headerTimerIndicator{display:none!important}
+  body{background:#fff!important;color:#000!important}
+}
+
+/* Unterstützung für Produktivitäts-Paket 4, Befehl „Fokus-Modus“: Chrome dimmen */
+html.qp-zen .sidebar,html.qp-zen .topbar{opacity:.28;transition:opacity .25s ease}
+html.qp-zen .sidebar:hover,html.qp-zen .sidebar:focus-within,
+html.qp-zen .topbar:hover,html.qp-zen .topbar:focus-within{opacity:1}
+</style>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════
+   PRODUKTIVITÄTS-PAKET 4 — 20 weitere Befehle für die Command-Palette
+   (Ctrl/Cmd+K). Self-contained, registriert sich in window._p6Extra.
+   Namespace qp (kollisionsfrei zu px, p2, p3). Nutzt bestehende
+   window.*-Helfer defensiv; Schreib-Aktionen nur nach Nutzer-Aktion.
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+  function qpData(){ try { return (window.APP&&APP.state&&APP.state.data)||null; } catch(e){ return null; } }
+  function qpTasks(){ var d=qpData(); try { return Object.values((d&&d.entities&&d.entities.tasks)||{}); } catch(e){ return []; } }
+  function qpOpen(){ return qpTasks().filter(function(t){ return t && t.status!=="done"; }); }
+  function qpYmd(dt){ var y=dt.getFullYear(),m=dt.getMonth()+1,da=dt.getDate(); return y+"-"+(m<10?"0":"")+m+"-"+(da<10?"0":"")+da; }
+  function qpToday(){ try { return (typeof window.todayYmd==="function")?window.todayYmd():qpYmd(new Date()); } catch(e){ return qpYmd(new Date()); } }
+  function qpEsc(s){ return (window.esc?window.esc(s):String(s==null?"":s).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; })); }
+  function qpJs(s){ return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'"); }
+  function qpToast(a,b,c){ if(typeof window.toast==="function") window.toast(a,b,c); }
+  function qpSave(){ if(typeof window.scheduleSave==="function") window.scheduleSave(); }
+  function qpRender(){ if(typeof window.render==="function") window.render(); }
+  function qpModal(title, body, footer){ if(typeof window.openModal==="function") window.openModal(title, body, footer||'<button class="btn" data-action="close-modal">Schließen</button>'); }
+  function qpUpd(id, patch){ if(typeof window.updateEntity==="function") window.updateEntity("task", id, patch); }
+  function qpFmtSec(sec){ sec=Math.max(0,Math.round(sec||0)); var h=Math.floor(sec/3600),m=Math.round((sec%3600)/60); return h>0?(h+"h "+m+"m"):(m+" Min"); }
+  function qpCopy(text, okMsg){
+    function fb(){ try { var ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); qpToast("ok","Kopiert",okMsg||""); } catch(e){ qpModal("Kopieren",'<textarea style="width:100%;height:200px">'+qpEsc(text)+'</textarea>'); } }
+    try { if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(function(){ qpToast("ok","Kopiert",okMsg||""); }).catch(fb); } else fb(); } catch(e){ fb(); }
+  }
+  function qpTaskRows(list, extra){
+    var today=qpToday();
+    return '<div style="max-height:52vh;overflow:auto">'+list.slice(0,80).map(function(t){
+      var od=t.dueDate&&String(t.dueDate)<today;
+      return '<div style="display:flex;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border)">'
+        + '<span style="color:'+(od?"var(--danger)":"var(--muted)")+';font-size:11.5px;min-width:84px">'+qpEsc(t.dueDate||"—")+'</span>'
+        + '<span style="flex:1;min-width:0;cursor:pointer" onclick="closeModal();window.qpGoTask(\''+qpJs(t.id)+'\')">'+qpEsc(t.title||"(ohne Titel)")+'</span>'
+        + '<span style="color:var(--muted);font-size:11px">P'+(t.priority||3)+'</span>'
+        + (extra?extra(t):"")
+        + '</div>';
+    }).join("")+'</div>';
+  }
+  window.qpGoTask = function(id){ try { if(typeof window.navigate==="function") window.navigate("tasks", id); else location.hash="#/tasks/"+id; } catch(e){} };
+
+  // ── 1) Fällige snoozen (+1 Tag / +1 Woche) ──
+  window.qpSnooze = function(id, days){
+    var d=new Date(); d.setDate(d.getDate()+days);
+    qpUpd(id,{dueDate:qpYmd(d)}); qpSave(); qpRender();
+    qpToast("ok","Verschoben","Neue Fälligkeit: "+qpYmd(d));
+    window.qpSnoozeDue();
+  };
+  window.qpSnoozeDue = function(){
+    var today=qpToday();
+    var list=qpOpen().filter(function(t){return t.dueDate&&String(t.dueDate)<=today;}).sort(function(a,b){return String(a.dueDate).localeCompare(String(b.dueDate));});
+    if(!list.length){ qpToast("info","Snooze","Nichts fällig — nichts zu verschieben. 🎉"); try{ if(window.closeModal) window.closeModal(); }catch(e){} return; }
+    qpModal("😴 Fällige Aufgaben snoozen", qpTaskRows(list, function(t){
+      return '<button class="btn sm" onclick="window.qpSnooze(\''+qpJs(t.id)+'\',1)">+1 Tag</button><button class="btn sm" onclick="window.qpSnooze(\''+qpJs(t.id)+'\',7)">+1 Wo</button>';
+    }));
+  };
+
+  // ── 2) Aufgaben ohne Datum triagieren ──
+  window.qpSetDue = function(id, offset){
+    var d=new Date(); d.setDate(d.getDate()+offset);
+    qpUpd(id,{dueDate:qpYmd(d)}); qpSave(); qpRender();
+    qpToast("ok","Datum gesetzt", qpYmd(d));
+    window.qpNoDate();
+  };
+  window.qpNoDate = function(){
+    var list=qpOpen().filter(function(t){return !t.dueDate;}).sort(function(a,b){return (a.priority||3)-(b.priority||3);});
+    if(!list.length){ qpToast("info","Triage","Alle offenen Aufgaben haben ein Datum. ✅"); try{ if(window.closeModal) window.closeModal(); }catch(e){} return; }
+    qpModal("🗂️ Aufgaben ohne Datum ("+list.length+")", qpTaskRows(list, function(t){
+      return '<button class="btn sm" onclick="window.qpSetDue(\''+qpJs(t.id)+'\',0)">Heute</button><button class="btn sm" onclick="window.qpSetDue(\''+qpJs(t.id)+'\',1)">Morgen</button><button class="btn sm" onclick="window.qpSetDue(\''+qpJs(t.id)+'\',7)">+1 Wo</button>';
+    }));
+  };
+
+  // ── 3) Liegengebliebene Aufgaben (30+ Tage unangetastet) ──
+  window.qpStale = function(){
+    var cutoff=Date.now()-30*86400000;
+    var list=qpOpen().filter(function(t){ var ts=Date.parse(t.updatedAt||t.createdAt||"")||0; return ts>0&&ts<cutoff; })
+      .sort(function(a,b){ return (Date.parse(a.updatedAt||a.createdAt||"")||0)-(Date.parse(b.updatedAt||b.createdAt||"")||0); });
+    if(!list.length){ qpToast("info","Liegengeblieben","Nichts liegt länger als 30 Tage. 👍"); return; }
+    qpModal("🕸️ Liegengeblieben (30+ Tage, "+list.length+")", qpTaskRows(list));
+  };
+
+  // ── 4) Doppelte Aufgaben finden ──
+  window.qpDuplicates = function(){
+    var seen={}, dups=[];
+    qpOpen().forEach(function(t){ var k=String(t.title||"").trim().toLowerCase(); if(!k) return; (seen[k]=seen[k]||[]).push(t); });
+    Object.keys(seen).forEach(function(k){ if(seen[k].length>1) dups=dups.concat(seen[k]); });
+    if(!dups.length){ qpToast("ok","Duplikate","Keine doppelten offenen Aufgaben gefunden. ✅"); return; }
+    qpModal("👯 Mögliche Duplikate ("+dups.length+")", qpTaskRows(dups.sort(function(a,b){return String(a.title||"").localeCompare(String(b.title||""));})));
+  };
+
+  // ── 5) Wichtig-Liste (P1 + P2) ──
+  window.qpImportant = function(){
+    var list=qpOpen().filter(function(t){return (t.priority||3)<=2;})
+      .sort(function(a,b){ return (a.priority||3)-(b.priority||3) || String(a.dueDate||"9999").localeCompare(String(b.dueDate||"9999")); });
+    if(!list.length){ qpToast("info","Wichtig","Keine offenen P1/P2-Aufgaben."); return; }
+    qpModal("⭐ Wichtige Aufgaben (P1/P2)", qpTaskRows(list));
+  };
+
+  // ── 6) Morgen planen ──
+  window.qpTomorrow = function(){
+    var d=new Date(); d.setDate(d.getDate()+1); var tm=qpYmd(d);
+    var list=qpOpen().filter(function(t){return t.dueDate===tm;});
+    qpModal("🌄 Morgen fällig ("+tm+")", list.length?qpTaskRows(list):'<div style="color:var(--muted);padding:10px 2px">Für morgen ist nichts fällig.</div>');
+  };
+
+  // ── 7) Tages-Statistik ──
+  window.qpTodayStats = function(){
+    var today=qpToday(), d=qpData()||{};
+    var doneToday=qpTasks().filter(function(t){return t.status==="done"&&String(t.updatedAt||"").slice(0,10)===today;}).length;
+    var createdToday=qpTasks().filter(function(t){return String(t.createdAt||"").slice(0,10)===today;}).length;
+    var dueOpen=qpOpen().filter(function(t){return t.dueDate===today;}).length;
+    var overdue=qpOpen().filter(function(t){return t.dueDate&&String(t.dueDate)<today;}).length;
+    var secToday=0; try { Object.values((d.entities&&d.entities.timeEntries)||{}).forEach(function(te){ if(te&&String(te.startTs||"").slice(0,10)===today) secToday+=(te.durationSec||0); }); } catch(e){}
+    function stat(l,v,c){ return '<div style="flex:1;min-width:120px;background:var(--panel2);border-radius:10px;padding:12px;text-align:center"><div style="font-size:24px;font-weight:800;color:'+(c||"var(--text)")+'">'+v+'</div><div style="font-size:11px;color:var(--muted);margin-top:2px">'+l+'</div></div>'; }
+    qpModal("📊 Heute im Überblick ("+today+")",
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + stat("Erledigt", doneToday, "var(--success)") + stat("Neu erstellt", createdToday)
+      + stat("Heute fällig (offen)", dueOpen, dueOpen?"var(--warning)":"var(--success)")
+      + stat("Überfällig", overdue, overdue?"var(--danger)":"var(--success)")
+      + stat("Erfasste Zeit", qpFmtSec(secToday), "var(--accent)")
+      + '</div>');
+  };
+
+  // ── 8) Produktivitäts-Streak ──
+  window.qpStreak = function(){
+    var days={}; qpTasks().forEach(function(t){ if(t.status==="done"){ var dd=String(t.updatedAt||"").slice(0,10); if(dd) days[dd]=1; } });
+    var streak=0, d=new Date();
+    if(!days[qpYmd(d)]) d.setDate(d.getDate()-1); // heute darf noch offen sein
+    while(days[qpYmd(d)]){ streak++; d.setDate(d.getDate()-1); }
+    var msg=streak>=7?"Beeindruckend — dranbleiben! 🔥":(streak>=3?"Guter Lauf! 💪":(streak>0?"Der Anfang ist gemacht.":"Heute eine Aufgabe erledigen und den Streak starten."));
+    qpModal("🔥 Produktivitäts-Streak",
+      '<div style="text-align:center;padding:14px 6px"><div style="font-size:52px;font-weight:900;color:var(--accent)">'+streak+'</div>'
+      + '<div style="color:var(--muted);margin-top:4px">Tag(e) in Folge mit mindestens einer erledigten Aufgabe</div>'
+      + '<div style="margin-top:10px;font-size:13px">'+msg+'</div>'
+      + '<div style="margin-top:8px;font-size:11px;color:var(--muted)">Basis: Aktualisierungsdatum erledigter Aufgaben</div></div>');
+  };
+
+  // ── 9) Wochenrückblick kopieren ──
+  window.qpWeekReview = function(){
+    var cutoff=Date.now()-7*86400000;
+    var done=qpTasks().filter(function(t){ return t.status==="done" && (Date.parse(t.updatedAt||"")||0)>=cutoff; })
+      .sort(function(a,b){ return String(a.updatedAt||"").localeCompare(String(b.updatedAt||"")); });
+    if(!done.length){ qpToast("info","Wochenrückblick","In den letzten 7 Tagen keine erledigten Aufgaben erfasst."); return; }
+    var txt="# Wochenrückblick ("+qpToday()+")\n\nErledigt in den letzten 7 Tagen:\n"+done.slice(0,150).map(function(t){ return "- [x] "+(t.title||"")+" ("+String(t.updatedAt||"").slice(0,10)+")"; }).join("\n");
+    qpCopy(txt, done.length+" erledigte Aufgabe(n) als Markdown kopiert");
+  };
+
+  // ── 10) Offene Aufgaben als CSV exportieren ──
+  window.qpCsvExport = function(){
+    var list=qpOpen(); if(!list.length){ qpToast("info","CSV-Export","Keine offenen Aufgaben."); return; }
+    function cell(v){ v=String(v==null?"":v); return '"'+v.replace(/"/g,'""')+'"'; }
+    var rows=[["Titel","Status","Priorität","Fällig","Tags","Erstellt"].join(";")];
+    list.forEach(function(t){ rows.push([cell(t.title),cell(t.status),cell(t.priority||3),cell(t.dueDate||""),cell((t.tags||[]).join(", ")),cell(String(t.createdAt||"").slice(0,10))].join(";")); });
+    var blob=new Blob(["﻿"+rows.join("\r\n")],{type:"text/csv;charset=utf-8"});
+    var url=URL.createObjectURL(blob), a=document.createElement("a");
+    a.href=url; a.download="aufgaben-"+qpToday()+".csv"; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+    qpToast("ok","CSV-Export", list.length+" Aufgaben exportiert.");
+  };
+
+  // ── 11) Laufende Timer: Übersicht & Stoppen ──
+  window.qpStopTimer = function(id){
+    try {
+      var ind=document.getElementById("headerTimerIndicator");
+      if(ind && typeof window.headerTimerStop==="function"){ ind._taskId=id; window.headerTimerStop(); }
+      else if(id.indexOf("manual_")===0 && typeof window.stopManualTimer==="function"){ window.stopManualTimer(id); }
+      else if(typeof window.stopTimer==="function"){ window.stopTimer(id); }
+    } catch(e){ qpToast("err","Timer",(e&&e.message)||""); }
+    window.qpTimers();
+  };
+  window.qpTimers = function(){
+    var d=qpData(); var timers=(d&&d.timers)||{};
+    var running=Object.keys(timers).filter(function(id){ return timers[id]&&timers[id].startTs; });
+    if(!running.length){ qpToast("info","Timer","Kein Timer läuft gerade."); try{ if(window.closeModal) window.closeModal(); }catch(e){} return; }
+    var html='<div>'+running.map(function(id){
+      var t=timers[id], label=id;
+      try {
+        if(id==="planning") label="Planung";
+        else if(id.indexOf("manual_")===0) label=t.manualLabel||t.note||"Manueller Timer";
+        else if(id.indexOf("project-")===0){ var p=window.getEntity&&window.getEntity("project",id.slice(8)); label=p?("📁 "+(p.title||"Projekt")):"Projekt"; }
+        else { var task=window.getEntity&&window.getEntity("task",id); if(task) label="✅ "+(task.title||"Aufgabe"); }
+      } catch(e){}
+      var sec=Math.max(0,Math.round((Date.now()-new Date(t.startTs).getTime())/1000));
+      return '<div style="display:flex;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border)"><span style="flex:1;min-width:0">'+qpEsc(label)+'</span><span style="font-family:var(--mono);color:var(--accent)">'+qpFmtSec(sec)+'</span><button class="btn sm danger" onclick="window.qpStopTimer(\''+qpJs(id)+'\')">⏹ Stopp</button></div>';
+    }).join("")+'</div>';
+    qpModal("⏱️ Laufende Timer ("+running.length+")", html);
+  };
+
+  // ── 12) Heute erfasste Zeit nach Kategorie ──
+  window.qpTimeToday = function(){
+    var today=qpToday(), d=qpData()||{}, byCat={}, total=0;
+    try { Object.values((d.entities&&d.entities.timeEntries)||{}).forEach(function(te){
+      if(!te||String(te.startTs||"").slice(0,10)!==today) return;
+      var c=te.category||"Ohne Kategorie"; byCat[c]=(byCat[c]||0)+(te.durationSec||0); total+=(te.durationSec||0);
+    }); } catch(e){}
+    var cats=Object.keys(byCat).sort(function(a,b){return byCat[b]-byCat[a];});
+    if(!total){ qpToast("info","Zeiterfassung","Heute noch keine Zeit erfasst."); return; }
+    var html='<div style="font-size:22px;font-weight:800;margin-bottom:10px;color:var(--accent)">'+qpFmtSec(total)+' <span style="font-size:12px;color:var(--muted);font-weight:400">gesamt heute</span></div>'
+      + cats.map(function(c){ var pct=Math.round(byCat[c]/total*100);
+        return '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span>'+qpEsc(c)+'</span><span style="color:var(--muted)">'+qpFmtSec(byCat[c])+' · '+pct+'%</span></div><div class="progress" style="height:6px;background:var(--panel2);border-radius:99px;overflow:hidden"><div class="bar" style="width:'+pct+'%;height:100%"></div></div></div>'; }).join("");
+    qpModal("⏳ Heute erfasste Zeit", html);
+  };
+
+  // ── 13) Erinnerung in X Minuten ──
+  window.qpRemind = function(){
+    var m=window.prompt("Erinnerung in wie vielen Minuten?","15"); if(m==null) return;
+    var mins=parseInt(m,10); if(!mins||mins<1){ qpToast("warn","Erinnerung","Bitte eine Minutenzahl > 0 angeben."); return; }
+    var txt=window.prompt("Woran soll ich erinnern?",""); if(txt==null) return; txt=txt.trim()||"Erinnerung!";
+    try { if(window.Notification&&Notification.permission==="default") Notification.requestPermission(); } catch(e){}
+    setTimeout(function(){
+      qpToast("ok","⏰ Erinnerung", txt);
+      try { if(window.Notification&&Notification.permission==="granted") new Notification("⏰ Quantus-Erinnerung",{ body:txt }); } catch(e){}
+    }, mins*60000);
+    qpToast("ok","Erinnerung gestellt","In "+mins+" Min: "+txt.slice(0,60));
+  };
+
+  // ── 14) Countdown bis Datum ──
+  window.qpCountdown = function(){
+    var s=window.prompt("Datum (z. B. 31.12.2026 oder 2026-12-31):",""); if(s==null) return; s=s.trim(); if(!s) return;
+    var dt=null, m;
+    if((m=s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/))){ var y=m[3].length===2?2000+parseInt(m[3],10):parseInt(m[3],10); dt=new Date(y,parseInt(m[2],10)-1,parseInt(m[1],10)); }
+    else if((m=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))){ dt=new Date(parseInt(m[1],10),parseInt(m[2],10)-1,parseInt(m[3],10)); }
+    if(!dt||isNaN(dt.getTime())){ qpToast("warn","Countdown","Datum nicht erkannt."); return; }
+    var days=Math.round((dt.setHours(0,0,0,0)-new Date().setHours(0,0,0,0))/86400000);
+    qpToast("ok","📆 Countdown", days>0?("Noch "+days+" Tag(e) bis "+s):(days===0?"Das ist heute!":"Liegt "+Math.abs(days)+" Tag(e) zurück."));
+  };
+
+  // ── 15) Textbausteine (Snippets) ──
+  function qpSnips(){ var d=qpData(); if(!d) return []; d.qpSnippets=d.qpSnippets||[]; return d.qpSnippets; }
+  window.qpSnippetCopy = function(i){ var s=qpSnips()[i]; if(s){ qpCopy(s.text, "„"+(s.title||"Baustein")+"“ kopiert"); } };
+  window.qpSnippetDel = function(i){ var arr=qpSnips(); var s=arr[i]; if(!s) return; if(!window.confirm("Baustein „"+(s.title||"")+"“ löschen?")) return; arr.splice(i,1); qpSave(); window.qpSnippets(); };
+  window.qpSnippetAdd = function(){
+    var t=window.prompt("Name des Textbausteins (z. B. Mail-Signatur):",""); if(t==null) return; t=t.trim(); if(!t) return;
+    var x=window.prompt("Text des Bausteins:",""); if(x==null) return; x=x.trim(); if(!x) return;
+    qpSnips().push({ title:t.slice(0,60), text:x }); qpSave(); qpToast("ok","Baustein gespeichert",t); window.qpSnippets();
+  };
+  window.qpSnippets = function(){
+    var arr=qpSnips();
+    var html=(arr.length?arr.map(function(s,i){
+      return '<div style="display:flex;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border)"><span style="flex:1;min-width:0;cursor:pointer" title="Klick = kopieren" onclick="window.qpSnippetCopy('+i+')"><strong>'+qpEsc(s.title||"Baustein")+'</strong><br><span style="font-size:11px;color:var(--muted)">'+qpEsc(String(s.text||"").slice(0,70))+'</span></span><button class="btn sm" onclick="window.qpSnippetCopy('+i+')">📋</button><button class="btn sm" onclick="window.qpSnippetDel('+i+')">🗑</button></div>';
+    }).join(""):'<div style="color:var(--muted);padding:10px 2px">Noch keine Textbausteine. Häufige Texte (Signaturen, Antworten, Adressen) einmal speichern, immer wieder kopieren.</div>');
+    qpModal("📋 Textbausteine", html, '<button class="btn" data-action="close-modal">Schließen</button><button class="btn primary" onclick="window.qpSnippetAdd()">＋ Neuer Baustein</button>');
+  };
+
+  // ── 16) Schnelles Logbuch (eine Zeile → Monats-Notiz) ──
+  window.qpLog = function(){
+    var s=window.prompt("Logbuch-Eintrag (eine Zeile):",""); if(s==null) return; s=s.trim(); if(!s) return;
+    var now=new Date(); var title="Logbuch "+now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
+    var line="- "+String(now.getDate()).padStart(2,"0")+"."+String(now.getMonth()+1).padStart(2,"0")+". "+String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0")+" — "+s;
+    var d=qpData(); var note=null;
+    try { note=Object.values((d&&d.entities&&d.entities.notes)||{}).find(function(n){ return n&&n.title===title; })||null; } catch(e){}
+    if(note && typeof window.updateEntity==="function"){ window.updateEntity("note", note.id, { content:(note.content||"").replace(/\s+$/,"")+"\n"+line }); }
+    else if(typeof window.createEntity==="function"){ window.createEntity("note", { title:title, content:"# "+title+"\n\n"+line, tags:["logbuch"] }); }
+    else { qpToast("err","Logbuch","Speichern nicht möglich."); return; }
+    qpSave(); qpRender(); qpToast("ok","Logbuch", line.slice(0,70));
+  };
+
+  // ── 17) Fokus-Modus (Sidebar/Topbar dimmen) ──
+  window.qpZen = function(){
+    var on=document.documentElement.classList.toggle("qp-zen");
+    qpToast("ok","Fokus-Modus", on?"An — Navigation gedimmt (Maus drüber = sichtbar).":"Aus.");
+  };
+
+  // ── 18) Fälligkeits-Zähler im Tab-Titel ──
+  function qpBadgeTick(){
+    try {
+      var today=qpToday(); var n=qpOpen().filter(function(t){return t.dueDate&&String(t.dueDate)<=today;}).length;
+      document.title=(n>0?("("+n+") "):"")+"Quantus";
+    } catch(e){}
+  }
+  window.qpTitleBadge = function(){
+    var on=localStorage.getItem("qp_title_badge")==="1";
+    if(on){ localStorage.removeItem("qp_title_badge"); if(window._qpBadgeIv){clearInterval(window._qpBadgeIv);window._qpBadgeIv=null;} document.title="Quantus"; qpToast("ok","Tab-Zähler","Aus."); }
+    else { localStorage.setItem("qp_title_badge","1"); qpBadgeTick(); if(!window._qpBadgeIv) window._qpBadgeIv=setInterval(qpBadgeTick,60000); qpToast("ok","Tab-Zähler","An — fällige Aufgaben erscheinen im Browser-Tab."); }
+  };
+  try { if(localStorage.getItem("qp_title_badge")==="1"){ setTimeout(qpBadgeTick,4000); window._qpBadgeIv=setInterval(qpBadgeTick,60000); } } catch(e){}
+
+  // ── 19) Link zur aktuellen Ansicht kopieren ──
+  window.qpCopyLink = function(){ qpCopy(String(location.href), "Link zur aktuellen Ansicht kopiert"); };
+
+  // ── 20) Produktivitäts-Tipp des Tages ──
+  var QP_TIPS=[
+    "Zwei-Minuten-Regel: Was unter 2 Minuten dauert, sofort erledigen statt erfassen.",
+    "Iss den Frosch: Die unangenehmste Aufgabe zuerst — der Rest des Tages wird leichter.",
+    "Time-Boxing: Aufgaben feste Zeitfenster geben statt offene Enden.",
+    "Maximal 3 Tages-Prioritäten. Alles andere ist Bonus.",
+    "Batching: Ähnliche Aufgaben (Mails, Anrufe, Admin) bündeln statt streuen.",
+    "Pausen einplanen: 5 Minuten pro Stunde halten die Konzentration hoch.",
+    "Abends 5 Minuten den nächsten Tag planen — morgens sofort starten.",
+    "Große Aufgaben in Schritte unter 30 Minuten zerlegen.",
+    "Benachrichtigungen aus während Fokus-Blöcken — jede Unterbrechung kostet ~20 Minuten.",
+    "Wöchentlicher Rückblick: Was lief gut? Was blockiert? Was fliegt raus?",
+    "Nein sagen ist ein Produktivitäts-Werkzeug: Jedes Ja kostet ein anderes Ja.",
+    "Perfekt ist der Feind von fertig — erst liefern, dann polieren.",
+    "Energie schlägt Zeit: Anspruchsvolles in die persönlichen Hochphasen legen.",
+    "Aufgaben ohne Datum sind Wünsche. Termin geben oder bewusst streichen."
+  ];
+  window.qpTip = function(){
+    var start=new Date(new Date().getFullYear(),0,0); var doy=Math.floor((Date.now()-start.getTime())/86400000);
+    var tip=QP_TIPS[doy%QP_TIPS.length];
+    qpModal("💡 Produktivitäts-Tipp des Tages", '<div style="font-size:14.5px;line-height:1.65;padding:6px 2px">'+qpEsc(tip)+'</div>');
+  };
+
+  // ── Registrierung in der Command-Palette (Ctrl/Cmd+K) ──
+  window._p6Extra = (window._p6Extra||[]).concat([
+    { icon:"😴", label:"Fällige Aufgaben snoozen (+1 Tag/+1 Woche)", run:window.qpSnoozeDue },
+    { icon:"🗂️", label:"Aufgaben ohne Datum triagieren", run:window.qpNoDate },
+    { icon:"🕸️", label:"Liegengebliebene Aufgaben (30+ Tage)", run:window.qpStale },
+    { icon:"👯", label:"Doppelte Aufgaben finden", run:window.qpDuplicates },
+    { icon:"⭐", label:"Wichtig-Liste (P1/P2)", run:window.qpImportant },
+    { icon:"🌄", label:"Morgen planen (morgen fällig)", run:window.qpTomorrow },
+    { icon:"📊", label:"Tages-Statistik", run:window.qpTodayStats },
+    { icon:"🔥", label:"Produktivitäts-Streak anzeigen", run:window.qpStreak },
+    { icon:"📝", label:"Wochenrückblick kopieren (7 Tage erledigt)", run:window.qpWeekReview },
+    { icon:"📤", label:"Offene Aufgaben als CSV exportieren", run:window.qpCsvExport },
+    { icon:"⏱️", label:"Laufende Timer anzeigen & stoppen", run:window.qpTimers },
+    { icon:"⏳", label:"Heute erfasste Zeit (nach Kategorie)", run:window.qpTimeToday },
+    { icon:"⏰", label:"Erinnerung in X Minuten", run:window.qpRemind },
+    { icon:"📆", label:"Countdown bis Datum", run:window.qpCountdown },
+    { icon:"📋", label:"Textbausteine (speichern & kopieren)", run:window.qpSnippets },
+    { icon:"📓", label:"Logbuch: schnelle Zeile erfassen", run:window.qpLog },
+    { icon:"🧘", label:"Fokus-Modus an/aus (Navigation dimmen)", run:window.qpZen },
+    { icon:"🔢", label:"Fälligkeits-Zähler im Tab-Titel an/aus", run:window.qpTitleBadge },
+    { icon:"🔗", label:"Link zur aktuellen Ansicht kopieren", run:window.qpCopyLink },
+    { icon:"💡", label:"Produktivitäts-Tipp des Tages", run:window.qpTip }
+  ]);
 })();
 </script>
 
