@@ -95751,6 +95751,7 @@ console.log('📚 Leseliste geladen');
 .gmlc-footer { display:flex; align-items:center; gap:8px; width:100%; }
 .gmlc-footer-spacer { flex:1; }
 .modal-footer .gmlc-send { padding:11px 28px; font-size:14.5px; font-weight:700; border-radius:10px; }
+.modal-footer .gmlc-savedraft { padding:11px 18px; font-size:13.5px; font-weight:600; border-radius:10px; }
 .gmlc-iconbtn { width:40px; height:40px; display:inline-flex; align-items:center; justify-content:center; background:none; border:1px solid var(--border); color:var(--text2); cursor:pointer; border-radius:9px; padding:0; }
 .gmlc-iconbtn:hover { background:var(--hover); color:var(--text); }
 .gmlc-iconbtn svg { width:18px; height:18px; display:block; }
@@ -96495,14 +96496,15 @@ console.log('📚 Leseliste geladen');
         + '</div>';
     }
     var ccShown = !!(prefill.cc && String(prefill.cc).trim());
+    var bccShown = !!(prefill.bcc && String(prefill.bcc).trim());
     var toggles = '<div class="gmlc-toggles">'
       + '<button type="button" class="gmlc-toggle'+(ccShown?' active':'')+'" id="gmlCcToggle" onclick="gmlToggleField(\'cc\')">Cc</button>'
-      + '<button type="button" class="gmlc-toggle" id="gmlBccToggle" onclick="gmlToggleField(\'bcc\')">Bcc</button>'
+      + '<button type="button" class="gmlc-toggle'+(bccShown?' active':'')+'" id="gmlBccToggle" onclick="gmlToggleField(\'bcc\')">Bcc</button>'
       + '</div>';
     var fields = '<div class="gmlc-fields">'
       + row('gmlTo','An',prefill.to,{ ph:'Name oder E-Mail eingeben…', tail:toggles, ac:true })
       + row('gmlCc','Cc',prefill.cc,{ rowId:'gmlCcRow', hidden:!ccShown, ph:'Cc-Empfänger', ac:true })
-      + row('gmlBcc','Bcc','',{ rowId:'gmlBccRow', hidden:true, ph:'Bcc-Empfänger', ac:true })
+      + row('gmlBcc','Bcc',prefill.bcc,{ rowId:'gmlBccRow', hidden:!bccShown, ph:'Bcc-Empfänger', ac:true })
       + row('gmlSubject','Betreff',prefill.subject,{ ph:'Betreff', attrs:'onkeydown="gmlComposeKey(event)"' })
       + '</div>';
     var toolbar = '<div class="gmlc-toolbar" role="toolbar" aria-label="Formatierung">'
@@ -96552,6 +96554,7 @@ console.log('📚 Leseliste geladen');
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
       + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()">Senden</button>'
+      + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe")">💾 Entwurf speichern</button>'
       + '<button type="button" class="gmlc-iconbtn" onclick="gmlAttach()" title="Datei anhängen" aria-label="Datei anhängen">'+SVG.attach+'</button>'
       + (hasOrig ? '<button type="button" class="gmlc-iconbtn" onclick="gmlToggleQuote()" title="Zitat ein-/ausblenden" aria-label="Zitat ein-/ausblenden">'+SVG.quote+'</button>' : '')
       + '<span class="gmlc-footer-spacer"></span>'
@@ -97414,6 +97417,57 @@ console.log('📚 Leseliste geladen');
     finally { GM._composeBusy=false; var b=document.getElementById("gmlSendBtn"); if(b){ b.disabled=false; b.textContent="Senden"; } }
   };
 
+  // ── Entwurf speichern (statt senden) ──
+  // Legt den aktuellen Verfassen-Stand als Entwurf in der Firebase RTDB unter /gmailDrafts ab
+  // (gleiche Struktur wie die n8n-KI-Entwürfe), sodass er in der „KI-Entwürfe"-Liste erscheint
+  // und über gmailOpenDraft wieder geöffnet, bearbeitet und gesendet werden kann. Wird ein
+  // bestehender Entwurf bearbeitet (ctx.draftKey), aktualisieren wir denselben Eintrag statt
+  // einen neuen anzulegen. Kein Versand — reiner RTDB-Schreibvorgang.
+  window.gmailSaveDraft = async function(){
+    if (GM._composeBusy) return;
+    var g=function(id){ return document.getElementById(id); };
+    var to=(g("gmlTo")&&g("gmlTo").value||"").trim();
+    var cc=(g("gmlCc")&&g("gmlCc").value||"").trim();
+    var bcc=(g("gmlBcc")&&g("gmlBcc").value||"").trim();
+    var subject=(g("gmlSubject")&&g("gmlSubject").value||"").trim();
+    var body=(g("gmlBody")&&g("gmlBody").value||"");
+    if (!to && !subject && !body.trim()){ toast("info","Nichts zu speichern","Der Entwurf ist leer."); return; }
+    GM._composeBusy=true; var sd=g("gmlSaveDraftBtn"); if(sd){ sd.disabled=true; sd.textContent="Speichere…"; }
+    try {
+      var ctx = GM._composeCtx||{};
+      var src = ctx.source||{};
+      var toA = parseAddr(to);
+      var draft = {
+        to:to, cc:cc, bcc:bcc, subject:subject,
+        toName: toA.name || "",
+        draftBody: body,
+        threadId: ctx.threadId||"",
+        messageId: (src.id)||"",
+        inReplyTo: ctx.inReplyTo||"",
+        references: ctx.references||"",
+        originalFrom: src.from||"",
+        originalSubject: src.subject||"",
+        originalBody: src.body||"",
+        source: "manual-draft",
+        status: "pending",
+        updatedAt: Date.now()
+      };
+      if ((GM._attachments||[]).length){ toast("info","Hinweis","Anhänge werden im Entwurf nicht gespeichert — bitte vor dem Senden erneut anhängen."); }
+      if (ctx.draftKey){
+        // Bestehenden Entwurf aktualisieren (createdAt bleibt erhalten).
+        await rtdbPatch("gmailDrafts/"+ctx.draftKey, draft);
+      } else {
+        draft.createdAt = Date.now();
+        await rtdbPost("gmailDrafts", draft);
+      }
+      if (window.closeModal) window.closeModal();
+      toast("ok","Entwurf gespeichert","Der Entwurf liegt unter „KI-Entwürfe" bereit.");
+      GM.open=null;
+      if (typeof loadDrafts==="function") loadDrafts();
+    } catch(e){ toast("err","Speichern fehlgeschlagen", e.message||"Unbekannter Fehler"); }
+    finally { GM._composeBusy=false; var b=document.getElementById("gmlSaveDraftBtn"); if(b){ b.disabled=false; b.textContent="💾 Entwurf speichern"; } }
+  };
+
   // ── Folge-Aktionen nach dem Senden (Mail erledigen / Aufgabe erstellen) ──
   // Erscheint nach erfolgreichem Versand (Verfassen, Antworten, KI-Entwurf). Nutzt die
   // bestehende Erledigt-Logik (gmailToggleDone: Quantus/Erledigt-Label + raus aus INBOX, KEINE
@@ -98044,7 +98098,7 @@ console.log('📚 Leseliste geladen');
     // Prefill the existing compose dialog. threadId keeps it in the right Gmail
     // thread; the user reviews, edits and sends MANUALLY (no auto-send). On send,
     // gmailSend marks the draft "used" via the draftKey in the compose context.
-    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, draftKey:key, note:note, original: hasSource ? { loading:true } : undefined,
+    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, inReplyTo:d.inReplyTo||null, references:d.references||null, draftKey:key, note:note, original: hasSource ? { loading:true } : undefined,
       source: { id:d.messageId||"", threadId:d.threadId||"", from:d.originalFrom||d.from||"", subject:d.originalSubject||d.subject||"", body:d.originalBody||"" } });
     if (d.originalBody || d.originalSubject || d.originalFrom){
       window.gmailFillOriginal({ from:d.originalFrom||d.from||"", subject:d.originalSubject||"", body:d.originalBody||"", date:d.originalDate||0 });
