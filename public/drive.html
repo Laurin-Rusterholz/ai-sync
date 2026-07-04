@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quantus · Drive</title>
+<link rel="icon" href="favicon.svg">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   QUANTUS DRIVE — Design „Schiefer/Leinen"
+   Mattes Schiefer-Anthrazit + warmes Greige · Akzente Coral/Teal/Sand
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --schiefer:      #2b3036;
+  --schiefer-tief: #23272c;
+  --schiefer-hell: #3a4048;
+  --leinen:        #efebe2;
+  --leinen-hell:   #f7f4ee;
+  --leinen-tief:   #e3ddd0;
+  --linie:         #d8d1c2;
+  --linie-dunkel:  #4a5058;
+  --tinte:         #2b3036;
+  --muted:         #6d6b64;
+  --muted-hell:    #a5a29a;
+  --coral:         #d96c57;
+  --coral-tief:    #b9503c;
+  --teal:          #3e8e87;
+  --teal-tief:     #2f6d68;
+  --sand:          #c9a876;
+  --gruen:         #5d8a5e;
+  --radius:        10px;
+  --schatten:      0 2px 10px rgba(43,48,54,.10);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--leinen);
+  color: var(--tinte);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+button { font: inherit; cursor: pointer; }
+input, select { font: inherit; }
+::selection { background: var(--sand); color: var(--schiefer); }
+
+#app { display:flex; height:100vh; overflow:hidden; }
+
+/* ── Sidebar (Schiefer) ─────────────────────────────────────────────────── */
+#sidebar {
+  width: 268px; min-width: 268px;
+  background: var(--schiefer);
+  color: var(--leinen);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+}
+.sb-brand {
+  padding: 20px 18px 14px;
+  font-size: 17px; font-weight: 700; letter-spacing: .3px;
+  border-bottom: 1px solid var(--linie-dunkel);
+}
+.sb-brand small { display:block; font-size:11px; font-weight:500; color:var(--muted-hell); letter-spacing:1.2px; text-transform:uppercase; margin-top:2px; }
+.sb-upload { padding: 14px 14px 10px; }
+.btn-upload {
+  width:100%; padding:10px 12px; border:0; border-radius:var(--radius);
+  background: var(--coral); color:#fff; font-weight:700; font-size:14px;
+  transition: background .15s;
+}
+.btn-upload:hover { background: var(--coral-tief); }
+#nav { flex:1; overflow-y:auto; padding: 4px 8px 12px; }
+.nav-item, .baum-zeile {
+  display:flex; align-items:center; gap:8px;
+  padding: 7px 10px; border-radius: 8px; cursor:pointer;
+  color: var(--leinen); font-size: 13.5px;
+  user-select:none;
+}
+.nav-item:hover, .baum-zeile:hover { background: var(--schiefer-hell); }
+.nav-item.aktiv, .baum-zeile.aktiv { background: var(--schiefer-hell); box-shadow: inset 3px 0 0 var(--coral); }
+.nav-item .zahl { margin-left:auto; font-size:11px; background:var(--coral); color:#fff; border-radius:9px; padding:1px 7px; font-weight:700; }
+.nav-sep { margin: 10px 10px 6px; font-size:10.5px; letter-spacing:1.4px; text-transform:uppercase; color:var(--muted-hell); }
+.baum-zeile { padding-left: calc(10px + var(--tiefe, 0) * 16px); }
+.baum-pfeil { width:14px; text-align:center; font-size:10px; color:var(--muted-hell); flex:none; transition: transform .12s; }
+.baum-pfeil.offen { transform: rotate(90deg); }
+.baum-pfeil.leer { visibility:hidden; }
+.baum-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.baum-zeile.typ-bereich .baum-name { font-weight: 650; }
+.baum-zeile.typ-thema .baum-name { color: var(--muted-hell); font-size:13px; }
+.sb-fuss {
+  padding: 10px 14px; border-top: 1px solid var(--linie-dunkel);
+  font-size: 11.5px; color: var(--muted-hell);
+  display:flex; align-items:center; gap:7px;
+}
+.sb-fuss .punkt { width:8px; height:8px; border-radius:50%; background:var(--muted-hell); flex:none; }
+.sb-fuss .punkt.online { background: var(--teal); }
+.btn-neuer-ordner {
+  margin: 4px 14px 12px; padding: 7px 10px;
+  background:transparent; color:var(--muted-hell);
+  border:1px dashed var(--linie-dunkel); border-radius:8px; font-size:12.5px;
+}
+.btn-neuer-ordner:hover { color:var(--leinen); border-color:var(--muted-hell); }
+
+/* ── Hauptbereich (Leinen) ──────────────────────────────────────────────── */
+#haupt { flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative; }
+#kopf {
+  padding: 14px 22px; display:flex; align-items:center; gap:16px;
+  border-bottom: 1px solid var(--linie); background: var(--leinen-hell);
+}
+#brotkrumen { font-size: 14px; font-weight: 600; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#brotkrumen .trenner { color: var(--muted-hell); margin: 0 7px; font-weight:400; }
+#brotkrumen .krume { color: var(--muted); }
+#brotkrumen .krume:last-child { color: var(--tinte); }
+#sucheInput {
+  width: 300px; padding: 8px 13px;
+  border: 1px solid var(--linie); border-radius: 20px;
+  background: #fff; color: var(--tinte); outline: none;
+}
+#sucheInput:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(62,142,135,.15); }
+#liste { flex:1; overflow-y:auto; padding: 18px 22px 40px; }
+#haupt.drop-aktiv::after {
+  content: "Dateien hier ablegen"; position:absolute; inset:10px;
+  border: 3px dashed var(--teal); border-radius: 14px;
+  background: rgba(62,142,135,.08); color: var(--teal-tief);
+  display:flex; align-items:center; justify-content:center;
+  font-size: 20px; font-weight: 700; pointer-events:none; z-index: 5;
+}
+
+/* Upload-Fortschritt */
+.upload-karte {
+  background:#fff; border:1px solid var(--linie); border-radius:var(--radius);
+  padding: 10px 14px; margin-bottom: 10px; box-shadow: var(--schatten);
+}
+.upload-karte .uk-kopf { display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px; }
+.upload-karte .uk-phase { color: var(--muted); }
+.uk-balken { height:6px; border-radius:3px; background: var(--leinen-tief); overflow:hidden; }
+.uk-balken > div { height:100%; background: var(--teal); border-radius:3px; transition: width .2s; }
+
+/* Dokument-Tabelle */
+table.docs { width:100%; border-collapse: collapse; background:#fff; border-radius: var(--radius); overflow:hidden; box-shadow: var(--schatten); }
+table.docs th {
+  text-align:left; font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; padding: 11px 14px;
+  background: var(--leinen-hell); border-bottom: 1px solid var(--linie);
+}
+table.docs td { padding: 11px 14px; border-bottom: 1px solid var(--leinen-tief); vertical-align: middle; }
+table.docs tr.doc-zeile { cursor: pointer; }
+table.docs tr.doc-zeile:hover td { background: var(--leinen-hell); }
+table.docs tr:last-child td { border-bottom: 0; }
+.doc-name { font-weight: 600; display:flex; align-items:center; gap:9px; min-width:0; }
+.doc-name .icon { flex:none; font-size:17px; }
+.doc-name .txt { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 340px; }
+.doc-name .orig { display:block; font-size:11.5px; color:var(--muted); font-weight:400; }
+.zelle-muted { color: var(--muted); font-size: 13px; white-space:nowrap; }
+.tag {
+  display:inline-block; background: var(--leinen-tief); color: var(--muted);
+  border-radius: 20px; padding: 1px 9px; font-size: 11.5px; margin: 1px 3px 1px 0;
+}
+.dup-hinweis { color: var(--coral-tief); font-size: 12px; font-weight:600; white-space:nowrap; }
+
+/* Status-Badges */
+.badge {
+  display:inline-flex; align-items:center; gap:6px;
+  font-size: 11.5px; font-weight: 700; letter-spacing:.2px;
+  border-radius: 20px; padding: 3px 10px; white-space:nowrap;
+}
+.badge .pkt { width:7px; height:7px; border-radius:50%; background: currentColor; flex:none; }
+.b-eingang            { background:#e5e2da; color:#6d6b64; }
+.b-wird_klassifiziert { background:rgba(62,142,135,.14); color:var(--teal-tief); }
+.b-wird_klassifiziert .pkt { animation: pulsieren 1.1s ease-in-out infinite; }
+.b-klassifiziert      { background:rgba(93,138,94,.16);  color:#3f6b40; }
+.b-review_noetig      { background:rgba(217,108,87,.16); color:var(--coral-tief); }
+.b-abgelegt           { background:rgba(201,168,118,.22); color:#8a6d3d; }
+.b-papierkorb         { background:#e5e2da; color:var(--muted-hell); }
+@keyframes pulsieren { 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:.35; transform:scale(.75);} }
+
+.leer-zustand { text-align:center; color: var(--muted); padding: 70px 20px; }
+.leer-zustand .gross { font-size: 44px; margin-bottom: 10px; }
+
+/* ── Detail-Drawer ──────────────────────────────────────────────────────── */
+#drawer {
+  position: fixed; top:0; right:0; bottom:0; width: min(560px, 92vw);
+  background: var(--leinen-hell); border-left: 1px solid var(--linie);
+  box-shadow: -8px 0 30px rgba(43,48,54,.18);
+  transform: translateX(105%); transition: transform .18s ease-out;
+  display:flex; flex-direction:column; z-index: 40;
+}
+#drawer.offen { transform: translateX(0); }
+.dr-kopf { padding: 16px 20px; border-bottom:1px solid var(--linie); display:flex; align-items:flex-start; gap:12px; }
+.dr-kopf h2 { font-size: 16px; line-height:1.35; flex:1; word-break:break-word; }
+.dr-schliessen { border:0; background:transparent; font-size:20px; color:var(--muted); padding:2px 6px; border-radius:6px; }
+.dr-schliessen:hover { background: var(--leinen-tief); color: var(--tinte); }
+.dr-inhalt { flex:1; overflow-y:auto; padding: 16px 20px 30px; }
+.dr-meta { display:grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 13px; margin-bottom: 16px; }
+.dr-meta dt { color: var(--muted); }
+.dr-meta dd { word-break: break-word; }
+.vorschlag-karte {
+  background:#fff; border:1px solid var(--linie); border-left: 4px solid var(--teal);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px;
+}
+.vorschlag-karte.review { border-left-color: var(--coral); }
+.vk-titel { font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 9px; }
+.vk-ziel { font-weight: 650; font-size: 14.5px; margin-bottom: 4px; }
+.vk-ziel .trenner { color: var(--muted-hell); margin: 0 6px; font-weight:400; }
+.vk-zeile { font-size: 13px; margin: 5px 0; color: var(--tinte); }
+.vk-zeile b { font-weight: 650; }
+.konfidenz-balken { height: 7px; border-radius: 4px; background: var(--leinen-tief); overflow:hidden; margin: 4px 0 2px; }
+.konfidenz-balken > div { height:100%; border-radius:4px; }
+.fehler-box { background: rgba(217,108,87,.1); border:1px solid rgba(217,108,87,.35); color: var(--coral-tief); border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 14px; }
+.dr-aktionen { display:flex; flex-wrap:wrap; gap: 9px; margin-bottom: 18px; }
+.btn {
+  padding: 8px 15px; border-radius: 8px; border: 1px solid var(--linie);
+  background: #fff; color: var(--tinte); font-weight: 600; font-size: 13.5px;
+}
+.btn:hover { background: var(--leinen-tief); }
+.btn.primaer { background: var(--teal); border-color: var(--teal); color: #fff; }
+.btn.primaer:hover { background: var(--teal-tief); }
+.btn.gefahr { color: var(--coral-tief); border-color: rgba(217,108,87,.5); }
+.btn.gefahr:hover { background: rgba(217,108,87,.1); }
+#vorschau { margin-top: 8px; }
+#vorschau iframe { width:100%; height: 460px; border:1px solid var(--linie); border-radius: var(--radius); background:#fff; }
+#vorschau img { max-width:100%; border:1px solid var(--linie); border-radius: var(--radius); }
+.textauszug { background:#fff; border:1px solid var(--linie); border-radius: var(--radius); padding: 12px 14px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; max-height: 180px; overflow-y:auto; }
+
+/* ── Modal ──────────────────────────────────────────────────────────────── */
+#modalHintergrund {
+  position: fixed; inset:0; background: rgba(43,48,54,.45);
+  display:none; align-items:center; justify-content:center; z-index: 60; padding: 20px;
+}
+#modalHintergrund.offen { display:flex; }
+#modalBox {
+  background: var(--leinen-hell); border-radius: 14px; box-shadow: 0 18px 60px rgba(0,0,0,.3);
+  width: min(460px, 100%); padding: 20px 22px;
+}
+#modalBox h3 { font-size: 16px; margin-bottom: 14px; }
+#modalBox label { display:block; font-size: 12.5px; color: var(--muted); font-weight:600; margin: 12px 0 4px; }
+#modalBox input[type=text], #modalBox select {
+  width:100%; padding: 8px 11px; border:1px solid var(--linie); border-radius: 8px; background:#fff; outline:none;
+}
+#modalBox input[type=text]:focus, #modalBox select:focus { border-color: var(--teal); }
+.modal-aktionen { display:flex; justify-content:flex-end; gap: 9px; margin-top: 18px; }
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--schiefer); color: var(--leinen);
+  padding: 10px 20px; border-radius: 24px; font-size: 13.5px; font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0,0,0,.3); opacity: 0; pointer-events: none;
+  transition: opacity .18s, transform .18s; z-index: 100; max-width: 86vw;
+}
+#toast.sichtbar { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 760px) {
+  #sidebar { width: 210px; min-width: 210px; }
+  #sucheInput { width: 150px; }
+  .doc-name .txt { max-width: 160px; }
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar">
+    <div class="sb-brand">🗄️ Drive <small>Quantus · Ablage</small></div>
+    <div class="sb-upload">
+      <button class="btn-upload" data-action="upload-klick">⬆️&nbsp; Dateien hochladen</button>
+      <input type="file" id="dateiInput" multiple hidden>
+    </div>
+    <div id="nav"></div>
+    <button class="btn-neuer-ordner" data-action="neuer-ordner">＋ Neuer Ordner</button>
+    <div class="sb-fuss"><span class="punkt" id="authPunkt"></span><span id="authText">Verbinde …</span></div>
+  </aside>
+
+  <main id="haupt">
+    <div id="kopf">
+      <div id="brotkrumen"></div>
+      <input type="search" id="sucheInput" placeholder="Suchen … (Name, Tags, Thema, Text)">
+    </div>
+    <div id="liste"></div>
+  </main>
+</div>
+
+<div id="drawer">
+  <div class="dr-kopf">
+    <h2 id="drTitel"></h2>
+    <button class="dr-schliessen" data-action="drawer-schliessen" title="Schliessen">✕</button>
+  </div>
+  <div class="dr-inhalt" id="drInhalt"></div>
+</div>
+
+<div id="modalHintergrund" data-action="modal-hintergrund">
+  <div id="modalBox"></div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Firebase compat-SDK v10.8.0 — identisch zur Hauptapp (index.html), plus Auth für anonyme Anmeldung -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+
+<script>
+(function () {
+"use strict";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KONFIGURATION — Werte identisch zu public/index.html (~Zeile 5168)
+// ═══════════════════════════════════════════════════════════════════════════
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC6xVo-wmXC4JjG7qMQnOExIJU-UDvBluE",
+  authDomain: "jupidu-36804.firebaseapp.com",
+  projectId: "jupidu-36804",
+  storageBucket: "jupidu-36804.firebasestorage.app",
+  messagingSenderId: "11390726952",
+  appId: "1:11390726952:web:aba2f101b6c5ca2bc5561d",
+  measurementId: "G-LT97CCT5DF"
+};
+// RTDB-Instanz explizit (europe-west1) — wie in index.html, kein databaseURL in der Config nötig.
+const RTDB_DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+
+const P_FOLDERS = "driveFolders";
+const P_DOCS    = "driveDocs";
+const P_INBOX   = "driveInbox";
+
+// Taxonomie — dient NUR zur Erst-Initialisierung des Ordnerbaums (falls leer).
+// Danach lebt der Baum frei erweiterbar in der RTDB.
+const TAXONOMIE = [
+  { name: "Organisationen",    unter: ["EBS","Jupidu","Operation Libero","Reformplattform","SP AR","SP Herisau","Synode","YES"] },
+  { name: "Projekte",          unter: ["Persönliche Projekte","Projekte in Organisationen","Monetarisierung"] },
+  { name: "Wissen & Recherche",unter: ["Recherchen laufend","Recherchen abgeschlossen","Factsheets","Artikel"], themen: ["Cybersicherheit CH","Sudan-Konflikt"] },
+  { name: "Bildung & Beruf",   unter: ["Schule","Writing","Versicherungen","Lernen EBMP/VWL"] },
+  { name: "Persönlich",        unter: ["Steuern","Lohnabrechnungen","Fotobücher","Private Dokumente"] },
+  { name: "Vorlagen",          unter: [] },
+  { name: "System/Meta",       unter: [] },
+  { name: "Eingang",           unter: [] }
+];
+
+const TEXT_ENDUNGEN = ["txt","md","csv","json","html","xml","vtt","srt"];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIREBASE-SETUP + ANONYME ANMELDUNG
+// ═══════════════════════════════════════════════════════════════════════════
+let db = null, storage = null, auth = null;
+try {
+  firebase.initializeApp(FIREBASE_CONFIG);
+  auth    = firebase.auth();
+  storage = firebase.storage();
+  db      = firebase.app().database(RTDB_DB_URL);
+} catch (e) {
+  console.error("Firebase Init fehlgeschlagen:", e);
+}
+
+const S = {
+  bereit: false,            // Auth abgeschlossen + Listener aktiv
+  ordner: {},               // driveFolders
+  docs: {},                 // driveDocs
+  inbox: {},                // driveInbox (für Duplikat-/Fehlerhinweis vor Klassifizierung)
+  ansicht: { art: "eingang", folderId: null },   // art: eingang | alle | papierkorb | ordner
+  suche: "",
+  offen: {},                // Baum-Aufklappzustand
+  drawerDocId: null,
+  vorschauOffen: false,
+  uploads: {}               // laufende Uploads {tempId: {name, prozent, phase}}
+};
+
+function boot() {
+  if (!auth) { toast("Firebase SDK nicht geladen — Adblocker prüfen"); return; }
+  auth.onAuthStateChanged(function (user) {
+    const punkt = document.getElementById("authPunkt");
+    const text  = document.getElementById("authText");
+    if (user) {
+      punkt.classList.add("online");
+      text.textContent = "Verbunden (anonym)";
+      if (!S.bereit) { S.bereit = true; listenerStarten(); taxonomieSeedFallsLeer(); }
+    } else {
+      punkt.classList.remove("online");
+      text.textContent = "Melde an …";
+      auth.signInAnonymously().catch(function (e) {
+        text.textContent = "Anmeldung fehlgeschlagen";
+        console.error("Anonyme Anmeldung fehlgeschlagen:", e);
+        toast("Anmeldung fehlgeschlagen — ist Anonymous Auth im Firebase-Projekt aktiviert?");
+      });
+    }
+  });
+}
+
+function listenerStarten() {
+  db.ref(P_FOLDERS).on("value", function (snap) { S.ordner = snap.val() || {}; render(); });
+  db.ref(P_DOCS).on("value",    function (snap) { S.docs   = snap.val() || {}; render(); });
+  db.ref(P_INBOX).on("value",   function (snap) { S.inbox  = snap.val() || {}; render(); });
+}
+
+// Ordnerbaum aus der Taxonomie anlegen — NUR wenn driveFolders komplett leer ist.
+async function taxonomieSeedFallsLeer() {
+  try {
+    const snap = await db.ref(P_FOLDERS).once("value");
+    if (snap.exists() && snap.val() && Object.keys(snap.val()).length) return;
+    const jetzt = new Date().toISOString();
+    const alle = {};
+    TAXONOMIE.forEach(function (b) {
+      const bid = db.ref(P_FOLDERS).push().key;
+      alle[bid] = { name: b.name, bereich: b.name, parentId: null, typ: "bereich", erstellt: jetzt };
+      (b.unter || []).forEach(function (u) {
+        const uid = db.ref(P_FOLDERS).push().key;
+        alle[uid] = { name: u, bereich: b.name, parentId: bid, typ: "unterordner", erstellt: jetzt };
+      });
+      (b.themen || []).forEach(function (t) {
+        const tid = db.ref(P_FOLDERS).push().key;
+        alle[tid] = { name: t, bereich: b.name, parentId: bid, typ: "thema", erstellt: jetzt };
+      });
+    });
+    await db.ref(P_FOLDERS).set(alle);
+    toast("Ordnerbaum aus Taxonomie initialisiert");
+  } catch (e) {
+    console.warn("Taxonomie-Seed übersprungen:", e && e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HILFSFUNKTIONEN
+// ═══════════════════════════════════════════════════════════════════════════
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("sichtbar");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { el.classList.remove("sichtbar"); }, 3500);
+}
+function fmtGroesse(b) {
+  b = Number(b) || 0;
+  if (b < 1024) return b + " B";
+  if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+  return (b / 1048576).toFixed(1) + " MB";
+}
+function fmtDatum(iso) {
+  if (!iso) return "–";
+  try { return new Date(iso).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric" }); }
+  catch (e) { return String(iso).slice(0, 10); }
+}
+function dateiIcon(mime, name) {
+  const n = String(name || "").toLowerCase();
+  if ((mime || "").startsWith("image/")) return "🖼️";
+  if ((mime || "") === "application/pdf" || n.endsWith(".pdf")) return "📕";
+  if (n.endsWith(".docx") || n.endsWith(".doc")) return "📘";
+  if (n.endsWith(".xlsx") || n.endsWith(".csv")) return "📗";
+  if (TEXT_ENDUNGEN.some(function (e) { return n.endsWith("." + e); })) return "📄";
+  return "📎";
+}
+function endung(name) { return (String(name || "").split(".").pop() || "").toLowerCase(); }
+function lc(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
+
+async function sha256Hex(arrayBuffer) {
+  const digest = await crypto.subtle.digest("SHA-256", arrayBuffer);
+  return Array.from(new Uint8Array(digest)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+}
+
+// ── Ordner-Helfer ──
+function kinder(parentId) {
+  return Object.keys(S.ordner)
+    .filter(function (id) { return (S.ordner[id].parentId || null) === (parentId || null); })
+    .sort(function (a, b) { return S.ordner[a].name.localeCompare(S.ordner[b].name, "de"); });
+}
+function ordnerPfad(id) {
+  const teile = []; let cur = id, schutz = 0;
+  while (cur && S.ordner[cur] && schutz++ < 20) { teile.unshift(S.ordner[cur].name); cur = S.ordner[cur].parentId; }
+  return teile;
+}
+function ordnerWurzel(id) {
+  let cur = id, schutz = 0;
+  while (cur && S.ordner[cur] && S.ordner[cur].parentId && schutz++ < 20) cur = S.ordner[cur].parentId;
+  return cur && S.ordner[cur] ? S.ordner[cur] : null;
+}
+function findeOrdner(name, parentId) {
+  const n = lc(name);
+  return kinder(parentId).find(function (id) { return lc(S.ordner[id].name) === n; }) || null;
+}
+async function findeOderErstelleOrdner(name, parentId, typ, bereichName) {
+  const vorhanden = findeOrdner(name, parentId);
+  if (vorhanden) return vorhanden;
+  const id = db.ref(P_FOLDERS).push().key;
+  const eintrag = { name: String(name).trim(), bereich: bereichName || String(name).trim(), parentId: parentId || null, typ: typ, erstellt: new Date().toISOString() };
+  await db.ref(P_FOLDERS + "/" + id).set(eintrag);
+  S.ordner[id] = eintrag; // lokal sofort verfügbar (Listener zieht gleich nach)
+  return id;
+}
+
+// Duplikat-Verdacht: clientseitiger Hash-Abgleich (Upload) ODER Rückmeldung aus Queue/Vorschlag
+function istDuplikat(docId, doc) {
+  if (doc && doc.vorschlag && doc.vorschlag.duplikat_verdacht === true) return true;
+  const q = S.inbox[docId];
+  return !!(q && q.duplikat_verdacht === true);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEXTEXTRAKTION — wiederverwendet aus index.html („ATTACHMENT TEXT EXTRACTION")
+// PDF: gevendortes pdf.js (UMD v3, disableWorker) · DOCX: mammoth.js · Text: TextDecoder
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadPDFLibrary() {
+  if (window.pdfjsLib && window.pdfjsLib.getDocument) return true;
+  // Reihenfolge wie in index.html: gevendorte UMD-Builds zuerst, dann CDN-Fallback.
+  const quellen = [
+    { js: "/vendor/pdf/pdf.min.js",   worker: "/vendor/pdf/pdf.worker.min.js" },
+    { js: "/vendor/pdfjs/pdf.min.js", worker: "/vendor/pdfjs/pdf.worker.min.js" },
+    { js: "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js",            worker: "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js" },
+    { js: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js", worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js" }
+  ];
+  for (const q of quellen) {
+    try {
+      await new Promise(function (resolve, reject) {
+        const s = document.createElement("script");
+        s.src = q.js;
+        if (/^https?:/.test(q.js)) s.crossOrigin = "anonymous";
+        s.onload = resolve; s.onerror = function () { reject(new Error("script onerror")); };
+        document.head.appendChild(s);
+      });
+      if (window.pdfjsLib && window.pdfjsLib.getDocument) {
+        try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = q.worker; } catch (e) {}
+        return true;
+      }
+    } catch (e) { /* nächste Quelle */ }
+  }
+  return false;
+}
+
+async function loadMammothLibrary() {
+  if (window.mammoth) return true;
+  const urls = [
+    "https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js",
+    "https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"
+  ];
+  for (const url of urls) {
+    try {
+      await new Promise(function (resolve, reject) {
+        const s = document.createElement("script");
+        s.src = url; s.crossOrigin = "anonymous";
+        s.onload = resolve; s.onerror = reject;
+        setTimeout(function () { reject(new Error("Timeout")); }, 15000);
+        document.head.appendChild(s);
+      });
+      if (window.mammoth) return true;
+    } catch (e) { /* nächste Quelle */ }
+  }
+  return false;
+}
+
+async function extrahiereText(file, arrayBuffer) {
+  const name = lc(file.name);
+  const typ = file.type || "";
+  try {
+    // ─── PDF ───
+    if (name.endsWith(".pdf") || typ === "application/pdf") {
+      const ok = await loadPDFLibrary();
+      if (!ok || !window.pdfjsLib) throw new Error("PDF.js nicht verfügbar");
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)), disableWorker: true }).promise;
+      const seiten = [];
+      const maxSeiten = Math.min(pdf.numPages, 80); // Limit für Performance (wie index.html)
+      for (let i = 1; i <= maxSeiten; i++) {
+        const page = await pdf.getPage(i);
+        const tc = await page.getTextContent();
+        seiten.push(tc.items.map(function (it) { return it.str; }).join(" "));
+      }
+      let text = seiten.join("\n\n");
+      if (pdf.numPages > maxSeiten) text += "\n\n[... " + (pdf.numPages - maxSeiten) + " weitere Seiten nicht extrahiert ...]";
+      return text.replace(/[ \t]+/g, " ").trim();
+    }
+    // ─── Word .docx (mammoth) ───
+    if (name.endsWith(".docx") || typ === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      const ok = await loadMammothLibrary();
+      if (!ok || !window.mammoth) throw new Error("mammoth.js nicht verfügbar (Adblocker?)");
+      const res = await window.mammoth.extractRawText({ arrayBuffer: arrayBuffer.slice(0) });
+      return String((res && res.value) || "").trim();
+    }
+    // ─── Reine Textformate ───
+    if (TEXT_ENDUNGEN.indexOf(endung(file.name)) >= 0 || typ.startsWith("text/")) {
+      let text = new TextDecoder("utf-8").decode(arrayBuffer);
+      if (name.endsWith(".html") || name.endsWith(".xml")) {
+        text = text.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ");
+      }
+      return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    }
+  } catch (e) {
+    console.warn("[Drive] Textextraktion fehlgeschlagen:", file.name, e && e.message);
+  }
+  return ""; // Bilder & unbekannte Formate: kein Text
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UPLOAD-PIPELINE
+// Storage-Upload → Text extrahieren → SHA-256 + Duplikat-Check →
+// driveDocs (status "eingang") → driveInbox (status "pending", für n8n)
+// ═══════════════════════════════════════════════════════════════════════════
+async function dateienHochladen(fileList) {
+  if (!S.bereit) { toast("Noch nicht verbunden — bitte kurz warten"); return; }
+  const dateien = Array.from(fileList || []);
+  for (const f of dateien) dateiHochladen(f); // parallel, je eigene Fortschrittskarte
+}
+
+async function dateiHochladen(file) {
+  const tempId = "u_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+  S.uploads[tempId] = { name: file.name, prozent: 0, phase: "Lädt hoch …" };
+  renderListe();
+  try {
+    const docId = db.ref(P_DOCS).push().key;
+    const storagePath = "drive/" + docId + "/" + file.name;
+
+    // a) Storage-Upload → downloadUrl
+    const ref = storage.ref(storagePath);
+    const task = ref.put(file, {
+      contentType: file.type || "application/octet-stream",
+      customMetadata: { uploadDate: new Date().toISOString() }
+    });
+    const downloadUrl = await new Promise(function (resolve, reject) {
+      task.on("state_changed",
+        function (snap) { S.uploads[tempId].prozent = Math.round((snap.bytesTransferred / snap.totalBytes) * 100); renderListe(); },
+        reject,
+        async function () { try { resolve(await task.snapshot.ref.getDownloadURL()); } catch (e) { reject(e); } }
+      );
+    });
+
+    // b) Text extrahieren (clientseitig, wie in der Hauptapp)
+    S.uploads[tempId].phase = "Extrahiere Text …"; S.uploads[tempId].prozent = 100; renderListe();
+    const arrayBuffer = await file.arrayBuffer();
+    const text = await extrahiereText(file, arrayBuffer);
+
+    // c) SHA-256 + Duplikat-Verdacht gegen bestehende driveDocs-Hashes
+    const hash = await sha256Hex(arrayBuffer);
+    const duplikat = Object.keys(S.docs).some(function (id) { return S.docs[id] && S.docs[id].hash === hash; });
+
+    // d) driveDocs — Status "eingang"
+    const jetzt = new Date().toISOString();
+    await db.ref(P_DOCS + "/" + docId).set({
+      dateiname: file.name,
+      titel_final: "",
+      storagePath: storagePath,
+      downloadUrl: downloadUrl,
+      mimeType: file.type || "application/octet-stream",
+      groesse: file.size,
+      hash: hash,
+      status: "eingang",
+      folderId: null,
+      vorschlag: null,
+      textauszug: text.slice(0, 2000),
+      erstellt: jetzt,
+      aktualisiert: jetzt
+    });
+
+    // e) driveInbox — Queue-Eintrag für n8n (Muster entityInbox: Status-Feld, kein Löschen)
+    await db.ref(P_INBOX + "/" + docId).set({
+      docId: docId,
+      dateiname: file.name,
+      mimeType: file.type || "application/octet-stream",
+      text: text.slice(0, 6000),
+      hash: hash,
+      duplikat_verdacht: duplikat,
+      status: "pending",
+      erstellt: jetzt
+    });
+
+    delete S.uploads[tempId];
+    toast("„" + file.name + "“ hochgeladen — Klassifizierung angestossen");
+    render();
+  } catch (e) {
+    console.error("[Drive] Upload fehlgeschlagen:", e);
+    delete S.uploads[tempId];
+    toast("Upload fehlgeschlagen: " + (e && e.message ? e.message : "Unbekannter Fehler"));
+    render();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VORSCHLAG ÜBERNEHMEN / ÄNDERN / PAPIERKORB
+// ═══════════════════════════════════════════════════════════════════════════
+async function vorschlagUebernehmen(docId) {
+  const doc = S.docs[docId];
+  if (!doc || !doc.vorschlag) { toast("Kein Vorschlag vorhanden"); return; }
+  const v = doc.vorschlag;
+  try {
+    // Zielordner: bereich → unterordner → thema (fehlende Ebenen werden angelegt)
+    const bereichName = v.bereich && findeOrdner(v.bereich, null) ? v.bereich : "Eingang";
+    const bereichId = await findeOderErstelleOrdner(bereichName, null, "bereich", bereichName);
+    let zielId = bereichId;
+    if (v.unterordner) zielId = await findeOderErstelleOrdner(v.unterordner, bereichId, "unterordner", bereichName);
+    if (v.thema)       zielId = await findeOderErstelleOrdner(v.thema, zielId, "thema", bereichName);
+
+    await db.ref(P_DOCS + "/" + docId).update({
+      folderId: zielId,
+      titel_final: v.titel_vorschlag || doc.dateiname,
+      status: "abgelegt",
+      aktualisiert: new Date().toISOString()
+    });
+    toast("Abgelegt unter: " + ordnerPfad(zielId).join(" › "));
+  } catch (e) {
+    toast("Übernehmen fehlgeschlagen: " + (e && e.message));
+  }
+}
+
+function zielAendernDialog(docId) {
+  const doc = S.docs[docId];
+  if (!doc) return;
+  // Alle Ordner als eingerückte Auswahlliste
+  let optionen = "";
+  (function tiefe(parentId, einzug) {
+    kinder(parentId).forEach(function (id) {
+      optionen += '<option value="' + esc(id) + '">' + "&nbsp;".repeat(einzug * 3) + esc(S.ordner[id].name) + "</option>";
+      tiefe(id, einzug + 1);
+    });
+  })(null, 0);
+  const titelWert = doc.titel_final || (doc.vorschlag && doc.vorschlag.titel_vorschlag) || doc.dateiname;
+  modalOeffnen(
+    "<h3>Ablageziel ändern</h3>" +
+    '<label>Zielordner</label><select id="mZiel">' + optionen + "</select>" +
+    '<label>Titel / Dateiname</label><input type="text" id="mTitel" value="' + esc(titelWert) + '">' +
+    '<div class="modal-aktionen">' +
+    '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+    '<button class="btn primaer" data-action="modal-ok">Ablegen</button></div>',
+    async function () {
+      const zielId = document.getElementById("mZiel").value;
+      const titel  = document.getElementById("mTitel").value.trim() || doc.dateiname;
+      if (!zielId) return;
+      await db.ref(P_DOCS + "/" + docId).update({
+        folderId: zielId, titel_final: titel, status: "abgelegt",
+        aktualisiert: new Date().toISOString()
+      });
+      toast("Abgelegt unter: " + ordnerPfad(zielId).join(" › "));
+    }
+  );
+  if (doc.folderId && S.ordner[doc.folderId]) document.getElementById("mZiel").value = doc.folderId;
+}
+
+function neuerOrdnerDialog() {
+  const aktuellerOrdner = S.ansicht.art === "ordner" ? S.ansicht.folderId : null;
+  const ort = aktuellerOrdner ? ordnerPfad(aktuellerOrdner).join(" › ") : "Wurzel (neuer Bereich)";
+  modalOeffnen(
+    "<h3>Neuer Ordner</h3>" +
+    '<div style="font-size:12.5px;color:var(--muted)">Wird angelegt in: <b>' + esc(ort) + "</b></div>" +
+    '<label>Name</label><input type="text" id="mName" placeholder="z. B. Sudan-Konflikt">' +
+    '<div class="modal-aktionen">' +
+    '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+    '<button class="btn primaer" data-action="modal-ok">Anlegen</button></div>',
+    async function () {
+      const name = document.getElementById("mName").value.trim();
+      if (!name) return;
+      let typ = "bereich", bereichName = name;
+      if (aktuellerOrdner) {
+        const eltern = S.ordner[aktuellerOrdner];
+        typ = eltern.typ === "bereich" ? "unterordner" : "thema";
+        bereichName = eltern.bereich || ordnerPfad(aktuellerOrdner)[0];
+      }
+      const id = await findeOderErstelleOrdner(name, aktuellerOrdner, typ, bereichName);
+      S.offen[aktuellerOrdner || ""] = true;
+      toast("Ordner „" + name + "“ angelegt");
+      S.ansicht = { art: "ordner", folderId: id };
+      render();
+    }
+  );
+  document.getElementById("mName").focus();
+}
+
+async function inPapierkorb(docId) {
+  await db.ref(P_DOCS + "/" + docId).update({ status: "papierkorb", aktualisiert: new Date().toISOString() });
+  toast("In den Papierkorb verschoben");
+}
+async function wiederherstellen(docId) {
+  const doc = S.docs[docId];
+  const status = doc && doc.folderId ? "abgelegt" : (doc && doc.vorschlag ? "klassifiziert" : "eingang");
+  await db.ref(P_DOCS + "/" + docId).update({ status: status, aktualisiert: new Date().toISOString() });
+  toast("Wiederhergestellt");
+}
+function endgueltigLoeschenDialog(docId) {
+  const doc = S.docs[docId];
+  if (!doc) return;
+  modalOeffnen(
+    "<h3>Endgültig löschen?</h3>" +
+    '<div style="font-size:13.5px">„' + esc(doc.titel_final || doc.dateiname) + "“ wird <b>unwiderruflich</b> gelöscht " +
+    "(Datei im Storage + Datenbank-Eintrag). Dieser Schritt kann nicht rückgängig gemacht werden.</div>" +
+    '<div class="modal-aktionen">' +
+    '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+    '<button class="btn gefahr" data-action="modal-ok">Endgültig löschen</button></div>',
+    async function () {
+      try { if (doc.storagePath) await storage.ref(doc.storagePath).delete(); }
+      catch (e) { console.warn("Storage-Löschen:", e && e.message); }
+      await db.ref(P_DOCS + "/" + docId).remove();
+      await db.ref(P_INBOX + "/" + docId).remove();
+      if (S.drawerDocId === docId) drawerSchliessen();
+      toast("Endgültig gelöscht");
+    }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════════════════════════════════════
+const STATUS_LABEL = {
+  eingang: "Eingang",
+  wird_klassifiziert: "Wird klassifiziert",
+  klassifiziert: "Klassifiziert",
+  review_noetig: "Review nötig",
+  abgelegt: "Abgelegt",
+  papierkorb: "Papierkorb"
+};
+function badge(status) {
+  const s = STATUS_LABEL[status] ? status : "eingang";
+  return '<span class="badge b-' + s + '"><span class="pkt"></span>' + STATUS_LABEL[s] + "</span>";
+}
+
+function docsGefiltert() {
+  const a = S.ansicht;
+  const suche = lc(S.suche);
+  return Object.keys(S.docs).filter(function (id) {
+    const d = S.docs[id]; if (!d) return false;
+    if (a.art === "papierkorb") { if (d.status !== "papierkorb") return false; }
+    else if (d.status === "papierkorb") return false;
+    if (a.art === "eingang" && d.folderId) return false;
+    if (a.art === "ordner") {
+      // Ordner-Ansicht zeigt Dokumente des Ordners UND aller Unterordner
+      let cur = d.folderId, treffer = false, schutz = 0;
+      while (cur && schutz++ < 20) { if (cur === a.folderId) { treffer = true; break; } cur = S.ordner[cur] ? S.ordner[cur].parentId : null; }
+      if (!treffer) return false;
+    }
+    if (suche) {
+      const v = d.vorschlag || {};
+      const heuhaufen = [
+        d.dateiname, d.titel_final, d.textauszug,
+        v.bereich, v.unterordner, v.thema, v.titel_vorschlag,
+        (v.tags || []).join(" "),
+        ordnerPfad(d.folderId).join(" ")
+      ].map(lc).join(" ");
+      if (heuhaufen.indexOf(suche) < 0) return false;
+    }
+    return true;
+  }).sort(function (x, y) { return String(S.docs[y].erstellt || "").localeCompare(String(S.docs[x].erstellt || "")); });
+}
+
+function render() { renderNav(); renderBrotkrumen(); renderListe(); renderDrawer(); }
+
+function renderNav() {
+  const eingangZahl = Object.keys(S.docs).filter(function (id) {
+    const d = S.docs[id]; return d && !d.folderId && d.status !== "papierkorb";
+  }).length;
+  let html = "";
+  html += navItem("eingang", "📥", "Eingang / Neu", eingangZahl);
+  html += navItem("alle", "🗂️", "Alle Dokumente", 0);
+  html += '<div class="nav-sep">Ablage</div>';
+  html += baumHtml(null, 0);
+  html += '<div class="nav-sep"></div>';
+  html += navItem("papierkorb", "🗑️", "Papierkorb", 0);
+  document.getElementById("nav").innerHTML = html;
+}
+function navItem(art, icon, label, zahl) {
+  const aktiv = S.ansicht.art === art ? " aktiv" : "";
+  return '<div class="nav-item' + aktiv + '" data-action="ansicht" data-art="' + art + '">' +
+    "<span>" + icon + "</span><span>" + esc(label) + "</span>" +
+    (zahl ? '<span class="zahl">' + zahl + "</span>" : "") + "</div>";
+}
+function baumHtml(parentId, tiefe) {
+  let html = "";
+  kinder(parentId).forEach(function (id) {
+    const o = S.ordner[id];
+    const kids = kinder(id);
+    const offen = !!S.offen[id];
+    const aktiv = S.ansicht.art === "ordner" && S.ansicht.folderId === id ? " aktiv" : "";
+    html += '<div class="baum-zeile typ-' + esc(o.typ) + aktiv + '" style="--tiefe:' + tiefe + '" data-action="ordner-waehlen" data-id="' + esc(id) + '">' +
+      '<span class="baum-pfeil' + (offen ? " offen" : "") + (kids.length ? "" : " leer") + '" data-action="ordner-klappen" data-id="' + esc(id) + '">▶</span>' +
+      '<span class="baum-name">' + (o.typ === "bereich" ? "" : o.typ === "thema" ? "· " : "") + esc(o.name) + "</span></div>";
+    if (offen && kids.length) html += baumHtml(id, tiefe + 1);
+  });
+  return html;
+}
+
+function renderBrotkrumen() {
+  const a = S.ansicht;
+  let teile;
+  if (a.art === "eingang") teile = ["Eingang / Neu"];
+  else if (a.art === "alle") teile = ["Alle Dokumente"];
+  else if (a.art === "papierkorb") teile = ["Papierkorb"];
+  else teile = ["Ablage"].concat(ordnerPfad(a.folderId));
+  document.getElementById("brotkrumen").innerHTML =
+    teile.map(function (t) { return '<span class="krume">' + esc(t) + "</span>"; }).join('<span class="trenner">›</span>');
+}
+
+function renderListe() {
+  let html = "";
+  // Laufende Uploads
+  Object.keys(S.uploads).forEach(function (id) {
+    const u = S.uploads[id];
+    html += '<div class="upload-karte"><div class="uk-kopf"><span>⬆️ ' + esc(u.name) + '</span><span class="uk-phase">' + esc(u.phase) + " " + u.prozent + '%</span></div><div class="uk-balken"><div style="width:' + u.prozent + '%"></div></div></div>';
+  });
+
+  const ids = docsGefiltert();
+  if (!ids.length && !Object.keys(S.uploads).length) {
+    const meldung = S.suche ? "Keine Treffer für „" + esc(S.suche) + "“"
+      : S.ansicht.art === "papierkorb" ? "Der Papierkorb ist leer."
+      : S.ansicht.art === "eingang" ? "Keine neuen Dokumente. Lade Dateien hoch — sie werden automatisch klassifiziert."
+      : "Dieser Ordner ist leer.";
+    html += '<div class="leer-zustand"><div class="gross">🗄️</div><p>' + meldung + "</p></div>";
+  } else if (ids.length) {
+    html += '<table class="docs"><thead><tr><th>Name</th><th>Bereich</th><th>Themen-Tags</th><th>Status</th><th>Datum</th><th>Grösse</th></tr></thead><tbody>';
+    ids.forEach(function (id) {
+      const d = S.docs[id];
+      const v = d.vorschlag || {};
+      const wurzel = d.folderId ? ordnerWurzel(d.folderId) : null;
+      const bereich = wurzel ? wurzel.name : (v.bereich || "–");
+      const tags = (v.tags || []).slice(0, 4).map(function (t) { return '<span class="tag">' + esc(t) + "</span>"; }).join("");
+      const dup = istDuplikat(id, d) ? ' <span class="dup-hinweis" title="Möglicherweise bereits vorhanden (Hash/KI)">⚠︎ Duplikat?</span>' : "";
+      html += '<tr class="doc-zeile" data-action="doc-oeffnen" data-id="' + esc(id) + '">' +
+        '<td><div class="doc-name"><span class="icon">' + dateiIcon(d.mimeType, d.dateiname) + '</span><span class="txt">' + esc(d.titel_final || d.dateiname) +
+        (d.titel_final && d.titel_final !== d.dateiname ? '<span class="orig">' + esc(d.dateiname) + "</span>" : "") + "</span>" + dup + "</div></td>" +
+        '<td class="zelle-muted">' + esc(bereich) + "</td>" +
+        "<td>" + (tags || '<span class="zelle-muted">–</span>') + "</td>" +
+        "<td>" + badge(d.status) + "</td>" +
+        '<td class="zelle-muted">' + fmtDatum(d.erstellt) + "</td>" +
+        '<td class="zelle-muted">' + fmtGroesse(d.groesse) + "</td></tr>";
+    });
+    html += "</tbody></table>";
+  }
+  document.getElementById("liste").innerHTML = html;
+}
+
+function renderDrawer() {
+  const drawer = document.getElementById("drawer");
+  const docId = S.drawerDocId;
+  const d = docId ? S.docs[docId] : null;
+  if (!d) { drawer.classList.remove("offen"); return; }
+  drawer.classList.add("offen");
+  document.getElementById("drTitel").textContent = d.titel_final || d.dateiname;
+
+  const v = d.vorschlag;
+  const q = S.inbox[docId];
+  let html = "";
+
+  // Metadaten
+  html += '<dl class="dr-meta">' +
+    "<dt>Status</dt><dd>" + badge(d.status) + "</dd>" +
+    "<dt>Originalname</dt><dd>" + esc(d.dateiname) + "</dd>" +
+    "<dt>Abgelegt in</dt><dd>" + (d.folderId ? esc(ordnerPfad(d.folderId).join(" › ")) : '<span class="zelle-muted">— noch nicht abgelegt —</span>') + "</dd>" +
+    "<dt>Grösse</dt><dd>" + fmtGroesse(d.groesse) + " · " + esc(d.mimeType || "?") + "</dd>" +
+    "<dt>Hochgeladen</dt><dd>" + fmtDatum(d.erstellt) + "</dd>" +
+    "<dt>SHA-256</dt><dd style=\"font-family:monospace;font-size:11px\">" + esc(String(d.hash || "").slice(0, 24)) + "…</dd>" +
+    "</dl>";
+
+  if (istDuplikat(docId, d)) {
+    html += '<div class="fehler-box">⚠︎ <b>Duplikat-Verdacht:</b> Eine Datei mit identischem Inhalt (Hash) existiert bereits oder die KI vermutet eine Kopie.</div>';
+  }
+  if (d.fehler) {
+    html += '<div class="fehler-box"><b>Fehler bei der Klassifizierung:</b> ' + esc(d.fehler) + "</div>";
+  } else if (q && q.status === "error") {
+    html += '<div class="fehler-box"><b>Klassifizierung fehlgeschlagen</b>' + (q.fehler ? ": " + esc(q.fehler) : "") + "</div>";
+  }
+
+  // KI-Vorschlag (klassifiziert / review_noetig)
+  if (v && (d.status === "klassifiziert" || d.status === "review_noetig" || d.status === "abgelegt")) {
+    const conf = Math.max(0, Math.min(1, Number(v.confidence) || 0));
+    const confFarbe = conf >= 0.6 ? "var(--gruen)" : "var(--coral)";
+    html += '<div class="vorschlag-karte' + (d.status === "review_noetig" ? " review" : "") + '">' +
+      '<div class="vk-titel">🤖 KI-Ablagevorschlag</div>' +
+      '<div class="vk-ziel">' + esc(v.bereich || "?") +
+      (v.unterordner ? '<span class="trenner">›</span>' + esc(v.unterordner) : "") +
+      (v.thema ? '<span class="trenner">›</span>' + esc(v.thema) : "") + "</div>" +
+      (v.titel_vorschlag ? '<div class="vk-zeile"><b>Titel:</b> ' + esc(v.titel_vorschlag) + "</div>" : "") +
+      ((v.tags || []).length ? '<div class="vk-zeile">' + v.tags.map(function (t) { return '<span class="tag">' + esc(t) + "</span>"; }).join("") + "</div>" : "") +
+      '<div class="vk-zeile"><b>Confidence:</b> ' + Math.round(conf * 100) + "%" +
+      '<div class="konfidenz-balken"><div style="width:' + Math.round(conf * 100) + "%;background:" + confFarbe + '"></div></div></div>' +
+      (v.begruendung ? '<div class="vk-zeile" style="color:var(--muted)">' + esc(v.begruendung) + "</div>" : "") +
+      "</div>";
+  }
+
+  // Aktionen
+  html += '<div class="dr-aktionen">';
+  if (d.status === "papierkorb") {
+    html += '<button class="btn primaer" data-action="wiederherstellen" data-id="' + esc(docId) + '">↩︎ Wiederherstellen</button>';
+    html += '<button class="btn gefahr" data-action="endgueltig-loeschen" data-id="' + esc(docId) + '">Endgültig löschen …</button>';
+  } else {
+    if (v && d.status !== "abgelegt") {
+      html += '<button class="btn primaer" data-action="uebernehmen" data-id="' + esc(docId) + '">✓ Übernehmen</button>';
+    }
+    html += '<button class="btn" data-action="aendern" data-id="' + esc(docId) + '">' + (d.status === "abgelegt" ? "Verschieben / Umbenennen …" : "Ändern …") + "</button>";
+    html += '<button class="btn" data-action="vorschau" data-id="' + esc(docId) + '">' + (S.vorschauOffen ? "Vorschau schliessen" : "👁 Vorschau") + "</button>";
+    html += '<a class="btn" href="' + esc(d.downloadUrl || "#") + '" target="_blank" rel="noopener" style="text-decoration:none">⬇ Herunterladen</a>';
+    html += '<button class="btn gefahr" data-action="papierkorb" data-id="' + esc(docId) + '">🗑 Papierkorb</button>';
+  }
+  html += "</div>";
+
+  // Vorschau (PDF/Bild inline, sonst nur Download-Link oben)
+  if (S.vorschauOffen && d.status !== "papierkorb") {
+    const istPdf = (d.mimeType === "application/pdf") || endung(d.dateiname) === "pdf";
+    const istBild = String(d.mimeType || "").startsWith("image/");
+    if (istPdf)      html += '<div id="vorschau"><iframe src="' + esc(d.downloadUrl) + '" title="PDF-Vorschau"></iframe></div>';
+    else if (istBild) html += '<div id="vorschau"><img src="' + esc(d.downloadUrl) + '" alt="Bild-Vorschau"></div>';
+    else html += '<div id="vorschau"><div class="zelle-muted">Für diesen Dateityp gibt es keine Inline-Vorschau — bitte „Herunterladen" nutzen.</div></div>';
+  }
+
+  if (d.textauszug) {
+    html += '<div class="vk-titel" style="margin-top:18px">Textauszug</div><div class="textauszug">' + esc(d.textauszug) + "</div>";
+  }
+
+  document.getElementById("drInhalt").innerHTML = html;
+}
+
+function drawerSchliessen() { S.drawerDocId = null; S.vorschauOffen = false; renderDrawer(); }
+
+// ── Modal-Helfer ──
+let _modalOk = null;
+function modalOeffnen(html, okCallback) {
+  _modalOk = okCallback || null;
+  document.getElementById("modalBox").innerHTML = html;
+  document.getElementById("modalHintergrund").classList.add("offen");
+}
+function modalSchliessen() {
+  _modalOk = null;
+  document.getElementById("modalHintergrund").classList.remove("offen");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVENT-DELEGATION (data-action)
+// ═══════════════════════════════════════════════════════════════════════════
+document.addEventListener("click", function (e) {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const aktion = el.getAttribute("data-action");
+  const id = el.getAttribute("data-id");
+
+  switch (aktion) {
+    case "upload-klick":      document.getElementById("dateiInput").click(); break;
+    case "ansicht":           S.ansicht = { art: el.getAttribute("data-art"), folderId: null }; render(); break;
+    case "ordner-klappen":    e.stopPropagation(); S.offen[id] = !S.offen[id]; renderNav(); break;
+    case "ordner-waehlen":
+      if (e.target.closest('[data-action="ordner-klappen"]')) break;
+      S.ansicht = { art: "ordner", folderId: id }; S.offen[id] = true; render(); break;
+    case "doc-oeffnen":       S.drawerDocId = id; S.vorschauOffen = false; renderDrawer(); break;
+    case "drawer-schliessen": drawerSchliessen(); break;
+    case "neuer-ordner":      neuerOrdnerDialog(); break;
+    case "uebernehmen":       vorschlagUebernehmen(id); break;
+    case "aendern":           zielAendernDialog(id); break;
+    case "vorschau":          S.vorschauOffen = !S.vorschauOffen; renderDrawer(); break;
+    case "papierkorb":        inPapierkorb(id); break;
+    case "wiederherstellen":  wiederherstellen(id); break;
+    case "endgueltig-loeschen": endgueltigLoeschenDialog(id); break;
+    case "modal-schliessen":  modalSchliessen(); break;
+    case "modal-hintergrund": if (e.target === el) modalSchliessen(); break;
+    case "modal-ok":
+      (function () {
+        const cb = _modalOk; modalSchliessen();
+        if (cb) Promise.resolve(cb()).catch(function (err) { toast("Fehler: " + (err && err.message)); });
+      })();
+      break;
+  }
+});
+
+document.getElementById("dateiInput").addEventListener("change", function (e) {
+  dateienHochladen(e.target.files);
+  e.target.value = "";
+});
+document.getElementById("sucheInput").addEventListener("input", function (e) {
+  S.suche = e.target.value; renderListe();
+});
+
+// Drag & Drop auf den Hauptbereich
+(function () {
+  const haupt = document.getElementById("haupt");
+  let zaehler = 0;
+  haupt.addEventListener("dragenter", function (e) { e.preventDefault(); zaehler++; haupt.classList.add("drop-aktiv"); });
+  haupt.addEventListener("dragover",  function (e) { e.preventDefault(); });
+  haupt.addEventListener("dragleave", function ()  { if (--zaehler <= 0) { zaehler = 0; haupt.classList.remove("drop-aktiv"); } });
+  haupt.addEventListener("drop", function (e) {
+    e.preventDefault(); zaehler = 0; haupt.classList.remove("drop-aktiv");
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) dateienHochladen(e.dataTransfer.files);
+  });
+})();
+
+render();
+boot();
+})();
+</script>
+</body>
+</html>
