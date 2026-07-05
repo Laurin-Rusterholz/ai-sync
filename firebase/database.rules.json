@@ -13,6 +13,13 @@
                   ".write": true,
                   ".indexOn": ["status"]
           },
+          "nobraine": {
+                  ".read": "auth != null",
+                  ".write": "auth != null",
+                  "recipes": {
+                          ".indexOn": ["kategorie", "lastUsed"]
+                  }
+          },
           "$andere": {
                   ".read": true,
                   ".write": true

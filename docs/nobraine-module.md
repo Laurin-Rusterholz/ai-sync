@@ -12,13 +12,13 @@ RTDB-Pfad-Root **`/nobraine/`**.
 Konventionen exakt wie `public/drive.html`: IIFE-Scope (kein globaler
 Namespace), Event-Delegation über `data-action`-Attribute, `toast()` für
 sämtliches Feedback, Design-System „Schiefer/Leinen", Firebase compat v10.8.0,
-Auth-Stub (kein Login, wie `drive.html`), Sprache Hochdeutsch mit Schweizer
-Schreibweise (ss statt ß), responsive & mobile-first.
+echte Firebase-Anmeldung (Custom Token via n8n, Fallback anonym), Sprache
+Hochdeutsch mit Schweizer Schreibweise (ss statt ß), responsive & mobile-first.
 
 - Firebase-Projekt: `jupidu-36804`
 - RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
 - SDK: Firebase **compat v10.8.0** (`app`, `auth`, `database`)
-- Auth: **kein Login** — Auth-Stub wie `drive.html` (lokaler User, kein `signInAnonymously`); RTDB-Pfade offen (kein Auth-Gate, via `$andere`)
+- Auth: **echte Anmeldung** — primär Firebase **Custom Token** von n8n (`signInWithCustomToken`), Fallback `signInAnonymously`. Listener/Reads/Writes starten erst nach `onAuthStateChanged` mit echtem User. `/nobraine` ist per `auth != null` gegated.
 - Navigation: registriert in `public/index.html` unter `getAllApps()`
   (`key: "nobraine"`, Icon 🍽️, Label „No-Braine") sowie im Routing-`switch`
   von `renderMain()` (`case "nobraine": window.location.href = "nobraine.html"`).
@@ -98,22 +98,60 @@ Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
 Schlägt der `POST` fehl (z. B. weil `WEBHOOK_URL` noch der Platzhalter ist),
 setzt das Frontend `generation.status = "error"` mit erklärender `message` und
-zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend meldet sich anonym
-an; die RTDB-Pfade sind offen (kein Auth-Gate), n8n schreibt per Service-Account.
+zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend ist echt eingeloggt
+(Custom Token via n8n, `auth != null` erfüllt — siehe Auth-Abschnitt); n8n selbst
+schreibt per Service-Account (umgeht die Regeln).
 
 ## Firebase-Security-Rules
 
-Der `nobraine`-Teilbaum benötigt **keinen eigenen Regel-Block**: Er wird vom
-bestehenden `$andere`-Wildcard in `firebase/database.rules.json` abgedeckt und
-ist damit — wie der übrige Bestand des Repos — offen les-/schreibbar (kein
-Auth-Gate). Das entspricht der aktuellen RTDB-Konvention (`main` hat auch die
-Drive-Pfade wieder offen gestellt, siehe `9587a73`).
+Der gesamte `nobraine`-Teilbaum ist mit **`auth != null`** gegated (Block in
+`firebase/database.rules.json`) — die RTDB enthält sensible Daten und bleibt
+geschützt. Der Block ist rein additiv: Drive-Pfade und der `$andere`-Wildcard
+bleiben unverändert wie von `main` gesetzt; nur der explizite `nobraine`-Key
+verlangt Auth. `nobraine/recipes` trägt `.indexOn: ["kategorie","lastUsed"]`.
 
-**Auth:** Kein echter Login. Wie `public/drive.html` (Commit `825e705`) nutzt das
-Frontend einen **Auth-Stub** (`onAuthStateChanged` liefert sofort einen lokalen
-User `{ uid: "lokal" }`, `signInAnonymously` ist ein No-op). Die App bootet damit
-ohne Firebase-Anmeldung; „Anonym" muss im Firebase-Projekt **nicht** aktiviert
-sein. Zusammen mit den offenen Regeln funktioniert Lesen/Schreiben direkt.
+> Live-Rules bewusst **nicht** öffnen. Weil die Regeln Auth verlangen, muss die
+> App wirklich eingeloggt sein (siehe Auth), sonst scheitern Schreibzugriffe in
+> Produktion mit `permission_denied`.
+
+## Auth: Custom Token via n8n (kein anonymer Login nötig)
+
+Anonyme Anmeldung lässt sich im Projekt nicht aktivieren. Stattdessen meldet sich
+der Browser mit einem **Firebase Custom Token** an, das **n8n** mit seinen
+vorhandenen Service-Account-/OAuth-Credentials ausstellt. So ist die App echt
+eingeloggt (`auth != null`), ohne dass ein Sign-in-Provider in der Firebase-
+Konsole umgeschaltet werden muss (Custom Tokens funktionieren über den
+Service-Account, nicht über die Provider-Liste).
+
+**Ablauf im Frontend (`boot()` → `anmelden()`):**
+
+1. `POST` an `TOKEN_WEBHOOK_URL` (Konstante in `nobraine.html`, Platzhalter
+   ersetzen) → erwartet `{ "token": "<firebase custom token>" }`.
+2. `auth.signInWithCustomToken(token)`.
+3. Schlägt das fehl (oder ist `TOKEN_WEBHOOK_URL` noch der Platzhalter), wird als
+   **Fallback** `signInAnonymously()` versucht.
+4. Erst nach `onAuthStateChanged` mit echtem User starten Listener/Reads/Writes
+   (`S.bereit`-Gate) — `auth != null` ist damit bei jedem Zugriff erfüllt.
+5. Scheitern beide Wege, hängt die App nicht still, sondern zeigt im Footer
+   „Login fehlgeschlagen — Token/Anmeldung prüfen" (roter Punkt) + Toast mit
+   Fehlercode.
+
+**n8n-Seite (Token-Webhook):** Ein Webhook (POST) mintet mit dem
+Firebase-Service-Account ein Custom Token und gibt `{ token }` zurück. Varianten:
+
+- **Firebase Admin SDK** (Function/Code-Node): `admin.auth().createCustomToken(uid)`.
+- **Ohne Admin SDK:** signiertes JWT (`aud` =
+  `https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit`,
+  `iss`/`sub` = Service-Account-Mail, `uid`) via IAM `signJwt` — dasselbe
+  Service-Konto wie beim Drive-Workflow, ergänzt um die Rolle **Service Account
+  Token Creator**.
+
+Der Token-Webhook sollte gegen unbefugten Abruf geschützt werden (z. B.
+n8n-Header-Auth), da er Login-Tokens ausstellt.
+
+Solange `TOKEN_WEBHOOK_URL` der Platzhalter ist, greift der anonyme Fallback —
+dann muss „Anonym" im Firebase-Projekt aktiviert sein, sonst erscheint der
+Footer-Fehlerhinweis.
 
 ## Erst-Seed der Bibliothek
 
@@ -133,8 +171,9 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
 
 1. `public/nobraine.html` öffnen (lokal via `npx serve public` oder über das
    Netlify-Deployment; oder in der Hauptapp über die App „No-Braine"). Unten
-   links muss „Verbunden (anonym)" mit grünem Punkt stehen. Beim ersten Start
-   erscheinen die Starter-Rezepte in der Bibliothek.
+   links muss „Angemeldet" mit grünem Punkt stehen (Custom Token via n8n bzw.
+   anonymer Fallback). Beim ersten Start erscheinen die Starter-Rezepte in der
+   Bibliothek.
 2. **Rezepte:** In „Rezepte" ein Rezept anklicken → Drawer mit vollständigem
    Rezept (Zutaten mit Mengen, nummerierte Schritte, Portionen, Kochzeit).
    Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen. „＋ Neues Rezept"
