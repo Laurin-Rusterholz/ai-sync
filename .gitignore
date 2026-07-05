@@ -2,3 +2,4 @@ node_modules/
 .netlify/
 *.log
 .DS_Store
+service-account*.json

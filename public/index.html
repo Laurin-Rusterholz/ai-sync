@@ -3506,6 +3506,7 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
   
   <!-- mammoth.js wird bei Bedarf dynamisch über loadMammoth() geladen (mit CDN-Fallbacks) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
 
@@ -5183,6 +5184,22 @@ try {
     firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
     firebaseStorage = firebase.storage();
     console.log('🔥 Firebase Storage verbunden');
+    // Anonyme Anmeldung, damit die App unter RTDB-Regeln mit "auth != null"
+    // (Drive-Modul, künftig ggf. weitere Pfade) nicht ausgesperrt wird.
+    // Fire-and-forget: Alle bestehenden Abläufe starten unverändert; die
+    // SDK-Verbindungen authentifizieren sich, sobald der Login durch ist.
+    try {
+      if (firebase.auth) {
+        firebase.auth().onAuthStateChanged(function (user) {
+          if (user) { console.log('🔑 Firebase anonym angemeldet'); return; }
+          firebase.auth().signInAnonymously().catch(function (e) {
+            console.warn('⚠️ Anonyme Firebase-Anmeldung fehlgeschlagen (Anonymous Auth in der Konsole aktiviert?):', e && e.message);
+          });
+        });
+      }
+    } catch (authErr) {
+      console.warn('⚠️ Firebase Auth nicht verfügbar:', authErr && authErr.message);
+    }
   } else {
     console.warn('⚠️ Firebase SDK nicht geladen – evtl. Adblocker deaktivieren oder Seite auf Netlify deployen');
   }
