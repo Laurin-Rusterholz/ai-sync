@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Quantus · No-Braine</title>
+<title>Quantus · Weekly Planner</title>
 <link rel="icon" href="favicon.svg">
 <style>
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -64,8 +64,13 @@ h1, h2, .redaktionell {
   display:flex; flex-direction:column;
   overflow:hidden;
 }
+.sb-zurueck {
+  display:block; padding: 12px 20px 0; color: var(--muted-hell); text-decoration:none;
+  font-size: 12.5px; font-weight: 600; letter-spacing:.3px;
+}
+.sb-zurueck:hover { color: var(--leinen); }
 .sb-brand {
-  padding: 22px 20px 16px;
+  padding: 8px 20px 16px;
   font-size: 19px; font-weight: 700; letter-spacing: .2px;
   border-bottom: 1px solid var(--linie-dunkel);
   font-family: Georgia, serif;
@@ -415,6 +420,8 @@ h1, h2, .redaktionell {
   border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.45; max-width: 300px;
 }
 .login-status { font-size: 13.5px; color: var(--muted); }
+.login-zurueck { display:inline-block; margin-top:22px; font-size:13px; color:var(--muted); text-decoration:none; }
+.login-zurueck:hover { color:var(--tinte); text-decoration:underline; }
 .login-spinner {
   width: 26px; height: 26px; border: 3px solid var(--linie); border-top-color: var(--teal);
   border-radius: 50%; animation: dreh .7s linear infinite;
@@ -432,6 +439,7 @@ h1, h2, .redaktionell {
     width:100%; min-width:0; flex-direction:row; align-items:center;
     height:auto; overflow-x:auto;
   }
+  .sb-zurueck { padding:14px 6px 14px 14px; white-space:nowrap; flex:none; }
   .sb-brand { border-bottom:0; border-right:1px solid var(--linie-dunkel); padding:14px 16px; font-size:16px; white-space:nowrap; }
   .sb-brand small { display:none; }
   #nav { display:flex; flex:1; padding:8px; gap:4px; overflow-x:auto; }
@@ -451,18 +459,20 @@ h1, h2, .redaktionell {
 <div id="loginOverlay" class="offen">
   <div class="login-box">
     <div class="login-logo">🍽️</div>
-    <h1>No-Braine</h1>
+    <h1>Weekly Planner</h1>
     <div class="login-untertitel">Quantus · Wochen-Menüplaner</div>
     <div id="loginInhalt">
       <div class="login-spinner"></div>
       <div class="login-status">Anmeldung wird geprüft …</div>
     </div>
+    <a class="login-zurueck" href="index.html">‹ Zurück zu Quantus</a>
   </div>
 </div>
 
 <div id="app">
   <aside id="sidebar">
-    <div class="sb-brand">🍽️ No-Braine <small>Quantus · Wochenplaner</small></div>
+    <a class="sb-zurueck" href="index.html" title="Zurück zu Quantus">‹ Quantus</a>
+    <div class="sb-brand">🍽️ Weekly Planner <small>Quantus · Wochenplaner</small></div>
     <nav id="nav"></nav>
     <div class="sb-fuss">
       <span class="punkt" id="authPunkt"></span>
