@@ -12,13 +12,13 @@ RTDB-Pfad-Root **`/nobraine/`**.
 Konventionen exakt wie `public/drive.html`: IIFE-Scope (kein globaler
 Namespace), Event-Delegation über `data-action`-Attribute, `toast()` für
 sämtliches Feedback, Design-System „Schiefer/Leinen", Firebase compat v10.8.0,
-Anonymous Auth, Sprache Hochdeutsch mit Schweizer Schreibweise (ss statt ß),
-responsive & mobile-first.
+Auth-Stub (kein Login, wie `drive.html`), Sprache Hochdeutsch mit Schweizer
+Schreibweise (ss statt ß), responsive & mobile-first.
 
 - Firebase-Projekt: `jupidu-36804`
 - RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
 - SDK: Firebase **compat v10.8.0** (`app`, `auth`, `database`)
-- Auth: **Anonymous Auth** (`firebase.auth().signInAnonymously()`); RTDB-Pfade offen (kein Auth-Gate, via `$andere`)
+- Auth: **kein Login** — Auth-Stub wie `drive.html` (lokaler User, kein `signInAnonymously`); RTDB-Pfade offen (kein Auth-Gate, via `$andere`)
 - Navigation: registriert in `public/index.html` unter `getAllApps()`
   (`key: "nobraine"`, Icon 🍽️, Label „No-Braine") sowie im Routing-`switch`
   von `renderMain()` (`case "nobraine": window.location.href = "nobraine.html"`).
@@ -109,12 +109,11 @@ ist damit — wie der übrige Bestand des Repos — offen les-/schreibbar (kein
 Auth-Gate). Das entspricht der aktuellen RTDB-Konvention (`main` hat auch die
 Drive-Pfade wieder offen gestellt, siehe `9587a73`).
 
-**Anonymous Auth:** Das Frontend meldet sich — wie `public/drive.html` — anonym
-an (`signInAnonymously()`) und startet seine Listener erst nach erfolgreicher
-Anmeldung. Die Regeln setzen Auth zwar nicht mehr voraus, für den Boot der App
-muss „Anonym" im Firebase-Projekt aber aktiviert sein (Konsole → Authentication
-→ Sign-in method → „Anonym"); sonst bleibt das Modul bei „Anmeldung
-fehlgeschlagen" stehen.
+**Auth:** Kein echter Login. Wie `public/drive.html` (Commit `825e705`) nutzt das
+Frontend einen **Auth-Stub** (`onAuthStateChanged` liefert sofort einen lokalen
+User `{ uid: "lokal" }`, `signInAnonymously` ist ein No-op). Die App bootet damit
+ohne Firebase-Anmeldung; „Anonym" muss im Firebase-Projekt **nicht** aktiviert
+sein. Zusammen mit den offenen Regeln funktioniert Lesen/Schreiben direkt.
 
 ## Erst-Seed der Bibliothek
 

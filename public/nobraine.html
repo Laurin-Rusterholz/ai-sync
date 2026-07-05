@@ -492,7 +492,9 @@ const KATEGORIEN = [
 let db = null, auth = null;
 try {
   firebase.initializeApp(FIREBASE_CONFIG);
-  auth = firebase.auth();
+  // Auth-Stub statt anonymer Anmeldung (identisch zu drive.html) — die RTDB-Pfade
+  // sind offen, ein echter Login ist nicht nötig. Bootet sofort mit lokalem User.
+  auth = { onAuthStateChanged: function (cb) { cb({ uid: "lokal" }); }, signInAnonymously: function () { return Promise.resolve(); } };
   db   = firebase.app().database(RTDB_DB_URL);
 } catch (e) {
   console.error("Firebase Init fehlgeschlagen:", e);
