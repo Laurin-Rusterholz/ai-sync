@@ -98,6 +98,12 @@ input, select { font: inherit; }
   border:1px dashed var(--linie-dunkel); border-radius:8px; font-size:12.5px;
 }
 .btn-neuer-ordner:hover { color:var(--leinen); border-color:var(--muted-hell); }
+.btn-login {
+  margin: 4px 14px 12px; padding: 9px 12px;
+  background: var(--teal); color: #fff; border: 0; border-radius: 8px;
+  font-weight: 700; font-size: 13px;
+}
+.btn-login:hover { background: var(--teal-tief); }
 
 /* ── Hauptbereich (Leinen) ──────────────────────────────────────────────── */
 #haupt { flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative; }
@@ -278,6 +284,7 @@ table.docs tr:last-child td { border-bottom: 0; }
     <div id="nav"></div>
     <button class="btn-neuer-ordner" data-action="neuer-ordner">＋ Neuer Ordner</button>
     <button class="btn-neuer-ordner" id="backfillBtn" style="margin-top:0;display:none" data-action="backfill">🧺 Bestehende Dateien scannen</button>
+    <button class="btn-login" id="loginBtn" data-action="login" style="display:none">🔐 Mit Google anmelden</button>
     <div class="sb-fuss"><span class="punkt" id="authPunkt"></span><span id="authText">Verbinde …</span></div>
   </aside>
 
@@ -376,26 +383,46 @@ const S = {
 
 function boot() {
   if (!auth) { toast("Firebase SDK nicht geladen — Adblocker prüfen"); return; }
+  // Rückkehr aus einem signInWithRedirect-Fallback abschliessen (falls Popup blockiert war)
+  try { auth.getRedirectResult().catch(function () {}); } catch (e) {}
   auth.onAuthStateChanged(function (user) {
-    const punkt = document.getElementById("authPunkt");
-    const text  = document.getElementById("authText");
-    const bfBtn = document.getElementById("backfillBtn");
+    const punkt    = document.getElementById("authPunkt");
+    const text     = document.getElementById("authText");
+    const bfBtn    = document.getElementById("backfillBtn");
+    const loginBtn = document.getElementById("loginBtn");
     if (user) {
       punkt.classList.add("online");
-      text.textContent = "Verbunden (anonym)";
-      if (bfBtn) bfBtn.style.display = ""; // Scan-Button nur sichtbar, wenn eingeloggt
+      text.textContent = "Verbunden: " + (user.email || user.displayName || "Google");
+      if (bfBtn) bfBtn.style.display = "";      // Scan-Button nur sichtbar, wenn eingeloggt
+      if (loginBtn) loginBtn.style.display = "none";
       if (!S.bereit) { S.bereit = true; listenerStarten(); taxonomieSeedFallsLeer(); }
     } else {
       punkt.classList.remove("online");
-      text.textContent = "Melde an …";
+      text.textContent = "Nicht angemeldet";
       if (bfBtn) bfBtn.style.display = "none";
-      auth.signInAnonymously().catch(function (e) {
-        text.textContent = "Anmeldung fehlgeschlagen";
-        console.error("Anonyme Anmeldung fehlgeschlagen:", e);
-        toast("Anmeldung fehlgeschlagen — ist Anonymous Auth im Firebase-Projekt aktiviert?");
-      });
+      if (loginBtn) loginBtn.style.display = "";
+      render(); // Hinweis in der Liste aktualisieren
     }
   });
+}
+
+// Google-Login (statt Anonymous Auth — der Google-Provider muss in der
+// Firebase-Konsole aktiviert sein). Die Session wird lokal persistiert:
+// Anmeldung ist pro Browser nur einmal nötig; onAuthStateChanged stellt sie
+// bei jedem Laden still wieder her.
+async function googleAnmelden() {
+  if (!auth) return;
+  const provider = new firebase.auth.GoogleAuthProvider();
+  try {
+    await auth.signInWithPopup(provider);
+  } catch (e) {
+    if (e && e.code === "auth/popup-blocked") {
+      try { await auth.signInWithRedirect(provider); return; } catch (e2) { e = e2; }
+    }
+    if (e && e.code === "auth/popup-closed-by-user") return; // bewusst abgebrochen
+    console.error("Google-Anmeldung fehlgeschlagen:", e);
+    toast("Google-Anmeldung fehlgeschlagen — ist der Google-Provider in Firebase aktiviert und die Domain autorisiert? (" + (e && e.message ? e.message : "?") + ")");
+  }
 }
 
 function listenerStarten() {
@@ -1085,7 +1112,8 @@ function renderListe() {
 
   const ids = docsGefiltert();
   if (!ids.length && !Object.keys(S.uploads).length) {
-    const meldung = S.suche ? "Keine Treffer für „" + esc(S.suche) + "“"
+    const meldung = !S.bereit ? "Bitte zuerst unten links „Mit Google anmelden“ klicken — danach lädt die Ablage."
+      : S.suche ? "Keine Treffer für „" + esc(S.suche) + "“"
       : S.ansicht.art === "papierkorb" ? "Der Papierkorb ist leer."
       : S.ansicht.art === "eingang" ? "Keine neuen Dokumente. Lade Dateien hoch — sie werden automatisch klassifiziert."
       : "Dieser Ordner ist leer.";
@@ -1226,6 +1254,7 @@ document.addEventListener("click", function (e) {
     case "doc-oeffnen":       S.drawerDocId = id; S.vorschauOffen = false; renderDrawer(); break;
     case "drawer-schliessen": drawerSchliessen(); break;
     case "neuer-ordner":      neuerOrdnerDialog(); break;
+    case "login":             googleAnmelden(); break;
     case "backfill":          backfillDialog(); break;
     case "backfill-start":    backfillStarten(); break;
     case "backfill-stopp":    _bfStop = true; break;
