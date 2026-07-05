@@ -532,8 +532,8 @@ function freePath(wk)  { return P_WEEKS + "/" + wk + "/freeblocks"; }   // /free
 function shopPath(wk)  { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
 function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /generation = { status, … }
 
-// n8n-Webhook — Platzhalter. Vom eigenen n8n-Workflow ersetzen (POST empfängt {weekKey, typ, ...}).
-const WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-generate";
+// n8n-Produktions-Webhook (POST empfängt {weekKey, typ, ...}).
+const WEBHOOK_URL = "https://n8n.srv1757990.hstgr.cloud/webhook/nobraine-generate";
 
 const TAGE_LANG  = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
 const TAG_KURZ   = ["Mo","Di","Mi","Do","Fr","Sa","So"];
@@ -1710,9 +1710,9 @@ async function generieren(payloadExtra, hinweis) {
     console.error("Webhook fehlgeschlagen:", e);
     await db.ref(genPath(wk)).update({
       status: "error",
-      message: "Webhook nicht erreichbar (WEBHOOK_URL noch Platzhalter?)"
+      message: "n8n-Webhook nicht erreichbar" + (e && e.message ? " (" + e.message + ")" : "")
     }).catch(function () {});
-    toast("Webhook nicht erreichbar — WEBHOOK_URL im Code setzen.");
+    toast("n8n-Webhook nicht erreichbar" + (e && e.message ? " — " + e.message : "") + ".");
   }
 }
 function wocheGenerieren() {
