@@ -15603,7 +15603,6 @@ function getAllApps() {
     {key:"dashboard", icon:"🏠", label:t("dashboard"), desc:getLang()==="de"?"Übersicht über alles":"Overview of everything"},
     {key:"visionboard", icon:"🌳", label:"Vision 2026", desc:getLang()==="de"?"Deine Lebensvision":"Your life vision"},
     {key:"today", icon:"☀️", label:t("today"), desc:getLang()==="de"?"Tagesplanung":"Daily planning"},
-    {key:"weekplanning", icon:"📋", label:t("weekplanning"), desc:getLang()==="de"?"Woche organisieren":"Organize your week"},
     {key:"tasks", icon:"✅", label:t("tasks"), desc:getLang()==="de"?"Aufgabenverwaltung":"Task management"},
     {key:"notes", icon:"📝", label:"NoteFlow", desc:getLang()==="de"?"Notizen & Dokumente":"Notes & documents"},
     {key:"learn", icon:"📚", label:"RecallLab", desc:getLang()==="de"?"Lernkarten & Spaced Repetition":"Flashcards & spaced repetition"},
@@ -15645,7 +15644,7 @@ function getAllApps() {
     {key:"gmail", icon:"📧", label:"Gmail", desc:getLang()==="de"?"Gmail-Posteingang lesen, schreiben, antworten & verwalten":"Read, compose, reply to & manage your Gmail inbox"},
     {key:"briefings", icon:"📬", label:"Briefings", desc:getLang()==="de"?"Zugestellte Briefing-PDFs (z.B. Morning-Briefing aus n8n) ansehen & herunterladen":"View & download delivered briefing PDFs (e.g. morning briefing from n8n)"},
     {key:"drive", icon:"🗄️", label:"Drive", desc:getLang()==="de"?"Dateiablage mit KI-Klassifizierung (Upload, Ordnerbaum, n8n-Vorschläge)":"File storage with AI classification (upload, folder tree, n8n suggestions)"},
-    {key:"nobraine", icon:"🍽️", label:"No-Braine", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
+    {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -15963,7 +15962,7 @@ function renderMain() {
     case "learn": openRecallLab(); return; // Öffnet RecallLab Flashcards
     case "readinghub": openReadingHub(); return; // Öffnet ReadingHub
     case "pdfeditor": (window.openPdfEditor ? window.openPdfEditor() : 0); return; // Öffnet PDF-Editor/Reader
-    case "weekplanning": html = viewWeekPlanning(); break;
+    case "weekplanning": window.location.href = "nobraine.html"; return; // Alter Weekly Planner entfernt → neuer (nobraine.html)
     case "tasks": html = id ? viewTaskDetail(id) : viewTasks(); break;
     case "projects": html = id ? viewProjectDetail(id) : viewProjects(); break;
     case "organizations": html = id ? viewOrgDetail(id) : viewOrganizations(); break;
@@ -43416,7 +43415,7 @@ function viewToday() {
             ${plannedTasks.map(t => renderTask(t, false)).join("")}
           </div>
           <div class="mt-2">
-            <a href="#/weekplanning" class="btn sm">📋 Wochenplanung öffnen</a>
+            <a href="#/nobraine" class="btn sm">🍽️ Weekly Planner öffnen</a>
           </div>
         </div>
         `;
@@ -69737,7 +69736,7 @@ function headerTimerClick() {
   } else if (taskId.startsWith('project-')) {
     navigate('projects', taskId.replace('project-', ''));
   } else if (taskId === 'planning') {
-    navigate('weekplanning');
+    navigate('nobraine');
   } else if (taskId.startsWith('manual_')) {
     // ✅ FIX: Bei manuellem Timer das Bearbeiten-Modal öffnen
     openManualTimerEditModal(taskId);
