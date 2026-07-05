@@ -410,6 +410,22 @@ function boot() {
 // Firebase-Konsole aktiviert sein). Die Session wird lokal persistiert:
 // Anmeldung ist pro Browser nur einmal nötig; onAuthStateChanged stellt sie
 // bei jedem Laden still wieder her.
+function loginFehlerText(e) {
+  const code = (e && e.code) || "";
+  const msg = (e && e.message) || "";
+  if (code.indexOf("api-key") >= 0 || msg.indexOf("api-key") >= 0 || msg.indexOf("API key not valid") >= 0)
+    return "API-Key lehnt Firebase Auth ab: In der Google-Cloud-Konsole (APIs & Dienste → Anmeldedaten → Browser-Key) die „Identity Toolkit API“ bei den API-Einschränkungen erlauben — und in Firebase unter Authentication einmal „Get started“ klicken.";
+  if (code === "auth/operation-not-allowed")
+    return "Google-Provider ist in Firebase nicht aktiviert (Authentication → Sign-in method → Google).";
+  if (code === "auth/unauthorized-domain")
+    return "Diese Domain fehlt in Firebase unter Authentication → Settings → Autorisierte Domains.";
+  if (code === "auth/operation-not-supported-in-this-environment")
+    return "Anmeldung in dieser Einbettung nicht möglich — bitte drive.html direkt in einem eigenen Tab öffnen und dort anmelden.";
+  if (code === "auth/network-request-failed")
+    return "Netzwerkfehler — Verbindung/Adblocker prüfen.";
+  return "Fehler: " + (code || msg || "unbekannt");
+}
+
 async function googleAnmelden() {
   if (!auth) return;
   const provider = new firebase.auth.GoogleAuthProvider();
@@ -417,11 +433,24 @@ async function googleAnmelden() {
     await auth.signInWithPopup(provider);
   } catch (e) {
     if (e && e.code === "auth/popup-blocked") {
-      try { await auth.signInWithRedirect(provider); return; } catch (e2) { e = e2; }
+      // Redirect-Fallback nur top-level — im eingebetteten Iframe verweigert
+      // Google die Darstellung (X-Frame-Options).
+      if (window.self === window.top) {
+        try { await auth.signInWithRedirect(provider); return; } catch (e2) { e = e2; }
+      } else {
+        e = { code: "auth/operation-not-supported-in-this-environment", message: "Popup blockiert (Iframe)" };
+      }
     }
     if (e && e.code === "auth/popup-closed-by-user") return; // bewusst abgebrochen
     console.error("Google-Anmeldung fehlgeschlagen:", e);
-    toast("Google-Anmeldung fehlgeschlagen — ist der Google-Provider in Firebase aktiviert und die Domain autorisiert? (" + (e && e.message ? e.message : "?") + ")");
+    const grund = loginFehlerText(e);
+    const text = document.getElementById("authText");
+    if (text) text.textContent = "Login-Fehler: " + ((e && e.code) || "?");
+    toast(grund);
+    // Im eingebetteten Modus zusätzlich den Ausweg anbieten
+    if (window.self !== window.top && e && e.code !== "auth/operation-not-allowed") {
+      try { window.open("drive.html", "_blank", "noopener"); } catch (e3) {}
+    }
   }
 }
 
