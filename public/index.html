@@ -98227,14 +98227,37 @@ console.log('📚 Leseliste geladen');
   // geladen wurden). Gleiche RTDB-Instanz (RTDB_URL) und exakt dieselben Pfade; die REST-Form
   // bleibt nur als Fallback, falls das Firebase-SDK ausnahmsweise fehlt.
   function rtdbDb(){ try { if (typeof firebase==="undefined" || !firebase.app) return null; return firebase.app().database(RTDB_URL); } catch(e){ return null; } }
+  // Auf die anonyme Firebase-Anmeldung warten, BEVOR ein RTDB-Pfad gelesen/geschrieben wird.
+  // Die App meldet sich fire-and-forget an (signInAnonymously, ~oben bei firebase.initializeApp);
+  // die erste bootData()-Ladung (loadDrafts → rtdbGet("gmailDrafts")) kann daher feuern, bevor der
+  // Login durch ist. Unter den (korrekten) RTDB-Regeln mit "auth != null" liefert der Server dann
+  // "permission_denied at /gmailDrafts". Wir gaten deshalb jeden RTDB-Zugriff auf einen fertigen
+  // User; als Sicherheitsnetz (z. B. Anonymous-Auth in der Konsole deaktiviert) lösen wir nach 4 s
+  // trotzdem auf, damit die Aufrufe nicht ewig hängen und der bisherige Weg unverändert greift.
+  var _rtdbAuthReadyP=null;
+  function rtdbAuthReady(){
+    if (_rtdbAuthReadyP) return _rtdbAuthReadyP;
+    _rtdbAuthReadyP = new Promise(function(resolve){
+      try {
+        if (typeof firebase==="undefined" || !firebase.auth){ resolve(); return; }
+        var auth=firebase.auth();
+        if (auth.currentUser){ resolve(); return; }
+        var done=false, fin=function(){ if(done) return; done=true; try{ unsub&&unsub(); }catch(e){} resolve(); };
+        var unsub=auth.onAuthStateChanged(function(u){ if(u) fin(); });
+        setTimeout(fin,4000);
+      } catch(e){ resolve(); }
+    });
+    return _rtdbAuthReadyP;
+  }
   async function rtdbGet(path){
+    await rtdbAuthReady();
     var db=rtdbDb();
     if (db){ var snap=await db.ref(path).once("value"); return snap.val(); }
     var r=await fetch(RTDB_URL+"/"+path+".json",{cache:"no-store"}); if(!r.ok) throw new Error("RTDB HTTP "+r.status); return await r.json();
   }
-  function rtdbPut(path,value){ var db=rtdbDb(); if (db) return db.ref(path).set(value).catch(function(){}); return fetch(RTDB_URL+"/"+path+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)}).catch(function(){}); }
-  function rtdbPatch(path,obj){ var db=rtdbDb(); if (db) return db.ref(path).update(obj).catch(function(){}); return fetch(RTDB_URL+"/"+path+".json",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}).catch(function(){}); }
-  function rtdbPost(path,obj){ var db=rtdbDb(); if (db) return db.ref(path).push(obj); return fetch(RTDB_URL+"/"+path+".json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); }
+  async function rtdbPut(path,value){ await rtdbAuthReady(); var db=rtdbDb(); if (db) return db.ref(path).set(value).catch(function(){}); return fetch(RTDB_URL+"/"+path+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(value)}).catch(function(){}); }
+  async function rtdbPatch(path,obj){ await rtdbAuthReady(); var db=rtdbDb(); if (db) return db.ref(path).update(obj).catch(function(){}); return fetch(RTDB_URL+"/"+path+".json",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}).catch(function(){}); }
+  async function rtdbPost(path,obj){ await rtdbAuthReady(); var db=rtdbDb(); if (db) return db.ref(path).push(obj); return fetch(RTDB_URL+"/"+path+".json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(obj)}); }
 
   // ── 1) Klassifizierung (gmailClassifications/<messageId>) ──
   async function loadClassifications(){
