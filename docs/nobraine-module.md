@@ -18,7 +18,7 @@ responsive & mobile-first.
 - Firebase-Projekt: `jupidu-36804`
 - RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
 - SDK: Firebase **compat v10.8.0** (`app`, `auth`, `database`)
-- Auth: **Anonymous Auth** (`firebase.auth().signInAnonymously()`), Regel-Gate `auth != null`
+- Auth: **Anonymous Auth** (`firebase.auth().signInAnonymously()`); RTDB-Pfade offen (kein Auth-Gate, via `$andere`)
 - Navigation: registriert in `public/index.html` unter `getAllApps()`
   (`key: "nobraine"`, Icon 🍽️, Label „No-Braine") sowie im Routing-`switch`
   von `renderMain()` (`case "nobraine": window.location.href = "nobraine.html"`).
@@ -98,21 +98,23 @@ Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
 Schlägt der `POST` fehl (z. B. weil `WEBHOOK_URL` noch der Platzhalter ist),
 setzt das Frontend `generation.status = "error"` mit erklärender `message` und
-zeigt einen Toast — nichts bleibt stumm hängen. Der Service-Account von n8n
-umgeht die `auth != null`-Regeln; das Frontend meldet sich anonym an.
+zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend meldet sich anonym
+an; die RTDB-Pfade sind offen (kein Auth-Gate), n8n schreibt per Service-Account.
 
 ## Firebase-Security-Rules
 
-Block aus `firebase/database.rules.json` übernehmen. Der gesamte
-`nobraine`-Teilbaum wird mit `auth != null` gegated (analog zum Drive-Block).
-Wie dort gilt: **kein** `.read`/`.write` auf Wurzelebene stehen lassen — eine
-Erlaubnis am Elternknoten vererbt sich in der RTDB nach unten und würde das Gate
-aushebeln. `nobraine/recipes` trägt `.indexOn: ["kategorie","lastUsed"]` als
-Vorbereitung für spätere gefilterte REST-Queries.
+Der `nobraine`-Teilbaum benötigt **keinen eigenen Regel-Block**: Er wird vom
+bestehenden `$andere`-Wildcard in `firebase/database.rules.json` abgedeckt und
+ist damit — wie der übrige Bestand des Repos — offen les-/schreibbar (kein
+Auth-Gate). Das entspricht der aktuellen RTDB-Konvention (`main` hat auch die
+Drive-Pfade wieder offen gestellt, siehe `9587a73`).
 
-**Anonymous Auth** muss im Firebase-Projekt aktiviert sein (Konsole →
-Authentication → Sign-in method → „Anonym"). Ohne diesen Schritt bleibt das
-Modul bei „Anmeldung fehlgeschlagen" stehen.
+**Anonymous Auth:** Das Frontend meldet sich — wie `public/drive.html` — anonym
+an (`signInAnonymously()`) und startet seine Listener erst nach erfolgreicher
+Anmeldung. Die Regeln setzen Auth zwar nicht mehr voraus, für den Boot der App
+muss „Anonym" im Firebase-Projekt aber aktiviert sein (Konsole → Authentication
+→ Sign-in method → „Anonym"); sonst bleibt das Modul bei „Anmeldung
+fehlgeschlagen" stehen.
 
 ## Erst-Seed der Bibliothek
 

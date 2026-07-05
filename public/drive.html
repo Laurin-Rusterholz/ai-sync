@@ -342,7 +342,7 @@ const TEXT_ENDUNGEN = ["txt","md","csv","json","html","xml","vtt","srt"];
 let db = null, storage = null, auth = null;
 try {
   firebase.initializeApp(FIREBASE_CONFIG);
-  auth    = firebase.auth();
+  auth    = { onAuthStateChanged: function (cb) { cb({ uid: "lokal" }); }, signInAnonymously: function () { return Promise.resolve(); } };
   storage = firebase.storage();
   db      = firebase.app().database(RTDB_DB_URL);
 } catch (e) {
@@ -369,7 +369,7 @@ function boot() {
     const text  = document.getElementById("authText");
     if (user) {
       punkt.classList.add("online");
-      text.textContent = "Verbunden (anonym)";
+      text.textContent = "Verbunden";
       if (!S.bereit) { S.bereit = true; listenerStarten(); taxonomieSeedFallsLeer(); }
     } else {
       punkt.classList.remove("online");

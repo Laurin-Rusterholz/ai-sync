@@ -1,66 +1,21 @@
 {
-  "rules": {
-
-    // ═════════════════════════════════════════════════════════════════════
-    //  ▼▼▼ ZUSATZ-BLOCK „QUANTUS DRIVE" (NEU) ▼▼▼
-    //  Nur diese drei Pfade werden mit auth != null gegated. Das Drive-
-    //  Frontend meldet sich anonym an (signInAnonymously) und erfüllt die
-    //  Bedingung; der n8n-Workflow schreibt per Service-Konto (umgeht die
-    //  Regeln). Bestehende Module sind NICHT betroffen — siehe unten.
-    // ═════════════════════════════════════════════════════════════════════
-    "driveFolders": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
-    "driveDocs": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
-    "driveInbox": {
-      ".read": "auth != null",
-      ".write": "auth != null",
-      ".indexOn": ["status"]
-    },
-    // ═════════════════════════════════════════════════════════════════════
-    //  ▲▲▲ ENDE ZUSATZ-BLOCK „QUANTUS DRIVE" ▲▲▲
-    // ═════════════════════════════════════════════════════════════════════
-
-    // ═════════════════════════════════════════════════════════════════════
-    //  ▼▼▼ ZUSATZ-BLOCK „NO-BRAINE WEEKLY PLANNER" (NEU) ▼▼▼
-    //  Gesamter /nobraine-Teilbaum wird mit auth != null gegated. Das
-    //  Frontend (public/nobraine.html) meldet sich anonym an
-    //  (signInAnonymously) und erfüllt die Bedingung; der n8n-Workflow
-    //  schreibt Plan + Generierungsstatus per Service-Konto (umgeht die
-    //  Regeln). Wie beim Drive-Block: NICHT auf Wurzelebene erlauben,
-    //  sonst vererbt sich die Erlaubnis nach unten und hebelt das Gate aus.
-    // ═════════════════════════════════════════════════════════════════════
-    "nobraine": {
-      ".read": "auth != null",
-      ".write": "auth != null",
-      "recipes": {
-        ".indexOn": ["kategorie", "lastUsed"]
-      }
-    },
-    // ═════════════════════════════════════════════════════════════════════
-    //  ▲▲▲ ENDE ZUSATZ-BLOCK „NO-BRAINE WEEKLY PLANNER" ▲▲▲
-    // ═════════════════════════════════════════════════════════════════════
-
-    // BESTAND: "$andere" matcht alle übrigen Top-Level-Pfade (appStore,
-    // entityInbox, gmailClassifications, draftRequests, taskSuggestions,
-    // orgMailInstructions, News-Batch, …) und repliziert deren bisheriges
-    // offenes Verhalten unverändert — die bestehenden Module laufen ohne
-    // Auth weiter wie bisher.
-    //
-    // WICHTIG beim Übernehmen in die Firebase-Konsole:
-    // 1) Es darf KEIN ".read"/".write" direkt auf Wurzelebene (neben den
-    //    Pfaden) stehen — in der RTDB vererbt eine Erlaubnis am Eltern-
-    //    knoten nach unten und würde das Drive-Gate aushebeln.
-    // 2) Wer bereits eigene, restriktivere Regeln für Bestandspfade hat
-    //    (z. B. appStore mit auth != null gemäss docs/firebase-rtdb-
-    //    storage.md): diese behalten und nur den Drive-Block ergänzen.
-    "$andere": {
-      ".read": true,
-      ".write": true
+    "rules": {
+          "driveFolders": {
+                  ".read": true,
+                  ".write": true
+          },
+          "driveDocs": {
+                  ".read": true,
+                  ".write": true
+          },
+          "driveInbox": {
+                  ".read": true,
+                  ".write": true,
+                  ".indexOn": ["status"]
+          },
+          "$andere": {
+                  ".read": true,
+                  ".write": true
+          }
     }
-  }
 }
