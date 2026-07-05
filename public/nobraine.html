@@ -89,6 +89,7 @@ h1, h2, .redaktionell {
 }
 .sb-fuss .punkt { width:8px; height:8px; border-radius:50%; background:var(--muted-hell); flex:none; }
 .sb-fuss .punkt.online { background: var(--teal); }
+.sb-fuss .punkt.fehler { background: var(--coral); }
 
 /* ── Hauptbereich (Leinen) ──────────────────────────────────────────────── */
 #haupt { flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative; }
@@ -492,9 +493,10 @@ const KATEGORIEN = [
 let db = null, auth = null;
 try {
   firebase.initializeApp(FIREBASE_CONFIG);
-  // Auth-Stub statt anonymer Anmeldung (identisch zu drive.html) — die RTDB-Pfade
-  // sind offen, ein echter Login ist nicht nötig. Bootet sofort mit lokalem User.
-  auth = { onAuthStateChanged: function (cb) { cb({ uid: "lokal" }); }, signInAnonymously: function () { return Promise.resolve(); } };
+  // ECHTE anonyme Anmeldung (wie drive.html vor dem Auth-Stub). Die Live-RTDB-Regeln
+  // für /nobraine verlangen auth != null — die App muss also wirklich eingeloggt sein,
+  // bevor Reads/Writes laufen (siehe boot(): Listener starten erst bei echtem User).
+  auth = firebase.auth();
   db   = firebase.app().database(RTDB_DB_URL);
 } catch (e) {
   console.error("Firebase Init fehlgeschlagen:", e);
@@ -631,11 +633,16 @@ function boot() {
       }
     } else {
       punkt.classList.remove("online");
+      punkt.classList.remove("fehler");
       text.textContent = "Melde an …";
       auth.signInAnonymously().catch(function (e) {
-        text.textContent = "Anmeldung fehlgeschlagen";
+        punkt.classList.add("fehler");
+        const code = (e && e.code) ? e.code : "";
+        // Klarer, handlungsleitender Hinweis im Footer statt stillem Hängen.
+        text.textContent = "Login fehlgeschlagen — anonyme Anmeldung aktivieren";
         console.error("Anonyme Anmeldung fehlgeschlagen:", e);
-        toast("Anmeldung fehlgeschlagen — ist Anonymous Auth im Firebase-Projekt aktiviert?");
+        toast("Login fehlgeschlagen" + (code ? " (" + code + ")" : "") +
+          " — im Firebase-Projekt Authentication → Sign-in method → Anonym aktivieren.");
       });
     }
   });

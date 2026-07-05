@@ -12,13 +12,13 @@ RTDB-Pfad-Root **`/nobraine/`**.
 Konventionen exakt wie `public/drive.html`: IIFE-Scope (kein globaler
 Namespace), Event-Delegation über `data-action`-Attribute, `toast()` für
 sämtliches Feedback, Design-System „Schiefer/Leinen", Firebase compat v10.8.0,
-Auth-Stub (kein Login, wie `drive.html`), Sprache Hochdeutsch mit Schweizer
-Schreibweise (ss statt ß), responsive & mobile-first.
+anonyme Firebase-Anmeldung, Sprache Hochdeutsch mit Schweizer Schreibweise
+(ss statt ß), responsive & mobile-first.
 
 - Firebase-Projekt: `jupidu-36804`
 - RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
 - SDK: Firebase **compat v10.8.0** (`app`, `auth`, `database`)
-- Auth: **kein Login** — Auth-Stub wie `drive.html` (lokaler User, kein `signInAnonymously`); RTDB-Pfade offen (kein Auth-Gate, via `$andere`)
+- Auth: **echte anonyme Anmeldung** (`firebase.auth().signInAnonymously()`); Listener starten erst nach `onAuthStateChanged` mit echtem User. `/nobraine` ist per `auth != null` gegated.
 - Navigation: registriert in `public/index.html` unter `getAllApps()`
   (`key: "nobraine"`, Icon 🍽️, Label „No-Braine") sowie im Routing-`switch`
   von `renderMain()` (`case "nobraine": window.location.href = "nobraine.html"`).
@@ -98,22 +98,33 @@ Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
 Schlägt der `POST` fehl (z. B. weil `WEBHOOK_URL` noch der Platzhalter ist),
 setzt das Frontend `generation.status = "error"` mit erklärender `message` und
-zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend meldet sich anonym
-an; die RTDB-Pfade sind offen (kein Auth-Gate), n8n schreibt per Service-Account.
+zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend meldet sich echt
+anonym an (`auth != null` erfüllt); n8n schreibt per Service-Account (umgeht die
+Regeln).
 
 ## Firebase-Security-Rules
 
-Der `nobraine`-Teilbaum benötigt **keinen eigenen Regel-Block**: Er wird vom
-bestehenden `$andere`-Wildcard in `firebase/database.rules.json` abgedeckt und
-ist damit — wie der übrige Bestand des Repos — offen les-/schreibbar (kein
-Auth-Gate). Das entspricht der aktuellen RTDB-Konvention (`main` hat auch die
-Drive-Pfade wieder offen gestellt, siehe `9587a73`).
+Der gesamte `nobraine`-Teilbaum ist mit **`auth != null`** gegated (Block in
+`firebase/database.rules.json`) — die RTDB enthält sensible Daten und bleibt
+geschützt. Der Block ist rein additiv: Drive-Pfade und der `$andere`-Wildcard
+bleiben unverändert wie von `main` gesetzt; nur der explizite `nobraine`-Key
+verlangt Auth. `nobraine/recipes` trägt `.indexOn: ["kategorie","lastUsed"]`.
 
-**Auth:** Kein echter Login. Wie `public/drive.html` (Commit `825e705`) nutzt das
-Frontend einen **Auth-Stub** (`onAuthStateChanged` liefert sofort einen lokalen
-User `{ uid: "lokal" }`, `signInAnonymously` ist ein No-op). Die App bootet damit
-ohne Firebase-Anmeldung; „Anonym" muss im Firebase-Projekt **nicht** aktiviert
-sein. Zusammen mit den offenen Regeln funktioniert Lesen/Schreiben direkt.
+> Live-Rules bewusst **nicht** öffnen. Weil die Regeln Auth verlangen, muss die
+> App wirklich eingeloggt sein (siehe Auth), sonst scheitern Schreibzugriffe in
+> Produktion mit `permission_denied`.
+
+**Auth: echte anonyme Anmeldung.** Wie `public/drive.html` vor dem Auth-Stub ruft
+das Frontend `firebase.auth().signInAnonymously()` auf und startet Listener,
+Reads und Writes **erst**, wenn `onAuthStateChanged` einen echten User liefert
+(`S.bereit`-Gate im Boot). Dadurch ist `auth != null` zum Zeitpunkt jedes
+Zugriffs erfüllt.
+
+**Anonymous Auth muss im Firebase-Projekt aktiviert sein** (Konsole →
+Authentication → Sign-in method → „Anonym"). Ist sie es nicht, schlägt
+`signInAnonymously()` fehl; die App hängt dann nicht still, sondern zeigt im
+Footer „Login fehlgeschlagen — anonyme Anmeldung aktivieren" (roter Punkt) plus
+einen Toast mit Fehlercode.
 
 ## Erst-Seed der Bibliothek
 
