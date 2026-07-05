@@ -14,8 +14,8 @@
                   ".indexOn": ["status"]
           },
           "nobraine": {
-                  ".read": "auth != null && auth.uid === 'DEINE_FIREBASE_UID'",
-                  ".write": "auth != null && auth.uid === 'DEINE_FIREBASE_UID'",
+                  ".read": "auth != null",
+                  ".write": "auth != null",
                   "recipes": {
                           ".indexOn": ["kategorie", "lastUsed"]
                   }
