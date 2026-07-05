@@ -15646,6 +15646,7 @@ function getAllApps() {
     {key:"briefings", icon:"📬", label:"Briefings", desc:getLang()==="de"?"Zugestellte Briefing-PDFs (z.B. Morning-Briefing aus n8n) ansehen & herunterladen":"View & download delivered briefing PDFs (e.g. morning briefing from n8n)"},
     {key:"drive", icon:"🗄️", label:"Drive", desc:getLang()==="de"?"Dateiablage mit KI-Klassifizierung (Upload, Ordnerbaum, n8n-Vorschläge)":"File storage with AI classification (upload, folder tree, n8n suggestions)"},
     {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
+    {key:"docstudio", icon:"📄", label:"DocStudio", desc:getLang()==="de"?"Dokumente generieren & gestalten (Rechnung, Einladung, Brief …) mit KI & PDF-Export":"Generate & design documents (invoice, invitation, letter …) with AI & PDF export"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -16017,6 +16018,7 @@ function renderMain() {
     case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
     case "drive": html = viewDrive(); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
+    case "docstudio": window.location.href = "docstudio.html"; return; // Öffnet DocStudio (eigenständige Single-File-App)
     case "settings": { openSettings(); return; }
 
     default: {
