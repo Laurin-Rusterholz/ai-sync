@@ -15237,6 +15237,7 @@ function navigate(route, id = null) {
     else if (typeof window.openSettings === "function") window.openSettings();
     return;
   }
+
   
   const hash = id ? `#/${route}/${id}` : `#/${route}`;
   
@@ -15246,6 +15247,14 @@ function navigate(route, id = null) {
   APP.state.historyIndex = APP.state.historyStack.length;
   
   window.location.hash = hash;
+}
+
+// ── QUANTUS DRIVE — eigenständiges Single-File-Modul (drive.html), als App
+//    direkt in Quantus eingebettet (volle Höhe im Inhaltsbereich). ──────────
+function viewDrive() {
+  return `
+    <iframe src="drive.html" title="Quantus Drive"
+      style="width:100%;height:calc(100vh - 110px);min-height:520px;border:1px solid var(--border,#333);border-radius:12px;background:#efebe2;display:block"></iframe>`;
 }
 
 function goBack() {
@@ -15638,6 +15647,7 @@ function getAllApps() {
     {key:"googlecalendar", icon:"📆", label:"Google Calendar", desc:getLang()==="de"?"Google-Kalender anzeigen, Events erstellen, bearbeiten & löschen":"View Google Calendar, create, edit & delete events"},
     {key:"gmail", icon:"📧", label:"Gmail", desc:getLang()==="de"?"Gmail-Posteingang lesen, schreiben, antworten & verwalten":"Read, compose, reply to & manage your Gmail inbox"},
     {key:"briefings", icon:"📬", label:"Briefings", desc:getLang()==="de"?"Zugestellte Briefing-PDFs (z.B. Morning-Briefing aus n8n) ansehen & herunterladen":"View & download delivered briefing PDFs (e.g. morning briefing from n8n)"},
+    {key:"drive", icon:"🗄️", label:"Drive", desc:getLang()==="de"?"Dateiablage mit KI-Klassifizierung (Upload, Ordnerbaum, n8n-Vorschläge)":"File storage with AI classification (upload, folder tree, n8n suggestions)"},
     {key:"nobraine", icon:"🍽️", label:"No-Braine", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
   ];
   // Append custom pages
@@ -16008,6 +16018,7 @@ function renderMain() {
     case "googlecalendar": html = (typeof viewGoogleCalendar === "function" ? viewGoogleCalendar() : '<div style="padding:40px;text-align:center">Lade Google Calendar…</div>'); break;
     case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
     case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
+    case "drive": html = viewDrive(); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "settings": { openSettings(); return; }
 
