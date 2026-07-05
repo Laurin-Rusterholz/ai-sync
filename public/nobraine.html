@@ -475,6 +475,12 @@ function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /gene
 // n8n-Webhook — Platzhalter. Vom eigenen n8n-Workflow ersetzen (POST empfängt {weekKey, typ, ...}).
 const WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-generate";
 
+// n8n-Webhook, der ein Firebase Custom Token liefert (POST → { token: "<customToken>" }).
+// n8n signiert das Token mit seinen Service-Account/OAuth-Credentials (Firebase Admin bzw.
+// IAM signJWT). Damit meldet sich der Browser echt an (auth != null), ohne dass anonyme
+// Anmeldung im Projekt aktiviert sein muss. Platzhalter unten durch die echte URL ersetzen.
+const TOKEN_WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-token";
+
 const TAGE_LANG  = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
 const TAG_KURZ   = ["Mo","Di","Mi","Do","Fr","Sa","So"];
 // Nur Mittag- und Abendessen werden geplant (Frühstück bleibt Routine).
@@ -611,8 +617,9 @@ function boot() {
     const punkt = document.getElementById("authPunkt");
     const text  = document.getElementById("authText");
     if (user) {
+      punkt.classList.remove("fehler");
       punkt.classList.add("online");
-      text.textContent = "Verbunden (anonym)";
+      text.textContent = "Angemeldet";
       if (!S.bereit) {
         S.bereit = true;
         db.ref(P_RECIPES).on("value", function (snap) {
@@ -633,19 +640,66 @@ function boot() {
       }
     } else {
       punkt.classList.remove("online");
-      punkt.classList.remove("fehler");
-      text.textContent = "Melde an …";
-      auth.signInAnonymously().catch(function (e) {
-        punkt.classList.add("fehler");
-        const code = (e && e.code) ? e.code : "";
-        // Klarer, handlungsleitender Hinweis im Footer statt stillem Hängen.
-        text.textContent = "Login fehlgeschlagen — anonyme Anmeldung aktivieren";
-        console.error("Anonyme Anmeldung fehlgeschlagen:", e);
-        toast("Login fehlgeschlagen" + (code ? " (" + code + ")" : "") +
-          " — im Firebase-Projekt Authentication → Sign-in method → Anonym aktivieren.");
-      });
+      anmelden();
     }
   });
+}
+
+// Anmeldung: primär Firebase Custom Token von n8n (nutzt dessen Service-Account/
+// OAuth-Credentials), Fallback anonyme Anmeldung. Erst danach ist auth != null erfüllt;
+// Listener/Reads/Writes starten über onAuthStateChanged (S.bereit-Gate).
+let _anmeldungLaeuft = false;
+async function anmelden() {
+  if (_anmeldungLaeuft || S.bereit) return;
+  _anmeldungLaeuft = true;
+  const punkt = document.getElementById("authPunkt");
+  const text  = document.getElementById("authText");
+  punkt.classList.remove("fehler");
+  text.textContent = "Melde an …";
+
+  // 1) Firebase Custom Token von n8n holen und damit anmelden
+  try {
+    const token = await customTokenHolen();
+    if (token) {
+      await auth.signInWithCustomToken(token);
+      _anmeldungLaeuft = false;
+      return; // onAuthStateChanged startet die Listener
+    }
+  } catch (e) {
+    console.warn("Custom-Token-Anmeldung fehlgeschlagen:", e);
+  }
+
+  // 2) Fallback: anonyme Anmeldung (falls im Projekt doch aktiviert)
+  try {
+    await auth.signInAnonymously();
+    _anmeldungLaeuft = false;
+    return;
+  } catch (e) {
+    _anmeldungLaeuft = false;
+    punkt.classList.add("fehler");
+    const code = (e && e.code) ? e.code : "";
+    // Klarer, handlungsleitender Hinweis im Footer statt stillem Hängen.
+    text.textContent = "Login fehlgeschlagen — Token/Anmeldung prüfen";
+    console.error("Anmeldung fehlgeschlagen:", e);
+    toast("Login fehlgeschlagen" + (code ? " (" + code + ")" : "") +
+      " — TOKEN_WEBHOOK_URL (n8n Custom Token) setzen oder anonyme Anmeldung aktivieren.");
+  }
+}
+
+// Holt ein Firebase Custom Token vom n8n-Webhook. Gibt null zurück, solange die URL
+// noch der Platzhalter ist (dann greift der anonyme Fallback).
+async function customTokenHolen() {
+  if (!TOKEN_WEBHOOK_URL || TOKEN_WEBHOOK_URL.indexOf("example.com") > -1) return null;
+  const res = await fetch(TOKEN_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ app: "nobraine" })
+  });
+  if (!res.ok) throw new Error("Token-Webhook Status " + res.status);
+  const data = await res.json();
+  const token = data && (data.token || data.customToken || data.firebaseToken);
+  if (!token) throw new Error("Antwort ohne token-Feld");
+  return token;
 }
 
 // Woche-abhängige Listener (meals / freeblocks / shopping / generation) neu binden
