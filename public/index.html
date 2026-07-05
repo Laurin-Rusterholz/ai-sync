@@ -15648,6 +15648,7 @@ function getAllApps() {
     {key:"gmail", icon:"📧", label:"Gmail", desc:getLang()==="de"?"Gmail-Posteingang lesen, schreiben, antworten & verwalten":"Read, compose, reply to & manage your Gmail inbox"},
     {key:"briefings", icon:"📬", label:"Briefings", desc:getLang()==="de"?"Zugestellte Briefing-PDFs (z.B. Morning-Briefing aus n8n) ansehen & herunterladen":"View & download delivered briefing PDFs (e.g. morning briefing from n8n)"},
     {key:"drive", icon:"🗄️", label:"Drive", desc:getLang()==="de"?"Dateiablage mit KI-Klassifizierung (Upload, Ordnerbaum, n8n-Vorschläge)":"File storage with AI classification (upload, folder tree, n8n suggestions)"},
+    {key:"nobraine", icon:"🍽️", label:"No-Braine", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -16018,6 +16019,7 @@ function renderMain() {
     case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
     case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
     case "drive": html = viewDrive(); break;
+    case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "settings": { openSettings(); return; }
 
     default: {
