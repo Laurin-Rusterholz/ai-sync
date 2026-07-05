@@ -237,6 +237,17 @@ table.docs tr:last-child td { border-bottom: 0; }
 }
 #modalBox input[type=text]:focus, #modalBox select:focus { border-color: var(--teal); }
 .modal-aktionen { display:flex; justify-content:flex-end; gap: 9px; margin-top: 18px; }
+#modalBox label.inline { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--tinte); font-weight:500; }
+.bf-log {
+  margin-top: 12px; background: var(--schiefer); color: var(--leinen);
+  border-radius: 8px; padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.55; height: 190px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all; display: none;
+}
+.bf-log.aktiv { display: block; }
+.bf-log .warn { color: var(--sand); }
+.bf-log .fehler { color: var(--coral); }
 
 /* ── Toast ──────────────────────────────────────────────────────────────── */
 #toast {
@@ -266,6 +277,7 @@ table.docs tr:last-child td { border-bottom: 0; }
     </div>
     <div id="nav"></div>
     <button class="btn-neuer-ordner" data-action="neuer-ordner">＋ Neuer Ordner</button>
+    <button class="btn-neuer-ordner" id="backfillBtn" style="margin-top:0;display:none" data-action="backfill">🧺 Bestehende Dateien scannen</button>
     <div class="sb-fuss"><span class="punkt" id="authPunkt"></span><span id="authText">Verbinde …</span></div>
   </aside>
 
@@ -367,13 +379,16 @@ function boot() {
   auth.onAuthStateChanged(function (user) {
     const punkt = document.getElementById("authPunkt");
     const text  = document.getElementById("authText");
+    const bfBtn = document.getElementById("backfillBtn");
     if (user) {
       punkt.classList.add("online");
       text.textContent = "Verbunden (anonym)";
+      if (bfBtn) bfBtn.style.display = ""; // Scan-Button nur sichtbar, wenn eingeloggt
       if (!S.bereit) { S.bereit = true; listenerStarten(); taxonomieSeedFallsLeer(); }
     } else {
       punkt.classList.remove("online");
       text.textContent = "Melde an …";
+      if (bfBtn) bfBtn.style.display = "none";
       auth.signInAnonymously().catch(function (e) {
         text.textContent = "Anmeldung fehlgeschlagen";
         console.error("Anonyme Anmeldung fehlgeschlagen:", e);
@@ -793,6 +808,183 @@ function endgueltigLoeschenDialog(docId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BACKFILL — bestehende Storage-Dateien scannen und in die Queue stellen
+// Läuft komplett im Browser mit der anonymen Anmeldung (kein Admin-SDK).
+// ═══════════════════════════════════════════════════════════════════════════
+// NUR unkritische Ordner. belege/ und buchhaltung-sp-ar/ enthalten
+// Finanzdaten und bleiben HART ausgeschlossen: Die Blockliste wird sowohl
+// beim rekursiven Abstieg als auch nochmals pro Datei-Pfad geprüft.
+const BACKFILL_PREFIXES = ["attachments/", "cloud-sync/", "drive/", "project-inbox/", "task-files/"];
+const BACKFILL_BLOCKLISTE = ["belege/", "buchhaltung-sp-ar/"];
+const BACKFILL_MAX_BYTES = 50 * 1024 * 1024; // Dateien > 50 MB überspringen
+
+let _bfLaeuft = false, _bfStop = false;
+
+function bfBlockiert(pfad) {
+  const p = String(pfad || "");
+  return BACKFILL_BLOCKLISTE.some(function (b) { return p === b || p.indexOf(b) === 0; });
+}
+async function sha256HexText(s) {
+  return sha256Hex(new TextEncoder().encode(String(s)));
+}
+function bfLog(msg, klasse) {
+  const el = document.getElementById("bfLog");
+  if (!el) return;
+  el.classList.add("aktiv");
+  const zeile = document.createElement("div");
+  if (klasse) zeile.className = klasse;
+  zeile.textContent = msg;
+  el.appendChild(zeile);
+  el.scrollTop = el.scrollHeight;
+}
+function bfFortschritt(txt) {
+  const el = document.getElementById("bfFortschritt");
+  if (el) el.textContent = txt;
+}
+
+function backfillDialog() {
+  modalOeffnen(
+    "<h3>Bestehende Dateien scannen</h3>" +
+    '<div style="font-size:12.5px;color:var(--muted);line-height:1.55">Durchsucht ' +
+    BACKFILL_PREFIXES.map(function (p) { return "<code>" + esc(p) + "</code>"; }).join(", ") +
+    " rekursiv und stellt neue Dateien in die Klassifizierungs-Queue (<code>driveInbox</code>). " +
+    "Bereits erfasste Dateien werden übersprungen (idempotent). " +
+    "<b>belege/ und buchhaltung-sp-ar/ sind hart ausgeschlossen (Finanzdaten).</b></div>" +
+    '<label class="inline" style="margin-top:12px"><input type="checkbox" id="bfProbelauf"> Probelauf — nur auflisten, nichts schreiben</label>' +
+    '<div id="bfFortschritt" style="font-size:12px;color:var(--muted);margin-top:10px"></div>' +
+    '<div id="bfLog" class="bf-log"></div>' +
+    '<div class="modal-aktionen">' +
+    '<button class="btn" data-action="modal-schliessen">Schliessen</button>' +
+    '<button class="btn gefahr" id="bfStopp" data-action="backfill-stopp" style="display:none">Stopp</button>' +
+    '<button class="btn primaer" id="bfStart" data-action="backfill-start">Scan starten</button></div>',
+    null
+  );
+}
+
+// Rekursives Auflisten via Storage-SDK; Blockliste gilt auch beim Abstieg.
+async function bfListeRekursiv(ref, sammel) {
+  const res = await ref.listAll();
+  res.items.forEach(function (it) { sammel.push(it); });
+  for (const p of res.prefixes) {
+    if (_bfStop) return;
+    if (bfBlockiert(p.fullPath.replace(/\/?$/, "/"))) continue;
+    await bfListeRekursiv(p, sammel);
+  }
+}
+
+async function backfillStarten() {
+  if (_bfLaeuft) return;
+  if (!S.bereit || !auth || !auth.currentUser) { toast("Nicht angemeldet — Scan nicht möglich"); return; }
+  _bfLaeuft = true; _bfStop = false;
+  const probelauf = !!(document.getElementById("bfProbelauf") || {}).checked;
+  const startBtn = document.getElementById("bfStart");
+  const stoppBtn = document.getElementById("bfStopp");
+  if (startBtn) startBtn.style.display = "none";
+  if (stoppBtn) stoppBtn.style.display = "";
+  let geschrieben = 0, uebersprungen = 0, fehlerZahl = 0;
+
+  try {
+    bfLog("Scanne Storage-Ordner …");
+    const dateien = [];
+    for (const prefix of BACKFILL_PREFIXES) {
+      if (_bfStop) break;
+      const vorher = dateien.length;
+      try { await bfListeRekursiv(storage.ref(prefix), dateien); }
+      catch (e) { fehlerZahl++; bfLog("Auflisten fehlgeschlagen: " + prefix + " — " + (e && e.message), "fehler"); }
+      bfLog(prefix + " → " + (dateien.length - vorher) + " Dateien");
+    }
+    const n = dateien.length;
+    bfLog("Gefunden: " + n + " Dateien." + (probelauf ? " PROBELAUF — es wird nichts geschrieben." : ""));
+
+    // Bekannte Pfade/Hashes aus dem Live-Zustand (driveDocs) für Idempotenz + Duplikat-Verdacht
+    const bekanntePfade = new Set(), bekannteHashes = new Set();
+    Object.keys(S.docs).forEach(function (id) {
+      const d = S.docs[id] || {};
+      if (d.storagePath) bekanntePfade.add(d.storagePath);
+      if (d.hash) bekannteHashes.add(d.hash);
+    });
+
+    for (let i = 0; i < n; i++) {
+      if (_bfStop) { bfLog("Gestoppt.", "warn"); break; }
+      const item = dateien[i];
+      const pfad = item.fullPath;
+      bfFortschritt((i + 1) + " von " + n + " — " + pfad);
+      try {
+        if (bfBlockiert(pfad)) { uebersprungen++; continue; } // doppelter Schutz (Finanzdaten)
+
+        // Idempotenz: deterministische docId aus dem Storage-Pfad + Pfad-Abgleich
+        const docId = "bf_" + (await sha256HexText(pfad));
+        if (S.docs[docId] || bekanntePfade.has(pfad)) { uebersprungen++; continue; }
+
+        const meta = await item.getMetadata();
+        const groesse = Number(meta.size || 0);
+        if (groesse > BACKFILL_MAX_BYTES) { uebersprungen++; bfLog("Übersprungen (>50 MB): " + pfad, "warn"); continue; }
+
+        if (probelauf) { geschrieben++; bfLog("Würde anlegen: " + pfad); continue; }
+
+        const url = await item.getDownloadURL();
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error("Download HTTP " + resp.status);
+        const ab = await resp.arrayBuffer();
+        const hash = await sha256Hex(ab);
+        const dup = bekannteHashes.has(hash);
+        // Bestehende Extraktions-Logik aus dem Upload-Pfad wiederverwenden
+        // (PDF via pdf.js, DOCX via mammoth, JSON/Textformate direkt; Bilder → kein Text)
+        const text = await extrahiereText({ name: item.name, type: meta.contentType || "" }, ab);
+        const mimeType = meta.contentType || "application/octet-stream";
+        const jetzt = new Date().toISOString();
+
+        await db.ref(P_DOCS + "/" + docId).set({
+          dateiname: item.name,
+          titel_final: "",
+          storagePath: pfad,
+          downloadUrl: url,
+          mimeType: mimeType,
+          groesse: groesse,
+          hash: hash,
+          status: "eingang",
+          folderId: null,
+          vorschlag: null,
+          textauszug: text.slice(0, 2000),
+          erstellt: meta.timeCreated || jetzt,
+          aktualisiert: jetzt
+        });
+        // Queue-Eintrag exakt im Format, das "Pending filtern" (n8n) erwartet
+        await db.ref(P_INBOX + "/" + docId).set({
+          docId: docId,
+          dateiname: item.name,
+          mimeType: mimeType,
+          hash: hash,
+          text: text.slice(0, 6000),
+          storagePath: pfad,
+          duplikat_verdacht: dup,
+          status: "pending",
+          erstellt: jetzt
+        });
+
+        bekanntePfade.add(pfad);
+        bekannteHashes.add(hash);
+        geschrieben++;
+        bfLog("Neu: " + pfad + (text ? " (" + text.length + " Zeichen Text)" : " (kein Text)"));
+      } catch (e) {
+        fehlerZahl++;
+        bfLog("Fehler: " + pfad + " — " + (e && e.message), "fehler");
+      }
+    }
+
+    const fazit = "Fertig. Geschrieben: " + geschrieben + " · Übersprungen: " + uebersprungen +
+      " · Fehler: " + fehlerZahl + (probelauf ? " (Probelauf)" : "");
+    bfLog(fazit);
+    bfFortschritt("");
+    toast(fazit);
+  } finally {
+    _bfLaeuft = false;
+    if (startBtn) startBtn.style.display = "";
+    if (stoppBtn) stoppBtn.style.display = "none";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RENDERING
 // ═══════════════════════════════════════════════════════════════════════════
 const STATUS_LABEL = {
@@ -1034,14 +1226,17 @@ document.addEventListener("click", function (e) {
     case "doc-oeffnen":       S.drawerDocId = id; S.vorschauOffen = false; renderDrawer(); break;
     case "drawer-schliessen": drawerSchliessen(); break;
     case "neuer-ordner":      neuerOrdnerDialog(); break;
+    case "backfill":          backfillDialog(); break;
+    case "backfill-start":    backfillStarten(); break;
+    case "backfill-stopp":    _bfStop = true; break;
     case "uebernehmen":       vorschlagUebernehmen(id); break;
     case "aendern":           zielAendernDialog(id); break;
     case "vorschau":          S.vorschauOffen = !S.vorschauOffen; renderDrawer(); break;
     case "papierkorb":        inPapierkorb(id); break;
     case "wiederherstellen":  wiederherstellen(id); break;
     case "endgueltig-loeschen": endgueltigLoeschenDialog(id); break;
-    case "modal-schliessen":  modalSchliessen(); break;
-    case "modal-hintergrund": if (e.target === el) modalSchliessen(); break;
+    case "modal-schliessen":  if (_bfLaeuft) _bfStop = true; modalSchliessen(); break;
+    case "modal-hintergrund": if (e.target === el) { if (_bfLaeuft) _bfStop = true; modalSchliessen(); } break;
     case "modal-ok":
       (function () {
         const cb = _modalOk; modalSchliessen();
