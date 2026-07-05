@@ -134,27 +134,65 @@ Kein Passwort im Client, keine n8n-Abhängigkeit für die Anmeldung.
 
 ## Firebase-Security-Rules
 
-Der `nobraine`-Teilbaum ist auf die **feste UID** gegated
-(`firebase/database.rules.json`), damit nur das eigene Konto Zugriff hat — die
-RTDB enthält sensible Daten:
+Der `nobraine`-Teilbaum ist mit **`auth != null`** gegated
+(`firebase/database.rules.json`) — dieselbe Konvention wie der
+`appStore`-Blob der Hauptapp (`docs/firebase-rtdb-storage.md`). Bewusst **keine
+feste UID hardcodiert**, damit man sich nicht aussperrt:
 
 ```json
 "nobraine": {
-  ".read":  "auth != null && auth.uid === 'DEINE_FIREBASE_UID'",
-  ".write": "auth != null && auth.uid === 'DEINE_FIREBASE_UID'",
+  ".read":  "auth != null",
+  ".write": "auth != null",
   "recipes": { ".indexOn": ["kategorie", "lastUsed"] }
 }
 ```
 
 Der Block ist rein additiv: Drive-Pfade und der `$andere`-Wildcard bleiben
-unverändert wie von `main` gesetzt. **`DEINE_FIREBASE_UID` durch die echte UID
-ersetzen** und die Rules deployen.
+unverändert. Der Google-Login (nobraine.html) erfüllt `auth != null`; Reads/
+Writes starten ohnehin erst nach `onAuthStateChanged` mit echtem User. Der
+Quantus-Sync-Koordinator (index.html, s. u.) liest `/nobraine` nur mit
+Firebase-Session — ohne Session kein Zugriff und kein `permission_denied`.
 
-> Live-Rules bewusst **nicht** öffnen. Nur `auth != null` würde jedem
-> beliebigen Google-Konto Zugriff geben — deshalb das UID-Gate. Solange die
-> Platzhalter-UID drinsteht, verweigert die RTDB den Zugriff; die App meldet das
-> dann als „Zugriff verweigert — ist deine UID in den Firebase-Rules
-> eingetragen?" (statt still leer zu bleiben).
+## Integration in Quantus (Daily Planner & Habits)
+
+Die Weekly-Planner-Daten erscheinen **nativ** in der bestehenden Habits-App und
+im Daily Planner — es wird keine neue Anzeige erfunden. Da der gesamte
+Quantus-Zustand als **ein JSON-Blob** unter `appStore/app-data_json` liegt
+(Last-Write-Wins, nur `.once`-Reads, kein Live-Merge), darf eine externe Seite
+diesen Blob **nicht** schreiben. Deshalb ist **`index.html` der Koordinator**
+(es besitzt Blob-Zugriff *und* authentifizierten `/nobraine`-Zugriff); auf
+`/nobraine` wird nur **gelesen**.
+
+**Koordinator-Block in `index.html`** (`NO-BRAINE → QUANTUS SYNC-KOORDINATOR`,
+eigener `<script>`-Block, startet erst mit Firebase-Session):
+
+| No-Braine-Quelle | Ziel-Store (bestehend) | Mapping |
+|---|---|---|
+| `nobraine/habitdefs/<id>` | `dailyBriefing.routines[]` | Upsert einer Routine je Definition, markiert per `nbHabitId`; Schema `{ id:"rt_nb_…", text, icon, frequency:"daily", target:1, completions:[], subCompletions:[], archived, nbHabitId, source:"nobraine" }`. Gelöschte/inaktive Defs → Routine `archived:true`. |
+| `nobraine/habits/<datum>/<id>=true` | `routine.completions[]` | Autorität für die Completions der nb-Routine: je erledigtem Datum ein `{ id:"hc_nb_…", date:"YYYY-MM-DD", value:target }`; nicht (mehr) erledigte Daten werden entfernt. |
+| `nobraine/weeks/<jahr-kw>/meals/<tag>/<mittag\|abend>` + `nobraine/recipes` | `dailyBriefing.timeBlocks[<datum>][]` | Je Slot ein Block `{ id:"tb_nb_…", nbMealKey, startTime, endTime, title:"🍽️ Mittagessen: <Rezept>" }`. Mittag 12:00–13:00, Abend 18:30–19:30. Erscheint in der „Tagesplanung"-Timeline. |
+
+Abgedeckte Wochen: **aktuelle + nächste** (deckt die Daily-Planner-Range
+heute…+7). Der Upsert ist idempotent (kein Duplizieren bei Re-Sync).
+
+**Abhaken konsistent in beiden Apps (eine Wahrheit):** `/nobraine/habits` ist die
+Autorität für nb-Habit-Completions. Abhaken im Weekly Planner schreibt dorthin →
+der Koordinator spiegelt es in `routine.completions`. Abhaken in Quantus
+(`toggleHabitToday`/`incHabitToday`) schreibt für nb-Routinen (`nbHabitId`)
+**zusätzlich** nach `/nobraine/habits/<heute>/<nbHabitId>` zurück → beide Seiten
+bleiben konsistent.
+
+> Grenze: Der Koordinator läuft **client-seitig in index.html** (wie der
+> bestehende `quantus_task_inbox`-Importer). Die Spiegelung passiert also, während
+> eine Quantus-Session offen ist; ohne offene Quantus-Session bleibt der Weekly
+> Planner für sich (eigene `/nobraine`-Daten) und Quantus zieht beim nächsten
+> Öffnen nach. Meals werden für die aktuelle + nächste Woche gespiegelt.
+
+Bestehende Quantus-Konventionen, die exakt übernommen wurden: Task-Ingest via
+Root-Queue `quantus_task_inbox` (Schema `{ title, text?, description?, priority?,
+status?, dueDate?, tags?, source? }`, wird konsumiert und gelöscht); Habits in
+`dailyBriefing.routines` mit `completions:[{id,date,value}]` (Datum `YYYY-MM-DD`);
+Tages-Timeline aus `dailyBriefing.timeBlocks[<datum>]`.
 
 ## Erst-Seed der Bibliothek
 
@@ -172,12 +210,18 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
 
 ## Testanleitung
 
+> **Hinweis zum Testen mit echtem Firebase:** In der CI-/Sandbox-Umgebung sind die
+> Firebase-Hosts (gstatic-CDN, RTDB) durch die Netzwerk-Policy blockiert und ein
+> echter Google-Popup-Login ist nicht automatisierbar. Die App-Logik (Login-Flow,
+> Wochenanzeige, Freihalten, Habit-Abhaken, Generieren-POST) sowie die Koordinator-
+> Reconcile-Logik sind daher mit Firebase-Stubs end-to-end verifiziert. Der finale
+> Real-Firebase-Test (echter Google-Login) erfolgt auf dem Netlify-Deployment.
+
 1. `public/nobraine.html` öffnen (lokal via `npx serve public` oder über das
-   Netlify-Deployment; oder in der Hauptapp über die App „No-Braine"). Es
+   Netlify-Deployment; oder in der Hauptapp über die App „Weekly Planner"). Es
    erscheint der Login-Screen → „Mit Google anmelden" → nach der Anmeldung zeigt
-   der Footer unten links die E-Mail mit grünem Punkt (UID im Tooltip/der
-   Konsole). Beim ersten Start erscheinen die Starter-Rezepte in der Bibliothek.
-   (Bleibt die Liste leer + „Zugriff verweigert": UID in den Rules eintragen.)
+   der Footer unten links die E-Mail mit grünem Punkt. Beim ersten Start
+   erscheinen die Starter-Rezepte in der Bibliothek.
 2. **Rezepte:** In „Rezepte" ein Rezept anklicken → Drawer mit vollständigem
    Rezept (Zutaten mit Mengen, nummerierte Schritte, Portionen, Kochzeit).
    Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen. „＋ Neues Rezept"
@@ -202,7 +246,17 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
    persistiert, Badge in der Navigation zählt offene Posten), manuell Artikel
    ergänzen (Enter oder „＋ Hinzufügen"), „Erledigte entfernen".
 7. **Gewohnheiten:** In „Gewohnheiten" erscheinen die Standard-Gewohnheiten als
-   Matrix über die Woche. Zellen abhaken (Schreiben nach `habits/<datum>/…`,
-   Serie `🔥 N` aktualisiert sich), „＋ Gewohnheit" anlegen (Name + Symbol),
-   Namen anklicken zum Bearbeiten/Löschen. Wochennavigation (‹ ›) blättert die
-   Matrix durch die Wochen.
+   Matrix über die Woche (inkl. **Morgenessen** 🥣). Zellen abhaken (Schreiben
+   nach `habits/<datum>/…`, Serie `🔥 N` aktualisiert sich), „＋ Gewohnheit"
+   anlegen (Name + Symbol), Namen anklicken zum Bearbeiten/Löschen.
+   Wochennavigation (‹ ›) blättert die Matrix durch die Wochen.
+8. **Integration in Quantus** (Quantus-Session parallel geöffnet): Nach dem
+   Planen einer Woche und Abhaken von Habits im Weekly Planner erscheinen in
+   Quantus:
+   - **Daily Planner** (App „Daily Briefing") in der „Tagesplanung"-Timeline die
+     Mittag-/Abendessen des jeweiligen Tages (12:00 / 18:30, mit Rezeptname).
+   - **Habits-App / Daily Planner**: „Morgenessen" und die weiteren Weekly-
+     Planner-Gewohnheiten als Routinen; in Quantus abgehakt → im Weekly Planner
+     abgehakt und umgekehrt (`/nobraine/habits` ist die gemeinsame Wahrheit).
+   Verifikation im RTDB: `dailyBriefing.routines[]` enthält Einträge mit
+   `nbHabitId`, `dailyBriefing.timeBlocks[<datum>]` Blöcke mit `nbMealKey`.

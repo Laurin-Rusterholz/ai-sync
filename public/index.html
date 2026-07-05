@@ -20202,6 +20202,9 @@ window.toggleHabitToday = function(habitId) {
     h.completions = h.completions.filter(c => c.date !== today);
     h.completions.push({ id: 'hc_' + Math.random().toString(36).slice(2, 8), date: today, value: target });
   }
+  // No-Braine-Habits: Completion zusätzlich nach /nobraine/habits spiegeln (eine Wahrheit,
+  // konsistent zwischen Habits-App/Daily Planner und Weekly Planner).
+  if (h.nbHabitId) { try { const done = getCompletionForDate(h, today) >= target; firebase.app().database(RTDB_DB_URL).ref("nobraine/habits/" + today + "/" + h.nbHabitId).set(done ? true : null); } catch(e) {} }
   scheduleSave();
   render();
 };
@@ -20214,6 +20217,7 @@ window.incHabitToday = function(habitId) {
 
   if (!Array.isArray(h.completions)) h.completions = [];
   h.completions.push({ id: 'hc_' + Math.random().toString(36).slice(2, 8), date: today, value: 1 });
+  if (h.nbHabitId) { try { firebase.app().database(RTDB_DB_URL).ref("nobraine/habits/" + today + "/" + h.nbHabitId).set(true); } catch(e) {} }
   scheduleSave();
   render();
 };
@@ -70402,6 +70406,106 @@ window.searchAllData = searchAllData;
 })();
 
 
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NO-BRAINE → QUANTUS SYNC-KOORDINATOR
+   Spiegelt die eigenständige Weekly-Planner-App (public/nobraine.html, RTDB-Root
+   /nobraine) in die BESTEHENDEN Quantus-Stores, damit ihre Daten nativ in der
+   Habits-App und im Daily Planner erscheinen — ohne neue Anzeige zu erfinden:
+     • Habits:     /nobraine/habitdefs (+ /nobraine/habits/<datum>/<id>=true)
+                     → APP.state.data.dailyBriefing.routines[]  (+ completions)
+     • Mahlzeiten: /nobraine/weeks/<jahr-kw>/meals/<tag>/<mittag|abend> = recipeId
+                     → APP.state.data.dailyBriefing.timeBlocks[<datum>][]  (Tagesplanung)
+   index.html ist alleiniger Writer des appStore-Blobs; auf /nobraine wird nur
+   GELESEN. Der Rückschrieb der Habit-Completions läuft über den nativen
+   Habit-Toggle (toggleHabitToday, nbHabitId → /nobraine/habits). /nobraine hat
+   auth != null; der Koordinator startet erst mit Firebase-Session (kein
+   permission_denied). Datenpfade/Schemata: siehe docs/nobraine-module.md.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+  var RTDB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+  var TAG_KEYS = ["montag","dienstag","mittwoch","donnerstag","freitag","samstag","sonntag"];
+  var SLOTS = {
+    mittag: { start:"12:00", end:"13:00", label:"Mittagessen", icon:"🍽️" },
+    abend:  { start:"18:30", end:"19:30", label:"Abendessen",  icon:"🍲" }
+  };
+  var S = { defs:{}, log:{}, recipes:{}, meals:{}, started:false };
+
+  function fdb(){ try { if (window.firebase && firebase.app) return firebase.app().database(RTDB_URL); } catch(e){} return null; }
+  function mondayOf(d){ var m=new Date(d); var v=(m.getDay()+6)%7; m.setDate(m.getDate()-v); m.setHours(0,0,0,0); return m; }
+  function isoWeek(d){ var t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())); var tag=t.getUTCDay()||7; t.setUTCDate(t.getUTCDate()+4-tag); var js=new Date(Date.UTC(t.getUTCFullYear(),0,1)); var w=Math.ceil((((t-js)/86400000)+1)/7); return { jahr:t.getUTCFullYear(), woche:w }; }
+  function weekKeyOf(monday){ var w=isoWeek(monday); return w.jahr+"-W"+String(w.woche).padStart(2,"0"); }
+  function isoDate(d){ return new Date(d).toISOString().slice(0,10); }
+  function currentWeeks(){ var m0=mondayOf(new Date()); var m1=new Date(m0); m1.setDate(m1.getDate()+7); return [ {wk:weekKeyOf(m0),monday:m0}, {wk:weekKeyOf(m1),monday:m1} ]; }
+  function recipeName(id){ var r=S.recipes[id]; return (r && r.name) ? r.name : null; }
+  function brief(){ var A=window.APP; var d=A && A.state && A.state.data; if(!d) return null; if(!d.dailyBriefing) d.dailyBriefing={ routines:[], timeBlocks:{} }; if(!Array.isArray(d.dailyBriefing.routines)) d.dailyBriefing.routines=[]; if(!d.dailyBriefing.timeBlocks) d.dailyBriefing.timeBlocks={}; return d.dailyBriefing; }
+
+  // Habits: habitdefs → routines (Upsert per nbHabitId), completions aus /nobraine/habits als Autorität
+  function reconcileHabits(){
+    var b=brief(); if(!b) return false; var routines=b.routines; var changed=false;
+    Object.keys(S.defs||{}).forEach(function(id){
+      var def=S.defs[id]||{}; var r=routines.find(function(x){ return x.nbHabitId===id; });
+      if(def.aktiv===false){ if(r && !r.archived){ r.archived=true; changed=true; } return; }
+      if(!r){ routines.push({ id:"rt_nb_"+String(id).slice(0,12), nbHabitId:id, source:"nobraine", text:def.name||"Habit", icon:def.icon||"🔁", color:"#3e8e87", frequency:"daily", customDays:[], target:1, unit:"", subUnits:[], archived:false, createdAt:new Date().toISOString(), completions:[], subCompletions:[] }); changed=true; }
+      else { if(def.name && r.text!==def.name){ r.text=def.name; changed=true; } if(def.icon && r.icon!==def.icon){ r.icon=def.icon; changed=true; } if(r.archived){ r.archived=false; changed=true; } }
+    });
+    // Routinen zu gelöschten habitdefs archivieren
+    routines.forEach(function(r){ if(r.nbHabitId && !(S.defs && S.defs[r.nbHabitId]) && !r.archived){ r.archived=true; changed=true; } });
+    // Completions je nb-Routine exakt an /nobraine/habits ausrichten (Autorität)
+    routines.forEach(function(r){
+      if(!r.nbHabitId) return; if(!Array.isArray(r.completions)) r.completions=[];
+      var soll={}; Object.keys(S.log||{}).forEach(function(date){ if((S.log[date]||{})[r.nbHabitId]) soll[date]=true; });
+      var have={}; r.completions.forEach(function(c){ if(c&&c.date) have[c.date]=true; });
+      Object.keys(soll).forEach(function(date){ if(!have[date]){ r.completions.push({ id:"hc_nb_"+Math.random().toString(36).slice(2,8), date:date, value:r.target||1 }); changed=true; } });
+      var before=r.completions.length;
+      r.completions=r.completions.filter(function(c){ return c&&c.date&&soll[c.date]; });
+      if(r.completions.length!==before) changed=true;
+    });
+    return changed;
+  }
+
+  // Mahlzeiten: /nobraine/weeks/<wk>/meals/<tag> → timeBlocks[date] (nur nb-Blöcke, Upsert)
+  function reconcileMeals(){
+    var b=brief(); if(!b) return false; var tbs=b.timeBlocks; var changed=false;
+    currentWeeks().forEach(function(wo){
+      var mealsWk=S.meals[wo.wk]||{};
+      for(var i=0;i<7;i++){
+        var d=new Date(wo.monday); d.setDate(d.getDate()+i); var date=isoDate(d); var tag=TAG_KEYS[i];
+        var dayMeals=mealsWk[tag]||{}; if(!Array.isArray(tbs[date])) tbs[date]=[];
+        var others=tbs[date].filter(function(x){ return !(x&&x.nbMealKey); });
+        var neu=[];
+        Object.keys(SLOTS).forEach(function(slot){ var rid=dayMeals[slot]; if(!rid) return; var name=recipeName(rid); if(!name) return; var c=SLOTS[slot];
+          neu.push({ id:"tb_nb_"+wo.wk+"_"+tag+"_"+slot, nbMealKey:wo.wk+"_"+tag+"_"+slot, startTime:c.start, endTime:c.end, title:c.icon+" "+c.label+": "+name, source:"nobraine" }); });
+        var oldNb=tbs[date].filter(function(x){ return x&&x.nbMealKey; }).map(function(x){ return x.nbMealKey+"|"+x.title+"|"+x.startTime; }).sort().join(";");
+        var newNb=neu.map(function(x){ return x.nbMealKey+"|"+x.title+"|"+x.startTime; }).sort().join(";");
+        if(oldNb!==newNb){ tbs[date]=others.concat(neu); changed=true; }
+      }
+    });
+    return changed;
+  }
+
+  var _t=null;
+  function apply(){ clearTimeout(_t); _t=setTimeout(function(){
+    var c1=false,c2=false; try{ c1=reconcileHabits(); }catch(e){ console.warn("[nbSync] habits:",e); } try{ c2=reconcileMeals(); }catch(e){ console.warn("[nbSync] meals:",e); }
+    if(c1||c2){ try{ if(typeof window.scheduleSave==="function") window.scheduleSave(); }catch(e){} try{ if(typeof window.render==="function") window.render(); }catch(e){} }
+  }, 200); }
+
+  function subscribe(){ var d=fdb(); if(!d){ setTimeout(subscribe,1500); return; }
+    function on(path,cb){ try{ d.ref(path).on("value", function(s){ cb(s.val()||{}); apply(); }, function(err){ console.warn("[nbSync] read denied "+path, err&&err.code); }); }catch(e){} }
+    on("nobraine/habitdefs", function(v){ S.defs=v; });
+    on("nobraine/habits",    function(v){ S.log=v; });
+    on("nobraine/recipes",   function(v){ S.recipes=v; });
+    currentWeeks().forEach(function(wo){ on("nobraine/weeks/"+wo.wk+"/meals", function(v){ S.meals[wo.wk]=v; }); });
+    console.info("[nbSync] No-Braine → Quantus Sync aktiv");
+  }
+  function start(){ if(S.started) return; S.started=true; subscribe(); }
+  function wait(){ try{ if(window.firebase && firebase.auth){ firebase.auth().onAuthStateChanged(function(u){ if(u) start(); }); return; } }catch(e){} setTimeout(wait,1500); }
+  if(document.readyState!=="loading") setTimeout(wait,1500); else document.addEventListener("DOMContentLoaded", function(){ setTimeout(wait,1500); });
+  window._nbSync = { state:S, apply:apply, start:start };
+})();
 </script>
 
 <script>
