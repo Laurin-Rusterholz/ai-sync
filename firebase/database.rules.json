@@ -1,28 +1,42 @@
 {
-    "rules": {
-          "driveFolders": {
-                  ".read": true,
-                  ".write": true
-          },
-          "driveDocs": {
-                  ".read": true,
-                  ".write": true
-          },
-          "driveInbox": {
-                  ".read": true,
-                  ".write": true,
-                  ".indexOn": ["status"]
-          },
-          "nobraine": {
-                  ".read": "auth != null",
-                  ".write": "auth != null",
-                  "recipes": {
-                          ".indexOn": ["kategorie", "lastUsed"]
-                  }
-          },
-          "$andere": {
-                  ".read": true,
-                  ".write": true
-          }
+  "rules": {
+    "//": "Anonyme Firebase-Anmeldung ist im Projekt nicht aktiv. Damit die App-Pfade ohne Login funktionieren, sind die UI-/Queue-Pfade offen (gmailDrafts etc. via $andere). AUSNAHME: 'appStore' enthaelt den kompletten App-Datensatz INKL. API-Keys (RTDB_NODE) und 'settings' potenziell Konfiguration — beide bleiben mit 'auth != null' geschuetzt, damit keine Secrets oeffentlich lesbar sind. WICHTIG in der Firebase-Konsole: kein '.read'/'.write' auf Wurzelebene, sonst wuerde die Erlaubnis nach unten vererben und das appStore-Gate aushebeln.",
+
+    "appStore": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "settings": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "driveInbox": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["status"]
+    },
+    "communicator_inbox": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["status", "timestamp"]
+    },
+    "quantus_task_inbox": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["timestamp"]
+    },
+    "nobraine": {
+      ".read": true,
+      ".write": true,
+      "recipes": {
+        ".indexOn": ["kategorie", "lastUsed"]
+      }
+    },
+
+    "$andere": {
+      ".read": true,
+      ".write": true
     }
+  }
 }

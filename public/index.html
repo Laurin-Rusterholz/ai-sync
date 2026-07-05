@@ -98244,7 +98244,10 @@ console.log('📚 Leseliste geladen');
         if (auth.currentUser){ resolve(); return; }
         var done=false, fin=function(){ if(done) return; done=true; try{ unsub&&unsub(); }catch(e){} resolve(); };
         var unsub=auth.onAuthStateChanged(function(u){ if(u) fin(); });
-        setTimeout(fin,4000);
+        // Kurzer Fallback: Die RTDB-Regeln für die UI-Pfade (gmailDrafts etc.) sind offen,
+        // ein Login ist dort nicht nötig. Ist (anonyme) Auth aktiv, greift der
+        // onAuthStateChanged-Zweig sofort; ist sie aus, lädt die Liste nach ~1,5 s statt 4 s.
+        setTimeout(fin,1500);
       } catch(e){ resolve(); }
     });
     return _rtdbAuthReadyP;
