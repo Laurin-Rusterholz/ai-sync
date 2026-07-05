@@ -381,6 +381,50 @@ h1, h2, .redaktionell {
 }
 #toast.sichtbar { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ── Login-Overlay ──────────────────────────────────────────────────────── */
+#loginOverlay {
+  position: fixed; inset: 0; z-index: 200; display: none;
+  align-items: center; justify-content: center; padding: 24px;
+  background: var(--schiefer);
+}
+#loginOverlay.offen { display: flex; }
+.login-box {
+  background: var(--leinen-hell); border-radius: 20px; box-shadow: 0 24px 70px rgba(0,0,0,.4);
+  width: min(400px, 100%); padding: 40px 34px; text-align: center;
+}
+.login-logo { font-size: 52px; line-height: 1; margin-bottom: 8px; }
+.login-box h1 { font-size: 30px; font-weight: 700; }
+.login-untertitel { font-size: 12.5px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); margin-top: 4px; margin-bottom: 30px; }
+#loginInhalt { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.btn-google {
+  display: inline-flex; align-items: center; gap: 11px;
+  padding: 12px 22px; border: 1px solid var(--linie); border-radius: 12px;
+  background: #fff; color: var(--tinte); font-weight: 600; font-size: 15px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08); transition: box-shadow .15s, transform .08s;
+}
+.btn-google:hover { box-shadow: 0 3px 10px rgba(0,0,0,.14); }
+.btn-google:active { transform: scale(.98); }
+.btn-google .g-logo {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: conic-gradient(from -45deg, #ea4335 0 25%, #fbbc05 0 50%, #34a853 0 75%, #4285f4 0);
+  color: #fff; font-weight: 800; font-family: Georgia, serif; font-size: 13px;
+}
+.login-hinweis { font-size: 12px; color: var(--muted); max-width: 280px; line-height: 1.5; }
+.login-fehler {
+  background: rgba(217,108,87,.12); border: 1px solid rgba(217,108,87,.4); color: var(--coral-tief);
+  border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.45; max-width: 300px;
+}
+.login-status { font-size: 13.5px; color: var(--muted); }
+.login-spinner {
+  width: 26px; height: 26px; border: 3px solid var(--linie); border-top-color: var(--teal);
+  border-radius: 50%; animation: dreh .7s linear infinite;
+}
+#logoutBtn {
+  margin-left: auto; border: 0; background: transparent; color: var(--muted-hell);
+  font-size: 15px; padding: 2px 6px; border-radius: 6px; line-height: 1;
+}
+#logoutBtn:hover { color: var(--leinen); background: var(--schiefer-hell); }
+
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 @media (max-width: 760px) {
   #app { flex-direction: column; }
@@ -404,11 +448,27 @@ h1, h2, .redaktionell {
 </head>
 <body>
 
+<div id="loginOverlay" class="offen">
+  <div class="login-box">
+    <div class="login-logo">🍽️</div>
+    <h1>No-Braine</h1>
+    <div class="login-untertitel">Quantus · Wochen-Menüplaner</div>
+    <div id="loginInhalt">
+      <div class="login-spinner"></div>
+      <div class="login-status">Anmeldung wird geprüft …</div>
+    </div>
+  </div>
+</div>
+
 <div id="app">
   <aside id="sidebar">
     <div class="sb-brand">🍽️ No-Braine <small>Quantus · Wochenplaner</small></div>
     <nav id="nav"></nav>
-    <div class="sb-fuss"><span class="punkt" id="authPunkt"></span><span id="authText">Verbinde …</span></div>
+    <div class="sb-fuss">
+      <span class="punkt" id="authPunkt"></span>
+      <span id="authText">Verbinde …</span>
+      <button id="logoutBtn" data-action="logout" title="Abmelden">⎋</button>
+    </div>
   </aside>
 
   <main id="haupt">
@@ -434,7 +494,7 @@ h1, h2, .redaktionell {
 
 <div id="toast"></div>
 
-<!-- Firebase compat-SDK v10.8.0 — identisch zur Hauptapp (index.html), plus Auth für anonyme Anmeldung -->
+<!-- Firebase compat-SDK v10.8.0 — identisch zur Hauptapp (index.html), plus Auth für Google-Login -->
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
@@ -475,12 +535,6 @@ function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /gene
 // n8n-Webhook — Platzhalter. Vom eigenen n8n-Workflow ersetzen (POST empfängt {weekKey, typ, ...}).
 const WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-generate";
 
-// n8n-Webhook, der ein Firebase Custom Token liefert (POST → { token: "<customToken>" }).
-// n8n signiert das Token mit seinen Service-Account/OAuth-Credentials (Firebase Admin bzw.
-// IAM signJWT). Damit meldet sich der Browser echt an (auth != null), ohne dass anonyme
-// Anmeldung im Projekt aktiviert sein muss. Platzhalter unten durch die echte URL ersetzen.
-const TOKEN_WEBHOOK_URL = "https://n8n.example.com/webhook/nobraine-token";
-
 const TAGE_LANG  = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
 const TAG_KURZ   = ["Mo","Di","Mi","Do","Fr","Sa","So"];
 // Nur Mittag- und Abendessen werden geplant (Frühstück bleibt Routine).
@@ -494,14 +548,14 @@ const KATEGORIEN = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FIREBASE-SETUP + ANONYME ANMELDUNG
+// FIREBASE-SETUP + GOOGLE-LOGIN
 // ═══════════════════════════════════════════════════════════════════════════
 let db = null, auth = null;
 try {
   firebase.initializeApp(FIREBASE_CONFIG);
-  // ECHTE anonyme Anmeldung (wie drive.html vor dem Auth-Stub). Die Live-RTDB-Regeln
-  // für /nobraine verlangen auth != null — die App muss also wirklich eingeloggt sein,
-  // bevor Reads/Writes laufen (siehe boot(): Listener starten erst bei echtem User).
+  // Google-Login (signInWithPopup). Die Live-RTDB-Regeln für /nobraine sind auf die
+  // feste UID gegated — die App muss wirklich eingeloggt sein, bevor Reads/Writes
+  // laufen (siehe boot(): Listener starten erst bei echtem User).
   auth = firebase.auth();
   db   = firebase.app().database(RTDB_DB_URL);
 } catch (e) {
@@ -612,94 +666,93 @@ function mengeStr(n) {
 // BOOT & LISTENER
 // ═══════════════════════════════════════════════════════════════════════════
 function boot() {
-  if (!auth) { toast("Firebase SDK nicht geladen — Adblocker prüfen"); return; }
+  if (!auth) { loginOverlayZeigen("fehler", "Firebase SDK nicht geladen — Adblocker prüfen?"); return; }
   auth.onAuthStateChanged(function (user) {
     const punkt = document.getElementById("authPunkt");
     const text  = document.getElementById("authText");
     if (user) {
+      // Angemeldet — Login-Overlay ausblenden, Listener starten
+      document.getElementById("loginOverlay").classList.remove("offen");
       punkt.classList.remove("fehler");
       punkt.classList.add("online");
-      text.textContent = "Angemeldet";
+      const name = user.email || user.displayName || "angemeldet";
+      text.textContent = name;
+      text.title = "UID: " + (user.uid || "") + " — für die Security-Rules";
+      console.info("No-Braine angemeldet als", name, "· UID:", user.uid);
       if (!S.bereit) {
         S.bereit = true;
         db.ref(P_RECIPES).on("value", function (snap) {
           S.recipes = snap.val() || {};
           rezepteSeedFallsLeer();
           render();
-        });
+        }, zugriffFehler);
         db.ref(P_HABITDEFS).on("value", function (snap) {
           S.habitDefs = snap.val() || {};
           habitsSeedFallsLeer();
           render();
-        });
+        }, zugriffFehler);
         db.ref(P_HABITS).on("value", function (snap) {
           S.habitLog = snap.val() || {};
           render();
-        });
+        }, zugriffFehler);
         wochenListenerAktualisieren();
       }
     } else {
+      // Nicht angemeldet — Login-Overlay mit Google-Button zeigen (kein Auto-Popup:
+      // signInWithPopup braucht eine Nutzeraktion, sonst blockt der Browser das Popup).
       punkt.classList.remove("online");
-      anmelden();
+      document.getElementById("authText").textContent = "Nicht angemeldet";
+      loginOverlayZeigen("login");
     }
   });
 }
 
-// Anmeldung: primär Firebase Custom Token von n8n (nutzt dessen Service-Account/
-// OAuth-Credentials), Fallback anonyme Anmeldung. Erst danach ist auth != null erfüllt;
-// Listener/Reads/Writes starten über onAuthStateChanged (S.bereit-Gate).
-let _anmeldungLaeuft = false;
-async function anmelden() {
-  if (_anmeldungLaeuft || S.bereit) return;
-  _anmeldungLaeuft = true;
+// Reagiert auf permission_denied der RTDB-Listener (z. B. UID noch nicht in den Rules).
+function zugriffFehler(err) {
+  console.error("RTDB-Zugriff verweigert:", err);
   const punkt = document.getElementById("authPunkt");
-  const text  = document.getElementById("authText");
-  punkt.classList.remove("fehler");
-  text.textContent = "Melde an …";
-
-  // 1) Firebase Custom Token von n8n holen und damit anmelden
-  try {
-    const token = await customTokenHolen();
-    if (token) {
-      await auth.signInWithCustomToken(token);
-      _anmeldungLaeuft = false;
-      return; // onAuthStateChanged startet die Listener
-    }
-  } catch (e) {
-    console.warn("Custom-Token-Anmeldung fehlgeschlagen:", e);
-  }
-
-  // 2) Fallback: anonyme Anmeldung (falls im Projekt doch aktiviert)
-  try {
-    await auth.signInAnonymously();
-    _anmeldungLaeuft = false;
-    return;
-  } catch (e) {
-    _anmeldungLaeuft = false;
-    punkt.classList.add("fehler");
-    const code = (e && e.code) ? e.code : "";
-    // Klarer, handlungsleitender Hinweis im Footer statt stillem Hängen.
-    text.textContent = "Login fehlgeschlagen — Token/Anmeldung prüfen";
-    console.error("Anmeldung fehlgeschlagen:", e);
-    toast("Login fehlgeschlagen" + (code ? " (" + code + ")" : "") +
-      " — TOKEN_WEBHOOK_URL (n8n Custom Token) setzen oder anonyme Anmeldung aktivieren.");
-  }
+  if (punkt) punkt.classList.add("fehler");
+  toast("Zugriff verweigert — ist deine UID in den Firebase-Rules (/nobraine) eingetragen?");
 }
 
-// Holt ein Firebase Custom Token vom n8n-Webhook. Gibt null zurück, solange die URL
-// noch der Platzhalter ist (dann greift der anonyme Fallback).
-async function customTokenHolen() {
-  if (!TOKEN_WEBHOOK_URL || TOKEN_WEBHOOK_URL.indexOf("example.com") > -1) return null;
-  const res = await fetch(TOKEN_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ app: "nobraine" })
+// Google-Anmeldung per Popup (nur auf Nutzerklick).
+function googleLogin() {
+  loginOverlayZeigen("laeuft");
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  auth.signInWithPopup(provider).catch(function (e) {
+    const code = (e && e.code) ? e.code : "";
+    console.error("Google-Anmeldung fehlgeschlagen:", e);
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+      loginOverlayZeigen("login");
+    } else if (code === "auth/operation-not-allowed") {
+      loginOverlayZeigen("fehler", "Google-Login ist im Firebase-Projekt nicht aktiviert (Authentication → Sign-in method → Google).");
+    } else if (code === "auth/unauthorized-domain") {
+      loginOverlayZeigen("fehler", "Diese Domain ist in Firebase Auth nicht freigegeben (Authentication → Settings → Authorized domains).");
+    } else {
+      loginOverlayZeigen("fehler", "Anmeldung fehlgeschlagen" + (code ? " (" + code + ")" : "") + ".");
+    }
   });
-  if (!res.ok) throw new Error("Token-Webhook Status " + res.status);
-  const data = await res.json();
-  const token = data && (data.token || data.customToken || data.firebaseToken);
-  if (!token) throw new Error("Antwort ohne token-Feld");
-  return token;
+}
+function logout() {
+  if (auth && auth.signOut) auth.signOut();
+}
+
+// Login-Overlay-Zustände: "login" (Button), "laeuft" (Spinner), "fehler" (Meldung + Button)
+function loginOverlayZeigen(zustand, meldung) {
+  const ov = document.getElementById("loginOverlay");
+  const inhalt = document.getElementById("loginInhalt");
+  if (!ov || !inhalt) return;
+  ov.classList.add("offen");
+  if (zustand === "laeuft") {
+    inhalt.innerHTML = '<div class="login-spinner"></div><div class="login-status">Anmeldung läuft …</div>';
+  } else {
+    inhalt.innerHTML =
+      (zustand === "fehler" && meldung ? '<div class="login-fehler">' + esc(meldung) + "</div>" : "") +
+      '<button class="btn-google" data-action="google-login">' +
+        '<span class="g-logo">G</span> Mit Google anmelden</button>' +
+      '<div class="login-hinweis">Zugriff nur für berechtigte Konten. Die App speichert deine Planung in Firebase.</div>';
+  }
 }
 
 // Woche-abhängige Listener (meals / freeblocks / shopping / generation) neu binden
@@ -1836,6 +1889,8 @@ document.addEventListener("click", function (e) {
   const slot = el.getAttribute("data-slot");
 
   switch (aktion) {
+    case "google-login":    googleLogin(); break;
+    case "logout":          logout(); break;
     case "ansicht":         S.ansicht = el.getAttribute("data-art"); S.drawer = null; render(); break;
     case "woche-zurueck":   wocheWechseln(-1); break;
     case "woche-vor":       wocheWechseln(1); break;

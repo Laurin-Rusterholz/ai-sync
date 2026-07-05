@@ -12,13 +12,13 @@ RTDB-Pfad-Root **`/nobraine/`**.
 Konventionen exakt wie `public/drive.html`: IIFE-Scope (kein globaler
 Namespace), Event-Delegation über `data-action`-Attribute, `toast()` für
 sämtliches Feedback, Design-System „Schiefer/Leinen", Firebase compat v10.8.0,
-echte Firebase-Anmeldung (Custom Token via n8n, Fallback anonym), Sprache
-Hochdeutsch mit Schweizer Schreibweise (ss statt ß), responsive & mobile-first.
+Google-Login (`signInWithPopup`) mit UID-gegateten Rules, Sprache Hochdeutsch mit
+Schweizer Schreibweise (ss statt ß), responsive & mobile-first.
 
 - Firebase-Projekt: `jupidu-36804`
 - RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
 - SDK: Firebase **compat v10.8.0** (`app`, `auth`, `database`)
-- Auth: **echte Anmeldung** — primär Firebase **Custom Token** von n8n (`signInWithCustomToken`), Fallback `signInAnonymously`. Listener/Reads/Writes starten erst nach `onAuthStateChanged` mit echtem User. `/nobraine` ist per `auth != null` gegated.
+- Auth: **Google-Login** (`signInWithPopup(GoogleAuthProvider)`) über einen Login-Screen; Listener/Reads/Writes starten erst nach `onAuthStateChanged` mit echtem User. `/nobraine` ist auf die **feste UID** gegated (`auth.uid === '…'`).
 - Navigation: registriert in `public/index.html` unter `getAllApps()`
   (`key: "nobraine"`, Icon 🍽️, Label „No-Braine") sowie im Routing-`switch`
   von `renderMain()` (`case "nobraine": window.location.href = "nobraine.html"`).
@@ -98,60 +98,63 @@ Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
 Schlägt der `POST` fehl (z. B. weil `WEBHOOK_URL` noch der Platzhalter ist),
 setzt das Frontend `generation.status = "error"` mit erklärender `message` und
-zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend ist echt eingeloggt
-(Custom Token via n8n, `auth != null` erfüllt — siehe Auth-Abschnitt); n8n selbst
+zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend ist per Google-Login
+eingeloggt (`auth.uid` erfüllt die Rule — siehe Auth-Abschnitt); n8n selbst
 schreibt per Service-Account (umgeht die Regeln).
+
+## Auth: Google-Login im Browser
+
+Anonyme Anmeldung lässt sich im Projekt nicht aktivieren. Stattdessen meldet sich
+der Browser per **Google-Login** an: Beim Start zeigt die App einen Login-Screen
+mit „Mit Google anmelden"; ein Klick öffnet `signInWithPopup(GoogleAuthProvider)`.
+Kein Passwort im Client, keine n8n-Abhängigkeit für die Anmeldung.
+
+**Ablauf (`boot()` / `googleLogin()`):**
+
+1. `onAuthStateChanged` prüft beim Start eine bestehende (persistierte) Sitzung.
+   Kein User → Login-Overlay mit Button (**kein** Auto-Popup — `signInWithPopup`
+   braucht eine Nutzeraktion, sonst blockt der Browser das Popup).
+2. Klick → `signInWithPopup`. Erfolg → `onAuthStateChanged` liefert den User,
+   Overlay schliesst, Listener/Reads/Writes starten (`S.bereit`-Gate). Der Footer
+   zeigt die E-Mail; die **UID** steht im Tooltip und in der Konsole.
+3. Fehler werden im Overlay erklärt: Popup abgebrochen → zurück zum Button;
+   `auth/operation-not-allowed` → „Google-Login nicht aktiviert";
+   `auth/unauthorized-domain` → Domain in Firebase Auth freigeben.
+4. „⎋" im Footer meldet ab (`signOut`), Overlay öffnet wieder.
+
+**Einrichtung im Firebase-Projekt:**
+
+1. Authentication → Sign-in method → **Google** aktivieren.
+2. Authentication → Settings → **Authorized domains**: Netlify-Domain (und
+   ggf. `localhost`) eintragen.
+3. Einmal in der App anmelden, dann die eigene **UID** in die Rules eintragen
+   (siehe unten). Die UID steht im Footer-Tooltip, in der Browser-Konsole
+   („No-Braine angemeldet als … · UID: …") oder in der Firebase-Konsole unter
+   Authentication → Users.
 
 ## Firebase-Security-Rules
 
-Der gesamte `nobraine`-Teilbaum ist mit **`auth != null`** gegated (Block in
-`firebase/database.rules.json`) — die RTDB enthält sensible Daten und bleibt
-geschützt. Der Block ist rein additiv: Drive-Pfade und der `$andere`-Wildcard
-bleiben unverändert wie von `main` gesetzt; nur der explizite `nobraine`-Key
-verlangt Auth. `nobraine/recipes` trägt `.indexOn: ["kategorie","lastUsed"]`.
+Der `nobraine`-Teilbaum ist auf die **feste UID** gegated
+(`firebase/database.rules.json`), damit nur das eigene Konto Zugriff hat — die
+RTDB enthält sensible Daten:
 
-> Live-Rules bewusst **nicht** öffnen. Weil die Regeln Auth verlangen, muss die
-> App wirklich eingeloggt sein (siehe Auth), sonst scheitern Schreibzugriffe in
-> Produktion mit `permission_denied`.
+```json
+"nobraine": {
+  ".read":  "auth != null && auth.uid === 'DEINE_FIREBASE_UID'",
+  ".write": "auth != null && auth.uid === 'DEINE_FIREBASE_UID'",
+  "recipes": { ".indexOn": ["kategorie", "lastUsed"] }
+}
+```
 
-## Auth: Custom Token via n8n (kein anonymer Login nötig)
+Der Block ist rein additiv: Drive-Pfade und der `$andere`-Wildcard bleiben
+unverändert wie von `main` gesetzt. **`DEINE_FIREBASE_UID` durch die echte UID
+ersetzen** und die Rules deployen.
 
-Anonyme Anmeldung lässt sich im Projekt nicht aktivieren. Stattdessen meldet sich
-der Browser mit einem **Firebase Custom Token** an, das **n8n** mit seinen
-vorhandenen Service-Account-/OAuth-Credentials ausstellt. So ist die App echt
-eingeloggt (`auth != null`), ohne dass ein Sign-in-Provider in der Firebase-
-Konsole umgeschaltet werden muss (Custom Tokens funktionieren über den
-Service-Account, nicht über die Provider-Liste).
-
-**Ablauf im Frontend (`boot()` → `anmelden()`):**
-
-1. `POST` an `TOKEN_WEBHOOK_URL` (Konstante in `nobraine.html`, Platzhalter
-   ersetzen) → erwartet `{ "token": "<firebase custom token>" }`.
-2. `auth.signInWithCustomToken(token)`.
-3. Schlägt das fehl (oder ist `TOKEN_WEBHOOK_URL` noch der Platzhalter), wird als
-   **Fallback** `signInAnonymously()` versucht.
-4. Erst nach `onAuthStateChanged` mit echtem User starten Listener/Reads/Writes
-   (`S.bereit`-Gate) — `auth != null` ist damit bei jedem Zugriff erfüllt.
-5. Scheitern beide Wege, hängt die App nicht still, sondern zeigt im Footer
-   „Login fehlgeschlagen — Token/Anmeldung prüfen" (roter Punkt) + Toast mit
-   Fehlercode.
-
-**n8n-Seite (Token-Webhook):** Ein Webhook (POST) mintet mit dem
-Firebase-Service-Account ein Custom Token und gibt `{ token }` zurück. Varianten:
-
-- **Firebase Admin SDK** (Function/Code-Node): `admin.auth().createCustomToken(uid)`.
-- **Ohne Admin SDK:** signiertes JWT (`aud` =
-  `https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit`,
-  `iss`/`sub` = Service-Account-Mail, `uid`) via IAM `signJwt` — dasselbe
-  Service-Konto wie beim Drive-Workflow, ergänzt um die Rolle **Service Account
-  Token Creator**.
-
-Der Token-Webhook sollte gegen unbefugten Abruf geschützt werden (z. B.
-n8n-Header-Auth), da er Login-Tokens ausstellt.
-
-Solange `TOKEN_WEBHOOK_URL` der Platzhalter ist, greift der anonyme Fallback —
-dann muss „Anonym" im Firebase-Projekt aktiviert sein, sonst erscheint der
-Footer-Fehlerhinweis.
+> Live-Rules bewusst **nicht** öffnen. Nur `auth != null` würde jedem
+> beliebigen Google-Konto Zugriff geben — deshalb das UID-Gate. Solange die
+> Platzhalter-UID drinsteht, verweigert die RTDB den Zugriff; die App meldet das
+> dann als „Zugriff verweigert — ist deine UID in den Firebase-Rules
+> eingetragen?" (statt still leer zu bleiben).
 
 ## Erst-Seed der Bibliothek
 
@@ -170,10 +173,11 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
 ## Testanleitung
 
 1. `public/nobraine.html` öffnen (lokal via `npx serve public` oder über das
-   Netlify-Deployment; oder in der Hauptapp über die App „No-Braine"). Unten
-   links muss „Angemeldet" mit grünem Punkt stehen (Custom Token via n8n bzw.
-   anonymer Fallback). Beim ersten Start erscheinen die Starter-Rezepte in der
-   Bibliothek.
+   Netlify-Deployment; oder in der Hauptapp über die App „No-Braine"). Es
+   erscheint der Login-Screen → „Mit Google anmelden" → nach der Anmeldung zeigt
+   der Footer unten links die E-Mail mit grünem Punkt (UID im Tooltip/der
+   Konsole). Beim ersten Start erscheinen die Starter-Rezepte in der Bibliothek.
+   (Bleibt die Liste leer + „Zugriff verweigert": UID in den Rules eintragen.)
 2. **Rezepte:** In „Rezepte" ein Rezept anklicken → Drawer mit vollständigem
    Rezept (Zutaten mit Mengen, nummerierte Schritte, Portionen, Kochzeit).
    Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen. „＋ Neues Rezept"
