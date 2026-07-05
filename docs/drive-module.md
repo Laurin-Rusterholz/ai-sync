@@ -15,7 +15,9 @@ ausschliesslich über die RTDB: Frontend schreibt `driveInbox` (status
 - Firebase-Projekt: `jupidu-36804` · Bucket: `jupidu-36804.firebasestorage.app`
 - RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
 - SDK: Firebase **compat v10.8.0** (wie `index.html`), zusätzlich `firebase-auth-compat`
-- Auth: **Anonymous Auth** (`firebase.auth().signInAnonymously()`), Regel-Gate `auth != null`
+- Auth: **Google-Login** (`signInWithPopup` mit `GoogleAuthProvider`, Redirect-Fallback),
+  Regel-Gate `auth != null`. Die Session wird pro Browser persistiert (einmal anmelden
+  genügt) und gilt pro Origin — auch `index.html` ist damit angemeldet.
 
 ## Datenmodell (RTDB)
 
@@ -48,9 +50,11 @@ n8n lädt die Datei **nicht** erneut — der Text kommt aus dem Queue-Eintrag.
 
 ### 1. Firebase
 
-1. **Anonymous Auth aktivieren:** Firebase-Konsole → Authentication →
-   Sign-in method → „Anonym" aktivieren. Ohne diesen Schritt bleibt das
-   Modul bei „Anmeldung fehlgeschlagen" stehen.
+1. **Google-Provider aktivieren:** Firebase-Konsole → Authentication →
+   Sign-in method → „Google" aktivieren (Anonymous wird NICHT benötigt).
+   Unter Authentication → Settings → „Autorisierte Domains" muss die
+   Deploy-Domain stehen (z. B. `management-xo2-pro.netlify.app`;
+   `localhost` ist standardmässig erlaubt), sonst schlägt das Popup fehl.
 2. **RTDB-Regeln ergänzen:** Block aus `firebase/database.rules.json`
    übernehmen. Nur `driveFolders`/`driveDocs`/`driveInbox` werden mit
    `auth != null` gegated; der `$andere`-Wildcard repliziert das bisherige

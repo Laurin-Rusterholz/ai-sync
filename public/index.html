@@ -5184,17 +5184,14 @@ try {
     firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
     firebaseStorage = firebase.storage();
     console.log('🔥 Firebase Storage verbunden');
-    // Anonyme Anmeldung, damit die App unter RTDB-Regeln mit "auth != null"
-    // (Drive-Modul, künftig ggf. weitere Pfade) nicht ausgesperrt wird.
-    // Fire-and-forget: Alle bestehenden Abläufe starten unverändert; die
-    // SDK-Verbindungen authentifizieren sich, sobald der Login durch ist.
+    // Google-Login statt Anonymous Auth: Die Anmeldung passiert im Drive-Modul
+    // (drive.html, "Mit Google anmelden"). Die Firebase-Session gilt pro Origin
+    // und wird hier automatisch mitverwendet — kein Auto-Login, nur Status-Log,
+    // damit RTDB-Regeln mit "auth != null" nachvollziehbar bleiben.
     try {
       if (firebase.auth) {
         firebase.auth().onAuthStateChanged(function (user) {
-          if (user) { console.log('🔑 Firebase anonym angemeldet'); return; }
-          firebase.auth().signInAnonymously().catch(function (e) {
-            console.warn('⚠️ Anonyme Firebase-Anmeldung fehlgeschlagen (Anonymous Auth in der Konsole aktiviert?):', e && e.message);
-          });
+          if (user) console.log('🔑 Firebase angemeldet als', user.email || user.uid);
         });
       }
     } catch (authErr) {
