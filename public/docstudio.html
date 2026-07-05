@@ -35,6 +35,8 @@
   --warning:#e3b048;
   --success:#45c198;
   --info:#6aa3de;
+  --coral:#d96c57;
+  --coral-tief:#b9503c;
   --bg:var(--surface-base);
   --panel:var(--surface-raised);
   --panel2:var(--surface-overlay);
@@ -113,6 +115,9 @@ a{color:var(--accent)}
 .btn.sm{padding:5px 10px;font-size:12px}
 .btn.ghost{background:transparent}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.coral{background:var(--coral);border-color:var(--coral);color:#fff}
+.btn.coral:hover{background:var(--coral-tief);border-color:var(--coral-tief)}
+.btnspin{width:12px;height:12px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;flex:none}
 
 /* ── Layout ── */
 .wrap{max-width:1240px;margin:0 auto;padding:22px 18px 80px}
@@ -295,6 +300,7 @@ a{color:var(--accent)}
      POST <BASE>/quantus-doc-generate  {org, docType, fields, style, context, examples, wishes, contract}
      POST <BASE>/quantus-doc-revise    {html, instruction, org}
      POST <BASE>/quantus-doc-example   {org, fileUrl, fileName, mimeType}  → {text, styleAnalysis}
+     POST <BASE>/quantus-doc-pdf       {html, filename}  → PDF-Blob (Gotenberg)
    Alle mit Header  x-quantus-key: <WEBHOOK_KEY>
    ════════════════════════════════════════════════════════════════════════ */
 
@@ -316,9 +322,11 @@ var CONFIG = {
   WEBHOOK_KEY: "",
   WH_GENERATE: "quantus-doc-generate",
   WH_REVISE: "quantus-doc-revise",
+  WH_PDF: "quantus-doc-pdf",
   // TODO(Laurin): Webhook-Namen fuer die Beispiel-Extraktion (Text + Stilanalyse) in n8n anlegen
   WH_EXAMPLE: "quantus-doc-example",
   GENERATE_TIMEOUT_MS: 150000,   // Generierung kann 30–60 s dauern
+  PDF_TIMEOUT_MS: 90000,
   RTDB_TIMEOUT_MS: 15000,
   MAX_VERSIONS: 25
 };
@@ -602,7 +610,7 @@ var S = {
   gen: emptyGen(),
   filters: { org:"", type:"", project:"", status:"", q:"" },
   exOrgId: "",
-  editor: { docId:"", zoom:1, editing:false, quickOpen:false, versionsOpen:false, revising:false, revlog:[] },
+  editor: { docId:"", zoom:1, editing:false, quickOpen:false, versionsOpen:false, revising:false, exportingPdf:false, revlog:[] },
   ctxModal: null
 };
 
@@ -671,7 +679,7 @@ function onHashChange(){
   var h = (location.hash || "#/docs").replace(/^#\//, "");
   var parts = h.split("/");
   var v = parts[0] || "docs";
-  if (v === "editor"){ S.editor.docId = parts[1] || ""; S.editor.editing = false; S.editor.quickOpen = false; S.editor.versionsOpen = false; S.editor.revlog = []; _quickVals = null; }
+  if (v === "editor"){ S.editor.docId = parts[1] || ""; S.editor.editing = false; S.editor.quickOpen = false; S.editor.versionsOpen = false; S.editor.exportingPdf = false; S.editor.revlog = []; _quickVals = null; }
   S.view = ["docs","new","orgs","examples","editor"].indexOf(v) >= 0 ? v : "docs";
   render();
 }
@@ -1177,6 +1185,7 @@ function renderEditor(){
     + '<span class="spacer"></span>'
     + '<button class="btn sm" data-action="ed-print">🖨 PDF / Drucken</button>'
     + '<button class="btn sm" data-action="ed-download">⬇ HTML</button>'
+    + '<button class="btn sm coral" data-action="export-pdf"'+(ed.exportingPdf?" disabled":"")+'>'+(ed.exportingPdf?'<span class="btnspin"></span> PDF wird erstellt…':'📄 Als PDF exportieren')+'</button>'
     + '<button class="btn sm" data-action="doc-template" data-id="'+esc(doc.id)+'">📋 Als Vorlage duplizieren</button>'
     + '</div>'
     + (ed.quickOpen ? renderQuickPanel(doc) : "")
@@ -1324,6 +1333,47 @@ function downloadHtml(doc){
   a.download = String(doc.title||"dokument").replace(/[^a-zA-Z0-9aeoeueAeOeUe _-]/g,"").trim().replace(/\s+/g,"-").toLowerCase() + ".html";
   document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
+}
+// Serverseitiger PDF-Export: n8n → Gotenberg rendert das Dokument-HTML zu PDF.
+async function exportPdf(){
+  var ed = S.editor, doc = S.docs[ed.docId];
+  if (!doc || ed.exportingPdf) return;
+  if (ed.editing) return toast("warn","Zuerst Bearbeitung speichern","Direktbearbeitung ist aktiv");
+  var ver = currentVersion(doc);
+  if (!ver) return toast("warn","Keine Version vorhanden","Dieses Dokument hat noch keinen Inhalt");
+  // TODO(Laurin): Webhook-Key pruefen — es wird derselbe CONFIG.WEBHOOK_KEY (x-quantus-key) wie bei quantus-doc-generate verwendet
+  if (!CONFIG.WEBHOOK_KEY) toast("warn", "Webhook-Key fehlt", "x-quantus-key in CONFIG setzen (// TODO(Laurin))");
+  var filename = doc.docType + "-" + doc.id + ".pdf";
+  ed.exportingPdf = true; render(); afterEditorRender();
+  toast("info", "PDF wird erstellt …");
+  try {
+    var r;
+    try {
+      r = await fetchWithTimeout(CONFIG.WEBHOOK_BASE.replace(/\/$/, "") + "/" + CONFIG.WH_PDF, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-quantus-key": CONFIG.WEBHOOK_KEY },
+        body: JSON.stringify({ html: ver.html, filename: filename })
+      }, CONFIG.PDF_TIMEOUT_MS);
+    } catch(e){
+      if (e && e.name === "AbortError") throw new Error("PDF-Erstellung hat zu lange gedauert");
+      throw new Error("PDF-Server nicht erreichbar (" + (e && e.message || "Netzwerkfehler") + ")");
+    }
+    if (!r.ok) throw new Error("PDF-Server nicht erreichbar (Status " + r.status + ")");
+    var blob = await r.blob();
+    var ctype = (r.headers.get("Content-Type") || "").toLowerCase();
+    if (!blob || !blob.size || ctype.indexOf("pdf") < 0) throw new Error("Ungueltige Antwort vom PDF-Server");
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
+    toast("ok", "PDF erstellt", filename);
+  } catch(e){
+    toast("err", "PDF-Export fehlgeschlagen", e.message || String(e), 7000);
+  } finally {
+    ed.exportingPdf = false;
+    if (S.view === "editor" && S.editor.docId === doc.id){ render(); afterEditorRender(); }
+  }
 }
 function loadAsTemplate(docId){
   var doc = S.docs[docId];
@@ -1494,6 +1544,7 @@ document.addEventListener("click", function(e){
       break;
     }
     case "ed-download": { var d3 = S.docs[S.editor.docId]; if (d3) downloadHtml(d3); break; }
+    case "export-pdf": exportPdf(); break;
     case "ed-status": {
       var d4 = S.docs[S.editor.docId]; if (!d4) break;
       d4.status = (d4.status === "final") ? "entwurf" : "final";

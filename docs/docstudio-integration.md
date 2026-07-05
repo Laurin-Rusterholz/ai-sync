@@ -61,6 +61,7 @@ Basis-URL und Key stehen im `CONFIG`-Objekt am Anfang des Scripts in `docstudio.
 | `POST …/quantus-doc-generate` | `{org, docType, fields, style:{preset, sliders, freitext}, context:[{source,title,content}], examples:[{styleAnalysis,excerpt}], wishes, contract}` | vollstaendiges HTML (roh oder als JSON `{html}`) |
 | `POST …/quantus-doc-revise` | `{html, instruction, org}` | vollstaendiges HTML |
 | `POST …/quantus-doc-example` | `{org, fileUrl, fileName, mimeType}` | JSON `{text, styleAnalysis}` |
+| `POST …/quantus-doc-pdf` | `{html, filename}` | PDF-Blob (`application/pdf`, gerendert via Gotenberg) |
 
 `contract.cssVars` benennt die `:root`-Variablen, die das generierte Dokument fuer
 Farben/Schriften nutzen muss (`--doc-primary`, `--doc-secondary`, `--doc-accent`,
