@@ -29139,7 +29139,7 @@ function viewTasks() {
   // Liste View
   const listHtml = `
     <div class="tasks-grid">
-      ${tasks.map(t => renderTaskCard(t)).join('') || '<div class="mini text-center">${t("no_results")}</div>'}
+      ${tasks.map(t => renderTaskCard(t)).join('') || `<div class="mini text-center">${t("no_results")}</div>`}
     </div>
   `;
   
@@ -29882,7 +29882,7 @@ function viewProjects() {
         </div>
       </div>
     `;
-  }).join('') || '<div class="mini text-center">${t("no_results")}</div>';
+  }).join('') || `<div class="mini text-center">${t("no_results")}</div>`;
   
   return `
     <div class="page-header">
@@ -104352,6 +104352,14 @@ body.tabs-on .topbar{top:0 !important}
 .topbar-center .universal-search{height:36px;max-height:36px;align-items:center;overflow:hidden}
 .topbar-center .universal-search input{height:100%;padding-top:0;padding-bottom:0}
 
+/* ── 14) Typo-Hierarchie & Kopfzeilen-Konsistenz (v5) ── */
+.page-title h2{font-size:clamp(22px,1.8vw,27px)}
+.stat-card .value{font-size:clamp(26px,2vw,32px)}
+.page-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.page-actions .btn{height:36px}
+.card{box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+html.theme-light .card{box-shadow:none}
+
 @media (prefers-reduced-motion:reduce){
   .gml-loading::after{animation:none}
 }
@@ -104367,7 +104375,7 @@ body.tabs-on .topbar{top:0 !important}
       { s:150, x:'87%', y:'7%',  c:'pink',    t:'ring', d:2 },
       { s:130, x:'91%', y:'68%', c:'info',    t:'blob', d:4 },
       { s:95,  x:'3%',  y:'76%', c:'success', t:'ring', d:1 },
-      { s:56,  x:'74%', y:'87%', c:'warning', t:'dot',  d:3 },
+      { s:48,  x:'74%', y:'88%', c:'info', t:'dot',  d:3 },
       { s:44,  x:'42%', y:'5%',  c:'info',    t:'dot',  d:5 }
     ];
     formen.forEach(function(o,i){
