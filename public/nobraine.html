@@ -1068,9 +1068,25 @@ function renderInhalt() {
 }
 
 // ── Wochenplan ────────────────────────────────────────────────────────────
+// Eine Generierung gilt nach 5 Minuten ohne Abschluss als hängen geblieben.
+// Ohne diesen Timeout bleibt der Spinner für immer: Der Status "pending"/
+// "running" steht persistent in der RTDB — schliesst n8n den Workflow nie ab
+// (Webhook down, Workflow-Fehler), würde er nie zurückgesetzt und der
+// Generieren-Button bliebe dauerhaft gesperrt, auch nach einem Neuladen.
+const GEN_TIMEOUT_MS = 5 * 60 * 1000;
+function genStartMs() {
+  const g = S.generation || {};
+  return Date.parse(g.startedAt || g.angefragt || "") || 0;
+}
+function genHaengt() {
+  const st = S.generation && S.generation.status;
+  if (st !== "pending" && st !== "running") return false;
+  const t0 = genStartMs();
+  return !t0 || (Date.now() - t0 > GEN_TIMEOUT_MS);
+}
 function genLaeuft() {
   const st = S.generation && S.generation.status;
-  return st === "pending" || st === "running";
+  return (st === "pending" || st === "running") && !genHaengt();
 }
 function viewPlan() {
   const tage = tageDerWoche(S.weekMonday);
@@ -1082,6 +1098,12 @@ function viewPlan() {
   if (laeuft) {
     statusHtml = '<span class="gen-status"><span class="spinner"></span>' +
       (gStatus === "running" ? "n8n generiert die Woche …" : "Anfrage gesendet …") + "</span>";
+    // Während der Generierung periodisch neu rendern, damit die Timeout-
+    // Erkennung auch ohne RTDB-Update oder Nutzeraktion greift.
+    clearTimeout(viewPlan._tick);
+    viewPlan._tick = setTimeout(function () { render(); }, 30000);
+  } else if (genHaengt()) {
+    statusHtml = '<span class="gen-status">⚠︎ Generierung hängt (keine Antwort von n8n) — bitte erneut versuchen.</span>';
   } else if (gStatus === "done" && S.generation.finishedAt) {
     statusHtml = '<span class="gen-status">✓ Zuletzt generiert: ' + fmtKurz(S.generation.finishedAt) + "</span>";
   } else if (gStatus === "error") {
@@ -1712,11 +1734,19 @@ async function generieren(payloadExtra, hinweis) {
     });
     toast(hinweis || "Generierung gestartet …");
     // Webhook anstossen. n8n aktualisiert Status + Plan live über die RTDB-Listener.
-    const res = await fetch(WEBHOOK_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    // Mit Abbruch nach 20 s: Ein hängender Request würde sonst nie in den
+    // Fehlerzweig laufen und der Status bliebe auf "pending".
+    const ctrl = new AbortController();
+    const abbruch = setTimeout(function () { ctrl.abort(); }, 20000);
+    let res;
+    try {
+      res = await fetch(WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal
+      });
+    } finally { clearTimeout(abbruch); }
     if (!res.ok) throw new Error("Webhook-Status " + res.status);
   } catch (e) {
     console.error("Webhook fehlgeschlagen:", e);
