@@ -5079,6 +5079,7 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
         <button class="topbar-btn" id="btnQuickNote" title="Schnellnotiz">📝</button>
         <button class="topbar-btn" id="btnQuickIdea" title="Schnellidee (⌘+I)">💡</button>
         <button class="topbar-btn" data-action="nav" data-route="programs" title="Programme">🧩</button>
+        <button class="topbar-btn" title="Ins Drive hochladen (mit KI-Klassifizierung)" onclick="window.driveQuickUpload&&window.driveQuickUpload()">📤</button>
         <button class="topbar-btn" id="btnStartTimer" title="Timer starten" onclick="openManualTimerModal()">⏱️</button>
         <div class="topbar-divider"></div>
         <div style="position:relative" id="pinnedDropdownWrap">
@@ -5374,6 +5375,153 @@ async function _syncExistingFilesToDrive() {
 // der zweite Versuch fängt späte Anmeldungen ab.
 setTimeout(_syncExistingFilesToDrive, 12000);
 setTimeout(_syncExistingFilesToDrive, 45000);
+
+// ── Drive ↔ Hauptapp: PDFs aus dem Drive-Modul im PDF-Editor öffnen ──
+// drive.html (im iframe) sendet bei PDF-Klick eine postMessage; hier wird der
+// PDF-Editor mit URL + storagePath geöffnet (Speichern schreibt zurück).
+window.addEventListener('message', function(ev){
+  try {
+    if (ev.origin !== location.origin) return;
+    var d = ev && ev.data;
+    if (!d || typeof d !== 'object' || d.type !== 'quantus-open-pdf' || !d.url) return;
+    if (typeof window.openPdfEditor === 'function') {
+      window.openPdfEditor(String(d.url), { name: String(d.name || 'Dokument.pdf'), storagePath: d.storagePath ? String(d.storagePath) : null });
+    } else {
+      window.open(String(d.url), '_blank', 'noopener');
+    }
+  } catch(e) {}
+});
+
+// ── „Aus Drive anhängen": Drive-Dokumente als Anhang an Entities (Projekte,
+//    Aufgaben, …) — referenziert dieselbe Storage-Datei, kein Doppel-Upload. ──
+function _escDrv(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+window._attachFromDrive = async function(kind, entityId){
+  if (typeof window.openModal !== 'function') return;
+  window.openModal('🗄️ Aus Drive anhängen',
+    '<input type="text" id="drvPickSearch" placeholder="Suchen (Name, Titel)…" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:10px;font-size:13.5px;margin-bottom:10px" oninput="window._attachFromDriveFilter(this.value)">'
+    + '<div id="drvPickList" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"><div class="mini" style="padding:10px">⏳ Lade Drive-Dokumente…</div></div>',
+    '<button class="btn" onclick="closeModal()">Schliessen</button>');
+  try {
+    var db = _driveDb(); if (!db) throw new Error('Firebase nicht verfügbar');
+    var snap = await db.ref('driveDocs').once('value');
+    var docs = snap.val() || {};
+    var arr = Object.keys(docs).map(function(k){ var d = docs[k]; d._id = k; return d; })
+      .filter(function(d){ return d && d.status !== 'papierkorb' && d.downloadUrl; })
+      .sort(function(a,b){ return String(b.erstellt||'').localeCompare(String(a.erstellt||'')); });
+    window._drvPickCache = { arr: arr, kind: kind, entityId: entityId };
+    window._attachFromDriveFilter('');
+  } catch(e) {
+    var el = document.getElementById('drvPickList');
+    if (el) el.innerHTML = '<div class="mini" style="padding:10px;color:var(--danger)">Fehler: ' + _escDrv(e && e.message) + '</div>';
+  }
+};
+window._attachFromDriveFilter = function(q){
+  var c = window._drvPickCache; var el = document.getElementById('drvPickList');
+  if (!c || !el) return;
+  q = String(q||'').trim().toLowerCase();
+  var rows = c.arr.filter(function(d){
+    if (!q) return true;
+    return (String(d.dateiname||'') + ' ' + String(d.titel_final||'')).toLowerCase().indexOf(q) >= 0;
+  }).slice(0, 60);
+  if (!rows.length) { el.innerHTML = '<div class="mini" style="padding:10px">Keine Dokumente gefunden.</div>'; return; }
+  el.innerHTML = rows.map(function(d){
+    var kb = d.groesse ? (d.groesse < 1048576 ? Math.round(d.groesse/1024)+' KB' : (d.groesse/1048576).toFixed(1)+' MB') : '';
+    return '<div class="list-item" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer" onclick="window._attachDriveDoc(\'' + _escDrv(d._id) + '\')">'
+      + '<span style="font-size:17px;flex-shrink:0">📄</span>'
+      + '<span style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escDrv(d.titel_final || d.dateiname) + '</div>'
+      + '<div style="font-size:11px;color:var(--muted)">' + _escDrv(String(d.erstellt||'').slice(0,10)) + (kb ? ' · ' + kb : '') + '</div></span>'
+      + '<span class="btn sm">Anhängen</span></div>';
+  }).join('');
+};
+window._attachDriveDoc = function(docId){
+  try {
+    var c = window._drvPickCache; if (!c) return;
+    var d = c.arr.find(function(x){ return x._id === docId; }); if (!d) return;
+    var kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', meeting:'meetings', person:'persons', idea:'ideas' };
+    var ent = APP.state.data.entities[kindMap[c.kind] || (c.kind + 's')] && APP.state.data.entities[kindMap[c.kind] || (c.kind + 's')][c.entityId];
+    if (!ent) { toast('err','Fehler','Element nicht gefunden'); return; }
+    ent.files = Array.isArray(ent.files) ? ent.files : [];
+    if (ent.files.some(function(f){ return f && f.storagePath === d.storagePath; })) { toast('info','Schon angehängt', d.dateiname||''); return; }
+    ent.files.push({
+      id: 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,6),
+      name: d.titel_final || d.dateiname || 'Dokument',
+      originalName: d.dateiname || '',
+      size: d.groesse || 0,
+      type: d.mimeType || 'application/octet-stream',
+      storagePath: d.storagePath || '',
+      url: d.downloadUrl || '',
+      uploadedAt: new Date().toISOString(),
+      fromDrive: true
+    });
+    ent.updatedAt = new Date().toISOString();
+    if (typeof scheduleSave === 'function') scheduleSave();
+    toast('ok','🗄️ Angehängt', (d.titel_final || d.dateiname || '') );
+    if (typeof window.closeModal === 'function') window.closeModal();
+    if (typeof render === 'function') render();
+  } catch(e) { toast('err','Fehler', (e && e.message) || ''); }
+};
+
+// ── 📤 Quick-Upload „Ins Drive": überall erreichbar (Topbar/Palette). Lädt
+//    Dateien hoch, extrahiert Text, schreibt driveDocs (Eingang) + driveInbox
+//    (pending) → gleiche Klassifizierungs-Pipeline wie der Upload im Drive. ──
+window.driveQuickUpload = function(){
+  if (typeof window.openModal !== 'function') return;
+  window.openModal('📤 Ins Drive hochladen',
+    '<div class="mini" style="margin-bottom:10px">Dateien landen im Drive-„Eingang“, werden automatisch für die KI-Klassifizierung eingereiht (Text wird extrahiert) und sind danach überall anhängbar.</div>'
+    + '<div class="file-upload-zone" onclick="document.getElementById(\'drvQuickInput\').click()" ondragover="event.preventDefault();this.classList.add(\'dragging\')" ondragleave="this.classList.remove(\'dragging\')" ondrop="event.preventDefault();this.classList.remove(\'dragging\');window._driveQuickUploadFiles(event.dataTransfer.files)">'
+    + '<div class="upload-icon">📤</div><div class="upload-text">Klicken oder Dateien hierher ziehen</div><div class="upload-hint">max. 50 MB pro Datei</div></div>'
+    + '<input type="file" id="drvQuickInput" multiple style="display:none" onchange="window._driveQuickUploadFiles(this.files);this.value=\'\'">'
+    + '<div id="drvQuickLog" style="margin-top:10px;display:flex;flex-direction:column;gap:6px"></div>',
+    '<button class="btn" onclick="closeModal()">Schliessen</button>');
+};
+window._driveQuickUploadFiles = async function(fileList){
+  var files = Array.prototype.slice.call(fileList || []);
+  if (!files.length) return;
+  var log = function(html){ var el = document.getElementById('drvQuickLog'); if (el) el.insertAdjacentHTML('beforeend', html); };
+  var db = _driveDb();
+  if (!db || !window.firebaseStorage) { toast('err','Firebase','Nicht verbunden — bitte anmelden.'); return; }
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    if (file.size > 50 * 1024 * 1024) { log('<div class="mini" style="color:var(--danger)">✗ ' + _escDrv(file.name) + ' — über 50 MB</div>'); continue; }
+    var rowId = 'drvq_' + i + '_' + Date.now().toString(36);
+    log('<div class="mini" id="' + rowId + '">⏳ ' + _escDrv(file.name) + ' — lädt hoch…</div>');
+    var row = function(){ return document.getElementById(rowId); };
+    try {
+      var docId = db.ref('driveDocs').push().key;
+      var storagePath = 'drive/' + docId + '/' + file.name;
+      var downloadUrl = await uploadToFirebase(file, storagePath, function(pct){ var r = row(); if (r) r.textContent = '⏳ ' + file.name + ' — ' + pct + '%'; });
+      var r1 = row(); if (r1) r1.textContent = '🧠 ' + file.name + ' — extrahiere Text…';
+      var text = '';
+      try { if (typeof window._extractTextFromFile === 'function') text = String(await window._extractTextFromFile(file) || ''); } catch(e) {}
+      var hash = '';
+      try {
+        var ab = await file.arrayBuffer();
+        var dig = await crypto.subtle.digest('SHA-256', ab);
+        hash = Array.from(new Uint8Array(dig)).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+      } catch(e) {}
+      var jetzt = new Date().toISOString();
+      await db.ref('driveDocs/' + docId).set({
+        dateiname: file.name, titel_final: '', storagePath: storagePath, downloadUrl: downloadUrl,
+        mimeType: file.type || 'application/octet-stream', groesse: file.size, hash: hash,
+        status: 'eingang', folderId: null, vorschlag: null,
+        textauszug: text.slice(0, 2000), quelle: 'quick-upload', erstellt: jetzt, aktualisiert: jetzt
+      });
+      await db.ref('driveInbox/' + docId).set({
+        docId: docId, dateiname: file.name, mimeType: file.type || 'application/octet-stream',
+        text: text.slice(0, 6000), hash: hash, storagePath: storagePath,
+        duplikat_verdacht: false, status: 'pending', erstellt: jetzt
+      });
+      var r2 = row(); if (r2) { r2.textContent = '✓ ' + file.name + ' — im Drive gespeichert, Klassifizierung eingereiht'; r2.style.color = 'var(--ok)'; }
+    } catch(e) {
+      var r3 = row(); if (r3) { r3.textContent = '✗ ' + file.name + ' — ' + ((e && e.message) || 'Fehler'); r3.style.color = 'var(--danger)'; }
+    }
+  }
+  toast('ok','📤 Drive', files.length + ' Datei(en) verarbeitet');
+};
+// Command-Palette-Eintrag (Ctrl/Cmd+K)
+window._p6Extra = (window._p6Extra || []).concat([
+  { icon: '📤', label: 'Ins Drive hochladen (mit KI-Klassifizierung)', run: function(){ window.driveQuickUpload(); } }
+]);
 
 
 const CLOUD_SYNC_HEALTH_KEY = '__cloud_sync_health_v2';
@@ -6306,6 +6454,7 @@ function renderFileAttachments(kind, entityId) {
         <span>📎 Dokumente (${files.length})${indexedCount > 0 ? ` <span style="font-size:11px;font-weight:400;color:var(--ok);margin-left:6px">· ${indexedCount} indexiert</span>` : ''}</span>
         <div style="display:flex;gap:6px;align-items:center">
           ${unindexedCount >= 1 ? `<button onclick="window._reindexAllFiles('${kind}','${entityId}')" style="background:var(--accent-soft);border:1px solid var(--accent-soft);color:var(--accent);cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px" title="Text aus ${unindexedCount} Datei(en) extrahieren">🧠 ${unindexedCount} indexieren</button>` : ''}
+          <button onclick="window._attachFromDrive('${kind}','${entityId}')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:4px;transition:all .15s" title="Dokument aus dem Drive anhängen (kein Doppel-Upload — verweist auf dieselbe Datei)">🗄️ Aus Drive</button>
           <button onclick="window._createFileFolder('${kind}','${entityId}')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:4px;transition:all .15s" title="Neuen Ordner erstellen">📁+ Ordner</button>
         </div>
       </h3>
