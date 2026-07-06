@@ -1183,10 +1183,20 @@ function renderDrawer() {
   const q = S.inbox[docId];
   let html = "";
 
+  // Herkunft: In der Haupt-App hochgeladene Anhänge (attachments/{kind}/{id}/…)
+  // werden automatisch hier registriert — die Quelle wird im Drawer ausgewiesen.
+  let quelleText = "";
+  if (d.quelle === "app-upload" || String(d.storagePath || "").indexOf("attachments/") === 0) {
+    const teile = String(d.storagePath || "").split("/");
+    const artLabel = { task: "Aufgabe", project: "Projekt", meeting: "Meeting", message: "Nachricht", invoice: "Rechnung", readingList: "Leseliste", organization: "Organisation", person: "Person", note: "Notiz", goal: "Ziel", idea: "Idee" }[teile[1]] || teile[1] || "";
+    quelleText = "App-Anhang" + (artLabel ? " (" + artLabel + ")" : "");
+  }
+
   // Metadaten
   html += '<dl class="dr-meta">' +
     "<dt>Status</dt><dd>" + badge(d.status) + "</dd>" +
     "<dt>Originalname</dt><dd>" + esc(d.dateiname) + "</dd>" +
+    (quelleText ? "<dt>Quelle</dt><dd>" + esc(quelleText) + "</dd>" : "") +
     "<dt>Abgelegt in</dt><dd>" + (d.folderId ? esc(ordnerPfad(d.folderId).join(" › ")) : '<span class="zelle-muted">— noch nicht abgelegt —</span>') + "</dd>" +
     "<dt>Grösse</dt><dd>" + fmtGroesse(d.groesse) + " · " + esc(d.mimeType || "?") + "</dd>" +
     "<dt>Hochgeladen</dt><dd>" + fmtDatum(d.erstellt) + "</dd>" +

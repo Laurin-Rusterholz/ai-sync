@@ -5219,7 +5219,13 @@ async function uploadToFirebase(file, path, onProgress) {
     uploadTask.on('state_changed',
       (snap) => { if (onProgress) onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)); },
       (err) => reject(err),
-      async () => { const url = await uploadTask.snapshot.ref.getDownloadURL(); resolve(url); }
+      async () => {
+        const url = await uploadTask.snapshot.ref.getDownloadURL();
+        // Anhang zusätzlich im Drive-Modul registrieren (fire-and-forget,
+        // blockiert den Upload nicht und darf nie einen Fehler durchreichen)
+        try { _registerUploadInDrive(file, path, url); } catch(e) {}
+        resolve(url);
+      }
     );
   });
 }
@@ -5227,6 +5233,82 @@ async function uploadToFirebase(file, path, onProgress) {
 async function deleteFromFirebase(path) {
   if (!firebaseStorage) return;
   try { await firebaseStorage.ref(path).delete(); } catch(e) { console.warn('Firebase delete:', e.message); }
+  try { _unregisterUploadFromDrive(path); } catch(e) {}
+}
+
+// ── Drive-Anbindung: In der App hochgeladene Anhänge (attachments/…) werden
+// zusätzlich im Drive-Modul (drive.html) registriert und erscheinen dort sofort
+// im „Eingang“ — inkl. Queue-Eintrag für die KI-Klassifizierung (driveInbox).
+// Die docId ist deterministisch aus dem Storage-Pfad abgeleitet — exakt wie beim
+// Backfill-Scan in drive.html („bf_“ + SHA-256 des Pfads) — dadurch idempotent:
+// weder Doppel-Uploads noch ein späterer Scan erzeugen Duplikate.
+const DRIVE_RTDB_URL = 'https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app';
+function _driveDb() {
+  try { if (window.firebase && firebase.app) return firebase.app().database(DRIVE_RTDB_URL); } catch(e) {}
+  return null;
+}
+async function _driveDocIdForPath(path) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(path)));
+  return 'bf_' + Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function _registerUploadInDrive(file, path, downloadUrl) {
+  try {
+    if (!String(path || '').startsWith('attachments/')) return; // nur Anhänge, keine internen Uploads (readinghub/, cloud-sync/, …)
+    const db = _driveDb(); if (!db) return;
+    const docId = await _driveDocIdForPath(path);
+    const existing = await db.ref('driveDocs/' + docId).once('value');
+    if (existing.exists()) return;
+    let hash = '';
+    try {
+      const ab = await file.arrayBuffer();
+      const d = await crypto.subtle.digest('SHA-256', ab);
+      hash = Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch(e) {}
+    let text = '';
+    try { if (typeof window._extractTextFromFile === 'function') text = String(await window._extractTextFromFile(file) || ''); } catch(e) {}
+    const name = file.name || String(path).split('/').pop() || 'Datei';
+    const mime = file.type || 'application/octet-stream';
+    const jetzt = new Date().toISOString();
+    await db.ref('driveDocs/' + docId).set({
+      dateiname: name,
+      titel_final: '',
+      storagePath: path,
+      downloadUrl: downloadUrl || '',
+      mimeType: mime,
+      groesse: file.size || 0,
+      hash: hash,
+      status: 'eingang',
+      folderId: null,
+      vorschlag: null,
+      textauszug: text.slice(0, 2000),
+      quelle: 'app-upload',
+      erstellt: jetzt,
+      aktualisiert: jetzt
+    });
+    await db.ref('driveInbox/' + docId).set({
+      docId: docId,
+      dateiname: name,
+      mimeType: mime,
+      text: text.slice(0, 6000),
+      hash: hash,
+      storagePath: path,
+      duplikat_verdacht: false,
+      status: 'pending',
+      erstellt: jetzt
+    });
+    console.log('[Drive] Anhang registriert:', path);
+  } catch(e) { console.warn('[Drive] Registrierung übersprungen:', e && e.message); }
+}
+// Beim Löschen eines Anhangs auch den Drive-Eintrag entfernen, damit im Drive
+// kein toter Verweis (gelöschte Storage-Datei) zurückbleibt.
+async function _unregisterUploadFromDrive(path) {
+  try {
+    if (!String(path || '').startsWith('attachments/')) return;
+    const db = _driveDb(); if (!db) return;
+    const docId = await _driveDocIdForPath(path);
+    await db.ref('driveDocs/' + docId).remove();
+    await db.ref('driveInbox/' + docId).remove();
+  } catch(e) {}
 }
 
 
