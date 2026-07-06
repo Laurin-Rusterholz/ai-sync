@@ -452,6 +452,19 @@ h1, h2, .redaktionell {
   #kopfTitel h1 { font-size:20px; }
   #inhalt { padding:16px 16px 60px; }
 }
+
+/* ── Polish-Layer (additiv): Effekte, Fokus, Tiefe — konsistent zur Hauptapp ── */
+button { transition: transform .13s ease, background .15s ease, box-shadow .18s ease, border-color .15s ease; }
+button:active { transform: scale(.97); }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 6px; }
+.tag-karte, .slot { transition: border-color .15s ease, box-shadow .2s ease, transform .18s ease; }
+.tag-karte:hover { box-shadow: 0 6px 20px rgba(43,49,52,.10); }
+.slot:hover { transform: translateY(-1px); }
+.btn-gen:hover:not([disabled]) { box-shadow: 0 4px 14px rgba(217,108,87,.30); }
+.nav-item { transition: background .13s ease, box-shadow .13s ease; }
+@keyframes nbPop { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+#modalBox { animation: nbPop .2s cubic-bezier(.2,.9,.3,1.15) both; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001s !important; transition-duration: .001s !important; } }
 </style>
 </head>
 <body>

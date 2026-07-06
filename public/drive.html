@@ -270,6 +270,21 @@ table.docs tr:last-child td { border-bottom: 0; }
   #sucheInput { width: 150px; }
   .doc-name .txt { max-width: 160px; }
 }
+
+/* ── Polish-Layer (additiv): Effekte, Fokus, Tiefe — konsistent zur Hauptapp ── */
+button { transition: transform .13s ease, background .15s ease, box-shadow .18s ease, border-color .15s ease; }
+button:active { transform: scale(.97); }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 6px; }
+#sucheInput { transition: border-color .15s ease, box-shadow .15s ease; }
+.btn-upload:hover, .btn.primaer:hover { box-shadow: 0 4px 14px rgba(62,142,135,.25); }
+table.docs tr.doc-zeile td { transition: background .12s ease; }
+.nav-item, .baum-zeile { transition: background .13s ease; }
+#drawer { transition: transform .22s cubic-bezier(.2,.9,.3,1); }
+.vorschlag-karte, .upload-karte { transition: box-shadow .2s ease; }
+.vorschlag-karte:hover { box-shadow: var(--schatten); }
+#modalBox { animation: drvPop .2s cubic-bezier(.2,.9,.3,1.15) both; }
+@keyframes drvPop { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001s !important; transition-duration: .001s !important; } }
 </style>
 </head>
 <body>

@@ -103929,5 +103929,185 @@ html.qp-zen .topbar:hover,html.qp-zen .topbar:focus-within{opacity:1}
 })();
 </script>
 
+<style id="asanaLayer">
+/* ═══════════════════════════════════════════════════════════════════════════
+   ASANA-LAYER v1 — grossflächige Layout-, Kontrast- & Effekt-Politur
+   Rein additiv: letztes <style> im Dokument → gewinnt die Kaskade bei gleicher
+   Spezifität. KEINE Markup-/JS-Änderungen, keine Funktion entfällt.
+   Prinzipien (an Asana angelehnt): ruhige, helle Flächen · Hairline-Borders ·
+   klare Typo-Hierarchie · Akzent nur für Aktives/Primäres · sanfte Bewegung.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1) Farb-Tokens: Kontraste schärfen ─────────────────────────────────────
+   Dark: tiefere Basis, hellerer Text, deutlichere Borders.
+   Light: von Beige auf „Paper" (fast weiss) gehoben — Asana-typisch,
+   deutlich mehr Kontrast. Alle Legacy-Aliase erben automatisch. */
+:root{
+  --surface-base:#14181c;
+  --surface-raised:#1d232a;
+  --surface-overlay:#272f38;
+  --border:#3a444f;
+  --border2:#54606d;
+  --text-primary:#f3f5f8;
+  --text-muted:#9ba5b1;
+  --text2:#d5dae1;
+  --shadow:0 1px 2px rgba(0,0,0,.42),0 4px 16px rgba(0,0,0,.30);
+  --shadow-lg:0 10px 28px rgba(0,0,0,.44),0 26px 68px rgba(0,0,0,.36);
+}
+html.theme-light{
+  --surface-base:#f6f5f3;
+  --surface-raised:#ffffff;
+  --surface-overlay:#ffffff;
+  --border:#e3e1dc;
+  --border2:#c8c5be;
+  --hover:rgba(30,31,33,.055);
+  --text-primary:#1e1f21;
+  --text-muted:#6d6e6f;
+  --text2:#45474b;
+  --accent:#7c3aed;
+  --accent-deep:#6d28d9;
+  --shadow:0 1px 2px rgba(30,31,33,.07),0 4px 16px rgba(30,31,33,.08);
+  --shadow-lg:0 10px 28px rgba(30,31,33,.14),0 26px 68px rgba(30,31,33,.11);
+}
+
+/* ── 2) Typografie & Grundstimmung ── */
+body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+h1{letter-spacing:-.02em}
+h2{letter-spacing:-.015em}
+.page-title h2{font-weight:700}
+.page-title p,.card .subtitle{color:var(--text-muted)}
+.mini{color:var(--text-muted)}
+.sep,.card .sep{border-color:var(--border)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001s!important;transition-duration:.001s!important}}
+
+/* ── 3) Buttons: klare Hierarchie, Press-/Hover-Effekte ── */
+.btn{border-radius:10px;font-weight:600;letter-spacing:.01em;border:1px solid var(--border);transition:transform .13s ease,box-shadow .18s ease,background .15s ease,border-color .15s ease,color .15s ease,filter .15s ease}
+.btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:var(--shadow);border-color:var(--border2)}
+.btn:active{transform:translateY(0) scale(.98);box-shadow:none}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.btn.primary{background:linear-gradient(180deg,var(--accent),var(--accent-deep));border-color:transparent;color:var(--on-accent)}
+.btn.primary:hover:not(:disabled){box-shadow:0 4px 16px var(--accent-soft);filter:brightness(1.07)}
+.btn.ghost{background:transparent;border-color:transparent}
+.btn.ghost:hover{background:var(--hover);border-color:var(--border)}
+.btn.sm{border-radius:8px}
+.topbar-btn{border-radius:9px;transition:background .13s ease,color .13s ease,transform .13s ease}
+.topbar-btn:hover{background:var(--hover)}
+.topbar-btn:active{transform:scale(.95)}
+
+/* ── 4) Karten & Flächen: Hairline statt schwer, Hover-Lift ── */
+.card{border:1px solid var(--border);border-radius:var(--radius);box-shadow:none;transition:border-color .16s ease,box-shadow .22s ease}
+.card:hover{border-color:var(--border2);box-shadow:var(--shadow)}
+.card h3{letter-spacing:-.01em}
+.project-card,.goal-card,.stat-card,.task-card,.app-card,.postit,.update-card,.dd-card,.time-entry-card,.rh-book-card,.nf-note-card{border:1px solid var(--border);transition:border-color .16s ease,box-shadow .22s ease,transform .22s cubic-bezier(.22,.9,.35,1)}
+.project-card:hover,.goal-card:hover,.stat-card:hover,.app-card-main:hover,.postit:hover,.rh-book-card:hover,.nf-note-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg);border-color:var(--border2)}
+.task-card:hover,.update-card:hover,.dd-card:hover{transform:translateY(-1px);box-shadow:var(--shadow);border-color:var(--border2)}
+.stat-card .value{font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stat-card .label{color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.07em;font-weight:700}
+
+/* ── 5) Sidebar & Topbar: ruhiger, aktive Zustände deutlicher ── */
+.sidebar{border-right:1px solid var(--border)}
+.sidebar-item,.nav-item,.app-nav-item{border-radius:9px;transition:background .13s ease,color .13s ease,box-shadow .13s ease}
+.sidebar-item:hover,.nav-item:hover,.app-nav-item:hover{background:var(--hover)}
+.sidebar-item.active,.nav-item.active,.app-nav-item.active{background:var(--accent-soft);color:var(--accent);font-weight:600;box-shadow:inset 3px 0 0 var(--accent)}
+.sidebar-section-title,.apps-section-title,.nf-section-title{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted);font-weight:700}
+.sidebar-quick-item{border-radius:9px;transition:background .13s ease}
+.sidebar-quick-item:hover{background:var(--hover)}
+.topbar{background:color-mix(in oklab,var(--surface-raised) 84%,transparent);backdrop-filter:blur(14px) saturate(1.15);-webkit-backdrop-filter:blur(14px) saturate(1.15);border-bottom:1px solid var(--border)}
+.universal-search{border:1px solid var(--border);border-radius:10px;background:var(--surface-base);transition:border-color .15s ease,box-shadow .15s ease}
+.universal-search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+html.theme-light .universal-search{background:#fff}
+
+/* ── 6) Formulare: klare Felder, kräftiger Fokus-Ring ── */
+textarea,input[type="text"],input[type="email"],input[type="url"],input[type="tel"],input[type="number"],input[type="password"],input[type="search"],input[type="date"],input[type="time"],input[type="datetime-local"],select{border-radius:10px;transition:border-color .15s ease,box-shadow .15s ease,background .15s ease}
+.input:focus,input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
+label,.nf-fg label,.global-task-modal-content label{font-weight:600}
+.form label{color:var(--text2)}
+
+/* ── 7) Overlays: Modal-Pop, Toast-Slide, weicherer Backdrop ── */
+.modal-backdrop{background:rgba(9,11,15,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+html.theme-light .modal-backdrop{background:rgba(30,31,33,.32)}
+.modal{border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-lg)}
+.modal-backdrop.open .modal{animation:asnPop .22s cubic-bezier(.2,.9,.3,1.15) both}
+@keyframes asnPop{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+.modal-header{border-bottom:1px solid var(--border)}
+.modal-header h3{letter-spacing:-.01em;font-weight:700}
+.modal-footer{border-top:1px solid var(--border)}
+.slide-panel{border-left:1px solid var(--border);box-shadow:var(--shadow-lg)}
+.toast{border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-lg);animation:asnToast .3s cubic-bezier(.2,.9,.3,1.15) both}
+@keyframes asnToast{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:none}}
+.toast.ok{box-shadow:var(--shadow-lg),inset 3px 0 0 var(--success)}
+.toast.warn{box-shadow:var(--shadow-lg),inset 3px 0 0 var(--warning)}
+.toast.danger{box-shadow:var(--shadow-lg),inset 3px 0 0 var(--danger)}
+
+/* ── 8) Tabs: Asana-typische Unterstreichung statt Pillen ── */
+.tabs{border-bottom:1px solid var(--border);gap:2px}
+.tab{background:transparent;border:0;border-radius:8px 8px 0 0;color:var(--text-muted);font-weight:600;transition:color .13s ease,background .13s ease,box-shadow .13s ease}
+.tab:hover{color:var(--text);background:var(--hover)}
+.tab.active{color:var(--accent);background:transparent;box-shadow:inset 0 -2px 0 var(--accent)}
+
+/* ── 9) Listen, Zeilen, Tabellen ── */
+.list-item{border-radius:10px;transition:background .12s ease}
+.list-item:hover{background:var(--hover)}
+.list-item.overdue{box-shadow:inset 3px 0 0 var(--danger)}
+.list-item .item-title .name{font-weight:600}
+.list-item .item-meta{color:var(--text-muted)}
+.dd-row{border-radius:10px;transition:background .12s ease}
+.dd-row:hover{background:var(--hover)}
+th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted);font-weight:700}
+.wk-item{border-radius:8px;transition:background .12s ease,transform .12s ease}
+.wk-item:hover{background:var(--hover);transform:translateX(2px)}
+
+/* ── 10) Chips, Badges, Pills, Tags: konsistente Pillen ── */
+.badge,.pill,.chip,.entity-chip{border-radius:999px}
+.chip{border:1px solid var(--border)}
+.tag{border-radius:999px;font-weight:600}
+.entity-chip{transition:transform .13s ease,box-shadow .18s ease}
+.entity-chip:hover{transform:translateY(-1px)}
+
+/* ── 11) Fortschritt & Status: satter, animiert ── */
+.progress{height:6px;border-radius:999px;overflow:hidden;background:var(--hover)}
+.progress .bar{border-radius:999px;transition:width .55s cubic-bezier(.22,.9,.35,1)}
+.task-priority{border-radius:6px;font-weight:700;letter-spacing:.02em}
+.task-card.overdue{border-left:3px solid var(--danger)}
+.timeline-marker{box-shadow:0 0 0 3px var(--surface-raised)}
+.trend-up{color:var(--success)}
+.trend-down{color:var(--danger)}
+
+/* ── 12) Aufgaben-Flächen: Kanban/Matrix/Grids ── */
+.matrix-quadrant{border-radius:var(--radius);transition:border-color .16s ease,box-shadow .2s ease}
+.quadrant-tasks.drag-over,.unassigned-tasks.drag-over{outline:2px dashed var(--accent);outline-offset:-4px;background:var(--accent-soft)}
+.eisenhower-task{border-radius:10px;transition:transform .15s ease,box-shadow .2s ease}
+.eisenhower-task:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+.eisenhower-task.dragging{opacity:.6;transform:scale(.97) rotate(1deg)}
+.task-mini-card{border-radius:10px;transition:background .12s ease,transform .13s ease}
+.task-mini-card:hover{background:var(--hover);transform:translateX(2px)}
+
+/* ── 13) Datei-/Upload-Bereiche ── */
+.file-item{border-radius:10px;transition:background .12s ease}
+.file-item:hover{background:var(--hover)}
+.file-upload-zone{border-radius:var(--radius);transition:border-color .15s ease,background .15s ease}
+.file-upload-zone:hover,.file-upload-zone.dragging,.drop-zone:hover{border-color:var(--accent);background:var(--accent-soft)}
+
+/* ── 14) Gmail-Modul: Feinschliff auf dem bestehenden Layout ── */
+.gml-ei-row{border-radius:8px}
+.gml-draft{border-radius:12px;transition:border-color .16s ease,box-shadow .2s ease}
+.gml-draft:hover{border-color:var(--border2);box-shadow:var(--shadow)}
+.gmlc-toolbar,.gmlc-aibar{border-radius:10px}
+.gmlc-ai{border-radius:8px;transition:background .13s ease,transform .13s ease}
+.gmlc-ai:active{transform:scale(.96)}
+.gml-linkchip{transition:border-color .13s ease,transform .13s ease}
+.gml-linkchip:hover{border-color:var(--border2)}
+
+/* ── 15) Scroll & Feinheiten ── */
+.searchbar{border-radius:10px}
+.quick-note-input{border-radius:10px}
+.empty-folder,.nf-empty,.rh-empty-state{color:var(--text-muted)}
+.chat-bubble{border-radius:14px}
+.calendar-day{border-radius:9px;transition:background .12s ease}
+.calendar-day:hover{background:var(--hover)}
+.calendar-day.today{box-shadow:inset 0 0 0 2px var(--accent)}
+</style>
+
 </body>
 </html>
