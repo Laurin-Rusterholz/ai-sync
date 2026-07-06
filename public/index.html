@@ -95828,6 +95828,9 @@ console.log('📚 Leseliste geladen');
 .gml-ei-drafts { margin-bottom:6px; }
 .gml-ei-subj { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gml-ei-date { flex-shrink:0; font-size:11.5px; color:var(--muted); }
+.gml-ei-reply { flex-shrink:0; border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:13px; line-height:1; padding:1px 5px; border-radius:5px; opacity:0; transition:opacity .12s; }
+.gml-ei-row:hover .gml-ei-reply { opacity:1; }
+.gml-ei-reply:hover { color:var(--text); background:var(--panel2); }
 .gml-draft-list { display:flex; flex-direction:column; gap:10px; padding:10px 14px 16px; }
 .gml-draft { border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:rgba(48,209,88,.04); }
 .gml-draft-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; }
@@ -96788,7 +96791,7 @@ console.log('📚 Leseliste geladen');
     // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
     var hasPrev = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var html = '<div class="gml-compose-modal'+(hasPrev?' gml-has-prev':'')+'">'
-      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-07-06 · Verlauf-Vorschau v9 · KI-Verbessern sanft</div>'
+      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-07-06 · Verlauf-Vorschau v9 · KI-Verbessern sanft · Element-Kontext</div>'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + fields + linkBar + toolbar + aibar + msg + attachList
@@ -96885,10 +96888,20 @@ console.log('📚 Leseliste geladen');
     var origFrom = src.from ? parseAddr(src.from) : null;
     var greetName = origFrom ? String(origFrom.name||"").split(" ")[0] : "";
     var origCtx = src.body ? ("Ursprüngliche Nachricht von "+(origFrom?(origFrom.name||origFrom.email):"(unbekannt)")+":\nBetreff: "+(src.subject||"")+"\n\n"+String(src.body).replace(/\s+/g," ").slice(0,3000)) : "";
+    // Verknüpftes Quantus-Element (Aufgabe/Projekt/Org/Person) als Kontext für
+    // ALLE KI-Aktionen: Die KI kennt damit Titel, Beschreibung, Termine,
+    // zugeordnete Personen und die letzten Mails des Elements.
+    try { if (ctx.linkedEntity){ var entCtx = gmlEntityAiContext(ctx.linkedEntity.kind, ctx.linkedEntity.id); if (entCtx) origCtx = entCtx + (origCtx ? "\n\n" + origCtx : ""); } } catch(e){}
+    // Aktuelle Formularfelder (An/Betreff) mitgeben, damit Entwürfe die richtige
+    // Person ansprechen — auch ohne Original-Mail.
+    var anVal = String((document.getElementById("gmlTo")||{}).value||"").trim();
+    var subjVal = String((document.getElementById("gmlSubject")||{}).value||"").trim();
+    if (anVal || subjVal){ var feldCtx = "Entwurf-Felder — An: "+(anVal||"?")+(subjVal?(" · Betreff: "+subjVal):""); origCtx = origCtx ? (origCtx+"\n\n"+feldCtx) : feldCtx; }
     var sys, user;
     if (action==="draft"){
-      sys = "Du bist ein hilfreicher E-Mail-Assistent. Formuliere eine vollständige, natürliche Antwort-E-Mail auf Deutsch: passende Anrede"+(greetName?(" (Empfänger: "+greetName+")"):"")+", klarer Hauptteil, höfliche Grußformel. Schreibe NUR den E-Mail-Text – kein Betreff, keine Erklärungen, keine Markdown-Codeblöcke.";
-      user = (origCtx?origCtx+"\n\n":"") + (draft ? ("Berücksichtige diese Stichpunkte/Wünsche für die Antwort:\n"+draft) : "Verfasse eine angemessene, höfliche Antwort.");
+      var istAntwort = !!src.body;
+      sys = "Du bist ein hilfreicher E-Mail-Assistent. Formuliere eine vollständige, natürliche "+(istAntwort?"Antwort-E-Mail":"E-Mail")+" auf Deutsch: passende Anrede"+(greetName?(" (Empfänger: "+greetName+")"):"")+", klarer Hauptteil, höfliche Grußformel. Schreibe NUR den E-Mail-Text – kein Betreff, keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?origCtx+"\n\n":"") + (draft ? ("Berücksichtige diese Stichpunkte/Wünsche für die "+(istAntwort?"Antwort":"E-Mail")+":\n"+draft) : (istAntwort ? "Verfasse eine angemessene, höfliche Antwort." : "Verfasse eine passende, höfliche E-Mail auf Basis des Kontexts."));
     } else if (action==="custom"){
       var instr = String((document.getElementById("gmlAiInstruct")||{}).value||"").trim();
       if (!instr){ toast("info","Keine Anweisung","Bitte links eine Anweisung für die KI eingeben."); return; }
@@ -99091,16 +99104,80 @@ console.log('📚 Leseliste geladen');
     return out;
   }
 
+  // ── Kompakter Element-Kontext für die Composer-KI ──
+  // Fasst das verknüpfte Element (Titel, Beschreibung, Termine, Personen,
+  // letzte Mails) als Klartext zusammen. Wird in gmlAI allen Aktionen
+  // vorangestellt, damit Entwürfe inhaltlich zum Element passen.
+  var ENT_LABEL = { task:"Aufgabe", project:"Projekt", organization:"Organisation", person:"Person" };
+  function gmlEntityAiContext(kind, id){
+    var e = entityOf(kind, id); if (!e) return "";
+    var L = [];
+    L.push("Verknüpftes Element in Quantus — "+(ENT_LABEL[kind]||kind)+": "+String(e.title||e.name||"(ohne Titel)"));
+    function add(label, v){ if (v==null) return; v = String(v).replace(/\s+/g," ").trim(); if (v) L.push(label+": "+v.slice(0, 600)); }
+    add("Beschreibung", e.description);
+    add("Notizen", e.notes || e.content);
+    add("Status", e.status);
+    if (kind==="task"){ add("Priorität", e.priority); add("Fällig am", e.dueDate || e.deadline); }
+    if (kind==="project"){ add("Deadline", e.deadline || e.dueDate); add("Ziel", e.goal || e.objective); }
+    if (kind==="person"){ add("Firma/Organisation", e.company); add("Rolle", e.role); }
+    try {
+      var ps = qPersons(), pl = [];
+      (e.mailPersonIds||[]).forEach(function(pid){ var p=ps[pid]; if(p) pl.push((p.name||"Person")+((p.emails&&p.emails[0])?" <"+p.emails[0]+">":"")); });
+      if (pl.length) L.push("Zugeordnete Personen: "+pl.slice(0,8).join(", "));
+    } catch(_){}
+    try {
+      var st = GM.entityInbox[kind+":"+id];
+      if (st && st.rows && st.rows.length){
+        L.push("Letzte Mails zu diesem Element:");
+        st.rows.slice(0,5).forEach(function(m){ var a=parseAddr(m.from); L.push("- "+(a.name||a.email)+": "+String(m.subject||"")+(m.snippet?(" — "+String(m.snippet).slice(0,140)):"")); });
+      }
+    } catch(_){}
+    return L.join("\n").slice(0, 2800);
+  }
+
   // Verfassen-Modal aus einer Element-Detailseite (Projekt/Org/Aufgabe) heraus, vorbefüllt mit
   // den E-Mail-Adressen der zugehörigen Personen (entityAddresses). Öffnet NUR den Composer;
   // gesendet wird erst über den bestehenden „Senden"-Klick (gmailSend) — kein Auto-Versand.
+  // Auch ohne zugeordnete Adressen nutzbar: dann mit leerem An-Feld, die
+  // Element-Verknüpfung (linkedEntity) ist trotzdem gesetzt.
   window.gmailComposeToEntity = function(kind, id){
     var ad = entityAddresses(kind, id);
-    if (!ad.length){ toast("info","Keine Personen","Diesem Element sind keine Personen/E-Mails mit Adresse zugeordnet."); return; }
     var ent = (kind==="task") ? ((APP.state.data.entities.tasks||{})[id]) : entityOf(kind, id);
     var titleTxt = ent ? String(ent.title||ent.name||"") : "";
     if (typeof window.gmailCompose!=="function"){ toast("err","Nicht verfügbar","Gmail-Modul nicht geladen."); return; }
-    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: "✉️ Mail an "+ad.length+" Person(en)", linkedEntity:{ kind:kind, id:id } });
+    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: ad.length ? "✉️ Mail an "+ad.length+" Person(en)" : "✉️ Neue E-Mail — "+(ENT_LABEL[kind]||""), linkedEntity:{ kind:kind, id:id } });
+  };
+
+  // ✨ KI-Entwurf direkt vom Element: öffnet den Composer (vorbefüllt + verknüpft)
+  // und stösst die Entwurf-Generierung an — die KI nutzt den Element-Kontext
+  // (gmlEntityAiContext). Gesendet wird weiterhin nur manuell über „Senden".
+  window.gmailAiDraftForEntity = function(kind, id){
+    var ad = entityAddresses(kind, id);
+    var ent = entityOf(kind, id);
+    var titleTxt = ent ? String(ent.title||ent.name||"") : "";
+    if (typeof window.gmailCompose!=="function"){ toast("err","Nicht verfügbar","Gmail-Modul nicht geladen."); return; }
+    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: "✨ KI-Entwurf — "+(titleTxt||"Neue E-Mail"), linkedEntity:{ kind:kind, id:id } });
+    setTimeout(function(){ try { if (typeof window.gmlAI==="function") window.gmlAI("draft"); } catch(e){} }, 350);
+  };
+
+  // ↩︎ Antwort direkt aus der Element-Inbox-Karte: lädt die Original-Mail
+  // vollständig (Message-ID/References für sauberes Threading) und öffnet den
+  // Composer als Antwort — mit Element-Verknüpfung, damit der Thread im
+  // Element bleibt und die KI beide Kontexte (Mail + Element) kennt.
+  window.gmailReplyFromEntity = async function(msgId, kind, id){
+    try {
+      await gmailEnsureReady();
+      var msg = await gmApi("GET","/users/me/messages/"+encodeURIComponent(msgId), { query:{ format:"full" } });
+      var h = headerMap(msg.payload), bodies = extractBodies(msg.payload);
+      var o = { id:msg.id, threadId:msg.threadId, from:h.from||"", subject:h.subject||"", messageId:h["message-id"]||"", references:h.references||"", text:bodies.text, html:bodies.html };
+      var a = parseAddr(o.from);
+      var subj = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+      window.gmailCompose({ title:"↩︎ Antwort", to:a.email, subject:subj,
+        threadId:o.threadId||null, inReplyTo:o.messageId||null,
+        references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null,
+        linkedEntity:{ kind:kind, id:id },
+        source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:(o.text||htmlToText(o.html)||"") } });
+    } catch(e){ toast("err","Fehler",(e&&e.message)||"Nachricht konnte nicht geladen werden"); }
   };
 
   function gmailDetectEntity(){
@@ -99124,9 +99201,10 @@ console.log('📚 Leseliste geladen');
     var threadN=(ent && Array.isArray(ent.mailThreadIds)) ? ent.mailThreadIds.length : 0;
     var drafts=(GM.entityDrafts && GM.entityDrafts[kind+":"+id]) || [];
     var st=GM.entityInbox[kind+":"+id]||{};
-    var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Gmail-Inbox</span>'
+    var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Mail</span>'
       +'<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'
-      +(ad.length?'<button class="btn sm primary" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail an die zugeordneten Personen schreiben (Adressen sind vorbefüllt, Verknüpfung ist gesetzt)">✉️ Mail schreiben</button>':'')
+      +'<button class="btn sm primary" onclick="window.gmailAiDraftForEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="KI-Entwurf mit dem Kontext dieses Elements generieren (Titel, Beschreibung, Personen, letzte Mails)">✨ KI-Entwurf</button>'
+      +'<button class="btn sm" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail schreiben — Adressen der zugeordneten Personen sind vorbefüllt, Verknüpfung ist gesetzt">✉️ Mail schreiben</button>'
       +'<button class="btn sm" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">⚙️ Personen/E-Mails</button>'
       +(ad.length?'<button class="btn sm" onclick="gmailOpenInGmailWeb(\''+jsStr(entityQuery(kind,id))+'\')" title="In Gmail filtern">↗ Gmail</button>':'')
       +'</span></h3>';
@@ -99134,12 +99212,12 @@ console.log('📚 Leseliste geladen');
     var draftsHtml = drafts.length ? ('<div class="gml-ei-drafts"><div class="gml-ei-subhead">✏️ Entwürfe ('+drafts.length+')</div><div class="gml-ei-list">'
       + drafts.map(function(d){ return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">Entwurf</span></div>'; }).join("")
       + '</div></div>') : '';
-    if (!ad.length && !threadN && !drafts.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen, Adressen oder Mail-Threads zugeordnet — ordne welche zu oder verknüpfe eine Mail (🔗 in der Mail-Ansicht), um Mails hier zu sehen.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
+    if (!ad.length && !threadN && !drafts.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen, Adressen oder Mail-Threads zugeordnet. Du kannst trotzdem direkt eine Mail schreiben oder per ✨ KI-Entwurf generieren lassen — beim Senden wird der Thread automatisch mit diesem Element verknüpft.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
     var bodyHtml;
     if (st.loading) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">⏳ Lade Mails…</div>';
     else if (st.error) bodyHtml='<div style="color:var(--danger);font-size:13px;padding:8px 2px">'+esc(st.error)+'</div>';
     else if (!st.rows || !st.rows.length) bodyHtml=(ad.length||threadN)?'<div style="color:var(--muted);font-size:13px;padding:8px 2px">Noch keine Mails gefunden.</div>':'';
-    else bodyHtml='<div class="gml-ei-list">'+st.rows.map(function(m){ var a=parseAddr(m.from); return '<div class="gml-ei-row'+(m.unread?" unread":"")+'" onclick="gmailOpenFromExternal(\''+jsStr(m.id)+'\')"><span class="gml-ei-from">'+esc(a.name||a.email)+'</span><span class="gml-ei-subj">'+esc(m.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(fmtDate(m.internalDate))+'</span></div>'; }).join("")+'</div>';
+    else bodyHtml='<div class="gml-ei-list">'+st.rows.map(function(m){ var a=parseAddr(m.from); return '<div class="gml-ei-row'+(m.unread?" unread":"")+'" onclick="gmailOpenFromExternal(\''+jsStr(m.id)+'\')"><span class="gml-ei-from">'+esc(a.name||a.email)+'</span><span class="gml-ei-subj">'+esc(m.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(fmtDate(m.internalDate))+'</span><button class="gml-ei-reply" title="Antworten — verknüpft mit diesem Element, KI kennt Mail & Element" onclick="event.stopPropagation();gmailReplyFromEntity(\''+jsStr(m.id)+'\',\''+kind+'\',\''+jsStr(id)+'\')">↩︎</button></div>'; }).join("")+'</div>';
     var meta=ad.length+' Adresse(n)'+(threadN?' · '+threadN+' Thread(s)':'')+(drafts.length?' · '+drafts.length+' Entwurf/Entwürfe':'')+' · '+(st.rows?st.rows.length:0)+' Mail(s)';
     return head+'<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px">'+meta+'</div>'+draftsHtml+bodyHtml;
   }
