@@ -94238,15 +94238,20 @@ console.log('📚 Leseliste geladen');
       }
       var prio = (typeof v.priority === "number") ? v.priority : 3;
       var st   = (v.status === "done" || v.status === "doing") ? v.status : "todo";
+      var src  = v.source || "communicator";
+      // Default-Tag nur für Communicator/WhatsApp; andere Quellen (z. B. No-Braine
+      // Meal-Prep aus n8n) sollen nicht fälschlich als "WhatsApp" getaggt werden.
+      var tags = Array.isArray(v.tags) ? v.tags : (src === "communicator" ? ["WhatsApp"] : []);
 
       var taskId = window.createEntity("task", {
         title: title,
         description: desc,
         status: st,
         priority: prio,
-        dueDate: v.dueDate || null,
-        tags: Array.isArray(v.tags) ? v.tags : ["WhatsApp"],
-        source: v.source || "communicator",
+        dueDate: v.dueDate || null,        // YYYY-MM-DD → erscheint im Daily Planner am Fälligkeitstag
+        tags: tags,
+        source: src,                        // z. B. "nobraine"
+        type: v.type || null,               // z. B. "meal-prep" (Samstags-Vorkoch-Aufgabe)
         commSourceKey: key,
         commFrom: v.from || null,
         commName: v.name || null
@@ -94254,8 +94259,8 @@ console.log('📚 Leseliste geladen');
 
       markProcessed(key);
       try { snap.ref.remove(); } catch(e){}
-      console.log("📥 [Quantus] Task aus Communicator importiert:", taskId, "—", title);
-      if (typeof window.toast === "function") { try { window.toast("Neue Aufgabe aus Communicator: " + title); } catch(e){} }
+      console.log("📥 [Quantus] Task aus Inbox importiert:", taskId, "—", title, "(source:", src + ")");
+      if (typeof window.toast === "function") { try { window.toast("Neue Aufgabe: " + title); } catch(e){} }
     } catch(e){
       console.warn("[Quantus] Task-Import fehlgeschlagen:", e && e.message);
     }

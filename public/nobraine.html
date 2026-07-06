@@ -431,6 +431,12 @@ h1, h2, .redaktionell {
   font-size: 15px; padding: 2px 6px; border-radius: 6px; line-height: 1;
 }
 #logoutBtn:hover { color: var(--leinen); background: var(--schiefer-hell); }
+#loginBtn {
+  margin-left: auto; border: 1px solid var(--linie-dunkel); background: transparent;
+  color: var(--muted-hell); font-size: 11.5px; font-weight: 600; padding: 3px 10px;
+  border-radius: 14px; line-height: 1.4;
+}
+#loginBtn:hover { color: var(--leinen); border-color: var(--muted-hell); }
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 @media (max-width: 760px) {
@@ -469,14 +475,14 @@ button:active { transform: scale(.97); }
 </head>
 <body>
 
-<div id="loginOverlay" class="offen">
+<div id="loginOverlay">
   <div class="login-box">
     <div class="login-logo">🍽️</div>
     <h1>Weekly Planner</h1>
     <div class="login-untertitel">Quantus · Wochen-Menüplaner</div>
     <div id="loginInhalt">
       <div class="login-spinner"></div>
-      <div class="login-status">Anmeldung wird geprüft …</div>
+      <div class="login-status">Anmeldung läuft …</div>
     </div>
     <a class="login-zurueck" href="index.html">‹ Zurück zu Quantus</a>
   </div>
@@ -490,7 +496,8 @@ button:active { transform: scale(.97); }
     <div class="sb-fuss">
       <span class="punkt" id="authPunkt"></span>
       <span id="authText">Verbinde …</span>
-      <button id="logoutBtn" data-action="logout" title="Abmelden">⎋</button>
+      <button id="loginBtn" data-action="google-login" title="Bei Quantus anmelden (für Sync mit Habits/Daily Planner)" style="display:none">Anmelden</button>
+      <button id="logoutBtn" data-action="logout" title="Abmelden" style="display:none">⎋</button>
     </div>
   </aside>
 
@@ -690,93 +697,83 @@ function mengeStr(n) {
 // BOOT & LISTENER
 // ═══════════════════════════════════════════════════════════════════════════
 function boot() {
-  if (!auth) { loginOverlayZeigen("fehler", "Firebase SDK nicht geladen — Adblocker prüfen?"); return; }
-  auth.onAuthStateChanged(function (user) {
-    const punkt = document.getElementById("authPunkt");
-    const text  = document.getElementById("authText");
-    if (user) {
-      // Angemeldet — Login-Overlay ausblenden, Listener starten
-      document.getElementById("loginOverlay").classList.remove("offen");
-      punkt.classList.remove("fehler");
-      punkt.classList.add("online");
-      const name = user.email || user.displayName || "angemeldet";
-      text.textContent = name;
-      text.title = "UID: " + (user.uid || "") + " — für die Security-Rules";
-      console.info("No-Braine angemeldet als", name, "· UID:", user.uid);
-      if (!S.bereit) {
-        S.bereit = true;
-        db.ref(P_RECIPES).on("value", function (snap) {
-          S.recipes = snap.val() || {};
-          rezepteSeedFallsLeer();
-          render();
-        }, zugriffFehler);
-        db.ref(P_HABITDEFS).on("value", function (snap) {
-          S.habitDefs = snap.val() || {};
-          habitsSeedFallsLeer();
-          render();
-        }, zugriffFehler);
-        db.ref(P_HABITS).on("value", function (snap) {
-          S.habitLog = snap.val() || {};
-          render();
-        }, zugriffFehler);
-        wochenListenerAktualisieren();
-      }
-    } else {
-      // Nicht angemeldet — Login-Overlay mit Google-Button zeigen (kein Auto-Popup:
-      // signInWithPopup braucht eine Nutzeraktion, sonst blockt der Browser das Popup).
-      punkt.classList.remove("online");
-      document.getElementById("authText").textContent = "Nicht angemeldet";
-      loginOverlayZeigen("login");
-    }
-  });
+  if (!db) { toast("Firebase SDK nicht geladen — Adblocker/Netzwerk prüfen?"); render(); return; }
+  // /nobraine ist offen (RTDB-Rules read/write: true) → App SOFORT starten, KEIN
+  // erzwungener Login. Reads/Writes auf /nobraine funktionieren ohne eingeloggten User.
+  const ov = document.getElementById("loginOverlay"); if (ov) ov.classList.remove("offen");
+  listenerStarten();
+  // Optionaler Login: stellt nur die Firebase-Session für die auth-geschützten
+  // Quantus-Daten (appStore) her (Sync-Koordinator) — blockiert /nobraine NICHT.
+  try {
+    if (auth && auth.onAuthStateChanged) auth.onAuthStateChanged(function (user) { authStatus(user); });
+    else authStatus(null);
+  } catch (e) { authStatus(null); }
 }
 
-// Reagiert auf permission_denied der RTDB-Listener (z. B. UID noch nicht in den Rules).
+// /nobraine-Listener einmalig starten (ohne Login, da /nobraine offen ist).
+function listenerStarten() {
+  if (S.bereit) return;
+  S.bereit = true;
+  db.ref(P_RECIPES).on("value", function (snap) { S.recipes = snap.val() || {}; rezepteSeedFallsLeer(); render(); }, zugriffFehler);
+  db.ref(P_HABITDEFS).on("value", function (snap) { S.habitDefs = snap.val() || {}; habitsSeedFallsLeer(); render(); }, zugriffFehler);
+  db.ref(P_HABITS).on("value", function (snap) { S.habitLog = snap.val() || {}; render(); }, zugriffFehler);
+  wochenListenerAktualisieren();
+}
+
+// Footer-Status + optionale Anmeldung. Ohne Login läuft die App (offene Rules);
+// ein Login ist nur für die auth-geschützten Quantus-Daten (appStore/Sync) nötig.
+function authStatus(user) {
+  const punkt = document.getElementById("authPunkt");
+  const text  = document.getElementById("authText");
+  const loginB = document.getElementById("loginBtn");
+  const logoutB = document.getElementById("logoutBtn");
+  const ov = document.getElementById("loginOverlay"); if (ov) ov.classList.remove("offen");
+  if (punkt) { punkt.classList.remove("fehler"); punkt.classList.add("online"); }
+  if (user) {
+    if (text) text.textContent = user.email || user.displayName || "angemeldet";
+    if (loginB) loginB.style.display = "none";
+    if (logoutB) logoutB.style.display = "";
+  } else {
+    if (text) text.textContent = "Verbunden";
+    if (loginB) loginB.style.display = "";
+    if (logoutB) logoutB.style.display = "none";
+  }
+}
+
+// permission_denied der /nobraine-Listener (bei offenen Rules eigentlich nicht möglich).
 function zugriffFehler(err) {
   console.error("RTDB-Zugriff verweigert:", err);
   const punkt = document.getElementById("authPunkt");
   if (punkt) punkt.classList.add("fehler");
-  toast("Zugriff verweigert — ist deine UID in den Firebase-Rules (/nobraine) eingetragen?");
+  toast("RTDB-Zugriff verweigert — /nobraine-Rules prüfen (read/write: true).");
 }
 
-// Google-Anmeldung per Popup (nur auf Nutzerklick).
+// Optionale Google-Anmeldung (nur für die appStore-/Quantus-Session). Blockiert nie.
 function googleLogin() {
-  loginOverlayZeigen("laeuft");
+  if (!auth || !auth.signInWithPopup) { toast("Firebase Auth nicht verfügbar."); return; }
+  loginOverlayZeigen();
   const provider = new firebase.auth.GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
-  auth.signInWithPopup(provider).catch(function (e) {
-    const code = (e && e.code) ? e.code : "";
-    console.error("Google-Anmeldung fehlgeschlagen:", e);
-    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
-      loginOverlayZeigen("login");
-    } else if (code === "auth/operation-not-allowed") {
-      loginOverlayZeigen("fehler", "Google-Login ist im Firebase-Projekt nicht aktiviert (Authentication → Sign-in method → Google).");
-    } else if (code === "auth/unauthorized-domain") {
-      loginOverlayZeigen("fehler", "Diese Domain ist in Firebase Auth nicht freigegeben (Authentication → Settings → Authorized domains).");
-    } else {
-      loginOverlayZeigen("fehler", "Anmeldung fehlgeschlagen" + (code ? " (" + code + ")" : "") + ".");
-    }
-  });
+  auth.signInWithPopup(provider)
+    .then(function () { const ov = document.getElementById("loginOverlay"); if (ov) ov.classList.remove("offen"); })
+    .catch(function (e) {
+      const ov = document.getElementById("loginOverlay"); if (ov) ov.classList.remove("offen");
+      const code = (e && e.code) ? e.code : "";
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
+      if (code === "auth/operation-not-allowed") toast("Google-Login im Firebase-Projekt nicht aktiviert.");
+      else if (code === "auth/unauthorized-domain") toast("Domain in Firebase Auth nicht freigegeben (Authorized domains).");
+      else toast("Anmeldung fehlgeschlagen" + (code ? " (" + code + ")" : "") + ".");
+    });
 }
-function logout() {
-  if (auth && auth.signOut) auth.signOut();
-}
+function logout() { if (auth && auth.signOut) auth.signOut(); }
 
-// Login-Overlay-Zustände: "login" (Button), "laeuft" (Spinner), "fehler" (Meldung + Button)
-function loginOverlayZeigen(zustand, meldung) {
+// Overlay nur noch als Spinner während der optionalen Anmeldung (blockiert nicht die App).
+function loginOverlayZeigen() {
   const ov = document.getElementById("loginOverlay");
   const inhalt = document.getElementById("loginInhalt");
   if (!ov || !inhalt) return;
   ov.classList.add("offen");
-  if (zustand === "laeuft") {
-    inhalt.innerHTML = '<div class="login-spinner"></div><div class="login-status">Anmeldung läuft …</div>';
-  } else {
-    inhalt.innerHTML =
-      (zustand === "fehler" && meldung ? '<div class="login-fehler">' + esc(meldung) + "</div>" : "") +
-      '<button class="btn-google" data-action="google-login">' +
-        '<span class="g-logo">G</span> Mit Google anmelden</button>' +
-      '<div class="login-hinweis">Zugriff nur für berechtigte Konten. Die App speichert deine Planung in Firebase.</div>';
-  }
+  inhalt.innerHTML = '<div class="login-spinner"></div><div class="login-status">Anmeldung läuft …</div>';
 }
 
 // Woche-abhängige Listener (meals / freeblocks / shopping / generation) neu binden

@@ -18,7 +18,7 @@ Schweizer Schreibweise (ss statt ß), responsive & mobile-first.
 - Firebase-Projekt: `jupidu-36804`
 - RTDB: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
 - SDK: Firebase **compat v10.8.0** (`app`, `auth`, `database`)
-- Auth: **Google-Login** (`signInWithPopup(GoogleAuthProvider)`) über einen Login-Screen; Listener/Reads/Writes starten erst nach `onAuthStateChanged` mit echtem User. `/nobraine` ist auf die **feste UID** gegated (`auth.uid === '…'`).
+- Auth: **kein erzwungener Login** — `/nobraine` ist offen (`.read/.write: true`), die App bootet und liest/schreibt ohne User. Optionaler Google-Login (Footer) nur für die auth-geschützten Quantus-Daten (`appStore`).
 - Navigation: registriert in `public/index.html` unter `getAllApps()`
   (`key: "nobraine"`, Icon 🍽️, Label „No-Braine") sowie im Routing-`switch`
   von `renderMain()` (`case "nobraine": window.location.href = "nobraine.html"`).
@@ -102,56 +102,55 @@ zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend ist per Google-L
 eingeloggt (`auth.uid` erfüllt die Rule — siehe Auth-Abschnitt); n8n selbst
 schreibt per Service-Account (umgeht die Regeln).
 
-## Auth: Google-Login im Browser
+## Auth: kein erzwungener Login (offene /nobraine-Rules)
 
-Anonyme Anmeldung lässt sich im Projekt nicht aktivieren. Stattdessen meldet sich
-der Browser per **Google-Login** an: Beim Start zeigt die App einen Login-Screen
-mit „Mit Google anmelden"; ein Klick öffnet `signInWithPopup(GoogleAuthProvider)`.
-Kein Passwort im Client, keine n8n-Abhängigkeit für die Anmeldung.
+`/nobraine` ist in den Rules **offen** (`.read/.write: true`), daher erzwingt
+`nobraine.html` **keinen** Login. Die App bootet sofort und liest/schreibt
+`/nobraine` **ohne** eingeloggten User (`boot()` → `listenerStarten()` läuft
+unbedingt). Kein `permission_denied`.
 
-**Ablauf (`boot()` / `googleLogin()`):**
+**Optionaler Login** (Footer-Button „Anmelden"): öffnet
+`signInWithPopup(GoogleAuthProvider)` und stellt die Firebase-Session **nur für
+die auth-geschützten Quantus-Daten** (`appStore`, s. Sync-Koordinator) her —
+die `/nobraine`-Nutzung wird davon **nicht** blockiert. Bei aktiver Session zeigt
+der Footer die E-Mail + „⎋" (Abmelden); der Login-Overlay erscheint nur noch als
+kurzer Spinner während der Anmeldung.
 
-1. `onAuthStateChanged` prüft beim Start eine bestehende (persistierte) Sitzung.
-   Kein User → Login-Overlay mit Button (**kein** Auto-Popup — `signInWithPopup`
-   braucht eine Nutzeraktion, sonst blockt der Browser das Popup).
-2. Klick → `signInWithPopup`. Erfolg → `onAuthStateChanged` liefert den User,
-   Overlay schliesst, Listener/Reads/Writes starten (`S.bereit`-Gate). Der Footer
-   zeigt die E-Mail; die **UID** steht im Tooltip und in der Konsole.
-3. Fehler werden im Overlay erklärt: Popup abgebrochen → zurück zum Button;
-   `auth/operation-not-allowed` → „Google-Login nicht aktiviert";
-   `auth/unauthorized-domain` → Domain in Firebase Auth freigeben.
-4. „⎋" im Footer meldet ab (`signOut`), Overlay öffnet wieder.
-
-**Einrichtung im Firebase-Projekt:**
-
-1. Authentication → Sign-in method → **Google** aktivieren.
-2. Authentication → Settings → **Authorized domains**: Netlify-Domain (und
-   ggf. `localhost`) eintragen.
-3. Einmal in der App anmelden, dann die eigene **UID** in die Rules eintragen
-   (siehe unten). Die UID steht im Footer-Tooltip, in der Browser-Konsole
-   („No-Braine angemeldet als … · UID: …") oder in der Firebase-Konsole unter
-   Authentication → Users.
+Für den Login im Firebase-Projekt: Authentication → Sign-in method → **Google**
+aktivieren; Netlify-Domain unter **Authorized domains** eintragen. (Nur nötig,
+wenn die auth-geschützten Quantus-Daten aus dem Weekly Planner heraus angemeldet
+werden sollen — der Planer selbst funktioniert auch ohne.)
 
 ## Firebase-Security-Rules
 
-Der `nobraine`-Teilbaum ist mit **`auth != null`** gegated
-(`firebase/database.rules.json`) — dieselbe Konvention wie der
-`appStore`-Blob der Hauptapp (`docs/firebase-rtdb-storage.md`). Bewusst **keine
-feste UID hardcodiert**, damit man sich nicht aussperrt:
+Finaler Stand in `firebase/database.rules.json` (identisch zur deployten
+Console):
 
 ```json
-"nobraine": {
-  ".read":  "auth != null",
-  ".write": "auth != null",
-  "recipes": { ".indexOn": ["kategorie", "lastUsed"] }
+{
+  "rules": {
+    "appStore":           { ".read": "auth != null", ".write": "auth != null" },
+    "settings":           { ".read": "auth != null", ".write": "auth != null" },
+    "driveInbox":         { ".read": true, ".write": true, ".indexOn": ["status"] },
+    "communicator_inbox": { ".read": true, ".write": true },
+    "quantus_task_inbox": { ".read": true, ".write": true },
+    "nobraine": {
+      ".read": true, ".write": true,
+      "recipes": { ".indexOn": ["kategorie", "lastUsed"] }
+    },
+    "$andere":            { ".read": true, ".write": true }
+  }
 }
 ```
 
-Der Block ist rein additiv: Drive-Pfade und der `$andere`-Wildcard bleiben
-unverändert. Der Google-Login (nobraine.html) erfüllt `auth != null`; Reads/
-Writes starten ohnehin erst nach `onAuthStateChanged` mit echtem User. Der
-Quantus-Sync-Koordinator (index.html, s. u.) liest `/nobraine` nur mit
-Firebase-Session — ohne Session kein Zugriff und kein `permission_denied`.
+- **`/nobraine` und `/quantus_task_inbox` sind offen** (kein Auth-Gate) — der
+  Weekly Planner und der n8n-Task-Ingest funktionieren ohne Login. Keine
+  hartcodierte UID mehr.
+- **`/appStore` und `/settings` bleiben `auth != null`** (enthalten den
+  Quantus-Zustand inkl. API-Keys). Deshalb muss der **Sync-Koordinator**
+  (index.html), der nach `dailyBriefing.routines`/`timeBlocks` im
+  `appStore`-Blob schreibt, weiterhin auf eine **Firebase-Session warten** — das
+  blockiert aber die offene `/nobraine`-Nutzung nicht.
 
 ## Integration in Quantus (Daily Planner & Habits)
 
@@ -190,9 +189,17 @@ bleiben konsistent.
 
 Bestehende Quantus-Konventionen, die exakt übernommen wurden: Task-Ingest via
 Root-Queue `quantus_task_inbox` (Schema `{ title, text?, description?, priority?,
-status?, dueDate?, tags?, source? }`, wird konsumiert und gelöscht); Habits in
-`dailyBriefing.routines` mit `completions:[{id,date,value}]` (Datum `YYYY-MM-DD`);
-Tages-Timeline aus `dailyBriefing.timeBlocks[<datum>]`.
+status?, dueDate?, tags?, source?, type? }`, wird konsumiert und gelöscht); Habits
+in `dailyBriefing.routines` mit `completions:[{id,date,value}]` (Datum
+`YYYY-MM-DD`); Tages-Timeline aus `dailyBriefing.timeBlocks[<datum>]`.
+
+**n8n Meal-Prep-Task:** Ein n8n-Workflow kann die Samstags-Vorkoch-Aufgabe direkt
+nach `/quantus_task_inbox` pushen (offene Rules, kein Auth nötig), z. B.
+`{ title:"Vorkochen fürs Wochenende", dueDate:"2026-07-11", source:"nobraine",
+type:"meal-prep", priority:2 }`. Der bestehende Importer (index.html) legt daraus
+einen Task mit **`dueDate`** an → er erscheint am Fälligkeitstag im Daily Planner
+(und in den fälligen Aufgaben). `source`/`type` werden übernommen; Nicht-
+Communicator-Quellen bekommen **nicht** mehr fälschlich den Tag „WhatsApp".
 
 ## Erst-Seed der Bibliothek
 
@@ -218,10 +225,11 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
 > Real-Firebase-Test (echter Google-Login) erfolgt auf dem Netlify-Deployment.
 
 1. `public/nobraine.html` öffnen (lokal via `npx serve public` oder über das
-   Netlify-Deployment; oder in der Hauptapp über die App „Weekly Planner"). Es
-   erscheint der Login-Screen → „Mit Google anmelden" → nach der Anmeldung zeigt
-   der Footer unten links die E-Mail mit grünem Punkt. Beim ersten Start
-   erscheinen die Starter-Rezepte in der Bibliothek.
+   Netlify-Deployment; oder in der Hauptapp über die App „Weekly Planner"). Die
+   App startet **direkt ohne Login** (offene `/nobraine`-Rules); Footer unten
+   links „Verbunden" mit grünem Punkt. Beim ersten Start erscheinen die Starter-
+   Rezepte in der Bibliothek. Optional „Anmelden" im Footer (für den Quantus-Sync,
+   der die auth-geschützten `appStore`-Daten schreibt).
 2. **Rezepte:** In „Rezepte" ein Rezept anklicken → Drawer mit vollständigem
    Rezept (Zutaten mit Mengen, nummerierte Schritte, Portionen, Kochzeit).
    Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen. „＋ Neues Rezept"

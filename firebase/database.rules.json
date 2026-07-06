@@ -1,28 +1,40 @@
 {
-    "rules": {
-          "driveFolders": {
-                  ".read": true,
-                  ".write": true
-          },
-          "driveDocs": {
-                  ".read": true,
-                  ".write": true
-          },
-          "driveInbox": {
-                  ".read": true,
-                  ".write": true,
-                  ".indexOn": ["status"]
-          },
-          "nobraine": {
-                  ".read": "auth != null",
-                  ".write": "auth != null",
-                  "recipes": {
-                          ".indexOn": ["kategorie", "lastUsed"]
-                  }
-          },
-          "$andere": {
-                  ".read": true,
-                  ".write": true
-          }
+  "rules": {
+
+    "appStore": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "settings": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "driveInbox": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["status"]
+    },
+    "communicator_inbox": {
+      ".read": true,
+      ".write": true
+    },
+    "quantus_task_inbox": {
+      ".read": true,
+      ".write": true
+    },
+
+    "nobraine": {
+      ".read": true,
+      ".write": true,
+      "recipes": {
+        ".indexOn": ["kategorie", "lastUsed"]
+      }
+    },
+
+    "$andere": {
+      ".read": true,
+      ".write": true
     }
+  }
 }
