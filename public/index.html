@@ -5219,7 +5219,13 @@ async function uploadToFirebase(file, path, onProgress) {
     uploadTask.on('state_changed',
       (snap) => { if (onProgress) onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)); },
       (err) => reject(err),
-      async () => { const url = await uploadTask.snapshot.ref.getDownloadURL(); resolve(url); }
+      async () => {
+        const url = await uploadTask.snapshot.ref.getDownloadURL();
+        // Anhang zusätzlich im Drive-Modul registrieren (fire-and-forget,
+        // blockiert den Upload nicht und darf nie einen Fehler durchreichen)
+        try { _registerUploadInDrive(file, path, url); } catch(e) {}
+        resolve(url);
+      }
     );
   });
 }
@@ -5227,6 +5233,82 @@ async function uploadToFirebase(file, path, onProgress) {
 async function deleteFromFirebase(path) {
   if (!firebaseStorage) return;
   try { await firebaseStorage.ref(path).delete(); } catch(e) { console.warn('Firebase delete:', e.message); }
+  try { _unregisterUploadFromDrive(path); } catch(e) {}
+}
+
+// ── Drive-Anbindung: In der App hochgeladene Anhänge (attachments/…) werden
+// zusätzlich im Drive-Modul (drive.html) registriert und erscheinen dort sofort
+// im „Eingang“ — inkl. Queue-Eintrag für die KI-Klassifizierung (driveInbox).
+// Die docId ist deterministisch aus dem Storage-Pfad abgeleitet — exakt wie beim
+// Backfill-Scan in drive.html („bf_“ + SHA-256 des Pfads) — dadurch idempotent:
+// weder Doppel-Uploads noch ein späterer Scan erzeugen Duplikate.
+const DRIVE_RTDB_URL = 'https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app';
+function _driveDb() {
+  try { if (window.firebase && firebase.app) return firebase.app().database(DRIVE_RTDB_URL); } catch(e) {}
+  return null;
+}
+async function _driveDocIdForPath(path) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(path)));
+  return 'bf_' + Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function _registerUploadInDrive(file, path, downloadUrl) {
+  try {
+    if (!String(path || '').startsWith('attachments/')) return; // nur Anhänge, keine internen Uploads (readinghub/, cloud-sync/, …)
+    const db = _driveDb(); if (!db) return;
+    const docId = await _driveDocIdForPath(path);
+    const existing = await db.ref('driveDocs/' + docId).once('value');
+    if (existing.exists()) return;
+    let hash = '';
+    try {
+      const ab = await file.arrayBuffer();
+      const d = await crypto.subtle.digest('SHA-256', ab);
+      hash = Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch(e) {}
+    let text = '';
+    try { if (typeof window._extractTextFromFile === 'function') text = String(await window._extractTextFromFile(file) || ''); } catch(e) {}
+    const name = file.name || String(path).split('/').pop() || 'Datei';
+    const mime = file.type || 'application/octet-stream';
+    const jetzt = new Date().toISOString();
+    await db.ref('driveDocs/' + docId).set({
+      dateiname: name,
+      titel_final: '',
+      storagePath: path,
+      downloadUrl: downloadUrl || '',
+      mimeType: mime,
+      groesse: file.size || 0,
+      hash: hash,
+      status: 'eingang',
+      folderId: null,
+      vorschlag: null,
+      textauszug: text.slice(0, 2000),
+      quelle: 'app-upload',
+      erstellt: jetzt,
+      aktualisiert: jetzt
+    });
+    await db.ref('driveInbox/' + docId).set({
+      docId: docId,
+      dateiname: name,
+      mimeType: mime,
+      text: text.slice(0, 6000),
+      hash: hash,
+      storagePath: path,
+      duplikat_verdacht: false,
+      status: 'pending',
+      erstellt: jetzt
+    });
+    console.log('[Drive] Anhang registriert:', path);
+  } catch(e) { console.warn('[Drive] Registrierung übersprungen:', e && e.message); }
+}
+// Beim Löschen eines Anhangs auch den Drive-Eintrag entfernen, damit im Drive
+// kein toter Verweis (gelöschte Storage-Datei) zurückbleibt.
+async function _unregisterUploadFromDrive(path) {
+  try {
+    if (!String(path || '').startsWith('attachments/')) return;
+    const db = _driveDb(); if (!db) return;
+    const docId = await _driveDocIdForPath(path);
+    await db.ref('driveDocs/' + docId).remove();
+    await db.ref('driveInbox/' + docId).remove();
+  } catch(e) {}
 }
 
 
@@ -95746,6 +95828,16 @@ console.log('📚 Leseliste geladen');
 .gml-ei-drafts { margin-bottom:6px; }
 .gml-ei-subj { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gml-ei-date { flex-shrink:0; font-size:11.5px; color:var(--muted); }
+.gml-ei-reply { flex-shrink:0; border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:13px; line-height:1; padding:1px 5px; border-radius:5px; opacity:0; transition:opacity .12s; }
+.gml-ei-row:hover .gml-ei-reply { opacity:1; }
+.gml-ei-reply:hover { color:var(--text); background:var(--panel2); }
+#gmlSendLaterPop { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:10px; width:270px; box-shadow:0 12px 40px rgba(0,0,0,.35); display:flex; flex-direction:column; gap:3px; }
+.gmlc-later-title { font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:3px; }
+.gmlc-later-opt { display:flex; justify-content:space-between; align-items:baseline; gap:10px; border:0; background:transparent; color:var(--text); padding:7px 8px; border-radius:8px; cursor:pointer; font-size:13.5px; text-align:left; }
+.gmlc-later-opt:hover { background:var(--hover); }
+.gmlc-later-opt span { color:var(--muted); font-size:11.5px; white-space:nowrap; }
+.gmlc-later-custom { display:flex; gap:6px; margin-top:6px; padding-top:8px; border-top:1px solid var(--border); }
+.gmlc-later-custom input { flex:1; min-width:0; background:var(--panel2); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:6px 8px; font-size:12.5px; }
 .gml-draft-list { display:flex; flex-direction:column; gap:10px; padding:10px 14px 16px; }
 .gml-draft { border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:rgba(48,209,88,.04); }
 .gml-draft-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; }
@@ -96706,7 +96798,7 @@ console.log('📚 Leseliste geladen');
     // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
     var hasPrev = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var html = '<div class="gml-compose-modal'+(hasPrev?' gml-has-prev':'')+'">'
-      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-06-29 · Verlauf-Vorschau v9</div>'
+      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-07-06 · Verlauf-Vorschau v9 · KI-Verbessern sanft · Element-Kontext</div>'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + fields + linkBar + toolbar + aibar + msg + attachList
@@ -96715,6 +96807,7 @@ console.log('📚 Leseliste geladen');
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
       + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()">Senden</button>'
+      + '<button type="button" id="gmlSendLaterBtn" class="btn" onclick="gmailSendLaterMenu(event)" title="Später senden — Zeitpunkt wählen (z. B. in 1 Stunde oder morgen früh)">🕒 Später</button>'
       + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe“)">💾 Entwurf speichern</button>'
       + '<button type="button" class="gmlc-iconbtn" onclick="gmlAttach()" title="Datei anhängen" aria-label="Datei anhängen">'+SVG.attach+'</button>'
       + (hasOrig ? '<button type="button" class="gmlc-iconbtn" onclick="gmlToggleQuote()" title="Zitat ein-/ausblenden" aria-label="Zitat ein-/ausblenden">'+SVG.quote+'</button>' : '')
@@ -96803,10 +96896,20 @@ console.log('📚 Leseliste geladen');
     var origFrom = src.from ? parseAddr(src.from) : null;
     var greetName = origFrom ? String(origFrom.name||"").split(" ")[0] : "";
     var origCtx = src.body ? ("Ursprüngliche Nachricht von "+(origFrom?(origFrom.name||origFrom.email):"(unbekannt)")+":\nBetreff: "+(src.subject||"")+"\n\n"+String(src.body).replace(/\s+/g," ").slice(0,3000)) : "";
+    // Verknüpftes Quantus-Element (Aufgabe/Projekt/Org/Person) als Kontext für
+    // ALLE KI-Aktionen: Die KI kennt damit Titel, Beschreibung, Termine,
+    // zugeordnete Personen und die letzten Mails des Elements.
+    try { if (ctx.linkedEntity){ var entCtx = gmlEntityAiContext(ctx.linkedEntity.kind, ctx.linkedEntity.id); if (entCtx) origCtx = entCtx + (origCtx ? "\n\n" + origCtx : ""); } } catch(e){}
+    // Aktuelle Formularfelder (An/Betreff) mitgeben, damit Entwürfe die richtige
+    // Person ansprechen — auch ohne Original-Mail.
+    var anVal = String((document.getElementById("gmlTo")||{}).value||"").trim();
+    var subjVal = String((document.getElementById("gmlSubject")||{}).value||"").trim();
+    if (anVal || subjVal){ var feldCtx = "Entwurf-Felder — An: "+(anVal||"?")+(subjVal?(" · Betreff: "+subjVal):""); origCtx = origCtx ? (origCtx+"\n\n"+feldCtx) : feldCtx; }
     var sys, user;
     if (action==="draft"){
-      sys = "Du bist ein hilfreicher E-Mail-Assistent. Formuliere eine vollständige, natürliche Antwort-E-Mail auf Deutsch: passende Anrede"+(greetName?(" (Empfänger: "+greetName+")"):"")+", klarer Hauptteil, höfliche Grußformel. Schreibe NUR den E-Mail-Text – kein Betreff, keine Erklärungen, keine Markdown-Codeblöcke.";
-      user = (origCtx?origCtx+"\n\n":"") + (draft ? ("Berücksichtige diese Stichpunkte/Wünsche für die Antwort:\n"+draft) : "Verfasse eine angemessene, höfliche Antwort.");
+      var istAntwort = !!src.body;
+      sys = "Du bist ein hilfreicher E-Mail-Assistent. Formuliere eine vollständige, natürliche "+(istAntwort?"Antwort-E-Mail":"E-Mail")+" auf Deutsch: passende Anrede"+(greetName?(" (Empfänger: "+greetName+")"):"")+", klarer Hauptteil, höfliche Grußformel. Schreibe NUR den E-Mail-Text – kein Betreff, keine Erklärungen, keine Markdown-Codeblöcke.";
+      user = (origCtx?origCtx+"\n\n":"") + (draft ? ("Berücksichtige diese Stichpunkte/Wünsche für die "+(istAntwort?"Antwort":"E-Mail")+":\n"+draft) : (istAntwort ? "Verfasse eine angemessene, höfliche Antwort." : "Verfasse eine passende, höfliche E-Mail auf Basis des Kontexts."));
     } else if (action==="custom"){
       var instr = String((document.getElementById("gmlAiInstruct")||{}).value||"").trim();
       if (!instr){ toast("info","Keine Anweisung","Bitte links eine Anweisung für die KI eingeben."); return; }
@@ -96821,22 +96924,35 @@ console.log('📚 Leseliste geladen');
     } else {
       if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben oder „✨ Entwerfen“ nutzen."); return; }
       var how = {
-        improve:  "Verbessere Formulierung, Klarheit und Lesefluss, ohne Inhalt oder Aussage zu verändern.",
+        improve:  "Verbessere behutsam Formulierung, Klarheit und Lesefluss. Nimm nur kleine, punktuelle Anpassungen vor – der Text bleibt grundsätzlich so, wie er ist.",
         fix:      "Korrigiere ausschließlich Rechtschreibung, Grammatik und Zeichensetzung. Inhalt und Stil bleiben unverändert.",
         shorten:  "Fasse den Text deutlich knapper, aber höflich und vollständig.",
         friendly: "Formuliere den Text wärmer, freundlicher und persönlicher, ohne unprofessionell zu wirken.",
         formal:   "Formuliere den Text formeller und professioneller (Sie-Form, sachlich).",
       }[action] || "Verbessere den Text.";
-      sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      // Für alle Aktionen außer „Kürzer“ muss die Mail vollständig erhalten bleiben –
+      // nichts weglassen, nichts zusammenfassen, Aufbau/Absätze/Signatur beibehalten.
+      var keepAll = action==="shorten" ? "" : " Gib die E-Mail IMMER in voller Länge zurück: Behalte ALLE Inhalte, Absätze, Aufzählungen, Namen, Zahlen, Termine, Links, Anrede und Grußformel vollständig bei. Lasse nichts weg, fasse nichts zusammen und kürze nichts.";
+      sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+keepAll+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
       user = (origCtx?("Kontext – "+origCtx+"\n\n"):"") + "Text:\n"+draft;
     }
     var busyLbl = action==="draft" ? "Entwerfe Antwort …" : action==="custom" ? "Setze Anweisung um …" : action==="translate" ? "Übersetze …" : "Überarbeite …";
     gmlAiBusy(true, busyLbl);
+    // Token-Budget an die Entwurfslänge koppeln: das fixe Limit von früher (1100)
+    // hat lange Mails mitten im Text abgeschnitten – wirkte wie „halbe Mail gelöscht“.
+    var outTokens = Math.min(8000, Math.max(1100, Math.ceil(draft.length/2) + 500));
     var res;
-    try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:1100 }); }
+    try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:outTokens }); }
     catch(e){ gmlAiBusy(false,""); toast("err","KI-Fehler",(e&&e.message)||""); return; }
     if (!res){ gmlAiBusy(false,""); toast("warn","KI","Kein Ergebnis (API-Key in den Einstellungen?)"); return; }
     res = String(res).replace(/^```(?:\w+)?\s*/,"").replace(/```\s*$/,"").trim();
+    // Schutznetz für inhaltserhaltende Aktionen: fällt das Ergebnis drastisch kürzer
+    // aus als der Entwurf, ist meist etwas verloren gegangen → Entwurf nicht anfassen.
+    if ((action==="improve" || action==="fix" || action==="friendly" || action==="formal") && res.length < draft.length*0.55){
+      gmlAiBusy(false, "");
+      toast("warn","KI-Ergebnis verworfen","Die überarbeitete Version war deutlich kürzer als dein Entwurf – er bleibt unverändert. Bitte nochmals versuchen.");
+      return;
+    }
     GM._aiUndo = ta.value;  // einstufiges Rückgängig: vorigen Text merken (Toggle)
     ta.value = res; ta.focus(); try { ta.setSelectionRange(res.length, res.length); } catch(_){}
     gmlAiBusy(false, "");
@@ -97675,6 +97791,144 @@ console.log('📚 Leseliste geladen');
     finally { GM._composeBusy=false; var b=document.getElementById("gmlSaveDraftBtn"); if(b){ b.disabled=false; b.textContent="💾 Entwurf speichern"; } }
   };
 
+  // ── 🕒 Später senden ──
+  // Speichert den Verfassen-Stand als geplanten Entwurf (/gmailDrafts, status
+  // "scheduled" + sendAt) und versendet ihn zeitgesteuert über denselben
+  // Sende-Pfad wie „Senden" (buildRaw → messages/send, inkl. Threading &
+  // Element-Verknüpfung). Der Versand passiert clientseitig im Minuten-Takt —
+  // die App muss dazu in irgendeinem Tab/Gerät geöffnet und mit Gmail
+  // verbunden sein; verpasste Zeitpunkte werden beim nächsten App-Start
+  // nachgeholt. Ein Transaction-Claim verhindert Doppelversand aus mehreren Tabs.
+  function gmlFmtSendAt(ms){
+    try { var d=new Date(Number(ms)||0); return d.toLocaleDateString("de-CH",{weekday:"short",day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"}); }
+    catch(e){ return ""; }
+  }
+  window.gmailSendLaterMenu = function(ev){
+    try { if (ev) ev.stopPropagation(); } catch(_){}
+    var old=document.getElementById("gmlSendLaterPop"); if (old){ old.remove(); return; }
+    var btn=document.getElementById("gmlSendLaterBtn"); if (!btn) return;
+    var r=btn.getBoundingClientRect();
+    function at(h,m,addDays){ var d=new Date(); d.setDate(d.getDate()+(addDays||0)); d.setHours(h,m,0,0); return d.getTime(); }
+    var opts=[
+      { label:"In 1 Stunde", ts: Date.now()+3600000 },
+      { label:"In 3 Stunden", ts: Date.now()+3*3600000 }
+    ];
+    var heute18=at(18,0,0); if (heute18>Date.now()+5*60000) opts.push({ label:"Heute 18:00", ts:heute18 });
+    opts.push({ label:"Morgen 08:00", ts:at(8,0,1) });
+    opts.push({ label:"Morgen um diese Zeit", ts:Date.now()+86400000 });
+    var pop=document.createElement("div"); pop.id="gmlSendLaterPop";
+    pop.innerHTML='<div class="gmlc-later-title">🕒 Später senden</div>'
+      + opts.map(function(o){ return '<button type="button" class="gmlc-later-opt" onclick="gmailScheduleSend('+o.ts+')">'+esc(o.label)+'<span>'+esc(gmlFmtSendAt(o.ts))+'</span></button>'; }).join("")
+      + '<div class="gmlc-later-custom"><input type="datetime-local" id="gmlSendLaterAt"><button type="button" class="btn sm primary" onclick="gmailScheduleSendCustom()">OK</button></div>';
+    document.body.appendChild(pop);
+    pop.style.position="fixed"; pop.style.zIndex="10050";
+    pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-290))+"px";
+    pop.style.bottom=Math.max(8,(window.innerHeight-r.top+6))+"px";
+    setTimeout(function(){
+      document.addEventListener("click", function schliess(e2){ if (!pop.contains(e2.target)){ pop.remove(); document.removeEventListener("click", schliess); } });
+    },0);
+  };
+  window.gmailScheduleSendCustom = function(){
+    var v=(document.getElementById("gmlSendLaterAt")||{}).value||"";
+    if (!v){ toast("info","Kein Zeitpunkt","Bitte Datum & Uhrzeit wählen."); return; }
+    var t=new Date(v).getTime();
+    window.gmailScheduleSend(t);
+  };
+  window.gmailScheduleSend = async function(sendAt){
+    var pop=document.getElementById("gmlSendLaterPop"); if (pop) pop.remove();
+    sendAt=Number(sendAt);
+    if (!sendAt || isNaN(sendAt)){ toast("err","Ungültiger Zeitpunkt",""); return; }
+    if (sendAt < Date.now()+30000){ toast("err","Zeitpunkt liegt in der Vergangenheit","Bitte einen Zeitpunkt in der Zukunft wählen."); return; }
+    if (GM._composeBusy) return;
+    var g=function(id){ return document.getElementById(id); };
+    var to=(g("gmlTo")&&g("gmlTo").value||"").trim();
+    var cc=(g("gmlCc")&&g("gmlCc").value||"").trim();
+    var bcc=(g("gmlBcc")&&g("gmlBcc").value||"").trim();
+    var subject=(g("gmlSubject")&&g("gmlSubject").value||"").trim();
+    var body=(g("gmlBody")&&g("gmlBody").value||"");
+    if (!to){ toast("err","Empfänger fehlt","Für „Später senden“ braucht es mindestens eine An-Adresse."); return; }
+    GM._composeBusy=true;
+    try {
+      var ctx=GM._composeCtx||{}; var src=ctx.source||{}; var toA=parseAddr(to);
+      var le=(ctx.linkedEntity&&ctx.linkedEntity.kind&&ctx.linkedEntity.id)?ctx.linkedEntity:null;
+      var draft={
+        to:to, cc:cc, bcc:bcc, subject:subject,
+        toName: toA.name||"",
+        draftBody: body,
+        threadId: ctx.threadId||"",
+        messageId: (src.id)||"",
+        inReplyTo: ctx.inReplyTo||"",
+        references: ctx.references||"",
+        originalFrom: src.from||"",
+        originalSubject: src.subject||"",
+        originalBody: src.body||"",
+        replyQuote: ctx.replyQuote||null,
+        linkedEntity: le ? { kind:le.kind, id:le.id, title:gmlEntityLabel(le.kind,le.id) } : null,
+        source: "scheduled-send",
+        status: "scheduled",
+        sendAt: sendAt,
+        sendAttempts: 0,
+        updatedAt: Date.now()
+      };
+      if ((GM._attachments||[]).length){ toast("info","Hinweis","Anhänge werden bei „Später senden“ nicht mitgesendet — bitte sofort senden oder ohne Anhang planen."); }
+      if (ctx.draftKey){ await rtdbPatch("gmailDrafts/"+ctx.draftKey, draft); }
+      else { draft.createdAt=Date.now(); await rtdbPost("gmailDrafts", draft); }
+      if (window.closeModal) window.closeModal();
+      toast("ok","🕒 Geplant","Wird gesendet: "+gmlFmtSendAt(sendAt)+(le?(" · verknüpft mit „"+(gmlEntityLabel(le.kind,le.id)||"Element")+"“"):""));
+      GM.open=null;
+      if (typeof loadDrafts==="function") loadDrafts();
+      try { if (le && document.getElementById("gmlEntityInbox")) loadEntityInbox(le.kind, le.id); } catch(_){}
+    } catch(e){ toast("err","Planen fehlgeschlagen", e.message||"Unbekannter Fehler"); }
+    finally { GM._composeBusy=false; }
+  };
+  // Minuten-Takt: fällige geplante Entwürfe senden. Claim per RTDB-Transaction
+  // (status scheduled→sending), damit bei mehreren offenen Tabs/Geräten nur
+  // EINER sendet. Fehler → Retry im nächsten Takt, nach 5 Versuchen status "error".
+  async function gmailProcessScheduledDrafts(){
+    if (GM._schedBusy) return; GM._schedBusy=true;
+    try {
+      var data=await rtdbGet("gmailDrafts");
+      if (!data || typeof data!=="object") return;
+      var now=Date.now();
+      var due=Object.keys(data).filter(function(k){ var d=data[k]; return d && d.status==="scheduled" && typeof d.sendAt==="number" && d.sendAt<=now; });
+      if (!due.length) return;
+      await gmailEnsureReady();
+      if (!GM.status || !GM.status.connected) return; // dieses Gerät ist nicht mit Gmail verbunden — anderes Gerät übernimmt
+      for (var i=0;i<due.length && i<3;i++){
+        var key=due[i], d=data[key];
+        var dbh=rtdbDb(), claimed=false;
+        if (dbh){
+          try { var tx=await dbh.ref("gmailDrafts/"+key+"/status").transaction(function(cur){ return cur==="scheduled" ? "sending" : undefined; }); claimed=!!(tx&&tx.committed); }
+          catch(e){ claimed=false; }
+        }
+        if (!claimed) continue;
+        try {
+          var payload={ raw: buildRaw({ to:d.to, cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", inReplyTo:d.inReplyTo||null, references:d.references||null, attachments:[], quote:(d.replyQuote||null) }) };
+          if (d.threadId) payload.threadId=d.threadId;
+          var sentMsg=await gmApi("POST","/users/me/messages/send",{ body:payload });
+          await rtdbPatch("gmailDrafts/"+key,{ status:"sent", sentAt:Date.now(), updatedAt:Date.now() });
+          var le=d.linkedEntity;
+          if (le && le.kind && le.id){
+            var thrId=(sentMsg&&sentMsg.threadId)||d.threadId||null;
+            if (thrId){ try { gmlLinkThreadToEntity(le.kind,le.id,thrId); if (document.getElementById("gmlEntityInbox")) loadEntityInbox(le.kind,le.id); } catch(_){} }
+          }
+          toast("ok","🕒 Geplante Mail gesendet","An "+(d.toName||d.to||"")+(d.subject?(" · "+d.subject):""));
+        } catch(e){
+          var att=(Number(d.sendAttempts)||0)+1;
+          var upd = att>=5
+            ? { status:"error", lastError:(e&&e.message)||"Senden fehlgeschlagen", sendAttempts:att, updatedAt:Date.now() }
+            : { status:"scheduled", lastError:(e&&e.message)||"Senden fehlgeschlagen", sendAttempts:att, updatedAt:Date.now() };
+          await rtdbPatch("gmailDrafts/"+key, upd);
+          if (att>=5) toast("err","Geplante Mail fehlgeschlagen",(d.subject||"")+" — "+((e&&e.message)||""));
+        }
+      }
+      if (typeof loadDrafts==="function") loadDrafts();
+    } catch(e){ /* still — nächster Takt versucht es erneut */ }
+    finally { GM._schedBusy=false; }
+  }
+  setTimeout(gmailProcessScheduledDrafts, 8000);
+  setInterval(gmailProcessScheduledDrafts, 60000);
+
   // ── Folge-Aktionen nach dem Senden (Mail erledigen / Aufgabe erstellen) ──
   // Erscheint nach erfolgreichem Versand (Verfassen, Antworten, KI-Entwurf). Nutzt die
   // bestehende Erledigt-Logik (gmailToggleDone: Quantus/Erledigt-Label + raus aus INBOX, KEINE
@@ -98258,7 +98512,9 @@ console.log('📚 Leseliste geladen');
       // offenen Entwürfe (status==="pending"); die frühere generateDraft===true-Hürde (PR #16/#23)
       // blendete alle n8n-Entwürfe aus, weil das Flag nur in der Klassifizierung, nicht im Entwurf
       // steht. Manuelle On-Demand-Entwürfe (PR #24, ebenfalls status:"pending") erscheinen weiterhin.
-      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending"; }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
+      // "pending" (offen) und "scheduled" (🕒 Später senden) anzeigen — geplante
+      // Entwürfe sollen sichtbar bleiben, bis sie gesendet oder aufgehoben werden.
+      GM.drafts = arr.filter(function(d){ var st=(d.status||"pending"); return st==="pending"||st==="scheduled"; }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
     } catch(e){ GM.draftsError = e.message||"Entwürfe konnten nicht geladen werden"; }
     finally { GM.draftsLoading=false; rerender(); }
   }
@@ -98279,12 +98535,15 @@ console.log('📚 Leseliste geladen');
     var preview = esc((d.draftBody||"").replace(/\s+/g," ").trim().slice(0,180));
     var org = findOrgForEmail(d.to||"");
     var orgBadge = org ? '<div class="gml-org-badge'+(orgInstructions(org)?'':' muted')+'" title="'+(orgInstructions(org)?"KI-Anweisungen dieser Organisation werden angewendet":"Erkannte Organisation – keine E-Mail-Anweisungen hinterlegt")+'">🏢 '+esc(org.name||"Organisation")+(orgInstructions(org)?' · Anweisungen aktiv':'')+'</div>' : '';
+    var istGeplant = d.status==="scheduled";
     return '<div class="gml-draft">'
-      + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(d.to&&d.toName?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(d.to)+'&gt;</span>':'')+'</span><span class="gml-draft-date">🤖 '+esc(fmtDate(draftTs(d)))+'</span></div>'
+      + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(d.to&&d.toName?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(d.to)+'&gt;</span>':'')+'</span><span class="gml-draft-date">'+(istGeplant?('🕒 geplant: '+esc(gmlFmtSendAt(d.sendAt))):('🤖 '+esc(fmtDate(draftTs(d)))))+'</span></div>'
       + '<div class="gml-draft-subj">'+esc(d.subject||"(kein Betreff)")+'</div>'
       + orgBadge
       + '<div class="gml-draft-prev">'+(preview||'<span style="color:var(--muted)">(leerer Entwurf)</span>')+'</div>'
-      + '<div class="gml-draft-actions"><button class="btn primary sm" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')">✏️ Prüfen &amp; senden</button><button class="btn sm" onclick="gmailDismissDraft(\''+jsStr(d._key)+'\')">🗑 Verwerfen</button></div>'
+      + '<div class="gml-draft-actions"><button class="btn primary sm" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')">✏️ Prüfen &amp; senden</button>'
+      + (istGeplant?'<button class="btn sm" onclick="gmailUnscheduleDraft(\''+jsStr(d._key)+'\')" title="Geplanten Versand stoppen — der Entwurf bleibt erhalten">🕒 Planung aufheben</button>':'')
+      + '<button class="btn sm" onclick="gmailDismissDraft(\''+jsStr(d._key)+'\')">🗑 Verwerfen</button></div>'
       + '</div>';
   }
   window.gmailRefreshDrafts = function(){ loadDrafts(); };
@@ -98293,10 +98552,25 @@ console.log('📚 Leseliste geladen');
     try { return (GM.drafts||[]).filter(function(d){ return (d.status||"pending")==="pending"; }).map(function(d){ return { subject:d.subject||"(ohne Betreff)", to:d.toName||d.to||"" }; }); }
     catch(e){ return []; }
   };
+  // Geplanten Versand stoppen — Entwurf bleibt als "pending" erhalten.
+  window.gmailUnscheduleDraft = async function(key){
+    var d=(GM.drafts||[]).find(function(x){return x._key===key;});
+    if (d){ d.status="pending"; }
+    await rtdbPatch("gmailDrafts/"+key,{ status:"pending", updatedAt:Date.now() });
+    toast("ok","Planung aufgehoben","Der Entwurf bleibt erhalten und wird nicht automatisch gesendet.");
+    rerender();
+  };
   window.gmailOpenDraft = function(key){
     var d=(GM.drafts||[]).find(function(x){return x._key===key;});
     if (!d && GM.entityDrafts){ Object.keys(GM.entityDrafts).forEach(function(k){ if(!d) d=(GM.entityDrafts[k]||[]).find(function(x){return x._key===key;}); }); }
     if (!d){ toast("err","Entwurf nicht mehr da",""); return; }
+    // Sicherheitsnetz: Beim Öffnen eines GEPLANTEN Entwurfs die Planung anhalten,
+    // damit der Scheduler nicht die alte Fassung sendet, während man editiert.
+    if (d.status==="scheduled"){
+      d.status="pending";
+      setDraftStatus(key,"pending");
+      toast("info","🕒 Planung angehalten","Während du bearbeitest, wird nichts automatisch gesendet — plane danach neu über „🕒 Später“ oder sende direkt.");
+    }
     var org=findOrgForEmail(d.to||"");
     var note = org ? ('🏢 Organisation erkannt: <b>'+esc(org.name||"")+'</b>'+(orgInstructions(org)?' – deren KI-Anweisungen wurden beim Entwurf berücksichtigt.':' (keine E-Mail-Anweisungen hinterlegt).')) : '';
     // Original-Mail (auf die geantwortet wird) read-only über dem Entwurf zeigen.
@@ -98996,16 +99270,80 @@ console.log('📚 Leseliste geladen');
     return out;
   }
 
+  // ── Kompakter Element-Kontext für die Composer-KI ──
+  // Fasst das verknüpfte Element (Titel, Beschreibung, Termine, Personen,
+  // letzte Mails) als Klartext zusammen. Wird in gmlAI allen Aktionen
+  // vorangestellt, damit Entwürfe inhaltlich zum Element passen.
+  var ENT_LABEL = { task:"Aufgabe", project:"Projekt", organization:"Organisation", person:"Person" };
+  function gmlEntityAiContext(kind, id){
+    var e = entityOf(kind, id); if (!e) return "";
+    var L = [];
+    L.push("Verknüpftes Element in Quantus — "+(ENT_LABEL[kind]||kind)+": "+String(e.title||e.name||"(ohne Titel)"));
+    function add(label, v){ if (v==null) return; v = String(v).replace(/\s+/g," ").trim(); if (v) L.push(label+": "+v.slice(0, 600)); }
+    add("Beschreibung", e.description);
+    add("Notizen", e.notes || e.content);
+    add("Status", e.status);
+    if (kind==="task"){ add("Priorität", e.priority); add("Fällig am", e.dueDate || e.deadline); }
+    if (kind==="project"){ add("Deadline", e.deadline || e.dueDate); add("Ziel", e.goal || e.objective); }
+    if (kind==="person"){ add("Firma/Organisation", e.company); add("Rolle", e.role); }
+    try {
+      var ps = qPersons(), pl = [];
+      (e.mailPersonIds||[]).forEach(function(pid){ var p=ps[pid]; if(p) pl.push((p.name||"Person")+((p.emails&&p.emails[0])?" <"+p.emails[0]+">":"")); });
+      if (pl.length) L.push("Zugeordnete Personen: "+pl.slice(0,8).join(", "));
+    } catch(_){}
+    try {
+      var st = GM.entityInbox[kind+":"+id];
+      if (st && st.rows && st.rows.length){
+        L.push("Letzte Mails zu diesem Element:");
+        st.rows.slice(0,5).forEach(function(m){ var a=parseAddr(m.from); L.push("- "+(a.name||a.email)+": "+String(m.subject||"")+(m.snippet?(" — "+String(m.snippet).slice(0,140)):"")); });
+      }
+    } catch(_){}
+    return L.join("\n").slice(0, 2800);
+  }
+
   // Verfassen-Modal aus einer Element-Detailseite (Projekt/Org/Aufgabe) heraus, vorbefüllt mit
   // den E-Mail-Adressen der zugehörigen Personen (entityAddresses). Öffnet NUR den Composer;
   // gesendet wird erst über den bestehenden „Senden"-Klick (gmailSend) — kein Auto-Versand.
+  // Auch ohne zugeordnete Adressen nutzbar: dann mit leerem An-Feld, die
+  // Element-Verknüpfung (linkedEntity) ist trotzdem gesetzt.
   window.gmailComposeToEntity = function(kind, id){
     var ad = entityAddresses(kind, id);
-    if (!ad.length){ toast("info","Keine Personen","Diesem Element sind keine Personen/E-Mails mit Adresse zugeordnet."); return; }
     var ent = (kind==="task") ? ((APP.state.data.entities.tasks||{})[id]) : entityOf(kind, id);
     var titleTxt = ent ? String(ent.title||ent.name||"") : "";
     if (typeof window.gmailCompose!=="function"){ toast("err","Nicht verfügbar","Gmail-Modul nicht geladen."); return; }
-    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: "✉️ Mail an "+ad.length+" Person(en)", linkedEntity:{ kind:kind, id:id } });
+    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: ad.length ? "✉️ Mail an "+ad.length+" Person(en)" : "✉️ Neue E-Mail — "+(ENT_LABEL[kind]||""), linkedEntity:{ kind:kind, id:id } });
+  };
+
+  // ✨ KI-Entwurf direkt vom Element: öffnet den Composer (vorbefüllt + verknüpft)
+  // und stösst die Entwurf-Generierung an — die KI nutzt den Element-Kontext
+  // (gmlEntityAiContext). Gesendet wird weiterhin nur manuell über „Senden".
+  window.gmailAiDraftForEntity = function(kind, id){
+    var ad = entityAddresses(kind, id);
+    var ent = entityOf(kind, id);
+    var titleTxt = ent ? String(ent.title||ent.name||"") : "";
+    if (typeof window.gmailCompose!=="function"){ toast("err","Nicht verfügbar","Gmail-Modul nicht geladen."); return; }
+    window.gmailCompose({ to: ad.join(", "), subject: titleTxt, title: "✨ KI-Entwurf — "+(titleTxt||"Neue E-Mail"), linkedEntity:{ kind:kind, id:id } });
+    setTimeout(function(){ try { if (typeof window.gmlAI==="function") window.gmlAI("draft"); } catch(e){} }, 350);
+  };
+
+  // ↩︎ Antwort direkt aus der Element-Inbox-Karte: lädt die Original-Mail
+  // vollständig (Message-ID/References für sauberes Threading) und öffnet den
+  // Composer als Antwort — mit Element-Verknüpfung, damit der Thread im
+  // Element bleibt und die KI beide Kontexte (Mail + Element) kennt.
+  window.gmailReplyFromEntity = async function(msgId, kind, id){
+    try {
+      await gmailEnsureReady();
+      var msg = await gmApi("GET","/users/me/messages/"+encodeURIComponent(msgId), { query:{ format:"full" } });
+      var h = headerMap(msg.payload), bodies = extractBodies(msg.payload);
+      var o = { id:msg.id, threadId:msg.threadId, from:h.from||"", subject:h.subject||"", messageId:h["message-id"]||"", references:h.references||"", text:bodies.text, html:bodies.html };
+      var a = parseAddr(o.from);
+      var subj = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
+      window.gmailCompose({ title:"↩︎ Antwort", to:a.email, subject:subj,
+        threadId:o.threadId||null, inReplyTo:o.messageId||null,
+        references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null,
+        linkedEntity:{ kind:kind, id:id },
+        source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:(o.text||htmlToText(o.html)||"") } });
+    } catch(e){ toast("err","Fehler",(e&&e.message)||"Nachricht konnte nicht geladen werden"); }
   };
 
   function gmailDetectEntity(){
@@ -99029,22 +99367,23 @@ console.log('📚 Leseliste geladen');
     var threadN=(ent && Array.isArray(ent.mailThreadIds)) ? ent.mailThreadIds.length : 0;
     var drafts=(GM.entityDrafts && GM.entityDrafts[kind+":"+id]) || [];
     var st=GM.entityInbox[kind+":"+id]||{};
-    var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Gmail-Inbox</span>'
+    var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Mail</span>'
       +'<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'
-      +(ad.length?'<button class="btn sm primary" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail an die zugeordneten Personen schreiben (Adressen sind vorbefüllt, Verknüpfung ist gesetzt)">✉️ Mail schreiben</button>':'')
+      +'<button class="btn sm primary" onclick="window.gmailAiDraftForEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="KI-Entwurf mit dem Kontext dieses Elements generieren (Titel, Beschreibung, Personen, letzte Mails)">✨ KI-Entwurf</button>'
+      +'<button class="btn sm" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail schreiben — Adressen der zugeordneten Personen sind vorbefüllt, Verknüpfung ist gesetzt">✉️ Mail schreiben</button>'
       +'<button class="btn sm" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">⚙️ Personen/E-Mails</button>'
       +(ad.length?'<button class="btn sm" onclick="gmailOpenInGmailWeb(\''+jsStr(entityQuery(kind,id))+'\')" title="In Gmail filtern">↗ Gmail</button>':'')
       +'</span></h3>';
     // Verknüpfte Entwürfe (RTDB) — anklickbar, öffnen den Verfassen-Dialog vorbefüllt.
     var draftsHtml = drafts.length ? ('<div class="gml-ei-drafts"><div class="gml-ei-subhead">✏️ Entwürfe ('+drafts.length+')</div><div class="gml-ei-list">'
-      + drafts.map(function(d){ return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">Entwurf</span></div>'; }).join("")
+      + drafts.map(function(d){ var lbl=d.status==="scheduled"?("🕒 "+gmlFmtSendAt(d.sendAt)):"Entwurf"; return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(lbl)+'</span></div>'; }).join("")
       + '</div></div>') : '';
-    if (!ad.length && !threadN && !drafts.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen, Adressen oder Mail-Threads zugeordnet — ordne welche zu oder verknüpfe eine Mail (🔗 in der Mail-Ansicht), um Mails hier zu sehen.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
+    if (!ad.length && !threadN && !drafts.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen, Adressen oder Mail-Threads zugeordnet. Du kannst trotzdem direkt eine Mail schreiben oder per ✨ KI-Entwurf generieren lassen — beim Senden wird der Thread automatisch mit diesem Element verknüpft.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
     var bodyHtml;
     if (st.loading) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">⏳ Lade Mails…</div>';
     else if (st.error) bodyHtml='<div style="color:var(--danger);font-size:13px;padding:8px 2px">'+esc(st.error)+'</div>';
     else if (!st.rows || !st.rows.length) bodyHtml=(ad.length||threadN)?'<div style="color:var(--muted);font-size:13px;padding:8px 2px">Noch keine Mails gefunden.</div>':'';
-    else bodyHtml='<div class="gml-ei-list">'+st.rows.map(function(m){ var a=parseAddr(m.from); return '<div class="gml-ei-row'+(m.unread?" unread":"")+'" onclick="gmailOpenFromExternal(\''+jsStr(m.id)+'\')"><span class="gml-ei-from">'+esc(a.name||a.email)+'</span><span class="gml-ei-subj">'+esc(m.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(fmtDate(m.internalDate))+'</span></div>'; }).join("")+'</div>';
+    else bodyHtml='<div class="gml-ei-list">'+st.rows.map(function(m){ var a=parseAddr(m.from); return '<div class="gml-ei-row'+(m.unread?" unread":"")+'" onclick="gmailOpenFromExternal(\''+jsStr(m.id)+'\')"><span class="gml-ei-from">'+esc(a.name||a.email)+'</span><span class="gml-ei-subj">'+esc(m.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(fmtDate(m.internalDate))+'</span><button class="gml-ei-reply" title="Antworten — verknüpft mit diesem Element, KI kennt Mail & Element" onclick="event.stopPropagation();gmailReplyFromEntity(\''+jsStr(m.id)+'\',\''+kind+'\',\''+jsStr(id)+'\')">↩︎</button></div>'; }).join("")+'</div>';
     var meta=ad.length+' Adresse(n)'+(threadN?' · '+threadN+' Thread(s)':'')+(drafts.length?' · '+drafts.length+' Entwurf/Entwürfe':'')+' · '+(st.rows?st.rows.length:0)+' Mail(s)';
     return head+'<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px">'+meta+'</div>'+draftsHtml+bodyHtml;
   }
@@ -99090,7 +99429,7 @@ console.log('📚 Leseliste geladen');
         Object.keys(dd).forEach(function(k){
           var d=dd[k]; if(!d || typeof d!=="object") return;
           var le=d.linkedEntity; if(!le || le.kind!==kind || String(le.id)!==String(id)) return;
-          if ((d.status||"pending")!=="pending") return;
+          var st=(d.status||"pending"); if (st!=="pending" && st!=="scheduled") return;
           d._key=k; dl.push(d);
         });
       }
