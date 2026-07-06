@@ -5311,6 +5311,70 @@ async function _unregisterUploadFromDrive(path) {
   } catch(e) {}
 }
 
+// ── Bestands-Sync: BESTEHENDE Anhänge im Drive sichtbar machen ──
+// Die Auto-Registrierung oben greift nur bei NEUEN Uploads. Damit auch alle
+// früher hochgeladenen Projekt-/Aufgaben-/Meeting-Dateien im Drive erscheinen,
+// werden hier einmal pro Sitzung alle files[]-Arrays der Entities durchgegangen
+// und fehlende driveDocs-Einträge angelegt (nur Metadaten: Name, URL, Grösse —
+// die App kennt sie ohne teures Storage-Listing). Volltext & Hash reicht der
+// Backfill-Scan in drive.html nach (er ERGÄNZT jetzt Einträge ohne Hash, statt
+// sie zu überspringen). Läuft nur mit aktiver Firebase-Anmeldung; sonst
+// versucht es der zweite Timer später erneut.
+async function _syncExistingFilesToDrive() {
+  try {
+    if (window.__driveFileSyncDone) return;
+    const db = _driveDb(); if (!db) return;
+    try { if (firebase.auth && !firebase.auth().currentUser) return; } catch(e) {}
+    const ents = window.APP && APP.state && APP.state.data && APP.state.data.entities;
+    if (!ents) return;
+    window.__driveFileSyncDone = true;
+    const snap = await db.ref('driveDocs').once('value');
+    const docs = snap.val() || {};
+    const bekannt = new Set();
+    Object.keys(docs).forEach(k => { const d = docs[k]; if (d && d.storagePath) bekannt.add(d.storagePath); });
+    let neu = 0;
+    for (const map of Object.values(ents)) {
+      if (!map || typeof map !== 'object') continue;
+      for (const ent of Object.values(map)) {
+        const files = (ent && Array.isArray(ent.files)) ? ent.files : [];
+        for (const f of files) {
+          const path = f && f.storagePath;
+          if (!path || !String(path).startsWith('attachments/') || bekannt.has(path)) continue;
+          bekannt.add(path);
+          const docId = await _driveDocIdForPath(path);
+          if (docs[docId]) continue;
+          const jetzt = new Date().toISOString();
+          await db.ref('driveDocs/' + docId).set({
+            dateiname: f.name || String(path).split('/').pop(),
+            titel_final: '',
+            storagePath: path,
+            downloadUrl: f.url || '',
+            mimeType: f.type || 'application/octet-stream',
+            groesse: f.size || 0,
+            hash: '',
+            status: 'eingang',
+            folderId: null,
+            vorschlag: null,
+            textauszug: '',
+            quelle: 'app-sync',
+            erstellt: f.uploadedAt || jetzt,
+            aktualisiert: jetzt
+          });
+          neu++;
+          if (neu >= 300) break; // Sicherheitslimit pro Sitzung
+        }
+        if (neu >= 300) break;
+      }
+      if (neu >= 300) break;
+    }
+    if (neu) console.log('[Drive] Bestands-Sync: ' + neu + ' vorhandene Anhänge im Drive registriert');
+  } catch(e) { console.warn('[Drive] Bestands-Sync übersprungen:', e && e.message); }
+}
+// Verzögert anstossen: nach App-Boot sind Daten & Auth in der Regel bereit;
+// der zweite Versuch fängt späte Anmeldungen ab.
+setTimeout(_syncExistingFilesToDrive, 12000);
+setTimeout(_syncExistingFilesToDrive, 45000);
+
 
 const CLOUD_SYNC_HEALTH_KEY = '__cloud_sync_health_v2';
 const DEVICE_ID_KEY = '__cloud_sync_device_id';
