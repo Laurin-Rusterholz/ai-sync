@@ -104220,5 +104220,82 @@ body::before{
 }
 </style>
 
+<style id="asanaLayer3">
+/* ═══════════════════════════════════════════════════════════════════════════
+   ASANA-LAYER v3 — „Glas & Konfetti": Glas-Oberflächen, Deko-Formen,
+   Punktraster-Textur, schwebende Sidebar. Rein additiv; Daily Journal
+   (.jb-container, opakes Fixed-Overlay) bleibt weiterhin unberührt.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1) Textur: feines Punktraster über der Aurora (fix, hinter Inhalt) ── */
+body::after{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background-image:radial-gradient(circle, color-mix(in oklab, var(--text-primary) 7%, transparent) 1px, transparent 1.6px);
+  background-size:26px 26px;
+  mask-image:radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 100%);
+  -webkit-mask-image:radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 100%);
+}
+
+/* ── 2) Deko-Formen (per Mini-Script injiziert): Blobs, Ringe, Punkte ── */
+.asn-shape{position:fixed;z-index:-1;pointer-events:none;border-radius:50%;animation:asnFloat 22s ease-in-out infinite alternate}
+.asn-blob{background:color-mix(in oklab, var(--sc) 16%, transparent);filter:blur(30px)}
+.asn-ring{border:2px solid color-mix(in oklab, var(--sc) 32%, transparent)}
+.asn-dot{background:color-mix(in oklab, var(--sc) 22%, transparent)}
+@keyframes asnFloat{from{transform:translate3d(0,0,0) rotate(0deg)}to{transform:translate3d(16px,-26px,0) rotate(10deg)}}
+
+/* ── 3) Glas-Oberflächen: Sidebar schwebt, Modals & Panels aus Milchglas ── */
+@media (min-width:769px){
+  .sidebar{margin:10px 0 10px 10px;border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow);background:color-mix(in oklab, var(--surface-raised) 80%, transparent);backdrop-filter:blur(16px) saturate(1.15);-webkit-backdrop-filter:blur(16px) saturate(1.15)}
+  .main{padding:20px 26px 60px}
+}
+.modal{background:color-mix(in oklab, var(--surface-overlay) 88%, transparent);backdrop-filter:blur(16px) saturate(1.1);-webkit-backdrop-filter:blur(16px) saturate(1.1)}
+.slide-panel{background:color-mix(in oklab, var(--surface-overlay) 90%, transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.card{background:color-mix(in oklab, var(--surface-raised) 92%, transparent)}
+.toast{background:color-mix(in oklab, var(--surface-overlay) 86%, transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+
+/* ── 4) Verspielte Signaturen ── */
+.page-header{position:relative}
+.page-header::after{content:"";position:absolute;left:0;bottom:-6px;width:64px;height:4px;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--pink),var(--info));pointer-events:none}
+.modal-header{background:linear-gradient(180deg, color-mix(in oklab, var(--accent) 7%, transparent), transparent)}
+.sidebar-brand .logo{box-shadow:0 2px 10px var(--accent-soft),0 0 22px var(--accent-soft)}
+::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+.tags .tag,.postit-tags .postit-tag{background:var(--accent-soft);color:var(--accent);border:0}
+.tags .tag:nth-child(4n+2){background:color-mix(in oklab, var(--info) 20%, transparent);color:var(--info)}
+.tags .tag:nth-child(4n+3){background:color-mix(in oklab, var(--pink) 20%, transparent);color:var(--pink)}
+.tags .tag:nth-child(4n){background:color-mix(in oklab, var(--success) 20%, transparent);color:var(--success)}
+.empty-folder .gross,.rh-empty-state-icon,.chat-empty-icon{display:inline-block;animation:asnBob 3.2s ease-in-out infinite alternate}
+@keyframes asnBob{from{transform:translateY(0)}to{transform:translateY(-6px)}}
+.timer-widget .timer-time{animation:asnPulse 2.2s ease-in-out infinite}
+@keyframes asnPulse{0%,100%{opacity:1}50%{opacity:.6}}
+
+@media (prefers-reduced-motion:reduce){
+  .asn-shape,.empty-folder .gross,.rh-empty-state-icon,.chat-empty-icon,.timer-widget .timer-time{animation:none}
+}
+</style>
+<script>
+/* Deko-Formen hinter dem Inhalt (rein dekorativ, additiv). Respektiert
+   prefers-reduced-motion; liegt auf z-index:-1 und stört keine Interaktion. */
+(function(){
+  try{
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var formen=[
+      { s:230, x:'5%',  y:'14%', c:'accent',  t:'blob', d:0 },
+      { s:150, x:'87%', y:'7%',  c:'pink',    t:'ring', d:2 },
+      { s:130, x:'91%', y:'68%', c:'info',    t:'blob', d:4 },
+      { s:95,  x:'3%',  y:'76%', c:'success', t:'ring', d:1 },
+      { s:56,  x:'74%', y:'87%', c:'warning', t:'dot',  d:3 },
+      { s:44,  x:'42%', y:'5%',  c:'info',    t:'dot',  d:5 }
+    ];
+    formen.forEach(function(o,i){
+      var el=document.createElement('div');
+      el.className='asn-shape asn-'+o.t;
+      el.setAttribute('aria-hidden','true');
+      el.style.cssText='width:'+o.s+'px;height:'+o.s+'px;left:'+o.x+';top:'+o.y+';--sc:var(--'+o.c+');animation-delay:-'+(o.d*3)+'s;animation-duration:'+(18+i*4)+'s';
+      document.body.appendChild(el);
+    });
+  }catch(e){}
+})();
+</script>
+
 </body>
 </html>
