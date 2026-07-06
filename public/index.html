@@ -104114,5 +104114,111 @@ th{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--text
 .calendar-day.today{box-shadow:inset 0 0 0 2px var(--accent)}
 </style>
 
+<style id="asanaLayer2">
+/* ═══════════════════════════════════════════════════════════════════════════
+   ASANA-LAYER v2 — „Aurora": lebendiger Hintergrund, fröhliche Farben,
+   einheitlicher Stil über alle Module. Rein additiv (letztes <style>).
+   AUSNAHME Daily Journal: .jb-container ist ein fixes Overlay mit eigenem
+   opakem Hintergrund — es wird hier bewusst NICHT angefasst (keine jb-*
+   Selektoren), Aurora & Umstylung bleiben davor verborgen.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ── 1) Aurora-Hintergrund: mehrfarbige, langsam treibende Farbnebel ──
+   html trägt die Basisfarbe, body wird transparent, die Aurora liegt als
+   fixes Pseudo-Element dahinter (z-index:-1). Panels/Karten behalten ihre
+   Flächen → Inhalt schwebt lesbar über dem Farbverlauf. Beide Themes über
+   color-mix aus den Akzent-Tokens. */
+html{background:var(--surface-base)}
+body{background:transparent}
+body::before{
+  content:"";position:fixed;inset:-22%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(42% 36% at 18% 22%, color-mix(in oklab, var(--accent) 17%, transparent), transparent 72%),
+    radial-gradient(38% 34% at 84% 12%, color-mix(in oklab, var(--info) 14%, transparent), transparent 72%),
+    radial-gradient(46% 40% at 74% 88%, color-mix(in oklab, var(--pink) 13%, transparent), transparent 72%),
+    radial-gradient(34% 30% at 8% 90%, color-mix(in oklab, var(--success) 11%, transparent), transparent 72%);
+  animation:asnAurora 42s ease-in-out infinite alternate;
+  will-change:transform;
+}
+@keyframes asnAurora{
+  from{transform:translate3d(-2%,-1.5%,0) rotate(-1.5deg) scale(1)}
+  to{transform:translate3d(2%,2%,0) rotate(2deg) scale(1.07)}
+}
+
+/* ── 2) Signatur-Details: Gradient-Linie unter der Topbar, Gradient-Titel ── */
+.topbar{position:relative}
+.topbar::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;pointer-events:none;background:linear-gradient(90deg,var(--accent),var(--pink),var(--info),var(--success));opacity:.5}
+@supports (-webkit-background-clip:text){
+  .page-title h2,.nf-header h1,.rh-header-title{background:linear-gradient(94deg,var(--text-primary) 55%,var(--accent));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+}
+
+/* ── 3) Fröhliche Farbzyklen: Karten-Familien mit farbiger Oberkante ── */
+.stat-card{border-top:3px solid var(--accent)}
+.stat-card:nth-child(4n+2){border-top-color:var(--info)}
+.stat-card:nth-child(4n+3){border-top-color:var(--pink)}
+.stat-card:nth-child(4n){border-top-color:var(--success)}
+.project-card{border-top:3px solid var(--accent)}
+.project-card:nth-child(5n+2){border-top-color:var(--info)}
+.project-card:nth-child(5n+3){border-top-color:var(--pink)}
+.project-card:nth-child(5n+4){border-top-color:var(--success)}
+.project-card:nth-child(5n){border-top-color:var(--warning)}
+.goal-card{border-top:3px solid var(--pink)}
+.goal-card:nth-child(3n+2){border-top-color:var(--accent)}
+.goal-card:nth-child(3n){border-top-color:var(--info)}
+.app-card{border-top:3px solid var(--accent)}
+.app-card:nth-child(6n+2){border-top-color:var(--pink)}
+.app-card:nth-child(6n+3){border-top-color:var(--info)}
+.app-card:nth-child(6n+4){border-top-color:var(--success)}
+.app-card:nth-child(6n+5){border-top-color:var(--warning)}
+.app-card:nth-child(6n){border-top-color:var(--danger)}
+
+/* ── 4) Mehr Bewegung: Shine-Sweep, Icon-Pop, Streifen-Fortschritt ── */
+.btn.primary{position:relative;overflow:hidden}
+.btn.primary::after{content:"";position:absolute;top:0;bottom:0;left:-70%;width:45%;pointer-events:none;background:linear-gradient(100deg,transparent,rgba(255,255,255,.34),transparent);transform:skewX(-18deg);transition:left .45s ease}
+.btn.primary:hover::after{left:125%}
+.sidebar-item .icon,.nav-item .icon,.sidebar-quick-item .icon{transition:transform .16s cubic-bezier(.34,1.56,.64,1)}
+.sidebar-item:hover .icon,.nav-item:hover .icon,.sidebar-quick-item:hover .icon{transform:scale(1.18)}
+.app-card-icon{transition:transform .2s cubic-bezier(.34,1.56,.64,1)}
+.app-card-main:hover .app-card-icon{transform:scale(1.15) rotate(-4deg)}
+.progress .bar{background-image:linear-gradient(45deg,rgba(255,255,255,.14) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.14) 50%,rgba(255,255,255,.14) 75%,transparent 75%);background-size:14px 14px;animation:asnStripes 1.1s linear infinite}
+@keyframes asnStripes{to{background-position:14px 0}}
+.badge,.pill{transition:transform .13s ease}
+.badge:hover,.pill:hover{transform:scale(1.06)}
+.toast .toast-title{font-weight:700}
+
+/* ── 5) Einheitlicher Stil: Modul-Buttons/-Modals/-Toasts auf EINE Linie ── */
+.rh-btn,.nf-btn,.program-btn,.tr-quick-btn,.quick-prompt-btn,.launch-btn,.dd-btn,.order-btn,.topbar-btn,.nf-toolbar-btn{border-radius:10px;font-weight:600;transition:transform .13s ease,box-shadow .18s ease,background .15s ease,border-color .15s ease,color .15s ease}
+.rh-btn:hover,.nf-btn:hover,.program-btn:hover,.tr-quick-btn:hover,.quick-prompt-btn:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+.rh-btn:active,.nf-btn:active,.program-btn:active,.tr-quick-btn:active,.quick-prompt-btn:active,.dd-btn:active{transform:scale(.97)}
+.rh-btn-primary,.nf-btn-primary{background:linear-gradient(180deg,var(--accent),var(--accent-deep));border-color:transparent;color:var(--on-accent)}
+.rh-btn-primary:hover,.nf-btn-primary:hover{box-shadow:0 4px 16px var(--accent-soft);filter:brightness(1.07)}
+.nf-modal,.rh-modal{border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow-lg)}
+.nf-modal-overlay.active .nf-modal,.rh-modal-overlay.show .rh-modal{animation:asnPop .22s cubic-bezier(.2,.9,.3,1.15) both}
+.nf-modal-overlay,.rh-modal-overlay{backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.nf-toast,.rh-toast{border-radius:12px;box-shadow:var(--shadow-lg);animation:asnToast .3s cubic-bezier(.2,.9,.3,1.15) both}
+.nf-nav-item.active,.rh-nav-item.active{background:var(--accent-soft);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.nf-note-card:hover,.rh-item-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.rh-stat-card,.nf-stat{border:1px solid var(--border);border-radius:var(--radius);transition:transform .2s ease,box-shadow .2s ease}
+.rh-stat-card:hover,.nf-stat:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+
+/* ── 6) Fröhliche Kleinigkeiten überall ── */
+.chip .dot{box-shadow:0 0 0 3px color-mix(in oklab, currentColor 22%, transparent)}
+.timeline-marker.active{box-shadow:0 0 0 3px var(--surface-raised),0 0 12px var(--accent-soft)}
+.calendar-day.has-tasks::after{background:var(--accent)}
+.week-calendar .wk-day{font-weight:700}
+.matrix-quadrant.do .quadrant-header{color:var(--danger)}
+.matrix-quadrant.schedule .quadrant-header{color:var(--accent)}
+.matrix-quadrant.delegate .quadrant-header{color:var(--warning)}
+.matrix-quadrant.eliminate .quadrant-header{color:var(--text-muted)}
+.universal-search .search-shortcut{border:1px solid var(--border);border-radius:6px;background:var(--surface-overlay);font-weight:600}
+.empty-folder .gross,.rh-empty-state-icon{filter:saturate(1.2)}
+
+@media (prefers-reduced-motion:reduce){
+  body::before{animation:none}
+  .progress .bar{animation:none}
+}
+</style>
+
 </body>
 </html>
