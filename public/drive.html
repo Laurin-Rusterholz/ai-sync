@@ -161,6 +161,9 @@ table.docs tr:last-child td { border-bottom: 0; }
   border-radius: 20px; padding: 1px 9px; font-size: 11.5px; margin: 1px 3px 1px 0;
 }
 .dup-hinweis { color: var(--coral-tief); font-size: 12px; font-weight:600; white-space:nowrap; }
+.doc-info { border:0; background:transparent; cursor:pointer; font-size:13px; opacity:.45; margin-left:4px; padding:1px 3px; border-radius:5px; flex:none; }
+.doc-zeile:hover .doc-info { opacity:1; }
+.doc-info:hover { background: var(--leinen-tief); }
 
 /* Status-Badges */
 .badge {
@@ -539,6 +542,42 @@ function dateiIcon(mime, name) {
 }
 function endung(name) { return (String(name || "").split(".").pop() || "").toLowerCase(); }
 function lc(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
+
+// ── Typabhängiges Öffnen ──
+// PDF → im PDF-Editor der Hauptapp (postMessage an parent, wenn eingebettet)
+// Bild → Vorschau direkt im Drawer · Word → Download · Rest → Drawer wie bisher.
+function dateiKategorie(d) {
+  const n = lc(d && d.dateiname), m = String((d && d.mimeType) || "");
+  if (m === "application/pdf" || n.endsWith(".pdf")) return "pdf";
+  if (m.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|heic)$/.test(n)) return "bild";
+  if (/\.(docx?|odt)$/.test(n) || m.indexOf("wordprocessingml") >= 0 || m === "application/msword") return "word";
+  return "sonst";
+}
+function istEingebettet() { try { return window.self !== window.top; } catch (e) { return true; } }
+function pdfImEditorOeffnen(d) {
+  try {
+    window.parent.postMessage({ type: "quantus-open-pdf", url: d.downloadUrl, name: d.titel_final || d.dateiname || "Dokument.pdf", storagePath: d.storagePath || null }, location.origin);
+    toast("Öffne im PDF-Editor …");
+    return true;
+  } catch (e) { return false; }
+}
+function docOeffnen(docId) {
+  const d = S.docs[docId]; if (!d) return;
+  const kat = dateiKategorie(d);
+  if (kat === "pdf" && d.downloadUrl && istEingebettet() && pdfImEditorOeffnen(d)) return;
+  if (kat === "pdf") { S.drawerDocId = docId; S.vorschauOffen = true; renderDrawer(); return; }
+  if (kat === "bild") { S.drawerDocId = docId; S.vorschauOffen = true; renderDrawer(); return; }
+  if (kat === "word") {
+    if (d.downloadUrl) {
+      const a = document.createElement("a");
+      a.href = d.downloadUrl; a.target = "_blank"; a.rel = "noopener"; a.download = d.dateiname || "";
+      document.body.appendChild(a); a.click(); a.remove();
+      toast("Word-Dokument wird heruntergeladen …");
+    }
+    S.drawerDocId = docId; S.vorschauOffen = false; renderDrawer(); return;
+  }
+  S.drawerDocId = docId; S.vorschauOffen = false; renderDrawer();
+}
 
 async function sha256Hex(arrayBuffer) {
   const digest = await crypto.subtle.digest("SHA-256", arrayBuffer);
@@ -1181,7 +1220,8 @@ function renderListe() {
       const dup = istDuplikat(id, d) ? ' <span class="dup-hinweis" title="Möglicherweise bereits vorhanden (Hash/KI)">⚠︎ Duplikat?</span>' : "";
       html += '<tr class="doc-zeile" data-action="doc-oeffnen" data-id="' + esc(id) + '">' +
         '<td><div class="doc-name"><span class="icon">' + dateiIcon(d.mimeType, d.dateiname) + '</span><span class="txt">' + esc(d.titel_final || d.dateiname) +
-        (d.titel_final && d.titel_final !== d.dateiname ? '<span class="orig">' + esc(d.dateiname) + "</span>" : "") + "</span>" + dup + "</div></td>" +
+        (d.titel_final && d.titel_final !== d.dateiname ? '<span class="orig">' + esc(d.dateiname) + "</span>" : "") + "</span>" + dup +
+        '<button class="doc-info" title="Details & Ablage" data-action="doc-details" data-id="' + esc(id) + '">ℹ️</button>' + "</div></td>" +
         '<td class="zelle-muted">' + esc(bereich) + "</td>" +
         "<td>" + (tags || '<span class="zelle-muted">–</span>') + "</td>" +
         "<td>" + badge(d.status) + "</td>" +
@@ -1260,6 +1300,9 @@ function renderDrawer() {
     if (v && d.status !== "abgelegt") {
       html += '<button class="btn primaer" data-action="uebernehmen" data-id="' + esc(docId) + '">✓ Übernehmen</button>';
     }
+    if (dateiKategorie(d) === "pdf" && d.downloadUrl && istEingebettet()) {
+      html += '<button class="btn primaer" data-action="pdf-editor" data-id="' + esc(docId) + '">📝 Im PDF-Editor öffnen</button>';
+    }
     html += '<button class="btn" data-action="aendern" data-id="' + esc(docId) + '">' + (d.status === "abgelegt" ? "Verschieben / Umbenennen …" : "Ändern …") + "</button>";
     html += '<button class="btn" data-action="vorschau" data-id="' + esc(docId) + '">' + (S.vorschauOffen ? "Vorschau schliessen" : "👁 Vorschau") + "</button>";
     html += '<a class="btn" href="' + esc(d.downloadUrl || "#") + '" target="_blank" rel="noopener" style="text-decoration:none">⬇ Herunterladen</a>';
@@ -1313,7 +1356,9 @@ document.addEventListener("click", function (e) {
     case "ordner-waehlen":
       if (e.target.closest('[data-action="ordner-klappen"]')) break;
       S.ansicht = { art: "ordner", folderId: id }; S.offen[id] = true; render(); break;
-    case "doc-oeffnen":       S.drawerDocId = id; S.vorschauOffen = false; renderDrawer(); break;
+    case "doc-oeffnen":       docOeffnen(id); break;
+    case "doc-details":       S.drawerDocId = id; S.vorschauOffen = false; renderDrawer(); break;
+    case "pdf-editor":        { const d = S.docs[id]; if (d) pdfImEditorOeffnen(d); break; }
     case "drawer-schliessen": drawerSchliessen(); break;
     case "neuer-ordner":      neuerOrdnerDialog(); break;
     case "login":             googleAnmelden(); break;
