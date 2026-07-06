@@ -96706,7 +96706,7 @@ console.log('📚 Leseliste geladen');
     // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
     var hasPrev = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var html = '<div class="gml-compose-modal'+(hasPrev?' gml-has-prev':'')+'">'
-      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-06-29 · Verlauf-Vorschau v9</div>'
+      + '<div style="text-align:right;font-size:10px;color:var(--muted);opacity:.6;margin:-2px 0 2px">Build 2026-07-06 · Verlauf-Vorschau v9 · KI-Verbessern sanft</div>'
       + (prefill.note ? '<div class="gml-compose-note">'+prefill.note+'</div>' : '')
       + (prefill.original !== undefined ? renderComposeOriginal(prefill.original) : '')
       + fields + linkBar + toolbar + aibar + msg + attachList
@@ -96821,22 +96821,35 @@ console.log('📚 Leseliste geladen');
     } else {
       if (!draft){ toast("info","Kein Text","Bitte zuerst etwas schreiben oder „✨ Entwerfen“ nutzen."); return; }
       var how = {
-        improve:  "Verbessere Formulierung, Klarheit und Lesefluss, ohne Inhalt oder Aussage zu verändern.",
+        improve:  "Verbessere behutsam Formulierung, Klarheit und Lesefluss. Nimm nur kleine, punktuelle Anpassungen vor – der Text bleibt grundsätzlich so, wie er ist.",
         fix:      "Korrigiere ausschließlich Rechtschreibung, Grammatik und Zeichensetzung. Inhalt und Stil bleiben unverändert.",
         shorten:  "Fasse den Text deutlich knapper, aber höflich und vollständig.",
         friendly: "Formuliere den Text wärmer, freundlicher und persönlicher, ohne unprofessionell zu wirken.",
         formal:   "Formuliere den Text formeller und professioneller (Sie-Form, sachlich).",
       }[action] || "Verbessere den Text.";
-      sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
+      // Für alle Aktionen außer „Kürzer“ muss die Mail vollständig erhalten bleiben –
+      // nichts weglassen, nichts zusammenfassen, Aufbau/Absätze/Signatur beibehalten.
+      var keepAll = action==="shorten" ? "" : " Gib die E-Mail IMMER in voller Länge zurück: Behalte ALLE Inhalte, Absätze, Aufzählungen, Namen, Zahlen, Termine, Links, Anrede und Grußformel vollständig bei. Lasse nichts weg, fasse nichts zusammen und kürze nichts.";
+      sys = "Du bist ein E-Mail-Redaktionsassistent. "+how+keepAll+" Behalte die Sprache (Deutsch) bei. Antworte NUR mit dem überarbeiteten E-Mail-Text – keine Erklärungen, keine Markdown-Codeblöcke.";
       user = (origCtx?("Kontext – "+origCtx+"\n\n"):"") + "Text:\n"+draft;
     }
     var busyLbl = action==="draft" ? "Entwerfe Antwort …" : action==="custom" ? "Setze Anweisung um …" : action==="translate" ? "Übersetze …" : "Überarbeite …";
     gmlAiBusy(true, busyLbl);
+    // Token-Budget an die Entwurfslänge koppeln: das fixe Limit von früher (1100)
+    // hat lange Mails mitten im Text abgeschnitten – wirkte wie „halbe Mail gelöscht“.
+    var outTokens = Math.min(8000, Math.max(1100, Math.ceil(draft.length/2) + 500));
     var res;
-    try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:1100 }); }
+    try { res = await window.callAI(user, { systemPrompt:sys, maxTokens:outTokens }); }
     catch(e){ gmlAiBusy(false,""); toast("err","KI-Fehler",(e&&e.message)||""); return; }
     if (!res){ gmlAiBusy(false,""); toast("warn","KI","Kein Ergebnis (API-Key in den Einstellungen?)"); return; }
     res = String(res).replace(/^```(?:\w+)?\s*/,"").replace(/```\s*$/,"").trim();
+    // Schutznetz für inhaltserhaltende Aktionen: fällt das Ergebnis drastisch kürzer
+    // aus als der Entwurf, ist meist etwas verloren gegangen → Entwurf nicht anfassen.
+    if ((action==="improve" || action==="fix" || action==="friendly" || action==="formal") && res.length < draft.length*0.55){
+      gmlAiBusy(false, "");
+      toast("warn","KI-Ergebnis verworfen","Die überarbeitete Version war deutlich kürzer als dein Entwurf – er bleibt unverändert. Bitte nochmals versuchen.");
+      return;
+    }
     GM._aiUndo = ta.value;  // einstufiges Rückgängig: vorigen Text merken (Toggle)
     ta.value = res; ta.focus(); try { ta.setSelectionRange(res.length, res.length); } catch(_){}
     gmlAiBusy(false, "");
