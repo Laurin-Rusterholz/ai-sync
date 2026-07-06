@@ -95992,8 +95992,14 @@ console.log('📚 Leseliste geladen');
 .modal-footer .gmlc-savedraft { padding:11px 18px; font-size:13.5px; font-weight:600; border-radius:10px; }
 .gmlc-linkbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:2px 0 8px; padding:7px 10px; background:var(--panel2,rgba(127,127,127,.06)); border:1px solid var(--border); border-radius:9px; }
 .gmlc-linklabel { font-size:12.5px; font-weight:600; color:var(--text2); }
-.gmlc-linksel { flex:1; min-width:160px; background:var(--panel); border:1px solid var(--border); color:var(--text); padding:6px 9px; border-radius:8px; font-size:13px; }
+.gmlc-linksel { min-width:150px; max-width:210px; background:var(--panel); border:1px solid var(--border); color:var(--text); padding:6px 9px; border-radius:8px; font-size:13px; }
 .gmlc-linkhint { font-size:11.5px; color:var(--muted); }
+.gmlc-linkchips { display:flex; flex-wrap:wrap; gap:5px; align-items:center; flex:1; min-width:0; }
+.gml-linkchip { display:inline-flex; align-items:center; gap:5px; background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:2px 9px; font-size:12px; white-space:nowrap; max-width:100%; overflow:hidden; }
+.gml-linkchip a { cursor:pointer; color:var(--muted); font-weight:700; padding:0 1px; text-decoration:none; }
+.gml-linkchip a:hover { color:var(--danger); }
+.gml-linkchip.vorschlag { border-style:dashed; color:var(--muted); cursor:pointer; text-decoration:none; }
+.gml-linkchip.vorschlag:hover { color:var(--text); border-color:var(--text2); }
 .gmlc-iconbtn { width:40px; height:40px; display:inline-flex; align-items:center; justify-content:center; background:none; border:1px solid var(--border); color:var(--text2); cursor:pointer; border-radius:9px; padding:0; }
 .gmlc-iconbtn:hover { background:var(--hover); color:var(--text); }
 .gmlc-iconbtn svg { width:18px; height:18px; display:block; }
@@ -96783,16 +96789,20 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     var msg = '<div class="gmlc-msg-wrap"><textarea id="gmlBody" class="gmlc-textarea" onkeydown="gmlComposeKey(event)" placeholder="Nachricht verfassen…  ·  Tipp: „✨ Entwerfen“ lässt die KI eine Antwort vorschlagen  ·  ⌘/Strg+Enter sendet">'+esc(prefill.body||"")+'</textarea></div>';
     var attachList = '<div id="gmlAttachList" class="gmlc-attachlist"></div>';
-    // Verknüpfung mit einem Element (Aufgabe/Projekt/Org/Person): Wird beim Senden bzw.
-    // beim Entwurf-Speichern mitgeführt. Beim Senden bindet gmailSend den entstehenden
-    // Thread an das Element (mailThreadIds) → Antworten erscheinen dort in der Inbox-Karte.
-    var le0 = prefill.linkedEntity || null;
+    // Verknüpfungen mit Elementen (Aufgabe/Projekt/Org/Person): MEHRERE gleichzeitig
+    // möglich (z. B. Projekt + Aufgabe). Anzeige als Chips, hinzufügen über
+    // „＋ Verknüpfen…“. Beim Senden bindet gmailSend den Thread an ALLE
+    // verknüpften Elemente (mailThreadIds) → Antworten erscheinen in deren Inbox-Karten.
+    var les0 = [];
+    (Array.isArray(prefill.linkedEntities) ? prefill.linkedEntities : []).concat(prefill.linkedEntity ? [prefill.linkedEntity] : []).forEach(function(le){
+      if (le && le.kind && le.id && !les0.some(function(x){ return x.kind===le.kind && String(x.id)===String(le.id); })) les0.push({ kind:le.kind, id:le.id });
+    });
     var linkBar = '<div class="gmlc-linkbar">'
-      + '<span class="gmlc-linklabel">🔗 Verknüpfen:</span>'
-      + '<select id="gmlLinkSel" class="gmlc-linksel" onchange="gmlComposeSetLinkFromSel(this.value)">'
-      +   gmlEntityOptions(le0 && le0.kind, le0 && le0.id)
+      + '<span class="gmlc-linklabel">🔗</span>'
+      + '<span id="gmlLinkChips" class="gmlc-linkchips"></span>'
+      + '<select id="gmlLinkSel" class="gmlc-linksel" onchange="gmlComposeAddLink(this.value);this.selectedIndex=0;">'
+      +   gmlEntityOptions()
       + '</select>'
-      + '<span class="gmlc-linkhint" id="gmlLinkHint">'+(le0 ? 'Antworten landen in diesem Element' : 'optional – Antworten landen dann im Element')+'</span>'
       + '</div>';
     // Im Antwortmodus (Original vorhanden) das Schreibfeld kompakter halten, damit die
     // Vorschau der bisherigen Nachricht unten ohne Scrollen sichtbar ist.
@@ -96814,39 +96824,76 @@ console.log('📚 Leseliste geladen');
       + '<span class="gmlc-footer-spacer"></span>'
       + '<button type="button" class="gmlc-iconbtn gmlc-discard" onclick="gmlDiscard()" title="Verwerfen" aria-label="Verwerfen">'+SVG.trash+'</button>'
       + '</div>';
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null, linkedEntity: (prefill.linkedEntity && prefill.linkedEntity.kind && prefill.linkedEntity.id) ? { kind:prefill.linkedEntity.kind, id:prefill.linkedEntity.id } : null };
+    // linkedEntities ist die Quelle der Wahrheit; linkedEntity spiegelt das erste
+    // Element (Kompatibilität mit n8n-Entwürfen und bestehenden Pfaden).
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null, linkedEntities: les0, linkedEntity: les0[0]||null };
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
     // Cursor oben ins Schreibfeld setzen (über dem evtl. eingefügten Zitat),
     // damit man direkt lostippen kann und das Zitat darunter sichtbar bleibt.
-    setTimeout(function(){ var ta=document.getElementById("gmlBody"); if(ta){ try { ta.focus(); ta.setSelectionRange(0,0); ta.scrollTop=0; } catch(_){} } }, 30);
+    setTimeout(function(){ var ta=document.getElementById("gmlBody"); if(ta){ try { ta.focus(); ta.setSelectionRange(0,0); ta.scrollTop=0; } catch(_){} } try { window.gmlRenderLinkChips(); } catch(_){} }, 30);
   };
 
-  // ── Element-Verknüpfung im Verfassen-Dialog ──
+  // ── Element-Verknüpfung im Verfassen-Dialog (Mehrfach-Verknüpfung) ──
   // Baut die <select>-Optionen (Aufgaben/Projekte/Organisationen/Personen) für die
-  // Verknüpfungsleiste. Reine UI; setzt beim Ändern GM._composeCtx.linkedEntity.
-  function gmlEntityOptions(selKind, selId){
+  // Verknüpfungsleiste. Auswahl fügt einen Chip hinzu (gmlComposeAddLink).
+  function gmlEntityOptions(){
     var groups=[["tasks","task","📋 Aufgaben"],["projects","project","📦 Projekte"],["organizations","organization","🏢 Organisationen"],["persons","person","👤 Personen"]];
-    var html='<option value="">— nicht verknüpft —</option>';
+    var html='<option value="">＋ Verknüpfen…</option>';
     groups.forEach(function(g){
       var m=gmlEnt(g[0]); var ids=Object.keys(m); if(!ids.length) return;
       ids.sort(function(a,b){ return String(m[a].title||m[a].name||"").localeCompare(String(m[b].title||m[b].name||"")); });
       html+='<optgroup label="'+esc(g[2])+'">';
       ids.forEach(function(id){
         var lbl=String(m[id].title||m[id].name||id);
-        var sel=(selKind===g[1] && String(selId)===String(id))?' selected':'';
-        html+='<option value="'+esc(g[1]+":"+id)+'"'+sel+'>'+esc(lbl)+'</option>';
+        html+='<option value="'+esc(g[1]+":"+id)+'">'+esc(lbl)+'</option>';
       });
       html+='</optgroup>';
     });
     return html;
   }
-  window.gmlComposeSetLinkFromSel = function(v){
+  // linkedEntities ist die Quelle der Wahrheit; linkedEntity spiegelt Element 1.
+  var GML_KIND_ICON = { task:"📋", project:"📦", organization:"🏢", person:"👤" };
+  function gmlComposeLinks(){
+    var ctx=GM._composeCtx||{};
+    if (Array.isArray(ctx.linkedEntities)) return ctx.linkedEntities;
+    return (ctx.linkedEntity && ctx.linkedEntity.kind && ctx.linkedEntity.id) ? [ctx.linkedEntity] : [];
+  }
+  function gmlSyncLinkedEntity(){ var ctx=GM._composeCtx||(GM._composeCtx={}); ctx.linkedEntity=(ctx.linkedEntities&&ctx.linkedEntities[0])||null; }
+  window.gmlComposeAddLink = function(v){
+    if (!v) return;
+    var i=String(v).indexOf(":"); if (i<1) return;
+    var le={ kind:String(v).slice(0,i), id:String(v).slice(i+1) };
     var ctx=GM._composeCtx||(GM._composeCtx={});
-    if(!v){ ctx.linkedEntity=null; }
-    else { var i=String(v).indexOf(":"); ctx.linkedEntity={ kind:String(v).slice(0,i), id:String(v).slice(i+1) }; }
-    var h=document.getElementById("gmlLinkHint"); if(h) h.textContent = ctx.linkedEntity ? "Antworten landen in diesem Element" : "optional – Antworten landen dann im Element";
+    ctx.linkedEntities=Array.isArray(ctx.linkedEntities)?ctx.linkedEntities:[];
+    if (!ctx.linkedEntities.some(function(x){ return x.kind===le.kind && String(x.id)===String(le.id); })) ctx.linkedEntities.push(le);
+    gmlSyncLinkedEntity(); window.gmlRenderLinkChips();
+  };
+  window.gmlComposeRemoveLink = function(idx){
+    var ctx=GM._composeCtx||{}; if (!Array.isArray(ctx.linkedEntities)) return;
+    ctx.linkedEntities.splice(idx,1); gmlSyncLinkedEntity(); window.gmlRenderLinkChips();
+  };
+  window.gmlRenderLinkChips = function(){
+    var box=document.getElementById("gmlLinkChips"); if (!box) return;
+    var links=gmlComposeLinks();
+    var html=links.map(function(le,i){
+      var lbl=gmlEntityLabel(le.kind,le.id)||le.id;
+      return '<span class="gml-linkchip" title="'+esc((ENT_LABEL[le.kind]||le.kind)+": "+lbl)+'">'+(GML_KIND_ICON[le.kind]||"🔗")+' '+esc(String(lbl).slice(0,28))+'<a onclick="gmlComposeRemoveLink('+i+')" title="Verknüpfung entfernen">×</a></span>';
+    }).join("");
+    // Schnell-Vorschlag: gehört eine verknüpfte Aufgabe zu einem noch nicht
+    // verknüpften Projekt, dieses per Klick mitverknüpfen (Projekt + Aufgabe gleichzeitig).
+    var vorgeschlagen={};
+    links.forEach(function(le){
+      if (le.kind!=="task") return;
+      var t=entityOf("task",le.id); var pid=t&&t.projectId; if (!pid || vorgeschlagen[pid]) return;
+      if (links.some(function(x){ return x.kind==="project" && String(x.id)===String(pid); })) return;
+      var p=entityOf("project",pid); if (!p) return;
+      vorgeschlagen[pid]=1;
+      html+='<a class="gml-linkchip vorschlag" onclick="gmlComposeAddLink(\'project:'+jsStr(String(pid))+'\')" title="Projekt der Aufgabe mitverknüpfen">＋ 📦 '+esc(String(p.title||p.name||"Projekt").slice(0,24))+'</a>';
+    });
+    if (!html) html='<span class="gmlc-linkhint">optional — Antworten landen dann in den Elementen</span>';
+    box.innerHTML=html;
   };
 
   // ── Verfassen-Modal: additive UI-Helfer (verändern Versand/Feldnamen/IDs nicht) ──
@@ -96896,10 +96943,13 @@ console.log('📚 Leseliste geladen');
     var origFrom = src.from ? parseAddr(src.from) : null;
     var greetName = origFrom ? String(origFrom.name||"").split(" ")[0] : "";
     var origCtx = src.body ? ("Ursprüngliche Nachricht von "+(origFrom?(origFrom.name||origFrom.email):"(unbekannt)")+":\nBetreff: "+(src.subject||"")+"\n\n"+String(src.body).replace(/\s+/g," ").slice(0,3000)) : "";
-    // Verknüpftes Quantus-Element (Aufgabe/Projekt/Org/Person) als Kontext für
-    // ALLE KI-Aktionen: Die KI kennt damit Titel, Beschreibung, Termine,
-    // zugeordnete Personen und die letzten Mails des Elements.
-    try { if (ctx.linkedEntity){ var entCtx = gmlEntityAiContext(ctx.linkedEntity.kind, ctx.linkedEntity.id); if (entCtx) origCtx = entCtx + (origCtx ? "\n\n" + origCtx : ""); } } catch(e){}
+    // Verknüpfte Quantus-Elemente (Aufgabe/Projekt/Org/Person, mehrere möglich)
+    // als Kontext für ALLE KI-Aktionen: Die KI kennt damit Titel, Beschreibung,
+    // Termine, zugeordnete Personen und die letzten Mails der Elemente.
+    try {
+      var entCtx = gmlComposeLinks().slice(0,3).map(function(le){ return gmlEntityAiContext(le.kind, le.id); }).filter(Boolean).join("\n\n");
+      if (entCtx) origCtx = entCtx + (origCtx ? "\n\n" + origCtx : "");
+    } catch(e){}
     // Aktuelle Formularfelder (An/Betreff) mitgeben, damit Entwürfe die richtige
     // Person ansprechen — auch ohne Original-Mail.
     var anVal = String((document.getElementById("gmlTo")||{}).value||"").trim();
@@ -97718,13 +97768,19 @@ console.log('📚 Leseliste geladen');
       var sentMsg = await gmApi("POST","/users/me/messages/send", { body: payload });
       if (window.closeModal) window.closeModal();
       toast("ok","Gesendet","E-Mail an "+to+" gesendet.");
-      // Verknüpftes Element: entstehenden Thread binden, damit Antworten dort landen.
-      if (ctx.linkedEntity && ctx.linkedEntity.kind && ctx.linkedEntity.id){
+      // Verknüpfte Elemente (mehrere möglich): entstehenden Thread an ALLE binden,
+      // damit Antworten in jeder Element-Inbox landen (z. B. Projekt + Aufgabe).
+      var links = gmlComposeLinks();
+      if (links.length){
         var thrId = (sentMsg && sentMsg.threadId) || ctx.threadId || null;
-        if (thrId && gmlLinkThreadToEntity(ctx.linkedEntity.kind, ctx.linkedEntity.id, thrId)){
-          var lbl = gmlEntityLabel(ctx.linkedEntity.kind, ctx.linkedEntity.id);
-          toast("ok","Verknüpft","Antworten erscheinen in „"+(lbl||"dem Element")+"“.");
-          try { if (document.getElementById("gmlEntityInbox")) loadEntityInbox(ctx.linkedEntity.kind, ctx.linkedEntity.id); } catch(_){}
+        if (thrId){
+          var namen=[];
+          links.forEach(function(le){ if (gmlLinkThreadToEntity(le.kind, le.id, thrId)) namen.push(gmlEntityLabel(le.kind, le.id)||"Element"); });
+          if (namen.length) toast("ok","Verknüpft","Antworten erscheinen in: "+namen.join(", "));
+          try {
+            var card=document.getElementById("gmlEntityInbox");
+            if (card){ var ck=card.getAttribute("data-k"), ci=card.getAttribute("data-i"); if (links.some(function(x){ return x.kind===ck && String(x.id)===ci; })) loadEntityInbox(ck, ci); }
+          } catch(_){}
         }
       }
       // If this was an n8n KI-Entwurf, mark it as used (not before the manual send).
@@ -97757,7 +97813,8 @@ console.log('📚 Leseliste geladen');
       var ctx = GM._composeCtx||{};
       var src = ctx.source||{};
       var toA = parseAddr(to);
-      var le = (ctx.linkedEntity && ctx.linkedEntity.kind && ctx.linkedEntity.id) ? ctx.linkedEntity : null;
+      var links = gmlComposeLinks();
+      var le = links[0]||null;
       var draft = {
         to:to, cc:cc, bcc:bcc, subject:subject,
         toName: toA.name || "",
@@ -97770,6 +97827,7 @@ console.log('📚 Leseliste geladen');
         originalSubject: src.subject||"",
         originalBody: src.body||"",
         linkedEntity: le ? { kind:le.kind, id:le.id, title: gmlEntityLabel(le.kind, le.id) } : null,
+        linkedEntities: links.length ? links.map(function(x){ return { kind:x.kind, id:x.id, title:gmlEntityLabel(x.kind,x.id) }; }) : null,
         source: "manual-draft",
         status: "pending",
         updatedAt: Date.now()
@@ -97850,7 +97908,8 @@ console.log('📚 Leseliste geladen');
     GM._composeBusy=true;
     try {
       var ctx=GM._composeCtx||{}; var src=ctx.source||{}; var toA=parseAddr(to);
-      var le=(ctx.linkedEntity&&ctx.linkedEntity.kind&&ctx.linkedEntity.id)?ctx.linkedEntity:null;
+      var links=gmlComposeLinks();
+      var le=links[0]||null;
       var draft={
         to:to, cc:cc, bcc:bcc, subject:subject,
         toName: toA.name||"",
@@ -97864,6 +97923,7 @@ console.log('📚 Leseliste geladen');
         originalBody: src.body||"",
         replyQuote: ctx.replyQuote||null,
         linkedEntity: le ? { kind:le.kind, id:le.id, title:gmlEntityLabel(le.kind,le.id) } : null,
+        linkedEntities: links.length ? links.map(function(x){ return { kind:x.kind, id:x.id, title:gmlEntityLabel(x.kind,x.id) }; }) : null,
         source: "scheduled-send",
         status: "scheduled",
         sendAt: sendAt,
@@ -97907,10 +97967,15 @@ console.log('📚 Leseliste geladen');
           if (d.threadId) payload.threadId=d.threadId;
           var sentMsg=await gmApi("POST","/users/me/messages/send",{ body:payload });
           await rtdbPatch("gmailDrafts/"+key,{ status:"sent", sentAt:Date.now(), updatedAt:Date.now() });
-          var le=d.linkedEntity;
-          if (le && le.kind && le.id){
-            var thrId=(sentMsg&&sentMsg.threadId)||d.threadId||null;
-            if (thrId){ try { gmlLinkThreadToEntity(le.kind,le.id,thrId); if (document.getElementById("gmlEntityInbox")) loadEntityInbox(le.kind,le.id); } catch(_){} }
+          // Thread an ALLE verknüpften Elemente binden (linkedEntities, Fallback linkedEntity)
+          var les=Array.isArray(d.linkedEntities)?d.linkedEntities:(d.linkedEntity?[d.linkedEntity]:[]);
+          var thrId=(sentMsg&&sentMsg.threadId)||d.threadId||null;
+          if (thrId && les.length){
+            les.forEach(function(le){ if (le&&le.kind&&le.id){ try { gmlLinkThreadToEntity(le.kind,le.id,thrId); } catch(_){} } });
+            try {
+              var card=document.getElementById("gmlEntityInbox");
+              if (card){ var ck=card.getAttribute("data-k"), ci=card.getAttribute("data-i"); if (les.some(function(x){ return x&&x.kind===ck&&String(x.id)===ci; })) loadEntityInbox(ck,ci); }
+            } catch(_){}
           }
           toast("ok","🕒 Geplante Mail gesendet","An "+(d.toName||d.to||"")+(d.subject?(" · "+d.subject):""));
         } catch(e){
@@ -98580,7 +98645,7 @@ console.log('📚 Leseliste geladen');
     // Prefill the existing compose dialog. threadId keeps it in the right Gmail
     // thread; the user reviews, edits and sends MANUALLY (no auto-send). On send,
     // gmailSend marks the draft "used" via the draftKey in the compose context.
-    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, inReplyTo:d.inReplyTo||null, references:d.references||null, draftKey:key, note:note, linkedEntity:d.linkedEntity||null, original: hasSource ? { loading:true } : undefined,
+    window.gmailCompose({ title:"KI-Entwurf prüfen & senden", to:d.to||d.toName||"", cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", threadId:d.threadId||null, inReplyTo:d.inReplyTo||null, references:d.references||null, draftKey:key, note:note, linkedEntity:d.linkedEntity||null, linkedEntities:d.linkedEntities||null, original: hasSource ? { loading:true } : undefined,
       source: { id:d.messageId||"", threadId:d.threadId||"", from:d.originalFrom||d.from||"", subject:d.originalSubject||d.subject||"", body:d.originalBody||"" } });
     if (d.originalBody || d.originalSubject || d.originalFrom){
       window.gmailFillOriginal({ from:d.originalFrom||d.from||"", subject:d.originalSubject||"", body:d.originalBody||"", date:d.originalDate||0 });
@@ -99428,7 +99493,8 @@ console.log('📚 Leseliste geladen');
       if (dd && typeof dd==="object"){
         Object.keys(dd).forEach(function(k){
           var d=dd[k]; if(!d || typeof d!=="object") return;
-          var le=d.linkedEntity; if(!le || le.kind!==kind || String(le.id)!==String(id)) return;
+          var les=Array.isArray(d.linkedEntities)?d.linkedEntities:(d.linkedEntity?[d.linkedEntity]:[]);
+          if (!les.some(function(le){ return le && le.kind===kind && String(le.id)===String(id); })) return;
           var st=(d.status||"pending"); if (st!=="pending" && st!=="scheduled") return;
           d._key=k; dl.push(d);
         });
