@@ -95831,6 +95831,13 @@ console.log('📚 Leseliste geladen');
 .gml-ei-reply { flex-shrink:0; border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:13px; line-height:1; padding:1px 5px; border-radius:5px; opacity:0; transition:opacity .12s; }
 .gml-ei-row:hover .gml-ei-reply { opacity:1; }
 .gml-ei-reply:hover { color:var(--text); background:var(--panel2); }
+#gmlSendLaterPop { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:10px; width:270px; box-shadow:0 12px 40px rgba(0,0,0,.35); display:flex; flex-direction:column; gap:3px; }
+.gmlc-later-title { font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:3px; }
+.gmlc-later-opt { display:flex; justify-content:space-between; align-items:baseline; gap:10px; border:0; background:transparent; color:var(--text); padding:7px 8px; border-radius:8px; cursor:pointer; font-size:13.5px; text-align:left; }
+.gmlc-later-opt:hover { background:var(--hover); }
+.gmlc-later-opt span { color:var(--muted); font-size:11.5px; white-space:nowrap; }
+.gmlc-later-custom { display:flex; gap:6px; margin-top:6px; padding-top:8px; border-top:1px solid var(--border); }
+.gmlc-later-custom input { flex:1; min-width:0; background:var(--panel2); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:6px 8px; font-size:12.5px; }
 .gml-draft-list { display:flex; flex-direction:column; gap:10px; padding:10px 14px 16px; }
 .gml-draft { border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:rgba(48,209,88,.04); }
 .gml-draft-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; }
@@ -96800,6 +96807,7 @@ console.log('📚 Leseliste geladen');
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
       + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()">Senden</button>'
+      + '<button type="button" id="gmlSendLaterBtn" class="btn" onclick="gmailSendLaterMenu(event)" title="Später senden — Zeitpunkt wählen (z. B. in 1 Stunde oder morgen früh)">🕒 Später</button>'
       + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe“)">💾 Entwurf speichern</button>'
       + '<button type="button" class="gmlc-iconbtn" onclick="gmlAttach()" title="Datei anhängen" aria-label="Datei anhängen">'+SVG.attach+'</button>'
       + (hasOrig ? '<button type="button" class="gmlc-iconbtn" onclick="gmlToggleQuote()" title="Zitat ein-/ausblenden" aria-label="Zitat ein-/ausblenden">'+SVG.quote+'</button>' : '')
@@ -97783,6 +97791,144 @@ console.log('📚 Leseliste geladen');
     finally { GM._composeBusy=false; var b=document.getElementById("gmlSaveDraftBtn"); if(b){ b.disabled=false; b.textContent="💾 Entwurf speichern"; } }
   };
 
+  // ── 🕒 Später senden ──
+  // Speichert den Verfassen-Stand als geplanten Entwurf (/gmailDrafts, status
+  // "scheduled" + sendAt) und versendet ihn zeitgesteuert über denselben
+  // Sende-Pfad wie „Senden" (buildRaw → messages/send, inkl. Threading &
+  // Element-Verknüpfung). Der Versand passiert clientseitig im Minuten-Takt —
+  // die App muss dazu in irgendeinem Tab/Gerät geöffnet und mit Gmail
+  // verbunden sein; verpasste Zeitpunkte werden beim nächsten App-Start
+  // nachgeholt. Ein Transaction-Claim verhindert Doppelversand aus mehreren Tabs.
+  function gmlFmtSendAt(ms){
+    try { var d=new Date(Number(ms)||0); return d.toLocaleDateString("de-CH",{weekday:"short",day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"}); }
+    catch(e){ return ""; }
+  }
+  window.gmailSendLaterMenu = function(ev){
+    try { if (ev) ev.stopPropagation(); } catch(_){}
+    var old=document.getElementById("gmlSendLaterPop"); if (old){ old.remove(); return; }
+    var btn=document.getElementById("gmlSendLaterBtn"); if (!btn) return;
+    var r=btn.getBoundingClientRect();
+    function at(h,m,addDays){ var d=new Date(); d.setDate(d.getDate()+(addDays||0)); d.setHours(h,m,0,0); return d.getTime(); }
+    var opts=[
+      { label:"In 1 Stunde", ts: Date.now()+3600000 },
+      { label:"In 3 Stunden", ts: Date.now()+3*3600000 }
+    ];
+    var heute18=at(18,0,0); if (heute18>Date.now()+5*60000) opts.push({ label:"Heute 18:00", ts:heute18 });
+    opts.push({ label:"Morgen 08:00", ts:at(8,0,1) });
+    opts.push({ label:"Morgen um diese Zeit", ts:Date.now()+86400000 });
+    var pop=document.createElement("div"); pop.id="gmlSendLaterPop";
+    pop.innerHTML='<div class="gmlc-later-title">🕒 Später senden</div>'
+      + opts.map(function(o){ return '<button type="button" class="gmlc-later-opt" onclick="gmailScheduleSend('+o.ts+')">'+esc(o.label)+'<span>'+esc(gmlFmtSendAt(o.ts))+'</span></button>'; }).join("")
+      + '<div class="gmlc-later-custom"><input type="datetime-local" id="gmlSendLaterAt"><button type="button" class="btn sm primary" onclick="gmailScheduleSendCustom()">OK</button></div>';
+    document.body.appendChild(pop);
+    pop.style.position="fixed"; pop.style.zIndex="10050";
+    pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-290))+"px";
+    pop.style.bottom=Math.max(8,(window.innerHeight-r.top+6))+"px";
+    setTimeout(function(){
+      document.addEventListener("click", function schliess(e2){ if (!pop.contains(e2.target)){ pop.remove(); document.removeEventListener("click", schliess); } });
+    },0);
+  };
+  window.gmailScheduleSendCustom = function(){
+    var v=(document.getElementById("gmlSendLaterAt")||{}).value||"";
+    if (!v){ toast("info","Kein Zeitpunkt","Bitte Datum & Uhrzeit wählen."); return; }
+    var t=new Date(v).getTime();
+    window.gmailScheduleSend(t);
+  };
+  window.gmailScheduleSend = async function(sendAt){
+    var pop=document.getElementById("gmlSendLaterPop"); if (pop) pop.remove();
+    sendAt=Number(sendAt);
+    if (!sendAt || isNaN(sendAt)){ toast("err","Ungültiger Zeitpunkt",""); return; }
+    if (sendAt < Date.now()+30000){ toast("err","Zeitpunkt liegt in der Vergangenheit","Bitte einen Zeitpunkt in der Zukunft wählen."); return; }
+    if (GM._composeBusy) return;
+    var g=function(id){ return document.getElementById(id); };
+    var to=(g("gmlTo")&&g("gmlTo").value||"").trim();
+    var cc=(g("gmlCc")&&g("gmlCc").value||"").trim();
+    var bcc=(g("gmlBcc")&&g("gmlBcc").value||"").trim();
+    var subject=(g("gmlSubject")&&g("gmlSubject").value||"").trim();
+    var body=(g("gmlBody")&&g("gmlBody").value||"");
+    if (!to){ toast("err","Empfänger fehlt","Für „Später senden“ braucht es mindestens eine An-Adresse."); return; }
+    GM._composeBusy=true;
+    try {
+      var ctx=GM._composeCtx||{}; var src=ctx.source||{}; var toA=parseAddr(to);
+      var le=(ctx.linkedEntity&&ctx.linkedEntity.kind&&ctx.linkedEntity.id)?ctx.linkedEntity:null;
+      var draft={
+        to:to, cc:cc, bcc:bcc, subject:subject,
+        toName: toA.name||"",
+        draftBody: body,
+        threadId: ctx.threadId||"",
+        messageId: (src.id)||"",
+        inReplyTo: ctx.inReplyTo||"",
+        references: ctx.references||"",
+        originalFrom: src.from||"",
+        originalSubject: src.subject||"",
+        originalBody: src.body||"",
+        replyQuote: ctx.replyQuote||null,
+        linkedEntity: le ? { kind:le.kind, id:le.id, title:gmlEntityLabel(le.kind,le.id) } : null,
+        source: "scheduled-send",
+        status: "scheduled",
+        sendAt: sendAt,
+        sendAttempts: 0,
+        updatedAt: Date.now()
+      };
+      if ((GM._attachments||[]).length){ toast("info","Hinweis","Anhänge werden bei „Später senden“ nicht mitgesendet — bitte sofort senden oder ohne Anhang planen."); }
+      if (ctx.draftKey){ await rtdbPatch("gmailDrafts/"+ctx.draftKey, draft); }
+      else { draft.createdAt=Date.now(); await rtdbPost("gmailDrafts", draft); }
+      if (window.closeModal) window.closeModal();
+      toast("ok","🕒 Geplant","Wird gesendet: "+gmlFmtSendAt(sendAt)+(le?(" · verknüpft mit „"+(gmlEntityLabel(le.kind,le.id)||"Element")+"“"):""));
+      GM.open=null;
+      if (typeof loadDrafts==="function") loadDrafts();
+      try { if (le && document.getElementById("gmlEntityInbox")) loadEntityInbox(le.kind, le.id); } catch(_){}
+    } catch(e){ toast("err","Planen fehlgeschlagen", e.message||"Unbekannter Fehler"); }
+    finally { GM._composeBusy=false; }
+  };
+  // Minuten-Takt: fällige geplante Entwürfe senden. Claim per RTDB-Transaction
+  // (status scheduled→sending), damit bei mehreren offenen Tabs/Geräten nur
+  // EINER sendet. Fehler → Retry im nächsten Takt, nach 5 Versuchen status "error".
+  async function gmailProcessScheduledDrafts(){
+    if (GM._schedBusy) return; GM._schedBusy=true;
+    try {
+      var data=await rtdbGet("gmailDrafts");
+      if (!data || typeof data!=="object") return;
+      var now=Date.now();
+      var due=Object.keys(data).filter(function(k){ var d=data[k]; return d && d.status==="scheduled" && typeof d.sendAt==="number" && d.sendAt<=now; });
+      if (!due.length) return;
+      await gmailEnsureReady();
+      if (!GM.status || !GM.status.connected) return; // dieses Gerät ist nicht mit Gmail verbunden — anderes Gerät übernimmt
+      for (var i=0;i<due.length && i<3;i++){
+        var key=due[i], d=data[key];
+        var dbh=rtdbDb(), claimed=false;
+        if (dbh){
+          try { var tx=await dbh.ref("gmailDrafts/"+key+"/status").transaction(function(cur){ return cur==="scheduled" ? "sending" : undefined; }); claimed=!!(tx&&tx.committed); }
+          catch(e){ claimed=false; }
+        }
+        if (!claimed) continue;
+        try {
+          var payload={ raw: buildRaw({ to:d.to, cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", inReplyTo:d.inReplyTo||null, references:d.references||null, attachments:[], quote:(d.replyQuote||null) }) };
+          if (d.threadId) payload.threadId=d.threadId;
+          var sentMsg=await gmApi("POST","/users/me/messages/send",{ body:payload });
+          await rtdbPatch("gmailDrafts/"+key,{ status:"sent", sentAt:Date.now(), updatedAt:Date.now() });
+          var le=d.linkedEntity;
+          if (le && le.kind && le.id){
+            var thrId=(sentMsg&&sentMsg.threadId)||d.threadId||null;
+            if (thrId){ try { gmlLinkThreadToEntity(le.kind,le.id,thrId); if (document.getElementById("gmlEntityInbox")) loadEntityInbox(le.kind,le.id); } catch(_){} }
+          }
+          toast("ok","🕒 Geplante Mail gesendet","An "+(d.toName||d.to||"")+(d.subject?(" · "+d.subject):""));
+        } catch(e){
+          var att=(Number(d.sendAttempts)||0)+1;
+          var upd = att>=5
+            ? { status:"error", lastError:(e&&e.message)||"Senden fehlgeschlagen", sendAttempts:att, updatedAt:Date.now() }
+            : { status:"scheduled", lastError:(e&&e.message)||"Senden fehlgeschlagen", sendAttempts:att, updatedAt:Date.now() };
+          await rtdbPatch("gmailDrafts/"+key, upd);
+          if (att>=5) toast("err","Geplante Mail fehlgeschlagen",(d.subject||"")+" — "+((e&&e.message)||""));
+        }
+      }
+      if (typeof loadDrafts==="function") loadDrafts();
+    } catch(e){ /* still — nächster Takt versucht es erneut */ }
+    finally { GM._schedBusy=false; }
+  }
+  setTimeout(gmailProcessScheduledDrafts, 8000);
+  setInterval(gmailProcessScheduledDrafts, 60000);
+
   // ── Folge-Aktionen nach dem Senden (Mail erledigen / Aufgabe erstellen) ──
   // Erscheint nach erfolgreichem Versand (Verfassen, Antworten, KI-Entwurf). Nutzt die
   // bestehende Erledigt-Logik (gmailToggleDone: Quantus/Erledigt-Label + raus aus INBOX, KEINE
@@ -98366,7 +98512,9 @@ console.log('📚 Leseliste geladen');
       // offenen Entwürfe (status==="pending"); die frühere generateDraft===true-Hürde (PR #16/#23)
       // blendete alle n8n-Entwürfe aus, weil das Flag nur in der Klassifizierung, nicht im Entwurf
       // steht. Manuelle On-Demand-Entwürfe (PR #24, ebenfalls status:"pending") erscheinen weiterhin.
-      GM.drafts = arr.filter(function(d){ return (d.status||"pending")==="pending"; }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
+      // "pending" (offen) und "scheduled" (🕒 Später senden) anzeigen — geplante
+      // Entwürfe sollen sichtbar bleiben, bis sie gesendet oder aufgehoben werden.
+      GM.drafts = arr.filter(function(d){ var st=(d.status||"pending"); return st==="pending"||st==="scheduled"; }).sort(function(a,b){ return draftTs(b)-draftTs(a); });
     } catch(e){ GM.draftsError = e.message||"Entwürfe konnten nicht geladen werden"; }
     finally { GM.draftsLoading=false; rerender(); }
   }
@@ -98387,12 +98535,15 @@ console.log('📚 Leseliste geladen');
     var preview = esc((d.draftBody||"").replace(/\s+/g," ").trim().slice(0,180));
     var org = findOrgForEmail(d.to||"");
     var orgBadge = org ? '<div class="gml-org-badge'+(orgInstructions(org)?'':' muted')+'" title="'+(orgInstructions(org)?"KI-Anweisungen dieser Organisation werden angewendet":"Erkannte Organisation – keine E-Mail-Anweisungen hinterlegt")+'">🏢 '+esc(org.name||"Organisation")+(orgInstructions(org)?' · Anweisungen aktiv':'')+'</div>' : '';
+    var istGeplant = d.status==="scheduled";
     return '<div class="gml-draft">'
-      + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(d.to&&d.toName?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(d.to)+'&gt;</span>':'')+'</span><span class="gml-draft-date">🤖 '+esc(fmtDate(draftTs(d)))+'</span></div>'
+      + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(d.to&&d.toName?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(d.to)+'&gt;</span>':'')+'</span><span class="gml-draft-date">'+(istGeplant?('🕒 geplant: '+esc(gmlFmtSendAt(d.sendAt))):('🤖 '+esc(fmtDate(draftTs(d)))))+'</span></div>'
       + '<div class="gml-draft-subj">'+esc(d.subject||"(kein Betreff)")+'</div>'
       + orgBadge
       + '<div class="gml-draft-prev">'+(preview||'<span style="color:var(--muted)">(leerer Entwurf)</span>')+'</div>'
-      + '<div class="gml-draft-actions"><button class="btn primary sm" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')">✏️ Prüfen &amp; senden</button><button class="btn sm" onclick="gmailDismissDraft(\''+jsStr(d._key)+'\')">🗑 Verwerfen</button></div>'
+      + '<div class="gml-draft-actions"><button class="btn primary sm" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')">✏️ Prüfen &amp; senden</button>'
+      + (istGeplant?'<button class="btn sm" onclick="gmailUnscheduleDraft(\''+jsStr(d._key)+'\')" title="Geplanten Versand stoppen — der Entwurf bleibt erhalten">🕒 Planung aufheben</button>':'')
+      + '<button class="btn sm" onclick="gmailDismissDraft(\''+jsStr(d._key)+'\')">🗑 Verwerfen</button></div>'
       + '</div>';
   }
   window.gmailRefreshDrafts = function(){ loadDrafts(); };
@@ -98401,10 +98552,25 @@ console.log('📚 Leseliste geladen');
     try { return (GM.drafts||[]).filter(function(d){ return (d.status||"pending")==="pending"; }).map(function(d){ return { subject:d.subject||"(ohne Betreff)", to:d.toName||d.to||"" }; }); }
     catch(e){ return []; }
   };
+  // Geplanten Versand stoppen — Entwurf bleibt als "pending" erhalten.
+  window.gmailUnscheduleDraft = async function(key){
+    var d=(GM.drafts||[]).find(function(x){return x._key===key;});
+    if (d){ d.status="pending"; }
+    await rtdbPatch("gmailDrafts/"+key,{ status:"pending", updatedAt:Date.now() });
+    toast("ok","Planung aufgehoben","Der Entwurf bleibt erhalten und wird nicht automatisch gesendet.");
+    rerender();
+  };
   window.gmailOpenDraft = function(key){
     var d=(GM.drafts||[]).find(function(x){return x._key===key;});
     if (!d && GM.entityDrafts){ Object.keys(GM.entityDrafts).forEach(function(k){ if(!d) d=(GM.entityDrafts[k]||[]).find(function(x){return x._key===key;}); }); }
     if (!d){ toast("err","Entwurf nicht mehr da",""); return; }
+    // Sicherheitsnetz: Beim Öffnen eines GEPLANTEN Entwurfs die Planung anhalten,
+    // damit der Scheduler nicht die alte Fassung sendet, während man editiert.
+    if (d.status==="scheduled"){
+      d.status="pending";
+      setDraftStatus(key,"pending");
+      toast("info","🕒 Planung angehalten","Während du bearbeitest, wird nichts automatisch gesendet — plane danach neu über „🕒 Später“ oder sende direkt.");
+    }
     var org=findOrgForEmail(d.to||"");
     var note = org ? ('🏢 Organisation erkannt: <b>'+esc(org.name||"")+'</b>'+(orgInstructions(org)?' – deren KI-Anweisungen wurden beim Entwurf berücksichtigt.':' (keine E-Mail-Anweisungen hinterlegt).')) : '';
     // Original-Mail (auf die geantwortet wird) read-only über dem Entwurf zeigen.
@@ -99210,7 +99376,7 @@ console.log('📚 Leseliste geladen');
       +'</span></h3>';
     // Verknüpfte Entwürfe (RTDB) — anklickbar, öffnen den Verfassen-Dialog vorbefüllt.
     var draftsHtml = drafts.length ? ('<div class="gml-ei-drafts"><div class="gml-ei-subhead">✏️ Entwürfe ('+drafts.length+')</div><div class="gml-ei-list">'
-      + drafts.map(function(d){ return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">Entwurf</span></div>'; }).join("")
+      + drafts.map(function(d){ var lbl=d.status==="scheduled"?("🕒 "+gmlFmtSendAt(d.sendAt)):"Entwurf"; return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(lbl)+'</span></div>'; }).join("")
       + '</div></div>') : '';
     if (!ad.length && !threadN && !drafts.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen, Adressen oder Mail-Threads zugeordnet. Du kannst trotzdem direkt eine Mail schreiben oder per ✨ KI-Entwurf generieren lassen — beim Senden wird der Thread automatisch mit diesem Element verknüpft.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
     var bodyHtml;
@@ -99263,7 +99429,7 @@ console.log('📚 Leseliste geladen');
         Object.keys(dd).forEach(function(k){
           var d=dd[k]; if(!d || typeof d!=="object") return;
           var le=d.linkedEntity; if(!le || le.kind!==kind || String(le.id)!==String(id)) return;
-          if ((d.status||"pending")!=="pending") return;
+          var st=(d.status||"pending"); if (st!=="pending" && st!=="scheduled") return;
           d._key=k; dl.push(d);
         });
       }
