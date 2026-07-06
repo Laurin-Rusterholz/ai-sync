@@ -984,9 +984,13 @@ async function backfillStarten() {
       try {
         if (bfBlockiert(pfad)) { uebersprungen++; continue; } // doppelter Schutz (Finanzdaten)
 
-        // Idempotenz: deterministische docId aus dem Storage-Pfad + Pfad-Abgleich
+        // Idempotenz: deterministische docId aus dem Storage-Pfad + Pfad-Abgleich.
+        // AUSNAHME: Einträge aus dem App-Bestands-Sync (nur Metadaten, ohne Hash)
+        // werden NICHT übersprungen, sondern mit Volltext + Hash ANGEREICHERT.
         const docId = "bf_" + (await sha256HexText(pfad));
-        if (S.docs[docId] || bekanntePfade.has(pfad)) { uebersprungen++; continue; }
+        const vorhandener = S.docs[docId] || null;
+        const nurMetadaten = !!(vorhandener && !vorhandener.hash);
+        if ((vorhandener && !nurMetadaten) || (!vorhandener && bekanntePfade.has(pfad))) { uebersprungen++; continue; }
 
         const meta = await item.getMetadata();
         const groesse = Number(meta.size || 0);
@@ -1006,19 +1010,22 @@ async function backfillStarten() {
         const mimeType = meta.contentType || "application/octet-stream";
         const jetzt = new Date().toISOString();
 
+        // Beim Anreichern eines Metadaten-Eintrags bleiben manuelle Ablage-
+        // Entscheidungen (Ordner, Titel, Status) erhalten.
         await db.ref(P_DOCS + "/" + docId).set({
           dateiname: item.name,
-          titel_final: "",
+          titel_final: nurMetadaten ? (vorhandener.titel_final || "") : "",
           storagePath: pfad,
           downloadUrl: url,
           mimeType: mimeType,
           groesse: groesse,
           hash: hash,
-          status: "eingang",
-          folderId: null,
-          vorschlag: null,
+          status: nurMetadaten && vorhandener.status ? vorhandener.status : "eingang",
+          folderId: nurMetadaten ? (vorhandener.folderId || null) : null,
+          vorschlag: nurMetadaten ? (vorhandener.vorschlag || null) : null,
           textauszug: text.slice(0, 2000),
-          erstellt: meta.timeCreated || jetzt,
+          quelle: nurMetadaten ? (vorhandener.quelle || null) : null,
+          erstellt: (nurMetadaten && vorhandener.erstellt) || meta.timeCreated || jetzt,
           aktualisiert: jetzt
         });
         // Queue-Eintrag exakt im Format, das "Pending filtern" (n8n) erwartet
