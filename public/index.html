@@ -29139,7 +29139,7 @@ function viewTasks() {
   // Liste View
   const listHtml = `
     <div class="tasks-grid">
-      ${tasks.map(t => renderTaskCard(t)).join('') || '<div class="mini text-center">${t("no_results")}</div>'}
+      ${tasks.map(t => renderTaskCard(t)).join('') || `<div class="mini text-center">${t("no_results")}</div>`}
     </div>
   `;
   
@@ -29882,7 +29882,7 @@ function viewProjects() {
         </div>
       </div>
     `;
-  }).join('') || '<div class="mini text-center">${t("no_results")}</div>';
+  }).join('') || `<div class="mini text-center">${t("no_results")}</div>`;
   
   return `
     <div class="page-header">
@@ -104018,7 +104018,9 @@ h2{letter-spacing:-.015em}
 .sidebar-section-title,.apps-section-title,.nf-section-title{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-muted);font-weight:700}
 .sidebar-quick-item{border-radius:9px;transition:background .13s ease}
 .sidebar-quick-item:hover{background:var(--hover)}
-.topbar{background:color-mix(in oklab,var(--surface-raised) 84%,transparent);backdrop-filter:blur(14px) saturate(1.15);-webkit-backdrop-filter:blur(14px) saturate(1.15);border-bottom:1px solid var(--border)}
+/* Kein backdrop-filter auf der Topbar: er würde sie zum Positionsanker für
+   position:fixed-Kinder machen (Dropdowns/Menüs verschieben sich sonst). */
+.topbar{background:color-mix(in oklab,var(--surface-raised) 94%,transparent);border-bottom:1px solid var(--border)}
 .universal-search{border:1px solid var(--border);border-radius:10px;background:var(--surface-base);transition:border-color .15s ease,box-shadow .15s ease}
 .universal-search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 html.theme-light .universal-search{background:#fff}
@@ -104030,7 +104032,9 @@ label,.nf-fg label,.global-task-modal-content label{font-weight:600}
 .form label{color:var(--text2)}
 
 /* ── 7) Overlays: Modal-Pop, Toast-Slide, weicherer Backdrop ── */
-.modal-backdrop{background:rgba(9,11,15,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+/* Kein backdrop-filter: der Backdrop enthält das Modal — fixe Kinder würden
+   sonst am Backdrop statt am Viewport ankern (verschobene Popups). */
+.modal-backdrop{background:rgba(9,11,15,.6)}
 html.theme-light .modal-backdrop{background:rgba(30,31,33,.32)}
 .modal{border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-lg)}
 .modal-backdrop.open .modal{animation:asnPop .22s cubic-bezier(.2,.9,.3,1.15) both}
@@ -104195,7 +104199,7 @@ body::before{
 .rh-btn-primary:hover,.nf-btn-primary:hover{box-shadow:0 4px 16px var(--accent-soft);filter:brightness(1.07)}
 .nf-modal,.rh-modal{border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow-lg)}
 .nf-modal-overlay.active .nf-modal,.rh-modal-overlay.show .rh-modal{animation:asnPop .22s cubic-bezier(.2,.9,.3,1.15) both}
-.nf-modal-overlay,.rh-modal-overlay{backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.nf-modal-overlay,.rh-modal-overlay{background:rgba(9,11,15,.5)}
 .nf-toast,.rh-toast{border-radius:12px;box-shadow:var(--shadow-lg);animation:asnToast .3s cubic-bezier(.2,.9,.3,1.15) both}
 .nf-nav-item.active,.rh-nav-item.active{background:var(--accent-soft);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
 .nf-note-card:hover,.rh-item-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
@@ -104243,19 +104247,21 @@ body::after{
 .asn-dot{background:color-mix(in oklab, var(--sc) 22%, transparent)}
 @keyframes asnFloat{from{transform:translate3d(0,0,0) rotate(0deg)}to{transform:translate3d(16px,-26px,0) rotate(10deg)}}
 
-/* ── 3) Glas-Oberflächen: Sidebar schwebt, Modals & Panels aus Milchglas ── */
+/* ── 3) Schwebende Sidebar & sanft getönte Flächen ──
+   WICHTIG: bewusst KEIN backdrop-filter auf Sidebar/Modals/Panels — er macht
+   den Container zum Anker für position:fixed-Kinder (Kontextmenüs, Popups
+   würden verschoben) und kostet GPU. Nur leichte Transluzenz (kein Anker-
+   Effekt), Deckkraft hoch genug, dass nichts durchscheint/verdeckt wirkt. */
 @media (min-width:769px){
-  .sidebar{margin:10px 0 10px 10px;border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow);background:color-mix(in oklab, var(--surface-raised) 80%, transparent);backdrop-filter:blur(16px) saturate(1.15);-webkit-backdrop-filter:blur(16px) saturate(1.15)}
+  .sidebar{margin:10px 0 10px 10px;border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow);background:color-mix(in oklab, var(--surface-raised) 93%, transparent)}
   .main{padding:20px 26px 60px}
 }
-.modal{background:color-mix(in oklab, var(--surface-overlay) 88%, transparent);backdrop-filter:blur(16px) saturate(1.1);-webkit-backdrop-filter:blur(16px) saturate(1.1)}
-.slide-panel{background:color-mix(in oklab, var(--surface-overlay) 90%, transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
-.card{background:color-mix(in oklab, var(--surface-raised) 92%, transparent)}
-.toast{background:color-mix(in oklab, var(--surface-overlay) 86%, transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.modal{background:color-mix(in oklab, var(--surface-overlay) 97%, transparent)}
+.slide-panel{background:color-mix(in oklab, var(--surface-overlay) 97%, transparent)}
+.card{background:color-mix(in oklab, var(--surface-raised) 96%, transparent)}
+.toast{background:color-mix(in oklab, var(--surface-overlay) 96%, transparent)}
 
 /* ── 4) Verspielte Signaturen ── */
-.page-header{position:relative}
-.page-header::after{content:"";position:absolute;left:0;bottom:-6px;width:64px;height:4px;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--pink),var(--info));pointer-events:none}
 .modal-header{background:linear-gradient(180deg, color-mix(in oklab, var(--accent) 7%, transparent), transparent)}
 .sidebar-brand .logo{box-shadow:0 2px 10px var(--accent-soft),0 0 22px var(--accent-soft)}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent)}
@@ -104272,6 +104278,92 @@ body::after{
   .asn-shape,.empty-folder .gross,.rh-empty-state-icon,.chat-empty-icon,.timer-widget .timer-time{animation:none}
 }
 </style>
+
+<style id="asanaLayer4">
+/* ═══════════════════════════════════════════════════════════════════════════
+   ASANA-LAYER v4 — „Struktur": Komponenten-Anatomie statt nur Farben.
+   Karten-Header mit Trennlinie, Icon-Kacheln in der Sidebar, gerahmte
+   Empty-States, einheitliche Kontextmenüs, Lade-Shimmer, Chat-Bubbles,
+   Post-it-Kippung. Rein additiv; Daily Journal (jb-*) weiterhin unberührt.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1) Formular-Anatomie: native Controls im Markenlook ── */
+input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
+input,textarea{caret-color:var(--accent)}
+.btn:focus-visible{box-shadow:0 0 0 3px var(--accent-soft)}
+
+/* ── 2) Karten-Anatomie: H3 als echte Sektions-Header mit Trennlinie ── */
+.card>h3{padding-bottom:9px;border-bottom:1px solid var(--border);margin-bottom:12px}
+
+/* ── 3) Sidebar-Anatomie: Icons als Kacheln (App-Rail-Look) ── */
+.sidebar-item .icon{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:var(--hover);flex-shrink:0}
+.sidebar-item.active .icon{background:var(--accent-soft)}
+
+/* ── 4) Empty-States: gerahmte Einladungen statt loser Text ── */
+.empty-folder,.nf-empty,.rh-empty-state,.gml-empty,.chat-empty{border:1.5px dashed var(--border);border-radius:16px;background:color-mix(in oklab, var(--surface-raised) 55%, transparent)}
+
+/* ── 5) Kontextmenüs & Dropdowns: eine Sprache ── */
+.q-ctx,.nh .ctx,.rh-context-menu{border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-lg);background:var(--surface-overlay);animation:asnPop .16s cubic-bezier(.2,.9,.3,1.15) both}
+.rh-context-menu-item{border-radius:8px}
+
+/* ── 6) Lade-Shimmer statt statischem „Lade…" ── */
+.gml-loading{position:relative;overflow:hidden;border-radius:12px}
+.gml-loading::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,color-mix(in oklab, var(--text-primary) 7%, transparent) 50%,transparent 70%);animation:asnShimmer 1.4s linear infinite}
+@keyframes asnShimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* ── 7) Fortschritt mit Leucht-Spitze ── */
+.progress .bar{position:relative}
+.progress .bar::after{content:"";position:absolute;right:0;top:0;bottom:0;width:10px;border-radius:99px;background:rgba(255,255,255,.35);filter:blur(3px)}
+
+/* ── 8) Wochen-Kalender: Tage als Panels ── */
+.week-calendar .wk-col{background:color-mix(in oklab, var(--surface-raised) 92%, transparent);border:1px solid var(--border);border-radius:12px}
+.week-calendar .wk-head{font-weight:700}
+
+/* ── 9) Tabellen in Karten: Zeilen-Hover ── */
+.card tbody tr:hover td{background:var(--hover)}
+
+/* ── 10) Chat: Nutzer-Bubbles im Akzent-Gradient ── */
+.chat-bubble.user,.chat-msg.user{background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:var(--on-accent)}
+.chat-bubble.user .chat-bubble-time{color:color-mix(in oklab, var(--on-accent) 70%, transparent)}
+
+/* ── 11) Post-its: leicht verspielt gekippt ── */
+.postit:nth-child(odd){transform:rotate(-.5deg)}
+.postit:nth-child(even){transform:rotate(.5deg)}
+.postit:hover{transform:translateY(-2px) rotate(0deg)}
+
+/* ── 12) Feinheiten: Divider, Timeline, Thumbs, Meilensteine, Scroll ── */
+.topbar-divider{width:1px;background:var(--border)}
+.timeline::before{background:linear-gradient(180deg,var(--accent-soft),var(--border))}
+.file-thumb{box-shadow:var(--shadow)}
+.goal-milestone.done{color:var(--success)}
+.main{scroll-behavior:smooth}
+.modal{border-radius:18px}
+.matrix-label,.matrix-label-side{font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:10.5px;color:var(--text-muted)}
+
+/* ── 13) KORREKTUREN (Render-Test verifiziert) ──
+   a) Browser-Tab-Leiste: „body.tabs-on .topbar{top:38px!important}" war eine
+      schlafende Regel (Topbar war position:static). Unser position:relative
+      (für die Gradient-Linie) hat sie aktiviert → Topbar rutschte 38px nach
+      unten und VERDECKTE den Seiten-Header. Das body-Padding (38px) gleicht
+      die Tab-Leiste bereits aus — top muss 0 bleiben. */
+body.tabs-on .topbar{top:0 !important}
+/*  b) Suchfeld war 55px hoch in der 52px-Topbar (ragte oben/unten heraus) —
+      auf feste 36px geklemmt, Input füllt den Pill exakt. */
+.topbar-center .universal-search{height:36px;max-height:36px;align-items:center;overflow:hidden}
+.topbar-center .universal-search input{height:100%;padding-top:0;padding-bottom:0}
+
+/* ── 14) Typo-Hierarchie & Kopfzeilen-Konsistenz (v5) ── */
+.page-title h2{font-size:clamp(22px,1.8vw,27px)}
+.stat-card .value{font-size:clamp(26px,2vw,32px)}
+.page-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.page-actions .btn{height:36px}
+.card{box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+html.theme-light .card{box-shadow:none}
+
+@media (prefers-reduced-motion:reduce){
+  .gml-loading::after{animation:none}
+}
+</style>
 <script>
 /* Deko-Formen hinter dem Inhalt (rein dekorativ, additiv). Respektiert
    prefers-reduced-motion; liegt auf z-index:-1 und stört keine Interaktion. */
@@ -104283,7 +104375,7 @@ body::after{
       { s:150, x:'87%', y:'7%',  c:'pink',    t:'ring', d:2 },
       { s:130, x:'91%', y:'68%', c:'info',    t:'blob', d:4 },
       { s:95,  x:'3%',  y:'76%', c:'success', t:'ring', d:1 },
-      { s:56,  x:'74%', y:'87%', c:'warning', t:'dot',  d:3 },
+      { s:48,  x:'74%', y:'88%', c:'info', t:'dot',  d:3 },
       { s:44,  x:'42%', y:'5%',  c:'info',    t:'dot',  d:5 }
     ];
     formen.forEach(function(o,i){
