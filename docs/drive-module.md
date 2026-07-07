@@ -46,6 +46,74 @@ Storage-Ablage: `drive/<docId>/<dateiname>`.
 
 n8n lädt die Datei **nicht** erneut — der Text kommt aus dem Queue-Eintrag.
 
+## Dokumente öffnen (typabhängig)
+
+Ein Klick auf die Zeile **öffnet** das Dokument (Details/Ablage weiterhin über
+den ℹ️-Knopf der Zeile):
+
+| Typ | Verhalten |
+|---|---|
+| PDF | Öffnet automatisch den vollwertigen **PDF-Editor** der Hauptapp. Eingebettet (Drive-App in `index.html`): `postMessage` `quantus-open-pdf` an den Parent (Origin-geprüft). Standalone: Deep-Link `index.html?openpdf=<URL>&pdfname=<Name>&pdfpath=<StoragePath>` in neuem Tab. „Speichern" im Editor schreibt über den `storagePath` in dieselbe Drive-Datei zurück; `_syncDriveDocAfterSave` (Hauptapp) führt danach `driveDocs.downloadUrl`/`groesse` nach, weil beim Überschreiben eine neue Token-URL entsteht. |
+| Bild (jpg/png/gif/webp/svg/heic/…) | Lightbox-Overlay mit Download-Knopf. |
+| Word `.docx` | Word-Ansicht: mammoth.js rendert das Dokument als HTML („Papier"-Ansicht). Schlägt das fehl (z. B. Adblocker), wird stattdessen heruntergeladen. |
+| Word alt `.doc`/`.odt` | Download (Browser kann sie nicht rendern). |
+| Textformate (txt/md/csv/json/…) | Text-Ansicht im Overlay. |
+| Sonstige (xlsx, zip, …) | Drawer mit Metadaten/Download wie bisher. |
+
+Im Drawer gibt es zusätzlich „📝 Im PDF-Editor öffnen" (PDF) bzw. „📖 Öffnen"
+(Bild/Word/Text); `Esc` schliesst das Viewer-Overlay.
+
+## Drive-Anbindung der Hauptapp (Anhänge)
+
+In **allen** Entity-Anhang-Bereichen der Hauptapp (Projekte, Aufgaben,
+Notizen, Meetings, … — überall, wo `renderFileAttachments` rendert) gibt es
+den Knopf **„🗄️ Aus Drive"**. Er öffnet einen Picker mit:
+
+- **Suche** über Name, Titel, Tags, Bereich/Thema (KI-Vorschlag) und
+  Textauszug; Auswahl hängt das Dokument als **Referenz** an `entity.files[]`
+  an (gleiche Storage-Datei, kein Re-Upload; Felder `fromDrive:true`,
+  `driveDocId`). Bereits angehängte Dokumente sind markiert. Beim Entfernen
+  eines solchen Anhangs wird **nur die Referenz** gelöscht — die Datei bleibt
+  im Drive und im Storage erhalten (Guard im `delete-file`-Handler).
+- **Upload-Zone**: neue Dateien landen unter `drive/<docId>/<Dateiname>`,
+  bekommen einen `driveDocs`-Eintrag (Status `eingang`) plus
+  `driveInbox`-Queue-Eintrag (`pending`) — gleiche Klassifizierungs-Pipeline
+  wie der Upload im Drive — und werden sofort an die Entität angehängt.
+
+Zusätzlich gibt es den globalen **📤 Quick-Upload** (Topbar-Knopf und
+Befehls-Palette Ctrl/Cmd+K): gleicher Ablauf, ohne Anhängen an eine Entität.
+
+## Nach-Einreihen bestehender Eingang-Dokumente
+
+Sidebar-Knopf **„🔄 Eingang neu einreihen"** (`data-action="drive-rescan"`,
+nur eingeloggt sichtbar): reiht alle `driveDocs` mit Status `eingang`, die
+nicht bereits als `pending`/`processing` in der Queue stehen, erneut zur
+KI-Klassifizierung ein. Kern ist `driveEnqueueForClassification(docId, doc)`
+(auch als `window.driveEnqueueForClassification` exportiert): lädt die Datei
+(`downloadUrl`, sonst via `storagePath`), extrahiert den Text frisch, ergänzt
+fehlende Hashes, aktualisiert `driveDocs` (`textauszug`/`hash`) und schreibt
+`driveInbox/<docId>` mit Status `pending` im Upload-Schema:
+
+```json
+{
+  "docId": "<driveDocs-Schlüssel>",
+  "dateiname": "Beispiel.pdf",
+  "mimeType": "application/pdf",
+  "text": "<frischer Textauszug, max. 6000 Zeichen>",
+  "hash": "<sha256 hex>",
+  "storagePath": "drive/<docId>/Beispiel.pdf",
+  "duplikat_verdacht": false,
+  "status": "pending",
+  "erstellt": "2026-07-07T12:00:00.000Z"
+}
+```
+
+Der n8n-Poll („Pending filtern") liest daraus `docId`, `dateiname`,
+`mimeType`, `hash`, `duplikat_verdacht` und `text` — das Schema ist mit dem
+Upload-Pfad identisch. Der Storage-**Backfill** („🧺 Bestehende Dateien
+scannen") bleibt für Dateien zuständig, die noch gar keinen (vollständigen)
+`driveDocs`-Eintrag haben.
+
 ## Einrichtung
 
 ### 1. Firebase
