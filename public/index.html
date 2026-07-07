@@ -6200,10 +6200,12 @@ async function firebaseJsonPut(key, data, options = {}) {
   let payload = data;
   try {
     if (typeof options.mergeFn === 'function') {
+      // lastSeen vor dem GET lesen — firebaseJsonGet setzt lastRemoteSeenAt als
+      // Nebeneffekt auf remoteTs, sonst wäre shouldMerge unten immer false.
+      const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
       const remote = await firebaseJsonGet(key, { force: options.force });
       if (remote.ok && remote.data) {
         const remoteTs = getDataTimestamp(remote.data);
-        const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
         const remoteDevice = remote.data?.meta?.lastSavedBy || '';
         const localDevice = data?.meta?.lastSavedBy || getOrCreateDeviceId();
         const shouldMerge = !!options.alwaysMergeRemote || (!!remoteDevice && remoteDevice !== localDevice && remoteTs > lastSeen + 500);
@@ -6282,10 +6284,12 @@ async function rtdbJsonPut(key, data, options = {}) {
   let payload = data;
   try {
     if (typeof options.mergeFn === 'function') {
+      // lastSeen vor dem GET lesen — rtdbJsonGet setzt lastRemoteSeenAt als
+      // Nebeneffekt auf remoteTs, sonst wäre shouldMerge unten immer false.
+      const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
       const remote = await rtdbJsonGet(key, { force: options.force });
       if (remote.ok && remote.data) {
         const remoteTs = getDataTimestamp(remote.data);
-        const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
         const remoteDevice = remote.data?.meta?.lastSavedBy || '';
         const localDevice = data?.meta?.lastSavedBy || getOrCreateDeviceId();
         const shouldMerge = !!options.alwaysMergeRemote || (!!remoteDevice && remoteDevice !== localDevice && remoteTs > lastSeen + 500);
@@ -10166,6 +10170,13 @@ async function pullAndMergeBeforeSave(reason) {
       if (!isAutoSyncEnabled()) return { ok: true, merged: false, reason: 'autosync_off' };
       if (!hasAnyCloudProviderAvailable()) return { ok: true, merged: false, reason: 'no_provider' };
 
+      // lastSeen MUSS vor dem GET festgehalten werden: remoteGet() setzt
+      // lastRemoteSeenAt als Nebeneffekt auf den Zeitstempel der eben geholten
+      // Daten. Ein danach gelesenes lastSeen wäre immer === remoteTs, der
+      // "unseen"-Check unten damit immer false — der Schutz-Merge liefe NIE,
+      // und ein veralteter Stand würde frische Änderungen anderer Geräte
+      // (z. B. erledigte Aufgaben) beim Push kommentarlos überschreiben.
+      const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
       const result = await remoteGet({ force: true });
       _lastRemoteCheckAt = Date.now();
       if (!result.ok || !result.data) return { ok: true, merged: false, reason: 'no_remote' };
@@ -10174,7 +10185,6 @@ async function pullAndMergeBeforeSave(reason) {
       const remoteDevice = result.data?.meta?.lastSavedBy || '';
       const remoteTs = new Date(result.data?.meta?.updatedAt || 0).getTime();
       const localTs = new Date(APP.state.data?.meta?.updatedAt || 0).getTime();
-      const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
 
       // Merge nur wenn Remote von einem ANDEREN Gerät ist
       // UND der Remote-Stand neuer ist als das, was wir zuletzt gesehen haben.
@@ -11000,12 +11010,31 @@ async function fetchRemoteCandidates(key) {
 }
 function pickLatestRemoteCandidate(results) {
   const prio = { rtdb: 0, netlify: 1, firebase: 2 };
-  return [...(results || [])].sort((a, b) => {
+  const sorted = [...(results || [])].sort((a, b) => {
     const diff = getDataTimestamp(b?.data) - getDataTimestamp(a?.data);
     if (diff) return diff;
     if (a?.provider === b?.provider) return 0;
     return (prio[a?.provider] ?? 9) - (prio[b?.provider] ?? 9);
-  })[0] || null;
+  });
+  const newest = sorted[0] || null;
+  if (!newest) return null;
+  // Substanz-Schutz: der "neueste" Stand darf einen deutlich VOLLEREN Stand
+  // eines anderen Providers nicht ausstechen, wenn er selbst fast leer ist.
+  // Sonst gewinnt z. B. ein von einem leeren/veralteten Gerät überschriebener
+  // Provider ("nur noch 1 Element") gegen die vollständigen 400+ Einträge —
+  // und Pull/Ersetzen meldet fälschlich einen fast leeren Server-Stand.
+  const countOf = (c) => { try { return (getSyncStats(c.data) || {}).totalEntities || 0; } catch(e) { return 0; } };
+  let fullest = newest;
+  for (const c of sorted) { if (countOf(c) > countOf(fullest)) fullest = c; }
+  const newestCount = countOf(newest);
+  const fullestCount = countOf(fullest);
+  if (fullest !== newest && fullestCount >= 20 && newestCount < fullestCount * 0.5) {
+    console.warn('[CloudSync] Neuester Cloud-Stand (' + newest.provider + ': ' + newestCount +
+                 ' Entities) ist drastisch kleiner als der von ' + fullest.provider + ' (' + fullestCount +
+                 ' Entities) — der vollständigere Stand wird verwendet.');
+    return fullest;
+  }
+  return newest;
 }
 let _transferInProgress = false;
 
@@ -11328,6 +11357,26 @@ async function manualTransferPull(silent = false) {
     console.log('[ManualPull] Cloud-Daten:', formatSyncStatsShort(cloudStatsBefore), cloudStatsBefore);
     console.log('[ManualPull] Lokale Daten (vorher):', formatSyncStatsShort(localStatsBefore));
 
+    // Datenverlust-Schutz: Cloud-Stand ist drastisch kleiner als lokal
+    // (z. B. von einem leeren/veralteten Gerät überschrieben) → nicht blind
+    // ersetzen. Interaktiv nachfragen, im Silent-Modus abbrechen.
+    const cloudN = cloudStatsBefore.totalEntities || 0;
+    const localN = localStatsBefore.totalEntities || 0;
+    if (localN >= 4 && cloudN < localN * 0.5) {
+      const warnMsg = 'Cloud hat nur ' + cloudN + ' Einträge, lokal sind es ' + localN + '.';
+      if (silent) {
+        console.warn('[ManualPull] Abbruch (Datenverlust-Schutz): ' + warnMsg);
+        APP.state.storage.status = 'warning';
+        APP.state.storage.message = '⚠️ Pull gestoppt: ' + warnMsg;
+        updateSyncChip();
+        return { ok: false, reason: 'shrink_guard', cloudEntities: cloudN, localEntities: localN };
+      }
+      if (!confirm('Achtung: ' + warnMsg + '\n\nWenn du jetzt übernimmst, verlierst du ' + (localN - cloudN) + ' Einträge. Tipp: Nutze stattdessen "Zusammenführen (Merge)".\n\nTrotzdem den Cloud-Stand übernehmen?')) {
+        toast('warn', 'Abgebrochen', 'Lokale Daten unverändert — nutze ggf. Zusammenführen (Merge)');
+        return { ok: false, reason: 'aborted_by_user' };
+      }
+    }
+
     const incoming = normalizeData(chosen.data);
     APP.state.data = incoming;
 
@@ -11485,9 +11534,15 @@ window.diagnoseSync = async function() {
 window._replaceFromServer = async function() {
   toast('ok', 'Lade Server-Stand…');
   try {
-    const result = await remoteGet({ force: true });
-    if (!result.ok || !result.data) {
-      toast('warn', 'Kein Server-Stand', result.reason || result.status || 'Server hat keine Daten geliefert');
+    // ALLE Provider abfragen und den besten Kandidaten wählen — remoteGet()
+    // liefert nur den ERSTEN antwortenden Provider. Hält der (z. B. Firebase)
+    // einen fast leeren Stand, meldet der Dialog "Server hat nur 1 Einträge",
+    // obwohl ein anderer Provider die vollständigen Daten hat.
+    const candidates = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+    const result = pickLatestRemoteCandidate(candidates);
+    if (!result || !result.data) {
+      const errs = (candidates._errors || []).map(e => cloudProviderLabel(e.provider || '?') + (e.status ? ': HTTP ' + e.status : e.skipped ? ': nicht konfiguriert' : ': Fehler'));
+      toast('warn', 'Kein Server-Stand', errs.length ? errs.join(' · ') : 'Server hat keine Daten geliefert');
       return;
     }
     // Zählt ALLE Nutzerdaten — inkl. Habits/Routinen (dailyBriefing.routines).
