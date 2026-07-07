@@ -6121,19 +6121,38 @@ async function netlifyBlobGet(key, options = {}) {
 async function netlifyBlobPut(key, data, options = {}) {
   if (!shouldTryCloudProvider('netlify', options)) return { ok: false, skipped: true, provider: 'netlify' };
   const s = APP.state.settings.storage;
+  let payload = data;
+  // Optionaler Pre-Merge (wie bei rtdb/firebase): den aktuellen Netlify-Stand
+  // holen und einmischen, bevor er überschrieben wird. Der GET aktualisiert
+  // nebenbei den ETag, was 412-Konflikte deutlich seltener macht.
+  if (typeof options.mergeFn === 'function') {
+    try {
+      // lastSeen vor dem GET lesen — netlifyBlobGet setzt lastRemoteSeenAt als
+      // Nebeneffekt auf remoteTs, sonst wäre shouldMerge unten immer false.
+      const lastSeen = Number(APP.state.storage?.lastRemoteSeenAt || 0);
+      const remote = await netlifyBlobGet(key, { force: options.force });
+      if (remote.ok && remote.data) {
+        const remoteTs = getDataTimestamp(remote.data);
+        const remoteDevice = remote.data?.meta?.lastSavedBy || '';
+        const localDevice = data?.meta?.lastSavedBy || getOrCreateDeviceId();
+        const shouldMerge = !!options.alwaysMergeRemote || (!!remoteDevice && remoteDevice !== localDevice && remoteTs > lastSeen + 500);
+        if (shouldMerge) payload = options.mergeFn(data, remote.data);
+      }
+    } catch(e) { /* Pre-Merge ist best-effort — PUT läuft mit den Originaldaten weiter */ }
+  }
   const url = s.putUrl.replace('{key}', encodeURIComponent(key));
   const headers = { 'Content-Type': 'application/json', ...buildStorageAuthHeaders(s.authToken) };
   const etag = (options.force && options._retry412) ? null : (key === s.blobKey ? APP.state.storage.etag : _remoteEtags[key]);
   if (etag) headers['If-Match'] = etag;
   try {
-    const resp = await fetchWithTimeout(url, { method: 'PUT', headers, body: JSON.stringify(data) }, 12000);
+    const resp = await fetchWithTimeout(url, { method: 'PUT', headers, body: JSON.stringify(payload) }, 12000);
     if (!resp.ok) {
       // On 412 (ETag conflict): retry once without If-Match when force is set
       if (resp.status === 412 && options.force && !options._retry412) {
         console.log('[CloudSync] Netlify PUT 412 ETag conflict → retrying without If-Match');
         if (key === s.blobKey) APP.state.storage.etag = null;
         else delete _remoteEtags[key];
-        return netlifyBlobPut(key, data, { ...options, _retry412: true });
+        return netlifyBlobPut(key, payload, { ...options, _retry412: true });
       }
       if (resp.status !== 412) rememberCloudFailure('netlify', { status: resp.status });
       return { ok: false, status: resp.status, provider: 'netlify' };
@@ -6142,11 +6161,11 @@ async function netlifyBlobPut(key, data, options = {}) {
     if (newEtag) _remoteEtags[key] = newEtag;
     if (key === s.blobKey) {
       APP.state.storage.etag = newEtag || null;
-      APP.state.storage.lastRemoteSeenAt = getDataTimestamp(data) || Date.now();
+      APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now();
       APP.state.storage.lastRemoteProvider = 'netlify';
     }
     rememberCloudSuccess('netlify');
-    return { ok: true, status: resp.status, provider: 'netlify', data };
+    return { ok: true, status: resp.status, provider: 'netlify', data: payload };
   } catch(e) {
     rememberCloudFailure('netlify', { error: e });
     return { ok: false, error: e, provider: 'netlify' };
@@ -6350,16 +6369,22 @@ async function remotePutByKey(key, data, options = {}) {
       // Shadow-Write: den erfolgreichen Datensatz zusätzlich an die ANDEREN
       // verfügbaren Provider schreiben (gedrosselt, fire-and-forget), damit sie
       // warm bleiben und ein Rückschalten (z. B. RTDB → Netlify) verlustfrei ist.
+      // WICHTIG: mit alwaysMergeRemote — der Zielprovider kann einen frischeren
+      // Stand von einem anderen Gerät halten (z. B. dort erledigte Aufgaben);
+      // ein force-Overwrite ohne Merge würde diesen Stand vernichten.
       if (options.shadowToOthers && isAutoSyncEnabled()) {
         const now = Date.now();
         if (now - _lastShadowWriteAt > (options.shadowIntervalMs || 45000)) {
           _lastShadowWriteAt = now;
           const shadowData = res.data || data;
+          const shadowOpts = typeof options.mergeFn === 'function'
+            ? { force: true, mergeFn: options.mergeFn, alwaysMergeRemote: true }
+            : { force: true };
           ['rtdb', 'netlify', 'firebase'].forEach(other => {
             if (other === provider) return;
             if (!shouldTryCloudProvider(other, { force: true })) return;
             const putFn = other === 'rtdb' ? rtdbJsonPut : other === 'firebase' ? firebaseJsonPut : netlifyBlobPut;
-            Promise.resolve().then(() => putFn(key, shadowData, { force: true })).catch(e => {
+            Promise.resolve().then(() => putFn(key, shadowData, shadowOpts)).catch(e => {
               console.warn('[CloudSync] Shadow-Write (' + other + ') fehlgeschlagen:', e?.message || e);
             });
           });
