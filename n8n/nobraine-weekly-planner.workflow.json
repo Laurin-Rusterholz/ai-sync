@@ -1,0 +1,313 @@
+{
+  "id": "F0VpVpWNdgks5q4Y",
+  "name": "No-Braine Weekly Planner",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## No-Braine Weekly Planner\n\nGeneriert per Anthropic-API einen vegetarischen Wochen-Essensplan (Mittag + Abend, Mo-So) und schreibt ihn in die Firebase RTDB (`jupidu-36804`). Angestossen vom Frontend `public/nobraine.html` via POST auf den Webhook-Pfad `nobraine-generate` (muss zur Konstante WEBHOOK_URL im Frontend passen).\n\n**Ablauf:** Webhook -> Woche berechnen (ISO-KW + Montag der kommenden Woche, Fan-out je Google-Kalender) -> Status running -> Termine laden -> Busy-Flags ableiten -> Rezepte laden -> AI-Kontext bauen (recentRecipes = Negativliste) -> Anthropic (erfindet bei jedem Lauf komplett neue Rezepte) -> Plan + Einkaufsliste aggregieren -> RTDB-Multi-Path-Update -> Status done | error.\n\n**HINWEIS REKONSTRUKTION:** Diese Datei wurde im Repo neu angelegt (der Original-Export von Workflow F0VpVpWNdgks5q4Y lag nicht im Repo). Alle Code-Nodes und Expressions sind mit `scripts/validate-n8n-workflow.js` syntaktisch validiert.\n\n**Nach dem Import zuweisen/ersetzen:**\n1. *Google Service-Konto (RTDB)* — Google-API-Credential (Service Account, Scopes userinfo.email + firebase.database) fuer alle RTDB-HTTP-Nodes.\n2. *Google Calendar OAuth2* — fuer den Node „Google Kalender: Termine laden\".\n3. *Anthropic API-Key* — Header-Auth-Credential, Header-Name `x-api-key`.\n4. Im Code-Node „Woche berechnen\" die Platzhalter `REPLACE_..._CALENDAR_ID` durch echte Google-Kalender-IDs ersetzen.\n5. Workflow aktivieren.",
+        "height": 620,
+        "width": 460
+      },
+      "id": "sticky-doku",
+      "name": "Doku",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-780, -400]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nobraine-generate",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Webhook: Generierung anstossen",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-460, 0],
+      "webhookId": "8a9c1f2e-4b5d-4e6f-8a1b-2c3d4e5f6a7b"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Bestimmt die Zielwoche (ISO-Kalenderwoche + Montag der KOMMENDEN Woche) und\n// faechert ueber die Google-Kalender auf (ein Item je Kalender fuer den Termin-Abruf).\n// Payload vom Frontend (nobraine.html): { weekKey, startDatum, tage, slots, freeblocks, typ, ... }\n// Fehlt der Payload (oder ist er unvollstaendig), wird die kommende Woche ab heute berechnet.\nconst body = ($json.body && typeof $json.body === 'object') ? $json.body : ($json || {});\n\nfunction pad2(n) { return String(n).padStart(2, '0'); }\nfunction isoDatum(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }\n\n// ISO-8601-Kalenderwoche (Woche des Donnerstags)\nfunction isoWoche(d) {\n  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));\n  const wochentag = t.getUTCDay() || 7; // Mo=1 ... So=7\n  t.setUTCDate(t.getUTCDate() + 4 - wochentag);\n  const jahresanfang = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));\n  const kw = Math.ceil(((t.getTime() - jahresanfang.getTime()) / 86400000 + 1) / 7);\n  return { jahr: t.getUTCFullYear(), kw: kw };\n}\n\n// Montag der KOMMENDEN Woche (immer der naechste Montag, nie der heutige Tag)\nfunction naechsterMontag(ab) {\n  const d = new Date(ab.getFullYear(), ab.getMonth(), ab.getDate());\n  const delta = ((8 - d.getDay()) % 7) || 7;\n  d.setDate(d.getDate() + delta);\n  return d;\n}\n\nlet montag;\nif (typeof body.startDatum === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(body.startDatum)) {\n  const teile = body.startDatum.split('-');\n  montag = new Date(Number(teile[0]), Number(teile[1]) - 1, Number(teile[2]));\n} else {\n  montag = naechsterMontag(new Date());\n}\nconst sonntag = new Date(montag.getFullYear(), montag.getMonth(), montag.getDate() + 6);\nconst w = isoWoche(montag);\nconst weekKey = (typeof body.weekKey === 'string' && /^\\d{4}-W\\d{2}$/.test(body.weekKey))\n  ? body.weekKey\n  : (w.jahr + '-W' + pad2(w.kw));\n\n// Google-Kalender, deren Termine die Essensplanung beeinflussen.\n// Platzhalter nach dem Import durch echte Kalender-IDs ersetzen.\nconst calendars = [\n  'REPLACE_PRIMARY_CALENDAR_ID',\n  'REPLACE_PARTNER_CALENDAR_ID',\n  'REPLACE_FAMILY_CALENDAR_ID'\n];\n\nreturn calendars.map(function (calendarId, index) {\n  return { json: {\n    calendarId: calendarId,\n    calendarIndex: index,\n    weekKey: weekKey,\n    jahr: w.jahr,\n    kw: w.kw,\n    startDatum: isoDatum(montag),\n    endDatum: isoDatum(sonntag),\n    timeMin: isoDatum(montag) + 'T00:00:00Z',\n    timeMax: isoDatum(new Date(sonntag.getFullYear(), sonntag.getMonth(), sonntag.getDate() + 1)) + 'T00:00:00Z',\n    tage: Number(body.tage) || 7,\n    slots: Array.isArray(body.slots) ? body.slots : ['mittag', 'abend'],\n    freeblocks: Array.isArray(body.freeblocks) ? body.freeblocks : [],\n    typ: body.typ === 'slot' ? 'slot' : 'woche'\n  } };\n});"
+      },
+      "id": "node-woche-berechnen",
+      "name": "Woche berechnen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 0]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/weeks/{{ $json.weekKey }}/generation.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'running', message: null }) }}",
+        "options": {}
+      },
+      "id": "node-status-running",
+      "name": "RTDB: Status → running",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, -180],
+      "executeOnce": true,
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/calendar/v3/calendars/{{ encodeURIComponent($json.calendarId) }}/events?singleEvents=true&orderBy=startTime&maxResults=250&timeMin={{ encodeURIComponent($json.timeMin) }}&timeMax={{ encodeURIComponent($json.timeMax) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
+        "options": {}
+      },
+      "id": "node-kalender-laden",
+      "name": "Google Kalender: Termine laden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, 0],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregiert die Kalender-Antworten ALLER Kalender zu Busy-Flags je Wochentag.\n// Fenster: Mittag 11:30-13:30, Abend 18:00-20:30. Ueberlappt ein Termin das\n// Fenster (oder ist er ganztaegig), gilt der Slot als belegt.\n// Belegter Mittag => microwaveOnly: das vorgekochte Essen muss nur aufwaermbar sein.\nconst basis = $('Woche berechnen').first().json;\nconst TAGE = ['montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag'];\n\nconst startTeile = String(basis.startDatum).split('-');\nconst wochenstart = new Date(Number(startTeile[0]), Number(startTeile[1]) - 1, Number(startTeile[2]));\n\nconst proTag = {};\nfor (const t of TAGE) proTag[t] = { termine: [], mittagBusy: false, abendBusy: false };\n\nfunction ueberlappt(beginn, ende, tagDatum, vonH, vonM, bisH, bisM) {\n  const von = new Date(tagDatum.getFullYear(), tagDatum.getMonth(), tagDatum.getDate(), vonH, vonM, 0);\n  const bis = new Date(tagDatum.getFullYear(), tagDatum.getMonth(), tagDatum.getDate(), bisH, bisM, 0);\n  return beginn < bis && ende > von;\n}\n\nfor (const item of $input.all()) {\n  const antwort = (item && item.json) ? item.json : {};\n  // Fehler-Antworten (z. B. Platzhalter-Kalender, 404) liefern kein items[] und werden uebersprungen\n  const events = Array.isArray(antwort.items) ? antwort.items : [];\n  for (const ev of events) {\n    if (!ev || ev.status === 'cancelled') continue;\n    const ganztags = !!(ev.start && ev.start.date && !ev.start.dateTime);\n    const beginn = ganztags\n      ? new Date(ev.start.date + 'T00:00:00')\n      : new Date(String((ev.start && ev.start.dateTime) || ''));\n    if (isNaN(beginn.getTime())) continue;\n    const endeRoh = ganztags\n      ? new Date(String((ev.end && ev.end.date) || ev.start.date) + 'T00:00:00')\n      : new Date(String((ev.end && ev.end.dateTime) || beginn.toISOString()));\n    const ende = (endeRoh.getTime() > beginn.getTime()) ? endeRoh : new Date(beginn.getTime() + 60000);\n\n    for (let i = 0; i < 7; i++) {\n      const tagDatum = new Date(wochenstart.getFullYear(), wochenstart.getMonth(), wochenstart.getDate() + i);\n      const tagEnde = new Date(tagDatum.getFullYear(), tagDatum.getMonth(), tagDatum.getDate() + 1);\n      if (!(beginn < tagEnde && ende > tagDatum)) continue;\n      const tag = proTag[TAGE[i]];\n      tag.termine.push({\n        titel: ev.summary || '(ohne Titel)',\n        ganztags: ganztags,\n        start: ganztags ? null : beginn.toISOString(),\n        ende: ganztags ? null : ende.toISOString()\n      });\n      if (ganztags || ueberlappt(beginn, ende, tagDatum, 11, 30, 13, 30)) tag.mittagBusy = true;\n      if (ganztags || ueberlappt(beginn, ende, tagDatum, 18, 0, 20, 30)) tag.abendBusy = true;\n    }\n  }\n}\n\nconst busyByDay = {};\nfor (const t of TAGE) {\n  busyByDay[t] = {\n    mittag: { busy: proTag[t].mittagBusy, microwaveOnly: proTag[t].mittagBusy },\n    abend: { busy: proTag[t].abendBusy },\n    termine: proTag[t].termine\n  };\n}\n\nreturn [{ json: {\n  weekKey: basis.weekKey,\n  startDatum: basis.startDatum,\n  endDatum: basis.endDatum,\n  typ: basis.typ,\n  freeblocks: basis.freeblocks,\n  busyByDay: busyByDay\n} }];"
+      },
+      "id": "node-busy-flags",
+      "name": "Busy-Flags ableiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/recipes.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {}
+      },
+      "id": "node-rezepte-laden",
+      "name": "RTDB: Rezepte laden",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 0],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Baut den Kontext fuer die Anthropic-Anfrage.\n// recentRecipes = NEGATIVLISTE: Namen aller Rezepte, die in den letzten 28 Tagen\n// verwendet wurden (lastUsed) — die KI darf KEINES davon erneut verwenden und\n// muss stattdessen komplett neue Rezepte erfinden.\nconst flags = $('Busy-Flags ableiten').first().json;\n\nlet rezepte = $json;\nif (rezepte && typeof rezepte === 'object' && !Array.isArray(rezepte) && Object.keys(rezepte).length === 1 && 'data' in rezepte) rezepte = rezepte.data;\nif (!rezepte || typeof rezepte !== 'object' || Array.isArray(rezepte)) rezepte = {};\n\nconst grenze = new Date();\ngrenze.setDate(grenze.getDate() - 28);\n\nconst gesehen = new Set();\nconst recentRecipes = [];\nfor (const r of Object.values(rezepte)) {\n  if (!r || typeof r.name !== 'string' || !r.name.trim()) continue;\n  if (!r.lastUsed) continue;\n  const benutzt = new Date(String(r.lastUsed));\n  if (isNaN(benutzt.getTime()) || benutzt < grenze) continue;\n  const name = r.name.trim();\n  if (gesehen.has(name.toLowerCase())) continue;\n  gesehen.add(name.toLowerCase());\n  recentRecipes.push(name);\n}\nrecentRecipes.sort(function (a, b) { return a.localeCompare(b, 'de'); });\n\nreturn [{ json: {\n  weekKey: flags.weekKey,\n  startDatum: flags.startDatum,\n  typ: flags.typ,\n  busyByDay: flags.busyByDay,\n  freeblocks: Array.isArray(flags.freeblocks) ? flags.freeblocks : [],\n  recentRecipes: recentRecipes\n} }];"
+      },
+      "id": "node-ai-kontext",
+      "name": "AI-Kontext bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8000, system: 'Du bist ein kreativer Wochen-Essensplaner fuer einen vegetarischen Haushalt in der Schweiz. Du planst fuer Montag bis Sonntag je ein Mittagessen und ein Abendessen.\\nREGELN:\\n1. ERFINDE bei JEDEM Lauf KOMPLETT NEUE Rezepte. Waehle NIE aus einer festen Liste, kopiere keine bekannten Standardplaene und wiederhole nichts aus frueheren Laeufen - jedes Rezept ist eine eigene Neuschoepfung.\\n2. recentRecipes im Kontext ist eine NEGATIVLISTE: Verwende KEINES dieser kuerzlich gekochten Rezepte erneut, auch keine fast identischen Varianten - erfinde stattdessen neue Gerichte.\\n3. Alle Gerichte sind strikt vegetarisch: kein Fleisch, kein Fisch, keine Meeresfruechte, keine Gelatine.\\n4. Mittagessen muessen vorkochbar sein (Meal-Prep am Vortag) und gut aufwaermbar.\\n5. Abendessen werden frisch gekocht.\\n6. Termin-Logik anhand busyByDay: Ist bei einem Tag mittag.microwaveOnly true, muss das Mittagessen problemlos in der Mikrowelle aufwaermbar sein. Ist abend.busy true, plane ein schnelles Abendessen mit maximal 25 Minuten Kochzeit.\\n7. freeblocks respektieren: Fuer jeden Eintrag in freeblocks planst du fuer diesen Tag und Slot NICHTS und gibst null zurueck.\\n8. Jedes Rezept hat exakt dieses Schema: {\"name\":\"...\",\"portions\":2,\"timeMinutes\":30,\"ingredients\":[{\"name\":\"...\",\"amount\":\"200 g\"}],\"steps\":[\"...\"]} - amount enthaelt Menge und Einheit als Text.\\n9. Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt ohne Markdown-Zaeune und ohne Erklaertext: {\"days\":[{\"day\":\"montag\",\"lunch\":REZEPT_ODER_NULL,\"dinner\":REZEPT_ODER_NULL},...,{\"day\":\"sonntag\",\"lunch\":REZEPT_ODER_NULL,\"dinner\":REZEPT_ODER_NULL}]} mit allen sieben Tagen von montag bis sonntag.', messages: [ { role: 'user', content: 'Kontext:\\n' + JSON.stringify({ busyByDay: $json.busyByDay, freeblocks: $json.freeblocks, recentRecipes: $json.recentRecipes }, null, 2) } ] }) }}",
+        "options": {}
+      },
+      "id": "node-anthropic",
+      "name": "Anthropic: Wochenplan generieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 0],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Anthropic API-Key (Header x-api-key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Wertet die Claude-Antwort aus und baut EIN Multi-Path-Update fuer die RTDB:\n// - neue Rezepte  -> nobraine/recipes/<id>                 (Frontend-Schema, deutsch)\n// - Wochenplan    -> nobraine/weeks/<wk>/meals/<tag>/<slot> = recipeId\n// - Einkaufsliste -> nobraine/weeks/<wk>/shoppinglist/<key> (dedupliziert nach Name+Einheit,\n//   Mengen summiert; gleiches Schluesselformat wie das Frontend: auto_<slug(name)>__<slug(einheit)>)\n// Freigehaltene Slots (freeblocks) werden nie beschrieben.\nconst kontext = $('AI-Kontext bauen').first().json;\nconst resp = $json;\nconst jetzt = $now.toISO();\n\nconst antwortText = (resp && Array.isArray(resp.content) && resp.content[0] && typeof resp.content[0].text === 'string')\n  ? resp.content[0].text : null;\nif (!antwortText) {\n  const fehler = 'Anthropic-API-Fehler: ' + JSON.stringify((resp && (resp.error || resp)) || 'keine Antwort').slice(0, 500);\n  return [{ json: { ok: false, weekKey: kontext.weekKey, fehler: fehler } }];\n}\n\nlet plan = null;\ntry {\n  let t = antwortText.trim();\n  const zaun = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (zaun) t = zaun[1].trim();\n  plan = JSON.parse(t);\n} catch (e) {\n  return [{ json: { ok: false, weekKey: kontext.weekKey, fehler: 'JSON-Parse-Fehler in der Claude-Antwort: ' + e.message } }];\n}\nif (!plan || typeof plan !== 'object' || !Array.isArray(plan.days)) {\n  return [{ json: { ok: false, weekKey: kontext.weekKey, fehler: 'Claude-Antwort enthielt kein days-Array' } }];\n}\n\nconst TAGE = ['montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag'];\nconst frei = new Set((kontext.freeblocks || []).map(function (f) { return String(f.tag) + '|' + String(f.slot); }));\n\nfunction lc(s) { return String(s == null ? '' : s).toLowerCase(); }\nfunction slug(s) { return lc(s).replace(/[^a-z0-9äöü]+/g, '_').replace(/^_+|_+$/g, '') || 'x'; }\nfunction num(v) {\n  const s = String(v == null ? '' : v).replace(',', '.').trim();\n  if (s.indexOf('/') > -1) { const p = s.split('/'); const a = parseFloat(p[0]); const b = parseFloat(p[1]); if (b) return a / b; }\n  const n = parseFloat(s);\n  return isNaN(n) ? null : n;\n}\nfunction mengeTrennen(amount) {\n  const roh = String(amount == null ? '' : amount).trim();\n  const m = roh.match(/^([0-9]+(?:[.,][0-9]+)?(?:\\s*\\/\\s*[0-9]+)?)\\s*(.*)$/);\n  if (!m) return { menge: null, einheit: roh };\n  return { menge: num(m[1]), einheit: (m[2] || '').trim() };\n}\n\n// Prueft das KI-Schema {name, portions, timeMinutes, ingredients:[{name,amount}], steps:[...]}\n// und mappt auf das Frontend-Schema {name, kategorie, portionen, kochzeitMin, zutaten, schritte, tags, lastUsed, ...}\nfunction rezeptPruefen(roh, slotKey) {\n  if (!roh || typeof roh !== 'object') return null;\n  if (typeof roh.name !== 'string' || !roh.name.trim()) return null;\n  if (!Array.isArray(roh.ingredients) || roh.ingredients.length === 0) return null;\n  if (!Array.isArray(roh.steps) || roh.steps.length === 0) return null;\n  const zutaten = [];\n  for (const z of roh.ingredients) {\n    if (!z || typeof z.name !== 'string' || !z.name.trim()) continue;\n    const mt = mengeTrennen(z.amount);\n    zutaten.push({ name: z.name.trim(), menge: mt.menge == null ? '' : mt.menge, einheit: mt.einheit });\n  }\n  if (zutaten.length === 0) return null;\n  const schritte = roh.steps.map(function (s) { return String(s); }).filter(function (s) { return s.trim().length > 0; });\n  if (schritte.length === 0) return null;\n  return {\n    name: roh.name.trim(),\n    kategorie: slotKey,\n    portionen: Number(roh.portions) > 0 ? Math.round(Number(roh.portions)) : 2,\n    kochzeitMin: Number(roh.timeMinutes) > 0 ? Math.round(Number(roh.timeMinutes)) : 30,\n    zutaten: zutaten,\n    schritte: schritte,\n    tags: ['vegetarisch', 'generiert'],\n    lastUsed: null,\n    erstellt: jetzt,\n    aktualisiert: jetzt\n  };\n}\n\nconst updates = {};\nconst einkauf = {};\nlet zaehler = 0;\nconst startTeile = String(kontext.startDatum || '').split('-');\nconst wochenstart = new Date(Number(startTeile[0]), Number(startTeile[1]) - 1, Number(startTeile[2]));\nconst idBasis = jetzt.replace(/[^0-9]/g, '').slice(0, 14);\n\nfor (const eintrag of plan.days) {\n  if (!eintrag || typeof eintrag.day !== 'string') continue;\n  const tagKey = eintrag.day.toLowerCase().trim();\n  const tagIndex = TAGE.indexOf(tagKey);\n  if (tagIndex < 0) continue;\n  const datum = new Date(wochenstart.getFullYear(), wochenstart.getMonth(), wochenstart.getDate() + tagIndex);\n  const datumIso = datum.getFullYear() + '-' + String(datum.getMonth() + 1).padStart(2, '0') + '-' + String(datum.getDate()).padStart(2, '0');\n  const slots = { mittag: eintrag.lunch, abend: eintrag.dinner };\n  for (const slotKey of Object.keys(slots)) {\n    if (frei.has(tagKey + '|' + slotKey)) continue; // freigehaltene Slots respektieren\n    const rezept = rezeptPruefen(slots[slotKey], slotKey);\n    if (!rezept) continue;\n    zaehler += 1;\n    const id = 'gen_' + idBasis + '_' + String(zaehler).padStart(2, '0');\n    rezept.lastUsed = datumIso;\n    updates['nobraine/recipes/' + id] = rezept;\n    updates['nobraine/weeks/' + kontext.weekKey + '/meals/' + tagKey + '/' + slotKey] = id;\n    for (const z of rezept.zutaten) {\n      const key = 'auto_' + slug(z.name) + '__' + slug(z.einheit || '');\n      if (!einkauf[key]) einkauf[key] = { name: z.name, einheit: z.einheit || '', menge: 0, unbekannt: false };\n      const n = num(z.menge);\n      if (n == null) einkauf[key].unbekannt = true; else einkauf[key].menge += n;\n    }\n  }\n}\n\nif (zaehler === 0) {\n  return [{ json: { ok: false, weekKey: kontext.weekKey, fehler: 'Claude-Antwort enthielt keine verwertbaren Rezepte' } }];\n}\n\nfor (const key of Object.keys(einkauf)) {\n  const e = einkauf[key];\n  updates['nobraine/weeks/' + kontext.weekKey + '/shoppinglist/' + key] = {\n    name: e.name,\n    einheit: e.einheit,\n    menge: (e.unbekannt && e.menge === 0) ? '' : Math.round(e.menge * 100) / 100,\n    checked: false,\n    manuell: false\n  };\n}\n\nreturn [{ json: { ok: true, weekKey: kontext.weekKey, anzahlRezepte: zaehler, updates: updates } }];"
+      },
+      "id": "node-aggregieren",
+      "name": "Plan + Einkaufsliste aggregieren",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-erfolg",
+      "name": "Generierung erfolgreich?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 0]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.updates) }}",
+        "options": {}
+      },
+      "id": "node-plan-speichern",
+      "name": "RTDB: Plan speichern",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, -100],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/weeks/{{ $('Plan + Einkaufsliste aggregieren').item.json.weekKey }}/generation.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'done', finishedAt: $now.toISO(), message: null }) }}",
+        "options": {}
+      },
+      "id": "node-status-done",
+      "name": "RTDB: Status → done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, -100],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/weeks/{{ $json.weekKey }}/generation.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'error', finishedAt: $now.toISO(), message: $json.fehler || 'Unbekannter Fehler bei der Generierung' }) }}",
+        "options": {}
+      },
+      "id": "node-status-error",
+      "name": "RTDB: Status → error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 120],
+      "credentials": {
+        "googleApi": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Google Service-Konto (RTDB)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Generierung anstossen": {
+      "main": [[{ "node": "Woche berechnen", "type": "main", "index": 0 }]]
+    },
+    "Woche berechnen": {
+      "main": [[
+        { "node": "RTDB: Status → running", "type": "main", "index": 0 },
+        { "node": "Google Kalender: Termine laden", "type": "main", "index": 0 }
+      ]]
+    },
+    "Google Kalender: Termine laden": {
+      "main": [[{ "node": "Busy-Flags ableiten", "type": "main", "index": 0 }]]
+    },
+    "Busy-Flags ableiten": {
+      "main": [[{ "node": "RTDB: Rezepte laden", "type": "main", "index": 0 }]]
+    },
+    "RTDB: Rezepte laden": {
+      "main": [[{ "node": "AI-Kontext bauen", "type": "main", "index": 0 }]]
+    },
+    "AI-Kontext bauen": {
+      "main": [[{ "node": "Anthropic: Wochenplan generieren", "type": "main", "index": 0 }]]
+    },
+    "Anthropic: Wochenplan generieren": {
+      "main": [[{ "node": "Plan + Einkaufsliste aggregieren", "type": "main", "index": 0 }]]
+    },
+    "Plan + Einkaufsliste aggregieren": {
+      "main": [[{ "node": "Generierung erfolgreich?", "type": "main", "index": 0 }]]
+    },
+    "Generierung erfolgreich?": {
+      "main": [
+        [{ "node": "RTDB: Plan speichern", "type": "main", "index": 0 }],
+        [{ "node": "RTDB: Status → error", "type": "main", "index": 0 }]
+      ]
+    },
+    "RTDB: Plan speichern": {
+      "main": [[{ "node": "RTDB: Status → done", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
