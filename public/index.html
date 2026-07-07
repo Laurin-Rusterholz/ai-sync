@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Quantus</title>
-  <meta name="quantus-build" content="gmail-block-filters · 2026-07-07" />
+  <meta name="quantus-build" content="gmail-block-filters+entity-inbox · 2026-07-07" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -48925,6 +48925,7 @@ function openGlobalTaskModal(prefill = {}) {
       <input type="hidden" id="globalTaskSource" value="${esc(prefill.source || "")}" />
       <input type="hidden" id="globalTaskSourceId" value="${esc(prefill.sourceId || "")}" />
       <input type="hidden" id="globalTaskMailEmails" value="${esc((prefill.mailEmails || []).join(","))}" />
+      <input type="hidden" id="globalTaskMailThreads" value="${esc((prefill.mailThreadIds || []).join(","))}" />
       <input type="hidden" id="globalTaskSourceMsg" value="${esc(prefill.sourceMessageId || "")}" />
     </div>
   `, `
@@ -58667,9 +58668,12 @@ case "ideas-clear-filter": {
       };
 
       // Mail-Verknüpfung: aus einer Mail erstellte Aufgaben bekommen die Absender-Adresse
-      // (→ entityAddresses/Inbox-Karte zeigt die Mail) und die Quell-Message-ID.
+      // (→ Compose-Vorbefüllung), den Mail-Thread (→ Inbox-Karte der Aufgabe zeigt
+      // NUR diesen Thread samt Antworten, kein Adress-Matching) und die Quell-Message-ID.
       const _mailEmails = ($("#globalTaskMailEmails")?.value || "").split(",").map(s => s.trim()).filter(Boolean);
       if (_mailEmails.length) taskData.mailEmails = _mailEmails;
+      const _mailThreads = ($("#globalTaskMailThreads")?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (_mailThreads.length) taskData.mailThreadIds = _mailThreads;
       const _sourceMsg = $("#globalTaskSourceMsg")?.value || "";
       if (_sourceMsg) taskData.sourceMessageId = _sourceMsg;
 
@@ -97649,7 +97653,7 @@ console.log('📚 Leseliste geladen');
     if (typeof window.openModal!=="function") return;
     function list(plural,kind){ var m=gmlEnt(plural); return Object.keys(m).sort(function(a,b){ return String(m[a].title||m[a].name||"").localeCompare(String(m[b].title||m[b].name||"")); }).map(function(id){ var e=m[id]||{}; return '<button class="gml-more-item" onclick="gmailDoLinkMail(\''+kind+'\',\''+jsStr(id)+'\')">'+esc(e.title||e.name||id)+'</button>'; }).join('') || '<div style="color:var(--muted);font-size:12px;padding:4px 2px">—</div>'; }
     var html='<div style="max-height:52vh;overflow:auto">'
-      + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Diese Mail bzw. ihr gesamter Thread wird dem gewählten Element zugeordnet — die Absender-Adresse und alle Antworten des Threads erscheinen danach in dessen Inbox-Karte.</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Bei <strong>Organisationen/Personen</strong> wird die Absender-Adresse zugeordnet — alle Mails dieser Adresse erscheinen in der Inbox-Karte. Bei <strong>Projekten/Aufgaben</strong> wird nur dieser Mail-Thread (inkl. Antworten) verknüpft.</div>'
       + '<div class="gml-qa-sec">Aufgaben</div>'+list("tasks","task")
       + '<div class="gml-qa-sec">Projekte</div>'+list("projects","project")
       + '<div class="gml-qa-sec">Organisationen</div>'+list("organizations","organization")
@@ -97661,17 +97665,20 @@ console.log('📚 Leseliste geladen');
     var o=GM.open; if(!o) return;
     var e=entityOf(kind,id); if(!e){ toast("err","Nicht gefunden",""); return; }
     var a=parseAddr(o.from||"");
-    // 1) Absender-Adresse binden (wie bisher)
-    if (a.email){
+    // 1) Absender-Adresse binden — NUR Organisation/Person. Projekte/Aufgaben
+    //    zeigen bewusst nur Gesendetes/Verknüpftes; eine Adress-Bindung würde
+    //    den gesamten Mailverkehr des Absenders ins Projekt ziehen.
+    var bindAddr = a.email && entityUsesAddressInbox(kind);
+    if (bindAddr){
       e.mailEmails=Array.isArray(e.mailEmails)?e.mailEmails:[];
       var lc=a.email.toLowerCase();
       if (e.mailEmails.map(function(x){return String(x).toLowerCase();}).indexOf(lc)<0) e.mailEmails.push(a.email);
     }
-    // 2) Thread binden → alle Antworten dieses Threads landen im Element
+    // 2) Thread binden → diese Mail + alle Antworten des Threads landen im Element
     if (o.threadId){ gmlLinkThreadToEntity(kind, id, o.threadId); }
     else { persistEntity(kind,id); }
     if (window.closeModal) window.closeModal();
-    toast("ok","Verknüpft", (e.title||e.name||"")+(o.threadId?" — Thread & Adresse zugeordnet":" — Adresse zugeordnet"));
+    toast("ok","Verknüpft", (e.title||e.name||"")+(o.threadId?(bindAddr?" — Thread & Adresse zugeordnet":" — Thread zugeordnet"):(bindAddr?" — Adresse zugeordnet":"")));
     try { if (document.getElementById("gmlEntityInbox")) loadEntityInbox(kind,id); } catch(_){}
   };
   // 7) KI-Antwort mit Quantus-Kontext (öffnet Composer, kein Auto-Send)
@@ -97728,7 +97735,7 @@ console.log('📚 Leseliste geladen');
     var today=(typeof todayYmd==="function")?todayYmd():new Date().toISOString().slice(0,10);
     var isFuture=due?(due>=today):false;
     var txId=gmlCe("transaction", { amount:Math.abs(d.amount), type:"expense", category:"Rechnung", description:("Rechnung "+vendor+(d.invoiceNumber?" (Nr. "+d.invoiceNumber+")":"")).slice(0,160), date:due||today, scheduledDate:isFuture?due:null, isFuture:isFuture });
-    var taskId=gmlCe("task", { title:("Rechnung bezahlen: "+vendor+" ("+Math.abs(d.amount)+" "+cur+")").slice(0,200), description:("Betrag: "+Math.abs(d.amount)+" "+cur+(due?"\nFällig: "+due:"")+(d.invoiceNumber?"\nNr.: "+d.invoiceNumber:"")+gmlMailRef(o)), dueDate:due, priority:2, status:"todo", tags:["Gmail","Finanzen"] });
+    var taskId=gmlCe("task", { title:("Rechnung bezahlen: "+vendor+" ("+Math.abs(d.amount)+" "+cur+")").slice(0,200), description:("Betrag: "+Math.abs(d.amount)+" "+cur+(due?"\nFällig: "+due:"")+(d.invoiceNumber?"\nNr.: "+d.invoiceNumber:"")+gmlMailRef(o)), dueDate:due, priority:2, status:"todo", tags:["Gmail","Finanzen"], mailThreadIds:(o.threadId?[o.threadId]:[]), sourceMessageId:o.id });
     toast((txId||taskId)?"ok":"err", (txId||taskId)?"Buchung + Aufgabe erstellt":"Fehler", (txId||taskId)?(vendor+" · "+Math.abs(d.amount)+" "+cur):"");
   };
   // Menü: bündelt die 10 Aktionen (Button „🔗 Quantus" im Reader)
@@ -97909,7 +97916,7 @@ console.log('📚 Leseliste geladen');
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
     if (!window.confirm("Nachfass-Aufgabe in 3 Tagen erstellen (mit Mail verknüpft)?")) return;
     var a=parseAddr(o.from||""), due=gmlFutureDate(3);
-    var id=gmlCe("task", { title:("Nachfassen: "+(o.subject||"E-Mail")).slice(0,200), description:"Nachfassen zu dieser E-Mail."+gmlMailRef(o), status:"todo", priority:3, dueDate:due, tags:["Gmail","Nachfassen"], mailEmails:(a.email?[a.email]:[]), sourceMessageId:o.id });
+    var id=gmlCe("task", { title:("Nachfassen: "+(o.subject||"E-Mail")).slice(0,200), description:"Nachfassen zu dieser E-Mail."+gmlMailRef(o), status:"todo", priority:3, dueDate:due, tags:["Gmail","Nachfassen"], mailEmails:(a.email?[a.email]:[]), mailThreadIds:(o.threadId?[o.threadId]:[]), sourceMessageId:o.id });
     toast(id?"ok":"err", id?"Nachfass-Aufgabe erstellt":"Fehler", id?("Fällig "+due):"");
   };
   // 22) Produktivität: Fokus-Aufgabe (heute, 30 Min, verknüpft)
@@ -97917,7 +97924,7 @@ console.log('📚 Leseliste geladen');
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
     if (!window.confirm("Fokus-Aufgabe zum Bearbeiten dieser Mail anlegen (heute, 30 Min)?")) return;
     var a=parseAddr(o.from||""), today=gmlToday();
-    var id=gmlCe("task", { title:("Bearbeiten: "+(o.subject||"E-Mail")).slice(0,200), description:"Fokuszeit zum Bearbeiten dieser Mail."+gmlMailRef(o), status:"todo", priority:2, startDate:today, dueDate:today, estimatedMinutes:30, tags:["Gmail","Fokus"], mailEmails:(a.email?[a.email]:[]), sourceMessageId:o.id });
+    var id=gmlCe("task", { title:("Bearbeiten: "+(o.subject||"E-Mail")).slice(0,200), description:"Fokuszeit zum Bearbeiten dieser Mail."+gmlMailRef(o), status:"todo", priority:2, startDate:today, dueDate:today, estimatedMinutes:30, tags:["Gmail","Fokus"], mailEmails:(a.email?[a.email]:[]), mailThreadIds:(o.threadId?[o.threadId]:[]), sourceMessageId:o.id });
     toast(id?"ok":"err", id?"Fokus-Aufgabe erstellt":"Fehler", id?"Heute · 30 Min":"");
   };
   // 23) Produktivität: Mailtext als Sende-Vorlage speichern
@@ -98510,7 +98517,7 @@ console.log('📚 Leseliste geladen');
       else { title = ("Re: "+subj).slice(0,200); desc = ref + excerpt; }
       window.openGlobalTaskModal({
         title: String(title).slice(0,200), description: desc, priority: 3, tags:["Gmail"],
-        mailEmails: (fromA.email ? [fromA.email] : []), sourceMessageId: msgId || undefined
+        mailEmails: (fromA.email ? [fromA.email] : []), mailThreadIds: (thrId ? [thrId] : []), sourceMessageId: msgId || undefined
       });
     } catch(e){ toast("err","Fehler", e.message||"Aufgabe konnte nicht erstellt werden"); }
     finally { GM._postSendBusy = false; }
@@ -99533,6 +99540,7 @@ console.log('📚 Leseliste geladen');
         priority: (c && typeof c.priority==="number") ? c.priority : 3,
         tags: ["Gmail"],
         mailEmails: (a.email ? [a.email] : []),
+        mailThreadIds: (o.threadId ? [o.threadId] : []),
         sourceMessageId: o.id
       });
     } catch(e){
@@ -99976,7 +99984,9 @@ console.log('📚 Leseliste geladen');
   function renderEntityInbox(kind,id){
     var ad=entityAddresses(kind,id);
     var ent=entityOf(kind,id);
+    var useAddr=entityUsesAddressInbox(kind);
     var threadN=(ent && Array.isArray(ent.mailThreadIds)) ? ent.mailThreadIds.length : 0;
+    var srcN=(!useAddr && ent && ent.sourceMessageId) ? 1 : 0;
     var drafts=(GM.entityDrafts && GM.entityDrafts[kind+":"+id]) || [];
     var st=GM.entityInbox[kind+":"+id]||{};
     var head='<h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>📧 Mail</span>'
@@ -99984,47 +99994,79 @@ console.log('📚 Leseliste geladen');
       +'<button class="btn sm primary" onclick="window.gmailAiDraftForEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="KI-Entwurf mit dem Kontext dieses Elements generieren (Titel, Beschreibung, Personen, letzte Mails)">✨ KI-Entwurf</button>'
       +'<button class="btn sm" onclick="window.gmailComposeToEntity(\''+kind+'\',\''+jsStr(id)+'\')" title="Mail schreiben — Adressen der zugeordneten Personen sind vorbefüllt, Verknüpfung ist gesetzt">✉️ Mail schreiben</button>'
       +'<button class="btn sm" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">⚙️ Personen/E-Mails</button>'
-      +(ad.length?'<button class="btn sm" onclick="gmailOpenInGmailWeb(\''+jsStr(entityQuery(kind,id))+'\')" title="In Gmail filtern">↗ Gmail</button>':'')
+      +((useAddr&&ad.length)?'<button class="btn sm" onclick="gmailOpenInGmailWeb(\''+jsStr(entityQuery(kind,id))+'\')" title="In Gmail filtern">↗ Gmail</button>':'')
       +'</span></h3>';
     // Verknüpfte Entwürfe (RTDB) — anklickbar, öffnen den Verfassen-Dialog vorbefüllt.
     var draftsHtml = drafts.length ? ('<div class="gml-ei-drafts"><div class="gml-ei-subhead">✏️ Entwürfe ('+drafts.length+')</div><div class="gml-ei-list">'
       + drafts.map(function(d){ var lbl=d.status==="scheduled"?("🕒 "+gmlFmtSendAt(d.sendAt)):"Entwurf"; return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(lbl)+'</span></div>'; }).join("")
       + '</div></div>') : '';
-    if (!ad.length && !threadN && !drafts.length) return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">Noch keine Personen, Adressen oder Mail-Threads zugeordnet. Du kannst trotzdem direkt eine Mail schreiben oder per ✨ KI-Entwurf generieren lassen — beim Senden wird der Thread automatisch mit diesem Element verknüpft.</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
+    // Leerzustand je Element-Art: Org/Person zeigt alles adressbasierte, Projekt/
+    // Aufgabe bewusst nur Gesendetes + Antworten + manuell Verknüpftes.
+    var noBasis = useAddr ? (!ad.length && !threadN) : (!threadN && !srcN);
+    if (noBasis && !drafts.length){
+      var hint = useAddr
+        ? 'Noch keine Personen, Adressen oder Mail-Threads zugeordnet. Du kannst trotzdem direkt eine Mail schreiben oder per ✨ KI-Entwurf generieren lassen — beim Senden wird der Thread automatisch mit diesem Element verknüpft.'
+        : 'Hier erscheinen nur Mails, die aus diesem Element gesendet wurden (samt Antworten), sowie manuell verknüpfte Mails. Schreibe direkt eine Mail — beim Senden wird der Thread automatisch verknüpft — oder verknüpfe eine offene Mail über 🔗 Quantus → „Mail verknüpfen".';
+      return head+'<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:8px 2px"><span style="color:var(--muted);font-size:13px">'+hint+'</span><button class="btn sm primary" onclick="gmailManageEntityMails(\''+kind+'\',\''+jsStr(id)+'\')">+ Personen/E-Mails zuordnen</button></div>';
+    }
     var bodyHtml;
     if (st.loading) bodyHtml='<div style="color:var(--muted);font-size:13px;padding:8px 2px">⏳ Lade Mails…</div>';
     else if (st.error) bodyHtml='<div style="color:var(--danger);font-size:13px;padding:8px 2px">'+esc(st.error)+'</div>';
-    else if (!st.rows || !st.rows.length) bodyHtml=(ad.length||threadN)?'<div style="color:var(--muted);font-size:13px;padding:8px 2px">Noch keine Mails gefunden.</div>':'';
+    else if (!st.rows || !st.rows.length) bodyHtml=(useAddr?(ad.length||threadN):(threadN||srcN))?'<div style="color:var(--muted);font-size:13px;padding:8px 2px">Noch keine Mails gefunden.</div>':'';
     else bodyHtml='<div class="gml-ei-list">'+st.rows.map(function(m){ var a=parseAddr(m.from); return '<div class="gml-ei-row'+(m.unread?" unread":"")+'" onclick="gmailOpenFromExternal(\''+jsStr(m.id)+'\')"><span class="gml-ei-from">'+esc(a.name||a.email)+'</span><span class="gml-ei-subj">'+esc(m.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(fmtDate(m.internalDate))+'</span><button class="gml-ei-reply" title="Antworten — verknüpft mit diesem Element, KI kennt Mail & Element" onclick="event.stopPropagation();gmailReplyFromEntity(\''+jsStr(m.id)+'\',\''+kind+'\',\''+jsStr(id)+'\')">↩︎</button></div>'; }).join("")+'</div>';
-    var meta=ad.length+' Adresse(n)'+(threadN?' · '+threadN+' Thread(s)':'')+(drafts.length?' · '+drafts.length+' Entwurf/Entwürfe':'')+' · '+(st.rows?st.rows.length:0)+' Mail(s)';
+    var meta = useAddr
+      ? (ad.length+' Adresse(n)'+(threadN?' · '+threadN+' Thread(s)':'')+(drafts.length?' · '+drafts.length+' Entwurf/Entwürfe':'')+' · '+(st.rows?st.rows.length:0)+' Mail(s)')
+      : ((threadN+srcN)+' verknüpfte(r) Thread(s)'+(drafts.length?' · '+drafts.length+' Entwurf/Entwürfe':'')+' · '+(st.rows?st.rows.length:0)+' Mail(s) — nur Gesendetes, Antworten & manuell Verknüpftes');
     return head+'<div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px">'+meta+'</div>'+draftsHtml+bodyHtml;
   }
   function refreshEntityInboxDom(kind,id){
     var el=document.getElementById("gmlEntityInbox");
     if (el && el.getAttribute("data-k")===kind && el.getAttribute("data-i")===id) el.innerHTML=renderEntityInbox(kind,id);
   }
+  // Welche Mails die Inbox-Karte eines Elements zeigt, hängt von der Art ab:
+  //  • Organisation/Person: Mails ALLER zugehörigen Personen/Adressen (from:(…))
+  //    plus verknüpfte Threads — der komplette Verkehr mit dieser Org/Person.
+  //  • Projekt/Aufgabe: NUR aus dem Element gesendete Mails samt Antworten
+  //    (mailThreadIds — von gmailSend beim Senden gesetzt) und manuell
+  //    verknüpfte Mails (🔗 Mail verknüpfen / sourceMessageId). KEIN
+  //    Adress-Matching, sonst zieht jede zugeordnete Person ihren gesamten
+  //    Mailverkehr in jedes ihrer Projekte/Aufgaben.
+  function entityUsesAddressInbox(kind){ return kind==="organization" || kind==="person"; }
   async function loadEntityInbox(kind,id){
     var key=kind+":"+id, ad=entityAddresses(kind,id);
     var ent=entityOf(kind,id);
-    var threadIds=(ent && Array.isArray(ent.mailThreadIds)) ? ent.mailThreadIds : [];
+    var useAddr=entityUsesAddressInbox(kind);
+    var thrIds=((ent && Array.isArray(ent.mailThreadIds)) ? ent.mailThreadIds : []).slice();
+    // Aufgaben/Projekte, die vor der Thread-Verknüpfung aus einer Mail erstellt
+    // wurden, kennen nur sourceMessageId → deren Thread ebenfalls anzeigen.
+    var srcMsg=(!useAddr && ent && ent.sourceMessageId) ? String(ent.sourceMessageId) : "";
     // Verknüpfte Entwürfe (RTDB) für dieses Element laden — best effort, blockiert die Mail-Liste nicht.
     loadEntityDrafts(kind,id);
-    if (!ad.length && !threadIds.length){ refreshEntityInboxDom(kind,id); return; }
+    if ((!useAddr || !ad.length) && !thrIds.length && !srcMsg){ GM.entityInbox[key]={ rows:[] }; refreshEntityInboxDom(kind,id); return; }
     GM.entityInbox[key]={ loading:true }; refreshEntityInboxDom(kind,id);
     try {
       await gmailEnsureReady();
       var byId={};
-      // 1) Adressbasiert (from:(…)) — wie bisher
-      if (ad.length){
+      // 0) sourceMessageId (Legacy) → threadId auflösen und wie verknüpft behandeln
+      if (srcMsg){
+        try {
+          var sm=await gmApi("GET","/users/me/messages/"+encodeURIComponent(srcMsg),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}});
+          if (sm && sm.threadId){ if (thrIds.indexOf(sm.threadId)<0) thrIds.push(sm.threadId); }
+          else if (sm){ var r0=parseMeta(sm); byId[r0.id]=r0; }
+        } catch(_){}
+      }
+      // 1) Adressbasiert (from:(…)) — NUR Organisation/Person
+      if (useAddr && ad.length){
         var q="from:("+ad.join(" OR ")+")";
         var res=await gmApi("GET","/users/me/messages",{query:{q:q,maxResults:"15"}});
         var ids=(res.messages||[]).map(function(m){return m.id;});
         var metas=await Promise.all(ids.map(function(mid){return gmApi("GET","/users/me/messages/"+encodeURIComponent(mid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
         metas.filter(Boolean).map(parseMeta).forEach(function(r){ byId[r.id]=r; });
       }
-      // 2) Verknüpfte Threads (mailThreadIds) — Antworten landen hier, auch ohne Adress-Match
-      if (threadIds.length){
-        var thrs=await Promise.all(threadIds.slice(0,20).map(function(tid){ return gmApi("GET","/users/me/threads/"+encodeURIComponent(tid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;}); }));
+      // 2) Verknüpfte Threads (mailThreadIds) — gesendete Mails, deren Antworten
+      //    und manuell verknüpfte Mails; unabhängig vom Absender
+      if (thrIds.length){
+        var thrs=await Promise.all(thrIds.slice(0,20).map(function(tid){ return gmApi("GET","/users/me/threads/"+encodeURIComponent(tid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;}); }));
         thrs.filter(Boolean).forEach(function(t){ (t.messages||[]).forEach(function(msg){ try { var r=parseMeta(msg); byId[r.id]=r; } catch(_){} }); });
       }
       var rows=Object.keys(byId).map(function(k){return byId[k];}).sort(function(a,b){ return (b.internalDate||0)-(a.internalDate||0); });
@@ -100059,7 +100101,13 @@ console.log('📚 Leseliste geladen');
     var emailChips=ent.mailEmails.map(function(em){ return '<span class="gml-chip">'+esc(em)+' <a onclick="gmailEntEmailRemove(\''+kind+'\',\''+jsStr(id)+'\',\''+jsStr(em)+'\')">×</a></span>'; }).join("")||'<span style="color:var(--muted);font-size:12px">keine</span>';
     var opts='<option value="">+ Person hinzufügen…</option>'+Object.keys(ps).sort(function(x,y){return (ps[x].name||"").localeCompare(ps[y].name||"");}).map(function(pid){ return '<option value="'+esc(pid)+'">'+esc(ps[pid].name||pid)+(ps[pid].emails&&ps[pid].emails[0]?" · "+esc(ps[pid].emails[0]):"")+'</option>'; }).join("");
     var sel='style="width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:9px;font-size:13.5px;box-sizing:border-box"';
-    var html='<div style="margin-bottom:14px"><div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">Personen</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="gmlEntPersons">'+personChips+'</div>'
+    // Hinweis je Element-Art: bei Org/Person speisen die Adressen die Inbox-Karte,
+    // bei Projekt/Aufgabe dienen sie nur der Empfänger-Vorbefüllung beim Schreiben.
+    var hint = entityUsesAddressInbox(kind)
+      ? 'Alle Mails der zugeordneten Personen/Adressen erscheinen in der Inbox-Karte dieses Elements.'
+      : 'Zugeordnete Personen/Adressen werden beim ✉️ Mail schreiben als Empfänger vorbefüllt. Die Inbox-Karte zeigt bei Projekten/Aufgaben nur gesendete Mails samt Antworten und manuell verknüpfte Mails.';
+    var html='<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px">'+hint+'</div>'
+      +'<div style="margin-bottom:14px"><div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">Personen</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="gmlEntPersons">'+personChips+'</div>'
       +'<select '+sel+' onchange="gmailEntPersonAdd(\''+kind+'\',\''+jsStr(id)+'\',this.value);this.value=\'\'">'+opts+'</select></div>'
       +'<div><div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">Zusätzliche E-Mail-Adressen</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="gmlEntEmails">'+emailChips+'</div>'
       +'<div style="display:flex;gap:8px"><input id="gmlEntEmailInput" type="text" '+sel+' placeholder="adresse@example.com" onkeydown="if(event.key===\'Enter\'){event.preventDefault();gmailEntEmailAdd(\''+kind+'\',\''+jsStr(id)+'\');}"><button class="btn" onclick="gmailEntEmailAdd(\''+kind+'\',\''+jsStr(id)+'\')">+</button></div></div>';
