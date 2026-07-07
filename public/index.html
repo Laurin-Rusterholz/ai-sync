@@ -41944,15 +41944,35 @@ function viewChat() {
     if (m.sources && m.sources.length > 0) {
       sourcesHtml = '<div class="chat-sources">' +
         '<span class="chat-sources-label">Quellen:</span>' +
-        m.sources.map(s => '<a href="#/' + s.kind + 's/' + s.id + '" class="chat-source-link" data-action="nav" data-route="' + s.kind + 's/' + s.id + '">' + s.icon + ' ' + esc(s.title) + '</a>').join("") +
+        m.sources.map(s => '<a href="#/' + s.kind + 's/' + s.id + '" class="chat-source-link" data-action="nav" data-route="' + s.kind + 's/' + s.id + '">' + (s.icon || "📄") + ' ' + esc(s.title) + '</a>').join("") +
       '</div>';
     }
-    
+
+    // Agent-Aktionen als klickbare Chips (open → Navigation, create/link → agent-action)
+    let actionsHtml = "";
+    if (Array.isArray(m.actions) && m.actions.length > 0) {
+      const chips = m.actions.map(a => {
+        if (!a || !a.type || !a.label) return "";
+        if (a.type === "open" && a.kind && a.id) {
+          return '<a href="#/' + a.kind + 's/' + a.id + '" class="chat-action-chip" data-action="nav" data-route="' + a.kind + 's/' + a.id + '">🔎 ' + esc(a.label) + '</a>';
+        }
+        if (a.type === "create" && a.kind) {
+          return '<button class="chat-action-chip" data-action="agent-action" data-type="create" data-kind="' + esc(a.kind) + '" data-payload="' + esc(JSON.stringify(a.payload || {})) + '">➕ ' + esc(a.label) + '</button>';
+        }
+        if (a.type === "link" && a.kind && a.id) {
+          return '<button class="chat-action-chip" data-action="agent-action" data-type="link" data-kind="' + esc(a.kind) + '" data-id="' + esc(a.id) + '" data-payload="' + esc(JSON.stringify(a.payload || {})) + '">🔗 ' + esc(a.label) + '</button>';
+        }
+        return ""; // unbekannte Typen still ignorieren
+      }).filter(Boolean);
+      if (chips.length > 0) actionsHtml = '<div class="chat-actions">' + chips.join("") + '</div>';
+    }
+
     return '<div class="chat-msg ' + (isUser ? "user" : "assistant") + '">' +
       '<div class="chat-msg-avatar">' + (isUser ? "👤" : "🤖") + '</div>' +
       '<div class="chat-msg-body">' +
         '<div class="chat-msg-content">' + content + '</div>' +
         sourcesHtml +
+        actionsHtml +
         '<div class="chat-msg-time">' + time + '</div>' +
       '</div>' +
     '</div>';
@@ -42004,6 +42024,13 @@ function viewChat() {
     '.chat-sources-label{font-size:11px;color:var(--muted);font-weight:600}' +
     '.chat-source-link{font-size:12px;padding:4px 10px;background:var(--panel);border-radius:8px;color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:4px;transition:all 0.15s}' +
     '.chat-source-link:hover{background:var(--accent);color:var(--text)}' +
+    '.chat-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;padding:0 20px}' +
+    '.chat-action-chip{font-size:12px;font-weight:600;padding:6px 12px;background:var(--panel);border:1px solid var(--border);border-radius:10px;color:var(--accent);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s;font-family:inherit}' +
+    '.chat-action-chip:hover{background:var(--accent);color:var(--text);border-color:var(--accent)}' +
+    '.chat-thinking-dots span{animation:chatThinkingDot 1.2s infinite;opacity:0}' +
+    '.chat-thinking-dots span:nth-child(2){animation-delay:0.2s}' +
+    '.chat-thinking-dots span:nth-child(3){animation-delay:0.4s}' +
+    '@keyframes chatThinkingDot{0%{opacity:0}30%{opacity:1}100%{opacity:0}}' +
     '.chat-input-area{padding:20px 24px;border-top:1px solid var(--border);background:var(--panel)}' +
     '.chat-input-row{display:flex;gap:12px;align-items:flex-end;max-width:700px}' +
     '.chat-input-row textarea{flex:1;background:var(--panel2);border:2px solid var(--border);border-radius:16px;padding:16px 20px;font-size:14px;color:var(--text);resize:none;min-height:56px;max-height:200px;outline:none;font-family:inherit;transition:border-color 0.15s}' +
@@ -42047,15 +42074,10 @@ function viewChat() {
             '<div class="chat-empty-icon">🤖</div>' +
             '<div class="chat-empty-title">' + t("hello_help") + '</div>' +
             '<div class="chat-empty-text">' + t("ai_access_desc") + '</div>' +
-            (!(APP.state.settings?.openai?.apiKey || APP.state.settings?.openaiApiKey) ? 
-              '<div style="background:rgba(255,69,58,.15);border:1px solid rgba(255,69,58,.3);border-radius:12px;padding:12px 16px;margin:16px 0;max-width:500px">' +
-                '<div style="font-weight:600;color:var(--danger);margin-bottom:4px">⚠️ API-Key erforderlich</div>' +
-                '<div style="font-size:13px;color:var(--muted)">Bitte hinterlege deinen OpenAI API-Key in den <span style="color:var(--accent);cursor:pointer;text-decoration:underline" onclick="window.location.hash=\'#/settings\';if(typeof render===\'function\')render();">Einstellungen</span> um den Chat zu nutzen.</div>' +
-              '</div>' : 
-              '<div style="background:rgba(48,209,88,.15);border:1px solid rgba(48,209,88,.3);border-radius:12px;padding:12px 16px;margin:16px 0;max-width:500px">' +
-                '<div style="font-weight:600;color:var(--ok);margin-bottom:4px">✅ KI bereit</div>' +
-                '<div style="font-size:13px;color:var(--muted)">API verbunden. Stelle eine Frage oder nutze die Schnellaktionen!</div>' +
-              '</div>') +
+            '<div style="background:rgba(48,209,88,.15);border:1px solid rgba(48,209,88,.3);border-radius:12px;padding:12px 16px;margin:16px 0;max-width:500px">' +
+              '<div style="font-weight:600;color:var(--ok);margin-bottom:4px">🤖 Quantus-Agent bereit</div>' +
+              '<div style="font-size:13px;color:var(--muted)">Der Chat läuft über den n8n-Agenten: Er kennt deine Daten, schlägt Aktionen vor und merkt sich den Verlauf serverseitig.</div>' +
+            '</div>' +
             '<div class="chat-quick-prompts">' + quickPromptsHtml + '</div>' +
           '</div>' 
         : messagesHtml) +
@@ -73366,7 +73388,7 @@ Beginne mit den kritischen/hohen Prioritäten.`;
     return;
   }
   
-  // ========== CHAT HANDLER (API-BASIERT MIT TOOLS) ==========
+  // ========== CHAT HANDLER (n8n-AGENT MIT TOOLS) ==========
   if (action === "send-chat" || action === "send-chat-message") {
     e.preventDefault();
     e.stopPropagation();
@@ -73409,136 +73431,24 @@ Beginne mit den kritischen/hohen Prioritäten.`;
       if (container) container.scrollTop = container.scrollHeight;
     }, 50);
     
-    // AI Antwort via API
+    // AI Antwort via n8n-Agent (Gedächtnis liegt serverseitig, Schlüssel = sessionId)
     (async () => {
+      window.quantusAgentShowThinking();
       try {
-        // API-Key prüfen (beide möglichen Orte)
-        const apiKey = APP.state.settings?.openai?.apiKey || APP.state.settings?.openaiApiKey;
-        if (!apiKey) {
-          currentChat.messages.push({ 
-            role: "assistant", 
-            content: "⚠️ **API-Key erforderlich**\n\nBitte hinterlege deinen OpenAI API-Key in den Einstellungen:\n\n1. Gehe zu **Einstellungen** (⚙️)\n2. Scrolle zu **KI/OpenAI**\n3. Füge deinen API-Key ein\n\n➡️ Gehe zu Einstellungen (⚙️ in der Sidebar)", 
-            timestamp: nowIso() 
-          });
-          scheduleSave();
-          render();
-          return;
-        }
-        
-        // Vollständigen Kontext aufbauen
+        const res = await window.quantusAgentCall(msg);
+        window.quantusAgentHideThinking();
+
         const e_data = APP.state.data.entities;
-        const today = new Date().toISOString().slice(0, 10);
-        const todayDate = new Date();
-        
-        // Alle Daten sammeln
-        const tasks = Object.values(e_data.tasks || {});
-        const openTasks = tasks.filter(t => t.status !== "done");
-        const overdueTasks = openTasks.filter(t => t.dueDate && t.dueDate < today);
-        const todayTasks = openTasks.filter(t => t.dueDate === today);
-        const projects = Object.values(e_data.projects || {});
-        const notes = Object.values(e_data.notes || {});
-        const ideas = Object.values(e_data.ideas || {});
-        const goals = Object.values(e_data.goals || {});
-        const calendarEvents = Object.values(e_data.calendarEvents || {});
-        const meetings = Object.values(e_data.meetings || {});
-        const backgroundDocs = APP.state.data.backgroundDocs || [];
-        
-        // Termine diese Woche
-        const weekEnd = new Date(todayDate);
-        weekEnd.setDate(weekEnd.getDate() + 7);
-        const upcomingEvents = calendarEvents
-          .filter(ev => ev.date >= today && ev.date <= weekEnd.toISOString().slice(0, 10))
-          .sort((a, b) => (a.date + (a.startTime || "")).localeCompare(b.date + (b.startTime || "")));
-        
-        // System-Prompt mit vollem Kontext
-        let systemPrompt = `Du bist ein intelligenter Assistent für das AI Management Pro System. Du hilfst dem Nutzer bei der Organisation seiner Aufgaben, Termine, Notizen und Projekte.
+        let answer = String(res && res.reply != null ? res.reply : "").trim() || "Keine Antwort erhalten.";
 
-WICHTIG: Du kannst AKTIONEN ausführen! Wenn der Nutzer einen Termin erstellen möchte, antworte mit einem speziellen JSON-Block.
-
-=== HEUTIGES DATUM: ${todayDate.toLocaleDateString("de-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} ===
-
-=== AUFGABEN-ÜBERSICHT ===
-• ${openTasks.length} offene Aufgaben (${overdueTasks.length} überfällig, ${todayTasks.length} heute fällig)
-${overdueTasks.length > 0 ? `\nÜBERFÄLLIG:\n${overdueTasks.slice(0, 5).map(t => `- [ID:${t.id}] "${t.title}" (fällig: ${t.dueDate})`).join("\n")}` : ""}
-${todayTasks.length > 0 ? `\nHEUTE FÄLLIG:\n${todayTasks.map(t => `- [ID:${t.id}] "${t.title}"`).join("\n")}` : ""}
-${openTasks.filter(t => t.priority <= 2).length > 0 ? `\nHOHE PRIORITÄT:\n${openTasks.filter(t => t.priority <= 2).slice(0, 5).map(t => `- [ID:${t.id}] "${t.title}"`).join("\n")}` : ""}
-
-=== PROJEKTE (${projects.length}) ===
-${projects.filter(p => p.status === "active").slice(0, 10).map(p => {
-  const pTasks = tasks.filter(t => t.projectId === p.id);
-  const done = pTasks.filter(t => t.status === "done").length;
-  const pct = pTasks.length > 0 ? Math.round((done / pTasks.length) * 100) : 0;
-  return `- [ID:${p.id}] "${p.title}" - ${pct}% (${done}/${pTasks.length} Aufgaben)`;
-}).join("\n")}
-
-=== TERMINE DIESE WOCHE (${upcomingEvents.length}) ===
-${upcomingEvents.slice(0, 10).map(ev => `- [ID:${ev.id}] ${ev.date} ${ev.startTime || ""}-${ev.endTime || ""}: "${ev.title}"`).join("\n")}
-
-=== NOTIZEN (${notes.length}) ===
-${notes.slice(0, 15).map(n => `- [ID:${n.id}] "${n.title || "(Ohne Titel)"}"${n.tags?.length ? ` #${n.tags.slice(0, 3).join(" #")}` : ""}`).join("\n")}
-
-=== IDEEN (${ideas.length}) ===
-${ideas.slice(0, 10).map(i => `- [ID:${i.id}] "${i.title}"${i.tags?.length ? ` #${i.tags.slice(0, 2).join(" #")}` : ""}`).join("\n")}
-
-=== ZIELE (${goals.length}) ===
-${goals.filter(g => g.status === "active").slice(0, 5).map(g => `- [ID:${g.id}] "${g.title}"${g.dueDate ? ` (Frist: ${g.dueDate})` : ""}`).join("\n")}
-
-${backgroundDocs.length > 0 ? `=== WISSENSBASIS (${backgroundDocs.length} Dokumente) ===
-${backgroundDocs.slice(0, 5).map(d => `- "${d.title}" (${(d.content || "").split(/\\s+/).length} Wörter)`).join("\n")}
-` : ""}
-
-=== ANWEISUNGEN ===
-1. Antworte auf Deutsch, ausführlich und hilfreich
-2. Wenn du auf Daten verweist, nenne die ID in eckigen Klammern, z.B. [ID:abc123]
-3. Für TERMIN-ERSTELLUNG: Wenn der Nutzer einen Termin erstellen möchte und alle Details hat (Titel, Datum, Zeit), antworte mit:
-   <<<CREATE_EVENT>>>
-   {"title": "...", "date": "YYYY-MM-DD", "startTime": "HH:MM", "endTime": "HH:MM"}
-   <<<END_EVENT>>>
-   Gefolgt von einer Bestätigung.
-4. Prüfe bei Terminen auf Konflikte mit bestehenden Terminen
-5. Sei proaktiv und schlage Verbesserungen vor
-6. Verlinke relevante Einträge mit ihrer ID`;
-
-        // Chat-Verlauf für Kontext (letzte 10 Nachrichten)
-        const chatHistory = currentChat.messages.slice(-10).map(m => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: m.content
-        }));
-        
-        // API-Anfrage
-        const endpoint = "https://api.openai.com/v1/chat/completions";
-        const model = APP.state.settings?.openai?.model || APP.state.settings?.openaiModel || "gpt-4o-mini";
-        
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: [{ role: "system", content: systemPrompt }, ...chatHistory],
-            max_tokens: 4000,
-            temperature: 0.7
-          })
-        });
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`API-Fehler (${response.status}): ${errorText.slice(0, 200)}`);
-        }
-        
-        const data = await response.json();
-        let answer = data.choices?.[0]?.message?.content || "Keine Antwort erhalten.";
-        
-        // Prüfen ob ein Event erstellt werden soll
+        // Fallback: <<<CREATE_EVENT>>>-Block wie bisher unterstützen
         const eventMatch = answer.match(/<<<CREATE_EVENT>>>\s*(\{[\s\S]*?\})\s*<<<END_EVENT>>>/);
         let createdEventId = null;
-        
+
         if (eventMatch) {
           try {
             const eventData = JSON.parse(eventMatch[1]);
-            
+
             // Event erstellen
             if (eventData.title && eventData.date) {
               createdEventId = uuid();
@@ -73553,10 +73463,10 @@ ${backgroundDocs.slice(0, 5).map(d => `- "${d.title}" (${(d.content || "").split
                 createdAt: nowIso(),
                 updatedAt: nowIso()
               };
-              
+
               // Event-Erstellungs-Block aus Antwort entfernen
               answer = answer.replace(/<<<CREATE_EVENT>>>[\s\S]*?<<<END_EVENT>>>/g, "").trim();
-              
+
               // Bestätigung hinzufügen wenn nicht vorhanden
               if (!answer.includes("erstellt") && !answer.includes("angelegt")) {
                 answer += `\n\n✅ **Termin erstellt:** [ID:${createdEventId}]`;
@@ -73566,59 +73476,41 @@ ${backgroundDocs.slice(0, 5).map(d => `- "${d.title}" (${(d.content || "").split
             console.error("Event parse error:", parseErr);
           }
         }
-        
-        // IDs in klickbare Links umwandeln (für die Anzeige)
-        const sources = [];
-        const idPattern = /\[ID:([a-zA-Z0-9_-]+)\]/g;
-        let match;
-        while ((match = idPattern.exec(answer)) !== null) {
-          const id = match[1];
-          // Finde die Entity
-          for (const [kind, store] of [
-            ["task", "tasks"], ["project", "projects"], ["note", "notes"],
-            ["idea", "ideas"], ["goal", "goals"], ["calendarEvent", "calendarEvents"],
-            ["meeting", "meetings"]
-          ]) {
-            const entity = e_data[store]?.[id];
-            if (entity) {
-              sources.push({
-                kind,
-                id,
-                title: entity.title || entity.name || "(Ohne Titel)",
-                icon: { task: "✅", project: "📦", note: "📝", idea: "💡", goal: "🎯", calendarEvent: "📅", meeting: "🤝" }[kind] || "📄"
-              });
-              break;
-            }
-          }
-        }
-        
+
+        // Quellen: Server-Quellen + [ID:…]-Zitate im Text, dedupliziert und mit Icon
+        const sources = window.quantusAgentNormalizeSources(res && res.sources, answer);
+
         // IDs aus dem Text entfernen für sauberere Anzeige
         answer = answer.replace(/\s*\[ID:[a-zA-Z0-9_-]+\]/g, "");
-        
-        currentChat.messages.push({ 
-          role: "assistant", 
-          content: answer, 
-          sources: sources.length > 0 ? sources : undefined,
-          timestamp: nowIso() 
-        });
+
+        // Aktionen: klickbare Chips (open/create/link); unbekannte Typen werden verworfen
+        const actions = window.quantusAgentNormalizeActions(res && res.actions);
+
+        const assistantMsg = { role: "assistant", content: answer, timestamp: nowIso() };
+        if (sources.length > 0) assistantMsg.sources = sources;
+        if (actions.length > 0) assistantMsg.actions = actions;
+        currentChat.messages.push(assistantMsg);
         currentChat.updatedAt = nowIso();
         scheduleSave();
         render();
-        
+
         setTimeout(() => {
           const container = document.getElementById("chatMessages");
           if (container) container.scrollTop = container.scrollHeight;
         }, 50);
-        
+
       } catch (err) {
-        console.error("Chat error:", err);
-        currentChat.messages.push({ 
-          role: "assistant", 
-          content: `❌ **Fehler bei der API-Anfrage**\n\n${err.message}\n\nBitte überprüfe:\n- Ist der API-Key korrekt?\n- Hast du noch Guthaben bei OpenAI?\n- Ist das Modell verfügbar?`, 
-          timestamp: nowIso() 
-        });
+        console.error("Agent-Chat Fehler:", err);
+        window.quantusAgentHideThinking();
+        // Nutzer-Nachricht zurücknehmen und Text im Eingabefeld wiederherstellen
+        const last = currentChat.messages[currentChat.messages.length - 1];
+        if (last && last.role === "user" && last.content === msg) currentChat.messages.pop();
+        if (currentChat.messages.length === 0) currentChat.title = "Neuer Chat";
         scheduleSave();
         render();
+        const inputAfter = document.getElementById("chatInput");
+        if (inputAfter) { inputAfter.value = msg; inputAfter.focus(); }
+        toast("danger", "Nicht erreichbar", "Der Assistent ist gerade nicht erreichbar.");
       }
     })();
     
@@ -73804,6 +73696,184 @@ ${backgroundDocs.slice(0, 5).map(d => `- "${d.title}" (${(d.content || "").split
   }
   
 }, true); // CAPTURE PHASE
+
+// ============================================================================
+// QUANTUS-AGENT (n8n) — Backend des KI-Chats
+// Der Chat-View sendet Nachrichten an den n8n-Agenten statt direkt an OpenAI.
+// Das Gedächtnis liegt serverseitig im Agenten (Schlüssel = sessionId), der
+// Verlauf bleibt wie bisher lokal in APP.state.data.aiChats (appStore-Sync).
+// Antwort-Kontrakt des Webhooks (JSON):
+//   { reply: "<Text>",
+//     sources: [ { kind, id, title } ],
+//     actions: [ { type: "open"|"create"|"link", label, kind, id, payload } ] }
+// ============================================================================
+(function(){
+  "use strict";
+
+  var AGENT_WEBHOOK_URL = "https://n8n.srv1757990.hstgr.cloud/webhook/quantus-agent";
+  var AGENT_TIMEOUT_MS = 60000;
+  var SESSION_KEY = "quantus_agent_session";
+
+  var KIND_ICONS = { task: "✅", project: "📦", note: "📝", idea: "💡", goal: "🎯", calendarEvent: "📅", meeting: "🤝", person: "👤", organization: "🏢" };
+  var KIND_STORES = { task: "tasks", project: "projects", note: "notes", idea: "ideas", goal: "goals", calendarEvent: "calendarEvents", meeting: "meetings", person: "persons", organization: "organizations" };
+
+  function entityStores(){ try { return (APP.state.data && APP.state.data.entities) || {}; } catch(e){ return {}; } }
+
+  // Stabile Session-ID für das serverseitige Agenten-Gedächtnis
+  window.quantusAgentSessionId = function(){
+    try {
+      if (APP.state._agentSessionId) return APP.state._agentSessionId;
+      var id = localStorage.getItem(SESSION_KEY);
+      if (!id) {
+        id = (window.crypto && typeof crypto.randomUUID === "function") ? crypto.randomUUID() : uuid();
+        localStorage.setItem(SESSION_KEY, id);
+      }
+      APP.state._agentSessionId = id;
+      return id;
+    } catch(e){ return "quantus-agent-fallback"; }
+  };
+
+  // Aktuelle Ansicht + offenes Objekt als Kontext für den Agenten
+  function agentContext(){
+    var view = "dashboard", entityId = null;
+    try {
+      var seg = (location.hash || "").replace(/^#\//, "").split("?")[0].split("/");
+      if (seg[0]) view = seg[0];
+      if (seg[1]) entityId = seg[1];
+      var sp = APP.state.ui && APP.state.ui.slidePanel;
+      if (sp && sp.id) entityId = sp.id;
+    } catch(e){}
+    return { activeView: view, activeEntityId: entityId };
+  }
+
+  // POST an den n8n-Agenten; Antwort tolerant parsen (Objekt, n8n-Item-Array, {output}, Klartext)
+  window.quantusAgentCall = async function(message){
+    var body = {
+      sessionId: window.quantusAgentSessionId(),
+      message: String(message == null ? "" : message),
+      context: agentContext()
+    };
+    var resp = await fetchWithTimeout(AGENT_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }, AGENT_TIMEOUT_MS);
+    if (!resp.ok) throw new Error("Agent-Webhook HTTP " + resp.status);
+    var text = await resp.text();
+    var data = null;
+    try { data = JSON.parse(text); } catch(e){}
+    if (Array.isArray(data)) data = data[0] || null;
+    if (data && typeof data === "object") {
+      var reply = data.reply != null ? data.reply : (data.output != null ? data.output : data.text);
+      return { reply: String(reply == null ? "" : reply), sources: data.sources, actions: data.actions };
+    }
+    return { reply: String(text || ""), sources: [], actions: [] };
+  };
+
+  // Quellen normalisieren: Server-Angaben + [ID:…]-Zitate im Text, dedupliziert, mit Icon
+  window.quantusAgentNormalizeSources = function(serverSources, answerText){
+    var out = [], seen = {};
+    function push(kind, id, title){
+      if (!kind || !id || !KIND_STORES[kind]) return;
+      var key = kind + ":" + id;
+      if (seen[key]) return;
+      var ent = (entityStores()[KIND_STORES[kind]] || {})[id];
+      if (!title && ent) title = ent.title || ent.name;
+      seen[key] = true;
+      out.push({ kind: kind, id: String(id), title: title || "(Ohne Titel)", icon: KIND_ICONS[kind] || "📄" });
+    }
+    if (Array.isArray(serverSources)) {
+      serverSources.forEach(function(s){ if (s && typeof s === "object") push(s.kind, s.id, s.title); });
+    }
+    var m, re = /\[ID:([a-zA-Z0-9_-]+)\]/g, txt = String(answerText || "");
+    while ((m = re.exec(txt)) !== null) {
+      var id = m[1];
+      for (var kind in KIND_STORES) {
+        if ((entityStores()[KIND_STORES[kind]] || {})[id]) { push(kind, id, null); break; }
+      }
+    }
+    return out;
+  };
+
+  // Aktionen normalisieren; unbekannte Typen werden still verworfen
+  window.quantusAgentNormalizeActions = function(actions){
+    if (!Array.isArray(actions)) return [];
+    return actions.filter(function(a){
+      if (!a || typeof a !== "object" || !a.label || !a.type) return false;
+      if (a.type === "open") return !!(a.kind && a.id);
+      if (a.type === "create") return !!a.kind;
+      if (a.type === "link") return !!(a.kind && a.id && a.payload && a.payload.toKind && a.payload.toId);
+      return false;
+    }).map(function(a){
+      return {
+        type: a.type,
+        label: String(a.label).slice(0, 120),
+        kind: a.kind || null,
+        id: a.id != null ? String(a.id) : null,
+        payload: (a.payload && typeof a.payload === "object") ? a.payload : {}
+      };
+    });
+  };
+
+  // Denk-Indikator: reine DOM-Einblendung, wird NICHT in aiChats gespeichert
+  window.quantusAgentShowThinking = function(){
+    try {
+      var c = document.getElementById("chatMessages");
+      if (!c) return;
+      window.quantusAgentHideThinking();
+      var div = document.createElement("div");
+      div.className = "chat-msg assistant";
+      div.id = "agentThinkingMsg";
+      div.innerHTML = '<div class="chat-msg-avatar">🤖</div>' +
+        '<div class="chat-msg-body"><div class="chat-msg-content">Assistent denkt <span class="chat-thinking-dots"><span>●</span><span>●</span><span>●</span></span></div></div>';
+      c.appendChild(div);
+      c.scrollTop = c.scrollHeight;
+    } catch(e){}
+  };
+  window.quantusAgentHideThinking = function(){
+    try {
+      var el = document.getElementById("agentThinkingMsg");
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    } catch(e){}
+  };
+
+  // Klick-Handler für Action-Chips (create/link). "open"-Chips laufen über die
+  // bestehende Navigation (data-action="nav"). Capture-Phase wie der Chat-Handler.
+  document.addEventListener("click", function(e){
+    var el = e.target && e.target.closest ? e.target.closest('[data-action="agent-action"]') : null;
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var type = el.dataset.type, kind = el.dataset.kind || "", id = el.dataset.id || "";
+    var payload = {};
+    try { payload = JSON.parse(el.dataset.payload || "{}") || {}; } catch(err){ payload = {}; }
+    try {
+      if (type === "create") {
+        // Vorbefülltes Erstell-Formular öffnen — kein stilles Anlegen
+        if (kind === "task" && typeof openGlobalTaskModal === "function") {
+          openGlobalTaskModal(payload);
+        } else {
+          toast("info", "Kein Formular", "Für „" + kind + "“ gibt es kein Schnell-Formular — bitte manuell anlegen.");
+        }
+        return;
+      }
+      if (type === "link") {
+        if (typeof window.linkEntities === "function" && window.linkEntities(kind, id, payload.toKind, payload.toId)) {
+          toast("ok", "Verknüpft", "Elemente wurden beidseitig verknüpft.");
+          if (typeof render === "function") render();
+        } else {
+          toast("warn", "Verknüpfung fehlgeschlagen", "Element wurde nicht gefunden.");
+        }
+        return;
+      }
+      // Unbekannte Aktionstypen still ignorieren
+    } catch(err) {
+      console.warn("Agent-Aktion fehlgeschlagen:", err && err.message);
+      toast("warn", "Aktion fehlgeschlagen", err && err.message ? err.message : "");
+    }
+  }, true);
+})();
+
 
 // ========== ENTER-TASTE FÜR CHAT ==========
 document.addEventListener("keydown", function(e) {
