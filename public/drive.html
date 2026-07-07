@@ -268,10 +268,42 @@ table.docs tr:last-child td { border-bottom: 0; }
 }
 #toast.sichtbar { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ── Dokument-Viewer (Bild-Lightbox, Word-/Text-Ansicht) ────────────────── */
+#viewerOverlay {
+  position: fixed; inset: 0; background: rgba(43,48,54,.88);
+  display: none; flex-direction: column; z-index: 70;
+}
+#viewerOverlay.offen { display: flex; }
+.vw-kopf {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px; color: var(--leinen); flex: none;
+}
+.vw-kopf .vw-titel { flex: 1; min-width: 0; font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vw-kopf a.btn, .vw-kopf button.btn { background: var(--schiefer-hell); border-color: var(--linie-dunkel); color: var(--leinen); text-decoration: none; }
+.vw-kopf a.btn:hover, .vw-kopf button.btn:hover { background: var(--schiefer-tief); }
+.vw-inhalt { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 0 18px 24px; }
+.vw-inhalt img { max-width: 100%; max-height: calc(100vh - 90px); object-fit: contain; border-radius: 8px; box-shadow: 0 12px 44px rgba(0,0,0,.45); margin: auto; }
+.vw-papier {
+  background: #fff; color: #222; border-radius: 8px; box-shadow: 0 12px 44px rgba(0,0,0,.45);
+  width: min(860px, 100%); padding: 44px 52px; line-height: 1.7; font-size: 15px;
+}
+.vw-papier h1 { font-size: 24px; margin: 22px 0 10px; }
+.vw-papier h2 { font-size: 20px; margin: 18px 0 8px; }
+.vw-papier h3 { font-size: 17px; margin: 14px 0 7px; }
+.vw-papier p { margin: 8px 0; }
+.vw-papier table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.vw-papier td, .vw-papier th { border: 1px solid #d5d0c4; padding: 7px 11px; text-align: left; }
+.vw-papier ul, .vw-papier ol { margin: 8px 0; padding-left: 26px; }
+.vw-papier img { max-width: 100%; box-shadow: none; margin: 8px 0; }
+.vw-papier pre { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.vw-laden { color: var(--leinen); text-align: center; margin: auto; font-size: 15px; }
+.vw-laden .gross { font-size: 40px; margin-bottom: 10px; }
+
 @media (max-width: 760px) {
   #sidebar { width: 210px; min-width: 210px; }
   #sucheInput { width: 150px; }
   .doc-name .txt { max-width: 160px; }
+  .vw-papier { padding: 22px 18px; }
 }
 
 /* ── Polish-Layer (additiv): Effekte, Fokus, Tiefe — konsistent zur Hauptapp ── */
@@ -302,6 +334,7 @@ table.docs tr.doc-zeile td { transition: background .12s ease; }
     <div id="nav"></div>
     <button class="btn-neuer-ordner" data-action="neuer-ordner">＋ Neuer Ordner</button>
     <button class="btn-neuer-ordner" id="backfillBtn" style="margin-top:0;display:none" data-action="backfill">🧺 Bestehende Dateien scannen</button>
+    <button class="btn-neuer-ordner" id="rescanBtn" style="margin-top:0;display:none" data-action="drive-rescan">🔄 Eingang neu einreihen</button>
     <button class="btn-login" id="loginBtn" data-action="login" style="display:none">🔐 Mit Google anmelden</button>
     <div class="sb-fuss"><span class="punkt" id="authPunkt"></span><span id="authText">Verbinde …</span></div>
   </aside>
@@ -325,6 +358,15 @@ table.docs tr.doc-zeile td { transition: background .12s ease; }
 
 <div id="modalHintergrund" data-action="modal-hintergrund">
   <div id="modalBox"></div>
+</div>
+
+<div id="viewerOverlay" data-action="viewer-hintergrund">
+  <div class="vw-kopf">
+    <div class="vw-titel" id="vwTitel"></div>
+    <a class="btn" id="vwDownload" href="#" target="_blank" rel="noopener">⬇ Herunterladen</a>
+    <button class="btn" data-action="viewer-schliessen">✕ Schliessen</button>
+  </div>
+  <div class="vw-inhalt" id="vwInhalt"></div>
 </div>
 
 <div id="toast"></div>
@@ -408,17 +450,20 @@ function boot() {
     const punkt    = document.getElementById("authPunkt");
     const text     = document.getElementById("authText");
     const bfBtn    = document.getElementById("backfillBtn");
+    const rsBtn    = document.getElementById("rescanBtn");
     const loginBtn = document.getElementById("loginBtn");
     if (user) {
       punkt.classList.add("online");
       text.textContent = "Verbunden: " + (user.email || user.displayName || "Google");
-      if (bfBtn) bfBtn.style.display = "";      // Scan-Button nur sichtbar, wenn eingeloggt
+      if (bfBtn) bfBtn.style.display = "";      // Scan-/Einreihen-Buttons nur sichtbar, wenn eingeloggt
+      if (rsBtn) rsBtn.style.display = "";
       if (loginBtn) loginBtn.style.display = "none";
       if (!S.bereit) { S.bereit = true; listenerStarten(); taxonomieSeedFallsLeer(); }
     } else {
       punkt.classList.remove("online");
       text.textContent = "Nicht angemeldet";
       if (bfBtn) bfBtn.style.display = "none";
+      if (rsBtn) rsBtn.style.display = "none";
       if (loginBtn) loginBtn.style.display = "";
       render(); // Hinweis in der Liste aktualisieren
     }
@@ -544,13 +589,17 @@ function endung(name) { return (String(name || "").split(".").pop() || "").toLow
 function lc(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
 
 // ── Typabhängiges Öffnen ──
-// PDF → im PDF-Editor der Hauptapp (postMessage an parent, wenn eingebettet)
-// Bild → Vorschau direkt im Drawer · Word → Download · Rest → Drawer wie bisher.
+// PDF → PDF-Editor der Hauptapp (eingebettet: postMessage; standalone: Deep-Link
+// index.html?openpdf=… in neuem Tab) · Bild → Lightbox · DOCX → Word-Ansicht
+// (mammoth, Fallback Download) · .doc/.odt → Download · Textformate →
+// Text-Ansicht · Rest → Drawer wie bisher.
 function dateiKategorie(d) {
   const n = lc(d && d.dateiname), m = String((d && d.mimeType) || "");
   if (m === "application/pdf" || n.endsWith(".pdf")) return "pdf";
-  if (m.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|heic)$/.test(n)) return "bild";
-  if (/\.(docx?|odt)$/.test(n) || m.indexOf("wordprocessingml") >= 0 || m === "application/msword") return "word";
+  if (m.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|heic|bmp|avif)$/.test(n)) return "bild";
+  if (n.endsWith(".docx") || m.indexOf("wordprocessingml") >= 0) return "docx";
+  if (/\.(doc|odt)$/.test(n) || m === "application/msword") return "word-alt";
+  if (TEXT_ENDUNGEN.indexOf(endung(d && d.dateiname)) >= 0 || m.startsWith("text/")) return "text";
   return "sonst";
 }
 function istEingebettet() { try { return window.self !== window.top; } catch (e) { return true; } }
@@ -561,22 +610,119 @@ function pdfImEditorOeffnen(d) {
     return true;
   } catch (e) { return false; }
 }
+// Standalone (drive.html direkt im Browser): Hauptapp in neuem Tab starten —
+// sie öffnet das PDF über den URL-Parameter ?openpdf=… im vollen Editor.
+function pdfExternOeffnen(d) {
+  const url = "index.html?openpdf=" + encodeURIComponent(d.downloadUrl) +
+    "&pdfname=" + encodeURIComponent(d.titel_final || d.dateiname || "Dokument.pdf") +
+    (d.storagePath ? "&pdfpath=" + encodeURIComponent(d.storagePath) : "");
+  window.open(url, "_blank", "noopener");
+}
+function pdfOeffnen(d) {
+  if (!d || !d.downloadUrl) return false;
+  if (istEingebettet() && pdfImEditorOeffnen(d)) return true;
+  pdfExternOeffnen(d);
+  return true;
+}
+function dateiHerunterladen(d) {
+  const a = document.createElement("a");
+  a.href = d.downloadUrl; a.target = "_blank"; a.rel = "noopener"; a.download = d.dateiname || "";
+  document.body.appendChild(a); a.click(); a.remove();
+}
 function docOeffnen(docId) {
   const d = S.docs[docId]; if (!d) return;
   const kat = dateiKategorie(d);
-  if (kat === "pdf" && d.downloadUrl && istEingebettet() && pdfImEditorOeffnen(d)) return;
-  if (kat === "pdf") { S.drawerDocId = docId; S.vorschauOffen = true; renderDrawer(); return; }
-  if (kat === "bild") { S.drawerDocId = docId; S.vorschauOffen = true; renderDrawer(); return; }
-  if (kat === "word") {
-    if (d.downloadUrl) {
-      const a = document.createElement("a");
-      a.href = d.downloadUrl; a.target = "_blank"; a.rel = "noopener"; a.download = d.dateiname || "";
-      document.body.appendChild(a); a.click(); a.remove();
+  if (d.downloadUrl) {
+    if (kat === "pdf") { pdfOeffnen(d); return; }
+    if (kat === "bild") { bildAnzeigen(d); return; }
+    if (kat === "docx") { wordAnzeigen(d); return; }
+    if (kat === "word-alt") {
+      dateiHerunterladen(d);
       toast("Word-Dokument wird heruntergeladen …");
+      S.drawerDocId = docId; S.vorschauOffen = false; renderDrawer(); return;
     }
-    S.drawerDocId = docId; S.vorschauOffen = false; renderDrawer(); return;
+    if (kat === "text") { textAnzeigen(d); return; }
   }
   S.drawerDocId = docId; S.vorschauOffen = false; renderDrawer();
+}
+
+// mammoth-HTML entschärfen: DOCX-Inhalte sind nicht vertrauenswürdig — mammoth
+// escapt Text, übernimmt aber Hyperlink-Ziele unverändert (javascript:-Links!).
+// Konservativ: Event-Handler weg, href nur http/https/mailto/#, img nur data:/https:.
+function saubereDocxHtml(html) {
+  const doc = new DOMParser().parseFromString("<div>" + String(html || "") + "</div>", "text/html");
+  const wurzel = doc.body.firstChild;
+  wurzel.querySelectorAll("script,style,iframe,object,embed,link,meta,form").forEach(function (el) { el.remove(); });
+  wurzel.querySelectorAll("*").forEach(function (el) {
+    Array.prototype.slice.call(el.attributes).forEach(function (a) {
+      const n = a.name.toLowerCase();
+      const v = String(a.value || "").trim().toLowerCase();
+      if (n.indexOf("on") === 0) { el.removeAttribute(a.name); return; }
+      if (n === "href" && !(v.indexOf("http:") === 0 || v.indexOf("https:") === 0 || v.indexOf("mailto:") === 0 || v.indexOf("#") === 0)) { el.removeAttribute(a.name); return; }
+      if (n === "href") { el.setAttribute("target", "_blank"); el.setAttribute("rel", "noopener"); }
+      if (n === "src" && !(v.indexOf("data:image/") === 0 || v.indexOf("https:") === 0)) el.removeAttribute(a.name);
+    });
+  });
+  return wurzel.innerHTML;
+}
+
+// ── Viewer-Overlay (Bild-Lightbox, Word-/Text-Ansicht) ──
+// Token verhindert die Race, dass eine langsam ladende Word-/Text-Ansicht ein
+// danach geöffnetes anderes Dokument überschreibt.
+let _viewerToken = 0;
+function viewerOeffnen(titel, downloadUrl, inhaltHtml) {
+  _viewerToken++;
+  document.getElementById("vwTitel").textContent = titel;
+  document.getElementById("vwDownload").href = downloadUrl || "#";
+  document.getElementById("vwInhalt").innerHTML = inhaltHtml;
+  document.getElementById("viewerOverlay").classList.add("offen");
+  return _viewerToken;
+}
+function viewerSchliessen() {
+  _viewerToken++;
+  document.getElementById("viewerOverlay").classList.remove("offen");
+  document.getElementById("vwInhalt").innerHTML = "";
+}
+function bildAnzeigen(d) {
+  const name = d.titel_final || d.dateiname;
+  viewerOeffnen(name, d.downloadUrl, '<img src="' + esc(d.downloadUrl) + '" alt="' + esc(name) + '">');
+}
+async function wordAnzeigen(d) {
+  const name = d.titel_final || d.dateiname;
+  const tok = viewerOeffnen(name, d.downloadUrl, '<div class="vw-laden"><div class="gross">📘</div>Word-Dokument wird geladen …</div>');
+  try {
+    const ok = await loadMammothLibrary();
+    if (!ok || !window.mammoth) throw new Error("mammoth.js nicht verfügbar (Adblocker?)");
+    const resp = await fetch(d.downloadUrl);
+    if (!resp.ok) throw new Error("Download HTTP " + resp.status);
+    const ab = await resp.arrayBuffer();
+    const res = await window.mammoth.convertToHtml({ arrayBuffer: ab });
+    if (tok !== _viewerToken) return; // inzwischen geschlossen oder anderes Dokument geöffnet
+    const sicher = saubereDocxHtml((res && res.value) || "");
+    document.getElementById("vwInhalt").innerHTML = '<div class="vw-papier">' + (sicher || "<p>(leeres Dokument)</p>") + "</div>";
+  } catch (e) {
+    console.warn("[Drive] Word-Ansicht fehlgeschlagen:", e && e.message);
+    if (tok !== _viewerToken) return;
+    viewerSchliessen();
+    toast("Word-Ansicht nicht möglich — Datei wird heruntergeladen");
+    dateiHerunterladen(d);
+  }
+}
+async function textAnzeigen(d) {
+  const name = d.titel_final || d.dateiname;
+  const tok = viewerOeffnen(name, d.downloadUrl, '<div class="vw-laden"><div class="gross">📄</div>Wird geladen …</div>');
+  try {
+    const resp = await fetch(d.downloadUrl);
+    if (!resp.ok) throw new Error("Download HTTP " + resp.status);
+    const text = await resp.text();
+    if (tok !== _viewerToken) return; // inzwischen geschlossen oder anderes Dokument geöffnet
+    document.getElementById("vwInhalt").innerHTML = '<div class="vw-papier"><pre>' + esc(text.slice(0, 400000)) + "</pre></div>";
+  } catch (e) {
+    if (tok !== _viewerToken) return;
+    viewerSchliessen();
+    toast("Ansicht nicht möglich — Datei wird heruntergeladen");
+    dateiHerunterladen(d);
+  }
 }
 
 async function sha256Hex(arrayBuffer) {
@@ -916,6 +1062,128 @@ function endgueltigLoeschenDialog(docId) {
       toast("Endgültig gelöscht");
     }
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NACH-EINREIHEN — bestehende driveDocs mit Status "eingang" erneut in die
+// Klassifizierungs-Queue stellen (driveInbox, Status "pending"). Deckt
+// Einträge ab, die der Storage-Backfill überspringt (z. B. App-Uploads mit
+// Hash, deren Inbox-Eintrag fehlt oder auf "error" steht).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Einen bestehenden driveDocs-Eintrag zur Klassifizierung einreihen:
+// Datei laden → Text frisch extrahieren → Hash bilden (falls er fehlt) →
+// driveDocs anreichern → driveInbox mit Status "pending" schreiben
+// (identisches Feldschema wie beim Upload; n8n-Poll greift es beim
+// nächsten Lauf auf).
+async function driveEnqueueForClassification(docId, doc) {
+  doc = doc || S.docs[docId];
+  if (!doc) throw new Error("Unbekanntes Dokument: " + docId);
+  let url = doc.downloadUrl || null;
+  if (!url && doc.storagePath) {
+    try { url = await storage.ref(doc.storagePath).getDownloadURL(); } catch (e) {}
+  }
+  let text = String(doc.textauszug || "");
+  let hash = String(doc.hash || "");
+  if (url) {
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const ab = await resp.arrayBuffer();
+        const frisch = await extrahiereText({ name: doc.dateiname, type: doc.mimeType || "" }, ab);
+        if (frisch) text = frisch;
+        if (!hash) hash = await sha256Hex(ab);
+      }
+    } catch (e) { /* Metadaten reichen — n8n klassifiziert notfalls per Dateiname */ }
+  }
+  const duplikat = !!hash && Object.keys(S.docs).some(function (id) {
+    return id !== docId && S.docs[id] && S.docs[id].hash === hash;
+  });
+  const jetzt = new Date().toISOString();
+  await db.ref(P_DOCS + "/" + docId).update({
+    textauszug: text.slice(0, 2000),
+    hash: hash || null,
+    downloadUrl: url || doc.downloadUrl || "",
+    aktualisiert: jetzt
+  });
+  await db.ref(P_INBOX + "/" + docId).set({
+    docId: docId,
+    dateiname: doc.dateiname || "",
+    mimeType: doc.mimeType || "application/octet-stream",
+    text: text.slice(0, 6000),
+    hash: hash,
+    storagePath: doc.storagePath || "",
+    duplikat_verdacht: duplikat,
+    status: "pending",
+    erstellt: jetzt
+  });
+  return true;
+}
+window.driveEnqueueForClassification = driveEnqueueForClassification; // auch extern aufrufbar
+
+function rescanKandidaten() {
+  return Object.keys(S.docs).filter(function (id) {
+    const d = S.docs[id];
+    if (!d || d.status !== "eingang") return false;
+    const q = S.inbox[id];
+    if (q && (q.status === "pending" || q.status === "processing")) return false; // läuft bereits
+    return true;
+  });
+}
+
+let _rescanLaeuft = false, _rescanStop = false;
+
+function rescanDialog() {
+  const kandidaten = rescanKandidaten();
+  modalOeffnen(
+    "<h3>Eingang neu einreihen</h3>" +
+    '<div style="font-size:12.5px;color:var(--muted);line-height:1.55">Stellt alle Dokumente mit Status <b>Eingang</b>, die nicht bereits in der Queue warten oder verarbeitet werden, erneut zur KI-Klassifizierung ein (<code>driveInbox</code>, Status <code>pending</code>). Der Text wird dabei frisch extrahiert, fehlende Hashes werden ergänzt.</div>' +
+    '<div style="font-size:13px;margin-top:10px">Kandidaten: <b>' + kandidaten.length + "</b></div>" +
+    '<div id="bfFortschritt" style="font-size:12px;color:var(--muted);margin-top:10px"></div>' +
+    '<div id="bfLog" class="bf-log"></div>' +
+    '<div class="modal-aktionen">' +
+    '<button class="btn" data-action="modal-schliessen">Schliessen</button>' +
+    '<button class="btn gefahr" id="rescanStopp" data-action="drive-rescan-stopp" style="display:none">Stopp</button>' +
+    '<button class="btn primaer" id="rescanStart" data-action="drive-rescan-start"' + (kandidaten.length ? "" : " disabled") + ">Einreihen starten</button></div>",
+    null
+  );
+}
+
+async function rescanStarten() {
+  if (_rescanLaeuft) return;
+  if (!S.bereit || !auth || !auth.currentUser) { toast("Nicht angemeldet — Einreihen nicht möglich"); return; }
+  _rescanLaeuft = true; _rescanStop = false;
+  const startBtn = document.getElementById("rescanStart");
+  const stoppBtn = document.getElementById("rescanStopp");
+  if (startBtn) startBtn.style.display = "none";
+  if (stoppBtn) stoppBtn.style.display = "";
+  let ok = 0, fehler = 0;
+  try {
+    const ids = rescanKandidaten();
+    bfLog("Reihe " + ids.length + " Dokument(e) ein …");
+    for (let i = 0; i < ids.length; i++) {
+      if (_rescanStop) { bfLog("Gestoppt.", "warn"); break; }
+      const id = ids[i];
+      const d = S.docs[id];
+      bfFortschritt((i + 1) + " von " + ids.length + " — " + (d.titel_final || d.dateiname));
+      try {
+        await driveEnqueueForClassification(id, d);
+        ok++;
+        bfLog("Eingereiht: " + (d.titel_final || d.dateiname));
+      } catch (e) {
+        fehler++;
+        bfLog("Fehler: " + (d.titel_final || d.dateiname) + " — " + (e && e.message), "fehler");
+      }
+    }
+    const fazit = "Fertig. Eingereiht: " + ok + " · Fehler: " + fehler;
+    bfLog(fazit);
+    bfFortschritt("");
+    toast(fazit);
+  } finally {
+    _rescanLaeuft = false;
+    if (startBtn) startBtn.style.display = "";
+    if (stoppBtn) stoppBtn.style.display = "none";
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1300,8 +1568,11 @@ function renderDrawer() {
     if (v && d.status !== "abgelegt") {
       html += '<button class="btn primaer" data-action="uebernehmen" data-id="' + esc(docId) + '">✓ Übernehmen</button>';
     }
-    if (dateiKategorie(d) === "pdf" && d.downloadUrl && istEingebettet()) {
+    const kat = dateiKategorie(d);
+    if (kat === "pdf" && d.downloadUrl) {
       html += '<button class="btn primaer" data-action="pdf-editor" data-id="' + esc(docId) + '">📝 Im PDF-Editor öffnen</button>';
+    } else if ((kat === "bild" || kat === "docx" || kat === "text") && d.downloadUrl) {
+      html += '<button class="btn" data-action="datei-oeffnen" data-id="' + esc(docId) + '">📖 Öffnen</button>';
     }
     html += '<button class="btn" data-action="aendern" data-id="' + esc(docId) + '">' + (d.status === "abgelegt" ? "Verschieben / Umbenennen …" : "Ändern …") + "</button>";
     html += '<button class="btn" data-action="vorschau" data-id="' + esc(docId) + '">' + (S.vorschauOffen ? "Vorschau schliessen" : "👁 Vorschau") + "</button>";
@@ -1358,21 +1629,31 @@ document.addEventListener("click", function (e) {
       S.ansicht = { art: "ordner", folderId: id }; S.offen[id] = true; render(); break;
     case "doc-oeffnen":       docOeffnen(id); break;
     case "doc-details":       S.drawerDocId = id; S.vorschauOffen = false; renderDrawer(); break;
-    case "pdf-editor":        { const d = S.docs[id]; if (d) pdfImEditorOeffnen(d); break; }
+    case "pdf-editor":        { const d = S.docs[id]; if (d) pdfOeffnen(d); break; }
+    case "datei-oeffnen":     docOeffnen(id); break;
+    case "viewer-schliessen": viewerSchliessen(); break;
+    case "viewer-hintergrund":
+      // Klick auf den dunklen Hintergrund schliesst — der Inhaltsbereich
+      // (.vw-inhalt) füllt das Overlay, daher zählt auch er als Hintergrund.
+      if (e.target === el || e.target.classList.contains("vw-inhalt")) viewerSchliessen();
+      break;
     case "drawer-schliessen": drawerSchliessen(); break;
     case "neuer-ordner":      neuerOrdnerDialog(); break;
     case "login":             googleAnmelden(); break;
     case "backfill":          backfillDialog(); break;
     case "backfill-start":    backfillStarten(); break;
     case "backfill-stopp":    _bfStop = true; break;
+    case "drive-rescan":       rescanDialog(); break;
+    case "drive-rescan-start": rescanStarten(); break;
+    case "drive-rescan-stopp": _rescanStop = true; break;
     case "uebernehmen":       vorschlagUebernehmen(id); break;
     case "aendern":           zielAendernDialog(id); break;
     case "vorschau":          S.vorschauOffen = !S.vorschauOffen; renderDrawer(); break;
     case "papierkorb":        inPapierkorb(id); break;
     case "wiederherstellen":  wiederherstellen(id); break;
     case "endgueltig-loeschen": endgueltigLoeschenDialog(id); break;
-    case "modal-schliessen":  if (_bfLaeuft) _bfStop = true; modalSchliessen(); break;
-    case "modal-hintergrund": if (e.target === el) { if (_bfLaeuft) _bfStop = true; modalSchliessen(); } break;
+    case "modal-schliessen":  if (_bfLaeuft) _bfStop = true; if (_rescanLaeuft) _rescanStop = true; modalSchliessen(); break;
+    case "modal-hintergrund": if (e.target === el) { if (_bfLaeuft) _bfStop = true; if (_rescanLaeuft) _rescanStop = true; modalSchliessen(); } break;
     case "modal-ok":
       (function () {
         const cb = _modalOk; modalSchliessen();
@@ -1380,6 +1661,10 @@ document.addEventListener("click", function (e) {
       })();
       break;
   }
+});
+
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") viewerSchliessen();
 });
 
 document.getElementById("dateiInput").addEventListener("change", function (e) {
