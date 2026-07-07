@@ -35,6 +35,12 @@ export const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 export const SCOPES = [
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/gmail.modify",
+  // users.settings.filters (Absender/Domain blockieren): beim Blockieren wird
+  // ein echter Gmail-Filter angelegt, der künftige Mails serverseitig am
+  // Posteingang vorbeileitet. gmail.modify deckt Filter NICHT ab. Bestehende
+  // Verbindungen brauchen dafür einmalig ein erneutes „Mit Google verbinden"
+  // (login nutzt prompt=consent + include_granted_scopes, nichts weiter nötig).
+  "https://www.googleapis.com/auth/gmail.settings.basic",
 ];
 export const SCOPE = SCOPES.join(" ");
 

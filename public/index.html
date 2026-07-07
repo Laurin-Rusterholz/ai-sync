@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Quantus</title>
-  <meta name="quantus-build" content="briefing-5p-autofit+messages · 2026-06-21" />
+  <meta name="quantus-build" content="gmail-block-filters · 2026-07-07" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -96890,7 +96890,19 @@ console.log('📚 Leseliste geladen');
       + exportBtn
       + '</span>';
     var head = '<div class="gml-listhead"><span>'+esc(spec.title)+'</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+GM.messages.length+(GM.nextPageToken?"+":"")+'</span>'+toolrow+'</span></div>';
-    if (!GM.messages.length) return head + '<div class="gml-empty"><div style="font-size:44px">📭</div><p>Keine Nachrichten gefunden.</p></div>';
+    // „Blockiert"-Ansicht: Blockliste (Adressen + Domains) verwalten — Klick auf ✕ entsperrt
+    // (löscht den Gmail-Filter und holt die Mails zurück in den Posteingang).
+    var blockPanel = "";
+    if (GM.smart==="blocked"){
+      var bEntries = Array.from(GM._blockSet||loadBlocklist()).sort();
+      blockPanel = '<div class="gml-blockpanel" style="padding:10px 14px;border-bottom:1px solid var(--border)">'
+        + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Blockierte Absender ('+bEntries.length+')</div>'
+        + (bEntries.length
+            ? bEntries.map(function(en){ var isDom=en.charAt(0)==="@"; return '<span style="display:inline-flex;align-items:center;gap:6px;margin:0 6px 6px 0;padding:3px 9px;border:1px solid var(--border);border-radius:12px;font-size:12px" title="'+(isDom?"Ganze Domain blockiert":"Adresse blockiert")+'">'+(isDom?"🌐":"✉️")+' '+esc(en)+'<span style="cursor:pointer;opacity:.7" title="Entsperren – Gmail-Filter wird entfernt, Mails zurück in den Posteingang" onclick="gmailUnblock(\''+jsStr(en)+'\')">✕</span></span>'; }).join("")
+            : '<div style="font-size:12px;color:var(--muted)">Keine Absender blockiert. Blockiere über das ⛔-Symbol in der Mail-Liste oder im ⋯-Menü einer Mail.</div>')
+        + '</div>';
+    }
+    if (!GM.messages.length) return head + blockPanel + '<div class="gml-empty"><div style="font-size:44px">📭</div><p>Keine Nachrichten gefunden.</p></div>';
     // Punkt 2: Bulk-Aktionsleiste (nur bei Auswahl; KEINE permanente Löschung)
     var selN = selCount();
     var bulk = selN ? ('<div class="gml-bulkbar">'
@@ -96903,7 +96915,7 @@ console.log('📚 Leseliste geladen');
       + '<button class="gml-bulk-btn ghost" onclick="gmailClearSelection()">Abbrechen</button>'
       + '</div>') : '';
     var more = GM.nextPageToken ? '<div style="text-align:center;padding:14px"><button class="btn" onclick="gmailLoadMore()"'+(GM.listLoading?" disabled":"")+'>'+(GM.listLoading?"Lädt…":"Mehr laden")+'</button></div>' : "";
-    return head + bulk + '<div class="gml-list'+(GM.density==="compact"?" compact":"")+'">'+rows.map(function(m,i){ return renderRow(m,i); }).join("")+'</div>' + more;
+    return head + blockPanel + bulk + '<div class="gml-list'+(GM.density==="compact"?" compact":"")+'">'+rows.map(function(m,i){ return renderRow(m,i); }).join("")+'</div>' + more;
   }
 
   function renderMessageView(){
@@ -98601,9 +98613,22 @@ console.log('📚 Leseliste geladen');
   function personOf(h){ var idx=GM._personIdx||refreshPersonIndex(); return idx.byEmail.get(addrOf(h))||null; }
 
   // ── Blocklist (persisted in APP.state.data.gmailBlocklist) ──
+  //    Einträge: "user@domain.tld" (genau diese Adresse) ODER "@domain.tld"
+  //    (alle Absender der Domain). Pro Eintrag wird zusätzlich ein echter
+  //    Gmail-Filter angelegt (users.settings.filters), damit KÜNFTIGE Mails den
+  //    Posteingang serverseitig überspringen — sonst blendet die Blockliste nur
+  //    in Quantus aus und neue Mails landen trotzdem wieder im Posteingang.
+  //    Filter-IDs: APP.state.data.gmailBlockFilters = { eintrag: filterId }.
   function loadBlocklist(){ try { var arr=(window.APP&&APP.state&&APP.state.data&&APP.state.data.gmailBlocklist)||[]; GM._blockSet=new Set(arr.map(function(x){return String(x).toLowerCase();})); } catch(e){ GM._blockSet=new Set(); } return GM._blockSet; }
   function saveBlocklist(){ try { APP.state.data.gmailBlocklist = Array.from(GM._blockSet||[]); if(typeof window.scheduleSave==="function") window.scheduleSave(); } catch(e){} }
-  function isBlocked(email){ if(!GM._blockSet) loadBlocklist(); return GM._blockSet.has(String(email||"").toLowerCase()); }
+  function blockFilters(){ try { var d=APP.state.data; if(!d.gmailBlockFilters||typeof d.gmailBlockFilters!=="object") d.gmailBlockFilters={}; return d.gmailBlockFilters; } catch(e){ return {}; } }
+  function domainOf(email){ var e=String(email||"").toLowerCase(); var at=e.lastIndexOf("@"); return at>=0 ? e.slice(at) : ""; }  // → "@domain.tld"
+  function isBlocked(email){
+    if(!GM._blockSet) loadBlocklist();
+    var e=String(email||"").toLowerCase(); if(!e) return false;
+    if (GM._blockSet.has(e)) return true;
+    var d=domainOf(e); return !!(d && GM._blockSet.has(d));
+  }
 
   // ── Resolve / create the Quantus labels ──
   function resolveQuantusLabels(){
@@ -98643,31 +98668,104 @@ console.log('📚 Leseliste geladen');
     } catch(e){ toast("err","Fehler", e.message||"Konnte nicht abhaken"); }
   };
 
-  // ── Absender blockieren (lokale Blockliste + Label, nichts löschen) ──
-  window.gmailBlockSenderOf = async function(id){
+  // ── Absender blockieren (Blockliste + echter Gmail-Filter + Label) ──
+  //    Drei Ebenen, damit blockierte Mails wirklich NIE mehr im Posteingang
+  //    landen (auch nicht in der Gmail-App selbst):
+  //    1) Lokale Blockliste → sofortiges Ausblenden in allen Quantus-Ansichten.
+  //    2) Gmail-Filter (users.settings.filters) → Gmail archiviert künftige
+  //       Mails des Absenders/der Domain selbst („Posteingang überspringen")
+  //       und labelt sie mit Quantus/Blockiert.
+  //    3) Bestehende Mails (bis 500, paginiert) → Quantus/Blockiert + aus dem
+  //       Posteingang. Es wird nichts gelöscht.
+  async function listMsgIds(q, cap){
+    var ids=[], token=null;
+    do {
+      var query={ q:q, maxResults:"100" }; if (token) query.pageToken=token;
+      var res=await gmApi("GET","/users/me/messages",{ query:query });
+      (res.messages||[]).forEach(function(m){ ids.push(m.id); });
+      token=res.nextPageToken||null;
+    } while (token && ids.length<cap);
+    return ids.slice(0,cap);
+  }
+  async function createBlockFilter(entry, blkLabelId){
+    var map=blockFilters(); if (map[entry]) return;   // Filter existiert bereits
+    // criteria.from versteht wie die Gmail-Suche "user@x.tld" UND "@x.tld" (Domain).
+    var f=await gmApi("POST","/users/me/settings/filters",{ body:{ criteria:{ from:entry }, action:{ addLabelIds:[blkLabelId], removeLabelIds:["INBOX"] } } });
+    if (f && f.id){ map[entry]=f.id; if(typeof window.scheduleSave==="function") window.scheduleSave(); }
+  }
+  async function blockEntry(entry){
+    entry=String(entry||"").toLowerCase().trim(); if(!entry) throw new Error("Keine Adresse");
+    if (!GM._blockSet) loadBlocklist();
+    GM._blockSet.add(entry); saveBlocklist();
+    var blk = await ensureLabel(QBLOCK);
+    var filterWarn = "";
+    try { await createBlockFilter(entry, blk); }
+    catch(e){
+      // Ältere Google-Verbindungen haben den Scope gmail.settings.basic noch
+      // nicht → Filter erst nach erneutem „Mit Google verbinden" möglich.
+      // Blockieren via Label + Ausblenden funktioniert trotzdem sofort.
+      filterWarn = (e.status===403)
+        ? "Gmail-Filter für neue Mails konnte nicht angelegt werden. Bitte in den Einstellungen Google trennen und neu verbinden (neue Berechtigung nötig). Bis dahin werden neue Mails nur in Quantus ausgeblendet."
+        : "Gmail-Filter konnte nicht angelegt werden: "+(e.message||"Fehler");
+    }
+    var ids = await listMsgIds("from:"+entry, 500);
+    if (ids.length) await gmApi("POST","/users/me/messages/batchModify", { body:{ ids:ids, addLabelIds:[blk], removeLabelIds:["INBOX"] } });
+    return { count:ids.length, filterWarn:filterWarn };
+  }
+  window.gmailBlockSenderOf = function(id){
     var src = GM.messages.find(function(m){return m.id===id;}) || ((GM.open&&GM.open.id===id)?GM.open:null);
     var email = src ? addrOf(src.from) : "";
     if (!email){ toast("err","Kein Absender",""); return; }
-    if (!confirm("Absender blockieren?\n\n"+email+"\n\nKünftige Mails werden in deinen Quantus-Ansichten ausgeblendet und vorhandene mit '"+QBLOCK+"' aus dem Posteingang genommen. Es wird nichts gelöscht.")) return;
+    gmailBlockDialog(email);
+  };
+  // Auswahl-Dialog: nur diese Adresse ODER die ganze Domain blockieren.
+  function closeBlockDialog(){ var el=document.getElementById("gmlBlockDlg"); if(el&&el.parentNode) el.parentNode.removeChild(el); }
+  window.gmailBlockDialogClose = closeBlockDialog;
+  window.gmailBlockDialog = function(email){
+    email=String(email||"").toLowerCase(); var dom=domainOf(email);
+    closeBlockDialog();
+    var wrap=document.createElement("div"); wrap.id="gmlBlockDlg";
+    wrap.style.cssText="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px";
+    wrap.innerHTML = '<div style="background:var(--panel,#1c1c22);border:1px solid var(--border,#333);border-radius:14px;max-width:460px;width:100%;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.45)">'
+      + '<div style="font-size:15px;font-weight:700;margin-bottom:6px;color:var(--text,#eee)">⛔ Absender blockieren</div>'
+      + '<div style="font-size:12.5px;color:var(--muted,#999);line-height:1.5;margin-bottom:14px">Bestehende Mails wandern mit „'+esc(QBLOCK)+'" aus dem Posteingang und ein Gmail-Filter sorgt dafür, dass künftige Mails den Posteingang gar nicht mehr erreichen. Es wird nichts gelöscht.</div>'
+      + '<button class="btn" style="display:block;width:100%;margin-bottom:8px;text-align:left" onclick="gmailBlockConfirm(\''+jsStr(email)+'\')">✉️ Nur diese Adresse<br><span style="font-size:11px;color:var(--muted,#999);font-weight:400">'+esc(email)+'</span></button>'
+      + (dom ? '<button class="btn" style="display:block;width:100%;margin-bottom:8px;text-align:left" onclick="gmailBlockConfirm(\''+jsStr(dom)+'\')">🌐 Ganze Domain<br><span style="font-size:11px;color:var(--muted,#999);font-weight:400">alle Absender mit '+esc(dom)+'</span></button>' : '')
+      + '<button class="btn" style="display:block;width:100%;opacity:.75" onclick="gmailBlockDialogClose()">Abbrechen</button>'
+      + '</div>';
+    wrap.addEventListener("click", function(ev){ if(ev.target===wrap) closeBlockDialog(); });
+    document.body.appendChild(wrap);
+  };
+  window.gmailBlockConfirm = async function(entry){
+    closeBlockDialog();
     try {
-      GM._blockSet.add(email); saveBlocklist();
-      var blk = await ensureLabel(QBLOCK);
-      var res = await gmApi("GET","/users/me/messages", { query:{ q:"from:"+email, maxResults:"100" } });
-      var ids = (res.messages||[]).map(function(m){return m.id;});
-      if (ids.length) await gmApi("POST","/users/me/messages/batchModify", { body:{ ids:ids, addLabelIds:[blk], removeLabelIds:["INBOX"] } });
-      GM.messages = GM.messages.filter(function(m){ return addrOf(m.from)!==email; });
-      if (GM.open && addrOf(GM.open.from)===email) GM.open=null;
-      toast("ok","Blockiert", email+" – "+ids.length+" Mail(s) aus Posteingang genommen");
+      var r = await blockEntry(entry);
+      GM.messages = GM.messages.filter(function(m){ return !isBlocked(addrOf(m.from)); });
+      if (GM.open && isBlocked(addrOf(GM.open.from))) GM.open=null;
+      toast("ok","Blockiert", entry+" – "+r.count+" Mail(s) aus dem Posteingang genommen");
+      if (r.filterWarn) toast("warn","Gmail-Filter", r.filterWarn);
       rerender();
     } catch(e){ toast("err","Fehler", e.message||"Blockieren fehlgeschlagen"); }
   };
-  window.gmailUnblock = async function(email){
-    email=String(email||"").toLowerCase(); if(!email) return;
-    GM._blockSet.delete(email); saveBlocklist();
+  window.gmailUnblock = async function(entry){
+    entry=String(entry||"").toLowerCase(); if(!entry) return;
+    if (!GM._blockSet) loadBlocklist();
+    GM._blockSet.delete(entry); saveBlocklist();
+    // Gmail-Filter entfernen, damit neue Mails wieder normal ankommen (best effort).
     try {
-      var blk = GM.labelIds.blocked; if (blk){ var res=await gmApi("GET","/users/me/messages",{query:{q:"from:"+email+" label:Quantus-Blockiert",maxResults:"100"}}); var ids=(res.messages||[]).map(function(m){return m.id;}); if(ids.length) await gmApi("POST","/users/me/messages/batchModify",{body:{ids:ids,addLabelIds:["INBOX"],removeLabelIds:[blk]}}); }
+      var map=blockFilters(), fid=map[entry];
+      if (fid){ await gmApi("DELETE","/users/me/settings/filters/"+encodeURIComponent(fid)); }
+      if (map[entry]!==undefined){ delete map[entry]; if(typeof window.scheduleSave==="function") window.scheduleSave(); }
     } catch(e){}
-    toast("ok","Entsperrt", email); if (GM.smart==="blocked") loadMessages(true); else rerender();
+    // Vorhandene blockierte Mails zurück in den Posteingang.
+    try {
+      var blk = GM.labelIds.blocked;
+      if (blk){
+        var ids = await listMsgIds("from:"+entry+" label:Quantus-Blockiert", 500);
+        if (ids.length) await gmApi("POST","/users/me/messages/batchModify",{body:{ids:ids,addLabelIds:["INBOX"],removeLabelIds:[blk]}});
+      }
+    } catch(e){}
+    toast("ok","Entsperrt", entry); if (GM.smart==="blocked") loadMessages(true); else rerender();
   };
 
   // ── Export ──
@@ -99698,12 +99796,12 @@ console.log('📚 Leseliste geladen');
       var hh=headerMap(m2.payload); return "✅ Erledigt: "+(hh.subject||m2.id);
     }
     if (cmd==="BLOCK"){
+      // Akzeptiert "user@x.tld" (Adresse) oder "@x.tld" (ganze Domain); nutzt
+      // denselben Codepfad wie die UI (blockEntry → Gmail-Filter + Label).
       var email=(a[0]||"").trim().toLowerCase(); if(!email) return "❌ Keine E-Mail-Adresse";
       if(!confirm("Der KI-Assistent möchte den Absender blockieren:\n\n"+email+"\n\nBlockieren?")) return "↩️ Abgebrochen";
-      GM._blockSet.add(email); saveBlocklist();
-      var blk=await ensureLabel(QBLOCK); var r=await gmApi("GET","/users/me/messages",{query:{q:"from:"+email,maxResults:"100"}}); var ids2=(r.messages||[]).map(function(m){return m.id;});
-      if(ids2.length) await gmApi("POST","/users/me/messages/batchModify",{body:{ids:ids2,addLabelIds:[blk],removeLabelIds:["INBOX"]}});
-      return "⛔ Blockiert: "+email+" ("+ids2.length+" Mail(s))";
+      var rb=await blockEntry(email);
+      return "⛔ Blockiert: "+email+" ("+rb.count+" Mail(s))"+(rb.filterWarn?("\n⚠️ "+rb.filterWarn):"");
     }
     return "❓ Unbekannter Mail-Befehl: "+cmd;
   }

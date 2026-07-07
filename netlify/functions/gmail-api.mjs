@@ -40,12 +40,16 @@ const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 //   users.messages.batchModify POST /users/me/messages/batchModify  (Bulk Erledigt/Blockieren)
 //   users.threads.list/get   GET    /users/me/threads[/<id>]
 //   users.threads.modify     POST   /users/me/threads/<id>/modify
+//   users.settings.filters   GET/POST   /users/me/settings/filters        (Blockieren:
+//                            DELETE     /users/me/settings/filters/<id>    echter Gmail-
+//                            Filter „von Absender/Domain → Posteingang überspringen +
+//                            Quantus/Blockiert"; braucht Scope gmail.settings.basic)
 // The "(?!send\/)" guard keeps the literal send endpoint from also matching the
 // "<id>/modify" shape, so a bogus "/messages/send/modify" is rejected up front.
 // messages/<id>/attachments/<attachmentId> (GET, read-only) ergänzt — für Anhang-Inhalt
 // (Termin-Erkennung / Entwurfs-Kontext). Vom bestehenden Scope gmail.modify abgedeckt,
 // kein neuer OAuth-Scope, keine weiteren Pfade.
-const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify|\/attachments\/[^/?#]+)?)?|threads(\/[^/?#]+(\/modify)?)?)$/;
+const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify|\/attachments\/[^/?#]+)?)?|threads(\/[^/?#]+(\/modify)?)?|settings\/filters(\/[^/?#]+)?)$/;
 
 async function callGoogle(method, fullUrl, bodyObj, token) {
   const init = {
