@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#05060a">
 <title>Quantus — Ruhestand</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet">
 <style>
   /* ══════════════════════════════════════════════════════════════════════
      QUANTUS RUHESTAND — Ambient-Standby-Seite
@@ -64,6 +66,16 @@
     75%{transform:translate(.8vw,1.6vh)}
     100%{transform:translate(0,0)}
   }
+  /* Gleicher Drift für fixe Elemente außerhalb von #stage (Ecken, Telemetrie):
+     animiert die separate translate-Property, damit transform (z.B.
+     translateY(-50%) der Telemetrie) unangetastet bleibt. */
+  @keyframes oledDriftT{
+    0%{translate:0 0}
+    25%{translate:1.2vw -1.6vh}
+    50%{translate:-1.4vw -.6vh}
+    75%{translate:.8vw 1.6vh}
+    100%{translate:0 0}
+  }
 
   #hudWrap{position:relative;width:min(78vmin,860px);height:min(78vmin,860px)}
   #hud{position:absolute;inset:0;width:100%;height:100%}
@@ -73,6 +85,7 @@
     position:absolute;inset:0;
     display:flex;flex-direction:column;align-items:center;justify-content:center;
     text-align:center;pointer-events:none;
+    padding:0 17%;  /* Texte bleiben in der freien Innenzone der Ringe (schmale Screens: umbrechen statt überlappen) */
   }
   #clock{
     font-size:clamp(38px,9vmin,104px);
@@ -88,7 +101,7 @@
     font-weight:500;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;
   }
   #modeLine{
-    margin-top:2.6vmin;display:flex;align-items:center;gap:1vmin;
+    margin-top:2.6vmin;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:1vmin;
     font-family:var(--mono);font-size:clamp(9px,1.35vmin,13px);
     letter-spacing:.3em;text-transform:uppercase;color:var(--accent);
   }
@@ -100,7 +113,7 @@
   @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
 
   /* ── Ecken-Klammern (HUD-Rahmen) ── */
-  .corner{position:fixed;width:54px;height:54px;border:1px solid var(--accent-dim);opacity:.7;animation:cornerGlow 5s ease-in-out infinite}
+  .corner{position:fixed;width:54px;height:54px;border:1px solid var(--accent-dim);opacity:.7;animation:cornerGlow 5s ease-in-out infinite,oledDriftT 240s ease-in-out infinite}
   .corner.tl{top:26px;left:26px;border-right:none;border-bottom:none}
   .corner.tr{top:26px;right:26px;border-left:none;border-bottom:none}
   .corner.bl{bottom:26px;left:26px;border-right:none;border-top:none}
@@ -113,6 +126,7 @@
     display:none;flex-direction:column;gap:2.2vmin;
     font-family:var(--mono);font-size:11px;letter-spacing:.18em;
     color:var(--muted);text-transform:uppercase;
+    animation:oledDriftT 240s ease-in-out infinite;
   }
   .telemetry .tl-item{display:flex;flex-direction:column;gap:6px;min-width:150px}
   .telemetry .tl-label{font-size:9px;opacity:.6}
@@ -128,15 +142,21 @@
   /* Auf Ultrawide (z.B. 5120×1440, 32:9) füllen die Leisten die Flanken */
   @media (min-aspect-ratio:2/1){.telemetry{display:flex}}
 
-  /* ── Bedienelemente: erscheinen bei Mausbewegung, blenden wieder aus ── */
+  /* ── Bedienelemente: erscheinen bei Mausbewegung/Tastaturfokus.
+     Ausgeblendet ist der Button auch nicht hit-testbar (sonst bricht die
+     unsichtbare Fläche das cursor:none-Verhalten); Tab-Fokus bleibt möglich
+     und blendet die UI über :focus-within/focusin ein. ── */
   #uiLayer{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .5s ease}
-  body.ui-visible #uiLayer{opacity:1}
+  body.ui-visible #uiLayer,#uiLayer:focus-within{opacity:1}
+  #backBtn{pointer-events:none}
+  body.ui-visible #backBtn,#uiLayer:focus-within #backBtn{pointer-events:auto}
+  #backBtn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-color:var(--accent)}
   #backBtn{
     position:fixed;top:22px;left:50%;transform:translateX(-50%);
     pointer-events:auto;cursor:pointer;
     display:flex;align-items:center;gap:10px;
     padding:10px 22px;border-radius:12px;
-    background:rgba(33,40,48,.78);backdrop-filter:blur(14px);
+    background:rgba(33,40,48,.78);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
     border:1px solid rgba(79,90,102,.55);
     color:var(--text);font-family:var(--sans);font-size:13.5px;font-weight:600;letter-spacing:.02em;
     transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease;
@@ -157,12 +177,22 @@
     padding:2px 7px;margin:0 4px;color:var(--text);background:rgba(33,40,48,.6);
   }
 
-  /* ── Vignette für Tiefe ── */
+  /* ── Vignette für Tiefe — liegt im DOM VOR Ecken/Telemetrie/UI, damit
+     sie nur Sterne/Nebel/HUD abdunkelt, nicht die Randelemente ── */
   #vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 52%,rgba(2,3,6,.55) 100%)}
 
-  /* ── Reduzierte Bewegung: alles beruhigen, Uhr bleibt ── */
+  /* ── Sehr schmale Viewports: Ecken weglassen, Hint kompakter (sonst Überlappung) ── */
+  @media (max-width:520px){
+    .corner{display:none}
+    #hint{letter-spacing:.1em}
+  }
+
+  /* ── Reduzierte Bewegung: Deko-Animationen beruhigen. Der 240s-OLED-Drift
+     bleibt bewusst aktiv: ~1vw Versatz über Minuten ist vestibulär
+     unkritisch, schützt aber das Panel vor Burn-in. ── */
   @media (prefers-reduced-motion:reduce){
-    .nebula,#stage,.corner,#modeLine .dot,.telemetry .tl-bar i{animation:none!important}
+    .nebula,#modeLine .dot,.telemetry .tl-bar i{animation:none!important}
+    .corner{animation:oledDriftT 240s ease-in-out infinite}
   }
 </style>
 </head>
@@ -184,6 +214,8 @@
   </div>
 </div>
 
+<div id="vignette"></div>
+
 <div class="corner tl"></div>
 <div class="corner tr"></div>
 <div class="corner bl"></div>
@@ -200,8 +232,6 @@
   <div class="tl-item"><span class="tl-label">Signal</span><span class="tl-value">Quantus // QNT-05</span><span class="tl-bar"><i></i></span></div>
 </div>
 
-<div id="vignette"></div>
-
 <div id="uiLayer">
   <a id="backBtn" href="index.html" title="Zurück zu Quantus"><span class="logo"></span>Zurück zu Quantus</a>
   <div id="hint"><kbd>ESC</kbd> oder Klick — zurück zur App</div>
@@ -211,7 +241,8 @@
 (function(){
 "use strict";
 
-var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+var motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+var reducedMotion = motionQuery.matches;
 var DPR = Math.min(window.devicePixelRatio || 1, 2);
 
 /* ════════════════════════════════════════════════════════════
@@ -225,7 +256,16 @@ var stars = [], meteors = [];
 var W = 0, H = 0, CX = 0, CY = 0;
 var STAR_SPEED = reducedMotion ? 0.0006 : 0.012;  // Warp-Tempo (Anteil Tiefe/Frame @60fps)
 
+// OS-Einstellung „Bewegung reduzieren" auch zur Laufzeit honorieren (Seite läuft dauerhaft)
+function applyMotionPref(){
+  reducedMotion = motionQuery.matches;
+  STAR_SPEED = reducedMotion ? 0.0006 : 0.012;
+}
+if (motionQuery.addEventListener) motionQuery.addEventListener("change", applyMotionPref);
+else if (motionQuery.addListener) motionQuery.addListener(applyMotionPref);
+
 function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);  // neu lesen: Zoom/Monitorwechsel ändern das DPR
   W = window.innerWidth; H = window.innerHeight;
   CX = W / 2; CY = H / 2;
   starCanvas.width = Math.round(W * DPR);
@@ -518,8 +558,10 @@ function updateClock(){
     tlUptime.textContent = pad(Math.floor(up / 3600)) + ":" + pad(Math.floor(up / 60) % 60) + ":" + pad(up % 60);
   }
   if (tlDay){
-    var start = new Date(d.getFullYear(), 0, 0);
-    tlDay.textContent = "Tag " + Math.floor((d - start) / 86400000) + " / " + (((d.getFullYear() % 4 === 0 && d.getFullYear() % 100 !== 0) || d.getFullYear() % 400 === 0) ? 366 : 365);
+    // UTC-Mitternachts-Differenz: immun gegen die DST-Stunde (sonst Tag−1 zwischen 0 und 1 Uhr im Sommer)
+    var y = d.getFullYear();
+    var dayN = Math.floor((Date.UTC(y, d.getMonth(), d.getDate()) - Date.UTC(y, 0, 1)) / 86400000) + 1;
+    tlDay.textContent = "Tag " + dayN + " / " + (((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365);
   }
   if (tlWeek) tlWeek.textContent = "KW " + pad(isoWeek(d));
 }
@@ -531,6 +573,8 @@ setInterval(updateClock, 1000);
    ════════════════════════════════════════════════════════════ */
 var lastFrame = performance.now();
 var running = true;
+var rafId = 0;   // ausstehender rAF — wird beim Pausieren gecancelt, sonst
+                 // stapeln sich nach Hidden→Visible-Zyklen parallele Loops
 
 function frame(nowMs){
   if (!running) return;
@@ -539,17 +583,21 @@ function frame(nowMs){
   var dtNorm = dt / 16.6667;                   // 1.0 ≙ 60 fps — geräteunabhängiges Tempo (144 Hz!)
   drawStars(dtNorm);
   drawHud(nowMs / 1000);
-  requestAnimationFrame(frame);
+  rafId = requestAnimationFrame(frame);
 }
 
 document.addEventListener("visibilitychange", function(){
-  if (document.hidden){ running = false; }
-  else if (!running){ running = true; lastFrame = performance.now(); requestAnimationFrame(frame); }
+  if (document.hidden){
+    running = false;
+    cancelAnimationFrame(rafId);
+  } else if (!running){
+    running = true; lastFrame = performance.now(); rafId = requestAnimationFrame(frame);
+  }
 });
 
 window.addEventListener("resize", resize);
 resize();
-requestAnimationFrame(frame);
+rafId = requestAnimationFrame(frame);
 
 /* ════════════════════════════════════════════════════════════
    5) BEDIENUNG — Maus zeigt UI, ESC/Klick führt zurück zur App
@@ -561,7 +609,16 @@ function showUi(){
   uiTimeout = setTimeout(function(){ document.body.classList.remove("ui-visible"); }, 3200);
 }
 window.addEventListener("mousemove", showUi);
-window.addEventListener("touchstart", showUi, { passive: true });
+window.addEventListener("focusin", showUi);   // Tastatur (Tab auf Back-Button) zeigt die UI ebenfalls
+
+// Touch: der erste Tap zeigt nur die UI (und schluckt den zugehörigen Klick),
+// erst ein Tap bei sichtbarer UI navigiert zurück — sonst käme man auf
+// Touch-Geräten nie dazu, Button/Hinweis überhaupt zu sehen.
+var touchShowedUi = false;
+window.addEventListener("touchstart", function(){
+  if (!document.body.classList.contains("ui-visible")) touchShowedUi = true;
+  showUi();
+}, { passive: true });
 
 function goBack(){ window.location.href = "index.html"; }
 window.addEventListener("keydown", function(e){
@@ -570,6 +627,7 @@ window.addEventListener("keydown", function(e){
 // Klick irgendwo (außer auf den Button selbst, der navigiert ohnehin) → zurück
 window.addEventListener("click", function(e){
   if (e.target.closest && e.target.closest("#backBtn")) return;
+  if (touchShowedUi){ touchShowedUi = false; return; }
   goBack();
 });
 
