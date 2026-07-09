@@ -519,8 +519,10 @@ async function googleAnmelden() {
 }
 
 function listenerStarten() {
-  db.ref(P_FOLDERS).on("value", function (snap) { S.ordner = snap.val() || {}; render(); });
-  db.ref(P_DOCS).on("value",    function (snap) { S.docs   = snap.val() || {}; render(); });
+  // autoAblage() nach beiden Updates: Docs können vor dem Ordnerbaum eintreffen
+  // (und umgekehrt) — die Funktion prüft selbst, ob beides bereit ist.
+  db.ref(P_FOLDERS).on("value", function (snap) { S.ordner = snap.val() || {}; render(); autoAblage(); });
+  db.ref(P_DOCS).on("value",    function (snap) { S.docs   = snap.val() || {}; render(); autoAblage(); });
   db.ref(P_INBOX).on("value",   function (snap) { S.inbox  = snap.val() || {}; render(); });
 }
 
@@ -746,9 +748,18 @@ function ordnerWurzel(id) {
   while (cur && S.ordner[cur] && S.ordner[cur].parentId && schutz++ < 20) cur = S.ordner[cur].parentId;
   return cur && S.ordner[cur] ? S.ordner[cur] : null;
 }
+// Namensvergleich für Ordner: case-insensitive und Umlaut-tolerant —
+// „Persönlich" ≡ „Persoenlich", Akzente werden entfernt. So mappt der
+// KI-Vorschlag zuverlässig auf bestehende driveFolders-Einträge.
+function normName(s) {
+  return String(s == null ? "" : s).toLowerCase()
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ").trim();
+}
 function findeOrdner(name, parentId) {
-  const n = lc(name);
-  return kinder(parentId).find(function (id) { return lc(S.ordner[id].name) === n; }) || null;
+  const n = normName(name);
+  return kinder(parentId).find(function (id) { return normName(S.ordner[id].name) === n; }) || null;
 }
 async function findeOderErstelleOrdner(name, parentId, typ, bereichName) {
   const vorhanden = findeOrdner(name, parentId);
@@ -820,6 +831,69 @@ async function loadMammothLibrary() {
   return false;
 }
 
+// ── OCR-Fallback für PDFs ohne Textebene (gescannte/bildbasierte PDFs) ──
+// Tesseract.js wird lazy per CDN geladen — NUR wenn ein PDF keinen Text
+// liefert; die App wird dadurch nicht grösser. Sprachen: Deutsch + Englisch.
+async function loadTesseractLibrary() {
+  if (window.Tesseract) return true;
+  const urls = [
+    "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js",
+    "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"
+  ];
+  for (const url of urls) {
+    try {
+      await new Promise(function (resolve, reject) {
+        const s = document.createElement("script");
+        s.src = url; s.crossOrigin = "anonymous";
+        s.onload = resolve; s.onerror = reject;
+        setTimeout(function () { reject(new Error("Timeout")); }, 20000);
+        document.head.appendChild(s);
+      });
+      if (window.Tesseract) return true;
+    } catch (e) { /* nächste Quelle */ }
+  }
+  return false;
+}
+
+// Erste Seiten eines PDFs rendern und per OCR lesen. Wirft nie — liefert ""
+// wenn OCR nicht möglich ist (Engine nicht ladbar, Render-Fehler, …).
+const OCR_MAX_SEITEN = 5;
+async function pdfOcrText(arrayBuffer, dateiname) {
+  try {
+    toast("OCR läuft für " + (dateiname || "PDF") + " …");
+    if (!(await loadPDFLibrary()) || !window.pdfjsLib) return "";
+    if (!(await loadTesseractLibrary()) || !window.Tesseract) {
+      toast("OCR nicht möglich — Tesseract.js nicht ladbar (Adblocker/Netz?)");
+      return "";
+    }
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)), disableWorker: true }).promise;
+    const n = Math.min(pdf.numPages, OCR_MAX_SEITEN);
+    let worker = null;
+    try { if (window.Tesseract.createWorker) worker = await window.Tesseract.createWorker("deu+eng"); } catch (e) { worker = null; }
+    const teile = [];
+    try {
+      for (let i = 1; i <= n; i++) {
+        toast("OCR läuft für " + (dateiname || "PDF") + " … Seite " + i + "/" + n);
+        const page = await pdf.getPage(i);
+        const vp = page.getViewport({ scale: 2 });
+        const cv = document.createElement("canvas");
+        cv.width = vp.width; cv.height = vp.height;
+        await page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise;
+        const res = worker ? await worker.recognize(cv) : await window.Tesseract.recognize(cv, "deu+eng");
+        teile.push(String((res && res.data && res.data.text) || ""));
+      }
+    } finally {
+      if (worker) { try { await worker.terminate(); } catch (e) {} }
+    }
+    let text = teile.join("\n\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    if (text && pdf.numPages > n) text += "\n\n[OCR: nur die ersten " + n + " von " + pdf.numPages + " Seiten erkannt]";
+    return text;
+  } catch (e) {
+    console.warn("[Drive] OCR fehlgeschlagen:", dateiname, e && e.message);
+    return "";
+  }
+}
+
 async function extrahiereText(file, arrayBuffer) {
   const name = lc(file.name);
   const typ = file.type || "";
@@ -838,7 +912,13 @@ async function extrahiereText(file, arrayBuffer) {
       }
       let text = seiten.join("\n\n");
       if (pdf.numPages > maxSeiten) text += "\n\n[... " + (pdf.numPages - maxSeiten) + " weitere Seiten nicht extrahiert ...]";
-      return text.replace(/[ \t]+/g, " ").trim();
+      text = text.replace(/[ \t]+/g, " ").trim();
+      // Keine/kaum Textebene → gescanntes PDF: OCR-Fallback (Tesseract, lazy)
+      if (text.replace(/\s+/g, "").length < 20) {
+        const ocr = await pdfOcrText(arrayBuffer, file.name);
+        if (ocr && ocr.length > text.length) return "[OCR] " + ocr;
+      }
+      return text;
     }
     // ─── Word .docx (mammoth) ───
     if (name.endsWith(".docx") || typ === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
@@ -916,7 +996,7 @@ async function dateiHochladen(file) {
       status: "eingang",
       folderId: null,
       vorschlag: null,
-      textauszug: text.slice(0, 2000),
+      textauszug: text.slice(0, 12000),
       erstellt: jetzt,
       aktualisiert: jetzt
     });
@@ -945,29 +1025,70 @@ async function dateiHochladen(file) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// VORSCHLAG ÜBERNEHMEN / ÄNDERN / PAPIERKORB
+// VORSCHLAG ÜBERNEHMEN / AUTO-ABLAGE / ÄNDERN / PAPIERKORB
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Kern-Zuordnung: KI-Vorschlag (vorschlag.bereich/unterordner/thema) auf echte
+// driveFolders-IDs mappen (Namensvergleich case-insensitive + Umlaut-tolerant;
+// fehlende Ebenen werden als driveFolders-Eintrag angelegt) und das Dokument
+// ablegen. Das Ordner-Link-Feld auf dem Doc ist `folderId` — genau darüber
+// filtert die Ordner-Ansicht (S.ansicht.art === "ordner", inkl. Eltern-Kette).
+// Zusätzlich werden `bereich` und `titel_final` gesetzt.
+async function vorschlagAblegen(docId, doc) {
+  const v = (doc && doc.vorschlag) || {};
+  // Bereich muss ein echter Wurzel-Ordner sein, sonst Fallback "Eingang"
+  const bereichName = v.bereich && findeOrdner(v.bereich, null) ? v.bereich : "Eingang";
+  const bereichId = await findeOderErstelleOrdner(bereichName, null, "bereich", bereichName);
+  let zielId = bereichId;
+  if (v.unterordner) zielId = await findeOderErstelleOrdner(v.unterordner, bereichId, "unterordner", bereichName);
+  if (v.thema)       zielId = await findeOderErstelleOrdner(v.thema, zielId, "thema", bereichName);
+  await db.ref(P_DOCS + "/" + docId).update({
+    folderId: zielId,
+    bereich: (S.ordner[bereichId] && S.ordner[bereichId].name) || bereichName,
+    titel_final: v.titel_vorschlag || doc.titel_final || doc.dateiname,
+    status: "abgelegt",
+    aktualisiert: new Date().toISOString()
+  });
+  return zielId;
+}
+
 async function vorschlagUebernehmen(docId) {
   const doc = S.docs[docId];
   if (!doc || !doc.vorschlag) { toast("Kein Vorschlag vorhanden"); return; }
-  const v = doc.vorschlag;
   try {
-    // Zielordner: bereich → unterordner → thema (fehlende Ebenen werden angelegt)
-    const bereichName = v.bereich && findeOrdner(v.bereich, null) ? v.bereich : "Eingang";
-    const bereichId = await findeOderErstelleOrdner(bereichName, null, "bereich", bereichName);
-    let zielId = bereichId;
-    if (v.unterordner) zielId = await findeOderErstelleOrdner(v.unterordner, bereichId, "unterordner", bereichName);
-    if (v.thema)       zielId = await findeOderErstelleOrdner(v.thema, zielId, "thema", bereichName);
-
-    await db.ref(P_DOCS + "/" + docId).update({
-      folderId: zielId,
-      titel_final: v.titel_vorschlag || doc.dateiname,
-      status: "abgelegt",
-      aktualisiert: new Date().toISOString()
-    });
+    const zielId = await vorschlagAblegen(docId, doc);
     toast("Abgelegt unter: " + ordnerPfad(zielId).join(" › "));
   } catch (e) {
     toast("Übernehmen fehlgeschlagen: " + (e && e.message));
+  }
+}
+
+// ── Auto-Ablage: sicher klassifizierte Dokumente (confidence ≥ 0.85) landen
+//    automatisch im Zielordner. Darunter bleibt es bei manueller Bestätigung
+//    („Übernehmen"); review_noetig bleibt ohnehin manuell. Läuft nach jedem
+//    Docs-/Ordner-Update über die RTDB-Listener; idempotent, weil abgelegte
+//    Dokumente ein folderId tragen und nicht mehr matchen. ──
+const AUTO_ABLAGE_CONFIDENCE = 0.85;
+let _autoAblageLaeuft = false;
+async function autoAblage() {
+  if (_autoAblageLaeuft || !S.bereit) return;
+  if (!Object.keys(S.ordner).length) return; // Ordnerbaum noch nicht geladen
+  const ids = Object.keys(S.docs).filter(function (id) {
+    const d = S.docs[id];
+    return d && d.status === "klassifiziert" && !d.folderId && d.vorschlag &&
+      Number(d.vorschlag.confidence) >= AUTO_ABLAGE_CONFIDENCE;
+  });
+  if (!ids.length) return;
+  _autoAblageLaeuft = true;
+  let n = 0;
+  try {
+    for (const id of ids) {
+      try { await vorschlagAblegen(id, S.docs[id]); n++; }
+      catch (e) { console.warn("[Drive] Auto-Ablage fehlgeschlagen:", id, e && e.message); }
+    }
+    if (n) toast(n + " Dokument(e) automatisch abgelegt (Confidence ≥ " + Math.round(AUTO_ABLAGE_CONFIDENCE * 100) + " %)");
+  } finally {
+    _autoAblageLaeuft = false;
   }
 }
 
@@ -994,8 +1115,10 @@ function zielAendernDialog(docId) {
       const zielId = document.getElementById("mZiel").value;
       const titel  = document.getElementById("mTitel").value.trim() || doc.dateiname;
       if (!zielId) return;
+      const wurzel = ordnerWurzel(zielId);
       await db.ref(P_DOCS + "/" + docId).update({
         folderId: zielId, titel_final: titel, status: "abgelegt",
+        bereich: (wurzel && wurzel.name) || null,
         aktualisiert: new Date().toISOString()
       });
       toast("Abgelegt unter: " + ordnerPfad(zielId).join(" › "));
@@ -1101,7 +1224,7 @@ async function driveEnqueueForClassification(docId, doc) {
   });
   const jetzt = new Date().toISOString();
   await db.ref(P_DOCS + "/" + docId).update({
-    textauszug: text.slice(0, 2000),
+    textauszug: text.slice(0, 12000),
     hash: hash || null,
     downloadUrl: url || doc.downloadUrl || "",
     aktualisiert: jetzt
@@ -1124,7 +1247,12 @@ window.driveEnqueueForClassification = driveEnqueueForClassification; // auch ex
 function rescanKandidaten() {
   return Object.keys(S.docs).filter(function (id) {
     const d = S.docs[id];
-    if (!d || d.status !== "eingang") return false;
+    if (!d) return false;
+    // "eingang": noch nie erfolgreich klassifiziert. "review_noetig" ohne
+    // Textauszug: gescannte PDFs — die OCR im Einreih-Pfad liefert jetzt Text,
+    // danach klassifiziert n8n automatisch neu.
+    const ohneText = String(d.textauszug || "").trim().length < 20;
+    if (!(d.status === "eingang" || (d.status === "review_noetig" && ohneText))) return false;
     const q = S.inbox[id];
     if (q && (q.status === "pending" || q.status === "processing")) return false; // läuft bereits
     return true;
@@ -1137,7 +1265,7 @@ function rescanDialog() {
   const kandidaten = rescanKandidaten();
   modalOeffnen(
     "<h3>Eingang neu einreihen</h3>" +
-    '<div style="font-size:12.5px;color:var(--muted);line-height:1.55">Stellt alle Dokumente mit Status <b>Eingang</b>, die nicht bereits in der Queue warten oder verarbeitet werden, erneut zur KI-Klassifizierung ein (<code>driveInbox</code>, Status <code>pending</code>). Der Text wird dabei frisch extrahiert, fehlende Hashes werden ergänzt.</div>' +
+    '<div style="font-size:12.5px;color:var(--muted);line-height:1.55">Stellt alle Dokumente mit Status <b>Eingang</b> — sowie <b>Review nötig</b> ohne Textauszug (gescannte PDFs) — erneut zur KI-Klassifizierung ein (<code>driveInbox</code>, Status <code>pending</code>). Der Text wird frisch extrahiert; PDFs ohne Textebene werden per <b>OCR</b> gelesen (Tesseract, wird bei Bedarf geladen), fehlende Hashes werden ergänzt.</div>' +
     '<div style="font-size:13px;margin-top:10px">Kandidaten: <b>' + kandidaten.length + "</b></div>" +
     '<div id="bfFortschritt" style="font-size:12px;color:var(--muted);margin-top:10px"></div>' +
     '<div id="bfLog" class="bf-log"></div>' +
@@ -1330,7 +1458,7 @@ async function backfillStarten() {
           status: nurMetadaten && vorhandener.status ? vorhandener.status : "eingang",
           folderId: nurMetadaten ? (vorhandener.folderId || null) : null,
           vorschlag: nurMetadaten ? (vorhandener.vorschlag || null) : null,
-          textauszug: text.slice(0, 2000),
+          textauszug: text.slice(0, 12000),
           quelle: nurMetadaten ? (vorhandener.quelle || null) : null,
           erstellt: (nurMetadaten && vorhandener.erstellt) || meta.timeCreated || jetzt,
           aktualisiert: jetzt

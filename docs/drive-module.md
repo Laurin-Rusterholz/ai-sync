@@ -39,10 +39,36 @@ Storage-Ablage: `drive/<docId>/<dateiname>`.
 ## Upload-Ablauf (clientseitig)
 
 1. Storage-Upload → `downloadUrl`
-2. Text extrahieren (PDF/DOCX/Textformate; Bilder ohne Text)
+2. Text extrahieren (PDF/DOCX/Textformate; Bilder ohne Text). **OCR-Fallback:**
+   liefert ein PDF < 20 Zeichen Text (gescannt/bildbasiert), werden die ersten
+   5 Seiten via pdf.js gerendert und mit **Tesseract.js** (deu+eng, lazy per
+   CDN — nur bei Bedarf geladen) gelesen; das Ergebnis wird mit `[OCR] `
+   markiert. Fortschritt per `toast()`, Fehler werden nie geworfen.
 3. SHA-256 bilden und gegen bestehende `driveDocs`-Hashes prüfen → `duplikat_verdacht`
-4. `driveDocs/<id>` mit Status `eingang` anlegen (inkl. `textauszug`, `hash`)
-5. `driveInbox/<docId>` mit `text` + `hash` + Status `pending` schreiben
+4. `driveDocs/<id>` mit Status `eingang` anlegen (inkl. `textauszug` — max.
+   12 000 Zeichen —, `hash`)
+5. `driveInbox/<docId>` mit `text` (max. 6 000) + `hash` + Status `pending` schreiben
+
+## Ablage & Auto-Ablage (Ordner-Zuordnung)
+
+Das Ordner-Link-Feld auf `driveDocs` ist **`folderId`** — die Ordner-Ansicht
+filtert darüber (inkl. Eltern-Kette). `vorschlagAblegen(docId, doc)` mappt den
+KI-Vorschlag (`vorschlag.bereich`/`unterordner`/`thema`) auf echte
+`driveFolders`-IDs: Namensvergleich **case-insensitive und Umlaut-tolerant**
+(„Persönlich" ≡ „Persoenlich"); fehlende Ebenen werden als
+`driveFolders`-Eintrag (`name`, `bereich`, `parentId`, `typ`) angelegt;
+unbekannte Bereiche fallen auf „Eingang" zurück. Gesetzt werden `folderId`,
+`bereich` (Wurzel-Ordnername), `titel_final` (= `titel_vorschlag`) und
+Status `abgelegt`.
+
+- **„Übernehmen"** im Drawer nutzt genau diesen Pfad — das Dokument erscheint
+  sofort im richtigen Ordner.
+- **Auto-Ablage:** Dokumente mit `vorschlag.confidence ≥ 0.85` werden nach der
+  Klassifizierung automatisch abgelegt (läuft über die RTDB-Listener beim
+  Öffnen des Drives). Darunter bleibt es bei manueller Bestätigung;
+  `review_noetig` ist immer manuell.
+- „🔄 Eingang neu einreihen" umfasst zusätzlich `review_noetig`-Dokumente
+  ohne Textauszug (gescannte PDFs): OCR liefert Text, n8n klassifiziert neu.
 
 n8n lädt die Datei **nicht** erneut — der Text kommt aus dem Queue-Eintrag.
 
