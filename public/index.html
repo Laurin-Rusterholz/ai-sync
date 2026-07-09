@@ -102715,6 +102715,7 @@ window.addEventListener("hashchange", function(){
       ["🧱","Reduzieren (Flatten)","Felder fest einbrennen",()=>flattenForm()],
     ]));
     body.appendChild(grp("OCR & Konvertierung","#A8533A",[
+      ["🔎","Text per OCR erkennen","Ganzes Dokument (bis 20 Seiten) als kopierbaren Text",()=>ocrDocument()],
       ["🔡","OCR (Seite)","Text aus Scan erkennen (lädt Engine)",()=>ocrPage()],
       ["🖼️","Seite als Bild","Aktuelle Seite als PNG",()=>exportPng()],
       ["📝","Text exportieren","Gesamttext als .txt",()=>exportText()],
@@ -102938,6 +102939,38 @@ window.addEventListener("hashchange", function(){
 
   // OCR
   async function ocrPage(){ note("info","OCR-Engine wird geladen … (kann etwas dauern)"); if(!await ensureTesseract()){ note("danger","Tesseract.js konnte nicht geladen werden"); return; } try { const page=await ED.pdfDoc.getPage(ED.page); const vp=page.getViewport({scale:2}); const c=document.createElement("canvas"); c.width=vp.width; c.height=vp.height; await page.render({canvasContext:c.getContext("2d"), viewport:vp}).promise; const { data }=await window.Tesseract.recognize(c, "deu+eng"); showTextModal("OCR — Seite "+ED.page, data.text||"(kein Text erkannt)"); } catch(e){ note("danger","OCR fehlgeschlagen: "+(e.message||e)); } }
+  // Ganzes Dokument per OCR erkennen (deu+eng, bis 20 Seiten) — Ergebnis landet
+  // in einem kopierbaren Text-Panel (showTextModal hat den 📋-Kopieren-Button).
+  async function ocrDocument(){
+    if (!ED.pdfDoc){ note("warn","Kein Dokument geladen"); return; }
+    note("info","OCR-Engine wird geladen … (kann etwas dauern)");
+    if(!await ensureTesseract()){ note("danger","Tesseract.js konnte nicht geladen werden"); return; }
+    const MAX_SEITEN = 20;
+    const n = Math.min(ED.numPages, MAX_SEITEN);
+    let worker = null;
+    try { if (window.Tesseract.createWorker) worker = await window.Tesseract.createWorker("deu+eng"); } catch(e){ worker = null; }
+    const teile = [];
+    try {
+      for (let i = 1; i <= n; i++){
+        note("info", "Text per OCR erkennen … Seite " + i + "/" + n);
+        const page = await ED.pdfDoc.getPage(i);
+        const vp = page.getViewport({ scale: 2 });
+        const c = document.createElement("canvas"); c.width = vp.width; c.height = vp.height;
+        await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+        const res = worker ? await worker.recognize(c) : await window.Tesseract.recognize(c, "deu+eng");
+        teile.push("===== Seite " + i + " =====\n" + String((res && res.data && res.data.text) || "").trim());
+      }
+    } catch(e){
+      note("danger","OCR fehlgeschlagen: " + (e.message || e));
+    } finally {
+      if (worker){ try { await worker.terminate(); } catch(e){} }
+    }
+    if (!teile.length) return;
+    let out = teile.join("\n\n").trim();
+    if (ED.numPages > n) out += "\n\n[OCR: nur die ersten " + n + " von " + ED.numPages + " Seiten erkannt]";
+    note("ok","OCR abgeschlossen (" + teile.length + " Seite(n))");
+    showTextModal("Text per OCR erkannt — " + (ED.name || "Dokument"), out || "(kein Text erkannt)");
+  }
 
   // Export
   async function exportPng(){ try { const page=await ED.pdfDoc.getPage(ED.page); const vp=page.getViewport({scale:2}); const c=document.createElement("canvas"); c.width=vp.width; c.height=vp.height; await page.render({canvasContext:c.getContext("2d"), viewport:vp}).promise; c.toBlob(b=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=baseName()+"_S"+ED.page+".png"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); }, "image/png"); note("ok","Seite als PNG exportiert"); } catch(e){ note("danger",e.message); } }
