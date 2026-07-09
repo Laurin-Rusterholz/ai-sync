@@ -5096,6 +5096,7 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
         <button class="topbar-btn" id="btnManualPull" title="Vom Server herunterladen" onclick="window._openPullChoiceModal()">☁️↓</button>
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
+        <button class="topbar-btn" id="btnRuhestand" title="Ruhestand — Ambient-Modus" onclick="window.location.href='ruhestand.html'" style="font-size:14px">🌌</button>
         <button class="topbar-btn" id="btnSettings" title="Einstellungen">⚙️</button>
       </div>
     </div>
@@ -16470,6 +16471,7 @@ function renderMain() {
     case "drive": html = viewDrive(); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "docstudio": window.location.href = "docstudio.html"; return; // Öffnet DocStudio (eigenständige Single-File-App)
+    case "ruhestand": window.location.href = "ruhestand.html"; return; // Öffnet den Ruhestand-Ambient-Modus (eigenständige Single-File-Seite)
     case "settings": { openSettings(); return; }
 
     default: {

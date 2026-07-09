@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#05060a">
+<title>Quantus — Ruhestand</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  /* ══════════════════════════════════════════════════════════════════════
+     QUANTUS RUHESTAND — Ambient-Standby-Seite
+     Sci-Fi-HUD (rotierende Ringe, Radial-Spektrum, Radar-Sweep) im
+     Quantus-„Schiefer"-Look: matt-dunkel mit violettem Marken-Akzent.
+     Dauerbewegung: Sternenfeld im Warp, Sternschnuppen, Ring-Rotation.
+     OLED-Schutz: das gesamte HUD driftet langsam über den Schirm,
+     nichts steht dauerhaft auf demselben Pixel.
+     ══════════════════════════════════════════════════════════════════════ */
+  :root{
+    --bg:#05060a;
+    --accent:#a78bfa;        /* Quantus Marken-Violett */
+    --accent-deep:#8b5cf6;
+    --accent-dim:rgba(167,139,250,.34);
+    --info:#6aa3de;          /* sekundärer, kühler Ton (Anklang ans Referenzbild) */
+    --success:#45c198;
+    --text:#eef0f2;
+    --muted:#929aa4;
+    --sans:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    cursor:none;
+    -webkit-font-smoothing:antialiased;
+    user-select:none;
+  }
+  body.ui-visible{cursor:default}
+
+  /* ── Sternenfeld (Canvas, ganzflächig) ── */
+  #stars{position:fixed;inset:0;width:100%;height:100%;display:block}
+
+  /* ── Nebel: weiche, driftende Farbflächen hinter dem HUD ── */
+  .nebula{position:fixed;border-radius:50%;filter:blur(90px);opacity:.16;pointer-events:none}
+  .nebula.a{width:56vmin;height:56vmin;left:12%;top:16%;background:radial-gradient(circle,#8b5cf6,transparent 70%);animation:nebDriftA 46s ease-in-out infinite alternate}
+  .nebula.b{width:48vmin;height:48vmin;right:10%;bottom:12%;background:radial-gradient(circle,#3b5f8f,transparent 70%);animation:nebDriftB 58s ease-in-out infinite alternate}
+  .nebula.c{width:34vmin;height:34vmin;right:26%;top:8%;background:radial-gradient(circle,#6d28d9,transparent 70%);animation:nebDriftC 38s ease-in-out infinite alternate}
+  @keyframes nebDriftA{from{transform:translate(0,0) scale(1)}to{transform:translate(9vw,6vh) scale(1.18)}}
+  @keyframes nebDriftB{from{transform:translate(0,0) scale(1.12)}to{transform:translate(-7vw,-5vh) scale(.94)}}
+  @keyframes nebDriftC{from{transform:translate(0,0)}to{transform:translate(-5vw,7vh) scale(1.22)}}
+
+  /* ── HUD-Bühne: driftet als Ganzes langsam (OLED-Schutz) ── */
+  #stage{
+    position:fixed;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    animation:oledDrift 240s ease-in-out infinite;
+  }
+  @keyframes oledDrift{
+    0%{transform:translate(0,0)}
+    25%{transform:translate(1.2vw,-1.6vh)}
+    50%{transform:translate(-1.4vw,-.6vh)}
+    75%{transform:translate(.8vw,1.6vh)}
+    100%{transform:translate(0,0)}
+  }
+
+  #hudWrap{position:relative;width:min(78vmin,860px);height:min(78vmin,860px)}
+  #hud{position:absolute;inset:0;width:100%;height:100%}
+
+  /* ── Zentrum: Uhr & Status (DOM für gestochen scharfe Typo) ── */
+  #center{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;pointer-events:none;
+  }
+  #clock{
+    font-size:clamp(38px,9vmin,104px);
+    font-weight:200;letter-spacing:.04em;
+    font-variant-numeric:tabular-nums;
+    line-height:1;
+    color:var(--text);
+    text-shadow:0 0 24px rgba(167,139,250,.35),0 0 90px rgba(139,92,246,.18);
+  }
+  #clock .sec{font-size:.42em;font-weight:300;color:var(--accent);opacity:.85}
+  #dateLine{
+    margin-top:1.4vmin;font-size:clamp(11px,1.9vmin,19px);
+    font-weight:500;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;
+  }
+  #modeLine{
+    margin-top:2.6vmin;display:flex;align-items:center;gap:1vmin;
+    font-family:var(--mono);font-size:clamp(9px,1.35vmin,13px);
+    letter-spacing:.3em;text-transform:uppercase;color:var(--accent);
+  }
+  #modeLine .dot{
+    width:.9vmin;height:.9vmin;min-width:5px;min-height:5px;border-radius:50%;
+    background:var(--accent);box-shadow:0 0 10px var(--accent);
+    animation:pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
+
+  /* ── Ecken-Klammern (HUD-Rahmen) ── */
+  .corner{position:fixed;width:54px;height:54px;border:1px solid var(--accent-dim);opacity:.7;animation:cornerGlow 5s ease-in-out infinite}
+  .corner.tl{top:26px;left:26px;border-right:none;border-bottom:none}
+  .corner.tr{top:26px;right:26px;border-left:none;border-bottom:none}
+  .corner.bl{bottom:26px;left:26px;border-right:none;border-top:none}
+  .corner.br{bottom:26px;right:26px;border-left:none;border-top:none}
+  @keyframes cornerGlow{0%,100%{opacity:.35}50%{opacity:.85}}
+
+  /* ── Telemetrie-Leisten links/rechts (nur auf breiten Displays) ── */
+  .telemetry{
+    position:fixed;top:50%;transform:translateY(-50%);
+    display:none;flex-direction:column;gap:2.2vmin;
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    color:var(--muted);text-transform:uppercase;
+  }
+  .telemetry .tl-item{display:flex;flex-direction:column;gap:6px;min-width:150px}
+  .telemetry .tl-label{font-size:9px;opacity:.6}
+  .telemetry .tl-value{color:var(--text);font-size:12px;letter-spacing:.1em}
+  .telemetry .tl-bar{height:2px;background:rgba(146,154,164,.16);border-radius:2px;overflow:hidden}
+  .telemetry .tl-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent-deep),var(--accent));border-radius:2px;animation:barBreath 6s ease-in-out infinite}
+  .telemetry .tl-item:nth-child(2) .tl-bar i{animation-delay:-2s;background:linear-gradient(90deg,#3b5f8f,var(--info))}
+  .telemetry .tl-item:nth-child(3) .tl-bar i{animation-delay:-4s}
+  @keyframes barBreath{0%,100%{width:26%}50%{width:82%}}
+  #telemetryL{left:4vw}
+  #telemetryR{right:4vw;text-align:right}
+  #telemetryR .tl-bar i{margin-left:auto}
+  /* Auf Ultrawide (z.B. 5120×1440, 32:9) füllen die Leisten die Flanken */
+  @media (min-aspect-ratio:2/1){.telemetry{display:flex}}
+
+  /* ── Bedienelemente: erscheinen bei Mausbewegung, blenden wieder aus ── */
+  #uiLayer{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .5s ease}
+  body.ui-visible #uiLayer{opacity:1}
+  #backBtn{
+    position:fixed;top:22px;left:50%;transform:translateX(-50%);
+    pointer-events:auto;cursor:pointer;
+    display:flex;align-items:center;gap:10px;
+    padding:10px 22px;border-radius:12px;
+    background:rgba(33,40,48,.78);backdrop-filter:blur(14px);
+    border:1px solid rgba(79,90,102,.55);
+    color:var(--text);font-family:var(--sans);font-size:13.5px;font-weight:600;letter-spacing:.02em;
+    transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease;
+  }
+  #backBtn:hover{border-color:var(--accent);box-shadow:0 0 0 3px rgba(167,139,250,.22),0 10px 30px rgba(0,0,0,.5);transform:translateX(-50%) translateY(-1px)}
+  #backBtn .logo{
+    width:18px;height:18px;border-radius:5px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-deep));
+    box-shadow:0 0 12px rgba(139,92,246,.5);
+  }
+  #hint{
+    position:fixed;bottom:26px;left:50%;transform:translateX(-50%);
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;
+    color:var(--muted);opacity:.85;
+  }
+  #hint kbd{
+    font-family:var(--mono);border:1px solid rgba(79,90,102,.6);border-radius:5px;
+    padding:2px 7px;margin:0 4px;color:var(--text);background:rgba(33,40,48,.6);
+  }
+
+  /* ── Vignette für Tiefe ── */
+  #vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 52%,rgba(2,3,6,.55) 100%)}
+
+  /* ── Reduzierte Bewegung: alles beruhigen, Uhr bleibt ── */
+  @media (prefers-reduced-motion:reduce){
+    .nebula,#stage,.corner,#modeLine .dot,.telemetry .tl-bar i{animation:none!important}
+  }
+</style>
+</head>
+<body>
+
+<canvas id="stars"></canvas>
+<div class="nebula a"></div>
+<div class="nebula b"></div>
+<div class="nebula c"></div>
+
+<div id="stage">
+  <div id="hudWrap">
+    <canvas id="hud"></canvas>
+    <div id="center">
+      <div id="clock">--:--<span class="sec"></span></div>
+      <div id="dateLine">—</div>
+      <div id="modeLine"><span class="dot"></span><span>Ruhestand · System bereit</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="corner tl"></div>
+<div class="corner tr"></div>
+<div class="corner bl"></div>
+<div class="corner br"></div>
+
+<div class="telemetry" id="telemetryL">
+  <div class="tl-item"><span class="tl-label">Sitzung</span><span class="tl-value" id="tlUptime">00:00:00</span><span class="tl-bar"><i></i></span></div>
+  <div class="tl-item"><span class="tl-label">Tag</span><span class="tl-value" id="tlDay">—</span><span class="tl-bar"><i></i></span></div>
+  <div class="tl-item"><span class="tl-label">Kalenderwoche</span><span class="tl-value" id="tlWeek">—</span><span class="tl-bar"><i></i></span></div>
+</div>
+<div class="telemetry" id="telemetryR">
+  <div class="tl-item"><span class="tl-label">Modus</span><span class="tl-value">Ambient</span><span class="tl-bar"><i></i></span></div>
+  <div class="tl-item"><span class="tl-label">Sync</span><span class="tl-value" id="tlSync">Bereit</span><span class="tl-bar"><i></i></span></div>
+  <div class="tl-item"><span class="tl-label">Signal</span><span class="tl-value">Quantus // QNT-05</span><span class="tl-bar"><i></i></span></div>
+</div>
+
+<div id="vignette"></div>
+
+<div id="uiLayer">
+  <a id="backBtn" href="index.html" title="Zurück zu Quantus"><span class="logo"></span>Zurück zu Quantus</a>
+  <div id="hint"><kbd>ESC</kbd> oder Klick — zurück zur App</div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+/* ════════════════════════════════════════════════════════════
+   1) STERNENFELD — Sterne fliegen an einem vorbei (Warp-Effekt)
+   3D-Punkte werden auf die Fläche projiziert; nahe Sterne ziehen
+   kurze Streifen. Dazu gelegentliche Sternschnuppen.
+   ════════════════════════════════════════════════════════════ */
+var starCanvas = document.getElementById("stars");
+var sctx = starCanvas.getContext("2d");
+var stars = [], meteors = [];
+var W = 0, H = 0, CX = 0, CY = 0;
+var STAR_SPEED = reducedMotion ? 0.0006 : 0.012;  // Warp-Tempo (Anteil Tiefe/Frame @60fps)
+
+function resize(){
+  W = window.innerWidth; H = window.innerHeight;
+  CX = W / 2; CY = H / 2;
+  starCanvas.width = Math.round(W * DPR);
+  starCanvas.height = Math.round(H * DPR);
+  sctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  // Sterndichte an Fläche koppeln, harte Obergrenze (Ultrawide 5120×1440!)
+  var target = Math.min(650, Math.round(W * H / 3800));
+  while (stars.length < target) stars.push(newStar(true));
+  stars.length = target;
+  sizeHud();
+}
+
+function newStar(anyDepth){
+  return {
+    x: (Math.random() * 2 - 1),           // -1..1 relative Raumkoordinaten
+    y: (Math.random() * 2 - 1),
+    z: anyDepth ? Math.random() * 0.95 + 0.05 : 1,  // 1 = ganz hinten
+    hue: Math.random()                     // 0..1 → violett/blau/weiß-Mix
+  };
+}
+
+function starColor(hue, alpha){
+  // Palette: überwiegend Weiß, Anteil Quantus-Violett & kühles Blau
+  if (hue < 0.60) return "rgba(238,240,242," + alpha + ")";
+  if (hue < 0.85) return "rgba(167,139,250," + alpha + ")";
+  return "rgba(106,163,222," + alpha + ")";
+}
+
+function drawStars(dtNorm){
+  sctx.clearRect(0, 0, W, H);
+  var span = Math.max(W, H);
+  for (var i = 0; i < stars.length; i++){
+    var s = stars[i];
+    var pz = s.z;
+    s.z -= STAR_SPEED * dtNorm * (0.4 + 0.6 * (1 - s.z)); // nahe Sterne ziehen schneller vorbei
+    if (s.z <= 0.02){ stars[i] = newStar(false); continue; }
+    var k  = 0.5 / s.z, pk = 0.5 / pz;
+    var x  = CX + s.x * k * span, y  = CY + s.y * k * span;
+    var px = CX + s.x * pk * span, py = CY + s.y * pk * span;
+    if (x < -20 || x > W + 20 || y < -20 || y > H + 20){ stars[i] = newStar(false); continue; }
+    var depth = 1 - s.z;                       // 0 hinten … 1 vorn
+    var alpha = Math.min(1, 0.15 + depth * 0.9);
+    var size  = 0.4 + depth * 1.8;
+    // nahe Sterne → kurzer Streifen (Bewegungsgefühl), ferne → Punkt
+    var dx = x - px, dy = y - py;
+    var streak = Math.sqrt(dx * dx + dy * dy);
+    if (streak > 1.2 && !reducedMotion){
+      sctx.strokeStyle = starColor(s.hue, alpha * 0.9);
+      sctx.lineWidth = size;
+      sctx.lineCap = "round";
+      sctx.beginPath(); sctx.moveTo(px, py); sctx.lineTo(x, y); sctx.stroke();
+    } else {
+      sctx.fillStyle = starColor(s.hue, alpha);
+      sctx.beginPath(); sctx.arc(x, y, size, 0, 6.2832); sctx.fill();
+    }
+  }
+  if (!reducedMotion) drawMeteors(dtNorm);
+}
+
+/* Sternschnuppen: selten, diagonal, mit Schweif */
+function drawMeteors(dtNorm){
+  if (Math.random() < 0.0035 * dtNorm && meteors.length < 3){  // Spawn-Rate framerate-unabhängig (60–144 Hz)
+    var fromLeft = Math.random() < 0.5;
+    meteors.push({
+      x: fromLeft ? -60 : W * Math.random(),
+      y: fromLeft ? H * Math.random() * 0.5 : -60,
+      vx: 7 + Math.random() * 7,
+      vy: 3.5 + Math.random() * 3.5,
+      life: 1
+    });
+  }
+  for (var i = meteors.length - 1; i >= 0; i--){
+    var m = meteors[i];
+    m.x += m.vx * dtNorm; m.y += m.vy * dtNorm;
+    m.life -= 0.008 * dtNorm;
+    if (m.life <= 0 || m.x > W + 80 || m.y > H + 80){ meteors.splice(i, 1); continue; }
+    var tail = 14;
+    var grad = sctx.createLinearGradient(m.x, m.y, m.x - m.vx * tail, m.y - m.vy * tail);
+    grad.addColorStop(0, "rgba(238,240,242," + (0.9 * m.life) + ")");
+    grad.addColorStop(0.3, "rgba(167,139,250," + (0.5 * m.life) + ")");
+    grad.addColorStop(1, "rgba(167,139,250,0)");
+    sctx.strokeStyle = grad;
+    sctx.lineWidth = 1.6;
+    sctx.lineCap = "round";
+    sctx.beginPath();
+    sctx.moveTo(m.x, m.y);
+    sctx.lineTo(m.x - m.vx * tail, m.y - m.vy * tail);
+    sctx.stroke();
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   2) HUD — konzentrische Ringe wie im Referenzbild, in Quantus-
+   Farben: Tick-Ring, rotierende Segmentbögen, gestrichelte Ringe,
+   Radial-Spektrum („Audio-Bars"), Radar-Sweep, Orbit-Punkte,
+   Sekunden-Fortschrittsbogen.
+   ════════════════════════════════════════════════════════════ */
+var hudCanvas = document.getElementById("hud");
+var hctx = hudCanvas.getContext("2d");
+var HS = 0, HC = 0;          // HUD-Kantenlänge & Mittelpunkt (CSS-Pixel)
+var spectrum = [];           // Radial-Balken: Phasen & Tempi
+var SPECTRUM_N = 96;
+for (var si = 0; si < SPECTRUM_N; si++){
+  spectrum.push({ phase: Math.random() * 6.2832, speed: 0.4 + Math.random() * 1.4, amp: 0.35 + Math.random() * 0.65 });
+}
+
+function sizeHud(){
+  var rect = hudCanvas.parentElement.getBoundingClientRect();
+  HS = rect.width;
+  HC = HS / 2;
+  hudCanvas.width = Math.round(HS * DPR);
+  hudCanvas.height = Math.round(HS * DPR);
+  hctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+
+var VIOLET       = "167,139,250";
+var VIOLET_DEEP  = "139,92,246";
+var BLUE         = "106,163,222";
+var TEXT_RGB     = "238,240,242";
+
+function ring(r, width, rgb, alpha, glow){
+  hctx.beginPath();
+  hctx.arc(HC, HC, r, 0, 6.2832);
+  hctx.strokeStyle = "rgba(" + rgb + "," + alpha + ")";
+  hctx.lineWidth = width;
+  hctx.shadowBlur = glow || 0;
+  hctx.shadowColor = "rgba(" + rgb + ",.8)";
+  hctx.stroke();
+  hctx.shadowBlur = 0;
+}
+
+function arc(r, a0, a1, width, rgb, alpha, glow, cap){
+  hctx.beginPath();
+  hctx.arc(HC, HC, r, a0, a1);
+  hctx.strokeStyle = "rgba(" + rgb + "," + alpha + ")";
+  hctx.lineWidth = width;
+  hctx.lineCap = cap || "butt";
+  hctx.shadowBlur = glow || 0;
+  hctx.shadowColor = "rgba(" + rgb + ",.85)";
+  hctx.stroke();
+  hctx.shadowBlur = 0;
+  hctx.lineCap = "butt";
+}
+
+function ticks(r, n, len, width, rgb, alpha, rot, everyNthLonger){
+  for (var i = 0; i < n; i++){
+    var a = rot + (i / n) * 6.2832;
+    var l = (everyNthLonger && i % everyNthLonger === 0) ? len * 1.9 : len;
+    var c = Math.cos(a), s = Math.sin(a);
+    hctx.beginPath();
+    hctx.moveTo(HC + c * r, HC + s * r);
+    hctx.lineTo(HC + c * (r - l), HC + s * (r - l));
+    hctx.strokeStyle = "rgba(" + rgb + "," + alpha + ")";
+    hctx.lineWidth = width;
+    hctx.stroke();
+  }
+}
+
+function dashedRing(r, dashCount, fill, width, rgb, alpha, rot){
+  var step = 6.2832 / dashCount;
+  for (var i = 0; i < dashCount; i++){
+    var a0 = rot + i * step;
+    arc(r, a0, a0 + step * fill, width, rgb, alpha, 0);
+  }
+}
+
+function drawHud(t){
+  hctx.clearRect(0, 0, HS, HS);
+  var R = HC * 0.98;                 // Außenradius
+  var slow = reducedMotion ? 0 : t;  // bei Reduced Motion: eingefroren, aber sichtbar
+
+  /* Basis-Kreise (statisch, sehr dezent) */
+  ring(R * 0.99, 1, VIOLET, 0.10);
+  ring(R * 0.80, 1, VIOLET, 0.08);
+  ring(R * 0.485, 1, BLUE, 0.10);
+
+  /* Äußerer Tick-Ring — Uhrenskala, rotiert extrem langsam */
+  ticks(R * 0.985, 120, R * 0.018, 1, TEXT_RGB, 0.28, slow * 0.02, 10);
+
+  /* Gestrichelter Ring außen — langsam im Uhrzeigersinn */
+  dashedRing(R * 0.93, 48, 0.55, 2, VIOLET, 0.35, slow * 0.06);
+
+  /* Kräftige Segmentbögen — gegenläufig, mit Glow (Signatur des Referenzbilds) */
+  var segs = [[0, 1.9], [2.4, 3.6], [4.1, 5.6]];
+  for (var i = 0; i < segs.length; i++){
+    arc(R * 0.87, segs[i][0] - slow * 0.10, segs[i][1] - slow * 0.10, R * 0.028, VIOLET, 0.55, 14);
+  }
+  var segs2 = [[0.6, 1.4], [2.9, 4.9]];
+  for (i = 0; i < segs2.length; i++){
+    arc(R * 0.755, segs2[i][0] + slow * 0.16, segs2[i][1] + slow * 0.16, R * 0.014, BLUE, 0.5, 8);
+  }
+
+  /* Mittlerer Tick-Ring — gegenläufig */
+  ticks(R * 0.71, 90, R * 0.022, 1, VIOLET, 0.30, -slow * 0.05);
+
+  /* Radial-Spektrum — pulsierende Balken (wie Audio-Visualizer im Bild) */
+  var base = R * 0.545;
+  for (i = 0; i < SPECTRUM_N; i++){
+    var sp = spectrum[i];
+    var a = (i / SPECTRUM_N) * 6.2832 + slow * 0.03;
+    var wob = reducedMotion ? 0.5 :
+      (Math.sin(t * sp.speed + sp.phase) * 0.5 + 0.5) *
+      (Math.sin(t * 0.35 + i * 0.42) * 0.5 + 0.5);
+    var len = R * 0.015 + wob * sp.amp * R * 0.085;
+    var c = Math.cos(a), s2 = Math.sin(a);
+    hctx.beginPath();
+    hctx.moveTo(HC + c * base, HC + s2 * base);
+    hctx.lineTo(HC + c * (base + len), HC + s2 * (base + len));
+    hctx.strokeStyle = "rgba(" + (i % 5 === 0 ? BLUE : VIOLET) + "," + (0.30 + wob * 0.45) + ")";
+    hctx.lineWidth = 1.5;
+    hctx.stroke();
+  }
+
+  /* Gestrichelter Innenring — schneller, gegen den Uhrzeigersinn */
+  dashedRing(R * 0.52, 32, 0.45, 1.5, BLUE, 0.4, -slow * 0.14);
+
+  /* Sekunden-Fortschrittsbogen (Minutenzyklus, weich) */
+  var now = new Date();
+  var minuteFrac = (now.getSeconds() + now.getMilliseconds() / 1000) / 60;
+  arc(R * 0.60, -1.5708, -1.5708 + minuteFrac * 6.2832, R * 0.012, VIOLET_DEEP, 0.85, 12, "round");
+
+  /* Radar-Sweep: umlaufender Bogen mit hellem Kopf */
+  var sweep = slow * 0.5;
+  for (i = 0; i < 14; i++){
+    var fade = i / 14;
+    arc(R * 0.44, sweep - 0.5 + fade * 0.5, sweep - 0.5 + fade * 0.5 + 0.045, R * 0.02, VIOLET, 0.05 + fade * 0.4, 0);
+  }
+  var hx = HC + Math.cos(sweep) * R * 0.44, hy = HC + Math.sin(sweep) * R * 0.44;
+  hctx.beginPath(); hctx.arc(hx, hy, R * 0.012, 0, 6.2832);
+  hctx.fillStyle = "rgba(" + TEXT_RGB + ",.95)";
+  hctx.shadowBlur = 16; hctx.shadowColor = "rgba(" + VIOLET + ",1)";
+  hctx.fill(); hctx.shadowBlur = 0;
+
+  /* Orbit-Punkte auf den Basisringen */
+  var orbits = [
+    { r: 0.80, sp: 0.22, ph: 0.0, rgb: VIOLET },
+    { r: 0.80, sp: 0.22, ph: 3.14, rgb: BLUE },
+    { r: 0.99, sp: -0.09, ph: 1.2, rgb: VIOLET }
+  ];
+  for (i = 0; i < orbits.length; i++){
+    var o = orbits[i];
+    var oa = slow * o.sp + o.ph;
+    var ox = HC + Math.cos(oa) * R * o.r, oy = HC + Math.sin(oa) * R * o.r;
+    hctx.beginPath(); hctx.arc(ox, oy, R * 0.008, 0, 6.2832);
+    hctx.fillStyle = "rgba(" + o.rgb + ",.9)";
+    hctx.shadowBlur = 10; hctx.shadowColor = "rgba(" + o.rgb + ",.9)";
+    hctx.fill(); hctx.shadowBlur = 0;
+  }
+
+  /* Fadenkreuz-Andeutung: vier kurze Linien außen */
+  for (i = 0; i < 4; i++){
+    var ca = i * 1.5708 + 0.7854;
+    var c1 = Math.cos(ca), s1 = Math.sin(ca);
+    hctx.beginPath();
+    hctx.moveTo(HC + c1 * R * 1.0, HC + s1 * R * 1.0);
+    hctx.lineTo(HC + c1 * R * 0.955, HC + s1 * R * 0.955);
+    hctx.strokeStyle = "rgba(" + TEXT_RGB + ",.35)";
+    hctx.lineWidth = 2;
+    hctx.stroke();
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   3) UHR, DATUM & TELEMETRIE
+   ════════════════════════════════════════════════════════════ */
+var clockEl = document.getElementById("clock");
+var dateEl = document.getElementById("dateLine");
+var tlUptime = document.getElementById("tlUptime");
+var tlDay = document.getElementById("tlDay");
+var tlWeek = document.getElementById("tlWeek");
+var sessionStart = Date.now();
+
+function pad(n){ return n < 10 ? "0" + n : "" + n; }
+
+function isoWeek(d){
+  var t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  var dayNum = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - dayNum);
+  var yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  return Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
+}
+
+function updateClock(){
+  var d = new Date();
+  clockEl.innerHTML = pad(d.getHours()) + ":" + pad(d.getMinutes()) +
+    '<span class="sec">:' + pad(d.getSeconds()) + "</span>";
+  dateEl.textContent = d.toLocaleDateString("de-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  if (tlUptime){
+    var up = Math.floor((Date.now() - sessionStart) / 1000);
+    tlUptime.textContent = pad(Math.floor(up / 3600)) + ":" + pad(Math.floor(up / 60) % 60) + ":" + pad(up % 60);
+  }
+  if (tlDay){
+    var start = new Date(d.getFullYear(), 0, 0);
+    tlDay.textContent = "Tag " + Math.floor((d - start) / 86400000) + " / " + (((d.getFullYear() % 4 === 0 && d.getFullYear() % 100 !== 0) || d.getFullYear() % 400 === 0) ? 366 : 365);
+  }
+  if (tlWeek) tlWeek.textContent = "KW " + pad(isoWeek(d));
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+/* ════════════════════════════════════════════════════════════
+   4) HAUPTSCHLEIFE
+   ════════════════════════════════════════════════════════════ */
+var lastFrame = performance.now();
+var running = true;
+
+function frame(nowMs){
+  if (!running) return;
+  var dt = Math.min(100, nowMs - lastFrame);   // ms, gedeckelt (Tab-Rückkehr)
+  lastFrame = nowMs;
+  var dtNorm = dt / 16.6667;                   // 1.0 ≙ 60 fps — geräteunabhängiges Tempo (144 Hz!)
+  drawStars(dtNorm);
+  drawHud(nowMs / 1000);
+  requestAnimationFrame(frame);
+}
+
+document.addEventListener("visibilitychange", function(){
+  if (document.hidden){ running = false; }
+  else if (!running){ running = true; lastFrame = performance.now(); requestAnimationFrame(frame); }
+});
+
+window.addEventListener("resize", resize);
+resize();
+requestAnimationFrame(frame);
+
+/* ════════════════════════════════════════════════════════════
+   5) BEDIENUNG — Maus zeigt UI, ESC/Klick führt zurück zur App
+   ════════════════════════════════════════════════════════════ */
+var uiTimeout = null;
+function showUi(){
+  document.body.classList.add("ui-visible");
+  clearTimeout(uiTimeout);
+  uiTimeout = setTimeout(function(){ document.body.classList.remove("ui-visible"); }, 3200);
+}
+window.addEventListener("mousemove", showUi);
+window.addEventListener("touchstart", showUi, { passive: true });
+
+function goBack(){ window.location.href = "index.html"; }
+window.addEventListener("keydown", function(e){
+  if (e.key === "Escape") goBack();
+});
+// Klick irgendwo (außer auf den Button selbst, der navigiert ohnehin) → zurück
+window.addEventListener("click", function(e){
+  if (e.target.closest && e.target.closest("#backBtn")) return;
+  goBack();
+});
+
+})();
+</script>
+</body>
+</html>
