@@ -3523,15 +3523,15 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
    den Topbar-Button manuell fixiert werden (localStorage: quantusLayoutMode).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Computer: gesamte Bildschirmbreite nutzen ── */
+/* ── Computer: Inhalt bleibt in normaler Arbeitsbreite (max. 1400px, wie auf
+   einem Laptop-Bildschirm) — der zusätzliche Platz des breiten Monitors wird
+   NICHT zum Breiterziehen genutzt, sondern gehört den Seitenpanels: mehrere
+   Apps gleichzeitig offen, Panels wachsen mit dem freien Platz mit. ── */
 body.mode-computer .main{padding:16px 24px 40px}
-body.mode-computer .main .page{max-width:none}
+body.mode-computer.dock-open .app{grid-template-columns:240px minmax(720px,1400px) minmax(min-content,1fr)}
+body.mode-computer.dock-open .app.sidebar-collapsed{grid-template-columns:0 minmax(720px,1400px) minmax(min-content,1fr)}
+body.mode-computer .dock-panel{flex:1 1 340px;width:auto;min-width:300px}
 body.mode-computer .apps-list{max-width:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:10px}
-/* Auf sehr breiten Screens dichtere Übersichts-Grids */
-@media(min-width:2200px){
-  body.mode-computer .main .grid-4{grid-template-columns:repeat(4,1fr)}
-  body.mode-computer .tasks-grid{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
-}
 
 /* ── Laptop: Inhalt begrenzt & zentriert (fokussiertes Arbeiten) ── */
 body.mode-laptop .main .page{max-width:1400px}
@@ -105207,7 +105207,7 @@ html.theme-light .card{box-shadow:none}
   var DOCK_KEY = "quantusDockPanels";  // JSON-Array offener Panel-Keys
 
   var MODE_META = {
-    computer: { icon: "🖥️", label: "Computer", desc: "Volle Breite · bis zu 3 Seitenpanels" },
+    computer: { icon: "🖥️", label: "Computer", desc: "Arbeitsbreite wie gewohnt · Restplatz für mehrere Panels" },
     laptop:   { icon: "💻", label: "Laptop",   desc: "Fokussiert · 1 Seitenpanel" },
     tablet:   { icon: "📱", label: "Tablet",   desc: "Kompakt · Sidebar als Overlay" }
   };
@@ -105215,7 +105215,14 @@ html.theme-light .card{box-shadow:none}
   function lmSetting(){ try { return localStorage.getItem(LM_KEY) || "auto"; } catch(e){ return "auto"; } }
   function detectMode(){ var w = window.innerWidth; return w >= 1720 ? "computer" : (w >= 1100 ? "laptop" : "tablet"); }
   function effectiveMode(){ var s = lmSetting(); return MODE_META[s] ? s : detectMode(); }
-  function maxPanels(){ var m = effectiveMode(); return m === "computer" ? 3 : (m === "laptop" ? 1 : 0); }
+  // Panel-Limit: Der Inhalt behält seine Arbeitsbreite — es passen so viele
+  // Panels, wie der restliche Platz hergibt (mind. 2, max. 4 im Computermodus).
+  function maxPanels(){
+    var m = effectiveMode();
+    if (m === "tablet") return 0;
+    if (m === "laptop") return 1;
+    return Math.max(2, Math.min(4, Math.floor((window.innerWidth - 240 - 720) / 310)));
+  }
 
   var _prevMode = null;
   function applyLayoutMode(){
@@ -105313,7 +105320,11 @@ html.theme-light .card{box-shadow:none}
   // ── Panel-Dock ────────────────────────────────────────────────────────────
   function getOpenPanels(){
     try {
-      var a = JSON.parse(localStorage.getItem(DOCK_KEY) || "[]");
+      var raw = localStorage.getItem(DOCK_KEY);
+      // Erster Start auf einem breiten Bildschirm: zwei Panels als Vorschlag
+      // öffnen, damit der Split-Screen sichtbar wird. Schliessen speichert [].
+      if (raw === null) return effectiveMode() === "computer" ? ["today", "polaris"] : [];
+      var a = JSON.parse(raw || "[]");
       return Array.isArray(a) ? a.filter(function(k){ return PANELS[k]; }) : [];
     } catch(e){ return []; }
   }
@@ -105343,6 +105354,7 @@ html.theme-light .card{box-shadow:none}
     var dock = document.getElementById("panelDock");
     if (!dock) return;
     var open = getOpenPanels().slice(0, maxPanels());
+    document.body.classList.toggle("dock-open", open.length > 0);
     if (!open.length || !window.APP || !APP.state || !APP.state.data || !APP.state.data.entities) {
       dock.innerHTML = "";
       updateFabOffset();
