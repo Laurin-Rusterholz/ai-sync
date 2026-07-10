@@ -16099,6 +16099,7 @@ function getAllApps() {
     {key:"drive", icon:"🗄️", label:"Drive", desc:getLang()==="de"?"Dateiablage mit KI-Klassifizierung (Upload, Ordnerbaum, n8n-Vorschläge)":"File storage with AI classification (upload, folder tree, n8n suggestions)"},
     {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
     {key:"docstudio", icon:"📄", label:"DocStudio", desc:getLang()==="de"?"Dokumente generieren & gestalten (Rechnung, Einladung, Brief …) mit KI & PDF-Export":"Generate & design documents (invoice, invitation, letter …) with AI & PDF export"},
+    {key:"polaris", icon:"🛰️", label:"Polaris", desc:getLang()==="de"?"Sprachsteuerung — Konversations-Agent mit Live-Briefing (ElevenLabs)":"Voice control — conversational agent with live briefing (ElevenLabs)"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -16469,6 +16470,7 @@ function renderMain() {
     case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
     case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
     case "drive": html = viewDrive(); break;
+    case "polaris": html = (typeof window.viewPolaris === "function" ? window.viewPolaris() : '<div style="padding:40px;text-align:center">Lade Polaris…</div>'); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "docstudio": window.location.href = "docstudio.html"; return; // Öffnet DocStudio (eigenständige Single-File-App)
     case "ruhestand": window.location.href = "ruhestand.html"; return; // Öffnet den Ruhestand-Ambient-Modus (eigenständige Single-File-Seite)
@@ -105036,6 +105038,498 @@ html.theme-light .card{box-shadow:none}
       document.body.appendChild(el);
     });
   }catch(e){}
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     POLARIS — Sprachsteuerungs-Modul (ElevenLabs Conversational AI)
+     Eigener View unter #/polaris (Registrierung: getAllApps + Route-Switch).
+     Toggle-Zustand persistiert via bestehendem scheduleSave()-Muster unter
+     data.settings.polaris.enabled (→ Firebase RTDB, appStore-Sync).
+     Zugang ausschliesslich über Signed-URL vom n8n-Endpoint — keine Secrets.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<style>
+/* Polaris — nur bestehende Design-Tokens (Schiefer-Palette); alle neuen Klassen polaris-präfixiert */
+.polaris-card{max-width:560px;margin:0 auto}
+.polaris-hero{display:flex;flex-direction:column;align-items:center;gap:16px;padding:32px 20px 26px;text-align:center}
+.polaris-orb{--polaris-glow:var(--accent-soft);--polaris-core:var(--accent);position:relative;width:130px;height:130px;border-radius:50%;
+  background:radial-gradient(circle at 34% 30%, var(--polaris-glow), transparent 60%),radial-gradient(circle at 50% 55%, var(--surface-overlay), var(--surface-base) 80%);
+  border:1px solid var(--border2);
+  box-shadow:0 0 calc(12px + 52px*var(--polaris-level,0)) var(--polaris-glow), inset 0 0 24px rgba(0,0,0,.35);
+  transform:scale(calc(1 + 0.14*var(--polaris-level,0)))}
+.polaris-orb::before{content:"";position:absolute;inset:-9px;border-radius:50%;border:1px solid var(--polaris-glow);opacity:.5}
+.polaris-orb::after{content:"";position:absolute;inset:18%;border-radius:50%;background:radial-gradient(circle at 50% 42%, var(--polaris-core) 0%, transparent 72%);opacity:.28;filter:blur(1px)}
+.polaris-orb--idle{--polaris-glow:transparent;--polaris-core:var(--text-muted)}
+.polaris-orb--idle::before{opacity:.18;border-color:var(--border2)}
+.polaris-orb--listening{--polaris-glow:color-mix(in oklab, var(--info) 38%, transparent);--polaris-core:var(--info);animation:polarisBreathe 3.2s ease-in-out infinite}
+.polaris-orb--thinking{--polaris-glow:color-mix(in oklab, var(--warning) 38%, transparent);--polaris-core:var(--warning);animation:polarisBreathe 1.5s ease-in-out infinite}
+.polaris-orb--speaking{--polaris-glow:color-mix(in oklab, var(--danger) 42%, transparent);--polaris-core:var(--danger)}
+@keyframes polarisBreathe{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
+.polaris-status{font-size:13px;color:var(--text-muted);min-height:18px}
+.polaris-controls{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;border-top:1px solid var(--border)}
+.polaris-controls .polaris-label{display:flex;flex-direction:column;gap:2px;text-align:left}
+.polaris-controls .polaris-label b{font-size:13.5px}
+.polaris-controls .polaris-label span{font-size:12px;color:var(--text-muted)}
+.polaris-switch{position:relative;flex-shrink:0;width:52px;height:30px;border-radius:999px;border:1px solid var(--border2);background:var(--surface-overlay);cursor:pointer;transition:var(--transition);padding:0}
+.polaris-switch .polaris-switch-knob{position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:var(--text-muted);transition:var(--transition)}
+.polaris-switch.on{background:var(--accent);border-color:var(--accent)}
+.polaris-switch.on .polaris-switch-knob{left:25px;background:var(--on-accent)}
+.polaris-switch:disabled{opacity:.55;cursor:wait}
+.polaris-boot{position:fixed;inset:0;z-index:4000;display:grid;place-items:center;background:color-mix(in oklab, var(--surface-base) 90%, black);opacity:0;pointer-events:none;transition:opacity .45s ease}
+.polaris-boot.show{opacity:1;pointer-events:auto}
+.polaris-boot-inner{display:flex;flex-direction:column;align-items:center;gap:22px;padding:30px;max-width:min(480px,92vw)}
+.polaris-boot .polaris-orb{width:170px;height:170px}
+.polaris-boot-title{font-family:var(--mono);font-size:20px;letter-spacing:.42em;text-indent:.42em;color:var(--text-primary);opacity:.92}
+.polaris-boot-lines{font-family:var(--mono);font-size:12px;line-height:1.9;color:var(--text-muted);min-height:96px;text-align:center}
+.polaris-boot-lines div{opacity:0;transform:translateY(4px);animation:polarisLineIn .4s ease forwards}
+.polaris-boot-hint{font-size:11px;color:var(--text-muted);opacity:.65}
+@keyframes polarisLineIn{to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.polaris-orb--listening,.polaris-orb--thinking{animation:none}.polaris-boot{transition:none}}
+</style>
+<!-- ElevenLabs Web-SDK (Browser-Standalone-Build) via CDN.
+     HINWEIS: dist/lib.umd.js existiert ab v1.x nicht mehr — der Standalone-Build
+     heisst dist/lib.iife.js und exponiert das Global window.ElevenLabsClient
+     (mit ElevenLabsClient.Conversation). Version gepinnt für deterministische Deploys. -->
+<script src="https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.14.1/dist/lib.iife.js" defer></script>
+<script>
+(function(){
+  "use strict";
+
+  // ═══ KONFIGURATION ════════════════════════════════════════════════════
+  // >>> HIER AGENT-ID EINTRAGEN (wird manuell gepflegt) <<<
+  // Die Agent-ID ist KEIN Secret (öffentlich sichtbar); der eigentliche
+  // Zugang läuft über die Signed-URL vom n8n-Endpoint unten.
+  const POLARIS_AGENT_ID = "REPLACE_WITH_AGENT_ID";
+  // Liefert { signedUrl } oder { conversationToken } — dadurch bleiben
+  // ElevenLabs-API-Key & Co. serverseitig; hier wird nichts hardcodiert.
+  const POLARIS_SESSION_URL_ENDPOINT = "https://n8n.srv1757990.hstgr.cloud/webhook/polaris/session-url";
+  const POLARIS_TZ = "Europe/Zurich";
+  const PL_MODES = ["idle","listening","thinking","speaking"];
+
+  // ═══ Modul-Zustand (in-memory; Persistenz: data.settings.polaris) ══════
+  let plSession = null;      // aktive Conversation-Instanz des SDK
+  let plActive = false;      // Session logisch aktiv (nach erfolgreichem Start)
+  let plStarting = false;    // Guard gegen Doppel-Start
+  let plMode = "idle";       // idle | listening | thinking | speaking
+  let plStatusText = "Bereit";
+  let plHasSpoken = false;   // true, sobald der Agent zum ersten Mal gesprochen hat
+  let plBootActive = false;
+  let plBootTimers = [];
+  let plRaf = null;          // rAF-Handle des audio-reaktiven Orb-Loops
+  let plUserOff = false;     // manuelles Ausschalten (unterdrückt Disconnect-Toast)
+
+  // ── Sichere Wrapper auf App-Globals (Muster der späten Script-Blöcke) ──
+  function plToast(type, title, msg){ if (typeof window.toast === "function") try { window.toast(type, title, msg); } catch(e){} }
+  function plEsc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  function plSettings(){
+    try {
+      const data = window.APP && APP.state && APP.state.data;
+      if (!data) return { enabled: false };
+      if (!data.settings) data.settings = {};
+      if (!data.settings.polaris) data.settings.polaris = { enabled: false };
+      return data.settings.polaris;
+    } catch(e){ return { enabled: false }; }
+  }
+  // TODO(polaris): Persistenz erfolgt im App-Payload unter data.settings.polaris.enabled
+  // über das bestehende scheduleSave()-Muster (→ Firebase RTDB appStore-Sync) — nicht
+  // als roher RTDB-Knoten "settings/polaris/enabled". Das ist das etablierte
+  // Speicher-Muster dieses Projekts für App-Einstellungen.
+  function plPersistEnabled(v){
+    plSettings().enabled = !!v;
+    if (typeof window.scheduleSave === "function") try { window.scheduleSave(); } catch(e){ console.error("Polaris: scheduleSave fehlgeschlagen", e); }
+  }
+
+  // ── Dynamische Variablen (clientseitig via Intl, Zeitzone Europe/Zurich) ──
+  function plDynamicVariables(){
+    const now = new Date();
+    const fmt = function(opt){ return new Intl.DateTimeFormat("de-CH", Object.assign({ timeZone: POLARIS_TZ }, opt)).format(now); };
+    return {
+      user_name: "Laurin",
+      // TODO(polaris): Datumsformat als TT.MM.JJJJ angenommen (de-CH), z.B. "10.07.2026"
+      current_date: fmt({ day: "2-digit", month: "2-digit", year: "numeric" }),
+      current_weekday: fmt({ weekday: "long" }),                                // z.B. "Freitag"
+      current_time: fmt({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" }), // z.B. "09:41"
+      timezone: POLARIS_TZ
+    };
+  }
+
+  // ── SDK-Global auflösen ──
+  // Verifiziert gegen @elevenlabs/client 1.14.1: der IIFE-Build (dist/lib.iife.js)
+  // exponiert window.ElevenLabsClient mit ElevenLabsClient.Conversation.
+  // Fallbacks decken mögliche künftige/ältere Global-Namen ab.
+  function plConversationClass(){
+    const g = window.ElevenLabsClient || window.ElevenLabs;
+    if (g && g.Conversation && typeof g.Conversation.startSession === "function") return g.Conversation;
+    if (window.Conversation && typeof window.Conversation.startSession === "function") return window.Conversation;
+    return null;
+  }
+
+  // ── UI-Helfer ──
+  function plSetMode(mode){
+    plMode = PL_MODES.indexOf(mode) >= 0 ? mode : "idle";
+    ["polarisOrb","polarisBootOrb"].forEach(function(id){
+      const el = document.getElementById(id);
+      if (!el) return;
+      PL_MODES.forEach(function(m){ el.classList.remove("polaris-orb--" + m); });
+      el.classList.add("polaris-orb--" + plMode);
+    });
+  }
+  function plSetStatus(text){
+    plStatusText = text;
+    const el = document.getElementById("polarisStatus");
+    if (el) el.textContent = text;
+  }
+  function plUpdateUI(){
+    const on = plActive;
+    const sw = document.getElementById("polarisSwitch");
+    if (sw){
+      sw.classList.toggle("on", on);
+      sw.setAttribute("aria-checked", on ? "true" : "false");
+      sw.disabled = plStarting;
+    }
+    const btn = document.getElementById("polarisLaunchBtn");
+    if (btn) btn.disabled = plStarting;
+    plSetMode(plMode);
+    plSetStatus(plStatusText);
+  }
+
+  // ── Audio-reaktiver Orb (rAF-Loop auf getOutputVolume) ──
+  function plApplyLevel(v){
+    const val = String(Math.max(0, Math.min(1, v)).toFixed(3));
+    ["polarisOrb","polarisBootOrb"].forEach(function(id){
+      const el = document.getElementById(id);
+      if (el) el.style.setProperty("--polaris-level", val);
+    });
+  }
+  function plOrbTick(){
+    if (!plActive || !plSession){ plRaf = null; plApplyLevel(0); return; }
+    let level = 0;
+    try {
+      const v = plSession.getOutputVolume();
+      if (typeof v === "number" && isFinite(v)) level = v;
+    } catch(e){}
+    plApplyLevel(level);
+    plRaf = requestAnimationFrame(plOrbTick);
+  }
+  function plOrbLoopStart(){ if (plRaf == null) plRaf = requestAnimationFrame(plOrbTick); }
+  function plOrbLoopStop(){ if (plRaf != null){ cancelAnimationFrame(plRaf); plRaf = null; } plApplyLevel(0); }
+
+  // ── Boot-Overlay (lebt auf document.body, überlebt View-Re-Renders) ──
+  const PL_BOOT_LINES = [
+    "Audiokanal wird geöffnet …",
+    "Signed-URL vom Gateway bezogen …",
+    "Kontext wird geladen …",
+    "Briefing wird vorbereitet …"
+  ];
+  function plBootEnsure(){
+    let el = document.getElementById("polarisBootOverlay");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "polarisBootOverlay";
+    el.className = "polaris-boot";
+    el.innerHTML = '<div class="polaris-boot-inner">'
+      + '<div class="polaris-orb polaris-orb--idle" id="polarisBootOrb" aria-hidden="true"></div>'
+      + '<div class="polaris-boot-title">POLARIS</div>'
+      + '<div class="polaris-boot-lines" id="polarisBootLines"></div>'
+      + '<div class="polaris-boot-hint">Tippen zum Ausblenden — die Session läuft weiter</div>'
+      + '</div>';
+    el.addEventListener("click", function(){ plBootHide(); });
+    document.body.appendChild(el);
+    return el;
+  }
+  function plBootTimersClear(){ plBootTimers.forEach(clearTimeout); plBootTimers = []; }
+  function plBootShow(){
+    const el = plBootEnsure();
+    plBootActive = true;
+    plBootTimersClear();
+    const lines = document.getElementById("polarisBootLines");
+    if (lines) lines.innerHTML = "";
+    PL_BOOT_LINES.forEach(function(text, i){
+      plBootTimers.push(setTimeout(function(){
+        const box = document.getElementById("polarisBootLines");
+        if (!box || !plBootActive) return;
+        const div = document.createElement("div");
+        div.textContent = "▸ " + text;
+        box.appendChild(div);
+      }, 500 + i * 650));
+    });
+    // Sicherheitsventil: Overlay nie endlos anzeigen (z.B. wenn Agent-Audio ausbleibt)
+    plBootTimers.push(setTimeout(function(){ if (plBootActive) plBootHide(); }, 45000));
+    // Guard gegen Race: schlägt der Start noch im selben Frame fehl, läuft
+    // plBootHide() VOR diesem rAF-Callback — dann darf "show" nicht mehr rein.
+    requestAnimationFrame(function(){ if (plBootActive) el.classList.add("show"); });
+  }
+  function plBootHide(){
+    plBootActive = false;
+    plBootTimersClear();
+    const el = document.getElementById("polarisBootOverlay");
+    if (el) el.classList.remove("show");
+  }
+
+  // ── Signed-URL / Token vom n8n-Endpoint holen (keine Secrets im Frontend) ──
+  async function plFetchSessionAuth(){
+    let url = POLARIS_SESSION_URL_ENDPOINT;
+    // TODO(polaris): Annahme — der Endpoint akzeptiert optional ?agent_id=…;
+    // wird nur mitgesendet, sobald die Konstante oben gepflegt ist. Ein
+    // Endpoint, der den Parameter ignoriert, funktioniert unverändert.
+    if (POLARIS_AGENT_ID && POLARIS_AGENT_ID !== "REPLACE_WITH_AGENT_ID"){
+      url += (url.indexOf("?") >= 0 ? "&" : "?") + "agent_id=" + encodeURIComponent(POLARIS_AGENT_ID);
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(function(){ ctrl.abort(); }, 15000);
+    try {
+      const resp = await fetch(url, { method: "GET", headers: { "Accept": "application/json" }, signal: ctrl.signal });
+      if (!resp.ok) throw new Error("session-url Endpoint antwortete HTTP " + resp.status);
+      const data = await resp.json();
+      // Wenn signedUrl vorhanden ist → WebSocket; sonst conversationToken → WebRTC
+      if (data && data.signedUrl) return { signedUrl: data.signedUrl };
+      if (data && data.conversationToken) return { conversationToken: data.conversationToken };
+      throw new Error("session-url Endpoint lieferte weder signedUrl noch conversationToken");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // ── SDK-Callbacks ──
+  function plOnModeChange(ev){
+    const mode = ev && ev.mode;
+    if (mode === "speaking"){
+      plHasSpoken = true;
+      plSetMode("speaking");
+      plSetStatus("Polaris spricht …");
+    } else if (mode === "listening"){
+      plSetMode("listening");
+      plSetStatus("Polaris hört zu");
+      // Ruhiger Hörzustand nach dem Briefing: sobald das ERSTE Agent-Audio
+      // endet (speaking → listening), Boot-Overlay ausblenden. Bewusst kein
+      // Transkript-Parsing — nur die Statuswechsel des SDK.
+      if (plBootActive && plHasSpoken) plBootHide();
+    }
+  }
+  function plOnMessage(msg){
+    // TODO(polaris): Das SDK kennt kein eigenes "thinking"-Mode-Event
+    // (onModeChange liefert nur listening/speaking; verifiziert in v1.14.1).
+    // "thinking" wird abgeleitet: Nutzer-Transkript eingetroffen → Agent
+    // verarbeitet, bis die nächste Audio-Antwort beginnt.
+    if (msg && msg.source === "user" && plActive){
+      plSetMode("thinking");
+      plSetStatus("Polaris denkt nach …");
+    }
+  }
+  function plOnStatusChange(ev){
+    const st = ev && ev.status;
+    if (st === "connecting") plSetStatus("Verbinde …");
+    else if (st === "connected") plSetStatus("Verbunden — Polaris hört zu");
+  }
+  function plOnError(message, context){
+    console.error("Polaris: SDK-Fehler:", message, context || "");
+    plToast("err", "Polaris", "Polaris-Fehler: " + (message || "Unbekannter Fehler"));
+  }
+  function plOnDisconnect(details){
+    // Deckt auch das agentenseitige Auflegen via System-Tool end_call ab:
+    // Session aufräumen und den Toggle konsistent auf „Aus" zurücksetzen.
+    const wasActive = plActive;
+    const wasUserOff = plUserOff;
+    plActive = false;
+    plUserOff = false;
+    plSession = null;
+    plStarting = false;
+    plHasSpoken = false;
+    if (!wasActive) return; // Start-Fehlerpfad räumt selbst auf (plStart/plCleanup)
+    plPersistEnabled(false);
+    plOrbLoopStop();
+    plBootHide();
+    plSetMode("idle");
+    plSetStatus("Bereit");
+    plUpdateUI();
+    if (details && details.reason === "error"){
+      console.error("Polaris: Verbindung unterbrochen", details);
+      plToast("err", "Polaris", "Verbindung unterbrochen.");
+    } else if (!wasUserOff){
+      plToast("ok", "Polaris", "Gespräch beendet.");
+    }
+  }
+
+  // ── Session-Lebenszyklus ──
+  function plCleanup(){
+    plStarting = false;
+    plActive = false;
+    plUserOff = false;
+    plHasSpoken = false;
+    if (plSession){
+      const s = plSession; plSession = null;
+      try { Promise.resolve(s.endSession()).catch(function(){}); } catch(e){}
+    }
+    plPersistEnabled(false);
+    plOrbLoopStop();
+    plBootHide();
+    plSetMode("idle");
+    plSetStatus("Bereit");
+    plUpdateUI();
+  }
+
+  async function plStart(opts){
+    const wantLaunch = !!(opts && opts.launch);
+    if (plActive || plStarting) return;
+    plStarting = true;
+    plSetStatus("Verbinde …");
+    plUpdateUI();
+    // Boot-Effekt startet SOFORT mit dem Launch-Klick (parallel zum
+    // Verbindungsaufbau); jeder Fehlerpfad bricht ihn via plCleanup wieder ab.
+    if (wantLaunch) plBootShow();
+    try {
+      // 1) Mikrofon-Permission IMMER explizit vor dem Session-Start anfragen
+      let mic;
+      try {
+        mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch(err){
+        console.error("Polaris: Mikrofonzugriff verweigert", err);
+        plToast("err", "Polaris", "Kein Mikrofonzugriff — bitte in den Browsereinstellungen erlauben.");
+        plCleanup();
+        return;
+      }
+      // Nur Permission-Check — den eigentlichen Audio-Stream öffnet das SDK selbst
+      try { mic.getTracks().forEach(function(t){ t.stop(); }); } catch(e){}
+
+      // 2) SDK-Global prüfen
+      const Conversation = plConversationClass();
+      if (!Conversation){
+        console.error("Polaris: ElevenLabs-SDK nicht gefunden (window.ElevenLabsClient fehlt — CDN-Script geladen?)");
+        plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
+        plCleanup();
+        return;
+      }
+
+      // 3) Signed-URL/Token holen
+      let auth;
+      try {
+        auth = await plFetchSessionAuth();
+      } catch(err){
+        console.error("Polaris: session-url Endpoint nicht erreichbar", err);
+        plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
+        plCleanup();
+        return;
+      }
+
+      // 4) Session starten — dynamische Variablen gehen mit dem Init-Event raus
+      plHasSpoken = false;
+      const startPromise = Conversation.startSession(Object.assign({}, auth, {
+        dynamicVariables: plDynamicVariables(),
+        onModeChange: plOnModeChange,
+        onStatusChange: plOnStatusChange,
+        onMessage: plOnMessage,
+        onError: plOnError,
+        onDisconnect: plOnDisconnect
+      }));
+      // Hartes Start-Timeout: plStarting darf nie hängen bleiben, falls das
+      // SDK weder auflöst noch wirft. Eine verspätet doch noch aufgebaute
+      // Session wird sofort wieder beendet.
+      let plTimedOut = false;
+      const conversation = await Promise.race([
+        startPromise.then(function(c){
+          if (plTimedOut){
+            try { Promise.resolve(c.endSession()).catch(function(){}); } catch(e){}
+            throw new Error("Verbindung nach Timeout verworfen");
+          }
+          return c;
+        }),
+        new Promise(function(_, reject){
+          setTimeout(function(){ plTimedOut = true; reject(new Error("Session-Start-Timeout nach 30s")); }, 30000);
+        })
+      ]);
+      plSession = conversation;
+      plActive = true;
+      plStarting = false;
+      plPersistEnabled(true);
+      plSetMode("listening");
+      plSetStatus("Verbunden — Polaris hört zu");
+      plOrbLoopStart();
+
+      // 6) Launch-Kommando als User-Text-Message direkt nach Session-Start
+      if (wantLaunch){
+        try { conversation.sendUserMessage("LAUNCH"); }
+        catch(err){ console.error("Polaris: LAUNCH-Nachricht fehlgeschlagen", err); plToast("warn", "Polaris", "Briefing-Start konnte nicht gesendet werden."); }
+      }
+      plUpdateUI();
+    } catch(err){
+      console.error("Polaris: Session-Start fehlgeschlagen", err);
+      plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
+      plCleanup();
+    }
+  }
+
+  async function plStop(byUser){
+    if (!plSession){ plCleanup(); return; }
+    plUserOff = !!byUser;
+    plSetStatus("Beende …");
+    try {
+      await plSession.endSession(); // Aufräumen übernimmt plOnDisconnect
+      if (byUser) plToast("ok", "Polaris", "Ausgeschaltet.");
+    } catch(err){
+      console.error("Polaris: endSession fehlgeschlagen", err);
+      plCleanup();
+    }
+  }
+
+  function plToggle(){
+    if (plStarting) return; // während des Verbindens nicht umschaltbar
+    if (plActive){ plStop(true); return; }
+    plStart({ launch: false });
+  }
+  function plLaunch(){
+    if (plStarting) return;
+    if (plActive && plSession){
+      // TODO(polaris): Launch bei bereits laufender Session als erneutes
+      // Briefing interpretiert (LAUNCH + Boot-Effekt, ohne Neu-Verbinden).
+      plHasSpoken = false;
+      plBootShow();
+      try { plSession.sendUserMessage("LAUNCH"); }
+      catch(err){ console.error("Polaris: LAUNCH-Nachricht fehlgeschlagen", err); plToast("warn", "Polaris", "Briefing-Start konnte nicht gesendet werden."); }
+      return;
+    }
+    plStart({ launch: true });
+  }
+
+  // ── View (#/polaris) ──
+  window.viewPolaris = function(){
+    // Konsistenz nach Reload: eine Session überlebt keinen Page-Load — der
+    // Toggle darf nie „An ohne Session" zeigen. Persistierten Zustand
+    // korrigieren statt Auto-Start (Browser verlangen für Mikrofon/Audio
+    // eine Nutzer-Geste). // TODO(polaris): bewusst kein Auto-Reconnect.
+    const s = plSettings();
+    if (s.enabled && !plActive && !plStarting){
+      s.enabled = false;
+      if (typeof window.scheduleSave === "function") try { window.scheduleSave(); } catch(e){}
+    }
+    const on = plActive;
+    const busy = plStarting;
+    return '<div class="page-header">'
+      + '<div class="page-title"><h2>🛰️ Polaris</h2>'
+      + '<p style="color:var(--text-muted);font-size:13px;margin:4px 0 0">Sprachsteuerung — sprich mit deinem persönlichen Agenten</p></div>'
+      + '</div>'
+      + '<div class="card polaris-card">'
+      +   '<div class="polaris-hero">'
+      +     '<div class="polaris-orb polaris-orb--' + plEsc(plMode) + '" id="polarisOrb" aria-hidden="true"></div>'
+      +     '<div class="polaris-status" id="polarisStatus" role="status">' + plEsc(plStatusText) + '</div>'
+      +     '<button class="btn primary" id="polarisLaunchBtn" data-action="polaris-launch"' + (busy ? " disabled" : "") + '>🚀 Launch</button>'
+      +   '</div>'
+      +   '<div class="polaris-controls">'
+      +     '<div class="polaris-label"><b>Polaris aktiv</b><span>An = Session starten · Aus = Session beenden</span></div>'
+      +     '<button class="polaris-switch' + (on ? " on" : "") + '" id="polarisSwitch" data-action="polaris-toggle" role="switch" aria-checked="' + (on ? "true" : "false") + '" aria-label="Polaris an/aus"' + (busy ? " disabled" : "") + '>'
+      +       '<span class="polaris-switch-knob"></span>'
+      +     '</button>'
+      +   '</div>'
+      + '</div>';
+  };
+
+  // ── Event-Delegation (Muster der bestehenden Module: data-action, kein onclick) ──
+  document.addEventListener("click", function(e){
+    const el = e.target.closest("[data-action]");
+    if (!el) return;
+    const action = el.dataset.action;
+    if (action === "polaris-toggle"){ e.preventDefault(); plToggle(); }
+    else if (action === "polaris-launch"){ e.preventDefault(); plLaunch(); }
+  });
 })();
 </script>
 
