@@ -12,6 +12,7 @@
      Sonst würde ein hängender Font-Request die ganze Standby-Seite einfrieren. -->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap" rel="stylesheet"></noscript>
+<script src="quantus-orb.js" defer></script>
 <style>
   /* ══════════════════════════════════════════════════════════════════════
      QUANTUS RUHESTAND — Neural-Standby (Ambient-Modus)
@@ -358,6 +359,8 @@
   <span><span class="bc-name">Quantus</span><br><span class="bc-sub">Neural Standby</span></span>
 </div>
 <div class="chip qcard" id="sysChip">
+  <quantus-orb id="voiceOrb" title="Sprachsteuerung — in Vorbereitung" style="width:24px;height:24px;flex:none"></quantus-orb>
+  <span class="sep"></span>
   <span class="on"><i></i>Online</span>
   <span class="sep"></span>
   <span>QNT-Core 05</span>
@@ -1008,9 +1011,23 @@ document.getElementById("fsBtn").addEventListener("click", function(e){
   toggleFullscreen();
 });
 window.addEventListener("click", function(e){
-  if (e.target.closest && (e.target.closest("#launchBtn") || e.target.closest("#fsBtn") || e.target.closest("#bootOverlay"))) return;
+  if (e.target.closest && (e.target.closest("#launchBtn") || e.target.closest("#fsBtn") || e.target.closest("#bootOverlay") || e.target.closest("quantus-orb"))) return;
   if (!isFullscreen()) toggleFullscreen();
   showUi();
+});
+
+/* Sprach-Orb: an die Sprachsteuerung anbinden, sobald vorhanden —
+   bis dahin Klick-Vorschau der „KI spricht"-Wellen */
+var orbDemoTimer = null;
+document.addEventListener("orb-activate", function(e){
+  var orb = e.target;
+  if (window.quantusVoice && typeof window.quantusVoice.toggle === "function"){
+    window.quantusVoice.toggle(orb);
+    return;
+  }
+  clearTimeout(orbDemoTimer);
+  orb.speaking = !orb.speaking;
+  if (orb.speaking) orbDemoTimer = setTimeout(function(){ orb.speaking = false; }, 4000);
 });
 
 window.addEventListener("keydown", function(e){

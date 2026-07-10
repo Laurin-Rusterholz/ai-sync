@@ -13,6 +13,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <script src="quantus-orb.js" defer></script>
   <script>
   /* Theme früh anwenden (kein FOUC) — „Schiefer" (dark, Default) / „Leinen" (light), an themeMode. */
   (function(){ try {
@@ -5072,6 +5073,8 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
         <button onclick="event.stopPropagation();headerTimerStop()" style="background:none;border:none;cursor:pointer;color:#ff3b30;font-size:14px;padding:0 2px" title="Timer stoppen">⏹</button>
       </div>
       <div class="topbar-actions" style="display:flex;align-items:center;gap:8px">
+        <quantus-orb id="voiceOrb" title="Sprachsteuerung — in Vorbereitung (Klick: Vorschau)" style="width:30px;height:30px;flex:none"></quantus-orb>
+        <div class="topbar-divider"></div>
         <input type="text" id="globalIdeaInput" placeholder="💡 Idee..." style="width:120px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:12px" />
         <input type="text" id="globalUpdateInput" placeholder="🔧 Update..." style="width:120px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:12px" />
         <div class="topbar-divider"></div>
@@ -105091,6 +105094,21 @@ html.theme-light .card{box-shadow:none}
     // ohne Geste über die Route), bleibt das Overlay einfach im Fenstermodus.
     if (wrap.requestFullscreen) wrap.requestFullscreen().catch(function(){});
   };
+
+  /* ── Sprach-Orb (Topbar): Klick geht an die Sprachsteuerung, sobald sie
+     existiert (window.quantusVoice.toggle). Bis dahin: kurze Vorschau der
+     „KI spricht"-Animation, damit der Zustand erlebbar ist. ── */
+  var orbDemoTimer = null;
+  document.addEventListener("orb-activate", function(e){
+    var orb = e.target;
+    if (window.quantusVoice && typeof window.quantusVoice.toggle === "function"){
+      window.quantusVoice.toggle(orb);
+      return;
+    }
+    clearTimeout(orbDemoTimer);
+    orb.speaking = !orb.speaking;
+    if (orb.speaking) orbDemoTimer = setTimeout(function(){ orb.speaking = false; }, 4000);
+  });
 })();
 </script>
 
