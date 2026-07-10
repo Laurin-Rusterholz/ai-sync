@@ -5096,7 +5096,7 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
         <button class="topbar-btn" id="btnManualPull" title="Vom Server herunterladen" onclick="window._openPullChoiceModal()">☁️↓</button>
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
-        <button class="topbar-btn" id="btnRuhestand" title="Ruhestand — Ambient-Modus" onclick="window.location.href='ruhestand.html'" style="font-size:14px">🌌</button>
+        <button class="topbar-btn" id="btnRuhestand" title="Ruhestand — Ambient-Modus (Vollbild)" onclick="window.openRuhestandOverlay?window.openRuhestandOverlay():(window.location.href='ruhestand.html')" style="font-size:14px">🌌</button>
         <button class="topbar-btn" id="btnSettings" title="Einstellungen">⚙️</button>
       </div>
     </div>
@@ -16471,7 +16471,7 @@ function renderMain() {
     case "drive": html = viewDrive(); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "docstudio": window.location.href = "docstudio.html"; return; // Öffnet DocStudio (eigenständige Single-File-App)
-    case "ruhestand": window.location.href = "ruhestand.html"; return; // Öffnet den Ruhestand-Ambient-Modus (eigenständige Single-File-Seite)
+    case "ruhestand": (window.openRuhestandOverlay ? window.openRuhestandOverlay() : (window.location.href = "ruhestand.html")); return; // Öffnet den Ruhestand-Ambient-Modus (Vollbild-Overlay)
     case "settings": { openSettings(); return; }
 
     default: {
@@ -105036,6 +105036,61 @@ html.theme-light .card{box-shadow:none}
       document.body.appendChild(el);
     });
   }catch(e){}
+})();
+</script>
+
+<script>
+/* ── RUHESTAND-OVERLAY — öffnet ruhestand.html als iframe im Vollbild.
+   Der Klick auf den Header-Button ist die nötige Nutzer-Geste, daher kann
+   das Vollbild hier direkt aktiviert werden (auf einer frisch geladenen
+   Seite wäre das nicht erlaubt). Das iframe meldet sich per postMessage:
+   „toggleFs" (Vollbild umschalten) und „close" (Launch → zurück in die App,
+   ohne Neuladen). Gleiches Einbettungs-Muster wie das Drive-Modul. ── */
+(function(){
+  "use strict";
+  var wrap = null, frame = null;
+
+  function sendFsState(){
+    if (frame && frame.contentWindow){
+      frame.contentWindow.postMessage({ type: "ruhestand:fs", active: !!document.fullscreenElement }, location.origin);
+    }
+  }
+  document.addEventListener("fullscreenchange", sendFsState);
+
+  window.addEventListener("message", function(e){
+    if (e.origin !== location.origin || !e.data || !frame || e.source !== frame.contentWindow) return;
+    if (e.data.type === "ruhestand:toggleFs"){
+      if (document.fullscreenElement){ document.exitFullscreen && document.exitFullscreen(); }
+      else if (wrap && wrap.requestFullscreen){ wrap.requestFullscreen().catch(function(){}); }
+    } else if (e.data.type === "ruhestand:close"){
+      closeRuhestandOverlay();
+    }
+  });
+
+  function closeRuhestandOverlay(){
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function(){});
+    if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    wrap = null; frame = null;
+  }
+
+  window.openRuhestandOverlay = function(){
+    if (wrap) return; // schon offen
+    wrap = document.createElement("div");
+    wrap.id = "ruhestandOverlay";
+    wrap.style.cssText = "position:fixed;inset:0;z-index:999999;background:#05060a";
+    frame = document.createElement("iframe");
+    frame.src = "ruhestand.html";
+    frame.title = "Quantus Ruhestand";
+    frame.style.cssText = "width:100%;height:100%;border:0;display:block";
+    frame.setAttribute("allow", "fullscreen");
+    frame.allowFullscreen = true;
+    frame.addEventListener("load", sendFsState);
+    wrap.appendChild(frame);
+    document.body.appendChild(wrap);
+    // Vollbild direkt aus der Klick-Geste heraus; schlägt es fehl (z.B. Aufruf
+    // ohne Geste über die Route), bleibt das Overlay einfach im Fenstermodus.
+    if (wrap.requestFullscreen) wrap.requestFullscreen().catch(function(){});
+  };
 })();
 </script>
 
