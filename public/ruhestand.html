@@ -7,7 +7,11 @@
 <title>Quantus — Ruhestand</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap" rel="stylesheet">
+<!-- Nicht-blockierend laden: media="print" hält den Parser nicht auf — Uhr &
+     Animationen starten sofort, Inter wird nachgeladen und getauscht (swap).
+     Sonst würde ein hängender Font-Request die ganze Standby-Seite einfrieren. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <style>
   /* ══════════════════════════════════════════════════════════════════════
      QUANTUS RUHESTAND — Neural-Standby (Ambient-Modus)
@@ -164,9 +168,9 @@
   }
   #brandChip{left:3vw}
   #brandChip .logo{
-    width:20px;height:20px;border-radius:6px;flex:none;
-    background:linear-gradient(135deg,var(--accent),var(--accent-deep));
-    box-shadow:0 0 14px rgba(139,92,246,.45);
+    width:22px;height:22px;flex:none;
+    background:url('emblem.svg') center/contain no-repeat;
+    filter:drop-shadow(0 0 8px rgba(139,92,246,.45));
   }
   #brandChip .bc-name{font-weight:700;letter-spacing:-.01em}
   #brandChip .bc-sub{font-size:10.5px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-top:1px}
@@ -280,10 +284,12 @@
   }
   @keyframes bootPop{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
   .boot-card .logo{
-    width:44px;height:44px;border-radius:12px;margin:0 auto 16px;
-    background:linear-gradient(135deg,var(--accent),var(--accent-deep));
-    box-shadow:0 0 26px rgba(139,92,246,.5);
+    width:52px;height:52px;margin:0 auto 16px;
+    background:url('emblem.svg') center/contain no-repeat;
+    filter:drop-shadow(0 0 16px rgba(139,92,246,.55));
+    animation:bootSpin 8s linear infinite;
   }
+  @keyframes bootSpin{to{transform:rotate(360deg)}}
   .boot-card h2{font-size:19px;font-weight:700;letter-spacing:-.012em}
   .boot-card .boot-status{
     margin-top:6px;min-height:18px;font-size:12px;color:var(--muted);
@@ -408,6 +414,21 @@
 var motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 var reducedMotion = motionQuery.matches;
 var DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+/* Eingebettet im Quantus-Overlay (iframe)? Dann besitzt die Haupt-App das
+   Vollbild (sie hat die Klick-Geste) und „zurück" heißt: Overlay schließen —
+   ohne Neuladen der App. Standalone (direkter Aufruf) bleibt alles lokal. */
+var EMBEDDED = (function(){ try { return window.self !== window.top; } catch(e){ return true; } })();
+var parentFs = false;   // Vollbild-Zustand der Haupt-App (per postMessage gemeldet)
+if (EMBEDDED){
+  window.addEventListener("message", function(e){
+    if (e.origin !== location.origin || !e.data) return;
+    if (e.data.type === "ruhestand:fs") parentFs = !!e.data.active;
+  });
+}
+function isFullscreen(){
+  return EMBEDDED ? parentFs : !!document.fullscreenElement;
+}
 
 /* ════════════════════════════════════════════════════════════
    1) STERNENFELD — Warp-Effekt + Sternschnuppen
@@ -965,10 +986,17 @@ function showUi(){
 window.addEventListener("mousemove", showUi);
 window.addEventListener("touchstart", showUi, { passive: true });
 window.addEventListener("focusin", showUi);
+showUi();   // beim Start kurz zeigen: Hint erklärt Vollbild (F/Klick) und Launch
 
-/* Vollbild: Autostart geht nicht ohne Nutzer-Geste — erster Klick/Tap
-   irgendwo (außer auf Bedienelemente) oder Taste F schalten um. */
+/* Vollbild: Autostart geht nicht ohne Nutzer-Geste — im Overlay übernimmt
+   die Haupt-App das direkt beim Öffnen (Header-Klick). Hier: erster
+   Klick/Tap irgendwo oder Taste F schalten um; eingebettet wird die
+   Umschaltung an die Haupt-App delegiert (Nutzer-Aktivierung propagiert). */
 function toggleFullscreen(){
+  if (EMBEDDED){
+    try { window.parent.postMessage({ type: "ruhestand:toggleFs" }, location.origin); } catch(e){}
+    return;
+  }
   if (document.fullscreenElement){
     document.exitFullscreen && document.exitFullscreen();
   } else if (document.documentElement.requestFullscreen){
@@ -981,7 +1009,7 @@ document.getElementById("fsBtn").addEventListener("click", function(e){
 });
 window.addEventListener("click", function(e){
   if (e.target.closest && (e.target.closest("#launchBtn") || e.target.closest("#fsBtn") || e.target.closest("#bootOverlay"))) return;
-  if (!document.fullscreenElement) toggleFullscreen();
+  if (!isFullscreen()) toggleFullscreen();
   showUi();
 });
 
@@ -990,13 +1018,19 @@ window.addEventListener("keydown", function(e){
   if (e.key === "Escape"){
     // Im Vollbild fängt der Browser ESC (Vollbild-Ausstieg) — erst der
     // zweite ESC verlässt die Seite.
-    if (document.fullscreenElement) return;
+    if (isFullscreen()) return;
     goBack();
   }
   if (e.key === "Enter" && document.activeElement && document.activeElement.id === "launchBtn") return; // Button feuert selbst
 });
 
-function goBack(){ window.location.href = "index.html"; }
+function goBack(){
+  if (EMBEDDED){
+    try { window.parent.postMessage({ type: "ruhestand:close" }, location.origin); } catch(e){}
+    return;
+  }
+  window.location.href = "index.html";
+}
 
 /* Launch-Sequenz: kurzer Boot im Quantus-Look, dann in die App */
 var launching = false;
