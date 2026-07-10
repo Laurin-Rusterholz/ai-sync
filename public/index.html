@@ -540,8 +540,8 @@
     .rh-toast.info{border-left:3px solid var(--info)}
 
     /* App Layout - With Sidebar */
-    .app{display:grid;grid-template-columns:240px 1fr;grid-template-rows:52px 1fr;height:100%;transition:grid-template-columns 0.3s ease}
-    .app.sidebar-collapsed{grid-template-columns:0 1fr}
+    .app{display:grid;grid-template-columns:240px minmax(0,1fr) auto;grid-template-rows:52px 1fr;height:100%;transition:grid-template-columns 0.3s ease}
+    .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) auto}
     .app.sidebar-collapsed .sidebar{transform:translateX(-100%);opacity:0;pointer-events:none}
     .app.sidebar-collapsed .sidebar-toggle-btn{left:8px}
     
@@ -587,7 +587,7 @@
     .app-nav-item .badge{background:var(--danger);padding:2px 6px;border-radius:999px;font-size:10px;font-weight:600;color:var(--text);margin-left:4px}
 
     /* Topbar - Apple Style Clean */
-    .topbar{grid-column:2;grid-row:1;display:flex;align-items:center;padding:0 16px;height:52px;gap:12px;border-bottom:1px solid var(--border);background:rgba(28,28,30,.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);z-index:10}
+    .topbar{grid-column:2/-1;grid-row:1;display:flex;align-items:center;padding:0 16px;height:52px;gap:12px;border-bottom:1px solid var(--border);background:rgba(28,28,30,.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);z-index:10}
     .brand{display:flex;align-items:center;gap:10px;flex-shrink:0;cursor:pointer;padding:6px 8px;border-radius:10px;transition:var(--transition)}
     .brand:hover{background:var(--panel2)}
     .brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
@@ -3516,6 +3516,83 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
 
 
 
+<style id="quantusLayoutModesCss">
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANZEIGEMODI — Computer (Ultrawide) / Laptop / Tablet
+   Der Modus wird automatisch anhand der Fensterbreite erkannt und kann über
+   den Topbar-Button manuell fixiert werden (localStorage: quantusLayoutMode).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Computer: gesamte Bildschirmbreite nutzen ── */
+body.mode-computer .main{padding:16px 24px 40px}
+body.mode-computer .main .page{max-width:none}
+body.mode-computer .apps-list{max-width:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:10px}
+/* Auf sehr breiten Screens dichtere Übersichts-Grids */
+@media(min-width:2200px){
+  body.mode-computer .main .grid-4{grid-template-columns:repeat(4,1fr)}
+  body.mode-computer .tasks-grid{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+}
+
+/* ── Laptop: Inhalt begrenzt & zentriert (fokussiertes Arbeiten) ── */
+body.mode-laptop .main .page{max-width:1400px}
+
+/* ── Tablet: kompakt, Sidebar als Overlay, keine Seitenpanels ── */
+body.mode-tablet .app{grid-template-columns:1fr}
+body.mode-tablet .sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;z-index:500;box-shadow:var(--shadow-lg)}
+body.mode-tablet .app:not(.sidebar-collapsed) .sidebar{transform:translateX(0)}
+body.mode-tablet .app.sidebar-collapsed .sidebar{transform:translateX(-100%)}
+body.mode-tablet .sidebar-toggle-btn{left:8px;top:60px}
+body.mode-tablet .app:not(.sidebar-collapsed) .sidebar-toggle-btn{left:248px}
+body.mode-tablet .topbar{grid-column:1}
+body.mode-tablet .main{grid-column:1;padding:12px}
+body.mode-tablet .main .page{max-width:100%}
+body.mode-tablet #globalIdeaInput,body.mode-tablet #globalUpdateInput{display:none}
+body.mode-tablet .panel-dock{display:none !important}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PANEL-DOCK — Split-Screen-Seitenpanels (Computer: bis 3, Laptop: 1)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.panel-dock{grid-column:3;grid-row:2;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);border-left:1px solid var(--border)}
+.panel-dock:empty{display:none}
+.dock-panel{width:360px;flex-shrink:0;display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--border)}
+.dock-panel:first-child{border-left:none}
+body.mode-laptop .dock-panel{width:330px}
+.dock-panel-header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--panel2);flex-shrink:0}
+.dock-panel-header .dock-panel-title{flex:1;font-size:12.5px;font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dock-panel-header button{width:24px;height:24px;border:none;background:transparent;color:var(--muted);cursor:pointer;border-radius:6px;font-size:13px;display:flex;align-items:center;justify-content:center;transition:var(--transition)}
+.dock-panel-header button:hover{background:var(--panel3);color:var(--text)}
+.dock-panel-body{flex:1;overflow-y:auto;padding:10px 12px;min-height:0;display:flex;flex-direction:column;gap:8px}
+.dock-input{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:12.5px;font-family:inherit;outline:none;box-sizing:border-box}
+.dock-input:focus{border-color:var(--accent)}
+.dock-item{display:flex;align-items:flex-start;gap:8px;padding:7px 8px;border-radius:8px;transition:var(--transition);font-size:12.5px;line-height:1.4}
+.dock-item:hover{background:var(--panel2)}
+.dock-item input[type=checkbox]{width:15px;height:15px;margin-top:1px;cursor:pointer;flex-shrink:0}
+.dock-item .dock-item-title{flex:1;min-width:0;cursor:pointer;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.dock-item .dock-item-meta{font-size:10.5px;color:var(--muted);white-space:nowrap;flex-shrink:0}
+.dock-item .dock-item-meta.overdue{color:var(--danger);font-weight:700}
+.dock-section-title{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:6px 0 2px}
+.dock-empty{font-size:12px;color:var(--muted);text-align:center;padding:14px 6px}
+/* Polaris-Mini-Chat */
+.dock-chat-messages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:120px}
+.dock-chat-msg{max-width:92%;padding:8px 11px;border-radius:12px;font-size:12.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.dock-chat-msg.user{align-self:flex-end;background:var(--accent);color:var(--text);border-bottom-right-radius:4px}
+.dock-chat-msg.assistant{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:4px}
+.dock-chat-input-row{display:flex;gap:6px;flex-shrink:0}
+.dock-chat-input-row textarea{flex:1;resize:none;min-height:38px;max-height:110px}
+/* Fokus-Timer */
+.dock-focus-time{font-size:42px;font-weight:900;font-family:var(--mono);text-align:center;letter-spacing:1px;margin:10px 0 2px}
+.dock-focus-phase{text-align:center;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+.dock-focus-actions{display:flex;gap:6px;justify-content:center}
+/* Dropdown-Menüs (Modus & Panels) */
+.topbar-menu{display:none;position:absolute;top:42px;right:0;width:240px;background:var(--panel);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:999;padding:8px}
+.topbar-menu .topbar-menu-title{font-size:10px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;letter-spacing:.5px}
+.topbar-menu-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:none;background:transparent;color:var(--text2);border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:500;text-align:left;transition:var(--transition)}
+.topbar-menu-item:hover{background:var(--panel2)}
+.topbar-menu-item.active{background:var(--accent);color:var(--text)}
+.topbar-menu-item .check{margin-left:auto;font-size:11px}
+/* Dock unterhalb von 900px nie anzeigen (Mobile-Layout) */
+@media(max-width:900px){.panel-dock{display:none !important}}
+</style>
 </head>
 <body>
 <!-- Loading Overlay -->
@@ -5097,6 +5174,14 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
         <button class="topbar-btn" id="btnRuhestand" title="Ruhestand — Ambient-Modus (Vollbild)" onclick="window.openRuhestandOverlay?window.openRuhestandOverlay():(window.location.href='ruhestand.html')" style="font-size:14px">🌌</button>
+        <div style="position:relative" id="dockMenuWrap">
+          <button class="topbar-btn" id="btnDockPanels" title="Seitenpanels — mehrere Apps gleichzeitig (Split-Screen)" onclick="window.toggleDockMenu&&window.toggleDockMenu()">🗂️</button>
+          <div class="topbar-menu" id="dockMenu"></div>
+        </div>
+        <div style="position:relative" id="layoutModeWrap">
+          <button class="topbar-btn" id="btnLayoutMode" title="Anzeigemodus (Computer / Laptop / Tablet)" onclick="window.toggleLayoutModeMenu&&window.toggleLayoutModeMenu()">🖥️</button>
+          <div class="topbar-menu" id="layoutModeMenu"></div>
+        </div>
         <button class="topbar-btn" id="btnSettings" title="Einstellungen">⚙️</button>
       </div>
     </div>
@@ -5107,6 +5192,9 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
 
   <!-- Main Content -->
   <main class="main" id="main"></main>
+
+  <!-- Panel-Dock: Split-Screen-Seitenpanels (Computer-/Laptop-Modus) -->
+  <aside class="panel-dock" id="panelDock"></aside>
 </div>
 
 <!-- Modal -->
@@ -7634,10 +7722,10 @@ window._aiOpenSettings = function() {
   
   closeModal();
   setTimeout(() => {
-    openModal('⚙️ KI-Assistent — Einstellungen', `
+    openModal('⚙️ Polaris — Einstellungen', `
       <div class="form" style="max-height:65vh;overflow-y:auto;padding-right:8px">
         <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55">
-          Hier kannst du steuern, wie viel Daten der KI-Assistent verarbeitet. Mehr = präzisere Antworten, aber langsamer und teurer (mehr Tokens). Sonnet 4 hat ~200k Tokens Kontextfenster (≈600k Zeichen).
+          Hier kannst du steuern, wie viel Daten Polaris verarbeitet. Mehr = präzisere Antworten, aber langsamer und teurer (mehr Tokens). Sonnet 4 hat ~200k Tokens Kontextfenster (≈600k Zeichen).
         </p>
         
         <div style="background:var(--accent-soft);border:1px solid var(--accent-soft);border-radius:10px;padding:12px 14px;margin-bottom:14px">
@@ -7730,10 +7818,10 @@ window.openEntityAi = async function(kind, entityId) {
   const name = entity.name || entity.title || 'Unbekannt';
   
   // Modal öffnen mit Loading-State
-  openModal(`🤖 KI-Assistent · ${esc(name)}`, `
+  openModal(`🌟 Polaris · ${esc(name)}`, `
     <div id="aiAssistantBody" style="min-height:300px;display:flex;flex-direction:column;gap:14px">
       <div style="background:var(--accent-soft);border:1px solid var(--accent-soft);border-radius:10px;padding:12px 14px;font-size:12.5px;color:var(--muted);line-height:1.55">
-        Der KI-Assistent analysiert alle verfügbaren Informationen zu <strong style="color:var(--text)">${esc(name)}</strong> — Meetings, E-Mails, Aufgaben, Notizen, Personen und <strong style="color:var(--text)">extrahierten Text aus Dokumenten</strong> (PDFs, Word).
+        Polaris analysiert alle verfügbaren Informationen zu <strong style="color:var(--text)">${esc(name)}</strong> — Meetings, E-Mails, Aufgaben, Notizen, Personen und <strong style="color:var(--text)">extrahierten Text aus Dokumenten</strong> (PDFs, Word).
       </div>
       <div id="aiContextStats" style="font-size:12px;color:var(--muted)">Sammle Kontext...</div>
       <div id="aiActionButtons" style="display:none;flex-wrap:wrap;gap:6px"></div>
@@ -8330,7 +8418,7 @@ const TRANSLATIONS = {
     "dashboard": "Dashboard", "apps": "Apps", "today": "Mein Tag", "learn": "Lernen",
     "weekplanning": "Wochenplanung", "tasks": "Aufgaben", "messages": "Nachrichten",
     "projects": "Projekte", "ideas": "Ideen", "meetings": "Meetings", "updates": "Updates",
-    "budget": "Budget", "chat": "KI-Chat", "knowledge": "Wissensbasis", "notes": "Notizen",
+    "budget": "Budget", "chat": "Polaris", "knowledge": "Wissensbasis", "notes": "Notizen",
     "calendar": "Kalender", "goals": "Ziele", "strategies": "Strategien",
     "programs": "Programme", "organizations": "Organisationen", "time": "Zeit",
     "statistics": "Statistiken", "reports": "Reports", "journal": "Journal Booklet",
@@ -8361,7 +8449,7 @@ const TRANSLATIONS = {
     "in_progress": "In Arbeit", "quick_todos": "Schnell-ToDos",
     "inbox": "Inbox", "recent_activity": "Letzte Aktivitäten",
     "weekly_goals": "Wochenziele", "pinned": "Angepinnt",
-    "ai_assistant": "KI-Assistent", "planning_assistant": "Planungsassistent",
+    "ai_assistant": "Polaris", "planning_assistant": "Planungsassistent",
     "quick_links": "Schnelllinks",
     // Tasks
     "tasks_subtitle": "Aufgaben verwalten, priorisieren und erledigen",
@@ -8383,7 +8471,7 @@ const TRANSLATIONS = {
     "cloud_sync": "Cloud-Synchronisation", "auto_save": "Automatisch speichern",
     "auto_sync": "Automatisch synchronisieren",
     // AI Chat
-    "hello_help": "Hallo! Wie kann ich helfen?",
+    "hello_help": "Hallo! Ich bin Polaris. Wie kann ich helfen?",
     "ai_access_desc": "Ich habe Zugriff auf deine Aufgaben, Projekte, Notizen, Termine, Ideen und Wissensbasis. Ich kann auch Termine für dich erstellen!",
     "api_key_required": "API-Key erforderlich",
     "api_key_hint": "Bitte hinterlege deinen OpenAI API-Key in den Einstellungen um den Chat zu nutzen.",
@@ -8419,7 +8507,7 @@ const TRANSLATIONS = {
     "dashboard": "Dashboard", "apps": "Apps", "today": "My Day", "learn": "Learn",
     "weekplanning": "Week Planning", "tasks": "Tasks", "messages": "Messages",
     "projects": "Projects", "ideas": "Ideas", "meetings": "Meetings", "updates": "Updates",
-    "budget": "Budget", "chat": "AI Chat", "knowledge": "Knowledge Base", "notes": "Notes",
+    "budget": "Budget", "chat": "Polaris", "knowledge": "Knowledge Base", "notes": "Notes",
     "calendar": "Calendar", "goals": "Goals", "strategies": "Strategies",
     "programs": "Programs", "organizations": "Organizations", "time": "Time",
     "statistics": "Statistics", "reports": "Reports", "journal": "Journal Booklet",
@@ -8445,7 +8533,7 @@ const TRANSLATIONS = {
     "in_progress": "In Progress", "quick_todos": "Quick ToDos",
     "inbox": "Inbox", "recent_activity": "Recent Activity",
     "weekly_goals": "Weekly Goals", "pinned": "Pinned",
-    "ai_assistant": "AI Assistant", "planning_assistant": "Planning Assistant",
+    "ai_assistant": "Polaris", "planning_assistant": "Planning Assistant",
     "quick_links": "Quick Links",
     "tasks_subtitle": "Manage, prioritize and complete tasks",
     "matrix": "Matrix", "list": "List",
@@ -8462,7 +8550,7 @@ const TRANSLATIONS = {
     "import_export": "Data", "language": "Language",
     "cloud_sync": "Cloud Synchronization", "auto_save": "Auto-save",
     "auto_sync": "Auto-sync",
-    "hello_help": "Hello! How can I help?",
+    "hello_help": "Hello! I'm Polaris. How can I help?",
     "ai_access_desc": "I have access to your tasks, projects, notes, events, ideas and knowledge base. I can also create events for you!",
     "api_key_required": "API Key Required",
     "api_key_hint": "Please add your OpenAI API key in Settings to use the chat.",
@@ -13731,10 +13819,10 @@ function buildFullContextPrompt() {
   const weekSeconds = times.filter(t => t.startTs >= weekIso).reduce((sum, t) => sum + (t.durationSec || 0), 0);
   
   // ========== KONTEXT ERSTELLEN ==========
-  let context = `Du bist ein hilfreicher Assistent für das AI Management Pro System. Du hast VOLLSTÄNDIGEN Lese-Zugriff auf ALLE Daten des Nutzers.
+  let context = `Du bist Polaris, die persönliche KI von Quantus. Du hast VOLLSTÄNDIGEN Lese-Zugriff auf ALLE Daten des Nutzers.
 
 WICHTIG — diese Chat-View ist für Konversation und Analyse, nicht für direkte Aktionen:
-- Wenn der Nutzer eine Aktion ausführen möchte (löschen, erstellen, aufräumen, ändern), verweise ihn auf den "Quick Assistent" (lila Glühbirne unten rechts) — der hat Schreibrechte und kann Befehle ausführen.
+- Wenn der Nutzer eine Aktion ausführen möchte (löschen, erstellen, aufräumen, ändern), verweise ihn auf "Polaris Quick" (lila Glühbirne unten rechts) — der hat Schreibrechte und kann Befehle ausführen.
 - ODER nenne den passenden Ort/Button in der App (z.B. "Im Habit-Tracker gibt es 🧹 Duplikate zusammenführen").
 - Behaupte NIEMALS, du hättest etwas gelöscht/erstellt/geändert. Du kannst aus dieser View heraus nichts modifizieren.
 
@@ -14672,7 +14760,7 @@ function localSmartResponse(prompt) {
   }
   
   // Allgemeine Hilfe
-  let response = `👋 **Hallo! Ich bin dein lokaler Assistent.**\n\n`;
+  let response = `👋 **Hallo! Ich bin Polaris, dein lokaler Assistent.**\n\n`;
   response += `Ich habe Zugriff auf deine **gesamte Wissensbasis** und kann dir helfen mit:\n\n`;
   response += `• 🔍 **Suchen:** "Suche nach [Begriff]" - durchsucht alle Daten\n`;
   response += `• 📋 **Aufgaben:** "Was sollte ich heute tun?"\n`;
@@ -15817,6 +15905,9 @@ function _doRender() {
   renderSidebar();
   renderMain();
   updateWeeklyGoalProgress();
+
+  // Panel-Dock (Split-Screen-Seitenpanels) mitrendern — Modul am Seitenende
+  if (typeof window.renderDock === "function") { try { window.renderDock(); } catch(e){} }
   
   // Knowledge file input handler (re-attach after render)
   const kfi = document.getElementById("knowledgeFileInput");
@@ -16061,7 +16152,7 @@ function getAllApps() {
     {key:"learn", icon:"📚", label:"RecallLab", desc:getLang()==="de"?"Lernkarten & Spaced Repetition":"Flashcards & spaced repetition"},
     {key:"readinghub", icon:"📖", label:"ReadingHub", desc:getLang()==="de"?"Bücher lesen & annotieren":"Read & annotate books"},
     {key:"pdfeditor", icon:"📄", label:"PDF Editor", desc:getLang()==="de"?"PDFs lesen, annotieren, Seiten verwalten & bearbeiten":"Read, annotate, manage pages & edit PDFs"},
-    {key:"chat", icon:"💬", label:t("chat"), desc:getLang()==="de"?"Mit KI chatten":"Chat with AI"},
+    {key:"chat", icon:"🌟", label:t("chat"), desc:getLang()==="de"?"Mit Polaris chatten":"Chat with Polaris"},
     {key:"projects", icon:"📦", label:t("projects"), desc:getLang()==="de"?"Projektverwaltung":"Project management"},
     {key:"programs", icon:"🧩", label:t("programs"), desc:getLang()==="de"?"Programm-Management":"Program management"},
     {key:"organizations", icon:"🏛️", label:t("organizations"), desc:getLang()==="de"?"Kontakte & Firmen":"Contacts & companies"},
@@ -28938,7 +29029,7 @@ function viewDashboard() {
       </div>
       <div class="page-actions">
         <button class="btn primary" data-action="quick-task">➕ Neue Aufgabe</button>
-        <button class="btn" data-action="nav" data-route="chat">🤖 KI-Assistent</button>
+        <button class="btn" data-action="nav" data-route="chat">🌟 Polaris</button>
         <button class="btn" onclick="window.showProductivityStats()" title="Produktivitäts-Statistiken (Woche)">📊 Statistiken</button>
         <button class="btn" onclick="window.aiSuggestWeeklyGoals()" title="KI schlägt Wochenziele vor">🎯 KI-Wochenziele</button>
       </div>
@@ -29933,7 +30024,7 @@ function viewTaskDetail(id) {
         </div>
         
         <div class="ai-panel mb-4">
-          <h4>🤖 KI-Assistent</h4>
+          <h4>🌟 Polaris</h4>
           <div class="ai-actions">
             <button class="btn sm" data-action="ai-suggest-workflow" data-id="${id}">Ablauf vorschlagen</button>
           </div>
@@ -31541,7 +31632,7 @@ function viewProjectDetail(id) {
         </div>
         
         <div class="ai-panel mb-4">
-          <h4>🤖 KI-Planungsassistent</h4>
+          <h4>🌟 Polaris Planungsassistent</h4>
           <div class="ai-actions">
             <button class="btn sm" data-action="ai-suggest-plan" data-id="${id}">Aufgabenplan generieren</button>
             <button class="btn sm" data-action="open-ai-planner" data-id="${id}">Planungsfragen</button>
@@ -37365,7 +37456,7 @@ function viewOrgDetail(id) {
       </div>
       <div class="page-actions">
         <button class="btn sm" data-action="go-back">← ${t("back")}</button>
-        <button class="btn" onclick="window.openEntityAi('organization','${id}')" style="background:linear-gradient(135deg,var(--accent),var(--accent));color:#fff;font-weight:700">🤖 KI-Assistent</button>
+        <button class="btn" onclick="window.openEntityAi('organization','${id}')" style="background:linear-gradient(135deg,var(--accent),var(--accent));color:#fff;font-weight:700">🌟 Polaris</button>
         <button class="btn danger" data-action="delete-entity" data-kind="organization" data-id="${id}">🗑 Löschen</button>
         <button class="btn" onclick="window.exportEntityPDF('organization','${id}')">📄 PDF</button>
         <button class="btn" onclick="window.openDeckblatt('organization','${id}')">📋 Deckblatt</button>
@@ -37838,7 +37929,7 @@ function viewNoteDetail(id) {
       
       <div class="col-4">
         <div class="ai-panel mb-4">
-          <h4>🤖 KI-Assistent</h4>
+          <h4>🌟 Polaris</h4>
           <div class="ai-actions">
             <button class="btn sm" data-action="ai-summarize" data-id="${id}">📋 Zusammenfassen</button>
             <button class="btn sm" data-action="ai-extract-todos" data-id="${id}">✅ TODOs extrahieren</button>
@@ -42025,7 +42116,7 @@ function viewChat() {
     }
 
     return '<div class="chat-msg ' + (isUser ? "user" : "assistant") + '">' +
-      '<div class="chat-msg-avatar">' + (isUser ? "👤" : "🤖") + '</div>' +
+      '<div class="chat-msg-avatar">' + (isUser ? "👤" : "🌟") + '</div>' +
       '<div class="chat-msg-body">' +
         '<div class="chat-msg-content">' + content + '</div>' +
         sourcesHtml +
@@ -42128,12 +42219,12 @@ function viewChat() {
       '<div class="chat-body" id="chatMessages">' +
         (messages.length === 0 ? 
           '<div class="chat-empty">' +
-            '<div class="chat-empty-icon">🤖</div>' +
+            '<div class="chat-empty-icon">🌟</div>' +
             '<div class="chat-empty-title">' + t("hello_help") + '</div>' +
             '<div class="chat-empty-text">' + t("ai_access_desc") + '</div>' +
             '<div style="background:rgba(48,209,88,.15);border:1px solid rgba(48,209,88,.3);border-radius:12px;padding:12px 16px;margin:16px 0;max-width:500px">' +
-              '<div style="font-weight:600;color:var(--ok);margin-bottom:4px">🤖 Quantus-Agent bereit</div>' +
-              '<div style="font-size:13px;color:var(--muted)">Der Chat läuft über den n8n-Agenten: Er kennt deine Daten, schlägt Aktionen vor und merkt sich den Verlauf serverseitig.</div>' +
+              '<div style="font-weight:600;color:var(--ok);margin-bottom:4px">🌟 Polaris bereit</div>' +
+              '<div style="font-size:13px;color:var(--muted)">Polaris kennt deine Daten, schlägt Aktionen vor und merkt sich den Verlauf serverseitig.</div>' +
             '</div>' +
             '<div class="chat-quick-prompts">' + quickPromptsHtml + '</div>' +
           '</div>' 
@@ -42141,7 +42232,7 @@ function viewChat() {
       '</div>' +
       '<div class="chat-input-area">' +
         '<div class="chat-input-row">' +
-          '<textarea id="chatInput" placeholder="Nachricht eingeben... (Enter = Senden)" rows="1"></textarea>' +
+          '<textarea id="chatInput" placeholder="Polaris fragen... (Enter = Senden)" rows="1"></textarea>' +
           '<button class="btn primary chat-send-btn" data-action="send-chat-message">Senden ↵</button>' +
         '</div>' +
       '</div>' +
@@ -42463,7 +42554,7 @@ function viewUpdates() {
         </div>
         
         <div class="card">
-          <h3>🤖 KI-Assistent</h3>
+          <h3>🌟 Polaris</h3>
           <div class="sep"></div>
           <div class="mb-3">
             <div class="mini mb-2">Prompt für offene Updates:</div>
@@ -44241,7 +44332,7 @@ function viewKnowledge() {
         <div class="sep"></div>
         <div class="mini">
           <p class="mb-2"><strong>1. Dokumente hochladen:</strong> Lade PDFs, Word-Dokumente oder Textdateien hoch. Der Text wird automatisch extrahiert.</p>
-          <p class="mb-2"><strong>2. KI-Zugriff:</strong> Die KI kann auf alle Dokumente in der Wissensbasis zugreifen, wenn du im KI-Chat Fragen stellst.</p>
+          <p class="mb-2"><strong>2. KI-Zugriff:</strong> Die KI kann auf alle Dokumente in der Wissensbasis zugreifen, wenn du Polaris Fragen stellst.</p>
           <p class="mb-2"><strong>3. Kontext:</strong> Je mehr relevante Dokumente du hinzufügst, desto besser kann die KI personalisierte Antworten geben.</p>
           <p><strong>Beispiele:</strong> Firmenrichtlinien, Produktdokumentation, persönliche Notizen, Lernmaterialien, Anleitungen...</p>
         </div>
@@ -47338,7 +47429,7 @@ function viewMeetingDetail(id) {
       </div>
       <div class="page-actions">
         <button class="btn" data-action="nav" data-route="meetings">← ${t("back")}</button>
-        <button class="btn" onclick="window.openEntityAi('meeting','${id}')" style="background:linear-gradient(135deg,var(--accent),var(--accent));color:#fff;font-weight:700">🤖 KI-Assistent</button>
+        <button class="btn" onclick="window.openEntityAi('meeting','${id}')" style="background:linear-gradient(135deg,var(--accent),var(--accent));color:#fff;font-weight:700">🌟 Polaris</button>
         ${statusActions}
         <button class="btn danger" data-action="delete-meeting" data-id="${id}">🗑</button>
         <button class="btn" onclick="window.exportEntityPDF('meeting','${id}')">📄 PDF</button>
@@ -59514,7 +59605,7 @@ async function init() {
         <div id="promptsTab" class="settings-tab-content hidden">
           <div class="form">
             <h4 style="margin-bottom:12px">💬 Benutzerdefinierte Chat-Prompts</h4>
-            <div class="mini col-12 mb-3">Erstelle Schnell-Prompts für den KI-Chat. Diese werden als Quick-Actions angezeigt.</div>
+            <div class="mini col-12 mb-3">Erstelle Schnell-Prompts für Polaris. Diese werden als Quick-Actions angezeigt.</div>
             <div id="customPromptsContainer">
               ${(APP.state.settings.customPrompts || [
                 { id: "plan", name: "📋 Tagesplanung", prompt: "Was sollte ich heute priorisieren basierend auf meinen Aufgaben und Notizen?" },
@@ -63807,7 +63898,7 @@ function initNoteFlow() {
     if (modal) {
       const inner = modal.querySelector(".nf-modal-content") || modal.querySelector("div");
       if (inner) {
-        inner.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><h3 style="font-size:16px;font-weight:700">✨ KI-Assistent</h3><button onclick="window.nfCloseModal(\'nf-nb-modal\')" style="background:var(--border);border:1px solid var(--border);color:var(--nf-txt2);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .15s" onmouseover="this.style.background=\'rgba(255,69,58,.15)\';this.style.color=\'#ff453a\'" onmouseout="this.style.background=\'rgba(255,255,255,.08)\';this.style.color=\'var(--nf-txt2)\'">✕</button></div>' + modalHtml;
+        inner.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><h3 style="font-size:16px;font-weight:700">✨ Polaris</h3><button onclick="window.nfCloseModal(\'nf-nb-modal\')" style="background:var(--border);border:1px solid var(--border);color:var(--nf-txt2);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .15s" onmouseover="this.style.background=\'rgba(255,69,58,.15)\';this.style.color=\'#ff453a\'" onmouseout="this.style.background=\'rgba(255,255,255,.08)\';this.style.color=\'var(--nf-txt2)\'">✕</button></div>' + modalHtml;
       }
     }
     
@@ -64414,7 +64505,7 @@ function initNoteFlow() {
             '</div>' +
             '<div style="margin-left:auto;display:flex;gap:6px;align-items:center">' +
               '<button class="nf-toolbar-btn" onclick="window.nfTogglePin()" title="Notiz anpinnen" id="nf-pin-btn" style="font-size:13px">📌</button>' +
-              '<button class="nf-toolbar-btn" onclick="window.nfAiAssist()" title="KI-Assistent" style="background:var(--accent-soft);color:var(--accent)">✨</button>' +
+              '<button class="nf-toolbar-btn" onclick="window.nfAiAssist()" title="Polaris" style="background:var(--accent-soft);color:var(--accent)">✨</button>' +
               '<button class="nf-toolbar-btn" onclick="window.nfPrintNote()" title="Drucken">🖨️</button>' +
               '<button class="nf-toolbar-btn" onclick="window.nfToggleZen()" title="Vollbild" id="nf-zen-btn">⛶</button>' +
               '<button class="nf-toolbar-btn" onclick="window.nfToggleEditorSidebar()" title="Seitenleiste" style="font-size:11px">☰</button>' +
@@ -66038,7 +66129,7 @@ function viewNotesWorkspace(noteId){
 
           <!-- KI-Panel für Notizen -->
           <div class="card mt-3" style="padding:14px;background:linear-gradient(135deg,var(--accent-soft),var(--accent-soft));border:1px solid var(--accent-soft)">
-            <h3 style="margin-bottom:12px">🤖 KI-Assistent</h3>
+            <h3 style="margin-bottom:12px">🌟 Polaris</h3>
             <div class="flex flex-wrap gap-2">
               <button class="btn sm" data-action="ai-summarize-note" data-id="${openNote.id}">✨ Zusammenfassen</button>
               <button class="btn sm" data-action="ai-extract-todos" data-id="${openNote.id}">✅ TODOs extrahieren</button>
@@ -66975,7 +67066,7 @@ try {
           <div class="progress mb-2"><div class="bar accent" style="width:${stats.total ? Math.round(stats.done/stats.total*100) : 0}%"></div></div>
           <div class="mini">Erledigt: <strong>${stats.done}</strong> / ${stats.total}</div>
           <div class="flex gap-2 mt-3">
-            <button class="btn sm" data-action="nav" data-route="chat">🤖 KI-Chat</button>
+            <button class="btn sm" data-action="nav" data-route="chat">🌟 Polaris</button>
             <button class="btn sm" data-action="open-reports-modal">📊 Report</button>
           </div>
         </div>
@@ -70708,6 +70799,13 @@ window.nowIso = nowIso;
 window.esc = esc;
 window.$ = $;
 window.APP = APP;
+// Für Anzeigemodi & Panel-Dock (Script am Seitenende)
+window.fmtDate = fmtDate;
+window.todayYmd = todayYmd;
+window.addDaysYmd = addDaysYmd;
+window.getOverdueTasks = getOverdueTasks;
+window.getUpcomingTasks = getUpcomingTasks;
+window.autoClassifyIdea = autoClassifyIdea;
 
 // Dashboard Apps Hub helpers
 window._filterDashApps = function(){
@@ -71978,7 +72076,7 @@ Analyse:`;
     const note = getEntity("note", noteId);
     if (!note) return;
     
-    openModal("🤖 KI-Assistent", `
+    openModal("🌟 Polaris", `
       <div class="mini mb-3">Wähle eine Aktion für diese Notiz:</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px">
         <button class="btn" onclick="closeModal();aiSummarizeNote('${noteId}')">✨ Zusammenfassen</button>
@@ -72294,7 +72392,7 @@ Analyse:`;
     var st=window._p1Steps; if(!st) return;
     var chosen=[]; document.querySelectorAll('[data-p1step]').forEach(function(cb){ if(cb.checked) chosen.push(st.items[parseInt(cb.dataset.p1step,10)]); });
     if(!chosen.length){ toast("warn","","Nichts ausgewählt"); return; }
-    if(!confirm("Der KI-Assistent möchte "+chosen.length+" Aufgabe(n) anlegen:\n\n"+chosen.map(function(c){return "• "+c.title;}).join("\n")+"\n\nAnlegen?")) return;
+    if(!confirm("Polaris möchte "+chosen.length+" Aufgabe(n) anlegen:\n\n"+chosen.map(function(c){return "• "+c.title;}).join("\n")+"\n\nAnlegen?")) return;
     var note=getEntity("note", st.noteId), n=0;
     chosen.forEach(function(c){
       var ref = note ? ("\n\nAus Notiz: "+(note.title||"(ohne Titel)")) : "";
@@ -81904,7 +82002,7 @@ window.openResearchHubTicket=function(){openResearchHub()};
 }
 </style>
 
-<button id="qc-fab" title="Quick Assistent">
+<button id="qc-fab" title="Polaris Quick — KI-Assistent">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5-3 6.5V18a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.5C6.5 14 5 12 5 9a7 7 0 0 1 7-7z"/><line x1="9" y1="22" x2="15" y2="22"/><line x1="10" y1="2" x2="10" y2="5" opacity=".4"/><line x1="14" y1="2" x2="14" y2="5" opacity=".4"/></svg>
 </button>
 
@@ -81912,7 +82010,7 @@ window.openResearchHubTicket=function(){openResearchHub()};
   <div class="qc-hdr">
     <div class="qc-hdr-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 1 7 7c0 3-1.5 5-3 6.5V18a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.5C6.5 14 5 12 5 9a7 7 0 0 1 7-7z"/><line x1="9" y1="22" x2="15" y2="22"/></svg></div>
     <div class="qc-hdr-info">
-      <h4>Quick Assistent</h4>
+      <h4>Polaris Quick</h4>
       <p id="qc-ctx-lbl">Dashboard</p>
     </div>
     <div class="qc-hdr-actions">
@@ -82743,7 +82841,7 @@ function addDaysYmd(ymd, n){
 // ═══════════════════════════════════════
 function buildSystemPrompt(ctx, dataSnapshot){
   return `# IDENTITÄT
-Du bist der Quick Assistent von AI Management Pro — ein vollständig integrierter, kontextbewusster KI-Assistent mit KOMPLETTEM Zugriff auf ALLE Daten und voller Berechtigung alles zu lesen, erstellen, ändern und löschen.
+Du bist Polaris, die persönliche KI von Quantus — ein vollständig integrierter, kontextbewusster KI-Assistent mit KOMPLETTEM Zugriff auf ALLE Daten und voller Berechtigung alles zu lesen, erstellen, ändern und löschen.
 
 Du hast Zugriff auf ALLES:
 - Aufgaben, Projekte, Notizen (mit Inhalt!), Notizbücher, Ideen, Ziele, Strategien
@@ -83049,7 +83147,7 @@ function renderMsgs(){
   if(QC.messages.length===0){
     const ctx=getCtx();
     const insights=getInsights();
-    let html = `<div class="qc-welcome"><h4>Quick Assistent</h4><p>Kontextbewusst auf ${ctx.icon} ${ctx.label}. Ich kenne alle deine Daten und kann direkt handeln.</p>`;
+    let html = `<div class="qc-welcome"><h4>Polaris Quick</h4><p>Kontextbewusst auf ${ctx.icon} ${ctx.label}. Ich kenne alle deine Daten und kann direkt handeln.</p>`;
     if(!hasKey) html += `<div class="qc-nokey">⚠️ Kein API-Key. <a onclick="window.navigate('settings')">In Einstellungen hinterlegen</a></div>`;
     html += `<div class="qc-insights">${insights.map(ins=>`<div class="qc-insight" data-prompt="${escA(ins.prompt)}">${ins.icon} ${ins.text}</div>`).join("")}</div></div>`;
     msgsEl.innerHTML = html;
@@ -96044,7 +96142,7 @@ console.log('📚 Leseliste geladen');
       // Schreib-Bestätigung: nichts ohne Rückfrage in den Kalender schreiben — Vorschau vor dem Schreiben
       // (gleiches Muster wie {{GCAL_DELETE}} / {{GMAIL_SEND}}).
       var _when = st ? (st+"–"+et+" Uhr") : "ganztägig";
-      var _prev = "Der KI-Assistent möchte folgenden Termin in deinen Google Kalender eintragen:\n\n"
+      var _prev = "Polaris möchte folgenden Termin in deinen Google Kalender eintragen:\n\n"
         + "Titel: "+title+"\nDatum: "+date+"\nZeit: "+_when+"\n"
         + (loc?("Ort: "+loc+"\n"):"") + (att.length?("Gäste: "+att.map(function(x){return x.email;}).join(", ")+"\n"):"")
         + "\nJetzt eintragen?";
@@ -96058,7 +96156,7 @@ console.log('📚 Leseliste geladen');
       if (!Object.keys(patch).length) return "❌ Keine gültigen Felder zum Ändern";
       // Schreib-Bestätigung vor dem Ändern (nichts ohne Rückfrage).
       var _chg = Object.keys(patch).map(function(k){ return "• "+k+": "+patch[k]; }).join("\n");
-      if (!confirm("Der KI-Assistent möchte diesen Termin ändern:\n\n\""+(ev.summary||"")+"\"\n\n"+_chg+"\n\nJetzt ändern?")) return "↩️ Änderung abgebrochen";
+      if (!confirm("Polaris möchte diesen Termin ändern:\n\n\""+(ev.summary||"")+"\"\n\n"+_chg+"\n\nJetzt ändern?")) return "↩️ Änderung abgebrochen";
       await gcApi("PATCH","/calendars/"+encodeURIComponent(ev._calId)+"/events/"+encodeURIComponent(ev.id), { query:{ sendUpdates:"none" }, body:patch });
       return "✏️ \""+(ev.summary||"")+"\" aktualisiert";
     }
@@ -96069,7 +96167,7 @@ console.log('📚 Leseliste geladen');
       if (isAllDay(ev2)) body2 = { start:{ date:nd2 }, end:{ date: toDateVal(addDays(new Date(nd2+"T00:00:00"),1)) } };
       else { if (!nt) nt=toTimeVal(s); var sdt=new Date(nd2+"T"+nt+":00"); body2={ start:{ dateTime:toLocalIso(sdt), timeZone:tz }, end:{ dateTime:toLocalIso(new Date(sdt.getTime()+dur*60000)), timeZone:tz } }; }
       // Schreib-Bestätigung vor dem Verschieben (nichts ohne Rückfrage).
-      if (!confirm("Der KI-Assistent möchte diesen Termin verschieben:\n\n\""+(ev2.summary||"")+"\"\n\nNeu: "+nd2+(nt?" "+nt+" Uhr":"")+"\n\nJetzt verschieben?")) return "↩️ Verschieben abgebrochen";
+      if (!confirm("Polaris möchte diesen Termin verschieben:\n\n\""+(ev2.summary||"")+"\"\n\nNeu: "+nd2+(nt?" "+nt+" Uhr":"")+"\n\nJetzt verschieben?")) return "↩️ Verschieben abgebrochen";
       await gcApi("PATCH","/calendars/"+encodeURIComponent(ev2._calId)+"/events/"+encodeURIComponent(ev2.id), { query:{ sendUpdates:"none" }, body:body2 });
       return "📆 \""+(ev2.summary||"")+"\" verschoben auf "+nd2+(nt?" "+nt:"");
     }
@@ -105091,6 +105189,471 @@ html.theme-light .card{box-shadow:none}
     // ohne Geste über die Route), bleibt das Overlay einfach im Fenstermodus.
     if (wrap.requestFullscreen) wrap.requestFullscreen().catch(function(){});
   };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANZEIGEMODI (Computer / Laptop / Tablet) + PANEL-DOCK (Split-Screen)
+   - Computer: volle Bildschirmbreite, bis zu 3 Seitenpanels gleichzeitig
+   - Laptop:   fokussiertes Layout (max. 1400px), 1 Seitenpanel
+   - Tablet:   kompakt, Sidebar als Overlay, keine Seitenpanels
+   Modus wird automatisch erkannt (Fensterbreite) oder manuell fixiert.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+
+  var LM_KEY = "quantusLayoutMode";    // 'auto' | 'computer' | 'laptop' | 'tablet'
+  var DOCK_KEY = "quantusDockPanels";  // JSON-Array offener Panel-Keys
+
+  var MODE_META = {
+    computer: { icon: "🖥️", label: "Computer", desc: "Volle Breite · bis zu 3 Seitenpanels" },
+    laptop:   { icon: "💻", label: "Laptop",   desc: "Fokussiert · 1 Seitenpanel" },
+    tablet:   { icon: "📱", label: "Tablet",   desc: "Kompakt · Sidebar als Overlay" }
+  };
+
+  function lmSetting(){ try { return localStorage.getItem(LM_KEY) || "auto"; } catch(e){ return "auto"; } }
+  function detectMode(){ var w = window.innerWidth; return w >= 1720 ? "computer" : (w >= 1100 ? "laptop" : "tablet"); }
+  function effectiveMode(){ var s = lmSetting(); return MODE_META[s] ? s : detectMode(); }
+  function maxPanels(){ var m = effectiveMode(); return m === "computer" ? 3 : (m === "laptop" ? 1 : 0); }
+
+  var _prevMode = null;
+  function applyLayoutMode(){
+    var m = effectiveMode();
+    document.body.classList.remove("mode-computer", "mode-laptop", "mode-tablet");
+    document.body.classList.add("mode-" + m);
+    // Beim Wechsel in den Tablet-Modus Sidebar einklappen (sie überlagert dort den Inhalt)
+    if (m === "tablet" && _prevMode !== "tablet") {
+      var appEl = document.getElementById("app");
+      if (appEl) appEl.classList.add("sidebar-collapsed");
+    }
+    _prevMode = m;
+    var btn = document.getElementById("btnLayoutMode");
+    if (btn) {
+      btn.textContent = MODE_META[m].icon;
+      btn.title = "Anzeigemodus: " + MODE_META[m].label + (lmSetting() === "auto" ? " (automatisch)" : " (fixiert)");
+    }
+    renderDock();
+  }
+
+  window.setLayoutMode = function(m){
+    try { localStorage.setItem(LM_KEY, m); } catch(e){}
+    closeTopbarMenus();
+    applyLayoutMode();
+    if (typeof toast === "function") {
+      var label = m === "auto" ? "Automatisch (" + MODE_META[detectMode()].label + ")" : (MODE_META[m] ? MODE_META[m].label : m);
+      toast("ok", "Anzeigemodus", label);
+    }
+  };
+
+  // ── Topbar-Dropdowns ──────────────────────────────────────────────────────
+  function closeTopbarMenus(){
+    ["layoutModeMenu", "dockMenu"].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) el.style.display = "none";
+    });
+  }
+
+  window.toggleLayoutModeMenu = function(){
+    var menu = document.getElementById("layoutModeMenu");
+    if (!menu) return;
+    if (menu.style.display === "block") { menu.style.display = "none"; return; }
+    closeTopbarMenus();
+    var setting = lmSetting();
+    var html = '<div class="topbar-menu-title">Anzeigemodus</div>';
+    html += modeMenuItem("auto", "⚡", "Automatisch", "Nach Bildschirmgrösse (aktuell: " + MODE_META[detectMode()].label + ")", setting === "auto");
+    ["computer", "laptop", "tablet"].forEach(function(k){
+      html += modeMenuItem(k, MODE_META[k].icon, MODE_META[k].label, MODE_META[k].desc, setting === k);
+    });
+    menu.innerHTML = html;
+    menu.style.display = "block";
+  };
+
+  function modeMenuItem(key, icon, label, desc, active){
+    return '<button class="topbar-menu-item' + (active ? " active" : "") + '" onclick="window.setLayoutMode(\'' + key + '\')">' +
+      '<span>' + icon + '</span>' +
+      '<span style="flex:1;min-width:0"><span style="display:block;font-weight:600">' + label + '</span>' +
+      '<span style="display:block;font-size:10.5px;color:' + (active ? "inherit" : "var(--muted)") + '">' + desc + '</span></span>' +
+      (active ? '<span class="check">✓</span>' : '') + '</button>';
+  }
+
+  window.toggleDockMenu = function(){
+    var menu = document.getElementById("dockMenu");
+    if (!menu) return;
+    if (menu.style.display === "block") { menu.style.display = "none"; return; }
+    closeTopbarMenus();
+    renderDockMenu();
+    menu.style.display = "block";
+  };
+
+  function renderDockMenu(){
+    var menu = document.getElementById("dockMenu");
+    if (!menu) return;
+    var open = getOpenPanels();
+    var mx = maxPanels();
+    var html = '<div class="topbar-menu-title">Seitenpanels · max. ' + mx + ' im ' + MODE_META[effectiveMode()].label + '-Modus</div>';
+    if (mx === 0) html += '<div style="font-size:11px;color:var(--muted);padding:4px 10px 8px">Im Tablet-Modus nicht verfügbar — wechsle in den Laptop- oder Computer-Modus.</div>';
+    Object.keys(PANELS).forEach(function(k){
+      var p = PANELS[k];
+      var active = open.indexOf(k) >= 0;
+      html += '<button class="topbar-menu-item' + (active ? " active" : "") + '" onclick="window.toggleDockPanel(\'' + k + '\')">' +
+        '<span>' + p.icon + '</span><span style="flex:1">' + p.title + '</span>' +
+        (active ? '<span class="check">✓</span>' : '') + '</button>';
+    });
+    menu.innerHTML = html;
+  }
+
+  // Menüs bei Klick ausserhalb schliessen
+  document.addEventListener("click", function(e){
+    if (!e.target.closest || (!e.target.closest("#layoutModeWrap") && !e.target.closest("#dockMenuWrap"))) {
+      closeTopbarMenus();
+    }
+  });
+
+  // ── Panel-Dock ────────────────────────────────────────────────────────────
+  function getOpenPanels(){
+    try {
+      var a = JSON.parse(localStorage.getItem(DOCK_KEY) || "[]");
+      return Array.isArray(a) ? a.filter(function(k){ return PANELS[k]; }) : [];
+    } catch(e){ return []; }
+  }
+  function setOpenPanels(a){ try { localStorage.setItem(DOCK_KEY, JSON.stringify(a)); } catch(e){} }
+
+  window.toggleDockPanel = function(key){
+    if (!PANELS[key]) return;
+    var open = getOpenPanels();
+    var i = open.indexOf(key);
+    if (i >= 0) {
+      open.splice(i, 1);
+    } else {
+      var mx = maxPanels();
+      if (mx === 0) {
+        if (typeof toast === "function") toast("warn", "Seitenpanels", "Im Tablet-Modus nicht verfügbar");
+        return;
+      }
+      open.push(key);
+      while (open.length > mx) open.shift(); // ältestes Panel weicht
+    }
+    setOpenPanels(open);
+    renderDock();
+    renderDockMenu();
+  };
+
+  function renderDock(){
+    var dock = document.getElementById("panelDock");
+    if (!dock) return;
+    var open = getOpenPanels().slice(0, maxPanels());
+    if (!open.length || !window.APP || !APP.state || !APP.state.data || !APP.state.data.entities) {
+      dock.innerHTML = "";
+      updateFabOffset();
+      return;
+    }
+    dock.innerHTML = open.map(function(k){
+      var p = PANELS[k];
+      var body;
+      try { body = p.render(); }
+      catch(e){ body = '<div class="dock-empty">Panel-Fehler: ' + (e && e.message || e) + '</div>'; }
+      return '<section class="dock-panel" data-panel="' + k + '">' +
+        '<div class="dock-panel-header"><span>' + p.icon + '</span><span class="dock-panel-title">' + p.title + '</span>' +
+        '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+        '<div class="dock-panel-body">' + body + '</div></section>';
+    }).join("");
+    open.forEach(function(k){
+      if (PANELS[k].mount) { try { PANELS[k].mount(); } catch(e){} }
+    });
+    updateFabOffset();
+  }
+  window.renderDock = renderDock;
+
+  // Polaris-Quick-FAB (+ Panel) nach links verschieben, wenn das Dock offen ist,
+  // damit die Seitenpanels nicht verdeckt werden.
+  function updateFabOffset(){
+    var dock = document.getElementById("panelDock");
+    var w = dock ? dock.getBoundingClientRect().width : 0;
+    ["qc-fab", "qc-panel"].forEach(function(id){
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.style.right = w > 0 ? (24 + w) + "px" : "";
+    });
+  }
+
+  // Gemeinsame Task-Zeile
+  function taskRow(t, today){
+    var meta = "";
+    if (t.dueDate) {
+      var od = t.dueDate < today;
+      meta = '<span class="dock-item-meta' + (od ? " overdue" : "") + '">' + (od ? "⚠ " : "") + fmtDate(t.dueDate) + '</span>';
+    }
+    return '<div class="dock-item">' +
+      '<input type="checkbox" onchange="window.dockCompleteTask(\'' + t.id + '\')" title="Als erledigt markieren" />' +
+      '<span class="dock-item-title" onclick="location.hash=\'#/tasks/' + t.id + '\'">' + esc(t.title || "(Ohne Titel)") + '</span>' +
+      meta + '</div>';
+  }
+
+  // ── Panel: Aufgaben ──
+  function renderTasksPanel(){
+    var today = todayYmd();
+    var tasks = Object.values(APP.state.data.entities.tasks || {}).filter(function(t){ return t.status !== "done"; });
+    tasks.sort(function(a, b){
+      var ad = a.dueDate || "9999-99-99", bd = b.dueDate || "9999-99-99";
+      if (ad !== bd) return ad < bd ? -1 : 1;
+      return (a.priority || 3) - (b.priority || 3);
+    });
+    var listHtml = tasks.slice(0, 40).map(function(t){ return taskRow(t, today); }).join("") ||
+      '<div class="dock-empty">Keine offenen Aufgaben 🎉</div>';
+    return '<input class="dock-input" id="dockTaskAdd" placeholder="+ Neue Aufgabe (Enter)" onkeydown="window.dockAddTask(event)" />' +
+      '<div class="dock-section-title">Offen (' + tasks.length + ')</div>' + listHtml;
+  }
+  window.dockAddTask = function(ev){
+    if (ev.key !== "Enter") return;
+    var el = ev.target;
+    var title = (el.value || "").trim();
+    if (!title) return;
+    el.value = "";
+    createEntity("task", { title: title, description: "", priority: 3, dueDate: null, status: "todo" });
+    if (typeof toast === "function") toast("ok", "Aufgabe erstellt", title);
+    render();
+  };
+  window.dockCompleteTask = function(id){
+    updateEntity("task", id, { status: "done", completedAt: nowIso() });
+    if (typeof toast === "function") toast("ok", "Erledigt", "Aufgabe abgeschlossen ✅");
+    render();
+  };
+
+  // ── Panel: Heute (Agenda) ──
+  function renderTodayPanel(){
+    var today = todayYmd();
+    var overdue = getOverdueTasks();
+    var dueToday = getUpcomingTasks(0);
+    var upcoming = getUpcomingTasks(3).filter(function(t){ return t.dueDate > today; });
+    var events = Object.values(APP.state.data.entities.calendarEvents || {})
+      .filter(function(ev){ return ev.date === today; })
+      .sort(function(a, b){ return (a.startTime || "").localeCompare(b.startTime || ""); });
+
+    var html = "";
+    if (events.length) {
+      html += '<div class="dock-section-title">📅 Termine heute</div>' + events.map(function(ev){
+        return '<div class="dock-item"><span style="flex-shrink:0">🕐</span>' +
+          '<span class="dock-item-title" onclick="location.hash=\'#/calendar\'">' + esc(ev.title || "(Ohne Titel)") + '</span>' +
+          '<span class="dock-item-meta">' + esc(ev.startTime || "") + '</span></div>';
+      }).join("");
+    }
+    if (overdue.length) html += '<div class="dock-section-title" style="color:var(--danger)">⚠️ Überfällig (' + overdue.length + ')</div>' + overdue.slice(0, 10).map(function(t){ return taskRow(t, today); }).join("");
+    html += '<div class="dock-section-title">☀️ Heute fällig (' + dueToday.length + ')</div>';
+    html += dueToday.length ? dueToday.map(function(t){ return taskRow(t, today); }).join("") : '<div class="dock-empty">Nichts fällig heute</div>';
+    if (upcoming.length) html += '<div class="dock-section-title">🔜 Nächste 3 Tage</div>' + upcoming.slice(0, 10).map(function(t){ return taskRow(t, today); }).join("");
+    return html;
+  }
+
+  // ── Panel: Polaris (KI-Schnellchat) ──
+  var _polarisBusy = false;
+  function getDockChat(){
+    if (!APP.state.data.aiChats) APP.state.data.aiChats = [];
+    var c = null;
+    for (var i = 0; i < APP.state.data.aiChats.length; i++) {
+      if (APP.state.data.aiChats[i] && APP.state.data.aiChats[i].dockChat) { c = APP.state.data.aiChats[i]; break; }
+    }
+    if (!c) {
+      c = { id: uuid(), title: "Polaris — Seitenpanel", dockChat: true, messages: [], pinned: false, createdAt: nowIso(), updatedAt: nowIso() };
+      APP.state.data.aiChats.push(c);
+      scheduleSave();
+    }
+    return c;
+  }
+  function renderPolarisPanel(){
+    var chat = getDockChat();
+    var msgs = chat.messages.slice(-30).map(function(m){
+      return '<div class="dock-chat-msg ' + (m.role === "user" ? "user" : "assistant") + '">' + esc(m.content || "") + '</div>';
+    }).join("");
+    if (!msgs) msgs = '<div class="dock-empty">🌟 Hallo! Ich bin Polaris.<br>Frag mich etwas zu deinen Aufgaben, Terminen, Notizen oder Projekten.</div>';
+    if (_polarisBusy) msgs += '<div class="dock-chat-msg assistant">🌟 Polaris denkt nach…</div>';
+    return '<div class="dock-chat-messages" id="dockPolarisMsgs">' + msgs + '</div>' +
+      '<div class="dock-chat-input-row">' +
+        '<textarea class="dock-input" id="dockPolarisInput" placeholder="Polaris fragen… (Enter = Senden)" onkeydown="window.dockPolarisKey(event)"></textarea>' +
+        '<button class="btn primary sm" onclick="window.dockPolarisSend()" title="Senden">➤</button>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center">' +
+        '<button class="btn ghost sm" onclick="location.hash=\'#/chat\'">💬 Vollbild</button>' +
+        '<button class="btn ghost sm" onclick="window.dockPolarisClear()" title="Verlauf leeren">🗑</button>' +
+      '</div>';
+  }
+  function mountPolarisPanel(){
+    var el = document.getElementById("dockPolarisMsgs");
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+  window.dockPolarisKey = function(ev){
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); window.dockPolarisSend(); }
+  };
+  window.dockPolarisClear = function(){
+    var chat = getDockChat();
+    chat.messages = [];
+    chat.updatedAt = nowIso();
+    scheduleSave();
+    renderDock();
+  };
+  window.dockPolarisSend = function(){
+    if (_polarisBusy) return;
+    var input = document.getElementById("dockPolarisInput");
+    var msg = ((input && input.value) || "").trim();
+    if (!msg) return;
+    input.value = "";
+    var chat = getDockChat();
+    chat.messages.push({ role: "user", content: msg, timestamp: nowIso() });
+    chat.updatedAt = nowIso();
+    scheduleSave();
+    _polarisBusy = true;
+    renderDock();
+    (async function(){
+      var answer = "";
+      try {
+        if (typeof window.quantusAgentCall === "function") {
+          var res = await window.quantusAgentCall(msg);
+          answer = String(res && res.reply != null ? res.reply : "").trim();
+        }
+        if (!answer && typeof sendChatMessage === "function") {
+          var r2 = await sendChatMessage(msg);
+          answer = (typeof r2 === "string" ? r2 : String(r2 || "")).trim();
+        }
+      } catch(e){
+        answer = "⚠️ " + ((e && e.message) || "Anfrage fehlgeschlagen");
+      }
+      if (!answer) answer = "Keine Antwort erhalten.";
+      answer = answer.replace(/\s*\[ID:[a-zA-Z0-9_-]+\]/g, "");
+      chat.messages.push({ role: "assistant", content: answer, timestamp: nowIso() });
+      chat.updatedAt = nowIso();
+      _polarisBusy = false;
+      scheduleSave();
+      renderDock();
+    })();
+  };
+
+  // ── Panel: Schnellnotiz (Entwurf übersteht Re-Renders) ──
+  var _noteDraft = { title: "", content: "" };
+  function renderNotePanel(){
+    return '<input class="dock-input" id="dockNoteTitle" placeholder="Titel" value="' + esc(_noteDraft.title) + '" oninput="window._dockNoteInput(this,\'title\')" />' +
+      '<textarea class="dock-input" id="dockNoteContent" rows="9" placeholder="Notiz schreiben…" oninput="window._dockNoteInput(this,\'content\')">' + esc(_noteDraft.content) + '</textarea>' +
+      '<button class="btn primary sm" onclick="window.dockSaveNote()">💾 Als Notiz speichern</button>';
+  }
+  window._dockNoteInput = function(el, field){ _noteDraft[field] = el.value; };
+  window.dockSaveNote = function(){
+    var t = (_noteDraft.title || "").trim();
+    var c = (_noteDraft.content || "").trim();
+    if (!t && !c) { if (typeof toast === "function") toast("warn", "Notiz", "Titel oder Inhalt eingeben"); return; }
+    createEntity("note", { title: t || c.slice(0, 40), content: c });
+    _noteDraft = { title: "", content: "" };
+    if (typeof toast === "function") toast("ok", "Notiz gespeichert", t || "Ohne Titel");
+    render();
+  };
+
+  // ── Panel: Ideen ──
+  function renderIdeasPanel(){
+    var ideas = Object.values(APP.state.data.entities.ideas || {})
+      .sort(function(a, b){ return (b.createdAt || "").localeCompare(a.createdAt || ""); })
+      .slice(0, 8);
+    var listHtml = ideas.map(function(i){
+      return '<div class="dock-item"><span style="flex-shrink:0">💡</span>' +
+        '<span class="dock-item-title" onclick="location.hash=\'#/ideas/' + i.id + '\'">' + esc(i.title || "(Ohne Titel)") + '</span>' +
+        '<span class="dock-item-meta">' + fmtDate(i.createdAt) + '</span></div>';
+    }).join("") || '<div class="dock-empty">Noch keine Ideen</div>';
+    return '<input class="dock-input" id="dockIdeaAdd" placeholder="+ Neue Idee (Enter)" onkeydown="window.dockAddIdea(event)" />' +
+      '<div class="dock-section-title">Zuletzt</div>' + listHtml;
+  }
+  window.dockAddIdea = function(ev){
+    if (ev.key !== "Enter") return;
+    var el = ev.target;
+    var title = (el.value || "").trim();
+    if (!title) return;
+    el.value = "";
+    var id = createEntity("idea", { title: title, content: "", tags: [] });
+    if (typeof toast === "function") toast("ok", "Idee erfasst", title);
+    if (typeof autoClassifyIdea === "function") { try { autoClassifyIdea(id, title); } catch(e){} }
+    render();
+  };
+
+  // ── Panel: Angepinnt ──
+  function renderPinnedPanel(){
+    var pinnedItems = APP.state.data.pinnedItems || [];
+    var kindIcons = { task: "✅", project: "📦", note: "📝", goal: "🎯", strategy: "🧭", idea: "💡", meeting: "🤝", organization: "🏛️", decision: "⚖️" };
+    var rows = pinnedItems.map(function(key){
+      var parts = key.split(":");
+      var kind = parts[0], id = parts[1];
+      var entity = getEntity(kind, id);
+      if (!entity) return "";
+      var name = entity.title || entity.name || "(Ohne Titel)";
+      return '<div class="dock-item" data-action="open-entity" data-kind="' + kind + '" data-id="' + id + '" style="cursor:pointer">' +
+        '<span style="flex-shrink:0">' + (kindIcons[kind] || "📌") + '</span>' +
+        '<span class="dock-item-title">' + esc(name) + '</span></div>';
+    }).join("");
+    return rows || '<div class="dock-empty">Keine angepinnten Elemente<br><span style="font-size:11px">Pinne Aufgaben, Projekte oder Notizen über das 📌-Symbol an.</span></div>';
+  }
+
+  // ── Panel: Fokus-Timer (Pomodoro) ──
+  var FOCUS = { running: false, phase: "work", remaining: 25 * 60, workMin: 25, breakMin: 5, timer: null };
+  function fmtFocus(s){
+    var m = Math.floor(s / 60), ss = s % 60;
+    return (m < 10 ? "0" : "") + m + ":" + (ss < 10 ? "0" : "") + ss;
+  }
+  function renderFocusPanel(){
+    return '<div class="dock-focus-phase">' + (FOCUS.phase === "work" ? "🍅 Fokus-Phase" : "☕ Pause") + '</div>' +
+      '<div class="dock-focus-time" id="dockFocusTime">' + fmtFocus(FOCUS.remaining) + '</div>' +
+      '<div class="dock-focus-actions">' +
+        '<button class="btn primary sm" onclick="window.dockFocusToggle()">' + (FOCUS.running ? "⏸ Pause" : "▶ Start") + '</button>' +
+        '<button class="btn sm" onclick="window.dockFocusReset()">↺ Reset</button>' +
+        '<button class="btn ghost sm" onclick="window.dockFocusSkip()" title="Phase überspringen">⏭</button>' +
+      '</div>' +
+      '<div style="font-size:10.5px;color:var(--muted);text-align:center;margin-top:8px">' + FOCUS.workMin + ' Min. Fokus · ' + FOCUS.breakMin + ' Min. Pause</div>';
+  }
+  function focusTick(){
+    if (!FOCUS.running) return;
+    FOCUS.remaining--;
+    if (FOCUS.remaining <= 0) {
+      var wasWork = FOCUS.phase === "work";
+      FOCUS.phase = wasWork ? "break" : "work";
+      FOCUS.remaining = (wasWork ? FOCUS.breakMin : FOCUS.workMin) * 60;
+      if (typeof toast === "function") toast("ok", "Fokus-Timer", wasWork ? "☕ Pause! Gut gemacht." : "🍅 Weiter geht's — neue Fokus-Phase.");
+      renderDock();
+      return;
+    }
+    var el = document.getElementById("dockFocusTime");
+    if (el) el.textContent = fmtFocus(FOCUS.remaining);
+  }
+  window.dockFocusToggle = function(){
+    FOCUS.running = !FOCUS.running;
+    if (FOCUS.running && !FOCUS.timer) FOCUS.timer = setInterval(focusTick, 1000);
+    renderDock();
+  };
+  window.dockFocusReset = function(){
+    FOCUS.running = false;
+    FOCUS.phase = "work";
+    FOCUS.remaining = FOCUS.workMin * 60;
+    renderDock();
+  };
+  window.dockFocusSkip = function(){
+    var wasWork = FOCUS.phase === "work";
+    FOCUS.phase = wasWork ? "break" : "work";
+    FOCUS.remaining = (wasWork ? FOCUS.breakMin : FOCUS.workMin) * 60;
+    renderDock();
+  };
+
+  var PANELS = {
+    tasks:   { icon: "✅", title: "Aufgaben",     render: renderTasksPanel },
+    today:   { icon: "☀️", title: "Heute",        render: renderTodayPanel },
+    polaris: { icon: "🌟", title: "Polaris",      render: renderPolarisPanel, mount: mountPolarisPanel },
+    note:    { icon: "📝", title: "Schnellnotiz", render: renderNotePanel },
+    ideas:   { icon: "💡", title: "Ideen",        render: renderIdeasPanel },
+    pinned:  { icon: "📌", title: "Angepinnt",    render: renderPinnedPanel },
+    focus:   { icon: "⏱️", title: "Fokus-Timer",  render: renderFocusPanel }
+  };
+
+  // Integration in den App-Render-Zyklus: _doRender() ruft window.renderDock()
+  // direkt auf (siehe Haupt-Script) — hier nur Resize- und Initial-Handling.
+  var _resizeTimer = null;
+  window.addEventListener("resize", function(){
+    if (_resizeTimer) clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(applyLayoutMode, 150);
+  });
+
+  applyLayoutMode();
 })();
 </script>
 
