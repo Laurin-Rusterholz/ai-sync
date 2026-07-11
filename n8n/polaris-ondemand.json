@@ -1,0 +1,442 @@
+{
+  "name": "Polaris: On-Demand — Suche & Vorlesen (RTDB)",
+  "nodes": [
+    {
+      "parameters": {
+        "width": 660,
+        "height": 400,
+        "content": "## Polaris: On-Demand — Suche & Vorlesen (RTDB-only)\n\n`POST /webhook/polaris/search` und `POST /webhook/polaris/read-document` lesen AUSSCHLIESSLICH aus der Firebase RTDB (`jupidu-36804`, REST `.json`-Endpunkte) — **keine Google-Drive- und keine Gmail-Credentials nötig**.\n\nDurchsuchte Knoten: `docDocuments` (+ `docOrgs` für Organisations-Kontext), `driveDocs`, `driveInbox`. `driveFolders` wird bewusst nicht geladen (nur Pfad-Deko).\n\n**Nach dem Import:**\n1. Falls im alten Workflow „Polaris: On-Demand“ noch `/search`- und `/read-document`-Webhooks aktiv sind (googleDrive-/gmail-Nodes „CRED Drive Search“ / „CRED Gmail Search“): dort diese zwei Pfade deaktivieren/löschen — sonst Webhook-Pfad-Konflikt. `read-mail` bleibt unberührt.\n2. Diesen Workflow aktivieren. Keine Credentials zuweisen — es gibt keine.\n\n**Antworten:** immer JSON via Respond-Node mit `Access-Control-Allow-Origin: *`; OPTIONS-Preflight beantwortet n8n über die Webhook-CORS-Option (`allowedOrigins: *`). Fehler werfen nie 500: leere Suche → `{results:[],count:0}`, kein Treffer → `{ok:false, reason:'nicht gefunden'}`."
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        -80
+      ],
+      "id": "3fa1e0f6-8b5d-5d01-8961-a24d753fcfe0",
+      "name": "Doku"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/search",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "6f9407fa-9889-53b7-aaa0-89e53731b919",
+      "name": "Webhook search",
+      "webhookId": "f2306244-19fd-5f7c-bd56-50a0f980b0cc"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/docDocuments.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "9a0f0c34-bc81-5ba4-af3b-ed4381975e04",
+      "name": "docDocuments lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/docOrgs.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "8759a467-d733-51bc-b2b1-43dfef6853db",
+      "name": "docOrgs lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveDocs.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "84dc57a7-12a6-55d8-8e2c-55e434f5f361",
+      "name": "driveDocs lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveInbox.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "a4526fa7-1a48-558f-9681-cf03f670d020",
+      "name": "driveInbox lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gemeinsame Helfer (werden in beide Code-Nodes eingebettet)\nfunction parseNode(name){\n  try {\n    const item = $(name).first().json || {};\n    const v = JSON.parse((item.data != null ? item.data : 'null') || 'null');\n    return (v && typeof v === 'object') ? v : {};\n  } catch (e) { return {}; }\n}\nfunction stripHtml(h){\n  return String(h || '')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"')\n    .replace(/\\s+/g, ' ').trim();\n}\nfunction toTs(v){ if (v == null) return 0; const n = (typeof v === 'number') ? v : Date.parse(String(v)); return isFinite(n) ? n : 0; }\nfunction genText(g){\n  if (!g || typeof g !== 'object') return '';\n  const parts = [];\n  if (g.fields && typeof g.fields === 'object'){\n    Object.keys(g.fields).forEach(k => {\n      const v = g.fields[k];\n      if (v != null && String(v).trim()) parts.push(k + ': ' + String(v).trim());\n    });\n  }\n  if (g.styleText) parts.push(String(g.styleText));\n  if (g.wishes) parts.push(String(g.wishes));\n  return parts.join('\\n');\n}\nfunction newestVersionHtml(vs){\n  let list = [];\n  if (Array.isArray(vs)) list = vs.filter(Boolean);\n  else if (vs && typeof vs === 'object') list = Object.values(vs).filter(Boolean);\n  if (!list.length) return '';\n  list = list.slice().sort((a, b) => toTs(a && a.ts) - toTs(b && b.ts));\n  const v = list[list.length - 1] || {};\n  return String(v.html || v.text || v.content || '');\n}\n// Kandidaten aus allen Knoten einsammeln (defensiv gegen null/fehlende Felder)\nfunction collectCandidates(docs, orgs, drive, inbox){\n  const cands = [];\n  Object.keys(docs).forEach(id => {\n    const d = docs[id]; if (!d || typeof d !== 'object') return;\n    const org = (d.orgId && orgs[d.orgId] && orgs[d.orgId].name) ? String(orgs[d.orgId].name) : '';\n    const title = String(d.title || 'Dokument');\n    const bodyRaw = (genText(d.gen) + '\\n' + stripHtml(newestVersionHtml(d.versions))).trim();\n    cands.push({ quelle: 'docDocuments', id, title, org,\n      head: (title + ' ' + (d.docType || '') + ' ' + org).toLowerCase(),\n      body: bodyRaw.toLowerCase(), bodyRaw, ts: toTs(d.updatedAt || d.createdAt) });\n  });\n  Object.keys(drive).forEach(id => {\n    const d = drive[id]; if (!d || typeof d !== 'object') return;\n    const title = String(d.titel_final || d.dateiname || 'Datei');\n    const bodyRaw = String(d.textauszug || '').trim();\n    cands.push({ quelle: 'driveDocs', id, title,\n      head: (title + ' ' + (d.dateiname || '')).toLowerCase(),\n      body: bodyRaw.toLowerCase(), bodyRaw, ts: toTs(d.aktualisiert || d.erstellt),\n      mimeType: d.mimeType || undefined, downloadUrl: d.downloadUrl || undefined });\n  });\n  Object.keys(inbox).forEach(id => {\n    const n = inbox[id]; if (!n || typeof n !== 'object') return;\n    const title = String(n.dateiname || 'Eingang');\n    const bodyRaw = String(n.text || '').trim();\n    cands.push({ quelle: 'driveInbox', id, title,\n      head: title.toLowerCase(),\n      body: bodyRaw.toLowerCase(), bodyRaw, ts: toTs(n.erstellt),\n      mimeType: n.mimeType || undefined });\n  });\n  return cands;\n}\nfunction scoreAndSort(cands, tokens){\n  const now = Date.now();\n  cands.forEach(c => {\n    let s = 0;\n    tokens.forEach(t => { if (c.head.includes(t)) s += 4; if (c.body.includes(t)) s += 1.5; });\n    if (tokens.length && s === 0){ c._score = 0; return; }\n    const ageDays = c.ts ? (now - c.ts) / 86400000 : 9999;\n    c._score = s + Math.max(0, 1.5 - ageDays / 60); // Rezenz-Bonus\n  });\n  const hits = tokens.length ? cands.filter(c => c._score > 0) : cands.slice();\n  hits.sort((a, b) => (b._score - a._score) || (b.ts - a.ts));\n  return hits;\n}\nfunction tokenize(q){ return String(q || '').toLowerCase().split(/[^a-zäöüéèàß0-9]+/).filter(t => t.length >= 2); }\n\n// ── /search: case-insensitive Volltextsuche ueber alle Knoten ──\ntry {\n  const body = $('Webhook search').first().json.body || {};\n  const tokens = tokenize(body.query);\n  const limit = Math.max(1, Math.min(25, Number(body.limit) || 8));\n  const cands = collectCandidates(\n    parseNode('docDocuments lesen'), parseNode('docOrgs lesen'),\n    parseNode('driveDocs lesen'), parseNode('driveInbox lesen'));\n  const hits = scoreAndSort(cands, tokens);\n  function snippet(c){\n    const src = c.bodyRaw || '';\n    if (!src) return c.quelle === 'docDocuments' ? '' : 'PDF/Datei, kein Textauszug vorhanden.';\n    let pos = -1;\n    for (const t of tokens){ pos = src.toLowerCase().indexOf(t); if (pos >= 0) break; }\n    const start = Math.max(0, pos < 0 ? 0 : pos - 60);\n    return (start > 0 ? '… ' : '') + src.slice(start, start + 180).trim() + (src.length > start + 180 ? ' …' : '');\n  }\n  const results = hits.slice(0, limit).map(c => {\n    const r = { quelle: c.quelle, id: c.id, title: c.title, snippet: snippet(c) };\n    if (c.mimeType) r.mimeType = c.mimeType;\n    if (c.downloadUrl) r.downloadUrl = c.downloadUrl;\n    return r;\n  });\n  return [{ json: { results, count: results.length } }];\n} catch (e) {\n  return [{ json: { results: [], count: 0 } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "8e69d2f6-0c61-5f3e-a86e-4c9341d39137",
+      "name": "Suchen & ranken (Dokumente)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "8e0254f0-fa23-5915-ab91-0bff942fd66a",
+      "name": "Respond search"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/read-document",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        260
+      ],
+      "id": "228b58b3-c330-5a34-b6e8-fd85c10862ab",
+      "name": "Webhook read-document",
+      "webhookId": "56737e1e-677c-593c-acc6-e461f26a3c1d"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/docDocuments.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        260
+      ],
+      "id": "85f276e7-b2c1-5122-8ea8-bf0f83edfee3",
+      "name": "RD docDocuments lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/docOrgs.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        260
+      ],
+      "id": "4de793da-174d-5150-8ca5-78ffba2e5a79",
+      "name": "RD docOrgs lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveDocs.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        260
+      ],
+      "id": "b1de21ed-64dc-55bb-8b86-1e8d3a16a2b4",
+      "name": "RD driveDocs lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/driveInbox.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        260
+      ],
+      "id": "2d5fdfb0-3207-51c7-bc93-e6cb2652032f",
+      "name": "RD driveInbox lesen",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gemeinsame Helfer (werden in beide Code-Nodes eingebettet)\nfunction parseNode(name){\n  try {\n    const item = $(name).first().json || {};\n    const v = JSON.parse((item.data != null ? item.data : 'null') || 'null');\n    return (v && typeof v === 'object') ? v : {};\n  } catch (e) { return {}; }\n}\nfunction stripHtml(h){\n  return String(h || '')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"')\n    .replace(/\\s+/g, ' ').trim();\n}\nfunction toTs(v){ if (v == null) return 0; const n = (typeof v === 'number') ? v : Date.parse(String(v)); return isFinite(n) ? n : 0; }\nfunction genText(g){\n  if (!g || typeof g !== 'object') return '';\n  const parts = [];\n  if (g.fields && typeof g.fields === 'object'){\n    Object.keys(g.fields).forEach(k => {\n      const v = g.fields[k];\n      if (v != null && String(v).trim()) parts.push(k + ': ' + String(v).trim());\n    });\n  }\n  if (g.styleText) parts.push(String(g.styleText));\n  if (g.wishes) parts.push(String(g.wishes));\n  return parts.join('\\n');\n}\nfunction newestVersionHtml(vs){\n  let list = [];\n  if (Array.isArray(vs)) list = vs.filter(Boolean);\n  else if (vs && typeof vs === 'object') list = Object.values(vs).filter(Boolean);\n  if (!list.length) return '';\n  list = list.slice().sort((a, b) => toTs(a && a.ts) - toTs(b && b.ts));\n  const v = list[list.length - 1] || {};\n  return String(v.html || v.text || v.content || '');\n}\n// Kandidaten aus allen Knoten einsammeln (defensiv gegen null/fehlende Felder)\nfunction collectCandidates(docs, orgs, drive, inbox){\n  const cands = [];\n  Object.keys(docs).forEach(id => {\n    const d = docs[id]; if (!d || typeof d !== 'object') return;\n    const org = (d.orgId && orgs[d.orgId] && orgs[d.orgId].name) ? String(orgs[d.orgId].name) : '';\n    const title = String(d.title || 'Dokument');\n    const bodyRaw = (genText(d.gen) + '\\n' + stripHtml(newestVersionHtml(d.versions))).trim();\n    cands.push({ quelle: 'docDocuments', id, title, org,\n      head: (title + ' ' + (d.docType || '') + ' ' + org).toLowerCase(),\n      body: bodyRaw.toLowerCase(), bodyRaw, ts: toTs(d.updatedAt || d.createdAt) });\n  });\n  Object.keys(drive).forEach(id => {\n    const d = drive[id]; if (!d || typeof d !== 'object') return;\n    const title = String(d.titel_final || d.dateiname || 'Datei');\n    const bodyRaw = String(d.textauszug || '').trim();\n    cands.push({ quelle: 'driveDocs', id, title,\n      head: (title + ' ' + (d.dateiname || '')).toLowerCase(),\n      body: bodyRaw.toLowerCase(), bodyRaw, ts: toTs(d.aktualisiert || d.erstellt),\n      mimeType: d.mimeType || undefined, downloadUrl: d.downloadUrl || undefined });\n  });\n  Object.keys(inbox).forEach(id => {\n    const n = inbox[id]; if (!n || typeof n !== 'object') return;\n    const title = String(n.dateiname || 'Eingang');\n    const bodyRaw = String(n.text || '').trim();\n    cands.push({ quelle: 'driveInbox', id, title,\n      head: title.toLowerCase(),\n      body: bodyRaw.toLowerCase(), bodyRaw, ts: toTs(n.erstellt),\n      mimeType: n.mimeType || undefined });\n  });\n  return cands;\n}\nfunction scoreAndSort(cands, tokens){\n  const now = Date.now();\n  cands.forEach(c => {\n    let s = 0;\n    tokens.forEach(t => { if (c.head.includes(t)) s += 4; if (c.body.includes(t)) s += 1.5; });\n    if (tokens.length && s === 0){ c._score = 0; return; }\n    const ageDays = c.ts ? (now - c.ts) / 86400000 : 9999;\n    c._score = s + Math.max(0, 1.5 - ageDays / 60); // Rezenz-Bonus\n  });\n  const hits = tokens.length ? cands.filter(c => c._score > 0) : cands.slice();\n  hits.sort((a, b) => (b._score - a._score) || (b.ts - a.ts));\n  return hits;\n}\nfunction tokenize(q){ return String(q || '').toLowerCase().split(/[^a-zäöüéèàß0-9]+/).filter(t => t.length >= 2); }\n\n// ── /read-document: exakter Eintrag per id ODER bester Treffer per query ──\ntry {\n  const body = $('Webhook read-document').first().json.body || {};\n  const id = body.id != null ? String(body.id) : '';\n  const tokens = tokenize(body.query);\n  const docs = parseNode('RD docDocuments lesen');\n  const orgs = parseNode('RD docOrgs lesen');\n  const drive = parseNode('RD driveDocs lesen');\n  const inbox = parseNode('RD driveInbox lesen');\n\n  function compose(quelle, key){\n    if (quelle === 'docDocuments'){\n      const d = docs[key]; if (!d || typeof d !== 'object') return null;\n      const org = (d.orgId && orgs[d.orgId] && orgs[d.orgId].name) ? String(orgs[d.orgId].name) : '';\n      const title = String(d.title || 'Dokument');\n      const lines = ['Dokument: ' + title\n        + (d.docType ? ' (' + d.docType + ')' : '')\n        + (org ? ', Organisation: ' + org : '')\n        + (d.status ? ', Status: ' + d.status : '')];\n      const gt = genText(d.gen); if (gt) lines.push(gt);\n      const vh = stripHtml(newestVersionHtml(d.versions)); if (vh) lines.push(vh);\n      return { ok: true, quelle, id: key, title, text: lines.join('\\n\\n').slice(0, 6000) };\n    }\n    if (quelle === 'driveDocs'){\n      const d = drive[key]; if (!d || typeof d !== 'object') return null;\n      const title = String(d.titel_final || d.dateiname || 'Datei');\n      let text = String(d.textauszug || '').trim();\n      if (!text) text = 'PDF/Datei, kein Textauszug vorhanden.' + (d.downloadUrl ? ' Download: ' + d.downloadUrl : '');\n      const r = { ok: true, quelle, id: key, title, text: text.slice(0, 6000) };\n      if (d.mimeType) r.mimeType = d.mimeType;\n      if (d.downloadUrl) r.downloadUrl = d.downloadUrl;\n      return r;\n    }\n    if (quelle === 'driveInbox'){\n      const n = inbox[key]; if (!n || typeof n !== 'object') return null;\n      const title = String(n.dateiname || 'Eingang');\n      let text = String(n.text || '').trim();\n      if (!text) text = 'Datei im Eingang, kein Textauszug vorhanden.';\n      const r = { ok: true, quelle, id: key, title, text: text.slice(0, 6000) };\n      if (n.mimeType) r.mimeType = n.mimeType;\n      return r;\n    }\n    return null;\n  }\n\n  if (id){\n    const direct = compose('docDocuments', id) || compose('driveDocs', id) || compose('driveInbox', id);\n    return [{ json: direct || { ok: false, reason: 'nicht gefunden' } }];\n  }\n  if (!tokens.length) return [{ json: { ok: false, reason: 'id oder query erforderlich' } }];\n  const hits = scoreAndSort(collectCandidates(docs, orgs, drive, inbox), tokens);\n  if (!hits.length) return [{ json: { ok: false, reason: 'nicht gefunden' } }];\n  const best = hits[0];\n  return [{ json: compose(best.quelle, best.id) || { ok: false, reason: 'nicht gefunden' } }];\n} catch (e) {\n  return [{ json: { ok: false, reason: 'nicht gefunden' } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        260
+      ],
+      "id": "6ea478f9-6cdf-5c4f-8871-8d9f40c59bbd",
+      "name": "Dokument zusammensetzen"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        260
+      ],
+      "id": "3f5f16fc-c7c9-5b8b-84bb-cbf73e864bd8",
+      "name": "Respond read-document"
+    }
+  ],
+  "connections": {
+    "Webhook search": {
+      "main": [
+        [
+          {
+            "node": "docDocuments lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "docDocuments lesen": {
+      "main": [
+        [
+          {
+            "node": "docOrgs lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "docOrgs lesen": {
+      "main": [
+        [
+          {
+            "node": "driveDocs lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "driveDocs lesen": {
+      "main": [
+        [
+          {
+            "node": "driveInbox lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "driveInbox lesen": {
+      "main": [
+        [
+          {
+            "node": "Suchen & ranken (Dokumente)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Suchen & ranken (Dokumente)": {
+      "main": [
+        [
+          {
+            "node": "Respond search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook read-document": {
+      "main": [
+        [
+          {
+            "node": "RD docDocuments lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RD docDocuments lesen": {
+      "main": [
+        [
+          {
+            "node": "RD docOrgs lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RD docOrgs lesen": {
+      "main": [
+        [
+          {
+            "node": "RD driveDocs lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RD driveDocs lesen": {
+      "main": [
+        [
+          {
+            "node": "RD driveInbox lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RD driveInbox lesen": {
+      "main": [
+        [
+          {
+            "node": "Dokument zusammensetzen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dokument zusammensetzen": {
+      "main": [
+        [
+          {
+            "node": "Respond read-document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Zurich"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
