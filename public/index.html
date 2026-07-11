@@ -550,7 +550,7 @@
     .sidebar{grid-column:1;grid-row:1/3;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--border);z-index:50;transition:transform 0.3s ease,opacity 0.3s ease;overflow:hidden}
     .sidebar-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
     .sidebar-brand{display:flex;align-items:center;gap:10px;cursor:pointer}
-    .sidebar-brand .logo{width:32px;height:32px;border-radius:0;background:url('emblem.svg') center/contain no-repeat;box-shadow:none;filter:drop-shadow(0 1px 6px var(--accent-soft))}
+    .sidebar-brand .logo{width:32px;height:32px;border-radius:0;background:url('emblem.svg') center/contain no-repeat;box-shadow:none;filter:none}
     .sidebar-brand .brand-text h1{font-size:14px;font-weight:700;margin:0}
     .sidebar-brand .brand-text .sub{font-size:10px;color:var(--muted)}
     .sidebar-pin-btn{width:28px;height:28px;border-radius:8px;background:transparent;border:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:var(--transition)}
@@ -592,7 +592,7 @@
     .brand{display:flex;align-items:center;gap:10px;flex-shrink:0;cursor:pointer;padding:6px 8px;border-radius:10px;transition:var(--transition)}
     .brand:hover{background:var(--panel2)}
     .brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
-    .logo{width:32px;height:32px;border-radius:0;background:url('emblem.svg') center/contain no-repeat;box-shadow:none;filter:drop-shadow(0 1px 6px var(--accent-soft))}
+    .logo{width:32px;height:32px;border-radius:0;background:url('emblem.svg') center/contain no-repeat;box-shadow:none;filter:none}
     .brand-text h1{font-size:15px;font-weight:700;letter-spacing:-.2px;margin:0}
     .brand-text .sub{font-size:11px;color:var(--muted);font-weight:500}
     
@@ -105014,7 +105014,9 @@ body::after{
 
 /* ── 4) Verspielte Signaturen ── */
 .modal-header{background:linear-gradient(180deg, color-mix(in oklab, var(--accent) 7%, transparent), transparent)}
-.sidebar-brand .logo{box-shadow:0 2px 10px var(--accent-soft),0 0 22px var(--accent-soft)}
+/* Kein Glow hinter dem kleinen Marken-Emblem: bei 32px verschmieren die
+   Schatten aller Ring-Linien sonst zu einer dunkel-violetten Scheibe. */
+.sidebar-brand .logo{box-shadow:none}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 .tags .tag,.postit-tags .postit-tag{background:var(--accent-soft);color:var(--accent);border:0}
 .tags .tag:nth-child(4n+2){background:color-mix(in oklab, var(--info) 20%, transparent);color:var(--info)}
