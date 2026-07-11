@@ -226,6 +226,33 @@ a{color:var(--accent)}
 .edpanel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:13px;margin-top:12px}
 .verrow{display:flex;gap:10px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--border);font-size:12.5px}
 .verrow:last-child{border-bottom:none}
+.edframewrap.layouting{outline:3px dashed var(--accent);outline-offset:5px}
+.edhint{margin-top:10px;font-size:12px;color:var(--muted);background:var(--surface-overlay);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px}
+
+/* ── Layout-Modus: schwebendes Mini-Panel ── */
+.lay-panel{position:fixed;z-index:70;display:flex;gap:8px;align-items:center;background:var(--surface-overlay);border:1px solid var(--border2);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:6px 8px}
+.lay-panel .lay-grp{display:flex;gap:4px;align-items:center;padding-right:8px;border-right:1px solid var(--border)}
+.lay-panel .lay-grp:last-child{border-right:none;padding-right:0}
+.lay-panel .iconbtn{padding:5px 9px;font-size:13px}
+.lay-panel .iconbtn.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.lay-panel .lay-fs{font-size:12px;min-width:46px;text-align:center;color:var(--text2);font-variant-numeric:tabular-nums}
+
+/* ── PDF-Editor-Overlay ── */
+.pdfed-overlay{position:fixed;inset:0;z-index:80;background:var(--surface-base);display:flex;flex-direction:column}
+.pdfed-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:var(--surface-raised);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+.pdfed-bar strong{font-family:'Playfair Display',serif;font-size:15px}
+.pdfed-stage{flex:1;overflow:auto;padding:22px 14px 60px;display:flex;flex-direction:column;align-items:center;gap:18px;background:color-mix(in oklab, var(--surface-base) 70%, black 6%)}
+.pdfed-page{position:relative;background:#fff;box-shadow:0 8px 26px rgba(0,0,0,.42)}
+.pdfed-canvas{display:block}
+.pdfed-layer{position:absolute;inset:0;overflow:hidden}
+.pdfed-anno{position:absolute;cursor:move;box-sizing:border-box;touch-action:none}
+.pdfed-anno.text{color:#111;min-width:22px;min-height:1em;padding:1px 2px;white-space:pre-wrap;line-height:1.2;font-family:Helvetica,Arial,sans-serif;outline:1px dashed transparent}
+.pdfed-anno.text:hover{outline-color:rgba(0,0,0,.28)}
+.pdfed-anno.text.editing{cursor:text;outline:1px solid var(--accent);background:rgba(255,255,255,.65)}
+.pdfed-anno.rect{border:1.5px solid #1f2937;background:transparent}
+.pdfed-anno.sel{outline:2px solid var(--accent) !important;outline-offset:1px}
+.pdfed-loading{color:var(--text-muted);display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:12vh}
+.pdfed-tool.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 
 /* ── Toasts / Busy / Skeleton ── */
 #toasts{position:fixed;top:14px;right:14px;z-index:100;display:flex;flex-direction:column;gap:8px;max-width:min(360px,90vw)}
@@ -269,6 +296,7 @@ a{color:var(--accent)}
 </header>
 <main class="wrap" id="view"></main>
 <div id="modal-root"></div>
+<div id="pdf-root"></div>
 <div id="busy" class="busy hidden"><div class="box"><div class="spinner"></div><div id="busy-title" style="font-weight:700;font-size:15px">Bitte warten…</div><div id="busy-msg" class="muted small" style="margin-top:6px"></div></div></div>
 <input type="file" id="file-logo" class="hidden" accept="image/png,image/jpeg,image/svg+xml,image/webp">
 <input type="file" id="file-example" class="hidden" accept=".pdf,.docx,.doc,image/png,image/jpeg,image/webp">
@@ -610,8 +638,9 @@ var S = {
   gen: emptyGen(),
   filters: { org:"", type:"", project:"", status:"", q:"" },
   exOrgId: "",
-  editor: { docId:"", zoom:1, editing:false, quickOpen:false, versionsOpen:false, revising:false, exportingPdf:false, revlog:[] },
-  ctxModal: null
+  editor: { docId:"", zoom:1, editing:false, quickOpen:false, versionsOpen:false, revising:false, exportingPdf:false, revlog:[], layouting:false, layoutSel:-1, snap:false },
+  ctxModal: null,
+  pdfEditor: null
 };
 
 /* ── Datenzugriff ─────────────────────────────────────────────────────── */
@@ -675,11 +704,28 @@ function entityToContext(sourceKey, e){
 function nav(view, arg){
   location.hash = "#/" + view + (arg ? "/" + arg : "");
 }
+function resetEditorState(docId){
+  S.editor.docId = docId || "";
+  S.editor.editing = false; S.editor.quickOpen = false; S.editor.versionsOpen = false;
+  S.editor.exportingPdf = false; S.editor.layouting = false; S.editor.layoutSel = -1;
+  S.editor.revlog = []; _quickVals = null;
+  teardownLayoutMode();
+}
 function onHashChange(){
   var h = (location.hash || "#/docs").replace(/^#\//, "");
   var parts = h.split("/");
   var v = parts[0] || "docs";
-  if (v === "editor"){ S.editor.docId = parts[1] || ""; S.editor.editing = false; S.editor.quickOpen = false; S.editor.versionsOpen = false; S.editor.exportingPdf = false; S.editor.revlog = []; _quickVals = null; }
+  // Beim Verlassen der PDF-Route (z.B. Zurueck-Button) das Overlay schliessen.
+  if (v !== "pdf" && S.pdfEditor) closePdfEditor(true);
+  if (v === "pdf"){
+    var did = parts[1] || "";
+    resetEditorState(did);
+    S.view = "editor";
+    render();
+    if (!(S.pdfEditor && S.pdfEditor.docId === did)) openPdfEditor(did, true);
+    return;
+  }
+  if (v === "editor") resetEditorState(parts[1] || "");
   S.view = ["docs","new","orgs","examples","editor"].indexOf(v) >= 0 ? v : "docs";
   render();
 }
@@ -1180,17 +1226,21 @@ function renderEditor(){
     + '<button class="iconbtn" data-action="ed-zoom-out" title="Verkleinern">−</button><span class="small mono" style="min-width:44px;text-align:center">'+zoomPct+'%</span><button class="iconbtn" data-action="ed-zoom-in" title="Vergroessern">+</button>'
     + '<span class="spacer"></span>'
     + '<button class="btn sm'+(ed.editing?" primary":"")+'" data-action="ed-edit-toggle">'+(ed.editing?"💾 Bearbeitung speichern":"✏️ Direkt bearbeiten")+'</button>'
+    + '<button class="btn sm'+(ed.layouting?" primary":"")+'" data-action="ed-layout-toggle">'+(ed.layouting?"✓ Layout fertig":"🧲 Layout anpassen")+'</button>'
+    + (ed.layouting ? '<button class="btn sm ghost" data-action="ed-layout-reset" title="Alle Verschiebungen dieses Dokuments verwerfen">↺ Zuruecksetzen</button>' : "")
     + '<button class="btn sm'+(ed.quickOpen?" primary":"")+'" data-action="ed-quick-toggle">🎨 Schnellregler</button>'
     + '<button class="btn sm'+(ed.versionsOpen?" primary":"")+'" data-action="ed-versions-toggle">🕘 Versionen ('+(doc.versions||[]).length+')</button>'
     + '<span class="spacer"></span>'
     + '<button class="btn sm" data-action="ed-print">🖨 PDF / Drucken</button>'
     + '<button class="btn sm" data-action="ed-download">⬇ HTML</button>'
     + '<button class="btn sm coral" data-action="export-pdf"'+(ed.exportingPdf?" disabled":"")+'>'+(ed.exportingPdf?'<span class="btnspin"></span> PDF wird erstellt…':'📄 Als PDF exportieren')+'</button>'
+    + '<button class="btn sm" data-action="open-pdf-editor">📝 Im PDF-Editor oeffnen</button>'
     + '<button class="btn sm" data-action="doc-template" data-id="'+esc(doc.id)+'">📋 Als Vorlage duplizieren</button>'
     + '</div>'
+    + (ed.layouting ? '<div class="edhint">🧲 <b>Layout-Modus:</b> Block anklicken und frei verschieben · Pfeiltasten = pixelweise (Shift = 10 px) · Mini-Panel fuer Schriftgroesse/Ausrichtung/Raster. Fertig? Auf „✓ Layout fertig“ klicken — die Anpassungen werden gespeichert.</div>' : "")
     + (ed.quickOpen ? renderQuickPanel(doc) : "")
     + (ed.versionsOpen ? renderVersionsPanel(doc) : "")
-    + '<div class="edstage"><div class="edframewrap'+(ed.editing?" editing":"")+'" id="edwrap"><iframe id="edframe" sandbox="allow-same-origin allow-scripts allow-modals" title="Dokumentvorschau"></iframe></div></div>'
+    + '<div class="edstage"><div class="edframewrap'+(ed.editing?" editing":"")+(ed.layouting?" layouting":"")+'" id="edwrap"><iframe id="edframe" sandbox="allow-same-origin allow-scripts allow-modals" title="Dokumentvorschau"></iframe></div></div>'
     + '<div class="revlog" id="revlog">' + ed.revlog.map(function(m){ return '<div class="revmsg'+(m.sys?" sys":"")+'">'+esc(m.text)+'</div>'; }).join("") + '</div>'
     + '<div class="revbar"><textarea id="rev-input" placeholder="Revisionsanweisung an Claude … z.B. „Titel groesser, Fusszeile dezenter, Abschnitt X umformulieren“ (Enter = senden)"></textarea>'
     + '<button class="btn primary" data-action="ed-revise" '+(ed.revising?"disabled":"")+'>'+(ed.revising?"⏳":"➤ Senden")+'</button></div>';
@@ -1224,8 +1274,10 @@ function afterEditorRender(){
   frame.onload = function(){
     try {
       var d = frame.contentDocument;
+      applyLayoutOverridesLive();
       frame.style.height = Math.max(d.documentElement.scrollHeight, d.body ? d.body.scrollHeight : 0, 1123) + "px";
       if (S.editor.editing) d.designMode = "on";
+      if (S.editor.layouting) setupLayoutMode();
       applyQuickLive();
     } catch(e){}
   };
@@ -1261,13 +1313,27 @@ async function pushVersion(doc, html, note){
   if (doc.versions.length > CONFIG.MAX_VERSIONS) doc.versions = doc.versions.slice(-CONFIG.MAX_VERSIONS);
   await saveDoc(doc);
 }
+// Liefert das Dokument-HTML aus dem iframe — bereinigt um Layout-Modus-Artefakte
+// (data-qb-Marker, injizierte Style-Bloecke, Auswahlrahmen-Klasse), damit
+// gespeicherte Versionen sauber bleiben. Die Overrides leben ausschliesslich in
+// doc.layoutOverrides und werden bei jedem Rendern erneut angewendet.
 function getFrameHtml(){
   var d = $("#edframe").contentDocument;
-  return "<!DOCTYPE html>\n" + d.documentElement.outerHTML;
+  var root = d.documentElement.cloneNode(true);
+  try {
+    var s1 = root.querySelector("#q-layout"); if (s1) s1.remove();
+    var s2 = root.querySelector("#q-lay-style"); if (s2) s2.remove();
+    Array.prototype.forEach.call(root.querySelectorAll("[data-qb]"), function(el){
+      el.removeAttribute("data-qb"); el.classList.remove("q-lay-sel");
+      if (el.getAttribute("class") === "") el.removeAttribute("class");
+    });
+  } catch(e){}
+  return "<!DOCTYPE html>\n" + root.outerHTML;
 }
 async function toggleDirectEdit(){
   var ed = S.editor, doc = S.docs[ed.docId];
   if (!doc) return;
+  if (ed.layouting) return toast("warn","Layout-Modus aktiv","Bitte zuerst den Layout-Modus mit „✓ Layout fertig“ beenden");
   if (!ed.editing){
     ed.editing = true;
     try { $("#edframe").contentDocument.designMode = "on"; } catch(e){ toast("err","Bearbeitung nicht moeglich", e.message); ed.editing = false; }
@@ -1297,6 +1363,7 @@ async function reviseDocument(){
   var instruction = input && input.value.trim();
   if (!doc || !instruction) return;
   if (ed.editing) return toast("warn","Zuerst Bearbeitung speichern","Direktbearbeitung ist aktiv");
+  if (ed.layouting) return toast("warn","Zuerst Layout-Modus beenden","Der Layout-Modus ist aktiv");
   ed.revising = true; ed.revlog.push({ text: instruction });
   render(); afterEditorRender();
   busyWithClock("Revision laeuft…", "Claude ueberarbeitet dein Dokument");
@@ -1320,6 +1387,10 @@ async function rollbackTo(idx){
   if (!doc || !doc.versions || !doc.versions[idx]) return;
   busy("Rollback…");
   try {
+    // Die Layout-Overrides sind an die Struktur der vorherigen Version gebunden —
+    // beim Rollback werden sie zurueckgesetzt (Regel: bei Rollback zuruecksetzbar).
+    doc.layoutOverrides = {};
+    S.editor.layoutSel = -1;
     await pushVersion(doc, doc.versions[idx].html, "Rollback auf Version #" + (idx+1) + " (" + fmtDate(doc.versions[idx].ts) + ")");
     toast("ok","Rollback ausgefuehrt","Version #" + (idx+1) + " ist wieder aktuell (als neue Version)");
   } catch(e){ toast("err","Rollback fehlgeschlagen", e.message); }
@@ -1327,41 +1398,47 @@ async function rollbackTo(idx){
 }
 function downloadHtml(doc){
   var ver = currentVersion(doc); if (!ver) return;
-  var blob = new Blob([ver.html], { type: "text/html;charset=utf-8" });
+  var blob = new Blob([currentBakedHtml(doc)], { type: "text/html;charset=utf-8" });
   var a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = String(doc.title||"dokument").replace(/[^a-zA-Z0-9aeoeueAeOeUe _-]/g,"").trim().replace(/\s+/g,"-").toLowerCase() + ".html";
   document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
 }
-// Serverseitiger PDF-Export: n8n → Gotenberg rendert das Dokument-HTML zu PDF.
+// Ruft den n8n→Gotenberg-Webhook auf und liefert das PDF als Blob (mit Timeout,
+// Content-Type-Pruefung). Wird von exportPdf() und dem PDF-Editor gemeinsam genutzt.
+async function fetchPdfBlob(html, filename){
+  if (!CONFIG.WEBHOOK_KEY) toast("warn", "Webhook-Key fehlt", "x-quantus-key in CONFIG setzen (// TODO(Laurin))");
+  var r;
+  try {
+    r = await fetchWithTimeout(CONFIG.WEBHOOK_BASE.replace(/\/$/, "") + "/" + CONFIG.WH_PDF, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-quantus-key": CONFIG.WEBHOOK_KEY },
+      body: JSON.stringify({ html: html, filename: filename })
+    }, CONFIG.PDF_TIMEOUT_MS);
+  } catch(e){
+    if (e && e.name === "AbortError") throw new Error("PDF-Erstellung hat zu lange gedauert");
+    throw new Error("PDF-Server nicht erreichbar (" + (e && e.message || "Netzwerkfehler") + ")");
+  }
+  if (!r.ok) throw new Error("PDF-Server nicht erreichbar (Status " + r.status + ")");
+  var blob = await r.blob();
+  var ctype = (r.headers.get("Content-Type") || "").toLowerCase();
+  if (!blob || !blob.size || ctype.indexOf("pdf") < 0) throw new Error("Ungueltige Antwort vom PDF-Server");
+  return blob;
+}
+// Serverseitiger PDF-Export: n8n → Gotenberg rendert das Dokument-HTML (inkl.
+// angewandter Layout-Overrides) zu PDF.
 async function exportPdf(){
   var ed = S.editor, doc = S.docs[ed.docId];
   if (!doc || ed.exportingPdf) return;
   if (ed.editing) return toast("warn","Zuerst Bearbeitung speichern","Direktbearbeitung ist aktiv");
   var ver = currentVersion(doc);
   if (!ver) return toast("warn","Keine Version vorhanden","Dieses Dokument hat noch keinen Inhalt");
-  // TODO(Laurin): Webhook-Key pruefen — es wird derselbe CONFIG.WEBHOOK_KEY (x-quantus-key) wie bei quantus-doc-generate verwendet
-  if (!CONFIG.WEBHOOK_KEY) toast("warn", "Webhook-Key fehlt", "x-quantus-key in CONFIG setzen (// TODO(Laurin))");
   var filename = doc.docType + "-" + doc.id + ".pdf";
   ed.exportingPdf = true; render(); afterEditorRender();
   toast("info", "PDF wird erstellt …");
   try {
-    var r;
-    try {
-      r = await fetchWithTimeout(CONFIG.WEBHOOK_BASE.replace(/\/$/, "") + "/" + CONFIG.WH_PDF, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-quantus-key": CONFIG.WEBHOOK_KEY },
-        body: JSON.stringify({ html: ver.html, filename: filename })
-      }, CONFIG.PDF_TIMEOUT_MS);
-    } catch(e){
-      if (e && e.name === "AbortError") throw new Error("PDF-Erstellung hat zu lange gedauert");
-      throw new Error("PDF-Server nicht erreichbar (" + (e && e.message || "Netzwerkfehler") + ")");
-    }
-    if (!r.ok) throw new Error("PDF-Server nicht erreichbar (Status " + r.status + ")");
-    var blob = await r.blob();
-    var ctype = (r.headers.get("Content-Type") || "").toLowerCase();
-    if (!blob || !blob.size || ctype.indexOf("pdf") < 0) throw new Error("Ungueltige Antwort vom PDF-Server");
+    var blob = await fetchPdfBlob(currentBakedHtml(doc), filename);
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = filename;
@@ -1390,6 +1467,549 @@ function loadAsTemplate(docId){
   if (S.gen.docType === "rechnung") S.gen.fields.nummer = nextInvoiceNo(S.gen.orgId);
   toast("ok","Vorlage geladen","Generator mit den Angaben von „"+ (doc.title||"") +"“ vorbefuellt");
   nav("new");
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LAYOUT-MODUS — Top-Level-Bloecke eines generierten Dokuments frei verschieben.
+
+   Speicherung: doc.layoutOverrides = { "<blockIndex>": {dx,dy,fontSizePx,align} }
+   in Firebase (Teil des Dokuments). Angewendet wird ausschliesslich ueber einen
+   injizierten <style id="q-layout">-Block, der die Bloecke per data-qb-Marker
+   adressiert — so bleibt das gespeicherte Versions-HTML sauber, und die Overrides
+   sind jederzeit (Rollback / Zuruecksetzen) verwerfbar.
+   ══════════════════════════════════════════════════════════════════════════ */
+function frameDoc(){ var f = $("#edframe"); return f && f.contentDocument; }
+function ovOf(doc){ return doc.layoutOverrides || (doc.layoutOverrides = {}); }
+function blockOv(doc, i){ var o = ovOf(doc); return o[i] || (o[i] = { dx:0, dy:0, fontSizePx:0, align:"" }); }
+
+// Verschiebbare Top-Level-Bloecke ermitteln: durch Einzel-Wrapper (z.B. <div class="page">)
+// hindurch absteigen, bis der Container mehrere logische Bloecke enthaelt.
+function getMovableBlocks(d){
+  var body = d && d.body; if (!body) return [];
+  function realKids(el){
+    return Array.prototype.filter.call(el.children, function(c){
+      return c.nodeType === 1 && !/^(SCRIPT|STYLE|LINK|META|BR|HR)$/.test(c.tagName);
+    });
+  }
+  var container = body, guard = 0;
+  while (guard++ < 8){
+    var kids = realKids(container);
+    if (kids.length === 1 && /^(DIV|SECTION|MAIN|ARTICLE)$/.test(kids[0].tagName) && realKids(kids[0]).length >= 1){
+      container = kids[0];
+    } else break;
+  }
+  return realKids(container);
+}
+function overridesCss(ov){
+  var css = "";
+  Object.keys(ov || {}).forEach(function(k){
+    var o = ov[k]; if (!o) return;
+    var p = "";
+    if (o.dx || o.dy) p += "transform:translate(" + (o.dx||0) + "px," + (o.dy||0) + "px) !important;";
+    if (o.fontSizePx) p += "font-size:" + o.fontSizePx + "px !important;";
+    if (o.align) p += "text-align:" + o.align + " !important;";
+    if (p) css += '[data-qb="' + k + '"]{' + p + "}\n";
+  });
+  return css;
+}
+// Bloecke markieren + <style id="q-layout"> mit den Overrides erzeugen/aktualisieren.
+function applyLayoutStyle(d, ov){
+  var blocks = getMovableBlocks(d);
+  blocks.forEach(function(el, i){ el.setAttribute("data-qb", i); });
+  var st = d.getElementById("q-layout");
+  if (!st){ st = d.createElement("style"); st.id = "q-layout"; (d.head || d.documentElement).appendChild(st); }
+  st.textContent = overridesCss(ov);
+  return blocks;
+}
+function refreshLayoutStyle(){
+  var d = frameDoc(), doc = S.docs[S.editor.docId];
+  if (!d || !doc) return;
+  var st = d.getElementById("q-layout");
+  if (st) st.textContent = overridesCss(ovOf(doc));
+}
+// Beim (Neu-)Laden des iframes anwenden — nur wenn Overrides existieren oder der
+// Layout-Modus aktiv ist (sonst bleibt die Vorschau voellig unangetastet).
+function applyLayoutOverridesLive(){
+  var d = frameDoc(), doc = S.docs[S.editor.docId];
+  if (!d || !doc) return;
+  var has = doc.layoutOverrides && Object.keys(doc.layoutOverrides).length;
+  if (S.editor.layouting || has) applyLayoutStyle(d, doc.layoutOverrides || {});
+}
+// Overrides in ein HTML-String „einbacken" (fuer PDF-Export / Download / PDF-Editor).
+function bakeLayoutHtml(html, ov){
+  if (!ov || !Object.keys(ov).length) return html;
+  try {
+    var d = new DOMParser().parseFromString(html, "text/html");
+    applyLayoutStyle(d, ov);
+    return "<!DOCTYPE html>\n" + d.documentElement.outerHTML;
+  } catch(e){ return html; }
+}
+function currentBakedHtml(doc){
+  var v = currentVersion(doc);
+  return v ? bakeLayoutHtml(v.html, doc.layoutOverrides || {}) : "";
+}
+
+var _layDrag = null;
+function setupLayoutMode(){
+  var d = frameDoc(), doc = S.docs[S.editor.docId];
+  if (!d || !doc) return;
+  applyLayoutStyle(d, ovOf(doc));
+  if (!d.getElementById("q-lay-style")){
+    var st = d.createElement("style"); st.id = "q-lay-style";
+    st.textContent = "[data-qb]{cursor:move !important} [data-qb].q-lay-sel{outline:2px solid #45c198 !important;outline-offset:2px !important;background:rgba(69,193,152,.06) !important}";
+    (d.head || d.documentElement).appendChild(st);
+  }
+  d.addEventListener("pointerdown", layPointerDown, true);
+  d.addEventListener("pointermove", layPointerMove, true);
+  d.addEventListener("pointerup", layPointerUp, true);
+  d.addEventListener("keydown", layKeyDown, true);          // wenn das iframe fokussiert ist
+  window.addEventListener("keydown", layKeyDownOuter, true); // wenn das Hauptfenster fokussiert ist
+  ensureLayPanel();
+  toast("info", "Layout-Modus aktiv", "Block anklicken und ziehen · Pfeiltasten fein (Shift = 10 px)");
+}
+function layPointerDown(e){
+  var d = frameDoc(); if (!d) return;
+  var el = e.target.closest("[data-qb]");
+  if (!el){ selectBlock(-1); return; }
+  var i = parseInt(el.getAttribute("data-qb"), 10);
+  selectBlock(i);
+  var o = blockOv(S.docs[S.editor.docId], i);
+  _layDrag = { i:i, el:el, sx:e.clientX, sy:e.clientY, ox:o.dx||0, oy:o.dy||0 };
+  try { el.setPointerCapture(e.pointerId); } catch(_){}
+  hideLayPanel();
+  e.preventDefault();
+}
+function layPointerMove(e){
+  if (!_layDrag) return;
+  var ndx = _layDrag.ox + (e.clientX - _layDrag.sx);
+  var ndy = _layDrag.oy + (e.clientY - _layDrag.sy);
+  if (S.editor.snap){ ndx = Math.round(ndx/8)*8; ndy = Math.round(ndy/8)*8; }
+  var o = blockOv(S.docs[S.editor.docId], _layDrag.i);
+  o.dx = ndx; o.dy = ndy;
+  refreshLayoutStyle();
+}
+function layPointerUp(){
+  if (!_layDrag) return;
+  var i = _layDrag.i; _layDrag = null;
+  showLayPanel(i);
+}
+function layKeyDown(e){
+  var i = S.editor.layoutSel; if (i < 0) return;
+  var step = e.shiftKey ? 10 : 1, used = true, o = blockOv(S.docs[S.editor.docId], i);
+  switch (e.key){
+    case "ArrowLeft":  o.dx = (o.dx||0) - step; break;
+    case "ArrowRight": o.dx = (o.dx||0) + step; break;
+    case "ArrowUp":    o.dy = (o.dy||0) - step; break;
+    case "ArrowDown":  o.dy = (o.dy||0) + step; break;
+    default: used = false;
+  }
+  if (used){ e.preventDefault(); refreshLayoutStyle(); repositionLayPanel(); }
+}
+// Gleiche Pfeiltasten-Logik, wenn der Fokus im Hauptfenster liegt (nicht im iframe) —
+// nur solange kein Textfeld fokussiert ist, damit z.B. die Revisions-Eingabe frei bleibt.
+function layKeyDownOuter(e){
+  if (!S.editor.layouting || S.editor.layoutSel < 0) return;
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].indexOf(e.key) < 0) return;
+  var ae = document.activeElement;
+  if (ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) || ae.isContentEditable)) return;
+  layKeyDown(e);
+}
+function selectBlock(i){
+  var d = frameDoc(); if (!d) return;
+  Array.prototype.forEach.call(d.querySelectorAll("[data-qb].q-lay-sel"), function(el){ el.classList.remove("q-lay-sel"); });
+  S.editor.layoutSel = i;
+  if (i >= 0){
+    var el = d.querySelector('[data-qb="' + i + '"]');
+    if (el) el.classList.add("q-lay-sel");
+    showLayPanel(i);
+  } else hideLayPanel();
+}
+function ensureLayPanel(){
+  if ($("#lay-panel")) return;
+  var p = document.createElement("div"); p.id = "lay-panel"; p.className = "lay-panel hidden";
+  document.body.appendChild(p);
+  window.addEventListener("scroll", repositionLayPanel, true);
+  window.addEventListener("resize", repositionLayPanel);
+}
+function hideLayPanel(){ var p = $("#lay-panel"); if (p) p.classList.add("hidden"); }
+function showLayPanel(i){
+  var p = $("#lay-panel"); if (!p || i < 0) return;
+  var doc = S.docs[S.editor.docId], o = blockOv(doc, i), d = frameDoc();
+  var el = d && d.querySelector('[data-qb="' + i + '"]');
+  var fs = o.fontSizePx || (el ? Math.round(parseFloat(d.defaultView.getComputedStyle(el).fontSize) || 16) : 16);
+  p.innerHTML =
+      '<div class="lay-grp"><button class="iconbtn" data-action="ed-lay-font" data-dir="-1" title="Schrift kleiner">A−</button>'
+    + '<span class="lay-fs">' + fs + ' px</span>'
+    + '<button class="iconbtn" data-action="ed-lay-font" data-dir="1" title="Schrift groesser">A+</button></div>'
+    + '<div class="lay-grp"><button class="iconbtn' + (o.align==="left"?" on":"") + '" data-action="ed-lay-align" data-align="left" title="Linksbuendig">⯇</button>'
+    + '<button class="iconbtn' + (o.align==="center"?" on":"") + '" data-action="ed-lay-align" data-align="center" title="Zentriert">≡</button>'
+    + '<button class="iconbtn' + (o.align==="right"?" on":"") + '" data-action="ed-lay-align" data-align="right" title="Rechtsbuendig">⯈</button></div>'
+    + '<div class="lay-grp"><button class="iconbtn' + (S.editor.snap?" on":"") + '" data-action="ed-lay-snap" title="Am 8-px-Raster einrasten">🧲 Raster</button>'
+    + '<button class="iconbtn" data-action="ed-lay-reset-block" title="Diesen Block zuruecksetzen">↺</button></div>';
+  p.classList.remove("hidden");
+  repositionLayPanel();
+}
+function repositionLayPanel(){
+  var p = $("#lay-panel"); if (!p || p.classList.contains("hidden")) return;
+  var i = S.editor.layoutSel; if (i < 0) return;
+  var fr = $("#edframe"), d = frameDoc();
+  var el = d && d.querySelector('[data-qb="' + i + '"]');
+  if (!fr || !el) return;
+  var ir = fr.getBoundingClientRect(), br = el.getBoundingClientRect(), z = S.editor.zoom;
+  var left = ir.left + br.left * z;
+  var top = ir.top + br.top * z - p.offsetHeight - 8;
+  if (top < 8) top = ir.top + br.top * z + br.height * z + 8;
+  left = Math.max(8, Math.min(left, window.innerWidth - p.offsetWidth - 8));
+  top = Math.max(8, Math.min(top, window.innerHeight - p.offsetHeight - 8));
+  p.style.left = left + "px"; p.style.top = top + "px";
+}
+function layStepFont(dir){
+  var i = S.editor.layoutSel; if (i < 0) return;
+  var d = frameDoc(), doc = S.docs[S.editor.docId];
+  var el = d && d.querySelector('[data-qb="' + i + '"]'); if (!el) return;
+  var o = blockOv(doc, i);
+  var cur = o.fontSizePx || parseFloat(d.defaultView.getComputedStyle(el).fontSize) || 16;
+  o.fontSizePx = Math.max(6, Math.min(96, Math.round(cur + dir*2)));
+  refreshLayoutStyle(); showLayPanel(i);
+}
+function laySetAlign(align){
+  var i = S.editor.layoutSel; if (i < 0) return;
+  var o = blockOv(S.docs[S.editor.docId], i);
+  o.align = (o.align === align) ? "" : align;
+  refreshLayoutStyle(); showLayPanel(i);
+}
+function layResetBlock(){
+  var i = S.editor.layoutSel; if (i < 0) return;
+  var doc = S.docs[S.editor.docId];
+  if (doc.layoutOverrides) delete doc.layoutOverrides[i];
+  refreshLayoutStyle(); showLayPanel(i);
+}
+function teardownLayoutMode(){
+  var p = $("#lay-panel"); if (p) p.remove();
+  window.removeEventListener("scroll", repositionLayPanel, true);
+  window.removeEventListener("resize", repositionLayPanel);
+  window.removeEventListener("keydown", layKeyDownOuter, true);
+  _layDrag = null;
+}
+async function toggleLayoutMode(){
+  var ed = S.editor, doc = S.docs[ed.docId];
+  if (!doc) return;
+  if (ed.editing) return toast("warn","Textbearbeitung aktiv","Bitte zuerst die Direktbearbeitung speichern/beenden");
+  if (!ed.layouting){
+    ed.layouting = true; ed.layoutSel = -1;
+    render(); afterEditorRender();   // afterEditorRender ruft setupLayoutMode nach dem Laden
+  } else {
+    ed.layouting = false; ed.layoutSel = -1;
+    teardownLayoutMode();
+    busy("Layout wird gespeichert…");
+    try { await saveDoc(doc); toast("ok","Layout gespeichert","Deine Anpassungen wurden gesichert"); }
+    catch(e){ toast("err","Speichern fehlgeschlagen", e.message); }
+    finally { busy(null); render(); afterEditorRender(); }
+  }
+}
+async function resetAllLayout(){
+  var doc = S.docs[S.editor.docId]; if (!doc) return;
+  if (!confirm("Alle Layout-Anpassungen dieses Dokuments zuruecksetzen?")) return;
+  doc.layoutOverrides = {}; S.editor.layoutSel = -1;
+  busy("Layout wird zurueckgesetzt…");
+  try { await saveDoc(doc); toast("ok","Layout zurueckgesetzt"); }
+  catch(e){ toast("err","Fehler", e.message); }
+  finally { busy(null); render(); afterEditorRender(); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PDF-EDITOR — „Im PDF-Editor oeffnen".
+
+   Technische Wahl: PDF.js (Rendern der Seiten auf <canvas>) + eine leichte
+   HTML-Annotationsschicht + pdf-lib (Zurueckschreiben der Text-/Rahmen-Annotationen
+   ins PDF). Beide Libs liegen bereits versioniert unter /vendor/ (kein CDN-Zwang,
+   Single-File-kompatibel). Fallback (Regel 3): schlaegt das Laden fehl, wird das
+   frisch erzeugte PDF im Browser-eigenen Viewer geoeffnet (blob-URL, neuer Tab).
+   ══════════════════════════════════════════════════════════════════════════ */
+var _pdfAnnoDrag = null;
+function loadScriptOnce(src, test){
+  if (test()) return Promise.resolve(true);
+  return new Promise(function(res){
+    var s = document.createElement("script");
+    s.src = src;
+    s.onload = function(){ res(test()); };
+    s.onerror = function(){ res(false); };
+    document.head.appendChild(s);
+  });
+}
+async function loadPdfjs(){
+  var test = function(){ return !!(window.pdfjsLib && window.pdfjsLib.getDocument); };
+  if (test()) return true;
+  // WICHTIG: der klassische UMD-Build (/vendor/pdf/, v3.11.174) zuerst — /vendor/pdfjs/
+  // ist ein ES-Modul und laesst sich nicht als klassisches <script> laden. Reihenfolge
+  // wie in drive.html/index.html, danach CDN-Fallback.
+  var srcs = [
+    ["/vendor/pdf/pdf.min.js","/vendor/pdf/pdf.worker.min.js"],
+    ["/vendor/pdfjs/pdf.min.js","/vendor/pdfjs/pdf.worker.min.js"],
+    ["https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js","https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"],
+    ["https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js","https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"]
+  ];
+  for (var i=0;i<srcs.length;i++){
+    if (await loadScriptOnce(srcs[i][0], test)){
+      try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = srcs[i][1]; } catch(_){}
+      return true;
+    }
+  }
+  return false;
+}
+async function loadPdfLib(){
+  var test = function(){ return !!(window.PDFLib && window.PDFLib.PDFDocument); };
+  if (test()) return true;
+  var srcs = ["/vendor/pdf-lib.min.js","/vendor/pdf/pdf-lib.min.js","/vendor/pdfjs/pdf-lib.min.js",
+    "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js","https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"];
+  for (var i=0;i<srcs.length;i++){ if (await loadScriptOnce(srcs[i], test)) return true; }
+  return false;
+}
+function pdfBarHtml(){
+  var pe = S.pdfEditor, loading = pe.loading, dis = loading ? " disabled" : "";
+  return '<button class="btn sm" data-action="pdfed-close">✕ Schliessen</button>'
+    + '<strong>📝 PDF-Editor</strong><span class="small muted">' + esc(pe.filename) + '</span>'
+    + '<span class="spacer"></span>'
+    + '<button class="iconbtn" data-action="pdfed-zoom-out"' + dis + '>−</button>'
+    + '<span class="small mono" style="min-width:44px;text-align:center">' + Math.round(pe.scale/1.2*100) + '%</span>'
+    + '<button class="iconbtn" data-action="pdfed-zoom-in"' + dis + '>+</button>'
+    + '<span class="spacer"></span>'
+    + '<button class="btn sm pdfed-tool' + (pe.tool==="select"?" on":"") + '" data-action="pdfed-tool" data-tool="select"' + dis + '>➤ Auswahl</button>'
+    + '<button class="btn sm pdfed-tool' + (pe.tool==="text"?" on":"") + '" data-action="pdfed-tool" data-tool="text"' + dis + '>🅣 Text</button>'
+    + '<button class="btn sm pdfed-tool' + (pe.tool==="rect"?" on":"") + '" data-action="pdfed-tool" data-tool="rect"' + dis + '>▭ Rahmen</button>'
+    + '<input type="color" data-pdfed="color" value="' + esc(pe.color) + '" title="Farbe fuer neue/ausgewaehlte Elemente" style="width:40px;height:32px;padding:2px"' + dis + '>'
+    + '<button class="btn sm ghost danger" data-action="pdfed-delete"' + dis + '>🗑 Loeschen</button>'
+    + '<span class="spacer"></span>'
+    + '<button class="btn sm" data-action="pdfed-browser" title="Original-PDF im Browser-Viewer oeffnen (Kommentare/Markup)">🌐 Browser-Viewer</button>'
+    + '<button class="btn sm coral" data-action="pdfed-save"' + dis + '>⬇ Als PDF speichern</button>';
+}
+function updatePdfBar(){ var b = $("#pdfed-bar"); if (b) b.innerHTML = pdfBarHtml(); }
+function buildPdfOverlay(){
+  var root = $("#pdf-root"); if (!root) return;
+  root.innerHTML = '<div class="pdfed-overlay"><div class="pdfed-bar" id="pdfed-bar"></div>'
+    + '<div class="pdfed-stage" id="pdfed-stage"><div class="pdfed-loading"><div class="spinner"></div><div>PDF wird erzeugt und geladen…</div></div></div></div>';
+  updatePdfBar();
+  var stage = $("#pdfed-stage");
+  stage.addEventListener("pointerdown", pdfedStageDown);
+  document.addEventListener("pointermove", pdfedDocMove, true);
+  document.addEventListener("pointerup", pdfedDocUp, true);
+}
+async function openPdfEditor(docId, fromRoute){
+  docId = docId || S.editor.docId;
+  var doc = S.docs[docId];
+  if (!doc){ if (!S.loading.docs) toast("warn","Dokument nicht gefunden"); return; }
+  if (S.editor.editing) return toast("warn","Textbearbeitung aktiv","Bitte zuerst die Direktbearbeitung beenden");
+  if (S.pdfEditor && S.pdfEditor.docId === docId && S.pdfEditor.built) return;
+  var ver = currentVersion(doc);
+  if (!ver) return toast("warn","Keine Version vorhanden","Dieses Dokument hat noch keinen Inhalt");
+  S.pdfEditor = { docId:docId, filename:(doc.docType + "-" + doc.id + ".pdf"), bytes:null, blob:null, blobUrl:"",
+    annos:[], selId:null, scale:1.2, tool:"select", color:"#1f2937", loading:true, built:true, pages:[], pdf:null };
+  if (!fromRoute){ try { history.pushState(null, "", "#/pdf/" + docId); } catch(_){ location.hash = "#/pdf/" + docId; } }
+  buildPdfOverlay();
+  try {
+    var blob = await fetchPdfBlob(currentBakedHtml(doc), S.pdfEditor.filename);
+    if (!S.pdfEditor) return;   // zwischenzeitlich geschlossen
+    S.pdfEditor.blob = blob;
+    S.pdfEditor.blobUrl = URL.createObjectURL(blob);
+    S.pdfEditor.bytes = await blob.arrayBuffer();
+    if (!(await loadPdfjs())) throw new Error("__FALLBACK__");
+    await renderPdfPages();
+    if (!S.pdfEditor) return;
+    S.pdfEditor.loading = false; updatePdfBar();
+    toast("ok","PDF geladen","Text/Rahmen hinzufuegen, verschieben — dann „Als PDF speichern“");
+  } catch(e){
+    if (e && e.message === "__FALLBACK__"){
+      toast("info","PDF-Editor nicht verfuegbar","PDF wird im Browser-Viewer geoeffnet");
+      if (S.pdfEditor && S.pdfEditor.blobUrl) window.open(S.pdfEditor.blobUrl, "_blank");
+      closePdfEditor();
+    } else {
+      toast("err","PDF konnte nicht geladen werden", (e && e.message) || String(e), 7000);
+      closePdfEditor();
+    }
+  }
+}
+async function renderPdfPages(){
+  var pe = S.pdfEditor; var stage = $("#pdfed-stage"); if (!pe || !stage) return;
+  var keepSel = pe.selId;
+  stage.innerHTML = "";
+  var pdf = pe.pdf || await window.pdfjsLib.getDocument({ data: new Uint8Array(pe.bytes.slice(0)) }).promise;
+  pe.pdf = pdf; pe.pages = [];
+  for (var n=1; n<=pdf.numPages; n++){
+    var page = await pdf.getPage(n);
+    var vp = page.getViewport({ scale: pe.scale });
+    var vp1 = page.getViewport({ scale: 1 });
+    var pageDiv = document.createElement("div");
+    pageDiv.className = "pdfed-page"; pageDiv.style.width = vp.width + "px"; pageDiv.style.height = vp.height + "px";
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height); canvas.className = "pdfed-canvas";
+    pageDiv.appendChild(canvas);
+    var layer = document.createElement("div"); layer.className = "pdfed-layer"; layer.dataset.page = (n-1);
+    pageDiv.appendChild(layer);
+    stage.appendChild(pageDiv);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    pe.pages.push({ wPt: vp1.width, hPt: vp1.height, layer: layer, div: pageDiv });
+  }
+  pe.selId = keepSel;
+  renderAnnos();
+}
+function annoById(id){ var pe = S.pdfEditor; return pe && pe.annos.filter(function(a){ return a.id === id; })[0]; }
+function placeAnno(el, a){
+  var s = S.pdfEditor.scale;
+  el.style.left = (a.x * s) + "px"; el.style.top = (a.y * s) + "px";
+  if (a.type === "text"){ el.style.fontSize = (a.fontSize * s) + "px"; el.style.color = a.color; }
+  else if (a.type === "rect"){ el.style.width = (a.w * s) + "px"; el.style.height = (a.h * s) + "px"; el.style.borderColor = a.color; }
+}
+function makeAnnoEl(a){
+  var el = document.createElement("div");
+  el.className = "pdfed-anno " + a.type + (a.id === S.pdfEditor.selId ? " sel" : "");
+  el.dataset.id = a.id;
+  if (a.type === "text"){
+    el.textContent = a.text || "";
+    el.addEventListener("dblclick", function(){ enterTextEdit(el, a); });
+  }
+  placeAnno(el, a);
+  return el;
+}
+function renderAnnos(){
+  var pe = S.pdfEditor; if (!pe || !pe.pages) return;
+  pe.pages.forEach(function(p){ p.layer.innerHTML = ""; });
+  pe.annos.forEach(function(a){ var p = pe.pages[a.page]; if (p) p.layer.appendChild(makeAnnoEl(a)); });
+}
+function createAnno(type, pageIdx, xPt, yPt){
+  var pe = S.pdfEditor, id = uid();
+  var a = { id:id, page:pageIdx, x:xPt, y:yPt, color:pe.color, type:type };
+  if (type === "text"){ a.text = "Text"; a.fontSize = 14; }
+  else { a.w = 140; a.h = 54; }
+  pe.annos.push(a); pe.selId = id;
+  var p = pe.pages[pageIdx]; if (!p) return;
+  var el = makeAnnoEl(a); p.layer.appendChild(el);
+  if (type === "text") enterTextEdit(el, a);
+}
+function enterTextEdit(el, a){
+  el.classList.add("editing"); el.contentEditable = "true"; el.focus();
+  try {
+    var r = document.createRange(); r.selectNodeContents(el);
+    var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  } catch(_){}
+  el.onblur = function(){
+    a.text = el.textContent;
+    el.classList.remove("editing"); el.contentEditable = "false"; el.onblur = null;
+    if (!a.text){ // leerer Textblock → verwerfen
+      var pe = S.pdfEditor; if (pe){ pe.annos = pe.annos.filter(function(x){ return x.id !== a.id; }); }
+      el.remove();
+    }
+  };
+}
+function selectAnno(id){
+  var pe = S.pdfEditor; if (!pe) return;
+  pe.selId = id;
+  var stage = $("#pdfed-stage"); if (!stage) return;
+  $$(".pdfed-anno", stage).forEach(function(el){ el.classList.toggle("sel", el.dataset.id === id); });
+  if (id){ var a = annoById(id); var ci = $('[data-pdfed="color"]'); if (a && ci) ci.value = a.color; }
+}
+function pdfedStageDown(e){
+  var pe = S.pdfEditor; if (!pe || pe.loading) return;
+  var annoEl = e.target.closest(".pdfed-anno");
+  if (annoEl){
+    selectAnno(annoEl.dataset.id);
+    if (!annoEl.classList.contains("editing")){
+      var a = annoById(annoEl.dataset.id); if (!a) return;
+      _pdfAnnoDrag = { id:a.id, el:annoEl, sx:e.clientX, sy:e.clientY, ox:a.x, oy:a.y };
+      try { annoEl.setPointerCapture(e.pointerId); } catch(_){}
+      e.preventDefault();
+    }
+    return;
+  }
+  var layer = e.target.closest(".pdfed-layer");
+  if (!layer){ selectAnno(null); return; }
+  if (pe.tool === "text" || pe.tool === "rect"){
+    var pi = parseInt(layer.dataset.page, 10);
+    var rect = layer.getBoundingClientRect();
+    createAnno(pe.tool, pi, (e.clientX - rect.left) / pe.scale, (e.clientY - rect.top) / pe.scale);
+    pe.tool = "select"; updatePdfBar();
+  } else selectAnno(null);
+}
+function pdfedDocMove(e){
+  if (!_pdfAnnoDrag) return;
+  var pe = S.pdfEditor; if (!pe) return;
+  var a = annoById(_pdfAnnoDrag.id); if (!a) return;
+  a.x = Math.max(0, _pdfAnnoDrag.ox + (e.clientX - _pdfAnnoDrag.sx) / pe.scale);
+  a.y = Math.max(0, _pdfAnnoDrag.oy + (e.clientY - _pdfAnnoDrag.sy) / pe.scale);
+  placeAnno(_pdfAnnoDrag.el, a);
+}
+function pdfedDocUp(){ _pdfAnnoDrag = null; }
+function setPdfedColor(hex){
+  var pe = S.pdfEditor; if (!pe) return;
+  pe.color = hex;
+  if (pe.selId){
+    var a = annoById(pe.selId); if (a){ a.color = hex; var el = $('.pdfed-anno[data-id="' + pe.selId + '"]'); if (el) placeAnno(el, a); }
+  }
+}
+function deleteSelAnno(){
+  var pe = S.pdfEditor; if (!pe || !pe.selId) return;
+  pe.annos = pe.annos.filter(function(a){ return a.id !== pe.selId; });
+  var el = $('.pdfed-anno[data-id="' + pe.selId + '"]'); if (el) el.remove();
+  pe.selId = null;
+}
+async function pdfedZoom(dir){
+  var pe = S.pdfEditor; if (!pe || pe.loading) return;
+  pe.scale = Math.max(0.5, Math.min(3, r2(pe.scale * (dir > 0 ? 1.2 : 1/1.2))));
+  pe.loading = true; updatePdfBar();
+  try { await renderPdfPages(); } catch(e){ toast("err","Zoom fehlgeschlagen", e.message); }
+  finally { pe.loading = false; updatePdfBar(); }
+}
+function hexToRgb(hex){
+  var m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex||"#111111"));
+  if (!m) return { r:0.1, g:0.1, b:0.1 };
+  return { r:parseInt(m[1],16)/255, g:parseInt(m[2],16)/255, b:parseInt(m[3],16)/255 };
+}
+function sanitizeWinAnsi(s){ return String(s==null?"":s).replace(/[^\x09\x0A\x0D\x20-\xFF]/g, "?"); }
+async function savePdfEdits(){
+  var pe = S.pdfEditor; if (!pe || pe.loading) return;
+  if (!(await loadPdfLib())){
+    toast("warn","Speichern nicht moeglich","PDF-Bibliothek nicht geladen — nutze „Browser-Viewer“");
+    return;
+  }
+  busy("PDF wird gespeichert…");
+  try {
+    var PDFLib = window.PDFLib;
+    var pdfDoc = await PDFLib.PDFDocument.load(pe.bytes.slice(0));
+    var font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+    var pages = pdfDoc.getPages();
+    pe.annos.forEach(function(a){
+      var pg = pages[a.page]; if (!pg) return;
+      var H = pg.getHeight(), c = hexToRgb(a.color), col = PDFLib.rgb(c.r, c.g, c.b);
+      if (a.type === "text"){
+        var size = a.fontSize || 14;
+        String(a.text||"").split("\n").forEach(function(ln, li){
+          try { pg.drawText(sanitizeWinAnsi(ln), { x:a.x, y:H - a.y - size - (li*size*1.2), size:size, font:font, color:col }); } catch(_){}
+        });
+      } else if (a.type === "rect"){
+        try { pg.drawRectangle({ x:a.x, y:H - a.y - a.h, width:a.w, height:a.h, borderColor:col, borderWidth:1.5, opacity:0, borderOpacity:1 }); } catch(_){}
+      }
+    });
+    var bytes = await pdfDoc.save();
+    var out = new Blob([bytes], { type:"application/pdf" });
+    var a2 = document.createElement("a");
+    a2.href = URL.createObjectURL(out);
+    a2.download = pe.filename.replace(/\.pdf$/i, "") + "-bearbeitet.pdf";
+    document.body.appendChild(a2); a2.click();
+    setTimeout(function(){ URL.revokeObjectURL(a2.href); a2.remove(); }, 400);
+    toast("ok","PDF gespeichert", a2.download);
+  } catch(e){
+    toast("err","Speichern fehlgeschlagen", (e && e.message) || String(e), 7000);
+  } finally { busy(null); }
+}
+function closePdfEditor(silent){
+  var pe = S.pdfEditor;
+  var root = $("#pdf-root"); if (root) root.innerHTML = "";
+  document.removeEventListener("pointermove", pdfedDocMove, true);
+  document.removeEventListener("pointerup", pdfedDocUp, true);
+  _pdfAnnoDrag = null;
+  var docId = pe && pe.docId;
+  if (pe && pe.blobUrl){ try { URL.revokeObjectURL(pe.blobUrl); } catch(_){} }
+  S.pdfEditor = null;
+  if (!silent && docId && /^#\/pdf\//.test(location.hash)) location.hash = "#/editor/" + docId;
 }
 
 /* ── Event-Delegation ─────────────────────────────────────────────────── */
@@ -1545,6 +2165,22 @@ document.addEventListener("click", function(e){
     }
     case "ed-download": { var d3 = S.docs[S.editor.docId]; if (d3) downloadHtml(d3); break; }
     case "export-pdf": exportPdf(); break;
+    // Layout-Modus
+    case "ed-layout-toggle": toggleLayoutMode(); break;
+    case "ed-layout-reset": resetAllLayout(); break;
+    case "ed-lay-font": layStepFont(parseInt(el.dataset.dir,10)); break;
+    case "ed-lay-align": laySetAlign(el.dataset.align); break;
+    case "ed-lay-snap": S.editor.snap = !S.editor.snap; showLayPanel(S.editor.layoutSel); break;
+    case "ed-lay-reset-block": layResetBlock(); break;
+    // PDF-Editor
+    case "open-pdf-editor": openPdfEditor(S.editor.docId); break;
+    case "pdfed-close": closePdfEditor(); break;
+    case "pdfed-zoom-in": pdfedZoom(1); break;
+    case "pdfed-zoom-out": pdfedZoom(-1); break;
+    case "pdfed-tool": if (S.pdfEditor){ S.pdfEditor.tool = el.dataset.tool; updatePdfBar(); } break;
+    case "pdfed-delete": deleteSelAnno(); break;
+    case "pdfed-save": savePdfEdits(); break;
+    case "pdfed-browser": { var pe5 = S.pdfEditor; if (pe5 && pe5.blobUrl) window.open(pe5.blobUrl, "_blank"); break; }
     case "ed-status": {
       var d4 = S.docs[S.editor.docId]; if (!d4) break;
       d4.status = (d4.status === "final") ? "entwurf" : "final";
@@ -1586,6 +2222,7 @@ document.addEventListener("change", function(e){
     return;
   }
   if (t.dataset.quick !== undefined && _quickVals){ _quickVals[t.dataset.quick] = t.value; applyQuickLive(); return; }
+  if (t.dataset.pdfed === "color"){ setPdfedColor(t.value); return; }
   if (t.id === "file-logo"){ handleLogoFile(t.files[0]); t.value = ""; return; }
   if (t.id === "file-example"){ handleExampleFile(t.files[0]); t.value = ""; return; }
 });
@@ -1613,6 +2250,7 @@ document.addEventListener("input", function(e){
     return;
   }
   if (t.dataset.quick !== undefined && _quickVals){ _quickVals[t.dataset.quick] = t.value; applyQuickLive(); return; }
+  if (t.dataset.pdfed === "color"){ setPdfedColor(t.value); return; }
   if (t.id === "ctx-search" && S.ctxModal){ S.ctxModal.q = t.value; debouncedCtxRender(); return; }
   if (t.dataset.filter === "q"){ S.filters.q = t.value; debouncedDocsRender(); return; }
 });
@@ -1633,6 +2271,11 @@ async function boot(){
   var ctxId = params.get("context"), ctxType = params.get("type");
   onHashChange();
   await loadAll();
+  // Direktaufruf/Reload auf #/pdf/<docId>: Overlay nach dem Laden der Daten oeffnen.
+  if (/^#\/pdf\//.test(location.hash) && !(S.pdfEditor && S.pdfEditor.built)){
+    var pid = location.hash.replace(/^#\//, "").split("/")[1];
+    if (pid) openPdfEditor(pid, true);
+  }
   if (ctxId && ctxType){
     var map = { project:"projects", task:"tasks", note:"notes", person:"persons", contact:"persons" };
     var sk = map[ctxType] || ctxType;
