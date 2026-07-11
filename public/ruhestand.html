@@ -64,8 +64,6 @@
     position:fixed;inset:-80px;pointer-events:none;opacity:.55;
     background-image:radial-gradient(rgba(146,154,164,.055) 1px,transparent 1px);
     background-size:46px 46px;
-    -webkit-mask-image:radial-gradient(ellipse at center,transparent 30%,#000 78%);
-    mask-image:radial-gradient(ellipse at center,transparent 30%,#000 78%);
     animation:oledDriftT 240s ease-in-out infinite;
   }
 
@@ -74,6 +72,16 @@
   .nebula.a{width:58vmin;height:58vmin;left:11%;top:14%;background:radial-gradient(circle,#8b5cf6,transparent 70%);animation:nebDriftA 46s ease-in-out infinite alternate}
   .nebula.b{width:50vmin;height:50vmin;right:9%;bottom:10%;background:radial-gradient(circle,#3b5f8f,transparent 70%);animation:nebDriftB 58s ease-in-out infinite alternate}
   .nebula.c{width:36vmin;height:36vmin;right:24%;top:6%;background:radial-gradient(circle,#6d28d9,transparent 70%);animation:nebDriftC 38s ease-in-out infinite alternate}
+  /* Zentrierter Ambient-Glow hinter dem HUD: gleicht aus, dass die Rand-Nebel
+     nur die Peripherie aufhellen — sonst wirkt die Kreiszone dunkler als der
+     Rest. Kein blur nötig (Gradient ist schon weich). */
+  .nebula.d{
+    width:92vmin;height:92vmin;left:50%;top:50%;margin:-46vmin 0 0 -46vmin;
+    background:radial-gradient(circle,#8b5cf6,transparent 64%);
+    filter:none;opacity:.1;
+    animation:nebBreath 16s ease-in-out infinite alternate;
+  }
+  @keyframes nebBreath{from{transform:scale(.94)}to{transform:scale(1.1)}}
   @keyframes nebDriftA{from{transform:translate(0,0) scale(1)}to{transform:translate(9vw,6vh) scale(1.18)}}
   @keyframes nebDriftB{from{transform:translate(0,0) scale(1.12)}to{transform:translate(-7vw,-5vh) scale(.94)}}
   @keyframes nebDriftC{from{transform:translate(0,0)}to{transform:translate(-5vw,7vh) scale(1.22)}}
@@ -332,6 +340,7 @@
 <div class="nebula a"></div>
 <div class="nebula b"></div>
 <div class="nebula c"></div>
+<div class="nebula d"></div>
 <div id="grid"></div>
 
 <div id="stage">
