@@ -1,0 +1,957 @@
+{
+  "name": "Polaris — Gedächtnis & Tools (Webhooks)",
+  "nodes": [
+    {
+      "parameters": {
+        "width": 640,
+        "height": 420,
+        "content": "## Polaris — Gedächtnis & Tools (6 Webhooks)\n\nBackend für das Polaris-Sprachmodul in Quantus (`public/index.html`).\nEndpunkte: `polaris/memory-save`, `memory-recall`, `note-save`, `research`, `character-update`, `proactive` (alle POST, JSON). Der bestehende `polaris/session-url`-Webhook (Signed-URL) ist hier bewusst NICHT enthalten.\n\n**Nach dem Import:**\n1. Dem Claude-Node der memory-save-Kette das Anthropic-Credential zuweisen (Header `x-api-key`). `research` braucht KEIN Credential mehr: DuckDuckGo ohne Key, optional Tavily via n8n-Env `TAVILY_API_KEY`.\n2. Workflow aktivieren (Production-URL = `/webhook/polaris/...`).\n\n**RTDB:** `polaris/*` ist per Regeln offen (`$andere`) — die HTTP-Nodes brauchen keine Credentials. Werden die Regeln später verschärft, den RTDB-Nodes ein `googleApi`-Service-Konto geben (wie im Drive-Workflow).\n\n**CORS:** `allowedOrigins: *` auf allen Webhooks, damit das Frontend direkt posten darf.\n\n**Härtung (optional):** `x-polaris-secret` prüfen, sobald die Browser-Aufrufe über eine Netlify-Function laufen, die den Header serverseitig injiziert. Der ElevenLabs-Agent kann die Webhooks zusätzlich als Server-Tools mit dem Secret-Header aufrufen.\n\n**proactive** nutzt aktuell Beziehung + offene Notizen + Tageszeit — fällige Quantus-Aufgaben oder ungelesene Mails lassen sich als weitere Lese-Nodes vor „Opener bauen“ ergänzen."
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -780,
+        -120
+      ],
+      "id": "8d2110cf-8a82-5869-8944-185226152b74",
+      "name": "Doku"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/memory-save",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "60cbb5b7-a6ca-58c6-a514-8f6780e4aad3",
+      "name": "Webhook memory-save",
+      "webhookId": "775dc1e2-922b-5a59-b10e-be6f2d63a728"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Eingabe: { type, text, summary?, tags?, importance?, source? }\nconst b = $json.body || {};\nconst TYPES = ['conversation','note','fact','preference'];\nconst type = TYPES.includes(b.type) ? b.type : 'fact';\nconst text = String(b.text || '').slice(0, 8000);\nif (!text) throw new Error('memory-save: text fehlt');\nconst tags = Array.isArray(b.tags) ? b.tags.map(t => String(t).toLowerCase().slice(0, 40)).slice(0, 8) : [];\nlet importance = Number(b.importance);\nif (!isFinite(importance)) importance = 2;\nimportance = Math.max(1, Math.min(5, Math.round(importance)));\nconst entry = {\n  ts: Date.now(),\n  type, text,\n  summary: String(b.summary || '').slice(0, 500),\n  tags, importance,\n  source: b.source === 'system' ? 'system' : 'voice'\n};\nreturn [{ json: { entry } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "fb9ae3e5-27aa-526e-b89d-b31ffb862676",
+      "name": "Memory normalisieren"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "1e6d3274-7725-5f03-a064-f1d05391c7ea",
+              "leftValue": "={{ $json.entry.type }}",
+              "rightValue": "conversation",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "50b5b5c1-1758-56dd-a8b7-5df48a60a88c",
+      "name": "Konversation?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// LLM-Zusammenfassung ersetzt die Client-Heuristik (nur type=conversation).\nconst entry = $json.entry;\nconst anthropicBody = {\n  model: 'claude-sonnet-5',\n  max_tokens: 400,\n  system: 'Du fasst Sprach-Gespraeche zwischen Laurin und seinem Assistenten Polaris zusammen. Antworte AUSSCHLIESSLICH mit einem JSON-Objekt ohne Markdown: {\"summary\":\"2-3 praegnante deutsche Saetze (was besprochen, was entschieden, was offen blieb)\",\"tags\":[\"3-6 kleingeschriebene schlagworte\"]}',\n  messages: [{ role: 'user', content: 'Transkript:\\n' + entry.text }]\n};\nreturn [{ json: { entry, anthropicBody } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -60
+      ],
+      "id": "ca5928af-b89f-5e95-8704-99eebf6ff88e",
+      "name": "Claude-Request (Zusammenfassung)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.anthropicBody) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -60
+      ],
+      "id": "5489b3af-bac2-53e2-bd6c-23d4afe7ca6e",
+      "name": "Claude zusammenfassen",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Anthropic API-Key (Header x-api-key)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Claude-Fehler (onError continue) => Client-summary bleibt stehen.\nconst entry = $('Memory normalisieren').first().json.entry;\ntry {\n  const txt = ((($json.content || [])[0]) || {}).text || '';\n  const parsed = JSON.parse(txt.replace(/^```(json)?/i, '').replace(/```\\s*$/, '').trim());\n  if (parsed.summary) entry.summary = String(parsed.summary).slice(0, 500);\n  if (Array.isArray(parsed.tags) && parsed.tags.length) entry.tags = parsed.tags.map(t => String(t).toLowerCase().slice(0, 40)).slice(0, 8);\n} catch (e) { /* Heuristik behalten */ }\nreturn [{ json: { entry } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -60
+      ],
+      "id": "8d905cea-e75c-50a4-a3ba-d2951d892127",
+      "name": "Zusammenfassung übernehmen"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/memory.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.entry) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "f9a3aa5d-75a1-528b-bef4-dbf5110deca4",
+      "name": "Memory → RTDB"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, id: ($json && $json.name) || null } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ],
+      "id": "5b822a37-7f8f-55a1-8b76-ecb0ddccba06",
+      "name": "Antwort memory-save"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        0
+      ],
+      "id": "d47cf7d0-2e6c-5f46-81a9-37728c1f28e9",
+      "name": "Respond memory-save"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/memory-recall",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        240
+      ],
+      "id": "deef6be8-e3ca-56a4-b780-f86a1cdef330",
+      "name": "Webhook memory-recall",
+      "webhookId": "622e3eb9-08f8-52c4-afa1-adf29226426a"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/memory.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        240
+      ],
+      "id": "064dc518-cbca-5984-84fd-a2a8cd057298",
+      "name": "Memory lesen"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/notes.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        240
+      ],
+      "id": "829c4179-cb91-59ec-bfb6-eb564efac039",
+      "name": "Notizen lesen"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Volltext-/Tag-Suche ueber memory + notes, relevanteste zuerst.\nconst body = $('Webhook memory-recall').first().json.body || {};\nconst query = String(body.query || '').toLowerCase();\nconst limit = Math.max(1, Math.min(20, Number(body.limit) || 5));\nconst tokens = query.split(/[^a-zäöüéèàß0-9]+/).filter(t => t.length >= 3);\nfunction parse(node){ try { return JSON.parse(node || 'null') || {}; } catch(e){ return {}; } }\nconst memRaw = parse($('Memory lesen').first().json.data);\nconst noteRaw = parse($json.data);\nconst items = [];\nObject.keys(memRaw).forEach(k => { const m = memRaw[k]; if (m && m.text != null) items.push(Object.assign({ id: k }, m)); });\nObject.keys(noteRaw).forEach(k => { const n = noteRaw[k]; if (n && n.text != null) items.push({ id: k, type: 'note', ts: n.ts, text: n.text, summary: '', tags: n.tags || [], importance: 2, done: n.done }); });\nconst now = Date.now();\nitems.forEach(it => {\n  const hay = ((it.text || '') + ' ' + (it.summary || '') + ' ' + (it.tags || []).join(' ')).toLowerCase();\n  let s = 0;\n  tokens.forEach(t => { if (hay.includes(t)) s += 3; });\n  s += Math.min(2, Number(it.importance) || 0) * 0.5;\n  const ageDays = (now - (Number(it.ts) || 0)) / 86400000;\n  s += Math.max(0, 2 - ageDays / 30); // Rezenz-Bonus\n  it._score = s;\n});\nitems.sort((a, b) => b._score - a._score);\nconst top = items.slice(0, limit).map(it => { const c = Object.assign({}, it); delete c._score; return c; });\nreturn [{ json: { items: top } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        240
+      ],
+      "id": "1efc3f7d-0a2c-5ae9-9905-fd99af836cb1",
+      "name": "Suchen & ranken"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        240
+      ],
+      "id": "ecc77d89-0f5e-580f-bb10-a6693532578c",
+      "name": "Respond memory-recall"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/note-save",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        480
+      ],
+      "id": "6f190e40-c5b8-5222-ace5-07a398406cb3",
+      "name": "Webhook note-save",
+      "webhookId": "c831bfa5-a10e-562a-bdd4-d9d9793d22dc"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $json.body || {};\nconst text = String(b.text || '').trim().slice(0, 1000);\nif (!text) throw new Error('note-save: text fehlt');\nconst tags = Array.isArray(b.tags) ? b.tags.map(t => String(t).toLowerCase().slice(0, 40)).slice(0, 6) : [];\nreturn [{ json: { entry: { ts: Date.now(), text, tags, done: false } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        480
+      ],
+      "id": "531a13f2-95e1-5ba3-a7ad-0dc45e8bb9b3",
+      "name": "Notiz normalisieren"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/notes.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.entry) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        480
+      ],
+      "id": "cfb5b717-ff92-5822-b730-3956c3e0758e",
+      "name": "Notiz → RTDB"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, id: ($json && $json.name) || null } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        480
+      ],
+      "id": "78a70f20-8397-5b1f-be07-6c79c70e91a5",
+      "name": "Antwort note-save"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        480
+      ],
+      "id": "7c41ec9f-9727-578b-8984-289454d4a5d8",
+      "name": "Respond note-save"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/research",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        720
+      ],
+      "id": "0df9ea58-2936-5d19-86fd-5c7fc9ee53d3",
+      "name": "Webhook research",
+      "webhookId": "47802915-350d-54d5-98fe-d414db1f0f9f"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        720
+      ],
+      "id": "610e1c32-3342-5044-a058-b40804b6b058",
+      "name": "Respond research"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/character-update",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        960
+      ],
+      "id": "7e7f6d1d-eb86-55d4-94a4-97ee6d0a22a6",
+      "name": "Webhook character-update",
+      "webhookId": "42f10a36-9614-5db8-a140-4e59ac6e4e9b"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/character.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        960
+      ],
+      "id": "495d21b9-5604-59d7-a017-ed6956e2cb66",
+      "name": "Charakter lesen"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Traits hart auf +-0.05 pro Aufruf und 0..1 gesamt klemmen.\nconst body = $('Webhook character-update').first().json.body || {};\nconst deltas = body.traitDeltas || {};\nconst reason = String(body.reason || '').slice(0, 300);\nconst DEFAULTS = {\n  traits: { humor: 0.55, warmth: 0.7, directness: 0.6, curiosity: 0.65, formality: 0.25 },\n  backstory: 'Polaris ist Laurins digitaler Nordstern: ein neugieriger Begleiter, der Quantus in- und auswendig kennt, gern mitdenkt und lieber einen trockenen Spruch macht als eine Floskel.',\n  catchphrases: ['Kurs halten, Laurin.', 'Das kommt in mein Logbuch.', 'Kleiner Stern, grosse Wirkung.'],\n  evolutionLog: []\n};\nlet ch = null;\ntry { ch = JSON.parse($json.data || 'null'); } catch (e) {}\nif (!ch || !ch.traits) ch = DEFAULTS;\nconst changes = [];\n['humor','warmth','directness','curiosity','formality'].forEach(k => {\n  let d = Number(deltas[k]);\n  if (!isFinite(d) || !d) return;\n  d = Math.max(-0.05, Math.min(0.05, d));\n  const cur = (typeof ch.traits[k] === 'number') ? ch.traits[k] : 0.5;\n  ch.traits[k] = Math.max(0, Math.min(1, Math.round((cur + d) * 1000) / 1000));\n  changes.push(k + ' ' + (d > 0 ? '+' : '') + d);\n});\nif (changes.length){\n  ch.evolutionLog = (Array.isArray(ch.evolutionLog) ? ch.evolutionLog : []).slice(-19);\n  ch.evolutionLog.push({ ts: Date.now(), change: changes.join(', '), reason });\n}\nreturn [{ json: { character: ch } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        960
+      ],
+      "id": "814f9f4b-92cb-5464-82d6-82b8a6cfd1ff",
+      "name": "Deltas klemmen & anwenden"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/character.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.character) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        960
+      ],
+      "id": "ce2ee9ee-0355-5153-810e-232f94b0c512",
+      "name": "Charakter → RTDB"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, character: $json } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        960
+      ],
+      "id": "3ce9e817-d36d-557c-944c-311d3093146b",
+      "name": "Antwort character-update"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        960
+      ],
+      "id": "17658679-d7c0-51fb-9974-d275b1d1202b",
+      "name": "Respond character-update"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/proactive",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1200
+      ],
+      "id": "7dfa77a1-2694-58f1-b873-d2da0f44da2f",
+      "name": "Webhook proactive",
+      "webhookId": "9b272541-8e20-5d65-9606-9ec942395bf7"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/relationship.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        1200
+      ],
+      "id": "1ba706f9-ed7a-5b56-a056-e7576839a1c2",
+      "name": "Beziehung lesen"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/notes.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        1200
+      ],
+      "id": "805341e9-c59d-535f-baf6-027cd25f813f",
+      "name": "Offene Notizen lesen"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gespraechseinstieg aus openLoops, offenen Notizen und Tageszeit.\nfunction parse(node){ try { return JSON.parse(node || 'null') || {}; } catch(e){ return {}; } }\nconst rel = parse($('Beziehung lesen').first().json.data);\nconst notesRaw = parse($json.data);\nconst openNotes = Object.values(notesRaw).filter(n => n && n.done === false);\nconst h = Number(new Intl.DateTimeFormat('de-CH', { timeZone: 'Europe/Zurich', hour: '2-digit', hourCycle: 'h23' }).format(new Date()));\nconst gruss = h < 5 ? 'Nachtschicht, Laurin?' : h < 11 ? 'Guten Morgen, Laurin' : h < 18 ? 'Hallo Laurin' : 'Guten Abend, Laurin';\nconst loops = Array.isArray(rel.openLoops) ? rel.openLoops : [];\nlet teil;\nif (loops.length) teil = 'Offen geblieben war: „' + String(loops[0]).slice(0, 100) + '“ — wie sieht es damit aus?';\nelse if (openNotes.length) teil = 'Du hast ' + openNotes.length + ' offene Notiz' + (openNotes.length === 1 ? '' : 'en') + ' — soll ich sie kurz durchgehen?';\nelse if (Number(rel.streak) >= 3) teil = 'Tag ' + rel.streak + ' in Folge — Kurs halten. Was steht an?';\nelse teil = 'Was steht heute an?';\nreturn [{ json: { opener: gruss + '. ' + teil } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        1200
+      ],
+      "id": "4eafeda8-cc9c-5da8-aa87-b670470efa45",
+      "name": "Opener bauen"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        1200
+      ],
+      "id": "49d07ebc-ce54-5a6b-8562-09dbe8ddb00e",
+      "name": "Respond proactive"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── research: echte Web-Recherche OHNE Credentials ──\n// Prioritaet: (1) Tavily — NUR wenn $env.TAVILY_API_KEY gesetzt ist, sonst\n// kommentarlos uebersprungen; (2) DuckDuckGo Instant-Answer-API;\n// (3) DuckDuckGo HTML-Endpoint per Regex (kein DOM im Code-Node).\n// Wirft NIE: jeder Fehlerpfad liefert ein gueltiges JSON im Zielformat.\nconst body = $('Webhook research').first().json.body || {};\nconst query = String(body.query || '').trim().slice(0, 300);\nconst FAIL  = { query, summary: 'Ich habe gerade keinen Zugriff auf die Websuche.', sources: [] };\nconst EMPTY = { query, summary: 'Dazu habe ich online nichts Belastbares gefunden.', sources: [] };\nif (!query) return [{ json: EMPTY }];\n\nlet anyOk = false; // mind. eine Quelle hat geantwortet → \"keine Treffer\" statt \"kein Zugriff\"\nconst http = async (opts) => {\n  try {\n    const r = await this.helpers.httpRequest(Object.assign({ timeout: 8000 }, opts));\n    anyOk = true;\n    return r;\n  } catch (e) { return null; }\n};\nfunction txt(s){\n  return String(s == null ? '' : s)\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"').replace(/&#x?[0-9a-f]+;/gi, ' ')\n    .replace(/\\s+/g, ' ').trim();\n}\nfunction cleanSummary(s){\n  // vorlesbar: kein Markdown, 1-3 knappe Saetze, an Satzgrenze gekappt\n  let out = txt(s).replace(/[*_#`>|]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  const parts = out.split(/(?<=[.!?])\\s+/).slice(0, 3);\n  out = parts.join(' ');\n  if (out.length > 420){\n    const cut = out.slice(0, 420);\n    const dot = cut.lastIndexOf('. ');\n    out = dot > 140 ? cut.slice(0, dot + 1) : cut.trim() + ' …';\n  }\n  return out;\n}\nlet summary = '';\nconst sources = [];\nconst seen = new Set();\nfunction addSource(title, url){\n  url = String(url || '');\n  if (!/^https?:\\/\\//.test(url) || seen.has(url) || sources.length >= 5) return;\n  seen.add(url);\n  sources.push({ title: txt(title) || url, url });\n}\n\ntry {\n  // ── 1) Tavily (optional per n8n-Env-Variable) ──\n  let tavilyKey = '';\n  try { tavilyKey = (typeof $env !== 'undefined' && $env.TAVILY_API_KEY) ? String($env.TAVILY_API_KEY) : ''; } catch (e) {}\n  if (tavilyKey){\n    const t = await http({ method: 'POST', url: 'https://api.tavily.com/search', json: true,\n      body: { api_key: tavilyKey, query, max_results: 5, include_answer: true } });\n    if (t){\n      if (t.answer) summary = cleanSummary(t.answer);\n      (Array.isArray(t.results) ? t.results : []).forEach(r => { if (r) addSource(r.title, r.url); });\n    }\n  }\n\n  // ── 2) DuckDuckGo Instant-Answer-API (ohne Key) ──\n  if (!summary || sources.length < 3){\n    let ia = await http({ method: 'GET',\n      url: 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) + '&format=json&no_html=1&skip_disambig=1&t=quantus' });\n    if (typeof ia === 'string'){ try { ia = JSON.parse(ia); } catch (e) { ia = null; } }\n    if (ia){\n      const abs = txt(ia.AbstractText || ia.Answer || ia.Definition || '');\n      if (abs && !summary) summary = cleanSummary(abs);\n      if (ia.AbstractURL) addSource(ia.Heading || ia.AbstractSource, ia.AbstractURL);\n      const flat = [];\n      (Array.isArray(ia.RelatedTopics) ? ia.RelatedTopics : []).forEach(rt => {\n        if (!rt) return;\n        if (Array.isArray(rt.Topics)) rt.Topics.forEach(x => { if (x) flat.push(x); });\n        else flat.push(rt);\n      });\n      flat.forEach(rt => { if (rt.FirstURL) addSource(txt(rt.Text).split(' - ')[0], rt.FirstURL); });\n    }\n  }\n\n  // ── 3) DuckDuckGo HTML-Fallback (Regex-Parsing der Trefferliste) ──\n  if (!sources.length){\n    const html = await http({ method: 'GET',\n      url: 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query),\n      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) QuantusPolaris/1.0' } });\n    if (html){\n      const s = String(html);\n      const snips = [];\n      const snipRe = /class=\"[^\"]*result__snippet[^\"]*\"[^>]*>([\\s\\S]*?)<\\/(?:a|div|span)>/g;\n      let m;\n      while ((m = snipRe.exec(s)) && snips.length < 5) snips.push(txt(m[1]));\n      const linkRe = /<a[^>]+class=\"[^\"]*result__a[^\"]*\"[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)<\\/a>/g;\n      while ((m = linkRe.exec(s)) && sources.length < 5){\n        let url = m[1];\n        const uddg = /[?&]uddg=([^&\"]+)/.exec(url); // DDG-Redirect aufloesen\n        if (uddg){ try { url = decodeURIComponent(uddg[1]); } catch (e) {} }\n        if (url.startsWith('//')) url = 'https:' + url;\n        addSource(m[2], url);\n      }\n      if (!summary && snips.length) summary = cleanSummary(snips.slice(0, 2).join(' '));\n    }\n  }\n\n  if (!summary && sources.length){\n    summary = cleanSummary('Dazu habe ich Folgendes gefunden: ' + sources.slice(0, 3).map(s => s.title).join('; ') + '.');\n  }\n  if (!summary && !sources.length) return [{ json: anyOk ? EMPTY : FAIL }];\n  return [{ json: { query, summary, sources: sources.slice(0, 5) } }];\n} catch (e) {\n  return [{ json: FAIL }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        720
+      ],
+      "id": "5d3e226b-19ac-5fbd-b31a-979d26c04ee1",
+      "name": "research (Websuche)"
+    }
+  ],
+  "connections": {
+    "Webhook memory-save": {
+      "main": [
+        [
+          {
+            "node": "Memory normalisieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory normalisieren": {
+      "main": [
+        [
+          {
+            "node": "Konversation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Konversation?": {
+      "main": [
+        [
+          {
+            "node": "Claude-Request (Zusammenfassung)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Memory → RTDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude-Request (Zusammenfassung)": {
+      "main": [
+        [
+          {
+            "node": "Claude zusammenfassen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude zusammenfassen": {
+      "main": [
+        [
+          {
+            "node": "Zusammenfassung übernehmen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zusammenfassung übernehmen": {
+      "main": [
+        [
+          {
+            "node": "Memory → RTDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory → RTDB": {
+      "main": [
+        [
+          {
+            "node": "Antwort memory-save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Antwort memory-save": {
+      "main": [
+        [
+          {
+            "node": "Respond memory-save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook memory-recall": {
+      "main": [
+        [
+          {
+            "node": "Memory lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory lesen": {
+      "main": [
+        [
+          {
+            "node": "Notizen lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notizen lesen": {
+      "main": [
+        [
+          {
+            "node": "Suchen & ranken",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Suchen & ranken": {
+      "main": [
+        [
+          {
+            "node": "Respond memory-recall",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook note-save": {
+      "main": [
+        [
+          {
+            "node": "Notiz normalisieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notiz normalisieren": {
+      "main": [
+        [
+          {
+            "node": "Notiz → RTDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notiz → RTDB": {
+      "main": [
+        [
+          {
+            "node": "Antwort note-save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Antwort note-save": {
+      "main": [
+        [
+          {
+            "node": "Respond note-save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook research": {
+      "main": [
+        [
+          {
+            "node": "research (Websuche)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook character-update": {
+      "main": [
+        [
+          {
+            "node": "Charakter lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Charakter lesen": {
+      "main": [
+        [
+          {
+            "node": "Deltas klemmen & anwenden",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deltas klemmen & anwenden": {
+      "main": [
+        [
+          {
+            "node": "Charakter → RTDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Charakter → RTDB": {
+      "main": [
+        [
+          {
+            "node": "Antwort character-update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Antwort character-update": {
+      "main": [
+        [
+          {
+            "node": "Respond character-update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook proactive": {
+      "main": [
+        [
+          {
+            "node": "Beziehung lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Beziehung lesen": {
+      "main": [
+        [
+          {
+            "node": "Offene Notizen lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offene Notizen lesen": {
+      "main": [
+        [
+          {
+            "node": "Opener bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opener bauen": {
+      "main": [
+        [
+          {
+            "node": "Respond proactive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "research (Websuche)": {
+      "main": [
+        [
+          {
+            "node": "Respond research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Zurich"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
