@@ -5,7 +5,7 @@
       "parameters": {
         "width": 640,
         "height": 420,
-        "content": "## Polaris — Gedächtnis & Tools (6 Webhooks)\n\nBackend für das Polaris-Sprachmodul in Quantus (`public/index.html`).\nEndpunkte: `polaris/memory-save`, `memory-recall`, `note-save`, `research`, `character-update`, `proactive` (alle POST, JSON). Der bestehende `polaris/session-url`-Webhook (Signed-URL) ist hier bewusst NICHT enthalten.\n\n**Nach dem Import:**\n1. Den beiden Claude-Nodes das Anthropic-Credential zuweisen (Header `x-api-key`).\n2. Workflow aktivieren (Production-URL = `/webhook/polaris/...`).\n\n**RTDB:** `polaris/*` ist per Regeln offen (`$andere`) — die HTTP-Nodes brauchen keine Credentials. Werden die Regeln später verschärft, den RTDB-Nodes ein `googleApi`-Service-Konto geben (wie im Drive-Workflow).\n\n**CORS:** `allowedOrigins: *` auf allen Webhooks, damit das Frontend direkt posten darf.\n\n**Härtung (optional):** `x-polaris-secret` prüfen, sobald die Browser-Aufrufe über eine Netlify-Function laufen, die den Header serverseitig injiziert. Der ElevenLabs-Agent kann die Webhooks zusätzlich als Server-Tools mit dem Secret-Header aufrufen.\n\n**proactive** nutzt aktuell Beziehung + offene Notizen + Tageszeit — fällige Quantus-Aufgaben oder ungelesene Mails lassen sich als weitere Lese-Nodes vor „Opener bauen“ ergänzen."
+        "content": "## Polaris — Gedächtnis & Tools (6 Webhooks)\n\nBackend für das Polaris-Sprachmodul in Quantus (`public/index.html`).\nEndpunkte: `polaris/memory-save`, `memory-recall`, `note-save`, `research`, `character-update`, `proactive` (alle POST, JSON). Der bestehende `polaris/session-url`-Webhook (Signed-URL) ist hier bewusst NICHT enthalten.\n\n**Nach dem Import:**\n1. Dem Claude-Node der memory-save-Kette das Anthropic-Credential zuweisen (Header `x-api-key`). `research` braucht KEIN Credential mehr: DuckDuckGo ohne Key, optional Tavily via n8n-Env `TAVILY_API_KEY`.\n2. Workflow aktivieren (Production-URL = `/webhook/polaris/...`).\n\n**RTDB:** `polaris/*` ist per Regeln offen (`$andere`) — die HTTP-Nodes brauchen keine Credentials. Werden die Regeln später verschärft, den RTDB-Nodes ein `googleApi`-Service-Konto geben (wie im Drive-Workflow).\n\n**CORS:** `allowedOrigins: *` auf allen Webhooks, damit das Frontend direkt posten darf.\n\n**Härtung (optional):** `x-polaris-secret` prüfen, sobald die Browser-Aufrufe über eine Netlify-Function laufen, die den Header serverseitig injiziert. Der ElevenLabs-Agent kann die Webhooks zusätzlich als Server-Tools mit dem Secret-Header aufrufen.\n\n**proactive** nutzt aktuell Beziehung + offene Notizen + Tageszeit — fällige Quantus-Aufgaben oder ungelesene Mails lassen sich als weitere Lese-Nodes vor „Opener bauen“ ergänzen."
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -401,70 +401,6 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body || {};\nconst query = String(body.query || '').slice(0, 300);\nif (!query) throw new Error('research: query fehlt');\nconst anthropicBody = {\n  model: 'claude-sonnet-5',\n  max_tokens: 1200,\n  system: 'Du bist die Recherche-Einheit von Polaris (Sprachassistent von Laurin). Recherchiere die Frage im Web und antworte AUSSCHLIESSLICH mit einem JSON-Objekt ohne Markdown: {\"summary\":\"praezise deutsche Zusammenfassung in 3-5 Saetzen, gut vorlesbar\",\"sources\":[{\"title\":\"...\",\"url\":\"...\"}]} mit 2-4 Quellen.',\n  messages: [{ role: 'user', content: query }],\n  tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]\n};\nreturn [{ json: { anthropicBody } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        220,
-        720
-      ],
-      "id": "b652cfaa-7245-5508-be0b-4a5090b639b6",
-      "name": "Claude-Request (Websuche)"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.anthropicBody) }}",
-        "options": {
-          "timeout": 90000
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        440,
-        720
-      ],
-      "id": "564c895e-dd7d-5ef6-be61-d1127f3e0c05",
-      "name": "Claude recherchieren",
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "ERSETZEN-NACH-IMPORT",
-          "name": "Anthropic API-Key (Header x-api-key)"
-        }
-      },
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Antwort = mehrere Content-Bloecke (text + web_search_tool_result).\nconst content = $json.content || [];\nif (!content.length) throw new Error('research: keine Antwort von Claude (' + JSON.stringify($json.error || $json).slice(0, 200) + ')');\nlet text = '';\nlet sources = [];\nconst seen = new Set();\nfunction push(list, t, u){ if (u && !seen.has(u)){ seen.add(u); list.push({ title: t || u, url: u }); } }\ncontent.forEach(b => {\n  if (b.type === 'text'){\n    text += b.text || '';\n    (b.citations || []).forEach(c => push(sources, c.title, c.url));\n  }\n  if (b.type === 'web_search_tool_result' && Array.isArray(b.content)){\n    b.content.forEach(r => push(sources, r.title, r.url));\n  }\n});\nlet summary = text.trim();\ntry {\n  const p = JSON.parse(text.replace(/^```(json)?/i, '').replace(/```\\s*$/, '').trim());\n  if (p.summary) summary = p.summary;\n  if (Array.isArray(p.sources) && p.sources.length){\n    const ps = []; const seen2 = new Set();\n    p.sources.forEach(s => { if (s && s.url && !seen2.has(s.url)){ seen2.add(s.url); ps.push({ title: s.title || s.url, url: s.url }); } });\n    sources.forEach(s => { if (!seen2.has(s.url)){ seen2.add(s.url); ps.push(s); } });\n    sources = ps;\n  }\n} catch (e) { /* Rohtext als summary */ }\nreturn [{ json: { summary: String(summary).slice(0, 2000), sources: sources.slice(0, 5) } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        660,
-        720
-      ],
-      "id": "d8de344d-893b-53b5-8eb0-1243378749f0",
-      "name": "Ergebnis extrahieren"
-    },
-    {
-      "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {
@@ -689,6 +625,19 @@
       ],
       "id": "49d07ebc-ce54-5a6b-8562-09dbe8ddb00e",
       "name": "Respond proactive"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── research: echte Web-Recherche OHNE Credentials ──\n// Prioritaet: (1) Tavily — NUR wenn $env.TAVILY_API_KEY gesetzt ist, sonst\n// kommentarlos uebersprungen; (2) DuckDuckGo Instant-Answer-API;\n// (3) DuckDuckGo HTML-Endpoint per Regex (kein DOM im Code-Node).\n// Wirft NIE: jeder Fehlerpfad liefert ein gueltiges JSON im Zielformat.\nconst body = $('Webhook research').first().json.body || {};\nconst query = String(body.query || '').trim().slice(0, 300);\nconst FAIL  = { query, summary: 'Ich habe gerade keinen Zugriff auf die Websuche.', sources: [] };\nconst EMPTY = { query, summary: 'Dazu habe ich online nichts Belastbares gefunden.', sources: [] };\nif (!query) return [{ json: EMPTY }];\n\nlet anyOk = false; // mind. eine Quelle hat geantwortet → \"keine Treffer\" statt \"kein Zugriff\"\nconst http = async (opts) => {\n  try {\n    const r = await this.helpers.httpRequest(Object.assign({ timeout: 8000 }, opts));\n    anyOk = true;\n    return r;\n  } catch (e) { return null; }\n};\nfunction txt(s){\n  return String(s == null ? '' : s)\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"').replace(/&#x?[0-9a-f]+;/gi, ' ')\n    .replace(/\\s+/g, ' ').trim();\n}\nfunction cleanSummary(s){\n  // vorlesbar: kein Markdown, 1-3 knappe Saetze, an Satzgrenze gekappt\n  let out = txt(s).replace(/[*_#`>|]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  const parts = out.split(/(?<=[.!?])\\s+/).slice(0, 3);\n  out = parts.join(' ');\n  if (out.length > 420){\n    const cut = out.slice(0, 420);\n    const dot = cut.lastIndexOf('. ');\n    out = dot > 140 ? cut.slice(0, dot + 1) : cut.trim() + ' …';\n  }\n  return out;\n}\nlet summary = '';\nconst sources = [];\nconst seen = new Set();\nfunction addSource(title, url){\n  url = String(url || '');\n  if (!/^https?:\\/\\//.test(url) || seen.has(url) || sources.length >= 5) return;\n  seen.add(url);\n  sources.push({ title: txt(title) || url, url });\n}\n\ntry {\n  // ── 1) Tavily (optional per n8n-Env-Variable) ──\n  let tavilyKey = '';\n  try { tavilyKey = (typeof $env !== 'undefined' && $env.TAVILY_API_KEY) ? String($env.TAVILY_API_KEY) : ''; } catch (e) {}\n  if (tavilyKey){\n    const t = await http({ method: 'POST', url: 'https://api.tavily.com/search', json: true,\n      body: { api_key: tavilyKey, query, max_results: 5, include_answer: true } });\n    if (t){\n      if (t.answer) summary = cleanSummary(t.answer);\n      (Array.isArray(t.results) ? t.results : []).forEach(r => { if (r) addSource(r.title, r.url); });\n    }\n  }\n\n  // ── 2) DuckDuckGo Instant-Answer-API (ohne Key) ──\n  if (!summary || sources.length < 3){\n    let ia = await http({ method: 'GET',\n      url: 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) + '&format=json&no_html=1&skip_disambig=1&t=quantus' });\n    if (typeof ia === 'string'){ try { ia = JSON.parse(ia); } catch (e) { ia = null; } }\n    if (ia){\n      const abs = txt(ia.AbstractText || ia.Answer || ia.Definition || '');\n      if (abs && !summary) summary = cleanSummary(abs);\n      if (ia.AbstractURL) addSource(ia.Heading || ia.AbstractSource, ia.AbstractURL);\n      const flat = [];\n      (Array.isArray(ia.RelatedTopics) ? ia.RelatedTopics : []).forEach(rt => {\n        if (!rt) return;\n        if (Array.isArray(rt.Topics)) rt.Topics.forEach(x => { if (x) flat.push(x); });\n        else flat.push(rt);\n      });\n      flat.forEach(rt => { if (rt.FirstURL) addSource(txt(rt.Text).split(' - ')[0], rt.FirstURL); });\n    }\n  }\n\n  // ── 3) DuckDuckGo HTML-Fallback (Regex-Parsing der Trefferliste) ──\n  if (!sources.length){\n    const html = await http({ method: 'GET',\n      url: 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query),\n      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) QuantusPolaris/1.0' } });\n    if (html){\n      const s = String(html);\n      const snips = [];\n      const snipRe = /class=\"[^\"]*result__snippet[^\"]*\"[^>]*>([\\s\\S]*?)<\\/(?:a|div|span)>/g;\n      let m;\n      while ((m = snipRe.exec(s)) && snips.length < 5) snips.push(txt(m[1]));\n      const linkRe = /<a[^>]+class=\"[^\"]*result__a[^\"]*\"[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)<\\/a>/g;\n      while ((m = linkRe.exec(s)) && sources.length < 5){\n        let url = m[1];\n        const uddg = /[?&]uddg=([^&\"]+)/.exec(url); // DDG-Redirect aufloesen\n        if (uddg){ try { url = decodeURIComponent(uddg[1]); } catch (e) {} }\n        if (url.startsWith('//')) url = 'https:' + url;\n        addSource(m[2], url);\n      }\n      if (!summary && snips.length) summary = cleanSummary(snips.slice(0, 2).join(' '));\n    }\n  }\n\n  if (!summary && sources.length){\n    summary = cleanSummary('Dazu habe ich Folgendes gefunden: ' + sources.slice(0, 3).map(s => s.title).join('; ') + '.');\n  }\n  if (!summary && !sources.length) return [{ json: anyOk ? EMPTY : FAIL }];\n  return [{ json: { query, summary, sources: sources.slice(0, 5) } }];\n} catch (e) {\n  return [{ json: FAIL }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        720
+      ],
+      "id": "5d3e226b-19ac-5fbd-b31a-979d26c04ee1",
+      "name": "research (Websuche)"
     }
   ],
   "connections": {
@@ -879,40 +828,7 @@
       "main": [
         [
           {
-            "node": "Claude-Request (Websuche)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Claude-Request (Websuche)": {
-      "main": [
-        [
-          {
-            "node": "Claude recherchieren",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Claude recherchieren": {
-      "main": [
-        [
-          {
-            "node": "Ergebnis extrahieren",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ergebnis extrahieren": {
-      "main": [
-        [
-          {
-            "node": "Respond research",
+            "node": "research (Websuche)",
             "type": "main",
             "index": 0
           }
@@ -1012,6 +928,17 @@
         [
           {
             "node": "Respond proactive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "research (Websuche)": {
+      "main": [
+        [
+          {
+            "node": "Respond research",
             "type": "main",
             "index": 0
           }

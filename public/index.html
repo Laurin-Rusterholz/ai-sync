@@ -5150,7 +5150,7 @@ body.mode-laptop .dock-panel{width:330px}
         <button onclick="event.stopPropagation();headerTimerStop()" style="background:none;border:none;cursor:pointer;color:#ff3b30;font-size:14px;padding:0 2px" title="Timer stoppen">⏹</button>
       </div>
       <div class="topbar-actions" style="display:flex;align-items:center;gap:8px">
-        <quantus-orb id="voiceOrb" title="Sprachsteuerung — in Vorbereitung (Klick: Vorschau)" style="width:30px;height:30px;flex:none"></quantus-orb>
+        <quantus-orb id="voiceOrb" data-action="polaris-voice-toggle" title="Polaris Sprachsteuerung — Klick: Start/Stopp" style="width:30px;height:30px;flex:none"></quantus-orb>
         <div class="topbar-divider"></div>
         <input type="text" id="globalIdeaInput" placeholder="💡 Idee..." style="width:120px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:12px" />
         <input type="text" id="globalUpdateInput" placeholder="🔧 Update..." style="width:120px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:12px" />
@@ -105752,7 +105752,29 @@ html.theme-light .card{box-shadow:none}
 .polaris-mem-item{display:flex;gap:8px;align-items:baseline;font-size:12.5px;color:var(--text2);background:var(--hover);border-radius:8px;padding:7px 10px}
 .polaris-mem-when{flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--text-muted)}
 .polaris-mem-empty{font-size:12.5px;color:var(--text-muted);padding:4px 0 2px}
-@media (prefers-reduced-motion:reduce){.polaris-orb--listening,.polaris-orb--thinking{animation:none}.polaris-boot{transition:none}}
+/* ── Sprach-Orb-Zustände (Header-<quantus-orb> + grosser Ruhemodus-Orb) ──
+   "speaking" nutzt zusätzlich den eingebauten Ripple-Effekt der Web-Component
+   (orb.speaking = true) — dadurch ist der Effekt in Topbar und Ruhemodus-
+   Vollbild identisch. Glow-Akzente: Petrol (--info) fürs Zuhören/Verbinden,
+   Koralle (--danger) fürs Sprechen. */
+quantus-orb.polaris-voice--connecting,quantus-orb.polaris-voice--listening,quantus-orb.polaris-voice--speaking{border-radius:50%}
+quantus-orb.polaris-voice--connecting{animation:polarisOrbConnect .9s ease-in-out infinite}
+quantus-orb.polaris-voice--listening{animation:polarisOrbListen 3s ease-in-out infinite}
+quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out infinite}
+@keyframes polarisOrbConnect{0%,100%{box-shadow:0 0 0 0 color-mix(in oklab, var(--info) 50%, transparent)}50%{box-shadow:0 0 14px 4px color-mix(in oklab, var(--info) 50%, transparent)}}
+@keyframes polarisOrbListen{0%,100%{box-shadow:0 0 6px 1px color-mix(in oklab, var(--info) 32%, transparent)}50%{box-shadow:0 0 16px 5px color-mix(in oklab, var(--info) 48%, transparent)}}
+@keyframes polarisOrbSpeak{0%,100%{box-shadow:0 0 14px 4px color-mix(in oklab, var(--danger) 50%, transparent)}50%{box-shadow:0 0 34px 12px color-mix(in oklab, var(--danger) 72%, transparent)}}
+/* Grosser zentraler Orb im Ruhemodus-Overlay (#ruhestandOverlay) */
+.polaris-ruhe-wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;pointer-events:none;z-index:5}
+.polaris-ruhe-wrap quantus-orb{width:min(38vmin,240px);height:min(38vmin,240px);pointer-events:auto;cursor:pointer}
+.polaris-ruhe-label{font-family:var(--mono, ui-monospace, monospace);font-size:13px;letter-spacing:.3em;text-indent:.3em;text-transform:uppercase;color:rgba(238,240,242,.82);pointer-events:none;text-shadow:0 1px 10px rgba(0,0,0,.65)}
+@media (prefers-reduced-motion:reduce){
+  .polaris-orb--listening,.polaris-orb--thinking{animation:none}
+  .polaris-boot{transition:none}
+  quantus-orb.polaris-voice--connecting,quantus-orb.polaris-voice--listening{animation:none;box-shadow:0 0 10px 2px color-mix(in oklab, var(--info) 35%, transparent)}
+  quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeakSoft 2.4s ease-in-out infinite}
+}
+@keyframes polarisOrbSpeakSoft{0%,100%{box-shadow:0 0 10px 3px color-mix(in oklab, var(--danger) 40%, transparent)}50%{box-shadow:0 0 18px 6px color-mix(in oklab, var(--danger) 55%, transparent)}}
 </style>
 <!-- ElevenLabs Web-SDK (Browser-Standalone-Build) via CDN.
      HINWEIS: dist/lib.umd.js existiert ab v1.x nicht mehr — der Standalone-Build
@@ -106042,6 +106064,7 @@ html.theme-light .card{box-shadow:none}
       PL_MODES.forEach(function(m){ el.classList.remove("polaris-orb--" + m); });
       el.classList.add("polaris-orb--" + plMode);
     });
+    plVoiceStateSync(); // Header-/Ruhemodus-Orbs spiegeln den Live-Zustand
   }
   function plSetStatus(text){
     plStatusText = text;
@@ -106066,6 +106089,7 @@ html.theme-light .card{box-shadow:none}
     if (btn) btn.disabled = plStarting;
     plSetMode(plMode);
     plSetStatus(plStatusText);
+    plVoiceStateSync();
   }
 
   // ── Audio-reaktiver Orb (rAF-Loop auf getOutputVolume) ──
@@ -106456,6 +106480,134 @@ html.theme-light .card{box-shadow:none}
     }, 2500);
   });
 
+  // ═══ SPRACH-ORB (Topbar) & RUHEMODUS — Aufgaben A–C ═════════════════════
+  // Der Header-<quantus-orb> ist DER zentrale Ein/Aus-Schalter der Sprach-
+  // steuerung. Er ist doppelt angebunden: (1) data-action="polaris-voice-
+  // toggle" über die zentrale Delegation, (2) das komponenten-eigene
+  // "orb-activate"-Event → window.quantusVoice.toggle (Hook aus main).
+  // Beide können beim selben Klick feuern — der 350-ms-Guard schluckt das
+  // Duplikat.
+  const PL_ARMED_KEY = "polarisVoiceArmed"; // sessionStorage: einmal per Klick freigegeben
+  const PL_BACKOFF = [1000, 2000, 5000, 10000];
+  let plVoiceState = "idle";     // idle | connecting | listening | speaking
+  let plRuheActive = false;      // Ruhemodus-Overlay (#ruhestandOverlay) offen
+  let plReconnectTimer = null;
+  let plReconnectIdx = 0;
+  let plLastToggleTs = 0;
+  let plLastStartErr = "";       // "mic" stoppt den Auto-Reconnect (sinnlos ohne Permission)
+
+  function plArmed(){ try { return sessionStorage.getItem(PL_ARMED_KEY) === "1"; } catch(e){ return false; } }
+  function plSetArmed(v){ try { sessionStorage.setItem(PL_ARMED_KEY, v ? "1" : "0"); } catch(e){} }
+
+  // Spiegelt den Live-Zustand auf ALLE <quantus-orb>-Instanzen (Topbar +
+  // Ruhemodus): CSS-Klassen für den Glow, natives speaking-Attribut für den
+  // kräftigen Ripple-Effekt der Web-Component (identisch in beiden Kontexten).
+  function plVoiceStateSync(){
+    plVoiceState = plStarting ? "connecting" : (!plActive ? "idle" : (plMode === "speaking" ? "speaking" : "listening"));
+    const st = plVoiceState;
+    document.querySelectorAll("quantus-orb").forEach(function(o){
+      ["connecting","listening","speaking"].forEach(function(k){ o.classList.remove("polaris-voice--" + k); });
+      if (st !== "idle") o.classList.add("polaris-voice--" + st);
+      try { o.speaking = (st === "speaking"); } catch(e){}
+      o.setAttribute("title",
+        st === "idle" ? "Polaris Sprachsteuerung — Klick: Start" :
+        st === "connecting" ? "Polaris verbindet …" :
+        st === "speaking" ? "Polaris spricht — Klick: Stopp" : "Polaris hört zu — Klick: Stopp");
+    });
+    const label = document.getElementById("polarisRuheLabel");
+    if (label){
+      label.textContent =
+        st === "idle" ? (plArmed() ? "Tippen zum Verbinden" : "Polaris aktivieren") :
+        st === "connecting" ? "Verbinde …" :
+        st === "speaking" ? "Polaris spricht" : "Polaris hört zu";
+    }
+  }
+
+  // ── Wiederverwendbare Session-Steuerung (Orb, Panel-Switch, Ruhemodus) ──
+  async function polarisVoiceStart(){
+    await plStart({ launch: false });
+  }
+  async function polarisVoiceStop(){
+    // Absichtliches Stoppen hat Vorrang: Auto-Connect bleibt aus, bis wieder
+    // manuell gestartet wird (Flag zurücksetzen), Reconnect-Schleife beenden.
+    plClearReconnect();
+    plSetArmed(false);
+    await plStop(true);
+  }
+  function polarisVoiceToggle(){
+    const now = Date.now();
+    if (now - plLastToggleTs < 350) return; // orb-activate + data-action = 1 Klick
+    plLastToggleTs = now;
+    if (plStarting) return;
+    if (plActive){ polarisVoiceStop().catch(function(e){ console.error("Polaris: Voice-Stop fehlgeschlagen", e); }); }
+    else { polarisVoiceStart().catch(function(e){ console.error("Polaris: Voice-Start fehlgeschlagen", e); }); }
+  }
+  window.polarisVoiceStart = function(){ return polarisVoiceStart().catch(function(e){ console.error("Polaris: Voice-Start fehlgeschlagen", e); }); };
+  window.polarisVoiceStop = function(){ return polarisVoiceStop().catch(function(e){ console.error("Polaris: Voice-Stop fehlgeschlagen", e); }); };
+  window.polarisVoiceToggle = polarisVoiceToggle;
+  // Hook, den der Orb-Klick-Handler aus main bereits erwartet
+  window.quantusVoice = {
+    toggle: function(){ polarisVoiceToggle(); },
+    start: window.polarisVoiceStart,
+    stop: window.polarisVoiceStop,
+    get active(){ return plActive; },
+    get state(){ return plVoiceState; }
+  };
+
+  // ── Auto-Reconnect im Ruhemodus (Backoff 1s/2s/5s/10s, gedeckelt) ──
+  function plClearReconnect(){ if (plReconnectTimer){ clearTimeout(plReconnectTimer); plReconnectTimer = null; } }
+  function plScheduleReconnect(){
+    if (!plRuheActive || !plArmed() || plActive || plStarting || plReconnectTimer) return;
+    if (plLastStartErr === "mic") return; // ohne Mikrofon-Permission ist Wiederholen sinnlos
+    const delay = PL_BACKOFF[Math.min(plReconnectIdx, PL_BACKOFF.length - 1)];
+    plReconnectIdx++;
+    plReconnectTimer = setTimeout(function(){
+      plReconnectTimer = null;
+      if (!plRuheActive || !plArmed() || plActive || plStarting) return;
+      plStart({ launch: false, silent: true })
+        .then(function(){ if (plActive) plReconnectIdx = 0; else plScheduleReconnect(); })
+        .catch(function(e){ console.error("Polaris: Reconnect fehlgeschlagen", e); plScheduleReconnect(); });
+    }, delay);
+  }
+
+  // ── Ruhemodus-Erkennung: #ruhestandOverlay (Vollbild-iframe) beobachten ──
+  function plRuheOrbEnsure(wrap){
+    if (document.getElementById("polarisRuheWrap")) return;
+    const box = document.createElement("div");
+    box.id = "polarisRuheWrap";
+    box.className = "polaris-ruhe-wrap";
+    box.innerHTML = '<quantus-orb id="polarisRuheOrb" data-action="polaris-voice-toggle" title="Polaris Sprachsteuerung" style="display:inline-flex"></quantus-orb>'
+      + '<div class="polaris-ruhe-label" id="polarisRuheLabel">Polaris aktivieren</div>';
+    wrap.appendChild(box);
+    plVoiceStateSync();
+  }
+  function plRuheEnter(wrap){
+    if (plRuheActive) return;
+    plRuheActive = true;
+    plReconnectIdx = 0;
+    plLastStartErr = "";
+    plRuheOrbEnsure(wrap);
+    // Auto-Connect nur, wenn die Sprachsitzung in dieser Browser-Session schon
+    // einmal per Klick freigegeben wurde — sonst wartet der grosse Orb auf den
+    // ersten Klick ("Polaris aktivieren", Browser-Geste für das Mikrofon).
+    if (plArmed() && !plActive && !plStarting){
+      plStart({ launch: false, silent: true }).catch(function(e){ console.error("Polaris: Ruhemodus-Autoconnect fehlgeschlagen", e); });
+    }
+  }
+  function plRuheExit(){
+    if (!plRuheActive) return;
+    plRuheActive = false;
+    plClearReconnect();
+    plReconnectIdx = 0;
+    // Kein Zwangs-Disconnect: eine laufende Session darf weiterlaufen.
+  }
+  try {
+    new MutationObserver(function(){
+      const wrap = document.getElementById("ruhestandOverlay");
+      if (wrap) plRuheEnter(wrap); else plRuheExit();
+    }).observe(document.body, { childList: true });
+  } catch(e){ console.error("Polaris: Ruhemodus-Observer fehlgeschlagen", e); }
+
   // ═══ SDK-CALLBACKS ══════════════════════════════════════════════════════
   function plOnModeChange(ev){
     const mode = ev && ev.mode;
@@ -106531,10 +106683,12 @@ html.theme-light .card{box-shadow:none}
     plUpdateUI();
     if (details && details.reason === "error"){
       console.error("Polaris: Verbindung unterbrochen", details);
-      plToast("err", "Polaris", "Verbindung unterbrochen.");
+      if (!plRuheActive) plToast("err", "Polaris", "Verbindung unterbrochen.");
     } else if (!wasUserOff){
       plToast("ok", "Polaris", "Gespräch beendet.");
     }
+    // Ruhemodus: unabsichtlicher Abbruch → automatisch neu verbinden (Backoff)
+    if (plRuheActive && !wasUserOff) plScheduleReconnect();
     // Gespräch ins Langzeitgedächtnis übernehmen (fire-and-forget, nie werfend)
     plAfterSession(transcript, stats).catch(function(e){ console.error("Polaris: After-Session fehlgeschlagen", e); });
   }
@@ -106563,7 +106717,9 @@ html.theme-light .card{box-shadow:none}
   async function plStart(opts){
     const wantLaunch = !!(opts && opts.launch);
     const wantProactive = !!(opts && opts.proactive);
+    const silent = !!(opts && opts.silent); // Auto-Versuche (Ruhemodus/Reconnect): keine Fehler-Toast-Kaskade
     if (plActive || plStarting) return;
+    plLastStartErr = "";
     plStarting = true;
     plSetStatus("Verbinde …");
     plUpdateUI();
@@ -106577,7 +106733,8 @@ html.theme-light .card{box-shadow:none}
         mic = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch(err){
         console.error("Polaris: Mikrofonzugriff verweigert", err);
-        plToast("err", "Polaris", "Kein Mikrofonzugriff — bitte in den Browsereinstellungen erlauben.");
+        plLastStartErr = "mic";
+        if (!silent) plToast("err", "Polaris", "Kein Mikrofonzugriff — bitte in den Browsereinstellungen erlauben.");
         plCleanup();
         return;
       }
@@ -106588,7 +106745,8 @@ html.theme-light .card{box-shadow:none}
       const Conversation = plConversationClass();
       if (!Conversation){
         console.error("Polaris: ElevenLabs-SDK nicht gefunden (window.ElevenLabsClient fehlt — CDN-Script geladen?)");
-        plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
+        plLastStartErr = "sdk";
+        if (!silent) plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
         plCleanup();
         return;
       }
@@ -106602,7 +106760,8 @@ html.theme-light .card{box-shadow:none}
         sessCtx = both[1] || sessCtx;
       } catch(err){
         console.error("Polaris: session-url Endpoint nicht erreichbar", err);
-        plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
+        plLastStartErr = "net";
+        if (!silent) plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
         plCleanup();
         return;
       }
@@ -106649,6 +106808,9 @@ html.theme-light .card{box-shadow:none}
       plActive = true;
       plStarting = false;
       plPersistEnabled(true);
+      // Sprachsitzung ist (mind. einmal) freigegeben → Ruhemodus darf auto-verbinden
+      plSetArmed(true);
+      plReconnectIdx = 0;
       plSetMode("listening");
       plSetStatus("Verbunden — Polaris hört zu");
       plOrbLoopStart();
@@ -106669,7 +106831,8 @@ html.theme-light .card{box-shadow:none}
       plUpdateUI();
     } catch(err){
       console.error("Polaris: Session-Start fehlgeschlagen", err);
-      plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
+      if (!plLastStartErr) plLastStartErr = "net";
+      if (!silent) plToast("err", "Polaris", "Polaris konnte nicht verbinden.");
       plCleanup();
     }
   }
@@ -106688,9 +106851,8 @@ html.theme-light .card{box-shadow:none}
   }
 
   function plToggle(){
-    if (plStarting) return; // während des Verbindens nicht umschaltbar
-    if (plActive){ plStop(true); return; }
-    plStart({ launch: false });
+    // Panel-Switch und Header-Orb nutzen dieselbe Session-Steuerung (Aufgabe A)
+    polarisVoiceToggle();
   }
   function plLaunch(){
     if (plStarting) return;
@@ -106861,12 +107023,13 @@ html.theme-light .card{box-shadow:none}
     if (!el) return;
     const action = el.dataset.action;
     if (action === "polaris-toggle"){ e.preventDefault(); plToggle(); }
+    else if (action === "polaris-voice-toggle"){ e.preventDefault(); polarisVoiceToggle(); }
     else if (action === "polaris-launch"){ e.preventDefault(); plLaunch(); }
     else if (action === "polaris-proactive-toggle"){ e.preventDefault(); plProactiveToggle(); }
   });
 
   // Diagnose-Hooks (nur Konsole; keine UI-Abhängigkeit)
-  window.__polarisDebug = { nudge: plProactiveNudge, afterSession: plAfterSession, panelRefresh: plPanelRefresh };
+  window.__polarisDebug = { nudge: plProactiveNudge, afterSession: plAfterSession, panelRefresh: plPanelRefresh, setMode: plSetMode, voiceState: function(){ return plVoiceState; } };
 })();
 </script>
 
