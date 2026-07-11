@@ -105571,22 +105571,40 @@ html.theme-light .card{box-shadow:none}
     } catch(e){ return ""; }
   }
 
-  // Kontext für den Session-Start: Erinnerungen + proaktiver Opener.
+  // Kompakter Charakter-Brief für {{polaris_character}}: nur damit erreicht
+  // die Trait-Evolution tatsächlich die Stimme des Agenten.
+  function plCharacterBrief(ch, rel){
+    try {
+      const t = (ch && ch.traits) || POLARIS_CHARACTER_DEFAULTS.traits;
+      const pct = function(k){ return Math.round(Math.max(0, Math.min(1, Number(t[k]) || 0)) * 100) + "%"; };
+      let s = "Humor " + pct("humor") + " · Wärme " + pct("warmth") + " · Direktheit " + pct("directness")
+        + " · Neugier " + pct("curiosity") + " · Förmlichkeit " + pct("formality") + ".";
+      const back = (ch && ch.backstory) || POLARIS_CHARACTER_DEFAULTS.backstory;
+      if (back) s += " " + String(back).slice(0, 240);
+      const phrases = (ch && Array.isArray(ch.catchphrases) && ch.catchphrases.length ? ch.catchphrases : POLARIS_CHARACTER_DEFAULTS.catchphrases).slice(0, 3);
+      if (phrases.length) s += " Typische Sprüche: " + phrases.join(" | ");
+      if (rel) s += " Letzte Stimmung: " + (rel.mood || "neutral") + ", Streak: " + (rel.streak || 0) + (Number(rel.streak) === 1 ? " Tag." : " Tage.");
+      return s.slice(0, 800);
+    } catch(e){ return ""; }
+  }
+
+  // Kontext für den Session-Start: Erinnerungen + proaktiver Opener + Charakter.
   // Wirft NIE — Fehler enden in leeren Strings (Session startet trotzdem).
   async function plFetchSessionContext(){
-    const ctx = { memory: "", opener: "" };
+    const ctx = { memory: "", opener: "", character: "" };
     try {
+      let rel = null;
+      try { rel = await plDbGet("polaris/relationship"); } catch(e){}
       let topics = "letzte gespräche offene themen notizen";
-      try {
-        const rel = await plDbGet("polaris/relationship");
-        if (rel && Array.isArray(rel.lastTopics) && rel.lastTopics.length) topics = rel.lastTopics.join(" ");
-      } catch(e){}
+      if (rel && Array.isArray(rel.lastTopics) && rel.lastTopics.length) topics = rel.lastTopics.join(" ");
       const results = await Promise.all([
         plRecallMemory(topics, 5).catch(function(e){ console.error("Polaris: memory-recall fehlgeschlagen", e); return ""; }),
-        plFetchOpener().catch(function(e){ console.error("Polaris: Opener fehlgeschlagen", e); return ""; })
+        plFetchOpener().catch(function(e){ console.error("Polaris: Opener fehlgeschlagen", e); return ""; }),
+        plDbGet("polaris/character").catch(function(e){ console.error("Polaris: Charakter lesen fehlgeschlagen", e); return null; })
       ]);
       ctx.memory = results[0] || "";
       ctx.opener = results[1] || "";
+      ctx.character = plCharacterBrief(results[2], rel);
     } catch(err){ console.error("Polaris: Session-Kontext fehlgeschlagen", err); }
     return ctx;
   }
@@ -105955,8 +105973,9 @@ html.theme-light .card{box-shadow:none}
 
       // 4) Session starten — dynamische Variablen gehen mit dem Init-Event raus:
       //    Basisdaten + {{polaris_memory}} (Erinnerungen) + {{polaris_opener}}
-      //    (proaktiver Gesprächseinstieg; der Agent kann beide im Prompt bzw.
-      //    in der First-Message nutzen).
+      //    (proaktiver Gesprächseinstieg) + {{polaris_character}} (Trait-Brief,
+      //    damit die Charakter-Evolution die Stimme erreicht) — nutzbar im
+      //    Prompt bzw. in der First-Message des Agenten.
       plHasSpoken = false;
       plTranscript = [];
       plSessStats = { notes: 0, research: 0 };
@@ -105965,6 +105984,7 @@ html.theme-light .card{box-shadow:none}
       const dyn = plDynamicVariables();
       dyn.polaris_memory = sessCtx.memory || "";
       dyn.polaris_opener = sessCtx.opener || "";
+      dyn.polaris_character = sessCtx.character || "";
       const startPromise = Conversation.startSession(Object.assign({}, auth, {
         dynamicVariables: dyn,
         onModeChange: plOnModeChange,
