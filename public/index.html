@@ -27822,6 +27822,11 @@ function renderConceptTabContent(c, tab) {
           <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Workflow aus Schritten, Stakeholders, Deadlines aus Meilensteinen, DoD aus Erfolgskriterien</div>
           ${c.convertedToProjectId ? `<div style="margin-top:8px;font-size:11px;color:var(--ok)">✓ Bereits umgewandelt</div>` : ''}
         </button>
+        <button onclick="convertConceptToWorkflow('${id}')" style="padding:16px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.3);border-radius:10px;cursor:pointer;color:var(--text);text-align:left">
+          <div style="font-size:24px;margin-bottom:6px">⚙️</div>
+          <div style="font-weight:700;font-size:13.5px">In Workflow umwandeln</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">Eigenständiger Prozess im Workflow-Modul, Schritte aus dem Konzept</div>
+        </button>
         <button onclick="convertConceptToIdea('${id}')" style="padding:16px;background:rgba(251,146,60,.08);border:1px solid rgba(251,146,60,.3);border-radius:10px;cursor:pointer;color:var(--text);text-align:left">
           <div style="font-size:24px;margin-bottom:6px">💡</div>
           <div style="font-weight:700;font-size:13.5px">In Idee umwandeln</div>
@@ -28396,6 +28401,79 @@ window.convertConceptToProject = function(id) {
   scheduleSave();
   navigate('projects', projId);
   toast('ok', '📁 Projekt erstellt', c.title);
+};
+
+window.convertConceptToWorkflow = function(id) {
+  const c = APP.state.data.entities.concepts?.[id]; if (!c) return;
+  const now = new Date().toISOString();
+  const wid = "wf_" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+  const steps = (c.steps || []).map((s, i) => ({
+    id: "step_" + Math.random().toString(36).slice(2, 8),
+    title: s.title || ("Schritt " + (i + 1)),
+    program: "", description: s.description || "", notes: "",
+    links: [], codeSnippets: [], improvements: [],
+    linkedNotes: [], linkedTasks: [], linkedProjects: [], linkedPersons: [], linkedEmails: [], linkedProtocols: [],
+  }));
+  const rules = [
+    c.summary && ("Zusammenfassung: " + c.summary),
+    c.problem && ("Problem: " + c.problem),
+    c.solution && ("Lösung: " + c.solution),
+  ].filter(Boolean).join("\n\n");
+  if (!APP.state.data.entities.workflows) APP.state.data.entities.workflows = {};
+  APP.state.data.entities.workflows[wid] = {
+    id: wid, title: c.title || "Workflow", rules, steps,
+    linkedProjectId: c.convertedToProjectId || null, tags: c.tags || [],
+    createdAt: now, updatedAt: now,
+  };
+  if (!Array.isArray(c.linkedWorkflows)) c.linkedWorkflows = [];
+  c.linkedWorkflows.push(wid);
+  c.updatedAt = now;
+  scheduleSave();
+  navigate('workflows', wid);
+  toast('ok', '⚙️ Workflow erstellt', c.title || 'Workflow');
+};
+
+// Konzept aus Projekt oder Aufgabe erstellen (mirror des Konzept-Template-Schemas)
+window.createConceptFromEntity = function(kind, id) {
+  const map = kind === 'project' ? APP.state.data.entities.projects : APP.state.data.entities.tasks;
+  const ent = map && map[id]; if (!ent) return;
+  const now = new Date().toISOString();
+  const cid = "cpt_" + Math.random().toString(36).slice(2, 10);
+  const title = ent.title || ent.name || "Konzept";
+  const steps = (ent.workflow || []).map((s, i) => ({
+    id: "cs_" + Math.random().toString(36).slice(2, 8),
+    title: s.title || ("Schritt " + (i + 1)),
+    description: s.description || "",
+  }));
+  const objectives = (ent.definitionOfDone || ent.learningGoals || []).map((d) => ({
+    id: "ob_" + Math.random().toString(36).slice(2, 8), text: d.text || "", done: d.done || false,
+  }));
+  const risks = (ent.risks || []).map((r) => ({
+    id: "rk_" + Math.random().toString(36).slice(2, 8),
+    text: r.text || "", mitigation: r.mitigation || "", impact: r.impact, probability: r.probability,
+  }));
+  if (!APP.state.data.entities.concepts) APP.state.data.entities.concepts = {};
+  APP.state.data.entities.concepts[cid] = {
+    id: cid, title, icon: ent.icon || "💡", color: ent.color || "#a855f7",
+    template: null, status: "draft", tags: ent.tags || [],
+    summary: ent.description || ent.notes || "", vision: "", problem: "", solution: "", targetGroup: "", valueProposition: "", context: "",
+    objectives, successCriteria: [], assumptions: [], risks, stakeholders: [],
+    resources: [], steps, questions: [], references: [], alternatives: [],
+    sections: [],
+    timeline: { start: "", end: "", milestones: [] },
+    budget: { total: 0, currency: "CHF", items: [] },
+    linkedPersons: [], linkedProjects: kind === 'project' ? [id] : [], linkedGoals: [], linkedIdeas: [], linkedNotes: [], linkedDecisions: [], linkedOrganizations: [],
+    versions: [], convertedToProjectId: null,
+    notebookId: null, files: [], fileFolders: [],
+    sourceKind: kind, sourceId: id,
+    createdAt: now, updatedAt: now,
+  };
+  if (!Array.isArray(ent.linkedConcepts)) ent.linkedConcepts = [];
+  ent.linkedConcepts.push(cid);
+  ent.updatedAt = now;
+  scheduleSave();
+  navigate('concepts', cid);
+  toast('ok', '🧩 Konzept erstellt', title);
 };
 
 window.convertConceptToIdea = function(id) {
@@ -30095,6 +30173,7 @@ function viewTaskDetail(id) {
           <div class="flex gap-2 flex-wrap">
             <button class="btn sm" data-action="open-link-modal" data-kind="task" data-id="${id}">➕ Verknüpfen</button>
             <button class="btn sm" data-action="create-note-from" data-kind="task" data-id="${id}">📝 Notiz erstellen</button>
+            <button class="btn sm" onclick="createConceptFromEntity('task','${id}')">🧩 Konzept erstellen</button>
             <button class="btn sm" data-action="ai-suggest-links" data-kind="task" data-id="${id}">🤖 KI-Verknüpfung</button>
           </div>
           ${externalLinksHtml ? `<div class="sep"></div><div class="mb-2 mini">Externe Links:</div><div class="flex flex-wrap gap-2">${externalLinksHtml}</div>` : ""}
@@ -31606,6 +31685,7 @@ function viewProjectDetail(id) {
           </div>
           <div class="flex gap-2 flex-wrap">
             <button class="btn sm" data-action="create-note-from" data-kind="project" data-id="${id}">📝 Notiz erstellen</button>
+            <button class="btn sm" onclick="createConceptFromEntity('project','${id}')">🧩 Konzept erstellen</button>
             <button class="btn sm" data-action="open-link-modal" data-kind="project" data-id="${id}">➕ Verknüpfen</button>
             <button class="btn sm" data-action="add-external-link" data-kind="project" data-id="${id}">🔗 Externen Link</button>
             <button class="btn sm" data-action="open-program-buttons-modal" data-kind="project" data-id="${id}">🧩 Program-Buttons</button>
@@ -36258,6 +36338,7 @@ function viewLearningProjectDetail(id) {
           <div class="flex gap-2 flex-wrap">
             <button class="btn sm" data-action="open-link-modal" data-kind="project" data-id="${id}">➕ Verknüpfen</button>
             <button class="btn sm" data-action="create-note-from" data-kind="project" data-id="${id}">📝 Notiz</button>
+            <button class="btn sm" onclick="createConceptFromEntity('project','${id}')">🧩 Konzept</button>
             <button class="btn sm" data-action="create-idea-for" data-kind="project" data-id="${id}">💡 Idee</button>
           </div>
         </div>
@@ -36599,6 +36680,7 @@ function viewPersonalityProjectDetail(id) {
           <div class="flex gap-2 flex-wrap">
             <button class="btn sm" data-action="open-link-modal" data-kind="project" data-id="${id}">➕ Verknüpfen</button>
             <button class="btn sm" data-action="create-note-from" data-kind="project" data-id="${id}">📝 Notiz</button>
+            <button class="btn sm" onclick="createConceptFromEntity('project','${id}')">🧩 Konzept</button>
             <button class="btn sm" data-action="create-idea-for" data-kind="project" data-id="${id}">💡 Idee</button>
           </div>
         </div>
