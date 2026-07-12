@@ -249,7 +249,12 @@
 
   /* ── Launch-Button: dezent, unten mittig — startet Quantus ── */
   #launchBtn{
-    position:fixed;bottom:4.6vh;left:50%;transform:translateX(-50%);
+    position:fixed;left:50%;transform:translateX(-50%);
+    /* Robust unten halten: Safe-Area (Home-Indikator) + dynamische Viewport-
+       Höhe (dvh), damit der Button auf Mobilgeräten NICHT hinter der Browser-/
+       Systemleiste verschwindet. vh-Zeile ist der Fallback für alte Browser. */
+    bottom:calc(4.6vh + env(safe-area-inset-bottom, 0px));
+    bottom:calc(max(48px, 6dvh) + env(safe-area-inset-bottom, 0px));
     display:flex;align-items:center;gap:10px;
     padding:10px 26px;border-radius:999px;
     /* Deckend: der Sternenhimmel/die Ringe scheinen NICHT mehr durch den Button */
@@ -282,7 +287,9 @@
 
   /* ── Hint: erscheint nur bei Mausbewegung ── */
   #hint{
-    position:fixed;bottom:1.6vh;left:50%;transform:translateX(-50%);
+    position:fixed;left:50%;transform:translateX(-50%);
+    bottom:calc(1.6vh + env(safe-area-inset-bottom, 0px));
+    bottom:calc(max(14px, 2dvh) + env(safe-area-inset-bottom, 0px));
     font-family:var(--mono);font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;
     color:var(--muted);opacity:0;transition:opacity .5s ease;pointer-events:none;
     white-space:nowrap;
