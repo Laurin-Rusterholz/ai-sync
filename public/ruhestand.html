@@ -126,6 +126,13 @@
     margin-bottom:2.2vmin;opacity:.85;
   }
   #coreLabel b{color:var(--accent);font-weight:600}
+  /* ── Uhr oben (aus der Bildmitte gerückt) ── */
+  #topClock{
+    position:fixed;top:clamp(58px,9vh,124px);left:50%;
+    transform:translateX(-50%);
+    text-align:center;pointer-events:none;z-index:3;
+    translate:0 0;animation:oledDriftT 240s ease-in-out infinite;
+  }
   #clock{
     font-size:clamp(38px,8.6vmin,100px);
     font-weight:200;letter-spacing:.04em;
@@ -136,7 +143,7 @@
   }
   #clock .sec{font-size:.42em;font-weight:300;color:var(--accent);opacity:.85}
   #dateLine{
-    margin-top:1.5vmin;font-size:clamp(11px,1.8vmin,18px);
+    margin-top:1.2vmin;font-size:clamp(11px,1.8vmin,18px);
     font-weight:500;color:var(--muted);letter-spacing:.15em;text-transform:uppercase;
   }
   #modeLine{
@@ -348,12 +355,18 @@
     <canvas id="hud"></canvas>
     <div id="center">
       <div id="coreLabel"><b>Quantus</b> · Neural Core</div>
-      <div id="clock">--:--<span class="sec"></span></div>
-      <div id="dateLine">—</div>
       <div id="modeLine"><span class="dot"></span><span>Ruhestand · Standby aktiv</span></div>
       <canvas id="wave"></canvas>
     </div>
   </div>
+</div>
+
+<!-- Uhr & Datum: bewusst NICHT im Zentrum — sitzt oben, damit die Ringe
+     (der „atmende" Neural-Core) die freie Bildmitte einnehmen und beim
+     Sprechen von Polaris sichtbar reagieren können. -->
+<div id="topClock">
+  <div id="clock">--:--<span class="sec"></span></div>
+  <div id="dateLine">—</div>
 </div>
 
 <div id="vignette"></div>
@@ -440,6 +453,65 @@ if (EMBEDDED){
 }
 function isFullscreen(){
   return EMBEDDED ? parentFs : !!document.fullscreenElement;
+}
+
+/* ════════════════════════════════════════════════════════════
+   0b) POLARIS-SPRACHREAKTION — die Ringe „atmen", wenn Polaris spricht
+   ════════════════════════════════════════════════════════════
+   Pegelquelle (0..1):
+   • Eingebettet: die Haupt-App postet {type:'ruhestand:voice', level, speaking}
+     im Takt von getOutputVolume() (echtes Polaris-Audio).
+   • Standalone / Demo: Klick auf den Orb setzt orb.speaking → synthetischer Pegel.
+   voice.level wird pro Frame weich nachgezogen; „ripples" sind nach außen
+   laufende Kreise, die beim Sprechen entstehen. */
+var voice = { level: 0, target: 0, speaking: false, realTs: 0 };
+var ripples = [];          // { age, life, strength }
+var rippleAccum = 0;
+var synthPhase = 0;
+var voiceOrbEl = document.getElementById("voiceOrb");
+
+window.addEventListener("message", function(e){
+  if (e.origin !== location.origin || !e.data) return;
+  if (e.data.type === "ruhestand:voice"){
+    var lv = Math.max(0, Math.min(1, +e.data.level || 0));
+    voice.realTs = performance.now();
+    voice.speaking = !!e.data.speaking && lv > 0.008;
+    voice.target = voice.speaking ? Math.max(lv, 0.12) : 0;
+    if (voiceOrbEl){ try { voiceOrbEl.speaking = voice.speaking; } catch(_){} }
+  }
+});
+
+function updateVoice(dtSec){
+  var realFresh = (performance.now() - voice.realTs) < 350;   // echter Pegel liegt an?
+  var orbSpeaking = !!(voiceOrbEl && voiceOrbEl.speaking);
+  if (!realFresh){
+    if (orbSpeaking && !reducedMotion){
+      // Kein echtes Audio: lebhaften Pegel synthetisieren (0.28..0.84)
+      synthPhase += dtSec * 6.2;
+      voice.speaking = true;
+      voice.target = 0.28 + (Math.sin(synthPhase) * 0.5 + 0.5) * 0.42
+                          + (Math.sin(synthPhase * 2.3 + 1.1) * 0.5 + 0.5) * 0.14;
+    } else {
+      voice.speaking = false; voice.target = 0;
+    }
+  }
+  // weiches Nachziehen (schneller rauf, sanfter runter), frameratenormiert
+  var k = (voice.target > voice.level ? 0.28 : 0.10) * Math.min(1, dtSec * 60);
+  voice.level += (voice.target - voice.level) * k;
+  if (voice.level < 0.001) voice.level = 0;
+
+  // Ripples erzeugen, solange gesprochen wird
+  if (voice.speaking && !reducedMotion){
+    rippleAccum += dtSec * (0.7 + voice.level * 2.6);
+    while (rippleAccum >= 1){
+      rippleAccum -= 1;
+      ripples.push({ age: 0, life: 1.7, strength: 0.4 + voice.level * 0.6 });
+    }
+  }
+  for (var i = ripples.length - 1; i >= 0; i--){
+    ripples[i].age += dtSec;
+    if (ripples[i].age >= ripples[i].life) ripples.splice(i, 1);
+  }
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -635,14 +707,16 @@ function dashedRing(r, dashCount, fill, width, rgb, alpha, rot){
 function drawHud(t){
   hctx.clearRect(0, 0, HS, HS);
   var R = HC * 0.98;
-  var slow = reducedMotion ? 0 : t;
+  var vl = voice.level;                       // Sprach-Pegel 0..1
+  // Sprechen beschleunigt die Rotation spürbar → die Ringe „bewegen sich"
+  var slow = reducedMotion ? 0 : t * (1 + vl * 0.8);
 
-  /* Atmender KI-Kern: weicher violetter Schein hinter der Uhr */
+  /* Atmender KI-Kern: weicher violetter Schein — dehnt sich beim Sprechen aus */
   var breath = reducedMotion ? 0.5 : (Math.sin(t * 0.55) * 0.5 + 0.5);
-  var coreR = R * (0.30 + breath * 0.025);
+  var coreR = R * (0.30 + breath * 0.025 + vl * 0.10);
   var cg = hctx.createRadialGradient(HC, HC, 0, HC, HC, coreR);
-  cg.addColorStop(0, "rgba(" + VIOLET_DEEP + "," + (0.10 + breath * 0.07) + ")");
-  cg.addColorStop(0.65, "rgba(" + VIOLET_DEEP + "," + (0.045 + breath * 0.03) + ")");
+  cg.addColorStop(0, "rgba(" + VIOLET_DEEP + "," + (0.10 + breath * 0.07 + vl * 0.16) + ")");
+  cg.addColorStop(0.65, "rgba(" + VIOLET_DEEP + "," + (0.045 + breath * 0.03 + vl * 0.08) + ")");
   cg.addColorStop(1, "rgba(" + VIOLET_DEEP + ",0)");
   hctx.fillStyle = cg;
   hctx.beginPath(); hctx.arc(HC, HC, coreR, 0, 6.2832); hctx.fill();
@@ -664,6 +738,20 @@ function drawHud(t){
   ring(R * 0.99, 1, VIOLET, 0.10);
   ring(R * 0.80, 1, VIOLET, 0.08);
   ring(R * 0.485, 1, BLUE, 0.10);
+
+  /* ── Sprachreaktion: nach außen laufende Ripples + heller pulsierende Ringe ── */
+  for (var rp = 0; rp < ripples.length; rp++){
+    var rr = ripples[rp];
+    var f = rr.age / rr.life;                 // 0 → 1
+    var rad = R * (0.42 + f * 0.56);
+    var al = rr.strength * (1 - f) * 0.5;
+    ring(rad, 1.4 + (1 - f) * 1.3, VIOLET, al, 8 * (1 - f));
+  }
+  if (vl > 0.01){
+    ring(R * (0.485 + vl * 0.055), 1 + vl * 1.6, BLUE,   0.10 + vl * 0.5, 6 + vl * 16);
+    ring(R * (0.80  + vl * 0.04),  1 + vl * 1.3, VIOLET, 0.08 + vl * 0.42, vl * 14);
+    ring(R * (0.99  + vl * 0.02),  1 + vl * 1.0, VIOLET, 0.10 + vl * 0.3,  vl * 10);
+  }
 
   /* Äußerer Tick-Ring — Uhrenskala */
   ticks(R * 0.985, 120, R * 0.018, 1, TEXT_RGB, 0.26, slow * 0.02, 10);
@@ -692,12 +780,12 @@ function drawHud(t){
     var wob = reducedMotion ? 0.5 :
       (Math.sin(t * sp.speed + sp.phase) * 0.5 + 0.5) *
       (Math.sin(t * 0.35 + i * 0.42) * 0.5 + 0.5);
-    var len = R * 0.013 + wob * sp.amp * R * 0.08;
+    var len = R * 0.013 + wob * sp.amp * R * 0.08 * (1 + vl * 2.6);
     var c = Math.cos(a), s2 = Math.sin(a);
     hctx.beginPath();
     hctx.moveTo(HC + c * base, HC + s2 * base);
     hctx.lineTo(HC + c * (base + len), HC + s2 * (base + len));
-    hctx.strokeStyle = "rgba(" + (i % 5 === 0 ? BLUE : VIOLET) + "," + (0.26 + wob * 0.42) + ")";
+    hctx.strokeStyle = "rgba(" + (i % 5 === 0 ? BLUE : VIOLET) + "," + (0.26 + wob * 0.42 + vl * 0.28) + ")";
     hctx.lineWidth = 1.4;
     hctx.stroke();
   }
@@ -769,7 +857,8 @@ function sizeWave(){
 function drawWave(t){
   wctx.clearRect(0, 0, WW, WH);
   var mid = WH / 2;
-  var tt = reducedMotion ? 0 : t;
+  var tt = reducedMotion ? 0 : t * (1 + voice.level * 1.2);
+  var amp = 0.55 + voice.level * 1.5;                       // schlägt beim Sprechen kräftig aus
   wctx.beginPath();
   for (var x = 0; x <= WW; x += 2){
     var u = x / WW;
@@ -778,7 +867,7 @@ function drawWave(t){
       Math.sin(u * 22 + tt * 2.1) * 0.35 +
       Math.sin(u * 9 - tt * 1.3) * 0.3 +
       Math.sin(u * 47 + tt * 3.7) * 0.12
-    ) * mid * 0.85;
+    ) * mid * 0.85 * amp;
     if (x === 0) wctx.moveTo(x, y); else wctx.lineTo(x, y);
   }
   var wg = wctx.createLinearGradient(0, 0, WW, 0);
@@ -967,6 +1056,7 @@ function frame(nowMs){
   var dt = Math.min(100, nowMs - lastFrame);
   lastFrame = nowMs;
   var dtNorm = dt / 16.6667;   // 1.0 ≙ 60 fps — geräteunabhängiges Tempo (144 Hz!)
+  updateVoice(dt / 1000);      // Sprach-Pegel & Ripples fortschreiben
   drawStars(dtNorm);
   drawHud(nowMs / 1000);
   drawWave(nowMs / 1000);

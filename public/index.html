@@ -8581,6 +8581,7 @@ const TRANSLATIONS = {
     "offline_saved": "Saved offline",
     "syncing": "Syncing...", "saved": "Saved",
     "changes": "Changes...",
+    "quantusproject": "Quantus Projekt",
   }
 };
 
@@ -8612,6 +8613,7 @@ const ROUTE_DEFS = [
   {key:"programs", icon:"🧩"}, {key:"organizations", icon:"🏛️"}, {key:"time", icon:"⏱️"},
   {key:"statistics", icon:"📊"}, {key:"reports", icon:"🤖"}, {key:"reflecta", icon:"🪞"},
   {key:"decisions", icon:"⚖️"}, {key:"journal", icon:"✍️"},
+  {key:"quantusproject", icon:"🛠️"},
 ];
 function getRoutes() {
   return ROUTE_DEFS.map(r => ({...r, label: t(r.key), hash: "#/" + r.key}));
@@ -16194,6 +16196,7 @@ function getAllApps() {
     {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
     {key:"docstudio", icon:"📄", label:"DocStudio", desc:getLang()==="de"?"Dokumente generieren & gestalten (Rechnung, Einladung, Brief …) mit KI & PDF-Export":"Generate & design documents (invoice, invitation, letter …) with AI & PDF export"},
     {key:"polaris", icon:"🛰️", label:"Polaris", desc:getLang()==="de"?"Sprachsteuerung — Konversations-Agent mit Live-Briefing (ElevenLabs)":"Voice control — conversational agent with live briefing (ElevenLabs)"},
+    {key:"quantusproject", icon:"🛠️", label:"Quantus Projekt", desc:getLang()==="de"?"Quantus selbst weiterentwickeln: Grundprompt + Spezifikation, Updates, Logbuch & Ideen":"Develop Quantus itself: base prompt + specification, updates, logbook & ideas"},
   ];
   // Append custom pages
   const customPages = APP.state.data.customPages || [];
@@ -16560,6 +16563,14 @@ function renderMain() {
     case "workflows": html = id ? viewWorkflowDetail(id) : viewWorkflows(); break;
     case "journal": openJournalBooklet(); return;
     case "passwordmanager": html = viewPasswordManager(); break;
+    case "quantusproject": {
+      // Das Quantus-Cockpit lebt im Projekt PRJ-UCHWW. Existiert es, springen wir
+      // dorthin; sonst zeigen wir das eigenständige Modul als Rückfallebene.
+      var _qpProj = Object.values(APP.state.data.entities.projects || {}).find(function(pr){ return String(pr.externalId||"").toUpperCase() === "PRJ-UCHWW"; });
+      if (_qpProj){ location.hash = "#/projects/" + _qpProj.id; return; }
+      html = (typeof viewQuantusProject === "function" ? viewQuantusProject() : '<div style="padding:40px;text-align:center">Lade Quantus Projekt…</div>');
+      break;
+    }
     case "googlecalendar": html = (typeof viewGoogleCalendar === "function" ? viewGoogleCalendar() : '<div style="padding:40px;text-align:center">Lade Google Calendar…</div>'); break;
     case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
     case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
@@ -16994,7 +17005,7 @@ function viewDailyBriefing() {
     
     <!-- Tagesplanung -->
     <div class="db-section">
-      <h3>` + "\u{1F4C5}" + ` Tagesplanung</h3>
+      <h3 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">` + "\u{1F4C5}" + ` Tagesplanung <button class="btn sm ghost" data-action="db-sync-planner" title="Diese Tagesplanung als Termine in den Google-Kalender „Daily Planner“ schreiben" style="font-size:11px;font-weight:600">` + "\u{1F4C5}" + `→ Daily Planner</button></h3>
       ${(() => {
         const tb = (db.timeBlocks || {})[selectedDate] || [];
         const combined = [...tb.map(b => ({...b, isBlock: true})), ...calEvents.map(ev => ({startTime: ev.startTime || "00:00", endTime: ev.endTime || "", title: ev.title, isBlock: false, allDay: ev.allDay}))];
@@ -17003,8 +17014,8 @@ function viewDailyBriefing() {
         const timedItems = combined.filter(it => !it.allDay && it.startTime);
         const allDayItems = combined.filter(it => it.allDay);
         
-        if (!combined.length) return '<div class="mini" style="opacity:.5">Keine Eintr\u00e4ge.</div>';
-        
+        const isEmpty = !combined.length;
+
         // Determine visible hour range from items
         let minH = 23, maxH = 0;
         timedItems.forEach(it => {
@@ -17017,7 +17028,7 @@ function viewDailyBriefing() {
           if (endCeil > maxH) maxH = endCeil;
           if (eh > maxH) maxH = eh;
         });
-        if (minH > maxH) { minH = 8; maxH = 18; }
+        if (minH > maxH) { minH = 7; maxH = 21; }
         minH = Math.max(0, minH);
         maxH = Math.min(24, Math.max(maxH + 1, minH + 2));
         
@@ -17042,8 +17053,11 @@ function viewDailyBriefing() {
           html += '</div>';
         }
         
-        // Timeline container
-        html += '<div class="db-timeline" style="height:' + (totalHours * hourHeight) + 'px;position:relative">';
+        // Timeline container — ziehen zum Einfügen eines Blocks (wie Google Kalender)
+        html += '<div class="db-timeline" data-minh="' + minH + '" data-hh="' + hourHeight + '" data-date="' + selectedDate + '" onmousedown="window._dbTimelineDown(event)" style="height:' + (totalHours * hourHeight) + 'px;position:relative;cursor:crosshair">';
+        if (isEmpty) {
+          html += '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:var(--muted);font-size:12px;opacity:.6;text-align:center;padding:0 12px">Zieh über die Zeitachse, um einen Block einzufügen</div>';
+        }
         
         // Hour grid
         html += '<div class="db-tl-hours">';
@@ -18194,10 +18208,78 @@ window._dbAddBlock = function() {
     });
     bStart.value = ""; bEnd.value = ""; if (bTitle) bTitle.value = ""; if (bTask) bTask.value = "";
     scheduleSave();
+    if (window._dbMaybeAutoSyncPlanner) window._dbMaybeAutoSyncPlanner(targetDate);
     render();
   } else {
     toast("warn", "Fehlend", "Bitte Von, Bis und Titel/Aufgabe eingeben");
   }
+};
+
+// Tagesplanung: ziehen zum Einfügen eines Blocks (wie im Google Kalender).
+// Statt Zeiten manuell zu tippen, zieht man über die Zeitachse; die Zeiten
+// werden übernommen und man vergibt nur noch einen Titel (oder eine Aufgabe).
+window._dbTimelineDown = function(e){
+  if (e.button !== 0) return;
+  if (e.target.closest && e.target.closest(".db-tl-event")) return; // bestehender Block
+  var tl = e.currentTarget;
+  var rect = tl.getBoundingClientRect();
+  var minH = parseFloat(tl.dataset.minh) || 0;
+  var hh = parseFloat(tl.dataset.hh) || 48;
+  var date = tl.dataset.date;
+  function snap(m){ return Math.round(m/15)*15; }
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  function yToMin(y){ return snap(clamp(((y - rect.top)/hh + minH) * 60, 0, 1440)); }
+  var startMin = yToMin(e.clientY), curMin = startMin, moved = false;
+  e.preventDefault();
+  var box = document.createElement("div");
+  box.style.cssText = "position:absolute;left:48px;right:6px;background:var(--accent-soft,rgba(139,92,246,.20));border:1.5px solid var(--accent,#8b5cf6);border-radius:8px;pointer-events:none;z-index:9;box-sizing:border-box";
+  tl.appendChild(box);
+  function paint(){
+    var a = Math.min(startMin, curMin), b = Math.max(startMin, curMin);
+    box.style.top = ((a/60 - minH) * hh) + "px";
+    box.style.height = Math.max(3, ((b - a)/60) * hh) + "px";
+  }
+  paint();
+  function mv(me){ curMin = yToMin(me.clientY); if (Math.abs(curMin - startMin) >= 15) moved = true; paint(); }
+  function up(){
+    document.removeEventListener("mousemove", mv);
+    document.removeEventListener("mouseup", up);
+    if (box.parentNode) box.parentNode.removeChild(box);
+    var a = Math.min(startMin, curMin), b = Math.max(startMin, curMin);
+    if (!moved || b - a < 15) b = Math.min(1440, a + 60); // reiner Klick → 60-Min-Block
+    if (b <= a) b = Math.min(1440, a + 60);
+    window._dbInsertBlockAt(date, a, b);
+  }
+  document.addEventListener("mousemove", mv);
+  document.addEventListener("mouseup", up);
+};
+
+window._dbInsertBlockAt = function(date, aMin, bMin){
+  function p(n){ return (n < 10 ? "0" : "") + n; }
+  function m2t(m){ m = Math.min(1439, Math.max(0, Math.round(m))); return p(Math.floor(m/60)) + ":" + p(m%60); }
+  var s = document.getElementById("dbBlockStart");
+  var en = document.getElementById("dbBlockEnd");
+  var ti = document.getElementById("dbBlockTitle");
+  var tk = document.getElementById("dbBlockTask");
+  if (s) s.value = m2t(aMin);
+  if (en) en.value = m2t(bMin);
+  // Ist bereits ein Titel/eine Aufgabe gewählt → Block sofort einschieben.
+  if ((tk && tk.value) || (ti && ti.value.trim())){
+    window._dbAddBlock();
+  } else if (ti){
+    ti.focus(); if (ti.select) ti.select();
+    toast("info", "Zeit gewählt", m2t(aMin) + "–" + m2t(bMin) + " · Titel eingeben & Enter");
+  }
+};
+
+// Auto-Sync in den Google-Kalender „Daily Planner", sobald einmal aktiviert.
+window._dbMaybeAutoSyncPlanner = function(date){
+  try {
+    var db = APP.state.data.dailyBriefing || {};
+    if (!db.autoDailyPlanner) return;
+    var blocks = ((db.timeBlocks || {})[date]) || [];
+    if (typeof window.gcalSyncDailyPlanner === "function") window.gcalSyncDailyPlanner(date, blocks, { silent: true });
+  } catch(e){}
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -32491,6 +32573,12 @@ function renderCustomProjectFeatures(id) {
   // PRJ-NFYW5
   if (normalized === 'PRJ-NFYW5') {
     try { return renderCustom_PRJNFYW5(id, p); } catch(e) { return _kvErrorBox('PRJ-NFYW5', e); }
+  }
+
+  // PRJ-UCHWW — Quantus-Weiterentwicklung (Grundprompt + Spezifikation, Updates, Logbuch, Ideen)
+  if (normalized === 'PRJ-UCHWW') {
+    try { return (typeof window.renderCustom_PRJUCHWW === 'function') ? window.renderCustom_PRJUCHWW(id, p) : ''; }
+    catch(e) { return _kvErrorBox('PRJ-UCHWW', e); }
   }
   
   // PRJ-Z2SEX nur wenn explizit so gesetzt
@@ -95522,8 +95610,8 @@ console.log('📚 Leseliste geladen');
     grid += '</div>';
     days.forEach(function(d){
       var key = dayKey(d), isT = sameDay(d,today);
-      grid += '<div class="gcv-col'+(isT?" today":"")+'" data-date="'+key+'" ondragover="gcalDragOver(event)" ondrop="gcalDrop(event,\''+key+'\',event)">';
-      for (var h2=0;h2<24;h2++) grid += '<div class="gcv-hour" onclick="gcalCreateAt(\''+key+'\',\''+pad(h2)+':00\')"></div>';
+      grid += '<div class="gcv-col'+(isT?" today":"")+'" data-date="'+key+'" ondragover="gcalDragOver(event)" ondrop="gcalDrop(event,\''+key+'\',event)" onmousedown="gcalGridDown(event,\''+key+'\')">';
+      for (var h2=0;h2<24;h2++) grid += '<div class="gcv-hour"></div>';
       var timed = (by[key]||[]).filter(function(ev){ return !(isAllDay(ev)||ev._allDay) && !ev._isTask; });
       var items = timed.map(function(ev){ var s=evStart(ev), e=evEnd(ev); var sm=clamp(minutesOf(s),0,1439); var em=clamp(minutesOf(e)||1440,sm+15,1440); if(!sameDay(s,d)) sm=0; if(!sameDay(e,d)&&!sameDay(addDays(e,-1),d)) em=1440; return { ev:ev, sMin:sm, eMin:Math.max(em,sm+15) }; });
       layoutColumns(items).forEach(function(it){ grid += renderTimedEvent(it, key); });
@@ -95926,6 +96014,104 @@ console.log('📚 Leseliste geladen');
   window.gcalToggleTasks = function(){ GC.showTasks = !GC.showTasks; savePrefs(); rerender(); };
   window.gcalGotoDay = function(key){ GC.cursor = new Date(key+"T00:00:00"); GC.view = "day"; GC._needScroll = true; savePrefs(); reloadEvents(); };
   window.gcalCreateAt = function(dateKey, time){ gcalOpenEditor(null, null, { date: dateKey, time: time||null }); };
+
+  // ── Ziehen zum Erstellen: von einer Zeit zur anderen ziehen wählt die Dauer ──
+  // (Ersetzt das reine Klicken auf feste Stundenblöcke. Ein einfacher Klick
+  //  ohne Ziehen legt weiterhin einen 60-Minuten-Termin an.)
+  function minToHHMM(min){ min = clamp(Math.round(min),0,1439); return pad(Math.floor(min/60))+":"+pad(min%60); }
+  window.gcalGridDown = function(e, dateKey){
+    if (e.button !== 0) return;                                   // nur linke Maustaste
+    if (e.target.closest(".gcv-event") || e.target.closest(".gcv-resize")) return; // Termin/Resize haben eigene Handler
+    var col = e.currentTarget;
+    var rect = col.getBoundingClientRect();
+    var startMin = snap15(clamp((e.clientY - rect.top)/GCV_HH*60, 0, 1425));
+    e.preventDefault();                                           // keine Textauswahl
+    var box = document.createElement("div");
+    box.className = "gcv-selbox";
+    box.style.cssText = "position:absolute;left:1px;right:1px;background:var(--accent-soft,rgba(139,92,246,.20));border:1px solid var(--accent,#8b5cf6);border-radius:6px;pointer-events:none;z-index:6;box-sizing:border-box";
+    col.appendChild(box);
+    var curMin = startMin, moved = false;
+    function paint(){
+      var a = Math.min(startMin, curMin), b = Math.max(startMin, curMin);
+      box.style.top = (a*GCV_HH/60)+"px";
+      box.style.height = Math.max(2,(b-a)*GCV_HH/60)+"px";
+    }
+    paint();
+    function move(me){
+      curMin = snap15(clamp((me.clientY - rect.top)/GCV_HH*60, 0, 1440));
+      if (Math.abs(curMin - startMin) >= 15) moved = true;
+      paint();
+    }
+    function up(){
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      if (box.parentNode) box.parentNode.removeChild(box);
+      var a = Math.min(startMin, curMin), b = Math.max(startMin, curMin);
+      if (!moved || b - a < 15){ b = Math.min(1440, a + 60); }   // reiner Klick → 60-Min-Termin
+      if (b <= a) b = Math.min(1440, a + 60);
+      gcalOpenEditor(null, null, { date: dateKey, time: minToHHMM(a), endTime: minToHHMM(b) });
+    }
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  };
+
+  // ── Daily-Briefing-Tagesplanung → Google-Kalender „Daily Planner" ──
+  // Schreibt die Zeitblöcke eines Tages idempotent als Termine in einen
+  // dedizierten Kalender „Daily Planner" (wird bei Bedarf angelegt).
+  window.gcalSyncDailyPlanner = async function(dateKey, blocks, opts){
+    opts = opts || {};
+    var silent = !!opts.silent;
+    function note(type, ti, msg){ if (!silent || type === "err"){ try { toast(type, ti, msg); } catch(_){} } }
+    blocks = blocks || [];
+    try {
+      if (!GC.status) await loadStatus();
+      if (!GC.status || !GC.status.connected){ note("err","Google Calendar","Nicht verbunden — bitte im Google-Calendar-Modul verbinden."); return false; }
+      if (!GC.calendars || !GC.calendars.length){
+        try { var list = await gcApi("GET","/users/me/calendarList"); GC.calendars = list.items || []; }
+        catch(e){ note("err","Google Calendar", e.message || "Kalenderliste konnte nicht geladen werden."); return false; }
+      }
+      var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Zurich";
+      var dp = GC.calendars.find(function(c){ var n = c.summaryOverride || c.summary; return n === "Daily Planner" && (c.accessRole === "owner" || c.accessRole === "writer"); });
+      if (!dp){
+        var created = await gcApi("POST","/calendars", { body:{ summary:"Daily Planner", timeZone: tz } });
+        if (!created || !created.id){ note("err","Google Calendar","Kalender „Daily Planner\" konnte nicht angelegt werden."); return false; }
+        dp = { id: created.id, summary:"Daily Planner", accessRole:"owner" };
+        GC.calendars.push(dp);
+        try { if (GC.selected){ GC.selected.add(dp.id); if (typeof savePrefs === "function") savePrefs(); } } catch(_){}
+      }
+      var encId = encodeURIComponent(dp.id);
+      // Vorhandene Daily-Planner-Events dieses Tages entfernen (idempotent)
+      try {
+        var dayMin = new Date(dateKey+"T00:00:00"), dayMax = new Date(dateKey+"T23:59:59");
+        var ex = await gcApi("GET","/calendars/"+encId+"/events", { query:{ timeMin: dayMin.toISOString(), timeMax: dayMax.toISOString(), singleEvents:"true", maxResults:"2500", privateExtendedProperty:"qdp=1" } });
+        var old = (ex && ex.items) || [];
+        for (var i=0;i<old.length;i++){ try { await gcApi("DELETE","/calendars/"+encId+"/events/"+encodeURIComponent(old[i].id)); } catch(_){} }
+      } catch(_){}
+      function parseHM(str){ var m = String(str || "").trim().match(/(\d{1,2})\s*[:.h]?\s*(\d{2})?/); if (!m) return null; return { h: Math.min(23, parseInt(m[1],10)||0), m: Math.min(59, parseInt(m[2]||"0",10)||0) }; }
+      var count = 0;
+      for (var b=0;b<blocks.length;b++){
+        var blk = blocks[b]; var s = parseHM(blk.startTime); if (!s) continue;
+        var e = parseHM(blk.endTime);
+        var startMin = s.h*60 + s.m;
+        var endMin = e ? (e.h*60 + e.m) : (startMin + 60);
+        if (endMin <= startMin) endMin = startMin + 60;
+        endMin = Math.min(endMin, 1439);
+        var startISO = dateKey+"T"+pad(s.h)+":"+pad(s.m)+":00";
+        var endISO = dateKey+"T"+pad(Math.floor(endMin/60))+":"+pad(endMin%60)+":00";
+        try {
+          await gcApi("POST","/calendars/"+encId+"/events", { body:{
+            summary: blk.title || "Block",
+            start:{ dateTime: startISO, timeZone: tz },
+            end:{ dateTime: endISO, timeZone: tz },
+            extendedProperties:{ private:{ qdp:"1", qdpDate: dateKey, qdpBlock: blk.id || "" } }
+          } });
+          count++;
+        } catch(err){ /* einzelnen Block überspringen */ }
+      }
+      note("ok","Daily Planner", count + " Block(e) in Google Calendar übertragen");
+      return true;
+    } catch(e){ note("err","Google Calendar", e.message || "Sync fehlgeschlagen"); return false; }
+  };
 
   // ── Task interactions (Quantus integration) ──
   window.gcalOpenTask = function(taskId){
@@ -105180,6 +105366,14 @@ html.theme-light .card{box-shadow:none}
   }
   document.addEventListener("fullscreenchange", sendFsState);
 
+  /* Sprach-Pegel (0..1) an die Standby-Seite melden, damit die Ringe beim
+     Sprechen von Polaris reagieren. No-op, solange das Overlay zu ist. */
+  window.__ruhestandVoice = function(level, speaking){
+    if (frame && frame.contentWindow){
+      frame.contentWindow.postMessage({ type: "ruhestand:voice", level: level, speaking: !!speaking }, location.origin);
+    }
+  };
+
   window.addEventListener("message", function(e){
     if (e.origin !== location.origin || !e.data || !frame || e.source !== frame.contentWindow) return;
     if (e.data.type === "ruhestand:toggleFs"){
@@ -106114,11 +106308,15 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 
   // ── Audio-reaktiver Orb (rAF-Loop auf getOutputVolume) ──
   function plApplyLevel(v){
-    const val = String(Math.max(0, Math.min(1, v)).toFixed(3));
+    const num = Math.max(0, Math.min(1, v));
+    const val = String(num.toFixed(3));
     ["polarisOrb","polarisBootOrb"].forEach(function(id){
       const el = document.getElementById(id);
       if (el) el.style.setProperty("--polaris-level", val);
     });
+    // Standby-Overlay (ruhestand.html) mit dem Pegel versorgen — die Ringe
+    // dort „atmen" im Takt der Polaris-Stimme.
+    if (window.__ruhestandVoice) window.__ruhestandVoice(num, num > 0.02);
   }
   function plOrbTick(){
     if (!plActive || !plSession){ plRaf = null; plApplyLevel(0); return; }
@@ -108543,6 +108741,520 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     document.head.appendChild(st);
   }
 
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     QUANTUS PROJEKT — Quantus mit Quantus weiterentwickeln
+     Grundprompt (Standardinhalt, nicht ausgeführt: type="text/plain") +
+     Cockpit-Modul (Grundprompt + eine Spezifikation → alles kopieren,
+     Updates erledigen, Logbuch, Ideen).
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script type="text/plain" id="quantusBasePromptDefault">
+# Quantus – Projektprompt (Grundprompt)
+
+Mit diesem Projekt entwickle ich das Programm Quantus selbst weiter.
+
+## 3. Arbeitsumgebung
+Es wird grundsätzlich mit mehreren Tabs gearbeitet. Du nutzt diese Tabs aktiv und wechselst selbstständig zwischen ihnen.
+
+Tab 1: Claude im Browser — Du bist verantwortlich für:
+- Projektleitung
+- Architektur
+- Planung
+- Fehleranalyse
+- Erstellung und Prüfung der Arbeitsaufträge
+- Vorbereitung von Firebase Rules
+- Vorbereitung von Netlify-Konfigurationen
+- Vorbereitung von n8n-Workflows
+- Vorbereitung aller manuellen Schritte
+- Prüfung der Ergebnisse von Claude Code
+- Pflege des Projektlogbuchs
+- Pflege des aktuellen Projektprompts
+
+Tab 2: Claude Code — verantwortlich für:
+- Analyse des Repositorys
+- Änderungen im Repository
+- Erstellen und Bearbeiten von Dateien
+- Implementierung von Funktionen
+- Refactoring
+- technische Tests
+- Deploy-Konfiguration
+- Prüfung bestehender Dateien
+- Dokumentation der vorgenommenen Änderungen
+Du gibst die von dir erstellten Arbeitsaufträge selbst direkt in Claude Code ein.
+
+Tab 3: Google Docs – Projektprompt ("Quantus – Projektprompt"): immer aktuelle
+vollständige Version, dauerhafte Regeln, Änderungen an Arbeitsweise/Tech-Stack,
+neue verbindliche Vorgaben, relevante Architekturentscheidungen.
+
+Tab 4: Google Docs – Projektlogbuch ("Quantus – Projektlogbuch"): nach jeder
+substanziellen Handlung Zwischenstand eintragen.
+
+Weitere Tabs nach Bedarf: Firebase Console, Netlify, n8n, Hostinger, GitHub,
+Gotenberg, Google Cloud Console, API-Portale, technische Dokumentationen,
+Test- oder Vorschauumgebungen.
+
+## 4. Oberste Arbeitsregel: Claude Code immer zuerst starten
+Sobald eine Aufgabe Änderungen am Code, Repository, Deployment oder an
+technischen Dateien erfordert, muss Claude Code als erste operative Handlung
+gestartet werden:
+1. Aufgabe analysieren.
+2. Vollständigen Arbeitsauftrag für Claude Code erstellen.
+3. In den Claude-Code-Tab wechseln.
+4. Prompt direkt in Claude Code eingeben.
+5. Bearbeitung starten.
+6. Gestarteten Auftrag sofort im Projektlogbuch dokumentieren.
+7. Während Claude Code arbeitet, die übrige Vorbereitung parallel fortsetzen.
+
+Der Prompt für Claude Code muss so vollständig sein, dass ohne technische
+Rückfrage durchgearbeitet werden kann. Er enthält mindestens:
+1. Projektkontext
+2. Ziel der Änderung
+3. bekannte Repository- oder Dateistruktur
+4. betroffene Dateien
+5. verbindliche Tech-Stack-Vorgaben
+6. gewünschtes Verhalten
+7. Datenstrukturen
+8. Fehlerbehandlung
+9. Anforderungen an die mobile Darstellung
+10. Testfälle
+11. Definition of Done
+12. Anweisung für einen strukturierten Abschlussbericht
+
+Sind Repository/Dateien/Struktur unbekannt, weist du Claude Code an, zuerst das
+gesamte Repository zu analysieren und danach selbstständig die passenden
+Dateien zu identifizieren.
+
+## Vorlage Zwischenstand (Projektlogbuch)
+## YYYY-MM-DD HH:MM – Zwischenstand
+### Aktuelles Ziel
+### Bereits erledigt
+### Claude Code
+### Aktueller technischer Stand
+### Entscheidungen
+### Probleme und Risiken
+### Manuelle Schritte
+### Nächster Schritt
+</script>
+
+<script>
+/* ── Quantus Projekt: Cockpit-Modul ─────────────────────────────────────── */
+(function(){
+  "use strict";
+
+  function qpDefaultBase(){
+    var el = document.getElementById("quantusBasePromptDefault");
+    return el ? el.textContent.replace(/^\s+/, "").replace(/\s+$/, "") : "";
+  }
+
+  function qpState(){
+    var d = APP.state.data;
+    if (!d.quantusProject || typeof d.quantusProject !== "object") d.quantusProject = {};
+    var qp = d.quantusProject;
+    if (typeof qp.basePrompt !== "string") qp.basePrompt = qpDefaultBase();
+    if (typeof qp.spec !== "string") qp.spec = "";
+    if (!Array.isArray(qp.log)) qp.log = [];
+    return qp;
+  }
+  window.qpState = qpState;
+
+  // Baustein: vollständiger Arbeitsauftrag = Grundprompt + Spezifikation
+  function qpComposed(){
+    var qp = qpState();
+    var base = (qp.basePrompt || "").trim();
+    var spec = (qp.spec || "").trim();
+    if (!spec) return base;
+    return base + "\n\n---\n\n## Spezifikation (aktueller Auftrag)\n" + spec;
+  }
+  window.qpComposed = qpComposed;
+
+  function qpLog(text){
+    var qp = qpState();
+    qp.log.unshift({ ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim() });
+    if (qp.log.length > 500) qp.log.length = 500;
+  }
+
+  function qpCopy(text){
+    text = String(text == null ? "" : text);
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      return navigator.clipboard.writeText(text).catch(function(){ return qpCopyFallback(text); });
+    }
+    return Promise.resolve(qpCopyFallback(text));
+  }
+  function qpCopyFallback(text){
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand("copy"); document.body.removeChild(ta);
+    } catch(e){}
+  }
+
+  // Persistenz aus den Textfeldern (oninput)
+  window.qpSetBase = function(v){ qpState().basePrompt = v; scheduleSave(); };
+  window.qpSetSpec = function(v){ qpState().spec = v; scheduleSave(); };
+
+  function fmtTs(iso){
+    try { return new Date(iso).toLocaleString("de-CH", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }); }
+    catch(e){ return iso || ""; }
+  }
+
+  window.viewQuantusProject = function(){
+    var qp = qpState();
+    var e = (typeof esc === "function") ? esc : function(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[c]; }); };
+
+    var updates = Object.values(APP.state.data.entities.updates || {});
+    var open = updates.filter(function(u){ return !u.checked && u.status !== "done"; })
+      .sort(function(a,b){ return String(b.createdAt||"").localeCompare(String(a.createdAt||"")); });
+    var doneCount = updates.length - open.length;
+
+    var ideas = Object.values(APP.state.data.entities.ideas || {})
+      .sort(function(a,b){ return String(b.createdAt||"").localeCompare(String(a.createdAt||"")); }).slice(0, 6);
+
+    var specLen = (qp.spec || "").trim().length;
+
+    var updatesHtml = open.length
+      ? open.map(function(u){
+          return '<div class="card" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-bottom:8px">'
+            + '<button class="btn sm" title="Als erledigt markieren" data-action="complete-update" data-id="' + e(u.id) + '" style="flex:none">✓</button>'
+            + '<div style="flex:1;min-width:0">'
+            +   '<div style="font-weight:500">' + e(u.text || "(ohne Titel)") + '</div>'
+            +   '<div class="text-muted mini" style="margin-top:2px">' + e(u.category || "general") + (u.priority && u.priority !== "normal" ? " · " + e(u.priority) : "") + '</div>'
+            + '</div>'
+            + '<button class="btn sm ghost" title="Löschen" data-action="delete-update" data-id="' + e(u.id) + '" style="flex:none">🗑</button>'
+            + '</div>';
+        }).join("")
+      : '<div class="text-muted" style="padding:12px 4px">Keine offenen Updates. 🎉</div>';
+
+    var ideasHtml = ideas.length
+      ? ideas.map(function(i){
+          return '<div class="pill sm" style="display:inline-flex;max-width:100%;margin:0 6px 6px 0" title="' + e(i.title || i.text || "") + '">💡 ' + e((i.title || i.text || "").slice(0, 60)) + '</div>';
+        }).join("")
+      : '<div class="text-muted mini" style="margin-bottom:6px">Noch keine Ideen erfasst.</div>';
+
+    var logHtml = qp.log.length
+      ? qp.log.slice(0, 60).map(function(entry, i){
+          return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div class="text-muted mini" style="flex:none;width:118px;font-variant-numeric:tabular-nums">' + e(fmtTs(entry.ts)) + '</div>'
+            + '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>'
+            + '<button class="btn sm ghost" title="Eintrag löschen" data-action="qp-log-del" data-idx="' + i + '" style="flex:none">✕</button>'
+            + '</div>';
+        }).join("")
+      : '<div class="text-muted mini" style="padding:8px 0">Noch keine Einträge.</div>';
+
+    return ''
+      + '<div class="page-header"><h1>🛠️ Quantus Projekt</h1>'
+      +   '<p class="text-muted">Quantus mit Quantus weiterentwickeln — Grundprompt + Spezifikation, Updates, Logbuch und Ideen an einem Ort.</p>'
+      + '</div>'
+
+      // ── Prompt zusammenstellen ──
+      + '<div class="card" style="padding:16px;margin-bottom:16px">'
+      +   '<div class="flex justify-between items-center" style="margin-bottom:10px">'
+      +     '<h3 style="margin:0">🧩 Arbeitsauftrag zusammenstellen</h3>'
+      +     '<span class="text-muted mini">Grundprompt wird beim Kopieren automatisch mitgegeben</span>'
+      +   '</div>'
+      +   '<label style="display:block;font-weight:600;margin-bottom:4px">Spezifikation für Claude Code</label>'
+      +   '<textarea id="qpSpec" oninput="window.qpSetSpec(this.value)" placeholder="Nur die Spezifikation eintragen — was soll umgesetzt werden? Der Grundprompt wird automatisch davorgesetzt." '
+      +     'style="width:100%;min-height:160px;resize:vertical;font-family:inherit;line-height:1.5">' + e(qp.spec) + '</textarea>'
+      +   '<div class="flex items-center" style="gap:10px;margin-top:10px;flex-wrap:wrap">'
+      +     '<button class="btn primary" data-action="qp-copy-all">📋 Alles kopieren (Grundprompt + Spezifikation)</button>'
+      +     '<button class="btn sm" data-action="qp-copy-spec">Nur Spezifikation kopieren</button>'
+      +     '<span class="text-muted mini">' + specLen + ' Zeichen Spezifikation</span>'
+      +   '</div>'
+      +   '<details style="margin-top:14px">'
+      +     '<summary style="cursor:pointer;font-weight:600">Grundprompt anzeigen / bearbeiten</summary>'
+      +     '<textarea id="qpBase" oninput="window.qpSetBase(this.value)" '
+      +       'style="width:100%;min-height:280px;resize:vertical;margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5">' + e(qp.basePrompt) + '</textarea>'
+      +     '<div style="margin-top:8px"><button class="btn sm ghost" data-action="qp-reset-base">↺ Grundprompt auf Standard zurücksetzen</button></div>'
+      +   '</details>'
+      + '</div>'
+
+      + '<div class="flex" style="gap:16px;flex-wrap:wrap;align-items:flex-start">'
+
+      // ── Updates ──
+      +   '<div class="card" style="padding:16px;flex:1 1 340px;min-width:300px">'
+      +     '<div class="flex justify-between items-center" style="margin-bottom:10px">'
+      +       '<h3 style="margin:0">🔧 Updates</h3>'
+      +       '<button class="btn sm primary" data-action="create-update-modal">＋ Neu</button>'
+      +     '</div>'
+      +     '<div class="text-muted mini" style="margin-bottom:10px">' + open.length + ' offen · ' + doneCount + ' erledigt</div>'
+      +     updatesHtml
+      +     '<div style="margin-top:8px"><a class="btn sm ghost" href="#/updates">Alle Updates öffnen →</a></div>'
+      +   '</div>'
+
+      // ── Logbuch ──
+      +   '<div class="card" style="padding:16px;flex:2 1 460px;min-width:320px">'
+      +     '<h3 style="margin:0 0 10px">📓 Logbuch</h3>'
+      +     '<div class="flex" style="gap:8px;margin-bottom:10px">'
+      +       '<input id="qpLogInput" type="text" placeholder="Zwischenstand / Änderung notieren…" style="flex:1;min-width:0" '
+      +         'onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qp-log-add]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +       '<button class="btn" data-action="qp-log-add">Eintragen</button>'
+      +     '</div>'
+      +     '<div style="max-height:360px;overflow:auto">' + logHtml + '</div>'
+      +   '</div>'
+
+      + '</div>'
+
+      // ── Ideen ──
+      + '<div class="card" style="padding:16px;margin-top:16px">'
+      +   '<div class="flex justify-between items-center" style="margin-bottom:10px">'
+      +     '<h3 style="margin:0">💡 Ideen für Anpassungen</h3>'
+      +     '<a class="btn sm ghost" href="#/ideas">Alle Ideen →</a>'
+      +   '</div>'
+      +   '<div style="margin-bottom:10px">' + ideasHtml + '</div>'
+      +   '<div class="flex" style="gap:8px">'
+      +     '<input id="qpIdeaInput" type="text" placeholder="Neue Idee für Quantus…" style="flex:1;min-width:0" '
+      +       'onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qp-add-idea]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +     '<button class="btn" data-action="qp-add-idea">＋ Idee</button>'
+      +   '</div>'
+      + '</div>';
+  };
+
+  // ══ Projekt-gebundenes Cockpit (PRJ-UCHWW) ══════════════════════════════
+  // Gleiche Funktion wie das Modul, aber die Daten (Grundprompt, Spezifikation,
+  // Logbuch) leben am Projekt unter p._custom.quantusDev — so ist alles an das
+  // Projekt PRJ-UCHWW gebunden.
+  function qppState(pid){
+    var p = APP.state.data.entities.projects[pid];
+    if (!p) return null;
+    if (!p._custom || typeof p._custom !== "object") p._custom = {};
+    if (!p._custom.quantusDev || typeof p._custom.quantusDev !== "object") p._custom.quantusDev = {};
+    var qd = p._custom.quantusDev;
+    if (typeof qd.basePrompt !== "string") qd.basePrompt = qpDefaultBase();
+    if (typeof qd.spec !== "string") qd.spec = "";
+    if (!Array.isArray(qd.log)) qd.log = [];
+    return qd;
+  }
+  function qppComposed(qd){
+    var base = (qd.basePrompt || "").trim(), spec = (qd.spec || "").trim();
+    if (!spec) return base;
+    return base + "\n\n---\n\n## Spezifikation (aktueller Auftrag)\n" + spec;
+  }
+  function qppLog(qd, text){
+    qd.log.unshift({ ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim() });
+    if (qd.log.length > 500) qd.log.length = 500;
+  }
+  window.qppSet = function(pid, field, val){ var qd = qppState(pid); if (!qd) return; if (field === "base") qd.basePrompt = val; else qd.spec = val; scheduleSave(); };
+
+  window.renderCustom_PRJUCHWW = function(id, p){
+    var qd = qppState(id);
+    if (!qd) return "";
+    var e = (typeof esc === "function") ? esc : function(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[c]; }); };
+
+    var updates = Object.values(APP.state.data.entities.updates || {});
+    var open = updates.filter(function(u){ return !u.checked && u.status !== "done"; })
+      .sort(function(a,b){ return String(b.createdAt||"").localeCompare(String(a.createdAt||"")); });
+    var doneCount = updates.length - open.length;
+
+    var ideas = Object.values(APP.state.data.entities.ideas || {})
+      .filter(function(i){ return (i.linkedProjects||[]).indexOf(id) >= 0; })
+      .sort(function(a,b){ return String(b.createdAt||"").localeCompare(String(a.createdAt||"")); }).slice(0, 8);
+
+    function fmtTs(iso){ try { return new Date(iso).toLocaleString("de-CH", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }); } catch(x){ return iso || ""; } }
+
+    var updatesHtml = open.length
+      ? open.map(function(u){
+          return '<div class="card" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-bottom:8px">'
+            + '<button class="btn sm" title="Als erledigt markieren" data-action="complete-update" data-id="' + e(u.id) + '" style="flex:none">✓</button>'
+            + '<div style="flex:1;min-width:0"><div style="font-weight:500">' + e(u.text || "(ohne Titel)") + '</div>'
+            + '<div class="text-muted mini" style="margin-top:2px">' + e(u.category || "general") + (u.priority && u.priority !== "normal" ? " · " + e(u.priority) : "") + '</div></div>'
+            + '<button class="btn sm ghost" title="Löschen" data-action="delete-update" data-id="' + e(u.id) + '" style="flex:none">🗑</button>'
+            + '</div>';
+        }).join("")
+      : '<div class="text-muted" style="padding:12px 4px">Keine offenen Updates. 🎉</div>';
+
+    var ideasHtml = ideas.length
+      ? ideas.map(function(i){ return '<div class="pill sm" style="display:inline-flex;max-width:100%;margin:0 6px 6px 0" title="' + e(i.title || i.content || i.text || "") + '">💡 ' + e((i.title || i.content || i.text || "").slice(0, 60)) + '</div>'; }).join("")
+      : '<div class="text-muted mini" style="margin-bottom:6px">Noch keine Ideen für dieses Projekt.</div>';
+
+    var logHtml = qd.log.length
+      ? qd.log.slice(0, 60).map(function(entry, i){
+          return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div class="text-muted mini" style="flex:none;width:118px;font-variant-numeric:tabular-nums">' + e(fmtTs(entry.ts)) + '</div>'
+            + '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>'
+            + '<button class="btn sm ghost" title="Eintrag löschen" data-action="qpp-log-del" data-pid="' + e(id) + '" data-idx="' + i + '" style="flex:none">✕</button>'
+            + '</div>';
+        }).join("")
+      : '<div class="text-muted mini" style="padding:8px 0">Noch keine Einträge.</div>';
+
+    var specLen = (qd.spec || "").trim().length;
+
+    return ''
+      + '<div style="margin-top:16px">'
+      + '<div class="card" style="padding:16px;margin-bottom:16px">'
+      +   '<div class="flex justify-between items-center" style="margin-bottom:10px">'
+      +     '<h3 style="margin:0">🛠️ Quantus-Weiterentwicklung</h3>'
+      +     '<span class="text-muted mini">Grundprompt wird beim Kopieren automatisch mitgegeben</span>'
+      +   '</div>'
+      +   '<label style="display:block;font-weight:600;margin-bottom:4px">Spezifikation für Claude Code</label>'
+      +   '<textarea id="qppSpec" oninput="window.qppSet(\'' + e(id) + '\',\'spec\',this.value)" placeholder="Nur die Spezifikation eintragen — was soll umgesetzt werden? Der Grundprompt wird automatisch davorgesetzt." style="width:100%;min-height:160px;resize:vertical;font-family:inherit;line-height:1.5">' + e(qd.spec) + '</textarea>'
+      +   '<div class="flex items-center" style="gap:10px;margin-top:10px;flex-wrap:wrap">'
+      +     '<button class="btn primary" data-action="qpp-copy-all" data-pid="' + e(id) + '">📋 Alles kopieren (Grundprompt + Spezifikation)</button>'
+      +     '<button class="btn sm" data-action="qpp-copy-spec" data-pid="' + e(id) + '">Nur Spezifikation kopieren</button>'
+      +     '<span class="text-muted mini">' + specLen + ' Zeichen Spezifikation</span>'
+      +   '</div>'
+      +   '<details style="margin-top:14px">'
+      +     '<summary style="cursor:pointer;font-weight:600">Grundprompt anzeigen / bearbeiten</summary>'
+      +     '<textarea id="qppBase" oninput="window.qppSet(\'' + e(id) + '\',\'base\',this.value)" style="width:100%;min-height:280px;resize:vertical;margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5">' + e(qd.basePrompt) + '</textarea>'
+      +     '<div style="margin-top:8px"><button class="btn sm ghost" data-action="qpp-reset-base" data-pid="' + e(id) + '">↺ Grundprompt auf Standard zurücksetzen</button></div>'
+      +   '</details>'
+      + '</div>'
+      + '<div class="flex" style="gap:16px;flex-wrap:wrap;align-items:flex-start">'
+      +   '<div class="card" style="padding:16px;flex:1 1 340px;min-width:300px">'
+      +     '<div class="flex justify-between items-center" style="margin-bottom:10px"><h3 style="margin:0">🔧 Updates</h3><button class="btn sm primary" data-action="create-update-modal">＋ Neu</button></div>'
+      +     '<div class="text-muted mini" style="margin-bottom:10px">' + open.length + ' offen · ' + doneCount + ' erledigt</div>'
+      +     updatesHtml
+      +     '<div style="margin-top:8px"><a class="btn sm ghost" href="#/updates">Alle Updates öffnen →</a></div>'
+      +   '</div>'
+      +   '<div class="card" style="padding:16px;flex:2 1 460px;min-width:320px">'
+      +     '<h3 style="margin:0 0 10px">📓 Logbuch</h3>'
+      +     '<div class="flex" style="gap:8px;margin-bottom:10px">'
+      +       '<input id="qppLogInput" type="text" placeholder="Zwischenstand / Änderung notieren…" style="flex:1;min-width:0" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qpp-log-add]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +       '<button class="btn" data-action="qpp-log-add" data-pid="' + e(id) + '">Eintragen</button>'
+      +     '</div>'
+      +     '<div style="max-height:360px;overflow:auto">' + logHtml + '</div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="card" style="padding:16px;margin-top:16px">'
+      +   '<div class="flex justify-between items-center" style="margin-bottom:10px"><h3 style="margin:0">💡 Ideen für Anpassungen</h3><a class="btn sm ghost" href="#/ideas">Alle Ideen →</a></div>'
+      +   '<div style="margin-bottom:10px">' + ideasHtml + '</div>'
+      +   '<div class="flex" style="gap:8px">'
+      +     '<input id="qppIdeaInput" type="text" placeholder="Neue Idee für Quantus…" style="flex:1;min-width:0" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qpp-add-idea]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +     '<button class="btn" data-action="qpp-add-idea" data-pid="' + e(id) + '">＋ Idee</button>'
+      +   '</div>'
+      + '</div>'
+      + '</div>';
+  };
+
+  // ── Aktionen: eigener handleClick-Wrapper (Muster wie die v-Wrapper) ──
+  var __qp_prev_handleClick = window.handleClick;
+  window.handleClick = function(ev){
+    var el = ev && ev.target && ev.target.closest ? ev.target.closest("[data-action]") : null;
+    if (!el) return __qp_prev_handleClick ? __qp_prev_handleClick(ev) : undefined;
+    var action = el.dataset.action;
+
+    if (action === "qp-copy-all"){
+      ev.preventDefault();
+      var full = qpComposed();
+      qpCopy(full).then(function(){
+        var qp = qpState();
+        var spec = (qp.spec || "").trim();
+        qpLog("Arbeitsauftrag kopiert" + (spec ? " — " + spec.split("\n")[0].slice(0, 80) : " (nur Grundprompt)"));
+        scheduleSave();
+        toast("ok", "Kopiert", "Grundprompt + Spezifikation in der Zwischenablage");
+        render();
+      });
+      return;
+    }
+    if (action === "qp-copy-spec"){
+      ev.preventDefault();
+      qpCopy((qpState().spec || "").trim());
+      toast("ok", "Kopiert", "Spezifikation in der Zwischenablage");
+      return;
+    }
+    if (action === "qp-reset-base"){
+      ev.preventDefault();
+      if (!confirm("Grundprompt auf den Standardinhalt zurücksetzen? Deine Änderungen am Grundprompt gehen verloren.")) return;
+      qpState().basePrompt = qpDefaultBase();
+      scheduleSave();
+      toast("ok", "Zurückgesetzt", "Grundprompt auf Standard gesetzt");
+      render();
+      return;
+    }
+    if (action === "qp-log-add"){
+      ev.preventDefault();
+      var inp = document.getElementById("qpLogInput");
+      var txt = inp ? inp.value.trim() : "";
+      if (!txt){ toast("warn", "Leer", "Bitte einen Text eingeben"); return; }
+      qpLog(txt);
+      scheduleSave();
+      render();
+      return;
+    }
+    if (action === "qp-log-del"){
+      ev.preventDefault();
+      var idx = parseInt(el.dataset.idx, 10);
+      var qp = qpState();
+      if (!isNaN(idx) && idx >= 0 && idx < qp.log.length){ qp.log.splice(idx, 1); scheduleSave(); render(); }
+      return;
+    }
+    // ── Projekt-gebundenes Cockpit (PRJ-UCHWW) ──
+    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-add-idea"){
+      ev.preventDefault();
+      var pid = el.dataset.pid;
+      var p = pid && APP.state.data.entities.projects ? APP.state.data.entities.projects[pid] : null;
+      var qd = window.qppSet ? qppState(pid) : null;
+      if (!p || !qd){ toast("err", "Projekt fehlt", "Projekt nicht gefunden"); return; }
+
+      if (action === "qpp-copy-all"){
+        qpCopy(qppComposed(qd)).then(function(){
+          var spec = (qd.spec || "").trim();
+          qppLog(qd, "Arbeitsauftrag kopiert" + (spec ? " — " + spec.split("\n")[0].slice(0, 80) : " (nur Grundprompt)"));
+          scheduleSave();
+          toast("ok", "Kopiert", "Grundprompt + Spezifikation in der Zwischenablage");
+          render();
+        });
+        return;
+      }
+      if (action === "qpp-copy-spec"){ qpCopy((qd.spec || "").trim()); toast("ok", "Kopiert", "Spezifikation in der Zwischenablage"); return; }
+      if (action === "qpp-reset-base"){
+        if (!confirm("Grundprompt auf den Standardinhalt zurücksetzen? Deine Änderungen am Grundprompt gehen verloren.")) return;
+        qd.basePrompt = qpDefaultBase(); scheduleSave(); toast("ok", "Zurückgesetzt", "Grundprompt auf Standard gesetzt"); render(); return;
+      }
+      if (action === "qpp-log-add"){
+        var lin = document.getElementById("qppLogInput"); var ltxt = lin ? lin.value.trim() : "";
+        if (!ltxt){ toast("warn", "Leer", "Bitte einen Text eingeben"); return; }
+        qppLog(qd, ltxt); scheduleSave(); render(); return;
+      }
+      if (action === "qpp-log-del"){
+        var qidx = parseInt(el.dataset.idx, 10);
+        if (!isNaN(qidx) && qidx >= 0 && qidx < qd.log.length){ qd.log.splice(qidx, 1); scheduleSave(); render(); }
+        return;
+      }
+      if (action === "qpp-add-idea"){
+        var iin = document.getElementById("qppIdeaInput"); var itx = iin ? iin.value.trim() : "";
+        if (!itx){ toast("warn", "Leer", "Bitte eine Idee eingeben"); return; }
+        if (typeof createEntity === "function"){
+          var newIdeaId = createEntity("idea", { title: itx, content: itx, status: "idea", tags: ["quantus"], source: "PRJ-UCHWW", linkedProjects: [pid] });
+          if (newIdeaId){ if (!Array.isArray(p.linkedIdeas)) p.linkedIdeas = []; if (p.linkedIdeas.indexOf(newIdeaId) < 0) p.linkedIdeas.push(newIdeaId); }
+        }
+        qppLog(qd, "Idee erfasst: " + itx.slice(0, 80)); scheduleSave();
+        toast("ok", "Idee erfasst", "Mit dem Projekt verknüpft"); render(); return;
+      }
+      return;
+    }
+
+    if (action === "db-sync-planner"){
+      ev.preventDefault();
+      var dpDate = (window._dbDate || (typeof todayYmd === "function" ? todayYmd() : ""));
+      var dpDb = APP.state.data.dailyBriefing || {};
+      var dpBlocks = ((dpDb.timeBlocks || {})[dpDate]) || [];
+      if (!dpBlocks.length){ toast("warn", "Leer", "Keine Blöcke zum Übertragen — plane zuerst den Tag."); return; }
+      if (typeof window.gcalSyncDailyPlanner !== "function"){ toast("err", "Nicht verfügbar", "Google-Calendar-Modul ist nicht geladen."); return; }
+      toast("info", "Daily Planner", "Übertrage in Google Calendar…");
+      window.gcalSyncDailyPlanner(dpDate, dpBlocks).then(function(ok){
+        if (ok){ dpDb.autoDailyPlanner = true; APP.state.data.dailyBriefing = dpDb; scheduleSave(); }
+      });
+      return;
+    }
+    if (action === "qp-add-idea"){
+      ev.preventDefault();
+      var iel = document.getElementById("qpIdeaInput");
+      var itxt = iel ? iel.value.trim() : "";
+      if (!itxt){ toast("warn", "Leer", "Bitte eine Idee eingeben"); return; }
+      if (typeof createEntity === "function"){
+        createEntity("idea", { title: itxt, content: itxt, status: "idea", tags: ["quantus"], source: "quantusproject" });
+      }
+      qpLog("Idee erfasst: " + itxt.slice(0, 80));
+      scheduleSave();
+      toast("ok", "Idee erfasst", "In der Ideensammlung gespeichert");
+      render();
+      return;
+    }
+
+    return __qp_prev_handleClick ? __qp_prev_handleClick(ev) : undefined;
+  };
 })();
 </script>
 
