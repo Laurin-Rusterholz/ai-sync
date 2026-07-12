@@ -27,7 +27,10 @@ const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 // Besides the basic calendarList/events/colors routes this also allows the
 // per-event sub-actions move + instances (and the events/quickAdd shortcut,
 // which matches the generic /events/<id> form) plus the top-level /freeBusy.
-const ALLOWED_PATH = /^\/(users\/me\/calendarList(\/[^/?#]+)?|calendars\/[^/?#]+(\/events(\/[^/?#]+(\/(move|instances))?)?)?|freeBusy|colors)$/;
+// The calendar-id segment is optional so `POST /calendars` can create a new
+// secondary calendar (e.g. the "Daily Planner" calendar written from the
+// Daily-Briefing day plan).
+const ALLOWED_PATH = /^\/(users\/me\/calendarList(\/[^/?#]+)?|calendars(\/[^/?#]+(\/events(\/[^/?#]+(\/(move|instances))?)?)?)?|freeBusy|colors)$/;
 
 async function callGoogle(method, fullUrl, bodyObj, token) {
   const init = {
