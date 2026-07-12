@@ -107513,7 +107513,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     B.filter = { text: "", tags: new Set(), colors: new Set() };
     B.editingId = null;
     B.pointers = new Map(); B.gesture = null; B.eraser = false;
-    B.noteColor = null; B._cycle = 0;
+    B.noteColor = null; B._cycle = 0; B._guides = [];
     injectCSS();
     buildOverlay();
     B.mounted = true;
@@ -107901,10 +107901,18 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     });
     // SVG-Grösse setzen
     const b = worldBounds();
+    let guideParts = "";
+    if (B._guides && B._guides.length) {
+      const gsw = 1 / (B.view.zoom || 1);
+      B._guides.forEach((g) => {
+        if (g.v) guideParts += `<line x1="${g.at}" y1="${b.y}" x2="${g.at}" y2="${b.y + b.h}" stroke="var(--sb-accent)" stroke-width="${gsw}" stroke-dasharray="${6 * gsw} ${4 * gsw}"></line>`;
+        else guideParts += `<line x1="${b.x}" y1="${g.at}" x2="${b.x + b.w}" y2="${g.at}" stroke="var(--sb-accent)" stroke-width="${gsw}" stroke-dasharray="${6 * gsw} ${4 * gsw}"></line>`;
+      });
+    }
     svg.setAttribute("width", b.w); svg.setAttribute("height", b.h);
     svg.style.left = b.x + "px"; svg.style.top = b.y + "px";
     svg.setAttribute("viewBox", `${b.x} ${b.y} ${b.w} ${b.h}`);
-    svg.innerHTML = defs + parts;
+    svg.innerHTML = defs + parts + guideParts;
   }
 
   function worldBounds() {
@@ -107928,13 +107936,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const el = document.getElementById("sbHint");
     if (!el) return;
     if (!B.board.notes.length) {
-      el.innerHTML = `Doppelklick auf die Fläche oder <b>＋ Post-it</b> zum Starten · <b>N</b> neues Post-it · Mausrad = Zoom`;
+      el.innerHTML = `Doppelklick oder <b>＋ Post-it</b> · <b>N</b> neu · Notiz wählen &amp; <b>tippen</b> zum Beschriften · von den <b>Rändern ziehen</b> verbindet (auf leere Fläche = neues verbundenes Post-it) · Mausrad = Zoom`;
       el.style.display = "block";
     } else if (B.tool === "draw") {
       el.innerHTML = B.eraser ? `🧽 <b>Radierer</b>: Striche antippen oder überfahren zum Löschen. <b>Esc</b> beendet.` : `✏️ <b>Zeichnen</b>: Mit Stift oder Finger malen. Zwei Finger = Verschieben &amp; Zoom. <b>Esc</b> beendet.`;
       el.style.display = "block";
     } else if (B.tool === "connect") {
-      el.innerHTML = `🔗 <b>Verbinden</b>: Von einem Post-it zu einem anderen ziehen. <b>Esc</b> beendet den Modus.`;
+      el.innerHTML = `🔗 <b>Verbinden</b>: Von einem Post-it zu einem anderen ziehen. Auf leere Fläche ziehen erzeugt ein neues verbundenes Post-it. <b>Esc</b> beendet.`;
       el.style.display = "block";
     } else {
       el.style.display = "none";
@@ -108002,6 +108010,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const id = noteEl.dataset.id;
       const n = noteById(id);
       if (B.tool === "connect") { startConnect(id, e); return; }
+      const wasSoleSelected = B.sel.size === 1 && B.sel.has(id);
       // Auswahl-Logik
       if (e.shiftKey || e.metaKey || e.ctrlKey) {
         if (B.sel.has(id)) B.sel.delete(id); else B.sel.add(id);
@@ -108014,7 +108023,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       }
       renderNotes();
       if (!n || n.locked) return;
-      startDrag(e);
+      startDrag(e, wasSoleSelected);
       return;
     }
 
@@ -108026,15 +108035,41 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     }
   }
 
-  function startDrag(e) {
+  function computeSnap(items) {
+    const zoom = B.view.zoom || 1;
+    const TH = 7 / zoom;
+    const movedIds = new Set(items.map((it) => it.n.id));
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    items.forEach(({ n, px, py }) => {
+      minX = Math.min(minX, px); minY = Math.min(minY, py);
+      maxX = Math.max(maxX, px + (n.w || NOTE_W)); maxY = Math.max(maxY, py + (n.h || NOTE_H));
+    });
+    const movVs = [minX, (minX + maxX) / 2, maxX];
+    const movHs = [minY, (minY + maxY) / 2, maxY];
+    let bestDX = null, bestDY = null, gx = null, gy = null;
+    B.board.notes.forEach((o) => {
+      if (movedIds.has(o.id)) return;
+      const vlines = [o.x, o.x + (o.w || NOTE_W) / 2, o.x + (o.w || NOTE_W)];
+      const hlines = [o.y, o.y + (o.h || NOTE_H) / 2, o.y + (o.h || NOTE_H)];
+      movVs.forEach((mv) => vlines.forEach((vl) => { const dd = vl - mv; if (Math.abs(dd) <= TH && (bestDX === null || Math.abs(dd) < Math.abs(bestDX))) { bestDX = dd; gx = vl; } }));
+      movHs.forEach((mh) => hlines.forEach((hl) => { const dd = hl - mh; if (Math.abs(dd) <= TH && (bestDY === null || Math.abs(dd) < Math.abs(bestDY))) { bestDY = dd; gy = hl; } }));
+    });
+    const guides = [];
+    if (gx !== null) guides.push({ v: true, at: gx });
+    if (gy !== null) guides.push({ v: false, at: gy });
+    return { dx: bestDX || 0, dy: bestDY || 0, guides };
+  }
+  function startDrag(e, wasSoleSelected) {
     const notes = selectedNotes().filter((n) => !n.locked);
     if (!notes.length) return;
     pushHistory();
     B.drag = {
       type: "move", pointerId: e.pointerId,
       startX: e.clientX, startY: e.clientY, moved: false,
+      wasSoleSelected: !!wasSoleSelected,
       items: notes.map((n) => ({ n, ox: n.x, oy: n.y })),
     };
+    notes.forEach((n) => { const el = noteElById(n.id); if (el) el.classList.add("dragging"); });
     bindDrag();
   }
 
@@ -108133,14 +108168,17 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (d.type === "draw") { const w = screenToWorld(e.clientX, e.clientY); d.stroke.points.push([Math.round(w.x), Math.round(w.y)]); renderConnections(); return; }
     if (d.type === "erase") { eraseAtClient(e.clientX, e.clientY); return; }
     if (d.type === "move") {
-      const dx = (e.clientX - d.startX) / B.view.zoom;
-      const dy = (e.clientY - d.startY) / B.view.zoom;
+      const rawdx = (e.clientX - d.startX) / B.view.zoom;
+      const rawdy = (e.clientY - d.startY) / B.view.zoom;
       if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) > 3) d.moved = true;
-      d.items.forEach(({ n, ox, oy }) => {
-        n.x = ox + dx; n.y = oy + dy;
+      const items = d.items.map(({ n, ox, oy }) => ({ n, px: ox + rawdx, py: oy + rawdy }));
+      const snap = e.altKey ? { dx: 0, dy: 0, guides: [] } : computeSnap(items);
+      items.forEach(({ n, px, py }) => {
+        n.x = px + snap.dx; n.y = py + snap.dy;
         const el = noteElById(n.id);
         if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
       });
+      B._guides = snap.guides;
       renderConnections();
     } else if (d.type === "resize") {
       const dw = (e.clientX - d.startX) / B.view.zoom;
@@ -108192,11 +108230,14 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     }
     if (d.type === "erase") { B._eraseHistory = false; persist(); B.drag = null; return; }
     if (d.type === "move") {
+      B._guides = [];
+      d.items.forEach(({ n }) => { const el = noteElById(n.id); if (el) el.classList.remove("dragging"); });
       if (d.moved) {
-        d.items.forEach(({ n }) => { n.x = Math.round(n.x / GRID) * GRID; n.y = Math.round(n.y / GRID) * GRID; n.updatedAt = nowIso(); });
+        d.items.forEach(({ n }) => { n.x = Math.round(n.x); n.y = Math.round(n.y); n.updatedAt = nowIso(); });
         renderNotes(); renderConnections(); persist();
       } else {
         B.undoStack.pop(); // kein echter Move → History-Eintrag verwerfen
+        if (d.wasSoleSelected && d.items.length === 1 && !d.items[0].n.locked) beginEdit(d.items[0].n.id);
       }
     } else if (d.type === "resize") {
       d.n.updatedAt = nowIso();
@@ -108212,9 +108253,20 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         pushHistory();
         B.board.connections.push({ id: uid("conn"), from: d.from, to: d.hoverTarget, style: "curved", color: "#8a94a6", width: 2, arrow: "end", label: "" });
         persist();
-      }
+        renderConnections();
+      } else if (d.cur) {
+        const src = noteById(d.from);
+        const far = !src || d.cur.x < src.x - 20 || d.cur.x > src.x + (src.w || NOTE_W) + 20 || d.cur.y < src.y - 20 || d.cur.y > src.y + (src.h || NOTE_H) + 20;
+        if (far) {
+          pushHistory();
+          const nn = addNote({ x: Math.round((d.cur.x - NOTE_W / 2) / GRID) * GRID, y: Math.round((d.cur.y - NOTE_H / 2) / GRID) * GRID, color: src ? src.color : undefined });
+          B.board.connections.push({ id: uid("conn"), from: d.from, to: nn.id, style: "curved", color: "#8a94a6", width: 2, arrow: "end", label: "" });
+          B.sel = new Set([nn.id]);
+          persist(); renderNotes(); renderConnections();
+          beginEdit(nn.id);
+        } else { renderConnections(); }
+      } else { renderConnections(); }
       B.drag = null;
-      renderConnections();
     }
     B.drag = null;
   }
@@ -108266,7 +108318,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   }
 
   // ════════════════════════════ TEXT-EDIT ══════════════════════════════════
-  function beginEdit(id) {
+  function beginEdit(id, startChar) {
+    if (B.editingId === id) return;
     const n = noteById(id);
     if (!n || n.locked) return;
     B.editingId = id;
@@ -108275,7 +108328,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const body = el.querySelector(".sb-note-body");
     body.setAttribute("contenteditable", "true");
     body.classList.add("editing");
-    body.textContent = n.text || "";
+    body.textContent = startChar ? ((n.text || "") + startChar) : (n.text || "");
     el.classList.add("editing");
     // Fokus + Caret ans Ende
     setTimeout(() => {
@@ -108855,6 +108908,10 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (mod && (e.key === "x" || e.key === "X")) { copySelected(true); return; }
     if (mod && (e.key === "v" || e.key === "V")) { pasteInternal(); return; }
     if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteSelected(); return; }
+    if (!mod && !e.altKey && e.key.length === 1 && e.key !== " " && B.sel.size === 1) {
+      const _id = [...B.sel][0]; const _n = noteById(_id);
+      if (_n && !_n.locked) { e.preventDefault(); beginEdit(_id, e.key); return; }
+    }
     if ((e.key === "n" || e.key === "N") && !mod) { e.preventDefault(); pushHistory(); const n = addNote({}); B.sel = new Set([n.id]); renderNotes(); persist(); beginEdit(n.id); return; }
     if (e.key === "Enter" && B.sel.size === 1 && !mod) { e.preventDefault(); beginEdit([...B.sel][0]); return; }
     // Pfeiltasten: nudge
@@ -108927,7 +108984,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-note.sel{outline:2.5px solid var(--sb-accent);outline-offset:2px}
       .sb-note.dim{opacity:.22}
       .sb-note.locked{cursor:not-allowed}
-      .sb-note.conn-target{outline:3px dashed var(--sb-accent);outline-offset:2px}
+      .sb-note.conn-target{outline:3px solid var(--sb-accent);outline-offset:2px;box-shadow:0 0 0 4px color-mix(in oklab,var(--sb-accent) 28%,transparent),0 6px 20px rgba(0,0,0,.4)}
+      .sb-note.dragging{box-shadow:0 14px 30px rgba(0,0,0,.55)!important;z-index:100000!important;cursor:grabbing}
       .sb-note.editing{cursor:text;box-shadow:0 6px 22px rgba(0,0,0,.5)}
       .sb-note-body{flex:1;display:flex;align-items:center;padding:12px 13px;line-height:1.32;word-break:break-word;white-space:pre-wrap;overflow:hidden;font-family:inherit}
       .sb-note-body.editing{cursor:text;outline:none;overflow:auto;align-items:flex-start;user-select:text}
@@ -108942,8 +109000,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-note-tags{position:absolute;bottom:4px;left:6px;right:6px;display:flex;gap:3px;flex-wrap:wrap;pointer-events:none}
       .sb-tag{font-size:9.5px;font-weight:700;background:rgba(0,0,0,.16);border-radius:6px;padding:1px 6px;color:inherit}
       .sb-anchors{position:absolute;inset:-8px;pointer-events:none}
-      .sb-anchor{position:absolute;width:11px;height:11px;border-radius:50%;background:var(--sb-accent);border:2px solid #fff;opacity:0;transition:opacity .12s;pointer-events:auto;cursor:crosshair}
-      .sb-note:hover .sb-anchor{opacity:.9}
+      .sb-anchor{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--sb-accent);border:2px solid #fff;opacity:0;transition:opacity .12s,transform .12s;pointer-events:auto;cursor:crosshair;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+      .sb-anchor:hover{transform:scale(1.35)!important}
+      .sb-note:hover .sb-anchor{opacity:1}
       .sb-anchor[data-anchor=t]{top:-6px;left:50%;transform:translateX(-50%)}
       .sb-anchor[data-anchor=b]{bottom:-6px;left:50%;transform:translateX(-50%)}
       .sb-anchor[data-anchor=l]{left:-6px;top:50%;transform:translateY(-50%)}

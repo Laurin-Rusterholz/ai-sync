@@ -54,7 +54,15 @@ nötig, da alles im bestehenden Daten-Blob mitreist.
   Unterstrichen/Durchgestrichen, Aufzählung.
 - **Aussehen**: 10 Post-it-Farben (Hintergrund + kontrastierende Textfarbe),
   Formen (Quadrat, Rechteck, „abgerissen").
-- **Anordnen**: Drag & Drop (Grid-Snap), Resize, Z-Order vor/zurück,
+- **Verschieben**: Drag & Drop mit **Smart-Guides** — beim Ziehen erscheinen
+  Ausrichtungslinien und die Notiz rastet an Kanten/Mitte anderer Post-its ein
+  (Alt gedrückt halten deaktiviert das Einrasten); „Lift"-Effekt beim Ziehen.
+- **Beschriften**: Doppelklick, **einfacher Klick auf eine bereits gewählte
+  Notiz**, oder eine gewählte Notiz einfach **lostippen** (Tippen-zum-Bearbeiten).
+- **Verbinden**: an den Rand-Ankerpunkten ziehen; Ziehen auf ein anderes
+  Post-it verbindet, Ziehen auf **leere Fläche erzeugt ein neues, direkt
+  verbundenes Post-it** (öffnet gleich den Texteditor).
+- **Anordnen**: Resize, Z-Order vor/zurück,
   Ausrichten & Verteilen (6 + 2 Modi), „In Raster anordnen", Clustern nach
   Farbe/Tag, Gruppieren/Gruppierung lösen.
 - **Verbinden**: Anchor-Punkte beim Hover oder Verbinden-Modus; Linien folgen
