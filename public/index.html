@@ -37593,7 +37593,7 @@ function viewOrgDetail(id) {
   
   // Tasks
   const tasks = Object.values(e.tasks).filter(t => 
-    t.organizationId === id || (o.linkedTasks || []).includes(t.id)
+    (t.organizationId === id || (o.linkedTasks || []).includes(t.id)) && t.status !== "done"
   );
   const tasksHtml = tasks.slice(0, 10).map(t => `
     <div class="list-item" data-action="open-slide" data-kind="task" data-id="${t.id}">
@@ -39391,7 +39391,7 @@ function viewGoalDetail(id) {
   
   const linkedTasks = Object.values(e.tasks).filter(t => (t.linkedGoals || []).includes(id));
   
-  const tasksHtml = linkedTasks.map(t => `
+  const tasksHtml = linkedTasks.filter(t => t.status !== "done").map(t => `
     <div class="list-item" style="display:flex;align-items:center">
       <div style="flex:1;display:flex;align-items:center;gap:8px;cursor:pointer" data-action="open-slide" data-kind="task" data-id="${t.id}">
         <div class="item-icon">${t.status === "done" ? "✅" : "⚪"}</div>
@@ -40426,7 +40426,7 @@ function viewStrategyDetail(id) {
   const linkedProjects = Object.values(e.projects).filter(p => (p.linkedStrategies || []).includes(s.id));
   const totalTime = linkedTasks.reduce((sum, t) => sum + getTaskSeconds(t.id), 0);
   
-  const tasksHtml = linkedTasks.map(t => `
+  const tasksHtml = linkedTasks.filter(t => t.status !== "done").map(t => `
     <div class="list-item" data-action="open-slide" data-kind="task" data-id="${t.id}">
       <div class="item-icon">${t.status === "done" ? "✅" : "⚪"}</div>
       <div class="item-body">
@@ -43646,7 +43646,7 @@ function viewWeekPlanning() {
       
       for (var j = 0; j < taskIds.length; j++) {
         var t = e.tasks[taskIds[j]];
-        if (t) {
+        if (t && t.status !== "done") {
           plannedMins += (t.estimatedMinutes || 30);
           tasksHtml += '<div class="day-task eisenhower-task" draggable="true" data-task-id="' + taskIds[j] + '" style="padding:8px;border:1px solid var(--border);border-radius:8px;margin-bottom:4px;cursor:grab;display:flex;justify-content:space-between;align-items:center" data-action="open-slide" data-kind="task" data-id="' + taskIds[j] + '">' +
             '<span class="name">' + esc(t.title) + '</span>' +
@@ -43705,7 +43705,7 @@ function viewWeekPlanning() {
       
       for (var j = 0; j < taskIds.length; j++) {
         var t = e.tasks[taskIds[j]];
-        if (t) {
+        if (t && t.status !== "done") {
           plannedMins += (t.estimatedMinutes || 30);
           tasksHtml += '<div class="day-task" style="padding:8px;border:1px solid var(--border);border-radius:8px;margin-bottom:4px;cursor:pointer" data-action="open-slide" data-kind="task" data-id="' + taskIds[j] + '">' +
             '<span class="name">' + esc(t.title) + '</span>' +
@@ -47501,7 +47501,7 @@ function viewMeetingDetail(id) {
   // ALLE linkedXxx Verknüpfungen als Chips
   const linkedTasksChips = (meeting.linkedTasks || []).map(tid => {
     const t = e.tasks?.[tid];
-    return t ? `<span class="entity-chip" style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--panel3);border-radius:6px;font-size:11px">
+    return (t && t.status !== "done") ? `<span class="entity-chip" style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--panel3);border-radius:6px;font-size:11px">
       <span style="cursor:pointer" data-action="open-slide" data-kind="task" data-id="${tid}">✅ ${esc(t.title?.slice(0,25))}</span>
       <button style="background:none;border:none;color:var(--muted);cursor:pointer;padding:0 2px;font-size:12px;line-height:1" data-action="unlink-entity" data-src-kind="meeting" data-src-id="${id}" data-tgt-kind="task" data-tgt-id="${tid}">✕</button>
     </span>` : "";
@@ -64908,7 +64908,7 @@ function initNoteFlow() {
     if (!container || !nfCurrentNote) return;
     
     var tasks = Object.values(APP.state.data.entities.tasks || {}).filter(function(t) {
-      return nfCurrentNote.linkedTasks?.includes(t.id);
+      return nfCurrentNote.linkedTasks?.includes(t.id) && t.status !== "done";
     });
     
     if (tasks.length === 0) {
@@ -90611,7 +90611,7 @@ console.log('📚 Leseliste geladen');
     if (mail.linkedTasks?.length) {
       const taskPills = mail.linkedTasks.map(tid => {
         const t = ents.tasks?.[tid];
-        if (!t) return "";
+        if (!t || t.status === "done") return "";
         const done = t.status === "done";
         return `<span class="mh-link-pill" onclick="navigate('tasks','${tid}')">
           ${done ? "✓" : "◯"} ${mhEsc(t.title || "Task")}
@@ -91354,7 +91354,7 @@ console.log('📚 Leseliste geladen');
     
     // Verknüpfungs-Listen aufbauen
     const linkedProjects = (p.linkedProjects || []).map(pid => mhData().projects?.[pid]).filter(Boolean);
-    const linkedTasks = (p.linkedTasks || []).map(tid => mhData().tasks?.[tid]).filter(Boolean);
+    const linkedTasks = (p.linkedTasks || []).map(tid => mhData().tasks?.[tid]).filter(t => t && t.status !== "done");
     const linkedNotes = (p.linkedNotes || []).map(nid => mhData().notes?.[nid]).filter(Boolean);
     const linkedMeetings = (p.linkedMeetings || []).map(mid => mhData().meetings?.[mid]).filter(Boolean);
     const linkedDecisions = (p.linkedDecisions || []).map(did => mhData().decisions?.[did]).filter(Boolean);
@@ -92694,7 +92694,7 @@ console.log('📚 Leseliste geladen');
     const persons = ents.persons || {};
     
     const attendees = (pr.attendeePersonIds || []).map(pid => persons[pid]).filter(Boolean);
-    const tasks = (pr.linkedTasks || []).map(tid => ents.tasks?.[tid]).filter(Boolean);
+    const tasks = (pr.linkedTasks || []).map(tid => ents.tasks?.[tid]).filter(t => t && t.status !== "done");
     const projects = (pr.linkedProjects || []).map(pid => ents.projects?.[pid]).filter(Boolean);
     
     return `<div class="pr-detail">
@@ -93633,7 +93633,7 @@ console.log('📚 Leseliste geladen');
     }).join("");
     
     const taskLinks = (step.linkedTasks || []).map(tid => {
-      const t = ents.tasks?.[tid]; if (!t) return "";
+      const t = ents.tasks?.[tid]; if (!t || t.status === "done") return "";
       return `<span class="wf-link-pill task" onclick="event.stopPropagation();navigate('tasks','${tid}')">${t.status === "done" ? "✓" : "◯"} ${wfEsc((t.title || "").slice(0, 30))}<button onclick="event.stopPropagation();wfRemoveLink('${w.id}','${step.id}','linkedTasks','${tid}')">×</button></span>`;
     }).join("");
     
