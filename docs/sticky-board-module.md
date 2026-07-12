@@ -81,6 +81,14 @@ nötig, da alles im bestehenden Daten-Blob mitreist.
   kopieren" (→ Notes-Collection).
 - **Canvas**: Pan (Leertaste/Mittelklick/Pan auf leerer Fläche), Zoom (Mausrad
   zum Cursor, `+`/`−`/`100%`), „Alles einpassen".
+- **HTML-Elemente**: `</> HTML` fügt ein Element ein, in das eigener HTML/CSS/
+  JS-Code eingegeben und **live gerendert** wird (isolierter `<iframe
+  sandbox="allow-scripts">`, keine externen Ressourcen/Netzwerk, kein Zugriff
+  aufs Elternfenster). Kopfzeile mit Bearbeiten (✎) und Interaktions-Toggle
+  (🖱️ — sonst ist das Element verschiebbar). Der Code-Editor bietet einen
+  „📋 Grundprompt"-Knopf, der einen KI-Prompt mit den exakten Element-Massen
+  und Format-Vorgaben in die Zwischenablage legt. Gespeichert als
+  `note.type="html"` + `note.html`.
 - **Zeichnen (Tablet/Stift)**: Freihand-Zeichenmodus (`✏️ Zeichnen`) mit
   Stiftfarbe und -dicke, Radierer (Striche antippen/überfahren), „Leeren".
   Strokes liegen in `board.drawings` und sind Teil von Undo/Redo.

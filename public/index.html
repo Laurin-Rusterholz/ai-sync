@@ -82110,7 +82110,7 @@ window.openResearchHubTicket=function(){openResearchHub()};
 <style>
 /* ── FAB ── */
 #qc-fab{
-  position:fixed;bottom:24px;right:24px;z-index:89000;
+  position:fixed;bottom:24px;right:24px;z-index:2147483647;
   width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;
   background:linear-gradient(135deg,var(--accent),var(--accent));
   box-shadow:0 4px 20px var(--accent-soft);
@@ -82124,7 +82124,7 @@ window.openResearchHubTicket=function(){openResearchHub()};
 
 /* ── Panel ── */
 #qc-panel{
-  position:fixed;bottom:92px;right:24px;z-index:89001;
+  position:fixed;bottom:92px;right:24px;z-index:2147483647;
   width:420px;max-height:min(640px,82vh);
   background:var(--panel);border:1px solid var(--border);
   border-radius:20px;overflow:hidden;
@@ -107452,6 +107452,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const vx = minX - pad, vy = minY - pad, vw = bw + pad * 2, vh = bh + pad * 2;
       const sw = Math.max(2, vw / 220);
       const rects = notes.slice(0, 150).map((n) => {
+        if (n.type === "html") return `<rect x="${n.x}" y="${n.y}" width="${n.w || 300}" height="${n.h || 220}" rx="10" fill="#334155"/><rect x="${n.x}" y="${n.y}" width="${n.w || 300}" height="22" rx="4" fill="#475569"/>`;
         const c = colorByKey(n.color);
         const bg = n.color && n.color[0] === "#" ? n.color : c.bg;
         return `<rect x="${n.x}" y="${n.y}" width="${n.w || NOTE_W}" height="${n.h || NOTE_H}" rx="10" fill="${bg}"/>`;
@@ -107748,6 +107749,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     return `
       <div class="sb-group">
         <button class="sb-btn sb-primary" data-sb="add" title="Neues Post-it (N)">＋ Post-it</button>
+        <button class="sb-btn" data-sb="addHtml" title="HTML-Element: eigener Code/Widget, live gerendert">&lt;/&gt; HTML</button>
         <button class="sb-btn sb-toggle" data-sb="bulk" id="sbBulkBtn" title="Bulk-Modus: Enter erzeugt neues Post-it">⤵ Bulk</button>
       </div>
       <div class="sb-group" id="sbColorGroup" title="Farbe">
@@ -107878,6 +107880,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // vollständig ins Post-it passt (Höhe UND Breite). Manuelle Grösse wird
   // respektiert.
   function fitNoteFont(el, n) {
+    if (n && n.type === "html") return;
     const body = el && el.querySelector(".sb-note-body");
     if (!body) return;
     if (n && n.fontSize !== "auto" && n.fontSize != null) { body.style.fontSize = n.fontSize + "px"; return; }
@@ -107910,6 +107913,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     wrap.innerHTML = B.board.notes.slice().sort((a, b) => (a.z || 0) - (b.z || 0)).map((n) => {
       const selected = B.sel.has(n.id);
       const dim = fActive && !matchesFilter(n);
+      if (n.type === "html") return renderHtmlNote(n, selected, dim);
       const c = colorByKey(n.color);
       const txt = n.textColor || c.text;
       const tagsHtml = (n.tags || []).length ? `<div class="sb-note-tags">${n.tags.map((t) => `<span class="sb-tag">${esc(t)}</span>`).join("")}</div>` : "";
@@ -107932,6 +107936,110 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       </div>`;
     }).join("");
     wrap.querySelectorAll(".sb-note").forEach((el) => { const n = noteById(el.dataset.id); if (n) fitNoteFont(el, n); });
+  }
+
+  const DEFAULT_HTML = '<style>body{margin:0;height:100%;display:flex;align-items:center;justify-content:center;background:#0f172a;color:#e2e8f0;font-family:system-ui}#c{font-size:34px;font-weight:600;font-variant-numeric:tabular-nums}</style><div id="c">--:--:--</div><script>function u(){var d=new Date();document.getElementById("c").textContent=d.toLocaleTimeString("de-CH");}u();setInterval(u,1000);<' + '/script>';
+
+  function htmlSrcdoc(html) {
+    const reset = '<style>*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;width:100%;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}</style>';
+    return reset + (html && html.trim() ? html : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8a94a6;font-size:12.5px">Leer — ✎ zum Bearbeiten</div>');
+  }
+
+  function renderHtmlNote(n, selected, dim) {
+    const src = htmlSrcdoc(n.html || "");
+    const tagsHtml = (n.tags || []).length ? `<div class="sb-note-tags">${n.tags.map((t) => `<span class="sb-tag">${esc(t)}</span>`).join("")}</div>` : "";
+    return `<div class="sb-note sb-note-html${selected ? " sel" : ""}${dim ? " dim" : ""}${n.locked ? " locked" : ""}" data-id="${n.id}" style="left:${n.x}px;top:${n.y}px;width:${n.w || 280}px;height:${n.h || 200}px;z-index:${n.z || 1}">
+      <div class="sb-html-bar" data-role="html-bar">
+        <span class="sb-html-tag">&lt;/&gt; HTML</span>
+        <span style="flex:1"></span>
+        <button class="sb-html-btn" data-role="html-interact" title="Interaktion an/aus (sonst verschiebbar)">🖱️</button>
+        <button class="sb-html-btn" data-role="html-edit" title="Code bearbeiten">✎</button>
+      </div>
+      <iframe class="sb-html-frame" data-role="html-frame" sandbox="allow-scripts" srcdoc="${esc(src)}"></iframe>
+      ${tagsHtml}
+      <div class="sb-anchors" data-role="anchors">
+        <span class="sb-anchor" data-anchor="t"></span>
+        <span class="sb-anchor" data-anchor="r"></span>
+        <span class="sb-anchor" data-anchor="b"></span>
+        <span class="sb-anchor" data-anchor="l"></span>
+      </div>
+      <div class="sb-resize" data-role="resize" style="color:var(--sb-muted)"></div>
+    </div>`;
+  }
+
+  function addHtmlElement() {
+    pushHistory();
+    const nn = addNote({ type: "html", w: 300, h: 220, color: "white", html: DEFAULT_HTML });
+    B.sel = new Set([nn.id]);
+    persist(); renderNotes();
+    openHtmlEditor(nn.id);
+  }
+
+  function toggleHtmlInteract(id) {
+    const el = noteElById(id);
+    if (el) el.classList.toggle("interacting");
+  }
+
+  function grundprompt(n) {
+    const w = n ? (n.w || 300) : 300, h = n ? ((n.h || 220) - 24) : 196;
+    return "Du erzeugst ein eigenstaendiges HTML-Snippet fuer ein HTML-Element auf einem Sticky-Board in Quantus.\n\n"
+      + "STRIKTE VORGABEN:\n"
+      + "- Zielgroesse EXAKT " + w + "px Breite x " + h + "px Hoehe. Der Code laeuft in <iframe sandbox=\"allow-scripts\">. Nutze width/height:100%, box-sizing:border-box, kein ungewolltes Scrollen.\n"
+      + "- VOLLSTAENDIG SELF-CONTAINED: nur inline <style> und <script>. KEINE externen CDNs, Fonts, Bilder-URLs, kein fetch/Netzwerk (Sandbox blockiert das).\n"
+      + "- Kein Zugriff aufs Elternfenster, kein localStorage/cookies (isolierte Origin).\n"
+      + "- Systemschriftart (font-family:system-ui). Inhalte sinnvoll zentrieren, auf die feste Groesse ausgelegt.\n"
+      + "- Datum/Zeit: JS Date im Browser des Nutzers, Locale de-CH, 24h-Format. Bei Berechnungen exakte, klar formatierte Ausgaben (z.B. HH:MM:SS, Tage/Stunden).\n"
+      + "- Gib NUR den HTML-Code aus (ab <style> oder <div>), ohne Erklaertext und ohne Markdown-Codefences.\n\n"
+      + "AUFGABE: ";
+  }
+  function copyGrundprompt(n) {
+    const t = grundprompt(n);
+    try { navigator.clipboard.writeText(t); toast("ok", "Grundprompt", "In Zwischenablage kopiert"); }
+    catch (e) { try { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("ok", "Grundprompt", "Kopiert"); } catch (e2) { toast("warn", "Grundprompt", "Kopieren nicht moeglich"); } }
+  }
+
+  function closeHtmlEditor() { const b = document.getElementById("sbHtmlEditor"); if (b) b.remove(); }
+  function openHtmlEditor(id) {
+    const n = noteById(id);
+    if (!n || n.type !== "html") return;
+    closeHtmlEditor();
+    const box = document.createElement("div");
+    box.id = "sbHtmlEditor";
+    box.className = "sb-html-editor";
+    box.innerHTML = `
+      <div class="sb-html-editor-panel">
+        <div class="sb-html-editor-head">
+          <span>&lt;/&gt; HTML-Element bearbeiten</span>
+          <span style="flex:1"></span>
+          <button class="sb-btn" data-hed="prompt" title="Grundprompt fuer KI in die Zwischenablage">📋 Grundprompt</button>
+          <button class="sb-btn sb-close" data-hed="cancel" title="Schliessen">✕</button>
+        </div>
+        <textarea class="sb-html-code" id="sbHtmlCode" spellcheck="false" placeholder="Eigenen HTML / CSS / JS-Code eingeben…"></textarea>
+        <div class="sb-html-editor-foot">
+          <span class="sb-html-hint">Läuft isoliert (sandbox). Nutzbare Fläche ca. ${(n.w || 300)}×${(n.h || 220) - 24}px · Strg/Cmd+Enter = Anwenden</span>
+          <span style="flex:1"></span>
+          <button class="sb-btn" data-hed="cancel">Abbrechen</button>
+          <button class="sb-btn sb-primary" data-hed="apply">✓ Anwenden</button>
+        </div>
+      </div>`;
+    (document.getElementById("sbOverlay") || document.body).appendChild(box);
+    const ta = box.querySelector("#sbHtmlCode");
+    ta.value = n.html || "";
+    setTimeout(() => { ta.focus(); }, 0);
+    const apply = () => { pushHistory(); n.html = ta.value; n.updatedAt = nowIso(); persist(); renderNotes(); closeHtmlEditor(); toast("ok", "HTML", "Aktualisiert"); };
+    box.onclick = (ev) => {
+      if (ev.target === box) { closeHtmlEditor(); return; }
+      const b = ev.target.closest("[data-hed]"); if (!b) return;
+      const act = b.dataset.hed;
+      if (act === "cancel") closeHtmlEditor();
+      else if (act === "apply") apply();
+      else if (act === "prompt") copyGrundprompt(n);
+    };
+    ta.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Escape") { ev.preventDefault(); closeHtmlEditor(); }
+      else if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); apply(); }
+    });
   }
 
   function renderNoteText(n) {
@@ -108088,6 +108196,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       return;
     }
     // Vote-Button
+    if (e.target.closest("[data-role='html-edit']") && noteEl) { openHtmlEditor(noteEl.dataset.id); return; }
+    if (e.target.closest("[data-role='html-interact']") && noteEl) { toggleHtmlInteract(noteEl.dataset.id); return; }
     if (e.target.closest("[data-role='vote']") && noteEl) {
       pushHistory();
       const n = noteById(noteEl.dataset.id);
@@ -108493,6 +108603,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         break;
       }
       case "add": { pushHistory(); const n = addNote({}); B.sel = new Set([n.id]); renderNotes(); persist(); beginEdit(n.id); break; }
+      case "addHtml": addHtmlElement(); break;
       case "bulk": B.board.bulkMode = !B.board.bulkMode; updateToolbarState(); persist(); toast("ok", "Bulk-Modus", B.board.bulkMode ? "An — Enter erzeugt neues Post-it" : "Aus"); break;
       case "bold": toggleFmt("bold"); break;
       case "italic": toggleFmt("italic"); break;
@@ -109095,6 +109206,22 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-note.conn-target{outline:3px solid var(--sb-accent);outline-offset:2px;box-shadow:0 0 0 4px color-mix(in oklab,var(--sb-accent) 28%,transparent),0 6px 20px rgba(0,0,0,.4)}
       .sb-note.dragging{box-shadow:0 14px 30px rgba(0,0,0,.55)!important;z-index:100000!important;cursor:grabbing}
       .sb-note.editing{cursor:text;box-shadow:0 6px 22px rgba(0,0,0,.5)}
+      .sb-note-html{background:#fff;overflow:hidden;flex-direction:column;border-radius:6px}
+      .sb-html-bar{display:flex;align-items:center;gap:4px;height:24px;padding:0 6px;background:var(--sb-panel2);border-bottom:1px solid var(--sb-border);flex-shrink:0;cursor:grab;user-select:none}
+      .sb-html-tag{font-size:10px;font-weight:700;color:var(--sb-muted);letter-spacing:.04em}
+      .sb-html-btn{border:0;background:transparent;color:var(--sb-text);cursor:pointer;font-size:12px;padding:1px 5px;border-radius:5px;line-height:1}
+      .sb-html-btn:hover{background:var(--sb-border)}
+      .sb-html-frame{flex:1;width:100%;border:0;background:#fff;pointer-events:none}
+      .sb-note-html.interacting .sb-html-frame{pointer-events:auto}
+      .sb-note-html.interacting .sb-html-bar{background:var(--sb-accent);color:#fff}
+      .sb-note-html.interacting .sb-html-tag{color:#fff}
+      .sb-html-editor{position:absolute;inset:0;z-index:60;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px}
+      .sb-html-editor-panel{width:min(760px,94%);max-height:88%;display:flex;flex-direction:column;background:var(--sb-panel);border:1px solid var(--sb-border);border-radius:12px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+      .sb-html-editor-head,.sb-html-editor-foot{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--sb-panel2)}
+      .sb-html-editor-head{border-bottom:1px solid var(--sb-border);font-weight:700;font-size:13px}
+      .sb-html-editor-foot{border-top:1px solid var(--sb-border)}
+      .sb-html-hint{font-size:11px;color:var(--sb-muted)}
+      .sb-html-code{flex:1;min-height:300px;background:var(--bg);color:var(--sb-text);border:0;padding:12px 14px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55;resize:none;outline:none;white-space:pre}
       .sb-note-body{flex:1;display:flex;align-items:center;padding:12px 13px;line-height:1.32;word-break:break-word;white-space:pre-wrap;overflow:hidden;font-family:inherit}
       .sb-note-body.editing{cursor:text;outline:none;overflow:auto;align-items:flex-start;user-select:text}
       .sb-note-body .sb-placeholder{opacity:.4;font-style:italic;font-weight:400}
