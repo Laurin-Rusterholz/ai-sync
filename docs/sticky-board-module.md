@@ -15,10 +15,18 @@ folgt dem Muster der bestehenden geteilten Blöcke `renderMeasuresBlock` /
   (Mini-Board mit Bounding-Box-Skalierung + Zähler) in die Detailansicht. Wird
   neben `renderMeasuresBlock(...)` in allen vier Views aufgerufen (guarded:
   `${window.renderStickyBoardBlock ? … : ''}`).
-- **`window.openStickyBoard(kind, id)`** — öffnet den Vollbild-Editor als Overlay
-  am `document.body`. Bewusst **ausserhalb** des `render()`-Zyklus, damit
+- **`window.openStickyBoard(kind, id)`** — öffnet den Editor als Overlay am
+  `document.body`. Bewusst **ausserhalb** des `render()`-Zyklus, damit
   Drag/Pan/Zoom nicht durch App-Re-Renders unterbrochen werden. Beim Schliessen
   wird `render()` einmal aufgerufen, um die Vorschau zu aktualisieren.
+  - **Split-Screen (Desktop, Standard ab Fensterbreite ≥ 1100px)**: öffnet als
+    rechtes Seitenpanel (halb/halb, per Divider resizable), startet unter der
+    38px-Tableiste (`#browserTabBar`, z-index 2147483600) und reflowt die App
+    via `body.sb-docked` auf die linke Hälfte → die Quantus-Tableiste und
+    Tab-Wechsel bleiben erreichbar. z-index im Split unter der Tableiste (1000).
+  - **Vollbild**: per Toolbar-Toggle (⇥/⛶) umschaltbar; deckt alles ab
+    (z-index 2147483646). Auf schmalen Screens immer Vollbild.
+  - Präferenz (`sbViewMode`) und Split-Breite (`sbSplitPx`) in localStorage.
 
 `kind` ∈ `{ task, project, strategy, concept }` → Collection über die interne
 `KIND_MAP` (identisch zu `MEASURE_ENTITY_MAP`).
