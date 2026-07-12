@@ -107491,6 +107491,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     penColor: "#e5765a",
     penWidth: 3,
     eraser: false,
+    noteColor: null,   // null = Auto (Farben rotieren), sonst fixierter Farb-Key für neue Post-its
+    _cycle: 0,
     pointers: new Map(),
     gesture: null,
   };
@@ -107511,6 +107513,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     B.filter = { text: "", tags: new Set(), colors: new Set() };
     B.editingId = null;
     B.pointers = new Map(); B.gesture = null; B.eraser = false;
+    B.noteColor = null; B._cycle = 0;
     injectCSS();
     buildOverlay();
     B.mounted = true;
@@ -107603,7 +107606,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       x: Math.round((center.x - NOTE_W / 2) / GRID) * GRID,
       y: Math.round((center.y - NOTE_H / 2) / GRID) * GRID,
       w: NOTE_W, h: NOTE_H,
-      text: "", color: "yellow", textColor: "",
+      text: "", color: B.noteColor || nextCycleColor(), textColor: "",
       shape: "square", fontSize: "auto", align: "center", valign: "middle",
       bold: false, italic: false, underline: false, strike: false,
       z: maxZ() + 1, tags: [], votes: 0, locked: false,
@@ -107951,6 +107954,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (cvd) { cvd.classList.toggle("draw", B.tool === "draw" && !B.eraser); cvd.classList.toggle("erase", B.tool === "draw" && B.eraser); }
     const ft = document.getElementById("sbFilterToggle");
     if (ft) ft.classList.toggle("active", filterActive());
+    updateSwatchState();
   }
 
   // ════════════════════════════ CANVAS-INTERAKTION ═════════════════════════
@@ -108397,12 +108401,29 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       }).join("\n");
     });
   }
+  function nextCycleColor() {
+    const c = COLORS[B._cycle % COLORS.length];
+    B._cycle = (B._cycle + 1) % COLORS.length;
+    return c.key;
+  }
+  function updateSwatchState() {
+    document.querySelectorAll(".sb-swatch[data-sb=\"color\"]").forEach((el) => {
+      el.classList.toggle("active", B.noteColor != null && el.dataset.color === B.noteColor);
+    });
+  }
   function applyColor(key) {
+    // Klick auf aktive Farbe => zurück zu Auto (Rotation); sonst Farbe für neue Post-its fixieren
+    B.noteColor = (B.noteColor === key) ? null : key;
     const notes = selectedNotes();
-    if (!notes.length) { toast("warn", "Farbe", "Erst Post-its auswählen"); return; }
-    pushHistory();
-    notes.forEach((n) => { n.color = key; n.textColor = ""; n.updatedAt = nowIso(); });
-    persist(); renderNotes();
+    if (notes.length) {
+      pushHistory();
+      notes.forEach((n) => { n.color = key; n.textColor = ""; n.updatedAt = nowIso(); });
+      persist();
+    }
+    renderNotes();
+    updateSwatchState();
+    const label = (COLORS.find((c) => c.key === key) || {}).label || key;
+    toast("ok", "Farbe", B.noteColor ? ("Neue Post-its: " + label) : "Auto (Farben rotieren)");
   }
 
   function groupSelected() {
@@ -108864,6 +108885,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-select{height:30px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:7px;color:var(--sb-text);font-size:12px;padding:0 6px;cursor:pointer;max-width:135px}
       .sb-swatch{width:22px;height:22px;border-radius:5px;border:2px solid rgba(0,0,0,.15);cursor:pointer;padding:0;box-shadow:0 1px 2px rgba(0,0,0,.2)}
       .sb-swatch:hover{transform:scale(1.12);outline:2px solid var(--sb-accent)}
+      .sb-swatch.active{outline:3px solid var(--sb-text);outline-offset:1px;transform:scale(1.14);box-shadow:0 0 0 2px var(--sb-panel),0 0 8px rgba(0,0,0,.4)}
       .sb-pencolor{width:30px;height:30px;padding:0;border:1px solid var(--sb-border);border-radius:7px;background:none;cursor:pointer}
       .sb-svg .sb-draw{pointer-events:none}
       .sb-topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
