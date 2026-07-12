@@ -107432,6 +107432,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // Wird aus den vier Detailansichten aufgerufen (wie renderFileAttachments).
   window.renderStickyBoardBlock = function (kind, id) {
     if (!KIND_MAP[kind]) return "";
+    injectCSS();
     const ent = getEntity(kind, id);
     if (!ent) return "";
     const board = ent.stickyBoard;
@@ -108940,6 +108941,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     `;
     document.head.appendChild(st);
   }
+
+  // CSS sofort bereitstellen, damit auch die Vorschau-Blöcke korrekt gestylt sind
+  try { injectCSS(); } catch (e) {}
 
 })();
 </script>
