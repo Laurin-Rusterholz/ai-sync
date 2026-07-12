@@ -30325,11 +30325,16 @@ function viewTaskCreate() {
 function viewProjects() {
   const e = APP.state.data.entities;
   const filters = APP.state.ui.filters.projects || {};
+  // Standardmässig nur aktive Projekte anzeigen (umschaltbar via Filter → "Alle Status")
+  if (filters.status === undefined) {
+    filters.status = "active";
+    APP.state.ui.filters.projects = filters;
+  }
   const viewMode = APP.state.ui.flags?.projectsViewMode || "grid";
-  
+
   let allProjects = Object.values(e.projects);
   let projects = [...allProjects];
-  
+
   if (filters.status) {
     projects = projects.filter(p => p.status === filters.status);
   }
