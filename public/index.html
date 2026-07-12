@@ -107326,12 +107326,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (!ent) return null;
     if (!ent.stickyBoard) {
       if (!createIfMissing) return null;
-      ent.stickyBoard = { notes: [], connections: [], view: { x: 0, y: 0, zoom: 1 }, bulkMode: false };
+      ent.stickyBoard = { notes: [], connections: [], drawings: [], view: { x: 0, y: 0, zoom: 1 }, bulkMode: false };
     }
     const b = ent.stickyBoard;
     if (!Array.isArray(b.notes)) b.notes = [];
     if (!Array.isArray(b.connections)) b.connections = [];
     if (!b.view || typeof b.view !== "object") b.view = { x: 0, y: 0, zoom: 1 };
+    if (!Array.isArray(b.drawings)) b.drawings = [];
     return b;
   }
 
@@ -107399,6 +107400,11 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     editingId: null,
     spaceDown: false,
     mounted: false,
+    penColor: "#e5765a",
+    penWidth: 3,
+    eraser: false,
+    pointers: new Map(),
+    gesture: null,
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -107416,10 +107422,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     B.undoStack = []; B.redoStack = [];
     B.filter = { text: "", tags: new Set(), colors: new Set() };
     B.editingId = null;
+    B.pointers = new Map(); B.gesture = null; B.eraser = false;
     injectCSS();
     buildOverlay();
     B.mounted = true;
     document.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("pointercancel", onPointerCancel, true);
+    window.addEventListener("pointerup", onPointerCancel, true);
     // Falls leer: sanft eine Willkommens-Note anbieten (nicht automatisch anlegen)
     fitToContent(true);
     renderAll();
@@ -107429,6 +107438,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     persist();
     B.mounted = false;
     document.removeEventListener("keydown", onKeyDown, true);
+    window.removeEventListener("pointercancel", onPointerCancel, true);
+    window.removeEventListener("pointerup", onPointerCancel, true);
     const ov = document.getElementById("sbOverlay");
     if (ov) ov.remove();
     hideContextMenu();
@@ -107451,7 +107462,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 
   // ── Undo/Redo (Snapshot-basiert) ──
   function snapshot() {
-    return JSON.stringify({ notes: B.board.notes, connections: B.board.connections });
+    return JSON.stringify({ notes: B.board.notes, connections: B.board.connections, drawings: B.board.drawings || [] });
   }
   function pushHistory() {
     B.undoStack.push(snapshot());
@@ -107463,6 +107474,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const data = JSON.parse(snap);
     B.board.notes = data.notes;
     B.board.connections = data.connections;
+    B.board.drawings = data.drawings || [];
     B.sel = new Set([...B.sel].filter((id) => B.board.notes.some((n) => n.id === id)));
   }
   function undo() {
@@ -107615,6 +107627,18 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       </div>
       <div class="sb-group">
         <button class="sb-btn sb-toggle" data-sb="connect" id="sbConnectBtn" title="Verbinden: Post-its mit Linien verknüpfen">🔗 Verbinden</button>
+      </div>
+      <div class="sb-group">
+        <button class="sb-btn sb-toggle" data-sb="draw" id="sbDrawBtn" title="Zeichnen mit Stift/Finger — ideal für Tablet">✏️ Zeichnen</button>
+        <button class="sb-btn sb-toggle" data-sb="eraser" id="sbEraserBtn" title="Radierer: Striche antippen/überfahren zum Löschen">🧽</button>
+        <input type="color" class="sb-pencolor" data-sb="pencolor" id="sbPenColor" value="#e5765a" title="Stiftfarbe">
+        <select class="sb-select" data-sb="penwidth" id="sbPenWidth" title="Stiftdicke">
+          <option value="2">Dünn</option>
+          <option value="3" selected>Mittel</option>
+          <option value="6">Dick</option>
+          <option value="10">Marker</option>
+        </select>
+        <button class="sb-btn" data-sb="clearDraw" title="Alle Zeichnungen entfernen">Leeren</button>
       </div>
       <div class="sb-group">
         ${fmtBtn("group", "◱ Gruppe", "Gruppieren")}
@@ -107778,6 +107802,12 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (B.drag && B.drag.type === "connect" && B.drag.cur) {
       parts += `<path d="M ${B.drag.startPt.x} ${B.drag.startPt.y} L ${B.drag.cur.x} ${B.drag.cur.y}" fill="none" stroke="var(--sb-accent)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#sbArrow)"></path>`;
     }
+    (B.board.drawings || []).forEach((st) => {
+      if (!st.points || !st.points.length) return;
+      const dd = "M " + st.points.map((pt) => pt[0] + " " + pt[1]).join(" L ");
+      const hit = (B.tool === "draw") ? "stroke" : "none";
+      parts += `<path d="${dd}" fill="none" stroke="${st.color || '#e5765a'}" stroke-width="${st.width || 3}" stroke-linecap="round" stroke-linejoin="round" data-draw="${st.id}" class="sb-draw" style="pointer-events:${hit}"></path>`;
+    });
     // SVG-Grösse setzen
     const b = worldBounds();
     svg.setAttribute("width", b.w); svg.setAttribute("height", b.h);
@@ -107809,6 +107839,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (!B.board.notes.length) {
       el.innerHTML = `Doppelklick auf die Fläche oder <b>＋ Post-it</b> zum Starten · <b>N</b> neues Post-it · Mausrad = Zoom`;
       el.style.display = "block";
+    } else if (B.tool === "draw") {
+      el.innerHTML = B.eraser ? `🧽 <b>Radierer</b>: Striche antippen oder überfahren zum Löschen. <b>Esc</b> beendet.` : `✏️ <b>Zeichnen</b>: Mit Stift oder Finger malen. Zwei Finger = Verschieben &amp; Zoom. <b>Esc</b> beendet.`;
+      el.style.display = "block";
     } else if (B.tool === "connect") {
       el.innerHTML = `🔗 <b>Verbinden</b>: Von einem Post-it zu einem anderen ziehen. <b>Esc</b> beendet den Modus.`;
       el.style.display = "block";
@@ -107822,6 +107855,12 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (bulk) bulk.classList.toggle("active", !!B.board.bulkMode);
     const conn = document.getElementById("sbConnectBtn");
     if (conn) conn.classList.toggle("active", B.tool === "connect");
+    const dr = document.getElementById("sbDrawBtn");
+    if (dr) dr.classList.toggle("active", B.tool === "draw");
+    const er = document.getElementById("sbEraserBtn");
+    if (er) er.classList.toggle("active", B.eraser);
+    const cvd = canvasEl();
+    if (cvd) { cvd.classList.toggle("draw", B.tool === "draw" && !B.eraser); cvd.classList.toggle("erase", B.tool === "draw" && B.eraser); }
     const ft = document.getElementById("sbFilterToggle");
     if (ft) ft.classList.toggle("active", filterActive());
   }
@@ -107829,6 +107868,12 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // ════════════════════════════ CANVAS-INTERAKTION ═════════════════════════
   function onCanvasPointerDown(e) {
     if (e.button === 2) return; // Rechtsklick → contextmenu
+    B.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (B.pointers.size >= 2) { startGesture(); return; }
+    if (B.tool === "draw") {
+      if (B.eraser) { B.drag = { type: "erase" }; eraseAtClient(e.clientX, e.clientY); bindDrag(); return; }
+      startDraw(e); return;
+    }
     hideContextMenu();
     const cv = canvasEl();
     cv.focus();
@@ -107882,7 +107927,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     }
 
     // leere Fläche
-    if (B.tool === "pan" || B.spaceDown || e.button === 1) {
+    if (B.tool === "pan" || B.spaceDown || e.button === 1 || e.pointerType === "touch") {
       startPan(e);
     } else {
       startMarquee(e);
@@ -107931,6 +107976,54 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     bindDrag();
   }
 
+  function ptDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function ptMid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+  function startGesture() {
+    if (B.drag && B.drag.type === "marquee") hideMarquee();
+    const pts = [...B.pointers.values()];
+    if (pts.length < 2) return;
+    B.gesture = { startDist: ptDist(pts[0], pts[1]) || 1, startMid: ptMid(pts[0], pts[1]), startView: { x: B.view.x, y: B.view.y, zoom: B.view.zoom } };
+    B.drag = { type: "gesture" };
+    bindDrag();
+  }
+  function handleGestureMove() {
+    const pts = [...B.pointers.values()];
+    if (pts.length < 2 || !B.gesture) return;
+    const g = B.gesture;
+    const nd = ptDist(pts[0], pts[1]) || 1;
+    const nm = ptMid(pts[0], pts[1]);
+    const rect = canvasEl().getBoundingClientRect();
+    const zoom = Math.max(0.15, Math.min(4, g.startView.zoom * (nd / g.startDist)));
+    const mx = g.startMid.x - rect.left, my = g.startMid.y - rect.top;
+    const worldX = (mx - g.startView.x) / g.startView.zoom;
+    const worldY = (my - g.startView.y) / g.startView.zoom;
+    B.view.zoom = zoom;
+    B.view.x = mx - worldX * zoom + (nm.x - g.startMid.x);
+    B.view.y = my - worldY * zoom + (nm.y - g.startMid.y);
+    updateTransform();
+  }
+  function startDraw(e) {
+    pushHistory();
+    const w = screenToWorld(e.clientX, e.clientY);
+    if (!Array.isArray(B.board.drawings)) B.board.drawings = [];
+    const stroke = { id: uid("draw"), color: B.penColor, width: B.penWidth, points: [[Math.round(w.x), Math.round(w.y)]] };
+    B.board.drawings.push(stroke);
+    B.drag = { type: "draw", pointerId: e.pointerId, stroke };
+    bindDrag();
+  }
+  function eraseAtClient(cx, cy) {
+    const el = document.elementFromPoint(cx, cy);
+    const path = (el && el.closest) ? el.closest("[data-draw]") : null;
+    if (!path) return;
+    const did = path.getAttribute("data-draw");
+    if (!B._eraseHistory) { pushHistory(); B._eraseHistory = true; }
+    B.board.drawings = (B.board.drawings || []).filter((x) => x.id !== did);
+    renderConnections();
+  }
+  function onPointerCancel(e) {
+    B.pointers.delete(e.pointerId);
+    if (B.drag && B.drag.type === "gesture" && B.pointers.size < 2) { B.gesture = null; B.drag = null; unbindDrag(); }
+  }
   function bindDrag() {
     window.addEventListener("pointermove", onPointerMove, true);
     window.addEventListener("pointerup", onPointerUp, true);
@@ -107943,6 +108036,10 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   function onPointerMove(e) {
     const d = B.drag;
     if (!d) return;
+    if (B.pointers.has(e.pointerId)) B.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (d.type === "gesture") { handleGestureMove(); return; }
+    if (d.type === "draw") { const w = screenToWorld(e.clientX, e.clientY); d.stroke.points.push([Math.round(w.x), Math.round(w.y)]); renderConnections(); return; }
+    if (d.type === "erase") { eraseAtClient(e.clientX, e.clientY); return; }
     if (d.type === "move") {
       const dx = (e.clientX - d.startX) / B.view.zoom;
       const dy = (e.clientY - d.startY) / B.view.zoom;
@@ -107993,8 +108090,15 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 
   function onPointerUp(e) {
     const d = B.drag;
+    B.pointers.delete(e.pointerId);
+    if (d && d.type === "gesture") { if (B.pointers.size < 2) { B.gesture = null; B.drag = null; unbindDrag(); persistSoon(); } return; }
     unbindDrag();
     if (!d) return;
+    if (d.type === "draw") {
+      if (!d.stroke || d.stroke.points.length < 2) { B.board.drawings = (B.board.drawings || []).filter((x) => x !== d.stroke); B.undoStack.pop(); renderConnections(); } else { persist(); }
+      B.drag = null; return;
+    }
+    if (d.type === "erase") { B._eraseHistory = false; persist(); B.drag = null; return; }
     if (d.type === "move") {
       if (d.moved) {
         d.items.forEach(({ n }) => { n.x = Math.round(n.x / GRID) * GRID; n.y = Math.round(n.y / GRID) * GRID; n.updatedAt = nowIso(); });
@@ -108134,6 +108238,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (!el) return;
     const act = el.dataset.sb;
     if (act === "shape") { applyToSelected((n) => { n.shape = el.value; }); }
+    else if (act === "penwidth") { B.penWidth = +el.value; }
+    else if (act === "pencolor") { B.penColor = el.value; }
     else if (act === "align-menu") { if (el.value) { alignDistribute(el.value); el.value = ""; } }
     else if (act === "cluster") { if (el.value) { clusterBy(el.value); el.value = ""; } }
   }
@@ -108155,6 +108261,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       case "font-inc": applyToSelected((n) => { n.fontSize = Math.min(72, (n.fontSize === "auto" ? autoFont(n) : n.fontSize) + 2); }); break;
       case "font-auto": applyToSelected((n) => { n.fontSize = "auto"; }); break;
       case "connect": B.tool = B.tool === "connect" ? "select" : "connect"; updateToolbarState(); updateHint(); break;
+      case "draw": B.tool = (B.tool === "draw") ? "select" : "draw"; if (B.tool !== "draw") B.eraser = false; updateToolbarState(); updateHint(); renderConnections(); break;
+      case "eraser": B.eraser = !B.eraser; if (B.eraser) B.tool = "draw"; updateToolbarState(); updateHint(); renderConnections(); break;
+      case "clearDraw": if ((B.board.drawings || []).length) { pushHistory(); B.board.drawings = []; persist(); renderConnections(); toast("ok", "Zeichnung", "Entfernt"); } break;
       case "group": groupSelected(); break;
       case "ungroup": ungroupSelected(); break;
       case "grid": arrangeGrid(); break;
@@ -108609,7 +108718,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const mod = e.ctrlKey || e.metaKey;
 
     if (e.key === "Escape") {
-      if (B.tool === "connect") { B.tool = "select"; updateToolbarState(); updateHint(); e.preventDefault(); return; }
+      if (B.tool === "connect" || B.tool === "draw") { B.tool = "select"; B.eraser = false; updateToolbarState(); updateHint(); e.preventDefault(); return; }
       const ctx = document.getElementById("sbCtx");
       if (ctx && ctx.style.display === "block") { hideContextMenu(); e.preventDefault(); return; }
       if (B.sel.size) { B.sel = new Set(); renderNotes(); e.preventDefault(); return; }
@@ -108646,7 +108755,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const st = document.createElement("style");
     st.id = "sbStyles";
     st.textContent = `
-      .sb-overlay{position:fixed;inset:0;z-index:12000;display:flex;flex-direction:column;background:var(--bg,#171c20);--sb-panel:var(--panel,#212830);--sb-panel2:var(--panel2,#2d3640);--sb-text:var(--text,#eef0f2);--sb-muted:var(--muted,#929aa4);--sb-border:var(--border,#3b4550);--sb-accent:var(--accent,#a78bfa);color:var(--sb-text);font-family:system-ui,-apple-system,sans-serif;animation:sbFade .18s ease}
+      .sb-overlay{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;background:var(--bg,#171c20);--sb-panel:var(--panel,#212830);--sb-panel2:var(--panel2,#2d3640);--sb-text:var(--text,#eef0f2);--sb-muted:var(--muted,#929aa4);--sb-border:var(--border,#3b4550);--sb-accent:var(--accent,#a78bfa);color:var(--sb-text);font-family:system-ui,-apple-system,sans-serif;animation:sbFade .18s ease}
       @keyframes sbFade{from{opacity:0}to{opacity:1}}
       .sb-topbar{display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--sb-panel);border-bottom:1px solid var(--sb-border);flex-shrink:0}
       .sb-title{display:flex;align-items:center;gap:9px;min-width:150px;max-width:230px}
@@ -108667,6 +108776,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-select{height:30px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:7px;color:var(--sb-text);font-size:12px;padding:0 6px;cursor:pointer;max-width:135px}
       .sb-swatch{width:22px;height:22px;border-radius:5px;border:2px solid rgba(0,0,0,.15);cursor:pointer;padding:0;box-shadow:0 1px 2px rgba(0,0,0,.2)}
       .sb-swatch:hover{transform:scale(1.12);outline:2px solid var(--sb-accent)}
+      .sb-pencolor{width:30px;height:30px;padding:0;border:1px solid var(--sb-border);border-radius:7px;background:none;cursor:pointer}
+      .sb-svg .sb-draw{pointer-events:none}
       .sb-topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
       .sb-zoom{display:flex;align-items:center;gap:2px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:8px;padding:2px}
       .sb-zoom .sb-btn{background:transparent;border:0;height:26px;min-width:26px}
@@ -108682,6 +108793,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-canvas{position:relative;flex:1;overflow:hidden;background:var(--bg,#171c20);background-image:radial-gradient(circle,var(--sb-border) 1px,transparent 1px);background-size:24px 24px;cursor:default;outline:none;touch-action:none}
       .sb-canvas.panning,.sb-canvas.space{cursor:grab}
       .sb-canvas.panning{cursor:grabbing}
+      .sb-canvas.draw{cursor:crosshair}
+      .sb-canvas.erase{cursor:cell}
       .sb-world{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
       .sb-svg{position:absolute;overflow:visible;pointer-events:none}
       .sb-svg .sb-conn{pointer-events:stroke}
@@ -108721,7 +108834,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-marquee{position:absolute;background:color-mix(in oklab,var(--sb-accent) 14%,transparent);border:1.5px solid var(--sb-accent);pointer-events:none;z-index:9999}
       .sb-hint{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:var(--sb-panel);border:1px solid var(--sb-border);border-radius:10px;padding:9px 16px;font-size:12.5px;color:var(--sb-muted);box-shadow:0 6px 20px rgba(0,0,0,.35);pointer-events:none;max-width:90%;text-align:center}
       .sb-hint b{color:var(--sb-text)}
-      .sb-contextmenu{position:fixed;z-index:12500;background:var(--sb-panel);border:1px solid var(--sb-border);border-radius:10px;padding:6px;min-width:200px;box-shadow:0 10px 34px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
+      .sb-contextmenu{position:fixed;z-index:2147483003;background:var(--sb-panel);border:1px solid var(--sb-border);border-radius:10px;padding:6px;min-width:200px;box-shadow:0 10px 34px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
       .sb-ctx-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--sb-muted);padding:5px 8px 3px}
       .sb-ctx-hint{font-size:11px;color:var(--sb-muted);padding:0 8px 6px}
       .sb-ctx-item{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--sb-text);font-size:13px;padding:7px 9px;border-radius:6px;cursor:pointer}

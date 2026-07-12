@@ -65,6 +65,12 @@ nötig, da alles im bestehenden Daten-Blob mitreist.
   kopieren" (→ Notes-Collection).
 - **Canvas**: Pan (Leertaste/Mittelklick/Pan auf leerer Fläche), Zoom (Mausrad
   zum Cursor, `+`/`−`/`100%`), „Alles einpassen".
+- **Zeichnen (Tablet/Stift)**: Freihand-Zeichenmodus (`✏️ Zeichnen`) mit
+  Stiftfarbe und -dicke, Radierer (Striche antippen/überfahren), „Leeren".
+  Strokes liegen in `board.drawings` und sind Teil von Undo/Redo.
+- **Touch/Tablet-Gesten**: Ein Finger auf leerer Fläche verschiebt, zwei Finger
+  = gleichzeitig Verschieben & Zoom (Pinch). Stift/Finger malen im
+  Zeichenmodus.
 - **Aktionen**: Kopieren/Ausschneiden/Einfügen/Löschen, Undo/Redo (Snapshot),
   Marquee- und Shift-Mehrfachauswahl, Kontextmenü (Rechtsklick).
 - **Import/Export**: CSV-Export; Import aus Zeilen/CSV.
