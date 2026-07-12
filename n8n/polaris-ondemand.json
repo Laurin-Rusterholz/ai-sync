@@ -5,7 +5,7 @@
       "parameters": {
         "width": 660,
         "height": 400,
-        "content": "## Polaris: On-Demand — Suche & Vorlesen (RTDB-only)\n\n`POST /webhook/polaris/search` und `POST /webhook/polaris/read-document` lesen AUSSCHLIESSLICH aus der Firebase RTDB (`jupidu-36804`, REST `.json`-Endpunkte) — **keine Google-Drive- und keine Gmail-Credentials nötig**.\n\nDurchsuchte Knoten: `docDocuments` (+ `docOrgs` für Organisations-Kontext), `driveDocs`, `driveInbox`. `driveFolders` wird bewusst nicht geladen (nur Pfad-Deko).\n\n**Nach dem Import:**\n1. Falls im alten Workflow „Polaris: On-Demand“ noch `/search`- und `/read-document`-Webhooks aktiv sind (googleDrive-/gmail-Nodes „CRED Drive Search“ / „CRED Gmail Search“): dort diese zwei Pfade deaktivieren/löschen — sonst Webhook-Pfad-Konflikt. `read-mail` bleibt unberührt.\n2. Diesen Workflow aktivieren. Keine Credentials zuweisen — es gibt keine.\n\n**Antworten:** immer JSON via Respond-Node mit `Access-Control-Allow-Origin: *`; OPTIONS-Preflight beantwortet n8n über die Webhook-CORS-Option (`allowedOrigins: *`). Fehler werfen nie 500: leere Suche → `{results:[],count:0}`, kein Treffer → `{ok:false, reason:'nicht gefunden'}`."
+        "content": "## Polaris: On-Demand — Suche & Vorlesen (RTDB-only)\n\n`POST /webhook/polaris/search` und `POST /webhook/polaris/read-document` lesen AUSSCHLIESSLICH aus der Firebase RTDB (`jupidu-36804`, REST `.json`-Endpunkte) — **keine Google-Drive- und keine Gmail-Credentials nötig**.\n\nDurchsuchte Knoten: `docDocuments` (+ `docOrgs` für Organisations-Kontext), `driveDocs`, `driveInbox`. `driveFolders` wird bewusst nicht geladen (nur Pfad-Deko).\n\n**Nach dem Import:**\n1. Falls im alten Workflow „Polaris: On-Demand“ noch `/search`- und `/read-document`-Webhooks aktiv sind (googleDrive-/gmail-Nodes „CRED Drive Search“ / „CRED Gmail Search“): dort diese zwei Pfade deaktivieren/löschen — sonst Webhook-Pfad-Konflikt. `read-mail` bleibt unberührt.\n2. `read-mail` + `compose-mail`: den beiden Gmail-Nodes das gmailOAuth2-Credential „Gmail account“ zuweisen — die einzigen Credentials im Workflow (search/read-document bleiben credential-frei). KEIN Secret-/Env-Check ($env ist in der Instanz gesperrt); compose-mail legt AUSSCHLIESSLICH Entwürfe an (resource=draft), sendet NIE.\n3. Workflow aktivieren.\n\n**Antworten:** immer JSON via Respond-Node mit `Access-Control-Allow-Origin: *`; OPTIONS-Preflight beantwortet n8n über die Webhook-CORS-Option (`allowedOrigins: *`). Fehler werfen nie 500: leere Suche → `{results:[],count:0}`, kein Treffer → `{ok:false, reason:'nicht gefunden'}`."
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -295,6 +295,261 @@
       ],
       "id": "3f5f16fc-c7c9-5b8b-84bb-cbf73e864bd8",
       "name": "Respond read-document"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/read-mail",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        520
+      ],
+      "id": "d0744481-0e5c-552d-a772-31dab6e578bf",
+      "name": "Webhook read-mail",
+      "webhookId": "5f7bec3e-95fd-5231-b3e7-84831f1d778d"
+    },
+    {
+      "parameters": {
+        "jsCode": "// read-mail: reine Input-Validierung — bewusst KEIN Secret-/Env-Check.\n// Browser rufen ohne Secret auf (siehe docs/polaris-module.md, Sicherheit/\n// Härtung) und der Zugriff auf Umgebungsvariablen ist in dieser n8n-Instanz\n// gesperrt ('access to env vars denied'). Fehlt die id → saubere JSON-Antwort.\ntry {\n  const b = $json.body || {};\n  const id = String(b.id || '').trim();\n  if (!id) return [{ json: { ok: false, error: 'no id' } }];\n  return [{ json: { ok: true, id: id } }];\n} catch (e) { return [{ json: { ok: false, error: 'no id' } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        520
+      ],
+      "id": "99eb9088-f59e-583f-b67d-9bd5cf57d76f",
+      "name": "Validate read-mail"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "19346f0a-5ef4-5185-8c5c-619c5d43bd1e",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        520
+      ],
+      "id": "b8f0aa1a-a321-551e-b740-4c7ccc3661a8",
+      "name": "Hat id?"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "simple": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        660,
+        460
+      ],
+      "id": "00710769-5c91-58bc-9bb4-da83683e85f9",
+      "name": "Gmail Get by ID",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gmail-Antwort defensiv normalisieren (verschiedene n8n-Gmail-Formate:\n// simplify-Top-Level-Felder ODER payload.headers[]-Array). Wirft nie.\ntry {\n  const j = $json || {};\n  if (j.error) return [{ json: { ok: false, error: 'Mail nicht gefunden' } }];\n  function header(name){\n    const hs = (j.payload && Array.isArray(j.payload.headers)) ? j.payload.headers\n      : (Array.isArray(j.headers) ? j.headers : []);\n    const h = hs.find(function(x){ return x && String(x.name || '').toLowerCase() === name.toLowerCase(); });\n    return h ? String(h.value || '') : '';\n  }\n  function strip(s){ return String(s == null ? '' : s).replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/\\s+/g, ' ').trim(); }\n  return [{ json: {\n    ok: true,\n    id: String(j.id || $('Validate read-mail').first().json.id || ''),\n    from: String(j.from || j.From || header('From') || ''),\n    to: String(j.to || j.To || header('To') || ''),\n    subject: String(j.subject || j.Subject || header('Subject') || ''),\n    date: String(j.date || j.Date || header('Date') || ''),\n    text: strip(j.textPlain || j.text || j.textHtml || j.snippet || '').slice(0, 4000)\n  } }];\n} catch (e) { return [{ json: { ok: false, error: 'Mail nicht gefunden' } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        460
+      ],
+      "id": "d154d40f-afb6-500d-ac0f-5ce8b3178fd1",
+      "name": "Format Mail"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        520
+      ],
+      "id": "a874d13a-b8a0-5f68-8278-07c98e1358d5",
+      "name": "Respond read-mail"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/compose-mail",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        780
+      ],
+      "id": "af16784f-3d0b-5b76-bd2f-7225cdc67257",
+      "name": "Webhook compose-mail",
+      "webhookId": "67c4553d-c32b-5649-a05a-0daa431d7319"
+    },
+    {
+      "parameters": {
+        "jsCode": "// compose-mail: Validierung. SICHERHEIT: dieser Zweig legt AUSSCHLIESSLICH\n// einen Gmail-ENTWURF an (Gmail-Node: resource=draft, operation=create) —\n// es wird NIEMALS gesendet. Kein Env-Zugriff, keine eigenen HTTP-Requests.\ntry {\n  const b = $json.body || {};\n  const text = String(b.body || '').trim();\n  if (!text) return [{ json: { ok: false, error: 'kein Text' } }];\n  return [{ json: {\n    ok: true,\n    to: String(b.to || '').trim().slice(0, 200),\n    subject: (String(b.subject || '').trim() || 'Von Polaris diktiert').slice(0, 200),\n    body: text.slice(0, 10000)\n  } }];\n} catch (e) { return [{ json: { ok: false, error: 'kein Text' } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        780
+      ],
+      "id": "f27cbc38-df91-5a7b-bb7f-648fe959cc40",
+      "name": "Validate compose"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "86216747-1606-5bdc-b534-e4f97d70554c",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        780
+      ],
+      "id": "78598110-c3b5-5928-bb92-c1c77079b990",
+      "name": "Hat Text?"
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "sendTo": "={{ $json.to }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        660,
+        720
+      ],
+      "id": "6ee267f4-728f-512a-ad9f-193651b18805",
+      "name": "Gmail Create Draft",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Gmail account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Draft-Antwort → {ok, draftId, to, subject, note}. Wirft nie.\ntry {\n  const v = $('Validate compose').first().json;\n  const j = $json || {};\n  if (j.error) return [{ json: { ok: false, error: 'Entwurf konnte nicht angelegt werden' } }];\n  const draftId = String(j.id || (j.message && j.message.id) || '');\n  return [{ json: { ok: true, draftId: draftId, to: v.to || '', subject: v.subject || '',\n    note: 'Als Entwurf gespeichert — nicht gesendet' } }];\n} catch (e) { return [{ json: { ok: false, error: 'Entwurf konnte nicht angelegt werden' } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        720
+      ],
+      "id": "8752bcdb-2d06-532b-bae0-2d7518f6bba4",
+      "name": "Format compose"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        780
+      ],
+      "id": "b73bc2a7-6100-5508-a20a-e9287b355c19",
+      "name": "Respond compose-mail"
     }
   ],
   "connections": {
@@ -424,6 +679,130 @@
         [
           {
             "node": "Respond read-document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook read-mail": {
+      "main": [
+        [
+          {
+            "node": "Validate read-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate read-mail": {
+      "main": [
+        [
+          {
+            "node": "Hat id?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hat id?": {
+      "main": [
+        [
+          {
+            "node": "Gmail Get by ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond read-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Get by ID": {
+      "main": [
+        [
+          {
+            "node": "Format Mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Mail": {
+      "main": [
+        [
+          {
+            "node": "Respond read-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook compose-mail": {
+      "main": [
+        [
+          {
+            "node": "Validate compose",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate compose": {
+      "main": [
+        [
+          {
+            "node": "Hat Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hat Text?": {
+      "main": [
+        [
+          {
+            "node": "Gmail Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond compose-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Create Draft": {
+      "main": [
+        [
+          {
+            "node": "Format compose",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format compose": {
+      "main": [
+        [
+          {
+            "node": "Respond compose-mail",
             "type": "main",
             "index": 0
           }

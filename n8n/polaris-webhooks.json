@@ -689,6 +689,129 @@
       "id": "3346ff66-202a-5dc7-89d3-32088f1a5a51",
       "name": "Wiki Summary",
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/create-project",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1440
+      ],
+      "id": "019538b8-f04f-5fe4-8d58-762abed17e8b",
+      "name": "WH create-project",
+      "webhookId": "8898a985-d61b-54a4-ab9d-6d76e2c69eda"
+    },
+    {
+      "parameters": {
+        "jsCode": "// create-project: validiert und baut das Projekt-Objekt.\n// Kein Env-Zugriff, keine eigenen HTTP-Requests (RTDB-POST macht der\n// dedizierte HTTP-Request-Node dahinter). Wirft nie.\ntry {\n  const b = $json.body || {};\n  const title = String(b.title || '').trim().slice(0, 200);\n  if (!title) return [{ json: { ok: false, error: 'kein Titel' } }];\n  const tags = Array.isArray(b.tags) ? b.tags.map(function(t){ return String(t).toLowerCase().slice(0, 40); }).slice(0, 8) : [];\n  return [{ json: { ok: true, project: {\n    ts: Date.now(),\n    title: title,\n    description: String(b.description || '').slice(0, 2000),\n    tags: tags,\n    status: 'open',\n    source: b.source === 'system' ? 'system' : 'voice'\n  } } }];\n} catch (e) { return [{ json: { ok: false, error: 'kein Titel' } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1440
+      ],
+      "id": "4d294282-2ed4-51c0-b2b2-20b0f471c351",
+      "name": "prep project"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "0d8b5fd1-d96d-5db1-9d6b-d17b4c20759b",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        1440
+      ],
+      "id": "c92a980e-3621-54e2-b706-1d96357afc23",
+      "name": "IF hat Titel"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/projects.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.project) }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        1380
+      ],
+      "id": "075a0bbe-0416-5b79-a1cc-76a2811950b5",
+      "name": "RTDB create-project",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Firebase-POST-Echo {name: pushId} → {ok, id, title}. Wirft nie.\ntry {\n  const prep = $('prep project').first().json;\n  if (!prep || prep.ok !== true) return [{ json: prep || { ok: false, error: 'kein Titel' } }];\n  const j = $json || {};\n  if (j.error || !j.name) return [{ json: { ok: false, error: 'Speichern fehlgeschlagen' } }];\n  return [{ json: { ok: true, id: String(j.name), title: prep.project.title } }];\n} catch (e) { return [{ json: { ok: false, error: 'Speichern fehlgeschlagen' } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1380
+      ],
+      "id": "8e39631d-ff71-5834-9d44-8d21609a9111",
+      "name": "resp project"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1440
+      ],
+      "id": "0003a2cf-17c0-5f05-88d0-6494ca1f54ca",
+      "name": "Resp create-project"
     }
   ],
   "connections": {
@@ -1023,6 +1146,68 @@
         [
           {
             "node": "research (Websuche)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WH create-project": {
+      "main": [
+        [
+          {
+            "node": "prep project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prep project": {
+      "main": [
+        [
+          {
+            "node": "IF hat Titel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF hat Titel": {
+      "main": [
+        [
+          {
+            "node": "RTDB create-project",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resp create-project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB create-project": {
+      "main": [
+        [
+          {
+            "node": "resp project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "resp project": {
+      "main": [
+        [
+          {
+            "node": "Resp create-project",
             "type": "main",
             "index": 0
           }

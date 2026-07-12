@@ -105713,6 +105713,9 @@ html.theme-light .card{box-shadow:none}
 .polaris-orb--speaking{--polaris-glow:color-mix(in oklab, var(--danger) 42%, transparent);--polaris-core:var(--danger)}
 @keyframes polarisBreathe{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
 .polaris-status{font-size:13px;color:var(--text-muted);min-height:18px}
+/* Schnellaktionen (Projekt/Mail-Entwurf) — Touch-Targets >=44px, mobil umbrechend */
+.polaris-quick{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:100%}
+.polaris-quick-btn{min-height:44px;padding:10px 16px;font-size:13px}
 .polaris-controls{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;border-top:1px solid var(--border)}
 .polaris-controls .polaris-label{display:flex;flex-direction:column;gap:2px;text-align:left}
 .polaris-controls .polaris-label b{font-size:13.5px}
@@ -105851,7 +105854,11 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     noteSave:        POLARIS_WEBHOOK_BASE + "/note-save",
     research:        POLARIS_WEBHOOK_BASE + "/research",
     characterUpdate: POLARIS_WEBHOOK_BASE + "/character-update",
-    proactive:       POLARIS_WEBHOOK_BASE + "/proactive"
+    proactive:       POLARIS_WEBHOOK_BASE + "/proactive",
+    // On-Demand-Workflow: compose-mail legt AUSSCHLIESSLICH Gmail-Entwürfe an
+    // (nie senden); create-project schreibt nach polaris/projects (Brain).
+    composeMail:     POLARIS_WEBHOOK_BASE + "/compose-mail",
+    createProject:   POLARIS_WEBHOOK_BASE + "/create-project"
   };
 
   // ═══ FIREBASE-DATENMODELL (RTDB jupidu-36804, unter polaris/) ═══════════
@@ -105860,6 +105867,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   //  polaris/character         { traits:{humor,warmth,directness,curiosity,formality} 0-1,
   //                              backstory, catchphrases:[], evolutionLog:[{ts,change,reason}] }
   //  polaris/relationship      { ts, mood, lastTopics:[], openLoops:[], streak }
+  //  polaris/projects/{pushId} { ts, title, description, tags:[], status:'open'|'done', source }
   //  polaris/settings/proactiveEnabled   (Spiegel des lokalen Settings)
   // Direktzugriff nur als Fallback/Lesepfad — primärer Schreibweg sind die
   // n8n-Webhooks oben. (RTDB-Regeln: $andere → read/write true.)
@@ -105880,6 +105888,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // Sprachbefehle (auf finale User-Transkripte angewendet)
   const PL_CMD_NOTE = /^\s*(?:polaris[,!\s]+)?(?:merk(?:e)?\s+dir|notier(?:e)?(?:\s+dir)?|schreib(?:e)?\s+(?:dir\s+)?auf)[,:\s]+(.+)$/i;
   const PL_CMD_RESEARCH = /^\s*(?:polaris[,!\s]+)?(?:recherchier(?:e)?(?:\s+(?:mal|bitte))?|such(?:e)?\s+im\s+(?:netz|internet)(?:\s+nach)?)[,:\s]+(.+)$/i;
+  // "schreib eine Mail …" → Gmail-ENTWURF (nie senden); "leg ein Projekt an …" → polaris/projects
+  const PL_CMD_MAIL = /^\s*(?:polaris[,!\s]+)?(?:schreib(?:e)?|verfass(?:e)?|erstell(?:e)?)\s+(?:eine\s+|einen\s+)?(?:e-?mail|mail)(?:-entwurf)?\b[,:\s]*(.*)$/i;
+  const PL_CMD_PROJECT = /^\s*(?:polaris[,!\s]+)?(?:(?:leg(?:e)?|erstell(?:e)?)\s+(?:ein\s+)?(?:neues\s+)?projekt(?:\s+an)?(?:\s+namens)?|neues\s+projekt)[,:\s]+(.+)$/i;
 
   // ═══ Modul-Zustand (in-memory; Persistenz: data.settings.polaris) ══════
   let plSession = null;      // aktive Conversation-Instanz des SDK
@@ -106315,6 +106326,51 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     }
   }
 
+  // ── Mail-Entwurf diktieren → compose-mail (legt NUR einen Gmail-ENTWURF an,
+  //    sendet nie; Empfänger/Betreff werden heuristisch aus dem Diktat gezogen) ──
+  async function plComposeMail(raw){
+    const src = String(raw || "").trim();
+    if (!src){ plToast("warn", "Polaris", "Kein Mail-Text — sag z.B. „schreib eine Mail an name@adresse: …“."); return; }
+    let to = "", subject = "";
+    const mTo = /\ban\s+([^\s,;:]+@[^\s,;:]+)/i.exec(src);
+    if (mTo) to = mTo[1].replace(/[.,;:]+$/, "");
+    const mSub = /\bbetreff[:\s]+(.{2,80}?)(?:[.;:]|$)/i.exec(src);
+    if (mSub) subject = mSub[1].trim();
+    try {
+      const data = await plPost(POLARIS_EP.composeMail, { to: to, subject: subject, body: src });
+      if (!data || data.ok !== true) throw new Error((data && data.error) || "compose-mail fehlgeschlagen");
+      plToast("ok", "Polaris", "Mail-Entwurf gespeichert" + (to ? " (an " + to + ")" : "") + " — wird NICHT gesendet.");
+      if (plSession) try { plSession.sendContextualUpdate("Systeminfo: Mail-Entwurf wurde in Gmail gespeichert (NICHT gesendet)" + (to ? ", Empfänger " + to : "") + (data.draftId ? ", Draft-ID " + data.draftId : "") + "."); } catch(e){}
+    } catch(err){
+      console.error("Polaris: compose-mail fehlgeschlagen", err);
+      plToast("err", "Polaris", "Mail-Entwurf konnte nicht gespeichert werden.");
+      if (plSession) try { plSession.sendContextualUpdate("Systeminfo: Der Mail-Entwurf konnte nicht gespeichert werden (Endpoint nicht erreichbar)."); } catch(e){}
+    }
+  }
+
+  // ── Projekt anlegen → create-project (polaris/projects); Fallback: direkter RTDB-Push ──
+  async function plCreateProject(title){
+    const t = String(title || "").trim().slice(0, 200);
+    if (!t){ plToast("warn", "Polaris", "Kein Projekt-Titel."); return; }
+    try {
+      const data = await plPost(POLARIS_EP.createProject, { title: t, description: "", tags: [] });
+      if (!data || data.ok !== true) throw new Error((data && data.error) || "create-project fehlgeschlagen");
+      plToast("ok", "Polaris", "Projekt angelegt: „" + t.slice(0, 60) + "“");
+      if (plSession) try { plSession.sendContextualUpdate("Systeminfo: Projekt „" + t.slice(0, 120) + "“ wurde in Polaris angelegt" + (data.id ? " (ID " + data.id + ")" : "") + "."); } catch(e){}
+    } catch(err){
+      console.error("Polaris: create-project nicht erreichbar — lokaler Fallback", err);
+      plEndpointFallbackWarn("create-project");
+      try {
+        await plDbPush("polaris/projects", { ts: Date.now(), title: t, description: "", tags: [], status: "open", source: "voice" });
+        plToast("ok", "Polaris", "Projekt angelegt: „" + t.slice(0, 60) + "“");
+        if (plSession) try { plSession.sendContextualUpdate("Systeminfo: Projekt „" + t.slice(0, 120) + "“ wurde angelegt."); } catch(e){}
+      } catch(e){
+        console.error("Polaris: Projekt-Fallback fehlgeschlagen", e);
+        plToast("err", "Polaris", "Projekt konnte nicht angelegt werden.");
+      }
+    }
+  }
+
   // ═══ CHARAKTER & BEZIEHUNG ══════════════════════════════════════════════
   async function plEnsureCharacter(){
     let ch = null;
@@ -106639,12 +106695,17 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         plSetMode("thinking");
         plSetStatus("Polaris denkt nach …");
       }
-      // Sprachbefehle: „merk dir …" → Notiz, „recherchiere …" → Web-Recherche
+      // Sprachbefehle: „merk dir …" → Notiz, „recherchiere …" → Web-Recherche,
+      // „schreib eine Mail …" → Gmail-ENTWURF, „leg ein Projekt an …" → Projekt
       let m = PL_CMD_NOTE.exec(text);
       if (m && m[1]){
         plSaveNote(m[1]).catch(function(e){ console.error("Polaris: Notiz-Befehl fehlgeschlagen", e); });
       } else if ((m = PL_CMD_RESEARCH.exec(text)) && m[1]){
         plResearch(m[1]).catch(function(e){ console.error("Polaris: Recherche-Befehl fehlgeschlagen", e); });
+      } else if ((m = PL_CMD_MAIL.exec(text))){
+        plComposeMail(m[1]).catch(function(e){ console.error("Polaris: Mail-Befehl fehlgeschlagen", e); });
+      } else if ((m = PL_CMD_PROJECT.exec(text)) && m[1]){
+        plCreateProject(m[1]).catch(function(e){ console.error("Polaris: Projekt-Befehl fehlgeschlagen", e); });
       }
     } else if (msg.source === "ai"){
       plTranscript.push({ role: "agent", text: text, ts: Date.now() });
@@ -107006,6 +107067,10 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       +     '<div class="polaris-orb polaris-orb--' + plEsc(plMode) + '" id="polarisOrb" aria-hidden="true"></div>'
       +     '<div class="polaris-status" id="polarisStatus" role="status">' + plEsc(plStatusText) + '</div>'
       +     '<button class="btn primary" id="polarisLaunchBtn" data-action="polaris-launch"' + (busy ? " disabled" : "") + '>🚀 Launch</button>'
+      +     '<div class="polaris-quick">'
+      +       '<button class="btn ghost polaris-quick-btn" data-action="polaris-create-project">📁 Projekt anlegen</button>'
+      +       '<button class="btn ghost polaris-quick-btn" data-action="polaris-compose-mail">📧 Mail-Entwurf</button>'
+      +     '</div>'
       +   '</div>'
       +   '<div class="polaris-controls">'
       +     '<div class="polaris-label"><b>Polaris aktiv</b><span>An = Session starten · Aus = Session beenden</span></div>'
@@ -107026,6 +107091,16 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     else if (action === "polaris-voice-toggle"){ e.preventDefault(); polarisVoiceToggle(); }
     else if (action === "polaris-launch"){ e.preventDefault(); plLaunch(); }
     else if (action === "polaris-proactive-toggle"){ e.preventDefault(); plProactiveToggle(); }
+    else if (action === "polaris-create-project"){
+      e.preventDefault();
+      const t = window.prompt("Titel des neuen Projekts:");
+      if (t != null && t.trim()) plCreateProject(t).catch(function(err){ console.error("Polaris: Projekt anlegen fehlgeschlagen", err); });
+    }
+    else if (action === "polaris-compose-mail"){
+      e.preventDefault();
+      const t = window.prompt("Mail-Text (optional „an name@adresse“ und „Betreff: …“ mitdiktieren) — wird nur als ENTWURF gespeichert:");
+      if (t != null && t.trim()) plComposeMail(t).catch(function(err){ console.error("Polaris: Mail-Entwurf fehlgeschlagen", err); });
+    }
   });
 
   // Diagnose-Hooks (nur Konsole; keine UI-Abhängigkeit)
