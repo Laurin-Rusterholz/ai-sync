@@ -105,10 +105,11 @@
   }
 
   /* ── HUD-Bühne ── */
+  /* Kein OLED-Drift auf den Ringen: sie bleiben exakt in der Bildmitte und
+     immer auf derselben Achse wie die Uhr (bewegte Ringe = kaum Burn-in). */
   #stage{
     position:fixed;inset:0;
     display:flex;align-items:center;justify-content:center;
-    animation:oledDrift 240s ease-in-out infinite;
   }
   #hudWrap{position:relative;width:min(76vmin,840px);height:min(76vmin,840px)}
   #hud{position:absolute;inset:0;width:100%;height:100%}
@@ -131,7 +132,6 @@
     position:fixed;top:clamp(58px,9vh,124px);left:50%;
     transform:translateX(-50%);
     text-align:center;pointer-events:none;z-index:3;
-    translate:0 0;animation:oledDriftT 240s ease-in-out infinite;
   }
   #clock{
     font-size:clamp(38px,8.6vmin,100px);
