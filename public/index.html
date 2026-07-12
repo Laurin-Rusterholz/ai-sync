@@ -107820,6 +107820,35 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     return Math.max(10, Math.min(40, Math.round(fs)));
   }
 
+  // Echtes Auto-Fit: verkleinert die Schrift per Binärsuche, bis der Text
+  // vollständig ins Post-it passt (Höhe UND Breite). Manuelle Grösse wird
+  // respektiert.
+  function fitNoteFont(el, n) {
+    const body = el && el.querySelector(".sb-note-body");
+    if (!body) return;
+    if (n && n.fontSize !== "auto" && n.fontSize != null) { body.style.fontSize = n.fontSize + "px"; return; }
+    const maxF = Math.min(40, Math.max(16, Math.round(Math.sqrt((n.w || NOTE_W) * (n.h || NOTE_H)) / 5)));
+    const editing = body.classList.contains("editing");
+    // Beim Bearbeiten steht der Text noch nicht in n.text — live aus dem DOM messen
+    const hasContent = editing ? ((body.textContent || "").length > 0) : !!(n && n.text);
+    if (!hasContent) { body.style.fontSize = maxF + "px"; return; }
+    const minF = 7;
+    const savedAlign = body.style.alignItems, savedJustify = body.style.justifyContent;
+    if (!editing) { body.style.alignItems = "flex-start"; body.style.justifyContent = "flex-start"; }
+    const fits = () => body.scrollHeight <= body.clientHeight + 1 && body.scrollWidth <= body.clientWidth + 1;
+    body.style.fontSize = maxF + "px";
+    if (!fits()) {
+      let lo = minF, hi = maxF, best = minF;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        body.style.fontSize = mid + "px";
+        if (fits()) { best = mid; lo = mid + 1; } else { hi = mid - 1; }
+      }
+      body.style.fontSize = best + "px";
+    }
+    if (!editing) { body.style.alignItems = savedAlign; body.style.justifyContent = savedJustify; }
+  }
+
   function renderNotes() {
     const wrap = document.getElementById("sbNotes");
     if (!wrap) return;
@@ -107848,6 +107877,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         <div class="sb-resize" data-role="resize" style="color:${txt}"></div>
       </div>`;
     }).join("");
+    wrap.querySelectorAll(".sb-note").forEach((el) => { const n = noteById(el.dataset.id); if (n) fitNoteFont(el, n); });
   }
 
   function renderNoteText(n) {
@@ -108194,7 +108224,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       if (el) {
         el.style.width = d.n.w + "px"; el.style.height = d.n.h + "px";
         const body = el.querySelector(".sb-note-body");
-        if (body && (d.n.fontSize === "auto" || d.n.fontSize == null)) body.style.fontSize = autoFont(d.n) + "px";
+        if (body) fitNoteFont(el, d.n);
       }
       renderConnections();
     } else if (d.type === "pan") {
@@ -108341,11 +108371,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const range = document.createRange();
       range.selectNodeContents(body); range.collapse(false);
       const selc = window.getSelection(); selc.removeAllRanges(); selc.addRange(range);
+      fitNoteFont(el, n);
     }, 0);
 
     const finish = (createNext) => {
       body.removeEventListener("blur", onBlur);
       body.removeEventListener("keydown", onEditKey);
+      body.removeEventListener("input", onInput);
       body.removeAttribute("contenteditable");
       body.classList.remove("editing");
       el.classList.remove("editing");
@@ -108369,8 +108401,10 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         ev.preventDefault(); finish(true);
       }
     };
+    const onInput = () => fitNoteFont(el, n);
     body.addEventListener("blur", onBlur);
     body.addEventListener("keydown", onEditKey);
+    body.addEventListener("input", onInput);
   }
 
   // ════════════════════════════ TOOLBAR-AKTIONEN ═══════════════════════════
