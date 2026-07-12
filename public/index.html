@@ -27453,6 +27453,9 @@ window.viewConceptDetail = function(id) {
       
       ${renderMeasuresBlock('concept', c.id)}
       
+      ${window.renderStickyBoardBlock ? window.renderStickyBoardBlock('concept', c.id) : ''}
+
+      
       ${renderConceptNotebookSection(c, c.id)}
       
       ${renderFileAttachments("concept", c.id)}
@@ -30074,6 +30077,9 @@ function viewTaskDetail(id) {
         
         ${renderMeasuresBlock('task', id)}
         
+        ${window.renderStickyBoardBlock ? window.renderStickyBoardBlock('task', id) : ''}
+
+        
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
           <div class="tags mb-3">${tagsHtml}</div>
@@ -31680,6 +31686,9 @@ function viewProjectDetail(id) {
         })}
         
         ${renderMeasuresBlock('project', id)}
+        
+        ${window.renderStickyBoardBlock ? window.renderStickyBoardBlock('project', id) : ''}
+
         
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
@@ -36356,6 +36365,9 @@ function viewLearningProjectDetail(id) {
         </div>
 
         ${renderFileAttachments("project", id)}
+        
+        ${window.renderStickyBoardBlock ? window.renderStickyBoardBlock('project', id) : ''}
+
 
         <div class="card mb-4">
           <h3>🏷️ Tags</h3>
@@ -36614,6 +36626,9 @@ function viewPersonalityProjectDetail(id) {
           <input type="text" placeholder="Tag eingeben..." data-action="add-tag-input" data-kind="project" data-id="${id}" />
         </div>
         ${renderFileAttachments("project", id)}
+        
+        ${window.renderStickyBoardBlock ? window.renderStickyBoardBlock('project', id) : ''}
+
       </div>
     </div>
   `;
@@ -40423,6 +40438,9 @@ function viewStrategyDetail(id) {
         </div>
         
         ${renderMeasuresBlock('strategy', id)}
+        
+        ${window.renderStickyBoardBlock ? window.renderStickyBoardBlock('strategy', id) : ''}
+
         
         ${renderStrategyNotebookSection(s, id)}
         
@@ -107230,6 +107248,1499 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 
   // Diagnose-Hooks (nur Konsole; keine UI-Abhängigkeit)
   window.__polarisDebug = { nudge: plProactiveNudge, afterSession: plAfterSession, panelRefresh: plPanelRefresh, setMode: plSetMode, voiceState: function(){ return plVoiceState; } };
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     STICKY BOARD — Post-its / Whiteboard (Miro-artig) als wiederverwendbares
+     Element in Aufgaben, Projekten, Strategien und Konzepten.
+     Vorschau-Block via window.renderStickyBoardBlock(kind,id) in den Detail-
+     ansichten; Vollbild-Editor via window.openStickyBoard(kind,id) — bewusst
+     ausserhalb des render()-Zyklus. Persistenz am Entity (entity.stickyBoard)
+     via scheduleSave() (RTDB-Blob), keine Schemaänderung nötig.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   STICKY BOARD — Post-its / Whiteboard (Miro-artig)
+   ---------------------------------------------------------------------------
+   Ein wiederverwendbares Board-Element für Aufgaben, Projekte, Strategien und
+   Konzepte. Folgt dem Muster der bestehenden geteilten Blöcke (renderMeasures-
+   Block / renderFileAttachments): eine kind→collection-Zuordnung, Daten direkt
+   am Entity (entity.stickyBoard), Persistenz via scheduleSave() (RTDB-Blob).
+
+   Die Detailansichten rendern nur einen kompakten Vorschau-Block. Der eigent-
+   liche Editor ist ein Vollbild-Overlay am document.body — bewusst AUSSERHALB
+   des render()-Zyklus, damit Drag/Pan/Zoom nicht durch App-Re-Renders gestört
+   werden. Beim Schliessen wird render() einmal aufgerufen, um die Vorschau zu
+   aktualisieren.
+
+   Alle CSS-Klassen sind mit `sb-` präfixiert. Keine externen Abhängigkeiten.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+
+  const KIND_MAP = { task: "tasks", project: "projects", strategy: "strategies", concept: "concepts" };
+
+  // Post-it-Farbpalette (Hintergrund + passende Textfarbe für Kontrast)
+  const COLORS = [
+    { key: "yellow", label: "Gelb",   bg: "#ffe066", text: "#3a2f00" },
+    { key: "green",  label: "Grün",   bg: "#b2f2bb", text: "#0b3d1a" },
+    { key: "blue",   label: "Blau",   bg: "#a5d8ff", text: "#0a2e4d" },
+    { key: "pink",   label: "Pink",   bg: "#fcc2d7", text: "#4d0a29" },
+    { key: "orange", label: "Orange", bg: "#ffd8a8", text: "#4d2600" },
+    { key: "purple", label: "Lila",   bg: "#d0bfff", text: "#2a0a4d" },
+    { key: "teal",   label: "Petrol", bg: "#96f2d7", text: "#083d33" },
+    { key: "red",    label: "Rot",    bg: "#ffc9c9", text: "#4d0a0a" },
+    { key: "gray",   label: "Grau",   bg: "#dee2e6", text: "#212529" },
+    { key: "white",  label: "Weiss",  bg: "#ffffff", text: "#1a1a1a" },
+  ];
+  const colorByKey = (k) => COLORS.find((c) => c.key === k) || COLORS[0];
+
+  const NOTE_W = 180, NOTE_H = 180, GRID = 20;
+  const uid = (p) => (p || "sn") + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const nowIso = () => new Date().toISOString();
+  const esc = (s) => (window.esc ? window.esc(s) : String(s == null ? "" : s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])));
+  const toast = (t, a, b) => { try { window.toast && window.toast(t, a, b); } catch (e) {} };
+  const save = () => { try { window.scheduleSave && window.scheduleSave(); } catch (e) {} };
+
+  function authorName() {
+    try {
+      const fb = window.firebase;
+      if (fb && fb.auth && fb.auth().currentUser) {
+        const u = fb.auth().currentUser;
+        return u.displayName || u.email || "Ich";
+      }
+    } catch (e) {}
+    try { return (window.APP && APP.state.data.meta && APP.state.data.meta.workspaceName) || "Ich"; } catch (e) {}
+    return "Ich";
+  }
+
+  function getEntity(kind, id) {
+    const coll = KIND_MAP[kind];
+    if (!coll || !window.APP) return null;
+    return (APP.state.data.entities[coll] || {})[id] || null;
+  }
+
+  function getBoard(kind, id, createIfMissing) {
+    const ent = getEntity(kind, id);
+    if (!ent) return null;
+    if (!ent.stickyBoard) {
+      if (!createIfMissing) return null;
+      ent.stickyBoard = { notes: [], connections: [], view: { x: 0, y: 0, zoom: 1 }, bulkMode: false };
+    }
+    const b = ent.stickyBoard;
+    if (!Array.isArray(b.notes)) b.notes = [];
+    if (!Array.isArray(b.connections)) b.connections = [];
+    if (!b.view || typeof b.view !== "object") b.view = { x: 0, y: 0, zoom: 1 };
+    return b;
+  }
+
+  function touch(kind, id) {
+    const ent = getEntity(kind, id);
+    if (ent) ent.updatedAt = nowIso();
+  }
+
+  // ════════════════════════════ VORSCHAU-BLOCK ═════════════════════════════
+  // Wird aus den vier Detailansichten aufgerufen (wie renderFileAttachments).
+  window.renderStickyBoardBlock = function (kind, id) {
+    if (!KIND_MAP[kind]) return "";
+    const ent = getEntity(kind, id);
+    if (!ent) return "";
+    const board = ent.stickyBoard;
+    const notes = (board && board.notes) || [];
+    const conns = (board && board.connections) || [];
+
+    let previewInner = "";
+    if (notes.length) {
+      // Auto-fit-Mini-Vorschau: Bounding-Box aller Notes auf 100% skalieren
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      notes.forEach((n) => {
+        minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + (n.w || NOTE_W)); maxY = Math.max(maxY, n.y + (n.h || NOTE_H));
+      });
+      const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+      const PW = 100, PH = 100; // Vorschau-Innenraum in % via padding-Box
+      const scale = Math.min(PW / bw, PH / bh, 1) * 0.92;
+      previewInner = notes.slice(0, 60).map((n) => {
+        const c = colorByKey(n.color);
+        const bg = n.color && n.color[0] === "#" ? n.color : c.bg;
+        const x = (n.x - minX) * scale, y = (n.y - minY) * scale;
+        const w = (n.w || NOTE_W) * scale, h = (n.h || NOTE_H) * scale;
+        return `<div style="position:absolute;left:${x}%;top:${y}%;width:${w}%;height:${h}%;background:${bg};border-radius:2px;box-shadow:0 1px 2px rgba(0,0,0,.25)"></div>`;
+      }).join("");
+    }
+
+    const emptyState = `<div class="sb-preview-empty">
+        <div style="font-size:30px;line-height:1;margin-bottom:6px">🗒️</div>
+        <div style="font-size:12.5px;color:var(--muted)">Noch keine Post-its. Sammle Ideen visuell auf dem Board.</div>
+      </div>`;
+
+    return `<div class="card mb-4 sb-block">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <h3 style="margin:0;display:flex;align-items:center;gap:8px;flex:1">🗒️ Sticky Board${notes.length ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">(${notes.length} Post-it${notes.length === 1 ? "" : "s"}${conns.length ? `, ${conns.length} Verb.` : ""})</span>` : ""}</h3>
+        <button class="btn sm primary" onclick="window.openStickyBoard('${kind}','${id}')">${notes.length ? "↗ Board öffnen" : "+ Board starten"}</button>
+      </div>
+      <div class="sb-preview" onclick="window.openStickyBoard('${kind}','${id}')" title="Board öffnen">
+        ${notes.length ? `<div class="sb-preview-canvas">${previewInner}</div>` : emptyState}
+      </div>
+    </div>`;
+  };
+
+  // ════════════════════════════ OVERLAY-EDITOR ═════════════════════════════
+  const B = {
+    kind: null, id: null, board: null,
+    sel: new Set(),                 // ausgewählte Note-IDs
+    view: { x: 0, y: 0, zoom: 1 },
+    tool: "select",                 // select | pan | connect
+    drag: null,                     // aktueller Drag-Zustand
+    undoStack: [], redoStack: [],
+    clipboard: null,
+    filter: { text: "", tags: new Set(), colors: new Set() },
+    editingId: null,
+    spaceDown: false,
+    mounted: false,
+  };
+
+  const $ = (sel) => document.querySelector(sel);
+  const canvasEl = () => document.getElementById("sbCanvas");
+  const worldEl = () => document.getElementById("sbWorld");
+  const svgEl = () => document.getElementById("sbSvg");
+
+  window.openStickyBoard = function (kind, id) {
+    const board = getBoard(kind, id, true);
+    if (!board) { toast("warn", "Board", "Element nicht gefunden"); return; }
+    B.kind = kind; B.id = id; B.board = board;
+    B.sel = new Set();
+    B.view = Object.assign({ x: 0, y: 0, zoom: 1 }, board.view || {});
+    B.tool = "select";
+    B.undoStack = []; B.redoStack = [];
+    B.filter = { text: "", tags: new Set(), colors: new Set() };
+    B.editingId = null;
+    injectCSS();
+    buildOverlay();
+    B.mounted = true;
+    document.addEventListener("keydown", onKeyDown, true);
+    // Falls leer: sanft eine Willkommens-Note anbieten (nicht automatisch anlegen)
+    fitToContent(true);
+    renderAll();
+  };
+
+  function closeBoard() {
+    persist();
+    B.mounted = false;
+    document.removeEventListener("keydown", onKeyDown, true);
+    const ov = document.getElementById("sbOverlay");
+    if (ov) ov.remove();
+    hideContextMenu();
+    try { window.render && window.render(); } catch (e) {}
+  }
+
+  // ── Persistenz ──
+  function persist() {
+    if (!B.board) return;
+    B.board.view = { x: B.view.x, y: B.view.y, zoom: B.view.zoom };
+    touch(B.kind, B.id);
+    save();
+  }
+  // Debounced Speichern bei häufigen Aktionen (Drag)
+  let _saveT = null;
+  function persistSoon() {
+    if (_saveT) return;
+    _saveT = setTimeout(() => { _saveT = null; persist(); }, 400);
+  }
+
+  // ── Undo/Redo (Snapshot-basiert) ──
+  function snapshot() {
+    return JSON.stringify({ notes: B.board.notes, connections: B.board.connections });
+  }
+  function pushHistory() {
+    B.undoStack.push(snapshot());
+    if (B.undoStack.length > 60) B.undoStack.shift();
+    B.redoStack = [];
+    updateToolbarState();
+  }
+  function restore(snap) {
+    const data = JSON.parse(snap);
+    B.board.notes = data.notes;
+    B.board.connections = data.connections;
+    B.sel = new Set([...B.sel].filter((id) => B.board.notes.some((n) => n.id === id)));
+  }
+  function undo() {
+    if (!B.undoStack.length) return;
+    B.redoStack.push(snapshot());
+    restore(B.undoStack.pop());
+    persist(); renderAll();
+  }
+  function redo() {
+    if (!B.redoStack.length) return;
+    B.undoStack.push(snapshot());
+    restore(B.redoStack.pop());
+    persist(); renderAll();
+  }
+
+  // ── Koordinaten: Screen → Welt ──
+  function screenToWorld(clientX, clientY) {
+    const rect = canvasEl().getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - B.view.x) / B.view.zoom,
+      y: (clientY - rect.top - B.view.y) / B.view.zoom,
+    };
+  }
+  function viewportCenterWorld() {
+    const rect = canvasEl().getBoundingClientRect();
+    return screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  // ── Notes-Helper ──
+  function noteById(id) { return B.board.notes.find((n) => n.id === id); }
+  function maxZ() { return B.board.notes.reduce((m, n) => Math.max(m, n.z || 0), 0); }
+  function selectedNotes() { return [...B.sel].map(noteById).filter(Boolean); }
+
+  function addNote(props) {
+    const center = viewportCenterWorld();
+    const n = Object.assign({
+      id: uid("note"),
+      x: Math.round((center.x - NOTE_W / 2) / GRID) * GRID,
+      y: Math.round((center.y - NOTE_H / 2) / GRID) * GRID,
+      w: NOTE_W, h: NOTE_H,
+      text: "", color: "yellow", textColor: "",
+      shape: "square", fontSize: "auto", align: "center", valign: "middle",
+      bold: false, italic: false, underline: false, strike: false,
+      z: maxZ() + 1, tags: [], votes: 0, locked: false,
+      groupId: null, author: authorName(), createdAt: nowIso(), updatedAt: nowIso(),
+    }, props || {});
+    B.board.notes.push(n);
+    return n;
+  }
+
+  function matchesFilter(n) {
+    const f = B.filter;
+    if (f.colors.size && !f.colors.has(n.color)) return false;
+    if (f.tags.size) { const nt = new Set(n.tags || []); let ok = false; f.tags.forEach((t) => { if (nt.has(t)) ok = true; }); if (!ok) return false; }
+    if (f.text) { const hay = ((n.text || "") + " " + (n.tags || []).join(" ")).toLowerCase(); if (!hay.includes(f.text.toLowerCase())) return false; }
+    return true;
+  }
+  function filterActive() { return !!(B.filter.text || B.filter.tags.size || B.filter.colors.size); }
+
+  // ════════════════════════════ DOM-AUFBAU ═════════════════════════════════
+  function buildOverlay() {
+    const old = document.getElementById("sbOverlay");
+    if (old) old.remove();
+    const ent = getEntity(B.kind, B.id);
+    const title = (ent && (ent.title || ent.name)) || "Board";
+    const kindLabel = { task: "Aufgabe", project: "Projekt", strategy: "Strategie", concept: "Konzept" }[B.kind] || "";
+
+    const ov = document.createElement("div");
+    ov.id = "sbOverlay";
+    ov.className = "sb-overlay";
+    ov.innerHTML = `
+      <div class="sb-topbar">
+        <div class="sb-title">
+          <span style="font-size:17px">🗒️</span>
+          <div style="min-width:0">
+            <div class="sb-title-main">${esc(title)}</div>
+            <div class="sb-title-sub">${kindLabel} · Sticky Board</div>
+          </div>
+        </div>
+        <div class="sb-toolgroups" id="sbToolbar"></div>
+        <div class="sb-topbar-right">
+          <div class="sb-zoom">
+            <button class="sb-btn" data-sb="zoomOut" title="Verkleinern">−</button>
+            <button class="sb-btn sb-zoom-val" data-sb="zoomReset" title="Zoom zurücksetzen"><span id="sbZoomVal">100%</span></button>
+            <button class="sb-btn" data-sb="zoomIn" title="Vergrössern">+</button>
+            <button class="sb-btn" data-sb="fit" title="Alles einpassen">⤢</button>
+          </div>
+          <button class="sb-btn sb-close" data-sb="close" title="Schliessen (Esc)">✕</button>
+        </div>
+      </div>
+      <div class="sb-filterbar" id="sbFilterbar" style="display:none"></div>
+      <div class="sb-canvas" id="sbCanvas">
+        <div class="sb-world" id="sbWorld">
+          <svg class="sb-svg" id="sbSvg"></svg>
+          <div class="sb-notes" id="sbNotes"></div>
+          <div class="sb-marquee" id="sbMarquee" style="display:none"></div>
+        </div>
+        <div class="sb-hint" id="sbHint"></div>
+      </div>
+      <div class="sb-contextmenu" id="sbCtx" style="display:none"></div>
+    `;
+    document.body.appendChild(ov);
+
+    // Toolbar
+    document.getElementById("sbToolbar").innerHTML = toolbarHTML();
+
+    // Events
+    ov.addEventListener("click", onToolbarClick);
+    ov.addEventListener("change", onToolbarChange);
+    const cv = canvasEl();
+    cv.addEventListener("pointerdown", onCanvasPointerDown);
+    cv.addEventListener("wheel", onWheel, { passive: false });
+    cv.addEventListener("dblclick", onCanvasDblClick);
+    cv.addEventListener("contextmenu", onCanvasContextMenu);
+    cv.addEventListener("paste", onPaste);
+    cv.tabIndex = 0;
+  }
+
+  function toolbarHTML() {
+    const fmtBtn = (act, label, title) => `<button class="sb-btn" data-sb="${act}" title="${title}">${label}</button>`;
+    return `
+      <div class="sb-group">
+        <button class="sb-btn sb-primary" data-sb="add" title="Neues Post-it (N)">＋ Post-it</button>
+        <button class="sb-btn sb-toggle" data-sb="bulk" id="sbBulkBtn" title="Bulk-Modus: Enter erzeugt neues Post-it">⤵ Bulk</button>
+      </div>
+      <div class="sb-group" id="sbColorGroup" title="Farbe">
+        ${COLORS.map((c) => `<button class="sb-swatch" data-sb="color" data-color="${c.key}" title="${c.label}" style="background:${c.bg}"></button>`).join("")}
+      </div>
+      <div class="sb-group">
+        <select class="sb-select" data-sb="shape" id="sbShape" title="Form">
+          <option value="square">▢ Quadrat</option>
+          <option value="rect">▭ Rechteck</option>
+          <option value="torn">⬒ Abgerissen</option>
+        </select>
+      </div>
+      <div class="sb-group">
+        ${fmtBtn("bold", "<b>B</b>", "Fett")}
+        ${fmtBtn("italic", "<i>I</i>", "Kursiv")}
+        ${fmtBtn("underline", "<u>U</u>", "Unterstrichen")}
+        ${fmtBtn("strike", "<s>S</s>", "Durchgestrichen")}
+        ${fmtBtn("bullet", "☰", "Aufzählung")}
+      </div>
+      <div class="sb-group">
+        ${fmtBtn("align-left", "⬅", "Linksbündig")}
+        ${fmtBtn("align-center", "⬍", "Zentriert")}
+        ${fmtBtn("align-right", "➡", "Rechtsbündig")}
+        ${fmtBtn("font-dec", "A−", "Schrift kleiner")}
+        ${fmtBtn("font-inc", "A＋", "Schrift grösser")}
+        ${fmtBtn("font-auto", "⤢A", "Auto-Fit")}
+      </div>
+      <div class="sb-group">
+        <button class="sb-btn sb-toggle" data-sb="connect" id="sbConnectBtn" title="Verbinden: Post-its mit Linien verknüpfen">🔗 Verbinden</button>
+      </div>
+      <div class="sb-group">
+        ${fmtBtn("group", "◱ Gruppe", "Gruppieren")}
+        ${fmtBtn("ungroup", "◲", "Gruppierung lösen")}
+        ${fmtBtn("grid", "▦ Raster", "In Raster anordnen")}
+        <select class="sb-select" data-sb="align-menu" title="Ausrichten & Verteilen">
+          <option value="">Ausrichten…</option>
+          <option value="al">⬅ Links</option>
+          <option value="ac">⬍ Horiz. Mitte</option>
+          <option value="ar">➡ Rechts</option>
+          <option value="at">⬆ Oben</option>
+          <option value="am">⬌ Vert. Mitte</option>
+          <option value="ab">⬇ Unten</option>
+          <option value="dh">↔ Horiz. verteilen</option>
+          <option value="dv">↕ Vert. verteilen</option>
+        </select>
+        <select class="sb-select" data-sb="cluster" title="Clustern">
+          <option value="">Clustern…</option>
+          <option value="color">Nach Farbe</option>
+          <option value="tag">Nach Tag</option>
+        </select>
+      </div>
+      <div class="sb-group">
+        ${fmtBtn("front", "⬆▢", "Nach vorne")}
+        ${fmtBtn("back", "⬇▢", "Nach hinten")}
+        ${fmtBtn("lock", "🔒", "Sperren/Entsperren")}
+      </div>
+      <div class="sb-group">
+        ${fmtBtn("duplicate", "⧉", "Duplizieren (Ctrl/Cmd+D)")}
+        ${fmtBtn("delete", "🗑", "Löschen (Entf)")}
+        ${fmtBtn("undo", "↶", "Rückgängig (Ctrl/Cmd+Z)")}
+        ${fmtBtn("redo", "↷", "Wiederholen")}
+      </div>
+      <div class="sb-group">
+        <button class="sb-btn sb-toggle" data-sb="filterToggle" id="sbFilterToggle" title="Filter & Suche">🔍 Filter</button>
+        ${fmtBtn("export", "⭳ CSV", "Als CSV exportieren")}
+        ${fmtBtn("import", "⭱ Import", "Aus Text/CSV importieren")}
+      </div>
+    `;
+  }
+
+  // ════════════════════════════ RENDERING ══════════════════════════════════
+  function renderAll() {
+    renderNotes();
+    renderConnections();
+    updateTransform();
+    updateToolbarState();
+    updateHint();
+  }
+
+  function updateTransform() {
+    const w = worldEl();
+    if (w) w.style.transform = `translate(${B.view.x}px,${B.view.y}px) scale(${B.view.zoom})`;
+    const zv = document.getElementById("sbZoomVal");
+    if (zv) zv.textContent = Math.round(B.view.zoom * 100) + "%";
+  }
+
+  function noteStyle(n) {
+    const c = colorByKey(n.color);
+    const bg = n.color && n.color[0] === "#" ? n.color : c.bg;
+    const txt = n.textColor || c.text;
+    let radius = "6px", extra = "";
+    if (n.shape === "torn") { extra = "clip-path:polygon(0 0,100% 0,100% 92%,96% 100%,90% 94%,82% 100%,74% 94%,66% 100%,58% 94%,50% 100%,42% 94%,34% 100%,26% 94%,18% 100%,10% 94%,4% 100%,0 92%);"; }
+    return `left:${n.x}px;top:${n.y}px;width:${n.w || NOTE_W}px;height:${n.h || NOTE_H}px;background:${bg};color:${txt};z-index:${n.z || 1};${extra}border-radius:${radius}`;
+  }
+
+  function noteInnerStyle(n) {
+    const align = { left: "left", center: "center", right: "right" }[n.align] || "center";
+    const jc = { top: "flex-start", middle: "center", bottom: "flex-end" }[n.valign] || "center";
+    let fs = n.fontSize === "auto" || n.fontSize == null ? autoFont(n) : n.fontSize;
+    let deco = [];
+    if (n.underline) deco.push("underline");
+    if (n.strike) deco.push("line-through");
+    return `text-align:${align};justify-content:${jc};font-size:${fs}px;font-weight:${n.bold ? "800" : "500"};font-style:${n.italic ? "italic" : "normal"};text-decoration:${deco.join(" ") || "none"}`;
+  }
+
+  function autoFont(n) {
+    const len = (n.text || "").length;
+    const area = (n.w || NOTE_W) * (n.h || NOTE_H);
+    const base = Math.sqrt(area) / 6;
+    let fs = base;
+    if (len > 0) fs = Math.min(base, Math.max(11, Math.sqrt(area / (len + 1)) * 1.3));
+    return Math.max(10, Math.min(40, Math.round(fs)));
+  }
+
+  function renderNotes() {
+    const wrap = document.getElementById("sbNotes");
+    if (!wrap) return;
+    const fActive = filterActive();
+    wrap.innerHTML = B.board.notes.slice().sort((a, b) => (a.z || 0) - (b.z || 0)).map((n) => {
+      const selected = B.sel.has(n.id);
+      const dim = fActive && !matchesFilter(n);
+      const c = colorByKey(n.color);
+      const txt = n.textColor || c.text;
+      const tagsHtml = (n.tags || []).length ? `<div class="sb-note-tags">${n.tags.map((t) => `<span class="sb-tag">${esc(t)}</span>`).join("")}</div>` : "";
+      const votesHtml = n.votes ? `<span class="sb-note-votes" title="Stimmen">👍 ${n.votes}</span>` : "";
+      const lockHtml = n.locked ? `<span class="sb-note-lock" title="Gesperrt">🔒</span>` : "";
+      return `<div class="sb-note${selected ? " sel" : ""}${dim ? " dim" : ""}${n.locked ? " locked" : ""}" data-id="${n.id}" style="${noteStyle(n)}">
+        <div class="sb-note-body" style="${noteInnerStyle(n)}" data-role="body">${renderNoteText(n)}</div>
+        <div class="sb-note-meta">
+          ${votesHtml}${lockHtml}
+          <button class="sb-vote" data-role="vote" title="Abstimmen">👍</button>
+        </div>
+        ${tagsHtml}
+        <div class="sb-anchors" data-role="anchors">
+          <span class="sb-anchor" data-anchor="t"></span>
+          <span class="sb-anchor" data-anchor="r"></span>
+          <span class="sb-anchor" data-anchor="b"></span>
+          <span class="sb-anchor" data-anchor="l"></span>
+        </div>
+        <div class="sb-resize" data-role="resize" style="color:${txt}"></div>
+      </div>`;
+    }).join("");
+  }
+
+  function renderNoteText(n) {
+    const raw = n.text || "";
+    if (!raw) return `<span class="sb-placeholder">${n.locked ? "" : "Text eingeben…"}</span>`;
+    // einfache Bullet-Darstellung: Zeilen, die mit "- " oder "• " beginnen
+    return esc(raw).replace(/\n/g, "<br>");
+  }
+
+  function renderConnections() {
+    const svg = svgEl();
+    if (!svg) return;
+    // Bounding-Box der Welt bestimmen für SVG-Grösse (grosszügig)
+    let parts = "";
+    const defs = `<defs>
+      <marker id="sbArrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+        <path d="M0,0 L8,3 L0,6 Z" fill="context-stroke"></path>
+      </marker>
+    </defs>`;
+    B.board.connections.forEach((cn) => {
+      const a = noteById(cn.from), b = noteById(cn.to);
+      if (!a || !b) return;
+      const p = anchorPoints(a, b);
+      const col = cn.color || "#8a94a6";
+      const w = cn.width || 2;
+      const arrow = cn.arrow || "end";
+      let d;
+      if (cn.style === "elbow") {
+        const midX = (p.x1 + p.x2) / 2;
+        d = `M ${p.x1} ${p.y1} L ${midX} ${p.y1} L ${midX} ${p.y2} L ${p.x2} ${p.y2}`;
+      } else if (cn.style === "straight") {
+        d = `M ${p.x1} ${p.y1} L ${p.x2} ${p.y2}`;
+      } else {
+        const dx = Math.abs(p.x2 - p.x1) * 0.5;
+        d = `M ${p.x1} ${p.y1} C ${p.x1 + dx} ${p.y1}, ${p.x2 - dx} ${p.y2}, ${p.x2} ${p.y2}`;
+      }
+      const markerEnd = (arrow === "end" || arrow === "both") ? `marker-end="url(#sbArrow)"` : "";
+      const markerStart = (arrow === "both") ? `marker-start="url(#sbArrow)"` : "";
+      parts += `<path d="${d}" fill="none" stroke="${col}" stroke-width="${w}" ${markerEnd} ${markerStart} class="sb-conn" data-conn="${cn.id}" style="stroke:${col}"></path>`;
+      // klickbare, breitere Hitline
+      parts += `<path d="${d}" fill="none" stroke="transparent" stroke-width="${Math.max(12, w + 10)}" class="sb-conn-hit" data-conn="${cn.id}"></path>`;
+      if (cn.label) {
+        const mx = (p.x1 + p.x2) / 2, my = (p.y1 + p.y2) / 2;
+        parts += `<g class="sb-conn-label" data-conn="${cn.id}"><rect x="${mx - cn.label.length * 3.4 - 6}" y="${my - 10}" width="${cn.label.length * 6.8 + 12}" height="20" rx="5" fill="var(--sb-panel)" stroke="${col}"></rect><text x="${mx}" y="${my + 4}" text-anchor="middle" font-size="11" fill="var(--sb-text)">${esc(cn.label)}</text></g>`;
+      }
+    });
+    // temporäre Verbindungslinie beim Ziehen
+    if (B.drag && B.drag.type === "connect" && B.drag.cur) {
+      parts += `<path d="M ${B.drag.startPt.x} ${B.drag.startPt.y} L ${B.drag.cur.x} ${B.drag.cur.y}" fill="none" stroke="var(--sb-accent)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#sbArrow)"></path>`;
+    }
+    // SVG-Grösse setzen
+    const b = worldBounds();
+    svg.setAttribute("width", b.w); svg.setAttribute("height", b.h);
+    svg.style.left = b.x + "px"; svg.style.top = b.y + "px";
+    svg.setAttribute("viewBox", `${b.x} ${b.y} ${b.w} ${b.h}`);
+    svg.innerHTML = defs + parts;
+  }
+
+  function worldBounds() {
+    if (!B.board.notes.length) return { x: -2000, y: -2000, w: 4000, h: 4000 };
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    B.board.notes.forEach((n) => {
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + (n.w || NOTE_W)); maxY = Math.max(maxY, n.y + (n.h || NOTE_H));
+    });
+    const pad = 2000;
+    return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
+  }
+
+  function anchorPoints(a, b) {
+    const ac = { x: a.x + (a.w || NOTE_W) / 2, y: a.y + (a.h || NOTE_H) / 2 };
+    const bc = { x: b.x + (b.w || NOTE_W) / 2, y: b.y + (b.h || NOTE_H) / 2 };
+    return { x1: ac.x, y1: ac.y, x2: bc.x, y2: bc.y };
+  }
+
+  function updateHint() {
+    const el = document.getElementById("sbHint");
+    if (!el) return;
+    if (!B.board.notes.length) {
+      el.innerHTML = `Doppelklick auf die Fläche oder <b>＋ Post-it</b> zum Starten · <b>N</b> neues Post-it · Mausrad = Zoom`;
+      el.style.display = "block";
+    } else if (B.tool === "connect") {
+      el.innerHTML = `🔗 <b>Verbinden</b>: Von einem Post-it zu einem anderen ziehen. <b>Esc</b> beendet den Modus.`;
+      el.style.display = "block";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
+  function updateToolbarState() {
+    const bulk = document.getElementById("sbBulkBtn");
+    if (bulk) bulk.classList.toggle("active", !!B.board.bulkMode);
+    const conn = document.getElementById("sbConnectBtn");
+    if (conn) conn.classList.toggle("active", B.tool === "connect");
+    const ft = document.getElementById("sbFilterToggle");
+    if (ft) ft.classList.toggle("active", filterActive());
+  }
+
+  // ════════════════════════════ CANVAS-INTERAKTION ═════════════════════════
+  function onCanvasPointerDown(e) {
+    if (e.button === 2) return; // Rechtsklick → contextmenu
+    hideContextMenu();
+    const cv = canvasEl();
+    cv.focus();
+    const noteEl = e.target.closest(".sb-note");
+    const anchorEl = e.target.closest(".sb-anchor");
+    const resizeEl = e.target.closest(".sb-resize");
+    const connHit = e.target.closest(".sb-conn-hit, .sb-conn-label");
+
+    // Verbindung anklicken → auswählen/bearbeiten
+    if (connHit && !noteEl) {
+      selectConnection(connHit.dataset.conn, e);
+      return;
+    }
+
+    // Anchor → Verbindung ziehen
+    if (anchorEl && noteEl) {
+      startConnect(noteEl.dataset.id, e);
+      return;
+    }
+    // Resize-Handle
+    if (resizeEl && noteEl) {
+      startResize(noteEl.dataset.id, e);
+      return;
+    }
+    // Vote-Button
+    if (e.target.closest("[data-role='vote']") && noteEl) {
+      pushHistory();
+      const n = noteById(noteEl.dataset.id);
+      if (n) { n.votes = (n.votes || 0) + 1; n.updatedAt = nowIso(); persist(); renderNotes(); }
+      return;
+    }
+
+    if (noteEl) {
+      const id = noteEl.dataset.id;
+      const n = noteById(id);
+      if (B.tool === "connect") { startConnect(id, e); return; }
+      // Auswahl-Logik
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        if (B.sel.has(id)) B.sel.delete(id); else B.sel.add(id);
+      } else if (!B.sel.has(id)) {
+        B.sel = new Set([id]);
+      }
+      // Gruppen-Auswahl
+      if (n && n.groupId) {
+        B.board.notes.forEach((m) => { if (m.groupId === n.groupId) B.sel.add(m.id); });
+      }
+      renderNotes();
+      if (!n || n.locked) return;
+      startDrag(e);
+      return;
+    }
+
+    // leere Fläche
+    if (B.tool === "pan" || B.spaceDown || e.button === 1) {
+      startPan(e);
+    } else {
+      startMarquee(e);
+    }
+  }
+
+  function startDrag(e) {
+    const notes = selectedNotes().filter((n) => !n.locked);
+    if (!notes.length) return;
+    pushHistory();
+    B.drag = {
+      type: "move", pointerId: e.pointerId,
+      startX: e.clientX, startY: e.clientY, moved: false,
+      items: notes.map((n) => ({ n, ox: n.x, oy: n.y })),
+    };
+    bindDrag();
+  }
+
+  function startResize(id, e) {
+    const n = noteById(id);
+    if (!n || n.locked) return;
+    B.sel = new Set([id]); renderNotes();
+    pushHistory();
+    B.drag = { type: "resize", pointerId: e.pointerId, n, startX: e.clientX, startY: e.clientY, ow: n.w || NOTE_W, oh: n.h || NOTE_H };
+    bindDrag();
+  }
+
+  function startPan(e) {
+    B.drag = { type: "pan", pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, ox: B.view.x, oy: B.view.y };
+    canvasEl().classList.add("panning");
+    bindDrag();
+  }
+
+  function startMarquee(e) {
+    if (!(e.shiftKey || e.metaKey || e.ctrlKey)) { B.sel = new Set(); renderNotes(); }
+    const start = screenToWorld(e.clientX, e.clientY);
+    B.drag = { type: "marquee", pointerId: e.pointerId, start, base: new Set(B.sel) };
+    bindDrag();
+  }
+
+  function startConnect(id, e) {
+    const n = noteById(id);
+    if (!n) return;
+    const c = { x: n.x + (n.w || NOTE_W) / 2, y: n.y + (n.h || NOTE_H) / 2 };
+    B.drag = { type: "connect", pointerId: e.pointerId, from: id, startPt: c, cur: c };
+    bindDrag();
+  }
+
+  function bindDrag() {
+    window.addEventListener("pointermove", onPointerMove, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+  }
+  function unbindDrag() {
+    window.removeEventListener("pointermove", onPointerMove, true);
+    window.removeEventListener("pointerup", onPointerUp, true);
+  }
+
+  function onPointerMove(e) {
+    const d = B.drag;
+    if (!d) return;
+    if (d.type === "move") {
+      const dx = (e.clientX - d.startX) / B.view.zoom;
+      const dy = (e.clientY - d.startY) / B.view.zoom;
+      if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) > 3) d.moved = true;
+      d.items.forEach(({ n, ox, oy }) => {
+        n.x = ox + dx; n.y = oy + dy;
+        const el = noteElById(n.id);
+        if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
+      });
+      renderConnections();
+    } else if (d.type === "resize") {
+      const dw = (e.clientX - d.startX) / B.view.zoom;
+      const dh = (e.clientY - d.startY) / B.view.zoom;
+      d.n.w = Math.max(80, d.ow + dw);
+      d.n.h = Math.max(60, d.oh + dh);
+      const el = noteElById(d.n.id);
+      if (el) {
+        el.style.width = d.n.w + "px"; el.style.height = d.n.h + "px";
+        const body = el.querySelector(".sb-note-body");
+        if (body && (d.n.fontSize === "auto" || d.n.fontSize == null)) body.style.fontSize = autoFont(d.n) + "px";
+      }
+      renderConnections();
+    } else if (d.type === "pan") {
+      B.view.x = d.ox + (e.clientX - d.startX);
+      B.view.y = d.oy + (e.clientY - d.startY);
+      updateTransform();
+    } else if (d.type === "marquee") {
+      const cur = screenToWorld(e.clientX, e.clientY);
+      d.cur = cur;
+      drawMarquee(d.start, cur);
+      const box = { x1: Math.min(d.start.x, cur.x), y1: Math.min(d.start.y, cur.y), x2: Math.max(d.start.x, cur.x), y2: Math.max(d.start.y, cur.y) };
+      B.sel = new Set(d.base);
+      B.board.notes.forEach((n) => {
+        const nx1 = n.x, ny1 = n.y, nx2 = n.x + (n.w || NOTE_W), ny2 = n.y + (n.h || NOTE_H);
+        if (nx1 < box.x2 && nx2 > box.x1 && ny1 < box.y2 && ny2 > box.y1) B.sel.add(n.id);
+      });
+      renderNotes();
+    } else if (d.type === "connect") {
+      d.cur = screenToWorld(e.clientX, e.clientY);
+      const overEl = document.elementFromPoint(e.clientX, e.clientY);
+      const overNote = overEl && overEl.closest(".sb-note");
+      d.hoverTarget = overNote ? overNote.dataset.id : null;
+      document.querySelectorAll(".sb-note.conn-target").forEach((el) => el.classList.remove("conn-target"));
+      if (overNote && overNote.dataset.id !== d.from) overNote.classList.add("conn-target");
+      renderConnections();
+    }
+  }
+
+  function onPointerUp(e) {
+    const d = B.drag;
+    unbindDrag();
+    if (!d) return;
+    if (d.type === "move") {
+      if (d.moved) {
+        d.items.forEach(({ n }) => { n.x = Math.round(n.x / GRID) * GRID; n.y = Math.round(n.y / GRID) * GRID; n.updatedAt = nowIso(); });
+        renderNotes(); renderConnections(); persist();
+      } else {
+        B.undoStack.pop(); // kein echter Move → History-Eintrag verwerfen
+      }
+    } else if (d.type === "resize") {
+      d.n.updatedAt = nowIso();
+      renderNotes(); persist();
+    } else if (d.type === "pan") {
+      canvasEl().classList.remove("panning");
+      persistSoon();
+    } else if (d.type === "marquee") {
+      hideMarquee();
+    } else if (d.type === "connect") {
+      document.querySelectorAll(".sb-note.conn-target").forEach((el) => el.classList.remove("conn-target"));
+      if (d.hoverTarget && d.hoverTarget !== d.from) {
+        pushHistory();
+        B.board.connections.push({ id: uid("conn"), from: d.from, to: d.hoverTarget, style: "curved", color: "#8a94a6", width: 2, arrow: "end", label: "" });
+        persist();
+      }
+      B.drag = null;
+      renderConnections();
+    }
+    B.drag = null;
+  }
+
+  function noteElById(id) { return document.querySelector(`.sb-note[data-id="${id}"]`); }
+
+  function drawMarquee(a, b) {
+    const m = document.getElementById("sbMarquee");
+    if (!m) return;
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    m.style.display = "block";
+    m.style.left = x + "px"; m.style.top = y + "px";
+    m.style.width = Math.abs(b.x - a.x) + "px"; m.style.height = Math.abs(b.y - a.y) + "px";
+  }
+  function hideMarquee() { const m = document.getElementById("sbMarquee"); if (m) m.style.display = "none"; }
+
+  function onWheel(e) {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey || true) {
+      // Zoom zum Cursor
+      const rect = canvasEl().getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const worldX = (mx - B.view.x) / B.view.zoom;
+      const worldY = (my - B.view.y) / B.view.zoom;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const z = Math.max(0.15, Math.min(4, B.view.zoom * factor));
+      B.view.zoom = z;
+      B.view.x = mx - worldX * z;
+      B.view.y = my - worldY * z;
+      updateTransform();
+      persistSoon();
+    }
+  }
+
+  function onCanvasDblClick(e) {
+    if (e.target.closest(".sb-note")) {
+      const noteEl = e.target.closest(".sb-note");
+      beginEdit(noteEl.dataset.id);
+      return;
+    }
+    if (e.target.closest(".sb-conn-hit, .sb-conn-label")) return;
+    // leere Fläche → neue Note an Cursor
+    const w = screenToWorld(e.clientX, e.clientY);
+    pushHistory();
+    const n = addNote({ x: Math.round((w.x - NOTE_W / 2) / GRID) * GRID, y: Math.round((w.y - NOTE_H / 2) / GRID) * GRID });
+    B.sel = new Set([n.id]);
+    renderNotes(); persist();
+    beginEdit(n.id);
+  }
+
+  // ════════════════════════════ TEXT-EDIT ══════════════════════════════════
+  function beginEdit(id) {
+    const n = noteById(id);
+    if (!n || n.locked) return;
+    B.editingId = id;
+    const el = noteElById(id);
+    if (!el) return;
+    const body = el.querySelector(".sb-note-body");
+    body.setAttribute("contenteditable", "true");
+    body.classList.add("editing");
+    body.textContent = n.text || "";
+    el.classList.add("editing");
+    // Fokus + Caret ans Ende
+    setTimeout(() => {
+      body.focus();
+      const range = document.createRange();
+      range.selectNodeContents(body); range.collapse(false);
+      const selc = window.getSelection(); selc.removeAllRanges(); selc.addRange(range);
+    }, 0);
+
+    const finish = (createNext) => {
+      body.removeEventListener("blur", onBlur);
+      body.removeEventListener("keydown", onEditKey);
+      body.removeAttribute("contenteditable");
+      body.classList.remove("editing");
+      el.classList.remove("editing");
+      const val = body.innerText.replace(/ /g, " ").replace(/\n{3,}/g, "\n\n").trimEnd();
+      if (val !== (n.text || "")) { pushHistory(); n.text = val; n.updatedAt = nowIso(); persist(); }
+      B.editingId = null;
+      renderNotes();
+      if (createNext && B.board.bulkMode) {
+        pushHistory();
+        const nn = addNote({ x: n.x, y: n.y + (n.h || NOTE_H) + GRID, color: n.color, shape: n.shape });
+        B.sel = new Set([nn.id]);
+        renderNotes(); persist();
+        beginEdit(nn.id);
+      }
+    };
+    const onBlur = () => finish(false);
+    const onEditKey = (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+      else if (ev.key === "Enter" && (ev.shiftKey ? false : (B.board.bulkMode || ev.ctrlKey || ev.metaKey))) {
+        ev.preventDefault(); finish(true);
+      }
+    };
+    body.addEventListener("blur", onBlur);
+    body.addEventListener("keydown", onEditKey);
+  }
+
+  // ════════════════════════════ TOOLBAR-AKTIONEN ═══════════════════════════
+  function onToolbarClick(e) {
+    const swatch = e.target.closest(".sb-swatch");
+    if (swatch) { applyColor(swatch.dataset.color); return; }
+    const btn = e.target.closest("[data-sb]");
+    if (!btn) return;
+    const act = btn.dataset.sb;
+    handleAction(act, btn);
+  }
+
+  function onToolbarChange(e) {
+    const el = e.target.closest("[data-sb]");
+    if (!el) return;
+    const act = el.dataset.sb;
+    if (act === "shape") { applyToSelected((n) => { n.shape = el.value; }); }
+    else if (act === "align-menu") { if (el.value) { alignDistribute(el.value); el.value = ""; } }
+    else if (act === "cluster") { if (el.value) { clusterBy(el.value); el.value = ""; } }
+  }
+
+  function handleAction(act, btn) {
+    switch (act) {
+      case "close": closeBoard(); break;
+      case "add": { pushHistory(); const n = addNote({}); B.sel = new Set([n.id]); renderNotes(); persist(); beginEdit(n.id); break; }
+      case "bulk": B.board.bulkMode = !B.board.bulkMode; updateToolbarState(); persist(); toast("ok", "Bulk-Modus", B.board.bulkMode ? "An — Enter erzeugt neues Post-it" : "Aus"); break;
+      case "bold": toggleFmt("bold"); break;
+      case "italic": toggleFmt("italic"); break;
+      case "underline": toggleFmt("underline"); break;
+      case "strike": toggleFmt("strike"); break;
+      case "bullet": bulletSelected(); break;
+      case "align-left": applyToSelected((n) => { n.align = "left"; }); break;
+      case "align-center": applyToSelected((n) => { n.align = "center"; }); break;
+      case "align-right": applyToSelected((n) => { n.align = "right"; }); break;
+      case "font-dec": applyToSelected((n) => { n.fontSize = Math.max(8, (n.fontSize === "auto" ? autoFont(n) : n.fontSize) - 2); }); break;
+      case "font-inc": applyToSelected((n) => { n.fontSize = Math.min(72, (n.fontSize === "auto" ? autoFont(n) : n.fontSize) + 2); }); break;
+      case "font-auto": applyToSelected((n) => { n.fontSize = "auto"; }); break;
+      case "connect": B.tool = B.tool === "connect" ? "select" : "connect"; updateToolbarState(); updateHint(); break;
+      case "group": groupSelected(); break;
+      case "ungroup": ungroupSelected(); break;
+      case "grid": arrangeGrid(); break;
+      case "front": zOrder(1); break;
+      case "back": zOrder(-1); break;
+      case "lock": toggleLock(); break;
+      case "duplicate": duplicateSelected(); break;
+      case "delete": deleteSelected(); break;
+      case "undo": undo(); break;
+      case "redo": redo(); break;
+      case "filterToggle": toggleFilterbar(); break;
+      case "export": exportCSV(); break;
+      case "import": openImport(); break;
+      case "zoomIn": zoomBy(1.2); break;
+      case "zoomOut": zoomBy(1 / 1.2); break;
+      case "zoomReset": B.view.zoom = 1; updateTransform(); persistSoon(); break;
+      case "fit": fitToContent(false); break;
+    }
+  }
+
+  function applyToSelected(fn) {
+    const notes = selectedNotes();
+    if (!notes.length) { toast("warn", "Auswahl", "Erst Post-its auswählen"); return; }
+    pushHistory();
+    notes.forEach((n) => { fn(n); n.updatedAt = nowIso(); });
+    persist(); renderNotes();
+  }
+  function toggleFmt(key) {
+    const notes = selectedNotes();
+    if (!notes.length) { toast("warn", "Auswahl", "Erst Post-its auswählen"); return; }
+    pushHistory();
+    const anyOff = notes.some((n) => !n[key]);
+    notes.forEach((n) => { n[key] = anyOff; n.updatedAt = nowIso(); });
+    persist(); renderNotes();
+  }
+  function bulletSelected() {
+    applyToSelected((n) => {
+      const lines = (n.text || "").split("\n");
+      const allBul = lines.every((l) => /^\s*[•\-]\s/.test(l) || l.trim() === "");
+      n.text = lines.map((l) => {
+        if (l.trim() === "") return l;
+        return allBul ? l.replace(/^\s*[•\-]\s/, "") : "• " + l.replace(/^\s*[•\-]\s/, "");
+      }).join("\n");
+    });
+  }
+  function applyColor(key) {
+    const notes = selectedNotes();
+    if (!notes.length) { toast("warn", "Farbe", "Erst Post-its auswählen"); return; }
+    pushHistory();
+    notes.forEach((n) => { n.color = key; n.textColor = ""; n.updatedAt = nowIso(); });
+    persist(); renderNotes();
+  }
+
+  function groupSelected() {
+    const notes = selectedNotes();
+    if (notes.length < 2) { toast("warn", "Gruppe", "Mindestens 2 Post-its auswählen"); return; }
+    pushHistory();
+    const gid = uid("grp");
+    notes.forEach((n) => { n.groupId = gid; });
+    persist(); renderNotes(); toast("ok", "Gruppe", notes.length + " Post-its gruppiert");
+  }
+  function ungroupSelected() {
+    const notes = selectedNotes();
+    if (!notes.length) return;
+    pushHistory();
+    notes.forEach((n) => { n.groupId = null; });
+    persist(); renderNotes();
+  }
+
+  function arrangeGrid() {
+    let notes = selectedNotes();
+    if (notes.length < 2) notes = B.board.notes.slice();
+    if (!notes.length) return;
+    pushHistory();
+    notes.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    const cols = Math.ceil(Math.sqrt(notes.length));
+    const gap = 24;
+    const cw = Math.max(...notes.map((n) => n.w || NOTE_W)) + gap;
+    const ch = Math.max(...notes.map((n) => n.h || NOTE_H)) + gap;
+    const ox = Math.min(...notes.map((n) => n.x));
+    const oy = Math.min(...notes.map((n) => n.y));
+    notes.forEach((n, i) => { n.x = ox + (i % cols) * cw; n.y = oy + Math.floor(i / cols) * ch; n.updatedAt = nowIso(); });
+    persist(); renderAll(); toast("ok", "Raster", "Angeordnet");
+  }
+
+  function alignDistribute(mode) {
+    const notes = selectedNotes();
+    if (notes.length < 2) { toast("warn", "Ausrichten", "Mindestens 2 Post-its auswählen"); return; }
+    pushHistory();
+    const xs = notes.map((n) => n.x), ys = notes.map((n) => n.y);
+    const rs = notes.map((n) => n.x + (n.w || NOTE_W)), bs = notes.map((n) => n.y + (n.h || NOTE_H));
+    if (mode === "al") { const m = Math.min(...xs); notes.forEach((n) => n.x = m); }
+    else if (mode === "ar") { const m = Math.max(...rs); notes.forEach((n) => n.x = m - (n.w || NOTE_W)); }
+    else if (mode === "ac") { const m = (Math.min(...xs) + Math.max(...rs)) / 2; notes.forEach((n) => n.x = Math.round(m - (n.w || NOTE_W) / 2)); }
+    else if (mode === "at") { const m = Math.min(...ys); notes.forEach((n) => n.y = m); }
+    else if (mode === "ab") { const m = Math.max(...bs); notes.forEach((n) => n.y = m - (n.h || NOTE_H)); }
+    else if (mode === "am") { const m = (Math.min(...ys) + Math.max(...bs)) / 2; notes.forEach((n) => n.y = Math.round(m - (n.h || NOTE_H) / 2)); }
+    else if (mode === "dh") { const s = notes.slice().sort((a, b) => a.x - b.x); const min = s[0].x, max = s[s.length - 1].x; const step = (max - min) / (s.length - 1); s.forEach((n, i) => n.x = Math.round(min + step * i)); }
+    else if (mode === "dv") { const s = notes.slice().sort((a, b) => a.y - b.y); const min = s[0].y, max = s[s.length - 1].y; const step = (max - min) / (s.length - 1); s.forEach((n, i) => n.y = Math.round(min + step * i)); }
+    notes.forEach((n) => n.updatedAt = nowIso());
+    persist(); renderAll();
+  }
+
+  function clusterBy(mode) {
+    const notes = B.board.notes.slice();
+    if (!notes.length) return;
+    pushHistory();
+    const groups = {};
+    notes.forEach((n) => {
+      const key = mode === "color" ? (n.color || "yellow") : ((n.tags && n.tags[0]) || "— ohne Tag");
+      (groups[key] = groups[key] || []).push(n);
+    });
+    const ox = Math.min(...notes.map((n) => n.x));
+    const oy = Math.min(...notes.map((n) => n.y));
+    const colGap = 40, rowGap = 24;
+    let colX = ox;
+    Object.keys(groups).forEach((key) => {
+      const list = groups[key];
+      const cw = Math.max(...list.map((n) => n.w || NOTE_W));
+      list.forEach((n, i) => { n.x = colX; n.y = oy + 40 + i * ((n.h || NOTE_H) + rowGap); n.updatedAt = nowIso(); });
+      colX += cw + colGap;
+    });
+    persist(); renderAll(); toast("ok", "Clustern", "Nach " + (mode === "color" ? "Farbe" : "Tag") + " sortiert");
+  }
+
+  function zOrder(dir) {
+    const notes = selectedNotes();
+    if (!notes.length) return;
+    pushHistory();
+    if (dir > 0) { const top = maxZ(); notes.forEach((n, i) => n.z = top + 1 + i); }
+    else { const min = B.board.notes.reduce((m, n) => Math.min(m, n.z || 0), 0); notes.forEach((n, i) => n.z = min - 1 - i); }
+    persist(); renderNotes();
+  }
+
+  function toggleLock() {
+    const notes = selectedNotes();
+    if (!notes.length) return;
+    pushHistory();
+    const anyUnlocked = notes.some((n) => !n.locked);
+    notes.forEach((n) => { n.locked = anyUnlocked; n.updatedAt = nowIso(); });
+    persist(); renderNotes();
+  }
+
+  function duplicateSelected() {
+    const notes = selectedNotes();
+    if (!notes.length) return;
+    pushHistory();
+    const copies = notes.map((n) => Object.assign({}, n, { id: uid("note"), x: n.x + GRID, y: n.y + GRID, z: maxZ() + 1, groupId: null, createdAt: nowIso(), updatedAt: nowIso() }));
+    copies.forEach((c) => B.board.notes.push(c));
+    B.sel = new Set(copies.map((c) => c.id));
+    persist(); renderNotes();
+  }
+
+  function deleteSelected() {
+    const ids = new Set(B.sel);
+    if (!ids.size) return;
+    pushHistory();
+    B.board.notes = B.board.notes.filter((n) => !ids.has(n.id));
+    B.board.connections = B.board.connections.filter((c) => !ids.has(c.from) && !ids.has(c.to));
+    B.sel = new Set();
+    persist(); renderAll();
+  }
+
+  // ── Verbindungen bearbeiten (kleines Popover) ──
+  function selectConnection(connId, e) {
+    const cn = B.board.connections.find((c) => c.id === connId);
+    if (!cn) return;
+    showConnMenu(cn, e.clientX, e.clientY);
+  }
+  function showConnMenu(cn, x, y) {
+    const ctx = document.getElementById("sbCtx");
+    const styleOpt = (v, l) => `<option value="${v}" ${cn.style === v ? "selected" : ""}>${l}</option>`;
+    const arrowOpt = (v, l) => `<option value="${v}" ${cn.arrow === v ? "selected" : ""}>${l}</option>`;
+    ctx.innerHTML = `
+      <div class="sb-ctx-title">🔗 Verbindung</div>
+      <label class="sb-ctx-row">Stil
+        <select id="sbConnStyle">${styleOpt("curved", "Gebogen")}${styleOpt("straight", "Gerade")}${styleOpt("elbow", "Rechtwinklig")}</select>
+      </label>
+      <label class="sb-ctx-row">Pfeil
+        <select id="sbConnArrow">${arrowOpt("end", "→ Ende")}${arrowOpt("both", "↔ Beide")}${arrowOpt("none", "— Keiner")}</select>
+      </label>
+      <label class="sb-ctx-row">Dicke
+        <input type="range" id="sbConnWidth" min="1" max="8" value="${cn.width || 2}">
+      </label>
+      <label class="sb-ctx-row">Farbe
+        <input type="color" id="sbConnColor" value="${cn.color || "#8a94a6"}">
+      </label>
+      <label class="sb-ctx-row">Label
+        <input type="text" id="sbConnLabel" value="${esc(cn.label || "")}" placeholder="Beschriftung…">
+      </label>
+      <div class="sb-ctx-actions">
+        <button class="sb-btn sb-primary" data-sb-ctx="applyConn">Übernehmen</button>
+        <button class="sb-btn" data-sb-ctx="delConn">Löschen</button>
+      </div>`;
+    ctx.style.display = "block";
+    positionCtx(ctx, x, y);
+    ctx._connId = cn.id;
+    ctx.onclick = (ev) => {
+      const b = ev.target.closest("[data-sb-ctx]");
+      if (!b) return;
+      const c = B.board.connections.find((z) => z.id === ctx._connId);
+      if (!c) { hideContextMenu(); return; }
+      if (b.dataset.sbCtx === "applyConn") {
+        pushHistory();
+        c.style = document.getElementById("sbConnStyle").value;
+        c.arrow = document.getElementById("sbConnArrow").value;
+        c.width = +document.getElementById("sbConnWidth").value;
+        c.color = document.getElementById("sbConnColor").value;
+        c.label = document.getElementById("sbConnLabel").value.trim();
+        persist(); renderConnections(); hideContextMenu();
+      } else if (b.dataset.sbCtx === "delConn") {
+        pushHistory();
+        B.board.connections = B.board.connections.filter((z) => z.id !== ctx._connId);
+        persist(); renderConnections(); hideContextMenu();
+      }
+    };
+  }
+
+  // ── Kontextmenü (Rechtsklick auf Note) ──
+  function onCanvasContextMenu(e) {
+    const noteEl = e.target.closest(".sb-note");
+    if (!noteEl) { hideContextMenu(); return; }
+    e.preventDefault();
+    const id = noteEl.dataset.id;
+    if (!B.sel.has(id)) { B.sel = new Set([id]); renderNotes(); }
+    showNoteMenu(noteById(id), e.clientX, e.clientY);
+  }
+  function showNoteMenu(n, x, y) {
+    if (!n) return;
+    const ctx = document.getElementById("sbCtx");
+    const item = (act, label) => `<button class="sb-ctx-item" data-sb-ctx="${act}">${label}</button>`;
+    ctx.innerHTML = `
+      <div class="sb-ctx-title">Post-it</div>
+      ${item("edit", "✏️ Text bearbeiten")}
+      ${item("tags", "🏷️ Tags…")}
+      ${item("duplicate", "⧉ Duplizieren")}
+      ${item("front", "⬆ Nach vorne")}
+      ${item("back", "⬇ Nach hinten")}
+      ${item("lock", n.locked ? "🔓 Entsperren" : "🔒 Sperren")}
+      ${item("convert", "📝 Als Notiz kopieren")}
+      ${item("delete", "🗑 Löschen")}`;
+    ctx.style.display = "block";
+    positionCtx(ctx, x, y);
+    ctx._noteId = n.id;
+    ctx.onclick = (ev) => {
+      const b = ev.target.closest("[data-sb-ctx]");
+      if (!b) return;
+      const act = b.dataset.sbCtx;
+      hideContextMenu();
+      if (act === "edit") beginEdit(n.id);
+      else if (act === "tags") editTags(n.id);
+      else if (act === "duplicate") duplicateSelected();
+      else if (act === "front") zOrder(1);
+      else if (act === "back") zOrder(-1);
+      else if (act === "lock") toggleLock();
+      else if (act === "convert") convertToNote(n.id);
+      else if (act === "delete") deleteSelected();
+    };
+  }
+  function positionCtx(ctx, x, y) {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const r = ctx.getBoundingClientRect();
+    ctx.style.left = Math.min(x, vw - r.width - 12) + "px";
+    ctx.style.top = Math.min(y, vh - r.height - 12) + "px";
+  }
+  function hideContextMenu() { const ctx = document.getElementById("sbCtx"); if (ctx) { ctx.style.display = "none"; ctx.onclick = null; } }
+
+  function editTags(id) {
+    const n = noteById(id);
+    if (!n) return;
+    const cur = (n.tags || []).join(", ");
+    const val = window.prompt("Tags (Komma-getrennt):", cur);
+    if (val == null) return;
+    pushHistory();
+    n.tags = val.split(",").map((s) => s.trim()).filter(Boolean);
+    n.updatedAt = nowIso();
+    persist(); renderNotes(); renderFilterbar();
+  }
+
+  function convertToNote(id) {
+    const n = noteById(id);
+    if (!n) return;
+    try {
+      if (window.createEntity) {
+        const title = (n.text || "").split("\n")[0].slice(0, 60) || "Post-it";
+        window.createEntity("note", { title, content: n.text || "", source: "sticky-board" });
+        toast("ok", "Notiz", "Als Notiz gespeichert");
+      }
+    } catch (e) { toast("warn", "Notiz", "Konnte nicht konvertieren"); }
+  }
+
+  // ════════════════════════════ FILTER / SUCHE ═════════════════════════════
+  function toggleFilterbar() {
+    const fb = document.getElementById("sbFilterbar");
+    const show = fb.style.display === "none";
+    fb.style.display = show ? "flex" : "none";
+    if (show) renderFilterbar();
+    else { B.filter = { text: "", tags: new Set(), colors: new Set() }; renderNotes(); updateToolbarState(); }
+  }
+  function renderFilterbar() {
+    const fb = document.getElementById("sbFilterbar");
+    if (!fb || fb.style.display === "none") return;
+    const allTags = new Set();
+    B.board.notes.forEach((n) => (n.tags || []).forEach((t) => allTags.add(t)));
+    const usedColors = new Set(B.board.notes.map((n) => n.color));
+    fb.innerHTML = `
+      <input type="text" class="sb-filter-input" id="sbFilterText" placeholder="🔍 Suche im Text…" value="${esc(B.filter.text)}">
+      <div class="sb-filter-colors">${COLORS.filter((c) => usedColors.has(c.key)).map((c) => `<button class="sb-swatch sb-filter-swatch${B.filter.colors.has(c.key) ? " on" : ""}" data-fcolor="${c.key}" style="background:${c.bg}" title="${c.label}"></button>`).join("")}</div>
+      <div class="sb-filter-tags">${[...allTags].map((t) => `<button class="sb-tag sb-filter-tag${B.filter.tags.has(t) ? " on" : ""}" data-ftag="${esc(t)}">${esc(t)}</button>`).join("") || '<span style="font-size:11px;color:var(--muted)">Keine Tags</span>'}</div>
+      <button class="sb-btn" data-sb-filter="clear">Zurücksetzen</button>`;
+    const input = document.getElementById("sbFilterText");
+    input.oninput = () => { B.filter.text = input.value; renderNotes(); updateToolbarState(); };
+    fb.querySelectorAll("[data-fcolor]").forEach((b) => b.onclick = () => { const k = b.dataset.fcolor; if (B.filter.colors.has(k)) B.filter.colors.delete(k); else B.filter.colors.add(k); renderFilterbar(); renderNotes(); updateToolbarState(); });
+    fb.querySelectorAll("[data-ftag]").forEach((b) => b.onclick = () => { const k = b.dataset.ftag; if (B.filter.tags.has(k)) B.filter.tags.delete(k); else B.filter.tags.add(k); renderFilterbar(); renderNotes(); updateToolbarState(); });
+    const clr = fb.querySelector("[data-sb-filter='clear']");
+    if (clr) clr.onclick = () => { B.filter = { text: "", tags: new Set(), colors: new Set() }; renderFilterbar(); renderNotes(); updateToolbarState(); };
+  }
+
+  // ════════════════════════════ IMPORT / EXPORT ════════════════════════════
+  function exportCSV() {
+    if (!B.board.notes.length) { toast("warn", "Export", "Keine Post-its"); return; }
+    const rows = [["text", "color", "tags", "votes", "x", "y", "author", "createdAt"]];
+    B.board.notes.forEach((n) => rows.push([n.text || "", n.color || "", (n.tags || []).join("|"), n.votes || 0, Math.round(n.x), Math.round(n.y), n.author || "", n.createdAt || ""]));
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    const ent = getEntity(B.kind, B.id);
+    a.href = URL.createObjectURL(blob);
+    a.download = "sticky-board-" + ((ent && (ent.title || ent.name)) || "board").replace(/[^\w\-]+/g, "_").slice(0, 40) + ".csv";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast("ok", "Export", B.board.notes.length + " Post-its als CSV");
+  }
+
+  function openImport() {
+    const ctx = document.getElementById("sbCtx");
+    ctx.innerHTML = `
+      <div class="sb-ctx-title">⭱ Import</div>
+      <div class="sb-ctx-hint">Eine Zeile = ein Post-it. Oder CSV mit Spalte „text".</div>
+      <textarea id="sbImportText" class="sb-import-area" placeholder="Idee 1\nIdee 2\nIdee 3…"></textarea>
+      <label class="sb-ctx-row">Farbe
+        <select id="sbImportColor">${COLORS.map((c) => `<option value="${c.key}">${c.label}</option>`).join("")}</select>
+      </label>
+      <div class="sb-ctx-actions">
+        <button class="sb-btn sb-primary" data-sb-imp="do">Erzeugen</button>
+        <button class="sb-btn" data-sb-imp="cancel">Abbrechen</button>
+      </div>`;
+    ctx.style.display = "block";
+    positionCtx(ctx, window.innerWidth / 2 - 150, 120);
+    ctx.onclick = (ev) => {
+      const b = ev.target.closest("[data-sb-imp]");
+      if (!b) return;
+      if (b.dataset.sbImp === "cancel") { hideContextMenu(); return; }
+      const raw = document.getElementById("sbImportText").value;
+      const color = document.getElementById("sbImportColor").value;
+      importLines(raw, color);
+      hideContextMenu();
+    };
+    setTimeout(() => document.getElementById("sbImportText").focus(), 0);
+  }
+
+  function importLines(raw, color) {
+    let lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    // CSV-Erkennung: erste Zeile enthält "text" als Header
+    if (lines[0] && /(^|,)\s*"?text"?\s*(,|$)/i.test(lines[0])) {
+      const parsed = lines.slice(1).map((l) => (l.match(/("(?:[^"]|"")*"|[^,]*)/g) || [])[0] || "").map((c) => c.replace(/^"|"$/g, "").replace(/""/g, '"').trim()).filter(Boolean);
+      lines = parsed;
+    }
+    if (!lines.length) { toast("warn", "Import", "Nichts zu importieren"); return; }
+    pushHistory();
+    const center = viewportCenterWorld();
+    const cols = Math.ceil(Math.sqrt(lines.length));
+    const cw = NOTE_W + 24, ch = NOTE_H + 24;
+    const startX = Math.round((center.x - (cols * cw) / 2) / GRID) * GRID;
+    const startY = Math.round((center.y - (Math.ceil(lines.length / cols) * ch) / 2) / GRID) * GRID;
+    const ids = [];
+    lines.forEach((text, i) => {
+      const n = addNote({ text, color, x: startX + (i % cols) * cw, y: startY + Math.floor(i / cols) * ch });
+      ids.push(n.id);
+    });
+    B.sel = new Set(ids);
+    persist(); renderAll();
+    toast("ok", "Import", lines.length + " Post-its erstellt");
+  }
+
+  function onPaste(e) {
+    if (B.editingId) return;
+    const txt = (e.clipboardData || window.clipboardData).getData("text");
+    if (!txt) return;
+    // Interner Post-it-Clipboard
+    if (B.clipboard && txt === B.clipboard._marker) { pasteInternal(); e.preventDefault(); return; }
+    const lines = txt.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length > 1) { e.preventDefault(); importLines(txt, "yellow"); }
+    else if (lines.length === 1) { e.preventDefault(); pushHistory(); const n = addNote({ text: lines[0].trim() }); B.sel = new Set([n.id]); persist(); renderNotes(); }
+  }
+
+  function copySelected(cut) {
+    const notes = selectedNotes();
+    if (!notes.length) return;
+    B.clipboard = { _marker: "__sb_clip__", notes: notes.map((n) => JSON.parse(JSON.stringify(n))) };
+    try { navigator.clipboard && navigator.clipboard.writeText("__sb_clip__"); } catch (e) {}
+    if (cut) deleteSelected();
+  }
+  function pasteInternal() {
+    if (!B.clipboard || !B.clipboard.notes) return;
+    pushHistory();
+    const ids = [];
+    B.clipboard.notes.forEach((src) => {
+      const n = Object.assign({}, src, { id: uid("note"), x: src.x + GRID * 2, y: src.y + GRID * 2, z: maxZ() + 1, groupId: null, createdAt: nowIso(), updatedAt: nowIso() });
+      B.board.notes.push(n); ids.push(n.id);
+    });
+    B.sel = new Set(ids);
+    persist(); renderNotes();
+  }
+
+  // ════════════════════════════ ZOOM / FIT ═════════════════════════════════
+  function zoomBy(f) {
+    const rect = canvasEl().getBoundingClientRect();
+    const cx = rect.width / 2, cy = rect.height / 2;
+    const worldX = (cx - B.view.x) / B.view.zoom;
+    const worldY = (cy - B.view.y) / B.view.zoom;
+    B.view.zoom = Math.max(0.15, Math.min(4, B.view.zoom * f));
+    B.view.x = cx - worldX * B.view.zoom;
+    B.view.y = cy - worldY * B.view.zoom;
+    updateTransform(); persistSoon();
+  }
+  function fitToContent(silentIfSaved) {
+    if (silentIfSaved && B.board.view && (B.board.view.x || B.board.view.y || (B.board.view.zoom && B.board.view.zoom !== 1))) return;
+    if (!B.board.notes.length) { B.view = { x: 0, y: 0, zoom: 1 }; updateTransform(); return; }
+    const rect = canvasEl().getBoundingClientRect();
+    if (!rect.width) { setTimeout(() => fitToContent(false), 60); return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    B.board.notes.forEach((n) => {
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + (n.w || NOTE_W)); maxY = Math.max(maxY, n.y + (n.h || NOTE_H));
+    });
+    const bw = maxX - minX, bh = maxY - minY;
+    const pad = 80;
+    const zoom = Math.max(0.15, Math.min(1.6, Math.min((rect.width - pad * 2) / bw, (rect.height - pad * 2) / bh)));
+    B.view.zoom = zoom;
+    B.view.x = (rect.width - bw * zoom) / 2 - minX * zoom;
+    B.view.y = (rect.height - bh * zoom) / 2 - minY * zoom;
+    updateTransform();
+  }
+
+  // ════════════════════════════ TASTATUR ═══════════════════════════════════
+  function onKeyDown(e) {
+    if (!B.mounted) return;
+    if (B.editingId) return; // Text-Editor hat eigene Handler
+    const tgt = e.target;
+    const inField = tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.tagName === "SELECT" || tgt.isContentEditable);
+    const mod = e.ctrlKey || e.metaKey;
+
+    if (e.key === "Escape") {
+      if (B.tool === "connect") { B.tool = "select"; updateToolbarState(); updateHint(); e.preventDefault(); return; }
+      const ctx = document.getElementById("sbCtx");
+      if (ctx && ctx.style.display === "block") { hideContextMenu(); e.preventDefault(); return; }
+      if (B.sel.size) { B.sel = new Set(); renderNotes(); e.preventDefault(); return; }
+      closeBoard(); e.preventDefault(); return;
+    }
+    if (inField) return;
+
+    if (e.key === " ") { B.spaceDown = true; canvasEl().classList.add("space"); }
+    if (mod && (e.key === "z" || e.key === "Z")) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if (mod && (e.key === "y" || e.key === "Y")) { e.preventDefault(); redo(); return; }
+    if (mod && (e.key === "d" || e.key === "D")) { e.preventDefault(); duplicateSelected(); return; }
+    if (mod && (e.key === "a" || e.key === "A")) { e.preventDefault(); B.sel = new Set(B.board.notes.map((n) => n.id)); renderNotes(); return; }
+    if (mod && (e.key === "c" || e.key === "C")) { copySelected(false); return; }
+    if (mod && (e.key === "x" || e.key === "X")) { copySelected(true); return; }
+    if (mod && (e.key === "v" || e.key === "V")) { pasteInternal(); return; }
+    if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); deleteSelected(); return; }
+    if ((e.key === "n" || e.key === "N") && !mod) { e.preventDefault(); pushHistory(); const n = addNote({}); B.sel = new Set([n.id]); renderNotes(); persist(); beginEdit(n.id); return; }
+    if (e.key === "Enter" && B.sel.size === 1 && !mod) { e.preventDefault(); beginEdit([...B.sel][0]); return; }
+    // Pfeiltasten: nudge
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && B.sel.size) {
+      e.preventDefault();
+      const step = e.shiftKey ? GRID : 2;
+      const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+      const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+      selectedNotes().forEach((n) => { if (!n.locked) { n.x += dx; n.y += dy; } });
+      renderNotes(); renderConnections(); persistSoon();
+    }
+  }
+  document.addEventListener("keyup", (e) => { if (e.key === " ") { B.spaceDown = false; const cv = canvasEl(); if (cv) cv.classList.remove("space"); } }, true);
+
+  // ════════════════════════════ CSS ════════════════════════════════════════
+  function injectCSS() {
+    if (document.getElementById("sbStyles")) return;
+    const st = document.createElement("style");
+    st.id = "sbStyles";
+    st.textContent = `
+      .sb-overlay{position:fixed;inset:0;z-index:12000;display:flex;flex-direction:column;background:var(--bg,#171c20);--sb-panel:var(--panel,#212830);--sb-panel2:var(--panel2,#2d3640);--sb-text:var(--text,#eef0f2);--sb-muted:var(--muted,#929aa4);--sb-border:var(--border,#3b4550);--sb-accent:var(--accent,#a78bfa);color:var(--sb-text);font-family:system-ui,-apple-system,sans-serif;animation:sbFade .18s ease}
+      @keyframes sbFade{from{opacity:0}to{opacity:1}}
+      .sb-topbar{display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--sb-panel);border-bottom:1px solid var(--sb-border);flex-shrink:0}
+      .sb-title{display:flex;align-items:center;gap:9px;min-width:150px;max-width:230px}
+      .sb-title-main{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .sb-title-sub{font-size:10.5px;color:var(--sb-muted);text-transform:uppercase;letter-spacing:.05em}
+      .sb-toolgroups{display:flex;align-items:center;gap:6px;flex:1;overflow-x:auto;padding:2px;scrollbar-width:thin}
+      .sb-toolgroups::-webkit-scrollbar{height:6px}
+      .sb-toolgroups::-webkit-scrollbar-thumb{background:var(--sb-border);border-radius:3px}
+      .sb-group{display:flex;align-items:center;gap:3px;padding:2px 7px;border-right:1px solid var(--sb-border);flex-shrink:0}
+      .sb-group:last-child{border-right:0}
+      .sb-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:30px;height:30px;padding:0 9px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:7px;color:var(--sb-text);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
+      .sb-btn:hover{background:var(--sb-border)}
+      .sb-btn.sb-primary{background:var(--sb-accent);border-color:var(--sb-accent);color:#fff}
+      .sb-btn.sb-primary:hover{filter:brightness(1.08)}
+      .sb-btn.sb-toggle.active{background:var(--sb-accent);border-color:var(--sb-accent);color:#fff}
+      .sb-btn.sb-close{background:transparent;font-size:15px}
+      .sb-btn.sb-close:hover{background:var(--danger,#e5765a);color:#fff}
+      .sb-select{height:30px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:7px;color:var(--sb-text);font-size:12px;padding:0 6px;cursor:pointer;max-width:135px}
+      .sb-swatch{width:22px;height:22px;border-radius:5px;border:2px solid rgba(0,0,0,.15);cursor:pointer;padding:0;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+      .sb-swatch:hover{transform:scale(1.12);outline:2px solid var(--sb-accent)}
+      .sb-topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+      .sb-zoom{display:flex;align-items:center;gap:2px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:8px;padding:2px}
+      .sb-zoom .sb-btn{background:transparent;border:0;height:26px;min-width:26px}
+      .sb-zoom-val{min-width:52px;font-variant-numeric:tabular-nums}
+      .sb-filterbar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--sb-panel2);border-bottom:1px solid var(--sb-border);flex-wrap:wrap}
+      .sb-filter-input{height:30px;background:var(--sb-panel);border:1px solid var(--sb-border);border-radius:7px;color:var(--sb-text);font-size:13px;padding:0 10px;min-width:200px}
+      .sb-filter-colors{display:flex;gap:4px}
+      .sb-filter-swatch{width:20px;height:20px;opacity:.5}
+      .sb-filter-swatch.on{opacity:1;outline:2px solid var(--sb-accent)}
+      .sb-filter-tags{display:flex;gap:5px;flex-wrap:wrap}
+      .sb-filter-tag{cursor:pointer;opacity:.6}
+      .sb-filter-tag.on{opacity:1;outline:1px solid var(--sb-accent)}
+      .sb-canvas{position:relative;flex:1;overflow:hidden;background:var(--bg,#171c20);background-image:radial-gradient(circle,var(--sb-border) 1px,transparent 1px);background-size:24px 24px;cursor:default;outline:none;touch-action:none}
+      .sb-canvas.panning,.sb-canvas.space{cursor:grab}
+      .sb-canvas.panning{cursor:grabbing}
+      .sb-world{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
+      .sb-svg{position:absolute;overflow:visible;pointer-events:none}
+      .sb-svg .sb-conn{pointer-events:stroke}
+      .sb-svg .sb-conn-hit{pointer-events:stroke;cursor:pointer}
+      .sb-svg .sb-conn-label{pointer-events:auto;cursor:pointer}
+      .sb-notes{position:absolute;top:0;left:0}
+      .sb-note{position:absolute;box-shadow:0 3px 10px rgba(0,0,0,.28);cursor:grab;user-select:none;display:flex;flex-direction:column;transition:box-shadow .12s;overflow:visible}
+      .sb-note:hover{box-shadow:0 5px 18px rgba(0,0,0,.4)}
+      .sb-note.sel{outline:2.5px solid var(--sb-accent);outline-offset:2px}
+      .sb-note.dim{opacity:.22}
+      .sb-note.locked{cursor:not-allowed}
+      .sb-note.conn-target{outline:3px dashed var(--sb-accent);outline-offset:2px}
+      .sb-note.editing{cursor:text;box-shadow:0 6px 22px rgba(0,0,0,.5)}
+      .sb-note-body{flex:1;display:flex;align-items:center;padding:12px 13px;line-height:1.32;word-break:break-word;white-space:pre-wrap;overflow:hidden;font-family:inherit}
+      .sb-note-body.editing{cursor:text;outline:none;overflow:auto;align-items:flex-start;user-select:text}
+      .sb-note-body .sb-placeholder{opacity:.4;font-style:italic;font-weight:400}
+      .sb-note-meta{position:absolute;top:4px;right:6px;display:flex;align-items:center;gap:5px;font-size:11px;opacity:0;transition:opacity .12s}
+      .sb-note:hover .sb-note-meta{opacity:.85}
+      .sb-note-votes{opacity:1!important;position:static}
+      .sb-note .sb-note-votes{background:rgba(0,0,0,.12);border-radius:8px;padding:1px 5px;font-weight:700}
+      .sb-vote{background:rgba(0,0,0,.12);border:0;border-radius:6px;cursor:pointer;font-size:11px;padding:1px 4px;color:inherit}
+      .sb-vote:hover{background:rgba(0,0,0,.25)}
+      .sb-note-lock{font-size:11px}
+      .sb-note-tags{position:absolute;bottom:4px;left:6px;right:6px;display:flex;gap:3px;flex-wrap:wrap;pointer-events:none}
+      .sb-tag{font-size:9.5px;font-weight:700;background:rgba(0,0,0,.16);border-radius:6px;padding:1px 6px;color:inherit}
+      .sb-anchors{position:absolute;inset:-8px;pointer-events:none}
+      .sb-anchor{position:absolute;width:11px;height:11px;border-radius:50%;background:var(--sb-accent);border:2px solid #fff;opacity:0;transition:opacity .12s;pointer-events:auto;cursor:crosshair}
+      .sb-note:hover .sb-anchor{opacity:.9}
+      .sb-anchor[data-anchor=t]{top:-6px;left:50%;transform:translateX(-50%)}
+      .sb-anchor[data-anchor=b]{bottom:-6px;left:50%;transform:translateX(-50%)}
+      .sb-anchor[data-anchor=l]{left:-6px;top:50%;transform:translateY(-50%)}
+      .sb-anchor[data-anchor=r]{right:-6px;top:50%;transform:translateY(-50%)}
+      .sb-resize{position:absolute;right:-1px;bottom:-1px;width:16px;height:16px;cursor:nwse-resize;opacity:0;transition:opacity .12s}
+      .sb-resize::after{content:"";position:absolute;right:3px;bottom:3px;width:8px;height:8px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;opacity:.6}
+      .sb-note:hover .sb-resize,.sb-note.sel .sb-resize{opacity:1}
+      .sb-note.locked .sb-resize,.sb-note.locked .sb-anchor{display:none}
+      .sb-marquee{position:absolute;background:color-mix(in oklab,var(--sb-accent) 14%,transparent);border:1.5px solid var(--sb-accent);pointer-events:none;z-index:9999}
+      .sb-hint{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:var(--sb-panel);border:1px solid var(--sb-border);border-radius:10px;padding:9px 16px;font-size:12.5px;color:var(--sb-muted);box-shadow:0 6px 20px rgba(0,0,0,.35);pointer-events:none;max-width:90%;text-align:center}
+      .sb-hint b{color:var(--sb-text)}
+      .sb-contextmenu{position:fixed;z-index:12500;background:var(--sb-panel);border:1px solid var(--sb-border);border-radius:10px;padding:6px;min-width:200px;box-shadow:0 10px 34px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
+      .sb-ctx-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--sb-muted);padding:5px 8px 3px}
+      .sb-ctx-hint{font-size:11px;color:var(--sb-muted);padding:0 8px 6px}
+      .sb-ctx-item{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--sb-text);font-size:13px;padding:7px 9px;border-radius:6px;cursor:pointer}
+      .sb-ctx-item:hover{background:var(--sb-panel2)}
+      .sb-ctx-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--sb-muted);padding:4px 8px}
+      .sb-ctx-row select,.sb-ctx-row input[type=text]{flex:1;max-width:120px;height:28px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:6px;color:var(--sb-text);font-size:12px;padding:0 6px}
+      .sb-ctx-row input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--sb-border);border-radius:6px;background:none;cursor:pointer}
+      .sb-ctx-row input[type=range]{flex:1;max-width:110px}
+      .sb-ctx-actions{display:flex;gap:6px;padding:6px 6px 2px;justify-content:flex-end}
+      .sb-import-area{width:calc(100% - 16px);margin:0 8px;min-height:130px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:8px;color:var(--sb-text);font-size:13px;padding:8px;resize:vertical;font-family:inherit}
+      /* Vorschau-Block in Detailansichten */
+      .sb-preview{position:relative;height:150px;border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;background:var(--bg);background-image:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:18px 18px;transition:border-color .15s}
+      .sb-preview:hover{border-color:var(--accent)}
+      .sb-preview-canvas{position:absolute;inset:14px}
+      .sb-preview-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:16px}
+    `;
+    document.head.appendChild(st);
+  }
+
 })();
 </script>
 
