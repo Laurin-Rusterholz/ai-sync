@@ -107441,22 +107441,27 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 
     let previewInner = "";
     if (notes.length) {
-      // Auto-fit-Mini-Vorschau: Bounding-Box aller Notes auf 100% skalieren
+      // Mini-Vorschau als SVG — viewBox erhält das Seitenverhältnis (keine Verzerrung)
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       notes.forEach((n) => {
         minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
         maxX = Math.max(maxX, n.x + (n.w || NOTE_W)); maxY = Math.max(maxY, n.y + (n.h || NOTE_H));
       });
       const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
-      const PW = 100, PH = 100; // Vorschau-Innenraum in % via padding-Box
-      const scale = Math.min(PW / bw, PH / bh, 1) * 0.92;
-      previewInner = notes.slice(0, 60).map((n) => {
+      const pad = Math.max(bw, bh) * 0.06 + 24;
+      const vx = minX - pad, vy = minY - pad, vw = bw + pad * 2, vh = bh + pad * 2;
+      const sw = Math.max(2, vw / 220);
+      const rects = notes.slice(0, 150).map((n) => {
         const c = colorByKey(n.color);
         const bg = n.color && n.color[0] === "#" ? n.color : c.bg;
-        const x = (n.x - minX) * scale, y = (n.y - minY) * scale;
-        const w = (n.w || NOTE_W) * scale, h = (n.h || NOTE_H) * scale;
-        return `<div style="position:absolute;left:${x}%;top:${y}%;width:${w}%;height:${h}%;background:${bg};border-radius:2px;box-shadow:0 1px 2px rgba(0,0,0,.25)"></div>`;
+        return `<rect x="${n.x}" y="${n.y}" width="${n.w || NOTE_W}" height="${n.h || NOTE_H}" rx="10" fill="${bg}"/>`;
       }).join("");
+      const lines = conns.map((cn) => {
+        const a = notes.find((x) => x.id === cn.from), b2 = notes.find((x) => x.id === cn.to);
+        if (!a || !b2) return "";
+        return `<line x1="${a.x + (a.w || NOTE_W) / 2}" y1="${a.y + (a.h || NOTE_H) / 2}" x2="${b2.x + (b2.w || NOTE_W) / 2}" y2="${b2.y + (b2.h || NOTE_H) / 2}" stroke="#8a94a6" stroke-width="${sw}"/>`;
+      }).join("");
+      previewInner = `<svg viewBox="${vx} ${vy} ${vw} ${vh}" preserveAspectRatio="xMidYMid meet" width="100%" height="100%" style="display:block">${lines}${rects}</svg>`;
     }
 
     const emptyState = `<div class="sb-preview-empty">
