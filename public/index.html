@@ -16563,7 +16563,14 @@ function renderMain() {
     case "workflows": html = id ? viewWorkflowDetail(id) : viewWorkflows(); break;
     case "journal": openJournalBooklet(); return;
     case "passwordmanager": html = viewPasswordManager(); break;
-    case "quantusproject": html = (typeof viewQuantusProject === "function" ? viewQuantusProject() : '<div style="padding:40px;text-align:center">Lade Quantus Projekt…</div>'); break;
+    case "quantusproject": {
+      // Das Quantus-Cockpit lebt im Projekt PRJ-UCHWW. Existiert es, springen wir
+      // dorthin; sonst zeigen wir das eigenständige Modul als Rückfallebene.
+      var _qpProj = Object.values(APP.state.data.entities.projects || {}).find(function(pr){ return String(pr.externalId||"").toUpperCase() === "PRJ-UCHWW"; });
+      if (_qpProj){ location.hash = "#/projects/" + _qpProj.id; return; }
+      html = (typeof viewQuantusProject === "function" ? viewQuantusProject() : '<div style="padding:40px;text-align:center">Lade Quantus Projekt…</div>');
+      break;
+    }
     case "googlecalendar": html = (typeof viewGoogleCalendar === "function" ? viewGoogleCalendar() : '<div style="padding:40px;text-align:center">Lade Google Calendar…</div>'); break;
     case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
     case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
@@ -32557,6 +32564,12 @@ function renderCustomProjectFeatures(id) {
   // PRJ-NFYW5
   if (normalized === 'PRJ-NFYW5') {
     try { return renderCustom_PRJNFYW5(id, p); } catch(e) { return _kvErrorBox('PRJ-NFYW5', e); }
+  }
+
+  // PRJ-UCHWW — Quantus-Weiterentwicklung (Grundprompt + Spezifikation, Updates, Logbuch, Ideen)
+  if (normalized === 'PRJ-UCHWW') {
+    try { return (typeof window.renderCustom_PRJUCHWW === 'function') ? window.renderCustom_PRJUCHWW(id, p) : ''; }
+    catch(e) { return _kvErrorBox('PRJ-UCHWW', e); }
   }
   
   // PRJ-Z2SEX nur wenn explizit so gesetzt
@@ -107487,6 +107500,122 @@ Dateien zu identifizieren.
       + '</div>';
   };
 
+  // ══ Projekt-gebundenes Cockpit (PRJ-UCHWW) ══════════════════════════════
+  // Gleiche Funktion wie das Modul, aber die Daten (Grundprompt, Spezifikation,
+  // Logbuch) leben am Projekt unter p._custom.quantusDev — so ist alles an das
+  // Projekt PRJ-UCHWW gebunden.
+  function qppState(pid){
+    var p = APP.state.data.entities.projects[pid];
+    if (!p) return null;
+    if (!p._custom || typeof p._custom !== "object") p._custom = {};
+    if (!p._custom.quantusDev || typeof p._custom.quantusDev !== "object") p._custom.quantusDev = {};
+    var qd = p._custom.quantusDev;
+    if (typeof qd.basePrompt !== "string") qd.basePrompt = qpDefaultBase();
+    if (typeof qd.spec !== "string") qd.spec = "";
+    if (!Array.isArray(qd.log)) qd.log = [];
+    return qd;
+  }
+  function qppComposed(qd){
+    var base = (qd.basePrompt || "").trim(), spec = (qd.spec || "").trim();
+    if (!spec) return base;
+    return base + "\n\n---\n\n## Spezifikation (aktueller Auftrag)\n" + spec;
+  }
+  function qppLog(qd, text){
+    qd.log.unshift({ ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim() });
+    if (qd.log.length > 500) qd.log.length = 500;
+  }
+  window.qppSet = function(pid, field, val){ var qd = qppState(pid); if (!qd) return; if (field === "base") qd.basePrompt = val; else qd.spec = val; scheduleSave(); };
+
+  window.renderCustom_PRJUCHWW = function(id, p){
+    var qd = qppState(id);
+    if (!qd) return "";
+    var e = (typeof esc === "function") ? esc : function(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[c]; }); };
+
+    var updates = Object.values(APP.state.data.entities.updates || {});
+    var open = updates.filter(function(u){ return !u.checked && u.status !== "done"; })
+      .sort(function(a,b){ return String(b.createdAt||"").localeCompare(String(a.createdAt||"")); });
+    var doneCount = updates.length - open.length;
+
+    var ideas = Object.values(APP.state.data.entities.ideas || {})
+      .filter(function(i){ return (i.linkedProjects||[]).indexOf(id) >= 0; })
+      .sort(function(a,b){ return String(b.createdAt||"").localeCompare(String(a.createdAt||"")); }).slice(0, 8);
+
+    function fmtTs(iso){ try { return new Date(iso).toLocaleString("de-CH", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }); } catch(x){ return iso || ""; } }
+
+    var updatesHtml = open.length
+      ? open.map(function(u){
+          return '<div class="card" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-bottom:8px">'
+            + '<button class="btn sm" title="Als erledigt markieren" data-action="complete-update" data-id="' + e(u.id) + '" style="flex:none">✓</button>'
+            + '<div style="flex:1;min-width:0"><div style="font-weight:500">' + e(u.text || "(ohne Titel)") + '</div>'
+            + '<div class="text-muted mini" style="margin-top:2px">' + e(u.category || "general") + (u.priority && u.priority !== "normal" ? " · " + e(u.priority) : "") + '</div></div>'
+            + '<button class="btn sm ghost" title="Löschen" data-action="delete-update" data-id="' + e(u.id) + '" style="flex:none">🗑</button>'
+            + '</div>';
+        }).join("")
+      : '<div class="text-muted" style="padding:12px 4px">Keine offenen Updates. 🎉</div>';
+
+    var ideasHtml = ideas.length
+      ? ideas.map(function(i){ return '<div class="pill sm" style="display:inline-flex;max-width:100%;margin:0 6px 6px 0" title="' + e(i.title || i.content || i.text || "") + '">💡 ' + e((i.title || i.content || i.text || "").slice(0, 60)) + '</div>'; }).join("")
+      : '<div class="text-muted mini" style="margin-bottom:6px">Noch keine Ideen für dieses Projekt.</div>';
+
+    var logHtml = qd.log.length
+      ? qd.log.slice(0, 60).map(function(entry, i){
+          return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div class="text-muted mini" style="flex:none;width:118px;font-variant-numeric:tabular-nums">' + e(fmtTs(entry.ts)) + '</div>'
+            + '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>'
+            + '<button class="btn sm ghost" title="Eintrag löschen" data-action="qpp-log-del" data-pid="' + e(id) + '" data-idx="' + i + '" style="flex:none">✕</button>'
+            + '</div>';
+        }).join("")
+      : '<div class="text-muted mini" style="padding:8px 0">Noch keine Einträge.</div>';
+
+    var specLen = (qd.spec || "").trim().length;
+
+    return ''
+      + '<div style="margin-top:16px">'
+      + '<div class="card" style="padding:16px;margin-bottom:16px">'
+      +   '<div class="flex justify-between items-center" style="margin-bottom:10px">'
+      +     '<h3 style="margin:0">🛠️ Quantus-Weiterentwicklung</h3>'
+      +     '<span class="text-muted mini">Grundprompt wird beim Kopieren automatisch mitgegeben</span>'
+      +   '</div>'
+      +   '<label style="display:block;font-weight:600;margin-bottom:4px">Spezifikation für Claude Code</label>'
+      +   '<textarea id="qppSpec" oninput="window.qppSet(\'' + e(id) + '\',\'spec\',this.value)" placeholder="Nur die Spezifikation eintragen — was soll umgesetzt werden? Der Grundprompt wird automatisch davorgesetzt." style="width:100%;min-height:160px;resize:vertical;font-family:inherit;line-height:1.5">' + e(qd.spec) + '</textarea>'
+      +   '<div class="flex items-center" style="gap:10px;margin-top:10px;flex-wrap:wrap">'
+      +     '<button class="btn primary" data-action="qpp-copy-all" data-pid="' + e(id) + '">📋 Alles kopieren (Grundprompt + Spezifikation)</button>'
+      +     '<button class="btn sm" data-action="qpp-copy-spec" data-pid="' + e(id) + '">Nur Spezifikation kopieren</button>'
+      +     '<span class="text-muted mini">' + specLen + ' Zeichen Spezifikation</span>'
+      +   '</div>'
+      +   '<details style="margin-top:14px">'
+      +     '<summary style="cursor:pointer;font-weight:600">Grundprompt anzeigen / bearbeiten</summary>'
+      +     '<textarea id="qppBase" oninput="window.qppSet(\'' + e(id) + '\',\'base\',this.value)" style="width:100%;min-height:280px;resize:vertical;margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5">' + e(qd.basePrompt) + '</textarea>'
+      +     '<div style="margin-top:8px"><button class="btn sm ghost" data-action="qpp-reset-base" data-pid="' + e(id) + '">↺ Grundprompt auf Standard zurücksetzen</button></div>'
+      +   '</details>'
+      + '</div>'
+      + '<div class="flex" style="gap:16px;flex-wrap:wrap;align-items:flex-start">'
+      +   '<div class="card" style="padding:16px;flex:1 1 340px;min-width:300px">'
+      +     '<div class="flex justify-between items-center" style="margin-bottom:10px"><h3 style="margin:0">🔧 Updates</h3><button class="btn sm primary" data-action="create-update-modal">＋ Neu</button></div>'
+      +     '<div class="text-muted mini" style="margin-bottom:10px">' + open.length + ' offen · ' + doneCount + ' erledigt</div>'
+      +     updatesHtml
+      +     '<div style="margin-top:8px"><a class="btn sm ghost" href="#/updates">Alle Updates öffnen →</a></div>'
+      +   '</div>'
+      +   '<div class="card" style="padding:16px;flex:2 1 460px;min-width:320px">'
+      +     '<h3 style="margin:0 0 10px">📓 Logbuch</h3>'
+      +     '<div class="flex" style="gap:8px;margin-bottom:10px">'
+      +       '<input id="qppLogInput" type="text" placeholder="Zwischenstand / Änderung notieren…" style="flex:1;min-width:0" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qpp-log-add]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +       '<button class="btn" data-action="qpp-log-add" data-pid="' + e(id) + '">Eintragen</button>'
+      +     '</div>'
+      +     '<div style="max-height:360px;overflow:auto">' + logHtml + '</div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="card" style="padding:16px;margin-top:16px">'
+      +   '<div class="flex justify-between items-center" style="margin-bottom:10px"><h3 style="margin:0">💡 Ideen für Anpassungen</h3><a class="btn sm ghost" href="#/ideas">Alle Ideen →</a></div>'
+      +   '<div style="margin-bottom:10px">' + ideasHtml + '</div>'
+      +   '<div class="flex" style="gap:8px">'
+      +     '<input id="qppIdeaInput" type="text" placeholder="Neue Idee für Quantus…" style="flex:1;min-width:0" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qpp-add-idea]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +     '<button class="btn" data-action="qpp-add-idea" data-pid="' + e(id) + '">＋ Idee</button>'
+      +   '</div>'
+      + '</div>'
+      + '</div>';
+  };
+
   // ── Aktionen: eigener handleClick-Wrapper (Muster wie die v-Wrapper) ──
   var __qp_prev_handleClick = window.handleClick;
   window.handleClick = function(ev){
@@ -107539,6 +107668,52 @@ Dateien zu identifizieren.
       if (!isNaN(idx) && idx >= 0 && idx < qp.log.length){ qp.log.splice(idx, 1); scheduleSave(); render(); }
       return;
     }
+    // ── Projekt-gebundenes Cockpit (PRJ-UCHWW) ──
+    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-add-idea"){
+      ev.preventDefault();
+      var pid = el.dataset.pid;
+      var p = pid && APP.state.data.entities.projects ? APP.state.data.entities.projects[pid] : null;
+      var qd = window.qppSet ? qppState(pid) : null;
+      if (!p || !qd){ toast("err", "Projekt fehlt", "Projekt nicht gefunden"); return; }
+
+      if (action === "qpp-copy-all"){
+        qpCopy(qppComposed(qd)).then(function(){
+          var spec = (qd.spec || "").trim();
+          qppLog(qd, "Arbeitsauftrag kopiert" + (spec ? " — " + spec.split("\n")[0].slice(0, 80) : " (nur Grundprompt)"));
+          scheduleSave();
+          toast("ok", "Kopiert", "Grundprompt + Spezifikation in der Zwischenablage");
+          render();
+        });
+        return;
+      }
+      if (action === "qpp-copy-spec"){ qpCopy((qd.spec || "").trim()); toast("ok", "Kopiert", "Spezifikation in der Zwischenablage"); return; }
+      if (action === "qpp-reset-base"){
+        if (!confirm("Grundprompt auf den Standardinhalt zurücksetzen? Deine Änderungen am Grundprompt gehen verloren.")) return;
+        qd.basePrompt = qpDefaultBase(); scheduleSave(); toast("ok", "Zurückgesetzt", "Grundprompt auf Standard gesetzt"); render(); return;
+      }
+      if (action === "qpp-log-add"){
+        var lin = document.getElementById("qppLogInput"); var ltxt = lin ? lin.value.trim() : "";
+        if (!ltxt){ toast("warn", "Leer", "Bitte einen Text eingeben"); return; }
+        qppLog(qd, ltxt); scheduleSave(); render(); return;
+      }
+      if (action === "qpp-log-del"){
+        var qidx = parseInt(el.dataset.idx, 10);
+        if (!isNaN(qidx) && qidx >= 0 && qidx < qd.log.length){ qd.log.splice(qidx, 1); scheduleSave(); render(); }
+        return;
+      }
+      if (action === "qpp-add-idea"){
+        var iin = document.getElementById("qppIdeaInput"); var itx = iin ? iin.value.trim() : "";
+        if (!itx){ toast("warn", "Leer", "Bitte eine Idee eingeben"); return; }
+        if (typeof createEntity === "function"){
+          var newIdeaId = createEntity("idea", { title: itx, content: itx, status: "idea", tags: ["quantus"], source: "PRJ-UCHWW", linkedProjects: [pid] });
+          if (newIdeaId){ if (!Array.isArray(p.linkedIdeas)) p.linkedIdeas = []; if (p.linkedIdeas.indexOf(newIdeaId) < 0) p.linkedIdeas.push(newIdeaId); }
+        }
+        qppLog(qd, "Idee erfasst: " + itx.slice(0, 80)); scheduleSave();
+        toast("ok", "Idee erfasst", "Mit dem Projekt verknüpft"); render(); return;
+      }
+      return;
+    }
+
     if (action === "db-sync-planner"){
       ev.preventDefault();
       var dpDate = (window._dbDate || (typeof todayYmd === "function" ? todayYmd() : ""));
