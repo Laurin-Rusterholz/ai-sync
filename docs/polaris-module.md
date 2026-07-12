@@ -55,7 +55,7 @@ Basis: `https://n8n.srv1757990.hstgr.cloud/webhook/polaris`
 | `POST /memory-save` | `{type, text, summary?, tags?, importance?, source?}` | `{ok, id}` | normalisieren → bei `conversation` LLM-Zusammenfassung (Claude, Fallback: Client-Heuristik) → Push nach `polaris/memory` |
 | `POST /memory-recall` | `{query, limit?}` | `{items:[…]}` | Volltext-/Tag-Suche über `memory` + `notes` mit Rezenz-/Wichtigkeits-Bonus |
 | `POST /note-save` | `{text, tags?}` | `{ok, id}` | Push nach `polaris/notes` (`done:false`) |
-| `POST /research` | `{query}` | `{summary, sources:[{title,url}]}` | Claude mit `web_search`-Server-Tool, deutsche vorlesbare Zusammenfassung |
+| `POST /research` | `{query}` | `{query, summary, sources:[{title,url}]}` | dedizierte HTTP-Request-Nodes: Wikipedia-Suche (de→en) + REST-Summary des besten Treffers (timeout 6000, continueOnFail); Code-Node verarbeitet nur — kein Credential, kein `this.helpers.httpRequest` (hängt in der Task-Runner-Sandbox) |
 | `POST /character-update` | `{traitDeltas, reason}` | `{ok, character}` | Deltas hart ±0.05 klemmen, Traits 0–1, `evolutionLog`-Eintrag (max. 20) |
 | `POST /proactive` | `{}` | `{opener}` | Gruss nach Tageszeit (Europe/Zurich) + ältester Open Loop bzw. offene Notizen bzw. Streak |
 

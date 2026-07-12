@@ -5,7 +5,7 @@
       "parameters": {
         "width": 640,
         "height": 420,
-        "content": "## Polaris — Gedächtnis & Tools (6 Webhooks)\n\nBackend für das Polaris-Sprachmodul in Quantus (`public/index.html`).\nEndpunkte: `polaris/memory-save`, `memory-recall`, `note-save`, `research`, `character-update`, `proactive` (alle POST, JSON). Der bestehende `polaris/session-url`-Webhook (Signed-URL) ist hier bewusst NICHT enthalten.\n\n**Nach dem Import:**\n1. Dem Claude-Node der memory-save-Kette das Anthropic-Credential zuweisen (Header `x-api-key`). `research` braucht KEIN Credential: Wikipedia (de→en) als Primärquelle, DuckDuckGo-Instant-Answer nur als Ergänzung, optional Tavily via n8n-Env `TAVILY_API_KEY`. Harte 4-s-Timeouts pro Request (Promise.race), Gesamtbudget <8 s.\n2. Workflow aktivieren (Production-URL = `/webhook/polaris/...`).\n\n**RTDB:** `polaris/*` ist per Regeln offen (`$andere`) — die HTTP-Nodes brauchen keine Credentials. Werden die Regeln später verschärft, den RTDB-Nodes ein `googleApi`-Service-Konto geben (wie im Drive-Workflow).\n\n**CORS:** `allowedOrigins: *` auf allen Webhooks, damit das Frontend direkt posten darf.\n\n**Härtung (optional):** `x-polaris-secret` prüfen, sobald die Browser-Aufrufe über eine Netlify-Function laufen, die den Header serverseitig injiziert. Der ElevenLabs-Agent kann die Webhooks zusätzlich als Server-Tools mit dem Secret-Header aufrufen.\n\n**proactive** nutzt aktuell Beziehung + offene Notizen + Tageszeit — fällige Quantus-Aufgaben oder ungelesene Mails lassen sich als weitere Lese-Nodes vor „Opener bauen“ ergänzen."
+        "content": "## Polaris — Gedächtnis & Tools (6 Webhooks)\n\nBackend für das Polaris-Sprachmodul in Quantus (`public/index.html`).\nEndpunkte: `polaris/memory-save`, `memory-recall`, `note-save`, `research`, `character-update`, `proactive` (alle POST, JSON). Der bestehende `polaris/session-url`-Webhook (Signed-URL) ist hier bewusst NICHT enthalten.\n\n**Nach dem Import:**\n1. Dem Claude-Node der memory-save-Kette das Anthropic-Credential zuweisen (Header `x-api-key`). `research` braucht KEIN Credential: dedizierte HTTP-Request-Nodes (Wiki Suche de→en, Wiki Summary; timeout 6000, continueOnFail) — der Code-Node verarbeitet NUR noch (this.helpers.httpRequest hängt in der Task-Runner-Sandbox der Live-Instanz).\n2. Workflow aktivieren (Production-URL = `/webhook/polaris/...`).\n\n**RTDB:** `polaris/*` ist per Regeln offen (`$andere`) — die HTTP-Nodes brauchen keine Credentials. Werden die Regeln später verschärft, den RTDB-Nodes ein `googleApi`-Service-Konto geben (wie im Drive-Workflow).\n\n**CORS:** `allowedOrigins: *` auf allen Webhooks, damit das Frontend direkt posten darf.\n\n**Härtung (optional):** `x-polaris-secret` prüfen, sobald die Browser-Aufrufe über eine Netlify-Function laufen, die den Header serverseitig injiziert. Der ElevenLabs-Agent kann die Webhooks zusätzlich als Server-Tools mit dem Secret-Header aufrufen.\n\n**proactive** nutzt aktuell Beziehung + offene Notizen + Tageszeit — fällige Quantus-Aufgaben oder ungelesene Mails lassen sich als weitere Lese-Nodes vor „Opener bauen“ ergänzen."
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -417,7 +417,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        880,
+        1100,
         720
       ],
       "id": "610e1c32-3342-5044-a058-b40804b6b058",
@@ -628,16 +628,67 @@
     },
     {
       "parameters": {
-        "jsCode": "// ── research: robuste Web-Recherche OHNE Credentials ──\n// Quellen-Reihenfolge:\n//   (1) Tavily — NUR wenn $env.TAVILY_API_KEY gesetzt, sonst kommentarlos übersprungen\n//   (2) Wikipedia (PRIMÄR, key-frei & von Server-IPs zuverlässig):\n//       Action-API list=search (de, Fallback en) für die Trefferliste,\n//       REST /page/summary/<titel> des besten Treffers für den Extract-Text\n//   (3) DuckDuckGo Instant-Answer — NUR als Ergänzung, wenn AbstractText nicht leer\n// Der frühere html.duckduckgo.com-Fallback ist ENTFERNT (von der Server-IP\n// blockiert → Hänger).\n// Timeouts: HART pro Request via Promise.race gegen setTimeout(4000 ms) —\n// bewusst NICHT die n8n-timeout-Option (greift hier nicht). Gesamtbudget des\n// Nodes < 8 s über eine Deadline; ist sie erschöpft, werden weitere Requests\n// übersprungen. Wirft NIE: jeder Pfad liefert gültiges JSON im Zielformat.\nconst body = $('Webhook research').first().json.body || {};\nconst query = String(body.query || '').trim().slice(0, 300);\nconst FAIL  = { query, summary: 'Ich habe gerade keinen Zugriff auf die Websuche.', sources: [] };\nconst EMPTY = { query, summary: 'Dazu habe ich online nichts Belastbares gefunden.', sources: [] };\nif (!query) return [{ json: EMPTY }];\n\nconst started = Date.now();\nconst BUDGET_MS = 7000;        // Gesamtbudget des Nodes (hart unter 8 s)\nconst PER_REQUEST_MS = 4000;   // harter Timeout pro Einzel-Request\nlet anyOk = false;             // mind. eine Quelle hat geantwortet → \"keine Treffer\" statt \"kein Zugriff\"\n\nconst http = (opts) => {\n  const left = BUDGET_MS - (Date.now() - started);\n  if (left < 300) return Promise.resolve(null); // Budget erschöpft → Request überspringen\n  let timer = null;\n  const kill = new Promise(function(_, reject){\n    timer = setTimeout(function(){ reject(new Error('timeout')); }, Math.min(PER_REQUEST_MS, left));\n  });\n  return Promise.race([ this.helpers.httpRequest(opts), kill ])\n    .then(function(r){ anyOk = true; return r; })\n    .catch(function(){ return null; })\n    .finally(function(){ clearTimeout(timer); });\n};\n\nfunction txt(s){\n  return String(s == null ? '' : s)\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"').replace(/&#x?[0-9a-f]+;/gi, ' ')\n    .replace(/\\s+/g, ' ').trim();\n}\nfunction cleanSummary(s){\n  // vorlesbar: kein Markdown/HTML, max. ~3 Sätze / ~420 Zeichen\n  let out = txt(s).replace(/[*_#`>|]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  out = out.split(/(?<=[.!?])\\s+/).slice(0, 3).join(' ');\n  if (out.length > 420){\n    const cut = out.slice(0, 420);\n    const dot = cut.lastIndexOf('. ');\n    out = dot > 140 ? cut.slice(0, dot + 1) : cut.trim() + ' …';\n  }\n  return out;\n}\nfunction parseJson(v){\n  if (v == null) return null;\n  if (typeof v === 'object') return v;\n  try { return JSON.parse(String(v)); } catch (e) { return null; }\n}\nlet summary = '';\nconst sources = [];\nconst seen = new Set();\nfunction addSource(title, url){\n  url = String(url || '');\n  if (!/^https?:\\/\\//.test(url) || seen.has(url) || sources.length >= 5) return;\n  seen.add(url);\n  sources.push({ title: txt(title) || url, url });\n}\n\ntry {\n  // ── 1) Tavily (optional per n8n-Env-Variable, bevorzugt) ──\n  let tavilyKey = '';\n  try { tavilyKey = (typeof $env !== 'undefined' && $env.TAVILY_API_KEY) ? String($env.TAVILY_API_KEY) : ''; } catch (e) {}\n  if (tavilyKey){\n    const t = parseJson(await http({ method: 'POST', url: 'https://api.tavily.com/search', json: true,\n      body: { api_key: tavilyKey, query, max_results: 5, include_answer: true } }));\n    if (t){\n      if (t.answer) summary = cleanSummary(t.answer);\n      (Array.isArray(t.results) ? t.results : []).forEach(function(r){ if (r) addSource(r.title, r.url); });\n    }\n  }\n\n  // ── 2) Wikipedia (Primärquelle): de-Suche, Fallback en ──\n  if (!summary || sources.length < 3){\n    let lang = 'de', hits = [];\n    for (const l of ['de', 'en']){\n      const sr = parseJson(await http({ method: 'GET',\n        url: 'https://' + l + '.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encodeURIComponent(query) + '&format=json&utf8=1&srlimit=5' }));\n      const list = sr && sr.query && Array.isArray(sr.query.search) ? sr.query.search : [];\n      if (list.length){ lang = l; hits = list; break; }\n    }\n    if (hits.length){\n      hits.slice(0, 5).forEach(function(h){\n        if (h && h.title) addSource(h.title, 'https://' + lang + '.wikipedia.org/wiki/' + encodeURIComponent(String(h.title).replace(/ /g, '_')));\n      });\n      if (!summary){\n        // Extract des besten Treffers als saubere summary-Basis\n        const rest = parseJson(await http({ method: 'GET',\n          url: 'https://' + lang + '.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(String(hits[0].title).replace(/ /g, '_')) }));\n        if (rest && rest.extract) summary = cleanSummary(rest.extract);\n        const pageUrl = rest && rest.content_urls && rest.content_urls.desktop && rest.content_urls.desktop.page;\n        if (pageUrl && sources.length && sources[0].url.indexOf('wikipedia.org/wiki/') >= 0) sources[0].url = pageUrl;\n      }\n      if (!summary && hits[0].snippet) summary = cleanSummary(hits[0].snippet);\n    }\n  }\n\n  // ── 3) DuckDuckGo Instant-Answer — NUR wenn AbstractText nicht leer (Ergänzung) ──\n  if (!summary || sources.length < 3){\n    const ia = parseJson(await http({ method: 'GET',\n      url: 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) + '&format=json&no_html=1&skip_disambig=1&t=quantus' }));\n    if (ia){\n      const abs = txt(ia.AbstractText || '');\n      if (abs){\n        if (!summary) summary = cleanSummary(abs);\n        if (ia.AbstractURL) addSource(ia.Heading || ia.AbstractSource, ia.AbstractURL);\n      }\n    }\n  }\n\n  if (!summary && sources.length){\n    summary = cleanSummary('Dazu habe ich Folgendes gefunden: ' + sources.slice(0, 3).map(function(s){ return s.title; }).join('; ') + '.');\n  }\n  if (!summary && !sources.length) return [{ json: anyOk ? EMPTY : FAIL }];\n  return [{ json: { query, summary, sources: sources.slice(0, 5) } }];\n} catch (e) {\n  return [{ json: FAIL }];\n}\n"
+        "jsCode": "// ── research: NUR Verarbeitung — KEINE eigenen HTTP-Requests! ──\n// this.helpers.httpRequest haengt in der Task-Runner-Sandbox der Live-\n// Instanz und Promise.race-Timeouts greifen dort nicht. Alle HTTP-Aufrufe\n// laufen deshalb in dedizierten HTTP-Request-Nodes VOR diesem Node:\n//   \"Wiki Suche\"    → de.wikipedia.org Action-API list=search (Trefferliste)\n//   \"Wiki Suche EN\" → en.wikipedia.org (Fallback, wenn de leer)\n//   \"Wiki Summary\"  → REST /page/summary/<bester Titel> (Extract als summary)\n// Alle drei mit options.timeout=6000 + continueOnFail — dieser Node liest\n// nur deren Outputs und baut { query, summary, sources }. Kein Treffer →\n// { query, summary:\"\", sources:[] } (HTTP 200, kein Fehler). Wirft NIE.\nconst query = String((($('Webhook research').first().json || {}).body || {}).query || '').trim().slice(0, 300);\nconst EMPTY = { query: query, summary: '', sources: [] };\ntry {\n  function nodeJson(name){\n    try {\n      const j = $(name).first().json;\n      return (j && typeof j === 'object' && !j.error) ? j : null;\n    } catch (e) { return null; }\n  }\n  function txt(s){\n    return String(s == null ? '' : s)\n      .replace(/<[^>]+>/g, ' ')\n      .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')\n      .replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"').replace(/&#x?[0-9a-f]+;/gi, ' ')\n      .replace(/\\s+/g, ' ').trim();\n  }\n  function cleanSummary(s){\n    // vorlesbar: kein HTML/Markdown, an Satzgrenze gekappt, max ~600 Zeichen\n    let out = txt(s).replace(/[*_#`>|]+/g, ' ').replace(/\\s+/g, ' ').trim();\n    if (out.length > 600){\n      const cut = out.slice(0, 600);\n      const dot = cut.lastIndexOf('. ');\n      out = dot > 200 ? cut.slice(0, dot + 1) : cut.trim() + ' …';\n    }\n    return out;\n  }\n  const de = nodeJson('Wiki Suche');\n  const en = nodeJson('Wiki Suche EN');\n  const sum = nodeJson('Wiki Summary');\n  const deHits = (de && de.query && Array.isArray(de.query.search)) ? de.query.search : [];\n  const enHits = (en && en.query && Array.isArray(en.query.search)) ? en.query.search : [];\n  const lang = deHits.length ? 'de' : 'en';\n  const hits = deHits.length ? deHits : enHits;\n\n  const sources = [];\n  const seen = new Set();\n  hits.slice(0, 5).forEach(function(h){\n    if (!h || !h.title) return;\n    const url = 'https://' + lang + '.wikipedia.org/wiki/' + encodeURIComponent(String(h.title).replace(/ /g, '_'));\n    if (seen.has(url)) return;\n    seen.add(url);\n    sources.push({ title: txt(h.title), url: url });\n  });\n\n  let summary = '';\n  if (sum && typeof sum.extract === 'string' && sum.extract) summary = cleanSummary(sum.extract);\n  if (!summary && hits.length && hits[0].snippet) summary = cleanSummary(hits[0].snippet);\n  // kanonische Artikel-URL aus dem REST-Summary bevorzugen\n  const pageUrl = sum && sum.content_urls && sum.content_urls.desktop && sum.content_urls.desktop.page;\n  if (pageUrl){\n    if (sources.length && sources[0].url.indexOf('wikipedia.org/wiki/') >= 0) sources[0].url = pageUrl;\n    else if (!sources.length) sources.push({ title: txt(sum.title || query), url: pageUrl });\n  }\n\n  if (!summary && !sources.length) return [{ json: EMPTY }];\n  return [{ json: { query: query, summary: summary, sources: sources.slice(0, 5) } }];\n} catch (e) {\n  return [{ json: EMPTY }];\n}\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
+        880,
         720
       ],
       "id": "5d3e226b-19ac-5fbd-b31a-979d26c04ee1",
       "name": "research (Websuche)"
+    },
+    {
+      "parameters": {
+        "url": "=https://de.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=5&srsearch={{ encodeURIComponent($('Webhook research').first().json.body?.query || '') }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        720
+      ],
+      "id": "e4513303-35a3-501f-9a9b-17b43b0c8ee6",
+      "name": "Wiki Suche",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=5&srsearch={{ encodeURIComponent($('Webhook research').first().json.body?.query || '') }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        720
+      ],
+      "id": "02097875-b001-5735-b29a-ea1468cafd2a",
+      "name": "Wiki Suche EN",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{ ($('Wiki Suche').first().json.query?.search?.[0]?.title) ? 'de' : 'en' }}.wikipedia.org/api/rest_v1/page/summary/{{ encodeURIComponent((($('Wiki Suche').first().json.query?.search?.[0]?.title) || ($('Wiki Suche EN').first().json.query?.search?.[0]?.title) || ($('Webhook research').first().json.body?.query) || 'Wikipedia').replace(/ /g, '_')) }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        720
+      ],
+      "id": "3346ff66-202a-5dc7-89d3-32088f1a5a51",
+      "name": "Wiki Summary",
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -828,7 +879,7 @@
       "main": [
         [
           {
-            "node": "research (Websuche)",
+            "node": "Wiki Suche",
             "type": "main",
             "index": 0
           }
@@ -939,6 +990,39 @@
         [
           {
             "node": "Respond research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiki Suche": {
+      "main": [
+        [
+          {
+            "node": "Wiki Suche EN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiki Suche EN": {
+      "main": [
+        [
+          {
+            "node": "Wiki Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiki Summary": {
+      "main": [
+        [
+          {
+            "node": "research (Websuche)",
             "type": "main",
             "index": 0
           }
