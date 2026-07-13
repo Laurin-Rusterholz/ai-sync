@@ -5,7 +5,7 @@
       "parameters": {
         "width": 640,
         "height": 420,
-        "content": "## Polaris — Gedächtnis & Tools (6 Webhooks)\n\nBackend für das Polaris-Sprachmodul in Quantus (`public/index.html`).\nEndpunkte: `polaris/memory-save`, `memory-recall`, `note-save`, `research`, `character-update`, `proactive` (alle POST, JSON). Der bestehende `polaris/session-url`-Webhook (Signed-URL) ist hier bewusst NICHT enthalten.\n\n**Nach dem Import:**\n1. Dem Claude-Node der memory-save-Kette das Anthropic-Credential zuweisen (Header `x-api-key`). `research` braucht KEIN Credential mehr: DuckDuckGo ohne Key, optional Tavily via n8n-Env `TAVILY_API_KEY`.\n2. Workflow aktivieren (Production-URL = `/webhook/polaris/...`).\n\n**RTDB:** `polaris/*` ist per Regeln offen (`$andere`) — die HTTP-Nodes brauchen keine Credentials. Werden die Regeln später verschärft, den RTDB-Nodes ein `googleApi`-Service-Konto geben (wie im Drive-Workflow).\n\n**CORS:** `allowedOrigins: *` auf allen Webhooks, damit das Frontend direkt posten darf.\n\n**Härtung (optional):** `x-polaris-secret` prüfen, sobald die Browser-Aufrufe über eine Netlify-Function laufen, die den Header serverseitig injiziert. Der ElevenLabs-Agent kann die Webhooks zusätzlich als Server-Tools mit dem Secret-Header aufrufen.\n\n**proactive** nutzt aktuell Beziehung + offene Notizen + Tageszeit — fällige Quantus-Aufgaben oder ungelesene Mails lassen sich als weitere Lese-Nodes vor „Opener bauen“ ergänzen."
+        "content": "## Polaris — Gedächtnis & Tools (6 Webhooks)\n\nBackend für das Polaris-Sprachmodul in Quantus (`public/index.html`).\nEndpunkte: `polaris/memory-save`, `memory-recall`, `note-save`, `research`, `character-update`, `proactive` (alle POST, JSON). Der bestehende `polaris/session-url`-Webhook (Signed-URL) ist hier bewusst NICHT enthalten.\n\n**Nach dem Import:**\n1. Dem Claude-Node der memory-save-Kette das Anthropic-Credential zuweisen (Header `x-api-key`). `research` braucht KEIN Credential: dedizierte HTTP-Request-Nodes (Wiki Suche de→en, Wiki Summary; timeout 6000, continueOnFail) — der Code-Node verarbeitet NUR noch (this.helpers.httpRequest hängt in der Task-Runner-Sandbox der Live-Instanz).\n2. Workflow aktivieren (Production-URL = `/webhook/polaris/...`).\n\n**RTDB:** `polaris/*` ist per Regeln offen (`$andere`) — die HTTP-Nodes brauchen keine Credentials. Werden die Regeln später verschärft, den RTDB-Nodes ein `googleApi`-Service-Konto geben (wie im Drive-Workflow).\n\n**CORS:** `allowedOrigins: *` auf allen Webhooks, damit das Frontend direkt posten darf.\n\n**Härtung (optional):** `x-polaris-secret` prüfen, sobald die Browser-Aufrufe über eine Netlify-Function laufen, die den Header serverseitig injiziert. Der ElevenLabs-Agent kann die Webhooks zusätzlich als Server-Tools mit dem Secret-Header aufrufen.\n\n**proactive** nutzt aktuell Beziehung + offene Notizen + Tageszeit — fällige Quantus-Aufgaben oder ungelesene Mails lassen sich als weitere Lese-Nodes vor „Opener bauen“ ergänzen."
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -417,7 +417,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        880,
+        1100,
         720
       ],
       "id": "610e1c32-3342-5044-a058-b40804b6b058",
@@ -628,16 +628,190 @@
     },
     {
       "parameters": {
-        "jsCode": "// ── research: echte Web-Recherche OHNE Credentials ──\n// Prioritaet: (1) Tavily — NUR wenn $env.TAVILY_API_KEY gesetzt ist, sonst\n// kommentarlos uebersprungen; (2) DuckDuckGo Instant-Answer-API;\n// (3) DuckDuckGo HTML-Endpoint per Regex (kein DOM im Code-Node).\n// Wirft NIE: jeder Fehlerpfad liefert ein gueltiges JSON im Zielformat.\nconst body = $('Webhook research').first().json.body || {};\nconst query = String(body.query || '').trim().slice(0, 300);\nconst FAIL  = { query, summary: 'Ich habe gerade keinen Zugriff auf die Websuche.', sources: [] };\nconst EMPTY = { query, summary: 'Dazu habe ich online nichts Belastbares gefunden.', sources: [] };\nif (!query) return [{ json: EMPTY }];\n\nlet anyOk = false; // mind. eine Quelle hat geantwortet → \"keine Treffer\" statt \"kein Zugriff\"\nconst http = async (opts) => {\n  try {\n    const r = await this.helpers.httpRequest(Object.assign({ timeout: 8000 }, opts));\n    anyOk = true;\n    return r;\n  } catch (e) { return null; }\n};\nfunction txt(s){\n  return String(s == null ? '' : s)\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"').replace(/&#x?[0-9a-f]+;/gi, ' ')\n    .replace(/\\s+/g, ' ').trim();\n}\nfunction cleanSummary(s){\n  // vorlesbar: kein Markdown, 1-3 knappe Saetze, an Satzgrenze gekappt\n  let out = txt(s).replace(/[*_#`>|]+/g, ' ').replace(/\\s+/g, ' ').trim();\n  const parts = out.split(/(?<=[.!?])\\s+/).slice(0, 3);\n  out = parts.join(' ');\n  if (out.length > 420){\n    const cut = out.slice(0, 420);\n    const dot = cut.lastIndexOf('. ');\n    out = dot > 140 ? cut.slice(0, dot + 1) : cut.trim() + ' …';\n  }\n  return out;\n}\nlet summary = '';\nconst sources = [];\nconst seen = new Set();\nfunction addSource(title, url){\n  url = String(url || '');\n  if (!/^https?:\\/\\//.test(url) || seen.has(url) || sources.length >= 5) return;\n  seen.add(url);\n  sources.push({ title: txt(title) || url, url });\n}\n\ntry {\n  // ── 1) Tavily (optional per n8n-Env-Variable) ──\n  let tavilyKey = '';\n  try { tavilyKey = (typeof $env !== 'undefined' && $env.TAVILY_API_KEY) ? String($env.TAVILY_API_KEY) : ''; } catch (e) {}\n  if (tavilyKey){\n    const t = await http({ method: 'POST', url: 'https://api.tavily.com/search', json: true,\n      body: { api_key: tavilyKey, query, max_results: 5, include_answer: true } });\n    if (t){\n      if (t.answer) summary = cleanSummary(t.answer);\n      (Array.isArray(t.results) ? t.results : []).forEach(r => { if (r) addSource(r.title, r.url); });\n    }\n  }\n\n  // ── 2) DuckDuckGo Instant-Answer-API (ohne Key) ──\n  if (!summary || sources.length < 3){\n    let ia = await http({ method: 'GET',\n      url: 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) + '&format=json&no_html=1&skip_disambig=1&t=quantus' });\n    if (typeof ia === 'string'){ try { ia = JSON.parse(ia); } catch (e) { ia = null; } }\n    if (ia){\n      const abs = txt(ia.AbstractText || ia.Answer || ia.Definition || '');\n      if (abs && !summary) summary = cleanSummary(abs);\n      if (ia.AbstractURL) addSource(ia.Heading || ia.AbstractSource, ia.AbstractURL);\n      const flat = [];\n      (Array.isArray(ia.RelatedTopics) ? ia.RelatedTopics : []).forEach(rt => {\n        if (!rt) return;\n        if (Array.isArray(rt.Topics)) rt.Topics.forEach(x => { if (x) flat.push(x); });\n        else flat.push(rt);\n      });\n      flat.forEach(rt => { if (rt.FirstURL) addSource(txt(rt.Text).split(' - ')[0], rt.FirstURL); });\n    }\n  }\n\n  // ── 3) DuckDuckGo HTML-Fallback (Regex-Parsing der Trefferliste) ──\n  if (!sources.length){\n    const html = await http({ method: 'GET',\n      url: 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query),\n      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) QuantusPolaris/1.0' } });\n    if (html){\n      const s = String(html);\n      const snips = [];\n      const snipRe = /class=\"[^\"]*result__snippet[^\"]*\"[^>]*>([\\s\\S]*?)<\\/(?:a|div|span)>/g;\n      let m;\n      while ((m = snipRe.exec(s)) && snips.length < 5) snips.push(txt(m[1]));\n      const linkRe = /<a[^>]+class=\"[^\"]*result__a[^\"]*\"[^>]+href=\"([^\"]+)\"[^>]*>([\\s\\S]*?)<\\/a>/g;\n      while ((m = linkRe.exec(s)) && sources.length < 5){\n        let url = m[1];\n        const uddg = /[?&]uddg=([^&\"]+)/.exec(url); // DDG-Redirect aufloesen\n        if (uddg){ try { url = decodeURIComponent(uddg[1]); } catch (e) {} }\n        if (url.startsWith('//')) url = 'https:' + url;\n        addSource(m[2], url);\n      }\n      if (!summary && snips.length) summary = cleanSummary(snips.slice(0, 2).join(' '));\n    }\n  }\n\n  if (!summary && sources.length){\n    summary = cleanSummary('Dazu habe ich Folgendes gefunden: ' + sources.slice(0, 3).map(s => s.title).join('; ') + '.');\n  }\n  if (!summary && !sources.length) return [{ json: anyOk ? EMPTY : FAIL }];\n  return [{ json: { query, summary, sources: sources.slice(0, 5) } }];\n} catch (e) {\n  return [{ json: FAIL }];\n}\n"
+        "jsCode": "// ── research: NUR Verarbeitung — KEINE eigenen HTTP-Requests! ──\n// this.helpers.httpRequest haengt in der Task-Runner-Sandbox der Live-\n// Instanz und Promise.race-Timeouts greifen dort nicht. Alle HTTP-Aufrufe\n// laufen deshalb in dedizierten HTTP-Request-Nodes VOR diesem Node:\n//   \"Wiki Suche\"    → de.wikipedia.org Action-API list=search (Trefferliste)\n//   \"Wiki Suche EN\" → en.wikipedia.org (Fallback, wenn de leer)\n//   \"Wiki Summary\"  → REST /page/summary/<bester Titel> (Extract als summary)\n// Alle drei mit options.timeout=6000 + continueOnFail — dieser Node liest\n// nur deren Outputs und baut { query, summary, sources }. Kein Treffer →\n// { query, summary:\"\", sources:[] } (HTTP 200, kein Fehler). Wirft NIE.\nconst query = String((($('Webhook research').first().json || {}).body || {}).query || '').trim().slice(0, 300);\nconst EMPTY = { query: query, summary: '', sources: [] };\ntry {\n  function nodeJson(name){\n    try {\n      const j = $(name).first().json;\n      return (j && typeof j === 'object' && !j.error) ? j : null;\n    } catch (e) { return null; }\n  }\n  function txt(s){\n    return String(s == null ? '' : s)\n      .replace(/<[^>]+>/g, ' ')\n      .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')\n      .replace(/&gt;/gi, '>').replace(/&quot;/gi, '\"').replace(/&#x?[0-9a-f]+;/gi, ' ')\n      .replace(/\\s+/g, ' ').trim();\n  }\n  function cleanSummary(s){\n    // vorlesbar: kein HTML/Markdown, an Satzgrenze gekappt, max ~600 Zeichen\n    let out = txt(s).replace(/[*_#`>|]+/g, ' ').replace(/\\s+/g, ' ').trim();\n    if (out.length > 600){\n      const cut = out.slice(0, 600);\n      const dot = cut.lastIndexOf('. ');\n      out = dot > 200 ? cut.slice(0, dot + 1) : cut.trim() + ' …';\n    }\n    return out;\n  }\n  const de = nodeJson('Wiki Suche');\n  const en = nodeJson('Wiki Suche EN');\n  const sum = nodeJson('Wiki Summary');\n  const deHits = (de && de.query && Array.isArray(de.query.search)) ? de.query.search : [];\n  const enHits = (en && en.query && Array.isArray(en.query.search)) ? en.query.search : [];\n  const lang = deHits.length ? 'de' : 'en';\n  const hits = deHits.length ? deHits : enHits;\n\n  const sources = [];\n  const seen = new Set();\n  hits.slice(0, 5).forEach(function(h){\n    if (!h || !h.title) return;\n    const url = 'https://' + lang + '.wikipedia.org/wiki/' + encodeURIComponent(String(h.title).replace(/ /g, '_'));\n    if (seen.has(url)) return;\n    seen.add(url);\n    sources.push({ title: txt(h.title), url: url });\n  });\n\n  let summary = '';\n  if (sum && typeof sum.extract === 'string' && sum.extract) summary = cleanSummary(sum.extract);\n  if (!summary && hits.length && hits[0].snippet) summary = cleanSummary(hits[0].snippet);\n  // kanonische Artikel-URL aus dem REST-Summary bevorzugen\n  const pageUrl = sum && sum.content_urls && sum.content_urls.desktop && sum.content_urls.desktop.page;\n  if (pageUrl){\n    if (sources.length && sources[0].url.indexOf('wikipedia.org/wiki/') >= 0) sources[0].url = pageUrl;\n    else if (!sources.length) sources.push({ title: txt(sum.title || query), url: pageUrl });\n  }\n\n  if (!summary && !sources.length) return [{ json: EMPTY }];\n  return [{ json: { query: query, summary: summary, sources: sources.slice(0, 5) } }];\n} catch (e) {\n  return [{ json: EMPTY }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        720
+      ],
+      "id": "5d3e226b-19ac-5fbd-b31a-979d26c04ee1",
+      "name": "research (Websuche)"
+    },
+    {
+      "parameters": {
+        "url": "=https://de.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=5&srsearch={{ encodeURIComponent($('Webhook research').first().json.body?.query || '') }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        720
+      ],
+      "id": "e4513303-35a3-501f-9a9b-17b43b0c8ee6",
+      "name": "Wiki Suche",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=5&srsearch={{ encodeURIComponent($('Webhook research').first().json.body?.query || '') }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        720
+      ],
+      "id": "02097875-b001-5735-b29a-ea1468cafd2a",
+      "name": "Wiki Suche EN",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://{{ ($('Wiki Suche').first().json.query?.search?.[0]?.title) ? 'de' : 'en' }}.wikipedia.org/api/rest_v1/page/summary/{{ encodeURIComponent((($('Wiki Suche').first().json.query?.search?.[0]?.title) || ($('Wiki Suche EN').first().json.query?.search?.[0]?.title) || ($('Webhook research').first().json.body?.query) || 'Wikipedia').replace(/ /g, '_')) }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        720
+      ],
+      "id": "3346ff66-202a-5dc7-89d3-32088f1a5a51",
+      "name": "Wiki Summary",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/create-project",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1440
+      ],
+      "id": "019538b8-f04f-5fe4-8d58-762abed17e8b",
+      "name": "WH create-project",
+      "webhookId": "8898a985-d61b-54a4-ab9d-6d76e2c69eda"
+    },
+    {
+      "parameters": {
+        "jsCode": "// create-project: validiert und baut das Projekt-Objekt.\n// Kein Env-Zugriff, keine eigenen HTTP-Requests (RTDB-POST macht der\n// dedizierte HTTP-Request-Node dahinter). Wirft nie.\ntry {\n  const b = $json.body || {};\n  const title = String(b.title || '').trim().slice(0, 200);\n  if (!title) return [{ json: { ok: false, error: 'kein Titel' } }];\n  const tags = Array.isArray(b.tags) ? b.tags.map(function(t){ return String(t).toLowerCase().slice(0, 40); }).slice(0, 8) : [];\n  return [{ json: { ok: true, project: {\n    ts: Date.now(),\n    title: title,\n    description: String(b.description || '').slice(0, 2000),\n    tags: tags,\n    status: 'open',\n    source: b.source === 'system' ? 'system' : 'voice'\n  } } }];\n} catch (e) { return [{ json: { ok: false, error: 'kein Titel' } }]; }"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         220,
-        720
+        1440
       ],
-      "id": "5d3e226b-19ac-5fbd-b31a-979d26c04ee1",
-      "name": "research (Websuche)"
+      "id": "4d294282-2ed4-51c0-b2b2-20b0f471c351",
+      "name": "prep project"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "0d8b5fd1-d96d-5db1-9d6b-d17b4c20759b",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        1440
+      ],
+      "id": "c92a980e-3621-54e2-b706-1d96357afc23",
+      "name": "IF hat Titel"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/polaris/projects.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.project) }}",
+        "options": {
+          "timeout": 6000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        1380
+      ],
+      "id": "075a0bbe-0416-5b79-a1cc-76a2811950b5",
+      "name": "RTDB create-project",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Firebase-POST-Echo {name: pushId} → {ok, id, title}. Wirft nie.\ntry {\n  const prep = $('prep project').first().json;\n  if (!prep || prep.ok !== true) return [{ json: prep || { ok: false, error: 'kein Titel' } }];\n  const j = $json || {};\n  if (j.error || !j.name) return [{ json: { ok: false, error: 'Speichern fehlgeschlagen' } }];\n  return [{ json: { ok: true, id: String(j.name), title: prep.project.title } }];\n} catch (e) { return [{ json: { ok: false, error: 'Speichern fehlgeschlagen' } }]; }"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        1380
+      ],
+      "id": "8e39631d-ff71-5834-9d44-8d21609a9111",
+      "name": "resp project"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        1440
+      ],
+      "id": "0003a2cf-17c0-5f05-88d0-6494ca1f54ca",
+      "name": "Resp create-project"
     }
   ],
   "connections": {
@@ -828,7 +1002,7 @@
       "main": [
         [
           {
-            "node": "research (Websuche)",
+            "node": "Wiki Suche",
             "type": "main",
             "index": 0
           }
@@ -939,6 +1113,101 @@
         [
           {
             "node": "Respond research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiki Suche": {
+      "main": [
+        [
+          {
+            "node": "Wiki Suche EN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiki Suche EN": {
+      "main": [
+        [
+          {
+            "node": "Wiki Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiki Summary": {
+      "main": [
+        [
+          {
+            "node": "research (Websuche)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WH create-project": {
+      "main": [
+        [
+          {
+            "node": "prep project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prep project": {
+      "main": [
+        [
+          {
+            "node": "IF hat Titel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF hat Titel": {
+      "main": [
+        [
+          {
+            "node": "RTDB create-project",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resp create-project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB create-project": {
+      "main": [
+        [
+          {
+            "node": "resp project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "resp project": {
+      "main": [
+        [
+          {
+            "node": "Resp create-project",
             "type": "main",
             "index": 0
           }

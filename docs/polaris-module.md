@@ -20,7 +20,7 @@ Charakter, Web-Recherche und proaktivem Gesprächsverhalten.
 | Toggle „Polaris aktiv" | An = Session starten (nach Mikrofon-Permission-Check), Aus = `endSession()`. Persistiert unter `data.settings.polaris.enabled` via `scheduleSave()`. `onDisconnect` (auch agentenseitiges `end_call`) setzt konsistent auf „Aus". |
 | Launch-Button | Session-Start + `sendUserMessage("LAUNCH")` + Boot-Overlay (audio-reaktiver Orb). Overlay verschwindet beim ersten `speaking → listening`-Wechsel (SDK-Statuscallback, kein Transkript-Parsing), Sicherheitsventil 45 s, Tap-to-dismiss. |
 | Status-Orb | idle / listening / thinking (abgeleitet: User-Transkript eingetroffen) / speaking; Glow/Scale via `getOutputVolume()`-rAF-Loop. |
-| Sprachbefehle | „merk dir …" / „notier(e) …" / „schreib auf …" → `note-save`. „recherchiere …" / „such im Netz nach …" → `research`, Ergebnis geht als Kontext-Update zurück an den Agenten. |
+| Sprachbefehle | „merk dir …" / „notier(e) …" / „schreib auf …" → `note-save`. „recherchiere …" / „such im Netz nach …" → `research`, Ergebnis geht als Kontext-Update zurück an den Agenten. „schreib eine Mail (an name@adresse) (Betreff: …) …" → `compose-mail` (legt **nur einen Gmail-Entwurf** an, sendet nie). „leg ein Projekt an …" / „neues Projekt …" → `create-project`. Dazu zwei Schnellaktions-Buttons im Polaris-View (`data-action="polaris-create-project"` / `"polaris-compose-mail"`, Touch-Targets ≥44px). |
 | Nach Session-Ende | Transcript-Zusammenfassung → `memory-save` (type `conversation`), Beziehungs-Update (Stimmung, lastTopics, Open Loops, Streak), Charakter-Evolution (Trait-Drift hart ±0.05, `evolutionLog`). |
 | Beim Session-Start | `memory-recall` + `proactive` + Charakter-Lesen parallel zum Auth-Fetch → dynamische Variablen (siehe unten). |
 | Proaktivität | Auto-Start beim App-Öffnen (nur wenn Toggle zuletzt an, Proaktivität an **und** Mikrofon-Permission bereits erteilt) und Inaktivitäts-Nudge (4 min Stille, 15 min Cooldown). Abschaltbar über den Schalter im Panel; Setting liegt lokal + gespiegelt unter `polaris/settings/proactiveEnabled` (RTDB-Wert gewinnt beim Panel-Refresh). |
@@ -39,6 +39,7 @@ zurück (einmalige Warnung pro Endpoint und Seitenaufruf).
 | `polaris/notes/{pushId}` | `{ ts, text, tags[], done: false }` |
 | `polaris/character` | `{ traits: { humor, warmth, directness, curiosity, formality } je 0–1, backstory, catchphrases[], evolutionLog: [{ ts, change, reason }] }` — wird beim ersten Zugriff mit Defaults initialisiert |
 | `polaris/relationship` | `{ ts, mood, lastTopics[], openLoops[], streak }` |
+| `polaris/projects/{pushId}` | `{ ts, title, description, tags[], status: 'open'\|'done', source: 'voice'\|'system' }` |
 | `polaris/settings/proactiveEnabled` | Spiegel des Frontend-Schalters (auch von n8n/Agent lesbar) |
 
 Die RTDB-Regeln decken `polaris/*` über den offenen `$andere`-Zweig ab.
@@ -55,9 +56,12 @@ Basis: `https://n8n.srv1757990.hstgr.cloud/webhook/polaris`
 | `POST /memory-save` | `{type, text, summary?, tags?, importance?, source?}` | `{ok, id}` | normalisieren → bei `conversation` LLM-Zusammenfassung (Claude, Fallback: Client-Heuristik) → Push nach `polaris/memory` |
 | `POST /memory-recall` | `{query, limit?}` | `{items:[…]}` | Volltext-/Tag-Suche über `memory` + `notes` mit Rezenz-/Wichtigkeits-Bonus |
 | `POST /note-save` | `{text, tags?}` | `{ok, id}` | Push nach `polaris/notes` (`done:false`) |
-| `POST /research` | `{query}` | `{summary, sources:[{title,url}]}` | Claude mit `web_search`-Server-Tool, deutsche vorlesbare Zusammenfassung |
+| `POST /research` | `{query}` | `{query, summary, sources:[{title,url}]}` | dedizierte HTTP-Request-Nodes: Wikipedia-Suche (de→en) + REST-Summary des besten Treffers (timeout 6000, continueOnFail); Code-Node verarbeitet nur — kein Credential, kein `this.helpers.httpRequest` (hängt in der Task-Runner-Sandbox) |
 | `POST /character-update` | `{traitDeltas, reason}` | `{ok, character}` | Deltas hart ±0.05 klemmen, Traits 0–1, `evolutionLog`-Eintrag (max. 20) |
 | `POST /proactive` | `{}` | `{opener}` | Gruss nach Tageszeit (Europe/Zurich) + ältester Open Loop bzw. offene Notizen bzw. Streak |
+| `POST /create-project` | `{title, description?, tags?}` | `{ok, id, title}` | Brain-Workflow, credential-frei: HTTP-Node POST auf `polaris/projects.json`; ohne Titel `{ok:false, error:'kein Titel'}` |
+| `POST /read-mail` | `{id}` | `{ok, id, from, to, subject, date, text}` | On-Demand-Workflow, Gmail-Node `message/get` (gmailOAuth2). Reine Input-Validierung — **kein** Secret-/`$env`-Check (Env-Zugriff ist in der Instanz gesperrt); ohne id `{ok:false, error:'no id'}` |
+| `POST /compose-mail` | `{to?, subject?, body}` | `{ok, draftId, to, subject, note}` | On-Demand-Workflow, Gmail-Node **`draft/create`** — legt ausschliesslich einen **Entwurf** an, sendet **niemals**; ohne body `{ok:false, error:'kein Text'}` |
 
 **Import:** Datei in n8n importieren → den beiden Claude-Nodes das
 Anthropic-Credential (Header `x-api-key`) zuweisen → Workflow aktivieren.
