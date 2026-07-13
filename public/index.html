@@ -109661,8 +109661,8 @@ Dateien zu identifizieren.
     if (!spec) return base;
     return base + "\n\n---\n\n## Spezifikation (aktueller Auftrag)\n" + spec;
   }
-  function qppLog(qd, text){
-    qd.log.unshift({ ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim() });
+  function qppLog(qd, text, tag){
+    qd.log.unshift({ ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim(), tag: String(tag || "").trim() });
     if (qd.log.length > 500) qd.log.length = 500;
   }
   window.qppSet = function(pid, field, val){ var qd = qppState(pid); if (!qd) return; if (field === "base") qd.basePrompt = val; else qd.spec = val; scheduleSave(); };
@@ -109700,13 +109700,27 @@ Dateien zu identifizieren.
 
     var logHtml = qd.log.length
       ? qd.log.slice(0, 60).map(function(entry, i){
-          return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
-            + '<div class="text-muted mini" style="flex:none;width:118px;font-variant-numeric:tabular-nums">' + e(fmtTs(entry.ts)) + '</div>'
+          var tg = (entry.tag || "").trim();
+          var tagChip = tg ? '<span style="flex:none;align-self:center;background:var(--accent-soft);color:var(--accent);font-size:10.5px;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap">' + e(tg) + '</span>' : '';
+          return '<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div class="text-muted mini" style="flex:none;width:104px;font-variant-numeric:tabular-nums">' + e(fmtTs(entry.ts)) + '</div>'
+            + tagChip
             + '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>'
             + '<button class="btn sm ghost" title="Eintrag löschen" data-action="qpp-log-del" data-pid="' + e(id) + '" data-idx="' + i + '" style="flex:none">✕</button>'
             + '</div>';
         }).join("")
       : '<div class="text-muted mini" style="padding:8px 0">Noch keine Einträge.</div>';
+
+    var qppTagCounts = {};
+    qd.log.forEach(function(en){ var t = (en.tag || "").trim(); if (t) qppTagCounts[t] = (qppTagCounts[t] || 0) + 1; });
+    var qppTagKeys = Object.keys(qppTagCounts).sort();
+    var qppTagOptions = qppTagKeys.map(function(t){ return '<option value="' + e(t) + '">'; }).join("");
+    var qppTagCopyRow = qppTagKeys.length
+      ? '<div class="flex" style="gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'
+        + '<span class="text-muted mini">Nach Tag kopieren:</span>'
+        + qppTagKeys.map(function(t){ return '<button class="btn sm" data-action="qpp-log-copytag" data-pid="' + e(id) + '" data-tag="' + e(t) + '" title="Alle Eintraege mit diesem Tag kopieren">📋 ' + e(t) + ' (' + qppTagCounts[t] + ')</button>'; }).join("")
+        + '</div>'
+      : '';
 
     var specLen = (qd.spec || "").trim().length;
 
@@ -109739,10 +109753,13 @@ Dateien zu identifizieren.
       +   '</div>'
       +   '<div class="card" style="padding:16px;flex:2 1 460px;min-width:320px">'
       +     '<h3 style="margin:0 0 10px">📓 Logbuch</h3>'
-      +     '<div class="flex" style="gap:8px;margin-bottom:10px">'
-      +       '<input id="qppLogInput" type="text" placeholder="Zwischenstand / Änderung notieren…" style="flex:1;min-width:0" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qpp-log-add]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +     '<div class="flex" style="gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+      +       '<input id="qppLogInput" type="text" placeholder="Zwischenstand / Änderung notieren…" style="flex:1 1 220px;min-width:0" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qpp-log-add]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +       '<input id="qppLogTag" type="text" list="qppLogTagList" placeholder="Tag" style="flex:0 1 140px;min-width:0" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window.handleClick({target:this.parentNode.querySelector(\'[data-action=qpp-log-add]\'),preventDefault:function(){},stopPropagation:function(){}});}">'
+      +       '<datalist id="qppLogTagList">' + qppTagOptions + '</datalist>'
       +       '<button class="btn" data-action="qpp-log-add" data-pid="' + e(id) + '">Eintragen</button>'
       +     '</div>'
+      +     qppTagCopyRow
       +     '<div style="max-height:360px;overflow:auto">' + logHtml + '</div>'
       +   '</div>'
       + '</div>'
@@ -109810,7 +109827,7 @@ Dateien zu identifizieren.
       return;
     }
     // ── Projekt-gebundenes Cockpit (PRJ-UCHWW) ──
-    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-add-idea"){
+    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-log-copytag" || action === "qpp-add-idea"){
       ev.preventDefault();
       var pid = el.dataset.pid;
       var p = pid && APP.state.data.entities.projects ? APP.state.data.entities.projects[pid] : null;
@@ -109834,8 +109851,20 @@ Dateien zu identifizieren.
       }
       if (action === "qpp-log-add"){
         var lin = document.getElementById("qppLogInput"); var ltxt = lin ? lin.value.trim() : "";
+        var ltagEl = document.getElementById("qppLogTag"); var ltag = ltagEl ? ltagEl.value.trim() : "";
         if (!ltxt){ toast("warn", "Leer", "Bitte einen Text eingeben"); return; }
-        qppLog(qd, ltxt); scheduleSave(); render(); return;
+        qppLog(qd, ltxt, ltag); scheduleSave(); render(); return;
+      }
+      if (action === "qpp-log-copytag"){
+        var ctag = (el.dataset.tag || "").trim();
+        var centries = qd.log.filter(function(en){ return (en.tag || "").trim() === ctag; });
+        if (!centries.length){ toast("warn", "Leer", "Keine Eintraege mit diesem Tag"); return; }
+        var cfmt = function(iso){ try { return new Date(iso).toLocaleString("de-CH", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }); } catch(x){ return iso || ""; } };
+        var ctxt = "# Logbuch - Tag: " + ctag + " (" + centries.length + " Eintraege)\n\n"
+          + centries.map(function(en){ return "[" + cfmt(en.ts) + "] " + (en.text || ""); }).join("\n");
+        qpCopy(ctxt);
+        toast("ok", "Kopiert", centries.length + " Eintrag/Eintraege mit Tag: " + ctag);
+        return;
       }
       if (action === "qpp-log-del"){
         var qidx = parseInt(el.dataset.idx, 10);
