@@ -25,7 +25,7 @@ ausschliesslich über die RTDB: Frontend schreibt `driveInbox` (status
 |---|---|
 | `driveFolders/<id>` | `{ name, bereich, parentId (null=Wurzel), typ ("bereich"\|"unterordner"\|"thema"), erstellt }` |
 | `driveDocs/<id>` | `{ dateiname, titel_final, storagePath, downloadUrl, mimeType, groesse, hash (SHA-256), status, folderId (null bis Übernahme), vorschlag, textauszug (~2000 Zeichen), erstellt, aktualisiert }` |
-| `driveInbox/<docId>` | `{ docId, dateiname, mimeType, text (~6000 Zeichen), hash, duplikat_verdacht, status ("pending"\|"processing"\|"processed"\|"error"), erstellt }` |
+| `driveInbox/<docId>` | `{ docId, dateiname, mimeType, text (~6000 Zeichen), hash, duplikat_verdacht, status ("pending"\|"processing"\|"processed"\|"error"), processing_seit (ISO, beim Wechsel auf `processing` gesetzt — Basis für Stale-Reclaim), fehler (bei `error`), verarbeitet (ISO, bei `processed`), erstellt }` |
 
 `vorschlag` (von n8n geschrieben):
 `{ bereich, unterordner, thema, tags[], titel_vorschlag, confidence, begruendung, duplikat_verdacht }`
@@ -176,6 +176,24 @@ Der Workflow pollt daher alle 60 s `driveInbox` auf `status == "pending"`
 eine gefilterte REST-Query (`orderBy="status"&equalTo="pending"`) umgestellt
 werden soll.
 
+**Stale-Reclaim (hängende `processing`-Einträge):** Der In-Progress-Status
+wird gesetzt, *bevor* die Klassifizierung abgeschlossen ist. Bricht ein
+Downstream-Node hart ab (n8n-Neustart, Netzwerkfehler eines RTDB-PATCH,
+Timeout), bliebe der Eintrag ohne Sicherung für immer auf `processing` und
+würde vom reinen `pending`-Filter nie wieder aufgegriffen. Daher:
+- Beim Wechsel auf `processing` schreibt der Node **Inbox → processing**
+  zusätzlich `processing_seit` (ISO-Zeitstempel).
+- Der Node **Pending filtern** greift neben `pending` auch `processing`-
+  Einträge wieder auf, deren `processing_seit` älter als **10 Min** ist
+  (Timeout) **oder** die kein `processing_seit` haben (Altdaten → gelten als
+  stale). Der Reclaim re-stempelt `processing_seit` auf „jetzt", sodass ein
+  erneut scheiternder Lauf wieder 10 Min Karenz erhält.
+- Harte API-/HTTP-Fehler setzen `driveInbox.status = "error"` **plus**
+  `fehler` (inkl. HTTP-Status, soweit verfügbar). `error` wird vom Filter
+  **nicht** erneut aufgegriffen — fehlerhafte Einträge laufen nicht in eine
+  Endlosschleife, der Grund bleibt aber im Drawer sichtbar. Nichts wird je
+  gelöscht (nur Status-Wechsel).
+
 ## Testanleitung: eingang → wird_klassifiziert → Vorschlag → Übernehmen
 
 1. `public/drive.html` öffnen (lokal via `npx serve public` oder über das
@@ -202,7 +220,13 @@ werden soll.
 6. Gegenprobe Fehlerpfad: n8n-Credential kurz entfernen und erneut hochladen
    → Badge **Review nötig** + Fehlertext im Drawer, `driveInbox`-Status
    `error`. Nichts wird stumm verworfen.
-7. Papierkorb: „🗑 Papierkorb" im Drawer setzt nur den Status; unter
+7. Gegenprobe Stale-Reclaim: einen `driveInbox`-Eintrag manuell auf
+   `status: "processing"` mit `processing_seit` > 10 Min in der Vergangenheit
+   (oder ganz ohne `processing_seit`) setzen. Beim nächsten Poll (≤ 60 s) greift
+   **Pending filtern** ihn erneut auf und führt ihn zu `processed`/`error` —
+   kein dauerhaftes Hängenbleiben mehr. Ein `processing`-Eintrag jünger als
+   10 Min wird dagegen in Ruhe gelassen (kein Doppelanlauf).
+8. Papierkorb: „🗑 Papierkorb" im Drawer setzt nur den Status; unter
    **Papierkorb** lässt sich das Dokument wiederherstellen oder — nur nach
    expliziter Bestätigung — endgültig löschen (Storage + RTDB).
 
