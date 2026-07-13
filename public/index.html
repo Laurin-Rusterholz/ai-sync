@@ -3593,6 +3593,22 @@ body.mode-laptop .dock-panel{width:330px}
 .topbar-menu-item .check{margin-left:auto;font-size:11px}
 /* Dock unterhalb von 900px nie anzeigen (Mobile-Layout) */
 @media(max-width:900px){.panel-dock{display:none !important}}
+
+/* ═══ Ganze Apps als Seitenpanel — Split-Screen mit vollen App-Ansichten ═══ */
+/* Volle App-Panels sind flexibel (statt fix 360px) und teilen sich die Breite. */
+.dock-panel.app-panel{flex:1 1 0;min-width:0;width:auto}
+.dock-panel.app-panel .dock-panel-body{padding:0;display:block;overflow:auto}
+.dock-panel.app-panel .dock-panel-body > .page{padding:14px 16px 32px;max-width:none}
+/* Sind volle App-Panels offen, teilen sich Hauptbereich (1fr) und Dock
+   (Anzahl App-Panels als fr) die Breite → volle App neben voller App.
+   fr-Spalten überlaufen nie → nichts wird abgeschnitten. */
+body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
+body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
+/* Inhalte im App-Panel brechen auf die Spaltenbreite um; Breites scrollt statt abzuschneiden. */
+.dock-panel.app-panel .grid-4,.dock-panel.app-panel .grid-3,.dock-panel.app-panel .grid-2{grid-template-columns:1fr !important}
+.dock-panel.app-panel table{display:block;overflow-x:auto;max-width:100%}
+/* Dock-Menü scrollbar, da jetzt alle Apps gelistet sind. */
+#dockMenu{max-height:min(72vh,600px);overflow-y:auto}
 </style>
 </head>
 <body>
@@ -105614,11 +105630,22 @@ html.theme-light .card{box-shadow:none}
     var mx = maxPanels();
     var html = '<div class="topbar-menu-title">Seitenpanels · max. ' + mx + ' im ' + MODE_META[effectiveMode()].label + '-Modus</div>';
     if (mx === 0) html += '<div style="font-size:11px;color:var(--muted);padding:4px 10px 8px">Im Tablet-Modus nicht verfügbar — wechsle in den Laptop- oder Computer-Modus.</div>';
+    html += '<div class="topbar-menu-title" style="margin-top:2px">Schnell-Panels</div>';
     Object.keys(PANELS).forEach(function(k){
       var p = PANELS[k];
       var active = open.indexOf(k) >= 0;
       html += '<button class="topbar-menu-item' + (active ? " active" : "") + '" onclick="window.toggleDockPanel(\'' + k + '\')">' +
         '<span>' + p.icon + '</span><span style="flex:1">' + p.title + '</span>' +
+        (active ? '<span class="check">✓</span>' : '') + '</button>';
+    });
+    // Ganze Apps (volle App-Ansicht im Panel — auch App neben App)
+    var all = (typeof getAllApps === "function") ? getAllApps() : [];
+    html += '<div class="topbar-menu-title" style="margin-top:6px;border-top:1px solid var(--border);padding-top:8px">Ganze App im Seitenpanel</div>';
+    all.filter(function(a){ return PANEL_ROUTES[a.key]; }).forEach(function(a){
+      var key = "app:" + a.key;
+      var active = open.indexOf(key) >= 0;
+      html += '<button class="topbar-menu-item' + (active ? " active" : "") + '" onclick="window.toggleDockPanel(\'' + key + '\')">' +
+        '<span>' + a.icon + '</span><span style="flex:1">' + esc(a.label) + '</span>' +
         (active ? '<span class="check">✓</span>' : '') + '</button>';
     });
     menu.innerHTML = html;
@@ -105635,13 +105662,13 @@ html.theme-light .card{box-shadow:none}
   function getOpenPanels(){
     try {
       var a = JSON.parse(localStorage.getItem(DOCK_KEY) || "[]");
-      return Array.isArray(a) ? a.filter(function(k){ return PANELS[k]; }) : [];
+      return Array.isArray(a) ? a.filter(function(k){ return PANELS[k] || (isAppKey(k) && PANEL_ROUTES[routeOf(k)]); }) : [];
     } catch(e){ return []; }
   }
   function setOpenPanels(a){ try { localStorage.setItem(DOCK_KEY, JSON.stringify(a)); } catch(e){} }
 
   window.toggleDockPanel = function(key){
-    if (!PANELS[key]) return;
+    if (!PANELS[key] && !(isAppKey(key) && PANEL_ROUTES[routeOf(key)])) return;
     var open = getOpenPanels();
     var i = open.indexOf(key);
     if (i >= 0) {
@@ -105660,29 +105687,49 @@ html.theme-light .card{box-shadow:none}
     renderDockMenu();
   };
 
+  var _dockBusy = false;
   function renderDock(){
-    var dock = document.getElementById("panelDock");
-    if (!dock) return;
-    var open = getOpenPanels().slice(0, maxPanels());
-    if (!open.length || !window.APP || !APP.state || !APP.state.data || !APP.state.data.entities) {
-      dock.innerHTML = "";
+    if (_dockBusy) return;      // Re-Entrancy-Schutz (App-Panels rufen View-Funktionen auf)
+    _dockBusy = true;
+    try {
+      var dock = document.getElementById("panelDock");
+      if (!dock) return;
+      var open = getOpenPanels().slice(0, maxPanels());
+      var appEl = document.querySelector(".app");
+      if (!open.length || !window.APP || !APP.state || !APP.state.data || !APP.state.data.entities) {
+        dock.innerHTML = "";
+        document.body.classList.remove("has-app-panels");
+        if (appEl) appEl.style.removeProperty("--dock-fr");
+        updateFabOffset();
+        return;
+      }
+      dock.innerHTML = open.map(function(k){
+        if (isAppKey(k)){
+          var route = routeOf(k), meta = appPanelMeta(route);
+          return '<section class="dock-panel app-panel" data-panel="' + k + '">' +
+            '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
+            '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+            '<div class="dock-panel-body">' + renderRoutePanel(route) + '</div></section>';
+        }
+        var p = PANELS[k]; var body;
+        try { body = p.render(); }
+        catch(e){ body = '<div class="dock-empty">Panel-Fehler: ' + (e && e.message || e) + '</div>'; }
+        return '<section class="dock-panel" data-panel="' + k + '">' +
+          '<div class="dock-panel-header"><span>' + p.icon + '</span><span class="dock-panel-title">' + p.title + '</span>' +
+          '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+          '<div class="dock-panel-body">' + body + '</div></section>';
+      }).join("");
+      open.forEach(function(k){
+        if (!isAppKey(k) && PANELS[k] && PANELS[k].mount) { try { PANELS[k].mount(); } catch(e){} }
+      });
+      // Breite aufteilen: Hauptbereich = 1fr, Dock = Anzahl voller App-Panels als fr
+      var appCount = open.filter(isAppKey).length;
+      if (appEl){
+        if (appCount > 0){ document.body.classList.add("has-app-panels"); appEl.style.setProperty("--dock-fr", appCount); }
+        else { document.body.classList.remove("has-app-panels"); appEl.style.removeProperty("--dock-fr"); }
+      }
       updateFabOffset();
-      return;
-    }
-    dock.innerHTML = open.map(function(k){
-      var p = PANELS[k];
-      var body;
-      try { body = p.render(); }
-      catch(e){ body = '<div class="dock-empty">Panel-Fehler: ' + (e && e.message || e) + '</div>'; }
-      return '<section class="dock-panel" data-panel="' + k + '">' +
-        '<div class="dock-panel-header"><span>' + p.icon + '</span><span class="dock-panel-title">' + p.title + '</span>' +
-        '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
-        '<div class="dock-panel-body">' + body + '</div></section>';
-    }).join("");
-    open.forEach(function(k){
-      if (PANELS[k].mount) { try { PANELS[k].mount(); } catch(e){} }
-    });
-    updateFabOffset();
+    } finally { _dockBusy = false; }
   }
   window.renderDock = renderDock;
 
@@ -105955,6 +106002,35 @@ html.theme-light .card{box-shadow:none}
     FOCUS.remaining = (wasWork ? FOCUS.breakMin : FOCUS.workMin) * 60;
     renderDock();
   };
+
+  // Ganze Apps, die inline (als HTML) rendern — als volles Seitenpanel nutzbar.
+  // (Apps, die als Vollbild-Overlay/iframe öffnen, sind bewusst nicht dabei.)
+  var PANEL_ROUTES = {
+    dashboard:"viewDashboard", today:"viewToday", tasks:"viewTasks", projects:"viewProjects",
+    organizations:"viewOrganizations", persons:"viewPersons", calendar:"viewCalendar",
+    googlecalendar:"viewGoogleCalendar", gmail:"viewGmail", time:"viewTime", goals:"viewGoals",
+    strategies:"viewStrategies", programs:"viewPrograms", statistics:"viewStatistics",
+    reports:"viewReports", chat:"viewChat", knowledge:"viewKnowledge", budget:"viewBudget",
+    messages:"viewMessages", ideas:"viewIdeas", meetings:"viewMeetings", updates:"viewUpdates",
+    dailybriefing:"viewDailyBriefing", reflecta:"viewReflecta", habits:"viewHabits",
+    concepts:"viewConcepts", workload:"viewWorkload", measures:"viewMeasures",
+    decisions:"viewDecisions", protocols:"viewProtocols", workflows:"viewWorkflows",
+    passwordmanager:"viewPasswordManager", briefings:"viewBriefings", handbook:"viewHandbook",
+    quantusproject:"viewQuantusProject"
+  };
+  function isAppKey(k){ return typeof k === "string" && k.indexOf("app:") === 0; }
+  function routeOf(k){ return k.slice(4); }
+  function appPanelMeta(route){
+    var all = (typeof getAllApps === "function") ? getAllApps() : [];
+    var m = all.filter(function(a){ return a.key === route; })[0];
+    return { icon: (m && m.icon) || "🗔", title: (m && m.label) || route };
+  }
+  function renderRoutePanel(route){
+    var fn = PANEL_ROUTES[route];
+    if (!fn || typeof window[fn] !== "function") return '<div class="dock-empty">Diese App lässt sich nicht als Panel öffnen.</div>';
+    try { return '<div class="page">' + window[fn]() + '</div>'; }
+    catch(e){ return '<div class="dock-empty">Panel-Fehler: ' + ((e && e.message) || e) + '</div>'; }
+  }
 
   var PANELS = {
     tasks:   { icon: "✅", title: "Aufgaben",     render: renderTasksPanel },
