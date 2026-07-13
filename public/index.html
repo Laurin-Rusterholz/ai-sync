@@ -110694,7 +110694,7 @@ Dateien zu identifizieren.
   function setSaveState(state) {
     const el = $("#nf2SaveState");
     if (!el) return;
-    if (state === "typing") { el.textContent = "…"; el.className = "nf2-savestate typing"; return; }
+    if (state === "typing") { if (el.className.indexOf("typing") < 0) { el.textContent = "…"; el.className = "nf2-savestate typing"; } return; }
     el.textContent = "✓ Gespeichert";
     el.className = "nf2-savestate ok";
     if (_saveStateT) clearTimeout(_saveStateT);
@@ -110837,8 +110837,14 @@ Dateien zu identifizieren.
     const wrap = blocksEl();
     if (!wrap) return;
 
+    // Während einer IME-/Autokorrektur-Komposition nur speichern, keine
+    // Slash-/Mention-Erkennung — hält das Tippen (Umlaute, Vorschläge) flüssig.
+    wrap.addEventListener("compositionstart", () => { S.composing = true; });
+    wrap.addEventListener("compositionend", () => { S.composing = false; scheduleContentSave(); maybeSlash(); maybeMention(); });
+
     wrap.addEventListener("input", (e) => {
       scheduleContentSave();
+      if (e.isComposing || S.composing) return;
       maybeSlash(e);
       maybeMention(e);
     });
@@ -111301,6 +111307,7 @@ Dateien zu identifizieren.
         <button data-cmd="italic"><i>I</i></button>
         <button data-cmd="underline"><u>U</u></button>
         <button data-cmd="strikeThrough"><s>S</s></button>
+        <button data-cmd="mark" title="Markieren"><span class="nf2-hlic">M</span></button>
         <button data-cmd="code">‹›</button>
         <button data-cmd="link">🔗</button>`;
       bub.style.display = "flex";
@@ -111320,12 +111327,35 @@ Dateien zu identifizieren.
           const sel = window.getSelection();
           const txt = sel.toString();
           document.execCommand("insertHTML", false, "<code>" + esc(txt) + "</code>");
+        } else if (cmd === "mark") {
+          toggleHighlight();
         } else {
           document.execCommand(cmd, false, null);
         }
         scheduleContentSave();
       };
     }, 120);
+  }
+
+  // Markieren (Highlight) — umschließt die Auswahl mit <mark> bzw. entfernt es wieder.
+  function toggleHighlight() {
+    const s = window.getSelection();
+    if (!s.rangeCount || s.isCollapsed) return;
+    const r = s.getRangeAt(0);
+    const anc = r.commonAncestorContainer;
+    const host = anc.nodeType === 1 ? anc : anc.parentElement;
+    const mark = host && host.closest ? host.closest("mark, .nf2-hl") : null;
+    if (mark && mark.closest(".nf2-bc")) {
+      // bereits markiert → auspacken
+      const parent = mark.parentNode;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+      if (parent.normalize) parent.normalize();
+      return;
+    }
+    const tmp = document.createElement("div");
+    tmp.appendChild(r.cloneContents());
+    document.execCommand("insertHTML", false, '<mark class="nf2-hl">' + tmp.innerHTML + "</mark>");
   }
 
   // ═══ BACKLINKS ("Erwähnt in / Verknüpft mit") ═════════════════════════════
@@ -111738,6 +111768,9 @@ Dateien zu identifizieren.
 .nf2-hrline hr{border:0;border-top:1px solid var(--n2-line);margin:0}
 .nf2-bc code{font-family:ui-monospace,Menlo,monospace;font-size:.85em;background:var(--n2-hover);border-radius:4px;padding:1px 5px;color:#eb5757}
 .nf2-bc a{color:var(--n2-acc);text-decoration:underline;text-underline-offset:2px}
+.nf2-bc mark,.nf2-bc .nf2-hl{background:rgba(255,208,0,.42);color:inherit;border-radius:3px;padding:0 1px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.nf2-host.dark .nf2-bc mark,.nf2-host.dark .nf2-bc .nf2-hl{background:rgba(255,214,64,.30)}
+.nf2-hlic{display:inline-block;background:rgba(255,208,0,.55);color:#3a2f00;border-radius:2px;padding:0 4px;font-weight:700;font-size:12px}
 .nf2-mention{display:inline-flex;align-items:center;gap:3px;background:var(--n2-hover);border-radius:6px;padding:0 6px;font-size:.92em;color:var(--n2-txt)!important;text-decoration:none!important;cursor:pointer;white-space:nowrap}
 .nf2-mention:hover{background:var(--n2-active)}
 /* ── Menü / Popover ── */
