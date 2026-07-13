@@ -3517,6 +3517,9 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
 
 
 
+<script>/* Embed-Modus: die App chrome-los in einem Seitenpanel-iframe zeigen. Früh
+   gesetzt (im <head>), damit kein Sidebar/Topbar-Aufblitzen entsteht. */
+try{if(location.search.indexOf("embed=1")>=0)document.documentElement.classList.add("embed-mode");}catch(e){}</script>
 <style id="quantusLayoutModesCss">
 /* ═══════════════════════════════════════════════════════════════════════════
    ANZEIGEMODI — Computer (Ultrawide) / Laptop / Tablet
@@ -3609,6 +3612,26 @@ body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)
 .dock-panel.app-panel table{display:block;overflow-x:auto;max-width:100%}
 /* Dock-Menü scrollbar, da jetzt alle Apps gelistet sind. */
 #dockMenu{max-height:min(72vh,600px);overflow-y:auto}
+
+/* iframe-Panels: Apps ohne Inline-Ansicht (Drive, NoteFlow, DocStudio, …) als
+   vollwertige App im Panel. */
+.dock-panel.frame-panel{flex:1 1 0;min-width:0;width:auto}
+.dock-panel.frame-panel .dock-panel-body{padding:0;overflow:hidden}
+.dock-frame{width:100%;height:100%;border:0;display:block;background:var(--bg)}
+/* Auch frame-Panels teilen sich die Breite (App neben App). */
+body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
+
+/* ═══ Embed-Modus — chrome-lose App fürs iframe-Panel ═══ */
+html.embed-mode .sidebar,
+html.embed-mode .topbar,
+html.embed-mode .panel-dock,
+html.embed-mode #sidebarToggleBtn,
+html.embed-mode #qc-fab,
+html.embed-mode #qc-panel,
+html.embed-mode #appLaunchScreen,
+html.embed-mode #loadingOverlay{display:none !important}
+html.embed-mode .app{grid-template-columns:1fr !important;grid-template-rows:1fr !important}
+html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12px !important;max-width:none !important}
 </style>
 </head>
 <body>
@@ -105638,11 +105661,14 @@ html.theme-light .card{box-shadow:none}
         '<span>' + p.icon + '</span><span style="flex:1">' + p.title + '</span>' +
         (active ? '<span class="check">✓</span>' : '') + '</button>';
     });
-    // Ganze Apps (volle App-Ansicht im Panel — auch App neben App)
+    // Ganze Apps (volle App-Ansicht im Panel — auch App neben App). Inline-
+    // fähige Apps rendern direkt, alle anderen als iframe (Embed/Standalone).
     var all = (typeof getAllApps === "function") ? getAllApps() : [];
+    var seen = {};
     html += '<div class="topbar-menu-title" style="margin-top:6px;border-top:1px solid var(--border);padding-top:8px">Ganze App im Seitenpanel</div>';
-    all.filter(function(a){ return PANEL_ROUTES[a.key]; }).forEach(function(a){
-      var key = "app:" + a.key;
+    all.forEach(function(a){
+      if (!a || !a.key || seen[a.key]) return; seen[a.key] = 1;
+      var key = PANEL_ROUTES[a.key] ? ("app:" + a.key) : ("frame:" + a.key);
       var active = open.indexOf(key) >= 0;
       html += '<button class="topbar-menu-item' + (active ? " active" : "") + '" onclick="window.toggleDockPanel(\'' + key + '\')">' +
         '<span>' + a.icon + '</span><span style="flex:1">' + esc(a.label) + '</span>' +
@@ -105662,13 +105688,13 @@ html.theme-light .card{box-shadow:none}
   function getOpenPanels(){
     try {
       var a = JSON.parse(localStorage.getItem(DOCK_KEY) || "[]");
-      return Array.isArray(a) ? a.filter(function(k){ return PANELS[k] || (isAppKey(k) && PANEL_ROUTES[routeOf(k)]); }) : [];
+      return Array.isArray(a) ? a.filter(function(k){ return PANELS[k] || (isAppKey(k) && PANEL_ROUTES[routeOf(k)]) || (isFrameKey(k) && routeOf(k)); }) : [];
     } catch(e){ return []; }
   }
   function setOpenPanels(a){ try { localStorage.setItem(DOCK_KEY, JSON.stringify(a)); } catch(e){} }
 
   window.toggleDockPanel = function(key){
-    if (!PANELS[key] && !(isAppKey(key) && PANEL_ROUTES[routeOf(key)])) return;
+    if (!PANELS[key] && !(isAppKey(key) && PANEL_ROUTES[routeOf(key)]) && !(isFrameKey(key) && routeOf(key))) return;
     var open = getOpenPanels();
     var i = open.indexOf(key);
     if (i >= 0) {
@@ -105690,6 +105716,11 @@ html.theme-light .card{box-shadow:none}
   var _dockBusy = false;
   function renderDock(){
     if (_dockBusy) return;      // Re-Entrancy-Schutz (App-Panels rufen View-Funktionen auf)
+    // Im Embed-Modus (App läuft selbst in einem Panel-iframe) kein verschachteltes Dock.
+    if (document.documentElement.classList.contains("embed-mode")) {
+      var d0 = document.getElementById("panelDock"); if (d0) d0.innerHTML = "";
+      return;
+    }
     _dockBusy = true;
     try {
       var dock = document.getElementById("panelDock");
@@ -105711,6 +105742,14 @@ html.theme-light .card{box-shadow:none}
             '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
             '<div class="dock-panel-body">' + renderRoutePanel(route) + '</div></section>';
         }
+        if (isFrameKey(k)){
+          var froute = routeOf(k), fmeta = appPanelMeta(froute);
+          return '<section class="dock-panel frame-panel" data-panel="' + k + '">' +
+            '<div class="dock-panel-header"><span>' + fmeta.icon + '</span><span class="dock-panel-title">' + esc(fmeta.title) + '</span>' +
+            '<button title="In neuem Tab öffnen" onclick="window.open(\'' + frameSrc(froute) + '\',\'_blank\')" style="font-size:12px">⤢</button>' +
+            '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+            '<div class="dock-panel-body"><iframe class="dock-frame" src="' + frameSrc(froute) + '" title="' + esc(fmeta.title) + '" allow="fullscreen"></iframe></div></section>';
+        }
         var p = PANELS[k]; var body;
         try { body = p.render(); }
         catch(e){ body = '<div class="dock-empty">Panel-Fehler: ' + (e && e.message || e) + '</div>'; }
@@ -105722,8 +105761,8 @@ html.theme-light .card{box-shadow:none}
       open.forEach(function(k){
         if (!isAppKey(k) && PANELS[k] && PANELS[k].mount) { try { PANELS[k].mount(); } catch(e){} }
       });
-      // Breite aufteilen: Hauptbereich = 1fr, Dock = Anzahl voller App-Panels als fr
-      var appCount = open.filter(isAppKey).length;
+      // Breite aufteilen: Hauptbereich = 1fr, Dock = Anzahl voller App-/Frame-Panels als fr
+      var appCount = open.filter(isFullPanel).length;
       if (appEl){
         if (appCount > 0){ document.body.classList.add("has-app-panels"); appEl.style.setProperty("--dock-fr", appCount); }
         else { document.body.classList.remove("has-app-panels"); appEl.style.removeProperty("--dock-fr"); }
@@ -106019,7 +106058,13 @@ html.theme-light .card{box-shadow:none}
     quantusproject:"viewQuantusProject"
   };
   function isAppKey(k){ return typeof k === "string" && k.indexOf("app:") === 0; }
-  function routeOf(k){ return k.slice(4); }
+  function isFrameKey(k){ return typeof k === "string" && k.indexOf("frame:") === 0; }
+  function isFullPanel(k){ return isAppKey(k) || isFrameKey(k); }
+  function routeOf(k){ return k.slice(k.indexOf(":") + 1); }
+  // Apps mit eigener Standalone-Seite direkt laden (leichter, eigener Speicher);
+  // SPA-interne Overlays via chrome-losen Embed-Modus der Haupt-App.
+  var FRAME_SRC = { docstudio:"docstudio.html", nobraine:"nobraine.html", weekplanning:"nobraine.html", drive:"drive.html", ruhestand:"ruhestand.html" };
+  function frameSrc(route){ return FRAME_SRC[route] || ("index.html?embed=1#/" + route); }
   function appPanelMeta(route){
     var all = (typeof getAllApps === "function") ? getAllApps() : [];
     var m = all.filter(function(a){ return a.key === route; })[0];
