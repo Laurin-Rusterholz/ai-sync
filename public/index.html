@@ -15839,6 +15839,35 @@ function viewDrive() {
       style="width:100%;height:calc(100vh - 110px);min-height:520px;border:1px solid var(--border,#333);border-radius:12px;background:#efebe2;display:block"></iframe>`;
 }
 
+// ── QUANTUS BROWSER — vollwertiger Remote-Browser (neko) als App, direkt in
+//    Quantus eingebettet. Der Stream laeuft auf dem VPS; Auto-Login + verdeckte
+//    neko-UI via Query-Parametern (usr/pwd/embed) gemaess neko v3. ────────────
+const QUANTUS_BROWSER_URL  = 'https://neko.laurin-rusterholz.ch/';
+const QUANTUS_BROWSER_USER = 'quantus';
+const QUANTUS_BROWSER_PW   = 'gwpZSmYtGb6Y6QG/NiHzbXwZO1153cu5';
+// Baut die Embed-URL: usr+pwd => Auto-Join ohne Login-Maske, embed=1 => ohne
+// neko-Sidebar (Stream bleibt interaktiv, im Gegensatz zu cast=1).
+function quantusBrowserSrc() {
+  return QUANTUS_BROWSER_URL
+    + '?usr='  + encodeURIComponent(QUANTUS_BROWSER_USER)
+    + '&pwd='  + encodeURIComponent(QUANTUS_BROWSER_PW)
+    + '&embed=1';
+}
+function viewBrowser() {
+  return `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span style="font-size:20px">🌐</span>
+      <h1 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Quantus Browser</h1>
+      <div style="flex:1"></div>
+      <button class="btn sm" data-action="browser-reload" title="Seite neu laden">↻ Neu laden</button>
+      <button class="btn sm" data-action="browser-fullscreen" title="Vollbild">⛶ Vollbild</button>
+    </div>
+    <iframe id="quantusBrowserFrame" title="Quantus Browser" loading="lazy"
+      src="${quantusBrowserSrc()}"
+      allow="autoplay; fullscreen; clipboard-read; clipboard-write"
+      style="width:100%;height:calc(100vh - 96px);border:1px solid var(--border,#333);border-radius:12px;background:#2B3134;display:block"></iframe>`;
+}
+
 function goBack() {
   // Close NoteFlow if active
   const nfContainer = document.getElementById("noteflowContainer");
@@ -16232,6 +16261,7 @@ function getAllApps() {
     {key:"gmail", icon:"📧", label:"Gmail", desc:getLang()==="de"?"Gmail-Posteingang lesen, schreiben, antworten & verwalten":"Read, compose, reply to & manage your Gmail inbox"},
     {key:"briefings", icon:"📬", label:"Briefings", desc:getLang()==="de"?"Zugestellte Briefing-PDFs (z.B. Morning-Briefing aus n8n) ansehen & herunterladen":"View & download delivered briefing PDFs (e.g. morning briefing from n8n)"},
     {key:"drive", icon:"🗄️", label:"Drive", desc:getLang()==="de"?"Dateiablage mit KI-Klassifizierung (Upload, Ordnerbaum, n8n-Vorschläge)":"File storage with AI classification (upload, folder tree, n8n suggestions)"},
+    {key:"browser", icon:"🌐", label:"Browser", desc:getLang()==="de"?"Quantus Browser — vollwertiger Remote-Browser im Stream (neko), ohne Login-Maske":"Quantus Browser — full remote browser stream (neko), no login screen"},
     {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
     {key:"docstudio", icon:"📄", label:"DocStudio", desc:getLang()==="de"?"Dokumente generieren & gestalten (Rechnung, Einladung, Brief …) mit KI & PDF-Export":"Generate & design documents (invoice, invitation, letter …) with AI & PDF export"},
     {key:"polaris", icon:"🛰️", label:"Polaris", desc:getLang()==="de"?"Sprachsteuerung — Konversations-Agent mit Live-Briefing (ElevenLabs)":"Voice control — conversational agent with live briefing (ElevenLabs)"},
@@ -16614,6 +16644,7 @@ function renderMain() {
     case "gmail": html = (typeof viewGmail === "function" ? viewGmail() : '<div style="padding:40px;text-align:center">Lade Gmail…</div>'); break;
     case "briefings": html = (typeof viewBriefings === "function" ? viewBriefings() : '<div style="padding:40px;text-align:center">Lade Briefings…</div>'); break;
     case "drive": html = viewDrive(); break;
+    case "browser": html = viewBrowser(); break;
     case "polaris": html = (typeof window.viewPolaris === "function" ? window.viewPolaris() : '<div style="padding:40px;text-align:center">Lade Polaris…</div>'); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "docstudio": window.location.href = "docstudio.html"; return; // Öffnet DocStudio (eigenständige Single-File-App)
@@ -51790,6 +51821,16 @@ function handleClick(e) {
   switch (action) {
     case "nav": navigate(el.dataset.route, el.dataset.id || undefined); break;
     case "go-back": goBack(); break;
+    case "browser-reload": {
+      const f = document.getElementById("quantusBrowserFrame");
+      if (f) f.src = quantusBrowserSrc();
+      break;
+    }
+    case "browser-fullscreen": {
+      const f = document.getElementById("quantusBrowserFrame");
+      if (f && f.requestFullscreen) f.requestFullscreen();
+      break;
+    }
     case "close-modal": closeModal(); break;
     case "close-slide": closeSlidePanel(); break;
     

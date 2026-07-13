@@ -1,0 +1,25 @@
+# Quantus Browser — neko (Remote-Browser) auf dem VPS
+# Deploy:   cd ~/neko && docker compose up -d
+# Health:   docker compose ps && docker compose logs -f neko
+#
+# Passwoerter kommen aus ~/neko/.env (NICHT im Git, siehe .env.example).
+# Das USER-Passwort muss identisch sein mit QUANTUS_BROWSER_PW in public/index.html,
+# sonst schlaegt der Auto-Login fehl.
+services:
+  neko:
+    image: ghcr.io/m1k1o/neko/chromium:latest
+    restart: unless-stopped
+    shm_size: "2gb"
+    cap_add: [SYS_ADMIN]
+    ports:
+      - "8080:8080"
+      - "56000-56100:56000-56100/udp"
+    environment:
+      # WebRTC: expliziter UDP-Portbereich + oeffentliche IP (NAT 1:1) + ICE-Lite
+      NEKO_WEBRTC_EPR: "56000-56100"
+      NEKO_WEBRTC_NAT1TO1: "82.180.155.81"
+      NEKO_WEBRTC_ICELITE: "1"
+      # Mitglieder-Provider: multiuser (geteilte Passwoerter fuer User + Admin)
+      NEKO_MEMBER_PROVIDER: "multiuser"
+      NEKO_MEMBER_MULTIUSER_USER_PASSWORD: "${NEKO_USER_PASSWORD}"
+      NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "${NEKO_ADMIN_PASSWORD}"
