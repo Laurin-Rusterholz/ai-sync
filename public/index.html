@@ -107898,6 +107898,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     pointers: new Map(),
     gesture: null,
     sideMode: false,
+    _interacting: new Set(),   // Note-IDs im HTML-Interaktionsmodus (bleibt bis 🖱️ aktiv verlassen)
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -107917,6 +107918,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     B.editingId = null;
     B.pointers = new Map(); B.gesture = null; B.eraser = false;
     B.noteColor = null; B._cycle = 0; B._guides = [];
+    B._interacting = new Set();
     B.sideMode = getSideModePref();
     try { const sp = localStorage.getItem("sbSplitPx"); if (sp) document.body.style.setProperty("--sb-split", sp); } catch (e) {}
     injectCSS();
@@ -108345,7 +108347,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const S = "<scr" + "ipt>", ES = "</scr" + "ipt>";
     // Brücke: window.quantus.save(data) + automatisches Speichern aller Eingabefelder -> Quantus (note.htmlState)
     const bridge = S + "(function(){var NID=" + nid + ";var st=" + stateJson + "||{};"
-      + "window.quantus={state:st,save:function(d){try{st=d;parent.postMessage({__sbSave:1,id:NID,data:d},'*');}catch(e){}}};"
+      + "window.quantus={state:st,save:function(d){try{st=Object.assign({},st||{},d||{});this.state=st;parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}};"
       + "function pi(){var v={};document.querySelectorAll('input,textarea,select').forEach(function(el,i){var k=el.id||el.name||('f'+i);v[k]=(el.type==='checkbox'||el.type==='radio')?el.checked:el.value;});st._inputs=v;try{parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}"
       + "function rs(){var v=(st&&st._inputs)||{};document.querySelectorAll('input,textarea,select').forEach(function(el,i){var k=el.id||el.name||('f'+i);if(k in v){if(el.type==='checkbox'||el.type==='radio')el.checked=!!v[k];else el.value=v[k];}});}"
       + "window.addEventListener('input',pi,true);window.addEventListener('change',pi,true);"
@@ -108357,7 +108359,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   function renderHtmlNote(n, selected, dim) {
     const src = htmlSrcdoc(n);
     const tagsHtml = (n.tags || []).length ? `<div class="sb-note-tags">${n.tags.map((t) => `<span class="sb-tag">${esc(t)}</span>`).join("")}</div>` : "";
-    return `<div class="sb-note sb-note-html${selected ? " sel" : ""}${dim ? " dim" : ""}${n.locked ? " locked" : ""}" data-id="${n.id}" style="left:${n.x}px;top:${n.y}px;width:${n.w || 280}px;height:${n.h || 200}px;z-index:${n.z || 1}">
+    return `<div class="sb-note sb-note-html${selected ? " sel" : ""}${dim ? " dim" : ""}${n.locked ? " locked" : ""}${B._interacting.has(n.id) ? " interacting" : ""}" data-id="${n.id}" style="left:${n.x}px;top:${n.y}px;width:${n.w || 280}px;height:${n.h || 200}px;z-index:${n.z || 1}">
       <div class="sb-html-bar" data-role="html-bar">
         <span class="sb-html-tag">&lt;/&gt; HTML</span>
         <span style="flex:1"></span>
@@ -108385,8 +108387,11 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   }
 
   function toggleHtmlInteract(id) {
+    if (!id) return;
+    if (B._interacting.has(id)) B._interacting.delete(id);
+    else B._interacting.add(id);
     const el = noteElById(id);
-    if (el) el.classList.toggle("interacting");
+    if (el) el.classList.toggle("interacting", B._interacting.has(id));
   }
 
   function grundprompt(n) {
