@@ -105783,6 +105783,20 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 .polaris-display-text{padding:14px 16px;font-size:13.5px;line-height:1.65;color:var(--text2);max-height:min(46vh,420px);overflow:auto;overflow-wrap:anywhere}
 .polaris-display-list{margin:0;padding:14px 16px 14px 34px;font-size:13.5px;line-height:1.75;color:var(--text2);max-height:min(46vh,420px);overflow:auto}
 .polaris-display-code{margin:0;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--text2);background:var(--surface-base);max-height:min(46vh,420px);overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+/* Upload-Fläche (type='upload') */
+.polaris-display-drop{margin:14px 16px;padding:22px 16px;border:1.5px dashed var(--border2);border-radius:var(--radius-sm);text-align:center;font-size:13px;color:var(--text2);cursor:pointer;transition:var(--transition);min-height:44px}
+.polaris-display-drop:hover,.polaris-display-drop--over{border-color:var(--accent);background:var(--accent-soft)}
+.polaris-display-drop-icon{font-size:26px;margin-bottom:6px}
+.polaris-display-drop-hint{font-size:11.5px;color:var(--text-muted);margin-top:4px}
+.polaris-display-drop-status{font-size:12px;color:var(--text-muted);margin-top:8px;min-height:16px;font-family:var(--mono)}
+/* Notiz-Editor (type='note') */
+.polaris-display-note{display:flex;flex-direction:column;gap:10px;padding:14px 16px}
+.polaris-display-note-input{min-height:96px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-base);color:var(--text);font-size:13px;line-height:1.55;font-family:var(--sans);resize:vertical}
+.polaris-display-note-preview{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--hover);padding:10px 12px;font-size:12.5px;line-height:1.6;color:var(--text2);max-height:200px;overflow:auto}
+.polaris-display-note-preview p{margin:0 0 6px}
+.polaris-display-note-preview ul{margin:0 0 6px;padding-left:18px}
+.polaris-display-note-title{font-weight:700;font-size:13px;color:var(--text-primary);margin-bottom:6px}
+.polaris-display-note-adopt{min-height:44px}
 @media (max-width:600px){.polaris-display{right:12px;left:12px;bottom:12px;max-width:none}}
 @media (prefers-reduced-motion:reduce){.polaris-display{transition:none}.polaris-display-fresh{animation:none}}
 /* Grosser zentraler Orb im Ruhemodus-Overlay (#ruhestandOverlay) */
@@ -105931,6 +105945,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   let plRelCache = null;     // polaris/relationship
   let plMemCache = [];       // letzte Memory-Einträge (neueste zuerst)
   let plPanelBusy = false;
+  let plAutoSendMail = false; // Spiegel von polaris/settings/autoSendMail (RTDB ist die Quelle; null → false)
   let plPanelLastTs = 0;
   const plWarnedEndpoints = {};
 
@@ -106113,6 +106128,11 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const en = plProactiveOn();
       ps.classList.toggle("on", en);
       ps.setAttribute("aria-checked", en ? "true" : "false");
+    }
+    const asw = document.getElementById("polarisAutoSendSwitch");
+    if (asw){
+      asw.classList.toggle("on", plAutoSendMail);
+      asw.setAttribute("aria-checked", plAutoSendMail ? "true" : "false");
     }
     const btn = document.getElementById("polarisLaunchBtn");
     if (btn) btn.disabled = plStarting;
@@ -106636,6 +106656,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   }
   function plDisplayHasContent(d){
     if (!d) return false;
+    // interaktive Typen (Upload-Fläche, Notiz-Editor) brauchen keinen content
+    const t = String(d.type || "").toLowerCase();
+    if (t === "upload" || t === "note") return true;
     const c = (typeof d.content === "object" && d.content !== null) ? JSON.stringify(d.content) : String(d.content == null ? "" : d.content);
     return String(d.title || "").trim() !== "" || c.trim() !== "";
   }
@@ -106652,7 +106675,138 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (type === "code"){
       return '<pre class="polaris-display-code">' + plEsc(raw) + '</pre>';
     }
+    if (type === "upload"){
+      // Drag&Drop-/Datei-Upload-Fläche — Datei geht über den bestehenden
+      // Quantus-Upload (uploadToFirebase, Pfad attachments/… → automatische
+      // Drive-Registrierung inkl. Textauszug), Verweis nach polaris/uploads.
+      return '<div class="polaris-display-drop" id="polarisDropZone" data-action="polaris-upload-pick" role="button" tabindex="0" aria-label="Dokument hochladen">'
+        + '<div class="polaris-display-drop-icon" aria-hidden="true">📄</div>'
+        + '<div><b>Dokument hier ablegen</b> — Polaris prüft es</div>'
+        + '<div class="polaris-display-drop-hint">' + plEsc(raw || "oder tippen zum Auswählen") + '</div>'
+        + '<div class="polaris-display-drop-status" id="polarisUploadStatus" role="status"></div>'
+        + '</div>'
+        + '<input type="file" id="polarisUploadInput" style="display:none" aria-hidden="true" />';
+    }
+    if (type === "note"){
+      // Notiz-Editor: Text eintippen/einfügen → formatierter Vorschlag →
+      // „In Notizbuch übernehmen" (nutzt das bestehende createEntity("note")).
+      return '<div class="polaris-display-note">'
+        + '<textarea class="polaris-display-note-input" id="polarisNoteInput" placeholder="Text für die Notiz eintippen oder einfügen …"></textarea>'
+        + '<div class="polaris-display-note-preview" id="polarisNotePreview"><div class="polaris-mem-empty">Vorschau erscheint hier …</div></div>'
+        + '<button class="btn primary polaris-display-note-adopt" data-action="polaris-note-adopt">📓 In Notizbuch übernehmen</button>'
+        + '</div>';
+    }
     return '<div class="polaris-display-text">' + plEsc(raw).replace(/\r?\n/g, "<br>") + '</div>';
+  }
+
+  // ── Notiz-Formatierung: erste Zeile = Titel, -/*/•-Zeilen = Stichpunkte ──
+  function plNoteFormat(raw){
+    const lines = String(raw || "").replace(/\r/g, "").split("\n");
+    let title = "";
+    const rest = [];
+    lines.forEach(function(l){
+      if (!title && l.trim()){ title = l.trim().replace(/^#+\s*/, "").slice(0, 80); return; }
+      if (title) rest.push(l);
+    });
+    const content = rest.join("\n").replace(/^\n+/, "").replace(/\n{3,}/g, "\n\n").trim();
+    // Vorschau-HTML (escaped): Absätze + Stichpunktlisten
+    const blocks = [];
+    let bullets = [];
+    function flushBullets(){
+      if (bullets.length){ blocks.push('<ul>' + bullets.map(function(b){ return '<li>' + plEsc(b) + '</li>'; }).join("") + '</ul>'); bullets = []; }
+    }
+    (content ? content.split("\n") : []).forEach(function(l){
+      const m = /^\s*[-•*]\s+(.+)$/.exec(l);
+      if (m){ bullets.push(m[1]); return; }
+      flushBullets();
+      if (l.trim()) blocks.push('<p>' + plEsc(l.trim()) + '</p>');
+    });
+    flushBullets();
+    return {
+      title: title || ("Notiz – " + new Intl.DateTimeFormat("de-CH", { timeZone: POLARIS_TZ, day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date())),
+      content: content,
+      previewHtml: '<div class="polaris-display-note-title">' + plEsc(title || "Notiz") + '</div>' + (blocks.join("") || '<p class="polaris-mem-empty">…</p>')
+    };
+  }
+  function plNotePreviewUpdate(){
+    const ta = document.getElementById("polarisNoteInput");
+    const pv = document.getElementById("polarisNotePreview");
+    if (!ta || !pv) return;
+    if (!ta.value.trim()){ pv.innerHTML = '<div class="polaris-mem-empty">Vorschau erscheint hier …</div>'; return; }
+    pv.innerHTML = plNoteFormat(ta.value).previewHtml;
+  }
+  function plNoteAdopt(){
+    const ta = document.getElementById("polarisNoteInput");
+    const raw = ta ? String(ta.value || "").trim() : "";
+    if (!raw){ plToast("warn", "Polaris", "Kein Notiz-Text."); return; }
+    try {
+      if (typeof window.createEntity !== "function") throw new Error("createEntity nicht verfügbar");
+      const fmt = plNoteFormat(raw);
+      const notebooks = (window.APP && APP.state && APP.state.data && APP.state.data.entities && APP.state.data.entities.notebooks) || {};
+      const notebookId = Object.keys(notebooks)[0] || null;
+      window.createEntity("note", { title: fmt.title, content: fmt.content, notebookId: notebookId });
+      plScheduleSave();
+      plToast("ok", "Polaris", "Notiz übernommen: „" + fmt.title.slice(0, 60) + "“");
+      if (plSession) try { plSession.sendContextualUpdate("Systeminfo: Die Notiz „" + fmt.title.slice(0, 120) + "“ wurde ins Notizbuch übernommen."); } catch(e){}
+      plDisplayDismiss();
+    } catch(err){
+      console.error("Polaris: Notiz übernehmen fehlgeschlagen", err);
+      plToast("err", "Polaris", "Notiz konnte nicht übernommen werden.");
+    }
+  }
+
+  // ── Upload aus der Anzeige: bestehender Quantus-Upload + polaris/uploads ──
+  async function plHandleDisplayUpload(file){
+    if (!file) return;
+    const status = function(t){ const el = document.getElementById("polarisUploadStatus"); if (el) el.textContent = t; };
+    try {
+      if (typeof window.uploadToFirebase !== "function") throw new Error("Upload-Mechanismus nicht verfügbar (Firebase Storage)");
+      const safeName = String(file.name || "datei").replace(/[^\w.\-äöüÄÖÜéèà ]+/g, "_").slice(0, 120);
+      // attachments/-Präfix → automatische Drive-Registrierung inkl. Textauszug,
+      // damit Polaris das Dokument via /read-document lesen kann
+      const path = "attachments/polaris/" + Date.now() + "_" + safeName;
+      status("Lade hoch … 0%");
+      const url = await window.uploadToFirebase(file, path, function(p){ status("Lade hoch … " + p + "%"); });
+      await plDbPush("polaris/uploads", { ts: Date.now(), name: safeName, path: path, url: String(url || ""), size: file.size || 0, mimeType: file.type || "" });
+      status("✅ Hochgeladen — Polaris kann es jetzt lesen.");
+      plToast("ok", "Polaris", "Dokument hochgeladen: " + safeName);
+      if (plSession) try { plSession.sendContextualUpdate("Systeminfo: Laurin hat das Dokument „" + safeName + "“ hochgeladen (polaris/uploads, Drive-Eingang „" + path + "“)."); } catch(e){}
+    } catch(err){
+      console.error("Polaris: Display-Upload fehlgeschlagen", err);
+      status("⚠️ Upload fehlgeschlagen.");
+      plToast("err", "Polaris", "Dokument konnte nicht hochgeladen werden.");
+    }
+  }
+
+  // Typ-spezifische Verdrahtung nach jedem Render (innerHTML ersetzt Listener)
+  function plDisplayWire(d){
+    const type = String((d && d.type) || "").toLowerCase();
+    if (type === "upload"){
+      const zone = document.getElementById("polarisDropZone");
+      const input = document.getElementById("polarisUploadInput");
+      if (input) input.addEventListener("change", function(){ if (input.files && input.files[0]) plHandleDisplayUpload(input.files[0]); });
+      if (zone){
+        ["dragover", "dragenter"].forEach(function(ev){
+          zone.addEventListener(ev, function(e){ e.preventDefault(); zone.classList.add("polaris-display-drop--over"); });
+        });
+        ["dragleave", "drop"].forEach(function(ev){
+          zone.addEventListener(ev, function(e){ e.preventDefault(); zone.classList.remove("polaris-display-drop--over"); });
+        });
+        zone.addEventListener("drop", function(e){
+          const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (f) plHandleDisplayUpload(f);
+        });
+      }
+    } else if (type === "note"){
+      const ta = document.getElementById("polarisNoteInput");
+      if (ta){
+        // Vorbelegung aus d.content (als value, nie als HTML — offene RTDB-Regeln)
+        const pre = (d && d.content != null && typeof d.content !== "object") ? String(d.content) : "";
+        if (pre.trim()) ta.value = pre;
+        ta.addEventListener("input", plNotePreviewUpdate);
+        plNotePreviewUpdate();
+      }
+    }
   }
   function plDisplayEnsure(){
     let el = document.getElementById("polarisDisplay");
@@ -106665,7 +106819,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     document.body.appendChild(el);
     return el;
   }
-  const PL_DISPLAY_ICONS = { info: "ℹ️", note: "📝", notiz: "📝", mail: "📧", task: "✅", aufgabe: "✅", list: "📋", liste: "📋", code: "🧾", termin: "📅", event: "📅", warnung: "⚠️", warning: "⚠️" };
+  const PL_DISPLAY_ICONS = { info: "ℹ️", note: "📝", notiz: "📝", mail: "📧", task: "✅", aufgabe: "✅", list: "📋", liste: "📋", code: "🧾", termin: "📅", event: "📅", warnung: "⚠️", warning: "⚠️", upload: "📎" };
   function plDisplayHandle(d){
     try {
       const el = plDisplayEnsure();
@@ -106693,6 +106847,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         + plDisplayContentHtml(d)
         + '</div>';
       el.classList.add("show");
+      plDisplayWire(d); // Typ-spezifische Listener (Upload-Zone, Notiz-Editor)
       // sanfter „frisch"-Puls beim Inhaltswechsel (rein CSS, kein Reload)
       const card = el.firstElementChild;
       if (card){ card.classList.remove("polaris-display-fresh"); void card.offsetWidth; card.classList.add("polaris-display-fresh"); }
@@ -107130,6 +107285,24 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     plUpdateUI();
     plToast("ok", "Polaris", v ? "Proaktive Ansprache aktiviert." : "Proaktive Ansprache deaktiviert.");
   }
+  // Auto-Senden-Schalter: Quelle ist AUSSCHLIESSLICH die RTDB
+  // (polaris/settings/autoSendMail), damit n8n beim compose-mail-Aufruf
+  // entscheiden kann: aus = nur Entwurf, an = wirklich senden. Default false.
+  function plAutoSendToggle(){
+    const v = !plAutoSendMail;
+    plAutoSendMail = v; // optimistisch — bei Schreibfehler zurückdrehen
+    plUpdateUI();
+    plDbSet("polaris/settings/autoSendMail", v).then(function(){
+      plToast(v ? "warn" : "ok", "Polaris", v
+        ? "Polaris darf Mails jetzt EIGENSTÄNDIG SENDEN."
+        : "Polaris speichert Mails nur noch als Entwurf.");
+    }).catch(function(e){
+      console.error("Polaris: autoSendMail-Schreiben fehlgeschlagen", e);
+      plAutoSendMail = !v;
+      plUpdateUI();
+      plToast("err", "Polaris", "Einstellung konnte nicht gespeichert werden.");
+    });
+  }
 
   // ═══ CHARAKTER-PANEL (read-only, dezent) ════════════════════════════════
   function plPanelApply(){
@@ -107171,7 +107344,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         plEnsureCharacter(),
         plDbGet("polaris/relationship").catch(function(){ return null; }),
         plDbGet("polaris/memory", { orderByKey: true, limitToLast: 5 }).catch(function(){ return null; }),
-        plDbGet("polaris/settings/proactiveEnabled").catch(function(){ return undefined; })
+        plDbGet("polaris/settings/proactiveEnabled").catch(function(){ return undefined; }),
+        plDbGet("polaris/settings/autoSendMail").catch(function(){ return undefined; })
       ]);
       plCharCache = results[0];
       plRelCache = results[1];
@@ -107181,6 +107355,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         plSettings().proactiveEnabled = results[3];
         plScheduleSave();
       }
+      // autoSendMail lebt NUR in der RTDB (n8n liest den Knoten); null → false
+      plAutoSendMail = results[4] === true;
       // Panel-Cache für sofortiges Rendern beim nächsten View-Aufbau
       const s = plSettings();
       s.cache = {
@@ -107225,6 +107401,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       + '<div class="polaris-proactive-row">'
       +   '<div class="polaris-label"><b>Proaktive Ansprache</b><span>Polaris darf von sich aus das Gespräch eröffnen</span></div>'
       +   '<button class="polaris-switch polaris-switch-sm' + (proOn ? " on" : "") + '" id="polarisProactiveSwitch" data-action="polaris-proactive-toggle" role="switch" aria-checked="' + (proOn ? "true" : "false") + '" aria-label="Proaktive Ansprache an/aus">'
+      +     '<span class="polaris-switch-knob"></span>'
+      +   '</button>'
+      + '</div>'
+      + '<div class="polaris-proactive-row">'
+      +   '<div class="polaris-label"><b>Polaris darf Mails eigenständig senden</b>'
+      +     '<span>Wenn aus, speichert Polaris Mails nur als Entwurf. Wenn an, versendet Polaris Mails ohne weitere Rückfrage.</span></div>'
+      +   '<button class="polaris-switch polaris-switch-sm' + (plAutoSendMail ? " on" : "") + '" id="polarisAutoSendSwitch" data-action="polaris-autosend-toggle" role="switch" aria-checked="' + (plAutoSendMail ? "true" : "false") + '" aria-label="Mails eigenständig senden an/aus">'
       +     '<span class="polaris-switch-knob"></span>'
       +   '</button>'
       + '</div>'
@@ -107282,6 +107465,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     else if (action === "polaris-voice-toggle"){ e.preventDefault(); polarisVoiceToggle(); }
     else if (action === "polaris-launch"){ e.preventDefault(); plLaunch(); }
     else if (action === "polaris-proactive-toggle"){ e.preventDefault(); plProactiveToggle(); }
+    else if (action === "polaris-autosend-toggle"){ e.preventDefault(); plAutoSendToggle(); }
     else if (action === "polaris-create-project"){
       e.preventDefault();
       const t = window.prompt("Titel des neuen Projekts:");
@@ -107293,6 +107477,12 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       if (t != null && t.trim()) plComposeMail(t).catch(function(err){ console.error("Polaris: Mail-Entwurf fehlgeschlagen", err); });
     }
     else if (action === "polaris-display-close"){ e.preventDefault(); plDisplayDismiss(); }
+    else if (action === "polaris-upload-pick"){
+      e.preventDefault();
+      const input = document.getElementById("polarisUploadInput");
+      if (input) input.click();
+    }
+    else if (action === "polaris-note-adopt"){ e.preventDefault(); plNoteAdopt(); }
   });
 
   // Diagnose-Hooks (nur Konsole; keine UI-Abhängigkeit)
