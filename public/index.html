@@ -110038,5 +110038,1529 @@ Dateien zu identifizieren.
 })();
 </script>
 
+<!-- ═══════════════════════════════════════════════════════════════════════
+     NOTEFLOW 2 — Notion-artiger Umbau (Override von openNoteFlow/closeNoteFlow/
+     noteflowUpdateUI/noteflowOpenNote). Gleicher Container, gleiches Datenmodell
+     (note.content bleibt HTML), Verknüpfungen bleiben erhalten und werden um
+     beidseitige Links, @-Mentions und Backlinks ergänzt. Details im Modulkopf.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTEFLOW 2 — Notion-artiger Umbau
+   ---------------------------------------------------------------------------
+   Ersetzt die NoteFlow-Oberfläche komplett (Override von window.openNoteFlow /
+   closeNoteFlow / noteflowUpdateUI / noteflowOpenNote), behält aber Container
+   (#noteflowContainer), Datenmodell und alle Verknüpfungen bei:
+
+   · Notizen bleiben entities.notes {title, content(HTML), notebookId,
+     chapterId, tags, linkedTasks/Projects/Meetings/Organizations, …}
+   · note.content bleibt HTML → alle bestehenden Konsumenten (Projekt-
+     Notizbuch-Textareas, KI-Kontexte, Exporte) funktionieren weiter.
+   · notebook.notes-Arrays werden weiter gepflegt (Projekt-Notizbücher!).
+   · Verknüpfungen werden ERGÄNZT: beidseitige Links (target.linkedNotes),
+     @-Mentions im Text, Backlinks-Sektion ("Erwähnt in / Verknüpft mit").
+
+   Notion-Anleihen: Sidebar-Seitenbaum, grosser Titel, Block-Editor mit
+   Slash-Menü, Markdown-Shortcuts, To-dos, Drag-Reorder, Floating-Toolbar,
+   sofortiges Autosave — kein Ladebildschirm, kein Speichern-Knopf.
+   Alle Klassen nf2-präfixiert.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+
+  // ── State ────────────────────────────────────────────────────────────────
+  const S = {
+    noteId: null,          // aktuell geöffnete Notiz
+    search: "",
+    collapsed: {},         // sidebar: eingeklappte Knoten { key: true }
+    saveT: null,
+    slash: null,           // { blockEl, query, idx, items }
+    mention: null,         // { query, idx, items, range }
+    dragging: null,
+    theme: (function(){ try { return localStorage.getItem("noteflow-theme") || "dark"; } catch (e) { return "dark"; } })(),
+    booted: false,
+  };
+  try { S.collapsed = JSON.parse(localStorage.getItem("nf2-collapsed") || "{}") || {}; } catch (e) { S.collapsed = {}; }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+  const nowIso = () => new Date().toISOString();
+  const uid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+  const E = () => (window.APP && APP.state && APP.state.data && APP.state.data.entities) || {};
+  const notesMap = () => { const e = E(); if (!e.notes) e.notes = {}; return e.notes; };
+  const nbMap = () => { const e = E(); if (!e.notebooks) e.notebooks = {}; return e.notebooks; };
+  const chMap = () => { const e = E(); if (!e.chapters) e.chapters = {}; return e.chapters; };
+  const save = () => { try { window.scheduleSave && window.scheduleSave(); } catch (e) {} };
+  const note = (id) => notesMap()[id || S.noteId] || null;
+  const fmtDate = (d) => { try { return new Date(d).toLocaleDateString("de-CH", { day: "2-digit", month: "short", year: "numeric" }); } catch (e) { return ""; } };
+  const container = () => document.getElementById("noteflowContainer");
+  const appEl = () => document.getElementById("noteflowApp");
+  const blocksEl = () => document.getElementById("nf2Blocks");
+
+  function pinnedKey(id) { return "note:" + id; }
+  function isFav(id) { return ((window.APP && APP.state.data.pinnedItems) || []).indexOf(pinnedKey(id)) >= 0; }
+  function toggleFav(id) {
+    const d = APP.state.data;
+    d.pinnedItems = d.pinnedItems || [];
+    const k = pinnedKey(id), i = d.pinnedItems.indexOf(k);
+    if (i >= 0) d.pinnedItems.splice(i, 1); else d.pinnedItems.push(k);
+    save();
+  }
+
+  const KIND_META = {
+    task: { coll: "tasks", icon: "✅", label: "Aufgabe", route: "tasks", linkField: "linkedTasks" },
+    project: { coll: "projects", icon: "📦", label: "Projekt", route: "projects", linkField: "linkedProjects" },
+    meeting: { coll: "meetings", icon: "🤝", label: "Meeting", route: "meetings", linkField: "linkedMeetings" },
+    organization: { coll: "organizations", icon: "🏢", label: "Organisation", route: "organizations", linkField: "linkedOrganizations" },
+    note: { coll: "notes", icon: "📄", label: "Notiz", route: "notes", linkField: null },
+  };
+  const entTitle = (ent) => (ent && (ent.title || ent.name)) || "(Ohne Titel)";
+  const chTitle = (ch) => (ch && (ch.title || ch.name)) || "Kapitel";
+
+  // ═══ ÖFFNEN / SCHLIESSEN — sofort, ohne Fake-Ladescreen ══════════════════
+  function open(noteId) {
+    const c = container();
+    if (!c) return;
+    injectCSS();
+    c.className = "noteflow-container active nf2-host " + S.theme;
+    const ov = document.getElementById("loadingOverlay");
+    if (ov) { ov.style.display = "none"; }
+    if (!S.booted || !$("#nf2Root")) { buildShell(); S.booted = true; }
+    if (noteId && notesMap()[noteId]) S.noteId = noteId;
+    if (!S.noteId || !note()) {
+      const all = Object.values(notesMap()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      S.noteId = all.length ? all[0].id : null;
+    }
+    // Router-Zustand angleichen — sonst schliesst eine spätere Navigation das Panel
+    const wantHash = "#/notes" + (S.noteId ? "/" + S.noteId : "");
+    if (location.hash.indexOf("#/notes") !== 0) { try { history.replaceState(null, "", wantHash); } catch (e) { location.hash = wantHash; } }
+    renderSidebar();
+    renderPage();
+  }
+  function close() {
+    flushSave();
+    const c = container();
+    if (c) c.classList.remove("active");
+    if (String(location.hash).indexOf("#/notes") === 0) location.hash = "#/dashboard";
+    try { window.render && window.render(); } catch (e) {}
+  }
+  function updateUI() {
+    const c = container();
+    if (!c || !c.classList.contains("active") || !$("#nf2Root")) return;
+    renderSidebar();
+    // Editor nicht anfassen, wenn der Nutzer gerade tippt
+    const ae = document.activeElement;
+    if (!(ae && $("#nf2Main") && $("#nf2Main").contains(ae))) renderPage();
+  }
+  window.openNoteFlow = open;
+  window.closeNoteFlow = close;
+  window.noteflowUpdateUI = updateUI;
+  window.noteflowOpenNote = function (id) { openPage(id); };
+
+  // ═══ SHELL ═══════════════════════════════════════════════════════════════
+  function buildShell() {
+    appEl().innerHTML = `
+      <div class="nf2" id="nf2Root">
+        <aside class="nf2-side" id="nf2Side">
+          <div class="nf2-side-head">
+            <div class="nf2-ws" title="Zurück zu Quantus" id="nf2Back"><span class="nf2-ws-ic">📝</span><span class="nf2-ws-name">NoteFlow</span></div>
+            <button class="nf2-iconbtn" id="nf2ThemeBtn" title="Design umschalten">◐</button>
+            <button class="nf2-iconbtn" id="nf2CloseBtn" title="Schliessen (Esc)">✕</button>
+          </div>
+          <div class="nf2-search-wrap"><input class="nf2-search" id="nf2Search" placeholder="Suchen…"></div>
+          <div class="nf2-tree" id="nf2Tree"></div>
+          <div class="nf2-side-foot">
+            <button class="nf2-newpage" id="nf2NewPage">＋ Neue Seite</button>
+            <button class="nf2-newnb" id="nf2NewNb" title="Neues Notizbuch">📓＋</button>
+          </div>
+        </aside>
+        <main class="nf2-main" id="nf2Main">
+          <div class="nf2-topbar">
+            <button class="nf2-iconbtn nf2-sidetoggle" id="nf2SideToggle" title="Seitenleiste">☰</button>
+            <div class="nf2-crumbs" id="nf2Crumbs"></div>
+            <div class="nf2-top-actions">
+              <span class="nf2-savestate" id="nf2SaveState"></span>
+              <button class="nf2-iconbtn" id="nf2FavBtn" title="Favorit">☆</button>
+              <button class="nf2-iconbtn" id="nf2LinkBtn" title="Verknüpfen">🔗</button>
+              <button class="nf2-iconbtn" id="nf2MoreBtn" title="Mehr">⋯</button>
+            </div>
+          </div>
+          <div class="nf2-scroll" id="nf2Scroll">
+            <div class="nf2-page" id="nf2Page"></div>
+          </div>
+        </main>
+        <div class="nf2-menu" id="nf2Menu" style="display:none"></div>
+        <div class="nf2-bubble" id="nf2Bubble" style="display:none"></div>
+        <div class="nf2-dropline" id="nf2DropLine" style="display:none"></div>
+      </div>`;
+
+    $("#nf2Back").onclick = close;
+    $("#nf2CloseBtn").onclick = close;
+    $("#nf2ThemeBtn").onclick = toggleTheme;
+    $("#nf2SideToggle").onclick = () => $("#nf2Root").classList.toggle("side-hidden");
+    $("#nf2NewPage").onclick = () => newNote(null, null);
+    $("#nf2NewNb").onclick = newNotebook;
+    $("#nf2Search").addEventListener("input", (e) => { S.search = e.target.value; renderSidebar(); });
+    $("#nf2FavBtn").onclick = () => { if (S.noteId) { toggleFav(S.noteId); renderTopbar(); renderSidebar(); } };
+    $("#nf2LinkBtn").onclick = (e) => openLinkPopover(e.currentTarget);
+    $("#nf2MoreBtn").onclick = (e) => openMoreMenu(e.currentTarget);
+
+    if (!S.listeners) {
+      S.listeners = true;
+      document.addEventListener("keydown", onGlobalKey, true);
+      document.addEventListener("selectionchange", onSelChange);
+      document.addEventListener("pointerdown", (e) => {
+        const m = $("#nf2Menu");
+        if (m && m.style.display !== "none" && !m.contains(e.target)) hideMenu();
+      }, true);
+      window.addEventListener("beforeunload", flushSave);
+    }
+  }
+
+  function toggleTheme() {
+    S.theme = S.theme === "dark" ? "light" : "dark";
+    try { localStorage.setItem("noteflow-theme", S.theme); } catch (e) {}
+    const c = container();
+    if (c) c.className = "noteflow-container active nf2-host " + S.theme;
+  }
+
+  function onGlobalKey(e) {
+    const c = container();
+    if (!c || !c.classList.contains("active")) return;
+    if (e.key === "Escape") {
+      if ($("#nf2Menu").style.display !== "none") { hideMenu(); e.preventDefault(); e.stopPropagation(); return; }
+      const bub = $("#nf2Bubble");
+      if (bub && bub.style.display !== "none") { bub.style.display = "none"; return; }
+      e.preventDefault(); e.stopPropagation(); close(); return;
+    }
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && (e.key === "n" || e.key === "N") && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); newNote(null, null); }
+  }
+
+  // ═══ SIDEBAR (Seitenbaum) ═════════════════════════════════════════════════
+  function collapsedKey(kind, id) { return kind + ":" + id; }
+  function setCollapsed(key, val) {
+    if (val) S.collapsed[key] = true; else delete S.collapsed[key];
+    try { localStorage.setItem("nf2-collapsed", JSON.stringify(S.collapsed)); } catch (e) {}
+  }
+  function matchesSearch(n) {
+    if (!S.search.trim()) return true;
+    const q = S.search.toLowerCase();
+    const tmp = document.createElement("div"); tmp.innerHTML = n.content || "";
+    return (n.title || "").toLowerCase().includes(q) || (tmp.textContent || "").toLowerCase().includes(q);
+  }
+
+  function noteItem(n, depth) {
+    const active = n.id === S.noteId;
+    return `<div class="nf2-item nf2-note${active ? " active" : ""}" data-note="${n.id}" style="padding-left:${10 + depth * 14}px" title="${esc(n.title || "Ohne Titel")}">
+      <span class="nf2-item-ic">${esc(n.icon || "📄")}</span>
+      <span class="nf2-item-t">${esc(n.title || "Ohne Titel")}</span>
+      ${isFav(n.id) ? '<span class="nf2-item-star">★</span>' : ""}
+    </div>`;
+  }
+
+  function renderSidebar() {
+    const tree = $("#nf2Tree");
+    if (!tree) return;
+    const notes = Object.values(notesMap());
+    const searching = !!S.search.trim();
+    const vis = searching ? notes.filter(matchesSearch) : notes;
+    const byNb = {};
+    vis.forEach((n) => { const k = n.notebookId || ""; (byNb[k] = byNb[k] || []).push(n); });
+    const sortNotes = (arr) => arr.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+
+    let html = "";
+
+    // Favoriten
+    const favs = vis.filter((n) => isFav(n.id));
+    if (favs.length) {
+      html += `<div class="nf2-sec">Favoriten</div>`;
+      sortNotes(favs).forEach((n) => { html += noteItem(n, 0); });
+    }
+
+    html += `<div class="nf2-sec">Seiten</div>`;
+
+    // Notebooks
+    const nbs = Object.values(nbMap()).sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+    nbs.forEach((nb) => {
+      const key = collapsedKey("nb", nb.id);
+      const isOpen = searching ? true : !S.collapsed[key];
+      const nbNotes = byNb[nb.id] || [];
+      if (searching && !nbNotes.length) return;
+      html += `<div class="nf2-item nf2-nb" data-nb="${nb.id}">
+        <span class="nf2-chev${isOpen ? " open" : ""}" data-chev="${key}">▸</span>
+        <span class="nf2-item-ic">📓</span>
+        <span class="nf2-item-t">${esc(nb.title || "Notizbuch")}</span>
+        <span class="nf2-item-count">${nbNotes.length}</span>
+        <button class="nf2-item-add" data-addnote="${nb.id}" title="Seite hinzufügen">＋</button>
+      </div>`;
+      if (isOpen) {
+        const chapters = Object.values(chMap()).filter((c) => c.notebookId === nb.id);
+        const usedByCh = new Set();
+        chapters.forEach((ch) => {
+          const chNotes = nbNotes.filter((n) => n.chapterId === ch.id);
+          chNotes.forEach((n) => usedByCh.add(n.id));
+          if (searching && !chNotes.length) return;
+          const ckey = collapsedKey("ch", ch.id);
+          const cOpen = searching ? true : !S.collapsed[ckey];
+          html += `<div class="nf2-item nf2-ch" data-ch="${ch.id}" style="padding-left:24px">
+            <span class="nf2-chev${cOpen ? " open" : ""}" data-chev="${ckey}">▸</span>
+            <span class="nf2-item-ic">📑</span>
+            <span class="nf2-item-t">${esc(chTitle(ch))}</span>
+            <button class="nf2-item-add" data-addnote="${nb.id}" data-addch="${ch.id}" title="Seite hinzufügen">＋</button>
+          </div>`;
+          if (cOpen) sortNotes(chNotes).forEach((n) => { html += noteItem(n, 2); });
+        });
+        sortNotes(nbNotes.filter((n) => !usedByCh.has(n.id))).forEach((n) => { html += noteItem(n, 1); });
+      }
+    });
+
+    // Inbox (ohne Notizbuch)
+    const inbox = byNb[""] || [];
+    if (inbox.length || !searching) {
+      const ikey = collapsedKey("nb", "_inbox");
+      const iOpen = searching ? true : !S.collapsed[ikey];
+      html += `<div class="nf2-item nf2-nb" data-nb="_inbox">
+        <span class="nf2-chev${iOpen ? " open" : ""}" data-chev="${ikey}">▸</span>
+        <span class="nf2-item-ic">📥</span><span class="nf2-item-t">Inbox</span>
+        <span class="nf2-item-count">${inbox.length}</span>
+        <button class="nf2-item-add" data-addnote="" title="Seite hinzufügen">＋</button>
+      </div>`;
+      if (iOpen) sortNotes(inbox).forEach((n) => { html += noteItem(n, 1); });
+    }
+
+    if (searching && !vis.length) html += `<div class="nf2-empty-side">Keine Treffer</div>`;
+    tree.innerHTML = html;
+
+    tree.onclick = (e) => {
+      const chev = e.target.closest("[data-chev]");
+      if (chev) { const k = chev.dataset.chev; setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
+      const add = e.target.closest("[data-addnote]");
+      if (add) { e.stopPropagation(); newNote(add.dataset.addnote || null, add.dataset.addch || null); return; }
+      const ni = e.target.closest("[data-note]");
+      if (ni) { openPage(ni.dataset.note); return; }
+      const nbi = e.target.closest("[data-nb]");
+      if (nbi && nbi.dataset.nb !== "_inbox") { const k = collapsedKey("nb", nbi.dataset.nb); setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
+      if (nbi) { const k = collapsedKey("nb", "_inbox"); setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
+      const chi = e.target.closest("[data-ch]");
+      if (chi) { const k = collapsedKey("ch", chi.dataset.ch); setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
+    };
+    tree.oncontextmenu = (e) => {
+      const nbi = e.target.closest("[data-nb]");
+      const ni = e.target.closest("[data-note]");
+      const chi = e.target.closest("[data-ch]");
+      if (ni) { e.preventDefault(); noteContextMenu(ni.dataset.note, e.clientX, e.clientY); }
+      else if (chi) { e.preventDefault(); chapterContextMenu(chi.dataset.ch, e.clientX, e.clientY); }
+      else if (nbi && nbi.dataset.nb !== "_inbox") { e.preventDefault(); nbContextMenu(nbi.dataset.nb, e.clientX, e.clientY); }
+    };
+  }
+
+  // ═══ SEITE (Titel + Editor) ═══════════════════════════════════════════════
+  function openPage(id) {
+    if (!notesMap()[id]) return;
+    flushSave();
+    S.noteId = id;
+    const c = container();
+    if (!c || !c.classList.contains("active")) { open(id); return; }
+    renderSidebar();
+    renderPage();
+  }
+
+  function renderTopbar() {
+    const n = note();
+    const crumbs = $("#nf2Crumbs");
+    if (!crumbs) return;
+    if (!n) { crumbs.innerHTML = ""; return; }
+    const nb = n.notebookId ? nbMap()[n.notebookId] : null;
+    const ch = n.chapterId ? chMap()[n.chapterId] : null;
+    let html = "";
+    html += `<span class="nf2-crumb" data-crumb="move">📓 ${esc(nb ? (nb.title || "Notizbuch") : "Inbox")}</span>`;
+    if (ch) html += `<span class="nf2-crumb-sep">/</span><span class="nf2-crumb" data-crumb="move">${esc(chTitle(ch))}</span>`;
+    html += `<span class="nf2-crumb-sep">/</span><span class="nf2-crumb cur">${esc(n.title || "Ohne Titel")}</span>`;
+    crumbs.innerHTML = html;
+    crumbs.querySelectorAll('[data-crumb="move"]').forEach((el) => { el.onclick = (e) => openMoveMenu(e.currentTarget); });
+    const fav = $("#nf2FavBtn");
+    if (fav) { fav.textContent = isFav(n.id) ? "★" : "☆"; fav.classList.toggle("on", isFav(n.id)); }
+  }
+
+  function renderPage() {
+    const page = $("#nf2Page");
+    if (!page) return;
+    const n = note();
+    renderTopbar();
+    if (!n) {
+      page.innerHTML = `<div class="nf2-empty">
+        <div class="nf2-empty-ic">📝</div>
+        <div class="nf2-empty-t">Keine Seite ausgewählt</div>
+        <button class="nf2-btn primary" id="nf2EmptyNew">＋ Neue Seite erstellen</button>
+      </div>`;
+      const b = $("#nf2EmptyNew"); if (b) b.onclick = () => newNote(null, null);
+      return;
+    }
+    page.innerHTML = `
+      <div class="nf2-title" id="nf2Title" contenteditable="true" data-ph="Ohne Titel">${esc(n.title || "")}</div>
+      <div class="nf2-meta" id="nf2Meta"></div>
+      <div class="nf2-blocks" id="nf2Blocks"></div>
+      <div class="nf2-backlinks" id="nf2Backlinks"></div>`;
+    renderMeta();
+    renderBlocksFromContent(n.content || "");
+    renderBacklinks();
+    wireTitle();
+    wireBlocks();
+  }
+
+  function renderMeta() {
+    const n = note();
+    const meta = $("#nf2Meta");
+    if (!meta || !n) return;
+    let chips = "";
+    chips += `<span class="nf2-mchip muted">${fmtDate(n.updatedAt || n.createdAt)}</span>`;
+    (n.tags || []).forEach((t, i) => { chips += `<span class="nf2-mchip tag">#${esc(t)}<button data-deltag="${i}">×</button></span>`; });
+    chips += `<button class="nf2-mchip addtag" id="nf2AddTag">＋ Tag</button>`;
+    Object.keys(KIND_META).forEach((kind) => {
+      const km = KIND_META[kind];
+      if (!km.linkField) return;
+      (n[km.linkField] || []).forEach((tid) => {
+        const ent = (E()[km.coll] || {})[tid];
+        if (!ent) return;
+        chips += `<span class="nf2-mchip link" data-goto="${kind}:${tid}" title="${km.label} öffnen">${km.icon} ${esc(entTitle(ent).slice(0, 28))}<button data-unlink="${kind}:${tid}">×</button></span>`;
+      });
+    });
+    chips += `<button class="nf2-mchip addlink" id="nf2AddLink">🔗 Verknüpfen</button>`;
+    meta.innerHTML = chips;
+    meta.onclick = (e) => {
+      const del = e.target.closest("[data-deltag]");
+      if (del) { const n2 = note(); n2.tags.splice(+del.dataset.deltag, 1); touch(); renderMeta(); return; }
+      const un = e.target.closest("[data-unlink]");
+      if (un) { unlink(un.dataset.unlink); return; }
+      const go = e.target.closest("[data-goto]");
+      if (go) { const [k, id] = go.dataset.goto.split(":"); gotoEntity(k, id); return; }
+      if (e.target.closest("#nf2AddTag")) { addTagPrompt(); return; }
+      if (e.target.closest("#nf2AddLink")) { openLinkPopover(e.target.closest("#nf2AddLink")); return; }
+    };
+  }
+
+  function addTagPrompt() {
+    const v = window.prompt("Tag hinzufügen:", "");
+    if (!v || !v.trim()) return;
+    const n = note();
+    n.tags = n.tags || [];
+    v.split(",").map((s) => s.trim()).filter(Boolean).forEach((t) => { if (n.tags.indexOf(t) < 0) n.tags.push(t); });
+    touch(); renderMeta();
+  }
+
+  function gotoEntity(kind, id) {
+    if (kind === "note") { openPage(id); return; }
+    const km = KIND_META[kind];
+    if (!km) return;
+    flushSave();
+    try { window.navigate ? navigate(km.route, id) : (location.hash = "#/" + km.route + "/" + id); } catch (e) { location.hash = "#/" + km.route + "/" + id; }
+  }
+
+  function unlink(spec) {
+    const [kind, id] = spec.split(":");
+    const km = KIND_META[kind];
+    const n = note();
+    if (!km || !n) return;
+    n[km.linkField] = (n[km.linkField] || []).filter((x) => x !== id);
+    const ent = (E()[km.coll] || {})[id];
+    if (ent && Array.isArray(ent.linkedNotes)) ent.linkedNotes = ent.linkedNotes.filter((x) => x !== n.id);
+    touch(); renderMeta(); renderBacklinks();
+  }
+
+  function touch() {
+    const n = note();
+    if (n) n.updatedAt = nowIso();
+    save();
+    setSaveState("saved");
+  }
+
+  let _saveStateT = null;
+  function setSaveState(state) {
+    const el = $("#nf2SaveState");
+    if (!el) return;
+    if (state === "typing") { el.textContent = "…"; el.className = "nf2-savestate typing"; return; }
+    el.textContent = "✓ Gespeichert";
+    el.className = "nf2-savestate ok";
+    if (_saveStateT) clearTimeout(_saveStateT);
+    _saveStateT = setTimeout(() => { el.textContent = ""; }, 1800);
+  }
+
+  // ═══ TITEL ════════════════════════════════════════════════════════════════
+  function wireTitle() {
+    const t = $("#nf2Title");
+    if (!t) return;
+    t.addEventListener("input", () => { scheduleContentSave(); });
+    t.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const first = blocksEl() && blocksEl().querySelector(".nf2-bc");
+        if (first) placeCaret(first, false); else { const b = appendBlock("p", "", null); placeCaret($(".nf2-bc", b), false); }
+      }
+      if (e.key === "ArrowDown") {
+        const first = blocksEl() && blocksEl().querySelector(".nf2-bc");
+        if (first) { e.preventDefault(); placeCaret(first, false); }
+      }
+      e.stopPropagation();
+    });
+    t.addEventListener("blur", flushSave);
+  }
+
+  // ═══ BLÖCKE: HTML ↔ DOM ══════════════════════════════════════════════════
+  const BLOCK_TYPES = {
+    p:    { ph: "Schreiben, «/» für Befehle…" },
+    h1:   { ph: "Überschrift 1" },
+    h2:   { ph: "Überschrift 2" },
+    h3:   { ph: "Überschrift 3" },
+    ul:   { ph: "Liste" },
+    ol:   { ph: "Liste" },
+    todo: { ph: "To-do" },
+    q:    { ph: "Zitat" },
+    code: { ph: "Code" },
+    hr:   { ph: "" },
+  };
+
+  function makeBlock(type, html, checked) {
+    const b = document.createElement("div");
+    b.className = "nf2-block";
+    b.dataset.t = type;
+    if (type === "todo") b.dataset.c = checked ? "1" : "0";
+    let inner = `<div class="nf2-gutter" contenteditable="false"><button class="nf2-gbtn nf2-plus" title="Block darunter einfügen" tabindex="-1">＋</button><button class="nf2-gbtn nf2-grip" title="Ziehen zum Verschieben · Klick für Menü" tabindex="-1">⠿</button></div>`;
+    if (type === "todo") inner += `<button class="nf2-check" contenteditable="false" tabindex="-1">${checked ? "✓" : ""}</button>`;
+    if (type === "hr") inner += `<div class="nf2-hrline" contenteditable="false"><hr></div>`;
+    else inner += `<div class="nf2-bc" contenteditable="${type === "code" ? "plaintext-only" : "true"}" data-ph="${esc(BLOCK_TYPES[type] ? BLOCK_TYPES[type].ph : "")}">${type === "code" ? esc(html) : html}</div>`;
+    b.innerHTML = inner;
+    return b;
+  }
+
+  function parseContentToBlocks(html) {
+    const out = [];
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html || "";
+    const pushP = (h) => out.push(["p", h]);
+    Array.from(tmp.childNodes).forEach((node) => {
+      if (node.nodeType === 3) { const t = node.textContent; if (t.trim()) pushP(esc(t)); return; }
+      if (node.nodeType !== 1) return;
+      const tag = node.tagName;
+      if (tag === "H1" || tag === "H2" || tag === "H3") out.push([tag.toLowerCase(), node.innerHTML]);
+      else if (tag === "H4" || tag === "H5" || tag === "H6") out.push(["h3", node.innerHTML]);
+      else if (tag === "UL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ul", li.innerHTML]));
+      else if (tag === "OL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ol", li.innerHTML]));
+      else if (tag === "BLOCKQUOTE") out.push(["q", node.innerHTML]);
+      else if (tag === "PRE") out.push(["code", node.textContent || ""]);
+      else if (tag === "HR") out.push(["hr", ""]);
+      else if (tag === "DIV" && node.hasAttribute("data-todo")) out.push(["todo", node.innerHTML, node.getAttribute("data-checked") === "1"]);
+      else if (tag === "BR") pushP("");
+      else if (tag === "DIV" || tag === "P") {
+        // Legacy-contenteditable: DIVs können verschachtelt sein
+        if (node.querySelector("div,p,h1,h2,h3,ul,ol,blockquote,pre")) {
+          const inner = parseContentToBlocks(node.innerHTML);
+          inner.forEach((x) => out.push(x));
+        } else pushP(node.innerHTML);
+      }
+      else pushP(node.outerHTML);
+    });
+    if (!out.length) out.push(["p", ""]);
+    return out;
+  }
+
+  function renderBlocksFromContent(html) {
+    const wrap = blocksEl();
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    parseContentToBlocks(html).forEach(([t, h, c]) => wrap.appendChild(makeBlock(t, h, c)));
+  }
+
+  function serializeBlocks() {
+    const wrap = blocksEl();
+    if (!wrap) return "";
+    let out = "", run = null;
+    const flush = () => { if (run) { out += "<" + run.tag + ">" + run.items.map((i) => "<li>" + i + "</li>").join("") + "</" + run.tag + ">"; run = null; } };
+    $$(".nf2-block", wrap).forEach((b) => {
+      const t = b.dataset.t;
+      const bc = $(".nf2-bc", b);
+      const h = bc ? bc.innerHTML.replace(/<br>$/, "") : "";
+      if (t === "ul" || t === "ol") { if (!run || run.tag !== t) { flush(); run = { tag: t, items: [] }; } run.items.push(h); return; }
+      flush();
+      if (t === "p") out += "<p>" + (h || "<br>") + "</p>";
+      else if (t === "h1" || t === "h2" || t === "h3") out += "<" + t + ">" + h + "</" + t + ">";
+      else if (t === "todo") out += '<div data-todo="1" data-checked="' + (b.dataset.c === "1" ? "1" : "0") + '">' + h + "</div>";
+      else if (t === "q") out += "<blockquote>" + h + "</blockquote>";
+      else if (t === "code") out += "<pre>" + esc(bc ? bc.textContent : "") + "</pre>";
+      else if (t === "hr") out += "<hr>";
+    });
+    flush();
+    return out;
+  }
+
+  function scheduleContentSave() {
+    setSaveState("typing");
+    if (S.saveT) clearTimeout(S.saveT);
+    S.saveT = setTimeout(flushSave, 600);
+  }
+  function flushSave() {
+    if (S.saveT) { clearTimeout(S.saveT); S.saveT = null; }
+    const n = note();
+    if (!n) return;
+    const t = $("#nf2Title");
+    let changed = false;
+    if (t) { const v = (t.textContent || "").trim(); if (v !== (n.title || "")) { n.title = v; changed = true; } }
+    if (blocksEl()) { const html = serializeBlocks(); if (html !== (n.content || "")) { n.content = html; changed = true; } }
+    if (changed) {
+      n.updatedAt = nowIso();
+      save();
+      setSaveState("saved");
+      renderTopbar();
+      // Sidebar-Titel aktualisieren, ohne den Editor anzufassen
+      const item = $(`#nf2Tree [data-note="${n.id}"] .nf2-item-t`);
+      if (item) item.textContent = n.title || "Ohne Titel";
+    }
+  }
+
+  // ═══ EDITOR-EVENTS ════════════════════════════════════════════════════════
+  function wireBlocks() {
+    const wrap = blocksEl();
+    if (!wrap) return;
+
+    wrap.addEventListener("input", (e) => {
+      scheduleContentSave();
+      maybeSlash(e);
+      maybeMention(e);
+    });
+
+    wrap.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (S.slash) { if (slashKey(e)) return; }
+      if (S.mention) { if (mentionKey(e)) return; }
+      const bc = e.target.closest && e.target.closest(".nf2-bc");
+      if (!bc) return;
+      const block = bc.closest(".nf2-block");
+      const type = block.dataset.t;
+
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (type === "code") { document.execCommand("insertText", false, "\n"); scheduleContentSave(); return; }
+        const empty = !bc.textContent.trim();
+        if (empty && (type === "ul" || type === "ol" || type === "todo" || type === "q")) { transformBlock(block, "p"); return; }
+        splitBlock(block, bc);
+        return;
+      }
+      if (e.key === "Backspace") {
+        if (caretAtStart(bc) && selCollapsed()) {
+          e.preventDefault();
+          if (type !== "p") { transformBlock(block, "p"); return; }
+          mergeWithPrevious(block, bc);
+          return;
+        }
+      }
+      if (e.key === "ArrowUp" && caretAtStart(bc)) {
+        const prev = prevEditable(block);
+        if (prev) { e.preventDefault(); placeCaret(prev, true); }
+        else { const t = $("#nf2Title"); if (t) { e.preventDefault(); placeCaret(t, true); } }
+        return;
+      }
+      if (e.key === "ArrowDown" && caretAtEnd(bc)) {
+        const nx = nextEditable(block);
+        if (nx) { e.preventDefault(); placeCaret(nx, false); }
+        return;
+      }
+      if (e.key === " ") { if (markdownShortcut(block, bc)) e.preventDefault(); }
+    });
+
+    wrap.addEventListener("click", (e) => {
+      const check = e.target.closest(".nf2-check");
+      if (check) {
+        const b = check.closest(".nf2-block");
+        b.dataset.c = b.dataset.c === "1" ? "0" : "1";
+        check.textContent = b.dataset.c === "1" ? "✓" : "";
+        scheduleContentSave();
+        return;
+      }
+      const plus = e.target.closest(".nf2-plus");
+      if (plus) {
+        const b = plus.closest(".nf2-block");
+        const nb = makeBlock("p", "");
+        b.after(nb);
+        placeCaret($(".nf2-bc", nb), false);
+        scheduleContentSave();
+        return;
+      }
+      const grip = e.target.closest(".nf2-grip");
+      if (grip) return; // Menü/Drag übernimmt der pointerdown-Pfad
+      const mention = e.target.closest(".nf2-mention");
+      if (mention) { e.preventDefault(); gotoEntity(mention.dataset.kind, mention.dataset.id); return; }
+      const hr = e.target.closest('.nf2-block[data-t="hr"]');
+      if (hr) { $$(".nf2-block.sel", wrap).forEach((x) => x.classList.remove("sel")); hr.classList.add("sel"); }
+    });
+
+    // Klick unter den letzten Block → neuen Absatz beginnen (Notion-Verhalten)
+    $("#nf2Scroll").onclick = (e) => {
+      if (e.target !== $("#nf2Scroll") && e.target !== $("#nf2Page")) return;
+      const wrap2 = blocksEl();
+      if (!wrap2) return;
+      const last = wrap2.lastElementChild;
+      const lastBc = last && $(".nf2-bc", last);
+      if (lastBc && !lastBc.textContent.trim() && last.dataset.t === "p") { placeCaret(lastBc, false); return; }
+      const nb = makeBlock("p", "");
+      wrap2.appendChild(nb);
+      placeCaret($(".nf2-bc", nb), false);
+    };
+
+    wrap.addEventListener("paste", (e) => {
+      const bc = e.target.closest && e.target.closest(".nf2-bc");
+      if (!bc) return;
+      e.preventDefault();
+      const txt = (e.clipboardData || window.clipboardData).getData("text/plain");
+      const lines = String(txt || "").split(/\r?\n/);
+      if (lines.length <= 1 || bc.closest(".nf2-block").dataset.t === "code") {
+        document.execCommand("insertText", false, txt);
+      } else {
+        // Mehrzeilig: erste Zeile inline, Rest als neue Blöcke
+        document.execCommand("insertText", false, lines[0]);
+        let ref = bc.closest(".nf2-block");
+        lines.slice(1).forEach((ln) => {
+          const md = mdLineToBlock(ln);
+          const b = makeBlock(md.t, esc(md.text), md.c);
+          ref.after(b); ref = b;
+        });
+        const lastBc = $(".nf2-bc", ref);
+        if (lastBc) placeCaret(lastBc, false);
+      }
+      scheduleContentSave();
+    });
+
+    // Drag-Reorder über den Grip
+    wrap.addEventListener("pointerdown", (e) => {
+      const grip = e.target.closest(".nf2-grip");
+      if (!grip) return;
+      const block = grip.closest(".nf2-block");
+      startBlockDrag(block, e);
+    });
+  }
+
+  function mdLineToBlock(ln) {
+    let m;
+    if ((m = ln.match(/^###\s+(.*)/))) return { t: "h3", text: m[1] };
+    if ((m = ln.match(/^##\s+(.*)/))) return { t: "h2", text: m[1] };
+    if ((m = ln.match(/^#\s+(.*)/))) return { t: "h1", text: m[1] };
+    if ((m = ln.match(/^\s*\[( |x)\]\s*(.*)/i))) return { t: "todo", text: m[2], c: m[1].toLowerCase() === "x" };
+    if ((m = ln.match(/^\s*[-*•]\s+(.*)/))) return { t: "ul", text: m[1] };
+    if ((m = ln.match(/^\s*\d+[.)]\s+(.*)/))) return { t: "ol", text: m[1] };
+    if ((m = ln.match(/^>\s?(.*)/))) return { t: "q", text: m[1] };
+    if (/^\s*(---|\*\*\*)\s*$/.test(ln)) return { t: "hr", text: "" };
+    return { t: "p", text: ln };
+  }
+
+  // ── Caret-Utilities ──
+  function selCollapsed() { const s = window.getSelection(); return !s.rangeCount || s.getRangeAt(0).collapsed; }
+  function caretAtStart(el) {
+    const s = window.getSelection();
+    if (!s.rangeCount) return false;
+    const r = s.getRangeAt(0).cloneRange();
+    r.selectNodeContents(el); r.setEnd(s.getRangeAt(0).startContainer, s.getRangeAt(0).startOffset);
+    return r.toString().length === 0;
+  }
+  function caretAtEnd(el) {
+    const s = window.getSelection();
+    if (!s.rangeCount) return false;
+    const r = s.getRangeAt(0).cloneRange();
+    r.selectNodeContents(el); r.setStart(s.getRangeAt(0).endContainer, s.getRangeAt(0).endOffset);
+    return r.toString().length === 0;
+  }
+  function placeCaret(el, atStart) {
+    el.focus();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(!!atStart);
+    const s = window.getSelection();
+    s.removeAllRanges(); s.addRange(r);
+  }
+  function prevEditable(block) {
+    let b = block.previousElementSibling;
+    while (b && !$(".nf2-bc", b)) b = b.previousElementSibling;
+    return b ? $(".nf2-bc", b) : null;
+  }
+  function nextEditable(block) {
+    let b = block.nextElementSibling;
+    while (b && !$(".nf2-bc", b)) b = b.nextElementSibling;
+    return b ? $(".nf2-bc", b) : null;
+  }
+
+  // ── Block-Operationen ──
+  function splitBlock(block, bc) {
+    const s = window.getSelection();
+    const r = s.getRangeAt(0);
+    const tail = document.createRange();
+    tail.selectNodeContents(bc);
+    tail.setStart(r.endContainer, r.endOffset);
+    const frag = tail.extractContents();
+    const tmp = document.createElement("div"); tmp.appendChild(frag);
+    const type = block.dataset.t;
+    const newType = (type === "ul" || type === "ol" || type === "todo") ? type : "p";
+    const nb = makeBlock(newType, tmp.innerHTML, false);
+    block.after(nb);
+    placeCaret($(".nf2-bc", nb), true);
+    scheduleContentSave();
+  }
+  function mergeWithPrevious(block, bc) {
+    const prevB = block.previousElementSibling;
+    if (!prevB) return;
+    if (prevB.dataset.t === "hr") { prevB.remove(); scheduleContentSave(); return; }
+    const prevBc = $(".nf2-bc", prevB);
+    if (!prevBc) return;
+    // Caret-Position an der Nahtstelle merken
+    const marker = document.createElement("span");
+    marker.id = "nf2CaretMark";
+    prevBc.appendChild(marker);
+    prevBc.insertAdjacentHTML("beforeend", bc.innerHTML);
+    block.remove();
+    const mk = document.getElementById("nf2CaretMark");
+    if (mk) {
+      const r = document.createRange();
+      r.setStartAfter(mk); r.collapse(true);
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      mk.remove();
+    }
+    prevBc.focus();
+    scheduleContentSave();
+  }
+  function transformBlock(block, type, keepFocus) {
+    const bc = $(".nf2-bc", block);
+    const html = bc ? (type === "code" ? bc.textContent : bc.innerHTML) : "";
+    const nb = makeBlock(type, html, block.dataset.c === "1");
+    block.replaceWith(nb);
+    const nbc = $(".nf2-bc", nb);
+    if (nbc && keepFocus !== false) placeCaret(nbc, false);
+    scheduleContentSave();
+    return nb;
+  }
+  function appendBlock(type, html, after) {
+    const b = makeBlock(type, html || "");
+    if (after) after.after(b); else blocksEl().appendChild(b);
+    return b;
+  }
+  function markdownShortcut(block, bc) {
+    if (block.dataset.t === "code") return false;
+    const s = window.getSelection();
+    if (!s.rangeCount) return false;
+    const r = s.getRangeAt(0).cloneRange();
+    r.selectNodeContents(bc); r.setEnd(s.getRangeAt(0).startContainer, s.getRangeAt(0).startOffset);
+    const before = r.toString();
+    const map = { "#": "h1", "##": "h2", "###": "h3", "-": "ul", "*": "ul", "1.": "ol", "[]": "todo", "[x]": "todo", ">": "q", "```": "code" };
+    if (before === "---") { // Trennlinie
+      bc.innerHTML = "";
+      const hr = makeBlock("hr", "");
+      block.before(hr);
+      scheduleContentSave();
+      return true;
+    }
+    const t = map[before];
+    if (!t) return false;
+    // Präfix entfernen und umwandeln
+    bc.innerHTML = bc.innerHTML.replace(/^(\s|&nbsp;)*(#{1,3}|-|\*|1\.|\[( |x)?\]|>|```)/, "");
+    const nb = transformBlock(block, t);
+    if (before === "[x]") { nb.dataset.c = "1"; const ck = $(".nf2-check", nb); if (ck) ck.textContent = "✓"; }
+    return true;
+  }
+
+  // ═══ SLASH-MENÜ ═══════════════════════════════════════════════════════════
+  const SLASH_ITEMS = [
+    { k: "p", ic: "¶", t: "Text", d: "Einfacher Absatz" },
+    { k: "h1", ic: "H1", t: "Überschrift 1", d: "Grosse Überschrift" },
+    { k: "h2", ic: "H2", t: "Überschrift 2", d: "Mittlere Überschrift" },
+    { k: "h3", ic: "H3", t: "Überschrift 3", d: "Kleine Überschrift" },
+    { k: "ul", ic: "•", t: "Aufzählung", d: "Liste mit Punkten" },
+    { k: "ol", ic: "1.", t: "Nummerierte Liste", d: "Liste mit Zahlen" },
+    { k: "todo", ic: "☑", t: "To-do", d: "Mit Checkbox" },
+    { k: "q", ic: "❝", t: "Zitat", d: "Hervorgehobenes Zitat" },
+    { k: "code", ic: "</>", t: "Code", d: "Codeblock" },
+    { k: "hr", ic: "—", t: "Trennlinie", d: "Horizontale Linie" },
+    { k: "@", ic: "@", t: "Erwähnen…", d: "Aufgabe, Projekt oder Notiz verknüpfen" },
+  ];
+
+  function maybeSlash() {
+    const s = window.getSelection();
+    if (!s.rangeCount) return;
+    const bc = s.anchorNode && (s.anchorNode.nodeType === 1 ? s.anchorNode : s.anchorNode.parentElement);
+    const bcEl = bc && bc.closest ? bc.closest(".nf2-bc") : null;
+    if (!bcEl) { hideMenu(); S.slash = null; return; }
+    const txt = bcEl.textContent || "";
+    const m = txt.match(/^\/([\wäöü-]*)$/i);
+    if (!m) { if (S.slash) { S.slash = null; hideMenu(); } return; }
+    const q = m[1].toLowerCase();
+    const items = SLASH_ITEMS.filter((it) => !q || it.t.toLowerCase().includes(q) || it.k.includes(q));
+    if (!items.length) { S.slash = null; hideMenu(); return; }
+    S.slash = { blockEl: bcEl.closest(".nf2-block"), items, idx: Math.min(S.slash ? S.slash.idx : 0, items.length - 1) };
+    showMenuAt(bcEl.getBoundingClientRect(), items.map((it, i) => (
+      `<div class="nf2-mi${i === S.slash.idx ? " sel" : ""}" data-mi="${i}"><span class="nf2-mi-ic">${it.ic}</span><span class="nf2-mi-t">${it.t}</span><span class="nf2-mi-d">${it.d}</span></div>`
+    )).join(""), (i) => applySlash(i));
+  }
+  function slashKey(e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); S.slash.idx = (S.slash.idx + 1) % S.slash.items.length; maybeSlash(); return true; }
+    if (e.key === "ArrowUp") { e.preventDefault(); S.slash.idx = (S.slash.idx - 1 + S.slash.items.length) % S.slash.items.length; maybeSlash(); return true; }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applySlash(S.slash.idx); return true; }
+    if (e.key === "Escape") { e.preventDefault(); S.slash = null; hideMenu(); return true; }
+    return false;
+  }
+  function applySlash(i) {
+    const sl = S.slash;
+    if (!sl) return;
+    const it = sl.items[i];
+    S.slash = null;
+    hideMenu();
+    const block = sl.blockEl;
+    const bc = $(".nf2-bc", block);
+    if (bc) bc.innerHTML = "";
+    if (it.k === "hr") {
+      const hr = makeBlock("hr", "");
+      block.before(hr);
+      placeCaret(bc, true);
+    } else if (it.k === "@") {
+      placeCaret(bc, true);
+      document.execCommand("insertText", false, "@");
+      maybeMention();
+    } else {
+      transformBlock(block, it.k);
+    }
+    scheduleContentSave();
+  }
+
+  // ═══ @-MENTIONS (Verknüpfungen im Text) ═══════════════════════════════════
+  function mentionCandidates(q) {
+    const out = [];
+    const push = (kind, ent) => out.push({ kind, id: ent.id, title: entTitle(ent) });
+    const match = (ent) => !q || entTitle(ent).toLowerCase().includes(q);
+    Object.values(E().tasks || {}).filter((t) => t.status !== "done").filter(match).slice(0, 5).forEach((x) => push("task", x));
+    Object.values(E().projects || {}).filter(match).slice(0, 4).forEach((x) => push("project", x));
+    Object.values(notesMap()).filter((n) => n.id !== S.noteId).filter(match).slice(0, 4).forEach((x) => push("note", x));
+    return out.slice(0, 10);
+  }
+  function maybeMention() {
+    const s = window.getSelection();
+    if (!s.rangeCount) return;
+    const anchor = s.anchorNode;
+    if (!anchor || anchor.nodeType !== 3) { if (S.mention) { S.mention = null; hideMenu(); } return; }
+    const bcEl = anchor.parentElement && anchor.parentElement.closest(".nf2-bc");
+    if (!bcEl) { if (S.mention) { S.mention = null; hideMenu(); } return; }
+    const upto = anchor.textContent.slice(0, s.anchorOffset);
+    const m = upto.match(/@([\wäöüÄÖÜ -]{0,30})$/);
+    if (!m) { if (S.mention) { S.mention = null; hideMenu(); } return; }
+    const q = m[1].toLowerCase();
+    const items = mentionCandidates(q);
+    if (!items.length) { S.mention = null; hideMenu(); return; }
+    S.mention = { items, idx: Math.min(S.mention ? S.mention.idx : 0, items.length - 1), node: anchor, qlen: m[0].length };
+    showMenuAt(bcEl.getBoundingClientRect(), items.map((it, i) => (
+      `<div class="nf2-mi${i === S.mention.idx ? " sel" : ""}" data-mi="${i}"><span class="nf2-mi-ic">${KIND_META[it.kind].icon}</span><span class="nf2-mi-t">${esc(it.title.slice(0, 40))}</span><span class="nf2-mi-d">${KIND_META[it.kind].label}</span></div>`
+    )).join(""), (i) => applyMention(i));
+  }
+  function mentionKey(e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); S.mention.idx = (S.mention.idx + 1) % S.mention.items.length; maybeMention(); return true; }
+    if (e.key === "ArrowUp") { e.preventDefault(); S.mention.idx = (S.mention.idx - 1 + S.mention.items.length) % S.mention.items.length; maybeMention(); return true; }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applyMention(S.mention.idx); return true; }
+    if (e.key === "Escape") { e.preventDefault(); S.mention = null; hideMenu(); return true; }
+    return false;
+  }
+  function applyMention(i) {
+    const mn = S.mention;
+    if (!mn) return;
+    const it = mn.items[i];
+    S.mention = null;
+    hideMenu();
+    // "@query" im Textknoten ersetzen
+    const node = mn.node;
+    const s = window.getSelection();
+    const off = s.anchorOffset;
+    node.textContent = node.textContent.slice(0, off - mn.qlen) + node.textContent.slice(off);
+    const r = document.createRange();
+    r.setStart(node, off - mn.qlen); r.collapse(true);
+    s.removeAllRanges(); s.addRange(r);
+    const chip = `<a class="nf2-mention" data-kind="${it.kind}" data-id="${it.id}" contenteditable="false">${KIND_META[it.kind].icon} ${esc(it.title.slice(0, 40))}</a>&nbsp;`;
+    document.execCommand("insertHTML", false, chip);
+    scheduleContentSave();
+    setTimeout(renderBacklinks, 50);
+  }
+
+  // ═══ MENÜ-KOMPONENTE (Slash/Mention/Kontext) ══════════════════════════════
+  function showMenuAt(rect, html, onPick) {
+    const m = $("#nf2Menu");
+    m.innerHTML = html;
+    m.style.display = "block";
+    const mw = 320;
+    let x = rect.left, y = rect.bottom + 6;
+    if (x + mw > window.innerWidth - 12) x = window.innerWidth - mw - 12;
+    if (y + m.offsetHeight > window.innerHeight - 10) y = rect.top - m.offsetHeight - 6;
+    m.style.left = x + "px"; m.style.top = Math.max(8, y) + "px";
+    m.onmousedown = (e) => e.preventDefault(); // Fokus im Editor behalten
+    m.onclick = (e) => { const mi = e.target.closest("[data-mi]"); if (mi && onPick) onPick(+mi.dataset.mi); };
+  }
+  function showMenuXY(x, y, html, onPick) {
+    showMenuAt({ left: x, bottom: y, top: y }, html, onPick);
+  }
+  function hideMenu() {
+    const m = $("#nf2Menu");
+    if (m) { m.style.display = "none"; m.innerHTML = ""; m.onclick = null; }
+  }
+
+  // ═══ BLOCK-MENÜ (Grip-Klick) ══════════════════════════════════════════════
+  function blockMenu(block, anchor) {
+    const items = [
+      { a: "turn-p", ic: "¶", t: "In Text umwandeln" },
+      { a: "turn-h1", ic: "H1", t: "In Überschrift 1" },
+      { a: "turn-h2", ic: "H2", t: "In Überschrift 2" },
+      { a: "turn-ul", ic: "•", t: "In Aufzählung" },
+      { a: "turn-todo", ic: "☑", t: "In To-do" },
+      { a: "dup", ic: "⧉", t: "Duplizieren" },
+      { a: "del", ic: "🗑", t: "Löschen" },
+    ];
+    showMenuAt(anchor.getBoundingClientRect(), items.map((it, i) => (
+      `<div class="nf2-mi" data-mi="${i}"><span class="nf2-mi-ic">${it.ic}</span><span class="nf2-mi-t">${it.t}</span></div>`
+    )).join(""), (i) => {
+      hideMenu();
+      const a = items[i].a;
+      if (a === "del") { block.remove(); if (!blocksEl().children.length) blocksEl().appendChild(makeBlock("p", "")); scheduleContentSave(); }
+      else if (a === "dup") { const bc = $(".nf2-bc", block); const cl = makeBlock(block.dataset.t, bc ? bc.innerHTML : "", block.dataset.c === "1"); block.after(cl); scheduleContentSave(); }
+      else if (a.indexOf("turn-") === 0) transformBlock(block, a.slice(5));
+    });
+  }
+
+  // ═══ DRAG-REORDER ═════════════════════════════════════════════════════════
+  function startBlockDrag(block, e) {
+    e.preventDefault();
+    const wrap = blocksEl();
+    const line = $("#nf2DropLine");
+    let target = null, after = false, moved = false;
+    const onMove = (ev) => {
+      moved = true;
+      block.classList.add("dragging");
+      const els = $$(".nf2-block", wrap).filter((b) => b !== block);
+      target = null;
+      for (const b of els) {
+        const r = b.getBoundingClientRect();
+        if (ev.clientY < r.top + r.height / 2) { target = b; after = false; break; }
+        target = b; after = true;
+      }
+      if (target) {
+        const r = target.getBoundingClientRect();
+        line.style.display = "block";
+        line.style.left = r.left + "px";
+        line.style.width = r.width + "px";
+        line.style.top = (after ? r.bottom : r.top) - 1 + "px";
+      } else line.style.display = "none";
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      line.style.display = "none";
+      block.classList.remove("dragging");
+      S.dragging = "end";
+      if (moved && target) {
+        if (after) target.after(block); else target.before(block);
+        scheduleContentSave();
+      } else if (!moved) {
+        blockMenu(block, $(".nf2-grip", block));
+      }
+      setTimeout(() => { S.dragging = null; }, 80);
+    };
+    S.dragging = true;
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+  }
+
+  // ═══ FLOATING FORMAT-TOOLBAR ══════════════════════════════════════════════
+  let _bubbleT = null;
+  function onSelChange() {
+    const c = container();
+    if (!c || !c.classList.contains("active")) return;
+    if (_bubbleT) clearTimeout(_bubbleT);
+    _bubbleT = setTimeout(() => {
+      const bub = $("#nf2Bubble");
+      if (!bub) return;
+      const s = window.getSelection();
+      if (!s.rangeCount || s.isCollapsed) { bub.style.display = "none"; return; }
+      const r = s.getRangeAt(0);
+      const el = r.commonAncestorContainer.nodeType === 1 ? r.commonAncestorContainer : r.commonAncestorContainer.parentElement;
+      if (!el || !el.closest || !el.closest(".nf2-bc")) { bub.style.display = "none"; return; }
+      const rect = r.getBoundingClientRect();
+      bub.innerHTML = `
+        <button data-cmd="bold"><b>B</b></button>
+        <button data-cmd="italic"><i>I</i></button>
+        <button data-cmd="underline"><u>U</u></button>
+        <button data-cmd="strikeThrough"><s>S</s></button>
+        <button data-cmd="code">‹›</button>
+        <button data-cmd="link">🔗</button>`;
+      bub.style.display = "flex";
+      let x = rect.left + rect.width / 2 - bub.offsetWidth / 2;
+      x = Math.max(8, Math.min(x, window.innerWidth - bub.offsetWidth - 8));
+      bub.style.left = x + "px";
+      bub.style.top = Math.max(8, rect.top - bub.offsetHeight - 8) + "px";
+      bub.onmousedown = (e) => e.preventDefault();
+      bub.onclick = (e) => {
+        const b = e.target.closest("[data-cmd]");
+        if (!b) return;
+        const cmd = b.dataset.cmd;
+        if (cmd === "link") {
+          const url = window.prompt("Link-URL:", "https://");
+          if (url) document.execCommand("createLink", false, url);
+        } else if (cmd === "code") {
+          const sel = window.getSelection();
+          const txt = sel.toString();
+          document.execCommand("insertHTML", false, "<code>" + esc(txt) + "</code>");
+        } else {
+          document.execCommand(cmd, false, null);
+        }
+        scheduleContentSave();
+      };
+    }, 120);
+  }
+
+  // ═══ BACKLINKS ("Erwähnt in / Verknüpft mit") ═════════════════════════════
+  function renderBacklinks() {
+    const el = $("#nf2Backlinks");
+    const n = note();
+    if (!el || !n) return;
+    const refs = [];
+    // Entities, die diese Notiz verlinken (linkedNotes)
+    [["task", "tasks"], ["project", "projects"], ["meeting", "meetings"], ["organization", "organizations"]].forEach(([kind, coll]) => {
+      Object.values(E()[coll] || {}).forEach((ent) => {
+        if (Array.isArray(ent.linkedNotes) && ent.linkedNotes.indexOf(n.id) >= 0) refs.push({ kind, id: ent.id, title: entTitle(ent) });
+      });
+    });
+    // Notizen, die diese Seite per Mention erwähnen
+    Object.values(notesMap()).forEach((other) => {
+      if (other.id === n.id) return;
+      if ((other.content || "").indexOf('data-id="' + n.id + '"') >= 0) refs.push({ kind: "note", id: other.id, title: entTitle(other) });
+    });
+    if (!refs.length) { el.innerHTML = ""; return; }
+    el.innerHTML = `<div class="nf2-back-h">↩ Erwähnt in / verknüpft mit</div>` + refs.map((r) => (
+      `<div class="nf2-back-item" data-goto="${r.kind}:${r.id}">${KIND_META[r.kind].icon} ${esc(r.title.slice(0, 60))}</div>`
+    )).join("");
+    el.onclick = (e) => {
+      const g = e.target.closest("[data-goto]");
+      if (g) { const [k, id] = g.dataset.goto.split(":"); gotoEntity(k, id); }
+    };
+  }
+
+  // ═══ VERKNÜPFEN-POPOVER ═══════════════════════════════════════════════════
+  function openLinkPopover(anchor) {
+    const n = note();
+    if (!n) return;
+    const render = (q) => {
+      q = (q || "").toLowerCase();
+      let rows = "";
+      [["task", "Aufgaben"], ["project", "Projekte"], ["meeting", "Meetings"], ["organization", "Organisationen"]].forEach(([kind, label]) => {
+        const km = KIND_META[kind];
+        const linked = new Set(n[km.linkField] || []);
+        const cands = Object.values(E()[km.coll] || {})
+          .filter((ent) => kind !== "task" || ent.status !== "done" || linked.has(ent.id))
+          .filter((ent) => !q || entTitle(ent).toLowerCase().includes(q))
+          .sort((a, b) => (linked.has(b.id) ? 1 : 0) - (linked.has(a.id) ? 1 : 0) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
+          .slice(0, q ? 8 : 4);
+        if (!cands.length) return;
+        rows += `<div class="nf2-lp-sec">${label}</div>`;
+        cands.forEach((ent) => {
+          const on = linked.has(ent.id);
+          rows += `<div class="nf2-mi nf2-lp-row${on ? " on" : ""}" data-toggle="${kind}:${ent.id}"><span class="nf2-mi-ic">${km.icon}</span><span class="nf2-mi-t">${esc(entTitle(ent).slice(0, 42))}</span><span class="nf2-mi-d">${on ? "✓ verknüpft" : ""}</span></div>`;
+        });
+      });
+      return `<div class="nf2-lp"><input class="nf2-lp-search" id="nf2LpSearch" placeholder="Suchen und verknüpfen…" value="${esc(q)}"><div class="nf2-lp-list">${rows || '<div class="nf2-empty-side">Keine Treffer</div>'}</div></div>`;
+    };
+    const rect = anchor.getBoundingClientRect();
+    const rerender = (q) => {
+      showMenuAt(rect, render(q), null);
+      const inp = $("#nf2LpSearch");
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+      inp.oninput = () => rerender(inp.value);
+      inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") hideMenu(); };
+      $("#nf2Menu").onclick = (e) => {
+        const row = e.target.closest("[data-toggle]");
+        if (!row) return;
+        const [kind, id] = row.dataset.toggle.split(":");
+        toggleLink(kind, id);
+        rerender($("#nf2LpSearch").value);
+      };
+      $("#nf2Menu").onmousedown = null; // Eingabefeld braucht Fokus
+    };
+    rerender("");
+  }
+  function toggleLink(kind, id) {
+    const n = note();
+    const km = KIND_META[kind];
+    if (!n || !km) return;
+    n[km.linkField] = n[km.linkField] || [];
+    const i = n[km.linkField].indexOf(id);
+    const ent = (E()[km.coll] || {})[id];
+    if (i >= 0) {
+      n[km.linkField].splice(i, 1);
+      if (ent && Array.isArray(ent.linkedNotes)) ent.linkedNotes = ent.linkedNotes.filter((x) => x !== n.id);
+    } else {
+      n[km.linkField].push(id);
+      if (ent) { if (!Array.isArray(ent.linkedNotes)) ent.linkedNotes = []; if (ent.linkedNotes.indexOf(n.id) < 0) ent.linkedNotes.push(n.id); }
+    }
+    touch();
+    renderMeta();
+    renderBacklinks();
+  }
+
+  // ═══ MEHR-MENÜ / KONTEXTMENÜS / VERSCHIEBEN ══════════════════════════════
+  function openMoreMenu(anchor) {
+    const n = note();
+    if (!n) return;
+    const items = [
+      { a: "fav", ic: isFav(n.id) ? "★" : "☆", t: isFav(n.id) ? "Aus Favoriten entfernen" : "Zu Favoriten" },
+      { a: "move", ic: "📓", t: "Verschieben nach…" },
+      { a: "dup", ic: "⧉", t: "Seite duplizieren" },
+      { a: "mdcopy", ic: "📋", t: "Als Markdown kopieren" },
+      { a: "export", ic: "⭳", t: "Als .md exportieren" },
+      { a: "del", ic: "🗑", t: "Seite löschen" },
+    ];
+    showMenuAt(anchor.getBoundingClientRect(), items.map((it, i) => (
+      `<div class="nf2-mi" data-mi="${i}"><span class="nf2-mi-ic">${it.ic}</span><span class="nf2-mi-t">${it.t}</span></div>`
+    )).join(""), (i) => {
+      hideMenu();
+      const a = items[i].a;
+      if (a === "fav") { toggleFav(n.id); renderTopbar(); renderSidebar(); }
+      else if (a === "move") openMoveMenu(anchor);
+      else if (a === "dup") duplicateNote(n.id);
+      else if (a === "mdcopy") { copyText(noteToMarkdown(n)); toastMsg("Als Markdown kopiert"); }
+      else if (a === "export") exportMd(n);
+      else if (a === "del") deleteNote(n.id);
+    });
+  }
+  function noteContextMenu(id, x, y) {
+    const n = notesMap()[id];
+    if (!n) return;
+    const items = [
+      { a: "open", ic: "↗", t: "Öffnen" },
+      { a: "fav", ic: isFav(id) ? "★" : "☆", t: isFav(id) ? "Aus Favoriten entfernen" : "Zu Favoriten" },
+      { a: "dup", ic: "⧉", t: "Duplizieren" },
+      { a: "del", ic: "🗑", t: "Löschen" },
+    ];
+    showMenuXY(x, y, items.map((it, i) => `<div class="nf2-mi" data-mi="${i}"><span class="nf2-mi-ic">${it.ic}</span><span class="nf2-mi-t">${it.t}</span></div>`).join(""), (i) => {
+      hideMenu();
+      const a = items[i].a;
+      if (a === "open") openPage(id);
+      else if (a === "fav") { toggleFav(id); renderSidebar(); renderTopbar(); }
+      else if (a === "dup") duplicateNote(id);
+      else if (a === "del") deleteNote(id);
+    });
+  }
+  function nbContextMenu(id, x, y) {
+    const items = [
+      { a: "add", ic: "＋", t: "Neue Seite" },
+      { a: "addch", ic: "📑", t: "Neues Kapitel" },
+      { a: "ren", ic: "✎", t: "Umbenennen" },
+      { a: "del", ic: "🗑", t: "Notizbuch löschen" },
+    ];
+    showMenuXY(x, y, items.map((it, i) => `<div class="nf2-mi" data-mi="${i}"><span class="nf2-mi-ic">${it.ic}</span><span class="nf2-mi-t">${it.t}</span></div>`).join(""), (i) => {
+      hideMenu();
+      const a = items[i].a;
+      const nb = nbMap()[id];
+      if (!nb) return;
+      if (a === "add") newNote(id, null);
+      else if (a === "addch") {
+        const t = window.prompt("Kapitel-Name:", "");
+        if (t && t.trim()) addChapter(id, t.trim());
+      }
+      else if (a === "ren") { const t = window.prompt("Notizbuch umbenennen:", nb.title || ""); if (t != null && t.trim()) { nb.title = t.trim(); nb.updatedAt = nowIso(); save(); renderSidebar(); renderTopbar(); } }
+      else if (a === "del") {
+        const count = Object.values(notesMap()).filter((n) => n.notebookId === id).length;
+        if (!confirm(`Notizbuch «${nb.title || ""}» löschen? ${count} Seite(n) wandern in die Inbox.`)) return;
+        Object.values(notesMap()).forEach((n) => { if (n.notebookId === id) { n.notebookId = null; n.chapterId = null; } });
+        Object.values(chMap()).forEach((c) => { if (c.notebookId === id) delete chMap()[c.id]; });
+        delete nbMap()[id];
+        save(); renderSidebar(); renderTopbar();
+      }
+    });
+  }
+  function chapterContextMenu(id, x, y) {
+    const items = [
+      { a: "add", ic: "＋", t: "Neue Seite" },
+      { a: "ren", ic: "✎", t: "Umbenennen" },
+      { a: "del", ic: "🗑", t: "Kapitel löschen" },
+    ];
+    showMenuXY(x, y, items.map((it, i) => `<div class="nf2-mi" data-mi="${i}"><span class="nf2-mi-ic">${it.ic}</span><span class="nf2-mi-t">${it.t}</span></div>`).join(""), (i) => {
+      hideMenu();
+      const ch = chMap()[id];
+      if (!ch) return;
+      const a = items[i].a;
+      if (a === "add") newNote(ch.notebookId, id);
+      else if (a === "ren") { const t = window.prompt("Kapitel umbenennen:", chTitle(ch)); if (t != null && t.trim()) { ch.title = t.trim(); save(); renderSidebar(); } }
+      else if (a === "del") {
+        if (!confirm(`Kapitel «${ch.title || ""}» löschen? Seiten bleiben im Notizbuch.`)) return;
+        Object.values(notesMap()).forEach((n) => { if (n.chapterId === id) n.chapterId = null; });
+        delete chMap()[id];
+        save(); renderSidebar(); renderTopbar();
+      }
+    });
+  }
+  function addChapter(nbId, title) {
+    const id = uid();
+    chMap()[id] = { id, notebookId: nbId, title, name: title, createdAt: nowIso(), updatedAt: nowIso() };
+    save(); renderSidebar();
+  }
+  function openMoveMenu(anchor) {
+    const n = note();
+    if (!n) return;
+    const nbs = Object.values(nbMap());
+    let items = [{ a: "nb:", ic: "📥", t: "Inbox (kein Notizbuch)" }];
+    nbs.forEach((nb) => {
+      items.push({ a: "nb:" + nb.id, ic: "📓", t: nb.title || "Notizbuch" });
+      Object.values(chMap()).filter((c) => c.notebookId === nb.id).forEach((ch) => {
+        items.push({ a: "ch:" + nb.id + ":" + ch.id, ic: "📑", t: "  " + (nb.title || "") + " / " + chTitle(ch) });
+      });
+    });
+    showMenuAt(anchor.getBoundingClientRect(), items.map((it, i) => (
+      `<div class="nf2-mi" data-mi="${i}"><span class="nf2-mi-ic">${it.ic}</span><span class="nf2-mi-t">${esc(it.t)}</span></div>`
+    )).join(""), (i) => {
+      hideMenu();
+      const a = items[i].a;
+      const oldNb = n.notebookId;
+      if (a.indexOf("ch:") === 0) { const [, nbId, chId] = a.split(":"); n.notebookId = nbId; n.chapterId = chId; }
+      else { const nbId = a.slice(3) || null; n.notebookId = nbId; n.chapterId = null; }
+      syncNbArrays(n.id, oldNb, n.notebookId);
+      touch(); renderSidebar(); renderTopbar(); renderMeta();
+    });
+  }
+  // notebook.notes-Arrays pflegen (Projekt-Notizbücher hängen daran)
+  function syncNbArrays(noteId, oldNbId, newNbId) {
+    if (oldNbId === newNbId) return;
+    const oldNb = oldNbId ? nbMap()[oldNbId] : null;
+    if (oldNb && Array.isArray(oldNb.notes)) oldNb.notes = oldNb.notes.filter((x) => x !== noteId);
+    const newNb = newNbId ? nbMap()[newNbId] : null;
+    if (newNb) { if (!Array.isArray(newNb.notes)) newNb.notes = []; if (newNb.notes.indexOf(noteId) < 0) newNb.notes.push(noteId); }
+  }
+
+  // ═══ NOTIZ-OPERATIONEN ════════════════════════════════════════════════════
+  function newNote(nbId, chId) {
+    flushSave();
+    const id = uid();
+    const now = nowIso();
+    notesMap()[id] = {
+      id, title: "", content: "<p><br></p>",
+      notebookId: nbId || null, chapterId: chId || null,
+      tags: [], linkedTasks: [], linkedProjects: [], linkedMeetings: [], linkedOrganizations: [],
+      createdAt: now, updatedAt: now,
+    };
+    syncNbArrays(id, null, nbId || null);
+    save();
+    S.noteId = id;
+    renderSidebar();
+    renderPage();
+    const t = $("#nf2Title");
+    if (t) placeCaret(t, false);
+  }
+  function duplicateNote(id) {
+    const src = notesMap()[id];
+    if (!src) return;
+    const nid = uid();
+    const copy = JSON.parse(JSON.stringify(src));
+    copy.id = nid;
+    copy.title = (src.title || "Ohne Titel") + " (Kopie)";
+    copy.createdAt = nowIso(); copy.updatedAt = nowIso();
+    notesMap()[nid] = copy;
+    syncNbArrays(nid, null, copy.notebookId || null);
+    save();
+    openPage(nid);
+    toastMsg("Seite dupliziert");
+  }
+  function deleteNote(id) {
+    const n = notesMap()[id];
+    if (!n) return;
+    if (!confirm(`Seite «${n.title || "Ohne Titel"}» löschen?`)) return;
+    syncNbArrays(id, n.notebookId || null, null);
+    delete notesMap()[id];
+    const d = APP.state.data;
+    if (Array.isArray(d.pinnedItems)) d.pinnedItems = d.pinnedItems.filter((k) => k !== pinnedKey(id));
+    save();
+    if (S.noteId === id) {
+      const all = Object.values(notesMap()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      S.noteId = all.length ? all[0].id : null;
+    }
+    renderSidebar();
+    renderPage();
+    toastMsg("Seite gelöscht");
+  }
+
+  function noteToMarkdown(n) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = n.content || "";
+    let md = "# " + (n.title || "Ohne Titel") + "\n\n";
+    parseContentToBlocks(n.content || "").forEach(([t, h, c]) => {
+      const d = document.createElement("div"); d.innerHTML = h;
+      const text = d.textContent || "";
+      if (t === "h1") md += "# " + text + "\n\n";
+      else if (t === "h2") md += "## " + text + "\n\n";
+      else if (t === "h3") md += "### " + text + "\n\n";
+      else if (t === "ul") md += "- " + text + "\n";
+      else if (t === "ol") md += "1. " + text + "\n";
+      else if (t === "todo") md += "- [" + (c ? "x" : " ") + "] " + text + "\n";
+      else if (t === "q") md += "> " + text + "\n\n";
+      else if (t === "code") md += "```\n" + text + "\n```\n\n";
+      else if (t === "hr") md += "\n---\n\n";
+      else md += text + "\n\n";
+    });
+    return md.replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  }
+  function exportMd(n) {
+    const blob = new Blob([noteToMarkdown(n)], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (n.title || "notiz").replace(/[^\wäöüÄÖÜ\- ]+/g, "").trim().replace(/\s+/g, "-").slice(0, 60) + ".md";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  function copyText(t) {
+    try { navigator.clipboard.writeText(t); }
+    catch (e) { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+  }
+  function toastMsg(msg) { try { window.toast && window.toast("ok", "NoteFlow", msg); } catch (e) {} }
+
+  function newNotebook() {
+    const t = window.prompt("Name des Notizbuchs:", "");
+    if (!t || !t.trim()) return;
+    const id = uid();
+    nbMap()[id] = { id, title: t.trim(), notes: [], createdAt: nowIso(), updatedAt: nowIso() };
+    save(); renderSidebar();
+  }
+
+  // ═══ CSS ══════════════════════════════════════════════════════════════════
+  function injectCSS() {
+    if (document.getElementById("nf2Styles")) return;
+    const st = document.createElement("style");
+    st.id = "nf2Styles";
+    st.textContent = `
+.nf2-host.dark{--n2-bg:#191919;--n2-side:#202020;--n2-txt:#d4d4d4;--n2-txt2:#9b9b9b;--n2-txt3:#6f6f6f;--n2-line:#2f2f2f;--n2-hover:rgba(255,255,255,.055);--n2-active:rgba(255,255,255,.09);--n2-acc:#a78bfa;--n2-card:#252525;--n2-sh:rgba(0,0,0,.5)}
+.nf2-host.light{--n2-bg:#ffffff;--n2-side:#f7f7f5;--n2-txt:#37352f;--n2-txt2:#787774;--n2-txt3:#b3b1ac;--n2-line:#ededec;--n2-hover:rgba(0,0,0,.045);--n2-active:rgba(0,0,0,.08);--n2-acc:#6b46c1;--n2-card:#ffffff;--n2-sh:rgba(15,15,15,.12)}
+.nf2{display:flex;width:100%;height:100%;background:var(--n2-bg);color:var(--n2-txt);font-family:ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:16px;line-height:1.5}
+.nf2 *{box-sizing:border-box}
+.nf2 ::selection{background:color-mix(in oklab,var(--n2-acc) 30%,transparent)}
+/* ── Sidebar ── */
+.nf2-side{width:262px;flex-shrink:0;background:var(--n2-side);border-right:1px solid var(--n2-line);display:flex;flex-direction:column;transition:margin-left .18s ease}
+.nf2.side-hidden .nf2-side{margin-left:-262px}
+.nf2-side-head{display:flex;align-items:center;gap:4px;padding:10px 10px 6px}
+.nf2-ws{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:5px 8px;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px}
+.nf2-ws:hover{background:var(--n2-hover)}
+.nf2-iconbtn{width:28px;height:28px;border:0;background:transparent;color:var(--n2-txt2);border-radius:6px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .1s}
+.nf2-iconbtn:hover{background:var(--n2-hover);color:var(--n2-txt)}
+.nf2-iconbtn.on{color:#f5b301}
+.nf2-search-wrap{padding:2px 10px 8px}
+.nf2-search{width:100%;height:30px;background:var(--n2-bg);border:1px solid var(--n2-line);border-radius:7px;color:var(--n2-txt);font-size:13.5px;padding:0 10px;outline:none;transition:border-color .12s}
+.nf2-search:focus{border-color:var(--n2-acc)}
+.nf2-tree{flex:1;overflow-y:auto;padding:2px 6px 10px;scrollbar-width:thin}
+.nf2-sec{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--n2-txt3);padding:12px 10px 4px}
+.nf2-item{display:flex;align-items:center;gap:6px;padding:4px 8px;margin:1px 0;border-radius:6px;cursor:pointer;font-size:13.5px;color:var(--n2-txt2);user-select:none;position:relative}
+.nf2-item:hover{background:var(--n2-hover);color:var(--n2-txt)}
+.nf2-item.active{background:var(--n2-active);color:var(--n2-txt);font-weight:600}
+.nf2-item-ic{flex-shrink:0;width:18px;text-align:center;font-size:14px}
+.nf2-item-t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nf2-item-count{font-size:11px;color:var(--n2-txt3)}
+.nf2-item-star{color:#f5b301;font-size:11px}
+.nf2-item-add{display:none;width:20px;height:20px;border:0;border-radius:4px;background:transparent;color:var(--n2-txt2);cursor:pointer;font-size:13px;flex-shrink:0}
+.nf2-item:hover .nf2-item-add{display:inline-flex;align-items:center;justify-content:center}
+.nf2-item-add:hover{background:var(--n2-active);color:var(--n2-txt)}
+.nf2-chev{flex-shrink:0;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;color:var(--n2-txt3);font-size:10px;transition:transform .12s}
+.nf2-chev.open{transform:rotate(90deg)}
+.nf2-chev:hover{background:var(--n2-active)}
+.nf2-side-foot{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--n2-line)}
+.nf2-newpage{flex:1;height:32px;border:0;border-radius:7px;background:transparent;color:var(--n2-txt2);font-size:13.5px;font-weight:600;cursor:pointer;text-align:left;padding:0 10px}
+.nf2-newpage:hover{background:var(--n2-hover);color:var(--n2-txt)}
+.nf2-newnb{width:44px;height:32px;border:0;border-radius:7px;background:transparent;color:var(--n2-txt2);cursor:pointer;font-size:13px}
+.nf2-newnb:hover{background:var(--n2-hover);color:var(--n2-txt)}
+.nf2-empty-side{padding:10px;font-size:13px;color:var(--n2-txt3)}
+/* ── Main ── */
+.nf2-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.nf2-topbar{display:flex;align-items:center;gap:8px;height:46px;padding:0 12px;flex-shrink:0}
+.nf2-crumbs{flex:1;min-width:0;display:flex;align-items:center;gap:4px;font-size:13.5px;color:var(--n2-txt2);white-space:nowrap;overflow:hidden}
+.nf2-crumb{padding:3px 6px;border-radius:5px;cursor:pointer}
+.nf2-crumb:hover{background:var(--n2-hover)}
+.nf2-crumb.cur{color:var(--n2-txt);cursor:default}
+.nf2-crumb.cur:hover{background:transparent}
+.nf2-crumb-sep{color:var(--n2-txt3)}
+.nf2-top-actions{display:flex;align-items:center;gap:2px}
+.nf2-savestate{font-size:12px;color:var(--n2-txt3);margin-right:6px;min-width:86px;text-align:right}
+.nf2-savestate.ok{color:#4ea36a}
+.nf2-scroll{flex:1;overflow-y:auto;cursor:text}
+.nf2-page{max-width:760px;margin:0 auto;padding:40px 56px 30vh;cursor:auto}
+.nf2-title{font-size:40px;font-weight:700;line-height:1.15;outline:none;margin-bottom:6px;letter-spacing:-.01em}
+.nf2-title:empty::before{content:attr(data-ph);color:var(--n2-txt3)}
+.nf2-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 22px;min-height:24px}
+.nf2-mchip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 9px;border-radius:12px;background:var(--n2-hover);color:var(--n2-txt2);border:0;cursor:default}
+.nf2-mchip.tag{color:var(--n2-acc)}
+.nf2-mchip.link{cursor:pointer}
+.nf2-mchip.link:hover{background:var(--n2-active);color:var(--n2-txt)}
+.nf2-mchip.addtag,.nf2-mchip.addlink{cursor:pointer;opacity:.65}
+.nf2-mchip.addtag:hover,.nf2-mchip.addlink:hover{opacity:1;background:var(--n2-active)}
+.nf2-mchip button{border:0;background:transparent;color:inherit;cursor:pointer;font-size:12px;padding:0 0 0 2px;opacity:.5}
+.nf2-mchip button:hover{opacity:1}
+/* ── Blocks ── */
+.nf2-blocks{min-height:120px}
+.nf2-block{position:relative;display:flex;align-items:flex-start;padding:1px 0;border-radius:4px}
+.nf2-block.dragging{opacity:.4}
+.nf2-block.sel{background:color-mix(in oklab,var(--n2-acc) 14%,transparent)}
+.nf2-gutter{position:absolute;left:-46px;top:2px;display:flex;gap:0;opacity:0;transition:opacity .1s}
+.nf2-block:hover .nf2-gutter{opacity:1}
+.nf2-gbtn{width:22px;height:24px;border:0;background:transparent;color:var(--n2-txt3);border-radius:5px;cursor:pointer;font-size:14px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.nf2-gbtn:hover{background:var(--n2-hover);color:var(--n2-txt2)}
+.nf2-grip{cursor:grab;font-size:12px}
+.nf2-bc{flex:1;min-width:0;outline:none;word-break:break-word;white-space:pre-wrap;padding:2px 0}
+.nf2-bc:focus:empty::before,.nf2-block[data-t="p"] .nf2-bc:focus:empty::before{content:attr(data-ph);color:var(--n2-txt3);pointer-events:none}
+.nf2-block[data-t="h1"] .nf2-bc{font-size:30px;font-weight:700;line-height:1.25;margin-top:18px}
+.nf2-block[data-t="h2"] .nf2-bc{font-size:24px;font-weight:700;line-height:1.25;margin-top:14px}
+.nf2-block[data-t="h3"] .nf2-bc{font-size:20px;font-weight:600;line-height:1.25;margin-top:10px}
+.nf2-block[data-t="ul"] .nf2-bc{padding-left:24px;position:relative}
+.nf2-block[data-t="ul"] .nf2-bc::before{content:"•";position:absolute;left:8px;color:var(--n2-txt)}
+.nf2-block[data-t="ol"]{counter-increment:nf2ol}
+.nf2-block:not([data-t="ol"])+.nf2-block[data-t="ol"],.nf2-blocks>.nf2-block[data-t="ol"]:first-child{counter-reset:nf2ol}
+.nf2-block[data-t="ol"] .nf2-bc{padding-left:24px;position:relative}
+.nf2-block[data-t="ol"] .nf2-bc::before{content:counter(nf2ol) ".";position:absolute;left:4px;color:var(--n2-txt);font-variant-numeric:tabular-nums}
+.nf2-check{width:18px;height:18px;margin:4px 8px 0 0;border:1.5px solid var(--n2-txt3);border-radius:4px;background:transparent;color:#fff;cursor:pointer;flex-shrink:0;font-size:12px;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:background .12s,border-color .12s}
+.nf2-block[data-c="1"] .nf2-check{background:var(--n2-acc);border-color:var(--n2-acc)}
+.nf2-block[data-c="1"] .nf2-bc{text-decoration:line-through;color:var(--n2-txt3)}
+.nf2-block[data-t="q"] .nf2-bc{border-left:3px solid var(--n2-txt);padding-left:14px;font-style:italic}
+.nf2-block[data-t="code"] .nf2-bc{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13.5px;background:var(--n2-card);border:1px solid var(--n2-line);border-radius:8px;padding:12px 14px;white-space:pre-wrap}
+.nf2-hrline{flex:1;padding:8px 0;cursor:default}
+.nf2-hrline hr{border:0;border-top:1px solid var(--n2-line);margin:0}
+.nf2-bc code{font-family:ui-monospace,Menlo,monospace;font-size:.85em;background:var(--n2-hover);border-radius:4px;padding:1px 5px;color:#eb5757}
+.nf2-bc a{color:var(--n2-acc);text-decoration:underline;text-underline-offset:2px}
+.nf2-mention{display:inline-flex;align-items:center;gap:3px;background:var(--n2-hover);border-radius:6px;padding:0 6px;font-size:.92em;color:var(--n2-txt)!important;text-decoration:none!important;cursor:pointer;white-space:nowrap}
+.nf2-mention:hover{background:var(--n2-active)}
+/* ── Menü / Popover ── */
+.nf2-menu{position:fixed;z-index:2147483200;min-width:280px;max-width:340px;max-height:340px;overflow-y:auto;background:var(--n2-card);border:1px solid var(--n2-line);border-radius:10px;box-shadow:0 14px 40px var(--n2-sh);padding:5px}
+.nf2-mi{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13.5px}
+.nf2-mi:hover,.nf2-mi.sel{background:var(--n2-hover)}
+.nf2-mi-ic{flex-shrink:0;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;background:var(--n2-hover);border-radius:6px;font-size:12px;font-weight:700}
+.nf2-mi-t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nf2-mi-d{font-size:11px;color:var(--n2-txt3);white-space:nowrap}
+.nf2-lp-search{width:100%;height:32px;background:var(--n2-bg);border:1px solid var(--n2-line);border-radius:7px;color:var(--n2-txt);font-size:13.5px;padding:0 10px;outline:none;margin-bottom:6px}
+.nf2-lp-sec{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--n2-txt3);padding:7px 8px 2px}
+.nf2-lp-row.on .nf2-mi-d{color:#4ea36a}
+/* ── Bubble-Toolbar ── */
+.nf2-bubble{position:fixed;z-index:2147483200;display:flex;gap:2px;background:var(--n2-card);border:1px solid var(--n2-line);border-radius:9px;box-shadow:0 10px 30px var(--n2-sh);padding:4px}
+.nf2-bubble button{border:0;background:transparent;color:var(--n2-txt);width:30px;height:28px;border-radius:6px;cursor:pointer;font-size:13.5px}
+.nf2-bubble button:hover{background:var(--n2-hover)}
+/* ── Backlinks ── */
+.nf2-backlinks{margin-top:44px;border-top:1px solid var(--n2-line);padding-top:14px}
+.nf2-back-h{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--n2-txt3);margin-bottom:8px}
+.nf2-back-item{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:13.5px;color:var(--n2-txt2)}
+.nf2-back-item:hover{background:var(--n2-hover);color:var(--n2-txt)}
+/* ── Sonstiges ── */
+.nf2-dropline{position:fixed;z-index:2147483100;height:2.5px;background:var(--n2-acc);border-radius:2px;pointer-events:none}
+.nf2-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:80px 20px;text-align:center}
+.nf2-empty-ic{font-size:44px}
+.nf2-empty-t{font-size:16px;color:var(--n2-txt2)}
+.nf2-btn{border:1px solid var(--n2-line);background:var(--n2-card);color:var(--n2-txt);border-radius:8px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer}
+.nf2-btn.primary{background:var(--n2-acc);border-color:var(--n2-acc);color:#fff}
+@media(max-width:900px){.nf2-side{position:absolute;z-index:20;height:100%;box-shadow:8px 0 30px var(--n2-sh)}.nf2.side-hidden .nf2-side{margin-left:-262px;box-shadow:none}.nf2-page{padding:24px 20px 30vh}.nf2-gutter{left:-30px}.nf2-title{font-size:32px}}
+`;
+    document.head.appendChild(st);
+  }
+
+})();
+
+</script>
+
 </body>
 </html>
