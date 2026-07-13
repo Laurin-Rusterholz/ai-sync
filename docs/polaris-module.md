@@ -40,6 +40,7 @@ zurück (einmalige Warnung pro Endpoint und Seitenaufruf).
 | `polaris/character` | `{ traits: { humor, warmth, directness, curiosity, formality } je 0–1, backstory, catchphrases[], evolutionLog: [{ ts, change, reason }] }` — wird beim ersten Zugriff mit Defaults initialisiert |
 | `polaris/relationship` | `{ ts, mood, lastTopics[], openLoops[], streak }` |
 | `polaris/projects/{pushId}` | `{ ts, title, description, tags[], status: 'open'\|'done', source: 'voice'\|'system' }` |
+| `polaris/display` | `{ title, content, type, ts, updatedAt }` — die aktuelle Bildschirm-Anzeige (n8n schreibt/überschreibt). Das Frontend hört live darauf (`on('value')`, REST-Poll-Fallback) und zeigt eine Karte unten rechts, auch über dem Ruhemodus: `type='list'` → zeilenweise Liste, `type='code'` → `<pre>`/monospace, sonst Text; leerer Knoten → Karte blendet sanft aus; Inhalte werden immer escaped gerendert (kein Roh-HTML). Schliessen via `data-action="polaris-display-close"` oder Escape (bis neuer Inhalt kommt). |
 | `polaris/settings/proactiveEnabled` | Spiegel des Frontend-Schalters (auch von n8n/Agent lesbar) |
 
 Die RTDB-Regeln decken `polaris/*` über den offenen `$andere`-Zweig ab.
