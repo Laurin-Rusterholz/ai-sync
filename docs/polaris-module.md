@@ -40,6 +40,7 @@ zurück (einmalige Warnung pro Endpoint und Seitenaufruf).
 | `polaris/character` | `{ traits: { humor, warmth, directness, curiosity, formality } je 0–1, backstory, catchphrases[], evolutionLog: [{ ts, change, reason }] }` — wird beim ersten Zugriff mit Defaults initialisiert |
 | `polaris/relationship` | `{ ts, mood, lastTopics[], openLoops[], streak }` |
 | `polaris/projects/{pushId}` | `{ ts, title, description, tags[], status: 'open'\|'done', source: 'voice'\|'system' }` |
+| `polaris/conversations/{conversationId}` | `{ id, startedAt, durationSecs, turnCount, summary, transcript, createdAt, ts }` — schreibt der n8n-Post-Call-Webhook (`/conversation-log`) nach jedem Gespräch. Beim Session-Start liest das Frontend die **15 neuesten** Einträge (client-seitig nach `ts` absteigend sortiert — die Keys sind ElevenLabs-IDs, nicht chronologisch) und hängt sie als Block `Frühere Gespräche:` mit Zeilen `Früheres Gespräch vom TT.MM.JJJJ: {summary}` an `{{polaris_memory}}` an (neueste 5 Summaries max. 240 Zeichen, ältere 120, Block ≤1600, Variable gesamt ≤3000 Zeichen; Inhalte defensiv bereinigt). Leerer/nicht erreichbarer Knoten → Kontext wie bisher ohne Historie. |
 | `polaris/display` | `{ title, content, type, ts, updatedAt }` — die aktuelle Bildschirm-Anzeige (n8n schreibt/überschreibt). Das Frontend hört live darauf (`on('value')`, REST-Poll-Fallback) und zeigt eine Karte unten rechts, auch über dem Ruhemodus: `type='list'` → zeilenweise Liste, `type='code'` → `<pre>`/monospace, sonst Text; leerer Knoten → Karte blendet sanft aus; Inhalte werden immer escaped gerendert (kein Roh-HTML). Schliessen via `data-action="polaris-display-close"` oder Escape (bis neuer Inhalt kommt). |
 | `polaris/settings/proactiveEnabled` | Spiegel des Frontend-Schalters (auch von n8n/Agent lesbar) |
 
@@ -86,7 +87,7 @@ Agent-ID: `agent_5101kx5v9rw7fx78kx919m332kkh` (bereits im Frontend eingetragen)
 |---|---|
 | `{{user_name}}` | „Laurin" |
 | `{{current_date}}` / `{{current_weekday}}` / `{{current_time}}` / `{{timezone}}` | via `Intl`, Europe/Zurich (TT.MM.JJJJ, deutscher Wochentag, HH:MM) |
-| `{{polaris_memory}}` | die 5 relevantesten Erinnerungen, eine pro Zeile |
+| `{{polaris_memory}}` | die 5 relevantesten Erinnerungen (memory-recall), eine pro Zeile — plus Block „Frühere Gespräche:" mit den 15 neuesten Summaries aus `polaris/conversations` (gesamt max. 3000 Zeichen) |
 | `{{polaris_opener}}` | proaktiver Gesprächseinstieg |
 | `{{polaris_character}}` | Trait-Brief (Prozente), Backstory, typische Sprüche, letzte Stimmung + Streak — **so erreicht die Charakter-Evolution die Stimme** |
 

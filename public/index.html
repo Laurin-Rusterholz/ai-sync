@@ -106689,6 +106689,64 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     } catch(e){ return ""; }
   }
 
+  // ── Gesprächs-Historie (polaris/conversations, vom n8n-Post-Call-Webhook) ──
+  // Der Post-Call-Webhook speichert nach jedem Gespräch ein Record unter
+  // polaris/conversations/{conversationId} ({id, startedAt, durationSecs,
+  // turnCount, summary, transcript, createdAt, ts}). Hier werden die neuesten
+  // N Summaries zu einem kompakten Textblock für {{polaris_memory}} gebaut.
+  // Die Keys sind ElevenLabs-Conversation-IDs (NICHT chronologisch) — deshalb
+  // voller Read + client-seitige Sortierung nach ts absteigend.
+  // TODO(polaris): Wächst der Knoten stark, lohnt sich '.indexOn: ["ts"]' in
+  // den RTDB-Regeln + orderByChild-Query statt Voll-Read.
+  function plCleanPromptText(s){
+    // defensiv: HTML-Tags, Steuerzeichen und Template-Klammern raus
+    // (offene RTDB-Regeln — der Text landet im Agenten-Prompt)
+    return String(s == null ? "" : s)
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[{}]/g, " ")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  async function plRecallConversations(maxCount, maxChars){
+    try {
+      const raw = await plDbGet("polaris/conversations");
+      if (!raw || typeof raw !== "object") return "";
+      function toMs(v){
+        if (v == null) return 0;
+        if (typeof v === "number" && isFinite(v)) return v;
+        const n = Number(v);
+        if (isFinite(n) && n > 0) return n;
+        const p = Date.parse(String(v));
+        return isFinite(p) ? p : 0;
+      }
+      const list = Object.keys(raw).map(function(k){ return raw[k]; })
+        .filter(function(c){ return c && typeof c === "object" && (c.summary || c.transcript); });
+      list.sort(function(a, b){
+        return toMs(b.ts || b.createdAt || b.startedAt) - toMs(a.ts || a.createdAt || a.startedAt);
+      });
+      const lines = [];
+      let used = 0;
+      for (let i = 0; i < list.length && lines.length < (maxCount || 15); i++){
+        const c = list[i];
+        const t = toMs(c.ts || c.createdAt || c.startedAt);
+        const when = t ? new Intl.DateTimeFormat("de-CH", { timeZone: POLARIS_TZ, day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(t)) : "unbekannt";
+        // neueste Gespräche ausführlicher, ältere knapper — hält den Prompt kompakt
+        const cap = lines.length < 5 ? 240 : 120;
+        const sum = plCleanPromptText(c.summary || "").slice(0, cap);
+        if (!sum) continue;
+        const line = "Früheres Gespräch vom " + when + ": " + sum;
+        if (used + line.length + 1 > (maxChars || 1600)) break;
+        used += line.length + 1;
+        lines.push(line);
+      }
+      return lines.join("\n");
+    } catch(err){
+      console.error("Polaris: Gesprächs-Historie nicht lesbar — Kontext ohne Historie", err);
+      return "";
+    }
+  }
+
   // Kompakter Charakter-Brief für {{polaris_character}}: nur damit erreicht
   // die Trait-Evolution tatsächlich die Stimme des Agenten.
   function plCharacterBrief(ch, rel){
@@ -106718,9 +106776,14 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const results = await Promise.all([
         plRecallMemory(topics, 5).catch(function(e){ console.error("Polaris: memory-recall fehlgeschlagen", e); return ""; }),
         plFetchOpener().catch(function(e){ console.error("Polaris: Opener fehlgeschlagen", e); return ""; }),
-        plDbGet("polaris/character").catch(function(e){ console.error("Polaris: Charakter lesen fehlgeschlagen", e); return null; })
+        plDbGet("polaris/character").catch(function(e){ console.error("Polaris: Charakter lesen fehlgeschlagen", e); return null; }),
+        plRecallConversations(15, 1600).catch(function(e){ console.error("Polaris: Gesprächs-Historie fehlgeschlagen", e); return ""; })
       ]);
-      ctx.memory = results[0] || "";
+      // {{polaris_memory}} = Erinnerungen (memory-recall) + Gesprächs-Historie
+      // (polaris/conversations, 15 neueste Summaries) — Gesamtdeckel 3000 Zeichen.
+      const memBlock = results[0] || "";
+      const convBlock = results[3] || "";
+      ctx.memory = (memBlock + (convBlock ? (memBlock ? "\n" : "") + "Frühere Gespräche:\n" + convBlock : "")).slice(0, 3000);
       ctx.opener = results[1] || "";
       ctx.character = plCharacterBrief(results[2], rel);
     } catch(err){ console.error("Polaris: Session-Kontext fehlgeschlagen", err); }
