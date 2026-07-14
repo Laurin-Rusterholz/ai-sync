@@ -16647,6 +16647,53 @@ function renderMain() {
   }
 }
 
+// Split-Screen-Dock: HTML-Ansicht einer Route liefern. MUSS in diesem Scope
+// liegen, weil die viewX-Funktionen hier (nicht global auf window) definiert
+// sind — deshalb scheiterte das Dock zuvor mit „lässt sich nicht als Panel
+// öffnen". Nur Listen-/Übersichtsansichten (kein id, keine Navigation/Overlay).
+window.qxRouteHtml = function(route){
+  try {
+    switch(route){
+      case "dashboard": return viewDashboard();
+      case "today": return viewToday();
+      case "tasks": return viewTasks();
+      case "projects": return viewProjects();
+      case "organizations": return viewOrganizations();
+      case "persons": return viewPersons();
+      case "calendar": return viewCalendar();
+      case "time": return viewTime();
+      case "goals": return viewGoals();
+      case "strategies": return viewStrategies();
+      case "programs": return viewPrograms();
+      case "statistics": return viewStatistics();
+      case "reports": return viewReports();
+      case "chat": return viewChat();
+      case "knowledge": return viewKnowledge();
+      case "budget": return viewBudget();
+      case "messages": return viewMessages();
+      case "ideas": return viewIdeas();
+      case "meetings": return viewMeetings();
+      case "updates": return viewUpdates();
+      case "dailybriefing": return viewDailyBriefing();
+      case "reflecta": return viewReflecta();
+      case "habits": return viewHabits();
+      case "concepts": return viewConcepts();
+      case "workload": return viewWorkload();
+      case "measures": return viewMeasures();
+      case "decisions": return viewDecisions();
+      case "protocols": return viewProtocols();
+      case "workflows": return viewWorkflows();
+      case "passwordmanager": return viewPasswordManager();
+      case "googlecalendar": return (typeof viewGoogleCalendar==="function"? viewGoogleCalendar() : null);
+      case "gmail": return (typeof viewGmail==="function"? viewGmail() : null);
+      case "briefings": return (typeof viewBriefings==="function"? viewBriefings() : null);
+      case "handbook": return (typeof window.viewHandbook==="function"? window.viewHandbook() : null);
+      case "quantusproject": return (typeof viewQuantusProject==="function"? viewQuantusProject() : null);
+      default: return null;
+    }
+  } catch(e){ return '<div style="padding:16px;color:var(--danger,#e5765a)">Panel-Fehler: ' + ((e&&e.message)||e) + '</div>'; }
+};
+
 // ===================== DAILY BRIEFING =====================
 // Global: selected date for daily briefing
 if (!window._dbDate) window._dbDate = null;
@@ -105745,18 +105792,18 @@ html.theme-light .card{box-shadow:none}
       dock.innerHTML = open.map(function(k){
         if (isAppKey(k)){
           var route = routeOf(k), meta = appPanelMeta(route);
-          return '<section class="dock-panel app-panel" data-panel="' + k + '">' +
-            '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
-            '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
-            '<div class="dock-panel-body">' + renderRoutePanel(route) + '</div></section>';
+          var body = renderRoutePanel(route);
+          if (body != null){
+            return '<section class="dock-panel app-panel" data-panel="' + k + '">' +
+              '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
+              '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+              '<div class="dock-panel-body">' + body + '</div></section>';
+          }
+          return frameSectionHtml(k, route, meta);   // kein Inline-Renderer → iframe (Embed)
         }
         if (isFrameKey(k)){
-          var froute = routeOf(k), fmeta = appPanelMeta(froute);
-          return '<section class="dock-panel frame-panel" data-panel="' + k + '">' +
-            '<div class="dock-panel-header"><span>' + fmeta.icon + '</span><span class="dock-panel-title">' + esc(fmeta.title) + '</span>' +
-            '<button title="In neuem Tab öffnen" onclick="window.open(\'' + frameSrc(froute) + '\',\'_blank\')" style="font-size:12px">⤢</button>' +
-            '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
-            '<div class="dock-panel-body"><iframe class="dock-frame" src="' + frameSrc(froute) + '" title="' + esc(fmeta.title) + '" allow="fullscreen"></iframe></div></section>';
+          var froute = routeOf(k);
+          return frameSectionHtml(k, froute, appPanelMeta(froute));
         }
         var p = PANELS[k]; var body;
         try { body = p.render(); }
@@ -106078,11 +106125,20 @@ html.theme-light .card{box-shadow:none}
     var m = all.filter(function(a){ return a.key === route; })[0];
     return { icon: (m && m.icon) || "🗔", title: (m && m.label) || route };
   }
+  // Inline-HTML einer Route (über den In-Scope-Resolver der Haupt-App).
+  // Gibt null zurück, wenn keine Inline-Ansicht verfügbar ist → dann iframe.
   function renderRoutePanel(route){
-    var fn = PANEL_ROUTES[route];
-    if (!fn || typeof window[fn] !== "function") return '<div class="dock-empty">Diese App lässt sich nicht als Panel öffnen.</div>';
-    try { return '<div class="page">' + window[fn]() + '</div>'; }
-    catch(e){ return '<div class="dock-empty">Panel-Fehler: ' + ((e && e.message) || e) + '</div>'; }
+    if (typeof window.qxRouteHtml === "function"){
+      try { var h = window.qxRouteHtml(route); if (h != null) return '<div class="page">' + h + '</div>'; } catch(e){}
+    }
+    return null;
+  }
+  function frameSectionHtml(k, route, meta){
+    return '<section class="dock-panel frame-panel" data-panel="' + k + '">' +
+      '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
+      '<button title="In neuem Tab öffnen" onclick="window.open(\'' + frameSrc(route) + '\',\'_blank\')" style="font-size:12px">⤢</button>' +
+      '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+      '<div class="dock-panel-body"><iframe class="dock-frame" src="' + frameSrc(route) + '" title="' + esc(meta.title) + '" allow="fullscreen"></iframe></div></section>';
   }
 
   var PANELS = {
