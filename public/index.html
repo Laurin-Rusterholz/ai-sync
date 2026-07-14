@@ -12,6 +12,10 @@
   <meta name="apple-mobile-web-app-title" content="Quantus" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <!-- Preconnects: DNS/TLS zu Font- und Firebase-CDNs früh aufbauen (weniger Blockierzeit beim ersten Laden) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://www.gstatic.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="quantus-orb.js" defer></script>
   <script>
@@ -11034,6 +11038,9 @@ function notifyStorageOverflow() {
   } catch(e) {}
 }
 function saveLocalData() {
+  // Direkter Aufruf ersetzt eine evtl. noch ausstehende gebündelte Speicherung.
+  if (typeof _localSaveTimer !== "undefined" && _localSaveTimer) { clearTimeout(_localSaveTimer); _localSaveTimer = null; }
+  if (typeof _localSaveDirty !== "undefined") _localSaveDirty = false;
   try {
     // Always embed settings and UI state before saving
     if (APP.state.settings) APP.state.data._settings = APP.state.settings;
@@ -12166,6 +12173,28 @@ let _saveDirty = false;
 let _lastSaveTime = 0;
 let _syncLockActive = false; // Prevents saves during incoming cross-device sync
 
+// Lokales Speichern gebündelt: JSON.stringify des kompletten States + localStorage-Write
+// sind synchron auf dem Main-Thread und machten das Tippen ruckelig (ein Voll-Snapshot
+// pro Tastendruck). Änderungen werden hier ~400ms gesammelt; bei Tab-Wechsel/Schließen
+// wird sofort geflusht, dazu greift weiterhin das 5s-Sicherheitsnetz unten.
+var _localSaveTimer = null;
+var _localSaveDirty = false;
+function scheduleLocalSave() {
+  _localSaveDirty = true;
+  if (_localSaveTimer) return;
+  _localSaveTimer = setTimeout(function() {
+    _localSaveTimer = null;
+    if (_localSaveDirty) saveLocalData();
+  }, 400);
+}
+function flushLocalSave() {
+  if (_localSaveTimer) { clearTimeout(_localSaveTimer); _localSaveTimer = null; }
+  if (_localSaveDirty) saveLocalData();
+}
+window.addEventListener("pagehide", flushLocalSave);
+window.addEventListener("beforeunload", flushLocalSave);
+document.addEventListener("visibilitychange", function() { if (document.hidden) flushLocalSave(); });
+
 function scheduleSave() {
   if (isManualTransferMode()) {
     _saveDirty = true;
@@ -12174,7 +12203,7 @@ function scheduleSave() {
     updateSyncChip();
     if (!APP.state.data.meta) APP.state.data.meta = {};
     APP.state.data.meta.updatedAt = new Date().toISOString();
-    saveLocalData();
+    scheduleLocalSave();
     return;
   }
   if (!APP.state.settings.storage.autoSave) return;
@@ -12187,9 +12216,9 @@ function scheduleSave() {
   if (!APP.state.data.meta) APP.state.data.meta = {};
   APP.state.data.meta.updatedAt = new Date().toISOString();
   
-  // Save locally IMMEDIATELY (no debounce — data safety > performance)
-  saveLocalData();
-  
+  // Lokal gebündelt speichern (~400ms) — Flush bei Tab-Wechsel/Schließen sichert die Daten.
+  scheduleLocalSave();
+
   // Throttle remote save: if last remote save > 3s ago, save now
   var now = Date.now();
   if (now - _lastSaveTime >= 3000) {
@@ -15935,8 +15964,9 @@ let _renderCount = 0;
 function render() {
   // Debounce rapid re-renders (coalesce calls within 50ms)
   _renderCount++;
-  if (_renderCount > 2) {
-    // More than 2 rapid calls — debounce
+  if (_renderCount > 1) {
+    // Nur der erste Aufruf eines Bursts rendert sofort — alle weiteren werden zu
+    // EINEM nachgelagerten Render gebündelt (vorher: 2 volle Re-Renders pro Interaktion).
     if (_renderTimer) return;
     _renderTimer = setTimeout(() => {
       _renderTimer = null;
@@ -15945,7 +15975,7 @@ function render() {
     }, 50);
     return;
   }
-  // First 2 calls go through immediately
+  // First call goes through immediately
   setTimeout(() => { _renderCount = Math.max(0, _renderCount - 1); }, 100);
   _doRender();
 }
@@ -52501,6 +52531,7 @@ case "start-project-timer": {
 // Dashboard Uhr aktualisieren
 if (!APP.state.ui.clockInterval) {
   APP.state.ui.clockInterval = setInterval(() => {
+    if (document.hidden) return;
     const clock = document.getElementById("dashboardClock");
     if (clock) {
       clock.textContent = new Date().toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit" });
@@ -60460,10 +60491,18 @@ async function init() {
     }
   } catch(e) {}
 
-  // Timer update interval
+  // Timer update interval — Sidebar nur neu aufbauen, wenn sich die Menge der laufenden
+  // Timer ändert (Start/Stop). Die Zeitanzeige selbst aktualisiert tickLiveUI in-place;
+  // das frühere renderSidebar() im Sekundentakt hat die ganze Sidebar-DOM ständig ersetzt.
+  let _lastRunningTimerKey = null;
   setInterval(() => {
+    if (document.hidden) return;
     const timers = getRunningTimers();
-    if (timers.length > 0) renderSidebar();
+    const key = timers.map(t => t.taskId).sort().join(",");
+    if (key !== _lastRunningTimerKey) {
+      _lastRunningTimerKey = key;
+      if (timers.length > 0) renderSidebar();
+    }
   }, 1000);
   
   // App sichtbar machen
@@ -60861,6 +60900,7 @@ function hideLaunchScreen(instant = false) {
 }
 
 function updateLaunchClock() {
+  if (document.hidden) return;
   const now = new Date();
   const timeEl = document.getElementById("launchTime");
   const dateEl = document.getElementById("launchDate");
@@ -67638,6 +67678,14 @@ function renderSidebarLockButton(){
 
 /* ---------- Live UI tick (timer, project time, sidebar timer) ---------- */
 function tickLiveUI(){
+  // Läuft im Sekundentakt: bei verstecktem Tab oder ohne laufenden Timer gibt es
+  // nichts zu aktualisieren — dann die DOM-Scans + Wochenziel-Neuberechnung sparen.
+  if (document.hidden) return;
+  const _timers = APP.state.data?.timers || {};
+  let _anyRunning = false;
+  for (const _k in _timers) { if (_timers[_k] && _timers[_k].startTs) { _anyRunning = true; break; } }
+  if (!_anyRunning) return;
+
   // Task detail running timer
   document.querySelectorAll("[data-live-timer]").forEach(el => {
     const taskId = el.getAttribute("data-task-id");
@@ -70585,6 +70633,7 @@ window.viewRules = viewRules;
 
 // ==================== HEADER TIMER INDICATOR ====================
 function updateHeaderTimer() {
+  if (document.hidden) return; // reine Anzeige — rechnet beim nächsten sichtbaren Tick von startTs neu
   const indicator = document.getElementById('headerTimerIndicator');
   if (!indicator) return;
 
@@ -83895,7 +83944,7 @@ input.addEventListener("input",()=>{
 window.addEventListener("hashchange",()=>{ if(QC.open) refresh(); });
 let lastCtxStr = "";
 setInterval(()=>{
-  if(!QC.open) return;
+  if(document.hidden || !QC.open) return;
   const ctx = getCtx();
   const str = ctx.app+"|"+(ctx.id||"")+"|"+(ctx.entityTitle||"");
   if(str !== lastCtxStr){ lastCtxStr=str; refresh(); }
@@ -84184,6 +84233,7 @@ setInterval(()=>{
 
   // Kombinierter Tick: erst injizieren, dann updaten
   function tick() {
+    if (document.hidden) return;
     injectWidgets();
     updateAllWidgets();
   }
@@ -85494,7 +85544,7 @@ window._saveReaderPrefs = function() {
   }
   window.addEventListener('scroll', update, { passive: true });
   window.addEventListener('resize', update);
-  setInterval(update, 1000); // safety
+  setInterval(() => { if (!document.hidden) update(); }, 1000); // safety
 })();
 
 // Apply reader prefs at startup
@@ -85895,7 +85945,7 @@ window._editorAIAction = async function(action) {
     counter.textContent = `${words} Wörter · ${chars} Zeichen · ~${minutes} min`;
     counter.style.display = el.offsetParent ? 'block' : 'none';
   }
-  setInterval(updateCounter, 1500);
+  setInterval(() => { if (!document.hidden) updateCounter(); }, 1500);
 })();
 
 console.log('✨ Enhanced Features Package v1.0 geladen — Cmd+K für Spotlight');
@@ -87936,7 +87986,7 @@ function attachHubObservers() {
 
 // Periodisches Title-Refresh (für Projekte deren Daten erst nachgeladen werden)
 setInterval(() => {
-  if (!tabsEnabled()) return;
+  if (document.hidden || !tabsEnabled()) return;
   let changed = false;
   _tabs.forEach(t => {
     let info;
@@ -88113,6 +88163,7 @@ setTimeout(suppressLoaders, 1000);
 
 // ─── Tab-Bar verstecken wenn Vollbild-Overlays aktiv (Reflect, Launch-Screen) ──
 function updateTabBarVisibility() {
+  if (document.hidden) return; // liest offsetHeight (Layout) — im Hintergrund unnötig
   if (!tabsEnabled()) return;
   const bar = document.getElementById('browserTabBar');
   if (!bar) return;
@@ -88534,6 +88585,7 @@ function triggerSidebarAction(action) {
 
 // ─── Header Task-Counter aktualisieren ───────────────────────
 function updateHeaderCount() {
+  if (document.hidden) return;
   try {
     const tasks = window.APP?.state?.data?.entities?.tasks || {};
     const open = Object.values(tasks).filter(t => t && !t.deleted && !t.archived && t.status !== 'done').length;
@@ -100720,7 +100772,7 @@ var FORMATS = { "1:1":[1080,1080], "4:5":[1080,1350], "9:16":[1080,1920] };
 function formatDims(f){ return FORMATS[f] || FORMATS["1:1"]; }
 
 /* ── Helfer (lokal — analog zu den bestehenden angehaengten Modulen) ── */
-function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+function esc(s){ s = String(s==null?"":s); if (!/[&<>"']/.test(s)) return s; return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 function iso(){ return new Date().toISOString(); }
 function trunc(s,n){ s=String(s==null?"":s); return s.length<=n ? s : s.slice(0,n).replace(/\s+\S*$/,"")+"…"; }
 function toastMsg(type,title,msg){
