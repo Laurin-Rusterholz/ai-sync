@@ -110522,8 +110522,10 @@ Dateien zu identifizieren.
   // ── State ────────────────────────────────────────────────────────────────
   const S = {
     noteId: null,          // aktuell geöffnete Notiz
+    view: "page",          // "page" = Editor, "home" = Übersicht (alle Notizen)
+    homeFilter: "all",     // Übersicht-Filter: "all" | "fav" | notebookId | "_inbox"
     search: "",
-    collapsed: {},         // sidebar: eingeklappte Knoten { key: true }
+    open: {},              // sidebar: ausgeklappte Knoten { key: true } — Standard: eingeklappt
     saveT: null,
     slash: null,           // { blockEl, query, idx, items }
     mention: null,         // { query, idx, items, range }
@@ -110531,7 +110533,7 @@ Dateien zu identifizieren.
     theme: (function(){ try { return localStorage.getItem("noteflow-theme") || "dark"; } catch (e) { return "dark"; } })(),
     booted: false,
   };
-  try { S.collapsed = JSON.parse(localStorage.getItem("nf2-collapsed") || "{}") || {}; } catch (e) { S.collapsed = {}; }
+  try { S.open = JSON.parse(localStorage.getItem("nf2-open") || "{}") || {}; } catch (e) { S.open = {}; }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -110585,7 +110587,7 @@ Dateien zu identifizieren.
     const ae = document.activeElement;
     const typing = already && ae && $("#nf2Main") && $("#nf2Main").contains(ae);
     if (already && sameNote && typing) { renderSidebar(); return; } // Editor nicht unter den Fingern wegrendern
-    if (noteId && notesMap()[noteId]) S.noteId = noteId;
+    if (noteId && notesMap()[noteId]) { S.noteId = noteId; S.view = "page"; }
     if (!S.noteId || !note()) {
       const all = Object.values(notesMap()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
       S.noteId = all.length ? all[0].id : null;
@@ -110652,6 +110654,7 @@ Dateien zu identifizieren.
         </main>
         <div class="nf2-menu" id="nf2Menu" style="display:none"></div>
         <div class="nf2-bubble" id="nf2Bubble" style="display:none"></div>
+        <div class="nf2-palette" id="nf2Palette" style="display:none"></div>
         <div class="nf2-dropline" id="nf2DropLine" style="display:none"></div>
       </div>`;
 
@@ -110673,6 +110676,8 @@ Dateien zu identifizieren.
       document.addEventListener("pointerdown", (e) => {
         const m = $("#nf2Menu");
         if (m && m.style.display !== "none" && !m.contains(e.target)) hideMenu();
+        const pal = $("#nf2Palette");
+        if (pal && pal.style.display !== "none" && !pal.contains(e.target) && !(e.target.closest && e.target.closest('#nf2Bubble'))) pal.style.display = "none";
       }, true);
       window.addEventListener("beforeunload", flushSave);
     }
@@ -110689,6 +110694,8 @@ Dateien zu identifizieren.
     const c = container();
     if (!c || !c.classList.contains("active")) return;
     if (e.key === "Escape") {
+      const pal = $("#nf2Palette");
+      if (pal && pal.style.display !== "none") { pal.style.display = "none"; e.preventDefault(); e.stopPropagation(); return; }
       if ($("#nf2Menu").style.display !== "none") { hideMenu(); e.preventDefault(); e.stopPropagation(); return; }
       const bub = $("#nf2Bubble");
       if (bub && bub.style.display !== "none") { bub.style.display = "none"; return; }
@@ -110696,14 +110703,17 @@ Dateien zu identifizieren.
     }
     const mod = e.ctrlKey || e.metaKey;
     if (mod && (e.key === "n" || e.key === "N") && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); newNote(null, null); }
+    // Anstreichen: Ctrl/Cmd+Shift+H
+    if (mod && e.shiftKey && (e.key === "h" || e.key === "H")) { e.preventDefault(); e.stopPropagation(); styleSelection("hl", "yellow"); }
   }
 
   // ═══ SIDEBAR (Seitenbaum) ═════════════════════════════════════════════════
   function collapsedKey(kind, id) { return kind + ":" + id; }
-  function setCollapsed(key, val) {
-    if (val) S.collapsed[key] = true; else delete S.collapsed[key];
-    try { localStorage.setItem("nf2-collapsed", JSON.stringify(S.collapsed)); } catch (e) {}
+  function setOpen(key, val) {
+    if (val) S.open[key] = true; else delete S.open[key];
+    try { localStorage.setItem("nf2-open", JSON.stringify(S.open)); } catch (e) {}
   }
+  function toggleOpen(key) { setOpen(key, !S.open[key]); }
   function matchesSearch(n) {
     if (!S.search.trim()) return true;
     const q = S.search.toLowerCase();
@@ -110712,7 +110722,7 @@ Dateien zu identifizieren.
   }
 
   function noteItem(n, depth) {
-    const active = n.id === S.noteId;
+    const active = n.id === S.noteId && S.view === "page";
     return `<div class="nf2-item nf2-note${active ? " active" : ""}" data-note="${n.id}" style="padding-left:${10 + depth * 14}px" title="${esc(n.title || "Ohne Titel")}">
       <span class="nf2-item-ic">${esc(n.icon || "📄")}</span>
       <span class="nf2-item-t">${esc(n.title || "Ohne Titel")}</span>
@@ -110732,20 +110742,34 @@ Dateien zu identifizieren.
 
     let html = "";
 
-    // Favoriten
+    // ── Feste Navigation (immer sichtbar) ──
+    if (!searching) {
+      html += `<div class="nf2-nav">
+        <div class="nf2-navitem${S.view === "home" ? " active" : ""}" data-nav="home"><span class="nf2-item-ic">🗂️</span><span class="nf2-item-t">Alle Notizen</span><span class="nf2-item-count">${notes.length}</span></div>
+      </div>`;
+    }
+
+    // ── Favoriten ──
     const favs = vis.filter((n) => isFav(n.id));
     if (favs.length) {
-      html += `<div class="nf2-sec">Favoriten</div>`;
+      html += `<div class="nf2-sec">★ Favoriten</div>`;
       sortNotes(favs).forEach((n) => { html += noteItem(n, 0); });
     }
 
-    html += `<div class="nf2-sec">Seiten</div>`;
+    // ── Zuletzt bearbeitet (Schnellzugriff, flach — löst „ich finde Notizen nicht") ──
+    if (!searching && notes.length) {
+      const recent = sortNotes(notes.slice()).slice(0, 6);
+      html += `<div class="nf2-sec">Zuletzt bearbeitet</div>`;
+      recent.forEach((n) => { html += noteItem(n, 0); });
+    }
 
-    // Notebooks
+    html += `<div class="nf2-sec">Notizbücher</div>`;
+
+    // Notebooks — standardmäßig eingeklappt
     const nbs = Object.values(nbMap()).sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
     nbs.forEach((nb) => {
       const key = collapsedKey("nb", nb.id);
-      const isOpen = searching ? true : !S.collapsed[key];
+      const isOpen = searching ? true : !!S.open[key];
       const nbNotes = byNb[nb.id] || [];
       if (searching && !nbNotes.length) return;
       html += `<div class="nf2-item nf2-nb" data-nb="${nb.id}">
@@ -110763,7 +110787,7 @@ Dateien zu identifizieren.
           chNotes.forEach((n) => usedByCh.add(n.id));
           if (searching && !chNotes.length) return;
           const ckey = collapsedKey("ch", ch.id);
-          const cOpen = searching ? true : !S.collapsed[ckey];
+          const cOpen = searching ? true : !!S.open[ckey];
           html += `<div class="nf2-item nf2-ch" data-ch="${ch.id}" style="padding-left:24px">
             <span class="nf2-chev${cOpen ? " open" : ""}" data-chev="${ckey}">▸</span>
             <span class="nf2-item-ic">📑</span>
@@ -110776,11 +110800,11 @@ Dateien zu identifizieren.
       }
     });
 
-    // Inbox (ohne Notizbuch)
+    // Inbox (ohne Notizbuch) — standardmäßig eingeklappt
     const inbox = byNb[""] || [];
     if (inbox.length || !searching) {
       const ikey = collapsedKey("nb", "_inbox");
-      const iOpen = searching ? true : !S.collapsed[ikey];
+      const iOpen = searching ? true : !!S.open[ikey];
       html += `<div class="nf2-item nf2-nb" data-nb="_inbox">
         <span class="nf2-chev${iOpen ? " open" : ""}" data-chev="${ikey}">▸</span>
         <span class="nf2-item-ic">📥</span><span class="nf2-item-t">Inbox</span>
@@ -110794,17 +110818,19 @@ Dateien zu identifizieren.
     tree.innerHTML = html;
 
     tree.onclick = (e) => {
+      const nav = e.target.closest("[data-nav]");
+      if (nav) { if (nav.dataset.nav === "home") openHome(); return; }
       const chev = e.target.closest("[data-chev]");
-      if (chev) { const k = chev.dataset.chev; setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
+      if (chev) { toggleOpen(chev.dataset.chev); renderSidebar(); return; }
       const add = e.target.closest("[data-addnote]");
       if (add) { e.stopPropagation(); newNote(add.dataset.addnote || null, add.dataset.addch || null); return; }
       const ni = e.target.closest("[data-note]");
       if (ni) { openPage(ni.dataset.note); return; }
       const nbi = e.target.closest("[data-nb]");
-      if (nbi && nbi.dataset.nb !== "_inbox") { const k = collapsedKey("nb", nbi.dataset.nb); setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
-      if (nbi) { const k = collapsedKey("nb", "_inbox"); setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
+      if (nbi && nbi.dataset.nb !== "_inbox") { toggleOpen(collapsedKey("nb", nbi.dataset.nb)); renderSidebar(); return; }
+      if (nbi) { toggleOpen(collapsedKey("nb", "_inbox")); renderSidebar(); return; }
       const chi = e.target.closest("[data-ch]");
-      if (chi) { const k = collapsedKey("ch", chi.dataset.ch); setCollapsed(k, !S.collapsed[k]); renderSidebar(); return; }
+      if (chi) { toggleOpen(collapsedKey("ch", chi.dataset.ch)); renderSidebar(); return; }
     };
     tree.oncontextmenu = (e) => {
       const nbi = e.target.closest("[data-nb]");
@@ -110821,16 +110847,31 @@ Dateien zu identifizieren.
     if (!notesMap()[id]) return;
     flushSave();
     S.noteId = id;
+    S.view = "page";
     const c = container();
     if (!c || !c.classList.contains("active")) { open(id); return; }
     renderSidebar();
     renderPage();
   }
+  function openHome(filter) {
+    flushSave();
+    S.view = "home";
+    if (filter) S.homeFilter = filter;
+    renderSidebar();
+    renderPage();
+  }
 
   function renderTopbar() {
-    const n = note();
     const crumbs = $("#nf2Crumbs");
     if (!crumbs) return;
+    const actions = $("#nf2Root") && $("#nf2Root").querySelector(".nf2-top-actions");
+    if (S.view === "home") {
+      crumbs.innerHTML = `<span class="nf2-crumb cur">🗂️ Alle Notizen</span>`;
+      if (actions) actions.style.display = "none";
+      return;
+    }
+    if (actions) actions.style.display = "";
+    const n = note();
     if (!n) { crumbs.innerHTML = ""; return; }
     const nb = n.notebookId ? nbMap()[n.notebookId] : null;
     const ch = n.chapterId ? chMap()[n.chapterId] : null;
@@ -110847,8 +110888,10 @@ Dateien zu identifizieren.
   function renderPage() {
     const page = $("#nf2Page");
     if (!page) return;
-    const n = note();
     renderTopbar();
+    page.className = "nf2-page" + (S.view === "home" ? " home" : "");
+    if (S.view === "home") { renderHome(); return; }
+    const n = note();
     if (!n) {
       page.innerHTML = `<div class="nf2-empty">
         <div class="nf2-empty-ic">📝</div>
@@ -110868,6 +110911,100 @@ Dateien zu identifizieren.
     renderBacklinks();
     wireTitle();
     wireBlocks();
+  }
+
+  // ═══ ÜBERSICHT / HOME (alle Notizen als durchsuchbare Karten) ═════════════
+  function noteExcerpt(n, len) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = n.content || "";
+    const t = (tmp.textContent || "").replace(/\s+/g, " ").trim();
+    return t.slice(0, len || 140);
+  }
+  function renderHome() {
+    const page = $("#nf2Page");
+    if (!page) return;
+    const q = (S.homeSearch || "").toLowerCase().trim();
+    const nbs = Object.values(nbMap()).sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+    let notes = Object.values(notesMap());
+    // Filter
+    if (S.homeFilter === "fav") notes = notes.filter((n) => isFav(n.id));
+    else if (S.homeFilter === "_inbox") notes = notes.filter((n) => !n.notebookId);
+    else if (S.homeFilter && S.homeFilter !== "all") notes = notes.filter((n) => n.notebookId === S.homeFilter);
+    // Suche
+    if (q) notes = notes.filter((n) => (n.title || "").toLowerCase().includes(q) || noteExcerpt(n, 400).toLowerCase().includes(q));
+    notes.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+
+    const chip = (id, label, count) => `<button class="nf2-hfilter${S.homeFilter === id ? " active" : ""}" data-hf="${esc(id)}">${esc(label)}${count != null ? ` <span class="nf2-hfilter-c">${count}</span>` : ""}</button>`;
+    let filters = chip("all", "Alle", Object.keys(notesMap()).length);
+    const favCount = Object.values(notesMap()).filter((n) => isFav(n.id)).length;
+    if (favCount) filters += chip("fav", "★ Favoriten", favCount);
+    nbs.forEach((nb) => { const c = Object.values(notesMap()).filter((n) => n.notebookId === nb.id).length; filters += chip(nb.id, "📓 " + (nb.title || "Notizbuch"), c); });
+    const inboxCount = Object.values(notesMap()).filter((n) => !n.notebookId).length;
+    if (inboxCount) filters += chip("_inbox", "📥 Inbox", inboxCount);
+
+    let cards = "";
+    notes.forEach((n) => {
+      const nb = n.notebookId ? nbMap()[n.notebookId] : null;
+      const ex = noteExcerpt(n, 150);
+      cards += `<div class="nf2-card" data-open="${n.id}">
+        <div class="nf2-card-top"><span class="nf2-card-ic">${esc(n.icon || "📄")}</span>${isFav(n.id) ? '<span class="nf2-card-star">★</span>' : ""}</div>
+        <div class="nf2-card-title">${esc(n.title || "Ohne Titel")}</div>
+        <div class="nf2-card-ex">${esc(ex) || '<span class="nf2-card-empty">Leere Seite</span>'}</div>
+        <div class="nf2-card-foot"><span class="nf2-card-nb">${esc(nb ? (nb.title || "Notizbuch") : "Inbox")}</span><span class="nf2-card-date">${fmtDate(n.updatedAt || n.createdAt)}</span></div>
+      </div>`;
+    });
+    if (!cards) cards = `<div class="nf2-home-empty">${q ? "Keine Notizen gefunden." : "Noch keine Notizen. Erstelle deine erste Seite."}</div>`;
+
+    page.innerHTML = `
+      <div class="nf2-home">
+        <div class="nf2-home-head">
+          <h1 class="nf2-home-h1">🗂️ Alle Notizen</h1>
+          <button class="nf2-btn primary" id="nf2HomeNew">＋ Neue Seite</button>
+        </div>
+        <div class="nf2-home-searchwrap"><span class="nf2-home-searchic">🔍</span><input class="nf2-home-search" id="nf2HomeSearch" placeholder="Alle Notizen durchsuchen…" value="${esc(S.homeSearch || "")}"></div>
+        <div class="nf2-home-filters">${filters}</div>
+        <div class="nf2-home-grid">${cards}</div>
+      </div>`;
+
+    const nw = $("#nf2HomeNew"); if (nw) nw.onclick = () => newNote(S.homeFilter && S.homeFilter !== "all" && S.homeFilter !== "fav" && S.homeFilter !== "_inbox" ? S.homeFilter : null, null);
+    const grid = page.querySelector(".nf2-home-grid");
+    if (grid) grid.onclick = (e) => { const c = e.target.closest("[data-open]"); if (c) openPage(c.dataset.open); };
+    const filt = page.querySelector(".nf2-home-filters");
+    if (filt) filt.onclick = (e) => { const b = e.target.closest("[data-hf]"); if (b) { S.homeFilter = b.dataset.hf; renderHome(); } };
+    const si = $("#nf2HomeSearch");
+    if (si) {
+      si.oninput = () => { S.homeSearch = si.value; renderHomeGrid(); };
+      si.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Escape") { S.homeSearch = ""; renderHome(); } };
+      // Fokus behalten beim Tippen
+      si.focus();
+      const v = si.value; si.setSelectionRange(v.length, v.length);
+    }
+  }
+  // Nur das Karten-Raster neu zeichnen (damit das Suchfeld beim Tippen den Fokus behält)
+  function renderHomeGrid() {
+    const page = $("#nf2Page");
+    const grid = page && page.querySelector(".nf2-home-grid");
+    if (!grid) { renderHome(); return; }
+    const q = (S.homeSearch || "").toLowerCase().trim();
+    let notes = Object.values(notesMap());
+    if (S.homeFilter === "fav") notes = notes.filter((n) => isFav(n.id));
+    else if (S.homeFilter === "_inbox") notes = notes.filter((n) => !n.notebookId);
+    else if (S.homeFilter && S.homeFilter !== "all") notes = notes.filter((n) => n.notebookId === S.homeFilter);
+    if (q) notes = notes.filter((n) => (n.title || "").toLowerCase().includes(q) || noteExcerpt(n, 400).toLowerCase().includes(q));
+    notes.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+    let cards = "";
+    notes.forEach((n) => {
+      const nb = n.notebookId ? nbMap()[n.notebookId] : null;
+      const ex = noteExcerpt(n, 150);
+      cards += `<div class="nf2-card" data-open="${n.id}">
+        <div class="nf2-card-top"><span class="nf2-card-ic">${esc(n.icon || "📄")}</span>${isFav(n.id) ? '<span class="nf2-card-star">★</span>' : ""}</div>
+        <div class="nf2-card-title">${esc(n.title || "Ohne Titel")}</div>
+        <div class="nf2-card-ex">${esc(ex) || '<span class="nf2-card-empty">Leere Seite</span>'}</div>
+        <div class="nf2-card-foot"><span class="nf2-card-nb">${esc(nb ? (nb.title || "Notizbuch") : "Inbox")}</span><span class="nf2-card-date">${fmtDate(n.updatedAt || n.createdAt)}</span></div>
+      </div>`;
+    });
+    if (!cards) cards = `<div class="nf2-home-empty">${q ? "Keine Notizen gefunden." : "Noch keine Notizen."}</div>`;
+    grid.innerHTML = cards;
   }
 
   function renderMeta() {
@@ -111534,7 +111671,20 @@ Dateien zu identifizieren.
   }
 
   // ═══ FLOATING FORMAT-TOOLBAR ══════════════════════════════════════════════
+  // Farbpalette (Notion-Stil): Klassen + data-c, damit sie themenabhängig bleibt.
+  const NF2_COLORS = [
+    { k: "default", label: "Standard" },
+    { k: "gray",    label: "Grau" },
+    { k: "red",     label: "Rot" },
+    { k: "orange",  label: "Orange" },
+    { k: "yellow",  label: "Gelb" },
+    { k: "green",   label: "Grün" },
+    { k: "blue",    label: "Blau" },
+    { k: "purple",  label: "Lila" },
+    { k: "pink",    label: "Rosa" },
+  ];
   let _bubbleT = null;
+  let _savedRange = null;
   function onSelChange() {
     const c = container();
     if (!c || !c.classList.contains("active")) return;
@@ -111542,20 +111692,25 @@ Dateien zu identifizieren.
     _bubbleT = setTimeout(() => {
       const bub = $("#nf2Bubble");
       if (!bub) return;
+      const pal = $("#nf2Palette");
+      if (pal && pal.style.display !== "none" && pal.contains(document.activeElement)) return;
       const s = window.getSelection();
-      if (!s.rangeCount || s.isCollapsed) { bub.style.display = "none"; return; }
+      if (!s.rangeCount || s.isCollapsed) { bub.style.display = "none"; if (pal) pal.style.display = "none"; return; }
       const r = s.getRangeAt(0);
       const el = r.commonAncestorContainer.nodeType === 1 ? r.commonAncestorContainer : r.commonAncestorContainer.parentElement;
-      if (!el || !el.closest || !el.closest(".nf2-bc")) { bub.style.display = "none"; return; }
+      if (!el || !el.closest || !el.closest(".nf2-bc")) { bub.style.display = "none"; if (pal) pal.style.display = "none"; return; }
       const rect = r.getBoundingClientRect();
       bub.innerHTML = `
-        <button data-cmd="bold"><b>B</b></button>
-        <button data-cmd="italic"><i>I</i></button>
-        <button data-cmd="underline"><u>U</u></button>
-        <button data-cmd="strikeThrough"><s>S</s></button>
-        <button data-cmd="mark" title="Markieren"><span class="nf2-hlic">M</span></button>
-        <button data-cmd="code">‹›</button>
-        <button data-cmd="link">🔗</button>`;
+        <button data-cmd="bold" title="Fett (Ctrl+B)"><b>B</b></button>
+        <button data-cmd="italic" title="Kursiv (Ctrl+I)"><i>I</i></button>
+        <button data-cmd="underline" title="Unterstrichen (Ctrl+U)"><u>U</u></button>
+        <button data-cmd="strikeThrough" title="Durchgestrichen"><s>S</s></button>
+        <button data-cmd="code" title="Code">‹›</button>
+        <span class="nf2-bub-sep"></span>
+        <button data-cmd="hl" title="Anstreichen"><span class="nf2-hlic">A</span></button>
+        <button data-cmd="color" title="Farbe & Anstreichen">🎨<span class="nf2-bub-car">▾</span></button>
+        <span class="nf2-bub-sep"></span>
+        <button data-cmd="link" title="Link einfügen">🔗</button>`;
       bub.style.display = "flex";
       let x = rect.left + rect.width / 2 - bub.offsetWidth / 2;
       x = Math.max(8, Math.min(x, window.innerWidth - bub.offsetWidth - 8));
@@ -111568,40 +111723,91 @@ Dateien zu identifizieren.
         const cmd = b.dataset.cmd;
         if (cmd === "link") {
           const url = window.prompt("Link-URL:", "https://");
-          if (url) document.execCommand("createLink", false, url);
+          if (url) { document.execCommand("createLink", false, url); scheduleContentSave(); }
         } else if (cmd === "code") {
           const sel = window.getSelection();
           const txt = sel.toString();
           document.execCommand("insertHTML", false, "<code>" + esc(txt) + "</code>");
-        } else if (cmd === "mark") {
-          toggleHighlight();
+          scheduleContentSave();
+        } else if (cmd === "hl") {
+          styleSelection("hl", "yellow"); // Schnell-Anstreichen (gelb)
+        } else if (cmd === "color") {
+          openPalette(b.getBoundingClientRect());
         } else {
           document.execCommand(cmd, false, null);
+          scheduleContentSave();
         }
-        scheduleContentSave();
       };
     }, 120);
   }
 
-  // Markieren (Highlight) — umschließt die Auswahl mit <mark> bzw. entfernt es wieder.
-  function toggleHighlight() {
+  // Farb-Popover mit Text- und Hintergrundfarben (Anstreichen)
+  function openPalette(rect) {
+    const pal = $("#nf2Palette");
+    if (!pal) return;
+    const s = window.getSelection();
+    _savedRange = (s && s.rangeCount) ? s.getRangeAt(0).cloneRange() : null;
+    const swatch = (kind, c) => `<button class="nf2-sw nf2-sw-${kind}" data-sw="${kind}:${c.k}" data-c="${c.k}" title="${esc(c.label)}"><span class="nf2-sw-dot">A</span><span class="nf2-sw-lb">${esc(c.label)}</span></button>`;
+    pal.innerHTML = `
+      <div class="nf2-pal-sec">Textfarbe</div>
+      <div class="nf2-pal-row">${NF2_COLORS.map((c) => swatch("fg", c)).join("")}</div>
+      <div class="nf2-pal-sec">Anstreichen</div>
+      <div class="nf2-pal-row">${NF2_COLORS.map((c) => swatch("hl", c)).join("")}</div>`;
+    pal.style.display = "block";
+    let x = rect.left, y = rect.bottom + 6;
+    if (x + 250 > window.innerWidth - 10) x = window.innerWidth - 250 - 10;
+    if (y + pal.offsetHeight > window.innerHeight - 10) y = rect.top - pal.offsetHeight - 6;
+    pal.style.left = Math.max(8, x) + "px";
+    pal.style.top = Math.max(8, y) + "px";
+    pal.onmousedown = (e) => e.preventDefault();
+    pal.onclick = (e) => {
+      const b = e.target.closest("[data-sw]");
+      if (!b) return;
+      const [kind, col] = b.dataset.sw.split(":");
+      if (_savedRange) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(_savedRange); }
+      styleSelection(kind, col === "default" ? null : col);
+      pal.style.display = "none";
+    };
+  }
+
+  // Auswahl mit Farb-/Anstreich-Wrapper versehen (oder entfernen). Robust für
+  // Teilauswahlen: extrahiert den Bereich, entfernt vorhandene gleichartige
+  // Wrapper und packt ihn neu ein.
+  function styleSelection(kind, color) {
     const s = window.getSelection();
     if (!s.rangeCount || s.isCollapsed) return;
     const r = s.getRangeAt(0);
-    const anc = r.commonAncestorContainer;
-    const host = anc.nodeType === 1 ? anc : anc.parentElement;
-    const mark = host && host.closest ? host.closest("mark, .nf2-hl") : null;
-    if (mark && mark.closest(".nf2-bc")) {
-      // bereits markiert → auspacken
-      const parent = mark.parentNode;
-      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-      parent.removeChild(mark);
-      if (parent.normalize) parent.normalize();
-      return;
+    const a = r.commonAncestorContainer;
+    const host = a.nodeType === 1 ? a : a.parentElement;
+    const bc = host && host.closest ? host.closest(".nf2-bc") : null;
+    if (!bc) return;
+    const frag = r.extractContents();
+    const stripSel = kind === "fg" ? "span.nf2-fg" : "mark.nf2-hl";
+    const strip = (root) => {
+      const list = root.querySelectorAll ? root.querySelectorAll(stripSel) : [];
+      Array.from(list).forEach((el) => { const p = el.parentNode; while (el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el); });
+    };
+    strip(frag);
+    let out;
+    if (color) {
+      out = document.createElement(kind === "hl" ? "mark" : "span");
+      out.className = kind === "hl" ? "nf2-hl" : "nf2-fg";
+      out.setAttribute("data-c", color);
+      out.appendChild(frag);
+    } else {
+      out = frag; // "Standard" → nur entpacken
     }
-    const tmp = document.createElement("div");
-    tmp.appendChild(r.cloneContents());
-    document.execCommand("insertHTML", false, '<mark class="nf2-hl">' + tmp.innerHTML + "</mark>");
+    const wrapEl = out.nodeType === 1 ? out : null;
+    r.insertNode(out);
+    if (bc.normalize) bc.normalize();
+    // Auswahl auf den formatierten Bereich zurücksetzen
+    try {
+      const nr = document.createRange();
+      if (wrapEl && wrapEl.parentNode) nr.selectNodeContents(wrapEl);
+      else nr.selectNodeContents(bc);
+      s.removeAllRanges(); s.addRange(nr);
+    } catch (e) {}
+    scheduleContentSave();
   }
 
   // ═══ BACKLINKS ("Erwähnt in / Verknüpft mit") ═════════════════════════════
@@ -111825,6 +112031,7 @@ Dateien zu identifizieren.
   // ═══ NOTIZ-OPERATIONEN ════════════════════════════════════════════════════
   function newNote(nbId, chId) {
     flushSave();
+    S.view = "page";
     const id = uid();
     const now = nowIso();
     notesMap()[id] = {
@@ -112014,8 +112221,8 @@ Dateien zu identifizieren.
 .nf2-hrline hr{border:0;border-top:1px solid var(--n2-line);margin:0}
 .nf2-bc code{font-family:ui-monospace,Menlo,monospace;font-size:.85em;background:var(--n2-hover);border-radius:4px;padding:1px 5px;color:#eb5757}
 .nf2-bc a{color:var(--n2-acc);text-decoration:underline;text-underline-offset:2px}
-.nf2-bc mark,.nf2-bc .nf2-hl{background:rgba(255,208,0,.42);color:inherit;border-radius:3px;padding:0 1px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
-.nf2-host.dark .nf2-bc mark,.nf2-host.dark .nf2-bc .nf2-hl{background:rgba(255,214,64,.30)}
+.nf2-bc mark:not([data-c]),.nf2-bc .nf2-hl:not([data-c]){background:rgba(255,208,0,.42);color:inherit;border-radius:3px;padding:0 1px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.nf2-host.dark .nf2-bc mark:not([data-c]),.nf2-host.dark .nf2-bc .nf2-hl:not([data-c]){background:rgba(255,214,64,.30)}
 .nf2-hlic{display:inline-block;background:rgba(255,208,0,.55);color:#3a2f00;border-radius:2px;padding:0 4px;font-weight:700;font-size:12px}
 .nf2-mention{display:inline-flex;align-items:center;gap:3px;background:var(--n2-hover);border-radius:6px;padding:0 6px;font-size:.92em;color:var(--n2-txt)!important;text-decoration:none!important;cursor:pointer;white-space:nowrap}
 .nf2-mention:hover{background:var(--n2-active)}
@@ -112045,7 +112252,60 @@ Dateien zu identifizieren.
 .nf2-empty-t{font-size:16px;color:var(--n2-txt2)}
 .nf2-btn{border:1px solid var(--n2-line);background:var(--n2-card);color:var(--n2-txt);border-radius:8px;padding:8px 16px;font-size:13.5px;font-weight:600;cursor:pointer}
 .nf2-btn.primary{background:var(--n2-acc);border-color:var(--n2-acc);color:#fff}
-@media(max-width:900px){.nf2-side{position:absolute;z-index:20;height:100%;box-shadow:8px 0 30px var(--n2-sh)}.nf2.side-hidden .nf2-side{margin-left:-262px;box-shadow:none}.nf2-page{padding:24px 20px 30vh}.nf2-gutter{left:-30px}.nf2-title{font-size:32px}}
+/* ── Sidebar-Navigation ── */
+.nf2-nav{padding:6px 6px 2px}
+.nf2-navitem{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--n2-txt2);user-select:none}
+.nf2-navitem:hover{background:var(--n2-hover);color:var(--n2-txt)}
+.nf2-navitem.active{background:var(--n2-active);color:var(--n2-txt)}
+.nf2-navitem .nf2-item-count{margin-left:auto;font-weight:500}
+/* ── Übersicht / Home ── */
+.nf2-page.home{max-width:1080px;padding:32px 40px 20vh}
+.nf2-home-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.nf2-home-h1{font-size:28px;font-weight:700;margin:0;letter-spacing:-.01em}
+.nf2-home-searchwrap{position:relative;margin-bottom:14px}
+.nf2-home-searchic{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:14px;opacity:.6;pointer-events:none}
+.nf2-home-search{width:100%;height:44px;background:var(--n2-side);border:1px solid var(--n2-line);border-radius:10px;color:var(--n2-txt);font-size:15px;padding:0 14px 0 40px;outline:none;transition:border-color .12s}
+.nf2-home-search:focus{border-color:var(--n2-acc)}
+.nf2-home-filters{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:20px}
+.nf2-hfilter{border:1px solid var(--n2-line);background:transparent;color:var(--n2-txt2);border-radius:16px;padding:5px 12px;font-size:13px;font-weight:500;cursor:pointer;transition:all .12s;display:inline-flex;align-items:center;gap:5px}
+.nf2-hfilter:hover{background:var(--n2-hover);color:var(--n2-txt)}
+.nf2-hfilter.active{background:var(--n2-acc);border-color:var(--n2-acc);color:#fff}
+.nf2-hfilter-c{font-size:11px;opacity:.7}
+.nf2-home-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.nf2-card{background:var(--n2-card);border:1px solid var(--n2-line);border-radius:12px;padding:14px 15px;cursor:pointer;display:flex;flex-direction:column;gap:7px;min-height:130px;transition:border-color .12s,box-shadow .15s,transform .08s}
+.nf2-card:hover{border-color:var(--n2-acc);box-shadow:0 6px 22px var(--n2-sh);transform:translateY(-1px)}
+.nf2-card-top{display:flex;align-items:center;justify-content:space-between}
+.nf2-card-ic{font-size:22px}
+.nf2-card-star{color:#f5b301;font-size:13px}
+.nf2-card-title{font-size:15px;font-weight:600;color:var(--n2-txt);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.nf2-card-ex{flex:1;font-size:12.5px;color:var(--n2-txt2);line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.nf2-card-empty{color:var(--n2-txt3);font-style:italic}
+.nf2-card-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--n2-txt3);margin-top:2px}
+.nf2-card-nb{display:inline-flex;align-items:center;gap:3px;background:var(--n2-hover);padding:2px 7px;border-radius:8px;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nf2-card-date{flex-shrink:0}
+.nf2-home-empty{grid-column:1/-1;padding:60px 20px;text-align:center;color:var(--n2-txt3);font-size:14px}
+/* ── Bubble-Erweiterung ── */
+.nf2-bub-sep{width:1px;align-self:stretch;background:var(--n2-line);margin:3px 2px}
+.nf2-bub-car{font-size:8px;margin-left:1px;opacity:.7}
+/* ── Farb-Palette ── */
+.nf2-palette{position:fixed;z-index:2147483300;width:250px;background:var(--n2-card);border:1px solid var(--n2-line);border-radius:10px;box-shadow:0 14px 40px var(--n2-sh);padding:6px}
+.nf2-pal-sec{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--n2-txt3);padding:6px 6px 3px}
+.nf2-pal-row{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-bottom:2px}
+.nf2-sw{display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--n2-txt);border-radius:6px;padding:5px 5px;cursor:pointer;font-size:11.5px;text-align:left;overflow:hidden}
+.nf2-sw:hover{background:var(--n2-hover)}
+.nf2-sw-dot{flex-shrink:0;width:19px;height:19px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:1px solid var(--n2-line)}
+.nf2-sw-lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nf2-sw-fg .nf2-sw-dot{background:var(--n2-side)}
+.nf2-sw-fg[data-c="default"] .nf2-sw-dot,.nf2-sw-hl[data-c="default"] .nf2-sw-dot{color:var(--n2-txt);background:var(--n2-side)}
+/* Text- & Anstreich-Farben (Klassen bleiben themenabhängig) */
+.nf2-fg[data-c="gray"]{color:var(--nf-fg-gray)} .nf2-fg[data-c="red"]{color:var(--nf-fg-red)} .nf2-fg[data-c="orange"]{color:var(--nf-fg-orange)} .nf2-fg[data-c="yellow"]{color:var(--nf-fg-yellow)} .nf2-fg[data-c="green"]{color:var(--nf-fg-green)} .nf2-fg[data-c="blue"]{color:var(--nf-fg-blue)} .nf2-fg[data-c="purple"]{color:var(--nf-fg-purple)} .nf2-fg[data-c="pink"]{color:var(--nf-fg-pink)}
+.nf2-bc mark.nf2-hl[data-c],.nf2-bc .nf2-hl[data-c]{color:inherit;border-radius:3px;padding:0 2px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.nf2-hl[data-c="gray"]{background:var(--nf-hl-gray)} .nf2-hl[data-c="red"]{background:var(--nf-hl-red)} .nf2-hl[data-c="orange"]{background:var(--nf-hl-orange)} .nf2-hl[data-c="yellow"]{background:var(--nf-hl-yellow)} .nf2-hl[data-c="green"]{background:var(--nf-hl-green)} .nf2-hl[data-c="blue"]{background:var(--nf-hl-blue)} .nf2-hl[data-c="purple"]{background:var(--nf-hl-purple)} .nf2-hl[data-c="pink"]{background:var(--nf-hl-pink)}
+.nf2-sw-fg[data-c="gray"] .nf2-sw-dot{color:var(--nf-fg-gray)} .nf2-sw-fg[data-c="red"] .nf2-sw-dot{color:var(--nf-fg-red)} .nf2-sw-fg[data-c="orange"] .nf2-sw-dot{color:var(--nf-fg-orange)} .nf2-sw-fg[data-c="yellow"] .nf2-sw-dot{color:var(--nf-fg-yellow)} .nf2-sw-fg[data-c="green"] .nf2-sw-dot{color:var(--nf-fg-green)} .nf2-sw-fg[data-c="blue"] .nf2-sw-dot{color:var(--nf-fg-blue)} .nf2-sw-fg[data-c="purple"] .nf2-sw-dot{color:var(--nf-fg-purple)} .nf2-sw-fg[data-c="pink"] .nf2-sw-dot{color:var(--nf-fg-pink)}
+.nf2-sw-hl[data-c="gray"] .nf2-sw-dot{background:var(--nf-hl-gray)} .nf2-sw-hl[data-c="red"] .nf2-sw-dot{background:var(--nf-hl-red)} .nf2-sw-hl[data-c="orange"] .nf2-sw-dot{background:var(--nf-hl-orange)} .nf2-sw-hl[data-c="yellow"] .nf2-sw-dot{background:var(--nf-hl-yellow)} .nf2-sw-hl[data-c="green"] .nf2-sw-dot{background:var(--nf-hl-green)} .nf2-sw-hl[data-c="blue"] .nf2-sw-dot{background:var(--nf-hl-blue)} .nf2-sw-hl[data-c="purple"] .nf2-sw-dot{background:var(--nf-hl-purple)} .nf2-sw-hl[data-c="pink"] .nf2-sw-dot{background:var(--nf-hl-pink)}
+.nf2-host.light{--nf-fg-gray:#787066;--nf-fg-red:#e03e3e;--nf-fg-orange:#d9730d;--nf-fg-yellow:#cb912f;--nf-fg-green:#0f7b6c;--nf-fg-blue:#0b6bcb;--nf-fg-purple:#6940a5;--nf-fg-pink:#ad1a72;--nf-hl-gray:#e3e2e0;--nf-hl-red:#ffe2dd;--nf-hl-orange:#fadec9;--nf-hl-yellow:#fdecc8;--nf-hl-green:#dbeddb;--nf-hl-blue:#d3e5ef;--nf-hl-purple:#e8deee;--nf-hl-pink:#f5e0e9}
+.nf2-host.dark{--nf-fg-gray:#9b9b9b;--nf-fg-red:#ff7369;--nf-fg-orange:#ffa344;--nf-fg-yellow:#ffdc49;--nf-fg-green:#4dab9a;--nf-fg-blue:#529cff;--nf-fg-purple:#b18aff;--nf-fg-pink:#ff5eb6;--nf-hl-gray:rgba(255,255,255,.11);--nf-hl-red:rgba(255,115,105,.28);--nf-hl-orange:rgba(255,163,68,.26);--nf-hl-yellow:rgba(255,214,64,.26);--nf-hl-green:rgba(77,171,154,.30);--nf-hl-blue:rgba(82,156,255,.28);--nf-hl-purple:rgba(177,138,255,.30);--nf-hl-pink:rgba(255,94,182,.26)}
+@media(max-width:900px){.nf2-side{position:absolute;z-index:20;height:100%;box-shadow:8px 0 30px var(--n2-sh)}.nf2.side-hidden .nf2-side{margin-left:-262px;box-shadow:none}.nf2-page{padding:24px 20px 30vh}.nf2-page.home{padding:20px 16px 20vh}.nf2-gutter{left:-30px}.nf2-title{font-size:32px}.nf2-home-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}
 `;
     document.head.appendChild(st);
   }
