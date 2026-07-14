@@ -119,3 +119,75 @@ Sand `#C9A96E`.
 - 2026-07-14 · Discovery abgeschlossen (Firebase, Rules, RecallLab-Schema, n8n
   Host/Anthropic/Gotenberg/typeVersions). RTDB-Egress geblockt → Self-Seed-Ansatz
   gewaehlt. Werte oben festgehalten.
+- 2026-07-14 · App-Modul gebaut: Nav-Eintrag + Route `smarter`, vier Views
+  (Heute/Upload/Warteschlange/Einstellungen), Single-File/IIFE, data-action.
+  config wird idempotent selbst geseedet & read-back-verifiziert. Smoketest
+  (headless Chromium): 0 uncaught JS-Errors, alle vier Views schalten um, Upload
+  feuert gegen leere ingestWebhookUrl ohne Fehler. Zwei Commits.
+- 2026-07-14 · Adversarialer Code-Review (4 Lenses, verifiziert): 6 bestaetigte
+  Findings behoben — Offline-Erststart-Skeleton (high), Warteschlange-Reorder bei
+  doppelten order-Werten (med), Reveal-Reset bei Hintergrund-Reload (med),
+  Datumsschluessel nutzt jetzt config.timezone (med), config-Read-back prueft alle
+  5 Keys (low), Offline-loadedAt (low). 1 Finding (null in questions[]) als
+  REFUTED verworfen (RTDB speichert keine null-Array-Elemente). Re-Smoketest
+  12/12 inkl. passivem Offline-Erststart; Reorder per Unit-Test gegen
+  doppelte/fehlende order. Branch gepusht.
+- 2026-07-14 · Deploy: Branch `claude/quantus-smarter-module-wkv4xt` gepusht
+  (Netlify baut daraus die Branch-Preview). Produktions-Deploy = Merge nach
+  `main` — bewusst dem Nutzer ueberlassen (kein eigenmaechtiger Merge/PR).
+
+---
+
+## 4 · Handoff-Prompt für Claude im Browser (n8n)
+Der folgende Prompt ist mit allen real entdeckten Werten ausgefuellt (keine
+Platzhalter ausser den drei OFFENEN Punkten, die nachweislich nicht im Repo
+stehen und in n8n selbst zu holen sind).
+
+--- PROMPT FÜR CLAUDE IM BROWSER (n8n) ---
+Rolle: Du baust den kompletten n8n-Teil des Quantus-Moduls „Smarter". Der App-Teil ist fertig, getestet und deployed (Single-File `public/index.html`, Modul-Route `#/smarter`, vier Views). Halte dich EXAKT an die unten gelieferten realen Werte. Nicht nachfragen, sinnvolle Defaults waehlen und notieren, nie „geht nicht" ohne Alternative. Sehr haeufig ins Quantus Logbuch loggen, eigener Session-Tag.
+
+## Umgebung (real ausgelesen)
+- n8n-Host: `https://n8n.srv1757990.hstgr.cloud`
+  - REST-API-Basis: `https://n8n.srv1757990.hstgr.cloud/api/v1/` (Header `X-N8N-API-KEY: <n8n-API-Key>` — OFFEN, im UI unter Settings → n8n API erzeugen/holen)
+  - Webhook-Basis (Production): `https://n8n.srv1757990.hstgr.cloud/webhook/<pfad>`
+- Anthropic-Credential: WIEDERVERWENDEN, keine neue anlegen. Typ `httpHeaderAuth`, Name exakt „Anthropic API-Key (Header x-api-key)", Header-Name `x-api-key`. Interne Credential-ID = OFFEN (steht nicht im Repo) → in n8n per diesem Namen auswaehlen. Aufruf: `n8n-nodes-base.httpRequest` v4.2 → `POST https://api.anthropic.com/v1/messages`, zusaetzlicher Header `anthropic-version: 2023-06-01`, Body `{ model, max_tokens, system, messages:[{role:'user',content}] }`. Modell: `claude-sonnet-5` (auf dieser Instanz bereits produktiv genutzt; alternativ `claude-sonnet-4-6`).
+- Gotenberg-Aufrufmuster: Es existiert bereits ein fertiger n8n→Gotenberg-Webhook — WIEDERVERWENDEN:
+  `POST https://n8n.srv1757990.hstgr.cloud/webhook/quantus-doc-pdf`, Body `{ html, filename }`, Antwort = PDF-Blob (`application/pdf`). Das PDF danach nach Firebase Storage (Bucket `jupidu-36804.firebasestorage.app`) hochladen und die Download-URL als `pdfUrl` speichern. Direkte Gotenberg-Endpoint-URL (`/forms/chromium/convert/html`) = OFFEN → falls du direkt rendern willst, oeffne den Workflow hinter `quantus-doc-pdf` und kopiere dessen Gotenberg-Node.
+- Workflow-Node-Vorlage (Typen + typeVersions, alle im Repo unter `n8n/`):
+  `n8n-nodes-base.webhook` v2, `n8n-nodes-base.scheduleTrigger` v1.2, `n8n-nodes-base.httpRequest` v4.2, `n8n-nodes-base.code` v2, `n8n-nodes-base.if` v2, `n8n-nodes-base.respondToWebhook` v1.1, `n8n-nodes-base.stickyNote` v1.
+  Beste Vorlagen: `n8n/nobraine-weekly-planner.workflow.json` (scheduleTrigger + Anthropic-httpRequest + RTDB-Multi-Path-Update via PATCH) und `n8n/polaris-webhooks.json` (webhook + code + httpRequest + respondToWebhook).
+- Firebase RTDB `jupidu-36804`, REST-Basis: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`. `smarter/*` faellt unter die offene Regel `$andere` (`.read/.write:true`) ⇒ RTDB-Schreiben via plain `httpRequest` OHNE Credential:
+  - GET `…/smarter/config.json`, PATCH `…/smarter/config.json`
+  - GET `…/smarter/queue.json`, PATCH/PUT `…/smarter/queue/<unitId>.json`
+  - PUT `…/smarter/documents/<yyyy-mm-dd>.json`
+
+## Datenvertrag (exakt einhalten)
+- `smarter/config` = `{ dailyMinutes:30, targetWords:2800, scheduleTime:"04:00", timezone:"Europe/Zurich", ingestWebhookUrl }`. (Die App seedet diese config bereits selbst; du liest sie und schreibst NUR `ingestWebhookUrl` hinein.)
+- `smarter/queue/<unitId>` = `{ sourceId, order, title, content, estMinutes, status:"pending"|"delivered"|"split" }`.
+- `smarter/documents/<yyyy-mm-dd>` = `{ unitIds:[…], theoryHtml:"<html>", questions:[{ q, a }], pdfUrl:"…", done:false }`.
+  - `<yyyy-mm-dd>` = lokales Datum in `config.timezone` (Default `Europe/Zurich`) — die App bildet den Schluessel mit exakt dieser Zeitzone, also identisch nummerieren. `questions` = Array von Objekten `{ q:Frage, a:Antwort }` (aus der Theorie beantwortbar). Die App rendert genau dieses Schema (Frage + „Antwort zeigen").
+- Upload-Vertrag: Der Ingest-Webhook empfaengt `{ filename, type:"html"|"pdf", base64 }` und MUSS mit `{ ok:true, units:<int> }` antworten (die App wertet genau das aus).
+- Flashcards: NICHT unter `smarter/`, sondern ins bestehende RecallLab-Schema. Exakte Feldnamen:
+  - Speicherort in RTDB: `cloud-sync/app-data.json` → Feld `recallLabData.cards[]` (das ist der Cloud-Spiegel des RecallLab; die App mergt beim Laden per Karten-ID als Union, neue Karten mit eigener `id` bleiben erhalten — verifiziert).
+  - Vorgehen: GET `…/cloud-sync/app-data.json.json` → falls vorhanden, an `recallLabData.cards` anhaengen; `recallLabData.meta`/Top-`meta.updatedAt` = jetzt (ISO), damit die App den Stand als neuer erkennt → PUT zurueck. (Falls `cloud-sync/app-data.json` noch nicht existiert: die App legt ihn beim ersten Cloud-Save an — dann Karten beim naechsten Lauf anhaengen; alternativ Netlify-Blob `app-data.json`.)
+  - Karten-Objekt (exakt): `{ id:<uuid>, deckId:"deck_general", front:<Frage>, back:<Antwort>, reversible:true, cardType:"basic", createdAt:<ms>, srs:{ ease:2.5, intervalDays:1, repetitions:1, nextReview:<morgen-00:00-ms>, phase:"review", step:0, lapses:0 } }`.
+  - `front`=Vorderseite, `back`=Rueckseite. Es gibt KEIN Feld `dueDate` — die Faelligkeit ist `srs.nextReview` (Unix-ms). „dueDate = morgen" ⇒ `srs.nextReview` = morgen 00:00 in ms.
+  - Deck `deck_general` („📋 Allgemein") existiert bereits. Optional eigenes Deck `deck_smarter` in `recallLabData.decks[]` anlegen: `{ id:"deck_smarter", name:"🎓 Smarter", description:"Automatisch aus Smarter-Lernstoff", createdAt:<ms>, newCardsPerDay:20 }`.
+  - SELBSTTEST Flashcards: eine Testkarte schreiben, die App laden, pruefen dass sie in RecallLab (Deck) auftaucht. Falls der Cloud-Spiegel-Pfad nicht durchschlaegt: als Fallback in den Netlify-Blob `app-data.json` (`recallLabData.cards`) schreiben.
+
+## Baue, aktiviere, teste selbst
+1) `smarter-ingest` (Webhook, empfohlener Pfad `smarter-ingest` ⇒ URL `https://n8n.srv1757990.hstgr.cloud/webhook/smarter-ingest`):
+   Body `{filename,type,base64}` → Text extrahieren (PDF: Gotenberg/pdf-Extraktion oder ein PDF-Text-Node; HTML: Tags strippen) → Zeichenanzahl > 0 pruefen, sonst Fehler `{ok:false}` + Log. → Anthropic splittet VERLUSTFREI in Units von ~`targetWords` Woertern (NUR schneiden, nie zusammenfassen/kuerzen, `order` fortlaufend erhalten) → jede Unit als `pending` nach `smarter/queue/<unitId>` (`{sourceId, order, title, content, estMinutes, status:"pending"}`; `estMinutes` = ceil(Woerter/200)). Antwort `{ ok:true, units:<int> }`.
+2) `smarter-daily` (`scheduleTrigger` v1.2, taeglich, `timezone:"Europe/Zurich"` explizit im Node, Zeit aus `config.scheduleTime`, Default 04:00):
+   `smarter/config` lesen → offene Units (`status=="pending"`) nach `order` akkumulieren bis ~`dailyMinutes` (kleine kombinieren; ist eine Unit zu gross, splitten und den Rest als neue `pending`-Unit mit erhaltener `order` zuruecklegen) → Anthropic erzeugt aus den kombinierten Units: `theoryHtml` + `questions:[{q,a}]` (aus der Theorie beantwortbar) + Flashcards → `quantus-doc-pdf`-Webhook rendert PDF, Upload nach Firebase Storage → `smarter/documents/<yyyy-mm-dd>` schreiben (`{unitIds, theoryHtml, questions, pdfUrl, done:false}`), verwendete Units auf `status:"delivered"`, Flashcards ins RecallLab-Schema (siehe oben) mit `srs.nextReview` = morgen.
+3) Beide Workflows aktivieren; je eine Test-Execution auf `success` pruefen. Bei `smarter-daily` verifizieren: naechste Laufzeit == 04:00 `Europe/Zurich`.
+4) `ingestWebhookUrl` in `smarter/config` schreiben: PATCH `…/smarter/config.json` mit `{ "ingestWebhookUrl":"https://n8n.srv1757990.hstgr.cloud/webhook/smarter-ingest" }`. (Danach zeigt die App im Upload-Tab keine „fehlt noch"-Meldung mehr und der Upload feuert real.)
+
+## NO-LOSS-SELBSTTEST
+8000-Woerter-Text durch `smarter-ingest`, drei `smarter-daily`-Laeufe simulieren. Nachweis: ALLE Units `delivered` UND Summe der Zeichen aller Units == Ausgangszeichen (kein Zeichenverlust; Split darf nur schneiden). Bei Abweichung fixen.
+
+## OFFENE WERTE aus Discovery
+1. Anthropic-Credential-ID (n8n-intern) — nur als Platzhalter im Repo; per Credential-Namen „Anthropic API-Key (Header x-api-key)" wiederverwenden.
+2. Direkte Gotenberg-Endpoint-URL — nicht im Repo; Alternative = bestehender Webhook `…/webhook/quantus-doc-pdf` (`{html,filename}` → PDF-Blob).
+3. n8n-API-Key (`X-N8N-API-KEY`) fuer die REST-API — nicht im Repo; im n8n-UI erzeugen.
+--- ENDE ---
