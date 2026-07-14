@@ -104,5 +104,21 @@ nötig, da alles im bestehenden Daten-Blob mitreist.
 `N` neu · `Enter` bearbeiten · `Entf`/`Backspace` löschen ·
 `Ctrl/Cmd+D` duplizieren · `Ctrl/Cmd+Z` / `+Shift` undo/redo ·
 `Ctrl/Cmd+A` alles auswählen · `Ctrl/Cmd+C/X/V` kopieren/ausschneiden/einfügen ·
-Pfeiltasten nudge (`+Shift` = Grid-Schritt) · `Esc` Bearbeiten/Auswahl beenden
-bzw. Board schliessen.
+`Esc` Bearbeiten/Auswahl beenden bzw. Board schliessen.
+
+### Mausfreie Bedienung
+
+Das Board ist komplett ohne Maus nutzbar. Beim Öffnen erhält die Fläche
+automatisch den Fokus. Es gibt zwei Modi:
+
+- **Navigations-Modus** (keine Notiz gewählt): Pfeiltasten **schwenken** die
+  Fläche (`+Shift` = grosser Schritt), `+`/`−` **zoomen**, `0` = 100 %,
+  `F` = **alles einpassen**, `Tab` wählt die erste Notiz.
+- **Notiz-Modus** (eine Notiz gewählt): `Tab` / `Shift+Tab` springt zur
+  **nächsten/vorherigen** Notiz (räumliche Lesereihenfolge) und holt sie mittig
+  in die Ansicht; Pfeiltasten **verschieben** die Notiz (`+Shift` = Grid-Schritt);
+  einfach **lostippen** beschriftet, `Enter` öffnet den Editor, `Entf` löscht.
+
+`Tab` am Anfang/Ende der Notizliste gibt den Fokus zurück an die Toolbar
+(Buttons sind nativ per `Tab` erreichbar und mit `Enter`/`Leertaste` auslösbar) —
+so entsteht kein Focus-Trap auf der Fläche.

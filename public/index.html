@@ -107770,6 +107770,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     // Falls leer: sanft eine Willkommens-Note anbieten (nicht automatisch anlegen)
     fitToContent(true);
     renderAll();
+    // Fokus auf die Flaeche, damit das Board sofort ohne Maus bedienbar ist.
+    setTimeout(() => { const cv = canvasEl(); if (cv) cv.focus(); }, 30);
   };
 
   function closeBoard() {
@@ -108383,7 +108385,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const el = document.getElementById("sbHint");
     if (!el) return;
     if (!B.board.notes.length) {
-      el.innerHTML = `Doppelklick oder <b>＋ Post-it</b> · <b>N</b> neu · Notiz wählen &amp; <b>tippen</b> zum Beschriften · von den <b>Rändern ziehen</b> verbindet (auf leere Fläche = neues verbundenes Post-it) · Mausrad = Zoom`;
+      el.innerHTML = `Doppelklick oder <b>＋ Post-it</b> · <b>N</b> neu · <b>Tab</b> wählt Notizen · Notiz wählen &amp; <b>tippen</b> zum Beschriften · von den <b>Rändern ziehen</b> verbindet (auf leere Fläche = neues verbundenes Post-it) · Mausrad / <b>+ −</b> = Zoom`;
       el.style.display = "block";
     } else if (B.tool === "draw") {
       el.innerHTML = B.eraser ? `🧽 <b>Radierer</b>: Striche antippen oder überfahren zum Löschen. <b>Esc</b> beendet.` : `✏️ <b>Zeichnen</b>: Mit Stift oder Finger malen. Zwei Finger = Verschieben &amp; Zoom. <b>Esc</b> beendet.`;
@@ -109354,6 +109356,38 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   }
 
   // ════════════════════════════ TASTATUR ═══════════════════════════════════
+  // Notizen in Lesereihenfolge (oben-links -> unten-rechts) fuer Tab-Navigation.
+  function orderedNotes() {
+    return B.board.notes.slice().sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  }
+  // Schwenkt (ohne Zoom-Aenderung) so, dass die Notiz mittig in der Flaeche liegt.
+  function centerOnNote(n) {
+    const cv = canvasEl(); if (!cv || !n) return;
+    const rect = cv.getBoundingClientRect();
+    const nw = n.w || NOTE_W, nh = n.h || NOTE_H;
+    B.view.x = rect.width / 2 - (n.x + nw / 2) * B.view.zoom;
+    B.view.y = rect.height / 2 - (n.y + nh / 2) * B.view.zoom;
+    updateTransform(); persistSoon();
+  }
+  // Waehlt genau eine Notiz per Tastatur und holt sie in die Ansicht.
+  function keyboardSelect(id) {
+    B.sel = new Set([id]); renderNotes(); centerOnNote(noteById(id));
+  }
+  // Tab/Shift+Tab: zur naechsten/vorherigen Notiz; am Rand zurueck in die Toolbar
+  // (bewusst kein Focus-Trap auf der Flaeche).
+  function cycleSelection(backwards) {
+    const ids = orderedNotes().map((n) => n.id);
+    if (!ids.length) return;
+    const cur = B.sel.size === 1 ? ids.indexOf([...B.sel][0]) : -1;
+    const next = cur === -1 ? (backwards ? ids.length - 1 : 0) : (backwards ? cur - 1 : cur + 1);
+    if (next < 0 || next >= ids.length) {
+      B.sel = new Set(); renderNotes();
+      const tb = document.querySelector(".sb-topbar .sb-btn");
+      if (tb) tb.focus();
+      return;
+    }
+    keyboardSelect(ids[next]);
+  }
   function onKeyDown(e) {
     if (!B.mounted) return;
     if (B.editingId) return; // Text-Editor hat eigene Handler
@@ -109369,6 +109403,31 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       closeBoard(); e.preventDefault(); return;
     }
     if (inField) return;
+
+    // ── Tab / Shift+Tab: Auswahl durch die Notizen bewegen (mausfrei). Auf
+    //    Buttons/Links laeuft Tab normal weiter (kein Focus-Trap). ──
+    if (e.key === "Tab") {
+      const inControl = tgt && tgt.closest && tgt.closest("button,input,select,textarea,a,[contenteditable]");
+      if (!inControl && B.board.notes.length) { e.preventDefault(); cycleSelection(e.shiftKey); return; }
+    }
+
+    // ── Navigations-Modus (keine Notiz gewaehlt): Flaeche schwenken, zoomen,
+    //    einpassen — alles per Tastatur. ──
+    if (!B.sel.size && !mod && !e.altKey) {
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+        const step = e.shiftKey ? 200 : 60;
+        if (e.key === "ArrowLeft") B.view.x += step;
+        else if (e.key === "ArrowRight") B.view.x -= step;
+        else if (e.key === "ArrowUp") B.view.y += step;
+        else B.view.y -= step;
+        updateTransform(); persistSoon(); return;
+      }
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomBy(1.2); return; }
+      if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomBy(1 / 1.2); return; }
+      if (e.key === "0") { e.preventDefault(); B.view.zoom = 1; updateTransform(); persistSoon(); return; }
+      if (e.key === "f" || e.key === "F") { e.preventDefault(); fitToContent(false); return; }
+    }
 
     if (e.key === " ") { B.spaceDown = true; canvasEl().classList.add("space"); }
     if (mod && (e.key === "z" || e.key === "Z")) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
