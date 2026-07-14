@@ -15863,6 +15863,7 @@ const SMARTER = {
   configVerified: false,
   queue: {},
   today: null,
+  dayKey: null,
   error: null,
   revealed: new Set(),
   pendingUpload: null,
@@ -15874,13 +15875,15 @@ function smarterRootRef() {
   try { return (typeof rtdbDbRef === "function") ? rtdbDbRef("smarter") : null; } catch(e) { return null; }
 }
 function smarterTodayKey() {
-  // yyyy-mm-dd in Europe/Zurich (en-CA liefert ISO-Datum)
-  try { return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date()); }
-  catch(e) { return new Date().toISOString().slice(0, 10); }
-}
-function smarterTomorrowMs() {
-  // morgen 00:00 (ms) — als Referenz für Flashcards (srs.nextReview) im Handoff
-  const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() + 24 * 60 * 60 * 1000;
+  // yyyy-mm-dd in der konfigurierten Zeitzone (Default Europe/Zurich, gleiche
+  // TZ wie n8n) — en-CA liefert ISO-Datum. So stimmen App- und n8n-Datumsschlüssel
+  // auch bei geänderter config.timezone überein.
+  const tz = (SMARTER.config && SMARTER.config.timezone) || "Europe/Zurich";
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date()); }
+  catch (e) {
+    try { return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date()); }
+    catch (e2) { return new Date().toISOString().slice(0, 10); }
+  }
 }
 function smarterQueueUnits() {
   const q = SMARTER.queue || {};
@@ -15907,7 +15910,8 @@ async function smarterEnsureConfig(db) {
       rb.dailyMinutes === SMARTER_DEFAULT_CONFIG.dailyMinutes &&
       rb.targetWords === SMARTER_DEFAULT_CONFIG.targetWords &&
       rb.scheduleTime === SMARTER_DEFAULT_CONFIG.scheduleTime &&
-      rb.timezone === SMARTER_DEFAULT_CONFIG.timezone);
+      rb.timezone === SMARTER_DEFAULT_CONFIG.timezone &&
+      rb.ingestWebhookUrl === SMARTER_DEFAULT_CONFIG.ingestWebhookUrl);
     if (SMARTER.configVerified) console.log("🎓 Smarter: config geseedet & verifiziert");
     return;
   }
@@ -15920,19 +15924,30 @@ async function smarterEnsureConfig(db) {
 async function smarterLoad() {
   if (SMARTER.loading) return;
   const db = smarterRootRef();
-  if (!db) { SMARTER.noFirebase = true; SMARTER.loaded = true; return; }
+  if (!db) {
+    // Offline: Skeleton durch die Offline-Ansicht ersetzen (render) und als frisch
+    // markieren (loadedAt), sonst bleibt der Erststart auf dem Ladescreen hängen
+    // und jeder Re-Render plant eine überflüssige Nachladung.
+    SMARTER.noFirebase = true; SMARTER.loaded = true; SMARTER.loadedAt = Date.now();
+    render();
+    return;
+  }
   SMARTER.loading = true; SMARTER.noFirebase = false; SMARTER.error = null;
   try {
     await smarterEnsureConfig(db);
+    // config zuerst laden, damit smarterTodayKey die konfigurierte Zeitzone kennt
+    const cfgSnap = await db.child("config").once("value");
+    SMARTER.config = cfgSnap.val() || Object.assign({}, SMARTER_DEFAULT_CONFIG);
+    const dayKey = smarterTodayKey();
+    // Reveal-Status nur bei echtem Tageswechsel zurücksetzen — Hintergrund-Reloads
+    // am selben Tag dürfen bereits aufgedeckte Antworten nicht wieder einklappen.
+    if (dayKey !== SMARTER.dayKey) { SMARTER.revealed = new Set(); SMARTER.dayKey = dayKey; }
     const results = await Promise.all([
-      db.child("config").once("value"),
       db.child("queue").once("value"),
-      db.child("documents/" + smarterTodayKey()).once("value")
+      db.child("documents/" + dayKey).once("value")
     ]);
-    SMARTER.config = results[0].val() || Object.assign({}, SMARTER_DEFAULT_CONFIG);
-    SMARTER.queue = results[1].val() || {};
-    SMARTER.today = results[2].val() || null;
-    SMARTER.revealed = new Set();
+    SMARTER.queue = results[0].val() || {};
+    SMARTER.today = results[1].val() || null;
   } catch (e) {
     SMARTER.error = (e && e.message) || String(e);
     console.warn("Smarter load:", e);
@@ -16265,17 +16280,19 @@ async function smarterQueueMove(id, dir) {
   if (idx < 0) return;
   const swapWith = dir === "up" ? idx - 1 : idx + 1;
   if (swapWith < 0 || swapWith >= pending.length) return;
-  const a = pending[idx], b = pending[swapWith];
   const db = smarterRootRef();
-  if (!db) return;
-  const aOrder = Number(a.order) || 0, bOrder = Number(b.order) || 0;
+  if (!db) { if (typeof toast === "function") toast("warn", "Smarter", "Cloud nicht verbunden"); return; }
+  // Positionstausch + lückenlose Neu-Nummerierung. Robust gegen doppelte oder
+  // fehlende order-Werte (z. B. wenn n8n je Upload ab 0 nummeriert): ein reiner
+  // Werte-Tausch wäre bei gleichen order-Werten ein No-Op.
+  const tmp = pending[idx]; pending[idx] = pending[swapWith]; pending[swapWith] = tmp;
   try {
     const upd = {};
-    upd[a._id + "/order"] = bOrder;
-    upd[b._id + "/order"] = aOrder;
+    pending.forEach(function(u, k) {
+      upd[u._id + "/order"] = k;
+      if (SMARTER.queue[u._id]) SMARTER.queue[u._id].order = k;
+    });
     await db.child("queue").update(upd);
-    if (SMARTER.queue[a._id]) SMARTER.queue[a._id].order = bOrder;
-    if (SMARTER.queue[b._id]) SMARTER.queue[b._id].order = aOrder;
     render();
   } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Reihenfolge nicht gespeichert"); }
 }
