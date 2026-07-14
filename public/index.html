@@ -110350,8 +110350,10 @@ Dateien zu identifizieren.
     if (!spec) return base;
     return base + "\n\n---\n\n## Spezifikation (aktueller Auftrag)\n" + spec;
   }
-  function qppLog(qd, text, tag){
-    qd.log.unshift({ ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim(), tag: String(tag || "").trim() });
+  function qppLog(qd, text, tag, full){
+    var entry = { ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim(), tag: String(tag || "").trim() };
+    if (full != null && String(full).trim()) entry.full = String(full);
+    qd.log.unshift(entry);
     if (qd.log.length > 500) qd.log.length = 500;
   }
   window.qppSet = function(pid, field, val){ var qd = qppState(pid); if (!qd) return; if (field === "base") qd.basePrompt = val; else qd.spec = val; scheduleSave(); };
@@ -110391,10 +110393,14 @@ Dateien zu identifizieren.
       ? qd.log.slice(0, 60).map(function(entry, i){
           var tg = (entry.tag || "").trim();
           var tagChip = tg ? '<span style="flex:none;align-self:center;background:var(--accent-soft);color:var(--accent);font-size:10.5px;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap">' + e(tg) + '</span>' : '';
+          var hasFull = !!(entry.full && String(entry.full).trim());
+          var textCell = hasFull
+            ? '<div class="qpp-log-full-link" data-action="qpp-log-showfull" data-pid="' + e(id) + '" data-idx="' + i + '" title="Vollständigen Prompt anzeigen" style="flex:1;min-width:0;white-space:pre-wrap;cursor:pointer">' + e(entry.text) + ' <span class="text-muted mini" style="white-space:nowrap">📄 ganzer Prompt</span></div>'
+            : '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>';
           return '<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
             + '<div class="text-muted mini" style="flex:none;width:104px;font-variant-numeric:tabular-nums">' + e(fmtTs(entry.ts)) + '</div>'
             + tagChip
-            + '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>'
+            + textCell
             + '<button class="btn sm ghost" title="Eintrag löschen" data-action="qpp-log-del" data-pid="' + e(id) + '" data-idx="' + i + '" style="flex:none">✕</button>'
             + '</div>';
         }).join("")
@@ -110515,8 +110521,15 @@ Dateien zu identifizieren.
       if (!isNaN(idx) && idx >= 0 && idx < qp.log.length){ qp.log.splice(idx, 1); scheduleSave(); render(); }
       return;
     }
+    if (action === "qpp-log-copyfull"){
+      ev.preventDefault();
+      var cf = window._qppLastFullPrompt || "";
+      if (!cf){ toast("warn", "Leer", "Kein Prompt zum Kopieren"); return; }
+      qpCopy(cf); toast("ok", "Kopiert", "Vollständiger Prompt in der Zwischenablage");
+      return;
+    }
     // ── Projekt-gebundenes Cockpit (PRJ-UCHWW) ──
-    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-log-copytag" || action === "qpp-add-idea"){
+    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-log-copytag" || action === "qpp-add-idea" || action === "qpp-log-showfull"){
       ev.preventDefault();
       var pid = el.dataset.pid;
       var p = pid && APP.state.data.entities.projects ? APP.state.data.entities.projects[pid] : null;
@@ -110524,9 +110537,10 @@ Dateien zu identifizieren.
       if (!p || !qd){ toast("err", "Projekt fehlt", "Projekt nicht gefunden"); return; }
 
       if (action === "qpp-copy-all"){
-        qpCopy(qppComposed(qd)).then(function(){
+        var qppFull = qppComposed(qd);
+        qpCopy(qppFull).then(function(){
           var spec = (qd.spec || "").trim();
-          qppLog(qd, "Arbeitsauftrag kopiert" + (spec ? " — " + spec.split("\n")[0].slice(0, 80) : " (nur Grundprompt)"));
+          qppLog(qd, "Arbeitsauftrag kopiert" + (spec ? " — " + spec.split("\n")[0].slice(0, 80) : " (nur Grundprompt)"), "", qppFull);
           scheduleSave();
           toast("ok", "Kopiert", "Grundprompt + Spezifikation in der Zwischenablage");
           render();
@@ -110553,6 +110567,23 @@ Dateien zu identifizieren.
           + centries.map(function(en){ return "[" + cfmt(en.ts) + "] " + (en.text || ""); }).join("\n");
         qpCopy(ctxt);
         toast("ok", "Kopiert", centries.length + " Eintrag/Eintraege mit Tag: " + ctag);
+        return;
+      }
+      if (action === "qpp-log-showfull"){
+        var sidx = parseInt(el.dataset.idx, 10);
+        var sEntry = (!isNaN(sidx) && sidx >= 0 && sidx < qd.log.length) ? qd.log[sidx] : null;
+        var sFull = sEntry && sEntry.full ? String(sEntry.full) : "";
+        if (!sFull){ toast("warn", "Kein Prompt", "Für diesen Eintrag ist kein vollständiger Prompt gespeichert"); return; }
+        var eEsc = (typeof esc === "function") ? esc : function(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[c]; }); };
+        var sfWhen = (function(iso){ try { return new Date(iso).toLocaleString("de-CH", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }); } catch(x){ return iso || ""; } })(sEntry.ts);
+        if (typeof window.openModal === "function"){
+          window._qppLastFullPrompt = sFull;
+          var sfBody = '<div class="text-muted mini" style="margin-bottom:8px">Kopiert am ' + eEsc(sfWhen) + ' · ' + sFull.length + ' Zeichen</div>'
+            + '<textarea readonly style="width:100%;min-height:420px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5" onclick="this.select()">' + eEsc(sFull) + '</textarea>';
+          var sfFooter = '<button class="btn primary" data-action="qpp-log-copyfull">📋 Prompt kopieren</button>'
+            + '<button class="btn" data-action="close-modal" onclick="if(window.closeModal)window.closeModal()">Schließen</button>';
+          window.openModal("📄 Kopierter Prompt", sfBody, sfFooter);
+        }
         return;
       }
       if (action === "qpp-log-del"){
