@@ -8652,7 +8652,7 @@ const ROUTE_DEFS = [
   {key:"programs", icon:"🧩"}, {key:"organizations", icon:"🏛️"}, {key:"time", icon:"⏱️"},
   {key:"statistics", icon:"📊"}, {key:"reports", icon:"🤖"}, {key:"reflecta", icon:"🪞"},
   {key:"decisions", icon:"⚖️"}, {key:"journal", icon:"✍️"},
-  {key:"quantusproject", icon:"🛠️"},
+  {key:"quantusproject", icon:"🛠️"}, {key:"smarter", icon:"🎓"},
 ];
 function getRoutes() {
   return ROUTE_DEFS.map(r => ({...r, label: t(r.key), hash: "#/" + r.key}));
@@ -15839,6 +15839,497 @@ function viewDrive() {
       style="width:100%;height:calc(100vh - 110px);min-height:520px;border:1px solid var(--border,#333);border-radius:12px;background:#efebe2;display:block"></iframe>`;
 }
 
+// ============================================================================
+// SMARTER — täglicher Lernstoff (Heute / Upload / Warteschlange / Einstellungen)
+// Datenvertrag: alles unter smarter/ (sources, queue, documents, config).
+// config = {dailyMinutes:30, targetWords:2800, scheduleTime:"04:00",
+//           timezone:"Europe/Zurich", ingestWebhookUrl}. Seeding idempotent
+// durch die App (RTDB ist nur im Browser des Nutzers erreichbar).
+// ============================================================================
+const SMARTER_DEFAULT_CONFIG = {
+  dailyMinutes: 30,
+  targetWords: 2800,
+  scheduleTime: "04:00",
+  timezone: "Europe/Zurich",
+  ingestWebhookUrl: ""
+};
+const SMARTER = {
+  tab: "today",
+  loaded: false,
+  loading: false,
+  loadedAt: 0,
+  noFirebase: false,
+  config: null,
+  configVerified: false,
+  queue: {},
+  today: null,
+  error: null,
+  revealed: new Set(),
+  pendingUpload: null,
+  uploading: false
+};
+
+function smarterRootRef() {
+  // rtdbDbRef liefert bei fehlendem Firebase-SDK null → nie werfen.
+  try { return (typeof rtdbDbRef === "function") ? rtdbDbRef("smarter") : null; } catch(e) { return null; }
+}
+function smarterTodayKey() {
+  // yyyy-mm-dd in Europe/Zurich (en-CA liefert ISO-Datum)
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date()); }
+  catch(e) { return new Date().toISOString().slice(0, 10); }
+}
+function smarterTomorrowMs() {
+  // morgen 00:00 (ms) — als Referenz für Flashcards (srs.nextReview) im Handoff
+  const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() + 24 * 60 * 60 * 1000;
+}
+function smarterQueueUnits() {
+  const q = SMARTER.queue || {};
+  return Object.keys(q).map(function(id) { return Object.assign({ _id: id }, q[id] || {}); });
+}
+function smarterPendingUnits() {
+  return smarterQueueUnits()
+    .filter(function(u) { return (u.status || "pending") === "pending"; })
+    .sort(function(a, b) { return (Number(a.order) || 0) - (Number(b.order) || 0); });
+}
+function smarterRemainingMinutes() {
+  return smarterPendingUnits().reduce(function(sum, u) { return sum + (Number(u.estMinutes) || 0); }, 0);
+}
+
+async function smarterEnsureConfig(db) {
+  // Idempotentes Seeding: fehlt config komplett → Defaults schreiben + verifizieren.
+  // Existiert config → nur fehlende Keys ergänzen (nie bestehende Werte überschreiben).
+  const snap = await db.child("config").once("value");
+  const cur = snap.val();
+  if (!cur || typeof cur !== "object") {
+    await db.child("config").set(SMARTER_DEFAULT_CONFIG);
+    const rb = (await db.child("config").once("value")).val();
+    SMARTER.configVerified = !!(rb &&
+      rb.dailyMinutes === SMARTER_DEFAULT_CONFIG.dailyMinutes &&
+      rb.targetWords === SMARTER_DEFAULT_CONFIG.targetWords &&
+      rb.scheduleTime === SMARTER_DEFAULT_CONFIG.scheduleTime &&
+      rb.timezone === SMARTER_DEFAULT_CONFIG.timezone);
+    if (SMARTER.configVerified) console.log("🎓 Smarter: config geseedet & verifiziert");
+    return;
+  }
+  const patch = {};
+  for (const k in SMARTER_DEFAULT_CONFIG) if (cur[k] === undefined) patch[k] = SMARTER_DEFAULT_CONFIG[k];
+  if (Object.keys(patch).length) await db.child("config").update(patch);
+  SMARTER.configVerified = true;
+}
+
+async function smarterLoad() {
+  if (SMARTER.loading) return;
+  const db = smarterRootRef();
+  if (!db) { SMARTER.noFirebase = true; SMARTER.loaded = true; return; }
+  SMARTER.loading = true; SMARTER.noFirebase = false; SMARTER.error = null;
+  try {
+    await smarterEnsureConfig(db);
+    const results = await Promise.all([
+      db.child("config").once("value"),
+      db.child("queue").once("value"),
+      db.child("documents/" + smarterTodayKey()).once("value")
+    ]);
+    SMARTER.config = results[0].val() || Object.assign({}, SMARTER_DEFAULT_CONFIG);
+    SMARTER.queue = results[1].val() || {};
+    SMARTER.today = results[2].val() || null;
+    SMARTER.revealed = new Set();
+  } catch (e) {
+    SMARTER.error = (e && e.message) || String(e);
+    console.warn("Smarter load:", e);
+  }
+  SMARTER.loading = false; SMARTER.loaded = true; SMARTER.loadedAt = Date.now();
+  render();
+}
+
+function viewSmarter() {
+  // Erststart / veralteter Stand → im Hintergrund laden (kein Blockieren).
+  if (!SMARTER.loading && (!SMARTER.loaded || (Date.now() - SMARTER.loadedAt) > 60000)) {
+    SMARTER.loaded = false;
+    setTimeout(smarterLoad, 0);
+  }
+
+  const tabs = [
+    { key: "today", icon: "☀️", label: "Heute" },
+    { key: "upload", icon: "📥", label: "Upload" },
+    { key: "queue", icon: "📚", label: "Warteschlange" },
+    { key: "settings", icon: "⚙️", label: "Einstellungen" }
+  ];
+  const active = SMARTER.tab || "today";
+  const connected = !SMARTER.noFirebase;
+  const statusPill = connected
+    ? '<span class="sm-pill sm-pill-ok">● Cloud verbunden</span>'
+    : '<span class="sm-pill sm-pill-warn">● Cloud offline</span>';
+
+  const offlineBanner = SMARTER.noFirebase
+    ? '<div class="sm-offline">⚠ Cloud offline — Ansicht funktioniert; Speichern &amp; Upload brauchen die Firebase-Anmeldung (Drive-Modul) oder die Netlify-App.</div>'
+    : "";
+
+  let body = "";
+  if (!SMARTER.noFirebase && !SMARTER.loaded && !SMARTER.config) {
+    body = '<div class="sm-skeleton">Lädt Lernstoff …</div>';
+  } else if (active === "upload") body = smarterTabUpload();
+  else if (active === "queue") body = smarterTabQueue();
+  else if (active === "settings") body = smarterTabSettings();
+  else body = smarterTabToday();
+
+  return `
+    <style>
+      .smarter-wrap{--sm-coral:#D96B5B;--sm-petrol:#2F8C80;--sm-sand:#C9A96E;max-width:900px;margin:0 auto}
+      .sm-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+      .sm-head h1{margin:0;font-size:20px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:9px}
+      .sm-pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:.2px}
+      .sm-pill-ok{background:color-mix(in oklab,var(--sm-petrol) 20%,transparent);color:var(--sm-petrol);border:1px solid color-mix(in oklab,var(--sm-petrol) 40%,transparent)}
+      .sm-pill-warn{background:color-mix(in oklab,var(--warn) 18%,transparent);color:var(--warn);border:1px solid color-mix(in oklab,var(--warn) 38%,transparent)}
+      .sm-tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap}
+      .sm-tab{appearance:none;background:transparent;border:0;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:700;padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;border-radius:8px 8px 0 0;transition:var(--transition)}
+      .sm-tab:hover{color:var(--text);background:var(--hover)}
+      .sm-tab.active{color:var(--sm-coral);border-bottom-color:var(--sm-coral)}
+      .sm-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+      .sm-card h3{margin:0 0 10px;font-size:14px;font-weight:800;color:var(--text)}
+      .sm-btn{appearance:none;border:1px solid var(--border2);background:var(--panel2);color:var(--text);font-size:13px;font-weight:700;padding:8px 14px;border-radius:10px;cursor:pointer;transition:var(--transition)}
+      .sm-btn:hover{border-color:var(--sm-coral)}
+      .sm-btn.sm-primary{background:var(--sm-coral);border-color:var(--sm-coral);color:#fff}
+      .sm-btn.sm-primary:hover{filter:brightness(1.06)}
+      .sm-btn.sm-ghost{background:transparent}
+      .sm-btn.sm-mini{font-size:12px;padding:4px 9px;border-radius:8px}
+      .sm-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+      .sm-muted{color:var(--muted);font-size:13px}
+      .sm-drop{border:2px dashed var(--border2);border-radius:14px;padding:34px 18px;text-align:center;cursor:pointer;transition:var(--transition);background:var(--panel2)}
+      .sm-drop:hover,.sm-drop.sm-over{border-color:var(--sm-petrol);background:color-mix(in oklab,var(--sm-petrol) 8%,var(--panel2))}
+      .sm-drop .sm-drop-icon{font-size:34px;margin-bottom:8px}
+      .sm-q{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+      .sm-q-head{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--text);font-weight:600}
+      .sm-q-num{flex:none;width:22px;height:22px;border-radius:50%;background:var(--sm-sand);color:#2B3134;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
+      .sm-q-a{margin-top:9px;padding-top:9px;border-top:1px solid var(--border);color:var(--text2);font-size:13px;line-height:1.5}
+      .sm-theory{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;line-height:1.6;color:var(--text);max-height:52vh;overflow:auto}
+      .sm-theory h1,.sm-theory h2,.sm-theory h3{color:var(--text)}
+      .sm-unit{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:11px 14px;margin-bottom:9px}
+      .sm-unit-title{flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sm-unit-min{flex:none;font-size:12px;font-weight:700;color:var(--sm-petrol)}
+      .sm-field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+      .sm-field label{font-size:12px;font-weight:700;color:var(--muted)}
+      .sm-field input{background:var(--panel2);border:1px solid var(--border2);border-radius:10px;padding:9px 12px;color:var(--text);font-size:14px;font-family:var(--sans)}
+      .sm-field input:focus{outline:none;border-color:var(--sm-coral)}
+      .sm-field input[readonly]{opacity:.7;cursor:not-allowed}
+      .sm-notice{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--sm-sand);border-radius:12px;padding:16px 18px}
+      .sm-notice h3{margin:0 0 6px;font-size:14px;color:var(--text)}
+      .sm-skeleton{padding:40px;text-align:center;color:var(--muted);font-size:14px}
+      .sm-offline{background:color-mix(in oklab,var(--warn) 14%,transparent);border:1px solid color-mix(in oklab,var(--warn) 32%,transparent);color:var(--text2);font-size:12.5px;padding:9px 13px;border-radius:10px;margin-bottom:14px}
+      .sm-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+      .sm-stat{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:10px 16px;text-align:center;min-width:96px}
+      .sm-stat .v{font-size:20px;font-weight:800;color:var(--sm-coral)}
+      .sm-stat .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+    </style>
+    <div class="smarter-wrap">
+      <div class="sm-head">
+        <h1>🎓 Smarter</h1>
+        ${statusPill}
+        <div style="flex:1"></div>
+        <button class="sm-btn sm-ghost sm-mini" data-action="smarter-refresh" title="Aktualisieren">↻ Aktualisieren</button>
+      </div>
+      <div class="sm-tabs">
+        ${tabs.map(function(tb){ return '<button class="sm-tab ' + (active===tb.key?'active':'') + '" data-action="smarter-tab" data-tab="' + tb.key + '">' + tb.icon + ' ' + tb.label + '</button>'; }).join("")}
+      </div>
+      ${offlineBanner}
+      ${body}
+    </div>`;
+}
+
+function smarterNotice(title, msg) {
+  return '<div class="sm-notice"><h3>' + esc(title) + '</h3><div class="sm-muted">' + esc(msg) + '</div></div>';
+}
+
+function smarterTabToday() {
+  const doc = SMARTER.today;
+  const todayKey = smarterTodayKey();
+  if (!doc) {
+    return smarterNotice("Noch kein Lernstoff für heute",
+      "Für " + todayKey + " liegt noch kein Tagesdokument vor. Der Smarter-Daily-Workflow (n8n) erzeugt es automatisch um " + esc((SMARTER.config && SMARTER.config.scheduleTime) || "04:00") + " Uhr. Lade oben eine Quelle hoch, damit die Warteschlange gefüllt wird.");
+  }
+  const questions = Array.isArray(doc.questions) ? doc.questions : [];
+  const unitCount = Array.isArray(doc.unitIds) ? doc.unitIds.length : 0;
+  const done = !!doc.done;
+
+  let html = "";
+  html += '<div class="sm-summary">';
+  html += '<div class="sm-stat"><div class="v">' + unitCount + '</div><div class="l">Units</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + questions.length + '</div><div class="l">Fragen</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + (done ? "✓" : "–") + '</div><div class="l">Erledigt</div></div>';
+  html += '</div>';
+
+  html += '<div class="sm-card"><div class="sm-row" style="justify-content:space-between">';
+  html += '<h3 style="margin:0">📖 Theorie — ' + esc(todayKey) + '</h3>';
+  html += '<div class="sm-row">';
+  if (doc.pdfUrl) html += '<a class="sm-btn sm-mini" href="' + esc(doc.pdfUrl) + '" target="_blank" rel="noopener">📄 PDF öffnen</a>';
+  html += '<button class="sm-btn sm-mini ' + (done ? "" : "sm-primary") + '" data-action="smarter-toggle-done">' + (done ? "↺ Wieder offen" : "✓ Als erledigt markieren") + '</button>';
+  html += '</div></div>';
+  if (doc.theoryHtml) html += '<div class="sm-theory">' + doc.theoryHtml + '</div>';
+  else html += '<div class="sm-muted">Kein Theorie-HTML im Dokument.</div>';
+  html += '</div>';
+
+  if (questions.length) {
+    html += '<div class="sm-card"><h3>❓ Fragen</h3>';
+    html += questions.map(function(item, i) {
+      const q = (typeof item === "string") ? item : (item.q || item.question || item.frage || "");
+      const a = (typeof item === "string") ? "" : (item.a || item.answer || item.antwort || "");
+      const shown = SMARTER.revealed.has(i);
+      let out = '<div class="sm-q"><div class="sm-q-head"><span class="sm-q-num">' + (i + 1) + '</span><span>' + esc(q) + '</span></div>';
+      if (a) {
+        out += shown
+          ? '<div class="sm-q-a">' + esc(a) + '</div>'
+          : '<div style="margin-top:8px"><button class="sm-btn sm-ghost sm-mini" data-action="smarter-reveal" data-idx="' + i + '">Antwort zeigen</button></div>';
+      }
+      out += '</div>';
+      return out;
+    }).join("");
+    html += '</div>';
+  }
+  return html;
+}
+
+function smarterTabUpload() {
+  const cfg = SMARTER.config || {};
+  const hasUrl = !!(cfg.ingestWebhookUrl && String(cfg.ingestWebhookUrl).trim());
+  const p = SMARTER.pendingUpload;
+
+  let html = '<div class="sm-card"><h3>📥 Quelle hochladen</h3>';
+  html += '<div class="sm-muted" style="margin-bottom:12px">HTML- oder PDF-Datei ablegen. Der Ingest-Workflow (n8n) schneidet den Text verlustfrei in Units und legt sie als <code>pending</code> in die Warteschlange.</div>';
+  html += '<div class="sm-drop" id="smarterDrop" data-action="smarter-pick-file" ondragover="smarterOnDragOver(event)" ondragleave="smarterOnDragLeave(event)" ondrop="smarterOnDrop(event)">';
+  html += '<div class="sm-drop-icon">📄</div>';
+  html += '<div style="font-weight:700;color:var(--text)">Datei hierher ziehen oder klicken</div>';
+  html += '<div class="sm-muted" style="margin-top:4px">.html · .htm · .pdf</div>';
+  html += '<input type="file" id="smarterFileInput" accept=".html,.htm,.pdf" style="display:none" onchange="smarterOnFilePicked(this)">';
+  html += '</div>';
+
+  if (p) {
+    const kb = p.base64 ? Math.round((p.base64.length * 3 / 4) / 1024) : 0;
+    html += '<div class="sm-unit" style="margin-top:14px"><span style="font-size:18px">' + (p.type === "pdf" ? "📕" : "📘") + '</span>';
+    html += '<div class="sm-unit-title">' + esc(p.filename) + ' <span class="sm-muted">· ' + p.type.toUpperCase() + ' · ~' + kb + ' KB</span></div>';
+    html += '</div>';
+    html += '<div class="sm-row" style="margin-top:12px">';
+    html += '<button class="sm-btn sm-primary" data-action="smarter-upload"' + (SMARTER.uploading ? " disabled" : "") + '>' + (SMARTER.uploading ? "Lädt hoch …" : "⬆ An Ingest senden") + '</button>';
+    html += '<button class="sm-btn sm-ghost" data-action="smarter-clear-upload">Verwerfen</button>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  if (!hasUrl) {
+    html += smarterNotice("ingestWebhookUrl noch nicht gesetzt",
+      "Der n8n-Ingest-Webhook ist noch nicht in smarter/config hinterlegt (wird nach dem n8n-Build von Claude im Browser eingetragen). Bis dahin lässt sich eine Datei auswählen; der Upload meldet dann, dass die Ziel-URL fehlt.");
+  }
+  return html;
+}
+
+function smarterTabQueue() {
+  const pending = smarterPendingUnits();
+  const all = smarterQueueUnits();
+  const delivered = all.filter(function(u){ return u.status === "delivered"; }).length;
+  const split = all.filter(function(u){ return u.status === "split"; }).length;
+  const dailyMin = Number((SMARTER.config || {}).dailyMinutes) || 30;
+
+  let html = '<div class="sm-summary">';
+  html += '<div class="sm-stat"><div class="v">' + pending.length + '</div><div class="l">Offen</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + smarterRemainingMinutes() + '</div><div class="l">Rest-Min</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + delivered + '</div><div class="l">Geliefert</div></div>';
+  html += '<div class="sm-stat"><div class="v">~' + Math.max(1, Math.ceil(smarterRemainingMinutes() / dailyMin)) + '</div><div class="l">Tage</div></div>';
+  html += '</div>';
+
+  html += '<div class="sm-card"><h3>📚 Offene Units</h3>';
+  if (!pending.length) {
+    html += '<div class="sm-muted">Keine offenen Units. Lade im Upload-Tab eine Quelle hoch.</div>';
+  } else {
+    html += pending.map(function(u, i) {
+      let row = '<div class="sm-unit">';
+      row += '<span class="sm-unit-min">≈ ' + (Number(u.estMinutes) || 0) + ' Min</span>';
+      row += '<div class="sm-unit-title">' + esc(u.title || ("Unit " + (u.order != null ? u.order : (i + 1)))) + (split && u.status === "split" ? "" : "") + '</div>';
+      row += '<div class="sm-row" style="gap:5px">';
+      row += '<button class="sm-btn sm-mini sm-ghost" data-action="smarter-queue-up" data-id="' + esc(u._id) + '"' + (i === 0 ? " disabled" : "") + ' title="Nach oben">▲</button>';
+      row += '<button class="sm-btn sm-mini sm-ghost" data-action="smarter-queue-down" data-id="' + esc(u._id) + '"' + (i === pending.length - 1 ? " disabled" : "") + ' title="Nach unten">▼</button>';
+      row += '<button class="sm-btn sm-mini sm-ghost" data-action="smarter-queue-del" data-id="' + esc(u._id) + '" title="Löschen">✕</button>';
+      row += '</div></div>';
+      return row;
+    }).join("");
+  }
+  html += '</div>';
+  return html;
+}
+
+function smarterTabSettings() {
+  const c = SMARTER.config || Object.assign({}, SMARTER_DEFAULT_CONFIG);
+  let html = '<div class="sm-card"><h3>⚙️ Einstellungen</h3>';
+  html += '<div class="sm-field"><label>Minuten pro Tag</label><input type="number" id="smCfgMinutes" min="5" max="240" step="5" value="' + esc(String(c.dailyMinutes != null ? c.dailyMinutes : 30)) + '"></div>';
+  html += '<div class="sm-field"><label>Uhrzeit (täglicher Lauf)</label><input type="time" id="smCfgTime" value="' + esc(String(c.scheduleTime || "04:00")) + '"></div>';
+  html += '<div class="sm-field"><label>Zielwörter pro Tag</label><input type="number" id="smCfgWords" min="200" max="10000" step="100" value="' + esc(String(c.targetWords != null ? c.targetWords : 2800)) + '"></div>';
+  html += '<div class="sm-field"><label>Zeitzone</label><input type="text" id="smCfgTz" value="' + esc(String(c.timezone || "Europe/Zurich")) + '"></div>';
+  html += '<div class="sm-row"><button class="sm-btn sm-primary" data-action="smarter-save-settings">Speichern</button>';
+  html += SMARTER.configVerified ? '<span class="sm-muted">✓ config in RTDB verifiziert</span>' : '';
+  html += '</div></div>';
+
+  html += '<div class="sm-card"><h3>🔗 Ingest-Webhook</h3>';
+  html += '<div class="sm-field"><label>ingestWebhookUrl (schreibt der n8n-Build)</label><input type="text" id="smCfgIngest" readonly value="' + esc(String(c.ingestWebhookUrl || "")) + '" placeholder="— noch nicht gesetzt —"></div>';
+  html += '<div class="sm-muted">Diese URL wird nach dem n8n-Build automatisch von Claude im Browser in <code>smarter/config/ingestWebhookUrl</code> geschrieben. Die App liest sie von dort.</div>';
+  html += '</div>';
+  return html;
+}
+
+// ── Datei-Handler (inline onchange/ondrop → window, überleben Re-Renders) ──
+function smarterReadFileToBase64(file) {
+  return new Promise(function(resolve, reject) {
+    const r = new FileReader();
+    r.onload = function() {
+      const s = String(r.result || "");
+      const i = s.indexOf("base64,");
+      resolve(i >= 0 ? s.slice(i + 7) : "");
+    };
+    r.onerror = function() { reject(r.error || new Error("Datei-Lesefehler")); };
+    r.readAsDataURL(file);
+  });
+}
+async function smarterAcceptFile(file) {
+  if (!file) return;
+  const name = file.name || "upload";
+  const lower = name.toLowerCase();
+  const type = lower.endsWith(".pdf") ? "pdf" : "html";
+  try {
+    const base64 = await smarterReadFileToBase64(file);
+    SMARTER.pendingUpload = { filename: name, type: type, base64: base64 };
+    render();
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Datei konnte nicht gelesen werden");
+    console.warn("Smarter file read:", e);
+  }
+}
+window.smarterOnFilePicked = function(input) {
+  const f = input && input.files && input.files[0];
+  smarterAcceptFile(f);
+};
+window.smarterOnDragOver = function(ev) { ev.preventDefault(); const d = document.getElementById("smarterDrop"); if (d) d.classList.add("sm-over"); };
+window.smarterOnDragLeave = function(ev) { const d = document.getElementById("smarterDrop"); if (d) d.classList.remove("sm-over"); };
+window.smarterOnDrop = function(ev) {
+  ev.preventDefault();
+  const d = document.getElementById("smarterDrop"); if (d) d.classList.remove("sm-over");
+  const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  smarterAcceptFile(f);
+};
+
+async function smarterDoUpload() {
+  const p = SMARTER.pendingUpload;
+  if (!p) return;
+  const url = (SMARTER.config && SMARTER.config.ingestWebhookUrl) ? String(SMARTER.config.ingestWebhookUrl).trim() : "";
+  if (!url) {
+    if (typeof toast === "function") toast("info", "Smarter", "ingestWebhookUrl fehlt noch — wird nach dem n8n-Build gesetzt.");
+    return;
+  }
+  SMARTER.uploading = true; render();
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: p.filename, type: p.type, base64: p.base64 })
+    });
+    let data = {};
+    try { data = await resp.json(); } catch (e) {}
+    if (resp.ok && data && data.ok) {
+      const units = Number(data.units) || 0;
+      if (typeof toast === "function") toast("ok", "Smarter", units + " Units erstellt");
+      SMARTER.pendingUpload = null;
+      SMARTER.loaded = false;
+      await smarterLoad();
+      SMARTER.tab = "queue";
+      render();
+    } else {
+      if (typeof toast === "function") toast("warn", "Smarter", "Ingest antwortete ohne { ok:true } (HTTP " + resp.status + ")");
+    }
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Upload fehlgeschlagen: " + ((e && e.message) || e));
+    console.warn("Smarter upload:", e);
+  }
+  SMARTER.uploading = false; render();
+}
+
+async function smarterToggleDone() {
+  const db = smarterRootRef();
+  if (!db || !SMARTER.today) return;
+  const key = smarterTodayKey();
+  const next = !SMARTER.today.done;
+  try {
+    await db.child("documents/" + key + "/done").set(next);
+    SMARTER.today.done = next;
+    render();
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Konnte Status nicht speichern"); }
+}
+
+async function smarterQueueMove(id, dir) {
+  const pending = smarterPendingUnits();
+  const idx = pending.findIndex(function(u) { return u._id === id; });
+  if (idx < 0) return;
+  const swapWith = dir === "up" ? idx - 1 : idx + 1;
+  if (swapWith < 0 || swapWith >= pending.length) return;
+  const a = pending[idx], b = pending[swapWith];
+  const db = smarterRootRef();
+  if (!db) return;
+  const aOrder = Number(a.order) || 0, bOrder = Number(b.order) || 0;
+  try {
+    const upd = {};
+    upd[a._id + "/order"] = bOrder;
+    upd[b._id + "/order"] = aOrder;
+    await db.child("queue").update(upd);
+    if (SMARTER.queue[a._id]) SMARTER.queue[a._id].order = bOrder;
+    if (SMARTER.queue[b._id]) SMARTER.queue[b._id].order = aOrder;
+    render();
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Reihenfolge nicht gespeichert"); }
+}
+
+async function smarterQueueDelete(id) {
+  const db = smarterRootRef();
+  if (!db) return;
+  try {
+    await db.child("queue/" + id).remove();
+    delete SMARTER.queue[id];
+    render();
+    if (typeof toast === "function") toast("ok", "Smarter", "Unit gelöscht");
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Löschen fehlgeschlagen"); }
+}
+
+async function smarterSaveSettings() {
+  const db = smarterRootRef();
+  if (!db) { if (typeof toast === "function") toast("warn", "Smarter", "Cloud nicht verbunden"); return; }
+  const minutes = parseInt((document.getElementById("smCfgMinutes") || {}).value, 10);
+  const words = parseInt((document.getElementById("smCfgWords") || {}).value, 10);
+  const time = (document.getElementById("smCfgTime") || {}).value || "04:00";
+  const tz = ((document.getElementById("smCfgTz") || {}).value || "Europe/Zurich").trim();
+  const patch = {
+    dailyMinutes: (isFinite(minutes) && minutes > 0) ? minutes : 30,
+    targetWords: (isFinite(words) && words > 0) ? words : 2800,
+    scheduleTime: time,
+    timezone: tz || "Europe/Zurich"
+  };
+  try {
+    await db.child("config").update(patch);
+    SMARTER.config = Object.assign({}, SMARTER.config || {}, patch);
+    if (typeof toast === "function") toast("ok", "Smarter", "Einstellungen gespeichert");
+    render();
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Speichern fehlgeschlagen"); }
+}
+
+function smarterHandleAction(action, el, e) {
+  if (e && e.preventDefault) e.preventDefault();
+  switch (action) {
+    case "smarter-tab": SMARTER.tab = el.dataset.tab || "today"; render(); break;
+    case "smarter-refresh": SMARTER.loaded = false; smarterLoad(); break;
+    case "smarter-pick-file": { const inp = document.getElementById("smarterFileInput"); if (inp) inp.click(); break; }
+    case "smarter-upload": smarterDoUpload(); break;
+    case "smarter-clear-upload": SMARTER.pendingUpload = null; render(); break;
+    case "smarter-reveal": SMARTER.revealed.add(Number(el.dataset.idx)); render(); break;
+    case "smarter-toggle-done": smarterToggleDone(); break;
+    case "smarter-queue-up": smarterQueueMove(el.dataset.id, "up"); break;
+    case "smarter-queue-down": smarterQueueMove(el.dataset.id, "down"); break;
+    case "smarter-queue-del": smarterQueueDelete(el.dataset.id); break;
+    case "smarter-save-settings": smarterSaveSettings(); break;
+    default: break;
+  }
+}
+
 // ── QUANTUS BROWSER — vollwertiger Remote-Browser (neko) als App, direkt in
 //    Quantus eingebettet. Der Stream laeuft auf dem VPS; Auto-Login + verdeckte
 //    neko-UI via Query-Parametern (usr/pwd/embed) gemaess neko v3. ────────────
@@ -16114,7 +16605,7 @@ function renderSidebar() {
   const alwaysShow = ["dashboard","settings"];
   
   // Pinned sidebar apps (stored in data)
-  const pinnedSidebar = APP.state.data.sidebarPinnedApps || ["today","tasks","projects","notes","chat"];
+  const pinnedSidebar = APP.state.data.sidebarPinnedApps || ["today","tasks","projects","notes","smarter","chat"];
   
   // Pinned section = always-show + pinned from settings
   const pinnedKeys = [...alwaysShow, ...pinnedSidebar.filter(k => !alwaysShow.includes(k))];
@@ -16223,6 +16714,7 @@ function getAllApps() {
     {key:"tasks", icon:"✅", label:t("tasks"), desc:getLang()==="de"?"Aufgabenverwaltung":"Task management"},
     {key:"notes", icon:"📝", label:"NoteFlow", desc:getLang()==="de"?"Notizen & Dokumente":"Notes & documents"},
     {key:"learn", icon:"📚", label:"RecallLab", desc:getLang()==="de"?"Lernkarten & Spaced Repetition":"Flashcards & spaced repetition"},
+    {key:"smarter", icon:"🎓", label:"Smarter", desc:getLang()==="de"?"Täglicher Lernstoff — Theorie, Fragen, PDF":"Daily study material — theory, questions, PDF"},
     {key:"readinghub", icon:"📖", label:"ReadingHub", desc:getLang()==="de"?"Bücher lesen & annotieren":"Read & annotate books"},
     {key:"pdfeditor", icon:"📄", label:"PDF Editor", desc:getLang()==="de"?"PDFs lesen, annotieren, Seiten verwalten & bearbeiten":"Read, annotate, manage pages & edit PDFs"},
     {key:"chat", icon:"🌟", label:t("chat"), desc:getLang()==="de"?"Mit Polaris chatten":"Chat with Polaris"},
@@ -16581,6 +17073,7 @@ function renderMain() {
     case "visionboard": openVisionBoard(); return; // Öffnet VisionBoard 2026
     case "today": html = viewToday(); break;
     case "learn": openRecallLab(); return; // Öffnet RecallLab Flashcards
+    case "smarter": html = viewSmarter(); break; // Smarter — täglicher Lernstoff
     case "readinghub": openReadingHub(); return; // Öffnet ReadingHub
     case "pdfeditor": (window.openPdfEditor ? window.openPdfEditor() : 0); return; // Öffnet PDF-Editor/Reader
     case "weekplanning": window.location.href = "nobraine.html"; return; // Alter Weekly Planner entfernt → neuer (nobraine.html)
@@ -51864,7 +52357,13 @@ function handleClick(e) {
   const action = el.dataset.action;
   const kind = el.dataset.kind;
   const id = el.dataset.id;
-  
+
+  // Smarter-Modul: alle data-action="smarter-…" an den Modul-Dispatcher geben
+  if (action && action.indexOf("smarter-") === 0) {
+    try { smarterHandleAction(action, el, e); } catch(err) { console.warn("Smarter-Action:", err); }
+    return;
+  }
+
   switch (action) {
     case "nav": navigate(el.dataset.route, el.dataset.id || undefined); break;
     case "go-back": goBack(); break;
