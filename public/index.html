@@ -108467,6 +108467,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         ${fmtBtn("font-auto", "⤢A", "Auto-Fit")}
       </div>
       <div class="sb-group">
+        <button class="sb-btn sb-toggle" data-sb="pan" id="sbPanBtn" title="Hand: Fläche durch Ziehen verschieben (ideal für Touchpad)">✋ Hand</button>
         <button class="sb-btn sb-toggle" data-sb="connect" id="sbConnectBtn" title="Verbinden: Post-its mit Linien verknüpfen">🔗 Verbinden</button>
       </div>
       <div class="sb-group">
@@ -108836,10 +108837,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const el = document.getElementById("sbHint");
     if (!el) return;
     if (!B.board.notes.length) {
-      el.innerHTML = `Doppelklick oder <b>＋ Post-it</b> · <b>N</b> neu · <b>Tab</b> wählt Notizen · Notiz wählen &amp; <b>tippen</b> zum Beschriften · von den <b>Rändern ziehen</b> verbindet (auf leere Fläche = neues verbundenes Post-it) · Mausrad / <b>+ −</b> = Zoom`;
+      el.innerHTML = `Doppelklick oder <b>＋ Post-it</b> · <b>N</b> neu · <b>Tab</b> wählt Notizen · Notiz wählen &amp; <b>tippen</b> zum Beschriften · von den <b>Rändern ziehen</b> verbindet (auf leere Fläche = neues verbundenes Post-it) · Zwei-Finger-Scrollen schwenkt · Pinch / <b>Strg</b>+Scrollen zoomt · ✋ <b>Hand</b> für Touchpad`;
       el.style.display = "block";
     } else if (B.tool === "draw") {
       el.innerHTML = B.eraser ? `🧽 <b>Radierer</b>: Striche antippen oder überfahren zum Löschen. <b>Esc</b> beendet.` : `✏️ <b>Zeichnen</b>: Mit Stift oder Finger malen. Zwei Finger = Verschieben &amp; Zoom. <b>Esc</b> beendet.`;
+      el.style.display = "block";
+    } else if (B.tool === "pan") {
+      el.innerHTML = `✋ <b>Hand</b>: Mit gedrücktem Touchpad/Finger ziehen verschiebt die Fläche. Zwei-Finger-Scrollen schwenkt, Pinch/<b>Strg</b>+Scrollen zoomt. <b>Esc</b> beendet.`;
       el.style.display = "block";
     } else if (B.tool === "connect") {
       el.innerHTML = `🔗 <b>Verbinden</b>: Von einem Post-it zu einem anderen ziehen. Auf leere Fläche ziehen erzeugt ein neues verbundenes Post-it. <b>Esc</b> beendet.`;
@@ -108852,6 +108856,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   function updateToolbarState() {
     const bulk = document.getElementById("sbBulkBtn");
     if (bulk) bulk.classList.toggle("active", !!B.board.bulkMode);
+    const pan = document.getElementById("sbPanBtn");
+    if (pan) pan.classList.toggle("active", B.tool === "pan");
     const conn = document.getElementById("sbConnectBtn");
     if (conn) conn.classList.toggle("active", B.tool === "connect");
     const dr = document.getElementById("sbDrawBtn");
@@ -108859,7 +108865,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const er = document.getElementById("sbEraserBtn");
     if (er) er.classList.toggle("active", B.eraser);
     const cvd = canvasEl();
-    if (cvd) { cvd.classList.toggle("draw", B.tool === "draw" && !B.eraser); cvd.classList.toggle("erase", B.tool === "draw" && B.eraser); }
+    if (cvd) { cvd.classList.toggle("draw", B.tool === "draw" && !B.eraser); cvd.classList.toggle("erase", B.tool === "draw" && B.eraser); cvd.classList.toggle("pantool", B.tool === "pan"); }
     const ft = document.getElementById("sbFilterToggle");
     if (ft) ft.classList.toggle("active", filterActive());
     updateSwatchState();
@@ -108877,6 +108883,8 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     hideContextMenu();
     const cv = canvasEl();
     cv.focus();
+    // Hand-Werkzeug: Ziehen verschiebt die Flaeche (auch ueber Notizen).
+    if (B.tool === "pan") { startPan(e); return; }
     const noteEl = e.target.closest(".sb-note");
     const anchorEl = e.target.closest(".sb-anchor");
     const resizeEl = e.target.closest(".sb-resize");
@@ -109196,8 +109204,11 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 
   function onWheel(e) {
     e.preventDefault();
-    if (e.ctrlKey || e.metaKey || true) {
-      // Zoom zum Cursor
+    // Trackpad-Standard (wie Figma/Miro): Pinch bzw. Ctrl/Cmd+Scroll = Zoom
+    // zum Cursor, normales Zwei-Finger-Scrollen = Flaeche schwenken. So ist das
+    // Board mit dem Touchpad ohne Ziehen navigierbar. (Browser bilden die
+    // Trackpad-Pinch-Geste als wheel-Event mit ctrlKey ab.)
+    if (e.ctrlKey || e.metaKey) {
       const rect = canvasEl().getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
       const worldX = (mx - B.view.x) / B.view.zoom;
@@ -109207,9 +109218,14 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       B.view.zoom = z;
       B.view.x = mx - worldX * z;
       B.view.y = my - worldY * z;
-      updateTransform();
-      persistSoon();
+    } else {
+      // deltaMode: 0=Pixel, 1=Zeilen, 2=Seiten → in Pixel umrechnen
+      const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? (canvasEl().clientHeight || 800) : 1);
+      B.view.x -= e.deltaX * unit;
+      B.view.y -= e.deltaY * unit;
     }
+    updateTransform();
+    persistSoon();
   }
 
   function onCanvasDblClick(e) {
@@ -109329,6 +109345,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       case "font-dec": applyToSelected((n) => { n.fontSize = Math.max(8, (n.fontSize === "auto" ? autoFont(n) : n.fontSize) - 2); }); break;
       case "font-inc": applyToSelected((n) => { n.fontSize = Math.min(72, (n.fontSize === "auto" ? autoFont(n) : n.fontSize) + 2); }); break;
       case "font-auto": applyToSelected((n) => { n.fontSize = "auto"; }); break;
+      case "pan": B.tool = B.tool === "pan" ? "select" : "pan"; B.eraser = false; updateToolbarState(); updateHint(); break;
       case "connect": B.tool = B.tool === "connect" ? "select" : "connect"; updateToolbarState(); updateHint(); break;
       case "draw": B.tool = (B.tool === "draw") ? "select" : "draw"; if (B.tool !== "draw") B.eraser = false; updateToolbarState(); updateHint(); renderConnections(); break;
       case "eraser": B.eraser = !B.eraser; if (B.eraser) B.tool = "draw"; updateToolbarState(); updateHint(); renderConnections(); break;
@@ -109847,7 +109864,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const mod = e.ctrlKey || e.metaKey;
 
     if (e.key === "Escape") {
-      if (B.tool === "connect" || B.tool === "draw") { B.tool = "select"; B.eraser = false; updateToolbarState(); updateHint(); e.preventDefault(); return; }
+      if (B.tool === "connect" || B.tool === "draw" || B.tool === "pan") { B.tool = "select"; B.eraser = false; updateToolbarState(); updateHint(); e.preventDefault(); return; }
       const ctx = document.getElementById("sbCtx");
       if (ctx && ctx.style.display === "block") { hideContextMenu(); e.preventDefault(); return; }
       if (B.sel.size) { B.sel = new Set(); renderNotes(); e.preventDefault(); return; }
@@ -109958,7 +109975,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-filter-tag{cursor:pointer;opacity:.6}
       .sb-filter-tag.on{opacity:1;outline:1px solid var(--sb-accent)}
       .sb-canvas{position:relative;flex:1;overflow:hidden;background:var(--bg,#171c20);background-image:radial-gradient(circle,var(--sb-border) 1px,transparent 1px);background-size:24px 24px;cursor:default;outline:none;touch-action:none}
-      .sb-canvas.panning,.sb-canvas.space{cursor:grab}
+      .sb-canvas.panning,.sb-canvas.space,.sb-canvas.pantool{cursor:grab}
       .sb-canvas.panning{cursor:grabbing}
       .sb-canvas.draw{cursor:crosshair}
       .sb-canvas.erase{cursor:cell}

@@ -79,8 +79,10 @@ nötig, da alles im bestehenden Daten-Blob mitreist.
 - **Tags & Filter**: Tags pro Post-it, Filterleiste mit Suche + Farb-/Tag-Filter.
 - **Interaktion**: Votes (👍), Autoren-Anzeige, Sperren (Lock), „Als Notiz
   kopieren" (→ Notes-Collection).
-- **Canvas**: Pan (Leertaste/Mittelklick/Pan auf leerer Fläche), Zoom (Mausrad
-  zum Cursor, `+`/`−`/`100%`), „Alles einpassen".
+- **Canvas**: Pan (Leertaste/Mittelklick/Pan auf leerer Fläche, ✋ **Hand**-
+  Werkzeug, **Zwei-Finger-Scrollen**), Zoom (**Pinch** bzw. **Strg/Cmd+Scrollen**
+  zum Cursor, `+`/`−`/`100%`), „Alles einpassen". Zwei-Finger-Scrollen schwenkt
+  (wie Figma/Miro) — für Mausrad-Zoom `Strg`/`Cmd` halten.
 - **HTML-Elemente**: `</> HTML` fügt ein Element ein, in das eigener HTML/CSS/
   JS-Code eingegeben und **live gerendert** wird (isolierter `<iframe
   sandbox="allow-scripts">`, keine externen Ressourcen/Netzwerk, kein Zugriff
@@ -106,9 +108,19 @@ nötig, da alles im bestehenden Daten-Blob mitreist.
 `Ctrl/Cmd+A` alles auswählen · `Ctrl/Cmd+C/X/V` kopieren/ausschneiden/einfügen ·
 `Esc` Bearbeiten/Auswahl beenden bzw. Board schliessen.
 
-### Mausfreie Bedienung
+### Touchpad-Bedienung (ohne Maus)
 
-Das Board ist komplett ohne Maus nutzbar. Beim Öffnen erhält die Fläche
+Für Laptop-Touchpads (melden sich als „mouse", nicht „touch"):
+
+- **Zwei-Finger-Scrollen** schwenkt die Fläche (statt wie früher zu zoomen).
+- **Pinch** bzw. **Strg/Cmd + Scrollen** zoomt zum Cursor.
+- **✋ Hand-Werkzeug** (Toolbar): danach verschiebt Ziehen die Fläche — auch
+  über Post-its hinweg. `Esc` oder erneuter Klick beendet es.
+- Post-its verschieben: direkt antippen und ziehen. Auswählen: antippen.
+
+### Mausfreie Bedienung (Tastatur)
+
+Das Board ist auch komplett per Tastatur nutzbar. Beim Öffnen erhält die Fläche
 automatisch den Fokus. Es gibt zwei Modi:
 
 - **Navigations-Modus** (keine Notiz gewählt): Pfeiltasten **schwenken** die
