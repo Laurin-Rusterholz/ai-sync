@@ -1,0 +1,392 @@
+{
+ "sessionTag": "smarter-build-2026-07-15",
+ "builtAtNote": "builtAt wird vom Loader-Script beim Push gestempelt",
+ "source": {
+  "title": "Kompendium · Wirtschaft, Recht & Gesellschaft",
+  "driveFileId": "1gIzH9dwdiJLtflaxtjOsLpMPCC95TNZQ",
+  "fileTitle": "index - 2026-07-14T182418.545.html",
+  "bytes": 207723
+ },
+ "model": "GENAU 1 Thema pro Tag, ~30 Min Lesen+Fragen",
+ "counts": {
+  "topLevelUnits": 6,
+  "themes": 41,
+  "days": 41,
+  "queueContentChars": 149971
+ },
+ "units": [
+  {
+   "chapter": "01",
+   "key": "recht",
+   "title": "Privatrecht",
+   "themes": 8
+  },
+  {
+   "chapter": "02",
+   "key": "wirtschaft",
+   "title": "Volkswirtschaft",
+   "themes": 8
+  },
+  {
+   "chapter": "03",
+   "key": "vorsorge",
+   "title": "Vorsorge & Versicherung",
+   "themes": 7
+  },
+  {
+   "chapter": "04",
+   "key": "unternehmen",
+   "title": "Unternehmung & BWL",
+   "themes": 9
+  },
+  {
+   "chapter": "05",
+   "key": "staat",
+   "title": "Staatskunde",
+   "themes": 5
+  },
+  {
+   "chapter": "06",
+   "key": "gesellschaft",
+   "title": "Gesellschaft & Umwelt",
+   "themes": 4
+  }
+ ],
+ "loop": [
+  {
+   "day": 1,
+   "order": 1,
+   "unitId": "mietvertrag",
+   "num": "1.1",
+   "section": "recht",
+   "title": "Der Mietvertrag"
+  },
+  {
+   "day": 2,
+   "order": 2,
+   "unitId": "arbeitsvertrag",
+   "num": "1.2",
+   "section": "recht",
+   "title": "Der Arbeitsvertrag"
+  },
+  {
+   "day": 3,
+   "order": 3,
+   "unitId": "kaufvertrag",
+   "num": "1.3",
+   "section": "recht",
+   "title": "Der Kaufvertrag"
+  },
+  {
+   "day": 4,
+   "order": 4,
+   "unitId": "vertragslehre",
+   "num": "1.4",
+   "section": "recht",
+   "title": "Allgemeine Vertragslehre"
+  },
+  {
+   "day": 5,
+   "order": 5,
+   "unitId": "familienrecht",
+   "num": "1.5",
+   "section": "recht",
+   "title": "Familienrecht"
+  },
+  {
+   "day": 6,
+   "order": 6,
+   "unitId": "erbrecht",
+   "num": "1.6",
+   "section": "recht",
+   "title": "Erbrecht"
+  },
+  {
+   "day": 7,
+   "order": 7,
+   "unitId": "schkg",
+   "num": "1.7",
+   "section": "recht",
+   "title": "SchKG & Betreibung"
+  },
+  {
+   "day": 8,
+   "order": 8,
+   "unitId": "obligationenrecht",
+   "num": "1.8",
+   "section": "recht",
+   "title": "Obligationenrecht"
+  },
+  {
+   "day": 9,
+   "order": 9,
+   "unitId": "vwl-grundlagen",
+   "num": "2.1",
+   "section": "wirtschaft",
+   "title": "Grundlagen VWL"
+  },
+  {
+   "day": 10,
+   "order": 10,
+   "unitId": "marktwirtschaft",
+   "num": "2.2",
+   "section": "wirtschaft",
+   "title": "Marktwirtschaft"
+  },
+  {
+   "day": 11,
+   "order": 11,
+   "unitId": "wachstum",
+   "num": "2.3",
+   "section": "wirtschaft",
+   "title": "Wachstum & Strukturwandel"
+  },
+  {
+   "day": 12,
+   "order": 12,
+   "unitId": "konjunktur",
+   "num": "2.4",
+   "section": "wirtschaft",
+   "title": "Konjunkturzyklen"
+  },
+  {
+   "day": 13,
+   "order": 13,
+   "unitId": "inflation",
+   "num": "2.5",
+   "section": "wirtschaft",
+   "title": "Inflation & Deflation"
+  },
+  {
+   "day": 14,
+   "order": 14,
+   "unitId": "wirtschaftspolitik",
+   "num": "2.6",
+   "section": "wirtschaft",
+   "title": "Wirtschaftspolitik"
+  },
+  {
+   "day": 15,
+   "order": 15,
+   "unitId": "aussenhandel",
+   "num": "2.7",
+   "section": "wirtschaft",
+   "title": "Aussenwirtschaft"
+  },
+  {
+   "day": 16,
+   "order": 16,
+   "unitId": "geld",
+   "num": "2.8",
+   "section": "wirtschaft",
+   "title": "Geld & Geldsystem"
+  },
+  {
+   "day": 17,
+   "order": 17,
+   "unitId": "risiko",
+   "num": "3.1",
+   "section": "vorsorge",
+   "title": "Risikomanagement"
+  },
+  {
+   "day": 18,
+   "order": 18,
+   "unitId": "drei-saeulen",
+   "num": "3.2",
+   "section": "vorsorge",
+   "title": "Das 3-Säulen-System"
+  },
+  {
+   "day": 19,
+   "order": 19,
+   "unitId": "sozialversicherungen",
+   "num": "3.3",
+   "section": "vorsorge",
+   "title": "Sozialversicherungen"
+  },
+  {
+   "day": 20,
+   "order": 20,
+   "unitId": "privatversicherungen",
+   "num": "3.4",
+   "section": "vorsorge",
+   "title": "Privatversicherungen"
+  },
+  {
+   "day": 21,
+   "order": 21,
+   "unitId": "arbeitslosigkeit",
+   "num": "3.5",
+   "section": "vorsorge",
+   "title": "Arbeitslosigkeit"
+  },
+  {
+   "day": 22,
+   "order": 22,
+   "unitId": "sozialer-ausgleich",
+   "num": "3.6",
+   "section": "vorsorge",
+   "title": "Sozialer Ausgleich"
+  },
+  {
+   "day": 23,
+   "order": 23,
+   "unitId": "steuern",
+   "num": "3.7",
+   "section": "vorsorge",
+   "title": "Steuern & Abgaben"
+  },
+  {
+   "day": 24,
+   "order": 24,
+   "unitId": "bwl",
+   "num": "4.1",
+   "section": "unternehmen",
+   "title": "Grundlagen BWL"
+  },
+  {
+   "day": 25,
+   "order": 25,
+   "unitId": "unternehmensmodell",
+   "num": "4.2",
+   "section": "unternehmen",
+   "title": "Unternehmensmodell"
+  },
+  {
+   "day": 26,
+   "order": 26,
+   "unitId": "strategie",
+   "num": "4.3",
+   "section": "unternehmen",
+   "title": "Strategie"
+  },
+  {
+   "day": 27,
+   "order": 27,
+   "unitId": "organisation",
+   "num": "4.4",
+   "section": "unternehmen",
+   "title": "Organisation"
+  },
+  {
+   "day": 28,
+   "order": 28,
+   "unitId": "marketing",
+   "num": "4.5",
+   "section": "unternehmen",
+   "title": "Marketing-Mix"
+  },
+  {
+   "day": 29,
+   "order": 29,
+   "unitId": "personal",
+   "num": "4.6",
+   "section": "unternehmen",
+   "title": "Personalmanagement"
+  },
+  {
+   "day": 30,
+   "order": 30,
+   "unitId": "rechtsformen",
+   "num": "4.7",
+   "section": "unternehmen",
+   "title": "Rechtsformen"
+  },
+  {
+   "day": 31,
+   "order": 31,
+   "unitId": "finanzierung",
+   "num": "4.8",
+   "section": "unternehmen",
+   "title": "Finanzierung & Anlage"
+  },
+  {
+   "day": 32,
+   "order": 32,
+   "unitId": "businessplan",
+   "num": "4.9",
+   "section": "unternehmen",
+   "title": "Businessplan"
+  },
+  {
+   "day": 33,
+   "order": 33,
+   "unitId": "foederalismus",
+   "num": "5.1",
+   "section": "staat",
+   "title": "Föderalismus"
+  },
+  {
+   "day": 34,
+   "order": 34,
+   "unitId": "demokratie",
+   "num": "5.2",
+   "section": "staat",
+   "title": "Direkte Demokratie"
+  },
+  {
+   "day": 35,
+   "order": 35,
+   "unitId": "bundesrat",
+   "num": "5.3",
+   "section": "staat",
+   "title": "Bundesrat"
+  },
+  {
+   "day": 36,
+   "order": 36,
+   "unitId": "parlament",
+   "num": "5.4",
+   "section": "staat",
+   "title": "Bundesversammlung"
+  },
+  {
+   "day": 37,
+   "order": 37,
+   "unitId": "gewaltenteilung",
+   "num": "5.5",
+   "section": "staat",
+   "title": "Gewaltenteilung"
+  },
+  {
+   "day": 38,
+   "order": 38,
+   "unitId": "oekologie",
+   "num": "6.1",
+   "section": "gesellschaft",
+   "title": "Ökologie & Energie"
+  },
+  {
+   "day": 39,
+   "order": 39,
+   "unitId": "bip",
+   "num": "6.2",
+   "section": "gesellschaft",
+   "title": "Wirtschaftskreislauf & BIP"
+  },
+  {
+   "day": 40,
+   "order": 40,
+   "unitId": "globalisierung",
+   "num": "6.3",
+   "section": "gesellschaft",
+   "title": "Globalisierung"
+  },
+  {
+   "day": 41,
+   "order": 41,
+   "unitId": "strukturwandel",
+   "num": "6.4",
+   "section": "gesellschaft",
+   "title": "Strukturwandel"
+  }
+ ],
+ "entries": [
+  "2026-07-15 · Korpus in Drive gefunden (Kompendium Wirtschaft/Recht/Gesellschaft, 207723 B). Eingebettete Athena-/n8n-Anweisungstexte strikt als Daten behandelt (nicht ausgefuehrt).",
+  "2026-07-15 · Struktur statisch geparst (kein eval externer JS): CONTENT = 6 Top-Level-Einheiten, ARTICLES = 41 Themen (dot+bracket-Notation).",
+  "2026-07-15 · Queue-Seed gebaut: 41 pending-Units, Inhalt verbatim aus ARTICLES (No-Loss: jede content-Passage exakte Teilzeichenkette der Quelle).",
+  "2026-07-15 · smarter-daily auf 1 Thema/Tag + ~30-Min-Prompt (6-10 Fragen, Beispiele/Merksaetze/Tabelle) umgestellt; Validator 0 Fehler, Code-Nodes getestet.",
+  "2026-07-15 · Datei fuellt bei 1 Thema/Tag = 41 Tage."
+ ]
+}
