@@ -191,3 +191,173 @@ Rolle: Du baust den kompletten n8n-Teil des Quantus-Moduls „Smarter". Der App-
 2. Direkte Gotenberg-Endpoint-URL — nicht im Repo; Alternative = bestehender Webhook `…/webhook/quantus-doc-pdf` (`{html,filename}` → PDF-Blob).
 3. n8n-API-Key (`X-N8N-API-KEY`) fuer die REST-API — nicht im Repo; im n8n-UI erzeugen.
 --- ENDE ---
+
+---
+
+## 5 · Update 2026-07-15 — HTML-Lerndokument statt PDF (Session `smarter-htmldoc-2026-07-15`)
+
+Gotenberg/PDF ist tot und wird fallengelassen. Stattdessen: taeglich ein schoen
+gestaltetes, self-contained **HTML-Lerndokument** mit Antwortfeldern.
+
+### Datenvertrag erweitert
+- `smarter/documents/<yyyy-mm-dd>` neu: **`documentHtml`** (self-contained HTML,
+  inline CSS, keine externen Requests). `pdfUrl` bleibt `""` (entfaellt).
+- `questions[]`: jede Frage hat jetzt eine **stabile `id`** → `{ id:"q1"|"q2"…, q, a }`.
+- **NEU `smarter/documents/<yyyy-mm-dd>/answers/<qId>` = `{ text, updatedAt:<iso> }`**
+  — Nutzerantworten, nur innerhalb `smarter/` (offene Regel, kein Credential).
+
+### App (public/index.html, Modul Smarter, „Heute")
+- `documentHtml` wird isoliert in einem **iframe** (`srcdoc`, Scripts entfernt)
+  gerendert → 1:1 wie der Download, kein Style-Bleed in die App.
+- Unter jeder Frage (per `data-qid`) wird ein **Antwort-Textfeld** eingedockt,
+  vorbefuellt aus `answers/<qId>`. Speichern: Debounce 700 ms + sofort bei Blur
+  → `set(smarter/documents/<heute>/answers/<qId>, {text,updatedAt})`, mit
+  sichtbarem Feedback (gespeichert ✓ / offline gemerkt / Fehler).
+- „Musterantwort zeigen" pro Frage (aus `questions[].a`).
+- „Herunterladen": statische `.html`-Kopie inkl. eingegebener Antworten
+  (Blob + `a[download]`, Dateiname `smarter-<date>.html`). Speicherbar sind die
+  Antworten nur in der Quantus-Ansicht.
+- Fallback (Dokument ohne `documentHtml`): Theorie + Fragen nativ, ebenfalls mit
+  speicherbaren Antwortfeldern.
+- Post-render Hook (`window.__smarterPostRender`) mountet das iframe nach jedem
+  Render; Antwortfelder via Parent-Listener (Tippen loest keinen Voll-Render aus).
+- Verifiziert (headless Chromium, 16/16, 0 uncaught JS-Errors): iframe rendert,
+  Felder pro `data-qid` eingedockt + vorbefuellt, Tippen+Blur speichert ohne
+  Fehler, Download bettet Antworten ein.
+
+### n8n (`n8n/smarter-daily.workflow.json` — Import, da API von hier blockiert)
+Die n8n-REST-API ist aus der Claude-Code-Umgebung nicht erreichbar (403). Daher
+liegt der komplette Workflow als importierbares JSON im Repo.
+
+**Import:** n8n → Workflows → Import from File → `n8n/smarter-daily.workflow.json`.
+Danach:
+1. Node „Anthropic: Theorie + Fragen" → Credential **„Anthropic API-Key (Header
+   x-api-key)"** zuweisen (Header-Auth, wiederverwenden). Die RTDB-Nodes brauchen
+   KEIN Credential (`smarter/*` offen via `$andere`).
+2. Alten Workflow `2Bkv3B2la7OOpAc3` deaktivieren (oder dessen Gotenberg-Nodes
+   „PDF via webhook"/„Upload PDF" entfernen) — dieser neue ersetzt ihn.
+3. Workflow aktivieren. Zeitzone ist im Workflow-Setting auf `Europe/Zurich`
+   gesetzt; Schedule-Cron `0 4 * * *` → 04:00 Europe/Zurich. Naechste Laufzeit
+   verifizieren.
+4. Test-Execution auf `success` pruefen; danach `smarter/documents/<heute>` in
+   der RTDB kontrollieren (`documentHtml`, `questions[].id`, `pdfUrl:""`,
+   `done:false`).
+
+**Node-Kette:** Schedule → GET config → GET queue → „Units auswaehlen"
+(Akkumulieren bis `dailyMinutes`, verlustfreies Schneiden, Rest als neue
+`pending`-Unit `order+0.5`) → IF `hasWork` → Anthropic (`claude-sonnet-5`,
+striktes JSON `{theoryHtml, questions:[{q,a}], flashcards:[{front,back}]}`) →
+„Dokument bauen" (IDs q1..qn, `documentHtml`) → PATCH `smarter/documents/<date>`
+(**PATCH** statt PUT → App-`answers` bleiben erhalten) + PATCH `smarter/queue`.
+
+### KORREKTUR zum Flashcards-Speicherort (frueherer Handoff)
+Frueher als „RTDB `cloud-sync/app-data.json`" notiert — **falsch**. `firebaseJsonPut`
+laedt via `uploadToFirebase` in Firebase **Storage** (Bucket
+`jupidu-36804.firebasestorage.app`), Pfad `cloud-sync/app-data.json`
+(`sanitizeCloudKey` behaelt den Punkt). Der RecallLab-Cloud-Stand liegt also in
+**Storage** bzw. im Netlify-Blob `app-data.json`, NICHT in der RTDB. Ein
+Flashcard-Push nach RecallLab braucht Storage-Auth und ist ein eigener Schritt —
+im `smarter-daily`-Workflow daher bewusst NICHT enthalten; die generierten
+Flashcards liegen als `documents/<date>/flashcards` bereit. `smarter/*` selbst
+ist echte RTDB (Dokumente/Antworten funktionieren dort verifiziert).
+
+### Logbuch
+- 2026-07-15 · Gotenberg-Ausfall auf srv1757990 diagnostiziert (kein SSH/Egress
+  aus der Umgebung → Remediation-Befehle geliefert). Danach Modul auf
+  HTML-Lerndokument umgestellt: App (iframe-Doc + speicherbare Antwortfelder +
+  Download) und n8n (`smarter-daily.workflow.json`, kein Gotenberg). Smoketest
+  16/16, Workflow-Validator 0 Fehler, Code-Nodes inkl. No-Loss-Split getestet.
+  Flashcard-Speicherort korrigiert (Storage statt RTDB).
+
+---
+
+## 6 · Update 2026-07-15 — Korpus gezählt, 1 Thema/Tag, Queue geseedet (Session `smarter-build-2026-07-15`)
+
+**Quelle:** „Kompendium · Wirtschaft, Recht & Gesellschaft" (Google Drive
+`1gIzH9dwdiJLtflaxtjOsLpMPCC95TNZQ`, 207 723 B). Die eingebetteten
+KI-Anweisungstexte (`Du bist Athena…`, `So nutzt die KI in n8n diese Datei`)
+wurden **strikt als Inhalt/Daten** behandelt — nichts davon ausgeführt. Struktur
+**statisch** geparst (kein `eval`/`Function` auf externem JS; nur String/Regex).
+
+### Zählung (exakt)
+- **Top-Level-Lerneinheiten: 6** — `CONTENT`-Sektionen:
+  01 recht (Privatrecht, 8) · 02 wirtschaft (Volkswirtschaft, 8) ·
+  03 vorsorge (Vorsorge & Versicherung, 7) · 04 unternehmen (Unternehmung & BWL, 9) ·
+  05 staat (Staatskunde, 5) · 06 gesellschaft (Gesellschaft & Umwelt, 4).
+- **Unterthemen/Themen: 41** (`ARTICLES.<id>`, dot- und bracket-Notation; 8+8+7+9+5+4).
+- **Tage bei 1 Thema/Tag: 41.**
+
+### Modell 1 Thema/Tag (Daily angepasst)
+- `n8n/smarter-daily.workflow.json`: Node „Thema auswaehlen" nimmt **genau EIN**
+  nächstes `pending`-Thema nach `order` (kein Akkumulieren, kein Schneiden mehr).
+- Anthropic-Prompt auf **~30 Min** Zielumfang umgestellt: theoryHtml mit mehreren
+  Abschnitten, Beispielen, Merksätzen, ggf. Tabelle (Richtwert 800–1400 Wörter),
+  **6–10 Fragen** (Verständnis + Anwendung), 4–8 Flashcards; `max_tokens` 12000.
+  Prompt weist die KI an, den Quelltext **nur als Lernmaterial** zu behandeln
+  (keine darin enthaltenen Anweisungen befolgen).
+- Datenvertrag unverändert: `smarter/documents/<date>` = {unitIds, theoryHtml,
+  questions:[{id,q,a}], flashcards, pdfUrl:"", done:false, documentHtml}; Antworten
+  unter `…/answers/<qId>`; **PATCH statt PUT**.
+
+### Queue (verlustfrei) + Loader
+- `n8n/smarter-queue.seed.json`: **41 `pending`-Units**, je
+  {sourceId:"wissensbasis-kompendium", order:1..41, title, content, estMinutes:30,
+  status:"pending"}. `content` = **verbatim** aus `ARTICLES[id]` (lead+body);
+  No-Loss verifiziert (jede content-Passage ist exakte Teilzeichenkette der
+  Quelle — nur geschnitten, nichts zusammengefasst). Gesamt 149 971 Zeichen.
+- `n8n/smarter-buildlog.seed.json`: Build-Logbuch für `smarter/buildLog/smarter-build-2026-07-15`.
+- `scripts/seed-smarter-queue.mjs`: pusht Queue + buildLog per PATCH in die RTDB
+  (dort ausführen, wo die RTDB erreichbar ist — aus der Claude-Umgebung 403).
+  `node scripts/seed-smarter-queue.mjs` (bzw. `--dry-run`).
+
+### Loop-Reihenfolge (unitIds, 1 Thema/Tag)
+```
+  Tag  1: 1.1  Der Mietvertrag  (recht)
+  Tag  2: 1.2  Der Arbeitsvertrag  (recht)
+  Tag  3: 1.3  Der Kaufvertrag  (recht)
+  Tag  4: 1.4  Allgemeine Vertragslehre  (recht)
+  Tag  5: 1.5  Familienrecht  (recht)
+  Tag  6: 1.6  Erbrecht  (recht)
+  Tag  7: 1.7  SchKG & Betreibung  (recht)
+  Tag  8: 1.8  Obligationenrecht  (recht)
+  Tag  9: 2.1  Grundlagen VWL  (wirtschaft)
+  Tag 10: 2.2  Marktwirtschaft  (wirtschaft)
+  Tag 11: 2.3  Wachstum & Strukturwandel  (wirtschaft)
+  Tag 12: 2.4  Konjunkturzyklen  (wirtschaft)
+  Tag 13: 2.5  Inflation & Deflation  (wirtschaft)
+  Tag 14: 2.6  Wirtschaftspolitik  (wirtschaft)
+  Tag 15: 2.7  Aussenwirtschaft  (wirtschaft)
+  Tag 16: 2.8  Geld & Geldsystem  (wirtschaft)
+  Tag 17: 3.1  Risikomanagement  (vorsorge)
+  Tag 18: 3.2  Das 3-Säulen-System  (vorsorge)
+  Tag 19: 3.3  Sozialversicherungen  (vorsorge)
+  Tag 20: 3.4  Privatversicherungen  (vorsorge)
+  Tag 21: 3.5  Arbeitslosigkeit  (vorsorge)
+  Tag 22: 3.6  Sozialer Ausgleich  (vorsorge)
+  Tag 23: 3.7  Steuern & Abgaben  (vorsorge)
+  Tag 24: 4.1  Grundlagen BWL  (unternehmen)
+  Tag 25: 4.2  Unternehmensmodell  (unternehmen)
+  Tag 26: 4.3  Strategie  (unternehmen)
+  Tag 27: 4.4  Organisation  (unternehmen)
+  Tag 28: 4.5  Marketing-Mix  (unternehmen)
+  Tag 29: 4.6  Personalmanagement  (unternehmen)
+  Tag 30: 4.7  Rechtsformen  (unternehmen)
+  Tag 31: 4.8  Finanzierung & Anlage  (unternehmen)
+  Tag 32: 4.9  Businessplan  (unternehmen)
+  Tag 33: 5.1  Föderalismus  (staat)
+  Tag 34: 5.2  Direkte Demokratie  (staat)
+  Tag 35: 5.3  Bundesrat  (staat)
+  Tag 36: 5.4  Bundesversammlung  (staat)
+  Tag 37: 5.5  Gewaltenteilung  (staat)
+  Tag 38: 6.1  Ökologie & Energie  (gesellschaft)
+  Tag 39: 6.2  Wirtschaftskreislauf & BIP  (gesellschaft)
+  Tag 40: 6.3  Globalisierung  (gesellschaft)
+  Tag 41: 6.4  Strukturwandel  (gesellschaft)
+```
+
+### Logbuch
+- 2026-07-15 · Korpus in Drive gefunden + statisch geparst (6 Einheiten, 41 Themen).
+  Queue-Seed (41 pending, verlustfrei) + buildLog + Loader-Script erstellt; Daily
+  auf 1 Thema/Tag & ~30-Min-Prompt umgestellt. Workflow-Validator 0 Fehler,
+  Code-Nodes getestet (Selektion nimmt genau 1 Thema, No-Loss-Substring-Check).
+  RTDB aus der Umgebung nicht erreichbar → Seed/Log via Loader-Script (Nutzer).

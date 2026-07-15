@@ -16034,6 +16034,15 @@ function viewSmarter() {
       .sm-stat{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:10px 16px;text-align:center;min-width:96px}
       .sm-stat .v{font-size:20px;font-weight:800;color:var(--sm-coral)}
       .sm-stat .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+      .sm-doc-frame{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:#EFEAE1;margin-bottom:14px}
+      .sm-doc-iframe{width:100%;border:0;display:block;background:#EFEAE1;min-height:340px}
+      .sm-ans-wrap{margin:10px 0 6px}
+      .sm-ans-lbl{font-size:11px;font-weight:700;color:var(--sm-petrol);text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px}
+      .sm-ans{width:100%;box-sizing:border-box;min-height:66px;resize:vertical;background:var(--panel2);border:1px solid var(--border2);border-radius:10px;padding:9px 11px;color:var(--text);font:14px/1.5 var(--sans)}
+      .sm-ans:focus{outline:none;border-color:var(--sm-coral)}
+      .sm-ans-meta{display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:11px;color:var(--muted);min-height:16px}
+      .sm-ans-fb{font-weight:700}
+      .sm-model{margin-top:8px;padding:9px 11px;border-radius:8px;background:color-mix(in oklab,var(--sm-petrol) 12%,transparent);border:1px solid color-mix(in oklab,var(--sm-petrol) 32%,transparent);color:var(--text2);font-size:13px;line-height:1.5}
     </style>
     <div class="smarter-wrap">
       <div class="sm-head">
@@ -16054,6 +16063,28 @@ function smarterNotice(title, msg) {
   return '<div class="sm-notice"><h3>' + esc(title) + '</h3><div class="sm-muted">' + esc(msg) + '</div></div>';
 }
 
+// Iframe-interne Styles für die eingedockten Antwortfelder (Schiefer/Leinen,
+// eigenes Realm → keine App-CSS-Variablen verfügbar, daher feste Werte).
+const SMARTER_IFRAME_ANSWER_CSS = [
+  ".sd-answer{margin:10px 0 24px;padding:12px 14px;border:1px solid #C9A96E;border-left:3px solid #D96B5B;border-radius:10px;background:rgba(255,255,255,.55)}",
+  ".sd-answer .sd-lbl{font-size:11px;font-weight:700;color:#2F8C80;margin-bottom:6px;letter-spacing:.3px;text-transform:uppercase}",
+  ".sd-answer textarea{width:100%;box-sizing:border-box;min-height:72px;resize:vertical;background:#fff;border:1px solid #C9A96E;border-radius:8px;padding:9px 11px;color:#2B3134;font:15px/1.55 inherit}",
+  ".sd-answer textarea:focus{outline:none;border-color:#D96B5B;box-shadow:0 0 0 3px rgba(217,107,91,.18)}",
+  ".sd-answer .sd-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;min-height:18px;gap:10px}",
+  ".sd-answer .sd-fb{font-size:12px;font-weight:700}",
+  ".sd-answer .sd-showbtn{appearance:none;border:1px solid #C9A96E;background:#C9A96E;color:#2B3134;font-size:12px;font-weight:700;padding:4px 10px;border-radius:7px;cursor:pointer;white-space:nowrap}",
+  ".sd-answer .sd-model{margin-top:8px;padding:9px 11px;border-radius:8px;background:rgba(47,140,128,.12);border:1px solid rgba(47,140,128,.35);color:#2B3134;font-size:13px;line-height:1.5}",
+  "@media print{.sd-answer .sd-showbtn{display:none}.sd-answer{background:transparent}}"
+].join("\n");
+
+function smarterAnswersMap() {
+  return (SMARTER.today && SMARTER.today.answers && typeof SMARTER.today.answers === "object") ? SMARTER.today.answers : {};
+}
+function smarterAnsweredCount(questions) {
+  const a = smarterAnswersMap();
+  return (questions || []).filter(function(q) { const id = q && q.id; return id && a[id] && String(a[id].text || "").trim(); }).length;
+}
+
 function smarterTabToday() {
   const doc = SMARTER.today;
   const todayKey = smarterTodayKey();
@@ -16064,42 +16095,279 @@ function smarterTabToday() {
   const questions = Array.isArray(doc.questions) ? doc.questions : [];
   const unitCount = Array.isArray(doc.unitIds) ? doc.unitIds.length : 0;
   const done = !!doc.done;
+  const answered = smarterAnsweredCount(questions);
 
   let html = "";
   html += '<div class="sm-summary">';
   html += '<div class="sm-stat"><div class="v">' + unitCount + '</div><div class="l">Units</div></div>';
   html += '<div class="sm-stat"><div class="v">' + questions.length + '</div><div class="l">Fragen</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + answered + '</div><div class="l">Beantwortet</div></div>';
   html += '<div class="sm-stat"><div class="v">' + (done ? "✓" : "–") + '</div><div class="l">Erledigt</div></div>';
   html += '</div>';
 
-  html += '<div class="sm-card"><div class="sm-row" style="justify-content:space-between">';
-  html += '<h3 style="margin:0">📖 Theorie — ' + esc(todayKey) + '</h3>';
+  html += '<div class="sm-card">';
+  html += '<div class="sm-row" style="justify-content:space-between">';
+  html += '<h3 style="margin:0">📖 Lerndokument — ' + esc(todayKey) + '</h3>';
   html += '<div class="sm-row">';
-  if (doc.pdfUrl) html += '<a class="sm-btn sm-mini" href="' + esc(doc.pdfUrl) + '" target="_blank" rel="noopener">📄 PDF öffnen</a>';
-  html += '<button class="sm-btn sm-mini ' + (done ? "" : "sm-primary") + '" data-action="smarter-toggle-done">' + (done ? "↺ Wieder offen" : "✓ Als erledigt markieren") + '</button>';
+  html += '<button class="sm-btn sm-mini" data-action="smarter-download">⬇ Herunterladen</button>';
+  html += '<button class="sm-btn sm-mini ' + (done ? "" : "sm-primary") + '" data-action="smarter-toggle-done">' + (done ? "↺ Wieder offen" : "✓ Erledigt") + '</button>';
   html += '</div></div>';
+  html += '<div class="sm-muted" style="margin-top:8px">Beantworte die Fragen direkt im Dokument — deine Antworten werden automatisch in Quantus gespeichert. Der Download ist eine statische Kopie inkl. deiner Antworten.</div>';
+  html += '</div>';
+
+  if (doc.documentHtml) {
+    // Standalone-HTML isoliert im iframe rendern; Antwortfelder werden nach dem
+    // Rendern per data-qid eingedockt (smarterMountDocument, post-render Hook).
+    html += '<div class="sm-doc-frame"><iframe id="smarterDocFrame" class="sm-doc-iframe" title="Smarter Lerndokument" scrolling="no"></iframe></div>';
+  } else {
+    // Fallback (Dokument ohne documentHtml, z. B. Altbestand): Theorie + Fragen
+    // nativ rendern, ebenfalls mit speicherbaren Antwortfeldern.
+    html += smarterNativeToday(doc, questions);
+  }
+  return html;
+}
+
+// Native Darstellung (Fallback ohne documentHtml)
+function smarterNativeToday(doc, questions) {
+  const answers = smarterAnswersMap();
+  let html = "";
+  html += '<div class="sm-card"><h3>📖 Theorie</h3>';
   if (doc.theoryHtml) html += '<div class="sm-theory">' + doc.theoryHtml + '</div>';
   else html += '<div class="sm-muted">Kein Theorie-HTML im Dokument.</div>';
   html += '</div>';
-
   if (questions.length) {
     html += '<div class="sm-card"><h3>❓ Fragen</h3>';
     html += questions.map(function(item, i) {
+      const qid = (item && item.id) ? item.id : ("q" + (i + 1));
       const q = (typeof item === "string") ? item : (item.q || item.question || item.frage || "");
       const a = (typeof item === "string") ? "" : (item.a || item.answer || item.antwort || "");
+      const saved = answers[qid] && answers[qid].text ? String(answers[qid].text) : "";
       const shown = SMARTER.revealed.has(i);
       let out = '<div class="sm-q"><div class="sm-q-head"><span class="sm-q-num">' + (i + 1) + '</span><span>' + esc(q) + '</span></div>';
-      if (a) {
-        out += shown
-          ? '<div class="sm-q-a">' + esc(a) + '</div>'
-          : '<div style="margin-top:8px"><button class="sm-btn sm-ghost sm-mini" data-action="smarter-reveal" data-idx="' + i + '">Antwort zeigen</button></div>';
-      }
+      out += '<div class="sm-ans-wrap"><div class="sm-ans-lbl">Deine Antwort</div>';
+      out += '<textarea class="sm-ans" data-qid="' + esc(qid) + '" placeholder="Deine Antwort …" oninput="smarterOnAnswerInput(this)" onblur="smarterOnAnswerBlur(this)">' + esc(saved) + '</textarea>';
+      out += '<div class="sm-ans-meta"><span class="sm-ans-fb" id="smfb_' + esc(qid) + '"></span>';
+      if (a) out += '<button class="sm-btn sm-ghost sm-mini" data-action="smarter-reveal" data-idx="' + i + '">Musterantwort zeigen</button>';
       out += '</div>';
+      if (a && shown) out += '<div class="sm-model">' + esc(a) + '</div>';
+      out += '</div></div>';
       return out;
     }).join("");
     html += '</div>';
   }
   return html;
+}
+
+// ── Antwort speichern (Debounce; sofort bei Blur) ──
+async function smarterCommitAnswer(qid, text, fbEl) {
+  const db = smarterRootRef();
+  const dayKey = SMARTER.dayKey || smarterTodayKey();
+  if (!db) { if (fbEl) { fbEl.textContent = "offline – lokal gemerkt"; fbEl.style.color = "#C9A96E"; } return; }
+  try {
+    await db.child("documents/" + dayKey + "/answers/" + qid).set({ text: String(text || ""), updatedAt: new Date().toISOString() });
+    if (fbEl) { fbEl.textContent = "gespeichert ✓"; fbEl.style.color = "#2F8C80"; }
+  } catch (e) {
+    if (fbEl) { fbEl.textContent = "Fehler beim Speichern"; fbEl.style.color = "#D96B5B"; }
+    console.warn("Smarter save answer:", e);
+  }
+}
+function smarterQueueAnswerSave(qid, text, fbEl, immediate) {
+  if (!qid) return;
+  if (SMARTER.today) {
+    SMARTER.today.answers = SMARTER.today.answers || {};
+    SMARTER.today.answers[qid] = { text: String(text || ""), updatedAt: new Date().toISOString() };
+  }
+  SMARTER.answerTimers = SMARTER.answerTimers || {};
+  clearTimeout(SMARTER.answerTimers[qid]);
+  if (fbEl) { fbEl.textContent = "…"; fbEl.style.color = ""; }
+  if (immediate) { smarterCommitAnswer(qid, text, fbEl); }
+  else { SMARTER.answerTimers[qid] = setTimeout(function() { smarterCommitAnswer(qid, text, fbEl); }, 700); }
+}
+// Native (App-DOM) Inline-Handler
+window.smarterOnAnswerInput = function(ta) {
+  if (!ta) return;
+  const qid = ta.getAttribute("data-qid");
+  smarterQueueAnswerSave(qid, ta.value, document.getElementById("smfb_" + qid), false);
+};
+window.smarterOnAnswerBlur = function(ta) {
+  if (!ta) return;
+  const qid = ta.getAttribute("data-qid");
+  smarterQueueAnswerSave(qid, ta.value, document.getElementById("smfb_" + qid), true);
+};
+
+// ── iframe-Dokument mounten + Antwortfelder eindocken ──
+function smarterMountDocument() {
+  try {
+    const h = (typeof parseHash === "function") ? parseHash() : { route: (APP.state.ui && APP.state.ui.route) };
+    if (h.route !== "smarter") return;
+    if ((SMARTER.tab || "today") !== "today") return;
+    const doc = SMARTER.today;
+    const iframe = document.getElementById("smarterDocFrame");
+    if (!iframe || !doc || !doc.documentHtml) return;
+    if (iframe.dataset.mounted === "1") return;
+    iframe.dataset.mounted = "1";
+    smarterMountInto(iframe, doc);
+  } catch (e) { console.warn("Smarter mount:", e); }
+}
+window.__smarterPostRender = smarterMountDocument;
+
+// Testbar/wiederverwendbar: rendert doc.documentHtml in ein iframe und dockt die
+// Antwortfelder ein. Scripts im Dokument werden entfernt (statischer Inhalt).
+window.smarterMountInto = function(iframe, doc) {
+  if (!iframe || !doc) return;
+  const safe = String(doc.documentHtml || "").replace(/<script\b[\s\S]*?<\/script>/gi, "");
+  iframe.addEventListener("load", function onl() {
+    iframe.removeEventListener("load", onl);
+    try { smarterInjectAnswers(iframe, doc); } catch (e) { console.warn("Smarter inject:", e); }
+  });
+  iframe.srcdoc = safe;
+};
+
+function smarterSizeIframe(iframe) {
+  try {
+    const idoc = iframe.contentDocument;
+    if (idoc && idoc.documentElement) iframe.style.height = (idoc.documentElement.scrollHeight + 12) + "px";
+  } catch (e) {}
+}
+
+function smarterInjectAnswers(iframe, doc) {
+  const idoc = iframe.contentDocument;
+  if (!idoc || !idoc.body) return;
+  const st = idoc.createElement("style");
+  st.textContent = SMARTER_IFRAME_ANSWER_CSS;
+  (idoc.head || idoc.body).appendChild(st);
+
+  const answers = (doc.answers && typeof doc.answers === "object") ? doc.answers : {};
+  const qById = {};
+  (Array.isArray(doc.questions) ? doc.questions : []).forEach(function(q) { if (q && q.id) qById[q.id] = q; });
+
+  const nodes = idoc.querySelectorAll("[data-qid]");
+  nodes.forEach(function(el) {
+    const qid = el.getAttribute("data-qid");
+    if (!qid) return;
+    // schon vorhanden? (kein Doppel-Andocken)
+    if (el.nextElementSibling && el.nextElementSibling.classList && el.nextElementSibling.classList.contains("sd-answer")) return;
+    const saved = answers[qid] && answers[qid].text ? String(answers[qid].text) : "";
+    const model = qById[qid] ? String(qById[qid].a || qById[qid].answer || "") : "";
+    const block = smarterBuildAnswerBlock(idoc, iframe, qid, saved, model);
+    el.insertAdjacentElement("afterend", block);
+  });
+  smarterSizeIframe(iframe);
+}
+
+function smarterBuildAnswerBlock(idoc, iframe, qid, saved, model) {
+  const wrap = idoc.createElement("div");
+  wrap.className = "sd-answer";
+  wrap.setAttribute("data-answer-for", qid);
+
+  const lbl = idoc.createElement("div");
+  lbl.className = "sd-lbl"; lbl.textContent = "Deine Antwort";
+  wrap.appendChild(lbl);
+
+  const ta = idoc.createElement("textarea");
+  ta.value = saved; ta.setAttribute("placeholder", "Deine Antwort …");
+  wrap.appendChild(ta);
+
+  const meta = idoc.createElement("div");
+  meta.className = "sd-meta";
+  const fb = idoc.createElement("span");
+  fb.className = "sd-fb";
+  meta.appendChild(fb);
+
+  let modelEl = null;
+  if (model) {
+    const btn = idoc.createElement("button");
+    btn.type = "button"; btn.className = "sd-showbtn"; btn.textContent = "Musterantwort zeigen";
+    modelEl = idoc.createElement("div");
+    modelEl.className = "sd-model"; modelEl.style.display = "none"; modelEl.textContent = model;
+    btn.addEventListener("click", function() {
+      const open = modelEl.style.display !== "none";
+      modelEl.style.display = open ? "none" : "block";
+      btn.textContent = open ? "Musterantwort zeigen" : "Musterantwort verbergen";
+      smarterSizeIframe(iframe);
+    });
+    meta.appendChild(btn);
+  }
+  wrap.appendChild(meta);
+  if (modelEl) wrap.appendChild(modelEl);
+
+  // Listener (Parent-Closures — funktionieren, obwohl das Dokument selbst
+  // keine Scripts ausführt).
+  ta.addEventListener("input", function() { smarterQueueAnswerSave(qid, ta.value, fb, false); smarterSizeIframe(iframe); });
+  ta.addEventListener("blur", function() { smarterQueueAnswerSave(qid, ta.value, fb, true); });
+  return wrap;
+}
+
+// ── Download (statische HTML-Kopie inkl. eingegebener Antworten) ──
+window.smarterBuildDownloadHtml = function(documentHtml, answers, questions) {
+  let src = String(documentHtml || "").replace(/<script\b[\s\S]*?<\/script>/gi, "");
+  try {
+    const d = new DOMParser().parseFromString(src, "text/html");
+    (questions || []).forEach(function(qq) {
+      const qid = qq && qq.id; if (!qid) return;
+      const el = d.querySelector('[data-qid="' + qid + '"]');
+      if (!el) return;
+      const ans = (answers && answers[qid] && answers[qid].text) ? String(answers[qid].text) : "";
+      const box = d.createElement("div");
+      box.setAttribute("style", "margin:8px 0 20px;padding:10px 12px;border:1px solid #C9A96E;border-left:3px solid #D96B5B;border-radius:8px;background:#fff;white-space:pre-wrap;color:#2B3134;font:14px/1.55 sans-serif");
+      const lab = d.createElement("div");
+      lab.setAttribute("style", "font-size:11px;font-weight:700;color:#2F8C80;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px");
+      lab.textContent = "Deine Antwort";
+      const txt = d.createElement("div");
+      txt.textContent = ans || "—";
+      box.appendChild(lab); box.appendChild(txt);
+      el.insertAdjacentElement("afterend", box);
+    });
+    return "<!doctype html>\n" + d.documentElement.outerHTML;
+  } catch (e) {
+    return src;
+  }
+};
+
+function smarterBuildFallbackDownloadHtml(doc, answers, questions) {
+  const dk = SMARTER.dayKey || smarterTodayKey();
+  const rows = (questions || []).map(function(item, i) {
+    const qid = (item && item.id) ? item.id : ("q" + (i + 1));
+    const q = (typeof item === "string") ? item : (item.q || item.question || "");
+    const a = (typeof item === "string") ? "" : (item.a || item.answer || "");
+    const ans = (answers && answers[qid] && answers[qid].text) ? String(answers[qid].text) : "";
+    return '<div class="q"><div class="qh"><b>' + (i + 1) + '.</b> ' + esc(q) + '</div>' +
+      '<div class="lbl">Deine Antwort</div><div class="ab">' + (esc(ans) || "—") + '</div>' +
+      (a ? '<div class="lbl">Musterantwort</div><div class="mb">' + esc(a) + '</div>' : '') + '</div>';
+  }).join("");
+  return '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Smarter — ' + esc(dk) + '</title><style>' +
+    'body{margin:0;background:#EFEAE1;color:#2B3134;font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;padding:28px}' +
+    '.wrap{max-width:780px;margin:0 auto}h1{color:#2B3134;border-bottom:3px solid #D96B5B;padding-bottom:8px}' +
+    '.theory{background:#fff;border:1px solid #C9A96E;border-radius:12px;padding:16px 18px;margin:16px 0}' +
+    '.q{background:rgba(255,255,255,.6);border:1px solid #C9A96E;border-left:3px solid #D96B5B;border-radius:10px;padding:12px 14px;margin:12px 0}' +
+    '.lbl{font-size:11px;font-weight:700;color:#2F8C80;text-transform:uppercase;letter-spacing:.3px;margin:8px 0 4px}' +
+    '.ab{background:#fff;border:1px solid #C9A96E;border-radius:8px;padding:9px 11px;white-space:pre-wrap}' +
+    '.mb{background:rgba(47,140,128,.12);border:1px solid rgba(47,140,128,.35);border-radius:8px;padding:9px 11px}' +
+    '</style></head><body><div class="wrap"><h1>🎓 Smarter — ' + esc(dk) + '</h1>' +
+    '<div class="theory">' + (doc.theoryHtml || "") + '</div>' + rows + '</div></body></html>';
+}
+
+function smarterDownloadDocument() {
+  const doc = SMARTER.today;
+  if (!doc) { if (typeof toast === "function") toast("info", "Smarter", "Kein Dokument zum Herunterladen"); return; }
+  const answers = smarterAnswersMap();
+  const questions = Array.isArray(doc.questions) ? doc.questions : [];
+  const html = doc.documentHtml
+    ? window.smarterBuildDownloadHtml(doc.documentHtml, answers, questions)
+    : smarterBuildFallbackDownloadHtml(doc, answers, questions);
+  try {
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "smarter-" + (SMARTER.dayKey || smarterTodayKey()) + ".html";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 4000);
+    if (typeof toast === "function") toast("ok", "Smarter", "Lerndokument heruntergeladen");
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Download fehlgeschlagen");
+    console.warn("Smarter download:", e);
+  }
 }
 
 function smarterTabUpload() {
@@ -16338,6 +16606,7 @@ function smarterHandleAction(action, el, e) {
     case "smarter-upload": smarterDoUpload(); break;
     case "smarter-clear-upload": SMARTER.pendingUpload = null; render(); break;
     case "smarter-reveal": SMARTER.revealed.add(Number(el.dataset.idx)); render(); break;
+    case "smarter-download": smarterDownloadDocument(); break;
     case "smarter-toggle-done": smarterToggleDone(); break;
     case "smarter-queue-up": smarterQueueMove(el.dataset.id, "up"); break;
     case "smarter-queue-down": smarterQueueMove(el.dataset.id, "down"); break;
@@ -16489,6 +16758,9 @@ function _doRender() {
 
   // Panel-Dock (Split-Screen-Seitenpanels) mitrendern — Modul am Seitenende
   if (typeof window.renderDock === "function") { try { window.renderDock(); } catch(e){} }
+
+  // Smarter: nach dem Render das Lerndokument-iframe mounten + Antwortfelder eindocken
+  if (typeof window.__smarterPostRender === "function") { try { window.__smarterPostRender(); } catch(e){} }
   
   // Knowledge file input handler (re-attach after render)
   const kfi = document.getElementById("knowledgeFileInput");
