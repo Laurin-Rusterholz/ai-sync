@@ -58,6 +58,17 @@ Nach `JSON.parse(wrapper.data)` liegen die relevanten Sammlungen unter
 ```
 `accounts[<id>]` enthält u.a. `name`, `balance`, `currency` (Default `CHF`).
 
+## Fertiger Workflow: `n8n/polaris-budget.json`
+
+Dieser Lese-Endpunkt ist bereits als importierbarer Workflow im Repo abgelegt
+(`POST /webhook/polaris/budget`). Node-Kette: `WH budget` (Webhook) →
+`RTDB app-data` (HTTP-Request GET auf `appStore/app-data_json.json`,
+timeout 8000, continueOnFail) → `Validate budget` (Code-Node: parst `data`,
+extrahiert die sechs `entities.*`-Sammlungen + `summary`) → `Resp budget`
+(JSON, CORS `*`). Antwort: `{ok:true, budget:{…}}` bzw. defensiv
+`{ok:false, error}`. Keine Credentials, keine Schreib-/Sende-Operation.
+Import: Datei in n8n importieren und aktivieren — sonst nichts.
+
 ## Beispiel: Saldo/Ausgaben in einem n8n-Code-Node berechnen
 
 Muster wie bei den anderen Polaris-Endpunkten (dedizierter **HTTP-Request-Node**
