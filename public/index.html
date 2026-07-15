@@ -111490,7 +111490,7 @@ Dateien zu identifizieren.
 
     tree.onclick = (e) => {
       const nav = e.target.closest("[data-nav]");
-      if (nav) { if (nav.dataset.nav === "home") openHome(); return; }
+      if (nav) { if (nav.dataset.nav === "home") openHome("all"); return; }
       const chev = e.target.closest("[data-chev]");
       if (chev) { toggleOpen(chev.dataset.chev); renderSidebar(); return; }
       const add = e.target.closest("[data-addnote]");
@@ -111498,8 +111498,16 @@ Dateien zu identifizieren.
       const ni = e.target.closest("[data-note]");
       if (ni) { openPage(ni.dataset.note); return; }
       const nbi = e.target.closest("[data-nb]");
-      if (nbi && nbi.dataset.nb !== "_inbox") { toggleOpen(collapsedKey("nb", nbi.dataset.nb)); renderSidebar(); return; }
-      if (nbi) { toggleOpen(collapsedKey("nb", "_inbox")); renderSidebar(); return; }
+      if (nbi && nbi.dataset.nb !== "_inbox") {
+        // Klick auf den Notizbuch-Namen: Notizbuch vollständig öffnen (alle Seiten
+        // als Übersicht) UND im Baum aufklappen. Aufklappen/Einklappen bleibt zusätzlich
+        // über das Dreieck (Chevron) möglich.
+        const key = collapsedKey("nb", nbi.dataset.nb);
+        if (!S.open[key]) setOpen(key, true);
+        openHome(nbi.dataset.nb);
+        return;
+      }
+      if (nbi) { openHome("_inbox"); return; }
       const chi = e.target.closest("[data-ch]");
       if (chi) { toggleOpen(collapsedKey("ch", chi.dataset.ch)); renderSidebar(); return; }
     };
@@ -111531,13 +111539,23 @@ Dateien zu identifizieren.
     renderSidebar();
     renderPage();
   }
+  // Titel der Übersicht abhängig vom aktiven Filter (Notizbuch, Inbox, Favoriten …)
+  function homeTitle() {
+    if (S.homeFilter === "fav") return "★ Favoriten";
+    if (S.homeFilter === "_inbox") return "📥 Inbox";
+    if (S.homeFilter && S.homeFilter !== "all") {
+      const nb = nbMap()[S.homeFilter];
+      if (nb) return "📓 " + esc(nb.title || "Notizbuch");
+    }
+    return "🗂️ Alle Notizen";
+  }
 
   function renderTopbar() {
     const crumbs = $("#nf2Crumbs");
     if (!crumbs) return;
     const actions = $("#nf2Root") && $("#nf2Root").querySelector(".nf2-top-actions");
     if (S.view === "home") {
-      crumbs.innerHTML = `<span class="nf2-crumb cur">🗂️ Alle Notizen</span>`;
+      crumbs.innerHTML = `<span class="nf2-crumb cur">${homeTitle()}</span>`;
       if (actions) actions.style.display = "none";
       return;
     }
@@ -111629,7 +111647,7 @@ Dateien zu identifizieren.
     page.innerHTML = `
       <div class="nf2-home">
         <div class="nf2-home-head">
-          <h1 class="nf2-home-h1">🗂️ Alle Notizen</h1>
+          <h1 class="nf2-home-h1">${homeTitle()}</h1>
           <button class="nf2-btn primary" id="nf2HomeNew">＋ Neue Seite</button>
         </div>
         <div class="nf2-home-searchwrap"><span class="nf2-home-searchic">🔍</span><input class="nf2-home-search" id="nf2HomeSearch" placeholder="Alle Notizen durchsuchen…" value="${esc(S.homeSearch || "")}"></div>
@@ -111786,18 +111804,22 @@ Dateien zu identifizieren.
     todo: { ph: "To-do" },
     q:    { ph: "Zitat" },
     code: { ph: "Code" },
+    callout: { ph: "Hinweis…" },
     hr:   { ph: "" },
   };
 
-  function makeBlock(type, html, checked) {
+  function makeBlock(type, html, checked, align) {
     const b = document.createElement("div");
     b.className = "nf2-block";
     b.dataset.t = type;
     if (type === "todo") b.dataset.c = checked ? "1" : "0";
+    if (align) b.dataset.align = align;
+    const ph = esc(BLOCK_TYPES[type] ? BLOCK_TYPES[type].ph : "");
     let inner = `<div class="nf2-gutter" contenteditable="false"><button class="nf2-gbtn nf2-plus" title="Block darunter einfügen" tabindex="-1">＋</button><button class="nf2-gbtn nf2-grip" title="Ziehen zum Verschieben · Klick für Menü" tabindex="-1">⠿</button></div>`;
     if (type === "todo") inner += `<button class="nf2-check" contenteditable="false" tabindex="-1">${checked ? "✓" : ""}</button>`;
     if (type === "hr") inner += `<div class="nf2-hrline" contenteditable="false"><hr></div>`;
-    else inner += `<div class="nf2-bc" contenteditable="${type === "code" ? "plaintext-only" : "true"}" data-ph="${esc(BLOCK_TYPES[type] ? BLOCK_TYPES[type].ph : "")}">${type === "code" ? esc(html) : html}</div>`;
+    else if (type === "callout") inner += `<div class="nf2-callout-box"><span class="nf2-callout-ic" contenteditable="false">💡</span><div class="nf2-bc" contenteditable="true" data-ph="${ph}">${html}</div></div>`;
+    else inner += `<div class="nf2-bc" contenteditable="${type === "code" ? "plaintext-only" : "true"}" data-ph="${ph}">${type === "code" ? esc(html) : html}</div>`;
     b.innerHTML = inner;
     return b;
   }
@@ -111806,26 +111828,29 @@ Dateien zu identifizieren.
     const out = [];
     const tmp = document.createElement("div");
     tmp.innerHTML = html || "";
-    const pushP = (h) => out.push(["p", h]);
+    // Ausrichtung aus dem Element lesen (text-align)
+    const al = (n) => { const a = n && n.style && n.style.textAlign; return (a && a !== "left" && a !== "start") ? a : ""; };
+    const pushP = (h, align) => out.push(["p", h, false, align || ""]);
     Array.from(tmp.childNodes).forEach((node) => {
       if (node.nodeType === 3) { const t = node.textContent; if (t.trim()) pushP(esc(t)); return; }
       if (node.nodeType !== 1) return;
       const tag = node.tagName;
-      if (tag === "H1" || tag === "H2" || tag === "H3") out.push([tag.toLowerCase(), node.innerHTML]);
-      else if (tag === "H4" || tag === "H5" || tag === "H6") out.push(["h3", node.innerHTML]);
-      else if (tag === "UL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ul", li.innerHTML]));
-      else if (tag === "OL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ol", li.innerHTML]));
-      else if (tag === "BLOCKQUOTE") out.push(["q", node.innerHTML]);
+      if (tag === "H1" || tag === "H2" || tag === "H3") out.push([tag.toLowerCase(), node.innerHTML, false, al(node)]);
+      else if (tag === "H4" || tag === "H5" || tag === "H6") out.push(["h3", node.innerHTML, false, al(node)]);
+      else if (tag === "UL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ul", li.innerHTML, false, al(li)]));
+      else if (tag === "OL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ol", li.innerHTML, false, al(li)]));
+      else if (tag === "BLOCKQUOTE") out.push(["q", node.innerHTML, false, al(node)]);
       else if (tag === "PRE") out.push(["code", node.textContent || ""]);
       else if (tag === "HR") out.push(["hr", ""]);
-      else if (tag === "DIV" && node.hasAttribute("data-todo")) out.push(["todo", node.innerHTML, node.getAttribute("data-checked") === "1"]);
+      else if (tag === "DIV" && node.hasAttribute("data-callout")) out.push(["callout", node.innerHTML, false, al(node)]);
+      else if (tag === "DIV" && node.hasAttribute("data-todo")) out.push(["todo", node.innerHTML, node.getAttribute("data-checked") === "1", al(node)]);
       else if (tag === "BR") pushP("");
       else if (tag === "DIV" || tag === "P") {
         // Legacy-contenteditable: DIVs können verschachtelt sein
         if (node.querySelector("div,p,h1,h2,h3,ul,ol,blockquote,pre")) {
           const inner = parseContentToBlocks(node.innerHTML);
           inner.forEach((x) => out.push(x));
-        } else pushP(node.innerHTML);
+        } else pushP(node.innerHTML, al(node));
       }
       else pushP(node.outerHTML);
     });
@@ -111837,24 +111862,26 @@ Dateien zu identifizieren.
     const wrap = blocksEl();
     if (!wrap) return;
     wrap.innerHTML = "";
-    parseContentToBlocks(html).forEach(([t, h, c]) => wrap.appendChild(makeBlock(t, h, c)));
+    parseContentToBlocks(html).forEach(([t, h, c, al]) => wrap.appendChild(makeBlock(t, h, c, al)));
   }
 
   function serializeBlocks() {
     const wrap = blocksEl();
     if (!wrap) return "";
     let out = "", run = null;
-    const flush = () => { if (run) { out += "<" + run.tag + ">" + run.items.map((i) => "<li>" + i + "</li>").join("") + "</" + run.tag + ">"; run = null; } };
+    const alSt = (b) => { const a = b.dataset.align; return a ? ` style="text-align:${a}"` : ""; };
+    const flush = () => { if (run) { out += "<" + run.tag + ">" + run.items.map((i) => "<li" + (i.align ? ` style="text-align:${i.align}"` : "") + ">" + i.h + "</li>").join("") + "</" + run.tag + ">"; run = null; } };
     $$(".nf2-block", wrap).forEach((b) => {
       const t = b.dataset.t;
       const bc = $(".nf2-bc", b);
       const h = bc ? bc.innerHTML.replace(/<br>$/, "") : "";
-      if (t === "ul" || t === "ol") { if (!run || run.tag !== t) { flush(); run = { tag: t, items: [] }; } run.items.push(h); return; }
+      if (t === "ul" || t === "ol") { if (!run || run.tag !== t) { flush(); run = { tag: t, items: [] }; } run.items.push({ h, align: b.dataset.align || "" }); return; }
       flush();
-      if (t === "p") out += "<p>" + (h || "<br>") + "</p>";
-      else if (t === "h1" || t === "h2" || t === "h3") out += "<" + t + ">" + h + "</" + t + ">";
-      else if (t === "todo") out += '<div data-todo="1" data-checked="' + (b.dataset.c === "1" ? "1" : "0") + '">' + h + "</div>";
-      else if (t === "q") out += "<blockquote>" + h + "</blockquote>";
+      if (t === "p") out += "<p" + alSt(b) + ">" + (h || "<br>") + "</p>";
+      else if (t === "h1" || t === "h2" || t === "h3") out += "<" + t + alSt(b) + ">" + h + "</" + t + ">";
+      else if (t === "todo") out += '<div data-todo="1" data-checked="' + (b.dataset.c === "1" ? "1" : "0") + '"' + alSt(b) + ">" + h + "</div>";
+      else if (t === "q") out += "<blockquote" + alSt(b) + ">" + h + "</blockquote>";
+      else if (t === "callout") out += '<div data-callout="1"' + alSt(b) + ">" + h + "</div>";
       else if (t === "code") out += "<pre>" + esc(bc ? bc.textContent : "") + "</pre>";
       else if (t === "hr") out += "<hr>";
     });
@@ -112102,7 +112129,7 @@ Dateien zu identifizieren.
   function transformBlock(block, type, keepFocus) {
     const bc = $(".nf2-bc", block);
     const html = bc ? (type === "code" ? bc.textContent : bc.innerHTML) : "";
-    const nb = makeBlock(type, html, block.dataset.c === "1");
+    const nb = makeBlock(type, html, block.dataset.c === "1", type === "hr" ? "" : (block.dataset.align || ""));
     block.replaceWith(nb);
     const nbc = $(".nf2-bc", nb);
     if (nbc && keepFocus !== false) placeCaret(nbc, false);
@@ -112149,6 +112176,7 @@ Dateien zu identifizieren.
     { k: "todo", ic: "☑", t: "To-do", d: "Mit Checkbox" },
     { k: "q", ic: "❝", t: "Zitat", d: "Hervorgehobenes Zitat" },
     { k: "code", ic: "</>", t: "Code", d: "Codeblock" },
+    { k: "callout", ic: "💡", t: "Callout", d: "Hervorgehobener Hinweis" },
     { k: "hr", ic: "—", t: "Trennlinie", d: "Horizontale Linie" },
     { k: "@", ic: "@", t: "Erwähnen…", d: "Aufgabe, Projekt oder Notiz verknüpfen" },
   ];
@@ -112282,8 +112310,15 @@ Dateien zu identifizieren.
       { a: "turn-p", ic: "¶", t: "In Text umwandeln" },
       { a: "turn-h1", ic: "H1", t: "In Überschrift 1" },
       { a: "turn-h2", ic: "H2", t: "In Überschrift 2" },
+      { a: "turn-h3", ic: "H3", t: "In Überschrift 3" },
       { a: "turn-ul", ic: "•", t: "In Aufzählung" },
+      { a: "turn-ol", ic: "1.", t: "In nummerierte Liste" },
       { a: "turn-todo", ic: "☑", t: "In To-do" },
+      { a: "turn-q", ic: "❝", t: "In Zitat" },
+      { a: "turn-callout", ic: "💡", t: "In Callout" },
+      { a: "align-left", ic: "⇤", t: "Linksbündig" },
+      { a: "align-center", ic: "≡", t: "Zentriert" },
+      { a: "align-right", ic: "⇥", t: "Rechtsbündig" },
       { a: "dup", ic: "⧉", t: "Duplizieren" },
       { a: "del", ic: "🗑", t: "Löschen" },
     ];
@@ -112293,7 +112328,8 @@ Dateien zu identifizieren.
       hideMenu();
       const a = items[i].a;
       if (a === "del") { block.remove(); if (!blocksEl().children.length) blocksEl().appendChild(makeBlock("p", "")); scheduleContentSave(); }
-      else if (a === "dup") { const bc = $(".nf2-bc", block); const cl = makeBlock(block.dataset.t, bc ? bc.innerHTML : "", block.dataset.c === "1"); block.after(cl); scheduleContentSave(); }
+      else if (a === "dup") { const bc = $(".nf2-bc", block); const cl = makeBlock(block.dataset.t, bc ? bc.innerHTML : "", block.dataset.c === "1", block.dataset.align || ""); block.after(cl); scheduleContentSave(); }
+      else if (a.indexOf("align-") === 0) { const dir = a.slice(6); if (dir === "left") delete block.dataset.align; else block.dataset.align = dir; scheduleContentSave(); }
       else if (a.indexOf("turn-") === 0) transformBlock(block, a.slice(5));
     });
   }
@@ -112381,7 +112417,11 @@ Dateien zu identifizieren.
         <button data-cmd="hl" title="Anstreichen"><span class="nf2-hlic">A</span></button>
         <button data-cmd="color" title="Farbe & Anstreichen">🎨<span class="nf2-bub-car">▾</span></button>
         <span class="nf2-bub-sep"></span>
-        <button data-cmd="link" title="Link einfügen">🔗</button>`;
+        <button data-cmd="sup" title="Hochgestellt">x²</button>
+        <button data-cmd="sub" title="Tiefgestellt">x₂</button>
+        <span class="nf2-bub-sep"></span>
+        <button data-cmd="link" title="Link einfügen">🔗</button>
+        <button data-cmd="clear" title="Formatierung entfernen">🧹</button>`;
       bub.style.display = "flex";
       let x = rect.left + rect.width / 2 - bub.offsetWidth / 2;
       x = Math.max(8, Math.min(x, window.innerWidth - bub.offsetWidth - 8));
@@ -112404,6 +112444,12 @@ Dateien zu identifizieren.
           styleSelection("hl", "yellow"); // Schnell-Anstreichen (gelb)
         } else if (cmd === "color") {
           openPalette(b.getBoundingClientRect());
+        } else if (cmd === "sup") {
+          document.execCommand("superscript", false, null); scheduleContentSave();
+        } else if (cmd === "sub") {
+          document.execCommand("subscript", false, null); scheduleContentSave();
+        } else if (cmd === "clear") {
+          clearFormatting();
         } else {
           document.execCommand(cmd, false, null);
           scheduleContentSave();
@@ -112478,6 +112524,27 @@ Dateien zu identifizieren.
       else nr.selectNodeContents(bc);
       s.removeAllRanges(); s.addRange(nr);
     } catch (e) {}
+    scheduleContentSave();
+  }
+
+  // Sämtliche Zeichen-Formatierung der Auswahl entfernen (Fett/Kursiv/Farbe/
+  // Anstreichen/Code/hoch-/tiefgestellt), Mentions & Links bleiben erhalten.
+  function clearFormatting() {
+    const s = window.getSelection();
+    if (!s.rangeCount || s.isCollapsed) return;
+    try { document.execCommand("removeFormat", false, null); } catch (e) {}
+    const r = s.getRangeAt(0);
+    const a = r.commonAncestorContainer;
+    const host = a.nodeType === 1 ? a : a.parentElement;
+    const bc = host && host.closest ? host.closest(".nf2-bc") : null;
+    if (!bc) return;
+    const frag = r.extractContents();
+    const unwrap = (el) => { const p = el.parentNode; if (!p) return; while (el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el); };
+    if (frag.querySelectorAll) {
+      Array.from(frag.querySelectorAll("span.nf2-fg,mark.nf2-hl,mark,code,b,strong,i,em,u,s,strike,sup,sub,font")).forEach(unwrap);
+    }
+    r.insertNode(frag);
+    if (bc.normalize) bc.normalize();
     scheduleContentSave();
   }
 
@@ -112897,6 +112964,17 @@ Dateien zu identifizieren.
 .nf2-hlic{display:inline-block;background:rgba(255,208,0,.55);color:#3a2f00;border-radius:2px;padding:0 4px;font-weight:700;font-size:12px}
 .nf2-mention{display:inline-flex;align-items:center;gap:3px;background:var(--n2-hover);border-radius:6px;padding:0 6px;font-size:.92em;color:var(--n2-txt)!important;text-decoration:none!important;cursor:pointer;white-space:nowrap}
 .nf2-mention:hover{background:var(--n2-active)}
+/* Kein Fokus-Rahmen pro Absatz (globale :focus-visible-Regel der App überschreiben) */
+.nf2 .nf2-bc:focus,.nf2 .nf2-bc:focus-visible,.nf2 .nf2-title:focus,.nf2 .nf2-title:focus-visible{outline:none;box-shadow:none;border-radius:0}
+/* ── Text-Ausrichtung ── */
+.nf2-block[data-align="center"] .nf2-bc{text-align:center}
+.nf2-block[data-align="right"] .nf2-bc{text-align:right}
+.nf2-block[data-align="justify"] .nf2-bc{text-align:justify}
+/* ── Callout (Hinweis-Box) ── */
+.nf2-block[data-t="callout"]{padding:3px 0}
+.nf2-block[data-t="callout"] .nf2-callout-box{flex:1;min-width:0;display:flex;gap:10px;background:var(--n2-hover);border:1px solid var(--n2-line);border-radius:8px;padding:12px 14px}
+.nf2-callout-ic{flex-shrink:0;font-size:16px;line-height:1.55;user-select:none}
+.nf2-block[data-t="callout"] .nf2-bc{padding:0}
 /* ── Menü / Popover ── */
 .nf2-menu{position:fixed;z-index:2147483200;min-width:280px;max-width:340px;max-height:340px;overflow-y:auto;background:var(--n2-card);border:1px solid var(--n2-line);border-radius:10px;box-shadow:0 14px 40px var(--n2-sh);padding:5px}
 .nf2-mi{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13.5px}
