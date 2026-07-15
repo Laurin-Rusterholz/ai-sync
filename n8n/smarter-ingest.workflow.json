@@ -1,0 +1,281 @@
+{
+  "name": "Smarter — Ingest (txt/html/pdf)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Smarter — Ingest (Upload -> pending-Units)\n\nWebhook-Pfad `smarter-ingest`. Empfaengt vom Quantus-Upload `{ filename, type:\"txt\"|\"html\"|\"pdf\", base64 }` und legt VERLUSTFREI `pending`-Units in `smarter/queue` an; antwortet `{ ok:true, units:<int> }`.\n\n**Ablauf:** Webhook -> queue lesen -> Datei vorbereiten (base64 dekodieren; TXT bleibt Reintext VERBATIM, HTML wird zu Text gestrippt, PDF -> Binary) -> (nur PDF) Extract From File -> Units bauen (an Absatzgrenzen nach Offsets schneiden = nur schneiden, nichts zusammenfassen; title aus erster Zeile/Dateiname; order haengt an bestehende max order an) -> PATCH `smarter/queue` -> Antwort.\n\n**Sicherheit:** Der Inhalt wird ausschliesslich als Daten gespeichert — NICHT ausgefuehrt/interpretiert. Eingebettete Anweisungstexte (z. B. `Du bist Athena...`) sind reiner Lernstoff.\n\n**RTDB:** `smarter/*` offen ($andere) -> RTDB-Nodes ohne Credential. **Kein Gotenberg.**\n\n**Nach Import:** aktivieren, Production-URL `https://n8n.srv1757990.hstgr.cloud/webhook/smarter-ingest` in `smarter/config/ingestWebhookUrl` schreiben (die App liest sie dort). Fuer PDF muss der Node `Extract From File` verfuegbar sein (Standard-n8n).",
+        "height": 460,
+        "width": 520,
+        "color": 5
+      },
+      "id": "sn-ingest",
+      "name": "Doku",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -620,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "smarter-ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "n-wh",
+      "name": "Webhook: smarter-ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -620,
+        120
+      ],
+      "webhookId": "smarter-ingest-7c2f"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/smarter/queue.json",
+        "options": {}
+      },
+      "id": "n-qget",
+      "name": "RTDB: queue lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -400,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/smarter/config.json",
+        "options": {}
+      },
+      "id": "n-cget",
+      "name": "RTDB: config lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -200,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Webhook-Body lesen (n8n v2 legt JSON-Body unter .body ab; Fallback: root).\nconst wh = ($(\"Webhook: smarter-ingest\").first() || {}).json || {};\nconst body = (wh && wh.body && typeof wh.body === \"object\") ? wh.body : wh;\nconst filename = String(body.filename || \"upload.txt\");\nlet type = String(body.type || \"\").toLowerCase();\nconst base64 = String(body.base64 || \"\");\nif (!base64) throw new Error(\"Ingest: kein base64 im Body\");\nif (!type) {\n  const l = filename.toLowerCase();\n  type = l.endsWith(\".pdf\") ? \"pdf\" : (l.endsWith(\".html\") || l.endsWith(\".htm\")) ? \"html\" : \"txt\";\n}\n\nfunction htmlToText(h) {\n  return String(h)\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, \" \")\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, \" \")\n    .replace(/<\\/(p|div|section|article|li|tr|h[1-6]|table|ul|ol|blockquote)>/gi, \"\\n\\n\")\n    .replace(/<br\\s*\\/?>/gi, \"\\n\")\n    .replace(/<[^>]+>/g, \" \")\n    .replace(/&nbsp;/g, \" \").replace(/&amp;/g, \"&\").replace(/&lt;/g, \"<\")\n    .replace(/&gt;/g, \">\").replace(/&quot;/g, '\"').replace(/&#0?39;|&apos;/g, \"'\")\n    .replace(/[ \\t ]+/g, \" \")\n    .replace(/[ \\t]*\\n[ \\t]*/g, \"\\n\")\n    .replace(/\\n{3,}/g, \"\\n\\n\")\n    .trim();\n}\n\nif (type === \"pdf\") {\n  // PDF -> Extract From File Node (binary property 'data')\n  return [{ json: { filename: filename, type: type, isPdf: true }, binary: { data: { data: base64, mimeType: \"application/pdf\", fileName: filename } } }];\n}\n\nconst raw = Buffer.from(base64, \"base64\").toString(\"utf-8\");\n// TXT bleibt VERBATIM (Reintext); nur HTML wird zu Text gestrippt.\nconst text = (type === \"html\") ? htmlToText(raw) : raw;\nreturn [{ json: { filename: filename, type: type, isPdf: false, text: text } }];\n"
+      },
+      "id": "n-prep",
+      "name": "Datei vorbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c-pdf",
+              "leftValue": "={{ $json.isPdf }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-if",
+      "name": "PDF?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        240,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "n-extract",
+      "name": "PDF-Text extrahieren",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Text aus Vorbereitung (txt/html) ODER Extract-From-File (pdf, $json.text).\nconst prep = ($(\"Datei vorbereiten\").first() || {}).json || {};\nlet text = \"\";\nif ($json && typeof $json.text === \"string\" && $json.text.trim()) text = $json.text;\nelse if (typeof prep.text === \"string\") text = prep.text;\ntext = String(text || \"\");\n\n// Zeichen > 0 pruefen (sonst Fehler-Antwort, keine Unit)\nif (!text.trim()) {\n  return [{ json: { ok: false, units: 0, queueUpdate: {}, error: \"kein extrahierbarer Text\" } }];\n}\n\nconst filename = String(prep.filename || \"upload.txt\");\nconst base = filename.replace(/\\.[^.]+$/, \"\");\nfunction slug(s) { return String(s || \"src\").toLowerCase().replace(/[^a-z0-9]+/g, \"-\").replace(/^-+|-+$/g, \"\").slice(0, 40) || \"src\"; }\nfunction wc(s) { return String(s == null ? \"\" : s).trim().split(/\\s+/).filter(Boolean).length; }\n\n// Zielgroesse je Unit (aus config, sonst 2800 Woerter). Kleiner Text -> genau 1 Unit.\nlet targetWords = 2800;\ntry { const cfg = ($(\"RTDB: config lesen\").first() || {}).json; if (cfg && Number(cfg.targetWords)) targetWords = Number(cfg.targetWords); } catch (e) {}\n\n// VERLUSTFREI: an Absatzgrenzen (Leerzeile) nach Zeichen-Offsets schneiden.\n// Jede Unit ist eine exakte Teilzeichenkette; Aneinanderreihung == Originaltext.\nfunction splitLossless(t, tw) {\n  const bounds = [];\n  const re = /\\n\\s*\\n/g; let last = 0, m;\n  while ((m = re.exec(t)) !== null) { bounds.push([last, m.index + m[0].length]); last = m.index + m[0].length; }\n  bounds.push([last, t.length]);\n  const out = []; let curStart = bounds[0][0], curWords = 0;\n  for (let i = 0; i < bounds.length; i++) {\n    const s = bounds[i][0], e = bounds[i][1];\n    const w = wc(t.slice(s, e));\n    if (curWords > 0 && curWords + w > tw) { out.push([curStart, s]); curStart = s; curWords = 0; }\n    curWords += w;\n    if (i === bounds.length - 1) out.push([curStart, e]);\n  }\n  return out.map(function (p) { return t.slice(p[0], p[1]); });\n}\n\n// bestehende max order lesen (Units anhaengen, nicht ueberschreiben)\nlet maxOrder = 0;\ntry {\n  const q = ($(\"RTDB: queue lesen\").first() || {}).json || {};\n  Object.keys(q).forEach(function (k) { const o = Number(q[k] && q[k].order); if (isFinite(o) && o > maxOrder) maxOrder = o; });\n} catch (e) {}\n\nconst firstLine = (text.split(/\\r?\\n/).map(function (s) { return s.trim(); }).find(Boolean) || base).slice(0, 120);\nconst parts = splitLossless(text, targetWords);\nconst stamp = Date.now();\nconst sourceId = slug(base) + \"_\" + stamp;\nconst queueUpdate = {};\nparts.forEach(function (content, i) {\n  const w = wc(content);\n  const key = slug(base) + \"_\" + stamp + \"_\" + i;\n  queueUpdate[key] = {\n    sourceId: sourceId,\n    order: maxOrder + i + 1,\n    title: parts.length > 1 ? (firstLine + \" (Teil \" + (i + 1) + \"/\" + parts.length + \")\") : firstLine,\n    content: content,\n    estMinutes: Math.max(1, Math.ceil(w / 200)),\n    status: \"pending\"\n  };\n});\nreturn [{ json: { ok: true, units: parts.length, queueUpdate: queueUpdate } }];\n"
+      },
+      "id": "n-units",
+      "name": "Units bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/smarter/queue.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Units bauen').first().json.queueUpdate) }}",
+        "options": {}
+      },
+      "id": "n-qpatch",
+      "name": "RTDB: queue schreiben",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: $('Units bauen').first().json.ok, units: $('Units bauen').first().json.units }) }}",
+        "options": {}
+      },
+      "id": "n-resp",
+      "name": "Antwort",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook: smarter-ingest": {
+      "main": [
+        [
+          {
+            "node": "RTDB: queue lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB: queue lesen": {
+      "main": [
+        [
+          {
+            "node": "RTDB: config lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB: config lesen": {
+      "main": [
+        [
+          {
+            "node": "Datei vorbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datei vorbereiten": {
+      "main": [
+        [
+          {
+            "node": "PDF?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDF?": {
+      "main": [
+        [
+          {
+            "node": "PDF-Text extrahieren",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Units bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDF-Text extrahieren": {
+      "main": [
+        [
+          {
+            "node": "Units bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Units bauen": {
+      "main": [
+        [
+          {
+            "node": "RTDB: queue schreiben",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB: queue schreiben": {
+      "main": [
+        [
+          {
+            "node": "Antwort",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Zurich"
+  },
+  "pinData": {},
+  "meta": {
+    "note": "Smarter Ingest — txt/html/pdf -> verlustfreie pending-Units in smarter/queue. Kein Gotenberg."
+  }
+}
