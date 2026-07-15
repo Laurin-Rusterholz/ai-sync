@@ -191,3 +191,80 @@ Rolle: Du baust den kompletten n8n-Teil des Quantus-Moduls „Smarter". Der App-
 2. Direkte Gotenberg-Endpoint-URL — nicht im Repo; Alternative = bestehender Webhook `…/webhook/quantus-doc-pdf` (`{html,filename}` → PDF-Blob).
 3. n8n-API-Key (`X-N8N-API-KEY`) fuer die REST-API — nicht im Repo; im n8n-UI erzeugen.
 --- ENDE ---
+
+---
+
+## 5 · Update 2026-07-15 — HTML-Lerndokument statt PDF (Session `smarter-htmldoc-2026-07-15`)
+
+Gotenberg/PDF ist tot und wird fallengelassen. Stattdessen: taeglich ein schoen
+gestaltetes, self-contained **HTML-Lerndokument** mit Antwortfeldern.
+
+### Datenvertrag erweitert
+- `smarter/documents/<yyyy-mm-dd>` neu: **`documentHtml`** (self-contained HTML,
+  inline CSS, keine externen Requests). `pdfUrl` bleibt `""` (entfaellt).
+- `questions[]`: jede Frage hat jetzt eine **stabile `id`** → `{ id:"q1"|"q2"…, q, a }`.
+- **NEU `smarter/documents/<yyyy-mm-dd>/answers/<qId>` = `{ text, updatedAt:<iso> }`**
+  — Nutzerantworten, nur innerhalb `smarter/` (offene Regel, kein Credential).
+
+### App (public/index.html, Modul Smarter, „Heute")
+- `documentHtml` wird isoliert in einem **iframe** (`srcdoc`, Scripts entfernt)
+  gerendert → 1:1 wie der Download, kein Style-Bleed in die App.
+- Unter jeder Frage (per `data-qid`) wird ein **Antwort-Textfeld** eingedockt,
+  vorbefuellt aus `answers/<qId>`. Speichern: Debounce 700 ms + sofort bei Blur
+  → `set(smarter/documents/<heute>/answers/<qId>, {text,updatedAt})`, mit
+  sichtbarem Feedback (gespeichert ✓ / offline gemerkt / Fehler).
+- „Musterantwort zeigen" pro Frage (aus `questions[].a`).
+- „Herunterladen": statische `.html`-Kopie inkl. eingegebener Antworten
+  (Blob + `a[download]`, Dateiname `smarter-<date>.html`). Speicherbar sind die
+  Antworten nur in der Quantus-Ansicht.
+- Fallback (Dokument ohne `documentHtml`): Theorie + Fragen nativ, ebenfalls mit
+  speicherbaren Antwortfeldern.
+- Post-render Hook (`window.__smarterPostRender`) mountet das iframe nach jedem
+  Render; Antwortfelder via Parent-Listener (Tippen loest keinen Voll-Render aus).
+- Verifiziert (headless Chromium, 16/16, 0 uncaught JS-Errors): iframe rendert,
+  Felder pro `data-qid` eingedockt + vorbefuellt, Tippen+Blur speichert ohne
+  Fehler, Download bettet Antworten ein.
+
+### n8n (`n8n/smarter-daily.workflow.json` — Import, da API von hier blockiert)
+Die n8n-REST-API ist aus der Claude-Code-Umgebung nicht erreichbar (403). Daher
+liegt der komplette Workflow als importierbares JSON im Repo.
+
+**Import:** n8n → Workflows → Import from File → `n8n/smarter-daily.workflow.json`.
+Danach:
+1. Node „Anthropic: Theorie + Fragen" → Credential **„Anthropic API-Key (Header
+   x-api-key)"** zuweisen (Header-Auth, wiederverwenden). Die RTDB-Nodes brauchen
+   KEIN Credential (`smarter/*` offen via `$andere`).
+2. Alten Workflow `2Bkv3B2la7OOpAc3` deaktivieren (oder dessen Gotenberg-Nodes
+   „PDF via webhook"/„Upload PDF" entfernen) — dieser neue ersetzt ihn.
+3. Workflow aktivieren. Zeitzone ist im Workflow-Setting auf `Europe/Zurich`
+   gesetzt; Schedule-Cron `0 4 * * *` → 04:00 Europe/Zurich. Naechste Laufzeit
+   verifizieren.
+4. Test-Execution auf `success` pruefen; danach `smarter/documents/<heute>` in
+   der RTDB kontrollieren (`documentHtml`, `questions[].id`, `pdfUrl:""`,
+   `done:false`).
+
+**Node-Kette:** Schedule → GET config → GET queue → „Units auswaehlen"
+(Akkumulieren bis `dailyMinutes`, verlustfreies Schneiden, Rest als neue
+`pending`-Unit `order+0.5`) → IF `hasWork` → Anthropic (`claude-sonnet-5`,
+striktes JSON `{theoryHtml, questions:[{q,a}], flashcards:[{front,back}]}`) →
+„Dokument bauen" (IDs q1..qn, `documentHtml`) → PATCH `smarter/documents/<date>`
+(**PATCH** statt PUT → App-`answers` bleiben erhalten) + PATCH `smarter/queue`.
+
+### KORREKTUR zum Flashcards-Speicherort (frueherer Handoff)
+Frueher als „RTDB `cloud-sync/app-data.json`" notiert — **falsch**. `firebaseJsonPut`
+laedt via `uploadToFirebase` in Firebase **Storage** (Bucket
+`jupidu-36804.firebasestorage.app`), Pfad `cloud-sync/app-data.json`
+(`sanitizeCloudKey` behaelt den Punkt). Der RecallLab-Cloud-Stand liegt also in
+**Storage** bzw. im Netlify-Blob `app-data.json`, NICHT in der RTDB. Ein
+Flashcard-Push nach RecallLab braucht Storage-Auth und ist ein eigener Schritt —
+im `smarter-daily`-Workflow daher bewusst NICHT enthalten; die generierten
+Flashcards liegen als `documents/<date>/flashcards` bereit. `smarter/*` selbst
+ist echte RTDB (Dokumente/Antworten funktionieren dort verifiziert).
+
+### Logbuch
+- 2026-07-15 · Gotenberg-Ausfall auf srv1757990 diagnostiziert (kein SSH/Egress
+  aus der Umgebung → Remediation-Befehle geliefert). Danach Modul auf
+  HTML-Lerndokument umgestellt: App (iframe-Doc + speicherbare Antwortfelder +
+  Download) und n8n (`smarter-daily.workflow.json`, kein Gotenberg). Smoketest
+  16/16, Workflow-Validator 0 Fehler, Code-Nodes inkl. No-Loss-Split getestet.
+  Flashcard-Speicherort korrigiert (Storage statt RTDB).
