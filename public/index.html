@@ -16376,17 +16376,17 @@ function smarterTabUpload() {
   const p = SMARTER.pendingUpload;
 
   let html = '<div class="sm-card"><h3>📥 Quelle hochladen</h3>';
-  html += '<div class="sm-muted" style="margin-bottom:12px">HTML- oder PDF-Datei ablegen. Der Ingest-Workflow (n8n) schneidet den Text verlustfrei in Units und legt sie als <code>pending</code> in die Warteschlange.</div>';
+  html += '<div class="sm-muted" style="margin-bottom:12px">TXT-, HTML- oder PDF-Datei ablegen. Der Ingest-Workflow (n8n) schneidet den Text verlustfrei in Units und legt sie als <code>pending</code> in die Warteschlange.</div>';
   html += '<div class="sm-drop" id="smarterDrop" data-action="smarter-pick-file" ondragover="smarterOnDragOver(event)" ondragleave="smarterOnDragLeave(event)" ondrop="smarterOnDrop(event)">';
   html += '<div class="sm-drop-icon">📄</div>';
   html += '<div style="font-weight:700;color:var(--text)">Datei hierher ziehen oder klicken</div>';
-  html += '<div class="sm-muted" style="margin-top:4px">.html · .htm · .pdf</div>';
-  html += '<input type="file" id="smarterFileInput" accept=".html,.htm,.pdf" style="display:none" onchange="smarterOnFilePicked(this)">';
+  html += '<div class="sm-muted" style="margin-top:4px">.txt · .html · .htm · .pdf</div>';
+  html += '<input type="file" id="smarterFileInput" accept=".txt,.html,.htm,.pdf,text/plain" style="display:none" onchange="smarterOnFilePicked(this)">';
   html += '</div>';
 
   if (p) {
     const kb = p.base64 ? Math.round((p.base64.length * 3 / 4) / 1024) : 0;
-    html += '<div class="sm-unit" style="margin-top:14px"><span style="font-size:18px">' + (p.type === "pdf" ? "📕" : "📘") + '</span>';
+    html += '<div class="sm-unit" style="margin-top:14px"><span style="font-size:18px">' + (p.type === "pdf" ? "📕" : p.type === "txt" ? "📄" : "📘") + '</span>';
     html += '<div class="sm-unit-title">' + esc(p.filename) + ' <span class="sm-muted">· ' + p.type.toUpperCase() + ' · ~' + kb + ' KB</span></div>';
     html += '</div>';
     html += '<div class="sm-row" style="margin-top:12px">';
@@ -16472,7 +16472,9 @@ async function smarterAcceptFile(file) {
   if (!file) return;
   const name = file.name || "upload";
   const lower = name.toLowerCase();
-  const type = lower.endsWith(".pdf") ? "pdf" : "html";
+  const type = lower.endsWith(".pdf") ? "pdf"
+    : (lower.endsWith(".txt") || file.type === "text/plain") ? "txt"
+    : "html";
   try {
     const base64 = await smarterReadFileToBase64(file);
     SMARTER.pendingUpload = { filename: name, type: type, base64: base64 };
