@@ -108635,11 +108635,18 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const stateJson = JSON.stringify((n && n.htmlState) || null).replace(/</g, "\\u003c");
     const nid = JSON.stringify(n ? n.id : "");
     const S = "<scr" + "ipt>", ES = "</scr" + "ipt>";
-    // Brücke: window.quantus.save(data) + automatisches Speichern aller Eingabefelder -> Quantus (note.htmlState)
-    const bridge = S + "(function(){var NID=" + nid + ";var st=" + stateJson + "||{};"
-      + "window.quantus={state:st,save:function(d){try{st=Object.assign({},st||{},d||{});this.state=st;parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}};"
-      + "function pi(){var v={};document.querySelectorAll('input,textarea,select').forEach(function(el,i){var k=el.id||el.name||('f'+i);v[k]=(el.type==='checkbox'||el.type==='radio')?el.checked:el.value;});st._inputs=v;try{parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}"
-      + "function rs(){var v=(st&&st._inputs)||{};document.querySelectorAll('input,textarea,select').forEach(function(el,i){var k=el.id||el.name||('f'+i);if(k in v){if(el.type==='checkbox'||el.type==='radio')el.checked=!!v[k];else el.value=v[k];}});}"
+    // Brücke: window.quantus.save(data) + automatisches Speichern aller Eingabefelder -> Quantus (note.htmlState).
+    // WICHTIG: Feldwerte werden erst NACH dem Wiederherstellen (ready) erfasst, damit die
+    // beim Parsen laufende Widget-Logik die gespeicherten Werte nicht mit Standardwerten überschreibt.
+    // Beim Wiederherstellen werden synthetische input/change-Events gefeuert, damit die
+    // Widget-Logik mit den gespeicherten Werten neu rechnet (sonst zeigt es wieder Defaults).
+    const bridge = S + "(function(){var NID=" + nid + ";var st=" + stateJson + "||{};var ready=false;"
+      + "function key(el,i){return el.id||el.name||('f'+i);}"
+      + "function snap(){var v={};document.querySelectorAll('input,textarea,select').forEach(function(el,i){if(el.type==='radio'){var n=el.name||('r'+i);if(el.checked)v['@r:'+n]=el.value;return;}var k=key(el,i);v[k]=(el.type==='checkbox')?el.checked:el.value;});return v;}"
+      + "function post(){try{parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}"
+      + "window.quantus={state:st,save:function(d){try{st=Object.assign({},st||{},d||{});if(ready)st._inputs=snap();this.state=st;post();}catch(e){}}};"
+      + "function pi(){if(!ready)return;st._inputs=snap();post();}"
+      + "function rs(){var v=(st&&st._inputs)||{};var ch=[];document.querySelectorAll('input,textarea,select').forEach(function(el,i){if(el.type==='radio'){var n=el.name||('r'+i);if(('@r:'+n) in v){var sel=el.value===v['@r:'+n];el.checked=sel;if(sel)ch.push(el);}return;}var k=key(el,i);if(k in v){if(el.type==='checkbox')el.checked=!!v[k];else el.value=v[k];ch.push(el);}});ready=true;ch.forEach(function(el){try{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}});if(!ch.length)post();}"
       + "window.addEventListener('input',pi,true);window.addEventListener('change',pi,true);"
       + "if(document.readyState!=='loading')rs();else window.addEventListener('DOMContentLoaded',rs);})();" + ES;
     const html = (n && n.html && n.html.trim()) ? n.html : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8a94a6;font-size:12.5px">Leer — ✎ zum Bearbeiten</div>';
