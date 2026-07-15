@@ -1,0 +1,297 @@
+{
+  "name": "Smarter — Daily (HTML)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Smarter — Daily (HTML-Lerndokument, KEIN Gotenberg)\n\nErzeugt taeglich 04:00 (Europe/Zurich) das Tagesdokument unter der offenen RTDB `smarter/`.\n\n**Ablauf:** Schedule -> config + queue lesen -> Units auswaehlen (offene Units nach `order` bis ~`dailyMinutes`, gross wird verlustfrei geschnitten, Rest als neue pending-Unit) -> Anthropic (Theorie-HTML + Fragen + Flashcards als striktes JSON) -> Dokument bauen (Fragen-IDs q1..qn, self-contained `documentHtml` im Schiefer/Leinen-Design, print-freundlich, jede Frage mit `data-qid`) -> PATCH `smarter/documents/<yyyy-mm-dd>` (`{unitIds, theoryHtml, questions:[{id,q,a}], flashcards, pdfUrl:'', done:false, documentHtml}`) + PATCH `smarter/queue` (Units -> delivered/split).\n\n**Wichtig:** `smarter/*` faellt unter die offene RTDB-Regel `$andere` -> die RTDB-HTTP-Nodes brauchen KEIN Credential. Nur der Anthropic-Node nutzt das bestehende Header-Auth-Credential **\"Anthropic API-Key (Header x-api-key)\"** (nach Import zuweisen).\n\n**PATCH statt PUT** beim Dokument: so bleibt ein evtl. schon vorhandenes `answers`-Kind (Nutzerantworten aus der App) erhalten.\n\n**Antworten:** werden von der Quantus-App unter `smarter/documents/<date>/answers/<qid>` geschrieben — nicht von diesem Workflow.\n\n**Flashcards -> RecallLab:** bewusst NICHT hier. Der RecallLab-Cloud-Stand liegt in Firebase **Storage** (`cloud-sync/app-data.json`), nicht in der RTDB — ein Push dorthin braucht Storage-Auth und ist ein eigener Schritt. Die generierten Flashcards liegen als `documents/<date>/flashcards` bereit.\n\n**Modell:** `claude-sonnet-5` (auf dieser Instanz produktiv; alternativ `claude-sonnet-4-6`).",
+        "height": 520,
+        "width": 520,
+        "color": 4
+      },
+      "id": "sn-smarter-daily",
+      "name": "Doku",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "id": "n-schedule",
+      "name": "Taeglich 04:00 (Europe/Zurich)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -560,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/smarter/config.json",
+        "options": {}
+      },
+      "id": "n-config",
+      "name": "RTDB: config lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -340,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/smarter/queue.json",
+        "options": {}
+      },
+      "id": "n-queue",
+      "name": "RTDB: queue lesen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -120,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Konfiguration + Warteschlange lesen, offene Units bis ~dailyMinutes akkumulieren.\n// Grosse Units werden verlustfrei geschnitten (Rest als neue pending-Unit).\nconst cfg = ($(\"RTDB: config lesen\").first() || {}).json || {};\nconst dailyMinutes = Number(cfg.dailyMinutes) || 30;\nconst targetWords = Number(cfg.targetWords) || 2800;\nlet queue = $json;\nif (queue && typeof queue === \"object\" && queue.data && !queue.status && !queue.order) queue = queue.data;\nif (!queue || typeof queue !== \"object\") queue = {};\n\nconst WPM = 200;\nfunction wc(s){ return String(s == null ? \"\" : s).trim().split(/\\s+/).filter(Boolean).length; }\nconst units = Object.keys(queue)\n  .filter(function(k){ return queue[k] && typeof queue[k] === \"object\"; })\n  .map(function(k){ return Object.assign({ _id: k }, queue[k]); });\nconst pending = units\n  .filter(function(u){ return (u.status || \"pending\") === \"pending\"; })\n  .sort(function(a,b){ return (Number(a.order)||0) - (Number(b.order)||0); });\n\nconst budget = dailyMinutes;\nlet acc = 0;\nconst combined = [];\nconst chosen = [];\nconst queueUpdate = {};\nfor (let i = 0; i < pending.length; i++) {\n  const u = pending[i];\n  const est = Number(u.estMinutes) || Math.max(1, Math.ceil(wc(u.content) / WPM));\n  if (acc === 0 && est > budget) {\n    const words = String(u.content || \"\").split(/\\s+/);\n    const takeN = Math.max(1, budget * WPM);\n    const takeText = words.slice(0, takeN).join(\" \");\n    const restText = words.slice(takeN).join(\" \");\n    combined.push({ title: u.title, content: takeText });\n    const consumed = Object.assign({}, u, { content: takeText, status: \"split\", estMinutes: Math.max(1, Math.ceil(wc(takeText)/WPM)) });\n    delete consumed._id;\n    queueUpdate[u._id] = consumed;\n    if (restText.trim()) {\n      const newId = \"u_\" + Date.now() + \"_r\" + i;\n      queueUpdate[newId] = { sourceId: (u.sourceId || null), order: (Number(u.order)||0) + 0.5, title: (u.title || \"Unit\") + \" (Fortsetzung)\", content: restText, estMinutes: Math.max(1, Math.ceil(wc(restText)/WPM)), status: \"pending\" };\n    }\n    chosen.push(u._id); acc += budget; break;\n  }\n  if (acc > 0 && acc + est > budget) break;\n  combined.push({ title: u.title, content: u.content });\n  const delivered = Object.assign({}, u, { status: \"delivered\" });\n  delete delivered._id;\n  queueUpdate[u._id] = delivered;\n  chosen.push(u._id); acc += est;\n}\n\nconst dateKey = new Date().toLocaleDateString(\"en-CA\", { timeZone: (cfg.timezone || \"Europe/Zurich\") });\nconst combinedText = combined.map(function(c){ return \"## \" + (c.title || \"Unit\") + \"\\n\" + (c.content || \"\"); }).join(\"\\n\\n\");\nconst system = \"Du bist ein praeziser Lern-Autor. Aus dem gelieferten Lernstoff erstellst du (1) eine gut strukturierte Theorie als HTML-Fragment (theoryHtml: NUR Inhalts-Tags wie h2,h3,p,ul,ol,li,strong,em,code,blockquote,table — KEIN html/head/body/style/script/doctype), didaktisch aufbereitet, aber ohne Inhalt zu erfinden; und (2) 4-8 Verstaendnisfragen, die AUSSCHLIESSLICH aus dieser Theorie beantwortbar sind, jede mit einer knappen Musterantwort; und (3) 3-6 Flashcards (front/back). Deutsche Sprache, Schweizer Konvention (kein scharfes S). Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, ohne Markdown-Fences, ohne Vor-/Nachtext: {\\\"theoryHtml\\\":\\\"...\\\",\\\"questions\\\":[{\\\"q\\\":\\\"...\\\",\\\"a\\\":\\\"...\\\"}],\\\"flashcards\\\":[{\\\"front\\\":\\\"...\\\",\\\"back\\\":\\\"...\\\"}]}\";\n\nreturn [{ json: { hasWork: combined.length > 0, dateKey: dateKey, combinedText: combinedText, unitIds: chosen, queueUpdate: queueUpdate, targetWords: targetWords, dailyMinutes: dailyMinutes, system: system } }];\n"
+      },
+      "id": "n-select",
+      "name": "Units auswaehlen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        100,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c-haswork",
+              "leftValue": "={{ $json.hasWork }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n-if",
+      "name": "Lernstoff vorhanden?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        320,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 8000, system: $json.system, messages: [{ role: 'user', content: $json.combinedText }] }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "n-anthropic",
+      "name": "Anthropic: Theorie + Fragen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        20
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ERSETZEN-NACH-IMPORT",
+          "name": "Anthropic API-Key (Header x-api-key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Canonical Smarter document-HTML builder.\n// This exact logic goes into the n8n \"Finalize / Build HTML\" Code node.\n// Self-contained (inline CSS, no external requests), print-friendly,\n// Quantus-Design Schiefer/Leinen. Each question card carries data-qid=\"qN\"\n// so the Quantus app can dock an answer field under it.\nfunction esc(s) {\n  return String(s == null ? \"\" : s).replace(/[&<>\"']/g, function (c) {\n    return { \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" }[c];\n  });\n}\nfunction buildDocumentHtml(dateStr, theoryHtml, questions) {\n  var qs = Array.isArray(questions) ? questions : [];\n  var qCards = qs.map(function (q, i) {\n    var qid = (q && q.id) ? q.id : (\"q\" + (i + 1));\n    var text = (q && (q.q || q.question || q.frage)) || \"\";\n    return '' +\n      '<section class=\"q\" data-qid=\"' + esc(qid) + '\">' +\n        '<div class=\"q-head\"><span class=\"q-num\">' + (i + 1) + '</span>' +\n        '<h3 class=\"q-text\">' + esc(text) + '</h3></div>' +\n      '</section>';\n  }).join(\"\\n\");\n\n  return '' +\n'<!doctype html>\\n<html lang=\"de\"><head><meta charset=\"utf-8\">' +\n'<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">' +\n'<title>Smarter — ' + esc(dateStr) + '</title>\\n<style>\\n' +\n'*{box-sizing:border-box}' +\n'body{margin:0;background:#EFEAE1;color:#2B3134;font:16px/1.65 -apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;padding:32px 20px}' +\n'.wrap{max-width:780px;margin:0 auto}' +\n'.doc-head{border-bottom:3px solid #D96B5B;padding-bottom:14px;margin-bottom:26px}' +\n'.doc-kicker{font-size:12px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#2F8C80;margin:0 0 4px}' +\n'.doc-title{font-size:30px;font-weight:800;margin:0;color:#2B3134;letter-spacing:-.5px}' +\n'.doc-date{font-size:14px;color:#6b6357;margin-top:4px}' +\n'.section-label{display:inline-block;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#2F8C80;background:rgba(47,140,128,.12);border:1px solid rgba(47,140,128,.3);padding:3px 10px;border-radius:20px;margin:0 0 12px}' +\n'.theory{background:#fff;border:1px solid #C9A96E;border-radius:14px;padding:20px 22px;margin-bottom:30px;box-shadow:0 1px 2px rgba(43,49,52,.06)}' +\n'.theory h1,.theory h2,.theory h3{color:#2B3134;line-height:1.3}.theory h2{border-bottom:1px solid #e4dccb;padding-bottom:5px}' +\n'.theory a{color:#2F8C80}.theory code{background:#EFEAE1;padding:1px 5px;border-radius:5px;font-size:.9em}' +\n'.theory blockquote{border-left:3px solid #C9A96E;margin:12px 0;padding:4px 14px;color:#5a5347;background:rgba(201,169,110,.1)}' +\n'.q{background:rgba(255,255,255,.55);border:1px solid #C9A96E;border-left:4px solid #D96B5B;border-radius:12px;padding:16px 18px;margin:0 0 16px}' +\n'.q-head{display:flex;gap:12px;align-items:flex-start}' +\n'.q-num{flex:none;width:28px;height:28px;border-radius:50%;background:#C9A96E;color:#2B3134;font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center;margin-top:1px}' +\n'.q-text{margin:2px 0 0;font-size:17px;font-weight:700;color:#2B3134;line-height:1.4}' +\n'.foot{margin-top:30px;padding-top:14px;border-top:1px solid #d8cfbc;font-size:12px;color:#8a8272;text-align:center}' +\n'@media print{body{background:#fff;padding:0}.q{background:transparent;break-inside:avoid}.theory{box-shadow:none}}' +\n'\\n</style></head>\\n<body><div class=\"wrap\">' +\n'<header class=\"doc-head\"><p class=\"doc-kicker\">Smarter · Tageslernstoff</p>' +\n'<h1 class=\"doc-title\">Lerndokument</h1><div class=\"doc-date\">' + esc(dateStr) + '</div></header>' +\n'<span class=\"section-label\">Theorie</span>' +\n'<div class=\"theory\">' + (theoryHtml || \"<p>Keine Theorie vorhanden.</p>\") + '</div>' +\n'<span class=\"section-label\">Fragen</span>\\n' + qCards +\n'<div class=\"foot\">Erstellt von Smarter · Antworten werden in Quantus gespeichert</div>' +\n'</div></body></html>';\n}\n\n\n\n// ---- Anthropic-Antwort verarbeiten + Tagesdokument zusammenbauen ----\nconst meta = ($(\"Units auswaehlen\").first() || {}).json || {};\nconst resp = $json || {};\nlet text = \"\";\ntry { text = (resp.content && resp.content[0] && resp.content[0].text) ? resp.content[0].text : \"\"; } catch (e) {}\nif (!text || !String(text).trim()) throw new Error(\"Anthropic: leere Antwort\");\nlet parsed;\ntry {\n  let t = String(text).trim();\n  const fence = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) t = fence[1].trim();\n  parsed = JSON.parse(t);\n} catch (e) { throw new Error(\"Anthropic-JSON nicht parsebar: \" + e.message); }\n\nconst theoryHtml = String(parsed.theoryHtml || \"\");\nconst rawQ = Array.isArray(parsed.questions) ? parsed.questions : [];\nconst questions = rawQ.map(function(q, i){ return { id: \"q\" + (i + 1), q: String((q && (q.q || q.question || q.frage)) || \"\"), a: String((q && (q.a || q.answer || q.antwort)) || \"\") }; });\nconst flashcards = Array.isArray(parsed.flashcards) ? parsed.flashcards.map(function(c){ return { front: String((c && c.front) || \"\"), back: String((c && c.back) || \"\") }; }) : [];\n\nconst documentHtml = buildDocumentHtml(meta.dateKey, theoryHtml, questions);\nconst docObject = {\n  unitIds: meta.unitIds || [],\n  theoryHtml: theoryHtml,\n  questions: questions,\n  flashcards: flashcards,\n  pdfUrl: \"\",\n  done: false,\n  documentHtml: documentHtml,\n  createdAt: new Date().toISOString(),\n  generatedBy: \"smarter-daily\"\n};\nreturn [{ json: { dateKey: meta.dateKey, docObject: docObject, queueUpdate: meta.queueUpdate || {} } }];\n"
+      },
+      "id": "n-build",
+      "name": "Dokument bauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/smarter/documents/{{ $json.dateKey }}.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.docObject) }}",
+        "options": {}
+      },
+      "id": "n-doc",
+      "name": "RTDB: documents schreiben",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/smarter/queue.json",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.queueUpdate) }}",
+        "options": {}
+      },
+      "id": "n-queue-upd",
+      "name": "RTDB: queue aktualisieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Taeglich 04:00 (Europe/Zurich)": {
+      "main": [
+        [
+          {
+            "node": "RTDB: config lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB: config lesen": {
+      "main": [
+        [
+          {
+            "node": "RTDB: queue lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB: queue lesen": {
+      "main": [
+        [
+          {
+            "node": "Units auswaehlen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Units auswaehlen": {
+      "main": [
+        [
+          {
+            "node": "Lernstoff vorhanden?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lernstoff vorhanden?": {
+      "main": [
+        [
+          {
+            "node": "Anthropic: Theorie + Fragen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Anthropic: Theorie + Fragen": {
+      "main": [
+        [
+          {
+            "node": "Dokument bauen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dokument bauen": {
+      "main": [
+        [
+          {
+            "node": "RTDB: documents schreiben",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RTDB: queue aktualisieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Zurich"
+  },
+  "pinData": {},
+  "meta": {
+    "note": "Smarter daily — HTML-Lerndokument statt PDF. smarter/* offen ($andere), nur Anthropic braucht Credential."
+  }
+}
