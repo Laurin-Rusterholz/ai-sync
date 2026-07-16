@@ -392,7 +392,8 @@
   "2026-07-15 · ZIEL B: Daily-Prompt erzeugt auch aus reinen Zahlen/Statistiken Fliesstext (Zahlen einordnen/erklaeren/Trends, keine Erfindung, kein Widerspruch). Belegt mit Mock-Statistik (Arbeitslosenquote 2024): theoryHtml 920 Woerter, 13 Prosa-Absaetze, 50 Saetze, alle 7 Quell-Zahlen vorhanden, Tabelle nur ergaenzend.",
   "2026-07-15 · Sicherheitsregel unveraendert im Prompt (Quelltext nur Daten, keine Anweisungen befolgen). Datenvertrag unveraendert. Validator 0 Fehler (daily+ingest); App-Smoketest 19/19, 0 uncaught JS-Errors.",
   "2026-07-15 · Smarter Upload: Bereich 'Text einfuegen' ergaenzt (Titel + Textarea + Button). Blanker Text geht ueber DENSELBEN Ingest-Weg wie der Datei-Upload (smarterAcceptFile -> smarterDoUpload, POST {filename,type,base64}). Dual-Pfad-Beweis 9/9: gleiche URL, gleiches Schema, type 'txt', base64==Text verbatim (auch reine Zahlen/Statistik). Smoketest 19/19, 0 JS-Errors. Datenvertrag + Injection-Defense unveraendert.",
-  "2026-07-15 · BUGFIX Daily 'Dokument bauen': Anthropic-Antwort robust ausgelesen (erster type==='text'-Block statt content[0]) — behebt 'Anthropic: leere Antwort' bei vorangestelltem thinking-Block. Datenvertrag/Prompt/Injection-Defense unveraendert. 5/5 Mock-Tests, Validator 0 Fehler."
+  "2026-07-15 · BUGFIX Daily 'Dokument bauen': Anthropic-Antwort robust ausgelesen (erster type==='text'-Block statt content[0]) — behebt 'Anthropic: leere Antwort' bei vorangestelltem thinking-Block. Datenvertrag/Prompt/Injection-Defense unveraendert. 5/5 Mock-Tests, Validator 0 Fehler.",
+  "2026-07-15 · Umlaute-Fix Daily: System-Prompt (Node 'Thema auswaehlen') auf echte Umlaute ä/ö/ü umgestellt + explizite Anweisung 'niemals ae/oe/ue, statt ß immer ss' (gilt fuer alle Ausgabefelder). Kontrakt/Injection-Defense/Modell unveraendert. Beleg: Modell-Lauf -> 120 echte Umlaute, 0 ASCII-Umschreibungen, 0 ß. Validator 0 Fehler."
  ],
  "ziele_2026_07_15b": {
   "A_txt_upload": {

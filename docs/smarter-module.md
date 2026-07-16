@@ -503,3 +503,38 @@ wirft weiter klaren Fehler). Validator `scripts/validate-n8n-workflow.js`:
 ### Logbuch
 - 2026-07-15 · Daily-Extraktion robust gegen thinking-Block; „leere Antwort"-Bug
   behoben, 5/5 Tests, Validator 0 Fehler.
+
+---
+
+## 10 · Umlaute-Fix 2026-07-15 — Daily-System-Prompt in echtem Deutsch
+
+**Symptom:** Das Tages-Lerndokument enthielt ASCII-Umschreibungen statt echter
+Umlaute („veraendert", „fuer", „Woerter", „Bevoelkerung").
+
+**Ursache (kein Encoding-Bug):** Der System-Prompt im Node **„Thema auswaehlen"**
+(`n8n/smarter-daily.workflow.json`) war selbst in ae/oe/ue geschrieben — das
+Modell ahmte diesen Stil nach.
+
+**Fix:** kompletter System-Prompt in korrektem Deutsch mit **echten Umlauten**
+(Schweizer Konvention: kein ß, immer ss) + **explizite Anweisung am Anfang**:
+„Schreibe durchgehend korrektes Deutsch mit ECHTEN Umlauten (ä, ö, ü, Ä, Ö, Ü),
+verwende NIEMALS ASCII-Umschreibungen wie ae/oe/ue, statt ß immer ss" — gilt für
+alle Ausgabefelder (theoryHtml, questions, flashcards).
+
+**Unverändert:** JSON-Ausgabekontrakt (`theoryHtml`, `questions[{q,a}]`,
+`flashcards[{front,back}]`, keine Fences), **Injection-Defense-Klausel**,
+Datenvertrag `documents/<date>`, PATCH statt PUT, Modell `claude-sonnet-5`,
+restliche Logik. Es ist **nur die eine `system`-Zeile** im jsCode geändert; die
+Datei ist valides JSON (Validator 0 Fehler).
+
+**Verifikation:** Prompt real durch ein Modell mit Mock-Statistik ausgeführt →
+Output **120 echte Umlaute, 0 ASCII-Umschreibungen, 0 ß**, korrekte Wörter
+(Bevölkerung, für, über, Grösse, Veränderung, während, Verhältnis, …), 8 Fragen +
+8 Flashcards, self-contained `documentHtml`.
+
+**Re-Import:** `n8n/smarter-daily.workflow.json` neu importieren.
+
+### Logbuch
+- 2026-07-15 · Umlaute-Fix im Daily-System-Prompt (echte Umlaute + explizite
+  Regel); Kontrakt/Injection-Defense/Modell unverändert; Modell-Lauf belegt 120
+  Umlaute / 0 ASCII / 0 ß; Validator 0 Fehler.
