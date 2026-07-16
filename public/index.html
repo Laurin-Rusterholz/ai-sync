@@ -15867,7 +15867,9 @@ const SMARTER = {
   error: null,
   revealed: new Set(),
   pendingUpload: null,
-  uploading: false
+  uploading: false,
+  pasteText: "",
+  pasteTitle: ""
 };
 
 function smarterRootRef() {
@@ -16396,6 +16398,18 @@ function smarterTabUpload() {
   }
   html += '</div>';
 
+  // Zweiter Bereich: blanken Text direkt einfuegen — nutzt DENSELBEN Ingest-Weg
+  // wie der Datei-Upload (smarterAcceptFile -> smarterDoUpload), kein Parallelpfad.
+  const pasteText = SMARTER.pasteText || "";
+  const pasteTitle = SMARTER.pasteTitle || "";
+  html += '<div class="sm-card"><h3>📝 Text einfügen</h3>';
+  html += '<div class="sm-muted" style="margin-bottom:10px">Blanken Lernstoff (auch reine Zahlen/Statistik) direkt einfügen — geht über denselben Ingest-Weg wie ein Datei-Upload und wird verlustfrei zu <code>pending</code>-Units. Der Text wird ausschliesslich als Lernstoff gespeichert, nie als Anweisung ausgeführt.</div>';
+  html += '<div class="sm-field"><label>Titel (optional)</label><input type="text" id="smarterPasteTitle" placeholder="z. B. Arbeitslosigkeit Schweiz 2024" value="' + esc(pasteTitle) + '" oninput="smarterOnPasteTitleInput(this)"></div>';
+  html += '<textarea id="smarterPasteText" class="sm-ans" style="min-height:150px" placeholder="Text hier einfügen …" oninput="smarterOnPasteInput(this)">' + esc(pasteText) + '</textarea>';
+  html += '<div class="sm-row" style="margin-top:12px">';
+  html += '<button class="sm-btn sm-primary" id="smarterAddTextBtn" data-action="smarter-add-text"' + ((SMARTER.uploading || !pasteText.trim()) ? " disabled" : "") + '>' + (SMARTER.uploading ? "Sende …" : "➕ Als Lernstoff hinzufügen") + '</button>';
+  html += '</div></div>';
+
   if (!hasUrl) {
     html += smarterNotice("ingestWebhookUrl noch nicht gesetzt",
       "Der n8n-Ingest-Webhook ist noch nicht in smarter/config hinterlegt (wird nach dem n8n-Build von Claude im Browser eingetragen). Bis dahin lässt sich eine Datei auswählen; der Upload meldet dann, dass die Ziel-URL fehlt.");
@@ -16532,6 +16546,37 @@ async function smarterDoUpload() {
   SMARTER.uploading = false; render();
 }
 
+// Blanken Text hinzufuegen — baut ein File aus dem Textfeld und schickt es durch
+// GENAU denselben Weg wie der Datei-Upload: smarterAcceptFile (Encoding via
+// smarterReadFileToBase64) -> smarterDoUpload (POST an ingestWebhookUrl). Kein
+// paralleler Sende-/Encoding-Pfad. Der Text ist reiner Lernstoff/Daten.
+async function smarterAddPastedText() {
+  const text = String(SMARTER.pasteText || "");
+  if (!text.trim()) { if (typeof toast === "function") toast("warn", "Smarter", "Bitte zuerst Text einfügen"); return; }
+  const rawTitle = String(SMARTER.pasteTitle || "").trim();
+  const base = (rawTitle || "Einfuegetext").replace(/[^\w .\-]+/g, "_").replace(/\s+/g, "_").slice(0, 80) || "Einfuegetext";
+  const filename = base + ".txt";
+  try {
+    // File aus Text (type text/plain) -> exakt derselbe Handler wie beim Datei-Upload
+    const file = new File([text], filename, { type: "text/plain" });
+    await smarterAcceptFile(file);   // setzt SMARTER.pendingUpload = { filename, type:"txt", base64 }
+    await smarterDoUpload();          // identischer POST { filename, type, base64 }
+    if (!SMARTER.pendingUpload) {     // pendingUpload==null ⇒ Ingest hat {ok:true} geliefert
+      SMARTER.pasteText = ""; SMARTER.pasteTitle = "";
+      if (typeof toast === "function") toast("ok", "Smarter", "In Warteschlange gelegt");
+    }
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Konnte Text nicht senden");
+    console.warn("Smarter paste:", e);
+  }
+}
+window.smarterOnPasteInput = function(ta) {
+  SMARTER.pasteText = ta ? ta.value : "";
+  const btn = document.getElementById("smarterAddTextBtn");
+  if (btn) btn.disabled = !!SMARTER.uploading || !String(SMARTER.pasteText).trim();
+};
+window.smarterOnPasteTitleInput = function(inp) { SMARTER.pasteTitle = inp ? inp.value : ""; };
+
 async function smarterToggleDone() {
   const db = smarterRootRef();
   if (!db || !SMARTER.today) return;
@@ -16607,6 +16652,7 @@ function smarterHandleAction(action, el, e) {
     case "smarter-pick-file": { const inp = document.getElementById("smarterFileInput"); if (inp) inp.click(); break; }
     case "smarter-upload": smarterDoUpload(); break;
     case "smarter-clear-upload": SMARTER.pendingUpload = null; render(); break;
+    case "smarter-add-text": smarterAddPastedText(); break;
     case "smarter-reveal": SMARTER.revealed.add(Number(el.dataset.idx)); render(); break;
     case "smarter-download": smarterDownloadDocument(); break;
     case "smarter-toggle-done": smarterToggleDone(); break;
