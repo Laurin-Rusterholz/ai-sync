@@ -422,3 +422,48 @@ ergänzend. Zielumfang ~30 Min bleibt; Datenvertrag + Sicherheitsregel unveränd
 - 2026-07-15 · ZIEL A (.txt: App-Accept + Ingest-Workflow, verlustfrei) und ZIEL B
   (Daily-Prompt Zahlen→Fliesstext, belegt mit Mock-Statistik) umgesetzt & verifiziert.
   buildLog (`smarter/buildLog/smarter-build-2026-07-15`) ergänzt.
+
+---
+
+## 8 · Update 2026-07-15 — Blanken Text im Upload einfügen (Session `smarter-build-2026-07-15`)
+
+**Ziel:** neben dem Datei-Upload auch blanken Text direkt einfügen — über den
+**gleichen** Ingest-Weg, kein Parallelpfad.
+
+**App (`public/index.html`, Upload-View):** unter der Datei-Dropzone ein zweiter
+Bereich „📝 Text einfügen" (Titel optional + `<textarea>` + Button „Als Lernstoff
+hinzufügen"). Zustand in `SMARTER.pasteText` / `SMARTER.pasteTitle` (überlebt
+Re-Renders).
+
+**Gleicher Ingest-Weg (Kern der Aufgabe):** `smarterAddPastedText()` baut aus dem
+Text ein `new File([text], "<Titel>.txt", { type:"text/plain" })` und schickt es
+durch **exakt dieselben** Funktionen wie der Datei-Upload:
+`smarterAcceptFile()` (Encoding via `smarterReadFileToBase64`, setzt
+`SMARTER.pendingUpload = {filename, type:"txt", base64}`) → `smarterDoUpload()`
+(einziger Ingest-`fetch`, POST `{ filename, type, base64 }` an
+`smarter/config/ingestWebhookUrl`). Es gibt keinen zweiten Sende-/Encoding-Pfad.
+
+**Sende-Payload-Schema (identisch für Datei & Text):**
+```json
+{ "filename": "<name>.txt", "type": "txt", "base64": "<base64(UTF-8-Text)>" }
+```
+
+- Leerer Text → Button disabled + sanfte Fehlermeldung. Erfolg → Textarea/Titel
+  geleert + Bestätigung „In Warteschlange gelegt".
+- **Sicherheit:** eingegebener Text ist reiner Lernstoff/Daten; die
+  Injection-Defense-Regel im Ingest- und Daily-Prompt bleibt unverändert und
+  greift auch für Texteingaben. Die App interpretiert den Text nie als Anweisung.
+- **Datenvertrag unverändert:** queue-Unit `{sourceId, order, status:"pending",
+  title, content, estMinutes}`; Ingest schreibt per **PATCH** (kein Überschreiben).
+
+**Verifikation (headless Chromium):**
+- Regression-Smoketest **19/19, 0 uncaught JS-Errors**.
+- **Dual-Pfad-Beweis 9/9** (`paste-test.js`, Fetch abgefangen, Firebase gestubbt):
+  Datei-Upload **und** Text-Einfügen posten an **dieselbe URL** mit **identischem
+  `{base64,filename,type}`-Schema**, `type:"txt"`; die base64 dekodiert **verbatim**
+  zum jeweiligen Inhalt — auch ein Text mit **nur Zahlen/Statistik** kommt
+  unverändert als pending-Unit an (den der Daily via ZIEL-B-Prompt zu Fliesstext macht).
+
+### Logbuch
+- 2026-07-15 · Upload „Text einfügen" umgesetzt & verifiziert (gleicher Ingest-Weg,
+  Dual-Pfad-Beweis 9/9). buildLog ergänzt.
