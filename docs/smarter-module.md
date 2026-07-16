@@ -467,3 +467,39 @@ durch **exakt dieselben** Funktionen wie der Datei-Upload:
 ### Logbuch
 - 2026-07-15 · Upload „Text einfügen" umgesetzt & verifiziert (gleicher Ingest-Weg,
   Dual-Pfad-Beweis 9/9). buildLog ergänzt.
+
+---
+
+## 9 · Bugfix 2026-07-15 — Daily „Dokument bauen": robustes Auslesen der Anthropic-Antwort
+
+**Symptom:** Manueller „Execute Workflow" des Daily scheiterte im Code-Node
+„Dokument bauen" mit **„Anthropic: leere Antwort"**, obwohl der Anthropic-Node
+selbst erfolgreich war.
+
+**Ursache:** Aktuelle Modelle liefern im `content[]`-Array einen **thinking-Block
+VOR dem text-Block** (`content=[{type:"thinking",…},{type:"text",text:"…"}]`).
+Der alte Code griff fest auf `content[0].text` zu → beim thinking-Block
+`undefined` → „leere Antwort".
+
+**Fix** (`n8n/smarter-daily.workflow.json`, Node **„Dokument bauen"**, **Zeilen
+60–74** des Code-Nodes): nimm den **ersten** `content`-Eintrag mit
+`type==="text"` und nutze dessen `.text`; sonst **alle** nicht-leeren text-Blöcke
+joinen; `thinking`/`redacted_thinking`/leere Blöcke ignorieren; Fallbacks für
+reinen String bzw. flaches `.text`. Erst danach die „leere Antwort"-Prüfung
+(Zeile 74). JSON-Parsing + **Datenvertrag** (`documents/<date>` unverändert,
+PATCH statt PUT) und die **Injection-Defense-Regel** im Prompt bleiben
+unverändert. Der **Ingest** ist nicht betroffen (kein Anthropic-Node).
+
+**Verifikation:** Mock mit realer Struktur inkl. vorangestelltem thinking-Block →
+„Dokument bauen" extrahiert korrekt theoryHtml + 6 Fragen (q1–q6), baut
+`documentHtml`, kein Fehler. Insgesamt 5/5 Fälle (thinking-vor-text; gemischte
+Blöcke gejoint; json-Fence geparst; Regression `content[0]=text`; nur-thinking
+wirft weiter klaren Fehler). Validator `scripts/validate-n8n-workflow.js`:
+**0 Fehler**.
+
+**Re-Import:** `n8n/smarter-daily.workflow.json` neu importieren (die einzige
+Änderung steckt im Code-Node „Dokument bauen", Zeilen 60–74).
+
+### Logbuch
+- 2026-07-15 · Daily-Extraktion robust gegen thinking-Block; „leere Antwort"-Bug
+  behoben, 5/5 Tests, Validator 0 Fehler.
