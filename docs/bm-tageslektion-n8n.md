@@ -1,160 +1,134 @@
-# BM Tageslektion — n8n-Workflow (Firebase → Quantus BM-Prüfung)
+# BM-Lernprogramm — n8n-Architektur (Firebase ⇄ Quantus BM-Prüfung)
 
-Der Workflow spielt **täglich** den „Lehrer": er liest den Lernfortschritt aus
-Firebase, bestimmt die heute fälligen Themen, lässt Claude eine kurze Lektion +
-prüfungsnahe Fragen schreiben und legt das Ergebnis in Firebase ab. Die App
-`bm.html` liest es unter `bmpruefung/lessons/<datum>` und zeigt es in
-**Tageslektion** an.
+Das Programm folgt dem Sticky-Board-Konzept: **Tageslektionen** (Fokus) mit
+Grafiken + Übungsfragen + Repetitionsfragen, **wöchentlicher Übungstest**
+(Wochenthemen + frühere Themen; Fehler → zurück in die Repetition), **statische
+Theoriebücher** + KI-Chat, und **Fortschritt** über alle Themen. Der **Pace**
+(Themen/Woche) wird berechnet, nicht geraten.
 
-> **Alles über Firebase, keine Netlify-Blobs.** Lesen/Schreiben via RTDB-REST
-> (offene Rules unter `$andere`, kein Login).
+**Prinzip: n8n ist das Gehirn, die App (`bm.html`) ist der Client.**
+Die App erfasst Antworten und rendert; n8n rechnet Pace, generiert Lektionen und
+Tests und schedulet die Repetition. Alles über **Firebase RTDB** (offene
+`$andere`-Rules, kein Login), **keine Netlify-Blobs**.
+
+```
+App (Antworten) ──▶ Firebase aufg/…  ──▶ n8n (rechnen+generieren) ──▶ Firebase plan/lessons/tests ──▶ App rendert
+```
 
 ---
 
-## Endpunkte & Schemas (Fakten für den Workflow)
+## Firebase-Contract (`bmpruefung/`)
 
-**Firebase RTDB-Basis:**
-```
-https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app
-```
+Basis: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app` — Pfade unter `/bmpruefung/`.
 
-| Zweck | Methode | Pfad |
+| Pfad | Wer schreibt | Inhalt |
 |---|---|---|
-| Prüfungsdatum/Plan lesen | GET | `/bmpruefung/config.json` → `{ examDate, planStart, streak, ... }` |
-| Fortschritt lesen | GET | `/bmpruefung/aufg.json` → Map `{ "<fach>_<themaId>_<aufgabeId>": {box,due,c,w}, ... }` |
-| Lektion schreiben | PUT | `/bmpruefung/lessons/<YYYY-MM-DD>.json` (Body = Lektions-JSON, siehe unten) |
+| `config` | App | `{ examDate, planStart }` (Prüfungsdatum) |
+| `aufg/<fachKey>_<themaId>_<aufgabeId>` | App | `{ box(0–5), due, c, w }` — Leitner-Status je Aufgabe |
+| `plan` | **n8n** (wöchentlich) | `{ generatedAt, weeksLeft, topicsPerWeek, weekTopics:["fachKey/themaId",…], weekOf }` |
+| `lessons/<YYYY-MM-DD>` | **n8n** (täglich) | siehe Lektions-Schema |
+| `tests/<YYYY-Www>` | **n8n** (wöchentlich) | siehe Test-Schema; App schreibt `…/result` |
 
-**Curriculum (Themen + Aufgaben), statisch:**
-```
-https://management-xo2-pro.netlify.app/theorie/kompendium.json
-```
-Struktur: `{ faecher:[ { key, fach, themen:[ { id, kapitel, titel, lernziele[], theorie, merksaetze[], beispiele[], aufgaben:[ {id,typ,frage,optionen?,loesung,erklaerung,schwierigkeit} ] } ] } ] }`
+**Curriculum (statisch):** `https://management-xo2-pro.netlify.app/theorie/kompendium.json`
+(6 Fächer, 158 Themen, 1046 Aufgaben; `faecher[].themen[].aufgaben[]`).
+Fallback: `https://raw.githubusercontent.com/Laurin-Rusterholz/ai-sync/main/public/theorie/kompendium.json`.
 
-**Fortschritts-/Schlüssel-Logik (identisch zur App):**
-- Aufgaben-Key in `bmpruefung/aufg` = `` `${fachKey}_${themaId}_${aufgabeId}` `` (die App ersetzt `/ . # $ [ ]` durch `_`).
-- **Box** eines Aufgabe-Eintrags ist 0–5 (Leitner). Ohne Eintrag = Box 0.
-- **Thema-Beherrschung** = Mittelwert über die Aufgaben des Themas von `min(box,5)/5`.
-- **„Gemeistert"** = Beherrschung ≥ **0.6**.
-- **Pacing:** `daysLeft = examDate − heute`; `remaining = #Themen mit Beherrschung < 0.6`; `perDay = ceil(remaining / max(daysLeft,1))`. Heutige Themen = die **ersten `perDay` noch nicht gemeisterten** Themen in Curriculum-Reihenfolge (Fächer in Reihenfolge der `faecher`, Themen in Array-Reihenfolge).
+**Frage-Objekt** (überall gleich): `{ id, fach, themaId, typ(mc|offen|anwenden|rechnen), frage, optionen?, loesung, erklaerung, schwierigkeit }`. Bei `mc`: `loesung` exakt = eine der `optionen`.
 
-**Lektions-JSON, das die App erwartet** (nach `/bmpruefung/lessons/<YYYY-MM-DD>`):
+**Lektions-Schema** (`lessons/<datum>`):
 ```json
 {
   "datum": "2026-07-19",
-  "titel": "Tageslektion: Kontenrahmen & Buchungssatz",
-  "text": "Kurzer Lehrer-Text (Markdown erlaubt: ## Überschrift, **fett**, - Liste).",
-  "fragen": [
-    {
-      "id": "tl-2026-07-19-1",
-      "fach": "frw",                 // fachKey aus kompendium (optional, aber empfohlen)
-      "themaId": "das-konto",        // themaId aus kompendium (optional)
-      "typ": "mc",                   // "mc" | "offen" | "anwenden" | "rechnen"
-      "frage": "…",
-      "optionen": ["…","…","…","…"], // nur bei typ=mc
-      "loesung": "…",                // bei mc: exakt gleich wie eine Option
-      "erklaerung": "…",
-      "schwierigkeit": "mittel"      // leicht | mittel | schwer
-    }
-  ]
+  "titel": "Tageslektion: …",
+  "text": "KURZES Coach-Briefing (Markdown ok: ## …, **fett**, - Liste). KEIN Theorie-Nachdruck.",
+  "themen": ["fachKey/themaId", "…"],
+  "uebungsfragen": [ Frage-Objekt, … ],
+  "repetitionsfragen": [ Frage-Objekt, … ]
 }
 ```
-Falsch beantwortete Lektionsfragen wandern in der App automatisch in die
-Spaced-Repetition-Queue (bei gesetztem `fach`+`themaId` ins jeweilige Thema,
-sonst als eigenständiger Snapshot).
+Die App zeigt zu `themen[]` automatisch die **Grafiken** des jeweiligen Themas (Beherrschungs-Ring, Schwierigkeitsverteilung) und verlinkt Theorie/Lehrbuch — der Lektions-`text` bleibt bewusst kurz.
 
-**Anthropic (Messages API), wie im bestehenden Modell-Workflow:**
-`POST https://api.anthropic.com/v1/messages`, Header `x-api-key` (aus n8n-Credential, **nicht** hardcoden), `anthropic-version: 2023-06-01`, `content-type: application/json`. Modell: `claude-opus-4-8`.
+**Test-Schema** (`tests/<YYYY-Www>`, ISO-Woche z.B. `2026-W30`):
+```json
+{ "woche": "2026-W30", "erstelltAm": "2026-07-25", "themenDieseWoche": ["fachKey/themaId", …], "fragen": [ Frage-Objekt, … ] }
+```
+Die App schreibt nach dem Test `tests/<woche>/result = { abgegebenAm, richtig, falsch, score }` und benotet jede Frage in `aufg` (falsch → `box 0`, `due = morgen`). **Dadurch schliesst sich die Schleife automatisch:** falsche Testfragen sind am nächsten Tag fällig und erscheinen als **Repetitionsfragen** in der Tageslektion.
+
+**Gemeinsame Rechenregeln (in n8n-Code-Nodes):**
+- Aufgaben-Key = `` `${fachKey}_${themaId}_${aufgabeId}` `` (Zeichen `/ . # $ [ ]` → `_`).
+- Thema-Beherrschung = Mittel über seine `aufgaben` von `min(box,5)/5` (fehlt → box 0). **Gemeistert = ≥ 0.6.**
+- `config`/`aufg` dürfen `null` sein (Neu-Start) → alles box 0.
 
 ---
 
-## Prompt für „Claude for Chrome" (zum Bauen des Workflows in n8n)
+## Prompt für „Claude for Chrome" (drei Workflows bauen)
 
-> Kopiere den Block unten und gib ihn Claude für Chrome, während deine n8n-Instanz offen ist.
+> Kopiere alles unten. Basis-Fakten (Firebase-URL, kompendium, Key-Format) stehen oben in diesem Dokument.
 
 ```
-Baue mir in n8n einen neuen Workflow mit dem Namen „BM Tageslektion". Er soll täglich laufen und für meine Lern-App „Quantus · BM-Prüfung" eine Tageslektion erzeugen und in Firebase schreiben. Halte dich exakt an die folgenden Vorgaben.
+Baue in n8n drei Workflows für meine BM-Lern-App. Alle lesen/schreiben Firebase RTDB
+(Basis https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app, Pfade unter /bmpruefung/…).
+Curriculum: https://management-xo2-pro.netlify.app/theorie/kompendium.json (faecher[].themen[].aufgaben[]).
+Anthropic wie im bestehenden „Claude"-Node (Credential „Header Auth account" unverändert, model claude-opus-4-8,
+anthropic-version 2023-06-01). Pacing/Auswahl deterministisch in Code-Nodes (via this.helpers.httpRequest,
+json:true, try/catch pro Quelle). KI nur für Textinhalte. Alle Daten in Zeitzone Europe/Zurich.
+Bei Fehlern kontrolliert abbrechen (nie leere/kaputte Datei schreiben). Schedules NICHT aktivieren,
+erst manuellen Testlauf zeigen.
 
-TRIGGER
-- Schedule Trigger, täglich um 06:00 Uhr (Europe/Zurich).
+GEMEINSAME LOGIK (Code):
+- aufg-Key = `${fachKey}_${themaId}_${aufgabeId}` (Zeichen / . # $ [ ] → _).
+- Thema-Beherrschung = Mittel über seine aufgaben von min(box,5)/5 (fehlt → box 0); gemeistert = ≥ 0.6.
+- config/aufg dürfen null sein → alles box 0.
+- Frage-Objekt immer { id, fach, themaId, typ, frage, optionen?, loesung, erklaerung, schwierigkeit }.
 
-SCHRITT 1 — Fortschritt & Plan lesen (HTTP Request Nodes, Methode GET):
-- A: https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/bmpruefung/config.json  → liefert { examDate, planStart } (examDate ist das Prüfungsdatum als "YYYY-MM-DD"; kann null sein).
-- B: https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/bmpruefung/aufg.json     → Map von Aufgaben-Status: Key = "<fachKey>_<themaId>_<aufgabeId>", Wert = { box (0..5), due, c, w }. Kann null sein.
-- C: https://management-xo2-pro.netlify.app/theorie/kompendium.json                                → das Curriculum mit faecher[].themen[].aufgaben[].
+WORKFLOW 1 — „BM Pace" (Schedule Montag 05:00):
+- Lies config (examDate) + aufg + kompendium.
+- weeksLeft = max(1, ceil(Tage bis examDate / 7)); remaining = #Themen mit Beherrschung < 0.6;
+  topicsPerWeek = max(1, ceil(remaining / weeksLeft)).
+- weekTopics = erste topicsPerWeek NICHT gemeisterte Themen in Curriculum-Reihenfolge, je "fachKey/themaId".
+- PUT /bmpruefung/plan.json = { generatedAt, weeksLeft, topicsPerWeek, weekTopics, weekOf: <Montag dieser Woche> }.
 
-SCHRITT 2 — Heutige Themen bestimmen (Code Node, JavaScript):
-- Datum heute = YYYY-MM-DD (Zeitzone Europe/Zurich).
-- Falls examDate gesetzt: daysLeft = max(1, Tage zwischen heute und examDate).
-- Für jedes Thema in Curriculum-Reihenfolge (faecher in Array-Reihenfolge, darin themen in Array-Reihenfolge): berechne Beherrschung = Mittelwert über seine aufgaben von min(box,5)/5, wobei box aus aufg["<fachKey>_<themaId>_<aufgabeId>"].box kommt (fehlt der Eintrag → box 0). Ein Thema gilt als „gemeistert", wenn Beherrschung ≥ 0.6.
-- remaining = Anzahl nicht gemeisterter Themen. perDay = ceil(remaining / daysLeft) (mindestens 1; falls examDate null: perDay = 3).
-- todayTopics = die ersten perDay NICHT gemeisterten Themen in dieser Reihenfolge. Gib pro Thema mit: fachKey, fach, themaId, titel, kapitel, theorie, merksaetze, lernziele und die Liste seiner aufgaben.
+WORKFLOW 2 — „BM Tageslektion" (Schedule täglich 06:00):
+- Lies plan + aufg + kompendium (fehlt plan: Logik von WF1 inline).
+- todayTopics = nächste 1–2 Themen aus plan.weekTopics, die noch NICHT gemeistert sind.
+- uebungsfragen = 4–6 Fragen aus den aufgaben von todayTopics (Mix mc/offen), Frage-Objekte aus kompendium.
+- repetitionsfragen = alle aufg mit due ≤ heute, Frage-Objekte per Key aus kompendium rekonstruiert, max 6.
+- Anthropic: NUR ein KURZES Coach-Briefing (2–3 Sätze pro Thema: warum heute wichtig + Kernidee/Stolperfalle),
+  KEIN Theorie-Nachdruck, KEINE Code-Blöcke, am Ende ein Lerntipp. Reines JSON { titel, text } zurück.
+- PUT /bmpruefung/lessons/<YYYY-MM-DD>.json =
+  { datum, titel, text, themen: <todayTopics als "fachKey/themaId">, uebungsfragen, repetitionsfragen }.
+- Idempotent (überschreibt denselben Tag).
 
-SCHRITT 3 — Lektion generieren (HTTP Request an Anthropic):
-- POST https://api.anthropic.com/v1/messages
-- Header: x-api-key = mein Anthropic-API-Key aus einem n8n-Credential (NICHT im Klartext hardcoden), anthropic-version: 2023-06-01, content-type: application/json.
-- Body (JSON):
-  {
-    "model": "claude-opus-4-8",
-    "max_tokens": 2000,
-    "system": "Du bist ein Lehrer für die Schweizer Berufsmaturitätsprüfung (Wirtschaft & Dienstleistungen). Schreibe auf Deutsch in Schweizer Rechtschreibung (kein ß, nutze ss). Antworte NUR mit gültigem JSON, ohne Markdown-Codeblock, ohne Text davor oder danach.",
-    "messages": [{ "role": "user", "content": "<siehe unten>" }]
-  }
-- Der user-content soll die todayTopics (Titel + Kurz-Theorie + ein paar bestehende Aufgaben als Stil-Vorlage) enthalten und Folgendes verlangen:
-  „Erstelle eine motivierende, kurze Tageslektion zu diesen Themen und 6 prüfungsnahe Fragen. Gib GENAU dieses JSON zurück:
-  { \"titel\": \"…\", \"text\": \"2-4 Absätze Lehrer-Erklärung, Markdown erlaubt\", \"fragen\": [ { \"id\":\"tl-<datum>-<n>\", \"fach\":\"<fachKey>\", \"themaId\":\"<themaId>\", \"typ\":\"mc|offen|anwenden|rechnen\", \"frage\":\"…\", \"optionen\":[\"…\"] (nur bei mc), \"loesung\":\"… (bei mc exakt eine der Optionen)\", \"erklaerung\":\"…\", \"schwierigkeit\":\"leicht|mittel|schwer\" } ] }.
-  Nutze fach und themaId aus den vorgegebenen Themen. Mische MC und offene Fragen.\"
+WORKFLOW 3 — „BM Wochentest" (Schedule Samstag 08:00):
+- Lies plan + aufg + kompendium.
+- fragenWoche = aus den aufgaben der plan.weekTopics je 2 Fragen.
+- fragenAlt = 8 zufällige Fragen aus Themen, die schon bearbeitet wurden (mind. eine aufgabe mit box>0)
+  und NICHT in weekTopics sind.
+- PUT /bmpruefung/tests/<YYYY-Www>.json (ISO-Woche, z.B. 2026-W30) =
+  { woche, erstelltAm, themenDieseWoche: plan.weekTopics, fragen: [ …fragenWoche, …fragenAlt ] }.
 
-SCHRITT 4 — Zusammenbauen (Code Node):
-- Parse die Anthropic-Antwort (Feld content[0].text) als JSON. Falls das Parsen fehlschlägt, entferne evtl. umschließende ```json ... ``` und parse erneut.
-- Setze datum = heutiges Datum. Ergänze/überschreibe jede Frage-id mit "tl-<datum>-<index>" falls leer.
-- Ergebnis-Objekt: { datum, titel, text, fragen }.
-
-SCHRITT 5 — In Firebase schreiben (HTTP Request, Methode PUT):
-- URL: https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/bmpruefung/lessons/<heutiges-Datum>.json   (das Datum als Pfadsegment, z. B. …/lessons/2026-07-19.json)
-- Body: das Ergebnis-Objekt aus Schritt 4 (Content-Type application/json).
-
-FEHLERBEHANDLUNG
-- Wenn config/aufg null sind (neue Nutzung), nutze perDay = 3 und die ersten 3 Themen des Curriculums.
-- Der Workflow soll idempotent sein: erneutes Laufen am selben Tag überschreibt die Lektion dieses Tages.
-
-Zeig mir am Ende die fertige Workflow-Struktur und teste einen manuellen Lauf.
+Zeig mir je einen manuellen Testlauf (das geschriebene JSON).
 ```
 
 ---
 
-## KI-Funktionen der App (Chat, Erklären, Aufgaben, Antwort-Bewertung)
+## KI-Funktionen der App (Chat „Polaris", Erklären, Aufgaben, Antwort-Bewertung)
 
-Diese laufen **nicht** über Netlify. Die App nutzt in dieser Reihenfolge:
+Laufen **nicht** über Netlify. Reihenfolge:
+1. **In Quantus hinterlegter Anthropic-Key** — same-origin aus `localStorage["mgmt-v4-settings"].anthropicApiKey`, direkter Anthropic-Call (`anthropic-dangerous-direct-browser-access: true`). Kein Setup nötig, sobald der Key in Quantus steht.
+2. **Fallback: n8n-Webhook** `POST <BASE>/quantus-bm-chat` (Header `x-quantus-key`).
 
-1. **Der in Quantus hinterlegte Anthropic-Key** — die App liest ihn same-origin
-   aus `localStorage["mgmt-v4-settings"].anthropicApiKey` (Quantus → Einstellungen
-   → API-Keys) und ruft die Anthropic-API direkt aus dem Browser auf
-   (`anthropic-dangerous-direct-browser-access: true`). Kein Setup nötig, sobald
-   der Key in Quantus eingetragen ist.
-2. **Fallback: n8n-Webhook** `POST <BASE>/quantus-bm-chat`, Header
-   `x-quantus-key: <WEBHOOK_KEY>` — falls auf dem Gerät kein Quantus-Key vorliegt.
-
-**Optionalen Chat-Webhook in n8n bauen** (nur falls Weg 2 gewünscht) — Prompt:
-```
-Baue in n8n einen Webhook-Workflow „quantus-bm-chat":
-- Webhook Node (POST, Pfad quantus-bm-chat, Response Mode „Using Respond to Webhook").
-  Erwartet Header x-quantus-key == <mein Quantus-Webhook-Key> (sonst 401),
-  Body { system, messages:[{role,content}], max_tokens }.
-- HTTP Request an https://api.anthropic.com/v1/messages, Header x-api-key aus
-  meinem n8n-Anthropic-Credential (NICHT hardcoden), anthropic-version 2023-06-01.
-  Body { model:"claude-opus-4-8", max_tokens:{{max_tokens}}, system:{{system}}, messages:{{messages}} }.
-- Respond to Webhook: JSON { "text": <content[0].text der Anthropic-Antwort> }.
-  Setze CORS-Header Access-Control-Allow-Origin: * (die App ruft aus dem Browser).
-```
+**Optionalen Chat-Webhook** (nur falls Weg 2 gewünscht): Webhook-Node (POST `quantus-bm-chat`, prüft `x-quantus-key`, Body `{system, messages, max_tokens}`) → HTTP an Anthropic (Key aus n8n-Credential) → `Respond to Webhook` mit `{ "text": <content[0].text> }`, CORS `Access-Control-Allow-Origin: *`.
 
 ---
 
 ## Manuell testen (ohne n8n)
 
-Eine Beispiel-Lektion sofort setzen (dann in der App unter „Tageslektion" sichtbar):
+Beispiel-Lektion sofort setzen (erscheint dann in der App unter „Tageslektion"):
 ```bash
 curl -X PUT \
   "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/bmpruefung/lessons/$(date +%F).json" \
   -H "Content-Type: application/json" \
-  -d '{"datum":"'"$(date +%F)"'","titel":"Test-Lektion","text":"## Willkommen\nHeute üben wir **Buchungssätze**.","fragen":[{"id":"t1","fach":"frw","themaId":"das-konto","typ":"mc","frage":"Soll steht …","optionen":["links","rechts"],"loesung":"links","erklaerung":"Aktivkonten: Zunahme im Soll.","schwierigkeit":"leicht"}]}'
+  -d '{"datum":"'"$(date +%F)"'","titel":"Test-Lektion","text":"## Guten Morgen\nHeute: **Buchungssätze**.","themen":["frw/das-konto"],"uebungsfragen":[{"id":"u1","fach":"frw","themaId":"das-konto","typ":"mc","frage":"Soll steht …","optionen":["links","rechts"],"loesung":"links","erklaerung":"Aktivkonten: Zunahme im Soll.","schwierigkeit":"leicht"}],"repetitionsfragen":[]}'
 ```
+(Die genauen `themaId`-Werte je Fach stehen in der `kompendium.json` bzw. sind über die App-Themenliste ersichtlich.)

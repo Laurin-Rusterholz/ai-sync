@@ -263,17 +263,21 @@ function normAns(s){ return String(s==null?"":s).toLowerCase().normalize("NFD").
 function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
 /* Mini-Markdown (sicher: erst escapen, dann simple Muster) */
 function md(text){
-  var t=esc(text||"");
+  var t=esc(text||""), blocks=[];
+  t=t.replace(/```[a-z0-9]*\n?([\s\S]*?)```/gi,function(m,code){ blocks.push(code.replace(/\n+$/,"")); return ""+(blocks.length-1)+""; });
+  t=t.replace(/^>\s?/gm,"");
   t=t.replace(/^######?\s?/gm,"").replace(/^#{1,5}\s*(.+)$/gm,function(m,x){return "<h4>"+x+"</h4>";});
   t=t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>");
   var lines=t.split(/\n/), out=[], inList=false;
   lines.forEach(function(ln){
+    var mb=ln.match(/^(\d+)$/);
+    if(mb){ if(inList){out.push("</ul>");inList=false;} out.push('<pre class="merk" style="white-space:pre-wrap;overflow-x:auto">'+blocks[+mb[1]]+'</pre>'); return; }
     if(/^\s*[-•]\s+/.test(ln)){ if(!inList){out.push("<ul>");inList=true;} out.push("<li>"+ln.replace(/^\s*[-•]\s+/,"")+"</li>"); }
     else if(/^\s*\d+\.\s+/.test(ln)){ if(!inList){out.push("<ul>");inList=true;} out.push("<li>"+ln.replace(/^\s*\d+\.\s+/,"")+"</li>"); }
     else { if(inList){out.push("</ul>");inList=false;} if(/^<h4>/.test(ln)) out.push(ln); else if(ln.trim()==="") out.push(""); else out.push("<p>"+ln+"</p>"); }
   });
   if(inList) out.push("</ul>");
-  return out.join("");
+  return out.join("").replace(/(\d+)/g,function(m,i){return "<code>"+(blocks[+i]||"")+"</code>";});
 }
 
 /* ── Firebase RTDB (REST, offene Rules — kein Login) ───────────────────── */
@@ -285,7 +289,7 @@ function nsp(sub){ return CFG.NS+"/"+sub; }
 
 /* ── State ─────────────────────────────────────────────────────────────── */
 var DATA=null, IDX={themen:[],order:[],byKey:{},fachByKey:{}}, quiz=null, chatBusy=false, timer=null;
-var U={ aufg:{}, notes:{}, config:{}, chat:[], activity:{} };
+var U={ aufg:{}, notes:{}, config:{}, chat:[], activity:{}, plan:null, tests:{} };
 
 function cacheSave(){ try{ localStorage.setItem(CFG.CACHE, JSON.stringify(U)); }catch(e){} }
 function cacheLoad(){ try{ var c=JSON.parse(localStorage.getItem(CFG.CACHE)); if(c) U=Object.assign(U,c); }catch(e){} }
@@ -337,17 +341,24 @@ function plan(){
   if(!ex){ return {set:false, total:total, done:done}; }
   var start=U.config.planStart||todayISO();
   var daysLeft=Math.max(0, daysUntil(ex));
+  var weeksLeft=Math.max(1, Math.ceil(daysLeft/7));
   var span=Math.max(1, daysBetween(start,ex));
   var elapsed=clamp(daysBetween(start,todayISO())/span,0,1);
   var shouldMaster=Math.round(total*elapsed);
-  var perDay=daysLeft>0?Math.ceil((total-done)/daysLeft):(total-done);
-  // heutige Themen: naechste unmasterte in Curriculum-Reihenfolge
-  var todayTopics=IDX.order.filter(function(r){return themaMastery(r)<MASTER;}).slice(0, Math.max(1,perDay));
-  // Projektion: Tempo aus Aktivitaet (gemeisterte/Tag grob) — hier einfache Prognose
-  var behind=done-shouldMaster;
-  return {set:true, examDate:ex, total:total, done:done, daysLeft:daysLeft, shouldMaster:shouldMaster,
-    delta:behind, onTrack:behind>=0, perDay:perDay, todayTopics:todayTopics, remaining:total-done};
+  var behind=done-shouldMaster, remaining=total-done;
+  // Wochenthemen: bevorzugt aus Firebase-Plan (n8n „BM Pace"), sonst selbst rechnen
+  var fromN8n=!!(U.plan && Array.isArray(U.plan.weekTopics) && U.plan.weekTopics.length);
+  var topicsPerWeek=fromN8n ? (U.plan.topicsPerWeek||U.plan.weekTopics.length) : Math.max(1, Math.ceil(remaining/weeksLeft));
+  var weekRecs=fromN8n ? U.plan.weekTopics.map(function(k){return IDX.byKey[k];}).filter(Boolean)
+                       : IDX.order.filter(function(r){return themaMastery(r)<MASTER;}).slice(0, topicsPerWeek);
+  var todayTopics=weekRecs.filter(function(r){return themaMastery(r)<MASTER;}).slice(0,2);
+  if(!todayTopics.length) todayTopics=IDX.order.filter(function(r){return themaMastery(r)<MASTER;}).slice(0,2);
+  return {set:true, examDate:ex, total:total, done:done, daysLeft:daysLeft, weeksLeft:weeksLeft, shouldMaster:shouldMaster,
+    delta:behind, onTrack:behind>=0, topicsPerWeek:topicsPerWeek, weekTopics:weekRecs, todayTopics:todayTopics, remaining:remaining, fromN8n:fromN8n};
 }
+function isoWeek(iso){ var d=new Date((iso||todayISO())+"T00:00:00"); var day=(d.getDay()+6)%7; d.setDate(d.getDate()-day+3);
+  var firstThu=new Date(d.getFullYear(),0,4); var week=1+Math.round(((d-firstThu)/86400000-3+((firstThu.getDay()+6)%7))/7);
+  return d.getFullYear()+"-W"+String(week).padStart(2,"0"); }
 
 /* ── Spaced Repetition ─────────────────────────────────────────────────── */
 function komAufg(key){ var p=key.split("/"); if(p.length<3) return null; var a=p.pop(),t=p.pop(),f=p.join("/");
@@ -452,7 +463,7 @@ var NAV=[
   {h:"#/lektion",ic:"☀",l:"Tageslektion"},
   {h:"#/themen",ic:"❏",l:"Themen"},
   {h:"#/wiederholen",ic:"↻",l:"Wiederholen"},
-  {h:"#/simulation",ic:"⏱",l:"Prüfungssim"},
+  {h:"#/wochentest",ic:"⏱",l:"Wochentest"},
   {h:"#/karteikarten",ic:"❑",l:"Karteikarten"},
   {h:"#/merksaetze",ic:"✦",l:"Merksätze"},
   {h:"#/fortschritt",ic:"▰",l:"Fortschritt"},
@@ -470,6 +481,7 @@ function route(){ if(!DATA) return; renderNav(); var h=(location.hash||"#/dashbo
     case "lektion": return viewLektion(app);
     case "themen": return viewThemen(app);
     case "wiederholen": return viewWiederholen(app);
+    case "wochentest": return viewWochentest(app);
     case "simulation": return viewSimulation(app);
     case "karteikarten": return viewKarteikarten(app);
     case "merksaetze": return viewMerksaetze(app);
@@ -490,7 +502,7 @@ function boot(){
   Promise.all([loadData,fbNodes]).then(function(res){
     DATA=res[0]; buildIndex();
     var fb=res[1];
-    if(fb){ U.aufg=fb.aufg||{}; U.notes=fb.notes||{}; U.config=fb.config||{}; U.chat=fb.chat||[]; U.activity=fb.activity||{}; cacheSave(); }
+    if(fb){ U.aufg=fb.aufg||{}; U.notes=fb.notes||{}; U.config=fb.config||{}; U.chat=fb.chat||[]; U.activity=fb.activity||{}; U.plan=fb.plan||null; cacheSave(); }
     route();
     if(!U.config.examDate) setTimeout(askExamDate, 400);
   }).catch(function(e){ document.getElementById("app").innerHTML='<div class="empty"><div class="ic">⚠️</div><p>'+esc(e.message)+'</p></div>'; });
@@ -539,7 +551,7 @@ function viewDashboard(app){
   html+='<div class="grid g-cards" style="margin-top:16px">';
   html+=dashCard("↻","Wiederholen",(due.length?due.length+" Aufgabe(n) fällig — Fehler kehren automatisch zurück.":"Nichts fällig. Stark!"),"#/wiederholen","Starten");
   html+=dashCard("☀","Tageslektion","Deine geplanten Themen & Fragen für heute — wie vom Lehrer.","#/lektion","Öffnen");
-  html+=dashCard("⏱","Prüfungssimulation","Gemischter Testlauf unter Zeit — wie an der echten Prüfung.","#/simulation","Testen");
+  html+=dashCard("⏱","Wochentest","Diese Woche + Fragen aus früheren Themen — falsch = automatisch Repetition.","#/wochentest","Öffnen");
   html+='</div>';
 
   html+='<div class="section-title">Fortschritt nach Fach</div><div class="grid g-cards">';
@@ -560,11 +572,11 @@ function dashCard(ic,t,d,href,cta){ return '<a class="card click tcard" href="'+
 function viewLernplan(app){
   var pl=plan();
   if(!pl.set){ app.innerHTML='<div class="pagehead"><h1>Lernplan</h1></div><div class="empty"><div class="ic">◷</div><p>Setze zuerst dein Prüfungsdatum.</p><div class="btnrow" style="justify-content:center;margin-top:12px"><button class="btn primary" data-action="exam-ask">Prüfungsdatum setzen</button></div></div>'; return; }
-  var html='<div class="pagehead"><h1>Lernplan</h1><p>Prüfung am '+esc(fmtDate(pl.examDate))+' · noch '+pl.daysLeft+' Tage</p></div>';
+  var html='<div class="pagehead"><h1>Lernplan</h1><p>Prüfung am '+esc(fmtDate(pl.examDate))+' · noch '+pl.daysLeft+' Tage · '+(pl.fromN8n?'<span class="badge ok">Pace von n8n</span>':'<span class="badge">Pace berechnet in der App</span>')+'</p></div>';
   html+='<div class="grid g-stats">'
     +statCard(pl.daysLeft,"Tage bis Prüfung",true)
     +statCard(pl.remaining,"Themen offen")
-    +statCard(pl.perDay,"Themen / Tag nötig")
+    +statCard(pl.topicsPerWeek,"Themen / Woche nötig")
     +statCard((pl.onTrack?"+":"")+pl.delta,"vs. Soll")
     +'</div>';
   html+='<div class="card" style="margin-top:14px"><div class="chart-cap">Fortschritt vs. Soll-Linie</div>'
@@ -572,6 +584,9 @@ function viewLernplan(app){
     +'<div class="muted" style="font-size:12.5px;margin-top:8px">'+pl.done+' gemeistert · gelbe Markierung = Soll heute ('+pl.shouldMaster+'). '
     +(pl.onTrack?'<span class="accentc">Du liegst im Plan.</span>':'<span class="dangerc">Du bist '+(-pl.delta)+' Themen hinter dem Plan — heute etwas mehr üben.</span>')+'</div>'
     +'<div class="btnrow" style="margin-top:12px"><button class="btn sm" data-action="exam-ask">Prüfungsdatum ändern</button></div></div>';
+  if(pl.weekTopics.length){ html+='<div class="section-title">Diese Woche ('+pl.weekTopics.length+' Themen)</div><div class="grid g-cards">';
+    pl.weekTopics.forEach(function(r){ var m=themaMastery(r); html+='<a class="card click tcard" href="'+themaLink(r)+'" style="text-decoration:none"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:14px">'+esc(r.thema.titel)+'</h3><div class="foot">'+ring(m,32)+(m>=MASTER?'<span class="badge ok">✓</span>':'<div class="bar"><span style="width:'+(m*100).toFixed(0)+'%"></span></div>')+'</div></a>'; });
+    html+='</div>'; }
   html+='<div class="section-title">Heute dran ('+pl.todayTopics.length+' Themen)</div><div class="grid g-cards">';
   if(!pl.todayTopics.length) html+='<div class="empty" style="grid-column:1/-1">🎉 Alle Themen gemeistert!</div>';
   pl.todayTopics.forEach(function(r){ html+='<a class="card click tcard" href="'+themaLink(r)+'" style="text-decoration:none"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:14px">'+esc(r.thema.titel)+'</h3><div class="foot">'+ring(themaMastery(r),34)+'<span class="btn sm">Lernen →</span></div></a>'; });
@@ -650,10 +665,15 @@ function buildQuizDifficulty(level){ var items=[]; IDX.themen.forEach(function(r
   return {title:"Übung: "+level,items:shuffle(items).slice(0,20),idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/wiederholen"}; }
 function buildQuizSim(n){ var items=[]; IDX.themen.forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ items.push(makeItem(r,a)); }); });
   return {title:"Prüfungssimulation",items:shuffle(items).slice(0,n||25),idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/simulation",sim:true,started:Date.now()}; }
-function buildQuizFromLesson(lesson){ var items=(lesson.fragen||[]).map(function(a,i){ var fk=a.fach||"lektion",tid=a.themaId||("frage"+i),id=a.id||("f"+i);
-  var kr=IDX.byKey[themaKey(fk,tid)]; var rec=kr?{fachKey:kr.fachKey,fach:kr.fach,thema:kr.thema}:{fachKey:fk,fach:(IDX.fachByKey[fk]?IDX.fachByKey[fk].fach:"Tageslektion"),thema:{id:tid,titel:a.titel||lesson.titel||"Tageslektion"}};
-  return {rec:rec,a:a,key:aufgKey(fk,tid,id)}; });
-  return {title:lesson.titel||"Tageslektion",items:items,idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/lektion"}; }
+function buildQuizFromFragen(fragen,title,backHash,extra){
+  var items=(fragen||[]).map(function(a,i){ var fk=a.fach||"lektion",tid=a.themaId||("q"+i),id=a.id||("q"+i);
+    var kr=IDX.byKey[themaKey(fk,tid)]; var rec=kr?{fachKey:kr.fachKey,fach:kr.fach,thema:kr.thema}:{fachKey:fk,fach:(IDX.fachByKey[fk]?IDX.fachByKey[fk].fach:(a.fach||"Lektion")),thema:{id:tid,titel:a.titel||title}};
+    return {rec:rec,a:a,key:aufgKey(fk,tid,id)}; });
+  var q={title:title,items:items,idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:backHash||"#/dashboard"};
+  if(extra) for(var k in extra) q[k]=extra[k];
+  return q;
+}
+function buildQuizFromLesson(lesson){ return buildQuizFromFragen(lesson.uebungsfragen||lesson.fragen||[], lesson.titel||"Tageslektion", "#/lektion"); }
 function buildQuizTopics(recs){ var items=[]; recs.forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ items.push(makeItem(r,a)); }); });
   return {title:"Heutige Lektion",items:items,idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/lektion"}; }
 
@@ -679,6 +699,7 @@ function renderQuiz(app){
   html+='</div>'; app.innerHTML=html;
 }
 function renderQuizDone(app){ var r=quiz.results,tot=r.correct+r.wrong,pct=tot?Math.round(r.correct/tot*100):0;
+  if(quiz.testWeek && !quiz.__saved){ quiz.__saved=true; fbPut(nsp("tests/"+quiz.testWeek+"/result"), {abgegebenAm:todayISO(), richtig:r.correct, falsch:r.wrong, score:pct}).catch(function(e){ toast("Firebase: "+e.message,true); }); }
   var extra=quiz.sim?'<p class="muted">Dauer: '+Math.round((Date.now()-quiz.started)/60000)+' min · Note (grob): '+(1+5*pct/100).toFixed(1)+'</p>':'';
   app.innerHTML='<div class="quizwrap" style="text-align:center;padding-top:16px">'+ring(tot?r.correct/tot:0,96)
     +'<div class="pagehead" style="margin-top:14px"><h1>'+(pct>=80?"Stark!":pct>=50?"Gut":"Weiter üben")+'</h1><p>'+r.correct+' richtig · '+r.wrong+' falsch von '+tot+'</p>'+extra+'</div>'
@@ -697,6 +718,29 @@ function viewWiederholen(app){ var due=dueList();
     due.slice(0,9).forEach(function(d){ html+='<div class="card tcard"><div class="kap">'+esc(d.rec.fach)+'</div><h3 style="font-size:14px">'+esc(d.rec.thema.titel)+'</h3><div class="meta"><span class="badge due">Box '+d.st.box+'</span></div></div>'; });
     html+='</div>'; }
   app.innerHTML=html;
+}
+
+function viewWochentest(app){
+  var wk=isoWeek();
+  app.innerHTML='<div class="pagehead"><h1>Wochentest</h1></div><div class="empty"><div class="spin"></div><p>Test der Woche wird geladen …</p></div>';
+  fbGet(nsp("tests/"+wk)).then(function(test){
+    var html='<div class="pagehead"><h1>Wochentest</h1><p>Kalenderwoche '+wk+'</p></div>';
+    if(test && Array.isArray(test.fragen) && test.fragen.length){
+      var done=test.result;
+      html+='<div class="card" style="text-align:center;padding:24px"><div style="font-size:15px;margin-bottom:6px">'+test.fragen.length+' Fragen — diese Woche + frühere Themen</div>'
+        +'<p class="muted" style="margin:0 0 14px">Alles Falsche wandert automatisch in die Tageslektions-Repetition.</p>'
+        +'<button class="btn primary" data-action="quiz-test">'+(done?'Test wiederholen':'Test starten')+'</button>'
+        +(done?'<div class="badge ok" style="margin-top:12px">✓ Letztes Ergebnis: '+done.richtig+'/'+(done.richtig+done.falsch)+' ('+done.score+'%)</div>':'')+'</div>';
+      if(Array.isArray(test.themenDieseWoche)&&test.themenDieseWoche.length){ html+='<div class="section-title">Diese Woche geprüft</div><div class="grid g-cards">';
+        test.themenDieseWoche.forEach(function(k){ var r=IDX.byKey[k]; if(r) html+='<a class="card click tcard" href="'+themaLink(r)+'" style="text-decoration:none"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:14px">'+esc(r.thema.titel)+'</h3></a>'; });
+        html+='</div>'; }
+      window.__test=test; window.__testWk=wk;
+    } else {
+      html+='<div class="empty"><div class="ic">⏱</div><p>Für diese Woche wurde noch kein Test erstellt.</p><p class="muted" style="font-size:13px;max-width:520px;margin:8px auto 0">Der n8n-Workflow „BM Wochentest" legt ihn samstags unter <span class="mono">'+CFG.NS+'/tests/'+wk+'</span> ab. Bis dahin: freier Test:</p>'
+        +'<div class="btnrow" style="justify-content:center;margin-top:14px"><button class="btn" data-action="quiz-sim" data-n="15">Frei 15</button><button class="btn primary" data-action="quiz-sim" data-n="25">Frei 25</button><button class="btn" data-action="quiz-sim" data-n="40">Frei 40</button></div></div>';
+    }
+    app.innerHTML=html;
+  }).catch(function(e){ app.innerHTML='<div class="pagehead"><h1>Wochentest</h1></div><div class="empty"><div class="ic">⚠️</div><p>'+esc(e.message)+'</p></div>'; });
 }
 
 function viewSimulation(app){
@@ -776,18 +820,33 @@ function chatSend(text){ if(chatBusy) return; var inp=document.getElementById("c
 }
 
 /* ── Tageslektion (Lehrer) ─────────────────────────────────────────────── */
+function lessonTopicCards(themen){
+  return (themen||[]).map(function(k){ var r=IDX.byKey[k]; if(!r) return "";
+    var m=themaMastery(r), diff={leicht:0,mittel:0,schwer:0}; (r.thema.aufgaben||[]).forEach(function(a){diff[a.schwierigkeit]=(diff[a.schwierigkeit]||0)+1;});
+    return '<div class="card"><div style="display:flex;gap:12px;align-items:center"><div>'+ring(m,54)+'</div>'
+      +'<div style="flex:1"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:15px">'+esc(r.thema.titel)+'</h3>'
+      +'<div class="meta" style="margin-top:4px"><span class="chip leicht">L '+diff.leicht+'</span><span class="chip mittel">M '+diff.mittel+'</span><span class="chip schwer">S '+diff.schwer+'</span></div></div></div>'
+      +'<div class="btnrow" style="margin-top:10px"><a class="btn sm" href="'+themaLink(r)+'">Thema öffnen</a><a class="btn sm ghost" href="#/buch/'+encodeURIComponent(r.fachKey)+'">Lehrbuch</a></div></div>';
+  }).join("");
+}
 function viewLektion(app){
   app.innerHTML='<div class="pagehead"><h1>Tageslektion</h1></div><div class="empty"><div class="spin"></div><p>Lektion wird geladen …</p></div>';
   var pl=plan();
   fbGet(nsp("lessons/"+todayISO())).then(function(lesson){
     var html='<div class="pagehead"><h1>Tageslektion</h1><p>'+esc(fmtDate(todayISO()))+(pl.set?' · Prüfung in '+pl.daysLeft+' Tagen':'')+'</p></div>';
-    // Von n8n gelieferte Lektion (Lehrer-Text + Fragen)
+    // Von n8n gelieferte Lektion: Coach-Text + Themen-Grafiken + Übungs-/Repetitionsfragen
     if(lesson){
+      window.__lesson=lesson;
       if(lesson.titel) html+='<div class="pagehead" style="margin:0 0 10px"><h1 style="font-size:20px">'+esc(lesson.titel)+'</h1></div>';
       if(lesson.text||lesson.intro) html+='<div class="card prose" style="margin-bottom:14px">'+md(lesson.text||lesson.intro)+'</div>';
-      var nf=(lesson.fragen||[]).length;
-      html+='<div class="card" style="text-align:center;padding:22px"><div style="font-size:15px;margin-bottom:6px">'+(nf?nf+' Frage(n) von deinem Lehrer':'Lektion')+'</div>'+(nf?'<button class="btn primary" data-action="quiz-lesson">Fragen starten</button>':'')+'</div>';
-      window.__lesson=lesson;
+      var themen=(lesson.themen&&lesson.themen.length)?lesson.themen:pl.todayTopics.map(function(r){return r.key;});
+      var cards=lessonTopicCards(themen);
+      if(cards) html+='<div class="section-title">Heutige Themen (mit Grafiken)</div><div class="grid g-2">'+cards+'</div>';
+      var ueb=(lesson.uebungsfragen||lesson.fragen||[]), rep=(lesson.repetitionsfragen||[]), repCount=rep.length||dueList().length;
+      html+='<div class="section-title">Üben & Wiederholen</div><div class="grid g-cards">';
+      html+='<div class="card"><h3>Übungsfragen</h3><p class="muted" style="font-size:13px">'+ueb.length+' Fragen zu den heutigen Themen.</p><div class="foot" style="margin-top:8px"><button class="btn primary" data-action="quiz-uebung" '+(ueb.length?"":"disabled")+'>Starten</button></div></div>';
+      html+='<div class="card"><h3>Repetitionsfragen</h3><p class="muted" style="font-size:13px">'+repCount+' fällige Wiederholung(en) — deine Fehler.</p><div class="foot" style="margin-top:8px"><button class="btn" data-action="quiz-repetition" '+(repCount?"":"disabled")+'>Starten</button></div></div>';
+      html+='</div>';
     } else {
       // Kein n8n-Text → eigener Plan-basierter Unterricht
       html+='<div class="card" style="margin-bottom:14px"><div class="section-title" style="margin:0 0 8px">Heute dran</div>';
@@ -846,6 +905,9 @@ document.addEventListener("click", function(e){
     case "quiz-sim": quiz=buildQuizSim(parseInt(el.getAttribute("data-n"),10)); renderQuiz(app); break;
     case "quiz-today": { var pl=plan(); quiz=buildQuizTopics(pl.todayTopics); quiz.items.length?renderQuiz(app):toast("Keine Themen"); break; }
     case "quiz-lesson": if(window.__lesson){ quiz=buildQuizFromLesson(window.__lesson); renderQuiz(app); } break;
+    case "quiz-uebung": { var L=window.__lesson||{}; quiz=buildQuizFromFragen(L.uebungsfragen||L.fragen||[],"Übungsfragen","#/lektion"); quiz.items.length?renderQuiz(app):toast("Keine Übungsfragen"); break; }
+    case "quiz-repetition": { var L2=window.__lesson||{}; if(L2.repetitionsfragen&&L2.repetitionsfragen.length){ quiz=buildQuizFromFragen(L2.repetitionsfragen,"Repetitionsfragen","#/lektion"); } else { quiz=buildQuizFromDue(); quiz.backHash="#/lektion"; } quiz.items.length?renderQuiz(app):toast("Nichts fällig"); break; }
+    case "quiz-test": { if(window.__test){ quiz=buildQuizFromFragen(window.__test.fragen,"Wochentest "+window.__testWk,"#/wochentest",{testWeek:window.__testWk,sim:true,started:Date.now()}); renderQuiz(app); } break; }
     case "quiz-mc": quiz.chosen=parseInt(el.getAttribute("data-i"),10); quiz.revealed=true; renderQuiz(app); break;
     case "quiz-reveal": quiz.revealed=true; renderQuiz(app); break;
     case "quiz-grade": { var ok=el.getAttribute("data-ok")==="1"; var it=quiz.items[quiz.idx]; if(it&&it.key) gradeAufg(it.key,ok,{a:it.a,fach:(it.rec&&it.rec.fach),thema:(it.rec&&it.rec.thema&&it.rec.thema.titel)}); if(ok)quiz.results.correct++;else quiz.results.wrong++; quiz.idx++; quiz.revealed=false; quiz.chosen=null; renderQuiz(app); break; }
@@ -868,7 +930,7 @@ document.addEventListener("click", function(e){
     case "ai-grade": { var it3=quiz.items[quiz.idx]; var ua=(document.getElementById("open-answer")||{}).value||""; if(!ua.trim()){ toast("Erst eine Antwort eingeben"); break; }
       aiModal("KI-Feedback", function(){ return callAI(AI_SYS, [{role:"user",content:"Frage: „"+it3.a.frage+"\"\nMusterloesung: „"+it3.a.loesung+"\"\nMeine Antwort: „"+ua+"\"\n\nBewerte meine Antwort (richtig/teilweise/falsch), sage warum und was fehlt. Kurz."}], 600); }); break; }
     case "ai-lesson": { var pl2=plan(); var names=pl2.todayTopics.map(function(r){return r.thema.titel+" ("+r.fach+")";}).join(", ");
-      aiModal("KI-Tageslektion", function(){ return callAI(AI_SYS, [{role:"user",content:"Halte eine kurze, motivierende Tageslektion (wie ein Lehrer) zu diesen Themen fuer heute: "+names+". Erklaere die Kernidee jedes Themas in 2-3 Saetzen und gib am Ende einen Lerntipp."}], 1400); }); break; }
+      aiModal("KI-Tageslektion", function(){ return callAI(AI_SYS, [{role:"user",content:"Halte ein SEHR kurzes Coach-Briefing (wie ein Lehrer) zu diesen Themen fuer heute: "+names+". Pro Thema hoechstens 2-3 Saetze: warum heute wichtig + eine Kernidee oder Stolperfalle. KEIN Nachdruck der Theorie (die steht im Lehrbuch), KEINE Code-Bloecke. Am Ende ein kurzer Lerntipp."}], 800); }); break; }
     case "tts": { var rr=IDX.byKey[el.getAttribute("data-key")]; if(window.__speaking){ speechSynthesis.cancel(); window.__speaking=false; } else { speak(rr.thema.titel+". "+(rr.thema.theorie||"")); window.__speaking=true; } break; }
   }
 });
