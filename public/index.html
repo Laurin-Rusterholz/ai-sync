@@ -17093,6 +17093,7 @@ function getAllApps() {
     {key:"browser", icon:"🌐", label:"Browser", desc:getLang()==="de"?"Quantus Browser — vollwertiger Remote-Browser im Stream (neko), ohne Login-Maske":"Quantus Browser — full remote browser stream (neko), no login screen"},
     {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
     {key:"docstudio", icon:"📄", label:"DocStudio", desc:getLang()==="de"?"Dokumente generieren & gestalten (Rechnung, Einladung, Brief …) mit KI & PDF-Export":"Generate & design documents (invoice, invitation, letter …) with AI & PDF export"},
+    {key:"bmpruefung", icon:"🎓", label:"BM-Prüfung", desc:getLang()==="de"?"Prüfungsvorbereitung Berufsmaturität — alle Themen, Repetitionsaufgaben, Spaced Repetition, Tageslektion, Lehrbücher & KI-Chat":"Vocational baccalaureate (BM) exam prep — topics, drills, spaced repetition, daily lesson, textbooks & AI chat"},
     {key:"polaris", icon:"🛰️", label:"Polaris", desc:getLang()==="de"?"Sprachsteuerung — Konversations-Agent mit Live-Briefing (ElevenLabs)":"Voice control — conversational agent with live briefing (ElevenLabs)"},
     {key:"quantusproject", icon:"🛠️", label:"Quantus Projekt", desc:getLang()==="de"?"Quantus selbst weiterentwickeln: Grundprompt + Spezifikation, Updates, Logbuch & Ideen":"Develop Quantus itself: base prompt + specification, updates, logbook & ideas"},
   ];
@@ -17478,6 +17479,7 @@ function renderMain() {
     case "polaris": html = (typeof window.viewPolaris === "function" ? window.viewPolaris() : '<div style="padding:40px;text-align:center">Lade Polaris…</div>'); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "docstudio": window.location.href = "docstudio.html"; return; // Öffnet DocStudio (eigenständige Single-File-App)
+    case "bmpruefung": window.location.href = "bm.html"; return; // Öffnet Quantus · BM-Prüfung (eigenständige Single-File-App)
     case "ruhestand": (window.openRuhestandOverlay ? window.openRuhestandOverlay() : (window.location.href = "ruhestand.html")); return; // Öffnet den Ruhestand-Ambient-Modus (Vollbild-Overlay)
     case "settings": { openSettings(); return; }
 
@@ -106995,7 +106997,7 @@ html.theme-light .card{box-shadow:none}
   function routeOf(k){ return k.slice(k.indexOf(":") + 1); }
   // Apps mit eigener Standalone-Seite direkt laden (leichter, eigener Speicher);
   // SPA-interne Overlays via chrome-losen Embed-Modus der Haupt-App.
-  var FRAME_SRC = { docstudio:"docstudio.html", nobraine:"nobraine.html", weekplanning:"nobraine.html", drive:"drive.html", ruhestand:"ruhestand.html" };
+  var FRAME_SRC = { docstudio:"docstudio.html", nobraine:"nobraine.html", weekplanning:"nobraine.html", drive:"drive.html", ruhestand:"ruhestand.html", bmpruefung:"bm.html" };
   function frameSrc(route){ return FRAME_SRC[route] || ("index.html?embed=1#/" + route); }
   function appPanelMeta(route){
     var all = (typeof getAllApps === "function") ? getAllApps() : [];
