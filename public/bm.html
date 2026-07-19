@@ -231,7 +231,8 @@ label.fld{display:block;margin:0 0 6px;font-size:12px;color:var(--muted);font-we
 /* ═══════════════════════════════════════════════════════════════════════
    Quantus · BM-Prüfung — Prüfungscoach (Single-File, kein Build-Step)
    Speicherung: Firebase RTDB (REST, Namespace „bmpruefung", offene Rules)
-   Curriculum:  /theorie/kompendium.json    KI: /.netlify/functions/quantus-chat
+   Curriculum:  /theorie/kompendium.json
+   KI:          in Quantus hinterlegter Anthropic-Key (direkt) oder n8n-Webhook
    Tageslektion: Firebase bmpruefung/lessons/<datum> (vom n8n-Workflow geschrieben)
    ═══════════════════════════════════════════════════════════════════════ */
 var CFG = {
@@ -239,7 +240,10 @@ var CFG = {
   BOOK_BASE: "theorie/",
   FB:        "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app",
   NS:        "bmpruefung",
-  CHAT_URL:  "/.netlify/functions/quantus-chat",
+  // KI läuft über den in Quantus hinterlegten Anthropic-Key (direkt) ODER über n8n.
+  WEBHOOK_BASE: "https://n8n.srv1757990.hstgr.cloud/webhook",
+  WEBHOOK_KEY:  "qns_pdf_9f3k2m8x7q1zvb4p",
+  WH_CHAT:      "quantus-bm-chat",
   CACHE:     "quantus_bm_cache_v2",
 };
 var LEITNER=[1,2,4,7,14,30];          // Tage bis naechste Faelligkeit je Box
@@ -375,11 +379,36 @@ function correctIndex(a){
   return best;
 }
 
-/* ── KI (Anthropic via Netlify-Function) ───────────────────────────────── */
+/* ── KI ─────────────────────────────────────────────────────────────────
+   Transport: 1) der in Quantus (gleiche Origin) hinterlegte Anthropic-Key →
+   direkter Aufruf der Anthropic API; 2) sonst der n8n-Webhook (x-quantus-key,
+   Key liegt serverseitig im n8n-Credential). Kein Key im Code, kein Netlify-Env. */
+function storedAnthropicKey(){
+  function pick(o){ if(!o||typeof o!=="object") return ""; return o.anthropicApiKey||o.claudeApiKey||(o._settings&&(o._settings.anthropicApiKey||o._settings.claudeApiKey))||(o.settings&&(o.settings.anthropicApiKey||o.settings.claudeApiKey))||""; }
+  var k="";
+  try{ k=pick(JSON.parse(localStorage.getItem("mgmt-v4-settings")||"null")); }catch(e){}
+  if(!k){ try{ k=pick(JSON.parse(localStorage.getItem("mgmt-v4-data")||"null")); }catch(e){} }
+  return String(k||"").replace(/[\s ​-‍﻿]/g,"");
+}
+function aiModel(){ return U.config.aiModel || "claude-opus-4-8"; }
+function callAnthropicDirect(system,messages,mt,key){
+  return fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+    headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:aiModel(),max_tokens:mt,system:system,messages:messages})})
+    .then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error((j&&j.error&&j.error.message)||("Anthropic HTTP "+r.status));
+      return Array.isArray(j.content)?j.content.filter(function(b){return b&&b.type==="text";}).map(function(b){return b.text;}).join("").trim():""; }); });
+}
+function callAIviaN8n(system,messages,mt){
+  return fetch(CFG.WEBHOOK_BASE+"/"+CFG.WH_CHAT,{method:"POST",headers:{"content-type":"application/json","x-quantus-key":CFG.WEBHOOK_KEY},
+    body:JSON.stringify({system:system,messages:messages,max_tokens:mt})})
+    .then(function(r){ if(!r.ok) throw new Error("n8n-Webhook HTTP "+r.status); return r.text(); })
+    .then(function(txt){ try{ var j=JSON.parse(txt); return j.text||j.output||j.answer||(Array.isArray(j.content)?j.content.map(function(b){return b.text||"";}).join(""):txt); }catch(e){ return txt; } });
+}
 function callAI(system, messages, maxTokens){
-  return fetch(CFG.CHAT_URL,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({system:system,messages:messages,max_tokens:maxTokens||1024})})
-    .then(function(r){ return r.json().then(function(j){ if(!r.ok){ var m=j&&j.error==="not_configured"?"KI nicht konfiguriert — Owner muss ANTHROPIC_API_KEY in Netlify setzen.":(j&&j.message)||("Fehler "+r.status); throw new Error(m); } return j.text||""; }); });
+  var mt=maxTokens||1024, key=storedAnthropicKey();
+  if(key) return callAnthropicDirect(system,messages,mt,key).catch(function(){ return callAIviaN8n(system,messages,mt); });
+  return callAIviaN8n(system,messages,mt).catch(function(){
+    throw new Error("Keine KI verfügbar. Trage in Quantus (Einstellungen → API-Keys) deinen Anthropic-Key ein — die BM-App nutzt ihn automatisch — oder richte den n8n-Webhook quantus-bm-chat ein."); });
 }
 var AI_SYS="Du bist ein hilfreicher, praeziser Lerncoach fuer die Schweizer Berufsmaturitaets-Pruefung (BM, Wirtschaft & Dienstleistungen). Antworte auf Deutsch in Schweizer Rechtschreibung (kein scharfes s, nutze ss). Sei konkret, strukturiert, pruefungsnah.";
 function themaContext(rec){ if(!rec) return ""; return "\n\nThema: „"+rec.thema.titel+"\" ("+rec.fach+").\nTheorie:\n"+(rec.thema.theorie||"")+((rec.thema.merksaetze||[]).length?"\nMerksaetze: "+rec.thema.merksaetze.join("; "):""); }
@@ -780,6 +809,7 @@ function viewSettings(app){
   app.innerHTML='<div class="pagehead"><h1>Einstellungen</h1></div>'
     +'<div class="card" style="margin-bottom:12px"><label class="fld">Prüfungsdatum</label><div style="display:flex;gap:9px;flex-wrap:wrap"><input type="date" id="set-exam" value="'+esc(U.config.examDate||"")+'" style="max-width:220px"><button class="btn sm" data-action="set-exam-save">Speichern</button></div><div class="muted" style="font-size:12px;margin-top:6px">Steuert Lernplan, Pacing und die „im Plan?"-Anzeige.</div></div>'
     +'<div class="card" style="margin-bottom:12px"><label class="fld">Beherrschungs-Schwelle „gemeistert"</label><div class="muted" style="font-size:13px">Ein Thema gilt ab '+(MASTER*100)+'% als gemeistert (aus dem Leitner-Lernstand der Aufgaben).</div></div>'
+    +'<div class="card" style="margin-bottom:12px"><h3>KI-Quelle</h3><p class="muted" style="font-size:13px">Die KI nutzt automatisch den <strong>in Quantus hinterlegten Anthropic-Key</strong> (Quantus → Einstellungen → API-Keys, gleiche Browser-Origin) und ruft die Anthropic-API direkt auf. Ohne hinterlegten Key läuft es über den n8n-Webhook <span class="mono">'+CFG.WH_CHAT+'</span> (Key serverseitig im n8n-Credential). Kein Key im Code.</p><div style="margin-top:8px">'+(storedAnthropicKey()?'<span class="badge ok">✓ Anthropic-Key aus Quantus erkannt</span>':'<span class="badge warn">Kein Quantus-Key auf diesem Gerät → n8n-Webhook wird genutzt</span>')+'</div></div>'
     +'<div class="card"><h3>Speicherung</h3><p class="muted" style="font-size:13px">Alle Daten (Fortschritt, Notizen, Fehler-Queue, Zieldatum, Chat) liegen in Firebase RTDB unter <span class="mono">'+CFG.NS+'/</span>. Lokaler Cache für schnelles Laden/Offline.</p><div class="btnrow" style="margin-top:8px"><button class="btn sm" data-action="reload-fb">Neu von Firebase laden</button></div></div>';
 }
 
