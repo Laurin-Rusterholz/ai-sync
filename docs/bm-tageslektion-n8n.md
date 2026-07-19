@@ -122,6 +122,33 @@ Zeig mir am Ende die fertige Workflow-Struktur und teste einen manuellen Lauf.
 
 ---
 
+## KI-Funktionen der App (Chat, Erklären, Aufgaben, Antwort-Bewertung)
+
+Diese laufen **nicht** über Netlify. Die App nutzt in dieser Reihenfolge:
+
+1. **Der in Quantus hinterlegte Anthropic-Key** — die App liest ihn same-origin
+   aus `localStorage["mgmt-v4-settings"].anthropicApiKey` (Quantus → Einstellungen
+   → API-Keys) und ruft die Anthropic-API direkt aus dem Browser auf
+   (`anthropic-dangerous-direct-browser-access: true`). Kein Setup nötig, sobald
+   der Key in Quantus eingetragen ist.
+2. **Fallback: n8n-Webhook** `POST <BASE>/quantus-bm-chat`, Header
+   `x-quantus-key: <WEBHOOK_KEY>` — falls auf dem Gerät kein Quantus-Key vorliegt.
+
+**Optionalen Chat-Webhook in n8n bauen** (nur falls Weg 2 gewünscht) — Prompt:
+```
+Baue in n8n einen Webhook-Workflow „quantus-bm-chat":
+- Webhook Node (POST, Pfad quantus-bm-chat, Response Mode „Using Respond to Webhook").
+  Erwartet Header x-quantus-key == <mein Quantus-Webhook-Key> (sonst 401),
+  Body { system, messages:[{role,content}], max_tokens }.
+- HTTP Request an https://api.anthropic.com/v1/messages, Header x-api-key aus
+  meinem n8n-Anthropic-Credential (NICHT hardcoden), anthropic-version 2023-06-01.
+  Body { model:"claude-opus-4-8", max_tokens:{{max_tokens}}, system:{{system}}, messages:{{messages}} }.
+- Respond to Webhook: JSON { "text": <content[0].text der Anthropic-Antwort> }.
+  Setze CORS-Header Access-Control-Allow-Origin: * (die App ruft aus dem Browser).
+```
+
+---
+
 ## Manuell testen (ohne n8n)
 
 Eine Beispiel-Lektion sofort setzen (dann in der App unter „Tageslektion" sichtbar):
