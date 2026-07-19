@@ -208,6 +208,28 @@ label.fld{display:block;margin:0 0 6px;font-size:12px;color:var(--muted);font-we
 .tracklane{position:relative;height:12px;border-radius:999px;background:var(--panel2);overflow:hidden}
 .tracklane>.fill{position:absolute;left:0;top:0;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent-deep),var(--accent))}
 .tracklane>.mark{position:absolute;top:-4px;width:2px;height:20px;background:var(--warning)}
+/* Lektion */
+.lsec{display:flex;align-items:center;gap:10px;margin:26px 0 12px}
+.lsec .ic{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;font-size:15px;background:var(--accent-soft);color:var(--text);flex:none}
+.lsec h2{font-family:var(--serif);font-size:18px}
+.lsec .sub{color:var(--muted);font-size:12.5px}
+.lsec.rep .ic{background:color-mix(in oklab,var(--warning) 26%,transparent)}
+.lsec.ueb .ic{background:color-mix(in oklab,var(--info) 24%,transparent)}
+.g-topics{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+.ltopic{display:flex;flex-direction:column;gap:12px;padding:0;overflow:hidden}
+.ltopic .lt-head{padding:15px 16px 0}
+.ltopic .lt-head h3{font-family:var(--serif);font-size:18px;margin-top:5px}
+.ltopic .lt-fig{background:color-mix(in oklab,var(--surface-base) 60%,var(--panel));border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:14px 16px}
+.ltopic .lt-body{padding:0 16px 15px;display:flex;flex-direction:column;gap:12px}
+.lt-sum{font-size:13.5px;line-height:1.6;color:var(--text2)}
+.lt-block .cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;margin-bottom:6px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.gchip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:8px;font-size:12px;background:var(--panel2);border:1px solid var(--border);color:var(--text2)}
+.gchip.formula{font-family:var(--mono);font-size:11.5px}
+.goal{display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:4px 0}
+.goal .tick{flex:none;width:16px;height:16px;border-radius:5px;background:var(--accent-soft);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;font-size:10px;margin-top:1px}
+.lt-prog{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted)}
+.fig-lbl{font-size:11px;fill:var(--muted)} .fig-val{font-size:12px;font-weight:700;fill:var(--text)}
 @media (max-width:560px){ .wrap{padding:16px 12px 90px} .tb-brand small{display:none} .pagehead h1{font-size:21px} .hbar{grid-template-columns:56px 1fr 26px} }
 </style>
 </head>
@@ -351,8 +373,9 @@ function plan(){
   var topicsPerWeek=fromN8n ? (U.plan.topicsPerWeek||U.plan.weekTopics.length) : Math.max(1, Math.ceil(remaining/weeksLeft));
   var weekRecs=fromN8n ? U.plan.weekTopics.map(function(k){return IDX.byKey[k];}).filter(Boolean)
                        : IDX.order.filter(function(r){return themaMastery(r)<MASTER;}).slice(0, topicsPerWeek);
-  var todayTopics=weekRecs.filter(function(r){return themaMastery(r)<MASTER;}).slice(0,2);
-  if(!todayTopics.length) todayTopics=IDX.order.filter(function(r){return themaMastery(r)<MASTER;}).slice(0,2);
+  var perDay=(U.config.topicsPerDay===1||U.config.topicsPerDay===2)?U.config.topicsPerDay:2;
+  var todayTopics=weekRecs.filter(function(r){return themaMastery(r)<MASTER;}).slice(0,perDay);
+  if(!todayTopics.length) todayTopics=IDX.order.filter(function(r){return themaMastery(r)<MASTER;}).slice(0,perDay);
   return {set:true, examDate:ex, total:total, done:done, daysLeft:daysLeft, weeksLeft:weeksLeft, shouldMaster:shouldMaster,
     delta:behind, onTrack:behind>=0, topicsPerWeek:topicsPerWeek, weekTopics:weekRecs, todayTopics:todayTopics, remaining:remaining, fromN8n:fromN8n};
 }
@@ -451,6 +474,94 @@ function heatmap(days){ // letzte ~84 Tage
     var col=lvl===0?"var(--panel2)":"color-mix(in oklab,var(--accent) "+(lvl*22)+"%, var(--panel2))";
     out+='<i title="'+d+': '+(a?a.a+" Aufgaben":"–")+'" style="background:'+col+'"></i>'; }
   return out+'</div>'; }
+
+/* ── Themen-Diagramme (deterministisch, Inline-SVG, theme-aware) ────────── */
+function svgFig(inner,h){ return '<svg viewBox="0 0 360 '+(h||190)+'" style="width:100%;height:auto;max-width:520px;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg">'+inner+'</svg>'; }
+function figBox(x,y,w,h,label,color){ return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="10" fill="'+(color||"var(--panel2)")+'" stroke="var(--border2)"/><text x="'+(x+w/2)+'" y="'+(y+h/2+4)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--text)">'+esc(label)+'</text>'; }
+function svgTKonto(header,lL,rL,li,ri){ li=li||[]; ri=ri||[];
+  var s='<text x="180" y="20" text-anchor="middle" font-size="13" font-weight="700" fill="var(--text)">'+esc(header)+'</text>';
+  s+='<line x1="30" y1="52" x2="330" y2="52" stroke="var(--border2)" stroke-width="2"/><line x1="180" y1="52" x2="180" y2="172" stroke="var(--border2)" stroke-width="2"/>';
+  s+='<text x="105" y="45" text-anchor="middle" font-size="12" font-weight="700" fill="var(--accent)">'+esc(lL)+'</text><text x="255" y="45" text-anchor="middle" font-size="12" font-weight="700" fill="var(--info)">'+esc(rL)+'</text>';
+  li.forEach(function(t,i){ s+='<text x="42" y="'+(74+i*22)+'" font-size="11.5" fill="var(--text2)">• '+esc(t)+'</text>'; });
+  ri.forEach(function(t,i){ s+='<text x="192" y="'+(74+i*22)+'" font-size="11.5" fill="var(--text2)">• '+esc(t)+'</text>'; });
+  return svgFig(s,182); }
+function svgFlow3(a,op,b,res){ var y=42,h=46;
+  var s=figBox(18,y,96,h,a,"color-mix(in oklab,var(--accent) 18%,var(--panel2))");
+  s+='<text x="127" y="'+(y+h/2+7)+'" text-anchor="middle" font-size="20" fill="var(--muted)">'+esc(op)+'</text>'+figBox(140,y,96,h,b,"color-mix(in oklab,var(--danger) 18%,var(--panel2))");
+  s+='<text x="249" y="'+(y+h/2+7)+'" text-anchor="middle" font-size="20" fill="var(--muted)">=</text>'+figBox(260,y,82,h,res,"color-mix(in oklab,var(--info) 20%,var(--panel2))");
+  return svgFig(s,132); }
+function svgAxes(kind,label){ var ox=40,oy=152,w=290,hh=120;
+  var s='<line x1="'+ox+'" y1="'+oy+'" x2="'+(ox+w)+'" y2="'+oy+'" stroke="var(--border2)" stroke-width="1.5"/><line x1="'+ox+'" y1="'+oy+'" x2="'+ox+'" y2="'+(oy-hh-6)+'" stroke="var(--border2)" stroke-width="1.5"/>';
+  s+='<text x="'+(ox+w+3)+'" y="'+(oy+4)+'" font-size="11" fill="var(--muted)">x</text><text x="'+(ox-11)+'" y="'+(oy-hh-2)+'" font-size="11" fill="var(--muted)">y</text>';
+  var pts=[]; for(var i=0;i<=40;i++){ var t=i/40,x=ox+t*w,yv; if(kind==="parabel"){var u=(t-0.5)*2;yv=u*u;} else if(kind==="exp"){yv=(Math.pow(3,t)-1)/2;} else if(kind==="wurzel"){yv=Math.sqrt(t);} else {yv=t;} pts.push(x.toFixed(1)+","+(oy-yv*hh).toFixed(1)); }
+  s+='<polyline points="'+pts.join(" ")+'" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>';
+  if(label) s+='<text x="'+(ox+w)+'" y="'+(oy-hh)+'" text-anchor="end" font-size="12" font-weight="700" fill="var(--accent)">'+esc(label)+'</text>';
+  return svgFig(s,176); }
+function svgBars(vals,label){ var ox=40,oy=152,w=290,hh=120,max=Math.max.apply(null,vals),gap=w/vals.length,bw=gap*0.6;
+  var s='<line x1="'+ox+'" y1="'+oy+'" x2="'+(ox+w)+'" y2="'+oy+'" stroke="var(--border2)"/>';
+  vals.forEach(function(v,i){ var h=v/max*hh; s+='<rect x="'+(ox+i*gap+gap*0.2)+'" y="'+(oy-h)+'" width="'+bw+'" height="'+h+'" rx="3" fill="var(--accent)"/>'; });
+  if(label) s+='<text x="'+ox+'" y="'+(oy-hh-4)+'" font-size="11" fill="var(--muted)">'+esc(label)+'</text>';
+  return svgFig(s,176); }
+function svgSupplyDemand(){ var ox=40,oy=152,w=290,hh=120;
+  var s='<line x1="'+ox+'" y1="'+oy+'" x2="'+(ox+w)+'" y2="'+oy+'" stroke="var(--border2)"/><line x1="'+ox+'" y1="'+oy+'" x2="'+ox+'" y2="'+(oy-hh-6)+'" stroke="var(--border2)"/>';
+  s+='<text x="'+(ox+w)+'" y="'+(oy+15)+'" text-anchor="end" font-size="10" fill="var(--muted)">Menge</text><text x="'+(ox-6)+'" y="'+(oy-hh)+'" text-anchor="end" font-size="10" fill="var(--muted)">Preis</text>';
+  s+='<line x1="'+(ox+20)+'" y1="'+(oy-10)+'" x2="'+(ox+w-20)+'" y2="'+(oy-hh+10)+'" stroke="var(--info)" stroke-width="2.5"/><line x1="'+(ox+20)+'" y1="'+(oy-hh+10)+'" x2="'+(ox+w-20)+'" y2="'+(oy-10)+'" stroke="var(--danger)" stroke-width="2.5"/>';
+  s+='<circle cx="'+(ox+w/2)+'" cy="'+(oy-hh/2)+'" r="4.5" fill="var(--accent)"/><text x="'+(ox+w-14)+'" y="'+(oy-hh+20)+'" text-anchor="end" font-size="11" fill="var(--info)">Angebot</text><text x="'+(ox+w-14)+'" y="'+(oy-12)+'" text-anchor="end" font-size="11" fill="var(--danger)">Nachfrage</text>';
+  return svgFig(s,176); }
+function svgWave(labels){ var ox=30,oy=95,w=300,amp=44;
+  var pts=[]; for(var i=0;i<=60;i++){ var t=i/60,x=ox+t*w,y=oy-Math.sin(t*Math.PI*2)*amp; pts.push(x.toFixed(1)+","+y.toFixed(1)); }
+  var s='<line x1="'+ox+'" y1="'+oy+'" x2="'+(ox+w)+'" y2="'+oy+'" stroke="var(--border)" stroke-dasharray="3 4"/><polyline points="'+pts.join(" ")+'" fill="none" stroke="var(--accent)" stroke-width="2.5"/>';
+  (labels||["Aufschwung","Boom","Abschwung","Rezession"]).forEach(function(l,i){ s+='<text x="'+(ox+w*(0.12+i*0.25))+'" y="'+(i%2?oy+56:oy-52)+'" text-anchor="middle" font-size="10.5" fill="var(--muted)">'+esc(l)+'</text>'; });
+  return svgFig(s,180); }
+function svgSenderEmpf(){ var y=54,h=48;
+  var s='<defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--muted)"/></marker></defs>';
+  s+=figBox(24,y,110,h,"Sender","color-mix(in oklab,var(--accent) 16%,var(--panel2))")+figBox(226,y,110,h,"Empfänger","color-mix(in oklab,var(--info) 18%,var(--panel2))");
+  s+='<line x1="140" y1="'+(y+h/2)+'" x2="216" y2="'+(y+h/2)+'" stroke="var(--muted)" stroke-width="2" marker-end="url(#ar)"/><text x="180" y="'+(y+h/2-9)+'" text-anchor="middle" font-size="11" fill="var(--text2)">Nachricht</text><text x="180" y="'+(y+h/2+17)+'" text-anchor="middle" font-size="9.5" fill="var(--muted)">Kanal · Code</text>';
+  return svgFig(s,150); }
+function svgTimeline(){ var s='<line x1="30" y1="95" x2="330" y2="95" stroke="var(--border2)" stroke-width="2"/><text x="180" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text)">Zeitachse</text>';
+  ["Ursachen","Ereignis","Verlauf","Folgen"].forEach(function(m,i){ var x=48+i*95; s+='<circle cx="'+x+'" cy="95" r="6" fill="var(--accent)"/><text x="'+x+'" y="'+(i%2?126:72)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+m+'</text>'; });
+  return svgFig(s,150); }
+function svgConcept(center,nodes){ nodes=(nodes||[]).slice(0,4); var cx=180,cy=95,pos=[[180,32],[318,95],[180,158],[42,95]],s='';
+  nodes.forEach(function(n,i){ var p=pos[i]; s+='<line x1="'+cx+'" y1="'+cy+'" x2="'+p[0]+'" y2="'+p[1]+'" stroke="var(--border2)"/>'; });
+  nodes.forEach(function(n,i){ var p=pos[i]; s+='<rect x="'+(p[0]-58)+'" y="'+(p[1]-15)+'" width="116" height="30" rx="8" fill="var(--panel2)" stroke="var(--border)"/><text x="'+p[0]+'" y="'+(p[1]+4)+'" text-anchor="middle" font-size="10.5" fill="var(--text2)">'+esc(n.length>24?n.slice(0,22)+"…":n)+'</text>'; });
+  s+='<circle cx="'+cx+'" cy="'+cy+'" r="35" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="'+cx+'" y="'+(cy+4)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)">'+esc(center.length>16?center.slice(0,14)+"…":center)+'</text>';
+  return svgFig(s,190); }
+function topicDiagram(r){ var t=r.thema, hay=((t.titel||"")+" "+(t.kapitel||"")).toLowerCase(), f=r.fachKey, has=function(re){return re.test(hay);};
+  try{
+    if(f==="frw"){ if(has(/inventar/)) return svgFlow3("Vermögen","−","Schulden","Reinverm.");
+      if(has(/erfolg|aufwand|ertrag|gewinn/)) return svgTKonto("Erfolgsrechnung","Aufwand","Ertrag",["Waren, Personal","Zinsen, Abschr."],["Warenertrag","übr. Ertrag"]);
+      if(has(/bilanz|aktiven|passiven|abschluss/)) return svgTKonto("Bilanz","Aktiven","Passiven",["Umlaufvermögen","Anlagevermögen"],["Fremdkapital","Eigenkapital"]);
+      return svgTKonto("Konto","Soll","Haben",["Anfangsbestand","Zunahme"],["Abnahme","Schlussbestand"]); }
+    if(f==="mathematik"){ if(has(/linear/)) return svgAxes("linear","y = a·x + b");
+      if(has(/quadrat|parabel/)) return svgAxes("parabel","y = a·x²");
+      if(has(/exponential|logar|zins|renten|folge|reihe|wachstum/)) return svgAxes("exp","exponentiell");
+      if(has(/statistik|wahrschein|daten/)) return svgBars([3,6,8,5,2],"Häufigkeit");
+      if(has(/wurzel/)) return svgAxes("wurzel","√x");
+      return svgAxes("linear","Funktion"); }
+    if(f==="wirtschaft"){ if(has(/konjunktur|zyklus/)) return svgWave();
+      if(has(/markt|angebot|nachfrage|preis|monopol|konkurrenz|oligopol|gleichgewicht/)) return svgSupplyDemand();
+      if(has(/kreislauf|geld|zahlungs/)) return svgWave(["Haushalte","Güter","Unternehmen","Geld"]);
+      if(has(/bilanz|rechnungswesen|steuer/)) return svgTKonto("Bilanz","Aktiven","Passiven",[],[]);
+      return svgConcept(t.titel, t.lernziele||[]); }
+    if(f==="geschichte") return svgTimeline();
+    if(f==="deutsch"){ if(has(/kommunikation/)) return svgSenderEmpf(); return svgConcept(t.titel, t.lernziele||[]); }
+    if(f==="technik-umwelt"){ if(has(/kreislauf|zyklus|energie|klima|stoff|wasser/)) return svgWave(["Verdunstung","Wolken","Niederschlag","Abfluss"]); return svgConcept(t.titel, t.lernziele||[]); }
+  }catch(e){}
+  return svgConcept(t.titel, t.lernziele||[]); }
+function kurzfassung(th){ var t=String(th||"").replace(/```[\s\S]*?```/g," ").replace(/^\s*#{1,6}.*$/gm," ").replace(/[*_`>#]/g,"").replace(/\s+/g," ").trim(); if(!t) return "";
+  var m=t.match(/^.*?[.!?](\s|$)(.*?[.!?](\s|$))?/); var s=m?m[0]:t; if(s.length>240) s=s.slice(0,230).replace(/\s+\S*$/,"")+" …"; return s.trim(); }
+function lessonTopicCard(r){ var t=r.thema, m=themaMastery(r), na=(t.aufgaben||[]).length, seen=themaSeen(r);
+  var goals=(t.lernziele||[]).slice(0,4).map(function(z){return '<div class="goal"><span class="tick">✓</span><span>'+esc(z)+'</span></div>';}).join("");
+  var merk=(t.merksaetze||[]).slice(0,4).map(function(x){return '<span class="gchip formula">'+esc(x)+'</span>';}).join("");
+  var sum=kurzfassung(t.theorie);
+  var h='<div class="card ltopic"><div class="lt-head"><div class="meta"><span class="badge info">'+esc(r.fach)+'</span><span class="kap">'+esc(t.kapitel||"")+'</span></div><h3>'+esc(t.titel)+'</h3></div>'
+    +'<div class="lt-fig">'+topicDiagram(r)+'</div><div class="lt-body">';
+  if(sum) h+='<div class="lt-sum">'+esc(sum)+'</div>';
+  if(goals) h+='<div class="lt-block"><div class="cap">Lernziele</div>'+goals+'</div>';
+  if(merk) h+='<div class="lt-block"><div class="cap">Merksätze</div><div class="chips">'+merk+'</div></div>';
+  h+='<div class="lt-prog"><span>'+Math.round(m*100)+'% geübt</span><div class="bar"><span style="width:'+(m*100).toFixed(0)+'%"></span></div><span>'+seen+'/'+na+' Aufg.</span></div>';
+  h+='<div class="btnrow"><a class="btn sm primary" href="'+themaLink(r)+'">Thema öffnen</a><a class="btn sm ghost" href="#/buch/'+encodeURIComponent(r.fachKey)+'">Lehrbuch</a></div></div></div>';
+  return h; }
 
 /* ── Modal ─────────────────────────────────────────────────────────────── */
 function openModal(inner){ document.getElementById("modal-root").innerHTML='<div class="mask" data-action="modal-bg"><div class="modal"><span class="x" data-action="modal-close">×</span>'+inner+'</div></div>'; }
@@ -629,7 +740,8 @@ function viewThema(app,key){
     +'<button class="btn" data-action="tts" data-key="'+esc(key)+'">🔊 Vorlesen</button>'
     +'</div>';
 
-  // GRAFIKEN — mehrere kompakte Karten
+  // GRAFIKEN — Schema-Diagramm (voll) + kompakte Kennzahl-Karten
+  html+='<div class="card pad-sm" style="margin-bottom:14px"><div class="chart-cap">Schema</div>'+topicDiagram(rec)+'</div>';
   html+='<div class="grid g-charts">';
   html+='<div class="card pad-sm" style="text-align:center"><div class="chart-cap">Beherrschung</div>'+ring(m,84)+'</div>';
   html+='<div class="card pad-sm"><div class="chart-cap">Nach Schwierigkeit</div>'+hbars([{label:"leicht",value:diff.leicht,max:na,color:"var(--success)"},{label:"mittel",value:diff.mittel,max:na,color:"var(--warning)"},{label:"schwer",value:diff.schwer,max:na,color:"var(--danger)"}])+'</div>';
@@ -821,13 +933,7 @@ function chatSend(text){ if(chatBusy) return; var inp=document.getElementById("c
 
 /* ── Tageslektion (Lehrer) ─────────────────────────────────────────────── */
 function lessonTopicCards(themen){
-  return (themen||[]).map(function(k){ var r=IDX.byKey[k]; if(!r) return "";
-    var m=themaMastery(r), diff={leicht:0,mittel:0,schwer:0}; (r.thema.aufgaben||[]).forEach(function(a){diff[a.schwierigkeit]=(diff[a.schwierigkeit]||0)+1;});
-    return '<div class="card"><div style="display:flex;gap:12px;align-items:center"><div>'+ring(m,54)+'</div>'
-      +'<div style="flex:1"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:15px">'+esc(r.thema.titel)+'</h3>'
-      +'<div class="meta" style="margin-top:4px"><span class="chip leicht">L '+diff.leicht+'</span><span class="chip mittel">M '+diff.mittel+'</span><span class="chip schwer">S '+diff.schwer+'</span></div></div></div>'
-      +'<div class="btnrow" style="margin-top:10px"><a class="btn sm" href="'+themaLink(r)+'">Thema öffnen</a><a class="btn sm ghost" href="#/buch/'+encodeURIComponent(r.fachKey)+'">Lehrbuch</a></div></div>';
-  }).join("");
+  return (themen||[]).map(function(k){ var r=IDX.byKey[k]; return r?lessonTopicCard(r):""; }).join("");
 }
 function viewLektion(app){
   app.innerHTML='<div class="pagehead"><h1>Tageslektion</h1></div><div class="empty"><div class="spin"></div><p>Lektion wird geladen …</p></div>';
@@ -841,12 +947,12 @@ function viewLektion(app){
       if(lesson.text||lesson.intro) html+='<div class="card prose" style="margin-bottom:14px">'+md(lesson.text||lesson.intro)+'</div>';
       var themen=(lesson.themen&&lesson.themen.length)?lesson.themen:pl.todayTopics.map(function(r){return r.key;});
       var cards=lessonTopicCards(themen);
-      if(cards) html+='<div class="section-title">Heutige Themen (mit Grafiken)</div><div class="grid g-2">'+cards+'</div>';
+      if(cards) html+='<div class="lsec"><span class="ic">📘</span><div><h2>Heutige Themen</h2><div class="sub">Diagramm, Zusammenfassung, Lernziele & Merksätze pro Thema</div></div></div><div class="grid g-topics">'+cards+'</div>';
       var ueb=(lesson.uebungsfragen||lesson.fragen||[]), rep=(lesson.repetitionsfragen||[]), repCount=rep.length||dueList().length;
-      html+='<div class="section-title">Üben & Wiederholen</div><div class="grid g-cards">';
-      html+='<div class="card"><h3>Übungsfragen</h3><p class="muted" style="font-size:13px">'+ueb.length+' Fragen zu den heutigen Themen.</p><div class="foot" style="margin-top:8px"><button class="btn primary" data-action="quiz-uebung" '+(ueb.length?"":"disabled")+'>Starten</button></div></div>';
-      html+='<div class="card"><h3>Repetitionsfragen</h3><p class="muted" style="font-size:13px">'+repCount+' fällige Wiederholung(en) — deine Fehler.</p><div class="foot" style="margin-top:8px"><button class="btn" data-action="quiz-repetition" '+(repCount?"":"disabled")+'>Starten</button></div></div>';
-      html+='</div>';
+      html+='<div class="lsec ueb"><span class="ic">✎</span><div><h2>Übungsfragen</h2><div class="sub">'+ueb.length+' Fragen zu den heutigen Themen — festigen</div></div></div>';
+      html+='<div class="card" style="text-align:center;padding:22px"><button class="btn primary" data-action="quiz-uebung" '+(ueb.length?"":"disabled")+'>✎ Übungsfragen starten ('+ueb.length+')</button></div>';
+      html+='<div class="lsec rep"><span class="ic">↻</span><div><h2>Repetitionsfragen</h2><div class="sub">'+repCount+' fällige Wiederholung(en) — deine früheren Fehler kehren zurück</div></div></div>';
+      html+='<div class="card" style="text-align:center;padding:22px"><button class="btn" data-action="quiz-repetition" '+(repCount?"":"disabled")+'>↻ Repetition starten ('+repCount+')</button></div>';
     } else {
       // Kein n8n-Text → eigener Plan-basierter Unterricht
       html+='<div class="card" style="margin-bottom:14px"><div class="section-title" style="margin:0 0 8px">Heute dran</div>';
@@ -867,6 +973,7 @@ function viewLektion(app){
 function viewSettings(app){
   app.innerHTML='<div class="pagehead"><h1>Einstellungen</h1></div>'
     +'<div class="card" style="margin-bottom:12px"><label class="fld">Prüfungsdatum</label><div style="display:flex;gap:9px;flex-wrap:wrap"><input type="date" id="set-exam" value="'+esc(U.config.examDate||"")+'" style="max-width:220px"><button class="btn sm" data-action="set-exam-save">Speichern</button></div><div class="muted" style="font-size:12px;margin-top:6px">Steuert Lernplan, Pacing und die „im Plan?"-Anzeige.</div></div>'
+    +'<div class="card" style="margin-bottom:12px"><label class="fld">Themen pro Tag in der Tageslektion</label><div class="btnrow"><button class="btn sm'+(((U.config.topicsPerDay||2)===1)?" primary":"")+'" data-action="set-perday" data-n="1">1 Thema</button><button class="btn sm'+(((U.config.topicsPerDay||2)===2)?" primary":"")+'" data-action="set-perday" data-n="2">2 Themen</button></div><div class="muted" style="font-size:12px;margin-top:6px">Steuert, wie viele der Wochenthemen die Tageslektion pro Tag zeigt (1 = ruhiger, 2 = schneller durch den Stoff).</div></div>'
     +'<div class="card" style="margin-bottom:12px"><label class="fld">Beherrschungs-Schwelle „gemeistert"</label><div class="muted" style="font-size:13px">Ein Thema gilt ab '+(MASTER*100)+'% als gemeistert (aus dem Leitner-Lernstand der Aufgaben).</div></div>'
     +'<div class="card" style="margin-bottom:12px"><h3>KI-Quelle</h3><p class="muted" style="font-size:13px">Die KI nutzt automatisch den <strong>in Quantus hinterlegten Anthropic-Key</strong> (Quantus → Einstellungen → API-Keys, gleiche Browser-Origin) und ruft die Anthropic-API direkt auf. Ohne hinterlegten Key läuft es über den n8n-Webhook <span class="mono">'+CFG.WH_CHAT+'</span> (Key serverseitig im n8n-Credential). Kein Key im Code.</p><div style="margin-top:8px">'+(storedAnthropicKey()?'<span class="badge ok">✓ Anthropic-Key aus Quantus erkannt</span>':'<span class="badge warn">Kein Quantus-Key auf diesem Gerät → n8n-Webhook wird genutzt</span>')+'</div></div>'
     +'<div class="card"><h3>Speicherung</h3><p class="muted" style="font-size:13px">Alle Daten (Fortschritt, Notizen, Fehler-Queue, Zieldatum, Chat) liegen in Firebase RTDB unter <span class="mono">'+CFG.NS+'/</span>. Lokaler Cache für schnelles Laden/Offline.</p><div class="btnrow" style="margin-top:8px"><button class="btn sm" data-action="reload-fb">Neu von Firebase laden</button></div></div>';
@@ -895,6 +1002,7 @@ document.addEventListener("click", function(e){
     case "exam-ask": askExamDate(); break;
     case "exam-save": { var v=(document.getElementById("ex-date")||{}).value; if(v){ U.config.examDate=v; U.config.planStart=todayISO(); saveConfig(); closeModal(); toast("Lernplan erstellt"); route(); } break; }
     case "set-exam-save": { var v2=(document.getElementById("set-exam")||{}).value; U.config.examDate=v2||null; if(v2&&!U.config.planStart) U.config.planStart=todayISO(); saveConfig(); toast("Gespeichert"); route(); break; }
+    case "set-perday": { U.config.topicsPerDay=parseInt(el.getAttribute("data-n"),10); saveConfig(); toast("Themen pro Tag: "+U.config.topicsPerDay); route(); break; }
     case "reload-fb": { fbGet(CFG.NS).then(function(d){ d=d||{}; U.aufg=d.aufg||{};U.notes=d.notes||{};U.config=d.config||{};U.chat=d.chat||[];U.activity=d.activity||{}; cacheSave(); toast("Neu geladen"); route(); }).catch(function(x){toast(x.message,true);}); break; }
     case "goto": location.hash=el.getAttribute("data-h"); break;
     /* Quiz */
