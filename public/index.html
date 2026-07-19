@@ -3605,13 +3605,48 @@ body.mode-laptop .dock-panel{width:330px}
 /* Sind volle App-Panels offen, teilen sich Hauptbereich (1fr) und Dock
    (Anzahl App-Panels als fr) die Breite → volle App neben voller App.
    fr-Spalten überlaufen nie → nichts wird abgeschnitten. */
-body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
-body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
-/* Inhalte im App-Panel brechen auf die Spaltenbreite um; Breites scrollt statt abzuschneiden. */
-.dock-panel.app-panel .grid-4,.dock-panel.app-panel .grid-3,.dock-panel.app-panel .grid-2{grid-template-columns:1fr !important}
-.dock-panel.app-panel table{display:block;overflow-x:auto;max-width:100%}
+body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,var(--dock-fr,1fr))}
+body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) minmax(0,var(--dock-fr,1fr))}
 /* Dock-Menü scrollbar, da jetzt alle Apps gelistet sind. */
 #dockMenu{max-height:min(72vh,600px);overflow-y:auto}
+
+/* ── Zwei-Bildschirme-Kopfzeilen: Hauptbereich + jedes App-Panel bekommen
+   eine Kopfzeile mit "Bildschirm N"-Label und eigenem App-Wähler, damit sich
+   Split-Screen wie zwei unabhängige Monitore anfühlt — auf jeder Seite lässt
+   sich frei wählen, welche App dort läuft. ── */
+.main-split-header{display:flex;align-items:center;gap:10px;padding:9px 20px;border-bottom:1px solid var(--border);background:var(--panel2);position:sticky;top:0;z-index:5}
+body.mode-computer .main-split-header{padding-left:24px;padding-right:24px}
+.main-split-badge,.dock-screen-badge{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}
+.main-split-select{flex:1;min-width:0;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:12.5px;font-weight:600;font-family:inherit;cursor:pointer}
+.dock-switch-select{flex:1;min-width:0;padding:5px 8px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text);font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dock-switch-select:hover{background:var(--panel3);border-color:var(--border)}
+
+/* ── Container-Queries: Karten-Grids (Haupt­bereich & App-Panel) reagieren auf
+   die tatsächliche Breite ihres eigenen Containers statt auf die volle
+   Fensterbreite. Ohne das bleiben z.B. 4er-Karten-Raster im Split-Screen
+   erzwungen 4-spaltig, obwohl die Hälfte des Bildschirms viel schmaler ist
+   → gestauchte, "verzerrte" Karten. Mit Container-Queries passt sich jede
+   Seite unabhängig an, egal ob sie 30%, 50% oder 100% der Fensterbreite hat. ── */
+.main,.dock-panel.app-panel .dock-panel-body{container-type:inline-size}
+@container (max-width:1500px){
+  .grid-12 .col-8{grid-column:span 7}
+  .grid-12 .col-4{grid-column:span 5}
+}
+@container (max-width:1200px){
+  .grid-5{grid-template-columns:repeat(3,1fr)}
+  .grid-12 .col-8,.grid-12 .col-4,.grid-12 .col-7,.grid-12 .col-5,.grid-12 .col-6,.grid-12 .col-9,.grid-12 .col-3{grid-column:span 12}
+}
+@container (max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+@container (max-width:900px){
+  .grid-2,.grid-3,.grid-4,.grid-5{grid-template-columns:1fr}
+  .fin-grid-4{grid-template-columns:repeat(2,1fr)}
+  .fin-grid-3{grid-template-columns:1fr 1fr}
+}
+@container (max-width:600px){.fin-grid-4,.fin-grid-3,.fin-grid-2{grid-template-columns:1fr}}
+/* Breite Inhalte (Tabellen) scrollen statt den Container zu sprengen — nur
+   wenn wirklich ein Panel offen ist, damit sich am normalen Vollbild-Layout
+   nichts ändert. */
+body.has-app-panels .main table,.dock-panel.app-panel table{display:block;overflow-x:auto;max-width:100%}
 
 /* iframe-Panels: Apps ohne Inline-Ansicht (Drive, NoteFlow, DocStudio, …) als
    vollwertige App im Panel. */
@@ -3619,7 +3654,7 @@ body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)
 .dock-panel.frame-panel .dock-panel-body{padding:0;overflow:hidden}
 .dock-frame{width:100%;height:100%;border:0;display:block;background:var(--bg)}
 /* Auch frame-Panels teilen sich die Breite (App neben App). */
-body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
+body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,var(--dock-fr,1fr))}
 
 /* ═══ Embed-Modus — chrome-lose App fürs iframe-Panel ═══ */
 html.embed-mode .sidebar,
@@ -106666,23 +106701,31 @@ html.theme-light .card{box-shadow:none}
         document.body.classList.remove("has-app-panels");
         if (appEl) appEl.style.removeProperty("--dock-fr");
         updateFabOffset();
+        renderMainSplitHeader();
         return;
       }
+      // Bildschirm-Nummerierung: Hauptbereich ist "Bildschirm 1", jedes volle
+      // App-/Frame-Panel zählt in Öffnungsreihenfolge weiter (2, 3, …).
+      // Mini-Widgets (Aufgaben, Fokus-Timer, …) zählen nicht als eigener Bildschirm.
+      var screenNum = 1;
       dock.innerHTML = open.map(function(k){
         if (isAppKey(k)){
           var route = routeOf(k), meta = appPanelMeta(route);
           var body = renderRoutePanel(route);
           if (body != null){
+            screenNum++;
+            var closeBtn = '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button>';
             return '<section class="dock-panel app-panel" data-panel="' + k + '">' +
-              '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
-              '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+              '<div class="dock-panel-header">' + screenHeaderHtml(k, screenNum, closeBtn) + '</div>' +
               '<div class="dock-panel-body">' + body + '</div></section>';
           }
-          return frameSectionHtml(k, route, meta);   // kein Inline-Renderer → iframe (Embed)
+          screenNum++;
+          return frameSectionHtml(k, route, meta, screenNum);   // kein Inline-Renderer → iframe (Embed)
         }
         if (isFrameKey(k)){
           var froute = routeOf(k);
-          return frameSectionHtml(k, froute, appPanelMeta(froute));
+          screenNum++;
+          return frameSectionHtml(k, froute, appPanelMeta(froute), screenNum);
         }
         var p = PANELS[k]; var body;
         try { body = p.render(); }
@@ -106698,13 +106741,45 @@ html.theme-light .card{box-shadow:none}
       // Breite aufteilen: Hauptbereich = 1fr, Dock = Anzahl voller App-/Frame-Panels als fr
       var appCount = open.filter(isFullPanel).length;
       if (appEl){
-        if (appCount > 0){ document.body.classList.add("has-app-panels"); appEl.style.setProperty("--dock-fr", appCount); }
+        if (appCount > 0){ document.body.classList.add("has-app-panels"); appEl.style.setProperty("--dock-fr", appCount + "fr"); }
         else { document.body.classList.remove("has-app-panels"); appEl.style.removeProperty("--dock-fr"); }
       }
       updateFabOffset();
+      renderMainSplitHeader();
     } finally { _dockBusy = false; }
   }
   window.renderDock = renderDock;
+
+  // Kopfzeile über dem Hauptbereich ("Bildschirm 1") — nur sichtbar, solange
+  // mindestens ein volles App-Panel offen ist (echter Split-Screen). Erlaubt,
+  // die App im Hauptbereich genauso frei zu wechseln wie in jedem Seitenpanel.
+  function renderMainSplitHeader(){
+    var main = document.getElementById("main");
+    if (!main) return;
+    var existing = document.getElementById("mainSplitHeader");
+    if (existing) existing.remove();
+    if (!document.body.classList.contains("has-app-panels")) return;
+    var route = (typeof parseHash === "function") ? parseHash().route : null;
+    var bar = document.createElement("div");
+    bar.id = "mainSplitHeader";
+    bar.className = "main-split-header";
+    bar.innerHTML = '<span class="main-split-badge">🖥️ Bildschirm 1</span>' +
+      '<select class="main-split-select" title="App im Hauptbereich wechseln" onchange="window.location.hash=\'#/\'+this.value">' +
+      mainAppOptionsHtml(route) + '</select>';
+    main.insertBefore(bar, main.firstChild);
+  }
+  // Optionen-Liste (alle Apps) für den Bildschirm-1-Wähler — value ist die
+  // reine Routen-ID (wie im Hash), nicht das "app:"/"frame:"-Format der Panels.
+  function mainAppOptionsHtml(selectedRoute){
+    var all = (typeof getAllApps === "function") ? getAllApps() : [];
+    var seen = {}, html = "";
+    all.forEach(function(a){
+      if (!a || !a.key || seen[a.key]) return; seen[a.key] = 1;
+      html += '<option value="' + a.key + '"' + (a.key === selectedRoute ? " selected" : "") + '>' + a.icon + ' ' + esc(a.label) + '</option>';
+    });
+    return html;
+  }
+  window.renderMainSplitHeader = renderMainSplitHeader;
 
   // Polaris-Quick-FAB (+ Panel) nach links verschieben, wenn das Dock offen ist,
   // damit die Seitenpanels nicht verdeckt werden.
@@ -107004,6 +107079,39 @@ html.theme-light .card{box-shadow:none}
     var m = all.filter(function(a){ return a.key === route; })[0];
     return { icon: (m && m.icon) || "🗔", title: (m && m.label) || route };
   }
+  // Optionen-Liste (alle Apps) für den Bildschirm-Wähler in einer Panel-Kopfzeile
+  // — <option value> im selben "app:x"/"frame:x"-Format wie toggleDockPanel es erwartet.
+  function fullAppOptionsHtml(selectedKey){
+    var all = (typeof getAllApps === "function") ? getAllApps() : [];
+    var seen = {}, html = "";
+    all.forEach(function(a){
+      if (!a || !a.key || seen[a.key]) return; seen[a.key] = 1;
+      var key = PANEL_ROUTES[a.key] ? ("app:" + a.key) : ("frame:" + a.key);
+      html += '<option value="' + key + '"' + (key === selectedKey ? " selected" : "") + '>' + a.icon + ' ' + esc(a.label) + '</option>';
+    });
+    return html;
+  }
+  // Kopfzeile eines vollen App-/Frame-Panels: "Bildschirm N"-Label + Wähler,
+  // damit sich jede Seite wie ein eigener, frei belegbarer Monitor anfühlt.
+  function screenHeaderHtml(k, screenNum, closeBtn){
+    return '<span class="dock-screen-badge">🖥️ Bildschirm ' + screenNum + '</span>' +
+      '<select class="dock-switch-select" title="App auf diesem Bildschirm wechseln" onchange="window.dockSwitchPanel(\'' + k + '\', this.value)">' +
+      fullAppOptionsHtml(k) + '</select>' + closeBtn;
+  }
+  window.dockSwitchPanel = function(oldKey, newKey){
+    if (!newKey || newKey === oldKey) return;
+    if (!(isAppKey(newKey) && PANEL_ROUTES[routeOf(newKey)]) && !(isFrameKey(newKey) && routeOf(newKey))) return;
+    var open = getOpenPanels();
+    var i = open.indexOf(oldKey);
+    if (i < 0) return;
+    var dup = open.indexOf(newKey);
+    if (dup >= 0 && dup !== i) open.splice(dup, 1);
+    i = open.indexOf(oldKey);
+    open[i] = newKey;
+    setOpenPanels(open);
+    renderDock();
+    renderDockMenu();
+  };
   // Inline-HTML einer Route (über den In-Scope-Resolver der Haupt-App).
   // Gibt null zurück, wenn keine Inline-Ansicht verfügbar ist → dann iframe.
   function renderRoutePanel(route){
@@ -107012,11 +107120,11 @@ html.theme-light .card{box-shadow:none}
     }
     return null;
   }
-  function frameSectionHtml(k, route, meta){
+  function frameSectionHtml(k, route, meta, screenNum){
+    var closeBtn = '<button title="In neuem Tab öffnen" onclick="window.open(\'' + frameSrc(route) + '\',\'_blank\')" style="font-size:12px">⤢</button>' +
+      '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button>';
     return '<section class="dock-panel frame-panel" data-panel="' + k + '">' +
-      '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
-      '<button title="In neuem Tab öffnen" onclick="window.open(\'' + frameSrc(route) + '\',\'_blank\')" style="font-size:12px">⤢</button>' +
-      '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+      '<div class="dock-panel-header">' + screenHeaderHtml(k, screenNum, closeBtn) + '</div>' +
       '<div class="dock-panel-body"><iframe class="dock-frame" src="' + frameSrc(route) + '" title="' + esc(meta.title) + '" allow="fullscreen"></iframe></div></section>';
   }
 
