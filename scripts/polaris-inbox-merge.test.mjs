@@ -25,7 +25,14 @@ function extract(name) {
   return html.slice(start, end);
 }
 
-const SENSITIVE = "const POLARIS_SENSITIVE_RE = /(password|passwort|pin|iban|bic|api[_-]?key|token|secret|cvv)/i;";
+// Regex direkt aus index.html ziehen, damit der Test die ECHTE (erweiterte)
+// BLOCK-Feldliste prüft statt einer veralteten Kopie.
+function extractLine(prefix) {
+  const start = html.indexOf(prefix);
+  if (start < 0) throw new Error('Zeile nicht gefunden: ' + prefix);
+  return html.slice(start, html.indexOf('\n', start)).trim();
+}
+const SENSITIVE = extractLine('const POLARIS_SENSITIVE_RE =');
 const src = [SENSITIVE, extract('plParseTs'), extract('plInboxDecide'), extract('plInboxScrub'),
   'return { plParseTs, plInboxDecide, plInboxScrub };'].join('\n');
 const { plParseTs, plInboxDecide, plInboxScrub } = new Function(src)();
@@ -68,6 +75,9 @@ check('scrub: case-insensitive', !('Passwort' in plInboxScrub({ Passwort: 'x', o
 const nested = plInboxScrub({ title: 'T', meta: { token: 'abc', note: 'sichtbar' }, tags: ['a', 'b'] });
 check('scrub: rekursiv in verschachtelten Objekten', !('token' in nested.meta) && nested.meta.note === 'sichtbar');
 check('scrub: Arrays bleiben erhalten', Array.isArray(nested.tags) && nested.tags.length === 2);
+// erweiterte BLOCK-Feldliste (pass, cardnumber, card_number)
+const s2 = plInboxScrub({ title: 'Y', pass: 'x', cardnumber: '4111', card_number: '4111', cardNumber: '4111', ok: 1 });
+check('scrub: pass/cardnumber/card_number/cardNumber weg', !('pass' in s2) && !('cardnumber' in s2) && !('card_number' in s2) && !('cardNumber' in s2) && s2.ok === 1, Object.keys(s2));
 
 console.log(fails === 0 ? '\nALLE INBOX-REDUCER-TESTS OK' : '\n' + fails + ' TEST(S) FEHLGESCHLAGEN');
 process.exit(fails ? 1 : 0);
