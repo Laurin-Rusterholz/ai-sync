@@ -94,7 +94,8 @@ WORKFLOW 2 — „BM Tageslektion" (Schedule täglich 06:00):
 - uebungsfragen = 4–6 Fragen aus den aufgaben von todayTopics (Mix mc/offen), Frage-Objekte aus kompendium.
 - repetitionsfragen = alle aufg mit due ≤ heute, Frage-Objekte per Key aus kompendium rekonstruiert, max 6.
 - Anthropic: NUR ein KURZES Coach-Briefing (2–3 Sätze pro Thema: warum heute wichtig + Kernidee/Stolperfalle),
-  KEIN Theorie-Nachdruck, KEINE Code-Blöcke, am Ende ein Lerntipp. Reines JSON { titel, text } zurück.
+  KEIN Theorie-Nachdruck, KEINE Code-Blöcke, am Ende ein Lerntipp. Schweizer Rechtschreibung: Umlaute ä/ö/ü
+  ganz normal verwenden, aber KEIN scharfes ß (stattdessen ss). Reines JSON { titel, text } (UTF-8) zurück.
 - PUT /bmpruefung/lessons/<YYYY-MM-DD>.json =
   { datum, titel, text, themen: <todayTopics als "fachKey/themaId">, uebungsfragen, repetitionsfragen }.
 - Idempotent (überschreibt denselben Tag).

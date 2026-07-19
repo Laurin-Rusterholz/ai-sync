@@ -444,8 +444,8 @@ function callAI(system, messages, maxTokens){
   return callAIviaN8n(system,messages,mt).catch(function(){
     throw new Error("Keine KI verfügbar. Trage in Quantus (Einstellungen → API-Keys) deinen Anthropic-Key ein — die BM-App nutzt ihn automatisch — oder richte den n8n-Webhook quantus-bm-chat ein."); });
 }
-var AI_SYS="Du bist ein hilfreicher, praeziser Lerncoach fuer die Schweizer Berufsmaturitaets-Pruefung (BM, Wirtschaft & Dienstleistungen). Antworte auf Deutsch in Schweizer Rechtschreibung (kein scharfes s, nutze ss). Sei konkret, strukturiert, pruefungsnah.";
-function themaContext(rec){ if(!rec) return ""; return "\n\nThema: „"+rec.thema.titel+"\" ("+rec.fach+").\nTheorie:\n"+(rec.thema.theorie||"")+((rec.thema.merksaetze||[]).length?"\nMerksaetze: "+rec.thema.merksaetze.join("; "):""); }
+var AI_SYS="Du bist ein hilfreicher, präziser Lerncoach für die Schweizer Berufsmaturitäts-Prüfung (BM, Wirtschaft & Dienstleistungen). Antworte auf Deutsch in Schweizer Rechtschreibung: verwende die Umlaute ä, ö, ü ganz normal, aber KEIN scharfes ß (schreibe stattdessen ss). Sei konkret, strukturiert, prüfungsnah.";
+function themaContext(rec){ if(!rec) return ""; return "\n\nThema: „"+rec.thema.titel+"\" ("+rec.fach+").\nTheorie:\n"+(rec.thema.theorie||"")+((rec.thema.merksaetze||[]).length?"\nMerksätze: "+rec.thema.merksaetze.join("; "):""); }
 function aiModal(title, run){
   openModal('<h2>'+esc(title)+'</h2><div id="ai-out" class="prose"><span class="spin"></span> KI denkt nach …</div>');
   run().then(function(text){ var el=document.getElementById("ai-out"); if(el) el.innerHTML=md(text); })
@@ -1030,15 +1030,15 @@ document.addEventListener("click", function(e){
     case "chat-quick": chatSend(el.getAttribute("data-q")); break;
     case "chat-clear": U.chat=[]; saveChat(); renderChatLog(); break;
     /* AI */
-    case "ai-explain": { var r=IDX.byKey[el.getAttribute("data-key")]; aiModal("Erklärung: "+r.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erklaere das Thema verstaendlich und pruefungsnah, mit einem Beispiel."+themaContext(r)}], 1200); }); break; }
-    case "ai-simplify": { var r2=IDX.byKey[el.getAttribute("data-key")]; aiModal("Einfach erklärt: "+r2.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erklaere das Thema so einfach wie moeglich, wie fuer eine 12-jaehrige Person, mit einer Alltags-Analogie."+themaContext(r2)}], 900); }); break; }
-    case "ai-summary": { var r3=IDX.byKey[el.getAttribute("data-key")]; aiModal("Zusammenfassung: "+r3.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Fasse das Thema in maximal 5 Bullet-Points zusammen (das Pruefungsrelevante)."+themaContext(r3)}], 700); }); break; }
-    case "ai-more": { var r4=IDX.byKey[el.getAttribute("data-key")]; aiModal("Zusätzliche Aufgaben: "+r4.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erstelle 3 neue Uebungsaufgaben zu diesem Thema (Mix aus Multiple-Choice und offen), jeweils mit Loesung und kurzer Erklaerung."+themaContext(r4)}], 1200); }); break; }
-    case "ai-hint": { var it2=quiz.items[quiz.idx]; aiModal("Tipp", function(){ return callAI(AI_SYS, [{role:"user",content:"Gib einen kurzen Hinweis (KEINE Loesung nennen!) zu dieser Aufgabe: „"+it2.a.frage+"\""}], 300); }); break; }
+    case "ai-explain": { var r=IDX.byKey[el.getAttribute("data-key")]; aiModal("Erklärung: "+r.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erkläre das Thema verständlich und prüfungsnah, mit einem Beispiel."+themaContext(r)}], 1200); }); break; }
+    case "ai-simplify": { var r2=IDX.byKey[el.getAttribute("data-key")]; aiModal("Einfach erklärt: "+r2.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erkläre das Thema so einfach wie möglich, wie für eine 12-jährige Person, mit einer Alltags-Analogie."+themaContext(r2)}], 900); }); break; }
+    case "ai-summary": { var r3=IDX.byKey[el.getAttribute("data-key")]; aiModal("Zusammenfassung: "+r3.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Fasse das Thema in maximal 5 Bullet-Points zusammen (das Prüfungsrelevante)."+themaContext(r3)}], 700); }); break; }
+    case "ai-more": { var r4=IDX.byKey[el.getAttribute("data-key")]; aiModal("Zusätzliche Aufgaben: "+r4.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erstelle 3 neue Übungsaufgaben zu diesem Thema (Mix aus Multiple-Choice und offen), jeweils mit Lösung und kurzer Erklärung."+themaContext(r4)}], 1200); }); break; }
+    case "ai-hint": { var it2=quiz.items[quiz.idx]; aiModal("Tipp", function(){ return callAI(AI_SYS, [{role:"user",content:"Gib einen kurzen Hinweis (KEINE Lösung nennen!) zu dieser Aufgabe: „"+it2.a.frage+"\""}], 300); }); break; }
     case "ai-grade": { var it3=quiz.items[quiz.idx]; var ua=(document.getElementById("open-answer")||{}).value||""; if(!ua.trim()){ toast("Erst eine Antwort eingeben"); break; }
-      aiModal("KI-Feedback", function(){ return callAI(AI_SYS, [{role:"user",content:"Frage: „"+it3.a.frage+"\"\nMusterloesung: „"+it3.a.loesung+"\"\nMeine Antwort: „"+ua+"\"\n\nBewerte meine Antwort (richtig/teilweise/falsch), sage warum und was fehlt. Kurz."}], 600); }); break; }
+      aiModal("KI-Feedback", function(){ return callAI(AI_SYS, [{role:"user",content:"Frage: „"+it3.a.frage+"\"\nMusterlösung: „"+it3.a.loesung+"\"\nMeine Antwort: „"+ua+"\"\n\nBewerte meine Antwort (richtig/teilweise/falsch), sage warum und was fehlt. Kurz."}], 600); }); break; }
     case "ai-lesson": { var pl2=plan(); var names=pl2.todayTopics.map(function(r){return r.thema.titel+" ("+r.fach+")";}).join(", ");
-      aiModal("KI-Tageslektion", function(){ return callAI(AI_SYS, [{role:"user",content:"Halte ein SEHR kurzes Coach-Briefing (wie ein Lehrer) zu diesen Themen fuer heute: "+names+". Pro Thema hoechstens 2-3 Saetze: warum heute wichtig + eine Kernidee oder Stolperfalle. KEIN Nachdruck der Theorie (die steht im Lehrbuch), KEINE Code-Bloecke. Am Ende ein kurzer Lerntipp."}], 800); }); break; }
+      aiModal("KI-Tageslektion", function(){ return callAI(AI_SYS, [{role:"user",content:"Halte ein SEHR kurzes Coach-Briefing (wie ein Lehrer) zu diesen Themen für heute: "+names+". Pro Thema höchstens 2-3 Sätze: warum heute wichtig + eine Kernidee oder Stolperfalle. KEIN Nachdruck der Theorie (die steht im Lehrbuch), KEINE Code-Blöcke. Am Ende ein kurzer Lerntipp."}], 800); }); break; }
     case "tts": { var rr=IDX.byKey[el.getAttribute("data-key")]; if(window.__speaking){ speechSynthesis.cancel(); window.__speaking=false; } else { speak(rr.thema.titel+". "+(rr.thema.theorie||"")); window.__speaking=true; } break; }
   }
 });
