@@ -107286,11 +107286,50 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // Blob appStore/app-data_json. Zentral abschaltbar: Konstante unten ODER
   // RTDB-Schalter polaris/settings/inboxEnabled=false.
   const POLARIS_INBOX_ENABLED = true; // Feature-Flag (Default an)
-  // Whitelist: inbox-type → createEntity-kind (alle in getEntityMap vorhanden)
-  const POLARIS_INBOX_TYPES = { project: "project", task: "task", note: "note", goal: "goal", idea: "idea" };
-  const POLARIS_INBOX_KIND_LABEL = { project: "Projekt", task: "Aufgabe", note: "Notiz", goal: "Ziel", idea: "Idee" };
-  // Sensible Felder werden weder ins Modell übernommen noch angezeigt.
-  const POLARIS_SENSITIVE_RE = /(password|passwort|pin|iban|bic|api[_-]?key|token|secret|cvv)/i;
+  // ═══ KANONISCHE ENTITY-TYPEN — 1:1 mit der n8n-Backend-Whitelist ═══
+  // Die Typnamen sind identisch zu den n8n prep entity-* Whitelists (live),
+  // damit jede Aktion greift. Jeder Typ → Ziel-Deskriptor:
+  //   { kind }   → entities.<map> via createEntity/updateEntity (Activity/Undo)
+  //   { direct } → Direktschreibung in entities.<key> (nicht in getEntityMap)
+  //   { array }  → Dot-Pfad eines Arrays in APP.state.data (push/patch/remove)
+  // Kanonische Typen ohne eigenes App-Schema landen generisch in
+  // entities.polaris_<typ> (kein Konflikt mit App-Daten) — so geht kein
+  // Polaris-Schreibvorgang verloren. Mapping alt→neu siehe docs/polaris-module.md.
+  const POLARIS_TYPE_MAP = {
+    // Maps via getEntityMap (createEntity → Activity/Undo)
+    note: { kind: "note" }, goal: { kind: "goal" }, idea: { kind: "idea" },
+    decision: { kind: "decision" }, event: { kind: "calendarEvent" }, task: { kind: "task" },
+    project: { kind: "project" }, organization: { kind: "organization" }, meeting: { kind: "meeting" },
+    strategy: { kind: "strategy" }, program: { kind: "program" }, resource: { kind: "resource" },
+    message: { kind: "scheduledMessage" }, deck: { kind: "deck" }, vocabulary: { kind: "dictEntry" },
+    timeLog: { kind: "timeEntry" },
+    // Direktschreibung (Kinds nicht in getEntityMap)
+    person: { direct: "persons" }, concept: { direct: "concepts" }, thesis: { direct: "theses" },
+    // Array-Module: create=push · update=patch by id · delete=remove by id
+    habit: { array: "dailyBriefing.routines" }, reflection: { array: "reflections" },
+    journal: { array: "journal.documents" }, belief: { array: "dailyBriefing.beliefs" },
+    timeCapsule: { array: "journal.selfLetters" }, rule: { array: "rules.books" }
+  };
+  // Alle kanonischen Typnamen (live in n8n) — Basis des generischen Fallbacks.
+  // (rule ist NICHT kanonisch, aber via POLARIS_TYPE_MAP für rules.books bedienbar.)
+  const POLARIS_CANON_TYPES = new Set(["note","goal","idea","decision","event","habit","task","project","organization","person","concept","meeting","reflection","journal","flashcard","strategy","program","thesis","sticky","measure","vocabulary","document","dailyBriefing","weekPlanning","workload","message","timeCapsule","emailTemplate","chapter","timeLog","translation","deck","milestone","risk","resource","stakeholder","workflowStep","template","statusUpdate","retro","reflectionQuestion","belief","focusItem","knowledgeArea","learningSession","question","ideaCard","swot"]);
+  // Deutsche Labels für die Aktivitäts-Anzeige, per kanonischem Typ.
+  const POLARIS_TYPE_LABEL = {
+    note:"Notiz", goal:"Ziel", idea:"Idee", decision:"Entscheidung", event:"Termin",
+    habit:"Gewohnheit", task:"Aufgabe", project:"Projekt", organization:"Organisation",
+    person:"Person", concept:"Konzept", meeting:"Besprechung", reflection:"Reflexion",
+    journal:"Journal-Eintrag", strategy:"Strategie", program:"Programm", thesis:"These",
+    vocabulary:"Vokabel", message:"Nachricht", timeCapsule:"Zeitkapsel", timeLog:"Zeiteintrag",
+    deck:"Deck", resource:"Ressource", belief:"Glaubenssatz", rule:"Regel", document:"Dokument"
+  };
+  function plTypeLabel(type){ return POLARIS_TYPE_LABEL[type] || (type ? (type.charAt(0).toUpperCase() + type.slice(1)) : "Eintrag"); }
+  // ═══ VERBINDLICHE SICHERHEITSGRENZE (nicht aufweichen) ═══
+  // Diese Typen werden IMMER abgelehnt — auch falls sie versehentlich in die
+  // Whitelist geraten: Passwort-Tresor (entities.passwords) und Bank-/Kontodaten.
+  const POLARIS_BLOCKED_TYPES = new Set(["password","passwords","passwordentry","passwordmanager","passwort","vault","tresor","account","accounts","konto","bankaccount","bankkonto","transaction","transactions","transaktion","creditcard","creditcards","kreditkarte","subscription","subscriptions","invoice","invoices","financialgoal","purchaseproposal","budget","iban"]);
+  // Sensible FELDER (BLOCK-Feldfilter) — weder ins Modell noch in die Anzeige.
+  // Erweitert um pass und card(_)number; auf ALLE Typen angewandt.
+  const POLARIS_SENSITIVE_RE = /(password|passwort|pass|pin|iban|bic|api[_-]?key|apikey|secret|token|card_?number|cardnumber|cvv)/i;
   // Steuerfelder des inbox-Eintrags, die NICHT in die App-Entität wandern.
   const POLARIS_INBOX_CONTROL = ["op", "ts", "updatedAt", "createdAt", "processedAt", "processedBy", "id", "inboxId"];
 
@@ -108041,7 +108080,28 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // rohes HTML wäre ein XSS-Kanal). Kein Secret nötig (öffentliche Config).
   let plDisplayPollTimer = null;
   let plDisplayLastId = null;    // zuletzt gerenderter Inhalt (updatedAt/ts)
-  let plDisplayDismissedId = ""; // manuell geschlossen — bis neuer Inhalt kommt
+  let plDisplayLastTs = 0;       // ts der aktuell gezeigten Einblendung
+  let plDisplayDismissedTsMem = 0; // Fallback-Merker, falls localStorage nicht verfügbar
+
+  // ── Persistenter Auto-Dismiss (Teil B) ──
+  // Eine weggedrückte Einblendung poppt NIE wieder auf: der ts wird dauerhaft
+  // gemerkt (localStorage 'polarisDismissedDisplayTs' + zusätzlich RTDB
+  // polaris/display/dismissedTs für cross-device). Der Listener zeigt nur, wenn
+  // display.ts existiert UND grösser ist als der zuletzt weggedrückte ts.
+  function plDisplayTsOf(d){ return plParseTs(d && (d.ts != null ? d.ts : (d && d.updatedAt))); }
+  function plDisplayDismissedTs(){
+    try {
+      const v = window.localStorage ? localStorage.getItem("polarisDismissedDisplayTs") : null;
+      if (v != null && v !== ""){ const n = Number(v); if (isFinite(n)) return Math.max(n, plDisplayDismissedTsMem); }
+    } catch(e){ /* localStorage nicht verfügbar → RTDB/Mem-Fallback */ }
+    return plDisplayDismissedTsMem;
+  }
+  function plDisplaySetDismissedTs(ts){
+    const n = Math.max(plParseTs(ts), plDisplayDismissedTs());
+    plDisplayDismissedTsMem = n;
+    try { if (window.localStorage) localStorage.setItem("polarisDismissedDisplayTs", String(n)); } catch(e){}
+    try { plDbSet("polaris/display/dismissedTs", n).catch(function(){}); } catch(e){} // best effort, cross-device
+  }
 
   function plDisplayIdentity(d){
     if (!d) return "";
@@ -108216,14 +108276,19 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   function plDisplayHandle(d){
     try {
       const el = plDisplayEnsure();
+      // cross-device: einen in der RTDB gemerkten dismissedTs übernehmen
+      if (d && d.dismissedTs != null) plDisplayDismissedTsMem = Math.max(plDisplayDismissedTsMem, plParseTs(d.dismissedTs));
       const id = plDisplayIdentity(d);
-      if (!plDisplayHasContent(d) || (id && id === plDisplayDismissedId)){
+      const dispTs = plDisplayTsOf(d);
+      // Nur zeigen, wenn Inhalt vorhanden UND ts existiert UND ts > zuletzt weggedrückt.
+      if (!plDisplayHasContent(d) || dispTs <= 0 || dispTs <= plDisplayDismissedTs()){
         el.classList.remove("show"); // dezent ausblenden (CSS-Transition)
         plDisplayLastId = null;
         return;
       }
       if (id === plDisplayLastId && el.classList.contains("show")) return; // unverändert
       plDisplayLastId = id;
+      plDisplayLastTs = dispTs;
       const icon = PL_DISPLAY_ICONS[String((d && d.type) || "").toLowerCase()] || "🖥️";
       let when = "";
       try {
@@ -108247,7 +108312,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     } catch(err){ console.error("Polaris: Display-Anzeige fehlgeschlagen", err); }
   }
   function plDisplayDismiss(){
-    plDisplayDismissedId = plDisplayLastId || plDisplayDismissedId;
+    // ts dauerhaft merken → dieselbe Einblendung poppt nie wieder auf (auch
+    // nicht nach Reload oder erneutem RTDB-Listener-Event). Kein Auto-Timeout.
+    if (plDisplayLastTs > 0) plDisplaySetDismissedTs(plDisplayLastTs);
     const el = document.getElementById("polarisDisplay");
     if (el) el.classList.remove("show");
     plDisplayLastId = null;
@@ -108325,41 +108392,112 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   }
 
   // ── Übernahme eines inbox-Eintrags in die App (über die App-Funktionen) ──
+  // Array-Parent auflösen: navigiert den Dot-Pfad in APP.state.data, legt
+  // fehlende Parent-Objekte + das Array selbst an (leeres Array), gibt
+  // { parent, key } zurück. Nie werfend.
+  function plResolveArrayParent(pathStr){
+    const parts = String(pathStr).split(".");
+    const key = parts.pop();
+    let obj = window.APP && APP.state && APP.state.data;
+    if (!obj) return null;
+    for (let i = 0; i < parts.length; i++){
+      const p = parts[i];
+      if (!obj[p] || typeof obj[p] !== "object") obj[p] = {};
+      obj = obj[p];
+    }
+    if (!Array.isArray(obj[key])) obj[key] = [];
+    return { parent: obj, key: key };
+  }
+  // Speicher-Deskriptor für einen kanonischen Typ auflösen:
+  //   { mode:"array", arr }               → Array-Modul (push/patch/remove)
+  //   { mode:"map", map, viaApi, kind }   → Entity-Map (createEntity/direct)
+  // null → unbekannter, nicht-kanonischer Typ (wird ignoriert + geloggt).
+  function plResolveStore(type){
+    try {
+      const desc = POLARIS_TYPE_MAP[type];
+      if (desc && desc.array){
+        const r = plResolveArrayParent(desc.array);
+        if (!r) return null;
+        return { mode: "array", arr: r.parent[r.key] };
+      }
+      if (desc && desc.kind){
+        const m = (typeof window.getEntityMap === "function") ? window.getEntityMap(desc.kind) : null;
+        if (m) return { mode: "map", map: m, viaApi: true, kind: desc.kind };
+      }
+      const e = (window.APP && APP.state && APP.state.data && APP.state.data.entities) || null;
+      if (!e) return null;
+      let key = desc && desc.direct;
+      if (!key){
+        if (POLARIS_CANON_TYPES.has(type)) key = "polaris_" + type; // generischer Fallback (eigener Namespace)
+        else return null; // nicht kanonisch → unbekannt
+      }
+      if (!e[key]) e[key] = {};
+      return { mode: "map", map: e[key], viaApi: false };
+    } catch(err){ console.error("Polaris-Inbox: Speicher-Auflösung fehlgeschlagen", type, err); return null; }
+  }
   async function plInboxApply(type, inboxId, entry){
     try {
-      const kind = POLARIS_INBOX_TYPES[type];
-      if (!kind){ console.warn("Polaris-Inbox: unbekannter type ignoriert:", type, inboxId); return; }
+      const rawType = String(type || "");
+      const low = rawType.toLowerCase();
+      // VERBINDLICHE Sicherheitsgrenze: Tresor-/Bank-Typen immer ablehnen.
+      if (POLARIS_BLOCKED_TYPES.has(low)){
+        console.warn("Polaris-Inbox: gesperrter Typ abgelehnt (Sicherheitsgrenze Tresor/Bank):", type, inboxId);
+        return;
+      }
+      const store = plResolveStore(rawType);
+      if (!store){ console.warn("Polaris-Inbox: unbekannter type ignoriert:", type, inboxId); return; }
       if (!entry || typeof entry !== "object" || entry.processedAt) return;
       const s = plSettings();
       if (!s.inboxMap) s.inboxMap = {};
-      const mapKey = type + "/" + inboxId;
+      const mapKey = rawType + "/" + inboxId;
       const appId = s.inboxMap[mapKey] || null;
-      const existing = (appId && typeof window.getEntity === "function") ? window.getEntity(kind, appId) : null;
+      let existing = null;
+      if (appId){
+        existing = (store.mode === "array")
+          ? (store.arr.find(function(x){ return x && x.id === appId; }) || null)
+          : (store.map[appId] || null);
+      }
       const action = plInboxDecide(existing, entry);
       if (action === "skip") return;
 
-      // Datenfelder aufbereiten: scrubben + Steuerfelder entfernen
+      // Datenfelder aufbereiten: BLOCK-Feldfilter (scrub) + Steuerfelder entfernen
       const data = plInboxScrub(entry);
       POLARIS_INBOX_CONTROL.forEach(function(k){ delete data[k]; });
       data.source = data.source || "polaris";
       data.polarisTs = plParseTs(entry.updatedAt || entry.ts); // Inbox-Version-Zeit für LWW-Vergleich
-      const label = String(entry.title || data.title || data.name || POLARIS_INBOX_KIND_LABEL[type] || kind).slice(0, 80);
+      const label = String(entry.title || data.title || data.name || plTypeLabel(rawType)).slice(0, 80);
+      const iso = (typeof window.nowIso === "function") ? window.nowIso() : new Date().toISOString();
+      const genId = function(){ return (typeof window.uuid === "function") ? window.uuid() : ("pol_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)); };
 
-      if (typeof window.createEntity !== "function" || typeof window.updateEntity !== "function"){
-        console.error("Polaris-Inbox: App-Update-Funktionen nicht verfügbar — Merge übersprungen"); return;
-      }
       if (action === "create"){
-        const newId = window.createEntity(kind, data); // vergibt eigene uuid + scheduleSave (merge-aware)
-        if (!newId) throw new Error("createEntity fehlgeschlagen");
+        let newId;
+        if (store.mode === "array"){
+          newId = genId();
+          store.arr.push(Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data)); // Array: pushen
+          plScheduleSave();
+        } else if (store.viaApi){
+          newId = window.createEntity(store.kind, data); // uuid + createdAt/updatedAt + scheduleSave
+          if (!newId) throw new Error("createEntity fehlgeschlagen");
+        } else {
+          newId = genId(); // Direktschreibung
+          store.map[newId] = Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data);
+          plScheduleSave();
+        }
         s.inboxMap[mapKey] = newId;
         plScheduleSave(); // Index persistieren
-        plInboxActivity(type, "erstellt", label);
+        plInboxActivity(rawType, "erstellt", label);
       } else if (action === "update"){
-        window.updateEntity(kind, appId, data);
-        plInboxActivity(type, "aktualisiert", label);
+        if (store.mode === "array"){ Object.assign(existing, data, { updatedAt: iso }); plScheduleSave(); } // Array: Element per id patchen
+        else if (store.viaApi){ window.updateEntity(store.kind, appId, data); }
+        else { Object.assign(store.map[appId], data, { updatedAt: iso }); plScheduleSave(); }
+        plInboxActivity(rawType, "aktualisiert", label);
       } else if (action === "delete"){
-        window.updateEntity(kind, appId, { status: "deleted" }); // Soft-Delete, kein Hard-Delete
-        plInboxActivity(type, "gelöscht", label);
+        if (store.mode === "array"){
+          const i = store.arr.findIndex(function(x){ return x && x.id === appId; });
+          if (i >= 0){ store.arr.splice(i, 1); plScheduleSave(); } // Array: Element entfernen (per Vorgabe)
+        } else if (store.viaApi){ window.updateEntity(store.kind, appId, { status: "deleted" }); } // Map: Soft-Delete
+        else { store.map[appId].status = "deleted"; store.map[appId].updatedAt = iso; plScheduleSave(); }
+        plInboxActivity(rawType, "gelöscht", label);
       }
       if (typeof window.render === "function") try { window.render(); } catch(e){}
 
@@ -108376,7 +108514,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 
   // ── Aktivitäts-Anzeige „Polaris arbeitet gerade" (nicht-blockierend) ──
   function plInboxActivity(type, verb, label){
-    const kindLabel = POLARIS_INBOX_KIND_LABEL[type] || type;
+    const kindLabel = plTypeLabel(type);
     plToast("ok", "Polaris", "Polaris hat " + kindLabel + " „" + label + "“ " + verb + ".");
     try {
       let el = document.getElementById("polarisActivity");
@@ -108396,17 +108534,30 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     } catch(e){ console.error("Polaris-Inbox: Aktivitätsanzeige fehlgeschlagen", e); }
   }
 
-  // ── Listener starten (child_added/child_changed; REST-Poll-Fallback) ──
+  // ── Ganze Inbox verarbeiten (alle Typen; deckt auch neue n8n-Typen ab) ──
+  function plInboxProcessAll(val){
+    if (!val || typeof val !== "object") return;
+    Object.keys(val).forEach(function(type){
+      const bucket = val[type];
+      if (bucket && typeof bucket === "object"){
+        Object.keys(bucket).forEach(function(id){ plInboxApply(type, id, bucket[id]); });
+      }
+    });
+  }
+  // ── list: aktuelle Elemente eines Typs zurückgeben (Array- ODER Map-Modul) ──
+  function plInboxList(type){
+    try {
+      const store = plResolveStore(String(type || ""));
+      if (!store) return [];
+      if (store.mode === "array") return store.arr.slice();
+      return Object.keys(store.map).map(function(k){ return store.map[k]; });
+    } catch(e){ console.error("Polaris-Inbox: list fehlgeschlagen", type, e); return []; }
+  }
+  // ── Listener starten (on('value') auf die ganze Inbox; REST-Poll-Fallback) ──
   function plInboxPollStart(){
     if (plInboxPollTimer) return;
     const tick = function(){
-      Object.keys(POLARIS_INBOX_TYPES).forEach(function(type){
-        plDbGet("polaris/inbox/" + type).then(function(node){
-          if (node && typeof node === "object"){
-            Object.keys(node).forEach(function(id){ plInboxApply(type, id, node[id]); });
-          }
-        }).catch(function(){ /* nächster Tick */ });
-      });
+      plDbGet("polaris/inbox").then(plInboxProcessAll).catch(function(){ /* nächster Tick */ });
     };
     plInboxPollTimer = setInterval(tick, 12000);
     tick();
@@ -108419,17 +108570,16 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       if (en === false){ console.info("Polaris-Inbox: zentral deaktiviert (polaris/settings/inboxEnabled=false)"); return; }
     } catch(e){ /* Schalter nicht lesbar → Default an */ }
     plInboxStarted = true;
-    let usedSdk = false;
-    Object.keys(POLARIS_INBOX_TYPES).forEach(function(type){
-      const ref = plDbRef("polaris/inbox/" + type);
-      if (!ref) return;
-      usedSdk = true;
+    const ref = plDbRef("polaris/inbox"); // ein Listener über ALLE Typen (auch künftige)
+    if (ref){
       try {
-        ref.on("child_added", function(snap){ plInboxApply(type, snap.key, snap.val()); });
-        ref.on("child_changed", function(snap){ plInboxApply(type, snap.key, snap.val()); });
-      } catch(e){ console.error("Polaris-Inbox: Listener-Fehler", type, e); }
-    });
-    if (!usedSdk) plInboxPollStart(); // kein Firebase-SDK → REST-Polling
+        ref.on("value",
+          function(snap){ plInboxProcessAll(snap && snap.exists() ? snap.val() : null); },
+          function(err){ console.error("Polaris-Inbox: Listener-Fehler", err); });
+        return;
+      } catch(e){ console.error("Polaris-Inbox: Listener fehlgeschlagen — Poll-Fallback", e); }
+    }
+    plInboxPollStart(); // kein Firebase-SDK → REST-Polling
   }
   window.addEventListener("load", function(){ setTimeout(function(){ plInboxWatchStart(); }, 2000); });
 
@@ -109037,7 +109187,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   });
 
   // Diagnose-Hooks (nur Konsole; keine UI-Abhängigkeit)
-  window.__polarisDebug = { nudge: plProactiveNudge, afterSession: plAfterSession, panelRefresh: plPanelRefresh, setMode: plSetMode, voiceState: function(){ return plVoiceState; }, display: plDisplayHandle, inboxDecide: plInboxDecide, inboxScrub: plInboxScrub, inboxApply: plInboxApply, inboxWatchStart: plInboxWatchStart };
+  window.__polarisDebug = { nudge: plProactiveNudge, afterSession: plAfterSession, panelRefresh: plPanelRefresh, setMode: plSetMode, voiceState: function(){ return plVoiceState; }, display: plDisplayHandle, inboxDecide: plInboxDecide, inboxScrub: plInboxScrub, inboxApply: plInboxApply, inboxWatchStart: plInboxWatchStart, inboxList: plInboxList };
 })();
 </script>
 
