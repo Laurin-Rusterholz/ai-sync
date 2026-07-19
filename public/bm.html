@@ -10,7 +10,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>
-/* Theme frueh anwenden (kein FOUC) — gleicher localStorage-Key wie die Quantus-Hauptapp. */
 (function(){ try {
   var m = localStorage.getItem("quantus_themeMode") || "dark";
   var light = m==="light" || (m==="auto" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
@@ -19,13 +18,12 @@
 </script>
 <style>
 :root{
-  /* Design-System „Schiefer" (Dark, Default) — identisch zur Quantus-Hauptapp */
   --surface-base:#171c20; --surface-raised:#212830; --surface-overlay:#2d3640;
   --border:#3b4550; --border2:#4f5a66; --hover:rgba(224,226,232,.08);
   --text-primary:#eef0f2; --text-muted:#929aa4;
-  --accent:#45c198; --accent-deep:#2ea27b; --accent-soft:color-mix(in oklab, var(--accent) 24%, transparent);
+  --accent:#45c198; --accent-deep:#2ea27b; --accent-soft:color-mix(in oklab, var(--accent) 22%, transparent);
   --on-accent:#04140d;
-  --danger:#e5765a; --warning:#e3b048; --success:#45c198; --info:#6aa3de; --coral:#d96c57;
+  --danger:#e5765a; --warning:#e3b048; --success:#45c198; --info:#6aa3de; --violet:#a78bfa; --coral:#d96c57;
   --bg:var(--surface-base); --panel:var(--surface-raised); --panel2:var(--surface-overlay);
   --muted:var(--text-muted); --text:var(--text-primary); --text2:#cccfd5;
   --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.26);
@@ -37,815 +35,822 @@
   --transition:all .16s cubic-bezier(.25,.1,.25,1);
 }
 html.theme-light{
-  --surface-base:#cdc6b6; --surface-raised:#e9e3d5; --surface-overlay:#f2ede1;
-  --border:#c3bbaa; --border2:#a99f8b; --hover:rgba(30,30,25,.06);
+  --surface-base:#e7e1d4; --surface-raised:#f2ece0; --surface-overlay:#f8f3e9;
+  --border:#cdc4b1; --border2:#b3a892; --hover:rgba(30,30,25,.055);
   --text-primary:#232019; --text-muted:#6b6353;
-  --accent:#1f8a66; --accent-deep:#166b4f; --on-accent:#f7f5ef;
+  --accent:#1f8a66; --accent-deep:#166b4f; --on-accent:#f7f5ef; --violet:#7c5cd6;
   --shadow:0 1px 2px rgba(80,70,50,.12),0 6px 18px rgba(80,70,50,.10);
   --shadow-lg:0 10px 26px rgba(80,70,50,.16);
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
+a{color:inherit;text-decoration:none}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
-a{color:inherit}
 button{font-family:inherit}
-h1,h2,h3{margin:0;font-weight:600;line-height:1.25}
+h1,h2,h3,h4{margin:0;font-weight:600;line-height:1.25}
 .serif{font-family:var(--serif)}
-.muted{color:var(--muted)}
-.mono{font-family:var(--mono)}
-.hidden{display:none!important}
+.muted{color:var(--muted)} .mono{font-family:var(--mono)} .hidden{display:none!important}
+.accentc{color:var(--accent)} .dangerc{color:var(--danger)} .warnc{color:var(--warning)}
 
-/* ── Topbar ── */
-.topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;padding:10px 16px;
-  background:color-mix(in oklab,var(--surface-raised) 92%,transparent);backdrop-filter:blur(10px);
-  border-bottom:1px solid var(--border)}
-.tb-back{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;border-radius:var(--radius-sm);
-  color:var(--muted);text-decoration:none;font-size:13px;border:1px solid transparent;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:10px;padding:9px 14px;
+  background:color-mix(in oklab,var(--surface-raised) 92%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.tb-back{display:inline-flex;align-items:center;gap:4px;padding:6px 9px;border-radius:var(--radius-sm);color:var(--muted);text-decoration:none;font-size:13px}
 .tb-back:hover{background:var(--hover);color:var(--text)}
-.tb-brand{display:flex;align-items:center;gap:9px;font-weight:600}
-.tb-brand img{width:19px;height:19px;vertical-align:-3px}
-.tb-brand small{display:block;font-weight:400;font-size:11px;color:var(--muted);letter-spacing:.02em}
+.tb-brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14.5px}
+.tb-brand img{width:18px;height:18px}
+.tb-brand small{display:block;font-weight:400;font-size:10.5px;color:var(--muted)}
 .tb-spacer{flex:1}
-.tb-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:var(--radius-sm);
-  border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;font-size:15px;transition:var(--transition)}
+.tb-btn{display:inline-flex;align-items:center;justify-content:center;height:32px;min-width:32px;padding:0 8px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;font-size:13px;gap:5px}
 .tb-btn:hover{background:var(--hover);border-color:var(--border2)}
+.tb-btn.on{border-color:var(--accent);color:var(--accent)}
 
-/* ── Nav ── */
-.nav{display:flex;gap:4px;overflow-x:auto;padding:8px 12px;border-bottom:1px solid var(--border);
-  background:var(--surface-base);position:sticky;top:55px;z-index:35;scrollbar-width:thin}
+.nav{display:flex;gap:4px;overflow-x:auto;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-base);position:sticky;top:51px;z-index:35}
 .nav::-webkit-scrollbar{height:0}
-.nav a{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:999px;text-decoration:none;
-  color:var(--muted);font-size:13.5px;font-weight:500;white-space:nowrap;border:1px solid transparent;transition:var(--transition)}
+.nav a{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;text-decoration:none;color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap;border:1px solid transparent}
 .nav a:hover{background:var(--hover);color:var(--text)}
 .nav a.active{background:var(--accent-soft);color:var(--text);border-color:color-mix(in oklab,var(--accent) 45%,transparent)}
 
-/* ── Layout ── */
-.wrap{max-width:1080px;margin:0 auto;padding:22px 16px 80px}
+.wrap{max-width:1120px;margin:0 auto;padding:22px 16px 90px}
 .pagehead{margin:2px 0 18px}
-.pagehead h1{font-family:var(--serif);font-size:26px;font-weight:700}
+.pagehead h1{font-family:var(--serif);font-size:25px;font-weight:700}
 .pagehead p{margin:5px 0 0;color:var(--muted);font-size:14px}
 
-/* ── Cards / grid ── */
 .grid{display:grid;gap:14px}
-.g-stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-.g-cards{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+.g-stats{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.g-cards{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.g-2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g-charts{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.card.pad-sm{padding:13px}
 .card.click{cursor:pointer;transition:var(--transition)}
 .card.click:hover{border-color:var(--border2);transform:translateY(-1px);box-shadow:var(--shadow-lg)}
-.stat .n{font-size:27px;font-weight:700;font-family:var(--serif);line-height:1}
-.stat .l{color:var(--muted);font-size:12.5px;margin-top:5px}
+.stat .n{font-size:26px;font-weight:700;font-family:var(--serif);line-height:1}
+.stat .l{color:var(--muted);font-size:12px;margin-top:5px}
 .stat .n.accent{color:var(--accent)}
-.section-title{display:flex;align-items:center;gap:10px;margin:26px 0 12px;font-size:15px;font-weight:600}
-.section-title .badge{margin-left:auto}
-.fach-head{display:flex;align-items:baseline;gap:10px;margin:26px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
-.fach-head h2{font-family:var(--serif);font-size:20px}
-.fach-head .cnt{color:var(--muted);font-size:13px}
+.section-title{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:14px;font-weight:600}
+.section-title .sp{flex:1}
+.fach-head{display:flex;align-items:baseline;gap:10px;margin:24px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.fach-head h2{font-family:var(--serif);font-size:19px}
+.fach-head .cnt{color:var(--muted);font-size:12.5px}
 
-/* ── Badges / chips ── */
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:600;
-  background:var(--panel2);color:var(--muted);border:1px solid var(--border)}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:600;background:var(--panel2);color:var(--muted);border:1px solid var(--border)}
 .badge.ok{background:var(--accent-soft);color:var(--text);border-color:transparent}
-.badge.warn{background:color-mix(in oklab,var(--warning) 22%,transparent);color:var(--text)}
-.badge.due{background:color-mix(in oklab,var(--danger) 24%,transparent);color:var(--text)}
+.badge.warn{background:color-mix(in oklab,var(--warning) 24%,transparent);color:var(--text);border-color:transparent}
+.badge.due{background:color-mix(in oklab,var(--danger) 26%,transparent);color:var(--text);border-color:transparent}
+.badge.info{background:color-mix(in oklab,var(--info) 22%,transparent);color:var(--text);border-color:transparent}
 .chip{display:inline-flex;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;background:var(--panel2);color:var(--muted)}
 .chip.leicht{color:var(--success)} .chip.mittel{color:var(--warning)} .chip.schwer{color:var(--danger)}
 
-/* ── Thema card ── */
-.tcard{display:flex;flex-direction:column;gap:9px}
-.tcard .kap{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-.tcard h3{font-size:15.5px;font-weight:600}
-.tcard .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}
-.tcard .foot{display:flex;align-items:center;gap:10px;margin-top:auto;padding-top:6px}
+.tcard{display:flex;flex-direction:column;gap:8px}
+.tcard .kap{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.tcard h3{font-size:15px;font-weight:600}
+.tcard .meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.tcard .foot{display:flex;align-items:center;gap:10px;margin-top:auto;padding-top:4px}
 
-/* ── Progress ── */
-.bar{height:7px;border-radius:999px;background:var(--panel2);overflow:hidden;flex:1;min-width:60px}
+.bar{height:7px;border-radius:999px;background:var(--panel2);overflow:hidden;flex:1;min-width:50px}
 .bar>span{display:block;height:100%;background:linear-gradient(90deg,var(--accent-deep),var(--accent));border-radius:999px}
-.ring{display:inline-block;vertical-align:middle}
 
-/* ── Buttons ── */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 15px;border-radius:var(--radius-sm);
-  border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;font-size:14px;font-weight:500;
-  transition:var(--transition);text-decoration:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;font-size:13.5px;font-weight:500;transition:var(--transition);text-decoration:none}
 .btn:hover{background:var(--hover);border-color:var(--border2)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .btn.primary{background:var(--accent);color:var(--on-accent);border-color:transparent;font-weight:600}
 .btn.primary:hover{background:var(--accent-deep)}
+.btn.violet{background:var(--violet);color:#160c2e;border-color:transparent;font-weight:600}
 .btn.ghost{background:transparent}
-.btn.sm{padding:6px 11px;font-size:13px}
+.btn.sm{padding:6px 10px;font-size:12.5px}
 .btn.wide{width:100%}
-.btnrow{display:flex;gap:9px;flex-wrap:wrap}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
 
-/* ── Inputs ── */
-input[type=date],input[type=text],textarea,select{width:100%;padding:9px 11px;border-radius:var(--radius-sm);
-  border:1px solid var(--border);background:var(--surface-base);color:var(--text);font-family:inherit;font-size:14px}
-textarea{resize:vertical;min-height:96px;line-height:1.55}
+input[type=date],input[type=text],input[type=number],textarea,select{width:100%;padding:9px 11px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface-base);color:var(--text);font-family:inherit;font-size:14px}
+textarea{resize:vertical;min-height:90px;line-height:1.55}
 input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
-label.fld{display:block;margin:0 0 6px;font-size:12.5px;color:var(--muted);font-weight:600}
+label.fld{display:block;margin:0 0 6px;font-size:12px;color:var(--muted);font-weight:600}
 
-/* ── Detail blocks ── */
-.prose{white-space:pre-wrap;line-height:1.65;font-size:14.5px}
+/* Charts */
+.hbars{display:flex;flex-direction:column;gap:9px}
+.hbar{display:grid;grid-template-columns:64px 1fr 30px;align-items:center;gap:9px;font-size:12px}
+.hbar-l{color:var(--muted)}
+.hbar-t{height:8px;border-radius:999px;background:var(--panel2);overflow:hidden}
+.hbar-f{display:block;height:100%;border-radius:999px}
+.hbar-v{text-align:right;font-variant-numeric:tabular-nums;color:var(--text2)}
+.donut{border-radius:50%;-webkit-mask:radial-gradient(circle 10px at center,transparent 98%,#000 100%);mask:radial-gradient(circle at center,transparent 54%,#000 55%)}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.boxes{display:flex;gap:5px;flex-wrap:wrap}
+.box{display:flex;flex-direction:column;align-items:center;justify-content:center;width:38px;height:40px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);font-size:14px;font-weight:700}
+.box small{font-size:9px;color:var(--muted);font-weight:500}
+.heat{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,11px);gap:3px;overflow-x:auto;padding-bottom:4px}
+.heat i{width:11px;height:11px;border-radius:2px;background:var(--panel2)}
+.chart-cap{font-size:11.5px;color:var(--muted);margin-bottom:9px;font-weight:600}
+
+.prose{line-height:1.66;font-size:14.5px}
+.prose h3{font-family:var(--serif);font-size:17px;margin:16px 0 6px}
+.prose h4{font-size:14.5px;margin:13px 0 5px;color:var(--text)}
+.prose p{margin:8px 0}
+.prose ul{margin:8px 0;padding-left:20px} .prose li{margin:3px 0}
+.prose code{font-family:var(--mono);font-size:.9em;background:var(--surface-base);padding:1px 5px;border-radius:5px}
+.prose strong{font-weight:700}
 .list-clean{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
-.list-clean li{display:flex;gap:9px;align-items:flex-start}
+.list-clean li{display:flex;gap:9px;align-items:flex-start;font-size:14px}
 .list-clean li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-top:8px}
-.merk{font-family:var(--mono);font-size:13px;background:var(--surface-base);border:1px solid var(--border);
-  border-radius:8px;padding:8px 11px}
-.beispiel{font-family:var(--mono);font-size:13px;color:var(--text2)}
+.merk{font-family:var(--mono);font-size:12.5px;background:var(--surface-base);border:1px solid var(--border);border-radius:8px;padding:8px 11px;margin:6px 0}
+.beispiel{font-family:var(--mono);font-size:12.5px;color:var(--text2)}
 
-/* ── Quiz ── */
-.quizwrap{max-width:640px;margin:0 auto}
+/* Quiz */
+.quizwrap{max-width:660px;margin:0 auto}
 .quizbar{display:flex;align-items:center;gap:10px;margin-bottom:16px}
-.quizbar .bar{height:9px}
-.q-frage{font-size:18px;font-weight:500;line-height:1.45;margin:10px 0 18px;font-family:var(--serif)}
-.opt{display:block;width:100%;text-align:left;padding:13px 15px;margin:8px 0;border-radius:var(--radius-sm);
-  border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;font-size:14.5px;transition:var(--transition)}
+.q-frage{font-size:18px;font-weight:500;line-height:1.45;margin:10px 0 16px;font-family:var(--serif)}
+.opt{display:block;width:100%;text-align:left;padding:12px 14px;margin:7px 0;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;font-size:14px;transition:var(--transition)}
 .opt:hover{border-color:var(--border2);background:var(--hover)}
 .opt.correct{border-color:var(--success);background:color-mix(in oklab,var(--success) 16%,transparent)}
 .opt.wrong{border-color:var(--danger);background:color-mix(in oklab,var(--danger) 16%,transparent)}
 .opt.chosen{border-width:2px}
-.reveal{margin-top:16px;padding:15px;border-radius:var(--radius-sm);background:var(--surface-base);border:1px solid var(--border)}
-.reveal .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
-.reveal .los{font-size:15px;font-weight:600;margin:3px 0 10px}
-.selfgrade{display:flex;gap:10px;margin-top:14px}
+.reveal{margin-top:14px;padding:14px;border-radius:var(--radius-sm);background:var(--surface-base);border:1px solid var(--border)}
+.reveal .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.reveal .los{font-size:15px;font-weight:600;margin:3px 0 8px}
+.selfgrade{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap}
 
-/* ── Chat ── */
-.chatwrap{display:flex;flex-direction:column;height:calc(100vh - 200px);min-height:420px}
-.chatlog{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 2px}
-.msg{max-width:82%;padding:11px 14px;border-radius:14px;font-size:14.5px;line-height:1.55;white-space:pre-wrap}
-.msg.user{align-self:flex-end;background:var(--accent-soft);border:1px solid color-mix(in oklab,var(--accent) 40%,transparent)}
+/* Flashcard */
+.flip{perspective:1200px;max-width:520px;margin:0 auto}
+.flip-inner{position:relative;min-height:220px;transition:transform .5s;transform-style:preserve-3d;cursor:pointer}
+.flip.flipped .flip-inner{transform:rotateY(180deg)}
+.flip-face{position:absolute;inset:0;backface-visibility:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;border-radius:var(--radius);border:1px solid var(--border);background:var(--panel);box-shadow:var(--shadow)}
+.flip-back{transform:rotateY(180deg);background:var(--surface-overlay)}
+
+/* Chat */
+.chatwrap{display:flex;flex-direction:column;height:calc(100vh - 210px);min-height:400px}
+.chatlog{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:11px;padding:4px 2px}
+.msg{max-width:84%;padding:11px 14px;border-radius:14px;font-size:14px;line-height:1.55}
+.msg .prose{font-size:14px}
+.msg.user{align-self:flex-end;background:var(--accent-soft);border:1px solid color-mix(in oklab,var(--accent) 40%,transparent);white-space:pre-wrap}
 .msg.ai{align-self:flex-start;background:var(--panel);border:1px solid var(--border)}
-.msg.err{align-self:stretch;max-width:100%;background:color-mix(in oklab,var(--danger) 14%,transparent);border:1px solid var(--danger)}
-.chatform{display:flex;gap:9px;margin-top:12px;align-items:flex-end}
+.msg.err{align-self:stretch;max-width:100%;background:color-mix(in oklab,var(--danger) 14%,transparent);border:1px solid var(--danger);white-space:pre-wrap}
+.chatform{display:flex;gap:8px;margin-top:11px;align-items:flex-end}
 .chatform textarea{min-height:46px;max-height:150px}
+.quickrow{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}
 
-/* ── Book iframe ── */
 .bookframe{width:100%;height:calc(100vh - 150px);border:1px solid var(--border);border-radius:var(--radius);background:#fff}
 
-/* ── Toast / modal ── */
-#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;align-items:center}
-.toast{background:var(--surface-overlay);color:var(--text);border:1px solid var(--border2);border-radius:10px;
-  padding:10px 16px;box-shadow:var(--shadow-lg);font-size:13.5px;animation:tin .2s ease}
+/* Modal / toast */
+.mask{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:18px}
+.modal{background:var(--panel);border:1px solid var(--border2);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);max-width:640px;width:100%;max-height:88vh;overflow:auto;padding:20px}
+.modal h2{font-family:var(--serif);font-size:20px;margin-bottom:10px}
+.modal .x{position:sticky;top:0;float:right;cursor:pointer;color:var(--muted);font-size:20px;line-height:1}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:90;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{background:var(--surface-overlay);color:var(--text);border:1px solid var(--border2);border-radius:10px;padding:10px 16px;box-shadow:var(--shadow-lg);font-size:13px;animation:tin .2s ease}
+.toast.err{border-color:var(--danger)}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
-.empty{text-align:center;padding:46px 18px;color:var(--muted)}
-.empty .ic{font-size:34px;opacity:.7}
-.spin{display:inline-block;width:16px;height:16px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-3px}
+.empty{text-align:center;padding:44px 18px;color:var(--muted)}
+.empty .ic{font-size:32px;opacity:.7}
+.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
-@media (max-width:560px){ .wrap{padding:16px 12px 80px} .tb-brand small{display:none} .pagehead h1{font-size:22px} }
+.tracklane{position:relative;height:12px;border-radius:999px;background:var(--panel2);overflow:hidden}
+.tracklane>.fill{position:absolute;left:0;top:0;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent-deep),var(--accent))}
+.tracklane>.mark{position:absolute;top:-4px;width:2px;height:20px;background:var(--warning)}
+@media (max-width:560px){ .wrap{padding:16px 12px 90px} .tb-brand small{display:none} .pagehead h1{font-size:21px} .hbar{grid-template-columns:56px 1fr 26px} }
 </style>
 </head>
 <body>
 <div class="topbar">
   <a class="tb-back" href="index.html" title="Zurück zu Quantus">‹ Quantus</a>
-  <div class="tb-brand"><img src="emblem.svg" alt="">BM-Prüfung <small>Quantus · Prüfungsvorbereitung</small></div>
+  <div class="tb-brand"><img src="emblem.svg" alt="">BM-Prüfung <small>Quantus · Prüfungscoach</small></div>
   <div class="tb-spacer"></div>
+  <button class="tb-btn" data-action="pomodoro" id="pomo" title="Lern-Timer (Pomodoro)">◷ <span id="pomo-t">25:00</span></button>
+  <button class="tb-btn" data-action="nav-search" title="Suche">⌕</button>
+  <button class="tb-btn" data-action="nav-settings" title="Einstellungen">⚙</button>
   <button class="tb-btn" data-action="theme" title="Hell / Dunkel">◐</button>
 </div>
 <nav class="nav" id="nav"></nav>
-<main class="wrap" id="app"><div class="empty"><div class="spin"></div><p>Wissensbasis wird geladen …</p></div></main>
+<main class="wrap" id="app"><div class="empty"><div class="spin"></div><p>Wird geladen …</p></div></main>
+<div id="modal-root"></div>
 <div id="toast"></div>
 
 <script>
 "use strict";
 /* ═══════════════════════════════════════════════════════════════════════
-   Quantus · BM-Prüfung — statische Lern-App (Single-File, kein Build-Step)
-   Datenquelle: /theorie/kompendium.json (aus den 6 Theorie-Lehrbuechern)
-   Speicherung: localStorage (Fortschritt, Notizen, Zieldaten, Fehler-Queue)
-   Tageslektion: Netlify-Blob (von n8n geschrieben)   KI-Chat: Netlify-Function
+   Quantus · BM-Prüfung — Prüfungscoach (Single-File, kein Build-Step)
+   Speicherung: Firebase RTDB (REST, Namespace „bmpruefung", offene Rules)
+   Curriculum:  /theorie/kompendium.json    KI: /.netlify/functions/quantus-chat
+   Tageslektion: Firebase bmpruefung/lessons/<datum> (vom n8n-Workflow geschrieben)
    ═══════════════════════════════════════════════════════════════════════ */
-
 var CFG = {
-  DATA_URL:   "theorie/kompendium.json",
-  BOOK_BASE:  "theorie/",
-  LESSON_URL: "/.netlify/functions/quantus-lesson",
-  CHAT_URL:   "/.netlify/functions/quantus-chat",
-  STORE_KEY:  "quantus_bm_v1",
+  DATA_URL:  "theorie/kompendium.json",
+  BOOK_BASE: "theorie/",
+  FB:        "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app",
+  NS:        "bmpruefung",
+  CHAT_URL:  "/.netlify/functions/quantus-chat",
+  CACHE:     "quantus_bm_cache_v2",
 };
-/* Leitner-Intervalle je Box (Tage bis zur naechsten Faelligkeit). Box 0 = morgen. */
-var LEITNER = [1, 2, 4, 7, 14, 30];
+var LEITNER=[1,2,4,7,14,30];          // Tage bis naechste Faelligkeit je Box
+var MASTER=0.6;                        // Beherrschungs-Schwelle „gemeistert"
 
 /* ── Utils ─────────────────────────────────────────────────────────────── */
-function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
-  return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]; }); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c];}); }
 function todayISO(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
-function addDaysISO(iso, n){ var d=iso?new Date(iso+"T00:00:00"):new Date(); d.setDate(d.getDate()+n);
-  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
-function fmtDate(iso){ if(!iso) return ""; try{ return new Date(iso+"T00:00:00").toLocaleDateString("de-CH",{day:"2-digit",month:"short",year:"numeric"}); }catch(e){ return iso; } }
-function daysUntil(iso){ if(!iso) return null; return Math.round((new Date(iso+"T00:00:00")-new Date(todayISO()+"T00:00:00"))/86400000); }
-function toast(msg){ var t=document.createElement("div"); t.className="toast"; t.textContent=msg;
-  document.getElementById("toast").appendChild(t); setTimeout(function(){ t.remove(); }, 2600); }
-function normAns(s){ return String(s==null?"":s).toLowerCase()
-  .normalize("NFD").replace(/[̀-ͯ]/g,"")
-  .replace(/^\s*(option\s*\d+\s*[:.)-]*|[a-h][.)])\s*/i,"")
-  .replace(/[«»"'`]/g,"").replace(/[^a-z0-9]+/g," ").trim(); }
+function addDaysISO(iso,n){ var d=iso?new Date(iso+"T00:00:00"):new Date(); d.setDate(d.getDate()+n); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function fmtDate(iso){ if(!iso) return ""; try{ return new Date(iso+"T00:00:00").toLocaleDateString("de-CH",{weekday:"short",day:"2-digit",month:"short",year:"numeric"}); }catch(e){ return iso; } }
+function daysBetween(a,b){ return Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000); }
+function daysUntil(iso){ return iso?daysBetween(todayISO(),iso):null; }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function toast(msg,err){ var t=document.createElement("div"); t.className="toast"+(err?" err":""); t.textContent=msg; document.getElementById("toast").appendChild(t); setTimeout(function(){t.remove();},2800); }
+function fbKey(k){ return String(k).replace(/[.#$\[\]\/]/g,"_"); }
+function normAns(s){ return String(s==null?"":s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/^\s*(option\s*\d+\s*[:.)-]*|[a-h][.)])\s*/i,"").replace(/[«»"'`]/g,"").replace(/[^a-z0-9]+/g," ").trim(); }
+function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; } return a; }
+/* Mini-Markdown (sicher: erst escapen, dann simple Muster) */
+function md(text){
+  var t=esc(text||"");
+  t=t.replace(/^######?\s?/gm,"").replace(/^#{1,5}\s*(.+)$/gm,function(m,x){return "<h4>"+x+"</h4>";});
+  t=t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>");
+  var lines=t.split(/\n/), out=[], inList=false;
+  lines.forEach(function(ln){
+    if(/^\s*[-•]\s+/.test(ln)){ if(!inList){out.push("<ul>");inList=true;} out.push("<li>"+ln.replace(/^\s*[-•]\s+/,"")+"</li>"); }
+    else if(/^\s*\d+\.\s+/.test(ln)){ if(!inList){out.push("<ul>");inList=true;} out.push("<li>"+ln.replace(/^\s*\d+\.\s+/,"")+"</li>"); }
+    else { if(inList){out.push("</ul>");inList=false;} if(/^<h4>/.test(ln)) out.push(ln); else if(ln.trim()==="") out.push(""); else out.push("<p>"+ln+"</p>"); }
+  });
+  if(inList) out.push("</ul>");
+  return out.join("");
+}
+
+/* ── Firebase RTDB (REST, offene Rules — kein Login) ───────────────────── */
+function fbUrl(p){ return CFG.FB+"/"+p+".json"; }
+function fbGet(p){ return fetch(fbUrl(p)+"?_ts="+Date.now(),{cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("RTDB GET "+r.status); return r.json(); }); }
+function fbPut(p,d){ return fetch(fbUrl(p),{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)}).then(function(r){ if(!r.ok) throw new Error("RTDB PUT "+r.status); return r.json(); }); }
+function fbDelete(p){ return fetch(fbUrl(p),{method:"DELETE"}).then(function(r){ if(!r.ok) throw new Error("RTDB DEL "+r.status); return true; }); }
+function nsp(sub){ return CFG.NS+"/"+sub; }
 
 /* ── State ─────────────────────────────────────────────────────────────── */
-var DATA = null;                 // { faecher:[...], stats:{...} }
-var IDX = { themen:[], byKey:{}, fachByKey:{} };  // Indizes
-var U = null;                    // Nutzerdaten (localStorage)
-var quiz = null;                 // aktive Quiz-Session
-var chatBusy = false;
+var DATA=null, IDX={themen:[],order:[],byKey:{},fachByKey:{}}, quiz=null, chatBusy=false, timer=null;
+var U={ aufg:{}, notes:{}, config:{}, chat:[], activity:{} };
 
-function loadU(){
-  try{ U = JSON.parse(localStorage.getItem(CFG.STORE_KEY)) || null; }catch(e){ U=null; }
-  if(!U) U = {};
-  U.aufg   = U.aufg   || {};   // aufgabeKey -> {box, due, c, w}
-  U.goals  = U.goals  || {};   // themaKey -> ISO
-  U.notes  = U.notes  || {};   // themaKey -> text
-  U.lesson = U.lesson || {};   // { doneDates:{iso:true} }
-  U.chat   = U.chat   || [];   // [{role, content}]
-  U.lesson.doneDates = U.lesson.doneDates || {};
+function cacheSave(){ try{ localStorage.setItem(CFG.CACHE, JSON.stringify(U)); }catch(e){} }
+function cacheLoad(){ try{ var c=JSON.parse(localStorage.getItem(CFG.CACHE)); if(c) U=Object.assign(U,c); }catch(e){} }
+
+/* Persistenz: Speicher in Firebase + lokalem Cache (fire-and-forget) */
+function persist(sub, data, key){
+  cacheSave();
+  var path = key!=null ? nsp(sub)+"/"+fbKey(key) : nsp(sub);
+  var p = (data===null) ? fbDelete(path) : fbPut(path, data);
+  p.catch(function(e){ toast("Firebase: "+e.message, true); });
 }
-function saveU(){ try{ localStorage.setItem(CFG.STORE_KEY, JSON.stringify(U)); }catch(e){ toast("Speichern fehlgeschlagen (Speicher voll?)"); } }
+function saveAufg(key){ persist("aufg", U.aufg[key], key); }
+function saveNote(key){ persist("notes", U.notes[key]||null, key); }
+function saveConfig(){ persist("config", U.config); }
+function saveChat(){ U.chat=U.chat.slice(-40); persist("chat", U.chat); }
+function recordActivity(correct){
+  var t=todayISO(); var a=U.activity[t]||{a:0,c:0}; a.a++; if(correct) a.c++; U.activity[t]=a;
+  // Streak
+  var last=U.config.lastActive;
+  if(last!==t){ if(last===addDaysISO(t,-1)) U.config.streak=(U.config.streak||0)+1; else U.config.streak=1; U.config.lastActive=t; saveConfig(); }
+  persist("activity", a, t);
+}
 
 /* ── Keys / Index ──────────────────────────────────────────────────────── */
-function themaKey(fachKey, themaId){ return fachKey+"/"+themaId; }
-function aufgKey(fachKey, themaId, aId){ return fachKey+"/"+themaId+"/"+aId; }
-
+function themaKey(f,t){ return f+"/"+t; }
+function aufgKey(f,t,a){ return f+"/"+t+"/"+a; }
 function buildIndex(){
-  IDX = { themen:[], byKey:{}, fachByKey:{} };
+  IDX={themen:[],order:[],byKey:{},fachByKey:{}};
   DATA.faecher.forEach(function(f){
-    (f.themen||[]).forEach(function(t){
-      var k = themaKey(f.key, t.id);
-      var rec = { key:k, fachKey:f.key, fach:f.fach, file:f.file, thema:t };
-      IDX.themen.push(rec); IDX.byKey[k]=rec;
-    });
     IDX.fachByKey[f.key]=f;
+    (f.themen||[]).forEach(function(t){
+      var k=themaKey(f.key,t.id), rec={key:k,fachKey:f.key,fach:f.fach,file:f.file,thema:t};
+      IDX.themen.push(rec); IDX.order.push(rec); IDX.byKey[k]=rec;
+    });
   });
 }
 
 /* ── Fortschritt / Mastery ─────────────────────────────────────────────── */
-function aufgState(k){ return U.aufg[k] || null; }
-function themaMastery(rec){  // 0..1 ueber alle Aufgaben des Themas
-  var as = rec.thema.aufgaben||[]; if(!as.length) return 0;
-  var sum=0; as.forEach(function(a){ var st=U.aufg[aufgKey(rec.fachKey, rec.thema.id, a.id)];
-    sum += st ? Math.min(st.box,5)/5 : 0; });
-  return sum/as.length;
+function themaMastery(rec){ var as=rec.thema.aufgaben||[]; if(!as.length) return 0; var s=0;
+  as.forEach(function(a){ var st=U.aufg[aufgKey(rec.fachKey,rec.thema.id,a.id)]; s+= st?Math.min(st.box,5)/5:0; }); return s/as.length; }
+function themaSeen(rec){ var n=0; (rec.thema.aufgaben||[]).forEach(function(a){ if(U.aufg[aufgKey(rec.fachKey,rec.thema.id,a.id)]) n++; }); return n; }
+function themaBoxes(rec){ var b=[0,0,0,0,0,0]; (rec.thema.aufgaben||[]).forEach(function(a){ var st=U.aufg[aufgKey(rec.fachKey,rec.thema.id,a.id)]; b[st?Math.min(st.box,5):0]++; }); return b; }
+function fachMastery(fk){ var r=IDX.themen.filter(function(x){return x.fachKey===fk;}); if(!r.length) return 0; var s=0; r.forEach(function(x){s+=themaMastery(x);}); return s/r.length; }
+function masteredCount(){ return IDX.themen.filter(function(r){return themaMastery(r)>=MASTER;}).length; }
+
+/* ── Lernplan / Pacing ─────────────────────────────────────────────────── */
+function plan(){
+  var ex=U.config.examDate, total=IDX.themen.length, done=masteredCount();
+  if(!ex){ return {set:false, total:total, done:done}; }
+  var start=U.config.planStart||todayISO();
+  var daysLeft=Math.max(0, daysUntil(ex));
+  var span=Math.max(1, daysBetween(start,ex));
+  var elapsed=clamp(daysBetween(start,todayISO())/span,0,1);
+  var shouldMaster=Math.round(total*elapsed);
+  var perDay=daysLeft>0?Math.ceil((total-done)/daysLeft):(total-done);
+  // heutige Themen: naechste unmasterte in Curriculum-Reihenfolge
+  var todayTopics=IDX.order.filter(function(r){return themaMastery(r)<MASTER;}).slice(0, Math.max(1,perDay));
+  // Projektion: Tempo aus Aktivitaet (gemeisterte/Tag grob) — hier einfache Prognose
+  var behind=done-shouldMaster;
+  return {set:true, examDate:ex, total:total, done:done, daysLeft:daysLeft, shouldMaster:shouldMaster,
+    delta:behind, onTrack:behind>=0, perDay:perDay, todayTopics:todayTopics, remaining:total-done};
 }
-function themaSeen(rec){ var as=rec.thema.aufgaben||[],n=0;
-  as.forEach(function(a){ if(U.aufg[aufgKey(rec.fachKey,rec.thema.id,a.id)]) n++; }); return n; }
-function fachMastery(fachKey){ var recs=IDX.themen.filter(function(r){return r.fachKey===fachKey;});
-  if(!recs.length) return 0; var s=0; recs.forEach(function(r){ s+=themaMastery(r); }); return s/recs.length; }
-function komAufg(key){ // Aufgabe aus der Wissensbasis (oder null)
-  var parts=key.split("/"); if(parts.length<3) return null;
-  var aId=parts.pop(), tId=parts.pop(), fKey=parts.join("/");
-  var rec=IDX.byKey[fKey+"/"+tId]; if(!rec) return null;
-  var a=(rec.thema.aufgaben||[]).filter(function(x){return String(x.id)===aId;})[0];
-  return a ? {rec:{fachKey:rec.fachKey, fach:rec.fach, thema:rec.thema}, a:a} : null;
-}
-function resolveAufg(key){ // aus Wissensbasis, sonst aus gespeichertem Snapshot (z.B. Tageslektion)
-  var k=komAufg(key); if(k) return k;
-  var st=U.aufg[key];
-  if(st && st.snap){ var parts=key.split("/");
-    return {rec:{fachKey:parts[0]||"lektion", fach:st.fach||"Tageslektion", thema:{id:parts[1]||"lektion", titel:st.thema||"Tageslektion"}}, a:st.snap}; }
-  return null;
-}
-function dueList(){  // faellige Aufgaben (Fehler-Queue / Spaced Repetition) — aus der Queue
-  var t=todayISO(), out=[];
-  Object.keys(U.aufg).forEach(function(key){ var st=U.aufg[key];
-    if(!(st && st.due && st.due<=t)) return;
-    var r=resolveAufg(key); if(r) out.push({rec:r.rec, a:r.a, key:key, st:st});
-  });
-  out.sort(function(x,y){ return (x.st.due<y.st.due?-1:1); });
-  return out;
-}
-function gradeAufg(key, correct, meta){
-  var st = U.aufg[key] || { box:0, due:todayISO(), c:0, w:0 };
-  if(correct){ st.c++; st.box=Math.min(st.box+1,5); st.due=addDaysISO(todayISO(), LEITNER[st.box]); }
-  else       { st.w++; st.box=0;                     st.due=addDaysISO(todayISO(), 1); } /* morgen erneut */
+
+/* ── Spaced Repetition ─────────────────────────────────────────────────── */
+function komAufg(key){ var p=key.split("/"); if(p.length<3) return null; var a=p.pop(),t=p.pop(),f=p.join("/");
+  var rec=IDX.byKey[f+"/"+t]; if(!rec) return null; var x=(rec.thema.aufgaben||[]).filter(function(z){return String(z.id)===a;})[0];
+  return x?{rec:{fachKey:rec.fachKey,fach:rec.fach,thema:rec.thema},a:x}:null; }
+function resolveAufg(key){ var k=komAufg(key); if(k) return k; var st=U.aufg[key];
+  if(st&&st.snap){ var p=key.split("/"); return {rec:{fachKey:p[0]||"lektion",fach:st.fach||"Tageslektion",thema:{id:p[1]||"lektion",titel:st.thema||"Tageslektion"}},a:st.snap}; } return null; }
+function dueList(){ var t=todayISO(),out=[]; Object.keys(U.aufg).forEach(function(key){ var st=U.aufg[key];
+  if(!(st&&st.due&&st.due<=t)) return; var r=resolveAufg(key); if(r) out.push({rec:r.rec,a:r.a,key:key,st:st}); });
+  out.sort(function(x,y){return x.st.due<y.st.due?-1:1;}); return out; }
+function gradeAufg(key,correct,meta){
+  var st=U.aufg[key]||{box:0,due:todayISO(),c:0,w:0};
+  if(correct){ st.c++; st.box=Math.min(st.box+1,5); st.due=addDaysISO(todayISO(),LEITNER[st.box]); }
+  else       { st.w++; st.box=0;                     st.due=addDaysISO(todayISO(),1); }  /* falsch → morgen erneut */
   st.last=todayISO();
-  // Aufgaben ausserhalb der Wissensbasis (Tageslektion) mit Inhalt sichern,
-  // damit sie in „Wiederholen" rekonstruiert werden koennen.
-  if(meta && meta.a && !komAufg(key)){ st.snap=meta.a; st.fach=meta.fach||st.fach; st.thema=meta.thema||st.thema; }
-  U.aufg[key]=st; saveU();
+  if(meta&&meta.a&&!komAufg(key)){ st.snap=meta.a; st.fach=meta.fach||st.fach; st.thema=meta.thema||st.thema; }
+  U.aufg[key]=st; saveAufg(key); recordActivity(correct);
+}
+function correctIndex(a){
+  var opts=a.optionen||[]; if(!opts.length) return -1;
+  var loes=String(a.loesung==null?"":a.loesung).trim();
+  function byLetter(L){ L=L.toUpperCase(); for(var i=0;i<opts.length;i++){ var ml=String(opts[i]).match(/^\s*([A-Ha-h])[).]/); if(ml&&ml[1].toUpperCase()===L) return i; } var bi=L.charCodeAt(0)-65; return (bi>=0&&bi<opts.length)?bi:-1; }
+  var mL=loes.match(/^([A-Ha-h])[).:\s]*$/); if(mL){ var r=byLetter(mL[1]); if(r>=0) return r; }
+  var mW=loes.match(/(?:antwort|option|variante)\s*([A-Ha-h])\b/i); if(mW){ var r2=byLetter(mW[1]); if(r2>=0) return r2; }
+  var nl=normAns(loes); for(var i=0;i<opts.length;i++){ if(normAns(opts[i])===nl) return i; }
+  var mLd=loes.match(/^\s*([A-Ha-h])[).]/); if(mLd){ var r3=byLetter(mLd[1]); if(r3>=0) return r3; }
+  var mI=loes.match(/(?:option|antwort|variante)\s*(\d+)/i); if(mI){ var idx=parseInt(mI[1],10)-1; if(idx>=0&&idx<opts.length) return idx; }
+  var best=-1,bl=0; for(var i=0;i<opts.length;i++){ var no=normAns(opts[i]); if(no.length<5) continue; if(nl.indexOf(no)>=0||no.indexOf(nl)>=0){ if(no.length>bl){bl=no.length;best=i;} } }
+  return best;
 }
 
-/* ── Data load ─────────────────────────────────────────────────────────── */
-function boot(){
-  loadU();
-  fetch(CFG.DATA_URL, {cache:"no-cache"}).then(function(r){
-    if(!r.ok) throw new Error("HTTP "+r.status); return r.json();
-  }).then(function(j){
-    DATA=j; buildIndex(); renderNav(); route();
-  }).catch(function(e){
-    document.getElementById("app").innerHTML =
-      '<div class="empty"><div class="ic">⚠️</div><p>Wissensbasis konnte nicht geladen werden.<br><span class="muted">'+esc(e.message)+'</span></p></div>';
-  });
+/* ── KI (Anthropic via Netlify-Function) ───────────────────────────────── */
+function callAI(system, messages, maxTokens){
+  return fetch(CFG.CHAT_URL,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({system:system,messages:messages,max_tokens:maxTokens||1024})})
+    .then(function(r){ return r.json().then(function(j){ if(!r.ok){ var m=j&&j.error==="not_configured"?"KI nicht konfiguriert — Owner muss ANTHROPIC_API_KEY in Netlify setzen.":(j&&j.message)||("Fehler "+r.status); throw new Error(m); } return j.text||""; }); });
+}
+var AI_SYS="Du bist ein hilfreicher, praeziser Lerncoach fuer die Schweizer Berufsmaturitaets-Pruefung (BM, Wirtschaft & Dienstleistungen). Antworte auf Deutsch in Schweizer Rechtschreibung (kein scharfes s, nutze ss). Sei konkret, strukturiert, pruefungsnah.";
+function themaContext(rec){ if(!rec) return ""; return "\n\nThema: „"+rec.thema.titel+"\" ("+rec.fach+").\nTheorie:\n"+(rec.thema.theorie||"")+((rec.thema.merksaetze||[]).length?"\nMerksaetze: "+rec.thema.merksaetze.join("; "):""); }
+function aiModal(title, run){
+  openModal('<h2>'+esc(title)+'</h2><div id="ai-out" class="prose"><span class="spin"></span> KI denkt nach …</div>');
+  run().then(function(text){ var el=document.getElementById("ai-out"); if(el) el.innerHTML=md(text); })
+       .catch(function(e){ var el=document.getElementById("ai-out"); if(el) el.innerHTML='<div class="badge due">'+esc(e.message)+'</div>'; });
 }
 
-/* ── Navigation ────────────────────────────────────────────────────────── */
-var NAV = [
-  {h:"#/dashboard",  ic:"◆", l:"Übersicht"},
-  {h:"#/themen",     ic:"❏", l:"Themen"},
-  {h:"#/wiederholen",ic:"↻", l:"Wiederholen"},
-  {h:"#/lektion",    ic:"☀", l:"Tageslektion"},
-  {h:"#/buecher",    ic:"▤", l:"Lehrbücher"},
-  {h:"#/fortschritt",ic:"▰", l:"Fortschritt"},
-  {h:"#/chat",       ic:"✦", l:"KI-Chat"},
+/* ── Grafiken ──────────────────────────────────────────────────────────── */
+function ring(pct,size){ size=size||64; var r=(size/2)-6,c=2*Math.PI*r,off=c*(1-pct);
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'" style="display:block">'
+   +'<circle cx="'+size/2+'" cy="'+size/2+'" r="'+r+'" fill="none" stroke="var(--panel2)" stroke-width="6"/>'
+   +'<circle cx="'+size/2+'" cy="'+size/2+'" r="'+r+'" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="'+c.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'" transform="rotate(-90 '+size/2+' '+size/2+')"/>'
+   +'<text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle" font-size="'+(size*0.28)+'" font-weight="700" fill="var(--text)">'+Math.round(pct*100)+'</text></svg>'; }
+function hbars(items){ var max=Math.max.apply(null,[1].concat(items.map(function(i){return i.max||i.value||0;})));
+  return '<div class="hbars">'+items.map(function(i){ return '<div class="hbar"><span class="hbar-l">'+esc(i.label)+'</span>'
+    +'<span class="hbar-t"><span class="hbar-f" style="width:'+(100*((i.value||0)/max)).toFixed(0)+'%;background:'+(i.color||"var(--accent)")+'"></span></span>'
+    +'<span class="hbar-v">'+(i.value||0)+'</span></div>'; }).join("")+'</div>'; }
+function donut(segs,size){ size=size||96; var tot=segs.reduce(function(s,x){return s+x.value;},0);
+  if(!tot) return '<div class="donut" style="width:'+size+'px;height:'+size+'px;background:var(--panel2)"></div>';
+  var acc=0,stops=segs.map(function(s){ var a=acc/tot*360; acc+=s.value; return s.color+" "+a.toFixed(1)+"deg "+(acc/tot*360).toFixed(1)+"deg"; }).join(",");
+  return '<div class="donut" style="width:'+size+'px;height:'+size+'px;background:conic-gradient('+stops+')"></div>'; }
+function legend(items){ return '<div class="legend">'+items.filter(function(i){return i.value;}).map(function(i){return '<span><i style="background:'+i.color+'"></i>'+esc(i.label)+' '+i.value+'</span>';}).join("")+'</div>'; }
+function boxesViz(b){ return '<div class="boxes">'+b.map(function(n,i){ return '<div class="box" title="Box '+i+'">'+n+'<small>B'+i+'</small></div>'; }).join("")+'</div>'; }
+function heatmap(days){ // letzte ~84 Tage
+  var out='<div class="heat">'; var start=addDaysISO(todayISO(),-83);
+  for(var i=0;i<84;i++){ var d=addDaysISO(start,i); var a=U.activity[d]; var lvl=!a?0:a.a>=12?4:a.a>=7?3:a.a>=3?2:1;
+    var col=lvl===0?"var(--panel2)":"color-mix(in oklab,var(--accent) "+(lvl*22)+"%, var(--panel2))";
+    out+='<i title="'+d+': '+(a?a.a+" Aufgaben":"–")+'" style="background:'+col+'"></i>'; }
+  return out+'</div>'; }
+
+/* ── Modal ─────────────────────────────────────────────────────────────── */
+function openModal(inner){ document.getElementById("modal-root").innerHTML='<div class="mask" data-action="modal-bg"><div class="modal"><span class="x" data-action="modal-close">×</span>'+inner+'</div></div>'; }
+function closeModal(){ document.getElementById("modal-root").innerHTML=""; }
+
+/* ── Navigation / Router ───────────────────────────────────────────────── */
+var NAV=[
+  {h:"#/dashboard",ic:"◆",l:"Übersicht"},
+  {h:"#/lernplan",ic:"◷",l:"Lernplan"},
+  {h:"#/lektion",ic:"☀",l:"Tageslektion"},
+  {h:"#/themen",ic:"❏",l:"Themen"},
+  {h:"#/wiederholen",ic:"↻",l:"Wiederholen"},
+  {h:"#/simulation",ic:"⏱",l:"Prüfungssim"},
+  {h:"#/karteikarten",ic:"❑",l:"Karteikarten"},
+  {h:"#/merksaetze",ic:"✦",l:"Merksätze"},
+  {h:"#/fortschritt",ic:"▰",l:"Fortschritt"},
+  {h:"#/chat",ic:"✧",l:"KI-Chat"},
 ];
-function renderNav(){
-  var cur=location.hash||"#/dashboard";
-  document.getElementById("nav").innerHTML = NAV.map(function(n){
-    var act = cur.indexOf(n.h)===0 ? " active":"";
-    return '<a href="'+n.h+'" class="'+act.trim()+'"><span aria-hidden="true">'+n.ic+'</span> '+esc(n.l)+'</a>';
-  }).join("");
-}
-
-/* ── Router ────────────────────────────────────────────────────────────── */
-function route(){
-  if(!DATA) return;
-  renderNav();
-  var h=(location.hash||"#/dashboard").replace(/^#/,"");
-  var p=h.split("/").filter(Boolean); // ["", "thema", fach, id] -> filtered
-  var app=document.getElementById("app"); app.scrollTop=0; window.scrollTo(0,0);
-  quiz=null;
-  if(p[0]==="thema" && p[1] && p[2]) return viewThema(app, themaKey(p[1], p[2]));
-  if(p[0]==="buch"  && p[1])         return viewBuch(app, p[1]);
+function renderNav(){ var cur=location.hash||"#/dashboard";
+  document.getElementById("nav").innerHTML=NAV.map(function(n){ var act=cur.indexOf(n.h)===0?" active":"";
+    return '<a href="'+n.h+'" class="'+act.trim()+'"><span aria-hidden="true">'+n.ic+'</span> '+esc(n.l)+'</a>'; }).join(""); }
+function route(){ if(!DATA) return; renderNav(); var h=(location.hash||"#/dashboard").replace(/^#/,"");
+  var p=h.split("/").filter(Boolean); var app=document.getElementById("app"); window.scrollTo(0,0); quiz=null;
+  if(p[0]==="thema"&&p[1]&&p[2]) return viewThema(app,themaKey(decodeURIComponent(p[1]),decodeURIComponent(p[2])));
+  if(p[0]==="buch"&&p[1]) return viewBuch(app,decodeURIComponent(p[1]));
   switch(p[0]){
-    case "themen":      return viewThemen(app);
+    case "lernplan": return viewLernplan(app);
+    case "lektion": return viewLektion(app);
+    case "themen": return viewThemen(app);
     case "wiederholen": return viewWiederholen(app);
-    case "lektion":     return viewLektion(app);
-    case "buecher":     return viewBuecher(app);
+    case "simulation": return viewSimulation(app);
+    case "karteikarten": return viewKarteikarten(app);
+    case "merksaetze": return viewMerksaetze(app);
     case "fortschritt": return viewFortschritt(app);
-    case "chat":        return viewChat(app);
-    default:            return viewDashboard(app);
+    case "chat": return viewChat(app);
+    case "suche": return viewSuche(app);
+    case "settings": return viewSettings(app);
+    default: return viewDashboard(app);
   }
 }
 window.addEventListener("hashchange", route);
 
-/* ── SVG-Grafiken (generiert) ──────────────────────────────────────────── */
-function ring(pct, size){
-  size=size||46; var r=(size/2)-5, c=2*Math.PI*r, off=c*(1-pct);
-  return '<svg class="ring" width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'">'
-    +'<circle cx="'+size/2+'" cy="'+size/2+'" r="'+r+'" fill="none" stroke="var(--panel2)" stroke-width="5"/>'
-    +'<circle cx="'+size/2+'" cy="'+size/2+'" r="'+r+'" fill="none" stroke="var(--accent)" stroke-width="5" '
-    +'stroke-linecap="round" stroke-dasharray="'+c.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'" '
-    +'transform="rotate(-90 '+size/2+' '+size/2+')"/>'
-    +'<text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle" font-size="'+(size*0.26)+'" '
-    +'font-weight="700" fill="var(--text)">'+Math.round(pct*100)+'</text></svg>';
+/* ── Boot ──────────────────────────────────────────────────────────────── */
+function boot(){
+  cacheLoad();
+  var loadData=fetch(CFG.DATA_URL,{cache:"no-cache"}).then(function(r){ if(!r.ok) throw new Error("Daten HTTP "+r.status); return r.json(); });
+  var fbNodes=fbGet(CFG.NS).then(function(d){ return d||{}; }).catch(function(e){ toast("Firebase offline — nutze lokalen Cache",true); return null; });
+  Promise.all([loadData,fbNodes]).then(function(res){
+    DATA=res[0]; buildIndex();
+    var fb=res[1];
+    if(fb){ U.aufg=fb.aufg||{}; U.notes=fb.notes||{}; U.config=fb.config||{}; U.chat=fb.chat||[]; U.activity=fb.activity||{}; cacheSave(); }
+    route();
+    if(!U.config.examDate) setTimeout(askExamDate, 400);
+  }).catch(function(e){ document.getElementById("app").innerHTML='<div class="empty"><div class="ic">⚠️</div><p>'+esc(e.message)+'</p></div>'; });
 }
-function barsSVG(items){ // [{label,value,max,color}]
-  var w=100, bh=22, gap=10, h=items.length*(bh+gap);
-  var max=Math.max.apply(null, items.map(function(i){return i.max||1;}).concat([1]));
-  var y=0, rows=items.map(function(i){
-    var bw=(i.max? (i.value/ (max)) :0)*70;
-    var row='<g transform="translate(0,'+y+')">'
-      +'<text x="0" y="'+(bh*0.7)+'" font-size="9" fill="var(--muted)">'+esc(i.label)+'</text>'
-      +'<rect x="0" y="'+(bh-7)+'" width="70" height="6" rx="3" fill="var(--panel2)"/>'
-      +'<rect x="0" y="'+(bh-7)+'" width="'+bw.toFixed(1)+'" height="6" rx="3" fill="'+(i.color||"var(--accent)")+'"/>'
-      +'<text x="72" y="'+(bh-1)+'" font-size="9" fill="var(--text)">'+i.value+'</text></g>';
-    y+=bh+gap; return row;
-  }).join("");
-  return '<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMinYMin meet">'+rows+'</svg>';
-}
-function schwierChip(s){ var c=s==="leicht"?"leicht":(s==="schwer"?"schwer":"mittel"); return '<span class="chip '+c+'">'+esc(s||"–")+'</span>'; }
 
-/* ── Views ─────────────────────────────────────────────────────────────── */
+function askExamDate(){
+  openModal('<h2>Willkommen beim BM-Prüfungscoach</h2>'
+    +'<p class="muted" style="margin-bottom:14px">Setze dein <strong>Prüfungsdatum</strong>. Daraus baue ich deinen Lernplan, verteile alle '+IDX.themen.length+' Themen bis dahin und zeige dir täglich, ob du im Plan liegst.</p>'
+    +'<label class="fld">Prüfungsdatum</label><input type="date" id="ex-date" value="'+esc(U.config.examDate||addDaysISO(todayISO(),90))+'" style="max-width:220px">'
+    +'<div class="btnrow" style="margin-top:16px"><button class="btn primary" data-action="exam-save">Lernplan erstellen</button></div>');
+}
+
+/* ═══ VIEWS ═══════════════════════════════════════════════════════════════ */
+function statCard(n,l,accent){ return '<div class="card stat"><div class="n'+(accent?" accent":"")+'">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>'; }
+function themaLink(r){ return "#/thema/"+encodeURIComponent(r.fachKey)+"/"+encodeURIComponent(r.thema.id); }
+
 function viewDashboard(app){
-  var totalT=IDX.themen.length, seenT=IDX.themen.filter(function(r){return themaSeen(r)>0;}).length;
-  var overall=IDX.themen.reduce(function(s,r){return s+themaMastery(r);},0)/(totalT||1);
-  var due=dueList(); var lessonDone=U.lesson.doneDates[todayISO()];
-  var upcoming=IDX.themen.filter(function(r){var d=U.goals[r.key]; return d && daysUntil(d)>=0;})
-    .sort(function(a,b){return daysUntil(U.goals[a.key])-daysUntil(U.goals[b.key]);}).slice(0,4);
+  var pl=plan(), due=dueList(), overall=IDX.themen.reduce(function(s,r){return s+themaMastery(r);},0)/(IDX.themen.length||1);
+  var weak=IDX.themen.filter(function(r){return themaSeen(r)>0&&themaMastery(r)<MASTER;}).sort(function(a,b){return themaMastery(a)-themaMastery(b);}).slice(0,6);
+  var html='<div class="pagehead"><h1>Willkommen zurück</h1><p>'+DATA.stats.faecher+' Fächer · '+DATA.stats.themen+' Themen · '+DATA.stats.aufgaben+' Aufgaben</p></div>';
 
-  var html='<div class="pagehead"><h1>Willkommen zurück</h1><p>Deine BM-Prüfungsvorbereitung — '
-    +DATA.stats.faecher+' Fächer, '+DATA.stats.themen+' Themen, '+DATA.stats.aufgaben+' Aufgaben.</p></div>';
+  // Ziel-Ampel
+  if(pl.set){
+    var amp = pl.onTrack?'ok':'due', ampT=pl.onTrack?('✓ Im Plan ('+(pl.delta>0?'+'+pl.delta:pl.delta)+' Themen)'):('⚠ Hinter dem Plan ('+pl.delta+' Themen)');
+    html+='<div class="card" style="margin-bottom:16px"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">'
+      +'<div style="text-align:center">'+ring(pl.total?pl.done/pl.total:0,72)+'<div class="muted" style="font-size:11px;margin-top:3px">gemeistert</div></div>'
+      +'<div style="flex:1;min-width:200px"><div style="display:flex;align-items:center;gap:9px;margin-bottom:8px"><span class="badge '+amp+'">'+ampT+'</span>'
+      +'<span class="badge info">noch '+pl.daysLeft+' Tage</span></div>'
+      +'<div class="tracklane"><div class="fill" style="width:'+(100*pl.done/pl.total).toFixed(1)+'%"></div><div class="mark" style="left:'+(100*pl.shouldMaster/pl.total).toFixed(1)+'%" title="Soll heute"></div></div>'
+      +'<div class="muted" style="font-size:12px;margin-top:6px">'+pl.done+' / '+pl.total+' gemeistert · Soll heute: '+pl.shouldMaster+' · Prüfung '+fmtDate(pl.examDate)+'</div></div>'
+      +'<div class="btnrow"><a class="btn primary" href="#/lektion">☀ Heutige Lektion</a><a class="btn" href="#/lernplan">Lernplan</a></div>'
+      +'</div></div>';
+  } else {
+    html+='<div class="card" style="margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between">'
+      +'<div><strong>Kein Prüfungsdatum gesetzt.</strong><div class="muted" style="font-size:13px">Setze es, damit ich deinen Lernplan bauen kann.</div></div>'
+      +'<button class="btn primary" data-action="exam-ask">Prüfungsdatum setzen</button></div>';
+  }
 
   html+='<div class="grid g-stats">'
-    +statCard(Math.round(overall*100)+'%','Gesamt-Beherrschung',true)
-    +statCard(seenT+' / '+totalT,'Themen begonnen')
-    +statCard(due.length,(due.length===1?'fällige Wiederholung':'fällige Wiederholungen'))
-    +statCard(lessonDone?'✓':'offen','Tageslektion heute')
+    +statCard(Math.round(overall*100)+"%","Gesamt-Beherrschung",true)
+    +statCard(due.length,(due.length===1?"fällige Wiederholung":"fällige Wiederholungen"))
+    +statCard((U.config.streak||0)+"🔥","Tages-Streak")
+    +statCard(masteredCount()+" / "+IDX.themen.length,"Themen gemeistert")
     +'</div>';
 
   html+='<div class="grid g-cards" style="margin-top:16px">';
-  html+='<div class="card click" data-action="go" data-h="#/wiederholen"><div class="tcard">'
-    +'<div class="kap">Spaced Repetition</div><h3>Heute wiederholen</h3>'
-    +'<p class="muted" style="margin:2px 0">'+(due.length? due.length+' Aufgabe(n) sind fällig — falsch beantwortete Fragen kehren automatisch zurück.':'Keine Wiederholungen fällig. Stark!')+'</p>'
-    +'<div class="foot"><span class="btn sm primary">Starten →</span></div></div></div>';
-  html+='<div class="card click" data-action="go" data-h="#/lektion"><div class="tcard">'
-    +'<div class="kap">aus n8n</div><h3>Tägliche Lektion</h3>'
-    +'<p class="muted" style="margin:2px 0">'+(lessonDone?'Heute erledigt — gut gemacht.':'Die heutige Lektion mit frischen Fragen abrufen.')+'</p>'
-    +'<div class="foot"><span class="btn sm">Öffnen →</span></div></div></div>';
-  html+='<div class="card click" data-action="go" data-h="#/themen"><div class="tcard">'
-    +'<div class="kap">'+DATA.stats.themen+' Themen</div><h3>Alle Themen</h3>'
-    +'<p class="muted" style="margin:2px 0">Nach Fach gruppiert — lernen, üben, Zieldatum & Notizen setzen.</p>'
-    +'<div class="foot"><span class="btn sm">Durchsuchen →</span></div></div></div>';
+  html+=dashCard("↻","Wiederholen",(due.length?due.length+" Aufgabe(n) fällig — Fehler kehren automatisch zurück.":"Nichts fällig. Stark!"),"#/wiederholen","Starten");
+  html+=dashCard("☀","Tageslektion","Deine geplanten Themen & Fragen für heute — wie vom Lehrer.","#/lektion","Öffnen");
+  html+=dashCard("⏱","Prüfungssimulation","Gemischter Testlauf unter Zeit — wie an der echten Prüfung.","#/simulation","Testen");
   html+='</div>';
 
   html+='<div class="section-title">Fortschritt nach Fach</div><div class="grid g-cards">';
   DATA.faecher.forEach(function(f){ var m=fachMastery(f.key);
-    html+='<div class="card click" data-action="go" data-h="#/themen"><div class="tcard">'
-      +'<div style="display:flex;align-items:center;gap:12px">'+ring(m,44)
+    html+='<a class="card click tcard" href="#/themen" style="text-decoration:none"><div style="display:flex;align-items:center;gap:12px">'+ring(m,46)
       +'<div><h3>'+esc(f.fach)+'</h3><div class="muted" style="font-size:12px">'+(f.themen||[]).length+' Themen</div></div></div>'
-      +'<div class="bar" style="margin-top:6px"><span style="width:'+(m*100).toFixed(0)+'%"></span></div></div></div>';
-  });
+      +'<div class="bar" style="margin-top:6px"><span style="width:'+(m*100).toFixed(0)+'%"></span></div></a>'; });
   html+='</div>';
 
-  if(upcoming.length){
-    html+='<div class="section-title">Anstehende Zieldaten</div><div class="grid g-cards">';
-    upcoming.forEach(function(r){ var d=U.goals[r.key], du=daysUntil(d);
-      html+='<div class="card click" data-action="go" data-h="#/thema/'+encodeURIComponent(r.fachKey)+'/'+encodeURIComponent(r.thema.id)+'"><div class="tcard">'
-        +'<div class="kap">'+esc(r.fach)+'</div><h3>'+esc(r.thema.titel)+'</h3>'
-        +'<div class="meta"><span class="badge '+(du<=3?'due':'warn')+'">'+(du===0?'heute':du===1?'morgen':'in '+du+' Tagen')+'</span>'
-        +'<span class="muted" style="font-size:12px">'+fmtDate(d)+'</span></div></div></div>';
-    });
-    html+='</div>';
-  }
+  if(weak.length){ html+='<div class="section-title">Schwächste Themen <span class="sp"></span><a class="btn sm ghost" href="#/wiederholen">Alle üben</a></div><div class="grid g-cards">';
+    weak.forEach(function(r){ html+='<a class="card click tcard" href="'+themaLink(r)+'" style="text-decoration:none"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:14px">'+esc(r.thema.titel)+'</h3>'
+      +'<div class="foot">'+ring(themaMastery(r),34)+'<div class="bar"><span style="width:'+(themaMastery(r)*100).toFixed(0)+'%"></span></div></div></a>'; });
+    html+='</div>'; }
   app.innerHTML=html;
 }
-function statCard(n,l,accent){ return '<div class="card stat"><div class="n'+(accent?' accent':'')+'">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>'; }
+function dashCard(ic,t,d,href,cta){ return '<a class="card click tcard" href="'+href+'" style="text-decoration:none"><div class="kap">'+ic+'</div><h3>'+esc(t)+'</h3><p class="muted" style="margin:2px 0;font-size:13px">'+esc(d)+'</p><div class="foot"><span class="btn sm primary">'+esc(cta)+' →</span></div></a>'; }
+
+function viewLernplan(app){
+  var pl=plan();
+  if(!pl.set){ app.innerHTML='<div class="pagehead"><h1>Lernplan</h1></div><div class="empty"><div class="ic">◷</div><p>Setze zuerst dein Prüfungsdatum.</p><div class="btnrow" style="justify-content:center;margin-top:12px"><button class="btn primary" data-action="exam-ask">Prüfungsdatum setzen</button></div></div>'; return; }
+  var html='<div class="pagehead"><h1>Lernplan</h1><p>Prüfung am '+esc(fmtDate(pl.examDate))+' · noch '+pl.daysLeft+' Tage</p></div>';
+  html+='<div class="grid g-stats">'
+    +statCard(pl.daysLeft,"Tage bis Prüfung",true)
+    +statCard(pl.remaining,"Themen offen")
+    +statCard(pl.perDay,"Themen / Tag nötig")
+    +statCard((pl.onTrack?"+":"")+pl.delta,"vs. Soll")
+    +'</div>';
+  html+='<div class="card" style="margin-top:14px"><div class="chart-cap">Fortschritt vs. Soll-Linie</div>'
+    +'<div class="tracklane" style="height:16px"><div class="fill" style="width:'+(100*pl.done/pl.total).toFixed(1)+'%"></div><div class="mark" style="left:'+(100*pl.shouldMaster/pl.total).toFixed(1)+'%;height:24px"></div></div>'
+    +'<div class="muted" style="font-size:12.5px;margin-top:8px">'+pl.done+' gemeistert · gelbe Markierung = Soll heute ('+pl.shouldMaster+'). '
+    +(pl.onTrack?'<span class="accentc">Du liegst im Plan.</span>':'<span class="dangerc">Du bist '+(-pl.delta)+' Themen hinter dem Plan — heute etwas mehr üben.</span>')+'</div>'
+    +'<div class="btnrow" style="margin-top:12px"><button class="btn sm" data-action="exam-ask">Prüfungsdatum ändern</button></div></div>';
+  html+='<div class="section-title">Heute dran ('+pl.todayTopics.length+' Themen)</div><div class="grid g-cards">';
+  if(!pl.todayTopics.length) html+='<div class="empty" style="grid-column:1/-1">🎉 Alle Themen gemeistert!</div>';
+  pl.todayTopics.forEach(function(r){ html+='<a class="card click tcard" href="'+themaLink(r)+'" style="text-decoration:none"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:14px">'+esc(r.thema.titel)+'</h3><div class="foot">'+ring(themaMastery(r),34)+'<span class="btn sm">Lernen →</span></div></a>'; });
+  html+='</div>';
+  app.innerHTML=html;
+}
 
 function viewThemen(app){
-  var html='<div class="pagehead"><h1>Alle Themen</h1><p>'+DATA.stats.themen+' Themen aus '+DATA.stats.faecher+' Fächern — nach Fach gruppiert.</p></div>';
+  var q=(app.getAttribute("data-q")||"").toLowerCase();
+  var html='<div class="pagehead"><h1>Alle Themen</h1><p>'+DATA.stats.themen+' Themen aus '+DATA.stats.faecher+' Fächern.</p></div>';
   DATA.faecher.forEach(function(f){
     var recs=(f.themen||[]).map(function(t){return IDX.byKey[themaKey(f.key,t.id)];});
-    html+='<div class="fach-head"><h2>'+esc(f.fach)+'</h2><span class="cnt">'+recs.length+' Themen · '+(f.themen||[]).reduce(function(s,t){return s+(t.aufgaben||[]).length;},0)+' Aufgaben</span></div>';
-    html+='<div class="grid g-cards">';
-    recs.forEach(function(r){ var m=themaMastery(r), goal=U.goals[r.key], na=(r.thema.aufgaben||[]).length;
-      var goalBadge = goal ? '<span class="badge '+((daysUntil(goal)!=null&&daysUntil(goal)<=3&&daysUntil(goal)>=0)?'due':'warn')+'">◷ '+fmtDate(goal)+'</span>' : '';
-      html+='<div class="card click tcard" data-action="go" data-h="#/thema/'+encodeURIComponent(r.fachKey)+'/'+encodeURIComponent(r.thema.id)+'">'
-        +'<div class="kap">'+esc(r.thema.kapitel||"")+'</div>'
-        +'<h3>'+esc(r.thema.titel)+'</h3>'
-        +'<div class="meta"><span class="chip">'+na+' Aufgaben</span>'+goalBadge+(U.notes[r.key]?'<span class="badge">✎ Notiz</span>':'')+'</div>'
-        +'<div class="foot">'+ring(m,38)+'<div class="bar"><span style="width:'+(m*100).toFixed(0)+'%"></span></div></div>'
-        +'</div>';
-    });
+    html+='<div class="fach-head"><h2>'+esc(f.fach)+'</h2><span class="cnt">'+recs.length+' Themen</span></div><div class="grid g-cards">';
+    recs.forEach(function(r){ var m=themaMastery(r),na=(r.thema.aufgaben||[]).length;
+      html+='<a class="card click tcard" href="'+themaLink(r)+'" style="text-decoration:none"><div class="kap">'+esc(r.thema.kapitel||"")+'</div><h3>'+esc(r.thema.titel)+'</h3>'
+        +'<div class="meta"><span class="chip">'+na+' Aufgaben</span>'+(m>=MASTER?'<span class="badge ok">✓ gemeistert</span>':'')+(U.notes[fbKey(r.key)]?'<span class="badge">✎</span>':'')+'</div>'
+        +'<div class="foot">'+ring(m,36)+'<div class="bar"><span style="width:'+(m*100).toFixed(0)+'%"></span></div></div></a>'; });
     html+='</div>';
   });
   app.innerHTML=html;
 }
 
-function viewThema(app, key){
+function viewThema(app,key){
   var rec=IDX.byKey[key]; if(!rec){ app.innerHTML='<div class="empty">Thema nicht gefunden.</div>'; return; }
-  var t=rec.thema, m=themaMastery(rec), goal=U.goals[key]||"", note=U.notes[key]||"";
-  var na=(t.aufgaben||[]).length;
-  var diff={leicht:0,mittel:0,schwer:0}; (t.aufgaben||[]).forEach(function(a){ diff[a.schwierigkeit]=(diff[a.schwierigkeit]||0)+1; });
+  var t=rec.thema, m=themaMastery(rec), na=(t.aufgaben||[]).length, seen=themaSeen(rec), boxes=themaBoxes(rec);
+  var diff={leicht:0,mittel:0,schwer:0}, typ={mc:0,offen:0,anwenden:0,rechnen:0};
+  (t.aufgaben||[]).forEach(function(a){ diff[a.schwierigkeit]=(diff[a.schwierigkeit]||0)+1; typ[a.typ]=(typ[a.typ]||0)+1; });
+  var note=U.notes[fbKey(key)]||"";
 
   var html='<a class="btn ghost sm" href="#/themen" style="margin-bottom:12px">‹ Alle Themen</a>';
-  html+='<div class="pagehead"><div class="kap muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.05em">'+esc(rec.fach)+' · '+esc(t.kapitel||"")+'</div>'
-    +'<h1>'+esc(t.titel)+'</h1></div>';
+  html+='<div class="pagehead"><div class="kap muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.05em">'+esc(rec.fach)+' · '+esc(t.kapitel||"")+'</div><h1>'+esc(t.titel)+'</h1></div>';
 
-  html+='<div class="grid" style="grid-template-columns:1fr;gap:14px">';
+  html+='<div class="btnrow" style="margin-bottom:16px">'
+    +'<button class="btn primary" data-action="quiz-thema" data-key="'+esc(key)+'">↻ Repetition ('+na+')</button>'
+    +'<a class="btn" href="#/buch/'+encodeURIComponent(rec.fachKey)+'">▤ Lehrbuch</a>'
+    +'<button class="btn violet" data-action="ai-explain" data-key="'+esc(key)+'">✦ Erklär mir das</button>'
+    +'<button class="btn" data-action="ai-simplify" data-key="'+esc(key)+'">Einfacher</button>'
+    +'<button class="btn" data-action="ai-summary" data-key="'+esc(key)+'">Zusammenfassung</button>'
+    +'<button class="btn" data-action="ai-more" data-key="'+esc(key)+'">＋ KI-Aufgaben</button>'
+    +'<button class="btn" data-action="tts" data-key="'+esc(key)+'">🔊 Vorlesen</button>'
+    +'</div>';
 
-  // Aktionen + Grafik
-  html+='<div class="card"><div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">'
-    +'<div style="text-align:center">'+ring(m,64)+'<div class="muted" style="font-size:11px;margin-top:2px">Beherrschung</div></div>'
-    +'<div style="flex:1;min-width:170px"><div class="muted" style="font-size:12px;margin-bottom:6px">Aufgaben nach Schwierigkeit</div>'
-    + barsSVG([
-        {label:"leicht",value:diff.leicht||0,max:na,color:"var(--success)"},
-        {label:"mittel",value:diff.mittel||0,max:na,color:"var(--warning)"},
-        {label:"schwer",value:diff.schwer||0,max:na,color:"var(--danger)"}
-      ])
-    +'</div>'
-    +'<div class="btnrow" style="align-self:center">'
-    +'<button class="btn primary" data-action="quiz-thema" data-key="'+esc(key)+'">↻ Repetition starten ('+na+')</button>'
-    +'<a class="btn" href="#/buch/'+encodeURIComponent(rec.fachKey)+'">▤ Im Lehrbuch</a>'
-    +'</div></div></div>';
-
-  // Lernziele
-  if((t.lernziele||[]).length){ html+='<div class="card"><div class="section-title" style="margin:0 0 10px">Lernziele</div>'
-    +'<ul class="list-clean">'+t.lernziele.map(function(z){return '<li>'+esc(z)+'</li>';}).join("")+'</ul></div>'; }
-
-  // Theorie
-  html+='<div class="card"><div class="section-title" style="margin:0 0 10px">Theorie</div><div class="prose">'+esc(t.theorie||"")+'</div>';
-  if((t.merksaetze||[]).length){ html+='<div class="section-title" style="margin:16px 0 8px;font-size:13px">Merksätze</div>'
-    +t.merksaetze.map(function(mm){return '<div class="merk">'+esc(mm)+'</div>';}).join(""); }
-  if((t.beispiele||[]).length){ html+='<div class="section-title" style="margin:16px 0 8px;font-size:13px">Beispiele</div><ul class="list-clean">'
-    +t.beispiele.map(function(b){return '<li><span class="beispiel">'+esc(b)+'</span></li>';}).join("")+'</ul>'; }
+  // GRAFIKEN — mehrere kompakte Karten
+  html+='<div class="grid g-charts">';
+  html+='<div class="card pad-sm" style="text-align:center"><div class="chart-cap">Beherrschung</div>'+ring(m,84)+'</div>';
+  html+='<div class="card pad-sm"><div class="chart-cap">Nach Schwierigkeit</div>'+hbars([{label:"leicht",value:diff.leicht,max:na,color:"var(--success)"},{label:"mittel",value:diff.mittel,max:na,color:"var(--warning)"},{label:"schwer",value:diff.schwer,max:na,color:"var(--danger)"}])+'</div>';
+  html+='<div class="card pad-sm" style="text-align:center"><div class="chart-cap">Aufgabentypen</div>'+donut([{value:typ.mc,color:"var(--info)",label:"MC"},{value:typ.offen,color:"var(--violet)",label:"offen"},{value:typ.anwenden,color:"var(--accent)",label:"anwenden"},{value:typ.rechnen,color:"var(--warning)",label:"rechnen"}],84)+legend([{value:typ.mc,color:"var(--info)",label:"MC"},{value:typ.offen,color:"var(--violet)",label:"offen"},{value:typ.anwenden,color:"var(--accent)",label:"anw."},{value:typ.rechnen,color:"var(--warning)",label:"rechn."}])+'</div>';
+  html+='<div class="card pad-sm"><div class="chart-cap">Lernstatus (Leitner-Boxen)</div>'+boxesViz(boxes)+'<div class="muted" style="font-size:11px;margin-top:8px">'+seen+' / '+na+' Aufgaben bearbeitet</div></div>';
+  html+='<div class="card pad-sm"><div class="chart-cap">Fortschritt vs. Fach-Ø</div>'+hbars([{label:"Thema",value:Math.round(m*100),max:100,color:"var(--accent)"},{label:"Fach Ø",value:Math.round(fachMastery(rec.fachKey)*100),max:100,color:"var(--info)"}])+'</div>';
   html+='</div>';
 
-  // Zieldatum
-  html+='<div class="card"><label class="fld">Zieldatum für dieses Thema</label>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'
-    +'<input type="date" id="goal-input" value="'+esc(goal)+'" style="max-width:200px">'
-    +'<button class="btn sm" data-action="goal-save" data-key="'+esc(key)+'">Speichern</button>'
-    +(goal?'<button class="btn sm ghost" data-action="goal-clear" data-key="'+esc(key)+'">Entfernen</button>'
-      +'<span class="muted" style="font-size:12.5px">'+(daysUntil(goal)>=0?'noch '+daysUntil(goal)+' Tage':'überfällig')+'</span>':'')
-    +'</div></div>';
+  if((t.lernziele||[]).length){ html+='<div class="card" style="margin-top:14px"><div class="section-title" style="margin:0 0 10px">Lernziele</div><ul class="list-clean">'+t.lernziele.map(function(z){return '<li>'+esc(z)+'</li>';}).join("")+'</ul></div>'; }
 
-  // Notizbuch
-  html+='<div class="card"><label class="fld">Notizbuch (automatisch gespeichert)</label>'
-    +'<textarea id="note-input" data-action="note-input" data-key="'+esc(key)+'" placeholder="Deine Notizen zu diesem Thema …">'+esc(note)+'</textarea>'
-    +'<div class="muted" style="font-size:11.5px;margin-top:5px" id="note-status"></div></div>';
-
+  html+='<div class="card" style="margin-top:14px"><div class="section-title" style="margin:0 0 4px">Theorie</div><div class="prose" id="theorie-body">'+md(t.theorie||"")+'</div>';
+  if((t.merksaetze||[]).length){ html+='<div class="section-title" style="margin:16px 0 6px;font-size:13px">Merksätze</div>'+t.merksaetze.map(function(x){return '<div class="merk">'+esc(x)+'</div>';}).join(""); }
+  if((t.beispiele||[]).length){ html+='<div class="section-title" style="margin:16px 0 6px;font-size:13px">Beispiele</div><ul class="list-clean">'+t.beispiele.map(function(b){return '<li><span class="beispiel">'+esc(b)+'</span></li>';}).join("")+'</ul>'; }
   html+='</div>';
+
+  html+='<div class="card" style="margin-top:14px"><label class="fld">Notizbuch (automatisch in Firebase gespeichert)</label>'
+    +'<textarea id="note-input" data-action="note-input" data-key="'+esc(key)+'" placeholder="Deine Notizen …">'+esc(note)+'</textarea>'
+    +'<div class="muted" style="font-size:11px;margin-top:5px" id="note-status"></div></div>';
   app.innerHTML=html;
 }
 
-function viewBuecher(app){
-  var html='<div class="pagehead"><h1>Lehrbücher</h1><p>Die vollständigen Theorie-Wissensbasen — lesbar und formatiert.</p></div><div class="grid g-cards">';
-  DATA.faecher.forEach(function(f){
-    html+='<div class="card click tcard" data-action="go" data-h="#/buch/'+encodeURIComponent(f.key)+'">'
-      +'<div class="kap">Lehrbuch</div><h3>'+esc(f.fach)+'</h3>'
-      +'<div class="meta"><span class="chip">'+(f.themen||[]).length+' Themen</span></div>'
-      +'<div class="foot"><span class="btn sm">Öffnen →</span></div></div>';
-  });
-  html+='</div>';
-  app.innerHTML=html;
-}
-function viewBuch(app, fachKey){
-  var f=IDX.fachByKey[fachKey]; if(!f){ app.innerHTML='<div class="empty">Lehrbuch nicht gefunden.</div>'; return; }
-  app.innerHTML='<a class="btn ghost sm" href="#/buecher" style="margin-bottom:12px">‹ Lehrbücher</a>'
-    +'<div class="pagehead"><h1>'+esc(f.fach)+'</h1></div>'
-    +'<iframe class="bookframe" src="'+esc(CFG.BOOK_BASE+f.file)+'" title="'+esc(f.fach)+'" loading="lazy"></iframe>';
-}
+function viewBuch(app,fk){ var f=IDX.fachByKey[fk]; if(!f){ app.innerHTML='<div class="empty">Lehrbuch nicht gefunden.</div>'; return; }
+  app.innerHTML='<a class="btn ghost sm" href="#/themen" style="margin-bottom:12px">‹ Zurück</a><div class="pagehead"><h1>'+esc(f.fach)+'</h1></div><iframe class="bookframe" src="'+esc(CFG.BOOK_BASE+f.file)+'" title="'+esc(f.fach)+'" loading="lazy"></iframe>'; }
 
-/* ── Quiz-Engine ───────────────────────────────────────────────────────── */
-function buildQuizFromThema(key){
-  var rec=IDX.byKey[key]; if(!rec) return null;
-  var items=(rec.thema.aufgaben||[]).map(function(a){ return {rec:rec, a:a, key:aufgKey(rec.fachKey,rec.thema.id,a.id)}; });
-  return { title:rec.thema.titel, sub:rec.fach, items:items, idx:0, revealed:false, chosen:null, results:{correct:0,wrong:0}, mode:"thema", backHash:"#/thema/"+encodeURIComponent(rec.fachKey)+"/"+encodeURIComponent(rec.thema.id) };
-}
-function buildQuizFromDue(){
-  var due=dueList(); var items=due.map(function(d){ return {rec:d.rec, a:d.a, key:d.key}; });
-  return { title:"Fällige Wiederholungen", sub:items.length+" Aufgaben", items:items, idx:0, revealed:false, chosen:null, results:{correct:0,wrong:0}, mode:"due", backHash:"#/dashboard" };
-}
-function buildQuizFromLesson(lesson){
-  var items=(lesson.fragen||[]).map(function(a,i){
-    var fachKey=a.fach||"lektion", themaId=a.themaId||("frage"+i), id=a.id||("f"+i);
-    var rec=IDX.byKey[themaKey(fachKey,themaId)] || {rec:null, fachKey:fachKey, fach:(IDX.fachByKey[fachKey]?IDX.fachByKey[fachKey].fach:"Tageslektion"), thema:{id:themaId,titel:a.titel||lesson.titel||"Tageslektion"}};
-    return { rec:rec.rec?rec:{fachKey:fachKey,fach:rec.fach,thema:rec.thema}, a:a, key:aufgKey(fachKey,themaId,id) };
-  });
-  return { title:lesson.titel||"Tageslektion", sub:fmtDate(lesson.datum||todayISO()), items:items, idx:0, revealed:false, chosen:null, results:{correct:0,wrong:0}, mode:"lesson", backHash:"#/lektion" };
-}
+/* ── Quiz ──────────────────────────────────────────────────────────────── */
+function makeItem(rec,a){ return {rec:rec,a:a,key:aufgKey(rec.fachKey,rec.thema.id,a.id)}; }
+function buildQuizFromThema(key){ var rec=IDX.byKey[key]; if(!rec) return null;
+  return {title:rec.thema.titel,items:(rec.thema.aufgaben||[]).map(function(a){return makeItem(rec,a);}),idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/thema/"+encodeURIComponent(rec.fachKey)+"/"+encodeURIComponent(rec.thema.id)}; }
+function buildQuizFromDue(){ var d=dueList(); return {title:"Fällige Wiederholungen",items:d.map(function(x){return {rec:x.rec,a:x.a,key:x.key};}),idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/wiederholen"}; }
+function buildQuizWeak(){ var items=[]; IDX.themen.filter(function(r){return themaSeen(r)>0&&themaMastery(r)<MASTER;}).forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ items.push(makeItem(r,a)); }); });
+  return {title:"Schwache Themen üben",items:shuffle(items).slice(0,25),idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/wiederholen"}; }
+function buildQuizDifficulty(level){ var items=[]; IDX.themen.forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ if(a.schwierigkeit===level) items.push(makeItem(r,a)); }); });
+  return {title:"Übung: "+level,items:shuffle(items).slice(0,20),idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/wiederholen"}; }
+function buildQuizSim(n){ var items=[]; IDX.themen.forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ items.push(makeItem(r,a)); }); });
+  return {title:"Prüfungssimulation",items:shuffle(items).slice(0,n||25),idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/simulation",sim:true,started:Date.now()}; }
+function buildQuizFromLesson(lesson){ var items=(lesson.fragen||[]).map(function(a,i){ var fk=a.fach||"lektion",tid=a.themaId||("frage"+i),id=a.id||("f"+i);
+  var kr=IDX.byKey[themaKey(fk,tid)]; var rec=kr?{fachKey:kr.fachKey,fach:kr.fach,thema:kr.thema}:{fachKey:fk,fach:(IDX.fachByKey[fk]?IDX.fachByKey[fk].fach:"Tageslektion"),thema:{id:tid,titel:a.titel||lesson.titel||"Tageslektion"}};
+  return {rec:rec,a:a,key:aufgKey(fk,tid,id)}; });
+  return {title:lesson.titel||"Tageslektion",items:items,idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/lektion"}; }
+function buildQuizTopics(recs){ var items=[]; recs.forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ items.push(makeItem(r,a)); }); });
+  return {title:"Heutige Lektion",items:items,idx:0,revealed:false,chosen:null,results:{correct:0,wrong:0},backHash:"#/lektion"}; }
+
 function renderQuiz(app){
   if(!quiz){ app.innerHTML='<div class="empty">Keine Session.</div>'; return; }
-  if(quiz.idx>=quiz.items.length){ return renderQuizDone(app); }
-  var it=quiz.items[quiz.idx], a=it.a, n=quiz.items.length, pct=(quiz.idx/n)*100;
-  var isMC = a.typ==="mc" && Array.isArray(a.optionen) && a.optionen.length;
-  var ci = isMC ? correctIndex(a) : -1;
+  if(quiz.idx>=quiz.items.length) return renderQuizDone(app);
+  var it=quiz.items[quiz.idx],a=it.a,n=quiz.items.length,pct=(quiz.idx/n)*100;
+  var isMC=a.typ==="mc"&&Array.isArray(a.optionen)&&a.optionen.length, ci=isMC?correctIndex(a):-1;
   var html='<a class="btn ghost sm" href="'+quiz.backHash+'" data-action="quiz-quit" style="margin-bottom:12px">‹ Beenden</a>';
-  html+='<div class="quizwrap">';
-  html+='<div class="quizbar"><span class="muted" style="font-size:12px">'+(quiz.idx+1)+' / '+n+'</span>'
-    +'<div class="bar"><span style="width:'+pct+'%"></span></div>'+schwierChip(a.schwierigkeit)+'</div>';
-  html+='<div class="muted" style="font-size:12px">'+esc(it.fach||it.rec.fach||"")+'</div>';
-  html+='<div class="q-frage">'+esc(a.frage)+'</div>';
-
-  if(isMC){
-    html+='<div id="opts">'+a.optionen.map(function(o,i){
-      var cls="opt"; if(quiz.revealed){
-        if(i===ci) cls+=" correct";
-        if(quiz.chosen===i && i!==ci) cls+=" wrong";
-        if(quiz.chosen===i) cls+=" chosen";
-      }
-      return '<button class="'+cls+'" '+(quiz.revealed?'disabled':'data-action="quiz-mc" data-i="'+i+'"')+'>'+esc(o)+'</button>';
-    }).join("")+'</div>';
-  } else {
-    if(!quiz.revealed){
-      html+='<div class="muted" style="font-size:13px;margin:4px 0 12px">Offene Frage — überlege deine Antwort, dann auflösen.</div>'
-        +'<button class="btn primary wide" data-action="quiz-reveal">Lösung anzeigen</button>';
-    }
-  }
-
+  html+='<div class="quizwrap"><div class="quizbar"><span class="muted" style="font-size:12px">'+(quiz.idx+1)+' / '+n+'</span><div class="bar"><span style="width:'+pct+'%"></span></div><span class="chip '+(a.schwierigkeit==="leicht"?"leicht":a.schwierigkeit==="schwer"?"schwer":"mittel")+'">'+esc(a.schwierigkeit||"")+'</span></div>';
+  html+='<div class="muted" style="font-size:12px">'+esc(it.rec.fach||"")+'</div><div class="q-frage">'+esc(a.frage)+'</div>';
+  if(!quiz.revealed) html+='<div class="btnrow" style="margin:-4px 0 8px"><button class="btn sm" data-action="ai-hint">✦ Tipp</button></div>';
+  if(isMC){ html+='<div>'+a.optionen.map(function(o,i){ var cls="opt"; if(quiz.revealed){ if(i===ci)cls+=" correct"; if(quiz.chosen===i&&i!==ci)cls+=" wrong"; if(quiz.chosen===i)cls+=" chosen"; }
+      return '<button class="'+cls+'" '+(quiz.revealed?'disabled':'data-action="quiz-mc" data-i="'+i+'"')+'>'+esc(o)+'</button>'; }).join("")+'</div>'; }
+  else { if(!quiz.revealed) html+='<textarea id="open-answer" placeholder="Deine Antwort (optional — für KI-Feedback) …" style="margin:6px 0"></textarea>'
+      +'<div class="btnrow"><button class="btn primary" data-action="quiz-reveal">Lösung anzeigen</button><button class="btn violet" data-action="ai-grade">✦ KI bewertet meine Antwort</button></div>'; }
   if(quiz.revealed){
-    html+='<div class="reveal"><div class="lbl">Lösung</div><div class="los">'+esc(a.loesung)+'</div>'
-      +(a.erklaerung?'<div class="lbl">Erklärung</div><div class="prose" style="font-size:13.5px">'+esc(a.erklaerung)+'</div>':'')+'</div>';
-    if(isMC){
-      var autoCorrect = quiz.chosen!=null && quiz.chosen===ci;
-      html+='<div class="selfgrade"><div class="muted" style="font-size:13px;align-self:center;flex:1">'
-        +(quiz.chosen==null?'Nicht beantwortet':(autoCorrect?'✓ Richtig gewählt':'✗ Falsch gewählt'))+' — stimmt das?</div>'
-        +'<button class="btn sm" data-action="quiz-grade" data-ok="1">Als richtig werten</button>'
-        +'<button class="btn sm" data-action="quiz-grade" data-ok="0">Als falsch werten</button></div>';
-    } else {
-      html+='<div class="selfgrade"><button class="btn primary" style="flex:1" data-action="quiz-grade" data-ok="1">✓ Gewusst</button>'
-        +'<button class="btn" style="flex:1" data-action="quiz-grade" data-ok="0">✗ Nicht gewusst</button></div>';
-    }
+    html+='<div class="reveal"><div class="lbl">Lösung</div><div class="los">'+esc(a.loesung)+'</div>'+(a.erklaerung?'<div class="lbl">Erklärung</div><div class="prose" style="font-size:13.5px">'+md(a.erklaerung)+'</div>':'')+'</div>';
+    if(isMC){ var auto=quiz.chosen!=null&&quiz.chosen===ci;
+      html+='<div class="selfgrade"><div class="muted" style="font-size:13px;flex:1;align-self:center">'+(quiz.chosen==null?"Nicht beantwortet":(auto?"✓ Richtig gewählt":"✗ Falsch gewählt"))+'</div><button class="btn sm" data-action="quiz-grade" data-ok="1">Richtig</button><button class="btn sm" data-action="quiz-grade" data-ok="0">Falsch</button></div>'; }
+    else html+='<div class="selfgrade"><button class="btn primary" style="flex:1" data-action="quiz-grade" data-ok="1">✓ Gewusst</button><button class="btn" style="flex:1" data-action="quiz-grade" data-ok="0">✗ Nicht gewusst</button></div>';
   }
-  html+='</div>';
-  app.innerHTML=html;
+  html+='</div>'; app.innerHTML=html;
 }
-function renderQuizDone(app){
-  var r=quiz.results, tot=r.correct+r.wrong, pct=tot?Math.round(r.correct/tot*100):0;
-  app.innerHTML='<div class="quizwrap" style="text-align:center;padding-top:20px">'
-    +ring(tot?r.correct/tot:0,96)
-    +'<div class="pagehead" style="margin-top:14px"><h1>'+(pct>=80?'Stark!':pct>=50?'Gut gemacht':'Weiter üben')+'</h1>'
-    +'<p>'+r.correct+' richtig · '+r.wrong+' falsch von '+tot+'</p></div>'
-    +(r.wrong?'<p class="muted" style="max-width:420px;margin:0 auto 18px">Die '+r.wrong+' falsch beantworteten Aufgaben erscheinen ab morgen automatisch in „Wiederholen".</p>':'')
-    +'<div class="btnrow" style="justify-content:center">'
-    +'<a class="btn primary" href="'+quiz.backHash+'" data-action="quiz-quit">Fertig</a>'
-    +'<a class="btn" href="#/wiederholen" data-action="quiz-quit">Zu den Wiederholungen</a></div></div>';
-}
-/* Ermittelt den Index der korrekten Option. Deckt die uneinheitlichen
-   loesung-Formate der Wissensbasis ab: blosser Buchstabe ("B"), "Antwort B.",
-   "Option 1", Label-Prefix ("B) James Watt") und exakten/Teil-Text. */
-function correctIndex(a){
-  var opts=a.optionen||[]; if(!opts.length) return -1;
-  var loes=String(a.loesung==null?"":a.loesung).trim();
-  function byLetter(L){ L=L.toUpperCase();
-    for(var i=0;i<opts.length;i++){ var ml=String(opts[i]).match(/^\s*([A-Ha-h])[).]/); if(ml&&ml[1].toUpperCase()===L) return i; }
-    var bi=L.charCodeAt(0)-65; return (bi>=0&&bi<opts.length)?bi:-1; }
-  var mLetter=loes.match(/^([A-Ha-h])[).:\s]*$/);                 // "B" / "B)" / "B."
-  if(mLetter){ var r=byLetter(mLetter[1]); if(r>=0) return r; }
-  var mWord=loes.match(/(?:antwort|option|variante)\s*([A-Ha-h])\b/i); // "Antwort B."
-  if(mWord){ var r2=byLetter(mWord[1]); if(r2>=0) return r2; }
-  var nl=normAns(loes);
-  for(var i=0;i<opts.length;i++){ if(normAns(opts[i])===nl) return i; }   // exakter Text
-  var mLead=loes.match(/^\s*([A-Ha-h])[).]/);                     // "B) James Watt"
-  if(mLead){ var r3=byLetter(mLead[1]); if(r3>=0) return r3; }
-  var mIdx=loes.match(/(?:option|antwort|variante)\s*(\d+)/i);    // "Option 1"
-  if(mIdx){ var idx=parseInt(mIdx[1],10)-1; if(idx>=0&&idx<opts.length) return idx; }
-  var best=-1,bestLen=0;                                          // spezifischster Teil-Text
-  for(var i=0;i<opts.length;i++){ var no=normAns(opts[i]); if(no.length<5) continue;
-    if(nl.indexOf(no)>=0||no.indexOf(nl)>=0){ if(no.length>bestLen){bestLen=no.length;best=i;} } }
-  return best;
+function renderQuizDone(app){ var r=quiz.results,tot=r.correct+r.wrong,pct=tot?Math.round(r.correct/tot*100):0;
+  var extra=quiz.sim?'<p class="muted">Dauer: '+Math.round((Date.now()-quiz.started)/60000)+' min · Note (grob): '+(1+5*pct/100).toFixed(1)+'</p>':'';
+  app.innerHTML='<div class="quizwrap" style="text-align:center;padding-top:16px">'+ring(tot?r.correct/tot:0,96)
+    +'<div class="pagehead" style="margin-top:14px"><h1>'+(pct>=80?"Stark!":pct>=50?"Gut":"Weiter üben")+'</h1><p>'+r.correct+' richtig · '+r.wrong+' falsch von '+tot+'</p>'+extra+'</div>'
+    +(r.wrong?'<p class="muted" style="max-width:420px;margin:0 auto 16px">Die '+r.wrong+' falschen Aufgaben sind automatisch in „Wiederholen" (ab morgen).</p>':'')
+    +'<div class="btnrow" style="justify-content:center"><a class="btn primary" href="'+quiz.backHash+'" data-action="quiz-quit">Fertig</a><a class="btn" href="#/wiederholen" data-action="quiz-quit">Wiederholen</a></div></div>';
 }
 
-function viewWiederholen(app){
-  var due=dueList();
-  if(!due.length){ app.innerHTML='<div class="pagehead"><h1>Wiederholen</h1></div>'
-    +'<div class="empty"><div class="ic">✓</div><p>Nichts fällig. Falsch beantwortete Aufgaben kehren am nächsten Tag hierher zurück (Spaced Repetition).</p>'
-    +'<div class="btnrow" style="justify-content:center;margin-top:14px"><a class="btn" href="#/themen">Themen üben</a></div></div>'; return; }
-  var html='<div class="pagehead"><h1>Wiederholen</h1><p>'+due.length+' fällige Aufgabe(n) — inkl. deiner früheren Fehler.</p></div>';
-  html+='<div class="card" style="text-align:center;padding:26px"><div style="font-size:15px;margin-bottom:14px">Bereit für '+due.length+' Aufgaben?</div>'
-    +'<button class="btn primary" data-action="quiz-due">↻ Wiederholung starten</button></div>';
-  // Vorschau
-  html+='<div class="section-title">Fällig</div><div class="grid g-cards">';
-  due.slice(0,9).forEach(function(d){
-    html+='<div class="card tcard"><div class="kap">'+esc(d.rec.fach)+'</div><h3 style="font-size:14px">'+esc(d.rec.thema.titel)+'</h3>'
-      +'<div class="meta">'+schwierChip(d.a.schwierigkeit)+'<span class="badge due">Box '+d.st.box+'</span></div></div>';
-  });
+function viewWiederholen(app){ var due=dueList();
+  var html='<div class="pagehead"><h1>Wiederholen</h1><p>Falsche Antworten kehren automatisch am nächsten Tag zurück (Spaced Repetition).</p></div>';
+  html+='<div class="grid g-cards">';
+  html+='<div class="card"><h3>Fällige Wiederholungen</h3><p class="muted" style="font-size:13px">'+(due.length?due.length+" Aufgabe(n) fällig — inkl. deiner Fehler.":"Nichts fällig.")+'</p><div class="foot" style="margin-top:8px"><button class="btn primary" data-action="quiz-due" '+(due.length?"":"disabled")+'>↻ Starten</button></div></div>';
+  html+='<div class="card"><h3>Schwache Themen</h3><p class="muted" style="font-size:13px">Gemischte Aufgaben aus Themen unter '+(MASTER*100)+'%.</p><div class="foot" style="margin-top:8px"><button class="btn" data-action="quiz-weak">Üben</button></div></div>';
+  html+='<div class="card"><h3>Nach Schwierigkeit</h3><p class="muted" style="font-size:13px">Gezielt leichte, mittlere oder schwere Aufgaben.</p><div class="btnrow" style="margin-top:8px"><button class="btn sm" data-action="quiz-diff" data-l="leicht">Leicht</button><button class="btn sm" data-action="quiz-diff" data-l="mittel">Mittel</button><button class="btn sm" data-action="quiz-diff" data-l="schwer">Schwer</button></div></div>';
   html+='</div>';
+  if(due.length){ html+='<div class="section-title">Fällig</div><div class="grid g-cards">';
+    due.slice(0,9).forEach(function(d){ html+='<div class="card tcard"><div class="kap">'+esc(d.rec.fach)+'</div><h3 style="font-size:14px">'+esc(d.rec.thema.titel)+'</h3><div class="meta"><span class="badge due">Box '+d.st.box+'</span></div></div>'; });
+    html+='</div>'; }
   app.innerHTML=html;
 }
 
-function viewLektion(app){
-  app.innerHTML='<div class="pagehead"><h1>Tägliche Lektion</h1></div><div class="empty"><div class="spin"></div><p>Lektion wird geladen …</p></div>';
-  fetch(CFG.LESSON_URL, {cache:"no-store"}).then(function(r){
-    if(r.status===404) return null; if(!r.ok) throw new Error("HTTP "+r.status); return r.json();
-  }).then(function(lesson){
-    if(!lesson){ return renderLektionEmpty(app); }
-    var html='<div class="pagehead"><h1>'+esc(lesson.titel||"Tageslektion")+'</h1><p>'+esc(fmtDate(lesson.datum||todayISO()))
-      +(lesson.fach?' · '+esc(lesson.fach):'')+'</p></div>';
-    if(lesson.intro) html+='<div class="card prose" style="margin-bottom:14px">'+esc(lesson.intro)+'</div>';
-    var nf=(lesson.fragen||[]).length;
-    if(!nf){ html+='<div class="empty"><p>Diese Lektion enthält keine Fragen.</p></div>'; app.innerHTML=html; return; }
-    html+='<div class="card" style="text-align:center;padding:26px"><div style="font-size:15px;margin-bottom:6px">'+nf+' Frage(n) für heute</div>'
-      +'<p class="muted" style="margin:0 0 14px">Falsch beantwortete Fragen wandern automatisch in die Wiederholungs-Queue.</p>'
-      +'<button class="btn primary" data-action="quiz-lesson">Lektion starten</button></div>';
-    if(U.lesson.doneDates[todayISO()]) html+='<div class="badge ok" style="margin-top:12px">✓ Heute bereits erledigt</div>';
-    app.innerHTML=html;
-    window.__lesson=lesson;
-  }).catch(function(e){
-    app.innerHTML='<div class="pagehead"><h1>Tägliche Lektion</h1></div>'
-      +'<div class="empty"><div class="ic">⚠️</div><p>Lektion konnte nicht geladen werden.<br><span class="muted">'+esc(e.message)+'</span></p></div>';
-  });
+function viewSimulation(app){
+  app.innerHTML='<div class="pagehead"><h1>Prüfungssimulation</h1><p>Gemischte Aufgaben aus allen Fächern unter Zeit — wie an der echten BM-Prüfung.</p></div>'
+    +'<div class="grid g-cards"><div class="card"><h3>Kurz (15)</h3><p class="muted" style="font-size:13px">Schneller Check.</p><div class="foot" style="margin-top:8px"><button class="btn" data-action="quiz-sim" data-n="15">Start</button></div></div>'
+    +'<div class="card"><h3>Standard (25)</h3><p class="muted" style="font-size:13px">Empfohlen.</p><div class="foot" style="margin-top:8px"><button class="btn primary" data-action="quiz-sim" data-n="25">Start</button></div></div>'
+    +'<div class="card"><h3>Lang (40)</h3><p class="muted" style="font-size:13px">Ausdauer-Test.</p><div class="foot" style="margin-top:8px"><button class="btn" data-action="quiz-sim" data-n="40">Start</button></div></div></div>';
 }
-function renderLektionEmpty(app){
-  app.innerHTML='<div class="pagehead"><h1>Tägliche Lektion</h1></div>'
-    +'<div class="empty"><div class="ic">☀</div><p>Für heute liegt noch keine Lektion bereit.</p>'
-    +'<p class="muted" style="max-width:520px;margin:10px auto 0;font-size:13px">Der n8n-Workflow „BM Tageslektion" schreibt die Lektion per <span class="mono">PUT</span> nach '
-    +'<span class="mono">/.netlify/functions/blob-put?key=quantus-tageslektion</span>. Sobald das geschehen ist, erscheint sie hier.</p></div>';
+
+function viewKarteikarten(app){
+  if(!app.__deck){ var cards=[]; IDX.themen.forEach(function(r){ (r.thema.merksaetze||[]).forEach(function(mk){ cards.push({front:r.thema.titel,back:mk,fach:r.fach}); });
+    (r.thema.beispiele||[]).forEach(function(b){ cards.push({front:"Beispiel: "+r.thema.titel,back:b,fach:r.fach}); }); });
+    app.__deck=shuffle(cards); app.__i=0; app.__flip=false; }
+  var c=app.__deck[app.__i]||{front:"–",back:"–",fach:""};
+  app.innerHTML='<div class="pagehead"><h1>Karteikarten</h1><p>'+app.__deck.length+' Karten (Merksätze & Beispiele) — tippen zum Umdrehen.</p></div>'
+    +'<div class="flip'+(app.__flip?" flipped":"")+'" data-action="card-flip"><div class="flip-inner">'
+    +'<div class="flip-face"><div class="muted" style="font-size:11px;margin-bottom:8px">'+esc(c.fach)+'</div><div class="serif" style="font-size:19px">'+esc(c.front)+'</div><div class="muted" style="font-size:12px;margin-top:12px">tippen für Antwort</div></div>'
+    +'<div class="flip-face flip-back"><div class="mono" style="font-size:15px">'+esc(c.back)+'</div></div></div></div>'
+    +'<div class="btnrow" style="justify-content:center;margin-top:18px"><button class="btn" data-action="card-prev">‹ Zurück</button><span class="badge" style="align-self:center">'+(app.__i+1)+' / '+app.__deck.length+'</span><button class="btn primary" data-action="card-next">Weiter ›</button><button class="btn ghost" data-action="card-shuffle">⤮ Mischen</button></div>';
+}
+
+function viewMerksaetze(app){
+  var html='<div class="pagehead"><h1>Merksätze & Formeln</h1><p>Deine kompakte Formelsammlung — alle Merksätze an einem Ort.</p></div>';
+  DATA.faecher.forEach(function(f){ var any=(f.themen||[]).some(function(t){return (t.merksaetze||[]).length;}); if(!any) return;
+    html+='<div class="fach-head"><h2>'+esc(f.fach)+'</h2></div>';
+    (f.themen||[]).forEach(function(t){ if(!(t.merksaetze||[]).length) return;
+      html+='<div class="card pad-sm" style="margin-bottom:10px"><div class="chart-cap">'+esc(t.titel)+'</div>'+t.merksaetze.map(function(x){return '<div class="merk">'+esc(x)+'</div>';}).join("")+'</div>'; });
+  });
+  app.innerHTML=html;
+}
+
+function viewSuche(app){
+  var q=(app.getAttribute("data-q")||"");
+  var html='<div class="pagehead"><h1>Suche</h1></div><div class="card" style="margin-bottom:14px"><input type="text" id="search-in" data-action="search-live" placeholder="Themen, Theorie, Aufgaben durchsuchen …" value="'+esc(q)+'" autofocus></div><div id="search-res"></div>';
+  app.innerHTML=html; if(q) runSearch(q);
+}
+function runSearch(q){ var res=document.getElementById("search-res"); if(!res) return; q=q.trim().toLowerCase();
+  if(q.length<2){ res.innerHTML='<div class="empty muted">Mindestens 2 Zeichen …</div>'; return; }
+  var hits=[]; IDX.themen.forEach(function(r){ var t=r.thema; var hay=(t.titel+" "+(t.theorie||"")+" "+(t.lernziele||[]).join(" ")+" "+(t.merksaetze||[]).join(" ")).toLowerCase();
+    var aufHit=(t.aufgaben||[]).filter(function(a){return (a.frage+" "+a.loesung).toLowerCase().indexOf(q)>=0;}).length;
+    if(hay.indexOf(q)>=0||aufHit) hits.push({r:r,aufHit:aufHit}); });
+  if(!hits.length){ res.innerHTML='<div class="empty muted">Keine Treffer.</div>'; return; }
+  res.innerHTML='<div class="muted" style="font-size:12px;margin-bottom:8px">'+hits.length+' Themen</div><div class="grid g-cards">'+hits.slice(0,40).map(function(h){ return '<a class="card click tcard" href="'+themaLink(h.r)+'" style="text-decoration:none"><div class="kap">'+esc(h.r.fach)+'</div><h3 style="font-size:14px">'+esc(h.r.thema.titel)+'</h3>'+(h.aufHit?'<div class="meta"><span class="badge info">'+h.aufHit+' Aufgabe(n)</span></div>':'')+'</a>'; }).join("")+'</div>';
 }
 
 function viewFortschritt(app){
-  var totalT=IDX.themen.length;
-  var overall=IDX.themen.reduce(function(s,r){return s+themaMastery(r);},0)/(totalT||1);
-  var totalA=0,seenA=0,boxSum=0;
-  IDX.themen.forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ totalA++;
-    var st=U.aufg[aufgKey(r.fachKey,r.thema.id,a.id)]; if(st){seenA++; boxSum+=st.box;} }); });
-  var due=dueList().length;
-  var html='<div class="pagehead"><h1>Fortschritt</h1><p>Dein Lernstand über alle Fächer.</p></div>';
-  html+='<div class="grid g-stats">'
-    +statCard(Math.round(overall*100)+'%','Gesamt-Beherrschung',true)
-    +statCard(seenA+' / '+totalA,'Aufgaben bearbeitet')
-    +statCard(due,'fällig')
-    +statCard(IDX.themen.filter(function(r){return themaMastery(r)>=0.8;}).length,'Themen gemeistert (≥80%)')
-    +'</div>';
-  html+='<div class="section-title">Beherrschung nach Fach</div>';
-  html+='<div class="card"><div style="display:flex;flex-direction:column;gap:14px">';
-  DATA.faecher.forEach(function(f){ var m=fachMastery(f.key);
-    html+='<div style="display:flex;align-items:center;gap:12px">'
-      +'<div style="width:150px;font-size:13.5px">'+esc(f.fach)+'</div>'
-      +'<div class="bar" style="height:9px"><span style="width:'+(m*100).toFixed(0)+'%"></span></div>'
-      +'<div class="mono" style="width:44px;text-align:right;font-size:12.5px">'+Math.round(m*100)+'%</div></div>';
-  });
-  html+='</div></div>';
-  // Themen mit Zieldatum
-  var goals=IDX.themen.filter(function(r){return U.goals[r.key];})
-    .sort(function(a,b){return (U.goals[a.key]<U.goals[b.key]?-1:1);});
-  if(goals.length){
-    html+='<div class="section-title">Zieldaten</div><div class="grid g-cards">';
-    goals.forEach(function(r){ var d=U.goals[r.key], du=daysUntil(d);
-      html+='<div class="card click tcard" data-action="go" data-h="#/thema/'+encodeURIComponent(r.fachKey)+'/'+encodeURIComponent(r.thema.id)+'">'
-        +'<div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:14px">'+esc(r.thema.titel)+'</h3>'
-        +'<div class="meta"><span class="badge '+(du!=null&&du<0?'due':du!=null&&du<=3?'due':'warn')+'">'+(du<0?'überfällig':du===0?'heute':'in '+du+' T')+'</span>'
-        +'<span class="muted" style="font-size:12px">'+fmtDate(d)+'</span></div></div>';
-    });
-    html+='</div>';
-  }
+  var overall=IDX.themen.reduce(function(s,r){return s+themaMastery(r);},0)/(IDX.themen.length||1);
+  var totalA=0,seenA=0; IDX.themen.forEach(function(r){ (r.thema.aufgaben||[]).forEach(function(a){ totalA++; if(U.aufg[aufgKey(r.fachKey,r.thema.id,a.id)]) seenA++; }); });
+  var html='<div class="pagehead"><h1>Fortschritt</h1></div>';
+  html+='<div class="grid g-stats">'+statCard(Math.round(overall*100)+"%","Beherrschung",true)+statCard(seenA+" / "+totalA,"Aufgaben bearbeitet")+statCard(dueList().length,"fällig")+statCard((U.config.streak||0)+"🔥","Streak")+'</div>';
+  html+='<div class="card" style="margin-top:14px"><div class="chart-cap">Aktivität (letzte 12 Wochen)</div>'+heatmap()+'</div>';
+  html+='<div class="card" style="margin-top:14px"><div class="chart-cap">Beherrschung nach Fach</div>'+hbars(DATA.faecher.map(function(f){return {label:f.fach.split(" ")[0],value:Math.round(fachMastery(f.key)*100),max:100,color:"var(--accent)"};}))+'</div>';
   app.innerHTML=html;
 }
 
-/* ── KI-Chat ───────────────────────────────────────────────────────────── */
 function viewChat(app){
-  var opts='<option value="">Allgemein (BM-Coach)</option>'+IDX.themen.map(function(r){
-    return '<option value="'+esc(r.key)+'">'+esc(r.fach)+' · '+esc(r.thema.titel)+'</option>'; }).join("");
-  var html='<div class="pagehead"><h1>KI-Chat</h1><p>Fragen zu den Themen — gegründet auf deiner Wissensbasis.</p></div>';
-  html+='<div class="card" style="margin-bottom:12px"><label class="fld">Kontext-Thema (optional — die KI antwortet dann gezielt dazu)</label>'
-    +'<select id="chat-ctx">'+opts+'</select></div>';
-  html+='<div class="chatwrap"><div class="chatlog" id="chatlog"></div>'
-    +'<div class="chatform"><textarea id="chat-input" placeholder="Frage zur BM-Prüfung stellen …" data-action="chat-key"></textarea>'
-    +'<button class="btn primary" data-action="chat-send">Senden</button></div></div>';
-  app.innerHTML=html;
+  var opts='<option value="">Allgemein (BM-Coach)</option>'+IDX.themen.map(function(r){return '<option value="'+esc(r.key)+'">'+esc(r.fach)+' · '+esc(r.thema.titel)+'</option>';}).join("");
+  app.innerHTML='<div class="pagehead"><h1>KI-Chat</h1><p>Fragen zu den Themen — gegründet auf deiner Wissensbasis.</p></div>'
+    +'<div class="card" style="margin-bottom:10px"><label class="fld">Kontext-Thema (optional)</label><select id="chat-ctx">'+opts+'</select></div>'
+    +'<div class="quickrow"><button class="btn sm" data-action="chat-quick" data-q="Gib mir eine Übungsaufgabe mit Lösung.">Übungsaufgabe</button><button class="btn sm" data-action="chat-quick" data-q="Erkläre das Thema in 3 Sätzen.">Kurz erklären</button><button class="btn sm" data-action="chat-quick" data-q="Was sind typische Prüfungsfragen dazu?">Prüfungsfragen</button><button class="btn sm ghost" data-action="chat-clear">Verlauf löschen</button></div>'
+    +'<div class="chatwrap"><div class="chatlog" id="chatlog"></div><div class="chatform"><textarea id="chat-input" placeholder="Frage stellen …" data-action="chat-key"></textarea><button class="btn primary" data-action="chat-send">Senden</button></div></div>';
   renderChatLog();
 }
-function renderChatLog(){
-  var log=document.getElementById("chatlog"); if(!log) return;
-  if(!U.chat.length){ log.innerHTML='<div class="empty" style="margin:auto"><div class="ic">✦</div><p>Stelle eine Frage zu einem Thema — z.B. „Erkläre mir den Unterschied zwischen OR und ZGB" oder „Gib mir eine Übungsaufgabe zu Zinseszins".</p></div>'; return; }
-  log.innerHTML=U.chat.map(function(m){
-    var cls=m.role==="user"?"user":(m.role==="error"?"err":"ai");
-    return '<div class="msg '+cls+'">'+esc(m.content)+'</div>';
-  }).join("");
+function renderChatLog(){ var log=document.getElementById("chatlog"); if(!log) return;
+  if(!U.chat.length){ log.innerHTML='<div class="empty" style="margin:auto"><div class="ic">✧</div><p>Stelle eine Frage — z.B. „Erkläre den Unterschied zwischen OR und ZGB".</p></div>'; return; }
+  log.innerHTML=U.chat.map(function(m){ var cls=m.role==="user"?"user":(m.role==="error"?"err":"ai"); return '<div class="msg '+cls+'">'+(cls==="ai"?md(m.content):esc(m.content))+'</div>'; }).join("");
   log.scrollTop=log.scrollHeight;
 }
-function chatSend(){
-  if(chatBusy) return;
-  var inp=document.getElementById("chat-input"); if(!inp) return;
-  var text=(inp.value||"").trim(); if(!text) return;
-  var ctxKey=(document.getElementById("chat-ctx")||{}).value||"";
-  inp.value=""; U.chat.push({role:"user", content:text}); saveU(); renderChatLog();
-
-  var sys="Du bist ein hilfreicher, praeziser Lerncoach fuer die Schweizer Berufsmaturitaets-Pruefung (BM, Ausrichtung Wirtschaft und Dienstleistungen). "
-    +"Antworte auf Deutsch in Schweizer Rechtschreibung (kein scharfes s, nutze ss). Sei konkret, strukturiert und pruefungsnah. "
-    +"Wenn du eine Uebungsaufgabe gibst, nenne am Ende die Loesung.";
-  var rec=IDX.byKey[ctxKey];
-  if(rec){ sys+="\n\nKontext-Thema: „"+rec.thema.titel+"\" (Fach "+rec.fach+").\nTheorie dazu:\n"+(rec.thema.theorie||"")
-    +((rec.thema.merksaetze||[]).length?"\nMerksaetze: "+rec.thema.merksaetze.join("; "):""); }
-
-  var msgs=U.chat.filter(function(m){return m.role==="user"||m.role==="assistant";})
-    .slice(-10).map(function(m){return {role:m.role, content:m.content};});
-
-  chatBusy=true;
-  var btn=document.querySelector('[data-action="chat-send"]'); if(btn){ btn.disabled=true; btn.innerHTML='<span class="spin"></span>'; }
-  // Platzhalter „tippt"
-  U.chat.push({role:"assistant", content:"…"}); renderChatLog(); U.chat.pop();
-
-  fetch(CFG.CHAT_URL, { method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ system:sys, messages:msgs, max_tokens:1024 }) })
-  .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, status:r.status, j:j}; }); })
-  .then(function(res){
-    if(!res.ok){
-      var m=res.j&&res.j.message?res.j.message:("Fehler "+res.status);
-      if(res.j && res.j.error==="not_configured"){
-        m="KI-Chat ist noch nicht konfiguriert. Der Owner muss in Netlify die Umgebungsvariable ANTHROPIC_API_KEY setzen (Site settings → Environment variables) und neu deployen.";
-      }
-      U.chat.push({role:"error", content:m});
-    } else {
-      U.chat.push({role:"assistant", content:(res.j.text||"(keine Antwort)")});
-    }
-    saveU(); renderChatLog();
-  })
-  .catch(function(e){ U.chat.push({role:"error", content:"Netzwerkfehler: "+e.message}); saveU(); renderChatLog(); })
-  .finally(function(){ chatBusy=false; var b=document.querySelector('[data-action="chat-send"]'); if(b){ b.disabled=false; b.textContent="Senden"; } });
+function chatSend(text){ if(chatBusy) return; var inp=document.getElementById("chat-input"); text=text||(inp?inp.value:""); text=(text||"").trim(); if(!text) return; if(inp) inp.value="";
+  var ctx=IDX.byKey[(document.getElementById("chat-ctx")||{}).value||""];
+  U.chat.push({role:"user",content:text}); saveChat(); renderChatLog();
+  var msgs=U.chat.filter(function(m){return m.role==="user"||m.role==="assistant";}).slice(-10).map(function(m){return {role:m.role,content:m.content};});
+  chatBusy=true; var b=document.querySelector('[data-action="chat-send"]'); if(b){b.disabled=true;b.innerHTML='<span class="spin"></span>';}
+  callAI(AI_SYS+themaContext(ctx), msgs, 1024).then(function(t){ U.chat.push({role:"assistant",content:t||"(keine Antwort)"}); })
+    .catch(function(e){ U.chat.push({role:"error",content:e.message}); })
+    .finally(function(){ chatBusy=false; saveChat(); renderChatLog(); var x=document.querySelector('[data-action="chat-send"]'); if(x){x.disabled=false;x.textContent="Senden";} });
 }
 
-/* ── Event-Delegation (data-action) ────────────────────────────────────── */
+/* ── Tageslektion (Lehrer) ─────────────────────────────────────────────── */
+function viewLektion(app){
+  app.innerHTML='<div class="pagehead"><h1>Tageslektion</h1></div><div class="empty"><div class="spin"></div><p>Lektion wird geladen …</p></div>';
+  var pl=plan();
+  fbGet(nsp("lessons/"+todayISO())).then(function(lesson){
+    var html='<div class="pagehead"><h1>Tageslektion</h1><p>'+esc(fmtDate(todayISO()))+(pl.set?' · Prüfung in '+pl.daysLeft+' Tagen':'')+'</p></div>';
+    // Von n8n gelieferte Lektion (Lehrer-Text + Fragen)
+    if(lesson){
+      if(lesson.titel) html+='<div class="pagehead" style="margin:0 0 10px"><h1 style="font-size:20px">'+esc(lesson.titel)+'</h1></div>';
+      if(lesson.text||lesson.intro) html+='<div class="card prose" style="margin-bottom:14px">'+md(lesson.text||lesson.intro)+'</div>';
+      var nf=(lesson.fragen||[]).length;
+      html+='<div class="card" style="text-align:center;padding:22px"><div style="font-size:15px;margin-bottom:6px">'+(nf?nf+' Frage(n) von deinem Lehrer':'Lektion')+'</div>'+(nf?'<button class="btn primary" data-action="quiz-lesson">Fragen starten</button>':'')+'</div>';
+      window.__lesson=lesson;
+    } else {
+      // Kein n8n-Text → eigener Plan-basierter Unterricht
+      html+='<div class="card" style="margin-bottom:14px"><div class="section-title" style="margin:0 0 8px">Heute dran</div>';
+      if(pl.set&&pl.todayTopics.length){ html+='<p class="muted" style="font-size:13px;margin:0 0 10px">Dein Plan sieht heute diese Themen vor:</p><div class="grid g-cards">';
+        pl.todayTopics.forEach(function(r){ html+='<a class="card click tcard" href="'+themaLink(r)+'" style="text-decoration:none"><div class="kap">'+esc(r.fach)+'</div><h3 style="font-size:14px">'+esc(r.thema.titel)+'</h3><div class="foot">'+ring(themaMastery(r),32)+'<span class="btn sm">Lernen →</span></div></a>'; });
+        html+='</div><div class="btnrow" style="margin-top:12px"><button class="btn primary" data-action="quiz-today">Fragen zu heutigen Themen</button><button class="btn violet" data-action="ai-lesson">✦ KI-Lektion generieren</button></div>';
+      } else if(!pl.set){ html+='<p class="muted">Setze zuerst dein Prüfungsdatum.</p><button class="btn primary" data-action="exam-ask">Prüfungsdatum setzen</button>'; }
+      else html+='<p>🎉 Alle Themen gemeistert! Wiederhole zur Sicherung.</p>';
+      html+='</div>';
+      var due=dueList(); if(due.length) html+='<div class="card" style="text-align:center"><div style="margin-bottom:8px">Ausserdem '+due.length+' fällige Wiederholung(en).</div><button class="btn" data-action="quiz-due">↻ Wiederholen</button></div>';
+      html+='<p class="muted" style="font-size:12px;margin-top:12px">Tipp: Der n8n-Workflow „BM Tageslektion" kann täglich einen Lehrer-Text + Fragen nach <span class="mono">'+CFG.NS+'/lessons/'+todayISO()+'</span> in Firebase schreiben — dann erscheint er hier oben.</p>';
+    }
+    app.innerHTML=html;
+  }).catch(function(e){ app.innerHTML='<div class="pagehead"><h1>Tageslektion</h1></div><div class="empty"><div class="ic">⚠️</div><p>'+esc(e.message)+'</p></div>'; });
+}
+
+/* ── Settings ──────────────────────────────────────────────────────────── */
+function viewSettings(app){
+  app.innerHTML='<div class="pagehead"><h1>Einstellungen</h1></div>'
+    +'<div class="card" style="margin-bottom:12px"><label class="fld">Prüfungsdatum</label><div style="display:flex;gap:9px;flex-wrap:wrap"><input type="date" id="set-exam" value="'+esc(U.config.examDate||"")+'" style="max-width:220px"><button class="btn sm" data-action="set-exam-save">Speichern</button></div><div class="muted" style="font-size:12px;margin-top:6px">Steuert Lernplan, Pacing und die „im Plan?"-Anzeige.</div></div>'
+    +'<div class="card" style="margin-bottom:12px"><label class="fld">Beherrschungs-Schwelle „gemeistert"</label><div class="muted" style="font-size:13px">Ein Thema gilt ab '+(MASTER*100)+'% als gemeistert (aus dem Leitner-Lernstand der Aufgaben).</div></div>'
+    +'<div class="card"><h3>Speicherung</h3><p class="muted" style="font-size:13px">Alle Daten (Fortschritt, Notizen, Fehler-Queue, Zieldatum, Chat) liegen in Firebase RTDB unter <span class="mono">'+CFG.NS+'/</span>. Lokaler Cache für schnelles Laden/Offline.</p><div class="btnrow" style="margin-top:8px"><button class="btn sm" data-action="reload-fb">Neu von Firebase laden</button></div></div>';
+}
+
+/* ── Pomodoro ──────────────────────────────────────────────────────────── */
+function togglePomodoro(){ var el=document.getElementById("pomo"),tt=document.getElementById("pomo-t");
+  if(timer){ clearInterval(timer); timer=null; el.classList.remove("on"); tt.textContent="25:00"; return; }
+  var end=Date.now()+25*60000; el.classList.add("on");
+  timer=setInterval(function(){ var left=Math.max(0,end-Date.now()); var m=Math.floor(left/60000),s=Math.floor(left%60000/1000);
+    tt.textContent=String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+    if(left<=0){ clearInterval(timer); timer=null; el.classList.remove("on"); toast("Pomodoro fertig — kurze Pause!"); } }, 500);
+}
+function speak(text){ try{ speechSynthesis.cancel(); var u=new SpeechSynthesisUtterance(text.slice(0,4000)); u.lang="de-CH"; speechSynthesis.speak(u); toast("Vorlesen … (nochmal tippen zum Stoppen)"); }catch(e){ toast("Vorlesen nicht verfügbar",true); } }
+
+/* ── Event-Delegation ──────────────────────────────────────────────────── */
 document.addEventListener("click", function(e){
-  var el=e.target.closest("[data-action]"); if(!el) return;
-  var a=el.getAttribute("data-action");
-  var app=document.getElementById("app");
+  var el=e.target.closest("[data-action]"); if(!el) return; var a=el.getAttribute("data-action"); var app=document.getElementById("app");
   switch(a){
-    case "theme": {
-      var light=document.documentElement.classList.toggle("theme-light");
-      document.documentElement.classList.toggle("theme-dark",!light);
-      try{ localStorage.setItem("quantus_themeMode", light?"light":"dark"); }catch(x){}
-      break;
-    }
-    case "go": location.hash=el.getAttribute("data-h"); break;
-    case "goal-save": {
-      var k=el.getAttribute("data-key"), v=(document.getElementById("goal-input")||{}).value||"";
-      if(v){ U.goals[k]=v; } else { delete U.goals[k]; } saveU(); toast("Zieldatum gespeichert"); route(); break;
-    }
-    case "goal-clear": { delete U.goals[el.getAttribute("data-key")]; saveU(); toast("Zieldatum entfernt"); route(); break; }
-    case "quiz-thema": { quiz=buildQuizFromThema(el.getAttribute("data-key")); if(quiz&&quiz.items.length){ renderQuiz(app); } else { toast("Keine Aufgaben vorhanden"); } break; }
-    case "quiz-due":   { quiz=buildQuizFromDue(); if(quiz.items.length) renderQuiz(app); else toast("Nichts fällig"); break; }
-    case "quiz-lesson":{ if(window.__lesson){ quiz=buildQuizFromLesson(window.__lesson); U.lesson.doneDates[todayISO()]=true; saveU(); renderQuiz(app); } break; }
-    case "quiz-mc": { quiz.chosen=parseInt(el.getAttribute("data-i"),10); quiz.revealed=true; renderQuiz(app); break; }
-    case "quiz-reveal": { quiz.revealed=true; renderQuiz(app); break; }
-    case "quiz-grade": {
-      var ok=el.getAttribute("data-ok")==="1";
-      var it=quiz.items[quiz.idx];
-      if(it && it.key) gradeAufg(it.key, ok, {a:it.a, fach:(it.rec&&it.rec.fach)||it.fach, thema:(it.rec&&it.rec.thema&&it.rec.thema.titel)});
-      if(ok) quiz.results.correct++; else quiz.results.wrong++;
-      quiz.idx++; quiz.revealed=false; quiz.chosen=null; renderQuiz(app); break;
-    }
-    case "quiz-quit": quiz=null; break; // Link navigiert selbst
+    case "theme": { var light=document.documentElement.classList.toggle("theme-light"); document.documentElement.classList.toggle("theme-dark",!light); try{localStorage.setItem("quantus_themeMode",light?"light":"dark");}catch(x){} break; }
+    case "nav-search": location.hash="#/suche"; break;
+    case "nav-settings": location.hash="#/settings"; break;
+    case "pomodoro": togglePomodoro(); break;
+    case "modal-close": closeModal(); break;
+    case "modal-bg": if(e.target===el) closeModal(); break;
+    case "exam-ask": askExamDate(); break;
+    case "exam-save": { var v=(document.getElementById("ex-date")||{}).value; if(v){ U.config.examDate=v; U.config.planStart=todayISO(); saveConfig(); closeModal(); toast("Lernplan erstellt"); route(); } break; }
+    case "set-exam-save": { var v2=(document.getElementById("set-exam")||{}).value; U.config.examDate=v2||null; if(v2&&!U.config.planStart) U.config.planStart=todayISO(); saveConfig(); toast("Gespeichert"); route(); break; }
+    case "reload-fb": { fbGet(CFG.NS).then(function(d){ d=d||{}; U.aufg=d.aufg||{};U.notes=d.notes||{};U.config=d.config||{};U.chat=d.chat||[];U.activity=d.activity||{}; cacheSave(); toast("Neu geladen"); route(); }).catch(function(x){toast(x.message,true);}); break; }
+    case "goto": location.hash=el.getAttribute("data-h"); break;
+    /* Quiz */
+    case "quiz-thema": quiz=buildQuizFromThema(el.getAttribute("data-key")); quiz&&quiz.items.length?renderQuiz(app):toast("Keine Aufgaben"); break;
+    case "quiz-due": quiz=buildQuizFromDue(); quiz.items.length?renderQuiz(app):toast("Nichts fällig"); break;
+    case "quiz-weak": quiz=buildQuizWeak(); quiz.items.length?renderQuiz(app):toast("Keine schwachen Themen"); break;
+    case "quiz-diff": quiz=buildQuizDifficulty(el.getAttribute("data-l")); quiz.items.length?renderQuiz(app):toast("Keine Aufgaben"); break;
+    case "quiz-sim": quiz=buildQuizSim(parseInt(el.getAttribute("data-n"),10)); renderQuiz(app); break;
+    case "quiz-today": { var pl=plan(); quiz=buildQuizTopics(pl.todayTopics); quiz.items.length?renderQuiz(app):toast("Keine Themen"); break; }
+    case "quiz-lesson": if(window.__lesson){ quiz=buildQuizFromLesson(window.__lesson); renderQuiz(app); } break;
+    case "quiz-mc": quiz.chosen=parseInt(el.getAttribute("data-i"),10); quiz.revealed=true; renderQuiz(app); break;
+    case "quiz-reveal": quiz.revealed=true; renderQuiz(app); break;
+    case "quiz-grade": { var ok=el.getAttribute("data-ok")==="1"; var it=quiz.items[quiz.idx]; if(it&&it.key) gradeAufg(it.key,ok,{a:it.a,fach:(it.rec&&it.rec.fach),thema:(it.rec&&it.rec.thema&&it.rec.thema.titel)}); if(ok)quiz.results.correct++;else quiz.results.wrong++; quiz.idx++; quiz.revealed=false; quiz.chosen=null; renderQuiz(app); break; }
+    case "quiz-quit": quiz=null; break;
+    /* Karteikarten */
+    case "card-flip": app.__flip=!app.__flip; app.querySelector(".flip").classList.toggle("flipped",app.__flip); break;
+    case "card-next": app.__i=(app.__i+1)%app.__deck.length; app.__flip=false; viewKarteikarten(app); break;
+    case "card-prev": app.__i=(app.__i-1+app.__deck.length)%app.__deck.length; app.__flip=false; viewKarteikarten(app); break;
+    case "card-shuffle": app.__deck=shuffle(app.__deck); app.__i=0; app.__flip=false; viewKarteikarten(app); break;
+    /* Chat */
     case "chat-send": chatSend(); break;
+    case "chat-quick": chatSend(el.getAttribute("data-q")); break;
+    case "chat-clear": U.chat=[]; saveChat(); renderChatLog(); break;
+    /* AI */
+    case "ai-explain": { var r=IDX.byKey[el.getAttribute("data-key")]; aiModal("Erklärung: "+r.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erklaere das Thema verstaendlich und pruefungsnah, mit einem Beispiel."+themaContext(r)}], 1200); }); break; }
+    case "ai-simplify": { var r2=IDX.byKey[el.getAttribute("data-key")]; aiModal("Einfach erklärt: "+r2.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erklaere das Thema so einfach wie moeglich, wie fuer eine 12-jaehrige Person, mit einer Alltags-Analogie."+themaContext(r2)}], 900); }); break; }
+    case "ai-summary": { var r3=IDX.byKey[el.getAttribute("data-key")]; aiModal("Zusammenfassung: "+r3.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Fasse das Thema in maximal 5 Bullet-Points zusammen (das Pruefungsrelevante)."+themaContext(r3)}], 700); }); break; }
+    case "ai-more": { var r4=IDX.byKey[el.getAttribute("data-key")]; aiModal("Zusätzliche Aufgaben: "+r4.thema.titel, function(){ return callAI(AI_SYS, [{role:"user",content:"Erstelle 3 neue Uebungsaufgaben zu diesem Thema (Mix aus Multiple-Choice und offen), jeweils mit Loesung und kurzer Erklaerung."+themaContext(r4)}], 1200); }); break; }
+    case "ai-hint": { var it2=quiz.items[quiz.idx]; aiModal("Tipp", function(){ return callAI(AI_SYS, [{role:"user",content:"Gib einen kurzen Hinweis (KEINE Loesung nennen!) zu dieser Aufgabe: „"+it2.a.frage+"\""}], 300); }); break; }
+    case "ai-grade": { var it3=quiz.items[quiz.idx]; var ua=(document.getElementById("open-answer")||{}).value||""; if(!ua.trim()){ toast("Erst eine Antwort eingeben"); break; }
+      aiModal("KI-Feedback", function(){ return callAI(AI_SYS, [{role:"user",content:"Frage: „"+it3.a.frage+"\"\nMusterloesung: „"+it3.a.loesung+"\"\nMeine Antwort: „"+ua+"\"\n\nBewerte meine Antwort (richtig/teilweise/falsch), sage warum und was fehlt. Kurz."}], 600); }); break; }
+    case "ai-lesson": { var pl2=plan(); var names=pl2.todayTopics.map(function(r){return r.thema.titel+" ("+r.fach+")";}).join(", ");
+      aiModal("KI-Tageslektion", function(){ return callAI(AI_SYS, [{role:"user",content:"Halte eine kurze, motivierende Tageslektion (wie ein Lehrer) zu diesen Themen fuer heute: "+names+". Erklaere die Kernidee jedes Themas in 2-3 Saetzen und gib am Ende einen Lerntipp."}], 1400); }); break; }
+    case "tts": { var rr=IDX.byKey[el.getAttribute("data-key")]; if(window.__speaking){ speechSynthesis.cancel(); window.__speaking=false; } else { speak(rr.thema.titel+". "+(rr.thema.theorie||"")); window.__speaking=true; } break; }
   }
 });
-/* Notiz-Autosave + Chat-Enter */
 var noteTimer=null;
-document.addEventListener("input", function(e){
-  var el=e.target;
-  if(el.getAttribute && el.getAttribute("data-action")==="note-input"){
-    var k=el.getAttribute("data-key"), st=document.getElementById("note-status");
-    if(st) st.textContent="…";
-    clearTimeout(noteTimer);
-    noteTimer=setTimeout(function(){ if((el.value||"").trim()){ U.notes[k]=el.value; } else { delete U.notes[k]; }
-      saveU(); if(st){ st.textContent="Gespeichert · "+new Date().toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"}); } }, 500);
-  }
+document.addEventListener("input", function(e){ var el=e.target;
+  if(el.getAttribute&&el.getAttribute("data-action")==="note-input"){ var k=el.getAttribute("data-key"),st=document.getElementById("note-status"); if(st)st.textContent="…";
+    clearTimeout(noteTimer); noteTimer=setTimeout(function(){ var fk=fbKey(k); if((el.value||"").trim()) U.notes[fk]=el.value; else delete U.notes[fk]; saveNote(k); if(st)st.textContent="✓ gespeichert"; }, 600); }
+  if(el.getAttribute&&el.getAttribute("data-action")==="search-live"){ runSearch(el.value); }
 });
 document.addEventListener("keydown", function(e){
-  if(e.target && e.target.id==="chat-input" && e.key==="Enter" && !e.shiftKey){ e.preventDefault(); chatSend(); }
+  if(e.target&&e.target.id==="chat-input"&&e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); chatSend(); }
+  if(quiz&&!quiz.revealed){ var it=quiz.items[quiz.idx]; if(it&&it.a.typ==="mc"&&/^[1-9]$/.test(e.key)){ var i=parseInt(e.key,10)-1; if(i<(it.a.optionen||[]).length){ quiz.chosen=i; quiz.revealed=true; renderQuiz(document.getElementById("app")); } } }
 });
 
 boot();
