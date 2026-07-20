@@ -103807,9 +103807,14 @@ window.addEventListener("hashchange", function(){
   async function buildTextLayer(page, viewport, tl, i){
     try {
       const tc=await page.getTextContent();
+      const styles=tc.styles||{};
       ED.textCache[i]=tc.items.map(it=>it.str).join(" ");
       const frag=document.createDocumentFragment();
-      tc.items.forEach(it=>{ if(!it.str) return; const t=window.pdfjsLib.Util.transform(viewport.transform, it.transform); const fs=Math.hypot(t[2],t[3])||10; const sp=document.createElement("span"); sp.textContent=it.str; sp.style.left=t[4]+"px"; sp.style.top=(t[5]-fs)+"px"; sp.style.fontSize=fs+"px"; sp.style.fontFamily=it.fontName||"sans-serif"; sp.dataset.tw=(it.width!=null? it.width*viewport.scale : 0); frag.appendChild(sp); });
+      // Positionierung wie in PDF.js: t[5] ist die Grundlinie (Baseline), NICHT die
+      // Oberkante. Die Span-Oberkante liegt bei baseline − Oberlänge (ascent). Früher
+      // wurde stattdessen die volle Zeilenhöhe (fs) abgezogen, dadurch saßen Textauswahl
+      // und Markierungen zu hoch über dem sichtbaren Text ("Text verschoben").
+      tc.items.forEach(it=>{ if(!it.str) return; const t=window.pdfjsLib.Util.transform(viewport.transform, it.transform); const fs=Math.hypot(t[2],t[3])||10; const st=styles[it.fontName]||{}; let asc=fs; if(st.ascent) asc=st.ascent*fs; else if(st.descent) asc=(1+st.descent)*fs; const sp=document.createElement("span"); sp.textContent=it.str; sp.style.left=t[4]+"px"; sp.style.top=(t[5]-asc)+"px"; sp.style.fontSize=fs+"px"; sp.style.fontFamily=st.fontFamily||it.fontName||"sans-serif"; sp.dataset.tw=(it.width!=null? it.width*viewport.scale : 0); frag.appendChild(sp); });
       tl.appendChild(frag);
       // Horizontale Skalierung: die Ersatzschrift rendert breiter/schmaler als die
       // PDF-Originalschrift. Ohne diese Korrektur liegen Textauswahl, Such-Treffer
