@@ -15934,8 +15934,10 @@ const SMARTER = {
   pendingUpload: null,
   uploading: false,
   generating: false,
+  topicText: "",
   pasteText: "",
-  pasteTitle: ""
+  pasteTitle: "",
+  archive: { loaded: false, loading: false, docs: {}, selected: null }
 };
 
 function smarterRootRef() {
@@ -16034,6 +16036,7 @@ function viewSmarter() {
 
   const tabs = [
     { key: "today", icon: "☀️", label: "Heute" },
+    { key: "archive", icon: "🗄️", label: "Archiv" },
     { key: "upload", icon: "📥", label: "Upload" },
     { key: "queue", icon: "📚", label: "Warteschlange" },
     { key: "settings", icon: "⚙️", label: "Einstellungen" }
@@ -16051,7 +16054,8 @@ function viewSmarter() {
   let body = "";
   if (!SMARTER.noFirebase && !SMARTER.loaded && !SMARTER.config) {
     body = '<div class="sm-skeleton">Lädt Lernstoff …</div>';
-  } else if (active === "upload") body = smarterTabUpload();
+  } else if (active === "archive") body = smarterTabArchive();
+  else if (active === "upload") body = smarterTabUpload();
   else if (active === "queue") body = smarterTabQueue();
   else if (active === "settings") body = smarterTabSettings();
   else body = smarterTabToday();
@@ -16099,8 +16103,20 @@ function viewSmarter() {
       .sm-notice h3{margin:0 0 6px;font-size:14px;color:var(--text)}
       .sm-notice-inline{background:color-mix(in oklab,var(--warn) 12%,transparent);border:1px solid color-mix(in oklab,var(--warn) 30%,transparent);color:var(--text2);font-size:12.5px;line-height:1.5;padding:9px 13px;border-radius:10px;margin:10px 0 2px}
       .sm-btn-touch{min-height:44px;padding:11px 18px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:7px}
-      .sm-btn[disabled]{opacity:.6;cursor:progress}
+      .sm-btn[disabled]{opacity:.6;cursor:not-allowed}
       @media (max-width:560px){.sm-btn-touch{width:100%;justify-content:center}}
+      .sm-arch-list{display:flex;flex-direction:column;gap:9px}
+      .sm-arch-item{appearance:none;text-align:left;width:100%;display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;cursor:pointer;transition:var(--transition);min-height:56px}
+      .sm-arch-item:hover{border-color:var(--sm-coral);background:var(--hover)}
+      .sm-arch-main{flex:1;min-width:0}
+      .sm-arch-date{font-size:12px;font-weight:700;color:var(--sm-petrol);letter-spacing:.3px}
+      .sm-arch-title{font-size:14px;font-weight:700;color:var(--text);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sm-arch-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+      .sm-arch-chev{flex:none;font-size:22px;color:var(--muted);line-height:1}
+      .sm-badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.2px}
+      .sm-badge-warn{background:color-mix(in oklab,var(--warn) 16%,transparent);color:var(--warn);border:1px solid color-mix(in oklab,var(--warn) 34%,transparent)}
+      .sm-badge-ok{background:color-mix(in oklab,var(--sm-petrol) 16%,transparent);color:var(--sm-petrol);border:1px solid color-mix(in oklab,var(--sm-petrol) 34%,transparent)}
+      .sm-badge-muted{background:var(--panel);color:var(--muted);border:1px solid var(--border)}
       .sm-skeleton{padding:40px;text-align:center;color:var(--muted);font-size:14px}
       .sm-offline{background:color-mix(in oklab,var(--warn) 14%,transparent);border:1px solid color-mix(in oklab,var(--warn) 32%,transparent);color:var(--text2);font-size:12.5px;padding:9px 13px;border-radius:10px;margin-bottom:14px}
       .sm-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
@@ -16158,6 +16174,45 @@ function smarterAnsweredCount(questions) {
   return (questions || []).filter(function(q) { const id = q && q.id; return id && a[id] && String(a[id].text || "").trim(); }).length;
 }
 
+// ── Archiv-Helfer (rein, testbar: kein DOM/Firebase) ──
+// Leitet einen Anzeige-Titel aus einem Dokument ab: explizites title/unitTitle,
+// sonst erstes <h2> aus theoryHtml (Fallback-Docs tragen dort den Topic), sonst
+// "Lerndokument <dayKey>".
+function smarterDocTitle(d, dayKey) {
+  d = d || {};
+  if (d.title && String(d.title).trim()) return String(d.title).trim();
+  if (d.unitTitle && String(d.unitTitle).trim()) return String(d.unitTitle).trim();
+  const html = String(d.theoryHtml || "");
+  const m = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
+  if (m) {
+    const t = m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    if (t) return t;
+  }
+  return "Lerndokument " + (dayKey || "");
+}
+// Baut die nach Datum absteigend sortierte Archiv-Liste aus dem documents-Objekt.
+// Robust gegen leere/fehlerhafte Einträge.
+function smarterArchiveEntries(docsObj) {
+  const src = (docsObj && typeof docsObj === "object") ? docsObj : {};
+  const entries = Object.keys(src).map(function(dayKey) {
+    const d = (src[dayKey] && typeof src[dayKey] === "object") ? src[dayKey] : {};
+    const questions = Array.isArray(d.questions) ? d.questions : [];
+    const answers = (d.answers && typeof d.answers === "object") ? d.answers : {};
+    const answered = questions.filter(function(q) { const id = q && q.id; return id && answers[id] && String(answers[id].text || "").trim(); }).length;
+    return {
+      dayKey: dayKey,
+      title: smarterDocTitle(d, dayKey),
+      done: !!d.done,
+      generationError: !!d.generationError,
+      questionCount: questions.length,
+      answered: answered,
+      empty: !(d && (d.documentHtml || d.theoryHtml || questions.length))
+    };
+  });
+  entries.sort(function(a, b) { return a.dayKey < b.dayKey ? 1 : (a.dayKey > b.dayKey ? -1 : 0); });
+  return entries;
+}
+
 // Baut den „Jetzt/Neu generieren"-Button (mobil-tauglich, min. 44px Touch-Ziel
 // via .sm-btn-touch). hasDoc → „Neu generieren" (Überschreiben, Bestätigung im
 // Handler); sonst „Jetzt generieren". Während der Generierung deaktiviert + Label.
@@ -16171,6 +16226,29 @@ function smarterGenerateButton(hasDoc) {
     (busy ? ' disabled aria-busy="true"' : "") + '>' + label + '</button>';
 }
 
+// Karte „Eigenes Thema generieren": Feld (optional) + Button. POSTet an
+// generateWebhookUrl mit { topic, source:'manual' }. Ohne URL → Button disabled
+// + Hinweis. Feld-Wert lebt in SMARTER.topicText (Update ohne Re-Render).
+function smarterTopicGenerateCard() {
+  const url = (SMARTER.config && SMARTER.config.generateWebhookUrl) ? String(SMARTER.config.generateWebhookUrl).trim() : "";
+  const busy = !!SMARTER.generating;
+  const disabled = busy || !url;
+  let html = '<div class="sm-card">';
+  html += '<h3>✨ Eigenes Thema generieren</h3>';
+  html += '<div class="sm-muted" style="margin-bottom:10px">Optional ein Thema eingeben — das Tagesdokument wird dazu erzeugt. Leer lassen = automatische Themenwahl aus der Warteschlange.</div>';
+  html += '<div class="sm-field"><label>Thema (optional)</label>';
+  html += '<input type="text" id="smTopicInput" placeholder="z. B. Photosynthese, Schweizer AHV, …" value="' + esc(String(SMARTER.topicText || "")) + '"' +
+    (disabled ? " disabled" : "") + ' oninput="smarterOnTopicInput(this)"></div>';
+  html += '<div class="sm-row">';
+  html += '<button class="sm-btn sm-primary sm-btn-touch" data-action="smarter-generate-topic"' +
+    (disabled ? " disabled" + (busy ? ' aria-busy="true"' : "") : "") + '>' +
+    (busy ? "⏳ Wird generiert …" : "✨ Thema generieren") + '</button>';
+  html += '</div>';
+  if (!url) html += '<div class="sm-notice-inline" style="margin-top:10px">⚠ <code>generateWebhookUrl</code> ist noch nicht in <code>smarter/config</code> gesetzt — die Generierung ist deaktiviert. Trage die Webhook-URL in den Einstellungen bzw. in der RTDB ein.</div>';
+  html += '</div>';
+  return html;
+}
+
 function smarterTabToday() {
   const doc = SMARTER.today;
   const todayKey = smarterTodayKey();
@@ -16178,6 +16256,7 @@ function smarterTabToday() {
     let html = smarterNotice("Noch kein Lernstoff für heute",
       "Für " + todayKey + " liegt noch kein Tagesdokument vor. Der Smarter-Daily-Workflow (n8n) erzeugt es automatisch um " + esc((SMARTER.config && SMARTER.config.scheduleTime) || "04:00") + " Uhr. Du kannst es auch sofort selbst anstossen oder oben eine Quelle hochladen, damit die Warteschlange gefüllt wird.");
     html += '<div class="sm-row" style="margin-top:14px">' + smarterGenerateButton(false) + '</div>';
+    html += smarterTopicGenerateCard();
     return html;
   }
   const questions = Array.isArray(doc.questions) ? doc.questions : [];
@@ -16206,6 +16285,8 @@ function smarterTabToday() {
   html += '<div class="sm-row" style="margin-top:6px">' + smarterGenerateButton(true) + '</div>';
   html += '<div class="sm-muted" style="margin-top:8px">Beantworte die Fragen direkt im Dokument — deine Antworten werden automatisch in Quantus gespeichert. Der Download ist eine statische Kopie inkl. deiner Antworten.</div>';
   html += '</div>';
+
+  html += smarterTopicGenerateCard();
 
   if (doc.documentHtml) {
     // Standalone-HTML isoliert im iframe rendern; Antwortfelder werden nach dem
@@ -16250,6 +16331,113 @@ function smarterNativeToday(doc, questions) {
   return html;
 }
 
+// ── Archiv: alle Dokumente laden (lazy, beim ersten Öffnen) ──
+async function smarterLoadArchive(force) {
+  if (SMARTER.archive.loading) return;
+  if (SMARTER.archive.loaded && !force) return;
+  const db = smarterRootRef();
+  if (!db) { SMARTER.archive.loaded = true; render(); return; }
+  SMARTER.archive.loading = true;
+  try {
+    const snap = await db.child("documents").once("value");
+    SMARTER.archive.docs = snap.val() || {};
+  } catch (e) {
+    console.warn("Smarter archive load:", e);
+    SMARTER.archive.docs = {};
+  }
+  SMARTER.archive.loading = false; SMARTER.archive.loaded = true;
+  render();
+}
+
+function smarterTabArchive() {
+  // Lazy-Load beim ersten Öffnen (nicht im Render blockieren).
+  if (!SMARTER.noFirebase && !SMARTER.archive.loaded && !SMARTER.archive.loading) {
+    setTimeout(function() { smarterLoadArchive(false); }, 0);
+  }
+  // Detailansicht (read-only) eines gewählten Tages.
+  if (SMARTER.archive.selected) {
+    return smarterArchiveDetail(SMARTER.archive.selected);
+  }
+  if (!SMARTER.archive.loaded && !SMARTER.noFirebase) {
+    return '<div class="sm-skeleton">Lädt Archiv …</div>';
+  }
+  const entries = smarterArchiveEntries(SMARTER.archive.docs);
+  let html = '<div class="sm-card"><div class="sm-row" style="justify-content:space-between">';
+  html += '<h3 style="margin:0">🗄️ Archiv</h3>';
+  html += '<button class="sm-btn sm-mini sm-ghost" data-action="smarter-archive-refresh">↻ Aktualisieren</button>';
+  html += '</div>';
+  html += '<div class="sm-muted" style="margin-top:6px">Alle bisher erzeugten Tagesdokumente. Klick öffnet das Dokument inkl. deiner Antworten (nur Ansicht).</div></div>';
+  if (!entries.length) {
+    html += smarterNotice("Noch keine Dokumente", "Sobald der Smarter-Daily-Workflow oder „Thema generieren“ ein Dokument erzeugt, erscheint es hier.");
+    return html;
+  }
+  html += '<div class="sm-arch-list">';
+  html += entries.map(function(e) {
+    const badges = [];
+    if (e.generationError) badges.push('<span class="sm-badge sm-badge-warn">⚠ Fallback/Rohtext</span>');
+    if (e.done) badges.push('<span class="sm-badge sm-badge-ok">✓ Erledigt</span>');
+    if (e.empty) badges.push('<span class="sm-badge sm-badge-muted">leer</span>');
+    if (!e.empty && e.questionCount) badges.push('<span class="sm-badge sm-badge-muted">' + e.answered + '/' + e.questionCount + ' beantwortet</span>');
+    return '<button class="sm-arch-item" data-action="smarter-archive-open" data-day="' + esc(e.dayKey) + '">' +
+      '<div class="sm-arch-main"><div class="sm-arch-date">' + esc(e.dayKey) + '</div>' +
+      '<div class="sm-arch-title">' + esc(e.title) + '</div>' +
+      (badges.length ? '<div class="sm-arch-badges">' + badges.join("") + '</div>' : "") +
+      '</div><div class="sm-arch-chev">›</div></button>';
+  }).join("");
+  html += '</div>';
+  return html;
+}
+
+function smarterArchiveDetail(dayKey) {
+  const doc = (SMARTER.archive.docs && SMARTER.archive.docs[dayKey] && typeof SMARTER.archive.docs[dayKey] === "object") ? SMARTER.archive.docs[dayKey] : null;
+  let html = '<div class="sm-card"><div class="sm-row" style="justify-content:space-between">';
+  html += '<button class="sm-btn sm-mini" data-action="smarter-archive-back">← Zurück</button>';
+  html += '<h3 style="margin:0;text-align:right">📖 ' + esc(dayKey) + '</h3>';
+  html += '</div>';
+  if (doc && doc.generationError) {
+    html += '<div class="sm-notice-inline">⚠ Rohtext-Fallback (' + esc(String(doc.errorMessage || "Aufbereitung fehlgeschlagen")) + ').</div>';
+  }
+  html += '</div>';
+  if (!doc) {
+    html += smarterNotice("Dokument nicht gefunden", "Für " + dayKey + " liegt kein lesbares Dokument vor.");
+    return html;
+  }
+  const questions = Array.isArray(doc.questions) ? doc.questions : [];
+  const answered = smarterArchiveEntries({ x: doc })[0].answered;
+  html += '<div class="sm-summary">';
+  html += '<div class="sm-stat"><div class="v">' + questions.length + '</div><div class="l">Fragen</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + answered + '</div><div class="l">Beantwortet</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + (doc.done ? "✓" : "–") + '</div><div class="l">Erledigt</div></div>';
+  html += '</div>';
+  if (doc.documentHtml || doc.theoryHtml || questions.length) {
+    // read-only im iframe; Mount über den Post-Render-Hook (smarterMountDocument).
+    html += '<div class="sm-doc-frame"><iframe id="smarterArchiveFrame" class="sm-doc-iframe" title="Smarter Archiv-Dokument ' + esc(dayKey) + '" scrolling="no"></iframe></div>';
+  } else {
+    html += smarterNotice("Kein Inhalt", "Dieses Dokument enthält keinen darstellbaren Inhalt.");
+  }
+  return html;
+}
+
+// Rendert ein Dokument READ-ONLY (Antworten statisch eingebacken, nicht editierbar)
+// in ein iframe. Nutzt dieselbe Bau-Logik wie der Download.
+window.smarterMountReadonly = function(iframe, doc, dayKey) {
+  if (!iframe || !doc) return;
+  const answers = (doc.answers && typeof doc.answers === "object") ? doc.answers : {};
+  const questions = Array.isArray(doc.questions) ? doc.questions : [];
+  let src;
+  if (doc.documentHtml) {
+    src = window.smarterBuildDownloadHtml(doc.documentHtml, answers, questions);
+  } else {
+    src = smarterBuildFallbackDownloadHtml(doc, answers, questions, dayKey);
+  }
+  src = String(src || "").replace(/<script\b[\s\S]*?<\/script>/gi, "");
+  iframe.addEventListener("load", function onl() {
+    iframe.removeEventListener("load", onl);
+    smarterSizeIframe(iframe);
+  });
+  iframe.srcdoc = src;
+};
+
 // ── Antwort speichern (Debounce; sofort bei Blur) ──
 async function smarterCommitAnswer(qid, text, fbEl) {
   const db = smarterRootRef();
@@ -16292,13 +16480,23 @@ function smarterMountDocument() {
   try {
     const h = (typeof parseHash === "function") ? parseHash() : { route: (APP.state.ui && APP.state.ui.route) };
     if (h.route !== "smarter") return;
-    if ((SMARTER.tab || "today") !== "today") return;
-    const doc = SMARTER.today;
-    const iframe = document.getElementById("smarterDocFrame");
-    if (!iframe || !doc || !doc.documentHtml) return;
-    if (iframe.dataset.mounted === "1") return;
-    iframe.dataset.mounted = "1";
-    smarterMountInto(iframe, doc);
+    const tab = SMARTER.tab || "today";
+    if (tab === "today") {
+      const doc = SMARTER.today;
+      const iframe = document.getElementById("smarterDocFrame");
+      if (!iframe || !doc || !doc.documentHtml) return;
+      if (iframe.dataset.mounted === "1") return;
+      iframe.dataset.mounted = "1";
+      smarterMountInto(iframe, doc);
+    } else if (tab === "archive" && SMARTER.archive.selected) {
+      const dayKey = SMARTER.archive.selected;
+      const doc = SMARTER.archive.docs && SMARTER.archive.docs[dayKey];
+      const iframe = document.getElementById("smarterArchiveFrame");
+      if (!iframe || !doc) return;
+      if (iframe.dataset.mounted === "1") return;
+      iframe.dataset.mounted = "1";
+      window.smarterMountReadonly(iframe, doc, dayKey);
+    }
   } catch (e) { console.warn("Smarter mount:", e); }
 }
 window.__smarterPostRender = smarterMountDocument;
@@ -16416,8 +16614,8 @@ window.smarterBuildDownloadHtml = function(documentHtml, answers, questions) {
   }
 };
 
-function smarterBuildFallbackDownloadHtml(doc, answers, questions) {
-  const dk = SMARTER.dayKey || smarterTodayKey();
+function smarterBuildFallbackDownloadHtml(doc, answers, questions, dayKey) {
+  const dk = dayKey || SMARTER.dayKey || smarterTodayKey();
   const rows = (questions || []).map(function(item, i) {
     const qid = (item && item.id) ? item.id : ("q" + (i + 1));
     const q = (typeof item === "string") ? item : (item.q || item.question || "");
@@ -16688,6 +16886,49 @@ async function smarterGenerateToday(hasDoc) {
   SMARTER.generating = false; render();
 }
 
+// Feld-Wert ohne Re-Render mitschreiben (Fokus bleibt erhalten); Button-Disabled
+// nur nachziehen. Analog zu smarterOnPasteInput.
+window.smarterOnTopicInput = function(inp) {
+  SMARTER.topicText = inp ? inp.value : "";
+};
+
+// Eigenes Thema generieren: POST an generateWebhookUrl mit { topic, source }.
+// Leeres Thema = automatische Auswahl (n8n fällt auf die Queue zurück).
+async function smarterGenerateTopic() {
+  if (SMARTER.generating) return;
+  const url = (SMARTER.config && SMARTER.config.generateWebhookUrl) ? String(SMARTER.config.generateWebhookUrl).trim() : "";
+  if (!url) {
+    if (typeof toast === "function") toast("info", "Smarter", "generateWebhookUrl fehlt noch — in smarter/config eintragen.");
+    return;
+  }
+  const topic = String(SMARTER.topicText || "").trim();
+  SMARTER.generating = true; render();
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: topic, source: "manual" })
+    });
+    let data = null;
+    try { data = await resp.json(); } catch (e) {}
+    if (resp.ok && !(data && data.ok === false)) {
+      if (typeof toast === "function") toast("ok", "Smarter", "Generierung gestartet, Dokument erscheint in Kürze …");
+      SMARTER.topicText = "";
+      // Generierung (Anthropic) dauert etwas -> nach kurzer Verzögerung neu laden.
+      SMARTER.generating = false; render();
+      setTimeout(function() { SMARTER.loaded = false; smarterLoad(); }, 3500);
+      return;
+    } else {
+      const msg = (data && (data.error || data.message)) ? String(data.error || data.message) : ("HTTP " + resp.status);
+      if (typeof toast === "function") toast("warn", "Smarter", "Generierung nicht bestätigt (" + msg + ")");
+    }
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Generierung fehlgeschlagen: " + ((e && e.message) || e));
+    console.warn("Smarter generate topic:", e);
+  }
+  SMARTER.generating = false; render();
+}
+
 // Blanken Text hinzufuegen — baut ein File aus dem Textfeld und schickt es durch
 // GENAU denselben Weg wie der Datei-Upload: smarterAcceptFile (Encoding via
 // smarterReadFileToBase64) -> smarterDoUpload (POST an ingestWebhookUrl). Kein
@@ -16799,6 +17040,10 @@ function smarterHandleAction(action, el, e) {
     case "smarter-download": smarterDownloadDocument(); break;
     case "smarter-toggle-done": smarterToggleDone(); break;
     case "smarter-generate": smarterGenerateToday(el.dataset.hasDoc === "1"); break;
+    case "smarter-generate-topic": smarterGenerateTopic(); break;
+    case "smarter-archive-open": SMARTER.archive.selected = el.dataset.day || null; render(); break;
+    case "smarter-archive-back": SMARTER.archive.selected = null; render(); break;
+    case "smarter-archive-refresh": smarterLoadArchive(true); break;
     case "smarter-queue-up": smarterQueueMove(el.dataset.id, "up"); break;
     case "smarter-queue-down": smarterQueueMove(el.dataset.id, "down"); break;
     case "smarter-queue-del": smarterQueueDelete(el.dataset.id); break;
