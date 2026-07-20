@@ -141,9 +141,10 @@ function parseSections(text) {
   });
 }
 
-export async function renderBriefingPdf({ briefingText, date, title } = {}) {
+export async function renderBriefingPdf({ briefingText, date, title, label } = {}) {
   const doc = await PDFDocument.create();
-  const safeTitle = sanitize(title || "Morning Briefing") || "Morning Briefing";
+  const safeTitle = sanitize(title || "Morgen-Briefing") || "Morgen-Briefing";
+  const safeLabel = (sanitize(label || "MORGEN-BRIEFING") || "MORGEN-BRIEFING").toUpperCase();
   const safeDate = sanitize(date || "");
   doc.setTitle(safeTitle);
   doc.setCreator("Quantus");
@@ -162,7 +163,7 @@ export async function renderBriefingPdf({ briefingText, date, title } = {}) {
     page.drawRectangle({ x: BAR_X, y: CONTENT_BOTTOM, width: BAR_W, height: barTop - CONTENT_BOTTOM, color: GOLD });
 
     if (isFirst) {
-      const eyebrow = "MORNING BRIEFING".split("").join(" ");
+      const eyebrow = safeLabel.split("").join(" ");
       page.drawText(eyebrow, { x: CONTENT_L, y: PAGE_H - 42, size: 9, font: fontMeta, color: SOFT_GOLD });
       const titleLines = wrapLine(safeTitle, fontTitle, 25, CONTENT_W).slice(0, 2);
       let ty = PAGE_H - 68;
