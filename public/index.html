@@ -106440,6 +106440,25 @@ html.theme-light .card{box-shadow:none}
     _resizeTimer = setTimeout(applyLayoutMode, 150);
   });
 
+  // Quantus Tablet (eingebettete Tablet-Huelle) erzwingt den kompakten
+  // Tablet-Anzeigemodus ueber ?tablet=1 bzw. ?layout=tablet. So bleibt die volle
+  // App verfuegbar, wird aber sofort touchoptimiert dargestellt.
+  try {
+    var _params = new URLSearchParams(location.search || "");
+    if (_params.get("tablet") === "1" || _params.get("layout") === "tablet") {
+      localStorage.setItem(LM_KEY, "tablet");
+    }
+  } catch (e) {}
+
+  // Die Tablet-Huelle kann ohne Neuladen zwischen Modulen navigieren, indem sie
+  // eine Nachricht an dieses eingebettete Fenster sendet. Nur einfache Routen.
+  window.addEventListener("message", function(event){
+    var data = event && event.data;
+    if (!data || data.type !== "quantus-navigate" || typeof data.route !== "string") return;
+    if (!/^[a-z0-9_-]{1,40}$/i.test(data.route)) return;
+    if (("#/" + data.route) !== location.hash) location.hash = "#/" + data.route;
+  });
+
   applyLayoutMode();
 })();
 </script>
