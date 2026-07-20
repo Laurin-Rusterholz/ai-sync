@@ -1,10 +1,12 @@
 # Smarter — Daily: Node „Dokument bauen" (kopierbarer Code)
 
 Dieser Code gehört in den n8n-Code-Node **„Dokument bauen"** des Workflows
-**„Smarter — Daily (1 Thema/Tag, HTML)"** (Workflow-ID `SDltMnCLXjvAsrBv`).
+**„Smarter — Daily (1 Thema/Tag, HTML)"** (Workflow-ID `SDltMnCLXjvAsrBv`),
+Mode **Run Once for All Items**.
 
-Er ist die 1:1-Kopie der kanonischen, getesteten Logik aus
-`n8n/smarter-daily.workflow.json` bzw. `scripts/parse-model-json.mjs`.
+Er ist die 1:1-Kopie der kanonischen Logik aus
+`n8n/smarter-daily.workflow.json` (Parser getestet in `scripts/parse-model-json.mjs`,
+der komplette Node in `scripts/smarter-daily-node.test.mjs`).
 Falls du den Workflow neu aus dem Repo importierst, ist der Fix bereits
 enthalten — dann ist **kein** manuelles Einfügen nötig. Nur wenn der Node
 ausschliesslich in n8n gepflegt wird, ersetze seinen kompletten Inhalt durch
@@ -12,24 +14,44 @@ den Block unten.
 
 ## Was der Fix ändert
 
+### Runtime-Fix (Abbruchsicherheit)
+
+- **Problem:** Der Node warf `Code doesn't return items properly`
+  (`validateRunCodeAllItems` im JsTaskRunnerSandbox), obwohl bei reiner Prosa
+  der Fallback greifen sollte. Ursache: (a) `$("Thema auswaehlen").first()`
+  stand vor jedem try/catch und konnte den Node killen; (b) der Fallback nutzte
+  einen **bedingten Top-Level-`return`** in der Mitte des Codes, den der n8n
+  JS Task Runner nicht zuverlässig als Node-Output honoriert.
+- **Fix:** Alle Helfer-Funktionen stehen **oben**; die gesamte Ausführung ist in
+  ein **Top-Level-`try/catch`** gekapselt; es gibt **genau ein `return output;`**
+  am Ende. Jeder unerwartete Fehler (inkl. werfendem `first()`) landet in einem
+  Notfall-Fallback, der trotzdem ein valides
+  `[{ json: { dateKey, docObject, queueUpdate } }]` liefert.
+
+### Parser-Fix (robustes JSON + Fallback-Dokument)
+
 - **Vorher:** `JSON.parse` mit reinem Fence-Stripping; bei Prosa statt JSON
-  warf der Node `Unexpected token … is not valid JSON` → **ganzer Lauf brach
-  ab, kein Dokument geschrieben**.
+  warf der Node `Unexpected token … is not valid JSON`.
 - **Nachher:** `parseModelJson(text)` extrahiert robust (Fence → sonst erstes
   `{` bis letztes `}`), repariert trailing commas und parst erneut. Schlägt
-  alles fehl, wird **NICHT geworfen**, sondern ein minimales, schema-konformes
-  **Fallback-Dokument** (`generationError:true`, `errorMessage`, Rohtext als
-  escaped `theoryHtml`, leere `questions`/`flashcards`, `done:false`) gebaut.
-  → RTDB-Write und Queue-Status-Update laufen **immer**.
+  alles fehl (oder ist die Antwort leer), wird **NICHT geworfen**, sondern ein
+  minimales, schema-konformes **Fallback-Dokument** (`generationError:true`,
+  `errorMessage`, Rohtext als escaped `theoryHtml`, leere `questions`/
+  `flashcards`, `done:false`) gebaut. → RTDB-Write und Queue-Status-Update
+  laufen **immer**.
 
 ## Node-Code (komplett einfügen)
 
 ```javascript
-// Canonical Smarter document-HTML builder.
-// This exact logic goes into the n8n "Finalize / Build HTML" Code node.
-// Self-contained (inline CSS, no external requests), print-friendly,
-// Quantus-Design Schiefer/Leinen. Each question card carries data-qid="qN"
-// so the Quantus app can dock an answer field under it.
+// Canonical Smarter document-HTML builder + robuster JSON-Parser mit Fallback.
+// Läuft im n8n-Code-Node "Dokument bauen" (Mode: Run Once for All Items).
+// ABBRUCHSICHER: ALLE Helfer-Funktionen stehen oben, die gesamte Ausführung ist
+// in ein Top-Level-try/catch gekapselt und es gibt GENAU EIN "return output;" am
+// Ende. Dadurch kann der Node nie "Code doesn't return items properly" werfen —
+// selbst wenn $("Thema auswaehlen").first() wirft oder die KI reine Prosa liefert,
+// wird immer ein valides [{ json: { dateKey, docObject, queueUpdate } }] geliefert.
+// Kanonische, getestete Parser-Logik: scripts/parse-model-json.mjs im Repo.
+
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -79,32 +101,13 @@ function buildDocumentHtml(dateStr, theoryHtml, questions) {
 '</div></body></html>';
 }
 
+// Sicherer Heute-Key (unabhängig von anderen Nodes) für den Notfall-Fallback.
+function safeTodayKey() {
+  try { return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Zurich" }); }
+  catch (e) { return new Date().toISOString().slice(0, 10); }
+}
 
-
-// ---- Anthropic-Antwort verarbeiten + Tagesdokument zusammenbauen ----
-const meta = ($("Thema auswaehlen").first() || {}).json || {};
-const resp = $json || {};
-// Antwort ROBUST auslesen: content[] kann einen thinking-Block VOR dem text-Block
-// enthalten (content=[{type:"thinking",...},{type:"text",text:"..."}]). Nimm den
-// ERSTEN type==="text"-Block; sonst alle text-Bloecke joinen; thinking/leer ignorieren.
-let text = "";
-try {
-  const parts = (resp && Array.isArray(resp.content)) ? resp.content : [];
-  const textBlocks = parts.filter(function (b) { return b && b.type === "text" && typeof b.text === "string" && b.text.trim(); });
-  if (textBlocks.length) text = textBlocks.map(function (b) { return b.text; }).join("\n").trim();
-  if (!text) { // Fallback: irgendein nicht-leeres .text-Feld (thinking/leer ignoriert)
-    text = parts.map(function (b) { return (b && typeof b.text === "string") ? b.text : ""; }).filter(function (s) { return s && s.trim(); }).join("\n").trim();
-  }
-  if (!text && typeof resp === "string") text = resp;                    // Fallback: reiner String
-  if (!text && resp && typeof resp.text === "string") text = resp.text;  // Fallback: flaches .text
-} catch (e) {}
-if (!text || !String(text).trim()) throw new Error("Anthropic: leere Antwort");
-// ---- Robuster JSON-Parser + Fallback ------------------------------------
-// Kanonische, getestete Quelle: scripts/parse-model-json.mjs im Repo
-// (Laurin-Rusterholz/ai-sync). Diese Node-Kopie 1:1 synchron halten.
-// Ziel: reines JSON, ```json-Fence ODER Prosa+JSON gemischt robust einlesen;
-// bei Nicht-JSON NICHT werfen, sondern ein Fallback-Dokument bauen, damit der
-// RTDB-Write und das Queue-Update trotzdem laufen.
+// ---- Robuster JSON-Parser (kanonisch: scripts/parse-model-json.mjs) ----
 function repairJsonCandidate(t) {
   return String(t).replace(/,(\s*[}\]])/g, "$1");
 }
@@ -128,52 +131,88 @@ function parseModelJson(raw) {
   }
 }
 
-const parseResult = parseModelJson(text);
-
-// Fallback: KI-Antwort nicht als JSON gewinnbar -> Lauf NICHT abbrechen. Minimales,
-// schema-konformes Dokument mit Rohtext + generationError erzeugen, damit die App
-// etwas anzeigt und der Nutzer manuell nachbereiten kann.
-if (!parseResult.ok) {
-  const errMsg = parseResult.error || "JSON konnte nicht geparst werden";
-  const fbTitle = meta.unitTitle ? meta.unitTitle : "Tageslernstoff";
+// Baut ein minimales, schema-konformes Fallback-Dokument (generationError:true).
+// Wird sowohl bei "Antwort ist keine JSON" als auch im Notfall-catch verwendet.
+function buildFallbackDocObject(dateKey, unitTitle, unitIds, rawText, errorMessage) {
+  const errMsg = String(errorMessage || "JSON konnte nicht geparst werden");
+  const title = unitTitle ? unitTitle : "Tageslernstoff";
   const fbTheory =
-    '<h2>' + esc(fbTitle) + '</h2>' +
+    '<h2>' + esc(title) + '</h2>' +
     '<p><strong>Automatische Aufbereitung fehlgeschlagen — Rohtext unten.</strong></p>' +
     '<p>Die KI-Antwort konnte nicht als strukturiertes Dokument gelesen werden (' + esc(errMsg) + '). ' +
     'Der unveraenderte Rohtext des Modells ist zur manuellen Nachbereitung erhalten:</p>' +
-    '<pre style="white-space:pre-wrap;word-break:break-word">' + esc(text) + '</pre>';
-  const fbDoc = {
-    unitIds: meta.unitIds || [],
+    '<pre style="white-space:pre-wrap;word-break:break-word">' + esc(rawText) + '</pre>';
+  return {
+    unitIds: Array.isArray(unitIds) ? unitIds : [],
     theoryHtml: fbTheory,
     questions: [],
     flashcards: [],
     pdfUrl: "",
     done: false,
-    documentHtml: buildDocumentHtml(meta.dateKey, fbTheory, []),
+    documentHtml: buildDocumentHtml(dateKey, fbTheory, []),
     generationError: true,
     errorMessage: errMsg,
     createdAt: new Date().toISOString(),
     generatedBy: "smarter-daily"
   };
-  return [{ json: { dateKey: meta.dateKey, docObject: fbDoc, queueUpdate: meta.queueUpdate || {} } }];
 }
 
-const parsed = parseResult.value || {};
-const theoryHtml = String(parsed.theoryHtml || "");
-const rawQ = Array.isArray(parsed.questions) ? parsed.questions : [];
-const questions = rawQ.map(function(q, i){ return { id: "q" + (i + 1), q: String((q && (q.q || q.question || q.frage)) || ""), a: String((q && (q.a || q.answer || q.antwort)) || "") }; });
-const flashcards = Array.isArray(parsed.flashcards) ? parsed.flashcards.map(function(c){ return { front: String((c && c.front) || ""), back: String((c && c.back) || "") }; }) : [];
 
-const documentHtml = buildDocumentHtml(meta.dateKey, theoryHtml, questions);
-const docObject = {
-  unitIds: meta.unitIds || [],
-  theoryHtml: theoryHtml,
-  questions: questions,
-  flashcards: flashcards,
-  pdfUrl: "",
-  done: false,
-  documentHtml: documentHtml,
-  createdAt: new Date().toISOString(),
-  generatedBy: "smarter-daily"
-};
-return [{ json: { dateKey: meta.dateKey, docObject: docObject, queueUpdate: meta.queueUpdate || {} } }];```
+// ---- Ausführung: alles gekapselt, genau EIN return am Ende ----------------
+let output;
+try {
+  const meta = ($("Thema auswaehlen").first() || {}).json || {};
+  const resp = $json || {};
+
+  // Antwort ROBUST auslesen: content[] kann einen thinking-Block VOR dem text-Block
+  // enthalten. Nimm den ERSTEN type==="text"-Block; sonst alle text-Bloecke joinen.
+  let text = "";
+  try {
+    const parts = (resp && Array.isArray(resp.content)) ? resp.content : [];
+    const textBlocks = parts.filter(function (b) { return b && b.type === "text" && typeof b.text === "string" && b.text.trim(); });
+    if (textBlocks.length) text = textBlocks.map(function (b) { return b.text; }).join("\n").trim();
+    if (!text) { // Fallback: irgendein nicht-leeres .text-Feld (thinking/leer ignoriert)
+      text = parts.map(function (b) { return (b && typeof b.text === "string") ? b.text : ""; }).filter(function (s) { return s && s.trim(); }).join("\n").trim();
+    }
+    if (!text && typeof resp === "string") text = resp;                    // Fallback: reiner String
+    if (!text && resp && typeof resp.text === "string") text = resp.text;  // Fallback: flaches .text
+  } catch (e) {}
+
+  // Leere Antwort NICHT mehr werfen -> Fallback, damit trotzdem geschrieben wird.
+  const parseResult = (text && String(text).trim())
+    ? parseModelJson(text)
+    : { ok: false, error: "Anthropic: leere Antwort" };
+
+  const dateKey = meta.dateKey || safeTodayKey();
+  let docObject;
+  if (parseResult.ok) {
+    const parsed = parseResult.value || {};
+    const theoryHtml = String(parsed.theoryHtml || "");
+    const rawQ = Array.isArray(parsed.questions) ? parsed.questions : [];
+    const questions = rawQ.map(function(q, i){ return { id: "q" + (i + 1), q: String((q && (q.q || q.question || q.frage)) || ""), a: String((q && (q.a || q.answer || q.antwort)) || "") }; });
+    const flashcards = Array.isArray(parsed.flashcards) ? parsed.flashcards.map(function(c){ return { front: String((c && c.front) || ""), back: String((c && c.back) || "") }; }) : [];
+    docObject = {
+      unitIds: meta.unitIds || [],
+      theoryHtml: theoryHtml,
+      questions: questions,
+      flashcards: flashcards,
+      pdfUrl: "",
+      done: false,
+      documentHtml: buildDocumentHtml(dateKey, theoryHtml, questions),
+      createdAt: new Date().toISOString(),
+      generatedBy: "smarter-daily"
+    };
+  } else {
+    docObject = buildFallbackDocObject(dateKey, meta.unitTitle, meta.unitIds, text, parseResult.error);
+  }
+  output = [{ json: { dateKey: dateKey, docObject: docObject, queueUpdate: meta.queueUpdate || {} } }];
+} catch (err) {
+  // Letzte Absicherung: egal was oben schiefgeht (auch ein werfendes
+  // $("Thema auswaehlen").first()), IMMER ein valides Item zurückgeben, damit
+  // der Node nie "Code doesn't return items properly" wirft.
+  const emsg = (err && err.message) ? err.message : String(err);
+  const dk = safeTodayKey();
+  output = [{ json: { dateKey: dk, docObject: buildFallbackDocObject(dk, "", [], "", "Unerwarteter Fehler in 'Dokument bauen': " + emsg), queueUpdate: {} } }];
+}
+return output;
+```
