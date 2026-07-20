@@ -111303,6 +111303,14 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-overlay.sb-side{inset:38px 0 0 auto;width:var(--sb-split,50vw);z-index:1000;border-left:1px solid var(--sb-border);box-shadow:-12px 0 34px rgba(0,0,0,.45)}
       body.sb-docked #app{width:calc(100vw - var(--sb-split,50vw))!important;min-width:0}
       body.sb-docked #qc-fab,body.sb-docked #qc-panel{right:calc(var(--sb-split,50vw) + 20px)!important}
+      /* Split-Screen: zentrierte Dialoge/Overlays (z.B. „Neue Aufgabe") auf die
+         App-Hälfte begrenzen. Sonst zentrieren sie über der ganzen Fensterbreite
+         und landen mittig auf der Trennlinie → halb hinter/über dem Board
+         ("verschoben"). Mit right = Split-Breite zentriert der Flex-Backdrop den
+         Dialog in der sichtbaren App-Hälfte, das Board bleibt frei. */
+      body.sb-docked .modal-backdrop,
+      body.sb-docked .slide-panel-backdrop{right:var(--sb-split,50vw)}
+      body.sb-docked .slide-panel{left:calc((100vw - var(--sb-split,50vw)) / 2)}
       .sb-side-resizer{position:absolute;left:-4px;top:0;bottom:0;width:11px;cursor:ew-resize;z-index:30}
       .sb-side-resizer::after{content:"";position:absolute;left:4px;top:0;bottom:0;width:2px;background:var(--sb-border);transition:background .12s}
       .sb-side-resizer:hover::after,.sb-side-resizer.active::after{background:var(--sb-accent);width:3px}
