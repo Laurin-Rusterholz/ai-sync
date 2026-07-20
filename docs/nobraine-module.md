@@ -40,6 +40,7 @@ gruppiert.
 | `nobraine/weeks/<weekKey>/freeblocks/<tag>/<slotKey>` | `{ label, erstellt }` — bewusst freigehaltener Slot (auswärts, Resten, kein Kochen); wird bei der Generierung übersprungen und liefert nichts an die Einkaufsliste |
 | `nobraine/weeks/<weekKey>/shoppinglist/<key>` | `{ checked, manuell, name, einheit, menge }` — Check-Zustand aggregierter Positionen sowie manuell ergänzte Artikel |
 | `nobraine/weeks/<weekKey>/generation` | `{ status ("pending"\|"running"\|"done"\|"error"), typ ("woche"\|"slot"), angefragt, finishedAt, message, tag?, slot? }` |
+| `nobraine/weeks/<weekKey>/prefs` | `{ goal ("lose"\|"maintain"\|"gain"), calorieTrend ("less"\|"normal"\|"more"), trainingDays: [<kurz-key>…] }` — Steuer-Eingaben der Generierung je Woche. `trainingDays` sind Kurz-Keys `mon`…`sun`. Defaults (fehlend): `maintain` / `normal` / `[]`. |
 
 - `weekKey` (= `<jahr-kw>`): ISO-Woche, Format `YYYY-Www` (z. B. `2026-W27`). Wochenbeginn Montag.
 - `<tag>`: Wochentags-Key `montag` … `sonntag`.
@@ -47,6 +48,15 @@ gruppiert.
 
 ### Ableitungen im Frontend (kein zusätzlicher Persistenz-Zweig)
 
+- **Generierungs-Einstellungen (`prefs`)** steuern, wie die KI plant. Ein kompakter
+  Block direkt über dem „Woche generieren"-Button bietet drei Eingaben: **Ziel**
+  (Abnehmen / Halten / Zunehmen → `goal`), **Kalorien**-Tendenz (Weniger / Normal /
+  Mehr → `calorieTrend`) und **Trainingstage** (Mehrfachauswahl Mo–So →
+  `trainingDays`, Kurz-Keys `mon`…`sun`). Jede Auswahl schreibt **sofort** nach
+  `nobraine/weeks/<weekKey>/prefs/<feld>` (optimistisch auch im State) und wird beim
+  Wochenwechsel über den `prefs`-Listener korrekt nachgeladen. An Trainingstagen
+  plant die KI bewusst **mehr Protein und mehr Kalorien**; `goal`/`calorieTrend`
+  verschieben Portionsgrösse und Kaloriendichte insgesamt.
 - **Einkaufsliste** wird bei jedem Render aus dem Wochenplan berechnet: alle
   Zutaten der eingeplanten Rezepte werden nach `Name + Einheit` **dedupliziert**
   und die Mengen summiert (`num()`-Parser inkl. Komma und Brüchen wie `1/2`).
@@ -85,22 +95,46 @@ und muss auf den eigenen n8n-Webhook gesetzt werden.
 Ablauf „Woche generieren" bzw. „Slot neu generieren":
 
 1. Frontend schreibt `nobraine/weeks/<weekKey>/generation` mit `status: "pending"`.
-2. Frontend `POST`et an `WEBHOOK_URL` mit JSON-Payload:
-   - Woche: `{ weekKey, startDatum, tage: 7, slots: ["mittag","abend"], freeblocks: [{ tag, slot, label }], typ: "woche" }`
-   - Einzelner Slot: `{ …, typ: "slot", tag: <0-6>, slot: "<slotKey>", tagName }`
-3. n8n verarbeitet die Anfrage, wählt/erzeugt Rezepte, schreibt sie nach
-   `nobraine/weeks/<weekKey>/meals/…` (fehlende Rezepte zusätzlich nach
-   `nobraine/recipes`) und aktualisiert `nobraine/weeks/<weekKey>/generation`
-   auf `running` und schliesslich `done` (mit `finishedAt`).
-4. Das Frontend zeigt den Fortschritt live über `on('value')` auf `plan`,
+2. Frontend `POST`et an `WEBHOOK_URL` mit JSON-Payload (immer inkl. `prefs`):
+   - Woche: `{ weekKey, startDatum, tage: 7, slots: ["mittag","abend"], freeblocks: [{ tag, slot, label }], prefs: { goal, calorieTrend, trainingDays }, typ: "woche" }`
+   - Einzelner Slot: `{ …, typ: "slot", tag: "<tag-key>", slot: "<slotKey>", tagName }` — **`tag` ist der Wochentags-Key** (`montag`…`sonntag`), damit n8n den Slot eindeutig adressieren kann.
+   - Der `fetch` läuft mit **`keepalive: true`** und einem 20-s-`AbortController`:
+     Schliesst der Nutzer den Tab direkt nach dem Klick, wird der POST trotzdem
+     zu Ende gesendet und n8n startet serverseitig.
+3. n8n verarbeitet die Anfrage, berücksichtigt `prefs` (Ziel/Kalorien →
+   Portionsgrösse & Kaloriendichte; `trainingDays` → mehr Protein/Kalorien an
+   diesen Tagen; Kurz-Keys werden intern auf `montag`…`sonntag` gemappt), wählt/
+   erzeugt Rezepte, schreibt sie nach `nobraine/weeks/<weekKey>/meals/…` (fehlende
+   Rezepte zusätzlich nach `nobraine/recipes`) und aktualisiert
+   `nobraine/weeks/<weekKey>/generation` auf `running` und schliesslich `done`
+   (mit `finishedAt`).
+   - **`typ: "slot"`** regeneriert **nur den angefragten `tag`+`slot`** — der
+     Aggregations-Node verwirft alle übrigen Tage/Slots und schreibt in diesem
+     Modus **keine** Einkaufsliste (das Frontend aggregiert sie ohnehin live aus
+     den Meals). `typ: "woche"` schreibt die ganze Woche.
+4. Das Frontend zeigt den Fortschritt live über `on('value')` auf `meals`,
    `recipes` und `generation` der aktiven Woche — Ladezustand (Spinner +
    Statuszeile) inklusive.
 
 Schlägt der `POST` fehl (z. B. weil `WEBHOOK_URL` noch der Platzhalter ist),
 setzt das Frontend `generation.status = "error"` mit erklärender `message` und
-zeigt einen Toast — nichts bleibt stumm hängen. Das Frontend ist per Google-Login
-eingeloggt (`auth.uid` erfüllt die Rule — siehe Auth-Abschnitt); n8n selbst
-schreibt per Service-Account (umgeht die Regeln).
+zeigt einen Toast — nichts bleibt stumm hängen. n8n selbst schreibt per
+Service-Account (umgeht die Regeln).
+
+**Robustheit gegen „ewig running":**
+
+- **Frontend:** `GEN_TIMEOUT_MS` (5 min) ist das letzte Sicherheitsnetz — bleibt
+  der Status länger auf `pending`/`running`, zeigt die Karte „Generierung hängt"
+  und der Button wird wieder freigegeben (auch nach Neuladen).
+- **n8n:** Alle RTDB-Nodes haben ein `onError` gesetzt. Fehler beim Laden
+  (`RTDB: Rezepte laden`) oder Statusschreiben degradieren, ohne den Lauf
+  hart abzubrechen; scheitert `RTDB: Plan speichern`, läuft der Fehler-Ausgang
+  gezielt in `RTDB: Status → error` (mit aussagekräftiger `message`), sodass der
+  Status zuverlässig auf `error` statt dauerhaft auf `running` steht.
+- **Leeres/abgeschnittenes KI-Ergebnis:** `max_tokens` ist auf **16000** erhöht
+  (verhindert Abschneiden). Liefert Claude keinen verwertbaren Plan
+  (`zaehler === 0`, kein `days`-Array, JSON-Parse-Fehler), setzt der Workflow
+  sauber `status: "error"` mit Grund — nie ein stilles Leer-Ergebnis.
 
 ## Auth: kein erzwungener Login (offene /nobraine-Rules)
 

@@ -143,6 +143,37 @@ h1, h2, .redaktionell {
 @keyframes dreh { to { transform: rotate(360deg); } }
 .gen-status { font-size:12.5px; font-weight:600; display:inline-flex; align-items:center; gap:8px; }
 
+/* ── Generierungs-Einstellungen (Ziel / Kalorien / Trainingstage) ───────── */
+.pref-karte {
+  background:#fff; border:1px solid var(--linie); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 14px; box-shadow: var(--schatten);
+  display:flex; flex-direction:column; gap:12px;
+}
+.pref-zeile { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.pref-label {
+  font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--muted);
+  font-weight:700; min-width:104px; flex:none;
+}
+.pref-seg { display:inline-flex; border:1px solid var(--linie); border-radius:20px; overflow:hidden; }
+.pref-opt {
+  border:0; background:#fff; color:var(--muted); font-weight:600; font-size:13px;
+  padding:8px 14px; min-height:38px; cursor:pointer; transition: background .12s, color .12s;
+}
+.pref-opt + .pref-opt { border-left:1px solid var(--linie); }
+.pref-opt.aktiv { background: var(--schiefer); color: var(--leinen); }
+.pref-tage { display:flex; gap:6px; flex-wrap:wrap; }
+.pref-tag {
+  border:1px solid var(--linie); background:#fff; color:var(--muted); font-weight:600;
+  font-size:12.5px; width:40px; height:40px; border-radius:50%; cursor:pointer; flex:none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.pref-tag.aktiv { background: var(--teal); border-color: var(--teal); color:#fff; }
+@media (max-width:520px) {
+  .pref-label { min-width:0; width:100%; }
+  .pref-seg { width:100%; }
+  .pref-opt { flex:1; text-align:center; padding:9px 4px; }
+}
+
 /* ── Wochenplan-Gitter ──────────────────────────────────────────────────── */
 .wochen-grid { display:grid; gap:16px; grid-template-columns: 1fr; }
 @media (min-width:640px)  { .wochen-grid { grid-template-columns: repeat(2,1fr); } }
@@ -562,6 +593,7 @@ function calPath(wk)   { return P_WEEKS + "/" + wk + "/calendar"; }     // /cale
 function freePath(wk)  { return P_WEEKS + "/" + wk + "/freeblocks"; }   // /freeblocks/<tag>/<slot> = { label, erstellt }
 function shopPath(wk)  { return P_WEEKS + "/" + wk + "/shoppinglist"; } // /shoppinglist/<key> = { checked, manuell, … }
 function genPath(wk)   { return P_WEEKS + "/" + wk + "/generation"; }   // /generation = { status, … }
+function prefsPath(wk) { return P_WEEKS + "/" + wk + "/prefs"; }        // /prefs = { goal, calorieTrend, trainingDays[] }
 
 // n8n-Produktions-Webhook (POST empfängt {weekKey, typ, ...}).
 const WEBHOOK_URL = "https://n8n.srv1757990.hstgr.cloud/webhook/nobraine-generate";
@@ -603,13 +635,19 @@ const S = {
   free: {},                 // /nobraine/weeks/<wk>/freeblocks → { tag: { slot: { label } } }
   shopping: {},             // /nobraine/weeks/<wk>/shoppinglist
   generation: {},           // /nobraine/weeks/<wk>/generation
+  prefs: {},                // /nobraine/weeks/<wk>/prefs → { goal, calorieTrend, trainingDays[] }
   ansicht: "plan",          // plan | bibliothek | einkauf
   suche: "",
   katFilter: "alle",
   drawer: null,             // { recipeId, tag, slot } — tag/slot nur bei Slot-Kontext
   weekMonday: mondayOf(new Date()),
-  _mealsRef: null, _calRef: null, _freeRef: null, _shopRef: null, _genRef: null
+  _mealsRef: null, _calRef: null, _freeRef: null, _shopRef: null, _genRef: null, _prefsRef: null
 };
+
+// Steuer-Eingaben der Generierung (pro Woche unter /prefs). Index passt zu TAG_KEYS (Mo=0).
+const GOAL_OPTS  = [{ v: "lose", label: "Abnehmen" }, { v: "maintain", label: "Halten" }, { v: "gain", label: "Zunehmen" }];
+const TREND_OPTS = [{ v: "less", label: "Weniger" }, { v: "normal", label: "Normal" }, { v: "more", label: "Mehr" }];
+const TRAIN_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 // Vorschläge für den Grund eines Freiblocks (frei editierbar)
 const FREI_PRESETS = ["Auswärts", "Resten", "Einladung", "Kein Kochen"];
@@ -785,19 +823,22 @@ function wochenListenerAktualisieren() {
   if (S._freeRef)  S._freeRef.off();
   if (S._shopRef)  S._shopRef.off();
   if (S._genRef)   S._genRef.off();
+  if (S._prefsRef) S._prefsRef.off();
   S._mealsRef = db.ref(mealsPath(wk));
   S._calRef   = db.ref(calPath(wk));
   S._freeRef  = db.ref(freePath(wk));
   S._shopRef  = db.ref(shopPath(wk));
   S._genRef   = db.ref(genPath(wk));
+  S._prefsRef = db.ref(prefsPath(wk));
   S._mealsRef.on("value", function (snap) { S.meals = snap.val() || {}; render(); });
   S._calRef.on("value",   function (snap) { S.calendar = snap.val() || {}; render(); });
   S._freeRef.on("value",  function (snap) { S.free = snap.val() || {}; render(); });
   S._shopRef.on("value",  function (snap) { S.shopping = snap.val() || {}; render(); });
   S._genRef.on("value",   function (snap) { S.generation = snap.val() || {}; render(); });
+  S._prefsRef.on("value", function (snap) { S.prefs = snap.val() || {}; render(); });
 }
 
-function wocheZuruecksetzen() { S.meals = {}; S.calendar = {}; S.free = {}; S.shopping = {}; S.generation = {}; }
+function wocheZuruecksetzen() { S.meals = {}; S.calendar = {}; S.free = {}; S.shopping = {}; S.generation = {}; S.prefs = {}; }
 function wocheWechseln(deltaWochen) {
   const m = new Date(S.weekMonday);
   m.setDate(m.getDate() + deltaWochen * 7);
@@ -1098,6 +1139,37 @@ function genLaeuft() {
   const st = S.generation && S.generation.status;
   return (st === "pending" || st === "running") && !genHaengt();
 }
+// Normalisierte Prefs (mit Defaults maintain/normal/[]) — Basis für UI und Payload.
+function prefsAktuell() {
+  const p = S.prefs || {};
+  const goal  = (p.goal === "lose" || p.goal === "gain") ? p.goal : "maintain";
+  const trend = (p.calorieTrend === "less" || p.calorieTrend === "more") ? p.calorieTrend : "normal";
+  const train = Array.isArray(p.trainingDays)
+    ? p.trainingDays.filter(function (d) { return TRAIN_KEYS.indexOf(d) > -1; })
+    : [];
+  return { goal: goal, calorieTrend: trend, trainingDays: train };
+}
+// Kompakter Einstellungsblock über dem „Woche generieren"-Button.
+function prefsHtml() {
+  const p = prefsAktuell();
+  function seg(aktion, opts, cur) {
+    return opts.map(function (o) {
+      return '<button class="pref-opt' + (o.v === cur ? " aktiv" : "") + '" data-action="' + aktion +
+        '" data-val="' + o.v + '" aria-pressed="' + (o.v === cur ? "true" : "false") + '">' + o.label + "</button>";
+    }).join("");
+  }
+  const tage = TAG_KURZ.map(function (kurz, i) {
+    const dk = TRAIN_KEYS[i];
+    const aktiv = p.trainingDays.indexOf(dk) > -1;
+    return '<button class="pref-tag' + (aktiv ? " aktiv" : "") + '" data-action="pref-train" data-day="' + dk +
+      '" aria-pressed="' + (aktiv ? "true" : "false") + '" title="' + TAGE_LANG[i] + '">' + kurz + "</button>";
+  }).join("");
+  return '<div class="pref-karte">' +
+    '<div class="pref-zeile"><span class="pref-label">Ziel</span><div class="pref-seg">' + seg("pref-goal", GOAL_OPTS, p.goal) + "</div></div>" +
+    '<div class="pref-zeile"><span class="pref-label">Kalorien</span><div class="pref-seg">' + seg("pref-trend", TREND_OPTS, p.calorieTrend) + "</div></div>" +
+    '<div class="pref-zeile"><span class="pref-label">Trainingstage</span><div class="pref-tage">' + tage + "</div></div>" +
+  "</div>";
+}
 function viewPlan() {
   const tage = tageDerWoche(S.weekMonday);
   const heute = heuteIso();
@@ -1121,6 +1193,7 @@ function viewPlan() {
   }
 
   let html =
+    prefsHtml() +
     '<div class="gen-karte">' +
       '<div class="gk-text"><b>Woche automatisch planen</b>' +
         "<span>Startet den n8n-Workflow und füllt leere Slots per KI. Manuelle Rezepte und freigehaltene Slots bleiben unangetastet.</span></div>" +
@@ -1733,7 +1806,8 @@ async function generieren(payloadExtra, hinweis) {
     startDatum: isoDatum(S.weekMonday),
     tage: 7,
     slots: SLOTS.map(function (s) { return s.key; }),
-    freeblocks: freeblocks
+    freeblocks: freeblocks,
+    prefs: prefsAktuell()          // Ziel / Kalorien-Tendenz / Trainingstage steuern die KI
   }, payloadExtra || {});
   try {
     await db.ref(genPath(wk)).set({
@@ -1754,7 +1828,10 @@ async function generieren(payloadExtra, hinweis) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: ctrl.signal
+        signal: ctrl.signal,
+        // keepalive: der POST läuft auch dann noch zu Ende, wenn der Tab direkt
+        // nach dem Klick geschlossen wird — n8n startet dann trotzdem serverseitig.
+        keepalive: true
       });
     } finally { clearTimeout(abbruch); }
     if (!res.ok) throw new Error("Webhook-Status " + res.status);
@@ -1774,7 +1851,31 @@ function wocheGenerieren() {
 function slotGenerieren(tag, slot) {
   if (genLaeuft()) return;
   modalSchliessen();
-  generieren({ typ: "slot", tag: tag, slot: slot, tagName: TAGE_LANG[tag] }, "Slot wird generiert …");
+  // tag ist der numerische Wochentags-Index (0–6). n8n braucht den Tag-KEY
+  // (montag…sonntag), damit es im typ:"slot"-Modus NUR diesen Slot schreibt.
+  generieren({ typ: "slot", tag: dayKeyOf(tag), slot: slot, tagName: TAGE_LANG[tag] }, "Slot wird generiert …");
+}
+
+// ── Generierungs-Einstellungen (pro Woche unter /prefs) ────────────────────
+async function prefSetzen(feld, wert) {
+  const wk = weekKeyOf(S.weekMonday);
+  const patch = {}; patch[feld] = wert;
+  S.prefs = Object.assign({}, S.prefs, patch);   // optimistisch, sonst „flackert" die Auswahl
+  render();
+  try { await db.ref(prefsPath(wk) + "/" + feld).set(wert); }
+  catch (e) { toast("Speichern fehlgeschlagen: " + (e && e.message)); }
+}
+async function trainingTagToggle(dayKey) {
+  if (TRAIN_KEYS.indexOf(dayKey) < 0) return;
+  const wk = weekKeyOf(S.weekMonday);
+  const cur = prefsAktuell().trainingDays.slice();
+  const idx = cur.indexOf(dayKey);
+  if (idx > -1) cur.splice(idx, 1); else cur.push(dayKey);
+  cur.sort(function (a, b) { return TRAIN_KEYS.indexOf(a) - TRAIN_KEYS.indexOf(b); });
+  S.prefs = Object.assign({}, S.prefs, { trainingDays: cur });
+  render();
+  try { await db.ref(prefsPath(wk) + "/trainingDays").set(cur); }
+  catch (e) { toast("Speichern fehlgeschlagen: " + (e && e.message)); }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1961,6 +2062,9 @@ document.addEventListener("click", function (e) {
     case "frei-aufheben":   freiblockAufheben(tag, slot); break;
     case "waehlen-rezept":  modalSchliessen(); slotSetzen(tag, slot, id); break;
     case "woche-generieren": wocheGenerieren(); break;
+    case "pref-goal":       prefSetzen("goal", el.getAttribute("data-val")); break;
+    case "pref-trend":      prefSetzen("calorieTrend", el.getAttribute("data-val")); break;
+    case "pref-train":      trainingTagToggle(el.getAttribute("data-day")); break;
 
     case "kat-filter":      S.katFilter = el.getAttribute("data-kat"); renderInhalt(); break;
     case "rezept-neu":      rezeptFormular(null); break;
