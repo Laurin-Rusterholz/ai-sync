@@ -1,0 +1,141 @@
+{
+  "name": "Polaris: Budget (Lesepfad)",
+  "nodes": [
+    {
+      "parameters": {
+        "width": 640,
+        "height": 320,
+        "content": "## Polaris: Budget (reiner Lese-Endpunkt)\n\n`POST /webhook/polaris/budget` liest AUSSCHLIESSLICH — keine Schreib-/Sende-Operation, kein Credential.\n\nAblauf: HTTP-Request-Node holt `appStore/app-data_json` (Wrapper `{data:\"<JSON-String>\"}`), der Code-Node parst `data` und gibt `entities.transactions/accounts/creditCards/subscriptions/financialGoals/purchaseProposals` als sauberes JSON zurueck (+ kompakte `summary`).\n\n**Nach dem Import:** nur aktivieren — keine Credentials noetig (RTDB-Read ist offen).\n\nDefensiv: fehlender Knoten / nicht parsebares `data` -> HTTP 200 `{ok:false,error}`. CORS `allowedOrigins:*` + Access-Control-Allow-Origin am Respond-Node.\n\nDetails: docs/polaris-budget-access.md"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        -80
+      ],
+      "id": "8d2110cf-8a82-5869-8944-185226152b74",
+      "name": "Doku"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "polaris/budget",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e9f5dca8-d7cf-59bc-aa13-de58885a032a",
+      "name": "WH budget",
+      "webhookId": "b4418197-d8e9-5786-9cac-65ec3e67328f"
+    },
+    {
+      "parameters": {
+        "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/appStore/app-data_json.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "0fcddc8d-36a0-5656-b8cf-1df6d90ede2b",
+      "name": "RTDB app-data",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── /polaris/budget: NUR Verarbeitung, KEINE eigenen HTTP-Requests ──\n// Der RTDB-Knoten appStore/app-data_json wird vom vorgelagerten HTTP-Request-\n// Node \"RTDB app-data\" geholt. Er enthält einen Wrapper { data: \"<JSON-String\n// des gesamten App-Payloads>\", updatedAt, savedAt, savedBy } — das Feld `data`\n// muss geparst werden. Reiner Lesepfad; wirft NIE (defensiv → {ok:false,error}).\ntry {\n  const wrap = $json;\n  if (!wrap || typeof wrap !== 'object' || wrap.data == null || wrap.error) {\n    return [{ json: { ok: false, error: 'appStore/app-data_json nicht gefunden' } }];\n  }\n  let payload;\n  try {\n    payload = (typeof wrap.data === 'string') ? JSON.parse(wrap.data) : wrap.data;\n  } catch (e) {\n    return [{ json: { ok: false, error: 'data-Feld nicht parsebar' } }];\n  }\n  if (!payload || typeof payload !== 'object') {\n    return [{ json: { ok: false, error: 'Payload leer oder ungueltig' } }];\n  }\n  const ent = (payload.entities && typeof payload.entities === 'object') ? payload.entities : {};\n  // Entity-Maps { id -> objekt } defensiv in Arrays wandeln\n  const arr = function (m) {\n    if (!m || typeof m !== 'object') return [];\n    return Object.keys(m).map(function (k) { return m[k]; }).filter(function (x) { return x && typeof x === 'object'; });\n  };\n  const budget = {\n    transactions: arr(ent.transactions),\n    accounts: arr(ent.accounts),\n    creditCards: arr(ent.creditCards),\n    subscriptions: arr(ent.subscriptions),\n    financialGoals: arr(ent.financialGoals),\n    purchaseProposals: arr(ent.purchaseProposals)\n  };\n  // kompakte Kennzahlen (bequem fuer die Sprachausgabe; roh bleibt erhalten)\n  const real = budget.transactions.filter(function (t) { return t && !t.isFuture; });\n  const sum = function (list) { return list.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0); };\n  const income = sum(real.filter(function (t) { return t.type === 'income'; }));\n  const expense = sum(real.filter(function (t) { return t.type === 'expense'; }));\n  const totalBalance = budget.accounts.reduce(function (s, a) { return s + (Number(a.balance) || 0); }, 0);\n  budget.summary = {\n    currency: (budget.accounts[0] && budget.accounts[0].currency) || 'CHF',\n    totalBalance: totalBalance,\n    income: income,\n    expense: expense,\n    net: income - expense,\n    counts: {\n      transactions: budget.transactions.length,\n      accounts: budget.accounts.length,\n      creditCards: budget.creditCards.length,\n      subscriptions: budget.subscriptions.length,\n      financialGoals: budget.financialGoals.length,\n      purchaseProposals: budget.purchaseProposals.length\n    }\n  };\n  return [{ json: { ok: true, budget: budget } }];\n} catch (e) {\n  return [{ json: { ok: false, error: 'Budget konnte nicht gelesen werden' } }];\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "2f428ce5-9cb8-573a-a078-17767484826d",
+      "name": "Validate budget"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "id": "119211eb-756d-5d72-a5c7-9db01e268587",
+      "name": "Resp budget"
+    }
+  ],
+  "connections": {
+    "WH budget": {
+      "main": [
+        [
+          {
+            "node": "RTDB app-data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RTDB app-data": {
+      "main": [
+        [
+          {
+            "node": "Validate budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate budget": {
+      "main": [
+        [
+          {
+            "node": "Resp budget",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Zurich"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

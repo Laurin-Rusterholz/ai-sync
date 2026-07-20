@@ -1,0 +1,1003 @@
+<!DOCTYPE html><html lang='de'><head><meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>Theorie-Wissensbasis · Mathematik (EBMP)</title>
+<style>body{font-family:system-ui,Arial,sans-serif;max-width:900px;margin:0 auto;padding:24px;line-height:1.6;color:#1a1a1a}h1{border-bottom:2px solid #444}section{border-top:1px solid #ddd;padding:18px 0}h2{margin-bottom:2px}.meta{color:#666;font-size:13px}details{margin:4px 0;background:#f6f6f6;padding:6px 10px;border-radius:6px}.tag{display:inline-block;font-size:11px;background:#eee;border-radius:4px;padding:1px 6px;margin-right:6px;color:#555}</style></head><body>
+<h1>Wissensbasis · Mathematik</h1>
+<p class='meta'>Maschinenlesbare Theorie-Grundlage für die KI-Tageslektion (EBMP, Ausrichtung Wirtschaft &amp; Dienstleistungen). 13 Themen.</p>
+<section data-thema-id='terme' data-kapitel='01 Algebra &amp; Gleichungen'>
+<h2>01.1 Terme, Potenzen &amp; Wurzeln</h2>
+<p class='meta'>01 Algebra &amp; Gleichungen</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Terme umformen und vereinfachen</li><li>Potenz- und Wurzelgesetze anwenden</li><li>mit Logarithmen rechnen</li></ul></div>
+<div data-block='theorie'><p>Ein Term ist ein sinnvoller Rechenausdruck aus Zahlen, Variablen und Rechenzeichen. Beim Umformen gelten die Vorrangregeln (Klammer vor Punkt vor Strich) sowie das Distributiv-, Kommutativ- und Assoziativgesetz.</p><p>Potenzgesetze: a^m · a^n = a^(m+n); a^m ÷ a^n = a^(m−n); (a^m)^n = a^(m·n); a^0 = 1; a^(−n) = 1/a^n. Wurzeln sind Potenzen mit gebrochenem Exponenten: die n-te Wurzel aus a = a^(1/n). Der Logarithmus ist die Umkehrung der Potenz: log_b(x) = y bedeutet b^y = x. Rechenregeln: log(x·y)=log x+log y; log(x/y)=log x−log y; log(x^n)=n·log x.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>a^m·a^n = a^(m+n)</li><li>n-te Wurzel aus a = a^(1/n)</li><li>log(x^n) = n·log x</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='terme'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Vereinfache: x^5 · x^3<details><summary>Lösung</summary><p><strong>x^8</strong><br>Exponenten addieren: 5+3=8.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='terme'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Berechne 2^(-3)<details><summary>Lösung</summary><p><strong>1/8</strong><br>a^(−n)=1/a^n → 1/2^3.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='terme'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Löse nach x: log_10(x) = 2<details><summary>Lösung</summary><p><strong>x = 100</strong><br>10^2 = 100.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='terme'><span class='tag'>mc</span><span class='tag'>leicht</span> Was ist (a^2)^3?<ul><li>a^5</li><li>a^6</li><li>a^8</li><li>a^9</li></ul><details><summary>Lösung</summary><p><strong>a^6</strong><br>Exponenten multiplizieren: 2·3.</p></details></div>
+</div></section>
+<section data-thema-id='gleichungen' data-kapitel='01 Algebra &amp; Gleichungen'>
+<h2>01.2 Lineare &amp; quadratische Gleichungen</h2>
+<p class='meta'>01 Algebra &amp; Gleichungen</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>lineare Gleichungen lösen</li><li>quadratische Gleichungen mit der Lösungsformel lösen</li><li>Lösungen interpretieren</li></ul></div>
+<div data-block='theorie'><p>Eine lineare Gleichung hat die Form ax + b = 0 mit der Lösung x = −b/a. Man löst durch Äquivalenzumformungen (auf beiden Seiten dasselbe tun).</p><p>Eine quadratische Gleichung ax² + bx + c = 0 löst man mit der Lösungsformel x = (−b ± √(b²−4ac)) / (2a). Der Term D = b²−4ac heisst Diskriminante: Ist D &gt; 0, gibt es zwei Lösungen; D = 0 eine Lösung; D &lt; 0 keine reelle Lösung.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>Linear: x = −b/a</li><li>Quadratisch: x = (−b ± √(b²−4ac))/(2a)</li><li>Diskriminante D entscheidet über die Anzahl Lösungen</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='gleichungen'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Löse: 3x − 12 = 0<details><summary>Lösung</summary><p><strong>x = 4</strong><br>12 ÷ 3 = 4.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='gleichungen'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Löse: x² − 9 = 0<details><summary>Lösung</summary><p><strong>x = 3 oder x = −3</strong><br>x² = 9 → ±3.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='gleichungen'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Löse: x² − 5x + 6 = 0<details><summary>Lösung</summary><p><strong>x = 2 oder x = 3</strong><br>D=25−24=1; (5±1)/2.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='mittel' data-lernziel='gleichungen'><span class='tag'>mc</span><span class='tag'>mittel</span> Wie viele Lösungen bei D &lt; 0?<ul><li>Zwei</li><li>Eine</li><li>Keine reelle</li><li>Unendlich</li></ul><details><summary>Lösung</summary><p><strong>Keine reelle</strong><br>Negative Diskriminante → keine reelle Lösung.</p></details></div>
+</div></section>
+<section data-thema-id='gleichungssysteme' data-kapitel='01 Algebra &amp; Gleichungen'>
+<h2>01.3 Lineare Gleichungssysteme</h2>
+<p class='meta'>01 Algebra &amp; Gleichungen</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Gleichungssysteme mit zwei Unbekannten lösen</li><li>Einsetz- und Additionsverfahren anwenden</li><li>Lösungen deuten</li></ul></div>
+<div data-block='theorie'><p>Ein lineares Gleichungssystem besteht aus mehreren Gleichungen mit denselben Unbekannten. Bei zwei Gleichungen und zwei Unbekannten gibt es drei Lösungsverfahren: das Gleichsetzungsverfahren (beide nach derselben Variable auflösen und gleichsetzen), das Einsetzverfahren (eine Variable isolieren und einsetzen) und das Additionsverfahren (Gleichungen so kombinieren, dass eine Variable wegfällt).</p><p>Geometrisch entspricht die Lösung dem Schnittpunkt zweier Geraden. Parallele Geraden bedeuten keine Lösung, identische Geraden unendlich viele.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>Drei Verfahren: Gleichsetzen, Einsetzen, Addition</li><li>Lösung = Schnittpunkt der Geraden</li><li>Parallel → keine Lösung</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='gleichungssysteme'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Löse: x+y=10; x−y=2<details><summary>Lösung</summary><p><strong>x=6, y=4</strong><br>Addition: 2x=12 → x=6; y=4.</p></details></div>
+<div data-typ='offen' data-schwierigkeit='mittel' data-lernziel='gleichungssysteme'><span class='tag'>offen</span><span class='tag'>mittel</span> Was bedeutet es geometrisch, wenn ein System keine Lösung hat?<details><summary>Lösung</summary><p><strong>Die Geraden sind parallel.</strong><br>Kein Schnittpunkt.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='gleichungssysteme'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Löse: 2x+y=7; y=x+1<details><summary>Lösung</summary><p><strong>x=2, y=3</strong><br>Einsetzen: 2x+x+1=7 → x=2.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='gleichungssysteme'><span class='tag'>mc</span><span class='tag'>leicht</span> Welches Verfahren eliminiert eine Variable durch Kombination?<ul><li>Einsetzen</li><li>Addition</li><li>Gleichsetzen</li><li>Probieren</li></ul><details><summary>Lösung</summary><p><strong>Addition</strong><br>Additionsverfahren.</p></details></div>
+</div></section>
+<section data-thema-id='lineare-funktionen' data-kapitel='02 Funktionen'>
+<h2>02.1 Lineare Funktionen</h2>
+<p class='meta'>02 Funktionen</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Steigung und Achsenabschnitt bestimmen</li><li>Geradengleichungen aufstellen</li><li>lineare Funktionen im Kontext anwenden</li></ul></div>
+<div data-block='theorie'><p>Eine lineare Funktion hat die Form y = mx + q. Dabei ist m die Steigung (Änderung von y pro Einheit x) und q der y-Achsenabschnitt (Wert bei x = 0). Die Steigung berechnet man aus zwei Punkten: m = (y₂−y₁)/(x₂−x₁).</p><p>In der Wirtschaft sind viele Zusammenhänge linear: Kostenfunktionen (Fixkosten q + variable Kosten m·x), Nachfrage- und Budgetgeraden. Die Steigung der Budgetgeraden entspricht dem Preisverhältnis.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>y = mx + q</li><li>m = Δy/Δx</li><li>q = y-Wert bei x=0</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='lineare-funktionen'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Steigung durch (1,2) und (3,8)?<details><summary>Lösung</summary><p><strong>m = 3</strong><br>(8−2)/(3−1)=6/2=3.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='lineare-funktionen'><span class='tag'>rechnen</span><span class='tag'>leicht</span> K(x)=4x+150. Kosten bei 50 Stück?<details><summary>Lösung</summary><p><strong>350</strong><br>4·50+150=350.</p></details></div>
+<div data-typ='offen' data-schwierigkeit='mittel' data-lernziel='lineare-funktionen'><span class='tag'>offen</span><span class='tag'>mittel</span> Was bedeutet q in y=mx+q wirtschaftlich bei einer Kostenfunktion?<details><summary>Lösung</summary><p><strong>Die Fixkosten.</strong><br>Wert bei x=0.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='lineare-funktionen'><span class='tag'>mc</span><span class='tag'>leicht</span> Eine fallende Gerade hat welche Steigung?<ul><li>Positiv</li><li>Negativ</li><li>Null</li><li>Unendlich</li></ul><details><summary>Lösung</summary><p><strong>Negativ</strong><br>m&lt;0 → fallend.</p></details></div>
+</div></section>
+<section data-thema-id='quadratische-funktionen' data-kapitel='02 Funktionen'>
+<h2>02.2 Quadratische Funktionen</h2>
+<p class='meta'>02 Funktionen</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Parabeln beschreiben</li><li>Scheitelpunkt und Nullstellen bestimmen</li><li>Extremwerte anwenden</li></ul></div>
+<div data-block='theorie'><p>Eine quadratische Funktion y = ax² + bx + c beschreibt eine Parabel. Ist a &gt; 0, ist sie nach oben geöffnet (Minimum), bei a &lt; 0 nach unten (Maximum). Die Nullstellen findet man mit der Lösungsformel. Der Scheitelpunkt (Extremum) liegt bei x = −b/(2a).</p><p>In der Wirtschaft treten Parabeln z. B. bei Gewinnfunktionen auf: Der maximale Gewinn liegt im Scheitelpunkt. Das macht quadratische Funktionen für Optimierungsfragen wichtig.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>a&gt;0: Minimum, a&lt;0: Maximum</li><li>Scheitel bei x = −b/(2a)</li><li>Nullstellen über die Lösungsformel</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='quadratische-funktionen'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Scheitel-x von y=x²−6x+5?<details><summary>Lösung</summary><p><strong>x = 3</strong><br>−b/(2a)=6/2=3.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='quadratische-funktionen'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Nullstellen von y=x²−6x+5?<details><summary>Lösung</summary><p><strong>x=1 und x=5</strong><br>D=36−20=16; (6±4)/2.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='quadratische-funktionen'><span class='tag'>mc</span><span class='tag'>leicht</span> Bei a&lt;0 hat die Parabel ein …<ul><li>Minimum</li><li>Maximum</li><li>Keinen Scheitel</li><li>Zwei Scheitel</li></ul><details><summary>Lösung</summary><p><strong>Maximum</strong><br>Nach unten geöffnet.</p></details></div>
+<div data-typ='anwenden' data-schwierigkeit='schwer' data-lernziel='quadratische-funktionen'><span class='tag'>anwenden</span><span class='tag'>schwer</span> Gewinnfunktion G(x)=−x²+10x. Bei welcher Menge ist der Gewinn maximal?<details><summary>Lösung</summary><p><strong>x = 5</strong><br>Scheitel bei −b/(2a)=10/2=5.</p></details></div>
+</div></section>
+<section data-thema-id='exponential-log' data-kapitel='02 Funktionen'>
+<h2>02.3 Exponential- &amp; Logarithmusfunktion</h2>
+<p class='meta'>02 Funktionen</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>exponentielles Wachstum beschreiben</li><li>Exponentialgleichungen mit Logarithmus lösen</li><li>Anwendungen erkennen</li></ul></div>
+<div data-block='theorie'><p>Eine Exponentialfunktion y = a·b^x beschreibt Wachstum (b &gt; 1) oder Zerfall (0 &lt; b &lt; 1) mit konstanter Wachstumsrate. Typische Anwendungen sind Zinseszins, Inflation und Bevölkerungswachstum.</p><p>Um nach dem Exponenten aufzulösen, verwendet man den Logarithmus: aus b^x = c folgt x = log(c)/log(b). So beantwortet man Fragen wie «Nach wie vielen Jahren verdoppelt sich das Kapital?».</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>Exponentiell: y = a·b^x</li><li>b&gt;1 Wachstum, 0&lt;b&lt;1 Zerfall</li><li>b^x=c → x = log c / log b</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='exponential-log'><span class='tag'>mc</span><span class='tag'>leicht</span> Was beschreibt b&lt;1 in y=a·b^x?<ul><li>Wachstum</li><li>Zerfall</li><li>Konstanz</li><li>Lineares Wachstum</li></ul><details><summary>Lösung</summary><p><strong>Zerfall</strong><br>0&lt;b&lt;1 → Abnahme.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='exponential-log'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Löse 2^x = 8<details><summary>Lösung</summary><p><strong>x = 3</strong><br>2^3=8.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='exponential-log'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Nach wie vielen Jahren verdoppelt sich Kapital bei 100 %? (2^x=2)<details><summary>Lösung</summary><p><strong>x = 1</strong><br>Trivial, zur Methode: x=log2/log2=1.</p></details></div>
+<div data-typ='anwenden' data-schwierigkeit='mittel' data-lernziel='exponential-log'><span class='tag'>anwenden</span><span class='tag'>mittel</span> Welche Funktion löst &#x27;wann verdoppelt sich das Kapital&#x27;?<details><summary>Lösung</summary><p><strong>Der Logarithmus.</strong><br>Umkehrung der Exponentialfunktion.</p></details></div>
+</div></section>
+<section data-thema-id='prozent-zins' data-kapitel='03 Finanzmathematik'>
+<h2>03.1 Prozent- &amp; Zinsrechnung</h2>
+<p class='meta'>03 Finanzmathematik</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Prozentwerte berechnen</li><li>einfache Zinsen berechnen</li><li>Grund-/Prozentwert unterscheiden</li></ul></div>
+<div data-block='theorie'><p>Die Prozentrechnung verknüpft Grundwert (G), Prozentsatz (p) und Prozentwert (W): W = G · p/100. Beim einfachen Zins gilt für ein Jahr Zins = Kapital · p/100; für Teiljahre wird zeitanteilig gerechnet (Zins = K · p/100 · t/12 bei Monaten).</p><p>Wichtig ist die Unterscheidung, worauf sich der Prozentsatz bezieht (Grundwert). Prozentuale Zu- und Abnahmen wirken multiplikativ: +20 % bedeutet Faktor 1.2, −20 % Faktor 0.8.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>W = G · p/100</li><li>Jahreszins = K · p/100</li><li>+p % = Faktor (1+p/100)</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='prozent-zins'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Wie viel sind 15 % von 400?<details><summary>Lösung</summary><p><strong>60</strong><br>400·0.15=60.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='prozent-zins'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Jahreszins auf 5&#x27;000 bei 3 %?<details><summary>Lösung</summary><p><strong>150</strong><br>5&#x27;000·0.03=150.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='prozent-zins'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Zins auf 6&#x27;000 bei 4 % für 6 Monate?<details><summary>Lösung</summary><p><strong>120</strong><br>6&#x27;000·0.04·6/12=120.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='prozent-zins'><span class='tag'>mc</span><span class='tag'>leicht</span> +25 % entspricht welchem Faktor?<ul><li>0.25</li><li>1.25</li><li>2.5</li><li>0.75</li></ul><details><summary>Lösung</summary><p><strong>1.25</strong><br>1+0.25.</p></details></div>
+</div></section>
+<section data-thema-id='zinseszins' data-kapitel='03 Finanzmathematik'>
+<h2>03.2 Zinseszins</h2>
+<p class='meta'>03 Finanzmathematik</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Endkapital mit Zinseszins berechnen</li><li>exponentielles Kapitalwachstum erklären</li><li>Formel anwenden</li></ul></div>
+<div data-block='theorie'><p>Beim Zinseszins werden die Zinsen jeweils dem Kapital zugeschlagen und im Folgejahr mitverzinst. Das Endkapital nach n Jahren ist Kₙ = K₀ · (1 + p/100)^n. Das Kapital wächst also exponentiell.</p><p>Umgekehrt lässt sich das Anfangskapital (Barwert) durch Diskontieren berechnen: K₀ = Kₙ / (1 + p/100)^n. Über den Logarithmus bestimmt man die Laufzeit n.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>Kₙ = K₀ · (1 + p/100)^n</li><li>Zinseszins = exponentielles Wachstum</li><li>Barwert = Kₙ / (1+p/100)^n</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='zinseszins'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Endkapital: 2&#x27;000 zu 5 % über 2 Jahre?<details><summary>Lösung</summary><p><strong>2&#x27;205</strong><br>2&#x27;000·1.05²=2&#x27;205.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='zinseszins'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Endkapital: 1&#x27;000 zu 10 % über 3 Jahre?<details><summary>Lösung</summary><p><strong>1&#x27;331</strong><br>1&#x27;000·1.1³=1&#x27;331.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='zinseszins'><span class='tag'>mc</span><span class='tag'>leicht</span> Wie wächst Kapital beim Zinseszins?<ul><li>Linear</li><li>Exponentiell</li><li>Gar nicht</li><li>Sinkend</li></ul><details><summary>Lösung</summary><p><strong>Exponentiell</strong><br>Zinsen auf Zinsen.</p></details></div>
+<div data-typ='offen' data-schwierigkeit='schwer' data-lernziel='zinseszins'><span class='tag'>offen</span><span class='tag'>schwer</span> Wie berechnet man den Barwert eines künftigen Betrags?<details><summary>Lösung</summary><p><strong>Durch Diskontieren: K₀ = Kₙ/(1+p/100)^n.</strong><br>Abzinsen.</p></details></div>
+</div></section>
+<section data-thema-id='renten' data-kapitel='03 Finanzmathematik'>
+<h2>03.3 Renten- &amp; Ratenrechnung</h2>
+<p class='meta'>03 Finanzmathematik</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>regelmässige Zahlungen einordnen</li><li>End- und Barwert von Renten verstehen</li><li>Anwendungen erkennen</li></ul></div>
+<div data-block='theorie'><p>Eine Rente ist eine Folge regelmässiger, gleich hoher Zahlungen (z. B. jährliches Sparen oder Ratenzahlungen eines Kredits). Man unterscheidet vorschüssige (Zahlung am Periodenanfang) und nachschüssige Renten (am Periodenende).</p><p>Der Rentenendwert summiert alle aufgezinsten Zahlungen, der Rentenbarwert alle abgezinsten. Anwendungen: Sparpläne, Leasing, Annuitätendarlehen (konstante Rate aus Zins + Tilgung). Die Berechnung nutzt die geometrische Reihe.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>Rente = regelmässige gleiche Zahlungen</li><li>vorschüssig (Anfang) vs. nachschüssig (Ende)</li><li>Endwert = aufgezinst, Barwert = abgezinst</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='offen' data-schwierigkeit='mittel' data-lernziel='renten'><span class='tag'>offen</span><span class='tag'>mittel</span> Was ist eine nachschüssige Rente?<details><summary>Lösung</summary><p><strong>Zahlungen erfolgen jeweils am Periodenende.</strong><br>Gegenteil: vorschüssig.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='mittel' data-lernziel='renten'><span class='tag'>mc</span><span class='tag'>mittel</span> Was ist eine Annuität?<ul><li>Ein einmaliger Betrag</li><li>Eine konstante Rate aus Zins und Tilgung</li><li>Ein Zinssatz</li><li>Eine Steuer</li></ul><details><summary>Lösung</summary><p><strong>Eine konstante Rate aus Zins und Tilgung</strong><br>Annuitätendarlehen.</p></details></div>
+<div data-typ='offen' data-schwierigkeit='schwer' data-lernziel='renten'><span class='tag'>offen</span><span class='tag'>schwer</span> Wozu dient der Rentenbarwert?<details><summary>Lösung</summary><p><strong>Er zeigt den heutigen Wert künftiger regelmässiger Zahlungen.</strong><br>Vergleichbarkeit.</p></details></div>
+<div data-typ='anwenden' data-schwierigkeit='leicht' data-lernziel='renten'><span class='tag'>anwenden</span><span class='tag'>leicht</span> Nenne ein Alltagsbeispiel einer Rente.<details><summary>Lösung</summary><p><strong>Sparplan, Leasingraten, Kreditraten.</strong><br>Regelmässige Zahlungen.</p></details></div>
+</div></section>
+<section data-thema-id='folgen-reihen' data-kapitel='04 Analysis'>
+<h2>04.1 Folgen &amp; Reihen</h2>
+<p class='meta'>04 Analysis</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>arithmetische und geometrische Folgen unterscheiden</li><li>Folgenglieder berechnen</li><li>Summen bestimmen</li></ul></div>
+<div data-block='theorie'><p>Eine Folge ist eine geordnete Liste von Zahlen. Bei einer arithmetischen Folge ist die Differenz d zwischen zwei Gliedern konstant: aₙ = a₁ + (n−1)·d. Bei einer geometrischen Folge ist der Quotient q konstant: aₙ = a₁·q^(n−1).</p><p>Die Summe der ersten n Glieder heisst Reihe. Geometrische Reihen sind die Grundlage der Finanzmathematik (Renten, Zinseszins). Arithmetische Folgen beschreiben lineares, geometrische exponentielles Verhalten.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>Arithmetisch: aₙ = a₁+(n−1)d</li><li>Geometrisch: aₙ = a₁·q^(n−1)</li><li>Geometrische Reihe = Basis der Finanzmathematik</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='folgen-reihen'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Arithmetische Folge a₁=3, d=4. a₅?<details><summary>Lösung</summary><p><strong>19</strong><br>3+4·4=19.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='folgen-reihen'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Geometrische Folge a₁=2, q=3. a₄?<details><summary>Lösung</summary><p><strong>54</strong><br>2·3³=54.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='folgen-reihen'><span class='tag'>mc</span><span class='tag'>leicht</span> Welche Folge wächst exponentiell?<ul><li>Arithmetische</li><li>Geometrische</li><li>Konstante</li><li>Fallende lineare</li></ul><details><summary>Lösung</summary><p><strong>Geometrische</strong><br>Konstanter Quotient.</p></details></div>
+<div data-typ='offen' data-schwierigkeit='leicht' data-lernziel='folgen-reihen'><span class='tag'>offen</span><span class='tag'>leicht</span> Was ist eine Reihe?<details><summary>Lösung</summary><p><strong>Die Summe der Glieder einer Folge.</strong><br>Partialsummen.</p></details></div>
+</div></section>
+<section data-thema-id='differentialrechnung' data-kapitel='04 Analysis'>
+<h2>04.2 Differentialrechnung (Grundzüge)</h2>
+<p class='meta'>04 Analysis</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>die Ableitung als Steigung deuten</li><li>einfache Ableitungsregeln anwenden</li><li>Extremstellen bestimmen</li></ul></div>
+<div data-block='theorie'><p>Die Ableitung f′(x) einer Funktion gibt die Steigung des Graphen im Punkt x an – also die momentane Änderungsrate. Wichtige Regel (Potenzregel): Aus f(x)=x^n folgt f′(x)=n·x^(n−1); Konstanten fallen weg, konstante Faktoren bleiben.</p><p>An Extremstellen (Hoch-/Tiefpunkten) ist die Steigung null: f′(x)=0. In der Wirtschaft nutzt man das zur Optimierung, etwa zur Bestimmung der gewinnmaximalen Menge (Grenzkosten = Grenzerlös).</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>f(x)=x^n → f′(x)=n·x^(n−1)</li><li>Ableitung = Steigung/Änderungsrate</li><li>Extremstelle: f′(x)=0</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='differentialrechnung'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Leite ab: f(x)=x³<details><summary>Lösung</summary><p><strong>f′(x)=3x²</strong><br>Potenzregel.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='differentialrechnung'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Leite ab: f(x)=5x²−3x<details><summary>Lösung</summary><p><strong>f′(x)=10x−3</strong><br>Summenregel + Potenzregel.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='differentialrechnung'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Extremstelle von f(x)=x²−4x?<details><summary>Lösung</summary><p><strong>x=2</strong><br>f′(x)=2x−4=0 → x=2.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='differentialrechnung'><span class='tag'>mc</span><span class='tag'>leicht</span> Was gibt f′(x) geometrisch an?<ul><li>Den Funktionswert</li><li>Die Steigung</li><li>Die Fläche</li><li>Die Nullstelle</li></ul><details><summary>Lösung</summary><p><strong>Die Steigung</strong><br>Momentane Änderungsrate.</p></details></div>
+</div></section>
+<section data-thema-id='statistik' data-kapitel='05 Stochastik'>
+<h2>05.1 Beschreibende Statistik</h2>
+<p class='meta'>05 Stochastik</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Lageparameter berechnen (Mittelwert, Median, Modus)</li><li>Streuung interpretieren</li><li>Daten darstellen</li></ul></div>
+<div data-block='theorie'><p>Die beschreibende Statistik fasst Daten zusammen. Lageparameter: Das arithmetische Mittel ist die Summe aller Werte geteilt durch ihre Anzahl. Der Median ist der mittlere Wert einer geordneten Reihe (robust gegen Ausreisser). Der Modus ist der häufigste Wert.</p><p>Streuungsparameter beschreiben die Verteilung um die Mitte: Die Spannweite ist Max − Min; die Standardabweichung misst die durchschnittliche Abweichung vom Mittelwert. Daten werden in Tabellen, Histogrammen oder Boxplots dargestellt.</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>Mittelwert = Summe ÷ Anzahl</li><li>Median = mittlerer Wert (robust)</li><li>Spannweite = Max − Min</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='statistik'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Mittelwert von 4, 8, 6, 2?<details><summary>Lösung</summary><p><strong>5</strong><br>(4+8+6+2)/4=5.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='statistik'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Median von 3, 7, 2, 9, 5?<details><summary>Lösung</summary><p><strong>5</strong><br>Geordnet 2,3,5,7,9 → Mitte 5.</p></details></div>
+<div data-typ='mc' data-schwierigkeit='mittel' data-lernziel='statistik'><span class='tag'>mc</span><span class='tag'>mittel</span> Welcher Wert ist robust gegen Ausreisser?<ul><li>Mittelwert</li><li>Median</li><li>Spannweite</li><li>Summe</li></ul><details><summary>Lösung</summary><p><strong>Median</strong><br>Median ändert sich kaum durch Extremwerte.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='statistik'><span class='tag'>rechnen</span><span class='tag'>leicht</span> Spannweite von 12, 5, 20, 8?<details><summary>Lösung</summary><p><strong>15</strong><br>20−5=15.</p></details></div>
+</div></section>
+<section data-thema-id='wahrscheinlichkeit' data-kapitel='05 Stochastik'>
+<h2>05.2 Wahrscheinlichkeitsrechnung</h2>
+<p class='meta'>05 Stochastik</p>
+<div data-block='lernziele'><strong>Lernziele</strong><ul><li>Wahrscheinlichkeiten berechnen</li><li>Gegen- und Verknüpfungsregeln anwenden</li><li>Zufallsexperimente einordnen</li></ul></div>
+<div data-block='theorie'><p>Die Wahrscheinlichkeit eines Ereignisses ist P = (Anzahl günstige Fälle) ÷ (Anzahl mögliche Fälle), sofern alle Fälle gleich wahrscheinlich sind (Laplace). P liegt zwischen 0 und 1.</p><p>Regeln: Die Gegenwahrscheinlichkeit ist P(nicht A)=1−P(A). Bei unabhängigen Ereignissen gilt die Produktregel P(A und B)=P(A)·P(B); bei sich ausschliessenden Ereignissen die Summenregel P(A oder B)=P(A)+P(B).</p></div>
+<div data-block='merksaetze'><strong>Merksätze</strong><ul><li>P = günstige ÷ mögliche</li><li>P(nicht A) = 1 − P(A)</li><li>Unabhängig: P(A und B)=P(A)·P(B)</li></ul></div>
+<div data-block='aufgaben'><strong>Aufgaben</strong>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='wahrscheinlichkeit'><span class='tag'>rechnen</span><span class='tag'>leicht</span> P(gerade Zahl) beim Würfel?<details><summary>Lösung</summary><p><strong>1/2</strong><br>3 von 6 Zahlen sind gerade.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='leicht' data-lernziel='wahrscheinlichkeit'><span class='tag'>rechnen</span><span class='tag'>leicht</span> P(nicht 6) beim Würfel?<details><summary>Lösung</summary><p><strong>5/6</strong><br>1 − 1/6.</p></details></div>
+<div data-typ='rechnen' data-schwierigkeit='mittel' data-lernziel='wahrscheinlichkeit'><span class='tag'>rechnen</span><span class='tag'>mittel</span> Zweimal Kopf bei zwei Münzwürfen?<details><summary>Lösung</summary><p><strong>1/4</strong><br>1/2·1/2 (unabhängig).</p></details></div>
+<div data-typ='mc' data-schwierigkeit='leicht' data-lernziel='wahrscheinlichkeit'><span class='tag'>mc</span><span class='tag'>leicht</span> Welchen Wertebereich hat eine Wahrscheinlichkeit?<ul><li>−1 bis 1</li><li>0 bis 1</li><li>0 bis 100</li><li>1 bis 6</li></ul><details><summary>Lösung</summary><p><strong>0 bis 1</strong><br>P zwischen 0 und 1.</p></details></div>
+</div></section>
+<script type='application/json' id='kompendium-data'>
+{
+ "fach": "Mathematik",
+ "quelle": "SBFI Rahmenlehrplan BM, Ausrichtung Wirtschaft und Dienstleistungen",
+ "themen": [
+  {
+   "id": "terme",
+   "kapitel": "01 Algebra & Gleichungen",
+   "nummer": "01.1",
+   "titel": "Terme, Potenzen & Wurzeln",
+   "lernziele": [
+    "Terme umformen und vereinfachen",
+    "Potenz- und Wurzelgesetze anwenden",
+    "mit Logarithmen rechnen"
+   ],
+   "theorie": "Ein Term ist ein sinnvoller Rechenausdruck aus Zahlen, Variablen und Rechenzeichen. Beim Umformen gelten die Vorrangregeln (Klammer vor Punkt vor Strich) sowie das Distributiv-, Kommutativ- und Assoziativgesetz.\n\nPotenzgesetze: a^m · a^n = a^(m+n); a^m ÷ a^n = a^(m−n); (a^m)^n = a^(m·n); a^0 = 1; a^(−n) = 1/a^n. Wurzeln sind Potenzen mit gebrochenem Exponenten: die n-te Wurzel aus a = a^(1/n). Der Logarithmus ist die Umkehrung der Potenz: log_b(x) = y bedeutet b^y = x. Rechenregeln: log(x·y)=log x+log y; log(x/y)=log x−log y; log(x^n)=n·log x.",
+   "merksaetze": [
+    "a^m·a^n = a^(m+n)",
+    "n-te Wurzel aus a = a^(1/n)",
+    "log(x^n) = n·log x"
+   ],
+   "beispiele": [
+    "2^3·2^4 = 2^7 = 128",
+    "log(1000) = 3 (Basis 10)"
+   ],
+   "aufgaben": [
+    {
+     "id": "terme-a1",
+     "typ": "rechnen",
+     "frage": "Vereinfache: x^5 · x^3",
+     "loesung": "x^8",
+     "erklaerung": "Exponenten addieren: 5+3=8.",
+     "schwierigkeit": "leicht",
+     "lernziel": "terme"
+    },
+    {
+     "id": "terme-a2",
+     "typ": "rechnen",
+     "frage": "Berechne 2^(-3)",
+     "loesung": "1/8",
+     "erklaerung": "a^(−n)=1/a^n → 1/2^3.",
+     "schwierigkeit": "mittel",
+     "lernziel": "terme"
+    },
+    {
+     "id": "terme-a3",
+     "typ": "rechnen",
+     "frage": "Löse nach x: log_10(x) = 2",
+     "loesung": "x = 100",
+     "erklaerung": "10^2 = 100.",
+     "schwierigkeit": "mittel",
+     "lernziel": "terme"
+    },
+    {
+     "id": "terme-a4",
+     "typ": "mc",
+     "frage": "Was ist (a^2)^3?",
+     "loesung": "a^6",
+     "erklaerung": "Exponenten multiplizieren: 2·3.",
+     "schwierigkeit": "leicht",
+     "lernziel": "terme",
+     "optionen": [
+      "a^5",
+      "a^6",
+      "a^8",
+      "a^9"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "gleichungen",
+   "kapitel": "01 Algebra & Gleichungen",
+   "nummer": "01.2",
+   "titel": "Lineare & quadratische Gleichungen",
+   "lernziele": [
+    "lineare Gleichungen lösen",
+    "quadratische Gleichungen mit der Lösungsformel lösen",
+    "Lösungen interpretieren"
+   ],
+   "theorie": "Eine lineare Gleichung hat die Form ax + b = 0 mit der Lösung x = −b/a. Man löst durch Äquivalenzumformungen (auf beiden Seiten dasselbe tun).\n\nEine quadratische Gleichung ax² + bx + c = 0 löst man mit der Lösungsformel x = (−b ± √(b²−4ac)) / (2a). Der Term D = b²−4ac heisst Diskriminante: Ist D > 0, gibt es zwei Lösungen; D = 0 eine Lösung; D < 0 keine reelle Lösung.",
+   "merksaetze": [
+    "Linear: x = −b/a",
+    "Quadratisch: x = (−b ± √(b²−4ac))/(2a)",
+    "Diskriminante D entscheidet über die Anzahl Lösungen"
+   ],
+   "beispiele": [
+    "x²−5x+6=0 → x=2 oder x=3"
+   ],
+   "aufgaben": [
+    {
+     "id": "gleichungen-a1",
+     "typ": "rechnen",
+     "frage": "Löse: 3x − 12 = 0",
+     "loesung": "x = 4",
+     "erklaerung": "12 ÷ 3 = 4.",
+     "schwierigkeit": "leicht",
+     "lernziel": "gleichungen"
+    },
+    {
+     "id": "gleichungen-a2",
+     "typ": "rechnen",
+     "frage": "Löse: x² − 9 = 0",
+     "loesung": "x = 3 oder x = −3",
+     "erklaerung": "x² = 9 → ±3.",
+     "schwierigkeit": "leicht",
+     "lernziel": "gleichungen"
+    },
+    {
+     "id": "gleichungen-a3",
+     "typ": "rechnen",
+     "frage": "Löse: x² − 5x + 6 = 0",
+     "loesung": "x = 2 oder x = 3",
+     "erklaerung": "D=25−24=1; (5±1)/2.",
+     "schwierigkeit": "mittel",
+     "lernziel": "gleichungen"
+    },
+    {
+     "id": "gleichungen-a4",
+     "typ": "mc",
+     "frage": "Wie viele Lösungen bei D < 0?",
+     "loesung": "Keine reelle",
+     "erklaerung": "Negative Diskriminante → keine reelle Lösung.",
+     "schwierigkeit": "mittel",
+     "lernziel": "gleichungen",
+     "optionen": [
+      "Zwei",
+      "Eine",
+      "Keine reelle",
+      "Unendlich"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "gleichungssysteme",
+   "kapitel": "01 Algebra & Gleichungen",
+   "nummer": "01.3",
+   "titel": "Lineare Gleichungssysteme",
+   "lernziele": [
+    "Gleichungssysteme mit zwei Unbekannten lösen",
+    "Einsetz- und Additionsverfahren anwenden",
+    "Lösungen deuten"
+   ],
+   "theorie": "Ein lineares Gleichungssystem besteht aus mehreren Gleichungen mit denselben Unbekannten. Bei zwei Gleichungen und zwei Unbekannten gibt es drei Lösungsverfahren: das Gleichsetzungsverfahren (beide nach derselben Variable auflösen und gleichsetzen), das Einsetzverfahren (eine Variable isolieren und einsetzen) und das Additionsverfahren (Gleichungen so kombinieren, dass eine Variable wegfällt).\n\nGeometrisch entspricht die Lösung dem Schnittpunkt zweier Geraden. Parallele Geraden bedeuten keine Lösung, identische Geraden unendlich viele.",
+   "merksaetze": [
+    "Drei Verfahren: Gleichsetzen, Einsetzen, Addition",
+    "Lösung = Schnittpunkt der Geraden",
+    "Parallel → keine Lösung"
+   ],
+   "beispiele": [
+    "x+y=10 und x−y=2 → x=6, y=4"
+   ],
+   "aufgaben": [
+    {
+     "id": "gleichungssysteme-a1",
+     "typ": "rechnen",
+     "frage": "Löse: x+y=10; x−y=2",
+     "loesung": "x=6, y=4",
+     "erklaerung": "Addition: 2x=12 → x=6; y=4.",
+     "schwierigkeit": "mittel",
+     "lernziel": "gleichungssysteme"
+    },
+    {
+     "id": "gleichungssysteme-a2",
+     "typ": "offen",
+     "frage": "Was bedeutet es geometrisch, wenn ein System keine Lösung hat?",
+     "loesung": "Die Geraden sind parallel.",
+     "erklaerung": "Kein Schnittpunkt.",
+     "schwierigkeit": "mittel",
+     "lernziel": "gleichungssysteme"
+    },
+    {
+     "id": "gleichungssysteme-a3",
+     "typ": "rechnen",
+     "frage": "Löse: 2x+y=7; y=x+1",
+     "loesung": "x=2, y=3",
+     "erklaerung": "Einsetzen: 2x+x+1=7 → x=2.",
+     "schwierigkeit": "mittel",
+     "lernziel": "gleichungssysteme"
+    },
+    {
+     "id": "gleichungssysteme-a4",
+     "typ": "mc",
+     "frage": "Welches Verfahren eliminiert eine Variable durch Kombination?",
+     "loesung": "Addition",
+     "erklaerung": "Additionsverfahren.",
+     "schwierigkeit": "leicht",
+     "lernziel": "gleichungssysteme",
+     "optionen": [
+      "Einsetzen",
+      "Addition",
+      "Gleichsetzen",
+      "Probieren"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "lineare-funktionen",
+   "kapitel": "02 Funktionen",
+   "nummer": "02.1",
+   "titel": "Lineare Funktionen",
+   "lernziele": [
+    "Steigung und Achsenabschnitt bestimmen",
+    "Geradengleichungen aufstellen",
+    "lineare Funktionen im Kontext anwenden"
+   ],
+   "theorie": "Eine lineare Funktion hat die Form y = mx + q. Dabei ist m die Steigung (Änderung von y pro Einheit x) und q der y-Achsenabschnitt (Wert bei x = 0). Die Steigung berechnet man aus zwei Punkten: m = (y₂−y₁)/(x₂−x₁).\n\nIn der Wirtschaft sind viele Zusammenhänge linear: Kostenfunktionen (Fixkosten q + variable Kosten m·x), Nachfrage- und Budgetgeraden. Die Steigung der Budgetgeraden entspricht dem Preisverhältnis.",
+   "merksaetze": [
+    "y = mx + q",
+    "m = Δy/Δx",
+    "q = y-Wert bei x=0"
+   ],
+   "beispiele": [
+    "Kostenfunktion K(x)=5x+200: Fixkosten 200, variable Kosten 5/Stück"
+   ],
+   "aufgaben": [
+    {
+     "id": "lineare-funktionen-a1",
+     "typ": "rechnen",
+     "frage": "Steigung durch (1,2) und (3,8)?",
+     "loesung": "m = 3",
+     "erklaerung": "(8−2)/(3−1)=6/2=3.",
+     "schwierigkeit": "mittel",
+     "lernziel": "lineare-funktionen"
+    },
+    {
+     "id": "lineare-funktionen-a2",
+     "typ": "rechnen",
+     "frage": "K(x)=4x+150. Kosten bei 50 Stück?",
+     "loesung": "350",
+     "erklaerung": "4·50+150=350.",
+     "schwierigkeit": "leicht",
+     "lernziel": "lineare-funktionen"
+    },
+    {
+     "id": "lineare-funktionen-a3",
+     "typ": "offen",
+     "frage": "Was bedeutet q in y=mx+q wirtschaftlich bei einer Kostenfunktion?",
+     "loesung": "Die Fixkosten.",
+     "erklaerung": "Wert bei x=0.",
+     "schwierigkeit": "mittel",
+     "lernziel": "lineare-funktionen"
+    },
+    {
+     "id": "lineare-funktionen-a4",
+     "typ": "mc",
+     "frage": "Eine fallende Gerade hat welche Steigung?",
+     "loesung": "Negativ",
+     "erklaerung": "m<0 → fallend.",
+     "schwierigkeit": "leicht",
+     "lernziel": "lineare-funktionen",
+     "optionen": [
+      "Positiv",
+      "Negativ",
+      "Null",
+      "Unendlich"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "quadratische-funktionen",
+   "kapitel": "02 Funktionen",
+   "nummer": "02.2",
+   "titel": "Quadratische Funktionen",
+   "lernziele": [
+    "Parabeln beschreiben",
+    "Scheitelpunkt und Nullstellen bestimmen",
+    "Extremwerte anwenden"
+   ],
+   "theorie": "Eine quadratische Funktion y = ax² + bx + c beschreibt eine Parabel. Ist a > 0, ist sie nach oben geöffnet (Minimum), bei a < 0 nach unten (Maximum). Die Nullstellen findet man mit der Lösungsformel. Der Scheitelpunkt (Extremum) liegt bei x = −b/(2a).\n\nIn der Wirtschaft treten Parabeln z. B. bei Gewinnfunktionen auf: Der maximale Gewinn liegt im Scheitelpunkt. Das macht quadratische Funktionen für Optimierungsfragen wichtig.",
+   "merksaetze": [
+    "a>0: Minimum, a<0: Maximum",
+    "Scheitel bei x = −b/(2a)",
+    "Nullstellen über die Lösungsformel"
+   ],
+   "beispiele": [
+    "G(x)=−x²+10x: Maximum bei x=5"
+   ],
+   "aufgaben": [
+    {
+     "id": "quadratische-funktionen-a1",
+     "typ": "rechnen",
+     "frage": "Scheitel-x von y=x²−6x+5?",
+     "loesung": "x = 3",
+     "erklaerung": "−b/(2a)=6/2=3.",
+     "schwierigkeit": "mittel",
+     "lernziel": "quadratische-funktionen"
+    },
+    {
+     "id": "quadratische-funktionen-a2",
+     "typ": "rechnen",
+     "frage": "Nullstellen von y=x²−6x+5?",
+     "loesung": "x=1 und x=5",
+     "erklaerung": "D=36−20=16; (6±4)/2.",
+     "schwierigkeit": "mittel",
+     "lernziel": "quadratische-funktionen"
+    },
+    {
+     "id": "quadratische-funktionen-a3",
+     "typ": "mc",
+     "frage": "Bei a<0 hat die Parabel ein …",
+     "loesung": "Maximum",
+     "erklaerung": "Nach unten geöffnet.",
+     "schwierigkeit": "leicht",
+     "lernziel": "quadratische-funktionen",
+     "optionen": [
+      "Minimum",
+      "Maximum",
+      "Keinen Scheitel",
+      "Zwei Scheitel"
+     ]
+    },
+    {
+     "id": "quadratische-funktionen-a4",
+     "typ": "anwenden",
+     "frage": "Gewinnfunktion G(x)=−x²+10x. Bei welcher Menge ist der Gewinn maximal?",
+     "loesung": "x = 5",
+     "erklaerung": "Scheitel bei −b/(2a)=10/2=5.",
+     "schwierigkeit": "schwer",
+     "lernziel": "quadratische-funktionen"
+    }
+   ]
+  },
+  {
+   "id": "exponential-log",
+   "kapitel": "02 Funktionen",
+   "nummer": "02.3",
+   "titel": "Exponential- & Logarithmusfunktion",
+   "lernziele": [
+    "exponentielles Wachstum beschreiben",
+    "Exponentialgleichungen mit Logarithmus lösen",
+    "Anwendungen erkennen"
+   ],
+   "theorie": "Eine Exponentialfunktion y = a·b^x beschreibt Wachstum (b > 1) oder Zerfall (0 < b < 1) mit konstanter Wachstumsrate. Typische Anwendungen sind Zinseszins, Inflation und Bevölkerungswachstum.\n\nUm nach dem Exponenten aufzulösen, verwendet man den Logarithmus: aus b^x = c folgt x = log(c)/log(b). So beantwortet man Fragen wie «Nach wie vielen Jahren verdoppelt sich das Kapital?».",
+   "merksaetze": [
+    "Exponentiell: y = a·b^x",
+    "b>1 Wachstum, 0<b<1 Zerfall",
+    "b^x=c → x = log c / log b"
+   ],
+   "beispiele": [
+    "1000·1.05^x: 5 % Wachstum pro Periode"
+   ],
+   "aufgaben": [
+    {
+     "id": "exponential-log-a1",
+     "typ": "mc",
+     "frage": "Was beschreibt b<1 in y=a·b^x?",
+     "loesung": "Zerfall",
+     "erklaerung": "0<b<1 → Abnahme.",
+     "schwierigkeit": "leicht",
+     "lernziel": "exponential-log",
+     "optionen": [
+      "Wachstum",
+      "Zerfall",
+      "Konstanz",
+      "Lineares Wachstum"
+     ]
+    },
+    {
+     "id": "exponential-log-a2",
+     "typ": "rechnen",
+     "frage": "Löse 2^x = 8",
+     "loesung": "x = 3",
+     "erklaerung": "2^3=8.",
+     "schwierigkeit": "leicht",
+     "lernziel": "exponential-log"
+    },
+    {
+     "id": "exponential-log-a3",
+     "typ": "rechnen",
+     "frage": "Nach wie vielen Jahren verdoppelt sich Kapital bei 100 %? (2^x=2)",
+     "loesung": "x = 1",
+     "erklaerung": "Trivial, zur Methode: x=log2/log2=1.",
+     "schwierigkeit": "mittel",
+     "lernziel": "exponential-log"
+    },
+    {
+     "id": "exponential-log-a4",
+     "typ": "anwenden",
+     "frage": "Welche Funktion löst 'wann verdoppelt sich das Kapital'?",
+     "loesung": "Der Logarithmus.",
+     "erklaerung": "Umkehrung der Exponentialfunktion.",
+     "schwierigkeit": "mittel",
+     "lernziel": "exponential-log"
+    }
+   ]
+  },
+  {
+   "id": "prozent-zins",
+   "kapitel": "03 Finanzmathematik",
+   "nummer": "03.1",
+   "titel": "Prozent- & Zinsrechnung",
+   "lernziele": [
+    "Prozentwerte berechnen",
+    "einfache Zinsen berechnen",
+    "Grund-/Prozentwert unterscheiden"
+   ],
+   "theorie": "Die Prozentrechnung verknüpft Grundwert (G), Prozentsatz (p) und Prozentwert (W): W = G · p/100. Beim einfachen Zins gilt für ein Jahr Zins = Kapital · p/100; für Teiljahre wird zeitanteilig gerechnet (Zins = K · p/100 · t/12 bei Monaten).\n\nWichtig ist die Unterscheidung, worauf sich der Prozentsatz bezieht (Grundwert). Prozentuale Zu- und Abnahmen wirken multiplikativ: +20 % bedeutet Faktor 1.2, −20 % Faktor 0.8.",
+   "merksaetze": [
+    "W = G · p/100",
+    "Jahreszins = K · p/100",
+    "+p % = Faktor (1+p/100)"
+   ],
+   "beispiele": [
+    "8 % von 2'500 = 200"
+   ],
+   "aufgaben": [
+    {
+     "id": "prozent-zins-a1",
+     "typ": "rechnen",
+     "frage": "Wie viel sind 15 % von 400?",
+     "loesung": "60",
+     "erklaerung": "400·0.15=60.",
+     "schwierigkeit": "leicht",
+     "lernziel": "prozent-zins"
+    },
+    {
+     "id": "prozent-zins-a2",
+     "typ": "rechnen",
+     "frage": "Jahreszins auf 5'000 bei 3 %?",
+     "loesung": "150",
+     "erklaerung": "5'000·0.03=150.",
+     "schwierigkeit": "leicht",
+     "lernziel": "prozent-zins"
+    },
+    {
+     "id": "prozent-zins-a3",
+     "typ": "rechnen",
+     "frage": "Zins auf 6'000 bei 4 % für 6 Monate?",
+     "loesung": "120",
+     "erklaerung": "6'000·0.04·6/12=120.",
+     "schwierigkeit": "mittel",
+     "lernziel": "prozent-zins"
+    },
+    {
+     "id": "prozent-zins-a4",
+     "typ": "mc",
+     "frage": "+25 % entspricht welchem Faktor?",
+     "loesung": "1.25",
+     "erklaerung": "1+0.25.",
+     "schwierigkeit": "leicht",
+     "lernziel": "prozent-zins",
+     "optionen": [
+      "0.25",
+      "1.25",
+      "2.5",
+      "0.75"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "zinseszins",
+   "kapitel": "03 Finanzmathematik",
+   "nummer": "03.2",
+   "titel": "Zinseszins",
+   "lernziele": [
+    "Endkapital mit Zinseszins berechnen",
+    "exponentielles Kapitalwachstum erklären",
+    "Formel anwenden"
+   ],
+   "theorie": "Beim Zinseszins werden die Zinsen jeweils dem Kapital zugeschlagen und im Folgejahr mitverzinst. Das Endkapital nach n Jahren ist Kₙ = K₀ · (1 + p/100)^n. Das Kapital wächst also exponentiell.\n\nUmgekehrt lässt sich das Anfangskapital (Barwert) durch Diskontieren berechnen: K₀ = Kₙ / (1 + p/100)^n. Über den Logarithmus bestimmt man die Laufzeit n.",
+   "merksaetze": [
+    "Kₙ = K₀ · (1 + p/100)^n",
+    "Zinseszins = exponentielles Wachstum",
+    "Barwert = Kₙ / (1+p/100)^n"
+   ],
+   "beispiele": [
+    "1'000 zu 5 % über 3 Jahre → 1'000·1.05³ ≈ 1'157.63"
+   ],
+   "aufgaben": [
+    {
+     "id": "zinseszins-a1",
+     "typ": "rechnen",
+     "frage": "Endkapital: 2'000 zu 5 % über 2 Jahre?",
+     "loesung": "2'205",
+     "erklaerung": "2'000·1.05²=2'205.",
+     "schwierigkeit": "mittel",
+     "lernziel": "zinseszins"
+    },
+    {
+     "id": "zinseszins-a2",
+     "typ": "rechnen",
+     "frage": "Endkapital: 1'000 zu 10 % über 3 Jahre?",
+     "loesung": "1'331",
+     "erklaerung": "1'000·1.1³=1'331.",
+     "schwierigkeit": "mittel",
+     "lernziel": "zinseszins"
+    },
+    {
+     "id": "zinseszins-a3",
+     "typ": "mc",
+     "frage": "Wie wächst Kapital beim Zinseszins?",
+     "loesung": "Exponentiell",
+     "erklaerung": "Zinsen auf Zinsen.",
+     "schwierigkeit": "leicht",
+     "lernziel": "zinseszins",
+     "optionen": [
+      "Linear",
+      "Exponentiell",
+      "Gar nicht",
+      "Sinkend"
+     ]
+    },
+    {
+     "id": "zinseszins-a4",
+     "typ": "offen",
+     "frage": "Wie berechnet man den Barwert eines künftigen Betrags?",
+     "loesung": "Durch Diskontieren: K₀ = Kₙ/(1+p/100)^n.",
+     "erklaerung": "Abzinsen.",
+     "schwierigkeit": "schwer",
+     "lernziel": "zinseszins"
+    }
+   ]
+  },
+  {
+   "id": "renten",
+   "kapitel": "03 Finanzmathematik",
+   "nummer": "03.3",
+   "titel": "Renten- & Ratenrechnung",
+   "lernziele": [
+    "regelmässige Zahlungen einordnen",
+    "End- und Barwert von Renten verstehen",
+    "Anwendungen erkennen"
+   ],
+   "theorie": "Eine Rente ist eine Folge regelmässiger, gleich hoher Zahlungen (z. B. jährliches Sparen oder Ratenzahlungen eines Kredits). Man unterscheidet vorschüssige (Zahlung am Periodenanfang) und nachschüssige Renten (am Periodenende).\n\nDer Rentenendwert summiert alle aufgezinsten Zahlungen, der Rentenbarwert alle abgezinsten. Anwendungen: Sparpläne, Leasing, Annuitätendarlehen (konstante Rate aus Zins + Tilgung). Die Berechnung nutzt die geometrische Reihe.",
+   "merksaetze": [
+    "Rente = regelmässige gleiche Zahlungen",
+    "vorschüssig (Anfang) vs. nachschüssig (Ende)",
+    "Endwert = aufgezinst, Barwert = abgezinst"
+   ],
+   "beispiele": [
+    "Jährlich 1'000 sparen über mehrere Jahre → Rentenendwert"
+   ],
+   "aufgaben": [
+    {
+     "id": "renten-a1",
+     "typ": "offen",
+     "frage": "Was ist eine nachschüssige Rente?",
+     "loesung": "Zahlungen erfolgen jeweils am Periodenende.",
+     "erklaerung": "Gegenteil: vorschüssig.",
+     "schwierigkeit": "mittel",
+     "lernziel": "renten"
+    },
+    {
+     "id": "renten-a2",
+     "typ": "mc",
+     "frage": "Was ist eine Annuität?",
+     "loesung": "Eine konstante Rate aus Zins und Tilgung",
+     "erklaerung": "Annuitätendarlehen.",
+     "schwierigkeit": "mittel",
+     "lernziel": "renten",
+     "optionen": [
+      "Ein einmaliger Betrag",
+      "Eine konstante Rate aus Zins und Tilgung",
+      "Ein Zinssatz",
+      "Eine Steuer"
+     ]
+    },
+    {
+     "id": "renten-a3",
+     "typ": "offen",
+     "frage": "Wozu dient der Rentenbarwert?",
+     "loesung": "Er zeigt den heutigen Wert künftiger regelmässiger Zahlungen.",
+     "erklaerung": "Vergleichbarkeit.",
+     "schwierigkeit": "schwer",
+     "lernziel": "renten"
+    },
+    {
+     "id": "renten-a4",
+     "typ": "anwenden",
+     "frage": "Nenne ein Alltagsbeispiel einer Rente.",
+     "loesung": "Sparplan, Leasingraten, Kreditraten.",
+     "erklaerung": "Regelmässige Zahlungen.",
+     "schwierigkeit": "leicht",
+     "lernziel": "renten"
+    }
+   ]
+  },
+  {
+   "id": "folgen-reihen",
+   "kapitel": "04 Analysis",
+   "nummer": "04.1",
+   "titel": "Folgen & Reihen",
+   "lernziele": [
+    "arithmetische und geometrische Folgen unterscheiden",
+    "Folgenglieder berechnen",
+    "Summen bestimmen"
+   ],
+   "theorie": "Eine Folge ist eine geordnete Liste von Zahlen. Bei einer arithmetischen Folge ist die Differenz d zwischen zwei Gliedern konstant: aₙ = a₁ + (n−1)·d. Bei einer geometrischen Folge ist der Quotient q konstant: aₙ = a₁·q^(n−1).\n\nDie Summe der ersten n Glieder heisst Reihe. Geometrische Reihen sind die Grundlage der Finanzmathematik (Renten, Zinseszins). Arithmetische Folgen beschreiben lineares, geometrische exponentielles Verhalten.",
+   "merksaetze": [
+    "Arithmetisch: aₙ = a₁+(n−1)d",
+    "Geometrisch: aₙ = a₁·q^(n−1)",
+    "Geometrische Reihe = Basis der Finanzmathematik"
+   ],
+   "beispiele": [
+    "2,4,8,16 … geometrisch mit q=2"
+   ],
+   "aufgaben": [
+    {
+     "id": "folgen-reihen-a1",
+     "typ": "rechnen",
+     "frage": "Arithmetische Folge a₁=3, d=4. a₅?",
+     "loesung": "19",
+     "erklaerung": "3+4·4=19.",
+     "schwierigkeit": "mittel",
+     "lernziel": "folgen-reihen"
+    },
+    {
+     "id": "folgen-reihen-a2",
+     "typ": "rechnen",
+     "frage": "Geometrische Folge a₁=2, q=3. a₄?",
+     "loesung": "54",
+     "erklaerung": "2·3³=54.",
+     "schwierigkeit": "mittel",
+     "lernziel": "folgen-reihen"
+    },
+    {
+     "id": "folgen-reihen-a3",
+     "typ": "mc",
+     "frage": "Welche Folge wächst exponentiell?",
+     "loesung": "Geometrische",
+     "erklaerung": "Konstanter Quotient.",
+     "schwierigkeit": "leicht",
+     "lernziel": "folgen-reihen",
+     "optionen": [
+      "Arithmetische",
+      "Geometrische",
+      "Konstante",
+      "Fallende lineare"
+     ]
+    },
+    {
+     "id": "folgen-reihen-a4",
+     "typ": "offen",
+     "frage": "Was ist eine Reihe?",
+     "loesung": "Die Summe der Glieder einer Folge.",
+     "erklaerung": "Partialsummen.",
+     "schwierigkeit": "leicht",
+     "lernziel": "folgen-reihen"
+    }
+   ]
+  },
+  {
+   "id": "differentialrechnung",
+   "kapitel": "04 Analysis",
+   "nummer": "04.2",
+   "titel": "Differentialrechnung (Grundzüge)",
+   "lernziele": [
+    "die Ableitung als Steigung deuten",
+    "einfache Ableitungsregeln anwenden",
+    "Extremstellen bestimmen"
+   ],
+   "theorie": "Die Ableitung f′(x) einer Funktion gibt die Steigung des Graphen im Punkt x an – also die momentane Änderungsrate. Wichtige Regel (Potenzregel): Aus f(x)=x^n folgt f′(x)=n·x^(n−1); Konstanten fallen weg, konstante Faktoren bleiben.\n\nAn Extremstellen (Hoch-/Tiefpunkten) ist die Steigung null: f′(x)=0. In der Wirtschaft nutzt man das zur Optimierung, etwa zur Bestimmung der gewinnmaximalen Menge (Grenzkosten = Grenzerlös).",
+   "merksaetze": [
+    "f(x)=x^n → f′(x)=n·x^(n−1)",
+    "Ableitung = Steigung/Änderungsrate",
+    "Extremstelle: f′(x)=0"
+   ],
+   "beispiele": [
+    "f(x)=x² → f′(x)=2x; Extremum bei x=0"
+   ],
+   "aufgaben": [
+    {
+     "id": "differentialrechnung-a1",
+     "typ": "rechnen",
+     "frage": "Leite ab: f(x)=x³",
+     "loesung": "f′(x)=3x²",
+     "erklaerung": "Potenzregel.",
+     "schwierigkeit": "leicht",
+     "lernziel": "differentialrechnung"
+    },
+    {
+     "id": "differentialrechnung-a2",
+     "typ": "rechnen",
+     "frage": "Leite ab: f(x)=5x²−3x",
+     "loesung": "f′(x)=10x−3",
+     "erklaerung": "Summenregel + Potenzregel.",
+     "schwierigkeit": "mittel",
+     "lernziel": "differentialrechnung"
+    },
+    {
+     "id": "differentialrechnung-a3",
+     "typ": "rechnen",
+     "frage": "Extremstelle von f(x)=x²−4x?",
+     "loesung": "x=2",
+     "erklaerung": "f′(x)=2x−4=0 → x=2.",
+     "schwierigkeit": "mittel",
+     "lernziel": "differentialrechnung"
+    },
+    {
+     "id": "differentialrechnung-a4",
+     "typ": "mc",
+     "frage": "Was gibt f′(x) geometrisch an?",
+     "loesung": "Die Steigung",
+     "erklaerung": "Momentane Änderungsrate.",
+     "schwierigkeit": "leicht",
+     "lernziel": "differentialrechnung",
+     "optionen": [
+      "Den Funktionswert",
+      "Die Steigung",
+      "Die Fläche",
+      "Die Nullstelle"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "statistik",
+   "kapitel": "05 Stochastik",
+   "nummer": "05.1",
+   "titel": "Beschreibende Statistik",
+   "lernziele": [
+    "Lageparameter berechnen (Mittelwert, Median, Modus)",
+    "Streuung interpretieren",
+    "Daten darstellen"
+   ],
+   "theorie": "Die beschreibende Statistik fasst Daten zusammen. Lageparameter: Das arithmetische Mittel ist die Summe aller Werte geteilt durch ihre Anzahl. Der Median ist der mittlere Wert einer geordneten Reihe (robust gegen Ausreisser). Der Modus ist der häufigste Wert.\n\nStreuungsparameter beschreiben die Verteilung um die Mitte: Die Spannweite ist Max − Min; die Standardabweichung misst die durchschnittliche Abweichung vom Mittelwert. Daten werden in Tabellen, Histogrammen oder Boxplots dargestellt.",
+   "merksaetze": [
+    "Mittelwert = Summe ÷ Anzahl",
+    "Median = mittlerer Wert (robust)",
+    "Spannweite = Max − Min"
+   ],
+   "beispiele": [
+    "Werte 2,4,4,6,9 → Mittel 5, Median 4, Modus 4"
+   ],
+   "aufgaben": [
+    {
+     "id": "statistik-a1",
+     "typ": "rechnen",
+     "frage": "Mittelwert von 4, 8, 6, 2?",
+     "loesung": "5",
+     "erklaerung": "(4+8+6+2)/4=5.",
+     "schwierigkeit": "leicht",
+     "lernziel": "statistik"
+    },
+    {
+     "id": "statistik-a2",
+     "typ": "rechnen",
+     "frage": "Median von 3, 7, 2, 9, 5?",
+     "loesung": "5",
+     "erklaerung": "Geordnet 2,3,5,7,9 → Mitte 5.",
+     "schwierigkeit": "mittel",
+     "lernziel": "statistik"
+    },
+    {
+     "id": "statistik-a3",
+     "typ": "mc",
+     "frage": "Welcher Wert ist robust gegen Ausreisser?",
+     "loesung": "Median",
+     "erklaerung": "Median ändert sich kaum durch Extremwerte.",
+     "schwierigkeit": "mittel",
+     "lernziel": "statistik",
+     "optionen": [
+      "Mittelwert",
+      "Median",
+      "Spannweite",
+      "Summe"
+     ]
+    },
+    {
+     "id": "statistik-a4",
+     "typ": "rechnen",
+     "frage": "Spannweite von 12, 5, 20, 8?",
+     "loesung": "15",
+     "erklaerung": "20−5=15.",
+     "schwierigkeit": "leicht",
+     "lernziel": "statistik"
+    }
+   ]
+  },
+  {
+   "id": "wahrscheinlichkeit",
+   "kapitel": "05 Stochastik",
+   "nummer": "05.2",
+   "titel": "Wahrscheinlichkeitsrechnung",
+   "lernziele": [
+    "Wahrscheinlichkeiten berechnen",
+    "Gegen- und Verknüpfungsregeln anwenden",
+    "Zufallsexperimente einordnen"
+   ],
+   "theorie": "Die Wahrscheinlichkeit eines Ereignisses ist P = (Anzahl günstige Fälle) ÷ (Anzahl mögliche Fälle), sofern alle Fälle gleich wahrscheinlich sind (Laplace). P liegt zwischen 0 und 1.\n\nRegeln: Die Gegenwahrscheinlichkeit ist P(nicht A)=1−P(A). Bei unabhängigen Ereignissen gilt die Produktregel P(A und B)=P(A)·P(B); bei sich ausschliessenden Ereignissen die Summenregel P(A oder B)=P(A)+P(B).",
+   "merksaetze": [
+    "P = günstige ÷ mögliche",
+    "P(nicht A) = 1 − P(A)",
+    "Unabhängig: P(A und B)=P(A)·P(B)"
+   ],
+   "beispiele": [
+    "Würfel: P(6) = 1/6 ≈ 0.167"
+   ],
+   "aufgaben": [
+    {
+     "id": "wahrscheinlichkeit-a1",
+     "typ": "rechnen",
+     "frage": "P(gerade Zahl) beim Würfel?",
+     "loesung": "1/2",
+     "erklaerung": "3 von 6 Zahlen sind gerade.",
+     "schwierigkeit": "leicht",
+     "lernziel": "wahrscheinlichkeit"
+    },
+    {
+     "id": "wahrscheinlichkeit-a2",
+     "typ": "rechnen",
+     "frage": "P(nicht 6) beim Würfel?",
+     "loesung": "5/6",
+     "erklaerung": "1 − 1/6.",
+     "schwierigkeit": "leicht",
+     "lernziel": "wahrscheinlichkeit"
+    },
+    {
+     "id": "wahrscheinlichkeit-a3",
+     "typ": "rechnen",
+     "frage": "Zweimal Kopf bei zwei Münzwürfen?",
+     "loesung": "1/4",
+     "erklaerung": "1/2·1/2 (unabhängig).",
+     "schwierigkeit": "mittel",
+     "lernziel": "wahrscheinlichkeit"
+    },
+    {
+     "id": "wahrscheinlichkeit-a4",
+     "typ": "mc",
+     "frage": "Welchen Wertebereich hat eine Wahrscheinlichkeit?",
+     "loesung": "0 bis 1",
+     "erklaerung": "P zwischen 0 und 1.",
+     "schwierigkeit": "leicht",
+     "lernziel": "wahrscheinlichkeit",
+     "optionen": [
+      "−1 bis 1",
+      "0 bis 1",
+      "0 bis 100",
+      "1 bis 6"
+     ]
+    }
+   ]
+  }
+ ]
+}
+</script></body></html>

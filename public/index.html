@@ -3609,13 +3609,48 @@ body.mode-laptop .dock-panel{width:330px}
 /* Sind volle App-Panels offen, teilen sich Hauptbereich (1fr) und Dock
    (Anzahl App-Panels als fr) die Breite → volle App neben voller App.
    fr-Spalten überlaufen nie → nichts wird abgeschnitten. */
-body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
-body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
-/* Inhalte im App-Panel brechen auf die Spaltenbreite um; Breites scrollt statt abzuschneiden. */
-.dock-panel.app-panel .grid-4,.dock-panel.app-panel .grid-3,.dock-panel.app-panel .grid-2{grid-template-columns:1fr !important}
-.dock-panel.app-panel table{display:block;overflow-x:auto;max-width:100%}
+body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,var(--dock-fr,1fr))}
+body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) minmax(0,var(--dock-fr,1fr))}
 /* Dock-Menü scrollbar, da jetzt alle Apps gelistet sind. */
 #dockMenu{max-height:min(72vh,600px);overflow-y:auto}
+
+/* ── Zwei-Bildschirme-Kopfzeilen: Hauptbereich + jedes App-Panel bekommen
+   eine Kopfzeile mit "Bildschirm N"-Label und eigenem App-Wähler, damit sich
+   Split-Screen wie zwei unabhängige Monitore anfühlt — auf jeder Seite lässt
+   sich frei wählen, welche App dort läuft. ── */
+.main-split-header{display:flex;align-items:center;gap:10px;padding:9px 20px;border-bottom:1px solid var(--border);background:var(--panel2);position:sticky;top:0;z-index:5}
+body.mode-computer .main-split-header{padding-left:24px;padding-right:24px}
+.main-split-badge,.dock-screen-badge{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;flex-shrink:0}
+.main-split-select{flex:1;min-width:0;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:12.5px;font-weight:600;font-family:inherit;cursor:pointer}
+.dock-switch-select{flex:1;min-width:0;padding:5px 8px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--text);font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dock-switch-select:hover{background:var(--panel3);border-color:var(--border)}
+
+/* ── Container-Queries: Karten-Grids (Haupt­bereich & App-Panel) reagieren auf
+   die tatsächliche Breite ihres eigenen Containers statt auf die volle
+   Fensterbreite. Ohne das bleiben z.B. 4er-Karten-Raster im Split-Screen
+   erzwungen 4-spaltig, obwohl die Hälfte des Bildschirms viel schmaler ist
+   → gestauchte, "verzerrte" Karten. Mit Container-Queries passt sich jede
+   Seite unabhängig an, egal ob sie 30%, 50% oder 100% der Fensterbreite hat. ── */
+.main,.dock-panel.app-panel .dock-panel-body{container-type:inline-size}
+@container (max-width:1500px){
+  .grid-12 .col-8{grid-column:span 7}
+  .grid-12 .col-4{grid-column:span 5}
+}
+@container (max-width:1200px){
+  .grid-5{grid-template-columns:repeat(3,1fr)}
+  .grid-12 .col-8,.grid-12 .col-4,.grid-12 .col-7,.grid-12 .col-5,.grid-12 .col-6,.grid-12 .col-9,.grid-12 .col-3{grid-column:span 12}
+}
+@container (max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+@container (max-width:900px){
+  .grid-2,.grid-3,.grid-4,.grid-5{grid-template-columns:1fr}
+  .fin-grid-4{grid-template-columns:repeat(2,1fr)}
+  .fin-grid-3{grid-template-columns:1fr 1fr}
+}
+@container (max-width:600px){.fin-grid-4,.fin-grid-3,.fin-grid-2{grid-template-columns:1fr}}
+/* Breite Inhalte (Tabellen) scrollen statt den Container zu sprengen — nur
+   wenn wirklich ein Panel offen ist, damit sich am normalen Vollbild-Layout
+   nichts ändert. */
+body.has-app-panels .main table,.dock-panel.app-panel table{display:block;overflow-x:auto;max-width:100%}
 
 /* iframe-Panels: Apps ohne Inline-Ansicht (Drive, NoteFlow, DocStudio, …) als
    vollwertige App im Panel. */
@@ -3623,7 +3658,7 @@ body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)
 .dock-panel.frame-panel .dock-panel-body{padding:0;overflow:hidden}
 .dock-frame{width:100%;height:100%;border:0;display:block;background:var(--bg)}
 /* Auch frame-Panels teilen sich die Breite (App neben App). */
-body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,calc(var(--dock-fr,1) * 1fr))}
+body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,var(--dock-fr,1fr))}
 
 /* ═══ Embed-Modus — chrome-lose App fürs iframe-Panel ═══ */
 html.embed-mode .sidebar,
@@ -8656,7 +8691,7 @@ const ROUTE_DEFS = [
   {key:"programs", icon:"🧩"}, {key:"organizations", icon:"🏛️"}, {key:"time", icon:"⏱️"},
   {key:"statistics", icon:"📊"}, {key:"reports", icon:"🤖"}, {key:"reflecta", icon:"🪞"},
   {key:"decisions", icon:"⚖️"}, {key:"journal", icon:"✍️"},
-  {key:"quantusproject", icon:"🛠️"},
+  {key:"quantusproject", icon:"🛠️"}, {key:"smarter", icon:"🎓"},
 ];
 function getRoutes() {
   return ROUTE_DEFS.map(r => ({...r, label: t(r.key), hash: "#/" + r.key}));
@@ -15868,6 +15903,910 @@ function viewDrive() {
       style="width:100%;height:calc(100vh - 110px);min-height:520px;border:1px solid var(--border,#333);border-radius:12px;background:#efebe2;display:block"></iframe>`;
 }
 
+// ============================================================================
+// SMARTER — täglicher Lernstoff (Heute / Upload / Warteschlange / Einstellungen)
+// Datenvertrag: alles unter smarter/ (sources, queue, documents, config).
+// config = {dailyMinutes:30, targetWords:2800, scheduleTime:"04:00",
+//           timezone:"Europe/Zurich", ingestWebhookUrl}. Seeding idempotent
+// durch die App (RTDB ist nur im Browser des Nutzers erreichbar).
+// ============================================================================
+const SMARTER_DEFAULT_CONFIG = {
+  dailyMinutes: 30,
+  targetWords: 2800,
+  scheduleTime: "04:00",
+  timezone: "Europe/Zurich",
+  ingestWebhookUrl: "",
+  generateWebhookUrl: ""
+};
+const SMARTER = {
+  tab: "today",
+  loaded: false,
+  loading: false,
+  loadedAt: 0,
+  noFirebase: false,
+  config: null,
+  configVerified: false,
+  queue: {},
+  today: null,
+  dayKey: null,
+  error: null,
+  revealed: new Set(),
+  pendingUpload: null,
+  uploading: false,
+  generating: false,
+  pasteText: "",
+  pasteTitle: ""
+};
+
+function smarterRootRef() {
+  // rtdbDbRef liefert bei fehlendem Firebase-SDK null → nie werfen.
+  try { return (typeof rtdbDbRef === "function") ? rtdbDbRef("smarter") : null; } catch(e) { return null; }
+}
+function smarterTodayKey() {
+  // yyyy-mm-dd in der konfigurierten Zeitzone (Default Europe/Zurich, gleiche
+  // TZ wie n8n) — en-CA liefert ISO-Datum. So stimmen App- und n8n-Datumsschlüssel
+  // auch bei geänderter config.timezone überein.
+  const tz = (SMARTER.config && SMARTER.config.timezone) || "Europe/Zurich";
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date()); }
+  catch (e) {
+    try { return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date()); }
+    catch (e2) { return new Date().toISOString().slice(0, 10); }
+  }
+}
+function smarterQueueUnits() {
+  const q = SMARTER.queue || {};
+  return Object.keys(q).map(function(id) { return Object.assign({ _id: id }, q[id] || {}); });
+}
+function smarterPendingUnits() {
+  return smarterQueueUnits()
+    .filter(function(u) { return (u.status || "pending") === "pending"; })
+    .sort(function(a, b) { return (Number(a.order) || 0) - (Number(b.order) || 0); });
+}
+function smarterRemainingMinutes() {
+  return smarterPendingUnits().reduce(function(sum, u) { return sum + (Number(u.estMinutes) || 0); }, 0);
+}
+
+async function smarterEnsureConfig(db) {
+  // Idempotentes Seeding: fehlt config komplett → Defaults schreiben + verifizieren.
+  // Existiert config → nur fehlende Keys ergänzen (nie bestehende Werte überschreiben).
+  const snap = await db.child("config").once("value");
+  const cur = snap.val();
+  if (!cur || typeof cur !== "object") {
+    await db.child("config").set(SMARTER_DEFAULT_CONFIG);
+    const rb = (await db.child("config").once("value")).val();
+    SMARTER.configVerified = !!(rb &&
+      rb.dailyMinutes === SMARTER_DEFAULT_CONFIG.dailyMinutes &&
+      rb.targetWords === SMARTER_DEFAULT_CONFIG.targetWords &&
+      rb.scheduleTime === SMARTER_DEFAULT_CONFIG.scheduleTime &&
+      rb.timezone === SMARTER_DEFAULT_CONFIG.timezone &&
+      rb.ingestWebhookUrl === SMARTER_DEFAULT_CONFIG.ingestWebhookUrl &&
+      rb.generateWebhookUrl === SMARTER_DEFAULT_CONFIG.generateWebhookUrl);
+    if (SMARTER.configVerified) console.log("🎓 Smarter: config geseedet & verifiziert");
+    return;
+  }
+  const patch = {};
+  for (const k in SMARTER_DEFAULT_CONFIG) if (cur[k] === undefined) patch[k] = SMARTER_DEFAULT_CONFIG[k];
+  if (Object.keys(patch).length) await db.child("config").update(patch);
+  SMARTER.configVerified = true;
+}
+
+async function smarterLoad() {
+  if (SMARTER.loading) return;
+  const db = smarterRootRef();
+  if (!db) {
+    // Offline: Skeleton durch die Offline-Ansicht ersetzen (render) und als frisch
+    // markieren (loadedAt), sonst bleibt der Erststart auf dem Ladescreen hängen
+    // und jeder Re-Render plant eine überflüssige Nachladung.
+    SMARTER.noFirebase = true; SMARTER.loaded = true; SMARTER.loadedAt = Date.now();
+    render();
+    return;
+  }
+  SMARTER.loading = true; SMARTER.noFirebase = false; SMARTER.error = null;
+  try {
+    await smarterEnsureConfig(db);
+    // config zuerst laden, damit smarterTodayKey die konfigurierte Zeitzone kennt
+    const cfgSnap = await db.child("config").once("value");
+    SMARTER.config = cfgSnap.val() || Object.assign({}, SMARTER_DEFAULT_CONFIG);
+    const dayKey = smarterTodayKey();
+    // Reveal-Status nur bei echtem Tageswechsel zurücksetzen — Hintergrund-Reloads
+    // am selben Tag dürfen bereits aufgedeckte Antworten nicht wieder einklappen.
+    if (dayKey !== SMARTER.dayKey) { SMARTER.revealed = new Set(); SMARTER.dayKey = dayKey; }
+    const results = await Promise.all([
+      db.child("queue").once("value"),
+      db.child("documents/" + dayKey).once("value")
+    ]);
+    SMARTER.queue = results[0].val() || {};
+    SMARTER.today = results[1].val() || null;
+  } catch (e) {
+    SMARTER.error = (e && e.message) || String(e);
+    console.warn("Smarter load:", e);
+  }
+  SMARTER.loading = false; SMARTER.loaded = true; SMARTER.loadedAt = Date.now();
+  render();
+}
+
+function viewSmarter() {
+  // Erststart / veralteter Stand → im Hintergrund laden (kein Blockieren).
+  if (!SMARTER.loading && (!SMARTER.loaded || (Date.now() - SMARTER.loadedAt) > 60000)) {
+    SMARTER.loaded = false;
+    setTimeout(smarterLoad, 0);
+  }
+
+  const tabs = [
+    { key: "today", icon: "☀️", label: "Heute" },
+    { key: "upload", icon: "📥", label: "Upload" },
+    { key: "queue", icon: "📚", label: "Warteschlange" },
+    { key: "settings", icon: "⚙️", label: "Einstellungen" }
+  ];
+  const active = SMARTER.tab || "today";
+  const connected = !SMARTER.noFirebase;
+  const statusPill = connected
+    ? '<span class="sm-pill sm-pill-ok">● Cloud verbunden</span>'
+    : '<span class="sm-pill sm-pill-warn">● Cloud offline</span>';
+
+  const offlineBanner = SMARTER.noFirebase
+    ? '<div class="sm-offline">⚠ Cloud offline — Ansicht funktioniert; Speichern &amp; Upload brauchen die Firebase-Anmeldung (Drive-Modul) oder die Netlify-App.</div>'
+    : "";
+
+  let body = "";
+  if (!SMARTER.noFirebase && !SMARTER.loaded && !SMARTER.config) {
+    body = '<div class="sm-skeleton">Lädt Lernstoff …</div>';
+  } else if (active === "upload") body = smarterTabUpload();
+  else if (active === "queue") body = smarterTabQueue();
+  else if (active === "settings") body = smarterTabSettings();
+  else body = smarterTabToday();
+
+  return `
+    <style>
+      .smarter-wrap{--sm-coral:#D96B5B;--sm-petrol:#2F8C80;--sm-sand:#C9A96E;max-width:900px;margin:0 auto}
+      .sm-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+      .sm-head h1{margin:0;font-size:20px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:9px}
+      .sm-pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:.2px}
+      .sm-pill-ok{background:color-mix(in oklab,var(--sm-petrol) 20%,transparent);color:var(--sm-petrol);border:1px solid color-mix(in oklab,var(--sm-petrol) 40%,transparent)}
+      .sm-pill-warn{background:color-mix(in oklab,var(--warn) 18%,transparent);color:var(--warn);border:1px solid color-mix(in oklab,var(--warn) 38%,transparent)}
+      .sm-tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap}
+      .sm-tab{appearance:none;background:transparent;border:0;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:700;padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;border-radius:8px 8px 0 0;transition:var(--transition)}
+      .sm-tab:hover{color:var(--text);background:var(--hover)}
+      .sm-tab.active{color:var(--sm-coral);border-bottom-color:var(--sm-coral)}
+      .sm-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+      .sm-card h3{margin:0 0 10px;font-size:14px;font-weight:800;color:var(--text)}
+      .sm-btn{appearance:none;border:1px solid var(--border2);background:var(--panel2);color:var(--text);font-size:13px;font-weight:700;padding:8px 14px;border-radius:10px;cursor:pointer;transition:var(--transition)}
+      .sm-btn:hover{border-color:var(--sm-coral)}
+      .sm-btn.sm-primary{background:var(--sm-coral);border-color:var(--sm-coral);color:#fff}
+      .sm-btn.sm-primary:hover{filter:brightness(1.06)}
+      .sm-btn.sm-ghost{background:transparent}
+      .sm-btn.sm-mini{font-size:12px;padding:4px 9px;border-radius:8px}
+      .sm-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+      .sm-muted{color:var(--muted);font-size:13px}
+      .sm-drop{border:2px dashed var(--border2);border-radius:14px;padding:34px 18px;text-align:center;cursor:pointer;transition:var(--transition);background:var(--panel2)}
+      .sm-drop:hover,.sm-drop.sm-over{border-color:var(--sm-petrol);background:color-mix(in oklab,var(--sm-petrol) 8%,var(--panel2))}
+      .sm-drop .sm-drop-icon{font-size:34px;margin-bottom:8px}
+      .sm-q{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+      .sm-q-head{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--text);font-weight:600}
+      .sm-q-num{flex:none;width:22px;height:22px;border-radius:50%;background:var(--sm-sand);color:#2B3134;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
+      .sm-q-a{margin-top:9px;padding-top:9px;border-top:1px solid var(--border);color:var(--text2);font-size:13px;line-height:1.5}
+      .sm-theory{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;line-height:1.6;color:var(--text);max-height:52vh;overflow:auto}
+      .sm-theory h1,.sm-theory h2,.sm-theory h3{color:var(--text)}
+      .sm-unit{display:flex;align-items:center;gap:12px;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:11px 14px;margin-bottom:9px}
+      .sm-unit-title{flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sm-unit-min{flex:none;font-size:12px;font-weight:700;color:var(--sm-petrol)}
+      .sm-field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+      .sm-field label{font-size:12px;font-weight:700;color:var(--muted)}
+      .sm-field input{background:var(--panel2);border:1px solid var(--border2);border-radius:10px;padding:9px 12px;color:var(--text);font-size:14px;font-family:var(--sans)}
+      .sm-field input:focus{outline:none;border-color:var(--sm-coral)}
+      .sm-field input[readonly]{opacity:.7;cursor:not-allowed}
+      .sm-notice{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--sm-sand);border-radius:12px;padding:16px 18px}
+      .sm-notice h3{margin:0 0 6px;font-size:14px;color:var(--text)}
+      .sm-notice-inline{background:color-mix(in oklab,var(--warn) 12%,transparent);border:1px solid color-mix(in oklab,var(--warn) 30%,transparent);color:var(--text2);font-size:12.5px;line-height:1.5;padding:9px 13px;border-radius:10px;margin:10px 0 2px}
+      .sm-btn-touch{min-height:44px;padding:11px 18px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+      .sm-btn[disabled]{opacity:.6;cursor:progress}
+      @media (max-width:560px){.sm-btn-touch{width:100%;justify-content:center}}
+      .sm-skeleton{padding:40px;text-align:center;color:var(--muted);font-size:14px}
+      .sm-offline{background:color-mix(in oklab,var(--warn) 14%,transparent);border:1px solid color-mix(in oklab,var(--warn) 32%,transparent);color:var(--text2);font-size:12.5px;padding:9px 13px;border-radius:10px;margin-bottom:14px}
+      .sm-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+      .sm-stat{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:10px 16px;text-align:center;min-width:96px}
+      .sm-stat .v{font-size:20px;font-weight:800;color:var(--sm-coral)}
+      .sm-stat .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+      .sm-doc-frame{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:#EFEAE1;margin-bottom:14px}
+      .sm-doc-iframe{width:100%;border:0;display:block;background:#EFEAE1;min-height:340px}
+      .sm-ans-wrap{margin:10px 0 6px}
+      .sm-ans-lbl{font-size:11px;font-weight:700;color:var(--sm-petrol);text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px}
+      .sm-ans{width:100%;box-sizing:border-box;min-height:66px;resize:vertical;background:var(--panel2);border:1px solid var(--border2);border-radius:10px;padding:9px 11px;color:var(--text);font:14px/1.5 var(--sans)}
+      .sm-ans:focus{outline:none;border-color:var(--sm-coral)}
+      .sm-ans-meta{display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:11px;color:var(--muted);min-height:16px}
+      .sm-ans-fb{font-weight:700}
+      .sm-model{margin-top:8px;padding:9px 11px;border-radius:8px;background:color-mix(in oklab,var(--sm-petrol) 12%,transparent);border:1px solid color-mix(in oklab,var(--sm-petrol) 32%,transparent);color:var(--text2);font-size:13px;line-height:1.5}
+    </style>
+    <div class="smarter-wrap">
+      <div class="sm-head">
+        <h1>🎓 Smarter</h1>
+        ${statusPill}
+        <div style="flex:1"></div>
+        <button class="sm-btn sm-ghost sm-mini" data-action="smarter-refresh" title="Aktualisieren">↻ Aktualisieren</button>
+      </div>
+      <div class="sm-tabs">
+        ${tabs.map(function(tb){ return '<button class="sm-tab ' + (active===tb.key?'active':'') + '" data-action="smarter-tab" data-tab="' + tb.key + '">' + tb.icon + ' ' + tb.label + '</button>'; }).join("")}
+      </div>
+      ${offlineBanner}
+      ${body}
+    </div>`;
+}
+
+function smarterNotice(title, msg) {
+  return '<div class="sm-notice"><h3>' + esc(title) + '</h3><div class="sm-muted">' + esc(msg) + '</div></div>';
+}
+
+// Iframe-interne Styles für die eingedockten Antwortfelder (Schiefer/Leinen,
+// eigenes Realm → keine App-CSS-Variablen verfügbar, daher feste Werte).
+const SMARTER_IFRAME_ANSWER_CSS = [
+  ".sd-answer{margin:10px 0 24px;padding:12px 14px;border:1px solid #C9A96E;border-left:3px solid #D96B5B;border-radius:10px;background:rgba(255,255,255,.55)}",
+  ".sd-answer .sd-lbl{font-size:11px;font-weight:700;color:#2F8C80;margin-bottom:6px;letter-spacing:.3px;text-transform:uppercase}",
+  ".sd-answer textarea{width:100%;box-sizing:border-box;min-height:72px;resize:vertical;background:#fff;border:1px solid #C9A96E;border-radius:8px;padding:9px 11px;color:#2B3134;font:15px/1.55 inherit}",
+  ".sd-answer textarea:focus{outline:none;border-color:#D96B5B;box-shadow:0 0 0 3px rgba(217,107,91,.18)}",
+  ".sd-answer .sd-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;min-height:18px;gap:10px}",
+  ".sd-answer .sd-fb{font-size:12px;font-weight:700}",
+  ".sd-answer .sd-showbtn{appearance:none;border:1px solid #C9A96E;background:#C9A96E;color:#2B3134;font-size:12px;font-weight:700;padding:4px 10px;border-radius:7px;cursor:pointer;white-space:nowrap}",
+  ".sd-answer .sd-model{margin-top:8px;padding:9px 11px;border-radius:8px;background:rgba(47,140,128,.12);border:1px solid rgba(47,140,128,.35);color:#2B3134;font-size:13px;line-height:1.5}",
+  "@media print{.sd-answer .sd-showbtn{display:none}.sd-answer{background:transparent}}"
+].join("\n");
+
+function smarterAnswersMap() {
+  return (SMARTER.today && SMARTER.today.answers && typeof SMARTER.today.answers === "object") ? SMARTER.today.answers : {};
+}
+function smarterAnsweredCount(questions) {
+  const a = smarterAnswersMap();
+  return (questions || []).filter(function(q) { const id = q && q.id; return id && a[id] && String(a[id].text || "").trim(); }).length;
+}
+
+// Baut den „Jetzt/Neu generieren"-Button (mobil-tauglich, min. 44px Touch-Ziel
+// via .sm-btn-touch). hasDoc → „Neu generieren" (Überschreiben, Bestätigung im
+// Handler); sonst „Jetzt generieren". Während der Generierung deaktiviert + Label.
+function smarterGenerateButton(hasDoc) {
+  const busy = !!SMARTER.generating;
+  const label = busy
+    ? "⏳ Wird generiert …"
+    : (hasDoc ? "🔄 Neu generieren" : "✨ Jetzt generieren");
+  return '<button class="sm-btn sm-primary sm-btn-touch" data-action="smarter-generate"' +
+    ' data-has-doc="' + (hasDoc ? "1" : "0") + '"' +
+    (busy ? ' disabled aria-busy="true"' : "") + '>' + label + '</button>';
+}
+
+function smarterTabToday() {
+  const doc = SMARTER.today;
+  const todayKey = smarterTodayKey();
+  if (!doc) {
+    let html = smarterNotice("Noch kein Lernstoff für heute",
+      "Für " + todayKey + " liegt noch kein Tagesdokument vor. Der Smarter-Daily-Workflow (n8n) erzeugt es automatisch um " + esc((SMARTER.config && SMARTER.config.scheduleTime) || "04:00") + " Uhr. Du kannst es auch sofort selbst anstossen oder oben eine Quelle hochladen, damit die Warteschlange gefüllt wird.");
+    html += '<div class="sm-row" style="margin-top:14px">' + smarterGenerateButton(false) + '</div>';
+    return html;
+  }
+  const questions = Array.isArray(doc.questions) ? doc.questions : [];
+  const unitCount = Array.isArray(doc.unitIds) ? doc.unitIds.length : 0;
+  const done = !!doc.done;
+  const answered = smarterAnsweredCount(questions);
+
+  let html = "";
+  html += '<div class="sm-summary">';
+  html += '<div class="sm-stat"><div class="v">' + unitCount + '</div><div class="l">Units</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + questions.length + '</div><div class="l">Fragen</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + answered + '</div><div class="l">Beantwortet</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + (done ? "✓" : "–") + '</div><div class="l">Erledigt</div></div>';
+  html += '</div>';
+
+  html += '<div class="sm-card">';
+  html += '<div class="sm-row" style="justify-content:space-between">';
+  html += '<h3 style="margin:0">📖 Lerndokument — ' + esc(todayKey) + '</h3>';
+  html += '<div class="sm-row">';
+  html += '<button class="sm-btn sm-mini" data-action="smarter-download">⬇ Herunterladen</button>';
+  html += '<button class="sm-btn sm-mini ' + (done ? "" : "sm-primary") + '" data-action="smarter-toggle-done">' + (done ? "↺ Wieder offen" : "✓ Erledigt") + '</button>';
+  html += '</div></div>';
+  if (doc.generationError) {
+    html += '<div class="sm-notice-inline">⚠ Dieses Dokument wurde automatisch als Rohtext-Fallback erstellt (' + esc(String(doc.errorMessage || "Aufbereitung fehlgeschlagen")) + '). Du kannst es unten neu generieren.</div>';
+  }
+  html += '<div class="sm-row" style="margin-top:6px">' + smarterGenerateButton(true) + '</div>';
+  html += '<div class="sm-muted" style="margin-top:8px">Beantworte die Fragen direkt im Dokument — deine Antworten werden automatisch in Quantus gespeichert. Der Download ist eine statische Kopie inkl. deiner Antworten.</div>';
+  html += '</div>';
+
+  if (doc.documentHtml) {
+    // Standalone-HTML isoliert im iframe rendern; Antwortfelder werden nach dem
+    // Rendern per data-qid eingedockt (smarterMountDocument, post-render Hook).
+    html += '<div class="sm-doc-frame"><iframe id="smarterDocFrame" class="sm-doc-iframe" title="Smarter Lerndokument" scrolling="no"></iframe></div>';
+  } else {
+    // Fallback (Dokument ohne documentHtml, z. B. Altbestand): Theorie + Fragen
+    // nativ rendern, ebenfalls mit speicherbaren Antwortfeldern.
+    html += smarterNativeToday(doc, questions);
+  }
+  return html;
+}
+
+// Native Darstellung (Fallback ohne documentHtml)
+function smarterNativeToday(doc, questions) {
+  const answers = smarterAnswersMap();
+  let html = "";
+  html += '<div class="sm-card"><h3>📖 Theorie</h3>';
+  if (doc.theoryHtml) html += '<div class="sm-theory">' + doc.theoryHtml + '</div>';
+  else html += '<div class="sm-muted">Kein Theorie-HTML im Dokument.</div>';
+  html += '</div>';
+  if (questions.length) {
+    html += '<div class="sm-card"><h3>❓ Fragen</h3>';
+    html += questions.map(function(item, i) {
+      const qid = (item && item.id) ? item.id : ("q" + (i + 1));
+      const q = (typeof item === "string") ? item : (item.q || item.question || item.frage || "");
+      const a = (typeof item === "string") ? "" : (item.a || item.answer || item.antwort || "");
+      const saved = answers[qid] && answers[qid].text ? String(answers[qid].text) : "";
+      const shown = SMARTER.revealed.has(i);
+      let out = '<div class="sm-q"><div class="sm-q-head"><span class="sm-q-num">' + (i + 1) + '</span><span>' + esc(q) + '</span></div>';
+      out += '<div class="sm-ans-wrap"><div class="sm-ans-lbl">Deine Antwort</div>';
+      out += '<textarea class="sm-ans" data-qid="' + esc(qid) + '" placeholder="Deine Antwort …" oninput="smarterOnAnswerInput(this)" onblur="smarterOnAnswerBlur(this)">' + esc(saved) + '</textarea>';
+      out += '<div class="sm-ans-meta"><span class="sm-ans-fb" id="smfb_' + esc(qid) + '"></span>';
+      if (a) out += '<button class="sm-btn sm-ghost sm-mini" data-action="smarter-reveal" data-idx="' + i + '">Musterantwort zeigen</button>';
+      out += '</div>';
+      if (a && shown) out += '<div class="sm-model">' + esc(a) + '</div>';
+      out += '</div></div>';
+      return out;
+    }).join("");
+    html += '</div>';
+  }
+  return html;
+}
+
+// ── Antwort speichern (Debounce; sofort bei Blur) ──
+async function smarterCommitAnswer(qid, text, fbEl) {
+  const db = smarterRootRef();
+  const dayKey = SMARTER.dayKey || smarterTodayKey();
+  if (!db) { if (fbEl) { fbEl.textContent = "offline – lokal gemerkt"; fbEl.style.color = "#C9A96E"; } return; }
+  try {
+    await db.child("documents/" + dayKey + "/answers/" + qid).set({ text: String(text || ""), updatedAt: new Date().toISOString() });
+    if (fbEl) { fbEl.textContent = "gespeichert ✓"; fbEl.style.color = "#2F8C80"; }
+  } catch (e) {
+    if (fbEl) { fbEl.textContent = "Fehler beim Speichern"; fbEl.style.color = "#D96B5B"; }
+    console.warn("Smarter save answer:", e);
+  }
+}
+function smarterQueueAnswerSave(qid, text, fbEl, immediate) {
+  if (!qid) return;
+  if (SMARTER.today) {
+    SMARTER.today.answers = SMARTER.today.answers || {};
+    SMARTER.today.answers[qid] = { text: String(text || ""), updatedAt: new Date().toISOString() };
+  }
+  SMARTER.answerTimers = SMARTER.answerTimers || {};
+  clearTimeout(SMARTER.answerTimers[qid]);
+  if (fbEl) { fbEl.textContent = "…"; fbEl.style.color = ""; }
+  if (immediate) { smarterCommitAnswer(qid, text, fbEl); }
+  else { SMARTER.answerTimers[qid] = setTimeout(function() { smarterCommitAnswer(qid, text, fbEl); }, 700); }
+}
+// Native (App-DOM) Inline-Handler
+window.smarterOnAnswerInput = function(ta) {
+  if (!ta) return;
+  const qid = ta.getAttribute("data-qid");
+  smarterQueueAnswerSave(qid, ta.value, document.getElementById("smfb_" + qid), false);
+};
+window.smarterOnAnswerBlur = function(ta) {
+  if (!ta) return;
+  const qid = ta.getAttribute("data-qid");
+  smarterQueueAnswerSave(qid, ta.value, document.getElementById("smfb_" + qid), true);
+};
+
+// ── iframe-Dokument mounten + Antwortfelder eindocken ──
+function smarterMountDocument() {
+  try {
+    const h = (typeof parseHash === "function") ? parseHash() : { route: (APP.state.ui && APP.state.ui.route) };
+    if (h.route !== "smarter") return;
+    if ((SMARTER.tab || "today") !== "today") return;
+    const doc = SMARTER.today;
+    const iframe = document.getElementById("smarterDocFrame");
+    if (!iframe || !doc || !doc.documentHtml) return;
+    if (iframe.dataset.mounted === "1") return;
+    iframe.dataset.mounted = "1";
+    smarterMountInto(iframe, doc);
+  } catch (e) { console.warn("Smarter mount:", e); }
+}
+window.__smarterPostRender = smarterMountDocument;
+
+// Testbar/wiederverwendbar: rendert doc.documentHtml in ein iframe und dockt die
+// Antwortfelder ein. Scripts im Dokument werden entfernt (statischer Inhalt).
+window.smarterMountInto = function(iframe, doc) {
+  if (!iframe || !doc) return;
+  const safe = String(doc.documentHtml || "").replace(/<script\b[\s\S]*?<\/script>/gi, "");
+  iframe.addEventListener("load", function onl() {
+    iframe.removeEventListener("load", onl);
+    try { smarterInjectAnswers(iframe, doc); } catch (e) { console.warn("Smarter inject:", e); }
+  });
+  iframe.srcdoc = safe;
+};
+
+function smarterSizeIframe(iframe) {
+  try {
+    const idoc = iframe.contentDocument;
+    if (idoc && idoc.documentElement) iframe.style.height = (idoc.documentElement.scrollHeight + 12) + "px";
+  } catch (e) {}
+}
+
+function smarterInjectAnswers(iframe, doc) {
+  const idoc = iframe.contentDocument;
+  if (!idoc || !idoc.body) return;
+  const st = idoc.createElement("style");
+  st.textContent = SMARTER_IFRAME_ANSWER_CSS;
+  (idoc.head || idoc.body).appendChild(st);
+
+  const answers = (doc.answers && typeof doc.answers === "object") ? doc.answers : {};
+  const qById = {};
+  (Array.isArray(doc.questions) ? doc.questions : []).forEach(function(q) { if (q && q.id) qById[q.id] = q; });
+
+  const nodes = idoc.querySelectorAll("[data-qid]");
+  nodes.forEach(function(el) {
+    const qid = el.getAttribute("data-qid");
+    if (!qid) return;
+    // schon vorhanden? (kein Doppel-Andocken)
+    if (el.nextElementSibling && el.nextElementSibling.classList && el.nextElementSibling.classList.contains("sd-answer")) return;
+    const saved = answers[qid] && answers[qid].text ? String(answers[qid].text) : "";
+    const model = qById[qid] ? String(qById[qid].a || qById[qid].answer || "") : "";
+    const block = smarterBuildAnswerBlock(idoc, iframe, qid, saved, model);
+    el.insertAdjacentElement("afterend", block);
+  });
+  smarterSizeIframe(iframe);
+}
+
+function smarterBuildAnswerBlock(idoc, iframe, qid, saved, model) {
+  const wrap = idoc.createElement("div");
+  wrap.className = "sd-answer";
+  wrap.setAttribute("data-answer-for", qid);
+
+  const lbl = idoc.createElement("div");
+  lbl.className = "sd-lbl"; lbl.textContent = "Deine Antwort";
+  wrap.appendChild(lbl);
+
+  const ta = idoc.createElement("textarea");
+  ta.value = saved; ta.setAttribute("placeholder", "Deine Antwort …");
+  wrap.appendChild(ta);
+
+  const meta = idoc.createElement("div");
+  meta.className = "sd-meta";
+  const fb = idoc.createElement("span");
+  fb.className = "sd-fb";
+  meta.appendChild(fb);
+
+  let modelEl = null;
+  if (model) {
+    const btn = idoc.createElement("button");
+    btn.type = "button"; btn.className = "sd-showbtn"; btn.textContent = "Musterantwort zeigen";
+    modelEl = idoc.createElement("div");
+    modelEl.className = "sd-model"; modelEl.style.display = "none"; modelEl.textContent = model;
+    btn.addEventListener("click", function() {
+      const open = modelEl.style.display !== "none";
+      modelEl.style.display = open ? "none" : "block";
+      btn.textContent = open ? "Musterantwort zeigen" : "Musterantwort verbergen";
+      smarterSizeIframe(iframe);
+    });
+    meta.appendChild(btn);
+  }
+  wrap.appendChild(meta);
+  if (modelEl) wrap.appendChild(modelEl);
+
+  // Listener (Parent-Closures — funktionieren, obwohl das Dokument selbst
+  // keine Scripts ausführt).
+  ta.addEventListener("input", function() { smarterQueueAnswerSave(qid, ta.value, fb, false); smarterSizeIframe(iframe); });
+  ta.addEventListener("blur", function() { smarterQueueAnswerSave(qid, ta.value, fb, true); });
+  return wrap;
+}
+
+// ── Download (statische HTML-Kopie inkl. eingegebener Antworten) ──
+window.smarterBuildDownloadHtml = function(documentHtml, answers, questions) {
+  let src = String(documentHtml || "").replace(/<script\b[\s\S]*?<\/script>/gi, "");
+  try {
+    const d = new DOMParser().parseFromString(src, "text/html");
+    (questions || []).forEach(function(qq) {
+      const qid = qq && qq.id; if (!qid) return;
+      const el = d.querySelector('[data-qid="' + qid + '"]');
+      if (!el) return;
+      const ans = (answers && answers[qid] && answers[qid].text) ? String(answers[qid].text) : "";
+      const box = d.createElement("div");
+      box.setAttribute("style", "margin:8px 0 20px;padding:10px 12px;border:1px solid #C9A96E;border-left:3px solid #D96B5B;border-radius:8px;background:#fff;white-space:pre-wrap;color:#2B3134;font:14px/1.55 sans-serif");
+      const lab = d.createElement("div");
+      lab.setAttribute("style", "font-size:11px;font-weight:700;color:#2F8C80;text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px");
+      lab.textContent = "Deine Antwort";
+      const txt = d.createElement("div");
+      txt.textContent = ans || "—";
+      box.appendChild(lab); box.appendChild(txt);
+      el.insertAdjacentElement("afterend", box);
+    });
+    return "<!doctype html>\n" + d.documentElement.outerHTML;
+  } catch (e) {
+    return src;
+  }
+};
+
+function smarterBuildFallbackDownloadHtml(doc, answers, questions) {
+  const dk = SMARTER.dayKey || smarterTodayKey();
+  const rows = (questions || []).map(function(item, i) {
+    const qid = (item && item.id) ? item.id : ("q" + (i + 1));
+    const q = (typeof item === "string") ? item : (item.q || item.question || "");
+    const a = (typeof item === "string") ? "" : (item.a || item.answer || "");
+    const ans = (answers && answers[qid] && answers[qid].text) ? String(answers[qid].text) : "";
+    return '<div class="q"><div class="qh"><b>' + (i + 1) + '.</b> ' + esc(q) + '</div>' +
+      '<div class="lbl">Deine Antwort</div><div class="ab">' + (esc(ans) || "—") + '</div>' +
+      (a ? '<div class="lbl">Musterantwort</div><div class="mb">' + esc(a) + '</div>' : '') + '</div>';
+  }).join("");
+  return '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Smarter — ' + esc(dk) + '</title><style>' +
+    'body{margin:0;background:#EFEAE1;color:#2B3134;font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;padding:28px}' +
+    '.wrap{max-width:780px;margin:0 auto}h1{color:#2B3134;border-bottom:3px solid #D96B5B;padding-bottom:8px}' +
+    '.theory{background:#fff;border:1px solid #C9A96E;border-radius:12px;padding:16px 18px;margin:16px 0}' +
+    '.q{background:rgba(255,255,255,.6);border:1px solid #C9A96E;border-left:3px solid #D96B5B;border-radius:10px;padding:12px 14px;margin:12px 0}' +
+    '.lbl{font-size:11px;font-weight:700;color:#2F8C80;text-transform:uppercase;letter-spacing:.3px;margin:8px 0 4px}' +
+    '.ab{background:#fff;border:1px solid #C9A96E;border-radius:8px;padding:9px 11px;white-space:pre-wrap}' +
+    '.mb{background:rgba(47,140,128,.12);border:1px solid rgba(47,140,128,.35);border-radius:8px;padding:9px 11px}' +
+    '</style></head><body><div class="wrap"><h1>🎓 Smarter — ' + esc(dk) + '</h1>' +
+    '<div class="theory">' + (doc.theoryHtml || "") + '</div>' + rows + '</div></body></html>';
+}
+
+function smarterDownloadDocument() {
+  const doc = SMARTER.today;
+  if (!doc) { if (typeof toast === "function") toast("info", "Smarter", "Kein Dokument zum Herunterladen"); return; }
+  const answers = smarterAnswersMap();
+  const questions = Array.isArray(doc.questions) ? doc.questions : [];
+  const html = doc.documentHtml
+    ? window.smarterBuildDownloadHtml(doc.documentHtml, answers, questions)
+    : smarterBuildFallbackDownloadHtml(doc, answers, questions);
+  try {
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "smarter-" + (SMARTER.dayKey || smarterTodayKey()) + ".html";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 4000);
+    if (typeof toast === "function") toast("ok", "Smarter", "Lerndokument heruntergeladen");
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Download fehlgeschlagen");
+    console.warn("Smarter download:", e);
+  }
+}
+
+function smarterTabUpload() {
+  const cfg = SMARTER.config || {};
+  const hasUrl = !!(cfg.ingestWebhookUrl && String(cfg.ingestWebhookUrl).trim());
+  const p = SMARTER.pendingUpload;
+
+  let html = '<div class="sm-card"><h3>📥 Quelle hochladen</h3>';
+  html += '<div class="sm-muted" style="margin-bottom:12px">TXT-, HTML- oder PDF-Datei ablegen. Der Ingest-Workflow (n8n) schneidet den Text verlustfrei in Units und legt sie als <code>pending</code> in die Warteschlange.</div>';
+  html += '<div class="sm-drop" id="smarterDrop" data-action="smarter-pick-file" ondragover="smarterOnDragOver(event)" ondragleave="smarterOnDragLeave(event)" ondrop="smarterOnDrop(event)">';
+  html += '<div class="sm-drop-icon">📄</div>';
+  html += '<div style="font-weight:700;color:var(--text)">Datei hierher ziehen oder klicken</div>';
+  html += '<div class="sm-muted" style="margin-top:4px">.txt · .html · .htm · .pdf</div>';
+  html += '<input type="file" id="smarterFileInput" accept=".txt,.html,.htm,.pdf,text/plain" style="display:none" onchange="smarterOnFilePicked(this)">';
+  html += '</div>';
+
+  if (p) {
+    const kb = p.base64 ? Math.round((p.base64.length * 3 / 4) / 1024) : 0;
+    html += '<div class="sm-unit" style="margin-top:14px"><span style="font-size:18px">' + (p.type === "pdf" ? "📕" : p.type === "txt" ? "📄" : "📘") + '</span>';
+    html += '<div class="sm-unit-title">' + esc(p.filename) + ' <span class="sm-muted">· ' + p.type.toUpperCase() + ' · ~' + kb + ' KB</span></div>';
+    html += '</div>';
+    html += '<div class="sm-row" style="margin-top:12px">';
+    html += '<button class="sm-btn sm-primary" data-action="smarter-upload"' + (SMARTER.uploading ? " disabled" : "") + '>' + (SMARTER.uploading ? "Lädt hoch …" : "⬆ An Ingest senden") + '</button>';
+    html += '<button class="sm-btn sm-ghost" data-action="smarter-clear-upload">Verwerfen</button>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Zweiter Bereich: blanken Text direkt einfuegen — nutzt DENSELBEN Ingest-Weg
+  // wie der Datei-Upload (smarterAcceptFile -> smarterDoUpload), kein Parallelpfad.
+  const pasteText = SMARTER.pasteText || "";
+  const pasteTitle = SMARTER.pasteTitle || "";
+  html += '<div class="sm-card"><h3>📝 Text einfügen</h3>';
+  html += '<div class="sm-muted" style="margin-bottom:10px">Blanken Lernstoff (auch reine Zahlen/Statistik) direkt einfügen — geht über denselben Ingest-Weg wie ein Datei-Upload und wird verlustfrei zu <code>pending</code>-Units. Der Text wird ausschliesslich als Lernstoff gespeichert, nie als Anweisung ausgeführt.</div>';
+  html += '<div class="sm-field"><label>Titel (optional)</label><input type="text" id="smarterPasteTitle" placeholder="z. B. Arbeitslosigkeit Schweiz 2024" value="' + esc(pasteTitle) + '" oninput="smarterOnPasteTitleInput(this)"></div>';
+  html += '<textarea id="smarterPasteText" class="sm-ans" style="min-height:150px" placeholder="Text hier einfügen …" oninput="smarterOnPasteInput(this)">' + esc(pasteText) + '</textarea>';
+  html += '<div class="sm-row" style="margin-top:12px">';
+  html += '<button class="sm-btn sm-primary" id="smarterAddTextBtn" data-action="smarter-add-text"' + ((SMARTER.uploading || !pasteText.trim()) ? " disabled" : "") + '>' + (SMARTER.uploading ? "Sende …" : "➕ Als Lernstoff hinzufügen") + '</button>';
+  html += '</div></div>';
+
+  if (!hasUrl) {
+    html += smarterNotice("ingestWebhookUrl noch nicht gesetzt",
+      "Der n8n-Ingest-Webhook ist noch nicht in smarter/config hinterlegt (wird nach dem n8n-Build von Claude im Browser eingetragen). Bis dahin lässt sich eine Datei auswählen; der Upload meldet dann, dass die Ziel-URL fehlt.");
+  }
+  return html;
+}
+
+function smarterTabQueue() {
+  const pending = smarterPendingUnits();
+  const all = smarterQueueUnits();
+  const delivered = all.filter(function(u){ return u.status === "delivered"; }).length;
+  const split = all.filter(function(u){ return u.status === "split"; }).length;
+  const dailyMin = Number((SMARTER.config || {}).dailyMinutes) || 30;
+
+  let html = '<div class="sm-summary">';
+  html += '<div class="sm-stat"><div class="v">' + pending.length + '</div><div class="l">Offen</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + smarterRemainingMinutes() + '</div><div class="l">Rest-Min</div></div>';
+  html += '<div class="sm-stat"><div class="v">' + delivered + '</div><div class="l">Geliefert</div></div>';
+  html += '<div class="sm-stat"><div class="v">~' + Math.max(1, Math.ceil(smarterRemainingMinutes() / dailyMin)) + '</div><div class="l">Tage</div></div>';
+  html += '</div>';
+
+  html += '<div class="sm-card"><h3>📚 Offene Units</h3>';
+  if (!pending.length) {
+    html += '<div class="sm-muted">Keine offenen Units. Lade im Upload-Tab eine Quelle hoch.</div>';
+  } else {
+    html += pending.map(function(u, i) {
+      let row = '<div class="sm-unit">';
+      row += '<span class="sm-unit-min">≈ ' + (Number(u.estMinutes) || 0) + ' Min</span>';
+      row += '<div class="sm-unit-title">' + esc(u.title || ("Unit " + (u.order != null ? u.order : (i + 1)))) + (split && u.status === "split" ? "" : "") + '</div>';
+      row += '<div class="sm-row" style="gap:5px">';
+      row += '<button class="sm-btn sm-mini sm-ghost" data-action="smarter-queue-up" data-id="' + esc(u._id) + '"' + (i === 0 ? " disabled" : "") + ' title="Nach oben">▲</button>';
+      row += '<button class="sm-btn sm-mini sm-ghost" data-action="smarter-queue-down" data-id="' + esc(u._id) + '"' + (i === pending.length - 1 ? " disabled" : "") + ' title="Nach unten">▼</button>';
+      row += '<button class="sm-btn sm-mini sm-ghost" data-action="smarter-queue-del" data-id="' + esc(u._id) + '" title="Löschen">✕</button>';
+      row += '</div></div>';
+      return row;
+    }).join("");
+  }
+  html += '</div>';
+  return html;
+}
+
+function smarterTabSettings() {
+  const c = SMARTER.config || Object.assign({}, SMARTER_DEFAULT_CONFIG);
+  let html = '<div class="sm-card"><h3>⚙️ Einstellungen</h3>';
+  html += '<div class="sm-field"><label>Minuten pro Tag</label><input type="number" id="smCfgMinutes" min="5" max="240" step="5" value="' + esc(String(c.dailyMinutes != null ? c.dailyMinutes : 30)) + '"></div>';
+  html += '<div class="sm-field"><label>Uhrzeit (täglicher Lauf)</label><input type="time" id="smCfgTime" value="' + esc(String(c.scheduleTime || "04:00")) + '"></div>';
+  html += '<div class="sm-field"><label>Zielwörter pro Tag</label><input type="number" id="smCfgWords" min="200" max="10000" step="100" value="' + esc(String(c.targetWords != null ? c.targetWords : 2800)) + '"></div>';
+  html += '<div class="sm-field"><label>Zeitzone</label><input type="text" id="smCfgTz" value="' + esc(String(c.timezone || "Europe/Zurich")) + '"></div>';
+  html += '<div class="sm-row"><button class="sm-btn sm-primary" data-action="smarter-save-settings">Speichern</button>';
+  html += SMARTER.configVerified ? '<span class="sm-muted">✓ config in RTDB verifiziert</span>' : '';
+  html += '</div></div>';
+
+  html += '<div class="sm-card"><h3>🔗 Ingest-Webhook</h3>';
+  html += '<div class="sm-field"><label>ingestWebhookUrl (schreibt der n8n-Build)</label><input type="text" id="smCfgIngest" readonly value="' + esc(String(c.ingestWebhookUrl || "")) + '" placeholder="— noch nicht gesetzt —"></div>';
+  html += '<div class="sm-muted">Diese URL wird nach dem n8n-Build automatisch von Claude im Browser in <code>smarter/config/ingestWebhookUrl</code> geschrieben. Die App liest sie von dort.</div>';
+  html += '</div>';
+
+  html += '<div class="sm-card"><h3>⚡ Generierungs-Webhook</h3>';
+  html += '<div class="sm-field"><label>generateWebhookUrl (für „Jetzt generieren")</label><input type="text" id="smCfgGenerate" readonly value="' + esc(String(c.generateWebhookUrl || "")) + '" placeholder="— noch nicht gesetzt —"></div>';
+  html += '<div class="sm-muted">Trage hier nach dem n8n-Build die URL des Generierungs-Webhooks in <code>smarter/config/generateWebhookUrl</code> ein. Der Button „Jetzt generieren" im Heute-Tab löst darüber eine sofortige Tagesdokument-Erzeugung aus. Ohne URL bleibt der Button sichtbar, meldet aber, dass die Ziel-URL fehlt.</div>';
+  html += '</div>';
+  return html;
+}
+
+// ── Datei-Handler (inline onchange/ondrop → window, überleben Re-Renders) ──
+function smarterReadFileToBase64(file) {
+  return new Promise(function(resolve, reject) {
+    const r = new FileReader();
+    r.onload = function() {
+      const s = String(r.result || "");
+      const i = s.indexOf("base64,");
+      resolve(i >= 0 ? s.slice(i + 7) : "");
+    };
+    r.onerror = function() { reject(r.error || new Error("Datei-Lesefehler")); };
+    r.readAsDataURL(file);
+  });
+}
+async function smarterAcceptFile(file) {
+  if (!file) return;
+  const name = file.name || "upload";
+  const lower = name.toLowerCase();
+  const type = lower.endsWith(".pdf") ? "pdf"
+    : (lower.endsWith(".txt") || file.type === "text/plain") ? "txt"
+    : "html";
+  try {
+    const base64 = await smarterReadFileToBase64(file);
+    SMARTER.pendingUpload = { filename: name, type: type, base64: base64 };
+    render();
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Datei konnte nicht gelesen werden");
+    console.warn("Smarter file read:", e);
+  }
+}
+window.smarterOnFilePicked = function(input) {
+  const f = input && input.files && input.files[0];
+  smarterAcceptFile(f);
+};
+window.smarterOnDragOver = function(ev) { ev.preventDefault(); const d = document.getElementById("smarterDrop"); if (d) d.classList.add("sm-over"); };
+window.smarterOnDragLeave = function(ev) { const d = document.getElementById("smarterDrop"); if (d) d.classList.remove("sm-over"); };
+window.smarterOnDrop = function(ev) {
+  ev.preventDefault();
+  const d = document.getElementById("smarterDrop"); if (d) d.classList.remove("sm-over");
+  const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  smarterAcceptFile(f);
+};
+
+async function smarterDoUpload() {
+  const p = SMARTER.pendingUpload;
+  if (!p) return;
+  const url = (SMARTER.config && SMARTER.config.ingestWebhookUrl) ? String(SMARTER.config.ingestWebhookUrl).trim() : "";
+  if (!url) {
+    if (typeof toast === "function") toast("info", "Smarter", "ingestWebhookUrl fehlt noch — wird nach dem n8n-Build gesetzt.");
+    return;
+  }
+  SMARTER.uploading = true; render();
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: p.filename, type: p.type, base64: p.base64 })
+    });
+    let data = {};
+    try { data = await resp.json(); } catch (e) {}
+    if (resp.ok && data && data.ok) {
+      const units = Number(data.units) || 0;
+      if (typeof toast === "function") toast("ok", "Smarter", units + " Units erstellt");
+      SMARTER.pendingUpload = null;
+      SMARTER.loaded = false;
+      await smarterLoad();
+      SMARTER.tab = "queue";
+      render();
+    } else {
+      if (typeof toast === "function") toast("warn", "Smarter", "Ingest antwortete ohne { ok:true } (HTTP " + resp.status + ")");
+    }
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Upload fehlgeschlagen: " + ((e && e.message) || e));
+    console.warn("Smarter upload:", e);
+  }
+  SMARTER.uploading = false; render();
+}
+
+// On-Demand-Generierung: stösst den n8n-Generierungs-Webhook an (analog zum
+// ingestWebhookUrl-Mechanismus). URL kommt AUSSCHLIESSLICH aus der Config
+// (smarter/config/generateWebhookUrl) — kein Hardcoding. Existiert für heute
+// schon ein Dokument, wird vor dem Überschreiben eine Bestätigung eingeholt.
+async function smarterGenerateToday(hasDoc) {
+  if (SMARTER.generating) return;
+  const url = (SMARTER.config && SMARTER.config.generateWebhookUrl) ? String(SMARTER.config.generateWebhookUrl).trim() : "";
+  if (!url) {
+    if (typeof toast === "function") toast("info", "Smarter", "generateWebhookUrl fehlt noch — wird nach dem n8n-Build in smarter/config gesetzt.");
+    return;
+  }
+  if (hasDoc) {
+    const ok = (typeof confirm === "function") ? confirm("Für heute existiert bereits ein Lerndokument. Neu generieren und das bestehende überschreiben?") : true;
+    if (!ok) return;
+  }
+  const dayKey = SMARTER.dayKey || smarterTodayKey();
+  SMARTER.generating = true; render();
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: dayKey, force: true, source: "quantus-app" })
+    });
+    // Antwort tolerant lesen: manche n8n-Webhooks liefern kein JSON. Erfolg =
+    // HTTP-ok (kein { ok:false } explizit). Danach heutiges Dokument neu laden.
+    let data = null;
+    try { data = await resp.json(); } catch (e) {}
+    if (resp.ok && !(data && data.ok === false)) {
+      if (typeof toast === "function") toast("ok", "Smarter", "Generierung angestossen — lade Dokument …");
+      SMARTER.loaded = false;
+      await smarterLoad();   // lädt config, queue und documents/<heute> neu aus RTDB
+      if (SMARTER.today) {
+        if (typeof toast === "function") toast("ok", "Smarter", "Lerndokument aktualisiert");
+      } else if (typeof toast === "function") {
+        toast("info", "Smarter", "Noch kein Dokument in der Cloud — die Generierung läuft evtl. noch. Später „Aktualisieren“ drücken.");
+      }
+    } else {
+      const msg = (data && (data.error || data.message)) ? String(data.error || data.message) : ("HTTP " + resp.status);
+      if (typeof toast === "function") toast("warn", "Smarter", "Generierung nicht bestätigt (" + msg + ")");
+    }
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Generierung fehlgeschlagen: " + ((e && e.message) || e));
+    console.warn("Smarter generate:", e);
+  }
+  SMARTER.generating = false; render();
+}
+
+// Blanken Text hinzufuegen — baut ein File aus dem Textfeld und schickt es durch
+// GENAU denselben Weg wie der Datei-Upload: smarterAcceptFile (Encoding via
+// smarterReadFileToBase64) -> smarterDoUpload (POST an ingestWebhookUrl). Kein
+// paralleler Sende-/Encoding-Pfad. Der Text ist reiner Lernstoff/Daten.
+async function smarterAddPastedText() {
+  const text = String(SMARTER.pasteText || "");
+  if (!text.trim()) { if (typeof toast === "function") toast("warn", "Smarter", "Bitte zuerst Text einfügen"); return; }
+  const rawTitle = String(SMARTER.pasteTitle || "").trim();
+  const base = (rawTitle || "Einfuegetext").replace(/[^\w .\-]+/g, "_").replace(/\s+/g, "_").slice(0, 80) || "Einfuegetext";
+  const filename = base + ".txt";
+  try {
+    // File aus Text (type text/plain) -> exakt derselbe Handler wie beim Datei-Upload
+    const file = new File([text], filename, { type: "text/plain" });
+    await smarterAcceptFile(file);   // setzt SMARTER.pendingUpload = { filename, type:"txt", base64 }
+    await smarterDoUpload();          // identischer POST { filename, type, base64 }
+    if (!SMARTER.pendingUpload) {     // pendingUpload==null ⇒ Ingest hat {ok:true} geliefert
+      SMARTER.pasteText = ""; SMARTER.pasteTitle = "";
+      if (typeof toast === "function") toast("ok", "Smarter", "In Warteschlange gelegt");
+    }
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Konnte Text nicht senden");
+    console.warn("Smarter paste:", e);
+  }
+}
+window.smarterOnPasteInput = function(ta) {
+  SMARTER.pasteText = ta ? ta.value : "";
+  const btn = document.getElementById("smarterAddTextBtn");
+  if (btn) btn.disabled = !!SMARTER.uploading || !String(SMARTER.pasteText).trim();
+};
+window.smarterOnPasteTitleInput = function(inp) { SMARTER.pasteTitle = inp ? inp.value : ""; };
+
+async function smarterToggleDone() {
+  const db = smarterRootRef();
+  if (!db || !SMARTER.today) return;
+  const key = smarterTodayKey();
+  const next = !SMARTER.today.done;
+  try {
+    await db.child("documents/" + key + "/done").set(next);
+    SMARTER.today.done = next;
+    render();
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Konnte Status nicht speichern"); }
+}
+
+async function smarterQueueMove(id, dir) {
+  const pending = smarterPendingUnits();
+  const idx = pending.findIndex(function(u) { return u._id === id; });
+  if (idx < 0) return;
+  const swapWith = dir === "up" ? idx - 1 : idx + 1;
+  if (swapWith < 0 || swapWith >= pending.length) return;
+  const db = smarterRootRef();
+  if (!db) { if (typeof toast === "function") toast("warn", "Smarter", "Cloud nicht verbunden"); return; }
+  // Positionstausch + lückenlose Neu-Nummerierung. Robust gegen doppelte oder
+  // fehlende order-Werte (z. B. wenn n8n je Upload ab 0 nummeriert): ein reiner
+  // Werte-Tausch wäre bei gleichen order-Werten ein No-Op.
+  const tmp = pending[idx]; pending[idx] = pending[swapWith]; pending[swapWith] = tmp;
+  try {
+    const upd = {};
+    pending.forEach(function(u, k) {
+      upd[u._id + "/order"] = k;
+      if (SMARTER.queue[u._id]) SMARTER.queue[u._id].order = k;
+    });
+    await db.child("queue").update(upd);
+    render();
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Reihenfolge nicht gespeichert"); }
+}
+
+async function smarterQueueDelete(id) {
+  const db = smarterRootRef();
+  if (!db) return;
+  try {
+    await db.child("queue/" + id).remove();
+    delete SMARTER.queue[id];
+    render();
+    if (typeof toast === "function") toast("ok", "Smarter", "Unit gelöscht");
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Löschen fehlgeschlagen"); }
+}
+
+async function smarterSaveSettings() {
+  const db = smarterRootRef();
+  if (!db) { if (typeof toast === "function") toast("warn", "Smarter", "Cloud nicht verbunden"); return; }
+  const minutes = parseInt((document.getElementById("smCfgMinutes") || {}).value, 10);
+  const words = parseInt((document.getElementById("smCfgWords") || {}).value, 10);
+  const time = (document.getElementById("smCfgTime") || {}).value || "04:00";
+  const tz = ((document.getElementById("smCfgTz") || {}).value || "Europe/Zurich").trim();
+  const patch = {
+    dailyMinutes: (isFinite(minutes) && minutes > 0) ? minutes : 30,
+    targetWords: (isFinite(words) && words > 0) ? words : 2800,
+    scheduleTime: time,
+    timezone: tz || "Europe/Zurich"
+  };
+  try {
+    await db.child("config").update(patch);
+    SMARTER.config = Object.assign({}, SMARTER.config || {}, patch);
+    if (typeof toast === "function") toast("ok", "Smarter", "Einstellungen gespeichert");
+    render();
+  } catch (e) { if (typeof toast === "function") toast("danger", "Smarter", "Speichern fehlgeschlagen"); }
+}
+
+function smarterHandleAction(action, el, e) {
+  if (e && e.preventDefault) e.preventDefault();
+  switch (action) {
+    case "smarter-tab": SMARTER.tab = el.dataset.tab || "today"; render(); break;
+    case "smarter-refresh": SMARTER.loaded = false; smarterLoad(); break;
+    case "smarter-pick-file": { const inp = document.getElementById("smarterFileInput"); if (inp) inp.click(); break; }
+    case "smarter-upload": smarterDoUpload(); break;
+    case "smarter-clear-upload": SMARTER.pendingUpload = null; render(); break;
+    case "smarter-add-text": smarterAddPastedText(); break;
+    case "smarter-reveal": SMARTER.revealed.add(Number(el.dataset.idx)); render(); break;
+    case "smarter-download": smarterDownloadDocument(); break;
+    case "smarter-toggle-done": smarterToggleDone(); break;
+    case "smarter-generate": smarterGenerateToday(el.dataset.hasDoc === "1"); break;
+    case "smarter-queue-up": smarterQueueMove(el.dataset.id, "up"); break;
+    case "smarter-queue-down": smarterQueueMove(el.dataset.id, "down"); break;
+    case "smarter-queue-del": smarterQueueDelete(el.dataset.id); break;
+    case "smarter-save-settings": smarterSaveSettings(); break;
+    default: break;
+  }
+}
+
 // ── QUANTUS BROWSER — vollwertiger Remote-Browser (neko) als App, direkt in
 //    Quantus eingebettet. Der Stream laeuft auf dem VPS; Auto-Login + verdeckte
 //    neko-UI via Query-Parametern (usr/pwd/embed) gemaess neko v3. ────────────
@@ -16011,6 +16950,9 @@ function _doRender() {
 
   // Panel-Dock (Split-Screen-Seitenpanels) mitrendern — Modul am Seitenende
   if (typeof window.renderDock === "function") { try { window.renderDock(); } catch(e){} }
+
+  // Smarter: nach dem Render das Lerndokument-iframe mounten + Antwortfelder eindocken
+  if (typeof window.__smarterPostRender === "function") { try { window.__smarterPostRender(); } catch(e){} }
   
   // Knowledge file input handler (re-attach after render)
   const kfi = document.getElementById("knowledgeFileInput");
@@ -16144,7 +17086,7 @@ function renderSidebar() {
   const alwaysShow = ["dashboard","settings"];
   
   // Pinned sidebar apps (stored in data)
-  const pinnedSidebar = APP.state.data.sidebarPinnedApps || ["today","tasks","projects","notes","chat"];
+  const pinnedSidebar = APP.state.data.sidebarPinnedApps || ["today","tasks","projects","notes","smarter","chat"];
   
   // Pinned section = always-show + pinned from settings
   const pinnedKeys = [...alwaysShow, ...pinnedSidebar.filter(k => !alwaysShow.includes(k))];
@@ -16253,6 +17195,7 @@ function getAllApps() {
     {key:"tasks", icon:"✅", label:t("tasks"), desc:getLang()==="de"?"Aufgabenverwaltung":"Task management"},
     {key:"notes", icon:"📝", label:"NoteFlow", desc:getLang()==="de"?"Notizen & Dokumente":"Notes & documents"},
     {key:"learn", icon:"📚", label:"RecallLab", desc:getLang()==="de"?"Lernkarten & Spaced Repetition":"Flashcards & spaced repetition"},
+    {key:"smarter", icon:"🎓", label:"Smarter", desc:getLang()==="de"?"Täglicher Lernstoff — Theorie, Fragen, PDF":"Daily study material — theory, questions, PDF"},
     {key:"readinghub", icon:"📖", label:"ReadingHub", desc:getLang()==="de"?"Bücher lesen & annotieren":"Read & annotate books"},
     {key:"pdfeditor", icon:"📄", label:"PDF Editor", desc:getLang()==="de"?"PDFs lesen, annotieren, Seiten verwalten & bearbeiten":"Read, annotate, manage pages & edit PDFs"},
     {key:"chat", icon:"🌟", label:t("chat"), desc:getLang()==="de"?"Mit Polaris chatten":"Chat with Polaris"},
@@ -16294,6 +17237,7 @@ function getAllApps() {
     {key:"browser", icon:"🌐", label:"Browser", desc:getLang()==="de"?"Quantus Browser — vollwertiger Remote-Browser im Stream (neko), ohne Login-Maske":"Quantus Browser — full remote browser stream (neko), no login screen"},
     {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
     {key:"docstudio", icon:"📄", label:"DocStudio", desc:getLang()==="de"?"Dokumente generieren & gestalten (Rechnung, Einladung, Brief …) mit KI & PDF-Export":"Generate & design documents (invoice, invitation, letter …) with AI & PDF export"},
+    {key:"bmpruefung", icon:"🎓", label:"BM-Prüfung", desc:getLang()==="de"?"Prüfungsvorbereitung Berufsmaturität — alle Themen, Repetitionsaufgaben, Spaced Repetition, Tageslektion, Lehrbücher & KI-Chat":"Vocational baccalaureate (BM) exam prep — topics, drills, spaced repetition, daily lesson, textbooks & AI chat"},
     {key:"polaris", icon:"🛰️", label:"Polaris", desc:getLang()==="de"?"Sprachsteuerung — Konversations-Agent mit Live-Briefing (ElevenLabs)":"Voice control — conversational agent with live briefing (ElevenLabs)"},
     {key:"quantusproject", icon:"🛠️", label:"Quantus Projekt", desc:getLang()==="de"?"Quantus selbst weiterentwickeln: Grundprompt + Spezifikation, Updates, Logbuch & Ideen":"Develop Quantus itself: base prompt + specification, updates, logbook & ideas"},
   ];
@@ -16611,6 +17555,7 @@ function renderMain() {
     case "visionboard": openVisionBoard(); return; // Öffnet VisionBoard 2026
     case "today": html = viewToday(); break;
     case "learn": openRecallLab(); return; // Öffnet RecallLab Flashcards
+    case "smarter": html = viewSmarter(); break; // Smarter — täglicher Lernstoff
     case "readinghub": openReadingHub(); return; // Öffnet ReadingHub
     case "pdfeditor": (window.openPdfEditor ? window.openPdfEditor() : 0); return; // Öffnet PDF-Editor/Reader
     case "weekplanning": window.location.href = "nobraine.html"; return; // Alter Weekly Planner entfernt → neuer (nobraine.html)
@@ -16678,6 +17623,7 @@ function renderMain() {
     case "polaris": html = (typeof window.viewPolaris === "function" ? window.viewPolaris() : '<div style="padding:40px;text-align:center">Lade Polaris…</div>'); break;
     case "nobraine": window.location.href = "nobraine.html"; return; // Öffnet den No-Braine Weekly Planner (eigenständige Single-File-App)
     case "docstudio": window.location.href = "docstudio.html"; return; // Öffnet DocStudio (eigenständige Single-File-App)
+    case "bmpruefung": window.location.href = "bm.html"; return; // Öffnet Quantus · BM-Prüfung (eigenständige Single-File-App)
     case "ruhestand": (window.openRuhestandOverlay ? window.openRuhestandOverlay() : (window.location.href = "ruhestand.html")); return; // Öffnet den Ruhestand-Ambient-Modus (Vollbild-Overlay)
     case "settings": { openSettings(); return; }
 
@@ -51894,7 +52840,13 @@ function handleClick(e) {
   const action = el.dataset.action;
   const kind = el.dataset.kind;
   const id = el.dataset.id;
-  
+
+  // Smarter-Modul: alle data-action="smarter-…" an den Modul-Dispatcher geben
+  if (action && action.indexOf("smarter-") === 0) {
+    try { smarterHandleAction(action, el, e); } catch(err) { console.warn("Smarter-Action:", err); }
+    return;
+  }
+
   switch (action) {
     case "nav": navigate(el.dataset.route, el.dataset.id || undefined); break;
     case "go-back": goBack(); break;
@@ -102986,9 +103938,14 @@ window.addEventListener("hashchange", function(){
   async function buildTextLayer(page, viewport, tl, i){
     try {
       const tc=await page.getTextContent();
+      const styles=tc.styles||{};
       ED.textCache[i]=tc.items.map(it=>it.str).join(" ");
       const frag=document.createDocumentFragment();
-      tc.items.forEach(it=>{ if(!it.str) return; const t=window.pdfjsLib.Util.transform(viewport.transform, it.transform); const fs=Math.hypot(t[2],t[3])||10; const sp=document.createElement("span"); sp.textContent=it.str; sp.style.left=t[4]+"px"; sp.style.top=(t[5]-fs)+"px"; sp.style.fontSize=fs+"px"; sp.style.fontFamily=it.fontName||"sans-serif"; sp.dataset.tw=(it.width!=null? it.width*viewport.scale : 0); frag.appendChild(sp); });
+      // Positionierung wie in PDF.js: t[5] ist die Grundlinie (Baseline), NICHT die
+      // Oberkante. Die Span-Oberkante liegt bei baseline − Oberlänge (ascent). Früher
+      // wurde stattdessen die volle Zeilenhöhe (fs) abgezogen, dadurch saßen Textauswahl
+      // und Markierungen zu hoch über dem sichtbaren Text ("Text verschoben").
+      tc.items.forEach(it=>{ if(!it.str) return; const t=window.pdfjsLib.Util.transform(viewport.transform, it.transform); const fs=Math.hypot(t[2],t[3])||10; const st=styles[it.fontName]||{}; let asc=fs; if(st.ascent) asc=st.ascent*fs; else if(st.descent) asc=(1+st.descent)*fs; const sp=document.createElement("span"); sp.textContent=it.str; sp.style.left=t[4]+"px"; sp.style.top=(t[5]-asc)+"px"; sp.style.fontSize=fs+"px"; sp.style.fontFamily=st.fontFamily||it.fontName||"sans-serif"; sp.dataset.tw=(it.width!=null? it.width*viewport.scale : 0); frag.appendChild(sp); });
       tl.appendChild(frag);
       // Horizontale Skalierung: die Ersatzschrift rendert breiter/schmaler als die
       // PDF-Originalschrift. Ohne diese Korrektur liegen Textauswahl, Such-Treffer
@@ -105880,23 +106837,31 @@ html.theme-light .card{box-shadow:none}
         document.body.classList.remove("has-app-panels");
         if (appEl) appEl.style.removeProperty("--dock-fr");
         updateFabOffset();
+        renderMainSplitHeader();
         return;
       }
+      // Bildschirm-Nummerierung: Hauptbereich ist "Bildschirm 1", jedes volle
+      // App-/Frame-Panel zählt in Öffnungsreihenfolge weiter (2, 3, …).
+      // Mini-Widgets (Aufgaben, Fokus-Timer, …) zählen nicht als eigener Bildschirm.
+      var screenNum = 1;
       dock.innerHTML = open.map(function(k){
         if (isAppKey(k)){
           var route = routeOf(k), meta = appPanelMeta(route);
           var body = renderRoutePanel(route);
           if (body != null){
+            screenNum++;
+            var closeBtn = '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button>';
             return '<section class="dock-panel app-panel" data-panel="' + k + '">' +
-              '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
-              '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+              '<div class="dock-panel-header">' + screenHeaderHtml(k, screenNum, closeBtn) + '</div>' +
               '<div class="dock-panel-body">' + body + '</div></section>';
           }
-          return frameSectionHtml(k, route, meta);   // kein Inline-Renderer → iframe (Embed)
+          screenNum++;
+          return frameSectionHtml(k, route, meta, screenNum);   // kein Inline-Renderer → iframe (Embed)
         }
         if (isFrameKey(k)){
           var froute = routeOf(k);
-          return frameSectionHtml(k, froute, appPanelMeta(froute));
+          screenNum++;
+          return frameSectionHtml(k, froute, appPanelMeta(froute), screenNum);
         }
         var p = PANELS[k]; var body;
         try { body = p.render(); }
@@ -105912,13 +106877,45 @@ html.theme-light .card{box-shadow:none}
       // Breite aufteilen: Hauptbereich = 1fr, Dock = Anzahl voller App-/Frame-Panels als fr
       var appCount = open.filter(isFullPanel).length;
       if (appEl){
-        if (appCount > 0){ document.body.classList.add("has-app-panels"); appEl.style.setProperty("--dock-fr", appCount); }
+        if (appCount > 0){ document.body.classList.add("has-app-panels"); appEl.style.setProperty("--dock-fr", appCount + "fr"); }
         else { document.body.classList.remove("has-app-panels"); appEl.style.removeProperty("--dock-fr"); }
       }
       updateFabOffset();
+      renderMainSplitHeader();
     } finally { _dockBusy = false; }
   }
   window.renderDock = renderDock;
+
+  // Kopfzeile über dem Hauptbereich ("Bildschirm 1") — nur sichtbar, solange
+  // mindestens ein volles App-Panel offen ist (echter Split-Screen). Erlaubt,
+  // die App im Hauptbereich genauso frei zu wechseln wie in jedem Seitenpanel.
+  function renderMainSplitHeader(){
+    var main = document.getElementById("main");
+    if (!main) return;
+    var existing = document.getElementById("mainSplitHeader");
+    if (existing) existing.remove();
+    if (!document.body.classList.contains("has-app-panels")) return;
+    var route = (typeof parseHash === "function") ? parseHash().route : null;
+    var bar = document.createElement("div");
+    bar.id = "mainSplitHeader";
+    bar.className = "main-split-header";
+    bar.innerHTML = '<span class="main-split-badge">🖥️ Bildschirm 1</span>' +
+      '<select class="main-split-select" title="App im Hauptbereich wechseln" onchange="window.location.hash=\'#/\'+this.value">' +
+      mainAppOptionsHtml(route) + '</select>';
+    main.insertBefore(bar, main.firstChild);
+  }
+  // Optionen-Liste (alle Apps) für den Bildschirm-1-Wähler — value ist die
+  // reine Routen-ID (wie im Hash), nicht das "app:"/"frame:"-Format der Panels.
+  function mainAppOptionsHtml(selectedRoute){
+    var all = (typeof getAllApps === "function") ? getAllApps() : [];
+    var seen = {}, html = "";
+    all.forEach(function(a){
+      if (!a || !a.key || seen[a.key]) return; seen[a.key] = 1;
+      html += '<option value="' + a.key + '"' + (a.key === selectedRoute ? " selected" : "") + '>' + a.icon + ' ' + esc(a.label) + '</option>';
+    });
+    return html;
+  }
+  window.renderMainSplitHeader = renderMainSplitHeader;
 
   // Polaris-Quick-FAB (+ Panel) nach links verschieben, wenn das Dock offen ist,
   // damit die Seitenpanels nicht verdeckt werden.
@@ -106211,13 +107208,46 @@ html.theme-light .card{box-shadow:none}
   function routeOf(k){ return k.slice(k.indexOf(":") + 1); }
   // Apps mit eigener Standalone-Seite direkt laden (leichter, eigener Speicher);
   // SPA-interne Overlays via chrome-losen Embed-Modus der Haupt-App.
-  var FRAME_SRC = { docstudio:"docstudio.html", nobraine:"nobraine.html", weekplanning:"nobraine.html", drive:"drive.html", ruhestand:"ruhestand.html" };
+  var FRAME_SRC = { docstudio:"docstudio.html", nobraine:"nobraine.html", weekplanning:"nobraine.html", drive:"drive.html", ruhestand:"ruhestand.html", bmpruefung:"bm.html" };
   function frameSrc(route){ return FRAME_SRC[route] || ("index.html?embed=1#/" + route); }
   function appPanelMeta(route){
     var all = (typeof getAllApps === "function") ? getAllApps() : [];
     var m = all.filter(function(a){ return a.key === route; })[0];
     return { icon: (m && m.icon) || "🗔", title: (m && m.label) || route };
   }
+  // Optionen-Liste (alle Apps) für den Bildschirm-Wähler in einer Panel-Kopfzeile
+  // — <option value> im selben "app:x"/"frame:x"-Format wie toggleDockPanel es erwartet.
+  function fullAppOptionsHtml(selectedKey){
+    var all = (typeof getAllApps === "function") ? getAllApps() : [];
+    var seen = {}, html = "";
+    all.forEach(function(a){
+      if (!a || !a.key || seen[a.key]) return; seen[a.key] = 1;
+      var key = PANEL_ROUTES[a.key] ? ("app:" + a.key) : ("frame:" + a.key);
+      html += '<option value="' + key + '"' + (key === selectedKey ? " selected" : "") + '>' + a.icon + ' ' + esc(a.label) + '</option>';
+    });
+    return html;
+  }
+  // Kopfzeile eines vollen App-/Frame-Panels: "Bildschirm N"-Label + Wähler,
+  // damit sich jede Seite wie ein eigener, frei belegbarer Monitor anfühlt.
+  function screenHeaderHtml(k, screenNum, closeBtn){
+    return '<span class="dock-screen-badge">🖥️ Bildschirm ' + screenNum + '</span>' +
+      '<select class="dock-switch-select" title="App auf diesem Bildschirm wechseln" onchange="window.dockSwitchPanel(\'' + k + '\', this.value)">' +
+      fullAppOptionsHtml(k) + '</select>' + closeBtn;
+  }
+  window.dockSwitchPanel = function(oldKey, newKey){
+    if (!newKey || newKey === oldKey) return;
+    if (!(isAppKey(newKey) && PANEL_ROUTES[routeOf(newKey)]) && !(isFrameKey(newKey) && routeOf(newKey))) return;
+    var open = getOpenPanels();
+    var i = open.indexOf(oldKey);
+    if (i < 0) return;
+    var dup = open.indexOf(newKey);
+    if (dup >= 0 && dup !== i) open.splice(dup, 1);
+    i = open.indexOf(oldKey);
+    open[i] = newKey;
+    setOpenPanels(open);
+    renderDock();
+    renderDockMenu();
+  };
   // Inline-HTML einer Route (über den In-Scope-Resolver der Haupt-App).
   // Gibt null zurück, wenn keine Inline-Ansicht verfügbar ist → dann iframe.
   function renderRoutePanel(route){
@@ -106226,11 +107256,11 @@ html.theme-light .card{box-shadow:none}
     }
     return null;
   }
-  function frameSectionHtml(k, route, meta){
+  function frameSectionHtml(k, route, meta, screenNum){
+    var closeBtn = '<button title="In neuem Tab öffnen" onclick="window.open(\'' + frameSrc(route) + '\',\'_blank\')" style="font-size:12px">⤢</button>' +
+      '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button>';
     return '<section class="dock-panel frame-panel" data-panel="' + k + '">' +
-      '<div class="dock-panel-header"><span>' + meta.icon + '</span><span class="dock-panel-title">' + esc(meta.title) + '</span>' +
-      '<button title="In neuem Tab öffnen" onclick="window.open(\'' + frameSrc(route) + '\',\'_blank\')" style="font-size:12px">⤢</button>' +
-      '<button title="Panel schliessen" onclick="window.toggleDockPanel(\'' + k + '\')">✕</button></div>' +
+      '<div class="dock-panel-header">' + screenHeaderHtml(k, screenNum, closeBtn) + '</div>' +
       '<div class="dock-panel-body"><iframe class="dock-frame" src="' + frameSrc(route) + '" title="' + esc(meta.title) + '" allow="fullscreen"></iframe></div></section>';
   }
 
@@ -106378,6 +107408,14 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
 .polaris-display-note-adopt{min-height:44px}
 @media (max-width:600px){.polaris-display{right:12px;left:12px;bottom:12px;max-width:none}}
 @media (prefers-reduced-motion:reduce){.polaris-display{transition:none}.polaris-display-fresh{animation:none}}
+/* „Polaris arbeitet gerade" — kleine nicht-blockierende Status-Pille unten links */
+.polaris-activity{position:fixed;left:18px;bottom:18px;z-index:1000000;display:flex;align-items:center;gap:9px;max-width:min(360px,calc(100vw - 24px));padding:9px 14px;background:var(--surface-overlay);border:1px solid var(--border2);border-radius:999px;box-shadow:var(--shadow-lg);font-size:12.5px;color:var(--text2);opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity .3s ease,transform .3s ease}
+.polaris-activity.show{opacity:1;transform:none}
+.polaris-activity-dot{width:8px;height:8px;flex-shrink:0;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 var(--accent-soft);animation:polarisActivityPulse 1.6s ease-in-out infinite}
+.polaris-activity-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes polarisActivityPulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 6px transparent}}
+@media (max-width:600px){.polaris-activity{left:12px;right:12px;bottom:64px;max-width:none;justify-content:center}}
+@media (prefers-reduced-motion:reduce){.polaris-activity{transition:none}.polaris-activity-dot{animation:none}}
 /* Grosser zentraler Orb im Ruhemodus-Overlay (#ruhestandOverlay) */
 .polaris-ruhe-wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;pointer-events:none;z-index:5}
 .polaris-ruhe-wrap quantus-orb{width:min(38vmin,240px);height:min(38vmin,240px);pointer-events:auto;cursor:pointer}
@@ -106483,6 +107521,61 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // Direktzugriff nur als Fallback/Lesepfad — primärer Schreibweg sind die
   // n8n-Webhooks oben. (RTDB-Regeln: $andere → read/write true.)
   const POLARIS_RTDB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
+
+  // ═══ POLARIS-INBOX (Voice/n8n → App-Merge) ══════════════════════════════
+  // n8n schreibt neue/aktualisierte Einträge nach polaris/inbox/{type}/{id}
+  // ({ title, description, status, source, ts, updatedAt, op }). Der Listener
+  // merged sie KONFLIKTFREI über die BESTEHENDEN App-Funktionen (createEntity/
+  // updateEntity + scheduleSave) ins Modell — NIE per Direktschreiben in den
+  // Blob appStore/app-data_json. Zentral abschaltbar: Konstante unten ODER
+  // RTDB-Schalter polaris/settings/inboxEnabled=false.
+  const POLARIS_INBOX_ENABLED = true; // Feature-Flag (Default an)
+  // ═══ KANONISCHE ENTITY-TYPEN — 1:1 mit der n8n-Backend-Whitelist ═══
+  // Die Typnamen sind identisch zu den n8n prep entity-* Whitelists (live),
+  // damit jede Aktion greift. Jeder Typ → Ziel-Deskriptor:
+  //   { kind }   → entities.<map> via createEntity/updateEntity (Activity/Undo)
+  //   { direct } → Direktschreibung in entities.<key> (nicht in getEntityMap)
+  //   { array }  → Dot-Pfad eines Arrays in APP.state.data (push/patch/remove)
+  // Kanonische Typen ohne eigenes App-Schema landen generisch in
+  // entities.polaris_<typ> (kein Konflikt mit App-Daten) — so geht kein
+  // Polaris-Schreibvorgang verloren. Mapping alt→neu siehe docs/polaris-module.md.
+  const POLARIS_TYPE_MAP = {
+    // Maps via getEntityMap (createEntity → Activity/Undo)
+    note: { kind: "note" }, goal: { kind: "goal" }, idea: { kind: "idea" },
+    decision: { kind: "decision" }, event: { kind: "calendarEvent" }, task: { kind: "task" },
+    project: { kind: "project" }, organization: { kind: "organization" }, meeting: { kind: "meeting" },
+    strategy: { kind: "strategy" }, program: { kind: "program" }, resource: { kind: "resource" },
+    message: { kind: "scheduledMessage" }, deck: { kind: "deck" }, vocabulary: { kind: "dictEntry" },
+    timeLog: { kind: "timeEntry" },
+    // Direktschreibung (Kinds nicht in getEntityMap)
+    person: { direct: "persons" }, concept: { direct: "concepts" }, thesis: { direct: "theses" },
+    // Array-Module: create=push · update=patch by id · delete=remove by id
+    habit: { array: "dailyBriefing.routines" }, reflection: { array: "reflections" },
+    journal: { array: "journal.documents" }, belief: { array: "dailyBriefing.beliefs" },
+    timeCapsule: { array: "journal.selfLetters" }, rule: { array: "rules.books" }
+  };
+  // Alle kanonischen Typnamen (live in n8n) — Basis des generischen Fallbacks.
+  // (rule ist NICHT kanonisch, aber via POLARIS_TYPE_MAP für rules.books bedienbar.)
+  const POLARIS_CANON_TYPES = new Set(["note","goal","idea","decision","event","habit","task","project","organization","person","concept","meeting","reflection","journal","flashcard","strategy","program","thesis","sticky","measure","vocabulary","document","dailyBriefing","weekPlanning","workload","message","timeCapsule","emailTemplate","chapter","timeLog","translation","deck","milestone","risk","resource","stakeholder","workflowStep","template","statusUpdate","retro","reflectionQuestion","belief","focusItem","knowledgeArea","learningSession","question","ideaCard","swot"]);
+  // Deutsche Labels für die Aktivitäts-Anzeige, per kanonischem Typ.
+  const POLARIS_TYPE_LABEL = {
+    note:"Notiz", goal:"Ziel", idea:"Idee", decision:"Entscheidung", event:"Termin",
+    habit:"Gewohnheit", task:"Aufgabe", project:"Projekt", organization:"Organisation",
+    person:"Person", concept:"Konzept", meeting:"Besprechung", reflection:"Reflexion",
+    journal:"Journal-Eintrag", strategy:"Strategie", program:"Programm", thesis:"These",
+    vocabulary:"Vokabel", message:"Nachricht", timeCapsule:"Zeitkapsel", timeLog:"Zeiteintrag",
+    deck:"Deck", resource:"Ressource", belief:"Glaubenssatz", rule:"Regel", document:"Dokument"
+  };
+  function plTypeLabel(type){ return POLARIS_TYPE_LABEL[type] || (type ? (type.charAt(0).toUpperCase() + type.slice(1)) : "Eintrag"); }
+  // ═══ VERBINDLICHE SICHERHEITSGRENZE (nicht aufweichen) ═══
+  // Diese Typen werden IMMER abgelehnt — auch falls sie versehentlich in die
+  // Whitelist geraten: Passwort-Tresor (entities.passwords) und Bank-/Kontodaten.
+  const POLARIS_BLOCKED_TYPES = new Set(["password","passwords","passwordentry","passwordmanager","passwort","vault","tresor","account","accounts","konto","bankaccount","bankkonto","transaction","transactions","transaktion","creditcard","creditcards","kreditkarte","subscription","subscriptions","invoice","invoices","financialgoal","purchaseproposal","budget","iban"]);
+  // Sensible FELDER (BLOCK-Feldfilter) — weder ins Modell noch in die Anzeige.
+  // Erweitert um pass und card(_)number; auf ALLE Typen angewandt.
+  const POLARIS_SENSITIVE_RE = /(password|passwort|pass|pin|iban|bic|api[_-]?key|apikey|secret|token|card_?number|cardnumber|cvv)/i;
+  // Steuerfelder des inbox-Eintrags, die NICHT in die App-Entität wandern.
+  const POLARIS_INBOX_CONTROL = ["op", "ts", "updatedAt", "createdAt", "processedAt", "processedBy", "id", "inboxId"];
 
   const POLARIS_TZ = "Europe/Zurich";
   const PL_MODES = ["idle","listening","thinking","speaking"];
@@ -107231,7 +108324,28 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // rohes HTML wäre ein XSS-Kanal). Kein Secret nötig (öffentliche Config).
   let plDisplayPollTimer = null;
   let plDisplayLastId = null;    // zuletzt gerenderter Inhalt (updatedAt/ts)
-  let plDisplayDismissedId = ""; // manuell geschlossen — bis neuer Inhalt kommt
+  let plDisplayLastTs = 0;       // ts der aktuell gezeigten Einblendung
+  let plDisplayDismissedTsMem = 0; // Fallback-Merker, falls localStorage nicht verfügbar
+
+  // ── Persistenter Auto-Dismiss (Teil B) ──
+  // Eine weggedrückte Einblendung poppt NIE wieder auf: der ts wird dauerhaft
+  // gemerkt (localStorage 'polarisDismissedDisplayTs' + zusätzlich RTDB
+  // polaris/display/dismissedTs für cross-device). Der Listener zeigt nur, wenn
+  // display.ts existiert UND grösser ist als der zuletzt weggedrückte ts.
+  function plDisplayTsOf(d){ return plParseTs(d && (d.ts != null ? d.ts : (d && d.updatedAt))); }
+  function plDisplayDismissedTs(){
+    try {
+      const v = window.localStorage ? localStorage.getItem("polarisDismissedDisplayTs") : null;
+      if (v != null && v !== ""){ const n = Number(v); if (isFinite(n)) return Math.max(n, plDisplayDismissedTsMem); }
+    } catch(e){ /* localStorage nicht verfügbar → RTDB/Mem-Fallback */ }
+    return plDisplayDismissedTsMem;
+  }
+  function plDisplaySetDismissedTs(ts){
+    const n = Math.max(plParseTs(ts), plDisplayDismissedTs());
+    plDisplayDismissedTsMem = n;
+    try { if (window.localStorage) localStorage.setItem("polarisDismissedDisplayTs", String(n)); } catch(e){}
+    try { plDbSet("polaris/display/dismissedTs", n).catch(function(){}); } catch(e){} // best effort, cross-device
+  }
 
   function plDisplayIdentity(d){
     if (!d) return "";
@@ -107406,14 +108520,19 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   function plDisplayHandle(d){
     try {
       const el = plDisplayEnsure();
+      // cross-device: einen in der RTDB gemerkten dismissedTs übernehmen
+      if (d && d.dismissedTs != null) plDisplayDismissedTsMem = Math.max(plDisplayDismissedTsMem, plParseTs(d.dismissedTs));
       const id = plDisplayIdentity(d);
-      if (!plDisplayHasContent(d) || (id && id === plDisplayDismissedId)){
+      const dispTs = plDisplayTsOf(d);
+      // Nur zeigen, wenn Inhalt vorhanden UND ts existiert UND ts > zuletzt weggedrückt.
+      if (!plDisplayHasContent(d) || dispTs <= 0 || dispTs <= plDisplayDismissedTs()){
         el.classList.remove("show"); // dezent ausblenden (CSS-Transition)
         plDisplayLastId = null;
         return;
       }
       if (id === plDisplayLastId && el.classList.contains("show")) return; // unverändert
       plDisplayLastId = id;
+      plDisplayLastTs = dispTs;
       const icon = PL_DISPLAY_ICONS[String((d && d.type) || "").toLowerCase()] || "🖥️";
       let when = "";
       try {
@@ -107437,7 +108556,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     } catch(err){ console.error("Polaris: Display-Anzeige fehlgeschlagen", err); }
   }
   function plDisplayDismiss(){
-    plDisplayDismissedId = plDisplayLastId || plDisplayDismissedId;
+    // ts dauerhaft merken → dieselbe Einblendung poppt nie wieder auf (auch
+    // nicht nach Reload oder erneutem RTDB-Listener-Event). Kein Auto-Timeout.
+    if (plDisplayLastTs > 0) plDisplaySetDismissedTs(plDisplayLastTs);
     const el = document.getElementById("polarisDisplay");
     if (el) el.classList.remove("show");
     plDisplayLastId = null;
@@ -107464,6 +108585,247 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const el = document.getElementById("polarisDisplay");
     if (el && el.classList.contains("show")) plDisplayDismiss();
   });
+
+  // ═══ POLARIS-INBOX: Realtime-Listener + konfliktfreier Merge ════════════
+  let plInboxPollTimer = null;
+  let plInboxStarted = false;
+
+  // Zeitstempel robust zu ms parsen (Zahl, numerischer String oder ISO)
+  function plParseTs(v){
+    if (v == null) return 0;
+    if (typeof v === "number" && isFinite(v)) return v;
+    const n = Number(v);
+    if (isFinite(n) && n > 0) return n;
+    const p = Date.parse(String(v));
+    return isFinite(p) ? p : 0;
+  }
+
+  // ── REINE Merge-Entscheidung (testbar, ohne Firebase/DOM) ──
+  // existing = App-Entität (oder null), entry = inbox-Eintrag.
+  // Rückgabe: 'create' | 'update' | 'delete' | 'skip'.
+  // LWW greift NUR, wenn Polaris' updatedAt neuer ist als die App-Entität.
+  function plInboxDecide(existing, entry){
+    if (!entry || typeof entry !== "object") return "skip";
+    if (entry.processedAt) return "skip"; // schon verarbeitet → nie doppelt mergen
+    const op = String(entry.op || "create").toLowerCase();
+    if (op === "delete"){
+      if (!existing || existing.status === "deleted") return "skip"; // Soft-Delete idempotent
+      return "delete";
+    }
+    if (op !== "create" && op !== "update") return "skip"; // unbekannte op defensiv ignorieren
+    if (!existing) return "create";
+    // Vergleich gleich-zu-gleich: die zuletzt übernommene Inbox-Version-Zeit
+    // (polarisTs) statt der App-eigenen updatedAt (= Merge-Zeit). Fallback auf
+    // updatedAt/createdAt für App-Entitäten, die nicht von Polaris stammen.
+    const entryTs = plParseTs(entry.updatedAt || entry.ts);
+    const existTs = plParseTs(existing.polarisTs != null ? existing.polarisTs : (existing.updatedAt || existing.createdAt));
+    return entryTs > existTs ? "update" : "skip";
+  }
+
+  // ── Sensible Felder rekursiv entfernen (Scrub) — für Modell UND Anzeige ──
+  function plInboxScrub(obj){
+    if (!obj || typeof obj !== "object") return obj;
+    if (Array.isArray(obj)) return obj.map(plInboxScrub);
+    const out = {};
+    Object.keys(obj).forEach(function(k){
+      if (POLARIS_SENSITIVE_RE.test(k)) return; // Feld komplett weglassen
+      const v = obj[k];
+      out[k] = (v && typeof v === "object") ? plInboxScrub(v) : v;
+    });
+    return out;
+  }
+
+  // ── Übernahme eines inbox-Eintrags in die App (über die App-Funktionen) ──
+  // Array-Parent auflösen: navigiert den Dot-Pfad in APP.state.data, legt
+  // fehlende Parent-Objekte + das Array selbst an (leeres Array), gibt
+  // { parent, key } zurück. Nie werfend.
+  function plResolveArrayParent(pathStr){
+    const parts = String(pathStr).split(".");
+    const key = parts.pop();
+    let obj = window.APP && APP.state && APP.state.data;
+    if (!obj) return null;
+    for (let i = 0; i < parts.length; i++){
+      const p = parts[i];
+      if (!obj[p] || typeof obj[p] !== "object") obj[p] = {};
+      obj = obj[p];
+    }
+    if (!Array.isArray(obj[key])) obj[key] = [];
+    return { parent: obj, key: key };
+  }
+  // Speicher-Deskriptor für einen kanonischen Typ auflösen:
+  //   { mode:"array", arr }               → Array-Modul (push/patch/remove)
+  //   { mode:"map", map, viaApi, kind }   → Entity-Map (createEntity/direct)
+  // null → unbekannter, nicht-kanonischer Typ (wird ignoriert + geloggt).
+  function plResolveStore(type){
+    try {
+      const desc = POLARIS_TYPE_MAP[type];
+      if (desc && desc.array){
+        const r = plResolveArrayParent(desc.array);
+        if (!r) return null;
+        return { mode: "array", arr: r.parent[r.key] };
+      }
+      if (desc && desc.kind){
+        const m = (typeof window.getEntityMap === "function") ? window.getEntityMap(desc.kind) : null;
+        if (m) return { mode: "map", map: m, viaApi: true, kind: desc.kind };
+      }
+      const e = (window.APP && APP.state && APP.state.data && APP.state.data.entities) || null;
+      if (!e) return null;
+      let key = desc && desc.direct;
+      if (!key){
+        if (POLARIS_CANON_TYPES.has(type)) key = "polaris_" + type; // generischer Fallback (eigener Namespace)
+        else return null; // nicht kanonisch → unbekannt
+      }
+      if (!e[key]) e[key] = {};
+      return { mode: "map", map: e[key], viaApi: false };
+    } catch(err){ console.error("Polaris-Inbox: Speicher-Auflösung fehlgeschlagen", type, err); return null; }
+  }
+  async function plInboxApply(type, inboxId, entry){
+    try {
+      const rawType = String(type || "");
+      const low = rawType.toLowerCase();
+      // VERBINDLICHE Sicherheitsgrenze: Tresor-/Bank-Typen immer ablehnen.
+      if (POLARIS_BLOCKED_TYPES.has(low)){
+        console.warn("Polaris-Inbox: gesperrter Typ abgelehnt (Sicherheitsgrenze Tresor/Bank):", type, inboxId);
+        return;
+      }
+      const store = plResolveStore(rawType);
+      if (!store){ console.warn("Polaris-Inbox: unbekannter type ignoriert:", type, inboxId); return; }
+      if (!entry || typeof entry !== "object" || entry.processedAt) return;
+      const s = plSettings();
+      if (!s.inboxMap) s.inboxMap = {};
+      const mapKey = rawType + "/" + inboxId;
+      const appId = s.inboxMap[mapKey] || null;
+      let existing = null;
+      if (appId){
+        existing = (store.mode === "array")
+          ? (store.arr.find(function(x){ return x && x.id === appId; }) || null)
+          : (store.map[appId] || null);
+      }
+      const action = plInboxDecide(existing, entry);
+      if (action === "skip") return;
+
+      // Datenfelder aufbereiten: BLOCK-Feldfilter (scrub) + Steuerfelder entfernen
+      const data = plInboxScrub(entry);
+      POLARIS_INBOX_CONTROL.forEach(function(k){ delete data[k]; });
+      data.source = data.source || "polaris";
+      data.polarisTs = plParseTs(entry.updatedAt || entry.ts); // Inbox-Version-Zeit für LWW-Vergleich
+      const label = String(entry.title || data.title || data.name || plTypeLabel(rawType)).slice(0, 80);
+      const iso = (typeof window.nowIso === "function") ? window.nowIso() : new Date().toISOString();
+      const genId = function(){ return (typeof window.uuid === "function") ? window.uuid() : ("pol_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)); };
+
+      if (action === "create"){
+        let newId;
+        if (store.mode === "array"){
+          newId = genId();
+          store.arr.push(Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data)); // Array: pushen
+          plScheduleSave();
+        } else if (store.viaApi){
+          newId = window.createEntity(store.kind, data); // uuid + createdAt/updatedAt + scheduleSave
+          if (!newId) throw new Error("createEntity fehlgeschlagen");
+        } else {
+          newId = genId(); // Direktschreibung
+          store.map[newId] = Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data);
+          plScheduleSave();
+        }
+        s.inboxMap[mapKey] = newId;
+        plScheduleSave(); // Index persistieren
+        plInboxActivity(rawType, "erstellt", label);
+      } else if (action === "update"){
+        if (store.mode === "array"){ Object.assign(existing, data, { updatedAt: iso }); plScheduleSave(); } // Array: Element per id patchen
+        else if (store.viaApi){ window.updateEntity(store.kind, appId, data); }
+        else { Object.assign(store.map[appId], data, { updatedAt: iso }); plScheduleSave(); }
+        plInboxActivity(rawType, "aktualisiert", label);
+      } else if (action === "delete"){
+        if (store.mode === "array"){
+          const i = store.arr.findIndex(function(x){ return x && x.id === appId; });
+          if (i >= 0){ store.arr.splice(i, 1); plScheduleSave(); } // Array: Element entfernen (per Vorgabe)
+        } else if (store.viaApi){ window.updateEntity(store.kind, appId, { status: "deleted" }); } // Map: Soft-Delete
+        else { store.map[appId].status = "deleted"; store.map[appId].updatedAt = iso; plScheduleSave(); }
+        plInboxActivity(rawType, "gelöscht", label);
+      }
+      if (typeof window.render === "function") try { window.render(); } catch(e){}
+
+      // Eintrag als verarbeitet markieren (KEIN Hard-Delete, KEIN Blob-Zugriff)
+      try {
+        await plDbSet("polaris/inbox/" + type + "/" + inboxId + "/processedAt", Date.now());
+        const dev = (typeof window.getOrCreateDeviceId === "function") ? window.getOrCreateDeviceId() : "web";
+        await plDbSet("polaris/inbox/" + type + "/" + inboxId + "/processedBy", dev);
+      } catch(e){ console.error("Polaris-Inbox: processedAt-Markierung fehlgeschlagen", e); }
+    } catch(err){
+      console.error("Polaris-Inbox: Merge fehlgeschlagen", type, inboxId, err);
+    }
+  }
+
+  // ── Aktivitäts-Anzeige „Polaris arbeitet gerade" (nicht-blockierend) ──
+  function plInboxActivity(type, verb, label){
+    const kindLabel = plTypeLabel(type);
+    plToast("ok", "Polaris", "Polaris hat " + kindLabel + " „" + label + "“ " + verb + ".");
+    try {
+      let el = document.getElementById("polarisActivity");
+      if (!el){
+        el = document.createElement("div");
+        el.id = "polarisActivity";
+        el.className = "polaris-activity";
+        el.setAttribute("role", "status");
+        el.setAttribute("aria-live", "polite");
+        document.body.appendChild(el);
+      }
+      el.innerHTML = '<span class="polaris-activity-dot" aria-hidden="true"></span>'
+        + '<span class="polaris-activity-text">Polaris hat ' + plEsc(kindLabel) + ' „' + plEsc(label) + '“ ' + plEsc(verb) + '</span>';
+      el.classList.add("show");
+      clearTimeout(el._hideTimer);
+      el._hideTimer = setTimeout(function(){ el.classList.remove("show"); }, 6000);
+    } catch(e){ console.error("Polaris-Inbox: Aktivitätsanzeige fehlgeschlagen", e); }
+  }
+
+  // ── Ganze Inbox verarbeiten (alle Typen; deckt auch neue n8n-Typen ab) ──
+  function plInboxProcessAll(val){
+    if (!val || typeof val !== "object") return;
+    Object.keys(val).forEach(function(type){
+      const bucket = val[type];
+      if (bucket && typeof bucket === "object"){
+        Object.keys(bucket).forEach(function(id){ plInboxApply(type, id, bucket[id]); });
+      }
+    });
+  }
+  // ── list: aktuelle Elemente eines Typs zurückgeben (Array- ODER Map-Modul) ──
+  function plInboxList(type){
+    try {
+      const store = plResolveStore(String(type || ""));
+      if (!store) return [];
+      if (store.mode === "array") return store.arr.slice();
+      return Object.keys(store.map).map(function(k){ return store.map[k]; });
+    } catch(e){ console.error("Polaris-Inbox: list fehlgeschlagen", type, e); return []; }
+  }
+  // ── Listener starten (on('value') auf die ganze Inbox; REST-Poll-Fallback) ──
+  function plInboxPollStart(){
+    if (plInboxPollTimer) return;
+    const tick = function(){
+      plDbGet("polaris/inbox").then(plInboxProcessAll).catch(function(){ /* nächster Tick */ });
+    };
+    plInboxPollTimer = setInterval(tick, 12000);
+    tick();
+  }
+  async function plInboxWatchStart(){
+    if (plInboxStarted || !POLARIS_INBOX_ENABLED) return;
+    // Zentraler RTDB-Schalter — ohne Redeploy abschaltbar
+    try {
+      const en = await plDbGet("polaris/settings/inboxEnabled");
+      if (en === false){ console.info("Polaris-Inbox: zentral deaktiviert (polaris/settings/inboxEnabled=false)"); return; }
+    } catch(e){ /* Schalter nicht lesbar → Default an */ }
+    plInboxStarted = true;
+    const ref = plDbRef("polaris/inbox"); // ein Listener über ALLE Typen (auch künftige)
+    if (ref){
+      try {
+        ref.on("value",
+          function(snap){ plInboxProcessAll(snap && snap.exists() ? snap.val() : null); },
+          function(err){ console.error("Polaris-Inbox: Listener-Fehler", err); });
+        return;
+      } catch(e){ console.error("Polaris-Inbox: Listener fehlgeschlagen — Poll-Fallback", e); }
+    }
+    plInboxPollStart(); // kein Firebase-SDK → REST-Polling
+  }
+  window.addEventListener("load", function(){ setTimeout(function(){ plInboxWatchStart(); }, 2000); });
 
   // ═══ SPRACH-ORB (Topbar) & RUHEMODUS — Aufgaben A–C ═════════════════════
   // Der Header-<quantus-orb> ist DER zentrale Ein/Aus-Schalter der Sprach-
@@ -108069,7 +109431,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   });
 
   // Diagnose-Hooks (nur Konsole; keine UI-Abhängigkeit)
-  window.__polarisDebug = { nudge: plProactiveNudge, afterSession: plAfterSession, panelRefresh: plPanelRefresh, setMode: plSetMode, voiceState: function(){ return plVoiceState; }, display: plDisplayHandle };
+  window.__polarisDebug = { nudge: plProactiveNudge, afterSession: plAfterSession, panelRefresh: plPanelRefresh, setMode: plSetMode, voiceState: function(){ return plVoiceState; }, display: plDisplayHandle, inboxDecide: plInboxDecide, inboxScrub: plInboxScrub, inboxApply: plInboxApply, inboxWatchStart: plInboxWatchStart, inboxList: plInboxList };
 })();
 </script>
 
@@ -108687,11 +110049,18 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const stateJson = JSON.stringify((n && n.htmlState) || null).replace(/</g, "\\u003c");
     const nid = JSON.stringify(n ? n.id : "");
     const S = "<scr" + "ipt>", ES = "</scr" + "ipt>";
-    // Brücke: window.quantus.save(data) + automatisches Speichern aller Eingabefelder -> Quantus (note.htmlState)
-    const bridge = S + "(function(){var NID=" + nid + ";var st=" + stateJson + "||{};"
-      + "window.quantus={state:st,save:function(d){try{st=Object.assign({},st||{},d||{});this.state=st;parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}};"
-      + "function pi(){var v={};document.querySelectorAll('input,textarea,select').forEach(function(el,i){var k=el.id||el.name||('f'+i);v[k]=(el.type==='checkbox'||el.type==='radio')?el.checked:el.value;});st._inputs=v;try{parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}"
-      + "function rs(){var v=(st&&st._inputs)||{};document.querySelectorAll('input,textarea,select').forEach(function(el,i){var k=el.id||el.name||('f'+i);if(k in v){if(el.type==='checkbox'||el.type==='radio')el.checked=!!v[k];else el.value=v[k];}});}"
+    // Brücke: window.quantus.save(data) + automatisches Speichern aller Eingabefelder -> Quantus (note.htmlState).
+    // WICHTIG: Feldwerte werden erst NACH dem Wiederherstellen (ready) erfasst, damit die
+    // beim Parsen laufende Widget-Logik die gespeicherten Werte nicht mit Standardwerten überschreibt.
+    // Beim Wiederherstellen werden synthetische input/change-Events gefeuert, damit die
+    // Widget-Logik mit den gespeicherten Werten neu rechnet (sonst zeigt es wieder Defaults).
+    const bridge = S + "(function(){var NID=" + nid + ";var st=" + stateJson + "||{};var ready=false;"
+      + "function key(el,i){return el.id||el.name||('f'+i);}"
+      + "function snap(){var v={};document.querySelectorAll('input,textarea,select').forEach(function(el,i){if(el.type==='radio'){var n=el.name||('r'+i);if(el.checked)v['@r:'+n]=el.value;return;}var k=key(el,i);v[k]=(el.type==='checkbox')?el.checked:el.value;});return v;}"
+      + "function post(){try{parent.postMessage({__sbSave:1,id:NID,data:st},'*');}catch(e){}}"
+      + "window.quantus={state:st,save:function(d){try{st=Object.assign({},st||{},d||{});if(ready)st._inputs=snap();this.state=st;post();}catch(e){}}};"
+      + "function pi(){if(!ready)return;st._inputs=snap();post();}"
+      + "function rs(){var v=(st&&st._inputs)||{};var ch=[];document.querySelectorAll('input,textarea,select').forEach(function(el,i){if(el.type==='radio'){var n=el.name||('r'+i);if(('@r:'+n) in v){var sel=el.value===v['@r:'+n];el.checked=sel;if(sel)ch.push(el);}return;}var k=key(el,i);if(k in v){if(el.type==='checkbox')el.checked=!!v[k];else el.value=v[k];ch.push(el);}});ready=true;ch.forEach(function(el){try{el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}});if(!ch.length)post();}"
       + "window.addEventListener('input',pi,true);window.addEventListener('change',pi,true);"
       + "if(document.readyState!=='loading')rs();else window.addEventListener('DOMContentLoaded',rs);})();" + ES;
     const html = (n && n.html && n.html.trim()) ? n.html : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8a94a6;font-size:12.5px">Leer — ✎ zum Bearbeiten</div>';
@@ -109986,6 +111355,14 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-overlay.sb-side{inset:38px 0 0 auto;width:var(--sb-split,50vw);z-index:1000;border-left:1px solid var(--sb-border);box-shadow:-12px 0 34px rgba(0,0,0,.45)}
       body.sb-docked #app{width:calc(100vw - var(--sb-split,50vw))!important;min-width:0}
       body.sb-docked #qc-fab,body.sb-docked #qc-panel{right:calc(var(--sb-split,50vw) + 20px)!important}
+      /* Split-Screen: zentrierte Dialoge/Overlays (z.B. „Neue Aufgabe") auf die
+         App-Hälfte begrenzen. Sonst zentrieren sie über der ganzen Fensterbreite
+         und landen mittig auf der Trennlinie → halb hinter/über dem Board
+         ("verschoben"). Mit right = Split-Breite zentriert der Flex-Backdrop den
+         Dialog in der sichtbaren App-Hälfte, das Board bleibt frei. */
+      body.sb-docked .modal-backdrop,
+      body.sb-docked .slide-panel-backdrop{right:var(--sb-split,50vw)}
+      body.sb-docked .slide-panel{left:calc((100vw - var(--sb-split,50vw)) / 2)}
       .sb-side-resizer{position:absolute;left:-4px;top:0;bottom:0;width:11px;cursor:ew-resize;z-index:30}
       .sb-side-resizer::after{content:"";position:absolute;left:4px;top:0;bottom:0;width:2px;background:var(--sb-border);transition:background .12s}
       .sb-side-resizer:hover::after,.sb-side-resizer.active::after{background:var(--sb-accent);width:3px}
@@ -110402,8 +111779,10 @@ Dateien zu identifizieren.
     if (!spec) return base;
     return base + "\n\n---\n\n## Spezifikation (aktueller Auftrag)\n" + spec;
   }
-  function qppLog(qd, text, tag){
-    qd.log.unshift({ ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim(), tag: String(tag || "").trim() });
+  function qppLog(qd, text, tag, full){
+    var entry = { ts: (typeof nowIso === "function" ? nowIso() : new Date().toISOString()), text: String(text || "").trim(), tag: String(tag || "").trim() };
+    if (full != null && String(full).trim()) entry.full = String(full);
+    qd.log.unshift(entry);
     if (qd.log.length > 500) qd.log.length = 500;
   }
   window.qppSet = function(pid, field, val){ var qd = qppState(pid); if (!qd) return; if (field === "base") qd.basePrompt = val; else qd.spec = val; scheduleSave(); };
@@ -110443,10 +111822,14 @@ Dateien zu identifizieren.
       ? qd.log.slice(0, 60).map(function(entry, i){
           var tg = (entry.tag || "").trim();
           var tagChip = tg ? '<span style="flex:none;align-self:center;background:var(--accent-soft);color:var(--accent);font-size:10.5px;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap">' + e(tg) + '</span>' : '';
+          var hasFull = !!(entry.full && String(entry.full).trim());
+          var textCell = hasFull
+            ? '<div class="qpp-log-full-link" data-action="qpp-log-showfull" data-pid="' + e(id) + '" data-idx="' + i + '" title="Vollständigen Prompt anzeigen" style="flex:1;min-width:0;white-space:pre-wrap;cursor:pointer">' + e(entry.text) + ' <span class="text-muted mini" style="white-space:nowrap">📄 ganzer Prompt</span></div>'
+            : '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>';
           return '<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
             + '<div class="text-muted mini" style="flex:none;width:104px;font-variant-numeric:tabular-nums">' + e(fmtTs(entry.ts)) + '</div>'
             + tagChip
-            + '<div style="flex:1;min-width:0;white-space:pre-wrap">' + e(entry.text) + '</div>'
+            + textCell
             + '<button class="btn sm ghost" title="Eintrag löschen" data-action="qpp-log-del" data-pid="' + e(id) + '" data-idx="' + i + '" style="flex:none">✕</button>'
             + '</div>';
         }).join("")
@@ -110567,8 +111950,15 @@ Dateien zu identifizieren.
       if (!isNaN(idx) && idx >= 0 && idx < qp.log.length){ qp.log.splice(idx, 1); scheduleSave(); render(); }
       return;
     }
+    if (action === "qpp-log-copyfull"){
+      ev.preventDefault();
+      var cf = window._qppLastFullPrompt || "";
+      if (!cf){ toast("warn", "Leer", "Kein Prompt zum Kopieren"); return; }
+      qpCopy(cf); toast("ok", "Kopiert", "Vollständiger Prompt in der Zwischenablage");
+      return;
+    }
     // ── Projekt-gebundenes Cockpit (PRJ-UCHWW) ──
-    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-log-copytag" || action === "qpp-add-idea"){
+    if (action === "qpp-copy-all" || action === "qpp-copy-spec" || action === "qpp-reset-base" || action === "qpp-log-add" || action === "qpp-log-del" || action === "qpp-log-copytag" || action === "qpp-add-idea" || action === "qpp-log-showfull"){
       ev.preventDefault();
       var pid = el.dataset.pid;
       var p = pid && APP.state.data.entities.projects ? APP.state.data.entities.projects[pid] : null;
@@ -110576,9 +111966,10 @@ Dateien zu identifizieren.
       if (!p || !qd){ toast("err", "Projekt fehlt", "Projekt nicht gefunden"); return; }
 
       if (action === "qpp-copy-all"){
-        qpCopy(qppComposed(qd)).then(function(){
+        var qppFull = qppComposed(qd);
+        qpCopy(qppFull).then(function(){
           var spec = (qd.spec || "").trim();
-          qppLog(qd, "Arbeitsauftrag kopiert" + (spec ? " — " + spec.split("\n")[0].slice(0, 80) : " (nur Grundprompt)"));
+          qppLog(qd, "Arbeitsauftrag kopiert" + (spec ? " — " + spec.split("\n")[0].slice(0, 80) : " (nur Grundprompt)"), "", qppFull);
           scheduleSave();
           toast("ok", "Kopiert", "Grundprompt + Spezifikation in der Zwischenablage");
           render();
@@ -110605,6 +111996,23 @@ Dateien zu identifizieren.
           + centries.map(function(en){ return "[" + cfmt(en.ts) + "] " + (en.text || ""); }).join("\n");
         qpCopy(ctxt);
         toast("ok", "Kopiert", centries.length + " Eintrag/Eintraege mit Tag: " + ctag);
+        return;
+      }
+      if (action === "qpp-log-showfull"){
+        var sidx = parseInt(el.dataset.idx, 10);
+        var sEntry = (!isNaN(sidx) && sidx >= 0 && sidx < qd.log.length) ? qd.log[sidx] : null;
+        var sFull = sEntry && sEntry.full ? String(sEntry.full) : "";
+        if (!sFull){ toast("warn", "Kein Prompt", "Für diesen Eintrag ist kein vollständiger Prompt gespeichert"); return; }
+        var eEsc = (typeof esc === "function") ? esc : function(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"})[c]; }); };
+        var sfWhen = (function(iso){ try { return new Date(iso).toLocaleString("de-CH", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" }); } catch(x){ return iso || ""; } })(sEntry.ts);
+        if (typeof window.openModal === "function"){
+          window._qppLastFullPrompt = sFull;
+          var sfBody = '<div class="text-muted mini" style="margin-bottom:8px">Kopiert am ' + eEsc(sfWhen) + ' · ' + sFull.length + ' Zeichen</div>'
+            + '<textarea readonly style="width:100%;min-height:420px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5" onclick="this.select()">' + eEsc(sFull) + '</textarea>';
+          var sfFooter = '<button class="btn primary" data-action="qpp-log-copyfull">📋 Prompt kopieren</button>'
+            + '<button class="btn" data-action="close-modal" onclick="if(window.closeModal)window.closeModal()">Schließen</button>';
+          window.openModal("📄 Kopierter Prompt", sfBody, sfFooter);
+        }
         return;
       }
       if (action === "qpp-log-del"){
@@ -110988,7 +112396,7 @@ Dateien zu identifizieren.
 
     tree.onclick = (e) => {
       const nav = e.target.closest("[data-nav]");
-      if (nav) { if (nav.dataset.nav === "home") openHome(); return; }
+      if (nav) { if (nav.dataset.nav === "home") openHome("all"); return; }
       const chev = e.target.closest("[data-chev]");
       if (chev) { toggleOpen(chev.dataset.chev); renderSidebar(); return; }
       const add = e.target.closest("[data-addnote]");
@@ -110996,8 +112404,16 @@ Dateien zu identifizieren.
       const ni = e.target.closest("[data-note]");
       if (ni) { openPage(ni.dataset.note); return; }
       const nbi = e.target.closest("[data-nb]");
-      if (nbi && nbi.dataset.nb !== "_inbox") { toggleOpen(collapsedKey("nb", nbi.dataset.nb)); renderSidebar(); return; }
-      if (nbi) { toggleOpen(collapsedKey("nb", "_inbox")); renderSidebar(); return; }
+      if (nbi && nbi.dataset.nb !== "_inbox") {
+        // Klick auf den Notizbuch-Namen: Notizbuch vollständig öffnen (alle Seiten
+        // als Übersicht) UND im Baum aufklappen. Aufklappen/Einklappen bleibt zusätzlich
+        // über das Dreieck (Chevron) möglich.
+        const key = collapsedKey("nb", nbi.dataset.nb);
+        if (!S.open[key]) setOpen(key, true);
+        openHome(nbi.dataset.nb);
+        return;
+      }
+      if (nbi) { openHome("_inbox"); return; }
       const chi = e.target.closest("[data-ch]");
       if (chi) { toggleOpen(collapsedKey("ch", chi.dataset.ch)); renderSidebar(); return; }
     };
@@ -111029,13 +112445,23 @@ Dateien zu identifizieren.
     renderSidebar();
     renderPage();
   }
+  // Titel der Übersicht abhängig vom aktiven Filter (Notizbuch, Inbox, Favoriten …)
+  function homeTitle() {
+    if (S.homeFilter === "fav") return "★ Favoriten";
+    if (S.homeFilter === "_inbox") return "📥 Inbox";
+    if (S.homeFilter && S.homeFilter !== "all") {
+      const nb = nbMap()[S.homeFilter];
+      if (nb) return "📓 " + esc(nb.title || "Notizbuch");
+    }
+    return "🗂️ Alle Notizen";
+  }
 
   function renderTopbar() {
     const crumbs = $("#nf2Crumbs");
     if (!crumbs) return;
     const actions = $("#nf2Root") && $("#nf2Root").querySelector(".nf2-top-actions");
     if (S.view === "home") {
-      crumbs.innerHTML = `<span class="nf2-crumb cur">🗂️ Alle Notizen</span>`;
+      crumbs.innerHTML = `<span class="nf2-crumb cur">${homeTitle()}</span>`;
       if (actions) actions.style.display = "none";
       return;
     }
@@ -111127,7 +112553,7 @@ Dateien zu identifizieren.
     page.innerHTML = `
       <div class="nf2-home">
         <div class="nf2-home-head">
-          <h1 class="nf2-home-h1">🗂️ Alle Notizen</h1>
+          <h1 class="nf2-home-h1">${homeTitle()}</h1>
           <button class="nf2-btn primary" id="nf2HomeNew">＋ Neue Seite</button>
         </div>
         <div class="nf2-home-searchwrap"><span class="nf2-home-searchic">🔍</span><input class="nf2-home-search" id="nf2HomeSearch" placeholder="Alle Notizen durchsuchen…" value="${esc(S.homeSearch || "")}"></div>
@@ -111284,18 +112710,22 @@ Dateien zu identifizieren.
     todo: { ph: "To-do" },
     q:    { ph: "Zitat" },
     code: { ph: "Code" },
+    callout: { ph: "Hinweis…" },
     hr:   { ph: "" },
   };
 
-  function makeBlock(type, html, checked) {
+  function makeBlock(type, html, checked, align) {
     const b = document.createElement("div");
     b.className = "nf2-block";
     b.dataset.t = type;
     if (type === "todo") b.dataset.c = checked ? "1" : "0";
+    if (align) b.dataset.align = align;
+    const ph = esc(BLOCK_TYPES[type] ? BLOCK_TYPES[type].ph : "");
     let inner = `<div class="nf2-gutter" contenteditable="false"><button class="nf2-gbtn nf2-plus" title="Block darunter einfügen" tabindex="-1">＋</button><button class="nf2-gbtn nf2-grip" title="Ziehen zum Verschieben · Klick für Menü" tabindex="-1">⠿</button></div>`;
     if (type === "todo") inner += `<button class="nf2-check" contenteditable="false" tabindex="-1">${checked ? "✓" : ""}</button>`;
     if (type === "hr") inner += `<div class="nf2-hrline" contenteditable="false"><hr></div>`;
-    else inner += `<div class="nf2-bc" contenteditable="${type === "code" ? "plaintext-only" : "true"}" data-ph="${esc(BLOCK_TYPES[type] ? BLOCK_TYPES[type].ph : "")}">${type === "code" ? esc(html) : html}</div>`;
+    else if (type === "callout") inner += `<div class="nf2-callout-box"><span class="nf2-callout-ic" contenteditable="false">💡</span><div class="nf2-bc" contenteditable="true" data-ph="${ph}">${html}</div></div>`;
+    else inner += `<div class="nf2-bc" contenteditable="${type === "code" ? "plaintext-only" : "true"}" data-ph="${ph}">${type === "code" ? esc(html) : html}</div>`;
     b.innerHTML = inner;
     return b;
   }
@@ -111304,26 +112734,29 @@ Dateien zu identifizieren.
     const out = [];
     const tmp = document.createElement("div");
     tmp.innerHTML = html || "";
-    const pushP = (h) => out.push(["p", h]);
+    // Ausrichtung aus dem Element lesen (text-align)
+    const al = (n) => { const a = n && n.style && n.style.textAlign; return (a && a !== "left" && a !== "start") ? a : ""; };
+    const pushP = (h, align) => out.push(["p", h, false, align || ""]);
     Array.from(tmp.childNodes).forEach((node) => {
       if (node.nodeType === 3) { const t = node.textContent; if (t.trim()) pushP(esc(t)); return; }
       if (node.nodeType !== 1) return;
       const tag = node.tagName;
-      if (tag === "H1" || tag === "H2" || tag === "H3") out.push([tag.toLowerCase(), node.innerHTML]);
-      else if (tag === "H4" || tag === "H5" || tag === "H6") out.push(["h3", node.innerHTML]);
-      else if (tag === "UL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ul", li.innerHTML]));
-      else if (tag === "OL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ol", li.innerHTML]));
-      else if (tag === "BLOCKQUOTE") out.push(["q", node.innerHTML]);
+      if (tag === "H1" || tag === "H2" || tag === "H3") out.push([tag.toLowerCase(), node.innerHTML, false, al(node)]);
+      else if (tag === "H4" || tag === "H5" || tag === "H6") out.push(["h3", node.innerHTML, false, al(node)]);
+      else if (tag === "UL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ul", li.innerHTML, false, al(li)]));
+      else if (tag === "OL") Array.from(node.querySelectorAll(":scope > li")).forEach((li) => out.push(["ol", li.innerHTML, false, al(li)]));
+      else if (tag === "BLOCKQUOTE") out.push(["q", node.innerHTML, false, al(node)]);
       else if (tag === "PRE") out.push(["code", node.textContent || ""]);
       else if (tag === "HR") out.push(["hr", ""]);
-      else if (tag === "DIV" && node.hasAttribute("data-todo")) out.push(["todo", node.innerHTML, node.getAttribute("data-checked") === "1"]);
+      else if (tag === "DIV" && node.hasAttribute("data-callout")) out.push(["callout", node.innerHTML, false, al(node)]);
+      else if (tag === "DIV" && node.hasAttribute("data-todo")) out.push(["todo", node.innerHTML, node.getAttribute("data-checked") === "1", al(node)]);
       else if (tag === "BR") pushP("");
       else if (tag === "DIV" || tag === "P") {
         // Legacy-contenteditable: DIVs können verschachtelt sein
         if (node.querySelector("div,p,h1,h2,h3,ul,ol,blockquote,pre")) {
           const inner = parseContentToBlocks(node.innerHTML);
           inner.forEach((x) => out.push(x));
-        } else pushP(node.innerHTML);
+        } else pushP(node.innerHTML, al(node));
       }
       else pushP(node.outerHTML);
     });
@@ -111335,24 +112768,26 @@ Dateien zu identifizieren.
     const wrap = blocksEl();
     if (!wrap) return;
     wrap.innerHTML = "";
-    parseContentToBlocks(html).forEach(([t, h, c]) => wrap.appendChild(makeBlock(t, h, c)));
+    parseContentToBlocks(html).forEach(([t, h, c, al]) => wrap.appendChild(makeBlock(t, h, c, al)));
   }
 
   function serializeBlocks() {
     const wrap = blocksEl();
     if (!wrap) return "";
     let out = "", run = null;
-    const flush = () => { if (run) { out += "<" + run.tag + ">" + run.items.map((i) => "<li>" + i + "</li>").join("") + "</" + run.tag + ">"; run = null; } };
+    const alSt = (b) => { const a = b.dataset.align; return a ? ` style="text-align:${a}"` : ""; };
+    const flush = () => { if (run) { out += "<" + run.tag + ">" + run.items.map((i) => "<li" + (i.align ? ` style="text-align:${i.align}"` : "") + ">" + i.h + "</li>").join("") + "</" + run.tag + ">"; run = null; } };
     $$(".nf2-block", wrap).forEach((b) => {
       const t = b.dataset.t;
       const bc = $(".nf2-bc", b);
       const h = bc ? bc.innerHTML.replace(/<br>$/, "") : "";
-      if (t === "ul" || t === "ol") { if (!run || run.tag !== t) { flush(); run = { tag: t, items: [] }; } run.items.push(h); return; }
+      if (t === "ul" || t === "ol") { if (!run || run.tag !== t) { flush(); run = { tag: t, items: [] }; } run.items.push({ h, align: b.dataset.align || "" }); return; }
       flush();
-      if (t === "p") out += "<p>" + (h || "<br>") + "</p>";
-      else if (t === "h1" || t === "h2" || t === "h3") out += "<" + t + ">" + h + "</" + t + ">";
-      else if (t === "todo") out += '<div data-todo="1" data-checked="' + (b.dataset.c === "1" ? "1" : "0") + '">' + h + "</div>";
-      else if (t === "q") out += "<blockquote>" + h + "</blockquote>";
+      if (t === "p") out += "<p" + alSt(b) + ">" + (h || "<br>") + "</p>";
+      else if (t === "h1" || t === "h2" || t === "h3") out += "<" + t + alSt(b) + ">" + h + "</" + t + ">";
+      else if (t === "todo") out += '<div data-todo="1" data-checked="' + (b.dataset.c === "1" ? "1" : "0") + '"' + alSt(b) + ">" + h + "</div>";
+      else if (t === "q") out += "<blockquote" + alSt(b) + ">" + h + "</blockquote>";
+      else if (t === "callout") out += '<div data-callout="1"' + alSt(b) + ">" + h + "</div>";
       else if (t === "code") out += "<pre>" + esc(bc ? bc.textContent : "") + "</pre>";
       else if (t === "hr") out += "<hr>";
     });
@@ -111600,7 +113035,7 @@ Dateien zu identifizieren.
   function transformBlock(block, type, keepFocus) {
     const bc = $(".nf2-bc", block);
     const html = bc ? (type === "code" ? bc.textContent : bc.innerHTML) : "";
-    const nb = makeBlock(type, html, block.dataset.c === "1");
+    const nb = makeBlock(type, html, block.dataset.c === "1", type === "hr" ? "" : (block.dataset.align || ""));
     block.replaceWith(nb);
     const nbc = $(".nf2-bc", nb);
     if (nbc && keepFocus !== false) placeCaret(nbc, false);
@@ -111647,6 +113082,7 @@ Dateien zu identifizieren.
     { k: "todo", ic: "☑", t: "To-do", d: "Mit Checkbox" },
     { k: "q", ic: "❝", t: "Zitat", d: "Hervorgehobenes Zitat" },
     { k: "code", ic: "</>", t: "Code", d: "Codeblock" },
+    { k: "callout", ic: "💡", t: "Callout", d: "Hervorgehobener Hinweis" },
     { k: "hr", ic: "—", t: "Trennlinie", d: "Horizontale Linie" },
     { k: "@", ic: "@", t: "Erwähnen…", d: "Aufgabe, Projekt oder Notiz verknüpfen" },
   ];
@@ -111780,8 +113216,15 @@ Dateien zu identifizieren.
       { a: "turn-p", ic: "¶", t: "In Text umwandeln" },
       { a: "turn-h1", ic: "H1", t: "In Überschrift 1" },
       { a: "turn-h2", ic: "H2", t: "In Überschrift 2" },
+      { a: "turn-h3", ic: "H3", t: "In Überschrift 3" },
       { a: "turn-ul", ic: "•", t: "In Aufzählung" },
+      { a: "turn-ol", ic: "1.", t: "In nummerierte Liste" },
       { a: "turn-todo", ic: "☑", t: "In To-do" },
+      { a: "turn-q", ic: "❝", t: "In Zitat" },
+      { a: "turn-callout", ic: "💡", t: "In Callout" },
+      { a: "align-left", ic: "⇤", t: "Linksbündig" },
+      { a: "align-center", ic: "≡", t: "Zentriert" },
+      { a: "align-right", ic: "⇥", t: "Rechtsbündig" },
       { a: "dup", ic: "⧉", t: "Duplizieren" },
       { a: "del", ic: "🗑", t: "Löschen" },
     ];
@@ -111791,7 +113234,8 @@ Dateien zu identifizieren.
       hideMenu();
       const a = items[i].a;
       if (a === "del") { block.remove(); if (!blocksEl().children.length) blocksEl().appendChild(makeBlock("p", "")); scheduleContentSave(); }
-      else if (a === "dup") { const bc = $(".nf2-bc", block); const cl = makeBlock(block.dataset.t, bc ? bc.innerHTML : "", block.dataset.c === "1"); block.after(cl); scheduleContentSave(); }
+      else if (a === "dup") { const bc = $(".nf2-bc", block); const cl = makeBlock(block.dataset.t, bc ? bc.innerHTML : "", block.dataset.c === "1", block.dataset.align || ""); block.after(cl); scheduleContentSave(); }
+      else if (a.indexOf("align-") === 0) { const dir = a.slice(6); if (dir === "left") delete block.dataset.align; else block.dataset.align = dir; scheduleContentSave(); }
       else if (a.indexOf("turn-") === 0) transformBlock(block, a.slice(5));
     });
   }
@@ -111879,7 +113323,11 @@ Dateien zu identifizieren.
         <button data-cmd="hl" title="Anstreichen"><span class="nf2-hlic">A</span></button>
         <button data-cmd="color" title="Farbe & Anstreichen">🎨<span class="nf2-bub-car">▾</span></button>
         <span class="nf2-bub-sep"></span>
-        <button data-cmd="link" title="Link einfügen">🔗</button>`;
+        <button data-cmd="sup" title="Hochgestellt">x²</button>
+        <button data-cmd="sub" title="Tiefgestellt">x₂</button>
+        <span class="nf2-bub-sep"></span>
+        <button data-cmd="link" title="Link einfügen">🔗</button>
+        <button data-cmd="clear" title="Formatierung entfernen">🧹</button>`;
       bub.style.display = "flex";
       let x = rect.left + rect.width / 2 - bub.offsetWidth / 2;
       x = Math.max(8, Math.min(x, window.innerWidth - bub.offsetWidth - 8));
@@ -111902,6 +113350,12 @@ Dateien zu identifizieren.
           styleSelection("hl", "yellow"); // Schnell-Anstreichen (gelb)
         } else if (cmd === "color") {
           openPalette(b.getBoundingClientRect());
+        } else if (cmd === "sup") {
+          document.execCommand("superscript", false, null); scheduleContentSave();
+        } else if (cmd === "sub") {
+          document.execCommand("subscript", false, null); scheduleContentSave();
+        } else if (cmd === "clear") {
+          clearFormatting();
         } else {
           document.execCommand(cmd, false, null);
           scheduleContentSave();
@@ -111976,6 +113430,27 @@ Dateien zu identifizieren.
       else nr.selectNodeContents(bc);
       s.removeAllRanges(); s.addRange(nr);
     } catch (e) {}
+    scheduleContentSave();
+  }
+
+  // Sämtliche Zeichen-Formatierung der Auswahl entfernen (Fett/Kursiv/Farbe/
+  // Anstreichen/Code/hoch-/tiefgestellt), Mentions & Links bleiben erhalten.
+  function clearFormatting() {
+    const s = window.getSelection();
+    if (!s.rangeCount || s.isCollapsed) return;
+    try { document.execCommand("removeFormat", false, null); } catch (e) {}
+    const r = s.getRangeAt(0);
+    const a = r.commonAncestorContainer;
+    const host = a.nodeType === 1 ? a : a.parentElement;
+    const bc = host && host.closest ? host.closest(".nf2-bc") : null;
+    if (!bc) return;
+    const frag = r.extractContents();
+    const unwrap = (el) => { const p = el.parentNode; if (!p) return; while (el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el); };
+    if (frag.querySelectorAll) {
+      Array.from(frag.querySelectorAll("span.nf2-fg,mark.nf2-hl,mark,code,b,strong,i,em,u,s,strike,sup,sub,font")).forEach(unwrap);
+    }
+    r.insertNode(frag);
+    if (bc.normalize) bc.normalize();
     scheduleContentSave();
   }
 
@@ -112395,6 +113870,17 @@ Dateien zu identifizieren.
 .nf2-hlic{display:inline-block;background:rgba(255,208,0,.55);color:#3a2f00;border-radius:2px;padding:0 4px;font-weight:700;font-size:12px}
 .nf2-mention{display:inline-flex;align-items:center;gap:3px;background:var(--n2-hover);border-radius:6px;padding:0 6px;font-size:.92em;color:var(--n2-txt)!important;text-decoration:none!important;cursor:pointer;white-space:nowrap}
 .nf2-mention:hover{background:var(--n2-active)}
+/* Kein Fokus-Rahmen pro Absatz (globale :focus-visible-Regel der App überschreiben) */
+.nf2 .nf2-bc:focus,.nf2 .nf2-bc:focus-visible,.nf2 .nf2-title:focus,.nf2 .nf2-title:focus-visible{outline:none;box-shadow:none;border-radius:0}
+/* ── Text-Ausrichtung ── */
+.nf2-block[data-align="center"] .nf2-bc{text-align:center}
+.nf2-block[data-align="right"] .nf2-bc{text-align:right}
+.nf2-block[data-align="justify"] .nf2-bc{text-align:justify}
+/* ── Callout (Hinweis-Box) ── */
+.nf2-block[data-t="callout"]{padding:3px 0}
+.nf2-block[data-t="callout"] .nf2-callout-box{flex:1;min-width:0;display:flex;gap:10px;background:var(--n2-hover);border:1px solid var(--n2-line);border-radius:8px;padding:12px 14px}
+.nf2-callout-ic{flex-shrink:0;font-size:16px;line-height:1.55;user-select:none}
+.nf2-block[data-t="callout"] .nf2-bc{padding:0}
 /* ── Menü / Popover ── */
 .nf2-menu{position:fixed;z-index:2147483200;min-width:280px;max-width:340px;max-height:340px;overflow-y:auto;background:var(--n2-card);border:1px solid var(--n2-line);border-radius:10px;box-shadow:0 14px 40px var(--n2-sh);padding:5px}
 .nf2-mi{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:7px;cursor:pointer;font-size:13.5px}
