@@ -67,7 +67,7 @@
       --accent2:var(--success);
       --accent3:var(--info);
       --warn:var(--warning);
-      --danger:var(--danger);
+      --danger:#e5765a;
       --ok:var(--success);
       --pink:#d885a6;
       --orange:var(--warning);
@@ -41322,7 +41322,7 @@ function viewIdeasLegacy() {
         <div class="flex mb-3" style="gap:12px;flex-wrap:wrap">
           <h3 style="margin:0">📋 Ideen ${filterTag ? `(Tag: ${filterTag})` : ""}</h3>
           <div style="margin-left:auto;display:flex;gap:8px">
-            <select id="ideaStatusFilter" data-action="filter-ideas-status" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text)">
+            <select id="ideaStatusFilter" data-action="filter-ideas" data-field="status" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text)">
               <option value="all" ${filterStatus === "all" ? "selected" : ""}>Alle Status</option>
               <option value="open" ${filterStatus === "open" ? "selected" : ""}>Offen</option>
               <option value="processed" ${filterStatus === "processed" ? "selected" : ""}>Verarbeitet</option>
@@ -48544,7 +48544,7 @@ function viewMeetings(id) {
     <div class="card">
       <div class="flex mb-3" style="gap:12px;align-items:center">
         <h3 style="margin:0">📋 Alle Meetings</h3>
-        <select id="meetingStatusFilter" data-action="filter-meetings-status" style="margin-left:auto;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text)">
+        <select id="meetingStatusFilter" data-action="filter-meetings" data-field="status" style="margin-left:auto;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text)">
           <option value="all" ${filterStatus === "all" ? "selected" : ""}>Alle Status</option>
           <option value="planned" ${filterStatus === "planned" ? "selected" : ""}>Geplant</option>
           <option value="in_progress" ${filterStatus === "in_progress" ? "selected" : ""}>Läuft</option>
@@ -80234,223 +80234,11 @@ window.exportEntityPDF = function(kind, id) {
 </script>
 
 <!-- Custom Pages - Handlers -->
-<script>
-(function() {
-  const esc = window.esc || (s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"));
-  
-  function openPageEditor(pageKey) {
-    const pages = APP.state.data.customPages || [];
-    const existing = pageKey ? pages.find(p => p.key === pageKey) : null;
-    
-    const label = existing ? existing.label || "" : "";
-    const icon = existing ? existing.icon || "📄" : "📄";
-    const desc = existing ? existing.desc || "" : "";
-    const html = existing ? existing.html || "" : "";
-    
-    window.openModal(existing ? "✏️ Seite bearbeiten" : "➕ Neue Seite", `
-      <div class="form">
-        <label class="col-8">Name *
-          <input id="pageLabel" type="text" value="${esc(label)}" placeholder="z.B. Mein Dashboard" />
-        </label>
-        <label class="col-4">Icon
-          <input id="pageIcon" type="text" value="${esc(icon)}" placeholder="📄" style="font-size:20px;text-align:center" />
-        </label>
-        <label class="col-12">Beschreibung (optional)
-          <input id="pageDesc" type="text" value="${esc(desc)}" placeholder="Kurze Beschreibung" />
-        </label>
-        <label class="col-12">HTML-Inhalt
-          <div class="mini mb-1">Vollständiges HTML mit &lt;style&gt; und &lt;script&gt;. Wird als ganze Seite gerendert.</div>
-          <textarea id="pageHtml" style="min-height:300px;font-family:monospace;font-size:12px;white-space:pre;tab-size:2">${esc(html)}</textarea>
-        </label>
-        <details style="margin-top:4px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">📖 Beispiele</summary>
-          <div style="font-size:11px;margin-top:6px;color:var(--muted);line-height:1.8">
-            <b>Einfache Seite:</b><br>
-            <code>&lt;div style="max-width:800px"&gt;<br>
-            &nbsp;&nbsp;&lt;h3&gt;Meine Notizen&lt;/h3&gt;<br>
-            &nbsp;&nbsp;&lt;p&gt;Inhalt hier...&lt;/p&gt;<br>
-            &lt;/div&gt;</code><br><br>
-            <b>Eingebettete Webseite:</b><br>
-            <code>&lt;iframe src="https://example.com" style="width:100%;height:80vh;border:none;border-radius:12px"&gt;&lt;/iframe&gt;</code><br><br>
-            <b>Interaktives Widget:</b><br>
-            <code>&lt;div id="myWidget"&gt;&lt;/div&gt;<br>
-            &lt;script&gt;<br>
-            &nbsp;&nbsp;// Dein JavaScript hier<br>
-            &lt;/script&gt;</code>
-          </div>
-        </details>
-      </div>
-    `, `
-      <button class="btn" data-action="close-modal">Abbrechen</button>
-      ${existing ? '<button class="btn danger" data-action="delete-custom-page" data-key="'+pageKey+'">🗑 Löschen</button>' : ''}
-      <button class="btn primary" data-action="save-custom-page" data-key="${pageKey || ''}">💾 Speichern</button>
-    `);
-    setTimeout(() => {
-      const ta = document.getElementById("pageHtml");
-      if (ta) {
-        ta.addEventListener("keydown", function(e) {
-          if (e.key === "Tab") { e.preventDefault(); const s=this.selectionStart; this.value=this.value.substring(0,s)+"  "+this.value.substring(this.selectionEnd); this.selectionStart=this.selectionEnd=s+2; }
-        });
-      }
-    }, 80);
-  }
-  window.openPageEditor = openPageEditor;
-  
-  function refreshPagesListInSettings() {
-    const listEl = document.getElementById("customPagesList");
-    if (!listEl) return;
-    const pages = APP.state.data.customPages || [];
-    if (pages.length === 0) {
-      listEl.innerHTML = '<div class="mini" style="text-align:center;padding:16px;color:var(--muted)">Noch keine eigenen Seiten.</div>';
-      return;
-    }
-    listEl.innerHTML = pages.map((p, i) => `
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--panel2);border-radius:10px">
-        <span style="font-size:18px">${p.icon || '📄'}</span>
-        <span style="flex:1;font-size:13px">${esc(p.label || '(Ohne Titel)')}</span>
-        <button class="btn sm" data-action="edit-custom-page" data-key="${p.key}" style="padding:4px 8px">✏️</button>
-        <button class="btn sm danger" data-action="delete-custom-page" data-key="${p.key}" style="padding:4px 8px">🗑</button>
-      </div>
-    `).join("");
-  }
 
-  document.addEventListener("click", function(e) {
-    const el = e.target.closest("[data-action]");
-    if (!el) return;
-    const action = el.dataset.action;
-    const key = el.dataset.key;
-    
-    if (action === "add-custom-page") {
-      e.preventDefault(); e.stopPropagation();
-      openPageEditor(null);
-      return;
-    }
-    if (action === "edit-custom-page") {
-      e.preventDefault(); e.stopPropagation();
-      openPageEditor(key);
-      return;
-    }
-    if (action === "save-custom-page") {
-      e.preventDefault(); e.stopPropagation();
-      const label = (document.getElementById("pageLabel")?.value || "").trim();
-      const icon = (document.getElementById("pageIcon")?.value || "📄").trim();
-      const desc = (document.getElementById("pageDesc")?.value || "").trim();
-      const html = document.getElementById("pageHtml")?.value || "";
-      
-      if (!label) { window.toast("warn", "Fehler", "Name ist erforderlich"); return; }
-      
-      if (!APP.state.data.customPages) APP.state.data.customPages = [];
-      
-      if (key) {
-        // Update existing
-        const page = APP.state.data.customPages.find(p => p.key === key);
-        if (page) {
-          page.label = label;
-          page.icon = icon;
-          page.desc = desc;
-          page.html = html;
-          page.updatedAt = new Date().toISOString();
-        }
-      } else {
-        // Create new
-        const newKey = "custom_" + Date.now();
-        APP.state.data.customPages.push({
-          key: newKey,
-          label: label,
-          icon: icon,
-          desc: desc,
-          html: html,
-          createdAt: new Date().toISOString()
-        });
-        // Add to sidebar order
-        if (!APP.state.data.sidebarOrder) {
-          APP.state.data.sidebarOrder = window.getAllApps().map(a => a.key);
-        }
-        if (!APP.state.data.sidebarOrder.includes(newKey)) {
-          APP.state.data.sidebarOrder.push(newKey);
-        }
-      }
-      
-      window.scheduleSave();
-      window.closeModal();
-      window.render();
-      refreshPagesListInSettings();
-      window.toast("ok", "Gespeichert", icon + " " + label);
-      // Navigate to the new page
-      if (!key) {
-        const newPage = APP.state.data.customPages[APP.state.data.customPages.length - 1];
-        if (newPage) window.navigate(newPage.key);
-      }
-      return;
-    }
-    if (action === "delete-custom-page") {
-      e.preventDefault(); e.stopPropagation();
-      if (!confirm("Seite wirklich löschen?")) return;
-      if (!APP.state.data.customPages) return;
-      APP.state.data.customPages = APP.state.data.customPages.filter(p => p.key !== key);
-      // Remove from sidebar order
-      if (APP.state.data.sidebarOrder) {
-        APP.state.data.sidebarOrder = APP.state.data.sidebarOrder.filter(k => k !== key);
-      }
-      window.scheduleSave();
-      window.closeModal();
-      window.render();
-      refreshPagesListInSettings();
-      window.toast("ok", "Gelöscht", "Seite entfernt");
-      // Go back to dashboard if we were on this page
-      if (window.location.hash === "#/" + key) window.navigate("dashboard");
-      return;
-    }
-  }, true);
-})();
-</script>
 
-<script>
-// ABSOLUTE FALLBACK: Task creation capture handler (fires FIRST in capture phase)
-document.addEventListener("click", function(e) {
-  const el = e.target.closest('[data-action="quick-task"],[data-action="create-task"]');
-  if (!el) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-  if (typeof openGlobalTaskModal === "function") {
-    openGlobalTaskModal();
-  } else if (typeof window.openGlobalTaskModal === "function") {
-    window.openGlobalTaskModal();
-  }
-}, true); // CAPTURE PHASE - fires before ALL bubble handlers
-</script>
 
-<script>
-// Day Tracker Buttons (eigene Actions, kein Konflikt mit bestehenden Handlern)
-document.addEventListener("click", function(e) {
-  var el = e.target.closest('[data-action="day-tracker-start"],[data-action="day-tracker-complete"]');
-  if (!el) return;
-  e.preventDefault();
-  
-  var action = el.dataset.action;
-  var tracker = window.APP.state.data.dayTracker;
-  if (!tracker) { tracker = { daysStarted: [], daysCompleted: [] }; window.APP.state.data.dayTracker = tracker; }
-  
-  var today = new Date().toISOString().slice(0, 10);
-  
-  if (action === "day-tracker-start" && !tracker.daysStarted.includes(today)) {
-    tracker.daysStarted.push(today);
-    if (window.scheduleSave) window.scheduleSave();
-    if (window.toast) window.toast("ok", "☀️ Tag gestartet", "Guten Morgen! Viel Erfolg heute.");
-    if (window.render) window.render();
-  }
-  if (action === "day-tracker-complete" && !tracker.daysCompleted.includes(today)) {
-    // Route through Reflect flow
-    if (typeof finishDay === "function") {
-      finishDay();
-    } else {
-      tracker.daysCompleted.push(today);
-      if (window.scheduleSave) window.scheduleSave();
-      if (window.toast) window.toast("ok", "🌙 Tag abgeschlossen", "Gut gemacht! Bis morgen.");
-      if (window.render) window.render();
-    }
-  }
-});
-</script>
+
+
 
 <script>
 // ============================================================================
@@ -80698,637 +80486,7 @@ document.addEventListener("click", function(e) {
 });
 </script>
 
-<script>
-// ============================================================================
-// PDF EXPORT SYSTEM (Pure HTML/CSS Print - keine externen Abhängigkeiten)
-// ============================================================================
-window.exportEntityPDF = function(kind, id) {
-  var ent = APP.state.data.entities;
-  
-  // Helper functions
-  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function fmtD(d) { return d ? new Date(d).toLocaleDateString('de-CH') : '—'; }
-  function fmtDT(d) { return d ? new Date(d).toLocaleString('de-CH') : '—'; }
-  function fmtDur(sec) { if (!sec) return '—'; var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60); return h>0 ? h+'h '+m+'min' : m+'min'; }
-  function fmtMin(min) { min = Number(min)||0; if (!min) return '—'; var h=Math.floor(min/60), m=min%60; return h>0 ? (h+'h'+(m?' '+m+'min':'')) : m+'min'; }
-  function prioLabel(p) { var map={1:'🔴 Hoch',2:'🟠 Erhöht',3:'🟡 Normal',4:'🔵 Niedrig',5:'⚪ Minimal'}; return (p||p===0) ? (map[p]||String(p)) : '—'; }
-  function measuresBlock(measures) {
-    if (!measures || !measures.length) return '';
-    var statusMap = {planned:'Geplant',active:'Aktiv',done:'Erledigt'};
-    var statusColor = {planned:'#f59e0b',active:'#3b82f6',done:'#22c55e'};
-    var h = '';
-    measures.forEach(function(m){
-      var col = statusColor[m.status]||'#64748b';
-      h += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-left:3px solid '+col+';border-radius:6px;page-break-inside:avoid">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
-      h += '<div style="font-size:12px;color:var(--panel3);line-height:1.5;flex:1">'+esc(m.text||'—')+'</div>';
-      h += '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;color:#fff;background:'+col+';white-space:nowrap">'+(statusMap[m.status]||m.status||'—')+'</span>';
-      h += '</div>';
-      if (m.effectiveDate) h += '<div style="font-size:10px;color:var(--text2);margin-top:3px">Wirksam ab: '+fmtD(m.effectiveDate)+'</div>';
-      h += '</div>';
-    });
-    return h;
-  }
-  function checklistBlock(items) {
-    if (!items || !items.length) return '';
-    var h = '';
-    items.forEach(function(it){
-      h += '<div style="display:flex;gap:8px;padding:4px 0;font-size:12px;border-bottom:1px solid var(--text);align-items:flex-start">';
-      h += '<span style="color:'+(it.done?'var(--ok)':'var(--text)')+';font-weight:700">'+(it.done?'☑':'☐')+'</span>';
-      h += '<span style="color:var(--panel3);line-height:1.5;'+(it.done?'text-decoration:line-through;color:var(--text2)':'')+'">'+esc(it.text||'—')+'</span>';
-      h += '</div>';
-    });
-    return h;
-  }
-  function statusBadge(s) {
-    var map = {todo:'Offen',doing:'In Arbeit',waiting:'Wartend',review:'Review',done:'Erledigt',planning:'Planung',active:'Aktiv',paused:'Pausiert',archived:'Archiviert',planned:'Geplant',in_progress:'Läuft',completed:'Abgeschlossen'};
-    var colors = {todo:'#64748b',doing:'#3b82f6',waiting:'#f59e0b',review:'#a855f7',done:'#22c55e',planning:'#64748b',active:'#3b82f6',paused:'#f59e0b',archived:'#6b7280',planned:'#64748b',in_progress:'#ef4444',completed:'#22c55e'};
-    return '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:#fff;background:'+(colors[s]||'var(--muted)')+'">'+(map[s]||s||'—')+'</span>';
-  }
-  function section(title) { return '<div style="margin:18px 0 8px;padding:6px 10px;background:var(--text);border-left:3px solid #2d5ac8;font-size:14px;font-weight:700;color:var(--panel2)">'+esc(title)+'</div>'; }
-  function field(label, value) { if (!value && value !== 0) return ''; return '<div style="display:flex;gap:8px;padding:3px 0;font-size:12px;border-bottom:1px solid var(--text)"><span style="min-width:120px;color:var(--muted);font-weight:600">'+esc(label)+'</span><span style="color:var(--panel2)">'+esc(String(value))+'</span></div>'; }
-  function fieldHtml(label, html) { return '<div style="display:flex;gap:8px;padding:3px 0;font-size:12px;border-bottom:1px solid var(--text)"><span style="min-width:120px;color:var(--muted);font-weight:600">'+esc(label)+'</span><span style="color:var(--panel2)">'+html+'</span></div>'; }
-  function table(headers, rows) {
-    if (!rows || rows.length === 0) return '<div style="font-size:11px;color:var(--text2);padding:4px 0">Keine Einträge.</div>';
-    var h = '<table style="width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 12px"><thead><tr>';
-    headers.forEach(function(hd) { h += '<th style="text-align:left;padding:6px 8px;background:#1e3a8a;color:#fff;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px">'+esc(hd)+'</th>'; });
-    h += '</tr></thead><tbody>';
-    rows.forEach(function(row, i) {
-      h += '<tr style="background:'+(i%2===0?'#fff':'var(--text)')+'">';
-      row.forEach(function(cell) { h += '<td style="padding:5px 8px;border-bottom:1px solid var(--text)">'+esc(String(cell||'—'))+'</td>'; });
-      h += '</tr>';
-    });
-    return h + '</tbody></table>';
-  }
-  function textBlock(text) {
-    if (!text) return '';
-    return '<div style="font-size:12px;line-height:1.6;color:var(--panel3);white-space:pre-wrap;padding:6px 10px;background:var(--text);border-radius:4px;border:1px solid var(--text);margin:4px 0 12px">'+esc(text)+'</div>';
-  }
-  
-  function linkedSection(entity) {
-    var html = '';
-    var hasLinks = false;
-    
-    // Tasks
-    var lt = (entity.linkedTasks||[]).map(function(tid){return ent.tasks[tid]}).filter(Boolean);
-    if (lt.length) { hasLinks=true; html += section('Verknüpfte Aufgaben ('+lt.length+')');
-      lt.forEach(function(t) {
-        html += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-radius:6px">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-        html += '<div style="font-weight:600;font-size:12px;color:var(--panel2)">✅ '+esc(t.title||'Ohne Titel')+'</div>';
-        html += '<div>'+statusBadge(t.status)+'</div>';
-        html += '</div>';
-        if (t.priority || t.dueDate) html += '<div style="font-size:10px;color:var(--text2);margin-top:2px">Priorität: '+(t.priority||'—')+' · Fällig: '+fmtD(t.dueDate)+'</div>';
-        if (t.description) html += '<div style="font-size:11px;color:var(--muted);line-height:1.5;white-space:pre-wrap;margin-top:4px">'+esc(t.description)+'</div>';
-        html += '</div>';
-      });
-    }
-    
-    // Projects
-    var lp = (entity.linkedProjects||[]).map(function(pid){return ent.projects[pid]}).filter(Boolean);
-    if (lp.length) { hasLinks=true; html += section('Verknüpfte Projekte ('+lp.length+')');
-      html += table(['Projekt','Status','Erstellt'], lp.map(function(p){return [p.title, statusText(p.status), fmtD(p.createdAt)]})); }
-    
-    // Notes with content
-    var ln = (entity.linkedNotes||[]).map(function(nid){return ent.notes[nid]}).filter(Boolean);
-    if (ln.length) { hasLinks=true; html += section('Verknüpfte Notizen ('+ln.length+')');
-      ln.forEach(function(n) {
-        html += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-radius:6px">';
-        html += '<div style="font-weight:600;font-size:12px;color:var(--panel2);margin-bottom:4px">📝 '+esc(n.title||'Ohne Titel')+'</div>';
-        if (n.content) html += '<div style="font-size:11px;color:var(--muted);line-height:1.6;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word">'+esc(n.content)+'</div>';
-        html += '</div>';
-      });
-    }
-    
-    // Organizations
-    var lo = (entity.linkedOrganizations||[]).map(function(oid){return ent.organizations[oid]}).filter(Boolean);
-    if (lo.length) { hasLinks=true; html += section('Verknüpfte Organisationen ('+lo.length+')');
-      html += table(['Organisation','Typ','Branche'], lo.map(function(o){return [o.name, o.type||'—', o.industry||'—']})); }
-    
-    // Strategies
-    var ls = (entity.linkedStrategies||[]).map(function(sid){return ent.strategies[sid]}).filter(Boolean);
-    if (ls.length) { hasLinks=true; html += section('Verknüpfte Strategien ('+ls.length+')');
-      html += table(['Strategie','Status'], ls.map(function(s){return [s.title, statusText(s.status)]})); }
-    
-    // Goals
-    var lg = (entity.linkedGoals||[]).map(function(gid){return ent.goals[gid]}).filter(Boolean);
-    if (lg.length) { hasLinks=true; html += section('Verknüpfte Ziele ('+lg.length+')');
-      html += table(['Ziel','Typ','Frist'], lg.map(function(g){return [g.title, g.type||'—', fmtD(g.deadline)]})); }
-    
-    // Programs
-    var lpr = (entity.linkedPrograms||[]).map(function(pid){return ent.programs[pid]}).filter(Boolean);
-    if (lpr.length) { hasLinks=true; html += section('Verknüpfte Programme ('+lpr.length+')');
-      html += table(['Programm','Status'], lpr.map(function(p){return [p.title, statusText(p.status)]})); }
-    
-    // Meetings
-    var lm = (entity.linkedMeetings||[]).map(function(mid){return ent.meetings[mid]}).filter(Boolean);
-    if (lm.length) { hasLinks=true; html += section('Verknüpfte Meetings ('+lm.length+')');
-      html += table(['Meeting','Datum','Zeit'], lm.map(function(m){return [m.title, fmtD(m.date), (m.startTime||'')+ ' - '+(m.endTime||'')]})); }
-    
-    // External Links
-    var el = entity.externalLinks || [];
-    if (el.length) { hasLinks=true; html += section('Externe Links ('+el.length+')');
-      html += table(['Bezeichnung','URL'], el.map(function(l){return [l.label||'—', l.url||'—']})); }
-    
-    if (!hasLinks) html += '<div style="font-size:11px;color:var(--text2);padding:8px 0">Keine Verknüpfungen vorhanden.</div>';
-    return html;
-  }
-  
-  function statusText(s) {
-    var map = {todo:'Offen',doing:'In Arbeit',waiting:'Wartend',review:'Review',done:'Erledigt',planning:'Planung',active:'Aktiv',paused:'Pausiert',archived:'Archiviert',planned:'Geplant',in_progress:'Läuft',completed:'Abgeschlossen'};
-    return map[s] || s || '—';
-  }
-  
-  // Build PDF content
-  var title = '', subtitle = '', accentColor = '#2d5ac8', body = '';
-  
-  // ========== TASK ==========
-  if (kind === 'task') {
-    var t = ent.tasks[id];
-    if (!t) { window.toast("warn","PDF","Aufgabe nicht gefunden"); return; }
-    var catObj = (window.TASK_CATEGORIES||[]).find(function(c){return c.value===t.category});
-    var timeSpent = typeof getTaskSeconds === 'function' ? getTaskSeconds(id) : 0;
-    title = '✅ ' + (t.title||'Ohne Titel');
-    subtitle = statusText(t.status) + ' · Priorität ' + (t.priority||'—') + ' · Fällig: ' + fmtD(t.dueDate);
-    accentColor = '#3b82f6';
-    
-    body += section('Details');
-    body += field('Titel', t.title);
-    body += fieldHtml('Status', statusBadge(t.status));
-    body += field('Priorität', t.priority);
-    body += field('Fällig', fmtD(t.dueDate));
-    body += field('Kategorie', catObj ? catObj.label : (t.category||'—'));
-    body += field('Geschätzt', t.estimatedMinutes ? t.estimatedMinutes+' Min' : '—');
-    body += field('Zeiterfasst', fmtDur(timeSpent));
-    body += field('Wiederholung', t.recurrence||'Keine');
-    body += field('Erstellt', fmtDT(t.createdAt));
-    body += field('Aktualisiert', fmtDT(t.updatedAt));
-    if (t.tags && t.tags.length) body += field('Tags', t.tags.join(', '));
-    if (t.description) { body += section('Beschreibung'); body += textBlock(t.description); }
-    // Kommentare
-    var tComments = t.comments || [];
-    if (tComments.length) {
-      body += section('Kommentare ('+tComments.length+')');
-      tComments.forEach(function(c) {
-        body += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-radius:6px">';
-        body += '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">'+fmtDT(c.createdAt)+'</div>';
-        body += '<div style="font-size:12px;color:var(--panel3);line-height:1.5;white-space:pre-wrap">'+esc(c.text)+'</div>';
-        body += '</div>';
-      });
-    }
-    body += section('Verknüpfungen');
-    body += linkedSection(t);
-  }
-  
-  // ========== PROJECT ==========
-  else if (kind === 'project') {
-    var p = ent.projects[id];
-    if (!p) { window.toast("warn","PDF","Projekt nicht gefunden"); return; }
-    var projectTasks = Object.values(ent.tasks).filter(function(t2){return t2.projectId===id||(p.linkedTasks||[]).includes(t2.id)});
-    var openT = projectTasks.filter(function(t2){return t2.status!=='done'});
-    var doneT = projectTasks.filter(function(t2){return t2.status==='done'});
-    var timeSpent = typeof getProjectSeconds === 'function' ? getProjectSeconds(id) : 0;
-    var pct = projectTasks.length > 0 ? Math.round(doneT.length/projectTasks.length*100) : 0;
-    title = '📦 ' + (p.title||'Ohne Titel');
-    subtitle = statusText(p.status) + ' · ' + projectTasks.length + ' Aufgaben (' + doneT.length + ' erledigt) · ' + pct + '%';
-    accentColor = '#7c5cff';
-    
-    var estTotal = projectTasks.reduce(function(s2,t2){return s2+(Number(t2.estimatedMinutes)||0)},0);
-    var estOpen = openT.reduce(function(s2,t2){return s2+(Number(t2.estimatedMinutes)||0)},0);
-    body += section('Projektdaten');
-    body += field('Titel', p.title);
-    if (p.externalId) body += field('Projekt-ID', p.externalId);
-    body += fieldHtml('Status', statusBadge(p.status));
-    body += fieldHtml('Priorität', prioLabel(p.priority));
-    body += field('Startdatum', fmtD(p.startDate));
-    body += field('Enddatum', fmtD(p.endDate));
-    body += field('Zeitvoranschlag (geplant)', estTotal ? fmtMin(estTotal) + (estOpen && estOpen !== estTotal ? ' (offen: ' + fmtMin(estOpen) + ')' : '') : '—');
-    body += field('Zeiterfasst (effektiv)', fmtDur(timeSpent));
-    if (p.budget != null || p.spent != null) {
-      body += field('Budget', (p.budget != null ? Math.round(p.budget) + ' CHF' : '—') + (p.spent != null ? ' · ausgegeben: ' + Math.round(p.spent) + ' CHF' : ''));
-    }
-    body += field('Erstellt', fmtDT(p.createdAt));
-    if (p.tags && p.tags.length) body += field('Tags', p.tags.join(', '));
-    if (p.description) { body += section('Beschreibung'); body += textBlock(p.description); }
-
-    // 📅 Deadlines / Meilensteine
-    if (p.deadlines && p.deadlines.length) {
-      var sortedDl = p.deadlines.slice().sort(function(a,b){return (a.date||'').localeCompare(b.date||'')});
-      body += section('Deadlines & Meilensteine ('+p.deadlines.length+')');
-      body += table(['', 'Meilenstein', 'Datum'], sortedDl.map(function(d){
-        return [d.done ? '☑' : '☐', d.title||'—', fmtD(d.date)];
-      }));
-    }
-
-    // 🚨 Massnahmen (Projekt-Ebene)
-    if (p.measures && p.measures.length) {
-      body += section('Massnahmen ('+p.measures.length+')');
-      body += measuresBlock(p.measures);
-    }
-
-    // 🏁 Definition of Done
-    if (p.definitionOfDone && p.definitionOfDone.length) {
-      var dodDone = p.definitionOfDone.filter(function(x){return x.done}).length;
-      body += section('Definition of Done ('+dodDone+'/'+p.definitionOfDone.length+')');
-      body += checklistBlock(p.definitionOfDone);
-    }
-
-    // 🎓 Lernziele
-    if (p.learningGoals && p.learningGoals.length) {
-      var lgDone = p.learningGoals.filter(function(x){return x.done}).length;
-      body += section('Lernziele ('+lgDone+'/'+p.learningGoals.length+')');
-      body += checklistBlock(p.learningGoals);
-    }
-
-    // 📋 Status-Updates
-    if (p.statusUpdates && p.statusUpdates.length) {
-      var suColor = {green:'#22c55e',yellow:'#f59e0b',red:'#ef4444'};
-      var suLabel = {green:'🟢 Auf Kurs',yellow:'🟡 Achtung',red:'🔴 Kritisch'};
-      body += section('Status-Verlauf ('+p.statusUpdates.length+')');
-      p.statusUpdates.slice().reverse().forEach(function(su){
-        body += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-left:3px solid '+(suColor[su.status]||'var(--muted)')+';border-radius:6px;page-break-inside:avoid">';
-        body += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">';
-        body += '<span style="font-size:11px;font-weight:700;color:var(--panel3)">'+(suLabel[su.status]||su.status||'—')+'</span>';
-        body += '<span style="font-size:10px;color:var(--text2)">'+fmtD(su.date)+(su.by?' · '+esc(su.by):'')+'</span>';
-        body += '</div>';
-        if (su.text) body += '<div style="font-size:11px;color:var(--muted);line-height:1.5;white-space:pre-wrap">'+esc(su.text)+'</div>';
-        body += '</div>';
-      });
-    }
-
-    // 👥 Stakeholder
-    if (p.stakeholders && p.stakeholders.length) {
-      var roleMap = {sponsor:'Sponsor',contact:'Kontakt',member:'Mitglied',advisor:'Berater'};
-      body += section('Stakeholder ('+p.stakeholders.length+')');
-      body += table(['Person','Rolle','Notiz'], p.stakeholders.map(function(sh){
-        var person = ent.persons && ent.persons[sh.personId];
-        return [person ? (person.name||'—') : (sh.personId||'—'), roleMap[sh.role]||sh.role||'—', sh.note||'—'];
-      }));
-    }
-
-    // 📚 Ressourcen
-    if (p.resources && p.resources.length) {
-      body += section('Ressourcen ('+p.resources.length+')');
-      body += table(['Titel','Typ','Notiz'], p.resources.map(function(r){
-        return [r.title||r.url||'—', r.type||'—', r.note||'—'];
-      }));
-    }
-
-    // 💰 Budget-Posten
-    if (p.budgetItems && p.budgetItems.length) {
-      var plannedSum = p.budgetItems.reduce(function(s2,b){return s2+(Number(b.planned)||0)},0);
-      var actualSum = p.budgetItems.reduce(function(s2,b){return s2+(Number(b.actual)||0)},0);
-      body += section('Budget-Posten ('+p.budgetItems.length+')');
-      body += table(['Posten','Kategorie','Geplant','Tatsächlich'], p.budgetItems.map(function(b){
-        return [b.label||'—', b.category||'—', (b.planned!=null?Math.round(b.planned)+' CHF':'—'), (b.actual!=null?Math.round(b.actual)+' CHF':'—')];
-      }));
-      body += '<div style="font-size:11px;color:var(--panel3);font-weight:700;padding:4px 0">Summe: '+Math.round(plannedSum)+' CHF geplant · '+Math.round(actualSum)+' CHF tatsächlich</div>';
-    }
-
-    // 🔁 Retrospektive
-    if (p.retro && ((p.retro.good||[]).length || (p.retro.bad||[]).length || (p.retro.learnings||[]).length || (p.retro.doDifferently||[]).length)) {
-      body += section('Retrospektive');
-      var retroParts = [['✅ Gut gelaufen', p.retro.good||[]], ['⚠️ Nicht gut', p.retro.bad||[]], ['💡 Gelernt', p.retro.learnings||[]], ['🔄 Anders machen', p.retro.doDifferently||[]]];
-      retroParts.forEach(function(rp){
-        if (!rp[1] || !rp[1].length) return;
-        body += '<div style="margin:6px 0"><div style="font-size:12px;font-weight:700;color:var(--panel3);margin-bottom:3px">'+rp[0]+'</div>';
-        rp[1].forEach(function(item){
-          var txt = typeof item === 'string' ? item : (item.text||'');
-          body += '<div style="font-size:11px;color:var(--muted);line-height:1.5;padding:2px 0 2px 12px">• '+esc(txt)+'</div>';
-        });
-        body += '</div>';
-      });
-    }
-    
-    // Progress bar
-    body += section('Fortschritt');
-    body += '<div style="display:flex;gap:20px;margin:8px 0 12px">';
-    body += '<div style="text-align:center;padding:8px 16px;background:var(--text);border-radius:8px"><div style="font-size:22px;font-weight:700;color:var(--panel2)">'+projectTasks.length+'</div><div style="font-size:10px;color:var(--muted)">Total</div></div>';
-    body += '<div style="text-align:center;padding:8px 16px;background:var(--warn);border-radius:8px"><div style="font-size:22px;font-weight:700;color:var(--warn)">'+openT.length+'</div><div style="font-size:10px;color:var(--muted)">Offen</div></div>';
-    body += '<div style="text-align:center;padding:8px 16px;background:#dcfce7;border-radius:8px"><div style="font-size:22px;font-weight:700;color:var(--ok)">'+doneT.length+'</div><div style="font-size:10px;color:var(--muted)">Erledigt</div></div>';
-    body += '<div style="text-align:center;padding:8px 16px;background:#dbeafe;border-radius:8px"><div style="font-size:22px;font-weight:700;color:var(--accent)">'+pct+'%</div><div style="font-size:10px;color:var(--muted)">Fortschritt</div></div>';
-    body += '</div>';
-    body += '<div style="height:8px;background:var(--text);border-radius:4px;overflow:hidden;margin-bottom:12px"><div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,var(--ok),var(--ok));border-radius:4px"></div></div>';
-    
-    if (projectTasks.length) {
-      body += section('Alle Aufgaben ('+projectTasks.length+')');
-      body += table(['Aufgabe','Status','Priorität','Fällig','Zeitvoranschlag','Kategorie'], projectTasks.map(function(t2){
-        var cat = (window.TASK_CATEGORIES||[]).find(function(c){return c.value===t2.category});
-        return [t2.title||'—', statusText(t2.status), prioLabel(t2.priority), fmtD(t2.dueDate), fmtMin(t2.estimatedMinutes), cat?cat.label:'—'];
-      }));
-
-      // 🚨 Massnahmen aus Aufgaben aggregieren
-      var taskMeasures = [];
-      projectTasks.forEach(function(t2){
-        (t2.measures||[]).forEach(function(m){ taskMeasures.push({ task: t2.title, m: m }); });
-      });
-      if (taskMeasures.length) {
-        body += section('Massnahmen aus Aufgaben ('+taskMeasures.length+')');
-        var statusMapTm = {planned:'Geplant',active:'Aktiv',done:'Erledigt'};
-        var statusColorTm = {planned:'#f59e0b',active:'#3b82f6',done:'#22c55e'};
-        taskMeasures.forEach(function(tm){
-          var col = statusColorTm[tm.m.status]||'#64748b';
-          body += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-left:3px solid '+col+';border-radius:6px;page-break-inside:avoid">';
-          body += '<div style="font-size:10px;color:var(--text2);margin-bottom:3px">aus: '+esc(tm.task||'Aufgabe')+'</div>';
-          body += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
-          body += '<div style="font-size:12px;color:var(--panel3);line-height:1.5;flex:1">'+esc(tm.m.text||'—')+'</div>';
-          body += '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;color:#fff;background:'+col+';white-space:nowrap">'+(statusMapTm[tm.m.status]||tm.m.status||'—')+'</span>';
-          body += '</div>';
-          if (tm.m.effectiveDate) body += '<div style="font-size:10px;color:var(--text2);margin-top:3px">Wirksam ab: '+fmtD(tm.m.effectiveDate)+'</div>';
-          body += '</div>';
-        });
-      }
-      
-      // Aufgaben-Details mit Notizen
-      var tasksWithNotes = projectTasks.filter(function(t2){ return t2.description; });
-      if (tasksWithNotes.length) {
-        body += section('Aufgaben-Notizen ('+tasksWithNotes.length+')');
-        tasksWithNotes.forEach(function(t2){
-          body += '<div style="margin:8px 0;padding:10px 14px;background:var(--text);border:1px solid var(--text);border-radius:6px;page-break-inside:avoid">';
-          body += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-          body += '<div style="font-weight:700;font-size:12px;color:var(--panel2)">✅ '+esc(t2.title||'Ohne Titel')+'</div>';
-          body += statusBadge(t2.status);
-          body += '</div>';
-          var metaBits = [];
-          if (t2.priority) metaBits.push('Priorität: '+prioLabel(t2.priority));
-          if (t2.dueDate) metaBits.push('Fällig: '+fmtD(t2.dueDate));
-          if (t2.estimatedMinutes) metaBits.push('Zeitvoranschlag: '+fmtMin(t2.estimatedMinutes));
-          if (metaBits.length) body += '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">'+metaBits.join(' · ')+'</div>';
-          body += '<div style="font-size:11px;color:var(--muted);line-height:1.6;white-space:pre-wrap">'+esc(t2.description)+'</div>';
-          body += '</div>';
-        });
-      }
-    }
-    // Projekt-Kommentare
-    var pComments = p.comments || [];
-    if (pComments.length) {
-      body += section('Kommentare ('+pComments.length+')');
-      pComments.forEach(function(c) {
-        body += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-radius:6px">';
-        body += '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">'+fmtDT(c.createdAt)+'</div>';
-        body += '<div style="font-size:12px;color:var(--panel3);line-height:1.5;white-space:pre-wrap">'+esc(c.text)+'</div>';
-        body += '</div>';
-      });
-    }
-    body += section('Verknüpfungen');
-    body += linkedSection(p);
-  }
-  
-  // ========== ORGANIZATION ==========
-  else if (kind === 'organization') {
-    var o = ent.organizations[id];
-    if (!o) { window.toast("warn","PDF","Organisation nicht gefunden"); return; }
-    var orgTasks = Object.values(ent.tasks).filter(function(t2){return t2.organizationId===id||(o.linkedTasks||[]).includes(t2.id)});
-    var orgProjects = Object.values(ent.projects).filter(function(p2){return p2.organizationId===id||(o.linkedProjects||[]).includes(p2.id)});
-    var orgMeetings = Object.values(ent.meetings).filter(function(m){return m.organizationId===id});
-    title = '🏛️ ' + (o.name||'Ohne Name');
-    subtitle = (o.type||'') + (o.industry?' · '+o.industry:'') + ' · ' + orgTasks.length+' Aufgaben, '+orgProjects.length+' Projekte';
-    accentColor = '#059669';
-    
-    body += section('Stammdaten');
-    body += field('Name', o.name);
-    body += field('Typ', o.type);
-    body += field('Branche', o.industry);
-    body += field('Kontaktperson', o.contactPerson);
-    body += field('E-Mail', o.email);
-    body += field('Telefon', o.phone);
-    body += field('Website', o.website);
-    body += field('Adresse', o.address);
-    body += field('Erstellt', fmtDT(o.createdAt));
-    if (o.tags && o.tags.length) body += field('Tags', o.tags.join(', '));
-    if (o.description) { body += section('Beschreibung'); body += textBlock(o.description); }
-    if (orgProjects.length) { body += section('Projekte ('+orgProjects.length+')');
-      body += table(['Projekt','Status','Erstellt'], orgProjects.map(function(p2){return [p2.title, statusText(p2.status), fmtD(p2.createdAt)]})); }
-    if (orgTasks.length) { body += section('Aufgaben ('+orgTasks.length+')');
-      body += table(['Aufgabe','Status','Fällig'], orgTasks.map(function(t2){return [t2.title, statusText(t2.status), fmtD(t2.dueDate)]})); }
-    if (orgMeetings.length) { body += section('Meetings ('+orgMeetings.length+')');
-      body += table(['Meeting','Datum','Status'], orgMeetings.map(function(m){return [m.title, fmtD(m.date), statusText(m.status)]})); }
-    // Org-Kommentare
-    var oComments = o.comments || [];
-    if (oComments.length) {
-      body += section('Kommentare ('+oComments.length+')');
-      oComments.forEach(function(c) {
-        body += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-radius:6px">';
-        body += '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">'+fmtDT(c.createdAt)+'</div>';
-        body += '<div style="font-size:12px;color:var(--panel3);line-height:1.5;white-space:pre-wrap">'+esc(c.text)+'</div>';
-        body += '</div>';
-      });
-    }
-    body += section('Weitere Verknüpfungen');
-    body += linkedSection(o);
-  }
-  
-  // ========== NOTE ==========
-  else if (kind === 'note') {
-    var n = ent.notes[id];
-    if (!n) { window.toast("warn","PDF","Notiz nicht gefunden"); return; }
-    var notebook = n.notebookId ? ent.notebooks[n.notebookId] : null;
-    title = '📝 ' + (n.title||'Ohne Titel');
-    subtitle = (notebook?'Notizbuch: '+notebook.title:'Inbox') + ' · Aktualisiert: '+fmtD(n.updatedAt);
-    accentColor = '#f59e0b';
-    
-    body += section('Metadaten');
-    body += field('Titel', n.title);
-    body += field('Notizbuch', notebook?notebook.title:'Inbox');
-    body += field('Erstellt', fmtDT(n.createdAt));
-    body += field('Aktualisiert', fmtDT(n.updatedAt));
-    if (n.tags && n.tags.length) body += field('Tags', n.tags.join(', '));
-    if (n.summary) { body += section('Zusammenfassung'); body += textBlock(n.summary); }
-    if (n.content) { body += section('Inhalt'); body += textBlock(n.content); }
-    // Notiz-Kommentare
-    var nComments = n.comments || [];
-    if (nComments.length) {
-      body += section('Kommentare ('+nComments.length+')');
-      nComments.forEach(function(c) {
-        body += '<div style="margin:6px 0;padding:8px 12px;background:var(--text);border:1px solid var(--text);border-radius:6px">';
-        body += '<div style="font-size:10px;color:var(--text2);margin-bottom:4px">'+fmtDT(c.createdAt)+'</div>';
-        body += '<div style="font-size:12px;color:var(--panel3);line-height:1.5;white-space:pre-wrap">'+esc(c.text)+'</div>';
-        body += '</div>';
-      });
-    }
-    body += section('Verknüpfungen');
-    body += linkedSection(n);
-  }
-  
-  // ========== GOAL ==========
-  else if (kind === 'goal') {
-    var g = ent.goals[id];
-    if (!g) { window.toast("warn","PDF","Ziel nicht gefunden"); return; }
-    title = '🎯 ' + (g.title||'Ohne Titel');
-    subtitle = 'Typ: '+(g.type||'—')+' · Frist: '+fmtD(g.deadline);
-    accentColor = '#ef4444';
-    
-    body += section('Details');
-    body += field('Titel', g.title);
-    body += field('Typ', g.type);
-    body += fieldHtml('Status', statusBadge(g.status));
-    body += field('Frist', fmtD(g.deadline));
-    body += field('Fortschritt', g.progress!=null ? g.progress+'%' : '—');
-    body += field('Erstellt', fmtDT(g.createdAt));
-    if (g.tags && g.tags.length) body += field('Tags', g.tags.join(', '));
-    if (g.description) { body += section('Beschreibung'); body += textBlock(g.description); }
-    if (g.keyResults && g.keyResults.length) {
-      body += section('Key Results ('+g.keyResults.length+')');
-      body += table(['Key Result','Zielwert','Aktuell','Fortschritt'], g.keyResults.map(function(kr){return [kr.title||'—', kr.target||'—', kr.current||'—', kr.progress!=null?kr.progress+'%':'—']}));
-    }
-    body += section('Verknüpfungen');
-    body += linkedSection(g);
-  }
-  
-  // ========== STRATEGY ==========
-  else if (kind === 'strategy') {
-    var s = ent.strategies[id];
-    if (!s) { window.toast("warn","PDF","Strategie nicht gefunden"); return; }
-    title = '🧭 ' + (s.title||'Ohne Titel');
-    subtitle = 'Status: '+statusText(s.status);
-    accentColor = '#8b5cf6';
-    
-    body += section('Details');
-    body += field('Titel', s.title);
-    body += fieldHtml('Status', statusBadge(s.status));
-    body += field('Zeitraum', fmtD(s.startDate)+' bis '+fmtD(s.endDate));
-    body += field('Erstellt', fmtDT(s.createdAt));
-    if (s.tags && s.tags.length) body += field('Tags', s.tags.join(', '));
-    if (s.description) { body += section('Beschreibung'); body += textBlock(s.description); }
-    if (s.vision) { body += section('Vision'); body += textBlock(s.vision); }
-    if (s.mission) { body += section('Mission'); body += textBlock(s.mission); }
-    body += section('Verknüpfungen');
-    body += linkedSection(s);
-  }
-  
-  // ========== PROGRAM ==========
-  else if (kind === 'program') {
-    var pr = ent.programs[id];
-    if (!pr) { window.toast("warn","PDF","Programm nicht gefunden"); return; }
-    title = '🧩 ' + (pr.title||'Ohne Titel');
-    subtitle = 'Status: '+statusText(pr.status);
-    accentColor = '#0891b2';
-    
-    body += section('Details');
-    body += field('Titel', pr.title);
-    body += fieldHtml('Status', statusBadge(pr.status));
-    body += field('Erstellt', fmtDT(pr.createdAt));
-    if (pr.tags && pr.tags.length) body += field('Tags', pr.tags.join(', '));
-    if (pr.description) { body += section('Beschreibung'); body += textBlock(pr.description); }
-    var progProjects = (pr.projects||[]).map(function(pid){return ent.projects[pid]}).filter(Boolean);
-    var progTasks = (pr.tasks||[]).map(function(tid){return ent.tasks[tid]}).filter(Boolean);
-    if (progProjects.length) { body += section('Projekte im Programm ('+progProjects.length+')');
-      body += table(['Projekt','Status'], progProjects.map(function(p2){return [p2.title, statusText(p2.status)]})); }
-    if (progTasks.length) { body += section('Aufgaben im Programm ('+progTasks.length+')');
-      body += table(['Aufgabe','Status','Fällig'], progTasks.map(function(t2){return [t2.title, statusText(t2.status), fmtD(t2.dueDate)]})); }
-    body += section('Weitere Verknüpfungen');
-    body += linkedSection(pr);
-  }
-  
-  // ========== MEETING ==========
-  else if (kind === 'meeting') {
-    var mt = ent.meetings[id];
-    if (!mt) { window.toast("warn","PDF","Meeting nicht gefunden"); return; }
-    var mtOrg = mt.organizationId ? ent.organizations[mt.organizationId] : null;
-    var mtProj = mt.projectId ? ent.projects[mt.projectId] : null;
-    title = '🤝 ' + (mt.title||'Ohne Titel');
-    subtitle = fmtD(mt.date)+' · '+(mt.startTime||'')+' - '+(mt.endTime||'')+' · '+statusText(mt.status);
-    accentColor = '#dc2626';
-    
-    body += section('Details');
-    body += field('Titel', mt.title);
-    body += field('Datum', fmtD(mt.date));
-    body += field('Zeit', (mt.startTime||'—')+' - '+(mt.endTime||'—'));
-    body += fieldHtml('Status', statusBadge(mt.status));
-    body += field('Organisation', mtOrg?mtOrg.name:'—');
-    body += field('Projekt', mtProj?mtProj.title:'—');
-    body += field('Erstellt', fmtDT(mt.createdAt));
-    if (mt.tags && mt.tags.length) body += field('Tags', mt.tags.join(', '));
-    if (mt.description) { body += section('Beschreibung'); body += textBlock(mt.description); }
-    var agenda = mt.agendaItems || [];
-    if (agenda.length) {
-      body += section('Tagesordnung ('+agenda.length+' Punkte)');
-      body += table(['Nr','Thema','Dauer','Verantwortlich','Erledigt'], agenda.map(function(item,i){
-        return [i+1, item.title||'—', item.duration?item.duration+' Min':'—', item.responsible||'—', item.completed?'✅':'—'];
-      }));
-    }
-    if (mt.protocol) { body += section('Protokoll'); body += textBlock(mt.protocol); }
-    var shortTasks = mt.shortTasks || [];
-    if (shortTasks.length) { body += section('Sofort-Aufgaben ('+shortTasks.length+')');
-      body += table(['Aufgabe','Verantwortlich','Erledigt'], shortTasks.map(function(st){return [st.title||'—', st.responsible||'—', st.done?'✅':'—']})); }
-    body += section('Verknüpfungen');
-    body += linkedSection(mt);
-  }
-  
-  else { window.toast("warn","PDF","Export für "+kind+" nicht unterstützt"); return; }
-  
-  // ========== BUILD PRINT WINDOW ==========
-  var kindNames = {task:'Aufgabe',project:'Projekt',organization:'Organisation',note:'Notiz',goal:'Ziel',strategy:'Strategie',program:'Programm',meeting:'Meeting'};
-  var entityObj = ent[kind+'s'] ? ent[kind+'s'][id] : null;
-  var entityName = entityObj ? (entityObj.title||entityObj.name||'Export') : 'Export';
-  
-  var printHTML = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+esc(entityName)+' - PDF Export</title>';
-  printHTML += '<style>';
-  printHTML += '@page { size: A4; margin: 15mm; }';
-  printHTML += '@media print { body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } .no-print { display: none !important; } }';
-  printHTML += 'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; color: var(--panel2); line-height: 1.4; }';
-  printHTML += '.header { background: linear-gradient(135deg, '+accentColor+', '+accentColor+'dd); padding: 24px 28px; color: var(--text); margin-bottom: 6px; }';
-  printHTML += '.header h1 { margin: 0; font-size: 20px; font-weight: 700; }';
-  printHTML += '.header .sub { margin: 6px 0 0; font-size: 11px; opacity: 0.85; }';
-  printHTML += '.header .meta { margin: 4px 0 0; font-size: 9px; opacity: 0.6; }';
-  printHTML += '.content { padding: 0 28px 20px; overflow: visible; word-wrap: break-word; overflow-wrap: break-word; }';
-  printHTML += '.print-bar { padding: 12px 28px; background: var(--text); border-bottom: 1px solid var(--text); display: flex; gap: 10px; align-items: center; }';
-  printHTML += '.print-bar button { padding: 8px 20px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }';
-  printHTML += '.btn-print { background: '+accentColor+'; color: var(--text); }';
-  printHTML += '.btn-close { background: var(--text); color: var(--muted); }';
-  printHTML += 'table { page-break-inside: auto; } tr { page-break-inside: avoid; }';
-  printHTML += '</style></head><body>';
-  
-  // Print action bar (hidden when printing)
-  printHTML += '<div class="print-bar no-print">';
-  printHTML += '<button class="btn-print" onclick="window.print()">🖨️ Als PDF drucken / speichern</button>';
-  printHTML += '<button class="btn-close" onclick="window.close()">✕ Schliessen</button>';
-  printHTML += '<span style="font-size:11px;color:var(--text2);margin-left:auto">Tipp: Im Druckdialog "Als PDF speichern" wählen</span>';
-  printHTML += '</div>';
-  
-  // Header
-  printHTML += '<div class="header">';
-  printHTML += '<h1>'+esc(title)+'</h1>';
-  printHTML += '<div class="sub">'+esc(subtitle)+'</div>';
-  printHTML += '<div class="meta">AI Management Pro · Export '+new Date().toLocaleString('de-CH')+'</div>';
-  printHTML += '</div>';
-  
-  // Content
-  printHTML += '<div class="content">'+body+'</div>';
-  printHTML += '</body></html>';
-  
-  // Open in new window and auto-trigger print
-  var win = window.open('', '_blank');
-  if (!win) { window.toast("warn","PDF","Popup-Blocker aktiv. Bitte erlaube Popups für diese Seite."); return; }
-  win.document.write(printHTML);
-  win.document.close();
-  win.onload = function() { win.focus(); win.print(); };
-  window.toast("ok","📄 PDF","Druckfenster geöffnet für: "+entityName);
-};
-
-</script>
-
-
-<!-- ===== NEWSROOM HUB OVERLAY ===== -->
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-/* ===== NEWSROOM HUB — DARK NEON ===== */
-.nh{position:fixed;inset:0;z-index:999999;display:none;font-family:'Space Grotesk',sans-serif;background:#08080c;color:var(--text);font-size:14px;line-height:1.55;overflow:hidden;}
-.nh.active{display:flex;}
-.nh *{margin:0;padding:0;box-sizing:border-box;}
-.nh ::-webkit-scrollbar{width:4px;}.nh ::-webkit-scrollbar-track{background:transparent;}.nh ::-webkit-scrollbar-thumb{background:#1e1e2e;border-radius:2px;}
-.nh a{color:var(--neon);text-decoration:none;}.nh a:hover{text-decoration:underline;text-shadow:0 0 8px var(--neon-glow);}
-.nh input,.nh textarea,.nh select{color:var(--text) !important;}
-.nh{
-  --ink:var(--text);--ink2:#a8a8b8;--ink3:#6b6b80;--ink4:#44445a;
-  --bg:#08080c;--bg2:#0e0e14;--bg3:#14141e;--bg4:#1a1a28;--bg5:#222233;
-  --white:#12121c;--surface:#0e0e16;
-  --neon:#00f0ff;--neon-glow:rgba(0,240,255,.3);--neon-bg:rgba(0,240,255,.06);--neon-border:rgba(0,240,255,.15);
-  --red:var(--danger);--red-l:rgba(255,59,92,.08);--red-b:rgba(255,59,92,.15);
-  --blue:var(--accent);--blue-l:var(--accent-soft);
-  --green:#00ff88;--green-l:rgba(0,255,136,.06);--green-b:rgba(0,255,136,.15);
-  --amber:var(--warn);--amber-l:rgba(255,184,0,.06);--amber-b:rgba(255,184,0,.15);
-  --purple:var(--accent);--purple-l:var(--accent-soft);--purple-b:var(--accent-soft);
+rple-b:var(--accent-soft);
   --teal:#00d4aa;--teal-l:rgba(0,212,170,.06);
   --bdr:var(--hover);--bdr2:var(--border);
   --r:10px;--r2:14px;
@@ -113984,5 +113142,196 @@ h1, h2, h3{ letter-spacing:-0.011em; }
 
 </style>
 
+<script id="quantus-control-fixes-20260720">
+/* Confirmed control fixes: missing handlers, filter routing and action aliases. */
+(function(){
+  "use strict";
+
+  function qFixCsv(value){
+    var s = value == null ? "" : String(value);
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+
+  function qFixDownloadTimeCsv(){
+    var entities = (window.APP && APP.state && APP.state.data && APP.state.data.entities) || {};
+    var tasks = entities.tasks || {};
+    var entries = Object.values(entities.timeEntries || {}).sort(function(a,b){
+      return new Date(a.startTs || 0) - new Date(b.startTs || 0);
+    });
+    var rows = [["Datum","Start","Ende","Dauer (Minuten)","Aufgabe","Notiz"]];
+    entries.forEach(function(entry){
+      var task = entry.taskId ? tasks[entry.taskId] : null;
+      rows.push([
+        entry.startTs ? String(entry.startTs).slice(0,10) : "",
+        entry.startTs || "",
+        entry.endTs || "",
+        Math.round((Number(entry.durationSec) || 0) / 60),
+        task ? (task.title || "") : "",
+        entry.note || ""
+      ]);
+    });
+    var csv = "\uFEFF" + rows.map(function(row){ return row.map(qFixCsv).join(";"); }).join("\r\n");
+    var blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "quantus-zeiterfassung-" + (typeof todayYmd === "function" ? todayYmd() : new Date().toISOString().slice(0,10)) + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    if (typeof toast === "function") toast("ok", "CSV exportiert", entries.length + " Zeiteinträge exportiert");
+  }
+
+  function qFixCompleteUpdates(){
+    var entities = APP.state.data.entities || {};
+    var updates = Object.values(entities.updates || {});
+    var changed = 0;
+    updates.forEach(function(update){
+      if (update.status !== "done"){
+        update.status = "done";
+        update.updatedAt = typeof nowIso === "function" ? nowIso() : new Date().toISOString();
+        changed++;
+      }
+    });
+    if (typeof scheduleSave === "function") scheduleSave();
+    if (typeof render === "function") render();
+    if (typeof toast === "function") toast("ok", "Updates", changed ? changed + " Updates abgehakt" : "Alle Updates waren bereits erledigt");
+  }
+
+  function qFixCreateStrategy(){
+    var titleEl = document.getElementById("newStrategyTitle");
+    var descEl = document.getElementById("newStrategyDesc");
+    var title = titleEl ? titleEl.value.trim() : "";
+    if (!title){
+      if (typeof toast === "function") toast("warn", "Fehler", "Titel erforderlich");
+      if (titleEl) titleEl.focus();
+      return;
+    }
+    var id = createEntity("strategy", {
+      title: title,
+      description: descEl ? descEl.value.trim() : "",
+      status: "active",
+      milestones: [],
+      measures: []
+    });
+    if (typeof scheduleSave === "function") scheduleSave();
+    if (typeof toast === "function") toast("ok", "Strategie erstellt", title);
+    if (typeof navigate === "function") navigate("strategies", id);
+    else if (typeof render === "function") render();
+  }
+
+  function qFixAgendaTasks(el){
+    var meetingId = el.dataset.meetingId;
+    var idx = Number(el.dataset.idx);
+    var meeting = typeof getEntity === "function" ? getEntity("meeting", meetingId) : null;
+    var item = meeting && Array.isArray(meeting.agendaItems) ? meeting.agendaItems[idx] : null;
+    if (!item) return;
+    var titles = String(item.tasks || "").split(/\r?\n/).map(function(line){
+      return line.replace(/^\s*(?:[-*•]|\d+[.)]|\[[ xX]\])\s*/, "").trim();
+    }).filter(Boolean);
+    if (!titles.length){
+      if (typeof toast === "function") toast("warn", "Keine Aufgaben", "Im Feld Aufgaben steht noch nichts");
+      return;
+    }
+    meeting.linkedTasks = Array.isArray(meeting.linkedTasks) ? meeting.linkedTasks : [];
+    var existing = (APP.state.data.entities && APP.state.data.entities.tasks) || {};
+    var created = 0;
+    titles.forEach(function(title){
+      var duplicate = Object.values(existing).some(function(task){
+        return task && task.title === title && Array.isArray(task.linkedMeetings) && task.linkedMeetings.indexOf(meetingId) >= 0;
+      });
+      if (duplicate) return;
+      var taskId = createEntity("task", {
+        title: title,
+        description: item.description || item.notes || "",
+        status: "todo",
+        priority: Number(item.priority) || 3,
+        dueDate: meeting.date || null,
+        linkedMeetings: [meetingId],
+        meetingId: meetingId
+      });
+      if (taskId && meeting.linkedTasks.indexOf(taskId) < 0) meeting.linkedTasks.push(taskId);
+      created++;
+    });
+    item.tasksConvertedAt = typeof nowIso === "function" ? nowIso() : new Date().toISOString();
+    meeting.updatedAt = item.tasksConvertedAt;
+    if (typeof scheduleSave === "function") scheduleSave();
+    if (typeof render === "function") render();
+    if (typeof toast === "function") toast("ok", "Aufgaben erstellt", created ? created + " To-dos angelegt" : "Keine neuen To-dos");
+  }
+
+  function qFixRemoveAgendaAttachment(el){
+    var meetingId = el.dataset.meetingId;
+    var idx = Number(el.dataset.idx);
+    var attachmentIndex = Number(el.dataset.ai);
+    var meeting = typeof getEntity === "function" ? getEntity("meeting", meetingId) : null;
+    var item = meeting && Array.isArray(meeting.agendaItems) ? meeting.agendaItems[idx] : null;
+    if (!item || !Array.isArray(item.attachments) || !item.attachments[attachmentIndex]) return;
+    item.attachments.splice(attachmentIndex, 1);
+    meeting.updatedAt = typeof nowIso === "function" ? nowIso() : new Date().toISOString();
+    if (typeof scheduleSave === "function") scheduleSave();
+    var row = el.closest(".list-item");
+    if (row) row.remove();
+    if (typeof toast === "function") toast("ok", "Anhang entfernt", "Der Agenda-Anhang wurde entfernt");
+  }
+
+  var previous = window.handleClick;
+  window.handleClick = function(event){
+    var el = event && event.target && event.target.closest ? event.target.closest("[data-action]") : null;
+    if (!el) return previous ? previous(event) : undefined;
+    var action = el.dataset.action;
+
+    if (action === "create-strategy-submit"){
+      event.preventDefault();
+      event._handled = true;
+      qFixCreateStrategy();
+      return;
+    }
+    if (action === "export-time-csv"){
+      event.preventDefault();
+      event._handled = true;
+      qFixDownloadTimeCsv();
+      return;
+    }
+    if (action === "check-all-updates"){
+      event.preventDefault();
+      event._handled = true;
+      qFixCompleteUpdates();
+      return;
+    }
+    if (action === "agenda-tasks-to-todos"){
+      event.preventDefault();
+      event._handled = true;
+      qFixAgendaTasks(el);
+      return;
+    }
+    if (action === "remove-agenda-attachment"){
+      event.preventDefault();
+      event._handled = true;
+      qFixRemoveAgendaAttachment(el);
+      return;
+    }
+
+    /* Reuse already-tested controls instead of duplicating their logic. */
+    var alias = null;
+    if (action === "ai-extract-todos") alias = "ai-p1-nextsteps";
+    else if (action === "edit-today-time") alias = "open-manual-time-modal";
+    else if (action === "upload-protocol"){
+      alias = "trigger-file-upload";
+      el.dataset.kind = "meeting";
+      el.dataset.id = el.dataset.id || "";
+    }
+    if (alias && previous){
+      var original = el.dataset.action;
+      el.dataset.action = alias;
+      try { return previous(event); }
+      finally { el.dataset.action = original; }
+    }
+
+    return previous ? previous(event) : undefined;
+  };
+})();
+</script>
 </body>
 </html>
