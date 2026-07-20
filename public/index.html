@@ -15886,7 +15886,8 @@ const SMARTER_DEFAULT_CONFIG = {
   targetWords: 2800,
   scheduleTime: "04:00",
   timezone: "Europe/Zurich",
-  ingestWebhookUrl: ""
+  ingestWebhookUrl: "",
+  generateWebhookUrl: ""
 };
 const SMARTER = {
   tab: "today",
@@ -15903,6 +15904,7 @@ const SMARTER = {
   revealed: new Set(),
   pendingUpload: null,
   uploading: false,
+  generating: false,
   pasteText: "",
   pasteTitle: ""
 };
@@ -15948,7 +15950,8 @@ async function smarterEnsureConfig(db) {
       rb.targetWords === SMARTER_DEFAULT_CONFIG.targetWords &&
       rb.scheduleTime === SMARTER_DEFAULT_CONFIG.scheduleTime &&
       rb.timezone === SMARTER_DEFAULT_CONFIG.timezone &&
-      rb.ingestWebhookUrl === SMARTER_DEFAULT_CONFIG.ingestWebhookUrl);
+      rb.ingestWebhookUrl === SMARTER_DEFAULT_CONFIG.ingestWebhookUrl &&
+      rb.generateWebhookUrl === SMARTER_DEFAULT_CONFIG.generateWebhookUrl);
     if (SMARTER.configVerified) console.log("🎓 Smarter: config geseedet & verifiziert");
     return;
   }
@@ -16065,6 +16068,10 @@ function viewSmarter() {
       .sm-field input[readonly]{opacity:.7;cursor:not-allowed}
       .sm-notice{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--sm-sand);border-radius:12px;padding:16px 18px}
       .sm-notice h3{margin:0 0 6px;font-size:14px;color:var(--text)}
+      .sm-notice-inline{background:color-mix(in oklab,var(--warn) 12%,transparent);border:1px solid color-mix(in oklab,var(--warn) 30%,transparent);color:var(--text2);font-size:12.5px;line-height:1.5;padding:9px 13px;border-radius:10px;margin:10px 0 2px}
+      .sm-btn-touch{min-height:44px;padding:11px 18px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+      .sm-btn[disabled]{opacity:.6;cursor:progress}
+      @media (max-width:560px){.sm-btn-touch{width:100%;justify-content:center}}
       .sm-skeleton{padding:40px;text-align:center;color:var(--muted);font-size:14px}
       .sm-offline{background:color-mix(in oklab,var(--warn) 14%,transparent);border:1px solid color-mix(in oklab,var(--warn) 32%,transparent);color:var(--text2);font-size:12.5px;padding:9px 13px;border-radius:10px;margin-bottom:14px}
       .sm-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
@@ -16122,12 +16129,27 @@ function smarterAnsweredCount(questions) {
   return (questions || []).filter(function(q) { const id = q && q.id; return id && a[id] && String(a[id].text || "").trim(); }).length;
 }
 
+// Baut den „Jetzt/Neu generieren"-Button (mobil-tauglich, min. 44px Touch-Ziel
+// via .sm-btn-touch). hasDoc → „Neu generieren" (Überschreiben, Bestätigung im
+// Handler); sonst „Jetzt generieren". Während der Generierung deaktiviert + Label.
+function smarterGenerateButton(hasDoc) {
+  const busy = !!SMARTER.generating;
+  const label = busy
+    ? "⏳ Wird generiert …"
+    : (hasDoc ? "🔄 Neu generieren" : "✨ Jetzt generieren");
+  return '<button class="sm-btn sm-primary sm-btn-touch" data-action="smarter-generate"' +
+    ' data-has-doc="' + (hasDoc ? "1" : "0") + '"' +
+    (busy ? ' disabled aria-busy="true"' : "") + '>' + label + '</button>';
+}
+
 function smarterTabToday() {
   const doc = SMARTER.today;
   const todayKey = smarterTodayKey();
   if (!doc) {
-    return smarterNotice("Noch kein Lernstoff für heute",
-      "Für " + todayKey + " liegt noch kein Tagesdokument vor. Der Smarter-Daily-Workflow (n8n) erzeugt es automatisch um " + esc((SMARTER.config && SMARTER.config.scheduleTime) || "04:00") + " Uhr. Lade oben eine Quelle hoch, damit die Warteschlange gefüllt wird.");
+    let html = smarterNotice("Noch kein Lernstoff für heute",
+      "Für " + todayKey + " liegt noch kein Tagesdokument vor. Der Smarter-Daily-Workflow (n8n) erzeugt es automatisch um " + esc((SMARTER.config && SMARTER.config.scheduleTime) || "04:00") + " Uhr. Du kannst es auch sofort selbst anstossen oder oben eine Quelle hochladen, damit die Warteschlange gefüllt wird.");
+    html += '<div class="sm-row" style="margin-top:14px">' + smarterGenerateButton(false) + '</div>';
+    return html;
   }
   const questions = Array.isArray(doc.questions) ? doc.questions : [];
   const unitCount = Array.isArray(doc.unitIds) ? doc.unitIds.length : 0;
@@ -16149,6 +16171,10 @@ function smarterTabToday() {
   html += '<button class="sm-btn sm-mini" data-action="smarter-download">⬇ Herunterladen</button>';
   html += '<button class="sm-btn sm-mini ' + (done ? "" : "sm-primary") + '" data-action="smarter-toggle-done">' + (done ? "↺ Wieder offen" : "✓ Erledigt") + '</button>';
   html += '</div></div>';
+  if (doc.generationError) {
+    html += '<div class="sm-notice-inline">⚠ Dieses Dokument wurde automatisch als Rohtext-Fallback erstellt (' + esc(String(doc.errorMessage || "Aufbereitung fehlgeschlagen")) + '). Du kannst es unten neu generieren.</div>';
+  }
+  html += '<div class="sm-row" style="margin-top:6px">' + smarterGenerateButton(true) + '</div>';
   html += '<div class="sm-muted" style="margin-top:8px">Beantworte die Fragen direkt im Dokument — deine Antworten werden automatisch in Quantus gespeichert. Der Download ist eine statische Kopie inkl. deiner Antworten.</div>';
   html += '</div>';
 
@@ -16501,6 +16527,11 @@ function smarterTabSettings() {
   html += '<div class="sm-field"><label>ingestWebhookUrl (schreibt der n8n-Build)</label><input type="text" id="smCfgIngest" readonly value="' + esc(String(c.ingestWebhookUrl || "")) + '" placeholder="— noch nicht gesetzt —"></div>';
   html += '<div class="sm-muted">Diese URL wird nach dem n8n-Build automatisch von Claude im Browser in <code>smarter/config/ingestWebhookUrl</code> geschrieben. Die App liest sie von dort.</div>';
   html += '</div>';
+
+  html += '<div class="sm-card"><h3>⚡ Generierungs-Webhook</h3>';
+  html += '<div class="sm-field"><label>generateWebhookUrl (für „Jetzt generieren")</label><input type="text" id="smCfgGenerate" readonly value="' + esc(String(c.generateWebhookUrl || "")) + '" placeholder="— noch nicht gesetzt —"></div>';
+  html += '<div class="sm-muted">Trage hier nach dem n8n-Build die URL des Generierungs-Webhooks in <code>smarter/config/generateWebhookUrl</code> ein. Der Button „Jetzt generieren" im Heute-Tab löst darüber eine sofortige Tagesdokument-Erzeugung aus. Ohne URL bleibt der Button sichtbar, meldet aber, dass die Ziel-URL fehlt.</div>';
+  html += '</div>';
   return html;
 }
 
@@ -16579,6 +16610,53 @@ async function smarterDoUpload() {
     console.warn("Smarter upload:", e);
   }
   SMARTER.uploading = false; render();
+}
+
+// On-Demand-Generierung: stösst den n8n-Generierungs-Webhook an (analog zum
+// ingestWebhookUrl-Mechanismus). URL kommt AUSSCHLIESSLICH aus der Config
+// (smarter/config/generateWebhookUrl) — kein Hardcoding. Existiert für heute
+// schon ein Dokument, wird vor dem Überschreiben eine Bestätigung eingeholt.
+async function smarterGenerateToday(hasDoc) {
+  if (SMARTER.generating) return;
+  const url = (SMARTER.config && SMARTER.config.generateWebhookUrl) ? String(SMARTER.config.generateWebhookUrl).trim() : "";
+  if (!url) {
+    if (typeof toast === "function") toast("info", "Smarter", "generateWebhookUrl fehlt noch — wird nach dem n8n-Build in smarter/config gesetzt.");
+    return;
+  }
+  if (hasDoc) {
+    const ok = (typeof confirm === "function") ? confirm("Für heute existiert bereits ein Lerndokument. Neu generieren und das bestehende überschreiben?") : true;
+    if (!ok) return;
+  }
+  const dayKey = SMARTER.dayKey || smarterTodayKey();
+  SMARTER.generating = true; render();
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: dayKey, force: true, source: "quantus-app" })
+    });
+    // Antwort tolerant lesen: manche n8n-Webhooks liefern kein JSON. Erfolg =
+    // HTTP-ok (kein { ok:false } explizit). Danach heutiges Dokument neu laden.
+    let data = null;
+    try { data = await resp.json(); } catch (e) {}
+    if (resp.ok && !(data && data.ok === false)) {
+      if (typeof toast === "function") toast("ok", "Smarter", "Generierung angestossen — lade Dokument …");
+      SMARTER.loaded = false;
+      await smarterLoad();   // lädt config, queue und documents/<heute> neu aus RTDB
+      if (SMARTER.today) {
+        if (typeof toast === "function") toast("ok", "Smarter", "Lerndokument aktualisiert");
+      } else if (typeof toast === "function") {
+        toast("info", "Smarter", "Noch kein Dokument in der Cloud — die Generierung läuft evtl. noch. Später „Aktualisieren“ drücken.");
+      }
+    } else {
+      const msg = (data && (data.error || data.message)) ? String(data.error || data.message) : ("HTTP " + resp.status);
+      if (typeof toast === "function") toast("warn", "Smarter", "Generierung nicht bestätigt (" + msg + ")");
+    }
+  } catch (e) {
+    if (typeof toast === "function") toast("danger", "Smarter", "Generierung fehlgeschlagen: " + ((e && e.message) || e));
+    console.warn("Smarter generate:", e);
+  }
+  SMARTER.generating = false; render();
 }
 
 // Blanken Text hinzufuegen — baut ein File aus dem Textfeld und schickt es durch
@@ -16691,6 +16769,7 @@ function smarterHandleAction(action, el, e) {
     case "smarter-reveal": SMARTER.revealed.add(Number(el.dataset.idx)); render(); break;
     case "smarter-download": smarterDownloadDocument(); break;
     case "smarter-toggle-done": smarterToggleDone(); break;
+    case "smarter-generate": smarterGenerateToday(el.dataset.hasDoc === "1"); break;
     case "smarter-queue-up": smarterQueueMove(el.dataset.id, "up"); break;
     case "smarter-queue-down": smarterQueueMove(el.dataset.id, "down"); break;
     case "smarter-queue-del": smarterQueueDelete(el.dataset.id); break;
