@@ -43,8 +43,7 @@
       "parameters": {
         "method": "PATCH",
         "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/weeks/{{ $json.weekKey }}/generation.json",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi",
+        "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'running', message: null }) }}",
@@ -56,13 +55,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [-20, -180],
-      "executeOnce": true,
-      "credentials": {
-        "googleApi": {
-          "id": "ERSETZEN-NACH-IMPORT",
-          "name": "Google Service-Konto (RTDB)"
-        }
-      }
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -97,8 +90,7 @@
     {
       "parameters": {
         "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/recipes.json",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi",
+        "authentication": "none",
         "options": {}
       },
       "id": "node-rezepte-laden",
@@ -106,13 +98,7 @@
       "name": "RTDB: Rezepte laden",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [420, 0],
-      "credentials": {
-        "googleApi": {
-          "id": "ERSETZEN-NACH-IMPORT",
-          "name": "Google Service-Konto (RTDB)"
-        }
-      }
+      "position": [420, 0]
     },
     {
       "parameters": {
@@ -201,8 +187,7 @@
       "parameters": {
         "method": "PATCH",
         "url": "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/.json",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi",
+        "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.updates) }}",
@@ -213,20 +198,13 @@
       "name": "RTDB: Plan speichern",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1520, -100],
-      "credentials": {
-        "googleApi": {
-          "id": "ERSETZEN-NACH-IMPORT",
-          "name": "Google Service-Konto (RTDB)"
-        }
-      }
+      "position": [1520, -100]
     },
     {
       "parameters": {
         "method": "PATCH",
         "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/weeks/{{ $('Plan + Einkaufsliste aggregieren').item.json.weekKey }}/generation.json",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi",
+        "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'done', finishedAt: $now.toISO(), message: null }) }}",
@@ -237,20 +215,13 @@
       "name": "RTDB: Status → done",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1740, -100],
-      "credentials": {
-        "googleApi": {
-          "id": "ERSETZEN-NACH-IMPORT",
-          "name": "Google Service-Konto (RTDB)"
-        }
-      }
+      "position": [1740, -100]
     },
     {
       "parameters": {
         "method": "PATCH",
         "url": "=https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/nobraine/weeks/{{ $json.weekKey }}/generation.json",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi",
+        "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'error', finishedAt: $now.toISO(), message: $json.fehler || 'Fehler beim Schreiben in die Datenbank (Generierung abgebrochen)' }) }}",
@@ -261,13 +232,7 @@
       "name": "RTDB: Status → error",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1520, 120],
-      "credentials": {
-        "googleApi": {
-          "id": "ERSETZEN-NACH-IMPORT",
-          "name": "Google Service-Konto (RTDB)"
-        }
-      }
+      "position": [1520, 120]
     }
   ],
   "connections": {
