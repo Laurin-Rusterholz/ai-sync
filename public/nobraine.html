@@ -684,7 +684,7 @@ function tageDerWoche(monday) {
   }
   return arr;
 }
-function isoDatum(d) { return new Date(d).toISOString().slice(0, 10); }
+function isoDatum(d) { const x = new Date(d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); }
 function heuteIso() { return isoDatum(new Date()); }
 function fmtKurz(d) { return new Date(d).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit" }); }
 function fmtLang(d) { return new Date(d).toLocaleDateString("de-CH", { day: "2-digit", month: "long", year: "numeric" }); }
