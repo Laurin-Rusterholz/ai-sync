@@ -17189,11 +17189,88 @@ const LESEPLAN_PROMPT = [
 
 const LESEPLAN_DEFAULT_CONFIG = { wordsPerMinute: 200, minMinutesPerUnit: 10, timezone: "Europe/Zurich", aufbereitenWebhookUrl: "" };
 
+// Ab dieser Roh-HTML-Groesse wird der Inhalt NICHT mehr inline in die Realtime
+// Database geschrieben (dort ungeeignet fuer grosse Werte), sondern als Datei in
+// Firebase Storage abgelegt; in der DB bleiben nur Metadaten + Storage-Referenz.
+const LESEPLAN_INLINE_MAX_BYTES = 512 * 1024;
+
 const LESEPLAN = {
   tab: "docs", loaded: false, loading: false, loadedAt: 0, noFirebase: false,
   config: null, configVerified: false, docs: {}, aufbereitung: {}, selectedId: null,
-  error: null, creating: false, newTitle: "", newHtml: "", newZiel: ""
+  error: null, creating: false, newTitle: "", newHtml: "", newZiel: "",
+  uploadPct: 0, newStatus: "", newStatusKind: "", contentCache: {}
 };
+
+// Byte-genaue Groesse (UTF-8) eines Strings; Fallback auf Zeichenlaenge.
+function leseplanByteLength(str) {
+  try { return new Blob([String(str == null ? "" : str)]).size; }
+  catch (e) { return (str && str.length) || 0; }
+}
+
+// UID des angemeldeten Firebase-Nutzers (fuer den Storage-Pfad); null wenn unbekannt.
+function leseplanUserId() {
+  try { const u = firebase.auth && firebase.auth().currentUser; return (u && u.uid) || null; }
+  catch (e) { return null; }
+}
+
+// Ein Dokument braucht einen externen Inhalts-Load, wenn eine Storage-Referenz
+// hinterlegt ist UND keine Sektion mehr Inline-HTML besitzt (Abwaertskompatibilitaet:
+// alte, inline in der DB gespeicherte Dokumente behalten ihr html und bleiben lesbar).
+function leseplanDocNeedsExternalContent(d) {
+  if (!d) return false;
+  if (!(d.contentStoragePath || d.contentUrl)) return false;
+  const sek = d.sektionen || {};
+  const anyInline = Object.keys(sek).some(function (k) { return sek[k] && typeof sek[k].html === "string" && sek[k].html.length; });
+  return !anyInline;
+}
+
+// Laedt den ausgelagerten HTML-Inhalt aus Firebase Storage und baut daraus wieder
+// die Sektions-Map (s0,s1,… -> html). Ergebnis wird pro Dokument gecached.
+async function leseplanEnsureContent(d) {
+  const id = (d && (d._id || d.id)) || "";
+  if (LESEPLAN.contentCache[id]) return LESEPLAN.contentCache[id];
+  let url = (d && d.contentUrl) || null;
+  const path = (d && d.contentStoragePath) || null;
+  let html = null;
+  try {
+    if (!url && path && firebaseStorage) url = await firebaseStorage.ref(path).getDownloadURL();
+    if (!url) throw new Error("Kein Speicherort fuer den Inhalt hinterlegt");
+    let resp = await fetch(url);
+    if (!resp.ok && path && firebaseStorage) {
+      // Moeglicherweise abgelaufener/ungueltiger Download-Token -> frische URL holen
+      url = await firebaseStorage.ref(path).getDownloadURL();
+      resp = await fetch(url);
+    }
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    html = await resp.text();
+  } catch (e) {
+    throw new Error("Inhalt konnte nicht aus dem Speicher geladen werden (" + ((e && e.message) || e) + ")");
+  }
+  const cfg = LESEPLAN.config || LESEPLAN_DEFAULT_CONFIG;
+  const maxChunkWords = (d && d.maxChunkWords) || (cfg && cfg.maxChunkWords) || 600;
+  const map = {};
+  try { lpSplit(html, { maxChunkWords: maxChunkWords }).forEach(function (c, i) { map["s" + i] = c.html; }); }
+  catch (e) { throw new Error("Inhalt konnte nicht aufbereitet werden (" + ((e && e.message) || e) + ")"); }
+  LESEPLAN.contentCache[id] = map;
+  return map;
+}
+
+// Laedt eine HTML-Datei nach Firebase Storage (mit Fortschritt) und liefert die
+// Download-URL. Bewusst OHNE Drive-Registrierung (interner Leseplan-Inhalt).
+async function leseplanUploadContent(path, html, onProgress) {
+  if (!firebaseStorage) throw new Error("Firebase Storage nicht verbunden");
+  const blob = new Blob([String(html == null ? "" : html)], { type: "text/html" });
+  const ref = firebaseStorage.ref(path);
+  const meta = { contentType: "text/html; charset=utf-8", customMetadata: { source: "leseplan", uploadDate: new Date().toISOString() } };
+  const task = ref.put(blob, meta);
+  return new Promise(function (resolve, reject) {
+    task.on("state_changed",
+      function (snap) { if (onProgress) onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)); },
+      function (err) { reject(err); },
+      async function () { try { resolve(await task.snapshot.ref.getDownloadURL()); } catch (e) { reject(e); } }
+    );
+  });
+}
 
 function leseplanRootRef() { try { return (typeof rtdbDbRef === "function") ? rtdbDbRef("leseplan") : null; } catch (e) { return null; } }
 function leseplanTodayKey() {
@@ -17326,7 +17403,16 @@ function viewLeseplan() {
       .lp-ai h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--lp-green)}
       .lp-ai ul{margin:6px 0 0;padding-left:18px;color:var(--text2);font-size:13px}
       .lp-pre{background:var(--panel2);border:1px solid var(--border2);border-radius:12px;padding:14px;white-space:pre-wrap;word-break:break-word;font:12.5px/1.6 ui-monospace,Menlo,Consolas,monospace;color:var(--text);max-height:46vh;overflow:auto}
-      @media (max-width:560px){.lp-btn-touch{width:100%;justify-content:center}}
+      .lp-status{margin-top:12px;font-size:13px;font-weight:600;line-height:1.5;padding:10px 13px;border-radius:10px;background:var(--panel2);border:1px solid var(--border);color:var(--text2);word-break:break-word;overflow-wrap:anywhere}
+      .lp-status-ok{border-color:color-mix(in oklab,var(--lp-green) 40%,transparent);background:color-mix(in oklab,var(--lp-green) 12%,transparent);color:var(--text)}
+      .lp-status-err{border-color:color-mix(in oklab,var(--danger,#e5765a) 42%,transparent);background:color-mix(in oklab,var(--danger,#e5765a) 12%,transparent);color:var(--text)}
+      @media (max-width:560px){
+        .lp-btn-touch{width:100%;justify-content:center}
+        .lp-row-actions{flex-direction:column;align-items:stretch;gap:8px}
+        .lp-row-actions .lp-btn,.lp-row-actions label.lp-btn{width:100%;justify-content:center}
+        .lp-stat{flex:1 1 42%;min-width:0}
+        .lp-head h1{font-size:18px}
+      }
     </style>
     <div class="leseplan-wrap">
       <div class="lp-head">
@@ -17430,9 +17516,14 @@ function leseplanDetailHtml(d) {
 }
 
 // Baut das self-contained Lese-HTML fuer die aktuelle Einheit (Sektionen des Slots).
-function leseplanUnitDocumentHtml(doc, slot) {
+// htmlMap (optional) liefert das html fuer nach Storage ausgelagerte Dokumente;
+// sonst wird das Inline-html der Sektion genutzt (Abwaertskompatibilitaet).
+function leseplanUnitDocumentHtml(doc, slot, htmlMap) {
   const sek = doc.sektionen || {};
-  const parts = (Array.isArray(slot.sektionIds) ? slot.sektionIds : []).map(function (id) { return (sek[id] && sek[id].html) || ""; }).join("\n");
+  const parts = (Array.isArray(slot.sektionIds) ? slot.sektionIds : []).map(function (id) {
+    if (htmlMap && typeof htmlMap[id] === "string") return htmlMap[id];
+    return (sek[id] && sek[id].html) || "";
+  }).join("\n");
   return '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' +
     '*{box-sizing:border-box}body{margin:0;background:#EFEAE1;color:#2B3134;font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:26px 22px}' +
     '.wrap{max-width:720px;margin:0 auto}h1{font-size:26px;margin:0 0 4px;letter-spacing:-.4px}h2{font-size:20px;margin:22px 0 8px;border-bottom:1px solid #d8cfbc;padding-bottom:4px}h3{font-size:17px;margin:16px 0 6px}' +
@@ -17442,8 +17533,27 @@ function leseplanUnitDocumentHtml(doc, slot) {
     '</style></head><body><div class="wrap"><p class="kicker">Leseplan · Einheit ' + (slot.index + 1) + ' · ' + (slot.datum || "") + '</p>' + parts + '</div></body></html>';
 }
 
-// Post-render: Leseeinheit-iframe mounten (isoliert, Scripts entfernt).
-function leseplanMountUnit() {
+// Iframe-Hoehe an den Inhalt anpassen.
+function leseplanFitFrame(iframe) {
+  try { const idoc = iframe.contentDocument; if (idoc && idoc.documentElement) iframe.style.height = (idoc.documentElement.scrollHeight + 12) + "px"; } catch (e) {}
+}
+
+// Kleine self-contained Status-/Fehlerseite fuer das Leseeinheit-iframe
+// (Ladeindikator beim Nachladen grosser Dokumente bzw. klare Fehlermeldung).
+function leseplanFrameMessage(text, isError) {
+  return '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' +
+    'html,body{margin:0}body{min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#EFEAE1;color:' + (isError ? '#8a2f22' : '#5a5347') + ';font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:30px 20px;text-align:center;box-sizing:border-box}' +
+    '.msg{max-width:520px;word-break:break-word}' +
+    '.sp{width:28px;height:28px;border:3px solid #d8cfbc;border-top-color:#4C7DB8;border-radius:50%;animation:sp 1s linear infinite}' +
+    '@keyframes sp{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.sp{animation:none}}' +
+    '</style></head><body>' + (isError ? '<div style="font-size:26px">⚠</div>' : '<div class="sp"></div>') +
+    '<div class="msg">' + esc(text) + '</div></body></html>';
+}
+
+// Post-render: Leseeinheit-iframe mounten (isoliert, Scripts entfernt). Bei nach
+// Storage ausgelagerten Dokumenten wird der Inhalt zuerst nachgeladen (mit
+// Ladeindikator); schlaegt das fehl, erscheint eine klare deutsche Fehlermeldung.
+async function leseplanMountUnit() {
   try {
     const h = (typeof parseHash === "function") ? parseHash() : { route: (APP.state.ui && APP.state.ui.route) };
     if (h.route !== "leseplan") return;
@@ -17455,10 +17565,25 @@ function leseplanMountUnit() {
     if (!iframe || !slot) return;
     if (iframe.dataset.mounted === "1") return;
     iframe.dataset.mounted = "1";
-    const safe = leseplanUnitDocumentHtml(d, slot).replace(/<script\b[\s\S]*?<\/script>/gi, "");
+
+    let htmlMap = null;
+    if (leseplanDocNeedsExternalContent(d)) {
+      iframe.srcdoc = leseplanFrameMessage("Lädt Inhalt aus dem Speicher …", false);
+      try {
+        htmlMap = await leseplanEnsureContent(d);
+      } catch (e) {
+        iframe.srcdoc = leseplanFrameMessage(((e && e.message) || "Inhalt konnte nicht geladen werden") + ". Bitte Verbindung prüfen und Ansicht neu laden.", true);
+        if (typeof toast === "function") toast("danger", "Leseplan", (e && e.message) || "Inhalt konnte nicht geladen werden");
+        return;
+      }
+      // iframe koennte durch ein zwischenzeitliches Re-Render ersetzt worden sein
+      if (!iframe.isConnected) return;
+    }
+
+    const safe = leseplanUnitDocumentHtml(d, slot, htmlMap).replace(/<script\b[\s\S]*?<\/script>/gi, "");
     iframe.addEventListener("load", function onl() {
       iframe.removeEventListener("load", onl);
-      try { const idoc = iframe.contentDocument; if (idoc && idoc.documentElement) iframe.style.height = (idoc.documentElement.scrollHeight + 12) + "px"; } catch (e) {}
+      leseplanFitFrame(iframe);
     });
     iframe.srcdoc = safe;
   } catch (e) { console.warn("Leseplan mount:", e); }
@@ -17473,10 +17598,25 @@ function leseplanTabNeu() {
   html += '<div class="lp-field"><label>Titel (optional — sonst aus &lt;h1&gt;/&lt;title&gt;)</label><input type="text" id="lpNewTitle" placeholder="z. B. Wirtschaftsgeschichte Kapitel 3" value="' + esc(LESEPLAN.newTitle || "") + '" oninput="leseplanOnField(\'newTitle\',this)"></div>';
   html += '<div class="lp-field"><label>Zieldatum</label><input type="date" id="lpNewZiel" min="' + esc(leseplanTodayKey()) + '" value="' + esc(LESEPLAN.newZiel || tomorrow) + '" oninput="leseplanOnField(\'newZiel\',this)"></div>';
   html += '<div class="lp-field"><label>HTML-Inhalt</label><textarea id="lpNewHtml" placeholder="&lt;h1&gt;Titel&lt;/h1&gt;&#10;&lt;h2&gt;Abschnitt 1&lt;/h2&gt;&#10;&lt;p&gt;…&lt;/p&gt;" oninput="leseplanOnField(\'newHtml\',this)">' + esc(LESEPLAN.newHtml || "") + '</textarea></div>';
-  html += '<div class="lp-row"><button class="lp-btn lp-primary lp-btn-touch" id="lpCreateBtn" data-action="leseplan-create"' + ((LESEPLAN.creating || !String(LESEPLAN.newHtml || "").trim()) ? " disabled" : "") + '>' + (LESEPLAN.creating ? "Wird angelegt …" : "📖 Leseplan erstellen") + '</button>';
-  html += '<label class="lp-btn lp-ghost" style="cursor:pointer">⬆ HTML-Datei wählen<input type="file" accept=".html,.htm,text/html" style="display:none" onchange="leseplanPickFile(this)"></label></div>';
+  html += '<div class="lp-row lp-row-actions"><button class="lp-btn lp-primary lp-btn-touch" id="lpCreateBtn" data-action="leseplan-create"' + ((LESEPLAN.creating || !String(LESEPLAN.newHtml || "").trim()) ? " disabled" : "") + '>' + (LESEPLAN.creating ? "Wird angelegt …" : "📖 Leseplan erstellen") + '</button>';
+  html += '<label class="lp-btn lp-ghost lp-btn-touch" style="cursor:pointer">⬆ HTML-Datei wählen<input type="file" accept=".html,.htm,text/html" style="display:none" onchange="leseplanPickFile(this)"></label></div>';
+  html += '<div class="lp-muted" style="margin-top:8px;font-size:12px">Grosse Dokumente werden automatisch in Firebase Storage abgelegt (keine feste Grössengrenze). Kleine Dokumente bleiben wie bisher direkt gespeichert.</div>';
+  html += '<div class="lp-status' + (LESEPLAN.newStatus ? (LESEPLAN.newStatusKind === "err" ? " lp-status-err" : " lp-status-ok") : "") + '" id="lpNewStatus"' + (LESEPLAN.newStatus ? "" : ' style="display:none"') + '>' + esc(LESEPLAN.newStatus || "") + '</div>';
   html += '</div>';
   return html;
+}
+
+// Status-/Fortschrittszeile im Tab „Neues Dokument“ direkt im DOM aktualisieren
+// (ohne teures Re-Render bei jedem Upload-Prozent). kind: "ok" | "err" | "".
+function leseplanSetStatus(text, kind) {
+  LESEPLAN.newStatus = text || ""; LESEPLAN.newStatusKind = kind || "";
+  const el = document.getElementById("lpNewStatus");
+  if (el) {
+    el.textContent = LESEPLAN.newStatus;
+    el.style.display = LESEPLAN.newStatus ? "" : "none";
+    el.classList.toggle("lp-status-err", kind === "err");
+    el.classList.toggle("lp-status-ok", kind === "ok");
+  }
 }
 
 function leseplanTabPrompt() {
@@ -17526,28 +17666,70 @@ async function leseplanCreateDoc() {
   const ziel = String(LESEPLAN.newZiel || "").trim();
   const today = leseplanTodayKey();
   if (!html.trim()) { if (typeof toast === "function") toast("warn", "Leseplan", "Bitte HTML-Inhalt einfügen"); return; }
-  if (html.length > 2000000) { if (typeof toast === "function") toast("danger", "Leseplan", "Dokument zu gross (max. 2 MB)"); return; }
   if (!ziel) { if (typeof toast === "function") toast("warn", "Leseplan", "Bitte ein Zieldatum wählen"); return; }
   if (ziel < today) { if (typeof toast === "function") toast("danger", "Leseplan", "Zieldatum liegt in der Vergangenheit"); return; }
   const cfg = LESEPLAN.config || LESEPLAN_DEFAULT_CONFIG;
+  const maxChunkWords = (cfg && cfg.maxChunkWords) || 600;
   const id = "doc_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const res = lpBuildDoc(id, LESEPLAN.newTitle, html, today, ziel, cfg);
   if (res.error === "empty") { if (typeof toast === "function") toast("danger", "Leseplan", "Kein lesbarer Text im HTML gefunden"); return; }
   if (res.error === "past") { if (typeof toast === "function") toast("danger", "Leseplan", "Zieldatum zu knapp / in der Vergangenheit"); return; }
   if (!res.doc) { if (typeof toast === "function") toast("danger", "Leseplan", "Dokument konnte nicht erstellt werden"); return; }
-  LESEPLAN.creating = true; render();
+
+  // Grosse Dokumente NICHT inline in die RTDB (dort ungeeignet), sondern als Datei
+  // in Firebase Storage; in der DB bleiben nur Metadaten + Storage-Referenz.
+  const bytes = leseplanByteLength(html);
+  const useStorage = bytes > LESEPLAN_INLINE_MAX_BYTES;
+  const sizeLabel = bytes < 1048576 ? Math.round(bytes / 1024) + " KB" : (bytes / 1048576).toFixed(1) + " MB";
+
+  LESEPLAN.creating = true; LESEPLAN.uploadPct = 0;
+  LESEPLAN.newStatus = useStorage ? ("⬆ Grosses Dokument (" + sizeLabel + ") wird in den Speicher geladen …") : ""; LESEPLAN.newStatusKind = "";
+  render();
+  let uploaded = null; // { path, url } — fuer Rollback bei DB-Fehler
   try {
+    if (useStorage) {
+      if (!firebaseStorage) throw new Error("Firebase Storage nicht verbunden — für grosse Dokumente bitte im Drive-Modul mit Google anmelden.");
+      const uid = leseplanUserId() || "shared";
+      const path = "leseplan/" + uid + "/" + id + ".html";
+      const url = await leseplanUploadContent(path, html, function (pct) {
+        LESEPLAN.uploadPct = pct;
+        leseplanSetStatus("⬆ Lädt grosses Dokument (" + sizeLabel + ") in den Speicher … " + pct + "%", "");
+        const b = document.getElementById("lpCreateBtn");
+        if (b) b.textContent = "Lädt hoch … " + pct + "%";
+      });
+      uploaded = { path: path, url: url };
+      // Inline-HTML aus den Metadaten entfernen -> RTDB traegt nur noch Metadaten.
+      const sek = res.doc.sektionen || {};
+      Object.keys(sek).forEach(function (k) { if (sek[k]) delete sek[k].html; });
+      res.doc.contentStoragePath = path;
+      res.doc.contentUrl = url;
+      res.doc.contentBytes = bytes;
+      res.doc.maxChunkWords = maxChunkWords;
+    }
+    leseplanSetStatus("💾 Speichert …", "");
     await db.child("docs/" + id).set(res.doc);
     LESEPLAN.docs[id] = res.doc;
+    if (useStorage) {
+      // Content-Cache direkt fuellen, damit das Oeffnen keinen erneuten Download braucht.
+      try { const map = {}; lpSplit(html, { maxChunkWords: maxChunkWords }).forEach(function (c, i) { map["s" + i] = c.html; }); LESEPLAN.contentCache[id] = map; } catch (e) {}
+    }
     LESEPLAN.selectedId = id;
     LESEPLAN.newHtml = ""; LESEPLAN.newTitle = ""; LESEPLAN.newZiel = "";
+    LESEPLAN.newStatus = ""; LESEPLAN.newStatusKind = "";
     LESEPLAN.tab = "docs";
-    if (typeof toast === "function") toast("ok", "Leseplan", res.doc.einheitenGesamt + " Einheiten · " + (res.doc.rhythmus === "zweitaeglich" ? "2-Tages-Rhythmus" : "täglich"));
+    if (typeof toast === "function") toast("ok", "Leseplan", res.doc.einheitenGesamt + " Einheiten · " + (useStorage ? "Inhalt im Speicher · " : "") + (res.doc.rhythmus === "zweitaeglich" ? "2-Tages-Rhythmus" : "täglich"));
   } catch (e) {
-    if (typeof toast === "function") toast("danger", "Leseplan", "Speichern fehlgeschlagen: " + ((e && e.message) || e));
+    // Rollback: falls der Upload lief, aber der DB-Write scheiterte -> Storage-Datei
+    // entfernen, damit keine Waise zurueckbleibt.
+    if (uploaded && uploaded.path && firebaseStorage) { try { await firebaseStorage.ref(uploaded.path).delete(); } catch (e2) {} }
+    // Formular NICHT leeren -> kein Datenverlust; Eingabe bleibt erhalten.
+    const msg = (e && e.message) || String(e);
+    LESEPLAN.newStatusKind = "err";
+    LESEPLAN.newStatus = "✗ Speichern fehlgeschlagen: " + msg + " — deine Eingabe bleibt erhalten, bitte erneut versuchen.";
+    if (typeof toast === "function") toast("danger", "Leseplan", "Speichern fehlgeschlagen: " + msg);
     console.warn("Leseplan create:", e);
   }
-  LESEPLAN.creating = false; render();
+  LESEPLAN.creating = false; LESEPLAN.uploadPct = 0; render();
 }
 
 async function leseplanSetUnitDone(id, idx, done) {
@@ -17576,6 +17758,9 @@ async function leseplanDeleteDoc(id) {
   try {
     await db.child("docs/" + id).remove();
     try { await db.child("aufbereitung/" + id).remove(); } catch (e) {}
+    // Ausgelagerten Storage-Inhalt mitloeschen (kein Waise), Cache leeren.
+    if (doc && doc.contentStoragePath && firebaseStorage) { try { await firebaseStorage.ref(doc.contentStoragePath).delete(); } catch (e) {} }
+    if (LESEPLAN.contentCache) delete LESEPLAN.contentCache[id];
     delete LESEPLAN.docs[id];
     if (LESEPLAN.aufbereitung) delete LESEPLAN.aufbereitung[id];
     if (LESEPLAN.selectedId === id) { const l = leseplanDocsList(); LESEPLAN.selectedId = l.length ? l[0]._id : null; }

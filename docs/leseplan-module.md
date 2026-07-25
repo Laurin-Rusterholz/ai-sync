@@ -55,9 +55,27 @@ Basis: `https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app`
   "plan": [                          // die zeitverteilten Leseeinheiten
     { "index":0, "datum":"YYYY-MM-DD", "sektionIds":["s0","s1"], "words":<int>, "estMinutes":<int>, "done":false, "doneAt":null },
     …
-  ]
+  ],
+
+  // NUR bei grossen Dokumenten (Roh-HTML > 512 KB): der HTML-Inhalt liegt in
+  // Firebase Storage, in der RTDB stehen nur Metadaten + Storage-Referenz. Die
+  // "sektionen" tragen dann KEIN "html" mehr (nur order/title/wordCount/estMinutes).
+  "contentStoragePath": "leseplan/<uid>/<docId>.html",  // Storage-Pfad der HTML-Datei
+  "contentUrl": "https://…",         // Download-URL (mit Token)
+  "contentBytes": <int>,             // Roh-HTML-Groesse in Bytes
+  "maxChunkWords": 600               // beim Anlegen genutzter Split-Parameter (fuer deterministisches Re-Split beim Laden)
 }
 ```
+
+**Klein vs. gross (Realtime Database vs. Storage):** Bis **512 KB** Roh-HTML bleibt der
+Inhalt wie bisher **inline** in der RTDB (`sektionen[i].html`) — keine feste 2-MB-Grenze
+mehr, kleine Dokumente verhalten sich unverändert. **Grössere** Dokumente werden als
+`.html`-Datei nach **Firebase Storage** (`leseplan/<uid>/<docId>.html`) hochgeladen; die
+RTDB trägt nur noch Metadaten + `contentStoragePath`/`contentUrl`. Beim Öffnen lädt die
+App den Inhalt aus Storage nach (Ladeindikator) und rekonstruiert die Sektionen per
+deterministischem Re-Split (`lpSplit` mit gespeichertem `maxChunkWords`).
+**Abwärtskompatibel:** Alte, inline gespeicherte Dokumente (mit `sektionen[i].html`, ohne
+`contentStoragePath`) bleiben unverändert les-/öffenbar.
 
 - Der **Fortschritt** (`plan[i].done`, `einheitenErledigt`, `status`) wird von der
   App/Nutzer gesetzt (PATCH auf `docs/<docId>`), **nie** vom Daily-Workflow → kein Datenverlust.
@@ -96,10 +114,32 @@ bereinigten Body zurück (nur script/style entfernt).
    für jeden Rest-Slot noch ein Abschnitt übrig bleibt; der letzte Slot nimmt den Rest).
    → **kein Abschnitt geht verloren** (Summe der zugewiesenen Abschnitte = alle Abschnitte).
 
-**Fehlerzustände (App):** kein/leeres HTML → „Kein lesbarer Text“; > 2 MB → „Dokument zu
-gross“; Zieldatum leer → Hinweis; Zieldatum in der Vergangenheit/zu knapp → verständliche
-Meldung. Lade-/Leer-/Offline-Zustände sind abgedeckt (Skeleton, Leer-Notice, Offline-Banner
-bzw. „Cloud nicht erreichbar“ mit Retry).
+**Fehlerzustände (App):** kein/leeres HTML → „Kein lesbarer Text“; Zieldatum leer → Hinweis;
+Zieldatum in der Vergangenheit/zu knapp → verständliche Meldung. **Keine feste
+Grössenbeschränkung mehr** — grosse Dokumente gehen nach Storage (siehe §1). **Upload-/
+Download-Fehler** (Netzwerk, Storage-Regeln, Auth) werden abgefangen und als klare deutsche
+Meldung gezeigt (Toast + Status-/Fehlerzeile bzw. Fehlermeldung im Leseeinheit-iframe); bei
+Upload-Abbruch bleibt das Formular erhalten (**kein Datenverlust**), eine bereits
+hochgeladene Storage-Datei wird bei DB-Fehler wieder entfernt (kein Waise). Lade-/Leer-/
+Offline-Zustände sind abgedeckt (Skeleton, Leer-Notice, Offline-Banner, Ladeindikator beim
+Storage-Download bzw. „Cloud nicht erreichbar“ mit Retry).
+
+**Firebase Storage — Security Rules & CORS:** Uploads/Downloads laufen für den im
+Drive-Modul angemeldeten Nutzer. Der Storage-Pfad ist `leseplan/<uid>/<docId>.html`. Nötige
+Storage-Regel (falls nicht bereits durch eine breitere Regel abgedeckt):
+```
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /leseplan/{userId}/{file=**} {
+      allow read: if request.auth != null;                               // App-weit geteilt (docs liegen offen in der RTDB)
+      allow write: if request.auth != null && request.auth.uid == userId; // nur Eigentümer schreibt
+    }
+  }
+}
+```
+CORS des Buckets muss den App-Origin für `GET`/`PUT`/`POST` erlauben — bereits in
+`firebase/cors.json` (`https://management-xo2-pro.netlify.app`) hinterlegt.
 
 ---
 
@@ -111,7 +151,9 @@ Route `#/leseplan` (Nav-Eintrag `📖`, auch in der Apps-Kachelübersicht). Vier
   (self-contained HTML in isoliertem iframe, Scripts entfernt), optionaler KI-Aufbereitung,
   „✓ Als gelesen markieren“ und Plan-Übersicht.
 - **Neues Dokument:** Titel (optional), Zieldatum, HTML-Inhalt (einfügen oder `.html`-Datei
-  wählen) → Aufteilung + Plan client-seitig, Speicherung nach `leseplan/docs/<docId>`.
+  wählen — **ohne feste Grössengrenze**) → Aufteilung + Plan client-seitig, Speicherung nach
+  `leseplan/docs/<docId>`; grosse Dokumente zusätzlich als Datei in Firebase Storage (mit
+  Fortschritts-/Statusanzeige, mobil ≤ 360 px lesbar).
 - **Aufbereitungs-Prompt:** der sichtbare, **kopierbare** Prompt (Wortlaut siehe §6).
 - **Einstellungen:** `wordsPerMinute`, `minMinutesPerUnit`, Zeitzone; Anzeige der
   `aufbereitenWebhookUrl`.
@@ -155,6 +197,13 @@ nur der Anthropic-Node nutzt das bestehende Header-Auth-Credential
    (`datum ≤ heute`), noch nicht erledigte und noch nicht aufbereitete Einheit → Anthropic
    erzeugt kurze `zusammenfassung` + `kernpunkte` → PATCH
    `leseplan/aufbereitung/<docId>/<index>`. Der Fortschritt (`done`) wird **nicht** verändert.
+
+> **Hinweis (optional, grosse Dokumente):** Die Daily-KI-Aufbereitung liest den Text aus
+> `sektionen[i].html`. Für nach Storage **ausgelagerte** Dokumente (`contentStoragePath`
+> gesetzt, kein Inline-`html`) müsste der Workflow den Inhalt zusätzlich aus Storage laden.
+> Da die App auch ganz ohne diese optionale Aufbereitung vollständig funktioniert, ist dies
+> keine Voraussetzung für den Leseplan; die Storage-Erweiterung des Workflows ist ein
+> separater, optionaler Folgeschritt.
 
 ### Import-/Konfig-Anleitung
 1. n8n → **Workflows → Import from File** → `n8n/leseplan.workflow.json`.
