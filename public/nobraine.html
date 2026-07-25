@@ -1107,7 +1107,7 @@ function renderKopf() {
     aktionEl.innerHTML = '<button class="btn-primaer" data-action="habit-neu">＋ Gewohnheit</button>';
   } else {
     titelEl.innerHTML = "<h1>Einkaufsliste</h1><div class='unter'>Woche " + esc(weekKeyOf(S.weekMonday)) + "</div>";
-    aktionEl.innerHTML = "";
+    aktionEl.innerHTML = '<button class="btn-primaer" data-action="einkauf-pdf">⤓ Als PDF herunterladen</button>';
   }
 }
 
@@ -1928,6 +1928,86 @@ async function einkaufErledigteLoeschen() {
   await db.ref(shopPath(wk)).update(updates);
   toast("Erledigte Einträge entfernt");
 }
+// Exportiert die aktuell angezeigte, aggregierte Einkaufsliste als PDF.
+// Bewusst ohne zusätzliche PDF-Bibliothek: ein sauberes Druck-Layout in einem
+// unsichtbaren iframe + window.print() (Browser-Dialog „Als PDF speichern").
+// Datenquelle ist dieselbe wie das UI (einkaufAggregiert) — nur echte Einträge
+// der gewählten Woche, gelöschte sind nicht enthalten.
+function einkaufPdf() {
+  const items = einkaufAggregiert();
+  if (!items.length) { toast("Die Einkaufsliste ist leer — nichts zu exportieren."); return; }
+
+  const wk = weekKeyOf(S.weekMonday);
+  const tage = tageDerWoche(S.weekMonday);
+  const zeitraum = fmtKurz(tage[0]) + " – " + fmtKurz(tage[6]);
+  const g = S.generation || {};
+  const generiert = g.finishedAt ? fmtLang(g.finishedAt) : null;
+  const gedruckt = fmtLang(new Date());
+
+  function mengeText(x) {
+    if (x.unbekannt) return "";
+    if (x.menge != null && x.menge !== 0) return (mengeStr(x.menge) + " " + (x.einheit || "")).trim();
+    return x.einheit || "";
+  }
+  function zeile(x) {
+    return '<li class="' + (x.checked ? "erledigt" : "") + '">' +
+      '<span class="box">' + (x.checked ? "☑" : "☐") + "</span>" +
+      '<span class="nm">' + esc(x.name) + "</span>" +
+      '<span class="mg">' + esc(mengeText(x)) + "</span>" +
+    "</li>";
+  }
+
+  const offen = items.filter(function (x) { return !x.checked; });
+  const erledigt = items.filter(function (x) { return x.checked; });
+
+  let body = '<ul class="liste">' +
+    (offen.length ? offen.map(zeile).join("") : '<li class="leer">Alles erledigt.</li>') + "</ul>";
+  if (erledigt.length) {
+    body += '<h2>Erledigt · ' + erledigt.length + "</h2>" +
+      '<ul class="liste">' + erledigt.map(zeile).join("") + "</ul>";
+  }
+
+  const meta = "Woche " + esc(wk) + " · " + esc(zeitraum) +
+    (generiert ? " · generiert " + esc(generiert) : "");
+
+  const doc = '<!doctype html><html lang="de"><head><meta charset="utf-8">' +
+    "<title>Einkaufsliste " + esc(wk) + "</title><style>" +
+    "@page { size: A4; margin: 18mm 16mm; }" +
+    "* { box-sizing: border-box; }" +
+    'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1c1a17; margin: 0; }' +
+    "h1 { font-size: 24px; margin: 0 0 4px; }" +
+    ".meta { color: #6b655d; font-size: 12px; margin: 0 0 2px; }" +
+    ".gedruckt { color: #9a938a; font-size: 10.5px; margin: 0 0 18px; }" +
+    "h2 { font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: #6b655d; margin: 22px 0 8px; border-top: 1px solid #e5e0d8; padding-top: 12px; }" +
+    "ul.liste { list-style: none; margin: 0; padding: 0; }" +
+    "ul.liste li { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px solid #eee9e1; font-size: 14px; }" +
+    "li .box { font-size: 15px; line-height: 1; }" +
+    "li .nm { flex: 1; }" +
+    "li .mg { color: #4a453e; font-variant-numeric: tabular-nums; white-space: nowrap; }" +
+    "li.erledigt .nm, li.erledigt .mg { color: #a49c92; text-decoration: line-through; }" +
+    "li.leer { color: #6b655d; border: 0; }" +
+    "</style></head><body>" +
+    "<h1>Einkaufsliste</h1>" +
+    '<p class="meta">' + meta + "</p>" +
+    '<p class="gedruckt">Gedruckt am ' + esc(gedruckt) + "</p>" +
+    body +
+    "</body></html>";
+
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+  iframe.onload = function () {
+    const win = iframe.contentWindow;
+    if (!win) { iframe.remove(); toast("PDF-Export nicht möglich."); return; }
+    setTimeout(function () {
+      win.focus();
+      win.print();
+      setTimeout(function () { iframe.remove(); }, 1000);
+    }, 50);
+  };
+  iframe.srcdoc = doc;
+  document.body.appendChild(iframe);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AKTIONEN — Rezept anlegen / bearbeiten / löschen
@@ -2084,6 +2164,7 @@ document.addEventListener("click", function (e) {
     case "einkauf-toggle":  einkaufToggle(el); break;
     case "einkauf-loeschen": einkaufLoeschen(el.getAttribute("data-key")); break;
     case "einkauf-erledigt-loeschen": einkaufErledigteLoeschen(); break;
+    case "einkauf-pdf":     einkaufPdf(); break;
 
     case "drawer-schliessen": drawerSchliessen(); break;
     case "modal-schliessen":  modalSchliessen(); break;
