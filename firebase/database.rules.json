@@ -1,6 +1,5 @@
 {
   "rules": {
-
     "appStore": {
       ".read": "auth != null",
       ".write": "auth != null"
@@ -9,11 +8,12 @@
       ".read": "auth != null",
       ".write": "auth != null"
     },
-
     "driveInbox": {
       ".read": true,
       ".write": true,
-      ".indexOn": ["status"]
+      ".indexOn": [
+        "status"
+      ]
     },
     "communicator_inbox": {
       ".read": true,
@@ -23,42 +23,55 @@
       ".read": true,
       ".write": true
     },
-
     "nobraine": {
       ".read": true,
       ".write": true,
       "recipes": {
-        ".indexOn": ["kategorie", "lastUsed"]
+        ".indexOn": [
+          "kategorie",
+          "lastUsed"
+        ]
       }
     },
-
     "samsparking": {
+      "gate": {
+        ".read": false,
+        ".write": false
+      },
+      "session": {
+        "$uid": {
+          ".read": false,
+          ".write": "auth != null && auth.uid === $uid && (!newData.exists() || (root.child('samsparking/gate/pw').exists() && newData.child('pw').val() === root.child('samsparking/gate/pw').val()))"
+        }
+      },
       "content": {
         ".read": true,
-        ".write": "auth != null"
+        ".write": "auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val()"
       },
       "media": {
         ".read": true,
-        ".write": "auth != null"
+        ".write": "auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val()"
       },
       "versions": {
-        ".read": "auth != null",
-        ".write": "auth != null"
+        ".read": "auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val()",
+        ".write": "auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val()"
       },
       "config": {
-        ".read": "auth != null",
-        ".write": "auth != null"
+        ".read": "auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val()",
+        ".write": "auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val()"
       },
       "inquiries": {
-        ".read": "auth != null",
-        ".indexOn": ["status", "createdAt"],
+        ".read": "auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val()",
+        ".indexOn": [
+          "status",
+          "createdAt"
+        ],
         "$id": {
-          ".write": "auth != null || !data.exists()",
+          ".write": "!data.exists() || (auth != null && root.child('samsparking/gate/pw').exists() && root.child('samsparking/session').child(auth.uid).child('pw').val() === root.child('samsparking/gate/pw').val())",
           ".validate": "newData.hasChildren(['name','email','createdAt']) && newData.child('name').isString() && newData.child('name').val().length >= 2 && newData.child('name').val().length <= 120 && newData.child('email').isString() && newData.child('email').val().length <= 160 && newData.child('email').val().matches(/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/) && newData.child('createdAt').isString() && (!newData.child('message').exists() || (newData.child('message').isString() && newData.child('message').val().length <= 4000)) && (!newData.child('event').exists() || newData.child('event').val().length <= 200) && (!newData.child('city').exists() || newData.child('city').val().length <= 120)"
         }
       }
     },
-
     "$andere": {
       ".read": true,
       ".write": true
