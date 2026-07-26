@@ -32,6 +32,33 @@
       }
     },
 
+    "samsparking": {
+      "content": {
+        ".read": true,
+        ".write": "auth != null"
+      },
+      "media": {
+        ".read": true,
+        ".write": "auth != null"
+      },
+      "versions": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      },
+      "config": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      },
+      "inquiries": {
+        ".read": "auth != null",
+        ".indexOn": ["status", "createdAt"],
+        "$id": {
+          ".write": "auth != null || !data.exists()",
+          ".validate": "newData.hasChildren(['name','email','createdAt']) && newData.child('name').isString() && newData.child('name').val().length >= 2 && newData.child('name').val().length <= 120 && newData.child('email').isString() && newData.child('email').val().length <= 160 && newData.child('email').val().matches(/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/) && newData.child('createdAt').isString() && (!newData.child('message').exists() || (newData.child('message').isString() && newData.child('message').val().length <= 4000)) && (!newData.child('event').exists() || newData.child('event').val().length <= 200) && (!newData.child('city').exists() || newData.child('city').val().length <= 120)"
+        }
+      }
+    },
+
     "$andere": {
       ".read": true,
       ".write": true

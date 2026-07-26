@@ -1,8 +1,13 @@
 [
   {
-    "origin": ["https://management-xo2-pro.netlify.app"],
+    "origin": [
+      "https://management-xo2-pro.netlify.app",
+      "https://verwaltung-djsamsparkling.netlify.app",
+      "http://localhost:8080",
+      "http://127.0.0.1:8080"
+    ],
     "method": ["GET", "PUT", "POST", "DELETE", "HEAD"],
-    "responseHeader": ["Content-Type"],
+    "responseHeader": ["Content-Type", "Authorization", "Content-Length", "User-Agent", "x-goog-resumable"],
     "maxAgeSeconds": 3600
   }
 ]
