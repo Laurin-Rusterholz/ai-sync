@@ -1327,9 +1327,29 @@ function viewBibliothek() {
   return html;
 }
 
+// ── Einkaufslisten-Filter: Gewuerze & Kleinstmengen ───────────────────────
+// Gewuerze/Grundzutaten und Kleinmengen-Einheiten hat man normalerweise zuhause
+// und gehoeren NICHT auf die Einkaufsliste (die Rezepte selbst behalten alles).
+// Identisch mit dem jeweils anderen Ort (n8n-Aggregat-Node bzw. Frontend nobraine.html) - bei Aenderung BEIDE anpassen.
+const EK_FILTER_EINHEITEN = ['el', 'tl', 'prise', 'prisen', 'msp', 'messerspitze', 'nach geschmack', 'etwas', 'spritzer', 'n. b.', 'nach belieben'];
+const EK_FILTER_NAMEN = ['salz', 'pfeffer', 'zucker', 'oel', 'öl', 'olivenoel', 'olivenöl', 'essig', 'balsamico', 'chili', 'chiliflocken', 'paprikapulver', 'currypulver', 'curry', 'kurkuma', 'kreuzkuemmel', 'kreuzkümmel', 'kuemmel', 'kümmel', 'muskat', 'zimt', 'oregano', 'thymian', 'rosmarin', 'majoran', 'lorbeer', 'senfpulver', 'knoblauchpulver', 'zwiebelpulver', 'backpulver', 'natron', 'vanillezucker'];
+const EK_FILTER_NAMEN_GETROCKNET = ['basilikum', 'petersilie'];
+const EK_FILTER_AUSNAHMEN = ['zuckerschote', 'zuckererbse', 'zuckermais', 'zuckerhut', 'zuckermelone'];
+function ekAusschluss(name, einheit) {
+  const e = String(einheit == null ? '' : einheit).toLowerCase().trim();
+  if (EK_FILTER_EINHEITEN.indexOf(e) > -1) return true;
+  const n = String(name == null ? '' : name).toLowerCase();
+  for (let i = 0; i < EK_FILTER_AUSNAHMEN.length; i++) { if (n.indexOf(EK_FILTER_AUSNAHMEN[i]) > -1) return false; }
+  for (let i = 0; i < EK_FILTER_NAMEN.length; i++) { if (n.indexOf(EK_FILTER_NAMEN[i]) > -1) return true; }
+  if (n.indexOf('getrocknet') > -1) { for (let i = 0; i < EK_FILTER_NAMEN_GETROCKNET.length; i++) { if (n.indexOf(EK_FILTER_NAMEN_GETROCKNET[i]) > -1) return true; } }
+  return false;
+}
+
 // ── Einkaufsliste ─────────────────────────────────────────────────────────
 // Aggregiert alle Zutaten der Wochen-Rezepte (dedupliziert nach Name+Einheit),
 // summiert Mengen, mischt manuell ergänzte Einträge und persistierte Check-Zustände.
+// Gewuerze/Kleinstmengen (ekAusschluss) werden aus den Rezept-Zutaten NICHT in die
+// Liste uebernommen; manuell ergaenzte Eintraege bleiben immer erhalten.
 function einkaufAggregiert() {
   const agg = {}; // key -> { name, einheit, menge(nummerisch|null), stk, checked, manuell }
   // 1) aus dem Wochenplan
@@ -1339,6 +1359,7 @@ function einkaufAggregiert() {
       const r = S.recipes[tagPlan[slotKey]];
       if (!r || !r.zutaten) return;
       r.zutaten.forEach(function (z) {
+        if (ekAusschluss(z.name, z.einheit)) return; // Gewuerze/Kleinstmengen: nicht auf die Einkaufsliste
         const key = "auto_" + slug(z.name) + "__" + slug(z.einheit || "");
         if (!agg[key]) agg[key] = { name: z.name, einheit: z.einheit || "", menge: 0, unbekannt: false, checked: false, manuell: false, key: key };
         const n = num(z.menge);
