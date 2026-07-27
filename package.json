@@ -4,6 +4,11 @@
   "description": "Quantus — personal management app (Netlify functions backend)",
   "private": true,
   "type": "module",
+  "scripts": {
+    "backup": "node scripts/backup-blob.mjs",
+    "restore": "node scripts/backup-blob.mjs --restore",
+    "test:backup": "node scripts/backup-blob.test.mjs"
+  },
   "dependencies": {
     "@netlify/blobs": "^10.7.9",
     "pdf-lib": "^1.17.1"

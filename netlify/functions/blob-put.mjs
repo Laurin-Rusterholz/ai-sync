@@ -3,14 +3,19 @@ import { getStore } from "@netlify/blobs";
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, If-Match, If-None-Match",
   "Access-Control-Expose-Headers": "ETag"
 };
+
+// Obergrenze fuer einen Datenstand: schuetzt den Blob-Store vor versehentlich
+// riesigen Uploads (z. B. eingebettete Binaerdaten) — der normale App-Datenstand
+// liegt weit darunter.
+const MAX_BODY_BYTES = 20 * 1024 * 1024;
 
 export default async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "PUT" && req.method !== "POST") {
-    return Response.json({ error: "Method not allowed" }, { status: 405, headers: cors });
+    return Response.json({ error: "Method not allowed" }, { status: 405, headers: { ...cors, "Allow": "PUT, POST, OPTIONS" } });
   }
 
   const key = new URL(req.url).searchParams.get("key");
@@ -26,6 +31,13 @@ export default async (req) => {
 
   try {
     const body = await req.text();
+    const bodyBytes = new TextEncoder().encode(body).length;
+    if (bodyBytes > MAX_BODY_BYTES) {
+      return Response.json(
+        { error: "Payload too large", size: bodyBytes, max: MAX_BODY_BYTES },
+        { status: 413, headers: cors }
+      );
+    }
     try { JSON.parse(body); } catch (e) { return Response.json({ error: "Invalid JSON" }, { status: 400, headers: cors }); }
 
     const store = getStore("app-sync");
@@ -40,9 +52,16 @@ export default async (req) => {
     }
 
     await store.set(key, body);
-    const saved = await store.getWithMetadata(key, { type: "text" });
-    const newEtag = saved.etag || String(Date.now());
-    return Response.json({ ok: true, key: key, etag: newEtag }, {
+
+    // Die ETag-Nachlese ist nur Komfort: Schlaegt sie fehl, ist der Datenstand
+    // trotzdem gespeichert — dann antworten wir mit einem Ersatzwert statt 500.
+    let newEtag = String(Date.now());
+    try {
+      const saved = await store.getWithMetadata(key, { type: "text" });
+      if (saved && saved.etag) newEtag = saved.etag;
+    } catch (e) { /* Speichern war erfolgreich; ETag ist best effort */ }
+
+    return Response.json({ ok: true, key: key, etag: newEtag, size: bodyBytes }, {
       status: 200,
       headers: { ...cors, "ETag": newEtag },
     });
