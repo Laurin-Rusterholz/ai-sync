@@ -6255,6 +6255,9 @@ function buildRemoteAppPayload() {
   // Tombstones mitsenden, damit echte Löschungen über alle Geräte propagieren
   // (sonst "Geister-Wiederauferstehung" gelöschter Items auf Geräten ohne Tombstone).
   try { payload._deleteLog = getDeleteLog(); } catch(e) {}
+  // Auto-Antwort-Konfiguration immer mitsenden (auch bei Legacy-Ständen ohne Feld),
+  // damit sie über alle Geräte synchron bleibt.
+  try { payload.mailAutoReply = normalizeMailAutoReply(payload.mailAutoReply); } catch(e) {}
   if (!payload.meta) payload.meta = {};
   payload.meta.updatedAt = new Date().toISOString();
   payload.meta.lastSavedBy = getOrCreateDeviceId();
@@ -9151,6 +9154,29 @@ function emptyData() {
   };
 }
 
+// ── Automatische Mail-Antworten (Konfiguration) ──────────────────────────────
+// Wird im Gmail-Modul bearbeitet, über buildRemoteAppPayload gesynct und in die
+// RTDB (/mailAutoReply) gespiegelt, damit der n8n-Workflow sie lesen kann.
+// Rein defensiv: fehlende/kaputte Legacy-Stände ergeben immer gültige Defaults.
+const MAIL_AUTOREPLY_DEFAULT_TEXT =
+  "Vielen Dank für Ihre Nachricht.\n\n" +
+  "Ich habe Ihre E-Mail erhalten und melde mich so bald wie möglich persönlich bei Ihnen.\n\n" +
+  "Freundliche Grüsse";
+function normalizeMailAutoReply(raw) {
+  const c = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {};
+  const str = (v, fallback) => (typeof v === "string" ? v : (v == null ? fallback : String(v)));
+  return {
+    textEnabled: c.textEnabled === true,
+    textBody: str(c.textBody, MAIL_AUTOREPLY_DEFAULT_TEXT).slice(0, 8000),
+    aiEnabled: c.aiEnabled === true,
+    // Auto-Senden ist bewusst opt-in: alles andere als explizit true bleibt Entwurfsmodus.
+    aiAutoSend: c.aiAutoSend === true,
+    aiInstructions: str(c.aiInstructions, "").slice(0, 4000),
+    updatedAt: Number(c.updatedAt) > 0 ? Number(c.updatedAt) : 0,
+  };
+}
+window.normalizeMailAutoReply = normalizeMailAutoReply;
+window.MAIL_AUTOREPLY_DEFAULT_TEXT = MAIL_AUTOREPLY_DEFAULT_TEXT;
 function normalizeData(data) {
   const d = data && typeof data === "object" ? data : emptyData();
   
@@ -9160,7 +9186,10 @@ function normalizeData(data) {
   
   // Ensure mobilePushes Array (für Mobile-Journal-App)
   if (!Array.isArray(d.mobilePushes)) d.mobilePushes = [];
-  
+
+  // Ensure mailAutoReply (Automatische Antworten — Gmail-Modul + n8n)
+  d.mailAutoReply = normalizeMailAutoReply(d.mailAutoReply);
+
   // Ensure entities
   d.entities = d.entities || {};
   const e = d.entities;
@@ -98163,6 +98192,36 @@ console.log('📚 Leseliste geladen');
 .gmlc-iconbtn:hover { background:var(--hover); color:var(--text); }
 .gmlc-iconbtn svg { width:18px; height:18px; display:block; }
 .gmlc-iconbtn.gmlc-discard:hover { color:var(--danger); border-color:var(--danger); }
+
+/* ── Automatische Antworten (Abwesenheit & KI-Antwort) ── */
+.gml-ar { display:flex; flex-direction:column; gap:14px; padding:14px 16px 20px; max-width:760px; }
+.gml-ar-card { border:1px solid var(--border); border-radius:12px; padding:14px 16px; background:var(--panel2,rgba(127,127,127,.04)); }
+.gml-ar-card.on { border-color:color-mix(in srgb, var(--accent) 40%, var(--border)); background:color-mix(in srgb, var(--accent) 6%, transparent); }
+.gml-ar-head { display:flex; align-items:flex-start; gap:12px; }
+.gml-ar-head-txt { flex:1; min-width:0; }
+.gml-ar-title { font-weight:700; font-size:14.5px; color:var(--text); display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.gml-ar-desc { font-size:12.5px; color:var(--muted); line-height:1.55; margin-top:3px; }
+.gml-ar-sw { flex-shrink:0; width:46px; height:26px; border-radius:99px; border:1px solid var(--border); background:var(--hover); cursor:pointer; padding:0; position:relative; transition:background .15s, border-color .15s; }
+.gml-ar-sw::after { content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:var(--muted); transition:transform .15s, background .15s; }
+.gml-ar-sw[aria-checked="true"] { background:var(--accent); border-color:var(--accent); }
+.gml-ar-sw[aria-checked="true"]::after { transform:translateX(20px); background:#fff; }
+.gml-ar-sw:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.gml-ar-body { margin-top:12px; display:flex; flex-direction:column; gap:9px; }
+.gml-ar-label { font-size:12px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--text2); }
+.gml-ar-ta { width:100%; box-sizing:border-box; min-height:130px; resize:vertical; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--panel); color:var(--text); font-family:inherit; font-size:13.5px; line-height:1.6; outline:none; }
+.gml-ar-ta.short { min-height:70px; }
+.gml-ar-ta:focus { border-color:var(--accent); }
+.gml-ar-ta::placeholder { color:var(--muted); }
+.gml-ar-sub { margin-top:12px; padding:11px 13px; border-radius:10px; border:1px dashed var(--border); display:flex; align-items:flex-start; gap:12px; }
+.gml-ar-sub.on { border-style:solid; border-color:color-mix(in srgb, var(--danger,#ff453a) 45%, var(--border)); background:color-mix(in srgb, var(--danger,#ff453a) 7%, transparent); }
+.gml-ar-warn { margin-top:9px; font-size:12.5px; line-height:1.55; padding:9px 11px; border-radius:9px; border:1px solid color-mix(in srgb, var(--danger,#ff453a) 40%, var(--border)); background:color-mix(in srgb, var(--danger,#ff453a) 9%, transparent); color:var(--text); }
+.gml-ar-note { font-size:12.5px; color:var(--muted); line-height:1.6; padding:11px 13px; border-radius:10px; border:1px solid var(--border); background:var(--panel2,rgba(127,127,127,.04)); }
+.gml-ar-note code { font-size:11.5px; padding:1px 5px; border-radius:5px; background:var(--hover); }
+.gml-ar-pill { font-size:11px; font-weight:700; padding:2px 9px; border-radius:99px; background:var(--hover); color:var(--muted); white-space:nowrap; }
+.gml-ar-pill.on { background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent); }
+.gml-ar-pill.warn { background:color-mix(in srgb, var(--danger,#ff453a) 16%, transparent); color:var(--danger,#ff453a); }
+.gml-ar-saved { font-size:11.5px; color:var(--muted); }
+
 @media (max-width:700px){
   .modal:has(.gml-compose-modal) { width:96vw; height:90vh; }
   .gmlc-label { width:48px; font-size:12px; }
@@ -98175,6 +98234,12 @@ console.log('📚 Leseliste geladen');
   .gml-row-who { width:120px; }
   .gml-row-date { width:56px; }
   .gml-msgmeta { flex-wrap:wrap; }
+  .gml-ar { padding:12px 12px 18px; max-width:100%; }
+  .gml-ar-card { padding:12px 13px; }
+  .gml-ar-head { gap:10px; }
+  .gml-ar-title { font-size:14px; }
+  .gml-ar-ta { font-size:16px; }   /* verhindert iOS-Zoom beim Fokus */
+  .gml-ar-sub { flex-wrap:wrap; }
 }
 </style>
 
@@ -98556,6 +98621,7 @@ console.log('📚 Leseliste geladen');
       + '<div class="gml-nav-sep">Assistent</div>'
       + navBtn(GM.smart==="tasksuggest","📋","Aufgaben-Vorschläge","gmailSelectSmart('tasksuggest')", (GM.taskSuggestions&&GM.taskSuggestions.length)||0)
       + navBtn(GM.smart==="orgsuggest","💡","Vorschläge","gmailSelectSmart('orgsuggest')", (GM.orgSuggestions&&GM.orgSuggestions.length)||0)
+      + navBtn(GM.smart==="autoreply","🤖","Auto-Antwort","gmailSelectSmart('autoreply')", arActiveBadge())
       + '<div class="gml-nav-sep">Verwaltung</div>'
       + navBtn(GM.smart==="blocked","⛔","Blockiert","gmailSelectSmart('blocked')");
   }
@@ -100284,7 +100350,7 @@ console.log('📚 Leseliste geladen');
     toast("ok","Getrennt","Google-Konto wurde getrennt");
     rerender();
   };
-  window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); GM._classLoaded=false; loadClassifications(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else if(GM.smart==="tasksuggest") loadTaskSuggestions(); else if(GM.smart==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
+  window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); GM._classLoaded=false; loadClassifications(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else if(GM.smart==="tasksuggest") loadTaskSuggestions(); else if(GM.smart==="orgsuggest") loadOrgSuggestions(); else if(GM.smart==="autoreply") rerender(); else loadMessages(true); };
   window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.smart=null; GM.open=null; loadMessages(true); };
   // Neues echtes Gmail-Label anlegen — nutzt den bestehenden Erstell-Pfad (ensureLabel →
   // gmApi POST /users/me/labels). Der OAuth-Scope gmail.modify deckt das bereits ab; kein
@@ -100299,7 +100365,7 @@ console.log('📚 Leseliste geladen');
       rerender();
     } catch(e){ toast('err','Fehler', e.message||'Label konnte nicht erstellt werden'); }
   };
-  window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else if(s==="tasksuggest") loadTaskSuggestions(); else if(s==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
+  window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else if(s==="tasksuggest") loadTaskSuggestions(); else if(s==="orgsuggest") loadOrgSuggestions(); else if(s==="autoreply") rerender(); else loadMessages(true); };
   window.gmailOpenMessage = function(id){ openMessageById(id); };
   window.gmailBackToList = function(){ GM.open=null; rerender(); };
   window.gmailLoadMore = function(){ loadMessages(false); };
@@ -101383,8 +101449,155 @@ console.log('📚 Leseliste geladen');
   };
 
   // Dispatch für den Hauptbereich (inkl. der neuen Vorschlags-Ansichten).
+  // ════════════════════════════════════════════════════════════════════
+  //  Automatische Antworten — „Abwesenheit & KI-Antwort"
+  //  ---------------------------------------------------------------------
+  //  Reine KONFIGURATION. Diese App sendet hier nichts automatisch; sie legt
+  //  nur fest, was der n8n-Workflow mit eingehenden Mails tun soll:
+  //    (A) fester Abwesenheits-Text  → mailAutoReply.textEnabled/textBody
+  //    (B) KI-Antwort                → mailAutoReply.aiEnabled
+  //        Standard = ENTWURF: der Workflow legt den Entwurf unter
+  //        /gmailDrafts ab, wo ihn die Ansicht „🤖 KI-Entwürfe" zur Freigabe
+  //        anzeigt. Echtes Auto-Senden erst nach bewusstem aiAutoSend=true.
+  //  Persistenz: APP.state.data.mailAutoReply (scheduleSave → Blob-Sync) und
+  //  zusätzlich gespiegelt nach RTDB /mailAutoReply, damit n8n sie lesen kann
+  //  (gleiches Muster wie publishOrgMail / orgMailInstructions).
+  // ════════════════════════════════════════════════════════════════════
+  function arCfg(){
+    try {
+      var d = window.APP && APP.state && APP.state.data;
+      if (!d) return (typeof window.normalizeMailAutoReply==="function") ? window.normalizeMailAutoReply(null) : { textEnabled:false, textBody:"", aiEnabled:false, aiAutoSend:false, aiInstructions:"", updatedAt:0 };
+      // Legacy-Stände ohne Feld (oder mit kaputtem Wert) defensiv reparieren.
+      if (!d.mailAutoReply || typeof d.mailAutoReply!=="object" || Array.isArray(d.mailAutoReply)){
+        d.mailAutoReply = (typeof window.normalizeMailAutoReply==="function") ? window.normalizeMailAutoReply(d.mailAutoReply) : { textEnabled:false, textBody:"", aiEnabled:false, aiAutoSend:false, aiInstructions:"", updatedAt:0 };
+      }
+      return d.mailAutoReply;
+    } catch(e){ return { textEnabled:false, textBody:"", aiEnabled:false, aiAutoSend:false, aiInstructions:"", updatedAt:0 }; }
+  }
+  // Badge in der Navigation: zeigt, ob überhaupt eine Automatik scharf ist.
+  function arActiveBadge(){ var c=arCfg(); return (c.aiEnabled||c.textEnabled) ? "AN" : 0; }
+  // Spiegel in die RTDB — best effort, blockiert die UI nie.
+  function publishMailAutoReply(){
+    var c = arCfg();
+    try {
+      rtdbPatch("mailAutoReply", {
+        textEnabled: !!c.textEnabled,
+        textBody: String(c.textBody||""),
+        aiEnabled: !!c.aiEnabled,
+        aiAutoSend: !!c.aiAutoSend,
+        aiInstructions: String(c.aiInstructions||""),
+        updatedAt: c.updatedAt || Date.now(),
+      });
+    } catch(e){ /* still — die lokale Konfiguration ist bereits gespeichert */ }
+  }
+  function arSave(){
+    var c = arCfg();
+    c.updatedAt = Date.now();
+    try { if (typeof window.scheduleSave==="function") window.scheduleSave(); } catch(e){}
+    publishMailAutoReply();
+    try {
+      var el = document.getElementById("gmlArSaved");
+      if (el) el.textContent = "✓ Gespeichert " + new Date(c.updatedAt).toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"});
+    } catch(e){}
+  }
+  // Umschalter. aiAutoSend ist nur sinnvoll, wenn die KI-Antwort aktiv ist;
+  // beim Ausschalten von aiEnabled fällt Auto-Senden daher zurück auf AUS.
+  window.gmailArToggle = function(field){
+    var c = arCfg();
+    if (field==="aiAutoSend" && !c.aiEnabled) return;
+    c[field] = !c[field];
+    if (field==="aiEnabled" && !c.aiEnabled) c.aiAutoSend = false;
+    if (field==="aiAutoSend" && c.aiAutoSend){
+      if (!confirm("Auto-Senden aktivieren?\n\nEingehende Mails werden dann OHNE deine Freigabe von der KI beantwortet und wirklich versendet. Ohne diese Option erstellt die KI nur Entwürfe zur Prüfung.")){
+        c.aiAutoSend = false; arSave(); rerender(); return;
+      }
+    }
+    arSave();
+    rerender();
+  };
+  // Textfelder: speichern beim Verlassen/Ändern (kein rerender → Cursor bleibt).
+  window.gmailArText = function(field, value){
+    var c = arCfg();
+    var max = (field==="textBody") ? 8000 : 4000;
+    c[field] = String(value==null?"":value).slice(0, max);
+    arSave();
+  };
+  window.gmailArResetText = function(){
+    if (!confirm("Antworttext auf den Standardtext zurücksetzen?")) return;
+    var c = arCfg();
+    c.textBody = (typeof window.MAIL_AUTOREPLY_DEFAULT_TEXT==="string") ? window.MAIL_AUTOREPLY_DEFAULT_TEXT : "Vielen Dank für Ihre Nachricht.";
+    arSave();
+    rerender();
+  };
+  function arSwitch(field, on, label, disabled){
+    return '<button class="gml-ar-sw" role="switch" aria-checked="'+(on?"true":"false")+'" aria-label="'+esc(label)+'"'
+      + (disabled?' disabled title="Zuerst „KI beantwortet eingehende Mails" aktivieren"':'')
+      + ' onclick="gmailArToggle(\''+field+'\')"></button>';
+  }
+  function renderAutoReplyPane(){
+    var c = arCfg();
+    var head = '<div class="gml-listhead"><span>🤖 Automatische Antworten</span>'
+      + '<span id="gmlArSaved" class="gml-ar-saved">'+(c.updatedAt?('Zuletzt geändert: '+esc(fmtDate(c.updatedAt))):'Noch nicht konfiguriert')+'</span></div>';
+
+    // (A) Fester Text
+    var textCard = '<div class="gml-ar-card'+(c.textEnabled?" on":"")+'">'
+      + '<div class="gml-ar-head">'
+      +   '<div class="gml-ar-head-txt">'
+      +     '<div class="gml-ar-title">✉️ Automatische Text-Antwort'
+      +       (c.textEnabled ? '<span class="gml-ar-pill on">aktiv</span>' : '<span class="gml-ar-pill">aus</span>')
+      +       (c.textEnabled && c.aiEnabled ? '<span class="gml-ar-pill warn">von KI-Modus überstimmt</span>' : '')
+      +     '</div>'
+      +     '<div class="gml-ar-desc">Beantwortet eingehende Mails mit dem unten hinterlegten, festen Text (Abwesenheitsnotiz). Läuft ohne KI.</div>'
+      +   '</div>'
+      +   arSwitch("textEnabled", c.textEnabled, "Automatische Text-Antwort ein- oder ausschalten")
+      + '</div>'
+      + '<div class="gml-ar-body">'
+      +   '<div class="gml-ar-label">Antworttext</div>'
+      +   '<textarea class="gml-ar-ta" id="gmlArTextBody" placeholder="Text, mit dem automatisch geantwortet wird…" onchange="gmailArText(\'textBody\', this.value)">'+esc(c.textBody||"")+'</textarea>'
+      +   '<div><button class="gml-mini" onclick="gmailArResetText()">↺ Standardtext einsetzen</button></div>'
+      + '</div>'
+      + '</div>';
+
+    // (B) KI-Antwort
+    var aiCard = '<div class="gml-ar-card'+(c.aiEnabled?" on":"")+'">'
+      + '<div class="gml-ar-head">'
+      +   '<div class="gml-ar-head-txt">'
+      +     '<div class="gml-ar-title">🤖 KI beantwortet eingehende Mails'
+      +       (c.aiEnabled ? '<span class="gml-ar-pill on">aktiv</span>' : '<span class="gml-ar-pill">aus</span>')
+      +       (c.aiEnabled ? (c.aiAutoSend ? '<span class="gml-ar-pill warn">sendet automatisch</span>' : '<span class="gml-ar-pill on">nur Entwürfe</span>') : '')
+      +     '</div>'
+      +     '<div class="gml-ar-desc">Standard ist der <strong>Entwurfsmodus</strong>: Die KI schreibt eine Antwort, die unter „🤖 KI-Entwürfe" zur Prüfung landet und erst nach deiner Freigabe gesendet wird. Ist dieser Modus aktiv, hat er Vorrang vor der festen Text-Antwort.</div>'
+      +   '</div>'
+      +   arSwitch("aiEnabled", c.aiEnabled, "KI-Antwort ein- oder ausschalten")
+      + '</div>'
+      + '<div class="gml-ar-body">'
+      +   '<div class="gml-ar-label">Anweisung / Ton für die KI (optional)</div>'
+      +   '<textarea class="gml-ar-ta short" id="gmlArInstr" placeholder="z. B. höflich, kurz, auf Deutsch; keine Zusagen zu Terminen machen" onchange="gmailArText(\'aiInstructions\', this.value)">'+esc(c.aiInstructions||"")+'</textarea>'
+      +   '<div class="gml-ar-desc">Zusätzlich gelten weiterhin die pro Organisation hinterlegten E-Mail-Anweisungen.</div>'
+      + '</div>'
+      + '<div class="gml-ar-sub'+(c.aiAutoSend?" on":"")+'">'
+      +   '<div class="gml-ar-head-txt">'
+      +     '<div class="gml-ar-title">📤 Automatisch senden (statt nur Entwurf)</div>'
+      +     '<div class="gml-ar-desc">Standard: AUS. Bleibt dieser Schalter aus, erstellt die KI ausschliesslich Entwürfe – es geht nichts ungeprüft raus.</div>'
+      +   '</div>'
+      +   arSwitch("aiAutoSend", c.aiAutoSend, "Automatisches Senden ein- oder ausschalten", !c.aiEnabled)
+      + '</div>'
+      + (c.aiEnabled && c.aiAutoSend
+          ? '<div class="gml-ar-warn">⚠️ <strong>Achtung:</strong> Antworten werden ohne deine Freigabe verschickt. Prüfe die Anweisungen oben sorgfältig.</div>'
+          : '')
+      + '</div>';
+
+    var note = '<div class="gml-ar-note">ℹ️ Quantus speichert hier nur die Konfiguration – das Beantworten selbst übernimmt der n8n-Workflow, '
+      + 'der diese Einstellungen aus <code>/mailAutoReply</code> (Firebase RTDB) liest. Die Einstellungen werden sofort gespeichert und auf alle Geräte synchronisiert.'
+      + (GM.status && GM.status.connected && GM.status.gmail ? '' : '<br>Hinweis: Dieses Gerät ist aktuell nicht mit Gmail verbunden – die Konfiguration lässt sich trotzdem speichern.')
+      + '</div>';
+
+    return head + '<div class="gml-ar">' + textCard + aiCard + note + '</div>';
+  }
+
   function renderMainPane(){
     if (GM.open||GM.openLoading) return renderMessageView();
+    if (GM.smart==="autoreply") return renderAutoReplyPane();
     if (GM.smart==="entwuerfe") return renderDraftsPane();
     if (GM.smart==="tasksuggest") return renderTaskSuggestPane();
     if (GM.smart==="orgsuggest") return renderOrgSuggestPane();
