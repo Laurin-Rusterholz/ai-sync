@@ -49,7 +49,11 @@ const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 // messages/<id>/attachments/<attachmentId> (GET, read-only) ergänzt — für Anhang-Inhalt
 // (Termin-Erkennung / Entwurfs-Kontext). Vom bestehenden Scope gmail.modify abgedeckt,
 // kein neuer OAuth-Scope, keine weiteren Pfade.
-const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify|\/attachments\/[^/?#]+)?)?|threads(\/[^/?#]+(\/modify)?)?|settings\/filters(\/[^/?#]+)?)$/;
+//   users.settings.getVacation    GET /users/me/settings/vacation   (Abwesenheitsnotiz
+//   users.settings.updateVacation PUT /users/me/settings/vacation    direkt aus den
+//                                 Quantus-Einstellungen; Scope gmail.settings.basic
+//                                 ist bereits Teil der bestehenden Verbindung.)
+const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify|\/attachments\/[^/?#]+)?)?|threads(\/[^/?#]+(\/modify)?)?|settings\/(filters(\/[^/?#]+)?|vacation))$/;
 
 async function callGoogle(method, fullUrl, bodyObj, token) {
   const init = {

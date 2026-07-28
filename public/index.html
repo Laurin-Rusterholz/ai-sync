@@ -61766,6 +61766,7 @@ async function init() {
     <div class="tab" data-tab="appearance">🎨 ${t("appearance")}</div>
     <div class="tab" data-tab="notes">📝 ${t("notes_settings")}</div>
     <div class="tab" data-tab="notifications">🔔 ${t("notifications")}</div>
+    <div class="tab" data-tab="gmail">📧 Gmail</div>
     <div class="tab" data-tab="workschedule">⏰ ${t("work_schedule")}</div>
     <div class="tab" data-tab="shortcuts">⌨️ ${t("shortcuts")}</div>
     <div class="tab" data-tab="security">🔒 Passwortschutz</div>
@@ -61792,6 +61793,24 @@ async function init() {
               </div>
               <div class="mini" style="color:var(--muted);margin-top:10px;font-size:11px;line-height:1.5">
                 <strong>Hinweis Import:</strong> Vorhandene Daten werden überschrieben. Auth-Token und Sync-URLs bleiben erhalten.
+              </div>
+            </div>
+
+            <div class="card" style="padding:14px;border:1px solid var(--accent-soft);margin-bottom:14px">
+              <div style="font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:14px">🔌 Verbindungen &amp; Live-Sync</div>
+              <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
+                Prüfe alle Konnektoren (Firebase, Netlify, Google) mit einem Klick — inklusive Antwortzeit.
+                Mit aktivem Live-Sync erscheinen Änderungen von anderen Geräten sofort, ohne auf den nächsten Abgleich zu warten.
+              </div>
+              <label class="col-12" style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <input type="checkbox" id="setLiveSync" ${APP.state.settings.storage?.liveSync !== false ? "checked" : ""} style="width:auto"
+                  onchange="window.toggleLiveSyncSetting(this.checked)" />
+                ⚡ Live-Synchronisation zwischen Geräten (Sofort-Updates)
+              </label>
+              <div id="connCheckList" class="mini" style="color:var(--muted);margin-bottom:10px">Noch kein Test ausgeführt.</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="btn primary" onclick="window.runConnectionChecks()">🔍 Verbindungen testen</button>
+                <button type="button" class="btn" onclick="window.resetCloudBackoffs()">♻️ Pausierte Verbindungen reaktivieren</button>
               </div>
             </div>
 
@@ -62095,6 +62114,53 @@ async function init() {
             </label>
           </div>
         </div>
+        <div id="gmailTab" class="settings-tab-content hidden">
+          <div class="form">
+            <h4 style="margin-bottom:12px">📧 Gmail — direkt aus Quantus steuern</h4>
+            <div class="card" style="padding:14px;border:1px solid var(--accent-soft);margin-bottom:14px">
+              <div style="font-weight:700;margin-bottom:6px;font-size:14px">🏖 Automatische Rückantwort (Abwesenheitsnotiz)</div>
+              <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
+                Stelle die automatische Antwort deines Gmail-Kontos direkt hier ein — ohne die Gmail-App zu öffnen.
+                Änderungen werden sofort in deinem Google-Konto gespeichert.
+              </div>
+              <div id="vacationStatus" class="mini" style="margin-bottom:10px;color:var(--muted)">Lade aktuellen Stand …</div>
+              <label class="col-12" style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <input type="checkbox" id="vacEnabled" style="width:auto" />
+                Automatische Rückantwort aktiv
+              </label>
+              <label class="col-12" style="margin-bottom:8px">Betreff
+                <input type="text" id="vacSubject" placeholder="z. B. Abwesend bis 15. August" />
+              </label>
+              <label class="col-12" style="margin-bottom:8px">Nachricht
+                <textarea id="vacBody" rows="5" placeholder="Guten Tag&#10;&#10;Ich bin zurzeit abwesend und lese E-Mails erst nach meiner Rückkehr.&#10;&#10;Freundliche Grüsse"></textarea>
+              </label>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+                <label style="flex:1;min-width:150px">Erster Tag (optional)
+                  <input type="date" id="vacStart" />
+                </label>
+                <label style="flex:1;min-width:150px">Letzter Tag (optional)
+                  <input type="date" id="vacEnd" />
+                </label>
+              </div>
+              <label class="col-12" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+                <input type="checkbox" id="vacContactsOnly" style="width:auto" />
+                Nur an Personen in meinen Kontakten antworten
+              </label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="btn primary" onclick="window.saveVacationSettings()">💾 In Gmail speichern</button>
+                <button type="button" class="btn" onclick="window.loadVacationUI(true)">↻ Neu laden</button>
+              </div>
+            </div>
+            <div class="card" style="padding:14px;border:1px solid var(--accent-soft)">
+              <div style="font-weight:700;margin-bottom:6px;font-size:14px">📨 Massenmail (Serienmail)</div>
+              <div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.55">
+                Sende eine E-Mail an mehrere Empfänger aus deinen Quantus-Kontakten (Personen und Organisationen) —
+                jede Mail wird einzeln über dein Gmail-Konto verschickt und kann mit {name} personalisiert werden.
+              </div>
+              <button type="button" class="btn primary" onclick="window.openMassMail()">📨 Massenmail verfassen</button>
+            </div>
+          </div>
+        </div>
 <div id="workscheduleTab" class="settings-tab-content hidden">
       <div class="form">
         <div class="col-12">
@@ -62230,6 +62296,7 @@ async function init() {
           const target = document.getElementById(targetTab + "Tab");
           if (target) target.classList.remove("hidden");
           if (targetTab === "shortcuts" && typeof renderShortcutEditor === "function") renderShortcutEditor();
+          if (targetTab === "gmail" && typeof window.loadVacationUI === "function") window.loadVacationUI();
         });
       });
     }, 0);
@@ -114401,6 +114468,410 @@ h1, h2, h3{ letter-spacing:-0.011em; }
 
     return previous ? previous(event) : undefined;
   };
+})();
+</script>
+<script>
+// ============================================================================
+//  QUANTUS KONNEKT — Abwesenheitsnotiz, Massenmail, Verbindungs-Check, Live-Sync
+//  ---------------------------------------------------------------------------
+//  Eigenständiger Zusatzblock: nutzt nur öffentliche Helfer der Haupt-App
+//  (APP, syncFreshness, rtdbDbRef, toast, openModal) und patcht nichts ausser
+//  updateSyncChip (Live-Badge). Alles ist defensiv gekapselt, damit ein Fehler
+//  hier nie die Haupt-App blockiert.
+// ============================================================================
+(function () {
+  "use strict";
+
+  function authHeaders() {
+    var h = {};
+    try {
+      var t = window.APP && APP.state && APP.state.settings && APP.state.settings.storage && APP.state.settings.storage.authToken;
+      if (t) { var s = String(t).trim(); h["Authorization"] = s.toLowerCase().startsWith("bearer ") ? s : ("Bearer " + s); }
+    } catch (e) {}
+    return h;
+  }
+
+  async function gmailProxy(method, path, opts) {
+    opts = opts || {};
+    var headers = Object.assign({ "Content-Type": "application/json" }, authHeaders());
+    var r = await fetch("/.netlify/functions/gmail-api", {
+      method: "POST", headers: headers,
+      body: JSON.stringify({ method: method, path: path, query: opts.query || null, body: opts.body || null })
+    });
+    var d = await r.json().catch(function () { return null; });
+    if (!r.ok) {
+      var e = new Error((d && (d.error || d.message)) || ("HTTP " + r.status));
+      e.status = r.status; e.data = d;
+      throw e;
+    }
+    return d;
+  }
+
+  function safeToast(kind, title, msg) { try { if (typeof toast === "function") toast(kind, title, msg); } catch (e) {} }
+  function el(id) { return document.getElementById(id); }
+  function escText(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+
+  // ── 1) Abwesenheitsnotiz (Gmail vacation responder) ───────────────────────
+  window.loadVacationUI = async function (manual) {
+    var status = el("vacationStatus");
+    if (!status) return;
+    status.textContent = "Lade aktuellen Stand aus Gmail …";
+    try {
+      var v = await gmailProxy("GET", "/users/me/settings/vacation");
+      if (el("vacEnabled")) el("vacEnabled").checked = !!v.enableAutoReply;
+      if (el("vacSubject")) el("vacSubject").value = v.responseSubject || "";
+      if (el("vacBody")) el("vacBody").value = v.responseBodyPlainText || (v.responseBodyHtml ? String(v.responseBodyHtml).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "");
+      if (el("vacContactsOnly")) el("vacContactsOnly").checked = !!v.restrictToContacts;
+      if (el("vacStart")) el("vacStart").value = v.startTime ? new Date(Number(v.startTime)).toISOString().slice(0, 10) : "";
+      if (el("vacEnd")) el("vacEnd").value = v.endTime ? new Date(Number(v.endTime)).toISOString().slice(0, 10) : "";
+      status.innerHTML = v.enableAutoReply
+        ? '<span style="color:var(--ok)">● Aktiv</span> — die automatische Rückantwort ist in Gmail eingeschaltet.'
+        : '<span style="color:var(--muted)">○ Inaktiv</span> — zurzeit wird keine automatische Antwort gesendet.';
+      if (manual) safeToast("ok", "Abwesenheitsnotiz geladen", "Aktueller Stand aus Gmail übernommen");
+    } catch (e) {
+      status.innerHTML = '<span style="color:var(--danger)">Konnte nicht geladen werden:</span> ' + escText(e.message || e) +
+        (e.status === 401 ? " — bitte zuerst im Gmail-Modul „Mit Google verbinden“." : "");
+    }
+  };
+
+  window.saveVacationSettings = async function () {
+    var enabled = !!(el("vacEnabled") && el("vacEnabled").checked);
+    var body = {
+      enableAutoReply: enabled,
+      responseSubject: (el("vacSubject") && el("vacSubject").value || "").trim(),
+      responseBodyPlainText: (el("vacBody") && el("vacBody").value || "").trim(),
+      restrictToContacts: !!(el("vacContactsOnly") && el("vacContactsOnly").checked),
+      restrictToDomain: false
+    };
+    if (enabled && !body.responseBodyPlainText) { safeToast("warn", "Nachricht fehlt", "Bitte einen Antworttext eingeben."); return; }
+    var start = el("vacStart") && el("vacStart").value;
+    var end = el("vacEnd") && el("vacEnd").value;
+    // Gmail erwartet Epoch-Millisekunden; der letzte Tag zählt bis Tagesende.
+    if (start) body.startTime = String(new Date(start + "T00:00:00").getTime());
+    if (end) body.endTime = String(new Date(end + "T23:59:59").getTime());
+    try {
+      await gmailProxy("PUT", "/users/me/settings/vacation", { body: body });
+      safeToast("ok", "In Gmail gespeichert", enabled ? "Automatische Rückantwort ist aktiv." : "Automatische Rückantwort ist ausgeschaltet.");
+      window.loadVacationUI();
+    } catch (e) {
+      safeToast("error", "Speichern fehlgeschlagen", (e.message || String(e)) + (e.status === 401 ? " — bitte neu mit Google verbinden." : ""));
+    }
+  };
+
+  // ── 2) Massenmail (Serienmail über das eigene Gmail-Konto) ────────────────
+  function collectRecipients() {
+    var list = [];
+    var seen = {};
+    function add(name, email, source) {
+      var addr = String(email || "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return;
+      var key = addr.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      list.push({ name: String(name || "").trim() || addr.split("@")[0], email: addr, source: source });
+    }
+    try {
+      var persons = Object.values((APP.state.data.entities || {}).persons || {});
+      persons.forEach(function (p) {
+        if (!p || p.deletedAt || p.status === "deleted") return;
+        var mails = Array.isArray(p.emails) ? p.emails : (p.email ? [p.email] : []);
+        if (mails.length) add(p.name || p.title, mails[0], "Person");
+      });
+      var orgs = Object.values((APP.state.data.entities || {}).organizations || {});
+      orgs.forEach(function (o) {
+        if (!o || o.deletedAt || o.status === "deleted") return;
+        if (o.email) add(o.name || o.title, o.email, "Organisation");
+      });
+    } catch (e) {}
+    list.sort(function (a, b) { return a.name.localeCompare(b.name, "de"); });
+    return list;
+  }
+
+  function b64EncodeUtf8(str) { return btoa(unescape(encodeURIComponent(str))); }
+  function b64Url(str) { return b64EncodeUtf8(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+
+  function buildRawMessage(to, subject, bodyText) {
+    var encodedSubject = "=?UTF-8?B?" + b64EncodeUtf8(subject) + "?=";
+    var mime = "To: " + to + "\r\n" +
+      "Subject: " + encodedSubject + "\r\n" +
+      "MIME-Version: 1.0\r\n" +
+      "Content-Type: text/plain; charset=UTF-8\r\n" +
+      "Content-Transfer-Encoding: 8bit\r\n\r\n" +
+      bodyText;
+    return b64Url(mime);
+  }
+
+  var massMailAbort = false;
+
+  window.openMassMail = function () {
+    if (typeof openModal !== "function") { safeToast("error", "Nicht verfügbar", "Modal-System nicht geladen."); return; }
+    var recipients = collectRecipients();
+    var rows = recipients.map(function (r, i) {
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">' +
+        '<input type="checkbox" class="mm-recipient" data-i="' + i + '" style="width:auto">' +
+        '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">' + escText(r.name) + '</span>' +
+        '<span class="mini" style="color:var(--muted)">' + escText(r.email) + '</span>' +
+        '<span class="mini" style="color:var(--muted)">' + escText(r.source) + '</span></label>';
+    }).join("");
+    window._mmRecipients = recipients;
+    massMailAbort = false;
+    openModal("📨 Massenmail verfassen", [
+      '<div class="mini" style="color:var(--muted);margin-bottom:10px;line-height:1.5">Jede E-Mail wird einzeln über dein Gmail-Konto versendet (mit kurzer Pause zwischen den Mails). Platzhalter: <code>{name}</code> wird pro Empfänger ersetzt. Bitte beachte die Sende-Limits deines Gmail-Kontos.</div>',
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><strong style="font-size:13px">Empfänger aus Kontakten (' + recipients.length + ')</strong>',
+      '<button type="button" class="btn sm" onclick="document.querySelectorAll(\'.mm-recipient\').forEach(c=>c.checked=true)">Alle</button>',
+      '<button type="button" class="btn sm" onclick="document.querySelectorAll(\'.mm-recipient\').forEach(c=>c.checked=false)">Keine</button></div>',
+      '<div style="max-height:180px;overflow-y:auto;margin-bottom:10px;border:1px solid var(--border);border-radius:8px;padding:4px 10px">' + (rows || '<div class="mini" style="color:var(--muted);padding:8px 0">Keine Kontakte mit E-Mail-Adresse gefunden.</div>') + '</div>',
+      '<label style="display:block;margin-bottom:8px">Zusätzliche Empfänger (kommagetrennt oder eine Adresse pro Zeile)<textarea id="mmExtra" rows="2" placeholder="name@beispiel.ch, team@firma.ch"></textarea></label>',
+      '<label style="display:block;margin-bottom:8px">Betreff<input type="text" id="mmSubject" placeholder="z. B. Einladung zur Sitzung"></label>',
+      '<label style="display:block;margin-bottom:8px">Nachricht<textarea id="mmBody" rows="7" placeholder="Guten Tag {name}&#10;&#10;…&#10;&#10;Freundliche Grüsse"></textarea></label>',
+      '<div id="mmProgress" class="mini" style="color:var(--muted);margin-bottom:6px"></div>'
+    ].join(""), [
+      '<button class="btn" data-action="close-modal">Abbrechen</button>',
+      '<button class="btn" id="mmStopBtn" style="display:none" onclick="window._massMailStop()">⏹ Stoppen</button>',
+      '<button class="btn primary" id="mmSendBtn" onclick="window.sendMassMail()">📨 Senden</button>'
+    ].join(""));
+  };
+
+  window._massMailStop = function () { massMailAbort = true; };
+
+  window.sendMassMail = async function () {
+    var chosen = [];
+    document.querySelectorAll(".mm-recipient").forEach(function (c) {
+      if (c.checked) { var r = (window._mmRecipients || [])[Number(c.dataset.i)]; if (r) chosen.push(r); }
+    });
+    String((el("mmExtra") && el("mmExtra").value) || "").split(/[\n,;]+/).forEach(function (addr) {
+      addr = addr.trim();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) chosen.push({ name: addr.split("@")[0], email: addr, source: "Manuell" });
+    });
+    var dedup = {}; chosen = chosen.filter(function (r) { var k = r.email.toLowerCase(); if (dedup[k]) return false; dedup[k] = true; return true; });
+
+    var subject = ((el("mmSubject") && el("mmSubject").value) || "").trim();
+    var bodyTemplate = ((el("mmBody") && el("mmBody").value) || "").trim();
+    if (!chosen.length) { safeToast("warn", "Keine Empfänger", "Bitte mindestens einen Empfänger wählen."); return; }
+    if (!subject || !bodyTemplate) { safeToast("warn", "Angaben fehlen", "Betreff und Nachricht sind nötig."); return; }
+    if (!confirm("Massenmail an " + chosen.length + " Empfänger senden?\n\nJede Mail geht einzeln über dein Gmail-Konto raus." + (chosen.length > 100 ? "\n\nAchtung: Bei sehr vielen Mails können Gmail-Tageslimits greifen." : ""))) return;
+
+    var progress = el("mmProgress");
+    var sendBtn = el("mmSendBtn");
+    var stopBtn = el("mmStopBtn");
+    if (sendBtn) sendBtn.disabled = true;
+    if (stopBtn) stopBtn.style.display = "";
+    massMailAbort = false;
+    var ok = 0, failed = [];
+    for (var i = 0; i < chosen.length; i++) {
+      if (massMailAbort) break;
+      var r = chosen[i];
+      if (progress) progress.textContent = "Sende " + (i + 1) + " / " + chosen.length + " — " + r.email + " …";
+      try {
+        var personal = bodyTemplate.split("{name}").join(r.name);
+        var raw = buildRawMessage(r.email, subject, personal);
+        await gmailProxy("POST", "/users/me/messages/send", { body: { raw: raw } });
+        ok++;
+      } catch (e) {
+        failed.push(r.email + " (" + (e.message || e) + ")");
+        // Bei Quota-Fehlern sofort stoppen statt weiter ins Limit zu laufen.
+        if (e.status === 429 || /quota|limit/i.test(String(e.message || ""))) { massMailAbort = true; }
+      }
+      // Kurze Pause zwischen den Mails — schonend für das Gmail-Konto.
+      if (i < chosen.length - 1 && !massMailAbort) await new Promise(function (res) { setTimeout(res, 1200); });
+    }
+    if (sendBtn) sendBtn.disabled = false;
+    if (stopBtn) stopBtn.style.display = "none";
+    var summary = ok + " von " + chosen.length + " gesendet" + (massMailAbort && ok < chosen.length ? " (gestoppt)" : "");
+    if (progress) progress.innerHTML = escText(summary) + (failed.length ? '<br><span style="color:var(--danger)">Fehlgeschlagen: ' + escText(failed.slice(0, 5).join(", ")) + (failed.length > 5 ? " …" : "") + "</span>" : "");
+    safeToast(failed.length ? "warn" : "ok", "Massenmail abgeschlossen", summary);
+  };
+
+  // ── 3) Verbindungs-Check (alle Konnektoren mit Antwortzeit) ───────────────
+  async function timedCheck(name, fn) {
+    var t0 = Date.now();
+    try {
+      var detail = await fn();
+      return { name: name, ok: true, ms: Date.now() - t0, detail: detail || "" };
+    } catch (e) {
+      return { name: name, ok: false, ms: Date.now() - t0, detail: e.message || String(e) };
+    }
+  }
+
+  window.runConnectionChecks = async function () {
+    var box = el("connCheckList");
+    if (box) box.innerHTML = "Teste Verbindungen …";
+    var key = (APP.state.settings && APP.state.settings.storage && APP.state.settings.storage.blobKey) || "app-data.json";
+    var checks = await Promise.all([
+      timedCheck("Netlify Blob", async function () {
+        var r = await fetch("/.netlify/functions/blob-get?key=" + encodeURIComponent(key) + "&meta=1", { headers: authHeaders(), cache: "no-store" });
+        if (!r.ok && r.status !== 404) throw new Error("HTTP " + r.status);
+        var d = r.ok ? await r.json().catch(function () { return null; }) : null;
+        return d && d.size ? (Math.round(d.size / 1024) + " KB gespeichert") : (r.status === 404 ? "noch keine Daten" : "erreichbar");
+      }),
+      timedCheck("Firebase RTDB", async function () {
+        var url = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app/appStore/" + key.replace(/[.#$\[\]\/]/g, "_") + "/updatedAt.json?_ts=" + Date.now();
+        var r = await fetch(url, { cache: "no-store" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        var ts = await r.json();
+        return ts ? ("Stand " + new Date(ts).toLocaleString("de-CH")) : "noch keine Daten";
+      }),
+      timedCheck("Google (Kalender/Gmail)", async function () {
+        var r = await fetch("/.netlify/functions/gcal-auth?action=status", { headers: authHeaders(), cache: "no-store" });
+        var d = await r.json().catch(function () { return {}; });
+        if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+        if (!d.connected) throw new Error("Nicht verbunden — im Gmail/Kalender-Modul „Mit Google verbinden“.");
+        return (d.email ? d.email + " · " : "") + "verbunden";
+      }),
+      timedCheck("Live-Sync-Kanal", async function () {
+        if (APP.state.settings && APP.state.settings.storage && APP.state.settings.storage.liveSync === false) return "ausgeschaltet";
+        return window._liveSyncActive ? "aktiv — Änderungen anderer Geräte kommen sofort an" : "wird verbunden …";
+      })
+    ]);
+    var health = (typeof _cloudHealth !== "undefined" && _cloudHealth) || {};
+    var rows = checks.map(function (c) {
+      var dot = c.ok ? '<span style="color:var(--ok)">●</span>' : '<span style="color:var(--danger)">●</span>';
+      return '<div style="display:flex;gap:8px;align-items:baseline;padding:3px 0">' + dot +
+        ' <strong style="min-width:170px;display:inline-block">' + escText(c.name) + "</strong> " +
+        '<span>' + escText(c.detail) + "</span>" +
+        '<span style="margin-left:auto;color:var(--muted)">' + c.ms + " ms</span></div>";
+    }).join("");
+    var paused = ["netlify", "firebase", "rtdb"].filter(function (p) {
+      return health[p] && health[p].backoffUntil && Date.now() < health[p].backoffUntil;
+    });
+    if (paused.length) rows += '<div style="margin-top:6px;color:var(--warn,#eab308)">⏸ Pausiert wegen Fehlern: ' + paused.join(", ") + ' — mit „Reaktivieren“ sofort wieder freigeben.</div>';
+    if (box) box.innerHTML = rows;
+  };
+
+  window.resetCloudBackoffs = function () {
+    try {
+      ["netlify", "firebase", "rtdb"].forEach(function (p) {
+        if (typeof _cloudHealth !== "undefined" && _cloudHealth[p]) {
+          _cloudHealth[p].backoffUntil = 0;
+          _cloudHealth[p].failCount = 0;
+          _cloudHealth[p].lastError = "";
+        }
+      });
+      if (typeof persistCloudHealth === "function") persistCloudHealth();
+      safeToast("ok", "Verbindungen reaktiviert", "Alle pausierten Konnektoren werden sofort wieder genutzt.");
+      if (typeof syncFreshness === "function") syncFreshness("manual_reconnect");
+      window.runConnectionChecks();
+    } catch (e) { safeToast("error", "Fehler", e.message || String(e)); }
+  };
+
+  // ── 4) Live-Sync: Änderungen anderer Geräte sofort übernehmen ─────────────
+  // Lauscht per Firebase-RTDB-Listener auf den zentralen Datenknoten (denselben,
+  // den Tablet und Desktop beschreiben). Meldet ein anderes Gerät einen neueren
+  // Stand, übernimmt syncFreshness() ihn über den bewährten Merge-Pfad —
+  // inklusive Konflikt-Snapshot und Schutz ungespeicherter lokaler Änderungen.
+  var liveRef = null;
+  var liveDebounce = null;
+  var liveRetryAt = 0;
+  window._liveSyncActive = false;
+
+  function liveSyncEnabled() {
+    try { return !window.APP || !APP.state || !APP.state.settings || !APP.state.settings.storage || APP.state.settings.storage.liveSync !== false; }
+    catch (e) { return true; }
+  }
+
+  function detachLiveSync() {
+    if (liveRef) { try { liveRef.off(); } catch (e) {} }
+    liveRef = null;
+    window._liveSyncActive = false;
+  }
+
+  function attachLiveSync() {
+    if (liveRef || !liveSyncEnabled()) return;
+    if (Date.now() < liveRetryAt) return;
+    try {
+      if (typeof rtdbDbRef !== "function" || typeof rtdbNodeKey !== "function") return;
+      var key = (APP.state.settings && APP.state.settings.storage && APP.state.settings.storage.blobKey) || "app-data.json";
+      var ref = rtdbDbRef(RTDB_NODE + "/" + rtdbNodeKey(key));
+      if (!ref) return;
+      liveRef = ref;
+      ref.on("value", function (snap) {
+        window._liveSyncActive = true;
+        try { if (typeof updateSyncChip === "function") updateSyncChip(); } catch (e) {}
+        var wrap = snap && snap.val();
+        if (!wrap || !wrap.data) return;
+        var ownDevice = "";
+        try { ownDevice = getOrCreateDeviceId(); } catch (e) {}
+        // Eigene Schreibvorgänge lösen den Listener ebenfalls aus — ignorieren.
+        if (wrap.savedBy && ownDevice && wrap.savedBy === ownDevice) return;
+        var remoteTs = Date.parse(wrap.updatedAt || 0) || Number(wrap.savedAt) || 0;
+        var localTs = 0;
+        try { localTs = new Date(APP.state.data && APP.state.data.meta && APP.state.data.meta.updatedAt || 0).getTime() || 0; } catch (e) {}
+        if (remoteTs <= localTs + 500) return;
+        // Kurz sammeln (mehrere schnelle Schreibvorgänge → ein Merge-Lauf).
+        if (liveDebounce) clearTimeout(liveDebounce);
+        liveDebounce = setTimeout(function () {
+          liveDebounce = null;
+          try {
+            if (APP.state.storage && APP.state.storage._saving) return;
+            if (typeof syncFreshness === "function") {
+              syncFreshness("live_update").then(function (changed) {
+                if (changed) safeToast("info", "⚡ Live aktualisiert", "Änderungen von einem anderen Gerät wurden übernommen.");
+              }).catch(function () {});
+            }
+          } catch (e) {}
+        }, 700);
+      }, function (error) {
+        // Verbindung verloren oder Regeln verweigert: sauber abbauen und
+        // in 60 Sekunden erneut versuchen.
+        detachLiveSync();
+        liveRetryAt = Date.now() + 60000;
+        try { if (typeof updateSyncChip === "function") updateSyncChip(); } catch (e) {}
+      });
+    } catch (e) {
+      detachLiveSync();
+      liveRetryAt = Date.now() + 60000;
+    }
+  }
+
+  window.toggleLiveSyncSetting = function (enabled) {
+    try {
+      if (window.APP && APP.state && APP.state.settings) {
+        APP.state.settings.storage = APP.state.settings.storage || {};
+        APP.state.settings.storage.liveSync = enabled !== false;
+        if (typeof saveSettings === "function") saveSettings(APP.state.settings);
+      }
+    } catch (e) {}
+    if (enabled === false) { detachLiveSync(); safeToast("info", "Live-Sync aus", "Abgleich läuft weiter im 30-Sekunden-Takt."); }
+    else { liveRetryAt = 0; attachLiveSync(); safeToast("ok", "Live-Sync an", "Änderungen anderer Geräte erscheinen jetzt sofort."); }
+    try { if (typeof updateSyncChip === "function") updateSyncChip(); } catch (e) {}
+  };
+
+  // Live-Badge am Sync-Chip: „· Live“, solange der Kanal steht.
+  try {
+    var originalUpdateSyncChip = window.updateSyncChip;
+    if (typeof originalUpdateSyncChip === "function") {
+      window.updateSyncChip = function () {
+        originalUpdateSyncChip.apply(this, arguments);
+        try {
+          var status = document.querySelector("#syncStatus");
+          if (status && window._liveSyncActive && !/· Live$/.test(status.textContent)) {
+            status.textContent = status.textContent + " · Live";
+          }
+        } catch (e) {}
+      };
+    }
+  } catch (e) {}
+
+  // Bei Netz-Rückkehr: Backoffs aufheben und sofort abgleichen — die Verbindung
+  // soll nach Funklöchern nicht minutenlang pausiert bleiben.
+  window.addEventListener("online", function () {
+    try {
+      ["netlify", "firebase", "rtdb"].forEach(function (p) {
+        if (typeof _cloudHealth !== "undefined" && _cloudHealth[p]) { _cloudHealth[p].backoffUntil = 0; _cloudHealth[p].failCount = 0; }
+      });
+      if (typeof persistCloudHealth === "function") persistCloudHealth();
+    } catch (e) {}
+    liveRetryAt = 0;
+    attachLiveSync();
+    try { if (typeof syncFreshness === "function") syncFreshness("back_online"); } catch (e) {}
+  });
+
+  // Anlauf-Schleife: wartet, bis Haupt-App und Firebase bereit sind, hält den
+  // Listener danach am Leben (z. B. nach Fehlern oder Einstellungs-Wechseln).
+  setInterval(function () {
+    if (!window.APP || !APP.state) return;
+    if (liveSyncEnabled()) attachLiveSync(); else detachLiveSync();
+  }, 3000);
 })();
 </script>
 </body>
