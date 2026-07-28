@@ -10,8 +10,25 @@
   [headers.values]
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET, PUT, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type, Authorization, If-Match"
+    # If-None-Match erlaubt bedingte Abrufe (304) — Clients wie journal-mobile
+    # sparen sich bei unveraendertem Stand den kompletten Datenkoerper.
+    Access-Control-Allow-Headers = "Content-Type, Authorization, If-Match, If-None-Match"
     Access-Control-Expose-Headers = "ETag"
+
+# Icons und Embleme aendern sich praktisch nie — einen Tag im Browser-Cache
+# halten spart bei jedem App-Start unnoetige Requests.
+[[headers]]
+  for = "/favicon.svg"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+[[headers]]
+  for = "/emblem.svg"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+[[headers]]
+  for = "/apple-touch-icon.svg"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
 
 # Vendored PDF-Libraries: KEIN langes/immutable Caching, sonst kann ein einmal
 # ausgelieferter 404 (oder eine alte Version) dauerhaft im Browser/CDN hängen
