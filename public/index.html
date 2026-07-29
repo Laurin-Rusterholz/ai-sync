@@ -96276,6 +96276,26 @@ console.log('📚 Leseliste geladen');
     } catch(e){ return false; }
   }
 
+  // Ein Eintrag darf sagen, in welches Projekt die Aufgabe gehoert – ueber die
+  // externe Projekt-ID (Format PRJ-XXXXX), so wie sie im Projekt selbst steht.
+  // Beispiel: die Praesentations-Fassung der Sam-Sparkling-Website schickt
+  // Anpassungswuensche mit projectExternalId "PRJ-YWRM4". Findet sich kein
+  // passendes Projekt, entsteht die Aufgabe trotzdem – nur eben ohne Zuordnung.
+  function resolveProjectId(v){
+    var wunsch = String(v.projectExternalId || v.projectCode || "").trim().toUpperCase();
+    if (!wunsch) return null;
+    try {
+      var projects = window.APP && APP.state && APP.state.data && APP.state.data.entities && APP.state.data.entities.projects;
+      if (!projects) return null;
+      for (var id in projects){
+        var p = projects[id];
+        if (p && String(p.externalId || "").trim().toUpperCase() === wunsch) return p.id || id;
+      }
+      console.warn("[Quantus] Kein Projekt mit der ID " + wunsch + " – Aufgabe wird ohne Projekt angelegt.");
+    } catch(e){}
+    return null;
+  }
+
   function importItem(snap){
     var key = snap.key, v = snap.val() || {};
     try {
@@ -96299,6 +96319,8 @@ console.log('📚 Leseliste geladen');
       // Meal-Prep aus n8n) sollen nicht fälschlich als "WhatsApp" getaggt werden.
       var tags = Array.isArray(v.tags) ? v.tags : (src === "communicator" ? ["WhatsApp"] : []);
 
+      var projectId = resolveProjectId(v);
+
       var taskId = window.createEntity("task", {
         title: title,
         description: desc,
@@ -96308,14 +96330,23 @@ console.log('📚 Leseliste geladen');
         tags: tags,
         source: src,                        // z. B. "nobraine"
         type: v.type || null,               // z. B. "meal-prep" (Samstags-Vorkoch-Aufgabe)
+        projectId: projectId,               // aus projectExternalId aufgelöst, sonst null
         commSourceKey: key,
         commFrom: v.from || null,
         commName: v.name || null
       });
 
+      // Beidseitig verknüpfen, damit die Aufgabe auch in der Projektansicht auftaucht
+      if (projectId && typeof window.linkEntities === "function"){
+        try { window.linkEntities("project", projectId, "task", taskId); } catch(e){
+          console.warn("[Quantus] Verknüpfung Projekt↔Aufgabe fehlgeschlagen:", e && e.message);
+        }
+      }
+
       markProcessed(key);
       try { snap.ref.remove(); } catch(e){}
-      console.log("📥 [Quantus] Task aus Inbox importiert:", taskId, "—", title, "(source:", src + ")");
+      console.log("📥 [Quantus] Task aus Inbox importiert:", taskId, "—", title,
+                  "(source:", src + (projectId ? ", Projekt: " + (v.projectExternalId || v.projectCode) : "") + ")");
       if (typeof window.toast === "function") { try { window.toast("Neue Aufgabe: " + title); } catch(e){} }
     } catch(e){
       console.warn("[Quantus] Task-Import fehlgeschlagen:", e && e.message);
