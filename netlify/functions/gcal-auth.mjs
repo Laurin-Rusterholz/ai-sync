@@ -15,6 +15,7 @@ import {
   loadTokens, saveTokens, clearTokens, getValidAccessToken, revokeToken,
   CALENDAR_API_BASE,
 } from "../lib/gcal-shared.mjs";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 function randomState() {
   // 32 hex chars of CSPRNG
@@ -26,6 +27,37 @@ function randomState() {
 // Where the browser is bounced back to after the OAuth dance. Whitelisted so a
 // crafted ?return= value can never redirect into an arbitrary in-app route.
 const RETURN_ROUTES = new Set(["googlecalendar", "gmail"]);
+const FIREBASE_BOOTSTRAP_SCOPES = [
+  "https://www.googleapis.com/auth/firebase.database",
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/devstorage.full_control",
+].join(" ");
+const FIREBASE_BOOTSTRAP_TARGET = "https://app.netlify.com/projects/management-xo2-pro/configuration/env";
+
+function base64url(value) {
+  return Buffer.from(value).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function firebaseBootstrapState() {
+  const { clientSecret } = getOAuthConfig();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  const payload = `firebase.${expiresAt}.${randomState()}`;
+  const signature = base64url(createHmac("sha256", clientSecret).update(payload).digest());
+  return `${payload}.${signature}`;
+}
+
+function isFirebaseBootstrapState(state) {
+  const parts = String(state || "").split(".");
+  if (parts.length !== 4 || parts[0] !== "firebase") return false;
+  const expiresAt = Number(parts[1]);
+  if (!Number.isFinite(expiresAt) || expiresAt < Date.now() || expiresAt > Date.now() + 11 * 60 * 1000) return false;
+  const payload = parts.slice(0, 3).join(".");
+  const { clientSecret } = getOAuthConfig();
+  const expected = Buffer.from(base64url(createHmac("sha256", clientSecret).update(payload).digest()));
+  const received = Buffer.from(parts[3]);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
 function sanitizeReturn(raw) {
   const r = String(raw || "").toLowerCase().replace(/[^a-z]/g, "");
   return RETURN_ROUTES.has(r) ? r : "googlecalendar";
@@ -84,6 +116,22 @@ export default async (req) => {
     if (oauthError) return htmlError("Google meldete: " + oauthError, appOrigin);
     try {
       const state = url.searchParams.get("state") || "";
+      if (isFirebaseBootstrapState(state)) {
+        const tokens = await exchangeCode(code, req);
+        if (!tokens.refresh_token) {
+          return htmlError("Google hat kein Refresh-Token geliefert. Bitte den Zugriff erneut bestätigen.", appOrigin);
+        }
+        const handoff = base64url(tokens.refresh_token);
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: `${FIREBASE_BOOTSTRAP_TARGET}#firebase-oauth-refresh=${encodeURIComponent(handoff)}`,
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            ...CORS,
+          },
+        });
+      }
       const ok = await consumeState(state);
       if (!ok) return htmlError("Ungültiger oder abgelaufener State (CSRF-Schutz). Bitte erneut verbinden.", appOrigin);
 
@@ -126,6 +174,32 @@ export default async (req) => {
         prompt: "consent",            // → always issue a refresh token
         include_granted_scopes: "true",
         state,
+      });
+      return new Response(null, {
+        status: 302,
+        headers: { Location: `${GOOGLE_AUTH_URL}?${params.toString()}`, ...CORS },
+      });
+    } catch (e) {
+      return htmlError(e.message || String(e), appOrigin);
+    }
+  }
+
+  // A short-lived, state-signed bootstrap path for Firebase when organisation
+  // policy forbids service-account private keys. The token is handed directly
+  // to Netlify's environment editor and is never written to RTDB or a browser
+  // cache. Remove this route after the one-time setup has completed.
+  if (action === "firebase-bootstrap") {
+    try {
+      const { clientId } = getOAuthConfig();
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: getRedirectUri(req),
+        response_type: "code",
+        scope: FIREBASE_BOOTSTRAP_SCOPES,
+        access_type: "offline",
+        prompt: "consent",
+        include_granted_scopes: "true",
+        state: firebaseBootstrapState(),
       });
       return new Response(null, {
         status: 302,
