@@ -1,7 +1,8 @@
 # Backup und Wiederherstellung des Quantus-Datenstands
 
-Der zentrale Datenstand (`app-data.json`) liegt im Netlify-Blob-Store und wird
-ueber die Funktionen `blob-get` / `blob-put` gelesen und geschrieben. Mit dem
+Der zentrale Datenstand (`app-data.json`) liegt in Firebase RTDB unter
+`appStore/app-data_json`. Die kompatiblen Netlify-Functions `blob-get` /
+`blob-put` lesen und schreiben intern ausschliesslich Firebase. Mit dem
 CLI `scripts/backup-blob.mjs` laesst er sich jederzeit als Datei sichern und
 kontrolliert wiederherstellen.
 
@@ -52,6 +53,11 @@ SYNC_AUTH_TOKEN=xxx npm run backup
 
 Beide sparen beim regelmaessigen Polling (Tablet, journal-mobile) Datenvolumen
 und Akku.
+
+Die Functions benötigen für Firebase Admin entweder
+`FIREBASE_SERVICE_ACCOUNT_JSON` oder `FIREBASE_CLIENT_EMAIL` plus
+`FIREBASE_PRIVATE_KEY`. Secrets gehören nur in die Netlify-Umgebung, nie ins
+Repository.
 
 ## Selbsttest
 

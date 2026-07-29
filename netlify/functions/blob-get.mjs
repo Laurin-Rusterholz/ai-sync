@@ -1,4 +1,4 @@
-import { getStore } from "@netlify/blobs";
+import { readAppDataDocument } from "../lib/firebase-admin.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -27,9 +27,9 @@ export default async (req) => {
   }
 
   try {
-    const store = getStore("app-sync");
-    const { data, etag } = await store.getWithMetadata(key, { type: "text" });
-    if (data === null) return Response.json({ error: "Not found" }, { status: 404, headers: { ...cors, ...noStore } });
+    const stored = await readAppDataDocument(key);
+    const { data, etag } = stored;
+    if (!stored.exists) return Response.json({ error: "Not found" }, { status: 404, headers: { ...cors, ...noStore } });
 
     const currentEtag = etag || String(Date.now());
 

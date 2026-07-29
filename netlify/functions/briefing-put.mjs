@@ -4,7 +4,7 @@ import { cors, json, unauthorized, getBriefingStore, storeBriefing } from "../li
 //  BRIEFING — Upload endpoint (delivery into Quantus)
 //  ---------------------------------------------------------------------------
 //  Accepts an ALREADY-RENDERED briefing file (PDF) and stores it in the
-//  "briefings" blob store so it shows up in the in-app Briefings mailbox.
+//  Firebase Storage so it shows up in the in-app Briefings mailbox.
 //  (To have the PDF rendered server-side from plain text, use briefing-deliver.)
 //
 //  Two ways to send the file (whichever is easier in n8n):

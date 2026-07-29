@@ -4,6 +4,37 @@
       ".read": "auth != null",
       ".write": "auth != null"
     },
+    "flowertech": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "inquiries": {
+        ".indexOn": [
+          "status",
+          "createdAt"
+        ]
+      },
+      "videos": {
+        ".indexOn": [
+          "status",
+          "publishedAt",
+          "createdAt"
+        ]
+      }
+    },
+    "briefings": {
+      ".read": "auth != null",
+      ".write": false,
+      "items": {
+        ".indexOn": [
+          "createdAt",
+          "date"
+        ]
+      }
+    },
+    "integrations": {
+      ".read": false,
+      ".write": false
+    },
     "settings": {
       ".read": "auth != null",
       ".write": "auth != null"

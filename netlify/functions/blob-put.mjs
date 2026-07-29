@@ -1,4 +1,4 @@
-import { getStore } from "@netlify/blobs";
+import { writeAppDataText } from "../lib/firebase-admin.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -40,26 +40,13 @@ export default async (req) => {
     }
     try { JSON.parse(body); } catch (e) { return Response.json({ error: "Invalid JSON" }, { status: 400, headers: cors }); }
 
-    const store = getStore("app-sync");
     const ifMatch = req.headers.get("If-Match");
-    if (ifMatch) {
-      try {
-        const existing = await store.getWithMetadata(key, { type: "text" });
-        if (existing.data !== null && existing.etag && existing.etag !== ifMatch) {
-          return Response.json({ error: "ETag conflict" }, { status: 412, headers: cors });
-        }
-      } catch (e) { /* no existing data */ }
+    const saved = await writeAppDataText(key, body, { ifMatch });
+    if (saved.conflict) {
+      return Response.json({ error: "ETag conflict" }, { status: 412, headers: cors });
     }
-
-    await store.set(key, body);
-
-    // Die ETag-Nachlese ist nur Komfort: Schlaegt sie fehl, ist der Datenstand
-    // trotzdem gespeichert — dann antworten wir mit einem Ersatzwert statt 500.
-    let newEtag = String(Date.now());
-    try {
-      const saved = await store.getWithMetadata(key, { type: "text" });
-      if (saved && saved.etag) newEtag = saved.etag;
-    } catch (e) { /* Speichern war erfolgreich; ETag ist best effort */ }
+    if (!saved.ok) throw new Error("Firebase hat den Datenstand nicht gespeichert.");
+    const newEtag = saved.etag;
 
     return Response.json({ ok: true, key: key, etag: newEtag, size: bodyBytes }, {
       status: 200,

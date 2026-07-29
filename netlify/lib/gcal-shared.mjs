@@ -6,15 +6,15 @@
 //
 //  Security model (mirrors blob-get / blob-put):
 //   • Client-ID / Client-Secret come from env vars, never from the frontend.
-//   • Refresh-Token + Access-Token are stored server-side in Netlify Blobs.
+//   • Refresh-Token + Access-Token are stored server-side in Firebase RTDB.
 //   • Frontend calls are authorised with the same optional SYNC_AUTH_TOKEN
 //     bearer that the existing sync endpoints use.
 // ============================================================================
-import { getStore } from "@netlify/blobs";
+import { firebaseDbGet, firebaseDbRemove, firebaseDbSet } from "./firebase-admin.mjs";
 
-export const TOKEN_KEY = "gcal-tokens";
-export const STATE_KEY = "gcal-oauth-state";
-export const STORE_NAME = "app-sync";
+export const TOKEN_KEY = "tokens";
+export const STATE_KEY = "oauthState";
+export const INTEGRATION_PATH = "integrations/google";
 
 export const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -103,38 +103,35 @@ export function getAppOrigin(req) {
   return host ? `${proto}://${host}` : new URL(req.url).origin;
 }
 
-function store() {
-  return getStore(STORE_NAME);
+function path(key) {
+  return `${INTEGRATION_PATH}/${key}`;
 }
 
 export async function loadTokens() {
   try {
-    const raw = await store().get(TOKEN_KEY, { type: "text" });
-    if (!raw) return null;
-    return JSON.parse(raw);
+    return await firebaseDbGet(path(TOKEN_KEY));
   } catch (e) {
     return null;
   }
 }
 
 export async function saveTokens(tokens) {
-  await store().set(TOKEN_KEY, JSON.stringify(tokens));
+  await firebaseDbSet(path(TOKEN_KEY), tokens);
 }
 
 export async function clearTokens() {
-  try { await store().delete(TOKEN_KEY); } catch (e) { /* ignore */ }
+  try { await firebaseDbRemove(path(TOKEN_KEY)); } catch (e) { /* ignore */ }
 }
 
 export async function saveState(state) {
-  await store().set(STATE_KEY, JSON.stringify({ state, ts: Date.now() }));
+  await firebaseDbSet(path(STATE_KEY), { state, ts: Date.now() });
 }
 
 export async function consumeState(state) {
   try {
-    const raw = await store().get(STATE_KEY, { type: "text" });
-    try { await store().delete(STATE_KEY); } catch (e) { /* ignore */ }
-    if (!raw) return false;
-    const parsed = JSON.parse(raw);
+    const parsed = await firebaseDbGet(path(STATE_KEY));
+    try { await firebaseDbRemove(path(STATE_KEY)); } catch (e) { /* ignore */ }
+    if (!parsed) return false;
     // 10-minute validity window
     if (!parsed || parsed.state !== state) return false;
     if (Date.now() - (parsed.ts || 0) > 10 * 60 * 1000) return false;

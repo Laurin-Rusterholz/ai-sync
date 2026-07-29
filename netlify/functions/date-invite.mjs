@@ -1,5 +1,5 @@
-import { getStore } from "@netlify/blobs";
 import { sanitizeInvite, validateInvite, applyInvite } from "../lib/date-invite-core.mjs";
+import { mutateAppData } from "../lib/firebase-admin.mjs";
 
 // Nimmt die von Cati gewählte Date-Einladung (Datum + Uhrzeit) entgegen und legt
 // daraus serverseitig eine Aufgabe im app-data.json-Blob an — genau dort, wo die
@@ -16,8 +16,7 @@ const cors = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-const STORE = "app-sync";
-const KEY = "app-data.json"; // Standard-blobKey der Quantus-App
+const KEY = "app-data.json"; // Standard-App-Datensatz in Firebase RTDB
 
 export default async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -43,15 +42,12 @@ export default async (req) => {
   if (err) return Response.json({ error: err }, { status: 400, headers: cors });
 
   try {
-    const store = getStore(STORE);
-
-    // Read-modify-write: bestehenden App-Stand laden, Task ergänzen, zurückschreiben.
-    const existing = await store.get(KEY, { type: "text" });
-    let current = null;
-    if (existing) { try { current = JSON.parse(existing); } catch { current = null; } }
-
-    const { data, task } = applyInvite(current, invite);
-    await store.set(KEY, JSON.stringify(data));
+    // Firebase-Transaktion verhindert verlorene parallele App-Schreibvorgänge.
+    const mutation = await mutateAppData(KEY, (current) => {
+      const applied = applyInvite(current, invite);
+      return { data: applied.data, result: applied.task };
+    }, { savedBy: "date-invite" });
+    const task = mutation.result;
 
     return Response.json(
       { ok: true, taskId: task.id, dueDate: invite.date, time: invite.time, title: task.title },

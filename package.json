@@ -7,10 +7,10 @@
   "scripts": {
     "backup": "node scripts/backup-blob.mjs",
     "restore": "node scripts/backup-blob.mjs --restore",
-    "test:backup": "node scripts/backup-blob.test.mjs"
+    "test:backup": "node scripts/backup-blob.test.mjs",
+    "test:flowertech": "node scripts/flowertech-sync.test.mjs"
   },
   "dependencies": {
-    "@netlify/blobs": "^10.7.9",
     "pdf-lib": "^1.17.1"
   }
 }

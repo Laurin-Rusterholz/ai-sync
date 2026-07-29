@@ -6,7 +6,7 @@
 //  access token and forwards the request to https://gmail.googleapis.com.
 //
 //  Auth is SHARED with the calendar app — both use the single refresh token in
-//  Netlify Blobs (key "gcal-tokens"), whose scope list now also contains
+//  Firebase RTDB (integrations/google/tokens), whose scope list also contains
 //  gmail.modify (see netlify/lib/gcal-shared.mjs → SCOPES).
 //
 //  Body: { method, path, query?, body? }

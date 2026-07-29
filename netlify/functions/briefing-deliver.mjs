@@ -53,7 +53,7 @@ export default async (req) => {
 
   try {
     const pdf = await renderBriefingPdf({ briefingText, date, title, label });
-    // hand the blob store a clean, exact ArrayBuffer
+    // Hand Firebase Storage a clean, exact ArrayBuffer.
     const data = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
     const store = getBriefingStore();
     const meta = await storeBriefing(store, { data, title, date, filename, contentType: "application/pdf" });

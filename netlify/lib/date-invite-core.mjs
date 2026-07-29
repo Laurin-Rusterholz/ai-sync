@@ -1,6 +1,6 @@
 // Reiner, abhängigkeitsfreier Kern der Date-Einladung:
 // Eingaben säubern/prüfen, Aufgabe bauen und in den App-Stand (app-data.json)
-// einfügen. Bewusst ohne @netlify/blobs, damit die Logik isoliert testbar ist.
+// einfügen. Bewusst ohne Providerspezifika, damit die Logik isoliert testbar ist.
 
 export const WEEKDAYS = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
 export const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",

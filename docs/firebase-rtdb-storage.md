@@ -1,8 +1,9 @@
 # Firebase-RTDB-Speicherung (Auto-Sync-Primär)
 
 Speichert den **kompletten App-Datensatz** in der Firebase **Realtime Database** (RTDB)
-statt nur in localStorage/Netlify. RTDB ist der **primäre** Auto-Sync-Provider;
-Netlify bleibt als automatischer Fallback und Shadow warm.
+statt nur in localStorage. RTDB ist der **primäre** Auto-Sync-Provider;
+Firebase Storage hält Dateien und grosse JSON-Spiegel. Netlify hostet nur
+Frontend und Functions.
 
 **Warum RTDB?**
 - **Kein ~5-MB-localStorage-Limit** (RTDB erlaubt bis 16 MB pro Schreibvorgang) — löst
@@ -15,11 +16,10 @@ Ablage-Knoten: `appStore/<blobKey>` (z. B. `appStore/app-data_json`), Format
 
 ## Wie der Auto-Sync funktioniert
 - **Push:** Bei jedem Speichern wird der Datensatz zuerst nach RTDB geschrieben.
-  Danach wird er gedrosselt (~alle 45 s, fire-and-forget) als *Shadow* auch nach
-  Netlify (und Firebase Storage, falls verfuegbar) geschrieben, damit ein
-  Rueckschalten verlustfrei bleibt.
+  Danach wird er gedrosselt (~alle 45 s, fire-and-forget) als *Shadow* nach
+  Firebase Storage geschrieben.
 - **Pull:** Beim Laden/Abgleich wird RTDB bevorzugt gelesen; schlaegt es fehl,
-  greift automatisch Netlify/Firebase. Beim manuellen Transfer werden alle Provider
+  greift automatisch Firebase Storage. Beim manuellen Transfer werden beide Firebase-Ziele
   gelesen und der **neueste** Stand (per Zeitstempel) gewaehlt.
 - **Merge:** Entitaeten werden verlustfrei vereint (`mergeData`); Einstellungen werden
   uebernommen, aber **nicht-leere lokale API-Keys werden nie von leeren Remote-Werten
@@ -28,8 +28,8 @@ Ablage-Knoten: `appStore/<blobKey>` (z. B. `appStore/app-data_json`), Format
 
 ## Umschalten / Rollback (Einstellungen → Sync)
 - Checkbox **„RTDB als primären Auto-Sync verwenden"** (Default: an).
-  Aus → Netlify wird wieder primär (RTDB bleibt Fallback/Shadow).
-  Intern: `settings.storage.primaryProvider = "rtdb" | "netlify"`.
+  Aus → Firebase Storage wird primär (RTDB bleibt verfügbar).
+  Intern: `settings.storage.primaryProvider = "rtdb" | "firebase"`.
 - Ganz abschalten (RTDB gar nicht nutzen): `settings.storage.rtdbSync = false`.
 - Zusaetzliche manuelle Buttons: **Jetzt sichern / Jetzt laden / Status**.
 

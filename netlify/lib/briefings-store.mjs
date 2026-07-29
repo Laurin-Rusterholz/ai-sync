@@ -1,26 +1,15 @@
-// ============================================================================
-//  BRIEFINGS — Shared storage helpers
-//  ---------------------------------------------------------------------------
-//  Lives OUTSIDE netlify/functions so Netlify does NOT expose it as its own
-//  endpoint (esbuild bundles it into each importing function).
-//
-//  Single source of truth for the "briefings" blob store used by:
-//    briefing-put     (upload a pre-rendered file)
-//    briefing-deliver (render a PDF server-side, then store it here)
-//    briefing-list / briefing-get (read side)
-//
-//  Layout in the store:
-//    key "__index__"  → JSON array of metadata (newest first):
-//                       { id, title, date, filename, contentType, size, createdAt }
-//    key "<id>"       → the binary file, with the same metadata attached.
-//
-//  Auth mirrors blob-get / blob-put: optional SYNC_AUTH_TOKEN bearer.
-// ============================================================================
-import { getStore } from "@netlify/blobs";
+// Briefing metadata lives in Firebase RTDB; binaries live in Firebase Storage.
+import {
+  firebaseDbGet,
+  firebaseDbRemove,
+  firebaseDbSet,
+  firebaseStorageDelete,
+  firebaseStorageDownload,
+  firebaseStorageUpload,
+} from "./firebase-admin.mjs";
 
-export const STORE = "briefings";
-export const INDEX_KEY = "__index__";
 export const MAX_ITEMS = 200;
+export const BRIEFINGS_PATH = "briefings/items";
 
 export const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -37,48 +26,71 @@ export function json(data, status = 200, extraHeaders = {}) {
 }
 
 function env(name) {
-  try { if (typeof Netlify !== "undefined" && Netlify.env) return Netlify.env.get(name); } catch (e) { /* ignore */ }
-  return (typeof process !== "undefined" && process.env) ? process.env[name] : undefined;
+  try {
+    if (typeof Netlify !== "undefined" && Netlify.env) return Netlify.env.get(name);
+  } catch {
+    // Ignore and use process.env for local tests.
+  }
+  return typeof process !== "undefined" ? process.env?.[name] : undefined;
 }
 
-// Returns a 401 Response if the bearer token is required and wrong, else null.
 export function unauthorized(req) {
   const expected = env("SYNC_AUTH_TOKEN");
-  if (!expected) return null; // no token configured → open (same as blob-get/blob-put)
+  if (!expected) return null;
   const provided = req.headers.get("Authorization") || "";
   if (provided === expected || provided === "Bearer " + expected) return null;
   return json({ error: "Unauthorized" }, 401);
 }
 
+// Kept as a compatibility shim for existing callers.
 export function getBriefingStore() {
-  return getStore(STORE);
-}
-
-export async function readIndex(store) {
-  try {
-    const raw = await store.get(INDEX_KEY, { type: "text" });
-    const idx = raw ? JSON.parse(raw) : [];
-    return Array.isArray(idx) ? idx : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-export async function writeIndex(store, index) {
-  await store.set(INDEX_KEY, JSON.stringify(index));
+  return { provider: "firebase" };
 }
 
 function byteLengthOf(data) {
   if (data == null) return 0;
-  if (typeof data.byteLength === "number") return data.byteLength; // ArrayBuffer / TypedArray
+  if (typeof data.byteLength === "number") return data.byteLength;
   if (typeof data.length === "number") return data.length;
   return 0;
 }
 
-// Store a briefing binary + update the index (newest first). Returns the
-// metadata entry. `data` may be an ArrayBuffer / Uint8Array. For a once-a-day
-// delivery the read-modify-write window is tiny, so last-writer-wins is fine.
-export async function storeBriefing(store, { data, title, date, filename, contentType }) {
+function safeFilename(value) {
+  return String(value || "briefing.pdf")
+    .replace(/[\u0000-\u001f/\\]+/g, "_")
+    .slice(0, 120);
+}
+
+export async function listBriefings() {
+  const value = await firebaseDbGet(BRIEFINGS_PATH) || {};
+  return Object.values(value)
+    .filter(Boolean)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+export async function getBriefing(id) {
+  return firebaseDbGet(`${BRIEFINGS_PATH}/${id}`);
+}
+
+export async function deleteBriefing(id) {
+  const meta = await getBriefing(id);
+  if (!meta) return false;
+  await firebaseDbRemove(`${BRIEFINGS_PATH}/${id}`);
+  if (meta.storagePath) {
+    try {
+      await firebaseStorageDelete(meta.storagePath);
+    } catch {
+      // Metadata deletion is authoritative; orphan cleanup can be retried later.
+    }
+  }
+  return true;
+}
+
+export async function readBriefingBinary(meta) {
+  if (!meta?.storagePath) return null;
+  return firebaseStorageDownload(meta.storagePath);
+}
+
+export async function storeBriefing(_store, { data, title, date, filename, contentType }) {
   const now = new Date();
   const id = "b_" + now.getTime().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
 
@@ -86,21 +98,32 @@ export async function storeBriefing(store, { data, title, date, filename, conten
   title = String(title || ("Briefing " + date)).slice(0, 200);
   contentType = contentType || "application/pdf";
   if (!filename) filename = title.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) + ".pdf";
-  filename = String(filename).slice(0, 120);
+  filename = safeFilename(filename);
 
-  const meta = { id, title, date, filename, contentType, size: byteLengthOf(data), createdAt: now.toISOString() };
+  const storagePath = `briefings/${id}/${filename}`;
+  const buffer = Buffer.isBuffer(data)
+    ? data
+    : Buffer.from(data instanceof ArrayBuffer ? new Uint8Array(data) : data);
+  const meta = {
+    id,
+    title,
+    date,
+    filename,
+    contentType,
+    size: byteLengthOf(buffer),
+    createdAt: now.toISOString(),
+    storagePath,
+  };
 
-  await store.set(id, data, { metadata: meta });
+  await firebaseStorageUpload(storagePath, buffer, {
+    contentType,
+    metadata: { briefingId: id, createdAt: meta.createdAt },
+  });
+  await firebaseDbSet(`${BRIEFINGS_PATH}/${id}`, meta);
 
-  let index = await readIndex(store);
-  index = index.filter((x) => x && x.id !== id);
-  index.unshift(meta);
-  if (index.length > MAX_ITEMS) {
-    const removed = index.slice(MAX_ITEMS);
-    index = index.slice(0, MAX_ITEMS);
-    for (const r of removed) { try { await store.delete(r.id); } catch (e) { /* best effort */ } }
+  const items = await listBriefings();
+  for (const stale of items.slice(MAX_ITEMS)) {
+    await deleteBriefing(stale.id);
   }
-  await writeIndex(store, index);
-
   return meta;
 }
