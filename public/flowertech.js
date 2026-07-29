@@ -353,4 +353,174 @@
       ft.lastSyncAt = now();
       ft.syncStatus = "connected";
       save();
-      notify("ok", "FlowerTech synchronisiert", created ? created + " neue Aufgabe(n)" : "Keine Duplikate,
+      notify("ok", "FlowerTech synchronisiert", created ? created + " neue Aufgabe(n)" : "Keine Duplikate, alles aktuell");
+      rerender();
+    } catch (error) {
+      ft.syncStatus = "error";
+      notify("err", "FlowerTech", error.message);
+      rerender();
+    }
+  };
+
+  function renderFlowerTech() {
+    var ft = state();
+    if (!ft) return '<div class="card p-4">FlowerTech wird geladen…</div>';
+    initializeSync();
+    var allProjects = projects();
+    var allTasks = tasks();
+    var allInquiries = inquiries();
+    var allVideos = videos();
+    var activeTab = ft.activeTab;
+    var tabs = [
+      ["dashboard", "Dashboard"], ["projects", "Projekte"], ["tasks", "Aufgaben"],
+      ["leads", "Leads / Anfragen"], ["pipeline", "Pipeline"], ["finances", "Finanzen"],
+      ["notes", "Notizen"], ["links", "Links"], ["videos", "Instagram-Videos"]
+    ];
+    var syncLabels = {
+      connected: "Firebase verbunden", syncing: "Synchronisiert…",
+      login_required: "Anmeldung erforderlich", error: "Synchronisationsfehler",
+      unavailable: "Firebase nicht verfügbar", idle: "Bereit"
+    };
+    var inquiryStatuses = [
+      ["new", "Neu"], ["contacted", "Kontaktiert"], ["qualified", "Qualifiziert"],
+      ["proposal", "Offerte"], ["won", "Gewonnen"], ["lost", "Verloren"]
+    ];
+    var stages = [
+      ["lead", "Lead"], ["discovery", "Abklärung"], ["proposal", "Offerte"],
+      ["won", "Gewonnen"], ["lost", "Verloren"]
+    ];
+    var content = "";
+
+    if (activeTab === "dashboard") {
+      var openTasks = allTasks.filter(function (task) { return task.status !== "done"; }).length;
+      var income = ft.finances.filter(function (entry) { return entry.type === "income"; })
+        .reduce(function (sum, entry) { return sum + Number(entry.amount || 0); }, 0);
+      var expense = ft.finances.filter(function (entry) { return entry.type === "expense"; })
+        .reduce(function (sum, entry) { return sum + Number(entry.amount || 0); }, 0);
+      content =
+        '<div class="ft-kpis">' +
+          '<div class="ft-kpi"><span>Aktive Projekte</span><strong>' + allProjects.filter(function (p) { return p.status !== "done" && p.status !== "archived"; }).length + '</strong></div>' +
+          '<div class="ft-kpi"><span>Offene Aufgaben</span><strong>' + openTasks + '</strong></div>' +
+          '<div class="ft-kpi"><span>Neue Anfragen</span><strong>' + allInquiries.filter(function (i) { return !i.status || i.status === "new"; }).length + '</strong></div>' +
+          '<div class="ft-kpi"><span>Netto</span><strong>' + money(income - expense) + '</strong></div>' +
+        '</div>' +
+        '<div class="ft-grid-2"><div class="card p-4"><h3>Pipeline</h3><div class="sep"></div>' +
+          stages.map(function (stage) {
+            return '<div class="ft-row"><span>' + esc(stage[1]) + '</span><strong>' +
+              allProjects.filter(function (p) { return (p.pipelineStage || "lead") === stage[0]; }).length + '</strong></div>';
+          }).join("") +
+        '</div><div class="card p-4"><h3>Letzte Anfragen</h3><div class="sep"></div>' +
+          (allInquiries.length ? allInquiries.slice(0, 5).map(function (inquiry) {
+            return '<div class="ft-list-item"><strong>' + esc(inquiry.name || inquiry.email || "Anfrage") +
+              '</strong><span>' + esc(inquiry.company || inquiry.service || inquiry.status || "neu") + '</span></div>';
+          }).join("") : empty("Noch keine Website-Anfragen")) +
+        '</div></div>';
+    } else if (activeTab === "projects") {
+      content =
+        '<div class="card p-4 ft-form"><h3>FlowerTech-Projekt erstellen</h3>' +
+          '<input id="ftProjectTitle" type="text" placeholder="Projektname">' +
+          '<textarea id="ftProjectDescription" rows="3" placeholder="Kurzbeschreibung"></textarea>' +
+          '<button class="btn primary" onclick="window._ftCreateProject()">Projekt erstellen</button></div>' +
+        '<div class="ft-card-grid">' + (allProjects.length ? allProjects.map(function (project) {
+          return '<div class="card p-4"><div class="flex justify-between gap-2"><h3>' + esc(project.title || "Projekt") +
+            '</h3><span class="badge">' + esc(project.status || "active") + '</span></div><p class="mini">' +
+            esc(project.description || "Keine Beschreibung") + '</p><select onchange="window._ftSetProjectStage(\'' + esc(project.id) + '\',this.value)">' +
+            stages.map(function (stage) {
+              return '<option value="' + stage[0] + '" ' + ((project.pipelineStage || "lead") === stage[0] ? "selected" : "") + '>' + esc(stage[1]) + '</option>';
+            }).join("") + '</select><button class="btn sm mt-3" onclick="location.hash=\'#/projects/' + esc(project.id) + '\'">In AI Sync öffnen</button></div>';
+        }).join("") : empty("Noch keine FlowerTech-Projekte")) + '</div>';
+    } else if (activeTab === "tasks") {
+      content =
+        '<div class="card p-4 ft-inline-form"><input id="ftTaskTitle" type="text" placeholder="Neue Aufgabe">' +
+        '<select id="ftTaskProject"><option value="">Ohne Projekt</option>' + allProjects.map(function (p) {
+          return '<option value="' + esc(p.id) + '">' + esc(p.title) + '</option>';
+        }).join("") + '</select><button class="btn primary" onclick="window._ftCreateTask()">Hinzufügen</button></div>' +
+        '<div class="card p-4">' + (allTasks.length ? allTasks.map(function (task) {
+          var project = allProjects.find(function (p) { return p.id === task.projectId; });
+          return '<div class="ft-task"><span class="' + (task.status === "done" ? "ft-done" : "") + '">' +
+            esc(task.title || "Aufgabe") + '</span><small>' + esc(project && project.title || (task.sourceInquiryId ? "Website-Anfrage" : "FlowerTech")) +
+            '</small><button class="btn sm" onclick="location.hash=\'#/tasks/' + esc(task.id) + '\'">Öffnen</button></div>';
+        }).join("") : empty("Keine FlowerTech-Aufgaben")) + '</div>';
+    } else if (activeTab === "leads") {
+      content = '<div class="card p-4">' + (allInquiries.length ? allInquiries.map(function (inquiry) {
+        return '<div class="ft-lead"><div><strong>' + esc(inquiry.name || "Unbekannt") + '</strong><div class="mini">' +
+          esc(inquiry.company || "") + (inquiry.email ? " · " + esc(inquiry.email) : "") + '</div><p>' + esc(inquiry.message || "") +
+          '</p></div><select onchange="window._ftSetInquiryStatus(\'' + esc(inquiry.id) + '\',this.value)">' +
+          inquiryStatuses.map(function (status) {
+            return '<option value="' + status[0] + '" ' + ((inquiry.status || "new") === status[0] ? "selected" : "") + '>' + esc(status[1]) + '</option>';
+          }).join("") + '</select></div>';
+      }).join("") : empty("Noch keine Anfragen unter flowertech/inquiries")) + '</div>';
+    } else if (activeTab === "pipeline") {
+      content = '<div class="ft-pipeline">' + stages.map(function (stage) {
+        var items = allProjects.filter(function (p) { return (p.pipelineStage || "lead") === stage[0]; });
+        return '<div class="ft-column"><h3>' + esc(stage[1]) + ' <span>' + items.length + '</span></h3>' +
+          (items.length ? items.map(function (project) {
+            return '<div class="ft-pipeline-card"><strong>' + esc(project.title || "Projekt") +
+              '</strong><select onchange="window._ftSetProjectStage(\'' + esc(project.id) + '\',this.value)">' +
+              stages.map(function (option) {
+                return '<option value="' + option[0] + '" ' + (option[0] === stage[0] ? "selected" : "") + '>' + esc(option[1]) + '</option>';
+              }).join("") + '</select></div>';
+          }).join("") : '<div class="mini">Leer</div>') + '</div>';
+      }).join("") + '</div>';
+    } else if (activeTab === "finances") {
+      var totalIncome = ft.finances.filter(function (entry) { return entry.type === "income"; })
+        .reduce(function (sum, entry) { return sum + Number(entry.amount || 0); }, 0);
+      var totalExpense = ft.finances.filter(function (entry) { return entry.type === "expense"; })
+        .reduce(function (sum, entry) { return sum + Number(entry.amount || 0); }, 0);
+      content =
+        '<div class="ft-kpis"><div class="ft-kpi"><span>Einnahmen</span><strong>' + money(totalIncome) +
+        '</strong></div><div class="ft-kpi"><span>Ausgaben</span><strong>' + money(totalExpense) +
+        '</strong></div><div class="ft-kpi"><span>Netto</span><strong>' + money(totalIncome - totalExpense) + '</strong></div></div>' +
+        '<div class="card p-4 ft-inline-form"><input id="ftFinanceTitle" placeholder="Bezeichnung"><input id="ftFinanceAmount" type="number" min="0" step="0.05" placeholder="CHF">' +
+        '<select id="ftFinanceType"><option value="income">Einnahme</option><option value="expense">Ausgabe</option></select><button class="btn primary" onclick="window._ftAddFinance()">Buchen</button></div>' +
+        '<div class="card p-4">' + (ft.finances.length ? ft.finances.map(function (entry) {
+          return '<div class="ft-row"><span>' + esc(entry.title) + ' <small>' + esc(entry.date || "") + '</small></span><strong style="color:' +
+            (entry.type === "income" ? "var(--ok)" : "var(--danger)") + '">' + (entry.type === "income" ? "+" : "−") + " " + money(entry.amount) +
+            '</strong><button class="btn sm ghost" onclick="window._ftDeleteFinance(\'' + esc(entry.id) + '\')">×</button></div>';
+        }).join("") : empty("Noch keine Finanzbuchungen")) + '</div>';
+    } else if (activeTab === "notes") {
+      content =
+        '<div class="card p-4 ft-form"><input id="ftNoteTitle" placeholder="Titel"><textarea id="ftNoteContent" rows="4" placeholder="Notiz"></textarea><button class="btn primary" onclick="window._ftAddNote()">Notiz speichern</button></div>' +
+        '<div class="ft-card-grid">' + (ft.notes.length ? ft.notes.map(function (note) {
+          return '<div class="card p-4"><div class="flex justify-between"><h3>' + esc(note.title) + '</h3><button class="btn sm ghost" onclick="window._ftDeleteNote(\'' +
+            esc(note.id) + '\')">×</button></div><p style="white-space:pre-wrap">' + esc(note.content || "") + '</p><div class="mini">' + dateTime(note.createdAt) + '</div></div>';
+        }).join("") : empty("Noch keine FlowerTech-Notizen")) + '</div>';
+    } else if (activeTab === "links") {
+      content =
+        '<div class="card p-4 ft-inline-form"><input id="ftLinkTitle" placeholder="Bezeichnung"><input id="ftLinkUrl" type="url" placeholder="https://…"><button class="btn primary" onclick="window._ftAddLink()">Link speichern</button></div>' +
+        '<div class="card p-4">' + (ft.links.length ? ft.links.map(function (link) {
+          return '<div class="ft-row"><a href="' + esc(safeUrl(link.url)) + '" target="_blank" rel="noopener noreferrer">' + esc(link.title) +
+            '</a><span class="mini">' + esc(link.url) + '</span><button class="btn sm ghost" onclick="window._ftDeleteLink(\'' + esc(link.id) + '\')">×</button></div>';
+        }).join("") : empty("Noch keine Links")) + '</div>';
+    } else if (activeTab === "videos") {
+      content = '<div class="ft-card-grid">' + (allVideos.length ? allVideos.map(function (video) {
+        var url = safeUrl(video.url || video.instagramUrl);
+        return '<div class="card p-4"><div class="flex justify-between gap-2"><h3>' + esc(video.title || video.hook || "Instagram Reel") +
+          '</h3><span class="badge">' + esc(video.status || "draft") + '</span></div><p>' + esc(video.caption || "") +
+          '</p><div class="mini">' + dateTime(video.publishedAt || video.createdAt) + " · " +
+          Number(video.views || 0).toLocaleString("de-CH") + " Views · " + Number(video.likes || 0).toLocaleString("de-CH") +
+          ' Likes</div>' + (url !== "#" ? '<a class="btn sm mt-3" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Reel öffnen</a>' : "") + '</div>';
+      }).join("") : empty("Noch keine Videos unter flowertech/videos")) + '</div>';
+    }
+
+    return '<style>' +
+      '.ft-shell{--ft:#e879a9;--ft2:#7c3aed}.ft-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:20px}.ft-brand{display:flex;align-items:center;gap:12px}.ft-mark{width:46px;height:46px;border-radius:15px;display:grid;place-items:center;font-size:25px;background:linear-gradient(135deg,rgba(232,121,169,.24),rgba(124,58,237,.22));border:1px solid rgba(232,121,169,.35)}.ft-sync{font-size:11px;color:var(--muted);text-align:right}.ft-tabs{display:flex;gap:6px;overflow:auto;padding-bottom:8px;margin-bottom:18px}.ft-tab{white-space:nowrap;border:1px solid var(--border);background:var(--panel2);color:var(--muted);padding:8px 12px;border-radius:10px;cursor:pointer}.ft-tab.active{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--ft),var(--ft2))}.ft-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.ft-kpi{padding:18px;border-radius:14px;background:var(--panel);border:1px solid var(--border)}.ft-kpi span{display:block;color:var(--muted);font-size:11px;margin-bottom:7px}.ft-kpi strong{font-size:22px}.ft-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}.ft-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.ft-form,.ft-inline-form{display:flex;gap:10px;margin-bottom:14px}.ft-form{flex-direction:column}.ft-inline-form>*{flex:1}.ft-row,.ft-task,.ft-list-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}.ft-row>span,.ft-task>span,.ft-task>small,.ft-list-item>strong{flex:1}.ft-list-item{align-items:flex-start;flex-direction:column;gap:2px}.ft-list-item span,.ft-row small{color:var(--muted);font-size:11px}.ft-task small{color:var(--muted)}.ft-done{text-decoration:line-through;opacity:.55}.ft-lead{display:grid;grid-template-columns:1fr 170px;gap:18px;padding:16px 0;border-bottom:1px solid var(--border)}.ft-lead p{white-space:pre-wrap;margin:8px 0 0}.ft-pipeline{display:grid;grid-template-columns:repeat(5,minmax(190px,1fr));gap:10px;overflow:auto;padding-bottom:8px}.ft-column{background:var(--panel2);border:1px solid var(--border);border-radius:14px;padding:12px;min-height:210px}.ft-column h3{display:flex;justify-content:space-between;font-size:13px}.ft-pipeline-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px;margin-top:9px}.ft-pipeline-card strong{display:block;margin-bottom:8px}.ft-pipeline-card select{width:100%;font-size:11px}.ft-empty{padding:28px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:12px}' +
+      '@media(max-width:780px){.ft-head{flex-direction:column}.ft-sync{text-align:left}.ft-kpis{grid-template-columns:1fr 1fr}.ft-grid-2{grid-template-columns:1fr}.ft-inline-form{flex-direction:column}.ft-lead{grid-template-columns:1fr}.ft-pipeline{grid-template-columns:repeat(5,220px)}}@media(max-width:460px){.ft-kpis{grid-template-columns:1fr}}' +
+      '</style><div class="ft-shell"><div class="ft-head"><div class="ft-brand"><div class="ft-mark">🌸</div><div><h1 style="margin:0">FlowerTech</h1><div class="mini">Web-Apps & KI · Schweizer KMU</div></div></div>' +
+      '<div class="ft-sync"><div>' + esc(syncLabels[ft.syncStatus] || ft.syncStatus) + '</div><div>' +
+      (ft.lastSyncAt ? "Zuletzt " + dateTime(ft.lastSyncAt) : "Noch nicht synchronisiert") +
+      '</div><button class="btn sm mt-2" onclick="window._ftSyncNow()">Jetzt synchronisieren</button></div></div>' +
+      '<div class="ft-tabs">' + tabs.map(function (tab) {
+        return '<button class="ft-tab ' + (activeTab === tab[0] ? "active" : "") + '" onclick="window._ftSetTab(\'' + tab[0] + '\')">' + esc(tab[1]) + '</button>';
+      }).join("") + '</div>' + content + '</div>';
+  }
+
+  window.viewFlowerTech = renderFlowerTech;
+
+  function waitForApp() {
+    if (state()) initializeSync();
+    else setTimeout(waitForApp, 250);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", waitForApp);
+  else waitForApp();
+})();
