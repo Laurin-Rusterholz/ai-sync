@@ -43,6 +43,17 @@ function serviceAccountFromEnv() {
   );
 }
 
+function userRefreshTokenFromEnv() {
+  const refreshToken = env("FIREBASE_OAUTH_REFRESH_TOKEN");
+  if (!refreshToken) return null;
+  const clientId = env("GOOGLE_CLIENT_ID");
+  const clientSecret = env("GOOGLE_CLIENT_SECRET");
+  if (!clientId || !clientSecret) {
+    throw new Error("FIREBASE_OAUTH_REFRESH_TOKEN benötigt GOOGLE_CLIENT_ID und GOOGLE_CLIENT_SECRET.");
+  }
+  return { refreshToken, clientId, clientSecret };
+}
+
 function base64url(value) {
   const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
   return buffer.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
@@ -50,6 +61,26 @@ function base64url(value) {
 
 async function getAdminAccessToken() {
   if (cachedAccessToken && Date.now() < cachedAccessTokenExpiry - 60_000) return cachedAccessToken;
+  const userOAuth = userRefreshTokenFromEnv();
+  if (userOAuth) {
+    const response = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: userOAuth.refreshToken,
+        client_id: userOAuth.clientId,
+        client_secret: userOAuth.clientSecret,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.access_token) {
+      throw new Error("Firebase OAuth-Refresh fehlgeschlagen: " + (data.error_description || data.error || response.status));
+    }
+    cachedAccessToken = data.access_token;
+    cachedAccessTokenExpiry = Date.now() + Number(data.expires_in || 3600) * 1000;
+    return cachedAccessToken;
+  }
   const account = serviceAccountFromEnv();
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
