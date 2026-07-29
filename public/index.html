@@ -8697,6 +8697,32 @@ const ROUTE_DEFS = [
 function getRoutes() {
   return ROUTE_DEFS.map(r => ({...r, label: t(r.key), hash: "#/" + r.key}));
 }
+
+// Womit Quantus startet, wenn keine Adresse in der Zeile steht. "Mein Tag"
+// beginnt mit dem Block "Heute im Fokus" (fällige Aufgaben, heutige Termine,
+// offene Entwürfe) — also genau dem, was zuerst zählt. Umstellbar unter
+// Einstellungen → Erscheinungsbild. Ein Direktlink (#/projects/…) gewinnt
+// immer, hier geht es nur um den leeren Start.
+const START_ROUTE_DEFAULT = "today";
+function getStartRoute() {
+  try {
+    const gewuenscht = APP.state.settings?.ui?.startRoute;
+    if (gewuenscht && ROUTE_DEFS.some(r => r.key === gewuenscht)) return gewuenscht;
+  } catch (e) { /* Einstellungen noch nicht geladen */ }
+  return START_ROUTE_DEFAULT;
+}
+window.setStartRoute = function(key) {
+  if (!ROUTE_DEFS.some(r => r.key === key)) return;
+  try {
+    APP.state.settings.ui = APP.state.settings.ui || {};
+    APP.state.settings.ui.startRoute = key;
+    if (typeof window.scheduleSave === "function") window.scheduleSave();
+    if (typeof toast === "function") {
+      const r = getRoutes().find(x => x.key === key);
+      toast("ok", "Startseite", "Quantus öffnet künftig mit " + (r ? r.label : key) + ".");
+    }
+  } catch (e) { console.warn("[Quantus] Startseite nicht gespeichert:", e && e.message); }
+};
 // ROUTES is a getter so it always reflects current language
 let ROUTES = getRoutes();
 
@@ -10945,6 +10971,7 @@ function defaultSettings() {
     ui: {
       showSidebarOnDashboard: true,
       hideSidebarOnOtherPages: false,
+      startRoute: "today",   // womit Quantus startet — siehe getStartRoute()
     },
     shortcuts: {
       save:       { key: "s", ctrl: true,  shift: false, label: "Speichern" },
@@ -15869,10 +15896,11 @@ Max 5 Vorschläge. Nur relevante Verknüpfungen.`;
 // NAVIGATION & ROUTING
 // ============================================================================
 function parseHash() {
-  const hash = window.location.hash || "#/dashboard";
+  const start = getStartRoute();
+  const hash = window.location.hash || "#/" + start;
   const parts = hash.slice(2).split("/");
   return {
-    route: parts[0] || "dashboard",
+    route: parts[0] || start,
     id: parts[1] || null,
   };
 }
@@ -61955,6 +61983,13 @@ async function init() {
           <div class="form">
             <h4 style="margin-bottom:12px">🎨 Erscheinungsbild</h4>
             <label class="col-12">Workspace Name<input type="text" id="setWorkspaceName" value="${esc(APP.state.data.meta.workspaceName)}" /></label>
+            <label class="col-12">
+              Startseite
+              <select id="setStartRoute" onchange="window.setStartRoute(this.value)">
+                ${getRoutes().map(r => `<option value="${esc(r.key)}" ${getStartRoute() === r.key ? "selected" : ""}>${esc(r.icon)} ${esc(r.label)}</option>`).join("")}
+              </select>
+              <span class="mini" style="color:var(--muted)">Womit Quantus öffnet. „Mein Tag“ beginnt mit „🎯 Heute im Fokus“.</span>
+            </label>
             <label class="col-6">
               Design-Modus
               <select id="setThemeMode" onchange="window.setThemePref(this.value)">
