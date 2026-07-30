@@ -14,9 +14,18 @@
 //      bis ein Kandidat parst (balancierte Ausdruecke)
 //   5. keine unsichtbaren Unicode-Zeichen (Zero-Width-Space/-Joiner, BOM,
 //      Word-Joiner, Soft-Hyphen) in Code oder Expressions
+//   6. "jsonBody"-Felder (HTTP-Request mit specifyBody: "json"): ohne Expression
+//      valides JSON, als Expression ohne echte Zeilenumbrueche und kurz gehalten
 import { readFileSync } from 'node:fs';
 
 const UNSICHTBAR = /[\u200B\u200C\u200D\u2060\uFEFF\u00AD]/g;
+
+// n8n JSON.parst den aufgeloesten Wert des Feldes \u201EJSON Body". Ein langer
+// Inline-Body (z. B. ein kompletter LLM-Prompt in einer {{ \u2026 }}-Expression) ist
+// dort die haeufigste Fehlerquelle \u2014 n8n meldet dann \u201EThe value in 'JSON Body'
+// field is not valid JSON". Solche Bodies gehoeren in einen Code-Node davor; das
+// Feld enthaelt dann nur noch {{ JSON.stringify($json.<feld>) }}.
+const JSONBODY_MAX = 400;
 
 function jsParsbar(quelle) {
   try { new Function(quelle); return null; } catch (e) { return e.message; }
@@ -66,6 +75,23 @@ function expressionsPruefen(text, kontext, fehler) {
   }
 }
 
+function jsonBodyPruefen(text, kontext, fehler) {
+  if (!text.startsWith('=')) {
+    try { JSON.parse(text); }
+    catch (e) { fehler.push(kontext + ': jsonBody ohne Expression ist kein valides JSON — ' + e.message); }
+    return;
+  }
+  const ausdruck = text.slice(1);
+  if (/[\n\r\t]/.test(ausdruck)) {
+    fehler.push(kontext + ': jsonBody-Expression enthaelt echte Zeilenumbrueche/Tabs — n8n kann den Body dann nicht parsen ' +
+      '(mehrzeiligen Text in einen Code-Node auslagern)');
+  }
+  if (ausdruck.length > JSONBODY_MAX) {
+    fehler.push(kontext + ': jsonBody-Expression ist ' + ausdruck.length + ' Zeichen lang (Limit ' + JSONBODY_MAX + ') — ' +
+      'Body in einem Code-Node bauen und hier nur {{ JSON.stringify($json.<feld>) }} verwenden');
+  }
+}
+
 function alleStringsBesuchen(wert, pfad, cb) {
   if (typeof wert === 'string') { cb(wert, pfad); return; }
   if (Array.isArray(wert)) { wert.forEach((v, idx) => alleStringsBesuchen(v, pfad + '[' + idx + ']', cb)); return; }
@@ -111,6 +137,11 @@ function workflowPruefen(datei) {
         unsichtbareZeichen(text, kontext, fehler);
         const f = jsParsbar(text);
         if (f) fehler.push(kontext + ': JS-Syntaxfehler — ' + f);
+      } else if (pfad === 'jsonBody' || pfad.endsWith('.jsonBody')) {
+        geprueft++;
+        unsichtbareZeichen(text, kontext, fehler);
+        if (text.includes('{{')) expressionsPruefen(text, kontext, fehler);
+        jsonBodyPruefen(text, kontext, fehler);
       } else if (text.includes('{{')) {
         geprueft++;
         unsichtbareZeichen(text, kontext, fehler);

@@ -166,6 +166,51 @@ Service-Account (umgeht die Regeln).
   (`zaehler === 0`, kein `days`-Array, JSON-Parse-Fehler), setzt der Workflow
   sauber `status: "error"` mit Grund — nie ein stilles Leer-Ergebnis.
 
+### Request-Body: Prompt im Code-Node, nicht im HTTP-Node
+
+Der Anthropic-Request wird **vollständig im Code-Node `AI-Kontext bauen`** als
+Objekt `anthropicBody` gebaut (`model`, `max_tokens`, `system`, `messages`); der
+HTTP-Node `Anthropic: Wochenplan generieren` enthält im Feld „JSON Body" nur noch
+
+```
+{{ JSON.stringify($json.anthropicBody) }}
+```
+
+Grund: n8n `JSON.parse`t den aufgelösten Wert dieses Feldes. Steht dort ein
+mehrere Tausend Zeichen langer `{{ … }}`-Ausdruck mit Anführungszeichen,
+Zeilenumbrüchen (`\n`) und JSON-Beispielen im Prompt, kippt die Auflösung —
+der Node meldet dann
+
+> The value in the "JSON Body" field is not valid JSON
+
+und liefert wegen `onError: continueRegularOutput` ein Fehler-Item, das der
+Aggregations-Node als `Anthropic-API-Fehler: …` in `generation.message` schreibt;
+das Frontend zeigt es als Warnung in der Generier-Karte. Besonders leicht passiert
+das, wenn der Prompt im n8n-UI bearbeitet und gespeichert wurde — dabei werden
+`\n`-Sequenzen zu echten Zeilenumbrüchen und der Ausdruck ist nicht mehr
+parsebar. Im Code-Node existiert dieses Problem nicht, weil dort gar keine
+Expression-Auflösung stattfindet.
+
+`node scripts/validate-n8n-workflow.js` prüft das mit: `jsonBody`-Felder dürfen
+als Expression keine echten Zeilenumbrüche enthalten und nicht länger als 400
+Zeichen sein (ohne Expression müssen sie valides JSON sein).
+
+**Fix in einer laufenden n8n-Instanz** (ohne Neu-Import, damit Credentials und
+Kalender-IDs erhalten bleiben):
+
+1. Workflow öffnen → Node **`AI-Kontext bauen`** → den gesamten Code durch die
+   Fassung aus `n8n/nobraine-weekly-planner.workflow.json` ersetzen.
+2. Node **`Anthropic: Wochenplan generieren`** → Feld **JSON Body** komplett
+   leeren und exakt `{{ JSON.stringify($json.anthropicBody) }}` eintragen
+   (Expression-Modus, das `=`-Präfix setzt n8n selbst).
+3. Speichern, Workflow aktiv lassen, im Weekly Planner „🎲 Woche generieren".
+
+> **Zeitzone:** Der Node `Busy-Flags ableiten` vergleicht Kalender-Termine mit
+> lokalen Zeitfenstern (Mittag 11:30–13:30, Abend 18:00–20:30). Die n8n-Instanz
+> muss daher auf `Europe/Zurich` laufen (`GENERIC_TIMEZONE`/Workflow-Zeitzone) —
+> unter UTC verschieben sich die Fenster um eine bis zwei Stunden und Termine
+> gelten fälschlich als „nicht kollidierend".
+
 ## Auth: kein erzwungener Login (offene /nobraine-Rules)
 
 `/nobraine` ist in den Rules **offen** (`.read/.write: true`), daher erzwingt
