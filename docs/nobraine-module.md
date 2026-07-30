@@ -2,8 +2,9 @@
 
 Single-File-Modul **`public/nobraine.html`** (CSS + JS inline, kein Build, keine
 Frameworks ausser dem Firebase-SDK via CDN). Der Wochen-Menüplaner verwaltet
-eine durchsuchbare Rezept-Bibliothek, plant je Wochentag Mittag- und
-Abendessen (Frühstück bleibt Routine), aggregiert daraus eine Einkaufsliste,
+eine durchsuchbare Rezept-Bibliothek (KI-generiert **oder von Hand erfasst**),
+plant je Wochentag Mittag- und Abendessen sowie einen **täglichen Smoothie**
+(Frühstück bleibt Routine), aggregiert daraus eine Einkaufsliste,
 führt je Tag eine Termin-Agenda, trackt tägliche Gewohnheiten und stösst die
 automatische
 Wochen-Generierung über einen **n8n-Webhook** an. Alle Daten liegen unter dem
@@ -32,7 +33,7 @@ gruppiert.
 
 | Pfad | Inhalt |
 |---|---|
-| `nobraine/recipes/<id>` | `{ name, kategorie ("mittag"\|"abend"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
+| `nobraine/recipes/<id>` | `{ name, kategorie ("mittag"\|"abend"\|"smoothie"), portionen, kochzeitMin, zutaten:[{ menge, einheit, name }], schritte:[…], tags:[…], lastUsed (ISO-Datum\|null), erstellt, aktualisiert }` |
 | `nobraine/habitdefs/<id>` | `{ name, icon, sort, aktiv, erstellt }` — Definition einer Gewohnheit |
 | `nobraine/habits/<datum>/<habitId>` | `true` — Tages-Log: an diesem Tag (ISO-Datum `YYYY-MM-DD`) erledigte Gewohnheit |
 | `nobraine/weeks/<weekKey>/meals/<tag>/<slotKey>` | `recipeId` (String) — Zuweisung eines Rezepts zu einem Mahlzeiten-Slot |
@@ -44,7 +45,10 @@ gruppiert.
 
 - `weekKey` (= `<jahr-kw>`): ISO-Woche, Format `YYYY-Www` (z. B. `2026-W27`). Wochenbeginn Montag.
 - `<tag>`: Wochentags-Key `montag` … `sonntag`.
-- `slotKey`: `mittag` · `abend` — nur Mittag- und Abendessen werden geplant.
+- `slotKey`: `smoothie` · `mittag` · `abend`. Nur `mittag`/`abend` werden von der
+  KI generiert (Konstante `SLOTS`); `smoothie` ist ein rein manueller Slot. Alle
+  drei erscheinen im Wochenplan (`PLAN_SLOTS`) und liefern Zutaten an die
+  Einkaufsliste.
 
 ### Ableitungen im Frontend (kein zusätzlicher Persistenz-Zweig)
 
@@ -61,7 +65,33 @@ gruppiert.
   Zutaten der eingeplanten Rezepte werden nach `Name + Einheit` **dedupliziert**
   und die Mengen summiert (`num()`-Parser inkl. Komma und Brüchen wie `1/2`).
   Persistiert wird nur der Abhak-Zustand (`checked`) je aggregiertem Schlüssel
-  sowie manuell ergänzte Artikel (`manuell: true`).
+  sowie manuell ergänzte Artikel (`manuell: true`). Weil über **alle Tage und
+  Slots** summiert wird, ergibt derselbe Smoothie an 7 Tagen automatisch die
+  7-fache Menge jeder Smoothie-Zutat.
+- **Manuelle Artikel** werden im Kopf der Einkaufsliste erfasst (Menge · Einheit ·
+  Artikel). Menge und Einheit sind optional und werden — falls leer — aus dem
+  Artikelfeld abgetrennt (`„2 kg Mehl"` → `2` · `kg` · `Mehl`, gleiche Logik wie
+  die Zutaten-Zeilen im Rezept-Formular). `Enter` in einem der drei Felder fügt
+  hinzu; danach werden die Felder geleert und der Fokus springt zurück ins
+  Artikelfeld. Manuelle Artikel sind mit „manuell" markiert und einzeln löschbar;
+  der Gewürz-/Kleinstmengen-Filter gilt für sie nicht.
+- **Täglicher Smoothie:** Über der Wochen-Grid liegt die Smoothie-Karte. Sie
+  setzt **ein** selbst erfasstes Rezept auf die gewählten Tage (Vorauswahl: alle
+  sieben) — die Mengen für *einen* Smoothie werden pro Tag einmal gerechnet, bei
+  7 Tagen also 7× auf der Einkaufsliste. Der Dialog erlaubt Tages-Auswahl,
+  „Alle 7 Tage" und „＋ Neues Smoothie-Rezept" (legt das Rezept mit Kategorie
+  `smoothie` an und setzt es direkt auf alle sieben Tage). „Entfernen" leert den
+  Smoothie-Slot aller Tage. Die Einkaufsliste zeigt einen Hinweis, an wie vielen
+  Tagen der Smoothie geplant und damit wie oft er eingerechnet ist.
+  Für Smoothie-Zutaten greift der **Einheiten**-Filter (`EL`/`TL`/`Prise`)
+  bewusst **nicht** (`ekAusschlussSlot`) — Löffelmengen wie Haferflocken, Nussmus
+  oder Proteinpulver sind dort echte Einkäufe; der Namens-Filter (Zimt, Salz …)
+  gilt weiterhin.
+- **Eigene Rezepte** lassen sich an drei Stellen erfassen: „＋ Neues Rezept" im
+  Kopf der Bibliothek (auch im Leer-Hinweis), „＋ Eigenes Rezept" direkt im
+  Slot-Dialog des Wochenplans (Kategorie = Slot, wird nach dem Anlegen sofort in
+  diesen Slot eingeplant) und „＋ Neues Smoothie-Rezept" im Smoothie-Dialog.
+  Zutaten werden zeilenweise eingegeben (`„200 g Mehl"`, `„2 Eier"`, `„Salz"`).
 - **`lastUsed`** wird beim Einplanen auf das Datum des jeweiligen Slots gesetzt.
   Die Bibliothek sortiert selten/nie verwendete Rezepte nach vorne und markiert
   kürzlich (≤ 10 Tage) verwendete rot — so werden Wiederholungen sichtbar
@@ -203,7 +233,7 @@ eigener `<script>`-Block, startet erst mit Firebase-Session):
 |---|---|---|
 | `nobraine/habitdefs/<id>` | `dailyBriefing.routines[]` | Upsert einer Routine je Definition, markiert per `nbHabitId`; Schema `{ id:"rt_nb_…", text, icon, frequency:"daily", target:1, completions:[], subCompletions:[], archived, nbHabitId, source:"nobraine" }`. Gelöschte/inaktive Defs → Routine `archived:true`. |
 | `nobraine/habits/<datum>/<id>=true` | `routine.completions[]` | Autorität für die Completions der nb-Routine: je erledigtem Datum ein `{ id:"hc_nb_…", date:"YYYY-MM-DD", value:target }`; nicht (mehr) erledigte Daten werden entfernt. |
-| `nobraine/weeks/<jahr-kw>/meals/<tag>/<mittag\|abend>` + `nobraine/recipes` | `dailyBriefing.timeBlocks[<datum>][]` | Je Slot ein Block `{ id:"tb_nb_…", nbMealKey, startTime, endTime, title:"🍽️ Mittagessen: <Rezept>" }`. Mittag 12:00–13:00, Abend 18:30–19:30. Erscheint in der „Tagesplanung"-Timeline. |
+| `nobraine/weeks/<jahr-kw>/meals/<tag>/<smoothie\|mittag\|abend>` + `nobraine/recipes` | `dailyBriefing.timeBlocks[<datum>][]` | Je Slot ein Block `{ id:"tb_nb_…", nbMealKey, startTime, endTime, title:"🍽️ Mittagessen: <Rezept>" }`. Smoothie 07:30–07:45, Mittag 12:00–13:00, Abend 18:30–19:30. Erscheint in der „Tagesplanung"-Timeline. |
 
 Abgedeckte Wochen: **aktuelle + nächste** (deckt die Daily-Planner-Range
 heute…+7). Der Upsert ist idempotent (kein Duplizieren bei Re-Sync).
@@ -266,8 +296,9 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
    der die auth-geschützten `appStore`-Daten schreibt).
 2. **Rezepte:** In „Rezepte" ein Rezept anklicken → Drawer mit vollständigem
    Rezept (Zutaten mit Mengen, nummerierte Schritte, Portionen, Kochzeit).
-   Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen. „＋ Neues Rezept"
-   anlegen und wieder bearbeiten/löschen.
+   Suche nach Name/Zutat/Tag testen; Kategorie-Filter testen (inkl. „Smoothie").
+   „＋ Neues Rezept" von Hand anlegen (Name, Kategorie, Portionen, Kochzeit,
+   Zutaten zeilenweise, Schritte, Tags) und wieder bearbeiten/löschen.
 3. **Wochenplan:** Leeren Slot antippen → Rezept aus der Bibliothek wählen
    (passende Kategorie zuerst), „🚫 Freihalten" oder „Slot generieren". Gefüllten
    Slot antippen → Drawer mit „Rezept tauschen", „Neu generieren", „Freihalten",
@@ -286,7 +317,17 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
 6. **Einkaufsliste:** Nach dem Befüllen des Plans zeigt „Einkaufsliste" die
    aggregierte, deduplizierte Wochenliste. Positionen abhaken (Zustand
    persistiert, Badge in der Navigation zählt offene Posten), manuell Artikel
-   ergänzen (Enter oder „＋ Hinzufügen"), „Erledigte entfernen".
+   ergänzen (Enter oder „＋ Hinzufügen"; auch „2 kg Mehl" nur im Artikelfeld →
+   Menge/Einheit werden abgetrennt, Felder danach leer, Fokus zurück),
+   „Erledigte entfernen".
+6b. **Täglicher Smoothie:** Im Wochenplan „＋ Smoothie planen" → „＋ Neues
+   Smoothie-Rezept" (Kategorie ist auf „Smoothie" vorbelegt) mit Zutaten für
+   **einen** Smoothie anlegen → das Rezept steht danach im Smoothie-Slot aller
+   sieben Tage, die Karte meldet „An 7 von 7 Tagen". In der Einkaufsliste
+   erscheint jede Smoothie-Zutat mit der 7-fachen Menge (z. B. `1 Stk Banane`
+   → `7 Stk`) plus Hinweiszeile; Löffelmengen (`2 EL Haferflocken` → `14 EL`)
+   bleiben erhalten, Gewürze wie Zimt nicht. Über „✎ Anpassen" Tage abwählen →
+   die Mengen sinken entsprechend; „Entfernen" leert alle sieben Slots.
 7. **Gewohnheiten:** In „Gewohnheiten" erscheinen die Standard-Gewohnheiten als
    Matrix über die Woche (inkl. **Morgenessen** 🥣). Zellen abhaken (Schreiben
    nach `habits/<datum>/…`, Serie `🔥 N` aktualisiert sich), „＋ Gewohnheit"
@@ -296,7 +337,8 @@ mit Zutaten samt Mengen und Schritten). Bestehende Daten werden nie
    Planen einer Woche und Abhaken von Habits im Weekly Planner erscheinen in
    Quantus:
    - **Daily Planner** (App „Daily Briefing") in der „Tagesplanung"-Timeline die
-     Mittag-/Abendessen des jeweiligen Tages (12:00 / 18:30, mit Rezeptname).
+     Smoothie/Mittag-/Abendessen des jeweiligen Tages (07:30 / 12:00 / 18:30,
+     mit Rezeptname).
    - **Habits-App / Daily Planner**: „Morgenessen" und die weiteren Weekly-
      Planner-Gewohnheiten als Routinen; in Quantus abgehakt → im Weekly Planner
      abgehakt und umgekehrt (`/nobraine/habits` ist die gemeinsame Wahrheit).

@@ -203,6 +203,24 @@ h1, h2, .redaktionell {
 .slot.frei { background: var(--leinen-tief); border-style:dashed; border-color: var(--sand); }
 .slot.frei .s-rezept { color: var(--sand-tief); font-weight:600; }
 .slot.frei .frei-grund { color: var(--muted); font-weight:500; }
+.slot.smoothie .s-label { color: var(--gruen); }
+
+/* ── Smoothie-Karte (täglicher Smoothie der Woche) ───────────────────────── */
+.smoothie-karte {
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  background:#fff; border:1px solid var(--linie); border-left:4px solid var(--gruen);
+  border-radius: var(--radius); padding:15px 18px; margin-bottom:22px; box-shadow: var(--schatten);
+}
+.smoothie-karte .sk-text { flex:1; min-width:200px; }
+.smoothie-karte .sk-text b { font-size:15px; }
+.smoothie-karte .sk-text span { display:block; font-size:12.5px; color:var(--muted); margin-top:3px; }
+.btn-smoothie {
+  padding:10px 16px; border:0; border-radius: var(--radius-sm); background: var(--gruen);
+  color:#fff; font-weight:700; font-size:13.5px;
+}
+.btn-smoothie:hover { filter: brightness(.93); }
+.btn-smoothie.hell { background:transparent; color:var(--muted); border:1px solid var(--linie); }
+.btn-smoothie.hell:hover { color:var(--coral-tief); border-color:var(--coral); filter:none; }
 
 /* Tages-Agenda (Kalender) im Fuss der Tages-Karte */
 .tag-agenda { margin-top:11px; padding-top:11px; border-top:1px dashed var(--linie); display:flex; flex-direction:column; gap:5px; }
@@ -256,6 +274,7 @@ h1, h2, .redaktionell {
 .kat-mittag      { background: rgba(62,142,135,.18); color: var(--teal-tief); }
 .kat-abend       { background: rgba(217,108,87,.16); color: var(--coral-tief); }
 .kat-snack       { background: rgba(93,138,94,.18); color: var(--gruen); }
+.kat-smoothie    { background: rgba(93,138,94,.18); color: var(--gruen); }
 .rk-meta { font-size:12.5px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap; }
 .rk-tags { display:flex; gap:6px; flex-wrap:wrap; }
 .tag-pille { font-size:11px; background: var(--leinen-tief); color: var(--muted); border-radius:12px; padding:2px 9px; }
@@ -267,7 +286,12 @@ h1, h2, .redaktionell {
 
 /* ── Einkaufsliste ──────────────────────────────────────────────────────── */
 .einkauf-wrap { max-width: 720px; }
-.einkauf-add { display:flex; gap:9px; margin-bottom:20px; flex-wrap:wrap; }
+.einkauf-add { display:flex; gap:9px; margin-bottom:14px; flex-wrap:wrap; }
+.einkauf-hint { font-size:12px; color:var(--muted-hell); margin:-6px 0 16px; }
+.ek-hinweis {
+  font-size:12.5px; color:var(--muted); background:var(--leinen-hell);
+  border:1px dashed var(--linie); border-radius:var(--radius-sm); padding:9px 13px; margin-bottom:16px;
+}
 .einkauf-add input { padding:10px 13px; border:1px solid var(--linie); border-radius:var(--radius-sm); background:#fff; outline:none; }
 .einkauf-add input:focus { border-color: var(--teal); }
 .ea-menge { width:80px; } .ea-einheit { width:90px; } .ea-name { flex:1; min-width:140px; }
@@ -393,9 +417,15 @@ h1, h2, .redaktionell {
 #modalBox textarea { resize: vertical; min-height:72px; line-height:1.5; }
 #modalBox input:focus, #modalBox select:focus, #modalBox textarea:focus { border-color: var(--teal); }
 .feld-hint { font-size:11.5px; color:var(--muted-hell); margin-top:4px; }
+#modalBox .modal-hint {
+  font-size:12.5px; color:var(--muted); background:var(--leinen-tief);
+  border-radius:var(--radius-sm); padding:9px 12px; margin:2px 0 6px; line-height:1.45;
+}
+#modalBox .pref-tage { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
 .feld-reihe { display:flex; gap:12px; }
 .feld-reihe > div { flex:1; }
-.modal-aktionen { display:flex; justify-content:flex-end; gap: 10px; margin-top: 22px; }
+.modal-aktionen { display:flex; justify-content:flex-end; gap: 10px; margin-top: 22px; flex-wrap:wrap; }
+.modal-aktionen .btn { white-space:nowrap; }
 
 /* Rezept-Auswahl im Tausch-Modal */
 .auswahl-liste { max-height: 46vh; overflow-y:auto; margin: 4px -4px 0; }
@@ -601,14 +631,21 @@ const WEBHOOK_URL = "https://n8n.srv1757990.hstgr.cloud/webhook/nobraine-generat
 
 const TAGE_LANG  = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
 const TAG_KURZ   = ["Mo","Di","Mi","Do","Fr","Sa","So"];
-// Nur Mittag- und Abendessen werden geplant (Frühstück bleibt Routine).
+// Nur Mittag- und Abendessen werden von der KI geplant (Frühstück bleibt Routine).
 const SLOTS = [
   { key: "mittag", label: "Mittagessen", icon: "🥗" },
   { key: "abend",  label: "Abendessen",  icon: "🍲" }
 ];
+// Täglicher Smoothie: eigener Slot je Tag, aber NICHT Teil der KI-Generierung —
+// die Rezepte gibt man selbst ein. Steht derselbe Smoothie an allen 7 Tagen, landen
+// seine Zutaten automatisch 7× auf der Einkaufsliste (normale Wochen-Aggregation).
+const SMOOTHIE_SLOT = { key: "smoothie", label: "Smoothie", icon: "🥤" };
+// Alle im Wochenplan angezeigten Slots (SLOTS = generierbar, plus Smoothie).
+const PLAN_SLOTS = SLOTS.concat([SMOOTHIE_SLOT]);
 const KATEGORIEN = [
-  { key: "mittag", label: "Mittag" },
-  { key: "abend",  label: "Abend" }
+  { key: "mittag",   label: "Mittag" },
+  { key: "abend",    label: "Abend" },
+  { key: "smoothie", label: "Smoothie" }
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -712,6 +749,14 @@ function toast(msg) {
   el.classList.add("sichtbar");
   clearTimeout(toast._t);
   toast._t = setTimeout(function () { el.classList.remove("sichtbar"); }, 3500);
+}
+// Sanfter Abbruch eines Modal-OK-Callbacks: zeigt den Hinweis als Toast und
+// verhindert, dass modal-ok zusätzlich eine „Fehler: …"-Meldung ausgibt.
+function abbruch(hinweis) {
+  if (hinweis) toast(hinweis);
+  const e = new Error(hinweis || "abgebrochen");
+  e.abbruch = true;
+  return e;
 }
 function lc(s) { return String(s == null ? "" : s).trim().toLowerCase(); }
 function slug(s) { return lc(s).replace(/[^a-z0-9äöü]+/g, "_").replace(/^_+|_+$/g, "") || "x"; }
@@ -1095,7 +1140,8 @@ function renderKopf() {
   } else if (S.ansicht === "bibliothek") {
     const anz = Object.keys(S.recipes).length;
     titelEl.innerHTML = "<h1>Rezept-Bibliothek</h1><div class='unter'>" + anz + " Rezept" + (anz === 1 ? "" : "e") + "</div>";
-    aktionEl.innerHTML = '<button class="btn-primaer" data-action="rezept-neu">＋ Neues Rezept</button>';
+    aktionEl.innerHTML = '<button class="btn-primaer" data-action="rezept-neu"' +
+      (S.katFilter !== "alle" ? ' data-kat="' + esc(S.katFilter) + '"' : "") + ">＋ Neues Rezept</button>";
   } else if (S.ansicht === "habits") {
     const tage = tageDerWoche(S.weekMonday);
     titelEl.innerHTML =
@@ -1197,11 +1243,13 @@ function viewPlan() {
     prefsHtml() +
     '<div class="gen-karte">' +
       '<div class="gk-text"><b>Woche automatisch planen</b>' +
-        "<span>Startet den n8n-Workflow und füllt leere Slots per KI. Manuelle Rezepte und freigehaltene Slots bleiben unangetastet.</span></div>" +
+        "<span>Startet den n8n-Workflow und füllt leere Mittag-/Abend-Slots per KI. Manuelle Rezepte, " +
+        "freigehaltene Slots und der Smoothie bleiben unangetastet.</span></div>" +
       statusHtml +
       '<button class="btn-gen" data-action="woche-generieren"' + (laeuft ? " disabled" : "") + ">" +
         (laeuft ? '<span class="spinner"></span>Generiere …' : "🎲 Woche generieren") + "</button>" +
-    "</div>";
+    "</div>" +
+    smoothieKarteHtml();
 
   html += '<div class="wochen-grid">';
   tage.forEach(function (d, i) {
@@ -1213,24 +1261,25 @@ function viewPlan() {
       '<div class="tk-kopf"><span class="tag">' + TAGE_LANG[i] + "</span>" +
         (istHeute ? '<span class="heute-chip">Heute</span>' : "") +
         '<span class="datum">' + fmtKurz(d) + "</span></div>";
-    SLOTS.forEach(function (slot) {
+    PLAN_SLOTS.forEach(function (slot) {
       const rid = tagPlan[slot.key];
       const r = rid && S.recipes[rid];
       const fb = tagFree[slot.key];
+      const extra = slot.key === SMOOTHIE_SLOT.key ? " smoothie" : "";
       if (r) {
-        html += '<div class="slot" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
+        html += '<div class="slot' + extra + '" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
           '<div class="s-label">' + slot.icon + " " + slot.label + "</div>" +
           '<div class="s-rezept">' + esc(r.name) + "</div>" +
           '<div class="s-meta"><span>⏱ ' + (r.kochzeitMin || "–") + " min</span><span>🍽 " + (r.portionen || "–") + " Port.</span></div>" +
         "</div>";
       } else if (fb) {
         const grund = (fb.label && fb.label !== "Frei") ? " · " + esc(fb.label) : "";
-        html += '<div class="slot frei" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
+        html += '<div class="slot frei' + extra + '" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
           '<div class="s-label">' + slot.icon + " " + slot.label + "</div>" +
           '<div class="s-rezept">🚫 Frei<span class="frei-grund">' + grund + "</span></div>" +
         "</div>";
       } else {
-        html += '<div class="slot leer" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
+        html += '<div class="slot leer' + extra + '" data-action="slot-klick" data-tag="' + i + '" data-slot="' + slot.key + '">' +
           '<div class="s-label">' + slot.icon + " " + slot.label + "</div>" +
           '<div class="s-rezept">＋ hinzufügen</div>' +
         "</div>";
@@ -1241,6 +1290,131 @@ function viewPlan() {
   });
   html += "</div>";
   return html;
+}
+
+// ── Täglicher Smoothie ────────────────────────────────────────────────────
+// Der Smoothie ist ein normaler Slot je Wochentag (/meals/<tag>/smoothie = recipeId).
+// Dadurch greift die bestehende Wochen-Aggregation der Einkaufsliste automatisch:
+// derselbe Smoothie an 7 Tagen ⇒ jede Zutat 7× im Warenkorb. Ein Rezept einmal
+// erfassen genügt; die Karte im Wochenplan setzt es auf die gewählten Tage.
+function smoothieInfo() {
+  const eintraege = [];
+  TAG_KEYS.forEach(function (dk, i) {
+    const rid = (S.meals[dk] || {})[SMOOTHIE_SLOT.key];
+    if (rid && S.recipes[rid]) eintraege.push({ tag: i, recipeId: rid });
+  });
+  const ids = [];
+  eintraege.forEach(function (e) { if (ids.indexOf(e.recipeId) < 0) ids.push(e.recipeId); });
+  return { eintraege: eintraege, tage: eintraege.map(function (e) { return e.tag; }), ids: ids };
+}
+function smoothieNamen(ids) {
+  return ids.map(function (id) { return (S.recipes[id] || {}).name || "?"; }).join(" · ");
+}
+function smoothieKarteHtml() {
+  const info = smoothieInfo();
+  const n = info.eintraege.length;
+  let text;
+  if (n === 0) {
+    text = "<b>🥤 Täglicher Smoothie</b><span>Eigenes Smoothie-Rezept einmal erfassen — der Planer setzt es auf alle 7 Tage " +
+      "und rechnet die Zutaten automatisch 7× auf die Einkaufsliste.</span>";
+  } else if (info.ids.length === 1) {
+    text = "<b>🥤 " + esc(smoothieNamen(info.ids)) + "</b><span>An " + n + " von 7 Tagen geplant — Zutaten " + n +
+      "× auf der Einkaufsliste.</span>";
+  } else {
+    text = "<b>🥤 Smoothies</b><span>" + esc(smoothieNamen(info.ids)) + " — an " + n + " von 7 Tagen geplant.</span>";
+  }
+  return '<div class="smoothie-karte">' +
+    '<div class="sk-text">' + text + "</div>" +
+    (n ? '<button class="btn-smoothie hell" data-action="smoothie-entfernen">Entfernen</button>' : "") +
+    '<button class="btn-smoothie" data-action="smoothie-planen">' + (n ? "✎ Anpassen" : "＋ Smoothie planen") + "</button>" +
+  "</div>";
+}
+function smoothieDialog() {
+  const info = smoothieInfo();
+  const vorauswahl = info.ids[0] || "";
+  const alle = Object.keys(S.recipes).filter(function (id) { return !!S.recipes[id]; })
+    .sort(function (a, b) { return S.recipes[a].name.localeCompare(S.recipes[b].name, "de"); });
+  const smoothies = alle.filter(function (id) { return S.recipes[id].kategorie === "smoothie"; });
+  const andere    = alle.filter(function (id) { return S.recipes[id].kategorie !== "smoothie"; });
+
+  function opt(id) {
+    return '<option value="' + esc(id) + '"' + (id === vorauswahl ? " selected" : "") + ">" + esc(S.recipes[id].name) + "</option>";
+  }
+  let auswahlHtml;
+  if (alle.length === 0) {
+    auswahlHtml = '<div class="modal-hint">Noch kein Rezept vorhanden — lege zuerst dein Smoothie-Rezept an.</div>';
+  } else {
+    auswahlHtml = "<label>Smoothie-Rezept</label><select id=\"smRezept\">" +
+      (smoothies.length ? '<optgroup label="Smoothies">' + smoothies.map(opt).join("") + "</optgroup>" : "") +
+      (andere.length    ? '<optgroup label="Andere Rezepte">' + andere.map(opt).join("") + "</optgroup>" : "") +
+      "</select>";
+  }
+
+  // Standard: alle 7 Tage (bzw. die bereits geplanten Tage beim Anpassen)
+  const gewaehlt = info.tage.length ? info.tage : [0, 1, 2, 3, 4, 5, 6];
+  const tagePillen = TAG_KURZ.map(function (kurz, i) {
+    const aktiv = gewaehlt.indexOf(i) > -1;
+    return '<button type="button" class="pref-tag' + (aktiv ? " aktiv" : "") + '" data-action="sm-tag" data-idx="' + i +
+      '" aria-pressed="' + (aktiv ? "true" : "false") + '" title="' + TAGE_LANG[i] + '">' + kurz + "</button>";
+  }).join("");
+
+  modalOeffnen(
+    "<h3>🥤 Täglichen Smoothie planen</h3>" +
+    '<div class="modal-unter">Woche ' + esc(weekKeyOf(S.weekMonday)) + "</div>" +
+    '<div class="modal-hint">Ein Rezept, alle Tage: Die Zutatenmengen für <b>einen</b> Smoothie werden pro gewähltem Tag ' +
+      "einmal gerechnet — bei 7 Tagen also 7× auf der Einkaufsliste.</div>" +
+    auswahlHtml +
+    "<label>Tage</label><div class=\"pref-tage\" id=\"smTage\">" + tagePillen + "</div>" +
+    '<div class="modal-aktionen">' +
+      '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
+      '<button class="btn" data-action="sm-alle">Alle 7 Tage</button>' +
+      '<button class="btn" data-action="smoothie-rezept-neu">＋ Neues Rezept</button>' +
+      (alle.length ? '<button class="btn primaer" data-action="modal-ok">Übernehmen</button>' : "") +
+    "</div>",
+    async function () {
+      const sel = document.getElementById("smRezept");
+      const id = sel ? sel.value : "";
+      if (!id) throw abbruch("Bitte zuerst ein Smoothie-Rezept anlegen.");
+      const tage = [];
+      Array.prototype.forEach.call(document.querySelectorAll("#smTage .pref-tag.aktiv"), function (el) {
+        tage.push(parseInt(el.getAttribute("data-idx"), 10));
+      });
+      if (!tage.length) throw abbruch("Bitte mindestens einen Tag wählen.");
+      await smoothieSetzen(id, tage);
+    }
+  );
+}
+// Setzt den Smoothie genau auf die übergebenen Wochentags-Indizes (0=Mo) und
+// räumt die übrigen Tage auf — ein Aufruf, ein Multi-Path-Update.
+async function smoothieSetzen(recipeId, tagIdx) {
+  const wk = weekKeyOf(S.weekMonday);
+  const sk = SMOOTHIE_SLOT.key;
+  const mealUpdates = {}, freiUpdates = {};
+  TAG_KEYS.forEach(function (dk, i) {
+    const gesetzt = tagIdx.indexOf(i) > -1;
+    mealUpdates[dk + "/" + sk] = gesetzt ? recipeId : null;
+    // Rezept und Freiblock schliessen sich gegenseitig aus
+    if (gesetzt && (S.free[dk] || {})[sk]) freiUpdates[dk + "/" + sk] = null;
+  });
+  try {
+    await db.ref(mealsPath(wk)).update(mealUpdates);
+    if (Object.keys(freiUpdates).length) await db.ref(freePath(wk)).update(freiUpdates);
+    if (tagIdx.length) {
+      const letzter = tagIdx[tagIdx.length - 1];
+      await db.ref(P_RECIPES + "/" + recipeId + "/lastUsed").set(isoDatum(tageDerWoche(S.weekMonday)[letzter]));
+    }
+    const name = (S.recipes[recipeId] || {}).name || "Smoothie";
+    toast(name + " an " + tagIdx.length + (tagIdx.length === 1 ? " Tag" : " Tagen") + " geplant");
+  } catch (e) { toast("Fehler: " + (e && e.message)); }
+}
+async function smoothieEntfernen() {
+  const wk = weekKeyOf(S.weekMonday);
+  const updates = {};
+  TAG_KEYS.forEach(function (dk) { updates[dk + "/" + SMOOTHIE_SLOT.key] = null; });
+  try {
+    await db.ref(mealsPath(wk)).update(updates);
+    toast("Smoothie aus der Woche entfernt");
+  } catch (e) { toast("Fehler: " + (e && e.message)); }
 }
 
 // ── Tages-Agenda (Kalender) im Tages-Karten-Fuss ──────────────────────────
@@ -1299,8 +1473,11 @@ function viewBibliothek() {
   if (ids.length === 0) {
     html += '<div class="leer-hinweis"><div class="gross">🍳</div>' +
       (Object.keys(S.recipes).length === 0
-        ? "Noch keine Rezepte. Lege dein erstes Rezept an."
-        : "Keine Rezepte für diese Suche.") + "</div>";
+        ? "Noch keine Rezepte. Erfasse dein erstes Rezept von Hand."
+        : "Keine Rezepte für diese Suche.") +
+      '<div style="margin-top:16px"><button class="btn-primaer" data-action="rezept-neu"' +
+        (S.katFilter !== "alle" ? ' data-kat="' + esc(S.katFilter) + '"' : "") + ">＋ Neues Rezept</button></div>" +
+    "</div>";
     return html;
   }
 
@@ -1344,10 +1521,20 @@ function ekAusschluss(name, einheit) {
   if (n.indexOf('getrocknet') > -1) { for (let i = 0; i < EK_FILTER_NAMEN_GETROCKNET.length; i++) { if (n.indexOf(EK_FILTER_NAMEN_GETROCKNET[i]) > -1) return true; } }
   return false;
 }
+// Slot-abhängige Variante: Bei Smoothies wird der EINHEITEN-Filter bewusst NICHT
+// angewendet — Löffelmengen (Haferflocken, Nussmus, Chia, Proteinpulver) sind dort
+// echte Einkäufe und dürfen nicht verschwinden. Der Namens-Filter (Gewürze wie Zimt)
+// gilt weiterhin. ekAusschluss selbst bleibt unverändert (Parität mit dem n8n-Node).
+function ekAusschlussSlot(name, einheit, slotKey) {
+  if (slotKey === SMOOTHIE_SLOT.key) return ekAusschluss(name, "");
+  return ekAusschluss(name, einheit);
+}
 
 // ── Einkaufsliste ─────────────────────────────────────────────────────────
 // Aggregiert alle Zutaten der Wochen-Rezepte (dedupliziert nach Name+Einheit),
 // summiert Mengen, mischt manuell ergänzte Einträge und persistierte Check-Zustände.
+// Da über ALLE Tage und Slots summiert wird, ergibt derselbe Smoothie an 7 Tagen
+// automatisch die 7-fache Menge jeder Smoothie-Zutat.
 // Gewuerze/Kleinstmengen (ekAusschluss) werden aus den Rezept-Zutaten NICHT in die
 // Liste uebernommen; manuell ergaenzte Eintraege bleiben immer erhalten.
 function einkaufAggregiert() {
@@ -1359,7 +1546,7 @@ function einkaufAggregiert() {
       const r = S.recipes[tagPlan[slotKey]];
       if (!r || !r.zutaten) return;
       r.zutaten.forEach(function (z) {
-        if (ekAusschluss(z.name, z.einheit)) return; // Gewuerze/Kleinstmengen: nicht auf die Einkaufsliste
+        if (ekAusschlussSlot(z.name, z.einheit, slotKey)) return; // Gewuerze/Kleinstmengen: nicht auf die Einkaufsliste
         const key = "auto_" + slug(z.name) + "__" + slug(z.einheit || "");
         if (!agg[key]) agg[key] = { name: z.name, einheit: z.einheit || "", menge: 0, unbekannt: false, checked: false, manuell: false, key: key };
         const n = num(z.menge);
@@ -1387,13 +1574,21 @@ function offeneEinkauf() {
 }
 function viewEinkauf() {
   const items = einkaufAggregiert();
+  const smoothie = smoothieInfo();
   let html = '<div class="einkauf-wrap">' +
     '<div class="einkauf-add">' +
       '<input class="ea-menge"   id="ekMenge"   type="text" placeholder="Menge">' +
       '<input class="ea-einheit" id="ekEinheit" type="text" placeholder="Einheit">' +
       '<input class="ea-name"    id="ekName"    type="text" placeholder="Artikel manuell ergänzen …">' +
       '<button class="btn-primaer" data-action="einkauf-add">＋ Hinzufügen</button>' +
-    "</div>";
+    "</div>" +
+    '<div class="einkauf-hint">Menge und Einheit sind optional — „2 kg Mehl" kann auch direkt ins Artikelfeld getippt werden. Enter fügt hinzu.</div>';
+
+  if (smoothie.eintraege.length) {
+    const n = smoothie.eintraege.length;
+    html += '<div class="ek-hinweis">🥤 ' + esc(smoothieNamen(smoothie.ids)) + " an " + n +
+      (n === 1 ? " Tag" : " Tagen") + " geplant — die Zutaten sind " + n + "× eingerechnet.</div>";
+  }
 
   if (items.length === 0) {
     html += '<div class="leer-hinweis"><div class="gross">🛒</div>Noch nichts geplant. Fülle den Wochenplan oder ergänze Artikel manuell.</div></div>';
@@ -1556,9 +1751,14 @@ function renderDrawer() {
 
   let aktionen = "";
   if (imSlot) {
-    const slotLabel = (SLOTS.find(function (s) { return s.key === S.drawer.slot; }) || {}).label || "";
+    const slotLabel = (PLAN_SLOTS.find(function (s) { return s.key === S.drawer.slot; }) || {}).label || "";
     aktionen += '<button class="btn primaer" data-action="slot-tauschen" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">↔ Rezept tauschen</button>';
-    aktionen += '<button class="btn akzent" data-action="slot-generieren" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Neu generieren</button>";
+    // Smoothies sind kein n8n-Slot — dort stattdessen direkt die Wochen-Planung anbieten.
+    if (S.drawer.slot === SMOOTHIE_SLOT.key) {
+      aktionen += '<button class="btn akzent" data-action="smoothie-planen">🥤 Für die ganze Woche</button>';
+    } else {
+      aktionen += '<button class="btn akzent" data-action="slot-generieren" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Neu generieren</button>";
+    }
     aktionen += '<button class="btn" data-action="slot-freihalten" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">🚫 Freihalten</button>';
     aktionen += '<button class="btn gefahr" data-action="slot-entfernen" data-tag="' + S.drawer.tag + '" data-slot="' + S.drawer.slot + '">Aus Plan entfernen</button>';
   } else {
@@ -1664,7 +1864,7 @@ async function freiblockAufheben(tag, slot) {
 
 function freihaltenDialog(tag, slot) {
   const dk = dayKeyOf(tag);
-  const slotObj = SLOTS.find(function (s) { return s.key === slot; }) || {};
+  const slotObj = PLAN_SLOTS.find(function (s) { return s.key === slot; }) || {};
   const bestehend = (S.free[dk] || {})[slot];
   const wert = bestehend && bestehend.label ? bestehend.label : "Frei";
   const chips = FREI_PRESETS.map(function (p) {
@@ -1688,7 +1888,8 @@ function freihaltenDialog(tag, slot) {
 }
 
 function rezeptWaehlenDialog(tag, slot) {
-  const slotObj = SLOTS.find(function (s) { return s.key === slot; }) || {};
+  const slotObj = PLAN_SLOTS.find(function (s) { return s.key === slot; }) || {};
+  const generierbar = slot !== SMOOTHIE_SLOT.key;   // Smoothies gibt man selbst ein (kein n8n-Slot)
   const state = { q: "" };
   function liste() {
     const q = lc(state.q);
@@ -1718,13 +1919,17 @@ function rezeptWaehlenDialog(tag, slot) {
   }
   modalOeffnen(
     "<h3>" + (slotObj.icon || "") + " " + esc(slotObj.label || "Mahlzeit") + " · " + TAGE_LANG[tag] + "</h3>" +
-    '<div class="modal-unter">Rezept aus der Bibliothek wählen, Slot freihalten oder per KI generieren.</div>' +
+    '<div class="modal-unter">Rezept aus der Bibliothek wählen, eigenes Rezept erfassen, Slot freihalten' +
+      (generierbar ? " oder per KI generieren." : ".") + "</div>" +
     '<input type="text" id="mSuche" placeholder="Rezept suchen …" style="margin-bottom:10px">' +
     '<div class="auswahl-liste" id="mListe">' + liste() + "</div>" +
     '<div class="modal-aktionen">' +
       '<button class="btn" data-action="modal-schliessen">Abbrechen</button>' +
       '<button class="btn" data-action="slot-freihalten" data-tag="' + tag + '" data-slot="' + slot + '">🚫 Freihalten</button>' +
-      '<button class="btn akzent" data-action="slot-generieren" data-tag="' + tag + '" data-slot="' + slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Slot generieren</button>" +
+      '<button class="btn" data-action="rezept-neu-slot" data-tag="' + tag + '" data-slot="' + slot + '">＋ Eigenes Rezept</button>' +
+      (generierbar
+        ? '<button class="btn akzent" data-action="slot-generieren" data-tag="' + tag + '" data-slot="' + slot + '"' + (genLaeuft() ? " disabled" : "") + ">🎲 Slot generieren</button>"
+        : "") +
     "</div>",
     null
   );
@@ -1736,7 +1941,7 @@ function rezeptEinplanenDialog(recipeId) {
   const r = S.recipes[recipeId]; if (!r) return;
   const tage = tageDerWoche(S.weekMonday);
   let tagOpt = tage.map(function (d, i) { return '<option value="' + i + '">' + TAGE_LANG[i] + ", " + fmtKurz(d) + "</option>"; }).join("");
-  let slotOpt = SLOTS.map(function (s) { return '<option value="' + s.key + '"' + (s.key === r.kategorie ? " selected" : "") + ">" + s.label + "</option>"; }).join("");
+  let slotOpt = PLAN_SLOTS.map(function (s) { return '<option value="' + s.key + '"' + (s.key === r.kategorie ? " selected" : "") + ">" + s.label + "</option>"; }).join("");
   modalOeffnen(
     "<h3>„" + esc(r.name) + "“ einplanen</h3>" +
     '<div class="modal-unter">Woche ' + esc(weekKeyOf(S.weekMonday)) + "</div>" +
@@ -1923,15 +2128,34 @@ async function einkaufToggle(el) {
   }
 }
 async function einkaufHinzufuegen() {
-  const name = document.getElementById("ekName").value.trim();
+  const nameEl = document.getElementById("ekName");
+  if (!nameEl) return;
+  let name = nameEl.value.trim();
   if (!name) { toast("Bitte einen Artikel eingeben."); return; }
-  const menge = document.getElementById("ekMenge").value.trim();
-  const einheit = document.getElementById("ekEinheit").value.trim();
+  const mengeEl = document.getElementById("ekMenge");
+  const einheitEl = document.getElementById("ekEinheit");
+  let menge = mengeEl ? mengeEl.value.trim() : "";
+  let einheit = einheitEl ? einheitEl.value.trim() : "";
+  // Schnelleingabe: Stehen Menge/Einheit leer, wird „2 kg Mehl" aus dem Artikelfeld
+  // aufgeteilt (gleiche Logik wie die Zutaten-Zeilen im Rezept-Formular).
+  if (!menge && !einheit) {
+    const z = textZuZutaten(name)[0];
+    if (z && z.name) { name = z.name; menge = z.menge || ""; einheit = z.einheit || ""; }
+  }
   const wk = weekKeyOf(S.weekMonday);
-  await db.ref(shopPath(wk)).push({
-    name: name, menge: menge, einheit: einheit, manuell: true, checked: false, erstellt: new Date().toISOString()
-  });
-  toast("Hinzugefügt: " + name);
+  try {
+    await db.ref(shopPath(wk)).push({
+      name: name, menge: menge, einheit: einheit, manuell: true, checked: false, erstellt: new Date().toISOString()
+    });
+    toast("Hinzugefügt: " + name);
+  } catch (e) { toast("Fehler: " + (e && e.message)); return; }
+  // Nach dem RTDB-Update rendert die Liste neu — Felder leeren und Fokus zurück
+  // in das Artikelfeld, damit mehrere Artikel hintereinander erfasst werden können.
+  setTimeout(function () {
+    const n2 = document.getElementById("ekName"); if (n2) { n2.value = ""; n2.focus(); }
+    const m2 = document.getElementById("ekMenge"); if (m2) m2.value = "";
+    const e2 = document.getElementById("ekEinheit"); if (e2) e2.value = "";
+  }, 120);
 }
 async function einkaufLoeschen(key) {
   await db.ref(shopPath(weekKeyOf(S.weekMonday)) + "/" + key).remove();
@@ -2048,13 +2272,19 @@ function textZuZutaten(text) {
     return { menge: "", einheit: "", name: l };
   });
 }
-function rezeptFormular(recipeId) {
+// vorgabe (optional): { kategorie, danach(id) } — Kategorie vorbelegen und nach dem
+// Anlegen direkt weiterarbeiten (z. B. Rezept sofort in den Slot / auf alle 7 Tage setzen).
+function rezeptFormular(recipeId, vorgabe) {
   const r = recipeId ? S.recipes[recipeId] : null;
+  const vorKat = (vorgabe && vorgabe.kategorie) || null;
   const katOpt = KATEGORIEN.map(function (k) {
-    return '<option value="' + k.key + '"' + (r && r.kategorie === k.key ? " selected" : "") + ">" + k.label + "</option>";
+    const gewaehlt = r ? (r.kategorie === k.key) : (vorKat === k.key);
+    return '<option value="' + k.key + '"' + (gewaehlt ? " selected" : "") + ">" + k.label + "</option>";
   }).join("");
   modalOeffnen(
     "<h3>" + (r ? "Rezept bearbeiten" : "Neues Rezept") + "</h3>" +
+    (r ? "" : '<div class="modal-hint">Erfasse ein Rezept, das du selbst kochst. Sobald es im Wochenplan steht, ' +
+      "landen seine Zutaten automatisch auf der Einkaufsliste der Woche.</div>") +
     '<label>Name</label><input type="text" id="rfName" value="' + esc(r ? r.name : "") + '" placeholder="z. B. Kürbisrisotto">' +
     '<div class="feld-reihe">' +
       '<div><label>Kategorie</label><select id="rfKat">' + katOpt + "</select></div>" +
@@ -2090,6 +2320,10 @@ function rezeptFormular(recipeId) {
         const id = db.ref(P_RECIPES).push().key;
         await db.ref(P_RECIPES + "/" + id).set(Object.assign({ lastUsed: null, erstellt: new Date().toISOString() }, daten));
         toast("Angelegt: " + name);
+        // Lokal vormerken, damit die Folgeaktion (danach) den Namen schon kennt,
+        // auch wenn der RTDB-Listener noch nicht zurückgemeldet hat.
+        S.recipes = Object.assign({}, S.recipes, (function () { const o = {}; o[id] = daten; return o; })());
+        if (vorgabe && typeof vorgabe.danach === "function") await vorgabe.danach(id);
       }
     }
   );
@@ -2168,8 +2402,29 @@ document.addEventListener("click", function (e) {
     case "pref-trend":      prefSetzen("calorieTrend", el.getAttribute("data-val")); break;
     case "pref-train":      trainingTagToggle(el.getAttribute("data-day")); break;
 
+    case "smoothie-planen":  drawerSchliessen(); smoothieDialog(); break;
+    case "smoothie-entfernen": smoothieEntfernen(); break;
+    case "sm-tag":          { const an = !el.classList.contains("aktiv");
+                              el.classList.toggle("aktiv", an);
+                              el.setAttribute("aria-pressed", an ? "true" : "false"); break; }
+    case "sm-alle":         { Array.prototype.forEach.call(document.querySelectorAll("#smTage .pref-tag"), function (t) {
+                                t.classList.add("aktiv"); t.setAttribute("aria-pressed", "true");
+                              }); break; }
+    case "smoothie-rezept-neu":
+      modalSchliessen();
+      // Neues Smoothie-Rezept anlegen und direkt auf alle 7 Tage der Woche setzen.
+      rezeptFormular(null, { kategorie: "smoothie", danach: function (neuId) { return smoothieSetzen(neuId, [0,1,2,3,4,5,6]); } });
+      break;
+
     case "kat-filter":      S.katFilter = el.getAttribute("data-kat"); renderInhalt(); break;
-    case "rezept-neu":      rezeptFormular(null); break;
+    case "rezept-neu":      rezeptFormular(null, el.getAttribute("data-kat") ? { kategorie: el.getAttribute("data-kat") } : null); break;
+    case "rezept-neu-slot":
+      modalSchliessen();
+      // Eigenes Rezept direkt aus einem Slot heraus erfassen und dort einplanen.
+      (function (t, s) {
+        rezeptFormular(null, { kategorie: s, danach: function (neuId) { return slotSetzen(t, s, neuId); } });
+      })(tag, slot);
+      break;
     case "rezept-oeffnen":  S.drawer = { recipeId: id, tag: null, slot: null }; renderDrawer(); break;
     case "rezept-bearbeiten": rezeptFormular(id); break;
     case "rezept-loeschen": rezeptLoeschenDialog(id); break;
@@ -2195,7 +2450,10 @@ document.addEventListener("click", function (e) {
         const cb = _modalOk;
         Promise.resolve(cb ? cb() : null)
           .then(function () { modalSchliessen(); })
-          .catch(function (err) { if (err && err.message !== "kein Name") toast("Fehler: " + (err && err.message)); });
+          .catch(function (err) {
+            if (err && (err.abbruch || err.message === "kein Name")) return;   // Validierung: Hinweis kam schon als Toast
+            toast("Fehler: " + (err && err.message));
+          });
       })();
       break;
   }
@@ -2205,9 +2463,12 @@ document.addEventListener("click", function (e) {
 document.addEventListener("input", function (e) {
   if (e.target && e.target.id === "sucheInput") { S.suche = e.target.value; renderInhalt(); }
 });
-// Enter im manuellen Einkauf-Feld
+// Enter in den manuellen Einkauf-Feldern (Menge/Einheit/Artikel)
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Enter" && e.target && e.target.id === "ekName") { e.preventDefault(); einkaufHinzufuegen(); }
+  if (e.key !== "Enter" || !e.target) return;
+  if (e.target.id === "ekName" || e.target.id === "ekMenge" || e.target.id === "ekEinheit") {
+    e.preventDefault(); einkaufHinzufuegen();
+  }
 });
 
 render();

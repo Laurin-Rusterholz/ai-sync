@@ -73419,7 +73419,7 @@ window.searchAllData = searchAllData;
    Habits-App und im Daily Planner erscheinen — ohne neue Anzeige zu erfinden:
      • Habits:     /nobraine/habitdefs (+ /nobraine/habits/<datum>/<id>=true)
                      → APP.state.data.dailyBriefing.routines[]  (+ completions)
-     • Mahlzeiten: /nobraine/weeks/<jahr-kw>/meals/<tag>/<mittag|abend> = recipeId
+     • Mahlzeiten: /nobraine/weeks/<jahr-kw>/meals/<tag>/<smoothie|mittag|abend> = recipeId
                      → APP.state.data.dailyBriefing.timeBlocks[<datum>][]  (Tagesplanung)
    index.html ist alleiniger Writer des appStore-Blobs; auf /nobraine wird nur
    GELESEN. Der Rückschrieb der Habit-Completions läuft über den nativen
@@ -73432,8 +73432,9 @@ window.searchAllData = searchAllData;
   var RTDB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
   var TAG_KEYS = ["montag","dienstag","mittwoch","donnerstag","freitag","samstag","sonntag"];
   var SLOTS = {
-    mittag: { start:"12:00", end:"13:00", label:"Mittagessen", icon:"🍽️" },
-    abend:  { start:"18:30", end:"19:30", label:"Abendessen",  icon:"🍲" }
+    smoothie: { start:"07:30", end:"07:45", label:"Smoothie",   icon:"🥤" },
+    mittag:   { start:"12:00", end:"13:00", label:"Mittagessen", icon:"🍽️" },
+    abend:    { start:"18:30", end:"19:30", label:"Abendessen",  icon:"🍲" }
   };
   var S = { defs:{}, log:{}, recipes:{}, meals:{}, started:false };
 
