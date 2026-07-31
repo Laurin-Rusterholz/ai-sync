@@ -10,11 +10,11 @@
 //   • Frontend calls are authorised with the same optional SYNC_AUTH_TOKEN
 //     bearer that the existing sync endpoints use.
 // ============================================================================
-import { firebaseDbGet, firebaseDbRemove, firebaseDbSet } from "./firebase-admin.mjs";
+import { getStore } from "@netlify/blobs";
 
 export const TOKEN_KEY = "tokens";
 export const STATE_KEY = "oauthState";
-export const INTEGRATION_PATH = "integrations/google";
+const OAUTH_STORE_NAME = "quantus-google-oauth";
 
 export const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -103,34 +103,39 @@ export function getAppOrigin(req) {
   return host ? `${proto}://${host}` : new URL(req.url).origin;
 }
 
-function path(key) {
-  return `${INTEGRATION_PATH}/${key}`;
+// Google refresh tokens and OAuth CSRF state must remain server-side, but they
+// should not depend on Firebase Admin credentials. The prior Firebase-backed
+// storage made the complete OAuth flow fail whenever its user refresh token
+// required reauthentication. A site-wide Netlify Blob store is available to
+// Functions without any extra credential and persists across deploys.
+function oauthStore() {
+  return getStore(OAUTH_STORE_NAME);
 }
 
 export async function loadTokens() {
   try {
-    return await firebaseDbGet(path(TOKEN_KEY));
+    return await oauthStore().get(TOKEN_KEY, { type: "json" });
   } catch (e) {
     return null;
   }
 }
 
 export async function saveTokens(tokens) {
-  await firebaseDbSet(path(TOKEN_KEY), tokens);
+  await oauthStore().setJSON(TOKEN_KEY, tokens);
 }
 
 export async function clearTokens() {
-  try { await firebaseDbRemove(path(TOKEN_KEY)); } catch (e) { /* ignore */ }
+  try { await oauthStore().delete(TOKEN_KEY); } catch (e) { /* ignore */ }
 }
 
 export async function saveState(state) {
-  await firebaseDbSet(path(STATE_KEY), { state, ts: Date.now() });
+  await oauthStore().setJSON(STATE_KEY, { state, ts: Date.now() });
 }
 
 export async function consumeState(state) {
   try {
-    const parsed = await firebaseDbGet(path(STATE_KEY));
-    try { await firebaseDbRemove(path(STATE_KEY)); } catch (e) { /* ignore */ }
+    const parsed = await oauthStore().get(STATE_KEY, { type: "json" });
+    try { await oauthStore().delete(STATE_KEY); } catch (e) { /* ignore */ }
     if (!parsed) return false;
     // 10-minute validity window
     if (!parsed || parsed.state !== state) return false;
