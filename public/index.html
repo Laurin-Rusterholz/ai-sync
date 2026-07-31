@@ -9178,6 +9178,13 @@ function emptyData() {
       finances: [],
       notes: [],
       links: [],
+      offers: [],        // Offerten (Positionen, MwSt, Status, → Rechnung)
+      invoices: [],      // Rechnungen inkl. selbst hochgeladenem QR-Code
+      clients: [],
+      aiLog: [],         // Ergebnisse der FlowerTech-KI-Funktionen
+      counters: {},      // laufende Nummern je Jahr (offer_2026, invoice_2026)
+      company: {},       // Absenderdaten für Offerten/Rechnungen
+      ui: {},
       syncStatus: "idle",
       lastSyncAt: null,
     },
@@ -9207,6 +9214,13 @@ function normalizeData(data) {
   d.flowertech.finances = Array.isArray(d.flowertech.finances) ? d.flowertech.finances : [];
   d.flowertech.notes = Array.isArray(d.flowertech.notes) ? d.flowertech.notes : [];
   d.flowertech.links = Array.isArray(d.flowertech.links) ? d.flowertech.links : [];
+  d.flowertech.offers = Array.isArray(d.flowertech.offers) ? d.flowertech.offers : [];
+  d.flowertech.invoices = Array.isArray(d.flowertech.invoices) ? d.flowertech.invoices : [];
+  d.flowertech.clients = Array.isArray(d.flowertech.clients) ? d.flowertech.clients : [];
+  d.flowertech.aiLog = Array.isArray(d.flowertech.aiLog) ? d.flowertech.aiLog : [];
+  d.flowertech.counters = d.flowertech.counters && typeof d.flowertech.counters === "object" ? d.flowertech.counters : {};
+  d.flowertech.company = d.flowertech.company && typeof d.flowertech.company === "object" ? d.flowertech.company : {};
+  d.flowertech.ui = d.flowertech.ui && typeof d.flowertech.ui === "object" ? d.flowertech.ui : {};
   d.flowertech.syncStatus = d.flowertech.syncStatus || "idle";
   d.flowertech.lastSyncAt = d.flowertech.lastSyncAt || null;
   e.organizations = e.organizations || {};
@@ -18257,7 +18271,7 @@ function getAllApps() {
     {key:"pdfeditor", icon:"📄", label:"PDF Editor", desc:getLang()==="de"?"PDFs lesen, annotieren, Seiten verwalten & bearbeiten":"Read, annotate, manage pages & edit PDFs"},
     {key:"chat", icon:"🌟", label:t("chat"), desc:getLang()==="de"?"Mit Polaris chatten":"Chat with Polaris"},
     {key:"projects", icon:"📦", label:t("projects"), desc:getLang()==="de"?"Projektverwaltung":"Project management"},
-    {key:"flowertech", icon:"🌸", label:"FlowerTech", desc:getLang()==="de"?"Web-Apps, Anfragen, Pipeline & Content":"Web apps, inquiries, pipeline & content"},
+    {key:"flowertech", icon:"🌸", label:"FlowerTech", desc:getLang()==="de"?"Projekte, Offerten, Rechnungen, KI & Content":"Projects, quotes, invoices, AI & content"},
     {key:"programs", icon:"🧩", label:t("programs"), desc:getLang()==="de"?"Programm-Management":"Program management"},
     {key:"organizations", icon:"🏛️", label:t("organizations"), desc:getLang()==="de"?"Kontakte & Firmen":"Contacts & companies"},
     {key:"calendar", icon:"📅", label:t("calendar"), desc:getLang()==="de"?"Termine & Events":"Events & appointments"},
