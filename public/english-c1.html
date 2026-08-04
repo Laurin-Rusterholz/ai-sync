@@ -20,7 +20,7 @@ html,body{margin:0;min-height:100%;background:#171c20;color:#eef0f2;font-family:
 <script>
 (async function(){
   try{
-    var files=["english-c1-payload-01.txt", "english-c1-payload-02.txt", "english-c1-payload-03a.txt", "english-c1-payload-03b.txt", "english-c1-payload-04.txt", "english-c1-payload-05.txt"];
+    var files=["english-c1-payload-01.txt", "english-c1-payload-02.txt", "english-c1-payload-03a.txt", "english-c1-payload-03b1.txt", "english-c1-payload-03b2.txt", "english-c1-payload-03b3.txt", "english-c1-payload-03b4.txt", "english-c1-payload-04.txt", "english-c1-payload-05.txt"];
     var parts=await Promise.all(files.map(function(file){
       return fetch(file,{cache:"force-cache"}).then(function(response){
         if(!response.ok)throw new Error(file+" · HTTP "+response.status);
