@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="de-CH">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#171c20">
+<title>Quantus · English C1 Reading Lab</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+html,body{margin:0;min-height:100%;background:#171c20;color:#eef0f2;font-family:Inter,system-ui,sans-serif}
+.boot{min-height:100vh;display:grid;place-items:center;text-align:center;padding:24px}
+.boot b{display:block;font-family:Georgia,serif;font-size:26px;margin-bottom:9px}
+.boot small{color:#929aa4;line-height:1.5}
+.spin{width:28px;height:28px;border:3px solid #3b4550;border-top-color:#45c198;border-radius:50%;margin:0 auto 18px;animation:s .8s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="boot"><div><div class="spin"></div><b>English C1 Reading Lab</b><small>Quantus lädt 12 intensive Lesemodule …</small></div></div>
+<script>
+(async function(){
+  try{
+    var files=["english-c1-payload-01.txt", "english-c1-payload-02.txt", "english-c1-payload-03.txt", "english-c1-payload-04.txt", "english-c1-payload-05.txt"];
+    var parts=await Promise.all(files.map(function(file){
+      return fetch(file,{cache:"force-cache"}).then(function(response){
+        if(!response.ok)throw new Error(file+" · HTTP "+response.status);
+        return response.text();
+      });
+    }));
+    var raw=atob(parts.join("").replace(/\s/g,""));
+    var bytes=new Uint8Array(raw.length);
+    for(var i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+    if(!("DecompressionStream" in window))throw new Error("Dieser Browser unterstützt die sichere Kurs-Dekomprimierung nicht.");
+    var stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+    var page=await new Response(stream).text();
+    document.open();document.write(page);document.close();
+  }catch(error){
+    document.body.innerHTML='<div class="boot"><div><b>Die Lernapp konnte nicht geladen werden.</b><small>'+String(error.message||error)+'</small></div></div>';
+  }
+})();
+</script>
+</body>
+</html>
