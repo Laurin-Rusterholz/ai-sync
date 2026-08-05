@@ -1,6 +1,24 @@
 const APP_KEY = "englishc1";
 const APP_ENTRY = '{key:"englishc1", icon:"🇬🇧", label:"English C1", desc:getLang()==="de"?"C1-Leseverständnis mit 12 Modulen, Aufgaben, Wortschatz, Wiederholung und Lernfortschritt":"C1 reading comprehension with 12 modules, exercises, vocabulary, review and progress"},';
 
+// A previous source transformation turned intended string separators such as
+// .join("\\n") into a physical backslash + line break. Whitespace after the
+// backslash makes the complete Quantus inline script fail to parse. Once that
+// happens, the browser treats the following JavaScript string fragments as
+// HTML, which is why settings inputs receive values such as "' + esc(...) + '".
+//
+// Keep this repair deliberately narrow: only the damaged join separators are
+// normalized. No application data or other JavaScript is rewritten.
+const BROKEN_CRLF_JOIN = /\.join\("\\r\\[ \t]*(?:\r\n|\n|\r)"\)/g;
+const BROKEN_NEWLINE_JOIN = /\.join\("\\[ \t]*(?:\r\n|\n|\r)"\)/g;
+
+export function repairQuantusInlineScriptLineBreaks(source) {
+  let html = String(source || "");
+  html = html.replace(BROKEN_CRLF_JOIN, '.join("\\r\\n")');
+  html = html.replace(BROKEN_NEWLINE_JOIN, '.join("\\n")');
+  return html;
+}
+
 export function injectEnglishC1(source) {
   let html = String(source || "");
 
@@ -67,13 +85,16 @@ export default async function handler(request, context) {
   if (!response.ok || !contentType.includes("text/html")) return response;
 
   const original = await response.text();
-  const transformed = injectEnglishC1(original);
+  const repaired = repairQuantusInlineScriptLineBreaks(original);
+  const transformed = injectEnglishC1(repaired);
   if (transformed === original) return new Response(original, response);
 
   const headers = new Headers(response.headers);
   headers.delete("content-length");
+  headers.delete("content-encoding");
   headers.delete("etag");
   headers.set("cache-control", "no-cache, must-revalidate");
+  if (repaired !== original) headers.set("x-quantus-index-repair", "inline-line-breaks");
   return new Response(transformed, {
     status: response.status,
     statusText: response.statusText,
