@@ -1,26 +1,16 @@
 const APP_KEY = "englishc1";
 const APP_ENTRY = '{key:"englishc1", icon:"🇬🇧", label:"English C1", desc:getLang()==="de"?"C1-Leseverständnis mit 12 Modulen, Aufgaben, Wortschatz, Wiederholung und Lernfortschritt":"C1 reading comprehension with 12 modules, exercises, vocabulary, review and progress"},';
 
-// A previous source transformation turned intended string separators such as
-// .join("\\n") into a physical backslash + line break. Whitespace after the
-// backslash makes the complete Quantus inline script fail to parse. Once that
-// happens, the browser treats the following JavaScript string fragments as
-// HTML, which is why settings inputs receive values such as "' + esc(...) + '".
-//
-// Keep this repair deliberately narrow: only double-quoted .join separators
-// ending in a physical backslash line break are normalized. The optional prefix
-// preserves an existing escaped carriage return used by the CSV export.
-const BROKEN_JOIN_SEPARATOR = /\.join\("([^"\r\n]*)\\[ \t]*(?:\r\n|\n|\r)"\)/g;
-
-export function repairQuantusInlineScriptLineBreaks(source) {
-  return String(source || "").replace(BROKEN_JOIN_SEPARATOR, (_match, prefix) => {
-    const separator = prefix === "\\r"
-      ? "\\r\\n"
-      : prefix
-        ? prefix + "\\n"
-        : "\\n";
-    return `.join("${separator}")`;
-  });
+// The Quantus single-file app contains strings that themselves build complete
+// HTML documents, including literal </body> tags. A first-match replacement
+// therefore corrupts JavaScript by injecting the launcher inside such a string.
+// The document's real closing body tag is the final occurrence in the response.
+export function insertBeforeFinalClosingTag(source, tagName, insertion) {
+  const html = String(source || "");
+  const closeTag = `</${String(tagName || "").toLowerCase()}>`;
+  const index = html.toLowerCase().lastIndexOf(closeTag);
+  if (index < 0) return `${html}\n${insertion}`;
+  return `${html.slice(0, index)}${insertion}\n${html.slice(index)}`;
 }
 
 export function injectEnglishC1(source) {
@@ -77,7 +67,7 @@ export function injectEnglishC1(source) {
   else retry();
 })();
 </script>`;
-    html = html.replace(/<\/body>/i, launcher + "\n</body>");
+    html = insertBeforeFinalClosingTag(html, "body", launcher);
   }
 
   return html;
@@ -89,8 +79,7 @@ export default async function handler(request, context) {
   if (!response.ok || !contentType.includes("text/html")) return response;
 
   const original = await response.text();
-  const repaired = repairQuantusInlineScriptLineBreaks(original);
-  const transformed = injectEnglishC1(repaired);
+  const transformed = injectEnglishC1(original);
   if (transformed === original) return new Response(original, response);
 
   const headers = new Headers(response.headers);
@@ -98,7 +87,7 @@ export default async function handler(request, context) {
   headers.delete("content-encoding");
   headers.delete("etag");
   headers.set("cache-control", "no-cache, must-revalidate");
-  if (repaired !== original) headers.set("x-quantus-index-repair", "inline-line-breaks");
+  headers.set("x-quantus-app-registry", "english-c1");
   return new Response(transformed, {
     status: response.status,
     statusText: response.statusText,
