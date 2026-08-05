@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - "public/index.html"
+      - "public/quantus-english-c1-entry.js"
       - "netlify/edge-functions/quantus-app-registry.js"
       - "tests/quantus-index-parser-repair.test.mjs"
+      - "tests/quantus-english-c1-entry.test.mjs"
       - "package.json"
       - ".github/workflows/validate-quantus-index.yml"
   workflow_dispatch:
