@@ -1,0 +1,78 @@
+== "devices") { if (global.QuantusUniversalUI) global.QuantusUniversalUI.openPanel(); return; }
+    if (action === "scroll-learning") { var target = global.document.getElementById("cmLearningStart"); if (target) target.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    if (action === "open-day") {
+      event.stopPropagation();
+      state.selectedModuleId = button.dataset.moduleId;
+      state.selectedDayId = button.dataset.dayId;
+      state.tab = "today";
+      render();
+      global.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (action === "select-module") { state.selectedModuleId = button.dataset.moduleId; return; }
+    if (action === "module-activate") {
+      event.stopPropagation();
+      setModuleStatus(button.dataset.moduleId, "active").then(function () { toast("Modul aktiviert", "Es wird für die nächsten Lerneinheiten priorisiert.", "ok"); }).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); });
+      return;
+    }
+    if (action === "module-archive") {
+      event.stopPropagation();
+      var module = state.data.modules[button.dataset.moduleId];
+      var next = module && module.status === "archived" ? "ready" : "archived";
+      setModuleStatus(button.dataset.moduleId, next).then(function () { toast(next === "archived" ? "Modul archiviert" : "Modul reaktiviert", "Fortschritt und Inhalte bleiben erhalten.", "ok"); }).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); });
+      return;
+    }
+    if (action === "copy-prompt") {
+      copyText(promptText()).then(function () { toast("Prompt kopiert", "Füge ihn zusammen mit deinen Dokumenten bei Claude ein.", "ok"); }).catch(function (error) { toast("Kopieren fehlgeschlagen", error.message, "error"); });
+      return;
+    }
+    if (action === "import-package") {
+      importPackage().catch(function (error) {
+        var message = error.validation ? error.validation.errors.map(function (item) { return item.path + ": " + item.message; }).join(" · ") : error.message;
+        toast("Import fehlgeschlagen", message || "Unbekannter Fehler", "error");
+      });
+      return;
+    }
+    if (action === "reopen-day") {
+      reopenDay(button.dataset.moduleId, button.dataset.dayId).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); });
+    }
+  });
+
+  global.document.addEventListener("submit", function (event) {
+    var form = event.target.closest("form[data-cm-form]");
+    if (!form) return;
+    event.preventDefault();
+    var type = form.dataset.cmForm;
+    var submit = form.querySelector('[type="submit"]');
+    if (submit) submit.disabled = true;
+    var promise = type === "complete" ? completeDay(form) : type === "reflection" ? saveReflection(form) : Promise.resolve();
+    promise.catch(function (error) { toast("Speichern fehlgeschlagen", error.message || String(error), "error"); })
+      .finally(function () { if (submit) submit.disabled = false; });
+  });
+
+  global.document.addEventListener("change", function (event) {
+    if (event.target.id === "cmImportFile") { readImportFile(event.target.files && event.target.files[0]); return; }
+    if (event.target.id === "cmReflectionDate") { state.reflectionDate = event.target.value || Core.dateKey(new Date()); render(); }
+  });
+
+  global.document.addEventListener("input", function (event) {
+    var promptKey = event.target.dataset.cmPrompt;
+    if (promptKey) {
+      state.prompt[promptKey] = promptKey === "dailyMinutes" ? Number(event.target.value) || 30 : event.target.value;
+      var output = global.document.getElementById("cmClaudePrompt");
+      if (output) output.value = promptText();
+    }
+    var outputId = event.target.dataset.cmOutput;
+    if (outputId) {
+      var outputNode = global.document.getElementById(outputId);
+      if (outputNode) outputNode.textContent = event.target.value + "/10";
+    }
+  });
+
+  global.addEventListener("online", function () { if (state.user) setSync("loading", "Verbindung wiederhergestellt"); render(); });
+  global.addEventListener("offline", function () { setSync("error", "Offline – letzter Stand sichtbar"); render(); });
+
+  global.CareerModelApp = { state: state, render: render, importPackage: importPackage, completeDay: completeDay };
+  render();
+  initFirebase();
+})(window);

@@ -1,0 +1,215 @@
+(function (global) {
+  "use strict";
+
+  if (!global || global.QuantusDeviceSync) return;
+
+  var FIREBASE_CONFIG = {
+    apiKey: "AIzaSyC6xVo-wmXC4JjG7qMQnOExIjU-UDvBluE",
+    authDomain: "jupidu-36804.firebaseapp.com",
+    databaseURL: "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "jupidu-36804",
+    storageBucket: "jupidu-36804.firebasestorage.app",
+    messagingSenderId: "11390726952",
+    appId: "1:11390726952:web:aba2f101b6c5ca2bc5561d"
+  };
+  var RTDB_URL = FIREBASE_CONFIG.databaseURL;
+  var DESKTOP_ORIGIN = "https://management-xo2-pro.netlify.app";
+  var DEVICE_ID_KEY = "quantus-device-id-v2";
+  var DEVICE_NAME_KEY = "quantus-device-name-v2";
+  var COMMAND_SEEN_KEY = "quantus-device-command-seen-v2";
+  var PRESENCE_TTL = 90000;
+  var COMMAND_TTL = 5 * 60 * 1000;
+  var HEARTBEAT_MS = 20000;
+  var SDK_URLS = [
+    "https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js",
+    "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js",
+    "https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"
+  ];
+
+  var state = {
+    status: "loading",
+    error: null,
+    firebaseApp: null,
+    auth: null,
+    db: null,
+    user: null,
+    device: null,
+    devices: {},
+    currentContext: null,
+    deviceRef: null,
+    devicesRef: null,
+    commandsRef: null,
+    listeners: [],
+    heartbeat: null,
+    readyPromise: null,
+    readyResolve: null,
+    channel: null,
+    initialized: false
+  };
+
+  state.readyPromise = new Promise(function (resolve) { state.readyResolve = resolve; });
+
+  function dispatch(name, detail) {
+    try { global.document.dispatchEvent(new CustomEvent(name, { detail: detail })); } catch (_) {}
+  }
+
+  function randomId(prefix) {
+    var cryptoObj = global.crypto;
+    if (cryptoObj && typeof cryptoObj.randomUUID === "function") return (prefix || "id") + "_" + cryptoObj.randomUUID();
+    if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
+      var bytes = new Uint8Array(12);
+      cryptoObj.getRandomValues(bytes);
+      return (prefix || "id") + "_" + Array.prototype.map.call(bytes, function (value) {
+        return value.toString(16).padStart(2, "0");
+      }).join("");
+    }
+    return (prefix || "id") + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  function readLocal(key, fallback) {
+    try {
+      var raw = global.localStorage.getItem(key);
+      return raw == null ? fallback : JSON.parse(raw);
+    } catch (_) { return fallback; }
+  }
+
+  function writeLocal(key, value) {
+    try { global.localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
+  }
+
+  function detectDeviceKind() {
+    var ua = String(global.navigator && global.navigator.userAgent || "");
+    var width = Math.max(global.innerWidth || 0, global.screen && global.screen.width || 0);
+    if (/iPad|Tablet|PlayBook|Silk/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua)) || (width >= 700 && width <= 1400 && navigator.maxTouchPoints > 1)) return "tablet";
+    if (/Mobi|iPhone|Android/i.test(ua) || width < 700) return "phone";
+    return "laptop";
+  }
+
+  function defaultDeviceName(kind) {
+    var platform = String(global.navigator && (global.navigator.userAgentData && global.navigator.userAgentData.platform || global.navigator.platform) || "");
+    if (kind === "tablet") return /iPad|Mac/i.test(platform) ? "iPad" : "Tablet";
+    if (kind === "phone") return /iPhone|Mac/i.test(platform) ? "iPhone" : "Handy";
+    if (/Win/i.test(platform)) return "Windows-Laptop";
+    if (/Mac/i.test(platform)) return "MacBook";
+    return "Laptop";
+  }
+
+  function loadDevice() {
+    var kind = detectDeviceKind();
+    var id = readLocal(DEVICE_ID_KEY, "");
+    if (!id || typeof id !== "string") {
+      id = randomId("device");
+      writeLocal(DEVICE_ID_KEY, id);
+    }
+    var name = readLocal(DEVICE_NAME_KEY, "");
+    if (!name || typeof name !== "string") {
+      name = defaultDeviceName(kind);
+      writeLocal(DEVICE_NAME_KEY, name);
+    }
+    return {
+      id: id,
+      name: name.slice(0, 60),
+      kind: kind,
+      platform: String(global.navigator && (global.navigator.userAgentData && global.navigator.userAgentData.platform || global.navigator.platform) || "Unbekannt").slice(0, 80)
+    };
+  }
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var existing = global.document.querySelector('script[src="' + src + '"]');
+      if (existing) {
+        if (existing.dataset.quantusLoaded === "1" || (global.firebase && /firebase-app/.test(src))) return resolve();
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", reject, { once: true });
+        return;
+      }
+      var script = global.document.createElement("script");
+      script.src = src;
+      script.async = false;
+      script.crossOrigin = "anonymous";
+      script.dataset.quantusDeviceSdk = "1";
+      script.addEventListener("load", function () { script.dataset.quantusLoaded = "1"; resolve(); }, { once: true });
+      script.addEventListener("error", function () { reject(new Error("Firebase SDK konnte nicht geladen werden: " + src)); }, { once: true });
+      (global.document.head || global.document.documentElement).appendChild(script);
+    });
+  }
+
+  function waitForFirebase() {
+    return new Promise(function (resolve) {
+      var attempts = 0;
+      var timer = setInterval(function () {
+        attempts += 1;
+        if (global.firebase && global.firebase.initializeApp && global.firebase.auth && global.firebase.database) {
+          clearInterval(timer);
+          resolve(true);
+        } else if (attempts >= 30) {
+          clearInterval(timer);
+          resolve(false);
+        }
+      }, 50);
+    }).then(function (found) {
+      if (found) return true;
+      return SDK_URLS.reduce(function (chain, url) {
+        return chain.then(function () {
+          if (/firebase-app/.test(url) && global.firebase && global.firebase.initializeApp) return null;
+          if (/firebase-auth/.test(url) && global.firebase && global.firebase.auth) return null;
+          if (/firebase-database/.test(url) && global.firebase && global.firebase.database) return null;
+          return loadScript(url);
+        });
+      }, Promise.resolve()).then(function () { return true; });
+    });
+  }
+
+  function normalizeText(value, maxLength) {
+    return String(value == null ? "" : value).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, maxLength || 300);
+  }
+
+  function isAllowedUrl(value) {
+    try {
+      var url = new URL(String(value || ""), global.location.href);
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password) return false;
+      if (url.origin === global.location.origin || url.origin === DESKTOP_ORIGIN) return true;
+      if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return true;
+      if (url.hostname.endsWith(".netlify.app") && /(quantus|management-xo2-pro)/i.test(url.hostname)) return true;
+      return false;
+    } catch (_) { return false; }
+  }
+
+  function safeUrl(value) {
+    if (!isAllowedUrl(value)) return "";
+    try { return new URL(String(value), global.location.href).href; } catch (_) { return ""; }
+  }
+
+  function routePartsFromHash(hash) {
+    var raw = String(hash || "").replace(/^#\/?/, "").split("?")[0];
+    return raw.split("/").filter(Boolean).map(function (part) {
+      try { return decodeURIComponent(part); } catch (_) { return part; }
+    });
+  }
+
+  function isTabletOrigin() {
+    return Boolean(global.__quantusTablet) || /quantus.*tablet/i.test(global.location.hostname);
+  }
+
+  function visibleElement(node) {
+    if (!node || !node.ownerDocument) return false;
+    try {
+      var style = global.getComputedStyle && global.getComputedStyle(node);
+      if (style && (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0)) return false;
+      return !node.getClientRects || node.getClientRects().length > 0;
+    } catch (_) { return true; }
+  }
+
+  function entityTitle(host, node) {
+    var titleNode = host && host.querySelector && host.querySelector('[data-context-title], [data-entity-title], .modal-title, .dialog-title, .drawer-title, h1, h2, h3, .item-title, .project-title');
+    var nodeTitle = node && node.querySelector && node.querySelector('[data-context-title], [data-entity-title], .item-title, .project-title, h1, h2, h3, strong');
+    return normalizeText(
+      node && (node.getAttribute("data-title") || node.getAttribute("aria-label")) ||
+      nodeTitle && nodeTitle.textContent || titleNode && titleNode.textContent || "Quantus Eintrag",
+      160
+    ) || "Quantus Eintrag";
+  }
+
+  function inferActiveEntity(fallbackRoute) {
+    var doc = global.document;
+    if (!doc || !d

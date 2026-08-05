@@ -1,0 +1,200 @@
+(function (global) {
+  "use strict";
+
+  var Core = global.CareerModelCore;
+  if (!Core) throw new Error("CareerModelCore fehlt.");
+
+  var FIREBASE_CONFIG = {
+    apiKey: "AIzaSyC6xVo-wmXC4JjG7qMQnOExIjU-UDvBluE",
+    authDomain: "jupidu-36804.firebaseapp.com",
+    databaseURL: "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "jupidu-36804",
+    storageBucket: "jupidu-36804.firebasestorage.app",
+    messagingSenderId: "11390726952",
+    appId: "1:11390726952:web:aba2f101b6c5ca2bc5561d"
+  };
+  var RTDB_URL = FIREBASE_CONFIG.databaseURL;
+  var DESKTOP_ORIGIN = "https://management-xo2-pro.netlify.app";
+  var CACHE_PREFIX = "quantus-career-model-cache-v1:";
+  var LAST_USER_KEY = "quantus-career-model-last-user-v1";
+
+  var appRoot = global.document.getElementById("careerApp");
+  var state = {
+    tab: "today",
+    authReady: false,
+    user: null,
+    firebaseApp: null,
+    auth: null,
+    db: null,
+    userRef: null,
+    listener: null,
+    data: Core.emptyState(),
+    remoteReady: false,
+    syncStatus: "loading",
+    syncMessage: "Cloud wird verbunden",
+    selectedModuleId: "",
+    selectedDayId: "",
+    importRaw: null,
+    importValidation: null,
+    importing: false,
+    prompt: {
+      areaName: "Versicherungen",
+      moduleTitle: "Haftpflichtrecht",
+      level: "Praxisorientierte Weiterbildung im Betrieb",
+      dailyMinutes: 30,
+      notes: ""
+    },
+    reflectionDate: Core.dateKey(new Date(), "Europe/Zurich"),
+    embedded: false
+  };
+
+  try {
+    var params = new URLSearchParams(global.location.search);
+    state.embedded = params.get("embedded") === "1";
+    state.selectedModuleId = params.get("module") || "";
+    state.selectedDayId = params.get("day") || "";
+  } catch (_) {}
+  if (state.embedded) global.document.body.classList.add("cm-embedded");
+
+  function esc(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+  }
+  function attr(value) { return esc(value); }
+  function asArray(value) { return Array.isArray(value) ? value : []; }
+  function asObject(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+  function values(map) { return Object.keys(asObject(map)).map(function (key) { return map[key]; }).filter(Boolean); }
+
+  function formatDate(value, options) {
+    if (!value) return "";
+    var date = value instanceof Date ? value : new Date(String(value).length === 10 ? value + "T12:00:00" : value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat("de-CH", options || { weekday: "short", day: "2-digit", month: "long", year: "numeric" }).format(date);
+  }
+
+  function toast(title, message, type) {
+    var stack = global.document.getElementById("careerToasts");
+    if (!stack) return;
+    var node = global.document.createElement("div");
+    node.className = "cm-toast " + (type || "");
+    node.innerHTML = "<strong>" + esc(title) + "</strong>" + (message ? "<span>" + esc(message) + "</span>" : "");
+    stack.appendChild(node);
+    setTimeout(function () { node.remove(); }, 4600);
+  }
+
+  function saveCache() {
+    if (!state.user) return;
+    try {
+      global.localStorage.setItem(CACHE_PREFIX + state.user.uid, JSON.stringify({ data: state.data, savedAt: new Date().toISOString() }));
+      global.localStorage.setItem(LAST_USER_KEY, state.user.uid);
+    } catch (_) {}
+  }
+
+  function loadCache(uid) {
+    try {
+      var parsed = JSON.parse(global.localStorage.getItem(CACHE_PREFIX + uid) || "null");
+      if (parsed && parsed.data) state.data = Core.normalizeState(parsed.data);
+    } catch (_) {}
+  }
+
+  function setSync(status, message) {
+    state.syncStatus = status;
+    state.syncMessage = message || "";
+  }
+
+  function detach() {
+    if (state.userRef && state.listener) state.userRef.off("value", state.listener);
+    state.userRef = null;
+    state.listener = null;
+  }
+
+  function attachUser(user) {
+    detach();
+    state.user = user || null;
+    state.authReady = true;
+    state.remoteReady = false;
+    if (!user) {
+      state.data = Core.emptyState();
+      setSync("signed-out", "Nicht angemeldet");
+      render();
+      return;
+    }
+    loadCache(user.uid);
+    setSync("loading", "Career Model wird synchronisiert");
+    render();
+    state.userRef = state.db.ref("careerModel/users/" + user.uid);
+    state.listener = function (snapshot) {
+      state.data = Core.normalizeState(snapshot.val() || {});
+      state.remoteReady = true;
+      setSync("live", "Live auf allen Geräten");
+      saveCache();
+      render();
+    };
+    state.userRef.on("value", state.listener, function (error) {
+      setSync("error", error.message || "Synchronisation fehlgeschlagen");
+      render();
+    });
+  }
+
+  function initFirebase() {
+    try {
+      state.firebaseApp = global.firebase.apps.length ? global.firebase.app() : global.firebase.initializeApp(FIREBASE_CONFIG);
+      state.auth = state.firebaseApp.auth();
+      state.db = state.firebaseApp.database(RTDB_URL);
+      state.auth.setPersistence(global.firebase.auth.Auth.Persistence.LOCAL).catch(function () {});
+      state.auth.onAuthStateChanged(attachUser, function (error) {
+        state.authReady = true;
+        setSync("error", error.message || "Anmeldung fehlgeschlagen");
+        render();
+      });
+    } catch (error) {
+      state.authReady = true;
+      setSync("error", error.message || "Firebase konnte nicht gestartet werden");
+      render();
+    }
+  }
+
+  function signIn() {
+    if (!state.auth) return Promise.reject(new Error("Anmeldung ist noch nicht bereit."));
+    var provider = new global.firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+    return state.auth.signInWithPopup(provider);
+  }
+
+  function signOut() { return state.auth ? state.auth.signOut() : Promise.resolve(); }
+
+  function shell(content, title, subtitle) {
+    var tabs = [
+      { key: "today", label: "Heute", icon: "☀" },
+      { key: "modules", label: "Bereiche", icon: "▦" },
+      { key: "import", label: "Import", icon: "⇩" },
+      { key: "reflecta", label: "Reflecta", icon: "◐" }
+    ];
+    var userName = state.user && (state.user.displayName || state.user.email) || "Quantus";
+    return '<div class="cm-shell">' +
+      '<aside class="cm-sidebar">' +
+        '<div class="cm-brand"><span class="cm-brand-mark">C</span><span class="cm-brand-text"><strong>Career Model</strong><small>Quantus Weiterbildung</small></span></div>' +
+        '<nav class="cm-nav">' + tabs.map(function (tab) {
+          return '<button class="' + (state.tab === tab.key ? "on" : "") + '" data-cm-action="tab" data-tab="' + tab.key + '"><span class="cm-nav-icon">' + tab.icon + '</span><span class="cm-nav-label">' + esc(tab.label) + '</span></button>';
+        }).join("") + '</nav>' +
+        '<div class="cm-side-spacer"></div>' +
+        '<div class="cm-sync-card"><div class="cm-sync-row"><i class="cm-sync-dot ' + (state.syncStatus === "live" ? "live" : state.syncStatus === "error" ? "error" : "") + '"></i>' + esc(state.syncMessage) + '</div><strong>' + esc(userName) + '</strong><small>' + values(state.data.modules).length + ' Module · ' + values(state.data.reflections).length + ' Reflexionen</small></div>' +
+      '</aside>' +
+      '<main class="cm-main">' +
+        '<header class="cm-topbar"><div><h1>' + esc(title) + '</h1><p>' + esc(subtitle || "") + '</p></div><div class="cm-top-actions"><button class="cm-btn cm-device-button" data-cm-action="devices">⇄ Geräte</button><button class="cm-btn ghost" data-cm-action="sign-out">Abmelden</button></div></header>' +
+        '<div class="cm-content">' + content + '</div>' +
+      '</main>' +
+    '</div>';
+  }
+
+  function loginView() {
+    if (!state.authReady) return '<div class="cm-boot"><div class="cm-logo">C</div><strong>Career Model wird verbunden …</strong></div>';
+    return '<section class="cm-login cm-card"><div class="cm-logo">C</div><div class="cm-eyebrow">Quantus Career Model</div><h1>Weiterbildung, die jeden Arbeitstag voranbringt.</h1><p>Importiere vollständig vorbereitete Fachmodule, arbeite täglich ungefähr 30 Minuten daran und halte am Abend mit Reflecta fest, was gut lief und was effizienter werden soll.</p><button class="cm-btn primary" data-cm-action="sign-in">Mit Quantus-Google-Konto anmelden</button><p class="cm-small">Tablet und Laptop verwenden danach denselben Live-Datenstand.</p></section>';
+  }
+
+  function selectedSession() {
+    var module = state.data.modules[state.selectedModuleId];
+    var day = module && asObject(module.days)[state.selectedDayId];
+    if (module && day) {
+      return { module: module, area: state.data.areas[module.areaId] || null, day: 

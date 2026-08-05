@@ -1,0 +1,185 @@
+esult, { max: 20, maxLength: 500 }) : [];
+        if (!text && !items.length) pushError(result, sectionPath, "Abschnitt braucht Text oder Listeneinträge.");
+        if (unsafeMarkup(text) || unsafeMarkup(sectionTitle)) pushError(result, sectionPath, "HTML und Scripts sind nicht erlaubt.");
+        return { type: type, title: sectionTitle, text: text, items: items, sourceRefs: sourceRefs };
+      });
+
+      var exerciseRaw = asObject(day.exercise);
+      var exercise = {
+        prompt: cleanText(exerciseRaw.prompt, 6000),
+        estimatedMinutes: Number(exerciseRaw.estimatedMinutes) || 0,
+        solution: cleanText(exerciseRaw.solution, 8000)
+      };
+      if (!exercise.prompt) pushError(result, path + ".exercise.prompt", "Praxisaufgabe fehlt.");
+      if (!exercise.solution) pushError(result, path + ".exercise.solution", "Musterlösung fehlt.");
+      if (!Number.isFinite(exercise.estimatedMinutes) || exercise.estimatedMinutes < 2 || exercise.estimatedMinutes > 20) pushError(result, path + ".exercise.estimatedMinutes", "Muss zwischen 2 und 20 Minuten liegen.");
+      if (unsafeMarkup(exercise.prompt) || unsafeMarkup(exercise.solution)) pushError(result, path + ".exercise", "HTML und Scripts sind nicht erlaubt.");
+
+      var questionsRaw = asArray(day.reviewQuestions);
+      if (questionsRaw.length < 2) pushError(result, path + ".reviewQuestions", "Mindestens zwei Kontrollfragen erforderlich.");
+      if (questionsRaw.length > 12) pushError(result, path + ".reviewQuestions", "Höchstens zwölf Kontrollfragen erlaubt.");
+      var questions = questionsRaw.map(function (rawQuestion, questionIndex) {
+        var questionPath = path + ".reviewQuestions[" + questionIndex + "]";
+        var question = asObject(rawQuestion);
+        var q = cleanText(question.question, 2000);
+        var answer = cleanText(question.answer, 4000);
+        if (!q) pushError(result, questionPath + ".question", "Frage fehlt.");
+        if (!answer) pushError(result, questionPath + ".answer", "Antwort fehlt.");
+        if (unsafeMarkup(q) || unsafeMarkup(answer)) pushError(result, questionPath, "HTML und Scripts sind nicht erlaubt.");
+        return { question: q, answer: answer };
+      });
+
+      return {
+        id: id,
+        day: number,
+        title: title,
+        estimatedMinutes: Number.isFinite(minutes) ? Math.round(minutes) : 30,
+        objectives: objectives,
+        sections: sections,
+        exercise: exercise,
+        reviewQuestions: questions,
+        takeaways: takeaways
+      };
+    }).sort(function (a, b) { return a.day - b.day; });
+
+    days.forEach(function (day, index) {
+      if (day.day !== index + 1) pushError(result, "module.days", "Tagesnummern müssen lückenlos bei 1 beginnen.");
+    });
+
+    var computedMinutes = days.reduce(function (sum, day) { return sum + day.estimatedMinutes; }, 0);
+    var declaredMinutes = Number(module.estimatedTotalMinutes);
+    if (Number.isFinite(declaredMinutes) && Math.abs(declaredMinutes - computedMinutes) > Math.max(10, computedMinutes * 0.1)) {
+      pushWarning(result, "module.estimatedTotalMinutes", "Gesamtzeit wurde auf die Summe der Tageszeiten korrigiert (" + computedMinutes + " Minuten).");
+    }
+    var average = days.length ? computedMinutes / days.length : 0;
+    if (days.length && (average < 25 || average > 35)) pushWarning(result, "module.days", "Durchschnitt pro Tag: " + average.toFixed(1) + " Minuten; Ziel sind ungefähr 30 Minuten.");
+
+    var generatedAt = cleanLine(input.generatedAt, 80);
+    if (generatedAt && Number.isNaN(Date.parse(generatedAt))) pushWarning(result, "generatedAt", "Zeitstempel ist nicht ISO-konform; Quantus setzt beim Import einen neuen Zeitstempel.");
+
+    result.value = {
+      schema: SCHEMA,
+      schemaVersion: VERSION,
+      generatedAt: generatedAt && !Number.isNaN(Date.parse(generatedAt)) ? new Date(generatedAt).toISOString() : new Date().toISOString(),
+      careerArea: {
+        id: areaId,
+        name: areaName,
+        description: cleanText(area.description, 3000)
+      },
+      module: {
+        id: moduleId,
+        title: moduleTitle,
+        description: cleanText(module.description, 6000),
+        level: cleanLine(module.level, 180),
+        sourceDocuments: sources,
+        estimatedTotalMinutes: computedMinutes,
+        days: days
+      }
+    };
+    result.metrics = { days: days.length, totalMinutes: computedMinutes, averageMinutes: average, sourceDocuments: sources.length };
+    result.ok = result.errors.length === 0;
+    return result;
+  }
+
+  function emptyState() {
+    return {
+      schemaVersion: VERSION,
+      areas: {},
+      modules: {},
+      progress: {},
+      reflections: {},
+      settings: { dailyMinutes: 30, timezone: "Europe/Zurich" },
+      meta: { createdAt: null, updatedAt: null }
+    };
+  }
+
+  function normalizeState(input) {
+    var base = emptyState();
+    input = asObject(input);
+    base.schemaVersion = VERSION;
+    base.areas = asObject(input.areas);
+    base.modules = asObject(input.modules);
+    base.progress = asObject(input.progress);
+    base.reflections = asObject(input.reflections);
+    base.settings = Object.assign(base.settings, asObject(input.settings));
+    base.meta = Object.assign(base.meta, asObject(input.meta));
+    return base;
+  }
+
+  function moduleProgress(stateInput, moduleId) {
+    var state = normalizeState(stateInput);
+    var module = state.modules[moduleId];
+    if (!module) return { completed: 0, total: 0, percent: 0, nextDayId: null };
+    var order = asArray(module.dayOrder);
+    var completedDays = asObject(state.progress[moduleId] && state.progress[moduleId].completedDays);
+    var completed = order.filter(function (id) { return Boolean(completedDays[id]); }).length;
+    var nextDayId = order.find(function (id) { return !completedDays[id]; }) || null;
+    return { completed: completed, total: order.length, percent: order.length ? Math.round(completed / order.length * 100) : 0, nextDayId: nextDayId };
+  }
+
+  function nextSession(stateInput) {
+    var state = normalizeState(stateInput);
+    var modules = Object.keys(state.modules).map(function (id) { return state.modules[id]; })
+      .filter(function (module) { return module && module.status !== "archived"; })
+      .sort(function (a, b) {
+        var aActive = a.status === "active" ? 1 : 0;
+        var bActive = b.status === "active" ? 1 : 0;
+        if (aActive !== bActive) return bActive - aActive;
+        return String(b.updatedAt || b.importedAt || "").localeCompare(String(a.updatedAt || a.importedAt || ""));
+      });
+    for (var i = 0; i < modules.length; i += 1) {
+      var module = modules[i];
+      var stats = moduleProgress(state, module.id);
+      if (!stats.nextDayId) continue;
+      var day = asObject(module.days)[stats.nextDayId];
+      if (!day) continue;
+      return {
+        module: module,
+        area: state.areas[module.areaId] || null,
+        day: day,
+        progress: stats,
+        completion: asObject(asObject(state.progress[module.id]).completedDays)[day.id] || null
+      };
+    }
+    return null;
+  }
+
+  function mergePackage(stateInput, packageInput, now) {
+    var validation = validatePackage(packageInput);
+    if (!validation.ok) {
+      var error = new Error("Career-Model-Datei ist ungültig.");
+      error.validation = validation;
+      throw error;
+    }
+    var pkg = validation.value;
+    var state = normalizeState(deepClone(stateInput || {}));
+    var timestamp = now && !Number.isNaN(Date.parse(now)) ? new Date(now).toISOString() : new Date().toISOString();
+    var areaId = pkg.careerArea.id;
+    var moduleId = pkg.module.id;
+    var previousModule = state.modules[moduleId] || null;
+    var previousAreaId = previousModule && previousModule.areaId;
+    var previousProgress = asObject(state.progress[moduleId]);
+    var dayOrder = pkg.module.days.map(function (day) { return day.id; });
+    var days = {};
+    pkg.module.days.forEach(function (day) { days[day.id] = day; });
+
+    if (previousAreaId && previousAreaId !== areaId && state.areas[previousAreaId]) {
+      state.areas[previousAreaId].moduleIds = asArray(state.areas[previousAreaId].moduleIds).filter(function (id) { return id !== moduleId; });
+      state.areas[previousAreaId].updatedAt = timestamp;
+    }
+
+    var area = Object.assign({}, state.areas[areaId] || {}, pkg.careerArea, {
+      id: areaId,
+      moduleIds: Array.from(new Set(asArray(state.areas[areaId] && state.areas[areaId].moduleIds).concat(moduleId))),
+      createdAt: state.areas[areaId] && state.areas[areaId].createdAt || timestamp,
+      updatedAt: timestamp
+    });
+    state.areas[areaId] = area;
+
+    state.modules[moduleId] = {
+      id: moduleId,
+      areaId: areaId,
+      title: pkg.module.title,
+      description: pkg.module.description,
+      level: pkg.module.level,
+      sour
