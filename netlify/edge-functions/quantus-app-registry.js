@@ -1,6 +1,18 @@
 const APP_KEY = "englishc1";
 const APP_ENTRY = '{key:"englishc1", icon:"🇬🇧", label:"English C1", desc:getLang()==="de"?"C1-Leseverständnis mit 12 Modulen, Aufgaben, Wortschatz, Wiederholung und Lernfortschritt":"C1 reading comprehension with 12 modules, exercises, vocabulary, review and progress"},';
 
+// The Quantus single-file app contains strings that themselves build complete
+// HTML documents, including literal </body> tags. A first-match replacement
+// therefore corrupts JavaScript by injecting the launcher inside such a string.
+// The document's real closing body tag is the final occurrence in the response.
+export function insertBeforeFinalClosingTag(source, tagName, insertion) {
+  const html = String(source || "");
+  const closeTag = `</${String(tagName || "").toLowerCase()}>`;
+  const index = html.toLowerCase().lastIndexOf(closeTag);
+  if (index < 0) return `${html}\n${insertion}`;
+  return `${html.slice(0, index)}${insertion}\n${html.slice(index)}`;
+}
+
 export function injectEnglishC1(source) {
   let html = String(source || "");
 
@@ -55,7 +67,7 @@ export function injectEnglishC1(source) {
   else retry();
 })();
 </script>`;
-    html = html.replace(/<\/body>/i, launcher + "\n</body>");
+    html = insertBeforeFinalClosingTag(html, "body", launcher);
   }
 
   return html;
@@ -72,8 +84,10 @@ export default async function handler(request, context) {
 
   const headers = new Headers(response.headers);
   headers.delete("content-length");
+  headers.delete("content-encoding");
   headers.delete("etag");
   headers.set("cache-control", "no-cache, must-revalidate");
+  headers.set("x-quantus-app-registry", "english-c1");
   return new Response(transformed, {
     status: response.status,
     statusText: response.statusText,
