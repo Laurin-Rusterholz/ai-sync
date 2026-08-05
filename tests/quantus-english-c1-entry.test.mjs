@@ -20,7 +20,8 @@ switch (route) {
 
 const transformed = injectEnglishC1(sample);
 assert.match(transformed, /key:"englishc1"/);
-assert.match(transformed, /case "englishc1": window\.location\.href = "\/english-c1\.html"/);
+assert.match(transformed, /case "englishc1": \{ try \{ if \(sessionStorage\.getItem\("quantusAppExit"\) === "englishc1"\)/);
+assert.match(transformed, /window\.location\.replace\("\/english-c1\.html"\); return; \}/);
 assert.match(transformed, /id="quantusEnglishC1HubLink"/);
 assert.match(transformed, /id="quantusEnglishC1Registration"/);
 assert.match(transformed, /src="\/quantus-english-c1-entry\.js"/);

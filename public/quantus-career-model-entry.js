@@ -193,9 +193,25 @@
     return true;
   }
 
+  // Verlässt jemand die Career-App über deren Zurück-Button, darf die Route
+  // #/career ihn nicht sofort wieder hineinschicken. Der Marker wird dabei
+  // einmalig verbraucht.
+  function consumeExitMarker() {
+    try {
+      if (global.sessionStorage.getItem("quantusAppExit") !== APP_ID) return false;
+      global.sessionStorage.removeItem("quantusAppExit");
+      return true;
+    } catch (_) { return false; }
+  }
+
   function interceptHash() {
     var hash = normalize(global.location.hash).replace(/^#\/?/, "");
-    if (hash === APP_ID || hash.indexOf(APP_ID + "/") === 0) global.location.replace(APP_URL);
+    if (hash !== APP_ID && hash.indexOf(APP_ID + "/") !== 0) return;
+    if (consumeExitMarker()) {
+      global.location.replace("#/dashboard");
+      return;
+    }
+    global.location.replace(APP_URL);
   }
 
   function ensureEntries() {

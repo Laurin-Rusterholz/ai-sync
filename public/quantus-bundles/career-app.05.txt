@@ -1,4 +1,5 @@
 == "devices") { if (global.QuantusUniversalUI) global.QuantusUniversalUI.openPanel(); return; }
+    if (action === "exit-app") { exitToQuantus(); return; }
     if (action === "scroll-learning") { var target = global.document.getElementById("cmLearningStart"); if (target) target.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     if (action === "open-day") {
       event.stopPropagation();
