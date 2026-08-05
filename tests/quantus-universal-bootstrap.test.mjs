@@ -23,5 +23,6 @@ assert.match(injectUniversalAssets("<body>Hallo</body>"), /quantus-device-sync\.
 assert.match(ui, /appStore\/app-data_json/, "main Quantus data must receive push-based refreshes");
 assert.match(ui, /PENDING_CONTEXT_KEY/, "device handoffs must survive page changes");
 assert.match(ui, /data-project-id/, "project handoffs must target exact entities");
-assert.match(deviceSync, /!user\.isAnonymous/, "anonymous browser sessions must not be treated as a shared device account");
+assert.match(deviceSync, /user\.isAnonymous/, "anonymous browser sessions must not be treated as a shared device account");
+assert.match(deviceSync, /quantusRealtime\/workspaces\//, "device state must be scoped to the signed-in account");
 console.log("quantus universal bootstrap and live handoff: ok");
