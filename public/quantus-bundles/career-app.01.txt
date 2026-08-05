@@ -17,6 +17,7 @@
   var DESKTOP_ORIGIN = "https://management-xo2-pro.netlify.app";
   var CACHE_PREFIX = "quantus-career-model-cache-v1:";
   var LAST_USER_KEY = "quantus-career-model-last-user-v1";
+  var QUANTUS_HOME_URL = "/#/dashboard";
 
   var appRoot = global.document.getElementById("careerApp");
   var state = {
@@ -166,13 +167,20 @@
 
   // Rückweg in die Quantus-Hauptapp. Der Marker verhindert, dass der Router von
   // index.html die Route #/career sofort wieder auf diese Seite umleitet.
-  function exitToQuantus() {
+  // Die Ausstiege sind echte <a href>: Klappt das JS nicht, navigiert der Link
+  // trotzdem. markExit() setzt nur den Marker, die Navigation macht der Link.
+  function markExit() {
     try { global.sessionStorage.setItem("quantusAppExit", "career"); } catch (_) {}
+  }
+
+  function exitToQuantus(node) {
+    markExit();
     if (state.embedded && global.parent && global.parent !== global) {
       try { global.parent.postMessage({ type: "quantus:close-app", app: "career" }, "*"); } catch (_) {}
-      return;
     }
-    global.location.replace("/#/dashboard");
+    // Hat das Element ein href, übernimmt der Browser die Navigation selbst.
+    if (node && node.getAttribute && node.getAttribute("href")) return;
+    global.location.assign(QUANTUS_HOME_URL);
   }
 
   function shell(content, title, subtitle) {
@@ -188,20 +196,20 @@
         '<div class="cm-brand"><span class="cm-brand-mark">C</span><span class="cm-brand-text"><strong>Career Model</strong><small>Quantus Weiterbildung</small></span></div>' +
         '<nav class="cm-nav">' + tabs.map(function (tab) {
           return '<button class="' + (state.tab === tab.key ? "on" : "") + '" data-cm-action="tab" data-tab="' + tab.key + '"><span class="cm-nav-icon">' + tab.icon + '</span><span class="cm-nav-label">' + esc(tab.label) + '</span></button>';
-        }).join("") + '<button class="cm-nav-exit" data-cm-action="exit-app" aria-label="Zurück zu Quantus"><span class="cm-nav-icon">←</span><span class="cm-nav-label">Quantus</span></button></nav>' +
+        }).join("") + '<a class="cm-nav-exit" href="' + QUANTUS_HOME_URL + '" data-cm-action="exit-app" aria-label="Zurück zu Quantus"><span class="cm-nav-icon">←</span><span class="cm-nav-label">Quantus</span></a></nav>' +
         '<div class="cm-side-spacer"></div>' +
         '<div class="cm-sync-card"><div class="cm-sync-row"><i class="cm-sync-dot ' + (state.syncStatus === "live" ? "live" : state.syncStatus === "error" ? "error" : "") + '"></i>' + esc(state.syncMessage) + '</div><strong>' + esc(userName) + '</strong><small>' + values(state.data.modules).length + ' Module · ' + values(state.data.reflections).length + ' Reflexionen</small></div>' +
       '</aside>' +
       '<main class="cm-main">' +
-        '<header class="cm-topbar"><div><h1>' + esc(title) + '</h1><p>' + esc(subtitle || "") + '</p></div><div class="cm-top-actions"><button class="cm-btn cm-back-button" data-cm-action="exit-app" aria-label="Zur&uuml;ck zu Quantus">&#8592; Quantus</button><button class="cm-btn cm-device-button" data-cm-action="devices">⇄ Geräte</button><button class="cm-btn ghost" data-cm-action="sign-out">Abmelden</button></div></header>' +
+        '<header class="cm-topbar"><div><h1>' + esc(title) + '</h1><p>' + esc(subtitle || "") + '</p></div><div class="cm-top-actions"><a class="cm-btn cm-back-button" href="' + QUANTUS_HOME_URL + '" data-cm-action="exit-app" aria-label="Zur&uuml;ck zu Quantus">&#8592; Quantus</a><button class="cm-btn cm-device-button" data-cm-action="devices">⇄ Geräte</button><button class="cm-btn ghost" data-cm-action="sign-out">Abmelden</button></div></header>' +
         '<div class="cm-content">' + content + '</div>' +
       '</main>' +
     '</div>';
   }
 
   function loginView() {
-    if (!state.authReady) return '<div class="cm-boot"><div class="cm-logo">C</div><strong>Career Model wird verbunden …</strong><button class="cm-btn cm-back-button" data-cm-action="exit-app">&#8592; Quantus</button></div>';
-    return '<section class="cm-login cm-card"><div class="cm-logo">C</div><div class="cm-eyebrow">Quantus Career Model</div><h1>Weiterbildung, die jeden Arbeitstag voranbringt.</h1><p>Importiere vollständig vorbereitete Fachmodule, arbeite täglich ungefähr 30 Minuten daran und halte am Abend mit Reflecta fest, was gut lief und was effizienter werden soll.</p><button class="cm-btn primary" data-cm-action="sign-in">Mit Quantus-Google-Konto anmelden</button><p class="cm-small">Tablet und Laptop verwenden danach denselben Live-Datenstand.</p><p><button class="cm-btn cm-back-button" data-cm-action="exit-app">&#8592; Zur&uuml;ck zu Quantus</button></p></section>';
+    if (!state.authReady) return '<div class="cm-boot"><div class="cm-logo">C</div><strong>Career Model wird verbunden …</strong><a class="cm-btn cm-back-button" href="/#/dashboard" data-cm-action="exit-app">&#8592; Quantus</a></div>';
+    return '<section class="cm-login cm-card"><div class="cm-logo">C</div><div class="cm-eyebrow">Quantus Career Model</div><h1>Weiterbildung, die jeden Arbeitstag voranbringt.</h1><p>Importiere vollständig vorbereitete Fachmodule, arbeite täglich ungefähr 30 Minuten daran und halte am Abend mit Reflecta fest, was gut lief und was effizienter werden soll.</p><button class="cm-btn primary" data-cm-action="sign-in">Mit Quantus-Google-Konto anmelden</button><p class="cm-small">Tablet und Laptop verwenden danach denselben Live-Datenstand.</p><p><a class="cm-btn cm-back-button" href="/#/dashboard" data-cm-action="exit-app">&#8592; Zur&uuml;ck zu Quantus</a></p></section>';
   }
 
   function selectedSession() {
