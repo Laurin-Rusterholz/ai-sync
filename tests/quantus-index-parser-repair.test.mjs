@@ -3,32 +3,61 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
-import { repairQuantusInlineScriptLineBreaks } from "../netlify/edge-functions/quantus-app-registry.js";
+import {
+  injectEnglishC1,
+  repairQuantusInlineScriptLineBreaks
+} from "../netlify/edge-functions/quantus-app-registry.js";
+import { injectUniversalAssets } from "../netlify/edge-functions/quantus-universal-bootstrap.js";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const source = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
 
-const physicalJoinBodies = Array.from(source.matchAll(/\.join\("([^"\r\n]{0,16}(?:\r\n|\n|\r)[^"\r\n]{0,16})"\)/g), (match) => match[1]);
-const diagnostics = physicalJoinBodies.map((body) => ({
-  json: JSON.stringify(body),
-  codePoints: Array.from(body, (character) => character.codePointAt(0))
-}));
-console.log("physical join diagnostics", JSON.stringify(diagnostics));
-assert.ok(physicalJoinBodies.length >= 3, `Expected damaged join separators; found ${physicalJoinBodies.length}: ${JSON.stringify(diagnostics)}`);
+function scriptBlocks(html) {
+  return Array.from(html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/gi), (match) => ({
+    attributes: match[1] || "",
+    source: match[2] || ""
+  })).filter((block) => {
+    if (/\bsrc\s*=/i.test(block.attributes)) return false;
+    const type = block.attributes.match(/\btype\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase();
+    return !type || type === "text/javascript" || type === "application/javascript" || type === "module";
+  });
+}
 
-const repaired = repairQuantusInlineScriptLineBreaks(source);
-const physicalAfter = Array.from(repaired.matchAll(/\.join\("([^"\r\n]{0,16}(?:\r\n|\n|\r)[^"\r\n]{0,16})"\)/g));
-assert.equal(physicalAfter.length, 0, "physical join continuations must be normalized");
-assert.match(repaired, /SMARTER_IFRAME_ANSWER_CSS[\s\S]*?\.join\("\\n"\)/, "Smarter CSS must use an explicit newline separator");
-assert.match(repaired, /HIER DEINEN TEXT EINFUEGEN[\s\S]*?\.join\("\\n"\)/, "Leseplan prompt must use an explicit newline separator");
-assert.match(repaired, /rows\.join\("\\r\\n"\)/, "CSV export must use an explicit CRLF separator");
+function parseHtmlScripts(html, label) {
+  const blocks = scriptBlocks(html);
+  assert.ok(blocks.length > 10, `${label}: unexpectedly few inline scripts`);
+  blocks.forEach((block, index) => {
+    const filename = `${label}-script-${index + 1}.js`;
+    try {
+      new vm.Script(block.source, { filename });
+    } catch (error) {
+      const lineMatch = String(error.stack || "").match(new RegExp(`${filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:(\\d+)`));
+      const line = Number(lineMatch?.[1] || 0);
+      const lines = block.source.split(/\r?\n/);
+      const from = Math.max(0, line - 4);
+      const to = Math.min(lines.length, line + 3);
+      const context = lines.slice(from, to).map((text, offset) => ({
+        line: from + offset + 1,
+        json: JSON.stringify(text),
+        codePoints: Array.from(text, (character) => character.codePointAt(0))
+      }));
+      console.error(`${label}: parser failure in inline script ${index + 1}`, JSON.stringify(context));
+      throw error;
+    }
+  });
+  console.log(`${label}: ${blocks.length} inline scripts parse`);
+}
 
-const inlineScripts = Array.from(repaired.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi), (match) => match[1]);
-const quantusCore = inlineScripts.find((script) => script.includes("SMARTER_IFRAME_ANSWER_CSS") && script.includes("LESEPLAN_DEFAULT_CONFIG"));
-assert.ok(quantusCore, "Quantus core inline script was not found");
-assert.doesNotThrow(
-  () => new vm.Script(quantusCore, { filename: "public/index.html:quantus-core" }),
-  "The repaired Quantus core inline script must parse completely"
+parseHtmlScripts(source, "raw-index");
+
+const registryThenUniversal = injectUniversalAssets(
+  injectEnglishC1(repairQuantusInlineScriptLineBreaks(source))
 );
+parseHtmlScripts(registryThenUniversal, "registry-then-universal");
 
-console.log(`quantus index parser repair: ok (${physicalJoinBodies.length} damaged separators repaired)`);
+const universalThenRegistry = injectEnglishC1(
+  repairQuantusInlineScriptLineBreaks(injectUniversalAssets(source))
+);
+parseHtmlScripts(universalThenRegistry, "universal-then-registry");
+
+console.log("quantus index parser diagnostics: ok");
