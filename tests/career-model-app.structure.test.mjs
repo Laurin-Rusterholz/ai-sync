@@ -20,7 +20,11 @@ assert.match(app, /transaction\(/);
 assert.match(app, /data-cm-action="exit-app"/);
 assert.match(app, /cm-nav-exit/);
 assert.match(app, /action === "exit-app"/);
-assert.match(app, /function exitToQuantus\(\)/);
+assert.match(app, /function exitToQuantus\(node\)/);
+// Die Ausstiege müssen echte Links sein, damit sie auch ohne den
+// JS-Klick-Handler navigieren.
+assert.match(app, /<a class="cm-btn cm-back-button" href="/);
+assert.match(app, /<a class="cm-nav-exit" href="/);
 assert.match(app, /sessionStorage\.setItem\("quantusAppExit", "career"\)/);
 assert.match(html, /href="\/#\/dashboard"/);
 assert.match(read("public/career-model.css"), /\.cm-back-button/);
