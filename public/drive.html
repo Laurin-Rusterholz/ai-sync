@@ -471,10 +471,12 @@ table.docs tr.doc-zeile td { transition: background .12s ease; }
 <div id="toast"></div>
 
 <!-- Firebase compat-SDK v10.8.0 — identisch zur Hauptapp (index.html), plus Auth für anonyme Anmeldung -->
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+<!-- Firebase SDK aus dem eigenen Origin: gstatic.com/firebasejs wird von
+     Adblockern und Firmen-Proxys blockiert. Siehe vendor/cloud-sdk/README.md. -->
+<script src="vendor/cloud-sdk/app.js"></script>
+<script src="vendor/cloud-sdk/auth.js"></script>
+<script src="vendor/cloud-sdk/storage.js"></script>
+<script src="vendor/cloud-sdk/db.js"></script>
 
 <script>
 (function () {
