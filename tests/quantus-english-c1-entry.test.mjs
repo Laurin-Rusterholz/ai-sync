@@ -35,8 +35,8 @@ const twice = injectEnglishC1(transformed);
 assert.equal(twice, transformed, "English C1 injection must be idempotent");
 assert.equal((twice.match(/key:"englishc1"/g) || []).length, 1);
 assert.equal((twice.match(/case "englishc1"/g) || []).length, 1);
-assert.equal((twice.match(/quantusEnglishC1HubLink/g) || []).length, 1);
-assert.equal((twice.match(/quantusEnglishC1Registration/g) || []).length, 1);
+assert.equal((twice.match(/id="quantusEnglishC1HubLink"/g) || []).length, 1);
+assert.equal((twice.match(/id="quantusEnglishC1Registration"/g) || []).length, 1);
 
 const browserScript = await readFile(new URL("../public/quantus-english-c1-entry.js", import.meta.url), "utf8");
 new vm.Script(browserScript, { filename: "quantus-english-c1-entry.js" });
