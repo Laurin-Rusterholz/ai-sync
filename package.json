@@ -12,8 +12,9 @@
     "test:index-parser": "node tests/quantus-index-parser-repair.test.mjs",
     "test:career-model": "node tests/career-model-core.test.mjs && node tests/career-model-app.structure.test.mjs",
     "test:universal-sync": "node tests/quantus-universal-bootstrap.test.mjs && node tests/quantus-bundles.test.mjs",
+    "test:firebase-sdk": "node tests/firebase-sdk-loading.test.mjs && node tests/sticky-board-split.test.mjs",
     "check:career-model": "node --check public/quantus-bundle-loader.js && node --check public/career-model-core.js && node --check public/career-model.js && node --check public/quantus-device-sync.js && node --check public/quantus-universal-ui.js && npm test",
-    "test": "npm run test:index-parser && npm run test:career-model && npm run test:universal-sync"
+    "test": "npm run test:index-parser && npm run test:career-model && npm run test:universal-sync && npm run test:firebase-sdk"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.11",
