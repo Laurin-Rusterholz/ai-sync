@@ -1,7 +1,29 @@
-const APP_KEY = "englishc1";
-const APP_ENTRY = '{key:"englishc1", icon:"🇬🇧", label:"English C1", desc:getLang()==="de"?"C1-Leseverständnis mit 12 Modulen, Aufgaben, Wortschatz, Wiederholung und Lernfortschritt":"C1 reading comprehension with 12 modules, exercises, vocabulary, review and progress"},';
-const HUB_MARKER = '<script id="quantusEnglishC1HubLink">window.__quantusEnglishC1HubLink=true;</script>';
-const REGISTRATION_SCRIPT = '<script id="quantusEnglishC1Registration" src="/quantus-english-c1-entry.js" defer></script>';
+const APP_DEFINITIONS = [
+  {
+    key: "englishc1",
+    icon: "🇬🇧",
+    label: "English C1",
+    descriptionDe: "C1-Leseverständnis mit 12 Modulen, Aufgaben, Wortschatz, Wiederholung und Lernfortschritt",
+    descriptionEn: "C1 reading comprehension with 12 modules, exercises, vocabulary, review and progress",
+    path: "/english-c1.html",
+    markerId: "quantusEnglishC1HubLink",
+    markerGlobal: "__quantusEnglishC1HubLink",
+    registrationId: "quantusEnglishC1Registration",
+    registrationScript: "/quantus-english-c1-entry.js"
+  },
+  {
+    key: "career",
+    icon: "🧭",
+    label: "Career Model",
+    descriptionDe: "Berufliche Weiterbildung in 30-Minuten-Modulen mit Lernfortschritt und Reflecta",
+    descriptionEn: "Professional development in 30-minute modules with progress tracking and Reflecta",
+    path: "/career-model.html",
+    markerId: "quantusCareerModelHubLink",
+    markerGlobal: "__quantusCareerModelHubLink",
+    registrationId: "quantusCareerModelRegistration",
+    registrationScript: "/quantus-career-model-entry.js"
+  }
+];
 
 // The Quantus single-file app contains strings that themselves build complete
 // HTML documents, including literal </body> tags. A first-match replacement
@@ -15,40 +37,68 @@ export function insertBeforeFinalClosingTag(source, tagName, insertion) {
   return `${html.slice(0, index)}${insertion}\n${html.slice(index)}`;
 }
 
-function injectNativeRegistry(html) {
-  if (/key\s*:\s*["']englishc1["']/.test(html)) return html;
-  return html.replace(
-    /(\r?\n[ \t]*)\{[ \t]*key[ \t]*:[ \t]*["']polaris["'][ \t]*,/,
-    function (match, indent) {
-      return indent + APP_ENTRY + match;
-    }
-  );
+function inlineAppEntry(app) {
+  return `{key:${JSON.stringify(app.key)}, icon:${JSON.stringify(app.icon)}, label:${JSON.stringify(app.label)}, desc:getLang()==="de"?${JSON.stringify(app.descriptionDe)}:${JSON.stringify(app.descriptionEn)}},`;
 }
 
-function injectNativeRouter(html) {
-  if (/case\s+["']englishc1["']\s*:/.test(html)) return html;
-  return html.replace(
-    /(\r?\n[ \t]*)case\s+["']ruhestand["']\s*:/,
-    function (match, indent) {
-      return indent + 'case "englishc1": window.location.href = "/english-c1.html"; return;' + match;
-    }
-  );
+function injectNativeRegistry(source) {
+  let html = source;
+  for (const app of APP_DEFINITIONS) {
+    const present = new RegExp(`key\\s*:\\s*["']${app.key}["']`).test(html);
+    if (present) continue;
+    html = html.replace(
+      /(\r?\n[ \t]*)\{[ \t]*key[ \t]*:[ \t]*["']polaris["'][ \t]*,/,
+      (match, indent) => `${indent}${inlineAppEntry(app)}${match}`
+    );
+  }
+  return html;
 }
 
-export function injectEnglishC1(source) {
+function injectNativeRouter(source) {
+  let html = source;
+  for (const app of APP_DEFINITIONS) {
+    const present = new RegExp(`case\\s+["']${app.key}["']\\s*:`).test(html);
+    if (present) continue;
+    html = html.replace(
+      /(\r?\n[ \t]*)case\s+["']ruhestand["']\s*:/,
+      (match, indent) => `${indent}case ${JSON.stringify(app.key)}: window.location.href = ${JSON.stringify(app.path)}; return;${match}`
+    );
+  }
+  return html;
+}
+
+function markerTag(app) {
+  return `<script id="${app.markerId}">window.${app.markerGlobal}=true;</script>`;
+}
+
+function registrationTag(app) {
+  return `<script id="${app.registrationId}" src="${app.registrationScript}" defer></script>`;
+}
+
+function injectRegistrationAssets(source) {
+  let html = source;
+  for (const app of APP_DEFINITIONS) {
+    if (!html.includes(`id="${app.markerId}"`)) {
+      html = insertBeforeFinalClosingTag(html, "body", markerTag(app));
+    }
+    if (!html.includes(`id="${app.registrationId}"`) && !html.includes(app.registrationScript)) {
+      html = insertBeforeFinalClosingTag(html, "body", registrationTag(app));
+    }
+  }
+  return html;
+}
+
+export function injectQuantusApps(source) {
   let html = String(source || "");
   html = injectNativeRegistry(html);
   html = injectNativeRouter(html);
-
-  // Keep the parser-regression marker introduced in PR #164, but move the
-  // dynamic UI behavior into a normal external browser script.
-  if (!html.includes('id="quantusEnglishC1HubLink"')) {
-    html = insertBeforeFinalClosingTag(html, "body", HUB_MARKER);
-  }
-  if (!html.includes('id="quantusEnglishC1Registration"') && !html.includes("/quantus-english-c1-entry.js")) {
-    html = insertBeforeFinalClosingTag(html, "body", REGISTRATION_SCRIPT);
-  }
+  html = injectRegistrationAssets(html);
   return html;
+}
+
+// Backwards-compatible export used by the existing regression suite.
+export function injectEnglishC1(source) {
+  return injectQuantusApps(source);
 }
 
 export default async function handler(request, context) {
@@ -57,13 +107,13 @@ export default async function handler(request, context) {
   if (!response.ok || !contentType.includes("text/html")) return response;
 
   const original = await response.text();
-  const transformed = injectEnglishC1(original);
+  const transformed = injectQuantusApps(original);
   const headers = new Headers(response.headers);
   headers.delete("content-length");
   headers.delete("content-encoding");
   headers.delete("etag");
   headers.set("cache-control", "no-cache, must-revalidate");
-  headers.set("x-quantus-app-registry", "english-c1");
+  headers.set("x-quantus-app-registry", "english-c1,career-model");
   return new Response(transformed, {
     status: response.status,
     statusText: response.statusText,
