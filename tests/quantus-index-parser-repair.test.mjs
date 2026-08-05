@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import {
   injectEnglishC1,
-  repairQuantusInlineScriptLineBreaks
+  insertBeforeFinalClosingTag
 } from "../netlify/edge-functions/quantus-app-registry.js";
 import { injectUniversalAssets } from "../netlify/edge-functions/quantus-universal-bootstrap.js";
 
@@ -28,36 +28,35 @@ function parseHtmlScripts(html, label) {
   assert.ok(blocks.length > 10, `${label}: unexpectedly few inline scripts`);
   blocks.forEach((block, index) => {
     const filename = `${label}-script-${index + 1}.js`;
-    try {
-      new vm.Script(block.source, { filename });
-    } catch (error) {
-      const lineMatch = String(error.stack || "").match(new RegExp(`${filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:(\\d+)`));
-      const line = Number(lineMatch?.[1] || 0);
-      const lines = block.source.split(/\r?\n/);
-      const from = Math.max(0, line - 4);
-      const to = Math.min(lines.length, line + 3);
-      const context = lines.slice(from, to).map((text, offset) => ({
-        line: from + offset + 1,
-        json: JSON.stringify(text),
-        codePoints: Array.from(text, (character) => character.codePointAt(0))
-      }));
-      console.error(`${label}: parser failure in inline script ${index + 1}`, JSON.stringify(context));
-      throw error;
-    }
+    new vm.Script(block.source, { filename });
   });
   console.log(`${label}: ${blocks.length} inline scripts parse`);
 }
 
 parseHtmlScripts(source, "raw-index");
 
-const registryThenUniversal = injectUniversalAssets(
-  injectEnglishC1(repairQuantusInlineScriptLineBreaks(source))
-);
+const launcherMarker = '<script id="quantusEnglishC1HubLink">';
+const registryOnly = injectEnglishC1(source);
+const launcherIndex = registryOnly.indexOf(launcherMarker);
+const finalBodyIndex = registryOnly.toLowerCase().lastIndexOf("</body>");
+const previousBodyIndex = registryOnly.toLowerCase().lastIndexOf("</body>", launcherIndex - 1);
+assert.ok(previousBodyIndex >= 0, "fixture must contain a generated-document body tag before the launcher");
+assert.ok(launcherIndex > previousBodyIndex, "launcher must not be injected into a generated HTML string");
+assert.ok(launcherIndex < finalBodyIndex, "launcher must be inserted before the real closing body tag");
+assert.equal(registryOnly.indexOf(launcherMarker, launcherIndex + 1), -1, "launcher injection must be idempotent");
+assert.equal(injectEnglishC1(registryOnly), registryOnly, "registry transform must be idempotent");
+parseHtmlScripts(registryOnly, "registry-only");
+
+const registryThenUniversal = injectUniversalAssets(registryOnly);
 parseHtmlScripts(registryThenUniversal, "registry-then-universal");
 
-const universalThenRegistry = injectEnglishC1(
-  repairQuantusInlineScriptLineBreaks(injectUniversalAssets(source))
-);
+const universalThenRegistry = injectEnglishC1(injectUniversalAssets(source));
 parseHtmlScripts(universalThenRegistry, "universal-then-registry");
 
-console.log("quantus index parser diagnostics: ok");
+assert.equal(
+  insertBeforeFinalClosingTag("<body>inside </body> text</body>", "body", "<script>safe</script>"),
+  "<body>inside </body> text<script>safe</script>\n</body>",
+  "helper must target the final closing tag"
+);
+
+console.log("quantus index parser regression: ok");
