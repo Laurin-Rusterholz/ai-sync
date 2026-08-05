@@ -16,6 +16,14 @@ assert.match(html, /quantus-device-sync\.js/);
 assert.match(app, /careerModel\/users\//);
 assert.match(app, /reflections\//);
 assert.match(app, /transaction\(/);
+// Rückweg in die Hauptapp: Topbar-Button, Navigationseintrag und Handler.
+assert.match(app, /data-cm-action="exit-app"/);
+assert.match(app, /cm-nav-exit/);
+assert.match(app, /action === "exit-app"/);
+assert.match(app, /function exitToQuantus\(\)/);
+assert.match(app, /sessionStorage\.setItem\("quantusAppExit", "career"\)/);
+assert.match(html, /href="\/#\/dashboard"/);
+assert.match(read("public/career-model.css"), /\.cm-back-button/);
 assert.match(core, /quantus-career-model\/v1/);
 assert.equal(schema.properties.schema.const, "quantus-career-model/v1");
 assert.equal(rules.rules.careerModel.users.$uid[".read"], "auth != null && auth.uid === $uid");

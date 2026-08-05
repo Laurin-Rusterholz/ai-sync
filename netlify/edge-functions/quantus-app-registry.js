@@ -54,6 +54,16 @@ function injectNativeRegistry(source) {
   return html;
 }
 
+// Die eigenständigen Apps liegen auf eigenen Seiten. Ein einfaches
+// `location.href = pfad` sperrt Nutzer dort ein: der Zurück-Schritt landet
+// wieder auf #/<key>, der Router leitet sofort erneut weiter. Deshalb
+// (a) `replace`, damit die Route #/<key> keinen eigenen History-Eintrag behält,
+// und (b) ein Session-Marker, den die App beim Verlassen setzt und der hier
+// einmalig zum Dashboard zurückführt, statt erneut umzuleiten.
+function routerCase(app) {
+  return `case ${JSON.stringify(app.key)}: { try { if (sessionStorage.getItem("quantusAppExit") === ${JSON.stringify(app.key)}) { sessionStorage.removeItem("quantusAppExit"); window.location.replace("#/dashboard"); return; } } catch (_e) {} window.location.replace(${JSON.stringify(app.path)}); return; }`;
+}
+
 function injectNativeRouter(source) {
   let html = source;
   for (const app of APP_DEFINITIONS) {
@@ -61,7 +71,7 @@ function injectNativeRouter(source) {
     if (present) continue;
     html = html.replace(
       /(\r?\n[ \t]*)case\s+["']ruhestand["']\s*:/,
-      (match, indent) => `${indent}case ${JSON.stringify(app.key)}: window.location.href = ${JSON.stringify(app.path)}; return;${match}`
+      (match, indent) => `${indent}${routerCase(app)}${match}`
     );
   }
   return html;
