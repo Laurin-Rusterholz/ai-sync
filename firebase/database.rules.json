@@ -64,6 +64,36 @@
         ]
       }
     },
+    "careerModel": {
+      "users": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
+    },
+    "quantusRealtime": {
+      "workspaces": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid",
+          "devices": {
+            ".indexOn": [
+              "updatedAt",
+              "online"
+            ]
+          },
+          "commands": {
+            "$deviceId": {
+              ".indexOn": [
+                "createdAt",
+                "expiresAt"
+              ]
+            }
+          }
+        }
+      }
+    },
     "samsparking": {
       "gate": {
         ".read": false,
@@ -104,8 +134,8 @@
       }
     },
     "$andere": {
-      ".read": true,
-      ".write": true
+      ".read": "$andere !== 'careerModel' && $andere !== 'quantusRealtime'",
+      ".write": "$andere !== 'careerModel' && $andere !== 'quantusRealtime'"
     }
   }
 }

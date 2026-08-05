@@ -1,0 +1,156 @@
+(function (root, factory) {
+  "use strict";
+  var api = factory();
+  if (typeof module === "object" && module.exports) module.exports = api;
+  if (root) root.CareerModelCore = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+  "use strict";
+
+  var SCHEMA = "quantus-career-model/v1";
+  var VERSION = 1;
+  var SECTION_TYPES = ["heading", "paragraph", "list", "callout", "example", "case", "checklist"];
+  var MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+  function isObject(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
+  function asArray(value) { return Array.isArray(value) ? value : []; }
+  function asObject(value) { return isObject(value) ? value : {}; }
+  function cleanText(value, maxLength) {
+    return String(value == null ? "" : value)
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+      .replace(/\r\n?/g, "\n")
+      .trim()
+      .slice(0, maxLength || 20000);
+  }
+  function cleanLine(value, maxLength) { return cleanText(value, maxLength || 500).replace(/\s+/g, " "); }
+  function deepClone(value) { return JSON.parse(JSON.stringify(value == null ? null : value)); }
+
+  function slugify(value, fallback) {
+    var slug = cleanLine(value, 120).toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 54);
+    return slug || fallback || "eintrag";
+  }
+
+  function makeId(prefix, label) {
+    var base = slugify(label, prefix || "item");
+    var hash = stableHash(String(label || base)).slice(0, 7);
+    return (prefix ? prefix + "-" : "") + base.slice(0, 48) + "-" + hash;
+  }
+
+  function stableHash(value) {
+    var text = String(value || "");
+    var hash = 2166136261;
+    for (var i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36).padStart(7, "0");
+  }
+
+  function validId(value) { return /^[a-z0-9][a-z0-9_-]{2,79}$/.test(String(value || "")); }
+  function dateKey(date, timezone) {
+    var current = date instanceof Date ? date : new Date(date || Date.now());
+    try {
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone || "Europe/Zurich", year: "numeric", month: "2-digit", day: "2-digit"
+      }).format(current);
+    } catch (_) { return current.toISOString().slice(0, 10); }
+  }
+
+  function pushError(result, path, message) { result.errors.push({ path: path, message: message }); }
+  function pushWarning(result, path, message) { result.warnings.push({ path: path, message: message }); }
+
+  function unsafeMarkup(value) {
+    var text = String(value == null ? "" : value);
+    return /<\s*\/?\s*[a-z][^>]*>/i.test(text) || /<\s*!doctype/i.test(text) || /\bon\w+\s*=/i.test(text) || /javascript\s*:/i.test(text);
+  }
+
+  function textArray(value, path, result, options) {
+    options = options || {};
+    if (!Array.isArray(value)) {
+      pushError(result, path, "Muss eine Liste sein.");
+      return [];
+    }
+    var output = value.map(function (item, index) {
+      if (typeof item !== "string") {
+        pushError(result, path + "[" + index + "]", "Muss Text sein.");
+        return "";
+      }
+      var clean = cleanLine(item, options.maxLength || 700);
+      if (!clean) pushError(result, path + "[" + index + "]", "Darf nicht leer sein.");
+      if (unsafeMarkup(clean)) pushError(result, path + "[" + index + "]", "Enthält nicht erlaubtes HTML oder Script.");
+      return clean;
+    }).filter(Boolean);
+    if (options.min != null && output.length < options.min) pushError(result, path, "Mindestens " + options.min + " Einträge erforderlich.");
+    if (options.max != null && output.length > options.max) pushError(result, path, "Höchstens " + options.max + " Einträge erlaubt.");
+    return output;
+  }
+
+  function validatePackage(input) {
+    var result = { ok: false, errors: [], warnings: [], value: null, metrics: null };
+    if (!isObject(input)) {
+      pushError(result, "$", "Die Datei muss ein JSON-Objekt enthalten.");
+      return result;
+    }
+    if (input.schema !== SCHEMA) pushError(result, "schema", "Erwartet wird exakt \"" + SCHEMA + "\".");
+    if (Number(input.schemaVersion) !== VERSION) pushError(result, "schemaVersion", "Erwartet wird Version " + VERSION + ".");
+
+    var area = asObject(input.careerArea);
+    var module = asObject(input.module);
+    var areaName = cleanLine(area.name, 140);
+    var moduleTitle = cleanLine(module.title, 180);
+    if (!areaName) pushError(result, "careerArea.name", "Karrierebereich fehlt.");
+    if (!moduleTitle) pushError(result, "module.title", "Modultitel fehlt.");
+    var areaId = cleanLine(area.id, 80) || makeId("area", areaName);
+    var moduleId = cleanLine(module.id, 80) || makeId("module", areaName + "-" + moduleTitle);
+    if (!validId(areaId)) pushError(result, "careerArea.id", "Nur Kleinbuchstaben, Zahlen, Bindestrich und Unterstrich sind erlaubt.");
+    if (!validId(moduleId)) pushError(result, "module.id", "Nur Kleinbuchstaben, Zahlen, Bindestrich und Unterstrich sind erlaubt.");
+    if (unsafeMarkup(areaName)) pushError(result, "careerArea.name", "HTML und Scripts sind nicht erlaubt.");
+    if (unsafeMarkup(moduleTitle)) pushError(result, "module.title", "HTML und Scripts sind nicht erlaubt.");
+
+    var sources = asArray(module.sourceDocuments).map(function (source, index) {
+      source = asObject(source);
+      var name = cleanLine(source.name, 240);
+      var reference = cleanLine(source.reference, 500);
+      if (!name) pushError(result, "module.sourceDocuments[" + index + "].name", "Quellenname fehlt.");
+      if (unsafeMarkup(name) || unsafeMarkup(reference)) pushError(result, "module.sourceDocuments[" + index + "]", "HTML und Scripts sind nicht erlaubt.");
+      return { name: name, reference: reference };
+    }).filter(function (source) { return source.name; });
+    if (!sources.length) pushWarning(result, "module.sourceDocuments", "Keine Quelldokumente aufgeführt. Für fachliche Nachvollziehbarkeit werden Quellen empfohlen.");
+
+    if (!Array.isArray(module.days) || !module.days.length) pushError(result, "module.days", "Mindestens ein Lerntag ist erforderlich.");
+    if (asArray(module.days).length > 180) pushError(result, "module.days", "Ein Modul darf höchstens 180 Lerntage enthalten.");
+
+    var seenIds = {};
+    var seenNumbers = {};
+    var days = asArray(module.days).map(function (rawDay, index) {
+      var path = "module.days[" + index + "]";
+      var day = asObject(rawDay);
+      var number = Number(day.day);
+      var id = cleanLine(day.id, 80) || "day-" + String(index + 1).padStart(2, "0");
+      var title = cleanLine(day.title, 180);
+      var minutes = Number(day.estimatedMinutes);
+      if (!Number.isInteger(number) || number < 1) pushError(result, path + ".day", "Muss eine positive ganze Zahl sein.");
+      if (!validId(id)) pushError(result, path + ".id", "Ungültige Tages-ID.");
+      if (seenIds[id]) pushError(result, path + ".id", "Tages-ID ist doppelt.");
+      if (seenNumbers[number]) pushError(result, path + ".day", "Tagesnummer ist doppelt.");
+      seenIds[id] = true;
+      seenNumbers[number] = true;
+      if (!title) pushError(result, path + ".title", "Titel fehlt.");
+      if (!Number.isFinite(minutes) || minutes < 15 || minutes > 60) pushError(result, path + ".estimatedMinutes", "Muss zwischen 15 und 60 Minuten liegen.");
+      else if (minutes < 25 || minutes > 35) pushWarning(result, path + ".estimatedMinutes", "Ziel sind ungefähr 30 Minuten (25–35 Minuten empfohlen).");
+
+      var objectives = textArray(day.objectives, path + ".objectives", result, { min: 1, max: 8, maxLength: 500 });
+      var takeaways = textArray(day.takeaways, path + ".takeaways", result, { min: 1, max: 10, maxLength: 600 });
+      var sectionsRaw = asArray(day.sections);
+      if (!sectionsRaw.length) pushError(result, path + ".sections", "Mindestens ein Inhaltsabschnitt ist erforderlich.");
+      var sections = sectionsRaw.map(function (rawSection, sectionIndex) {
+        var sectionPath = path + ".sections[" + sectionIndex + "]";
+        var section = asObject(rawSection);
+        var type = cleanLine(section.type, 30);
+        if (SECTION_TYPES.indexOf(type) < 0) pushError(result, sectionPath + ".type", "Erlaubt: " + SECTION_TYPES.join(", ") + ".");
+        var sectionTitle = cleanLine(section.title, 180);
+        var text = cleanText(section.text, 12000);
+        var items = Array.isArray(section.items) ? textArray(section.items, sectionPath + ".items", result, { max: 40, maxLength: 1200 }) : [];
+        var sourceRefs = Array.isArray(section.sourceRefs) ? textArray(section.sourceRefs, sectionPath + ".sourceRefs", r

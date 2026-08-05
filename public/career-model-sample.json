@@ -1,0 +1,134 @@
+{
+  "schema": "quantus-career-model/v1",
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-04T12:00:00.000Z",
+  "careerArea": {
+    "id": "area-versicherungen",
+    "name": "Versicherungen",
+    "description": "Berufliche Weiterbildung für die tägliche Arbeit in der Versicherungsbranche."
+  },
+  "module": {
+    "id": "module-haftpflichtrecht-grundlagen",
+    "title": "Haftpflichtrecht – Grundlagen",
+    "description": "Ein kurzes Beispielsmodul zur technischen Demonstration des Career-Model-Imports. Fachliche Inhalte müssen für den produktiven Einsatz aus den eigenen Unterlagen neu erzeugt werden.",
+    "level": "Einführung",
+    "sourceDocuments": [
+      {
+        "name": "Beispiel-Unterlage Haftpflichtrecht.pdf",
+        "reference": "Demonstrationsquelle – durch eigene Unterlagen ersetzen"
+      }
+    ],
+    "estimatedTotalMinutes": 60,
+    "days": [
+      {
+        "id": "day-01",
+        "day": 1,
+        "title": "Haftung systematisch prüfen",
+        "estimatedMinutes": 30,
+        "objectives": [
+          "Einen Haftpflichtfall mit einer klaren Prüfreihenfolge strukturieren.",
+          "Zwischen Sachverhalt, Anspruch und versicherungsrechtlicher Deckung unterscheiden."
+        ],
+        "sections": [
+          {
+            "type": "paragraph",
+            "title": "Drei getrennte Ebenen",
+            "text": "Ein Fall wird zuerst sachlich erfasst. Danach wird geprüft, ob eine Person gegenüber einer anderen Person haftet. Erst in einem weiteren Schritt wird untersucht, ob und in welchem Umfang eine Versicherung für diese Haftung eintritt. Diese Ebenen dürfen nicht vermischt werden.",
+            "items": [],
+            "sourceRefs": [
+              "Beispiel-Unterlage Haftpflichtrecht.pdf, Demonstrationsabschnitt"
+            ]
+          },
+          {
+            "type": "checklist",
+            "title": "Prüfreihenfolge für die Fallaufnahme",
+            "text": "Die folgende Reihenfolge schafft eine nachvollziehbare Akte.",
+            "items": [
+              "Beteiligte Personen und Rollen festhalten.",
+              "Ereignis, Ort und Zeitpunkt präzise beschreiben.",
+              "Schaden und vorhandene Belege erfassen.",
+              "Mögliche Anspruchsgrundlage aus den Unterlagen bestimmen.",
+              "Deckungsprüfung getrennt dokumentieren."
+            ],
+            "sourceRefs": [
+              "Beispiel-Unterlage Haftpflichtrecht.pdf, Demonstrationsabschnitt"
+            ]
+          }
+        ],
+        "exercise": {
+          "prompt": "Didaktischer Übungsfall: Eine Kundin meldet, dass bei einer privaten Tätigkeit ein Gegenstand einer Drittperson beschädigt wurde. Erstelle eine Fallaufnahme mit den fünf Punkten der Prüfreihenfolge und notiere, welche Informationen noch fehlen.",
+          "estimatedMinutes": 8,
+          "solution": "Die Musterlösung trennt Beteiligte, Ereignis, Schaden, mögliche Anspruchsgrundlage und Deckung. Fehlende Angaben werden als offene Fragen markiert, statt durch Vermutungen ergänzt zu werden."
+        },
+        "reviewQuestions": [
+          {
+            "question": "Warum werden Haftungsprüfung und Deckungsprüfung getrennt?",
+            "answer": "Weil zuerst geklärt wird, ob überhaupt eine rechtliche Haftung besteht. Erst danach wird anhand des Versicherungsvertrags geprüft, ob der konkrete Anspruch gedeckt ist."
+          },
+          {
+            "question": "Welche Informationen gehören mindestens in eine strukturierte Fallaufnahme?",
+            "answer": "Beteiligte und Rollen, Ereignis mit Ort und Zeitpunkt, Schaden und Belege, mögliche Anspruchsgrundlage sowie die getrennte Deckungsprüfung."
+          }
+        ],
+        "takeaways": [
+          "Sachverhalt, Haftung und Deckung sind drei getrennte Prüfebenen.",
+          "Fehlende Informationen werden als offene Fragen dokumentiert."
+        ]
+      },
+      {
+        "id": "day-02",
+        "day": 2,
+        "title": "Schadendokumentation und effiziente Rückfragen",
+        "estimatedMinutes": 30,
+        "objectives": [
+          "Belege zielgerichtet anfordern, ohne unnötige Rückfragen zu produzieren.",
+          "Eine kurze, prüfbare Arbeitsnotiz verfassen."
+        ],
+        "sections": [
+          {
+            "type": "list",
+            "title": "Belege nach Zweck ordnen",
+            "text": "Jeder verlangte Beleg soll eine konkrete offene Frage beantworten.",
+            "items": [
+              "Fotos und Zustandsnachweise klären Art und Umfang des Schadens.",
+              "Rechnungen oder Kostenvoranschläge stützen die Höhe des geltend gemachten Betrags.",
+              "Korrespondenz dokumentiert Forderungen, Fristen und bereits gemachte Aussagen.",
+              "Vertragsunterlagen dienen der späteren, getrennten Deckungsprüfung."
+            ],
+            "sourceRefs": [
+              "Beispiel-Unterlage Haftpflichtrecht.pdf, Demonstrationsabschnitt"
+            ]
+          },
+          {
+            "type": "example",
+            "title": "Präzise statt pauschal nachfragen",
+            "text": "Statt allgemein um alle Unterlagen zu bitten, wird erklärt, welcher Nachweis noch fehlt und wofür er benötigt wird. Dadurch kann die Kundin gezielt antworten und die Bearbeitung wird schneller.",
+            "items": [],
+            "sourceRefs": [
+              "Beispiel-Unterlage Haftpflichtrecht.pdf, Demonstrationsabschnitt"
+            ]
+          }
+        ],
+        "exercise": {
+          "prompt": "Didaktischer Übungsfall: Zu einem gemeldeten Sachschaden liegen nur eine kurze E-Mail und ein unscharfes Foto vor. Formuliere eine effiziente Rückfrage mit maximal fünf konkreten Punkten und begründe intern bei jedem Punkt den Zweck.",
+          "estimatedMinutes": 8,
+          "solution": "Die Rückfrage nennt nur entscheidende Lücken, beispielsweise genauer Hergang, Zeitpunkt, Eigentumsverhältnis, bessere Schadennachweise und Bezifferung. Die interne Begründung zeigt, welche Prüffrage der jeweilige Punkt beantwortet."
+        },
+        "reviewQuestions": [
+          {
+            "question": "Was macht eine Rückfrage effizient?",
+            "answer": "Sie fordert nur Informationen an, die eine konkrete offene Prüffrage beantworten, ist verständlich formuliert und vermeidet pauschale Sammelanfragen."
+          },
+          {
+            "question": "Welche Funktion hat eine Arbeitsnotiz?",
+            "answer": "Sie macht Sachstand, offene Punkte, nächste Handlung und Begründung so nachvollziehbar, dass die Bearbeitung ohne Informationsverlust fortgesetzt werden kann."
+          }
+        ],
+        "takeaways": [
+          "Jeder angeforderte Beleg braucht einen klaren Prüfzweck.",
+          "Eine gute Arbeitsnotiz enthält Sachstand, offene Punkte, nächsten Schritt und Begründung."
+        ]
+      }
+    ]
+  }
+}

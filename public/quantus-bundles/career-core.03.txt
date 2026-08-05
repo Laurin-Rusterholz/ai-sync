@@ -1,0 +1,136 @@
+ceDocuments: pkg.module.sourceDocuments,
+      estimatedTotalMinutes: pkg.module.estimatedTotalMinutes,
+      days: days,
+      dayOrder: dayOrder,
+      status: previousModule && previousModule.status || "active",
+      importedAt: previousModule && previousModule.importedAt || timestamp,
+      updatedAt: timestamp,
+      sourceGeneratedAt: pkg.generatedAt,
+      packageHash: stableHash(JSON.stringify(pkg))
+    };
+
+    var oldCompleted = asObject(previousProgress.completedDays);
+    var completedDays = {};
+    dayOrder.forEach(function (dayId) { if (oldCompleted[dayId]) completedDays[dayId] = oldCompleted[dayId]; });
+    var stats = { completed: Object.keys(completedDays).length, total: dayOrder.length };
+    state.progress[moduleId] = Object.assign({}, previousProgress, {
+      moduleId: moduleId,
+      completedDays: completedDays,
+      currentDayId: dayOrder.find(function (id) { return !completedDays[id]; }) || null,
+      startedAt: previousProgress.startedAt || timestamp,
+      completedAt: stats.completed === stats.total && stats.total ? previousProgress.completedAt || timestamp : null,
+      updatedAt: timestamp
+    });
+
+    state.meta.createdAt = state.meta.createdAt || timestamp;
+    state.meta.updatedAt = timestamp;
+    return state;
+  }
+
+  function buildClaudePrompt(options) {
+    options = options || {};
+    var areaName = cleanLine(options.areaName || "Versicherungen", 140);
+    var moduleTitle = cleanLine(options.moduleTitle || "Haftpflichtrecht", 180);
+    var level = cleanLine(options.level || "Praxisorientierte Weiterbildung", 180);
+    var minutes = Math.max(25, Math.min(35, Number(options.dailyMinutes) || 30));
+    var notes = cleanText(options.notes || "", 5000);
+    var areaId = makeId("area", areaName);
+    var moduleId = makeId("module", areaName + "-" + moduleTitle);
+    var schemaExample = {
+      schema: SCHEMA,
+      schemaVersion: VERSION,
+      generatedAt: "2026-08-04T12:00:00.000Z",
+      careerArea: { id: areaId, name: areaName, description: "Kurze Beschreibung des Arbeitsbereichs" },
+      module: {
+        id: moduleId,
+        title: moduleTitle,
+        description: "Ziel und Nutzen des Moduls",
+        level: level,
+        sourceDocuments: [{ name: "Exakter Dateiname", reference: "Kapitel, Seite oder Abschnitt" }],
+        estimatedTotalMinutes: minutes * 2,
+        days: [{
+          id: "day-01",
+          day: 1,
+          title: "Eindeutiger Tagestitel",
+          estimatedMinutes: minutes,
+          objectives: ["Konkretes Lernziel"],
+          sections: [{
+            type: "paragraph",
+            title: "Abschnittstitel",
+            text: "Vollständiger Lerntext in reinem Text, ohne HTML.",
+            items: [],
+            sourceRefs: ["Dateiname, Seite/Abschnitt"]
+          }],
+          exercise: { prompt: "Praxisfall oder Transferaufgabe", estimatedMinutes: 8, solution: "Begründete Musterlösung" },
+          reviewQuestions: [
+            { question: "Kontrollfrage 1", answer: "Präzise Antwort" },
+            { question: "Kontrollfrage 2", answer: "Präzise Antwort" }
+          ],
+          takeaways: ["Wichtigster Merksatz"]
+        }]
+      }
+    };
+
+    return [
+      "ROLLE UND AUFTRAG",
+      "Du erstellst aus den von mir hochgeladenen Quelldokumenten ein vollständig importierbares Weiterbildungsmodul für Quantus Career Model.",
+      "Das Ergebnis wird ohne weitere KI-Verarbeitung direkt in Quantus importiert. Deshalb muss die Datei inhaltlich vollständig, technisch exakt und sofort nutzbar sein.",
+      "",
+      "MODUL",
+      "Karrierebereich: " + areaName,
+      "Modultitel: " + moduleTitle,
+      "Niveau/Zielgruppe: " + level,
+      "Zieldauer pro Lerntag: ungefähr " + minutes + " Minuten (zulässig 25–35 Minuten).",
+      notes ? "Zusätzliche Vorgaben: " + notes : "Zusätzliche Vorgaben: keine.",
+      "",
+      "QUELLENTREUE",
+      "1. Verwende ausschliesslich Informationen aus den bereitgestellten Dokumenten.",
+      "2. Erfinde keine Rechtslage, Zahlen, Fristen, Deckungen, Produktmerkmale oder Quellen.",
+      "3. Kennzeichne jeden Inhaltsabschnitt mit sourceRefs, sodass die Herkunft nachvollziehbar bleibt.",
+      "4. Widersprechen sich Quellen, stelle den Widerspruch ausdrücklich dar. Löse ihn nicht durch Vermutung.",
+      "5. Schreibe auf Deutsch in Schweizer Rechtschreibung (ss statt ß).",
+      "",
+      "DIDAKTISCHE AUFTEILUNG",
+      "- Teile den gesamten Stoff vollständig und ohne Lücken in fortlaufende Lerntage auf.",
+      "- Jeder Tag muss 25–35 Minuten realistische Lernzeit enthalten und allein verständlich sein.",
+      "- Jeder Tag braucht: Lernziele, vollständige Theorie/Praxisabschnitte, eine Transferaufgabe mit Musterlösung, mindestens zwei Kontrollfragen mit Antworten und Merksätze.",
+      "- Nutze Beispiele und Fälle aus den Quellen. Bei eigenen neutralen Übungsfällen kennzeichne klar, dass es ein didaktischer Übungsfall ist.",
+      "- Vermeide Wiederholungen zwischen Tagen; baue logisch aufeinander auf.",
+      "",
+      "TECHNISCHER VERTRAG — ABSOLUT VERBINDLICH",
+      "- Antworte NUR mit einem einzigen gültigen JSON-Objekt.",
+      "- Keine Markdown-Codeblöcke, keine Einleitung, keine Schlussbemerkung.",
+      "- Exakt schema = \"" + SCHEMA + "\" und schemaVersion = " + VERSION + ".",
+      "- IDs nur in Kleinbuchstaben mit Zahlen, Bindestrich oder Unterstrich.",
+      "- day muss lückenlos bei 1 beginnen; IDs day-01, day-02 usw. müssen eindeutig sein.",
+      "- Erlaubte section.type-Werte: " + SECTION_TYPES.join(", ") + ".",
+      "- Alle Inhalte als reiner Text; kein HTML, JavaScript, iframe oder eingebettete Dateien.",
+      "- estimatedTotalMinutes muss exakt der Summe aller estimatedMinutes entsprechen.",
+      "- sourceDocuments muss jeden von mir bereitgestellten Dateinamen aufführen.",
+      "",
+      "VERBINDLICHE STRUKTUR (Inhalte vollständig ausfüllen und days auf die nötige Anzahl erweitern):",
+      JSON.stringify(schemaExample, null, 2),
+      "",
+      "PRÜFUNG VOR DER AUSGABE",
+      "Kontrolliere intern: gültiges JSON; keine Zusatzzeichen vor/nach dem Objekt; lückenlose Tage; jede Tagesdauer 25–35 Minuten; mindestens zwei Fragen je Tag; jede Aufgabe mit Lösung; Quellenreferenzen; Gesamtminuten korrekt. Gib danach nur das JSON aus."
+    ].join("\n");
+  }
+
+  return {
+    SCHEMA: SCHEMA,
+    VERSION: VERSION,
+    SECTION_TYPES: SECTION_TYPES.slice(),
+    MAX_FILE_BYTES: MAX_FILE_BYTES,
+    slugify: slugify,
+    makeId: makeId,
+    stableHash: stableHash,
+    dateKey: dateKey,
+    validatePackage: validatePackage,
+    normalizeState: normalizeState,
+    emptyState: emptyState,
+    mergePackage: mergePackage,
+    moduleProgress: moduleProgress,
+    nextSession: nextSession,
+    buildClaudePrompt: buildClaudePrompt
+  };
+});

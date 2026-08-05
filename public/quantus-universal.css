@@ -1,0 +1,28 @@
+#quantusDeviceUi{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:max(18px,calc(env(safe-area-inset-bottom) + 18px));z-index:2147483000;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text,var(--text-primary,#eef0f2));font-size:14px;line-height:1.4}
+#quantusDeviceUi *{box-sizing:border-box}
+#quantusDeviceUi .qu-fab{width:48px;height:48px;border-radius:16px;border:1px solid var(--border,#3b4550);background:color-mix(in oklab,var(--panel,var(--surface-raised,#212830)) 92%,transparent);color:inherit;box-shadow:0 12px 36px rgba(0,0,0,.3);font-size:23px;cursor:pointer;backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);transition:transform .16s ease,border-color .16s ease}
+#quantusDeviceUi .qu-fab:hover{transform:translateY(-2px);border-color:var(--accent,#a78bfa)}
+#quantusDeviceUi .qu-panel{display:none;position:absolute;right:0;bottom:58px;width:min(360px,calc(100vw - 24px));max-height:min(620px,calc(100vh - 100px));overflow:auto;border:1px solid var(--border,#3b4550);border-radius:20px;background:color-mix(in oklab,var(--panel,var(--surface-raised,#212830)) 96%,transparent);box-shadow:0 24px 70px rgba(0,0,0,.42);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:14px}
+#quantusDeviceUi.open .qu-panel{display:block;animation:qu-in .16s ease-out}
+@keyframes qu-in{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+#quantusDeviceUi .qu-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:2px 2px 12px}
+#quantusDeviceUi .qu-panel-head strong{display:block;font-size:16px}
+#quantusDeviceUi .qu-panel-head small,#quantusDeviceUi .qu-device small,#quantusDeviceUi .qu-context small{display:block;color:var(--muted,var(--text-muted,#929aa4));font-size:11.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#quantusDeviceUi .qu-panel-head button{border:0;background:transparent;color:inherit;font-size:24px;line-height:1;cursor:pointer;padding:0 4px}
+#quantusDeviceUi .qu-context{border:1px solid var(--border,#3b4550);border-radius:14px;padding:11px 12px;background:var(--surface-base,var(--bg,#171c20));margin-bottom:10px}
+#quantusDeviceUi .qu-context>span{display:block;text-transform:uppercase;letter-spacing:.08em;color:var(--muted,var(--text-muted,#929aa4));font-size:9.5px;font-weight:700}
+#quantusDeviceUi .qu-context>strong{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#quantusDeviceUi .qu-note,#quantusDeviceUi .qu-empty{border-radius:12px;padding:11px;background:color-mix(in oklab,var(--accent,#a78bfa) 13%,transparent);color:var(--muted,var(--text-muted,#929aa4));font-size:12px;margin-bottom:10px}
+#quantusDeviceUi .qu-device-list{display:flex;flex-direction:column;gap:7px}
+#quantusDeviceUi .qu-device{display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;text-align:left;border:1px solid var(--border,#3b4550);background:transparent;color:inherit;border-radius:13px;padding:9px 10px;cursor:pointer;transition:.15s ease}
+#quantusDeviceUi .qu-device:hover,#quantusDeviceUi .qu-device.sent{border-color:var(--accent,#a78bfa);background:color-mix(in oklab,var(--accent,#a78bfa) 10%,transparent)}
+#quantusDeviceUi .qu-device.offline{opacity:.62}
+#quantusDeviceUi .qu-device-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:color-mix(in oklab,var(--accent,#a78bfa) 20%,transparent);font-size:18px}
+#quantusDeviceUi .qu-device strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#quantusDeviceUi .qu-device i{font-style:normal;font-size:11px;color:var(--accent,#a78bfa)}
+#quantusDeviceUi .qu-panel-actions{display:flex;gap:7px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border,#3b4550)}
+#quantusDeviceUi .qu-panel-actions a,#quantusDeviceUi .qu-panel-actions button{flex:1;display:flex;align-items:center;justify-content:center;min-height:36px;border:1px solid var(--border,#3b4550);border-radius:11px;background:transparent;color:inherit;text-decoration:none;cursor:pointer;font-size:11.5px;padding:7px}
+.qu-entity-send{position:absolute!important;right:8px!important;top:8px!important;z-index:5!important;width:32px!important;height:32px!important;border-radius:10px!important;border:1px solid var(--border,#3b4550)!important;background:color-mix(in oklab,var(--panel,var(--surface-raised,#212830)) 92%,transparent)!important;color:var(--text,var(--text-primary,#eef0f2))!important;cursor:pointer!important;font-size:16px!important;line-height:1!important;padding:0!important;box-shadow:0 4px 14px rgba(0,0,0,.2)!important}
+.entity-card[data-quantus-send-decorated="1"],[data-project-id][data-quantus-send-decorated="1"],[data-task-id][data-quantus-send-decorated="1"]{position:relative}
+@media(max-width:640px){#quantusDeviceUi{right:10px;bottom:max(82px,calc(env(safe-area-inset-bottom) + 82px))}#quantusDeviceUi .qu-panel{position:fixed;left:10px;right:10px;bottom:max(142px,calc(env(safe-area-inset-bottom) + 142px));width:auto;max-height:calc(100vh - 175px)}}
+@media(prefers-reduced-motion:reduce){#quantusDeviceUi *{animation:none!important;transition:none!important}}

@@ -1,0 +1,186 @@
+abel><input type="range" min="1" max="10" name="focusScore" value="' + attr(existing.focusScore || 7) + '" data-cm-output="cmFocusOutput"></div><div class="cm-score"><label><span>Energie</span><output id="cmEnergyOutput">' + esc(existing.energyScore || 7) + '/10</output></label><input type="range" min="1" max="10" name="energyScore" value="' + attr(existing.energyScore || 7) + '" data-cm-output="cmEnergyOutput"></div></div><div class="cm-form-actions"><button class="cm-btn green" type="submit">Reflexion speichern</button></div></form></section>' +
+      '<div class="cm-section-head"><div><h2>Letzte Reflexionen</h2><p>Synchron auf Tablet und Laptop.</p></div></div><div class="cm-reflection-history">' + (history.length ? history.map(reflectionEntry).join("") : '<div class="cm-empty"><div class="cm-empty-icon">◐</div><h2>Noch keine Reflexion</h2><p>Dein erster Eintrag erscheint nach dem Speichern hier.</p></div>') + '</div>';
+    syncDeviceContext(null);
+    return shell(content, "Reflecta", "Abendliche Rückmeldung zur Arbeit im Betrieb");
+  }
+
+  function render() {
+    if (!state.user) {
+      appRoot.innerHTML = loginView();
+      return;
+    }
+    if (state.tab === "modules") appRoot.innerHTML = modulesView();
+    else if (state.tab === "import") appRoot.innerHTML = importView();
+    else if (state.tab === "reflecta") appRoot.innerHTML = reflectaView();
+    else appRoot.innerHTML = todayView();
+  }
+
+  function updateRoot(mutator) {
+    if (!state.userRef) return Promise.reject(new Error("Keine Cloud-Verbindung."));
+    setSync("loading", "Änderung wird gespeichert");
+    return state.userRef.transaction(function (current) {
+      var next = Core.normalizeState(current || {});
+      var result = mutator(next) || next;
+      result.meta = Object.assign({}, result.meta, { updatedAt: new Date().toISOString() });
+      return result;
+    }).then(function (result) {
+      if (!result.committed) throw new Error("Die Änderung wurde nicht übernommen.");
+      setSync("live", "Live auf allen Geräten");
+      return result.snapshot.val();
+    }).catch(function (error) {
+      setSync("error", error.message || "Speichern fehlgeschlagen");
+      throw error;
+    });
+  }
+
+  function completeDay(form) {
+    var data = new FormData(form);
+    var moduleId = form.dataset.moduleId;
+    var dayId = form.dataset.dayId;
+    var completion = {
+      completedAt: new Date().toISOString(),
+      actualMinutes: Math.max(1, Number(data.get("actualMinutes")) || 1),
+      confidence: String(data.get("confidence") || "mostly"),
+      notes: String(data.get("notes") || "").trim()
+    };
+    return updateRoot(function (root) {
+      var module = root.modules[moduleId];
+      if (!module || !asObject(module.days)[dayId]) throw new Error("Lerntag nicht gefunden.");
+      var progress = asObject(root.progress[moduleId]);
+      var completedDays = Object.assign({}, asObject(progress.completedDays));
+      completedDays[dayId] = completion;
+      var nextId = asArray(module.dayOrder).find(function (id) { return !completedDays[id]; }) || null;
+      root.progress[moduleId] = Object.assign({}, progress, {
+        moduleId: moduleId,
+        completedDays: completedDays,
+        currentDayId: nextId,
+        completedAt: nextId ? null : completion.completedAt,
+        updatedAt: completion.completedAt
+      });
+      return root;
+    }).then(function () {
+      state.selectedModuleId = "";
+      state.selectedDayId = "";
+      toast("Lerneinheit abgeschlossen", "Fortschritt und Notiz sind live synchronisiert.", "ok");
+    });
+  }
+
+  function reopenDay(moduleId, dayId) {
+    return updateRoot(function (root) {
+      var progress = asObject(root.progress[moduleId]);
+      var completedDays = Object.assign({}, asObject(progress.completedDays));
+      delete completedDays[dayId];
+      root.progress[moduleId] = Object.assign({}, progress, { completedDays: completedDays, currentDayId: dayId, completedAt: null, updatedAt: new Date().toISOString() });
+      return root;
+    }).then(function () { toast("Lerntag wieder geöffnet", "Der Abschluss wurde entfernt.", "ok"); });
+  }
+
+  function saveReflection(form) {
+    var data = new FormData(form);
+    var date = String(data.get("date") || state.reflectionDate);
+    var entry = {
+      date: date,
+      workedWell: String(data.get("workedWell") || "").trim(),
+      wentWrong: String(data.get("wentWrong") || "").trim(),
+      moreEfficient: String(data.get("moreEfficient") || "").trim(),
+      lesson: String(data.get("lesson") || "").trim(),
+      nextAction: String(data.get("nextAction") || "").trim(),
+      focusScore: Number(data.get("focusScore")) || 5,
+      energyScore: Number(data.get("energyScore")) || 5,
+      updatedAt: new Date().toISOString()
+    };
+    if (!entry.workedWell || !entry.wentWrong || !entry.moreEfficient) return Promise.reject(new Error("Bitte beantworte die drei Kernfragen."));
+    return state.userRef.child("reflections/" + date).set(entry).then(function () { toast("Reflecta gespeichert", "Deine Rückmeldung ist auf allen Geräten verfügbar.", "ok"); });
+  }
+
+  function readImportFile(file) {
+    state.importRaw = null;
+    state.importValidation = null;
+    if (!file) return render();
+    if (file.size > Core.MAX_FILE_BYTES) {
+      state.importValidation = { ok: false, errors: [{ path: "$", message: "Datei ist grösser als 5 MB." }], warnings: [], value: null };
+      return render();
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var parsed = JSON.parse(String(reader.result || ""));
+        state.importRaw = parsed;
+        state.importValidation = Core.validatePackage(parsed);
+      } catch (error) {
+        state.importValidation = { ok: false, errors: [{ path: "$", message: "Ungültiges JSON: " + error.message }], warnings: [], value: null };
+      }
+      render();
+    };
+    reader.onerror = function () {
+      state.importValidation = { ok: false, errors: [{ path: "$", message: "Datei konnte nicht gelesen werden." }], warnings: [], value: null };
+      render();
+    };
+    reader.readAsText(file, "utf-8");
+  }
+
+  function importPackage() {
+    if (!state.importRaw || !state.importValidation || !state.importValidation.ok) return Promise.reject(new Error("Die Datei ist nicht importierbar."));
+    state.importing = true;
+    render();
+    var raw = state.importRaw;
+    var moduleId = state.importValidation.value.module.id;
+    var firstDay = state.importValidation.value.module.days[0];
+    return state.userRef.transaction(function (current) {
+      return Core.mergePackage(current || {}, raw, new Date().toISOString());
+    }).then(function (result) {
+      if (!result.committed) throw new Error("Import wurde nicht übernommen.");
+      state.importing = false;
+      state.selectedModuleId = moduleId;
+      state.selectedDayId = firstDay && firstDay.id || "";
+      state.importRaw = null;
+      state.importValidation = null;
+      state.tab = "today";
+      toast("Modul importiert", "Alle Lerntage sind sofort auf Tablet und Laptop verfügbar.", "ok");
+      render();
+    }).catch(function (error) {
+      state.importing = false;
+      render();
+      throw error;
+    });
+  }
+
+  function setModuleStatus(moduleId, status) {
+    return updateRoot(function (root) {
+      if (!root.modules[moduleId]) throw new Error("Modul nicht gefunden.");
+      if (status === "active") {
+        Object.keys(root.modules).forEach(function (id) {
+          if (root.modules[id].areaId === root.modules[moduleId].areaId && root.modules[id].status === "active") root.modules[id].status = "ready";
+        });
+      }
+      root.modules[moduleId].status = status;
+      root.modules[moduleId].updatedAt = new Date().toISOString();
+      return root;
+    });
+  }
+
+  function copyText(text) {
+    if (global.navigator.clipboard && global.isSecureContext) return global.navigator.clipboard.writeText(text);
+    var area = global.document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    global.document.body.appendChild(area);
+    area.select();
+    global.document.execCommand("copy");
+    area.remove();
+    return Promise.resolve();
+  }
+
+  global.document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-cm-action]");
+    if (!button) return;
+    var action = button.dataset.cmAction;
+    if (action === "tab") { state.tab = button.dataset.tab || "today"; render(); return; }
+    if (action === "sign-in") {
+      button.disabled = true;
+      signIn().catch(function (error) { toast("Anmeldung fehlgeschlagen", error.message || String(error), "error"); }).finally(function () { button.disabled = false; });
+      return;
+    }
+    if (action === "sign-out") { signOut(); return; }
+    if (action =
