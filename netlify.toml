@@ -38,3 +38,14 @@
   for = "/vendor/*"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+# Quantus-Hub: English-C1-App sichtbar in App-Uebersicht und Seitenleiste.
+# Die sehr grosse Single-File-Hauptapp bleibt unveraendert; die Edge Function
+# ergaenzt App-Registry und Router beim Ausliefern.
+[[edge_functions]]
+  function = "quantus-app-registry"
+  path = "/"
+
+[[edge_functions]]
+  function = "quantus-app-registry"
+  path = "/index.html"
