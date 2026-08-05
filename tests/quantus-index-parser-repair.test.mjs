@@ -8,17 +8,12 @@ import { repairQuantusInlineScriptLineBreaks } from "../netlify/edge-functions/q
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const source = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
 
-const brokenCrLfJoin = /\.join\("\\r\\[ \t]*(?:\r\n|\n|\r)"\)/g;
-const brokenNewlineJoin = /\.join\("\\[ \t]*(?:\r\n|\n|\r)"\)/g;
-
-const crLfBefore = source.match(brokenCrLfJoin) || [];
-const newlineBefore = source.match(brokenNewlineJoin) || [];
-assert.ok(crLfBefore.length >= 1, "Expected the known damaged CRLF join separator in the current index fixture");
-assert.ok(newlineBefore.length >= 2, "Expected the known damaged newline join separators in the current index fixture");
+const brokenJoinSeparator = /\.join\("([^"\r\n]*)\\[ \t]*(?:\r\n|\n|\r)"\)/g;
+const brokenBefore = source.match(brokenJoinSeparator) || [];
+assert.ok(brokenBefore.length >= 3, "Expected the known damaged join separators in the current index fixture");
 
 const repaired = repairQuantusInlineScriptLineBreaks(source);
-assert.equal((repaired.match(brokenCrLfJoin) || []).length, 0, "CRLF join continuations must be normalized");
-assert.equal((repaired.match(brokenNewlineJoin) || []).length, 0, "newline join continuations must be normalized");
+assert.equal((repaired.match(brokenJoinSeparator) || []).length, 0, "physical join continuations must be normalized");
 assert.match(repaired, /SMARTER_IFRAME_ANSWER_CSS[\s\S]*?\.join\("\\n"\)/, "Smarter CSS must use an explicit newline separator");
 assert.match(repaired, /HIER DEINEN TEXT EINFUEGEN[\s\S]*?\.join\("\\n"\)/, "Leseplan prompt must use an explicit newline separator");
 assert.match(repaired, /rows\.join\("\\r\\n"\)/, "CSV export must use an explicit CRLF separator");
@@ -33,4 +28,4 @@ assert.doesNotThrow(
   "The repaired Quantus core inline script must parse completely"
 );
 
-console.log(`quantus index parser repair: ok (${newlineBefore.length + crLfBefore.length} damaged separators repaired)`);
+console.log(`quantus index parser repair: ok (${brokenBefore.length} damaged separators repaired)`);
