@@ -7,16 +7,20 @@ const APP_ENTRY = '{key:"englishc1", icon:"🇬🇧", label:"English C1", desc:g
 // happens, the browser treats the following JavaScript string fragments as
 // HTML, which is why settings inputs receive values such as "' + esc(...) + '".
 //
-// Keep this repair deliberately narrow: only the damaged join separators are
-// normalized. No application data or other JavaScript is rewritten.
-const BROKEN_CRLF_JOIN = /\.join\("\\r\\[ \t]*(?:\r\n|\n|\r)"\)/g;
-const BROKEN_NEWLINE_JOIN = /\.join\("\\[ \t]*(?:\r\n|\n|\r)"\)/g;
+// Keep this repair deliberately narrow: only double-quoted .join separators
+// ending in a physical backslash line break are normalized. The optional prefix
+// preserves an existing escaped carriage return used by the CSV export.
+const BROKEN_JOIN_SEPARATOR = /\.join\("([^"\r\n]*)\\[ \t]*(?:\r\n|\n|\r)"\)/g;
 
 export function repairQuantusInlineScriptLineBreaks(source) {
-  let html = String(source || "");
-  html = html.replace(BROKEN_CRLF_JOIN, '.join("\\r\\n")');
-  html = html.replace(BROKEN_NEWLINE_JOIN, '.join("\\n")');
-  return html;
+  return String(source || "").replace(BROKEN_JOIN_SEPARATOR, (_match, prefix) => {
+    const separator = prefix === "\\r"
+      ? "\\r\\n"
+      : prefix
+        ? prefix + "\\n"
+        : "\\n";
+    return `.join("${separator}")`;
+  });
 }
 
 export function injectEnglishC1(source) {
