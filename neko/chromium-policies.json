@@ -1,0 +1,43 @@
+{
+  "RestoreOnStartup": 1,
+  "DefaultCookiesSetting": 1,
+
+  "BookmarkBarEnabled": true,
+  "EditBookmarksEnabled": true,
+
+  "DownloadRestrictions": 0,
+  "PromptForDownloadLocation": false,
+  "AllowFileSelectionDialogs": true,
+  "URLAllowlist": ["file:///home/neko/Downloads"],
+  "URLBlocklist": ["file://*", "chrome://policy"],
+
+  "DeveloperToolsAvailability": 1,
+  "IncognitoModeAvailability": 0,
+
+  "FullscreenAllowed": true,
+  "AutoplayAllowed": true,
+  "VideoCaptureAllowed": true,
+  "DefaultNotificationsSetting": 2,
+
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "BrowserAddPersonEnabled": false,
+  "BrowserGuestModeEnabled": false,
+
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+
+  "BrowserLabsEnabled": false,
+  "CommandLineFlagSecurityWarningsEnabled": false,
+
+  "ExtensionInstallForcelist": [
+    "ddkjiahejlhfcafbddmgiahcphecmpfh;https://clients2.google.com/service/update2/crx",
+    "mnjggcdmjocbbbhaepdhchncahnbgone;https://clients2.google.com/service/update2/crx"
+  ],
+  "ExtensionInstallAllowlist": [
+    "ddkjiahejlhfcafbddmgiahcphecmpfh",
+    "mnjggcdmjocbbbhaepdhchncahnbgone"
+  ],
+  "ExtensionInstallBlocklist": ["*"]
+}

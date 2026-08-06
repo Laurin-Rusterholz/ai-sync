@@ -5,3 +5,5 @@ node_modules/
 service-account*.json
 neko/.env
 backups/
+neko/data/
+neko/backups/

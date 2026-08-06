@@ -17977,33 +17977,178 @@ function leseplanHandleAction(action, el, e) {
   }
 }
 
-// ── QUANTUS BROWSER — vollwertiger Remote-Browser (neko) als App, direkt in
-//    Quantus eingebettet. Der Stream laeuft auf dem VPS; Auto-Login + verdeckte
-//    neko-UI via Query-Parametern (usr/pwd/embed) gemaess neko v3. ────────────
-const QUANTUS_BROWSER_URL  = 'https://neko.laurin-rusterholz.ch/';
-const QUANTUS_BROWSER_USER = 'quantus';
-const QUANTUS_BROWSER_PW   = 'gwpZSmYtGb6Y6QG/NiHzbXwZO1153cu5';
-// Baut die Embed-URL: usr+pwd => Auto-Join ohne Login-Maske, embed=1 => ohne
-// neko-Sidebar (Stream bleibt interaktiv, im Gegensatz zu cast=1).
+// ── QUANTUS BROWSER — vollwertiger Remote-Browser (neko/Chromium) als App,
+//    direkt in Quantus eingebettet. Der Stream laeuft auf dem eigenen VPS.
+//
+//    SICHERHEIT: Hier steht bewusst KEIN Passwort. neko wird mit seiner eigenen
+//    Login-Maske im iframe geoeffnet; nur der Benutzername wird vorbelegt
+//    (`usr`, kein Geheimnis). Das Passwort wuerde ueber `pwd` in der URL, im
+//    ausgelieferten HTML, in Browser-History und Server-Logs landen — deshalb
+//    nutzen wir den regulaeren Login-Flow. neko setzt danach ein
+//    HttpOnly-Session-Cookie (SameSite=None; Secure), die Anmeldung haelt also
+//    ueber Reloads und Container-Neustarts hinweg. Details + UX-Trade-off:
+//    docs/quantus-browser-setup.md
+const QUANTUS_BROWSER_ORIGIN = 'https://neko.laurin-rusterholz.ch';
+const QUANTUS_BROWSER_USER   = 'quantus';
+// Wie lange auf Erreichbarkeit bzw. auf das iframe-load-Event gewartet wird.
+const QUANTUS_BROWSER_PROBE_MS = 8000;
+const QUANTUS_BROWSER_LOAD_MS  = 25000;
+const QUANTUS_BROWSER_RETRY_MS = 15000;
+
+// Embed-URL: `embed=1` blendet die neko-Zusatzkomponenten aus (Stream bleibt
+// interaktiv, im Gegensatz zu `cast=1`), `usr` belegt nur das Benutzerfeld vor.
 function quantusBrowserSrc() {
-  return QUANTUS_BROWSER_URL
-    + '?usr='  + encodeURIComponent(QUANTUS_BROWSER_USER)
-    + '&pwd='  + encodeURIComponent(QUANTUS_BROWSER_PW)
-    + '&embed=1';
+  return QUANTUS_BROWSER_ORIGIN + '/'
+    + '?usr=' + encodeURIComponent(QUANTUS_BROWSER_USER)
+    + '&embed=1&lang=de';
 }
+
+// Erreichbarkeitspruefung: `no-cors` liefert eine opaque Response — wir koennen
+// den Status nicht lesen, aber DNS-, TLS- und Verbindungsfehler schlagen als
+// Rejection durch. Genau das brauchen wir, um statt der rohen Browser-
+// Fehlerseite eine verstaendliche Status-UI zu zeigen.
+async function quantusBrowserProbe() {
+  const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = setTimeout(function(){ if (ctrl) ctrl.abort(); }, QUANTUS_BROWSER_PROBE_MS);
+  try {
+    await fetch(QUANTUS_BROWSER_ORIGIN + "/?probe=" + Date.now(), {
+      mode: "no-cors", cache: "no-store", credentials: "omit",
+      signal: ctrl ? ctrl.signal : undefined
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: (e && e.name === "AbortError") ? "timeout" : "network" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const QUANTUS_BROWSER_HINTS = {
+  timeout: "Der Server hat nicht innerhalb von 8 Sekunden geantwortet.",
+  network: "Der Server ist nicht erreichbar (DNS, TLS oder Verbindung).",
+  load:    "Die Verbindung stand, der Stream wurde aber nicht fertig geladen."
+};
+
+function quantusBrowserStatusHtml(state, reason) {
+  if (state === "checking") {
+    return '<div class="qbr-state"><div class="qbr-spinner"></div>'
+      + '<div class="qbr-title">Verbinde mit dem Quantus Browser…</div>'
+      + '<div class="qbr-hint">' + esc(QUANTUS_BROWSER_ORIGIN) + '</div></div>';
+  }
+  return '<div class="qbr-state"><div class="qbr-icon">🌐</div>'
+    + '<div class="qbr-title">Quantus Browser ist gerade nicht erreichbar</div>'
+    + '<div class="qbr-hint">' + esc(QUANTUS_BROWSER_HINTS[reason] || QUANTUS_BROWSER_HINTS.network) + '</div>'
+    + '<div class="qbr-hint">Der Dienst laeuft auf dem eigenen VPS. Laeuft der Container nicht, '
+    + 'startet er nach einem Reboot automatisch — das kann eine Minute dauern.</div>'
+    + '<div class="qbr-actions">'
+    + '<button class="btn sm" data-action="browser-retry">↻ Erneut versuchen</button>'
+    + '<button class="btn sm" data-action="browser-open-tab">↗ In neuem Tab oeffnen</button>'
+    + '</div>'
+    + '<div class="qbr-hint qbr-auto">Automatischer Wiederholungsversuch laeuft…</div></div>';
+}
+
+// Mount-Zustand: haelt Timer und Generation, damit ein Routenwechsel oder ein
+// zweiter Verbindungsversuch keine verwaisten Timer stehen laesst.
+const quantusBrowserState = { generation: 0, retryTimer: null, loadTimer: null, lastOkAt: 0 };
+// Ein render() der App ersetzt #main komplett — die Buehne wird also auch dann
+// neu aufgebaut, wenn der Stream eben noch lief. Ein frisches Probe-Ergebnis
+// wird deshalb kurz zwischengespeichert, damit das iframe in diesem Fall sofort
+// wieder da ist statt erst nach einem neuen Netzwerk-Roundtrip.
+const QUANTUS_BROWSER_PROBE_CACHE_MS = 60000;
+
+function quantusBrowserClearTimers() {
+  if (quantusBrowserState.retryTimer) { clearTimeout(quantusBrowserState.retryTimer); quantusBrowserState.retryTimer = null; }
+  if (quantusBrowserState.loadTimer)  { clearTimeout(quantusBrowserState.loadTimer);  quantusBrowserState.loadTimer  = null; }
+}
+
+function quantusBrowserStage() { return document.getElementById("quantusBrowserStage"); }
+
+async function quantusBrowserConnect() {
+  const stage = quantusBrowserStage();
+  if (!stage) return;
+  quantusBrowserClearTimers();
+  const generation = ++quantusBrowserState.generation;
+  const alive = function(){ return quantusBrowserState.generation === generation && document.body.contains(stage); };
+
+  const fresh = Date.now() - quantusBrowserState.lastOkAt < QUANTUS_BROWSER_PROBE_CACHE_MS;
+  if (!fresh) {
+    stage.innerHTML = quantusBrowserStatusHtml("checking");
+    const probe = await quantusBrowserProbe();
+    if (!alive()) return;
+    if (!probe.ok) {
+      quantusBrowserFail(stage, generation, probe.reason);
+      return;
+    }
+    quantusBrowserState.lastOkAt = Date.now();
+  }
+
+  const frame = document.createElement("iframe");
+  frame.id = "quantusBrowserFrame";
+  frame.title = "Quantus Browser";
+  frame.className = "qbr-frame";
+  frame.setAttribute("allow", "autoplay; fullscreen; clipboard-read; clipboard-write; encrypted-media; picture-in-picture");
+  frame.setAttribute("allowfullscreen", "");
+  frame.addEventListener("load", function(){
+    if (quantusBrowserState.loadTimer) { clearTimeout(quantusBrowserState.loadTimer); quantusBrowserState.loadTimer = null; }
+  });
+  frame.src = quantusBrowserSrc();
+  stage.innerHTML = "";
+  stage.appendChild(frame);
+
+  // Watchdog: kommt kein load-Event, war die Verbindung zwar offen, der Stream
+  // aber nicht nutzbar — dann wieder die Status-UI statt eines leeren Rahmens.
+  quantusBrowserState.loadTimer = setTimeout(function(){
+    if (!alive()) return;
+    quantusBrowserFail(stage, generation, "load");
+  }, QUANTUS_BROWSER_LOAD_MS);
+}
+
+function quantusBrowserFail(stage, generation, reason) {
+  // Nach einem Fehlschlag nie auf das zwischengespeicherte Probe-Ergebnis
+  // vertrauen — der naechste Versuch prueft die Erreichbarkeit wieder echt.
+  quantusBrowserState.lastOkAt = 0;
+  stage.innerHTML = quantusBrowserStatusHtml("offline", reason);
+  quantusBrowserState.retryTimer = setTimeout(function(){
+    if (quantusBrowserState.generation !== generation || !document.body.contains(stage)) return;
+    quantusBrowserConnect();
+  }, QUANTUS_BROWSER_RETRY_MS);
+}
+
 function viewBrowser() {
+  // Der Stream wird erst nach dem Einhaengen ins DOM aufgebaut, damit die
+  // Status-UI greift, bevor der Browser eine eigene Fehlerseite rendert.
+  setTimeout(quantusBrowserConnect, 0);
   return `
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+    <style id="quantusBrowserCss">
+      .qbr-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+      .qbr-stage{position:relative;width:100%;height:calc(100vh - 96px);height:calc(100dvh - 96px);
+        min-height:320px;border:1px solid var(--border,#333);border-radius:12px;background:#2B3134;
+        overflow:hidden;display:flex;align-items:center;justify-content:center}
+      .qbr-frame{width:100%;height:100%;border:0;display:block;background:#2B3134}
+      .qbr-state{max-width:440px;padding:28px 22px;text-align:center;color:var(--text)}
+      .qbr-icon{font-size:34px;margin-bottom:10px}
+      .qbr-title{font-size:15px;font-weight:700;margin-bottom:8px}
+      .qbr-hint{font-size:12px;line-height:1.6;color:var(--muted);margin-bottom:6px}
+      .qbr-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:14px 0 8px}
+      .qbr-auto{opacity:.75}
+      .qbr-spinner{width:26px;height:26px;margin:0 auto 12px;border-radius:50%;
+        border:2px solid var(--border,#333);border-top-color:var(--accent,#86a895);animation:qbrSpin .9s linear infinite}
+      @keyframes qbrSpin{to{transform:rotate(360deg)}}
+      /* Tablet/Handy: Kopfzeile ist kompakter, die Buehne darf mehr Hoehe haben. */
+      @media (max-width:820px){
+        .qbr-stage{height:calc(100vh - 132px);height:calc(100dvh - 132px)}
+      }
+      .qbr-stage:fullscreen,.qbr-stage:-webkit-full-screen{height:100%;border-radius:0;border:0}
+    </style>
+    <div class="qbr-head">
       <span style="font-size:20px">🌐</span>
       <h1 style="margin:0;font-size:18px;font-weight:700;color:var(--text)">Quantus Browser</h1>
       <div style="flex:1"></div>
-      <button class="btn sm" data-action="browser-reload" title="Seite neu laden">↻ Neu laden</button>
+      <button class="btn sm" data-action="browser-reload" title="Verbindung neu aufbauen">↻ Neu laden</button>
       <button class="btn sm" data-action="browser-fullscreen" title="Vollbild">⛶ Vollbild</button>
+      <button class="btn sm" data-action="browser-open-tab" title="In neuem Tab oeffnen">↗ Neuer Tab</button>
     </div>
-    <iframe id="quantusBrowserFrame" title="Quantus Browser" loading="lazy"
-      src="${quantusBrowserSrc()}"
-      allow="autoplay; fullscreen; clipboard-read; clipboard-write"
-      style="width:100%;height:calc(100vh - 96px);border:1px solid var(--border,#333);border-radius:12px;background:#2B3134;display:block"></iframe>`;
+    <div id="quantusBrowserStage" class="qbr-stage">${quantusBrowserStatusHtml("checking")}</div>`;
 }
 
 function goBack() {
@@ -18409,7 +18554,7 @@ function getAllApps() {
     {key:"gmail", icon:"📧", label:"Gmail", desc:getLang()==="de"?"Gmail-Posteingang lesen, schreiben, antworten & verwalten":"Read, compose, reply to & manage your Gmail inbox"},
     {key:"briefings", icon:"📬", label:"Briefings", desc:getLang()==="de"?"Zugestellte Briefing-PDFs (z.B. Morning-Briefing aus n8n) ansehen & herunterladen":"View & download delivered briefing PDFs (e.g. morning briefing from n8n)"},
     {key:"drive", icon:"🗄️", label:"Drive", desc:getLang()==="de"?"Dateiablage mit KI-Klassifizierung (Upload, Ordnerbaum, n8n-Vorschläge)":"File storage with AI classification (upload, folder tree, n8n suggestions)"},
-    {key:"browser", icon:"🌐", label:"Browser", desc:getLang()==="de"?"Quantus Browser — vollwertiger Remote-Browser im Stream (neko), ohne Login-Maske":"Quantus Browser — full remote browser stream (neko), no login screen"},
+    {key:"browser", icon:"🌐", label:"Browser", desc:getLang()==="de"?"Quantus Browser — vollwertiger Chromium auf dem eigenen VPS (neko), mit Tabs, Lesezeichen und persistentem Profil":"Quantus Browser — full Chromium on our own VPS (neko), with tabs, bookmarks and a persistent profile"},
     {key:"nobraine", icon:"🍽️", label:"Weekly Planner", desc:getLang()==="de"?"Wochen-Menüplaner mit Rezepten, KI-Generierung, Einkaufsliste & Gewohnheiten":"Weekly meal planner with recipes, AI generation, shopping list & habits"},
     {key:"docstudio", icon:"📄", label:"DocStudio", desc:getLang()==="de"?"Dokumente generieren & gestalten (Rechnung, Einladung, Brief …) mit KI & PDF-Export":"Generate & design documents (invoice, invitation, letter …) with AI & PDF export"},
     {key:"bmpruefung", icon:"🎓", label:"BM-Prüfung", desc:getLang()==="de"?"Prüfungsvorbereitung Berufsmaturität — alle Themen, Repetitionsaufgaben, Spaced Repetition, Tageslektion, Lehrbücher & KI-Chat":"Vocational baccalaureate (BM) exam prep — topics, drills, spaced repetition, daily lesson, textbooks & AI chat"},
@@ -54047,14 +54192,21 @@ function handleClick(e) {
   switch (action) {
     case "nav": navigate(el.dataset.route, el.dataset.id || undefined); break;
     case "go-back": goBack(); break;
-    case "browser-reload": {
-      const f = document.getElementById("quantusBrowserFrame");
-      if (f) f.src = quantusBrowserSrc();
+    case "browser-reload":
+    case "browser-retry": {
+      quantusBrowserConnect();
       break;
     }
     case "browser-fullscreen": {
-      const f = document.getElementById("quantusBrowserFrame");
-      if (f && f.requestFullscreen) f.requestFullscreen();
+      // Die Buehne (nicht nur das iframe) geht in den Vollbildmodus, damit auch
+      // die Status-UI im Vollbild sichtbar bleibt.
+      const stage = document.getElementById("quantusBrowserStage");
+      if (stage && stage.requestFullscreen) stage.requestFullscreen();
+      else if (stage && stage.webkitRequestFullscreen) stage.webkitRequestFullscreen();
+      break;
+    }
+    case "browser-open-tab": {
+      window.open(quantusBrowserSrc(), "_blank", "noopener");
       break;
     }
     case "close-modal": closeModal(); break;
@@ -81748,7 +81900,26 @@ document.addEventListener("click", function(e) {
 });
 </script>
 
-rple-b:var(--accent-soft);
+<!-- ===== NEWSROOM HUB OVERLAY ===== -->
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ===== NEWSROOM HUB — DARK NEON ===== */
+.nh{position:fixed;inset:0;z-index:999999;display:none;font-family:'Space Grotesk',sans-serif;background:#08080c;color:var(--text);font-size:14px;line-height:1.55;overflow:hidden;}
+.nh.active{display:flex;}
+.nh *{margin:0;padding:0;box-sizing:border-box;}
+.nh ::-webkit-scrollbar{width:4px;}.nh ::-webkit-scrollbar-track{background:transparent;}.nh ::-webkit-scrollbar-thumb{background:#1e1e2e;border-radius:2px;}
+.nh a{color:var(--neon);text-decoration:none;}.nh a:hover{text-decoration:underline;text-shadow:0 0 8px var(--neon-glow);}
+.nh input,.nh textarea,.nh select{color:var(--text) !important;}
+.nh{
+  --ink:var(--text);--ink2:#a8a8b8;--ink3:#6b6b80;--ink4:#44445a;
+  --bg:#08080c;--bg2:#0e0e14;--bg3:#14141e;--bg4:#1a1a28;--bg5:#222233;
+  --white:#12121c;--surface:#0e0e16;
+  --neon:#00f0ff;--neon-glow:rgba(0,240,255,.3);--neon-bg:rgba(0,240,255,.06);--neon-border:rgba(0,240,255,.15);
+  --red:var(--danger);--red-l:rgba(255,59,92,.08);--red-b:rgba(255,59,92,.15);
+  --blue:var(--accent);--blue-l:var(--accent-soft);
+  --green:#00ff88;--green-l:rgba(0,255,136,.06);--green-b:rgba(0,255,136,.15);
+  --amber:var(--warn);--amber-l:rgba(255,184,0,.06);--amber-b:rgba(255,184,0,.15);
+  --purple:var(--accent);--purple-l:var(--accent-soft);--purple-b:var(--accent-soft);
   --teal:#00d4aa;--teal-l:rgba(0,212,170,.06);
   --bdr:var(--hover);--bdr2:var(--border);
   --r:10px;--r2:14px;

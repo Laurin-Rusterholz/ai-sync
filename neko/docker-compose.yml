@@ -1,25 +1,124 @@
-# Quantus Browser — neko (Remote-Browser) auf dem VPS
-# Deploy:   cd ~/neko && docker compose up -d
-# Health:   docker compose ps && docker compose logs -f neko
+# Quantus Browser — neko (Chromium-Remote-Browser) auf dem Hostinger-KVM-1-VPS
 #
-# Passwoerter kommen aus ~/neko/.env (NICHT im Git, siehe .env.example).
-# Das USER-Passwort muss identisch sein mit QUANTUS_BROWSER_PW in public/index.html,
-# sonst schlaegt der Auto-Login fehl.
+# Chromium ist BEREITS im Image enthalten (ghcr.io/m1k1o/neko/chromium).
+# Auf dem Ubuntu-Host wird KEIN Chromium per apt installiert — Host-
+# Voraussetzungen sind nur Docker + Compose und ein Reverse Proxy.
+#
+# Deploy/Update:  bash scripts/deploy-neko-hostinger.sh
+# Manuell:        cd /opt/quantus-neko && docker compose up -d
+# Status:         cd /opt/quantus-neko && docker compose ps
+# Logs:           cd /opt/quantus-neko && docker compose logs -f neko
+#
+# Secrets kommen ausschliesslich aus /opt/quantus-neko/.env (nicht im Git,
+# Vorlage: .env.example). Im Quantus-Frontend steht KEIN Passwort.
 services:
   neko:
-    image: ghcr.io/m1k1o/neko/chromium:latest
+    # Version bewusst gepinnt (kein :latest) — Updates laufen kontrolliert
+    # ueber NEKO_IMAGE_TAG in der .env, siehe docs/quantus-browser-setup.md.
+    image: ghcr.io/m1k1o/neko/chromium:${NEKO_IMAGE_TAG:-3.1.5}
+    container_name: quantus-neko
     restart: unless-stopped
+
+    # Chromium braucht laut neko-Doku mindestens 2 GB /dev/shm, sonst stuerzen
+    # Renderer-Prozesse ab. Der Wert wird durch mem_limit mit abgesichert.
     shm_size: "2gb"
     cap_add: [SYS_ADMIN]
+    security_opt:
+      - seccomp:unconfined
+
     ports:
-      - "8080:8080"
-      - "56000-56100:56000-56100/udp"
+      # HTTP nur lokal — nach aussen geht ausschliesslich der Reverse Proxy.
+      - "127.0.0.1:${NEKO_HTTP_PORT:-8080}:8080"
+      # WebRTC: ein einziger gemultiplexter UDP-Port statt eines grossen
+      # Portbereichs. Auf KVM 1 spart das ~100 docker-proxy-Prozesse.
+      - "${NEKO_WEBRTC_PORT:-59000}:${NEKO_WEBRTC_PORT:-59000}/udp"
+      # TCP-Fallback auf demselben Port, falls UDP im Netz des Clients dicht ist.
+      - "${NEKO_WEBRTC_PORT:-59000}:${NEKO_WEBRTC_PORT:-59000}/tcp"
+
     environment:
-      # WebRTC: expliziter UDP-Portbereich + oeffentliche IP (NAT 1:1) + ICE-Lite
-      NEKO_WEBRTC_EPR: "56000-56100"
-      NEKO_WEBRTC_NAT1TO1: "82.180.155.81"
-      NEKO_WEBRTC_ICELITE: "1"
-      # Mitglieder-Provider: multiuser (geteilte Passwoerter fuer User + Admin)
+      # ── Server ────────────────────────────────────────────────────────────
+      NEKO_SERVER_BIND: "0.0.0.0:8080"
+      # Hinter dem Reverse Proxy: X-Forwarded-* vertrauen (Client-IP im Log).
+      NEKO_SERVER_PROXY: "true"
+
+      # ── WebRTC ────────────────────────────────────────────────────────────
+      NEKO_WEBRTC_UDPMUX: "${NEKO_WEBRTC_PORT:-59000}"
+      NEKO_WEBRTC_TCPMUX: "${NEKO_WEBRTC_PORT:-59000}"
+      # Oeffentliche VPS-IP (kein Geheimnis) fuer NAT 1:1.
+      NEKO_WEBRTC_NAT1TO1: "${NEKO_PUBLIC_IP}"
+      NEKO_WEBRTC_ICELITE: "true"
+
+      # ── Anmeldung ─────────────────────────────────────────────────────────
+      # multiuser: ein User- und ein Admin-Passwort, beide nur serverseitig.
       NEKO_MEMBER_PROVIDER: "multiuser"
-      NEKO_MEMBER_MULTIUSER_USER_PASSWORD: "${NEKO_USER_PASSWORD}"
-      NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "${NEKO_ADMIN_PASSWORD}"
+      NEKO_MEMBER_MULTIUSER_USER_PASSWORD: "${NEKO_USER_PASSWORD:?NEKO_USER_PASSWORD fehlt in .env}"
+      NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "${NEKO_ADMIN_PASSWORD:?NEKO_ADMIN_PASSWORD fehlt in .env}"
+
+      # ── Sitzung ───────────────────────────────────────────────────────────
+      # Cookie statt Token-in-localStorage: HttpOnly, und mit secure=true setzt
+      # neko SameSite=None — nur so haelt die Anmeldung im Quantus-iframe
+      # (Cross-Site-Kontext) ueber Reloads hinweg.
+      NEKO_SESSION_COOKIE_ENABLED: "true"
+      NEKO_SESSION_COOKIE_SECURE: "true"
+      NEKO_SESSION_COOKIE_HTTP_ONLY: "true"
+      NEKO_SESSION_COOKIE_EXPIRATION: "720h"
+      # Sitzungen auf Platte: Anmeldung ueberlebt Container-Neustart/Reboot.
+      NEKO_SESSION_FILE: "/home/neko/.neko/sessions.json"
+      # Nach Reconnect (Netzwechsel, Tab-Wechsel) nicht die alte Sitzung killen.
+      NEKO_SESSION_MERCIFUL_RECONNECT: "true"
+      # Wer verbindet, bekommt direkt die Steuerung — kein manuelles "Take".
+      NEKO_SESSION_IMPLICIT_HOSTING: "true"
+
+      # ── Desktop / Datentransfer ───────────────────────────────────────────
+      NEKO_DESKTOP_SCREEN: "${NEKO_SCREEN:-1280x720@30}"
+      NEKO_DESKTOP_UNMINIMIZE: "true"
+      # Drag & Drop vom eigenen Rechner in den Remote-Browser.
+      NEKO_DESKTOP_UPLOAD_DROP: "true"
+      # Experimentell (laut neko-Doku fehleranfaellig): faengt den Chromium-
+      # Dateidialog ab und fragt stattdessen im Browser-Tab nach der Datei.
+      # Bei Problemen in der .env auf "false" setzen.
+      NEKO_DESKTOP_FILE_CHOOSER_DIALOG: "${NEKO_FILE_CHOOSER:-true}"
+      # Datei-Transfer-Plugin: Up-/Download auch fuer den Nicht-Admin-User.
+      NEKO_FILETRANSFER_ENABLED: "true"
+      NEKO_FILETRANSFER_DIR: "/home/neko/Downloads"
+      NEKO_FILETRANSFER_USER_UPLOAD: "true"
+      NEKO_FILETRANSFER_USER_DOWNLOAD: "true"
+
+    volumes:
+      # Chromium-Profil: Cookies/Logins, Verlauf, Lesezeichen, Tabs/Tab-Gruppen,
+      # Einstellungen. Muss 1000:1000 gehoeren (User `neko` im Container).
+      - ./data/profile:/home/neko/.config/chromium
+      # Downloads + Ziel des Datei-Transfer-Plugins.
+      - ./data/downloads:/home/neko/Downloads
+      # neko-Sitzungsdatei (Anmeldung ueberlebt Neustarts).
+      - ./data/neko:/home/neko/.neko
+      # Chromium-Policies: aktiviert Downloads, Dateidialoge, Lesezeichen und
+      # persistente Cookies. Read-only gemountet.
+      - ./chromium-policies.json:/etc/chromium/policies/managed/policies.json:ro
+
+    # /health ist nicht garantiert; die Startseite ist es. Der Check kommt ohne
+    # curl/wget aus (beides ist im Image nicht zugesichert).
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080;
+          printf "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
+          head -n 1 <&3 | grep -q " 200 "'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+    # Konservative Grenzen fuer KVM 1 (1 vCPU / 4 GB): der Container darf den
+    # Host — insbesondere den bestehenden n8n — nicht verdraengen.
+    mem_limit: ${NEKO_MEM_LIMIT:-2600m}
+    memswap_limit: ${NEKO_MEM_LIMIT:-2600m}
+    cpu_shares: 512
+    pids_limit: 512
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

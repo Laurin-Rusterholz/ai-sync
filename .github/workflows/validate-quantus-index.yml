@@ -16,6 +16,10 @@ on:
       - "tests/career-model-learning.test.mjs"
       - "public/quantus-bundles/**"
       - "public/career-model.css"
+      - "tests/quantus-browser-module.test.mjs"
+      - "neko/**"
+      - "scripts/deploy-neko-hostinger.sh"
+      - "docs/quantus-browser-setup.md"
       - "package.json"
       - ".github/workflows/validate-quantus-index.yml"
   workflow_dispatch:
@@ -34,5 +38,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Shell-Syntax des VPS-Deploy-Skripts
+        run: bash -n scripts/deploy-neko-hostinger.sh
       - name: Run Quantus regression tests
         run: npm test
