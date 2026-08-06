@@ -82165,6 +82165,10 @@ document.addEventListener("click", function(e) {
 .jb-editor-title::placeholder{color:var(--panel)}
 .jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none}
 .jb-richtext:empty::before{content:attr(data-placeholder);color:var(--panel)}
+/* Kein violetter Fokus-Ring im Schreibbereich (globale :focus-visible-Regel überschreiben) */
+.jb-richtext:focus,.jb-richtext:focus-visible,.jb-editor-title:focus,.jb-editor-title:focus-visible,
+.jb-editor [contenteditable]:focus,.jb-editor [contenteditable]:focus-visible,
+.jb-read-view [contenteditable]:focus,.jb-read-view [contenteditable]:focus-visible{outline:none!important;box-shadow:none!important;border:none!important;border-radius:0!important}
 .jb-richtext h3{font-size:1.5em;color:var(--text);font-weight:600;margin:1.5rem 0 1rem}
 .jb-richtext blockquote{color:var(--text2);border-left:3px solid var(--muted);padding-left:1.5rem;margin:1.5rem 0;font-style:italic}
 /* Override global input styles inside journal */
