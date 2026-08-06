@@ -61877,7 +61877,15 @@ async function init() {
                 ticket.updatedAt = nowIso();
               }
             }
-            scheduleSave();
+            // Der Handler haengt am input-Event: bei Textfeldern feuert er pro Tastendruck
+            // und scheduleSave() serialisiert jedes Mal den gesamten App-State. Pro Feld
+            // buendeln (eigener Key, damit sich parallel bearbeitete Felder nicht
+            // gegenseitig verdraengen); Checkbox/Select speichern weiterhin sofort.
+            if (el.type === "checkbox" || el.tagName === "SELECT") {
+              scheduleSave();
+            } else {
+              scheduleSaveDebounced("field-edit:" + kind + ":" + eid + ":" + field, 600);
+            }
           }
         }
       }
@@ -61917,6 +61925,7 @@ async function init() {
     
   // Dashboard Uhr live aktualisieren
   setInterval(() => {
+    if (document.hidden) return; // reine Anzeige — beim nächsten sichtbaren Tick wieder korrekt
     const locale = "de-CH";
     const clock = document.getElementById("dashboardClock");
     if (clock) {
@@ -66364,7 +66373,11 @@ function initNoteFlow() {
     if (nfCurrentNote._fontSize) nfCurrentNote.fontSize = nfCurrentNote._fontSize;
     if (!APP.state.data.entities.notes) APP.state.data.entities.notes = {};
     APP.state.data.entities.notes[nfCurrentNote.id] = nfCurrentNote;
-    scheduleSave();
+    // Der Handler haengt am input-Event, feuert also pro Tastendruck. scheduleSave()
+    // serialisiert jedes Mal den gesamten App-State (JSON.stringify + localStorage +
+    // Cloud-Push) — gebuendelt reicht das voellig. flushPendingSaves() zieht den
+    // ausstehenden Save bei Tab-Wechsel/Schliessen sofort nach.
+    scheduleSaveDebounced("noteflow-autosave", 800);
   }
   
   // NoteFlow input-Listener für Live-Save
@@ -74439,7 +74452,8 @@ window.searchAllData = searchAllData;
       if (!note) return;
       note.title = String(t.value || "");
       note.updatedAt = nowIso();
-      scheduleSave();
+      // pro Tastendruck — Voll-State-Serialisierung buendeln (Flush bei Tab-Wechsel)
+      scheduleSaveDebounced("meeting-note-title:" + id, 600);
       return;
     }
     if (t.dataset.action === "meeting-note-content"){
@@ -74448,7 +74462,7 @@ window.searchAllData = searchAllData;
       if (!note) return;
       note.content = String(t.value || "");
       note.updatedAt = nowIso();
-      scheduleSave();
+      scheduleSaveDebounced("meeting-note-content:" + id, 600);
       return;
     }
   });
@@ -74476,7 +74490,7 @@ window.searchAllData = searchAllData;
       item[field] = String(val);
     }
     meeting.updatedAt = nowIso();
-    scheduleSave();
+    scheduleSaveDebounced("agenda-field:" + meetingId + ":" + idx + ":" + field, 600);
   });
 
   document.addEventListener("change", (e)=>{
@@ -82193,6 +82207,15 @@ document.addEventListener("click", function(e) {
    Haupt-App darunter weder gelayoutet noch gezeichnet werden. Die globalen
    Sekunden-Timer schreiben zwar weiter ins DOM, kosten dann aber kein Rendering. */
 body.jb-open #app,body.jb-open #launchScreen{content-visibility:hidden}
+/* Dasselbe generisch für alle deckenden Vollbild-Overlays: NoteFlow, Research/
+   Newsroom Hub, ReadingHub, Reflect und den PDF-Editor decken #app komplett ab.
+   :has() greift exakt beim Umschalten der Klasse — kein Timer, keine Latenz.
+   Browser ohne :has() ignorieren die Regel (kein Verhaltensunterschied). */
+body:has(#noteflowContainer.active) #app,
+body:has(#researchHubContainer.active) #app,
+body:has(#readingHubContainer.active) #app,
+body:has(#reflect-overlay) #app,
+body:has(#pdfedRoot) #app{content-visibility:hidden}
 .jb-nav h1{font-size:24px;font-weight:700;letter-spacing:-.05em;color:var(--text)}
 .jb-nav h1 span{color:var(--muted)}
 .jb-nav-links{display:flex;gap:16px;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);overflow-x:auto;padding:8px 0}
@@ -83988,6 +84011,13 @@ function saveData(){
     localStorage.setItem(SK,JSON.stringify(D));
   }
 }
+/* Fuer Tipp-Ereignisse: saveData() baut alle neun Datensaetze aus den Arrays neu auf
+   und serialisiert danach den gesamten App-State — pro Tastendruck viel zu teuer.
+   Gebuendelt; flushPendingSaves() zieht es bei Tab-Wechsel/Schliessen sofort nach. */
+function saveDataSoon(){
+  if(typeof window.scheduleSaveDebounced==='function')window.scheduleSaveDebounced('nh-editor',700,saveData);
+  else saveData();
+}
 
 /* ── RecallLab ── */
 function gRL(){try{const d=JSON.parse(localStorage.getItem('recalllab')||'null');const r=d||{decks:[],cards:[],reviewLogs:[],user:{xp:0,level:1,streak:0}};if(!Array.isArray(r.decks))r.decks=[];if(!Array.isArray(r.cards))r.cards=[];if(!r.decks.find(x=>x.id==='deck_general'))r.decks.unshift({id:'deck_general',name:'📋 Allgemein',createdAt:Date.now()});if(!r.decks.find(x=>x.id==='deck_en_de'))r.decks.push({id:'deck_en_de',name:'🇬🇧 Englisch',createdAt:Date.now()});return r}catch{return{decks:[{id:'deck_general',name:'📋 Allgemein',createdAt:Date.now()},{id:'deck_en_de',name:'🇬🇧 Englisch',createdAt:Date.now()}],cards:[],reviewLogs:[],user:{xp:0,level:1,streak:0}}}}
@@ -84127,7 +84157,7 @@ function nhRemoveDoc(idx){if(!confirm('Dokument entfernen?'))return;window._nhPe
 function nhDownloadDoc(idx){const doc=window._nhPendingDocs[idx];if(!doc?.dataUrl)return;const a=document.createElement('a');a.href=doc.dataUrl;a.download=doc.name||'datei';document.body.appendChild(a);a.click();setTimeout(()=>document.body.removeChild(a),100)}
 function nhSaveCol(eid){const t=document.getElementById('fc-t').value.trim();if(!t)return nhToastMsg('Title required');const type=document.getElementById('fc-ty').value;const o={id:eid||uid(),title:t,type,topicId:document.getElementById('fc-tp').value||null,schwerpunkt:document.getElementById('fc-sp').value||null,content:document.getElementById('fc-c').value.trim(),source:document.getElementById('fc-s').value.trim(),documents:window._nhPendingDocs||[],due:type==='task'?null:null,done:eid?(D.col.find(c=>c.id===eid)||{}).done||false:false,created:eid?(D.col.find(c=>c.id===eid)||{}).created||iso():iso(),updated:iso()};if(eid){const i=D.col.findIndex(c=>c.id===eid);if(i>=0)D.col[i]={...D.col[i],...o}}else D.col.push(o);saveData();nhCloseM();window._nhPendingDocs=null;render(curP);nhToastMsg('✓')}
 function nhTransfer(tid){const t=D.topics.find(x=>x.id===tid);if(!t)return;const mats=D.col.filter(m=>m.topicId===tid);let body='';const types={note:'NOTES',quote:'QUOTES',question:'QUESTIONS'};for(const[type,label]of Object.entries(types)){const items=mats.filter(m=>m.type===type);if(items.length){body+=`\n=== ${label} ===\n`;items.forEach(m=>{body+=`\n▸ ${m.title}\n${m.content||''}${m.source?'\n['+m.source+']':''}\n`})}}D.ed={tid,fmt:'article',title:t.title,body:body.trim(),status:'draft',social:D.ed.social||{instagram:'',linkedin:'',x:''},script:D.ed.script||''};saveData();document.getElementById('nh-nav-ed').style.display='';nhNav('editor');nhToastMsg('→ Editor')}
-function rEd(){const e=D.ed;const t=D.topics.find(x=>x.id===e.tid);const mats=e.tid?D.col.filter(m=>m.topicId===e.tid):[];document.getElementById('nh-p-editor').innerHTML=`<div class="ed-wrap"><div class="ed-side"><div class="ed-side-h"><span>Materials</span><button class="btn btn-sm" onclick="if(vTopic)nhOpenTopic(vTopic);else nhNav('topics')">← Back</button></div><div class="ed-mat">${mats.length?mats.map(m=>'<div class="ed-mat-item" data-id="'+m.id+'" onclick="nhInsert(\''+m.id+'\')"><span>'+TI[m.type]+'</span><div><b>'+esc(m.title)+'</b></div></div>').join(''):'<div style="padding:16px;font-size:11px;color:var(--ink4);text-align:center">No materials</div>'}</div></div><div class="ed-main"><div class="ed-main-inner"><div style="display:flex;align-items:center;gap:8px;margin-bottom:16px"><h2 style="font-family:var(--head);font-size:22px;flex:1">${esc(e.title||'Untitled')}</h2>${['article','video','social'].map(f=>'<button class="btn btn-sm'+(e.fmt===f?' btn-p':'')+'" onclick="D.ed.fmt=\''+f+'\';saveData();rEd()">'+{article:'Article',video:'Video',social:'Social'}[f]+'</button>').join('')}<button class="btn btn-p btn-sm" onclick="nhExport()">📤 Export</button></div><div id="nh-ed-content"></div></div></div></div>`;const ec=document.getElementById('nh-ed-content');if(e.fmt==='article'){ec.innerHTML=`<textarea class="script-textarea" id="nh-ed-b" placeholder="Write your article…" style="min-height:400px">${esc(e.body||'')}</textarea>`;document.getElementById('nh-ed-b').addEventListener('input',()=>{D.ed.body=document.getElementById('nh-ed-b').value;saveData()})}else if(e.fmt==='social'){const platforms=[{key:'instagram',name:'Instagram',icon:'📸',limit:60},{key:'linkedin',name:'LinkedIn',icon:'💼',limit:400},{key:'x',name:'X (Twitter)',icon:'𝕏',limit:50}];ec.innerHTML=platforms.map(p=>`<div class="social-card"><div class="social-card-head"><h4>${p.icon} ${p.name}</h4><span style="font-size:11px;color:var(--ink4)">~${p.limit} words</span></div><textarea class="social-textarea" id="nh-soc-${p.key}" placeholder="${p.name} post…">${esc((e.social||{})[p.key]||'')}</textarea><div class="word-count" id="nh-wc-${p.key}">${wc((e.social||{})[p.key]||'')} / ${p.limit}</div></div>`).join('');platforms.forEach(p=>{document.getElementById('nh-soc-'+p.key)?.addEventListener('input',function(){if(!D.ed.social)D.ed.social={};D.ed.social[p.key]=this.value;saveData();const c=wc(this.value);document.getElementById('nh-wc-'+p.key).textContent=c+' / '+p.limit;document.getElementById('nh-wc-'+p.key).className='word-count '+(c>p.limit?'over':c>0?'ok':'')})})}}
+function rEd(){const e=D.ed;const t=D.topics.find(x=>x.id===e.tid);const mats=e.tid?D.col.filter(m=>m.topicId===e.tid):[];document.getElementById('nh-p-editor').innerHTML=`<div class="ed-wrap"><div class="ed-side"><div class="ed-side-h"><span>Materials</span><button class="btn btn-sm" onclick="if(vTopic)nhOpenTopic(vTopic);else nhNav('topics')">← Back</button></div><div class="ed-mat">${mats.length?mats.map(m=>'<div class="ed-mat-item" data-id="'+m.id+'" onclick="nhInsert(\''+m.id+'\')"><span>'+TI[m.type]+'</span><div><b>'+esc(m.title)+'</b></div></div>').join(''):'<div style="padding:16px;font-size:11px;color:var(--ink4);text-align:center">No materials</div>'}</div></div><div class="ed-main"><div class="ed-main-inner"><div style="display:flex;align-items:center;gap:8px;margin-bottom:16px"><h2 style="font-family:var(--head);font-size:22px;flex:1">${esc(e.title||'Untitled')}</h2>${['article','video','social'].map(f=>'<button class="btn btn-sm'+(e.fmt===f?' btn-p':'')+'" onclick="D.ed.fmt=\''+f+'\';saveData();rEd()">'+{article:'Article',video:'Video',social:'Social'}[f]+'</button>').join('')}<button class="btn btn-p btn-sm" onclick="nhExport()">📤 Export</button></div><div id="nh-ed-content"></div></div></div></div>`;const ec=document.getElementById('nh-ed-content');if(e.fmt==='article'){ec.innerHTML=`<textarea class="script-textarea" id="nh-ed-b" placeholder="Write your article…" style="min-height:400px">${esc(e.body||'')}</textarea>`;document.getElementById('nh-ed-b').addEventListener('input',()=>{D.ed.body=document.getElementById('nh-ed-b').value;saveDataSoon()})}else if(e.fmt==='social'){const platforms=[{key:'instagram',name:'Instagram',icon:'📸',limit:60},{key:'linkedin',name:'LinkedIn',icon:'💼',limit:400},{key:'x',name:'X (Twitter)',icon:'𝕏',limit:50}];ec.innerHTML=platforms.map(p=>`<div class="social-card"><div class="social-card-head"><h4>${p.icon} ${p.name}</h4><span style="font-size:11px;color:var(--ink4)">~${p.limit} words</span></div><textarea class="social-textarea" id="nh-soc-${p.key}" placeholder="${p.name} post…">${esc((e.social||{})[p.key]||'')}</textarea><div class="word-count" id="nh-wc-${p.key}">${wc((e.social||{})[p.key]||'')} / ${p.limit}</div></div>`).join('');platforms.forEach(p=>{document.getElementById('nh-soc-'+p.key)?.addEventListener('input',function(){if(!D.ed.social)D.ed.social={};D.ed.social[p.key]=this.value;saveDataSoon();const c=wc(this.value);document.getElementById('nh-wc-'+p.key).textContent=c+' / '+p.limit;document.getElementById('nh-wc-'+p.key).className='word-count '+(c>p.limit?'over':c>0?'ok':'')})})}}
 function nhInsert(mid){const m=D.col.find(c=>c.id===mid);if(!m)return;const ta=document.getElementById('nh-ed-b');if(ta){ta.value+=`\n\n▸ ${m.title}\n${m.content||''}`;D.ed.body=ta.value;saveData();nhToastMsg('Inserted')}}
 function nhExport(){const e=D.ed;let content='';if(e.fmt==='article')content=e.body;else if(e.fmt==='social')content=Object.entries(e.social||{}).map(([k,v])=>`=== ${k.toUpperCase()} ===\n${v}`).join('\n\n');D.out.push({id:uid(),title:e.title,format:e.fmt,content,topicId:e.tid,created:iso()});const topic=D.topics.find(x=>x.id===e.tid);if(topic){topic.status='published';topic.updated=iso()}saveData();nhCloseM();nhToastMsg('✓ Exported');nhNav('outputs')}
 function rOut(ff='all'){let it=[...D.out].sort((a,b)=>new Date(b.created)-new Date(a.created));if(ff!=='all')it=it.filter(o=>o.format===ff);const fi={article:'📰',video:'🎬',social:'📱'};document.getElementById('nh-p-outputs').innerHTML=`<div class="tabs">${[['all','All'],['article','Article'],['video','Video'],['social','Social']].map(([k,l])=>`<button class="tab${ff===k?' on':''}" onclick="rOut('${k}')">${l}</button>`).join('')}</div>${it.length?it.map(o=>`<div class="card card-p"><div style="display:flex;justify-content:space-between"><div style="display:flex;align-items:center;gap:6px"><span style="font-size:18px">${fi[o.format]||'📄'}</span><h3>${esc(o.title)}</h3><span class="tag t-g">${o.format}</span></div><button class="btn btn-g btn-sm" onclick="nhDel('out','${o.id}')">✕</button></div><div class="text-block" style="margin-top:8px">${esc(o.content||'')}</div><div style="font-size:10px;color:var(--ink4);margin-top:6px">${fdt(o.created)}</div></div>`).join(''):'<div class="empty"><h3>No publications</h3></div>'}`}
@@ -84178,7 +84208,7 @@ document.addEventListener('keydown',e=>{const c=document.getElementById('researc
 document.getElementById('nh-file-in').addEventListener('change',async function(){const file=this.files[0];if(!file)return;this.value='';const ext=file.name.split('.').pop().toLowerCase();if(ext==='pdf'){const txt=await extractPDF(file);if(!txt)return;D.articles.push({id:uid(),title:file.name.replace(/\.pdf$/i,''),content:txt,fileName:file.name,isPdf:true,status:'new',readProgress:0,createdAt:iso()})}else{const txt=await file.text();D.articles.push({id:uid(),title:file.name.replace(/\.\w+$/,''),content:txt,fileName:file.name,isPdf:false,status:'new',readProgress:0,createdAt:iso()})}saveData();render(curP);nhBadges();nhToastMsg('📄 Importiert')});
 
 /* ═══ Search ═══ */
-document.getElementById('nh-gs').addEventListener('input',function(){const q=this.value.toLowerCase().trim();if(!q){render(curP);return}const res=[];const si=(a,t,i)=>a.forEach(x=>{const h=[x.title,x.content,x.description,x.summary,x.word,...(x.tags||[])].filter(Boolean).join(' ').toLowerCase();if(h.includes(q))res.push({...x,_t:t,_i:i})});si(D.news,'News','⚡');si(D.ideas,'Thought','💡');si(D.fw,'FW','🔭');si(D.topics,'Topic','📑');si(D.col,'Material','📦');si(D.articles,'Article','📄');si(D.dictionary,'Dict','📖');const pg=document.querySelector('.nh .page.on');if(pg&&!['nh-p-editor','nh-p-reader'].includes(pg.id)){pg.innerHTML=res.length?'<h3 style="font-family:var(--head);margin-bottom:10px">Ergebnisse für "'+esc(q)+'"</h3><div class="card card-p">'+res.map(r=>'<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--bdr);font-size:13px;align-items:center"><span>'+r._i+'</span><span style="font-weight:600;flex:1">'+esc(r.title||tr(r.content||r.word,60))+'</span><span class="tag t-b" style="font-size:9px">'+r._t+'</span></div>').join('')+'</div>':'<div class="empty"><h3>Keine Ergebnisse</h3></div>'}});
+document.getElementById('nh-gs').addEventListener('input',function(){/* Suche laeuft ueber sieben Datensaetze und baut die Seite komplett neu auf — pro Tastendruck zu teuer, darum entprellt. */clearTimeout(window._nhSearchTimer);const _el=this;window._nhSearchTimer=setTimeout(function(){_nhRunSearch(_el)},180)});function _nhRunSearch(_srcEl){const q=_srcEl.value.toLowerCase().trim();if(!q){render(curP);return}const res=[];const si=(a,t,i)=>a.forEach(x=>{const h=[x.title,x.content,x.description,x.summary,x.word,...(x.tags||[])].filter(Boolean).join(' ').toLowerCase();if(h.includes(q))res.push({...x,_t:t,_i:i})});si(D.news,'News','⚡');si(D.ideas,'Thought','💡');si(D.fw,'FW','🔭');si(D.topics,'Topic','📑');si(D.col,'Material','📦');si(D.articles,'Article','📄');si(D.dictionary,'Dict','📖');const pg=document.querySelector('.nh .page.on');if(pg&&!['nh-p-editor','nh-p-reader'].includes(pg.id)){pg.innerHTML=res.length?'<h3 style="font-family:var(--head);margin-bottom:10px">Ergebnisse für "'+esc(q)+'"</h3><div class="card card-p">'+res.map(r=>'<div style="display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--bdr);font-size:13px;align-items:center"><span>'+r._i+'</span><span style="font-weight:600;flex:1">'+esc(r.title||tr(r.content||r.word,60))+'</span><span class="tag t-b" style="font-size:9px">'+r._t+'</span></div>').join('')+'</div>':'<div class="empty"><h3>Keine Ergebnisse</h3></div>'}}
 
 /* ═══ INIT & BRIDGE ═══ */
 if(D.ed?.tid)document.getElementById('nh-nav-ed').style.display='';
@@ -109753,7 +109783,10 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     // Fallback ohne Firebase-SDK: alle 10 s per REST nachsehen
     if (plDisplayPollTimer) return;
     const poll = function(){ plDbGet("polaris/display").then(plDisplayHandle).catch(function(){ /* nächster Tick */ }); };
-    plDisplayPollTimer = setInterval(poll, 10000);
+    // Im Hintergrund-Tab kein REST-Request alle 10 s — beim Sichtbarwerden sofort nachholen.
+    const pollIfVisible = function(){ if (!document.hidden) poll(); };
+    document.addEventListener("visibilitychange", function(){ if (!document.hidden) poll(); });
+    plDisplayPollTimer = setInterval(pollIfVisible, 10000);
     poll();
   }
   window.addEventListener("load", function(){ setTimeout(plDisplayWatchStart, 1200); });
@@ -109980,7 +110013,9 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const tick = function(){
       plDbGet("polaris/inbox").then(plInboxProcessAll).catch(function(){ /* nächster Tick */ });
     };
-    plInboxPollTimer = setInterval(tick, 12000);
+    // Im Hintergrund-Tab kein REST-Request alle 12 s — beim Sichtbarwerden sofort nachholen.
+    document.addEventListener("visibilitychange", function(){ if (!document.hidden) tick(); });
+    plInboxPollTimer = setInterval(function(){ if (!document.hidden) tick(); }, 12000);
     tick();
   }
   async function plInboxWatchStart(){
