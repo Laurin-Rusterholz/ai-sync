@@ -306,6 +306,11 @@ check("Cookie-Auth ist AUS — der Legacy-Client des 3.1.5-Images kann sie nicht
     "Cookie-Auth bricht den Login des Legacy-Clients (iframe UND neuer Tab)");
   assert.match(compose, /NEKO_SESSION_FILE: "\/home\/neko\/\.neko\/sessions\.json"/);
   assert.match(compose, /NEKO_SERVER_PROXY: "true"/);
+  // Die Legacy-Bruecke ist die Voraussetzung dafuer, dass der mitgelieferte
+  // Client ueberhaupt eine Anmeldung durchbekommt. Sie haengt sonst am
+  // Image-Default — faellt der einmal, waere der Login wieder tot.
+  assert.match(compose, /NEKO_LEGACY: "true"/,
+    "der Client des Images spricht nur die v2-Endpunkte (/ws, /file)");
 });
 
 check("Passwoerter kommen aus der .env und fehlen nicht stillschweigend", () => {
@@ -489,6 +494,68 @@ check("Smoke erkennt einen Chromium-Crash-Loop (zwei PID-Stichproben)", () => {
   assert.match(deployScript, /Crash-Loop/);
   assert.match(deployScript, /\/var\/log\/neko\/chromium\.log/,
     "im Fehlerfall muss das Chromium-Log gezeigt werden");
+});
+
+// Die Compose-Datei zu reparieren beweist nicht, dass der LAUFENDE Container
+// die Reparatur uebernommen hat. Der Smoke meldet sich deshalb echt an.
+check("Smoke spielt die Anmeldung wirklich durch", () => {
+  assert.match(deployScript, /neko_login_probe\(\)/, "Anmelde-Probe fehlt");
+  assert.match(deployScript, /api\/login/);
+  // Sitzung wieder aufraeumen statt sie offen liegen zu lassen.
+  assert.match(deployScript, /neko_logout\(\)/);
+  assert.match(deployScript, /api\/logout/);
+  // Die Diagnose muss den Live-Fehler beim Namen nennen.
+  assert.match(deployScript, /Cookie-Auth im laufenden Container aktiv/);
+  assert.match(deployScript, /NEKO_SESSION_COOKIE_ENABLED muss/);
+});
+
+check("die Anmelde-Probe gibt weder Passwort noch Token preis", () => {
+  const probe = deployScript.slice(
+    deployScript.indexOf("neko_login_probe() {"),
+    deployScript.indexOf("# Tests laden nur die Funktionen")
+  );
+  assert.ok(probe.length > 200, "neko_login_probe nicht gefunden");
+  // Beides gehoert nicht in die Prozessliste: Passwort ueber stdin,
+  // Token ueber eine curl-Konfigurationsdatei.
+  assert.match(probe, /--data-binary @-/, "das Passwort muss ueber stdin gehen");
+  assert.doesNotMatch(probe, /--data(-binary)? ['"]?\{/, "Passwort stuende in der Prozessliste");
+  assert.match(deployScript, /printf 'header = "Authorization: Bearer/);
+  assert.doesNotMatch(deployScript, /-H "Authorization: Bearer/);
+  assert.doesNotMatch(deployScript, /set -x/);
+
+  // Genau eine erlaubte Passwortausgabe: die angekuendigte Einmalausgabe der
+  // frisch erzeugten Zugangsdaten beim allerersten Lauf.
+  const start = deployScript.indexOf('warn "EINMALIGE AUSGABE');
+  assert.ok(start > 0, "die angekuendigte Einmalausgabe fehlt");
+  const end = deployScript.indexOf("\nfi\n", start);
+  const rest = deployScript.slice(0, start) + deployScript.slice(end);
+  for (const line of rest.split("\n")) {
+    if (/^\s*#/.test(line)) continue;
+    if (!/NEKO_PW\b|NEKO_USER_PASSWORD/.test(line)) continue;
+    assert.doesNotMatch(line, /^\s*(echo|printf)\s/,
+      `Passwort landet in der Ausgabe: ${line.trim()}`);
+  }
+});
+
+check("Smoke prueft auch den Legacy-Pfad /ws, den der Client wirklich nutzt", () => {
+  // Der v2-Client verbindet sich nicht mit /api/ws, sondern mit /ws.
+  assert.match(deployScript, /"https:\/\/\$\{DOMAIN\}\/ws"/);
+  assert.match(deployScript, /Legacy-WebSocket \/ws/);
+});
+
+// Der Bind-Mount auf ./data/profile verdeckt die Voreinstellungen aus dem
+// Image (Home-Knopf, Lesezeichenleiste). Docker kopiert Image-Inhalte nur in
+// LEERE benannte Volumes, nicht in Bind-Mounts — sie fehlen also.
+check("Chromium-Voreinstellungen werden ins leere Profil nachgezogen", () => {
+  assert.match(deployScript, /seed_chromium_preferences\(\)/);
+  assert.match(deployScript, /Default\/Preferences/);
+  const fn = deployScript.slice(
+    deployScript.indexOf("seed_chromium_preferences() {"),
+    deployScript.indexOf("json_str()")
+  );
+  assert.ok(fn.length > 200, "seed_chromium_preferences nicht gefunden");
+  // Nur ins leere Profil — ein bestehendes darf nie ueberschrieben werden.
+  assert.match(fn, /\[ -e "\$\{target\}" \] && return 1/);
 });
 
 check("HTTPS-Smoke prueft per GET, nicht per HEAD", () => {

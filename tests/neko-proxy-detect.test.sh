@@ -261,4 +261,70 @@ check "NEKO_DATA_UID: Default 1000"             "$(field "${OWNTEST}" UID_DEFAUL
 check "NEKO_DATA_UID: .env uebersteuert"        "$(field "${OWNTEST}" UID_ENV)"     "1234"
 
 echo
+echo "7. Anmelde-Probe: Token im Body statt Cookie — und ohne Secret-Leck"
+# Der Live-Fehler war nicht die Compose-Datei, sondern der laufende Container:
+# mit Cookie-Auth liefert /api/login keinen Token im Body und JEDER Login des
+# mitgelieferten Clients scheitert. neko_login_probe muss diesen Fall vom
+# falschen Passwort und von einer toten API unterscheiden — und dabei weder
+# Passwort noch Token in die Kommandozeile schreiben (Prozessliste!).
+REC="${WORK}/rec"; mkdir -p "${REC}"
+
+# curl-Stub: schreibt Argumente und stdin mit und legt den gewuenschten
+# Antwort-Body in die mit -o benannte Datei.
+cat > "${WORK}/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${REC}/curl.args"
+case "$*" in *--data-binary\ @-*) cat >> "${REC}/curl.stdin" ;; esac
+out=""; prev=""
+for a in "$@"; do [ "${prev}" = "-o" ] && out="${a}"; prev="${a}"; done
+if [ -n "${out}" ] && [ "${out}" != "/dev/null" ]; then printf '%s' "${CURL_BODY:-}" > "${out}"; fi
+printf '%s' "${CURL_CODE:-200}"
+exit "${CURL_EXIT:-0}"
+STUB
+chmod +x "${WORK}/bin/curl"
+
+login_probe() {
+  PATH="${WORK}/bin:${PATH}" REC="${REC}" \
+  CURL_BODY="$1" CURL_CODE="$2" CURL_EXIT="${3:-0}" \
+  QUANTUS_NEKO_DIR="${WORK}/app" NEKO_DEPLOY_LIB_ONLY=1 \
+  bash -c 'set -uo pipefail
+    export PATH REC QUANTUS_NEKO_DIR CURL_BODY CURL_CODE CURL_EXIT
+    source "$1"
+    printf "RESULT=%s\n" "$(neko_login_probe 8080 quantus "$2")"
+  ' _ "${SCRIPT}" "$4"
+}
+
+# Absichtlich mit Anfuehrungszeichen: daran zerbricht eine handgebaute
+# JSON-Zeile. So muss es escaped im Body ankommen.
+SECRET='p@ss"wort/mit+zeichen'
+SECRET_JSON='p@ss\"wort/mit+zeichen'
+SECRET_MARK='wort/mit+zeichen'
+
+: > "${REC}/curl.args"; : > "${REC}/curl.stdin"
+OUT="$(login_probe '{"id":"quantus-ab12c","token":"tok-geheim-123","profile":{}}' 200 0 "${SECRET}")"
+check "Token im Body -> Client kann sich anmelden" "$(field "${OUT}" RESULT)" "token"
+check "die Probe-Sitzung wird wieder abgemeldet"   "$(grep -c 'api/logout' "${REC}/curl.args")" "1"
+
+if grep -qF "${SECRET_MARK}" "${REC}/curl.args"; then
+  printf '  ✗ Passwort steht in der curl-Kommandozeile (Prozessliste!)\n'; exit 1
+fi
+printf '  ✓ Passwort steht nicht in der Kommandozeile\n'; PASS=$((PASS + 1))
+if ! grep -qF "${SECRET_JSON}" "${REC}/curl.stdin"; then
+  printf '  ✗ Passwort kam nicht korrekt escaped im Body an — der Test pruefte nichts\n'; exit 1
+fi
+printf '  ✓ Passwort geht ueber stdin und ist korrekt JSON-escaped\n'; PASS=$((PASS + 1))
+if grep -qF 'tok-geheim-123' "${REC}/curl.args"; then
+  printf '  ✗ Sitzungstoken steht in der Kommandozeile\n'; exit 1
+fi
+printf '  ✓ Sitzungstoken steht nicht in der Kommandozeile\n'; PASS=$((PASS + 1))
+
+# Der Live-Fehler: Anmeldung geht durch, aber ohne Token im Body.
+OUT="$(login_probe '{"id":"quantus-ab12c","profile":{}}' 200 0 "${SECRET}")"
+check "Cookie-Auth wird als Fehler erkannt" "$(field "${OUT}" RESULT)" "cookie"
+OUT="$(login_probe '' 401 0 "${SECRET}")"
+check "falsches Passwort -> denied"         "$(field "${OUT}" RESULT)" "denied"
+OUT="$(login_probe '' 000 7 "${SECRET}")"
+check "keine Antwort -> unreachable"        "$(field "${OUT}" RESULT)" "unreachable"
+
+echo
 printf '✓ Proxy-Erkennung: %s Pruefungen bestanden\n\n' "${PASS}"

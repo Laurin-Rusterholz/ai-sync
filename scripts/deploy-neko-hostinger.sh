@@ -184,6 +184,83 @@ detect_proxy() {
   if docker ps --format '{{.Image}}' 2>/dev/null | grep -Eqi '(^|/)caddy(:|@|$)'; then PROXY="caddy-docker"; return; fi
 }
 
+# Das Profil-Volume ueberdeckt /home/neko/.config/chromium — und damit die
+# Voreinstellungen, die das Image dort ablegt (Home-Knopf, Lesezeichenleiste).
+# Bei einem Bind-Mount kopiert Docker den Image-Inhalt NICHT ins leere
+# Verzeichnis (anders als bei einem benannten Volume), die Defaults fehlen also
+# beim ersten Start. Sie werden deshalb einmalig aus dem Image geholt.
+# Idempotent und nicht destruktiv: ein vorhandenes Profil bleibt unberuehrt.
+seed_chromium_preferences() {
+  local uid="$1" gid="$2" tag img target
+  target="${APP_DIR}/data/profile/Default/Preferences"
+  [ -e "${target}" ] && return 1
+  tag="$(env_get NEKO_IMAGE_TAG)"; tag="${tag:-3.1.5}"
+  img="ghcr.io/m1k1o/neko/chromium:${tag}"
+  docker image inspect "${img}" >/dev/null 2>&1 || return 1
+  mkdir -p "${APP_DIR}/data/profile/Default"
+  if docker run --rm --network none --entrypoint cat "${img}" \
+       /home/neko/.config/chromium/Default/Preferences > "${target}.tmp" 2>/dev/null \
+     && [ -s "${target}.tmp" ]; then
+    mv "${target}.tmp" "${target}"
+    chown "${uid}:${gid}" "${target}" "${APP_DIR}/data/profile/Default" 2>/dev/null || true
+    return 0
+  fi
+  rm -f "${target}.tmp"
+  return 1
+}
+
+# ── Anmelde-Probe fuer die Smoke-Tests ────────────────────────────────────────
+# JSON-String mit Escaping, damit Sonderzeichen im Passwort die Anfrage nicht
+# zerlegen. Der Wert wird nirgends ausgegeben.
+json_str() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"; }
+
+# Meldet die Probe-Sitzung wieder ab. Der Token geht ueber eine
+# curl-Konfigurationsdatei (Modus 600) statt ueber die Kommandozeile — sonst
+# stuende er in der Prozessliste des Hosts.
+neko_logout() {
+  local port="$1" token="$2" cfg
+  [ -n "${token}" ] || return 0
+  cfg="$(mktemp)"; chmod 600 "${cfg}"
+  printf 'header = "Authorization: Bearer %s"\n' "${token}" > "${cfg}"
+  curl -sS -o /dev/null -m 10 -K "${cfg}" -X POST \
+    "http://127.0.0.1:${port}/api/logout" >/dev/null 2>&1 || true
+  rm -f "${cfg}"
+}
+
+# Spielt die Anmeldung wirklich durch — die Konfiguration allein beweist nicht,
+# dass der laufende Container sie auch uebernommen hat. Gibt genau ein Wort aus:
+#   token       — Anmeldung erfolgreich UND fuer den mitgelieferten Client
+#                 brauchbar (Token steht im Antwort-Body)
+#   cookie      — Anmeldung erfolgreich, aber nur per Cookie: der Client
+#                 scheitert dann mit "token not found …" (der Live-Fehler)
+#   denied      — Passwort passt nicht zum laufenden Container
+#   unreachable — neko antwortet lokal gar nicht
+# Das Passwort geht ausschliesslich ueber stdin: nie als Argument
+# (Prozessliste) und nie in eine Ausgabe.
+neko_login_probe() {
+  local port="$1" user="$2" pass="$3" body code token result
+  body="$(mktemp)"; chmod 600 "${body}"
+  code="$(printf '{"username":%s,"password":%s}' "$(json_str "${user}")" "$(json_str "${pass}")" \
+    | curl -sS -o "${body}" -w '%{http_code}' -m 10 \
+        -H 'Content-Type: application/json' --data-binary @- \
+        "http://127.0.0.1:${port}/api/login" 2>/dev/null)" || true
+  case "${code:-000}" in
+    200)
+      if grep -q '"token"' "${body}" 2>/dev/null; then
+        token="$(sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${body}")"
+        neko_logout "${port}" "${token}"
+        result="token"
+      else
+        result="cookie"
+      fi ;;
+    401|403) result="denied" ;;
+    000|"")  result="unreachable" ;;
+    *)       result="http-${code}" ;;
+  esac
+  rm -f "${body}"
+  printf '%s' "${result}"
+}
+
 # Tests laden nur die Funktionen, ohne dass das Skript etwas ausfuehrt:
 #   NEKO_DEPLOY_LIB_ONLY=1 source scripts/deploy-neko-hostinger.sh
 if [ "${NEKO_DEPLOY_LIB_ONLY:-0}" = "1" ]; then
@@ -307,6 +384,12 @@ for d in profile downloads neko; do
   ensure_data_dir "${APP_DIR}/data/${d}" "$(data_uid)" "$(data_gid)"
 done
 ok "data/{profile,downloads,neko} gehoeren $(data_uid):$(data_gid) (idempotent gesetzt, nichts geloescht)"
+
+# Voreinstellungen aus dem Image nur ins NOCH LEERE Profil nachziehen — der
+# Bind-Mount verdeckt sie sonst (Home-Knopf, Lesezeichenleiste).
+if seed_chromium_preferences "$(data_uid)" "$(data_gid)"; then
+  info "Chromium-Voreinstellungen aus dem Image ins leere Profil uebernommen"
+fi
 
 for f in docker-compose.yml docker-compose.traefik.yml chromium-policies.json; do
   if [ -f "${APP_DIR}/${f}" ] && ! cmp -s "${SRC_DIR}/${f}" "${APP_DIR}/${f}"; then
@@ -534,6 +617,34 @@ else
   ok "HTTP-Port nur an 127.0.0.1 gebunden"
 fi
 
+# ── Anmeldung wirklich durchspielen ──
+# Dass NEKO_SESSION_COOKIE_ENABLED="false" in der Compose-Datei steht, beweist
+# noch nicht, dass der LAUFENDE Container es uebernommen hat (alte .env, alter
+# Container, halb durchgezogenes Update). Genau das war der Live-Fehler: der
+# Login scheiterte trotz richtigem Passwort mit "token not found - make sure
+# you are not using Cookie auth on the server". Der Smoke meldet sich deshalb
+# echt an und sofort wieder ab. Passwort und Token tauchen dabei in keiner
+# Ausgabe und in keiner Prozessliste auf.
+NEKO_PW="$(env_get NEKO_USER_PASSWORD)"
+if [ -z "${NEKO_PW}" ]; then
+  warn "Kein NEKO_USER_PASSWORD in der .env — die Anmeldung ist nicht pruefbar"
+else
+  case "$(neko_login_probe "${HTTP_PORT}" "quantus" "${NEKO_PW}")" in
+    token)
+      ok "Anmeldung erfolgreich und Client-tauglich (Token im Antwort-Body)" ;;
+    cookie)
+      note_fail "Cookie-Auth im laufenden Container aktiv — der Login scheitert mit \"token not found\"."
+      note_fail "NEKO_SESSION_COOKIE_ENABLED muss \"false\" sein, danach: docker compose up -d" ;;
+    denied)
+      note_fail "Anmeldung abgelehnt — das Passwort in der .env passt nicht zum laufenden Container (docker compose up -d)" ;;
+    unreachable)
+      note_fail "Login-API lokal nicht erreichbar" ;;
+    *)
+      note_fail "Login-API antwortet unerwartet" ;;
+  esac
+fi
+unset NEKO_PW
+
 # ── Traefik-spezifische Smoke-Tests ──
 if [ "${PROXY}" = "traefik-docker" ]; then
   NET="$(env_get NEKO_TRAEFIK_NETWORK)"; NET="${NET:-${TRAEFIK_NETWORK}}"
@@ -590,6 +701,20 @@ case "${WS_CODE}" in
   400|401|403) ok "WebSocket-Endpunkt erreichbar (HTTP ${WS_CODE} — neko lehnt ohne Anmeldung ab, der Proxy leitet aber durch)" ;;
   000) note_fail "WebSocket-Endpunkt nicht erreichbar" ;;
   *)   warn "WebSocket-Endpunkt antwortet mit HTTP ${WS_CODE} — im Browser gegenpruefen" ;;
+esac
+
+# Der mitgelieferte Client verbindet sich nicht mit /api/ws, sondern mit /ws
+# (Legacy-Bruecke). Fuer den Stream im iframe zaehlt genau dieser Pfad.
+WS_LEGACY_CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 15 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: cXVhbnR1cy1zbW9rZS10ZXN0" \
+  "https://${DOMAIN}/ws" 2>/dev/null || echo 000)"
+case "${WS_LEGACY_CODE}" in
+  101)         ok "Legacy-WebSocket /ws erreichbar (101) — der Client des Images kommt durch" ;;
+  400|401|403) ok "Legacy-WebSocket /ws erreichbar (HTTP ${WS_LEGACY_CODE})" ;;
+  404)         note_fail "/ws liefert 404 — Legacy-Bruecke aus (NEKO_LEGACY) oder Route falsch" ;;
+  000)         note_fail "/ws nicht erreichbar" ;;
+  *)           warn "/ws antwortet mit HTTP ${WS_LEGACY_CODE} — im Browser gegenpruefen" ;;
 esac
 
 WEBRTC_PORT="$(env_get NEKO_WEBRTC_PORT)"; WEBRTC_PORT="${WEBRTC_PORT:-59000}"
