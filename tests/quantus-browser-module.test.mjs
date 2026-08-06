@@ -267,7 +267,11 @@ check("Restart-Policy, Healthcheck, shm_size und Limits sind gesetzt", () => {
   assert.match(compose, /healthcheck:/);
   assert.match(compose, /start_period: 60s/);
   assert.match(compose, /mem_limit: \$\{NEKO_MEM_LIMIT:-\d+m\}/);
-  assert.match(compose, /pids_limit: \d+/);
+  // pids_limit zaehlt Threads mit; Chromium braucht mehrere hundert. Bei 512
+  // schlug clone() fehl und Chromium stuerzte live mit SIGTRAP ab.
+  const pids = Number((/pids_limit: (\d+)/.exec(compose) || [])[1]);
+  assert.ok(Number.isFinite(pids), "pids_limit fehlt");
+  assert.ok(pids >= 1024, `pids_limit ${pids} ist zu knapp fuer Chromium-Threads (SIGTRAP-Gefahr)`);
   assert.match(compose, /max-size: "10m"/, "unbegrenzte Logs fuellen die Platte");
 });
 
@@ -289,10 +293,17 @@ check("WebRTC nutzt einen gemultiplexten Port statt eines Portbereichs", () => {
   assert.match(compose, /NEKO_WEBRTC_NAT1TO1: "\$\{NEKO_PUBLIC_IP\}"/);
 });
 
-check("Sitzungs-Cookie ist HttpOnly + Secure (SameSite=None fuer das iframe)", () => {
-  assert.match(compose, /NEKO_SESSION_COOKIE_ENABLED: "true"/);
-  assert.match(compose, /NEKO_SESSION_COOKIE_SECURE: "true"/);
-  assert.match(compose, /NEKO_SESSION_COOKIE_HTTP_ONLY: "true"/);
+check("Cookie-Auth ist AUS — der Legacy-Client des 3.1.5-Images kann sie nicht", () => {
+  // Live-Befund: Der im Image ausgelieferte v2-Client spricht die Legacy-API.
+  // Deren Login liest den Token aus dem Antwort-Body; mit Cookie-Auth laesst
+  // neko ihn weg und JEDER Login scheitert mit "token not found - make sure
+  // you are not using Cookie auth on the server"
+  // (server/internal/http/legacy/session.go: "if Cookie auth, the token will
+  // be empty"). Cookie-Auth darf hier also nie wieder aktiviert werden,
+  // solange das Image den Legacy-Client ausliefert.
+  assert.match(compose, /NEKO_SESSION_COOKIE_ENABLED: "false"/);
+  assert.doesNotMatch(compose, /NEKO_SESSION_COOKIE_ENABLED: "true"/,
+    "Cookie-Auth bricht den Login des Legacy-Clients (iframe UND neuer Tab)");
   assert.match(compose, /NEKO_SESSION_FILE: "\/home\/neko\/\.neko\/sessions\.json"/);
   assert.match(compose, /NEKO_SERVER_PROXY: "true"/);
 });
@@ -448,6 +459,43 @@ check("Vorabpruefungen, Backup, Smoke-Tests und Rollback sind enthalten", () => 
 
 check("Smoke-Test gibt die Chromium-Version aus dem Container aus", () => {
   assert.match(deployScript, /docker compose exec -T neko \/usr\/bin\/chromium --version/);
+});
+
+check("Deploy-Skript setzt Eigentuemer/Rechte der Daten-Mounts idempotent", () => {
+  // Live-Befund: root:root-Verzeichnisse -> "permission denied" fuer
+  // sessions.json und Downloads, Chromium-SIGTRAP-Loop (Profil unbeschreibbar).
+  assert.match(deployScript, /ensure_data_dir\(\)/, "Ownership-Funktion fehlt");
+  assert.match(deployScript, /chown -R "\$\{uid\}:\$\{gid\}"/, "chown auf den Container-User fehlt");
+  assert.match(deployScript, /chmod u\+rwX/, "Verzeichnis muss fuer den Eigentuemer nutzbar sein");
+  // chown nur bei Abweichung — sonst wird jeder Lauf mit grossem Profil teuer.
+  assert.match(deployScript, /find "\$\{dir\}" \\\( ! -uid "\$\{uid\}" -o ! -gid "\$\{gid\}" \\\)/);
+  // Nie destruktiv: die Reparatur darf unter keinen Umstaenden loeschen.
+  const fn = deployScript.slice(deployScript.indexOf("ensure_data_dir()"),
+                                deployScript.indexOf("PROXY=\"none\""));
+  assert.ok(fn.length > 100, "ensure_data_dir nicht gefunden");
+  assert.doesNotMatch(fn, /\brm\b|\bmv\b/, "Ownership-Reparatur darf nichts loeschen/verschieben");
+});
+
+check("Smoke prueft die Persistenz per Schreibprobe aus Container-Sicht", () => {
+  assert.match(deployScript, /\.quantus-rw-probe/);
+  assert.match(deployScript, /--user "\$\{DATA_UID\}:\$\{DATA_GID\}"/,
+    "die Schreibprobe muss als Container-User laufen, nicht als root");
+});
+
+check("Smoke erkennt einen Chromium-Crash-Loop (zwei PID-Stichproben)", () => {
+  // Ein blosser Versions-Check uebersieht einen Crash-Loop — live crashte
+  // Chromium mit SIGTRAP, waehrend der Container "healthy" blieb.
+  assert.match(deployScript, /chromium_pid\(\)/);
+  assert.match(deployScript, /Crash-Loop/);
+  assert.match(deployScript, /\/var\/log\/neko\/chromium\.log/,
+    "im Fehlerfall muss das Chromium-Log gezeigt werden");
+});
+
+check("HTTPS-Smoke prueft per GET, nicht per HEAD", () => {
+  // neko beantwortet HEAD live mit 405 — curl -fsSI meldete einen Fehler,
+  // wo keiner war. Der Smoke muss das tun, was der Browser tut: GET.
+  assert.doesNotMatch(deployScript, /curl -fsSI/, "HEAD-Smoke ist falsch negativ (neko: 405)");
+  assert.match(deployScript, /curl -sS -o \/dev\/null -w '%\{http_code\}' -m 20 "https:\/\/\$\{DOMAIN\}\/"/);
 });
 
 check("kein Chromium wird auf dem Host installiert", () => {

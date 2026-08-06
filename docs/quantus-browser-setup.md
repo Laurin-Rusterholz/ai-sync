@@ -28,10 +28,15 @@ Der Code-Deploy funktioniert **ohne** den VPS: `#/browser` zeigt dann die
 Status-/Retry-UI statt einer rohen Browser-Fehlerseite. Erst der VPS-Deploy
 macht den Browser nutzbar.
 
-**Aktueller Stand:** Code-Deploy fertig. VPS-Deploy **ausstehend** — die
-CI-/Agent-Umgebung hat keinen SSH-/Netzwerkzugang zum VPS (der Agent-Proxy
-beantwortet `neko.laurin-rusterholz.ch:443` mit 403), es wurde also **kein**
-Live-Deploy durchgefuehrt und keiner behauptet.
+**Aktueller Stand:** Code-Deploy fertig; VPS-Deploy von `main` (32e70e5) wurde
+laut Live-Abnahme vom 2026-08-06 durchgefuehrt (HTTPS live, Container healthy).
+Dieselbe Abnahme deckte drei Produktionsfehler auf, deren Fixes in diesem
+Stand stecken: Login scheiterte mit „token not found" (Cookie-Auth vs.
+Legacy-Client, Abschnitt 4), `data/` gehoerte `root:root` (permission denied
+fuer `sessions.json`/Downloads, Chromium-SIGTRAP-Crash-Loop, Abschnitte 2/3)
+und der HTTPS-Smoke prüfte per HEAD statt GET (falsch negativ, Abschnitt 6).
+Nach `git pull` + erneutem Skriptlauf ist ein **Live-Retest** noetig — diese
+Datei behauptet keinen Live-Zustand.
 
 ---
 
@@ -108,7 +113,13 @@ grep NEKO_USER_PASSWORD /opt/quantus-neko/.env
    automatischer Rueckbau.
 4. **`.env`** wird nur beim allerersten Lauf mit `openssl rand -base64 24`
    erzeugt (Modus 600) und danach nie ueberschrieben.
-5. **Rechte** — `data/` gehoert `1000:1000` (User `neko` im Container).
+5. **Rechte** — `data/{profile,downloads,neko}` gehoert `1000:1000` (User
+   `neko` im Container; per `NEKO_DATA_UID`/`NEKO_DATA_GID` uebersteuerbar).
+   Das Skript repariert Eigentuemer/Rechte bei **jedem** Lauf idempotent:
+   `chown -R` nur bei Abweichung, nie loeschend — bestehende Profile und
+   Downloads bleiben erhalten. Ohne diesen Schritt (root:root-Verzeichnisse)
+   scheitern `sessions.json` und Downloads mit „permission denied" und
+   Chromium crasht im Loop, weil sein `--user-data-dir` nicht beschreibbar ist.
 6. **Firewall** — `ufw`-Regeln, falls ufw aktiv; ausserdem der Hinweis auf die
    Hostinger-Panel-Firewall.
 7. **`docker compose up -d`** und Warten auf `healthy`.
@@ -232,7 +243,7 @@ bedient alle Verbindungen, plus TCP-Fallback auf demselben Port.
 | `shm_size` | `2gb` | neko-Doku: Chromium stuerzt sonst ab |
 | `mem_limit` | `2600m` | laesst ~1,4 GB fuer Host + n8n; OOM trifft den Container, nicht den Host |
 | `cpu_shares` | `512` | halbe Gewichtung gegenueber n8n statt harter CPU-Deckelung |
-| `pids_limit` | `512` | Schutz vor Prozess-Explosionen |
+| `pids_limit` | `2048` | Schutz vor Prozess-Explosionen. Zaehlt **Threads** mit — Chromium belegt schon mit wenigen Tabs mehrere hundert; bei `512` schlug `clone()` fehl und Chromium stuerzte mit SIGTRAP ab |
 | `NEKO_DESKTOP_SCREEN` | `1280x720@30` | Software-Encoding auf 1 vCPU; hoehere Aufloesung nur bei Bedarf |
 | `restart` | `unless-stopped` | Autostart nach Reboot |
 | `logging` | 10 MB × 3 | die 50-GB-Platte laeuft nicht mit Logs voll |
@@ -248,8 +259,11 @@ Aufloesung spaeter aendern: `NEKO_SCREEN` in `/opt/quantus-neko/.env`, dann
 | `/home/neko/Downloads` | `/opt/quantus-neko/data/downloads` | Downloads + Ziel des Datei-Transfers |
 | `/home/neko/.neko` | `/opt/quantus-neko/data/neko` | neko-Sitzungsdatei (`NEKO_SESSION_FILE`) — Anmeldung ueberlebt Neustarts |
 
-Alle drei gehoeren `1000:1000` (Container-User `neko`), `profile` und `neko`
-mit `700`, `downloads` mit `755`. Das Skript setzt das bei jedem Lauf.
+Alle drei gehoeren `1000:1000` (Container-User `neko`). Das Deploy-Skript
+setzt Eigentuemer und Rechte bei jedem Lauf idempotent (`ensure_data_dir`:
+`chown -R` nur bei Abweichung, `chmod u+rwX` auf das Verzeichnis, nie
+loeschend) und der Smoke-Test macht zusaetzlich eine **Schreibprobe aus
+Container-Sicht** (als UID 1000 in allen drei Pfaden).
 
 `RestoreOnStartup: 1` in den Chromium-Policies stellt beim Start die letzte
 Sitzung wieder her — offene Tabs und Tab-Gruppen sind nach
@@ -271,23 +285,31 @@ Stattdessen:
 * Die iframe-URL enthaelt nur `?usr=quantus&embed=1&lang=de` — **kein
   Geheimnis**. Der Benutzername ist vorbelegt, das Passwortfeld nicht.
 * Der Nutzer meldet sich **einmal** in der neko-Login-Maske an.
-* neko setzt ein **HttpOnly-Cookie**. Weil `session.cookie.secure=true` gesetzt
-  ist, sendet neko es mit `SameSite=None` — nur so ueberlebt die Anmeldung im
-  Cross-Site-iframe. (Belegt im neko-Quelltext: `CookieSetToken` waehlt
-  `http.SameSiteNoneMode`, sobald `Cookie.Secure` gesetzt ist.)
-* `NEKO_SESSION_FILE` legt Sitzungen auf Platte ab — die Anmeldung ueberlebt
-  `docker compose restart` und einen VPS-Reboot.
+* Serverseitig ist **Cookie-Auth aus** (`NEKO_SESSION_COOKIE_ENABLED=false`).
+  Das ist kein Stil-, sondern ein Kompatibilitaetsentscheid: Das gepinnte
+  Image `3.1.5` liefert den **v2-Client** aus, der ausschliesslich die
+  **Legacy-API** spricht. Deren Login liest den Token aus dem Antwort-Body von
+  `/api/login` — bei aktivierter Cookie-Auth laesst neko ihn dort bewusst weg,
+  und **jeder** Login endet mit „token not found - make sure you are not using
+  Cookie auth on the server". Genau das zeigte die Live-Abnahme. Beleg im
+  neko-Quelltext (`server/internal/http/legacy/session.go`): der Kommentar
+  „if Cookie auth, the token will be empty" steht direkt ueber dieser
+  Fehlermeldung.
+* Ohne Cookies haengt der Login an **keiner** Third-Party-Cookie-Regel mehr:
+  er funktioniert im Cross-Site-iframe genauso wie im neuen Tab — auch in
+  Safari. Der v2-Client merkt sich die Anmeldung nach dem ersten Login selbst
+  im **localStorage seiner Origin** (Quelle: `client/src/store/index.ts` im
+  neko-Repo) — Reloads fragen nicht erneut. Im iframe gilt dafuer der ggf.
+  partitionierte Speicher des jeweiligen Browsers.
+* `NEKO_SESSION_FILE` legt serverseitige Sitzungen auf Platte ab — sie
+  ueberleben `docker compose restart` und einen VPS-Reboot.
 
 **UX-Trade-off, ehrlich benannt:** ein echter passwortloser Auto-Login ist mit
 neko nur moeglich, indem das Passwort im Client offengelegt wird. Das wird
 bewusst **nicht** gemacht. Der Preis: gelegentlich einmal Passwort eintippen
-(Cookie-Laufzeit 30 Tage).
-
-**Safari/iOS:** blockt Cookies von Drittanbietern im iframe. Dort haelt die
-Anmeldung im eingebetteten Fenster ggf. nicht. Dafuer gibt es in der
-Browser-Kopfzeile den Knopf **„↗ Neuer Tab"** — im eigenen Tab ist neko
-First-Party und alles funktioniert normal. Chrome und Firefox (partitionierte
-Cookies) sind nicht betroffen.
+(z. B. wenn der Browser partitionierten iframe-Speicher leert). Der Knopf
+**„↗ Neuer Tab"** in der Browser-Kopfzeile bleibt als Ausweichweg — dort ist
+neko First-Party mit unpartitioniertem Speicher.
 
 ### Wichtig nach dem Deploy: altes Passwort rotieren
 
@@ -310,11 +332,11 @@ echo "Neues Passwort: ${NEW_PW}"   # in den Quantus-Passwortmanager uebernehmen
 | HTTP-Port nur an `127.0.0.1` gebunden | neko ist nur ueber den TLS-Proxy erreichbar, nie unverschluesselt |
 | `NEKO_SERVER_PROXY=true` | neko vertraut `X-Forwarded-*` nur hinter dem Proxy |
 | Admin-Passwort nie im Client | Aufloesung/Nutzerverwaltung bleibt serverseitig |
-| `PasswordManagerEnabled: false` | gespeicherte Passwoerter laegen im Profil auf dem VPS; Cookies genuegen fuer „eingeloggt bleiben" |
+| `PasswordManagerEnabled: false` | gespeicherte Passwoerter laegen im Profil auf dem VPS; Website-Cookies im Chromium-Profil genuegen fuer „eingeloggt bleiben" |
 | `SyncDisabled`, `BrowserSignin: 0` | keine Google-Kontoanmeldung — wir taeuschen keinen Chrome-Sync vor |
 | `ExtensionInstallBlocklist: ["*"]` | keine beliebigen Erweiterungen; Freigabe einzelner IDs siehe Abschnitt 5 |
 | `.env` Modus 600, in `.gitignore` | Secrets nur serverseitig |
-| Container ohne `--privileged` | nur `SYS_ADMIN` (Chromium-Sandbox), sonst nichts |
+| Container ohne `--privileged` | nur `SYS_ADMIN` + `seccomp:unconfined` (Empfehlung der neko-Doku fuer Chromium-Images), sonst nichts |
 
 ---
 
@@ -426,15 +448,20 @@ Netzwerk → "Cache deaktivieren".
 bash /opt/ai-sync/scripts/deploy-neko-hostinger.sh --smoke
 ```
 
-Prueft: `docker compose ps`, Chromium-Version **im Container**, neko-Version,
-gepinntes Image, lokale HTTP-Antwort, dass Port 8080 **nicht** auf `0.0.0.0`
-lauscht, HTTPS + Zertifikatsaussteller/-laufzeit, WebRTC-UDP-Port, Existenz und
-Rechte der Persistenz-Verzeichnisse, Autostart-Konfiguration.
+Prueft: `docker compose ps`, Chromium-Version **im Container**,
+**Chromium-Stabilitaet** (zwei PID-Stichproben im Abstand von 15 s — erkennt
+den SIGTRAP-Crash-Loop, den ein blosser Versions-Check uebersieht), gepinntes
+Image, lokale HTTP-Antwort, dass Port 8080 **nicht** auf `0.0.0.0` lauscht,
+HTTPS **per GET** (neko beantwortet HEAD mit 405 — ein `curl -I`-Smoke war
+live falsch negativ) + Zertifikatsaussteller/-laufzeit, WebRTC-UDP-Port,
+Existenz, **Eigentuemer** und Rechte der Persistenz-Verzeichnisse inklusive
+**Schreibprobe aus Container-Sicht** (als UID 1000), Autostart-Konfiguration.
 
 ### Manuelle Kommandozeilen-Checks
 
 ```bash
-curl -fsSI https://neko.laurin-rusterholz.ch          # HTTP/2 200, gueltiges TLS
+# GET, nicht HEAD (-I) — neko beantwortet HEAD mit 405:
+curl -fsS -o /dev/null -w '%{http_code}\n' https://neko.laurin-rusterholz.ch/   # erwartet: 200
 cd /opt/quantus-neko && docker compose ps             # State: running (healthy)
 docker compose exec -T neko /usr/bin/chromium --version
 ```
@@ -530,10 +557,13 @@ durch `rm -rf /opt/quantus-neko/data` geloescht.
 
 | Symptom | Ursache | Vorgehen |
 |---|---|---|
-| Status-UI „Server ist nicht erreichbar" | Container aus, Proxy/DNS/TLS defekt | `docker compose ps`, `curl -fsSI https://neko.laurin-rusterholz.ch` |
+| Status-UI „Server ist nicht erreichbar" | Container aus, Proxy/DNS/TLS defekt | `docker compose ps`; `curl -fsS -o /dev/null -w '%{http_code}\n' https://neko.laurin-rusterholz.ch/` (GET — HEAD liefert 405) |
+| Login scheitert mit „token not found - … Cookie auth" | Cookie-Auth am Server aktiv — mit dem Legacy-Client des 3.1.5-Images unvereinbar | `NEKO_SESSION_COOKIE_ENABLED` muss `false` sein (Standard dieses Repos); `cd /opt/quantus-neko && docker compose up -d` |
 | Login-Maske erscheint, aber Bild bleibt schwarz | UDP 59000 zu (meist Hostinger-Panel-Firewall) | Panel-Firewall pruefen; `ss -uln \| grep 59000` |
+| Chromium crasht wiederholt (SIGTRAP/core dumped) | `data/` gehoert root (Profil nicht beschreibbar) oder `pids_limit` zu knapp | Deploy-Skript (ohne `--smoke`) erneut ausfuehren — es setzt Eigentuemer/Rechte; `--smoke` prueft die Stabilitaet |
+| `permission denied` fuer `sessions.json`/Downloads | `data/` gehoert root statt `1000:1000` | Deploy-Skript erneut ausfuehren; Smoke macht die Schreibprobe |
 | Container startet, faellt aber staendig um | `/dev/shm` zu klein oder OOM | `docker compose logs neko`, `shm_size` und `mem_limit` pruefen |
-| Muss sich staendig neu anmelden | Cookies von Drittanbietern blockiert (Safari) | Knopf „↗ Neuer Tab" nutzen |
+| Muss sich staendig neu anmelden | Browser leert den (partitionierten) iframe-Speicher der neko-Origin | Knopf „↗ Neuer Tab" nutzen — dort unpartitionierter First-Party-Speicher |
 | Downloads werden verweigert | Policy-Datei nicht gemountet | `docker compose exec -T neko cat /etc/chromium/policies/managed/policies.json` |
 | Bild ruckelt | 1 vCPU am Limit | `NEKO_SCREEN` auf `1152x648@25` senken, `docker compose up -d` |
 | Zertifikat wird nicht ausgestellt | Port 80 zu oder DNS falsch | `journalctl -u caddy -f` bzw. `certbot certificates` |

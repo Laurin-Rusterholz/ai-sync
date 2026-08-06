@@ -205,4 +205,60 @@ fi
 printf '  ✓ Pruefmuster selbst verifiziert\n'; PASS=$((PASS + 1))
 
 echo
+echo "6. Datenverzeichnisse: Eigentuemer idempotent und nie destruktiv"
+# ensure_data_dir muss root:root-Altbestand reparieren (Live-Befund: permission
+# denied fuer sessions.json/Downloads, Chromium-SIGTRAP-Loop wegen
+# unbeschreibbarem Profil), darf aber bei korrektem Eigentuemer NICHTS anfassen
+# und unter keinen Umstaenden loeschen. chown ist gestubbt — der Test laeuft
+# auch ohne root (CI); geprueft wird die Entscheidung, nicht der Syscall.
+OWNTEST="$(QUANTUS_NEKO_DIR="${WORK}/app3" NEKO_DEPLOY_LIB_ONLY=1 bash -c '
+  set -uo pipefail
+  export QUANTUS_NEKO_DIR
+  mkdir -p "${QUANTUS_NEKO_DIR}"
+  source "$1"
+
+  STUB="${QUANTUS_NEKO_DIR}/stub"; LOG="${STUB}/chown.log"
+  mkdir -p "${STUB}"; : > "${LOG}"
+  printf "#!/usr/bin/env bash\necho \"\$*\" >> \"%s\"\n" "${LOG}" > "${STUB}/chown"
+  chmod +x "${STUB}/chown"
+  export PATH="${STUB}:${PATH}"
+
+  ME_UID="$(id -u)"; ME_GID="$(id -g)"
+  D="${QUANTUS_NEKO_DIR}/data/profile"
+  mkdir -p "${D}"
+  printf "wichtig" > "${D}/bookmark.bak"
+
+  # 1) Eigentuemer stimmt bereits -> KEIN chown (idempotent und billig)
+  ensure_data_dir "${D}" "${ME_UID}" "${ME_GID}"
+  printf "CALLS_OK=%s\n" "$(grep -c . "${LOG}")"
+
+  # 2) Eigentuemer weicht ab -> genau EIN rekursives chown auf uid:gid
+  ensure_data_dir "${D}" 4242 4243
+  printf "CALLS_BAD=%s\n" "$(grep -c . "${LOG}")"
+  printf "CALL_ARGS=%s\n" "$(tail -n1 "${LOG}")"
+
+  # 3) Bestehende Daten ueberleben die Reparatur unangetastet
+  printf "DATA=%s\n" "$(cat "${D}/bookmark.bak")"
+
+  # 4) Ein fuer den Eigentuemer unbenutzbares Verzeichnis (500) wird geoeffnet
+  E="${QUANTUS_NEKO_DIR}/data/neko"
+  mkdir -p "${E}"; chmod 500 "${E}"
+  ensure_data_dir "${E}" "${ME_UID}" "${ME_GID}"
+  printf "MODE=%s\n" "$(stat -c %a "${E}")"
+  chmod 700 "${E}"
+
+  # 5) data_uid/data_gid: Default 1000, per .env uebersteuerbar
+  printf "UID_DEFAULT=%s\n" "$(data_uid)"
+  env_set NEKO_DATA_UID 1234
+  printf "UID_ENV=%s\n" "$(data_uid)"
+' _ "${SCRIPT}")"
+check "korrekter Eigentuemer: kein chown"       "$(field "${OWNTEST}" CALLS_OK)"    "0"
+check "falscher Eigentuemer: genau ein chown"   "$(field "${OWNTEST}" CALLS_BAD)"   "1"
+check "chown ist rekursiv auf uid:gid"          "$(field "${OWNTEST}" CALL_ARGS)"   "-R 4242:4243 ${WORK}/app3/data/profile"
+check "bestehende Daten bleiben erhalten"       "$(field "${OWNTEST}" DATA)"        "wichtig"
+check "500er-Verzeichnis wird u+rwX repariert"  "$(field "${OWNTEST}" MODE)"        "700"
+check "NEKO_DATA_UID: Default 1000"             "$(field "${OWNTEST}" UID_DEFAULT)" "1000"
+check "NEKO_DATA_UID: .env uebersteuert"        "$(field "${OWNTEST}" UID_ENV)"     "1234"
+
+echo
 printf '✓ Proxy-Erkennung: %s Pruefungen bestanden\n\n' "${PASS}"

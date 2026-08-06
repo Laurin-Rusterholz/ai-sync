@@ -55,14 +55,16 @@ services:
       NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "${NEKO_ADMIN_PASSWORD:?NEKO_ADMIN_PASSWORD fehlt in .env}"
 
       # ── Sitzung ───────────────────────────────────────────────────────────
-      # Cookie statt Token-in-localStorage: HttpOnly, und mit secure=true setzt
-      # neko SameSite=None — nur so haelt die Anmeldung im Quantus-iframe
-      # (Cross-Site-Kontext) ueber Reloads hinweg.
-      NEKO_SESSION_COOKIE_ENABLED: "true"
-      NEKO_SESSION_COOKIE_SECURE: "true"
-      NEKO_SESSION_COOKIE_HTTP_ONLY: "true"
-      NEKO_SESSION_COOKIE_EXPIRATION: "720h"
-      # Sitzungen auf Platte: Anmeldung ueberlebt Container-Neustart/Reboot.
+      # Cookie-Auth ist AUS — Kompatibilitaet, nicht Geschmack: Das Image 3.1.5
+      # liefert den v2-Client aus, der ueber die Legacy-API spricht. Deren
+      # Login liest den Token aus dem Antwort-Body; bei aktivierter Cookie-Auth
+      # laesst neko ihn dort weg und JEDER Login scheitert mit "token not found
+      # - make sure you are not using Cookie auth on the server" (Beleg:
+      # server/internal/http/legacy/session.go im neko-Repo). Ohne Cookies
+      # funktioniert der Login im Cross-Site-iframe wie im neuen Tab; der
+      # Client merkt sich die Anmeldung selbst im localStorage seiner Origin.
+      NEKO_SESSION_COOKIE_ENABLED: "false"
+      # Sitzungen auf Platte: serverseitige Sitzungen ueberleben Neustarts.
       NEKO_SESSION_FILE: "/home/neko/.neko/sessions.json"
       # Nach Reconnect (Netzwechsel, Tab-Wechsel) nicht die alte Sitzung killen.
       NEKO_SESSION_MERCIFUL_RECONNECT: "true"
@@ -86,7 +88,10 @@ services:
 
     volumes:
       # Chromium-Profil: Cookies/Logins, Verlauf, Lesezeichen, Tabs/Tab-Gruppen,
-      # Einstellungen. Muss 1000:1000 gehoeren (User `neko` im Container).
+      # Einstellungen. Gehoert 1000:1000 (User `neko` im Container) — das
+      # Deploy-Skript setzt Eigentuemer/Rechte bei jedem Lauf idempotent.
+      # root:root fuehrte live zum Chromium-Crash-Loop (SIGTRAP), weil
+      # --user-data-dir nicht beschreibbar war.
       - ./data/profile:/home/neko/.config/chromium
       # Downloads + Ziel des Datei-Transfer-Plugins.
       - ./data/downloads:/home/neko/Downloads
@@ -115,7 +120,11 @@ services:
     mem_limit: ${NEKO_MEM_LIMIT:-2600m}
     memswap_limit: ${NEKO_MEM_LIMIT:-2600m}
     cpu_shares: 512
-    pids_limit: 512
+    # pids_limit zaehlt Threads mit: Chromium belegt schon mit wenigen Tabs
+    # mehrere hundert davon (Browser-, GPU-, Netzwerk- und Renderer-Prozesse).
+    # Bei 512 schlaegt clone() fehl und Chromium reisst mit SIGTRAP ab. 2048
+    # laesst Luft und schuetzt den Host weiterhin vor Prozess-Explosionen.
+    pids_limit: 2048
 
     logging:
       driver: "json-file"
