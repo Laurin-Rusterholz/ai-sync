@@ -106,11 +106,19 @@ Import: `n8n/flowertech-lead-to-project.workflow.json` (Workflow → Import from
 ### Ablauf
 
 ```
-Webhook /flowertech-lead  ┐
-Mail-Eingang (optional)   ┴→ Normalisieren & zuordnen → Zuordnung gültig?
-                                                          ├ ja  → Quantus-API → Ergebnis → Antwort 202
-                                                          └ nein→ Antwort 400 (kein Raten)
+Webhook /flowertech-lead → Signatur gültig? ─ nein → Antwort 401
+                                └ ja ┐
+Mail-Eingang (optional, aus)         ┴→ Normalisieren & zuordnen → Zuordnung gültig?
+                                                                     ├ ja  → Quantus-API → Ergebnis → Antwort 202
+                                                                     └ nein→ Antwort 400 (kein Raten)
 ```
+
+Der Webhook ist von aussen erreichbar. Er lehnt deshalb jeden Aufruf ohne den
+Header `X-FlowerTech-Signature` = `FT_WEBHOOK_SECRET` mit **401** ab — noch
+**vor** der Normalisierung, also bevor Fremddaten überhaupt angefasst werden.
+Ist `FT_WEBHOOK_SECRET` nicht gesetzt, schlägt der Vergleich fehl und der
+Webhook nimmt gar nichts an. Der IMAP-Eingang ist ein interner, standardmässig
+deaktivierter Zweig und braucht keine Signatur.
 
 ### Einzutragende Variablen
 
@@ -131,9 +139,14 @@ Ein starkes Secret erzeugen: `openssl rand -base64 48`.
 
 ### Sicherheit und Wiederholbarkeit
 
-* **Signatur:** Der Aufruf trägt `X-FlowerTech-Signature`. Ohne gesetztes
-  `FLOWERTECH_WEBHOOK_SECRET` sind ausschliesslich Browser-Aufrufe von erlaubten
-  Herkünften möglich.
+* **Zugang zur Funktion:** Ein Aufruf ist auf genau zwei Wegen zulässig —
+  Browser-Aufruf mit einer **erlaubten Herkunft** (`Origin`-Header) *oder*
+  Server-zu-Server mit **gültiger Signatur** (`X-FlowerTech-Signature`).
+  Ein fehlender `Origin`-Header ist ausdrücklich **kein** Freibrief: `curl` und
+  beliebige Skripte ohne Signatur erhalten **401**, bevor irgendetwas gespeichert
+  wird. Ohne gesetztes `FLOWERTECH_WEBHOOK_SECRET` sind ausschliesslich
+  Browser-Aufrufe von erlaubten Herkünften möglich. Der Signaturvergleich läuft
+  in konstanter Zeit über die volle Länge.
 * **Idempotenz:** `idempotencyKey` aus Token, Art, E-Mail und Zieltext. Der
   Server merkt sich verarbeitete Schlüssel unter `flowertech/submissionKeys/` und
   antwortet bei Wiederholung mit `{ ok: true, duplicate: true }`. Retries sind
@@ -164,6 +177,15 @@ Ein starkes Secret erzeugen: `openssl rand -base64 48`.
 5. Denselben Aufruf **noch einmal** absetzen. Erwartet: `"duplicate":true` —
    es entsteht kein zweites Projekt und keine doppelte Aufgabe.
 6. Aufruf ohne Token: erwartet HTTP 400 mit Begründung, kein Eintrag.
+   Aufruf am n8n-Webhook **ohne** `X-FlowerTech-Signature`: erwartet HTTP 401,
+   der Lead wird nicht einmal normalisiert.
+
+   ```bash
+   # muss 401 liefern — weder Herkunft noch Signatur
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
+     "$FT_QUANTUS_BASE/.netlify/functions/flowertech-portal" \
+     -H 'Content-Type: application/json' -d '{"token":"<TOKEN>","kind":"change","payload":{"title":"x"}}'
+   ```
 7. In Quantus die Projektseite öffnen: Bedarf ist gefüllt, die Aufgaben stehen
    in der zentralen Aufgaben-App, die Phase ist auf *Bestandesaufnahme*.
 

@@ -95,10 +95,20 @@ export default async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "POST") return json(req, { error: "Method not allowed" }, 405);
 
+  // Ein Aufruf ist nur auf genau zwei Wegen zulässig:
+  //   1. Browser-Aufruf mit einer erlaubten Herkunft (Origin-Header), oder
+  //   2. Server-zu-Server mit gültiger Signatur (FLOWERTECH_WEBHOOK_SECRET).
+  // Ein fehlender Origin-Header ist KEIN Freibrief: curl & Co. ohne Signatur
+  // werden abgewiesen, statt die Herkunftsprüfung stillschweigend zu überspringen.
   const origin = req.headers.get("Origin") || "";
   const fromMachine = machineCallAuthorized(req);
-  if (!fromMachine && origin && !allowedOrigins().has(origin)) {
-    return json(req, { error: "Origin not allowed" }, 403);
+  if (!fromMachine) {
+    if (!origin) {
+      return json(req, {
+        error: "Aufrufe ohne Herkunft benötigen eine gültige Signatur.",
+      }, 401);
+    }
+    if (!allowedOrigins().has(origin)) return json(req, { error: "Origin not allowed" }, 403);
   }
 
   if (Number(req.headers.get("Content-Length") || 0) > MAX_BODY_BYTES) {

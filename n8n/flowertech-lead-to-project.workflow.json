@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## FlowerTech — Lead → Projekt & Aufgaben\n\n**Zweck:** Ein Lead (Webhook oder Mail-Eingang) wird sicher normalisiert, einem FlowerTech-Projekt zugeordnet und über die Quantus-API eingespeist. Quantus erzeugt daraus Projektfelder und ganz normale Quantus-Aufgaben — es entsteht KEIN paralleles Datenmodell.\n\n**Ablauf:** Webhook/IMAP → Normalisieren (Code) → Token-Zuordnung prüfen → Quantus-API (`/.netlify/functions/flowertech-portal`) → Erfolg/Fehler → Antwort.\n\n**Erforderliche Umgebungsvariablen (n8n → Settings → Variables, NICHT im JSON):**\n- `FT_QUANTUS_BASE` — z. B. `https://management-xo2-pro.netlify.app`\n- `FT_WEBHOOK_SECRET` — identisch zu `FLOWERTECH_WEBHOOK_SECRET` in Netlify\n- `FT_DEFAULT_TOKEN` — optionaler Fallback-Freigabetoken für Leads ohne Token\n\n**Sicherheit:**\n- Das Shared Secret geht ausschliesslich über `$env` in den Header `X-FlowerTech-Signature`. Es steht nirgends in dieser Datei.\n- Ohne gültigen Freigabe-Token wird NICHT geraten: Der Lauf endet im Fehlerpfad.\n- `idempotencyKey` verhindert Doppeleinträge bei Wiederholungen; ein Retry ist gefahrlos.\n- Es werden nur die Felder übertragen, die das Bedarfsformular kennt.\n\n**Test:** siehe docs/flowertech-n8n.md",
-        "height": 620,
+        "content": "## FlowerTech — Lead → Projekt & Aufgaben\n\n**Zweck:** Ein Lead (Webhook oder Mail-Eingang) wird sicher normalisiert, einem FlowerTech-Projekt zugeordnet und über die Quantus-API eingespeist. Quantus erzeugt daraus Projektfelder und ganz normale Quantus-Aufgaben — es entsteht KEIN paralleles Datenmodell.\n\n**Ablauf:** Webhook → **Signatur pruefen** → Normalisieren (Code) → Token-Zuordnung prüfen → Quantus-API (`/.netlify/functions/flowertech-portal`) → Erfolg/Fehler → Antwort.\n\n**Erforderliche Umgebungsvariablen (n8n → Settings → Variables, NICHT im JSON):**\n- `FT_QUANTUS_BASE` — z. B. `https://management-xo2-pro.netlify.app`\n- `FT_WEBHOOK_SECRET` — identisch zu `FLOWERTECH_WEBHOOK_SECRET` in Netlify\n- `FT_DEFAULT_TOKEN` — optionaler Fallback-Freigabetoken für Leads ohne Token\n\n**Sicherheit:**\n- Der oeffentliche Webhook lehnt jeden Aufruf ohne Header `X-FlowerTech-Signature` = `FT_WEBHOOK_SECRET` mit 401 ab — noch VOR der Normalisierung. Der optionale IMAP-Eingang ist ein interner, standardmaessig deaktivierter Zweig und braucht keine Signatur.\n- Das Shared Secret geht ausschliesslich über `$env` in den Header `X-FlowerTech-Signature`. Es steht nirgends in dieser Datei.\n- Ohne gültigen Freigabe-Token wird NICHT geraten: Der Lauf endet im Fehlerpfad.\n- `idempotencyKey` verhindert Doppeleinträge bei Wiederholungen; ein Retry ist gefahrlos.\n- Es werden nur die Felder übertragen, die das Bedarfsformular kennt.\n\n**Test:** siehe docs/flowertech-workflow.md",
+        "height": 700,
         "width": 560,
         "color": 5
       },
@@ -13,33 +13,102 @@
       "name": "Doku",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-1120, -320]
+      "position": [
+        -1120,
+        -320
+      ]
     },
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "flowertech-lead",
         "responseMode": "responseNode",
-        "options": { "rawBody": false }
+        "options": {
+          "rawBody": false
+        }
       },
       "id": "ft-webhook",
       "name": "Webhook: flowertech-lead",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [-1120, 120],
+      "position": [
+        -1120,
+        120
+      ],
       "webhookId": "flowertech-lead-4b21"
     },
     {
       "parameters": {
-        "pollTimes": { "item": [{ "mode": "everyMinute" }] },
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "sig-check",
+              "leftValue": "={{ ($json.headers && $json.headers['x-flowertech-signature']) || '' }}",
+              "rightValue": "={{ $env.FT_WEBHOOK_SECRET }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ft-signature",
+      "name": "Signatur gueltig?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1000,
+        120
+      ],
+      "notes": "Der Webhook ist von aussen erreichbar. Ohne Header X-FlowerTech-Signature = FT_WEBHOOK_SECRET wird bereits hier abgelehnt — vor jeder Normalisierung. Ist FT_WEBHOOK_SECRET nicht gesetzt, schlaegt der Vergleich fehl und der Webhook nimmt nichts an."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'Unauthorized' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "ft-respond-unauth",
+      "name": "Antwort: nicht signiert",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
         "postProcessAction": "read",
-        "options": { "customEmailConfig": "[\"UNSEEN\"]", "forceReconnect": 60 }
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\"]",
+          "forceReconnect": 60
+        }
       },
       "id": "ft-imap",
       "name": "Mail-Eingang (optional)",
       "type": "n8n-nodes-base.emailReadImap",
       "typeVersion": 2,
-      "position": [-1120, 340],
+      "position": [
+        -1120,
+        340
+      ],
       "disabled": true,
       "notes": "Optionaler zweiter Eingang. Credentials nur in n8n hinterlegen — nie im Workflow-JSON."
     },
@@ -51,18 +120,28 @@
       "name": "Normalisieren & zuordnen",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-880, 200]
+      "position": [
+        -880,
+        200
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "version": 2 },
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
           "conditions": [
             {
               "id": "valid-check",
               "leftValue": "={{ $json.valid }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
           "combinator": "and"
@@ -73,7 +152,10 @@
       "name": "Zuordnung gültig?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [-640, 200]
+      "position": [
+        -640,
+        200
+      ]
     },
     {
       "parameters": {
@@ -82,16 +164,32 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" },
-            { "name": "X-FlowerTech-Signature", "value": "={{ $env.FT_WEBHOOK_SECRET }}" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-FlowerTech-Signature",
+              "value": "={{ $env.FT_WEBHOOK_SECRET }}"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ token: $json.token, kind: $json.kind, payload: $json.payload, idempotencyKey: $json.idempotencyKey }) }}",
         "options": {
-          "retry": { "retry": { "maxTries": 3, "waitBetweenTries": 2000 } },
-          "response": { "response": { "neverError": true, "fullResponse": true } },
+          "retry": {
+            "retry": {
+              "maxTries": 3,
+              "waitBetweenTries": 2000
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          },
           "timeout": 15000
         }
       },
@@ -99,7 +197,10 @@
       "name": "Quantus-API: Eingang buchen",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-400, 100],
+      "position": [
+        -400,
+        100
+      ],
       "notes": "Idempotent: derselbe idempotencyKey wird serverseitig nur einmal verarbeitet. Ein Retry ist gefahrlos."
     },
     {
@@ -110,47 +211,145 @@
       "name": "Ergebnis auswerten",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-160, 100]
+      "position": [
+        -160,
+        100
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ ok: $json.ok, duplicate: $json.duplicate, submissionId: $json.submissionId, error: $json.error }) }}",
-        "options": { "responseCode": "={{ $json.ok ? 202 : 502 }}" }
+        "options": {
+          "responseCode": "={{ $json.ok ? 202 : 502 }}"
+        }
       },
       "id": "ft-respond-ok",
       "name": "Antwort",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [80, 100]
+      "position": [
+        80,
+        100
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ ok: false, error: $json.reason }) }}",
-        "options": { "responseCode": 400 }
+        "options": {
+          "responseCode": 400
+        }
       },
       "id": "ft-respond-reject",
       "name": "Antwort: nicht zuordenbar",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [-400, 340]
+      "position": [
+        -400,
+        340
+      ]
     }
   ],
   "connections": {
-    "Webhook: flowertech-lead": { "main": [[{ "node": "Normalisieren & zuordnen", "type": "main", "index": 0 }]] },
-    "Mail-Eingang (optional)": { "main": [[{ "node": "Normalisieren & zuordnen", "type": "main", "index": 0 }]] },
-    "Normalisieren & zuordnen": { "main": [[{ "node": "Zuordnung gültig?", "type": "main", "index": 0 }]] },
-    "Zuordnung gültig?": {
+    "Webhook: flowertech-lead": {
       "main": [
-        [{ "node": "Quantus-API: Eingang buchen", "type": "main", "index": 0 }],
-        [{ "node": "Antwort: nicht zuordenbar", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Signatur gueltig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Quantus-API: Eingang buchen": { "main": [[{ "node": "Ergebnis auswerten", "type": "main", "index": 0 }]] },
-    "Ergebnis auswerten": { "main": [[{ "node": "Antwort", "type": "main", "index": 0 }]] }
+    "Mail-Eingang (optional)": {
+      "main": [
+        [
+          {
+            "node": "Normalisieren & zuordnen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalisieren & zuordnen": {
+      "main": [
+        [
+          {
+            "node": "Zuordnung gültig?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zuordnung gültig?": {
+      "main": [
+        [
+          {
+            "node": "Quantus-API: Eingang buchen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Antwort: nicht zuordenbar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quantus-API: Eingang buchen": {
+      "main": [
+        [
+          {
+            "node": "Ergebnis auswerten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ergebnis auswerten": {
+      "main": [
+        [
+          {
+            "node": "Antwort",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signatur gueltig?": {
+      "main": [
+        [
+          {
+            "node": "Normalisieren & zuordnen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Antwort: nicht signiert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "pinData": {},
-  "tags": ["flowertech", "quantus"]
+  "tags": [
+    "flowertech",
+    "quantus"
+  ]
 }
