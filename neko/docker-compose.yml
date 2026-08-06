@@ -64,6 +64,12 @@ services:
       # funktioniert der Login im Cross-Site-iframe wie im neuen Tab; der
       # Client merkt sich die Anmeldung selbst im localStorage seiner Origin.
       NEKO_SESSION_COOKIE_ENABLED: "false"
+      # Die Legacy-Bruecke ausdruecklich anfordern statt sie vom Image-Default
+      # abhaengen zu lassen: der mitgelieferte Client spricht ausschliesslich
+      # die v2-Endpunkte (/ws, /file, /stats). Faellt `legacy` in einer
+      # kuenftigen Version auf "false", waere die Anmeldung wieder tot — hier
+      # steht deshalb explizit, worauf sich dieses Setup verlaesst.
+      NEKO_LEGACY: "true"
       # Sitzungen auf Platte: serverseitige Sitzungen ueberleben Neustarts.
       NEKO_SESSION_FILE: "/home/neko/.neko/sessions.json"
       # Nach Reconnect (Netzwechsel, Tab-Wechsel) nicht die alte Sitzung killen.

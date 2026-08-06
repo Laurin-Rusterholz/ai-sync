@@ -240,13 +240,37 @@ bedient alle Verbindungen, plus TCP-Fallback auf demselben Port.
 
 | Einstellung | Wert | Warum |
 |---|---|---|
-| `shm_size` | `2gb` | neko-Doku: Chromium stuerzt sonst ab |
+| `shm_size` | `2gb` | Reserve fuer X-Server und GStreamer. **Nicht** die Ursache der Live-Abstuerze: das Image startet Chromium mit `--disable-dev-shm-usage`, es nutzt `/tmp` |
 | `mem_limit` | `2600m` | laesst ~1,4 GB fuer Host + n8n; OOM trifft den Container, nicht den Host |
 | `cpu_shares` | `512` | halbe Gewichtung gegenueber n8n statt harter CPU-Deckelung |
 | `pids_limit` | `2048` | Schutz vor Prozess-Explosionen. Zaehlt **Threads** mit — Chromium belegt schon mit wenigen Tabs mehrere hundert; bei `512` schlug `clone()` fehl und Chromium stuerzte mit SIGTRAP ab |
 | `NEKO_DESKTOP_SCREEN` | `1280x720@30` | Software-Encoding auf 1 vCPU; hoehere Aufloesung nur bei Bedarf |
 | `restart` | `unless-stopped` | Autostart nach Reboot |
 | `logging` | 10 MB × 3 | die 50-GB-Platte laeuft nicht mit Logs voll |
+
+#### Warum `SIGTRAP` — und was ausgeschlossen wurde
+
+`SIGTRAP` ist bei Chromium kein Speicher- und kein Netzwerkproblem: jedes
+fatale `CHECK` endet in `IMMEDIATE_CRASH()`, und das ist auf x86 ein `int3`,
+also genau `SIGTRAP (core dumped)`. Ein OOM saehe anders aus (`SIGKILL`,
+Exit 137). Gesucht war folglich ein fatales `CHECK` beim Start:
+
+| Verdacht | Befund |
+|---|---|
+| **Profil-Mount nicht beschreibbar** | **Hauptursache.** `--user-data-dir=/home/neko/.config/chromium` ist das gemountete `data/profile`; es gehoerte `root`, Chromium laeuft als `neko`. Ohne beschreibbares Profil bricht Chromium fatal ab, `supervisord` startet es wegen `autorestart=true` endlos neu |
+| **`pids_limit` erreicht** | zweiter, gleichwertiger Pfad: die Grenze zaehlt Threads, ein fehlgeschlagenes `clone()` endet ebenfalls im `CHECK`. Deshalb von `512` auf `2048` erhoeht |
+| `/dev/shm` zu klein | ausgeschlossen — das Image startet Chromium mit `--disable-dev-shm-usage` |
+| Sandbox / seccomp | ausgeschlossen — das Image startet mit `--no-sandbox`, `SYS_ADMIN` und `seccomp:unconfined` sind gesetzt |
+| Chromium-Policies | ausgeschlossen — ungueltige Policies ignoriert Chromium, es bricht deswegen nicht ab |
+| `mem_limit` | ausgeschlossen als Ursache **dieses** Symptoms (waere `SIGKILL`) |
+
+Die **Startargumente kommen aus dem Image** (`--no-sandbox`,
+`--disable-dev-shm-usage`, `--disable-gpu`, `--user-data-dir=…`) und werden
+bewusst nicht ueberschrieben — dafuer waere ein eigenes Image noetig.
+
+Warum das in `docker logs` schwer zu sehen war: Chromiums eigene Ausgabe geht
+nach `/var/log/neko/chromium.log` **im Container**, nicht auf stdout. Der
+Smoke-Test liest deshalb im Crash-Fall genau diese Datei mit aus.
 
 Aufloesung spaeter aendern: `NEKO_SCREEN` in `/opt/quantus-neko/.env`, dann
 `docker compose up -d`. Alternativ zur Laufzeit als Admin in der neko-UI.
@@ -268,6 +292,14 @@ Container-Sicht** (als UID 1000 in allen drei Pfaden).
 `RestoreOnStartup: 1` in den Chromium-Policies stellt beim Start die letzte
 Sitzung wieder her — offene Tabs und Tab-Gruppen sind nach
 `docker compose restart` wieder da.
+
+**Nebenwirkung des Profil-Mounts:** `data/profile` verdeckt
+`/home/neko/.config/chromium` und damit die Voreinstellungen, die das Image
+dort ablegt (Home-Knopf, Lesezeichenleiste). Docker kopiert Image-Inhalte nur
+in leere **benannte** Volumes, nicht in Bind-Mounts — beim ersten Start fehlten
+sie also. Das Deploy-Skript holt sie deshalb einmalig aus dem Image
+(`seed_chromium_preferences`); ein bereits vorhandenes Profil bleibt dabei
+unangetastet.
 
 ---
 
@@ -303,6 +335,31 @@ Stattdessen:
   partitionierte Speicher des jeweiligen Browsers.
 * `NEKO_SESSION_FILE` legt serverseitige Sitzungen auf Platte ab — sie
   ueberleben `docker compose restart` und einen VPS-Reboot.
+* `NEKO_LEGACY=true` steht ausdruecklich in der Compose-Datei. Die
+  Legacy-Bruecke ist heute der Image-Default — faellt sie in einer kuenftigen
+  Version weg, waere die Anmeldung wieder tot. Der Smoke-Test prueft deshalb
+  auch den Pfad `/ws`, den der Client wirklich benutzt (nicht `/api/ws`).
+
+### Ehrlich benannt: das Passwort steht in der Anfrage des Clients
+
+Der mitgelieferte v2-Client haengt Benutzer und Passwort als
+**Query-Parameter** an seine eigenen Anfragen (`/ws?password=…`,
+`/file?pwd=…`). Das laesst sich ohne einen selbst gebauten Client nicht
+abstellen — und ein eigener Client ist hier bewusst nicht das Ziel. Was daraus
+folgt, statt es zu verschweigen:
+
+* Uebertragen wird ausschliesslich ueber TLS.
+* neko protokolliert **erfolgreiche** Anfragen nur auf `debug`; im
+  Normalbetrieb (`info`) steht die URL nicht im Log. Bei einer
+  **fehlgeschlagenen** `/file`-Anfrage landet sie mit im Warn-Eintrag.
+  `docker logs quantus-neko` ist deshalb wie ein Secret zu behandeln: nur
+  root, Rotation 10 MB × 3, nicht weitergeben.
+* Traefiks Access-Log ist im bestehenden n8n-Stack nicht aktiviert — und wird
+  von hier aus auch nicht angefasst.
+* **In Quantus, im Repo und in der iframe-URL steht das Passwort nirgends.**
+  Auch das Deploy-Skript gibt es nie aus: die Anmelde-Probe schickt es ueber
+  `stdin`, den Sitzungstoken ueber eine curl-Konfigurationsdatei (Modus 600) —
+  beides taucht nicht in der Prozessliste des Hosts auf.
 
 **UX-Trade-off, ehrlich benannt:** ein echter passwortloser Auto-Login ist mit
 neko nur moeglich, indem das Passwort im Client offengelegt wird. Das wird
@@ -453,9 +510,20 @@ Prueft: `docker compose ps`, Chromium-Version **im Container**,
 den SIGTRAP-Crash-Loop, den ein blosser Versions-Check uebersieht), gepinntes
 Image, lokale HTTP-Antwort, dass Port 8080 **nicht** auf `0.0.0.0` lauscht,
 HTTPS **per GET** (neko beantwortet HEAD mit 405 — ein `curl -I`-Smoke war
-live falsch negativ) + Zertifikatsaussteller/-laufzeit, WebRTC-UDP-Port,
-Existenz, **Eigentuemer** und Rechte der Persistenz-Verzeichnisse inklusive
-**Schreibprobe aus Container-Sicht** (als UID 1000), Autostart-Konfiguration.
+live falsch negativ) + Zertifikatsaussteller/-laufzeit, WebSocket-Upgrade auf
+`/api/ws` **und** auf `/ws` (den Pfad, den der Client des Images wirklich
+nutzt), WebRTC-UDP-Port, Existenz, **Eigentuemer** und Rechte der
+Persistenz-Verzeichnisse inklusive **Schreibprobe aus Container-Sicht**
+(als UID 1000), Autostart-Konfiguration.
+
+Dazu die **echte Anmeldung**: der Smoke meldet sich per `/api/login` an,
+prueft, ob der Token im Antwort-Body steht (nur dann kann der mitgelieferte
+Client ihn verwenden), und meldet sich sofort wieder ab. Das ist die einzige
+Pruefung, die den Live-Fehler wirklich ausschliesst — dass in der
+Compose-Datei `NEKO_SESSION_COOKIE_ENABLED="false"` steht, heisst noch nicht,
+dass der **laufende** Container es uebernommen hat. Schlaegt sie an, nennt die
+Ausgabe den Grund im Klartext (Cookie-Auth aktiv, falsches Passwort oder API
+nicht erreichbar). Passwort und Token erscheinen dabei in keiner Ausgabe.
 
 ### Manuelle Kommandozeilen-Checks
 
