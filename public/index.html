@@ -25386,6 +25386,7 @@ function renderThesisWriteTab(th, state) {
           <div 
             id="thsEditor_${chapter.id}"
             contenteditable="true"
+            data-thesis-id="${th.id}" data-chapter-id="${chapter.id}"
             data-placeholder="Schreib hier dein Kapitel. Nimm dir Zeit. Atme. Lass die Worte fließen."
             style="width:100%;min-height:540px;background:none;border:0;outline:none;color:var(--text);font-family:${fontFamily};font-size:${fontSize}px;line-height:${lineHeight};box-sizing:border-box"
             oninput="window.thsLiveWordCount(this,'${chapter.id}');window.thsScheduleAutoSave('${th.id}','${chapter.id}')"
@@ -26094,6 +26095,7 @@ function renderThesisFocusMode(th, chapterId) {
             id="thsFocusEditor"
             class="ths-focus-textarea"
             contenteditable="true"
+            data-thesis-id="${th.id}" data-chapter-id="${chapter.id}"
             data-placeholder="Atme. Schreib."
             oninput="window.thsLiveWordCount(this,'${chapter.id}');window.thsScheduleAutoSave('${th.id}','${chapter.id}')"
             onblur="window.thsSaveChapterContentHtml('${th.id}','${chapter.id}',this.innerHTML);window.thsTrackSession('${th.id}','${chapter.id}',this.innerText)"
@@ -28116,14 +28118,17 @@ window.thsSaveChapterContentHtml = function(thId, chId, html) {
   scheduleSave();
 };
 
-// Debounced auto-save während des Tippens (1.5s)
+// Gebündeltes Speichern während des Tippens (1.5 s). Über die zentrale
+// Registry, damit ein Tab-Wechsel oder Schließen den offenen Schreibvorgang
+// nachholt — 1,5 Sekunden sind sonst schnell ein verlorener Satz.
 window.thsScheduleAutoSave = function(thId, chId) {
-  if (window._thsAutoSaveTimer) clearTimeout(window._thsAutoSaveTimer);
-  window._thsAutoSaveTimer = setTimeout(() => {
+  const write = () => {
     // Normaler Editor ODER Fokus-/Sprint-Editor (thsFocusEditor)
     const el = document.getElementById('thsEditor_' + chId) || document.getElementById('thsFocusEditor');
     if (el) window.thsSaveChapterContentHtml(thId, chId, el.innerHTML);
-  }, 1500);
+  };
+  if (typeof window.scheduleSaveDebounced === "function") window.scheduleSaveDebounced("thesis:" + thId + ":" + chId, 1500, write);
+  else write();
 };
 
 window.thsLiveWordCount = function(el, chId) {
@@ -28162,6 +28167,12 @@ window.thsFormat = function(command, value) {
   // re-focus auf den aktiven editor
   const focused = document.activeElement;
   if (focused?.id?.startsWith('thsEditor_')) focused.focus();
+  // execCommand loest je nach Browser kein input-Ereignis aus — reine
+  // Formatierung ginge dann verloren. Deshalb ausdruecklich sichern.
+  const ed = document.activeElement;
+  const thId = ed?.dataset?.thesisId || null;
+  const chId = ed?.dataset?.chapterId || null;
+  if (thId && chId) window.thsScheduleAutoSave(thId, chId);
 };
 
 // Bild via File-Picker einfügen
@@ -66505,12 +66516,14 @@ function initNoteFlow() {
   window.nfSetFont = function(fontFamily) {
     var ed = document.getElementById("nf-ed-content");
     if (ed) ed.style.fontFamily = "'" + fontFamily + "',sans-serif";
-    if (nfCurrentNote) nfCurrentNote._fontFamily = fontFamily;
+    // _fontFamily wandert erst in nfAutoSave() nach fontFamily. Ohne eigenen
+    // Aufruf ginge die Schriftwahl verloren, solange man nichts mehr tippt.
+    if (nfCurrentNote) { nfCurrentNote._fontFamily = fontFamily; nfAutoSave(); }
   };
   window.nfSetFontSize = function(size) {
     var ed = document.getElementById("nf-ed-content");
     if (ed) ed.style.fontSize = size + "px";
-    if (nfCurrentNote) nfCurrentNote._fontSize = size;
+    if (nfCurrentNote) { nfCurrentNote._fontSize = size; nfAutoSave(); }
   };
   
   // Pin note toggle
@@ -82205,10 +82218,31 @@ document.addEventListener("click", function(e) {
 .jb-editor-content{flex:1;padding:32px 96px;display:flex;flex-direction:column;align-items:center;overflow-y:auto}
 @media(max-width:768px){.jb-editor-content{padding:16px}}
 .jb-editor-wrap{width:100%;max-width:768px}
-.jb-editor-title{font-size:48px;font-weight:700;width:100%;color:var(--text);background:transparent!important;border:none!important;outline:none;font-family:inherit;padding:0!important;border-radius:0!important}
+.jb-editor-title{font-size:48px;font-weight:700;width:100%;color:var(--text);background:transparent!important;border:none!important;outline:none;font-family:inherit;padding:0!important;border-radius:0!important;line-height:1.15;letter-spacing:-.02em}
 .jb-editor-title::placeholder{color:var(--panel)}
-.jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none}
+/* ── Schreibkomfort ───────────────────────────────────────────────────────
+   Zeilenlaenge, Zeilenabstand und Absatzrhythmus entscheiden darueber, ob man
+   gern weiterschreibt. 66 Zeichen sind die klassische Lesebreite; darunter
+   springt das Auge, darueber verliert es die Zeile. Der Schreibbereich waechst
+   unten mit, damit der Cursor nie am Fensterrand klebt. */
+.jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none;
+  max-width:66ch;margin:0 auto;padding-bottom:45vh;
+  caret-color:var(--accent);text-wrap:pretty;hyphens:auto;-webkit-hyphens:auto}
 .jb-richtext:empty::before{content:attr(data-placeholder);color:var(--panel)}
+.jb-richtext>div,.jb-richtext>p{margin:0 0 .85em}
+.jb-richtext ul,.jb-richtext ol{padding-left:1.4em;margin:1em 0}
+.jb-richtext li{margin:.3em 0}
+.jb-richtext ::selection{background:color-mix(in oklab,var(--accent) 32%,transparent)}
+/* Ruhe-Modus: alles ausser dem Text tritt zurueck. Der laufende Absatz bleibt
+   voll sichtbar, die uebrigen daemmern — das haelt den Blick an der Stelle,
+   an der geschrieben wird, ohne den Zusammenhang wegzunehmen. */
+.jb-editor.jb-calm .jb-editor-header{opacity:.12;transition:opacity .35s}
+.jb-editor.jb-calm .jb-editor-header:hover,.jb-editor.jb-calm .jb-editor-header:focus-within{opacity:1}
+.jb-editor.jb-calm .jb-richtext>*{opacity:.32;transition:opacity .35s}
+.jb-editor.jb-calm .jb-richtext>.jb-here,.jb-editor.jb-calm .jb-richtext:not(:focus-within)>*{opacity:1}
+.jb-writing-meta{display:flex;gap:14px;align-items:center;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.jb-writing-meta b{color:var(--text2);font-weight:700}
+@media(max-width:768px){.jb-richtext{font-size:17px;padding-bottom:35vh}.jb-editor-title{font-size:32px}}
 /* Kein violetter Fokus-Ring im Schreibbereich (globale :focus-visible-Regel überschreiben) */
 .jb-richtext:focus,.jb-richtext:focus-visible,.jb-editor-title:focus,.jb-editor-title:focus-visible,
 .jb-editor [contenteditable]:focus,.jb-editor [contenteditable]:focus-visible,
@@ -82286,6 +82320,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         <button onclick="jbFormat('formatBlock','blockquote')" class="jb-toolbar-btn" title="Zitat">"</button>
       </div>
       <div style="width:1px;height:14px;background:var(--panel);flex-shrink:0"></div>
+      <span class="jb-writing-meta" id="jbWritingMeta"></span>
+      <button id="jbCalmBtn" onclick="jbToggleCalm()" style="background:none;border:1px solid var(--panel);color:var(--text2);font-size:11px;padding:4px 9px;border-radius:6px;cursor:pointer" title="Ruhe-Modus: alles ausser dem Text tritt zurück (Escape beendet ihn)">◐ Ruhe</button>
       <select class="jb-select" id="jbEditorFont" onchange="jbUpdateFont();jbAutoSave()" style="font-size:9px;padding:4px 2rem 4px 8px">
         <option value="jb-font-inter">Inter</option>
         <option value="jb-font-lora">Lora</option>
@@ -82320,7 +82356,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
           </div>
         </div>
         <input type="text" id="jbEditorTitle" class="jb-editor-title" placeholder="Haupttitel..." oninput="jbAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbEditorArea').focus()}">
-        <div id="jbEditorArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Beginne deine Erzählung..." oninput="jbAutoSave()"></div>
+        <div id="jbEditorArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Beginne deine Erzählung..." spellcheck="true" oninput="jbOnWrite()"></div>
       </div>
     </div>
   </div>
@@ -82385,7 +82421,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     <div class="jb-editor-content">
       <div class="jb-editor-wrap">
         <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." oninput="jbSLAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
-        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." oninput="jbSLAutoSave()"></div>
+        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." spellcheck="true" oninput="jbApplyTypography();jbSLAutoSave()"></div>
       </div>
     </div>
   </div>
@@ -82527,6 +82563,153 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   window.closeJournalBooklet = closeJournalBooklet;
 
   // ====== TOAST ======
+  // ══ Schreibkomfort ═══════════════════════════════════════════════════════
+  // Was das Schreiben angenehm macht, ist selten eine grosse Funktion: es sind
+  // ruhige Rueckmeldung, kein Springen, und dass die Tastatur tut, was man von
+  // einem Textprogramm erwartet.
+
+  function jbWordCount(text) {
+    var clean = String(text || "").replace(/ /g, " ").trim();
+    return clean ? clean.split(/\s+/).length : 0;
+  }
+
+  // Wortzahl und geschaetzte Lesezeit — ohne Nachkommastellen-Theater.
+  function jbUpdateWritingMeta() {
+    var box = document.getElementById("jbWritingMeta");
+    var area = document.getElementById("jbEditorArea");
+    if (!box || !area) return;
+    var words = jbWordCount(area.innerText || area.textContent || "");
+    var minutes = Math.max(1, Math.round(words / 200));
+    box.innerHTML = words
+      ? "<span><b>" + words.toLocaleString("de-CH") + "</b> Wörter</span><span><b>" + minutes + "</b> Min. Lesezeit</span>"
+      : "";
+  }
+  window.jbUpdateWritingMeta = jbUpdateWritingMeta;
+
+  // Ruhe-Modus: Kopfzeile und die uebrigen Absaetze treten zurueck.
+  window.jbToggleCalm = function() {
+    var ed = document.getElementById("jbEditor");
+    if (!ed) return;
+    var on = ed.classList.toggle("jb-calm");
+    try { localStorage.setItem("jbCalm", on ? "1" : "0"); } catch (e) {}
+    var btn = document.getElementById("jbCalmBtn");
+    if (btn) btn.style.color = on ? "var(--accent)" : "";
+    if (on) jbMarkCurrentParagraph();
+    jbToast(on ? "Ruhe-Modus an" : "Ruhe-Modus aus");
+  };
+
+  function jbApplyCalmPreference() {
+    var ed = document.getElementById("jbEditor");
+    if (!ed) return;
+    var on = false;
+    try { on = localStorage.getItem("jbCalm") === "1"; } catch (e) {}
+    ed.classList.toggle("jb-calm", on);
+    var btn = document.getElementById("jbCalmBtn");
+    if (btn) btn.style.color = on ? "var(--accent)" : "";
+  }
+
+  // Den Absatz markieren, in dem der Cursor steht — nur dieser bleibt im
+  // Ruhe-Modus voll sichtbar.
+  function jbMarkCurrentParagraph() {
+    var area = document.getElementById("jbEditorArea");
+    if (!area) return;
+    var sel = window.getSelection();
+    var node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+    var block = null;
+    while (node && node !== area) {
+      if (node.parentNode === area) { block = node; break; }
+      node = node.parentNode;
+    }
+    Array.prototype.forEach.call(area.children, function(child) {
+      child.classList.toggle("jb-here", child === block);
+    });
+  }
+
+  // Deutsche Typografie beim Tippen: „Anfuehrungszeichen", Gedankenstrich und
+  // Auslassungspunkte. Ersetzt wird nur direkt hinter dem Cursor und nur, wenn
+  // das Muster eindeutig ist — nichts wird nachtraeglich umgeschrieben.
+  var JB_TYPO = [
+    { re: /--$/, out: "–" },        // Gedankenstrich
+    { re: /\.\.\.$/, out: "…" },     // Auslassungspunkte
+    { re: /(^|[\s(\[])"$/, out: "$1„" },
+    { re: /([^\s(\[])"$/, out: "$1“" }
+  ];
+
+  function jbApplyTypography() {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
+    var range = sel.getRangeAt(0);
+    var node = range.startContainer;
+    if (node.nodeType !== 3) return false;           // nur in reinem Text
+    var offset = range.startOffset;
+    var before = node.textContent.slice(0, offset);
+    for (var i = 0; i < JB_TYPO.length; i++) {
+      var rule = JB_TYPO[i];
+      var m = before.match(rule.re);
+      if (!m) continue;
+      var replacement = rule.out.replace("$1", m[1] || "");
+      var cut = m[0].length;
+      // Ueber die Auswahl ersetzen statt textContent direkt zu setzen: nur so
+      // bleibt der Rueckgaengig-Verlauf des Browsers erhalten. Ein Textprogramm,
+      // in dem Strg+Z nicht mehr funktioniert, ist unbrauchbar.
+      try {
+        var r = document.createRange();
+        r.setStart(node, offset - cut);
+        r.setEnd(node, offset);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        document.execCommand("insertText", false, replacement);
+        return true;
+      } catch (e) {
+        // Sollte insertText nicht verfuegbar sein, lieber nichts ersetzen als
+        // den Text zu beschaedigen.
+        try { sel.removeAllRanges(); sel.addRange(range); } catch (_) {}
+        return false;
+      }
+    }
+    return false;
+  }
+  window.jbApplyTypography = jbApplyTypography;
+
+  // Laeuft bei jedem Anschlag im Schreibbereich.
+  window.jbOnWrite = function() {
+    jbApplyTypography();
+    jbUpdateWritingMeta();
+    jbMarkCurrentParagraph();
+    jbAutoSave();
+  };
+
+  // Tastatur: was man von einem Textprogramm erwartet.
+  //  ⌘/Strg+B/I/U — Fett, Kursiv, Unterstrichen
+  //  ⌘/Strg+S     — sofort sichern (statt die Seite zu speichern)
+  //  ⌘/Strg+↵     — Editor schliessen
+  //  Escape       — Ruhe-Modus verlassen bzw. Editor schliessen
+  document.addEventListener("keydown", function(e) {
+    var editor = document.getElementById("jbEditor");
+    if (!editor || !editor.classList.contains("active")) return;
+    var mod = e.metaKey || e.ctrlKey;
+    if (mod && !e.shiftKey && !e.altKey) {
+      var key = String(e.key || "").toLowerCase();
+      if (key === "b" || key === "i" || key === "u") {
+        e.preventDefault();
+        window.jbFormat({ b: "bold", i: "italic", u: "underline" }[key]);
+        return;
+      }
+      if (key === "s") { e.preventDefault(); clearTimeout(_jbAutoSaveTimer); jbSaveCurrentDoc(false); return; }
+      if (key === "enter") { e.preventDefault(); window.jbCloseEditor(); return; }
+    }
+    if (e.key === "Escape") {
+      if (editor.classList.contains("jb-calm")) { e.preventDefault(); window.jbToggleCalm(); }
+    }
+  });
+
+  // Cursorbewegungen ohne Tippen (Klick, Pfeiltasten) verschieben den Fokus-
+  // Absatz ebenfalls.
+  document.addEventListener("selectionchange", function() {
+    var editor = document.getElementById("jbEditor");
+    if (editor && editor.classList.contains("jb-calm")) jbMarkCurrentParagraph();
+  });
+
   function jbToast(msg) {
     const t = document.getElementById("jbToast");
     if (!t) return;
@@ -82870,7 +83053,19 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       lh.style.display = "none";
     }
     document.getElementById("jbEditor").classList.add("active");
-    document.getElementById("jbEditorTitle").focus();
+    jbApplyCalmPreference();
+    jbUpdateWritingMeta();
+    // Bei einem angefangenen Text direkt in den Schreibbereich — nicht in den
+    // Titel, den man dann erst wieder verlassen muesste.
+    var areaEl = document.getElementById("jbEditorArea");
+    if (doc.title && (areaEl.innerText || "").trim()) {
+      var r = document.createRange();
+      r.selectNodeContents(areaEl); r.collapse(false);
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      areaEl.focus();
+    } else {
+      document.getElementById("jbEditorTitle").focus();
+    }
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
     
     // Robust binding: addEventListener falls onclick blockiert wird
@@ -82908,6 +83103,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     scheduleSave();
     if (!silent) jbToast("Gesichert");
     document.getElementById("jbEditorStatus").textContent = "Gespeichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"});
+    jbUpdateWritingMeta();
   }
 
   // Send current entry to Mobile App

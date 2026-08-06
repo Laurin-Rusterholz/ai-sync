@@ -123,4 +123,57 @@ assert.match(bm, /document\.addEventListener\("visibilitychange", function\(\)\{
 assert.doesNotMatch(bm, /noteTimer=setTimeout\(function\(\)\{ var fk=fbKey\(k\)/,
   "bm.html haelt wieder einen unbeaufsichtigten Notiz-Timer");
 
+// ── 6. Weitere Module aus dem systematischen Durchgang ────────────────────
+// Der Thesis-Editor ist eine Schreib-App: 1,5 s Buendelung ohne Netz sind dort
+// schnell ein verlorener Satz. Und execCommand loest nicht ueberall input aus.
+assert.match(index, /window\.scheduleSaveDebounced\("thesis:" \+ thId \+ ":" \+ chId, 1500, write\)/,
+  "der Thesis-Editor haelt wieder einen eigenen, unbeaufsichtigten Timer");
+assert.ok(!index.includes("_thsAutoSaveTimer"), "_thsAutoSaveTimer umgeht die zentrale Registry wieder");
+assert.match(index, /if \(thId && chId\) window\.thsScheduleAutoSave\(thId, chId\);/,
+  "Formatierung im Thesis-Editor wird nicht gesichert");
+// Damit die Werkzeugleiste weiss, was sie speichern soll.
+assert.match(index, /data-thesis-id="\$\{th\.id\}" data-chapter-id="\$\{chapter\.id\}"/,
+  "die Thesis-Editoren tragen ihre Zugehoerigkeit nicht");
+// NoteFlow: die Schriftwahl landete nur im Zwischenspeicher.
+assert.match(index, /nfCurrentNote\._fontFamily = fontFamily; nfAutoSave\(\);/,
+  "die Schriftwahl in NoteFlow wird nicht gespeichert");
+assert.match(index, /nfCurrentNote\._fontSize = size; nfAutoSave\(\);/,
+  "die Schriftgroesse in NoteFlow wird nicht gespeichert");
+
+// ── 7. Doc Studio: das ausgefuellte Formular ueberlebt einen Neustart ─────
+// S.gen lag ausschliesslich im Arbeitsspeicher — ein langer Beleg war beim
+// Schliessen des Tabs weg, weil erst die Generierung daraus ein Dokument macht.
+const ds = read("public/docstudio.html");
+assert.match(ds, /var GEN_DRAFT_KEY = "quantus_docstudio_gen_draft_v1";/, "docstudio sichert das Formular nicht");
+for (const fn of ["saveGenDraft", "scheduleGenDraft", "flushGenDraft", "clearGenDraft", "restoreGenDraft", "genIsEmpty"]) {
+  assert.ok(ds.includes(`function ${fn}(`), `docstudio: ${fn}() fehlt`);
+}
+assert.match(ds, /window\.addEventListener\("pagehide", flushGenDraft\);/, "docstudio sichert bei pagehide nicht");
+assert.match(ds, /document\.addEventListener\("visibilitychange", function\(\)\{ if \(document\.hidden\) flushGenDraft\(\); \}\);/,
+  "docstudio sichert beim Wechsel in den Hintergrund nicht");
+assert.match(ds, /var restored = restoreGenDraft\(\);/, "docstudio stellt den Entwurf beim Start nicht wieder her");
+assert.match(ds, /S\.gen = emptyGen\(\);\s*\n\s*clearGenDraft\(\);/,
+  "docstudio raeumt den Entwurf nach der Generierung nicht auf");
+
+// ── 8. Schreibkomfort im Journal Booklet ──────────────────────────────────
+// Rueckgaengig muss funktionieren: die Zeichenersetzung laeuft ueber die
+// Auswahl und execCommand, nicht ueber direktes Setzen von textContent.
+assert.match(index, /document\.execCommand\("insertText", false, replacement\);/,
+  "die Zeichenersetzung zerstoert den Rueckgaengig-Verlauf");
+assert.doesNotMatch(index, /node\.textContent = before\.slice/,
+  "die Zeichenersetzung schreibt wieder direkt in den Textknoten");
+for (const fn of ["jbWordCount", "jbUpdateWritingMeta", "jbMarkCurrentParagraph", "jbApplyTypography"]) {
+  assert.ok(index.includes(`function ${fn}(`), `${fn}() fehlt`);
+}
+assert.match(index, /window\.jbToggleCalm = function\(\)/, "der Ruhe-Modus fehlt");
+assert.match(index, /window\.jbOnWrite = function\(\)/, "jbOnWrite\(\) fehlt");
+// Der Schreibbereich haengt am neuen Sammelaufruf.
+const writeArea = index.split("\n").find((line) => line.includes('id="jbEditorArea"'));
+assert.ok(writeArea && writeArea.includes("jbOnWrite()"), "der Schreibbereich ruft jbOnWrite\(\) nicht");
+assert.ok(writeArea && writeArea.includes('spellcheck="true"'), "die Rechtschreibpruefung ist im Schreibbereich aus");
+// Lesbare Zeilenlaenge und Platz unter dem Cursor.
+assert.match(index, /\.jb-richtext\{[^}]*max-width:66ch/, "die Zeilenlaenge ist nicht begrenzt");
+assert.match(index, /\.jb-richtext\{[^}]*padding-bottom:45vh/, "der Cursor klebt wieder am Fensterrand");
+assert.match(index, /\.jb-editor\.jb-calm \.jb-richtext>\*\{opacity:\.32/, "der Ruhe-Modus dimmt die uebrigen Absaetze nicht");
+
 console.log("persistence: ok");

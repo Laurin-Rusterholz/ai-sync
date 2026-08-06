@@ -664,6 +664,55 @@ function emptyGen(){
     styleText:"", exampleIds:[], context:[], wishes:"", title:"" };
 }
 
+/* ── Entwurf des Formulars ────────────────────────────────────────────────
+   Das ausgefuellte Formular (S.gen) lag bisher ausschliesslich im Arbeits-
+   speicher: erst die Generierung hat daraus ein Dokument gemacht. Wer einen
+   langen Beleg tippte und den Tab schloss oder neu lud, fing wieder bei null
+   an. Der Entwurf wird deshalb gebuendelt lokal gesichert und beim Start
+   wiederhergestellt — nach der Generierung ist er gegenstandslos. */
+var GEN_DRAFT_KEY = "quantus_docstudio_gen_draft_v1";
+var _genDraftTimer = null;
+function genIsEmpty(g){
+  if (!g) return true;
+  if (g.orgId || g.docType || g.preset || g.styleText || g.wishes || g.title) return false;
+  if ((g.exampleIds||[]).length || (g.context||[]).length) return false;
+  return !Object.keys(g.fields||{}).some(function(k){
+    var v = g.fields[k];
+    return Array.isArray(v) ? v.length : String(v==null?"":v).trim();
+  });
+}
+function saveGenDraft(){
+  _genDraftTimer = null;
+  try {
+    if (genIsEmpty(S.gen)) localStorage.removeItem(GEN_DRAFT_KEY);
+    else localStorage.setItem(GEN_DRAFT_KEY, JSON.stringify({ gen: S.gen, savedAt: Date.now() }));
+  } catch(e){ /* Speicher voll — der Entwurf ist es nicht wert, hier zu stoeren */ }
+}
+function scheduleGenDraft(){
+  if (_genDraftTimer) return;
+  _genDraftTimer = setTimeout(saveGenDraft, 800);
+}
+function flushGenDraft(){
+  if (_genDraftTimer) { clearTimeout(_genDraftTimer); saveGenDraft(); }
+}
+function clearGenDraft(){
+  if (_genDraftTimer) { clearTimeout(_genDraftTimer); _genDraftTimer = null; }
+  try { localStorage.removeItem(GEN_DRAFT_KEY); } catch(e){}
+}
+function restoreGenDraft(){
+  try {
+    var raw = localStorage.getItem(GEN_DRAFT_KEY);
+    if (!raw) return false;
+    var parsed = JSON.parse(raw);
+    if (!parsed || !parsed.gen || genIsEmpty(parsed.gen)) return false;
+    S.gen = Object.assign(emptyGen(), parsed.gen);
+    return true;
+  } catch(e){ return false; }
+}
+window.addEventListener("pagehide", flushGenDraft);
+window.addEventListener("beforeunload", flushGenDraft);
+document.addEventListener("visibilitychange", function(){ if (document.hidden) flushGenDraft(); });
+
 /* ── Zustand ──────────────────────────────────────────────────────────── */
 var S = {
   view: "docs",
@@ -1103,6 +1152,7 @@ async function generateDocument(){
     };
     await saveDoc(doc);
     S.gen = emptyGen();
+    clearGenDraft();
     toast("ok", "Dokument erstellt", doc.title);
     nav("editor", doc.id);
   } catch(e){
@@ -2264,13 +2314,14 @@ document.addEventListener("change", function(e){
 
 document.addEventListener("input", function(e){
   var t = e.target;
-  if (t.dataset.gen !== undefined){ S.gen[t.dataset.gen] = t.value; return; }
-  if (t.dataset.slider !== undefined){ S.gen.sliders[t.dataset.slider] = parseInt(t.value,10); return; }
-  if (t.dataset.gf !== undefined && t.dataset.gfCheck === undefined){ S.gen.fields[t.dataset.gf] = t.value; if (S.gen.docType==="rechnung" && (t.dataset.gf==="rabatt"||t.dataset.gf==="mwstSatz")) refreshInvoiceTotals(); return; }
+  if (t.dataset.gen !== undefined){ S.gen[t.dataset.gen] = t.value; scheduleGenDraft(); return; }
+  if (t.dataset.slider !== undefined){ S.gen.sliders[t.dataset.slider] = parseInt(t.value,10); scheduleGenDraft(); return; }
+  if (t.dataset.gf !== undefined && t.dataset.gfCheck === undefined){ S.gen.fields[t.dataset.gf] = t.value; scheduleGenDraft(); if (S.gen.docType==="rechnung" && (t.dataset.gf==="rabatt"||t.dataset.gf==="mwstSatz")) refreshInvoiceTotals(); return; }
   if (t.dataset.gt !== undefined){
     var rows = S.gen.fields[t.dataset.gt] = S.gen.fields[t.dataset.gt] || [];
     var r = rows[parseInt(t.dataset.row,10)] = rows[parseInt(t.dataset.row,10)] || {};
     r[t.dataset.col] = t.value;
+    scheduleGenDraft();
     if (t.dataset.gt === "positionen"){
       var cell = $('[data-calc-row="'+t.dataset.row+'"]');
       if (cell) cell.textContent = chf((parseFloat(r.menge)||0)*(parseFloat(r.preis)||0));
@@ -2278,7 +2329,7 @@ document.addEventListener("input", function(e){
     }
     return;
   }
-  if (t.dataset.ctxIdx !== undefined){ var c = S.gen.context[parseInt(t.dataset.ctxIdx,10)]; if (c) c.content = t.value; return; }
+  if (t.dataset.ctxIdx !== undefined){ var c = S.gen.context[parseInt(t.dataset.ctxIdx,10)]; if (c) c.content = t.value; scheduleGenDraft(); return; }
   if (t.dataset.org !== undefined && _editOrg){
     setDeep(_editOrg, t.dataset.org, t.value);
     if (t.type === "color"){ $$('[data-org="'+t.dataset.org+'"]').forEach(function(el){ if (el !== t) el.value = t.value; }); }
@@ -2300,11 +2351,14 @@ function setDeep(obj, path, val){
 
 /* ── Boot ─────────────────────────────────────────────────────────────── */
 async function boot(){
+  // Einen unterbrochenen Beleg fortsetzen, bevor irgendetwas gerendert wird.
+  var restored = restoreGenDraft();
   window.addEventListener("hashchange", onHashChange);
   // Einstieg aus anderen Modulen: ?context=<entityId>&type=<projects|tasks|notes|persons>
   var params = new URLSearchParams(location.search);
   var ctxId = params.get("context"), ctxType = params.get("type");
   onHashChange();
+  if (restored) toast("ok", "Entwurf wiederhergestellt", "Dein zuletzt ausgefuelltes Formular ist wieder da.", 6000);
   await loadAll();
   // Direktaufruf/Reload auf #/pdf/<docId>: Overlay nach dem Laden der Daten oeffnen.
   if (/^#\/pdf\//.test(location.hash) && !(S.pdfEditor && S.pdfEditor.built)){

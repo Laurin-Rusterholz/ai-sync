@@ -17,6 +17,7 @@ on:
       - "tests/career-model-ideas.test.mjs"
       - "tests/persistence.test.mjs"
       - "public/bm.html"
+      - "public/docstudio.html"
       - "public/quantus-bundles/**"
       - "public/career-model.css"
       - "tests/quantus-browser-module.test.mjs"
