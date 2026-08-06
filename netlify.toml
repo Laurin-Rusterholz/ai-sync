@@ -15,6 +15,21 @@
     Access-Control-Allow-Headers = "Content-Type, Authorization, If-Match, If-None-Match"
     Access-Control-Expose-Headers = "ETag"
 
+# Die Hauptapp ist eine einzige grosse HTML-Datei, die bei jedem Deploy neu
+# gebaut wird. Sie darf nirgends zwischengespeichert werden: die beiden Edge
+# Functions schreiben sie um und entfernen dabei den ETag, sodass eine
+# zwischengespeicherte Fassung nicht mehr revalidiert werden koennte — ein Fix
+# wuerde dann trotz Deploy nicht ankommen. Welcher Stand ausgeliefert wird,
+# zeigt der Header x-quantus-build.
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate"
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate"
+
 # Icons und Embleme aendern sich praktisch nie — einen Tag im Browser-Cache
 # halten spart bei jedem App-Start unnoetige Requests.
 [[headers]]

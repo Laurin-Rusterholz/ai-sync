@@ -1,0 +1,61 @@
+# Quantus Browser — Overlay fuer einen BEREITS LAUFENDEN Traefik im Docker-Setup.
+#
+# Wird zusaetzlich zu docker-compose.yml geladen:
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
+# Das Deploy-Skript traegt das dauerhaft als COMPOSE_FILE in die .env ein, damit
+# ein blosses `docker compose up -d` in /opt/quantus-neko dasselbe tut.
+#
+# WICHTIG — was hier NICHT passiert:
+#   * /docker/n8n/docker-compose.yml wird nicht angefasst
+#   * Traefik und n8n werden weder neu gestartet noch neu konfiguriert
+#   * es wird kein neues Netzwerk erzeugt; neko haengt sich an das bereits
+#     vorhandene externe Netz (Default: n8n_default)
+#
+# Traefik entdeckt neko ueber den Docker-Provider. Weil dort
+# exposedByDefault=false gilt, ist `traefik.enable=true` zwingend.
+#
+# WebSockets brauchen keine Zusatzkonfiguration: Traefik v3 reicht Upgrade-
+# Anfragen transparent durch, solange keine puffernde Middleware dazwischen
+# haengt — und hier haengt keine.
+#
+# WebRTC laeuft NICHT ueber Traefik. UDP/TCP 59000 bleibt direkt am Host
+# veroeffentlicht (siehe docker-compose.yml); Traefik sieht nur HTTP/WebSocket.
+services:
+  neko:
+    networks:
+      - proxy
+    labels:
+      traefik.enable: "true"
+      # Neko haengt ggf. an mehreren Netzen — Traefik muss wissen, ueber welches
+      # es den Container erreicht. Ohne dieses Label waehlt Traefik u. U. das
+      # falsche und die Route laeuft ins Leere.
+      traefik.docker.network: "${NEKO_TRAEFIK_NETWORK:-n8n_default}"
+
+      # ── HTTPS-Router ────────────────────────────────────────────────────────
+      traefik.http.routers.quantus-neko.rule: "Host(`${NEKO_DOMAIN:-neko.laurin-rusterholz.ch}`)"
+      traefik.http.routers.quantus-neko.entrypoints: "${NEKO_TRAEFIK_ENTRYPOINT_HTTPS:-websecure}"
+      traefik.http.routers.quantus-neko.tls: "true"
+      traefik.http.routers.quantus-neko.tls.certresolver: "${NEKO_TRAEFIK_CERTRESOLVER:-mytlschallenge}"
+      traefik.http.routers.quantus-neko.service: "quantus-neko"
+
+      # ── HTTP-Router ─────────────────────────────────────────────────────────
+      # Der globale HTTP->HTTPS-Redirect des Setups greift bereits am
+      # EntryPoint, bevor ein Router zum Zug kommt. Falls er dort einmal
+      # entfaellt, sorgt die eigene Middleware unten trotzdem fuer HTTPS —
+      # ausgeliefert wird ueber Port 80 also nie Klartext.
+      traefik.http.routers.quantus-neko-web.rule: "Host(`${NEKO_DOMAIN:-neko.laurin-rusterholz.ch}`)"
+      traefik.http.routers.quantus-neko-web.entrypoints: "${NEKO_TRAEFIK_ENTRYPOINT_HTTP:-web}"
+      traefik.http.routers.quantus-neko-web.middlewares: "quantus-neko-https@docker"
+      traefik.http.routers.quantus-neko-web.service: "quantus-neko"
+      traefik.http.middlewares.quantus-neko-https.redirectscheme.scheme: "https"
+      traefik.http.middlewares.quantus-neko-https.redirectscheme.permanent: "true"
+
+      # ── Service ─────────────────────────────────────────────────────────────
+      # Container-interner Port. Traefik spricht neko ueber das Docker-Netz an,
+      # nicht ueber die 127.0.0.1-Veroeffentlichung aus docker-compose.yml.
+      traefik.http.services.quantus-neko.loadbalancer.server.port: "8080"
+
+networks:
+  proxy:
+    external: true
+    name: "${NEKO_TRAEFIK_NETWORK:-n8n_default}"

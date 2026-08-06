@@ -111,6 +111,15 @@ export function injectEnglishC1(source) {
   return injectQuantusApps(source);
 }
 
+// Bau-Kennung aus <meta name="quantus-build"> lesen. Sie wandert als Header
+// mit, damit sich der ausgelieferte Stand mit einem HEAD-Request pruefen
+// laesst — ohne die mehrere Megabyte grosse Seite herunterzuladen. Genau das
+// fehlte, als unklar war, ob ein Fix live schon angekommen ist.
+export function readBuildTag(source) {
+  const match = /<meta\s+name=["']quantus-build["']\s+content=["']([^"']*)["']/i.exec(String(source || ""));
+  return match ? match[1] : "unknown";
+}
+
 export default async function handler(request, context) {
   const response = await context.next();
   const contentType = response.headers.get("content-type") || "";
@@ -122,8 +131,11 @@ export default async function handler(request, context) {
   headers.delete("content-length");
   headers.delete("content-encoding");
   headers.delete("etag");
-  headers.set("cache-control", "no-cache, must-revalidate");
+  // Ohne ETag kann nichts revalidiert werden — deshalb muss hier ausdruecklich
+  // stehen, dass weder Browser noch CDN eine alte Fassung weiterreichen duerfen.
+  headers.set("cache-control", "no-store, no-cache, must-revalidate");
   headers.set("x-quantus-app-registry", "english-c1,career-model");
+  headers.set("x-quantus-build", readBuildTag(transformed));
   return new Response(transformed, {
     status: response.status,
     statusText: response.statusText,

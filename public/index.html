@@ -4,7 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Quantus</title>
-  <meta name="quantus-build" content="gmail-block-filters+entity-inbox · 2026-07-07" />
+  <!-- Bau-Kennung. Wird von der Edge Function als Header x-quantus-build
+       gespiegelt, damit ohne 5-MB-Download pruefbar ist, welcher Stand
+       tatsaechlich ausgeliefert wird:
+         curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
+       Bei jeder Aenderung an dieser Datei mitziehen. -->
+  <meta name="quantus-build" content="neko-traefik+nh-style-restore · 2026-08-06" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
