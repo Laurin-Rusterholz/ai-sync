@@ -1,9 +1,4 @@
- cm-session"><div class="cm-eyebrow">' + esc(session.area && session.area.name || "Karrierebereich") + ' · Tag ' + esc(day.day) + '</div><h2>' + esc(day.title) + '</h2><p>' + esc(module.description || "Deine nächste berufliche Lerneinheit.") + '</p><div class="cm-meta-row"><span class="cm-pill accent">◷ ' + esc(day.estimatedMinutes) + ' Minuten</span><span class="cm-pill">▦ ' + esc(module.title) + '</span>' + (completion ? '<span class="cm-pill green">✓ abgeschlossen ' + esc(formatDate(completion.completedAt, { day: "2-digit", month: "2-digit" })) + '</span>' : '') + '</div><div class="cm-session-actions"><button class="cm-btn primary" data-cm-action="scroll-learning">Lerneinheit öffnen</button><button class="cm-btn" data-cm-action="devices">Auf anderes Gerät senden</button></div></section>' +
-      '<aside class="cm-card pad cm-progress-card"><h3>Modulfortschritt</h3><div class="cm-big-number">' + stats.percent + '<small>%</small></div>' + progressBar(stats.percent) + '<div class="cm-muted cm-small">' + stats.completed + ' von ' + stats.total + ' Lerntagen abgeschlossen</div><div class="cm-divider"></div><div class="cm-small cm-muted">Gesamtumfang</div><strong>' + esc(module.estimatedTotalMinutes || 0) + ' Minuten</strong></aside>' +
-    '</div>';
-
-    content += '<div id="cmLearningStart" class="cm-section-head"><div><h2>Lernziele</h2><p>Das kannst du nach dieser Einheit anwenden.</p></div></div><div class="cm-objectives">' + asArray(day.objectives).map(function (objective) { return '<div class="cm-objective">' + esc(objective) + '</div>'; }).join("") + '</div>';
-    content += '<div class="cm-section-head"><div><h2>Lerninhalt</h2><p>Vollständig aus der importierten Datei – ohne Laufzeit-KI.</p></div></div><div class="cm-grid">' + asArray(day.sections).map(renderSection).join("") + '</div>';
+"><div><h2>Lerninhalt</h2><p>Vollständig aus der importierten Datei – ohne Laufzeit-KI.</p></div></div><div class="cm-grid">' + asArray(day.sections).map(renderSection).join("") + '</div>';
     content += '<div class="cm-section-head"><div><h2>Praxisübung</h2><p>Übertrage den Stoff in deine tägliche Arbeit.</p></div><span class="cm-pill">◷ ' + esc(day.exercise && day.exercise.estimatedMinutes || 0) + ' Min.</span></div><section class="cm-card pad cm-exercise"><strong>Aufgabe</strong><p>' + esc(day.exercise && day.exercise.prompt || "") + '</p><details class="cm-exercise-solution"><summary>Musterlösung anzeigen</summary><p>' + esc(day.exercise && day.exercise.solution || "") + '</p></details></section>';
     content += '<div class="cm-section-head"><div><h2>Kontrollfragen</h2><p>Antwort zuerst selbst formulieren, danach aufklappen.</p></div></div><div class="cm-grid two">' + asArray(day.reviewQuestions).map(function (question, index) { return '<details class="cm-question"><summary>' + (index + 1) + '. ' + esc(question.question) + '</summary><p>' + esc(question.answer) + '</p></details>'; }).join("") + '</div>';
     content += '<div class="cm-section-head"><div><h2>Merksätze</h2></div></div><div class="cm-grid two">' + asArray(day.takeaways).map(function (item) { return '<div class="cm-card cm-learning-section cm-type-callout"><strong>' + esc(item) + '</strong></div>'; }).join("") + '</div>';
@@ -16,7 +11,19 @@
     if (!areas.length) return shell('<div class="cm-empty"><div class="cm-empty-icon">▦</div><h2>Noch keine Bereiche und Module</h2><p>Ein Import legt automatisch den Karrierebereich, das Modul und alle täglichen Lerneinheiten an.</p><button class="cm-btn primary" data-cm-action="tab" data-tab="import">Zum Import</button></div>', "Bereiche & Module", "Alle beruflichen Lernfelder an einem Ort");
     var content = '<div class="cm-area-list">' + areas.map(function (area) {
       var modules = asArray(area.moduleIds).map(function (id) { return state.data.modules[id]; }).filter(Boolean);
-      return '<section class="cm-card cm-area"><div class="cm-area-head"><div><div class="cm-eyebrow">Karrierebereich</div><h2>' + esc(area.name) + '</h2><p>' + esc(area.description || modules.length + " Module") + '</p></div><span class="cm-pill">' + modules.length + ' Module</span></div><div class="cm-module-grid">' + modules.map(function (module) {
+      var areaIdeas = Core.ideasForArea(state.data, area.name);
+      var openIdeas = areaIdeas.filter(function (idea) { return idea.status !== "used"; });
+      // Die Ideen des Berufsfelds gehoeren sichtbar neben seine Module: sie sind
+      // die Warteschlange, aus der die naechsten Module entstehen.
+      var ideaHint = '<div class="cm-area-ideas">' +
+        (openIdeas.length
+          ? '<span class="cm-small cm-muted">Offene Themenideen: ' +
+            openIdeas.slice(0, 4).map(function (idea) { return esc(idea.title); }).join(" · ") +
+            (openIdeas.length > 4 ? " und " + (openIdeas.length - 4) + " weitere" : "") + '</span>'
+          : '<span class="cm-small cm-muted">Noch keine Themenideen fuer dieses Berufsfeld.</span>') +
+        '<button class="cm-btn small" data-cm-action="idea-area" data-area-name="' + attr(area.name) + '">' +
+        (openIdeas.length ? "Ideen ansehen" : "Idee sammeln") + '</button></div>';
+      return '<section class="cm-card cm-area"><div class="cm-area-head"><div><div class="cm-eyebrow">Karrierebereich</div><h2>' + esc(area.name) + '</h2><p>' + esc(area.description || modules.length + " Module") + '</p></div><span class="cm-pill">' + modules.length + ' Module</span></div>' + ideaHint + '<div class="cm-module-grid">' + modules.map(function (module) {
         var stats = Core.moduleProgress(state.data, module.id);
         var completed = asObject(asObject(state.data.progress[module.id]).completedDays);
         return '<article class="cm-module" data-cm-action="select-module" data-module-id="' + attr(module.id) + '"><div class="cm-meta-row"><span class="cm-pill ' + (module.status === "active" ? "green" : "") + '">' + esc(module.status === "active" ? "Aktiv" : module.status || "Bereit") + '</span><span class="cm-pill">' + stats.total + ' Tage</span></div><h3>' + esc(module.title) + '</h3><p>' + esc(module.description || "") + '</p>' + progressBar(stats.percent) + '<div class="cm-module-foot"><small class="cm-muted">' + stats.completed + '/' + stats.total + ' erledigt</small><button class="cm-btn small" data-cm-action="module-activate" data-module-id="' + attr(module.id) + '">' + (module.status === "active" ? "Aktiv" : "Aktivieren") + '</button></div><div class="cm-day-list">' + asArray(module.dayOrder).map(function (dayId) {
@@ -113,4 +120,36 @@
       return shell('<section class="cm-card pad">' + filter + head + '</section>' +
         '<div class="cm-empty"><div class="cm-empty-icon">✓</div><h2>Fuer heute alles wiederholt</h2>' +
         '<p>Die naechsten Karten werden nach ihrem Leitner-Fach wieder faellig — nach 1, 2, 4, 7, 14 und 30 Tagen.</p></div>',
-        "Wiederholen", "Verteilte Wi
+        "Wiederholen", "Verteilte Wiederholung nach Leitner");
+    }
+
+    var card = due.find(function (entry) { return entry.id === state.reviewCardId; }) || due[0];
+    var entry = asObject(state.data.review[card.id]);
+    var box = Number(entry.box || 1);
+    var body = '<section class="cm-card pad">' + filter + head + '</section>' +
+      '<section class="cm-card pad cm-review-card">' +
+      '<div class="cm-meta-row"><span class="cm-pill accent">Fach ' + box + ' von ' + Core.LEITNER_DAYS.length + '</span>' +
+      '<span class="cm-pill">▦ ' + esc(card.moduleTitle) + '</span>' +
+      '<span class="cm-pill">' + esc(card.dayTitle || "") + '</span>' +
+      '<span class="cm-pill">' + (card.kind === "question" ? "Kontrollfrage" : "Merksatz") + '</span></div>' +
+      '<h2 class="cm-review-front">' + esc(card.front) + '</h2>' +
+      (state.reviewRevealed
+        ? '<div class="cm-review-back">' + esc(card.back || "(keine Antwort hinterlegt)") + '</div>' +
+          '<div class="cm-form-actions">' +
+          '<button class="cm-btn danger" data-cm-action="review-answer" data-card-id="' + attr(card.id) + '" data-correct="0">Nochmal ueben</button>' +
+          '<button class="cm-btn green" data-cm-action="review-answer" data-card-id="' + attr(card.id) + '" data-correct="1">Gewusst</button></div>'
+        : '<div class="cm-form-actions"><button class="cm-btn primary" data-cm-action="review-reveal" data-card-id="' + attr(card.id) + '">Antwort zeigen</button>' +
+          '<button class="cm-btn" data-cm-action="review-skip" data-card-id="' + attr(card.id) + '">Ueberspringen</button></div>') +
+      '<p class="cm-small cm-muted">' + (entry.seen ? esc(entry.seen + "× gesehen · " + (entry.correct || 0) + " richtig · " + (entry.wrong || 0) + " falsch") : "Neue Karte") + '</p>' +
+      '</section>';
+    return shell(body, "Wiederholen", due.length + " Karte(n) faellig");
+  }
+
+  // ── Fortschritt ──────────────────────────────────────────────────────────
+  function progressView() {
+    var stats = Core.progressStats(state.data);
+    var review = Core.reviewStats(state.data);
+    var areas = values(state.data.areas).sort(function (a, b) { return String(a.name).localeCompare(String(b.name), "de"); });
+    var tiles = [
+      ["Lerntage abgeschlossen", stats.doneDays + " / " + stats.totalDays],
+      ["Gesamtfortsch

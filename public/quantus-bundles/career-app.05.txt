@@ -1,48 +1,4 @@
- function preparationTaskPayload(prep, done) {
-    return {
-      title: "Modul vorbereiten: " + prep.moduleTitle,
-      description: Core.preparationTaskDescription(prep),
-      status: done ? "done" : "todo",
-      priority: 2,
-      dueDate: prep.targetDate || null,
-      tags: ["career-model", "weiterbildung"]
-    };
-  }
-
-  function createPreparation() {
-    // Ohne Cloud-Verbindung gar nicht erst anfangen — sonst entstuende eine
-    // Quantus-Aufgabe ohne die zugehoerige Vorbereitung.
-    if (!state.userRef) return Promise.reject(new Error("Bitte zuerst anmelden."));
-    var prep = Core.buildPreparation({
-      areaName: state.prompt.areaName,
-      moduleTitle: state.prompt.moduleTitle,
-      level: state.prompt.level,
-      dailyMinutes: state.prompt.dailyMinutes,
-      notes: state.prompt.notes,
-      targetDate: state.prepTargetDate
-    }, new Date().toISOString());
-    var inboxId = "career-" + prep.id;
-    // Erst die Aufgabe, dann der Eintrag: schlaegt die Bruecke fehl, entsteht
-    // keine Vorbereitung, die faelschlich behauptet, es gaebe eine Aufgabe.
-    return pushQuantusTask(inboxId, preparationTaskPayload(prep, false), "create").then(function () {
-      prep.taskRef = { source: "quantus-task", inboxId: inboxId };
-      return updateRoot(function (root) {
-        root.preparations[prep.id] = prep;
-        return root;
-      });
-    }).then(function () {
-      state.prepTargetDate = "";
-      toast("Vorbereitung angelegt", "Die Aufgabe steht ab sofort unter „Aufgaben“ in Quantus.", "ok");
-      render();
-    });
-  }
-
-  function finishPreparation(prepId, silent) {
-    var prep = asObject(state.data.preparations)[prepId];
-    if (!prep || prep.status === "done") return Promise.resolve();
-    var updated = Object.assign({}, prep, { status: "done", updatedAt: new Date().toISOString() });
-    return updateRoot(function (root) {
-      root.preparations[prepId] = updated;
+t.preparations[prepId] = updated;
       return root;
     }).then(function () {
       if (!updated.taskRef || !updated.taskRef.inboxId) return null;
@@ -89,6 +45,68 @@
       return prep && prep.status !== "done" && String(prep.moduleTitle || "").trim().toLowerCase() === needle;
     });
     return hit ? finishPreparation(hit.id, true).catch(function () {}) : Promise.resolve();
+  }
+
+  // ── Themenideen ──────────────────────────────────────────────────────────
+  function addIdea() {
+    var titleNode = global.document.getElementById("cmIdeaTitle");
+    var notesNode = global.document.getElementById("cmIdeaNotes");
+    var title = String(titleNode && titleNode.value || "").trim();
+    if (!title) return Promise.reject(new Error("Bitte ein Thema eingeben."));
+    var idea = Core.buildIdea({
+      areaName: state.prompt.areaName,
+      title: title,
+      notes: String(notesNode && notesNode.value || "")
+    }, new Date().toISOString());
+    return updateRoot(function (root) {
+      // Gleiche Idee im gleichen Berufsfeld → gleiche Id, also kein Duplikat.
+      var existing = asObject(root.ideas[idea.id]);
+      root.ideas[idea.id] = Object.assign({}, idea, {
+        createdAt: existing.createdAt || idea.createdAt,
+        status: existing.status || idea.status,
+        usedAt: existing.usedAt || null
+      });
+      return root;
+    }).then(function () { render(); });
+  }
+
+  function deleteIdea(ideaId) {
+    return updateRoot(function (root) { delete root.ideas[ideaId]; return root; }).then(function () { render(); });
+  }
+
+  function toggleIdea(ideaId) {
+    return updateRoot(function (root) {
+      var idea = asObject(root.ideas[ideaId]);
+      if (!idea.id) return root;
+      var used = idea.status === "used";
+      root.ideas[ideaId] = Object.assign({}, idea, {
+        status: used ? "open" : "used",
+        usedAt: used ? null : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      return root;
+    }).then(function () { render(); });
+  }
+
+  // Idee in den Prompt uebernehmen. Der Prompt-Zustand ist reine Oberflaeche und
+  // wird nicht synchronisiert — deshalb genuegt hier eine lokale Zuweisung.
+  function adoptIdea(ideaId) {
+    var idea = asObject(state.data.ideas)[ideaId];
+    if (!idea) return;
+    state.prompt = Core.applyIdeaToPrompt(state.prompt, idea);
+    render();
+    toast("Idee uebernommen", "Berufsfeld, Modultitel und Vorgaben stehen im Prompt.", "ok");
+  }
+
+  // Wird aus einer Idee ein Modul, gilt sie als erledigt. Aufgerufen beim
+  // Anlegen einer Vorbereitung und nach dem Import.
+  function markIdeaUsed(areaName, moduleTitle) {
+    var needle = String(moduleTitle || "").trim().toLowerCase();
+    if (!needle) return Promise.resolve();
+    var hit = Core.ideasForArea(state.data, areaName).find(function (idea) {
+      return idea.status !== "used" && String(idea.title || "").trim().toLowerCase() === needle;
+    });
+    return hit ? toggleIdea(hit.id).catch(function () {}) : Promise.resolve();
   }
 
   // ── Lernplan ─────────────────────────────────────────────────────────────
@@ -219,6 +237,22 @@
     }
     if (action === "prep-delete") { deletePreparation(button.dataset.prepId).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); }); return; }
     if (action === "prep-prompt") { adoptPreparation(button.dataset.prepId); return; }
+    if (action === "idea-add") {
+      button.disabled = true;
+      addIdea().catch(function (error) { toast("Nicht gespeichert", error.message || String(error), "error"); })
+        .finally(function () { button.disabled = false; });
+      return;
+    }
+    if (action === "idea-adopt") { adoptIdea(button.dataset.ideaId); return; }
+    if (action === "idea-toggle") { toggleIdea(button.dataset.ideaId).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); }); return; }
+    if (action === "idea-delete") { deleteIdea(button.dataset.ideaId).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); }); return; }
+    if (action === "idea-area") {
+      // Berufsfeld wechseln, damit dessen Ideen sichtbar werden.
+      state.prompt.areaName = button.dataset.areaName || state.prompt.areaName;
+      state.tab = "prepare";
+      render();
+      return;
+    }
   });
 
   global.document.addEventListener("submit", function (event) {

@@ -1,35 +1,4 @@
-urces,
-        estimatedTotalMinutes: computedMinutes,
-        days: days
-      }
-    };
-    result.metrics = { days: days.length, totalMinutes: computedMinutes, averageMinutes: average, sourceDocuments: sources.length };
-    result.ok = result.errors.length === 0;
-    return result;
-  }
-
-  function emptyState() {
-    return {
-      schemaVersion: VERSION,
-      areas: {},
-      modules: {},
-      progress: {},
-      reflections: {},
-      // Vorbereitung eines Moduls: der Weg von "Thema festgelegt" bis "Datei
-      // importiert". Jede Vorbereitung haengt an einer echten Quantus-Aufgabe
-      // (taskRef), damit sie in der normalen Aufgabenliste auftaucht.
-      preparations: {},
-      // Lernplan je Modul: { targetDate, startedAt } — das Pensum rechnet die
-      // App daraus selbst aus. Kein n8n, keine gelieferte Pace.
-      plans: {},
-      // Leitner-Wiederholung: cardId -> { box, dueDate, seen, correct, wrong }
-      review: {},
-      settings: { dailyMinutes: 30, timezone: "Europe/Zurich" },
-      meta: { createdAt: null, updatedAt: null }
-    };
-  }
-
-  function normalizeState(input) {
+ function normalizeState(input) {
     var base = emptyState();
     input = asObject(input);
     base.schemaVersion = VERSION;
@@ -40,6 +9,7 @@ urces,
     base.preparations = asObject(input.preparations);
     base.plans = asObject(input.plans);
     base.review = asObject(input.review);
+    base.ideas = asObject(input.ideas);
     base.settings = Object.assign(base.settings, asObject(input.settings));
     base.meta = Object.assign(base.meta, asObject(input.meta));
     return base;
@@ -297,9 +267,64 @@ urces,
     return hits;
   }
 
-  // ── Modulvorbereitung ────────────────────────────────────────────────────
-  // Ein Modul entsteht nicht aus dem Nichts: Thema festlegen, Quellen sammeln,
-  // Prompt an Claude geben, Datei zurueckbekommen, importieren. Genau diese
-  // Arbeit ist eine Aufgabe — und zwar dieselbe Aufgabenart wie in Quantus,
-  // nicht eine eigene Erfindung des Career Models.
-  var PREPARATION_STEPS = [
+  // ── Themenideen je Beruf ─────────────────────────────────────────────────
+  // Eine Idee ist ein Thema, das in einem Berufsfeld irgendwann ein Modul werden
+  // soll — festgehalten in dem Moment, in dem es einem auffaellt, nicht erst wenn
+  // man Zeit fuer die ganze Vorbereitung hat. Zugeordnet wird ueber den
+  // normalisierten Berufsnamen, damit Ideen auch dann schon sammelbar sind, wenn
+  // es fuer den Beruf noch gar keinen Bereich mit Modulen gibt.
+  function areaKey(areaName) {
+    return slugify(areaName, "beruf");
+  }
+
+  function buildIdea(input, now) {
+    input = asObject(input);
+    var areaName = cleanLine(input.areaName, 180) || "Karrierebereich";
+    var title = cleanLine(input.title, 180);
+    var timestamp = now && !Number.isNaN(Date.parse(now)) ? new Date(now).toISOString() : new Date().toISOString();
+    return {
+      id: makeId("idea", areaName + "-" + title),
+      areaKey: areaKey(areaName),
+      areaName: areaName,
+      title: title,
+      notes: cleanText(input.notes, 4000),
+      status: "open",           // open | used — "used", sobald daraus ein Modul wurde
+      usedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  // Alle Ideen eines Berufs, offene zuerst, darin die neuesten oben.
+  function ideasForArea(stateInput, areaName) {
+    var state = normalizeState(stateInput);
+    var key = areaKey(areaName);
+    return Object.keys(state.ideas).map(function (id) { return state.ideas[id]; })
+      .filter(function (idea) { return idea && idea.areaKey === key; })
+      .sort(function (a, b) {
+        var aOpen = a.status === "used" ? 1 : 0;
+        var bOpen = b.status === "used" ? 1 : 0;
+        if (aOpen !== bOpen) return aOpen - bOpen;
+        return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      });
+  }
+
+  // Alle Berufe, zu denen Ideen vorliegen — samt Zaehlern fuer die Uebersicht.
+  function ideaAreas(stateInput) {
+    var state = normalizeState(stateInput);
+    var byKey = {};
+    Object.keys(state.ideas).forEach(function (id) {
+      var idea = state.ideas[id];
+      if (!idea) return;
+      var entry = byKey[idea.areaKey] || (byKey[idea.areaKey] = { areaKey: idea.areaKey, areaName: idea.areaName, total: 0, open: 0 });
+      entry.total += 1;
+      if (idea.status !== "used") entry.open += 1;
+    });
+    return Object.keys(byKey).map(function (key) { return byKey[key]; })
+      .sort(function (a, b) { return String(a.areaName).localeCompare(String(b.areaName), "de"); });
+  }
+
+  // Idee → Prompt. Reine Funktion: nimmt den bisherigen Prompt-Zustand und gibt
+  // einen neuen zurueck, damit sich das Zusammenfuegen testen laesst.
+  // Der Modultitel wird ersetzt, die Notizen werden ERGAENZT statt ueberschrieben —
+  // was ma

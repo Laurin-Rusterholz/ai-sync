@@ -1,3 +1,27 @@
+n vorher an Vorgaben eingetippt hat, soll nicht verloren gehen. Ist die
+  // Notiz der Idee schon enthalten, passiert nichts (mehrfaches Uebernehmen
+  // derselben Idee darf den Prompt nicht aufblaehen).
+  function applyIdeaToPrompt(promptInput, ideaInput) {
+    var prompt = Object.assign({}, asObject(promptInput));
+    var idea = asObject(ideaInput);
+    if (idea.areaName) prompt.areaName = idea.areaName;
+    if (idea.title) prompt.moduleTitle = idea.title;
+    var addition = cleanText(idea.notes, 4000);
+    if (addition) {
+      var existing = String(prompt.notes == null ? "" : prompt.notes);
+      if (existing.indexOf(addition) === -1) {
+        prompt.notes = existing.trim() ? existing.replace(/\s+$/, "") + "\n\n" + addition : addition;
+      }
+    }
+    return prompt;
+  }
+
+  // ── Modulvorbereitung ────────────────────────────────────────────────────
+  // Ein Modul entsteht nicht aus dem Nichts: Thema festlegen, Quellen sammeln,
+  // Prompt an Claude geben, Datei zurueckbekommen, importieren. Genau diese
+  // Arbeit ist eine Aufgabe — und zwar dieselbe Aufgabenart wie in Quantus,
+  // nicht eine eigene Erfindung des Career Models.
+  var PREPARATION_STEPS = [
     "Quellen und Unterlagen zusammentragen",
     "Prompt im Career Model erzeugen und an Claude geben",
     "Gelieferte JSON-Datei gegen das Schema pruefen",
@@ -274,6 +298,11 @@
     progressStats: progressStats,
     searchContent: searchContent,
     buildPreparation: buildPreparation,
-    preparationTaskDescription: preparationTaskDescription
+    preparationTaskDescription: preparationTaskDescription,
+    areaKey: areaKey,
+    buildIdea: buildIdea,
+    ideasForArea: ideasForArea,
+    ideaAreas: ideaAreas,
+    applyIdeaToPrompt: applyIdeaToPrompt
   };
 });

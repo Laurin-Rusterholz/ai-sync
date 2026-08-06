@@ -1,5 +1,4 @@
-hema.json" target="_blank" rel="noopener">JSON-Schema</a></div>' + validationHtml(validation) +
-      (preview ? '<div class="cm-card cm-preview"><div class="cm-eyebrow">Importvorschau</div><h3>' + esc(preview.careerArea.name) + ' · ' + esc(preview.module.title) + '</h3><p class="cm-muted">' + esc(preview.module.description) + '</p><div class="cm-preview-stats"><span class="cm-pill">' + preview.module.days.length + ' Tage</span><span class="cm-pill">' + preview.module.estimatedTotalMinutes + ' Minuten</span><span class="cm-pill">' + preview.module.sourceDocuments.length + ' Quellen</span></div><div class="cm-form-actions"><button class="cm-btn green" data-cm-action="import-package" ' + (state.importing ? "disabled" : "") + '>' + (state.importing ? "Import läuft …" : "✓ Modul importieren") + '</button></div></div>' : '') +
+eview.module.sourceDocuments.length + ' Quellen</span></div><div class="cm-form-actions"><button class="cm-btn green" data-cm-action="import-package" ' + (state.importing ? "disabled" : "") + '>' + (state.importing ? "Import läuft …" : "✓ Modul importieren") + '</button></div></div>' : '') +
       '<div class="cm-divider"></div><div class="cm-message warn"><strong>Wichtig</strong><br>Bei einem erneuten Import mit derselben module.id werden Inhalte aktualisiert. Bereits abgeschlossene Tage mit derselben day-ID bleiben erhalten.</div></section>' +
     '</div>';
     return shell(content, "Modul importieren", "Claude erstellt die Datei; Quantus validiert und synchronisiert sie");
@@ -145,6 +144,7 @@ hema.json" target="_blank" rel="noopener">JSON-Schema</a></div>' + validationHtm
     var raw = state.importRaw;
     var moduleId = state.importValidation.value.module.id;
     var moduleTitle = state.importValidation.value.module.title;
+    var areaName = state.importValidation.value.careerArea.name;
     var firstDay = state.importValidation.value.module.days[0];
     return state.userRef.transaction(function (current) {
       return Core.mergePackage(current || {}, raw, new Date().toISOString());
@@ -158,8 +158,10 @@ hema.json" target="_blank" rel="noopener">JSON-Schema</a></div>' + validationHtm
       state.tab = "today";
       toast("Modul importiert", "Alle Lerntage sind sofort auf Tablet und Laptop verfügbar.", "ok");
       render();
-      // Passende Vorbereitung samt Quantus-Aufgabe abschliessen.
+      // Passende Vorbereitung samt Quantus-Aufgabe abschliessen — und die Idee,
+      // aus der das Modul entstanden ist, als erledigt markieren.
       closeMatchingPreparation(moduleTitle);
+      markIdeaUsed(areaName, moduleTitle).catch(function () {});
     }).catch(function (error) {
       state.importing = false;
       render();
@@ -203,4 +205,49 @@ hema.json" target="_blank" rel="noopener">JSON-Schema</a></div>' + validationHtm
     }, payload));
   }
 
- 
+  function preparationTaskPayload(prep, done) {
+    return {
+      title: "Modul vorbereiten: " + prep.moduleTitle,
+      description: Core.preparationTaskDescription(prep),
+      status: done ? "done" : "todo",
+      priority: 2,
+      dueDate: prep.targetDate || null,
+      tags: ["career-model", "weiterbildung"]
+    };
+  }
+
+  function createPreparation() {
+    // Ohne Cloud-Verbindung gar nicht erst anfangen — sonst entstuende eine
+    // Quantus-Aufgabe ohne die zugehoerige Vorbereitung.
+    if (!state.userRef) return Promise.reject(new Error("Bitte zuerst anmelden."));
+    var prep = Core.buildPreparation({
+      areaName: state.prompt.areaName,
+      moduleTitle: state.prompt.moduleTitle,
+      level: state.prompt.level,
+      dailyMinutes: state.prompt.dailyMinutes,
+      notes: state.prompt.notes,
+      targetDate: state.prepTargetDate
+    }, new Date().toISOString());
+    var inboxId = "career-" + prep.id;
+    // Erst die Aufgabe, dann der Eintrag: schlaegt die Bruecke fehl, entsteht
+    // keine Vorbereitung, die faelschlich behauptet, es gaebe eine Aufgabe.
+    return pushQuantusTask(inboxId, preparationTaskPayload(prep, false), "create").then(function () {
+      prep.taskRef = { source: "quantus-task", inboxId: inboxId };
+      return updateRoot(function (root) {
+        root.preparations[prep.id] = prep;
+        return root;
+      });
+    }).then(function () {
+      state.prepTargetDate = "";
+      toast("Vorbereitung angelegt", "Die Aufgabe steht ab sofort unter „Aufgaben“ in Quantus.", "ok");
+      render();
+      return markIdeaUsed(prep.areaName, prep.moduleTitle).catch(function () {});
+    });
+  }
+
+  function finishPreparation(prepId, silent) {
+    var prep = asObject(state.data.preparations)[prepId];
+    if (!prep || prep.status === "done") return Promise.resolve();
+    var updated = Object.assign({}, prep, { status: "done", updatedAt: new Date().toISOString() });
+    return updateRoot(function (root) {
+      roo

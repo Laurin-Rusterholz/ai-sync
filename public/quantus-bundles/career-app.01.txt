@@ -274,4 +274,9 @@
     var stats = session.progress;
     var completion = session.completion;
     var content = '<div class="cm-hero">' +
-      '<section class="cm-card pad
+      '<section class="cm-card pad cm-session"><div class="cm-eyebrow">' + esc(session.area && session.area.name || "Karrierebereich") + ' · Tag ' + esc(day.day) + '</div><h2>' + esc(day.title) + '</h2><p>' + esc(module.description || "Deine nächste berufliche Lerneinheit.") + '</p><div class="cm-meta-row"><span class="cm-pill accent">◷ ' + esc(day.estimatedMinutes) + ' Minuten</span><span class="cm-pill">▦ ' + esc(module.title) + '</span>' + (completion ? '<span class="cm-pill green">✓ abgeschlossen ' + esc(formatDate(completion.completedAt, { day: "2-digit", month: "2-digit" })) + '</span>' : '') + '</div><div class="cm-session-actions"><button class="cm-btn primary" data-cm-action="scroll-learning">Lerneinheit öffnen</button><button class="cm-btn" data-cm-action="devices">Auf anderes Gerät senden</button></div></section>' +
+      '<aside class="cm-card pad cm-progress-card"><h3>Modulfortschritt</h3><div class="cm-big-number">' + stats.percent + '<small>%</small></div>' + progressBar(stats.percent) + '<div class="cm-muted cm-small">' + stats.completed + ' von ' + stats.total + ' Lerntagen abgeschlossen</div><div class="cm-divider"></div><div class="cm-small cm-muted">Gesamtumfang</div><strong>' + esc(module.estimatedTotalMinutes || 0) + ' Minuten</strong></aside>' +
+    '</div>';
+
+    content += '<div id="cmLearningStart" class="cm-section-head"><div><h2>Lernziele</h2><p>Das kannst du nach dieser Einheit anwenden.</p></div></div><div class="cm-objectives">' + asArray(day.objectives).map(function (objective) { return '<div class="cm-objective">' + esc(objective) + '</div>'; }).join("") + '</div>';
+    content += '<div class="cm-section-head

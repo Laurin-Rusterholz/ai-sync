@@ -1,36 +1,4 @@
-ederholung nach Leitner");
-    }
-
-    var card = due.find(function (entry) { return entry.id === state.reviewCardId; }) || due[0];
-    var entry = asObject(state.data.review[card.id]);
-    var box = Number(entry.box || 1);
-    var body = '<section class="cm-card pad">' + filter + head + '</section>' +
-      '<section class="cm-card pad cm-review-card">' +
-      '<div class="cm-meta-row"><span class="cm-pill accent">Fach ' + box + ' von ' + Core.LEITNER_DAYS.length + '</span>' +
-      '<span class="cm-pill">▦ ' + esc(card.moduleTitle) + '</span>' +
-      '<span class="cm-pill">' + esc(card.dayTitle || "") + '</span>' +
-      '<span class="cm-pill">' + (card.kind === "question" ? "Kontrollfrage" : "Merksatz") + '</span></div>' +
-      '<h2 class="cm-review-front">' + esc(card.front) + '</h2>' +
-      (state.reviewRevealed
-        ? '<div class="cm-review-back">' + esc(card.back || "(keine Antwort hinterlegt)") + '</div>' +
-          '<div class="cm-form-actions">' +
-          '<button class="cm-btn danger" data-cm-action="review-answer" data-card-id="' + attr(card.id) + '" data-correct="0">Nochmal ueben</button>' +
-          '<button class="cm-btn green" data-cm-action="review-answer" data-card-id="' + attr(card.id) + '" data-correct="1">Gewusst</button></div>'
-        : '<div class="cm-form-actions"><button class="cm-btn primary" data-cm-action="review-reveal" data-card-id="' + attr(card.id) + '">Antwort zeigen</button>' +
-          '<button class="cm-btn" data-cm-action="review-skip" data-card-id="' + attr(card.id) + '">Ueberspringen</button></div>') +
-      '<p class="cm-small cm-muted">' + (entry.seen ? esc(entry.seen + "× gesehen · " + (entry.correct || 0) + " richtig · " + (entry.wrong || 0) + " falsch") : "Neue Karte") + '</p>' +
-      '</section>';
-    return shell(body, "Wiederholen", due.length + " Karte(n) faellig");
-  }
-
-  // ── Fortschritt ──────────────────────────────────────────────────────────
-  function progressView() {
-    var stats = Core.progressStats(state.data);
-    var review = Core.reviewStats(state.data);
-    var areas = values(state.data.areas).sort(function (a, b) { return String(a.name).localeCompare(String(b.name), "de"); });
-    var tiles = [
-      ["Lerntage abgeschlossen", stats.doneDays + " / " + stats.totalDays],
-      ["Gesamtfortschritt", stats.percent + " %"],
+ritt", stats.percent + " %"],
       ["Gelernte Zeit", Math.round(stats.minutes / 6) / 10 + " h"],
       ["Aktive Lerntage", String(stats.activeDays)],
       ["Serie", stats.streak + " Tag(e)"],
@@ -104,6 +72,56 @@ ederholung nach Leitner");
       '</div></article>';
   }
 
+  // ── Themenideen je Beruf ─────────────────────────────────────────────────
+  // Ideen gehoeren zum Beruf, nicht zu einem einzelnen Modul: sie entstehen im
+  // Arbeitsalltag ("das muesste ich mal koennen") und werden erst spaeter zu
+  // einem Modul. Deshalb haengen sie am Berufsfeld oben im Formular und lassen
+  // sich mit einem Klick in den Prompt uebernehmen.
+  function ideaRow(idea) {
+    var used = idea.status === "used";
+    return '<div class="cm-idea' + (used ? " used" : "") + '">' +
+      '<button class="cm-idea-check" data-cm-action="idea-toggle" data-idea-id="' + attr(idea.id) + '" ' +
+        'title="' + (used ? "Wieder als offen markieren" : "Als erledigt markieren") + '">' + (used ? "✓" : "") + '</button>' +
+      '<span class="cm-idea-main"><strong>' + esc(idea.title) + '</strong>' +
+      (idea.notes ? '<small>' + esc(idea.notes) + '</small>' : '') + '</span>' +
+      '<button class="cm-btn small" data-cm-action="idea-adopt" data-idea-id="' + attr(idea.id) + '" ' +
+        'title="Berufsfeld, Modultitel und Vorgaben in den Prompt uebernehmen">In Prompt uebernehmen</button>' +
+      '<button class="cm-btn small danger" data-cm-action="idea-delete" data-idea-id="' + attr(idea.id) + '">×</button>' +
+      '</div>';
+  }
+
+  function ideasSection() {
+    var areaName = String(state.prompt.areaName || "").trim();
+    var list = areaName ? Core.ideasForArea(state.data, areaName) : [];
+    var others = Core.ideaAreas(state.data).filter(function (entry) {
+      return entry.areaKey !== Core.areaKey(areaName);
+    });
+    var head = '<div class="cm-section-head"><div><h2>Themenideen</h2>' +
+      '<p>' + (areaName ? 'Was du im Berufsfeld „' + esc(areaName) + '" irgendwann koennen willst.'
+                        : 'Trage oben ein Berufsfeld ein, dann kannst du Ideen dazu sammeln.') + '</p></div>' +
+      (list.length ? '<span class="cm-pill">' + list.filter(function (idea) { return idea.status !== "used"; }).length + ' offen</span>' : '') +
+      '</div>';
+    var form = areaName
+      ? '<section class="cm-card pad"><div class="cm-form-grid">' +
+        '<div class="cm-field"><label>Thema</label><input id="cmIdeaTitle" placeholder="z. B. Haftpflichtrecht"></div>' +
+        '<div class="cm-field"><label>Notiz (optional)</label><input id="cmIdeaNotes" placeholder="Warum, welcher Schwerpunkt, welche Quelle"></div>' +
+        '</div><div class="cm-form-actions"><button class="cm-btn primary" data-cm-action="idea-add">Idee sichern</button></div>' +
+        (list.length ? '<div class="cm-idea-list">' + list.map(ideaRow).join("") + '</div>'
+                     : '<p class="cm-small cm-muted">Noch keine Idee fuer dieses Berufsfeld.</p>') +
+        '</section>'
+      : '';
+    // Ideen anderer Berufsfelder bleiben sichtbar — sonst verschwinden sie
+    // lautlos, sobald oben ein anderes Feld eingetragen ist.
+    var rest = others.length
+      ? '<section class="cm-card pad"><h3 style="margin-top:0">Andere Berufsfelder</h3><div class="cm-idea-areas">' +
+        others.map(function (entry) {
+          return '<button class="cm-btn" data-cm-action="idea-area" data-area-name="' + attr(entry.areaName) + '">' +
+            esc(entry.areaName) + ' <span class="cm-pill">' + entry.open + '/' + entry.total + '</span></button>';
+        }).join("") + '</div></section>'
+      : '';
+    return head + form + rest;
+  }
+
   function prepareView() {
     var list = values(state.data.preparations).sort(function (a, b) {
       return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
@@ -122,6 +140,7 @@ ederholung nach Leitner");
       '<button class="cm-btn" data-cm-action="tab" data-tab="import">Zum Import</button></div>' +
       '<p class="cm-small cm-muted">Die Aufgabe entsteht als normale Quantus-Aufgabe und erscheint unter „Aufgaben" — ' +
       'dieselbe Einheit wie jede andere Aufgabe, nicht eine eigene Art des Career Models.</p></section>';
+    content += ideasSection();
     content += '<div class="cm-section-head"><div><h2>Laufende Vorbereitungen</h2><p>Erledigt sich automatisch, sobald das Modul importiert ist.</p></div></div>';
     content += list.length ? list.map(preparationCard).join("")
       : '<div class="cm-empty"><div class="cm-empty-icon">✎</div><h2>Keine Vorbereitung offen</h2><p>Lege oben eine an.</p></div>';
@@ -144,4 +163,5 @@ ederholung nach Leitner");
     var preview = validation && validation.value;
     var content = '<div class="cm-import-layout">' +
       '<section class="cm-card pad"><div class="cm-section-head" style="margin-top:0"><div><h2>1. Claude-Prompt erstellen</h2><p>Du gibst Claude zusätzlich alle Quelldokumente.</p></div></div><div class="cm-form-grid"><div class="cm-field"><label>Karrierebereich / Job</label><input data-cm-prompt="areaName" value="' + attr(state.prompt.areaName) + '" placeholder="z. B. Versicherungen"></div><div class="cm-field"><label>Modultitel</label><input data-cm-prompt="moduleTitle" value="' + attr(state.prompt.moduleTitle) + '" placeholder="z. B. Haftpflichtrecht"></div><div class="cm-field"><label>Niveau / Anwendung</label><input data-cm-prompt="level" value="' + attr(state.prompt.level) + '"></div><div class="cm-field"><label>Minuten pro Tag</label><input type="number" min="25" max="35" data-cm-prompt="dailyMinutes" value="' + attr(state.prompt.dailyMinutes) + '"></div><div class="cm-field full"><label>Zusätzliche Vorgaben</label><textarea data-cm-prompt="notes" placeholder="Produkte, Rolle, Prüfungsziel, interne Besonderheiten …">' + esc(state.prompt.notes) + '</textarea></div><div class="cm-field full"><label>Kopierfertiger Prompt</label><textarea id="cmClaudePrompt" class="cm-prompt-box" readonly>' + esc(promptText()) + '</textarea></div></div><div class="cm-form-actions"><button class="cm-btn primary" data-cm-action="copy-prompt">Prompt kopieren</button></div></section>' +
-      '<section class="cm-card pad"><div class="cm-section-head" style="margin-top:0"><div><h2>2. Fertige JSON-Datei importieren</h2><p>Quantus benötigt dafür keine KI und verändert die Inhalte nicht.</p></div></div><label class="cm-upload"><input id="cmImportFile" type="file" accept="application/json,.json"><strong>JSON-Datei auswählen</strong><p class="cm-muted">Maximal 5 MB · Schema ' + esc(Core.SCHEMA) + '</p><span class="cm-btn">Datei öffnen</span></label><div class="cm-form-actions"><a class="cm-btn ghost" href="/career-model-sample.json" download>Beispieldatei herunterladen</a><a class="cm-btn ghost" href="/career-model.sc
+      '<section class="cm-card pad"><div class="cm-section-head" style="margin-top:0"><div><h2>2. Fertige JSON-Datei importieren</h2><p>Quantus benötigt dafür keine KI und verändert die Inhalte nicht.</p></div></div><label class="cm-upload"><input id="cmImportFile" type="file" accept="application/json,.json"><strong>JSON-Datei auswählen</strong><p class="cm-muted">Maximal 5 MB · Schema ' + esc(Core.SCHEMA) + '</p><span class="cm-btn">Datei öffnen</span></label><div class="cm-form-actions"><a class="cm-btn ghost" href="/career-model-sample.json" download>Beispieldatei herunterladen</a><a class="cm-btn ghost" href="/career-model.schema.json" target="_blank" rel="noopener">JSON-Schema</a></div>' + validationHtml(validation) +
+      (preview ? '<div class="cm-card cm-preview"><div class="cm-eyebrow">Importvorschau</div><h3>' + esc(preview.careerArea.name) + ' · ' + esc(preview.module.title) + '</h3><p class="cm-muted">' + esc(preview.module.description) + '</p><div class="cm-preview-stats"><span class="cm-pill">' + preview.module.days.length + ' Tage</span><span class="cm-pill">' + preview.module.estimatedTotalMinutes + ' Minuten</span><span class="cm-pill">' + pr

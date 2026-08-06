@@ -226,4 +226,39 @@
         title: moduleTitle,
         description: cleanText(module.description, 6000),
         level: cleanLine(module.level, 180),
-        sourceDocuments: so
+        sourceDocuments: sources,
+        estimatedTotalMinutes: computedMinutes,
+        days: days
+      }
+    };
+    result.metrics = { days: days.length, totalMinutes: computedMinutes, averageMinutes: average, sourceDocuments: sources.length };
+    result.ok = result.errors.length === 0;
+    return result;
+  }
+
+  function emptyState() {
+    return {
+      schemaVersion: VERSION,
+      areas: {},
+      modules: {},
+      progress: {},
+      reflections: {},
+      // Vorbereitung eines Moduls: der Weg von "Thema festgelegt" bis "Datei
+      // importiert". Jede Vorbereitung haengt an einer echten Quantus-Aufgabe
+      // (taskRef), damit sie in der normalen Aufgabenliste auftaucht.
+      preparations: {},
+      // Lernplan je Modul: { targetDate, startedAt } — das Pensum rechnet die
+      // App daraus selbst aus. Kein n8n, keine gelieferte Pace.
+      plans: {},
+      // Leitner-Wiederholung: cardId -> { box, dueDate, seen, correct, wrong }
+      review: {},
+      // Themenideen je Beruf: was in diesem Berufsfeld irgendwann ein Modul
+      // werden koennte. Bewusst am NAMEN des Berufs verankert und nicht an einer
+      // areaId — Ideen entstehen, lange bevor das erste Modul importiert ist.
+      ideas: {},
+      settings: { dailyMinutes: 30, timezone: "Europe/Zurich" },
+      meta: { createdAt: null, updatedAt: null }
+    };
+  }
+
+ 
