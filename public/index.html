@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export · 2026-08-06" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed · 2026-08-06" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -86393,6 +86393,28 @@ function buildAppSearchItems() {
       open: a.open,
     });
   });
+
+  // 3) Bereiche innerhalb von Apps, die eine eigene Bereichsliste anbieten.
+  //    FlowerTech hat seine Bereichsleiste abgelegt — die Suche ersetzt sie.
+  //    Die Liste kommt aus dem Modul selbst, es gibt keine Kopie hier.
+  try {
+    if (typeof window.flowerTechSearchSections === 'function') {
+      window.flowerTechSearchSections().forEach(section => {
+        const id = 'app-flowertech-' + section.key;
+        if (items.some(it => it.id === id)) return;
+        items.push({
+          kind: 'app',
+          category: 'App',
+          icon: section.icon || '🌸',
+          id,
+          title: section.title,
+          sub: section.sub || 'FlowerTech öffnen',
+          keywords: [section.key, section.title, section.sub, 'flowertech', 'app'].filter(Boolean).join(' '),
+          open: () => { window.location.hash = '#/flowertech/' + section.key; },
+        });
+      });
+    }
+  } catch (e) { console.warn('FlowerTech-Bereiche für die Suche:', e); }
 
   return items;
 }
