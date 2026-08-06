@@ -35,7 +35,11 @@ ok(index.includes("body.workspace-focus .main .app-nav"),
 ok(/applyWorkspaceFocus\(\);/.test(index), "applyWorkspaceFocus() wird im Render nicht aufgerufen");
 
 // ── 2. Apps als gleichwertige Suchresultate ────────────────────────────────
-ok(/const SPOTLIGHT_APPS = \[/.test(index), "die App-Registry für die Suche fehlt");
+// Die Suche speist sich aus der ECHTEN Registry getAllApps(), nicht aus einer
+// eingefrorenen Kopie. Details deckt tests/quantus-app-search-runtime.test.mjs ab.
+ok(/const SPOTLIGHT_APP_ACTIONS = \[/.test(index), "die Aktions-Eintraege der App-Suche fehlen");
+ok(/registry = \(typeof getAllApps === 'function'\) \? getAllApps\(\) : \[\]/.test(index),
+  "die App-Suche zieht ihre Liste nicht aus der echten Registry getAllApps()");
 ok(/function buildAppSearchItems\(\)/.test(index), "buildAppSearchItems() fehlt");
 ok(index.includes("window.buildAppSearchItems = buildAppSearchItems;"),
   "die App-Registry wird nicht exportiert — die universale Suche kann sie nicht nutzen");
@@ -49,7 +53,7 @@ ok(/window\._openAppSearchResult = function\(appId\)/.test(index),
   "ein App-Treffer der universalen Suche lässt sich nicht öffnen");
 // Icon und Kategorie am Treffer.
 ok(index.includes("spotlight-result-cat"), "die Kategorie fehlt am Suchtreffer");
-ok(index.includes("category: 'App'"), "Apps tragen keine Kategorie");
+ok(index.includes("category: 'App',"), "Apps tragen keine Kategorie");
 ok(index.includes("spotlight-result-icon"), "das Icon fehlt am Suchtreffer");
 
 // ── 3. Tastatur, Zustände und ARIA ─────────────────────────────────────────

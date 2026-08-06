@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="neko-traefik+nh-style-restore · 2026-08-06" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export · 2026-08-06" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -85935,81 +85935,91 @@ let _spotlightItems = [];
 // ── App-Registry für die Suche ─────────────────────────────────────────────
 // Eine Liste, zwei Konsumenten: Spotlight (⌘K) und die universale Suche.
 // Apps sind damit gleichwertige Treffer neben Projekten, Aufgaben, Notizen …
-const SPOTLIGHT_APPS = [
-      { icon: '◫', title: 'Dashboard', sub: 'Startseite', open: () => { window.location.hash = '#/dashboard'; } },
-      { icon: '📱', title: 'Apps', sub: 'App-Übersicht & Hub', open: () => { window.location.hash = '#/apps'; } },
-      { icon: '☀️', title: 'Heute', sub: 'Tagesübersicht', open: () => { window.location.hash = '#/today'; } },
-      { icon: '🌅', title: 'Daily Briefing', sub: 'Morgenplanung & Tagesplan', open: () => { window.location.hash = '#/dailybriefing'; } },
-      { icon: '✓', title: 'Aufgaben', sub: 'Alle Tasks', open: () => { window.location.hash = '#/tasks'; } },
-      { icon: '📦', title: 'Projekte', sub: 'Projekt-Übersicht', open: () => { window.location.hash = '#/projects'; } },
-      { icon: '🏛️', title: 'Organisationen', sub: 'Firmen, Vereine, Schulen', open: () => { window.location.hash = '#/organizations'; } },
-      { icon: '🧩', title: 'Programme', sub: 'Programme & Links-Sammlung', open: () => { window.location.hash = '#/programs'; } },
-      { icon: '💬', title: 'Messages', sub: 'Geplante Nachrichten', open: () => { window.location.hash = '#/messages'; } },
-      { icon: '🔁', title: 'Routinen', sub: 'Habits & Daily Tracking', open: () => { window.location.hash = '#/habits'; } },
-      { icon: '🌙', title: 'Reflecta', sub: 'Abend-Reflexion', open: () => { window.location.hash = '#/reflecta'; } },
-      { icon: '🧠', title: 'Konzepte', sub: 'Concept-Sammlung', open: () => { window.location.hash = '#/concepts'; } },
-      { icon: '🤔', title: 'Decisions', sub: 'Entscheidungs-Tracker', open: () => { window.location.hash = '#/decisions'; } },
-      { icon: '📋', title: 'Updates', sub: 'Status-Updates', open: () => { window.location.hash = '#/updates'; } },
-      { icon: '📜', title: 'Regeln', sub: 'Rules & Constraints', open: () => { window.location.hash = '#/rules'; } },
-      { icon: '🎓', title: 'Theses', sub: 'Maturarbeit / Thesen', open: () => { window.location.hash = '#/thesis'; } },
-      { icon: '⚖️', title: 'Workload', sub: 'Auslastung', open: () => { window.location.hash = '#/workload'; } },
-      { icon: '🚨', title: 'Maßnahmen', sub: 'Measures', open: () => { window.location.hash = '#/measures'; } },
-      { icon: '💰', title: 'Budget', sub: 'Konten, Buchungen, Rechnungen', open: () => { window.location.hash = '#/budget'; } },
-      { icon: '📝', title: 'NoteFlow', sub: 'Notizen & Notizbücher', open: () => { window.location.hash = '#/notes'; } },
-      { icon: '💡', title: 'Ideen', sub: 'Idea-Inbox', open: () => { window.location.hash = '#/ideas'; } },
-      { icon: '🤝', title: 'Meetings', sub: 'Termine & Sitzungen', open: () => { window.location.hash = '#/meetings'; } },
-      { icon: '🎯', title: 'Ziele', sub: 'Goals & Tracking', open: () => { window.location.hash = '#/goals'; } },
-      { icon: '📅', title: 'Kalender', sub: 'Termine im Überblick', open: () => { window.location.hash = '#/calendar'; } },
-      { icon: '🧠', title: 'RecallLab', sub: 'Spaced Repetition Lernkarten', open: () => { window.location.hash = '#/recall'; } },
-      { icon: '📰', title: 'Newsroom', sub: 'Editorial × Research Hub', open: () => { 
+// ── App-Registry für die Suche ─────────────────────────────────────────────
+// EINE Quelle: getAllApps() — dieselbe Liste, aus der Sidebar und App-Übersicht
+// gebaut werden, inklusive der Apps, die die Edge Function beim Ausliefern
+// ergänzt, und der eigenen Seiten des Nutzers. Vorher stand hier eine
+// eingefrorene Kopie; neu hinzugekommene Apps (z. B. FlowerTech) waren dadurch
+// über die Suche nicht auffindbar.
+//
+// Ergänzt wird sie nur um Einträge, die KEINE eigene Route haben, sondern eine
+// Funktion oder ein Overlay öffnen.
+const SPOTLIGHT_APP_ACTIONS = [
+  { icon: '📰', title: 'Newsroom', sub: 'Editorial × Research Hub', open: () => { 
         if (typeof window.openResearchHub === 'function') window.openResearchHub();
         else window.location.hash = '#/articles';
       }},
-      { icon: '📚', title: 'ReadingHub', sub: 'Bücher, PDFs, Annotations', open: () => {
+  { icon: '📚', title: 'ReadingHub', sub: 'Bücher, PDFs, Annotations', open: () => {
         if (typeof window.openReadingHub === 'function') window.openReadingHub();
         else window.location.hash = '#/readinghub';
       }},
-      { icon: '📧', title: 'Gmail', sub: 'Posteingang, Personen, Organisationen', open: () => { window.location.hash = '#/gmail'; } },
-      { icon: '👤', title: 'Personen', sub: 'Kontaktverwaltung', open: () => { window.location.hash = '#/persons'; } },
-      { icon: '📜', title: 'Protokolle', sub: 'PDF-Protokolle mit Text-Extraktion', open: () => { window.location.hash = '#/protocols'; } },
-      { icon: '⚙️', title: 'Workflows', sub: 'Prozesse, Schritte & Automatisierung', open: () => { window.location.hash = '#/workflows'; } },
-      { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
+  { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
         if (typeof window.openReadlist === 'function') window.openReadlist();
       }},
-      { icon: '🌐', title: 'Übersetzer', sub: 'AI-Übersetzung → RecallLab (⌘⇧T)', open: () => { 
+  { icon: '🌐', title: 'Übersetzer', sub: 'AI-Übersetzung → RecallLab (⌘⇧T)', open: () => { 
         if (typeof window.openTranslator === 'function') window.openTranslator(); 
       }},
-      { icon: '✏️', title: 'Editor', sub: 'Schreiben mit AI', open: () => {
+  { icon: '✏️', title: 'Editor', sub: 'Schreiben mit AI', open: () => {
         if (typeof window.openResearchHub === 'function') { 
           window.openResearchHub(); 
           setTimeout(() => { if (typeof window.nhNav === 'function') window.nhNav('editor'); }, 200); 
         }
       }},
-      { icon: '🌙', title: 'Daily Wrap', sub: 'Tagesabschluss & Reflexion', open: () => {
+  { icon: '🌙', title: 'Daily Wrap', sub: 'Tagesabschluss & Reflexion', open: () => {
         if (typeof window.openDailyWrap === 'function') window.openDailyWrap();
       }},
-      { icon: '📓', title: 'Journal', sub: 'Selbst-Briefe', open: () => { window.location.hash = '#/journal'; } },
-      { icon: '🎓', title: 'KV-Cockpit', sub: 'Abschlussprüfung Mai 2026', open: () => {
+  { icon: '🎓', title: 'KV-Cockpit', sub: 'Abschlussprüfung Mai 2026', open: () => {
         try {
           const projs = window.APP?.state?.data?.entities?.projects || {};
           const p = Object.values(projs).find(x => x.externalId === 'PRJ-Z2SEX');
           if (p) window.location.hash = '#/projects/' + p.id;
         } catch(e) {}
       }},
-      { icon: '⚙️', title: 'Einstellungen', sub: 'API Keys, Preferences', open: () => { window.location.hash = '#/settings'; } },
 ];
 
 function buildAppSearchItems() {
-  return SPOTLIGHT_APPS.map(a => ({
-    kind: 'app',
-    category: 'App',
-    icon: a.icon,
-    id: 'app-' + String(a.title || '').toLowerCase().replace(/\s+/g, '-'),
-    title: a.title,
-    sub: a.sub,
-    keywords: [a.title, a.sub, 'app', 'öffnen', 'oeffnen'].join(' '),
-    open: a.open,
-  }));
+  const items = [];
+  const seen = new Set();
+
+  // 1) Die echte App-Registry.
+  let registry = [];
+  try { registry = (typeof getAllApps === 'function') ? getAllApps() : []; }
+  catch (e) { console.warn('App-Registry für die Suche:', e); }
+  registry.forEach(app => {
+    if (!app || !app.key || seen.has(app.key)) return;
+    seen.add(app.key);
+    items.push({
+      kind: 'app',
+      category: 'App',
+      icon: app.icon || '📱',
+      id: 'app-' + app.key,
+      title: app.label || app.key,
+      sub: app.desc || 'App öffnen',
+      keywords: [app.key, app.label, app.desc, 'app', 'öffnen', 'oeffnen'].filter(Boolean).join(' '),
+      open: () => {
+        if (typeof navigate === 'function') navigate(app.key);
+        else window.location.hash = '#/' + app.key;
+      },
+    });
+  });
+
+  // 2) Aktionen und Overlays ohne eigene Route.
+  SPOTLIGHT_APP_ACTIONS.forEach(a => {
+    const id = 'app-' + String(a.title || '').toLowerCase().replace(/\s+/g, '-');
+    if (seen.has(a.title) || items.some(it => it.id === id)) return;
+    items.push({
+      kind: 'app',
+      category: 'App',
+      icon: a.icon || '📱',
+      id,
+      title: a.title,
+      sub: a.sub || 'App öffnen',
+      keywords: [a.title, a.sub, 'app', 'öffnen', 'oeffnen'].filter(Boolean).join(' '),
+      open: a.open,
+    });
+  });
+
+  return items;
 }
 window.buildAppSearchItems = buildAppSearchItems;
 
