@@ -18,6 +18,7 @@
 
   var inquiryRef = null;
   var videoRef = null;
+  var submissionRef = null;
   var initialized = false;
 
   // ── kleine Helfer ────────────────────────────────────────────────────────
@@ -236,10 +237,19 @@
     return (kind === "invoice" ? "RE-" : "OF-") + year + "-" + String(next).padStart(4, "0");
   }
 
+  // Der Kundenprozess kommt aus dem geteilten Workflow-Kern, damit Pipeline,
+  // Projektseite und Kundenansicht dieselben Phasen benennen. Die alten Phasen
+  // bleiben als Zusatzeinträge lesbar, damit bestehende Projekte nichts verlieren.
+  // Der Kundenprozess (identisch zu WORKFLOW_STAGES im geteilten Workflow-Kern).
+  // Bewusst hier als Literal: flowertech.js ist ein klassisches Script und läuft
+  // VOR dem deferred Modul — ein Zugriff auf window.FlowerTechWorkflow zur
+  // Ladezeit wäre leer. Innerhalb der Funktionen wird das Modul lazy geholt.
   var STAGES = [
-    ["lead", "Lead"], ["discovery", "Abklärung"], ["proposal", "Offerte"],
-    ["build", "Umsetzung"], ["won", "Gewonnen"], ["lost", "Verloren"]
+    ["lead", "Lead"], ["intake", "Bestandesaufnahme"], ["proposal", "Angebot / Vertrag"],
+    ["build", "Umsetzung"], ["revision", "Änderungsrunde"], ["approval", "Freigabe / Abschluss"]
   ];
+  // Alte Phasenschlüssel bleiben lesbar, tauchen aber nicht als Pipeline-Spalte auf.
+  var LEGACY_STAGE_LABELS = { discovery: "Abklärung", won: "Gewonnen", lost: "Verloren" };
 
   var INQUIRY_STATUSES = [
     ["new", "Neu"], ["contacted", "Kontaktiert"], ["qualified", "Qualifiziert"],
@@ -258,7 +268,9 @@
 
   function labelOf(list, value, fallback) {
     var hit = list.find(function (entry) { return entry[0] === value; });
-    return hit ? hit[1] : (fallback || value || "—");
+    if (hit) return hit[1];
+    if (list === STAGES && LEGACY_STAGE_LABELS[value]) return LEGACY_STAGE_LABELS[value];
+    return fallback || value || "—";
   }
 
   function isOverdue(invoice) {
@@ -310,11 +322,49 @@
     return created;
   }
 
+  // Eingänge aus den geteilten Kundenlinks verarbeiten. Ein Eintrag wirkt genau
+  // einmal (Idempotenz-Schlüssel) und nur, wenn sein Token zu einem Projekt
+  // gehört. Unbekannte Token werden ignoriert, nicht geraten.
+  function ingestSubmissions(raw) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return 0;
+    ft.processedSubmissions = ft.processedSubmissions && typeof ft.processedSubmissions === "object"
+      ? ft.processedSubmissions : {};
+    var byToken = {};
+    Object.keys(ft.shares || {}).forEach(function (projectId) {
+      var share = ft.shares[projectId] || {};
+      if (share.formToken) byToken[share.formToken] = { projectId: projectId, kind: "briefing" };
+      if (share.portalToken) byToken[share.portalToken] = { projectId: projectId, kind: "change" };
+    });
+    var handled = 0;
+    Object.keys(raw).forEach(function (key) {
+      var entry = raw[key] || {};
+      if (ft.processedSubmissions[key]) return;
+      var match = byToken[entry.token];
+      if (!match) return;                       // fremder oder abgelaufener Link
+      if (entry.kind === "briefing") {
+        applyBriefing(match.projectId, entry.payload || {}, { createTasks: true });
+        handled++;
+      } else if (entry.kind === "change") {
+        var cr = core.normalizeChangeRequest(
+          Object.assign({}, entry.payload || {}, { origin: "client" }), { now: now() });
+        if (core.changeRequestIsUsable(cr)) { addChangeRequest(match.projectId, cr); handled++; }
+      }
+      ft.processedSubmissions[key] = now();
+    });
+    if (handled) save();
+    return handled;
+  }
+  window._ftIngestSubmissions = ingestSubmissions;
+
   function stopListeners() {
     try { if (inquiryRef) inquiryRef.off(); } catch (error) {}
     try { if (videoRef) videoRef.off(); } catch (error) {}
+    try { if (submissionRef) submissionRef.off(); } catch (error) {}
     inquiryRef = null;
     videoRef = null;
+    submissionRef = null;
   }
 
   function routeIsFlowerTech() {
@@ -358,6 +408,18 @@
           ft.syncStatus = "error";
           console.warn("[FlowerTech] Inquiry-Sync:", error && error.message);
           if (routeIsFlowerTech()) rerender();
+        });
+
+        // Kundeneingänge aus den geteilten Links (Bedarfsformular, Änderungs-
+        // wünsche). Zuordnung ausschliesslich über den Freigabe-Token des
+        // Projekts — nichts wird „irgendwie" erraten.
+        submissionRef = db.ref("flowertech/submissions");
+        submissionRef.on("value", function (snapshot) {
+          try { ingestSubmissions(snapshot.val() || {}); }
+          catch (error) { console.warn("[FlowerTech] Eingänge:", error && error.message); }
+          if (routeIsFlowerTech() || /#\/projects\//.test(location.hash)) rerender();
+        }, function (error) {
+          console.warn("[FlowerTech] Eingangs-Sync:", error && error.message);
         });
 
         videoRef.on("value", function (snapshot) {
@@ -1593,7 +1655,10 @@
     }
 
     return '<div class="ft-panel"><style>' + STYLES + "</style>" +
-      head + kpis + sales +
+      head + kpis +
+      // Der Kundenworkflow steht zuoberst: Er ist der rote Faden des Projekts.
+      (typeof window.ftWorkflowPanel === "function" ? window.ftWorkflowPanel(project.id) : "") +
+      sales +
       '<div class="ft-grid-2 mt-3">' + docSection("offer", projectOffers) + docSection("invoice", projectInvoices) + "</div>" +
       (openDoc ? docEditor(openKind, openDoc) : "") +
       "</div>";
@@ -1793,10 +1858,24 @@
       // Keine Kacheln mehr: eine ruhige Liste mit allen Zahlen, die man zum
       // Sortieren braucht. Ein Klick öffnet die vollwertige Projektseite.
       content =
-        '<div class="card p-4 ft-form"><h3>FlowerTech-Projekt erstellen</h3>' +
-          '<input id="ftProjectTitle" type="text" placeholder="Projektname">' +
-          '<textarea id="ftProjectDescription" rows="3" placeholder="Kurzbeschreibung"></textarea>' +
-          '<button class="btn primary" onclick="window._ftCreateProject()">Projekt erstellen</button></div>' +
+        // Beim Interesse: Projekt mit Typ, Kundendaten und Preisrahmen anlegen.
+        // Der Kundenprozess startet damit sofort bei „Lead".
+        '<div class="card p-4 ft-form"><h3>Interesse erfassen — FlowerTech-Projekt anlegen</h3>' +
+          '<div class="ft-brief-grid">' +
+            '<label>Projektname *<input id="ftWfTitle" type="text" placeholder="z. B. Website Gärtnerei Muster"></label>' +
+            '<label>Typ<select id="ftWfType"><option value="website">Website</option>' +
+              '<option value="program">Programm / Anwendung</option></select></label>' +
+            '<label>Firma / Organisation<input id="ftWfCompany" type="text"></label>' +
+            '<label>Ansprechperson<input id="ftWfContact" type="text"></label>' +
+            '<label>E-Mail<input id="ftWfEmail" type="email"></label>' +
+            '<label>Telefon<input id="ftWfPhone" type="text"></label>' +
+            '<label>Budget / Preisvorstellung (CHF)<input id="ftWfBudget" type="number" step="0.05"></label>' +
+            '<label>Bisheriger Anbieterpreis (CHF)<input id="ftWfCurrent" type="number" step="0.05"></label>' +
+          "</div>" +
+          '<textarea id="ftWfDescription" rows="3" placeholder="Worum geht es? (Kurzbeschreibung)"></textarea>' +
+          '<button class="btn primary" onclick="window._ftCreateWorkflowProject()">Projekt anlegen</button>' +
+          '<div class="mini mt-2">Das Projekt startet in der Phase \u201eLead\u201c und bekommt sofort einen teilbaren ' +
+          "Link zum Bedarfsformular.</div></div>" +
         (allProjects.length
           ? '<div class="card p-4"><div class="ft-plist-head"><span>Projekt</span><span>Phase</span><span>Aufgaben</span>' +
             "<span>Offeriert</span><span>Fakturiert</span><span>Nächster Termin</span></div>" +
@@ -1987,6 +2066,1064 @@
       }).join("") + "</div>" + content + "</div>";
   }
 
+  // ==========================================================================
+  //  Kundenworkflow: Lead → Bestandesaufnahme → Angebot/Vertrag → Umsetzung →
+  //  Änderungsrunde → Freigabe/Abschluss.
+  //  Die Logik (Phasen, Vorlagen, Vertrag, Prompt) liegt im geteilten Modul
+  //  flowertech-workflow-core.js — hier ist nur die Darstellung.
+  // ==========================================================================
+  function W() { return window.FlowerTechWorkflow || null; }
+
+  // ── Zustand für den Workflow ────────────────────────────────────────────
+  function wf() {
+    var ft = state();
+    if (!ft) return null;
+    ft.briefings = ft.briefings && typeof ft.briefings === "object" ? ft.briefings : {};
+    ft.changeRequests = Array.isArray(ft.changeRequests) ? ft.changeRequests : [];
+    ft.contentDocs = ft.contentDocs && typeof ft.contentDocs === "object" ? ft.contentDocs : {};
+    ft.contracts = ft.contracts && typeof ft.contracts === "object" ? ft.contracts : {};
+    ft.legalDocs = ft.legalDocs && typeof ft.legalDocs === "object" ? ft.legalDocs : {};
+    ft.shares = ft.shares && typeof ft.shares === "object" ? ft.shares : {};
+    ft.promptPrefs = ft.promptPrefs && typeof ft.promptPrefs === "object" ? ft.promptPrefs : {};
+    return ft;
+  }
+
+  function briefingOf(projectId) { var ft = wf(); return (ft && ft.briefings[projectId]) || null; }
+  function contentOf(projectId) { var ft = wf(); return (ft && ft.contentDocs[projectId]) || null; }
+  function contractOf(projectId) { var ft = wf(); return (ft && ft.contracts[projectId]) || null; }
+  function legalOf(projectId, kind) {
+    var ft = wf();
+    return (ft && ft.legalDocs[projectId] && ft.legalDocs[projectId][kind]) || null;
+  }
+  function changesOf(projectId) {
+    var ft = wf();
+    return (ft ? ft.changeRequests : []).filter(function (c) { return c.projectId === projectId; })
+      .sort(function (a, b) { return String(b.createdAt || "").localeCompare(String(a.createdAt || "")); });
+  }
+  function sharesOf(projectId) {
+    var ft = wf();
+    if (!ft) return {};
+    ft.shares[projectId] = ft.shares[projectId] || {};
+    return ft.shares[projectId];
+  }
+
+  // Freigabe-Token: langes Zufallsgeheimnis, das nur ein Projekt freigibt.
+  // Kein API-Schlüssel — deshalb darf es im Link stehen.
+  function makeToken() {
+    var bytes = new Uint8Array(24);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+    else for (var i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    var chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+    var out = "";
+    for (var j = 0; j < bytes.length; j++) out += chars[bytes[j] % chars.length];
+    return out;
+  }
+
+  function ensureToken(projectId, key) {
+    var share = sharesOf(projectId);
+    if (!share[key]) { share[key] = makeToken(); share.createdAt = share.createdAt || now(); save(); }
+    return share[key];
+  }
+
+  function shareLinks(projectId) {
+    var core = W();
+    var origin = location.origin + location.pathname.replace(/\/[^/]*$/, "");
+    var share = sharesOf(projectId);
+    if (!core) return { form: "", portal: "" };
+    return {
+      form: share.formToken ? core.formUrl(origin, share.formToken) : "",
+      portal: share.portalToken ? core.portalUrl(origin, share.portalToken) : "",
+    };
+  }
+
+  function companyContext(projectId, amount) {
+    var ft = wf();
+    var project = projectById(projectId) || {};
+    return {
+      project: project,
+      company: (ft && ft.company) || {},
+      briefing: briefingOf(projectId) || {},
+      milestones: milestonesOfProject(projectId),
+      amount: amount == null ? null : amount,
+      links: shareLinks(projectId),
+    };
+  }
+
+  function wfVars(projectId, amount) {
+    var core = W();
+    return core ? core.contractVariables(companyContext(projectId, amount)) : {};
+  }
+
+  // ── Projekt anlegen mit Typ, Kundendaten und Preisrahmen ────────────────
+  window._ftCreateWorkflowProject = function () {
+    var val = function (id) { return ((document.getElementById(id) || {}).value || "").trim(); };
+    var title = val("ftWfTitle");
+    if (!title) return notify("warn", "FlowerTech", "Projektname erforderlich");
+    var projectId = window.createEntity("project", {
+      title: title,
+      description: val("ftWfDescription"),
+      status: "active",
+      projectType: "flowertech",
+      pipelineStage: "lead",
+      deliveryType: val("ftWfType") === "program" ? "program" : "website",
+      budget: val("ftWfBudget") ? num(val("ftWfBudget")) : null,
+      currentProviderPrice: val("ftWfCurrent") ? num(val("ftWfCurrent")) : null,
+      client: {
+        company: val("ftWfCompany"),
+        name: val("ftWfContact"),
+        email: val("ftWfEmail"),
+        phone: val("ftWfPhone"),
+      },
+      tags: ["flowertech"],
+    });
+    if (!projectId) return rerender();
+    var project = projectById(projectId);
+    if (project) {
+      project.ftContactLog = [{
+        id: id(), at: now(), channel: "note",
+        text: "Interesse erfasst — FlowerTech-Projekt angelegt.",
+      }];
+    }
+    // Freigabe-Links direkt bereitstellen, damit der Formularlink sofort teilbar ist.
+    ensureToken(projectId, "formToken");
+    ensureToken(projectId, "portalToken");
+    save();
+    notify("ok", "FlowerTech", "Projekt angelegt — Bedarfsformular kann geteilt werden");
+    window._ftOpenProject(projectId);
+  };
+
+  window._ftSetProjectNumber = function (projectId, field, value) {
+    var project = projectById(projectId);
+    if (!project) return;
+    var raw = String(value == null ? "" : value).trim();
+    project[field] = raw === "" ? null : num(raw);
+    project.updatedAt = now();
+    save();
+  };
+
+  window._ftSetDeliveryType = function (projectId, value) {
+    var project = projectById(projectId);
+    if (!project) return;
+    project.deliveryType = value === "program" ? "program" : "website";
+    project.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  window._ftAdvanceStage = function (projectId, direction) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return;
+    project.pipelineStage = direction === "back"
+      ? core.previousStage(project.pipelineStage)
+      : core.nextStage(project.pipelineStage);
+    project.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  window._ftSetProjectTab = function (projectId, tab) {
+    var ft = wf();
+    if (!ft) return;
+    ft.ui.projectTab = tab;
+    save();
+    rerender();
+  };
+
+  // ── Kontaktverlauf ──────────────────────────────────────────────────────
+  window._ftAddContactEntry = function (projectId) {
+    var project = projectById(projectId);
+    var input = document.getElementById("ftContactText");
+    var channel = (document.getElementById("ftContactChannel") || {}).value || "note";
+    var value = ((input || {}).value || "").trim();
+    if (!project || !value) return notify("warn", "FlowerTech", "Bitte kurz notieren, was besprochen wurde");
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({ id: id(), at: now(), channel: channel, text: value });
+    project.updatedAt = now();
+    if (input) input.value = "";
+    save();
+    rerender();
+  };
+
+  window._ftDeleteContactEntry = function (projectId, entryId) {
+    var project = projectById(projectId);
+    if (!project || !Array.isArray(project.ftContactLog)) return;
+    project.ftContactLog = project.ftContactLog.filter(function (e) { return e.id !== entryId; });
+    save();
+    rerender();
+  };
+
+  // ── Bedarfsformular ─────────────────────────────────────────────────────
+  // Dasselbe Feldset wie das geteilte HTML-Formular — intern direkt ausfüllbar.
+  window._ftSaveBriefing = function (projectId) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return;
+    var raw = {};
+    core.BRIEFING_FIELDS.forEach(function (field) {
+      var el = document.getElementById("ftBrief_" + field.key);
+      if (el) raw[field.key] = el.value;
+    });
+    raw.source = "intern";
+    applyBriefing(projectId, raw, { createTasks: true });
+  };
+
+  // Aus einer Antwort werden strukturierte Projektfelder UND normale
+  // Quantus-Aufgaben. Keine eigene Aufgabenart — deshalb erscheinen sie
+  // automatisch in der zentralen Aufgaben-App.
+  function applyBriefing(projectId, raw, options) {
+    var core = W();
+    var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return 0;
+    var briefing = core.normalizeBriefing(raw, { now: now() });
+    if (!core.briefingIsUsable(briefing)) {
+      notify("warn", "Bedarf", "E-Mail und Ziel werden benötigt");
+      return 0;
+    }
+    ft.briefings[projectId] = briefing;
+
+    var patch = core.projectFieldsFromBriefing(briefing, project);
+    Object.keys(patch).forEach(function (key) { project[key] = patch[key]; });
+    project.updatedAt = now();
+
+    var created = 0;
+    if (options && options.createTasks) created = createBriefingTasks(projectId, briefing);
+
+    // Leistungsbeschreibung als Startvorlage erzeugen, sofern noch keine da ist.
+    if (!ft.contentDocs[projectId]) {
+      ft.contentDocs[projectId] = core.buildServiceDescription(project, briefing, companyContext(projectId));
+    }
+    if (core.stageIndex(project.pipelineStage) < core.stageIndex("intake")) {
+      project.pipelineStage = "intake";
+    }
+    save();
+    notify("ok", "Bedarf", created ? ("Übernommen · " + created + " Aufgaben erstellt") : "Bedarf übernommen");
+    rerender();
+    return created;
+  }
+  window._ftApplyBriefing = applyBriefing;
+
+  function createBriefingTasks(projectId, briefing) {
+    var core = W();
+    var root = data();
+    if (!core || !root) return 0;
+    var existing = new Set(Object.values(root.entities.tasks || {})
+      .map(function (t) { return t && t.sourceBriefingKey; }).filter(Boolean));
+    var drafts = core.buildBriefingTasks(briefing, projectId, { now: now() });
+    var created = 0;
+    drafts.forEach(function (draft) {
+      var key = projectId + ":" + draft.key;
+      if (existing.has(key)) return;
+      var payload = Object.assign({}, draft);
+      delete payload.key;
+      payload.sourceBriefingKey = key;
+      window.createEntity("task", payload);
+      existing.add(key);
+      created++;
+    });
+    return created;
+  }
+
+  // ── Änderungswünsche ────────────────────────────────────────────────────
+  window._ftAddChangeRequest = function (projectId) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return;
+    var titleEl = document.getElementById("ftCrTitle");
+    var detailEl = document.getElementById("ftCrDetail");
+    var raw = {
+      title: (titleEl || {}).value || "",
+      detail: (detailEl || {}).value || "",
+      area: ((document.getElementById("ftCrArea") || {}).value || ""),
+      priority: Number((document.getElementById("ftCrPriority") || {}).value || 2),
+      origin: "internal",
+      requestedBy: "intern",
+    };
+    var cr = core.normalizeChangeRequest(raw, { now: now() });
+    if (!core.changeRequestIsUsable(cr)) return notify("warn", "Änderung", "Bitte einen Titel angeben");
+    addChangeRequest(projectId, cr);
+    if (titleEl) titleEl.value = "";
+    if (detailEl) detailEl.value = "";
+    rerender();
+  };
+
+  // Ein Änderungswunsch erzeugt IMMER eine normale Quantus-Aufgabe.
+  function addChangeRequest(projectId, normalized) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return null;
+    var entry = Object.assign({ id: id(), projectId: projectId }, normalized);
+    var taskId = window.createEntity("task", core.buildChangeRequestTask(entry, projectId, { now: now() }));
+    entry.taskId = taskId || null;
+    ft.changeRequests.unshift(entry);
+    var project = projectById(projectId);
+    if (project && core.stageIndex(project.pipelineStage) < core.stageIndex("revision")
+      && core.stageIndex(project.pipelineStage) >= core.stageIndex("build")) {
+      project.pipelineStage = "revision";
+    }
+    save();
+    notify("ok", "Änderung", "Erfasst und als Aufgabe angelegt");
+    return entry;
+  }
+  window._ftAddChangeRequestData = addChangeRequest;
+
+  window._ftSetChangeStatus = function (changeId, status) {
+    var ft = wf();
+    if (!ft) return;
+    var entry = ft.changeRequests.find(function (c) { return c.id === changeId; });
+    if (!entry) return;
+    entry.status = status;
+    entry.updatedAt = now();
+    // Die Aufgabe bleibt führend: Status „erledigt" schliesst sie mit.
+    var root = data();
+    var task = entry.taskId && root && root.entities.tasks[entry.taskId];
+    if (task) {
+      if (status === "done" && task.status !== "done") { task.status = "done"; task.completedAt = now(); }
+      if (status === "in_progress") task.status = "in_progress";
+      if (status === "rejected" && task.status !== "done") { task.status = "cancelled"; }
+      task.updatedAt = now();
+    }
+    save();
+    rerender();
+  };
+
+  window._ftDeleteChangeRequest = function (changeId) {
+    var ft = wf();
+    if (!ft) return;
+    ft.changeRequests = ft.changeRequests.filter(function (c) { return c.id !== changeId; });
+    save();
+    rerender();
+  };
+
+  // Der Status folgt der Aufgabe, damit die zentrale Aufgaben-App führend bleibt.
+  function syncChangeStatusFromTasks() {
+    var core = W();
+    var ft = wf();
+    var root = data();
+    if (!core || !ft || !root) return;
+    ft.changeRequests.forEach(function (entry) {
+      var task = entry.taskId && root.entities.tasks[entry.taskId];
+      if (!task) return;
+      var next = core.changeStatusFromTask(task, entry.status);
+      if (next !== entry.status) { entry.status = next; entry.updatedAt = now(); }
+    });
+  }
+
+  // ── Leistungsbeschreibung / Angebot ─────────────────────────────────────
+  window._ftBuildContent = function (projectId, force) {
+    var core = W();
+    var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return;
+    if (ft.contentDocs[projectId] && !force
+      && !window.confirm("Leistungsbeschreibung neu aus den Vorlagen aufbauen? Eigene Änderungen gehen verloren.")) return;
+    ft.contentDocs[projectId] = core.buildServiceDescription(project, briefingOf(projectId) || {}, companyContext(projectId));
+    save();
+    notify("ok", "Angebot", "Leistungsbeschreibung erstellt — jeder Block ist editierbar");
+    rerender();
+  };
+
+  // KI-Unterstützung: schreibt die Blöcke um, ersetzt sie aber nie ungefragt.
+  window._ftAiContentDraft = async function (projectId) {
+    var ft = wf();
+    var doc = contentOf(projectId);
+    if (!doc) return notify("warn", "Angebot", "Zuerst die Leistungsbeschreibung erstellen");
+    if (!aiAvailable()) return notify("warn", "KI", "Keine KI verfügbar");
+    var briefing = briefingOf(projectId) || {};
+    setAiBusy(true, "Leistungsbeschreibung");
+    try {
+      var answer = await window.callAI(
+        "Du schreibst für ein Schweizer KMU eine kundenfreundliche Leistungsbeschreibung auf Deutsch. " +
+        "Kurze Sätze, kein Fachjargon, per Sie. Gib NUR den überarbeiteten Text der Blöcke zurück, " +
+        "jeden Block eingeleitet mit '## ' und dem unveränderten Blocktitel.\n\n" +
+        "Briefing:\n" + JSON.stringify({
+          ziel: briefing.goal, zielgruppe: briefing.audience,
+          funktionen: briefing.features, seiten: briefing.pages, design: briefing.designWishes,
+        }) + "\n\nAktuelle Blöcke:\n" +
+        doc.blocks.map(function (b) { return "## " + b.title + "\n" + b.body; }).join("\n\n")
+      );
+      var parts = String(answer || "").split(/^##\s+/m).filter(Boolean);
+      var changed = 0;
+      parts.forEach(function (part) {
+        var nl = part.indexOf("\n");
+        if (nl < 0) return;
+        var title = part.slice(0, nl).trim();
+        var body = part.slice(nl + 1).trim();
+        var block = doc.blocks.find(function (b) { return b.title.trim() === title; });
+        if (block && body) { block.body = body; changed++; }
+      });
+      doc.updatedAt = now();
+      pushAi("Leistungsbeschreibung überarbeitet", answer);
+      save();
+      notify(changed ? "ok" : "warn", "KI", changed ? (changed + " Blöcke überarbeitet") : "Keine Blöcke erkannt — Text im KI-Log");
+    } catch (error) {
+      notify("err", "KI", error.message);
+    }
+    setAiBusy(false);
+    rerender();
+  };
+
+  // ── Vertrag ─────────────────────────────────────────────────────────────
+  window._ftBuildContract = function (projectId, force) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return;
+    if (ft.contracts[projectId] && !force
+      && !window.confirm("Vertrag neu aus der Vorlage aufbauen? Eigene Änderungen gehen verloren.")) return;
+    var accepted = docsOfProject("offer", projectId).find(function (o) { return o.status === "accepted"; });
+    var amount = accepted ? docTotals(accepted).rounded : null;
+    ft.contracts[projectId] = core.buildContractDraft(companyContext(projectId, amount));
+    save();
+    notify("ok", "Vertrag", "Entwurf erstellt — jede Klausel ist einzeln editierbar");
+    rerender();
+  };
+
+  // ── Rechtstexte ─────────────────────────────────────────────────────────
+  window._ftBuildLegal = function (projectId, kind, force) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return;
+    ft.legalDocs[projectId] = ft.legalDocs[projectId] || {};
+    if (ft.legalDocs[projectId][kind] && !force
+      && !window.confirm("Vorlage neu aufbauen? Eigene Änderungen gehen verloren.")) return;
+    ft.legalDocs[projectId][kind] = core.buildLegalDraft(kind, companyContext(projectId));
+    save();
+    notify("ok", "Rechtstext", "Entwurf erstellt — vor Verwendung rechtlich prüfen");
+    rerender();
+  };
+
+  // ── Gemeinsame Block-Bearbeitung (Angebot / Vertrag / AGB / Datenschutz) ─
+  function docOfScope(projectId, scope) {
+    if (scope === "content") return contentOf(projectId);
+    if (scope === "contract") return contractOf(projectId);
+    if (scope === "agb") return legalOf(projectId, "agb");
+    if (scope === "privacy") return legalOf(projectId, "privacy");
+    return null;
+  }
+  function blocksOf(doc) { return (doc && (doc.sections || doc.blocks)) || []; }
+
+  window._ftBlockSet = function (projectId, scope, blockKey, field, value) {
+    var doc = docOfScope(projectId, scope);
+    var block = blocksOf(doc).find(function (b) { return b.key === blockKey; });
+    if (!block) return;
+    block[field] = field === "enabled" ? !!value : value;
+    doc.updatedAt = now();
+    save();
+  };
+
+  window._ftBlockToggle = function (projectId, scope, blockKey, enabled) {
+    window._ftBlockSet(projectId, scope, blockKey, "enabled", enabled);
+    rerender();
+  };
+
+  window._ftBlockMove = function (projectId, scope, blockKey, delta) {
+    var doc = docOfScope(projectId, scope);
+    var list = blocksOf(doc);
+    var i = list.findIndex(function (b) { return b.key === blockKey; });
+    var target = i + delta;
+    if (i < 0 || target < 0 || target >= list.length) return;
+    var moved = list.splice(i, 1)[0];
+    list.splice(target, 0, moved);
+    doc.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  window._ftBlockAdd = function (projectId, scope) {
+    var doc = docOfScope(projectId, scope);
+    if (!doc) return;
+    var title = window.prompt("Titel des neuen Abschnitts:", "Zusätzliche Vereinbarung");
+    if (!title) return;
+    blocksOf(doc).push({ key: "custom_" + id(), title: title, body: "", enabled: true, variables: [] });
+    doc.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  window._ftBlockDelete = function (projectId, scope, blockKey) {
+    var doc = docOfScope(projectId, scope);
+    var list = blocksOf(doc);
+    var i = list.findIndex(function (b) { return b.key === blockKey; });
+    if (i < 0) return;
+    if (!window.confirm("Abschnitt entfernen?")) return;
+    list.splice(i, 1);
+    doc.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  window._ftDocMetaSet = function (projectId, scope, field, value) {
+    var doc = docOfScope(projectId, scope);
+    if (!doc) return;
+    doc[field] = value;
+    doc.updatedAt = now();
+    save();
+  };
+
+  window._ftDocStatusSet = function (projectId, scope, status) {
+    var doc = docOfScope(projectId, scope);
+    if (!doc) return;
+    if (status === "released" && doc.status !== "released") doc.version = num(doc.version, 1) + 1;
+    doc.status = status;
+    doc.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  function docPlainText(projectId, scope) {
+    var core = W();
+    var doc = docOfScope(projectId, scope);
+    if (!core || !doc) return "";
+    if (scope === "contract") return core.contractToText(doc, wfVars(projectId));
+    var head = (doc.title || "") + "\n";
+    if (doc.intro) head += "⚠ " + doc.intro + "\n";
+    if (doc.legalNotice) head += "⚠ " + doc.legalNotice + "\n";
+    return head + "\n" + blocksOf(doc).filter(function (b) { return b.enabled !== false; })
+      .map(function (b) { return b.title + "\n" + core.renderTemplate(b.body, wfVars(projectId)); }).join("\n\n") + "\n";
+  }
+
+  window._ftCopyDoc = function (projectId, scope) {
+    var text = docPlainText(projectId, scope);
+    if (!text) return notify("warn", "Kopieren", "Noch kein Inhalt");
+    copyText(text, "Text kopiert");
+  };
+
+  window._ftPrintDocText = function (projectId, scope) {
+    var text = docPlainText(projectId, scope);
+    if (!text) return notify("warn", "Export", "Noch kein Inhalt");
+    var win = window.open("", "_blank");
+    if (!win) return notify("warn", "Export", "Pop-up wurde blockiert");
+    win.document.write('<!doctype html><html lang="de"><head><meta charset="utf-8"><title>' +
+      esc(text.split("\n")[0]) + '</title><style>@page{size:A4;margin:20mm}' +
+      "body{font:13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111;white-space:pre-wrap}" +
+      "</style></head><body>" + esc(text) + "<" + "/body></html>");
+    win.document.close();
+    setTimeout(function () { try { win.print(); } catch (e) {} }, 300);
+  };
+
+  function copyText(text, message) {
+    var done = function () { notify("ok", "FlowerTech", message || "Kopiert"); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+    } else fallbackCopy(text, done);
+  }
+  function fallbackCopy(text, done) {
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand("copy"); done(); } catch (e) { notify("warn", "Kopieren", "Bitte manuell kopieren"); }
+    area.remove();
+  }
+  window._ftCopyText = copyText;
+
+  // ── Claude-Code-Prompt ──────────────────────────────────────────────────
+  window._ftTogglePromptData = function (projectId, key, on) {
+    var ft = wf();
+    if (!ft) return;
+    ft.promptPrefs[projectId] = ft.promptPrefs[projectId] || {};
+    ft.promptPrefs[projectId][key] = !!on;
+    save();
+    rerender();
+  };
+
+  function promptInclude(projectId) {
+    var core = W();
+    var ft = wf();
+    var stored = (ft && ft.promptPrefs[projectId]) || null;
+    var include = {};
+    (core ? core.PROMPT_DATA_OPTIONS : []).forEach(function (opt) {
+      include[opt.key] = stored && Object.prototype.hasOwnProperty.call(stored, opt.key)
+        ? !!stored[opt.key] : !!opt.default;
+    });
+    return include;
+  }
+
+  function claudePromptText(projectId) {
+    var core = W();
+    if (!core) return "";
+    return core.buildClaudePrompt({
+      project: projectById(projectId) || {},
+      briefing: briefingOf(projectId) || {},
+      changeRequests: changesOf(projectId),
+      notes: (wf() ? wf().notes : []).filter(function (n) { return n.projectId === projectId; }),
+    }, promptInclude(projectId));
+  }
+  window._ftClaudePrompt = claudePromptText;
+
+  window._ftCopyClaudePrompt = function (projectId) {
+    var text = claudePromptText(projectId);
+    if (!text) return notify("warn", "Prompt", "Kein Inhalt");
+    copyText(text, "Claude-Code-Prompt kopiert");
+  };
+
+  // ── Kundenansicht veröffentlichen ───────────────────────────────────────
+  // Datensparsam: nur das, was der Kunde sehen soll. Kein Zugriff auf Quantus.
+  function clientSnapshot(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return null;
+    var ft = wf();
+    var content = contentOf(projectId);
+    var offers = docsOfProject("offer", projectId);
+    var invoices = docsOfProject("invoice", projectId);
+    var costs = core.costOverview({
+      offers: offers, invoices: invoices,
+      totals: function (doc) { return docTotals(doc).rounded; },
+    });
+    return {
+      projectId: projectId,
+      title: project.title || "Projekt",
+      deliveryType: project.deliveryType || "website",
+      stage: project.pipelineStage || "lead",
+      stageLabel: core.stageLabel(project.pipelineStage),
+      updatedAt: now(),
+      company: { name: (ft.company && ft.company.name) || "FlowerTech", email: (ft.company && ft.company.email) || "" },
+      contact: { name: (project.client || {}).name || "", company: (project.client || {}).company || "" },
+      costs: costs,
+      budget: project.budget == null ? null : project.budget,
+      adminUrl: project.adminUrl || "",
+      previewUrl: project.previewUrl || "",
+      content: content ? blocksOf(content).filter(function (b) { return b.enabled !== false; })
+        .map(function (b) { return { title: b.title, body: core.renderTemplate(b.body, wfVars(projectId)) }; }) : [],
+      milestones: milestonesOfProject(projectId).map(function (m) {
+        return { title: m.title, date: m.date || "", done: !!m.done };
+      }),
+      changes: changesOf(projectId).map(function (c) {
+        return { title: c.title, status: c.status, statusLabel: core.changeStatusLabel(c.status), detail: c.detail || "", createdAt: c.createdAt };
+      }),
+      versions: (project.ftVersions || []).slice(0, 12),
+      messages: (project.ftContactLog || []).filter(function (e) { return e.shared; })
+        .map(function (e) { return { at: e.at, text: e.text }; }),
+    };
+  }
+  window._ftClientSnapshot = clientSnapshot;
+
+  window._ftPublishClientView = async function (projectId) {
+    var token = ensureToken(projectId, "portalToken");
+    var snapshot = clientSnapshot(projectId);
+    if (!snapshot) return;
+    var share = sharesOf(projectId);
+    try {
+      if (!window.firebase || !firebase.app) throw new Error("Firebase nicht verfügbar");
+      await firebase.app().database(RTDB).ref("flowertech/clientPortals/" + token).set(snapshot);
+      share.publishedAt = now();
+      share.publishError = null;
+      save();
+      notify("ok", "Kundenansicht", "Aktualisiert — Link kann geteilt werden");
+    } catch (error) {
+      share.publishError = error.message;
+      save();
+      notify("err", "Kundenansicht", "Konnte nicht veröffentlicht werden: " + error.message);
+    }
+    rerender();
+  };
+
+  window._ftRotateToken = function (projectId, key) {
+    if (!window.confirm("Neuen Link erzeugen? Der bisherige Link funktioniert danach nicht mehr.")) return;
+    sharesOf(projectId)[key] = makeToken();
+    save();
+    notify("ok", "Link", "Neuer Link erzeugt");
+    rerender();
+  };
+
+  window._ftCopyLink = function (url) {
+    if (!url) return notify("warn", "Link", "Noch kein Link vorhanden");
+    copyText(url, "Link kopiert");
+  };
+
+  // ── Kundenmail aus Vorlage ──────────────────────────────────────────────
+  window._ftComposeTemplate = function (projectId, key) {
+    var core = W();
+    if (!core) return;
+    var draft = core.buildMessageDraft(key, wfVars(projectId));
+    var project = projectById(projectId) || {};
+    var to = (project.client || {}).email || "";
+    if (typeof window.gmailComposeToEntity === "function") {
+      window.gmailComposeToEntity("project", projectId, { to: to, subject: draft.subject, body: draft.body });
+    }
+    // Immer auch in die Zwischenablage: so ist der Entwurf nutzbar, egal welcher
+    // Mailweg verwendet wird.
+    copyText(draft.subject + "\n\n" + draft.body, "Entwurf kopiert");
+    var log = project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    log.unshift({ id: id(), at: now(), channel: "mail", text: "Vorlage vorbereitet: " + draft.subject });
+    save();
+  };
+
+  // ── Versionen / Freigabe ────────────────────────────────────────────────
+  window._ftAddVersion = function (projectId) {
+    var project = projectById(projectId);
+    if (!project) return;
+    var label = ((document.getElementById("ftVersionLabel") || {}).value || "").trim();
+    if (!label) return notify("warn", "Version", "Bitte kurz beschreiben, was neu ist");
+    project.ftVersions = Array.isArray(project.ftVersions) ? project.ftVersions : [];
+    project.ftVersions.unshift({ id: id(), at: now(), label: label, approved: false });
+    project.updatedAt = now();
+    var el = document.getElementById("ftVersionLabel");
+    if (el) el.value = "";
+    save();
+    rerender();
+  };
+
+  window._ftApproveVersion = function (projectId, versionId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!project || !Array.isArray(project.ftVersions)) return;
+    var version = project.ftVersions.find(function (v) { return v.id === versionId; });
+    if (!version) return;
+    version.approved = !version.approved;
+    version.approvedAt = version.approved ? now() : null;
+    if (version.approved && core) project.pipelineStage = "approval";
+    project.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  // ==========================================================================
+  //  Darstellung des Workflows im Projekt
+  // ==========================================================================
+  function stepperHtml(project) {
+    var core = W();
+    if (!core) return "";
+    var active = core.stageIndex(project.pipelineStage);
+    return '<div class="ft-steps" role="list">' + core.WORKFLOW_STAGES.map(function (stage, i) {
+      var cls = i < active ? "done" : i === active ? "active" : "";
+      return '<button class="ft-step ' + cls + '" role="listitem" title="' + attr(stage.hint) + '" ' +
+        'onclick="window._ftSetProjectStage(\'' + attr(project.id) + "','" + stage.key + '\')">' +
+        '<span class="ft-step-no">' + (i + 1) + "</span><span>" + esc(stage.label) + "</span></button>";
+    }).join("") + "</div>" +
+      '<div class="ft-step-hint">' + esc(core.WORKFLOW_STAGES[active].hint) + "</div>" +
+      '<div class="ft-quick mb-3">' +
+      '<button class="btn sm" onclick="window._ftAdvanceStage(\'' + attr(project.id) + '\',\'back\')">← Zurück</button>' +
+      '<button class="btn sm primary" onclick="window._ftAdvanceStage(\'' + attr(project.id) + '\',\'next\')">Nächster Schritt →</button>' +
+      "</div>";
+  }
+
+  function briefingFormHtml(projectId) {
+    var core = W();
+    if (!core) return "";
+    var briefing = briefingOf(projectId) || {};
+    var fields = core.BRIEFING_FIELDS.map(function (field) {
+      var value = briefing[field.key];
+      if (Array.isArray(value)) value = value.join("\n");
+      if (value == null) value = "";
+      var hint = field.hint ? '<small class="ft-hint">' + esc(field.hint) + "</small>" : "";
+      var input;
+      if (field.type === "textarea") {
+        input = '<textarea id="ftBrief_' + field.key + '" rows="3">' + esc(value) + "</textarea>";
+      } else if (field.type === "select") {
+        input = '<select id="ftBrief_' + field.key + '">' + field.options.map(function (opt) {
+          return '<option value="' + opt[0] + '"' + (String(value) === opt[0] ? " selected" : "") + ">" + esc(opt[1]) + "</option>";
+        }).join("") + "</select>";
+      } else {
+        input = '<input id="ftBrief_' + field.key + '" type="' + (field.type === "date" ? "date" : "text") +
+          '" value="' + attr(value) + '">';
+      }
+      return "<label>" + esc(field.label) + (field.required ? " *" : "") + input + hint + "</label>";
+    }).join("");
+    return '<div class="ft-brief-grid">' + fields + "</div>" +
+      '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftSaveBriefing(\'' + attr(projectId) +
+      '\')">Bedarf übernehmen &amp; Aufgaben erstellen</button></div>' +
+      '<div class="mini mt-2">Aus den Angaben entstehen Projektfelder und ganz normale Quantus-Aufgaben — ' +
+      "sie erscheinen automatisch in der zentralen Aufgaben-App.</div>";
+  }
+
+  function blockEditorHtml(projectId, scope, doc, label) {
+    var core = W();
+    if (!doc) {
+      return '<div class="ft-empty">Noch nicht erstellt.</div>';
+    }
+    var blocks = blocksOf(doc);
+    var vars = wfVars(projectId);
+    var notice = doc.legalNotice || (core && core.LEGAL_REVIEW_NOTICE) || "";
+    var head = '<div class="ft-doc-head">' +
+      '<input class="ft-doc-title" value="' + attr(doc.title || label) + '" oninput="window._ftDocMetaSet(\'' +
+        attr(projectId) + "','" + scope + "','title',this.value)\">" +
+      '<span class="badge">v' + esc(String(doc.version || 1)) + " · " + esc(doc.status === "released" ? "Freigegeben" : "Entwurf") + "</span>" +
+      '<button class="btn sm" onclick="window._ftDocStatusSet(\'' + attr(projectId) + "','" + scope + "','" +
+        (doc.status === "released" ? "draft" : "released") + '\')">' +
+        (doc.status === "released" ? "Zurück auf Entwurf" : "Freigeben") + "</button>" +
+      '<button class="btn sm" onclick="window._ftCopyDoc(\'' + attr(projectId) + "','" + scope + '\')">Kopieren</button>' +
+      '<button class="btn sm" onclick="window._ftPrintDocText(\'' + attr(projectId) + "','" + scope + '\')">Drucken / PDF</button>' +
+      "</div>";
+    var legal = (scope === "contract" || scope === "agb" || scope === "privacy")
+      ? '<div class="ft-legal-note">⚠ ' + esc(doc.intro ? doc.intro + " " : "") + esc(notice) + "</div>"
+      : "";
+    var body = blocks.map(function (block, i) {
+      var preview = core ? core.renderTemplate(block.body || "", vars) : (block.body || "");
+      var varsUsed = (block.variables || (core ? core.templateVariables(block.body || "") : []));
+      return '<div class="ft-block' + (block.enabled === false ? " off" : "") + '">' +
+        '<div class="ft-block-head">' +
+          '<input class="ft-block-title" value="' + attr(block.title || "") + '" oninput="window._ftBlockSet(\'' +
+            attr(projectId) + "','" + scope + "','" + attr(block.key) + "','title',this.value)\">" +
+          '<label class="ft-block-on"><input type="checkbox"' + (block.enabled === false ? "" : " checked") +
+            ' onchange="window._ftBlockToggle(\'' + attr(projectId) + "','" + scope + "','" + attr(block.key) +
+            '\',this.checked)"> aktiv</label>' +
+          '<button class="btn sm ghost" title="Nach oben" onclick="window._ftBlockMove(\'' + attr(projectId) + "','" +
+            scope + "','" + attr(block.key) + '\',-1)">↑</button>' +
+          '<button class="btn sm ghost" title="Nach unten" onclick="window._ftBlockMove(\'' + attr(projectId) + "','" +
+            scope + "','" + attr(block.key) + '\',1)">↓</button>' +
+          '<button class="btn sm ghost" title="Entfernen" onclick="window._ftBlockDelete(\'' + attr(projectId) + "','" +
+            scope + "','" + attr(block.key) + '\')">×</button>' +
+        "</div>" +
+        '<textarea class="ft-block-body" rows="' + Math.min(16, Math.max(4, String(block.body || "").split("\n").length + 2)) +
+          '" oninput="window._ftBlockSet(\'' + attr(projectId) + "','" + scope + "','" + attr(block.key) +
+          '\',\'body\',this.value)">' + esc(block.body || "") + "</textarea>" +
+        (varsUsed.length ? '<div class="ft-vars">Variablen: ' + varsUsed.map(function (v) {
+          return '<code>{{' + esc(v) + "}}</code>";
+        }).join(" ") + "</div>" : "") +
+        '<details class="ft-preview"><summary>Vorschau (Variablen eingesetzt)</summary><pre>' + esc(preview) + "</pre></details>" +
+        "</div>";
+    }).join("");
+    return head + legal + body +
+      '<button class="btn sm mt-2" onclick="window._ftBlockAdd(\'' + attr(projectId) + "','" + scope +
+      '\')">＋ Abschnitt hinzufügen</button>';
+  }
+
+  function changeRequestsHtml(projectId) {
+    var core = W();
+    if (!core) return "";
+    var list = changesOf(projectId);
+    var rows = list.length ? list.map(function (entry) {
+      var task = entry.taskId && data() && data().entities.tasks[entry.taskId];
+      return '<div class="ft-cr ft-cr-' + esc(entry.status) + '">' +
+        '<div class="ft-cr-main"><strong>' + esc(entry.title) + "</strong>" +
+        (entry.detail ? "<small>" + esc(String(entry.detail).slice(0, 220)) + "</small>" : "") +
+        '<small class="ft-hint">' + esc(entry.origin === "internal" ? "intern" : "vom Kunden") +
+        (entry.requestedBy ? " · " + esc(entry.requestedBy) : "") + " · " + esc(dateTime(entry.createdAt)) + "</small></div>" +
+        '<select onchange="window._ftSetChangeStatus(\'' + attr(entry.id) + '\',this.value)">' +
+          core.CHANGE_STATUSES.map(function (s) {
+            return '<option value="' + s.key + '"' + (entry.status === s.key ? " selected" : "") + ">" + esc(s.label) + "</option>";
+          }).join("") + "</select>" +
+        (task ? '<button class="btn sm ghost" onclick="location.hash=\'#/tasks/' + attr(entry.taskId) +
+          '\'" title="Zur Aufgabe in der Aufgaben-App">↗ Aufgabe</button>'
+          : '<span class="mini">keine Aufgabe</span>') +
+        '<button class="btn sm ghost" onclick="window._ftDeleteChangeRequest(\'' + attr(entry.id) + '\')">×</button>' +
+        "</div>";
+    }).join("") : empty("Noch keine Änderungswünsche");
+    return '<div class="ft-inline-form">' +
+      '<input id="ftCrTitle" placeholder="Änderungswunsch, z. B. Startseite: Bilder tauschen">' +
+      '<input id="ftCrArea" placeholder="Bereich (optional)">' +
+      '<select id="ftCrPriority"><option value="1">Hoch</option><option value="2" selected>Normal</option><option value="3">Tief</option></select>' +
+      '<button class="btn primary" onclick="window._ftAddChangeRequest(\'' + attr(projectId) + '\')">Erfassen</button></div>' +
+      '<textarea id="ftCrDetail" rows="2" placeholder="Details (optional)" class="ft-cr-detail"></textarea>' +
+      rows +
+      '<div class="mini mt-2">Jeder Änderungswunsch wird zu einer normalen Quantus-Aufgabe. ' +
+      "Wird die Aufgabe erledigt, springt der Wunsch automatisch auf \u201eErledigt\u201c.</div>";
+  }
+
+  function clientPortalHtml(projectId) {
+    var core = W();
+    var project = projectById(projectId) || {};
+    var links = shareLinks(projectId);
+    var share = sharesOf(projectId);
+    var costs = core ? core.costOverview({
+      offers: docsOfProject("offer", projectId),
+      invoices: docsOfProject("invoice", projectId),
+      totals: function (doc) { return docTotals(doc).rounded; },
+    }) : { offered: 0, invoiced: 0, paid: 0, open: 0 };
+    var versions = (project.ftVersions || []);
+    return '<div class="ft-grid-2">' +
+      '<div class="card p-4"><h3>Teilbare Links</h3><div class="sep"></div>' +
+        '<div class="ft-link-row"><span>Bedarfsformular</span>' +
+          '<input readonly value="' + attr(links.form) + '">' +
+          '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(links.form) + '\')">Kopieren</button>' +
+          '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) + '\',\'formToken\')">Neu</button></div>' +
+        '<div class="ft-link-row"><span>Kundenansicht</span>' +
+          '<input readonly value="' + attr(links.portal) + '">' +
+          '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(links.portal) + '\')">Kopieren</button>' +
+          '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) + '\',\'portalToken\')">Neu</button></div>' +
+        '<button class="btn primary mt-2" onclick="window._ftPublishClientView(\'' + attr(projectId) +
+          '\')">Kundenansicht veröffentlichen / aktualisieren</button>' +
+        '<div class="mini mt-2">' + (share.publishedAt ? "Zuletzt veröffentlicht: " + esc(dateTime(share.publishedAt))
+          : "Noch nicht veröffentlicht — der Link zeigt erst nach dem Veröffentlichen Inhalte.") +
+          (share.publishError ? ' <span style="color:var(--danger)">' + esc(share.publishError) + "</span>" : "") + "</div>" +
+        '<div class="mini mt-2">Veröffentlicht wird nur eine datensparsame Auswahl: Typ, Kostenübersicht, ' +
+          "Leistungsbeschreibung, Änderungswünsche, Versionen und freigegebene Nachrichten.</div>" +
+      "</div>" +
+      '<div class="card p-4"><h3>Kostenübersicht</h3><div class="sep"></div>' +
+        '<div class="ft-kpis"><div class="ft-kpi"><span>Offeriert</span><strong>' + money(costs.offered) + "</strong></div>" +
+        '<div class="ft-kpi"><span>Fakturiert</span><strong>' + money(costs.invoiced) + "</strong></div>" +
+        '<div class="ft-kpi"><span>Bezahlt</span><strong>' + money(costs.paid) + "</strong></div>" +
+        '<div class="ft-kpi"><span>Offen</span><strong>' + money(costs.open) + "</strong></div></div>" +
+        '<label class="ft-inline-label">Verwaltung / Admin-Link' +
+          '<input value="' + attr(project.adminUrl || "") + '" placeholder="https://…" oninput="window._ftSetProjectField(\'' +
+            attr(projectId) + '\',\'adminUrl\',this.value)"></label>' +
+        '<label class="ft-inline-label">Vorschau-Link' +
+          '<input value="' + attr(project.previewUrl || "") + '" placeholder="https://…" oninput="window._ftSetProjectField(\'' +
+            attr(projectId) + '\',\'previewUrl\',this.value)"></label>' +
+      "</div></div>" +
+      '<div class="card p-4 mt-3"><h3>Versionen &amp; Freigabe</h3><div class="sep"></div>' +
+        '<div class="ft-inline-form"><input id="ftVersionLabel" placeholder="Was ist neu? z. B. Entwurf Startseite">' +
+        '<button class="btn primary" onclick="window._ftAddVersion(\'' + attr(projectId) + '\')">Version festhalten</button></div>' +
+        (versions.length ? versions.map(function (v) {
+          return '<div class="ft-ms' + (v.approved ? " done" : "") + '">' +
+            '<button class="ft-check' + (v.approved ? " on" : "") + '" onclick="window._ftApproveVersion(\'' +
+              attr(projectId) + "','" + attr(v.id) + '\')">' + (v.approved ? "✓" : "") + "</button>" +
+            '<span class="ft-ms-title">' + esc(v.label) + "</span><small>" + esc(dateTime(v.at)) +
+            (v.approved ? " · freigegeben" : "") + "</small></div>";
+        }).join("") : empty("Noch keine Versionen")) +
+      "</div>";
+  }
+
+  function communicationHtml(projectId) {
+    var core = W();
+    var project = projectById(projectId) || {};
+    var addresses = core ? core.projectMailAddresses(project) : [];
+    var log = project.ftContactLog || [];
+    var templates = (core ? core.MESSAGE_TEMPLATES : []).map(function (m) {
+      return '<button class="btn sm" onclick="window._ftComposeTemplate(\'' + attr(projectId) + "','" + m.key +
+        '\')">✉️ ' + esc(m.subject.replace(/\{\{.*?\}\}/g, "").trim() || m.key) + "</button>";
+    }).join("");
+    return '<div class="ft-grid-2">' +
+      '<div class="card p-4"><h3>Mailverlauf</h3><div class="sep"></div>' +
+        '<div class="mini">Zugeordnet wird ausschliesslich über den ausdrücklichen Projektkontakt und über ' +
+        "Mails, die aus diesem Projekt gesendet oder manuell verknüpft wurden. Es findet keine allgemeine " +
+        "Postfachüberwachung statt; alle Mails bleiben zusätzlich normal im Posteingang.</div>" +
+        '<div class="ft-addr mt-2">' + (addresses.length
+          ? addresses.map(function (a) { return '<span class="badge">' + esc(a) + "</span>"; }).join("")
+          : '<span class="mini">Noch keine Projektadresse hinterlegt.</span>') + "</div>" +
+        '<div class="ft-quick mt-2">' +
+          '<button class="btn sm" onclick="window.gmailComposeToEntity(\'project\',\'' + attr(projectId) +
+            '\')">✉️ Mail schreiben</button>' +
+          '<button class="btn sm" onclick="window.gmailManageEntityMails&&window.gmailManageEntityMails(\'project\',\'' +
+            attr(projectId) + '\')">⚙️ Adressen zuordnen</button>' +
+        "</div>" +
+        '<div class="mini mt-2">Die vollständige Mailkarte dieses Projekts steht weiter unten auf der Seite.</div>' +
+      "</div>" +
+      '<div class="card p-4"><h3>Kundenkommunikation</h3><div class="sep"></div>' +
+        '<div class="ft-quick">' + templates + "</div>" +
+        '<div class="mini mt-2">Vorlagen werden mit den Projektdaten gefüllt, in die Zwischenablage gelegt ' +
+        "und — falls Gmail verbunden ist — direkt im Verfassen-Fenster geöffnet. Vor dem Senden editierbar.</div>" +
+      "</div></div>" +
+      '<div class="card p-4 mt-3"><h3>Kontaktverlauf</h3><div class="sep"></div>' +
+        '<div class="ft-inline-form">' +
+          '<select id="ftContactChannel"><option value="note">Notiz</option><option value="call">Telefon</option>' +
+            '<option value="meeting">Termin</option><option value="mail">Mail</option></select>' +
+          '<input id="ftContactText" placeholder="Was wurde besprochen?">' +
+          '<button class="btn primary" onclick="window._ftAddContactEntry(\'' + attr(projectId) + '\')">Festhalten</button>' +
+        "</div>" +
+        (log.length ? log.map(function (entry) {
+          return '<div class="ft-row"><span>' + esc({ note: "📝", call: "📞", meeting: "🤝", mail: "✉️" }[entry.channel] || "📝") +
+            " " + esc(entry.text) + '<small> · ' + esc(dateTime(entry.at)) + "</small></span>" +
+            '<button class="btn sm ghost" onclick="window._ftDeleteContactEntry(\'' + attr(projectId) + "','" +
+            attr(entry.id) + '\')">×</button></div>';
+        }).join("") : empty("Noch kein Kontaktverlauf")) +
+      "</div>";
+  }
+
+  function promptHtml(projectId) {
+    var core = W();
+    if (!core) return "";
+    var include = promptInclude(projectId);
+    var options = core.PROMPT_DATA_OPTIONS.map(function (opt) {
+      return '<label class="ft-block-on"><input type="checkbox"' + (include[opt.key] ? " checked" : "") +
+        ' onchange="window._ftTogglePromptData(\'' + attr(projectId) + "','" + opt.key + '\',this.checked)"> ' +
+        esc(opt.label) + "</label>";
+    }).join("");
+    return '<div class="card p-4"><h3>Claude-Code-Prompt</h3><div class="sep"></div>' +
+      '<div class="mini">Wähle bewusst aus, welche Daten in den Prompt wandern. Kundendaten, Preise und ' +
+      "interne Notizen sind standardmässig NICHT enthalten.</div>" +
+      '<div class="ft-checks mt-2">' + options + "</div>" +
+      '<textarea class="ft-block-body mt-2" rows="16" readonly>' + esc(claudePromptText(projectId)) + "</textarea>" +
+      '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftCopyClaudePrompt(\'' +
+        attr(projectId) + '\')">Prompt kopieren</button></div></div>';
+  }
+
+  // Der ganze Workflow-Block auf der Projektseite.
+  function ftWorkflowPanel(projectId) {
+    var core = W();
+    var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return "";
+    syncChangeStatusFromTasks();
+
+    var tabs = [
+      ["workflow", "Ablauf"], ["bedarf", "Bedarf"], ["angebot", "Angebot / Leistung"],
+      ["vertrag", "Vertrag"], ["aenderungen", "Änderungen"], ["kunde", "Kundenansicht"],
+      ["kommunikation", "Kommunikation"], ["recht", "AGB / Datenschutz"], ["prompt", "Claude-Prompt"],
+    ];
+    var active = ft.ui.projectTab || "workflow";
+    if (!tabs.some(function (t) { return t[0] === active; })) active = "workflow";
+
+    var body = "";
+    if (active === "workflow") {
+      var openChanges = changesOf(projectId).filter(function (c) { return c.status !== "done" && c.status !== "rejected"; });
+      body = stepperHtml(project) +
+        '<div class="ft-grid-2"><div class="card p-4"><h3>Eckdaten</h3><div class="sep"></div>' +
+          '<div class="ft-field-grid">' +
+            "<label>Typ<select onchange=\"window._ftSetDeliveryType('" + attr(projectId) + "',this.value)\">" +
+              core.DELIVERY_TYPES.map(function (t) {
+                return '<option value="' + t.key + '"' + ((project.deliveryType || "website") === t.key ? " selected" : "") +
+                  ">" + esc(t.label) + "</option>";
+              }).join("") + "</select></label>" +
+            '<label>Budget / Preisvorstellung (CHF)<input type="number" step="0.05" value="' +
+              attr(project.budget == null ? "" : project.budget) + '" oninput="window._ftSetProjectNumber(\'' +
+              attr(projectId) + '\',\'budget\',this.value)"></label>' +
+            '<label>Bisheriger Anbieterpreis (CHF)<input type="number" step="0.05" value="' +
+              attr(project.currentProviderPrice == null ? "" : project.currentProviderPrice) +
+              '" oninput="window._ftSetProjectNumber(\'' + attr(projectId) + '\',\'currentProviderPrice\',this.value)"></label>' +
+            '<label>Wunschtermin<input type="date" value="' + attr(project.dueDate || "") +
+              '" oninput="window._ftSetProjectField(\'' + attr(projectId) + '\',\'dueDate\',this.value)"></label>' +
+          "</div>" +
+          '<div class="mini mt-2">' + esc(core.DELIVERY_TYPES.find(function (t) {
+            return t.key === (project.deliveryType || "website");
+          }).hint) + "</div></div>" +
+        '<div class="card p-4"><h3>Stand</h3><div class="sep"></div>' +
+          '<div class="ft-row"><span>Bedarf erfasst</span><strong>' + (briefingOf(projectId) ? "ja" : "nein") + "</strong></div>" +
+          '<div class="ft-row"><span>Leistungsbeschreibung</span><strong>' + (contentOf(projectId) ? "vorhanden" : "offen") + "</strong></div>" +
+          '<div class="ft-row"><span>Vertrag</span><strong>' + (contractOf(projectId) ? (contractOf(projectId).status === "released" ? "freigegeben" : "Entwurf") : "offen") + "</strong></div>" +
+          '<div class="ft-row"><span>Offene Änderungswünsche</span><strong>' + openChanges.length + "</strong></div>" +
+          '<div class="ft-row"><span>Offene Aufgaben</span><strong>' +
+            tasksOfProject(projectId).filter(function (t) { return t.status !== "done"; }).length + "</strong></div>" +
+        "</div></div>";
+    } else if (active === "bedarf") {
+      body = '<div class="card p-4"><h3>Bestandesaufnahme / Bedarf</h3><div class="sep"></div>' +
+        '<div class="mini">Intern ausfüllen oder den Formularlink (Reiter \u201eKundenansicht\u201c) an den Kunden schicken. ' +
+        "Beides landet an derselben Stelle.</div>" + briefingFormHtml(projectId) + "</div>";
+    } else if (active === "angebot") {
+      body = '<div class="card p-4"><h3>Leistungsbeschreibung / Angebot</h3><div class="sep"></div>' +
+        '<div class="ft-quick mb-3">' +
+          '<button class="btn primary" onclick="window._ftBuildContent(\'' + attr(projectId) + '\')">' +
+            (contentOf(projectId) ? "Aus Vorlage neu aufbauen" : "Aus Vorlage erstellen") + "</button>" +
+          '<button class="btn" onclick="window._ftAiContentDraft(\'' + attr(projectId) + '\')">✨ KI überarbeiten</button>' +
+        "</div>" + blockEditorHtml(projectId, "content", contentOf(projectId), "Leistungsbeschreibung") + "</div>";
+    } else if (active === "vertrag") {
+      body = '<div class="card p-4"><h3>Projektauftrag / Vertrag</h3><div class="sep"></div>' +
+        '<div class="ft-quick mb-3"><button class="btn primary" onclick="window._ftBuildContract(\'' + attr(projectId) + '\')">' +
+          (contractOf(projectId) ? "Aus Vorlage neu aufbauen" : "Aus Vorlage erstellen") + "</button></div>" +
+        blockEditorHtml(projectId, "contract", contractOf(projectId), "Projektauftrag") + "</div>";
+    } else if (active === "aenderungen") {
+      body = '<div class="card p-4"><h3>Änderungswünsche</h3><div class="sep"></div>' + changeRequestsHtml(projectId) + "</div>";
+    } else if (active === "kunde") {
+      body = clientPortalHtml(projectId);
+    } else if (active === "kommunikation") {
+      body = communicationHtml(projectId);
+    } else if (active === "recht") {
+      body = '<div class="card p-4"><h3>AGB (Entwurf)</h3><div class="sep"></div>' +
+        '<div class="ft-quick mb-3"><button class="btn primary" onclick="window._ftBuildLegal(\'' + attr(projectId) +
+          '\',\'agb\')">' + (legalOf(projectId, "agb") ? "Neu aufbauen" : "Entwurf erstellen") + "</button></div>" +
+        blockEditorHtml(projectId, "agb", legalOf(projectId, "agb"), "AGB") + "</div>" +
+        '<div class="card p-4 mt-3"><h3>Datenschutz (Entwurf)</h3><div class="sep"></div>' +
+        '<div class="ft-quick mb-3"><button class="btn primary" onclick="window._ftBuildLegal(\'' + attr(projectId) +
+          '\',\'privacy\')">' + (legalOf(projectId, "privacy") ? "Neu aufbauen" : "Entwurf erstellen") + "</button></div>" +
+        blockEditorHtml(projectId, "privacy", legalOf(projectId, "privacy"), "Datenschutz") + "</div>";
+    } else if (active === "prompt") {
+      body = promptHtml(projectId);
+    }
+
+    var nav = '<div class="ft-tabs ft-subtabs">' + tabs.map(function (tab) {
+      return '<button class="ft-tab ' + (active === tab[0] ? "active" : "") + '" onclick="window._ftSetProjectTab(\'' +
+        attr(projectId) + "','" + tab[0] + '\')">' + esc(tab[1]) + "</button>";
+    }).join("") + "</div>";
+
+    return '<div class="ft-workflow">' + nav + body + "</div>";
+  }
+  window.ftWorkflowPanel = ftWorkflowPanel;
+
   var STYLES =
     ".ft-shell{--ft:#e879a9;--ft2:#7c3aed}" +
     ".ft-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:20px}" +
@@ -2082,6 +3219,50 @@
     ".ft-prow{grid-template-columns:minmax(0,1fr) auto;gap:6px 12px}" +
     ".ft-prow>span:not(.ft-prow-main){font-size:11.5px;color:var(--muted);text-align:right}}" +
     "@media(max-width:980px){.ft-item-head,.ft-item-row{grid-template-columns:1fr 70px 80px 90px 70px 90px 34px;font-size:12px}}" +
+    // ── Kundenworkflow ──
+    ".ft-workflow{margin:18px 0}" +
+    ".ft-steps{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:6px}" +
+    ".ft-step{display:flex;align-items:center;gap:7px;white-space:nowrap;border:1px solid var(--border);" +
+      "background:var(--panel2);color:var(--muted);padding:8px 12px;border-radius:10px;cursor:pointer;font-size:12.5px}" +
+    ".ft-step .ft-step-no{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;" +
+      "background:var(--border);font-size:11px;font-weight:700}" +
+    ".ft-step.done{color:var(--text2);border-color:rgba(232,121,169,.35)}" +
+    ".ft-step.done .ft-step-no{background:rgba(232,121,169,.35)}" +
+    ".ft-step.active{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--ft),var(--ft2))}" +
+    ".ft-step.active .ft-step-no{background:rgba(255,255,255,.28)}" +
+    ".ft-step-hint{font-size:12px;color:var(--muted);margin-bottom:10px}" +
+    ".ft-brief-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}" +
+    ".ft-brief-grid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}" +
+    ".ft-brief-grid input,.ft-brief-grid textarea,.ft-brief-grid select{width:100%}" +
+    ".ft-hint{font-size:11px;color:var(--muted);opacity:.85}" +
+    ".ft-doc-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}" +
+    ".ft-doc-title{flex:1;min-width:180px;font-weight:600}" +
+    ".ft-legal-note{border:1px solid rgba(240,180,60,.45);background:rgba(240,180,60,.12);color:var(--text2);" +
+      "border-radius:10px;padding:9px 11px;font-size:12px;line-height:1.5;margin-bottom:12px}" +
+    ".ft-block{border:1px solid var(--border);border-radius:12px;padding:11px;margin-bottom:10px;background:var(--panel2)}" +
+    ".ft-block.off{opacity:.5}" +
+    ".ft-block-head{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:7px}" +
+    ".ft-block-title{flex:1;min-width:140px;font-weight:600}" +
+    ".ft-block-on{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);white-space:nowrap}" +
+    ".ft-block-body{width:100%;font-family:inherit;font-size:12.5px;line-height:1.55;resize:vertical}" +
+    ".ft-vars{font-size:11px;color:var(--muted);margin-top:5px;display:flex;flex-wrap:wrap;gap:5px}" +
+    ".ft-vars code{background:var(--border);border-radius:5px;padding:1px 5px}" +
+    ".ft-preview{margin-top:6px;font-size:11.5px;color:var(--muted)}" +
+    ".ft-preview pre{white-space:pre-wrap;font-family:inherit;background:var(--panel);border-radius:8px;padding:9px;margin:6px 0 0}" +
+    ".ft-cr{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;" +
+      "border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-top:8px}" +
+    ".ft-cr-main{display:flex;flex-direction:column;gap:2px;min-width:0}" +
+    ".ft-cr-main small{color:var(--muted);font-size:11.5px}" +
+    ".ft-cr-done{opacity:.6}.ft-cr-rejected{opacity:.5}" +
+    ".ft-cr-detail{width:100%;margin-top:8px}" +
+    ".ft-link-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}" +
+    ".ft-link-row span{font-size:12px;color:var(--muted);min-width:120px}" +
+    ".ft-link-row input{flex:1;min-width:160px;font-size:11.5px}" +
+    ".ft-inline-label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-top:10px}" +
+    ".ft-addr{display:flex;flex-wrap:wrap;gap:6px}" +
+    ".ft-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}" +
+    "@media(max-width:780px){.ft-brief-grid,.ft-checks{grid-template-columns:1fr}" +
+      ".ft-cr{grid-template-columns:1fr;align-items:stretch}.ft-link-row span{min-width:0}}" +
     "@media(max-width:780px){.ft-head{flex-direction:column}.ft-sync{text-align:left}.ft-kpis{grid-template-columns:1fr 1fr}" +
     ".ft-grid-2{grid-template-columns:1fr}.ft-inline-form{flex-direction:column}.ft-lead{grid-template-columns:1fr}" +
     ".ft-pipeline{grid-template-columns:repeat(6,220px)}.ft-ms{flex-wrap:wrap}.ft-ms input[type=date]{width:130px}" +
