@@ -26,8 +26,11 @@ export default async function quantusUniversalBootstrap(request, context) {
   headers.delete("content-length");
   headers.delete("content-encoding");
   headers.delete("etag");
+  // Der Rumpf wird hier immer neu ausgeliefert und der ETag faellt weg — dann
+  // darf auch nie eine zwischengespeicherte Fassung durchgereicht werden,
+  // unabhaengig davon, ob diese Funktion etwas eingefuegt hat.
+  headers.set("cache-control", "no-store, no-cache, must-revalidate");
   if (transformed !== html) {
-    headers.set("cache-control", "no-cache");
     headers.set("x-quantus-universal", "device-sync-v2");
   }
   return new Response(transformed, {

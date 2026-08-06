@@ -46,8 +46,8 @@ Container, nicht vom Host.
 |---|---|---|
 | Docker Engine | ✅ | `curl -fsSL https://get.docker.com \| sh` |
 | Compose-Plugin (`docker compose`) | ✅ | Teil moderner Docker-Installationen |
-| Reverse Proxy (nginx **oder** Caddy) | ✅ | wenn schon einer fuer n8n laeuft: **den benutzen** |
-| Zertifikat (Let's Encrypt) | ✅ | certbot (nginx) bzw. automatisch (Caddy) |
+| Reverse Proxy | ✅ | auf diesem VPS: **Traefik im Docker** (n8n-Stack) — wird benutzt, nicht ersetzt |
+| Zertifikat (Let's Encrypt) | ✅ | Traefik: ACME-Resolver des Bestands; nginx: certbot; Caddy: automatisch |
 | `chromium` / `chromium-browser` per apt | ❌ | **nicht installieren** |
 | X-Server, Desktop, VNC auf dem Host | ❌ | steckt alles im Container |
 
@@ -130,6 +130,73 @@ Im hPanel freigeben:
 
 ---
 
+## 2b. Der bestehende Traefik-Stack (so laeuft es auf diesem VPS)
+
+Auf dem VPS laeuft bereits ein n8n-Stack mit **Traefik v3.7.5** als Reverse
+Proxy (Compose-Projekt `n8n`, Datei `/docker/n8n/docker-compose.yml`, Docker-
+Provider mit `exposedByDefault=false`, EntryPoints `web`/`websecure`, globaler
+HTTP→HTTPS-Redirect, ACME-Resolver `mytlschallenge`, Netz `n8n_default`).
+
+**Dieser Stack wird nicht angefasst.** Kein Restart, kein `down`, keine
+Aenderung an seiner Compose-Datei, keine Aenderung an der Traefik-Konfiguration.
+neko meldet sich stattdessen selbst bei Traefik an — genau dafuer ist der
+Docker-Provider da.
+
+### Wie die Route entsteht
+
+Das Deploy-Skript erkennt Traefik und laedt zusaetzlich
+`neko/docker-compose.traefik.yml`. Das Overlay tut zwei Dinge:
+
+1. Es haengt den neko-Container an das **bereits vorhandene** externe Netz
+   `n8n_default` (`external: true` — es wird kein Netz erzeugt).
+2. Es setzt Labels, die Traefik von selbst aufgreift:
+
+| Label | Wert | Warum |
+|---|---|---|
+| `traefik.enable` | `true` | zwingend, weil `exposedByDefault=false` gilt |
+| `traefik.docker.network` | `n8n_default` | sonst waehlt Traefik u. U. das falsche Netz und die Route ist tot |
+| `…routers.quantus-neko.rule` | ``Host(`neko.laurin-rusterholz.ch`)`` | eigene Subdomain, kollidiert nicht mit n8n |
+| `…routers.quantus-neko.entrypoints` | `websecure` | HTTPS |
+| `…routers.quantus-neko.tls.certresolver` | `mytlschallenge` | derselbe ACME-Resolver wie n8n |
+| `…routers.quantus-neko-web.entrypoints` | `web` | HTTP |
+| `…middlewares.quantus-neko-https.redirectscheme` | `https` | eigener Redirect, falls der globale einmal entfaellt |
+| `…services.quantus-neko.loadbalancer.server.port` | `8080` | container-interner Port |
+
+Alle Namen sind mit `quantus-neko` praefixiert und koennen deshalb keine
+n8n-Router oder -Middlewares ueberschreiben.
+
+### Was Traefik NICHT macht
+
+**WebRTC laeuft an Traefik vorbei.** Der Medienstrom braucht UDP; Traefik ist
+hier fuer HTTP/TLS zustaendig. Port **59000 (UDP + TCP)** bleibt deshalb direkt
+am Host veroeffentlicht. Ueber Traefik laufen nur HTTPS und der WebSocket, mit
+dem der Stream ausgehandelt wird — WebSockets reicht Traefik v3 ohne
+Zusatzkonfiguration durch.
+
+### Was das kostet: neko sitzt im n8n-Netz
+
+Weil Traefik nicht veraendert werden darf, ist das gemeinsame Netz der einzige
+Weg. Damit kann der Remote-Browser n8n-Container direkt ueber deren interne
+Ports erreichen. Das ist bewusst in Kauf genommen und hier festgehalten: Wer
+den Browser bedient, hat ohnehin ein Passwort fuer diese Umgebung. Wer es
+strenger will, muss Traefik ein zweites Netz geben — das aendert aber den
+n8n-Stack und ist deshalb hier ausgeschlossen.
+
+### Der Compose-Kontext bleibt getrennt
+
+Das Deploy-Skript schreibt in `/opt/quantus-neko/.env`:
+
+```
+COMPOSE_PROJECT_NAME=quantus-neko
+COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml
+```
+
+Dadurch ist `docker compose` in `/opt/quantus-neko` **immer** nur fuer den
+neko-Stack zustaendig; das Projekt `n8n` bleibt unberuehrt — auch bei
+`docker compose down`.
+
+---
+
 ## 3. Architektur & Designentscheidungen
 
 ```
@@ -138,9 +205,10 @@ Browser des Nutzers
    │      └─ iframe ──────────────────────────────────────┐
    ▼                                                      │
 https://neko.laurin-rusterholz.ch  (TLS, Let's Encrypt)    │
-   │  nginx bzw. Caddy auf dem VPS                         │
-   ├─ HTTP/WebSocket ──▶ 127.0.0.1:8080  (neko, nur lokal gebunden)
-   └─ WebRTC UDP/TCP 59000 ──▶ Container (Medienstrom, am Proxy vorbei)
+   │  Traefik im Docker (bestehender n8n-Stack, unveraendert)
+   ├─ HTTP/WebSocket ──▶ quantus-neko:8080 ueber das Netz n8n_default
+   │                     (zusaetzlich 127.0.0.1:8080 nur fuer lokale Diagnose)
+   └─ WebRTC UDP/TCP 59000 ──▶ direkt am Host, an Traefik vorbei
                                    │
                             Chromium im Container
                                    │
@@ -328,6 +396,28 @@ drin.
 
 ---
 
+## 5b. Welcher Frontend-Stand ist live?
+
+Nach einem Merge auf `main` baut Netlify neu. Ob der neue Stand tatsaechlich
+ankommt, laesst sich ohne 5-MB-Download pruefen — `index.html` traegt eine
+Bau-Kennung, die die Edge Function als Header spiegelt:
+
+```bash
+curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
+# erwartet z. B.: x-quantus-build: neko-traefik+nh-style-restore · 2026-08-06
+```
+
+Steht dort eine aeltere Kennung, ist der Build noch nicht durch — nicht der
+Code. Zusaetzlich liefern `netlify.toml` und beide Edge Functions fuer `/` und
+`/index.html` jetzt `Cache-Control: no-store, no-cache, must-revalidate`: die
+Funktionen entfernen den ETag, eine zwischengespeicherte Fassung waere sonst
+nicht mehr revalidierbar und ein Fix kaeme trotz Deploy nicht an.
+
+Im Browser hartnaeckige Reste loswerden: Shift+Reload bzw. Entwicklertools →
+Netzwerk → "Cache deaktivieren".
+
+---
+
 ## 6. Abnahme
 
 ### Automatische Smoke-Tests (Skript)
@@ -448,6 +538,9 @@ durch `rm -rf /opt/quantus-neko/data` geloescht.
 | Bild ruckelt | 1 vCPU am Limit | `NEKO_SCREEN` auf `1152x648@25` senken, `docker compose up -d` |
 | Zertifikat wird nicht ausgestellt | Port 80 zu oder DNS falsch | `journalctl -u caddy -f` bzw. `certbot certificates` |
 | Nach Reboot laeuft nichts | Docker nicht enabled | `systemctl enable --now docker` |
+| Traefik liefert 404 fuer die Domain | Labels fehlen oder falsches Netz | `docker inspect -f '{{json .Config.Labels}}' quantus-neko`; `docker network inspect n8n_default` |
+| Zertifikat kommt nicht | falscher Resolver-Name | `grep NEKO_TRAEFIK_CERTRESOLVER /opt/quantus-neko/.env` mit den Traefik-Flags vergleichen |
+| Live-Seite zeigt einen alten Stand | HTML aus dem Cache | `curl -sSI https://management-xo2-pro.netlify.app/ \| grep -i x-quantus-build` |
 
 Logs:
 ```bash
@@ -463,8 +556,10 @@ cd /opt/quantus-neko && docker compose logs -f --tail=200 neko
 | `neko/docker-compose.yml` | Container-Definition (gepinnte Version, Ports, Volumes, Limits, Healthcheck) |
 | `neko/chromium-policies.json` | Chromium-Policies (Downloads, Lesezeichen, Dateidialoge, Cookies) |
 | `neko/.env.example` | Vorlage — **ohne** echte Werte |
+| `neko/docker-compose.traefik.yml` | Overlay mit den Traefik-Labels (bestehender n8n-Stack) |
 | `neko/nginx-neko.conf` | Server-Block, wenn nginx bereits laeuft |
 | `neko/Caddyfile.snippet` | Site-Block, wenn Caddy laeuft/installiert wird |
 | `scripts/deploy-neko-hostinger.sh` | idempotentes Deploy/Update/Smoke-Skript |
 | `public/index.html` | Quantus-App `#/browser` (iframe + Status-/Retry-UI, **kein Secret**) |
-| `tests/quantus-browser-module.test.mjs` | statische Pruefungen (Secrets, Compose, UI, Regressionen) |
+| `tests/quantus-browser-module.test.mjs` | statische Pruefungen (Secrets, Compose, Labels, UI, Regressionen) |
+| `tests/neko-proxy-detect.test.sh` | Proxy-Erkennung gegen einen gestubbten Docker |

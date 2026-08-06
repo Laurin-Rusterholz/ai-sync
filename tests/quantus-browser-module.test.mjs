@@ -40,6 +40,12 @@ const envExample = read("neko/.env.example");
 const deployScript = read("scripts/deploy-neko-hostinger.sh");
 const runbook = read("docs/quantus-browser-setup.md");
 
+// Ausgeliefert wird nicht public/index.html, sondern das Ergebnis beider Edge
+// Functions. Genau dieser Stand wird weiter unten geprueft.
+const { injectUniversalAssets } = await import("../netlify/edge-functions/quantus-universal-bootstrap.js");
+const { injectQuantusApps, readBuildTag } = await import("../netlify/edge-functions/quantus-app-registry.js");
+const deliveredHtml = injectQuantusApps(injectUniversalAssets(index));
+
 let checks = 0;
 const check = (label, fn) => { fn(); checks++; console.log("  ✓ " + label); };
 
@@ -296,24 +302,93 @@ check("Passwoerter kommen aus der .env und fehlen nicht stillschweigend", () => 
   assert.match(compose, /NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "\$\{NEKO_ADMIN_PASSWORD:\?/);
 });
 
-check("docker compose config validiert die Datei", () => {
-  const probe = spawnSync("docker", ["compose", "version"], { encoding: "utf8" });
-  if (probe.status !== 0) {
-    console.log("    (uebersprungen — docker compose steht hier nicht zur Verfuegung)");
-    return;
-  }
-  // Platzhalterwerte nur fuer die Validierung; sie landen nirgends auf Platte.
-  const res = spawnSync("docker", ["compose", "-f", "neko/docker-compose.yml", "config", "-q"], {
-    cwd: root,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      NEKO_USER_PASSWORD: "validation-placeholder",
-      NEKO_ADMIN_PASSWORD: "validation-placeholder",
-      NEKO_PUBLIC_IP: "203.0.113.10"
-    }
+// Platzhalterwerte nur fuer die Validierung; sie landen nirgends auf Platte.
+const COMPOSE_ENV = {
+  NEKO_USER_PASSWORD: "validation-placeholder",
+  NEKO_ADMIN_PASSWORD: "validation-placeholder",
+  NEKO_PUBLIC_IP: "203.0.113.10"
+};
+
+function composeConfig(files) {
+  const args = [];
+  for (const f of files) args.push("-f", f);
+  return spawnSync("docker", ["compose", ...args, "config"], {
+    cwd: root, encoding: "utf8", env: { ...process.env, ...COMPOSE_ENV }
   });
+}
+
+const dockerAvailable =
+  spawnSync("docker", ["compose", "version"], { encoding: "utf8" }).status === 0;
+
+check("docker compose config validiert die Basisdatei", () => {
+  if (!dockerAvailable) { console.log("    (uebersprungen — docker compose fehlt hier)"); return; }
+  const res = composeConfig(["neko/docker-compose.yml"]);
   assert.equal(res.status, 0, `docker compose config schlug fehl:\n${res.stderr}`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+console.log("\n4b. Traefik-Overlay fuer den bestehenden n8n-Stack");
+
+const traefikCompose = read("neko/docker-compose.traefik.yml");
+
+check("Overlay bindet nur ein VORHANDENES externes Netz ein", () => {
+  assert.match(traefikCompose, /external: true/);
+  assert.match(traefikCompose, /name: "\$\{NEKO_TRAEFIK_NETWORK:-n8n_default\}"/);
+  // Ein eigenes Netz waere fatal: Traefik haengt dort nicht dran.
+  assert.doesNotMatch(traefikCompose, /driver:\s*bridge/);
+});
+
+check("Overlay fasst n8n/Traefik nicht an", () => {
+  // Kommentare duerfen den fremden Stack erwaehnen — Konfiguration nicht.
+  const effective = traefikCompose
+    .split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
+  for (const forbidden of [/\/docker\/n8n/, /image:\s*\S*traefik/, /volumes:/, /docker\.sock/]) {
+    assert.doesNotMatch(effective, forbidden,
+      `Overlay greift auf den fremden Stack zu: ${forbidden}`);
+  }
+  // Nur der services:-Block zaehlt — networks: hat eigene Zwei-Leerzeichen-Keys.
+  const servicesBlock = traefikCompose.slice(
+    traefikCompose.indexOf("services:"),
+    traefikCompose.indexOf("\nnetworks:")
+  );
+  const services = [...servicesBlock.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map(m => m[1]);
+  assert.deepEqual(services, ["neko"], "Overlay definiert fremde Dienste");
+});
+
+check("Traefik-Labels sind vollstaendig und korrekt", () => {
+  if (!dockerAvailable) { console.log("    (uebersprungen — docker compose fehlt hier)"); return; }
+  const res = composeConfig(["neko/docker-compose.yml", "neko/docker-compose.traefik.yml"]);
+  assert.equal(res.status, 0, `Overlay-Validierung schlug fehl:\n${res.stderr}`);
+  const cfg = res.stdout;
+
+  for (const [needle, why] of [
+    ['traefik.enable: "true"', "exposedByDefault=false verlangt das ausdrueckliche Opt-in"],
+    ["traefik.docker.network: n8n_default", "ohne Netz-Label waehlt Traefik u. U. das falsche Netz"],
+    ["traefik.http.routers.quantus-neko.entrypoints: websecure", "HTTPS-EntryPoint"],
+    ["traefik.http.routers.quantus-neko.tls: \"true\"", "TLS aktiv"],
+    ["traefik.http.routers.quantus-neko.tls.certresolver: mytlschallenge", "ACME-Resolver des Bestands"],
+    ['traefik.http.services.quantus-neko.loadbalancer.server.port: "8080"', "Container-interner Port"],
+    ["traefik.http.routers.quantus-neko-web.entrypoints: web", "HTTP-EntryPoint"],
+    ["traefik.http.middlewares.quantus-neko-https.redirectscheme.scheme: https", "HTTP->HTTPS auch ohne globalen Redirect"]
+  ]) {
+    assert.ok(cfg.includes(needle), `Label fehlt (${why}): ${needle}`);
+  }
+
+  assert.match(cfg, /Host\(`neko\.laurin-rusterholz\.ch`\)/, "Router-Regel fehlt");
+  // Der Dienst haengt genau an dem externen Netz — sonst ist die Route tot.
+  assert.match(cfg, /networks:\n {6}proxy: null/, "neko haengt nicht am Traefik-Netz");
+  assert.match(cfg, /name: n8n_default\n {4}external: true/, "Netz ist nicht als extern deklariert");
+  // Compose-Projektname darf nicht mit dem n8n-Projekt kollidieren.
+  assert.doesNotMatch(cfg, /^name: n8n$/m);
+});
+
+check("WebRTC laeuft an Traefik vorbei direkt am Host", () => {
+  // Traefik kann kein UDP fuer diesen Stack routen — der Medienport muss
+  // deshalb weiterhin direkt veroeffentlicht sein.
+  assert.match(compose, /\$\{NEKO_WEBRTC_PORT:-59000\}\/udp/);
+  const effective = traefikCompose.split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
+  assert.doesNotMatch(effective, /udp/i, "UDP gehoert nicht in die Traefik-Labels");
+  assert.doesNotMatch(effective, /^\s*ports:/m, "Ports gehoeren in die Basisdatei, nicht ins Overlay");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -365,7 +440,7 @@ check("Vorabpruefungen, Backup, Smoke-Tests und Rollback sind enthalten", () => 
     "backups",                                  // Backup-Verzeichnis
     "nginx -t", "caddy validate",               // Konfiguration wird validiert
     "docker compose up -d",
-    "Rollback:"
+    "Rollback"
   ]) {
     assert.ok(deployScript.includes(needle), `"${needle}" fehlt im Deploy-Skript`);
   }
@@ -379,6 +454,43 @@ check("kein Chromium wird auf dem Host installiert", () => {
   assert.doesNotMatch(deployScript, /apt-get install[^\n]*chromium/,
     "Chromium darf nicht per apt auf den Host");
   assert.match(deployScript, /Chromium steckt im Container-Image/);
+});
+
+check("Traefik im Docker wird unterstuetzt statt abgelehnt", () => {
+  // Vorher endete dieser Fall mit "Route bitte selbst eintragen". Jetzt muss
+  // das Skript das Overlay aktivieren und das Netz pruefen.
+  assert.match(deployScript, /COMPOSE_FILE\s+"docker-compose\.yml:docker-compose\.traefik\.yml"/);
+  assert.match(deployScript, /docker network inspect "\$\{TRAEFIK_NETWORK\}"/);
+  assert.match(deployScript, /NEKO_TRAEFIK_CERTRESOLVER/);
+  assert.match(deployScript, /NEKO_TRAEFIK_ENTRYPOINT_HTTPS/);
+  // WebSocket-Smoketest ueber den Proxy.
+  assert.match(deployScript, /Sec-WebSocket-Key/);
+  assert.match(deployScript, /101/);
+  // Die alte Ablehnung darf nicht mehr im Traefik-Zweig stehen.
+  const traefikBranch = deployScript.slice(
+    deployScript.indexOf("  traefik-docker)"),
+    deployScript.indexOf("  nginx)\n    TARGET=")
+  );
+  assert.ok(traefikBranch.length > 100, "Traefik-Zweig nicht gefunden");
+  assert.doesNotMatch(traefikBranch, /bitte selbst eintragen/,
+    "Traefik-Zweig verweigert die Route noch immer");
+});
+
+check("fremde Stacks werden nie neu gestartet oder veraendert", () => {
+  for (const forbidden of [/docker restart/, /systemctl restart docker/, /\/docker\/n8n/]) {
+    assert.doesNotMatch(deployScript, forbidden,
+      `Deploy-Skript greift in einen fremden Stack ein: ${forbidden}`);
+  }
+  assert.match(deployScript, /COMPOSE_PROJECT_NAME.*quantus-neko/,
+    "eigenes Compose-Projekt fehlt — sonst kollidiert es mit dem n8n-Projekt");
+});
+
+check("das Skript ist als Bibliothek testbar", () => {
+  assert.match(deployScript, /NEKO_DEPLOY_LIB_ONLY/);
+  const res = spawnSync("bash", ["tests/neko-proxy-detect.test.sh"], { cwd: root, encoding: "utf8" });
+  assert.equal(res.status, 0, `Proxy-Erkennungstests fehlgeschlagen:\n${res.stdout}\n${res.stderr}`);
+  console.log(res.stdout.split("\n").filter(l => l.includes("Pruefungen bestanden")).join("").trim()
+    ? "    " + res.stdout.split("\n").filter(l => l.includes("Pruefungen bestanden"))[0].trim() : "");
 });
 
 check("Reverse Proxy wird erkannt, statt blind Caddy zu installieren", () => {
@@ -447,6 +559,54 @@ check("Marker der uebrigen Module sind weiterhin vorhanden", () => {
   for (const [needle, label] of markers) {
     assert.ok(index.includes(needle), `${label} fehlt (Marker: ${needle})`);
   }
+});
+
+check("die gesamte Auslieferungskette liefert sauberes HTML", () => {
+  // Bis hierher wurde nur die Quelldatei geprueft. Ausgeliefert wird aber das
+  // Ergebnis beider Edge Functions — genau dort koennte ein CSS-Block erneut
+  // aus seinem <style> fallen, ohne dass die Quelldatei etwas davon zeigt.
+  const delivered = deliveredHtml;
+
+  const leaks = textNodes(delivered).filter(n => n.text.length > 60 && looksLikeCode(n.text));
+  assert.deepEqual(leaks.map(n => `Zeile ${n.line}: ${n.text.slice(0, 80)}`), [],
+    "Code-Text im ausgelieferten HTML");
+
+  // Die Kopf-Injektion muss im echten <head> landen, nicht in einem
+  // JavaScript-String, der zufaellig ein </head> enthaelt.
+  const lower = delivered.toLowerCase();
+  assert.ok(lower.indexOf("</head>") < lower.indexOf("<body>"),
+    "das erste </head> steht nicht mehr vor <body> — die Injektion trifft einen JS-String");
+  assert.ok(delivered.includes("/quantus-device-sync.js"), "Universal-Assets fehlen");
+  assert.ok(delivered.includes('key:"englishc1"') && delivered.includes('key:"career"'),
+    "App-Registry-Injektion fehlt");
+  // Die Marker-Skripte gehoeren ans Dokumentende.
+  assert.ok(delivered.lastIndexOf("quantusEnglishC1HubLink") < lower.lastIndexOf("</body>"));
+});
+
+check("der ausgelieferte Stand ist ohne Volldownload pruefbar", () => {
+  // Als live noch der alte Stand zu sehen war, liess sich nicht feststellen,
+  // welcher Build ankommt. Die Bau-Kennung wird deshalb als Header gespiegelt.
+  const tag = readBuildTag(index);
+  assert.notEqual(tag, "unknown", "<meta name=\"quantus-build\"> fehlt");
+  assert.ok(tag.length > 3, "Bau-Kennung ist zu unspezifisch");
+  assert.equal(readBuildTag(deliveredHtml), tag,
+    "die Kennung ueberlebt die Edge Functions nicht");
+
+  const registry = read("netlify/edge-functions/quantus-app-registry.js");
+  assert.match(registry, /headers\.set\("x-quantus-build", readBuildTag\(transformed\)\)/);
+
+  // HTML darf nirgends zwischengespeichert werden — beide Edge Functions
+  // entfernen den ETag, eine gecachte Fassung waere sonst nicht mehr
+  // revalidierbar und ein Fix kaeme trotz Deploy nicht an.
+  const bootstrap = read("netlify/edge-functions/quantus-universal-bootstrap.js");
+  for (const [src, name] of [[registry, "app-registry"], [bootstrap, "universal-bootstrap"]]) {
+    assert.match(src, /headers\.delete\("etag"\)/, `${name}: ETag-Behandlung fehlt`);
+    assert.match(src, /cache-control", "no-store, no-cache, must-revalidate/,
+      `${name}: setzt kein unbedingtes no-store`);
+  }
+  const toml = read("netlify.toml");
+  assert.match(toml, /for = "\/index\.html"[\s\S]{0,200}Cache-Control = "no-store/);
+  assert.match(toml, /for = "\/"\n {2}\[headers\.values\]\n {4}Cache-Control = "no-store/);
 });
 
 check("die Edge-Function-Injektion findet weiterhin ihre Anker", () => {
