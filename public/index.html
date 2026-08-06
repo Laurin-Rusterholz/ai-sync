@@ -583,13 +583,9 @@
     .sidebar-quick-item:hover{background:var(--panel2)}
     .sidebar-quick-item .icon{font-size:14px}
     
-    /* App Navigation Bar */
-    .app-nav{grid-column:1;grid-row:2;display:flex;align-items:center;gap:6px;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
-    .app-nav::-webkit-scrollbar{display:none}
-    .app-nav-item{padding:8px 14px;border-radius:10px;background:transparent;border:none;color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;transition:var(--transition);display:flex;align-items:center;gap:6px}
-    .app-nav-item:hover{background:var(--panel2)}
-    .app-nav-item.active{background:var(--accent);color:var(--text)}
-    .app-nav-item .badge{background:var(--danger);padding:2px 6px;border-radius:999px;font-size:10px;font-weight:600;color:var(--text);margin-left:4px}
+    /* Die frühere horizontale App-Leiste unter dem Header ist ersatzlos
+       entfernt: App-Navigation läuft ausschliesslich über die linke Sidebar
+       und die Commandbar (Suche / ⌘K). Kein zweiter Navigationsstreifen. */
 
     /* Topbar - Apple Style Clean */
     .topbar{grid-column:2/-1;grid-row:1;display:flex;align-items:center;padding:0 16px;height:52px;gap:12px;border-bottom:1px solid var(--border);background:rgba(28,28,30,.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);z-index:10}
@@ -657,9 +653,16 @@
     .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
     .btn-icon{width:32px;height:32px;padding:0;justify-content:center;border-radius:8px}
 
-    /* App Navigation Bar entfernt - Sidebar ist jetzt links */
+    /* Sicherheitsnetz: sollte irgendein Alt-Modul noch eine horizontale
+       App-Leiste einhängen, bleibt sie unsichtbar. */
     .app-nav{display:none !important}
-    
+
+    /* Workspace-Fokus: sobald ein Projekt/Konzept geöffnet ist, dominiert der
+       Inhalt. Innerhalb des Inhalts wird nicht nochmals durch Apps navigiert. */
+    body.workspace-focus .main .app-nav,
+    body.workspace-focus .main .sidebar-nav{display:none !important}
+    body.workspace-focus .main .page{max-width:none}
+
     /* Nav Item Styles für App Navigation */
     .nav{display:flex;flex-direction:column;gap:2px}
     .nav-item{padding:10px 14px;border-radius:var(--radius-sm);border:none;display:flex;align-items:center;gap:10px;font-weight:500;font-size:13px;color:var(--text2);cursor:pointer;transition:var(--transition)}
@@ -5333,8 +5336,7 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
     </div>
   </header>
 
-  <!-- App Navigation Bar - Ersetzt Sidebar -->
-  <nav class="app-nav" id="appNav"></nav>
+  <!-- Die horizontale App-Leiste wurde entfernt (Sidebar + Commandbar reichen). -->
 
   <!-- Main Content -->
   <main class="main" id="main"></main>
@@ -18260,6 +18262,7 @@ function _doRender() {
   ROUTES = getRoutes();
   renderTopbar();
   renderSidebar();
+  applyWorkspaceFocus();
   renderMain();
   updateWeeklyGoalProgress();
 
@@ -18345,48 +18348,19 @@ function renderTopbar() {
   updateUndoButton();
 }
 
-function renderAppNav() {
-  const { route } = parseHash();
-  
-  // Alle verfügbaren Apps - direkt in der Navigation anzeigen
-  const allApps = [
-    {key:"dashboard", icon:"🏠", label:t("dashboard")},
-    {key:"today", icon:"☀️", label:t("today")},
-    {key:"tasks", icon:"✅", label:t("tasks")},
-    {key:"notes", icon:"📝", label:t("notes")},
-    {key:"pdfeditor", icon:"📄", label:"PDF Editor"},
-    {key:"projects", icon:"📦", label:t("projects")},
-    {key:"ideas", icon:"💡", label:t("ideas")},
-    {key:"gmail", icon:"📧", label:"Gmail"},
-  {key:"persons", icon:"👤", label:"Personen"},
-    {key:"protocols", icon:"📜", label:"Protokolle"},
-    {key:"workflows", icon:"⚙️", label:"Workflows"},
-    {key:"updates", icon:"🔧", label:t("updates")},
-    {key:"learn", icon:"📚", label:"RecallLab"},
-    {key:"calendar", icon:"📅", label:t("calendar")},
-    {key:"goals", icon:"🎯", label:t("goals")},
-    {key:"organizations", icon:"🏛️", label:t("organizations")},
-    {key:"chat", icon:"💬", label:t("chat")},
-    {key:"time", icon:"⏱️", label:t("time")},
-    {key:"budget", icon:"💰", label:t("budget")},
-    {key:"statistics", icon:"📊", label:t("statistics")},
-    {key:"reflecta", icon:"🪞", label:"Reflecta"},
-    {key:"settings", icon:"⚙️", label:t("settings")},
-  ];
-  
-  // Navigations-Items für alle Apps
-  const navHtml = allApps.map(app => {
-    const isActive = route === app.key;
-    let badge = "";
-    if (app.key === "tasks") {
-      const stats = getTaskStats();
-      if (stats.open > 0) badge = `<span class="badge">${stats.open}</span>`;
-    }
-    return `<button class="app-nav-item ${isActive ? "active" : ""}" data-action="nav" data-route="${app.key}">${app.icon} ${esc(app.label)}${badge}</button>`;
-  }).join("");
-  
-  const appNav = $("#appNav");
-  if (appNav) appNav.innerHTML = navHtml;
+// Workspace-Fokus: Ist ein einzelnes Projekt/Konzept (oder eine andere
+// Detailseite) geöffnet, soll dieser Inhalt den Arbeitsbereich dominieren.
+// Die Klasse am <body> steuert nur Layout-Feinheiten — sie blendet nichts aus,
+// was zum Inhalt selbst gehört.
+const WORKSPACE_FOCUS_ROUTES = new Set([
+  "projects", "concepts", "strategies", "programs", "theses", "thesis", "flowertech",
+]);
+function applyWorkspaceFocus() {
+  try {
+    const { route, id } = parseHash();
+    const focus = !!id && WORKSPACE_FOCUS_ROUTES.has(route);
+    document.body.classList.toggle("workspace-focus", focus);
+  } catch (e) { /* Layout-Detail — nie den Render blockieren */ }
 }
 
 // Smart renderSidebar: pinned (settings) + recent (30 min) + always dashboard/settings
@@ -18500,8 +18474,6 @@ function renderSidebar() {
     pinBtn.title = isPinned ? "Sidebar lösen" : "Sidebar anpinnen";
   }
   
-  // Also update the old app nav for compatibility
-  renderAppNav();
 }
 
 // Alle verfügbaren Apps (global für andere Funktionen)
@@ -68509,6 +68481,26 @@ function buildSearchIndex(){
     });
   }
 
+  // Apps — gleichwertige Treffer neben Projekten, Aufgaben, Notizen usw.
+  // Dieselbe Registry wie Spotlight (⌘K), damit beide Sucheinstiege gleich viel
+  // finden. Wird die Registry (noch) nicht geladen, bleibt die Suche wie bisher.
+  try {
+    if (typeof window.buildAppSearchItems === "function") {
+      for (const app of window.buildAppSearchItems()) {
+        items.push({
+          kind: "app",
+          id: app.id,
+          title: app.title,
+          subtitle: app.sub || "App öffnen",
+          content: app.keywords || "",
+          tags: ["app"],
+          icon: app.icon,
+          open: app.open,
+          updatedAt: "",
+        });
+      }
+    }
+  } catch (e) { console.warn("App-Index für die universale Suche:", e); }
 
   return items;
 }
@@ -68540,6 +68532,16 @@ function searchIndex(query, kindFilter=null){
     .slice(0, 50);
 }
 
+// Öffnet einen App-Treffer aus der universalen Suche. Die open()-Funktion lebt
+// in der App-Registry (window.buildAppSearchItems) — hier wird nur nachgeschlagen.
+window._openAppSearchResult = function(appId){
+  try {
+    const app = (window.buildAppSearchItems ? window.buildAppSearchItems() : []).find(a => a.id === appId);
+    if (typeof closeModal === "function") closeModal();
+    if (app && typeof app.open === "function") app.open();
+  } catch (e) { console.warn("App öffnen:", e); }
+};
+
 function openUniversalSearchModal(initialQuery=""){
   openModal(
     "🔍 Universale Suche",
@@ -68554,6 +68556,7 @@ function openUniversalSearchModal(initialQuery=""){
           Typ
           <select id="universalSearchKind">
             <option value="">Alle</option>
+            <option value="app">📱 Apps</option>
             <option value="task">Aufgaben</option>
             <option value="project">Projekte</option>
             <option value="note">Notizen</option>
@@ -68593,19 +68596,26 @@ function openUniversalSearchModal(initialQuery=""){
       if ((!k || k === "mail") && typeof window._p3SearchMails === "function") items = items.concat(window._p3SearchMails(q));
       if (k === "mail") items = items.filter(it => it.kind === "mail");
       if (items.length === 0){
-        results.innerHTML = `<div class="mini text-center">Keine Treffer.</div>`;
+        results.innerHTML = `<div class="mini text-center" style="padding:18px">
+          <strong style="display:block;font-size:14px;color:var(--text);margin-bottom:6px">Keine Treffer für „${esc(q)}"</strong>
+          Durchsucht werden Apps, Projekte, Aufgaben, Notizen, Mails, Ziele, Strategien,
+          Programme, Organisationen und Lernkarten. Versuche ein kürzeres Stichwort.
+        </div>`;
         return;
       }
       const groups = {};
       items.forEach(it => { (groups[it.kind] = groups[it.kind] || []).push(it); });
-      const order = ["task","note","mail","project","goal","strategy","program","organization","flashcard"];
+      // Apps zuerst: der schnellste Weg zum Ziel, gleichwertig gelistet.
+      const order = ["app","task","note","mail","project","goal","strategy","program","organization","flashcard"];
       const kinds = Object.keys(groups).sort((a,b) => { const ia=order.indexOf(a), ib=order.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib); });
-      const label = (kind) => (typeof window._p3KindLabel === "function" ? window._p3KindLabel(kind) : kind);
+      const label = (kind) => kind === "app" ? "Apps"
+        : (typeof window._p3KindLabel === "function" ? window._p3KindLabel(kind) : kind);
       results.innerHTML = kinds.map(kind => {
-        const rows = groups[kind].map(it => kind === "mail"
-          ? `<div class="list-item" onclick="window.openMailFromSearch('${it.id}')"><div class="item-icon">✉️</div><div class="item-body"><div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">mail</span></div><div class="item-meta"><span>${esc(it.subtitle)}</span></div></div></div>`
-          : `<div class="list-item" data-action="open-entity" data-kind="${it.kind}" data-id="${it.id}"><div class="item-icon">${kindIcon(it.kind)}</div><div class="item-body"><div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">${it.kind}</span></div><div class="item-meta"><span>${esc(it.subtitle)}</span></div></div></div>`
-        ).join("");
+        const rows = groups[kind].map(it => {
+          if (kind === "app") return `<div class="list-item" role="button" tabindex="0" data-search-hit="app" data-app-id="${esc(it.id)}" onclick="window._openAppSearchResult('${esc(it.id)}')"><div class="item-icon">${esc(it.icon || "📱")}</div><div class="item-body"><div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">app</span></div><div class="item-meta"><span>${esc(it.subtitle)}</span></div></div></div>`;
+          if (kind === "mail") return `<div class="list-item" data-search-hit="mail" data-id="${esc(it.id)}" onclick="window.openMailFromSearch('${it.id}')"><div class="item-icon">✉️</div><div class="item-body"><div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">mail</span></div><div class="item-meta"><span>${esc(it.subtitle)}</span></div></div></div>`;
+          return `<div class="list-item" data-search-hit="entity" data-action="open-entity" data-kind="${it.kind}" data-id="${it.id}"><div class="item-icon">${kindIcon(it.kind)}</div><div class="item-body"><div class="item-title"><span class="name">${esc(it.title)}</span><span class="pill">${it.kind}</span></div><div class="item-meta"><span>${esc(it.subtitle)}</span></div></div></div>`;
+        }).join("");
         return `<div class="mini text-muted" style="margin:8px 0 4px;font-weight:700">${label(kind)} (${groups[kind].length})</div>${rows}`;
       }).join("");
     };
@@ -68614,15 +68624,18 @@ function openUniversalSearchModal(initialQuery=""){
     kindSel.addEventListener("change", renderResults);
 
     input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape"){ e.preventDefault(); closeModal(); return; }
       if (e.key === "Enter"){
         e.preventDefault();
-        const first = results.querySelector('[data-action="open-entity"]');
-        if (first){
-          const kind = first.dataset.kind;
-          const id = first.dataset.id;
-          closeModal();
-          navigate(routeForKind(kind), id);
-        }
+        // Erster Treffer — egal ob App, Mail oder Entität.
+        const first = results.querySelector('[data-search-hit]');
+        if (!first) return;
+        if (first.dataset.searchHit === "app"){ window._openAppSearchResult(first.dataset.appId); return; }
+        if (first.dataset.searchHit === "mail"){ closeModal(); window.openMailFromSearch(first.dataset.id); return; }
+        const kind = first.dataset.kind;
+        const id = first.dataset.id;
+        closeModal();
+        navigate(routeForKind(kind), id);
       }
     });
 
@@ -85766,6 +85779,17 @@ setInterval(()=>{
   padding-top: 12vh;
 }
 .spotlight-overlay.open { display: flex; }
+.spotlight-overlay[hidden] { display: none; }
+.sr-only { position:absolute!important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+/* Kategorie-Chip: macht sichtbar, ob ein Treffer eine App oder ein Inhalt ist. */
+.spotlight-result-cat { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-weight: 700; flex-shrink: 0; }
+.spotlight-group { padding: 10px 22px 4px; font-size: 10px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+.spotlight-empty strong { display:block; font-size: 14px; color: var(--text); margin-bottom: 6px; }
+@media (max-width: 600px) {
+  .spotlight-overlay { padding-top: 6vh; }
+  .spotlight-box { width: 96vw; max-height: 82vh; }
+  .spotlight-result-kind, .spotlight-footer span:last-child { display: none; }
+}
 .spotlight-box {
   width: min(640px, 92vw); background: var(--panel); border: 1px solid var(--panel3);
   border-radius: 14px; box-shadow: 0 30px 80px rgba(0,0,0,0.6);
@@ -85867,12 +85891,17 @@ setInterval(()=>{
 }
 </style>
 
-<!-- Spotlight Overlay -->
-<div class="spotlight-overlay" id="spotlightOverlay">
+<!-- Spotlight Overlay — Suche über alles: Apps, Projekte, Aufgaben, Notizen … -->
+<div class="spotlight-overlay" id="spotlightOverlay" role="dialog" aria-modal="true" aria-labelledby="spotlightLabel" hidden>
   <div class="spotlight-box">
-    <input type="text" class="spotlight-input" id="spotlightInput" placeholder="Suche nach Themen, Notizen, Karten, Aufgaben, Projekten…" />
-    <div class="spotlight-results" id="spotlightResults"></div>
-    <div class="spotlight-footer">
+    <h2 id="spotlightLabel" class="sr-only">Suche über alles</h2>
+    <input type="text" class="spotlight-input" id="spotlightInput" autocomplete="off" spellcheck="false"
+           role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="spotlightResults"
+           aria-describedby="spotlightHelp"
+           placeholder="Apps, Projekte, Aufgaben, Notizen, Ideen, Mails …" />
+    <div class="spotlight-results" id="spotlightResults" role="listbox" aria-label="Suchergebnisse"></div>
+    <div class="spotlight-live sr-only" id="spotlightLive" role="status" aria-live="polite"></div>
+    <div class="spotlight-footer" id="spotlightHelp">
       <span><span class="spotlight-kbd">↑↓</span> Navigieren · <span class="spotlight-kbd">↵</span> Öffnen · <span class="spotlight-kbd">Esc</span> Schließen</span>
       <span><span class="spotlight-kbd">⌘K</span> oder <span class="spotlight-kbd">Strg+K</span></span>
     </div>
@@ -85897,6 +85926,87 @@ setInterval(()=>{
 
 let _spotlightSelected = 0;
 let _spotlightItems = [];
+
+// ── App-Registry für die Suche ─────────────────────────────────────────────
+// Eine Liste, zwei Konsumenten: Spotlight (⌘K) und die universale Suche.
+// Apps sind damit gleichwertige Treffer neben Projekten, Aufgaben, Notizen …
+const SPOTLIGHT_APPS = [
+      { icon: '◫', title: 'Dashboard', sub: 'Startseite', open: () => { window.location.hash = '#/dashboard'; } },
+      { icon: '📱', title: 'Apps', sub: 'App-Übersicht & Hub', open: () => { window.location.hash = '#/apps'; } },
+      { icon: '☀️', title: 'Heute', sub: 'Tagesübersicht', open: () => { window.location.hash = '#/today'; } },
+      { icon: '🌅', title: 'Daily Briefing', sub: 'Morgenplanung & Tagesplan', open: () => { window.location.hash = '#/dailybriefing'; } },
+      { icon: '✓', title: 'Aufgaben', sub: 'Alle Tasks', open: () => { window.location.hash = '#/tasks'; } },
+      { icon: '📦', title: 'Projekte', sub: 'Projekt-Übersicht', open: () => { window.location.hash = '#/projects'; } },
+      { icon: '🏛️', title: 'Organisationen', sub: 'Firmen, Vereine, Schulen', open: () => { window.location.hash = '#/organizations'; } },
+      { icon: '🧩', title: 'Programme', sub: 'Programme & Links-Sammlung', open: () => { window.location.hash = '#/programs'; } },
+      { icon: '💬', title: 'Messages', sub: 'Geplante Nachrichten', open: () => { window.location.hash = '#/messages'; } },
+      { icon: '🔁', title: 'Routinen', sub: 'Habits & Daily Tracking', open: () => { window.location.hash = '#/habits'; } },
+      { icon: '🌙', title: 'Reflecta', sub: 'Abend-Reflexion', open: () => { window.location.hash = '#/reflecta'; } },
+      { icon: '🧠', title: 'Konzepte', sub: 'Concept-Sammlung', open: () => { window.location.hash = '#/concepts'; } },
+      { icon: '🤔', title: 'Decisions', sub: 'Entscheidungs-Tracker', open: () => { window.location.hash = '#/decisions'; } },
+      { icon: '📋', title: 'Updates', sub: 'Status-Updates', open: () => { window.location.hash = '#/updates'; } },
+      { icon: '📜', title: 'Regeln', sub: 'Rules & Constraints', open: () => { window.location.hash = '#/rules'; } },
+      { icon: '🎓', title: 'Theses', sub: 'Maturarbeit / Thesen', open: () => { window.location.hash = '#/thesis'; } },
+      { icon: '⚖️', title: 'Workload', sub: 'Auslastung', open: () => { window.location.hash = '#/workload'; } },
+      { icon: '🚨', title: 'Maßnahmen', sub: 'Measures', open: () => { window.location.hash = '#/measures'; } },
+      { icon: '💰', title: 'Budget', sub: 'Konten, Buchungen, Rechnungen', open: () => { window.location.hash = '#/budget'; } },
+      { icon: '📝', title: 'NoteFlow', sub: 'Notizen & Notizbücher', open: () => { window.location.hash = '#/notes'; } },
+      { icon: '💡', title: 'Ideen', sub: 'Idea-Inbox', open: () => { window.location.hash = '#/ideas'; } },
+      { icon: '🤝', title: 'Meetings', sub: 'Termine & Sitzungen', open: () => { window.location.hash = '#/meetings'; } },
+      { icon: '🎯', title: 'Ziele', sub: 'Goals & Tracking', open: () => { window.location.hash = '#/goals'; } },
+      { icon: '📅', title: 'Kalender', sub: 'Termine im Überblick', open: () => { window.location.hash = '#/calendar'; } },
+      { icon: '🧠', title: 'RecallLab', sub: 'Spaced Repetition Lernkarten', open: () => { window.location.hash = '#/recall'; } },
+      { icon: '📰', title: 'Newsroom', sub: 'Editorial × Research Hub', open: () => { 
+        if (typeof window.openResearchHub === 'function') window.openResearchHub();
+        else window.location.hash = '#/articles';
+      }},
+      { icon: '📚', title: 'ReadingHub', sub: 'Bücher, PDFs, Annotations', open: () => {
+        if (typeof window.openReadingHub === 'function') window.openReadingHub();
+        else window.location.hash = '#/readinghub';
+      }},
+      { icon: '📧', title: 'Gmail', sub: 'Posteingang, Personen, Organisationen', open: () => { window.location.hash = '#/gmail'; } },
+      { icon: '👤', title: 'Personen', sub: 'Kontaktverwaltung', open: () => { window.location.hash = '#/persons'; } },
+      { icon: '📜', title: 'Protokolle', sub: 'PDF-Protokolle mit Text-Extraktion', open: () => { window.location.hash = '#/protocols'; } },
+      { icon: '⚙️', title: 'Workflows', sub: 'Prozesse, Schritte & Automatisierung', open: () => { window.location.hash = '#/workflows'; } },
+      { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
+        if (typeof window.openReadlist === 'function') window.openReadlist();
+      }},
+      { icon: '🌐', title: 'Übersetzer', sub: 'AI-Übersetzung → RecallLab (⌘⇧T)', open: () => { 
+        if (typeof window.openTranslator === 'function') window.openTranslator(); 
+      }},
+      { icon: '✏️', title: 'Editor', sub: 'Schreiben mit AI', open: () => {
+        if (typeof window.openResearchHub === 'function') { 
+          window.openResearchHub(); 
+          setTimeout(() => { if (typeof window.nhNav === 'function') window.nhNav('editor'); }, 200); 
+        }
+      }},
+      { icon: '🌙', title: 'Daily Wrap', sub: 'Tagesabschluss & Reflexion', open: () => {
+        if (typeof window.openDailyWrap === 'function') window.openDailyWrap();
+      }},
+      { icon: '📓', title: 'Journal', sub: 'Selbst-Briefe', open: () => { window.location.hash = '#/journal'; } },
+      { icon: '🎓', title: 'KV-Cockpit', sub: 'Abschlussprüfung Mai 2026', open: () => {
+        try {
+          const projs = window.APP?.state?.data?.entities?.projects || {};
+          const p = Object.values(projs).find(x => x.externalId === 'PRJ-Z2SEX');
+          if (p) window.location.hash = '#/projects/' + p.id;
+        } catch(e) {}
+      }},
+      { icon: '⚙️', title: 'Einstellungen', sub: 'API Keys, Preferences', open: () => { window.location.hash = '#/settings'; } },
+];
+
+function buildAppSearchItems() {
+  return SPOTLIGHT_APPS.map(a => ({
+    kind: 'app',
+    category: 'App',
+    icon: a.icon,
+    id: 'app-' + String(a.title || '').toLowerCase().replace(/\s+/g, '-'),
+    title: a.title,
+    sub: a.sub,
+    keywords: [a.title, a.sub, 'app', 'öffnen', 'oeffnen'].join(' '),
+    open: a.open,
+  }));
+}
+window.buildAppSearchItems = buildAppSearchItems;
 
 function buildSpotlightItems() {
   const items = [];
@@ -86065,79 +86175,20 @@ function buildSpotlightItems() {
     }
   } catch(e) {}
   
-  // Apps (immer indexiert für Cmd+K)
+  // Apps sind gleichwertige Suchresultate — dieselbe Registry wie in der
+  // universalen Suche (window.buildAppSearchItems).
   try {
-    const APPS_LIST = [
-      { icon: '◫', title: 'Dashboard', sub: 'Startseite', open: () => { window.location.hash = '#/dashboard'; } },
-      { icon: '📱', title: 'Apps', sub: 'App-Übersicht & Hub', open: () => { window.location.hash = '#/apps'; } },
-      { icon: '☀️', title: 'Heute', sub: 'Tagesübersicht', open: () => { window.location.hash = '#/today'; } },
-      { icon: '🌅', title: 'Daily Briefing', sub: 'Morgenplanung & Tagesplan', open: () => { window.location.hash = '#/dailybriefing'; } },
-      { icon: '✓', title: 'Aufgaben', sub: 'Alle Tasks', open: () => { window.location.hash = '#/tasks'; } },
-      { icon: '📦', title: 'Projekte', sub: 'Projekt-Übersicht', open: () => { window.location.hash = '#/projects'; } },
-      { icon: '🏛️', title: 'Organisationen', sub: 'Firmen, Vereine, Schulen', open: () => { window.location.hash = '#/organizations'; } },
-      { icon: '🧩', title: 'Programme', sub: 'Programme & Links-Sammlung', open: () => { window.location.hash = '#/programs'; } },
-      { icon: '💬', title: 'Messages', sub: 'Geplante Nachrichten', open: () => { window.location.hash = '#/messages'; } },
-      { icon: '🔁', title: 'Routinen', sub: 'Habits & Daily Tracking', open: () => { window.location.hash = '#/habits'; } },
-      { icon: '🌙', title: 'Reflecta', sub: 'Abend-Reflexion', open: () => { window.location.hash = '#/reflecta'; } },
-      { icon: '🧠', title: 'Konzepte', sub: 'Concept-Sammlung', open: () => { window.location.hash = '#/concepts'; } },
-      { icon: '🤔', title: 'Decisions', sub: 'Entscheidungs-Tracker', open: () => { window.location.hash = '#/decisions'; } },
-      { icon: '📋', title: 'Updates', sub: 'Status-Updates', open: () => { window.location.hash = '#/updates'; } },
-      { icon: '📜', title: 'Regeln', sub: 'Rules & Constraints', open: () => { window.location.hash = '#/rules'; } },
-      { icon: '🎓', title: 'Theses', sub: 'Maturarbeit / Thesen', open: () => { window.location.hash = '#/thesis'; } },
-      { icon: '⚖️', title: 'Workload', sub: 'Auslastung', open: () => { window.location.hash = '#/workload'; } },
-      { icon: '🚨', title: 'Maßnahmen', sub: 'Measures', open: () => { window.location.hash = '#/measures'; } },
-      { icon: '💰', title: 'Budget', sub: 'Konten, Buchungen, Rechnungen', open: () => { window.location.hash = '#/budget'; } },
-      { icon: '📝', title: 'NoteFlow', sub: 'Notizen & Notizbücher', open: () => { window.location.hash = '#/notes'; } },
-      { icon: '💡', title: 'Ideen', sub: 'Idea-Inbox', open: () => { window.location.hash = '#/ideas'; } },
-      { icon: '🤝', title: 'Meetings', sub: 'Termine & Sitzungen', open: () => { window.location.hash = '#/meetings'; } },
-      { icon: '🎯', title: 'Ziele', sub: 'Goals & Tracking', open: () => { window.location.hash = '#/goals'; } },
-      { icon: '📅', title: 'Kalender', sub: 'Termine im Überblick', open: () => { window.location.hash = '#/calendar'; } },
-      { icon: '🧠', title: 'RecallLab', sub: 'Spaced Repetition Lernkarten', open: () => { window.location.hash = '#/recall'; } },
-      { icon: '📰', title: 'Newsroom', sub: 'Editorial × Research Hub', open: () => { 
-        if (typeof window.openResearchHub === 'function') window.openResearchHub();
-        else window.location.hash = '#/articles';
-      }},
-      { icon: '📚', title: 'ReadingHub', sub: 'Bücher, PDFs, Annotations', open: () => {
-        if (typeof window.openReadingHub === 'function') window.openReadingHub();
-        else window.location.hash = '#/readinghub';
-      }},
-      { icon: '📧', title: 'Gmail', sub: 'Posteingang, Personen, Organisationen', open: () => { window.location.hash = '#/gmail'; } },
-      { icon: '👤', title: 'Personen', sub: 'Kontaktverwaltung', open: () => { window.location.hash = '#/persons'; } },
-      { icon: '📜', title: 'Protokolle', sub: 'PDF-Protokolle mit Text-Extraktion', open: () => { window.location.hash = '#/protocols'; } },
-      { icon: '⚙️', title: 'Workflows', sub: 'Prozesse, Schritte & Automatisierung', open: () => { window.location.hash = '#/workflows'; } },
-      { icon: '📖', title: 'Leseliste', sub: 'Read Later — Artikel zum Lesen', open: () => {
-        if (typeof window.openReadlist === 'function') window.openReadlist();
-      }},
-      { icon: '🌐', title: 'Übersetzer', sub: 'AI-Übersetzung → RecallLab (⌘⇧T)', open: () => { 
-        if (typeof window.openTranslator === 'function') window.openTranslator(); 
-      }},
-      { icon: '✏️', title: 'Editor', sub: 'Schreiben mit AI', open: () => {
-        if (typeof window.openResearchHub === 'function') { 
-          window.openResearchHub(); 
-          setTimeout(() => { if (typeof window.nhNav === 'function') window.nhNav('editor'); }, 200); 
-        }
-      }},
-      { icon: '🌙', title: 'Daily Wrap', sub: 'Tagesabschluss & Reflexion', open: () => {
-        if (typeof window.openDailyWrap === 'function') window.openDailyWrap();
-      }},
-      { icon: '📓', title: 'Journal', sub: 'Selbst-Briefe', open: () => { window.location.hash = '#/journal'; } },
-      { icon: '🎓', title: 'KV-Cockpit', sub: 'Abschlussprüfung Mai 2026', open: () => {
-        try {
-          const projs = window.APP?.state?.data?.entities?.projects || {};
-          const p = Object.values(projs).find(x => x.externalId === 'PRJ-Z2SEX');
-          if (p) window.location.hash = '#/projects/' + p.id;
-        } catch(e) {}
-      }},
-      { icon: '⚙️', title: 'Einstellungen', sub: 'API Keys, Preferences', open: () => { window.location.hash = '#/settings'; } },
-    ];
-    APPS_LIST.forEach(a => {
-      items.push({
-        kind: 'app', icon: a.icon, id: 'app-' + (a.title || '').toLowerCase(),
-        title: a.title, sub: a.sub, open: a.open,
-      });
-    });
+    items.push(...buildAppSearchItems());
   } catch(e) { console.warn('Apps-Index Fehler:', e); }
-  
+
+  // Kategorie für Anzeige und Gruppierung. Apps bringen ihre eigene mit.
+  const CATEGORY = {
+    task: 'Aufgabe', projekt: 'Projekt', notiz: 'Notiz', idee: 'Idee', email: 'Mail',
+    person: 'Person', protokoll: 'Protokoll', workflow: 'Workflow', meeting: 'Meeting',
+    ziel: 'Ziel', 'kv-thema': 'Lernthema', 'kv-karte': 'Lernkarte', karte: 'Lernkarte', app: 'App',
+  };
+  items.forEach(it => { if (!it.category) it.category = CATEGORY[it.kind] || it.kind; });
+
   return items;
 }
 
@@ -86163,32 +86214,43 @@ function fuzzyScore(haystack, needle) {
 
 function renderSpotlightResults(query) {
   const items = _spotlightItems;
-  if (!query || !query.trim()) {
-    // Top 8 zufällig (aber stabil): zeigt eine Auswahl quer durch alle Bereiche
+  const q = String(query || '').trim();
+  if (!q) {
+    // Leerer Zustand: erst die Apps (schnellster Einstieg), danach eine
+    // Auswahl quer durch die Inhalte.
+    const apps = items.filter(it => it.kind === 'app').slice(0, 8);
     const topByKind = {};
     items.forEach(it => {
+      if (it.kind === 'app') return;
       if (!topByKind[it.kind]) topByKind[it.kind] = [];
       if (topByKind[it.kind].length < 2) topByKind[it.kind].push(it);
     });
-    return Object.values(topByKind).flat().slice(0, 12);
+    return apps.concat(Object.values(topByKind).flat().slice(0, 10));
   }
-  
+
   const scored = items.map(it => ({
     ...it,
     _score: Math.max(
-      fuzzyScore(it.title, query) * 2,
-      fuzzyScore(it.sub || '', query)
+      fuzzyScore(it.title, q) * 2,
+      fuzzyScore(it.sub || '', q),
+      // Apps bringen zusätzliche Stichworte mit, damit "öffnen"/"app" trifft.
+      it.keywords ? fuzzyScore(it.keywords, q) : 0
     )
   })).filter(it => it._score > 0);
-  scored.sort((a, b) => b._score - a._score);
+  // Bei Gleichstand gewinnt die App: sie ist das direkteste Ziel.
+  scored.sort((a, b) => b._score - a._score || (a.kind === 'app' ? -1 : b.kind === 'app' ? 1 : 0));
   return scored.slice(0, 25);
 }
+
+let _spotlightReturnFocus = null;
 
 function showSpotlight() {
   _spotlightItems = buildSpotlightItems();
   const overlay = document.getElementById('spotlightOverlay');
   const input = document.getElementById('spotlightInput');
   if (!overlay || !input) return;
+  _spotlightReturnFocus = document.activeElement;
+  overlay.hidden = false;
   overlay.classList.add('open');
   input.value = '';
   _spotlightSelected = 0;
@@ -86198,30 +86260,56 @@ function showSpotlight() {
 
 function hideSpotlight() {
   const overlay = document.getElementById('spotlightOverlay');
-  if (overlay) overlay.classList.remove('open');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  overlay.hidden = true;
+  // Fokus zurück dorthin, wo die Suche geöffnet wurde (Tastatur-Bedienbarkeit).
+  try { if (_spotlightReturnFocus && _spotlightReturnFocus.focus) _spotlightReturnFocus.focus(); } catch(e) {}
+  _spotlightReturnFocus = null;
 }
 
 function updateSpotlightUI(query) {
   const out = document.getElementById('spotlightResults');
+  const input = document.getElementById('spotlightInput');
+  const live = document.getElementById('spotlightLive');
   if (!out) return;
+  const q = String(query || '').trim();
   const results = renderSpotlightResults(query);
   if (results.length === 0) {
-    out.innerHTML = '<div class="spotlight-empty">Keine Treffer. Indexierte Bereiche: Aufgaben, Projekte, Notizen, Ideen, Meetings, Ziele, KV-Themen/Karten, RecallLab-Karten</div>';
+    out.innerHTML = `<div class="spotlight-empty">
+      <strong>Keine Treffer für „${escHTML(q)}"</strong>
+      Durchsucht werden Apps, Projekte, Aufgaben, Notizen, Ideen, Mails, Personen,
+      Protokolle, Workflows, Meetings, Ziele und Lernkarten.<br>
+      Tipp: kürzeres Stichwort oder nur der App-Name (z. B. „Budget").
+    </div>`;
     _spotlightItems._results = [];
+    if (input) input.removeAttribute('aria-activedescendant');
+    if (live) live.textContent = 'Keine Treffer';
     return;
   }
   if (_spotlightSelected >= results.length) _spotlightSelected = 0;
-  out.innerHTML = results.map((r, i) => `
-    <div class="spotlight-result ${i === _spotlightSelected ? 'selected' : ''}" data-spotlight-idx="${i}">
-      <div class="spotlight-result-icon">${r.icon}</div>
+
+  let lastCategory = null;
+  out.innerHTML = results.map((r, i) => {
+    const selected = i === _spotlightSelected;
+    const cat = r.category || r.kind;
+    // Bei leerer Eingabe gruppiert nach Kategorie — sonst nach Relevanz sortiert.
+    const head = (!q && cat !== lastCategory) ? `<div class="spotlight-group" role="presentation">${escHTML(cat)}</div>` : '';
+    if (!q) lastCategory = cat;
+    return `${head}<div class="spotlight-result ${selected ? 'selected' : ''}" id="spotlightOpt${i}"
+        role="option" aria-selected="${selected}" data-spotlight-idx="${i}">
+      <div class="spotlight-result-icon" aria-hidden="true">${r.icon || '•'}</div>
       <div class="spotlight-result-content">
         <div class="spotlight-result-title">${escHTML(r.title)}</div>
         ${r.sub ? `<div class="spotlight-result-sub">${escHTML(r.sub)}</div>` : ''}
       </div>
-      <div class="spotlight-result-kind">${r.kind}</div>
-    </div>
-  `).join('');
+      <div class="spotlight-result-cat">${escHTML(cat)}</div>
+      <div class="spotlight-result-kind">${escHTML(r.kind)}</div>
+    </div>`;
+  }).join('');
   _spotlightItems._results = results;
+  if (input) input.setAttribute('aria-activedescendant', 'spotlightOpt' + _spotlightSelected);
+  if (live) live.textContent = results.length + (results.length === 1 ? ' Treffer' : ' Treffer');
   out.querySelectorAll('[data-spotlight-idx]').forEach(el => {
     el.addEventListener('click', () => {
       _spotlightSelected = parseInt(el.dataset.spotlightIdx);
@@ -86230,8 +86318,11 @@ function updateSpotlightUI(query) {
     el.addEventListener('mouseenter', () => {
       _spotlightSelected = parseInt(el.dataset.spotlightIdx);
       out.querySelectorAll('.spotlight-result').forEach((r, i) => {
-        r.classList.toggle('selected', i === _spotlightSelected);
+        const sel = i === _spotlightSelected;
+        r.classList.toggle('selected', sel);
+        r.setAttribute('aria-selected', String(sel));
       });
+      if (input) input.setAttribute('aria-activedescendant', 'spotlightOpt' + _spotlightSelected);
     });
   });
   // Ensure selected is in view
@@ -110605,7 +110696,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       </div>
       <div class="sb-group">
         <button class="sb-btn sb-toggle" data-sb="filterToggle" id="sbFilterToggle" title="Filter & Suche">🔍 Filter</button>
-        ${fmtBtn("export", "⭳ CSV", "Als CSV exportieren")}
+        ${fmtBtn("export", "⭳ Export", "Board exportieren: Bild (PNG), druckbares PDF oder CSV-Daten")}
         ${fmtBtn("import", "⭱ Import", "Aus Text/CSV importieren")}
       </div>
     `;
@@ -111491,7 +111582,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       case "undo": undo(); break;
       case "redo": redo(); break;
       case "filterToggle": toggleFilterbar(); break;
-      case "export": exportCSV(); break;
+      case "export": openExportDialog(); break;
       case "import": openImport(); break;
       case "zoomIn": zoomBy(1.2); break;
       case "zoomOut": zoomBy(1 / 1.2); break;
@@ -111826,20 +111917,458 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     if (clr) clr.onclick = () => { B.filter = { text: "", tags: new Set(), colors: new Set() }; renderFilterbar(); renderNotes(); updateToolbarState(); };
   }
 
-  // ════════════════════════════ IMPORT / EXPORT ════════════════════════════
-  function exportCSV() {
-    if (!B.board.notes.length) { toast("warn", "Export", "Keine Post-its"); return; }
+  // ════════════════════════════ EXPORT ═════════════════════════════════════
+  /* Der Export erzeugt eine eigene SVG-Zeichnung des Boards — NICHT einen
+     Screenshot des Editors. Dadurch ist die Toolbar garantiert nicht im Bild,
+     der Zustand ist exakt der sichtbare (Farben, Tags, Verbindungen, Zeichnun-
+     gen) und das Ergebnis skaliert verlustfrei. Aus derselben SVG entstehen
+     PNG (Canvas-Rasterung) und das druckbare PDF (Druckdialog → "Als PDF
+     sichern"). CSV bleibt unverändert der reine Datenexport. */
+
+  const EXPORT_PAD = 60;
+
+  function boardTitle() {
+    const ent = getEntity(B.kind, B.id);
+    return (ent && (ent.title || ent.name)) || "Board";
+  }
+  function safeFileName(base, ext) {
+    return String(base || "board").replace(/[^\w\-]+/g, "_").slice(0, 40) + "." + ext;
+  }
+  function exportDateLabel() {
+    try { return new Date().toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric" }); }
+    catch (e) { return new Date().toISOString().slice(0, 10); }
+  }
+
+  // Welche Notizen kommen ins Bild?
+  //  selection — nur die ausgewählten Post-its
+  //  viewport  — was gerade auf der Fläche zu sehen ist (robust über die
+  //              aktuelle Transformation zurückgerechnet)
+  //  board     — alles (Standard)
+  // Ein aktiver Filter blendet ausgegraute Notizen auch im Export aus: was man
+  // sieht, wird exportiert.
+  function exportNotes(scope) {
+    const all = B.board.notes || [];
+    const fActive = filterActive();
+    let list = fActive ? all.filter(matchesFilter) : all.slice();
+    if (scope === "selection") list = list.filter((n) => B.sel.has(n.id));
+    if (scope === "viewport") {
+      const cv = canvasEl();
+      const rect = cv ? cv.getBoundingClientRect() : { width: 1200, height: 800 };
+      const z = B.view.zoom || 1;
+      const x0 = -B.view.x / z, y0 = -B.view.y / z;
+      const x1 = x0 + rect.width / z, y1 = y0 + rect.height / z;
+      list = list.filter((n) => {
+        const nx = n.x, ny = n.y, nw = n.w || NOTE_W, nh = n.h || NOTE_H;
+        return nx + nw >= x0 && nx <= x1 && ny + nh >= y0 && ny <= y1;
+      });
+    }
+    return list;
+  }
+
+  function exportBounds(notes, drawings) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    notes.forEach((n) => {
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + (n.w || NOTE_W)); maxY = Math.max(maxY, n.y + (n.h || NOTE_H));
+    });
+    (drawings || []).forEach((st) => (st.points || []).forEach((pt) => {
+      minX = Math.min(minX, pt[0]); minY = Math.min(minY, pt[1]);
+      maxX = Math.max(maxX, pt[0]); maxY = Math.max(maxY, pt[1]);
+    }));
+    // Leeres oder kaputtes Board: nie NaN/Infinity ins SVG schreiben.
+    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+      return { x: 0, y: 0, w: NOTE_W * 3, h: NOTE_H * 2 };
+    }
+    const w = Math.max(NOTE_W, maxX - minX), h = Math.max(NOTE_H, maxY - minY);
+    return { x: minX, y: minY, w: w, h: h };
+  }
+
+  // Sehr einfacher Umbruch: SVG kann nicht selbst umbrechen, deshalb wird der
+  // Text hier in Zeilen zerlegt (Wortgrenzen, harte Trennung bei Monsterwörtern).
+  function wrapText(text, maxChars, maxLines) {
+    const out = [];
+    String(text || "").split(/\n/).forEach((para) => {
+      let line = "";
+      para.split(/\s+/).filter(Boolean).forEach((word) => {
+        while (word.length > maxChars) {
+          if (line) { out.push(line); line = ""; }
+          out.push(word.slice(0, maxChars));
+          word = word.slice(maxChars);
+        }
+        if (!line) line = word;
+        else if ((line + " " + word).length <= maxChars) line += " " + word;
+        else { out.push(line); line = word; }
+      });
+      out.push(line);
+    });
+    const lines = out.filter((l, i) => l !== "" || i === 0);
+    if (lines.length > maxLines) {
+      const cut = lines.slice(0, maxLines);
+      cut[maxLines - 1] = cut[maxLines - 1].slice(0, Math.max(1, maxChars - 1)) + "…";
+      return cut;
+    }
+    return lines;
+  }
+
+  function connPath(a, b, style) {
+    const p = anchorPoints(a, b);
+    if (style === "elbow") {
+      const midX = (p.x1 + p.x2) / 2;
+      return `M ${p.x1} ${p.y1} L ${midX} ${p.y1} L ${midX} ${p.y2} L ${p.x2} ${p.y2}`;
+    }
+    if (style === "straight") return `M ${p.x1} ${p.y1} L ${p.x2} ${p.y2}`;
+    const dx = Math.abs(p.x2 - p.x1) * 0.5;
+    return `M ${p.x1} ${p.y1} C ${p.x1 + dx} ${p.y1}, ${p.x2 - dx} ${p.y2}, ${p.x2} ${p.y2}`;
+  }
+
+  // Baut die vollständige SVG-Zeichnung. opts: {scope, grid, legend, header,
+  // connections, drawings}
+  function buildBoardSVG(opts) {
+    const o = opts || {};
+    const notes = exportNotes(o.scope);
+    const ids = new Set(notes.map((n) => n.id));
+    const conns = o.connections === false ? []
+      : (B.board.connections || []).filter((cn) => ids.has(cn.from) && ids.has(cn.to));
+    const drawings = o.drawings === false ? [] : (B.board.drawings || []);
+    const bounds = exportBounds(notes, o.scope === "board" ? drawings : []);
+
+    const headerH = o.header === false ? 0 : 84;
+    const usedColors = COLORS.filter((c) => notes.some((n) => (n.color || "yellow") === c.key));
+    const legendH = (o.legend && usedColors.length) ? 46 : 0;
+
+    const x = bounds.x - EXPORT_PAD, y = bounds.y - EXPORT_PAD;
+    const w = Math.round(bounds.w + EXPORT_PAD * 2);
+    const h = Math.round(bounds.h + EXPORT_PAD * 2);
+    const totalH = h + headerH + legendH;
+
+    let body = "";
+
+    // Raster
+    if (o.grid) {
+      const step = GRID * 2;
+      const gx = Math.floor(x / step) * step, gy = Math.floor(y / step) * step;
+      let lines = "";
+      for (let px = gx; px <= x + w; px += step) lines += `<line x1="${px}" y1="${y}" x2="${px}" y2="${y + h}" />`;
+      for (let py = gy; py <= y + h; py += step) lines += `<line x1="${x}" y1="${py}" x2="${x + w}" y2="${py}" />`;
+      body += `<g stroke="#dfe3ea" stroke-width="1">${lines}</g>`;
+    }
+
+    // Zeichnungen (Stift) unter den Post-its
+    drawings.forEach((st) => {
+      if (!st.points || st.points.length < 2) return;
+      const d = "M " + st.points.map((pt) => pt[0] + " " + pt[1]).join(" L ");
+      body += `<path d="${d}" fill="none" stroke="${esc(st.color || "#e5765a")}" stroke-width="${Number(st.width) || 3}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    });
+
+    // Verbindungen
+    conns.forEach((cn) => {
+      const a = notes.find((n) => n.id === cn.from), b = notes.find((n) => n.id === cn.to);
+      if (!a || !b) return;
+      const col = esc(cn.color || "#8a94a6");
+      const width = Number(cn.width) || 2;
+      const arrow = cn.arrow || "end";
+      const d = connPath(a, b, cn.style);
+      const me = (arrow === "end" || arrow === "both") ? ' marker-end="url(#sbExpArrow)"' : "";
+      const ms = (arrow === "both") ? ' marker-start="url(#sbExpArrow)"' : "";
+      body += `<path d="${d}" fill="none" stroke="${col}" stroke-width="${width}"${me}${ms}/>`;
+      if (cn.label) {
+        const p = anchorPoints(a, b);
+        const mx = (p.x1 + p.x2) / 2, my = (p.y1 + p.y2) / 2;
+        const lw = String(cn.label).length * 6.8 + 12;
+        body += `<g><rect x="${mx - lw / 2}" y="${my - 10}" width="${lw}" height="20" rx="5" fill="#ffffff" stroke="${col}"/>`
+          + `<text x="${mx}" y="${my + 4}" text-anchor="middle" font-size="11" fill="#1a1a1a">${esc(cn.label)}</text></g>`;
+      }
+    });
+
+    // Post-its
+    notes.slice().sort((a, b) => (a.z || 0) - (b.z || 0)).forEach((n) => {
+      const nw = n.w || NOTE_W, nh = n.h || NOTE_H;
+      if (n.type === "html") {
+        body += `<g><rect x="${n.x}" y="${n.y}" width="${nw}" height="${nh}" rx="10" fill="#334155"/>`
+          + `<rect x="${n.x}" y="${n.y}" width="${nw}" height="24" rx="6" fill="#475569"/>`
+          + `<text x="${n.x + 10}" y="${n.y + 17}" font-size="12" fill="#e2e8f0">${esc(n.title || "HTML-Element")}</text>`
+          + `<text x="${n.x + nw / 2}" y="${n.y + nh / 2}" text-anchor="middle" font-size="13" fill="#cbd5e1">&lt;/&gt; Live-Inhalt</text></g>`;
+        return;
+      }
+      const c = colorByKey(n.color);
+      const bg = n.color && n.color[0] === "#" ? n.color : c.bg;
+      const txt = n.textColor || c.text;
+      const tags = (n.tags || []).slice(0, 4);
+      const tagRow = tags.length ? 20 : 0;
+      const fs = Math.max(10, Math.min(22, Math.round(autoFont(n))));
+      const maxChars = Math.max(6, Math.floor((nw - 24) / (fs * 0.55)));
+      const maxLines = Math.max(1, Math.floor((nh - 26 - tagRow) / (fs * 1.25)));
+      const lines = wrapText(n.text, maxChars, maxLines);
+      const blockH = lines.length * fs * 1.25;
+      const startY = n.y + (nh - tagRow) / 2 - blockH / 2 + fs;
+      const anchor = n.align === "left" ? "start" : n.align === "right" ? "end" : "middle";
+      const tx = anchor === "start" ? n.x + 12 : anchor === "end" ? n.x + nw - 12 : n.x + nw / 2;
+      body += `<g><rect x="${n.x}" y="${n.y}" width="${nw}" height="${nh}" rx="6" fill="${esc(bg)}" stroke="rgba(0,0,0,.10)"/>`;
+      body += lines.map((line, i) => `<text x="${tx}" y="${startY + i * fs * 1.25}" text-anchor="${anchor}" font-size="${fs}" font-weight="${n.bold ? 800 : 500}" fill="${esc(txt)}">${esc(line)}</text>`).join("");
+      if (tags.length) {
+        let tagX = n.x + 10;
+        tags.forEach((t) => {
+          const tw = String(t).length * 5.6 + 12;
+          body += `<g><rect x="${tagX}" y="${n.y + nh - 24}" width="${tw}" height="16" rx="8" fill="rgba(0,0,0,.12)"/>`
+            + `<text x="${tagX + tw / 2}" y="${n.y + nh - 12}" text-anchor="middle" font-size="9" fill="${esc(txt)}">${esc(t)}</text></g>`;
+          tagX += tw + 5;
+        });
+      }
+      if (n.votes) {
+        body += `<text x="${n.x + nw - 10}" y="${n.y + 18}" text-anchor="end" font-size="11" fill="${esc(txt)}">👍 ${Number(n.votes) || 0}</text>`;
+      }
+      body += `</g>`;
+    });
+
+    // Kopfzeile: Titel + Datum + Umfang
+    let header = "";
+    if (headerH) {
+      const scopeLabel = o.scope === "selection" ? "Auswahl" : o.scope === "viewport" ? "Sichtbarer Ausschnitt" : "Gesamtes Board";
+      header = `<g transform="translate(0,0)">
+        <rect x="0" y="0" width="${w}" height="${headerH}" fill="#ffffff"/>
+        <text x="${EXPORT_PAD}" y="38" font-size="24" font-weight="700" fill="#111827">${esc(boardTitle())}</text>
+        <text x="${EXPORT_PAD}" y="62" font-size="13" fill="#6b7280">Sticky Board · ${esc(scopeLabel)} · ${esc(notes.length)} Post-it${notes.length === 1 ? "" : "s"}${conns.length ? " · " + conns.length + " Verbindung" + (conns.length === 1 ? "" : "en") : ""} · ${esc(exportDateLabel())}</text>
+        <line x1="${EXPORT_PAD}" y1="${headerH - 10}" x2="${w - EXPORT_PAD}" y2="${headerH - 10}" stroke="#e5e7eb" stroke-width="1"/>
+      </g>`;
+    }
+
+    // Legende: welche Farbe steht für was
+    let legend = "";
+    if (legendH) {
+      let lx = EXPORT_PAD;
+      legend = usedColors.map((c) => {
+        const count = notes.filter((n) => (n.color || "yellow") === c.key).length;
+        const label = `${c.label} (${count})`;
+        const seg = `<g><rect x="${lx}" y="14" width="14" height="14" rx="3" fill="${c.bg}" stroke="rgba(0,0,0,.15)"/>`
+          + `<text x="${lx + 20}" y="26" font-size="12" fill="#374151">${esc(label)}</text></g>`;
+        lx += 20 + label.length * 6.6 + 22;
+        return seg;
+      }).join("");
+      legend = `<g transform="translate(0,${headerH + h})"><rect x="0" y="0" width="${w}" height="${legendH}" fill="#ffffff"/>
+        <line x1="${EXPORT_PAD}" y1="4" x2="${w - EXPORT_PAD}" y2="4" stroke="#e5e7eb"/>${legend}</g>`;
+    }
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${totalH}" viewBox="0 0 ${w} ${totalH}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">`
+      + `<defs><marker id="sbExpArrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#8a94a6"></path></marker></defs>`
+      + `<rect x="0" y="0" width="${w}" height="${totalH}" fill="#ffffff"/>`
+      + header
+      + `<g transform="translate(${-x},${headerH - y})">${body}</g>`
+      + legend
+      + `</svg>`;
+    return { svg: svg, width: w, height: totalH, noteCount: notes.length };
+  }
+
+  // SVG → PNG über ein Canvas. Bewusst ohne externe Ressourcen im SVG, damit
+  // das Canvas nicht "tainted" wird und toBlob() erlaubt bleibt.
+  function svgToPngBlob(svgText, width, height, scale) {
+    return new Promise((resolve, reject) => {
+      const s = Math.max(1, Math.min(4, scale || 2));
+      const url = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }));
+      const img = new Image();
+      const done = (fn, arg) => { URL.revokeObjectURL(url); fn(arg); };
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(width * s));
+          canvas.height = Math.max(1, Math.round(height * s));
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (blob) done(resolve, blob);
+            else done(reject, new Error("Das Bild konnte nicht erzeugt werden."));
+          }, "image/png");
+        } catch (err) { done(reject, err); }
+      };
+      img.onerror = () => done(reject, new Error("Die Board-Grafik konnte nicht gerendert werden."));
+      img.src = url;
+    });
+  }
+
+  function downloadBlob(blob, filename) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+
+  // Druckbares PDF: das gerenderte Bild in ein schlankes Druckdokument legen und
+  // den Druckdialog öffnen ("Als PDF sichern"). Kein externes PDF-Paket nötig,
+  // und die Toolbar ist naturgemäss nicht enthalten.
+  function printBoardImage(dataUrl, landscape) {
+    const win = window.open("", "_blank");
+    if (!win) throw new Error("Der Druck-Tab wurde blockiert. Bitte Pop-ups für diese Seite erlauben.");
+    const title = boardTitle();
+    win.document.write(`<!doctype html><html lang="de"><head><meta charset="utf-8">
+      <title>${esc(title)} — Sticky Board</title>
+      <style>
+        @page { size: A4 ${landscape ? "landscape" : "portrait"}; margin: 12mm; }
+        html,body { margin:0; padding:0; background:#fff; color:#111827;
+          font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+        .wrap { padding: 10px; }
+        img { width:100%; height:auto; display:block; }
+        .foot { margin-top:8px; font-size:10px; color:#6b7280; text-align:right; }
+        @media print { .hint { display:none } }
+        .hint { margin:10px 0; font-size:12px; color:#6b7280; }
+      </style></head><body><div class="wrap">
+      <div class="hint">Druckdialog öffnet sich automatisch — dort \u201eAls PDF sichern\u201c wählen.</div>
+      <img src="${dataUrl}" alt="Sticky Board ${esc(title)}">
+      <div class="foot">${esc(title)} · ${esc(exportDateLabel())}</div>
+      </div><script>window.addEventListener('load',function(){setTimeout(function(){window.print();},250);});<\/script>
+      </body></html>`);
+    win.document.close();
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error("Das Bild konnte nicht gelesen werden."));
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  function setExportBusy(busy, message) {
+    const box = document.getElementById("sbExportStatus");
+    const run = document.getElementById("sbExportRun");
+    if (run) run.disabled = !!busy;
+    if (!box) return;
+    box.className = "sb-export-status" + (busy ? " busy" : "");
+    box.textContent = message || "";
+    box.style.display = message ? "block" : "none";
+  }
+  function setExportError(message) {
+    const box = document.getElementById("sbExportStatus");
+    const run = document.getElementById("sbExportRun");
+    if (run) run.disabled = false;
+    if (!box) return;
+    box.className = "sb-export-status error";
+    box.textContent = message;
+    box.style.display = "block";
+  }
+
+  async function runExport(opts) {
+    const scopeLabel = opts.scope === "selection" ? "Auswahl" : opts.scope === "viewport" ? "Ausschnitt" : "Board";
+    try {
+      if (opts.format === "csv") { exportCSV(opts.scope); hideContextMenu(); return; }
+      const built = buildBoardSVG(opts);
+      if (!built.noteCount) { setExportError("Für „" + scopeLabel + "\u201c hat es keine sichtbaren Post-its."); return; }
+      setExportBusy(true, "Board wird gerendert…");
+      if (opts.format === "svg") {
+        downloadBlob(new Blob([built.svg], { type: "image/svg+xml;charset=utf-8" }), safeFileName("sticky-board-" + boardTitle(), "svg"));
+        setExportBusy(false, "");
+        hideContextMenu();
+        toast("ok", "Export", built.noteCount + " Post-its als SVG");
+        return;
+      }
+      const blob = await svgToPngBlob(built.svg, built.width, built.height, opts.scale || 2);
+      if (opts.format === "pdf") {
+        setExportBusy(true, "Druckansicht wird vorbereitet…");
+        const dataUrl = await blobToDataUrl(blob);
+        printBoardImage(dataUrl, built.width >= built.height);
+        setExportBusy(false, "");
+        hideContextMenu();
+        toast("ok", "Export", "Druckansicht geöffnet — dort \u201eAls PDF sichern\u201c wählen");
+        return;
+      }
+      downloadBlob(blob, safeFileName("sticky-board-" + boardTitle(), "png"));
+      setExportBusy(false, "");
+      hideContextMenu();
+      toast("ok", "Export", built.noteCount + " Post-its als PNG");
+    } catch (err) {
+      console.warn("[StickyBoard] Export:", err);
+      setExportError((err && err.message) || "Der Export ist fehlgeschlagen.");
+    }
+  }
+
+  function openExportDialog() {
+    const ctx = document.getElementById("sbCtx");
+    if (!ctx) return;
+    const selCount = B.sel.size;
+    const total = (B.board.notes || []).length;
+    const visible = exportNotes("viewport").length;
+    ctx.innerHTML = `
+      <div class="sb-ctx-title">⭳ Export</div>
+      <div class="sb-ctx-hint">Exportiert wird genau der sichtbare Board-Zustand — ohne Werkzeugleiste.</div>
+      <label class="sb-ctx-row">Umfang
+        <select id="sbExpScope">
+          <option value="board">Gesamtes Board (${total})</option>
+          <option value="selection"${selCount ? "" : " disabled"}>Ausgewählte Post-its (${selCount})</option>
+          <option value="viewport">Sichtbarer Ausschnitt (${visible})</option>
+        </select>
+      </label>
+      <label class="sb-ctx-row">Format
+        <select id="sbExpFormat">
+          <option value="png">PNG-Bild</option>
+          <option value="pdf">PDF (druckbar)</option>
+          <option value="svg">SVG (vektor)</option>
+          <option value="csv">CSV (Daten)</option>
+        </select>
+      </label>
+      <label class="sb-ctx-row">Auflösung
+        <select id="sbExpScale">
+          <option value="1">1× (klein)</option>
+          <option value="2" selected>2× (empfohlen)</option>
+          <option value="3">3× (Druck)</option>
+        </select>
+      </label>
+      <label class="sb-ctx-check"><input type="checkbox" id="sbExpHeader" checked> Titel &amp; Datum</label>
+      <label class="sb-ctx-check"><input type="checkbox" id="sbExpLegend" checked> Farb-Legende</label>
+      <label class="sb-ctx-check"><input type="checkbox" id="sbExpConns" checked> Verbindungen</label>
+      <label class="sb-ctx-check"><input type="checkbox" id="sbExpGrid"> Raster</label>
+      <div class="sb-export-status" id="sbExportStatus" role="status" aria-live="polite" style="display:none"></div>
+      <div class="sb-ctx-actions">
+        <button class="sb-btn sb-primary" id="sbExportRun" data-sb-exp="run">Exportieren</button>
+        <button class="sb-btn" data-sb-exp="cancel">Abbrechen</button>
+      </div>`;
+    ctx.style.display = "block";
+    positionCtx(ctx, Math.max(12, window.innerWidth / 2 - 150), 100);
+    if (selCount) { const s = document.getElementById("sbExpScope"); if (s) s.value = "selection"; }
+    // CSV kennt weder Auflösung noch Legende — die Felder verstecken sich.
+    const fmt = document.getElementById("sbExpFormat");
+    const syncFields = () => {
+      const isImage = fmt.value !== "csv";
+      ["sbExpScale", "sbExpHeader", "sbExpLegend", "sbExpConns", "sbExpGrid"].forEach((elId) => {
+        const el = document.getElementById(elId);
+        const row = el && el.closest("label");
+        if (row) row.style.display = isImage ? "" : "none";
+      });
+      const scaleRow = document.getElementById("sbExpScale");
+      if (scaleRow && scaleRow.closest("label")) scaleRow.closest("label").style.display = (fmt.value === "png" || fmt.value === "pdf") ? "" : "none";
+    };
+    fmt.onchange = syncFields;
+    syncFields();
+    ctx.onclick = (ev) => {
+      const b = ev.target.closest("[data-sb-exp]");
+      if (!b) return;
+      if (b.dataset.sbExp === "cancel") { hideContextMenu(); return; }
+      runExport({
+        scope: document.getElementById("sbExpScope").value,
+        format: fmt.value,
+        scale: Number(document.getElementById("sbExpScale").value) || 2,
+        header: document.getElementById("sbExpHeader").checked,
+        legend: document.getElementById("sbExpLegend").checked,
+        connections: document.getElementById("sbExpConns").checked,
+        grid: document.getElementById("sbExpGrid").checked,
+        drawings: true,
+      });
+    };
+  }
+
+  // ════════════════════════════ IMPORT / CSV ═══════════════════════════════
+  // CSV bleibt der reine Datenexport (unverändertes Format). Neu respektiert er
+  // denselben Umfang wie der Bildexport, damit „Auswahl" überall dasselbe meint.
+  function exportCSV(scope) {
+    const notes = exportNotes(scope || "board");
+    if (!notes.length) { toast("warn", "Export", "Keine Post-its"); return; }
     const rows = [["text", "color", "tags", "votes", "x", "y", "author", "createdAt"]];
-    B.board.notes.forEach((n) => rows.push([n.text || "", n.color || "", (n.tags || []).join("|"), n.votes || 0, Math.round(n.x), Math.round(n.y), n.author || "", n.createdAt || ""]));
+    notes.forEach((n) => rows.push([n.text || "", n.color || "", (n.tags || []).join("|"), n.votes || 0, Math.round(n.x), Math.round(n.y), n.author || "", n.createdAt || ""]));
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    const ent = getEntity(B.kind, B.id);
-    a.href = URL.createObjectURL(blob);
-    a.download = "sticky-board-" + ((ent && (ent.title || ent.name)) || "board").replace(/[^\w\-]+/g, "_").slice(0, 40) + ".csv";
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    toast("ok", "Export", B.board.notes.length + " Post-its als CSV");
+    downloadBlob(blob, safeFileName("sticky-board-" + boardTitle(), "csv"));
+    toast("ok", "Export", notes.length + " Post-its als CSV");
   }
 
   function openImport() {
@@ -112187,6 +112716,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       .sb-ctx-row input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--sb-border);border-radius:6px;background:none;cursor:pointer}
       .sb-ctx-row input[type=range]{flex:1;max-width:110px}
       .sb-ctx-actions{display:flex;gap:6px;padding:6px 6px 2px;justify-content:flex-end}
+      /* Export-Dialog */
+      .sb-ctx-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sb-muted);padding:4px 8px;cursor:pointer}
+      .sb-ctx-check input{accent-color:var(--sb-accent);width:14px;height:14px;cursor:pointer}
+      .sb-export-status{margin:6px 8px;padding:7px 9px;border-radius:7px;font-size:11.5px;line-height:1.4;background:var(--sb-panel2);color:var(--sb-muted);border:1px solid var(--sb-border)}
+      .sb-export-status.busy{color:var(--sb-text)}
+      .sb-export-status.error{background:rgba(220,60,60,.12);border-color:rgba(220,60,60,.45);color:#ffb4b4}
+      @media(max-width:640px){.sb-ctx-row select{max-width:150px}}
       .sb-import-area{width:calc(100% - 16px);margin:0 8px;min-height:130px;background:var(--sb-panel2);border:1px solid var(--sb-border);border-radius:8px;color:var(--sb-text);font-size:13px;padding:8px;resize:vertical;font-family:inherit}
       /* Vorschau-Block in Detailansichten */
       .sb-preview{position:relative;height:150px;border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;background:var(--bg);background-image:radial-gradient(circle,var(--border) 1px,transparent 1px);background-size:18px 18px;transition:border-color .15s}
@@ -114747,6 +115283,11 @@ h1, h2, h3{ letter-spacing:-0.011em; }
 
 </style>
 
+<!-- FlowerTech: reiner Workflow-Kern (Prozess, Vorlagen, Vertrag, Prompt) als
+     ES-Modul — dieselbe Datei nutzen Node-Tests und die Netlify-Funktion.
+     Muss vor flowertech.js stehen; das Modul hängt sich als
+     window.FlowerTechWorkflow ein. -->
+<script type="module" src="flowertech-workflow-core.js"></script>
 <script src="flowertech.js"></script>
 <script id="quantus-control-fixes-20260720">
 /* Confirmed control fixes: missing handlers, filter routing and action aliases. */
