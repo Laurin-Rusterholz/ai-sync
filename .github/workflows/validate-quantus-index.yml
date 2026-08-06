@@ -15,6 +15,8 @@ on:
       - "public/flowertech.js"
       - "tests/career-model-learning.test.mjs"
       - "tests/career-model-ideas.test.mjs"
+      - "tests/persistence.test.mjs"
+      - "public/bm.html"
       - "public/quantus-bundles/**"
       - "public/career-model.css"
       - "tests/quantus-browser-module.test.mjs"

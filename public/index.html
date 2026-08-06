@@ -10223,6 +10223,14 @@ for (const u of Object.values(e.updates)) {
   d.journal.topics = d.journal.topics || [];
   d.journal.selfLetters = d.journal.selfLetters || [];
   d.journal.settings = d.journal.settings || { name: '', street: '', city: '', geminiApiKey: '' };
+  // Entwurf des Zukunftsbriefs. Vorher lebte der Brief NUR im DOM und war weg,
+  // sobald man den Editor schloss, die Seite neu lud oder der Tab abstürzte —
+  // erst „Senden" hat ihn überhaupt gespeichert. Der Entwurf wird laufend
+  // gesichert und beim Öffnen wiederhergestellt.
+  d.journal.selfLetterDraft = d.journal.selfLetterDraft || null;
+  // KI-Gespräch im Editor: lag ebenfalls nur im DOM und war nach einem Neuladen
+  // verloren. Format: [{ role: "user" | "ai", text, at }]
+  d.journal.chat = Array.isArray(d.journal.chat) ? d.journal.chat : [];
   // Check arrived self-letters
   const _jbNow = Date.now();
   d.journal.selfLetters.forEach(letter => {
@@ -12396,6 +12404,43 @@ function flushLocalSave() {
   if (_localSaveTimer) { clearTimeout(_localSaveTimer); _localSaveTimer = null; }
   if (_localSaveDirty) saveLocalData();
 }
+
+// ── Ausstehende gebündelte Speicherungen ────────────────────────────────────
+// Mehrere Module bündeln ihren scheduleSave()-Aufruf beim Tippen (500–800 ms),
+// damit nicht jeder Tastendruck einen Voll-Snapshot auslöst. Das Modell ist zu
+// diesem Zeitpunkt bereits geändert — aber solange scheduleSave() nicht lief,
+// ist NICHTS als geändert markiert: flushLocalSave() schreibt dann nichts und
+// der Server erfährt es nie. Wer den Tab innerhalb dieser Pause schloss oder
+// wechselte, verlor die letzte Eingabe.
+// Diese Registry hält die offenen Timer an einer Stelle, sodass Tab-Wechsel und
+// Schließen sie nachholen können. Module rufen statt eines eigenen setTimeout
+// scheduleSaveDebounced(key, delay) auf.
+var _pendingSaves = new Map();
+function scheduleSaveDebounced(key, delay, fn) {
+  var previous = _pendingSaves.get(key);
+  if (previous) clearTimeout(previous.timer);
+  var run = typeof fn === "function" ? fn : scheduleSave;
+  var timer = setTimeout(function() { _pendingSaves.delete(key); run(); }, delay || 600);
+  _pendingSaves.set(key, { timer: timer, run: run });
+}
+function flushPendingSaves() {
+  if (_pendingSaves.size) {
+    _pendingSaves.forEach(function(entry) {
+      clearTimeout(entry.timer);
+      try { entry.run(); } catch (e) { console.warn("[flushPendingSaves]", e); }
+    });
+    _pendingSaves.clear();
+  }
+  // Unabhängig von der Reihenfolge der Listener: das lokale Schreiben direkt
+  // hinterherziehen, sonst wartet es wieder 400 ms, die es nicht mehr gibt.
+  flushLocalSave();
+}
+window.scheduleSaveDebounced = scheduleSaveDebounced;
+window.flushPendingSaves = flushPendingSaves;
+
+window.addEventListener("pagehide", flushPendingSaves);
+window.addEventListener("beforeunload", flushPendingSaves);
+document.addEventListener("visibilitychange", function() { if (document.hidden) flushPendingSaves(); });
 window.addEventListener("pagehide", flushLocalSave);
 window.addEventListener("beforeunload", flushLocalSave);
 document.addEventListener("visibilitychange", function() { if (document.hidden) flushLocalSave(); });
@@ -21287,8 +21332,7 @@ window.dcUpdateMatrixSummary = function(id, value) {
   if (!dc) return;
   dc.matrixSummary = value;
   dc.updatedAt = nowIso();
-  if (window._dcSummarySaveTimer) clearTimeout(window._dcSummarySaveTimer);
-  window._dcSummarySaveTimer = setTimeout(() => scheduleSave(), 800);
+  scheduleSaveDebounced("decision-matrix-summary:" + id, 800);
 };
 
 // Decision daily reminder check
@@ -33231,8 +33275,7 @@ window.prjUpdateMatrixSummary = function(id, value) {
   const p = APP.state.data.entities.projects[id];
   if (!p) return;
   p.matrixSummary = value;
-  if (window._prjSummarySaveTimer) clearTimeout(window._prjSummarySaveTimer);
-  window._prjSummarySaveTimer = setTimeout(() => scheduleSave(), 800);
+  scheduleSaveDebounced("project-matrix-summary:" + id, 800);
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -33340,8 +33383,7 @@ window.prjUpdateWeeklyTarget = function(id, value) {
   const p = APP.state.data.entities.projects[id];
   if (!p) return;
   p.weeklyTargetHours = parseFloat(value) || 0;
-  if (window._prjWeeklySaveTimer) clearTimeout(window._prjWeeklySaveTimer);
-  window._prjWeeklySaveTimer = setTimeout(() => scheduleSave(), 500);
+  scheduleSaveDebounced("project-weekly-target:" + id, 500);
 };
 
 window.prjAddTimePhase = function(id) {
@@ -33714,8 +33756,7 @@ window.prjUpdateSubGoal = function(id, sgId, value) {
   const g = p.subGoals.find(x => x.id === sgId);
   if (!g) return;
   g.title = value;
-  if (window._prjSgSaveTimer) clearTimeout(window._prjSgSaveTimer);
-  window._prjSgSaveTimer = setTimeout(() => scheduleSave(), 800);
+  scheduleSaveDebounced("project-subgoal:" + id + ":" + sgId, 800);
 };
 
 window.prjToggleSubGoal = function(id, sgId) {
@@ -35588,8 +35629,7 @@ window.pb88UpdateTopic = function(id, topicId, field, value) {
   const pb = pb88Pb(id); if (!pb) return;
   const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
   t[field] = value;
-  if (window._pb88TopicSaveTimer) clearTimeout(window._pb88TopicSaveTimer);
-  window._pb88TopicSaveTimer = setTimeout(() => pb88Save(), 600);
+  scheduleSaveDebounced("pb88-topic:" + id + ":" + topicId, 600, pb88Save);
 };
 
 window.pb88DeleteTopic = function(id, topicId) {
@@ -35615,8 +35655,7 @@ window.pb88UpdateFocusArea = function(id, faId, field, value) {
   const pb = pb88Pb(id); if (!pb) return;
   const fa = (pb.focusAreas||[]).find(x => x.id === faId); if (!fa) return;
   fa[field] = value;
-  if (window._pb88FASaveTimer) clearTimeout(window._pb88FASaveTimer);
-  window._pb88FASaveTimer = setTimeout(() => pb88Save(), 600);
+  scheduleSaveDebounced("pb88-focusarea:" + id + ":" + faId, 600, pb88Save);
 };
 
 window.pb88DeleteFocusArea = function(id, faId) {
@@ -67672,6 +67711,11 @@ window.saveSettingsModal = function() {
   }
   
   saveSettings(APP.state.settings);
+  // saveSettings() schreibt nur die Einstellungen (localStorage/IndexedDB). Die
+  // Aenderungen an APP.state.data — ideasSettings und die eingebettete Kopie
+  // _settings — muessen zusaetzlich als geaendert markiert werden, sonst fehlen
+  // sie im lokalen Datenstand und werden nie zum Server synchronisiert.
+  scheduleSave();
   closeModal();
   applySidebarVisibility(parseHash().route);
   renderSidebarLockButton();
@@ -82242,7 +82286,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         <button onclick="jbFormat('formatBlock','blockquote')" class="jb-toolbar-btn" title="Zitat">"</button>
       </div>
       <div style="width:1px;height:14px;background:var(--panel);flex-shrink:0"></div>
-      <select class="jb-select" id="jbEditorFont" onchange="jbUpdateFont()" style="font-size:9px;padding:4px 2rem 4px 8px">
+      <select class="jb-select" id="jbEditorFont" onchange="jbUpdateFont();jbAutoSave()" style="font-size:9px;padding:4px 2rem 4px 8px">
         <option value="jb-font-inter">Inter</option>
         <option value="jb-font-lora">Lora</option>
         <option value="jb-font-inconsolata">Mono</option>
@@ -82322,7 +82366,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         <button onclick="jbFormatSL('formatBlock','blockquote')" class="jb-toolbar-btn">"</button>
       </div>
       <div style="width:1px;height:14px;background:var(--panel);flex-shrink:0"></div>
-      <select class="jb-select" id="jbSLFont" onchange="jbUpdateSLFont()" style="font-size:9px;padding:4px 2rem 4px 8px">
+      <select class="jb-select" id="jbSLFont" onchange="jbUpdateSLFont();jbSLAutoSave()" style="font-size:9px;padding:4px 2rem 4px 8px">
         <option value="jb-font-inter">Inter</option>
         <option value="jb-font-lora">Lora</option>
         <option value="jb-font-inconsolata">Mono</option>
@@ -82331,6 +82375,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
     <!-- Right -->
     <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+      <span id="jbSLStatus" style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;white-space:nowrap"></span>
+      <button onclick="jbDiscardSelfLetterDraft()" style="background:none;border:1px solid var(--panel);color:var(--text2);font-size:9px;padding:5px 10px;border-radius:6px;cursor:pointer;text-transform:uppercase;letter-spacing:.1em" title="Entwurf verwerfen und neu beginnen">Neu</button>
       <button onclick="jbToggleFullscreen()" style="background:none;border:1px solid var(--panel);color:var(--text2);font-size:12px;padding:4px 8px;border-radius:6px;cursor:pointer" title="Vollbild">⛶</button>
       <button onclick="jbToggleSLSidebar()" style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);color:var(--warn);font-size:9px;padding:5px 14px;border-radius:6px;cursor:pointer;font-weight:600;text-transform:uppercase;letter-spacing:.1em">⏰ Senden</button>
     </div>
@@ -82338,8 +82384,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   <div class="jb-editor-body">
     <div class="jb-editor-content">
       <div class="jb-editor-wrap">
-        <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
-        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..."></div>
+        <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." oninput="jbSLAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
+        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." oninput="jbSLAutoSave()"></div>
       </div>
     </div>
   </div>
@@ -82360,7 +82406,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       <button onclick="jbSetDelay('custom')" class="jb-delay-btn" data-delay="custom"><span style="margin-right:8px">✨</span><b>Individuelles Datum</b></button>
       <div id="jbCustomDatePicker" style="display:none">
         <label style="font-size:9px;color:var(--muted);text-transform:uppercase">Datum auswählen</label>
-        <input type="date" id="jbSLCustomDate" class="jb-input" onchange="jbUpdateDeliveryPreview()" style="margin-top:4px">
+        <input type="date" id="jbSLCustomDate" class="jb-input" onchange="jbUpdateDeliveryPreview();jbSLAutoSave()" style="margin-top:4px">
       </div>
       <div id="jbDeliveryPreview" style="display:none;padding:16px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:12px;text-align:center">
         <p style="font-size:9px;color:rgba(245,158,11,.7);text-transform:uppercase;letter-spacing:.2em;margin-bottom:4px">Ankunftsdatum</p>
@@ -82435,6 +82481,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   let _jbSelectedDelay = null;
   let _jbSLFont = "jb-font-inter";
   let _jbAutoSaveTimer = null;
+  let _jbSLAutoSaveTimer = null;
 
   function jd() { return APP.state.data.journal; }
   function jbEsc(s) { const d = document.createElement("div"); d.textContent = String(s || ""); return d.innerHTML; }
@@ -82456,6 +82503,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // Check arrived letters
     jbCheckArrivedLetters();
     c.classList.add("active");
+    jbRenderChat();
     jbNav("home");
   }
   window.openJournalBooklet = openJournalBooklet;
@@ -82753,15 +82801,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
           <div>
             <h3 style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;color:#fff;border-bottom:1px solid var(--panel);padding-bottom:8px;margin-bottom:16px">KI Konfiguration</h3>
             <label style="font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;display:block;margin-bottom:4px">Gemini API Key</label>
-            <input type="password" id="jbSetApiKey" class="jb-input" value="${jbEsc(s.geminiApiKey || '')}" placeholder="${APP?.state?.settings?.geminiApiKey ? '(nutzt Haupt-App Key)' : 'AIza...'}">
+            <input type="password" id="jbSetApiKey" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.geminiApiKey || '')}" placeholder="${APP?.state?.settings?.geminiApiKey ? '(nutzt Haupt-App Key)' : 'AIza...'}">
             <p style="font-size:10px;color:var(--panel3);margin-top:4px">Leer lassen = nutzt den Gemini Key aus den Haupt-Einstellungen</p>
           </div>
           <div>
             <h3 style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;color:#fff;border-bottom:1px solid var(--panel);padding-bottom:8px;margin-bottom:16px">Brief-Absender</h3>
             <div style="display:flex;flex-direction:column;gap:12px">
-              <input type="text" id="jbSetName" class="jb-input" value="${jbEsc(s.name || '')}" placeholder="Dein Name">
-              <input type="text" id="jbSetStreet" class="jb-input" value="${jbEsc(s.street || '')}" placeholder="Straße">
-              <input type="text" id="jbSetCity" class="jb-input" value="${jbEsc(s.city || '')}" placeholder="PLZ / Ort">
+              <input type="text" id="jbSetName" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.name || '')}" placeholder="Dein Name">
+              <input type="text" id="jbSetStreet" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.street || '')}" placeholder="Straße">
+              <input type="text" id="jbSetCity" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.city || '')}" placeholder="PLZ / Ort">
             </div>
             <button onclick="jbSaveSettings()" class="jb-btn" style="width:100%;margin-top:16px">Einstellungen Speichern</button>
           </div>
@@ -83074,11 +83122,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       if (sel.rangeCount > 0) {
         let p = sel.getRangeAt(0).commonAncestorContainer;
         if (p.nodeType !== 1) p = p.parentElement;
-        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbEditorArea").focus(); return; }
+        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbEditorArea").focus(); jbAutoSave(); return; }
       }
     }
     document.execCommand(cmd, false, val);
     document.getElementById("jbEditorArea").focus();
+    // execCommand loest je nach Browser kein input-Ereignis aus — deshalb hier
+    // ausdruecklich sichern, sonst geht reine Formatierung verloren.
+    jbAutoSave();
   };
 
   window.jbUpdateFont = function() {
@@ -83159,22 +83210,85 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   }
 
   // ====== SELF LETTERS ======
-  window.jbStartNewSelfLetter = function() {
-    document.getElementById("jbSLTitle").value = "";
-    document.getElementById("jbSLArea").innerHTML = "<div><br></div>";
-    document.getElementById("jbSLFont").value = "jb-font-inter";
-    _jbSLFont = "jb-font-inter";
+  // Ein Zukunftsbrief entsteht oft in einem Zug und ist lang. Vorher lebte er
+  // ausschliesslich im DOM: „Senden" war der einzige Weg, ihn zu speichern.
+  // Editor zu, Ansicht gewechselt, Seite neu geladen — alles weg. Deshalb wird
+  // der Brief jetzt wie jedes andere Dokument laufend als Entwurf gesichert.
+  function jbSLIsEmpty(draft) {
+    if (!draft) return true;
+    const text = String(draft.content || "").replace(/<[^>]*>/g, "").trim();
+    return !String(draft.title || "").trim() && !text;
+  }
+
+  function jbSaveSelfLetterDraft() {
+    const titleEl = document.getElementById("jbSLTitle");
+    const areaEl = document.getElementById("jbSLArea");
+    if (!titleEl || !areaEl) return;
+    const draft = {
+      title: titleEl.value,
+      content: areaEl.innerHTML,
+      font: document.getElementById("jbSLFont")?.value || _jbSLFont,
+      delay: _jbSelectedDelay,
+      customDate: document.getElementById("jbSLCustomDate")?.value || "",
+      updatedAt: Date.now()
+    };
+    // Ein leerer Brief soll keinen Entwurf hinterlassen, sonst meldet sich beim
+    // naechsten Oeffnen ein „wiederhergestellter" Brief ohne Inhalt.
+    jd().selfLetterDraft = jbSLIsEmpty(draft) ? null : draft;
+    scheduleSave();
+    const status = document.getElementById("jbSLStatus");
+    if (status) {
+      status.textContent = jd().selfLetterDraft
+        ? "Entwurf gesichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"})
+        : "";
+    }
+  }
+
+  function jbSLAutoSave() {
+    clearTimeout(_jbSLAutoSaveTimer);
+    _jbSLAutoSaveTimer = setTimeout(jbSaveSelfLetterDraft, 2000);
+  }
+  window.jbSLAutoSave = jbSLAutoSave;
+
+  function jbApplySelfLetterDraft(draft) {
+    document.getElementById("jbSLTitle").value = draft?.title || "";
+    document.getElementById("jbSLArea").innerHTML = draft?.content || "<div><br></div>";
+    const font = draft?.font || "jb-font-inter";
+    document.getElementById("jbSLFont").value = font;
+    _jbSLFont = font;
     jbUpdateSLFont();
-    _jbSelectedDelay = null;
-    document.querySelectorAll(".jb-delay-btn").forEach(b => b.classList.remove("active"));
-    document.getElementById("jbCustomDatePicker").style.display = "none";
-    document.getElementById("jbDeliveryPreview").style.display = "none";
+    _jbSelectedDelay = draft?.delay || null;
+    document.querySelectorAll(".jb-delay-btn").forEach(b => b.classList.toggle("active", b.dataset.delay === _jbSelectedDelay));
+    document.getElementById("jbCustomDatePicker").style.display = _jbSelectedDelay === "custom" ? "block" : "none";
+    const dateEl = document.getElementById("jbSLCustomDate");
+    if (dateEl) dateEl.value = draft?.customDate || "";
+    jbUpdateDeliveryPreview();
+    const status = document.getElementById("jbSLStatus");
+    if (status) status.textContent = draft ? "Entwurf wiederhergestellt" : "";
+  }
+
+  window.jbStartNewSelfLetter = function() {
+    // Liegt ein Entwurf vor, wird er fortgesetzt statt kommentarlos verworfen.
+    jbApplySelfLetterDraft(jd().selfLetterDraft);
     document.getElementById("jbSelfLetterEditor").classList.add("active");
     setTimeout(() => document.getElementById("jbSLTitle").focus(), 100);
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
   };
 
+  // Bewusster Neuanfang — der einzige Weg, einen Entwurf zu verlieren.
+  window.jbDiscardSelfLetterDraft = function() {
+    if (!jbSLIsEmpty(jd().selfLetterDraft) && !confirm("Entwurf verwerfen und neu beginnen?")) return;
+    clearTimeout(_jbSLAutoSaveTimer);
+    jd().selfLetterDraft = null;
+    scheduleSave();
+    jbApplySelfLetterDraft(null);
+    jbToast("Neuer Brief");
+  };
+
   window.jbCloseSelfLetterEditor = function() {
+    // Vor dem Schliessen sichern, nicht erst nach Ablauf der Autosave-Pause.
+    clearTimeout(_jbSLAutoSaveTimer);
+    jbSaveSelfLetterDraft();
     document.getElementById("jbSelfLetterEditor").classList.remove("active");
     document.getElementById("jbSLSidebar").classList.remove("open");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
@@ -83186,11 +83300,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       if (sel.rangeCount > 0) {
         let p = sel.getRangeAt(0).commonAncestorContainer;
         if (p.nodeType !== 1) p = p.parentElement;
-        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbSLArea").focus(); return; }
+        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbSLArea").focus(); jbSLAutoSave(); return; }
       }
     }
     document.execCommand(cmd, false, val);
     document.getElementById("jbSLArea").focus();
+    jbSLAutoSave();
   };
 
   window.jbUpdateSLFont = function() {
@@ -83205,6 +83320,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   window.jbSetDelay = function(delay) {
     _jbSelectedDelay = delay;
+    jbSLAutoSave();   // die gewaehlte Zustellzeit gehoert zum Entwurf
     document.querySelectorAll(".jb-delay-btn").forEach(b => b.classList.toggle("active", b.dataset.delay === delay));
     document.getElementById("jbCustomDatePicker").style.display = delay === "custom" ? "block" : "none";
     if (delay === "custom") {
@@ -83257,8 +83373,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       delivered: false, readAt: null
     };
     jd().selfLetters.push(letter);
+    // Der Brief ist jetzt echt — der Entwurf wird gegenstandslos.
+    clearTimeout(_jbSLAutoSaveTimer);
+    jd().selfLetterDraft = null;
     scheduleSave();
-    jbCloseSelfLetterEditor();
+    document.getElementById("jbSelfLetterEditor").classList.remove("active");
+    document.getElementById("jbSLSidebar").classList.remove("open");
+    if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
     jbToast("Brief in die Zukunft gesendet! 💌");
     jbNav("home");
   };
@@ -83366,22 +83487,51 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   };
 
   // ====== AI CHAT ======
+  // Der Verlauf lag frueher ausschliesslich im DOM und war nach jedem Neuladen
+  // weg. Er liegt jetzt im Datenstand und wird beim Oeffnen wieder aufgebaut.
+  function jbRenderChat() {
+    const history = document.getElementById("jbChatHistory");
+    if (!history) return;
+    const rows = jd().chat || [];
+    history.innerHTML = rows.length ? rows.map(row => row.role === "user"
+      ? `<div style="color:#fff;border-left:2px solid var(--panel);padding-left:16px;font-weight:700">Du:</div><div style="color:#fff;margin-bottom:16px">${jbEsc(row.text)}</div>`
+      : `<div style="color:var(--muted);background:rgba(24,24,27,.3);padding:16px;border-radius:12px;border:1px solid var(--panel);margin-bottom:16px;white-space:pre-wrap"><strong>Intelligence:</strong><br>${jbEsc(row.text)}</div>`
+    ).join("") : "";
+    history.scrollTop = history.scrollHeight;
+  }
+  window.jbRenderChat = jbRenderChat;
+
+  function jbPushChat(role, text) {
+    jd().chat = jd().chat || [];
+    jd().chat.push({ role, text: String(text || ""), at: Date.now() });
+    // Der Verlauf soll den Datenstand nicht unbegrenzt aufblaehen.
+    if (jd().chat.length > 200) jd().chat = jd().chat.slice(-200);
+    scheduleSave();
+    jbRenderChat();
+  }
+
+  window.jbClearChat = function() {
+    if (!(jd().chat || []).length) return;
+    if (!confirm("KI-Verlauf loeschen?")) return;
+    jd().chat = [];
+    scheduleSave();
+    jbRenderChat();
+  };
+
   window.jbSendChat = function() {
     const input = document.getElementById("jbChatInput");
-    const history = document.getElementById("jbChatHistory");
     const loader = document.getElementById("jbChatLoading");
     const userText = input.value.trim();
     if (!userText) return;
     const apiToken = jbGetGeminiKey();
     if (!apiToken) {
-      history.innerHTML += '<div style="color:var(--danger);padding:8px;border:1px solid rgba(239,68,68,.3);border-radius:8px">Bitte gib einen Gemini API Key im Setup ein.</div>';
+      jbPushChat("ai", "Bitte gib einen Gemini API Key im Setup ein.");
       input.value = "";
       return;
     }
-    history.innerHTML += `<div style="color:#fff;border-left:2px solid var(--panel);padding-left:16px;font-weight:700">Du:</div><div style="color:#fff;margin-bottom:16px">${jbEsc(userText)}</div>`;
+    jbPushChat("user", userText);
     input.value = "";
     loader.style.display = "block";
-    history.scrollTop = history.scrollHeight;
     const editorText = document.getElementById("jbEditorArea").innerText.substring(0, 3000);
     const ideasCtx = jd().topics.map(t => t.text).join(" | ");
     const sysPrompt = `Du bist ein literarischer Mentor im Journal Booklet. Aktueller Text: ${editorText}. Bisherige Ideen: ${ideasCtx}. Hilf dem Nutzer, den Text zu verbessern. Antworte präzise auf Deutsch.`;
@@ -83389,26 +83539,28 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ contents: [{parts:[{text:userText}]}], systemInstruction: {parts:[{text:sysPrompt}]} })
     }).then(r => r.json()).then(data => {
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "KI derzeit beschäftigt.";
-      history.innerHTML += `<div style="color:var(--muted);background:rgba(24,24,27,.3);padding:16px;border-radius:12px;border:1px solid var(--panel)"><strong>Intelligence:</strong><br>${reply}</div>`;
+      jbPushChat("ai", data.candidates?.[0]?.content?.parts?.[0]?.text || "KI derzeit beschäftigt.");
     }).catch(() => {
-      history.innerHTML += '<div style="color:#450a0a;font-size:9px;text-transform:uppercase">KI-Fehler (Prüfe API Key).</div>';
+      jbPushChat("ai", "KI-Fehler (Prüfe API Key).");
     }).finally(() => {
       loader.style.display = "none";
-      history.scrollTop = history.scrollHeight;
     });
   };
 
   // ====== SETTINGS ======
-  window.jbSaveSettings = function() {
+  // silent=true wird beim Verlassen eines Feldes aufgerufen: die Eingabe ist
+  // damit gesichert, ohne dass bei jedem Feldwechsel eine Meldung aufpoppt.
+  window.jbSaveSettings = function(silent) {
+    const byId = (id) => document.getElementById(id);
+    if (!byId("jbSetName")) return;   // Ansicht nicht offen
     jd().settings = {
-      name: document.getElementById("jbSetName").value,
-      street: document.getElementById("jbSetStreet").value,
-      city: document.getElementById("jbSetCity").value,
-      geminiApiKey: document.getElementById("jbSetApiKey").value
+      name: byId("jbSetName").value,
+      street: byId("jbSetStreet").value,
+      city: byId("jbSetCity").value,
+      geminiApiKey: byId("jbSetApiKey").value
     };
     scheduleSave();
-    jbToast("Einstellungen gesichert");
+    if (!silent) jbToast("Einstellungen gesichert");
   };
 
   // ====== EXPORT / IMPORT ======
@@ -83624,6 +83776,32 @@ function gSet(){try{const s=JSON.parse(localStorage.getItem(SKEY)||'{}');if(!s.a
 function sSet(d){localStorage.setItem(SKEY,JSON.stringify(d))}
 async function callGPT(prompt,mt){const s=gSet();const gk=APP?.state?.settings?.geminiApiKey||s.geminiKey||'';if(gk){try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+gk,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});if(r.ok){const d=await r.json();const t=d.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||null;if(t)return t}}catch(e){console.log('Gemini callGPT failed:',e)}}const ok=s.openaiKey;if(ok){try{const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ok},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.choices?.[0]?.message?.content?.trim()||null}}catch(e){}}const ck=s.apiKey;if(ck){try{const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ck,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.content?.map(c=>c.text||'').join('').trim()||null}}catch(e){}}nhToastMsg('API Key fehlt (Gemini/OpenAI/Anthropic)');return null}
 async function extractPDF(file){const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)});const k=gSet().apiKey;if(!k){nhToastMsg('Claude API Key fehlt');return null}nhToastMsg('PDF wird extrahiert…');try{const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:8000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:'Extract the complete text from this PDF. Return ONLY the raw text, no comments. Keep paragraphs.'}]}]})});if(!resp.ok){nhToastMsg('PDF Fehler');return null}const d=await resp.json();nhToastMsg('✓ PDF extrahiert');return d.content?.map(c=>c.text||'').join('').trim();}catch(e){nhToastMsg(e.message);return null}}
+
+  // ══ Notbremse: alles Offene in den Datenstand schreiben ══════════════════
+  // Der Editor sichert gebuendelt (2 s). Schliesst man den Tab oder wechselt
+  // ihn innerhalb dieser Pause, lagen die letzten Anschlaege nur im DOM — die
+  // App-eigene Flush-Logik konnte sie nicht sehen, weil sie noch gar nicht im
+  // Modell waren. jbFlush() holt sie ohne Wartezeit ab und stoesst danach den
+  // Sofort-Schreibvorgang der Hauptapp an.
+  function jbFlush() {
+    try {
+      const container = document.getElementById("journalBookletContainer");
+      if (!container || !APP?.state?.data?.journal) return;
+      if (_jbCurrentDocId && document.getElementById("jbEditor")?.classList.contains("active")) {
+        clearTimeout(_jbAutoSaveTimer);
+        jbSaveCurrentDoc(true);
+      }
+      if (document.getElementById("jbSelfLetterEditor")?.classList.contains("active")) {
+        clearTimeout(_jbSLAutoSaveTimer);
+        jbSaveSelfLetterDraft();
+      }
+      if (typeof flushLocalSave === "function") flushLocalSave();
+    } catch (e) { console.warn("[JournalBooklet] Flush fehlgeschlagen:", e); }
+  }
+  window.jbFlush = jbFlush;
+  window.addEventListener("pagehide", jbFlush);
+  window.addEventListener("beforeunload", jbFlush);
+  document.addEventListener("visibilitychange", function() { if (document.hidden) jbFlush(); });
 
 /* ── Cloud — handled by main app's scheduleSave(), no separate sync ── */
 /* All NH data is stored in APP.state.data.entities (nhNews, nhTopics etc.)
@@ -92915,6 +93093,10 @@ console.log('📚 Leseliste geladen');
     // Sync mit Entity wenn vorhanden
     if (_mhEditing && APP.state.data.entities.emails?.[_mhEditing]) {
       APP.state.data.entities.emails[_mhEditing].files = [..._mhFiles];
+      APP.state.data.entities.emails[_mhEditing].updatedAt = nowIso();
+      // Die Datei ist in Firebase bereits geloescht — ohne Speichern bliebe die
+      // Entitaet auf einen Anhang verweisen, den es nicht mehr gibt.
+      scheduleSave();
     }
     document.getElementById("mhFilesList").innerHTML = renderFilesList();
   };
@@ -103577,8 +103759,12 @@ function refreshBadge(){
 }
 
 /* ── Event-Delegation (data-nhi-act / data-nhi-field) ────────────── */
-var _saveTimer = null;
-function debouncedSave(){ clearTimeout(_saveTimer); _saveTimer = setTimeout(save, 700); }
+// Ueber die zentrale Registry, damit ein Tab-Wechsel die offene Speicherung
+// nachholt statt sie fallen zu lassen.
+function debouncedSave(){
+  if (typeof window.scheduleSaveDebounced === "function") window.scheduleSaveDebounced("nhi-panel", 700, save);
+  else save();
+}
 
 function onPanelClick(e){
   var el = e.target.closest("[data-nhi-act]");
@@ -113519,7 +113705,11 @@ Dateien zu identifizieren.
         const pal = $("#nf2Palette");
         if (pal && pal.style.display !== "none" && !pal.contains(e.target) && !(e.target.closest && e.target.closest('#nf2Bubble'))) pal.style.display = "none";
       }, true);
+      // beforeunload feuert auf Mobilgeraeten oft gar nicht — pagehide und der
+      // Wechsel in den Hintergrund sind dort die verlaesslichen Signale.
       window.addEventListener("beforeunload", flushSave);
+      window.addEventListener("pagehide", flushSave);
+      document.addEventListener("visibilitychange", function () { if (document.hidden) flushSave(); });
     }
   }
 
