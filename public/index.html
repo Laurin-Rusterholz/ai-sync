@@ -98461,18 +98461,81 @@ console.log('📚 Leseliste geladen');
 
   // ── Auth (shared gcal-auth endpoint) + Gmail proxy ──
   async function gmAuthCall(action){
-    var r = await fetch("/.netlify/functions/gcal-auth?action="+encodeURIComponent(action), { headers: authHeaders() });
+    var r;
+    // Gleiche Behandlung wie in gmApi: ein Verbindungsabbruch soll nicht als
+    // „Failed to fetch" in der Statusanzeige landen.
+    try { r = await fetch("/.netlify/functions/gcal-auth?action="+encodeURIComponent(action), { headers: authHeaders() }); }
+    catch(err){ var ne = new Error(gmIsNetErr(err) ? GM_NET_ERR : ((err&&err.message)||String(err))); ne.network = true; throw ne; }
     var d = await r.json().catch(function(){ return {}; });
     if (!r.ok){ var e=new Error(d.error||("HTTP "+r.status)); e.status=r.status; e.data=d; throw e; }
     return d;
   }
+  // ── Netzwerk-robuster Aufruf der Proxy-Funktion ───────────────────────────
+  // fetch() lehnt bei einem echten Netzwerkfehler (Verbindungsabbruch, HTTP/2-
+  // Reset, abgeschnittene Antwort, offline) mit einem TypeError ab, dessen
+  // Meldung im Browser schlicht „Failed to fetch" lautet — das war die Meldung,
+  // die beim Öffnen einer Mail im Detailbereich stand. Solche Abbrüche sind
+  // vorübergehend, deshalb werden LESENDE Aufrufe (method GET) bis zu dreimal
+  // mit wachsender Wartezeit wiederholt. Schreibende Aufrufe werden NICHT
+  // wiederholt: ein zweiter Versuch von messages/send würde die Mail ein
+  // zweites Mal verschicken. Bleibt es beim Fehler, gibt es statt „Failed to
+  // fetch" eine verständliche Meldung.
+  var GM_NET_ERR = "Netzwerkfehler – der Server war nicht erreichbar. Bitte Internetverbindung prüfen und erneut versuchen.";
+  var GM_RPC_TIMEOUT = 45000;   // harte Obergrenze pro Aufruf, damit nichts ewig hängt
+  function gmSleep(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+  function gmIsNetErr(e){ return !!e && (e.name==="TypeError" || e.name==="AbortError"); }
+  async function gmRpcOnce(payload, headers){
+    var ctl = (typeof AbortController!=="undefined") ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function(){ try { ctl.abort(); } catch(e){} }, GM_RPC_TIMEOUT) : null;
+    try {
+      var init = { method:"POST", headers:headers, body: JSON.stringify(payload) };
+      if (ctl) init.signal = ctl.signal;
+      var r = await fetch("/.netlify/functions/gmail-api", init);
+      // Den Körper noch INNERHALB des Wiederholungsfensters lesen: eine mitten im
+      // Stream abreissende Antwort wirft erst hier, nicht schon bei fetch().
+      return { res: r, text: await r.text() };
+    } finally { if (timer) clearTimeout(timer); }
+  }
   async function gmApi(method, path, opts){
     opts = opts||{};
     var headers = Object.assign({ "Content-Type":"application/json" }, authHeaders());
-    var r = await fetch("/.netlify/functions/gmail-api", { method:"POST", headers:headers, body: JSON.stringify({ method:method, path:path, query:opts.query||null, body:opts.body||null }) });
-    var d = await r.json().catch(function(){ return null; });
-    if (!r.ok){ var e=new Error((d&&(d.error||d.message))||("HTTP "+r.status)); e.status=r.status; e.data=d; throw e; }
+    var payload = { method:method, path:path, query:opts.query||null, body:opts.body||null };
+    var retries = (String(method||"GET").toUpperCase()==="GET") ? 3 : 0;
+    var attempt = 0, out = null;
+    for(;;){
+      try { out = await gmRpcOnce(payload, headers); break; }
+      catch(err){
+        if (!gmIsNetErr(err) || attempt>=retries){
+          var ne = new Error(gmIsNetErr(err) ? GM_NET_ERR : ((err&&err.message)||String(err)));
+          ne.network = true; throw ne;
+        }
+        await gmSleep(400 * Math.pow(2, attempt));   // 400 / 800 / 1600 ms
+        attempt++;
+      }
+    }
+    var d = null;
+    if (out.text){ try { d = JSON.parse(out.text); } catch(e){ d = null; } }
+    if (!out.res.ok){ var e2=new Error((d&&(d.error||d.message))||("HTTP "+out.res.status)); e2.status=out.res.status; e2.data=d; throw e2; }
     return d;
+  }
+
+  // Führt `worker` über alle `items` aus, aber höchstens `limit` gleichzeitig.
+  // Ohne diese Drossel gingen beim Laden einer Liste bis zu 25 Anfragen auf
+  // einen Schlag an dieselbe Netlify-Funktion — dieser Ansturm liess einzelne
+  // Verbindungen abreissen und löste serverseitig parallele Token-Refreshes aus.
+  async function gmMapPool(items, limit, worker){
+    var out = new Array(items.length), next = 0;
+    async function runner(){
+      for(;;){
+        var i = next++;
+        if (i >= items.length) return;
+        out[i] = await worker(items[i], i);
+      }
+    }
+    var runners = [];
+    for (var k=0; k<Math.min(limit, items.length); k++) runners.push(runner());
+    await Promise.all(runners);
+    return out;
   }
 
   function hasGmailScope(st){ return !!(st && st.scope && /gmail/i.test(st.scope)); }
@@ -98522,9 +98585,9 @@ console.log('📚 Leseliste geladen');
       var list = await gmApi("GET","/users/me/messages", { query: query });
       GM.nextPageToken = list.nextPageToken || null;
       var ids = (list.messages||[]).map(function(m){ return m.id; });
-      var metas = await Promise.all(ids.map(function(id){
+      var metas = await gmMapPool(ids, 5, function(id){
         return gmApi("GET","/users/me/messages/"+encodeURIComponent(id), { query:{ format:"metadata", metadataHeaders:["From","To","Cc","Subject","Date"] } }).catch(function(){ return null; });
-      }));
+      });
       var rows = metas.filter(Boolean).map(parseMeta);
       // Globally hide blocked senders everywhere EXCEPT the explicit "Blockiert" view.
       if (GM.smart!=="blocked") rows = rows.filter(function(m){ return !isBlocked(addrOf(m.from)); });
@@ -98553,7 +98616,7 @@ console.log('📚 Leseliste geladen');
         attachText: extractInlineAttachText(msg.payload), attachRefs: collectAttachmentRefs(msg.payload),
       };
       if (wasUnread) markReadById(msg.id, true, true); // auto-mark read on open
-    } catch(e){ GM.open = { error: e.message||"Nachricht konnte nicht geladen werden" }; }
+    } catch(e){ GM.open = { error: e.message||"Nachricht konnte nicht geladen werden", failedId: id }; }
     finally { GM.openLoading=false; rerender(); }
   }
 
@@ -98851,7 +98914,9 @@ console.log('📚 Leseliste geladen');
   function renderMessageView(){
     if (GM.openLoading) return '<div class="gml-msgtop"><button class="btn" onclick="gmailBackToList()">← Zurück</button></div><div class="gml-loading">⏳ Lade Nachricht…</div>';
     var o = GM.open; if (!o) return renderListPane();
-    if (o.error) return '<div class="gml-msgtop"><button class="btn" onclick="gmailBackToList()">← Zurück</button></div><div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(o.error)+'</p></div>';
+    if (o.error) return '<div class="gml-msgtop"><button class="btn" onclick="gmailBackToList()">← Zurück</button>'
+      + (o.failedId ? '<button class="btn primary" onclick="gmailRetryOpen()" title="Nachricht erneut laden">↻ Erneut versuchen</button>' : '')
+      + '</div><div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(o.error)+'</p></div>';
     var fromA = parseAddr(o.from);
     var ccLine = o.cc ? '<div class="gml-addr"><span>Cc:</span> '+esc(o.cc)+'</div>' : "";
     var done = isDoneMsg(o);
@@ -100522,6 +100587,8 @@ console.log('📚 Leseliste geladen');
   window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else if(s==="tasksuggest") loadTaskSuggestions(); else if(s==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
   window.gmailOpenMessage = function(id){ openMessageById(id); };
   window.gmailBackToList = function(){ GM.open=null; rerender(); };
+  // Erneuter Ladeversuch nach einem Netzwerkfehler — ohne Umweg über die Liste.
+  window.gmailRetryOpen = function(){ var id = GM.open && GM.open.failedId; if (id) openMessageById(id); };
   window.gmailLoadMore = function(){ loadMessages(false); };
   window.gmailSearch = function(v){ GM.query=(v||"").trim(); GM.smart=null; GM.open=null; loadMessages(true); };
   window.gmailClearSearch = function(){ GM.query=""; GM.open=null; loadMessages(true); };
