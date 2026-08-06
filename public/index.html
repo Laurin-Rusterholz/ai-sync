@@ -18875,7 +18875,7 @@ function renderMain() {
     if (route !== "readinghub") { const c = document.getElementById("readingHubContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
     if (route !== "learn") { const c = document.getElementById("recallLabOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
     if (route !== "visionboard") { const c = document.getElementById("visionBoardOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
-    if (route !== "journal") { const c = document.getElementById("journalBookletContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
+    if (route !== "journal") { const c = document.getElementById("journalBookletContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); document.body.classList.remove("jb-open"); }
   } catch(e) {}
   
   // ═══ Globaler App-Lock-Check ═══
@@ -82186,7 +82186,13 @@ document.addEventListener("click", function(e) {
 <style>
 .jb-container{position:fixed;inset:0;z-index:9990;background:var(--bg);color:var(--text);display:none;flex-direction:column;overflow:hidden;font-family:'Inter',sans-serif}
 .jb-container.active{display:flex}
-.jb-nav{border-bottom:1px solid var(--panel);padding:16px 24px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,.8);backdrop-filter:blur(12px);position:sticky;top:0;z-index:40}
+/* Perf: kein backdrop-filter auf der Sticky-Nav — Blur über einem scrollenden
+   Container erzwingt bei jedem Frame ein GPU-Recomposite des Hintergrunds. */
+.jb-nav{border-bottom:1px solid var(--panel);padding:16px 24px;display:flex;justify-content:space-between;align-items:center;background:var(--bg);position:sticky;top:0;z-index:40}
+/* Perf: Solange das Journal als Vollbild-Overlay läuft, muss die (sehr grosse)
+   Haupt-App darunter weder gelayoutet noch gezeichnet werden. Die globalen
+   Sekunden-Timer schreiben zwar weiter ins DOM, kosten dann aber kein Rendering. */
+body.jb-open #app,body.jb-open #launchScreen{content-visibility:hidden}
 .jb-nav h1{font-size:24px;font-weight:700;letter-spacing:-.05em;color:var(--text)}
 .jb-nav h1 span{color:var(--muted)}
 .jb-nav-links{display:flex;gap:16px;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);overflow-x:auto;padding:8px 0}
@@ -82539,6 +82545,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // Check arrived letters
     jbCheckArrivedLetters();
     c.classList.add("active");
+    document.body.classList.add("jb-open");
     jbRenderChat();
     jbNav("home");
   }
@@ -82547,6 +82554,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function closeJournalBooklet() {
     const c = document.getElementById("journalBookletContainer");
     if (c) c.classList.remove("active");
+    document.body.classList.remove("jb-open");
     document.getElementById("jbEditor").classList.remove("active");
     document.getElementById("jbSelfLetterEditor").classList.remove("active");
     document.getElementById("jbReadView").classList.remove("active");
@@ -83095,10 +83103,20 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function jbSaveCurrentDoc(silent) {
     const doc = jd().documents.find(d => d.id === _jbCurrentDocId);
     if (!doc) return;
-    doc.title = document.getElementById("jbEditorTitle").value;
-    doc.content = document.getElementById("jbEditorArea").innerHTML;
-    doc.recipientId = document.getElementById("jbEditorRecipient")?.value || "";
-    doc.font = document.getElementById("jbEditorFont").value;
+    const title = document.getElementById("jbEditorTitle").value;
+    const content = document.getElementById("jbEditorArea").innerHTML;
+    const recipientId = document.getElementById("jbEditorRecipient")?.value || "";
+    const font = document.getElementById("jbEditorFont").value;
+    // Perf: scheduleSave() serialisiert den GESAMTEN App-State (JSON.stringify +
+    // localStorage + Cloud-Push). Bei unverändertem Inhalt — z. B. Cursor-Bewegung,
+    // Formatier-Toggle, Fokuswechsel — sparen wir uns das komplett.
+    const unchanged = doc.title === title && doc.content === content
+      && (doc.recipientId || "") === recipientId && doc.font === font;
+    if (unchanged) { if (!silent) jbToast("Gesichert"); return; }
+    doc.title = title;
+    doc.content = content;
+    doc.recipientId = recipientId;
+    doc.font = font;
     doc.updatedAt = Date.now();
     scheduleSave();
     if (!silent) jbToast("Gesichert");
@@ -83430,8 +83448,17 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     };
     // Ein leerer Brief soll keinen Entwurf hinterlassen, sonst meldet sich beim
     // naechsten Oeffnen ein „wiederhergestellter" Brief ohne Inhalt.
-    jd().selfLetterDraft = jbSLIsEmpty(draft) ? null : draft;
-    scheduleSave();
+    const next = jbSLIsEmpty(draft) ? null : draft;
+    // Perf: nur speichern, wenn sich am Entwurf wirklich etwas geändert hat —
+    // scheduleSave() serialisiert sonst grundlos den gesamten App-State.
+    const prev = jd().selfLetterDraft;
+    const same = (!prev && !next) || (prev && next && prev.title === next.title
+      && prev.content === next.content && prev.font === next.font
+      && prev.delay === next.delay && prev.customDate === next.customDate);
+    if (!same) {
+      jd().selfLetterDraft = next;
+      scheduleSave();
+    }
     const status = document.getElementById("jbSLStatus");
     if (status) {
       status.textContent = jd().selfLetterDraft
