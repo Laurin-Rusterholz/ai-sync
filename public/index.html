@@ -17991,9 +17991,12 @@ function leseplanHandleAction(action, el, e) {
 //    Login-Maske im iframe geoeffnet; nur der Benutzername wird vorbelegt
 //    (`usr`, kein Geheimnis). Das Passwort wuerde ueber `pwd` in der URL, im
 //    ausgelieferten HTML, in Browser-History und Server-Logs landen — deshalb
-//    nutzen wir den regulaeren Login-Flow. neko setzt danach ein
-//    HttpOnly-Session-Cookie (SameSite=None; Secure), die Anmeldung haelt also
-//    ueber Reloads und Container-Neustarts hinweg. Details + UX-Trade-off:
+//    nutzen wir den regulaeren Login-Flow. Serverseitig ist Cookie-Auth AUS:
+//    der im Image 3.1.5 ausgelieferte Client spricht die Legacy-API, deren
+//    Login mit Cookie-Auth immer scheitert ("token not found"). Ohne Cookies
+//    funktioniert die Anmeldung im Cross-Site-iframe wie im neuen Tab; der
+//    neko-Client merkt sie sich selbst im localStorage seiner Origin, sie
+//    haelt also ueber Reloads hinweg. Details + UX-Trade-off:
 //    docs/quantus-browser-setup.md
 const QUANTUS_BROWSER_ORIGIN = 'https://neko.laurin-rusterholz.ch';
 const QUANTUS_BROWSER_USER   = 'quantus';

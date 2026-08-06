@@ -85,6 +85,33 @@ env_set() {
   chmod 600 "${file}"
 }
 
+# UID/GID des Container-Users "neko" im gepinnten Image. Nur numerisch; per
+# NEKO_DATA_UID/NEKO_DATA_GID in der .env ueberschreibbar, falls ein kuenftiges
+# Image einen anderen User mitbringt.
+data_uid() { local v; v="$(env_get NEKO_DATA_UID)"; printf '%s' "${v:-1000}"; }
+data_gid() { local v; v="$(env_get NEKO_DATA_GID)"; printf '%s' "${v:-1000}"; }
+
+# Bringt ein gemountetes Datenverzeichnis idempotent in den Besitz des
+# Container-Users. NIE destruktiv: ausschliesslich mkdir/chown/chmod, kein
+# Loeschen, kein Umbenennen — bestehende Profile/Downloads bleiben erhalten.
+#
+# Hintergrund (Live-Befund): die Verzeichnisse entstanden frueher als
+# root:root — damit konnte UID 1000 im Container weder sessions.json noch
+# Downloads schreiben, und Chromium crashte im Loop (SIGTRAP), weil sein
+# --user-data-dir nicht beschreibbar war.
+ensure_data_dir() {
+  local dir="$1" uid="$2" gid="$3"
+  mkdir -p "${dir}"
+  # chown nur, wenn tatsaechlich etwas falsch gehoert — so bleibt der Lauf
+  # auch mit einem grossen Chromium-Profil billig.
+  if find "${dir}" \( ! -uid "${uid}" -o ! -gid "${gid}" \) -print -quit 2>/dev/null | grep -q .; then
+    chown -R "${uid}:${gid}" "${dir}"
+  fi
+  # root legte die Verzeichnisse teils mit 700 an — nach dem chown braucht der
+  # Eigentuemer in jedem Fall Vollzugriff auf das Verzeichnis selbst.
+  chmod u+rwX "${dir}"
+}
+
 PROXY="none"
 TRAEFIK_CID=""
 TRAEFIK_NETWORKS=""
@@ -274,6 +301,13 @@ step "3/8  Verzeichnisse und Konfiguration"
 
 mkdir -p "${APP_DIR}"/data/{profile,downloads,neko} "${BACKUP_DIR}"
 
+# Eigentuemer/Rechte der Mounts: Chromium, das Datei-Transfer-Ziel und
+# sessions.json laufen im Container unter UID/GID 1000 ("neko").
+for d in profile downloads neko; do
+  ensure_data_dir "${APP_DIR}/data/${d}" "$(data_uid)" "$(data_gid)"
+done
+ok "data/{profile,downloads,neko} gehoeren $(data_uid):$(data_gid) (idempotent gesetzt, nichts geloescht)"
+
 for f in docker-compose.yml docker-compose.traefik.yml chromium-policies.json; do
   if [ -f "${APP_DIR}/${f}" ] && ! cmp -s "${SRC_DIR}/${f}" "${APP_DIR}/${f}"; then
     cp -a "${APP_DIR}/${f}" "${BACKUP_DIR}/${f}.${STAMP}.bak"
@@ -460,6 +494,33 @@ else
 fi
 info "Image (gepinnt): $(docker inspect -f '{{.Config.Image}}' quantus-neko 2>/dev/null || echo '?')"
 
+# Chromium muss nicht nur starten, sondern stabil LAUFEN. Live-Befund: mit
+# root-eigenem Profil crashte Chromium im Loop (SIGTRAP/core dumped) und
+# supervisord startete es endlos neu — die Version oben war trotzdem lesbar.
+# Zwei Stichproben im Abstand von 15 s muessen denselben Prozess zeigen.
+# Kommt ohne pgrep/ps aus (im Image nicht zugesichert): /proc reicht.
+chromium_pid() {
+  docker compose exec -T neko sh -c \
+    'for f in /proc/[0-9]*/comm; do c="$(cat "$f" 2>/dev/null)" || continue;
+       case "$c" in chromium*) p="${f#/proc/}"; printf "%s\n" "${p%%/*}";; esac;
+     done | sort -n | head -n1' 2>/dev/null | tr -d '\r'
+}
+PID_A="$(chromium_pid)"
+if [ -z "${PID_A}" ]; then
+  note_fail "Kein laufender Chromium-Prozess im Container — 'docker compose logs neko' pruefen"
+else
+  info "Chromium-Stabilitaet wird geprueft (15 s) …"
+  sleep 15
+  PID_B="$(chromium_pid)"
+  if [ "${PID_A}" = "${PID_B}" ]; then
+    ok "Chromium laeuft stabil (PID ${PID_A} unveraendert ueber 15 s — kein Crash-Loop)"
+  else
+    note_fail "Chromium-Crash-Loop: PID wechselte von ${PID_A} zu ${PID_B:-<leer>} innerhalb von 15 s"
+    docker compose exec -T neko sh -c 'tail -n 15 /var/log/neko/chromium.log 2>/dev/null' \
+      | sed 's/^/      /' || true
+  fi
+fi
+
 HTTP_PORT="$(env_get NEKO_HTTP_PORT)"; HTTP_PORT="${HTTP_PORT:-8080}"
 if curl -fsS -o /dev/null -m 10 "http://127.0.0.1:${HTTP_PORT}/"; then
   ok "neko antwortet lokal auf 127.0.0.1:${HTTP_PORT}"
@@ -507,14 +568,15 @@ if [ "${PROXY}" = "traefik-docker" ]; then
     | grep -v '^quantus-neko' | sed 's/^/      /' || true
 fi
 
-# TLS von aussen.
-if curl -fsSI -m 20 "https://${DOMAIN}" >/dev/null 2>&1; then
-  ok "HTTPS https://${DOMAIN} liefert eine Antwort mit gueltigem Zertifikat"
-  curl -sSI -m 20 "https://${DOMAIN}" | head -n 1 | sed 's/^/      /'
+# TLS von aussen — bewusst per GET: neko beantwortet HEAD live mit 405, ein
+# HEAD-Smoke (curl -I) meldete deshalb einen Fehler, wo keiner war.
+HTTPS_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "https://${DOMAIN}/" 2>/dev/null || echo 000)"
+if [ "${HTTPS_CODE}" = "200" ]; then
+  ok "HTTPS https://${DOMAIN} liefert HTTP 200 auf GET (gueltiges Zertifikat)"
   echo | openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" 2>/dev/null \
     | openssl x509 -noout -issuer -dates 2>/dev/null | sed 's/^/      /' || true
 else
-  note_fail "HTTPS https://${DOMAIN} noch nicht erfolgreich (Zertifikat, DNS oder Proxy pruefen)"
+  note_fail "HTTPS https://${DOMAIN} liefert HTTP ${HTTPS_CODE} statt 200 auf GET (Zertifikat, DNS oder Proxy pruefen)"
   [ "${PROXY}" = "traefik-docker" ] && info "Bei Traefik dauert die ACME-Ausstellung nach dem ersten Start bis zu 2 Minuten: docker logs \$(docker ps -qf name=traefik) --tail 50"
 fi
 
@@ -538,13 +600,29 @@ else
 fi
 info "Von aussen pruefbar nur mit einem zweiten Host: nc -vzu ${DOMAIN} ${WEBRTC_PORT}"
 
+# Persistenz: Existenz UND Eigentuemer — root:root hiess live "permission
+# denied" fuer sessions.json/Downloads und Chromium-Crash-Loop.
+DATA_UID="$(data_uid)"; DATA_GID="$(data_gid)"
 for d in profile downloads neko; do
-  if [ -d "${APP_DIR}/data/${d}" ]; then
-    ok "Persistent: ${APP_DIR}/data/${d} ($(stat -c '%U:%G %a' "${APP_DIR}/data/${d}"))"
+  dir="${APP_DIR}/data/${d}"
+  if [ ! -d "${dir}" ]; then
+    note_fail "Fehlt: ${dir}"
+  elif [ "$(stat -c '%u:%g' "${dir}")" = "${DATA_UID}:${DATA_GID}" ]; then
+    ok "Persistent: ${dir} ($(stat -c '%u:%g %a' "${dir}"))"
   else
-    note_fail "Fehlt: ${APP_DIR}/data/${d}"
+    note_fail "Falscher Eigentuemer: ${dir} gehoert $(stat -c '%u:%g' "${dir}") statt ${DATA_UID}:${DATA_GID} — Deploy-Skript (ohne --smoke) erneut ausfuehren"
   fi
 done
+
+# Schreibprobe AUS SICHT DES CONTAINERS — das ist der Test, der zaehlt:
+# genau hier scheiterten sessions.json und der Datei-Transfer live.
+if docker compose exec -T --user "${DATA_UID}:${DATA_GID}" neko sh -c \
+  'set -e; for d in /home/neko/.neko /home/neko/Downloads /home/neko/.config/chromium; do
+     touch "$d/.quantus-rw-probe" && rm -f "$d/.quantus-rw-probe"; done' >/dev/null 2>&1; then
+  ok "Schreibprobe als UID ${DATA_UID}: Profil, Downloads und .neko sind beschreibbar"
+else
+  note_fail "Schreibprobe als UID ${DATA_UID} fehlgeschlagen — Eigentuemer/Rechte unter ${APP_DIR}/data pruefen"
+fi
 
 if [ "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' quantus-neko 2>/dev/null)" = "unless-stopped" ] \
    && systemctl is-enabled --quiet docker 2>/dev/null; then
