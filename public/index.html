@@ -33873,7 +33873,13 @@ function viewProjectDetail(id) {
         <div class="label">Zeit gesamt</div>
       </div>
     </div>
-    
+
+    <!-- FlowerTech: Vertrieb, Planung, Offerten und Rechnungen zu diesem Projekt.
+         FlowerTech-Projekte haben keine eigene, abgespeckte Ansicht mehr — sie
+         liegen auf dieser Seite und sind damit gleich ausführlich wie jedes
+         andere Projekt. Für alle übrigen Projekte liefert der Block "". -->
+    ${p.projectType === "flowertech" && typeof window.ftProjectPanel === "function" ? window.ftProjectPanel(id) : ""}
+
     <div class="grid grid-12">
       <div class="col-8">
         <div class="card mb-4">
@@ -102053,13 +102059,13 @@ console.log('📚 Leseliste geladen');
         var q="from:("+ad.join(" OR ")+")";
         var res=await gmApi("GET","/users/me/messages",{query:{q:q,maxResults:"15"}});
         var ids=(res.messages||[]).map(function(m){return m.id;});
-        var metas=await Promise.all(ids.map(function(mid){return gmApi("GET","/users/me/messages/"+encodeURIComponent(mid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});}));
+        var metas=await gmMapPool(ids,5,function(mid){return gmApi("GET","/users/me/messages/"+encodeURIComponent(mid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;});});
         metas.filter(Boolean).map(parseMeta).forEach(function(r){ byId[r.id]=r; });
       }
       // 2) Verknüpfte Threads (mailThreadIds) — gesendete Mails, deren Antworten
       //    und manuell verknüpfte Mails; unabhängig vom Absender
       if (thrIds.length){
-        var thrs=await Promise.all(thrIds.slice(0,20).map(function(tid){ return gmApi("GET","/users/me/threads/"+encodeURIComponent(tid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;}); }));
+        var thrs=await gmMapPool(thrIds.slice(0,20),5,function(tid){ return gmApi("GET","/users/me/threads/"+encodeURIComponent(tid),{query:{format:"metadata",metadataHeaders:["From","Subject","Date"]}}).catch(function(){return null;}); });
         thrs.filter(Boolean).forEach(function(t){ (t.messages||[]).forEach(function(msg){ try { var r=parseMeta(msg); byId[r.id]=r; } catch(_){} }); });
       }
       var rows=Object.keys(byId).map(function(k){return byId[k];}).sort(function(a,b){ return (b.internalDate||0)-(a.internalDate||0); });

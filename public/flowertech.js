@@ -66,6 +66,7 @@
     ft.offers = Array.isArray(ft.offers) ? ft.offers : [];
     ft.invoices = Array.isArray(ft.invoices) ? ft.invoices : [];
     ft.clients = Array.isArray(ft.clients) ? ft.clients : [];
+    ft.milestones = Array.isArray(ft.milestones) ? ft.milestones : [];   // Planung: Phasen/Termine je Projekt
     ft.aiLog = Array.isArray(ft.aiLog) ? ft.aiLog : [];
     ft.counters = ft.counters && typeof ft.counters === "object" ? ft.counters : {};
     ft.company = ft.company && typeof ft.company === "object" ? ft.company : {};
@@ -164,17 +165,61 @@
   function empty(label) { return '<div class="ft-empty">' + esc(label) + "</div>"; }
 
   // ── Dokument-Mathematik ──────────────────────────────────────────────────
+  // Betrag einer einzelnen Position — inklusive Positionsrabatt. Ältere
+  // Dokumente kennen discountPercent auf der Position nicht; num() macht daraus
+  // 0, der Betrag bleibt damit exakt wie vorher.
+  function itemAmount(item) {
+    var gross = num(item && item.qty) * num(item && item.price);
+    return gross - gross * (num(item && item.discountPercent) / 100);
+  }
+
   function docTotals(doc) {
     var items = Array.isArray(doc && doc.items) ? doc.items : [];
-    var subtotal = items.reduce(function (sum, item) { return sum + num(item.qty) * num(item.price); }, 0);
+    var listed = items.reduce(function (sum, item) { return sum + num(item.qty) * num(item.price); }, 0);
+    var subtotal = items.reduce(function (sum, item) { return sum + itemAmount(item); }, 0);
+    var itemDiscount = listed - subtotal;
     var discount = subtotal * (num(doc && doc.discountPercent) / 100);
     var net = subtotal - discount;
     var vat = net * (num(doc && doc.vatRate) / 100);
     var gross = net + vat;
     return {
+      listed: listed, itemDiscount: itemDiscount,
       subtotal: subtotal, discount: discount, net: net, vat: vat, gross: gross,
       rounded: Math.round(gross * 20) / 20      // Rappenrundung auf 5 Rappen
     };
+  }
+
+  // ── Dokument-Verlauf ─────────────────────────────────────────────────────
+  // Jede Statusänderung wird mit Zeitpunkt festgehalten, damit im Dokument
+  // nachvollziehbar bleibt, wann es versendet, angenommen oder bezahlt wurde.
+  function pushHistory(doc, event, detail) {
+    if (!doc) return;
+    doc.history = Array.isArray(doc.history) ? doc.history : [];
+    doc.history.unshift({ id: id(), event: event, detail: detail || "", at: now() });
+    if (doc.history.length > 60) doc.history.length = 60;
+  }
+
+  // Eine Offerte gilt als abgelaufen, sobald das Gültigkeitsdatum vorbei ist und
+  // sie weder angenommen noch abgelehnt wurde.
+  function offerExpired(offer) {
+    return offer && offer.status === "sent" && offer.validUntil && offer.validUntil < today();
+  }
+
+  function daysUntil(ymd) {
+    if (!ymd) return null;
+    var target = new Date(String(ymd).slice(0, 10) + "T12:00:00");
+    if (isNaN(target)) return null;
+    var base = new Date(today() + "T12:00:00");
+    return Math.round((target - base) / 86400000);
+  }
+
+  function dueLabel(ymd) {
+    var d = daysUntil(ymd);
+    if (d === null) return "";
+    if (d < 0) return Math.abs(d) + " Tage überfällig";
+    if (d === 0) return "heute fällig";
+    if (d === 1) return "morgen fällig";
+    return "in " + d + " Tagen";
   }
 
   function nextNumber(kind) {
@@ -338,33 +383,21 @@
   window._ftSetTab = function (tab) {
     var ft = state();
     ft.activeTab = tab;
-    ft.ui.projectId = null;
     ft.ui.docId = null;
     save();
     rerender();
   };
 
+  // Ein FlowerTech-Projekt hat keine eigene, abgespeckte Ansicht mehr. Es wird
+  // auf der ganz normalen Quantus-Projektseite geöffnet — dieselbe Tiefe wie
+  // jedes andere Projekt (Aufgaben, Notizen, Zeit, Verknüpfungen, Mail-Verlauf).
+  // Die FlowerTech-Zusätze (Pipeline, Offerten, Rechnungen, Planung) hängt
+  // ftProjectPanel() dort als eigener Block ein.
   window._ftOpenProject = function (projectId) {
+    if (!projectId) return;
     var ft = state();
-    ft.activeTab = "projects";
-    ft.ui.projectId = projectId;
-    ft.ui.projectTab = ft.ui.projectTab || "overview";
-    save();
-    rerender();
-  };
-
-  window._ftSetProjectTab = function (tab) {
-    var ft = state();
-    ft.ui.projectTab = tab;
-    ft.ui.docId = null;
-    save();
-    rerender();
-  };
-
-  window._ftCloseProject = function () {
-    state().ui.projectId = null;
-    save();
-    rerender();
+    if (ft) { ft.ui.docId = null; save(); }
+    location.hash = "#/projects/" + projectId;
   };
 
   window._ftCreateProject = function () {
@@ -412,17 +445,6 @@
     });
     save();
     notify("ok", "FlowerTech", "Aufgabe erstellt");
-    rerender();
-  };
-
-  window._ftQuickTask = function (projectId) {
-    var title = ((document.getElementById("ftQuickTask") || {}).value || "").trim();
-    if (!title) return notify("warn", "FlowerTech", "Aufgabentitel erforderlich");
-    window.createEntity("task", {
-      title: title, projectId: projectId || null, status: "todo", priority: 3,
-      category: "flowertech", tags: ["flowertech"]
-    });
-    save();
     rerender();
   };
 
@@ -545,13 +567,23 @@
         phone: client.phone || "", street: client.street || "", zip: client.zip || "", city: client.city || ""
       },
       title: project ? project.title : (kind === "invoice" ? "Rechnung" : "Offerte"),
+      reference: "",                 // „Ihre Referenz" / Bestellnummer des Kunden
+      contactPerson: client.name || "",
+      periodFrom: "",                // Leistungszeitraum von / bis
+      periodTo: "",
+      paymentTerms: kind === "invoice"
+        ? num(ft.company.paymentDays, 30) + " Tage netto"
+        : "Zahlbar nach Aufwand gemäss Vereinbarung",
+      terms: "",                     // Konditionen / Bemerkungen zum Vertrag
+      notesInternal: "",             // nur intern, erscheint nie im Druck
+      history: [],
       intro: kind === "invoice"
         ? "Vielen Dank für die gute Zusammenarbeit. Wir erlauben uns, folgende Leistungen in Rechnung zu stellen:"
         : "Vielen Dank für Ihre Anfrage. Gerne unterbreiten wir Ihnen folgende Offerte:",
       outro: kind === "invoice"
         ? "Zahlbar innert " + num(ft.company.paymentDays, 30) + " Tagen."
         : "Wir freuen uns auf die Zusammenarbeit.",
-      items: [{ id: id(), description: "", qty: 1, unit: "Pauschal", price: 0 }],
+      items: [{ id: id(), description: "", detail: "", qty: 1, unit: "Pauschal", price: 0, discountPercent: 0 }],
       vatRate: num(ft.company.vatRate, VAT_DEFAULT),
       discountPercent: 0,
       currency: "CHF",
@@ -572,14 +604,12 @@
   window._ftNewDoc = function (kind, projectId) {
     var ft = state();
     var doc = blankDoc(kind, projectId || null);
+    pushHistory(doc, "created", (kind === "invoice" ? "Rechnung" : "Offerte") + " angelegt");
     docs(kind).unshift(doc);
-    if (projectId) {
-      ft.activeTab = "projects";
-      ft.ui.projectId = projectId;
-      ft.ui.projectTab = kind === "invoice" ? "invoices" : "offers";
-    } else {
-      ft.activeTab = kind === "invoice" ? "invoices" : "offers";
-    }
+    // Ohne Projekt: in den passenden FlowerTech-Reiter wechseln. Mit Projekt
+    // bleibt man auf der Projektseite — dort öffnet ftProjectPanel() denselben
+    // Editor direkt beim Projekt.
+    if (!projectId) ft.activeTab = kind === "invoice" ? "invoices" : "offers";
     ft.ui.docId = doc.id;
     ft.ui.docKind = kind;
     save();
@@ -628,16 +658,22 @@
 
   window._ftDocStatus = function (kind, docId, status) {
     var doc = docById(kind, docId);
-    if (!doc) return;
+    if (!doc || doc.status === status) return;
+    var list = kind === "invoice" ? INVOICE_STATUSES : OFFER_STATUSES;
+    pushHistory(doc, "status", labelOf(list, doc.status) + " → " + labelOf(list, status));
     doc.status = status;
     doc.updatedAt = now();
+    if (status === "sent" && !doc.sentAt) doc.sentAt = now();
     if (kind === "invoice" && status === "paid" && !doc.paidAt) {
       doc.paidAt = now();
       bookInvoicePayment(doc);
     }
-    if (kind === "offer" && status === "accepted" && doc.projectId) {
-      var project = projectById(doc.projectId);
-      if (project && project.pipelineStage !== "won") { project.pipelineStage = "build"; project.updatedAt = now(); }
+    if (kind === "offer" && status === "accepted") {
+      if (!doc.acceptedAt) doc.acceptedAt = now();
+      if (doc.projectId) {
+        var project = projectById(doc.projectId);
+        if (project && project.pipelineStage !== "won") { project.pipelineStage = "build"; project.updatedAt = now(); }
+      }
     }
     save();
     rerender();
@@ -664,11 +700,11 @@
     if (!doc) return;
     var item = (doc.items || []).find(function (entry) { return entry.id === itemId; });
     if (!item) return;
-    item[field] = (field === "qty" || field === "price") ? num(value) : value;
+    item[field] = (field === "qty" || field === "price" || field === "discountPercent") ? num(value) : value;
     doc.updatedAt = now();
     save();
     var cell = document.getElementById("ftRow_" + itemId);
-    if (cell) cell.textContent = money(num(item.qty) * num(item.price));
+    if (cell) cell.textContent = money(itemAmount(item));
     refreshTotals(kind, docId);
   };
 
@@ -676,7 +712,7 @@
     var doc = docById(kind, docId);
     if (!doc) return;
     doc.items = doc.items || [];
-    doc.items.push({ id: id(), description: "", qty: 1, unit: "Std.", price: 0 });
+    doc.items.push({ id: id(), description: "", detail: "", qty: 1, unit: "Std.", price: 0, discountPercent: 0 });
     doc.updatedAt = now();
     save();
     rerender();
@@ -730,12 +766,148 @@
     if (offer.status === "draft" || offer.status === "sent") offer.status = "accepted";
     offer.updatedAt = now();
     ft.activeTab = "invoices";
-    ft.ui.projectId = null;
     ft.ui.docId = invoice.id;
     ft.ui.docKind = "invoice";
     save();
     notify("ok", "FlowerTech", "Rechnung " + invoice.number + " aus Offerte erstellt");
     rerender();
+  };
+
+  // ── Planung: Meilensteine je Projekt ────────────────────────────────────
+  // Ein Meilenstein ist bewusst KEINE Aufgabe: er markiert einen Termin im
+  // Projektverlauf (Kickoff, Abnahme, Go-Live). Aufgaben bleiben Quantus-
+  // Aufgaben — dieselbe Einheit wie überall sonst in der App.
+  function milestonesOfProject(projectId) {
+    return state().milestones
+      .filter(function (entry) { return entry.projectId === projectId; })
+      .sort(function (a, b) { return String(a.date || "9999").localeCompare(String(b.date || "9999")); });
+  }
+
+  window._ftAddMilestone = function (projectId) {
+    var title = ((document.getElementById("ftMsTitle") || {}).value || "").trim();
+    var date = ((document.getElementById("ftMsDate") || {}).value || "").trim();
+    if (!title) return notify("warn", "Planung", "Bezeichnung erforderlich");
+    state().milestones.push({
+      id: id(), projectId: projectId || null, title: title, date: date || null,
+      done: false, createdAt: now(), updatedAt: now()
+    });
+    save();
+    rerender();
+  };
+
+  window._ftToggleMilestone = function (milestoneId) {
+    var entry = state().milestones.find(function (m) { return m.id === milestoneId; });
+    if (!entry) return;
+    entry.done = !entry.done;
+    entry.updatedAt = now();
+    save();
+    rerender();
+  };
+
+  window._ftSetMilestoneDate = function (milestoneId, value) {
+    var entry = state().milestones.find(function (m) { return m.id === milestoneId; });
+    if (!entry) return;
+    entry.date = value || null;
+    entry.updatedAt = now();
+    save();
+  };
+
+  window._ftDeleteMilestone = function (milestoneId) {
+    var ft = state();
+    ft.milestones = ft.milestones.filter(function (m) { return m.id !== milestoneId; });
+    save();
+    rerender();
+  };
+
+  // ── Offerte → Arbeitspaket ──────────────────────────────────────────────
+  // Aus jeder Offertposition wird eine echte Quantus-Aufgabe am Projekt. Der
+  // geschätzte Aufwand wird aus Menge × Einheit übernommen, wenn die Einheit
+  // nach Stunden aussieht. Bereits übertragene Positionen werden übersprungen.
+  window._ftOfferToTasks = function (offerId) {
+    var offer = docById("offer", offerId);
+    if (!offer) return;
+    if (!offer.projectId) return notify("warn", "FlowerTech", "Die Offerte ist keinem Projekt zugeordnet");
+    var root = data();
+    var existing = new Set(Object.values((root && root.entities && root.entities.tasks) || {})
+      .map(function (task) { return task && task.sourceOfferItemId; }).filter(Boolean));
+    var created = 0;
+    (offer.items || []).forEach(function (item) {
+      if (!item || existing.has(item.id)) return;
+      var label = String(item.description || "").trim();
+      if (!label) return;
+      var hours = /std|stunde|h\b/i.test(String(item.unit || "")) ? num(item.qty) : 0;
+      window.createEntity("task", {
+        title: label.slice(0, 200),
+        description: [item.detail || "", "Aus Offerte " + (offer.number || "") + " · " +
+          num(item.qty) + " " + (item.unit || "") + " à " + money(item.price)].filter(Boolean).join("\n\n"),
+        projectId: offer.projectId,
+        status: "todo",
+        priority: 2,
+        category: "flowertech",
+        estimatedMinutes: hours ? Math.round(hours * 60) : undefined,
+        tags: ["flowertech", "offerte"],
+        sourceOfferId: offer.id,
+        sourceOfferItemId: item.id
+      });
+      created++;
+    });
+    save();
+    notify(created ? "ok" : "info", "Arbeitspaket",
+      created ? created + " Aufgabe(n) aus der Offerte erstellt" : "Alle Positionen wurden bereits übertragen");
+    rerender();
+  };
+
+  // ── Offerte / Rechnung per Mail senden ──────────────────────────────────
+  // Nutzt den bestehenden Gmail-Composer. Die Mail wird mit dem Projekt
+  // verknüpft, damit der ganze Thread danach im Mail-Verlauf des Projekts
+  // auftaucht. Gesendet wird weiterhin nur manuell im Composer.
+  function docMailBody(kind, doc) {
+    var ft = state();
+    var isInvoice = kind === "invoice";
+    var totals = docTotals(doc);
+    var lines = [
+      "Guten Tag " + (doc.contactPerson || (doc.client && doc.client.name) || "") + "",
+      "",
+      doc.intro || "",
+      ""
+    ];
+    (doc.items || []).forEach(function (item) {
+      if (!item.description) return;
+      lines.push("• " + item.description + " — " + num(item.qty) + " " + (item.unit || "") + " · " + money(itemAmount(item)));
+    });
+    lines.push("");
+    lines.push("Total inkl. " + num(doc.vatRate) + "% MwSt: " + money(totals.rounded));
+    if (isInvoice && doc.dueDate) lines.push("Zahlbar bis " + dateOnly(doc.dueDate) + ".");
+    if (!isInvoice && doc.validUntil) lines.push("Diese Offerte ist gültig bis " + dateOnly(doc.validUntil) + ".");
+    if (doc.terms) { lines.push(""); lines.push(doc.terms); }
+    lines.push("");
+    lines.push(doc.outro || "");
+    lines.push("");
+    lines.push("Freundliche Grüsse");
+    lines.push((ft.company && ft.company.name) || "FlowerTech");
+    return lines.join("\n");
+  }
+
+  window._ftMailDoc = function (kind, docId) {
+    var doc = docById(kind, docId);
+    if (!doc) return;
+    if (typeof window.gmailCompose !== "function") {
+      return notify("err", "Gmail", "Das Gmail-Modul ist nicht geladen.");
+    }
+    var subject = (kind === "invoice" ? "Rechnung " : "Offerte ") + (doc.number || "") +
+      (doc.title ? " — " + doc.title : "");
+    window.gmailCompose({
+      to: (doc.client && doc.client.email) || "",
+      subject: subject,
+      body: docMailBody(kind, doc),
+      title: "✉️ " + subject,
+      linkedEntity: doc.projectId ? { kind: "project", id: doc.projectId } : null
+    });
+    // Der Status wird erst gesetzt, wenn wirklich gesendet wurde — hier nur der
+    // Verlaufseintrag, damit sichtbar bleibt, dass ein Versand vorbereitet wurde.
+    pushHistory(doc, "mail", "Mail-Entwurf geöffnet an " + ((doc.client && doc.client.email) || "—"));
+    doc.updatedAt = now();
+    save();
   };
 
   // ── QR-Code (wird immer selbst hochgeladen) ─────────────────────────────
@@ -809,10 +981,13 @@
     var isInvoice = kind === "invoice";
     var client = doc.client || {};
     var rows = (doc.items || []).map(function (item, index) {
+      var discount = num(item.discountPercent);
       return "<tr><td>" + (index + 1) + "</td><td>" + esc(item.description || "") +
+        (item.detail ? "<div class='detail'>" + esc(item.detail) + "</div>" : "") +
+        (discount ? "<div class='detail'>abzüglich " + esc(String(discount)) + "% Rabatt</div>" : "") +
         "</td><td class='r'>" + esc(String(num(item.qty))) + "</td><td>" + esc(item.unit || "") +
         "</td><td class='r'>" + money(item.price) + "</td><td class='r'>" +
-        money(num(item.qty) * num(item.price)) + "</td></tr>";
+        money(itemAmount(item)) + "</td></tr>";
     }).join("");
     return "<!doctype html><html lang='de'><head><meta charset='utf-8'><title>" +
       esc((isInvoice ? "Rechnung " : "Offerte ") + (doc.number || "")) + "</title><style>" +
@@ -829,6 +1004,8 @@
       ".totals{margin-top:14px;margin-left:auto;width:270px}" +
       ".totals div{display:flex;justify-content:space-between;padding:4px 0}" +
       ".totals .sum{border-top:2px solid #1c1c1e;margin-top:6px;padding-top:8px;font-weight:700;font-size:15px}" +
+      ".detail{color:#666;font-size:11px;margin-top:3px;white-space:pre-line}" +
+      ".terms{margin-top:22px;clear:both;font-size:12px;white-space:pre-line;border:1px solid #ddd;border-radius:6px;padding:10px 12px}" +
       ".qr{margin-top:28px;border-top:1px dashed #999;padding-top:16px}" +
       ".qr img{max-width:210px;display:block;margin-top:8px}" +
       ".foot{margin-top:34px;font-size:11px;color:#666;border-top:1px solid #ddd;padding-top:10px;white-space:pre-line}" +
@@ -845,6 +1022,12 @@
       "<div style='font-size:12px;color:#444'>" + esc(doc.title || "") +
       "<br>Datum: " + esc(dateOnly(doc.issueDate)) +
       (isInvoice ? "<br>Fällig: " + esc(dateOnly(doc.dueDate)) : "<br>Gültig bis: " + esc(dateOnly(doc.validUntil))) +
+      (doc.reference ? "<br>Ihre Referenz: " + esc(doc.reference) : "") +
+      (doc.contactPerson ? "<br>Ansprechperson: " + esc(doc.contactPerson) : "") +
+      (doc.periodFrom || doc.periodTo
+        ? "<br>Leistungszeitraum: " + esc(dateOnly(doc.periodFrom)) + " – " + esc(dateOnly(doc.periodTo))
+        : "") +
+      (doc.paymentTerms ? "<br>Konditionen: " + esc(doc.paymentTerms) : "") +
       "</div>" +
       (doc.intro ? "<p>" + esc(doc.intro) + "</p>" : "") +
       "<table><thead><tr><th>#</th><th>Leistung</th><th class='r'>Menge</th><th>Einheit</th><th class='r'>Ansatz</th><th class='r'>Betrag</th></tr></thead><tbody>" +
@@ -853,6 +1036,7 @@
       (totals.discount ? "<div><span>Rabatt " + esc(String(num(doc.discountPercent))) + "%</span><span>−" + money(totals.discount) + "</span></div>" : "") +
       "<div><span>MwSt " + esc(String(num(doc.vatRate))) + "%</span><span>" + money(totals.vat) + "</span></div>" +
       "<div class='sum'><span>Total CHF</span><span>" + money(totals.rounded) + "</span></div></div>" +
+      (doc.terms ? "<div class='terms'><strong>Konditionen</strong><br>" + esc(doc.terms) + "</div>" : "") +
       (isInvoice
         ? (doc.qr && doc.qr.url
             ? "<div class='qr'><strong>Zahlteil / QR-Rechnung</strong><img src='" + esc(doc.qr.url) + "' alt='QR-Einzahlungsschein'></div>"
@@ -1045,7 +1229,7 @@
     if (!entry) return;
     ft.notes.unshift({
       id: id(), title: entry.title, content: entry.text,
-      projectId: ft.ui.projectId || null, createdAt: now(), updatedAt: now()
+      projectId: null, createdAt: now(), updatedAt: now()
     });
     save();
     notify("ok", "FlowerTech", "Als Notiz gespeichert");
@@ -1088,16 +1272,55 @@
   // ==========================================================================
   function totalsHtml(doc) {
     var totals = docTotals(doc);
-    return '<div class="ft-total-row"><span>Zwischentotal</span><strong>' + money(totals.subtotal) + "</strong></div>" +
+    return (totals.itemDiscount ? '<div class="ft-total-row"><span>Positionen brutto</span><strong>' + money(totals.listed) + "</strong></div>" +
+        '<div class="ft-total-row"><span>Positionsrabatte</span><strong>−' + money(totals.itemDiscount) + "</strong></div>" : "") +
+      '<div class="ft-total-row"><span>Zwischentotal</span><strong>' + money(totals.subtotal) + "</strong></div>" +
       (totals.discount ? '<div class="ft-total-row"><span>Rabatt ' + esc(String(num(doc.discountPercent))) +
         "%</span><strong>−" + money(totals.discount) + "</strong></div>" : "") +
+      '<div class="ft-total-row"><span>Netto</span><strong>' + money(totals.net) + "</strong></div>" +
       '<div class="ft-total-row"><span>MwSt ' + esc(String(num(doc.vatRate))) + "%</span><strong>" + money(totals.vat) + "</strong></div>" +
-      '<div class="ft-total-row sum"><span>Total CHF</span><strong>' + money(totals.rounded) + "</strong></div>";
+      '<div class="ft-total-row sum"><span>Total CHF</span><strong>' + money(totals.rounded) + "</strong></div>" +
+      (Math.abs(totals.rounded - totals.gross) > 0.001
+        ? '<div class="ft-total-row mini"><span>Rappenrundung</span><span>' +
+          (totals.rounded > totals.gross ? "+" : "−") + money(Math.abs(totals.rounded - totals.gross)) + "</span></div>"
+        : "");
+  }
+
+  // Kurzer Kennzahlenstreifen über dem Dokument: Wert, Positionen, Alter und
+  // die für den jeweiligen Typ wichtigste Frist.
+  function docFactsHtml(kind, doc) {
+    var totals = docTotals(doc);
+    var isInvoice = kind === "invoice";
+    var deadline = isInvoice ? doc.dueDate : doc.validUntil;
+    var facts = [
+      ["Total", money(totals.rounded)],
+      ["Positionen", String((doc.items || []).length)],
+      [isInvoice ? "Fällig" : "Gültig bis", deadline ? dateOnly(deadline) + " · " + dueLabel(deadline) : "—"],
+      ["Erstellt", dateOnly(doc.issueDate)]
+    ];
+    if (isInvoice && doc.paidAt) facts.push(["Bezahlt", dateOnly(doc.paidAt)]);
+    if (!isInvoice && doc.acceptedAt) facts.push(["Angenommen", dateOnly(doc.acceptedAt)]);
+    if (doc.sentAt) facts.push(["Versendet", dateOnly(doc.sentAt)]);
+    return '<div class="ft-facts">' + facts.map(function (fact) {
+      return '<div class="ft-fact"><span>' + esc(fact[0]) + "</span><strong>" + esc(fact[1]) + "</strong></div>";
+    }).join("") + "</div>";
+  }
+
+  function historyHtml(doc) {
+    var entries = Array.isArray(doc.history) ? doc.history : [];
+    if (!entries.length) return '<div class="mini">Noch keine Einträge.</div>';
+    var icons = { created: "＋", status: "⇄", mail: "✉", payment: "💰", task: "☑" };
+    return '<div class="ft-history">' + entries.slice(0, 20).map(function (entry) {
+      return '<div class="ft-history-row"><span class="ft-history-icon">' + esc(icons[entry.event] || "•") +
+        '</span><span>' + esc(entry.detail || entry.event) + '</span><small>' + esc(dateTime(entry.at)) + "</small></div>";
+    }).join("") + "</div>";
   }
 
   function statusBadge(kind, doc) {
     var list = kind === "invoice" ? INVOICE_STATUSES : OFFER_STATUSES;
-    var value = (kind === "invoice" && isOverdue(doc)) ? "overdue" : doc.status;
+    var value = doc.status;
+    if (kind === "invoice" && isOverdue(doc)) value = "overdue";
+    else if (kind === "offer" && offerExpired(doc)) value = "expired";
     return '<span class="ft-status ' + esc(value) + '">' + esc(labelOf(list, value)) + "</span>";
   }
 
@@ -1108,10 +1331,21 @@
 
   function docListItem(kind, doc) {
     var project = doc.projectId ? projectById(doc.projectId) : null;
-    return '<div class="ft-doc-row" onclick="window._ftOpenDoc(\'' + kind + "','" + attr(doc.id) + '\')">' +
+    var deadline = kind === "invoice" ? doc.dueDate : doc.validUntil;
+    var late = kind === "invoice" ? isOverdue(doc) : offerExpired(doc);
+    var open = kind === "invoice"
+      ? (doc.status !== "paid" && doc.status !== "cancelled")
+      : (doc.status === "draft" || doc.status === "sent");
+    var meta = [
+      clientLabel(doc),
+      project ? project.title : "",
+      dateOnly(doc.issueDate),
+      (doc.items || []).length + " Position(en)",
+      deadline && open ? (kind === "invoice" ? "fällig " : "gültig bis ") + dateOnly(deadline) + " · " + dueLabel(deadline) : ""
+    ].filter(Boolean);
+    return '<div class="ft-doc-row' + (late ? " late" : "") + '" onclick="window._ftOpenDoc(\'' + kind + "','" + attr(doc.id) + '\')">' +
       '<div class="ft-doc-main"><strong>' + esc(doc.number || "—") + " · " + esc(doc.title || "Ohne Titel") + "</strong>" +
-      '<div class="mini">' + esc(clientLabel(doc)) + (project ? " · " + esc(project.title) : "") +
-      " · " + esc(dateOnly(doc.issueDate)) + "</div></div>" +
+      '<div class="mini">' + esc(meta.join(" · ")) + "</div></div>" +
       '<div class="ft-doc-side">' + statusBadge(kind, doc) + "<strong>" + money(docTotals(doc).rounded) + "</strong></div></div>";
   }
 
@@ -1125,72 +1359,106 @@
 
     var itemRows = (doc.items || []).map(function (item) {
       var setItem = "window._ftItemSet('" + kind + "','" + attr(doc.id) + "','" + attr(item.id) + "'";
-      return '<div class="ft-item-row">' +
+      return '<div class="ft-item-block">' +
+        '<div class="ft-item-row">' +
         '<input class="ft-item-desc" placeholder="Leistung" value="' + attr(item.description || "") +
           '" oninput="' + setItem + ",'description',this.value)\">" +
-        '<input type="number" step="0.25" min="0" value="' + attr(String(num(item.qty))) +
+        '<input type="number" step="0.25" min="0" title="Menge" value="' + attr(String(num(item.qty))) +
           '" oninput="' + setItem + ",'qty',this.value)\">" +
-        '<input class="ft-item-unit" value="' + attr(item.unit || "") + '" oninput="' + setItem + ",'unit',this.value)\">" +
-        '<input type="number" step="0.05" min="0" value="' + attr(String(num(item.price))) +
+        '<input class="ft-item-unit" title="Einheit" value="' + attr(item.unit || "") + '" oninput="' + setItem + ",'unit',this.value)\">" +
+        '<input type="number" step="0.05" min="0" title="Ansatz" value="' + attr(String(num(item.price))) +
           '" oninput="' + setItem + ",'price',this.value)\">" +
-        '<span class="ft-item-total" id="ftRow_' + attr(item.id) + '">' + money(num(item.qty) * num(item.price)) + "</span>" +
+        '<input type="number" step="1" min="0" max="100" title="Rabatt in %" value="' + attr(String(num(item.discountPercent))) +
+          '" oninput="' + setItem + ",'discountPercent',this.value)\">" +
+        '<span class="ft-item-total" id="ftRow_' + attr(item.id) + '">' + money(itemAmount(item)) + "</span>" +
         '<button class="btn sm ghost" onclick="window._ftRemoveItem(\'' + kind + "','" + attr(doc.id) + "','" +
-          attr(item.id) + '\')">×</button></div>';
+          attr(item.id) + '\')">×</button></div>' +
+        '<input class="ft-item-detail" placeholder="Beschreibung dieser Position (erscheint im Dokument)" value="' +
+          attr(item.detail || "") + '" oninput="' + setItem + ",'detail',this.value)\"></div>";
     }).join("");
 
+    var deadlineWarning = "";
+    if (isInvoice && isOverdue(doc)) {
+      deadlineWarning = '<div class="ft-alert warn"><span>Diese Rechnung ist seit ' +
+        esc(dueLabel(doc.dueDate)) + ' offen.</span><button class="btn sm" onclick="window._ftAiReminder(\'' +
+        attr(doc.id) + '\')">KI-Mahnung schreiben</button></div>';
+    } else if (!isInvoice && offerExpired(doc)) {
+      deadlineWarning = '<div class="ft-alert warn"><span>Die Gültigkeit ist am ' + esc(dateOnly(doc.validUntil)) +
+        ' abgelaufen.</span><button class="btn sm" onclick="window._ftDocStatus(\'offer\',\'' + attr(doc.id) +
+        '\',\'expired\')">Als abgelaufen markieren</button></div>';
+    }
+
     return '<div class="card p-4 ft-editor">' +
-      '<div class="ft-editor-head"><div><h3 style="margin:0">' + esc(doc.number || "") + "</h3>" +
+      '<div class="ft-editor-head"><div><h3 style="margin:0">' + esc(doc.number || "") + " " + statusBadge(kind, doc) + "</h3>" +
       '<div class="mini">' + (isInvoice ? "Rechnung" : "Offerte") + " · zuletzt " + esc(dateTime(doc.updatedAt)) + "</div></div>" +
       '<div class="ft-editor-actions">' +
       "<select onchange=\"window._ftDocStatus('" + kind + "','" + attr(doc.id) + "',this.value)\">" +
       statuses.map(function (status) {
         return '<option value="' + status[0] + '"' + (doc.status === status[0] ? " selected" : "") + ">" + esc(status[1]) + "</option>";
       }).join("") + "</select>" +
+      '<button class="btn sm primary" onclick="window._ftMailDoc(\'' + kind + "','" + attr(doc.id) + '\')" ' +
+        'title="Per Gmail versenden — der Thread wird mit dem Projekt verknüpft">✉️ Per Mail senden</button>' +
       '<button class="btn sm" onclick="window._ftPrintDoc(\'' + kind + "','" + attr(doc.id) + '\')">Drucken / PDF</button>' +
       (isInvoice
         ? '<button class="btn sm" onclick="window._ftAiReminder(\'' + attr(doc.id) + '\')">KI-Mahnung</button>'
-        : '<button class="btn sm primary" onclick="window._ftOfferToInvoice(\'' + attr(doc.id) + '\')">In Rechnung umwandeln</button>') +
+        : '<button class="btn sm" onclick="window._ftOfferToInvoice(\'' + attr(doc.id) + '\')">In Rechnung umwandeln</button>' +
+          '<button class="btn sm" onclick="window._ftOfferToTasks(\'' + attr(doc.id) + '\')" ' +
+            'title="Jede Position wird zu einer Quantus-Aufgabe am Projekt">☑ In Arbeitspaket</button>') +
       '<button class="btn sm ghost" onclick="window._ftDeleteDoc(\'' + kind + "','" + attr(doc.id) + '\')">Löschen</button>' +
       "</div></div>" +
 
-      '<div class="ft-field-grid">' +
+      deadlineWarning +
+      docFactsHtml(kind, doc) +
+
+      '<h4 class="ft-sub">Eckdaten</h4><div class="ft-field-grid">' +
       '<label>Titel<input value="' + attr(doc.title || "") + '" oninput="' + set + ",'title',this.value)\"></label>" +
       "<label>Projekt<select onchange=\"" + set + ",'projectId',this.value||null)\"><option value=\"\">Ohne Projekt</option>" +
       allProjects.map(function (project) {
         return '<option value="' + attr(project.id) + '"' + (doc.projectId === project.id ? " selected" : "") +
           ">" + esc(project.title) + "</option>";
       }).join("") + "</select></label>" +
+      '<label>Ihre Referenz<input value="' + attr(doc.reference || "") + '" placeholder="Bestellnummer des Kunden" oninput="' +
+        set + ",'reference',this.value)\"></label>" +
       '<label>Datum<input type="date" value="' + attr(doc.issueDate || "") + '" oninput="' + set + ",'issueDate',this.value)\"></label>" +
       (isInvoice
         ? '<label>Fällig am<input type="date" value="' + attr(doc.dueDate || "") + '" oninput="' + set + ",'dueDate',this.value)\"></label>"
         : '<label>Gültig bis<input type="date" value="' + attr(doc.validUntil || "") + '" oninput="' + set + ",'validUntil',this.value)\"></label>") +
+      '<label>Leistung von<input type="date" value="' + attr(doc.periodFrom || "") + '" oninput="' + set + ",'periodFrom',this.value)\"></label>" +
+      '<label>Leistung bis<input type="date" value="' + attr(doc.periodTo || "") + '" oninput="' + set + ",'periodTo',this.value)\"></label>" +
+      '<label>Zahlungskonditionen<input value="' + attr(doc.paymentTerms || "") + '" oninput="' + set + ",'paymentTerms',this.value)\"></label>" +
       "</div>" +
 
       '<h4 class="ft-sub">Kunde</h4><div class="ft-field-grid">' +
       '<label>Firma<input value="' + attr(client.company || "") + '" oninput="' + setClient + ",'company',this.value)\"></label>" +
       '<label>Name<input value="' + attr(client.name || "") + '" oninput="' + setClient + ",'name',this.value)\"></label>" +
+      '<label>Ansprechperson<input value="' + attr(doc.contactPerson || "") + '" oninput="' + set + ",'contactPerson',this.value)\"></label>" +
       '<label>E-Mail<input value="' + attr(client.email || "") + '" oninput="' + setClient + ",'email',this.value)\"></label>" +
+      '<label>Telefon<input value="' + attr(client.phone || "") + '" oninput="' + setClient + ",'phone',this.value)\"></label>" +
       '<label>Strasse<input value="' + attr(client.street || "") + '" oninput="' + setClient + ",'street',this.value)\"></label>" +
       '<label>PLZ<input value="' + attr(client.zip || "") + '" oninput="' + setClient + ",'zip',this.value)\"></label>" +
       '<label>Ort<input value="' + attr(client.city || "") + '" oninput="' + setClient + ",'city',this.value)\"></label>" +
       "</div>" +
 
       '<h4 class="ft-sub">Positionen</h4>' +
-      '<div class="ft-item-head"><span>Leistung</span><span>Menge</span><span>Einheit</span><span>Ansatz</span><span>Betrag</span><span></span></div>' +
+      '<div class="ft-item-head"><span>Leistung</span><span>Menge</span><span>Einheit</span><span>Ansatz</span><span>Rabatt %</span><span>Betrag</span><span></span></div>' +
       '<div class="ft-items">' + (itemRows || '<div class="mini">Noch keine Positionen</div>') + "</div>" +
       '<button class="btn sm mt-2" onclick="window._ftAddItem(\'' + kind + "','" + attr(doc.id) + '\')">＋ Position</button>' +
 
       '<div class="ft-field-grid mt-3">' +
       '<label>MwSt %<input type="number" step="0.1" min="0" value="' + attr(String(num(doc.vatRate))) +
         '" oninput="' + set + ",'vatRate',this.value)\"></label>" +
-      '<label>Rabatt %<input type="number" step="1" min="0" value="' + attr(String(num(doc.discountPercent))) +
+      '<label>Gesamtrabatt %<input type="number" step="1" min="0" value="' + attr(String(num(doc.discountPercent))) +
         '" oninput="' + set + ",'discountPercent',this.value)\"></label>" +
       "</div>" +
       '<div class="ft-totals" id="ftTotals_' + attr(doc.id) + '">' + totalsHtml(doc) + "</div>" +
 
       '<h4 class="ft-sub">Texte</h4>' +
       '<textarea rows="2" placeholder="Einleitung" oninput="' + set + ",'intro',this.value)\">" + esc(doc.intro || "") + "</textarea>" +
+      '<textarea rows="3" placeholder="Konditionen, Vorbehalte, Vertragliches (erscheint im Dokument)" oninput="' +
+        set + ",'terms',this.value)\">" + esc(doc.terms || "") + "</textarea>" +
       '<textarea rows="2" placeholder="Schlusstext" oninput="' + set + ",'outro',this.value)\">" + esc(doc.outro || "") + "</textarea>" +
+      '<textarea rows="2" placeholder="Interne Notiz — erscheint NIE im gedruckten Dokument" oninput="' +
+        set + ",'notesInternal',this.value)\">" + esc(doc.notesInternal || "") + "</textarea>" +
 
       (isInvoice ? qrBlock(doc) : "") +
 
@@ -1199,6 +1467,8 @@
       '" placeholder="Kurzbriefing, z. B. Website mit Shop für Blumenladen, 5 Seiten, SEO">' +
       '<button class="btn primary" onclick="window._ftAiDraftOffer(\'' + kind + "','" + attr(doc.id) +
       '\')">Positionen von der KI</button></div>' +
+
+      '<h4 class="ft-sub">Verlauf</h4>' + historyHtml(doc) +
       "</div>";
   }
 
@@ -1216,13 +1486,6 @@
       "</div>";
   }
 
-  function taskLine(task) {
-    return '<div class="ft-task"><button class="ft-check' + (task.status === "done" ? " on" : "") +
-      '" onclick="window._ftToggleTask(\'' + attr(task.id) + '\')">' + (task.status === "done" ? "✓" : "") + "</button>" +
-      '<span class="' + (task.status === "done" ? "ft-done" : "") + '">' + esc(task.title || "Aufgabe") + "</span>" +
-      "<small>" + esc(task.dueDate ? dateOnly(task.dueDate) : "") + "</small></div>";
-  }
-
   function noteCard(note) {
     return '<div class="card p-4"><div class="flex justify-between"><h3>' + esc(note.title) +
       '</h3><button class="btn sm ghost" onclick="window._ftDeleteNote(\'' + attr(note.id) + '\')">×</button></div>' +
@@ -1236,102 +1499,224 @@
   }
 
   // ==========================================================================
-  //  Projekt-Detailansicht — vollständig innerhalb von FlowerTech
+  //  FlowerTech-Block auf der normalen Quantus-Projektseite
+  //  ------------------------------------------------------------------------
+  //  Ein FlowerTech-Projekt hat keine eigene, abgespeckte Ansicht mehr. Es wird
+  //  unter #/projects/<id> geöffnet und ist dort genau so ausführlich wie jedes
+  //  andere Projekt. Dieser Block ergänzt nur, was FlowerTech zusätzlich kann:
+  //  Vertriebsphase, Planung mit Meilensteinen, Offerten und Rechnungen.
+  //  Den Mailverlauf steuert die bestehende Element-Inbox von Quantus bei — sie
+  //  hängt sich auf Projektseiten ohnehin selbst ein.
   // ==========================================================================
-  function renderProjectDetail(project) {
+  function ftProjectPanel(projectId) {
     var ft = state();
-    var tab = ft.ui.projectTab || "overview";
+    var project = projectById(projectId);
+    if (!ft || !project || project.projectType !== "flowertech") return "";
+
     var list = tasksOfProject(project.id);
     var open = list.filter(function (task) { return task.status !== "done"; });
-    var projectOffers = docsOfProject("offer", project.id);
-    var projectInvoices = docsOfProject("invoice", project.id);
+    var projectOffers = docsOfProject("offer", project.id).slice().sort(function (a, b) {
+      return String(b.issueDate || "").localeCompare(String(a.issueDate || ""));
+    });
+    var projectInvoices = docsOfProject("invoice", project.id).slice().sort(function (a, b) {
+      return String(b.issueDate || "").localeCompare(String(a.issueDate || ""));
+    });
     var paid = projectInvoices.filter(function (invoice) { return invoice.status === "paid"; })
       .reduce(function (sum, invoice) { return sum + docTotals(invoice).rounded; }, 0);
     var openAmount = projectInvoices.filter(function (invoice) {
       return invoice.status !== "paid" && invoice.status !== "cancelled";
     }).reduce(function (sum, invoice) { return sum + docTotals(invoice).rounded; }, 0);
-    var projectNotes = ft.notes.filter(function (note) { return note.projectId === project.id; });
-    var projectLinks = ft.links.filter(function (link) { return link.projectId === project.id; });
+    var offered = projectOffers.filter(function (offer) { return offer.status !== "declined"; })
+      .reduce(function (sum, offer) { return sum + docTotals(offer).rounded; }, 0);
+    var milestones = milestonesOfProject(project.id);
+    // Welches Dokument gerade offen ist, ergibt sich daraus, in welcher Liste es
+    // gefunden wurde — nicht aus doc.kind: sehr alte Dokumente haben das Feld
+    // noch nicht und würden sonst als Offerte gerendert.
+    var openDoc = null, openKind = "offer";
+    if (ft.ui.docId) {
+      openDoc = docById("offer", ft.ui.docId);
+      if (!openDoc) { openDoc = docById("invoice", ft.ui.docId); openKind = "invoice"; }
+    }
+    if (openDoc && openDoc.projectId !== project.id) openDoc = null;
 
-    var tabs = [
-      ["overview", "Übersicht"],
-      ["tasks", "Aufgaben" + (open.length ? " (" + open.length + ")" : "")],
-      ["offers", "Offerten" + (projectOffers.length ? " (" + projectOffers.length + ")" : "")],
-      ["invoices", "Rechnungen" + (projectInvoices.length ? " (" + projectInvoices.length + ")" : "")],
-      ["notes", "Notizen"], ["links", "Links"]
-    ];
+    var head = '<div class="ft-panel-head"><div class="ft-brand"><div class="ft-mark">🌸</div>' +
+      '<div><h3 style="margin:0">FlowerTech</h3><div class="mini">Vertrieb, Planung und Fakturierung zu diesem Projekt</div></div></div>' +
+      '<div class="ft-quick">' +
+      '<button class="btn sm" onclick="window._ftNewDoc(\'offer\',\'' + attr(project.id) + '\')">＋ Offerte</button>' +
+      '<button class="btn sm" onclick="window._ftNewDoc(\'invoice\',\'' + attr(project.id) + '\')">＋ Rechnung</button>' +
+      '<button class="btn sm" onclick="window.gmailComposeToEntity(\'project\',\'' + attr(project.id) + '\')">✉️ Mail an Kunde</button>' +
+      '<button class="btn sm" onclick="window._ftAiProjectReport(\'' + attr(project.id) + '\')">✨ KI-Statusbericht</button>' +
+      '<button class="btn sm ghost" onclick="location.hash=\'#/flowertech\'">FlowerTech öffnen</button>' +
+      "</div></div>";
 
-    var body = "";
-    if (tab === "overview") {
-      body =
-        '<div class="ft-kpis">' +
-        '<div class="ft-kpi"><span>Offene Aufgaben</span><strong>' + open.length + "</strong></div>" +
-        '<div class="ft-kpi"><span>Offerten</span><strong>' + projectOffers.length + "</strong></div>" +
-        '<div class="ft-kpi"><span>Bezahlt</span><strong>' + money(paid) + "</strong></div>" +
-        '<div class="ft-kpi"><span>Offen</span><strong>' + money(openAmount) + "</strong></div>" +
-        "</div>" +
-        '<div class="card p-4 ft-form"><label class="mini">Beschreibung</label>' +
-        "<textarea rows=\"5\" oninput=\"window._ftSetProjectField('" + attr(project.id) + "','description',this.value)\">" +
-        esc(project.description || "") + "</textarea>" +
-        '<div class="ft-field-grid">' +
-        "<label>Phase<select onchange=\"window._ftSetProjectStage('" + attr(project.id) + "',this.value)\">" +
-        STAGES.map(function (stage) {
-          return '<option value="' + stage[0] + '"' + ((project.pipelineStage || "lead") === stage[0] ? " selected" : "") +
-            ">" + esc(stage[1]) + "</option>";
-        }).join("") + "</select></label>" +
-        "<label>Status<select onchange=\"window._ftSetProjectField('" + attr(project.id) + "','status',this.value)\">" +
-        [["active", "Aktiv"], ["paused", "Pausiert"], ["done", "Abgeschlossen"], ["archived", "Archiviert"]].map(function (status) {
-          return '<option value="' + status[0] + '"' + ((project.status || "active") === status[0] ? " selected" : "") +
-            ">" + esc(status[1]) + "</option>";
-        }).join("") + "</select></label>" +
-        '<label>Deadline<input type="date" value="' + attr(project.dueDate || "") +
-        "\" oninput=\"window._ftSetProjectField('" + attr(project.id) + "','dueDate',this.value)\"></label>" +
-        "</div></div>" +
-        '<div class="ft-grid-2"><div class="card p-4"><h3>Nächste Aufgaben</h3><div class="sep"></div>' +
-        (open.slice(0, 6).map(taskLine).join("") || empty("Keine offenen Aufgaben")) + "</div>" +
-        '<div class="card p-4"><h3>Schnellaktionen</h3><div class="sep"></div>' +
-        '<button class="btn" onclick="window._ftAiProjectReport(\'' + attr(project.id) + '\')">KI-Statusbericht erstellen</button>' +
-        '<button class="btn mt-2" onclick="window._ftNewDoc(\'offer\',\'' + attr(project.id) + '\')">Offerte für dieses Projekt</button>' +
-        '<button class="btn mt-2" onclick="window._ftNewDoc(\'invoice\',\'' + attr(project.id) + '\')">Rechnung für dieses Projekt</button>' +
-        '<div class="mini mt-2">KI-Ergebnisse erscheinen im Reiter „KI“.</div></div></div>';
+    var kpis = '<div class="ft-kpis">' +
+      '<div class="ft-kpi"><span>Offene Aufgaben</span><strong>' + open.length + "</strong></div>" +
+      '<div class="ft-kpi"><span>Offeriert</span><strong>' + money(offered) + "</strong></div>" +
+      '<div class="ft-kpi"><span>Bezahlt</span><strong>' + money(paid) + "</strong></div>" +
+      '<div class="ft-kpi"><span>Offen</span><strong>' + money(openAmount) + "</strong></div>" +
+      "</div>";
 
-    } else if (tab === "tasks") {
-      body = '<div class="card p-4 ft-inline-form"><input id="ftQuickTask" placeholder="Neue Aufgabe für dieses Projekt">' +
-        '<button class="btn primary" onclick="window._ftQuickTask(\'' + attr(project.id) + '\')">Hinzufügen</button></div>' +
-        '<div class="card p-4">' + (list.length ? list.map(taskLine).join("") : empty("Noch keine Aufgaben")) + "</div>";
+    var client = project.client || {};
+    var sales = '<div class="ft-grid-2"><div class="card p-4"><h3>Vertrieb</h3><div class="sep"></div>' +
+      '<div class="ft-field-grid">' +
+      "<label>Phase<select onchange=\"window._ftSetProjectStage('" + attr(project.id) + "',this.value)\">" +
+      STAGES.map(function (stage) {
+        return '<option value="' + stage[0] + '"' + ((project.pipelineStage || "lead") === stage[0] ? " selected" : "") +
+          ">" + esc(stage[1]) + "</option>";
+      }).join("") + "</select></label>" +
+      '<label>Kunde / Firma<input value="' + attr(client.company || "") +
+        "\" oninput=\"window._ftSetClientField('" + attr(project.id) + "','company',this.value)\"></label>" +
+      '<label>Ansprechperson<input value="' + attr(client.name || "") +
+        "\" oninput=\"window._ftSetClientField('" + attr(project.id) + "','name',this.value)\"></label>" +
+      '<label>E-Mail<input value="' + attr(client.email || "") +
+        "\" oninput=\"window._ftSetClientField('" + attr(project.id) + "','email',this.value)\"></label>" +
+      '<label>Telefon<input value="' + attr(client.phone || "") +
+        "\" oninput=\"window._ftSetClientField('" + attr(project.id) + "','phone',this.value)\"></label>" +
+      "</div>" +
+      '<div class="mini mt-2">Diese Kundendaten werden in neue Offerten und Rechnungen übernommen.</div></div>' +
 
-    } else if (tab === "offers" || tab === "invoices") {
-      var kind = tab === "invoices" ? "invoice" : "offer";
-      var items = kind === "invoice" ? projectInvoices : projectOffers;
-      body = '<button class="btn primary mb-2" onclick="window._ftNewDoc(\'' + kind + "','" + attr(project.id) + '\')">＋ Neue ' +
-        (kind === "invoice" ? "Rechnung" : "Offerte") + "</button>" +
-        '<div class="card p-4">' + (items.length ? items.map(function (doc) { return docListItem(kind, doc); }).join("")
-          : empty("Noch keine Dokumente")) + "</div>" +
-        (ft.ui.docId && docById(kind, ft.ui.docId) ? docEditor(kind, docById(kind, ft.ui.docId)) : "");
+      // ── Planung ──
+      '<div class="card p-4"><h3>Planung</h3><div class="sep"></div>' +
+      '<div class="ft-inline-form"><input id="ftMsTitle" placeholder="Meilenstein, z. B. Abnahme Design">' +
+      '<input id="ftMsDate" type="date">' +
+      '<button class="btn primary" onclick="window._ftAddMilestone(\'' + attr(project.id) + '\')">Setzen</button></div>' +
+      (milestones.length ? milestones.map(milestoneRow).join("") : empty("Noch keine Meilensteine")) +
+      '<div class="mini mt-2">Meilensteine sind Termine im Projektverlauf. Alles, was erledigt werden muss, ' +
+      "bleibt eine normale Quantus-Aufgabe weiter oben auf dieser Seite.</div></div></div>";
 
-    } else if (tab === "notes") {
-      body = '<div class="card p-4 ft-form"><input id="ftNoteTitle" placeholder="Titel">' +
-        '<textarea id="ftNoteContent" rows="4" placeholder="Notiz"></textarea>' +
-        '<button class="btn primary" onclick="window._ftAddNote(\'' + attr(project.id) + '\')">Notiz speichern</button></div>' +
-        '<div class="ft-card-grid">' + (projectNotes.length ? projectNotes.map(noteCard).join("") : empty("Noch keine Projektnotizen")) + "</div>";
-
-    } else if (tab === "links") {
-      body = '<div class="card p-4 ft-inline-form"><input id="ftLinkTitle" placeholder="Bezeichnung">' +
-        '<input id="ftLinkUrl" type="url" placeholder="https://…">' +
-        '<button class="btn primary" onclick="window._ftAddLink(\'' + attr(project.id) + '\')">Link speichern</button></div>' +
-        '<div class="card p-4">' + (projectLinks.length ? projectLinks.map(linkRow).join("") : empty("Noch keine Links")) + "</div>";
+    function docSection(kind, items) {
+      var label = kind === "invoice" ? "Rechnungen" : "Offerten";
+      return '<div class="card p-4"><h3>' + label + " <span class=\"mini\">(" + items.length + ")</span></h3><div class=\"sep\"></div>" +
+        (items.length ? items.map(function (doc) { return docListItem(kind, doc); }).join("") : empty("Noch keine " + label)) +
+        '<button class="btn sm mt-2" onclick="window._ftNewDoc(\'' + kind + "','" + attr(project.id) + '\')">＋ Neue ' +
+        (kind === "invoice" ? "Rechnung" : "Offerte") + "</button></div>";
     }
 
-    return '<div class="ft-project-head">' +
-      '<button class="btn sm ghost" onclick="window._ftCloseProject()">‹ Alle Projekte</button>' +
-      "<h2>" + esc(project.title || "Projekt") + '</h2><span class="badge">' +
-      esc(labelOf(STAGES, project.pipelineStage || "lead")) + "</span>" +
-      '<span class="spacer"></span><button class="btn sm" onclick="location.hash=\'#/projects/' + attr(project.id) +
-      '\'">In AI Sync öffnen</button></div>' +
-      '<div class="ft-tabs ft-subtabs">' + tabs.map(function (entry) {
-        return '<button class="ft-tab' + (tab === entry[0] ? " active" : "") + '" onclick="window._ftSetProjectTab(\'' +
-          entry[0] + '\')">' + esc(entry[1]) + "</button>";
-      }).join("") + "</div>" + body;
+    return '<div class="ft-panel"><style>' + STYLES + "</style>" +
+      head + kpis + sales +
+      '<div class="ft-grid-2 mt-3">' + docSection("offer", projectOffers) + docSection("invoice", projectInvoices) + "</div>" +
+      (openDoc ? docEditor(openKind, openDoc) : "") +
+      "</div>";
+  }
+
+  function milestoneRow(entry) {
+    var late = !entry.done && entry.date && entry.date < today();
+    return '<div class="ft-ms' + (entry.done ? " done" : "") + (late ? " late" : "") + '">' +
+      '<button class="ft-check' + (entry.done ? " on" : "") + '" onclick="window._ftToggleMilestone(\'' +
+        attr(entry.id) + '\')">' + (entry.done ? "✓" : "") + "</button>" +
+      '<span class="ft-ms-title">' + esc(entry.title) + "</span>" +
+      '<input type="date" value="' + attr(entry.date || "") + '" onchange="window._ftSetMilestoneDate(\'' +
+        attr(entry.id) + '\',this.value)">' +
+      '<small>' + esc(entry.date ? dueLabel(entry.date) : "ohne Termin") + "</small>" +
+      '<button class="btn sm ghost" onclick="window._ftDeleteMilestone(\'' + attr(entry.id) + '\')">×</button></div>';
+  }
+
+  window._ftSetClientField = function (projectId, field, value) {
+    var project = projectById(projectId);
+    if (!project) return;
+    project.client = project.client || {};
+    project.client[field] = value;
+    project.updatedAt = now();
+    save();
+  };
+
+  // ── Projektliste (ersetzt die frühere Kachelansicht) ────────────────────
+  function projectRow(project) {
+    var list = tasksOfProject(project.id);
+    var openCount = list.filter(function (task) { return task.status !== "done"; }).length;
+    var invoiced = docsOfProject("invoice", project.id)
+      .reduce(function (sum, invoice) { return sum + docTotals(invoice).rounded; }, 0);
+    var offered = docsOfProject("offer", project.id)
+      .filter(function (offer) { return offer.status !== "declined"; })
+      .reduce(function (sum, offer) { return sum + docTotals(offer).rounded; }, 0);
+    // Nächster Termin: der früheste offene Meilenstein, die Projekt-Deadline
+    // oder das früheste Fälligkeitsdatum einer offenen Aufgabe — was zuerst kommt.
+    var dates = milestonesOfProject(project.id).filter(function (m) { return !m.done && m.date; })
+      .map(function (m) { return m.date; });
+    if (project.dueDate) dates.push(project.dueDate);
+    list.forEach(function (task) { if (task.status !== "done" && task.dueDate) dates.push(String(task.dueDate).slice(0, 10)); });
+    dates.sort();
+    var next = dates[0] || "";
+    var late = next && next < today();
+    return '<div class="ft-prow' + (late ? " late" : "") + '" onclick="window._ftOpenProject(\'' + attr(project.id) + '\')">' +
+      '<span class="ft-prow-main"><strong>' + esc(project.title || "Projekt") + "</strong>" +
+      '<small>' + esc(String(project.description || "Keine Beschreibung").slice(0, 120)) + "</small></span>" +
+      '<span class="badge">' + esc(labelOf(STAGES, project.pipelineStage || "lead")) + "</span>" +
+      "<span>" + (list.length - openCount) + " / " + list.length + "</span>" +
+      "<span>" + money(offered) + "</span>" +
+      "<span>" + money(invoiced) + "</span>" +
+      "<span>" + (next ? esc(dateOnly(next)) + ' <small>' + esc(dueLabel(next)) + "</small>" : "—") + "</span></div>";
+  }
+
+  // ── Planung über alle Projekte ──────────────────────────────────────────
+  // Sammelt alles mit Datum — offene Aufgaben, Meilensteine, Rechnungsfristen,
+  // Offert-Gültigkeiten — und gruppiert es nach Dringlichkeit.
+  function planningEntries(allProjects) {
+    var ft = state();
+    var byProject = {};
+    allProjects.forEach(function (p) { byProject[p.id] = p; });
+    var out = [];
+    tasks().forEach(function (task) {
+      if (task.status === "done" || !task.dueDate) return;
+      out.push({ date: String(task.dueDate).slice(0, 10), kind: "Aufgabe", icon: "☑",
+        title: task.title || "Aufgabe", projectId: task.projectId });
+    });
+    ft.milestones.forEach(function (entry) {
+      if (entry.done || !entry.date) return;
+      out.push({ date: entry.date, kind: "Meilenstein", icon: "◆", title: entry.title, projectId: entry.projectId });
+    });
+    ft.invoices.forEach(function (invoice) {
+      if (invoice.status === "paid" || invoice.status === "cancelled" || !invoice.dueDate) return;
+      out.push({ date: invoice.dueDate, kind: "Rechnung fällig", icon: "💰",
+        title: (invoice.number || "") + " · " + money(docTotals(invoice).rounded), projectId: invoice.projectId });
+    });
+    ft.offers.forEach(function (offer) {
+      if (offer.status !== "sent" || !offer.validUntil) return;
+      out.push({ date: offer.validUntil, kind: "Offerte läuft ab", icon: "◷",
+        title: (offer.number || "") + " · " + money(docTotals(offer).rounded), projectId: offer.projectId });
+    });
+    return out.sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
+      .map(function (entry) {
+        entry.project = byProject[entry.projectId] || projectById(entry.projectId);
+        return entry;
+      });
+  }
+
+  function renderPlanning(allProjects) {
+    var entries = planningEntries(allProjects);
+    var t = today();
+    var weekEnd = addDays(t, 7);
+    var monthEnd = addDays(t, 30);
+    var groups = [
+      ["Überfällig", entries.filter(function (e) { return e.date < t; })],
+      ["Heute", entries.filter(function (e) { return e.date === t; })],
+      ["Diese Woche", entries.filter(function (e) { return e.date > t && e.date <= weekEnd; })],
+      ["Nächste 30 Tage", entries.filter(function (e) { return e.date > weekEnd && e.date <= monthEnd; })],
+      ["Später", entries.filter(function (e) { return e.date > monthEnd; })]
+    ];
+    var kpis = '<div class="ft-kpis">' +
+      '<div class="ft-kpi"><span>Überfällig</span><strong>' + groups[0][1].length + "</strong></div>" +
+      '<div class="ft-kpi"><span>Diese Woche</span><strong>' + (groups[1][1].length + groups[2][1].length) + "</strong></div>" +
+      '<div class="ft-kpi"><span>Termine gesamt</span><strong>' + entries.length + "</strong></div>" +
+      '<div class="ft-kpi"><span>Aktive Projekte</span><strong>' +
+        allProjects.filter(function (p) { return p.status !== "done" && p.status !== "archived"; }).length + "</strong></div>" +
+      "</div>";
+    if (!entries.length) {
+      return kpis + empty("Nichts geplant. Termine entstehen aus Aufgaben mit Fälligkeitsdatum, " +
+        "Meilensteinen auf der Projektseite sowie Fristen von Rechnungen und Offerten.");
+    }
+    return kpis + groups.map(function (group) {
+      if (!group[1].length) return "";
+      return '<div class="card p-4 mb-3"><h3>' + esc(group[0]) + ' <span class="mini">(' + group[1].length + ")</span></h3>" +
+        '<div class="sep"></div>' + group[1].map(function (entry) {
+          return '<div class="ft-plan-row' + (entry.date < t ? " late" : "") + '"' +
+            (entry.project ? ' onclick="window._ftOpenProject(\'' + attr(entry.project.id) + '\')"' : "") + ">" +
+            '<span class="ft-plan-icon">' + esc(entry.icon) + "</span>" +
+            '<span class="ft-plan-title"><strong>' + esc(entry.title) + "</strong><small>" + esc(entry.kind) +
+            (entry.project ? " · " + esc(entry.project.title) : "") + "</small></span>" +
+            '<span class="ft-plan-date">' + esc(dateOnly(entry.date)) + "<small>" + esc(dueLabel(entry.date)) + "</small></span></div>";
+        }).join("") + "</div>";
+    }).join("");
   }
 
   // ==========================================================================
@@ -1349,7 +1734,7 @@
     var activeTab = ft.activeTab;
 
     var tabs = [
-      ["dashboard", "Dashboard"], ["projects", "Projekte"], ["tasks", "Aufgaben"],
+      ["dashboard", "Dashboard"], ["projects", "Projekte"], ["planung", "Planung"], ["tasks", "Aufgaben"],
       ["offers", "Offerten"], ["invoices", "Rechnungen"], ["ai", "KI"],
       ["leads", "Leads / Anfragen"], ["pipeline", "Pipeline"], ["finances", "Finanzen"],
       ["notes", "Notizen"], ["links", "Links"], ["videos", "Instagram-Videos"], ["settings", "Firma"]
@@ -1405,28 +1790,23 @@
         "</div></div>";
 
     } else if (activeTab === "projects") {
-      var selected = ft.ui.projectId ? projectById(ft.ui.projectId) : null;
-      if (selected) {
-        content = renderProjectDetail(selected);
-      } else {
-        content =
-          '<div class="card p-4 ft-form"><h3>FlowerTech-Projekt erstellen</h3>' +
-            '<input id="ftProjectTitle" type="text" placeholder="Projektname">' +
-            '<textarea id="ftProjectDescription" rows="3" placeholder="Kurzbeschreibung"></textarea>' +
-            '<button class="btn primary" onclick="window._ftCreateProject()">Projekt erstellen</button></div>' +
-          '<div class="ft-card-grid">' + (allProjects.length ? allProjects.map(function (project) {
-            var list = tasksOfProject(project.id);
-            var openCount = list.filter(function (task) { return task.status !== "done"; }).length;
-            var invoiced = docsOfProject("invoice", project.id)
-              .reduce(function (sum, invoice) { return sum + docTotals(invoice).rounded; }, 0);
-            return '<div class="card p-4 ft-project-card" onclick="window._ftOpenProject(\'' + attr(project.id) + '\')">' +
-              '<div class="flex justify-between gap-2"><h3>' + esc(project.title || "Projekt") + '</h3><span class="badge">' +
-              esc(labelOf(STAGES, project.pipelineStage || "lead")) + "</span></div>" +
-              '<p class="mini">' + esc(String(project.description || "Keine Beschreibung").slice(0, 140)) + "</p>" +
-              '<div class="ft-project-stats"><span>' + (list.length - openCount) + " / " + list.length +
-              " Aufgaben</span><span>" + money(invoiced) + " fakturiert</span></div></div>";
-          }).join("") : empty("Noch keine FlowerTech-Projekte")) + "</div>";
-      }
+      // Keine Kacheln mehr: eine ruhige Liste mit allen Zahlen, die man zum
+      // Sortieren braucht. Ein Klick öffnet die vollwertige Projektseite.
+      content =
+        '<div class="card p-4 ft-form"><h3>FlowerTech-Projekt erstellen</h3>' +
+          '<input id="ftProjectTitle" type="text" placeholder="Projektname">' +
+          '<textarea id="ftProjectDescription" rows="3" placeholder="Kurzbeschreibung"></textarea>' +
+          '<button class="btn primary" onclick="window._ftCreateProject()">Projekt erstellen</button></div>' +
+        (allProjects.length
+          ? '<div class="card p-4"><div class="ft-plist-head"><span>Projekt</span><span>Phase</span><span>Aufgaben</span>' +
+            "<span>Offeriert</span><span>Fakturiert</span><span>Nächster Termin</span></div>" +
+            allProjects.slice().sort(function (a, b) {
+              return String(a.title || "").localeCompare(String(b.title || ""), "de");
+            }).map(projectRow).join("") + "</div>"
+          : empty("Noch keine FlowerTech-Projekte"));
+
+    } else if (activeTab === "planung") {
+      content = renderPlanning(allProjects);
 
     } else if (activeTab === "tasks") {
       content =
@@ -1453,15 +1833,25 @@
         return kind2 === "invoice" ? (doc.status !== "paid" && doc.status !== "cancelled")
           : (doc.status === "draft" || doc.status === "sent");
       }).reduce(function (sum, doc) { return sum + docTotals(doc).rounded; }, 0);
+      var volume2 = list2.reduce(function (sum, doc) { return sum + docTotals(doc).rounded; }, 0);
+      var decided2 = list2.filter(function (doc) { return doc.status === "accepted" || doc.status === "declined"; });
+      var accepted2 = list2.filter(function (doc) { return doc.status === "accepted"; });
+      var late2 = kind2 === "invoice" ? list2.filter(isOverdue) : list2.filter(offerExpired);
       content =
         '<div class="ft-kpis"><div class="ft-kpi"><span>Anzahl</span><strong>' + list2.length + "</strong></div>" +
         '<div class="ft-kpi"><span>' + (kind2 === "invoice" ? "Offen" : "Pendent") + "</span><strong>" + money(totalOpen) + "</strong></div>" +
         (kind2 === "invoice"
           ? '<div class="ft-kpi"><span>Bezahlt</span><strong>' + money(list2.filter(function (doc) { return doc.status === "paid"; })
               .reduce(function (sum, doc) { return sum + docTotals(doc).rounded; }, 0)) + "</strong></div>"
-          : '<div class="ft-kpi"><span>Angenommen</span><strong>' +
-              list2.filter(function (doc) { return doc.status === "accepted"; }).length + "</strong></div>") +
+          : '<div class="ft-kpi"><span>Abschlussquote</span><strong>' +
+              (decided2.length ? Math.round(accepted2.length / decided2.length * 100) + " %" : "—") + "</strong></div>") +
+        '<div class="ft-kpi"><span>Ø Betrag</span><strong>' +
+          money(list2.length ? volume2 / list2.length : 0) + "</strong></div>" +
         "</div>" +
+        (late2.length ? '<div class="ft-alert warn"><span>' + late2.length +
+          (kind2 === "invoice" ? " überfällige Rechnung(en) · " + money(late2.reduce(function (sum, doc) {
+            return sum + docTotals(doc).rounded; }, 0)) : " Offerte(n) über die Gültigkeit hinaus") +
+          "</span></div>" : "") +
         '<button class="btn primary mb-2" onclick="window._ftNewDoc(\'' + kind2 + '\')">＋ Neue ' +
         (kind2 === "invoice" ? "Rechnung" : "Offerte") + "</button>" +
         '<div class="card p-4">' + (list2.length ? list2.map(function (doc) { return docListItem(kind2, doc); }).join("")
@@ -1630,11 +2020,37 @@
     ".ft-pipeline-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px;margin-top:9px}" +
     ".ft-pipeline-card strong{display:block;margin-bottom:8px}.ft-pipeline-card select{width:100%;font-size:11px}" +
     ".ft-empty{padding:28px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:12px}" +
-    ".ft-project-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}" +
-    ".ft-project-head h2{margin:0;font-size:20px}.ft-project-head .spacer{flex:1}" +
-    ".ft-project-card{cursor:pointer;transition:transform .12s ease,border-color .12s ease}" +
-    ".ft-project-card:hover{transform:translateY(-2px);border-color:var(--border2)}" +
-    ".ft-project-stats{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:10px}" +
+    // Projektliste statt Kacheln
+    ".ft-plist-head,.ft-prow{display:grid;grid-template-columns:minmax(0,2.4fr) 110px 90px 120px 120px 150px;gap:12px;align-items:center}" +
+    ".ft-plist-head{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding-bottom:8px;border-bottom:1px solid var(--border)}" +
+    ".ft-prow{padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;font-variant-numeric:tabular-nums}" +
+    ".ft-prow:hover{background:var(--hover,rgba(255,255,255,.03))}" +
+    ".ft-prow.late .ft-prow-main strong{color:var(--danger)}" +
+    ".ft-prow-main{display:flex;flex-direction:column;gap:3px;min-width:0}" +
+    ".ft-prow-main small,.ft-prow small{color:var(--muted);font-size:11px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+    // Planung
+    ".ft-plan-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer}" +
+    ".ft-plan-icon{width:26px;text-align:center;flex:0 0 auto}" +
+    ".ft-plan-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}" +
+    ".ft-plan-title small{color:var(--muted);font-size:11px}" +
+    ".ft-plan-date{text-align:right;white-space:nowrap;font-size:12px}.ft-plan-date small{display:block;color:var(--muted);font-size:10.5px}" +
+    ".ft-plan-row.late .ft-plan-date{color:var(--danger)}" +
+    // Meilensteine
+    ".ft-ms{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}" +
+    ".ft-ms-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+    ".ft-ms input[type=date]{width:150px;font-size:11px}.ft-ms small{color:var(--muted);font-size:11px;white-space:nowrap}" +
+    ".ft-ms.done .ft-ms-title{text-decoration:line-through;opacity:.55}.ft-ms.late small{color:var(--danger)}" +
+    // FlowerTech-Block auf der Projektseite
+    ".ft-panel{--ft:#e879a9;--ft2:#7c3aed;margin-top:16px;padding:18px;border-radius:16px;border:1px solid var(--border);background:var(--panel)}" +
+    ".ft-panel-head{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:16px}" +
+    ".ft-alert.warn{border-color:color-mix(in oklab,var(--danger) 45%,transparent)}" +
+    // Kennzahlenstreifen im Dokument
+    ".ft-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:6px 0 4px}" +
+    ".ft-fact{padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--border)}" +
+    ".ft-fact span{display:block;color:var(--muted);font-size:10.5px;margin-bottom:4px}.ft-fact strong{font-size:14px}" +
+    ".ft-history-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12.5px}" +
+    ".ft-history-row span:nth-child(2){flex:1;min-width:0}.ft-history-row small{color:var(--muted);white-space:nowrap}" +
+    ".ft-history-icon{width:20px;text-align:center;color:var(--muted)}" +
     ".ft-doc-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);cursor:pointer}" +
     ".ft-doc-main{flex:1;min-width:0}.ft-doc-side{display:flex;align-items:center;gap:12px;white-space:nowrap}" +
     ".ft-status{font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}" +
@@ -1649,27 +2065,38 @@
     ".ft-field-grid label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}" +
     ".ft-field-grid input,.ft-field-grid select{width:100%}" +
     ".ft-editor textarea{width:100%;margin-bottom:8px}" +
-    ".ft-item-head,.ft-item-row{display:grid;grid-template-columns:1fr 80px 100px 110px 110px 40px;gap:8px;align-items:center}" +
+    ".ft-item-head,.ft-item-row{display:grid;grid-template-columns:1fr 80px 100px 110px 90px 110px 40px;gap:8px;align-items:center}" +
     ".ft-item-head{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border)}" +
     ".ft-item-row{padding:6px 0}.ft-item-total{text-align:right;font-variant-numeric:tabular-nums}" +
+    ".ft-item-block{padding:4px 0 10px;border-bottom:1px solid var(--border)}" +
+    ".ft-item-detail{width:100%;margin-top:6px;font-size:12px}" +
+    ".ft-doc-row.late .ft-doc-main strong{color:var(--danger)}" +
+    ".ft-status.expired{color:var(--warn,#d9a441);border-color:color-mix(in oklab,var(--warn,#d9a441) 45%,transparent)}" +
     ".ft-totals{margin-top:14px;margin-left:auto;max-width:330px}" +
     ".ft-total-row{display:flex;justify-content:space-between;padding:5px 0}" +
     ".ft-total-row.sum{border-top:2px solid var(--border2);margin-top:6px;padding-top:8px;font-size:16px}" +
     ".ft-qr{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}" +
     ".ft-qr img{width:180px;border-radius:10px;background:#fff;padding:8px}" +
     ".ft-qr-drop{flex:1;min-width:240px;border:1px dashed var(--border2);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px}" +
-    "@media(max-width:980px){.ft-item-head,.ft-item-row{grid-template-columns:1fr 70px 80px 90px 90px 34px;font-size:12px}}" +
+    "@media(max-width:1180px){.ft-plist-head{display:none}" +
+    ".ft-prow{grid-template-columns:minmax(0,1fr) auto;gap:6px 12px}" +
+    ".ft-prow>span:not(.ft-prow-main){font-size:11.5px;color:var(--muted);text-align:right}}" +
+    "@media(max-width:980px){.ft-item-head,.ft-item-row{grid-template-columns:1fr 70px 80px 90px 70px 90px 34px;font-size:12px}}" +
     "@media(max-width:780px){.ft-head{flex-direction:column}.ft-sync{text-align:left}.ft-kpis{grid-template-columns:1fr 1fr}" +
     ".ft-grid-2{grid-template-columns:1fr}.ft-inline-form{flex-direction:column}.ft-lead{grid-template-columns:1fr}" +
-    ".ft-pipeline{grid-template-columns:repeat(6,220px)}" +
+    ".ft-pipeline{grid-template-columns:repeat(6,220px)}.ft-ms{flex-wrap:wrap}.ft-ms input[type=date]{width:130px}" +
     ".ft-item-head{display:none}.ft-item-row{grid-template-columns:1fr 1fr;gap:6px}.ft-item-row .ft-item-desc{grid-column:1/-1}}" +
     "@media(max-width:460px){.ft-kpis{grid-template-columns:1fr}}";
 
   window.viewFlowerTech = renderFlowerTech;
+  // Wird von viewProjectDetail() aufgerufen: der FlowerTech-Block auf der
+  // normalen Projektseite. Für Nicht-FlowerTech-Projekte liefert er "".
+  window.ftProjectPanel = ftProjectPanel;
 
   // Für Mobile/Tablet: dieselbe Rechenlogik ohne UI (Reuse statt Duplikat).
   window.FlowerTechCore = {
     docTotals: docTotals,
+    itemAmount: itemAmount,
     stages: STAGES,
     offerStatuses: OFFER_STATUSES,
     invoiceStatuses: INVOICE_STATUSES

@@ -11,6 +11,8 @@ on:
       - "tests/quantus-english-c1-entry.test.mjs"
       - "tests/quantus-career-model-entry.test.mjs"
       - "tests/gmail-network-retry.test.mjs"
+      - "tests/flowertech-projects.test.mjs"
+      - "public/flowertech.js"
       - "package.json"
       - ".github/workflows/validate-quantus-index.yml"
   workflow_dispatch:
