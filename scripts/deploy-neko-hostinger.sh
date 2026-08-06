@@ -500,13 +500,11 @@ if [ "${PROXY}" = "traefik-docker" ]; then
     && ok "TLS-Resolver-Label gesetzt: $(env_get NEKO_TRAEFIK_CERTRESOLVER)" \
     || note_fail "certresolver-Label fehlt — Traefik stellt kein Zertifikat aus"
 
-  # Erreicht Traefik den Container tatsaechlich ueber das Netz?
-  if docker exec "$(find_traefik)" true 2>/dev/null; then
-    info "Traefik-Container laeuft weiterhin (nicht angefasst)"
-  fi
-
-  # Gegenprobe: n8n unveraendert?
-  info "Fremde Container (unveraendert): $(docker ps --format '{{.Names}}' | grep -v '^quantus-neko$' | tr '\n' ' ')"
+  # Gegenprobe: Traefik und n8n laufen unveraendert weiter. Ihre Uptime ist der
+  # Beleg dafuer, dass dieses Skript sie nicht neu gestartet hat.
+  info "Fremde Container (von diesem Skript nicht angefasst):"
+  docker ps --format '{{.Names}}\t{{.Status}}' 2>/dev/null \
+    | grep -v '^quantus-neko' | sed 's/^/      /' || true
 fi
 
 # TLS von aussen.
