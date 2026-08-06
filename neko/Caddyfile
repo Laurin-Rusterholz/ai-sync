@@ -1,6 +1,0 @@
-# Quantus Browser — Reverse Proxy + automatisches TLS (Let's Encrypt)
-# Ziel: /etc/caddy/Caddyfile ; danach: systemctl reload caddy
-# Voraussetzung: Port 80 + 443 offen, DNS neko.laurin-rusterholz.ch -> 82.180.155.81
-neko.laurin-rusterholz.ch {
-    reverse_proxy localhost:8080
-}

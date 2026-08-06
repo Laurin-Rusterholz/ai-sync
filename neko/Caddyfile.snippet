@@ -1,0 +1,17 @@
+# Quantus Browser — Caddy-Site-Block.
+#
+# NUR verwenden, wenn auf dem VPS Caddy bereits der aktive Reverse Proxy ist
+# oder gar kein Proxy laeuft. Laeuft schon nginx oder Traefik (z. B. fuer n8n),
+# NICHT Caddy zusaetzlich installieren — sonst kollidieren zwei Dienste auf
+# Port 80/443 und das bestehende n8n-Setup faellt aus.
+# Das Deploy-Skript erkennt das automatisch und waehlt die passende Variante.
+#
+# Ziel:  /etc/caddy/conf.d/neko.caddy  (bei vorhandenem Caddy mit conf.d-Import)
+#   oder anhaengen an /etc/caddy/Caddyfile
+# Danach: caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+#
+# Caddy stellt Let's-Encrypt-Zertifikate automatisch aus und proxyt WebSockets
+# ohne Zusatzkonfiguration.
+neko.laurin-rusterholz.ch {
+	reverse_proxy 127.0.0.1:8080
+}
