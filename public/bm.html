@@ -1065,12 +1065,27 @@ document.addEventListener("click", function(e){
     case "tts": { var rr=IDX.byKey[el.getAttribute("data-key")]; if(window.__speaking){ speechSynthesis.cancel(); window.__speaking=false; } else { speak(rr.thema.titel+". "+(rr.thema.theorie||"")); window.__speaking=true; } break; }
   }
 });
-var noteTimer=null;
+/* Notizen werden gebuendelt geschrieben (600 ms). Wer den Tab innerhalb dieser
+   Pause schloss oder wechselte, verlor die letzten Anschlaege: die Notiz lag bis
+   dahin nur im Textfeld. flushNote() holt den offenen Schreibvorgang nach.
+   pagehide und visibilitychange sind dabei die verlaesslichen Signale —
+   beforeunload feuert auf Mobilgeraeten oft gar nicht. */
+var noteTimer=null, notePending=null;
+function flushNote(){
+  if(!notePending) return;
+  clearTimeout(noteTimer); noteTimer=null;
+  var job=notePending; notePending=null;
+  job();
+}
 document.addEventListener("input", function(e){ var el=e.target;
   if(el.getAttribute&&el.getAttribute("data-action")==="note-input"){ var k=el.getAttribute("data-key"),st=document.getElementById("note-status"); if(st)st.textContent="…";
-    clearTimeout(noteTimer); noteTimer=setTimeout(function(){ var fk=fbKey(k); if((el.value||"").trim()) U.notes[fk]=el.value; else delete U.notes[fk]; saveNote(k); if(st)st.textContent="✓ gespeichert"; }, 600); }
+    notePending=function(){ var fk=fbKey(k); if((el.value||"").trim()) U.notes[fk]=el.value; else delete U.notes[fk]; saveNote(k); if(st)st.textContent="✓ gespeichert"; };
+    clearTimeout(noteTimer); noteTimer=setTimeout(flushNote, 600); }
   if(el.getAttribute&&el.getAttribute("data-action")==="search-live"){ runSearch(el.value); }
 });
+window.addEventListener("pagehide", flushNote);
+window.addEventListener("beforeunload", flushNote);
+document.addEventListener("visibilitychange", function(){ if(document.hidden) flushNote(); });
 document.addEventListener("keydown", function(e){
   if(e.target&&e.target.id==="chat-input"&&e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); chatSend(); }
   if(quiz&&!quiz.revealed){ var it=quiz.items[quiz.idx]; if(it&&it.a.typ==="mc"&&/^[1-9]$/.test(e.key)){ var i=parseInt(e.key,10)-1; if(i<(it.a.optionen||[]).length){ quiz.chosen=i; quiz.revealed=true; renderQuiz(document.getElementById("app")); } } }

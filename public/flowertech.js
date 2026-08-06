@@ -248,6 +248,38 @@
     ["lead", "Lead"], ["intake", "Bestandesaufnahme"], ["proposal", "Angebot / Vertrag"],
     ["build", "Umsetzung"], ["revision", "Änderungsrunde"], ["approval", "Freigabe / Abschluss"]
   ];
+  // Die Bereiche von FlowerTech. Frueher waren sie eine horizontale Leiste
+  // ueber dem Inhalt — eine zweite App-Navigation im Inhalt, direkt unter der
+  // globalen. Die Leiste ist ersatzlos entfernt. Die Bereiche bleiben ueber
+  // Deep Links (#/flowertech/<bereich>), die globale Suche (Cmd/Ctrl+K) und die
+  // Einstiegskarten auf der Uebersicht erreichbar.
+  var SECTIONS = [
+    ["dashboard", "Übersicht", "🌸", "Zahlen, Projekte und letzte Anfragen auf einen Blick"],
+    ["projects", "Projekte", "📦", "FlowerTech-Projekte anlegen und öffnen"],
+    ["planung", "Planung", "🗓️", "Termine, Meilensteine und Fristen über alle Projekte"],
+    ["tasks", "Aufgaben", "✅", "Alle FlowerTech-Aufgaben"],
+    ["offers", "Offerten", "📄", "Offerten erstellen, versenden, nachfassen"],
+    ["invoices", "Rechnungen", "🧾", "Rechnungen, Zahlungen, Mahnungen"],
+    ["ai", "KI", "✨", "Textentwürfe, Statusberichte, Antworten"],
+    ["leads", "Leads / Anfragen", "📥", "Anfragen von der Website"],
+    ["pipeline", "Pipeline", "📊", "Projekte nach Phase"],
+    ["finances", "Finanzen", "💰", "Einnahmen und Ausgaben"],
+    ["notes", "Notizen", "📝", "Notizen zu FlowerTech"],
+    ["links", "Links", "🔗", "Gesammelte Links"],
+    ["videos", "Instagram-Videos", "🎬", "Videos und Veröffentlichungen"],
+    ["settings", "Firma", "⚙️", "Firmendaten für Offerten und Rechnungen"]
+  ];
+  function sectionOf(key) {
+    return SECTIONS.find(function (s) { return s[0] === key; }) || SECTIONS[0];
+  }
+  // Der Bereich steht im Hash (#/flowertech/offers), damit er verlinkbar,
+  // teilbar und ueber die globale Suche erreichbar ist.
+  function sectionFromHash() {
+    var parts = String(location.hash || "").split("/");
+    var key = parts[2] || "";
+    return SECTIONS.some(function (s) { return s[0] === key; }) ? key : "";
+  }
+
   // Alte Phasenschlüssel bleiben lesbar, tauchen aber nicht als Pipeline-Spalte auf.
   var LEGACY_STAGE_LABELS = { discovery: "Abklärung", won: "Gewonnen", lost: "Verloren" };
 
@@ -442,12 +474,20 @@
   // ==========================================================================
   //  Aktionen
   // ==========================================================================
-  window._ftSetTab = function (tab) {
+  // Bereichswechsel = Navigation. Der Hash ist die Wahrheit, damit ein Bereich
+  // verlinkbar bleibt und Zurueck/Vor im Browser funktioniert.
+  function setActiveTab(tab) {
     var ft = state();
+    if (!ft) return;
     ft.activeTab = tab;
     ft.ui.docId = null;
     save();
-    rerender();
+  }
+  window._ftSetTab = function (tab) {
+    setActiveTab(tab);
+    var target = "#/flowertech" + (tab && tab !== "dashboard" ? "/" + tab : "");
+    if (location.hash === target) rerender();
+    else location.hash = target;
   };
 
   // Ein FlowerTech-Projekt hat keine eigene, abgespeckte Ansicht mehr. Es wird
@@ -671,7 +711,7 @@
     // Ohne Projekt: in den passenden FlowerTech-Reiter wechseln. Mit Projekt
     // bleibt man auf der Projektseite — dort öffnet ftProjectPanel() denselben
     // Editor direkt beim Projekt.
-    if (!projectId) ft.activeTab = kind === "invoice" ? "invoices" : "offers";
+    if (!projectId) setActiveTab(kind === "invoice" ? "invoices" : "offers");
     ft.ui.docId = doc.id;
     ft.ui.docKind = kind;
     save();
@@ -802,7 +842,7 @@
     if (!offer) return;
     if (offer.invoiceId && docById("invoice", offer.invoiceId)) {
       notify("warn", "FlowerTech", "Aus dieser Offerte wurde bereits eine Rechnung erstellt");
-      ft.activeTab = "invoices";
+      setActiveTab("invoices");
       ft.ui.docId = offer.invoiceId;
       save();
       return rerender();
@@ -827,7 +867,7 @@
     offer.invoiceId = invoice.id;
     if (offer.status === "draft" || offer.status === "sent") offer.status = "accepted";
     offer.updatedAt = now();
-    ft.activeTab = "invoices";
+    setActiveTab("invoices");
     ft.ui.docId = invoice.id;
     ft.ui.docKind = "invoice";
     save();
@@ -1190,7 +1230,7 @@
         "Name: " + (inquiry.name || "—") + "\nUnternehmen: " + (inquiry.company || "—") +
         "\nInteresse: " + (inquiry.service || "—") + "\nNachricht:\n" + (inquiry.message || "—");
       pushAi("Antwort an " + (inquiry.name || inquiry.email || "Anfrage"), await ask(prompt, null, 700));
-      state().activeTab = "ai";
+      setActiveTab("ai");
     } catch (error) { notify("err", "KI", error.message || String(error)); }
     setAiBusy(false);
   };
@@ -1206,7 +1246,7 @@
         "\nBetrag: " + money(docTotals(invoice).rounded) + "\nFällig war: " + dateOnly(invoice.dueDate) +
         "\n\nKeine Drohungen, freundlicher Ton, Bitte um Zahlung innert 10 Tagen, Hinweis dass sich die Nachricht mit einer bereits erfolgten Zahlung überschneiden kann.";
       pushAi("Zahlungserinnerung " + (invoice.number || ""), await ask(prompt, null, 600));
-      state().activeTab = "ai";
+      setActiveTab("ai");
     } catch (error) { notify("err", "KI", error.message || String(error)); }
     setAiBusy(false);
   };
@@ -1787,6 +1827,21 @@
   // ==========================================================================
   //  Hauptansicht
   // ==========================================================================
+  // Kontextzugang zu den Bereichen: ruhige Karten am Fuss der Uebersicht,
+  // jede mit einem echten Deep Link. Ersetzt die frueher immer sichtbare
+  // Bereichsleiste.
+  function sectionEntriesHtml() {
+    return '<div class="card p-4 mt-3"><h3>Bereiche</h3><div class="sep"></div>' +
+      '<div class="ft-entries">' + SECTIONS.filter(function (s) { return s[0] !== "dashboard"; })
+        .map(function (s) {
+          return '<a class="ft-entry" href="#/flowertech/' + s[0] + '">' +
+            '<span class="ft-entry-icon" aria-hidden="true">' + esc(s[2]) + "</span>" +
+            '<span class="ft-entry-text"><strong>' + esc(s[1]) + "</strong><small>" + esc(s[3]) + "</small></span></a>";
+        }).join("") + "</div>" +
+      '<div class="mini mt-2">Jeder Bereich hat einen eigenen Link (z. B. <code>#/flowertech/offers</code>) ' +
+      "und ist über die globale Suche mit ⌘K / Strg+K erreichbar.</div></div>";
+  }
+
   function renderFlowerTech() {
     var ft = state();
     if (!ft) return '<div class="card p-4">FlowerTech wird geladen…</div>';
@@ -1796,14 +1851,8 @@
     var allTasks = tasks();
     var allInquiries = inquiries();
     var allVideos = videos();
-    var activeTab = ft.activeTab;
+    var activeTab = sectionFromHash() || ft.activeTab || "dashboard";
 
-    var tabs = [
-      ["dashboard", "Dashboard"], ["projects", "Projekte"], ["planung", "Planung"], ["tasks", "Aufgaben"],
-      ["offers", "Offerten"], ["invoices", "Rechnungen"], ["ai", "KI"],
-      ["leads", "Leads / Anfragen"], ["pipeline", "Pipeline"], ["finances", "Finanzen"],
-      ["notes", "Notizen"], ["links", "Links"], ["videos", "Instagram-Videos"], ["settings", "Firma"]
-    ];
     var syncLabels = {
       connected: "Firebase verbunden", syncing: "Synchronisiert…",
       login_required: "Anmeldung erforderlich", error: "Synchronisationsfehler",
@@ -2060,10 +2109,19 @@
       (ft.lastSyncAt ? "Zuletzt " + dateTime(ft.lastSyncAt) : "Noch nicht synchronisiert") +
       '</div><button class="btn sm mt-2" onclick="window._ftSyncNow()">Jetzt synchronisieren</button></div></div>' +
       (ft.ui.aiBusy ? '<div class="ft-alert"><span>' + esc(ft.ui.aiBusy) + "</span></div>" : "") +
-      '<div class="ft-tabs">' + tabs.map(function (tab) {
-        return '<button class="ft-tab ' + (activeTab === tab[0] ? "active" : "") + '" onclick="window._ftSetTab(\'' +
-          tab[0] + '\')">' + esc(tab[1]) + "</button>";
-      }).join("") + "</div>" + content + "</div>";
+      // KEINE Bereichsleiste mehr. Ist ein Bereich geoeffnet, steht nur eine
+      // schmale Kontextzeile mit dem Rueckweg darueber — der Bereich selbst
+      // bekommt den Platz.
+      (activeTab === "dashboard" ? "" :
+        '<div class="ft-context"><button class="ft-context-back" onclick="window._ftSetTab(\'dashboard\')">' +
+        '<span aria-hidden="true">←</span> FlowerTech-Übersicht</button>' +
+        '<span class="ft-context-sep" aria-hidden="true">›</span>' +
+        '<h2 class="ft-context-title">' + esc(sectionOf(activeTab)[2]) + " " + esc(sectionOf(activeTab)[1]) + "</h2></div>") +
+      content +
+      // Einstiegskarten stehen NUR auf der Uebersicht und unter dem Inhalt —
+      // sie sind Inhalt, keine Navigationsleiste ueber dem Arbeitsbereich.
+      (activeTab === "dashboard" ? sectionEntriesHtml() : "") +
+      "</div>";
   }
 
   // ==========================================================================
@@ -3130,7 +3188,23 @@
     ".ft-brand{display:flex;align-items:center;gap:12px}" +
     ".ft-mark{width:46px;height:46px;border-radius:15px;display:grid;place-items:center;font-size:25px;background:linear-gradient(135deg,rgba(232,121,169,.24),rgba(124,58,237,.22));border:1px solid rgba(232,121,169,.35)}" +
     ".ft-sync{font-size:11px;color:var(--muted);text-align:right}" +
+    // .ft-tabs/.ft-tab tragen jetzt nur noch die Bereichsnavigation INNERHALB
+    // eines Projekts (Ablauf, Bedarf, Angebot …). Die App-weite Bereichsleiste
+    // ueber dem Inhalt ist ersatzlos entfernt.
     ".ft-tabs{display:flex;gap:6px;overflow:auto;padding-bottom:8px;margin-bottom:18px}" +
+    ".ft-context{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 16px}" +
+    ".ft-context-back{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);" +
+      "background:var(--panel2);color:var(--muted);padding:6px 11px;border-radius:9px;cursor:pointer;font-size:12.5px}" +
+    ".ft-context-back:hover{background:var(--hover);color:var(--text)}" +
+    ".ft-context-sep{color:var(--muted);font-size:13px}" +
+    ".ft-context-title{margin:0;font-size:17px;font-weight:700}" +
+    ".ft-entries{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}" +
+    ".ft-entry{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);" +
+      "border-radius:11px;text-decoration:none;color:var(--text);transition:background .13s ease}" +
+    ".ft-entry:hover{background:var(--hover)}" +
+    ".ft-entry-icon{font-size:19px;flex:none}" +
+    ".ft-entry-text{display:flex;flex-direction:column;min-width:0}" +
+    ".ft-entry-text small{color:var(--muted);font-size:11.5px}" +
     ".ft-tab{white-space:nowrap;border:1px solid var(--border);background:var(--panel2);color:var(--muted);padding:8px 12px;border-radius:10px;cursor:pointer}" +
     ".ft-tab.active{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--ft),var(--ft2))}" +
     ".ft-subtabs{margin-top:14px}" +
@@ -3263,11 +3337,21 @@
     ".ft-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}" +
     "@media(max-width:780px){.ft-brief-grid,.ft-checks{grid-template-columns:1fr}" +
       ".ft-cr{grid-template-columns:1fr;align-items:stretch}.ft-link-row span{min-width:0}}" +
+    "@media(max-width:780px){.ft-entries{grid-template-columns:1fr}.ft-context-title{font-size:15px}" +
     "@media(max-width:780px){.ft-head{flex-direction:column}.ft-sync{text-align:left}.ft-kpis{grid-template-columns:1fr 1fr}" +
     ".ft-grid-2{grid-template-columns:1fr}.ft-inline-form{flex-direction:column}.ft-lead{grid-template-columns:1fr}" +
     ".ft-pipeline{grid-template-columns:repeat(6,220px)}.ft-ms{flex-wrap:wrap}.ft-ms input[type=date]{width:130px}" +
     ".ft-item-head{display:none}.ft-item-row{grid-template-columns:1fr 1fr;gap:6px}.ft-item-row .ft-item-desc{grid-column:1/-1}}" +
     "@media(max-width:460px){.ft-kpis{grid-template-columns:1fr}}";
+
+  // Die globale Suche (Cmd/Ctrl+K) zieht die Bereiche hier ab — dieselbe Liste,
+  // aus der die Einstiegskarten gebaut werden. Damit ersetzt die Suche die
+  // entfernte Bereichsleiste vollwertig.
+  window.flowerTechSearchSections = function () {
+    return SECTIONS.filter(function (s) { return s[0] !== "dashboard"; }).map(function (s) {
+      return { key: s[0], icon: s[2], title: "FlowerTech: " + s[1], sub: s[3] };
+    });
+  };
 
   window.viewFlowerTech = renderFlowerTech;
   // Wird von viewProjectDetail() aufgerufen: der FlowerTech-Block auf der

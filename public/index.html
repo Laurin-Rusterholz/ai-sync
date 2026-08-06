@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export · 2026-08-06" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed · 2026-08-06" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -10223,6 +10223,14 @@ for (const u of Object.values(e.updates)) {
   d.journal.topics = d.journal.topics || [];
   d.journal.selfLetters = d.journal.selfLetters || [];
   d.journal.settings = d.journal.settings || { name: '', street: '', city: '', geminiApiKey: '' };
+  // Entwurf des Zukunftsbriefs. Vorher lebte der Brief NUR im DOM und war weg,
+  // sobald man den Editor schloss, die Seite neu lud oder der Tab abstürzte —
+  // erst „Senden" hat ihn überhaupt gespeichert. Der Entwurf wird laufend
+  // gesichert und beim Öffnen wiederhergestellt.
+  d.journal.selfLetterDraft = d.journal.selfLetterDraft || null;
+  // KI-Gespräch im Editor: lag ebenfalls nur im DOM und war nach einem Neuladen
+  // verloren. Format: [{ role: "user" | "ai", text, at }]
+  d.journal.chat = Array.isArray(d.journal.chat) ? d.journal.chat : [];
   // Check arrived self-letters
   const _jbNow = Date.now();
   d.journal.selfLetters.forEach(letter => {
@@ -12396,6 +12404,43 @@ function flushLocalSave() {
   if (_localSaveTimer) { clearTimeout(_localSaveTimer); _localSaveTimer = null; }
   if (_localSaveDirty) saveLocalData();
 }
+
+// ── Ausstehende gebündelte Speicherungen ────────────────────────────────────
+// Mehrere Module bündeln ihren scheduleSave()-Aufruf beim Tippen (500–800 ms),
+// damit nicht jeder Tastendruck einen Voll-Snapshot auslöst. Das Modell ist zu
+// diesem Zeitpunkt bereits geändert — aber solange scheduleSave() nicht lief,
+// ist NICHTS als geändert markiert: flushLocalSave() schreibt dann nichts und
+// der Server erfährt es nie. Wer den Tab innerhalb dieser Pause schloss oder
+// wechselte, verlor die letzte Eingabe.
+// Diese Registry hält die offenen Timer an einer Stelle, sodass Tab-Wechsel und
+// Schließen sie nachholen können. Module rufen statt eines eigenen setTimeout
+// scheduleSaveDebounced(key, delay) auf.
+var _pendingSaves = new Map();
+function scheduleSaveDebounced(key, delay, fn) {
+  var previous = _pendingSaves.get(key);
+  if (previous) clearTimeout(previous.timer);
+  var run = typeof fn === "function" ? fn : scheduleSave;
+  var timer = setTimeout(function() { _pendingSaves.delete(key); run(); }, delay || 600);
+  _pendingSaves.set(key, { timer: timer, run: run });
+}
+function flushPendingSaves() {
+  if (_pendingSaves.size) {
+    _pendingSaves.forEach(function(entry) {
+      clearTimeout(entry.timer);
+      try { entry.run(); } catch (e) { console.warn("[flushPendingSaves]", e); }
+    });
+    _pendingSaves.clear();
+  }
+  // Unabhängig von der Reihenfolge der Listener: das lokale Schreiben direkt
+  // hinterherziehen, sonst wartet es wieder 400 ms, die es nicht mehr gibt.
+  flushLocalSave();
+}
+window.scheduleSaveDebounced = scheduleSaveDebounced;
+window.flushPendingSaves = flushPendingSaves;
+
+window.addEventListener("pagehide", flushPendingSaves);
+window.addEventListener("beforeunload", flushPendingSaves);
+document.addEventListener("visibilitychange", function() { if (document.hidden) flushPendingSaves(); });
 window.addEventListener("pagehide", flushLocalSave);
 window.addEventListener("beforeunload", flushLocalSave);
 document.addEventListener("visibilitychange", function() { if (document.hidden) flushLocalSave(); });
@@ -18833,7 +18878,7 @@ function renderMain() {
     if (route !== "readinghub") { const c = document.getElementById("readingHubContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
     if (route !== "learn") { const c = document.getElementById("recallLabOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
     if (route !== "visionboard") { const c = document.getElementById("visionBoardOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
-    if (route !== "journal") { const c = document.getElementById("journalBookletContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
+    if (route !== "journal") { const c = document.getElementById("journalBookletContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); document.body.classList.remove("jb-open"); }
   } catch(e) {}
   
   // ═══ Globaler App-Lock-Check ═══
@@ -21290,8 +21335,7 @@ window.dcUpdateMatrixSummary = function(id, value) {
   if (!dc) return;
   dc.matrixSummary = value;
   dc.updatedAt = nowIso();
-  if (window._dcSummarySaveTimer) clearTimeout(window._dcSummarySaveTimer);
-  window._dcSummarySaveTimer = setTimeout(() => scheduleSave(), 800);
+  scheduleSaveDebounced("decision-matrix-summary:" + id, 800);
 };
 
 // Decision daily reminder check
@@ -25345,6 +25389,7 @@ function renderThesisWriteTab(th, state) {
           <div 
             id="thsEditor_${chapter.id}"
             contenteditable="true"
+            data-thesis-id="${th.id}" data-chapter-id="${chapter.id}"
             data-placeholder="Schreib hier dein Kapitel. Nimm dir Zeit. Atme. Lass die Worte fließen."
             style="width:100%;min-height:540px;background:none;border:0;outline:none;color:var(--text);font-family:${fontFamily};font-size:${fontSize}px;line-height:${lineHeight};box-sizing:border-box"
             oninput="window.thsLiveWordCount(this,'${chapter.id}');window.thsScheduleAutoSave('${th.id}','${chapter.id}')"
@@ -26053,6 +26098,7 @@ function renderThesisFocusMode(th, chapterId) {
             id="thsFocusEditor"
             class="ths-focus-textarea"
             contenteditable="true"
+            data-thesis-id="${th.id}" data-chapter-id="${chapter.id}"
             data-placeholder="Atme. Schreib."
             oninput="window.thsLiveWordCount(this,'${chapter.id}');window.thsScheduleAutoSave('${th.id}','${chapter.id}')"
             onblur="window.thsSaveChapterContentHtml('${th.id}','${chapter.id}',this.innerHTML);window.thsTrackSession('${th.id}','${chapter.id}',this.innerText)"
@@ -28075,14 +28121,17 @@ window.thsSaveChapterContentHtml = function(thId, chId, html) {
   scheduleSave();
 };
 
-// Debounced auto-save während des Tippens (1.5s)
+// Gebündeltes Speichern während des Tippens (1.5 s). Über die zentrale
+// Registry, damit ein Tab-Wechsel oder Schließen den offenen Schreibvorgang
+// nachholt — 1,5 Sekunden sind sonst schnell ein verlorener Satz.
 window.thsScheduleAutoSave = function(thId, chId) {
-  if (window._thsAutoSaveTimer) clearTimeout(window._thsAutoSaveTimer);
-  window._thsAutoSaveTimer = setTimeout(() => {
+  const write = () => {
     // Normaler Editor ODER Fokus-/Sprint-Editor (thsFocusEditor)
     const el = document.getElementById('thsEditor_' + chId) || document.getElementById('thsFocusEditor');
     if (el) window.thsSaveChapterContentHtml(thId, chId, el.innerHTML);
-  }, 1500);
+  };
+  if (typeof window.scheduleSaveDebounced === "function") window.scheduleSaveDebounced("thesis:" + thId + ":" + chId, 1500, write);
+  else write();
 };
 
 window.thsLiveWordCount = function(el, chId) {
@@ -28121,6 +28170,12 @@ window.thsFormat = function(command, value) {
   // re-focus auf den aktiven editor
   const focused = document.activeElement;
   if (focused?.id?.startsWith('thsEditor_')) focused.focus();
+  // execCommand loest je nach Browser kein input-Ereignis aus — reine
+  // Formatierung ginge dann verloren. Deshalb ausdruecklich sichern.
+  const ed = document.activeElement;
+  const thId = ed?.dataset?.thesisId || null;
+  const chId = ed?.dataset?.chapterId || null;
+  if (thId && chId) window.thsScheduleAutoSave(thId, chId);
 };
 
 // Bild via File-Picker einfügen
@@ -33234,8 +33289,7 @@ window.prjUpdateMatrixSummary = function(id, value) {
   const p = APP.state.data.entities.projects[id];
   if (!p) return;
   p.matrixSummary = value;
-  if (window._prjSummarySaveTimer) clearTimeout(window._prjSummarySaveTimer);
-  window._prjSummarySaveTimer = setTimeout(() => scheduleSave(), 800);
+  scheduleSaveDebounced("project-matrix-summary:" + id, 800);
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -33343,8 +33397,7 @@ window.prjUpdateWeeklyTarget = function(id, value) {
   const p = APP.state.data.entities.projects[id];
   if (!p) return;
   p.weeklyTargetHours = parseFloat(value) || 0;
-  if (window._prjWeeklySaveTimer) clearTimeout(window._prjWeeklySaveTimer);
-  window._prjWeeklySaveTimer = setTimeout(() => scheduleSave(), 500);
+  scheduleSaveDebounced("project-weekly-target:" + id, 500);
 };
 
 window.prjAddTimePhase = function(id) {
@@ -33717,8 +33770,7 @@ window.prjUpdateSubGoal = function(id, sgId, value) {
   const g = p.subGoals.find(x => x.id === sgId);
   if (!g) return;
   g.title = value;
-  if (window._prjSgSaveTimer) clearTimeout(window._prjSgSaveTimer);
-  window._prjSgSaveTimer = setTimeout(() => scheduleSave(), 800);
+  scheduleSaveDebounced("project-subgoal:" + id + ":" + sgId, 800);
 };
 
 window.prjToggleSubGoal = function(id, sgId) {
@@ -35591,8 +35643,7 @@ window.pb88UpdateTopic = function(id, topicId, field, value) {
   const pb = pb88Pb(id); if (!pb) return;
   const t = (pb.topics||[]).find(x => x.id === topicId); if (!t) return;
   t[field] = value;
-  if (window._pb88TopicSaveTimer) clearTimeout(window._pb88TopicSaveTimer);
-  window._pb88TopicSaveTimer = setTimeout(() => pb88Save(), 600);
+  scheduleSaveDebounced("pb88-topic:" + id + ":" + topicId, 600, pb88Save);
 };
 
 window.pb88DeleteTopic = function(id, topicId) {
@@ -35618,8 +35669,7 @@ window.pb88UpdateFocusArea = function(id, faId, field, value) {
   const pb = pb88Pb(id); if (!pb) return;
   const fa = (pb.focusAreas||[]).find(x => x.id === faId); if (!fa) return;
   fa[field] = value;
-  if (window._pb88FASaveTimer) clearTimeout(window._pb88FASaveTimer);
-  window._pb88FASaveTimer = setTimeout(() => pb88Save(), 600);
+  scheduleSaveDebounced("pb88-focusarea:" + id + ":" + faId, 600, pb88Save);
 };
 
 window.pb88DeleteFocusArea = function(id, faId) {
@@ -66469,12 +66519,14 @@ function initNoteFlow() {
   window.nfSetFont = function(fontFamily) {
     var ed = document.getElementById("nf-ed-content");
     if (ed) ed.style.fontFamily = "'" + fontFamily + "',sans-serif";
-    if (nfCurrentNote) nfCurrentNote._fontFamily = fontFamily;
+    // _fontFamily wandert erst in nfAutoSave() nach fontFamily. Ohne eigenen
+    // Aufruf ginge die Schriftwahl verloren, solange man nichts mehr tippt.
+    if (nfCurrentNote) { nfCurrentNote._fontFamily = fontFamily; nfAutoSave(); }
   };
   window.nfSetFontSize = function(size) {
     var ed = document.getElementById("nf-ed-content");
     if (ed) ed.style.fontSize = size + "px";
-    if (nfCurrentNote) nfCurrentNote._fontSize = size;
+    if (nfCurrentNote) { nfCurrentNote._fontSize = size; nfAutoSave(); }
   };
   
   // Pin note toggle
@@ -67675,6 +67727,11 @@ window.saveSettingsModal = function() {
   }
   
   saveSettings(APP.state.settings);
+  // saveSettings() schreibt nur die Einstellungen (localStorage/IndexedDB). Die
+  // Aenderungen an APP.state.data — ideasSettings und die eingebettete Kopie
+  // _settings — muessen zusaetzlich als geaendert markiert werden, sonst fehlen
+  // sie im lokalen Datenstand und werden nie zum Server synchronisiert.
+  scheduleSave();
   closeModal();
   applySidebarVisibility(parseHash().route);
   renderSidebarLockButton();
@@ -82132,7 +82189,13 @@ document.addEventListener("click", function(e) {
 <style>
 .jb-container{position:fixed;inset:0;z-index:9990;background:var(--bg);color:var(--text);display:none;flex-direction:column;overflow:hidden;font-family:'Inter',sans-serif}
 .jb-container.active{display:flex}
-.jb-nav{border-bottom:1px solid var(--panel);padding:16px 24px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,.8);backdrop-filter:blur(12px);position:sticky;top:0;z-index:40}
+/* Perf: kein backdrop-filter auf der Sticky-Nav — Blur über einem scrollenden
+   Container erzwingt bei jedem Frame ein GPU-Recomposite des Hintergrunds. */
+.jb-nav{border-bottom:1px solid var(--panel);padding:16px 24px;display:flex;justify-content:space-between;align-items:center;background:var(--bg);position:sticky;top:0;z-index:40}
+/* Perf: Solange das Journal als Vollbild-Overlay läuft, muss die (sehr grosse)
+   Haupt-App darunter weder gelayoutet noch gezeichnet werden. Die globalen
+   Sekunden-Timer schreiben zwar weiter ins DOM, kosten dann aber kein Rendering. */
+body.jb-open #app,body.jb-open #launchScreen{content-visibility:hidden}
 .jb-nav h1{font-size:24px;font-weight:700;letter-spacing:-.05em;color:var(--text)}
 .jb-nav h1 span{color:var(--muted)}
 .jb-nav-links{display:flex;gap:16px;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);overflow-x:auto;padding:8px 0}
@@ -82164,10 +82227,31 @@ document.addEventListener("click", function(e) {
 .jb-editor-content{flex:1;padding:32px 96px;display:flex;flex-direction:column;align-items:center;overflow-y:auto}
 @media(max-width:768px){.jb-editor-content{padding:16px}}
 .jb-editor-wrap{width:100%;max-width:768px}
-.jb-editor-title{font-size:48px;font-weight:700;width:100%;color:var(--text);background:transparent!important;border:none!important;outline:none;font-family:inherit;padding:0!important;border-radius:0!important}
+.jb-editor-title{font-size:48px;font-weight:700;width:100%;color:var(--text);background:transparent!important;border:none!important;outline:none;font-family:inherit;padding:0!important;border-radius:0!important;line-height:1.15;letter-spacing:-.02em}
 .jb-editor-title::placeholder{color:var(--panel)}
-.jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none}
+/* ── Schreibkomfort ───────────────────────────────────────────────────────
+   Zeilenlaenge, Zeilenabstand und Absatzrhythmus entscheiden darueber, ob man
+   gern weiterschreibt. 66 Zeichen sind die klassische Lesebreite; darunter
+   springt das Auge, darueber verliert es die Zeile. Der Schreibbereich waechst
+   unten mit, damit der Cursor nie am Fensterrand klebt. */
+.jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none;
+  max-width:66ch;margin:0 auto;padding-bottom:45vh;
+  caret-color:var(--accent);text-wrap:pretty;hyphens:auto;-webkit-hyphens:auto}
 .jb-richtext:empty::before{content:attr(data-placeholder);color:var(--panel)}
+.jb-richtext>div,.jb-richtext>p{margin:0 0 .85em}
+.jb-richtext ul,.jb-richtext ol{padding-left:1.4em;margin:1em 0}
+.jb-richtext li{margin:.3em 0}
+.jb-richtext ::selection{background:color-mix(in oklab,var(--accent) 32%,transparent)}
+/* Ruhe-Modus: alles ausser dem Text tritt zurueck. Der laufende Absatz bleibt
+   voll sichtbar, die uebrigen daemmern — das haelt den Blick an der Stelle,
+   an der geschrieben wird, ohne den Zusammenhang wegzunehmen. */
+.jb-editor.jb-calm .jb-editor-header{opacity:.12;transition:opacity .35s}
+.jb-editor.jb-calm .jb-editor-header:hover,.jb-editor.jb-calm .jb-editor-header:focus-within{opacity:1}
+.jb-editor.jb-calm .jb-richtext>*{opacity:.32;transition:opacity .35s}
+.jb-editor.jb-calm .jb-richtext>.jb-here,.jb-editor.jb-calm .jb-richtext:not(:focus-within)>*{opacity:1}
+.jb-writing-meta{display:flex;gap:14px;align-items:center;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.jb-writing-meta b{color:var(--text2);font-weight:700}
+@media(max-width:768px){.jb-richtext{font-size:17px;padding-bottom:35vh}.jb-editor-title{font-size:32px}}
 /* Kein violetter Fokus-Ring im Schreibbereich (globale :focus-visible-Regel überschreiben) */
 .jb-richtext:focus,.jb-richtext:focus-visible,.jb-editor-title:focus,.jb-editor-title:focus-visible,
 .jb-editor [contenteditable]:focus,.jb-editor [contenteditable]:focus-visible,
@@ -82245,7 +82329,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         <button onclick="jbFormat('formatBlock','blockquote')" class="jb-toolbar-btn" title="Zitat">"</button>
       </div>
       <div style="width:1px;height:14px;background:var(--panel);flex-shrink:0"></div>
-      <select class="jb-select" id="jbEditorFont" onchange="jbUpdateFont()" style="font-size:9px;padding:4px 2rem 4px 8px">
+      <span class="jb-writing-meta" id="jbWritingMeta"></span>
+      <button id="jbCalmBtn" onclick="jbToggleCalm()" style="background:none;border:1px solid var(--panel);color:var(--text2);font-size:11px;padding:4px 9px;border-radius:6px;cursor:pointer" title="Ruhe-Modus: alles ausser dem Text tritt zurück (Escape beendet ihn)">◐ Ruhe</button>
+      <select class="jb-select" id="jbEditorFont" onchange="jbUpdateFont();jbAutoSave()" style="font-size:9px;padding:4px 2rem 4px 8px">
         <option value="jb-font-inter">Inter</option>
         <option value="jb-font-lora">Lora</option>
         <option value="jb-font-inconsolata">Mono</option>
@@ -82279,7 +82365,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
           </div>
         </div>
         <input type="text" id="jbEditorTitle" class="jb-editor-title" placeholder="Haupttitel..." oninput="jbAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbEditorArea').focus()}">
-        <div id="jbEditorArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Beginne deine Erzählung..." oninput="jbAutoSave()"></div>
+        <div id="jbEditorArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Beginne deine Erzählung..." spellcheck="true" oninput="jbOnWrite()"></div>
       </div>
     </div>
   </div>
@@ -82325,7 +82411,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         <button onclick="jbFormatSL('formatBlock','blockquote')" class="jb-toolbar-btn">"</button>
       </div>
       <div style="width:1px;height:14px;background:var(--panel);flex-shrink:0"></div>
-      <select class="jb-select" id="jbSLFont" onchange="jbUpdateSLFont()" style="font-size:9px;padding:4px 2rem 4px 8px">
+      <select class="jb-select" id="jbSLFont" onchange="jbUpdateSLFont();jbSLAutoSave()" style="font-size:9px;padding:4px 2rem 4px 8px">
         <option value="jb-font-inter">Inter</option>
         <option value="jb-font-lora">Lora</option>
         <option value="jb-font-inconsolata">Mono</option>
@@ -82334,6 +82420,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
     <!-- Right -->
     <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+      <span id="jbSLStatus" style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;white-space:nowrap"></span>
+      <button onclick="jbDiscardSelfLetterDraft()" style="background:none;border:1px solid var(--panel);color:var(--text2);font-size:9px;padding:5px 10px;border-radius:6px;cursor:pointer;text-transform:uppercase;letter-spacing:.1em" title="Entwurf verwerfen und neu beginnen">Neu</button>
       <button onclick="jbToggleFullscreen()" style="background:none;border:1px solid var(--panel);color:var(--text2);font-size:12px;padding:4px 8px;border-radius:6px;cursor:pointer" title="Vollbild">⛶</button>
       <button onclick="jbToggleSLSidebar()" style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);color:var(--warn);font-size:9px;padding:5px 14px;border-radius:6px;cursor:pointer;font-weight:600;text-transform:uppercase;letter-spacing:.1em">⏰ Senden</button>
     </div>
@@ -82341,8 +82429,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   <div class="jb-editor-body">
     <div class="jb-editor-content">
       <div class="jb-editor-wrap">
-        <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
-        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..."></div>
+        <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." oninput="jbSLAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
+        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." spellcheck="true" oninput="jbApplyTypography();jbSLAutoSave()"></div>
       </div>
     </div>
   </div>
@@ -82363,7 +82451,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       <button onclick="jbSetDelay('custom')" class="jb-delay-btn" data-delay="custom"><span style="margin-right:8px">✨</span><b>Individuelles Datum</b></button>
       <div id="jbCustomDatePicker" style="display:none">
         <label style="font-size:9px;color:var(--muted);text-transform:uppercase">Datum auswählen</label>
-        <input type="date" id="jbSLCustomDate" class="jb-input" onchange="jbUpdateDeliveryPreview()" style="margin-top:4px">
+        <input type="date" id="jbSLCustomDate" class="jb-input" onchange="jbUpdateDeliveryPreview();jbSLAutoSave()" style="margin-top:4px">
       </div>
       <div id="jbDeliveryPreview" style="display:none;padding:16px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:12px;text-align:center">
         <p style="font-size:9px;color:rgba(245,158,11,.7);text-transform:uppercase;letter-spacing:.2em;margin-bottom:4px">Ankunftsdatum</p>
@@ -82438,6 +82526,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   let _jbSelectedDelay = null;
   let _jbSLFont = "jb-font-inter";
   let _jbAutoSaveTimer = null;
+  let _jbSLAutoSaveTimer = null;
 
   function jd() { return APP.state.data.journal; }
   function jbEsc(s) { const d = document.createElement("div"); d.textContent = String(s || ""); return d.innerHTML; }
@@ -82459,6 +82548,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // Check arrived letters
     jbCheckArrivedLetters();
     c.classList.add("active");
+    document.body.classList.add("jb-open");
+    jbRenderChat();
     jbNav("home");
   }
   window.openJournalBooklet = openJournalBooklet;
@@ -82466,6 +82557,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function closeJournalBooklet() {
     const c = document.getElementById("journalBookletContainer");
     if (c) c.classList.remove("active");
+    document.body.classList.remove("jb-open");
     document.getElementById("jbEditor").classList.remove("active");
     document.getElementById("jbSelfLetterEditor").classList.remove("active");
     document.getElementById("jbReadView").classList.remove("active");
@@ -82482,6 +82574,153 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   window.closeJournalBooklet = closeJournalBooklet;
 
   // ====== TOAST ======
+  // ══ Schreibkomfort ═══════════════════════════════════════════════════════
+  // Was das Schreiben angenehm macht, ist selten eine grosse Funktion: es sind
+  // ruhige Rueckmeldung, kein Springen, und dass die Tastatur tut, was man von
+  // einem Textprogramm erwartet.
+
+  function jbWordCount(text) {
+    var clean = String(text || "").replace(/ /g, " ").trim();
+    return clean ? clean.split(/\s+/).length : 0;
+  }
+
+  // Wortzahl und geschaetzte Lesezeit — ohne Nachkommastellen-Theater.
+  function jbUpdateWritingMeta() {
+    var box = document.getElementById("jbWritingMeta");
+    var area = document.getElementById("jbEditorArea");
+    if (!box || !area) return;
+    var words = jbWordCount(area.innerText || area.textContent || "");
+    var minutes = Math.max(1, Math.round(words / 200));
+    box.innerHTML = words
+      ? "<span><b>" + words.toLocaleString("de-CH") + "</b> Wörter</span><span><b>" + minutes + "</b> Min. Lesezeit</span>"
+      : "";
+  }
+  window.jbUpdateWritingMeta = jbUpdateWritingMeta;
+
+  // Ruhe-Modus: Kopfzeile und die uebrigen Absaetze treten zurueck.
+  window.jbToggleCalm = function() {
+    var ed = document.getElementById("jbEditor");
+    if (!ed) return;
+    var on = ed.classList.toggle("jb-calm");
+    try { localStorage.setItem("jbCalm", on ? "1" : "0"); } catch (e) {}
+    var btn = document.getElementById("jbCalmBtn");
+    if (btn) btn.style.color = on ? "var(--accent)" : "";
+    if (on) jbMarkCurrentParagraph();
+    jbToast(on ? "Ruhe-Modus an" : "Ruhe-Modus aus");
+  };
+
+  function jbApplyCalmPreference() {
+    var ed = document.getElementById("jbEditor");
+    if (!ed) return;
+    var on = false;
+    try { on = localStorage.getItem("jbCalm") === "1"; } catch (e) {}
+    ed.classList.toggle("jb-calm", on);
+    var btn = document.getElementById("jbCalmBtn");
+    if (btn) btn.style.color = on ? "var(--accent)" : "";
+  }
+
+  // Den Absatz markieren, in dem der Cursor steht — nur dieser bleibt im
+  // Ruhe-Modus voll sichtbar.
+  function jbMarkCurrentParagraph() {
+    var area = document.getElementById("jbEditorArea");
+    if (!area) return;
+    var sel = window.getSelection();
+    var node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+    var block = null;
+    while (node && node !== area) {
+      if (node.parentNode === area) { block = node; break; }
+      node = node.parentNode;
+    }
+    Array.prototype.forEach.call(area.children, function(child) {
+      child.classList.toggle("jb-here", child === block);
+    });
+  }
+
+  // Deutsche Typografie beim Tippen: „Anfuehrungszeichen", Gedankenstrich und
+  // Auslassungspunkte. Ersetzt wird nur direkt hinter dem Cursor und nur, wenn
+  // das Muster eindeutig ist — nichts wird nachtraeglich umgeschrieben.
+  var JB_TYPO = [
+    { re: /--$/, out: "–" },        // Gedankenstrich
+    { re: /\.\.\.$/, out: "…" },     // Auslassungspunkte
+    { re: /(^|[\s(\[])"$/, out: "$1„" },
+    { re: /([^\s(\[])"$/, out: "$1“" }
+  ];
+
+  function jbApplyTypography() {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
+    var range = sel.getRangeAt(0);
+    var node = range.startContainer;
+    if (node.nodeType !== 3) return false;           // nur in reinem Text
+    var offset = range.startOffset;
+    var before = node.textContent.slice(0, offset);
+    for (var i = 0; i < JB_TYPO.length; i++) {
+      var rule = JB_TYPO[i];
+      var m = before.match(rule.re);
+      if (!m) continue;
+      var replacement = rule.out.replace("$1", m[1] || "");
+      var cut = m[0].length;
+      // Ueber die Auswahl ersetzen statt textContent direkt zu setzen: nur so
+      // bleibt der Rueckgaengig-Verlauf des Browsers erhalten. Ein Textprogramm,
+      // in dem Strg+Z nicht mehr funktioniert, ist unbrauchbar.
+      try {
+        var r = document.createRange();
+        r.setStart(node, offset - cut);
+        r.setEnd(node, offset);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        document.execCommand("insertText", false, replacement);
+        return true;
+      } catch (e) {
+        // Sollte insertText nicht verfuegbar sein, lieber nichts ersetzen als
+        // den Text zu beschaedigen.
+        try { sel.removeAllRanges(); sel.addRange(range); } catch (_) {}
+        return false;
+      }
+    }
+    return false;
+  }
+  window.jbApplyTypography = jbApplyTypography;
+
+  // Laeuft bei jedem Anschlag im Schreibbereich.
+  window.jbOnWrite = function() {
+    jbApplyTypography();
+    jbUpdateWritingMeta();
+    jbMarkCurrentParagraph();
+    jbAutoSave();
+  };
+
+  // Tastatur: was man von einem Textprogramm erwartet.
+  //  ⌘/Strg+B/I/U — Fett, Kursiv, Unterstrichen
+  //  ⌘/Strg+S     — sofort sichern (statt die Seite zu speichern)
+  //  ⌘/Strg+↵     — Editor schliessen
+  //  Escape       — Ruhe-Modus verlassen bzw. Editor schliessen
+  document.addEventListener("keydown", function(e) {
+    var editor = document.getElementById("jbEditor");
+    if (!editor || !editor.classList.contains("active")) return;
+    var mod = e.metaKey || e.ctrlKey;
+    if (mod && !e.shiftKey && !e.altKey) {
+      var key = String(e.key || "").toLowerCase();
+      if (key === "b" || key === "i" || key === "u") {
+        e.preventDefault();
+        window.jbFormat({ b: "bold", i: "italic", u: "underline" }[key]);
+        return;
+      }
+      if (key === "s") { e.preventDefault(); clearTimeout(_jbAutoSaveTimer); jbSaveCurrentDoc(false); return; }
+      if (key === "enter") { e.preventDefault(); window.jbCloseEditor(); return; }
+    }
+    if (e.key === "Escape") {
+      if (editor.classList.contains("jb-calm")) { e.preventDefault(); window.jbToggleCalm(); }
+    }
+  });
+
+  // Cursorbewegungen ohne Tippen (Klick, Pfeiltasten) verschieben den Fokus-
+  // Absatz ebenfalls.
+  document.addEventListener("selectionchange", function() {
+    var editor = document.getElementById("jbEditor");
+    if (editor && editor.classList.contains("jb-calm")) jbMarkCurrentParagraph();
+  });
+
   function jbToast(msg) {
     const t = document.getElementById("jbToast");
     if (!t) return;
@@ -82756,15 +82995,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
           <div>
             <h3 style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;color:#fff;border-bottom:1px solid var(--panel);padding-bottom:8px;margin-bottom:16px">KI Konfiguration</h3>
             <label style="font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:700;display:block;margin-bottom:4px">Gemini API Key</label>
-            <input type="password" id="jbSetApiKey" class="jb-input" value="${jbEsc(s.geminiApiKey || '')}" placeholder="${APP?.state?.settings?.geminiApiKey ? '(nutzt Haupt-App Key)' : 'AIza...'}">
+            <input type="password" id="jbSetApiKey" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.geminiApiKey || '')}" placeholder="${APP?.state?.settings?.geminiApiKey ? '(nutzt Haupt-App Key)' : 'AIza...'}">
             <p style="font-size:10px;color:var(--panel3);margin-top:4px">Leer lassen = nutzt den Gemini Key aus den Haupt-Einstellungen</p>
           </div>
           <div>
             <h3 style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;color:#fff;border-bottom:1px solid var(--panel);padding-bottom:8px;margin-bottom:16px">Brief-Absender</h3>
             <div style="display:flex;flex-direction:column;gap:12px">
-              <input type="text" id="jbSetName" class="jb-input" value="${jbEsc(s.name || '')}" placeholder="Dein Name">
-              <input type="text" id="jbSetStreet" class="jb-input" value="${jbEsc(s.street || '')}" placeholder="Straße">
-              <input type="text" id="jbSetCity" class="jb-input" value="${jbEsc(s.city || '')}" placeholder="PLZ / Ort">
+              <input type="text" id="jbSetName" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.name || '')}" placeholder="Dein Name">
+              <input type="text" id="jbSetStreet" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.street || '')}" placeholder="Straße">
+              <input type="text" id="jbSetCity" class="jb-input" onchange="jbSaveSettings(true)" value="${jbEsc(s.city || '')}" placeholder="PLZ / Ort">
             </div>
             <button onclick="jbSaveSettings()" class="jb-btn" style="width:100%;margin-top:16px">Einstellungen Speichern</button>
           </div>
@@ -82825,7 +83064,19 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       lh.style.display = "none";
     }
     document.getElementById("jbEditor").classList.add("active");
-    document.getElementById("jbEditorTitle").focus();
+    jbApplyCalmPreference();
+    jbUpdateWritingMeta();
+    // Bei einem angefangenen Text direkt in den Schreibbereich — nicht in den
+    // Titel, den man dann erst wieder verlassen muesste.
+    var areaEl = document.getElementById("jbEditorArea");
+    if (doc.title && (areaEl.innerText || "").trim()) {
+      var r = document.createRange();
+      r.selectNodeContents(areaEl); r.collapse(false);
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      areaEl.focus();
+    } else {
+      document.getElementById("jbEditorTitle").focus();
+    }
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
     
     // Robust binding: addEventListener falls onclick blockiert wird
@@ -82855,14 +83106,25 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function jbSaveCurrentDoc(silent) {
     const doc = jd().documents.find(d => d.id === _jbCurrentDocId);
     if (!doc) return;
-    doc.title = document.getElementById("jbEditorTitle").value;
-    doc.content = document.getElementById("jbEditorArea").innerHTML;
-    doc.recipientId = document.getElementById("jbEditorRecipient")?.value || "";
-    doc.font = document.getElementById("jbEditorFont").value;
+    const title = document.getElementById("jbEditorTitle").value;
+    const content = document.getElementById("jbEditorArea").innerHTML;
+    const recipientId = document.getElementById("jbEditorRecipient")?.value || "";
+    const font = document.getElementById("jbEditorFont").value;
+    // Perf: scheduleSave() serialisiert den GESAMTEN App-State (JSON.stringify +
+    // localStorage + Cloud-Push). Bei unverändertem Inhalt — z. B. Cursor-Bewegung,
+    // Formatier-Toggle, Fokuswechsel — sparen wir uns das komplett.
+    const unchanged = doc.title === title && doc.content === content
+      && (doc.recipientId || "") === recipientId && doc.font === font;
+    if (unchanged) { if (!silent) jbToast("Gesichert"); return; }
+    doc.title = title;
+    doc.content = content;
+    doc.recipientId = recipientId;
+    doc.font = font;
     doc.updatedAt = Date.now();
     scheduleSave();
     if (!silent) jbToast("Gesichert");
     document.getElementById("jbEditorStatus").textContent = "Gespeichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"});
+    jbUpdateWritingMeta();
   }
 
   // Send current entry to Mobile App
@@ -83077,11 +83339,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       if (sel.rangeCount > 0) {
         let p = sel.getRangeAt(0).commonAncestorContainer;
         if (p.nodeType !== 1) p = p.parentElement;
-        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbEditorArea").focus(); return; }
+        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbEditorArea").focus(); jbAutoSave(); return; }
       }
     }
     document.execCommand(cmd, false, val);
     document.getElementById("jbEditorArea").focus();
+    // execCommand loest je nach Browser kein input-Ereignis aus — deshalb hier
+    // ausdruecklich sichern, sonst geht reine Formatierung verloren.
+    jbAutoSave();
   };
 
   window.jbUpdateFont = function() {
@@ -83162,22 +83427,94 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   }
 
   // ====== SELF LETTERS ======
-  window.jbStartNewSelfLetter = function() {
-    document.getElementById("jbSLTitle").value = "";
-    document.getElementById("jbSLArea").innerHTML = "<div><br></div>";
-    document.getElementById("jbSLFont").value = "jb-font-inter";
-    _jbSLFont = "jb-font-inter";
+  // Ein Zukunftsbrief entsteht oft in einem Zug und ist lang. Vorher lebte er
+  // ausschliesslich im DOM: „Senden" war der einzige Weg, ihn zu speichern.
+  // Editor zu, Ansicht gewechselt, Seite neu geladen — alles weg. Deshalb wird
+  // der Brief jetzt wie jedes andere Dokument laufend als Entwurf gesichert.
+  function jbSLIsEmpty(draft) {
+    if (!draft) return true;
+    const text = String(draft.content || "").replace(/<[^>]*>/g, "").trim();
+    return !String(draft.title || "").trim() && !text;
+  }
+
+  function jbSaveSelfLetterDraft() {
+    const titleEl = document.getElementById("jbSLTitle");
+    const areaEl = document.getElementById("jbSLArea");
+    if (!titleEl || !areaEl) return;
+    const draft = {
+      title: titleEl.value,
+      content: areaEl.innerHTML,
+      font: document.getElementById("jbSLFont")?.value || _jbSLFont,
+      delay: _jbSelectedDelay,
+      customDate: document.getElementById("jbSLCustomDate")?.value || "",
+      updatedAt: Date.now()
+    };
+    // Ein leerer Brief soll keinen Entwurf hinterlassen, sonst meldet sich beim
+    // naechsten Oeffnen ein „wiederhergestellter" Brief ohne Inhalt.
+    const next = jbSLIsEmpty(draft) ? null : draft;
+    // Perf: nur speichern, wenn sich am Entwurf wirklich etwas geändert hat —
+    // scheduleSave() serialisiert sonst grundlos den gesamten App-State.
+    const prev = jd().selfLetterDraft;
+    const same = (!prev && !next) || (prev && next && prev.title === next.title
+      && prev.content === next.content && prev.font === next.font
+      && prev.delay === next.delay && prev.customDate === next.customDate);
+    if (!same) {
+      jd().selfLetterDraft = next;
+      scheduleSave();
+    }
+    const status = document.getElementById("jbSLStatus");
+    if (status) {
+      status.textContent = jd().selfLetterDraft
+        ? "Entwurf gesichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"})
+        : "";
+    }
+  }
+
+  function jbSLAutoSave() {
+    clearTimeout(_jbSLAutoSaveTimer);
+    _jbSLAutoSaveTimer = setTimeout(jbSaveSelfLetterDraft, 2000);
+  }
+  window.jbSLAutoSave = jbSLAutoSave;
+
+  function jbApplySelfLetterDraft(draft) {
+    document.getElementById("jbSLTitle").value = draft?.title || "";
+    document.getElementById("jbSLArea").innerHTML = draft?.content || "<div><br></div>";
+    const font = draft?.font || "jb-font-inter";
+    document.getElementById("jbSLFont").value = font;
+    _jbSLFont = font;
     jbUpdateSLFont();
-    _jbSelectedDelay = null;
-    document.querySelectorAll(".jb-delay-btn").forEach(b => b.classList.remove("active"));
-    document.getElementById("jbCustomDatePicker").style.display = "none";
-    document.getElementById("jbDeliveryPreview").style.display = "none";
+    _jbSelectedDelay = draft?.delay || null;
+    document.querySelectorAll(".jb-delay-btn").forEach(b => b.classList.toggle("active", b.dataset.delay === _jbSelectedDelay));
+    document.getElementById("jbCustomDatePicker").style.display = _jbSelectedDelay === "custom" ? "block" : "none";
+    const dateEl = document.getElementById("jbSLCustomDate");
+    if (dateEl) dateEl.value = draft?.customDate || "";
+    jbUpdateDeliveryPreview();
+    const status = document.getElementById("jbSLStatus");
+    if (status) status.textContent = draft ? "Entwurf wiederhergestellt" : "";
+  }
+
+  window.jbStartNewSelfLetter = function() {
+    // Liegt ein Entwurf vor, wird er fortgesetzt statt kommentarlos verworfen.
+    jbApplySelfLetterDraft(jd().selfLetterDraft);
     document.getElementById("jbSelfLetterEditor").classList.add("active");
     setTimeout(() => document.getElementById("jbSLTitle").focus(), 100);
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
   };
 
+  // Bewusster Neuanfang — der einzige Weg, einen Entwurf zu verlieren.
+  window.jbDiscardSelfLetterDraft = function() {
+    if (!jbSLIsEmpty(jd().selfLetterDraft) && !confirm("Entwurf verwerfen und neu beginnen?")) return;
+    clearTimeout(_jbSLAutoSaveTimer);
+    jd().selfLetterDraft = null;
+    scheduleSave();
+    jbApplySelfLetterDraft(null);
+    jbToast("Neuer Brief");
+  };
+
   window.jbCloseSelfLetterEditor = function() {
+    // Vor dem Schliessen sichern, nicht erst nach Ablauf der Autosave-Pause.
+    clearTimeout(_jbSLAutoSaveTimer);
+    jbSaveSelfLetterDraft();
     document.getElementById("jbSelfLetterEditor").classList.remove("active");
     document.getElementById("jbSLSidebar").classList.remove("open");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
@@ -83189,11 +83526,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       if (sel.rangeCount > 0) {
         let p = sel.getRangeAt(0).commonAncestorContainer;
         if (p.nodeType !== 1) p = p.parentElement;
-        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbSLArea").focus(); return; }
+        if (p.closest(val)) { document.execCommand("formatBlock", false, "div"); document.getElementById("jbSLArea").focus(); jbSLAutoSave(); return; }
       }
     }
     document.execCommand(cmd, false, val);
     document.getElementById("jbSLArea").focus();
+    jbSLAutoSave();
   };
 
   window.jbUpdateSLFont = function() {
@@ -83208,6 +83546,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   window.jbSetDelay = function(delay) {
     _jbSelectedDelay = delay;
+    jbSLAutoSave();   // die gewaehlte Zustellzeit gehoert zum Entwurf
     document.querySelectorAll(".jb-delay-btn").forEach(b => b.classList.toggle("active", b.dataset.delay === delay));
     document.getElementById("jbCustomDatePicker").style.display = delay === "custom" ? "block" : "none";
     if (delay === "custom") {
@@ -83260,8 +83599,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       delivered: false, readAt: null
     };
     jd().selfLetters.push(letter);
+    // Der Brief ist jetzt echt — der Entwurf wird gegenstandslos.
+    clearTimeout(_jbSLAutoSaveTimer);
+    jd().selfLetterDraft = null;
     scheduleSave();
-    jbCloseSelfLetterEditor();
+    document.getElementById("jbSelfLetterEditor").classList.remove("active");
+    document.getElementById("jbSLSidebar").classList.remove("open");
+    if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
     jbToast("Brief in die Zukunft gesendet! 💌");
     jbNav("home");
   };
@@ -83369,22 +83713,51 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   };
 
   // ====== AI CHAT ======
+  // Der Verlauf lag frueher ausschliesslich im DOM und war nach jedem Neuladen
+  // weg. Er liegt jetzt im Datenstand und wird beim Oeffnen wieder aufgebaut.
+  function jbRenderChat() {
+    const history = document.getElementById("jbChatHistory");
+    if (!history) return;
+    const rows = jd().chat || [];
+    history.innerHTML = rows.length ? rows.map(row => row.role === "user"
+      ? `<div style="color:#fff;border-left:2px solid var(--panel);padding-left:16px;font-weight:700">Du:</div><div style="color:#fff;margin-bottom:16px">${jbEsc(row.text)}</div>`
+      : `<div style="color:var(--muted);background:rgba(24,24,27,.3);padding:16px;border-radius:12px;border:1px solid var(--panel);margin-bottom:16px;white-space:pre-wrap"><strong>Intelligence:</strong><br>${jbEsc(row.text)}</div>`
+    ).join("") : "";
+    history.scrollTop = history.scrollHeight;
+  }
+  window.jbRenderChat = jbRenderChat;
+
+  function jbPushChat(role, text) {
+    jd().chat = jd().chat || [];
+    jd().chat.push({ role, text: String(text || ""), at: Date.now() });
+    // Der Verlauf soll den Datenstand nicht unbegrenzt aufblaehen.
+    if (jd().chat.length > 200) jd().chat = jd().chat.slice(-200);
+    scheduleSave();
+    jbRenderChat();
+  }
+
+  window.jbClearChat = function() {
+    if (!(jd().chat || []).length) return;
+    if (!confirm("KI-Verlauf loeschen?")) return;
+    jd().chat = [];
+    scheduleSave();
+    jbRenderChat();
+  };
+
   window.jbSendChat = function() {
     const input = document.getElementById("jbChatInput");
-    const history = document.getElementById("jbChatHistory");
     const loader = document.getElementById("jbChatLoading");
     const userText = input.value.trim();
     if (!userText) return;
     const apiToken = jbGetGeminiKey();
     if (!apiToken) {
-      history.innerHTML += '<div style="color:var(--danger);padding:8px;border:1px solid rgba(239,68,68,.3);border-radius:8px">Bitte gib einen Gemini API Key im Setup ein.</div>';
+      jbPushChat("ai", "Bitte gib einen Gemini API Key im Setup ein.");
       input.value = "";
       return;
     }
-    history.innerHTML += `<div style="color:#fff;border-left:2px solid var(--panel);padding-left:16px;font-weight:700">Du:</div><div style="color:#fff;margin-bottom:16px">${jbEsc(userText)}</div>`;
+    jbPushChat("user", userText);
     input.value = "";
     loader.style.display = "block";
-    history.scrollTop = history.scrollHeight;
     const editorText = document.getElementById("jbEditorArea").innerText.substring(0, 3000);
     const ideasCtx = jd().topics.map(t => t.text).join(" | ");
     const sysPrompt = `Du bist ein literarischer Mentor im Journal Booklet. Aktueller Text: ${editorText}. Bisherige Ideen: ${ideasCtx}. Hilf dem Nutzer, den Text zu verbessern. Antworte präzise auf Deutsch.`;
@@ -83392,26 +83765,28 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ contents: [{parts:[{text:userText}]}], systemInstruction: {parts:[{text:sysPrompt}]} })
     }).then(r => r.json()).then(data => {
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "KI derzeit beschäftigt.";
-      history.innerHTML += `<div style="color:var(--muted);background:rgba(24,24,27,.3);padding:16px;border-radius:12px;border:1px solid var(--panel)"><strong>Intelligence:</strong><br>${reply}</div>`;
+      jbPushChat("ai", data.candidates?.[0]?.content?.parts?.[0]?.text || "KI derzeit beschäftigt.");
     }).catch(() => {
-      history.innerHTML += '<div style="color:#450a0a;font-size:9px;text-transform:uppercase">KI-Fehler (Prüfe API Key).</div>';
+      jbPushChat("ai", "KI-Fehler (Prüfe API Key).");
     }).finally(() => {
       loader.style.display = "none";
-      history.scrollTop = history.scrollHeight;
     });
   };
 
   // ====== SETTINGS ======
-  window.jbSaveSettings = function() {
+  // silent=true wird beim Verlassen eines Feldes aufgerufen: die Eingabe ist
+  // damit gesichert, ohne dass bei jedem Feldwechsel eine Meldung aufpoppt.
+  window.jbSaveSettings = function(silent) {
+    const byId = (id) => document.getElementById(id);
+    if (!byId("jbSetName")) return;   // Ansicht nicht offen
     jd().settings = {
-      name: document.getElementById("jbSetName").value,
-      street: document.getElementById("jbSetStreet").value,
-      city: document.getElementById("jbSetCity").value,
-      geminiApiKey: document.getElementById("jbSetApiKey").value
+      name: byId("jbSetName").value,
+      street: byId("jbSetStreet").value,
+      city: byId("jbSetCity").value,
+      geminiApiKey: byId("jbSetApiKey").value
     };
     scheduleSave();
-    jbToast("Einstellungen gesichert");
+    if (!silent) jbToast("Einstellungen gesichert");
   };
 
   // ====== EXPORT / IMPORT ======
@@ -83627,6 +84002,32 @@ function gSet(){try{const s=JSON.parse(localStorage.getItem(SKEY)||'{}');if(!s.a
 function sSet(d){localStorage.setItem(SKEY,JSON.stringify(d))}
 async function callGPT(prompt,mt){const s=gSet();const gk=APP?.state?.settings?.geminiApiKey||s.geminiKey||'';if(gk){try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+gk,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});if(r.ok){const d=await r.json();const t=d.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||null;if(t)return t}}catch(e){console.log('Gemini callGPT failed:',e)}}const ok=s.openaiKey;if(ok){try{const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ok},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.choices?.[0]?.message?.content?.trim()||null}}catch(e){}}const ck=s.apiKey;if(ck){try{const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ck,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.content?.map(c=>c.text||'').join('').trim()||null}}catch(e){}}nhToastMsg('API Key fehlt (Gemini/OpenAI/Anthropic)');return null}
 async function extractPDF(file){const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)});const k=gSet().apiKey;if(!k){nhToastMsg('Claude API Key fehlt');return null}nhToastMsg('PDF wird extrahiert…');try{const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:8000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:'Extract the complete text from this PDF. Return ONLY the raw text, no comments. Keep paragraphs.'}]}]})});if(!resp.ok){nhToastMsg('PDF Fehler');return null}const d=await resp.json();nhToastMsg('✓ PDF extrahiert');return d.content?.map(c=>c.text||'').join('').trim();}catch(e){nhToastMsg(e.message);return null}}
+
+  // ══ Notbremse: alles Offene in den Datenstand schreiben ══════════════════
+  // Der Editor sichert gebuendelt (2 s). Schliesst man den Tab oder wechselt
+  // ihn innerhalb dieser Pause, lagen die letzten Anschlaege nur im DOM — die
+  // App-eigene Flush-Logik konnte sie nicht sehen, weil sie noch gar nicht im
+  // Modell waren. jbFlush() holt sie ohne Wartezeit ab und stoesst danach den
+  // Sofort-Schreibvorgang der Hauptapp an.
+  function jbFlush() {
+    try {
+      const container = document.getElementById("journalBookletContainer");
+      if (!container || !APP?.state?.data?.journal) return;
+      if (_jbCurrentDocId && document.getElementById("jbEditor")?.classList.contains("active")) {
+        clearTimeout(_jbAutoSaveTimer);
+        jbSaveCurrentDoc(true);
+      }
+      if (document.getElementById("jbSelfLetterEditor")?.classList.contains("active")) {
+        clearTimeout(_jbSLAutoSaveTimer);
+        jbSaveSelfLetterDraft();
+      }
+      if (typeof flushLocalSave === "function") flushLocalSave();
+    } catch (e) { console.warn("[JournalBooklet] Flush fehlgeschlagen:", e); }
+  }
+  window.jbFlush = jbFlush;
+  window.addEventListener("pagehide", jbFlush);
+  window.addEventListener("beforeunload", jbFlush);
+  document.addEventListener("visibilitychange", function() { if (document.hidden) jbFlush(); });
 
 /* ── Cloud — handled by main app's scheduleSave(), no separate sync ── */
 /* All NH data is stored in APP.state.data.entities (nhNews, nhTopics etc.)
@@ -86022,6 +86423,28 @@ function buildAppSearchItems() {
       open: a.open,
     });
   });
+
+  // 3) Bereiche innerhalb von Apps, die eine eigene Bereichsliste anbieten.
+  //    FlowerTech hat seine Bereichsleiste abgelegt — die Suche ersetzt sie.
+  //    Die Liste kommt aus dem Modul selbst, es gibt keine Kopie hier.
+  try {
+    if (typeof window.flowerTechSearchSections === 'function') {
+      window.flowerTechSearchSections().forEach(section => {
+        const id = 'app-flowertech-' + section.key;
+        if (items.some(it => it.id === id)) return;
+        items.push({
+          kind: 'app',
+          category: 'App',
+          icon: section.icon || '🌸',
+          id,
+          title: section.title,
+          sub: section.sub || 'FlowerTech öffnen',
+          keywords: [section.key, section.title, section.sub, 'flowertech', 'app'].filter(Boolean).join(' '),
+          open: () => { window.location.hash = '#/flowertech/' + section.key; },
+        });
+      });
+    }
+  } catch (e) { console.warn('FlowerTech-Bereiche für die Suche:', e); }
 
   return items;
 }
@@ -92918,6 +93341,10 @@ console.log('📚 Leseliste geladen');
     // Sync mit Entity wenn vorhanden
     if (_mhEditing && APP.state.data.entities.emails?.[_mhEditing]) {
       APP.state.data.entities.emails[_mhEditing].files = [..._mhFiles];
+      APP.state.data.entities.emails[_mhEditing].updatedAt = nowIso();
+      // Die Datei ist in Firebase bereits geloescht — ohne Speichern bliebe die
+      // Entitaet auf einen Anhang verweisen, den es nicht mehr gibt.
+      scheduleSave();
     }
     document.getElementById("mhFilesList").innerHTML = renderFilesList();
   };
@@ -103580,8 +104007,12 @@ function refreshBadge(){
 }
 
 /* ── Event-Delegation (data-nhi-act / data-nhi-field) ────────────── */
-var _saveTimer = null;
-function debouncedSave(){ clearTimeout(_saveTimer); _saveTimer = setTimeout(save, 700); }
+// Ueber die zentrale Registry, damit ein Tab-Wechsel die offene Speicherung
+// nachholt statt sie fallen zu lassen.
+function debouncedSave(){
+  if (typeof window.scheduleSaveDebounced === "function") window.scheduleSaveDebounced("nhi-panel", 700, save);
+  else save();
+}
 
 function onPanelClick(e){
   var el = e.target.closest("[data-nhi-act]");
@@ -113522,7 +113953,11 @@ Dateien zu identifizieren.
         const pal = $("#nf2Palette");
         if (pal && pal.style.display !== "none" && !pal.contains(e.target) && !(e.target.closest && e.target.closest('#nf2Bubble'))) pal.style.display = "none";
       }, true);
+      // beforeunload feuert auf Mobilgeraeten oft gar nicht — pagehide und der
+      // Wechsel in den Hintergrund sind dort die verlaesslichen Signale.
       window.addEventListener("beforeunload", flushSave);
+      window.addEventListener("pagehide", flushSave);
+      document.addEventListener("visibilitychange", function () { if (document.hidden) flushSave(); });
     }
   }
 

@@ -67,7 +67,9 @@ assert.match(ft, /ft\.milestones = Array\.isArray\(ft\.milestones\) \? ft\.miles
   "der Meilenstein-Zustand fehlt");
 assert.match(ft, /window\._ftAddMilestone = function \(projectId\)/, "_ftAddMilestone() fehlt");
 assert.match(ft, /function renderPlanning\(allProjects\)/, "die Planungsansicht fehlt");
-assert.match(ft, /\["planung", "Planung"\]/, "der Planungsreiter fehlt in der Navigation");
+// Die frueher horizontale Bereichsleiste ist entfernt; die Bereiche stehen in
+// SECTIONS und sind ueber Deep Links erreichbar (tests/flowertech-topnav-runtime).
+assert.match(ft, /\["planung", "Planung", /, "der Planungsbereich fehlt");
 // Aufgaben aus einer Offerte sind echte Quantus-Aufgaben, keine eigene Art.
 assert.match(ft, /window\._ftOfferToTasks = function \(offerId\)/, "_ftOfferToTasks() fehlt");
 assert.match(ft, /window\.createEntity\("task", \{[\s\S]{0,600}?sourceOfferItemId: item\.id/,
