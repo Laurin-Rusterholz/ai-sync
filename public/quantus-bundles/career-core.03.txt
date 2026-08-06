@@ -1,4 +1,134 @@
-ceDocuments: pkg.module.sourceDocuments,
+    "Quellen und Unterlagen zusammentragen",
+    "Prompt im Career Model erzeugen und an Claude geben",
+    "Gelieferte JSON-Datei gegen das Schema pruefen",
+    "Modul importieren und ersten Lerntag planen"
+  ];
+
+  function preparationId(areaName, moduleTitle) {
+    return makeId("prep", String(areaName || "") + "-" + String(moduleTitle || ""));
+  }
+
+  function buildPreparation(input, now) {
+    input = asObject(input);
+    var areaName = cleanLine(input.areaName, 180) || "Karrierebereich";
+    var moduleTitle = cleanLine(input.moduleTitle, 180) || "Neues Modul";
+    var timestamp = now && !Number.isNaN(Date.parse(now)) ? new Date(now).toISOString() : new Date().toISOString();
+    return {
+      id: preparationId(areaName, moduleTitle),
+      areaName: areaName,
+      moduleTitle: moduleTitle,
+      level: cleanLine(input.level, 180),
+      dailyMinutes: Number(input.dailyMinutes) || 30,
+      notes: cleanText(input.notes, 4000),
+      targetDate: cleanLine(input.targetDate, 10) || null,
+      steps: PREPARATION_STEPS.slice(),
+      status: "open",
+      taskRef: null,          // { source: "quantus-task", inboxId } — die echte Quantus-Aufgabe
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  // Beschreibung der Quantus-Aufgabe. Bewusst vollstaendig, damit die Aufgabe
+  // auch ausserhalb des Career Models fuer sich allein verstaendlich ist.
+  function preparationTaskDescription(preparation) {
+    var prep = asObject(preparation);
+    // null bedeutet "diese Zeile entfaellt"; "" ist eine gewollte Leerzeile.
+    return [
+      "Modul fuer das Career Model vorbereiten.",
+      "",
+      "Bereich: " + (prep.areaName || "—"),
+      "Modul: " + (prep.moduleTitle || "—"),
+      prep.level ? "Niveau: " + prep.level : null,
+      "Pensum: " + (prep.dailyMinutes || 30) + " Minuten pro Lerntag",
+      prep.targetDate ? "Zieldatum: " + prep.targetDate : null,
+      "",
+      "Schritte:",
+      asArray(prep.steps).map(function (step, index) { return (index + 1) + ". " + step; }).join("\n"),
+      prep.notes ? "\nVorgaben:\n" + prep.notes : null,
+      "",
+      "Fertig ist die Vorbereitung, sobald das Modul im Career Model importiert ist."
+    ].filter(function (line) { return line !== null; }).join("\n");
+  }
+
+
+  function moduleProgress(stateInput, moduleId) {
+    var state = normalizeState(stateInput);
+    var module = state.modules[moduleId];
+    if (!module) return { completed: 0, total: 0, percent: 0, nextDayId: null };
+    var order = asArray(module.dayOrder);
+    var completedDays = asObject(state.progress[moduleId] && state.progress[moduleId].completedDays);
+    var completed = order.filter(function (id) { return Boolean(completedDays[id]); }).length;
+    var nextDayId = order.find(function (id) { return !completedDays[id]; }) || null;
+    return { completed: completed, total: order.length, percent: order.length ? Math.round(completed / order.length * 100) : 0, nextDayId: nextDayId };
+  }
+
+  function nextSession(stateInput) {
+    var state = normalizeState(stateInput);
+    var modules = Object.keys(state.modules).map(function (id) { return state.modules[id]; })
+      .filter(function (module) { return module && module.status !== "archived"; })
+      .sort(function (a, b) {
+        var aActive = a.status === "active" ? 1 : 0;
+        var bActive = b.status === "active" ? 1 : 0;
+        if (aActive !== bActive) return bActive - aActive;
+        return String(b.updatedAt || b.importedAt || "").localeCompare(String(a.updatedAt || a.importedAt || ""));
+      });
+    for (var i = 0; i < modules.length; i += 1) {
+      var module = modules[i];
+      var stats = moduleProgress(state, module.id);
+      if (!stats.nextDayId) continue;
+      var day = asObject(module.days)[stats.nextDayId];
+      if (!day) continue;
+      return {
+        module: module,
+        area: state.areas[module.areaId] || null,
+        day: day,
+        progress: stats,
+        completion: asObject(asObject(state.progress[module.id]).completedDays)[day.id] || null
+      };
+    }
+    return null;
+  }
+
+  function mergePackage(stateInput, packageInput, now) {
+    var validation = validatePackage(packageInput);
+    if (!validation.ok) {
+      var error = new Error("Career-Model-Datei ist ungültig.");
+      error.validation = validation;
+      throw error;
+    }
+    var pkg = validation.value;
+    var state = normalizeState(deepClone(stateInput || {}));
+    var timestamp = now && !Number.isNaN(Date.parse(now)) ? new Date(now).toISOString() : new Date().toISOString();
+    var areaId = pkg.careerArea.id;
+    var moduleId = pkg.module.id;
+    var previousModule = state.modules[moduleId] || null;
+    var previousAreaId = previousModule && previousModule.areaId;
+    var previousProgress = asObject(state.progress[moduleId]);
+    var dayOrder = pkg.module.days.map(function (day) { return day.id; });
+    var days = {};
+    pkg.module.days.forEach(function (day) { days[day.id] = day; });
+
+    if (previousAreaId && previousAreaId !== areaId && state.areas[previousAreaId]) {
+      state.areas[previousAreaId].moduleIds = asArray(state.areas[previousAreaId].moduleIds).filter(function (id) { return id !== moduleId; });
+      state.areas[previousAreaId].updatedAt = timestamp;
+    }
+
+    var area = Object.assign({}, state.areas[areaId] || {}, pkg.careerArea, {
+      id: areaId,
+      moduleIds: Array.from(new Set(asArray(state.areas[areaId] && state.areas[areaId].moduleIds).concat(moduleId))),
+      createdAt: state.areas[areaId] && state.areas[areaId].createdAt || timestamp,
+      updatedAt: timestamp
+    });
+    state.areas[areaId] = area;
+
+    state.modules[moduleId] = {
+      id: moduleId,
+      areaId: areaId,
+      title: pkg.module.title,
+      description: pkg.module.description,
+      level: pkg.module.level,
+      sourceDocuments: pkg.module.sourceDocuments,
       estimatedTotalMinutes: pkg.module.estimatedTotalMinutes,
       days: days,
       dayOrder: dayOrder,
@@ -131,6 +261,19 @@ ceDocuments: pkg.module.sourceDocuments,
     mergePackage: mergePackage,
     moduleProgress: moduleProgress,
     nextSession: nextSession,
-    buildClaudePrompt: buildClaudePrompt
+    buildClaudePrompt: buildClaudePrompt,
+    LEITNER_DAYS: LEITNER_DAYS.slice(),
+    PREPARATION_STEPS: PREPARATION_STEPS.slice(),
+    addDaysKey: addDaysKey,
+    daysBetweenKeys: daysBetweenKeys,
+    studyPlan: studyPlan,
+    reviewCards: reviewCards,
+    dueCards: dueCards,
+    applyReviewResult: applyReviewResult,
+    reviewStats: reviewStats,
+    progressStats: progressStats,
+    searchContent: searchContent,
+    buildPreparation: buildPreparation,
+    preparationTaskDescription: preparationTaskDescription
   };
 });

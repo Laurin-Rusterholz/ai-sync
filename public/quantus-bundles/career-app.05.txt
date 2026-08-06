@@ -1,4 +1,150 @@
-== "devices") { if (global.QuantusUniversalUI) global.QuantusUniversalUI.openPanel(); return; }
+ function preparationTaskPayload(prep, done) {
+    return {
+      title: "Modul vorbereiten: " + prep.moduleTitle,
+      description: Core.preparationTaskDescription(prep),
+      status: done ? "done" : "todo",
+      priority: 2,
+      dueDate: prep.targetDate || null,
+      tags: ["career-model", "weiterbildung"]
+    };
+  }
+
+  function createPreparation() {
+    // Ohne Cloud-Verbindung gar nicht erst anfangen — sonst entstuende eine
+    // Quantus-Aufgabe ohne die zugehoerige Vorbereitung.
+    if (!state.userRef) return Promise.reject(new Error("Bitte zuerst anmelden."));
+    var prep = Core.buildPreparation({
+      areaName: state.prompt.areaName,
+      moduleTitle: state.prompt.moduleTitle,
+      level: state.prompt.level,
+      dailyMinutes: state.prompt.dailyMinutes,
+      notes: state.prompt.notes,
+      targetDate: state.prepTargetDate
+    }, new Date().toISOString());
+    var inboxId = "career-" + prep.id;
+    // Erst die Aufgabe, dann der Eintrag: schlaegt die Bruecke fehl, entsteht
+    // keine Vorbereitung, die faelschlich behauptet, es gaebe eine Aufgabe.
+    return pushQuantusTask(inboxId, preparationTaskPayload(prep, false), "create").then(function () {
+      prep.taskRef = { source: "quantus-task", inboxId: inboxId };
+      return updateRoot(function (root) {
+        root.preparations[prep.id] = prep;
+        return root;
+      });
+    }).then(function () {
+      state.prepTargetDate = "";
+      toast("Vorbereitung angelegt", "Die Aufgabe steht ab sofort unter „Aufgaben“ in Quantus.", "ok");
+      render();
+    });
+  }
+
+  function finishPreparation(prepId, silent) {
+    var prep = asObject(state.data.preparations)[prepId];
+    if (!prep || prep.status === "done") return Promise.resolve();
+    var updated = Object.assign({}, prep, { status: "done", updatedAt: new Date().toISOString() });
+    return updateRoot(function (root) {
+      root.preparations[prepId] = updated;
+      return root;
+    }).then(function () {
+      if (!updated.taskRef || !updated.taskRef.inboxId) return null;
+      return pushQuantusTask(updated.taskRef.inboxId, preparationTaskPayload(updated, true), "update");
+    }).then(function () {
+      if (!silent) toast("Vorbereitung erledigt", "Die Quantus-Aufgabe wurde ebenfalls abgeschlossen.", "ok");
+      render();
+    });
+  }
+
+  function deletePreparation(prepId) {
+    var prep = asObject(state.data.preparations)[prepId];
+    if (!prep) return Promise.resolve();
+    return updateRoot(function (root) {
+      delete root.preparations[prepId];
+      return root;
+    }).then(function () {
+      // Die Quantus-Aufgabe wird bewusst NICHT geloescht: sie gehoert ab dem
+      // Anlegen dem Aufgabenmodul. Sie wird nur nicht mehr weiter gepflegt.
+      toast("Vorbereitung entfernt", "Die Quantus-Aufgabe bleibt bestehen.", "ok");
+      render();
+    });
+  }
+
+  // Uebernimmt die Angaben einer Vorbereitung in die Prompt-Felder.
+  function adoptPreparation(prepId) {
+    var prep = asObject(state.data.preparations)[prepId];
+    if (!prep) return;
+    state.prompt.areaName = prep.areaName;
+    state.prompt.moduleTitle = prep.moduleTitle;
+    state.prompt.level = prep.level || state.prompt.level;
+    state.prompt.dailyMinutes = prep.dailyMinutes || 30;
+    state.prompt.notes = prep.notes || "";
+    state.tab = "import";
+    render();
+  }
+
+  // Nach einem Import: passt eine offene Vorbereitung zum importierten Modul,
+  // gilt sie als erledigt — samt der Quantus-Aufgabe.
+  function closeMatchingPreparation(moduleTitle) {
+    var needle = String(moduleTitle || "").trim().toLowerCase();
+    if (!needle) return Promise.resolve();
+    var hit = values(state.data.preparations).find(function (prep) {
+      return prep && prep.status !== "done" && String(prep.moduleTitle || "").trim().toLowerCase() === needle;
+    });
+    return hit ? finishPreparation(hit.id, true).catch(function () {}) : Promise.resolve();
+  }
+
+  // ── Lernplan ─────────────────────────────────────────────────────────────
+  function setPlanTarget(moduleId, targetDate) {
+    return updateRoot(function (root) {
+      if (!root.modules[moduleId]) throw new Error("Modul nicht gefunden.");
+      var existing = asObject(root.plans[moduleId]);
+      if (!targetDate) delete root.plans[moduleId];
+      else root.plans[moduleId] = {
+        targetDate: targetDate,
+        startedAt: existing.startedAt || Core.dateKey(new Date(), root.settings && root.settings.timezone),
+        updatedAt: new Date().toISOString()
+      };
+      return root;
+    });
+  }
+
+  // ── Wiederholen ──────────────────────────────────────────────────────────
+  function answerCard(cardId, correct) {
+    var today = Core.dateKey(new Date(), state.data.settings && state.data.settings.timezone);
+    return updateRoot(function (root) {
+      root.review[cardId] = Core.applyReviewResult(root.review[cardId], correct, today);
+      return root;
+    }).then(function () {
+      state.reviewDone += 1;
+      state.reviewCardId = "";
+      state.reviewRevealed = false;
+      render();
+    });
+  }
+
+  function copyText(text) {
+    if (global.navigator.clipboard && global.isSecureContext) return global.navigator.clipboard.writeText(text);
+    var area = global.document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    global.document.body.appendChild(area);
+    area.select();
+    global.document.execCommand("copy");
+    area.remove();
+    return Promise.resolve();
+  }
+
+  global.document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-cm-action]");
+    if (!button) return;
+    var action = button.dataset.cmAction;
+    if (action === "tab") { state.tab = button.dataset.tab || "today"; render(); return; }
+    if (action === "sign-in") {
+      button.disabled = true;
+      signIn().catch(function (error) { toast("Anmeldung fehlgeschlagen", error.message || String(error), "error"); }).finally(function () { button.disabled = false; });
+      return;
+    }
+    if (action === "sign-out") { signOut(); return; }
+    if (action === "devices") { if (global.QuantusUniversalUI) global.QuantusUniversalUI.openPanel(); return; }
     if (action === "exit-app") { exitToQuantus(button); return; }
     if (action === "scroll-learning") { var target = global.document.getElementById("cmLearningStart"); if (target) target.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     if (action === "open-day") {
@@ -36,7 +182,43 @@
     }
     if (action === "reopen-day") {
       reopenDay(button.dataset.moduleId, button.dataset.dayId).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); });
+      return;
     }
+    if (action === "plan-clear") {
+      setPlanTarget(button.dataset.moduleId, "").then(function () { toast("Zieldatum entfernt", "Das Modul laeuft wieder ohne Frist.", "ok"); render(); })
+        .catch(function (error) { toast("Nicht gespeichert", error.message, "error"); });
+      return;
+    }
+    if (action === "review-reveal") { state.reviewCardId = button.dataset.cardId || ""; state.reviewRevealed = true; render(); return; }
+    if (action === "review-skip") {
+      // Ueberspringen darf die Karte nicht bewerten — sie bleibt faellig und
+      // rutscht nur ans Ende der aktuellen Liste.
+      state.reviewCardId = "";
+      state.reviewRevealed = false;
+      var skipped = Core.dueCards(state.data, { moduleId: state.reviewModuleId || undefined });
+      var nextCard = skipped.find(function (entry) { return entry.id !== button.dataset.cardId; });
+      state.reviewCardId = nextCard ? nextCard.id : "";
+      render();
+      return;
+    }
+    if (action === "review-answer") {
+      button.disabled = true;
+      answerCard(button.dataset.cardId, button.dataset.correct === "1")
+        .catch(function (error) { toast("Nicht gespeichert", error.message, "error"); button.disabled = false; });
+      return;
+    }
+    if (action === "prep-create") {
+      button.disabled = true;
+      createPreparation().catch(function (error) { toast("Nicht angelegt", error.message || String(error), "error"); })
+        .finally(function () { button.disabled = false; });
+      return;
+    }
+    if (action === "prep-done") {
+      finishPreparation(button.dataset.prepId).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); });
+      return;
+    }
+    if (action === "prep-delete") { deletePreparation(button.dataset.prepId).catch(function (error) { toast("Nicht gespeichert", error.message, "error"); }); return; }
+    if (action === "prep-prompt") { adoptPreparation(button.dataset.prepId); return; }
   });
 
   global.document.addEventListener("submit", function (event) {
@@ -53,10 +235,34 @@
 
   global.document.addEventListener("change", function (event) {
     if (event.target.id === "cmImportFile") { readImportFile(event.target.files && event.target.files[0]); return; }
-    if (event.target.id === "cmReflectionDate") { state.reflectionDate = event.target.value || Core.dateKey(new Date()); render(); }
+    if (event.target.id === "cmReflectionDate") { state.reflectionDate = event.target.value || Core.dateKey(new Date()); render(); return; }
+    if (event.target.id === "cmPrepTarget") { state.prepTargetDate = event.target.value || ""; return; }
+    if (event.target.dataset.cmReviewFilter !== undefined) {
+      state.reviewModuleId = event.target.value || "";
+      state.reviewCardId = "";
+      state.reviewRevealed = false;
+      render();
+      return;
+    }
+    var planModuleId = event.target.dataset.cmPlan;
+    if (planModuleId) {
+      setPlanTarget(planModuleId, event.target.value || "")
+        .then(function () { render(); })
+        .catch(function (error) { toast("Nicht gespeichert", error.message, "error"); });
+    }
   });
 
   global.document.addEventListener("input", function (event) {
+    if (event.target.id === "cmSearchInput") {
+      // Nur den Trefferbereich neu zeichnen waere schoener, aber render() setzt
+      // den Fokus des Suchfeldes zurueck — deshalb erst ab zwei Zeichen und
+      // mit gemerktem Fokus.
+      state.searchQuery = event.target.value || "";
+      render();
+      var again = global.document.getElementById("cmSearchInput");
+      if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      return;
+    }
     var promptKey = event.target.dataset.cmPrompt;
     if (promptKey) {
       state.prompt[promptKey] = promptKey === "dailyMinutes" ? Number(event.target.value) || 30 : event.target.value;

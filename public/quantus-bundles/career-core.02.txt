@@ -1,77 +1,4 @@
-esult, { max: 20, maxLength: 500 }) : [];
-        if (!text && !items.length) pushError(result, sectionPath, "Abschnitt braucht Text oder Listeneinträge.");
-        if (unsafeMarkup(text) || unsafeMarkup(sectionTitle)) pushError(result, sectionPath, "HTML und Scripts sind nicht erlaubt.");
-        return { type: type, title: sectionTitle, text: text, items: items, sourceRefs: sourceRefs };
-      });
-
-      var exerciseRaw = asObject(day.exercise);
-      var exercise = {
-        prompt: cleanText(exerciseRaw.prompt, 6000),
-        estimatedMinutes: Number(exerciseRaw.estimatedMinutes) || 0,
-        solution: cleanText(exerciseRaw.solution, 8000)
-      };
-      if (!exercise.prompt) pushError(result, path + ".exercise.prompt", "Praxisaufgabe fehlt.");
-      if (!exercise.solution) pushError(result, path + ".exercise.solution", "Musterlösung fehlt.");
-      if (!Number.isFinite(exercise.estimatedMinutes) || exercise.estimatedMinutes < 2 || exercise.estimatedMinutes > 20) pushError(result, path + ".exercise.estimatedMinutes", "Muss zwischen 2 und 20 Minuten liegen.");
-      if (unsafeMarkup(exercise.prompt) || unsafeMarkup(exercise.solution)) pushError(result, path + ".exercise", "HTML und Scripts sind nicht erlaubt.");
-
-      var questionsRaw = asArray(day.reviewQuestions);
-      if (questionsRaw.length < 2) pushError(result, path + ".reviewQuestions", "Mindestens zwei Kontrollfragen erforderlich.");
-      if (questionsRaw.length > 12) pushError(result, path + ".reviewQuestions", "Höchstens zwölf Kontrollfragen erlaubt.");
-      var questions = questionsRaw.map(function (rawQuestion, questionIndex) {
-        var questionPath = path + ".reviewQuestions[" + questionIndex + "]";
-        var question = asObject(rawQuestion);
-        var q = cleanText(question.question, 2000);
-        var answer = cleanText(question.answer, 4000);
-        if (!q) pushError(result, questionPath + ".question", "Frage fehlt.");
-        if (!answer) pushError(result, questionPath + ".answer", "Antwort fehlt.");
-        if (unsafeMarkup(q) || unsafeMarkup(answer)) pushError(result, questionPath, "HTML und Scripts sind nicht erlaubt.");
-        return { question: q, answer: answer };
-      });
-
-      return {
-        id: id,
-        day: number,
-        title: title,
-        estimatedMinutes: Number.isFinite(minutes) ? Math.round(minutes) : 30,
-        objectives: objectives,
-        sections: sections,
-        exercise: exercise,
-        reviewQuestions: questions,
-        takeaways: takeaways
-      };
-    }).sort(function (a, b) { return a.day - b.day; });
-
-    days.forEach(function (day, index) {
-      if (day.day !== index + 1) pushError(result, "module.days", "Tagesnummern müssen lückenlos bei 1 beginnen.");
-    });
-
-    var computedMinutes = days.reduce(function (sum, day) { return sum + day.estimatedMinutes; }, 0);
-    var declaredMinutes = Number(module.estimatedTotalMinutes);
-    if (Number.isFinite(declaredMinutes) && Math.abs(declaredMinutes - computedMinutes) > Math.max(10, computedMinutes * 0.1)) {
-      pushWarning(result, "module.estimatedTotalMinutes", "Gesamtzeit wurde auf die Summe der Tageszeiten korrigiert (" + computedMinutes + " Minuten).");
-    }
-    var average = days.length ? computedMinutes / days.length : 0;
-    if (days.length && (average < 25 || average > 35)) pushWarning(result, "module.days", "Durchschnitt pro Tag: " + average.toFixed(1) + " Minuten; Ziel sind ungefähr 30 Minuten.");
-
-    var generatedAt = cleanLine(input.generatedAt, 80);
-    if (generatedAt && Number.isNaN(Date.parse(generatedAt))) pushWarning(result, "generatedAt", "Zeitstempel ist nicht ISO-konform; Quantus setzt beim Import einen neuen Zeitstempel.");
-
-    result.value = {
-      schema: SCHEMA,
-      schemaVersion: VERSION,
-      generatedAt: generatedAt && !Number.isNaN(Date.parse(generatedAt)) ? new Date(generatedAt).toISOString() : new Date().toISOString(),
-      careerArea: {
-        id: areaId,
-        name: areaName,
-        description: cleanText(area.description, 3000)
-      },
-      module: {
-        id: moduleId,
-        title: moduleTitle,
-        description: cleanText(module.description, 6000),
-        level: cleanLine(module.level, 180),
-        sourceDocuments: sources,
+urces,
         estimatedTotalMinutes: computedMinutes,
         days: days
       }
@@ -88,6 +15,15 @@ esult, { max: 20, maxLength: 500 }) : [];
       modules: {},
       progress: {},
       reflections: {},
+      // Vorbereitung eines Moduls: der Weg von "Thema festgelegt" bis "Datei
+      // importiert". Jede Vorbereitung haengt an einer echten Quantus-Aufgabe
+      // (taskRef), damit sie in der normalen Aufgabenliste auftaucht.
+      preparations: {},
+      // Lernplan je Modul: { targetDate, startedAt } — das Pensum rechnet die
+      // App daraus selbst aus. Kein n8n, keine gelieferte Pace.
+      plans: {},
+      // Leitner-Wiederholung: cardId -> { box, dueDate, seen, correct, wrong }
+      review: {},
       settings: { dailyMinutes: 30, timezone: "Europe/Zurich" },
       meta: { createdAt: null, updatedAt: null }
     };
@@ -101,85 +37,269 @@ esult, { max: 20, maxLength: 500 }) : [];
     base.modules = asObject(input.modules);
     base.progress = asObject(input.progress);
     base.reflections = asObject(input.reflections);
+    base.preparations = asObject(input.preparations);
+    base.plans = asObject(input.plans);
+    base.review = asObject(input.review);
     base.settings = Object.assign(base.settings, asObject(input.settings));
     base.meta = Object.assign(base.meta, asObject(input.meta));
     return base;
   }
 
-  function moduleProgress(stateInput, moduleId) {
-    var state = normalizeState(stateInput);
-    var module = state.modules[moduleId];
-    if (!module) return { completed: 0, total: 0, percent: 0, nextDayId: null };
-    var order = asArray(module.dayOrder);
-    var completedDays = asObject(state.progress[moduleId] && state.progress[moduleId].completedDays);
-    var completed = order.filter(function (id) { return Boolean(completedDays[id]); }).length;
-    var nextDayId = order.find(function (id) { return !completedDays[id]; }) || null;
-    return { completed: completed, total: order.length, percent: order.length ? Math.round(completed / order.length * 100) : 0, nextDayId: nextDayId };
+  // ── Lernplan ─────────────────────────────────────────────────────────────
+  // Dieselbe Idee wie die BM-Vorbereitung: ein Zieldatum, daraus das noetige
+  // Tagespensum und der Abgleich mit dem tatsaechlichen Stand. Der Unterschied
+  // ist nur, WER rechnet — hier die App selbst statt eines n8n-Workflows.
+  var LEITNER_DAYS = [1, 2, 4, 7, 14, 30];
+
+  function addDaysKey(key, days) {
+    var base = new Date(String(key || "").slice(0, 10) + "T12:00:00Z");
+    if (Number.isNaN(base.getTime())) base = new Date();
+    base.setUTCDate(base.getUTCDate() + Number(days || 0));
+    return base.toISOString().slice(0, 10);
   }
 
-  function nextSession(stateInput) {
+  function daysBetweenKeys(from, to) {
+    var a = new Date(String(from || "").slice(0, 10) + "T12:00:00Z");
+    var b = new Date(String(to || "").slice(0, 10) + "T12:00:00Z");
+    if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+    return Math.round((b - a) / 86400000);
+  }
+
+  // Liefert den Plan eines Moduls: verbleibende Tage, noetiges Pensum und ob man
+  // vor- oder zurueckliegt. Ohne Zieldatum bleibt targetDate null und die App
+  // zeigt nur den reinen Fortschritt.
+  function studyPlan(stateInput, moduleId, todayKey) {
     var state = normalizeState(stateInput);
-    var modules = Object.keys(state.modules).map(function (id) { return state.modules[id]; })
-      .filter(function (module) { return module && module.status !== "archived"; })
-      .sort(function (a, b) {
-        var aActive = a.status === "active" ? 1 : 0;
-        var bActive = b.status === "active" ? 1 : 0;
-        if (aActive !== bActive) return bActive - aActive;
-        return String(b.updatedAt || b.importedAt || "").localeCompare(String(a.updatedAt || a.importedAt || ""));
+    var stats = moduleProgress(state, moduleId);
+    var plan = asObject(state.plans[moduleId]);
+    var today = todayKey || dateKey(new Date(), state.settings.timezone);
+    var remaining = Math.max(0, stats.total - stats.completed);
+    var result = {
+      moduleId: moduleId,
+      targetDate: plan.targetDate || null,
+      startedAt: plan.startedAt || null,
+      total: stats.total,
+      completed: stats.completed,
+      remaining: remaining,
+      percent: stats.percent,
+      daysLeft: null,
+      perDay: null,
+      expected: null,
+      delta: null,
+      status: "ok"
+    };
+    if (!plan.targetDate) return result;
+    var daysLeft = daysBetweenKeys(today, plan.targetDate);
+    result.daysLeft = daysLeft;
+    if (daysLeft === null) return result;
+    result.perDay = daysLeft > 0 ? Math.ceil(remaining / daysLeft) : remaining;
+    // Erwarteter Stand: linear zwischen Start und Zieldatum.
+    var start = plan.startedAt || today;
+    var span = daysBetweenKeys(start, plan.targetDate);
+    if (span && span > 0) {
+      var elapsed = Math.max(0, Math.min(span, daysBetweenKeys(start, today)));
+      result.expected = Math.round(stats.total * (elapsed / span));
+      result.delta = stats.completed - result.expected;
+    }
+    if (daysLeft < 0 && remaining > 0) result.status = "overdue";
+    else if (result.delta !== null && result.delta <= -2) result.status = "behind";
+    else if (result.delta !== null && result.delta >= 2) result.status = "ahead";
+    return result;
+  }
+
+  // ── Wiederholung (Leitner) ───────────────────────────────────────────────
+  // Die Karten entstehen aus dem bereits importierten Stoff: Kontrollfragen und
+  // Merksaetze jedes Lerntags. Es wird nichts generiert und nichts nachgeladen —
+  // eine Karte existiert genau dann, wenn der Lerntag existiert.
+  function cardId(moduleId, dayId, kind, index) {
+    return moduleId + "::" + dayId + "::" + kind + index;
+  }
+
+  function reviewCards(stateInput, options) {
+    var state = normalizeState(stateInput);
+    options = asObject(options);
+    var onlyCompleted = options.onlyCompleted !== false;   // Standard: nur gelernte Tage
+    var cards = [];
+    Object.keys(state.modules).forEach(function (moduleId) {
+      if (options.moduleId && options.moduleId !== moduleId) return;
+      var module = state.modules[moduleId];
+      if (!module || module.status === "archived") return;
+      var completed = asObject(asObject(state.progress[moduleId]).completedDays);
+      asArray(module.dayOrder).forEach(function (dayId) {
+        var day = asObject(module.days)[dayId];
+        if (!day) return;
+        if (onlyCompleted && !completed[dayId]) return;
+        asArray(day.reviewQuestions).forEach(function (question, index) {
+          if (!question || !question.question) return;
+          cards.push({
+            id: cardId(moduleId, dayId, "q", index),
+            moduleId: moduleId, moduleTitle: module.title, dayId: dayId, dayTitle: day.title,
+            kind: "question", front: question.question, back: question.answer || ""
+          });
+        });
+        asArray(day.takeaways).forEach(function (item, index) {
+          if (!item) return;
+          cards.push({
+            id: cardId(moduleId, dayId, "t", index),
+            moduleId: moduleId, moduleTitle: module.title, dayId: dayId, dayTitle: day.title,
+            kind: "takeaway", front: "Merksatz zu: " + (day.title || ""), back: String(item)
+          });
+        });
       });
-    for (var i = 0; i < modules.length; i += 1) {
-      var module = modules[i];
-      var stats = moduleProgress(state, module.id);
-      if (!stats.nextDayId) continue;
-      var day = asObject(module.days)[stats.nextDayId];
-      if (!day) continue;
-      return {
-        module: module,
-        area: state.areas[module.areaId] || null,
-        day: day,
-        progress: stats,
-        completion: asObject(asObject(state.progress[module.id]).completedDays)[day.id] || null
-      };
-    }
-    return null;
+    });
+    return cards;
   }
 
-  function mergePackage(stateInput, packageInput, now) {
-    var validation = validatePackage(packageInput);
-    if (!validation.ok) {
-      var error = new Error("Career-Model-Datei ist ungültig.");
-      error.validation = validation;
-      throw error;
-    }
-    var pkg = validation.value;
-    var state = normalizeState(deepClone(stateInput || {}));
-    var timestamp = now && !Number.isNaN(Date.parse(now)) ? new Date(now).toISOString() : new Date().toISOString();
-    var areaId = pkg.careerArea.id;
-    var moduleId = pkg.module.id;
-    var previousModule = state.modules[moduleId] || null;
-    var previousAreaId = previousModule && previousModule.areaId;
-    var previousProgress = asObject(state.progress[moduleId]);
-    var dayOrder = pkg.module.days.map(function (day) { return day.id; });
-    var days = {};
-    pkg.module.days.forEach(function (day) { days[day.id] = day; });
-
-    if (previousAreaId && previousAreaId !== areaId && state.areas[previousAreaId]) {
-      state.areas[previousAreaId].moduleIds = asArray(state.areas[previousAreaId].moduleIds).filter(function (id) { return id !== moduleId; });
-      state.areas[previousAreaId].updatedAt = timestamp;
-    }
-
-    var area = Object.assign({}, state.areas[areaId] || {}, pkg.careerArea, {
-      id: areaId,
-      moduleIds: Array.from(new Set(asArray(state.areas[areaId] && state.areas[areaId].moduleIds).concat(moduleId))),
-      createdAt: state.areas[areaId] && state.areas[areaId].createdAt || timestamp,
-      updatedAt: timestamp
+  // Faellige Karten: alles, was noch nie gesehen wurde oder dessen Faelligkeit
+  // erreicht ist. Neue Karten zuerst, danach die am laengsten ueberfaelligen.
+  function dueCards(stateInput, options) {
+    var state = normalizeState(stateInput);
+    options = asObject(options);
+    var today = options.todayKey || dateKey(new Date(), state.settings.timezone);
+    return reviewCards(state, options).filter(function (card) {
+      var entry = state.review[card.id];
+      if (!entry || !entry.dueDate) return true;
+      return String(entry.dueDate) <= today;
+    }).sort(function (a, b) {
+      var ea = state.review[a.id], eb = state.review[b.id];
+      if (!ea && eb) return -1;
+      if (ea && !eb) return 1;
+      if (!ea && !eb) return 0;
+      return String(ea.dueDate || "").localeCompare(String(eb.dueDate || ""));
     });
-    state.areas[areaId] = area;
+  }
 
-    state.modules[moduleId] = {
-      id: moduleId,
-      areaId: areaId,
-      title: pkg.module.title,
-      description: pkg.module.description,
-      level: pkg.module.level,
-      sour
+  // Ergebnis einer Wiederholung: richtig schiebt eine Box weiter, falsch setzt
+  // zurueck auf Box 1. Gibt den neuen Eintrag zurueck (der Aufrufer speichert).
+  function applyReviewResult(entryInput, correct, todayKey) {
+    var entry = asObject(entryInput);
+    var box = Number(entry.box);
+    if (!Number.isFinite(box) || box < 1) box = 1;
+    box = correct ? Math.min(LEITNER_DAYS.length, box + 1) : 1;
+    var today = todayKey || dateKey(new Date());
+    return {
+      box: box,
+      dueDate: addDaysKey(today, LEITNER_DAYS[box - 1]),
+      lastSeen: today,
+      seen: Number(entry.seen || 0) + 1,
+      correct: Number(entry.correct || 0) + (correct ? 1 : 0),
+      wrong: Number(entry.wrong || 0) + (correct ? 0 : 1)
+    };
+  }
+
+  // Beherrschungsgrad: Anteil der Karten, die mindestens Box 4 erreicht haben.
+  function reviewStats(stateInput, options) {
+    var state = normalizeState(stateInput);
+    var cards = reviewCards(state, options);
+    var due = dueCards(state, options).length;
+    var mastered = 0, started = 0;
+    cards.forEach(function (card) {
+      var entry = state.review[card.id];
+      if (!entry) return;
+      started += 1;
+      if (Number(entry.box || 1) >= 4) mastered += 1;
+    });
+    return {
+      total: cards.length, due: due, started: started, mastered: mastered,
+      percent: cards.length ? Math.round(mastered / cards.length * 100) : 0
+    };
+  }
+
+  // ── Fortschritt ueber alle Module ────────────────────────────────────────
+  function progressStats(stateInput) {
+    var state = normalizeState(stateInput);
+    var moduleIds = Object.keys(state.modules);
+    var totalDays = 0, doneDays = 0, minutes = 0;
+    var dates = {};
+    moduleIds.forEach(function (moduleId) {
+      var module = state.modules[moduleId];
+      if (!module) return;
+      var stats = moduleProgress(state, moduleId);
+      totalDays += stats.total;
+      doneDays += stats.completed;
+      var completed = asObject(asObject(state.progress[moduleId]).completedDays);
+      Object.keys(completed).forEach(function (dayId) {
+        var entry = completed[dayId];
+        if (!entry) return;
+        minutes += Number(entry.actualMinutes || 0) || 0;
+        var key = String(entry.completedAt || "").slice(0, 10);
+        if (key) dates[key] = true;
+      });
+    });
+    return {
+      modules: moduleIds.length,
+      areas: Object.keys(state.areas).length,
+      totalDays: totalDays,
+      doneDays: doneDays,
+      percent: totalDays ? Math.round(doneDays / totalDays * 100) : 0,
+      minutes: minutes,
+      activeDays: Object.keys(dates).length,
+      streak: streakLength(Object.keys(dates).sort(), dateKey(new Date(), state.settings.timezone))
+    };
+  }
+
+  // Laufende Serie: heute oder gestern muss dabei sein, sonst ist sie gerissen.
+  function streakLength(sortedDates, todayKey) {
+    if (!sortedDates.length) return 0;
+    var set = {};
+    sortedDates.forEach(function (key) { set[key] = true; });
+    var cursor = todayKey;
+    if (!set[cursor]) {
+      cursor = addDaysKey(todayKey, -1);
+      if (!set[cursor]) return 0;
+    }
+    var count = 0;
+    while (set[cursor]) { count += 1; cursor = addDaysKey(cursor, -1); }
+    return count;
+  }
+
+  // ── Volltextsuche ueber alles Importierte ────────────────────────────────
+  function searchContent(stateInput, query, limit) {
+    var state = normalizeState(stateInput);
+    var needle = cleanLine(query, 120).toLowerCase();
+    if (needle.length < 2) return [];
+    var hits = [];
+    var max = Number(limit) > 0 ? Number(limit) : 60;
+    function push(hit) { if (hits.length < max) hits.push(hit); }
+    function matches(text) { return String(text || "").toLowerCase().indexOf(needle) > -1; }
+    Object.keys(state.modules).forEach(function (moduleId) {
+      var module = state.modules[moduleId];
+      if (!module) return;
+      asArray(module.dayOrder).forEach(function (dayId) {
+        var day = asObject(module.days)[dayId];
+        if (!day) return;
+        var where = { moduleId: moduleId, moduleTitle: module.title, dayId: dayId, dayTitle: day.title, day: day.day };
+        if (matches(day.title)) push(Object.assign({ kind: "Lerntag", text: day.title }, where));
+        asArray(day.objectives).forEach(function (item) {
+          if (matches(item)) push(Object.assign({ kind: "Lernziel", text: item }, where));
+        });
+        asArray(day.sections).forEach(function (section) {
+          if (matches(section.title) || matches(section.text)) {
+            push(Object.assign({ kind: "Lerninhalt", text: section.title || section.text }, where));
+          }
+          asArray(section.items).forEach(function (item) {
+            if (matches(item)) push(Object.assign({ kind: "Lerninhalt", text: item }, where));
+          });
+        });
+        asArray(day.reviewQuestions).forEach(function (question) {
+          if (matches(question.question) || matches(question.answer)) {
+            push(Object.assign({ kind: "Kontrollfrage", text: question.question }, where));
+          }
+        });
+        asArray(day.takeaways).forEach(function (item) {
+          if (matches(item)) push(Object.assign({ kind: "Merksatz", text: item }, where));
+        });
+        if (day.exercise && (matches(day.exercise.prompt) || matches(day.exercise.solution))) {
+          push(Object.assign({ kind: "Praxisuebung", text: day.exercise.prompt }, where));
+        }
+      });
+    });
+    return hits;
+  }
+
+  // ── Modulvorbereitung ────────────────────────────────────────────────────
+  // Ein Modul entsteht nicht aus dem Nichts: Thema festlegen, Quellen sammeln,
+  // Prompt an Claude geben, Datei zurueckbekommen, importieren. Genau diese
+  // Arbeit ist eine Aufgabe — und zwar dieselbe Aufgabenart wie in Quantus,
+  // nicht eine eigene Erfindung des Career Models.
+  var PREPARATION_STEPS = [

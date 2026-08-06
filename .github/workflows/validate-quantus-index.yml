@@ -13,6 +13,9 @@ on:
       - "tests/gmail-network-retry.test.mjs"
       - "tests/flowertech-projects.test.mjs"
       - "public/flowertech.js"
+      - "tests/career-model-learning.test.mjs"
+      - "public/quantus-bundles/**"
+      - "public/career-model.css"
       - "package.json"
       - ".github/workflows/validate-quantus-index.yml"
   workflow_dispatch:

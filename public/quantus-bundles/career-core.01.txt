@@ -153,4 +153,77 @@
         var sectionTitle = cleanLine(section.title, 180);
         var text = cleanText(section.text, 12000);
         var items = Array.isArray(section.items) ? textArray(section.items, sectionPath + ".items", result, { max: 40, maxLength: 1200 }) : [];
-        var sourceRefs = Array.isArray(section.sourceRefs) ? textArray(section.sourceRefs, sectionPath + ".sourceRefs", r
+        var sourceRefs = Array.isArray(section.sourceRefs) ? textArray(section.sourceRefs, sectionPath + ".sourceRefs", result, { max: 20, maxLength: 500 }) : [];
+        if (!text && !items.length) pushError(result, sectionPath, "Abschnitt braucht Text oder Listeneinträge.");
+        if (unsafeMarkup(text) || unsafeMarkup(sectionTitle)) pushError(result, sectionPath, "HTML und Scripts sind nicht erlaubt.");
+        return { type: type, title: sectionTitle, text: text, items: items, sourceRefs: sourceRefs };
+      });
+
+      var exerciseRaw = asObject(day.exercise);
+      var exercise = {
+        prompt: cleanText(exerciseRaw.prompt, 6000),
+        estimatedMinutes: Number(exerciseRaw.estimatedMinutes) || 0,
+        solution: cleanText(exerciseRaw.solution, 8000)
+      };
+      if (!exercise.prompt) pushError(result, path + ".exercise.prompt", "Praxisaufgabe fehlt.");
+      if (!exercise.solution) pushError(result, path + ".exercise.solution", "Musterlösung fehlt.");
+      if (!Number.isFinite(exercise.estimatedMinutes) || exercise.estimatedMinutes < 2 || exercise.estimatedMinutes > 20) pushError(result, path + ".exercise.estimatedMinutes", "Muss zwischen 2 und 20 Minuten liegen.");
+      if (unsafeMarkup(exercise.prompt) || unsafeMarkup(exercise.solution)) pushError(result, path + ".exercise", "HTML und Scripts sind nicht erlaubt.");
+
+      var questionsRaw = asArray(day.reviewQuestions);
+      if (questionsRaw.length < 2) pushError(result, path + ".reviewQuestions", "Mindestens zwei Kontrollfragen erforderlich.");
+      if (questionsRaw.length > 12) pushError(result, path + ".reviewQuestions", "Höchstens zwölf Kontrollfragen erlaubt.");
+      var questions = questionsRaw.map(function (rawQuestion, questionIndex) {
+        var questionPath = path + ".reviewQuestions[" + questionIndex + "]";
+        var question = asObject(rawQuestion);
+        var q = cleanText(question.question, 2000);
+        var answer = cleanText(question.answer, 4000);
+        if (!q) pushError(result, questionPath + ".question", "Frage fehlt.");
+        if (!answer) pushError(result, questionPath + ".answer", "Antwort fehlt.");
+        if (unsafeMarkup(q) || unsafeMarkup(answer)) pushError(result, questionPath, "HTML und Scripts sind nicht erlaubt.");
+        return { question: q, answer: answer };
+      });
+
+      return {
+        id: id,
+        day: number,
+        title: title,
+        estimatedMinutes: Number.isFinite(minutes) ? Math.round(minutes) : 30,
+        objectives: objectives,
+        sections: sections,
+        exercise: exercise,
+        reviewQuestions: questions,
+        takeaways: takeaways
+      };
+    }).sort(function (a, b) { return a.day - b.day; });
+
+    days.forEach(function (day, index) {
+      if (day.day !== index + 1) pushError(result, "module.days", "Tagesnummern müssen lückenlos bei 1 beginnen.");
+    });
+
+    var computedMinutes = days.reduce(function (sum, day) { return sum + day.estimatedMinutes; }, 0);
+    var declaredMinutes = Number(module.estimatedTotalMinutes);
+    if (Number.isFinite(declaredMinutes) && Math.abs(declaredMinutes - computedMinutes) > Math.max(10, computedMinutes * 0.1)) {
+      pushWarning(result, "module.estimatedTotalMinutes", "Gesamtzeit wurde auf die Summe der Tageszeiten korrigiert (" + computedMinutes + " Minuten).");
+    }
+    var average = days.length ? computedMinutes / days.length : 0;
+    if (days.length && (average < 25 || average > 35)) pushWarning(result, "module.days", "Durchschnitt pro Tag: " + average.toFixed(1) + " Minuten; Ziel sind ungefähr 30 Minuten.");
+
+    var generatedAt = cleanLine(input.generatedAt, 80);
+    if (generatedAt && Number.isNaN(Date.parse(generatedAt))) pushWarning(result, "generatedAt", "Zeitstempel ist nicht ISO-konform; Quantus setzt beim Import einen neuen Zeitstempel.");
+
+    result.value = {
+      schema: SCHEMA,
+      schemaVersion: VERSION,
+      generatedAt: generatedAt && !Number.isNaN(Date.parse(generatedAt)) ? new Date(generatedAt).toISOString() : new Date().toISOString(),
+      careerArea: {
+        id: areaId,
+        name: areaName,
+        description: cleanText(area.description, 3000)
+      },
+      module: {
+        id: moduleId,
+        title: moduleTitle,
+        description: cleanText(module.description, 6000),
+        level: cleanLine(module.level, 180),
+        sourceDocuments: so

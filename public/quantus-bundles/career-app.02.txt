@@ -1,50 +1,4 @@
-day, progress: Core.moduleProgress(state.data, module.id), completion: asObject(asObject(state.data.progress[module.id]).completedDays)[day.id] || null };
-    }
-    return Core.nextSession(state.data);
-  }
-
-  function syncDeviceContext(session) {
-    if (!global.QuantusDeviceSync) return;
-    var moduleId = session && session.module && session.module.id || "";
-    var dayId = session && session.day && session.day.id || "";
-    var query = moduleId ? "?module=" + encodeURIComponent(moduleId) + (dayId ? "&day=" + encodeURIComponent(dayId) : "") : "";
-    global.QuantusDeviceSync.setContext({
-      kind: "career",
-      route: "career",
-      collection: "careerModel",
-      entityId: dayId || moduleId,
-      title: session ? session.module.title + " · " + session.day.title : "Career Model",
-      url: DESKTOP_ORIGIN + "/career-model.html" + query,
-      sourceOrigin: global.location.origin
-    });
-  }
-
-  function progressBar(percent) {
-    return '<div class="cm-progress-track"><i style="width:' + Math.max(0, Math.min(100, Number(percent) || 0)) + '%"></i></div>';
-  }
-
-  function renderSection(section) {
-    var type = section.type || "paragraph";
-    return '<article class="cm-card cm-learning-section cm-type-' + attr(type) + '">' +
-      (section.title ? '<h3>' + esc(section.title) + '</h3>' : '') +
-      (section.text ? '<p>' + esc(section.text) + '</p>' : '') +
-      (asArray(section.items).length ? '<ul>' + section.items.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + '</ul>' : '') +
-      (asArray(section.sourceRefs).length ? '<div class="cm-source-refs">' + section.sourceRefs.map(function (ref) { return '<span>' + esc(ref) + '</span>'; }).join("") + '</div>' : '') +
-    '</article>';
-  }
-
-  function todayView() {
-    var session = selectedSession();
-    syncDeviceContext(session);
-    if (!session) {
-      return shell('<div class="cm-empty"><div class="cm-empty-icon">⇩</div><h2>Dein erstes Fachmodul fehlt noch</h2><p>Erstelle mit dem eingebauten Claude-Prompt eine exakt importierbare JSON-Datei. Quantus teilt nichts mehr mit KI auf – die fertigen Lerntage werden direkt übernommen.</p><button class="cm-btn primary" data-cm-action="tab" data-tab="import">Modul vorbereiten und importieren</button></div>', "Heute lernen", "Täglich ungefähr 30 Minuten fachlich weiterkommen");
-    }
-    var module = session.module;
-    var day = session.day;
-    var stats = session.progress;
-    var completion = session.completion;
-    var content = '<div class="cm-hero">' +
-      '<section class="cm-card pad cm-session"><div class="cm-eyebrow">' + esc(session.area && session.area.name || "Karrierebereich") + ' · Tag ' + esc(day.day) + '</div><h2>' + esc(day.title) + '</h2><p>' + esc(module.description || "Deine nächste berufliche Lerneinheit.") + '</p><div class="cm-meta-row"><span class="cm-pill accent">◷ ' + esc(day.estimatedMinutes) + ' Minuten</span><span class="cm-pill">▦ ' + esc(module.title) + '</span>' + (completion ? '<span class="cm-pill green">✓ abgeschlossen ' + esc(formatDate(completion.completedAt, { day: "2-digit", month: "2-digit" })) + '</span>' : '') + '</div><div class="cm-session-actions"><button class="cm-btn primary" data-cm-action="scroll-learning">Lerneinheit öffnen</button><button class="cm-btn" data-cm-action="devices">Auf anderes Gerät senden</button></div></section>' +
+ cm-session"><div class="cm-eyebrow">' + esc(session.area && session.area.name || "Karrierebereich") + ' · Tag ' + esc(day.day) + '</div><h2>' + esc(day.title) + '</h2><p>' + esc(module.description || "Deine nächste berufliche Lerneinheit.") + '</p><div class="cm-meta-row"><span class="cm-pill accent">◷ ' + esc(day.estimatedMinutes) + ' Minuten</span><span class="cm-pill">▦ ' + esc(module.title) + '</span>' + (completion ? '<span class="cm-pill green">✓ abgeschlossen ' + esc(formatDate(completion.completedAt, { day: "2-digit", month: "2-digit" })) + '</span>' : '') + '</div><div class="cm-session-actions"><button class="cm-btn primary" data-cm-action="scroll-learning">Lerneinheit öffnen</button><button class="cm-btn" data-cm-action="devices">Auf anderes Gerät senden</button></div></section>' +
       '<aside class="cm-card pad cm-progress-card"><h3>Modulfortschritt</h3><div class="cm-big-number">' + stats.percent + '<small>%</small></div>' + progressBar(stats.percent) + '<div class="cm-muted cm-small">' + stats.completed + ' von ' + stats.total + ' Lerntagen abgeschlossen</div><div class="cm-divider"></div><div class="cm-small cm-muted">Gesamtumfang</div><strong>' + esc(module.estimatedTotalMinutes || 0) + ' Minuten</strong></aside>' +
     '</div>';
 
@@ -65,4 +19,98 @@ day, progress: Core.moduleProgress(state.data, module.id), completion: asObject(
       return '<section class="cm-card cm-area"><div class="cm-area-head"><div><div class="cm-eyebrow">Karrierebereich</div><h2>' + esc(area.name) + '</h2><p>' + esc(area.description || modules.length + " Module") + '</p></div><span class="cm-pill">' + modules.length + ' Module</span></div><div class="cm-module-grid">' + modules.map(function (module) {
         var stats = Core.moduleProgress(state.data, module.id);
         var completed = asObject(asObject(state.data.progress[module.id]).completedDays);
-        return '<article class="cm-module" data-cm-action="select-module" data-module-id="' + attr(module.id) + '"><div class="cm-meta-row"><span class="cm
+        return '<article class="cm-module" data-cm-action="select-module" data-module-id="' + attr(module.id) + '"><div class="cm-meta-row"><span class="cm-pill ' + (module.status === "active" ? "green" : "") + '">' + esc(module.status === "active" ? "Aktiv" : module.status || "Bereit") + '</span><span class="cm-pill">' + stats.total + ' Tage</span></div><h3>' + esc(module.title) + '</h3><p>' + esc(module.description || "") + '</p>' + progressBar(stats.percent) + '<div class="cm-module-foot"><small class="cm-muted">' + stats.completed + '/' + stats.total + ' erledigt</small><button class="cm-btn small" data-cm-action="module-activate" data-module-id="' + attr(module.id) + '">' + (module.status === "active" ? "Aktiv" : "Aktivieren") + '</button></div><div class="cm-day-list">' + asArray(module.dayOrder).map(function (dayId) {
+          var day = asObject(module.days)[dayId];
+          if (!day) return "";
+          var done = Boolean(completed[dayId]);
+          return '<button class="cm-day-row ' + (done ? "done" : "") + '" data-cm-action="open-day" data-module-id="' + attr(module.id) + '" data-day-id="' + attr(day.id) + '"><span class="cm-day-no">' + (done ? "✓" : esc(day.day)) + '</span><span class="cm-day-main"><strong>' + esc(day.title) + '</strong><small>' + esc(day.estimatedMinutes) + ' Minuten</small></span><span>›</span></button>';
+        }).join("") + '</div><div class="cm-form-actions"><button class="cm-btn small danger" data-cm-action="module-archive" data-module-id="' + attr(module.id) + '">' + (module.status === "archived" ? "Reaktivieren" : "Archivieren") + '</button></div></article>';
+      }).join("") + '</div></section>';
+    }).join("") + '</div>';
+    return shell(content, "Bereiche & Module", "Jobs, Rollen und Fachwissen strukturiert weiterentwickeln");
+  }
+
+  // ── Lernplan ─────────────────────────────────────────────────────────────
+  // Das Gegenstueck zum BM-Lernplan: ein Zieldatum je Modul, daraus rechnet die
+  // App das noetige Tagespensum und den Abgleich mit dem tatsaechlichen Stand.
+  // Der Unterschied zu BM ist nur, dass hier nichts von aussen geliefert wird.
+  var PLAN_LABEL = {
+    ok: '<span class="cm-pill green">Im Plan</span>',
+    ahead: '<span class="cm-pill green">Vorsprung</span>',
+    behind: '<span class="cm-pill warn">Rueckstand</span>',
+    overdue: '<span class="cm-pill danger">Zieldatum verstrichen</span>'
+  };
+
+  function planCard(module) {
+    var plan = Core.studyPlan(state.data, module.id);
+    var area = state.data.areas[module.areaId];
+    var rows = [
+      ["Lerntage", plan.completed + " von " + plan.total],
+      ["Offen", String(plan.remaining)],
+      ["Verbleibende Tage", plan.daysLeft === null ? "—" : String(plan.daysLeft)],
+      ["Noetiges Pensum", plan.perDay === null ? "—" : plan.perDay + " Lerntag(e) pro Tag"],
+      ["Erwarteter Stand", plan.expected === null ? "—" : plan.expected + " Lerntage"],
+      ["Abweichung", plan.delta === null ? "—" : (plan.delta > 0 ? "+" : "") + plan.delta + " Lerntage"]
+    ];
+    return '<section class="cm-card pad"><div class="cm-section-head" style="margin-top:0"><div>' +
+      '<div class="cm-eyebrow">' + esc(area && area.name || "Karrierebereich") + '</div>' +
+      '<h2>' + esc(module.title) + '</h2></div>' + (PLAN_LABEL[plan.status] || "") + '</div>' +
+      progressBar(plan.percent) +
+      '<div class="cm-plan-grid">' + rows.map(function (row) {
+        return '<div class="cm-plan-cell"><small>' + esc(row[0]) + '</small><strong>' + esc(row[1]) + '</strong></div>';
+      }).join("") + '</div>' +
+      '<div class="cm-form-actions"><label class="cm-field" style="flex:1"><span class="cm-small">Zieldatum</span>' +
+      '<input type="date" data-cm-plan="' + attr(module.id) + '" value="' + attr(plan.targetDate || "") + '"></label>' +
+      '<button class="cm-btn" data-cm-action="plan-clear" data-module-id="' + attr(module.id) + '">Zieldatum entfernen</button>' +
+      '</div></section>';
+  }
+
+  function planView() {
+    var modules = values(state.data.modules).filter(function (module) { return module && module.status !== "archived"; })
+      .sort(function (a, b) { return String(a.title).localeCompare(String(b.title), "de"); });
+    if (!modules.length) {
+      return shell('<div class="cm-empty"><div class="cm-empty-icon">◷</div><h2>Noch kein Modul zum Planen</h2>' +
+        '<p>Bereite zuerst ein Modul vor und importiere es — danach kannst du hier ein Zieldatum setzen.</p>' +
+        '<button class="cm-btn primary" data-cm-action="tab" data-tab="prepare">Modul vorbereiten</button></div>',
+        "Lernplan", "Zieldatum setzen, Pensum daraus rechnen");
+    }
+    return shell(modules.map(planCard).join(""), "Lernplan",
+      "Das Pensum rechnet die App selbst — pro Modul aus Zieldatum und offenen Lerntagen");
+  }
+
+  // ── Wiederholen (Leitner) ────────────────────────────────────────────────
+  // Karten entstehen aus den Kontrollfragen und Merksaetzen abgeschlossener
+  // Lerntage. Es wird nichts generiert: gibt es den Lerntag nicht, gibt es die
+  // Karte nicht.
+  function reviewView() {
+    var options = { moduleId: state.reviewModuleId || undefined };
+    var stats = Core.reviewStats(state.data, options);
+    var due = Core.dueCards(state.data, options);
+    var modules = values(state.data.modules).filter(function (module) { return module && module.status !== "archived"; });
+    var filter = '<div class="cm-form-actions"><label class="cm-field" style="flex:1"><span class="cm-small">Modul</span>' +
+      '<select data-cm-review-filter><option value="">Alle Module</option>' + modules.map(function (module) {
+        return '<option value="' + attr(module.id) + '"' + (state.reviewModuleId === module.id ? " selected" : "") + '>' +
+          esc(module.title) + '</option>';
+      }).join("") + '</select></label></div>';
+
+    var head = '<div class="cm-plan-grid">' +
+      '<div class="cm-plan-cell"><small>Faellig</small><strong>' + stats.due + '</strong></div>' +
+      '<div class="cm-plan-cell"><small>Karten gesamt</small><strong>' + stats.total + '</strong></div>' +
+      '<div class="cm-plan-cell"><small>Gemeistert</small><strong>' + stats.mastered + '</strong></div>' +
+      '<div class="cm-plan-cell"><small>Beherrschung</small><strong>' + stats.percent + ' %</strong></div>' +
+      '<div class="cm-plan-cell"><small>Diese Sitzung</small><strong>' + state.reviewDone + '</strong></div>' +
+      '</div>';
+
+    if (!stats.total) {
+      return shell('<section class="cm-card pad">' + filter + '</section>' +
+        '<div class="cm-empty"><div class="cm-empty-icon">↻</div><h2>Noch nichts zu wiederholen</h2>' +
+        '<p>Karten entstehen aus den Kontrollfragen und Merksaetzen der Lerntage, die du abgeschlossen hast. ' +
+        'Schliesse deine erste Lerneinheit ab — danach steht sie hier zur Wiederholung bereit.</p>' +
+        '<button class="cm-btn primary" data-cm-action="tab" data-tab="today">Zur Lerneinheit</button></div>',
+        "Wiederholen", "Verteilte Wiederholung nach Leitner");
+    }
+    if (!due.length) {
+      return shell('<section class="cm-card pad">' + filter + head + '</section>' +
+        '<div class="cm-empty"><div class="cm-empty-icon">✓</div><h2>Fuer heute alles wiederholt</h2>' +
+        '<p>Die naechsten Karten werden nach ihrem Leitner-Fach wieder faellig — nach 1, 2, 4, 7, 14 und 30 Tagen.</p></div>',
+        "Wiederholen", "Verteilte Wi

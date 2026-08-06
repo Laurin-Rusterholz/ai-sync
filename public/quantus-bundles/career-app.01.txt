@@ -46,6 +46,12 @@
       notes: ""
     },
     reflectionDate: Core.dateKey(new Date(), "Europe/Zurich"),
+    reviewModuleId: "",      // Wiederholen: Filter auf ein Modul ("" = alle)
+    reviewCardId: "",        // gerade abgefragte Karte
+    reviewRevealed: false,   // Rueckseite aufgedeckt?
+    reviewDone: 0,           // in dieser Sitzung beantwortete Karten
+    searchQuery: "",
+    prepTargetDate: "",
     embedded: false
   };
 
@@ -184,9 +190,15 @@
   }
 
   function shell(content, title, subtitle) {
+    var due = Core.reviewStats(state.data).due;
     var tabs = [
       { key: "today", label: "Heute", icon: "☀" },
+      { key: "plan", label: "Lernplan", icon: "◷" },
       { key: "modules", label: "Bereiche", icon: "▦" },
+      { key: "review", label: "Wiederholen" + (due ? " (" + due + ")" : ""), icon: "↻" },
+      { key: "progress", label: "Fortschritt", icon: "▲" },
+      { key: "search", label: "Suche", icon: "⌕" },
+      { key: "prepare", label: "Vorbereiten", icon: "✎" },
       { key: "import", label: "Import", icon: "⇩" },
       { key: "reflecta", label: "Reflecta", icon: "◐" }
     ];
@@ -216,4 +228,50 @@
     var module = state.data.modules[state.selectedModuleId];
     var day = module && asObject(module.days)[state.selectedDayId];
     if (module && day) {
-      return { module: module, area: state.data.areas[module.areaId] || null, day: 
+      return { module: module, area: state.data.areas[module.areaId] || null, day: day, progress: Core.moduleProgress(state.data, module.id), completion: asObject(asObject(state.data.progress[module.id]).completedDays)[day.id] || null };
+    }
+    return Core.nextSession(state.data);
+  }
+
+  function syncDeviceContext(session) {
+    if (!global.QuantusDeviceSync) return;
+    var moduleId = session && session.module && session.module.id || "";
+    var dayId = session && session.day && session.day.id || "";
+    var query = moduleId ? "?module=" + encodeURIComponent(moduleId) + (dayId ? "&day=" + encodeURIComponent(dayId) : "") : "";
+    global.QuantusDeviceSync.setContext({
+      kind: "career",
+      route: "career",
+      collection: "careerModel",
+      entityId: dayId || moduleId,
+      title: session ? session.module.title + " · " + session.day.title : "Career Model",
+      url: DESKTOP_ORIGIN + "/career-model.html" + query,
+      sourceOrigin: global.location.origin
+    });
+  }
+
+  function progressBar(percent) {
+    return '<div class="cm-progress-track"><i style="width:' + Math.max(0, Math.min(100, Number(percent) || 0)) + '%"></i></div>';
+  }
+
+  function renderSection(section) {
+    var type = section.type || "paragraph";
+    return '<article class="cm-card cm-learning-section cm-type-' + attr(type) + '">' +
+      (section.title ? '<h3>' + esc(section.title) + '</h3>' : '') +
+      (section.text ? '<p>' + esc(section.text) + '</p>' : '') +
+      (asArray(section.items).length ? '<ul>' + section.items.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + '</ul>' : '') +
+      (asArray(section.sourceRefs).length ? '<div class="cm-source-refs">' + section.sourceRefs.map(function (ref) { return '<span>' + esc(ref) + '</span>'; }).join("") + '</div>' : '') +
+    '</article>';
+  }
+
+  function todayView() {
+    var session = selectedSession();
+    syncDeviceContext(session);
+    if (!session) {
+      return shell('<div class="cm-empty"><div class="cm-empty-icon">⇩</div><h2>Dein erstes Fachmodul fehlt noch</h2><p>Erstelle mit dem eingebauten Claude-Prompt eine exakt importierbare JSON-Datei. Quantus teilt nichts mehr mit KI auf – die fertigen Lerntage werden direkt übernommen.</p><button class="cm-btn primary" data-cm-action="tab" data-tab="import">Modul vorbereiten und importieren</button></div>', "Heute lernen", "Täglich ungefähr 30 Minuten fachlich weiterkommen");
+    }
+    var module = session.module;
+    var day = session.day;
+    var stats = session.progress;
+    var completion = session.completion;
+    var content = '<div class="cm-hero">' +
+      '<section class="cm-card pad
