@@ -106,36 +106,51 @@ Import: `n8n/flowertech-lead-to-project.workflow.json` (Workflow → Import from
 ### Ablauf
 
 ```
-Webhook /flowertech-lead → Signatur gültig? ─ nein → Antwort 401
-                                └ ja ┐
-Mail-Eingang (optional, aus)         ┴→ Normalisieren & zuordnen → Zuordnung gültig?
-                                                                     ├ ja  → Quantus-API → Ergebnis → Antwort 202
-                                                                     └ nein→ Antwort 400 (kein Raten)
+Webhook /flowertech-lead  (Header Auth durch n8n)
+        └→ Normalisieren & zuordnen → Zuordnung gültig?
+Mail-Eingang (optional, aus) ┘            ├ ja  → Quantus-API → Ergebnis → Antwort 202
+                                          └ nein→ Antwort 400 (kein Raten)
 ```
 
-Der Webhook ist von aussen erreichbar. Er lehnt deshalb jeden Aufruf ohne den
-Header `X-FlowerTech-Signature` = `FT_WEBHOOK_SECRET` mit **401** ab — noch
-**vor** der Normalisierung, also bevor Fremddaten überhaupt angefasst werden.
-Ist `FT_WEBHOOK_SECRET` nicht gesetzt, schlägt der Vergleich fehl und der
-Webhook nimmt gar nichts an. Der IMAP-Eingang ist ein interner, standardmässig
-deaktivierter Zweig und braucht keine Signatur.
+n8n prüft den Header **am Webhook, bevor der Workflow läuft**. Ein Aufruf ohne
+gültige Signatur erreicht die Normalisierung gar nicht. Der IMAP-Eingang ist ein
+interner, standardmässig deaktivierter Zweig und braucht keine Signatur.
+
+### Zwei manuelle Schritte nach dem Import
+
+Die Instanz braucht **keine n8n-Variables-Lizenz**. Das Geheimnis liegt in einem
+Credential, die öffentliche Quantus-Basis steht fest im HTTP-Node.
+
+**1. Credential anlegen** — n8n → *Credentials* → *New* → **Header Auth**:
+
+| Feld | Wert |
+| --- | --- |
+| Name | `FlowerTech Shared Signature` |
+| Header Name | `X-FlowerTech-Signature` |
+| Header Value | das gemeinsame Geheimnis, z. B. aus `openssl rand -base64 48` |
+
+**2. Credential in beiden Nodes wählen:**
+
+- `Webhook: flowertech-lead` → *Authentication: Header Auth* → Credential wählen
+- `Quantus-API: Eingang buchen` → Credential wählen
+
+Ohne diesen Schritt zeigen beide Nodes eine Credential-Warnung und der Workflow
+läuft nicht. Das ist beabsichtigt: Der importierte Workflow trägt bewusst nur
+den Namen des Credentials, nie dessen Wert.
 
 ### Einzutragende Variablen
 
-Alle Geheimnisse ausschliesslich als Umgebungsvariablen — **nie im Workflow-JSON
-und nie im Repository**.
+Nur noch auf der Netlify-Seite — in n8n übernimmt das Credential.
 
 | Ort | Variable | Bedeutung |
 | --- | --- | --- |
-| n8n (Settings → Variables) | `FT_QUANTUS_BASE` | Basis-URL, z. B. `https://management-xo2-pro.netlify.app` |
-| n8n | `FT_WEBHOOK_SECRET` | Shared Secret, identisch zum Netlify-Wert |
-| n8n | `FT_DEFAULT_TOKEN` | optional: Freigabe-Token für Leads ohne eigenen Token |
-| Netlify (Site settings → Environment) | `FLOWERTECH_WEBHOOK_SECRET` | Gegenstück zu `FT_WEBHOOK_SECRET` |
+| Netlify (Site settings → Environment) | `FLOWERTECH_WEBHOOK_SECRET` | **identisch** zum Header Value des n8n-Credentials |
 | Netlify | `FLOWERTECH_ALLOWED_ORIGINS` | zusätzliche erlaubte Herkünfte, kommagetrennt |
 | Netlify | `FLOWERTECH_RATE_SALT` | Salt für das IP-Ratenlimit |
 | Netlify | `FIREBASE_SERVICE_ACCOUNT_JSON` | bereits vorhanden (Firebase-Admin) |
 
-Ein starkes Secret erzeugen: `openssl rand -base64 48`.
+Die Basis-URL `https://management-xo2-pro.netlify.app` steht fest im HTTP-Node
+und ist keine Variable.
 
 ### Sicherheit und Wiederholbarkeit
 
@@ -162,13 +177,15 @@ Ein starkes Secret erzeugen: `openssl rand -base64 48`.
 
 1. In Quantus ein FlowerTech-Testprojekt anlegen und im Reiter *Kundenansicht*
    den **Formular-Token** aus dem Link kopieren (der Teil nach `?t=`).
-2. Netlify-Variablen setzen und neu deployen.
-3. In n8n die Variablen setzen, Workflow importieren und aktivieren.
+2. `FLOWERTECH_WEBHOOK_SECRET` in Netlify setzen und neu deployen.
+3. In n8n den Workflow importieren, das Credential anlegen, in beiden Nodes
+   wählen und den Workflow aktivieren.
 4. Testaufruf:
 
    ```bash
    curl -sS -X POST "$N8N_BASE/webhook/flowertech-lead" \
      -H 'Content-Type: application/json' \
+     -H "X-FlowerTech-Signature: $FLOWERTECH_WEBHOOK_SECRET" \
      -d '{"token":"<FORMULAR_TOKEN>","name":"Testkundin","email":"test@example.ch",
           "message":"Wir brauchen eine neue Website mit Kontaktformular und Terminbuchung."}'
    ```
@@ -177,13 +194,13 @@ Ein starkes Secret erzeugen: `openssl rand -base64 48`.
 5. Denselben Aufruf **noch einmal** absetzen. Erwartet: `"duplicate":true` —
    es entsteht kein zweites Projekt und keine doppelte Aufgabe.
 6. Aufruf ohne Token: erwartet HTTP 400 mit Begründung, kein Eintrag.
-   Aufruf am n8n-Webhook **ohne** `X-FlowerTech-Signature`: erwartet HTTP 401,
-   der Lead wird nicht einmal normalisiert.
+   Aufruf am n8n-Webhook **ohne** `X-FlowerTech-Signature`: n8n antwortet mit
+   403, bevor der Workflow startet — der Lead wird nicht einmal normalisiert.
 
    ```bash
    # muss 401 liefern — weder Herkunft noch Signatur
    curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
-     "$FT_QUANTUS_BASE/.netlify/functions/flowertech-portal" \
+     "https://management-xo2-pro.netlify.app/.netlify/functions/flowertech-portal" \
      -H 'Content-Type: application/json' -d '{"token":"<TOKEN>","kind":"change","payload":{"title":"x"}}'
    ```
 7. In Quantus die Projektseite öffnen: Bedarf ist gefüllt, die Aufgaben stehen
@@ -192,7 +209,7 @@ Ein starkes Secret erzeugen: `openssl rand -base64 48`.
 Die Funktion lässt sich auch direkt testen (ohne n8n):
 
 ```bash
-curl -sS -X POST "$FT_QUANTUS_BASE/.netlify/functions/flowertech-portal" \
+curl -sS -X POST "https://management-xo2-pro.netlify.app/.netlify/functions/flowertech-portal" \
   -H 'Content-Type: application/json' \
   -H "X-FlowerTech-Signature: $FLOWERTECH_WEBHOOK_SECRET" \
   -d '{"token":"<TOKEN>","kind":"change","payload":{"title":"Logo tauschen"}}'
