@@ -636,6 +636,22 @@ dass der **laufende** Container es uebernommen hat. Schlaegt sie an, nennt die
 Ausgabe den Grund im Klartext (Cookie-Auth aktiv, falsches Passwort oder API
 nicht erreichbar). Passwort und Token erscheinen dabei in keiner Ausgabe.
 
+#### Kann dieser Smoke-Test ueberhaupt fehlschlagen?
+
+Ja — und das ist gepruefte Zusage, keine Behauptung. Ein Smoke-Test, der nicht
+fehlschlagen kann, ist wertlos; genau das war die Ausgangslage (der alte
+HTTPS-Check konnte nur falsch negativ sein, ein Crash-Loop blieb unsichtbar).
+`tests/neko-smoke-failure-modes.test.sh` stellt deshalb jeden der vier
+Live-Fehler gegen ein gestubbtes `docker`/`curl` nach und verlangt die
+passende Fehlermeldung — plus die Gegenprobe, dass im heilen Fall **keine**
+davon erscheint. Der Test laeuft in `npm test` mit, ohne Container und ohne
+Netz.
+
+Der Abstand der beiden Chromium-Stichproben ist ueber `NEKO_SMOKE_GAP`
+steuerbar (Standard 15 s). Er existiert fuer diese Tests — auf dem VPS bleibt
+es bei 15 s, sonst koennte eine Neustartschleife zwischen den Messungen
+durchrutschen.
+
 ### Manuelle Kommandozeilen-Checks
 
 ```bash
@@ -796,4 +812,5 @@ cd /opt/quantus-neko && docker compose logs -f --tail=200 neko
 | `public/index.html` | Quantus-App `#/browser` (Huelle `#quantusBrowserHost` + iframe + Status-/Retry-UI, **kein Secret**) |
 | `tests/quantus-browser-module.test.mjs` | statische Pruefungen (Secrets, Compose, Labels, UI, Regressionen) |
 | `tests/quantus-browser-layout-runtime.test.mjs` | Laufzeittest der Buehne (Skalierung, Vollbild, Zustaende, Zustandserhalt) |
-| `tests/neko-proxy-detect.test.sh` | Proxy-Erkennung gegen einen gestubbten Docker |
+| `tests/neko-proxy-detect.test.sh` | Proxy-Erkennung, Rechte-Reparatur und Anmelde-Probe gegen ein gestubbtes Docker/curl |
+| `tests/neko-smoke-failure-modes.test.sh` | Gegenprobe: die vier Live-Fehler werden vom Smoke-Test auch wirklich gemeldet |

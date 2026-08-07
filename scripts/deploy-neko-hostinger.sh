@@ -592,13 +592,19 @@ PID_A="$(chromium_pid)"
 if [ -z "${PID_A}" ]; then
   note_fail "Kein laufender Chromium-Prozess im Container — 'docker compose logs neko' pruefen"
 else
-  info "Chromium-Stabilitaet wird geprueft (15 s) …"
-  sleep 15
+  # Abstand der beiden Stichproben. Nur fuer die Regressionstests kuerzbar
+  # (NEKO_SMOKE_GAP=0) — auf dem VPS bleibt es bei 15 s, sonst wuerde eine
+  # Neustartschleife zwischen den Messungen unentdeckt bleiben.
+  SMOKE_GAP="${NEKO_SMOKE_GAP:-15}"
+  info "Chromium-Stabilitaet wird geprueft (${SMOKE_GAP} s) …"
+  # Bewusst if/fi statt `[ … ] && sleep`: bei Gap 0 liefert der Test 1 zurueck
+  # und `set -e` wuerde das Skript an dieser Stelle beenden.
+  if [ "${SMOKE_GAP}" -gt 0 ]; then sleep "${SMOKE_GAP}"; fi
   PID_B="$(chromium_pid)"
   if [ "${PID_A}" = "${PID_B}" ]; then
-    ok "Chromium laeuft stabil (PID ${PID_A} unveraendert ueber 15 s — kein Crash-Loop)"
+    ok "Chromium laeuft stabil (PID ${PID_A} unveraendert ueber ${SMOKE_GAP} s — kein Crash-Loop)"
   else
-    note_fail "Chromium-Crash-Loop: PID wechselte von ${PID_A} zu ${PID_B:-<leer>} innerhalb von 15 s"
+    note_fail "Chromium-Crash-Loop: PID wechselte von ${PID_A} zu ${PID_B:-<leer>} innerhalb von ${SMOKE_GAP} s"
     docker compose exec -T neko sh -c 'tail -n 15 /var/log/neko/chromium.log 2>/dev/null' \
       | sed 's/^/      /' || true
   fi
