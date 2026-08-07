@@ -602,9 +602,9 @@ else
   if [ "${SMOKE_GAP}" -gt 0 ]; then sleep "${SMOKE_GAP}"; fi
   PID_B="$(chromium_pid)"
   if [ "${PID_A}" = "${PID_B}" ]; then
-    ok "Chromium laeuft stabil (PID ${PID_A} unveraendert ueber 15 s — kein Crash-Loop)"
+    ok "Chromium laeuft stabil (PID ${PID_A} unveraendert ueber ${SMOKE_GAP} s — kein Crash-Loop)"
   else
-    note_fail "Chromium-Crash-Loop: PID wechselte von ${PID_A} zu ${PID_B:-<leer>} innerhalb von 15 s"
+    note_fail "Chromium-Crash-Loop: PID wechselte von ${PID_A} zu ${PID_B:-<leer>} innerhalb von ${SMOKE_GAP} s"
     docker compose exec -T neko sh -c 'tail -n 15 /var/log/neko/chromium.log 2>/dev/null' \
       | sed 's/^/      /' || true
   fi
