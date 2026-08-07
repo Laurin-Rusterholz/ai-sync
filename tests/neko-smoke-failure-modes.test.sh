@@ -102,6 +102,11 @@ case "$*" in
 esac
 STUB
 
+  # Das Skript besteht auf root (auf dem VPS voellig richtig). Der CI-Runner ist
+  # aber `runner`, und ohne diesen Stub braeche es schon in den Vorabpruefungen
+  # ab — die Smoke-Tests liefen dann nie, und der Test meldete faelschlich
+  # "blind". Genau das hat die CI aufgedeckt.
+  printf '#!/usr/bin/env bash\nif [ "$1" = "-u" ]; then echo 0; else exec /usr/bin/id "$@"; fi\n' > "${W}/bin/id"
   printf '#!/usr/bin/env bash\nexit 1\n' > "${W}/bin/systemctl"
   printf '#!/usr/bin/env bash\necho "203.0.113.10 neko.laurin-rusterholz.ch"\n' > "${W}/bin/getent"
   printf '#!/usr/bin/env bash\ncase "$*" in *-uln*) echo ":59000" ;; *-tln*) echo "127.0.0.1:8080" ;; esac\n' > "${W}/bin/ss"
@@ -113,10 +118,25 @@ STUB
   rm -rf "${W}"
 }
 
+# Sicherung gegen einen kaputten Testaufbau: erreicht der Lauf die Smoke-Tests
+# gar nicht — etwa weil eine Vorabpruefung abbricht —, waere jedes Urteil
+# darunter wertlos. Dann soll der Test LAUT scheitern statt "der Smoke ist
+# blind" zu behaupten. (Genau dieser Fall trat auf: ohne root-Stub starb das
+# Skript in den Vorabpruefungen.)
+assert_reached_smoke() {
+  local out="$1" ctx="$2"
+  if printf '%s' "${out}" | grep -q '7/8  Smoke-Tests'; then return 0; fi
+  printf '  ✗ Testaufbau kaputt (%s): der Lauf erreicht die Smoke-Tests nicht\n' "${ctx}"
+  printf '%s\n' "${out}" | tail -n 3 | sed 's/^/        /'
+  FAILED=1
+  return 1
+}
+
 # Der kaputte Fall MUSS die Meldung bringen.
 expect_detected() {
   local name="$1" expect="$2" scenario="$3" out
   out="$(run_smoke "${scenario}")"
+  assert_reached_smoke "${out}" "${scenario}" || return
   if printf '%s' "${out}" | grep -qF "${expect}"; then
     printf '  ✓ %s\n' "${name}"
     PASS=$((PASS + 1))
@@ -143,15 +163,28 @@ expect_detected "HTTPS mit 405 statt 200 wird gemeldet" \
 # blind alles bemaengelt.
 HEALTHY="$(run_smoke ok)"
 healthy_ok=1
-for e in "Cookie-Auth im laufenden Container aktiv" "Chromium-Crash-Loop" \
-         "Falscher Eigentuemer" "statt 200 auf GET"; do
-  if printf '%s' "${HEALTHY}" | grep -qF "${e}"; then
-    printf '  ✗ im heilen Fall faelschlich gemeldet: %s\n' "${e}"
-    healthy_ok=0; FAILED=1
-  fi
-done
+if assert_reached_smoke "${HEALTHY}" "heiler Fall"; then
+  # Abwesenheit allein genuegt nicht — ein abgebrochener Lauf haette sie auch.
+  # Es muss belegt sein, dass die Pruefungen wirklich gelaufen und gruen sind.
+  for e in "Anmeldung erfolgreich und Client-tauglich" "Chromium laeuft stabil" \
+           "liefert HTTP 200 auf GET"; do
+    if ! printf '%s' "${HEALTHY}" | grep -qF "${e}"; then
+      printf '  ✗ im heilen Fall fehlt der Beleg, dass geprueft wurde: %s\n' "${e}"
+      healthy_ok=0; FAILED=1
+    fi
+  done
+  for e in "Cookie-Auth im laufenden Container aktiv" "Chromium-Crash-Loop" \
+           "Falscher Eigentuemer" "statt 200 auf GET"; do
+    if printf '%s' "${HEALTHY}" | grep -qF "${e}"; then
+      printf '  ✗ im heilen Fall faelschlich gemeldet: %s\n' "${e}"
+      healthy_ok=0; FAILED=1
+    fi
+  done
+else
+  healthy_ok=0
+fi
 if [ "${healthy_ok}" -eq 1 ]; then
-  printf '  ✓ im heilen Fall meldet der Smoke keinen dieser Fehler\n'
+  printf '  ✓ im heilen Fall laufen die Pruefungen und melden keinen dieser Fehler\n'
   PASS=$((PASS + 1))
 fi
 
