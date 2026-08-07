@@ -429,6 +429,14 @@ check("Restart-Policy, Healthcheck, shm_size und Limits sind gesetzt", () => {
   assert.match(compose, /shm_size: "2gb"/);
   assert.match(compose, /healthcheck:/);
   assert.match(compose, /start_period: 60s/);
+  // Der Healthcheck darf nur Werkzeuge nutzen, die das neko-Image nachweislich
+  // mitbringt. curl steht in dessen apt-Liste; bash mit /dev/tcp haengt dagegen
+  // am Compile-Flag --enable-net-redirections und ist nicht zugesichert.
+  assert.match(compose, /test: \["CMD", "curl",/,
+    "Healthcheck sollte curl direkt aufrufen (kein Shell-Umweg)");
+  const composeEffective = compose.split("\n").filter(l => !/^\s*#/.test(l)).join("\n");
+  assert.doesNotMatch(composeEffective, /dev\/tcp/,
+    "/dev/tcp setzt ein bash-Compile-Flag voraus, das im Image nicht zugesichert ist");
   assert.match(compose, /mem_limit: \$\{NEKO_MEM_LIMIT:-\d+m\}/);
   // pids_limit zaehlt Threads mit; Chromium braucht mehrere hundert. Bei 512
   // schlug clone() fehl und Chromium stuerzte live mit SIGTRAP ab.

@@ -103,27 +103,36 @@ grep NEKO_USER_PASSWORD /opt/quantus-neko/.env
 
 1. **Vorabpruefungen** — root, Ubuntu-Version, Docker/Compose, DNS, Speicher,
    RAM; warnt, falls jemand Chromium auf dem Host installiert hat.
-2. **Reverse-Proxy-Erkennung** — nginx/Caddy als Host-Dienst, Traefik/nginx/
-   Caddy als Container, oder gar nichts. Es wird **nur dann Caddy installiert,
-   wenn kein anderer Proxy laeuft und 80/443 frei sind**. Laeuft bereits ein
-   Proxy fuer n8n, bekommt neko lediglich eine zusaetzliche Route — das
-   bestehende n8n bleibt unangetastet.
-3. **Backup** jeder Proxy-/Compose-Datei nach `/opt/quantus-neko/backups/`
+2. **Reverse-Proxy-Erkennung** — in dieser Reihenfolge: Traefik im Docker
+   (ueber den **Image**-Namen, nicht den Container-Namen — ein
+   `traefik-metrics-exporter` ist kein Traefik), dann nginx/Caddy als
+   Host-Dienst, dann nginx/Caddy als Container, dann nichts. Auf diesem VPS
+   greift Fall 1. Es wird **nur dann Caddy installiert, wenn gar kein Proxy
+   laeuft und 80/443 frei sind**.
+3. **Bei Traefik**: Netz, ACME-Resolver und EntryPoint-Namen werden aus
+   `Cmd`/`Args`/`Env`/`Labels` des laufenden Traefik gelesen. Existiert das
+   Netz nicht oder haengt Traefik nicht daran, bricht das Skript ab, **bevor**
+   irgendetwas startet. Danach wird das Label-Overlay
+   (`neko/docker-compose.traefik.yml`) ueber `COMPOSE_FILE` in der `.env`
+   aktiviert. Am n8n-Stack wird nichts veraendert und nichts neu gestartet.
+4. **Backup** jeder Proxy-/Compose-Datei nach `/opt/quantus-neko/backups/`
    *vor* der Aenderung; `nginx -t` bzw. `caddy validate` schlaegt fehl ->
-   automatischer Rueckbau.
-4. **`.env`** wird nur beim allerersten Lauf mit `openssl rand -base64 24`
-   erzeugt (Modus 600) und danach nie ueberschrieben.
-5. **Rechte** — `data/{profile,downloads,neko}` gehoert `1000:1000` (User
+   automatischer Rueckbau. Im Traefik-Fall gibt es nichts zu sichern — es wird
+   keine fremde Datei angefasst.
+5. **`.env`** — Passwoerter entstehen nur beim allerersten Lauf mit
+   `openssl rand -base64 24` (Modus 600). Danach werden nur noch einzelne
+   Schluessel gepflegt; vorhandene Werte bleiben unangetastet.
+6. **Rechte** — `data/{profile,downloads,neko}` gehoert `1000:1000` (User
    `neko` im Container; per `NEKO_DATA_UID`/`NEKO_DATA_GID` uebersteuerbar).
    Das Skript repariert Eigentuemer/Rechte bei **jedem** Lauf idempotent:
    `chown -R` nur bei Abweichung, nie loeschend — bestehende Profile und
    Downloads bleiben erhalten. Ohne diesen Schritt (root:root-Verzeichnisse)
    scheitern `sessions.json` und Downloads mit „permission denied" und
    Chromium crasht im Loop, weil sein `--user-data-dir` nicht beschreibbar ist.
-6. **Firewall** — `ufw`-Regeln, falls ufw aktiv; ausserdem der Hinweis auf die
+7. **Firewall** — `ufw`-Regeln, falls ufw aktiv; ausserdem der Hinweis auf die
    Hostinger-Panel-Firewall.
-7. **`docker compose up -d`** und Warten auf `healthy`.
-8. **Smoke-Tests** — siehe Abschnitt 6.
+8. **`docker compose up -d`** — nur im Projekt `quantus-neko` — und Warten auf `healthy`.
+9. **Smoke-Tests** — siehe Abschnitt 6.
 
 Das Skript ist **idempotent**: mehrfaches Ausfuehren ist unschaedlich.
 
