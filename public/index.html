@@ -18399,12 +18399,22 @@ function quantusBrowserDismissNote() {
   quantusBrowserFit();
 }
 
-// Ohne Fokus landen Tastatureingaben nie im Remote-Chromium.
-function quantusBrowserFocusFrame() {
+// Ohne Fokus landen Tastatureingaben nie im Remote-Chromium. Ein Re-Render
+// darf dem Nutzer aber nicht mitten im Tippen die Tastatur wegnehmen: liegt der
+// Fokus in einem Eingabefeld, bleibt er dort. `force` ist der ausdrueckliche
+// Wunsch (Vollbild, frisch geladener Stream).
+function quantusBrowserFocusFrame(force) {
   const frame = quantusBrowserFrameEl();
-  if (!frame || typeof frame.focus !== "function") return;
+  if (!frame || typeof frame.focus !== "function") return false;
+  if (!force) {
+    const active = document.activeElement;
+    const tag = active && active.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
+        (active && active.isContentEditable)) return false;
+  }
   try { frame.focus({ preventScroll: true }); }
   catch (e) { try { frame.focus(); } catch (e2) {} }
+  return true;
 }
 
 // Groesse der Buehne nachziehen: Seitenverhaeltnis exakt halten, Viewport-Klasse
@@ -18474,7 +18484,7 @@ async function quantusBrowserConnect(opts) {
     // Nach einem Reconnect darf die Flaeche nicht klein oder leer stehen
     // bleiben — die Groesse wird deshalb sofort neu gerechnet.
     quantusBrowserFit();
-    quantusBrowserFocusFrame();
+    quantusBrowserFocusFrame(true);
   });
   frame.src = quantusBrowserSrc();
   canvas.innerHTML = "";
@@ -18524,7 +18534,7 @@ function quantusBrowserSetFullscreen(on) {
     btn.title = on ? "Vollbild beenden (Esc)" : "Vollbild — der Browser fuellt das Fenster";
   }
   quantusBrowserFit();
-  if (on) quantusBrowserFocusFrame();
+  if (on) quantusBrowserFocusFrame(true);
 }
 
 function quantusBrowserExitNativeFullscreen() {
@@ -18622,7 +18632,9 @@ function quantusBrowserLeave() {
   if (host) host.hidden = true;
   if (quantusBrowserState.retryTimer) { clearTimeout(quantusBrowserState.retryTimer); quantusBrowserState.retryTimer = null; }
   if (!wasActive && !quantusBrowserState.mounted) return;
-  if (quantusBrowserState.idleTimer) clearTimeout(quantusBrowserState.idleTimer);
+  // Nicht bei jedem Re-Render neu aufziehen — die Frist laeuft ab dem
+  // Verlassen der Route, nicht ab der letzten Interaktion anderswo.
+  if (quantusBrowserState.idleTimer) return;
   quantusBrowserState.idleTimer = setTimeout(function(){
     quantusBrowserState.idleTimer = null;
     if (quantusBrowserState.active) return;

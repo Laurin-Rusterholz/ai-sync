@@ -177,6 +177,7 @@ function makeDom() {
   body.appendChild(qcFab);
 
   doc.body = body;
+  doc.activeElement = body;
   doc.documentElement = el("html");
   doc.fullscreenElement = null;
   doc.webkitFullscreenElement = null;
@@ -668,6 +669,20 @@ console.log("\n10. Sicherheit, Fokus und Klickdurchlaessigkeit");
   // Und der Merker fuer den Anmeldehinweis landet nicht im iframe-Aufruf.
   app.api.dismissNote();
   ok(!app.api.src().includes("note"), "der Hinweis-Merker landet in der URL");
+
+  // Ein Re-Render darf niemandem mitten im Tippen die Tastatur wegnehmen.
+  const typing = { tagName: "INPUT", isContentEditable: false, focus() {} };
+  app.doc.activeElement = typing;
+  const guarded = app.frame().focusCount;
+  app.api.enter();
+  await flush();
+  eq(app.frame().focusCount, guarded,
+    "der Re-Render reisst den Fokus aus dem Eingabefeld");
+  // Ausdrueckliche Wuensche — Vollbild — holen den Fokus trotzdem.
+  app.api.toggleFullscreen();
+  ok(app.frame().focusCount > guarded, "das Vollbild holt den Fokus nicht in den Stream");
+  app.api.setFullscreen(false);
+  app.doc.activeElement = app.doc.body;
 }
 
 // ═══ 11. Ohne ResizeObserver bleibt die Buehne bedienbar ═══════════════════

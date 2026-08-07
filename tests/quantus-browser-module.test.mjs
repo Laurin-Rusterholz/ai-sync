@@ -282,6 +282,10 @@ check("nichts schluckt Klicks ueber der Buehne, der Fokus kommt an", () => {
   // Ohne Fokus kaeme keine Tastatureingabe im Remote-Chromium an.
   assert.match(BROWSER_JS, /function quantusBrowserFocusFrame\(/);
   assert.match(BROWSER_JS, /frame\.focus\(\{ preventScroll: true \}\)/);
+  // ... aber nie auf Kosten eines Eingabefelds: ein Re-Render darf dem Nutzer
+  // nicht mitten im Tippen die Tastatur wegnehmen.
+  const focusFn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserFocusFrame("));
+  assert.match(focusFn.slice(0, focusFn.indexOf("\n}\n")), /tag === "INPUT"[\s\S]{0,200}isContentEditable/);
 });
 
 check("Layout ist responsiv und der Kleinfenster-Fall ist abgefangen", () => {
