@@ -100,7 +100,12 @@ function list(value, maxItems, maxLen) {
   return raw.map((v) => text(v, maxLen || 120)).filter(Boolean).slice(0, maxItems || 25);
 }
 function money(value) {
-  const n = Number(String(value == null ? "" : value).replace(/[^\d.,-]/g, "").replace(",", "."));
+  // "CHF 1'200" → 1200, "4500,50" → 4500.5. Enthaelt die Angabe gar keine
+  // Ziffer ("keine Ahnung", "auf Anfrage"), ist sie KEIN Betrag — dann null
+  // statt 0. Sonst stuende im Vertrag "CHF 0.00" als vereinbarter Preis.
+  const raw = String(value == null ? "" : value).replace(/[^\d.,-]/g, "").replace(",", ".");
+  if (!/\d/.test(raw)) return null;
+  const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
 }
 
