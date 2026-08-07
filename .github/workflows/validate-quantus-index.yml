@@ -21,6 +21,7 @@ on:
       - "public/quantus-bundles/**"
       - "public/career-model.css"
       - "tests/quantus-browser-module.test.mjs"
+      - "tests/quantus-browser-layout-runtime.test.mjs"
       - "tests/neko-proxy-detect.test.sh"
       - "netlify.toml"
       - "netlify/edge-functions/**"

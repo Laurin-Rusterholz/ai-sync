@@ -18,7 +18,7 @@
     "test:gmail": "node tests/gmail-network-retry.test.mjs",
     "test:flowertech-projects": "node tests/flowertech-projects.test.mjs && node tests/flowertech-topnav-runtime.test.mjs",
     "test:persistence": "node tests/persistence.test.mjs",
-    "test:browser": "bash -n scripts/deploy-neko-hostinger.sh && node tests/quantus-browser-module.test.mjs",
+    "test:browser": "bash -n scripts/deploy-neko-hostinger.sh && node tests/quantus-browser-module.test.mjs && node tests/quantus-browser-layout-runtime.test.mjs",
     "check:career-model": "node --check public/quantus-bundle-loader.js && node --check public/career-model-core.js && node --check public/career-model.js && node --check public/quantus-device-sync.js && node --check public/quantus-universal-ui.js && npm test",
     "test": "npm run test:index-parser && npm run test:english-c1-entry && npm run test:career-model-entry && npm run test:career-model && npm run test:universal-sync && npm run test:firebase-sdk && npm run test:gmail && npm run test:flowertech-projects && npm run test:persistence && npm run test:browser && npm run test:navigation && npm run test:sticky-export && npm run test:flowertech-portal && npm run test:flowertech-workflow",
     "test:navigation": "node tests/quantus-navigation-search.test.mjs && node tests/quantus-app-search-runtime.test.mjs",
