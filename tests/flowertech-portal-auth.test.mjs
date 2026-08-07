@@ -120,43 +120,78 @@ function request(headers, body = BODY) {
   ok(response2.status === 405, `GET muss 405 liefern, war ${response2.status}`);
 }
 
-// ── 8. Der n8n-Webhook prüft die Signatur VOR der Normalisierung ───────────
+// ── 8. Der n8n-Webhook authentifiziert VOR der Normalisierung ─────────────
+// Die Instanz hat keine Variables-Lizenz, deshalb keine $env-Abhaengigkeit
+// mehr: Beide Nodes nutzen dasselbe n8n-Credential (Header Auth). n8n prueft
+// den Header am Webhook, bevor der Workflow ueberhaupt laeuft.
 {
-  const workflow = JSON.parse(
-    fs.readFileSync(path.join(root, "n8n/flowertech-lead-to-project.workflow.json"), "utf8"));
+  const file = path.join(root, "n8n/flowertech-lead-to-project.workflow.json");
+  const raw = fs.readFileSync(file, "utf8");
+  const workflow = JSON.parse(raw);
+  const CRED = "FlowerTech Shared Signature";
+
   ok(workflow.active === false, "der n8n-Workflow ist nicht mehr standardmässig inaktiv");
+  ok(!raw.includes("$env"), "der Workflow haengt wieder an n8n-Variables ($env)");
 
-  const gate = workflow.nodes.find((n) => n.id === "ft-signature");
-  ok(!!gate, "der Signatur-Check-Node fehlt im n8n-Workflow");
-  ok(gate.type === "n8n-nodes-base.if", "der Signatur-Check ist kein Verzweigungs-Node");
-  const condition = gate.parameters.conditions.conditions[0];
-  ok(condition.leftValue.includes("x-flowertech-signature"),
-    "der Signatur-Check liest den Header nicht");
-  ok(condition.rightValue.includes("$env.FT_WEBHOOK_SECRET"),
-    "der Signatur-Check vergleicht nicht gegen die Umgebungsvariable");
+  // Webhook: Header Auth ueber das Credential.
+  const webhook = workflow.nodes.find((n) => n.id === "ft-webhook");
+  ok(!!webhook, "der Webhook-Node fehlt");
+  ok(webhook.parameters.authentication === "headerAuth",
+    "der Webhook verlangt keine Header-Authentifizierung");
+  ok(webhook.credentials?.httpHeaderAuth?.name === CRED,
+    `der Webhook nutzt nicht das Credential "${CRED}"`);
 
-  // Der Webhook geht zuerst in den Signatur-Check, nicht direkt in die Normalisierung.
+  // Ausgehender Aufruf: dasselbe Credential, feste oeffentliche Basis.
+  const api = workflow.nodes.find((n) => n.id === "ft-api");
+  ok(!!api, "der HTTP-Node fehlt");
+  ok(api.parameters.authentication === "genericCredentialType"
+    && api.parameters.genericAuthType === "httpHeaderAuth",
+    "der ausgehende Aufruf nutzt keine Header-Auth per Credential");
+  ok(api.credentials?.httpHeaderAuth?.name === CRED,
+    `der ausgehende Aufruf nutzt nicht dasselbe Credential "${CRED}"`);
+  ok(api.parameters.url === "https://management-xo2-pro.netlify.app/.netlify/functions/flowertech-portal",
+    `die Quantus-Basis steht nicht fest im HTTP-Node: ${api.parameters.url}`);
+  // Der Signatur-Header darf NICHT mehr als Parameter dastehen — sonst waere er
+  // ein Ort, an dem versehentlich ein Klartext-Geheimnis landet.
+  const headerNames = (api.parameters.headerParameters?.parameters || []).map((h) => h.name);
+  ok(!headerNames.some((n) => /signature/i.test(n)),
+    "der Signatur-Header steht wieder als Parameter im Workflow");
+
+  // Auth passiert vor der Normalisierung: der Webhook geht direkt dorthin,
+  // das alte $env-IF ist weg.
+  ok(!workflow.nodes.some((n) => n.id === "ft-signature"),
+    "das $env-basierte Signatur-IF ist zurueck");
   const fromWebhook = workflow.connections["Webhook: flowertech-lead"].main[0];
-  ok(fromWebhook.length === 1 && fromWebhook[0].node === "Signatur gueltig?",
-    "der Webhook läuft wieder direkt in die Normalisierung");
-  const fromGate = workflow.connections["Signatur gueltig?"].main;
-  ok(fromGate[0][0].node === "Normalisieren & zuordnen", "der Ja-Zweig führt nicht zur Normalisierung");
-  ok(fromGate[1][0].node === "Antwort: nicht signiert", "es fehlt der Ablehnungszweig");
-  const reject = workflow.nodes.find((n) => n.id === "ft-respond-unauth");
-  ok(reject && reject.parameters.options.responseCode === 401,
-    "der Ablehnungszweig antwortet nicht mit 401");
+  ok(fromWebhook.length === 1 && fromWebhook[0].node === "Normalisieren & zuordnen",
+    "der Webhook fuehrt nicht direkt in die Normalisierung");
 
-  // Der Mail-Eingang bleibt der interne, deaktivierte Zweig ohne Signatur.
+  // Kein Fallback-Token: ohne Projekt-Token wird nichts angelegt.
+  const code = workflow.nodes.find((n) => n.id === "ft-normalize").parameters.jsCode;
+  ok(!/FT_DEFAULT_TOKEN/.test(code), "der Fallback-Token ist zurueck");
+  ok(/const token = pick\('token', 'projectToken'\);/.test(code),
+    "der Token kommt nicht mehr ausschliesslich aus dem Eingang");
+
+  // Der Mail-Eingang bleibt der interne, deaktivierte Zweig.
   const imap = workflow.nodes.find((n) => n.id === "ft-imap");
   ok(imap && imap.disabled === true, "der optionale Mail-Eingang ist nicht mehr deaktiviert");
-  ok(workflow.connections["Mail-Eingang (optional)"].main[0][0].node === "Normalisieren & zuordnen",
-    "der interne Mail-Zweig wurde umgehängt");
 
-  // Keine Geheimnisse im Workflow-JSON.
-  const raw = fs.readFileSync(path.join(root, "n8n/flowertech-lead-to-project.workflow.json"), "utf8");
-  ok(!/"credentials"\s*:/.test(raw), "im Workflow-JSON stehen Credentials");
-  ok(!/(secret|token|password)"\s*:\s*"[A-Za-z0-9_\-+/=]{12,}"/i.test(raw),
+  // Keine Geheimnisse im JSON — Credential-Referenzen tragen nur id und name.
+  for (const node of workflow.nodes) {
+    for (const value of Object.values(node.credentials || {})) {
+      ok(Object.keys(value).every((k) => k === "id" || k === "name"),
+        `der Credential-Verweis in ${node.name} enthaelt mehr als id/name`);
+      ok(!value.id, `der Credential-Verweis in ${node.name} ist an eine Instanz gebunden`);
+    }
+  }
+  ok(!/(secret|password|apiKey)"\s*:\s*"[^"]{8,}"/i.test(raw),
     "im Workflow-JSON steht ein eingebettetes Geheimnis");
+
+  // Die zwei manuellen Schritte sind im Workflow dokumentiert.
+  const doku = workflow.nodes.find((n) => n.id === "sn-ft-doc").parameters.content;
+  ok(/Credential anlegen/i.test(doku), "der Doku-Hinweis zum Anlegen des Credentials fehlt");
+  ok(/X-FlowerTech-Signature/.test(doku), "der Doku-Hinweis nennt den Header-Namen nicht");
+  ok(/FLOWERTECH_WEBHOOK_SECRET/.test(doku), "der Doku-Hinweis nennt die Netlify-Variable nicht");
+  ok(/BEIDEN Nodes|beiden Nodes/i.test(doku), "der Doku-Hinweis nennt nicht beide Nodes");
 }
 
 console.log(`flowertech portal auth: ok (${checks} Pruefungen)`);

@@ -4,8 +4,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## FlowerTech — Lead → Projekt & Aufgaben\n\n**Zweck:** Ein Lead (Webhook oder Mail-Eingang) wird sicher normalisiert, einem FlowerTech-Projekt zugeordnet und über die Quantus-API eingespeist. Quantus erzeugt daraus Projektfelder und ganz normale Quantus-Aufgaben — es entsteht KEIN paralleles Datenmodell.\n\n**Ablauf:** Webhook → **Signatur pruefen** → Normalisieren (Code) → Token-Zuordnung prüfen → Quantus-API (`/.netlify/functions/flowertech-portal`) → Erfolg/Fehler → Antwort.\n\n**Erforderliche Umgebungsvariablen (n8n → Settings → Variables, NICHT im JSON):**\n- `FT_QUANTUS_BASE` — z. B. `https://management-xo2-pro.netlify.app`\n- `FT_WEBHOOK_SECRET` — identisch zu `FLOWERTECH_WEBHOOK_SECRET` in Netlify\n- `FT_DEFAULT_TOKEN` — optionaler Fallback-Freigabetoken für Leads ohne Token\n\n**Sicherheit:**\n- Der oeffentliche Webhook lehnt jeden Aufruf ohne Header `X-FlowerTech-Signature` = `FT_WEBHOOK_SECRET` mit 401 ab — noch VOR der Normalisierung. Der optionale IMAP-Eingang ist ein interner, standardmaessig deaktivierter Zweig und braucht keine Signatur.\n- Das Shared Secret geht ausschliesslich über `$env` in den Header `X-FlowerTech-Signature`. Es steht nirgends in dieser Datei.\n- Ohne gültigen Freigabe-Token wird NICHT geraten: Der Lauf endet im Fehlerpfad.\n- `idempotencyKey` verhindert Doppeleinträge bei Wiederholungen; ein Retry ist gefahrlos.\n- Es werden nur die Felder übertragen, die das Bedarfsformular kennt.\n\n**Test:** siehe docs/flowertech-workflow.md",
-        "height": 700,
+        "content": "## FlowerTech — Lead → Projekt & Aufgaben\n\n**Zweck:** Ein Lead (Webhook oder Mail-Eingang) wird sicher normalisiert, einem FlowerTech-Projekt zugeordnet und ueber die Quantus-API eingespeist. Quantus erzeugt daraus Projektfelder und ganz normale Quantus-Aufgaben — es entsteht KEIN paralleles Datenmodell.\n\n**Ablauf:** Webhook (Header Auth) → Normalisieren (Code) → Token-Zuordnung pruefen → Quantus-API → Erfolg/Fehler → Antwort.\n\n### Zwei manuelle Schritte nach dem Import\n\n**1. Credential anlegen.** Credentials → New → *Header Auth*:\n- Name: `FlowerTech Shared Signature`\n- Header Name: `X-FlowerTech-Signature`\n- Header Value: das gemeinsame Geheimnis (z. B. `openssl rand -base64 48`)\n\nDerselbe Wert gehoert in Netlify als Umgebungsvariable `FLOWERTECH_WEBHOOK_SECRET`.\n\n**2. Credential in BEIDEN Nodes waehlen:**\n- `Webhook: flowertech-lead` → Authentication *Header Auth* → Credential waehlen\n- `Quantus-API: Eingang buchen` → Credential waehlen\n\nOhne diesen Schritt zeigen beide Nodes eine Credential-Warnung und der Workflow laeuft nicht.\n\n**Keine n8n-Variables noetig.** Die oeffentliche Quantus-Basis steht fest im HTTP-Node (`https://management-xo2-pro.netlify.app`).\n\n**Sicherheit:**\n- n8n prueft den Header am Webhook, BEVOR der Workflow laeuft. Ein Aufruf ohne gueltige Signatur erreicht die Normalisierung gar nicht.\n- Das Geheimnis liegt ausschliesslich im Credential — nirgends in dieser Datei.\n- Kein Fallback-Token: Ohne ausdruecklichen Projekt-Token endet der Lauf im Fehlerpfad. Es wird nicht geraten, zu welchem Projekt ein Lead gehoert.\n- `idempotencyKey` verhindert Doppeleintraege bei Wiederholungen; ein Retry ist gefahrlos.\n- Es werden nur die Felder uebertragen, die das Bedarfsformular kennt.\n\n**Test:** siehe docs/flowertech-workflow.md",
+        "height": 760,
         "width": 560,
         "color": 5
       },
@@ -25,7 +25,8 @@
         "responseMode": "responseNode",
         "options": {
           "rawBody": false
-        }
+        },
+        "authentication": "headerAuth"
       },
       "id": "ft-webhook",
       "name": "Webhook: flowertech-lead",
@@ -35,56 +36,14 @@
         -1120,
         120
       ],
-      "webhookId": "flowertech-lead-4b21"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "version": 2
-          },
-          "conditions": [
-            {
-              "id": "sig-check",
-              "leftValue": "={{ ($json.headers && $json.headers['x-flowertech-signature']) || '' }}",
-              "rightValue": "={{ $env.FT_WEBHOOK_SECRET }}",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "ft-signature",
-      "name": "Signatur gueltig?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        -1000,
-        120
-      ],
-      "notes": "Der Webhook ist von aussen erreichbar. Ohne Header X-FlowerTech-Signature = FT_WEBHOOK_SECRET wird bereits hier abgelehnt — vor jeder Normalisierung. Ist FT_WEBHOOK_SECRET nicht gesetzt, schlaegt der Vergleich fehl und der Webhook nimmt nichts an."
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: false, error: 'Unauthorized' }) }}",
-        "options": {
-          "responseCode": 401
+      "webhookId": "flowertech-lead-4b21",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "FlowerTech Shared Signature"
         }
       },
-      "id": "ft-respond-unauth",
-      "name": "Antwort: nicht signiert",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [
-        -880,
-        -60
-      ]
+      "notes": "Header Auth ueber das Credential 'FlowerTech Shared Signature'. n8n prueft den Header, BEVOR der Workflow laeuft — ein Aufruf ohne gueltige Signatur erreicht die Normalisierung gar nicht. Das Geheimnis liegt ausschliesslich im Credential."
     },
     {
       "parameters": {
@@ -114,7 +73,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Normalisierung: nimmt Webhook-JSON ODER eine eingehende Mail und baut\n// daraus genau die Felder, die das FlowerTech-Bedarfsformular kennt.\n// Alles Unbekannte wird verworfen — kein Durchreichen roher Fremddaten.\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  const src = j.body && typeof j.body === 'object' ? j.body : j;\n\n  const pick = (...keys) => {\n    for (const k of keys) {\n      const v = src[k];\n      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();\n    }\n    return '';\n  };\n\n  // Mail-Eingang: Absender und Text als Ausgangspunkt.\n  const fromRaw = pick('from', 'From');\n  const mailAddress = (fromRaw.match(/[^<\\s]+@[^>\\s]+/) || [''])[0];\n\n  const token = pick('token', 'projectToken') || ($env.FT_DEFAULT_TOKEN || '');\n\n  const payload = {\n    contactName: pick('name', 'contactName', 'fromName').slice(0, 120),\n    contactEmail: (pick('email', 'contactEmail') || mailAddress).toLowerCase().slice(0, 160),\n    contactPhone: pick('phone', 'contactPhone').slice(0, 60),\n    company: pick('company', 'organisation', 'organization').slice(0, 160),\n    deliveryType: /programm|program|app|software|tool/i.test(pick('service', 'deliveryType', 'subject', 'Subject')) ? 'program' : 'website',\n    goal: pick('goal', 'message', 'text', 'body', 'snippet').slice(0, 2000),\n    features: pick('features'),\n    currentSystem: pick('currentSystem', 'website', 'url'),\n    budget: pick('budget', 'preis'),\n    currentProviderPrice: pick('currentProviderPrice'),\n    notes: 'Eingang über n8n: ' + pick('source', 'channel', 'Subject', 'subject').slice(0, 200),\n  };\n\n  const valid = !!token && /^[A-Za-z0-9_-]{24,64}$/.test(token)\n    && /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(payload.contactEmail)\n    && payload.goal.length >= 10;\n\n  // Stabiler Idempotenz-Schlüssel: derselbe Lead wirkt nur einmal.\n  const basis = [token, 'briefing', payload.contactEmail, payload.goal].join('|');\n  let hash = 5381;\n  for (let i = 0; i < basis.length; i++) hash = ((hash << 5) + hash + basis.charCodeAt(i)) >>> 0;\n\n  out.push({ json: {\n    valid,\n    reason: valid ? '' : 'Token oder Pflichtangaben fehlen — kein Raten, kein Anlegen.',\n    token,\n    kind: 'briefing',\n    payload,\n    idempotencyKey: 'ft_' + hash.toString(36) + '_' + basis.length.toString(36),\n  }});\n}\nreturn out;"
+        "jsCode": "// Normalisierung: nimmt Webhook-JSON ODER eine eingehende Mail und baut\n// daraus genau die Felder, die das FlowerTech-Bedarfsformular kennt.\n// Alles Unbekannte wird verworfen — kein Durchreichen roher Fremddaten.\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  const src = j.body && typeof j.body === 'object' ? j.body : j;\n\n  const pick = (...keys) => {\n    for (const k of keys) {\n      const v = src[k];\n      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();\n    }\n    return '';\n  };\n\n  // Mail-Eingang: Absender und Text als Ausgangspunkt.\n  const fromRaw = pick('from', 'From');\n  const mailAddress = (fromRaw.match(/[^<\\s]+@[^>\\s]+/) || [''])[0];\n\n  // Kein Fallback-Token: Ohne ausdruecklichen Projekt-Token wird nichts\n  // angelegt. Es wird nicht geraten, zu welchem Projekt ein Lead gehoert.\n  const token = pick('token', 'projectToken');\n\n  const payload = {\n    contactName: pick('name', 'contactName', 'fromName').slice(0, 120),\n    contactEmail: (pick('email', 'contactEmail') || mailAddress).toLowerCase().slice(0, 160),\n    contactPhone: pick('phone', 'contactPhone').slice(0, 60),\n    company: pick('company', 'organisation', 'organization').slice(0, 160),\n    deliveryType: /programm|program|app|software|tool/i.test(pick('service', 'deliveryType', 'subject', 'Subject')) ? 'program' : 'website',\n    goal: pick('goal', 'message', 'text', 'body', 'snippet').slice(0, 2000),\n    features: pick('features'),\n    currentSystem: pick('currentSystem', 'website', 'url'),\n    budget: pick('budget', 'preis'),\n    currentProviderPrice: pick('currentProviderPrice'),\n    notes: 'Eingang über n8n: ' + pick('source', 'channel', 'Subject', 'subject').slice(0, 200),\n  };\n\n  const valid = !!token && /^[A-Za-z0-9_-]{24,64}$/.test(token)\n    && /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(payload.contactEmail)\n    && payload.goal.length >= 10;\n\n  // Stabiler Idempotenz-Schlüssel: derselbe Lead wirkt nur einmal.\n  const basis = [token, 'briefing', payload.contactEmail, payload.goal].join('|');\n  let hash = 5381;\n  for (let i = 0; i < basis.length; i++) hash = ((hash << 5) + hash + basis.charCodeAt(i)) >>> 0;\n\n  out.push({ json: {\n    valid,\n    reason: valid ? '' : 'Token oder Pflichtangaben fehlen — kein Raten, kein Anlegen.',\n    token,\n    kind: 'briefing',\n    payload,\n    idempotencyKey: 'ft_' + hash.toString(36) + '_' + basis.length.toString(36),\n  }});\n}\nreturn out;"
       },
       "id": "ft-normalize",
       "name": "Normalisieren & zuordnen",
@@ -160,17 +119,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.FT_QUANTUS_BASE }}/.netlify/functions/flowertech-portal",
+        "url": "https://management-xo2-pro.netlify.app/.netlify/functions/flowertech-portal",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Content-Type",
               "value": "application/json"
-            },
-            {
-              "name": "X-FlowerTech-Signature",
-              "value": "={{ $env.FT_WEBHOOK_SECRET }}"
             }
           ]
         },
@@ -191,7 +146,9 @@
             }
           },
           "timeout": 15000
-        }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
       },
       "id": "ft-api",
       "name": "Quantus-API: Eingang buchen",
@@ -201,7 +158,13 @@
         -400,
         100
       ],
-      "notes": "Idempotent: derselbe idempotencyKey wird serverseitig nur einmal verarbeitet. Ein Retry ist gefahrlos."
+      "notes": "Verwendet dasselbe Credential 'FlowerTech Shared Signature'; n8n setzt daraus den Header X-FlowerTech-Signature. Idempotent: derselbe idempotencyKey wird serverseitig nur einmal verarbeitet, ein Retry ist gefahrlos.",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "FlowerTech Shared Signature"
+        }
+      }
     },
     {
       "parameters": {
@@ -256,7 +219,7 @@
       "main": [
         [
           {
-            "node": "Signatur gueltig?",
+            "node": "Normalisieren & zuordnen",
             "type": "main",
             "index": 0
           }
@@ -319,24 +282,6 @@
         [
           {
             "node": "Antwort",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Signatur gueltig?": {
-      "main": [
-        [
-          {
-            "node": "Normalisieren & zuordnen",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Antwort: nicht signiert",
             "type": "main",
             "index": 0
           }
