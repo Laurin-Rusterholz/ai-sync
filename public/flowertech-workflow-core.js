@@ -308,6 +308,148 @@ export function changeStatusFromTask(task, currentStatus) {
   return currentStatus === "new" ? "accepted" : (currentStatus || "accepted");
 }
 
+/* ── Der Prozess als Daten ───────────────────────────────────────────────
+ * Statt einer Liste von Bereichen: die konkret naechsten Schritte, aus dem
+ * Datenstand abgeleitet. „Eine Anfrage wird zum Projekt" ist damit kein Knopf,
+ * den man finden muss, sondern ein Schritt, der von selbst auftaucht.
+ * Reine Funktion — keine DOM-Kenntnis, deshalb testbar.
+ * --------------------------------------------------------------------- */
+export const PROCESS_STEPS = [
+  { key: "inquiry", label: "Anfrage → Projekt", stage: "lead" },
+  { key: "briefing", label: "Bedarf aufnehmen", stage: "intake" },
+  { key: "offer", label: "Angebot erstellen", stage: "proposal" },
+  { key: "changes", label: "Änderungen abarbeiten", stage: "revision" },
+  { key: "approval", label: "Freigabe einholen", stage: "approval" },
+];
+
+// Eine Anfrage gilt als offen, solange kein Projekt daraus entstanden ist und
+// sie nicht ausdruecklich abgelehnt wurde.
+export function inquiryIsOpen(inquiry) {
+  if (!inquiry) return false;
+  if (inquiry.projectId) return false;
+  return inquiry.status !== "lost" && inquiry.status !== "won";
+}
+
+export function nextProcessSteps({
+  inquiries = [], projects = [], briefings = {}, offers = [], changeRequests = [],
+} = {}) {
+  const steps = [];
+  const active = projects.filter((p) => p && p.status !== "archived" && !p.deleted);
+
+  // 1. Anfragen, aus denen noch kein Projekt geworden ist.
+  const openInquiries = inquiries.filter(inquiryIsOpen);
+  if (openInquiries.length) {
+    steps.push({
+      key: "inquiry",
+      label: "Anfrage → Projekt",
+      hint: openInquiries.length === 1
+        ? "Eine Anfrage wartet darauf, ein Projekt zu werden."
+        : openInquiries.length + " Anfragen warten darauf, Projekte zu werden.",
+      count: openInquiries.length,
+      items: openInquiries.map((i) => ({
+        id: i.id,
+        title: i.company || i.name || i.email || "Anfrage",
+        sub: i.service || i.email || "",
+      })),
+    });
+  }
+
+  // 2. Projekte ohne aufgenommenen Bedarf.
+  const withoutBriefing = active.filter((p) => !briefings[p.id]
+    && stageIndex(p.pipelineStage) <= stageIndex("intake"));
+  if (withoutBriefing.length) {
+    steps.push({
+      key: "briefing",
+      label: "Bedarf aufnehmen",
+      hint: "Formular teilen oder gemeinsam ausfüllen — daraus entstehen Projektfelder und Aufgaben.",
+      count: withoutBriefing.length,
+      items: withoutBriefing.map((p) => ({ id: p.id, title: p.title || "Projekt", sub: stageLabel(p.pipelineStage) })),
+    });
+  }
+
+  // 3. Bedarf steht, aber es gibt noch kein Angebot.
+  const offeredProjects = new Set(offers
+    .filter((o) => o && o.status !== "declined" && o.projectId)
+    .map((o) => o.projectId));
+  const withoutOffer = active.filter((p) => briefings[p.id] && !offeredProjects.has(p.id));
+  if (withoutOffer.length) {
+    steps.push({
+      key: "offer",
+      label: "Angebot erstellen",
+      hint: "Leistungsbeschreibung und Preis aus dem Bedarf ableiten.",
+      count: withoutOffer.length,
+      items: withoutOffer.map((p) => ({ id: p.id, title: p.title || "Projekt", sub: stageLabel(p.pipelineStage) })),
+    });
+  }
+
+  // 4. Offene Änderungswünsche.
+  const openChanges = changeRequests.filter((c) => c && c.status !== "done" && c.status !== "rejected");
+  if (openChanges.length) {
+    const byProject = {};
+    openChanges.forEach((c) => { byProject[c.projectId] = (byProject[c.projectId] || 0) + 1; });
+    steps.push({
+      key: "changes",
+      label: "Änderungen abarbeiten",
+      hint: "Jeder Wunsch ist eine normale Aufgabe — der Status folgt ihr.",
+      count: openChanges.length,
+      items: Object.keys(byProject).map((id) => {
+        const p = active.find((x) => x.id === id);
+        return { id, title: (p && p.title) || "Projekt", sub: byProject[id] + " offen" };
+      }),
+    });
+  }
+
+  // 5. Fertig gebaut, aber noch nicht freigegeben.
+  const awaitingApproval = active.filter((p) => stageIndex(p.pipelineStage) === stageIndex("approval")
+    && p.status !== "done");
+  if (awaitingApproval.length) {
+    steps.push({
+      key: "approval",
+      label: "Freigabe einholen",
+      hint: "Abnahme, Übergabe, Schlussrechnung.",
+      count: awaitingApproval.length,
+      items: awaitingApproval.map((p) => ({ id: p.id, title: p.title || "Projekt", sub: "wartet auf Freigabe" })),
+    });
+  }
+
+  return steps;
+}
+
+// Aus einer Anfrage wird ein Projekt: Felder, Startphase und ein Briefing-
+// Entwurf in einem Schritt. Die Nachricht der Anfrage ist das erste Ziel —
+// der Kunde hat es ja schon formuliert.
+export function projectFromInquiry(inquiry, { now = new Date().toISOString() } = {}) {
+  const i = inquiry || {};
+  const message = String(i.message || "").trim();
+  return {
+    project: {
+      title: i.company || i.name || "FlowerTech-Projekt",
+      description: [i.service ? "Interesse: " + i.service : "", message].filter(Boolean).join("\n\n"),
+      status: "active",
+      projectType: "flowertech",
+      // Der Kundenprozess startet bei der Bestandesaufnahme: der Lead ist ja
+      // schon da, es fehlt der Bedarf.
+      pipelineStage: "intake",
+      deliveryType: /programm|program|app|software|tool/i.test(i.service || "") ? "program" : "website",
+      client: {
+        name: i.name || "", company: i.company || "",
+        email: i.email || "", phone: i.phone || "",
+      },
+      sourceInquiryId: i.id || null,
+      tags: ["flowertech"],
+      createdAt: now,
+      updatedAt: now,
+    },
+    // Nur uebernehmen, wenn die Nachricht als Zielbeschreibung taugt.
+    briefing: message.length >= 10
+      ? normalizeBriefing({
+          contactName: i.name, contactEmail: i.email, contactPhone: i.phone,
+          company: i.company, goal: message, source: "anfrage",
+        }, { now })
+      : null,
+  };
+}
+
 /* ── Kostenübersicht ─────────────────────────────────────────────────────── */
 // Eine Zahl, die der Kunde versteht: was offeriert, was fakturiert, was bezahlt
 // und was noch offen ist. Rechnet nur mit dem, was übergeben wird.
@@ -854,6 +996,7 @@ const API = {
   CHANGE_STATUSES, changeStatusLabel,
   BRIEFING_FIELDS, normalizeBriefing, briefingIsUsable, projectFieldsFromBriefing, buildBriefingTasks,
   normalizeChangeRequest, changeRequestIsUsable, buildChangeRequestTask, changeStatusFromTask,
+  PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,
   SERVICE_DESCRIPTION_TEMPLATES, WHY_FLOWERTECH_CARD, buildServiceDescription,

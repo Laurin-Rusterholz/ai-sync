@@ -20,6 +20,37 @@ Dort werden Projektname, Typ (Website oder Programm), Kundendaten,
 Budget/Preisvorstellung und der bisherige Anbieterpreis erfasst. Beim Anlegen
 entstehen automatisch die beiden Freigabe-Links (Bedarfsformular, Kundenansicht).
 
+## 1a. Der Prozess als Arbeitsliste
+
+Auf `#/flowertech` steht zuoberst **Nächster Schritt** — kein Menü, sondern das,
+was der Datenstand gerade verlangt. Die Logik liegt in `nextProcessSteps()` im
+geteilten Kern:
+
+| Schritt | erscheint, wenn |
+| --- | --- |
+| Anfrage → Projekt | eine Website-Anfrage noch kein Projekt ist |
+| Bedarf aufnehmen | ein Projekt in Lead/Bestandesaufnahme ohne Briefing steht |
+| Angebot erstellen | ein Briefing da ist, aber keine gültige Offerte |
+| Änderungen abarbeiten | offene Änderungswünsche existieren |
+| Freigabe einholen | ein Projekt in der Freigabephase wartet |
+
+Jeder Eintrag ist ein Knopf, der genau dort landet, wo weitergearbeitet wird.
+Ist nichts offen, steht das auch so da.
+
+**Anfrage → Projekt** ist ein vollständiger Schritt, nicht nur ein Knopf. In
+einem Zug entstehen:
+
+* das FlowerTech-Projekt mit Kundendaten, Typ (aus dem Interesse abgeleitet) und
+  Startphase *Bestandesaufnahme* — der Lead ist ja schon da,
+* beide Freigabe-Links (Bedarfsformular, Kundenansicht),
+* ein **Bedarfsentwurf aus der Nachricht** der Anfrage, sofern sie als
+  Zielbeschreibung taugt,
+* die Zuordnung der bereits angelegten Anfrage-Aufgabe zum neuen Projekt,
+* der Vermerk an der Anfrage, dass sie umgewandelt wurde.
+
+Eine bereits umgewandelte Anfrage legt kein zweites Projekt an, sondern öffnet
+das bestehende.
+
 ## 2. Bedarfsformular
 
 Ein Feldset, drei Verwendungen — definiert in `BRIEFING_FIELDS`:

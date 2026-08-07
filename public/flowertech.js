@@ -632,25 +632,60 @@
     }
   };
 
+  // Anfrage → Projekt: ein Prozessschritt, nicht nur ein Knopf. In einem Zug
+  // entstehen Projekt, Freigabe-Links und ein Bedarfsentwurf aus der Nachricht;
+  // die bereits angelegte Anfrage-Aufgabe wird dem Projekt zugeordnet und die
+  // Anfrage als umgewandelt markiert, damit kein zweites Projekt entsteht.
   window._ftInquiryToProject = function (inquiryId) {
+    var core = W();
+    var ft = wf();
     var inquiry = (state().inquiries || {})[inquiryId];
-    if (!inquiry) return;
-    var projectId = window.createEntity("project", {
-      title: inquiry.company || inquiry.name || "FlowerTech-Projekt",
-      description: [inquiry.service ? "Interesse: " + inquiry.service : "", inquiry.message || ""].filter(Boolean).join("\n\n"),
-      status: "active",
-      projectType: "flowertech",
-      pipelineStage: "discovery",
-      client: {
-        name: inquiry.name || "", company: inquiry.company || "",
-        email: inquiry.email || "", phone: inquiry.phone || ""
-      },
-      sourceInquiryId: inquiryId,
-      tags: ["flowertech"]
-    });
+    if (!core || !ft || !inquiry) return;
+
+    // Schon umgewandelt? Dann das bestehende Projekt oeffnen statt ein zweites
+    // anzulegen.
+    var existing = projects().find(function (p) { return p.sourceInquiryId === inquiryId; });
+    if (existing) {
+      notify("ok", "FlowerTech", "Diese Anfrage ist bereits ein Projekt");
+      return window._ftOpenProject(existing.id);
+    }
+
+    var built = core.projectFromInquiry(
+      Object.assign({ id: inquiryId }, inquiry), { now: now() });
+    var projectId = window.createEntity("project", built.project);
+    if (!projectId) return rerender();
+
+    // Freigabe-Links sofort bereitstellen — der naechste Schritt ist das
+    // Bedarfsformular.
+    ensureToken(projectId, "formToken");
+    ensureToken(projectId, "portalToken");
+
+    // Der Bedarf startet mit dem, was der Kunde schon geschrieben hat.
+    if (built.briefing) ft.briefings[projectId] = built.briefing;
+
+    // Die aus der Anfrage entstandene Aufgabe gehoert ab jetzt zum Projekt.
+    var root = data();
+    var task = root && root.entities.tasks && root.entities.tasks["flowertech-inquiry-" + inquiryId];
+    if (task && !task.projectId) { task.projectId = projectId; task.updatedAt = now(); }
+
+    // Anfrage als umgewandelt markieren.
+    inquiry.projectId = projectId;
+    inquiry.status = "qualified";
+    inquiry.updatedAt = now();
+
+    var project = projectById(projectId);
+    if (project) {
+      project.ftContactLog = [{
+        id: id(), at: now(), channel: "note",
+        text: "Aus Website-Anfrage übernommen" + (inquiry.email ? " (" + inquiry.email + ")" : "") + ".",
+      }];
+    }
+
     save();
-    notify("ok", "FlowerTech", "Projekt aus Anfrage erstellt");
-    if (projectId) window._ftOpenProject(projectId);
+    notify("ok", "FlowerTech", built.briefing
+      ? "Projekt erstellt — Bedarf aus der Anfrage übernommen"
+      : "Projekt aus Anfrage erstellt");
+    window._ftOpenProject(projectId);
   };
 
   // ── Offerten & Rechnungen ────────────────────────────────────────────────
@@ -1830,6 +1865,57 @@
   // Kontextzugang zu den Bereichen: ruhige Karten am Fuss der Uebersicht,
   // jede mit einem echten Deep Link. Ersetzt die frueher immer sichtbare
   // Bereichsleiste.
+  // Der Prozess als Arbeitsliste: was jetzt ansteht, direkt aus dem Datenstand.
+  // Steht ganz oben auf der Uebersicht — vor Kennzahlen und Bereichen.
+  function processHtml() {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return "";
+    var steps = core.nextProcessSteps({
+      inquiries: inquiries(),
+      projects: projects(),
+      briefings: ft.briefings,
+      offers: ft.offers,
+      changeRequests: ft.changeRequests,
+    });
+    if (!steps.length) {
+      return '<div class="card p-4 mb-3"><h3>Nächster Schritt</h3><div class="sep"></div>' +
+        '<div class="ft-empty">Nichts offen — alle Anfragen sind Projekte, jeder Bedarf ist aufgenommen ' +
+        "und es warten keine Änderungswünsche.</div></div>";
+    }
+    return '<div class="card p-4 mb-3"><h3>Nächster Schritt</h3><div class="sep"></div>' +
+      steps.map(function (step) {
+        return '<div class="ft-step-row">' +
+          '<div class="ft-step-head"><strong>' + esc(step.label) + "</strong>" +
+          '<span class="badge">' + step.count + "</span></div>" +
+          '<div class="mini">' + esc(step.hint) + "</div>" +
+          '<div class="ft-step-items">' + step.items.slice(0, 6).map(function (item) {
+            return stepItemHtml(step.key, item);
+          }).join("") +
+          (step.items.length > 6 ? '<span class="mini">+ ' + (step.items.length - 6) + " weitere</span>" : "") +
+          "</div></div>";
+      }).join("") + "</div>";
+  }
+
+  function stepItemHtml(stepKey, item) {
+    var label = esc(item.title) + (item.sub ? ' <small>' + esc(item.sub) + "</small>" : "");
+    if (stepKey === "inquiry") {
+      return '<button class="ft-step-item" onclick="window._ftInquiryToProject(\'' + attr(item.id) +
+        '\')" title="Projekt aus dieser Anfrage anlegen">→ ' + label + "</button>";
+    }
+    var tab = stepKey === "briefing" ? "bedarf" : stepKey === "offer" ? "angebot"
+      : stepKey === "changes" ? "aenderungen" : "workflow";
+    return '<button class="ft-step-item" onclick="window._ftOpenProjectAt(\'' + attr(item.id) + "','" +
+      tab + '\')">→ ' + label + "</button>";
+  }
+
+  // Projekt oeffnen und dabei gleich im richtigen Bereich landen.
+  window._ftOpenProjectAt = function (projectId, tab) {
+    var ft = wf();
+    if (ft) { ft.ui.projectTab = tab; save(); }
+    window._ftOpenProject(projectId);
+  };
+
   function sectionEntriesHtml() {
     return '<div class="card p-4 mt-3"><h3>Bereiche</h3><div class="sep"></div>' +
       '<div class="ft-entries">' + SECTIONS.filter(function (s) { return s[0] !== "dashboard"; })
@@ -1873,6 +1959,7 @@
       var openInvoiceSum = openInvoices.reduce(function (sum, invoice) { return sum + docTotals(invoice).rounded; }, 0);
       var overdue = ft.invoices.filter(isOverdue);
       content =
+        processHtml() +
         '<div class="ft-kpis">' +
           '<div class="ft-kpi"><span>Aktive Projekte</span><strong>' +
           allProjects.filter(function (p) { return p.status !== "done" && p.status !== "archived"; }).length + "</strong></div>" +
@@ -3198,6 +3285,14 @@
     ".ft-context-back:hover{background:var(--hover);color:var(--text)}" +
     ".ft-context-sep{color:var(--muted);font-size:13px}" +
     ".ft-context-title{margin:0;font-size:17px;font-weight:700}" +
+    ".ft-step-row{border-top:1px solid var(--border);padding:11px 0}" +
+    ".ft-step-row:first-of-type{border-top:0;padding-top:2px}" +
+    ".ft-step-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}" +
+    ".ft-step-items{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}" +
+    ".ft-step-item{border:1px solid var(--border);background:var(--panel2);color:var(--text);" +
+      "border-radius:9px;padding:6px 11px;cursor:pointer;font-size:12.5px;text-align:left}" +
+    ".ft-step-item:hover{background:var(--hover);border-color:var(--ft)}" +
+    ".ft-step-item small{color:var(--muted)}" +
     ".ft-entries{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}" +
     ".ft-entry{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);" +
       "border-radius:11px;text-decoration:none;color:var(--text);transition:background .13s ease}" +
