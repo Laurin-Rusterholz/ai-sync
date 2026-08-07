@@ -88593,15 +88593,22 @@ setTimeout(() => {
 }, 1500);
 
 // Progress-Balken Update
+// Perf: scrollHeight/offsetTop erzwingen ein Layout. Ungebuendelt lief das pro
+// Scroll-Event — auf einen Frame gedrosselt bleibt die Anzeige identisch.
+let _nhRdrRaf = 0;
 window.addEventListener('scroll', () => {
-  const bar = document.getElementById('nhRdrProgress');
-  if (!bar || bar.style.display === 'none') return;
-  const reader = document.querySelector('.nh #nh-p-reader.on .rdr-text, .nh #nh-p-reader.on .rdr-body');
-  if (!reader) return;
-  const total = reader.scrollHeight - window.innerHeight;
-  const done = window.scrollY - reader.offsetTop;
-  const pct = total > 0 ? Math.min(100, Math.max(0, (done / total) * 100)) : 0;
-  bar.style.width = pct + '%';
+  if (_nhRdrRaf) return;
+  _nhRdrRaf = requestAnimationFrame(() => {
+    _nhRdrRaf = 0;
+    const bar = document.getElementById('nhRdrProgress');
+    if (!bar || bar.style.display === 'none') return;
+    const reader = document.querySelector('.nh #nh-p-reader.on .rdr-text, .nh #nh-p-reader.on .rdr-body');
+    if (!reader) return;
+    const total = reader.scrollHeight - window.innerHeight;
+    const done = window.scrollY - reader.offsetTop;
+    const pct = total > 0 ? Math.min(100, Math.max(0, (done / total) * 100)) : 0;
+    bar.style.width = pct + '%';
+  });
 }, { passive: true });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -92106,6 +92113,13 @@ function openOwnReader(a) {
 }
 
 function _rlScrollHandler() {
+  // Perf: scrollHeight/clientHeight/scrollTop erzwingen ein Layout. Das Speichern war
+  // schon entprellt, das Messen und Setzen des Balkens lief aber pro Scroll-Event —
+  // auf einen Frame gebuendelt.
+  if (_rlScrollHandler._raf) return;
+  _rlScrollHandler._raf = requestAnimationFrame(() => { _rlScrollHandler._raf = 0; _rlScrollUpdate(); });
+}
+function _rlScrollUpdate() {
   const body = document.getElementById('rlReaderBody');
   if (!body || !_rlCurrentArticle) return;
   const total = body.scrollHeight - body.clientHeight;
@@ -104909,7 +104923,11 @@ window.addEventListener("hashchange", function(){
     on("pdfedSPrev","click",searchPrev);
     // Scroll → aktuelle Seite ermitteln
     const main=qs("#pdfedMain");
-    main.addEventListener("scroll",()=>{ if(ED.mode==="single") return; const pgs=qs("#pdfedPages").children; let best=ED.page, bd=1e9; for(const pg of pgs){ const r=pg.getBoundingClientRect(); const d=Math.abs(r.top-90); if(d<bd){ bd=d; best=+pg.dataset.page; } } if(best!==ED.page){ ED.page=best; updateChrome(); markActiveThumb(); } });
+    // Perf: der Handler misst JEDE Seite per getBoundingClientRect() — bei einem
+    // Dokument mit vielen Seiten sind das ebenso viele erzwungene Layouts, und zwar
+    // pro Scroll-Event. Auf einen Frame gebuendelt reicht voellig fuer die Anzeige.
+    let _pgRaf=0;
+    main.addEventListener("scroll",()=>{ if(ED.mode==="single") return; if(_pgRaf) return; _pgRaf=requestAnimationFrame(()=>{ _pgRaf=0; const pgs=qs("#pdfedPages").children; let best=ED.page, bd=1e9; for(const pg of pgs){ const r=pg.getBoundingClientRect(); const d=Math.abs(r.top-90); if(d<bd){ bd=d; best=+pg.dataset.page; } } if(best!==ED.page){ ED.page=best; updateChrome(); markActiveThumb(); } }); }, { passive: true });
     // Hand-Tool: Pan per Drag
     let pan=null;
     main.addEventListener("pointerdown",(e)=>{ if(ED.tool!=="hand") return; pan={x:e.clientX,y:e.clientY,l:main.scrollLeft,t:main.scrollTop}; main.setPointerCapture(e.pointerId); });
