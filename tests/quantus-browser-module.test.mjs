@@ -112,52 +112,215 @@ check("Secrets stehen nur in der serverseitigen .env", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-console.log("\n2. Browser-Route, iframe und Status-UI");
+console.log("\n2. Browser-Route, Buehne und Status-UI");
+
+// Die Huelle steht als festes Markup neben <main>; die Logik liegt im grossen
+// App-Skript. Beide Bereiche werden getrennt geschnitten, damit ein Treffer
+// nicht versehentlich aus einer anderen Stelle der 6-MB-Datei stammt.
+const HOST_MARKUP = index.slice(index.indexOf('<section class="qbr-host"'),
+                                index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+const BROWSER_JS = index.slice(index.indexOf("// ── QUANTUS BROWSER —"),
+                               index.indexOf("\nfunction goBack() {"));
 
 check("Route, App-Eintrag und View sind vorhanden", () => {
   assert.match(index, /case "browser": html = viewBrowser\(\); break;/);
   assert.match(index, /\{key:"browser", icon:"🌐", label:"Browser"/);
   assert.match(index, /function viewBrowser\(\)/);
+  assert.ok(HOST_MARKUP.length > 500, "die Browser-Huelle wurde nicht gefunden");
+  assert.ok(BROWSER_JS.length > 2000, "der Browser-Programmteil wurde nicht gefunden");
+});
+
+check("die Buehne liegt neben #main und ueberlebt jeden Re-Render", () => {
+  // Laege sie in #main, wuerde jeder render() das iframe neu bauen — Anmeldung,
+  // offene Chromium-Tabs und Scrollposition waeren jedes Mal weg.
+  const mainAt = index.indexOf('<main class="main" id="main"></main>');
+  const hostAt = index.indexOf('<section class="qbr-host" id="quantusBrowserHost"');
+  assert.ok(mainAt > 0 && hostAt > mainAt, "#quantusBrowserHost steht nicht neben <main>");
+  assert.ok(hostAt - mainAt < 400, "#quantusBrowserHost gehoert direkt neben <main>");
+  // viewBrowser() darf keinerlei Buehne mehr erzeugen, sondern nur einblenden.
+  const view = BROWSER_JS.slice(BROWSER_JS.indexOf("function viewBrowser()"));
+  assert.doesNotMatch(view, /<iframe|qbr-stage|<style/,
+    "viewBrowser() baut wieder eigenes Buehnen-Markup — damit geht der Zustand verloren");
+  assert.match(view, /quantusBrowserEnter/, "viewBrowser() blendet die Buehne nicht ein");
+  // Beim Wechsel auf eine andere Route muss sie aktiv verschwinden.
+  assert.match(index, /if \(route !== "browser"\) \{ quantusBrowserLeave\(\); \}/);
+  assert.match(HOST_MARKUP, /<section class="qbr-host" id="quantusBrowserHost" hidden/,
+    "die Buehne ist nicht standardmaessig ausgeblendet");
 });
 
 check("das iframe wird mit den noetigen Berechtigungen erzeugt", () => {
-  assert.match(index, /frame\.id = "quantusBrowserFrame"/);
+  assert.match(BROWSER_JS, /frame\.id = "quantusBrowserFrame"/);
   for (const perm of ["autoplay", "fullscreen", "clipboard-read", "clipboard-write"]) {
-    assert.ok(index.includes(perm), `allow="${perm}" fehlt`);
+    assert.ok(BROWSER_JS.includes(perm), `allow="${perm}" fehlt`);
   }
-  assert.match(index, /frame\.setAttribute\("allowfullscreen", ""\)/);
+  assert.match(BROWSER_JS, /frame\.setAttribute\("allowfullscreen", ""\)/);
 });
 
 check("Status-/Retry-UI statt roher Fehlerseite", () => {
-  assert.match(index, /function quantusBrowserStatusHtml\(/);
-  assert.match(index, /Quantus Browser ist gerade nicht erreichbar/);
-  assert.match(index, /data-action="browser-retry"/);
-  assert.match(index, /data-action="browser-open-tab"/);
+  assert.match(BROWSER_JS, /function quantusBrowserStatusHtml\(/);
+  assert.match(BROWSER_JS, /Quantus Browser ist gerade nicht erreichbar/);
+  assert.match(BROWSER_JS, /data-action="browser-retry"/);
+  assert.match(BROWSER_JS, /data-action="browser-open-tab"/);
   // Erreichbarkeit wird vor dem Einhaengen geprueft (no-cors-Probe).
-  assert.match(index, /mode: "no-cors"/);
+  assert.match(BROWSER_JS, /mode: "no-cors"/);
   // Watchdog, falls die Verbindung steht, der Stream aber nicht laedt.
-  assert.match(index, /QUANTUS_BROWSER_LOAD_MS/);
+  assert.match(BROWSER_JS, /QUANTUS_BROWSER_LOAD_MS/);
   // Automatischer Wiederholungsversuch.
-  assert.match(index, /QUANTUS_BROWSER_RETRY_MS/);
+  assert.match(BROWSER_JS, /QUANTUS_BROWSER_RETRY_MS/);
+  // Alle vier Zustaende, die der Nutzer sehen kann.
+  for (const state of ["checking", "tiny", "idle", "offline"]) {
+    assert.ok(BROWSER_JS.includes(`"${state}"`), `Zustand ${state} fehlt in der Status-UI`);
+  }
+  // Der Verbindungsstatus steht sichtbar in der Kopfzeile.
+  assert.match(HOST_MARKUP, /id="quantusBrowserStatus"/);
+  for (const label of ["Verbunden", "Verbinde…", "Nicht erreichbar"]) {
+    assert.ok(BROWSER_JS.includes(label), `Statustext fehlt: ${label}`);
+  }
 });
 
 check("alle data-action-Werte der Browser-UI haben einen Handler", () => {
-  const view = index.slice(index.indexOf("function viewBrowser()"),
-                           index.indexOf("function goBack()"));
-  const used = new Set([...view.matchAll(/data-action="(browser-[a-z-]+)"/g)].map(m => m[1]));
-  const status = index.slice(index.indexOf("function quantusBrowserStatusHtml("),
-                             index.indexOf("const quantusBrowserState"));
-  for (const m of status.matchAll(/data-action="(browser-[a-z-]+)"/g)) used.add(m[1]);
-  assert.ok(used.size >= 4, `zu wenige Browser-Aktionen gefunden: ${[...used]}`);
+  const used = new Set();
+  for (const m of HOST_MARKUP.matchAll(/data-action="(browser-[a-z-]+)"/g)) used.add(m[1]);
+  for (const m of BROWSER_JS.matchAll(/data-action="(browser-[a-z-]+)"/g)) used.add(m[1]);
+  assert.ok(used.size >= 6, `zu wenige Browser-Aktionen gefunden: ${[...used]}`);
   for (const action of used) {
     assert.ok(index.includes(`case "${action}":`), `kein Handler fuer ${action}`);
   }
 });
 
-check("Layout ist responsiv und vollbildfaehig", () => {
-  assert.match(index, /\.qbr-stage\{[^}]*100dvh/s, "dvh-Hoehe fehlt (Mobile-Adressleiste)");
-  assert.match(index, /@media \(max-width:820px\)/, "kein Breakpoint fuer Tablet/Handy");
-  assert.match(index, /\.qbr-stage:fullscreen/, "kein Vollbild-Styling");
+check("die Kopfzeile baut keine zweite Browseroberflaeche nach", () => {
+  // Chromium zeigt Tab-, Adress- und Erweiterungsleiste selbst. Eine
+  // nachgebaute Quantus-Variante darueber waere doppelt und irrefuehrend.
+  assert.doesNotMatch(HOST_MARKUP, /type="url"|placeholder="[^"]*(Adresse|URL|Suche)/i,
+    "nachgebaute Adressleiste ueber dem echten Chromium");
+  assert.doesNotMatch(HOST_MARKUP, /qbr-tabbar|qbr-tabs|class="qbr-tab"/,
+    "nachgebaute Tableiste ueber dem echten Chromium");
+  // Genau eine Toolbar in der Huelle.
+  assert.equal((HOST_MARKUP.match(/<header class="qbr-bar"/g) || []).length, 1,
+    "mehr als eine Toolbar in der Browser-Huelle");
+});
+
+check("„Neuer Tab“ bleibt Rueckfallebene, nicht der Hauptweg", () => {
+  const newTab = HOST_MARKUP.match(/<button[^>]*data-action="browser-open-tab"[^>]*>/);
+  assert.ok(newTab, "Button fuer den neuen Tab nicht gefunden");
+  assert.match(newTab[0], /qbr-btn-quiet/,
+    "„Neuer Tab“ ist als Hauptaktion gestaltet — er darf nur dezente Rueckfallebene sein");
+  // Der hervorgehobene Knopf ist das In-App-Vollbild.
+  const full = HOST_MARKUP.match(/<button[^>]*id="quantusBrowserFullBtn"[^>]*>/);
+  assert.ok(full && /qbr-btn-main/.test(full[0]), "Vollbild ist nicht die hervorgehobene Aktion");
+  // Auch in der Offline-Karte ist „Erneut versuchen“ primaer.
+  const offline = BROWSER_JS.slice(BROWSER_JS.indexOf("Quantus Browser ist gerade nicht erreichbar"));
+  const retryBtn = offline.match(/<button class="btn sm ([a-z]+)" data-action="browser-retry"/);
+  assert.ok(retryBtn && retryBtn[1] === "primary", "„Erneut versuchen“ ist nicht die Hauptaktion");
+  assert.match(offline, /<button class="btn sm ghost" data-action="browser-open-tab"/);
+});
+
+check("Browser-first-Layout: die Buehne bekommt die ganze Zelle", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  // #main wird im Browsermodus abgeschaltet — keine zweite Toolbar, keine
+  // doppelten Innenabstaende, kein Scrollcontainer um die Buehne.
+  assert.match(css, /body\.qbr-mode #main\{display:none\}/);
+  assert.match(css, /\.qbr-host\{grid-column:2;grid-row:2;display:flex;flex-direction:column/);
+  assert.match(css, /\.qbr-stage\{[^}]*flex:1 1 auto/, "die Buehne waechst nicht mit");
+  assert.match(css, /\.qbr-stage\{[^}]*min-height:0/, "ohne min-height:0 laeuft die Buehne ueber");
+  // Kein Innenabstand rund um den Stream.
+  assert.doesNotMatch(css, /\.qbr-stage\{[^}]*padding:[1-9]/, "unnoetiger Innenabstand an der Buehne");
+  // 1280x720 bleibt unverzerrt: exaktes Seitenverhaeltnis als CSS-Rueckfall.
+  assert.match(css, /\.qbr-canvas\{[^}]*aspect-ratio:16 \/ 9/);
+  assert.match(BROWSER_JS, /const QUANTUS_BROWSER_REMOTE_W = 1280/);
+  assert.match(BROWSER_JS, /const QUANTUS_BROWSER_REMOTE_H = 720/);
+  assert.match(BROWSER_JS, /function quantusBrowserFitBox\(/, "keine Groessenberechnung");
+});
+
+check("Vollbild laeuft in der App und hat einen CSS-Rueckfall", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  // Der CSS-Weg wird IMMER gesetzt — er wirkt auch, wenn die Fullscreen-API
+  // fehlt oder im eingebetteten Kontext abgelehnt wird.
+  assert.match(css, /body\.qbr-full #quantusBrowserHost\{position:fixed;inset:0/);
+  assert.match(css, /body\.qbr-full #quantusBrowserHost\{[^}]*100dvh/,
+    "dvh-Hoehe fehlt (Mobile-Adressleiste)");
+  assert.match(css, /\.qbr-stage:fullscreen/, "kein Vollbild-Styling fuer die native API");
+  const toggle = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserToggleFullscreen"));
+  assert.ok(toggle.indexOf("quantusBrowserSetFullscreen(true)") <
+            toggle.indexOf("host.requestFullscreen"),
+    "der CSS-Modus muss vor der nativen API gesetzt werden, sonst bleibt der Fallback aus");
+  // Rueckweg: Escape und der Schliessen-Knopf.
+  assert.match(BROWSER_JS, /e\.key !== "Escape"/);
+  assert.match(BROWSER_JS, /addEventListener\("fullscreenchange"/);
+  assert.match(HOST_MARKUP, /data-action="browser-exit-fullscreen"/);
+  // Der Wechsel darf das iframe nicht anfassen.
+  assert.doesNotMatch(toggle.slice(0, toggle.indexOf("\n}\n")), /createElement|\.src =/,
+    "der Vollbildwechsel baut den Stream neu auf — der Zustand ginge verloren");
+});
+
+check("Seitenbereiche draengen die Buehne nicht zusammen", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  // Navigation bleibt erreichbar, faehrt aber schmaler; der bestehende
+  // Einklapp-Schalter gilt weiter.
+  assert.match(css, /body\.qbr-mode #app\{grid-template-columns:var\(--qbr-nav,188px\)/);
+  assert.match(css, /body\.qbr-mode #app\.sidebar-collapsed\{grid-template-columns:0 /);
+  // Split-Screen-Panels werden zur Schublade statt zur dritten Spalte.
+  assert.match(css, /body\.qbr-mode\.has-app-panels #app\{grid-template-columns:var\(--qbr-nav,188px\)/);
+  assert.match(css, /body\.qbr-mode #panelDock\{position:fixed/);
+  // Das Details-Panel startet im Browsermodus immer geschlossen.
+  const enter = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserEnter"));
+  assert.match(enter.slice(0, enter.indexOf("\n}\n")), /closeSlidePanel\(\)/);
+});
+
+check("nichts schluckt Klicks ueber der Buehne, der Fokus kommt an", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  // Die Statusflaeche wird per display:none weggeschaltet, nicht nur
+  // transparent — eine unsichtbare klickbare Schicht waere fatal.
+  assert.match(css, /\.qbr-overlay\[hidden\]\{display:none\}/);
+  assert.doesNotMatch(css, /\.qbr-overlay\[hidden\]\{opacity:0\}/);
+  assert.match(css, /\.qbr-stage > \*:not\(\.qbr-canvas\):not\(\.qbr-overlay\)\{pointer-events:none\}/);
+  assert.match(BROWSER_JS, /ov\.hidden = true/);
+  // Ohne Fokus kaeme keine Tastatureingabe im Remote-Chromium an.
+  assert.match(BROWSER_JS, /function quantusBrowserFocusFrame\(/);
+  assert.match(BROWSER_JS, /frame\.focus\(\{ preventScroll: true \}\)/);
+  // ... aber nie auf Kosten eines Eingabefelds: ein Re-Render darf dem Nutzer
+  // nicht mitten im Tippen die Tastatur wegnehmen.
+  const focusFn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserFocusFrame("));
+  assert.match(focusFn.slice(0, focusFn.indexOf("\n}\n")), /tag === "INPUT"[\s\S]{0,200}isContentEditable/);
+});
+
+check("Layout ist responsiv und der Kleinfenster-Fall ist abgefangen", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  assert.match(css, /@media \(max-width:1100px\)/, "kein Breakpoint fuer schmale Laptops");
+  assert.match(css, /@media \(max-width:900px\)/, "kein Breakpoint fuer den Tablet-Umbruch");
+  assert.match(css, /@media \(max-width:820px\)/, "kein Breakpoint fuer Tablet/Handy");
+  // Die Spaltenregeln duerfen den mobilen Einspalter (<=900px) nicht kippen.
+  assert.match(css, /@media \(min-width:901px\)\{[\s\S]*?body\.qbr-mode #app\{/,
+    "die Browser-Spaltenregel greift auch unterhalb von 900px");
+  // Unterhalb von 900px zieht die Kopfleiste die App-Spalte auf ihre
+  // Mindestbreite — die ist breiter als der Viewport. Die Buehne misst sich
+  // dort deshalb am Viewport statt am Grid, sonst laeuft sie seitlich weg.
+  assert.match(css, /@media \(max-width:900px\)\{\s*\.qbr-host\{position:fixed;left:0;right:0;top:52px;bottom:0/);
+  assert.match(css, /body\.tabs-on \.qbr-host\{top:90px\}/,
+    "mit Tab-Leiste startet die Buehne nicht unterhalb der Kopfzeile");
+  // Statt einer unbedienbaren Briefmarke: Hinweis mit Vollbild-Aufruf.
+  assert.match(BROWSER_JS, /function quantusBrowserViewportClass\(/);
+  assert.match(BROWSER_JS, /Zu wenig Platz fuer den Browser/);
+  const tiny = BROWSER_JS.slice(BROWSER_JS.indexOf("Zu wenig Platz fuer den Browser"));
+  assert.match(tiny.slice(0, 600), /data-action="browser-fullscreen"/);
+});
+
+check("Farben kommen aus den Theme-Variablen (Dark und Light)", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  for (const token of ["var(--bg)", "var(--panel)", "var(--panel2)", "var(--text)", "var(--muted)", "var(--border)"]) {
+    assert.ok(css.includes(token), `Theme-Variable fehlt: ${token}`);
+  }
+  // Erlaubt sind nur die neko-eigene Buehnenfarbe und weiche Schatten —
+  // sonst keine fest verdrahteten Flaechenfarben, die im hellen Theme brechen.
+  const hardcoded = [...css.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(m => m[0])
+    .filter(v => !["#2B3134", "#333", "#4ade80", "#ef4444", "#f59e0b", "#86a895"].includes(v));
+  assert.deepEqual(hardcoded, [], "fest verdrahtete Farben im Browser-CSS");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

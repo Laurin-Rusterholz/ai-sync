@@ -497,6 +497,108 @@ Netzwerk → "Cache deaktivieren".
 
 ---
 
+## 5c. Die Quantus-Huelle um das echte Chromium
+
+**Grundsatz: Chromium ist die Browseroberflaeche, nicht Quantus.** Tab-Leiste,
+Adressleiste, Erweiterungsbereich und AI-Mode kommen aus dem echten Chromium im
+Container. Quantus baut davon **nichts** nach — jede nachgebaute Tab- oder
+Adressleiste waere eine zweite, widerspruechliche Bedienebene ueber der echten.
+Quantus stellt nur die Huelle: eine schmale Kopfzeile, die Groessenberechnung,
+die Zustaende und die optionale Assistenz daneben.
+
+### Aufbau
+
+```
+#app  (Grid: Navigation | Arbeitsbereich | Panel-Dock)
+ ├─ #main                      ← im Browsermodus display:none
+ └─ #quantusBrowserHost        ← dieselbe Grid-Zelle, eigene Spur
+     ├─ .qbr-bar               ← Titel · Verbindungsstatus · Neu laden ·
+     │                           Vollbild · (dezent) Polaris, neuer Tab
+     ├─ .qbr-note              ← einmaliger Anmeldehinweis, wegklickbar
+     └─ .qbr-stage
+         ├─ .qbr-canvas        ← 16:9-Flaeche, exakt berechnet
+         │   └─ iframe#quantusBrowserFrame
+         └─ .qbr-overlay       ← Laden / Offline / Kleinfenster / Pausiert
+```
+
+**Warum neben `#main` und nicht darin?** Ein `render()` der App ersetzt `#main`
+komplett. Laege das iframe dort, wuerde jeder Routenwechsel, jedes
+Sidebar-Toggle und jeder Re-Render die neko-Sitzung neu aufbauen — Anmeldung,
+offene Chromium-Tabs und Scrollposition waeren jedes Mal weg. Als eigene
+Grid-Zelle bleibt es stehen; `#main` wird im Browsermodus nur ausgeblendet.
+
+### Groessenberechnung
+
+Der Remote-Bildschirm ist **1280x720**. `quantusBrowserFitBox()` rechnet das
+groesste 16:9-Rechteck, das in die Buehne passt, und setzt es in Pixeln
+(`aspect-ratio: 16/9` ist der CSS-Rueckfall). Damit gilt:
+
+* keine Verzerrung — das Verhaeltnis weicht hoechstens um die Pixelrundung ab,
+* kein Beschnitt — die Flaeche bleibt immer innerhalb der Buehne,
+* keine schwarzen Balken *im* Stream — die Restflaeche ist Quantus-Hintergrund,
+  nicht das Letterboxing des neko-Clients.
+
+Die Buehne erbt ihre Hoehe aus dem Grid (`grid-row: 2`), es gibt **keine**
+`100vh - Konstante`-Rechnung mehr. Nachgezogen wird per `ResizeObserver` sowie
+bei `resize` und `orientationchange`.
+
+### Viewport-Klassen
+
+| Klasse | Bedingung | Verhalten |
+|---|---|---|
+| `wide` | ≥ 1100 x 620 | volle Kopfzeile mit Beschriftungen |
+| `compact` | ≥ 700 x 480 | Beschriftungen weichen Symbolen, Kopfzeile 36px |
+| `tiny` | < 700 oder < 480 | Hinweis + Vollbild-Aufruf statt Briefmarke; der Stream laeuft im Hintergrund weiter |
+
+Im Vollbild gilt immer `wide` — dort ist Platz per Definition da.
+
+### Vollbild
+
+`⛶ Vollbild` setzt **zuerst** `body.qbr-full` (CSS: `position:fixed; inset:0`)
+und legt danach die Fullscreen-API darueber. Fehlt die API oder lehnt der
+eingebettete Kontext sie ab, traegt der CSS-Weg allein — der Knopf funktioniert
+also immer. Zurueck geht es per `Esc`, per `✕` in der Kopfzeile oder durch einen
+Routenwechsel. Das iframe wird dabei **nie** angefasst, die Sitzung bleibt.
+
+> Hinweis: Liegt der Fokus im Stream, geht `Esc` an Chromium. Der `✕`-Knopf in
+> der Quantus-Kopfzeile ist deshalb der verlaessliche Rueckweg.
+
+### Seitenbereiche
+
+* Die linke Hauptnavigation bleibt erreichbar, faehrt im Browsermodus aber auf
+  188px (`--qbr-nav`); der bestehende Einklapp-Schalter gilt unveraendert.
+* Split-Screen-Panels (`#panelDock`) werden im Browsermodus zur Schublade ueber
+  der Buehne statt zur dritten Grid-Spalte — sie druecken den Stream nicht mehr
+  zusammen.
+* Das Details-Panel (`#slidePanel`) wird beim Betreten der Route immer
+  geschlossen.
+* Polaris Quick oeffnet sich als Overlay ueber der Buehne (`✨` in der
+  Kopfzeile oder die gewohnte Glühbirne) und blockiert die Fernbedienung nicht.
+
+### Zustaende
+
+| Zustand | Anzeige | Ausloeser |
+|---|---|---|
+| `checking` | Spinner + Origin | Erreichbarkeitspruefung laeuft |
+| `online` | gruener Punkt, „Verbunden" | iframe hat `load` gemeldet |
+| `offline` | Karte mit Grund + „Erneut versuchen" (primaer) / „In neuem Tab" (dezent) | Probe fehlgeschlagen oder Watchdog nach 25s |
+| `retry` | pulsierender Punkt | automatischer Wiederholungsversuch nach 15s |
+| `idle` | „Sitzung pausiert" + „Wieder verbinden" | 15 Minuten ausserhalb der Route |
+
+Nach jedem `load` wird die Groesse sofort neu gerechnet — die Flaeche kann nach
+einem Reconnect also nicht klein oder leer stehen bleiben.
+
+### Eingabe
+
+Die Statusflaeche wird per `hidden` (also `display:none`) weggeschaltet, nicht
+nur transparent gemacht: eine unsichtbare, aber klickbare Schicht ueber dem
+Stream wuerde Pointer- und Scroll-Ereignisse schlucken. Zusaetzlich gilt
+`pointer-events:none` fuer alles, was ausser Buehne und Statusflaeche in der
+Stage liegt. Nach `load`, nach Routenrueckkehr und beim Vollbildwechsel bekommt
+das iframe den Fokus — sonst kaeme keine Tastatureingabe im Chromium an.
+
+---
+
 ## 6. Abnahme
 
 ### Automatische Smoke-Tests (Skript)
@@ -562,6 +664,30 @@ nach:
 | 19 | Irgendwo einloggen (z. B. ein Webmail), dann `docker compose restart` | nach Neustart noch eingeloggt, Tabs wiederhergestellt, Lesezeichen und Downloads da |
 | 20 | `reboot` des VPS | Container startet automatisch, `docker compose ps` zeigt wieder `healthy` |
 | 21 | Container stoppen (`docker compose stop`), `#/browser` neu laden | freundliche Status-UI mit „Erneut versuchen" statt Browser-Fehlerseite; nach `docker compose start` verbindet die Auto-Wiederholung selbstaendig |
+
+#### Quantus-Huelle (Layout, Zustaende, Panels)
+
+Vorher/Nachher-Kriterien der Ueberarbeitung vom 07.08.2026. „Vorher" ist der
+Stand, den die Live-Abnahme gezeigt hat.
+
+| # | Test | Vorher | Erwartet (nachher) |
+|---|---|---|---|
+| 22 | `#/browser` bei 1440x900 | Buehne rechnete mit `100vh - 96px`, sass in einem Scrollcontainer, Innenabstaende von `#main` gingen ab | Buehne fuellt die Grid-Zelle; ~1250x700 nutzbares Bild; keine vertikale Scrollleiste |
+| 23 | Fenster auf 1280x720 | Bild wurde zur Briefmarke, unten schwarzer Rest | ~1090x615 unverzerrt, Restflaeche in Quantus-Hintergrund |
+| 24 | Schmales Tablet (834 breit) | Kopfzeile umgebrochen, Buehne gequetscht | Kopfzeile auf Symbole reduziert, Bild weiter 16:9 |
+| 25 | Handybreite (< 700px) | unbedienbarer Mini-Browser | Hinweis „Zu wenig Platz" mit Vollbild-Aufruf; Sitzung laeuft weiter |
+| 26 | Seitenverhaeltnis pruefen (Breite/Hoehe des Streams) | Letterboxing des neko-Clients, sichtbare schwarze Balken | 16:9 ± Pixelrundung, keine Verzerrung |
+| 27 | Knopf „⛶ Vollbild" | nur `requestFullscreen()` auf der Buehne; ohne API passierte nichts | Buehne fuellt den Viewport (CSS-Weg + native API); `Esc` und `✕` schalten zurueck |
+| 28 | Im Vollbild eine Seite laden, dann Vollbild verlassen | — | dieselbe Seite, keine neue Anmeldung |
+| 29 | `#/browser` → `#/tasks` → `#/browser` | iframe wurde neu gebaut, Anmeldung und Tabs weg | dieselbe Sitzung, dieselben Chromium-Tabs, kein neuer Login |
+| 30 | 15 Minuten ausserhalb der Route warten | Stream lief im Hintergrund weiter | Zustand „Sitzung pausiert"; beim Zurueckkommen sauberer Neuaufbau |
+| 31 | Split-Screen-Panel oeffnen (🗂️) | dritte Grid-Spalte quetschte den Stream | Panel liegt als Schublade darueber, Buehne behaelt ihre Breite |
+| 32 | Details-Panel war vorher offen, dann `#/browser` | Panel verdeckte die Buehne | Panel ist beim Betreten geschlossen |
+| 33 | „✨" in der Kopfzeile | — | Polaris Quick oeffnet als Overlay, der Stream bleibt bedienbar |
+| 34 | Mitten in die Buehne klicken, dann tippen | — | Eingabe kommt in Chromium an (kein Overlay davor, iframe hat Fokus) |
+| 35 | Kopfzeile ansehen | „Neuer Tab" stand gleichrangig neben Reload/Vollbild | „Vollbild" hervorgehoben, „↗" nur dezentes Symbol |
+| 36 | Container stoppen, dann `#/browser`, dann Container starten | — | Offline-Karte mit „Erneut versuchen" (primaer); nach dem Reconnect ist die Buehne wieder voll gross, nicht klein oder leer |
+| 37 | Dark- und Light-Theme umschalten | — | Kopfzeile, Statuskarte und Hintergrund folgen dem Theme |
 
 ---
 
@@ -658,6 +784,7 @@ cd /opt/quantus-neko && docker compose logs -f --tail=200 neko
 | `neko/nginx-neko.conf` | Server-Block, wenn nginx bereits laeuft |
 | `neko/Caddyfile.snippet` | Site-Block, wenn Caddy laeuft/installiert wird |
 | `scripts/deploy-neko-hostinger.sh` | idempotentes Deploy/Update/Smoke-Skript |
-| `public/index.html` | Quantus-App `#/browser` (iframe + Status-/Retry-UI, **kein Secret**) |
+| `public/index.html` | Quantus-App `#/browser` (Huelle `#quantusBrowserHost` + iframe + Status-/Retry-UI, **kein Secret**) |
 | `tests/quantus-browser-module.test.mjs` | statische Pruefungen (Secrets, Compose, Labels, UI, Regressionen) |
+| `tests/quantus-browser-layout-runtime.test.mjs` | Laufzeittest der Buehne (Skalierung, Vollbild, Zustaende, Zustandserhalt) |
 | `tests/neko-proxy-detect.test.sh` | Proxy-Erkennung gegen einen gestubbten Docker |
