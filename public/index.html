@@ -12620,6 +12620,15 @@ function scheduleSave() {
   // Lokal gebündelt speichern (~400ms) — Flush bei Tab-Wechsel/Schließen sichert die Daten.
   scheduleLocalSave();
 
+  // Solange im Journal aktiv geschrieben wird, bleibt es beim lokalen Sichern.
+  // Ein Remote-Durchlauf holt den kompletten Stand vom Server, merged ihn und
+  // schickt ihn wieder hoch — vier Kopien des gesamten Datenbestands im
+  // Speicher, alle paar Sekunden. Auf dem Handy reicht das, um den Tab
+  // abzuschiessen. _saveDirty bleibt gesetzt; das Sicherheitsnetz unten holt
+  // den Push nach, sobald die Eingabe ruht (spaetestens 5 s nach der letzten
+  // Taste), und pagehide/visibilitychange sichern ohnehin lokal.
+  if (remoteSaveOnHold()) return;
+
   // Throttle remote save: if last remote save > 3s ago, save now
   var now = Date.now();
   if (now - _lastSaveTime >= 3000) {
@@ -12631,6 +12640,7 @@ function scheduleSave() {
     var wait = 3000 - (now - _lastSaveTime);
     saveTimer = setTimeout(function() {
       saveTimer = null;
+      if (remoteSaveOnHold()) return;   // weiterhin am Schreiben — Netz unten uebernimmt
       if (_saveDirty) {
         _saveDirty = false;
         _lastSaveTime = Date.now();
@@ -12640,9 +12650,16 @@ function scheduleSave() {
   }
 }
 
+// Läuft gerade eine Schreibsitzung, in der ein Voll-Sync mehr schadet als nützt?
+function remoteSaveOnHold() {
+  try { return typeof window.jbIsTyping === "function" && window.jbIsTyping(); }
+  catch (e) { return false; }
+}
+
 // Safety net: check every 5s if dirty
 setInterval(function() {
   if (isManualTransferMode()) return;
+  if (remoteSaveOnHold()) return;
   if (_saveDirty && APP.state.settings.storage.autoSave) {
     _saveDirty = false;
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -82738,6 +82755,14 @@ body:has(#pdfedRoot) #app{content-visibility:hidden}
 .jb-richtext ul,.jb-richtext ol{padding-left:1.4em;margin:1em 0}
 .jb-richtext li{margin:.3em 0}
 .jb-richtext ::selection{background:color-mix(in oklab,var(--accent) 32%,transparent)}
+/* Lange Eintraege: die teuren Satz-Feinheiten treten zurueck. text-wrap:pretty
+   und hyphens:auto lassen den Browser den ganzen Schreibbereich neu umbrechen —
+   und das bei jedem Anschlag. Ab ein paar tausend Zeichen kostet das auf dem
+   Handy mehr Zeit, als zwischen zwei Tastendruecken liegt; die Eingaben stauen
+   sich, bis der Browser die Seite abschiesst. Der Text sieht minim anders
+   umbrochen aus, bleibt aber bedienbar. */
+.jb-richtext.jb-long{text-wrap:wrap;hyphens:manual;-webkit-hyphens:manual}
+.jb-editor.jb-calm .jb-richtext.jb-long>*{transition:none}
 /* Ruhe-Modus: alles ausser dem Text tritt zurueck. Der laufende Absatz bleibt
    voll sichtbar, die uebrigen daemmern — das haelt den Blick an der Stelle,
    an der geschrieben wird, ohne den Zusammenhang wegzunehmen. */
@@ -83080,18 +83105,72 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     return clean ? clean.split(/\s+/).length : 0;
   }
 
+  // Den geschriebenen Text auslesen, ohne den Browser zum Neuvermessen zu
+  // zwingen: innerText liefert die huebschere Fassung, erzwingt dafuer aber ein
+  // vollstaendiges Layout des Schreibbereichs — bei einem langen Eintrag also
+  // pro Tastendruck einmal ueber den ganzen Text. Fuer eine Wortzahl reicht
+  // textContent der einzelnen Absaetze vollkommen.
+  function jbEditorPlainText(area) {
+    if (!area) return "";
+    var kids = area.children;
+    if (!kids.length) return area.textContent || "";
+    var parts = [];
+    for (var i = 0; i < kids.length; i++) parts.push(kids[i].textContent);
+    return parts.join("\n");
+  }
+
+  function jbIsHandheld() {
+    try { return window.matchMedia("(hover:none) and (pointer:coarse)").matches; }
+    catch (e) { return false; }
+  }
+
+  // Ab dieser Laenge schaltet der Schreibbereich in den sparsamen Modus.
+  var JB_LONG_DOC_CHARS = 6000;
+
+  // Rechtschreibpruefung und Feinsatz kosten bei langen Texten mehr, als sie
+  // bringen: der Browser arbeitet bei jeder Aenderung erneut den gesamten
+  // Schreibbereich durch. Auf dem Handy korrigiert ohnehin die Tastatur,
+  // deshalb dort von Anfang an sparsam.
+  function jbTuneEditorForLength(len) {
+    var area = document.getElementById("jbEditorArea");
+    if (!area) return;
+    var long = len >= JB_LONG_DOC_CHARS || jbIsHandheld();
+    if (area.classList.contains("jb-long") === long) return;
+    area.classList.toggle("jb-long", long);
+    // spellcheck laesst sich nur ueber das Attribut zuverlaessig umschalten.
+    area.setAttribute("spellcheck", long ? "false" : "true");
+  }
+
   // Wortzahl und geschaetzte Lesezeit — ohne Nachkommastellen-Theater.
+  var _jbLastMetaWords = -1;
   function jbUpdateWritingMeta() {
     var box = document.getElementById("jbWritingMeta");
     var area = document.getElementById("jbEditorArea");
     if (!box || !area) return;
-    var words = jbWordCount(area.innerText || area.textContent || "");
+    var text = jbEditorPlainText(area);
+    jbTuneEditorForLength(text.length);
+    var words = jbWordCount(text);
+    if (words === _jbLastMetaWords) return;   // nichts hat sich geaendert
+    _jbLastMetaWords = words;
     var minutes = Math.max(1, Math.round(words / 200));
     box.innerHTML = words
       ? "<span><b>" + words.toLocaleString("de-CH") + "</b> Wörter</span><span><b>" + minutes + "</b> Min. Lesezeit</span>"
       : "";
   }
   window.jbUpdateWritingMeta = jbUpdateWritingMeta;
+
+  // Waehrend des Schreibens genuegt es, die Zaehlung nach einer kurzen Pause
+  // nachzuziehen. Sie pro Anschlag ueber den ganzen Text laufen zu lassen war
+  // die teuerste Einzelheit im Schreibbereich — und niemand liest die Wortzahl
+  // waehrend er tippt.
+  var _jbMetaTimer = null;
+  function jbScheduleWritingMeta() {
+    if (_jbMetaTimer) return;
+    _jbMetaTimer = setTimeout(function() {
+      _jbMetaTimer = null;
+      jbUpdateWritingMeta();
+    }, 700);
+  }
 
   // Ruhe-Modus: Kopfzeile und die uebrigen Absaetze treten zurueck.
   window.jbToggleCalm = function() {
@@ -83117,6 +83196,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   // Den Absatz markieren, in dem der Cursor steht — nur dieser bleibt im
   // Ruhe-Modus voll sichtbar.
+  var _jbHereEl = null;
   function jbMarkCurrentParagraph() {
     var area = document.getElementById("jbEditorArea");
     if (!area) return;
@@ -83127,9 +83207,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       if (node.parentNode === area) { block = node; break; }
       node = node.parentNode;
     }
-    Array.prototype.forEach.call(area.children, function(child) {
-      child.classList.toggle("jb-here", child === block);
-    });
+    // Nur die beiden betroffenen Absaetze anfassen. Ueber alle Kinder zu
+    // laufen und dort Klassen zu setzen, hiess bei jedem Anschlag den Stil des
+    // gesamten Textes fuer ungueltig zu erklaeren — bei ein paar hundert
+    // Absaetzen ist das die Arbeit, die das Tippen zaeh macht.
+    if (block === _jbHereEl) return;
+    if (_jbHereEl && _jbHereEl.classList) _jbHereEl.classList.remove("jb-here");
+    if (block && block.classList) block.classList.add("jb-here");
+    _jbHereEl = block;
   }
 
   // Deutsche Typografie beim Tippen: „Anfuehrungszeichen", Gedankenstrich und
@@ -83178,12 +83263,25 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   }
   window.jbApplyTypography = jbApplyTypography;
 
-  // Laeuft bei jedem Anschlag im Schreibbereich.
+  // Laeuft bei jedem Anschlag im Schreibbereich. Hier darf nur stehen, was
+  // wirklich sofort geschehen muss — alles Uebrige waechst mit der Textlaenge
+  // und wuerde das Tippen mit jedem Absatz zaeher machen.
+  var _jbLastKeystroke = 0;
   window.jbOnWrite = function() {
+    _jbLastKeystroke = Date.now();
     jbApplyTypography();
-    jbUpdateWritingMeta();
-    jbMarkCurrentParagraph();
+    jbScheduleWritingMeta();
+    var ed = document.getElementById("jbEditor");
+    if (ed && ed.classList.contains("jb-calm")) jbMarkCurrentParagraph();
     jbAutoSave();
+  };
+
+  // Wird von scheduleSave() gefragt: laeuft gerade eine Schreibsitzung?
+  // Solange getippt wird, bleibt das Sichern lokal (siehe scheduleSave).
+  window.jbIsTyping = function() {
+    var ed = document.getElementById("jbEditor");
+    if (!ed || !ed.classList.contains("active")) return false;
+    return Date.now() - _jbLastKeystroke < 2500;
   };
 
   // Tastatur: was man von einem Textprogramm erwartet.
@@ -83212,9 +83310,18 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   // Cursorbewegungen ohne Tippen (Klick, Pfeiltasten) verschieben den Fokus-
   // Absatz ebenfalls.
+  // selectionchange feuert auf Mobilgeraeten sehr dicht — beim Tippen, beim
+  // Setzen des Cursors, waehrend der Tastatur-Korrektur. Ein Bild pro
+  // Bildwiederholung genuegt vollauf.
+  var _jbSelRaf = 0;
   document.addEventListener("selectionchange", function() {
     var editor = document.getElementById("jbEditor");
-    if (editor && editor.classList.contains("jb-calm")) jbMarkCurrentParagraph();
+    if (!editor || !editor.classList.contains("jb-calm")) return;
+    if (_jbSelRaf) return;
+    _jbSelRaf = requestAnimationFrame(function() {
+      _jbSelRaf = 0;
+      jbMarkCurrentParagraph();
+    });
   });
 
   function jbToast(msg) {
@@ -83543,6 +83650,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     const doc = jd().documents.find(d => d.id === id);
     if (!doc) return;
     _jbCurrentDocId = id;
+    // Vor dem Einsetzen des Inhalts entscheiden, ob der sparsame Modus gilt —
+    // sonst laesst der Browser die Rechtschreibpruefung einmal ueber den
+    // ganzen Text laufen, bevor wir sie abschalten koennen.
+    _jbLastMetaWords = -1;
+    _jbHereEl = null;
+    jbTuneEditorForLength(String(doc.content || "").replace(/<[^>]*>/g, "").length);
     document.getElementById("jbEditorTitle").value = doc.title;
     document.getElementById("jbEditorArea").innerHTML = doc.content || "<div><br></div>";
     document.getElementById("jbEditorFont").value = doc.font || "jb-font-inter";
@@ -83813,9 +83926,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   };
 
   window.jbCloseEditor = function() {
+    // Erst schliessen, dann sichern: solange der Editor offen ist, haelt
+    // scheduleSave() den Remote-Push zurueck (siehe jbIsTyping). Die Felder
+    // sind auch im ausgeblendeten Editor noch auslesbar.
+    document.getElementById("jbEditor").classList.remove("active");
+    clearTimeout(_jbAutoSaveTimer);
     jbSaveCurrentDoc(true);
     _jbCurrentDocId = null;
-    document.getElementById("jbEditor").classList.remove("active");
     document.getElementById("jbEditorSidebar").classList.remove("open");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
     jbNav("docs");
