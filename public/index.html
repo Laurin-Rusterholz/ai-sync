@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-stage-no-login-hint · 2026-08-08" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-ultrawide-fullscreen · 2026-08-08" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -1023,8 +1023,12 @@
     .weekly-goal .goal-value{font-size:24px;font-weight:900;font-family:var(--mono)}
 
     /* Toasts */
-    .toast-container{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:10px}
-    .toast{padding:14px 18px;background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:12px;min-width:300px;box-shadow:var(--shadow);animation:slideIn .3s ease}
+    /* Der Container spannt sich unsichtbar ueber die rechte untere Ecke. Ohne
+       pointer-events:none faengt er dort Klicks ab — auch wenn gar kein Toast
+       sichtbar ist. Ueber dem Browser-Stream gingen so Klicks an Quantus statt
+       an das Remote-Chromium. Die Toasts selbst bleiben anklickbar. */
+    .toast-container{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:10px;pointer-events:none}
+    .toast{padding:14px 18px;background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:12px;min-width:300px;box-shadow:var(--shadow);animation:slideIn .3s ease;pointer-events:auto}
     .toast.ok{border-left-color:var(--ok)}
     .toast.warn{border-left-color:var(--warn)}
     .toast.danger{border-left-color:var(--danger)}
@@ -5328,6 +5332,7 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
         <button class="topbar-btn" id="btnRuhestand" title="Ruhestand — Ambient-Modus (Vollbild)" onclick="window.openRuhestandOverlay?window.openRuhestandOverlay():(window.location.href='ruhestand.html')" style="font-size:14px">🌌</button>
+        <button class="topbar-btn" id="btnQuantusFullscreen" data-action="browser-fullscreen" aria-pressed="false" title="Quantus Vollbild — der Browser fuellt den ganzen Bildschirm">⛶</button>
         <div style="position:relative" id="dockMenuWrap">
           <button class="topbar-btn" id="btnDockPanels" title="Seitenpanels — mehrere Apps gleichzeitig (Split-Screen)" onclick="window.toggleDockMenu&&window.toggleDockMenu()">🗂️</button>
           <div class="topbar-menu" id="dockMenu"></div>
@@ -5414,11 +5419,14 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
      damit der Stream so gross wie moeglich bleibt. */
   .qbr-stage{position:relative;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;
     display:flex;align-items:center;justify-content:center;background:var(--bg)}
-  /* Das Remote-Bild ist 1280x720. Die Flaeche haelt genau dieses Verhaeltnis —
-     nichts wird gestreckt, nichts abgeschnitten. Die JS-Berechnung setzt die
-     exakten Pixel, `aspect-ratio` ist der Rueckfall ohne Skript. */
+  /* Die Flaeche haelt exakt das Verhaeltnis des Remote-Bildschirms — nichts
+     wird gestreckt, nichts abgeschnitten, die Zeigerkoordinaten bleiben
+     deckungsgleich. Das Verhaeltnis kommt aus --qbr-ratio (von der echten
+     Aufloesung gesetzt); der feste Wert ist nur der Rueckfall ohne Skript.
+     Wichtig: hier niemals transform/scale einsetzen — der neko-Client rechnet
+     Mausposition aus der Elementgroesse, eine Skalierung wuerde sie versetzen. */
   .qbr-canvas{position:relative;width:100%;height:auto;max-width:100%;max-height:100%;
-    aspect-ratio:16 / 9;overflow:hidden;border-radius:10px;background:#2B3134;
+    aspect-ratio:var(--qbr-ratio,16 / 9);overflow:hidden;border-radius:10px;background:#2B3134;
     box-shadow:0 8px 26px rgba(0,0,0,.26)}
   .qbr-frame{display:block;width:100%;height:100%;border:0;background:#2B3134}
   /* Nichts Dekoratives darf ueber der Buehne Klicks abfangen. */
@@ -5447,11 +5455,30 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
   body.qbr-full #quantusBrowserHost{position:fixed;inset:0;z-index:2147483610;
     width:100vw;height:100vh;height:100dvh;border-radius:0;background:var(--bg)}
   body.qbr-full #quantusBrowserHost .qbr-canvas{border-radius:0;box-shadow:none}
+  /* Im Vollbild bleibt nur der Stream und eine flache Leiste zum Aussteigen.
+     Seitenleiste, Kopfzeile, Tab-Leiste und Panels sind weg — genau wie in
+     einem echten Vollbild-Chrome. */
+  body.qbr-full .sidebar,
+  body.qbr-full .topbar,
+  body.qbr-full .sidebar-toggle-btn,
+  body.qbr-full #browserTabBar,
+  body.qbr-full #btToggleHint,
+  body.qbr-full #panelDock{display:none !important}
+  body.qbr-full .qbr-bar{height:32px;border-bottom:0;background:var(--bg)}
   .qbr-host:fullscreen,.qbr-host:-webkit-full-screen{width:100vw;height:100vh;height:100dvh;background:var(--bg)}
   .qbr-stage:fullscreen,.qbr-stage:-webkit-full-screen{height:100%;border-radius:0;border:0}
   /* Polaris Quick bleibt auch im Vollbild erreichbar — als Overlay ueber der
      Buehne, ohne die Fernbedienung zu blockieren. */
   body.qbr-full #qc-fab,body.qbr-full #qc-panel{z-index:2147483646}
+  /* Der schwebende Knopf sass in der rechten unteren Ecke — und damit ueber
+     dem Stream: ein Klick dorthin ging an Quantus statt an Chromium. Im
+     Browsermodus uebernimmt das ✨ in der Kopfzeile, der Knopf verschwindet.
+     Das Panel selbst bleibt unveraendert erreichbar. */
+  body.qbr-mode #qc-fab{display:none}
+
+  /* „Quantus Vollbild" in der globalen Kopfzeile — nur dort, wo er etwas tut. */
+  body:not(.qbr-mode) #btnQuantusFullscreen{display:none}
+  body.qbr-mode #btnQuantusFullscreen{color:var(--accent)}
 
   /* Seitenbereiche: Die Hauptnavigation bleibt erreichbar, faehrt im
      Browsermodus aber schmaler. Der bestehende Einklapp-Schalter gilt weiter. */
@@ -5462,7 +5489,12 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
        Browsermodus liegen sie als Schublade darueber statt als dritte Spalte. */
     body.qbr-mode.has-app-panels #app{grid-template-columns:var(--qbr-nav,188px) minmax(0,1fr) auto}
     body.qbr-mode.has-app-panels #app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) auto}
-    body.qbr-mode #panelDock{position:fixed;top:52px;right:0;bottom:0;width:min(420px,42vw);
+    /* Auf breiten Schirmen bleibt neben dem 16:9-Stream Platz uebrig. Wird ein
+       Panel geoeffnet, legt es sich genau dorthin statt ueber den Stream — die
+       Buehne behaelt ihre Groesse. --qbr-side ist die freie Breite je Seite,
+       gesetzt von quantusBrowserFit(). Standardmaessig ist nichts geoeffnet. */
+    body.qbr-mode #panelDock{position:fixed;top:52px;right:0;bottom:0;
+      width:min(460px,max(300px,var(--qbr-side,0px)));
       z-index:1200;border-left:1px solid var(--border);box-shadow:-18px 0 44px rgba(0,0,0,.34)}
     body.qbr-mode.tabs-on #panelDock{top:90px}
   }
@@ -18198,11 +18230,23 @@ const QUANTUS_BROWSER_USER   = 'quantus';
 const QUANTUS_BROWSER_PROBE_MS = 8000;
 const QUANTUS_BROWSER_LOAD_MS  = 25000;
 const QUANTUS_BROWSER_RETRY_MS = 15000;
-// Aufloesung des Remote-Bildschirms im Container. Daraus wird das groesst-
-// moegliche Rechteck berechnet, das ohne Verzerrung und ohne Beschnitt in die
-// verfuegbare Flaeche passt.
+// Aufloesung des Remote-Bildschirms im Container — muss zu NEKO_SCREEN in
+// neko/docker-compose.yml passen. Daraus wird das groesstmoegliche Rechteck
+// berechnet, das ohne Verzerrung und ohne Beschnitt in die Buehne passt.
+//
+// WARUM DAS WICHTIG IST: Der Stream hat exakt die Form dieses Bildschirms.
+// Auf einem sehr breiten Fenster bleibt neben einem 16:9-Bild zwangslaeufig
+// Rand — mehr Remote-Arbeitsflaeche gibt es nur ueber eine breitere
+// Aufloesung im Container, nicht ueber CSS. Ein auf volle Breite gezogenes
+// iframe wuerde das Bild nur verzerren und die Zeigerkoordinaten versetzen.
 const QUANTUS_BROWSER_REMOTE_W = 1280;
 const QUANTUS_BROWSER_REMOTE_H = 720;
+// Wird NEKO_SCREEN auf dem VPS geaendert (z. B. auf ein Breitbildformat), laesst
+// sich das Frontend ohne neuen Deploy nachziehen:
+//   localStorage.setItem('quantus-browser-screen', '2560x1080')
+// Nur Ziffern, in den Grenzen gueltiger X11-Modi. Kein Geheimnis, keine
+// Zugangsdaten — nur eine Bildschirmgroesse.
+const QUANTUS_BROWSER_SCREEN_KEY = 'quantus-browser-screen';
 // Nach dem Verlassen der Route bleibt der Stream zunaechst stehen, damit ein
 // Abstecher zu Aufgaben oder Projekten ohne Neuaufbau zurueckkommt. Erst nach
 // dieser Zeit wird das iframe abgehaengt, statt im Hintergrund weiterzulaufen.
@@ -18241,6 +18285,25 @@ const QUANTUS_BROWSER_HINTS = {
   network: "Der Server ist nicht erreichbar (DNS, TLS oder Verbindung).",
   load:    "Die Verbindung stand, der Stream wurde aber nicht fertig geladen."
 };
+
+// Die tatsaechliche Remote-Aufloesung: eingebauter Wert, sofern kein gueltiger
+// Nachzieh-Wert hinterlegt ist. Bewusst streng geprueft — ein krummer Wert
+// wuerde das Bild verzerren statt es zu vergroessern.
+function quantusBrowserScreen() {
+  let width = QUANTUS_BROWSER_REMOTE_W;
+  let height = QUANTUS_BROWSER_REMOTE_H;
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(QUANTUS_BROWSER_SCREEN_KEY) : null;
+    const m = raw && /^\s*(\d{3,4})\s*[x\u00d7]\s*(\d{3,4})\s*$/.exec(raw);
+    if (m) {
+      const w = parseInt(m[1], 10), h = parseInt(m[2], 10);
+      // Grenzen gueltiger X11-Modi im Container. Ausserhalb davon lieber den
+      // eingebauten Wert behalten als eine unbrauchbare Buehne bauen.
+      if (w >= 640 && w <= 5120 && h >= 360 && h <= 2160) { width = w; height = h; }
+    }
+  } catch (e) { /* privater Modus o. ae. — eingebauter Wert genuegt */ }
+  return { width: width, height: height, ratio: width / height };
+}
 
 // Groesstes Rechteck im Seitenverhaeltnis des Remote-Bildes, das noch in die
 // verfuegbare Flaeche passt. Bewusst eine reine Rechnung ohne DOM-Zugriff —
@@ -18288,7 +18351,7 @@ const QUANTUS_BROWSER_STATUS_TEXT = {
 // stehen laesst.
 const quantusBrowserState = {
   generation: 0, retryTimer: null, loadTimer: null, idleTimer: null,
-  lastOkAt: 0, status: "idle",
+  lastOkAt: 0, status: "idle", refocusTimer: null,
   active: false, mounted: false, fullscreen: false, nativeFull: false, wired: false
 };
 // Ein render() der App ersetzt #main komplett. Die Buehne liegt zwar daneben,
@@ -18402,10 +18465,20 @@ function quantusBrowserFit() {
   const klass = quantusBrowserState.fullscreen ? "wide" : quantusBrowserViewportClass(vw, vh);
   host.dataset.viewport = klass;
 
-  const box = quantusBrowserFitBox(stage.clientWidth, stage.clientHeight,
-    QUANTUS_BROWSER_REMOTE_W / QUANTUS_BROWSER_REMOTE_H);
+  const screen = quantusBrowserScreen();
+  const box = quantusBrowserFitBox(stage.clientWidth, stage.clientHeight, screen.ratio);
   canvas.style.width  = box.width  ? box.width  + "px" : "";
   canvas.style.height = box.height ? box.height + "px" : "";
+  // Rueckfall ohne Skript und Grundlage fuer die Randflaeche.
+  host.style.setProperty("--qbr-ratio", screen.width + " / " + screen.height);
+  // Freie Breite je Seite. Auf Breitbild legt sich ein geoeffnetes Panel genau
+  // dorthin, statt den Stream zu ueberdecken oder zu verkleinern.
+  const side = Math.max(0, Math.floor((stage.clientWidth - box.width) / 2));
+  host.style.setProperty("--qbr-side", side + "px");
+  if (document.body && document.body.style) {
+    document.body.style.setProperty("--qbr-side", side + "px");
+  }
+  host.dataset.side = side > 160 ? "wide" : "tight";
 
   const ov = quantusBrowserOverlayEl();
   const shown = ov && !ov.hidden ? (ov.dataset.state || "") : "";
@@ -18495,10 +18568,11 @@ function quantusBrowserSetFullscreen(on) {
   // oder im eingebetteten Kontext abgelehnt wird.
   if (document.body && document.body.classList) document.body.classList.toggle("qbr-full", !!on);
   host.dataset.fullscreen = on ? "1" : "0";
-  const btn = document.getElementById("quantusBrowserFullBtn");
-  if (btn && typeof btn.setAttribute === "function") {
+  for (const id of ["quantusBrowserFullBtn", "btnQuantusFullscreen"]) {
+    const btn = document.getElementById(id);
+    if (!btn || typeof btn.setAttribute !== "function") continue;
     btn.setAttribute("aria-pressed", on ? "true" : "false");
-    btn.title = on ? "Vollbild beenden (Esc)" : "Vollbild — der Browser fuellt das Fenster";
+    btn.title = on ? "Vollbild beenden (Esc)" : "Quantus Vollbild — der Browser fuellt den ganzen Bildschirm";
   }
   quantusBrowserFit();
   if (on) quantusBrowserFocusFrame(true);
@@ -18538,7 +18612,19 @@ function quantusBrowserWire() {
   if (quantusBrowserState.wired) return;
   quantusBrowserState.wired = true;
 
-  const onResize = function(){ if (quantusBrowserState.active) quantusBrowserFit(); };
+  const onResize = function(){
+    if (!quantusBrowserState.active) return;
+    quantusBrowserFit();
+    // Nach dem Umbrechen gehoert der Fokus zurueck in den Stream, sonst laufen
+    // die naechsten Tasten ins Leere. Entprellt, damit das Ziehen am
+    // Fensterrand nicht bei jedem Pixel den Fokus greift — und ungezwungen,
+    // damit es niemandem das Eingabefeld wegnimmt.
+    if (quantusBrowserState.refocusTimer) clearTimeout(quantusBrowserState.refocusTimer);
+    quantusBrowserState.refocusTimer = setTimeout(function(){
+      quantusBrowserState.refocusTimer = null;
+      if (quantusBrowserState.active) quantusBrowserFocusFrame();
+    }, 160);
+  };
   if (typeof window !== "undefined" && window.addEventListener) {
     window.addEventListener("resize", onResize);
     window.addEventListener("orientationchange", onResize);
