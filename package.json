@@ -25,7 +25,7 @@
     "test:navigation": "node tests/quantus-navigation-search.test.mjs && node tests/quantus-app-search-runtime.test.mjs",
     "test:sticky-export": "node tests/sticky-board-export.test.mjs && node tests/sticky-board-export-runtime.test.mjs",
     "test:flowertech-portal": "node tests/flowertech-portal-auth.test.mjs",
-    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs"
+    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs && node tests/flowertech-kundenanfrage.test.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.11",

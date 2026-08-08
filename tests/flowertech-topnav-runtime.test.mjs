@@ -28,7 +28,7 @@ const ok = (condition, message) => { assert.ok(condition, message); checks++; };
 
 // Die Bereiche, die der Nutzer in der alten Leiste gesehen hat.
 const SECTION_LABELS = [
-  "Projekte", "Planung", "Aufgaben", "Offerten", "Rechnungen", "KI",
+  "Kundenanfragen", "Projekte", "Planung", "Aufgaben", "Offerten", "Rechnungen", "KI",
   "Leads / Anfragen", "Pipeline", "Finanzen", "Notizen", "Links",
   "Instagram-Videos", "Firma",
 ];
@@ -138,6 +138,7 @@ function renderAt(hash) {
 
   // 2. Kein Bereich ist verloren: jeder hat einen echten Deep Link.
   for (const [key, label] of [
+    ["intakes", "Kundenanfragen"],
     ["projects", "Projekte"], ["planung", "Planung"], ["tasks", "Aufgaben"],
     ["offers", "Offerten"], ["invoices", "Rechnungen"], ["ai", "KI"],
     ["leads", "Leads / Anfragen"], ["pipeline", "Pipeline"], ["finances", "Finanzen"],
@@ -364,7 +365,9 @@ function renderAt(hash) {
   }) === 0, "ein fremder Token wird angenommen");
 }
 
-// ── 14. Vision ohne Token legt genau EIN Direktprojekt an ─────────────────
+// ── 14. Vision ohne Token legt genau EINEN Vorgang an ─────────────────────
+// Seit der Zusammenfuehrung muendet der Vision Room in den Kundenanfrage-Weg:
+// Es entsteht ein Anfrage-Dokument und genau eine Aufgabe — kein Sonderweg.
 {
   const { win } = renderAt("#/flowertech");
   const projects = win.APP.state.data.entities.projects;
@@ -376,8 +379,13 @@ function renderAt(hash) {
   ok(win._ftIngestSubmissions({ sub_neu: entry }) === 1, "die Vision erzeugt kein Direktprojekt");
   const created = Object.values(projects).filter((p) => p.sourceVisionId === "sub_neu");
   ok(created.length === 1, `es entstanden ${created.length} Projekte statt genau eines`);
-  ok(created[0].ftRoute === "direct", "das Vision-Projekt ist kein Direktprojekt");
+  ok(created[0].ftRouteSource === "vision-room", "die Herkunft „Vision Room“ fehlt am Vorgang");
+  ok(created[0].ftIntakeDocument && created[0].ftIntakeDocument.answers.length,
+    "der Vision-Eingang erzeugt kein Anfrage-Dokument");
   ok(created[0].deliveryType === "program", "Web-App wurde nicht als Programm erkannt");
+  const visionTasks = Object.values(win.APP.state.data.entities.tasks)
+    .filter((t) => t.source === "flowertech-intake");
+  ok(visionTasks.length === 1, `es entstanden ${visionTasks.length} Aufgaben statt genau einer`);
 
   // Derselbe Eingang ein zweites Mal: kein zweites Projekt.
   win._ftIngestSubmissions({ sub_neu: entry });
