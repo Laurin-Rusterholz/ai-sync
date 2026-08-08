@@ -1974,6 +1974,10 @@
       '<button class="btn sm primary" onclick="window._ftMailDoc(\'' + kind + "','" + attr(doc.id) + '\')" ' +
         'title="Per Gmail versenden — der Thread wird mit dem Projekt verknüpft">✉️ Per Mail senden</button>' +
       '<button class="btn sm" onclick="window._ftPrintDoc(\'' + kind + "','" + attr(doc.id) + '\')">Drucken / PDF</button>' +
+      (doc.projectId
+        ? '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(clientPortalLink(doc.projectId)) +
+          '\')" title="Den Kundenlink dieses Projekts kopieren">🔗 Kundenlink</button>'
+        : "") +
       (isInvoice
         ? '<button class="btn sm" onclick="window._ftAiReminder(\'' + attr(doc.id) + '\')">KI-Mahnung</button>'
         : '<button class="btn sm" onclick="window._ftOfferToInvoice(\'' + attr(doc.id) + '\')">In Rechnung umwandeln</button>' +
@@ -1984,6 +1988,12 @@
 
       deadlineWarning +
       completeness +
+      // Der Kundenlink gehoert auch hierher: Wer an der Offerte sitzt, will
+      // ihn kopieren, ohne den Vorgang zu wechseln.
+      (doc.projectId
+        ? '<div class="ft-linkbar">' + clientLinkRowHtml(doc.projectId, "Kundenlink") + "</div>"
+        : '<div class="mini mt-2">Dieses Dokument gehört noch zu keinem Projekt — ' +
+          "ordne es unten einem zu, dann steht hier der Kundenlink.</div>") +
       docFactsHtml(kind, doc) +
 
       '<h4 class="ft-sub">Eckdaten</h4><div class="ft-field-grid">' +
@@ -2123,7 +2133,13 @@
       '<button class="btn sm" onclick="window.gmailComposeToEntity(\'project\',\'' + attr(project.id) + '\')">✉️ Mail an Kunde</button>' +
       '<button class="btn sm" onclick="window._ftAiProjectReport(\'' + attr(project.id) + '\')">✨ KI-Statusbericht</button>' +
       '<button class="btn sm ghost" onclick="location.hash=\'#/flowertech\'">FlowerTech öffnen</button>' +
-      "</div></div>";
+      "</div></div>" +
+      // Direkt unter dem Kopf, auf jedem Reiter: der Link, den die Kundschaft
+      // bekommt. Er war bisher nur im Reiter „Kundenportal" — dort sucht ihn
+      // niemand, der gerade an einer Offerte arbeitet.
+      '<div class="ft-linkbar">' + clientLinkRowHtml(project.id, "Kundenlink") +
+      '<div class="mini">Zeigt der Kundschaft Vorschau, Änderungswünsche, AGB und Rückfragen. ' +
+      "Wird nie automatisch verschickt — du entscheidest, wann sie ihn bekommt.</div></div>";
 
     var kpis = '<div class="ft-kpis">' +
       '<div class="ft-kpi"><span>Offene Aufgaben</span><strong>' + open.length + "</strong></div>" +
@@ -2218,7 +2234,10 @@
     var next = dates[0] || "";
     var late = next && next < today();
     return '<div class="ft-prow' + (late ? " late" : "") + '" onclick="window._ftOpenProject(\'' + attr(project.id) + '\')">' +
-      '<span class="ft-prow-main"><strong>' + esc(project.title || "Projekt") + "</strong>" +
+      '<span class="ft-prow-main"><strong>' + esc(project.title || "Projekt") +
+      '<button class="btn sm ghost ft-prow-link" title="Kundenlink kopieren" ' +
+        'onclick="event.stopPropagation();window._ftCopyProjectLink(\'' + attr(project.id) + '\')">🔗</button>' +
+      "</strong>" +
       '<small>' + esc(String(project.description || "Keine Beschreibung").slice(0, 120)) + "</small></span>" +
       '<span class="badge">' + esc(labelOf(STAGES, project.pipelineStage || "lead")) + "</span>" +
       "<span>" + (list.length - openCount) + " / " + list.length + "</span>" +
@@ -4115,6 +4134,25 @@
   }
   window._ftClientQuoteLink = clientQuoteLink;
 
+  // Der Kundenlink muss dort erreichbar sein, wo man ihn braucht: am Projekt
+  // und in der Offerte — nicht nur in einem Reiter, den man erst finden muss.
+  // Legt den Zugang an, falls es noch keinen gibt: ein Projekt ohne Kundenlink
+  // waere hier eine leere Zeile ohne Erklaerung.
+  function clientLinkRowHtml(projectId, label) {
+    if (!projectId) return "";
+    if (!sharesOf(projectId).portalToken) publishClientPortal(projectId);
+    var link = clientPortalLink(projectId);
+    if (!link) {
+      return '<div class="ft-legal-note">Der Kundenlink konnte nicht erzeugt werden — ' +
+        "ohne Firebase-Zugang gibt es keine Kundenseite.</div>";
+    }
+    return '<div class="ft-link-row"><span>' + esc(label || "Kundenlink") + "</span>" +
+      '<input readonly value="' + attr(link) + '" onclick="this.select()">' +
+      '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) + '\')">Kopieren</button>' +
+      '<a class="btn sm ghost" href="' + attr(link) + '" target="_blank" rel="noopener">Öffnen</a></div>';
+  }
+  window._ftClientLinkRow = clientLinkRowHtml;
+
   // Manuelles Aktualisieren bleibt moeglich, macht aber dasselbe wie der
   // automatische Weg — eine Stelle, kein zweiter Pfad.
   window._ftPublishClientView = function (projectId) {
@@ -4145,6 +4183,17 @@
   window._ftCopyLink = function (url) {
     if (!url) return notify("warn", "Link", "Noch kein Link vorhanden");
     copyText(url, "Link kopiert");
+  };
+
+  // Aus einer Liste heraus: Der Zugang entsteht erst beim Klick. Beim Rendern
+  // eine Kundenseite fuer jedes Projekt anzulegen waere ein Schreibvorgang pro
+  // Zeile — und pro Neuzeichnen.
+  window._ftCopyProjectLink = function (projectId) {
+    if (!projectId) return;
+    if (!sharesOf(projectId).portalToken) publishClientPortal(projectId);
+    var link = clientPortalLink(projectId);
+    if (!link) return notify("warn", "Kundenlink", "Ohne Firebase-Zugang gibt es keine Kundenseite.");
+    copyText(link, "Kundenlink kopiert");
   };
 
   // ── Kundenmail aus Vorlage ──────────────────────────────────────────────
@@ -4928,6 +4977,10 @@
     ".ft-cr-main small{color:var(--muted);font-size:11.5px}" +
     ".ft-cr-done{opacity:.6}.ft-cr-rejected{opacity:.5}" +
     ".ft-cr-detail{width:100%;margin-top:8px}" +
+    ".ft-prow-link{margin-left:8px;padding:2px 7px;font-size:12px;vertical-align:middle}" +
+    ".ft-linkbar{border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:12px;" +
+      "background:var(--panel2)}" +
+    ".ft-linkbar .ft-link-row{margin-bottom:0}" +
     ".ft-link-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}" +
     ".ft-link-row span{font-size:12px;color:var(--muted);min-width:120px}" +
     ".ft-link-row input{flex:1;min-width:160px;font-size:11.5px}" +
