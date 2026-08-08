@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-ultrawide-fullscreen · 2026-08-08" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn · 2026-08-08" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -5332,7 +5332,7 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
         <button class="topbar-btn" data-action="open-quick-thought" title="Gedanke notieren" style="font-size:14px">💭</button>
         <button class="topbar-btn" data-action="end-day" title="Tag abschließen" style="background:linear-gradient(135deg,var(--accent),var(--accent3));color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;width:auto">🌙</button>
         <button class="topbar-btn" id="btnRuhestand" title="Ruhestand — Ambient-Modus (Vollbild)" onclick="window.openRuhestandOverlay?window.openRuhestandOverlay():(window.location.href='ruhestand.html')" style="font-size:14px">🌌</button>
-        <button class="topbar-btn" id="btnQuantusFullscreen" data-action="browser-fullscreen" aria-pressed="false" title="Quantus Vollbild — der Browser fuellt den ganzen Bildschirm">⛶</button>
+        <button class="topbar-btn qbr-topbtn" id="btnQuantusFullscreen" data-action="browser-fullscreen" aria-pressed="false" title="Quantus Vollbild — der Browser fuellt den ganzen Bildschirm">⛶<span class="qbr-topbtn-label" id="btnQuantusFullscreenLabel">Quantus Vollbild</span></button>
         <div style="position:relative" id="dockMenuWrap">
           <button class="topbar-btn" id="btnDockPanels" title="Seitenpanels — mehrere Apps gleichzeitig (Split-Screen)" onclick="window.toggleDockMenu&&window.toggleDockMenu()">🗂️</button>
           <div class="topbar-menu" id="dockMenu"></div>
@@ -5476,9 +5476,39 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
      Das Panel selbst bleibt unveraendert erreichbar. */
   body.qbr-mode #qc-fab{display:none}
 
-  /* „Quantus Vollbild" in der globalen Kopfzeile — nur dort, wo er etwas tut. */
-  body:not(.qbr-mode) #btnQuantusFullscreen{display:none}
-  body.qbr-mode #btnQuantusFullscreen{color:var(--accent)}
+  /* „Quantus Vollbild" in der globalen Kopfzeile — nur dort, wo er etwas tut,
+     dort aber immer und mit lesbarer Beschriftung. Bewusst mit !important und
+     flex-shrink:0: die Kopfzeile kuerzt bei wenig Platz sonst Knoepfe weg, und
+     genau dieser darf nie verschwinden. */
+  body:not(.qbr-mode) #btnQuantusFullscreen{display:none !important}
+  /* Die Knopfleiste der Kopfzeile ist breiter als der Viewport (bestehendes
+     Verhalten, ~1287px) — ein Knopf am Ende waere schlicht abgeschnitten.
+     order:-1 setzt „Quantus Vollbild" an den Anfang der Gruppe, damit er als
+     erster im Bild liegt und nicht als letzter herausfaellt. */
+  body.qbr-mode #btnQuantusFullscreen{
+    order:-1;margin-right:4px;
+    display:inline-flex !important;align-items:center;gap:6px;flex:0 0 auto;
+    width:auto !important;min-width:0;padding:4px 10px;border-radius:8px;
+    background:var(--accent-soft);border:1px solid var(--accent-soft);
+    color:var(--text);font-size:12px;font-weight:700;white-space:nowrap;
+    overflow:visible;visibility:visible !important;opacity:1 !important}
+  body.qbr-mode #btnQuantusFullscreen:hover{background:var(--accent);color:#fff}
+  body.qbr-mode #btnQuantusFullscreen:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .qbr-topbtn-label{font:inherit}
+  /* Unter 900px bricht die Kopfzeile um und die Seitenleiste wird zur
+     Schublade ueber der linken Haelfte (z-index 500) — dort verschwand der
+     Knopf dahinter. Er wird deshalb rechts oben verankert, ueber der
+     Schublade und ausserhalb ihres Bereichs. */
+  @media (max-width:900px){
+    /* Achtung: .topbar hat backdrop-filter und ist damit selbst der Bezugs-
+       rahmen fuer position:fixed — `right` waere hier die rechte Kante der
+       (breiteren) Leiste, nicht die des Fensters. Deshalb ueber 100vw
+       gerechnet, das bleibt viewportbezogen. */
+    body.qbr-mode #btnQuantusFullscreen{position:fixed;top:8px;left:calc(100vw - 141px);right:auto;
+      z-index:520;margin:0}
+  }
+  /* Im Vollbild deckt die Buehne die Kopfzeile ohnehin ab; der Ausstieg sitzt
+     dann in der Browserleiste. */
 
   /* Seitenbereiche: Die Hauptnavigation bleibt erreichbar, faehrt im
      Browsermodus aber schmaler. Der bestehende Einklapp-Schalter gilt weiter. */
@@ -18239,8 +18269,8 @@ const QUANTUS_BROWSER_RETRY_MS = 15000;
 // Rand — mehr Remote-Arbeitsflaeche gibt es nur ueber eine breitere
 // Aufloesung im Container, nicht ueber CSS. Ein auf volle Breite gezogenes
 // iframe wuerde das Bild nur verzerren und die Zeigerkoordinaten versetzen.
-const QUANTUS_BROWSER_REMOTE_W = 1280;
-const QUANTUS_BROWSER_REMOTE_H = 720;
+const QUANTUS_BROWSER_REMOTE_W = 2560;
+const QUANTUS_BROWSER_REMOTE_H = 1080;
 // Wird NEKO_SCREEN auf dem VPS geaendert (z. B. auf ein Breitbildformat), laesst
 // sich das Frontend ohne neuen Deploy nachziehen:
 //   localStorage.setItem('quantus-browser-screen', '2560x1080')
@@ -18574,6 +18604,11 @@ function quantusBrowserSetFullscreen(on) {
     btn.setAttribute("aria-pressed", on ? "true" : "false");
     btn.title = on ? "Vollbild beenden (Esc)" : "Quantus Vollbild — der Browser fuellt den ganzen Bildschirm";
   }
+  // Der beschriftete Knopf in der globalen Kopfzeile sagt auch im Text, was er
+  // als naechstes tut — ein reines Symbol laesst offen, ob man ein- oder
+  // aussteigt.
+  const topLabel = document.getElementById("btnQuantusFullscreenLabel");
+  if (topLabel) topLabel.textContent = on ? "Vollbild beenden" : "Quantus Vollbild";
   quantusBrowserFit();
   if (on) quantusBrowserFocusFrame(true);
 }
@@ -18647,8 +18682,11 @@ function quantusBrowserWire() {
 
   document.addEventListener("keydown", function(e){
     if (!e || e.key !== "Escape" || !quantusBrowserState.fullscreen) return;
-    // Bei nativem Vollbild raeumt der Browser selbst auf (fullscreenchange).
-    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    // Immer selbst aussteigen — auch wenn eine native Sitzung laeuft. Frueher
+    // wurde hier auf den Browser vertraut; bleibt dessen Escape aus, haette das
+    // Vollbild festgehangen. Ein zusaetzliches exitFullscreen() schadet nicht,
+    // der fullscreenchange-Handler kommt auf denselben Zustand.
+    quantusBrowserExitNativeFullscreen();
     quantusBrowserSetFullscreen(false);
   });
 }

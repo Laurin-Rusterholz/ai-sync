@@ -152,6 +152,9 @@ function makeDom() {
   const statusText = el("span", null, "qbr-status-text");
   const fullBtn = el("button", "quantusBrowserFullBtn", "qbr-btn qbr-btn-main");
   const topFullBtn = el("button", "btnQuantusFullscreen", "topbar-btn");
+  const topFullLabel = el("span", "btnQuantusFullscreenLabel", "qbr-topbtn-label");
+  topFullLabel.textContent = "Quantus Vollbild";
+  topFullBtn.appendChild(topFullLabel);
   const stage = el("div", "quantusBrowserStage", "qbr-stage");
   const canvas = el("div", "quantusBrowserCanvas", "qbr-canvas");
   const overlay = el("div", "quantusBrowserOverlay", "qbr-overlay");
@@ -191,7 +194,7 @@ function makeDom() {
   doc.removeEventListener = () => {};
   doc.dispatch = (type, event) => { for (const fn of doc._listeners.get(type) || []) fn(event || { type }); };
 
-  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, topFullBtn, stage, canvas, overlay, qcFab } };
+  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, topFullBtn, topFullLabel, stage, canvas, overlay, qcFab } };
 }
 
 // ── Steuerbare Uhr ─────────────────────────────────────────────────────────
@@ -357,8 +360,8 @@ console.log("\n1. Skalierung des 1280x720-Bildes");
   }
 
   // Ohne brauchbares Verhaeltnis wird auf 1280x720 zurueckgefallen.
-  eq(fitBox(1280, 2000, 0), { width: 1280, height: 720 }, "Rueckfall auf das Remote-Verhaeltnis");
-  eq(fitBox(1280, 2000, NaN), { width: 1280, height: 720 }, "NaN faellt auf das Remote-Verhaeltnis zurueck");
+  eq(fitBox(1280, 2000, 0), { width: 1280, height: 540 }, "Rueckfall auf das Remote-Verhaeltnis");
+  eq(fitBox(1280, 2000, NaN), { width: 1280, height: 540 }, "NaN faellt auf das Remote-Verhaeltnis zurueck");
 }
 
 // ═══ 2. Viewport-Klassen ═══════════════════════════════════════════════════
@@ -402,9 +405,10 @@ console.log("\n3. Verbinden, Flaechenberechnung und Statusanzeige");
   eq(app.nodes.overlay.innerHTML, "", "der Ladehinweis wurde nicht geleert");
 
   // 1440x900: 188px Navigation, 52px Topbar, 40px Kopfzeile — sonst nichts.
+  // Remote ist 2560x1080 (21:9), die Breite ist hier die begrenzende Seite.
   eq(app.nodes.canvas.style.width, "1252px", "die Buehne nutzt die Breite nicht aus");
-  eq(app.nodes.canvas.style.height, "704px", "die Buehne nutzt die Hoehe nicht aus");
-  ok(parseInt(app.nodes.canvas.style.width, 10) > 1000 && parseInt(app.nodes.canvas.style.height, 10) > 600,
+  eq(app.nodes.canvas.style.height, "528px", "die Buehne nutzt die Hoehe nicht aus");
+  ok(parseInt(app.nodes.canvas.style.width, 10) > 1000 && parseInt(app.nodes.canvas.style.height, 10) > 450,
     "auf 1440x900 entsteht eine Briefmarke statt einer Arbeitsflaeche");
   ok(app.frame().focusCount > 0, "das iframe bekommt keinen Fokus — Tastatur kaeme nie an");
 
@@ -412,19 +416,19 @@ console.log("\n3. Verbinden, Flaechenberechnung und Statusanzeige");
   eq(app.nodes.stage.clientHeight, 808, "ueber der Buehne haengt noch ein zweiter Streifen");
   app.resize(1440, 900);
   eq(app.nodes.canvas.style.width, "1252px", "die Buehne nutzt die Breite nicht mehr aus");
-  eq(app.nodes.canvas.style.height, "704px", "die Buehne haelt das Seitenverhaeltnis nicht");
+  eq(app.nodes.canvas.style.height, "528px", "die Buehne haelt das Seitenverhaeltnis nicht");
 
   // 1280x720 und Tablet — beide bleiben unverzerrt und formatfuellend.
   app.resize(1280, 720);
   eq(app.nodes.canvas.style.width, "1092px", "1280x720: Breite falsch");
-  eq(app.nodes.canvas.style.height, "614px", "1280x720: Hoehe falsch");
+  eq(app.nodes.canvas.style.height, "461px", "1280x720: Hoehe falsch");
   eq(app.nodes.host.dataset.viewport, "wide", "1280x720 wird nicht als volle Flaeche gefuehrt");
 
   app.resize(1024, 768);
   eq(app.nodes.host.dataset.viewport, "compact", "Tablet wird nicht als kompakt gefuehrt");
   const tabletW = parseInt(app.nodes.canvas.style.width, 10);
   const tabletH = parseInt(app.nodes.canvas.style.height, 10);
-  ok(Math.abs(tabletW / tabletH - 16 / 9) < 0.01, "Tablet: das Bild wird verzerrt");
+  ok(Math.abs(tabletW / tabletH - 2560 / 1080) < 0.01, "Tablet: das Bild wird verzerrt");
   ok(app.nodes.overlay.hidden === true, "auf dem Tablet wird der Stream unnoetig verdeckt");
 }
 
@@ -491,7 +495,7 @@ console.log("\n5. In-App-Vollbild und CSS-Rueckfall");
   const fullW = parseInt(app.nodes.canvas.style.width, 10);
   ok(fullW > parseInt(widthBefore, 10), `im Vollbild wird die Buehne nicht groesser (${widthBefore} -> ${fullW}px)`);
   eq(app.nodes.canvas.style.width, "1440px", "im Vollbild wird die Breite nicht ausgenutzt");
-  eq(app.nodes.canvas.style.height, "810px", "im Vollbild stimmt die Hoehe nicht");
+  eq(app.nodes.canvas.style.height, "608px", "im Vollbild stimmt die Hoehe nicht");
 
   // Escape schaltet zurueck — ohne die Sitzung zu verlieren.
   app.doc.dispatch("keydown", { key: "Escape" });
@@ -577,8 +581,8 @@ console.log("\n7. Offline-, Retry- und Reconnect-Darstellung");
   // leer noch winzig bleiben.
   const w = parseInt(app.nodes.canvas.style.width, 10);
   const h = parseInt(app.nodes.canvas.style.height, 10);
-  ok(w > 1000 && h > 550, `nach dem Reconnect ist die Buehne zu klein: ${w}x${h}`);
-  ok(Math.abs(w / h - 16 / 9) < 0.01, "nach dem Reconnect ist das Bild verzerrt");
+  ok(w > 1000 && h > 450, `nach dem Reconnect ist die Buehne zu klein: ${w}x${h}`);
+  ok(Math.abs(w / h - 2560 / 1080) < 0.01, "nach dem Reconnect ist das Bild verzerrt");
 
   // Im Hintergrund wird nicht endlos weiterprobiert.
   const app2 = makeApp({ offline: true });
@@ -683,7 +687,7 @@ console.log("\n11. Rueckfall ohne ResizeObserver");
   app.loadFrame();
   app.resize(1280, 720);
   eq(app.nodes.canvas.style.width, "1092px", "ohne ResizeObserver wird nicht neu gerechnet");
-  eq(app.nodes.canvas.style.height, "614px", "ohne ResizeObserver stimmt die Hoehe nicht");
+  eq(app.nodes.canvas.style.height, "461px", "ohne ResizeObserver stimmt die Hoehe nicht");
 }
 
 // ═══ 12. Keine Zugangsdaten-Hilfe in der Oberflaeche ══════════════════════
@@ -731,62 +735,68 @@ console.log("\n12. Keine sichtbare Zugangsdaten-Hilfe");
 // ═══ 13. Breitbild: keine halbe Buehne, kein toter Rand ═══════════════════
 console.log("\n13. Breitbild (Ultrawide)");
 {
-  // Live-Befund 08.08.2026 auf 4071x1288: der Stream war nur 1986x1117 gross,
-  // im Vollbild 2146x1207 — der Rest lag brach. Ursache ist nicht das Layout,
-  // sondern die Form des Remote-Bildschirms: ein 16:9-Bild kann eine 3.16:1
-  // breite Flaeche nicht fuellen, ohne verzerrt zu werden.
+  // Live-Befund 08.08.2026 auf 4071x1288 mit dem alten 16:9-Remotebildschirm:
+  // Stream nur 1986x1117, im Vollbild 2146x1207 — der Rest lag brach, und das
+  // 1280er Bild war auf diese Groesse hochskaliert sichtbar unscharf.
+  // Der Remote-Bildschirm laeuft jetzt mit 2560x1080 (21:9).
   const app = makeApp({ innerWidth: 4071, innerHeight: 1288 });
   app.api.enter();
   await flush();
   app.loadFrame();
 
-  // Buehne 3883x1196 -> hoehenbegrenzt auf 2126x1196.
+  eq(app.api.screen().width, 2560, "die eingebaute Aufloesung ist nicht 2560 breit");
+  eq(app.api.screen().height, 1080, "die eingebaute Aufloesung ist nicht 1080 hoch");
+
+  // Buehne 3883x1196 -> hoehenbegrenzt auf 2835x1196.
   eq(app.nodes.canvas.style.height, "1196px", "die Buehne nutzt die Hoehe nicht aus");
   const w = parseInt(app.nodes.canvas.style.width, 10);
-  eq(w, 2126, "die Breite folgt nicht dem Bildverhaeltnis");
-  ok(Math.abs(w / 1196 - 16 / 9) < 0.01, "das Bild wird auf Breitbild verzerrt");
-  // Die freie Randbreite wird gemeldet — dort landet ein geoeffnetes Panel,
-  // statt den Stream zu ueberdecken.
-  eq(app.nodes.host.style["--qbr-side"], "878px", "die freie Randbreite wird nicht gemeldet");
+  eq(w, 2835, "die Breite folgt nicht dem Bildverhaeltnis");
+  ok(Math.abs(w / 1196 - 2560 / 1080) < 0.01, "das Bild wird auf Breitbild verzerrt");
+  // Gegen den Live-Befund: 1986 -> 2835 Bildpunkte Breite.
+  ok(w > 1986 * 1.4, `kaum Gewinn gegenueber dem Live-Befund: 1986 -> ${w}`);
+  // Und das Bild wird nicht mehr weit hochskaliert: 2835 zu 2560 nativ.
+  ok(w / 2560 < 1.2, `der Stream wird zu stark hochskaliert (${(w / 2560).toFixed(2)}x)`);
+
+  eq(app.nodes.host.style["--qbr-side"], "524px", "die freie Randbreite wird nicht gemeldet");
   eq(app.nodes.host.dataset.side, "wide", "der Breitbildfall wird nicht erkannt");
-  eq(app.nodes.host.style["--qbr-ratio"], "1280 / 720", "das Bildverhaeltnis wird nicht gemeldet");
+  eq(app.nodes.host.style["--qbr-ratio"], "2560 / 1080", "das Bildverhaeltnis wird nicht gemeldet");
 
   // Vollbild: flachere Leiste, volle Viewporthoehe.
   app.api.toggleFullscreen();
   app.layout();
   app.api.fit();
   eq(app.nodes.canvas.style.height, "1256px", "im Vollbild bleibt Hoehe liegen");
-  eq(app.nodes.canvas.style.width, "2233px", "im Vollbild bleibt Breite liegen");
-  // Gegen den Live-Befund gerechnet: 2146x1207 -> 2233x1256.
-  ok(2233 > 2146 && 1256 > 1207, "das Vollbild ist nicht groesser als vorher");
+  eq(app.nodes.canvas.style.width, "2977px", "im Vollbild bleibt Breite liegen");
+  // Live vorher: 2146x1207.
+  ok(2977 > 2146 && 1256 > 1207, "das Vollbild ist nicht groesser als vorher");
+  ok(2977 / 2560 < 1.2, "im Vollbild wird der Stream zu stark hochskaliert");
   eq(app.nodes.topFullBtn.getAttribute("aria-pressed"), "true",
     "der globale Knopf meldet den Vollbildzustand nicht");
+  eq(app.nodes.topFullLabel.textContent, "Vollbild beenden",
+    "die Beschriftung sagt im Vollbild nicht, was der Knopf tut");
   app.api.setFullscreen(false);
   eq(app.nodes.topFullBtn.getAttribute("aria-pressed"), "false",
     "der globale Knopf bleibt im Vollbildzustand haengen");
+  eq(app.nodes.topFullLabel.textContent, "Quantus Vollbild",
+    "die Beschriftung faellt nicht auf den Einstieg zurueck");
 
-  // Der eigentliche Hebel: eine breitere Remote-Aufloesung. Wird NEKO_SCREEN
-  // auf dem VPS umgestellt, zieht das Frontend ohne neuen Deploy nach.
-  const wide = makeApp({ innerWidth: 4071, innerHeight: 1288, screen: "2560x1080" });
-  wide.api.enter();
+  // Wird NEKO_SCREEN auf dem VPS wieder auf 16:9 zurueckgerollt, muss das
+  // Frontend ohne neuen Deploy mitgehen — sonst letterboxt es gegen eine
+  // Aufloesung, die es nicht mehr gibt.
+  const back = makeApp({ innerWidth: 4071, innerHeight: 1288, screen: "1280x720" });
+  back.api.enter();
   await flush();
-  wide.loadFrame();
-  eq(wide.api.screen().width, 2560, "der Nachzieh-Wert wird nicht uebernommen");
-  const ww = parseInt(wide.nodes.canvas.style.width, 10);
-  const wh = parseInt(wide.nodes.canvas.style.height, 10);
-  eq(wh, 1196, "mit Breitbildaufloesung stimmt die Hoehe nicht");
-  eq(ww, 2835, "mit Breitbildaufloesung stimmt die Breite nicht");
-  ok(ww > w * 1.3, `Breitbildaufloesung bringt kaum Flaeche: ${w} -> ${ww}`);
-  ok(Math.abs(ww / wh - 2560 / 1080) < 0.01, "mit Breitbildaufloesung wird verzerrt");
-  eq(wide.nodes.host.style["--qbr-ratio"], "2560 / 1080", "das Bildverhaeltnis folgt nicht");
+  back.loadFrame();
+  eq(back.api.screen().width, 1280, "der Rollback-Wert wird nicht uebernommen");
+  eq(back.nodes.canvas.style.width, "2126px", "nach dem Rollback stimmt die Breite nicht");
+  eq(back.nodes.host.style["--qbr-ratio"], "1280 / 720", "das Bildverhaeltnis folgt dem Rollback nicht");
 
   // Krumme oder unsinnige Werte werden ignoriert — lieber der eingebaute Wert
   // als eine verzerrte Buehne.
-  for (const bad of ["", "abc", "0x0", "99999x1", "1280", "1280x", "-1280x720", "6000x4000", "12x8"]) {
+  for (const bad of ["", "abc", "0x0", "99999x1", "2560", "2560x", "-2560x1080", "6000x4000", "12x8"]) {
     const a = makeApp({ screen: bad });
-    eq(a.api.screen().width, 1280, `unsinniger Wert wurde uebernommen: ${JSON.stringify(bad)}`);
+    eq(a.api.screen().width, 2560, `unsinniger Wert wurde uebernommen: ${JSON.stringify(bad)}`);
   }
-  // Beide Schreibweisen des Trenners sind erlaubt.
   eq(makeApp({ screen: "1920×1080" }).api.screen().width, 1920, "das Mal-Zeichen wird nicht erkannt");
   eq(makeApp({ screen: " 1600x900 " }).api.screen().height, 900, "Leerzeichen brechen den Wert");
 }

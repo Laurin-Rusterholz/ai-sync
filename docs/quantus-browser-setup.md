@@ -253,7 +253,7 @@ bedient alle Verbindungen, plus TCP-Fallback auf demselben Port.
 | `mem_limit` | `2600m` | laesst ~1,4 GB fuer Host + n8n; OOM trifft den Container, nicht den Host |
 | `cpu_shares` | `512` | halbe Gewichtung gegenueber n8n statt harter CPU-Deckelung |
 | `pids_limit` | `2048` | Schutz vor Prozess-Explosionen. Zaehlt **Threads** mit — Chromium belegt schon mit wenigen Tabs mehrere hundert; bei `512` schlug `clone()` fehl und Chromium stuerzte mit SIGTRAP ab |
-| `NEKO_DESKTOP_SCREEN` | `1280x720@30` | Software-Encoding auf 1 vCPU; hoehere Aufloesung nur bei Bedarf |
+| `NEKO_DESKTOP_SCREEN` | `2560x1080@25` | Breitbild (21:9): fuellt Ultrawide-Schirme und vermeidet unscharfes Hochskalieren. Ruckelt es auf 1 vCPU → Rollback auf `1280x720@25` |
 | `restart` | `unless-stopped` | Autostart nach Reboot |
 | `logging` | 10 MB × 3 | die 50-GB-Platte laeuft nicht mit Logs voll |
 
@@ -537,7 +537,7 @@ Grid-Zelle bleibt es stehen; `#main` wird im Browsermodus nur ausgeblendet.
 
 ### Groessenberechnung
 
-Der Remote-Bildschirm ist **1280x720** (`NEKO_SCREEN`). `quantusBrowserFitBox()`
+Der Remote-Bildschirm ist **2560x1080** (`NEKO_SCREEN`). `quantusBrowserFitBox()`
 rechnet das groesste Rechteck in genau diesem Verhaeltnis, das in die Buehne
 passt, und setzt es in Pixeln (`aspect-ratio: var(--qbr-ratio)` ist der
 CSS-Rueckfall). Damit gilt:
@@ -593,16 +593,51 @@ Was Quantus daraus macht:
    `QUANTUS_BROWSER_REMOTE_W/H` in `public/index.html` — ein Test haelt ihn
    gegen die Compose-Vorgabe, damit beide nicht auseinanderlaufen.
 
-Rechenbeispiel auf 4071x1288 im Vollbild:
+Gemessen auf 4071x1288 im echten Chromium:
 
-| `NEKO_SCREEN` | Verhaeltnis | Stream im Vollbild | Rand je Seite |
-|---|---|---|---|
-| `1280x720@30` | 16:9 | 2233x1256 | 919px |
-| `1920x1080@25` | 16:9 | 2233x1256 (schaerfer) | 919px |
-| `2560x1080@25` | 21:9 | **2977x1256** | 547px |
+| `NEKO_SCREEN` | Verhaeltnis | Stream normal | Stream im Vollbild | Skalierung |
+|---|---|---|---|---|
+| `1280x720@30` (alt) | 16:9 | 1986x1117 | 2146x1207 | 1.68x — sichtbar unscharf |
+| `2560x1080@25` (jetzt) | 21:9 | **2745x1158** | **2977x1256** | 1.16x |
 
-Hoehere Aufloesung kostet CPU (1 vCPU, Software-Encoding). Ruckelt das Bild,
-Bildrate oder Aufloesung wieder senken — siehe Stoerungssuche.
+### Aufloesung umstellen und pruefen
+
+```bash
+cd /opt/quantus-neko
+sed -i 's/^NEKO_SCREEN=.*/NEKO_SCREEN=2560x1080@25/' .env
+docker compose up -d          # NUR hier — n8n und Traefik bleiben unberuehrt
+bash scripts/deploy-neko-hostinger.sh --smoke
+```
+
+Der Smoke-Test **liest die Aufloesung aus dem laufenden X-Server zurueck**
+(`xdpyinfo`/`xrandr`/`xwininfo`) und vergleicht sie mit der Vorgabe. Steht in
+der `.env` ein Modus, den der Container nicht anbietet, faellt der X-Server
+still auf einen anderen zurueck — dann meldet der Smoke-Test
+„Aufloesung weicht ab" statt es durchgehen zu lassen. Zusaetzlich nimmt er eine
+CPU-Stichprobe: ab 90 % gilt der Modus auf 1 vCPU als zu teuer.
+
+### Rollback, wenn 1 vCPU nicht mitkommt
+
+Anzeichen: ruckelndes oder verzoegertes Bild, Smoke meldet ≥ 90 % CPU.
+
+```bash
+cd /opt/quantus-neko
+sed -i 's/^NEKO_SCREEN=.*/NEKO_SCREEN=1280x720@25/' .env
+docker compose up -d
+bash scripts/deploy-neko-hostinger.sh --smoke
+```
+
+Danach muss auch das Frontend zurueck, sonst rechnet es mit 21:9 gegen ein
+16:9-Bild und der neko-Client letterboxt innerhalb des Rahmens. Sofort und ohne
+Deploy in der Browser-Konsole auf der Quantus-Seite:
+
+```js
+localStorage.setItem('quantus-browser-screen', '1280x720')
+```
+
+Dauerhaft gehoeren `QUANTUS_BROWSER_REMOTE_W/H` in `public/index.html` und
+`NEKO_SCREEN` in `neko/docker-compose.yml` auf denselben Wert — ein Test haelt
+beide gegeneinander, damit sie nicht auseinanderlaufen.
 
 ### Viewport-Klassen
 
@@ -864,7 +899,9 @@ durch `rm -rf /opt/quantus-neko/data` geloescht.
 | Container startet, faellt aber staendig um | `/dev/shm` zu klein oder OOM | `docker compose logs neko`, `shm_size` und `mem_limit` pruefen |
 | Muss sich staendig neu anmelden | Browser leert den (partitionierten) iframe-Speicher der neko-Origin | Knopf „↗ Neuer Tab" nutzen — dort unpartitionierter First-Party-Speicher |
 | Downloads werden verweigert | Policy-Datei nicht gemountet | `docker compose exec -T neko cat /etc/chromium/policies/managed/policies.json` |
-| Bild ruckelt | 1 vCPU am Limit | `NEKO_SCREEN` auf `1152x648@25` senken, `docker compose up -d` |
+| Bild ruckelt | 1 vCPU am Limit | `NEKO_SCREEN` auf `1280x720@25` senken, `docker compose up -d`, dann `localStorage.setItem('quantus-browser-screen','1280x720')` — siehe Rollback in Abschnitt 5c |
+| Bild unscharf auf grossem Schirm | Remote-Aufloesung zu klein fuer den Schirm | `NEKO_SCREEN` erhoehen (`2560x1080@25`) und Frontend mitziehen |
+| Schwarzer Rand trotz Breitbild | Frontend und Container laufen auseinander | Smoke-Test zeigt die echte Aufloesung; Frontend darauf setzen |
 | Zertifikat wird nicht ausgestellt | Port 80 zu oder DNS falsch | `journalctl -u caddy -f` bzw. `certbot certificates` |
 | Nach Reboot laeuft nichts | Docker nicht enabled | `systemctl enable --now docker` |
 | Traefik liefert 404 fuer die Domain | Labels fehlen oder falsches Netz | `docker inspect -f '{{json .Config.Labels}}' quantus-neko`; `docker network inspect n8n_default` |
