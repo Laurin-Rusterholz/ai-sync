@@ -49,7 +49,13 @@ function makeSandbox(hash) {
     scheduleSave() {},
     render() {},
     toast() {},
-    createEntity: () => "id_1",
+    createEntity: (kind, payload) => {
+      // Echte Ablage, damit Ingest- und Versandpfade wirklich pruefbar sind.
+      const store = kind === "project" ? data.entities.projects : data.entities.tasks;
+      const newId = kind + "_" + (Object.keys(store).length + 1);
+      store[newId] = Object.assign({ id: newId }, payload);
+      return newId;
+    },
     esc: (v) => String(v == null ? "" : v)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
     uuid: () => "u_" + Math.random().toString(36).slice(2),
@@ -272,6 +278,182 @@ function renderAt(hash) {
     ok(/connect-src[^;]*management-xo2-pro/.test(toml),
       "die CSP verbietet den Aufruf an Quantus — der Versand würde im Browser blockiert");
   }
+}
+
+// ── 12. Vision-Token findet seinen Vorgang (Korrektur 1) ──────────────────
+// Vorher fehlte visionToken in byToken: Eine Ausarbeitung mit ?v= konnte nie
+// zugeordnet werden und lief ins Leere.
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  const projects = data.entities.projects;
+
+  projects.prj_1 = { id: "prj_1", title: "Bestehender Vorgang", projectType: "flowertech",
+    pipelineStage: "proposal", ftRoute: "offer_first" };
+  ft.shares = { prj_1: { formToken: "f".repeat(28), portalToken: "p".repeat(28), visionToken: "v".repeat(28) } };
+  ft.briefings = { prj_1: { goal: "Ursprüngliches Ziel", features: ["Kontaktformular"] } };
+  const before = Object.keys(projects).length;
+
+  const handled = win._ftIngestSubmissions({
+    sub_v: {
+      id: "sub_v", kind: "vision", token: "v".repeat(28),
+      payload: { type: "Website", idea: "Neue Startseite mit Buchung",
+                 features: ["Terminbuchung", "Kontaktformular"], email: "kundin@muster.ch" },
+    },
+  });
+  ok(handled === 1, "die Vision-Ausarbeitung wurde nicht zugeordnet — genau der Fehler");
+  ok(Object.keys(projects).length === before,
+    "die Vision-Ausarbeitung hat ein zweites Projekt angelegt");
+  ok(!!projects.prj_1.ftVision, "die Ausarbeitung ist nicht am Vorgang hinterlegt");
+  ok(ft.briefings.prj_1.features.includes("Terminbuchung"),
+    "die neue Funktion wurde nicht in den Bedarf übernommen");
+  ok(ft.briefings.prj_1.features.filter((f) => f === "Kontaktformular").length === 1,
+    "eine bereits bekannte Funktion wurde doppelt eingetragen");
+  ok(ft.briefings.prj_1.goal === "Ursprüngliches Ziel", "der gepflegte Bedarf wurde überschrieben");
+}
+
+// ── 13. Kein Cross-Match zwischen den Token-Arten (Korrektur 1) ───────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  data.entities.projects.prj_1 = { id: "prj_1", title: "X", projectType: "flowertech", pipelineStage: "proposal" };
+  ft.shares = { prj_1: { formToken: "f".repeat(28), portalToken: "p".repeat(28), visionToken: "v".repeat(28) } };
+  const before = Object.keys(data.entities.projects).length;
+
+  // Ein Formular-Token darf keine Vision einschleusen …
+  ok(win._ftIngestSubmissions({
+    s1: { id: "s1", kind: "vision", token: "f".repeat(28),
+          payload: { type: "Website", idea: "Untergeschoben", features: ["X"], email: "a@b.ch" } },
+  }) === 0, "ein Formular-Token nimmt eine Vision-Ausarbeitung an");
+  // … und ein Vision-Token keinen Änderungswunsch.
+  ok(win._ftIngestSubmissions({
+    s2: { id: "s2", kind: "change", token: "v".repeat(28), payload: { title: "Untergeschoben" } },
+  }) === 0, "ein Vision-Token nimmt einen Änderungswunsch an");
+  ok(!data.entities.projects.prj_1.ftVision, "die untergeschobene Vision wurde übernommen");
+  ok(Object.keys(data.entities.projects).length === before, "der Cross-Match hat ein Projekt angelegt");
+
+  // Ein völlig fremder Token bleibt wirkungslos.
+  ok(win._ftIngestSubmissions({
+    s3: { id: "s3", kind: "vision", token: "z".repeat(28),
+          payload: { type: "Website", idea: "Fremd", features: ["X"], email: "a@b.ch" } },
+  }) === 0, "ein fremder Token wird angenommen");
+}
+
+// ── 14. Vision ohne Token legt genau EIN Direktprojekt an ─────────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const projects = win.APP.state.data.entities.projects;
+  const entry = {
+    id: "sub_neu", kind: "vision", token: null,
+    payload: { type: "Web-App", idea: "Mitgliederverwaltung",
+               features: ["Login", "Beitragsliste"], email: "verein@muster.ch" },
+  };
+  ok(win._ftIngestSubmissions({ sub_neu: entry }) === 1, "die Vision erzeugt kein Direktprojekt");
+  const created = Object.values(projects).filter((p) => p.sourceVisionId === "sub_neu");
+  ok(created.length === 1, `es entstanden ${created.length} Projekte statt genau eines`);
+  ok(created[0].ftRoute === "direct", "das Vision-Projekt ist kein Direktprojekt");
+  ok(created[0].deliveryType === "program", "Web-App wurde nicht als Programm erkannt");
+
+  // Derselbe Eingang ein zweites Mal: kein zweites Projekt.
+  win._ftIngestSubmissions({ sub_neu: entry });
+  ok(Object.values(projects).filter((p) => p.sourceVisionId === "sub_neu").length === 1,
+    "derselbe Vision-Eingang hat ein zweites Projekt angelegt");
+}
+
+// ── 15. Die Beilage blockiert den Versand wirklich (Korrektur 2) ──────────
+// Vorher war sie nur Anzeige: _ftDocStatus('offer', id, 'sent') ging trotzdem.
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  const project = { id: "prj_1", title: "Angebotsvorgang", projectType: "flowertech",
+    pipelineStage: "proposal", ftRoute: "offer_first" };
+  data.entities.projects.prj_1 = project;
+  ft.shares = { prj_1: {} };
+  const offer = { id: "of_1", projectId: "prj_1", status: "draft", items: [], history: [] };
+  ft.offers = [offer];
+
+  // Ohne Beilage: blockiert.
+  win._ftDocStatus("offer", "of_1", "sent");
+  ok(offer.status === "draft", "die Offerte ging ohne Beilage raus");
+  ok(!win._ftOfferReadyToSend(offer).ready, "der Versand gilt ohne Beilage als bereit");
+
+  // Beispiel-URL, aber unbrauchbar: weiterhin blockiert.
+  project.ftOfferAttachment = { kind: "example", exampleUrl: "muster.ch" };
+  win._ftDocStatus("offer", "of_1", "sent");
+  ok(offer.status === "draft", "eine URL ohne Schema liess den Versand zu");
+  project.ftOfferAttachment = { kind: "example", exampleUrl: "javascript:alert(1)" };
+  win._ftDocStatus("offer", "of_1", "sent");
+  ok(offer.status === "draft", "eine javascript:-URL liess den Versand zu");
+
+  // Echte Beispiel-URL: geht raus UND steht im Dokument.
+  project.ftOfferAttachment = { kind: "example", exampleUrl: "https://muster.ch/vorschau" };
+  win._ftDocStatus("offer", "of_1", "sent");
+  ok(offer.status === "sent", "eine gültige Beilage blockiert den Versand");
+  ok(offer.attachment && offer.attachment.url === "https://muster.ch/vorschau",
+    "die Beilage steht nicht im Dokument, sondern nur am Projekt");
+  ok(offer.attachment.kind === "example", "die Art der Beilage fehlt im Dokument");
+}
+
+// ── 16. Vision-Beilage landet als echter Link im Dokument ─────────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  data.entities.projects.prj_1 = { id: "prj_1", title: "V", projectType: "flowertech",
+    pipelineStage: "proposal", ftRoute: "offer_first" };
+  ft.shares = { prj_1: {} };
+  const offer = { id: "of_2", projectId: "prj_1", status: "draft", items: [], history: [] };
+  ft.offers = [offer];
+
+  win._ftSetOfferAttachment("prj_1", "vision");
+  const token = data.entities.projects.prj_1.ftOfferAttachment.visionToken;
+  ok(/^[A-Za-z0-9_-]{24,64}$/.test(token), "der Vision-Token hat keine brauchbare Form");
+  ok(ft.shares.prj_1.visionToken === token,
+    "der Vision-Token hängt nicht am Vorgang — die Ausarbeitung fände nicht zurück");
+
+  win._ftDocStatus("offer", "of_2", "sent");
+  ok(offer.status === "sent", "die Vision-Beilage blockiert den Versand");
+  ok(offer.attachment && offer.attachment.kind === "vision", "die Vision-Beilage fehlt im Dokument");
+  ok(offer.attachment.url.includes("?v=" + token) && offer.attachment.url.includes("#vision"),
+    `der Vision-Link im Dokument stimmt nicht: ${offer.attachment.url}`);
+  // Kein erfundener Link: die URL enthält genau den Token dieses Vorgangs.
+  ok(!/undefined|null/.test(offer.attachment.url), "der Vision-Link enthält Platzhalter");
+}
+
+// ── 17. Direktprojekte bleiben unbehelligt ────────────────────────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  data.entities.projects.prj_d = { id: "prj_d", title: "D", projectType: "flowertech",
+    pipelineStage: "build", ftRoute: "direct" };
+  const offer = { id: "of_3", projectId: "prj_d", status: "draft", items: [], history: [] };
+  data.flowertech.offers = [offer];
+  win._ftDocStatus("offer", "of_3", "sent");
+  ok(offer.status === "sent", "ein Direktprojekt wird von der Beilagenpflicht blockiert");
+}
+
+// ── 18. Keine stille Default-Route (Korrektur 3) ──────────────────────────
+{
+  const source = fs.readFileSync(path.join(root, "public/flowertech.js"), "utf8");
+  ok(!/\|\| "offer_first"/.test(source), "die stille Default-Route ist zurück");
+  ok(/if \(ft\) ft\.ui\.newRoute = null;/.test(source), "die Wahl wird nach der Anlage nicht zurückgesetzt");
+  ok(/Bitte zuerst den Weg wählen/.test(source), "ohne Wahl fehlt der Hinweis");
+  ok(/function routeNoticeHtml\(\)/.test(source), "der Hinweis unter dem Formular ist nicht routenabhängig");
+  ok(!/Das Projekt startet in der Phase .Lead/.test(source), "der veraltete Lead-Hinweis steht noch da");
+
+  const { win } = renderAt("#/flowertech");
+  const before = Object.keys(win.APP.state.data.entities.projects).length;
+  win.APP.state.data.flowertech.ui = { newRoute: null };
+  win._ftCreateWorkflowProject();
+  ok(Object.keys(win.APP.state.data.entities.projects).length === before,
+    "ohne Wegwahl entstand trotzdem ein Projekt");
+  win.APP.state.data.flowertech.ui = { newRoute: "quatsch" };
+  win._ftCreateWorkflowProject();
+  ok(Object.keys(win.APP.state.data.entities.projects).length === before,
+    "eine erfundene Route legt ein Projekt an");
 }
 
 console.log(`flowertech topnav runtime: ok (${checks} Pruefungen)`);

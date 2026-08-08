@@ -368,6 +368,9 @@
       var share = ft.shares[projectId] || {};
       if (share.formToken) byToken[share.formToken] = { projectId: projectId, kind: "briefing" };
       if (share.portalToken) byToken[share.portalToken] = { projectId: projectId, kind: "change" };
+      // Ohne diese Zeile findet eine Vision-Ausarbeitung (?v=…) ihren Vorgang
+      // nie und liefe ins Leere.
+      if (share.visionToken) byToken[share.visionToken] = { projectId: projectId, kind: "vision" };
     });
     var handled = 0;
     Object.keys(raw).forEach(function (key) {
@@ -382,6 +385,9 @@
       }
       var match = byToken[entry.token];
       if (!match) return;                       // fremder oder abgelaufener Link
+      // Jeder Token oeffnet genau EINEN Weg. Ein Formular- oder Portal-Token
+      // darf keine Vision-Ausarbeitung einschleusen und umgekehrt.
+      if (match.kind !== entry.kind) return;
       if (entry.kind === "briefing") {
         applyBriefing(match.projectId, entry.payload || {}, { createTasks: true });
         handled++;
@@ -872,9 +878,54 @@
     save();
   };
 
+  // Die Beilage ist verbindlich: Eine Offerte darf erst raus, wenn sie
+  // vollstaendig ist. Geprueft wird GENAU im Versandpfad — eine Anzeige allein
+  // haette sich mit einem Klick auf "Versendet" umgehen lassen.
+  function offerReadyToSend(doc) {
+    var core = W();
+    var project = doc && doc.projectId ? projectById(doc.projectId) : null;
+    if (!core || !project) return { ready: true, reason: "" };
+    if (core.routeOf(project, docs("offer")) !== "offer_first") return { ready: true, reason: "" };
+    var attachment = project.ftOfferAttachment || {};
+    var state = core.offerAttachmentState({
+      kind: attachment.kind,
+      visionToken: attachment.visionToken,
+      exampleUrl: attachment.exampleUrl,
+    });
+    return { ready: state.ready, reason: state.reason };
+  }
+  window._ftOfferReadyToSend = offerReadyToSend;
+
+  // Beim Versand wandert die Beilage in das Dokument selbst — sie steht damit
+  // im gedruckten und im gemailten Angebot, nicht nur in einem Projektfeld.
+  function attachToOfferDoc(doc) {
+    var core = W();
+    var project = doc && doc.projectId ? projectById(doc.projectId) : null;
+    if (!core || !project) return;
+    var attachment = project.ftOfferAttachment || {};
+    if (attachment.kind === "vision") {
+      var link = visionLinkFor(project.id);
+      if (!link) return;
+      doc.attachment = { kind: "vision", label: "Vision Room", url: link, addedAt: now() };
+    } else if (attachment.kind === "example" && core.isHttpUrl(attachment.exampleUrl)) {
+      doc.attachment = {
+        kind: "example", label: "Website-Beispiel",
+        url: String(attachment.exampleUrl).trim(), addedAt: now(),
+      };
+    }
+  }
+
   window._ftDocStatus = function (kind, docId, status) {
     var doc = docById(kind, docId);
     if (!doc || doc.status === status) return;
+    if (kind === "offer" && status === "sent") {
+      var gate = offerReadyToSend(doc);
+      if (!gate.ready) {
+        notify("warn", "Offerte", gate.reason + " Der Versand ist bis dahin blockiert.");
+        return;
+      }
+      attachToOfferDoc(doc);
+    }
     var list = kind === "invoice" ? INVOICE_STATUSES : OFFER_STATUSES;
     pushHistory(doc, "status", labelOf(list, doc.status) + " → " + labelOf(list, status));
     doc.status = status;
@@ -1253,6 +1304,12 @@
       "<div><span>MwSt " + esc(String(num(doc.vatRate))) + "%</span><span>" + money(totals.vat) + "</span></div>" +
       "<div class='sum'><span>Total CHF</span><span>" + money(totals.rounded) + "</span></div></div>" +
       (doc.terms ? "<div class='terms'><strong>Konditionen</strong><br>" + esc(doc.terms) + "</div>" : "") +
+      // Beilage steht IM Dokument — der Link kommt aus doc.attachment, nicht
+      // aus einer Vermutung.
+      (doc.attachment && doc.attachment.url
+        ? "<div class='terms'><strong>Beilage: " + esc(doc.attachment.label || "") + "</strong><br>" +
+          esc(doc.attachment.url) + "</div>"
+        : "") +
       (isInvoice
         ? (doc.qr && doc.qr.url
             ? "<div class='qr'><strong>Zahlteil / QR-Rechnung</strong><img src='" + esc(doc.qr.url) + "' alt='QR-Einzahlungsschein'></div>"
@@ -2125,8 +2182,7 @@
           "</div>" +
           '<textarea id="ftWfDescription" rows="3" placeholder="Worum geht es? (Kurzbeschreibung)"></textarea>' +
           '<button class="btn primary" onclick="window._ftCreateWorkflowProject()">Projekt anlegen</button>' +
-          '<div class="mini mt-2">Das Projekt startet in der Phase \u201eLead\u201c und bekommt sofort einen teilbaren ' +
-          "Link zum Bedarfsformular.</div></div>" +
+          '<div class="mini mt-2">' + routeNoticeHtml() + "</div></div>" +
         (allProjects.length
           ? '<div class="card p-4"><div class="ft-plist-head"><span>Projekt</span><span>Phase</span><span>Aufgaben</span>' +
             "<span>Offeriert</span><span>Fakturiert</span><span>Nächster Termin</span></div>" +
@@ -2415,6 +2471,22 @@
   }
 
   // ── Projekt anlegen mit Typ, Kundendaten und Preisrahmen ────────────────
+  // Der Hinweis unter dem Formular nennt den wirklich gewaehlten Weg — vorher
+  // stand dort pauschal "Phase Lead", was seit der Weggabelung falsch war.
+  function routeNoticeHtml() {
+    var core = W();
+    var ft = wf();
+    var chosen = ft && ft.ui.newRoute;
+    if (!core || !core.ROUTES.some(function (r) { return r.key === chosen; })) {
+      return "Wähle zuerst oben den Weg — <b>Offerte zuerst</b> oder <b>Direktprojekt</b>. " +
+        "Ohne Wahl wird kein Projekt angelegt.";
+    }
+    var route = core.ROUTES.find(function (r) { return r.key === chosen; });
+    return "Weg: <b>" + esc(route.label) + "</b> — " + esc(route.hint) +
+      " Das Projekt startet in der Phase <b>Bestandesaufnahme</b> und bekommt sofort einen teilbaren " +
+      "Link zum Bedarfsformular.";
+  }
+
   window._ftPickNewRoute = function (route) {
     var ft = wf();
     if (!ft) return;
@@ -2425,8 +2497,16 @@
   };
 
   window._ftCreateWorkflowProject = function () {
+    var core = W();
+    var ft = wf();
     var val = function (id) { return ((document.getElementById(id) || {}).value || "").trim(); };
     var title = val("ftWfTitle");
+    // Ohne ausdrueckliche Wahl entsteht KEIN Projekt — es gibt keinen
+    // stillschweigenden Standardweg.
+    var chosenRoute = ft && ft.ui.newRoute;
+    if (!core || !core.ROUTES.some(function (r) { return r.key === chosenRoute; })) {
+      return notify("warn", "FlowerTech", "Bitte zuerst den Weg wählen: Offerte zuerst oder Direktprojekt");
+    }
     if (!title) return notify("warn", "FlowerTech", "Projektname erforderlich");
     var projectId = window.createEntity("project", {
       title: title,
@@ -2434,7 +2514,7 @@
       status: "active",
       projectType: "flowertech",
       pipelineStage: "intake",
-      ftRoute: (wf() && wf().ui.newRoute) || "offer_first",
+      ftRoute: chosenRoute,
       ftRouteDecidedAt: now(),
       ftRouteSource: "manuell",
       deliveryType: val("ftWfType") === "program" ? "program" : "website",
@@ -2459,8 +2539,11 @@
     // Freigabe-Links direkt bereitstellen, damit der Formularlink sofort teilbar ist.
     ensureToken(projectId, "formToken");
     ensureToken(projectId, "portalToken");
+    // Die Wahl gilt fuer genau diesen Vorgang und wird danach zurueckgesetzt,
+    // damit der naechste Start wieder bewusst entscheidet.
+    if (ft) ft.ui.newRoute = null;
     save();
-    notify("ok", "FlowerTech", "Projekt angelegt — Bedarfsformular kann geteilt werden");
+    notify("ok", "FlowerTech", "Projekt angelegt (" + core.routeLabel(chosenRoute) + ")");
     window._ftOpenProject(projectId);
   };
 
