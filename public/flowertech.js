@@ -366,11 +366,14 @@
     var byToken = {};
     Object.keys(ft.shares || {}).forEach(function (projectId) {
       var share = ft.shares[projectId] || {};
-      if (share.formToken) byToken[share.formToken] = { projectId: projectId, kind: "briefing" };
-      if (share.portalToken) byToken[share.portalToken] = { projectId: projectId, kind: "change" };
+      // Jeder Token oeffnet genau die Wege, fuer die er gedacht ist — nicht
+      // mehr. Der Kundenlink traegt Aenderungswunsch UND Offertenanfrage,
+      // weil beides auf derselben Kundenseite steht.
+      if (share.formToken) byToken[share.formToken] = { projectId: projectId, kinds: ["briefing"] };
+      if (share.portalToken) byToken[share.portalToken] = { projectId: projectId, kinds: ["change", "quote"] };
       // Ohne diese Zeile findet eine Vision-Ausarbeitung (?v=…) ihren Vorgang
       // nie und liefe ins Leere.
-      if (share.visionToken) byToken[share.visionToken] = { projectId: projectId, kind: "vision" };
+      if (share.visionToken) byToken[share.visionToken] = { projectId: projectId, kinds: ["vision", "quote"] };
     });
     var handled = 0;
     Object.keys(raw).forEach(function (key) {
@@ -383,17 +386,26 @@
         ft.processedSubmissions[key] = now();
         return;
       }
+      // Offertenanfrage ohne Token: aus dem Vision Room. Sie legt den Vorgang
+      // an und erzeugt genau EINE Aufgabe — keine Offerte, keine Nummer.
+      if (entry.kind === "quote" && !entry.token) {
+        if (createProjectFromQuote(entry)) handled++;
+        ft.processedSubmissions[key] = now();
+        return;
+      }
       var match = byToken[entry.token];
       if (!match) return;                       // fremder oder abgelaufener Link
-      // Jeder Token oeffnet genau EINEN Weg. Ein Formular- oder Portal-Token
-      // darf keine Vision-Ausarbeitung einschleusen und umgekehrt.
-      if (match.kind !== entry.kind) return;
+      // Ein Formular-Token darf keine Vision-Ausarbeitung einschleusen und
+      // umgekehrt. Erlaubt ist nur, wofuer der Token ausgegeben wurde.
+      if (match.kinds.indexOf(entry.kind) < 0) return;
       if (entry.kind === "briefing") {
         applyBriefing(match.projectId, entry.payload || {}, { createTasks: true });
         handled++;
       } else if (entry.kind === "vision") {
         applyVision(match.projectId, entry.payload || {});
         handled++;
+      } else if (entry.kind === "quote") {
+        if (applyQuoteRequest(match.projectId, entry.payload || {}, entry.id || key)) handled++;
       } else if (entry.kind === "change") {
         var cr = core.normalizeChangeRequest(
           Object.assign({}, entry.payload || {}, { origin: "client" }), { now: now() });
@@ -436,6 +448,132 @@
     notify("ok", "Vision Room", "Direktprojekt angelegt: " + (vision.idea || ""));
     return true;
   }
+
+  /* ── Offertenanfrage der Kundschaft ──────────────────────────────────────
+     Produktentscheidung: FlowerTech erzeugt keine leere Offerte auf Verdacht
+     und schickt auch keinen Mail-Entwurf. Die Kundschaft fuellt ueber ihren
+     eigenen flowertech.ch-Link aus, was sie braucht — erst dieses Absenden
+     erzeugt hier eine echte Offertenanfrage und GENAU EINE Folgeaufgabe.
+
+     Idempotenz auf zwei Ebenen: processedSubmissions (der Eingang wirkt
+     einmal) und submissionId am Vorgang (auch ein erneuter Import legt nichts
+     doppelt an). Bestehende Angaben werden ergaenzt, nie ueberschrieben und
+     nie geloescht.
+     ------------------------------------------------------------------- */
+  function quoteTaskKey(projectId, quote) {
+    return projectId + ":quote:" + (quote.submissionId || quote.id);
+  }
+
+  // GENAU eine Aufgabe pro Anfrage — der Schluessel verhindert Doppel.
+  function createQuoteTask(projectId, quote, project) {
+    var core = W();
+    var root = data();
+    if (!core || !root) return "";
+    var key = quoteTaskKey(projectId, quote);
+    var existing = Object.keys(root.entities.tasks || {}).find(function (taskId) {
+      var task = root.entities.tasks[taskId];
+      return task && task.sourceQuoteKey === key;
+    });
+    if (existing) return existing;
+    var draft = core.buildQuoteRequestTask(quote, projectId, { now: now(), project: project || {} });
+    var payload = Object.assign({}, draft);
+    delete payload.key;
+    payload.sourceQuoteKey = key;
+    return window.createEntity("task", payload) || "";
+  }
+
+  // Vorhandenes bleibt stehen. Ergaenzt wird nur, was noch leer ist.
+  function fillFromQuote(project, quote) {
+    var client = project.client = project.client || {};
+    if (quote.company && !client.company) client.company = quote.company;
+    if (quote.contactName && !client.name) client.name = quote.contactName;
+    if (quote.contactEmail && !client.email) client.email = quote.contactEmail;
+    if (quote.contactPhone && !client.phone) client.phone = quote.contactPhone;
+    if (quote.address && !client.street) client.street = quote.address;
+    if (quote.budget != null && project.budget == null) project.budget = quote.budget;
+    if (quote.deadline && !project.dueDate) project.dueDate = quote.deadline;
+    if (quote.deliveryType && !project.deliveryType) project.deliveryType = quote.deliveryType;
+  }
+
+  function applyQuoteRequest(projectId, payload, submissionId) {
+    var core = W();
+    var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return false;
+    var quote = core.normalizeQuoteRequest(payload, { now: now() });
+    // Ueber den Kundenlink ist der Vorgang bereits zugeordnet — die E-Mail ist
+    // dort freiwillig. Pflicht ist allein der Bedarf.
+    if (!core.quoteRequestIsUsable(quote)) return false;
+
+    var list = project.ftQuoteRequests = Array.isArray(project.ftQuoteRequests) ? project.ftQuoteRequests : [];
+    if (submissionId && list.some(function (q) { return q.submissionId === submissionId; })) return false;
+    quote.id = id();
+    quote.submissionId = submissionId || null;
+    list.unshift(quote);
+    if (list.length > 40) list.length = 40;
+    project.ftQuoteRequest = quote;
+    fillFromQuote(project, quote);
+
+    var taskId = createQuoteTask(projectId, quote, project);
+    if (taskId) quote.taskId = taskId;
+
+    var log = project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    log.unshift({
+      id: id(), at: now(), channel: "note",
+      text: "Offertenanfrage der Kundschaft eingegangen (" +
+        (quote.source === "vision-room" ? "Vision Room" : "Kundenseite") + ").",
+    });
+    project.updatedAt = now();
+    save();
+    refreshClientPortal(projectId);
+    notify("ok", "Offertenanfrage", "Neue Offertenanfrage: " + core.quoteRequestLabel(quote, project));
+    return true;
+  }
+  window._ftApplyQuoteRequest = applyQuoteRequest;
+
+  // Offertenanfrage aus dem Vision Room: dort gibt es noch keinen Vorgang.
+  // Es entsteht ein Projekt in der Phase „Lead" auf der Route „Offerte zuerst" —
+  // ausdruecklich KEINE Offerte und keine OF-Nummer.
+  function createProjectFromQuote(entry) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return false;
+    var quote = core.normalizeQuoteRequest(
+      Object.assign({}, entry.payload || {}, { source: "vision-room" }), { now: now() });
+    // Ohne Token kennt FlowerTech die Person nicht — ohne Rueckkanal waere die
+    // Anfrage nicht beantwortbar.
+    if (!core.quoteRequestIsUsable(quote, { requireEmail: true })) return false;
+    var existing = projects().find(function (p) { return p.sourceQuoteId === entry.id; });
+    if (existing) return false;
+
+    var label = core.quoteRequestLabel(quote, {});
+    var projectId = window.createEntity("project", {
+      title: label,
+      description: [
+        "Offertenanfrage aus dem Vision Room auf flowertech.ch.",
+        quote.visionType ? "Art: " + quote.visionType : "",
+        quote.need ? "Bedarf:\n" + quote.need : "",
+        (quote.features || []).length ? "Gewünschte Funktionen:\n- " + quote.features.join("\n- ") : "",
+      ].filter(Boolean).join("\n\n"),
+      status: "active",
+      projectType: "flowertech",
+      pipelineStage: "lead",
+      ftRoute: "offer_first",
+      ftRouteDecidedAt: now(),
+      ftRouteSource: "vision-room",
+      deliveryType: quote.deliveryType || "website",
+      client: { email: quote.contactEmail || "" },
+      tags: ["flowertech", "offertenanfrage", "visionroom"],
+      sourceQuoteId: entry.id || null,
+      createdAt: now(),
+      updatedAt: now(),
+    });
+    if (!projectId) return false;
+    ensureToken(projectId, "formToken");
+    publishClientPortal(projectId);
+    return applyQuoteRequest(projectId, quote, entry.id || null);
+  }
+  window._ftCreateProjectFromQuote = createProjectFromQuote;
 
   // Vision-Ausarbeitung zu einer bestehenden Offerte: sie ergaenzt den Bedarf
   // des vorhandenen Projekts, statt ein zweites anzulegen.
@@ -783,7 +921,11 @@
     var doc = {
       id: id(),
       kind: kind,
-      number: nextNumber(kind),
+      // Eine leere Offerte ist keine Offerte. Sie bekommt ihre OF-Nummer erst,
+      // wenn sie vollstaendig ist und tatsaechlich rausgeht — sonst entstuende
+      // sofort eine numerierte CHF-0.00-Offerte, die es gar nicht gibt, und die
+      // Nummernfolge haette Luecken aus verworfenen Entwuerfen.
+      number: kind === "invoice" ? nextNumber(kind) : "",
       status: "draft",
       projectId: projectId || null,
       client: {
@@ -885,8 +1027,14 @@
   // haette sich mit einem Klick auf "Versendet" umgehen lassen.
   function offerReadyToSend(doc) {
     var core = W();
+    if (!core) return { ready: true, reason: "" };
+    // Zuerst die Pflichtdaten: ohne Kunde, ohne Leistung oder ohne Preis ist es
+    // keine Offerte, sondern weiterhin eine Offertenanfrage. Sie als versendet
+    // zu markieren erzeugte eine falsche Versandhistorie.
+    var basis = core.offerSendableState({ doc: doc, total: docTotals(doc).rounded });
+    if (!basis.ready) return { ready: false, reason: basis.reason, missing: basis.missing };
     var project = doc && doc.projectId ? projectById(doc.projectId) : null;
-    if (!core || !project) return { ready: true, reason: "" };
+    if (!project) return { ready: true, reason: "" };
     if (core.routeOf(project, docs("offer")) !== "offer_first") return { ready: true, reason: "" };
     var attachment = project.ftOfferAttachment || {};
     var state = core.offerAttachmentState({
@@ -917,6 +1065,16 @@
     }
   }
 
+  // Die Nummer entsteht genau dann, wenn aus der Anfrage eine echte Offerte
+  // wird. Vorhandene Nummern bleiben unberuehrt.
+  function assignOfferNumber(doc) {
+    if (!doc || doc.number) return doc && doc.number;
+    doc.number = nextNumber(doc.kind || "offer");
+    pushHistory(doc, "number", "Offertennummer " + doc.number + " vergeben");
+    return doc.number;
+  }
+  window._ftAssignOfferNumber = assignOfferNumber;
+
   window._ftDocStatus = function (kind, docId, status) {
     var doc = docById(kind, docId);
     if (!doc || doc.status === status) return;
@@ -927,6 +1085,7 @@
         return;
       }
       attachToOfferDoc(doc);
+      assignOfferNumber(doc);
     }
     var list = kind === "invoice" ? INVOICE_STATUSES : OFFER_STATUSES;
     pushHistory(doc, "status", labelOf(list, doc.status) + " → " + labelOf(list, status));
@@ -1184,6 +1343,7 @@
       // Die Beilage muss VOR dem Aufbau des Mailtexts im Dokument stehen —
       // sonst fehlt der Link im Text.
       attachToOfferDoc(doc);
+      assignOfferNumber(doc);
     }
     var subject = (kind === "invoice" ? "Rechnung " : "Offerte ") + (doc.number || "") +
       (doc.title ? " — " + doc.title : "");
@@ -1281,7 +1441,7 @@
         money(itemAmount(item)) + "</td></tr>";
     }).join("");
     return "<!doctype html><html lang='de'><head><meta charset='utf-8'><title>" +
-      esc((isInvoice ? "Rechnung " : "Offerte ") + (doc.number || "")) + "</title><style>" +
+      esc((isInvoice ? "Rechnung " : "Offerte ") + docLabel(kind, doc)) + "</title><style>" +
       "*{box-sizing:border-box}body{font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1c1c1e;margin:0;padding:26mm 18mm}" +
       "h1{font-size:22px;margin:0 0 4px}" +
       ".head{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;border-bottom:2px solid #1c1c1e;padding-bottom:14px}" +
@@ -1309,7 +1469,7 @@
       (company.vatNumber ? "<br>MwSt-Nr. " + esc(company.vatNumber) : "") + "</div></div>" +
       "<div class='addr'>" + ([client.company, client.name, client.street,
         [client.zip, client.city].filter(Boolean).join(" ")].filter(Boolean).map(esc).join("\n") || "—") + "</div>" +
-      "<h1>" + esc((isInvoice ? "Rechnung " : "Offerte ") + (doc.number || "")) + "</h1>" +
+      "<h1>" + esc((isInvoice ? "Rechnung " : "Offerte ") + docLabel(kind, doc)) + "</h1>" +
       "<div style='font-size:12px;color:#444'>" + esc(doc.title || "") +
       "<br>Datum: " + esc(dateOnly(doc.issueDate)) +
       (isInvoice ? "<br>Fällig: " + esc(dateOnly(doc.dueDate)) : "<br>Gültig bis: " + esc(dateOnly(doc.validUntil))) +
@@ -1641,9 +1801,16 @@
       deadline && open ? (kind === "invoice" ? "fällig " : "gültig bis ") + dateOnly(deadline) + " · " + dueLabel(deadline) : ""
     ].filter(Boolean);
     return '<div class="ft-doc-row' + (late ? " late" : "") + '" onclick="window._ftOpenDoc(\'' + kind + "','" + attr(doc.id) + '\')">' +
-      '<div class="ft-doc-main"><strong>' + esc(doc.number || "—") + " · " + esc(doc.title || "Ohne Titel") + "</strong>" +
+      '<div class="ft-doc-main"><strong>' + esc(docLabel(kind, doc)) + " · " + esc(doc.title || "Ohne Titel") + "</strong>" +
       '<div class="mini">' + esc(meta.join(" · ")) + "</div></div>" +
       '<div class="ft-doc-side">' + statusBadge(kind, doc) + "<strong>" + money(docTotals(doc).rounded) + "</strong></div></div>";
+  }
+
+  // Solange eine Offerte keine Nummer hat, ist sie ein Entwurf. Das steht so
+  // da, statt als „—" geraten zu werden.
+  function docLabel(kind, doc) {
+    if (doc && doc.number) return doc.number;
+    return kind === "invoice" ? "Entwurf" : "Entwurf (Offertenanfrage)";
   }
 
   function docEditor(kind, doc) {
@@ -1685,8 +1852,27 @@
         '\',\'expired\')">Als abgelaufen markieren</button></div>';
     }
 
+    // Unvollstaendige Offerte: klar benennen, was fehlt, und den Weg anbieten,
+    // der die Luecke wirklich schliesst — die Kundschaft fragen. „Versendet"
+    // bleibt bis dahin gesperrt (geprueft im Versandpfad, nicht nur hier).
+    var completeness = "";
+    if (!isInvoice) {
+      var gate = offerReadyToSend(doc);
+      if (!gate.ready) {
+        var link = doc.projectId ? clientQuoteLink(doc.projectId) : "";
+        completeness = '<div class="ft-alert warn"><span><strong>Noch keine Offerte — Offertenanfrage.</strong> ' +
+          "Es fehlt: " + esc((gate.missing || []).join(", ") || "Pflichtdaten") +
+          ". Solange bleibt „Versendet\u201c gesperrt und es wird keine Offertennummer vergeben.</span>" +
+          (link
+            ? '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) +
+              '\')">Kundenlink zum Ausfüllen kopieren</button>'
+            : '<span class="mini">Ordne die Offerte einem Projekt zu, dann gibt es einen Kundenlink.</span>') +
+          "</div>";
+      }
+    }
+
     return '<div class="card p-4 ft-editor">' +
-      '<div class="ft-editor-head"><div><h3 style="margin:0">' + esc(doc.number || "") + " " + statusBadge(kind, doc) + "</h3>" +
+      '<div class="ft-editor-head"><div><h3 style="margin:0">' + esc(docLabel(kind, doc)) + " " + statusBadge(kind, doc) + "</h3>" +
       '<div class="mini">' + (isInvoice ? "Rechnung" : "Offerte") + " · zuletzt " + esc(dateTime(doc.updatedAt)) + "</div></div>" +
       '<div class="ft-editor-actions">' +
       "<select onchange=\"window._ftDocStatus('" + kind + "','" + attr(doc.id) + "',this.value)\">" +
@@ -1705,6 +1891,7 @@
       "</div></div>" +
 
       deadlineWarning +
+      completeness +
       docFactsHtml(kind, doc) +
 
       '<h4 class="ft-sub">Eckdaten</h4><div class="ft-field-grid">' +
@@ -2099,7 +2286,7 @@
         '\')" title="Weg wählen: Offerte zuerst oder Direktprojekt">→ ' + label + "</button>";
     }
     var tab = stepKey === "briefing" ? "bedarf" : stepKey === "offer" ? "angebot"
-      : stepKey === "changes" ? "aenderungen" : "workflow";
+      : stepKey === "changes" ? "aenderungen" : stepKey === "quote" ? "kunde" : "workflow";
     return '<button class="ft-step-item" onclick="window._ftOpenProjectAt(\'' + attr(item.id) + "','" +
       tab + '\')">→ ' + label + "</button>";
   }
@@ -3069,6 +3256,16 @@
         invoices: docsOfProject("invoice", projectId),
         totals: function (doc) { return docTotals(doc).rounded; },
       }),
+      quote: project.ftQuoteRequest || null,
+      // Vorbelegung bewusst nur inhaltlich: Bedarf, Art, Budget, Wunschdatum.
+      // Kontaktdaten wandern NICHT auf die Kundenseite — der Link ist ein
+      // Bearer-Link, und die Kundschaft kennt ihre eigenen Angaben.
+      prefill: {
+        need: (ft.briefings[projectId] || {}).goal || (project.ftVision || {}).idea || "",
+        deliveryType: project.deliveryType || "",
+        budget: project.budget,
+        deadline: project.dueDate || "",
+      },
       now: now(),
     });
   }
@@ -3129,6 +3326,14 @@
     return core && token ? core.clientPortalUrl(token) : "";
   }
   window._ftClientPortalLink = clientPortalLink;
+
+  // Derselbe sichere flowertech.ch-Kundenlink, nur direkt auf das
+  // Offertenformular. Kein management-xo2-pro-Link, keine Mail.
+  function clientQuoteLink(projectId) {
+    var link = clientPortalLink(projectId);
+    return link ? link + "#offerte" : "";
+  }
+  window._ftClientQuoteLink = clientQuoteLink;
 
   // Manuelles Aktualisieren bleibt moeglich, macht aber dasselbe wie der
   // automatische Weg — eine Stelle, kein zweiter Pfad.
@@ -3475,6 +3680,11 @@
 
   function clientPortalHtml(projectId) {
     var core = W();
+    // Auch aeltere Vorgaenge, die vor der Kundenseite entstanden sind, sollen
+    // hier sofort einen Kundenlink haben — sonst waere „Offerte beim Kunden
+    // anfragen" ausgerechnet dort leer. ensureToken legt nur an, wenn nichts da
+    // ist; ein zweiter Aufruf aendert nichts.
+    if (!sharesOf(projectId).portalToken) publishClientPortal(projectId);
     var project = projectById(projectId) || {};
     var links = shareLinks(projectId);
     var share = sharesOf(projectId);
@@ -3505,7 +3715,26 @@
         ? '<div class="ft-ready">✓ Kundenseite ist online · Stand ' + esc(dateTime(share.publishedAt)) + "</div>"
         : '<div class="mini">Die Kundenseite wird beim nächsten Speichern veröffentlicht.</div>';
 
-    return '<div class="ft-grid-2">' +
+    var quoteLink = clientQuoteLink(projectId);
+    var quote = project.ftQuoteRequest || null;
+    var quoteState = quote
+      ? '<div class="ft-ready">✓ Offertenanfrage eingegangen · ' + esc(dateTime(quote.submittedAt)) +
+        " · Status " + esc(core ? core.quoteStatusLabel(quote.status) : "Neu") + "</div>" +
+        '<div class="mini mt-2">' + esc(String(quote.need || "").slice(0, 240)) + "</div>"
+      : '<div class="mini">Noch keine Offertenanfrage. Schicke der Kundschaft den Link — sobald sie ' +
+        "absendet, entsteht hier die Anfrage und genau eine Aufgabe.</div>";
+
+    var quoteCard = '<div class="card p-4"><h3>Offerte beim Kunden anfragen</h3><div class="sep"></div>' +
+      '<div class="mini">Wir schicken keine leere Offerte und keinen Mail-Entwurf. Die Kundschaft füllt ' +
+      "auf ihrer eigenen FlowerTech-Seite aus, was sie braucht — daraus entsteht die Offertenanfrage.</div>" +
+      '<div class="ft-link-row mt-2"><span>Kundenlink</span>' +
+        '<input readonly value="' + attr(quoteLink) + '">' +
+        '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(quoteLink) +
+          '\')">Kundenlink kopieren</button>' +
+        (quoteLink ? '<a class="btn sm ghost" href="' + attr(quoteLink) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
+      "</div>" + quoteState + "</div>";
+
+    return quoteCard + '<div class="ft-grid-2 mt-3">' +
       '<div class="card p-4"><h3>Kundenseite</h3><div class="sep"></div>' +
         '<div class="mini">Jedes Projekt hat automatisch eine eigene Seite auf flowertech.ch. ' +
         "Sie entsteht beim Anlegen und aktualisiert sich bei jeder Änderung — du musst nichts veröffentlichen.</div>" +

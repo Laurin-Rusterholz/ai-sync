@@ -1,8 +1,10 @@
 /* FlowerTech — Kundenportal-Eingang
  * ---------------------------------------------------------------------------
- * Nimmt zwei Arten von Kundeneingaben entgegen:
+ * Nimmt die Kundeneingaben entgegen:
  *   kind = "briefing" → ausgefülltes Bedarfsformular (flowertech-formular.html)
- *   kind = "change"   → Änderungswunsch (flowertech-kunde.html)
+ *   kind = "change"   → Änderungswunsch (Kundenseite auf flowertech.ch)
+ *   kind = "quote"    → Offertenanfrage (Kundenseite oder Vision Room)
+ *   kind = "vision"   → Vision-Room-Ausarbeitung zu einer bestehenden Offerte
  * und legt sie unter flowertech/submissions/<id> ab. Die Quantus-App ordnet sie
  * anhand des Freigabe-Tokens genau einem Projekt zu und erzeugt daraus
  * Projektfelder und ganz normale Quantus-Aufgaben.
@@ -21,6 +23,7 @@ import {
   normalizeBriefing, briefingIsUsable,
   normalizeChangeRequest, changeRequestIsUsable,
   normalizeVisionSubmission, visionIsUsable,
+  normalizeQuoteRequest, quoteRequestIsUsable,
   isShareToken, idempotencyKey,
 } from "../../public/flowertech-workflow-core.js";
 
@@ -126,7 +129,7 @@ export default async (req) => {
   // Honeypot: echte Menschen füllen dieses Feld nie aus.
   if (body.website || body.fax) return json(req, { ok: true }, 202);
 
-  const kind = ["change", "vision", "briefing"].includes(body.kind) ? body.kind : "briefing";
+  const kind = ["change", "vision", "quote", "briefing"].includes(body.kind) ? body.kind : "briefing";
   const token = String(body.token || "");
 
   // Der Vision Room auf flowertech.ch ist oeffentlich: dort gibt es keinen
@@ -134,12 +137,14 @@ export default async (req) => {
   // deshalb nur akzeptiert, wenn sie von einer erlaubten Herkunft kommt —
   // dieselbe Pruefung, die auch das Kontaktformular schuetzt. Mit Token haengt
   // die Ausarbeitung an genau der Offerte, zu der der Token gehoert.
-  if (kind === "vision") {
+  // Dieselbe Regel gilt fuer die Offertenanfrage aus dem Vision Room: dort
+  // gibt es noch keinen Vorgang, an dem ein Token haengen koennte.
+  if (kind === "vision" || kind === "quote") {
     if (token && !isShareToken(token)) {
       return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
     }
     if (!token && fromMachine) {
-      return json(req, { error: "Vision-Eingaben ohne Token nur aus dem Browser." }, 400);
+      return json(req, { error: "Eingaben ohne Token nur aus dem Browser." }, 400);
     }
   } else if (!isShareToken(token)) {
     return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
@@ -158,7 +163,25 @@ export default async (req) => {
     payload = normalizeVisionSubmission(body.payload || {}, { now: createdAt });
     if (!visionIsUsable(payload)) {
       return json(req, {
-        error: "Bitte Idee, mindestens eine Funktion und eine gültige E-Mail angeben.",
+        error: "Bitte Ihre Idee beschreiben und eine gültige E-Mail angeben.",
+      }, 400);
+    }
+  } else if (kind === "quote") {
+    // Ohne Token kennt FlowerTech die anfragende Person noch nicht — dann ist
+    // die E-Mail der einzige Rueckkanal und deshalb Pflicht. Mit Token haengt
+    // die Anfrage an einem bekannten Vorgang; dort ist sie freiwillig.
+    payload = normalizeQuoteRequest(
+      Object.assign({}, body.payload || {}, {
+        // Die Quelle ist eine Herkunftsangabe, kein Recht: sie entscheidet
+        // nichts ausser der Beschriftung. Ohne Token gibt es nur den Vision Room.
+        source: body.source === "vision-room" ? "vision-room" : (token ? "portal" : "vision-room"),
+      }),
+      { now: createdAt });
+    if (!quoteRequestIsUsable(payload, { requireEmail: !token })) {
+      return json(req, {
+        error: token
+          ? "Bitte kurz beschreiben, was Sie brauchen."
+          : "Bitte kurz beschreiben, was Sie brauchen, und eine gültige E-Mail angeben.",
       }, 400);
     }
   } else {
@@ -170,7 +193,9 @@ export default async (req) => {
   }
 
   // Idempotenz: derselbe Eingang zählt nur einmal, auch bei Wiederholungen.
-  const key = String(body.idempotencyKey || idempotencyKey({ token, kind, ...payload })).slice(0, 80);
+  const key = String(body.idempotencyKey
+    || idempotencyKey({ token, kind, ...payload, title: payload.title || payload.need || payload.idea }))
+    .slice(0, 80);
   const existing = await firebaseDbGet(`flowertech/submissionKeys/${key}`);
   if (existing) return json(req, { ok: true, duplicate: true, submissionId: existing }, 200);
 
