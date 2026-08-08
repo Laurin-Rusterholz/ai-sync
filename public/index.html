@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-stage · 2026-08-07" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-stage-no-login-hint · 2026-08-08" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -5364,10 +5364,6 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
       <button type="button" class="qbr-btn qbr-btn-quiet" data-action="browser-assist" title="Polaris Quick — Assistenz ueber der Buehne" aria-label="Polaris Quick">✨</button>
       <button type="button" class="qbr-btn qbr-btn-quiet" data-action="browser-open-tab" title="Rueckfallebene: in einem eigenen Tab oeffnen" aria-label="In neuem Tab oeffnen">↗</button>
     </header>
-    <div class="qbr-note" id="quantusBrowserNote" hidden>
-      <span class="qbr-note-text">Die Anmeldung erfolgt direkt im Browserfenster — Benutzer <b>quantus</b>. Danach merkt sich der Dienst die Sitzung.</span>
-      <button type="button" class="qbr-btn qbr-btn-quiet" data-action="browser-dismiss-note" title="Hinweis ausblenden" aria-label="Hinweis ausblenden">✕</button>
-    </div>
     <div class="qbr-stage" id="quantusBrowserStage">
       <div class="qbr-canvas" id="quantusBrowserCanvas"></div>
       <div class="qbr-overlay" id="quantusBrowserOverlay" hidden></div>
@@ -5413,13 +5409,6 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
   .qbr-btn-quiet:hover{background:var(--hover);color:var(--text)}
   .qbr-btn-exit{display:none}
   body.qbr-full .qbr-btn-exit{display:inline-flex}
-
-  /* Einmaliger Anmeldehinweis — schmal, wegklickbar, nie im Weg. */
-  .qbr-note{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;
-    font-size:11.5px;line-height:1.45;color:var(--muted);
-    background:var(--panel2);border-bottom:1px solid var(--border)}
-  .qbr-note[hidden]{display:none}
-  .qbr-note-text{flex:1 1 auto;min-width:0}
 
   /* Buehne: nimmt die gesamte Resthoehe der Grid-Zelle. Keine Innenabstaende,
      damit der Stream so gross wie moeglich bleibt. */
@@ -18218,8 +18207,6 @@ const QUANTUS_BROWSER_REMOTE_H = 720;
 // Abstecher zu Aufgaben oder Projekten ohne Neuaufbau zurueckkommt. Erst nach
 // dieser Zeit wird das iframe abgehaengt, statt im Hintergrund weiterzulaufen.
 const QUANTUS_BROWSER_IDLE_MS = 900000;
-// Merker, dass der Anmeldehinweis schon weggeklickt wurde.
-const QUANTUS_BROWSER_NOTE_KEY = 'quantus-browser-login-note';
 
 // Embed-URL: `embed=1` blendet die neko-Zusatzkomponenten aus (Stream bleibt
 // interaktiv, im Gegensatz zu `cast=1`), `usr` belegt nur das Benutzerfeld vor.
@@ -18382,23 +18369,6 @@ function quantusBrowserHideOverlay() {
   ov.innerHTML = "";
 }
 
-function quantusBrowserNoteDismissed() {
-  try { return localStorage.getItem(QUANTUS_BROWSER_NOTE_KEY) === "1"; } catch (e) { return false; }
-}
-
-function quantusBrowserShowNote(show) {
-  const note = document.getElementById("quantusBrowserNote");
-  if (!note) return;
-  note.hidden = !show || quantusBrowserNoteDismissed();
-}
-
-function quantusBrowserDismissNote() {
-  try { localStorage.setItem(QUANTUS_BROWSER_NOTE_KEY, "1"); } catch (e) {}
-  quantusBrowserShowNote(false);
-  // Die freigewordene Zeile gehoert sofort der Buehne.
-  quantusBrowserFit();
-}
-
 // Ohne Fokus landen Tastatureingaben nie im Remote-Chromium. Ein Re-Render
 // darf dem Nutzer aber nicht mitten im Tippen die Tastatur wegnehmen: liegt der
 // Fokus in einem Eingabefeld, bleibt er dort. `force` ist der ausdrueckliche
@@ -18478,9 +18448,6 @@ async function quantusBrowserConnect(opts) {
     if (!alive()) return;
     quantusBrowserSetStatus("online");
     quantusBrowserHideOverlay();
-    // Der Hinweisstreifen kommt VOR der Berechnung — sonst waere die Buehne um
-    // seine Hoehe zu gross und liefe unter den Rand.
-    quantusBrowserShowNote(true);
     // Nach einem Reconnect darf die Flaeche nicht klein oder leer stehen
     // bleiben — die Groesse wird deshalb sofort neu gerechnet.
     quantusBrowserFit();
@@ -18613,7 +18580,6 @@ function quantusBrowserEnter() {
   // bewusst geoeffnet.
   try { closeSlidePanel(); } catch (e) {}
   quantusBrowserWire();
-  quantusBrowserShowNote(quantusBrowserState.status === "online");
   quantusBrowserFit();
   if (!quantusBrowserState.mounted) quantusBrowserConnect();
   else { quantusBrowserFit(); quantusBrowserFocusFrame(); }
@@ -54701,10 +54667,6 @@ function handleClick(e) {
       // weiter, die Fernbedienung bleibt bedienbar.
       const qcFab = document.getElementById("qc-fab");
       if (qcFab && typeof qcFab.click === "function") qcFab.click();
-      break;
-    }
-    case "browser-dismiss-note": {
-      quantusBrowserDismissNote();
       break;
     }
     case "browser-open-tab": {
