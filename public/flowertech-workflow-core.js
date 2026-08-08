@@ -1174,6 +1174,118 @@ export function portalUrl(origin, token) {
   return String(origin || "").replace(/\/+$/, "") + "/flowertech-kunde.html?t=" + token;
 }
 
+/* ── Kundenseite: Snapshot und Link ──────────────────────────────────────
+ * Jedes FlowerTech-Projekt bekommt automatisch eine Kundenseite auf
+ * flowertech.ch. Sie liest ausschliesslich diesen Snapshot — nie die App.
+ *
+ * Der Snapshot ist eine POSITIVLISTE: Was hier nicht ausdruecklich aufgebaut
+ * wird, verlaesst Quantus nicht. Insbesondere niemals: interne Notizen,
+ * Mailverlauf, Rechnungsdetails, interne IDs, Kontaktdaten der Kundschaft
+ * (die kennt sie selbst) oder irgendetwas Bearbeitbares.
+ *
+ * Der Link ist ein Bearer-Link: Wer ihn hat, sieht die Seite. Deshalb ist der
+ * Token lang und zufaellig, und "Link erneuern" loescht den alten Snapshot.
+ * --------------------------------------------------------------------- */
+export const CLIENT_PORTAL_BASE = "https://flowertech.ch";
+
+export function clientPortalUrl(token, { base = CLIENT_PORTAL_BASE } = {}) {
+  if (!isShareToken(token)) return "";
+  return String(base).replace(/\/+$/, "") + "/kunde.html?t=" + token;
+}
+
+// Nur diese Phasen zeigt die Kundenseite. "lost" bleibt bewusst draussen —
+// ein verlorener Vorgang bekommt keine Fortschrittsanzeige.
+export function clientStageProgress(stage) {
+  const i = stageIndex(stage);
+  return {
+    key: WORKFLOW_STAGES[i].key,
+    label: WORKFLOW_STAGES[i].label,
+    index: i,
+    total: WORKFLOW_STAGES.length,
+    steps: WORKFLOW_STAGES.map((s, n) => ({
+      label: s.label,
+      done: n < i,
+      current: n === i,
+    })),
+  };
+}
+
+function safeUrl(value) {
+  // Nur echte HTTPS-Adressen verlassen Quantus. Kein http, kein javascript:,
+  // kein data:, nichts Erfundenes.
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") return "";
+    if (!u.hostname || !u.hostname.includes(".")) return "";
+    return u.toString();
+  } catch { return ""; }
+}
+export { safeUrl as clientSafeUrl };
+
+export function buildClientSnapshot({
+  project = {}, company = {}, content = [], milestones = [], changes = [],
+  versions = [], costs = {}, now = new Date().toISOString(),
+} = {}) {
+  const stage = clientStageProgress(project.pipelineStage);
+  const money = (v) => (v == null || v === "" ? null : Math.round(Number(v) * 100) / 100);
+  return {
+    // Kein projectId, keine Token, keine E-Mail-Adresse der Kundschaft.
+    schema: 1,
+    title: String(project.title || "Projekt").slice(0, 160),
+    deliveryType: project.deliveryType === "program" ? "program" : "website",
+    stage: stage.key,
+    stageLabel: stage.label,
+    stageIndex: stage.index,
+    stageSteps: stage.steps,
+    closed: project.ftOutcome === "lost",
+    updatedAt: now,
+    company: {
+      name: String(company.name || "FlowerTech").slice(0, 120),
+      email: String(company.email || "").slice(0, 160),
+    },
+    // Vereinbarte Kosten — Summen, keine Rechnungsdetails, keine Positionen.
+    costs: {
+      agreed: money(costs.accepted != null ? costs.accepted : project.budget),
+      invoiced: money(costs.invoiced),
+      paid: money(costs.paid),
+      open: money(costs.open),
+    },
+    content: (content || []).slice(0, 30).map((b) => ({
+      title: String(b.title || "").slice(0, 160),
+      body: String(b.body || "").slice(0, 6000),
+    })),
+    milestones: (milestones || []).slice(0, 40).map((m) => ({
+      title: String(m.title || "").slice(0, 160),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(String(m.date || "")) ? m.date : "",
+      done: !!m.done,
+    })),
+    changes: (changes || []).slice(0, 60).map((c) => ({
+      title: String(c.title || "").slice(0, 160),
+      detail: String(c.detail || "").slice(0, 1500),
+      status: c.status || "new",
+      statusLabel: changeStatusLabel(c.status),
+      createdAt: c.createdAt || "",
+    })),
+    versions: (versions || []).slice(0, 20).map((v) => ({
+      label: String(v.label || "").slice(0, 160),
+      at: v.at || "",
+      approved: !!v.approved,
+    })),
+    previewUrl: safeUrl(project.previewUrl),
+    adminUrl: safeUrl(project.adminUrl),
+  };
+}
+
+// Was der Snapshot NIE enthalten darf. Wird im Test gegen echte Projektdaten
+// geprueft, damit ein neues Feld nicht versehentlich mitwandert.
+export const CLIENT_SNAPSHOT_FORBIDDEN_KEYS = [
+  "projectId", "id", "sourceInquiryId", "sourceVisionId", "ftContactLog",
+  "ftOfferAttachment", "ftVision", "client", "contact", "notesInternal",
+  "invoices", "offers", "mailThreadIds", "ftRouteSource", "budgetInternal",
+];
+
 /* ── Mailzuordnung ───────────────────────────────────────────────────────── */
 // Keine globale Postfachüberwachung: Eine Mail gehört nur dann zum Projekt,
 // wenn sie eine ausdrücklich hinterlegte Projektadresse betrifft oder bereits
@@ -1239,6 +1351,8 @@ const API = {
   MESSAGE_TEMPLATES, buildMessageDraft,
   PROMPT_DATA_OPTIONS, buildClaudePrompt,
   isShareToken, formUrl, portalUrl,
+  CLIENT_PORTAL_BASE, clientPortalUrl, clientStageProgress, buildClientSnapshot,
+  clientSafeUrl: safeUrl, CLIENT_SNAPSHOT_FORBIDDEN_KEYS,
   projectMailAddresses, mailBelongsToProject,
   idempotencyKey, isDuplicate,
 };

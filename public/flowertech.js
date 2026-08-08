@@ -422,7 +422,7 @@
     if (!projectId) return false;
 
     ensureToken(projectId, "formToken");
-    ensureToken(projectId, "portalToken");
+    publishClientPortal(projectId);
     ft.briefings[projectId] = built.briefing;
     createBriefingTasks(projectId, built.briefing);
 
@@ -603,6 +603,7 @@
     project.pipelineStage = stage;
     project.updatedAt = now();
     save();
+    refreshClientPortal(projectId);
     rerender();
   };
 
@@ -612,6 +613,7 @@
     project[field] = value;
     project.updatedAt = now();
     save();
+    refreshClientPortal(projectId);
   };
 
   window._ftCreateTask = function () {
@@ -743,7 +745,7 @@
     // Freigabe-Links sofort bereitstellen — der naechste Schritt ist das
     // Bedarfsformular.
     ensureToken(projectId, "formToken");
-    ensureToken(projectId, "portalToken");
+    publishClientPortal(projectId);
 
     // Der Bedarf startet mit dem, was der Kunde schon geschrieben hat.
     if (built.briefing) ft.briefings[projectId] = built.briefing;
@@ -2560,7 +2562,8 @@
     }
     // Freigabe-Links direkt bereitstellen, damit der Formularlink sofort teilbar ist.
     ensureToken(projectId, "formToken");
-    ensureToken(projectId, "portalToken");
+    // Kundenseite entsteht sofort mit — kein manuelles Veroeffentlichen mehr.
+    publishClientPortal(projectId);
     // Die Wahl gilt fuer genau diesen Vorgang und wird danach zurueckgesetzt,
     // damit der naechste Start wieder bewusst entscheidet.
     if (ft) ft.ui.newRoute = null;
@@ -2576,6 +2579,7 @@
     project[field] = raw === "" ? null : num(raw);
     project.updatedAt = now();
     save();
+    refreshClientPortal(projectId);
   };
 
   window._ftSetDeliveryType = function (projectId, value) {
@@ -2596,6 +2600,7 @@
       : core.nextStage(project.pipelineStage);
     project.updatedAt = now();
     save();
+    refreshClientPortal(projectId);
     rerender();
   };
 
@@ -2675,6 +2680,7 @@
       project.pipelineStage = "intake";
     }
     save();
+    refreshClientPortal(projectId);
     notify("ok", "Bedarf", created ? ("Übernommen · " + created + " Aufgaben erstellt") : "Bedarf übernommen");
     rerender();
     return created;
@@ -2734,6 +2740,7 @@
     var taskId = window.createEntity("task", core.buildChangeRequestTask(entry, projectId, { now: now() }));
     entry.taskId = taskId || null;
     ft.changeRequests.unshift(entry);
+    refreshClientPortal(projectId);
     var project = projectById(projectId);
     if (project && core.stageIndex(project.pipelineStage) < core.stageIndex("revision")
       && core.stageIndex(project.pipelineStage) >= core.stageIndex("build")) {
@@ -2752,6 +2759,7 @@
     if (!entry) return;
     entry.status = status;
     entry.updatedAt = now();
+    refreshClientPortal(entry.projectId);
     // Die Aufgabe bleibt führend: Status „erledigt" schliesst sie mit.
     var root = data();
     var task = entry.taskId && root && root.entities.tasks[entry.taskId];
@@ -2887,6 +2895,7 @@
     block[field] = field === "enabled" ? !!value : value;
     doc.updatedAt = now();
     save();
+    if (scope === "content") refreshClientPortal(projectId);
   };
 
   window._ftBlockToggle = function (projectId, scope, blockKey, enabled) {
@@ -3039,73 +3048,114 @@
 
   // ── Kundenansicht veröffentlichen ───────────────────────────────────────
   // Datensparsam: nur das, was der Kunde sehen soll. Kein Zugriff auf Quantus.
+  // Der Snapshot kommt aus dem Kern (Positivliste). Hier wird nur eingesammelt,
+  // was er braucht — nichts wird direkt durchgereicht.
   function clientSnapshot(projectId) {
     var core = W();
-    var project = projectById(projectId);
-    if (!core || !project) return null;
     var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return null;
     var content = contentOf(projectId);
-    var offers = docsOfProject("offer", projectId);
-    var invoices = docsOfProject("invoice", projectId);
-    var costs = core.costOverview({
-      offers: offers, invoices: invoices,
-      totals: function (doc) { return docTotals(doc).rounded; },
-    });
-    return {
-      projectId: projectId,
-      title: project.title || "Projekt",
-      deliveryType: project.deliveryType || "website",
-      stage: project.pipelineStage || "lead",
-      stageLabel: core.stageLabel(project.pipelineStage),
-      updatedAt: now(),
-      company: { name: (ft.company && ft.company.name) || "FlowerTech", email: (ft.company && ft.company.email) || "" },
-      contact: { name: (project.client || {}).name || "", company: (project.client || {}).company || "" },
-      costs: costs,
-      budget: project.budget == null ? null : project.budget,
-      adminUrl: project.adminUrl || "",
-      previewUrl: project.previewUrl || "",
+    return core.buildClientSnapshot({
+      project: project,
+      company: ft.company || {},
       content: content ? blocksOf(content).filter(function (b) { return b.enabled !== false; })
         .map(function (b) { return { title: b.title, body: core.renderTemplate(b.body, wfVars(projectId)) }; }) : [],
-      milestones: milestonesOfProject(projectId).map(function (m) {
-        return { title: m.title, date: m.date || "", done: !!m.done };
+      milestones: milestonesOfProject(projectId),
+      changes: changesOf(projectId),
+      versions: project.ftVersions || [],
+      costs: core.costOverview({
+        offers: docsOfProject("offer", projectId),
+        invoices: docsOfProject("invoice", projectId),
+        totals: function (doc) { return docTotals(doc).rounded; },
       }),
-      changes: changesOf(projectId).map(function (c) {
-        return { title: c.title, status: c.status, statusLabel: core.changeStatusLabel(c.status), detail: c.detail || "", createdAt: c.createdAt };
-      }),
-      versions: (project.ftVersions || []).slice(0, 12),
-      messages: (project.ftContactLog || []).filter(function (e) { return e.shared; })
-        .map(function (e) { return { at: e.at, text: e.text }; }),
-    };
+      now: now(),
+    });
   }
   window._ftClientSnapshot = clientSnapshot;
 
-  window._ftPublishClientView = async function (projectId) {
+  // ── Zentrale Stelle fuer Kundenseite: Token sichern und Snapshot schreiben ──
+  // Jeder Anlageweg und jede relevante Aenderung ruft NUR das hier auf.
+  function portalRef(token) {
+    if (!window.firebase || !firebase.app) return null;
+    try { return firebase.app().database(RTDB).ref("flowertech/clientPortals/" + token); }
+    catch (error) { return null; }
+  }
+
+  function publishClientPortal(projectId) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft || !projectById(projectId)) return null;
+    // Genau EIN Token pro Projekt — ensureToken legt nur an, wenn keiner da ist.
     var token = ensureToken(projectId, "portalToken");
     var snapshot = clientSnapshot(projectId);
-    if (!snapshot) return;
+    if (!snapshot) return null;
     var share = sharesOf(projectId);
-    try {
-      if (!window.firebase || !firebase.app) throw new Error("Firebase nicht verfügbar");
-      await firebase.app().database(RTDB).ref("flowertech/clientPortals/" + token).set(snapshot);
+    var ref = portalRef(token);
+    if (!ref) {
+      // Ohne Firebase kein Snapshot — das wird sichtbar vermerkt statt still
+      // zu scheitern, sonst zeigte der Link dauerhaft einen Leerzustand.
+      share.publishError = "Firebase nicht verfügbar — Kundenseite noch nicht veröffentlicht";
+      return token;
+    }
+    ref.set(snapshot).then(function () {
       share.publishedAt = now();
       share.publishError = null;
       save();
-      notify("ok", "Kundenansicht", "Aktualisiert — Link kann geteilt werden");
-    } catch (error) {
-      share.publishError = error.message;
+    }, function (error) {
+      share.publishError = error && error.message;
       save();
-      notify("err", "Kundenansicht", "Konnte nicht veröffentlicht werden: " + error.message);
-    }
+    });
+    return token;
+  }
+  window._ftPublishClientPortal = publishClientPortal;
+
+  // Nach jeder relevanten Aenderung aufrufen. Gebuendelt, damit Tippen in einem
+  // Feld nicht pro Anschlag schreibt.
+  var _portalTimers = {};
+  function refreshClientPortal(projectId) {
+    if (!projectId || !sharesOf(projectId).portalToken) return;
+    if (_portalTimers[projectId]) return;
+    _portalTimers[projectId] = setTimeout(function () {
+      delete _portalTimers[projectId];
+      publishClientPortal(projectId);
+    }, 600);
+  }
+  window._ftRefreshClientPortal = refreshClientPortal;
+
+  function clientPortalLink(projectId) {
+    var core = W();
+    var token = sharesOf(projectId).portalToken;
+    return core && token ? core.clientPortalUrl(token) : "";
+  }
+  window._ftClientPortalLink = clientPortalLink;
+
+  // Manuelles Aktualisieren bleibt moeglich, macht aber dasselbe wie der
+  // automatische Weg — eine Stelle, kein zweiter Pfad.
+  window._ftPublishClientView = function (projectId) {
+    var token = publishClientPortal(projectId);
+    notify(token ? "ok" : "warn", "Kundenseite",
+      token ? "Kundenseite aktualisiert" : "Kundenseite konnte nicht aktualisiert werden");
     rerender();
   };
 
   window._ftRotateToken = function (projectId, key) {
     if (!window.confirm("Neuen Link erzeugen? Der bisherige Link funktioniert danach nicht mehr.")) return;
-    sharesOf(projectId)[key] = makeToken();
+    var share = sharesOf(projectId);
+    var previous = share[key];
+    share[key] = makeToken();
+    // Widerruf heisst Widerruf: Der alte Snapshot wird geloescht, sonst bliebe
+    // der alte Link weiter lesbar.
+    if (key === "portalToken" && previous) {
+      var ref = portalRef(previous);
+      if (ref) ref.remove().catch(function () {});
+    }
     save();
-    notify("ok", "Link", "Neuer Link erzeugt");
+    if (key === "portalToken") publishClientPortal(projectId);
+    notify("ok", "Link", "Neuer Link erzeugt — der alte ist widerrufen");
     rerender();
   };
+
 
   window._ftCopyLink = function (url) {
     if (!url) return notify("warn", "Link", "Noch kein Link vorhanden");
@@ -3139,6 +3189,7 @@
     project.ftVersions = Array.isArray(project.ftVersions) ? project.ftVersions : [];
     project.ftVersions.unshift({ id: id(), at: now(), label: label, approved: false });
     project.updatedAt = now();
+    refreshClientPortal(projectId);
     var el = document.getElementById("ftVersionLabel");
     if (el) el.value = "";
     save();
@@ -3155,6 +3206,7 @@
     version.approvedAt = version.approved ? now() : null;
     if (version.approved && core) project.pipelineStage = "approval";
     project.updatedAt = now();
+    refreshClientPortal(projectId);
     save();
     rerender();
   };
@@ -3216,6 +3268,7 @@
     }
     project.updatedAt = now();
     save();
+    refreshClientPortal(projectId);
     notify("ok", "Offerte", decision === "accepted"
       ? "Angenommen — die Umsetzung ist gestartet"
       : "Abgelehnt — der Angebotsvorgang ist geschlossen");
@@ -3425,41 +3478,67 @@
     var project = projectById(projectId) || {};
     var links = shareLinks(projectId);
     var share = sharesOf(projectId);
+    var kundenLink = clientPortalLink(projectId);
     var costs = core ? core.costOverview({
       offers: docsOfProject("offer", projectId),
       invoices: docsOfProject("invoice", projectId),
       totals: function (doc) { return docTotals(doc).rounded; },
     }) : { offered: 0, invoiced: 0, paid: 0, open: 0 };
     var versions = (project.ftVersions || []);
+
+    // Preview/Admin: nur echte HTTPS-Adressen. Was nicht taugt, wird benannt
+    // statt still verworfen — und es wird nie ein Link erfunden.
+    function urlField(label, field, hint) {
+      var value = project[field] || "";
+      var bad = value && core && !core.clientSafeUrl(value);
+      return '<label class="ft-inline-label">' + esc(label) +
+        '<input type="url" value="' + attr(value) + '" placeholder="https://…" oninput="window._ftSetProjectField(\'' +
+          attr(projectId) + "','" + field + '\',this.value)"></label>' +
+        (bad ? '<div class="ft-legal-note">⚠ Nur vollständige HTTPS-Adressen werden der Kundschaft gezeigt. ' +
+          "Dieser Eintrag erscheint nicht auf der Kundenseite.</div>"
+          : '<div class="mini">' + esc(hint) + "</div>");
+    }
+
+    var status = share.publishError
+      ? '<div class="ft-legal-note">⚠ ' + esc(share.publishError) + "</div>"
+      : share.publishedAt
+        ? '<div class="ft-ready">✓ Kundenseite ist online · Stand ' + esc(dateTime(share.publishedAt)) + "</div>"
+        : '<div class="mini">Die Kundenseite wird beim nächsten Speichern veröffentlicht.</div>';
+
     return '<div class="ft-grid-2">' +
-      '<div class="card p-4"><h3>Teilbare Links</h3><div class="sep"></div>' +
+      '<div class="card p-4"><h3>Kundenseite</h3><div class="sep"></div>' +
+        '<div class="mini">Jedes Projekt hat automatisch eine eigene Seite auf flowertech.ch. ' +
+        "Sie entsteht beim Anlegen und aktualisiert sich bei jeder Änderung — du musst nichts veröffentlichen.</div>" +
+        '<div class="ft-link-row mt-2"><span>Kundenseite</span>' +
+          '<input readonly value="' + attr(kundenLink) + '">' +
+          '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(kundenLink) + '\')">Kopieren</button>' +
+          (kundenLink ? '<a class="btn sm ghost" href="' + attr(kundenLink) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
+          '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) +
+            '\',\'portalToken\')">Neu</button></div>' +
+        status +
+        '<div class="mini mt-2">Der Link wird bewusst NICHT automatisch verschickt — du entscheidest, wann ' +
+        "die Kundschaft ihn bekommt. „Neu\u201c widerruft den alten Link samt Inhalt.</div>" +
+        '<div class="ft-quick mt-2"><button class="btn sm" onclick="window._ftPublishClientView(\'' +
+          attr(projectId) + '\')">Jetzt aktualisieren</button></div>' +
+        '<div class="sep"></div>' +
         '<div class="ft-link-row"><span>Bedarfsformular</span>' +
           '<input readonly value="' + attr(links.form) + '">' +
           '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(links.form) + '\')">Kopieren</button>' +
-          '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) + '\',\'formToken\')">Neu</button></div>' +
-        '<div class="ft-link-row"><span>Kundenansicht</span>' +
-          '<input readonly value="' + attr(links.portal) + '">' +
-          '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(links.portal) + '\')">Kopieren</button>' +
-          '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) + '\',\'portalToken\')">Neu</button></div>' +
-        '<button class="btn primary mt-2" onclick="window._ftPublishClientView(\'' + attr(projectId) +
-          '\')">Kundenansicht veröffentlichen / aktualisieren</button>' +
-        '<div class="mini mt-2">' + (share.publishedAt ? "Zuletzt veröffentlicht: " + esc(dateTime(share.publishedAt))
-          : "Noch nicht veröffentlicht — der Link zeigt erst nach dem Veröffentlichen Inhalte.") +
-          (share.publishError ? ' <span style="color:var(--danger)">' + esc(share.publishError) + "</span>" : "") + "</div>" +
-        '<div class="mini mt-2">Veröffentlicht wird nur eine datensparsame Auswahl: Typ, Kostenübersicht, ' +
-          "Leistungsbeschreibung, Änderungswünsche, Versionen und freigegebene Nachrichten.</div>" +
+          '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) +
+            '\',\'formToken\')">Neu</button></div>' +
+        '<div class="mini mt-2">Gezeigt werden nur: Projektname, Phase, vereinbarte Kosten, ' +
+          "Leistungsbeschreibung, Termine, Versionen und Änderungswünsche. Keine internen Notizen, " +
+          "kein Mailverlauf, keine Rechnungsdetails.</div>" +
       "</div>" +
       '<div class="card p-4"><h3>Kostenübersicht</h3><div class="sep"></div>' +
         '<div class="ft-kpis"><div class="ft-kpi"><span>Offeriert</span><strong>' + money(costs.offered) + "</strong></div>" +
         '<div class="ft-kpi"><span>Fakturiert</span><strong>' + money(costs.invoiced) + "</strong></div>" +
         '<div class="ft-kpi"><span>Bezahlt</span><strong>' + money(costs.paid) + "</strong></div>" +
         '<div class="ft-kpi"><span>Offen</span><strong>' + money(costs.open) + "</strong></div></div>" +
-        '<label class="ft-inline-label">Verwaltung / Admin-Link' +
-          '<input value="' + attr(project.adminUrl || "") + '" placeholder="https://…" oninput="window._ftSetProjectField(\'' +
-            attr(projectId) + '\',\'adminUrl\',this.value)"></label>' +
-        '<label class="ft-inline-label">Vorschau-Link' +
-          '<input value="' + attr(project.previewUrl || "") + '" placeholder="https://…" oninput="window._ftSetProjectField(\'' +
-            attr(projectId) + '\',\'previewUrl\',this.value)"></label>' +
+        urlField("Vorschau-Link (zeigt die Kundschaft)", "previewUrl",
+          "Sobald hier eine HTTPS-Adresse steht, erscheint sie auf der Kundenseite.") +
+        urlField("Verwaltung / Admin (optional)", "adminUrl",
+          "Nur setzen, wenn die Kundschaft dort wirklich etwas verwalten kann.") +
       "</div></div>" +
       '<div class="card p-4 mt-3"><h3>Versionen &amp; Freigabe</h3><div class="sep"></div>' +
         '<div class="ft-inline-form"><input id="ftVersionLabel" placeholder="Was ist neu? z. B. Entwurf Startseite">' +
