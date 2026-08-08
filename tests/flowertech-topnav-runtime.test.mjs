@@ -51,6 +51,7 @@ function makeSandbox(hash) {
     toast() {},
     // Aufgezeichnete Mailentwuerfe — damit der Mailpfad pruefbar ist.
     __mails: [],
+    __portals: {},
     gmailCompose(opts) { win.__mails.push(opts); },
     createEntity: (kind, payload) => {
       // Echte Ablage, damit Ingest- und Versandpfade wirklich pruefbar sind.
@@ -65,7 +66,7 @@ function makeSandbox(hash) {
     nowIso: () => "2026-08-06T12:00:00.000Z",
     todayYmd: () => "2026-08-06",
     crypto: { getRandomValues: (a) => a.fill(7) },
-    setTimeout: () => 0,
+    setTimeout: (fn) => { if (typeof fn === "function") fn(); return 0; },
     confirm: () => true,
     prompt: () => "",
   };
@@ -81,15 +82,30 @@ function makeSandbox(hash) {
       body: { appendChild() {}, classList: { toggle() {}, remove() {} } },
     },
     location: win.location,
-    setTimeout: () => 0,
+    setTimeout: (fn) => { if (typeof fn === "function") fn(); return 0; },
     clearTimeout: () => {},
     console: { warn() {}, log() {}, error() {} },
     navigator: {},
     // flowertech.js greift an einzelnen Stellen auf bare Globals zu.
     APP: win.APP,
-    firebase: undefined,
+    // Firebase-Doppel: zeichnet auf, was unter clientPortals landet — damit
+    // ist die automatische Veroeffentlichung wirklich pruefbar.
+    firebase: {
+      app: () => ({
+        database: () => ({
+          ref: (path) => ({
+            set: (value) => { win.__portals[path] = value; return Promise.resolve(); },
+            remove: () => { delete win.__portals[path]; return Promise.resolve(); },
+          }),
+        }),
+      }),
+    },
   };
   sandbox.globalThis = sandbox;
+  // Dasselbe document-Objekt auch am window — Tests koennen so Formularfelder
+  // stellen, die flowertech.js ueber das bare `document` liest.
+  win.document = sandbox.document;
+  win.firebase = sandbox.firebase;
   return { sandbox, win };
 }
 
@@ -542,6 +558,112 @@ function renderAt(hash) {
   ok(win.__mails.length === 1, "ein Direktprojekt wird von der Beilagenpflicht blockiert");
   win._ftMailDoc("invoice", "in_1");
   ok(win.__mails.length === 2, "eine Rechnung wird von der Beilagenpflicht blockiert");
+}
+
+// ── 22. Kundenseite entsteht bei JEDEM Anlageweg automatisch ──────────────
+{
+  const portalKeys = (win) => Object.keys(win.__portals);
+
+  // a) Manuell mit gewaehltem Weg
+  {
+    const { win } = renderAt("#/flowertech");
+    win.APP.state.data.flowertech.ui = { newRoute: "offer_first" };
+    win.document.getElementById = (id) => (id === "ftWfTitle" ? { value: "Manuell" } : { value: "" });
+    win._ftCreateWorkflowProject();
+    const keys = portalKeys(win);
+    ok(keys.length === 1, `manueller Weg legte ${keys.length} Kundenseiten an statt genau einer`);
+    ok(/^flowertech\/clientPortals\/[A-Za-z0-9_-]{24,64}$/.test(keys[0]),
+      `der Snapshot-Pfad stimmt nicht: ${keys[0]}`);
+    ok(win.__portals[keys[0]].title === "Manuell", "der Snapshot trägt nicht den Projektnamen");
+    ok(!JSON.stringify(win.__portals[keys[0]]).includes("project_"),
+      "eine interne Projekt-ID steht im Snapshot");
+  }
+
+  // b) Anfrage → Projekt (mit ausdruecklicher Wegwahl)
+  {
+    const { win } = renderAt("#/flowertech");
+    win.APP.state.data.flowertech.inquiries = {
+      inq_1: { name: "Anna", company: "Muster AG", email: "a@muster.ch",
+               message: "Wir hätten gerne eine neue Website mit Buchung." },
+    };
+    win._ftInquiryToProject("inq_1", "direct");
+    ok(portalKeys(win).length === 1, "aus einer Anfrage entsteht keine Kundenseite");
+    // Zweiter Klick: kein zweites Projekt, keine zweite Seite.
+    win._ftInquiryToProject("inq_1", "direct");
+    ok(portalKeys(win).length === 1, "der zweite Klick legte eine zweite Kundenseite an");
+  }
+
+  // c) Vision Room → Direktprojekt
+  {
+    const { win } = renderAt("#/flowertech");
+    const entry = { id: "sub_v", kind: "vision", token: null,
+      payload: { type: "Website", idea: "Neue Seite", features: ["Kontakt"], email: "v@muster.ch" } };
+    win._ftIngestSubmissions({ sub_v: entry });
+    ok(portalKeys(win).length === 1, "das Vision-Direktprojekt bekommt keine Kundenseite");
+    win._ftIngestSubmissions({ sub_v: entry });
+    ok(portalKeys(win).length === 1, "derselbe Vision-Eingang legte eine zweite Kundenseite an");
+  }
+}
+
+// ── 23. Snapshot wird bei relevanten Änderungen nachgezogen ───────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  data.entities.projects.prj_1 = { id: "prj_1", title: "Laufend", projectType: "flowertech",
+    pipelineStage: "intake", ftRoute: "direct" };
+  data.flowertech.shares = { prj_1: { portalToken: "p".repeat(28) } };
+  const key = "flowertech/clientPortals/" + "p".repeat(28);
+
+  win._ftSetProjectStage("prj_1", "build");
+  ok(win.__portals[key], "nach dem Phasenwechsel wurde kein Snapshot geschrieben");
+  ok(win.__portals[key].stageLabel === "Umsetzung", "die neue Phase steht nicht im Snapshot");
+
+  win._ftSetProjectField("prj_1", "previewUrl", "https://vorschau.muster.ch");
+  ok(win.__portals[key].previewUrl.startsWith("https://vorschau.muster.ch"),
+    "die Vorschau-URL wird nicht nachgezogen");
+
+  // Ungültige URL erscheint gar nicht erst.
+  win._ftSetProjectField("prj_1", "previewUrl", "http://unsicher.ch");
+  ok(win.__portals[key].previewUrl === "", "eine http-URL landet auf der Kundenseite");
+
+  // Version und Freigabe
+  win.document.getElementById = (id) => (id === "ftVersionLabel" ? { value: "Entwurf 1" } : { value: "" });
+  win._ftAddVersion("prj_1");
+  ok((win.__portals[key].versions || []).length === 1, "die neue Version fehlt im Snapshot");
+  ok(win.__portals[key].versions[0].approved === false, "der Freigabestatus stimmt nicht");
+}
+
+// ── 24. Link erneuern widerruft den alten Snapshot ────────────────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  data.entities.projects.prj_1 = { id: "prj_1", title: "R", projectType: "flowertech", pipelineStage: "build" };
+  const alt = "a".repeat(28);
+  data.flowertech.shares = { prj_1: { portalToken: alt } };
+  win._ftPublishClientPortal("prj_1");
+  const altKey = "flowertech/clientPortals/" + alt;
+  ok(win.__portals[altKey], "der erste Snapshot wurde nicht geschrieben");
+
+  win._ftRotateToken("prj_1", "portalToken");
+  ok(!win.__portals[altKey], "der alte Snapshot bleibt nach dem Erneuern lesbar — der Link wäre nicht widerrufen");
+  const neu = data.flowertech.shares.prj_1.portalToken;
+  ok(neu !== alt && /^[A-Za-z0-9_-]{24,64}$/.test(neu), "es entstand kein brauchbarer neuer Token");
+  ok(win.__portals["flowertech/clientPortals/" + neu], "unter dem neuen Token liegt kein Snapshot");
+}
+
+// ── 25. UI: Kundenseite statt „veröffentlichen" ───────────────────────────
+{
+  const source = fs.readFileSync(path.join(root, "public/flowertech.js"), "utf8");
+  ok(/function publishClientPortal\(projectId\)/.test(source), "die zentrale Veröffentlichung fehlt");
+  ok(/function refreshClientPortal\(projectId\)/.test(source), "die automatische Aktualisierung fehlt");
+  ok(/core\.buildClientSnapshot\(/.test(source),
+    "der Snapshot wird nicht mehr über die geprüfte Positivliste im Kern gebaut");
+  ok(!/projectId: projectId,\s*\n\s*title: project\.title/.test(source),
+    "der alte Snapshot mit interner Projekt-ID ist zurück");
+  ok(/_ftClientPortalLink/.test(source), "der Kundenlink ist nicht abrufbar");
+  // Der Link wird nie automatisch verschickt.
+  ok(!/gmailCompose[\s\S]{0,200}clientPortalUrl/.test(source),
+    "der Kundenlink wird automatisch per Mail verschickt");
 }
 
 console.log(`flowertech topnav runtime: ok (${checks} Pruefungen)`);

@@ -647,4 +647,96 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
     "eine andere Idee erzeugt denselben Schluessel");
 }
 
+// ── 19. Kundenseite: Snapshot ist eine Positivliste ────────────────────────
+{
+  // Ein Projekt mit allem, was NICHT hinaus darf.
+  const project = {
+    id: "prj_geheim", title: "Website Muster", pipelineStage: "build",
+    deliveryType: "website", budget: 4500,
+    previewUrl: "https://vorschau.muster.ch", adminUrl: "https://admin.muster.ch",
+    client: { name: "Anna Muster", email: "anna@muster.ch", phone: "079 111 22 33" },
+    ftContactLog: [{ text: "Kunde zahlt spät", at: NOW }],
+    ftOfferAttachment: { kind: "vision", visionToken: "v".repeat(28) },
+    ftVision: { idea: "geheim" },
+    sourceInquiryId: "inq_1", sourceVisionId: "sub_1", ftRouteSource: "manuell",
+    mailThreadIds: ["thread_1"],
+  };
+  const snap = W.buildClientSnapshot({
+    project,
+    company: { name: "FlowerTech", email: "hallo@flowertech.ch" },
+    content: [{ title: "Angebot", body: "Text", enabled: true }],
+    milestones: [{ title: "Entwurf", date: "2026-09-01", done: true, id: "ms_1" }],
+    changes: [{ title: "Bild tauschen", status: "new", detail: "x", createdAt: NOW, id: "cr_1", taskId: "t_1" }],
+    versions: [{ label: "Entwurf 1", at: NOW, approved: false, id: "v_1" }],
+    costs: { accepted: 4500, invoiced: 2000, paid: 2000, open: 0 },
+    now: NOW,
+  });
+
+  // Nichts Internes im gesamten Snapshot — rekursiv geprueft.
+  const flat = JSON.stringify(snap);
+  for (const key of W.CLIENT_SNAPSHOT_FORBIDDEN_KEYS) {
+    ok(!new RegExp('"' + key + '"').test(flat), `verbotener Schluessel im Snapshot: ${key}`);
+  }
+  for (const secret of ["prj_geheim", "anna@muster.ch", "079 111 22 33", "Kunde zahlt spät",
+    "inq_1", "sub_1", "thread_1", "v".repeat(28), "ms_1", "cr_1", "v_1", "t_1"]) {
+    ok(!flat.includes(secret), `interne Angabe im Snapshot: ${secret}`);
+  }
+
+  // Was drin sein MUSS.
+  eq(snap.title, "Website Muster", "der Projektname fehlt");
+  eq(snap.stageLabel, "Umsetzung", "die Phase fehlt");
+  eq(snap.stageSteps.length, 6, "der Phasenfortschritt ist unvollstaendig");
+  ok(snap.stageSteps[3].current, "die aktuelle Phase ist nicht markiert");
+  ok(snap.stageSteps[0].done && !snap.stageSteps[4].done, "der Fortschritt stimmt nicht");
+  eq(snap.costs.agreed, 4500, "die vereinbarten Kosten fehlen");
+  eq(snap.costs.paid, 2000, "der bezahlte Betrag fehlt");
+  eq(snap.content.length, 1, "die Leistungsbeschreibung fehlt");
+  eq(snap.milestones[0].title, "Entwurf", "die Termine fehlen");
+  eq(snap.changes[0].statusLabel, "Neu", "der Änderungsstatus fehlt");
+  eq(snap.versions[0].approved, false, "der Freigabestatus fehlt");
+  eq(snap.previewUrl, "https://vorschau.muster.ch/", "die Vorschau-URL fehlt");
+  eq(snap.adminUrl, "https://admin.muster.ch/", "der Admin-Link fehlt");
+  eq(snap.closed, false, "ein laufender Vorgang gilt als geschlossen");
+  eq(W.buildClientSnapshot({ project: { ftOutcome: "lost" } }).closed, true,
+    "ein verlorener Vorgang wird nicht als geschlossen markiert");
+}
+
+// ── 20. URL-Pruefung: nur echte HTTPS-Adressen ─────────────────────────────
+{
+  for (const bad of ["", "muster.ch", "http://muster.ch", "javascript:alert(1)",
+    "data:text/html,<h1>x", "ftp://muster.ch", "https://", "//muster.ch"]) {
+    eq(W.clientSafeUrl(bad), "", `unsichere URL wird durchgelassen: ${bad}`);
+    const snap = W.buildClientSnapshot({ project: { previewUrl: bad, adminUrl: bad } });
+    eq(snap.previewUrl, "", `unsichere Vorschau-URL landet im Snapshot: ${bad}`);
+    eq(snap.adminUrl, "", `unsicherer Admin-Link landet im Snapshot: ${bad}`);
+  }
+  ok(W.clientSafeUrl("https://muster.ch/pfad?a=1").startsWith("https://muster.ch/"),
+    "eine gueltige HTTPS-Adresse wird verworfen");
+}
+
+// ── 21. Der Kundenlink zeigt auf flowertech.ch ─────────────────────────────
+{
+  const token = "t".repeat(28);
+  eq(W.clientPortalUrl(token), "https://flowertech.ch/kunde.html?t=" + token,
+    "der Kundenlink zeigt nicht auf flowertech.ch/kunde.html");
+  ok(!W.clientPortalUrl(token).includes("management-xo2-pro"),
+    "der neue Kundenlink zeigt weiterhin auf die Quantus-Domain");
+  eq(W.clientPortalUrl("zu-kurz"), "", "ein ungueltiger Token erzeugt trotzdem einen Link");
+  // Der alte Link bleibt fuer Bestandsprojekte erreichbar — keine Migration.
+  ok(W.portalUrl("https://management-xo2-pro.netlify.app", token).includes("flowertech-kunde.html"),
+    "der alte Kundenlink funktioniert nicht mehr");
+}
+
+// ── 22. Phasenfortschritt ──────────────────────────────────────────────────
+{
+  const p0 = W.clientStageProgress("lead");
+  eq(p0.index, 0, "Lead steht nicht am Anfang");
+  ok(p0.steps[0].current && !p0.steps[0].done, "die erste Phase ist falsch markiert");
+  const p5 = W.clientStageProgress("approval");
+  eq(p5.index, 5, "die Freigabe steht nicht am Ende");
+  eq(p5.steps.filter((s) => s.done).length, 5, "der Fortschritt bis zur Freigabe stimmt nicht");
+  // Altbestand bleibt darstellbar.
+  eq(W.clientStageProgress("discovery").label, "Bestandesaufnahme", "alte Phasen brechen den Fortschritt");
+}
+
 console.log(`flowertech workflow dataflow: ok (${checks} Pruefungen)`);
