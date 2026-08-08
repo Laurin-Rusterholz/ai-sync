@@ -65,6 +65,7 @@ class FakeElement {
     this.classList = new FakeClassList();
     this.dataset = {};
     this.style = {};
+    this.style.setProperty = (k, v) => { this.style[k] = v; };
     this.attributes = {};
     this.hidden = false;
     this.id = "";
@@ -150,6 +151,7 @@ function makeDom() {
   const status = el("span", "quantusBrowserStatus", "qbr-status");
   const statusText = el("span", null, "qbr-status-text");
   const fullBtn = el("button", "quantusBrowserFullBtn", "qbr-btn qbr-btn-main");
+  const topFullBtn = el("button", "btnQuantusFullscreen", "topbar-btn");
   const stage = el("div", "quantusBrowserStage", "qbr-stage");
   const canvas = el("div", "quantusBrowserCanvas", "qbr-canvas");
   const overlay = el("div", "quantusBrowserOverlay", "qbr-overlay");
@@ -172,7 +174,9 @@ function makeDom() {
   app.appendChild(host);
   body.appendChild(app);
   body.appendChild(qcFab);
+  body.appendChild(topFullBtn);
 
+  body.style.setProperty = (k, v) => { body.style[k] = v; };
   doc.body = body;
   doc.activeElement = body;
   doc.documentElement = el("html");
@@ -187,7 +191,7 @@ function makeDom() {
   doc.removeEventListener = () => {};
   doc.dispatch = (type, event) => { for (const fn of doc._listeners.get(type) || []) fn(event || { type }); };
 
-  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, stage, canvas, overlay, qcFab } };
+  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, topFullBtn, stage, canvas, overlay, qcFab } };
 }
 
 // ── Steuerbare Uhr ─────────────────────────────────────────────────────────
@@ -227,6 +231,7 @@ function makeApp(options = {}) {
   const clock = makeClock();
   const calls = { closeSlidePanel: 0, openedTabs: [], fetches: [] };
   const store = new Map();
+  if (options.screen) store.set("quantus-browser-screen", options.screen);
 
   const win = {
     innerWidth: options.innerWidth ?? 1440,
@@ -245,7 +250,7 @@ function makeApp(options = {}) {
   const layout = () => {
     const nav = nodes.app.classList.contains("sidebar-collapsed") ? 0 : 188;
     const full = doc.body.classList.contains("qbr-full");
-    const barH = 40;   // nur die Kopfzeile, kein Hinweisstreifen mehr
+    const barH = full ? 32 : 40;   // im Vollbild flacher, sonst die Kopfzeile
     nodes.stage.clientWidth = full ? win.innerWidth : Math.max(0, win.innerWidth - nav);
     nodes.stage.clientHeight = full ? win.innerHeight - barH : Math.max(0, win.innerHeight - 52 - barH);
   };
@@ -291,6 +296,7 @@ function makeApp(options = {}) {
       state: quantusBrowserState,
       src: quantusBrowserSrc,
       fitBox: quantusBrowserFitBox,
+      screen: quantusBrowserScreen,
       viewportClass: quantusBrowserViewportClass,
       fit: quantusBrowserFit,
       enter: quantusBrowserEnter,
@@ -720,6 +726,69 @@ console.log("\n12. Keine sichtbare Zugangsdaten-Hilfe");
   ok(!/[?&](pwd|pass|password|token|secret|key|auth)=/i.test(src),
     "die Einbettung uebergibt Anmeldedaten in der URL");
   ok(src.includes("usr="), "die Feldvorbelegung wurde mitentfernt — der Login-Flow aendert sich");
+}
+
+// ═══ 13. Breitbild: keine halbe Buehne, kein toter Rand ═══════════════════
+console.log("\n13. Breitbild (Ultrawide)");
+{
+  // Live-Befund 08.08.2026 auf 4071x1288: der Stream war nur 1986x1117 gross,
+  // im Vollbild 2146x1207 — der Rest lag brach. Ursache ist nicht das Layout,
+  // sondern die Form des Remote-Bildschirms: ein 16:9-Bild kann eine 3.16:1
+  // breite Flaeche nicht fuellen, ohne verzerrt zu werden.
+  const app = makeApp({ innerWidth: 4071, innerHeight: 1288 });
+  app.api.enter();
+  await flush();
+  app.loadFrame();
+
+  // Buehne 3883x1196 -> hoehenbegrenzt auf 2126x1196.
+  eq(app.nodes.canvas.style.height, "1196px", "die Buehne nutzt die Hoehe nicht aus");
+  const w = parseInt(app.nodes.canvas.style.width, 10);
+  eq(w, 2126, "die Breite folgt nicht dem Bildverhaeltnis");
+  ok(Math.abs(w / 1196 - 16 / 9) < 0.01, "das Bild wird auf Breitbild verzerrt");
+  // Die freie Randbreite wird gemeldet — dort landet ein geoeffnetes Panel,
+  // statt den Stream zu ueberdecken.
+  eq(app.nodes.host.style["--qbr-side"], "878px", "die freie Randbreite wird nicht gemeldet");
+  eq(app.nodes.host.dataset.side, "wide", "der Breitbildfall wird nicht erkannt");
+  eq(app.nodes.host.style["--qbr-ratio"], "1280 / 720", "das Bildverhaeltnis wird nicht gemeldet");
+
+  // Vollbild: flachere Leiste, volle Viewporthoehe.
+  app.api.toggleFullscreen();
+  app.layout();
+  app.api.fit();
+  eq(app.nodes.canvas.style.height, "1256px", "im Vollbild bleibt Hoehe liegen");
+  eq(app.nodes.canvas.style.width, "2233px", "im Vollbild bleibt Breite liegen");
+  // Gegen den Live-Befund gerechnet: 2146x1207 -> 2233x1256.
+  ok(2233 > 2146 && 1256 > 1207, "das Vollbild ist nicht groesser als vorher");
+  eq(app.nodes.topFullBtn.getAttribute("aria-pressed"), "true",
+    "der globale Knopf meldet den Vollbildzustand nicht");
+  app.api.setFullscreen(false);
+  eq(app.nodes.topFullBtn.getAttribute("aria-pressed"), "false",
+    "der globale Knopf bleibt im Vollbildzustand haengen");
+
+  // Der eigentliche Hebel: eine breitere Remote-Aufloesung. Wird NEKO_SCREEN
+  // auf dem VPS umgestellt, zieht das Frontend ohne neuen Deploy nach.
+  const wide = makeApp({ innerWidth: 4071, innerHeight: 1288, screen: "2560x1080" });
+  wide.api.enter();
+  await flush();
+  wide.loadFrame();
+  eq(wide.api.screen().width, 2560, "der Nachzieh-Wert wird nicht uebernommen");
+  const ww = parseInt(wide.nodes.canvas.style.width, 10);
+  const wh = parseInt(wide.nodes.canvas.style.height, 10);
+  eq(wh, 1196, "mit Breitbildaufloesung stimmt die Hoehe nicht");
+  eq(ww, 2835, "mit Breitbildaufloesung stimmt die Breite nicht");
+  ok(ww > w * 1.3, `Breitbildaufloesung bringt kaum Flaeche: ${w} -> ${ww}`);
+  ok(Math.abs(ww / wh - 2560 / 1080) < 0.01, "mit Breitbildaufloesung wird verzerrt");
+  eq(wide.nodes.host.style["--qbr-ratio"], "2560 / 1080", "das Bildverhaeltnis folgt nicht");
+
+  // Krumme oder unsinnige Werte werden ignoriert — lieber der eingebaute Wert
+  // als eine verzerrte Buehne.
+  for (const bad of ["", "abc", "0x0", "99999x1", "1280", "1280x", "-1280x720", "6000x4000", "12x8"]) {
+    const a = makeApp({ screen: bad });
+    eq(a.api.screen().width, 1280, `unsinniger Wert wurde uebernommen: ${JSON.stringify(bad)}`);
+  }
+  // Beide Schreibweisen des Trenners sind erlaubt.
+  eq(makeApp({ screen: "1920×1080" }).api.screen().width, 1920, "das Mal-Zeichen wird nicht erkannt");
+  eq(makeApp({ screen: " 1600x900 " }).api.screen().height, 900, "Leerzeichen brechen den Wert");
 }
 
 console.log(`\n✓ Quantus-Browser-Buehne: ${checks} Laufzeitpruefungen bestanden\n`);

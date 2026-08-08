@@ -537,9 +537,10 @@ Grid-Zelle bleibt es stehen; `#main` wird im Browsermodus nur ausgeblendet.
 
 ### Groessenberechnung
 
-Der Remote-Bildschirm ist **1280x720**. `quantusBrowserFitBox()` rechnet das
-groesste 16:9-Rechteck, das in die Buehne passt, und setzt es in Pixeln
-(`aspect-ratio: 16/9` ist der CSS-Rueckfall). Damit gilt:
+Der Remote-Bildschirm ist **1280x720** (`NEKO_SCREEN`). `quantusBrowserFitBox()`
+rechnet das groesste Rechteck in genau diesem Verhaeltnis, das in die Buehne
+passt, und setzt es in Pixeln (`aspect-ratio: var(--qbr-ratio)` ist der
+CSS-Rueckfall). Damit gilt:
 
 * keine Verzerrung — das Verhaeltnis weicht hoechstens um die Pixelrundung ab,
 * kein Beschnitt — die Flaeche bleibt immer innerhalb der Buehne,
@@ -548,7 +549,60 @@ groesste 16:9-Rechteck, das in die Buehne passt, und setzt es in Pixeln
 
 Die Buehne erbt ihre Hoehe aus dem Grid (`grid-row: 2`), es gibt **keine**
 `100vh - Konstante`-Rechnung mehr. Nachgezogen wird per `ResizeObserver` sowie
-bei `resize` und `orientationchange`.
+bei `resize` und `orientationchange`; danach bekommt das iframe den Fokus
+zurueck (entprellt), damit die naechste Taste nicht ins Leere laeuft.
+
+**Niemals `transform: scale()`** auf Buehne oder iframe. Der neko-Client
+rechnet die Mausposition aus der Elementgroesse — eine CSS-Skalierung wuerde
+jeden Klick versetzen. Tests verbieten es in CSS und Skript.
+
+### Breite Bildschirme: warum Rand entsteht — und was wirklich hilft
+
+Der Stream hat **exakt die Form des Remote-Bildschirms**. Auf einem 4071x1288
+grossen Fenster (Verhaeltnis 3.16:1) kann ein 16:9-Bild die Breite nicht
+fuellen, ohne verzerrt zu werden. Gemessen bleiben dort rund 900px Rand je
+Seite. Das ist kein Layoutfehler:
+
+* Ein auf 100% gezogenes iframe wuerde das Bild **strecken** und die
+  Zeigerkoordinaten versetzen.
+* Laesst man den neko-Client selbst letterboxen, sind die Balken nur dunkler —
+  nutzbare Flaeche gewinnt man keine.
+* **Mehr Remote-Arbeitsflaeche gibt es ausschliesslich ueber eine breitere
+  Aufloesung im Container.** CSS kann keine Bildpunkte erfinden.
+
+Was Quantus daraus macht:
+
+1. **Der freie Rand wird nutzbar.** `quantusBrowserFit()` meldet ihn als
+   `--qbr-side`. Wird ein Seitenpanel geoeffnet, legt es sich genau dorthin,
+   statt den Stream zu ueberdecken oder zu verkleinern. Standardmaessig ist
+   nichts geoeffnet.
+2. **Das Vollbild holt jede Zeile.** Seitenleiste, Kopfzeile, Tab-Leiste und
+   Panels verschwinden, die Browser-Leiste faellt auf 32px. Auf 4071x1288
+   ergibt das 2233x1256 statt 2146x1207 vor dieser Aenderung.
+3. **Die Aufloesung ist nachziehbar.** Wird `NEKO_SCREEN` auf dem VPS auf ein
+   Breitbildformat gestellt, folgt das Frontend ohne neuen Deploy:
+
+   ```js
+   // Browser-Konsole auf der Quantus-Seite
+   localStorage.setItem('quantus-browser-screen', '2560x1080')
+   ```
+
+   Der Wert wird streng geprueft (nur Ziffern, 640..5120 x 360..2160); alles
+   andere faellt auf den eingebauten Wert zurueck. Es ist eine Bildschirm-
+   groesse, **kein Geheimnis**. Dauerhaft gehoert derselbe Wert in
+   `QUANTUS_BROWSER_REMOTE_W/H` in `public/index.html` — ein Test haelt ihn
+   gegen die Compose-Vorgabe, damit beide nicht auseinanderlaufen.
+
+Rechenbeispiel auf 4071x1288 im Vollbild:
+
+| `NEKO_SCREEN` | Verhaeltnis | Stream im Vollbild | Rand je Seite |
+|---|---|---|---|
+| `1280x720@30` | 16:9 | 2233x1256 | 919px |
+| `1920x1080@25` | 16:9 | 2233x1256 (schaerfer) | 919px |
+| `2560x1080@25` | 21:9 | **2977x1256** | 547px |
+
+Hoehere Aufloesung kostet CPU (1 vCPU, Software-Encoding). Ruckelt das Bild,
+Bildrate oder Aufloesung wieder senken — siehe Stoerungssuche.
 
 ### Viewport-Klassen
 
@@ -561,6 +615,15 @@ bei `resize` und `orientationchange`.
 Im Vollbild gilt immer `wide` — dort ist Platz per Definition da.
 
 ### Vollbild
+
+Erreichbar an zwei Stellen: `⛶ Vollbild` in der Browser-Kopfzeile und
+**„Quantus Vollbild"** (`#btnQuantusFullscreen`) in der globalen Quantus-
+Kopfzeile. Beide loesen dasselbe aus und werden gemeinsam nachgefuehrt; der
+globale Knopf zeigt sich nur auf der Browser-Route.
+
+Im Vollbild verschwinden Seitenleiste, Quantus-Kopfzeile, Tab-Leiste und
+Panels vollstaendig — es bleibt der Stream und eine 32px flache Leiste zum
+Aussteigen. Polaris bleibt als Overlay erreichbar.
 
 `⛶ Vollbild` setzt **zuerst** `body.qbr-full` (CSS: `position:fixed; inset:0`)
 und legt danach die Fullscreen-API darueber. Fehlt die API oder lehnt der
