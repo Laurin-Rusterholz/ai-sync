@@ -649,4 +649,79 @@ const answersFor = (win, intakeId, values) => {
   ok(/entsteht genau ein Projekt/.test(html), "der Ablauf wird nicht erklärt");
 }
 
+// ── 15. Der Kundenlink ist dort, wo man ihn sucht ────────────────────────
+// Produktions-Rueckmeldung: „Ich kann in Quantus von einer Offerte oder einem
+// Projekt aus den Link nicht kopieren." Er lag nur im Reiter „Kundenportal" —
+// dort sucht ihn niemand, der gerade an einer Offerte sitzt.
+{
+  const { win, data } = makeSandbox();
+  data.entities.projects.prj_1 = {
+    id: "prj_1", title: "Beiz-Website", projectType: "flowertech",
+    pipelineStage: "proposal", client: {},
+  };
+  data.flowertech.shares = {};
+  const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
+
+  // a) Am Projekt — auf JEDEM Reiter, nicht nur im Kundenportal.
+  for (const tab of ["workflow", "angebot", "vertrag", "vorschau", "kunde"]) {
+    data.flowertech.ui = { projectTab: tab };
+    const html = strip(win.ftProjectPanel("prj_1"));
+    const token = data.flowertech.shares.prj_1.portalToken;
+    ok(/^[A-Za-z0-9_-]{24,64}$/.test(token || ""), `Reiter ${tab}: es entstand kein Kundenlink`);
+    const link = "https://flowertech.ch/kunde.html?t=" + token;
+    ok(html.includes(link), `Reiter ${tab}: der Kundenlink steht nicht auf der Projektseite`);
+    ok(html.includes("_ftCopyLink('" + link + "')"), `Reiter ${tab}: der Link lässt sich nicht kopieren`);
+    ok(/>Öffnen</.test(html), `Reiter ${tab}: der Link lässt sich nicht öffnen`);
+  }
+
+  // b) In der Offerte — ohne den Vorgang zu wechseln.
+  win._ftNewDoc("offer", "prj_1");
+  const doc = data.flowertech.offers[0];
+  data.flowertech.activeTab = "offers";
+  data.flowertech.ui = { docId: doc.id, docKind: "offer" };
+  const offerHtml = strip(win.viewFlowerTech());
+  const token = data.flowertech.shares.prj_1.portalToken;
+  const link = "https://flowertech.ch/kunde.html?t=" + token;
+  ok(offerHtml.includes(link), "in der Offerte fehlt der Kundenlink");
+  ok(/🔗 Kundenlink/.test(offerHtml), "in der Aktionszeile der Offerte fehlt der Kundenlink");
+  ok(offerHtml.includes("_ftCopyLink('" + link + "')"), "der Kundenlink der Offerte lässt sich nicht kopieren");
+
+  // c) Eine Offerte ohne Projekt erfindet keinen Link, sondern sagt, was fehlt.
+  win._ftNewDoc("offer");
+  const frei = data.flowertech.offers[0];
+  ok(!frei.projectId, "die neue Offerte hängt bereits an einem Projekt");
+  data.flowertech.ui = { docId: frei.id, docKind: "offer" };
+  const freiHtml = strip(win.viewFlowerTech());
+  ok(/gehört noch zu keinem Projekt/.test(freiHtml),
+    "eine Offerte ohne Projekt erklärt den fehlenden Kundenlink nicht");
+  ok(!/🔗 Kundenlink/.test(freiHtml), "eine Offerte ohne Projekt bietet einen erfundenen Link an");
+}
+
+// ── 16. In der Projektliste: kopieren, ohne zu öffnen ────────────────────
+{
+  const { win, data, written } = makeSandbox();
+  data.entities.projects.prj_1 = {
+    id: "prj_1", title: "Beiz-Website", projectType: "flowertech", pipelineStage: "lead", client: {},
+  };
+  data.flowertech.activeTab = "projects";
+  const html = win.viewFlowerTech().replace(/<style>[\s\S]*?<\/style>/g, "");
+  ok(/_ftCopyProjectLink\('prj_1'\)/.test(html), "in der Projektliste fehlt der Kopierknopf");
+  ok(/event\.stopPropagation\(\)/.test(html), "der Kopierknopf öffnet zugleich das Projekt");
+
+  // Beim Rendern der Liste entsteht noch KEIN Zugang — sonst waere jedes
+  // Neuzeichnen ein Schreibvorgang pro Zeile.
+  ok(!(data.flowertech.shares || {}).prj_1, "das blosse Anzeigen der Liste legt Kundenlinks an");
+  ok(Object.keys(written).length === 0, "das blosse Anzeigen der Liste schreibt Snapshots");
+
+  // Erst der Klick erzeugt ihn.
+  // Der Rueckfallweg der Zwischenablage braucht ein Textfeld — hier genuegt
+  // ein Doppel, geprueft wird der Zugang, nicht die Zwischenablage.
+  const area = { value: "", style: {}, select() {}, focus() {}, remove() {} };
+  win.document.createElement = () => area;
+  win._ftCopyProjectLink("prj_1");
+  const token = data.flowertech.shares.prj_1.portalToken;
+  ok(/^[A-Za-z0-9_-]{24,64}$/.test(token || ""), "beim Klick entsteht kein Kundenlink");
+  ok(written["flowertech/clientPortals/" + token], "beim Klick wird die Kundenseite nicht veröffentlicht");
+}
+
 console.log(`flowertech kundenanfrage: ok (${checks} Pruefungen)`);
