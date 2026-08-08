@@ -78,7 +78,12 @@ services:
       NEKO_SESSION_IMPLICIT_HOSTING: "true"
 
       # ── Desktop / Datentransfer ───────────────────────────────────────────
-      NEKO_DESKTOP_SCREEN: "${NEKO_SCREEN:-1280x720@30}"
+      # Breitbild (21:9). Der Stream hat exakt die Form dieser Aufloesung —
+      # auf einem Ultrawide-Schirm bleibt mit 16:9 sonst die halbe Breite
+      # ungenutzt, und hochskaliert wird das 1280er Bild sichtbar unscharf.
+      # Ruckelt es auf 1 vCPU: NEKO_SCREEN=1280x720@25 in der .env, dann
+      # `docker compose up -d` — siehe docs/quantus-browser-setup.md, Rollback.
+      NEKO_DESKTOP_SCREEN: "${NEKO_SCREEN:-2560x1080@25}"
       NEKO_DESKTOP_UNMINIMIZE: "true"
       # Drag & Drop vom eigenen Rechner in den Remote-Browser.
       NEKO_DESKTOP_UPLOAD_DROP: "true"

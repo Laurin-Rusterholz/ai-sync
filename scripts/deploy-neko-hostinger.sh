@@ -419,7 +419,7 @@ fi
 
 # Nicht-geheime Defaults nur ergaenzen, wenn sie fehlen.
 for kv in "NEKO_IMAGE_TAG=3.1.5" "NEKO_HTTP_PORT=8080" "NEKO_WEBRTC_PORT=59000" \
-          "NEKO_SCREEN=1280x720@30" "NEKO_MEM_LIMIT=2600m" "NEKO_FILE_CHOOSER=true" \
+          "NEKO_SCREEN=2560x1080@25" "NEKO_MEM_LIMIT=2600m" "NEKO_FILE_CHOOSER=true" \
           "NEKO_DOMAIN=${DOMAIN}" "COMPOSE_PROJECT_NAME=quantus-neko"; do
   key="${kv%%=*}"
   [ -n "$(env_get "${key}")" ] || env_set "${key}" "${kv#*=}"
@@ -607,6 +607,48 @@ else
     note_fail "Chromium-Crash-Loop: PID wechselte von ${PID_A} zu ${PID_B:-<leer>} innerhalb von ${SMOKE_GAP} s"
     docker compose exec -T neko sh -c 'tail -n 15 /var/log/neko/chromium.log 2>/dev/null' \
       | sed 's/^/      /' || true
+  fi
+fi
+
+# ── Aufloesung: WIRKLICH gesetzt, nicht nur konfiguriert ────────────────────
+# Der Stream hat exakt die Form des X-Bildschirms. Steht in der .env eine
+# Breitbildaufloesung, der X-Server faellt aber auf einen anderen Modus zurueck
+# (Modus nicht verfuegbar), sieht man das dem Container nicht an — im Browser
+# entsteht dann wieder Rand, und das Frontend rechnet mit dem falschen
+# Verhaeltnis. Deshalb wird hier zurueckgelesen statt geglaubt.
+SCREEN_CFG="$(env_get NEKO_SCREEN)"; SCREEN_CFG="${SCREEN_CFG:-2560x1080@25}"
+SCREEN_WANT="${SCREEN_CFG%%@*}"
+screen_actual() {
+  docker compose exec -T neko sh -c '
+    D="${DISPLAY:-:99.0}"
+    if command -v xdpyinfo >/dev/null 2>&1; then
+      xdpyinfo -display "$D" 2>/dev/null | sed -n "s/^ *dimensions: *\([0-9]*x[0-9]*\).*/\1/p" | head -n1
+    elif command -v xrandr >/dev/null 2>&1; then
+      xrandr --display "$D" 2>/dev/null | sed -n "s/^.*current \([0-9]*\) x \([0-9]*\).*/\1x\2/p" | head -n1
+    elif command -v xwininfo >/dev/null 2>&1; then
+      xwininfo -display "$D" -root 2>/dev/null | sed -n "s/^ *-geometry *\([0-9]*x[0-9]*\).*/\1/p" | head -n1
+    fi' 2>/dev/null | tr -d '\r' | head -n1
+}
+SCREEN_IS="$(screen_actual)"
+if [ -z "${SCREEN_IS}" ]; then
+  # Kein X-Werkzeug im Image — kein Grund, das Deploy scheitern zu lassen.
+  info "Aufloesung nicht auslesbar (kein xdpyinfo/xrandr/xwininfo im Image); konfiguriert ist ${SCREEN_CFG}"
+elif [ "${SCREEN_IS}" = "${SCREEN_WANT}" ]; then
+  ok "Bildschirm laeuft wirklich mit ${SCREEN_IS} (konfiguriert: ${SCREEN_CFG})"
+else
+  note_fail "Aufloesung weicht ab: X-Server meldet ${SCREEN_IS}, erwartet ${SCREEN_WANT}. Der Modus ist im Container vermutlich nicht verfuegbar — NEKO_SCREEN in ${APP_DIR}/.env auf 1280x720@25 zuruecksetzen und 'docker compose up -d' erneut ausfuehren"
+fi
+
+# ── Last nach der Aufloesungsumstellung ─────────────────────────────────────
+# Software-Encoding auf 1 vCPU: eine hoehere Aufloesung kann den Kern dauerhaft
+# saettigen. Das aeussert sich als ruckelndes Bild, nicht als Fehler — deshalb
+# hier eine Stichprobe mit klarer Handlungsanweisung statt stiller Hoffnung.
+CPU_PCT="$(docker stats --no-stream --format '{{.CPUPerc}}' quantus-neko 2>/dev/null | tr -d '%\r' | cut -d. -f1)"
+if [ -n "${CPU_PCT:-}" ] && [ "${CPU_PCT}" -ge 0 ] 2>/dev/null; then
+  if [ "${CPU_PCT}" -ge 90 ]; then
+    note_fail "Container zieht ${CPU_PCT}% CPU — auf 1 vCPU ruckelt das Bild dann. NEKO_SCREEN in ${APP_DIR}/.env auf 1280x720@25 senken und 'docker compose up -d' ausfuehren"
+  else
+    ok "CPU-Last des Containers: ${CPU_PCT}% (Stichprobe)"
   fi
 fi
 

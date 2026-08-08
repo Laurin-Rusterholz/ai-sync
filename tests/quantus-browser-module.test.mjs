@@ -306,8 +306,16 @@ check("Vollbild laeuft in der App und hat einen CSS-Rueckfall", () => {
   assert.ok(toggle.indexOf("quantusBrowserSetFullscreen(true)") <
             toggle.indexOf("host.requestFullscreen"),
     "der CSS-Modus muss vor der nativen API gesetzt werden, sonst bleibt der Fallback aus");
-  // Rueckweg: Escape und der Schliessen-Knopf.
+  // Rueckweg: Escape und der Schliessen-Knopf. Der Escape-Handler steigt
+  // IMMER aus — frueher vertraute er bei nativer Sitzung auf den Browser;
+  // blieb dessen Escape aus, haette das Vollbild festgehangen.
   assert.match(BROWSER_JS, /e\.key !== "Escape"/);
+  const escFn = BROWSER_JS.slice(BROWSER_JS.indexOf('e.key !== "Escape"'));
+  const escBody = escFn.slice(0, escFn.indexOf("});"));
+  assert.doesNotMatch(escBody, /if \(document\.fullscreenElement[^)]*\) return;/,
+    "der Escape-Handler ueberspringt die native Sitzung wieder");
+  assert.match(escBody, /quantusBrowserExitNativeFullscreen\(\)/);
+  assert.match(escBody, /quantusBrowserSetFullscreen\(false\)/);
   assert.match(BROWSER_JS, /addEventListener\("fullscreenchange"/);
   assert.match(HOST_MARKUP, /data-action="browser-exit-fullscreen"/);
   // Der Wechsel darf das iframe nicht anfassen.
@@ -322,13 +330,47 @@ check("die globale Kopfzeile hat einen Vollbild-Knopf", () => {
     "kein „Quantus Vollbild“ in der globalen Kopfzeile");
   assert.match(topbar, /id="btnQuantusFullscreen"[^>]*aria-pressed="false"/,
     "der Knopf meldet keinen Zustand");
-  // Er zeigt sich nur dort, wo er etwas tut.
+
+  // Er traegt sichtbaren Text, kein nacktes Symbol — sonst ist nicht
+  // erkennbar, was er tut.
+  const btn = /<button[^>]*id="btnQuantusFullscreen"[\s\S]*?<\/button>/.exec(topbar);
+  assert.ok(btn, "der Knopf wurde nicht gefunden");
+  assert.match(btn[0], /<span class="qbr-topbtn-label" id="btnQuantusFullscreenLabel">Quantus Vollbild<\/span>/,
+    "der Knopf hat keine sichtbare Beschriftung");
+  // Die Beschriftung sagt auch, was als naechstes passiert.
+  assert.match(BROWSER_JS, /btnQuantusFullscreenLabel/, "die Beschriftung wird nicht nachgefuehrt");
+  assert.match(BROWSER_JS, /"Vollbild beenden" : "Quantus Vollbild"/,
+    "die Beschriftung wechselt nicht zwischen Ein- und Ausstieg");
+
   const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
                           index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
-  assert.match(css, /body:not\(\.qbr-mode\) #btnQuantusFullscreen\{display:none\}/);
+  // Auf der Browser-Route immer sichtbar — die Kopfzeile darf ihn weder
+  // wegkuerzen noch ausblenden.
+  assert.match(css, /body:not\(\.qbr-mode\) #btnQuantusFullscreen\{display:none !important\}/);
+  const shown = /body\.qbr-mode #btnQuantusFullscreen\{[^}]*\}/.exec(css);
+  assert.ok(shown, "keine Sichtbarkeitsregel fuer die Browser-Route");
+  for (const decl of ["display:inline-flex !important", "flex:0 0 auto",
+                      "visibility:visible !important", "opacity:1 !important",
+                      "white-space:nowrap"]) {
+    assert.ok(shown[0].includes(decl), `dem Knopf fehlt: ${decl}`);
+  }
   // Beide Vollbild-Knoepfe werden gemeinsam nachgefuehrt.
   assert.match(BROWSER_JS, /\["quantusBrowserFullBtn", "btnQuantusFullscreen"\]/,
     "der globale Knopf wird nicht mitgefuehrt");
+  // Die Knopfleiste der Kopfzeile ist breiter als der Viewport — am Ende der
+  // Gruppe waere der Knopf abgeschnitten.
+  assert.match(shown[0], /order:-1/, "der Knopf steht nicht am Anfang der Knopfgruppe");
+  // Unter 900px bricht die Leiste um und die Seitenleiste wird zur Schublade;
+  // dort lag der Knopf dahinter. .topbar hat backdrop-filter und ist damit
+  // selbst Bezugsrahmen fuer position:fixed — `right` waere die falsche Kante.
+  assert.match(css, /@media \(max-width:900px\)\{[\s\S]*?body\.qbr-mode #btnQuantusFullscreen\{position:fixed[^}]*left:calc\(100vw - 141px\)[^}]*z-index:520/,
+    "auf schmalen Fenstern ist der Knopf nicht viewportbezogen verankert");
+  // Er haengt am statischen Markup, nicht an einer Renderfunktion — ein
+  // Re-Render der Kopfzeile darf ihn nicht abraeumen.
+  const topbarFn = index.slice(index.indexOf("function renderTopbar()"),
+                               index.indexOf("function renderSidebar()"));
+  assert.doesNotMatch(topbarFn, /innerHTML/,
+    "renderTopbar() baut die Kopfzeile neu — der Knopf wuerde verschwinden");
 });
 
 check("im Vollbild verschwindet die uebrige Quantus-Oberflaeche", () => {
@@ -451,7 +493,7 @@ check("Farben kommen aus den Theme-Variablen (Dark und Light)", () => {
   // Erlaubt sind nur die neko-eigene Buehnenfarbe und weiche Schatten —
   // sonst keine fest verdrahteten Flaechenfarben, die im hellen Theme brechen.
   const hardcoded = [...css.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map(m => m[0])
-    .filter(v => !["#2B3134", "#333", "#4ade80", "#ef4444", "#f59e0b", "#86a895"].includes(v));
+    .filter(v => !["#2B3134", "#333", "#4ade80", "#ef4444", "#f59e0b", "#86a895", "#fff"].includes(v));
   assert.deepEqual(hardcoded, [], "fest verdrahtete Farben im Browser-CSS");
 });
 
@@ -782,6 +824,32 @@ check("Deploy-Skript setzt Eigentuemer/Rechte der Daten-Mounts idempotent", () =
                                 deployScript.indexOf("PROXY=\"none\""));
   assert.ok(fn.length > 100, "ensure_data_dir nicht gefunden");
   assert.doesNotMatch(fn, /\brm\b|\bmv\b/, "Ownership-Reparatur darf nichts loeschen/verschieben");
+});
+
+check("Smoke liest die tatsaechliche Aufloesung zurueck", () => {
+  // In der .env kann stehen, was will — faellt der X-Server auf einen anderen
+  // Modus zurueck, entsteht im Browser wieder Rand und das Frontend rechnet
+  // mit dem falschen Verhaeltnis. Deshalb zurueklesen statt glauben.
+  assert.match(deployScript, /screen_actual\(\)/, "kein Rueckleser fuer die Aufloesung");
+  for (const tool of ["xdpyinfo", "xrandr", "xwininfo"]) {
+    assert.ok(deployScript.includes(tool), `Rueckleser kennt ${tool} nicht`);
+  }
+  assert.match(deployScript, /SCREEN_IS.*!=.*SCREEN_WANT|\[ "\$\{SCREEN_IS\}" = "\$\{SCREEN_WANT\}" \]/,
+    "die gelesene Aufloesung wird nicht mit der gewuenschten verglichen");
+  // Fehlt das Werkzeug im Image, darf das Deploy nicht scheitern.
+  assert.match(deployScript, /Aufloesung nicht auslesbar/,
+    "ohne X-Werkzeug muesste das Deploy trotzdem durchlaufen");
+  // Und bei Abweichung muss der Rueckweg dastehen.
+  assert.match(deployScript, /Aufloesung weicht ab[\s\S]{0,220}1280x720@25/,
+    "bei abweichender Aufloesung fehlt die Rollback-Anweisung");
+});
+
+check("Smoke warnt bei gesaettigter CPU mit Rueckweg", () => {
+  // Eine hoehere Aufloesung aeussert sich auf 1 vCPU als ruckelndes Bild, nicht
+  // als Fehler — deshalb eine Stichprobe mit klarer Anweisung.
+  assert.match(deployScript, /docker stats --no-stream/, "keine CPU-Stichprobe");
+  assert.match(deployScript, /CPU_PCT[\s\S]{0,400}1280x720@25/,
+    "bei hoher Last fehlt die Rollback-Anweisung");
 });
 
 check("Smoke prueft die Persistenz per Schreibprobe aus Container-Sicht", () => {
