@@ -51,6 +51,87 @@ einem Zug entstehen:
 Eine bereits umgewandelte Anfrage legt kein zweites Projekt an, sondern öffnet
 das bestehende.
 
+## 1b. Die Weggabelung: Offerte zuerst oder Direktprojekt
+
+Jeder neue Vorgang startet auf **genau einem** von zwei Wegen. Es gibt keine
+dritte, unklare Route.
+
+| Weg | Ablauf | Angebotsschritt |
+| --- | --- | --- |
+| **Offerte zuerst** | Bedarf → Offerte erstellen → senden → Entscheidung → Umsetzung | ja |
+| **Direktprojekt** | Bedarf → Leistung & Vertrag → Umsetzung → Änderungen → Freigabe | bewusst übersprungen, sichtbar markiert |
+
+Die Wahl steht zuoberst auf `#/flowertech` unter **Neue Zusammenarbeit starten**.
+Auch **Anfrage → Projekt** legt nichts mehr ohne Wahl an, sondern öffnet dieselbe
+Entscheidung.
+
+**Kein paralleles Datenmodell.** Ein Angebotsvorgang *ist* ein
+FlowerTech-Projekt. Wird die Offerte angenommen, wird dasselbe Projekt zum
+Umsetzungsprojekt (`pipelineStage: "build"`); wird sie abgelehnt, endet derselbe
+Vorgang (`ftOutcome: "lost"`, archiviert). Es entsteht in **keinem** Fall ein
+zweites Projekt.
+
+### Beilage zur Offerte
+
+Vor dem Senden wird verbindlich gewählt, was mitgeht:
+
+| Beilage | Was passiert |
+| --- | --- |
+| **Vision Room** | Ein persönlicher Link `https://flowertech.ch/?v=<token>#vision`. Die Ausarbeitung der Kundschaft hängt an genau dieser Offerte und ergänzt deren Bedarf — ohne Doppelanlage. |
+| **Website-Beispiel** | Eine echte, selbst gepflegte Vorschau-URL. **Es wird kein Link erfunden.** Fehlt sie, sagt die UI genau das und bietet den Vision Room an. |
+
+### Vision Room → Direktprojekt
+
+Der Vision Room auf flowertech.ch erfasst Art, Idee, Funktionen und E-Mail. Beim
+Absenden entsteht **ohne manuelle Nacharbeit** ein FlowerTech-Direktprojekt:
+Titel aus der Idee, Typ aus der Art, Funktionen als Bedarf und als normale
+Quantus-Aufgaben, Route `direct`, Phase *Bestandesaufnahme*.
+
+## 1c. Datenverträge
+
+**`POST /.netlify/functions/flowertech-portal`**
+
+```json
+{
+  "kind": "vision",
+  "token": "<optional: 24–64 Zeichen [A-Za-z0-9_-]>",
+  "payload": { "type": "Website|Web-Programm|Web-App",
+               "idea": "…", "features": ["…"], "email": "…" },
+  "idempotencyKey": "ft_…",
+  "website": ""
+}
+```
+
+Antworten: `201 {ok, submissionId}` · `200 {ok, duplicate:true}` ·
+`400` (unbrauchbar/ungültiger Token) · `401` (keine Herkunft, keine Signatur) ·
+`403` (fremde Herkunft) · `429` (Ratenlimit) · `202` (Honeypot, still verworfen).
+
+**Zuordnung:**
+
+| Token | Wirkung |
+| --- | --- |
+| keiner | neuer Vorgang → Direktprojekt. Nur aus dem Browser und nur von erlaubter Herkunft. |
+| `shares[projectId].visionToken` | Ausarbeitung zur Offerte dieses Vorgangs |
+| `shares[projectId].formToken` | Bedarfsformular |
+| `shares[projectId].portalToken` | Änderungswunsch |
+
+**Persistierte Felder** am Projekt: `ftRoute`, `ftRouteDecidedAt`,
+`ftRouteSource`, `ftOfferAttachment {kind, visionToken, exampleUrl}`,
+`ftVision`, `ftOutcome`, `sourceVisionId`.
+
+**Sicherheit:** Der Token steht im öffentlichen Link, enthält aber keine
+Projekt-ID und keinen Zugang zu Quantus. Herkunftsprüfung, Honeypot, Grössen-
+und Ratenlimit gelten unverändert; der Idempotenz-Schlüssel verhindert
+Doppelanlagen bei Doppelklick und Wiederholung.
+
+### Migration und Abwärtskompatibilität
+
+**Es werden keine Daten angefasst.** Bestehende Projekte tragen kein `ftRoute`;
+ihr Weg wird beim *Lesen* abgeleitet: Wer bereits eine Offerte hat, gilt als
+*Offerte zuerst*, alle anderen als *Direktprojekt*. Damit hat jedes Projekt
+genau einen Weg, ohne Migrationsschritt und ohne dass sich für bestehende
+Vorgänge etwas ändert.
+
 ## 2. Bedarfsformular
 
 Ein Feldset, drei Verwendungen — definiert in `BRIEFING_FIELDS`:

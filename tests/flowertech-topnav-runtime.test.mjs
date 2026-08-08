@@ -209,4 +209,69 @@ function renderAt(hash) {
     "ein Prozessschritt landet nicht im passenden Projektbereich");
 }
 
+// ── 9. Der Start ist eindeutig: genau zwei Wege ───────────────────────────
+{
+  const { html } = renderAt("#/flowertech");
+  ok(/Neue Zusammenarbeit starten/.test(html), "der eindeutige Einstieg fehlt auf der Übersicht");
+  ok(/Offerte zuerst/.test(html) && /Direktprojekt/.test(html), "die zwei Wege stehen nicht zur Wahl");
+  const routeButtons = (html.match(/class="ft-route[ "]/g) || []).length;
+  ok(routeButtons === 2, `es stehen ${routeButtons} Wege zur Wahl statt genau 2`);
+  ok(/_ftPickNewRoute\('offer_first'\)/.test(html) && /_ftPickNewRoute\('direct'\)/.test(html),
+    "die Wegwahl ist nicht verdrahtet");
+  // Der Start steht vor dem Prozess und damit ganz oben.
+  ok(html.indexOf("Neue Zusammenarbeit starten") < html.indexOf("Nächster Schritt"),
+    "der Einstieg steht nicht zuoberst");
+}
+
+// ── 10. Anfrage → Projekt wählt nicht mehr still ──────────────────────────
+{
+  const source = fs.readFileSync(path.join(root, "public/flowertech.js"), "utf8");
+  ok(/ft\.ui\.routeChoice = \{ inquiryId: inquiryId \};/.test(source),
+    "ein Klick auf die Anfrage legt weiterhin ohne Wahl ein Projekt an");
+  ok(/core\.ROUTES\.some\(function \(r\) \{ return r\.key === route; \}\)/.test(source),
+    "die Route wird nicht gegen die erlaubten Wege geprüft");
+  ok(/window\._ftCancelRouteChoice/.test(source), "die Wegwahl lässt sich nicht abbrechen");
+
+  // Offerte: Beilage, Vision-Link und Entscheid.
+  ok(/window\._ftSetOfferAttachment = function/.test(source), "die Beilagen-Wahl fehlt");
+  ok(/window\._ftSetExampleUrl = function/.test(source), "die Beispiel-URL lässt sich nicht pflegen");
+  ok(/function visionLinkFor\(projectId\)/.test(source), "der persönliche Vision-Link fehlt");
+  ok(/\/\?v=" \+ token \+ "#vision/.test(source), "der Vision-Link zeigt nicht auf den Vision Room");
+  ok(/sharesOf\(projectId\)\.visionToken = /.test(source),
+    "der Vision-Token hängt nicht am Vorgang — die Ausarbeitung fände nicht zurück");
+  ok(/window\._ftOfferDecision = function/.test(source), "Annahme/Ablehnung fehlt");
+  ok(/project\.ftOutcome = "lost"/.test(source), "die Ablehnung schliesst den Vorgang nicht als verloren");
+  ok(!/createEntity\("project"[\s\S]{0,400}?ftOutcome/.test(source),
+    "bei der Entscheidung entsteht ein zweites Projekt");
+
+  // Vision Room → Direktprojekt, genau einmal.
+  ok(/function createProjectFromVision\(entry\)/.test(source), "der Vision-Room-Trigger fehlt");
+  ok(/p\.sourceVisionId === entry\.id/.test(source),
+    "derselbe Vision-Eingang könnte zwei Projekte anlegen");
+  ok(/entry\.kind === "vision" && !entry\.token/.test(source),
+    "eine Vision ohne Token wird nicht als neuer Vorgang behandelt");
+  ok(/function applyVision\(projectId, payload\)/.test(source),
+    "eine Vision mit Token ergänzt kein bestehendes Projekt");
+}
+
+// ── 11. Der Vision Room sendet wirklich an Quantus ────────────────────────
+// Zweites Repo, aber derselbe Vertrag — deshalb hier mitgeprüft, sofern der
+// Klon vorhanden ist.
+{
+  const visionPage = "/workspace/flowertech/index.html";
+  if (fs.existsSync(visionPage)) {
+    const page = fs.readFileSync(visionPage, "utf8");
+    ok(/flowertech-portal/.test(page), "der Vision Room ruft die Quantus-Funktion nicht auf");
+    ok(/kind: 'vision'/.test(page), "der Vision Room sendet die falsche Art");
+    ok(/idempotencyKey/.test(page), "der Vision Room sichert nicht gegen Doppeleinreichung");
+    ok(/id="vrHp"/.test(page), "dem Vision Room fehlt der Honeypot");
+    ok(/URLSearchParams\(location\.search\)\.get\('v'\)/.test(page),
+      "der Vision Room liest den Zuordnungs-Token nicht");
+    ok(/\{24,64\}/.test(page), "der Token wird nicht auf Form geprüft");
+    const toml = fs.readFileSync("/workspace/flowertech/netlify.toml", "utf8");
+    ok(/connect-src[^;]*management-xo2-pro/.test(toml),
+      "die CSP verbietet den Aufruf an Quantus — der Versand würde im Browser blockiert");
+  }
+}
+
 console.log(`flowertech topnav runtime: ok (${checks} Pruefungen)`);
