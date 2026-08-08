@@ -20,6 +20,9 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// Denselben Workflow-Kern bereitstellen, den der Browser als Modul laedt —
+// sonst faellt der Prozessblock still aus.
+const CORE = (await import(path.join(root, "public/flowertech-workflow-core.js"))).default;
 let checks = 0;
 const ok = (condition, message) => { assert.ok(condition, message); checks++; };
 
@@ -39,6 +42,7 @@ function makeSandbox(hash) {
   };
   const win = {
     APP: { state: { data } },
+    FlowerTechWorkflow: CORE,
     location: { hash, origin: "https://example.test", pathname: "/index.html" },
     addEventListener() {},
     removeEventListener() {},
@@ -174,6 +178,35 @@ function renderAt(hash) {
   const build = /<meta\s+name="quantus-build"\s+content="([^"]*)"/.exec(index);
   ok(build && /flowertech-topnav-removed/.test(build[1]),
     `die Bau-Kennung wurde nicht hochgezogen: ${build && build[1]}`);
+}
+
+// ── 8. Der Prozess steht auf der Übersicht, vor den Bereichen ─────────────
+// "Eine Anfrage wird zum Projekt" soll nicht gesucht werden muessen, sondern
+// als naechster Schritt auftauchen.
+{
+  const { html } = renderAt("#/flowertech");
+  const prozess = html.indexOf("Nächster Schritt");
+  const bereiche = html.indexOf(">Bereiche<");
+  ok(prozess > 0, "der Prozessblock fehlt auf der Übersicht");
+  ok(bereiche > 0 && prozess < bereiche, "der Prozess steht nicht vor den Bereichen");
+  // Ohne Daten ein ruhiger, erklaerender Leerzustand statt einer leeren Karte.
+  ok(/Nichts offen/.test(html), "der Leerzustand des Prozessblocks fehlt");
+
+  const source = fs.readFileSync(path.join(root, "public/flowertech.js"), "utf8");
+  ok(/function processHtml\(\)/.test(source), "processHtml() fehlt");
+  ok(/core\.nextProcessSteps\(/.test(source),
+    "der Prozessblock rechnet nicht mit der gemeinsamen Logik aus dem Kern");
+  // Anfrage -> Projekt ist ein vollstaendiger Schritt, kein blosser Knopf.
+  ok(/core\.projectFromInquiry\(/.test(source),
+    "_ftInquiryToProject baut das Projekt nicht ueber den geteilten Kern");
+  ok(/ensureToken\(projectId, "formToken"\)/.test(source),
+    "beim Umwandeln entsteht kein teilbarer Formularlink");
+  ok(/inquiry\.projectId = projectId;/.test(source),
+    "die Anfrage wird nicht als umgewandelt markiert — sie liesse sich zweimal umwandeln");
+  ok(/projects\(\)\.find\(function \(p\) \{ return p\.sourceInquiryId === inquiryId; \}\)/.test(source),
+    "eine bereits umgewandelte Anfrage erzeugt ein zweites Projekt");
+  ok(/window\._ftOpenProjectAt = function/.test(source),
+    "ein Prozessschritt landet nicht im passenden Projektbereich");
 }
 
 console.log(`flowertech topnav runtime: ok (${checks} Pruefungen)`);

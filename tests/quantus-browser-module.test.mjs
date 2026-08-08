@@ -121,6 +121,9 @@ const HOST_MARKUP = index.slice(index.indexOf('<section class="qbr-host"'),
                                 index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
 const BROWSER_JS = index.slice(index.indexOf("// ── QUANTUS BROWSER —"),
                                index.indexOf("\nfunction goBack() {"));
+// Der vorbelegte Benutzername steht nur als Konstante im Skript — er wird aus
+// der Quelle gelesen, damit der Test ihn nicht selbst im Repo verewigt.
+const QUANTUS_BROWSER_USER = (/const QUANTUS_BROWSER_USER\s*=\s*'([^']+)'/.exec(BROWSER_JS) || [])[1];
 
 check("Route, App-Eintrag und View sind vorhanden", () => {
   assert.match(index, /case "browser": html = viewBrowser\(\); break;/);
@@ -188,6 +191,57 @@ check("alle data-action-Werte der Browser-UI haben einen Handler", () => {
   }
 });
 
+check("die Oberflaeche zeigt keinerlei Zugangsdaten-Hilfe", () => {
+  // Der frueher eingeblendete Anmeldehinweis ("Die Anmeldung erfolgt direkt im
+  // Browserfenster — Benutzer quantus") ist entfernt. Er darf auch nicht als
+  // wegklickbarer Streifen zurueckkommen: der Login gehoert allein in die
+  // Maske des Dienstes, Quantus gibt dazu keine Hilfestellung aus.
+  assert.doesNotMatch(HOST_MARKUP, /qbr-note|quantusBrowserNote/,
+    "der Hinweisstreifen ist wieder im Markup");
+  assert.doesNotMatch(BROWSER_JS, /quantusBrowserShowNote|quantusBrowserDismissNote|NOTE_KEY/,
+    "die Hinweis-Logik ist wieder im Modul");
+  assert.ok(!index.includes('data-action="browser-dismiss-note"'),
+    "die Aktion zum Wegklicken des Hinweises ist zurueck");
+  assert.ok(!index.includes('case "browser-dismiss-note":'),
+    "der Handler zum Wegklicken des Hinweises ist zurueck");
+
+  // Kein sichtbarer Text der Huelle nennt Benutzer, Passwort oder Anmeldeweg.
+  // Geprueft wird der sichtbare Anteil: Textknoten und die Attribute, die der
+  // Browser anzeigt (title, aria-label, placeholder, value).
+  const visible = [
+    ...HOST_MARKUP.replace(/<[^>]*>/g, "\n").split("\n"),
+    ...[...HOST_MARKUP.matchAll(/(?:title|aria-label|placeholder|value)="([^"]*)"/g)].map(m => m[1])
+  ];
+  // Dazu der Text, den die Statuszustaende einblenden. Nur einzeilige
+  // Zeichenketten aus quantusBrowserStatusHtml() — die vier gerenderten
+  // Zustaende selbst prueft der Laufzeittest.
+  const statusFn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserStatusHtml("),
+                                    BROWSER_JS.indexOf("// Die Statusflaeche liegt ueber der Buehne"));
+  assert.ok(statusFn.length > 400, "quantusBrowserStatusHtml() nicht gefunden");
+  const rendered = [...statusFn.matchAll(/'([^'\n]+)'/g)].map(m => m[1]);
+  const FORBIDDEN = /\bBenutzer\b|\bBenutzername\b|\bPasswort\b|\bKennwort\b|\bZugangsdaten\b|\bAnmeldedaten\b|\bcredentials?\b|\busername\b|\bpassword\b|\bAnmeldung erfolgt\b|\bmelde dich an\b|\banmelden mit\b/i;
+  for (const text of [...visible, ...rendered]) {
+    assert.doesNotMatch(text, FORBIDDEN,
+      `sichtbarer Zugangsdaten-Hinweis in der Browser-Oberflaeche: ${JSON.stringify(text.slice(0, 90))}`);
+  }
+
+  // Auf den Benutzernamen als Text laesst sich nicht sinnvoll pruefen — er
+  // heisst wie das Produkt. Aussagekraeftig ist die Form: der entfernte
+  // Streifen hob den Wert per <b> hervor. Die Kopfzeile braucht keinerlei
+  // Hervorhebungs- oder Code-Auszeichnung, also darf sie keine haben.
+  assert.doesNotMatch(HOST_MARKUP, /<(b|strong|code|kbd|samp)[\s>]/i,
+    "hervorgehobener Wert in der Kopfzeile — so sah der Zugangsdaten-Hinweis aus");
+
+  // Der Dienst authentifiziert weiterhin selbst. Die Einbettung uebergibt nur
+  // die Feldvorbelegung, nie ein Geheimnis — beides bleibt so.
+  assert.ok(QUANTUS_BROWSER_USER, "die Benutzer-Konstante fehlt im Modul");
+  const srcFn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserSrc()"),
+                                 BROWSER_JS.indexOf("async function quantusBrowserProbe"));
+  assert.match(srcFn, /usr=/, "die Feldvorbelegung wurde mitentfernt — der Login-Flow aendert sich");
+  assert.doesNotMatch(srcFn, /[?&](pwd|pass|password|token|secret|key|auth)=/i,
+    "die Einbettung uebergibt Anmeldedaten in der URL");
+});
+
 check("die Kopfzeile baut keine zweite Browseroberflaeche nach", () => {
   // Chromium zeigt Tab-, Adress- und Erweiterungsleiste selbst. Eine
   // nachgebaute Quantus-Variante darueber waere doppelt und irrefuehrend.
@@ -226,11 +280,17 @@ check("Browser-first-Layout: die Buehne bekommt die ganze Zelle", () => {
   assert.match(css, /\.qbr-stage\{[^}]*min-height:0/, "ohne min-height:0 laeuft die Buehne ueber");
   // Kein Innenabstand rund um den Stream.
   assert.doesNotMatch(css, /\.qbr-stage\{[^}]*padding:[1-9]/, "unnoetiger Innenabstand an der Buehne");
-  // 1280x720 bleibt unverzerrt: exaktes Seitenverhaeltnis als CSS-Rueckfall.
-  assert.match(css, /\.qbr-canvas\{[^}]*aspect-ratio:16 \/ 9/);
-  assert.match(BROWSER_JS, /const QUANTUS_BROWSER_REMOTE_W = 1280/);
-  assert.match(BROWSER_JS, /const QUANTUS_BROWSER_REMOTE_H = 720/);
+  // Unverzerrt: das Verhaeltnis kommt aus der echten Remote-Aufloesung, der
+  // feste Wert ist nur der Rueckfall ohne Skript.
+  assert.match(css, /\.qbr-canvas\{[^}]*aspect-ratio:var\(--qbr-ratio,16 \/ 9\)/);
   assert.match(BROWSER_JS, /function quantusBrowserFitBox\(/, "keine Groessenberechnung");
+  assert.match(BROWSER_JS, /function quantusBrowserScreen\(/, "keine Aufloesungsquelle");
+  // Niemals per transform skalieren — der neko-Client rechnet die Mausposition
+  // aus der Elementgroesse, eine Skalierung wuerde jeden Klick versetzen.
+  assert.doesNotMatch(css, /\.qbr-(canvas|frame)\{[^}]*transform:\s*scale/,
+    "skalierte Buehne — die Zeigerkoordinaten waeren versetzt");
+  assert.doesNotMatch(BROWSER_JS, /(canvas|frame)\.style\.transform/,
+    "skalierte Buehne — die Zeigerkoordinaten waeren versetzt");
 });
 
 check("Vollbild laeuft in der App und hat einen CSS-Rueckfall", () => {
@@ -253,6 +313,66 @@ check("Vollbild laeuft in der App und hat einen CSS-Rueckfall", () => {
   // Der Wechsel darf das iframe nicht anfassen.
   assert.doesNotMatch(toggle.slice(0, toggle.indexOf("\n}\n")), /createElement|\.src =/,
     "der Vollbildwechsel baut den Stream neu auf — der Zustand ginge verloren");
+});
+
+check("die globale Kopfzeile hat einen Vollbild-Knopf", () => {
+  const topbar = index.slice(index.indexOf('<button class="topbar-btn" id="btnSpotlight"'),
+                             index.indexOf('<button class="topbar-btn" id="btnSettings"'));
+  assert.match(topbar, /id="btnQuantusFullscreen"[^>]*data-action="browser-fullscreen"/,
+    "kein „Quantus Vollbild“ in der globalen Kopfzeile");
+  assert.match(topbar, /id="btnQuantusFullscreen"[^>]*aria-pressed="false"/,
+    "der Knopf meldet keinen Zustand");
+  // Er zeigt sich nur dort, wo er etwas tut.
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  assert.match(css, /body:not\(\.qbr-mode\) #btnQuantusFullscreen\{display:none\}/);
+  // Beide Vollbild-Knoepfe werden gemeinsam nachgefuehrt.
+  assert.match(BROWSER_JS, /\["quantusBrowserFullBtn", "btnQuantusFullscreen"\]/,
+    "der globale Knopf wird nicht mitgefuehrt");
+});
+
+check("im Vollbild verschwindet die uebrige Quantus-Oberflaeche", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  for (const sel of [".sidebar", ".topbar", "#browserTabBar", "#panelDock"]) {
+    assert.ok(css.includes("body.qbr-full " + sel), `${sel} bleibt im Vollbild stehen`);
+  }
+  assert.match(css, /body\.qbr-full #panelDock\{display:none !important\}/);
+  // Die Leiste im Vollbild ist flacher — jede Zeile gehoert dem Stream.
+  assert.match(css, /body\.qbr-full \.qbr-bar\{height:32px/);
+  // Polaris bleibt erreichbar.
+  assert.match(css, /body\.qbr-full #qc-fab,body\.qbr-full #qc-panel\{z-index:/);
+});
+
+check("auf Breitbild wird die Randflaeche nutzbar statt leer", () => {
+  const css = index.slice(index.indexOf('<style id="quantusBrowserCss">'),
+                          index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
+  // Ein geoeffnetes Panel legt sich in den freien Rand, statt den Stream zu
+  // ueberdecken oder zu verkleinern.
+  assert.match(css, /body\.qbr-mode #panelDock\{[^}]*var\(--qbr-side,0px\)/,
+    "das Panel nutzt die freie Randflaeche nicht");
+  assert.match(BROWSER_JS, /setProperty\("--qbr-side"/, "die freie Randbreite wird nicht gemeldet");
+  assert.match(BROWSER_JS, /setProperty\("--qbr-ratio"/, "das Bildverhaeltnis wird nicht gemeldet");
+});
+
+check("die Remote-Aufloesung ist nachziehbar, ohne Geheimnisse", () => {
+  // Wird NEKO_SCREEN auf dem VPS geaendert, muss das Frontend folgen koennen —
+  // sonst entsteht wieder ein Rand. Der Nachzieh-Wert ist eine Bildschirm-
+  // groesse, niemals eine Zugangsangabe.
+  assert.match(BROWSER_JS, /const QUANTUS_BROWSER_SCREEN_KEY = 'quantus-browser-screen'/);
+  const fn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserScreen()"),
+                              BROWSER_JS.indexOf("// Groesstes Rechteck"));
+  assert.match(fn, /\\d\{3,4\}/, "der Nachzieh-Wert wird nicht auf Ziffern begrenzt");
+  assert.match(fn, /w >= 640 && w <= 5120 && h >= 360 && h <= 2160/,
+    "der Nachzieh-Wert wird nicht auf gueltige Bildschirmgroessen begrenzt");
+  // Der eingebaute Wert muss zur Container-Voreinstellung passen, sonst
+  // letterboxt die Buehne gegen eine Aufloesung, die es gar nicht gibt.
+  const composeScreen = /NEKO_DESKTOP_SCREEN: "\$\{NEKO_SCREEN:-(\d+)x(\d+)@/.exec(compose);
+  assert.ok(composeScreen, "NEKO_SCREEN-Vorgabe im Compose nicht gefunden");
+  assert.match(BROWSER_JS, new RegExp("QUANTUS_BROWSER_REMOTE_W = " + composeScreen[1] + "\\b"),
+    `Frontend und Container sind auseinandergelaufen (Container: ${composeScreen[1]}x${composeScreen[2]})`);
+  assert.match(BROWSER_JS, new RegExp("QUANTUS_BROWSER_REMOTE_H = " + composeScreen[2] + "\\b"),
+    `Frontend und Container sind auseinandergelaufen (Container: ${composeScreen[1]}x${composeScreen[2]})`);
 });
 
 check("Seitenbereiche draengen die Buehne nicht zusammen", () => {
@@ -282,6 +402,18 @@ check("nichts schluckt Klicks ueber der Buehne, der Fokus kommt an", () => {
   // Ohne Fokus kaeme keine Tastatureingabe im Remote-Chromium an.
   assert.match(BROWSER_JS, /function quantusBrowserFocusFrame\(/);
   assert.match(BROWSER_JS, /frame\.focus\(\{ preventScroll: true \}\)/);
+  // Kein schwebender Knopf ueber dem Stream: der Polaris-Knopf sass in der
+  // rechten unteren Ecke und fing dort Klicks ab, die Chromium gehoerten.
+  assert.match(css, /body\.qbr-mode #qc-fab\{display:none\}/,
+    "der schwebende Polaris-Knopf liegt wieder ueber dem Stream");
+  assert.ok(HOST_MARKUP.includes('data-action="browser-assist"'),
+    "ohne den schwebenden Knopf gibt es keinen Weg mehr zu Polaris");
+  // Der Toast-Container spannt sich unsichtbar ueber die rechte untere Ecke —
+  // ueber dem Stream fing er dort Klicks ab, auch ohne sichtbaren Toast.
+  assert.match(index, /\.toast-container\{[^}]*pointer-events:none\}/,
+    "der Toast-Container faengt wieder Klicks ab");
+  assert.match(index, /\.toast\{[^}]*pointer-events:auto\}/,
+    "Toasts selbst muessen anklickbar bleiben");
   // ... aber nie auf Kosten eines Eingabefelds: ein Re-Render darf dem Nutzer
   // nicht mitten im Tippen die Tastatur wegnehmen.
   const focusFn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserFocusFrame("));

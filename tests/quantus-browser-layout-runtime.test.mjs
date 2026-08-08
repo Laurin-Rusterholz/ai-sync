@@ -65,6 +65,7 @@ class FakeElement {
     this.classList = new FakeClassList();
     this.dataset = {};
     this.style = {};
+    this.style.setProperty = (k, v) => { this.style[k] = v; };
     this.attributes = {};
     this.hidden = false;
     this.id = "";
@@ -150,14 +151,13 @@ function makeDom() {
   const status = el("span", "quantusBrowserStatus", "qbr-status");
   const statusText = el("span", null, "qbr-status-text");
   const fullBtn = el("button", "quantusBrowserFullBtn", "qbr-btn qbr-btn-main");
-  const note = el("div", "quantusBrowserNote", "qbr-note");
+  const topFullBtn = el("button", "btnQuantusFullscreen", "topbar-btn");
   const stage = el("div", "quantusBrowserStage", "qbr-stage");
   const canvas = el("div", "quantusBrowserCanvas", "qbr-canvas");
   const overlay = el("div", "quantusBrowserOverlay", "qbr-overlay");
   const qcFab = el("button", "qc-fab");
 
   host.hidden = true;
-  note.hidden = true;
   overlay.hidden = true;
   status.dataset.state = "idle";
   statusText.textContent = "Pausiert";
@@ -166,7 +166,6 @@ function makeDom() {
   bar.appendChild(status);
   bar.appendChild(fullBtn);
   host.appendChild(bar);
-  host.appendChild(note);
   stage.appendChild(canvas);
   stage.appendChild(overlay);
   host.appendChild(stage);
@@ -175,7 +174,9 @@ function makeDom() {
   app.appendChild(host);
   body.appendChild(app);
   body.appendChild(qcFab);
+  body.appendChild(topFullBtn);
 
+  body.style.setProperty = (k, v) => { body.style[k] = v; };
   doc.body = body;
   doc.activeElement = body;
   doc.documentElement = el("html");
@@ -190,7 +191,7 @@ function makeDom() {
   doc.removeEventListener = () => {};
   doc.dispatch = (type, event) => { for (const fn of doc._listeners.get(type) || []) fn(event || { type }); };
 
-  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, note, stage, canvas, overlay, qcFab } };
+  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, topFullBtn, stage, canvas, overlay, qcFab } };
 }
 
 // ── Steuerbare Uhr ─────────────────────────────────────────────────────────
@@ -230,6 +231,7 @@ function makeApp(options = {}) {
   const clock = makeClock();
   const calls = { closeSlidePanel: 0, openedTabs: [], fetches: [] };
   const store = new Map();
+  if (options.screen) store.set("quantus-browser-screen", options.screen);
 
   const win = {
     innerWidth: options.innerWidth ?? 1440,
@@ -248,7 +250,7 @@ function makeApp(options = {}) {
   const layout = () => {
     const nav = nodes.app.classList.contains("sidebar-collapsed") ? 0 : 188;
     const full = doc.body.classList.contains("qbr-full");
-    const barH = 40 + (nodes.note.hidden ? 0 : 26);
+    const barH = full ? 32 : 40;   // im Vollbild flacher, sonst die Kopfzeile
     nodes.stage.clientWidth = full ? win.innerWidth : Math.max(0, win.innerWidth - nav);
     nodes.stage.clientHeight = full ? win.innerHeight - barH : Math.max(0, win.innerHeight - 52 - barH);
   };
@@ -294,6 +296,7 @@ function makeApp(options = {}) {
       state: quantusBrowserState,
       src: quantusBrowserSrc,
       fitBox: quantusBrowserFitBox,
+      screen: quantusBrowserScreen,
       viewportClass: quantusBrowserViewportClass,
       fit: quantusBrowserFit,
       enter: quantusBrowserEnter,
@@ -303,7 +306,6 @@ function makeApp(options = {}) {
       toggleFullscreen: quantusBrowserToggleFullscreen,
       setFullscreen: quantusBrowserSetFullscreen,
       statusHtml: quantusBrowserStatusHtml,
-      dismissNote: quantusBrowserDismissNote,
       view: viewBrowser,
       IDLE_MS: QUANTUS_BROWSER_IDLE_MS,
       RETRY_MS: QUANTUS_BROWSER_RETRY_MS,
@@ -317,15 +319,12 @@ function makeApp(options = {}) {
     api, doc, nodes, clock, calls, win, layout, sandbox, net, frame,
     // Erst Grosse nachziehen, dann rechnen — genau wie der echte Resize-Pfad.
     resize(w, h) { win.innerWidth = w; win.innerHeight = h; layout(); win.dispatch("resize"); },
-    // Der Browser meldet den fertigen Stream. Danach noch einmal umbrechen:
-    // der eingeblendete Anmeldehinweis veraendert die Resthoehe.
+    // Der Browser meldet den fertigen Stream.
     loadFrame() {
       layout();
       const f = frame();
       ok(!!f, "kein iframe zum Laden vorhanden");
       f.dispatch("load");
-      layout();
-      api.fit();
     }
   };
 }
@@ -401,22 +400,17 @@ console.log("\n3. Verbinden, Flaechenberechnung und Statusanzeige");
   eq(app.nodes.statusText.textContent, "Verbunden", "kein lesbarer Verbindungsstatus");
   ok(app.nodes.overlay.hidden === true, "der Ladehinweis bleibt ueber dem Stream stehen");
   eq(app.nodes.overlay.innerHTML, "", "der Ladehinweis wurde nicht geleert");
-  ok(app.nodes.note.hidden === false, "der Anmeldehinweis erscheint nicht");
 
-  // 1440x900: 188px Navigation, 52px Topbar, 40px Kopfzeile, 26px Hinweis.
+  // 1440x900: 188px Navigation, 52px Topbar, 40px Kopfzeile — sonst nichts.
   eq(app.nodes.canvas.style.width, "1252px", "die Buehne nutzt die Breite nicht aus");
   eq(app.nodes.canvas.style.height, "704px", "die Buehne nutzt die Hoehe nicht aus");
   ok(parseInt(app.nodes.canvas.style.width, 10) > 1000 && parseInt(app.nodes.canvas.style.height, 10) > 600,
     "auf 1440x900 entsteht eine Briefmarke statt einer Arbeitsflaeche");
   ok(app.frame().focusCount > 0, "das iframe bekommt keinen Fokus — Tastatur kaeme nie an");
 
-  // Hinweis wegklicken gibt Hoehe frei; auf 1440x900 ist die Breite die
-  // begrenzende Seite, die Buehne bleibt also formatfuellend.
-  const stageHBefore = app.nodes.stage.clientHeight;
-  app.api.dismissNote();
-  ok(app.nodes.note.hidden === true, "der Anmeldehinweis laesst sich nicht ausblenden");
+  // Ueber der Buehne sitzt nur die Kopfzeile: 900 - 52 - 40 = 808px Resthoehe.
+  eq(app.nodes.stage.clientHeight, 808, "ueber der Buehne haengt noch ein zweiter Streifen");
   app.resize(1440, 900);
-  ok(app.nodes.stage.clientHeight > stageHBefore, "der weggeklickte Hinweis gibt keine Hoehe frei");
   eq(app.nodes.canvas.style.width, "1252px", "die Buehne nutzt die Breite nicht mehr aus");
   eq(app.nodes.canvas.style.height, "704px", "die Buehne haelt das Seitenverhaeltnis nicht");
 
@@ -480,7 +474,6 @@ console.log("\n5. In-App-Vollbild und CSS-Rueckfall");
   app.api.enter();
   await flush();
   app.loadFrame();
-  app.api.dismissNote();
   const frameBefore = app.frame();
   const widthBefore = app.nodes.canvas.style.width;
 
@@ -666,10 +659,6 @@ console.log("\n10. Sicherheit, Fokus und Klickdurchlaessigkeit");
   await flush();
   ok(app.frame().focusCount > before, "beim Zurueckkommen bekommt das iframe keinen Fokus");
 
-  // Und der Merker fuer den Anmeldehinweis landet nicht im iframe-Aufruf.
-  app.api.dismissNote();
-  ok(!app.api.src().includes("note"), "der Hinweis-Merker landet in der URL");
-
   // Ein Re-Render darf niemandem mitten im Tippen die Tastatur wegnehmen.
   const typing = { tagName: "INPUT", isContentEditable: false, focus() {} };
   app.doc.activeElement = typing;
@@ -692,10 +681,114 @@ console.log("\n11. Rueckfall ohne ResizeObserver");
   app.api.enter();
   await flush();
   app.loadFrame();
-  app.api.dismissNote();
   app.resize(1280, 720);
   eq(app.nodes.canvas.style.width, "1092px", "ohne ResizeObserver wird nicht neu gerechnet");
   eq(app.nodes.canvas.style.height, "614px", "ohne ResizeObserver stimmt die Hoehe nicht");
+}
+
+// ═══ 12. Keine Zugangsdaten-Hilfe in der Oberflaeche ══════════════════════
+console.log("\n12. Keine sichtbare Zugangsdaten-Hilfe");
+{
+  const app = makeApp();
+
+  // Die Hinweis-Funktionen gibt es nicht mehr — es bleibt also nichts, was
+  // einen Anmeldestreifen einblenden koennte.
+  eq(typeof app.api.dismissNote, "undefined", "die Hinweis-Logik ist zurueck");
+  ok(app.doc.getElementById("quantusBrowserNote") === null,
+    "das Markup des Anmeldehinweises ist zurueck");
+
+  // Jeder Zustand, den der Nutzer zu sehen bekommt, wird wirklich gerendert
+  // und auf Zugangsdaten-Text geprueft — nicht nur der Quelltext.
+  const FORBIDDEN = /\bBenutzer\b|\bBenutzername\b|\bPasswort\b|\bKennwort\b|\bZugangsdaten\b|\bAnmeldedaten\b|\bcredentials?\b|\busername\b|\bpassword\b|\bAnmeldung erfolgt\b/i;
+
+  for (const state of ["checking", "offline", "tiny", "idle"]) {
+    const html = app.api.statusHtml(state, "network");
+    ok(!FORBIDDEN.test(html),
+      `Zustand "${state}" zeigt einen Zugangsdaten-Hinweis: ${JSON.stringify(html.slice(0, 120))}`);
+    // Auf den Benutzernamen selbst laesst sich nicht pruefen — er heisst wie
+    // das Produkt. Stattdessen die Form, in der so ein Hinweis auftritt: der
+    // entfernte Streifen hob den Wert per <b> hervor. Keiner der Zustaende
+    // braucht Hervorhebungs- oder Code-Auszeichnung, also darf keiner sie haben.
+    ok(!/<(b|strong|code|kbd|samp)[\s>]/i.test(html),
+      `Zustand "${state}" hebt einen Wert hervor — so sah der Zugangsdaten-Hinweis aus`);
+  }
+
+  // Und die Zustaende, die im echten Ablauf eingeblendet werden, ebenso.
+  app.api.enter();
+  await flush();
+  ok(!FORBIDDEN.test(app.nodes.overlay.innerHTML), "der Ladezustand zeigt eine Zugangsdaten-Hilfe");
+  app.loadFrame();
+  eq(app.nodes.overlay.innerHTML, "", "nach dem Laden bleibt Text ueber dem Stream stehen");
+
+  // Der Dienst authentifiziert weiterhin selbst: die Einbettung uebergibt
+  // ausschliesslich die Feldvorbelegung, nie ein Geheimnis.
+  const src = app.api.src();
+  ok(!/[?&](pwd|pass|password|token|secret|key|auth)=/i.test(src),
+    "die Einbettung uebergibt Anmeldedaten in der URL");
+  ok(src.includes("usr="), "die Feldvorbelegung wurde mitentfernt — der Login-Flow aendert sich");
+}
+
+// ═══ 13. Breitbild: keine halbe Buehne, kein toter Rand ═══════════════════
+console.log("\n13. Breitbild (Ultrawide)");
+{
+  // Live-Befund 08.08.2026 auf 4071x1288: der Stream war nur 1986x1117 gross,
+  // im Vollbild 2146x1207 — der Rest lag brach. Ursache ist nicht das Layout,
+  // sondern die Form des Remote-Bildschirms: ein 16:9-Bild kann eine 3.16:1
+  // breite Flaeche nicht fuellen, ohne verzerrt zu werden.
+  const app = makeApp({ innerWidth: 4071, innerHeight: 1288 });
+  app.api.enter();
+  await flush();
+  app.loadFrame();
+
+  // Buehne 3883x1196 -> hoehenbegrenzt auf 2126x1196.
+  eq(app.nodes.canvas.style.height, "1196px", "die Buehne nutzt die Hoehe nicht aus");
+  const w = parseInt(app.nodes.canvas.style.width, 10);
+  eq(w, 2126, "die Breite folgt nicht dem Bildverhaeltnis");
+  ok(Math.abs(w / 1196 - 16 / 9) < 0.01, "das Bild wird auf Breitbild verzerrt");
+  // Die freie Randbreite wird gemeldet — dort landet ein geoeffnetes Panel,
+  // statt den Stream zu ueberdecken.
+  eq(app.nodes.host.style["--qbr-side"], "878px", "die freie Randbreite wird nicht gemeldet");
+  eq(app.nodes.host.dataset.side, "wide", "der Breitbildfall wird nicht erkannt");
+  eq(app.nodes.host.style["--qbr-ratio"], "1280 / 720", "das Bildverhaeltnis wird nicht gemeldet");
+
+  // Vollbild: flachere Leiste, volle Viewporthoehe.
+  app.api.toggleFullscreen();
+  app.layout();
+  app.api.fit();
+  eq(app.nodes.canvas.style.height, "1256px", "im Vollbild bleibt Hoehe liegen");
+  eq(app.nodes.canvas.style.width, "2233px", "im Vollbild bleibt Breite liegen");
+  // Gegen den Live-Befund gerechnet: 2146x1207 -> 2233x1256.
+  ok(2233 > 2146 && 1256 > 1207, "das Vollbild ist nicht groesser als vorher");
+  eq(app.nodes.topFullBtn.getAttribute("aria-pressed"), "true",
+    "der globale Knopf meldet den Vollbildzustand nicht");
+  app.api.setFullscreen(false);
+  eq(app.nodes.topFullBtn.getAttribute("aria-pressed"), "false",
+    "der globale Knopf bleibt im Vollbildzustand haengen");
+
+  // Der eigentliche Hebel: eine breitere Remote-Aufloesung. Wird NEKO_SCREEN
+  // auf dem VPS umgestellt, zieht das Frontend ohne neuen Deploy nach.
+  const wide = makeApp({ innerWidth: 4071, innerHeight: 1288, screen: "2560x1080" });
+  wide.api.enter();
+  await flush();
+  wide.loadFrame();
+  eq(wide.api.screen().width, 2560, "der Nachzieh-Wert wird nicht uebernommen");
+  const ww = parseInt(wide.nodes.canvas.style.width, 10);
+  const wh = parseInt(wide.nodes.canvas.style.height, 10);
+  eq(wh, 1196, "mit Breitbildaufloesung stimmt die Hoehe nicht");
+  eq(ww, 2835, "mit Breitbildaufloesung stimmt die Breite nicht");
+  ok(ww > w * 1.3, `Breitbildaufloesung bringt kaum Flaeche: ${w} -> ${ww}`);
+  ok(Math.abs(ww / wh - 2560 / 1080) < 0.01, "mit Breitbildaufloesung wird verzerrt");
+  eq(wide.nodes.host.style["--qbr-ratio"], "2560 / 1080", "das Bildverhaeltnis folgt nicht");
+
+  // Krumme oder unsinnige Werte werden ignoriert — lieber der eingebaute Wert
+  // als eine verzerrte Buehne.
+  for (const bad of ["", "abc", "0x0", "99999x1", "1280", "1280x", "-1280x720", "6000x4000", "12x8"]) {
+    const a = makeApp({ screen: bad });
+    eq(a.api.screen().width, 1280, `unsinniger Wert wurde uebernommen: ${JSON.stringify(bad)}`);
+  }
+  // Beide Schreibweisen des Trenners sind erlaubt.
+  eq(makeApp({ screen: "1920×1080" }).api.screen().width, 1920, "das Mal-Zeichen wird nicht erkannt");
+  eq(makeApp({ screen: " 1600x900 " }).api.screen().height, 900, "Leerzeichen brechen den Wert");
 }
 
 console.log(`\n✓ Quantus-Browser-Buehne: ${checks} Laufzeitpruefungen bestanden\n`);

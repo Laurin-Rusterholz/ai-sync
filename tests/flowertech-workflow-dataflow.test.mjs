@@ -389,4 +389,103 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
   eq(W.formUrl("https://x.test", "kaputt"), "", "ein ungueltiger Token erzeugt trotzdem einen Link");
 }
 
+// ── 12. Der Prozess als Daten: was jetzt ansteht ───────────────────────────
+{
+  const inquiries = [
+    { id: "i1", name: "Anna", company: "Muster AG", email: "a@muster.ch", status: "new" },
+    { id: "i2", name: "Beat", email: "b@x.ch", status: "new", projectId: "prj_x" }, // schon Projekt
+    { id: "i3", name: "Cara", email: "c@x.ch", status: "lost" },                    // abgesagt
+  ];
+  eq(inquiries.filter(W.inquiryIsOpen).map((i) => i.id), ["i1"],
+    "offene Anfragen werden falsch bestimmt");
+
+  const steps = W.nextProcessSteps({
+    inquiries,
+    projects: [
+      { id: "p1", title: "Ohne Bedarf", pipelineStage: "lead" },
+      { id: "p2", title: "Bedarf da, kein Angebot", pipelineStage: "intake" },
+      { id: "p3", title: "Wartet auf Freigabe", pipelineStage: "approval" },
+      { id: "p4", title: "Archiviert", pipelineStage: "lead", status: "archived" },
+    ],
+    briefings: { p2: { goal: "Ziel" } },
+    offers: [],
+    changeRequests: [
+      { projectId: "p3", status: "new", title: "A" },
+      { projectId: "p3", status: "done", title: "B" },
+    ],
+  });
+  const byKey = Object.fromEntries(steps.map((s) => [s.key, s]));
+
+  // Der Schritt, um den es geht: eine Anfrage wird zum Projekt.
+  ok(!!byKey.inquiry, "der Schritt 'Anfrage → Projekt' fehlt");
+  eq(byKey.inquiry.count, 1, "es wird die falsche Zahl offener Anfragen gemeldet");
+  eq(byKey.inquiry.items[0].title, "Muster AG", "die Anfrage wird falsch beschriftet");
+
+  eq(byKey.briefing.items.map((i) => i.id), ["p1"], "der Bedarfsschritt trifft die falschen Projekte");
+  eq(byKey.offer.items.map((i) => i.id), ["p2"], "der Angebotsschritt trifft die falschen Projekte");
+  eq(byKey.changes.count, 1, "erledigte Änderungswünsche zählen mit");
+  eq(byKey.approval.items.map((i) => i.id), ["p3"], "der Freigabeschritt trifft die falschen Projekte");
+  ok(!steps.some((s) => s.items.some((i) => i.id === "p4")),
+    "ein archiviertes Projekt taucht im Prozess auf");
+
+  // Nichts offen → keine Schritte, damit die Uebersicht ruhig bleibt.
+  eq(W.nextProcessSteps({}), [], "ohne Daten werden trotzdem Schritte gemeldet");
+
+  // Ein Projekt mit Angebot faellt aus dem Angebotsschritt.
+  const mitAngebot = W.nextProcessSteps({
+    projects: [{ id: "p2", title: "x", pipelineStage: "intake" }],
+    briefings: { p2: { goal: "Ziel" } },
+    offers: [{ projectId: "p2", status: "sent" }],
+  });
+  ok(!mitAngebot.some((s) => s.key === "offer"), "ein Projekt mit Angebot steht weiter im Angebotsschritt");
+  // Eine abgelehnte Offerte zaehlt nicht als Angebot.
+  const abgelehnt = W.nextProcessSteps({
+    projects: [{ id: "p2", title: "x", pipelineStage: "intake" }],
+    briefings: { p2: { goal: "Ziel" } },
+    offers: [{ projectId: "p2", status: "declined" }],
+  });
+  ok(abgelehnt.some((s) => s.key === "offer"), "eine abgelehnte Offerte gilt als erledigtes Angebot");
+}
+
+// ── 13. Anfrage → Projekt ──────────────────────────────────────────────────
+{
+  const inquiry = {
+    id: "inq_1", name: "Anna Muster", company: "Gärtnerei Muster",
+    email: "anna@muster.ch", phone: "079 111 22 33", service: "Website",
+    message: "Wir hätten gerne eine neue Website mit Kontaktformular.",
+  };
+  const { project, briefing: draft } = W.projectFromInquiry(inquiry, { now: NOW });
+
+  eq(project.title, "Gärtnerei Muster", "der Projektname kommt nicht aus der Anfrage");
+  eq(project.projectType, "flowertech", "das Projekt ist kein FlowerTech-Projekt");
+  eq(project.pipelineStage, "intake",
+    "der Prozess startet nicht bei der Bestandesaufnahme — der Lead ist ja bereits da");
+  eq(project.deliveryType, "website", "der Typ wird nicht aus dem Interesse abgeleitet");
+  eq(project.sourceInquiryId, "inq_1", "das Projekt verweist nicht auf die Anfrage");
+  eq(project.client.email, "anna@muster.ch", "die Kundendaten werden nicht uebernommen");
+  ok(project.description.includes("Kontaktformular"), "die Nachricht fehlt in der Beschreibung");
+
+  // Die Nachricht wird zum ersten Ziel — der Kunde hat es schon formuliert.
+  ok(!!draft, "aus der Nachricht entsteht kein Bedarfsentwurf");
+  eq(draft.contactEmail, "anna@muster.ch", "der Bedarfsentwurf uebernimmt die E-Mail nicht");
+  ok(draft.goal.includes("Kontaktformular"), "die Nachricht wird nicht als Ziel uebernommen");
+  eq(draft.source, "anfrage", "die Herkunft des Bedarfs ist nicht vermerkt");
+
+  // Aus dem Entwurf entstehen sofort ganz normale Aufgaben.
+  const tasks = W.buildBriefingTasks(draft, "prj_neu", { now: NOW });
+  ok(tasks.length > 0, "aus dem uebernommenen Bedarf entstehen keine Aufgaben");
+  ok(tasks.every((t) => t.projectId === "prj_neu" && t.status === "todo"),
+    "die Aufgaben haengen nicht am neuen Projekt");
+
+  // Ein Programm wird als solches erkannt.
+  eq(W.projectFromInquiry({ service: "Software für die Zeiterfassung" }, { now: NOW }).project.deliveryType,
+    "program", "ein Programm-Interesse wird als Website eingestuft");
+
+  // Zu kurze Nachricht → kein Bedarfsentwurf, statt einen leeren anzulegen.
+  eq(W.projectFromInquiry({ name: "X", message: "Hallo" }, { now: NOW }).briefing, null,
+    "aus einer zu kurzen Nachricht entsteht ein leerer Bedarfsentwurf");
+  eq(W.projectFromInquiry({}, { now: NOW }).project.title, "FlowerTech-Projekt",
+    "eine Anfrage ohne Namen erzeugt ein Projekt ohne Titel");
+}
+
 console.log(`flowertech workflow dataflow: ok (${checks} Pruefungen)`);

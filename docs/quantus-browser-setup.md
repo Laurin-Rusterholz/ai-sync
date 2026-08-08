@@ -523,7 +523,6 @@ die Zustaende und die optionale Assistenz daneben.
  └─ #quantusBrowserHost        ← dieselbe Grid-Zelle, eigene Spur
      ├─ .qbr-bar               ← Titel · Verbindungsstatus · Neu laden ·
      │                           Vollbild · (dezent) Polaris, neuer Tab
-     ├─ .qbr-note              ← einmaliger Anmeldehinweis, wegklickbar
      └─ .qbr-stage
          ├─ .qbr-canvas        ← 16:9-Flaeche, exakt berechnet
          │   └─ iframe#quantusBrowserFrame
@@ -538,9 +537,10 @@ Grid-Zelle bleibt es stehen; `#main` wird im Browsermodus nur ausgeblendet.
 
 ### Groessenberechnung
 
-Der Remote-Bildschirm ist **1280x720**. `quantusBrowserFitBox()` rechnet das
-groesste 16:9-Rechteck, das in die Buehne passt, und setzt es in Pixeln
-(`aspect-ratio: 16/9` ist der CSS-Rueckfall). Damit gilt:
+Der Remote-Bildschirm ist **1280x720** (`NEKO_SCREEN`). `quantusBrowserFitBox()`
+rechnet das groesste Rechteck in genau diesem Verhaeltnis, das in die Buehne
+passt, und setzt es in Pixeln (`aspect-ratio: var(--qbr-ratio)` ist der
+CSS-Rueckfall). Damit gilt:
 
 * keine Verzerrung — das Verhaeltnis weicht hoechstens um die Pixelrundung ab,
 * kein Beschnitt — die Flaeche bleibt immer innerhalb der Buehne,
@@ -549,7 +549,60 @@ groesste 16:9-Rechteck, das in die Buehne passt, und setzt es in Pixeln
 
 Die Buehne erbt ihre Hoehe aus dem Grid (`grid-row: 2`), es gibt **keine**
 `100vh - Konstante`-Rechnung mehr. Nachgezogen wird per `ResizeObserver` sowie
-bei `resize` und `orientationchange`.
+bei `resize` und `orientationchange`; danach bekommt das iframe den Fokus
+zurueck (entprellt), damit die naechste Taste nicht ins Leere laeuft.
+
+**Niemals `transform: scale()`** auf Buehne oder iframe. Der neko-Client
+rechnet die Mausposition aus der Elementgroesse — eine CSS-Skalierung wuerde
+jeden Klick versetzen. Tests verbieten es in CSS und Skript.
+
+### Breite Bildschirme: warum Rand entsteht — und was wirklich hilft
+
+Der Stream hat **exakt die Form des Remote-Bildschirms**. Auf einem 4071x1288
+grossen Fenster (Verhaeltnis 3.16:1) kann ein 16:9-Bild die Breite nicht
+fuellen, ohne verzerrt zu werden. Gemessen bleiben dort rund 900px Rand je
+Seite. Das ist kein Layoutfehler:
+
+* Ein auf 100% gezogenes iframe wuerde das Bild **strecken** und die
+  Zeigerkoordinaten versetzen.
+* Laesst man den neko-Client selbst letterboxen, sind die Balken nur dunkler —
+  nutzbare Flaeche gewinnt man keine.
+* **Mehr Remote-Arbeitsflaeche gibt es ausschliesslich ueber eine breitere
+  Aufloesung im Container.** CSS kann keine Bildpunkte erfinden.
+
+Was Quantus daraus macht:
+
+1. **Der freie Rand wird nutzbar.** `quantusBrowserFit()` meldet ihn als
+   `--qbr-side`. Wird ein Seitenpanel geoeffnet, legt es sich genau dorthin,
+   statt den Stream zu ueberdecken oder zu verkleinern. Standardmaessig ist
+   nichts geoeffnet.
+2. **Das Vollbild holt jede Zeile.** Seitenleiste, Kopfzeile, Tab-Leiste und
+   Panels verschwinden, die Browser-Leiste faellt auf 32px. Auf 4071x1288
+   ergibt das 2233x1256 statt 2146x1207 vor dieser Aenderung.
+3. **Die Aufloesung ist nachziehbar.** Wird `NEKO_SCREEN` auf dem VPS auf ein
+   Breitbildformat gestellt, folgt das Frontend ohne neuen Deploy:
+
+   ```js
+   // Browser-Konsole auf der Quantus-Seite
+   localStorage.setItem('quantus-browser-screen', '2560x1080')
+   ```
+
+   Der Wert wird streng geprueft (nur Ziffern, 640..5120 x 360..2160); alles
+   andere faellt auf den eingebauten Wert zurueck. Es ist eine Bildschirm-
+   groesse, **kein Geheimnis**. Dauerhaft gehoert derselbe Wert in
+   `QUANTUS_BROWSER_REMOTE_W/H` in `public/index.html` — ein Test haelt ihn
+   gegen die Compose-Vorgabe, damit beide nicht auseinanderlaufen.
+
+Rechenbeispiel auf 4071x1288 im Vollbild:
+
+| `NEKO_SCREEN` | Verhaeltnis | Stream im Vollbild | Rand je Seite |
+|---|---|---|---|
+| `1280x720@30` | 16:9 | 2233x1256 | 919px |
+| `1920x1080@25` | 16:9 | 2233x1256 (schaerfer) | 919px |
+| `2560x1080@25` | 21:9 | **2977x1256** | 547px |
+
+Hoehere Aufloesung kostet CPU (1 vCPU, Software-Encoding). Ruckelt das Bild,
+Bildrate oder Aufloesung wieder senken — siehe Stoerungssuche.
 
 ### Viewport-Klassen
 
@@ -562,6 +615,15 @@ bei `resize` und `orientationchange`.
 Im Vollbild gilt immer `wide` — dort ist Platz per Definition da.
 
 ### Vollbild
+
+Erreichbar an zwei Stellen: `⛶ Vollbild` in der Browser-Kopfzeile und
+**„Quantus Vollbild"** (`#btnQuantusFullscreen`) in der globalen Quantus-
+Kopfzeile. Beide loesen dasselbe aus und werden gemeinsam nachgefuehrt; der
+globale Knopf zeigt sich nur auf der Browser-Route.
+
+Im Vollbild verschwinden Seitenleiste, Quantus-Kopfzeile, Tab-Leiste und
+Panels vollstaendig — es bleibt der Stream und eine 32px flache Leiste zum
+Aussteigen. Polaris bleibt als Overlay erreichbar.
 
 `⛶ Vollbild` setzt **zuerst** `body.qbr-full` (CSS: `position:fixed; inset:0`)
 und legt danach die Fullscreen-API darueber. Fehlt die API oder lehnt der
@@ -583,6 +645,24 @@ Routenwechsel. Das iframe wird dabei **nie** angefasst, die Sitzung bleibt.
   geschlossen.
 * Polaris Quick oeffnet sich als Overlay ueber der Buehne (`✨` in der
   Kopfzeile oder die gewohnte Glühbirne) und blockiert die Fernbedienung nicht.
+
+### Keine Anmeldehilfe in der Oberflaeche
+
+Die Huelle gibt **keinerlei** Hinweis auf Benutzer, Passwort oder Anmeldeweg
+aus — weder als Banner, noch als wegklickbaren Streifen, noch in einer
+Statuskarte. Die Anmeldung gehoert allein in die Maske des Dienstes im iframe.
+
+Das ist bewusst mehr als Kosmetik: Ein Zugangsdaten-Hinweis in der Quantus-
+Oberflaeche steht im ausgelieferten HTML und damit in jedem Cache, jedem
+Screenshot und jeder Bildschirmfreigabe — auch dann, wenn er nur einen
+Benutzernamen nennt. Statische und Laufzeittests halten das fest: sie verbieten
+sowohl die Begriffe (Benutzer, Passwort, Zugangsdaten, credentials …) als auch
+die Form, in der so ein Hinweis auftrat (ein per `<b>` hervorgehobener Wert in
+Kopfzeile oder Statuskarte).
+
+Unveraendert bleibt: neko authentifiziert weiterhin mit Passwort, die
+Einbettung uebergibt ausschliesslich `usr` als Feldvorbelegung — nie ein
+Geheimnis. Siehe Abschnitt 4.
 
 ### Zustaende
 
@@ -635,6 +715,22 @@ Compose-Datei `NEKO_SESSION_COOKIE_ENABLED="false"` steht, heisst noch nicht,
 dass der **laufende** Container es uebernommen hat. Schlaegt sie an, nennt die
 Ausgabe den Grund im Klartext (Cookie-Auth aktiv, falsches Passwort oder API
 nicht erreichbar). Passwort und Token erscheinen dabei in keiner Ausgabe.
+
+#### Kann dieser Smoke-Test ueberhaupt fehlschlagen?
+
+Ja — und das ist gepruefte Zusage, keine Behauptung. Ein Smoke-Test, der nicht
+fehlschlagen kann, ist wertlos; genau das war die Ausgangslage (der alte
+HTTPS-Check konnte nur falsch negativ sein, ein Crash-Loop blieb unsichtbar).
+`tests/neko-smoke-failure-modes.test.sh` stellt deshalb jeden der vier
+Live-Fehler gegen ein gestubbtes `docker`/`curl` nach und verlangt die
+passende Fehlermeldung — plus die Gegenprobe, dass im heilen Fall **keine**
+davon erscheint. Der Test laeuft in `npm test` mit, ohne Container und ohne
+Netz.
+
+Der Abstand der beiden Chromium-Stichproben ist ueber `NEKO_SMOKE_GAP`
+steuerbar (Standard 15 s). Er existiert fuer diese Tests — auf dem VPS bleibt
+es bei 15 s, sonst koennte eine Neustartschleife zwischen den Messungen
+durchrutschen.
 
 ### Manuelle Kommandozeilen-Checks
 
@@ -796,4 +892,5 @@ cd /opt/quantus-neko && docker compose logs -f --tail=200 neko
 | `public/index.html` | Quantus-App `#/browser` (Huelle `#quantusBrowserHost` + iframe + Status-/Retry-UI, **kein Secret**) |
 | `tests/quantus-browser-module.test.mjs` | statische Pruefungen (Secrets, Compose, Labels, UI, Regressionen) |
 | `tests/quantus-browser-layout-runtime.test.mjs` | Laufzeittest der Buehne (Skalierung, Vollbild, Zustaende, Zustandserhalt) |
-| `tests/neko-proxy-detect.test.sh` | Proxy-Erkennung gegen einen gestubbten Docker |
+| `tests/neko-proxy-detect.test.sh` | Proxy-Erkennung, Rechte-Reparatur und Anmelde-Probe gegen ein gestubbtes Docker/curl |
+| `tests/neko-smoke-failure-modes.test.sh` | Gegenprobe: die vier Live-Fehler werden vom Smoke-Test auch wirklich gemeldet |
