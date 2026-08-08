@@ -232,15 +232,59 @@ function request(headers, body = BODY) {
   ok(response.status === 401, `ohne Herkunft und Signatur muss 401 kommen, war ${response.status}`);
 }
 
+// ── Fragebogen, Zustimmung und Antwort: Grenzen des Eingangs ──────────────
+// Auch diese Fälle müssen VOR jedem Firebase-Zugriff abbrechen.
+{
+  const post = (body) => handler(request({ Origin: "https://flowertech.ch" }, body));
+
+  // Ein Fragebogen ohne Einladung gibt es nicht.
+  let response = await post({ kind: "intake", payload: { answers: [] } });
+  ok(response.status === 400, `ein Fragebogen ohne Token muss 400 liefern, war ${response.status}`);
+  response = await post({ kind: "intake", token: "zu-kurz", payload: {} });
+  ok(response.status === 400, `ein unbrauchbarer Einladungstoken muss 400 liefern, war ${response.status}`);
+
+  // Zustimmung: ohne Fassung und ohne ausdrückliches Ja passiert nichts.
+  response = await post({ kind: "terms", token: VALID_TOKEN, payload: { accepted: true } });
+  ok(response.status === 400, `eine Zustimmung ohne Fassung muss 400 liefern, war ${response.status}`);
+  response = await post({ kind: "terms", token: VALID_TOKEN, payload: { version: "1", accepted: false } });
+  ok(response.status === 400, `eine Zustimmung ohne Ja muss 400 liefern, war ${response.status}`);
+  ok(/zustimmen/i.test((await response.json()).error || ""), "die Ablehnung nennt den Grund nicht");
+  response = await post({ kind: "terms", payload: { version: "1", accepted: true } });
+  ok(response.status === 400, `eine Zustimmung ohne Token muss 400 liefern, war ${response.status}`);
+
+  // Antwort auf eine Rückfrage: Frage und Text sind Pflicht.
+  response = await post({ kind: "answer", token: VALID_TOKEN, payload: { answer: "Ja" } });
+  ok(response.status === 400, `eine Antwort ohne Frage muss 400 liefern, war ${response.status}`);
+  response = await post({ kind: "answer", token: VALID_TOKEN, payload: { questionId: "q1", answer: "   " } });
+  ok(response.status === 400, `eine leere Antwort muss 400 liefern, war ${response.status}`);
+
+  // Und die Zugangsregeln gelten unverändert für alle drei Arten.
+  for (const kind of ["intake", "terms", "answer"]) {
+    const ohneHerkunft = await handler(request({}, { kind, token: VALID_TOKEN, payload: {} }));
+    ok(ohneHerkunft.status === 401, `${kind} ohne Herkunft und Signatur muss 401 liefern, war ${ohneHerkunft.status}`);
+    const fremd = await handler(request({ Origin: "https://fremd.example" },
+      { kind, token: VALID_TOKEN, payload: {} }));
+    ok(fremd.status === 403, `${kind} von fremder Herkunft muss 403 liefern, war ${fremd.status}`);
+  }
+}
+
 // ── Quelltext: die Offertenanfrage ist im Eingang wirklich vorgesehen ──────
 {
   const source = fs.readFileSync(path.join(root, "netlify/functions/flowertech-portal.mjs"), "utf8");
-  ok(/\["change", "vision", "quote", "briefing"\]/.test(source),
-    "die Offertenanfrage ist keine zugelassene Art");
+  ok(/"quote"/.test(source) && /"intake"/.test(source),
+    "Offertenanfrage oder Fragebogen sind keine zugelassenen Arten");
   ok(/quoteRequestIsUsable\(payload, \{ requireEmail: !token \}\)/.test(source),
     "die Mailpflicht haengt nicht am fehlenden Token");
   ok(/payload\.need/.test(source),
     "der Bedarf geht nicht in den Idempotenz-Schluessel ein — zwei verschiedene Anfragen waeren ein Duplikat");
+  // Ein Fragebogen gehoert zu genau EINER Einladung: der Schluessel haengt am
+  // Token, nicht am Inhalt und nicht am, was der Browser mitschickt.
+  ok(/ft_intake_\$\{token\}/.test(source),
+    "der Fragebogen ist nicht pro Einladung idempotent — ein Reload erzeugte einen zweiten Vorgang");
+  ok(/flowertech\/intakeForms\/\$\{token\}/.test(source),
+    "die Antworten werden nicht gegen den veroeffentlichten Fragebogen geprueft");
+  ok(/normalizeIntakeAnswers\(questions/.test(source),
+    "es wird nicht gegen die Fragen des Fragebogens normalisiert");
 }
 
 console.log(`flowertech portal auth: ok (${checks} Pruefungen)`);

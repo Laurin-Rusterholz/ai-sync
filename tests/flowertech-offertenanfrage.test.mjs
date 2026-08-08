@@ -333,6 +333,8 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
 }
 
 // ── 11. Vision Room ohne Token: Vorgang + genau eine Aufgabe ──────────────
+// Der Vision Room muendet in denselben Kundenanfrage-Weg: Es entsteht ein
+// Anfrage-Dokument, kein Sonderweg.
 {
   const { win, data } = makeSandbox();
   win.viewFlowerTech();
@@ -353,9 +355,11 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   ok(p.title.includes("Familien"), `der Vorgang traegt nicht die Idee: ${p.title}`);
   ok(p.ftRoute === "offer_first", "der Vision-Room-Eingang wird nicht als Offertenweg gefuehrt");
   ok(p.deliveryType === "program", "die Art aus dem Vision Room fehlt");
-  ok(p.ftQuoteRequest && p.ftQuoteRequest.source === "vision-room",
-    "die Herkunft „Vision Room“ fehlt");
-  ok(quoteTasks(data).length === 1, `es entstanden ${quoteTasks(data).length} Aufgaben statt genau einer`);
+  ok(p.ftRouteSource === "vision-room", "die Herkunft „Vision Room“ fehlt");
+  ok(p.ftIntakeDocument && p.ftIntakeDocument.answers.length,
+    "der Vision Room erzeugt kein Anfrage-Dokument");
+  const intakeTasks = tasksOf(data).filter((t) => t.source === "flowertech-intake");
+  ok(intakeTasks.length === 1, `es entstanden ${intakeTasks.length} Aufgaben statt genau einer`);
 
   // Ohne Rueckkanal keine Anfrage — sonst waere sie nicht beantwortbar.
   win._ftIngestSubmissions({
@@ -367,7 +371,8 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   // Wiederholung derselben Einreichung: kein zweiter Vorgang, keine zweite Aufgabe.
   win._ftIngestSubmissions({ sub_v2: Object.assign({}, eingang.sub_v) });
   ok(Object.values(data.entities.projects).length === 1, "eine Wiederholung legt einen zweiten Vorgang an");
-  ok(quoteTasks(data).length === 1, "eine Wiederholung erzeugt eine zweite Aufgabe");
+  ok(tasksOf(data).filter((t) => t.source === "flowertech-intake").length === 1,
+    "eine Wiederholung erzeugt eine zweite Aufgabe");
 }
 
 // ── 12. Keine leere OF-Nummer, kein „Versendet" ohne Pflichtdaten ─────────
@@ -421,19 +426,20 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   win.viewFlowerTech();
 
   const link = win._ftClientQuoteLink("prj_1");
+  const clientLink = win._ftClientPortalLink("prj_1");
   ok(link === "https://flowertech.ch/kunde.html?t=" + TOKEN + "#offerte",
     `der Kundenlink stimmt nicht: ${link}`);
+  ok(clientLink === "https://flowertech.ch/kunde.html?t=" + TOKEN,
+    `der Portallink stimmt nicht: ${clientLink}`);
   ok(!/management-xo2-pro/.test(link), "der kopierte Link zeigt auf die interne Verwaltung");
   ok(!/^mailto:/.test(link), "der Kundenlink ist eine Mailadresse");
 
   // Die Kundenansicht des Projekts — dieselbe Funktion, die der Browser ruft.
   const html = win.ftProjectPanel("prj_1").replace(/<style>[\s\S]*?<\/style>/g, "");
-  ok(html.includes("Offerte beim Kunden anfragen"),
-    "die Sektion „Offerte beim Kunden anfragen“ fehlt in der Kundenansicht");
+  ok(html.includes("Kundenportal"), "die Sektion „Kundenportal“ fehlt in der Projektansicht");
   ok(html.includes("Kundenlink kopieren"), "der Knopf „Kundenlink kopieren“ fehlt");
-  ok(html.includes(link), "der Kundenlink steht nicht in der Sektion");
+  ok(html.includes(clientLink), "der Kundenlink steht nicht in der Sektion");
   ok(/>Öffnen</.test(html), "der Knopf „Öffnen“ fehlt");
-  ok(html.includes("Noch keine Offertenanfrage"), "der Leerzustand wird nicht benannt");
 }
 
 // ── 13b. Auch aeltere Vorgaenge ohne Kundenlink bekommen einen ────────────
@@ -449,7 +455,7 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   const html = win.ftProjectPanel("prj_alt").replace(/<style>[\s\S]*?<\/style>/g, "");
   const token = data.flowertech.shares.prj_alt.portalToken;
   ok(/^[A-Za-z0-9_-]{24,64}$/.test(token || ""), "ein aelterer Vorgang bekommt keinen Kundenlink");
-  ok(html.includes("https://flowertech.ch/kunde.html?t=" + token + "#offerte"),
+  ok(html.includes("https://flowertech.ch/kunde.html?t=" + token),
     "der Kundenlink fehlt bei einem aelteren Vorgang");
 }
 

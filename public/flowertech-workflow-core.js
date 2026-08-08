@@ -641,6 +641,465 @@ export function offerSendableState({ doc = {}, total = 0 } = {}) {
   };
 }
 
+/* ── Kundenanfrage (Fragebogen) ──────────────────────────────────────────
+ * Der Einstieg in eine Zusammenarbeit ist ein Fragebogen, kein Projekt und
+ * keine Offerte. Ich lege die Fragen an, kopiere den oeffentlichen Link und
+ * gebe ihn der Kundschaft. Erst ihre Antwort erzeugt — genau einmal — ein
+ * Kundenprojekt samt Anfrage-Dokument und einer Aufgabe.
+ *
+ * Warum so: Ein Projekt vor der Antwort ist eine Behauptung. Es steht dann
+ * leer in der Liste, verbraucht eine Nummer und muss von Hand aufgeraeumt
+ * werden, wenn nie jemand antwortet.
+ *
+ * Die Fragen sind Daten, keine fest verdrahtete Maske: Jede Frage kann eine
+ * „Rolle" tragen. Die Rolle sagt, wohin die Antwort im Projekt gehoert
+ * (Firma, Kontakt, Bedarf, Budget, Termin). Fragen ohne Rolle sind frei —
+ * sie landen vollstaendig im Anfrage-Dokument und im Prompt.
+ * --------------------------------------------------------------------- */
+export const INTAKE_QUESTION_TYPES = [
+  { key: "text", label: "Kurzer Text" },
+  { key: "textarea", label: "Langer Text" },
+  { key: "email", label: "E-Mail" },
+  { key: "tel", label: "Telefon" },
+  { key: "select", label: "Auswahl" },
+  { key: "date", label: "Datum" },
+  { key: "number", label: "Zahl" },
+];
+
+// Rollen verbinden eine Frage mit einem Projektfeld. Alles andere bleibt
+// bewusst frei — der Fragebogen soll nicht zum Formularkorsett werden.
+export const INTAKE_ROLES = [
+  { key: "", label: "— frei —" },
+  { key: "company", label: "Firma / Organisation" },
+  { key: "contactName", label: "Ansprechperson" },
+  { key: "contactEmail", label: "E-Mail" },
+  { key: "contactPhone", label: "Telefon" },
+  { key: "address", label: "Adresse" },
+  { key: "projectTitle", label: "Projektname" },
+  { key: "need", label: "Bedarf / Ziel" },
+  { key: "budget", label: "Budgetrahmen" },
+  { key: "deadline", label: "Wunschtermin" },
+];
+const INTAKE_ROLE_KEYS = INTAKE_ROLES.map((r) => r.key).filter(Boolean);
+// Rollen, deren Antwort Kontaktdaten sind. Sie gehoeren ins Projekt, aber
+// niemals in einen oeffentlichen Snapshot.
+export const INTAKE_CONTACT_ROLES = ["company", "contactName", "contactEmail", "contactPhone", "address"];
+
+export const DEFAULT_INTAKE_TITLE = "Ihre Angaben für FlowerTech";
+export const DEFAULT_INTAKE_INTRO =
+  "Damit wir Ihnen etwas Passendes bauen können, brauchen wir ein paar Angaben. " +
+  "Was Sie noch nicht wissen, lassen Sie einfach leer — wir fragen nach.";
+
+export const DEFAULT_INTAKE_QUESTIONS = [
+  { key: "company", role: "company", type: "text", label: "Firma / Organisation" },
+  { key: "name", role: "contactName", type: "text", label: "Ihr Name", required: true },
+  { key: "email", role: "contactEmail", type: "email", label: "E-Mail", required: true,
+    hint: "Damit wir Ihnen antworten können." },
+  { key: "phone", role: "contactPhone", type: "tel", label: "Telefon" },
+  { key: "kind", role: "", type: "select", label: "Was brauchen Sie?", required: true,
+    options: ["Website", "Web-Programm", "Web-App", "Weiss ich noch nicht"] },
+  { key: "need", role: "need", type: "textarea", label: "Was soll damit erreicht werden?", required: true,
+    hint: "Ein paar Sätze genügen. Zum Beispiel: mehr Anfragen, weniger Papierkram." },
+  { key: "audience", role: "", type: "textarea", label: "Wer benutzt es?" },
+  { key: "features", role: "", type: "textarea", label: "Gewünschte Funktionen",
+    hint: "Eine pro Zeile — gerne unvollständig." },
+  { key: "pages", role: "", type: "textarea", label: "Seiten / Bereiche" },
+  { key: "design", role: "", type: "textarea", label: "Design-Wünsche",
+    hint: "Farben, Stil, Vorbilder — gerne Links zu Seiten, die Ihnen gefallen." },
+  { key: "content", role: "", type: "textarea", label: "Inhalte (Texte, Bilder, Logo)",
+    hint: "Was ist schon vorhanden, was müssten wir erstellen?" },
+  { key: "current", role: "", type: "textarea", label: "Aktuelles System" },
+  { key: "budget", role: "budget", type: "text", label: "Budgetrahmen (CHF)" },
+  { key: "deadline", role: "deadline", type: "date", label: "Wunschtermin" },
+  { key: "notes", role: "", type: "textarea", label: "Sonstiges" },
+];
+
+function slug(value, fallback) {
+  const out = String(value == null ? "" : value).toLowerCase()
+    .replace(/[äàâ]/g, "a").replace(/[öô]/g, "o").replace(/[üû]/g, "u").replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return out || fallback;
+}
+
+export function normalizeIntakeQuestions(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const out = [];
+  list.forEach((entry, i) => {
+    const q = entry && typeof entry === "object" ? entry : {};
+    const label = text(q.label, 200);
+    if (!label) return;                                   // ohne Frage keine Frage
+    const type = INTAKE_QUESTION_TYPES.some((t) => t.key === q.type) ? q.type : "text";
+    let key = slug(q.key || label, "frage-" + (i + 1));
+    while (seen.has(key)) key = key + "-" + (i + 1);
+    seen.add(key);
+    out.push({
+      key,
+      label,
+      type,
+      role: INTAKE_ROLE_KEYS.includes(q.role) ? q.role : "",
+      required: !!q.required,
+      hint: text(q.hint, 300),
+      options: type === "select" ? list_(q.options, 20, 120) : [],
+    });
+  });
+  return out.slice(0, 40);
+}
+// list() heisst intern anders, damit der Name oben lesbar bleibt.
+const list_ = list;
+
+// Die Antworten werden gegen die Fragen normalisiert: Was nicht gefragt wurde,
+// kommt nicht durch. Das ist die serverseitige Grenze des Fragebogens.
+export function normalizeIntakeAnswers(questions, raw, { now = new Date().toISOString() } = {}) {
+  const qs = normalizeIntakeQuestions(questions);
+  const src = raw && typeof raw === "object" ? raw : {};
+  const answers = qs.map((q) => {
+    const value = src[q.key];
+    let answer;
+    if (q.type === "textarea") answer = multiline(value, 4000);
+    else if (q.type === "date") answer = /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) ? String(value) : "";
+    else if (q.type === "select") answer = q.options.includes(text(value, 120)) ? text(value, 120) : "";
+    else if (q.type === "email") answer = text(value, 160).toLowerCase();
+    else answer = text(value, 400);
+    return { key: q.key, label: q.label, type: q.type, role: q.role, answer };
+  });
+  return { answers, submittedAt: now };
+}
+
+export function answerByRole(answers, role) {
+  const hit = (answers || []).find((a) => a.role === role && String(a.answer || "").trim());
+  return hit ? String(hit.answer).trim() : "";
+}
+
+// Brauchbar heisst: jede Pflichtfrage ist beantwortet und es gibt einen
+// Rueckkanal. Keine kuenstliche Mindestlaenge — getrimmter Text genuegt.
+export function intakeAnswersUsable(questions, answers) {
+  const qs = normalizeIntakeQuestions(questions);
+  const byKey = {};
+  (answers || []).forEach((a) => { byKey[a.key] = String(a.answer || "").trim(); });
+  const missing = qs.filter((q) => q.required && !byKey[q.key]).map((q) => q.label);
+  const email = answerByRole(answers, "contactEmail");
+  const hasMail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+  if (!hasMail) missing.push("eine gültige E-Mail-Adresse");
+  return { usable: missing.length === 0, missing };
+}
+
+// Das „erste Dokument": die vollstaendige erste Eingabe, unveraendert.
+export function buildIntakeDocument({ intake = {}, answers = [], now = new Date().toISOString() } = {}) {
+  return {
+    kind: "intake",
+    intakeTitle: text(intake.title, 200) || DEFAULT_INTAKE_TITLE,
+    intakeId: intake.id || null,
+    submittedAt: now,
+    answers: (answers || []).map((a) => ({
+      key: a.key, label: a.label, type: a.type, role: a.role || "",
+      answer: String(a.answer == null ? "" : a.answer),
+    })),
+  };
+}
+
+export function projectFromIntake({ intake = {}, answers = [], now = new Date().toISOString() } = {}) {
+  const need = answerByRole(answers, "need");
+  const title = answerByRole(answers, "projectTitle")
+    || answerByRole(answers, "company")
+    || (need ? need.replace(/\s+/g, " ").slice(0, 80) : "")
+    || text(intake.title, 80) || "Kundenanfrage";
+  const free = (answers || []).filter((a) => !INTAKE_CONTACT_ROLES.includes(a.role) && String(a.answer || "").trim());
+  return {
+    title,
+    description: [
+      "Aus dem FlowerTech-Fragebogen „" + (text(intake.title, 120) || DEFAULT_INTAKE_TITLE) + "“.",
+      ...free.map((a) => a.label + ":\n" + a.answer),
+    ].join("\n\n").slice(0, 8000),
+    status: "active",
+    projectType: "flowertech",
+    // Die Bestandesaufnahme ist mit dem Fragebogen erfolgt.
+    pipelineStage: "intake",
+    ftRoute: "offer_first",
+    ftRouteDecidedAt: now,
+    ftRouteSource: "kundenanfrage",
+    deliveryType: intake.deliveryType === "program" ? "program" : "website",
+    client: {
+      company: answerByRole(answers, "company"),
+      name: answerByRole(answers, "contactName"),
+      email: answerByRole(answers, "contactEmail"),
+      phone: answerByRole(answers, "contactPhone"),
+      street: answerByRole(answers, "address"),
+    },
+    budget: money(answerByRole(answers, "budget")),
+    dueDate: answerByRole(answers, "deadline"),
+    tags: ["flowertech", "kundenanfrage"],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+// GENAU eine Aufgabe. Der Fragebogen ist ein Vorgang, den ein Mensch einmal
+// anschaut — kein Faecher aus Einzelaufgaben pro Antwort.
+export function buildIntakeTask({ project = {}, document: doc = {}, projectId = null, now = new Date().toISOString() } = {}) {
+  const lines = (doc.answers || [])
+    .filter((a) => String(a.answer || "").trim())
+    .map((a) => a.label + ": " + String(a.answer).replace(/\n/g, "\n  "));
+  return {
+    key: "intake",
+    projectId,
+    title: "Offertenanfrage bearbeiten: " + (String(project.title || "Kundenanfrage").slice(0, 90)),
+    description: [
+      "Die Kundschaft hat den Fragebogen „" + (doc.intakeTitle || DEFAULT_INTAKE_TITLE) + "“ ausgefüllt.",
+      "Eingegangen: " + (doc.submittedAt || now),
+      "",
+      ...lines,
+    ].join("\n").slice(0, 8000),
+    status: "todo",
+    priority: 1,
+    category: "flowertech",
+    source: "flowertech-intake",
+    tags: ["flowertech", "kundenanfrage"],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/* ── Kundenportal: Fortschritt, Vorlage, Zustimmung ──────────────────────
+ * Das Portal ist mehr als ein Formular: Vorschau, Änderungswünsche, AGB und
+ * laufende Fragen. Der Fortschritt ist deshalb eigenstaendig — er beschreibt,
+ * was die Kundschaft sieht, nicht die interne Pipeline.
+ * --------------------------------------------------------------------- */
+export const PORTAL_STEPS = [
+  { key: "intake", label: "Fragebogen erhalten" },
+  { key: "preview", label: "Vorschau" },
+  { key: "changes", label: "Änderungen" },
+  { key: "approval", label: "Freigabe" },
+];
+
+export function portalProgress({ project = {}, hasPreview = false, changes = [], versions = [] } = {}) {
+  const approved = (versions || []).some((v) => v.approved);
+  const openChanges = (changes || []).filter((c) => c.status !== "done" && c.status !== "rejected");
+  let index = 0;
+  if (hasPreview) index = 1;
+  if (hasPreview && (changes || []).length) index = 2;
+  if (approved) index = 3;
+  return {
+    key: PORTAL_STEPS[index].key,
+    label: PORTAL_STEPS[index].label,
+    index,
+    total: PORTAL_STEPS.length,
+    openChanges: openChanges.length,
+    steps: PORTAL_STEPS.map((s, n) => ({ label: s.label, done: n < index, current: n === index })),
+  };
+}
+
+export const MAX_TEMPLATE_BYTES = 400 * 1024;
+export const MAX_PROMPT_BYTES = 200 * 1024;
+
+// Die Vorschau ist fremder HTML-Code, den ich selbst hochlade — trotzdem wird
+// sie entschaerft, bevor sie in einen oeffentlichen Snapshot geht. Ein Skript
+// in der Vorlage liefe sonst im Browser der Kundschaft. Zusaetzlich zeigt die
+// Kundenseite sie in einem sandboxed iframe: zwei Schichten, nicht eine.
+export function sanitizeTemplateHtml(raw, { max = MAX_TEMPLATE_BYTES } = {}) {
+  let html = String(raw == null ? "" : raw);
+  const removed = [];
+  const drop = (re, label) => {
+    if (re.test(html)) removed.push(label);
+    html = html.replace(re, "");
+  };
+  drop(/<script\b[\s\S]*?<\/script\s*>/gi, "Skripte");
+  drop(/<script\b[^>]*>/gi, "Skripte");
+  drop(/<iframe\b[\s\S]*?<\/iframe\s*>/gi, "eingebettete Seiten");
+  drop(/<object\b[\s\S]*?<\/object\s*>/gi, "Objekte");
+  drop(/<embed\b[^>]*>/gi, "Objekte");
+  drop(/\son[a-z]+\s*=\s*"[^"]*"/gi, "Ereignis-Attribute");
+  drop(/\son[a-z]+\s*=\s*'[^']*'/gi, "Ereignis-Attribute");
+  drop(/\son[a-z]+\s*=\s*[^\s>]+/gi, "Ereignis-Attribute");
+  drop(/javascript:/gi, "javascript:-Adressen");
+  const truncated = html.length > max;
+  if (truncated) html = html.slice(0, max);
+  return { html, removed: Array.from(new Set(removed)), truncated };
+}
+
+// Eine brauchbare, responsive Standardvorlage — damit sofort eine echte
+// Vorschau dasteht. Bewusst ohne fremde Inhalte: gefuellt wird sie aus den
+// Antworten der Kundschaft.
+export function defaultTemplateHtml({ project = {}, document: doc = {}, company = {} } = {}) {
+  const esc = (v) => String(v == null ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const answers = (doc.answers || []).filter(
+    (a) => !INTAKE_CONTACT_ROLES.includes(a.role) && String(a.answer || "").trim());
+  const need = answers.find((a) => a.role === "need");
+  const cards = answers.filter((a) => a.role !== "need").slice(0, 6);
+  const title = project.title || "Ihr neuer Auftritt";
+  const claim = need ? String(need.answer).split(/\n/)[0] : "Ein Auftritt, der zu Ihnen passt.";
+  return `<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+  :root{--bg:#07070a;--card:#101018;--line:#1d1d29;--text:#f4f2f8;--muted:#9a94a8;
+        --lime:#c8ff2e;--cyan:#25d5ff;--violet:#a06bff}
+  @media (prefers-color-scheme:light){:root{--bg:#f7f6fa;--card:#fff;--line:#e6e3ee;--text:#14121a;--muted:#66607a}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:0 20px}
+  header{padding:64px 0 40px}
+  .k{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
+  h1{font-size:clamp(28px,6vw,52px);line-height:1.08;letter-spacing:-.03em;margin:12px 0 14px}
+  .claim{font-size:clamp(17px,2.4vw,21px);color:var(--muted);max-width:36em;margin:0}
+  .ctas{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
+  .btn{display:inline-block;padding:14px 26px;border-radius:999px;text-decoration:none;font-weight:700;
+       background:linear-gradient(135deg,var(--lime),var(--cyan));color:#07070a}
+  .btn.ghost{background:none;border:1px solid var(--line);color:var(--text)}
+  section{padding:40px 0;border-top:1px solid var(--line)}
+  h2{font-size:20px;letter-spacing:-.01em;margin:0 0 18px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px}
+  .card h3{margin:0 0 8px;font-size:15px}
+  .card p{margin:0;color:var(--muted);font-size:14px;white-space:pre-wrap}
+  footer{padding:36px 0 64px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="k">${esc(company.name || "FlowerTech")}</div>
+    <h1>${esc(title)}</h1>
+    <p class="claim">${esc(claim)}</p>
+    <div class="ctas"><a class="btn" href="#kontakt">Kontakt aufnehmen</a>
+      <a class="btn ghost" href="#angebot">Was wir bauen</a></div>
+  </header>
+
+  <section id="angebot">
+    <h2>Was wir für Sie bauen</h2>
+    <div class="grid">
+${cards.map((a) => `      <div class="card"><h3>${esc(a.label)}</h3><p>${esc(a.answer)}</p></div>`).join("\n")
+  || '      <div class="card"><h3>Ihr Vorhaben</h3><p>Die Inhalte entstehen aus Ihren Angaben.</p></div>'}
+    </div>
+  </section>
+
+  <section id="kontakt">
+    <h2>Kontakt</h2>
+    <p class="claim">Schreiben Sie uns — wir melden uns innert 24 h.</p>
+  </section>
+
+  <footer>Entwurf · ${esc(company.name || "FlowerTech")} · Diese Vorschau ist unverbindlich.</footer>
+</div>
+</body>
+</html>
+`;
+}
+
+/* ── Der Prompt fuer die spaetere HTML-Erstellung ─────────────────────────
+ * Er ist die Eingabe fuer Claude Code. Deshalb muss er ALLES enthalten, was
+ * die Kundschaft gesagt hat — die selbst definierten Fragen mit ihren
+ * Antworten, die Vorlage, die Aenderungswuensche und den Projektkontext.
+ * Fehlt etwas, faellt es in der spaeteren Umsetzung stillschweigend weg.
+ * --------------------------------------------------------------------- */
+export function buildProjectPrompt({
+  project = {}, document: doc = {}, changes = [], questions = [],
+  templateName = "", company = {}, now = new Date().toISOString(),
+} = {}) {
+  const out = [];
+  out.push("# Auftrag: " + (project.title || "FlowerTech-Projekt"));
+  out.push("");
+  out.push("Erstelle eine vollständige, responsive Website als einzelne HTML-Datei.");
+  out.push("Alles Nötige (CSS, kleine Interaktionen) gehört in diese Datei. Keine externen");
+  out.push("Abhängigkeiten, kein Build-Schritt, keine erfundenen Inhalte: Was unten nicht");
+  out.push("steht, wird nicht behauptet.");
+  out.push("");
+  out.push("## Projektkontext");
+  out.push("- Art: " + (project.deliveryType === "program" ? "Programm / Anwendung" : "Website"));
+  out.push("- Phase: " + stageLabel(project.pipelineStage));
+  if (project.budget != null) out.push("- Budgetrahmen: CHF " + Number(project.budget).toFixed(2));
+  if (project.dueDate) out.push("- Wunschtermin: " + project.dueDate);
+  out.push("- Anbieter: " + (company.name || "FlowerTech"));
+  out.push("- Vorlage: " + (templateName || "FlowerTech-Standardvorlage"));
+  out.push("- Stand: " + now);
+  out.push("");
+  out.push("## Erstes Dokument — Antworten der Kundschaft");
+  out.push("");
+  out.push("Fragebogen: " + (doc.intakeTitle || DEFAULT_INTAKE_TITLE));
+  if (doc.submittedAt) out.push("Eingegangen: " + doc.submittedAt);
+  out.push("");
+  const answered = (doc.answers || []).filter((a) => String(a.answer || "").trim());
+  if (!answered.length) {
+    out.push("_Noch keine Antworten erfasst._");
+  } else {
+    answered.forEach((a) => {
+      // Kontaktdaten gehoeren nicht in einen Prompt, der eine Website baut.
+      const value = INTAKE_CONTACT_ROLES.includes(a.role) ? "(intern hinterlegt)" : a.answer;
+      out.push("### " + a.label);
+      out.push("");
+      out.push(String(value));
+      out.push("");
+    });
+  }
+  out.push("## Änderungswünsche");
+  out.push("");
+  const openChanges = (changes || []).filter((c) => c.status !== "rejected");
+  if (!openChanges.length) out.push("_Keine._");
+  else {
+    openChanges.forEach((c) => {
+      out.push("- **" + (c.title || "Änderung") + "**" +
+        (c.area ? " (" + c.area + ")" : "") +
+        " — Status: " + changeStatusLabel(c.status) +
+        (c.detail ? "\n  " + String(c.detail).replace(/\n/g, "\n  ") : ""));
+    });
+  }
+  out.push("");
+  out.push("## Weitere Fragen und Antworten");
+  out.push("");
+  const answeredQuestions = (questions || []).filter((q) => String(q.answer || "").trim());
+  if (!answeredQuestions.length) out.push("_Keine._");
+  else {
+    answeredQuestions.forEach((q) => {
+      out.push("- **" + (q.question || "Frage") + "**");
+      out.push("  " + String(q.answer).replace(/\n/g, "\n  "));
+    });
+  }
+  out.push("");
+  out.push("## Vorgaben");
+  out.push("");
+  out.push("- Mobil zuerst, danach Desktop. Keine horizontale Scrollleiste.");
+  out.push("- Helles und dunkles Farbschema über `prefers-color-scheme`.");
+  out.push("- Sinnvolle Überschriftenhierarchie, sichtbarer Fokus, Bedienung per Tastatur.");
+  out.push("- Deutsche Sprache, Schweizer Schreibweise (ss statt ß).");
+  out.push("- Keine Tracker, keine externen Schriften, keine Platzhalter-Bilder von fremden Servern.");
+  out.push("- Texte aus den Angaben oben ableiten. Wo etwas fehlt: knapp und ehrlich formulieren,");
+  out.push("  statt Zahlen, Referenzen oder Auszeichnungen zu erfinden.");
+  out.push("");
+  return out.join("\n");
+}
+
+/* ── AGB-Zustimmung im Portal ────────────────────────────────────────────
+ * Die Zustimmung ist ein Ereignis mit Zeitpunkt und Fassung — nicht ein
+ * Haeklein, das man spaeter nicht mehr nachvollziehen kann. Der Text bleibt
+ * ein Entwurf nach Schweizer Praxis (siehe LEGAL_REVIEW_NOTICE).
+ * --------------------------------------------------------------------- */
+export function termsState({ terms = {}, consent = null } = {}) {
+  const version = text(terms.version, 40) || "1";
+  const accepted = !!(consent && consent.acceptedAt && consent.version === version);
+  return {
+    version,
+    title: text(terms.title, 200) || "Allgemeine Geschäftsbedingungen (Entwurf)",
+    accepted,
+    acceptedAt: accepted ? String(consent.acceptedAt) : "",
+    // Veraltete Zustimmung: Es gab eine, aber zu einer anderen Fassung.
+    outdated: !!(consent && consent.acceptedAt && consent.version !== version),
+  };
+}
+
+export function normalizePortalQuestion(raw, { now = new Date().toISOString() } = {}) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  return {
+    question: multiline(r.question, 1500),
+    answer: multiline(r.answer, 4000),
+    askedAt: r.askedAt || now,
+    answeredAt: r.answer ? (r.answeredAt || now) : "",
+  };
+}
+
 /* ── Der Prozess als Daten ───────────────────────────────────────────────
  * Statt einer Liste von Bereichen: die konkret naechsten Schritte, aus dem
  * Datenstand abgeleitet. „Eine Anfrage wird zum Projekt" ist damit kein Knopf,
@@ -1363,6 +1822,13 @@ export function clientPortalUrl(token, { base = CLIENT_PORTAL_BASE } = {}) {
   return String(base).replace(/\/+$/, "") + "/kunde.html?t=" + token;
 }
 
+// Der oeffentliche Fragebogen. Eigener Token, eigene Seite: Die Einladung ist
+// nicht dasselbe wie der spaetere Portalzugang und wird auch nicht dazu.
+export function intakeFormUrl(token, { base = CLIENT_PORTAL_BASE } = {}) {
+  if (!isShareToken(token)) return "";
+  return String(base).replace(/\/+$/, "") + "/fragebogen.html?e=" + token;
+}
+
 // Nur diese Phasen zeigt die Kundenseite. "lost" bleibt bewusst draussen —
 // ein verlorener Vorgang bekommt keine Fortschrittsanzeige.
 export function clientStageProgress(stage) {
@@ -1397,8 +1863,14 @@ export { safeUrl as clientSafeUrl };
 export function buildClientSnapshot({
   project = {}, company = {}, content = [], milestones = [], changes = [],
   versions = [], costs = {}, quote = null, prefill = {}, now = new Date().toISOString(),
+  previewHtml = "", previewUpdatedAt = "", terms = {}, consent = null,
+  questions = [], intakeDocument = null,
 } = {}) {
   const stage = clientStageProgress(project.pipelineStage);
+  const preview = sanitizeTemplateHtml(previewHtml);
+  const portal = portalProgress({
+    project, hasPreview: !!preview.html.trim(), changes, versions,
+  });
   const money = (v) => (v == null || v === "" ? null : Math.round(Number(v) * 100) / 100);
   return {
     // Kein projectId, keine Token, keine E-Mail-Adresse der Kundschaft.
@@ -1464,13 +1936,58 @@ export function buildClientSnapshot({
         deadline: /^\d{4}-\d{2}-\d{2}$/.test(String(prefill.deadline || "")) ? String(prefill.deadline) : "",
       },
     },
+    // ── Kundenportal ────────────────────────────────────────────────────
+    // Der eigene Fortschritt der Kundschaft: Fragebogen → Vorschau →
+    // Änderungen → Freigabe. Das ist bewusst nicht die interne Pipeline.
+    portal: {
+      key: portal.key, label: portal.label, index: portal.index,
+      total: portal.total, steps: portal.steps, openChanges: portal.openChanges,
+    },
+    // Die Vorschau ist entschaerftes HTML. Die Kundenseite zeigt es
+    // zusaetzlich in einem sandboxed iframe — zwei Schichten, nicht eine.
+    preview: {
+      html: preview.html,
+      updatedAt: preview.html.trim() ? String(previewUpdatedAt || now) : "",
+      sanitized: preview.removed,
+    },
+    terms: (function () {
+      const state = termsState({ terms, consent });
+      return {
+        title: state.title,
+        version: state.version,
+        body: String(terms.body || "").slice(0, 40000),
+        notice: LEGAL_REVIEW_NOTICE,
+        accepted: state.accepted,
+        acceptedAt: state.acceptedAt,
+        outdated: state.outdated,
+      };
+    })(),
+    // Laufende Fragen. Der Name der antwortenden Person steht bewusst nicht
+    // drin — die Kundschaft weiss, wer sie ist.
+    questions: (questions || []).slice(0, 60).map((q) => ({
+      id: String(q.id || ""),
+      question: String(q.question || "").slice(0, 1500),
+      answer: String(q.answer || "").slice(0, 4000),
+      askedAt: q.askedAt || "",
+      answeredAt: q.answeredAt || "",
+    })),
+    // Die eigenen Angaben aus dem Fragebogen — ohne die Kontaktfelder.
+    intake: intakeDocument ? {
+      title: String(intakeDocument.intakeTitle || "").slice(0, 200),
+      submittedAt: intakeDocument.submittedAt || "",
+      answers: (intakeDocument.answers || [])
+        .filter((a) => !INTAKE_CONTACT_ROLES.includes(a.role) && String(a.answer || "").trim())
+        .slice(0, 40)
+        .map((a) => ({ label: String(a.label).slice(0, 200), answer: String(a.answer).slice(0, 4000) })),
+    } : null,
   };
 }
 
 // Was der Snapshot NIE enthalten darf. Wird im Test gegen echte Projektdaten
 // geprueft, damit ein neues Feld nicht versehentlich mitwandert.
 export const CLIENT_SNAPSHOT_FORBIDDEN_KEYS = [
-  "projectId", "id", "sourceInquiryId", "sourceVisionId", "sourceQuoteId", "ftContactLog",
+  "projectId", "id", "sourceInquiryId", "sourceVisionId", "sourceQuoteId", "sourceIntakeId",
+  "intakeId", "inviteToken", "portalToken", "formToken", "visionToken", "ftContactLog",
   "ftOfferAttachment", "ftVision", "ftQuoteRequest", "ftQuoteRequests",
   "client", "contact", "notesInternal",
   "invoices", "offers", "mailThreadIds", "ftRouteSource", "budgetInternal",
@@ -1532,6 +2049,11 @@ const API = {
   ROUTES, routeLabel, routeOf, routeIsExplicit, routeSkipsOffer, offerDecisionState,
   OFFER_ATTACHMENTS, isHttpUrl, offerAttachmentState,
   VISION_TYPES, visionDeliveryType, normalizeVisionSubmission, visionIsUsable, projectFromVision,
+  INTAKE_QUESTION_TYPES, INTAKE_ROLES, INTAKE_CONTACT_ROLES, DEFAULT_INTAKE_TITLE,
+  DEFAULT_INTAKE_INTRO, DEFAULT_INTAKE_QUESTIONS, normalizeIntakeQuestions, normalizeIntakeAnswers,
+  answerByRole, intakeAnswersUsable, buildIntakeDocument, projectFromIntake, buildIntakeTask,
+  PORTAL_STEPS, portalProgress, MAX_TEMPLATE_BYTES, MAX_PROMPT_BYTES, sanitizeTemplateHtml,
+  defaultTemplateHtml, buildProjectPrompt, termsState, normalizePortalQuestion,
   QUOTE_REQUEST_STATUSES, quoteStatusLabel, QUOTE_REQUEST_FIELDS, normalizeQuoteRequest,
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
@@ -1543,7 +2065,7 @@ const API = {
   MESSAGE_TEMPLATES, buildMessageDraft,
   PROMPT_DATA_OPTIONS, buildClaudePrompt,
   isShareToken, formUrl, portalUrl,
-  CLIENT_PORTAL_BASE, clientPortalUrl, clientStageProgress, buildClientSnapshot,
+  CLIENT_PORTAL_BASE, clientPortalUrl, intakeFormUrl, clientStageProgress, buildClientSnapshot,
   clientSafeUrl: safeUrl, CLIENT_SNAPSHOT_FORBIDDEN_KEYS,
   projectMailAddresses, mailBelongsToProject,
   idempotencyKey, isDuplicate,

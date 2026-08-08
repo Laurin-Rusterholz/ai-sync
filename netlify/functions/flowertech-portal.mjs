@@ -5,6 +5,9 @@
  *   kind = "change"   → Änderungswunsch (Kundenseite auf flowertech.ch)
  *   kind = "quote"    → Offertenanfrage (Kundenseite oder Vision Room)
  *   kind = "vision"   → Vision-Room-Ausarbeitung zu einer bestehenden Offerte
+ *   kind = "intake"   → ausgefüllter Fragebogen (fragebogen.html, Einladungstoken)
+ *   kind = "terms"    → AGB-Zustimmung im Kundenportal
+ *   kind = "answer"   → Antwort auf eine Rückfrage im Kundenportal
  * und legt sie unter flowertech/submissions/<id> ab. Die Quantus-App ordnet sie
  * anhand des Freigabe-Tokens genau einem Projekt zu und erzeugt daraus
  * Projektfelder und ganz normale Quantus-Aufgaben.
@@ -24,6 +27,7 @@ import {
   normalizeChangeRequest, changeRequestIsUsable,
   normalizeVisionSubmission, visionIsUsable,
   normalizeQuoteRequest, quoteRequestIsUsable,
+  normalizeIntakeQuestions, normalizeIntakeAnswers, intakeAnswersUsable,
   isShareToken, idempotencyKey,
 } from "../../public/flowertech-workflow-core.js";
 
@@ -129,7 +133,8 @@ export default async (req) => {
   // Honeypot: echte Menschen füllen dieses Feld nie aus.
   if (body.website || body.fax) return json(req, { ok: true }, 202);
 
-  const kind = ["change", "vision", "quote", "briefing"].includes(body.kind) ? body.kind : "briefing";
+  const kind = ["change", "vision", "quote", "intake", "terms", "answer", "briefing"]
+    .includes(body.kind) ? body.kind : "briefing";
   const token = String(body.token || "");
 
   // Der Vision Room auf flowertech.ch ist oeffentlich: dort gibt es keinen
@@ -149,11 +154,58 @@ export default async (req) => {
   } else if (!isShareToken(token)) {
     return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
   }
+  // Fragebogen, Zustimmung und Antwort gibt es nur zu einem konkreten Vorgang:
+  // ohne gültigen Token existiert kein Kontext, dem sie gehören könnten.
+  if (["intake", "terms", "answer"].includes(kind) && !isShareToken(token)) {
+    return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
+  }
 
   const createdAt = new Date().toISOString();
 
   let payload;
-  if (kind === "briefing") {
+  if (kind === "intake") {
+    // Der Fragebogen wird gegen SEINE Fragen geprüft, nicht gegen ein festes
+    // Schema: Der veröffentlichte Fragebogen ist die Wahrheit. Was nicht
+    // gefragt wurde, kommt nicht durch — das ist die serverseitige Grenze.
+    const published = await firebaseDbGet(`flowertech/intakeForms/${token}`);
+    if (!published || published.status === "closed") {
+      return json(req, { error: "Dieser Fragebogen ist nicht (mehr) verfügbar." }, 404);
+    }
+    const questions = normalizeIntakeQuestions(published.questions || []);
+    if (!questions.length) {
+      return json(req, { error: "Dieser Fragebogen enthält keine Fragen." }, 409);
+    }
+    const normalized = normalizeIntakeAnswers(questions, body.payload || {}, { now: createdAt });
+    const check = intakeAnswersUsable(questions, normalized.answers);
+    if (!check.usable) {
+      return json(req, {
+        error: "Bitte noch ergänzen: " + check.missing.join(", ") + ".",
+        missing: check.missing,
+      }, 400);
+    }
+    payload = {
+      // Bewusst KEINE interne ID: Der Token ist die Zuordnung, und der
+      // veröffentlichte Fragebogen soll nichts Internes tragen.
+      intakeTitle: String(published.title || ""),
+      answers: normalized.answers,
+      submittedAt: createdAt,
+      source: "kundenanfrage",
+    };
+  } else if (kind === "terms") {
+    // Eine Zustimmung ist ein Ereignis mit Fassung und Zeitpunkt.
+    const version = String(body.payload?.version || "").trim().slice(0, 40);
+    if (!version) return json(req, { error: "Die Fassung fehlt." }, 400);
+    if (body.payload?.accepted !== true) {
+      return json(req, { error: "Bitte den Bedingungen ausdrücklich zustimmen." }, 400);
+    }
+    payload = { version, accepted: true, acceptedAt: createdAt };
+  } else if (kind === "answer") {
+    const questionId = String(body.payload?.questionId || "").trim().slice(0, 60);
+    const answer = String(body.payload?.answer || "").replace(/\r\n/g, "\n").trim().slice(0, 4000);
+    if (!questionId) return json(req, { error: "Die Frage fehlt." }, 400);
+    if (!answer) return json(req, { error: "Bitte eine Antwort eintragen." }, 400);
+    payload = { questionId, answer, answeredAt: createdAt };
+  } else if (kind === "briefing") {
     payload = normalizeBriefing(body.payload || {}, { now: createdAt });
     payload.source = "portal";
     if (!briefingIsUsable(payload)) {
@@ -193,9 +245,15 @@ export default async (req) => {
   }
 
   // Idempotenz: derselbe Eingang zählt nur einmal, auch bei Wiederholungen.
-  const key = String(body.idempotencyKey
-    || idempotencyKey({ token, kind, ...payload, title: payload.title || payload.need || payload.idea }))
-    .slice(0, 80);
+  // Ein Fragebogen gehört zu genau EINER Einladung: Der Schlüssel haengt am
+  // Token, nicht am Inhalt. Ein Reload oder ein zweites Absenden liefert damit
+  // dieselbe Einreichung zurück, statt einen zweiten Vorgang zu erzeugen — und
+  // zwar unabhaengig davon, was der Browser als idempotencyKey mitschickt.
+  const key = kind === "intake"
+    ? `ft_intake_${token}`.slice(0, 80)
+    : String(body.idempotencyKey
+      || idempotencyKey({ token, kind, ...payload, title: payload.title || payload.need || payload.idea }))
+      .slice(0, 80);
   const existing = await firebaseDbGet(`flowertech/submissionKeys/${key}`);
   if (existing) return json(req, { ok: true, duplicate: true, submissionId: existing }, 200);
 

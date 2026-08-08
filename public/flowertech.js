@@ -60,6 +60,9 @@
     var ft = root.flowertech;
     ft.activeTab = ft.activeTab || "dashboard";
     ft.inquiries = ft.inquiries || {};
+    // Kundenanfragen (Fragebögen). Der Einstieg in eine Zusammenarbeit —
+    // vor jedem Projekt und vor jeder Offerte.
+    ft.intakes = ft.intakes && typeof ft.intakes === "object" ? ft.intakes : {};
     ft.videos = ft.videos || {};
     ft.finances = Array.isArray(ft.finances) ? ft.finances : [];
     ft.notes = Array.isArray(ft.notes) ? ft.notes : [];
@@ -255,6 +258,7 @@
   // Einstiegskarten auf der Uebersicht erreichbar.
   var SECTIONS = [
     ["dashboard", "Übersicht", "🌸", "Zahlen, Projekte und letzte Anfragen auf einen Blick"],
+    ["intakes", "Kundenanfragen", "📨", "Fragebogen anlegen, Link geben, Antworten sehen"],
     ["projects", "Projekte", "📦", "FlowerTech-Projekte anlegen und öffnen"],
     ["planung", "Planung", "🗓️", "Termine, Meilensteine und Fristen über alle Projekte"],
     ["tasks", "Aufgaben", "✅", "Alle FlowerTech-Aufgaben"],
@@ -375,6 +379,19 @@
       // nie und liefe ins Leere.
       if (share.visionToken) byToken[share.visionToken] = { projectId: projectId, kinds: ["vision", "quote"] };
     });
+    // Der Kundenlink traegt zusaetzlich Zustimmung und Rueckantwort.
+    Object.keys(byToken).forEach(function (token) {
+      if (byToken[token].kinds.indexOf("change") >= 0) {
+        byToken[token].kinds = byToken[token].kinds.concat(["terms", "answer"]);
+      }
+    });
+    // Einladungen zu Fragebögen sind ein eigener Kreis: ein Einladungstoken
+    // oeffnet ausschliesslich seinen Fragebogen und nichts sonst.
+    var byInvite = {};
+    Object.keys(ft.intakes || {}).forEach(function (intakeId) {
+      var intake = ft.intakes[intakeId] || {};
+      if (intake.inviteToken) byInvite[intake.inviteToken] = intakeId;
+    });
     var handled = 0;
     Object.keys(raw).forEach(function (key) {
       var entry = raw[key] || {};
@@ -393,6 +410,14 @@
         ft.processedSubmissions[key] = now();
         return;
       }
+      // Fragebogen: eigener Tokenkreis, eigener Weg.
+      if (entry.kind === "intake") {
+        var intakeId = byInvite[entry.token];
+        if (!intakeId) return;                  // fremde oder widerrufene Einladung
+        if (applyIntakeSubmission(intakeId, entry)) handled++;
+        ft.processedSubmissions[key] = now();
+        return;
+      }
       var match = byToken[entry.token];
       if (!match) return;                       // fremder oder abgelaufener Link
       // Ein Formular-Token darf keine Vision-Ausarbeitung einschleusen und
@@ -406,6 +431,10 @@
         handled++;
       } else if (entry.kind === "quote") {
         if (applyQuoteRequest(match.projectId, entry.payload || {}, entry.id || key)) handled++;
+      } else if (entry.kind === "terms") {
+        if (applyTermsConsent(match.projectId, entry.payload || {})) handled++;
+      } else if (entry.kind === "answer") {
+        if (applyPortalAnswer(match.projectId, entry.payload || {})) handled++;
       } else if (entry.kind === "change") {
         var cr = core.normalizeChangeRequest(
           Object.assign({}, entry.payload || {}, { origin: "client" }), { now: now() });
@@ -419,33 +448,26 @@
   // Aus einer Vision-Room-Eingabe entsteht ein Direktprojekt. Ein zweites Mal
   // derselbe Eingang legt nichts an: die Submission-ID ist der Schluessel, und
   // zusaetzlich schuetzt sourceVisionId gegen doppelte Projekte.
+  // Aeltere Vision-Eingaenge (kind "vision" ohne Token) muenden in denselben
+  // Kundenanfrage-Weg. Es gibt genau EINEN Weg in ein Projekt — sonst driften
+  // zwei Wege auseinander und niemand weiss mehr, welcher gilt.
   function createProjectFromVision(entry) {
     var core = W();
-    var ft = wf();
-    if (!core || !ft) return false;
+    if (!core) return false;
     var vision = core.normalizeVisionSubmission(entry.payload || {}, { now: now() });
     if (!core.visionIsUsable(vision)) return false;
-    var existing = projects().find(function (p) { return p.sourceVisionId === entry.id; });
-    if (existing) return false;
-
-    var built = core.projectFromVision(vision, { now: now() });
-    built.project.sourceVisionId = entry.id;
-    var projectId = window.createEntity("project", built.project);
-    if (!projectId) return false;
-
-    ensureToken(projectId, "formToken");
-    publishClientPortal(projectId);
-    ft.briefings[projectId] = built.briefing;
-    createBriefingTasks(projectId, built.briefing);
-
-    var project = projectById(projectId);
-    if (project) {
-      project.ftContactLog = [{
-        id: id(), at: now(), channel: "note",
-        text: "Aus dem Vision Room auf flowertech.ch — Direktprojekt.",
-      }];
-    }
-    notify("ok", "Vision Room", "Direktprojekt angelegt: " + (vision.idea || ""));
+    if (projects().find(function (p) { return p.sourceVisionId === entry.id; })) return false;
+    var handled = createProjectFromVisionQuote({
+      id: entry.id,
+      createdAt: entry.createdAt,
+      payload: {
+        type: vision.type, need: vision.idea, features: vision.features,
+        email: vision.contactEmail, deliveryType: vision.deliveryType,
+      },
+    });
+    if (!handled) return false;
+    var project = projects().find(function (p) { return p.sourceQuoteId === entry.id; });
+    if (project) { project.sourceVisionId = entry.id; project.ftVision = vision; }
     return true;
   }
 
@@ -531,49 +553,119 @@
   }
   window._ftApplyQuoteRequest = applyQuoteRequest;
 
-  // Offertenanfrage aus dem Vision Room: dort gibt es noch keinen Vorgang.
-  // Es entsteht ein Projekt in der Phase „Lead" auf der Route „Offerte zuerst" —
-  // ausdruecklich KEINE Offerte und keine OF-Nummer.
-  function createProjectFromQuote(entry) {
+  /* Der Vision Room mündet in denselben Kundenanfrage-Weg. Aus der Eingabe
+     wird ein bereits beantworteter Fragebogen: gleiches Anfrage-Dokument,
+     gleiche Vorlage, gleicher Prompt, gleiche eine Aufgabe. So gibt es genau
+     einen Weg in ein Projekt — und nicht zwei, die auseinanderdriften. */
+  var VISION_INTAKE_QUESTIONS = [
+    { key: "art", label: "Art des Vorhabens", type: "text", role: "" },
+    { key: "idee", label: "Ihre Idee", type: "textarea", role: "need", required: true },
+    { key: "funktionen", label: "Gewünschte Funktionen", type: "textarea", role: "" },
+    { key: "email", label: "E-Mail", type: "email", role: "contactEmail", required: true },
+  ];
+
+  function createProjectFromVisionQuote(entry) {
     var core = W();
     var ft = wf();
     if (!core || !ft) return false;
     var quote = core.normalizeQuoteRequest(
       Object.assign({}, entry.payload || {}, { source: "vision-room" }), { now: now() });
-    // Ohne Token kennt FlowerTech die Person nicht — ohne Rueckkanal waere die
-    // Anfrage nicht beantwortbar.
     if (!core.quoteRequestIsUsable(quote, { requireEmail: true })) return false;
-    var existing = projects().find(function (p) { return p.sourceQuoteId === entry.id; });
-    if (existing) return false;
+    if (projects().find(function (p) { return p.sourceQuoteId === entry.id; })) return false;
 
-    var label = core.quoteRequestLabel(quote, {});
-    var projectId = window.createEntity("project", {
-      title: label,
-      description: [
-        "Offertenanfrage aus dem Vision Room auf flowertech.ch.",
-        quote.visionType ? "Art: " + quote.visionType : "",
-        quote.need ? "Bedarf:\n" + quote.need : "",
-        (quote.features || []).length ? "Gewünschte Funktionen:\n- " + quote.features.join("\n- ") : "",
-      ].filter(Boolean).join("\n\n"),
-      status: "active",
-      projectType: "flowertech",
-      pipelineStage: "lead",
-      ftRoute: "offer_first",
-      ftRouteDecidedAt: now(),
-      ftRouteSource: "vision-room",
+    var intakeId = id();
+    var intake = {
+      id: intakeId,
+      title: "Vision Room",
+      intro: "Aus dem Vision Room auf flowertech.ch.",
       deliveryType: quote.deliveryType || "website",
-      client: { email: quote.contactEmail || "" },
-      tags: ["flowertech", "offertenanfrage", "visionroom"],
-      sourceQuoteId: entry.id || null,
+      questions: core.normalizeIntakeQuestions(VISION_INTAKE_QUESTIONS),
+      // Kein Einladungstoken: Dieser Fragebogen wurde nie versendet, er ist
+      // die Aufzeichnung einer Eingabe. Er darf deshalb auch nie oeffentlich
+      // erreichbar werden.
+      inviteToken: "",
+      source: "vision-room",
+      status: "answered",
       createdAt: now(),
       updatedAt: now(),
+    };
+    var normalized = core.normalizeIntakeAnswers(intake.questions, {
+      art: quote.visionType || "",
+      idee: quote.need,
+      funktionen: (quote.features || []).join("\n"),
+      email: quote.contactEmail,
+    }, { now: now() });
+    if (!core.intakeAnswersUsable(intake.questions, normalized.answers).usable) return false;
+
+    ft.intakes[intakeId] = intake;
+    var projectId = createProjectForIntake(intake, normalized.answers, {
+      submittedAt: entry.createdAt || now(),
+      logText: "Aus dem Vision Room auf flowertech.ch eingegangen.",
+      tags: ["visionroom"],
+      routeSource: "vision-room",
     });
-    if (!projectId) return false;
-    ensureToken(projectId, "formToken");
-    publishClientPortal(projectId);
-    return applyQuoteRequest(projectId, quote, entry.id || null);
+    if (!projectId) {
+      delete ft.intakes[intakeId];
+      return false;
+    }
+    var project = projectById(projectId);
+    if (project) project.sourceQuoteId = entry.id || null;
+    intake.projectId = projectId;
+    intake.submissionId = entry.id || null;
+    intake.answeredAt = entry.createdAt || now();
+    save();
+    notify("ok", "Vision Room", "Kundenanfrage eingegangen — Projekt angelegt: " +
+      ((project || {}).title || ""));
+    return true;
   }
+
+  // Bleibt als Name erhalten: der Eingang ruft ihn weiterhin auf.
+  function createProjectFromQuote(entry) { return createProjectFromVisionQuote(entry); }
+  window._ftCreateProjectFromVisionQuote = createProjectFromVisionQuote;
+
   window._ftCreateProjectFromQuote = createProjectFromQuote;
+
+  // Die AGB-Zustimmung wird als Ereignis festgehalten: Fassung und Zeitpunkt.
+  // Eine bereits erteilte Zustimmung zur selben Fassung wirkt nicht doppelt.
+  function applyTermsConsent(projectId, payload) {
+    var project = projectById(projectId);
+    if (!project || payload.accepted !== true) return false;
+    var version = String(payload.version || "").trim();
+    if (!version) return false;
+    var current = project.ftTermsConsent || null;
+    if (current && current.version === version && current.acceptedAt) return false;
+    project.ftTermsConsent = { version: version, acceptedAt: payload.acceptedAt || now() };
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({
+      id: id(), at: now(), channel: "note",
+      text: "AGB-Fassung " + version + " im Kundenportal ausdrücklich zugestimmt.",
+    });
+    project.updatedAt = now();
+    save();
+    refreshClientPortal(projectId);
+    notify("ok", "AGB", "Zustimmung eingegangen (Fassung " + version + ")");
+    return true;
+  }
+  window._ftApplyTermsConsent = applyTermsConsent;
+
+  // Antwort auf eine Rueckfrage. Eine bereits beantwortete Frage wird nicht
+  // ueberschrieben — sonst ginge der Verlauf der Kommunikation verloren.
+  function applyPortalAnswer(projectId, payload) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var list = project.ftPortalQuestions || [];
+    var hit = list.find(function (q) { return q.id === String(payload.questionId || ""); });
+    if (!hit || String(hit.answer || "").trim()) return false;
+    hit.answer = String(payload.answer || "").slice(0, 4000);
+    hit.answeredAt = payload.answeredAt || now();
+    project.updatedAt = now();
+    save();
+    refreshClientPortal(projectId);
+    notify("ok", "Kundenportal", "Antwort der Kundschaft eingegangen");
+    return true;
+  }
+  window._ftApplyPortalAnswer = applyPortalAnswer;
 
   // Vision-Ausarbeitung zu einer bestehenden Offerte: sie ergaenzt den Bedarf
   // des vorhandenen Projekts, statt ein zweites anzulegen.
@@ -1377,7 +1469,7 @@
       } else {
         if (file.size > QR_INLINE_LIMIT) throw new Error("Ohne Firebase max. 400 KB — bitte kleineres Bild wählen");
         var dataUrl = await new Promise(function (resolve, reject) {
-          var reader = new FileReader();
+          var reader = new window.FileReader();
           reader.onload = function () { resolve(reader.result); };
           reader.onerror = function () { reject(new Error("Datei konnte nicht gelesen werden")); };
           reader.readAsDataURL(file);
@@ -2206,6 +2298,195 @@
     }).join("");
   }
 
+  /* ── Kundenanfragen: Fragebogen anlegen, Link geben, Antwort sehen ─────── */
+  function intakeStatusBadge(intake) {
+    if (intake.projectId) return '<span class="badge ok">Beantwortet</span>';
+    if (intake.status === "closed") return '<span class="badge">Geschlossen</span>';
+    return '<span class="badge">Wartet auf Antwort</span>';
+  }
+
+  function intakeQuestionRow(intakeId, q, index, total) {
+    var core = W();
+    var set = "window._ftSetIntakeQuestion('" + attr(intakeId) + "'," + index + ",";
+    return '<div class="ft-q-row">' +
+      '<div class="ft-q-head"><span class="mini">Frage ' + (index + 1) + " von " + total + "</span>" +
+        '<div class="ft-q-actions">' +
+          '<button class="btn sm ghost" onclick="window._ftMoveIntakeQuestion(\'' + attr(intakeId) + "'," + index + ',-1)" title="Nach oben">↑</button>' +
+          '<button class="btn sm ghost" onclick="window._ftMoveIntakeQuestion(\'' + attr(intakeId) + "'," + index + ',1)" title="Nach unten">↓</button>' +
+          '<button class="btn sm ghost" onclick="window._ftRemoveIntakeQuestion(\'' + attr(intakeId) + "'," + index + ')" title="Frage entfernen">×</button>' +
+        "</div></div>" +
+      '<input class="ft-q-label" value="' + attr(q.label) + '" placeholder="Frage" oninput="' + set + "'label',this.value)\">" +
+      '<div class="ft-q-meta">' +
+        "<select onchange=\"" + set + "'type',this.value)\">" +
+          core.INTAKE_QUESTION_TYPES.map(function (t) {
+            return '<option value="' + t.key + '"' + (q.type === t.key ? " selected" : "") + ">" + esc(t.label) + "</option>";
+          }).join("") + "</select>" +
+        "<select onchange=\"" + set + "'role',this.value)\" title=\"Wohin die Antwort im Projekt gehört\">" +
+          core.INTAKE_ROLES.map(function (r) {
+            return '<option value="' + r.key + '"' + ((q.role || "") === r.key ? " selected" : "") + ">" + esc(r.label) + "</option>";
+          }).join("") + "</select>" +
+        '<label class="ft-q-req"><input type="checkbox"' + (q.required ? " checked" : "") +
+          ' onchange="' + set + "'required',this.checked)\"> Pflicht</label>" +
+      "</div>" +
+      '<input class="ft-q-hint" value="' + attr(q.hint || "") + '" placeholder="Hinweis unter der Frage (optional)" oninput="' + set + "'hint',this.value)\">" +
+      (q.type === "select"
+        ? '<textarea class="ft-q-opts" rows="2" placeholder="Auswahlmöglichkeiten — eine pro Zeile" oninput="' + set +
+          "'options',this.value)\">" + esc((q.options || []).join("\n")) + "</textarea>"
+        : "") +
+      "</div>";
+  }
+
+  function intakeEditor(intake) {
+    var core = W();
+    var link = intakeLink(intake.id);
+    var project = intake.projectId ? projectById(intake.projectId) : null;
+    var doc = project && project.ftIntakeDocument;
+    var set = "window._ftSetIntakeField('" + attr(intake.id) + "',";
+
+    var answers = doc
+      ? '<div class="card p-4 mt-3"><h3>Erstes Dokument — die Antworten</h3><div class="sep"></div>' +
+        '<div class="mini">Eingegangen ' + esc(dateTime(doc.submittedAt)) + " · unverändert festgehalten.</div>" +
+        (doc.answers || []).filter(function (a) { return String(a.answer || "").trim(); }).map(function (a) {
+          return '<div class="ft-answer"><strong>' + esc(a.label) + "</strong><p>" + esc(a.answer) + "</p></div>";
+        }).join("") +
+        '<div class="ft-quick mt-2"><button class="btn sm primary" onclick="window._ftOpenProjectAt(\'' +
+          attr(intake.projectId) + '\',\'vorschau\')">→ Projekt öffnen: ' + esc(project.title) + "</button></div></div>"
+      : "";
+
+    return '<div class="card p-4 mb-3">' +
+      '<div class="ft-editor-head"><div><h3 style="margin:0">' + esc(intake.title || "Kundenanfrage") + " " +
+        intakeStatusBadge(intake) + "</h3>" +
+        '<div class="mini">Fragebogen · zuletzt ' + esc(dateTime(intake.updatedAt)) + "</div></div>" +
+        '<div class="ft-editor-actions">' +
+          '<button class="btn sm" onclick="window._ftCloseIntake(\'' + attr(intake.id) + '\')">' +
+            (intake.status === "closed" ? "Wieder öffnen" : "Schliessen") + "</button>" +
+          '<button class="btn sm ghost" onclick="window._ftOpenIntake(\'' + attr(intake.id) + '\')">Zuklappen</button>' +
+        "</div></div>" +
+
+      '<div class="ft-link-row mt-2"><span>Öffentlicher Link</span>' +
+        '<input readonly value="' + attr(link) + '">' +
+        '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) + '\')">Link kopieren</button>' +
+        (link ? '<a class="btn sm ghost" href="' + attr(link) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
+        '<button class="btn sm ghost" onclick="window._ftRotateIntakeToken(\'' + attr(intake.id) +
+          '\')" title="Alten Link widerrufen">Neu</button></div>' +
+      (intake.publishError
+        ? '<div class="ft-legal-note">⚠ ' + esc(intake.publishError) + "</div>"
+        : intake.publishedAt
+          ? '<div class="ft-ready">✓ Fragebogen ist online · Stand ' + esc(dateTime(intake.publishedAt)) + "</div>"
+          : '<div class="mini">Wird beim nächsten Speichern veröffentlicht.</div>') +
+      '<div class="mini mt-2">Der Link erzeugt noch nichts. Erst wenn die Kundschaft absendet, ' +
+        "entsteht genau ein Projekt mit Anfrage-Dokument und einer Aufgabe.</div>" +
+
+      '<div class="sep"></div>' +
+      '<label class="ft-inline-label">Titel<input value="' + attr(intake.title || "") +
+        '" oninput="' + set + "'title',this.value)\"></label>" +
+      '<label class="ft-inline-label">Einleitung<textarea rows="2" oninput="' + set + "'intro',this.value)\">" +
+        esc(intake.intro || "") + "</textarea></label>" +
+      '<label class="ft-inline-label">Art des Vorhabens<select onchange="' + set + "'deliveryType',this.value)\">" +
+        core.DELIVERY_TYPES.map(function (t) {
+          return '<option value="' + t.key + '"' + ((intake.deliveryType || "website") === t.key ? " selected" : "") +
+            ">" + esc(t.label) + "</option>";
+        }).join("") + "</select></label>" +
+
+      '<div class="sep"></div><h4 class="ft-sub">Fragen</h4>' +
+      (intake.questions || []).map(function (q, i) {
+        return intakeQuestionRow(intake.id, q, i, (intake.questions || []).length);
+      }).join("") +
+      '<div class="ft-quick mt-2"><button class="btn sm" onclick="window._ftAddIntakeQuestion(\'' +
+        attr(intake.id) + '\')">＋ Frage</button></div>' +
+      "</div>" + answers;
+  }
+
+  function intakesHtml() {
+    var ft = wf();
+    if (!ft) return "";
+    var list = Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
+      .sort(function (a, b) { return String(b.createdAt || "").localeCompare(String(a.createdAt || "")); });
+    var openId = ft.ui.intakeId;
+
+    var head = '<div class="card p-4 mb-3"><h3>Kundenanfragen</h3><div class="sep"></div>' +
+      '<div class="mini">So beginnt eine Zusammenarbeit: Fragebogen anlegen, Fragen anpassen, ' +
+      "Link an die Kundschaft geben. Ihre Antwort erzeugt das Projekt — nicht umgekehrt.</div>" +
+      '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftNewIntake()">' +
+      "＋ Neue Kundenanfrage</button></div></div>";
+
+    if (!list.length) {
+      return head + '<div class="card p-4">' + empty("Noch keine Kundenanfrage. Lege eine an und gib den Link weiter.") + "</div>";
+    }
+
+    return head + list.map(function (intake) {
+      if (intake.id === openId) return intakeEditor(intake);
+      var project = intake.projectId ? projectById(intake.projectId) : null;
+      return '<div class="ft-doc-row" onclick="window._ftOpenIntake(\'' + attr(intake.id) + '\')">' +
+        '<div class="ft-doc-main"><strong>' + esc(intake.title || "Kundenanfrage") + "</strong>" +
+        '<div class="mini">' + esc([
+          (intake.questions || []).length + " Fragen",
+          project ? "Projekt: " + project.title : "noch keine Antwort",
+          dateTime(intake.updatedAt),
+        ].filter(Boolean).join(" · ")) + "</div></div>" +
+        '<div class="ft-doc-side">' + intakeStatusBadge(intake) + "</div></div>";
+    }).join("");
+  }
+
+  /* ── Vorschau & Prompt am Projekt ───────────────────────────────────────
+     Beides sind Dateien, die ich herunterlade, ändere und wieder hochlade.
+     Die Vorschau läuft in einem sandboxed iframe — die Vorlage ist HTML, das
+     nicht im Quantus-Kontext laufen darf.
+     ------------------------------------------------------------------- */
+  function previewPromptHtml(projectId) {
+    var core = W();
+    var project = projectById(projectId) || {};
+    var template = project.ftTemplate || {};
+    var prompt = project.ftPrompt || {};
+    var promptText = prompt.text || buildPromptFor(projectId);
+    var clean = core ? core.sanitizeTemplateHtml(template.html || "") : { html: "", removed: [] };
+    var doc = project.ftIntakeDocument;
+
+    return '<div class="card p-4"><h3>Vorschau</h3><div class="sep"></div>' +
+      '<div class="mini">' + (template.name
+        ? esc(template.name) + " · " + esc(template.source === "hochgeladen" ? "hochgeladen" : "Standardvorlage") +
+          " · " + esc(dateTime(template.updatedAt))
+        : "Noch keine Vorlage — die Standardvorlage entsteht mit der ersten Antwort.") + "</div>" +
+      (clean.removed.length
+        ? '<div class="ft-legal-note">⚠ Aus der Vorlage entfernt: ' + esc(clean.removed.join(", ")) +
+          ". Die Vorschau läuft zusätzlich abgeschottet.</div>"
+        : "") +
+      (clean.html.trim()
+        ? '<iframe class="ft-preview" title="Vorschau der Website" sandbox srcdoc="' + attr(clean.html) + '"></iframe>'
+        : '<div class="ft-empty">Noch keine Vorschau.</div>') +
+      '<div class="ft-quick mt-2">' +
+        '<button class="btn sm" onclick="window._ftDownloadTemplate(\'' + attr(projectId) + '\')">⭳ Vorlage (.html)</button>' +
+        '<label class="btn sm ghost ft-upload">⭱ Vorlage ersetzen' +
+          '<input type="file" accept=".html,.htm,text/html" onchange="window._ftUploadTemplate(\'' +
+            attr(projectId) + '\',this)"></label>' +
+        '<button class="btn sm ghost" onclick="window._ftResetTemplate(\'' + attr(projectId) +
+          '\')">Standardvorlage</button>' +
+      "</div>" +
+      '<div class="mini mt-2">Erlaubt sind .html-Dateien bis ' +
+        (core ? Math.round(core.MAX_TEMPLATE_BYTES / 1024) : 400) + " KB. Skripte, eingebettete Seiten und " +
+        "Ereignis-Attribute werden vor der Veröffentlichung entfernt.</div></div>" +
+
+      '<div class="card p-4 mt-3"><h3>Claude-Code-Prompt</h3><div class="sep"></div>' +
+      '<div class="mini">' + esc(prompt.name || "prompt.md") + " · " +
+        esc(prompt.source === "hochgeladen" ? "hochgeladen" : "aus dem aktuellen Stand erzeugt") +
+        (prompt.updatedAt ? " · " + esc(dateTime(prompt.updatedAt)) : "") + "</div>" +
+      (doc ? "" : '<div class="ft-legal-note">Noch kein Anfrage-Dokument: Der Prompt enthält erst dann alle ' +
+        "Antworten, wenn die Kundschaft den Fragebogen ausgefüllt hat.</div>") +
+      '<pre class="ft-prompt">' + esc(promptText) + "</pre>" +
+      '<div class="ft-quick mt-2">' +
+        '<button class="btn sm primary" onclick="window._ftCopyPrompt(\'' + attr(projectId) + '\')">Kopieren</button>' +
+        '<button class="btn sm" onclick="window._ftDownloadPrompt(\'' + attr(projectId) + '\')">⭳ Prompt (.md)</button>' +
+        '<label class="btn sm ghost ft-upload">⭱ Prompt ersetzen' +
+          '<input type="file" accept=".md,.markdown,.txt,text/markdown" onchange="window._ftUploadPrompt(\'' +
+            attr(projectId) + '\',this)"></label>' +
+        '<button class="btn sm ghost" onclick="window._ftRegeneratePrompt(\'' + attr(projectId) +
+          '\')">Neu erzeugen</button>' +
+      "</div>" +
+      '<div class="mini mt-2">Der Prompt ist die Eingabe für die spätere HTML-Erstellung. Er enthält ' +
+        "die Antworten aus dem Fragebogen, die Änderungswünsche, die Rückfragen und den Projektkontext. " +
+        "Ein Upload ersetzt ihn bewusst.</div></div>";
+  }
+
   // ==========================================================================
   //  Hauptansicht
   // ==========================================================================
@@ -2373,6 +2654,8 @@
           }).join("") : empty("Noch keine Website-Anfragen")) +
         "</div></div>";
 
+    } else if (activeTab === "intakes") {
+      content = intakesHtml();
     } else if (activeTab === "projects") {
       // Keine Kacheln mehr: eine ruhige Liste mit allen Zahlen, die man zum
       // Sortieren braucht. Ein Klick öffnet die vollwertige Projektseite.
@@ -2622,6 +2905,25 @@
     var ft = wf();
     return (ft && ft.legalDocs[projectId] && ft.legalDocs[projectId][kind]) || null;
   }
+  // Die AGB fuer das Kundenportal: der bearbeitete Entwurf des Projekts, sonst
+  // nichts. Ohne gepflegten Text gibt es im Portal auch keine Zustimmung —
+  // niemand soll etwas abnicken, das gar nicht dasteht.
+  function termsForProject(projectId) {
+    var doc = legalOf(projectId, "agb");
+    if (!doc) return { title: "", body: "", version: "" };
+    var body = (doc.sections || []).map(function (sec) {
+      return (sec.title ? sec.title + "\n" : "") + (sec.body || "");
+    }).join("\n\n").trim();
+    return {
+      title: doc.title || "Allgemeine Geschäftsbedingungen (Entwurf)",
+      body: body,
+      // Die Fassung wandert in die Zustimmung: Wird der Text geändert, gilt
+      // die alte Zustimmung sichtbar als veraltet.
+      version: String(doc.version || 1) + "-" + String(doc.updatedAt || "").slice(0, 10),
+    };
+  }
+  window._ftTermsForProject = termsForProject;
+
   function changesOf(projectId) {
     var ft = wf();
     return (ft ? ft.changeRequests : []).filter(function (c) { return c.projectId === projectId; })
@@ -3061,6 +3363,7 @@
       && !window.confirm("Vorlage neu aufbauen? Eigene Änderungen gehen verloren.")) return;
     ft.legalDocs[projectId][kind] = core.buildLegalDraft(kind, companyContext(projectId));
     save();
+    if (kind === "agb") refreshClientPortal(projectId);
     notify("ok", "Rechtstext", "Entwurf erstellt — vor Verwendung rechtlich prüfen");
     rerender();
   };
@@ -3082,7 +3385,10 @@
     block[field] = field === "enabled" ? !!value : value;
     doc.updatedAt = now();
     save();
-    if (scope === "content") refreshClientPortal(projectId);
+    // Leistungsbeschreibung UND AGB stehen im Kundenportal — beide muessen
+    // dort nachgezogen werden. Sonst stimmte die Kundschaft einem Text zu,
+    // den sie so nie gesehen hat.
+    if (scope === "content" || scope === "agb") refreshClientPortal(projectId);
   };
 
   window._ftBlockToggle = function (projectId, scope, blockKey, enabled) {
@@ -3233,6 +3539,474 @@
     copyText(text, "Claude-Code-Prompt kopiert");
   };
 
+  /* ── Kundenanfragen (Fragebögen) ─────────────────────────────────────────
+     Der Einstieg: Ich lege einen Fragebogen an, bearbeite die Fragen, kopiere
+     den öffentlichen Link. Erst die Antwort der Kundschaft erzeugt — genau
+     einmal — ein Projekt. Vorher gibt es kein Projekt und keine Offerte.
+     ------------------------------------------------------------------- */
+  function intakes() {
+    var ft = wf();
+    return ft ? ft.intakes : {};
+  }
+  function intakeById(intakeId) { return intakes()[intakeId] || null; }
+
+  function intakeRef(token) {
+    if (!token || typeof firebase === "undefined" || !firebase.app) return null;
+    try { return firebase.app().database(RTDB).ref("flowertech/intakeForms/" + token); }
+    catch (e) { return null; }
+  }
+
+  // Der veröffentlichte Fragebogen trägt nur, was die Kundschaft sehen soll:
+  // Titel, Einleitung, Fragen, Status. Keine internen IDs, keine Projektdaten,
+  // keine Kontaktangaben anderer Vorgänge.
+  function publishIntakeForm(intakeId) {
+    var core = W();
+    var ft = wf();
+    var intake = intakeById(intakeId);
+    if (!core || !ft || !intake) return "";
+    if (!intake.inviteToken) { intake.inviteToken = makeToken(); intake.updatedAt = now(); }
+    var ref = intakeRef(intake.inviteToken);
+    if (!ref) {
+      intake.publishError = "Kein Firebase-Zugang — der Fragebogen ist noch nicht online.";
+      return intake.inviteToken;
+    }
+    ref.set({
+      schema: 1,
+      title: intake.title || core.DEFAULT_INTAKE_TITLE,
+      intro: intake.intro || core.DEFAULT_INTAKE_INTRO,
+      questions: core.normalizeIntakeQuestions(intake.questions || []),
+      status: intake.status === "closed" ? "closed" : (intake.projectId ? "answered" : "open"),
+      company: { name: (ft.company && ft.company.name) || "FlowerTech" },
+      updatedAt: now(),
+    }).then(function () {
+      intake.publishedAt = now();
+      intake.publishError = "";
+      save();
+    }).catch(function (e) {
+      intake.publishError = (e && e.message) || "Der Fragebogen konnte nicht veröffentlicht werden.";
+      save();
+    });
+    return intake.inviteToken;
+  }
+  window._ftPublishIntakeForm = publishIntakeForm;
+
+  function intakeLink(intakeId) {
+    var core = W();
+    var intake = intakeById(intakeId);
+    return core && intake && intake.inviteToken ? core.intakeFormUrl(intake.inviteToken) : "";
+  }
+  window._ftIntakeLink = intakeLink;
+
+  window._ftNewIntake = function () {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return;
+    var intakeId = id();
+    ft.intakes[intakeId] = {
+      id: intakeId,
+      title: core.DEFAULT_INTAKE_TITLE,
+      intro: core.DEFAULT_INTAKE_INTRO,
+      deliveryType: "website",
+      questions: core.normalizeIntakeQuestions(core.DEFAULT_INTAKE_QUESTIONS),
+      inviteToken: makeToken(),
+      status: "open",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    ft.ui.intakeId = intakeId;
+    setActiveTab("intakes");
+    publishIntakeForm(intakeId);
+    save();
+    rerender();
+  };
+
+  window._ftOpenIntake = function (intakeId) {
+    var ft = wf();
+    if (!ft) return;
+    ft.ui.intakeId = ft.ui.intakeId === intakeId ? null : intakeId;
+    save();
+    rerender();
+  };
+
+  window._ftSetIntakeField = function (intakeId, field, value) {
+    var intake = intakeById(intakeId);
+    if (!intake) return;
+    intake[field] = value;
+    intake.updatedAt = now();
+    save();
+    publishIntakeForm(intakeId);
+  };
+
+  window._ftSetIntakeQuestion = function (intakeId, index, field, value) {
+    var core = W();
+    var intake = intakeById(intakeId);
+    if (!core || !intake) return;
+    var q = (intake.questions || [])[index];
+    if (!q) return;
+    if (field === "required") q.required = !!value;
+    else if (field === "options") q.options = String(value || "").split("\n").map(function (v) { return v.trim(); }).filter(Boolean);
+    else q[field] = value;
+    intake.questions = core.normalizeIntakeQuestions(intake.questions);
+    intake.updatedAt = now();
+    save();
+    publishIntakeForm(intakeId);
+    rerender();
+  };
+
+  window._ftAddIntakeQuestion = function (intakeId) {
+    var core = W();
+    var intake = intakeById(intakeId);
+    if (!core || !intake) return;
+    intake.questions = (intake.questions || []).concat([
+      { key: "frage-" + ((intake.questions || []).length + 1), label: "Neue Frage", type: "text", role: "", required: false },
+    ]);
+    intake.questions = core.normalizeIntakeQuestions(intake.questions);
+    intake.updatedAt = now();
+    save();
+    publishIntakeForm(intakeId);
+    rerender();
+  };
+
+  window._ftMoveIntakeQuestion = function (intakeId, index, delta) {
+    var intake = intakeById(intakeId);
+    if (!intake) return;
+    var list = intake.questions || [];
+    var to = index + delta;
+    if (to < 0 || to >= list.length) return;
+    var moved = list.splice(index, 1)[0];
+    list.splice(to, 0, moved);
+    intake.updatedAt = now();
+    save();
+    publishIntakeForm(intakeId);
+    rerender();
+  };
+
+  window._ftRemoveIntakeQuestion = function (intakeId, index) {
+    var intake = intakeById(intakeId);
+    if (!intake) return;
+    (intake.questions || []).splice(index, 1);
+    intake.updatedAt = now();
+    save();
+    publishIntakeForm(intakeId);
+    rerender();
+  };
+
+  // „Neu" widerruft die alte Einladung samt veröffentlichtem Fragebogen.
+  window._ftRotateIntakeToken = function (intakeId) {
+    var intake = intakeById(intakeId);
+    if (!intake) return;
+    if (!confirm("Der bisherige Link wird ungültig. Fortfahren?")) return;
+    var old = intakeRef(intake.inviteToken);
+    if (old) old.remove().catch(function () {});
+    intake.inviteToken = makeToken();
+    intake.updatedAt = now();
+    save();
+    publishIntakeForm(intakeId);
+    rerender();
+  };
+
+  window._ftCloseIntake = function (intakeId) {
+    var intake = intakeById(intakeId);
+    if (!intake) return;
+    intake.status = intake.status === "closed" ? "open" : "closed";
+    intake.updatedAt = now();
+    save();
+    publishIntakeForm(intakeId);
+    rerender();
+  };
+
+  // Aus der Antwort entsteht der Vorgang — genau einmal. Zwei Sperren: die
+  // Einreichung ist am Fragebogen vermerkt, und der Fragebogen kennt sein
+  // Projekt. Ein Reload oder ein zweites Absenden ändert deshalb nichts.
+  function applyIntakeSubmission(intakeId, entry) {
+    var core = W();
+    var ft = wf();
+    var intake = intakeById(intakeId);
+    if (!core || !ft || !intake) return false;
+    var submissionId = entry.id || null;
+    if (intake.projectId && projectById(intake.projectId)) return false;
+    if (submissionId && intake.submissionId === submissionId) return false;
+
+    var payload = entry.payload || {};
+    var normalized = core.normalizeIntakeAnswers(intake.questions || [], answersToMap(payload.answers), { now: now() });
+    var check = core.intakeAnswersUsable(intake.questions || [], normalized.answers);
+    if (!check.usable) return false;
+
+    var projectId = createProjectForIntake(intake, normalized.answers, {
+      submittedAt: entry.createdAt || now(),
+      logText: "Fragebogen „" + (intake.title || "") + "“ ausgefüllt eingegangen.",
+    });
+    if (!projectId) return false;
+
+    intake.projectId = projectId;
+    intake.submissionId = submissionId;
+    intake.answeredAt = entry.createdAt || now();
+    intake.status = "answered";
+    intake.updatedAt = now();
+    publishIntakeForm(intakeId);
+    save();
+    notify("ok", "Kundenanfrage", "Fragebogen beantwortet — Projekt angelegt: " +
+      ((projectById(projectId) || {}).title || ""));
+    return true;
+  }
+
+  /* Der gemeinsame Weg vom beantworteten Fragebogen zum Vorgang. Er wird von
+     zwei Stellen benutzt: vom oeffentlichen Fragebogen und vom Vision Room.
+     Beide erzeugen dieselben Artefakte — Anfrage-Dokument, Vorlage, Prompt,
+     Kundenportal und GENAU EINE Aufgabe. */
+  function createProjectForIntake(intake, answers, opts) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return "";
+    var options = opts || {};
+    var doc = core.buildIntakeDocument({
+      intake: intake, answers: answers, now: options.submittedAt || now(),
+    });
+    var built = core.projectFromIntake({ intake: intake, answers: answers, now: now() });
+    built.sourceIntakeId = intake.id || null;
+    if (options.tags) built.tags = built.tags.concat(options.tags);
+    if (options.routeSource) built.ftRouteSource = options.routeSource;
+    var projectId = window.createEntity("project", built);
+    if (!projectId) return "";
+
+    var project = projectById(projectId);
+    if (project) {
+      project.ftIntakeDocument = doc;
+      project.ftContactLog = [{
+        id: id(), at: now(), channel: "note",
+        text: options.logText || "Kundenanfrage eingegangen.",
+      }];
+      // Sofort eine echte Vorschau: die Standardvorlage, aus den Antworten
+      // gefüllt. Sie lässt sich danach herunterladen, ändern und ersetzen.
+      project.ftTemplate = {
+        name: "flowertech-standard.html",
+        html: core.defaultTemplateHtml({ project: built, document: doc, company: ft.company || {} }),
+        source: "standard",
+        updatedAt: now(),
+      };
+      project.ftPrompt = {
+        name: "prompt.md", text: buildPromptFor(projectId), source: "generiert", updatedAt: now(),
+      };
+    }
+    createIntakeTask(projectId, built, doc);
+    ensureToken(projectId, "formToken");
+    publishClientPortal(projectId);
+    return projectId;
+  }
+  window._ftApplyIntakeSubmission = applyIntakeSubmission;
+
+  // Der Eingang liefert die Antworten als Liste; normalizeIntakeAnswers
+  // erwartet eine Zuordnung Schlüssel → Wert.
+  function answersToMap(answers) {
+    var map = {};
+    (Array.isArray(answers) ? answers : []).forEach(function (a) {
+      if (a && a.key) map[a.key] = a.answer;
+    });
+    return map;
+  }
+
+  function createIntakeTask(projectId, project, doc) {
+    var core = W();
+    var root = data();
+    if (!core || !root) return "";
+    var key = projectId + ":intake";
+    var existing = Object.keys(root.entities.tasks || {}).find(function (taskId) {
+      var task = root.entities.tasks[taskId];
+      return task && task.sourceIntakeKey === key;
+    });
+    if (existing) return existing;
+    var draft = core.buildIntakeTask({ project: project, document: doc, projectId: projectId, now: now() });
+    var payload = Object.assign({}, draft);
+    delete payload.key;
+    payload.sourceIntakeKey = key;
+    return window.createEntity("task", payload) || "";
+  }
+
+  /* ── Vorlage und Prompt ──────────────────────────────────────────────────
+     Beide gehören dem Projekt und sind Dateien: herunterladen, ändern, wieder
+     hochladen. Der Upload ersetzt bewusst — sonst wüsste niemand, welche
+     Fassung gerade gilt.
+     ------------------------------------------------------------------- */
+  function buildPromptFor(projectId) {
+    var core = W();
+    var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return "";
+    return core.buildProjectPrompt({
+      project: project,
+      document: project.ftIntakeDocument || {},
+      changes: changesOf(projectId),
+      questions: project.ftPortalQuestions || [],
+      templateName: (project.ftTemplate && project.ftTemplate.name) || "",
+      company: ft.company || {},
+      now: now(),
+    });
+  }
+  window._ftBuildPrompt = buildPromptFor;
+
+  window._ftRegeneratePrompt = function (projectId) {
+    var project = projectById(projectId);
+    if (!project) return;
+    project.ftPrompt = { name: "prompt.md", text: buildPromptFor(projectId), source: "generiert", updatedAt: now() };
+    project.updatedAt = now();
+    save();
+    rerender();
+    notify("ok", "Prompt", "Prompt neu aus dem aktuellen Stand erzeugt");
+  };
+
+  function download(name, text, type) {
+    try {
+      var blob = new window.Blob([text], { type: type + ";charset=utf-8" });
+      var url = window.URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { window.URL.revokeObjectURL(url); }, 2000);
+    } catch (e) {
+      notify("err", "Download", "Die Datei konnte nicht erzeugt werden.");
+    }
+  }
+
+  window._ftDownloadPrompt = function (projectId) {
+    var project = projectById(projectId);
+    if (!project) return;
+    var text = (project.ftPrompt && project.ftPrompt.text) || buildPromptFor(projectId);
+    download(slugName(project.title) + "-prompt.md", text, "text/markdown");
+  };
+
+  window._ftDownloadTemplate = function (projectId) {
+    var project = projectById(projectId);
+    if (!project) return;
+    var html = (project.ftTemplate && project.ftTemplate.html) || "";
+    download(slugName(project.title) + "-vorlage.html", html, "text/html");
+  };
+
+  window._ftCopyPrompt = function (projectId) {
+    var project = projectById(projectId);
+    if (!project) return;
+    var text = (project.ftPrompt && project.ftPrompt.text) || buildPromptFor(projectId);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        notify("ok", "Prompt", "In die Zwischenablage kopiert");
+      }).catch(function () { notify("warn", "Prompt", "Kopieren nicht möglich"); });
+    } else notify("warn", "Prompt", "Kopieren nicht möglich");
+  };
+
+  function slugName(value) {
+    return String(value || "projekt").toLowerCase()
+      .replace(/[äàâ]/g, "a").replace(/[öô]/g, "o").replace(/[üû]/g, "u").replace(/ß/g, "ss")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "projekt";
+  }
+
+  // Upload: nur die erwartete Art, nur bis zur Grenze, und beim HTML zusätzlich
+  // entschärft. Was entfernt wurde, wird benannt statt stillschweigend gelöscht.
+  window._ftUploadTemplate = function (projectId, input) {
+    var core = W();
+    var project = projectById(projectId);
+    var file = input && input.files && input.files[0];
+    if (!core || !project || !file) return;
+    if (!/\.html?$/i.test(file.name)) {
+      return notify("warn", "Vorlage", "Bitte eine .html-Datei wählen.");
+    }
+    if (file.size > core.MAX_TEMPLATE_BYTES) {
+      return notify("warn", "Vorlage", "Die Datei ist zu gross (max. " +
+        Math.round(core.MAX_TEMPLATE_BYTES / 1024) + " KB).");
+    }
+    var reader = new window.FileReader();
+    reader.onload = function () {
+      var clean = core.sanitizeTemplateHtml(String(reader.result || ""));
+      project.ftTemplate = {
+        name: String(file.name).slice(0, 120), html: clean.html,
+        source: "hochgeladen", updatedAt: now(),
+      };
+      project.updatedAt = now();
+      save();
+      refreshClientPortal(projectId);
+      rerender();
+      notify("ok", "Vorlage", clean.removed.length
+        ? "Ersetzt. Entfernt wurden: " + clean.removed.join(", ") + "."
+        : "Vorlage ersetzt — die Vorschau ist aktualisiert.");
+    };
+    reader.onerror = function () { notify("err", "Vorlage", "Die Datei liess sich nicht lesen."); };
+    reader.readAsText(file);
+  };
+
+  window._ftUploadPrompt = function (projectId, input) {
+    var core = W();
+    var project = projectById(projectId);
+    var file = input && input.files && input.files[0];
+    if (!core || !project || !file) return;
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) {
+      return notify("warn", "Prompt", "Bitte eine .md-Datei wählen.");
+    }
+    if (file.size > core.MAX_PROMPT_BYTES) {
+      return notify("warn", "Prompt", "Die Datei ist zu gross (max. " +
+        Math.round(core.MAX_PROMPT_BYTES / 1024) + " KB).");
+    }
+    var reader = new window.FileReader();
+    reader.onload = function () {
+      project.ftPrompt = {
+        name: String(file.name).slice(0, 120), text: String(reader.result || "").slice(0, core.MAX_PROMPT_BYTES),
+        source: "hochgeladen", updatedAt: now(),
+      };
+      project.updatedAt = now();
+      save();
+      rerender();
+      notify("ok", "Prompt", "Prompt ersetzt.");
+    };
+    reader.onerror = function () { notify("err", "Prompt", "Die Datei liess sich nicht lesen."); };
+    reader.readAsText(file);
+  };
+
+  window._ftResetTemplate = function (projectId) {
+    var core = W();
+    var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return;
+    project.ftTemplate = {
+      name: "flowertech-standard.html",
+      html: core.defaultTemplateHtml({
+        project: project, document: project.ftIntakeDocument || {}, company: ft.company || {},
+      }),
+      source: "standard", updatedAt: now(),
+    };
+    project.updatedAt = now();
+    save();
+    refreshClientPortal(projectId);
+    rerender();
+  };
+
+  /* ── Rückfragen im Portal ────────────────────────────────────────────── */
+  window._ftAskPortalQuestion = function (projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    var input = document.getElementById("ftPortalQuestion");
+    if (!core || !project || !input) return;
+    var q = core.normalizePortalQuestion({ question: input.value, askedAt: now() }, { now: now() });
+    if (!q.question) return notify("warn", "Frage", "Bitte eine Frage eintragen.");
+    q.id = id();
+    project.ftPortalQuestions = Array.isArray(project.ftPortalQuestions) ? project.ftPortalQuestions : [];
+    project.ftPortalQuestions.push(q);
+    project.updatedAt = now();
+    input.value = "";
+    save();
+    refreshClientPortal(projectId);
+    rerender();
+  };
+
+  window._ftRemovePortalQuestion = function (projectId, questionId) {
+    var project = projectById(projectId);
+    if (!project) return;
+    project.ftPortalQuestions = (project.ftPortalQuestions || []).filter(function (q) { return q.id !== questionId; });
+    project.updatedAt = now();
+    save();
+    refreshClientPortal(projectId);
+    rerender();
+  };
+
   // ── Kundenansicht veröffentlichen ───────────────────────────────────────
   // Datensparsam: nur das, was der Kunde sehen soll. Kein Zugriff auf Quantus.
   // Der Snapshot kommt aus dem Kern (Positivliste). Hier wird nur eingesammelt,
@@ -3257,6 +4031,12 @@
         totals: function (doc) { return docTotals(doc).rounded; },
       }),
       quote: project.ftQuoteRequest || null,
+      previewHtml: (project.ftTemplate && project.ftTemplate.html) || "",
+      previewUpdatedAt: (project.ftTemplate && project.ftTemplate.updatedAt) || "",
+      terms: termsForProject(projectId),
+      consent: project.ftTermsConsent || null,
+      questions: project.ftPortalQuestions || [],
+      intakeDocument: project.ftIntakeDocument || null,
       // Vorbelegung bewusst nur inhaltlich: Bedarf, Art, Budget, Wunschdatum.
       // Kontaktdaten wandern NICHT auf die Kundenseite — der Link ist ein
       // Bearer-Link, und die Kundschaft kennt ihre eigenen Angaben.
@@ -3724,24 +4504,66 @@
       : '<div class="mini">Noch keine Offertenanfrage. Schicke der Kundschaft den Link — sobald sie ' +
         "absendet, entsteht hier die Anfrage und genau eine Aufgabe.</div>";
 
-    var quoteCard = '<div class="card p-4"><h3>Offerte beim Kunden anfragen</h3><div class="sep"></div>' +
-      '<div class="mini">Wir schicken keine leere Offerte und keinen Mail-Entwurf. Die Kundschaft füllt ' +
-      "auf ihrer eigenen FlowerTech-Seite aus, was sie braucht — daraus entsteht die Offertenanfrage.</div>" +
-      '<div class="ft-link-row mt-2"><span>Kundenlink</span>' +
-        '<input readonly value="' + attr(quoteLink) + '">' +
-        '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(quoteLink) +
-          '\')">Kundenlink kopieren</button>' +
-        (quoteLink ? '<a class="btn sm ghost" href="' + attr(quoteLink) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
-      "</div>" + quoteState + "</div>";
+    // Der Fortschritt, den die Kundschaft sieht — nicht die interne Pipeline.
+    var portal = core ? core.portalProgress({
+      project: project,
+      hasPreview: !!((project.ftTemplate || {}).html || "").trim(),
+      changes: changesOf(projectId),
+      versions: versions,
+    }) : { steps: [], label: "" };
+    var terms = core ? core.termsState({
+      terms: termsForProject(projectId), consent: project.ftTermsConsent || null,
+    }) : { accepted: false, outdated: false, version: "" };
+    var questions = project.ftPortalQuestions || [];
 
-    return quoteCard + '<div class="ft-grid-2 mt-3">' +
-      '<div class="card p-4"><h3>Kundenseite</h3><div class="sep"></div>' +
-        '<div class="mini">Jedes Projekt hat automatisch eine eigene Seite auf flowertech.ch. ' +
-        "Sie entsteht beim Anlegen und aktualisiert sich bei jeder Änderung — du musst nichts veröffentlichen.</div>" +
-        '<div class="ft-link-row mt-2"><span>Kundenseite</span>' +
+    var portalCard = '<div class="card p-4"><h3>Kundenportal</h3><div class="sep"></div>' +
+      '<div class="mini">Ein Link, alles drin: Vorschau, Änderungswünsche, AGB und Rückfragen. ' +
+      "Er wird nicht automatisch verschickt — du entscheidest, wann die Kundschaft ihn bekommt.</div>" +
+      '<div class="ft-link-row mt-2"><span>Kundenlink</span>' +
+        '<input readonly value="' + attr(kundenLink) + '">' +
+        '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(kundenLink) +
+          '\')">Kundenlink kopieren</button>' +
+        (kundenLink ? '<a class="btn sm ghost" href="' + attr(kundenLink) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
+      "</div>" +
+      '<div class="ft-steps mt-2">' + portal.steps.map(function (st) {
+        return '<span class="ft-step' + (st.done ? " done" : "") + (st.current ? " active" : "") + '">' +
+          esc(st.label) + "</span>";
+      }).join("") + "</div>" +
+      '<div class="mini mt-2">Stand: <b>' + esc(portal.label) + "</b>" +
+        (portal.openChanges ? " · " + portal.openChanges + " offene Änderungswünsche" : "") + "</div>" +
+      (terms.accepted
+        ? '<div class="ft-ready mt-2">✓ AGB zugestimmt am ' + esc(dateTime(terms.acceptedAt)) +
+          " (Fassung " + esc(terms.version) + ")</div>"
+        : terms.outdated
+          ? '<div class="ft-legal-note">⚠ Die Zustimmung gilt einer älteren AGB-Fassung. ' +
+            "Im Portal wird erneut um Zustimmung gebeten.</div>"
+          : '<div class="mini mt-2">AGB: noch keine Zustimmung.' +
+            (termsForProject(projectId).body ? "" : " Es ist auch noch kein AGB-Entwurf gepflegt " +
+              "(Reiter „AGB / Datenschutz\u201c) — ohne Text wird im Portal nichts zur Zustimmung gezeigt.") +
+            "</div>") +
+      '<div class="sep"></div><h4 class="ft-sub">Rückfragen an die Kundschaft</h4>' +
+      '<div class="ft-inline-form"><input id="ftPortalQuestion" placeholder="Frage, z. B. Haben Sie ein Logo als Datei?">' +
+        '<button class="btn primary" onclick="window._ftAskPortalQuestion(\'' + attr(projectId) + '\')">Fragen</button></div>' +
+      (questions.length ? questions.map(function (q) {
+        return '<div class="ft-qa"><div><strong>' + esc(q.question) + "</strong>" +
+          (String(q.answer || "").trim()
+            ? "<p>" + esc(q.answer) + '</p><small class="mini">beantwortet ' + esc(dateTime(q.answeredAt)) + "</small>"
+            : '<p class="mini">Noch keine Antwort.</p>') + "</div>" +
+          '<button class="btn sm ghost" onclick="window._ftRemovePortalQuestion(\'' + attr(projectId) +
+            "','" + attr(q.id) + '\')">×</button></div>';
+      }).join("") : empty("Noch keine Rückfragen")) +
+      "</div>";
+
+    var quoteCard = quote
+      ? '<div class="card p-4 mt-3"><h3>Frühere Offertenanfrage</h3><div class="sep"></div>' + quoteState + "</div>"
+      : "";
+
+    return portalCard + quoteCard + '<div class="ft-grid-2 mt-3">' +
+      '<div class="card p-4"><h3>Veröffentlichung</h3><div class="sep"></div>' +
+        '<div class="mini">Jedes Projekt hat automatisch sein Kundenportal auf flowertech.ch. ' +
+        "Es entsteht beim Anlegen und aktualisiert sich bei jeder Änderung — du musst nichts veröffentlichen.</div>" +
+        '<div class="ft-link-row mt-2"><span>Zugang erneuern</span>' +
           '<input readonly value="' + attr(kundenLink) + '">' +
-          '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(kundenLink) + '\')">Kopieren</button>' +
-          (kundenLink ? '<a class="btn sm ghost" href="' + attr(kundenLink) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
           '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) +
             '\',\'portalToken\')">Neu</button></div>' +
         status +
@@ -3856,7 +4678,8 @@
 
     var tabs = [
       ["workflow", "Ablauf"], ["bedarf", "Bedarf"], ["angebot", "Angebot / Leistung"],
-      ["vertrag", "Vertrag"], ["aenderungen", "Änderungen"], ["kunde", "Kundenansicht"],
+      ["vertrag", "Vertrag"], ["aenderungen", "Änderungen"],
+      ["vorschau", "Vorschau & Prompt"], ["kunde", "Kundenportal"],
       ["kommunikation", "Kommunikation"], ["recht", "AGB / Datenschutz"], ["prompt", "Claude-Prompt"],
     ];
     var active = ft.ui.projectTab || "workflow";
@@ -3912,6 +4735,8 @@
         blockEditorHtml(projectId, "contract", contractOf(projectId), "Projektauftrag") + "</div>";
     } else if (active === "aenderungen") {
       body = '<div class="card p-4"><h3>Änderungswünsche</h3><div class="sep"></div>' + changeRequestsHtml(projectId) + "</div>";
+    } else if (active === "vorschau") {
+      body = previewPromptHtml(projectId);
     } else if (active === "kunde") {
       body = clientPortalHtml(projectId);
     } else if (active === "kommunikation") {
@@ -4107,6 +4932,27 @@
     ".ft-link-row span{font-size:12px;color:var(--muted);min-width:120px}" +
     ".ft-link-row input{flex:1;min-width:160px;font-size:11.5px}" +
     ".ft-inline-label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-top:10px}" +
+    /* Kundenanfrage: Fragen bearbeiten */
+    ".ft-q-row{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px}" +
+    ".ft-q-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}" +
+    ".ft-q-actions{display:flex;gap:4px}" +
+    ".ft-q-row input,.ft-q-row textarea,.ft-q-row select{width:100%}" +
+    ".ft-q-label{font-weight:600}" +
+    ".ft-q-meta{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-top:6px;align-items:center}" +
+    ".ft-q-req{display:flex;gap:5px;align-items:center;font-size:12px;color:var(--muted);white-space:nowrap}" +
+    ".ft-q-req input{width:auto}" +
+    ".ft-q-hint,.ft-q-opts{margin-top:6px;font-size:12px}" +
+    ".ft-answer{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}" +
+    ".ft-answer p{margin:3px 0 0;white-space:pre-wrap;color:var(--text2);font-size:13px}" +
+    /* Vorschau und Prompt */
+    ".ft-preview{width:100%;height:460px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-top:8px}" +
+    ".ft-prompt{max-height:340px;overflow:auto;white-space:pre-wrap;font-size:11.5px;line-height:1.5;" +
+      "border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:8px;background:var(--bg2,rgba(0,0,0,.15))}" +
+    ".ft-upload{position:relative;overflow:hidden;display:inline-flex;align-items:center;cursor:pointer}" +
+    ".ft-upload input{position:absolute;inset:0;opacity:0;cursor:pointer}" +
+    ".ft-qa{border-top:1px solid var(--line);padding:8px 0;display:flex;gap:8px;justify-content:space-between;align-items:flex-start}" +
+    ".ft-qa p{margin:3px 0 0;white-space:pre-wrap;font-size:12.5px;color:var(--text2)}" +
+    "@media(max-width:780px){.ft-q-meta{grid-template-columns:1fr}.ft-preview{height:320px}}" +
     ".ft-addr{display:flex;flex-wrap:wrap;gap:6px}" +
     ".ft-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}" +
     "@media(max-width:780px){.ft-brief-grid,.ft-checks{grid-template-columns:1fr}" +
