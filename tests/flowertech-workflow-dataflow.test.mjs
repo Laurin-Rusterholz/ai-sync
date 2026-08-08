@@ -25,6 +25,12 @@ const eq = (actual, expected, message) => { assert.deepEqual(actual, expected, m
 
 const NOW = "2026-08-06T10:00:00.000Z";
 
+// de-CH setzt als Tausendertrenner je nach ICU-Version ' (U+0027) oder
+// \u2019 (U+2019). Beides ist korrekt — Tests duerfen daran nicht haengen.
+const normNum = (v) => String(v).replace(/[\u2018\u2019\u0027\u02BC\u00A0\u202F]/g, "'");
+const containsNum = (haystack, needle) => normNum(haystack).includes(normNum(needle));
+
+
 // ── 1. Der Kundenprozess laeuft vorwaerts und rueckwaerts ──────────────────
 {
   eq(W.WORKFLOW_STAGES.map((s) => s.key),
@@ -257,7 +263,8 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
 
   // Variablen werden zur Laufzeit ersetzt, offene bleiben sichtbar stehen.
   const verguetung = contract.sections.find((s) => s.key === "verguetung");
-  ok(verguetung.body.includes("4'500.00"), "der Preis wird nicht eingesetzt");
+  ok(containsNum(verguetung.body, "4'500.00"),
+    `der Preis wird nicht eingesetzt (erhalten: ${verguetung.body.slice(0, 80)})`);
   ok(/nur bei vergleichbarem Umfang|denselben Umfang/i.test(verguetung.body),
     "die faire Konkurrenzpreis-Formulierung fehlt");
   const schluss = contract.sections.find((s) => s.key === "schluss");
@@ -403,7 +410,8 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
     inquiries,
     projects: [
       { id: "p1", title: "Ohne Bedarf", pipelineStage: "lead" },
-      { id: "p2", title: "Bedarf da, kein Angebot", pipelineStage: "intake" },
+      // Ausdruecklich auf dem Offertweg — ohne Route waere es ein Direktprojekt.
+      { id: "p2", title: "Bedarf da, kein Angebot", pipelineStage: "intake", ftRoute: "offer_first" },
       { id: "p3", title: "Wartet auf Freigabe", pipelineStage: "approval" },
       { id: "p4", title: "Archiviert", pipelineStage: "lead", status: "archived" },
     ],
@@ -423,6 +431,9 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
 
   eq(byKey.briefing.items.map((i) => i.id), ["p1"], "der Bedarfsschritt trifft die falschen Projekte");
   eq(byKey.offer.items.map((i) => i.id), ["p2"], "der Angebotsschritt trifft die falschen Projekte");
+  // p1 hat keine Route und keine Offerte → gilt als Direktprojekt (Altbestand).
+  ok(!byKey.offer.items.some((i) => i.id === "p1"),
+    "ein routenloses Projekt landet faelschlich im Angebotsschritt");
   eq(byKey.changes.count, 1, "erledigte Änderungswünsche zählen mit");
   eq(byKey.approval.items.map((i) => i.id), ["p3"], "der Freigabeschritt trifft die falschen Projekte");
   ok(!steps.some((s) => s.items.some((i) => i.id === "p4")),
@@ -433,18 +444,21 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
 
   // Ein Projekt mit Angebot faellt aus dem Angebotsschritt.
   const mitAngebot = W.nextProcessSteps({
-    projects: [{ id: "p2", title: "x", pipelineStage: "intake" }],
+    projects: [{ id: "p2", title: "x", pipelineStage: "intake", ftRoute: "offer_first" }],
     briefings: { p2: { goal: "Ziel" } },
     offers: [{ projectId: "p2", status: "sent" }],
   });
   ok(!mitAngebot.some((s) => s.key === "offer"), "ein Projekt mit Angebot steht weiter im Angebotsschritt");
   // Eine abgelehnte Offerte zaehlt nicht als Angebot.
   const abgelehnt = W.nextProcessSteps({
-    projects: [{ id: "p2", title: "x", pipelineStage: "intake" }],
+    projects: [{ id: "p2", title: "x", pipelineStage: "intake", ftRoute: "offer_first" }],
     briefings: { p2: { goal: "Ziel" } },
     offers: [{ projectId: "p2", status: "declined" }],
   });
-  ok(abgelehnt.some((s) => s.key === "offer"), "eine abgelehnte Offerte gilt als erledigtes Angebot");
+  // Neue Regel: Ablehnung SCHLIESST den Angebotsvorgang. Er taucht nicht wieder
+  // als "Angebot erstellen" auf — sonst entstuende ein zweiter Anlauf von selbst.
+  ok(!abgelehnt.some((s) => String(s.key).startsWith("offer")),
+    "ein abgelehnter Angebotsvorgang wird wieder zur offenen Aufgabe");
 }
 
 // ── 13. Anfrage → Projekt ──────────────────────────────────────────────────
@@ -486,6 +500,151 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
     "aus einer zu kurzen Nachricht entsteht ein leerer Bedarfsentwurf");
   eq(W.projectFromInquiry({}, { now: NOW }).project.title, "FlowerTech-Projekt",
     "eine Anfrage ohne Namen erzeugt ein Projekt ohne Titel");
+}
+
+// ── 15. Die Weggabelung: Offerte zuerst / Direktprojekt ────────────────────
+{
+  eq(W.ROUTES.map((r) => r.key), ["offer_first", "direct"], "es gibt nicht genau zwei Wege");
+  ok(W.ROUTES.every((r) => r.label && r.hint && r.stages.length), "ein Weg ist unvollstaendig");
+  ok(W.ROUTES.find((r) => r.key === "direct").skips.includes("proposal"),
+    "das Direktprojekt ueberspringt den Angebotsschritt nicht sichtbar");
+
+  // Persistierte Entscheidung gewinnt.
+  eq(W.routeOf({ id: "p", ftRoute: "direct" }, []), "direct", "die gespeicherte Route wird ignoriert");
+  ok(W.routeIsExplicit({ ftRoute: "offer_first" }), "eine gesetzte Route gilt als unentschieden");
+
+  // Rueckwaertskompatibilitaet: Altbestand wird NICHT migriert, sondern beim
+  // Lesen abgeleitet — wer eine Offerte hat, lief ueber "Offerte zuerst".
+  ok(!W.routeIsExplicit({ id: "alt" }), "ein Altprojekt gilt faelschlich als entschieden");
+  eq(W.routeOf({ id: "alt" }, [{ projectId: "alt", status: "sent" }]), "offer_first",
+    "ein Altprojekt mit Offerte wird nicht als Offertweg gelesen");
+  eq(W.routeOf({ id: "alt" }, []), "direct", "ein Altprojekt ohne Offerte wird nicht als Direktprojekt gelesen");
+  eq(W.routeOf({ id: "x", ftRoute: "quatsch" }, []), "direct", "eine unbekannte Route wird uebernommen");
+
+  // Angebotsstand aus den vorhandenen Offerten — kein eigener Zaehler.
+  const p = { id: "p1" };
+  eq(W.offerDecisionState(p, []), "none", "ohne Offerte falscher Stand");
+  eq(W.offerDecisionState(p, [{ projectId: "p1", status: "draft" }]), "draft", "Entwurf falsch erkannt");
+  eq(W.offerDecisionState(p, [{ projectId: "p1", status: "sent" }]), "sent", "Versand falsch erkannt");
+  eq(W.offerDecisionState(p, [{ projectId: "p1", status: "declined" }, { projectId: "p1", status: "accepted" }]),
+    "accepted", "eine angenommene Offerte wird von einer abgelehnten verdeckt");
+  eq(W.offerDecisionState(p, [{ projectId: "p1", status: "declined" }]), "declined", "Ablehnung falsch erkannt");
+  eq(W.offerDecisionState(p, [{ projectId: "andere", status: "accepted" }]), "none",
+    "die Offerte eines fremden Projekts wird mitgezaehlt");
+}
+
+// ── 16. Prozessschritte folgen dem gewaehlten Weg ──────────────────────────
+{
+  const base = { briefings: { a: { goal: "x" }, b: { goal: "x" } } };
+  const keys = (opts) => W.nextProcessSteps(Object.assign({}, base, opts)).map((s) => s.key);
+
+  // Offertweg: erstellen → senden → Entscheidung.
+  const a = { id: "a", title: "A", pipelineStage: "intake", ftRoute: "offer_first" };
+  ok(keys({ projects: [a], offers: [] }).includes("offer"), "der Offertweg verlangt keine Offerte");
+  ok(keys({ projects: [a], offers: [{ projectId: "a", status: "draft" }] }).includes("offer_send"),
+    "eine Offerte im Entwurf fuehrt nicht zu 'Offerte senden'");
+  ok(keys({ projects: [a], offers: [{ projectId: "a", status: "sent" }] }).includes("offer_decision"),
+    "eine versendete Offerte fuehrt nicht zur Entscheidung");
+  // Angenommen: kein Angebotsschritt mehr.
+  const nachAnnahme = keys({ projects: [{ ...a, pipelineStage: "build" }], offers: [{ projectId: "a", status: "accepted" }] });
+  ok(!nachAnnahme.some((k) => k.startsWith("offer")), "nach der Annahme steht der Angebotsschritt weiter offen");
+
+  // Direktprojekt: NIE ein Angebotsschritt, dafuer die Umsetzung.
+  const b = { id: "b", title: "B", pipelineStage: "intake", ftRoute: "direct" };
+  const direkt = keys({ projects: [b], offers: [] });
+  ok(!direkt.some((k) => k.startsWith("offer")), "das Direktprojekt bekommt einen Angebotsschritt");
+  ok(direkt.includes("direct_build"), "das Direktprojekt bekommt keinen Umsetzungsschritt");
+  const item = W.nextProcessSteps(Object.assign({}, base, { projects: [b] }))
+    .find((s) => s.key === "direct_build").items[0];
+  ok(/übersprungen/.test(item.sub), "der übersprungene Angebotsschritt ist nicht sichtbar");
+
+  // Anfrage ohne Wahl setzt KEINE Route — die UI muss fragen.
+  eq(W.projectFromInquiry({ name: "X" }, { now: NOW }).project.ftRoute, null,
+    "eine Anfrage waehlt still einen Weg");
+  eq(W.projectFromInquiry({ name: "X" }, { now: NOW, route: "direct" }).project.ftRoute, "direct",
+    "die gewaehlte Route wird nicht uebernommen");
+  eq(W.projectFromInquiry({ name: "X" }, { now: NOW, route: "quatsch" }).project.ftRoute, null,
+    "eine erfundene Route wird uebernommen");
+}
+
+// ── 17. Beilage zur Offerte: Vision Room oder echte Beispiel-URL ───────────
+{
+  eq(W.OFFER_ATTACHMENTS.map((a) => a.key), ["vision", "example"], "die Beilagen stimmen nicht");
+
+  // Ohne Wahl ist nichts versandfertig.
+  const leer = W.offerAttachmentState({});
+  ok(!leer.ready && /Wähle/.test(leer.reason), "ohne Beilage fehlt die Aufforderung");
+
+  // Vision braucht einen echten Token.
+  ok(W.offerAttachmentState({ kind: "vision", visionToken: "v".repeat(28) }).ready,
+    "eine Beilage mit gueltigem Vision-Token gilt als unfertig");
+  const ohneToken = W.offerAttachmentState({ kind: "vision" });
+  ok(!ohneToken.ready && /Vision-Room-Link/.test(ohneToken.reason), "der fehlende Vision-Link wird nicht benannt");
+
+  // Beispiel braucht eine echte URL — erfundene Links gibt es nicht.
+  ok(W.offerAttachmentState({ kind: "example", exampleUrl: "https://muster.ch/vorschau" }).ready,
+    "eine gueltige Beispiel-URL gilt als unfertig");
+  for (const bad of ["", "muster.ch", "javascript:alert(1)", "ftp://x.ch", "https://", "http://localhost"]) {
+    const st = W.offerAttachmentState({ kind: "example", exampleUrl: bad });
+    ok(!st.ready, `unbrauchbare Beispiel-URL wird akzeptiert: ${bad}`);
+    ok(/echte Beispiel-URL|Vision Room/.test(st.reason), `keine Aufforderung bei: ${bad}`);
+  }
+  ok(W.isHttpUrl("http://muster.ch"), "http wird abgelehnt");
+  ok(!W.isHttpUrl("data:text/html,<h1>x"), "eine data-URL gilt als Beispiel-URL");
+}
+
+// ── 18. Vision Room → Direktprojekt ────────────────────────────────────────
+{
+  const raw = {
+    type: "Web-Programm",
+    idea: "Buchhaltung für kleine Vereine",
+    features: ["Belege erfassen", "Jahresabschluss", "Mitgliederliste"],
+    email: "  KASSIER@Verein.CH ",
+  };
+  const vision = W.normalizeVisionSubmission(raw, { now: NOW });
+  eq(vision.deliveryType, "program", "Web-Programm wird nicht als Programm gelesen");
+  eq(vision.contactEmail, "kassier@verein.ch", "die E-Mail wird nicht normalisiert");
+  eq(vision.features.length, 3, "die Funktionen gehen verloren");
+  eq(vision.source, "vision-room", "die Herkunft ist nicht vermerkt");
+  ok(W.visionIsUsable(vision), "eine vollstaendige Vision gilt als unbrauchbar");
+  eq(W.normalizeVisionSubmission({ type: "Web-App" }, { now: NOW }).deliveryType, "program",
+    "Web-App wird nicht als Programm gelesen");
+  eq(W.normalizeVisionSubmission({ type: "Erfunden" }, { now: NOW }).type, "Website",
+    "eine erfundene Art wird uebernommen");
+
+  // Unbrauchbares wird abgewiesen, statt halbe Projekte anzulegen.
+  ok(!W.visionIsUsable(W.normalizeVisionSubmission({ idea: "x", email: "a@b.ch", features: ["f"] }, { now: NOW })),
+    "eine zu kurze Idee gilt als brauchbar");
+  ok(!W.visionIsUsable(W.normalizeVisionSubmission({ idea: "Gute Idee", features: ["f"] }, { now: NOW })),
+    "eine Vision ohne E-Mail gilt als brauchbar");
+  ok(!W.visionIsUsable(W.normalizeVisionSubmission({ idea: "Gute Idee", email: "a@b.ch" }, { now: NOW })),
+    "eine Vision ohne Funktionen gilt als brauchbar");
+
+  // Das Direktprojekt entsteht vollstaendig — ohne Nacharbeit.
+  const { project, briefing: draft } = W.projectFromVision(vision, { now: NOW });
+  eq(project.ftRoute, "direct", "der Vision Room startet kein Direktprojekt");
+  eq(project.ftRouteSource, "vision-room", "die Herkunft der Route fehlt");
+  eq(project.pipelineStage, "intake", "die Bestandesaufnahme durch den Vision Room wird nicht anerkannt");
+  eq(project.deliveryType, "program", "der Typ aus dem Vision Room geht verloren");
+  eq(project.client.email, "kassier@verein.ch", "die Kontaktdaten gehen verloren");
+  ok(project.title.includes("Buchhaltung"), "die Idee wird nicht zum Titel");
+  ok(project.description.includes("Jahresabschluss"), "die Funktionen fehlen in der Beschreibung");
+  ok(project.tags.includes("visionroom"), "das Projekt ist nicht als Vision-Room-Projekt erkennbar");
+
+  // Aus den Funktionen entstehen sofort normale Quantus-Aufgaben.
+  eq(draft.features, vision.features, "der Bedarf uebernimmt die Funktionen nicht");
+  const tasks = W.buildBriefingTasks(draft, "prj_v", { now: NOW });
+  for (const f of vision.features) {
+    ok(tasks.some((t) => t.title === "Funktion: " + f), `keine Aufgabe fuer Vision-Funktion: ${f}`);
+  }
+  ok(tasks.every((t) => !("kind" in t) && !("type" in t)), "der Vision Room fuehrt eine eigene Aufgabenart ein");
+
+  // Idempotenz: derselbe Eingang, derselbe Schluessel.
+  const k1 = W.idempotencyKey({ token: "", kind: "vision", contactEmail: vision.contactEmail, title: vision.idea });
+  const k2 = W.idempotencyKey({ token: "", kind: "vision", contactEmail: vision.contactEmail, title: vision.idea });
+  eq(k1, k2, "derselbe Vision-Eingang erzeugt zwei Schluessel");
+  ok(W.idempotencyKey({ token: "", kind: "vision", contactEmail: vision.contactEmail, title: "Andere Idee" }) !== k1,
+    "eine andere Idee erzeugt denselben Schluessel");
 }
 
 console.log(`flowertech workflow dataflow: ok (${checks} Pruefungen)`);

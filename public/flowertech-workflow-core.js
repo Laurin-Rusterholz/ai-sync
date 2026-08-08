@@ -308,6 +308,188 @@ export function changeStatusFromTask(task, currentStatus) {
   return currentStatus === "new" ? "accepted" : (currentStatus || "accepted");
 }
 
+/* ── Die Weggabelung: Offerte zuerst oder Direktprojekt ──────────────────
+ * Ein neuer Vorgang startet genau einen von zwei Wegen. Die Entscheidung wird
+ * am Projekt persistiert (ftRoute) — es gibt keine dritte, unklare Route.
+ * KEIN paralleles Datenmodell: Ein Angebotsvorgang IST ein FlowerTech-Projekt.
+ * Wird die Offerte angenommen, wird dasselbe Projekt zum Umsetzungsprojekt;
+ * wird sie abgelehnt, endet derselbe Vorgang als verloren. Es entsteht in
+ * keinem Fall ein zweites Projekt.
+ * --------------------------------------------------------------------- */
+export const ROUTES = [
+  {
+    key: "offer_first",
+    label: "Offerte zuerst",
+    hint: "Bedarf aufnehmen, offerieren, Entscheid abwarten. Erst bei Annahme wird umgesetzt.",
+    stages: ["intake", "proposal", "build", "revision", "approval"],
+    startStage: "intake",
+  },
+  {
+    key: "direct",
+    label: "Direktprojekt",
+    hint: "Ohne Offerte direkt umsetzen. Der Angebotsschritt wird bewusst übersprungen.",
+    stages: ["intake", "build", "revision", "approval"],
+    startStage: "intake",
+    skips: ["proposal"],
+  },
+];
+
+export function routeLabel(route) {
+  const hit = ROUTES.find((r) => r.key === route);
+  return hit ? hit.label : "—";
+}
+
+// Bestehende Projekte tragen kein ftRoute. Sie werden NICHT migriert; ihr Weg
+// wird beim Lesen abgeleitet: Wer schon eine Offerte hat, lief offensichtlich
+// ueber "Offerte zuerst", alle anderen ueber "Direktprojekt". Damit hat jedes
+// Projekt genau einen Weg, ohne dass ein einziges Datum angefasst wird.
+export function routeOf(project, offers = []) {
+  const explicit = project && project.ftRoute;
+  if (ROUTES.some((r) => r.key === explicit)) return explicit;
+  const hasOffer = (offers || []).some((o) => o && o.projectId === (project && project.id));
+  return hasOffer ? "offer_first" : "direct";
+}
+export function routeIsExplicit(project) {
+  return ROUTES.some((r) => r.key === (project && project.ftRoute));
+}
+export function routeSkipsOffer(project, offers = []) {
+  return routeOf(project, offers) === "direct";
+}
+
+// Wo steht der Angebotsvorgang? Aus den vorhandenen Offerten abgeleitet —
+// FlowerTech fuehrt dafuer keinen eigenen Statuszaehler.
+export function offerDecisionState(project, offers = []) {
+  const mine = (offers || []).filter((o) => o && o.projectId === (project && project.id));
+  if (!mine.length) return "none";
+  if (mine.some((o) => o.status === "accepted")) return "accepted";
+  if (mine.some((o) => o.status === "sent")) return "sent";
+  if (mine.every((o) => o.status === "declined")) return "declined";
+  return "draft";
+}
+
+/* ── Beilage zur Offerte ─────────────────────────────────────────────────
+ * Vor dem Senden wird verbindlich gewaehlt, was mitgeht: ein persoenlicher
+ * Vision-Room-Link oder eine echte, selbst gepflegte Beispiel-URL. Erfundene
+ * Links gibt es nicht — fehlt die URL, ist die Beilage unvollstaendig und die
+ * UI fordert sie ein.
+ * --------------------------------------------------------------------- */
+export const OFFER_ATTACHMENTS = [
+  {
+    key: "vision",
+    label: "Vision Room",
+    hint: "Persönlicher Link: die Kundschaft baut ihre Idee selbst zusammen. Die Ausarbeitung hängt an dieser Offerte.",
+  },
+  {
+    key: "example",
+    label: "Website-Beispiel",
+    hint: "Eine echte Vorschau-URL, die du selbst pflegst. Wird der Offerte beigelegt.",
+  },
+];
+
+export function isHttpUrl(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return false;
+  if (!/^https?:\/\//i.test(raw)) return false;
+  try {
+    const u = new URL(raw);
+    return !!u.hostname && u.hostname.includes(".");
+  } catch { return false; }
+}
+
+// Ist die gewaehlte Beilage versandfertig? Gibt bei "nein" den Grund zurueck,
+// damit die UI genau das Fehlende einfordern kann.
+export function offerAttachmentState(attachment = {}) {
+  const kind = attachment.kind;
+  if (kind === "vision") {
+    return isShareToken(attachment.visionToken)
+      ? { ready: true, kind, reason: "" }
+      : { ready: false, kind, reason: "Der persönliche Vision-Room-Link fehlt noch." };
+  }
+  if (kind === "example") {
+    return isHttpUrl(attachment.exampleUrl)
+      ? { ready: true, kind, reason: "" }
+      : { ready: false, kind, reason: "Trage eine echte Beispiel-URL ein (https://…) oder wähle den Vision Room." };
+  }
+  return { ready: false, kind: null, reason: "Wähle, was der Offerte beigelegt wird." };
+}
+
+/* ── Vision Room ─────────────────────────────────────────────────────────
+ * Der Vision Room auf flowertech.ch erfasst Art, Idee, Funktionen und E-Mail.
+ * Zwei Faelle:
+ *   • ohne Token  → neuer Vorgang, Route "direct" (Direktprojekt)
+ *   • mit Token   → Ausarbeitung zu genau der Offerte, an der der Token haengt
+ * Der Token ist ein Freigabe-Geheimnis fuer EINEN Kontext — er enthaelt keine
+ * Projekt-ID und keinen Zugang zu Quantus.
+ * --------------------------------------------------------------------- */
+export const VISION_TYPES = [
+  { key: "Website", deliveryType: "website" },
+  { key: "Web-Programm", deliveryType: "program" },
+  { key: "Web-App", deliveryType: "program" },
+];
+
+export function visionDeliveryType(type) {
+  const hit = VISION_TYPES.find((t) => t.key === type);
+  return hit ? hit.deliveryType : "website";
+}
+
+export function normalizeVisionSubmission(raw, { now = new Date().toISOString() } = {}) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const type = VISION_TYPES.some((t) => t.key === r.type) ? r.type : "Website";
+  return {
+    type,
+    deliveryType: visionDeliveryType(type),
+    idea: text(r.idea, 120),
+    features: list(r.features, 40, 90),
+    contactEmail: text(r.email || r.contactEmail, 160).toLowerCase(),
+    submittedAt: now,
+    source: "vision-room",
+  };
+}
+
+export function visionIsUsable(vision) {
+  return !!(vision
+    && vision.idea && vision.idea.length >= 3
+    && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(vision.contactEmail || "")
+    && (vision.features || []).length > 0);
+}
+
+// Aus einer Vision-Room-Eingabe entsteht ein Direktprojekt: die Idee ist der
+// Titel, die Funktionen sind der Bedarf. Damit ist kein Nacharbeiten noetig.
+export function projectFromVision(vision, { now = new Date().toISOString() } = {}) {
+  const v = vision || {};
+  const briefing = normalizeBriefing({
+    contactEmail: v.contactEmail,
+    deliveryType: v.deliveryType,
+    goal: v.idea,
+    features: v.features,
+    source: "vision-room",
+  }, { now });
+  return {
+    project: {
+      title: v.idea || "Vision-Room-Projekt",
+      description: [
+        "Aus dem Vision Room auf flowertech.ch.",
+        "Art: " + (v.type || "Website"),
+        v.idea ? "Idee: " + v.idea : "",
+        (v.features || []).length ? "Funktionen:\n- " + v.features.join("\n- ") : "",
+      ].filter(Boolean).join("\n\n"),
+      status: "active",
+      projectType: "flowertech",
+      // Der Vision Room ist die Bestandesaufnahme — sie ist bereits erfolgt.
+      pipelineStage: "intake",
+      ftRoute: "direct",
+      ftRouteDecidedAt: now,
+      ftRouteSource: "vision-room",
+      deliveryType: v.deliveryType || "website",
+      client: { email: v.contactEmail || "" },
+      tags: ["flowertech", "visionroom"],
+      createdAt: now,
+      updatedAt: now,
+    },
+    briefing,
+  };
+}
+
 /* ── Der Prozess als Daten ───────────────────────────────────────────────
  * Statt einer Liste von Bereichen: die konkret naechsten Schritte, aus dem
  * Datenstand abgeleitet. „Eine Anfrage wird zum Projekt" ist damit kein Knopf,
@@ -318,6 +500,9 @@ export const PROCESS_STEPS = [
   { key: "inquiry", label: "Anfrage → Projekt", stage: "lead" },
   { key: "briefing", label: "Bedarf aufnehmen", stage: "intake" },
   { key: "offer", label: "Angebot erstellen", stage: "proposal" },
+  { key: "offer_send", label: "Offerte senden", stage: "proposal" },
+  { key: "offer_decision", label: "Entscheidung festhalten", stage: "proposal" },
+  { key: "direct_build", label: "Direktprojekt umsetzen", stage: "build" },
   { key: "changes", label: "Änderungen abarbeiten", stage: "revision" },
   { key: "approval", label: "Freigabe einholen", stage: "approval" },
 ];
@@ -367,18 +552,42 @@ export function nextProcessSteps({
     });
   }
 
-  // 3. Bedarf steht, aber es gibt noch kein Angebot.
-  const offeredProjects = new Set(offers
-    .filter((o) => o && o.status !== "declined" && o.projectId)
-    .map((o) => o.projectId));
-  const withoutOffer = active.filter((p) => briefings[p.id] && !offeredProjects.has(p.id));
-  if (withoutOffer.length) {
+  // 3. Angebotsweg: Offerte erstellen, senden, Entscheid abwarten.
+  //    Direktprojekte kommen hier bewusst NICHT vor — sie ueberspringen ihn.
+  const offerRoute = active.filter((p) => routeOf(p, offers) === "offer_first");
+  const needOffer = offerRoute.filter((p) => briefings[p.id] && offerDecisionState(p, offers) === "none");
+  if (needOffer.length) {
     steps.push({
       key: "offer",
       label: "Angebot erstellen",
       hint: "Leistungsbeschreibung und Preis aus dem Bedarf ableiten.",
-      count: withoutOffer.length,
-      items: withoutOffer.map((p) => ({ id: p.id, title: p.title || "Projekt", sub: stageLabel(p.pipelineStage) })),
+      count: needOffer.length,
+      items: needOffer.map((p) => ({ id: p.id, title: p.title || "Projekt", sub: stageLabel(p.pipelineStage) })),
+    });
+  }
+  const toSend = offerRoute.filter((p) => offerDecisionState(p, offers) === "draft");
+  if (toSend.length) {
+    steps.push({
+      key: "offer_send",
+      label: "Offerte senden",
+      hint: "Beilage wählen — persönlicher Vision-Room-Link oder Beispiel-URL — und verschicken.",
+      count: toSend.length,
+      items: toSend.map((p) => ({ id: p.id, title: p.title || "Projekt", sub: "Offerte im Entwurf" })),
+    });
+  }
+  const awaiting = offerRoute.filter((p) => offerDecisionState(p, offers) === "sent");
+  if (awaiting.length) {
+    steps.push({
+      key: "offer_decision",
+      label: "Entscheidung festhalten",
+      hint: "Offerte ist draussen. Annahme startet die Umsetzung, Ablehnung schliesst den Vorgang.",
+      count: awaiting.length,
+      items: awaiting.map((p) => ({
+        id: p.id,
+        title: p.title || "Projekt",
+        sub: (p.ftOfferAttachment && p.ftOfferAttachment.kind === "vision")
+          ? "Vision-Ausarbeitung prüfen" : "wartet auf Antwort",
+      })),
     });
   }
 
@@ -396,6 +605,23 @@ export function nextProcessSteps({
         const p = active.find((x) => x.id === id);
         return { id, title: (p && p.title) || "Projekt", sub: byProject[id] + " offen" };
       }),
+    });
+  }
+
+  // 4b. Direktprojekte: der Angebotsschritt ist bewusst uebersprungen, es geht
+  //     sofort in die Umsetzung.
+  const directBuild = active.filter((p) => routeOf(p, offers) === "direct"
+    && briefings[p.id]
+    && stageIndex(p.pipelineStage) < stageIndex("revision"));
+  if (directBuild.length) {
+    steps.push({
+      key: "direct_build",
+      label: "Direktprojekt umsetzen",
+      hint: "Ohne Offerte vereinbart — Leistung und Vertrag festhalten, dann bauen.",
+      count: directBuild.length,
+      items: directBuild.map((p) => ({
+        id: p.id, title: p.title || "Projekt", sub: "Angebotsschritt übersprungen",
+      })),
     });
   }
 
@@ -418,8 +644,10 @@ export function nextProcessSteps({
 // Aus einer Anfrage wird ein Projekt: Felder, Startphase und ein Briefing-
 // Entwurf in einem Schritt. Die Nachricht der Anfrage ist das erste Ziel —
 // der Kunde hat es ja schon formuliert.
-export function projectFromInquiry(inquiry, { now = new Date().toISOString() } = {}) {
+export function projectFromInquiry(inquiry, { now = new Date().toISOString(), route = null } = {}) {
   const i = inquiry || {};
+  // Ohne ausdrueckliche Wahl wird KEINE Route gesetzt — die UI muss fragen.
+  const chosen = ROUTES.some((r) => r.key === route) ? route : null;
   const message = String(i.message || "").trim();
   return {
     project: {
@@ -430,6 +658,9 @@ export function projectFromInquiry(inquiry, { now = new Date().toISOString() } =
       // Der Kundenprozess startet bei der Bestandesaufnahme: der Lead ist ja
       // schon da, es fehlt der Bedarf.
       pipelineStage: "intake",
+      ftRoute: chosen,
+      ftRouteDecidedAt: chosen ? now : null,
+      ftRouteSource: chosen ? "anfrage" : null,
       deliveryType: /programm|program|app|software|tool/i.test(i.service || "") ? "program" : "website",
       client: {
         name: i.name || "", company: i.company || "",
@@ -996,6 +1227,9 @@ const API = {
   CHANGE_STATUSES, changeStatusLabel,
   BRIEFING_FIELDS, normalizeBriefing, briefingIsUsable, projectFieldsFromBriefing, buildBriefingTasks,
   normalizeChangeRequest, changeRequestIsUsable, buildChangeRequestTask, changeStatusFromTask,
+  ROUTES, routeLabel, routeOf, routeIsExplicit, routeSkipsOffer, offerDecisionState,
+  OFFER_ATTACHMENTS, isHttpUrl, offerAttachmentState,
+  VISION_TYPES, visionDeliveryType, normalizeVisionSubmission, visionIsUsable, projectFromVision,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,

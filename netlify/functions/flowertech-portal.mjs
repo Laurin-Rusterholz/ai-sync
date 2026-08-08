@@ -20,6 +20,7 @@ import { firebaseDbGet, firebaseDbSet } from "../lib/firebase-admin.mjs";
 import {
   normalizeBriefing, briefingIsUsable,
   normalizeChangeRequest, changeRequestIsUsable,
+  normalizeVisionSubmission, visionIsUsable,
   isShareToken, idempotencyKey,
 } from "../../public/flowertech-workflow-core.js";
 
@@ -125,10 +126,25 @@ export default async (req) => {
   // Honeypot: echte Menschen füllen dieses Feld nie aus.
   if (body.website || body.fax) return json(req, { ok: true }, 202);
 
+  const kind = ["change", "vision", "briefing"].includes(body.kind) ? body.kind : "briefing";
   const token = String(body.token || "");
-  if (!isShareToken(token)) return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
 
-  const kind = body.kind === "change" ? "change" : "briefing";
+  // Der Vision Room auf flowertech.ch ist oeffentlich: dort gibt es keinen
+  // Vorgang, an den ein Token haengen koennte. Eine Eingabe ohne Token wird
+  // deshalb nur akzeptiert, wenn sie von einer erlaubten Herkunft kommt —
+  // dieselbe Pruefung, die auch das Kontaktformular schuetzt. Mit Token haengt
+  // die Ausarbeitung an genau der Offerte, zu der der Token gehoert.
+  if (kind === "vision") {
+    if (token && !isShareToken(token)) {
+      return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
+    }
+    if (!token && fromMachine) {
+      return json(req, { error: "Vision-Eingaben ohne Token nur aus dem Browser." }, 400);
+    }
+  } else if (!isShareToken(token)) {
+    return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
+  }
+
   const createdAt = new Date().toISOString();
 
   let payload;
@@ -137,6 +153,13 @@ export default async (req) => {
     payload.source = "portal";
     if (!briefingIsUsable(payload)) {
       return json(req, { error: "Bitte eine gültige E-Mail-Adresse und eine kurze Zielbeschreibung angeben." }, 400);
+    }
+  } else if (kind === "vision") {
+    payload = normalizeVisionSubmission(body.payload || {}, { now: createdAt });
+    if (!visionIsUsable(payload)) {
+      return json(req, {
+        error: "Bitte Idee, mindestens eine Funktion und eine gültige E-Mail angeben.",
+      }, 400);
     }
   } else {
     payload = normalizeChangeRequest(
@@ -158,7 +181,7 @@ export default async (req) => {
   const id = `sub_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
   try {
     await firebaseDbSet(`flowertech/submissions/${id}`, {
-      id, token, kind, payload, createdAt,
+      id, token: token || null, kind, payload, createdAt,
       via: fromMachine ? "machine" : "web",
       idempotencyKey: key,
     });
