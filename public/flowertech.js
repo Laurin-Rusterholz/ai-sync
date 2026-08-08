@@ -1147,6 +1147,15 @@
     if (isInvoice && doc.dueDate) lines.push("Zahlbar bis " + dateOnly(doc.dueDate) + ".");
     if (!isInvoice && doc.validUntil) lines.push("Diese Offerte ist gültig bis " + dateOnly(doc.validUntil) + ".");
     if (doc.terms) { lines.push(""); lines.push(doc.terms); }
+    // Beilage: der echte Link aus dem Dokument. Nie erfunden, nie geraten —
+    // attachToOfferDoc() hat ihn vor dem Versand hier hineingeschrieben.
+    if (doc.attachment && doc.attachment.url) {
+      lines.push("");
+      lines.push(doc.attachment.kind === "vision"
+        ? "Ihr persönlicher Vision Room — stellen Sie Ihre Idee selbst zusammen:"
+        : "Ein Beispiel, das zeigt, wie wir arbeiten:");
+      lines.push(doc.attachment.url);
+    }
     lines.push("");
     lines.push(doc.outro || "");
     lines.push("");
@@ -1160,6 +1169,19 @@
     if (!doc) return;
     if (typeof window.gmailCompose !== "function") {
       return notify("err", "Gmail", "Das Gmail-Modul ist nicht geladen.");
+    }
+    // „Per Mail senden" ist derselbe Versandweg wie der Statuswechsel und muss
+    // durch dieselbe Schranke. Sonst liesse sich die verbindliche Beilage mit
+    // einem Klick umgehen.
+    if (kind === "offer") {
+      var gate = offerReadyToSend(doc);
+      if (!gate.ready) {
+        notify("warn", "Offerte", gate.reason + " Der Mailversand ist bis dahin blockiert.");
+        return;
+      }
+      // Die Beilage muss VOR dem Aufbau des Mailtexts im Dokument stehen —
+      // sonst fehlt der Link im Text.
+      attachToOfferDoc(doc);
     }
     var subject = (kind === "invoice" ? "Rechnung " : "Offerte ") + (doc.number || "") +
       (doc.title ? " — " + doc.title : "");

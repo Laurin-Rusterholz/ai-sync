@@ -49,6 +49,9 @@ function makeSandbox(hash) {
     scheduleSave() {},
     render() {},
     toast() {},
+    // Aufgezeichnete Mailentwuerfe — damit der Mailpfad pruefbar ist.
+    __mails: [],
+    gmailCompose(opts) { win.__mails.push(opts); },
     createEntity: (kind, payload) => {
       // Echte Ablage, damit Ingest- und Versandpfade wirklich pruefbar sind.
       const store = kind === "project" ? data.entities.projects : data.entities.tasks;
@@ -454,6 +457,91 @@ function renderAt(hash) {
   win._ftCreateWorkflowProject();
   ok(Object.keys(win.APP.state.data.entities.projects).length === before,
     "eine erfundene Route legt ein Projekt an");
+}
+
+// ── 19. „Per Mail senden" geht durch dieselbe Schranke ────────────────────
+// Zweiter Bypass: _ftMailDoc() rief gmailCompose(docMailBody(...)) direkt auf,
+// ohne offerReadyToSend() und ohne attachToOfferDoc(). Damit liess sich eine
+// Offerte ohne Beilage verschicken, und selbst mit Beilage fehlte der Link.
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  data.entities.projects.prj_1 = { id: "prj_1", title: "Angebotsvorgang", projectType: "flowertech",
+    pipelineStage: "proposal", ftRoute: "offer_first", client: { email: "kundin@muster.ch" } };
+  ft.shares = { prj_1: {} };
+  const offer = { id: "of_m", projectId: "prj_1", status: "draft", items: [], history: [],
+    client: { email: "kundin@muster.ch" }, number: "OF-2026-0001" };
+  ft.offers = [offer];
+
+  // Ohne Beilage: kein Entwurf, kein Verlaufseintrag, Status unveraendert.
+  win._ftMailDoc("offer", "of_m");
+  ok(win.__mails.length === 0, "der Mailentwurf ging ohne Beilage auf");
+  ok(offer.status === "draft", "der Mailpfad hat den Status verändert");
+  ok((offer.history || []).length === 0, "ohne Versand wurde ein Verlaufseintrag geschrieben");
+
+  // Unbrauchbare Beispiel-URL: weiterhin blockiert.
+  data.entities.projects.prj_1.ftOfferAttachment = { kind: "example", exampleUrl: "muster.ch" };
+  win._ftMailDoc("offer", "of_m");
+  ok(win.__mails.length === 0, "eine URL ohne Schema liess den Mailversand zu");
+
+  // Echte Beispiel-URL: Entwurf geht auf UND der Link steht im Text.
+  data.entities.projects.prj_1.ftOfferAttachment = { kind: "example", exampleUrl: "https://muster.ch/vorschau" };
+  win._ftMailDoc("offer", "of_m");
+  ok(win.__mails.length === 1, "der Mailentwurf ging mit gültiger Beilage nicht auf");
+  const mail = win.__mails[0];
+  ok(mail.body.includes("https://muster.ch/vorschau"),
+    "die Beispiel-URL fehlt im Gmail-Text — genau der gemeldete Fehler");
+  ok(/Beispiel/.test(mail.body), "der Link im Mailtext ist nicht eingeordnet");
+  ok(mail.to === "kundin@muster.ch", "der Entwurf geht an die falsche Adresse");
+  ok(offer.attachment && offer.attachment.url === "https://muster.ch/vorschau",
+    "die Beilage steht nicht im Dokument");
+  // Der Status wird erst beim wirklichen Senden gesetzt.
+  ok(offer.status === "draft", "der Mailentwurf hat die Offerte bereits auf 'versendet' gesetzt");
+  ok((offer.history || []).some((h) => h.event === "mail"), "der Verlaufseintrag zum Entwurf fehlt");
+}
+
+// ── 20. Vision-Beilage steht im Gmail-Text ────────────────────────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  data.entities.projects.prj_1 = { id: "prj_1", title: "V", projectType: "flowertech",
+    pipelineStage: "proposal", ftRoute: "offer_first", client: { email: "k@muster.ch" } };
+  ft.shares = { prj_1: {} };
+  const offer = { id: "of_v", projectId: "prj_1", status: "draft", items: [], history: [],
+    client: { email: "k@muster.ch" } };
+  ft.offers = [offer];
+
+  win._ftSetOfferAttachment("prj_1", "vision");
+  const token = data.entities.projects.prj_1.ftOfferAttachment.visionToken;
+  win._ftMailDoc("offer", "of_v");
+  ok(win.__mails.length === 1, "der Mailentwurf mit Vision-Beilage ging nicht auf");
+  const body = win.__mails[0].body;
+  ok(body.includes("?v=" + token) && body.includes("#vision"),
+    "der persönliche Vision-Link fehlt im Gmail-Text");
+  ok(/Vision Room/.test(body), "der Vision-Link ist im Mailtext nicht eingeordnet");
+  ok(!/undefined|null/.test(body.split("\n").find((l) => l.includes("?v=")) || ""),
+    "der Vision-Link im Mailtext enthält Platzhalter");
+  ok(offer.status === "draft", "der Vision-Mailentwurf hat den Status gesetzt");
+}
+
+// ── 21. Direktprojekte und Rechnungen bleiben unbehelligt ─────────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  data.entities.projects.prj_d = { id: "prj_d", title: "D", projectType: "flowertech",
+    pipelineStage: "build", ftRoute: "direct", client: { email: "d@muster.ch" } };
+  ft.offers = [{ id: "of_d", projectId: "prj_d", status: "draft", items: [], history: [],
+    client: { email: "d@muster.ch" } }];
+  ft.invoices = [{ id: "in_1", projectId: "prj_d", status: "draft", items: [], history: [],
+    client: { email: "d@muster.ch" } }];
+
+  win._ftMailDoc("offer", "of_d");
+  ok(win.__mails.length === 1, "ein Direktprojekt wird von der Beilagenpflicht blockiert");
+  win._ftMailDoc("invoice", "in_1");
+  ok(win.__mails.length === 2, "eine Rechnung wird von der Beilagenpflicht blockiert");
 }
 
 console.log(`flowertech topnav runtime: ok (${checks} Pruefungen)`);

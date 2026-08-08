@@ -25,6 +25,12 @@ const eq = (actual, expected, message) => { assert.deepEqual(actual, expected, m
 
 const NOW = "2026-08-06T10:00:00.000Z";
 
+// de-CH setzt als Tausendertrenner je nach ICU-Version ' (U+0027) oder
+// \u2019 (U+2019). Beides ist korrekt — Tests duerfen daran nicht haengen.
+const normNum = (v) => String(v).replace(/[\u2018\u2019\u0027\u02BC\u00A0\u202F]/g, "'");
+const containsNum = (haystack, needle) => normNum(haystack).includes(normNum(needle));
+
+
 // ── 1. Der Kundenprozess laeuft vorwaerts und rueckwaerts ──────────────────
 {
   eq(W.WORKFLOW_STAGES.map((s) => s.key),
@@ -257,7 +263,8 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
 
   // Variablen werden zur Laufzeit ersetzt, offene bleiben sichtbar stehen.
   const verguetung = contract.sections.find((s) => s.key === "verguetung");
-  ok(verguetung.body.includes("4'500.00"), "der Preis wird nicht eingesetzt");
+  ok(containsNum(verguetung.body, "4'500.00"),
+    `der Preis wird nicht eingesetzt (erhalten: ${verguetung.body.slice(0, 80)})`);
   ok(/nur bei vergleichbarem Umfang|denselben Umfang/i.test(verguetung.body),
     "die faire Konkurrenzpreis-Formulierung fehlt");
   const schluss = contract.sections.find((s) => s.key === "schluss");
