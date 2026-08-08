@@ -523,7 +523,6 @@ die Zustaende und die optionale Assistenz daneben.
  └─ #quantusBrowserHost        ← dieselbe Grid-Zelle, eigene Spur
      ├─ .qbr-bar               ← Titel · Verbindungsstatus · Neu laden ·
      │                           Vollbild · (dezent) Polaris, neuer Tab
-     ├─ .qbr-note              ← einmaliger Anmeldehinweis, wegklickbar
      └─ .qbr-stage
          ├─ .qbr-canvas        ← 16:9-Flaeche, exakt berechnet
          │   └─ iframe#quantusBrowserFrame
@@ -583,6 +582,24 @@ Routenwechsel. Das iframe wird dabei **nie** angefasst, die Sitzung bleibt.
   geschlossen.
 * Polaris Quick oeffnet sich als Overlay ueber der Buehne (`✨` in der
   Kopfzeile oder die gewohnte Glühbirne) und blockiert die Fernbedienung nicht.
+
+### Keine Anmeldehilfe in der Oberflaeche
+
+Die Huelle gibt **keinerlei** Hinweis auf Benutzer, Passwort oder Anmeldeweg
+aus — weder als Banner, noch als wegklickbaren Streifen, noch in einer
+Statuskarte. Die Anmeldung gehoert allein in die Maske des Dienstes im iframe.
+
+Das ist bewusst mehr als Kosmetik: Ein Zugangsdaten-Hinweis in der Quantus-
+Oberflaeche steht im ausgelieferten HTML und damit in jedem Cache, jedem
+Screenshot und jeder Bildschirmfreigabe — auch dann, wenn er nur einen
+Benutzernamen nennt. Statische und Laufzeittests halten das fest: sie verbieten
+sowohl die Begriffe (Benutzer, Passwort, Zugangsdaten, credentials …) als auch
+die Form, in der so ein Hinweis auftrat (ein per `<b>` hervorgehobener Wert in
+Kopfzeile oder Statuskarte).
+
+Unveraendert bleibt: neko authentifiziert weiterhin mit Passwort, die
+Einbettung uebergibt ausschliesslich `usr` als Feldvorbelegung — nie ein
+Geheimnis. Siehe Abschnitt 4.
 
 ### Zustaende
 

@@ -150,14 +150,12 @@ function makeDom() {
   const status = el("span", "quantusBrowserStatus", "qbr-status");
   const statusText = el("span", null, "qbr-status-text");
   const fullBtn = el("button", "quantusBrowserFullBtn", "qbr-btn qbr-btn-main");
-  const note = el("div", "quantusBrowserNote", "qbr-note");
   const stage = el("div", "quantusBrowserStage", "qbr-stage");
   const canvas = el("div", "quantusBrowserCanvas", "qbr-canvas");
   const overlay = el("div", "quantusBrowserOverlay", "qbr-overlay");
   const qcFab = el("button", "qc-fab");
 
   host.hidden = true;
-  note.hidden = true;
   overlay.hidden = true;
   status.dataset.state = "idle";
   statusText.textContent = "Pausiert";
@@ -166,7 +164,6 @@ function makeDom() {
   bar.appendChild(status);
   bar.appendChild(fullBtn);
   host.appendChild(bar);
-  host.appendChild(note);
   stage.appendChild(canvas);
   stage.appendChild(overlay);
   host.appendChild(stage);
@@ -190,7 +187,7 @@ function makeDom() {
   doc.removeEventListener = () => {};
   doc.dispatch = (type, event) => { for (const fn of doc._listeners.get(type) || []) fn(event || { type }); };
 
-  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, note, stage, canvas, overlay, qcFab } };
+  return { doc, nodes: { body, app, main, panelDock, host, bar, status, statusText, fullBtn, stage, canvas, overlay, qcFab } };
 }
 
 // ── Steuerbare Uhr ─────────────────────────────────────────────────────────
@@ -248,7 +245,7 @@ function makeApp(options = {}) {
   const layout = () => {
     const nav = nodes.app.classList.contains("sidebar-collapsed") ? 0 : 188;
     const full = doc.body.classList.contains("qbr-full");
-    const barH = 40 + (nodes.note.hidden ? 0 : 26);
+    const barH = 40;   // nur die Kopfzeile, kein Hinweisstreifen mehr
     nodes.stage.clientWidth = full ? win.innerWidth : Math.max(0, win.innerWidth - nav);
     nodes.stage.clientHeight = full ? win.innerHeight - barH : Math.max(0, win.innerHeight - 52 - barH);
   };
@@ -303,7 +300,6 @@ function makeApp(options = {}) {
       toggleFullscreen: quantusBrowserToggleFullscreen,
       setFullscreen: quantusBrowserSetFullscreen,
       statusHtml: quantusBrowserStatusHtml,
-      dismissNote: quantusBrowserDismissNote,
       view: viewBrowser,
       IDLE_MS: QUANTUS_BROWSER_IDLE_MS,
       RETRY_MS: QUANTUS_BROWSER_RETRY_MS,
@@ -317,15 +313,12 @@ function makeApp(options = {}) {
     api, doc, nodes, clock, calls, win, layout, sandbox, net, frame,
     // Erst Grosse nachziehen, dann rechnen — genau wie der echte Resize-Pfad.
     resize(w, h) { win.innerWidth = w; win.innerHeight = h; layout(); win.dispatch("resize"); },
-    // Der Browser meldet den fertigen Stream. Danach noch einmal umbrechen:
-    // der eingeblendete Anmeldehinweis veraendert die Resthoehe.
+    // Der Browser meldet den fertigen Stream.
     loadFrame() {
       layout();
       const f = frame();
       ok(!!f, "kein iframe zum Laden vorhanden");
       f.dispatch("load");
-      layout();
-      api.fit();
     }
   };
 }
@@ -401,22 +394,17 @@ console.log("\n3. Verbinden, Flaechenberechnung und Statusanzeige");
   eq(app.nodes.statusText.textContent, "Verbunden", "kein lesbarer Verbindungsstatus");
   ok(app.nodes.overlay.hidden === true, "der Ladehinweis bleibt ueber dem Stream stehen");
   eq(app.nodes.overlay.innerHTML, "", "der Ladehinweis wurde nicht geleert");
-  ok(app.nodes.note.hidden === false, "der Anmeldehinweis erscheint nicht");
 
-  // 1440x900: 188px Navigation, 52px Topbar, 40px Kopfzeile, 26px Hinweis.
+  // 1440x900: 188px Navigation, 52px Topbar, 40px Kopfzeile — sonst nichts.
   eq(app.nodes.canvas.style.width, "1252px", "die Buehne nutzt die Breite nicht aus");
   eq(app.nodes.canvas.style.height, "704px", "die Buehne nutzt die Hoehe nicht aus");
   ok(parseInt(app.nodes.canvas.style.width, 10) > 1000 && parseInt(app.nodes.canvas.style.height, 10) > 600,
     "auf 1440x900 entsteht eine Briefmarke statt einer Arbeitsflaeche");
   ok(app.frame().focusCount > 0, "das iframe bekommt keinen Fokus — Tastatur kaeme nie an");
 
-  // Hinweis wegklicken gibt Hoehe frei; auf 1440x900 ist die Breite die
-  // begrenzende Seite, die Buehne bleibt also formatfuellend.
-  const stageHBefore = app.nodes.stage.clientHeight;
-  app.api.dismissNote();
-  ok(app.nodes.note.hidden === true, "der Anmeldehinweis laesst sich nicht ausblenden");
+  // Ueber der Buehne sitzt nur die Kopfzeile: 900 - 52 - 40 = 808px Resthoehe.
+  eq(app.nodes.stage.clientHeight, 808, "ueber der Buehne haengt noch ein zweiter Streifen");
   app.resize(1440, 900);
-  ok(app.nodes.stage.clientHeight > stageHBefore, "der weggeklickte Hinweis gibt keine Hoehe frei");
   eq(app.nodes.canvas.style.width, "1252px", "die Buehne nutzt die Breite nicht mehr aus");
   eq(app.nodes.canvas.style.height, "704px", "die Buehne haelt das Seitenverhaeltnis nicht");
 
@@ -480,7 +468,6 @@ console.log("\n5. In-App-Vollbild und CSS-Rueckfall");
   app.api.enter();
   await flush();
   app.loadFrame();
-  app.api.dismissNote();
   const frameBefore = app.frame();
   const widthBefore = app.nodes.canvas.style.width;
 
@@ -666,10 +653,6 @@ console.log("\n10. Sicherheit, Fokus und Klickdurchlaessigkeit");
   await flush();
   ok(app.frame().focusCount > before, "beim Zurueckkommen bekommt das iframe keinen Fokus");
 
-  // Und der Merker fuer den Anmeldehinweis landet nicht im iframe-Aufruf.
-  app.api.dismissNote();
-  ok(!app.api.src().includes("note"), "der Hinweis-Merker landet in der URL");
-
   // Ein Re-Render darf niemandem mitten im Tippen die Tastatur wegnehmen.
   const typing = { tagName: "INPUT", isContentEditable: false, focus() {} };
   app.doc.activeElement = typing;
@@ -692,10 +675,51 @@ console.log("\n11. Rueckfall ohne ResizeObserver");
   app.api.enter();
   await flush();
   app.loadFrame();
-  app.api.dismissNote();
   app.resize(1280, 720);
   eq(app.nodes.canvas.style.width, "1092px", "ohne ResizeObserver wird nicht neu gerechnet");
   eq(app.nodes.canvas.style.height, "614px", "ohne ResizeObserver stimmt die Hoehe nicht");
+}
+
+// ═══ 12. Keine Zugangsdaten-Hilfe in der Oberflaeche ══════════════════════
+console.log("\n12. Keine sichtbare Zugangsdaten-Hilfe");
+{
+  const app = makeApp();
+
+  // Die Hinweis-Funktionen gibt es nicht mehr — es bleibt also nichts, was
+  // einen Anmeldestreifen einblenden koennte.
+  eq(typeof app.api.dismissNote, "undefined", "die Hinweis-Logik ist zurueck");
+  ok(app.doc.getElementById("quantusBrowserNote") === null,
+    "das Markup des Anmeldehinweises ist zurueck");
+
+  // Jeder Zustand, den der Nutzer zu sehen bekommt, wird wirklich gerendert
+  // und auf Zugangsdaten-Text geprueft — nicht nur der Quelltext.
+  const FORBIDDEN = /\bBenutzer\b|\bBenutzername\b|\bPasswort\b|\bKennwort\b|\bZugangsdaten\b|\bAnmeldedaten\b|\bcredentials?\b|\busername\b|\bpassword\b|\bAnmeldung erfolgt\b/i;
+
+  for (const state of ["checking", "offline", "tiny", "idle"]) {
+    const html = app.api.statusHtml(state, "network");
+    ok(!FORBIDDEN.test(html),
+      `Zustand "${state}" zeigt einen Zugangsdaten-Hinweis: ${JSON.stringify(html.slice(0, 120))}`);
+    // Auf den Benutzernamen selbst laesst sich nicht pruefen — er heisst wie
+    // das Produkt. Stattdessen die Form, in der so ein Hinweis auftritt: der
+    // entfernte Streifen hob den Wert per <b> hervor. Keiner der Zustaende
+    // braucht Hervorhebungs- oder Code-Auszeichnung, also darf keiner sie haben.
+    ok(!/<(b|strong|code|kbd|samp)[\s>]/i.test(html),
+      `Zustand "${state}" hebt einen Wert hervor — so sah der Zugangsdaten-Hinweis aus`);
+  }
+
+  // Und die Zustaende, die im echten Ablauf eingeblendet werden, ebenso.
+  app.api.enter();
+  await flush();
+  ok(!FORBIDDEN.test(app.nodes.overlay.innerHTML), "der Ladezustand zeigt eine Zugangsdaten-Hilfe");
+  app.loadFrame();
+  eq(app.nodes.overlay.innerHTML, "", "nach dem Laden bleibt Text ueber dem Stream stehen");
+
+  // Der Dienst authentifiziert weiterhin selbst: die Einbettung uebergibt
+  // ausschliesslich die Feldvorbelegung, nie ein Geheimnis.
+  const src = app.api.src();
+  ok(!/[?&](pwd|pass|password|token|secret|key|auth)=/i.test(src),
+    "die Einbettung uebergibt Anmeldedaten in der URL");
+  ok(src.includes("usr="), "die Feldvorbelegung wurde mitentfernt — der Login-Flow aendert sich");
 }
 
 console.log(`\n✓ Quantus-Browser-Buehne: ${checks} Laufzeitpruefungen bestanden\n`);

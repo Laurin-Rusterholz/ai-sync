@@ -121,6 +121,9 @@ const HOST_MARKUP = index.slice(index.indexOf('<section class="qbr-host"'),
                                 index.indexOf("</style>", index.indexOf('<style id="quantusBrowserCss">')));
 const BROWSER_JS = index.slice(index.indexOf("// ── QUANTUS BROWSER —"),
                                index.indexOf("\nfunction goBack() {"));
+// Der vorbelegte Benutzername steht nur als Konstante im Skript — er wird aus
+// der Quelle gelesen, damit der Test ihn nicht selbst im Repo verewigt.
+const QUANTUS_BROWSER_USER = (/const QUANTUS_BROWSER_USER\s*=\s*'([^']+)'/.exec(BROWSER_JS) || [])[1];
 
 check("Route, App-Eintrag und View sind vorhanden", () => {
   assert.match(index, /case "browser": html = viewBrowser\(\); break;/);
@@ -186,6 +189,57 @@ check("alle data-action-Werte der Browser-UI haben einen Handler", () => {
   for (const action of used) {
     assert.ok(index.includes(`case "${action}":`), `kein Handler fuer ${action}`);
   }
+});
+
+check("die Oberflaeche zeigt keinerlei Zugangsdaten-Hilfe", () => {
+  // Der frueher eingeblendete Anmeldehinweis ("Die Anmeldung erfolgt direkt im
+  // Browserfenster — Benutzer quantus") ist entfernt. Er darf auch nicht als
+  // wegklickbarer Streifen zurueckkommen: der Login gehoert allein in die
+  // Maske des Dienstes, Quantus gibt dazu keine Hilfestellung aus.
+  assert.doesNotMatch(HOST_MARKUP, /qbr-note|quantusBrowserNote/,
+    "der Hinweisstreifen ist wieder im Markup");
+  assert.doesNotMatch(BROWSER_JS, /quantusBrowserShowNote|quantusBrowserDismissNote|NOTE_KEY/,
+    "die Hinweis-Logik ist wieder im Modul");
+  assert.ok(!index.includes('data-action="browser-dismiss-note"'),
+    "die Aktion zum Wegklicken des Hinweises ist zurueck");
+  assert.ok(!index.includes('case "browser-dismiss-note":'),
+    "der Handler zum Wegklicken des Hinweises ist zurueck");
+
+  // Kein sichtbarer Text der Huelle nennt Benutzer, Passwort oder Anmeldeweg.
+  // Geprueft wird der sichtbare Anteil: Textknoten und die Attribute, die der
+  // Browser anzeigt (title, aria-label, placeholder, value).
+  const visible = [
+    ...HOST_MARKUP.replace(/<[^>]*>/g, "\n").split("\n"),
+    ...[...HOST_MARKUP.matchAll(/(?:title|aria-label|placeholder|value)="([^"]*)"/g)].map(m => m[1])
+  ];
+  // Dazu der Text, den die Statuszustaende einblenden. Nur einzeilige
+  // Zeichenketten aus quantusBrowserStatusHtml() — die vier gerenderten
+  // Zustaende selbst prueft der Laufzeittest.
+  const statusFn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserStatusHtml("),
+                                    BROWSER_JS.indexOf("// Die Statusflaeche liegt ueber der Buehne"));
+  assert.ok(statusFn.length > 400, "quantusBrowserStatusHtml() nicht gefunden");
+  const rendered = [...statusFn.matchAll(/'([^'\n]+)'/g)].map(m => m[1]);
+  const FORBIDDEN = /\bBenutzer\b|\bBenutzername\b|\bPasswort\b|\bKennwort\b|\bZugangsdaten\b|\bAnmeldedaten\b|\bcredentials?\b|\busername\b|\bpassword\b|\bAnmeldung erfolgt\b|\bmelde dich an\b|\banmelden mit\b/i;
+  for (const text of [...visible, ...rendered]) {
+    assert.doesNotMatch(text, FORBIDDEN,
+      `sichtbarer Zugangsdaten-Hinweis in der Browser-Oberflaeche: ${JSON.stringify(text.slice(0, 90))}`);
+  }
+
+  // Auf den Benutzernamen als Text laesst sich nicht sinnvoll pruefen — er
+  // heisst wie das Produkt. Aussagekraeftig ist die Form: der entfernte
+  // Streifen hob den Wert per <b> hervor. Die Kopfzeile braucht keinerlei
+  // Hervorhebungs- oder Code-Auszeichnung, also darf sie keine haben.
+  assert.doesNotMatch(HOST_MARKUP, /<(b|strong|code|kbd|samp)[\s>]/i,
+    "hervorgehobener Wert in der Kopfzeile — so sah der Zugangsdaten-Hinweis aus");
+
+  // Der Dienst authentifiziert weiterhin selbst. Die Einbettung uebergibt nur
+  // die Feldvorbelegung, nie ein Geheimnis — beides bleibt so.
+  assert.ok(QUANTUS_BROWSER_USER, "die Benutzer-Konstante fehlt im Modul");
+  const srcFn = BROWSER_JS.slice(BROWSER_JS.indexOf("function quantusBrowserSrc()"),
+                                 BROWSER_JS.indexOf("async function quantusBrowserProbe"));
+  assert.match(srcFn, /usr=/, "die Feldvorbelegung wurde mitentfernt — der Login-Flow aendert sich");
+  assert.doesNotMatch(srcFn, /[?&](pwd|pass|password|token|secret|key|auth)=/i,
+    "die Einbettung uebergibt Anmeldedaten in der URL");
 });
 
 check("die Kopfzeile baut keine zweite Browseroberflaeche nach", () => {
