@@ -14,6 +14,26 @@
 
 set -uo pipefail
 
+# Dateirechte oktal lesen — portabel. GNU coreutils kennt `stat -c`, BSD/macOS
+# dagegen nur `stat -f`. Ohne diese Weiche lieferte macOS
+# "stat: illegal option -- c" und der Modus-Vergleich lief gegen einen leeren
+# Wert, statt zu greifen.
+#
+# Die Variante wird EINMAL an einer bekannten Datei ermittelt, nicht pro Aufruf
+# ueber einen Fehlschlag: GNU deutet `-f` als Dateisystem-Abfrage und wuerde
+# sonst stillschweigend etwas voellig anderes liefern.
+if stat -c '%a' "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
+  STAT_MODE_FMT=(-c '%a')
+else
+  STAT_MODE_FMT=(-f '%Lp')
+fi
+file_mode() {
+  stat "${STAT_MODE_FMT[@]}" "$1"
+}
+# Fuer Subshells, die den Helfer nicht sehen (bash -c), einzeln exportiert.
+export STAT_FMT_A="${STAT_MODE_FMT[0]}"
+export STAT_FMT_B="${STAT_MODE_FMT[1]}"
+
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${REPO_DIR}/scripts/deploy-neko-hostinger.sh"
 WORK="$(mktemp -d)"
@@ -139,6 +159,7 @@ check "kein Proxy vorhanden"  "$(field "$(load_lib)" PROXY)" "none"
 echo
 echo "4. .env wird idempotent gepflegt"
 ENVTEST="$(PATH="${WORK}/bin:${PATH}" QUANTUS_NEKO_DIR="${WORK}/app2" NEKO_DEPLOY_LIB_ONLY=1 \
+  STAT_FMT_A="${STAT_FMT_A}" STAT_FMT_B="${STAT_FMT_B}" \
   bash -c 'set -uo pipefail
     export QUANTUS_NEKO_DIR
     mkdir -p "${QUANTUS_NEKO_DIR}"
@@ -151,7 +172,7 @@ ENVTEST="$(PATH="${WORK}/bin:${PATH}" QUANTUS_NEKO_DIR="${WORK}/app2" NEKO_DEPLO
     printf "IP=%s\n"     "$(env_get NEKO_PUBLIC_IP)"
     printf "PW=%s\n"     "$(env_get NEKO_USER_PASSWORD)"
     printf "LINES=%s\n"  "$(grep -c "^COMPOSE_FILE=" "${APP_DIR}/.env")"
-    printf "MODE=%s\n"   "$(stat -c "%a" "${APP_DIR}/.env")"
+    printf "MODE=%s\n"   "$(stat "${STAT_FMT_A}" "${STAT_FMT_B}" "${APP_DIR}/.env")"
   ' _ "${SCRIPT}")"
 check "COMPOSE_FILE gesetzt"        "$(field "${ENVTEST}" GET)"   "docker-compose.yml:docker-compose.traefik.yml"
 check "vorhandener Wert ersetzt"    "$(field "${ENVTEST}" IP)"    "198.51.100.7"
@@ -211,7 +232,8 @@ echo "6. Datenverzeichnisse: Eigentuemer idempotent und nie destruktiv"
 # unbeschreibbarem Profil), darf aber bei korrektem Eigentuemer NICHTS anfassen
 # und unter keinen Umstaenden loeschen. chown ist gestubbt — der Test laeuft
 # auch ohne root (CI); geprueft wird die Entscheidung, nicht der Syscall.
-OWNTEST="$(QUANTUS_NEKO_DIR="${WORK}/app3" NEKO_DEPLOY_LIB_ONLY=1 bash -c '
+OWNTEST="$(QUANTUS_NEKO_DIR="${WORK}/app3" NEKO_DEPLOY_LIB_ONLY=1 \
+  STAT_FMT_A="${STAT_FMT_A}" STAT_FMT_B="${STAT_FMT_B}" bash -c '
   set -uo pipefail
   export QUANTUS_NEKO_DIR
   mkdir -p "${QUANTUS_NEKO_DIR}"
@@ -244,7 +266,7 @@ OWNTEST="$(QUANTUS_NEKO_DIR="${WORK}/app3" NEKO_DEPLOY_LIB_ONLY=1 bash -c '
   E="${QUANTUS_NEKO_DIR}/data/neko"
   mkdir -p "${E}"; chmod 500 "${E}"
   ensure_data_dir "${E}" "${ME_UID}" "${ME_GID}"
-  printf "MODE=%s\n" "$(stat -c %a "${E}")"
+  printf "MODE=%s\n" "$(stat "${STAT_FMT_A}" "${STAT_FMT_B}" "${E}")"
   chmod 700 "${E}"
 
   # 5) data_uid/data_gid: Default 1000, per .env uebersteuerbar
