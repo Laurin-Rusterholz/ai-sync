@@ -612,13 +612,15 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
   eq(W.normalizeVisionSubmission({ type: "Erfunden" }, { now: NOW }).type, "Website",
     "eine erfundene Art wird uebernommen");
 
-  // Unbrauchbares wird abgewiesen, statt halbe Projekte anzulegen.
-  ok(!W.visionIsUsable(W.normalizeVisionSubmission({ idea: "x", email: "a@b.ch", features: ["f"] }, { now: NOW })),
-    "eine zu kurze Idee gilt als brauchbar");
+  // Unbrauchbares wird abgewiesen, statt halbe Projekte anzulegen. Pflicht sind
+  // Idee und Rueckkanal — sonst nichts: keine kuenstliche Mindestlaenge und
+  // keine Pflicht zu Funktionen. Wer nur einen Satz schreibt, kommt durch.
+  ok(!W.visionIsUsable(W.normalizeVisionSubmission({ idea: "   ", email: "a@b.ch", features: ["f"] }, { now: NOW })),
+    "eine leere Idee gilt als brauchbar");
+  ok(W.visionIsUsable(W.normalizeVisionSubmission({ idea: "Hofladen", email: "a@b.ch" }, { now: NOW })),
+    "eine kurze Idee ohne Funktionen wird abgewiesen");
   ok(!W.visionIsUsable(W.normalizeVisionSubmission({ idea: "Gute Idee", features: ["f"] }, { now: NOW })),
     "eine Vision ohne E-Mail gilt als brauchbar");
-  ok(!W.visionIsUsable(W.normalizeVisionSubmission({ idea: "Gute Idee", email: "a@b.ch" }, { now: NOW })),
-    "eine Vision ohne Funktionen gilt als brauchbar");
 
   // Das Direktprojekt entsteht vollstaendig — ohne Nacharbeit.
   const { project, briefing: draft } = W.projectFromVision(vision, { now: NOW });

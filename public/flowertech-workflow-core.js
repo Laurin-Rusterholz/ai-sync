@@ -446,11 +446,13 @@ export function normalizeVisionSubmission(raw, { now = new Date().toISOString() 
   };
 }
 
+// Pflicht ist die Idee und ein Rueckkanal. Funktionen sind ein Angebot: wer
+// nur einen Satz schreibt, soll trotzdem senden koennen. Keine kuenstliche
+// Mindestlaenge — geprueft wird, ob nach dem Trimmen etwas dasteht.
 export function visionIsUsable(vision) {
   return !!(vision
-    && vision.idea && vision.idea.length >= 3
-    && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(vision.contactEmail || "")
-    && (vision.features || []).length > 0);
+    && vision.idea && vision.idea.trim()
+    && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(vision.contactEmail || ""));
 }
 
 // Aus einer Vision-Room-Eingabe entsteht ein Direktprojekt: die Idee ist der
@@ -490,6 +492,155 @@ export function projectFromVision(vision, { now = new Date().toISOString() } = {
   };
 }
 
+/* ── Offertenanfrage ─────────────────────────────────────────────────────
+ * Produktentscheidung: Eine Offerte entsteht NICHT intern auf Verdacht. Die
+ * Kundschaft fuellt ueber ihren eigenen FlowerTech-Link aus, was sie braucht;
+ * erst dieses Absenden erzeugt eine echte Offertenanfrage und genau EINE
+ * Folgeaufgabe. Alles davor ist eine Anfrage, keine Offerte — und damit gibt
+ * es auch keine leere Offerte mit Nummer und CHF 0.00.
+ *
+ * Bewusst niederschwellig: Pflicht ist allein der Bedarf. Keine kuenstliche
+ * Mindestlaenge, kein erzwungenes Budget, kein erzwungener Termin. Was die
+ * Kundschaft noch nicht weiss, muss sie nicht erfinden.
+ * --------------------------------------------------------------------- */
+export const QUOTE_REQUEST_STATUSES = [
+  { key: "new", label: "Neu" },
+  { key: "in_progress", label: "In Arbeit" },
+  { key: "quoted", label: "Offeriert" },
+  { key: "closed", label: "Abgeschlossen" },
+];
+
+export function quoteStatusLabel(status) {
+  const hit = QUOTE_REQUEST_STATUSES.find((s) => s.key === status);
+  return hit ? hit.label : "Neu";
+}
+
+// Die Feldliste ist die einzige Wahrheit: Sie beschreibt das oeffentliche
+// Formular auf der Kundenseite und die Normalisierung hier.
+export const QUOTE_REQUEST_FIELDS = [
+  { key: "company", label: "Firma / Organisation", type: "text", max: 160 },
+  { key: "contactName", label: "Ansprechperson", type: "text", max: 120 },
+  { key: "contactEmail", label: "E-Mail", type: "email", max: 160,
+    hint: "Nur nötig, wenn wir Ihnen per Mail antworten sollen." },
+  { key: "contactPhone", label: "Telefon", type: "text", max: 60 },
+  { key: "address", label: "Adresse", type: "text", max: 200 },
+  { key: "need", label: "Was brauchen Sie?", type: "textarea", required: true, max: 4000,
+    hint: "Ein paar Sätze genügen — wir fragen nach, wenn etwas unklar ist." },
+  { key: "budget", label: "Budgetrahmen (CHF)", type: "text", max: 40 },
+  { key: "deadline", label: "Wunschdatum", type: "date" },
+  { key: "notes", label: "Ergänzungen", type: "textarea", max: 3000 },
+];
+
+const QUOTE_SOURCES = ["portal", "vision-room", "intern"];
+
+export function normalizeQuoteRequest(raw, { now = new Date().toISOString() } = {}) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const source = QUOTE_SOURCES.includes(r.source) ? r.source : "portal";
+  return {
+    company: text(r.company, 160),
+    contactName: text(r.contactName || r.name, 120),
+    contactEmail: text(r.contactEmail || r.email, 160).toLowerCase(),
+    contactPhone: text(r.contactPhone || r.phone, 60),
+    address: text(r.address, 200),
+    // Der Bedarf ist der Kern. Zeilenumbrueche bleiben erhalten — die
+    // Kundschaft schreibt oft eine Liste.
+    need: multiline(r.need || r.idea || r.goal, 4000),
+    features: list(r.features, 40, 160),
+    // Ohne ausdrueckliche Angabe leitet sich die Art aus dem Vision-Room-Typ ab —
+    // sonst waere jede Vision-Anfrage stillschweigend eine Website.
+    deliveryType: r.deliveryType === "program" ? "program"
+      : r.deliveryType === "website" ? "website"
+      : (r.type || r.visionType) ? visionDeliveryType(text(r.type || r.visionType, 40)) : "",
+    visionType: text(r.type || r.visionType, 40),
+    budget: money(r.budget),
+    deadline: /^\d{4}-\d{2}-\d{2}$/.test(String(r.deadline || "")) ? String(r.deadline) : "",
+    notes: multiline(r.notes, 3000),
+    source,
+    status: "new",
+    submittedAt: now,
+  };
+}
+
+// Ohne Rueckkanal keine Anfrage: Kommt sie ueber den Vision Room, kennt
+// FlowerTech die Person noch gar nicht — dort ist die E-Mail deshalb Pflicht.
+// Ueber den Projekt-Kundenlink ist der Vorgang bereits zugeordnet; dann ist
+// sie freiwillig.
+export function quoteRequestIsUsable(quote, { requireEmail = false } = {}) {
+  if (!quote || !String(quote.need || "").trim()) return false;
+  if (!requireEmail) return true;
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(quote.contactEmail || "");
+}
+
+// Sprechender Titel fuer Aufgabe und Liste — nie leer, nie eine rohe ID.
+export function quoteRequestLabel(quote = {}, project = {}) {
+  const need = String(quote.need || "").replace(/\s+/g, " ").trim();
+  const title = String(project.title || "").trim();
+  const label = title || need || "Offertenanfrage";
+  return label.length > 90 ? label.slice(0, 87).trimEnd() + "…" : label;
+}
+
+// GENAU eine Aufgabe pro Anfrage. Kein Faecher aus Funktionen: die Anfrage ist
+// ein Vorgang, den ein Mensch einmal anschaut. Ganz normale Quantus-Aufgabe,
+// damit sie in der zentralen Aufgaben-App erscheint.
+export function buildQuoteRequestTask(quote, projectId, { now = new Date().toISOString(), project = {} } = {}) {
+  const q = quote || {};
+  const lines = [
+    "Offertenanfrage der Kundschaft — eingegangen " + (q.submittedAt || now) + ".",
+    "Quelle: " + (q.source === "vision-room" ? "Vision Room (flowertech.ch)" : "Kundenseite (flowertech.ch)"),
+    q.company ? "Firma: " + q.company : "",
+    q.contactName ? "Ansprechperson: " + q.contactName : "",
+    q.contactEmail ? "E-Mail: " + q.contactEmail : "",
+    q.contactPhone ? "Telefon: " + q.contactPhone : "",
+    q.address ? "Adresse: " + q.address : "",
+    q.need ? "\nBedarf:\n" + q.need : "",
+    (q.features || []).length ? "\nGewünschte Funktionen:\n- " + q.features.join("\n- ") : "",
+    q.budget != null ? "\nBudgetrahmen: CHF " + q.budget.toFixed(2) : "",
+    q.deadline ? "Wunschdatum: " + q.deadline : "",
+    q.notes ? "\nErgänzungen:\n" + q.notes : "",
+  ].filter(Boolean);
+  return {
+    key: "quote-request",
+    projectId: projectId || null,
+    title: "Offertenanfrage bearbeiten: " + quoteRequestLabel(q, project),
+    description: lines.join("\n"),
+    status: "todo",
+    priority: 1,
+    category: "flowertech",
+    source: "flowertech-quote",
+    tags: ["flowertech", "offertenanfrage"],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/* ── Wann darf eine Offerte "versendet" heissen? ──────────────────────────
+ * Eine Offerte ohne Kunde, ohne Leistung oder ohne Preis ist keine Offerte.
+ * Sie als versendet zu markieren erzeugt eine falsche Versandhistorie — und
+ * genau die Kombination "Ohne Kunde / CHF 0.00 / Versendet". Deshalb ist der
+ * Statuswechsel fachlich gesperrt, solange Pflichtdaten fehlen. Geprueft wird
+ * im Versandpfad selbst, nicht nur in der Anzeige: eine Anzeige liesse sich
+ * mit einem Klick auf das Auswahlfeld umgehen.
+ * --------------------------------------------------------------------- */
+export function offerSendableState({ doc = {}, total = 0 } = {}) {
+  const client = doc.client || {};
+  const hasClient = !!(String(client.company || "").trim() || String(client.name || "").trim());
+  const items = Array.isArray(doc.items) ? doc.items : [];
+  const hasService = items.some((item) => String(item && item.description || "").trim());
+  const hasPrice = Number(total) > 0;
+  const missing = [];
+  if (!hasClient) missing.push("Kunde (Firma oder Name)");
+  if (!hasService) missing.push("mindestens eine Leistung");
+  if (!hasPrice) missing.push("ein Preis über CHF 0.00");
+  return {
+    ready: missing.length === 0,
+    missing,
+    reason: missing.length
+      ? "Noch keine vollständige Offerte — es fehlt: " + missing.join(", ") +
+        ". Bis dahin bleibt der Vorgang eine Offertenanfrage."
+      : "",
+  };
+}
+
 /* ── Der Prozess als Daten ───────────────────────────────────────────────
  * Statt einer Liste von Bereichen: die konkret naechsten Schritte, aus dem
  * Datenstand abgeleitet. „Eine Anfrage wird zum Projekt" ist damit kein Knopf,
@@ -498,6 +649,7 @@ export function projectFromVision(vision, { now = new Date().toISOString() } = {
  * --------------------------------------------------------------------- */
 export const PROCESS_STEPS = [
   { key: "inquiry", label: "Anfrage → Projekt", stage: "lead" },
+  { key: "quote", label: "Offertenanfrage bearbeiten", stage: "lead" },
   { key: "briefing", label: "Bedarf aufnehmen", stage: "intake" },
   { key: "offer", label: "Angebot erstellen", stage: "proposal" },
   { key: "offer_send", label: "Offerte senden", stage: "proposal" },
@@ -535,6 +687,24 @@ export function nextProcessSteps({
         id: i.id,
         title: i.company || i.name || i.email || "Anfrage",
         sub: i.service || i.email || "",
+      })),
+    });
+  }
+
+  // 1b. Offertenanfragen der Kundschaft. Der konkreteste offene Vorgang: hier
+  //     hat jemand von sich aus ausgefuellt, was er braucht.
+  const openQuotes = active.filter((p) => p.ftQuoteRequest
+    && (p.ftQuoteRequest.status || "new") === "new");
+  if (openQuotes.length) {
+    steps.push({
+      key: "quote",
+      label: "Offertenanfrage bearbeiten",
+      hint: "Über den Kundenlink eingegangen — Angaben prüfen und Offerte erstellen.",
+      count: openQuotes.length,
+      items: openQuotes.map((p) => ({
+        id: p.id,
+        title: p.title || "Projekt",
+        sub: "Offertenanfrage · " + quoteStatusLabel(p.ftQuoteRequest.status),
       })),
     });
   }
@@ -1226,7 +1396,7 @@ export { safeUrl as clientSafeUrl };
 
 export function buildClientSnapshot({
   project = {}, company = {}, content = [], milestones = [], changes = [],
-  versions = [], costs = {}, now = new Date().toISOString(),
+  versions = [], costs = {}, quote = null, prefill = {}, now = new Date().toISOString(),
 } = {}) {
   const stage = clientStageProgress(project.pipelineStage);
   const money = (v) => (v == null || v === "" ? null : Math.round(Number(v) * 100) / 100);
@@ -1275,14 +1445,34 @@ export function buildClientSnapshot({
     })),
     previewUrl: safeUrl(project.previewUrl),
     adminUrl: safeUrl(project.adminUrl),
+    // Offertenanfrage: das Formular, das die Kundschaft selbst ausfuellt.
+    // Vorbelegt wird ausschliesslich Inhaltliches (Bedarf, Art, Budget,
+    // Wunschdatum). Bewusst KEINE Kontaktdaten: Der Link ist ein Bearer-Link —
+    // wer ihn in die Finger bekommt, soll dort keine Firmen-, Namens-, Mail-
+    // oder Telefonangaben vorfinden. Die Kundschaft kennt ihre eigenen Daten
+    // und traegt sie in zwei Feldern selbst ein.
+    quote: {
+      open: !quote,
+      status: quote ? (quote.status || "new") : null,
+      statusLabel: quote ? quoteStatusLabel(quote.status) : "",
+      submittedAt: quote ? String(quote.submittedAt || "") : "",
+      prefill: {
+        need: String(prefill.need || "").slice(0, 4000),
+        deliveryType: prefill.deliveryType === "program" ? "program"
+          : (prefill.deliveryType === "website" ? "website" : ""),
+        budget: money(prefill.budget),
+        deadline: /^\d{4}-\d{2}-\d{2}$/.test(String(prefill.deadline || "")) ? String(prefill.deadline) : "",
+      },
+    },
   };
 }
 
 // Was der Snapshot NIE enthalten darf. Wird im Test gegen echte Projektdaten
 // geprueft, damit ein neues Feld nicht versehentlich mitwandert.
 export const CLIENT_SNAPSHOT_FORBIDDEN_KEYS = [
-  "projectId", "id", "sourceInquiryId", "sourceVisionId", "ftContactLog",
-  "ftOfferAttachment", "ftVision", "client", "contact", "notesInternal",
+  "projectId", "id", "sourceInquiryId", "sourceVisionId", "sourceQuoteId", "ftContactLog",
+  "ftOfferAttachment", "ftVision", "ftQuoteRequest", "ftQuoteRequests",
+  "client", "contact", "notesInternal",
   "invoices", "offers", "mailThreadIds", "ftRouteSource", "budgetInternal",
 ];
 
@@ -1342,6 +1532,8 @@ const API = {
   ROUTES, routeLabel, routeOf, routeIsExplicit, routeSkipsOffer, offerDecisionState,
   OFFER_ATTACHMENTS, isHttpUrl, offerAttachmentState,
   VISION_TYPES, visionDeliveryType, normalizeVisionSubmission, visionIsUsable, projectFromVision,
+  QUOTE_REQUEST_STATUSES, quoteStatusLabel, QUOTE_REQUEST_FIELDS, normalizeQuoteRequest,
+  quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,

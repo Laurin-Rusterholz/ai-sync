@@ -287,7 +287,11 @@ function renderAt(hash) {
   if (fs.existsSync(visionPage)) {
     const page = fs.readFileSync(visionPage, "utf8");
     ok(/flowertech-portal/.test(page), "der Vision Room ruft die Quantus-Funktion nicht auf");
-    ok(/kind: 'vision'/.test(page), "der Vision Room sendet die falsche Art");
+    // Aus dem „Senden" wird eine echte Offertenanfrage — kein Mail-Entwurf.
+    ok(/kind: 'quote'/.test(page), "der Vision Room sendet die falsche Art");
+    ok(/source: 'vision-room'/.test(page), "die Herkunft der Anfrage fehlt");
+    ok(!/vrSend\.dataset\.mailto/.test(page), "der Vision Room faellt weiterhin auf ein Mailprogramm zurueck");
+    ok(!/Direktversand nicht möglich/.test(page), "der Mail-Rueckfalltext steht weiterhin auf der Seite");
     ok(/idempotencyKey/.test(page), "der Vision Room sichert nicht gegen Doppeleinreichung");
     ok(/id="vrHp"/.test(page), "dem Vision Room fehlt der Honeypot");
     ok(/URLSearchParams\(location\.search\)\.get\('v'\)/.test(page),
@@ -391,7 +395,8 @@ function renderAt(hash) {
     pipelineStage: "proposal", ftRoute: "offer_first" };
   data.entities.projects.prj_1 = project;
   ft.shares = { prj_1: {} };
-  const offer = { id: "of_1", projectId: "prj_1", status: "draft", items: [], history: [] };
+  const offer = { id: "of_1", projectId: "prj_1", status: "draft", history: [],
+    client: { company: "Muster AG" }, items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }] };
   ft.offers = [offer];
 
   // Ohne Beilage: blockiert.
@@ -424,7 +429,8 @@ function renderAt(hash) {
   data.entities.projects.prj_1 = { id: "prj_1", title: "V", projectType: "flowertech",
     pipelineStage: "proposal", ftRoute: "offer_first" };
   ft.shares = { prj_1: {} };
-  const offer = { id: "of_2", projectId: "prj_1", status: "draft", items: [], history: [] };
+  const offer = { id: "of_2", projectId: "prj_1", status: "draft", history: [],
+    client: { company: "Muster AG" }, items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }] };
   ft.offers = [offer];
 
   win._ftSetOfferAttachment("prj_1", "vision");
@@ -448,7 +454,8 @@ function renderAt(hash) {
   const data = win.APP.state.data;
   data.entities.projects.prj_d = { id: "prj_d", title: "D", projectType: "flowertech",
     pipelineStage: "build", ftRoute: "direct" };
-  const offer = { id: "of_3", projectId: "prj_d", status: "draft", items: [], history: [] };
+  const offer = { id: "of_3", projectId: "prj_d", status: "draft", history: [],
+    client: { company: "Muster AG" }, items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }] };
   data.flowertech.offers = [offer];
   win._ftDocStatus("offer", "of_3", "sent");
   ok(offer.status === "sent", "ein Direktprojekt wird von der Beilagenpflicht blockiert");
@@ -486,8 +493,9 @@ function renderAt(hash) {
   data.entities.projects.prj_1 = { id: "prj_1", title: "Angebotsvorgang", projectType: "flowertech",
     pipelineStage: "proposal", ftRoute: "offer_first", client: { email: "kundin@muster.ch" } };
   ft.shares = { prj_1: {} };
-  const offer = { id: "of_m", projectId: "prj_1", status: "draft", items: [], history: [],
-    client: { email: "kundin@muster.ch" }, number: "OF-2026-0001" };
+  const offer = { id: "of_m", projectId: "prj_1", status: "draft", history: [],
+    items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }],
+    client: { company: "Muster AG", email: "kundin@muster.ch" }, number: "OF-2026-0001" };
   ft.offers = [offer];
 
   // Ohne Beilage: kein Entwurf, kein Verlaufseintrag, Status unveraendert.
@@ -525,8 +533,9 @@ function renderAt(hash) {
   data.entities.projects.prj_1 = { id: "prj_1", title: "V", projectType: "flowertech",
     pipelineStage: "proposal", ftRoute: "offer_first", client: { email: "k@muster.ch" } };
   ft.shares = { prj_1: {} };
-  const offer = { id: "of_v", projectId: "prj_1", status: "draft", items: [], history: [],
-    client: { email: "k@muster.ch" } };
+  const offer = { id: "of_v", projectId: "prj_1", status: "draft", history: [],
+    items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }],
+    client: { company: "Muster AG", email: "k@muster.ch" } };
   ft.offers = [offer];
 
   win._ftSetOfferAttachment("prj_1", "vision");
@@ -549,8 +558,9 @@ function renderAt(hash) {
   const ft = data.flowertech;
   data.entities.projects.prj_d = { id: "prj_d", title: "D", projectType: "flowertech",
     pipelineStage: "build", ftRoute: "direct", client: { email: "d@muster.ch" } };
-  ft.offers = [{ id: "of_d", projectId: "prj_d", status: "draft", items: [], history: [],
-    client: { email: "d@muster.ch" } }];
+  ft.offers = [{ id: "of_d", projectId: "prj_d", status: "draft", history: [],
+    items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }],
+    client: { company: "Muster AG", email: "d@muster.ch" } }];
   ft.invoices = [{ id: "in_1", projectId: "prj_d", status: "draft", items: [], history: [],
     client: { email: "d@muster.ch" } }];
 

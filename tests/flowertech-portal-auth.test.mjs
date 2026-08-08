@@ -194,4 +194,53 @@ function request(headers, body = BODY) {
   ok(/BEIDEN Nodes|beiden Nodes/i.test(doku), "der Doku-Hinweis nennt nicht beide Nodes");
 }
 
+// ── Offertenanfrage: was der Eingang annimmt und was nicht ────────────────
+// Diese Faelle muessen VOR jedem Firebase-Zugriff abbrechen — sonst schluege
+// der Test durch den fehlenden Firebase-Zugang fehl. Genau das ist gewollt.
+{
+  const post = (body) => handler(request({ Origin: "https://flowertech.ch" }, body));
+
+  // Ohne Bedarf keine Anfrage.
+  let response = await post({ kind: "quote", token: VALID_TOKEN, payload: { need: "   " } });
+  ok(response.status === 400, `eine leere Offertenanfrage muss 400 liefern, war ${response.status}`);
+  ok(/brauchen/i.test((await response.json()).error || ""),
+    "die Ablehnung sagt nicht, was fehlt");
+
+  // Ohne Token (Vision Room) ist die Mail der einzige Rueckkanal — also Pflicht.
+  response = await post({ kind: "quote", payload: { need: "Website für unsere Beiz" } });
+  ok(response.status === 400, `eine Anfrage ohne Rueckkanal muss 400 liefern, war ${response.status}`);
+  ok(/E-Mail/i.test((await response.json()).error || ""),
+    "die Ablehnung nennt den fehlenden Rueckkanal nicht");
+
+  // Kaputter Token wird nicht geraten.
+  response = await post({ kind: "quote", token: "zu-kurz", payload: { need: "Website" } });
+  ok(response.status === 400, `ein unbrauchbarer Token muss 400 liefern, war ${response.status}`);
+
+  // Honeypot: gefuellt heisst still annehmen, nichts speichern.
+  response = await post({
+    kind: "quote", token: VALID_TOKEN, website: "bot", payload: { need: "Website" },
+  });
+  ok(response.status === 202, `der Honeypot muss 202 liefern, war ${response.status}`);
+
+  // Fremde Herkunft kommt gar nicht erst bis zur Pruefung.
+  response = await handler(request({ Origin: "https://fremd.example" },
+    { kind: "quote", token: VALID_TOKEN, payload: { need: "Website" } }));
+  ok(response.status === 403, `eine fremde Herkunft muss 403 liefern, war ${response.status}`);
+
+  // Und ohne Origin ohne Signatur: dieselbe Sperre wie fuer alles andere.
+  response = await handler(request({}, { kind: "quote", token: VALID_TOKEN, payload: { need: "Website" } }));
+  ok(response.status === 401, `ohne Herkunft und Signatur muss 401 kommen, war ${response.status}`);
+}
+
+// ── Quelltext: die Offertenanfrage ist im Eingang wirklich vorgesehen ──────
+{
+  const source = fs.readFileSync(path.join(root, "netlify/functions/flowertech-portal.mjs"), "utf8");
+  ok(/\["change", "vision", "quote", "briefing"\]/.test(source),
+    "die Offertenanfrage ist keine zugelassene Art");
+  ok(/quoteRequestIsUsable\(payload, \{ requireEmail: !token \}\)/.test(source),
+    "die Mailpflicht haengt nicht am fehlenden Token");
+  ok(/payload\.need/.test(source),
+    "der Bedarf geht nicht in den Idempotenz-Schluessel ein — zwei verschiedene Anfragen waeren ein Duplikat");
+}
+
 console.log(`flowertech portal auth: ok (${checks} Pruefungen)`);
