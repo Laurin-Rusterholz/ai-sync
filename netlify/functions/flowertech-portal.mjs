@@ -4,8 +4,12 @@
  *   kind = "briefing" → ausgefülltes Bedarfsformular (flowertech-formular.html)
  *   kind = "change"   → Änderungswunsch (Kundenseite auf flowertech.ch)
  *   kind = "quote"    → Offertenanfrage (Kundenseite oder Vision Room)
- *   kind = "vision"   → Vision-Room-Ausarbeitung zu einer bestehenden Offerte
- *   kind = "intake"   → ausgefüllter Fragebogen (fragebogen.html, Einladungstoken)
+ *   kind = "inquiry"  → Anfrage aus dem öffentlichen Vision Room (ohne Einladung).
+ *                       Sie erzeugt in Quantus eine ANFRAGE, kein Projekt: Erst
+ *                       ein abgesendeter Fragebogen legt einen Vorgang an.
+ *   kind = "vision"   → Vision-Room-Beitrag zu einer bestehenden Einladung oder Offerte
+ *   kind = "intake"   → ausgefüllter Fragebogen samt Vision Room (fragebogen.html,
+ *                       Einladungstoken). Genau EIN Absenden = genau EIN Projekt.
  *   kind = "terms"    → AGB-Zustimmung im Kundenportal
  *   kind = "answer"   → Antwort auf eine Rückfrage im Kundenportal
  * und legt sie unter flowertech/submissions/<id> ab. Die Quantus-App ordnet sie
@@ -133,7 +137,7 @@ export default async (req) => {
   // Honeypot: echte Menschen füllen dieses Feld nie aus.
   if (body.website || body.fax) return json(req, { ok: true }, 202);
 
-  const kind = ["change", "vision", "quote", "intake", "terms", "answer", "briefing"]
+  const kind = ["change", "vision", "quote", "inquiry", "intake", "terms", "answer", "briefing"]
     .includes(body.kind) ? body.kind : "briefing";
   const token = String(body.token || "");
 
@@ -144,7 +148,7 @@ export default async (req) => {
   // die Ausarbeitung an genau der Offerte, zu der der Token gehoert.
   // Dieselbe Regel gilt fuer die Offertenanfrage aus dem Vision Room: dort
   // gibt es noch keinen Vorgang, an dem ein Token haengen koennte.
-  if (kind === "vision" || kind === "quote") {
+  if (kind === "vision" || kind === "quote" || kind === "inquiry") {
     if (token && !isShareToken(token)) {
       return json(req, { error: "Ungültiger oder unvollständiger Link." }, 400);
     }
@@ -218,7 +222,7 @@ export default async (req) => {
         error: "Bitte Ihre Idee beschreiben und eine gültige E-Mail angeben.",
       }, 400);
     }
-  } else if (kind === "quote") {
+  } else if (kind === "quote" || kind === "inquiry") {
     // Ohne Token kennt FlowerTech die anfragende Person noch nicht — dann ist
     // die E-Mail der einzige Rueckkanal und deshalb Pflicht. Mit Token haengt
     // die Anfrage an einem bekannten Vorgang; dort ist sie freiwillig.

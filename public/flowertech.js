@@ -396,28 +396,27 @@
     Object.keys(raw).forEach(function (key) {
       var entry = raw[key] || {};
       if (ft.processedSubmissions[key]) return;
-      // Vision Room ohne Token: ein neuer Vorgang. Er wird zum Direktprojekt —
-      // ohne Nacharbeit, aber genau einmal (processedSubmissions).
-      if (entry.kind === "vision" && !entry.token) {
-        if (createProjectFromVision(entry)) handled++;
+      // Öffentlicher Vision Room (ohne Einladung): Das ist eine ANFRAGE, kein
+      // Projekt. Ein Projekt entsteht ausschliesslich, wenn jemand den
+      // Fragebogen tatsächlich absendet — vorher wäre es eine Behauptung.
+      if (!entry.token && ["inquiry", "vision", "quote"].indexOf(entry.kind) >= 0) {
+        if (createInquiryFromSubmission(entry)) handled++;
         ft.processedSubmissions[key] = now();
         return;
       }
-      // Offertenanfrage ohne Token: aus dem Vision Room. Sie legt den Vorgang
-      // an und erzeugt genau EINE Aufgabe — keine Offerte, keine Nummer.
-      if (entry.kind === "quote" && !entry.token) {
-        if (createProjectFromQuote(entry)) handled++;
-        ft.processedSubmissions[key] = now();
-        return;
-      }
-      // Fragebogen: eigener Tokenkreis, eigener Weg.
-      if (entry.kind === "intake") {
+      // Fragebogen: eigener Tokenkreis, eigener Weg. Der Vision Room gehört zu
+      // DIESER Einladung — eine Vision-Eingabe mit Einladungstoken ist deshalb
+      // eine Antwort auf denselben Fragebogen und niemals ein zweiter Vorgang.
+      if (["intake", "vision", "quote"].indexOf(entry.kind) >= 0 && byInvite[entry.token]) {
         var intakeId = byInvite[entry.token];
-        if (!intakeId) return;                  // fremde oder widerrufene Einladung
-        if (applyIntakeSubmission(intakeId, entry)) handled++;
+        var done = entry.kind === "intake"
+          ? applyIntakeSubmission(intakeId, entry)
+          : applyVisionToIntake(intakeId, entry);
+        if (done) handled++;
         ft.processedSubmissions[key] = now();
         return;
       }
+      if (entry.kind === "intake") return;       // fremde oder widerrufene Einladung
       var match = byToken[entry.token];
       if (!match) return;                       // fremder oder abgelaufener Link
       // Ein Formular-Token darf keine Vision-Ausarbeitung einschleusen und
@@ -445,31 +444,83 @@
     if (handled) save();
     return handled;
   }
-  // Aus einer Vision-Room-Eingabe entsteht ein Direktprojekt. Ein zweites Mal
-  // derselbe Eingang legt nichts an: die Submission-ID ist der Schluessel, und
-  // zusaetzlich schuetzt sourceVisionId gegen doppelte Projekte.
-  // Aeltere Vision-Eingaenge (kind "vision" ohne Token) muenden in denselben
-  // Kundenanfrage-Weg. Es gibt genau EINEN Weg in ein Projekt — sonst driften
-  // zwei Wege auseinander und niemand weiss mehr, welcher gilt.
-  function createProjectFromVision(entry) {
+  /* ── Öffentlicher Vision Room → ANFRAGE ─────────────────────────────────
+     Ohne Einladung gibt es keinen Vorgang, an dem eine Eingabe hängen könnte.
+     Sie wird deshalb zu einer Anfrage in der Leadliste — mit genau einem
+     nächsten Schritt: „Fragebogen-Link kopieren". Ein Projekt entsteht erst,
+     wenn die Kundschaft den Fragebogen tatsächlich absendet.
+
+     Idempotenz: die Submission-ID steht an der Anfrage. Ein erneuter Import
+     legt keine zweite Anfrage an.
+     ------------------------------------------------------------------- */
+  function createInquiryFromSubmission(entry) {
     var core = W();
-    if (!core) return false;
-    var vision = core.normalizeVisionSubmission(entry.payload || {}, { now: now() });
-    if (!core.visionIsUsable(vision)) return false;
-    if (projects().find(function (p) { return p.sourceVisionId === entry.id; })) return false;
-    var handled = createProjectFromVisionQuote({
-      id: entry.id,
-      createdAt: entry.createdAt,
-      payload: {
-        type: vision.type, need: vision.idea, features: vision.features,
-        email: vision.contactEmail, deliveryType: vision.deliveryType,
-      },
+    var ft = state();
+    if (!core || !ft) return false;
+    var inquiryId = "ftq_" + String(entry.id || id()).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40);
+    ft.inquiries = ft.inquiries && typeof ft.inquiries === "object" ? ft.inquiries : {};
+    if (ft.inquiries[inquiryId]) return false;
+    var inquiry = core.inquiryFromVision(entry.payload || {}, {
+      now: entry.createdAt || now(), id: inquiryId,
     });
-    if (!handled) return false;
-    var project = projects().find(function (p) { return p.sourceQuoteId === entry.id; });
-    if (project) { project.sourceVisionId = entry.id; project.ftVision = vision; }
+    if (!core.inquiryFromVisionIsUsable(inquiry)) return false;
+    inquiry.submissionId = entry.id || null;
+    ft.inquiries[inquiryId] = inquiry;
+    syncInquiryTasks([inquiry]);
+    save();
+    notify("ok", "Anfrage", "Neue Anfrage aus dem Vision Room — schick ihr den Fragebogen-Link.");
     return true;
   }
+  window._ftCreateInquiryFromSubmission = createInquiryFromSubmission;
+
+  /* ── Vision Room innerhalb derselben Einladung ───────────────────────────
+     Kommt eine Vision-Eingabe mit dem Einladungstoken herein (etwa weil sie
+     getrennt abgeschickt wurde), gehört sie zu genau diesem Fragebogen. Sie
+     wird als Antwort auf die Vision-Fragen übernommen — nicht als zweiter
+     Vorgang. Wurde der Fragebogen schon beantwortet, ergänzt sie das
+     bestehende Projekt und den Prompt.
+     ------------------------------------------------------------------- */
+  function applyVisionToIntake(intakeId, entry) {
+    var core = W();
+    var intake = intakeById(intakeId);
+    if (!core || !intake) return false;
+    var payload = entry.payload || {};
+    var idea = String(payload.idea || payload.need || "").trim();
+    var features = Array.isArray(payload.features) ? payload.features : [];
+    if (!idea && !features.length) return false;
+
+    var keys = core.VISION_QUESTION_KEYS;
+    intake.visionDraft = {
+      idea: idea, features: features,
+      submissionId: entry.id || null, submittedAt: entry.createdAt || now(),
+    };
+    intake.updatedAt = now();
+
+    // Noch keine Antwort? Dann wartet die Vision auf das Absenden des
+    // Fragebogens — sie erzeugt bewusst nichts von sich aus.
+    if (!intake.projectId) { save(); return true; }
+
+    var project = projectById(intake.projectId);
+    if (!project) { save(); return true; }
+    var doc = project.ftIntakeDocument || { answers: [] };
+    doc.answers = (doc.answers || []).map(function (a) {
+      if (a.key === keys.idea && idea) return Object.assign({}, a, { answer: idea });
+      if (a.key === keys.features && features.length) {
+        var known = String(a.answer || "").split("\n").map(function (v) { return v.trim(); }).filter(Boolean);
+        features.forEach(function (f) { if (known.indexOf(f) < 0) known.push(f); });
+        return Object.assign({}, a, { answer: known.join("\n") });
+      }
+      return a;
+    });
+    project.ftIntakeDocument = doc;
+    project.ftVision = { idea: idea, features: features, source: "fragebogen", submittedAt: now() };
+    project.updatedAt = now();
+    regeneratePrompt(intake.projectId);
+    save();
+    notify("ok", "Vision Room", "Ergänzung zum Fragebogen übernommen");
+    return true;
+  }
+  window._ftApplyVisionToIntake = applyVisionToIntake;
 
   /* ── Offertenanfrage der Kundschaft ──────────────────────────────────────
      Produktentscheidung: FlowerTech erzeugt keine leere Offerte auf Verdacht
@@ -553,77 +604,13 @@
   }
   window._ftApplyQuoteRequest = applyQuoteRequest;
 
-  /* Der Vision Room mündet in denselben Kundenanfrage-Weg. Aus der Eingabe
-     wird ein bereits beantworteter Fragebogen: gleiches Anfrage-Dokument,
-     gleiche Vorlage, gleicher Prompt, gleiche eine Aufgabe. So gibt es genau
-     einen Weg in ein Projekt — und nicht zwei, die auseinanderdriften. */
-  var VISION_INTAKE_QUESTIONS = [
-    { key: "art", label: "Art des Vorhabens", type: "text", role: "" },
-    { key: "idee", label: "Ihre Idee", type: "textarea", role: "need", required: true },
-    { key: "funktionen", label: "Gewünschte Funktionen", type: "textarea", role: "" },
-    { key: "email", label: "E-Mail", type: "email", role: "contactEmail", required: true },
-  ];
-
-  function createProjectFromVisionQuote(entry) {
-    var core = W();
-    var ft = wf();
-    if (!core || !ft) return false;
-    var quote = core.normalizeQuoteRequest(
-      Object.assign({}, entry.payload || {}, { source: "vision-room" }), { now: now() });
-    if (!core.quoteRequestIsUsable(quote, { requireEmail: true })) return false;
-    if (projects().find(function (p) { return p.sourceQuoteId === entry.id; })) return false;
-
-    var intakeId = id();
-    var intake = {
-      id: intakeId,
-      title: "Vision Room",
-      intro: "Aus dem Vision Room auf flowertech.ch.",
-      deliveryType: quote.deliveryType || "website",
-      questions: core.normalizeIntakeQuestions(VISION_INTAKE_QUESTIONS),
-      // Kein Einladungstoken: Dieser Fragebogen wurde nie versendet, er ist
-      // die Aufzeichnung einer Eingabe. Er darf deshalb auch nie oeffentlich
-      // erreichbar werden.
-      inviteToken: "",
-      source: "vision-room",
-      status: "answered",
-      createdAt: now(),
-      updatedAt: now(),
-    };
-    var normalized = core.normalizeIntakeAnswers(intake.questions, {
-      art: quote.visionType || "",
-      idee: quote.need,
-      funktionen: (quote.features || []).join("\n"),
-      email: quote.contactEmail,
-    }, { now: now() });
-    if (!core.intakeAnswersUsable(intake.questions, normalized.answers).usable) return false;
-
-    ft.intakes[intakeId] = intake;
-    var projectId = createProjectForIntake(intake, normalized.answers, {
-      submittedAt: entry.createdAt || now(),
-      logText: "Aus dem Vision Room auf flowertech.ch eingegangen.",
-      tags: ["visionroom"],
-      routeSource: "vision-room",
-    });
-    if (!projectId) {
-      delete ft.intakes[intakeId];
-      return false;
-    }
-    var project = projectById(projectId);
-    if (project) project.sourceQuoteId = entry.id || null;
-    intake.projectId = projectId;
-    intake.submissionId = entry.id || null;
-    intake.answeredAt = entry.createdAt || now();
-    save();
-    notify("ok", "Vision Room", "Kundenanfrage eingegangen — Projekt angelegt: " +
-      ((project || {}).title || ""));
-    return true;
-  }
-
-  // Bleibt als Name erhalten: der Eingang ruft ihn weiterhin auf.
-  function createProjectFromQuote(entry) { return createProjectFromVisionQuote(entry); }
-  window._ftCreateProjectFromVisionQuote = createProjectFromVisionQuote;
-
-  window._ftCreateProjectFromQuote = createProjectFromQuote;
+  /* Es gibt genau EINEN Weg in ein Projekt: das Absenden eines Fragebogens.
+     Der frühere Zweig „Vision Room → Direktprojekt" ist bewusst entfernt —
+     zwei Wege in denselben Zustand driften auseinander, und ein Projekt vor
+     der Antwort der Kundschaft ist eine Behauptung, keine Tatsache. Eine
+     Vision-Room-Eingabe ohne Einladung wird zur Anfrage (siehe
+     createInquiryFromSubmission), mit Einladung zur Antwort auf denselben
+     Fragebogen (siehe applyVisionToIntake). */
 
   // Die AGB-Zustimmung wird als Ereignis festgehalten: Fassung und Zeitpunkt.
   // Eine bereits erteilte Zustimmung zur selben Fassung wirkt nicht doppelt.
@@ -975,7 +962,6 @@
     // Freigabe-Links sofort bereitstellen — der naechste Schritt ist das
     // Bedarfsformular.
     ensureToken(projectId, "formToken");
-    publishClientPortal(projectId);
 
     // Der Bedarf startet mit dem, was der Kunde schon geschrieben hat.
     if (built.briefing) ft.briefings[projectId] = built.briefing;
@@ -1951,14 +1937,18 @@
     if (!isInvoice) {
       var gate = offerReadyToSend(doc);
       if (!gate.ready) {
-        var link = doc.projectId ? clientQuoteLink(doc.projectId) : "";
+        // Es wird KEIN Link erfunden. Ohne Projekt verweist die Offerte auf die
+        // Anfrage und verlangt eine Projektzuordnung; mit Projekt führt der Weg
+        // über den Fragebogen der Phase 1 — nie über ein Kundenportal, das es
+        // an dieser Stelle noch gar nicht gibt.
         completeness = '<div class="ft-alert warn"><span><strong>Noch keine Offerte — Offertenanfrage.</strong> ' +
           "Es fehlt: " + esc((gate.missing || []).join(", ") || "Pflichtdaten") +
           ". Solange bleibt „Versendet\u201c gesperrt und es wird keine Offertennummer vergeben.</span>" +
-          (link
-            ? '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) +
-              '\')">Kundenlink zum Ausfüllen kopieren</button>'
-            : '<span class="mini">Ordne die Offerte einem Projekt zu, dann gibt es einen Kundenlink.</span>') +
+          (doc.projectId
+            ? '<span class="mini">Fehlende Angaben holst du über den Fragebogen-Link der Kundenanfrage ' +
+              "(Reiter „Kundenanfragen\u201c) — das Kundenportal kommt erst danach.</span>"
+            : '<span class="mini">Diese Offerte gehört zu keinem Projekt. Ordne sie unten einem Projekt zu ' +
+              "oder bearbeite die zugehörige Anfrage — einen Kundenlink gibt es hier nicht.</span>") +
           "</div>";
       }
     }
@@ -1974,9 +1964,9 @@
       '<button class="btn sm primary" onclick="window._ftMailDoc(\'' + kind + "','" + attr(doc.id) + '\')" ' +
         'title="Per Gmail versenden — der Thread wird mit dem Projekt verknüpft">✉️ Per Mail senden</button>' +
       '<button class="btn sm" onclick="window._ftPrintDoc(\'' + kind + "','" + attr(doc.id) + '\')">Drucken / PDF</button>' +
-      (doc.projectId
+      (doc.projectId && clientPortalLink(doc.projectId)
         ? '<button class="btn sm" onclick="window._ftCopyLink(\'' + attr(clientPortalLink(doc.projectId)) +
-          '\')" title="Den Kundenlink dieses Projekts kopieren">🔗 Kundenlink</button>'
+          '\')" title="Den Kundenportal-Link dieses Projekts kopieren">🔗 Kundenportal-Link</button>'
         : "") +
       (isInvoice
         ? '<button class="btn sm" onclick="window._ftAiReminder(\'' + attr(doc.id) + '\')">KI-Mahnung</button>'
@@ -1991,9 +1981,9 @@
       // Der Kundenlink gehoert auch hierher: Wer an der Offerte sitzt, will
       // ihn kopieren, ohne den Vorgang zu wechseln.
       (doc.projectId
-        ? '<div class="ft-linkbar">' + clientLinkRowHtml(doc.projectId, "Kundenlink") + "</div>"
+        ? '<div class="ft-linkbar">' + clientLinkRowHtml(doc.projectId, "Kundenportal-Link") + "</div>"
         : '<div class="mini mt-2">Dieses Dokument gehört noch zu keinem Projekt — ' +
-          "ordne es unten einem zu, dann steht hier der Kundenlink.</div>") +
+          "ordne es unten einem zu, dann steht hier der Stand des Kundenportals.</div>") +
       docFactsHtml(kind, doc) +
 
       '<h4 class="ft-sub">Eckdaten</h4><div class="ft-field-grid">' +
@@ -2137,7 +2127,7 @@
       // Direkt unter dem Kopf, auf jedem Reiter: der Link, den die Kundschaft
       // bekommt. Er war bisher nur im Reiter „Kundenportal" — dort sucht ihn
       // niemand, der gerade an einer Offerte arbeitet.
-      '<div class="ft-linkbar">' + clientLinkRowHtml(project.id, "Kundenlink") +
+      '<div class="ft-linkbar">' + clientLinkRowHtml(project.id, "Kundenportal-Link") +
       '<div class="mini">Zeigt der Kundschaft Vorschau, Änderungswünsche, AGB und Rückfragen. ' +
       "Wird nie automatisch verschickt — du entscheidest, wann sie ihn bekommt.</div></div>";
 
@@ -2235,7 +2225,7 @@
     var late = next && next < today();
     return '<div class="ft-prow' + (late ? " late" : "") + '" onclick="window._ftOpenProject(\'' + attr(project.id) + '\')">' +
       '<span class="ft-prow-main"><strong>' + esc(project.title || "Projekt") +
-      '<button class="btn sm ghost ft-prow-link" title="Kundenlink kopieren" ' +
+      '<button class="btn sm ghost ft-prow-link" title="Kundenportal-Link kopieren" ' +
         'onclick="event.stopPropagation();window._ftCopyProjectLink(\'' + attr(project.id) + '\')">🔗</button>' +
       "</strong>" +
       '<small>' + esc(String(project.description || "Keine Beschreibung").slice(0, 120)) + "</small></span>" +
@@ -2358,6 +2348,7 @@
   function intakeEditor(intake) {
     var core = W();
     var link = intakeLink(intake.id);
+    var coverage = core.intakeCoverage(intake.questions || []);
     var project = intake.projectId ? projectById(intake.projectId) : null;
     var doc = project && project.ftIntakeDocument;
     var set = "window._ftSetIntakeField('" + attr(intake.id) + "',";
@@ -2382,19 +2373,28 @@
           '<button class="btn sm ghost" onclick="window._ftOpenIntake(\'' + attr(intake.id) + '\')">Zuklappen</button>' +
         "</div></div>" +
 
-      '<div class="ft-link-row mt-2"><span>Öffentlicher Link</span>' +
-        '<input readonly value="' + attr(link) + '">' +
-        '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) + '\')">Link kopieren</button>' +
+      '<div class="ft-link-row mt-2"><span>' + esc(core.LINK_LABELS.intake) + "</span>" +
+        '<input readonly value="' + attr(link) + '" onclick="this.select()">' +
+        '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) +
+          '\')" title="' + attr(core.LINK_LABELS.intakeHint) + '">Fragebogen-Link kopieren</button>' +
         (link ? '<a class="btn sm ghost" href="' + attr(link) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
         '<button class="btn sm ghost" onclick="window._ftRotateIntakeToken(\'' + attr(intake.id) +
           '\')" title="Alten Link widerrufen">Neu</button></div>' +
+      '<div class="mini"><b>' + esc(core.LINK_LABELS.intakeHint) + "</b> — dieser Link zeigt der Kundschaft " +
+        "ausschliesslich den Fragebogen samt Vision Room. Nie Vorschau, Angebot, Vertrag oder AGB; " +
+        "die stehen erst im Kundenportal der Phase 2.</div>" +
       (intake.publishError
         ? '<div class="ft-legal-note">⚠ ' + esc(intake.publishError) + "</div>"
         : intake.publishedAt
           ? '<div class="ft-ready">✓ Fragebogen ist online · Stand ' + esc(dateTime(intake.publishedAt)) + "</div>"
           : '<div class="mini">Wird beim nächsten Speichern veröffentlicht.</div>') +
       '<div class="mini mt-2">Der Link erzeugt noch nichts. Erst wenn die Kundschaft absendet, ' +
-        "entsteht genau ein Projekt mit Anfrage-Dokument und einer Aufgabe.</div>" +
+        "entsteht genau ein Projekt mit Anfrage-Dokument und genau einer Aufgabe " +
+        "\u201eOffertenanfrage\u201c.</div>" +
+      (coverage.complete
+        ? '<div class="ft-ready">✓ Der Fragebogen deckt alle Pflichtangaben ab.</div>'
+        : '<div class="ft-legal-note">⚠ Es fehlen noch Fragen zu: ' + esc(coverage.missing.join(", ")) +
+          ". Ohne sie fehlen die Angaben später in Offerte, Vertrag und Code-Prompt.</div>") +
 
       '<div class="sep"></div>' +
       '<label class="ft-inline-label">Titel<input value="' + attr(intake.title || "") +
@@ -2423,9 +2423,10 @@
       .sort(function (a, b) { return String(b.createdAt || "").localeCompare(String(a.createdAt || "")); });
     var openId = ft.ui.intakeId;
 
-    var head = '<div class="card p-4 mb-3"><h3>Kundenanfragen</h3><div class="sep"></div>' +
+    var head = '<div class="card p-4 mb-3"><h3>Kundenanfragen — Phase 1</h3><div class="sep"></div>' +
       '<div class="mini">So beginnt eine Zusammenarbeit: Fragebogen anlegen, Fragen anpassen, ' +
-      "Link an die Kundschaft geben. Ihre Antwort erzeugt das Projekt — nicht umgekehrt.</div>" +
+      "<b>Fragebogen-Link</b> an die Kundschaft geben. Der Link zeigt Kundendaten &amp; Vision Room — " +
+      "noch keine Vorschau. Ihre Antwort erzeugt das Projekt, nicht umgekehrt.</div>" +
       '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftNewIntake()">' +
       "＋ Neue Kundenanfrage</button></div></div>";
 
@@ -2582,8 +2583,10 @@
   function stepItemHtml(stepKey, item) {
     var label = esc(item.title) + (item.sub ? ' <small>' + esc(item.sub) + "</small>" : "");
     if (stepKey === "inquiry") {
-      return '<button class="ft-step-item" onclick="window._ftInquiryToProject(\'' + attr(item.id) +
-        '\')" title="Weg wählen: Offerte zuerst oder Direktprojekt">→ ' + label + "</button>";
+      // Der nächste Schritt an einer Anfrage ist der Fragebogen-Link — nicht
+      // ein Projekt. Das Projekt entsteht erst mit dem Absenden.
+      return '<button class="ft-step-item" onclick="window._ftCopyInquiryIntakeLink(\'' + attr(item.id) +
+        '\')" title="Kundendaten &amp; Vision Room – noch keine Vorschau">🔗 ' + label + "</button>";
     }
     var tab = stepKey === "briefing" ? "bedarf" : stepKey === "offer" ? "angebot"
       : stepKey === "changes" ? "aenderungen" : stepKey === "quote" ? "kunde" : "workflow";
@@ -2789,8 +2792,13 @@
             return '<option value="' + status[0] + '"' + ((inquiry.status || "new") === status[0] ? " selected" : "") +
               ">" + esc(status[1]) + "</option>";
           }).join("") + "</select>" +
-          '<button class="btn sm mt-2" onclick="window._ftInquiryToProject(\'' + attr(inquiry.id) + '\')">Projekt anlegen</button>' +
-          '<button class="btn sm mt-2" onclick="window._ftAiReply(\'' + attr(inquiry.id) + '\')">KI-Antwort</button></div></div>';
+          '<button class="btn sm mt-2 primary" onclick="window._ftCopyInquiryIntakeLink(\'' + attr(inquiry.id) +
+            '\')" title="Kundendaten &amp; Vision Room – noch keine Vorschau">🔗 Fragebogen-Link kopieren</button>' +
+          '<button class="btn sm mt-2" onclick="window._ftOpenIntakeForInquiry(\'' + attr(inquiry.id) +
+            '\')">Fragebogen bearbeiten</button>' +
+          '<button class="btn sm mt-2" onclick="window._ftAiReply(\'' + attr(inquiry.id) + '\')">KI-Antwort</button>' +
+          '<div class="mini mt-2">Kundendaten &amp; Vision Room – noch keine Vorschau. ' +
+            "Erst das Absenden erzeugt ein Projekt.</div></div></div>";
       }).join("") : empty("Noch keine Anfragen unter flowertech/inquiries")) + "</div>";
 
     } else if (activeTab === "pipeline") {
@@ -3071,8 +3079,9 @@
     }
     // Freigabe-Links direkt bereitstellen, damit der Formularlink sofort teilbar ist.
     ensureToken(projectId, "formToken");
-    // Kundenseite entsteht sofort mit — kein manuelles Veroeffentlichen mehr.
-    publishClientPortal(projectId);
+    // Kein Kundenportal an dieser Stelle: Es entsteht erst, wenn Vorschau,
+    // Leistungsbeschreibung, Offerte, Vertrag und AGB stehen — und ich es
+    // bewusst veröffentliche.
     // Die Wahl gilt fuer genau diesen Vorgang und wird danach zurueckgesetzt,
     // damit der naechste Start wieder bewusst entscheidet.
     if (ft) ft.ui.newRoute = null;
@@ -3525,6 +3534,13 @@
     if (!ft) return;
     ft.promptPrefs[projectId] = ft.promptPrefs[projectId] || {};
     ft.promptPrefs[projectId][key] = !!on;
+    // Der Projekt-Prompt folgt der Wahl sofort. Sonst stünde im Projekt eine
+    // Fassung, die etwas anderes enthält als die Häkchen versprechen — und
+    // gerade bei den Kontaktdaten wäre das die falsche Richtung.
+    var project = projectById(projectId);
+    if (project && project.ftPrompt && project.ftPrompt.source === "generiert") {
+      regeneratePrompt(projectId);
+    }
     save();
     rerender();
   };
@@ -3658,6 +3674,63 @@
     ft.ui.intakeId = intakeId;
     setActiveTab("intakes");
     publishIntakeForm(intakeId);
+    save();
+    rerender();
+  };
+
+  /* ── Fragebogen-Link an einer Anfrage ────────────────────────────────────
+     Der schnelle Weg: Anfrage anschauen → Fragebogen-Link kopieren → schicken.
+     Es entsteht KEIN Projekt. Der Fragebogen gehört zur Anfrage; ein zweiter
+     Klick erzeugt keinen zweiten Fragebogen, sondern liefert denselben Link.
+     ------------------------------------------------------------------- */
+  function intakeForInquiry(inquiryId) {
+    var core = W();
+    var ft = wf();
+    var inquiry = (state().inquiries || {})[inquiryId];
+    if (!core || !ft || !inquiry) return null;
+    var existing = Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
+      .find(function (i) { return i && i.inquiryId === inquiryId; });
+    if (existing) return existing;
+
+    var intakeId = id();
+    var intake = {
+      id: intakeId,
+      inquiryId: inquiryId,
+      title: core.DEFAULT_INTAKE_TITLE,
+      intro: core.DEFAULT_INTAKE_INTRO,
+      deliveryType: /programm|program|app|software|tool/i.test(inquiry.service || "") ? "program" : "website",
+      questions: core.normalizeIntakeQuestions(core.DEFAULT_INTAKE_QUESTIONS),
+      inviteToken: makeToken(),
+      status: "open",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    ft.intakes[intakeId] = intake;
+    inquiry.intakeId = intakeId;
+    inquiry.updatedAt = now();
+    publishIntakeForm(intakeId);
+    save();
+    return intake;
+  }
+  window._ftIntakeForInquiry = intakeForInquiry;
+
+  window._ftCopyInquiryIntakeLink = function (inquiryId) {
+    var core = W();
+    var intake = intakeForInquiry(inquiryId);
+    if (!intake) return notify("warn", "Fragebogen", "Diese Anfrage ist nicht mehr da.");
+    var link = intakeLink(intake.id);
+    if (!link) return notify("warn", "Fragebogen", "Ohne Firebase-Zugang gibt es keinen Fragebogen-Link.");
+    copyText(link, (core ? core.LINK_LABELS.intake : "Fragebogen-Link") + " kopiert — " +
+      (core ? core.LINK_LABELS.intakeHint : ""));
+    rerender();
+  };
+
+  window._ftOpenIntakeForInquiry = function (inquiryId) {
+    var ft = wf();
+    var intake = intakeForInquiry(inquiryId);
+    if (!ft || !intake) return;
+    ft.ui.intakeId = intake.id;
+    setActiveTab("intakes");
     save();
     rerender();
   };
@@ -3832,7 +3905,10 @@
     }
     createIntakeTask(projectId, built, doc);
     ensureToken(projectId, "formToken");
-    publishClientPortal(projectId);
+    // BEWUSST kein Kundenportal an dieser Stelle. Phase 1 endet hier: Es gibt
+    // ein Projekt, den vollständigen Prompt und eine Aufgabe. Der zweite Link
+    // entsteht erst in Phase 2 — nach Vorschau, Leistungsbeschreibung,
+    // Offerte, Vertrag, AGB und einer ausdrücklichen Veröffentlichung.
     return projectId;
   }
   window._ftApplyIntakeSubmission = applyIntakeSubmission;
@@ -3881,16 +3957,27 @@
       questions: project.ftPortalQuestions || [],
       templateName: (project.ftTemplate && project.ftTemplate.name) || "",
       company: ft.company || {},
+      // Kontakt- und Adressdaten bleiben intern. Sie gehen NUR mit, wenn ich
+      // das am Projekt ausdrücklich wähle — Standard ist aus.
+      includeContact: promptInclude(projectId).client === true,
       now: now(),
     });
   }
   window._ftBuildPrompt = buildPromptFor;
 
-  window._ftRegeneratePrompt = function (projectId) {
+  // Der Prompt gehört zum Projekt und muss dem Datenstand folgen. Jede Stelle,
+  // die Antworten ergänzt, ruft das hier auf — sonst veraltet er still.
+  function regeneratePrompt(projectId) {
     var project = projectById(projectId);
     if (!project) return;
     project.ftPrompt = { name: "prompt.md", text: buildPromptFor(projectId), source: "generiert", updatedAt: now() };
     project.updatedAt = now();
+  }
+  window._ftRegeneratePromptFor = regeneratePrompt;
+
+  window._ftRegeneratePrompt = function (projectId) {
+    if (!projectById(projectId)) return;
+    regeneratePrompt(projectId);
     save();
     rerender();
     notify("ok", "Prompt", "Prompt neu aus dem aktuellen Stand erzeugt");
@@ -4079,6 +4166,7 @@
       consent: project.ftTermsConsent || null,
       questions: project.ftPortalQuestions || [],
       intakeDocument: project.ftIntakeDocument || null,
+      release: portalRelease(projectId),
       // Vorbelegung bewusst nur inhaltlich: Bedarf, Art, Budget, Wunschdatum.
       // Kontaktdaten wandern NICHT auf die Kundenseite — der Link ist ein
       // Bearer-Link, und die Kundschaft kennt ihre eigenen Angaben.
@@ -4101,20 +4189,53 @@
     catch (error) { return null; }
   }
 
+  /* ── Phase 2: Wann ist das Kundenportal ein Link? ────────────────────────
+     Erst wenn es etwas zu zeigen gibt UND ich es bewusst veröffentlicht habe.
+     Die Bedingung liegt im Kern (portalReleaseState), damit Anzeige, Snapshot
+     und Test dieselbe Wahrheit benutzen — eine Prüfung nur in der Anzeige wäre
+     mit einem Klick umgangen.
+     ------------------------------------------------------------------- */
+  function portalRelease(projectId) {
+    var core = W();
+    var project = projectById(projectId) || {};
+    var share = sharesOf(projectId);
+    if (!core) return { ready: false, published: false, missing: [], label: "Kundenportal", reason: "" };
+    var content = contentOf(projectId);
+    var offers = docsOfProject("offer", projectId);
+    return core.portalReleaseState({
+      hasPreview: !!String((project.ftTemplate && project.ftTemplate.html) || "").trim()
+        || !!core.clientSafeUrl(project.previewUrl),
+      hasService: blocksOf(content).some(function (b) { return b.enabled !== false && String(b.body || "").trim(); }),
+      // Eine Offerte zählt erst, wenn sie eine Leistung und einen Preis trägt.
+      hasOffer: offers.some(function (doc) {
+        return core.offerSendableState({ doc: doc, total: docTotals(doc).rounded }).ready;
+      }),
+      hasContract: (blocksOf(contractOf(projectId)) || []).some(function (b) { return String(b.body || "").trim(); }),
+      hasTerms: !!String((termsForProject(projectId) || {}).body || "").trim(),
+      released: share.portalReleased === true,
+      releasedAt: share.portalReleasedAt || "",
+    });
+  }
+  window._ftPortalRelease = portalRelease;
+
+  // Schreibt den Snapshot — ausschliesslich für ein freigegebenes Portal.
+  // Ohne Freigabe wird NICHTS geschrieben: ein Token darf vorbereitet sein,
+  // eine öffentlich lesbare Seite entsteht daraus aber erst nach der Freigabe.
   function publishClientPortal(projectId) {
     var core = W();
     var ft = wf();
     if (!core || !ft || !projectById(projectId)) return null;
+    var share = sharesOf(projectId);
+    if (!portalRelease(projectId).published) return share.portalToken || null;
     // Genau EIN Token pro Projekt — ensureToken legt nur an, wenn keiner da ist.
     var token = ensureToken(projectId, "portalToken");
     var snapshot = clientSnapshot(projectId);
     if (!snapshot) return null;
-    var share = sharesOf(projectId);
     var ref = portalRef(token);
     if (!ref) {
       // Ohne Firebase kein Snapshot — das wird sichtbar vermerkt statt still
       // zu scheitern, sonst zeigte der Link dauerhaft einen Leerzustand.
-      share.publishError = "Firebase nicht verfügbar — Kundenseite noch nicht veröffentlicht";
+      share.publishError = "Firebase nicht verfügbar — Kundenportal noch nicht veröffentlicht";
       return token;
     }
     ref.set(snapshot).then(function () {
@@ -4129,11 +4250,49 @@
   }
   window._ftPublishClientPortal = publishClientPortal;
 
+  /* Die bewusste Veröffentlichung. Sie ist der einzige Weg, aus dem
+     vorbereiteten Token einen versendbaren Kundenportal-Link zu machen —
+     und sie verweigert sich, solange etwas fehlt. */
+  function releaseClientPortal(projectId) {
+    var state = portalRelease(projectId);
+    if (!state.ready) {
+      notify("warn", "Kundenportal", state.reason);
+      return null;
+    }
+    var share = sharesOf(projectId);
+    share.portalReleased = true;
+    share.portalReleasedAt = share.portalReleasedAt || now();
+    ensureToken(projectId, "portalToken");
+    var token = publishClientPortal(projectId);
+    save();
+    notify("ok", "Kundenportal", "Veröffentlicht — der Kundenportal-Link ist jetzt gültig.");
+    return token;
+  }
+  window._ftReleaseClientPortal = function (projectId) {
+    releaseClientPortal(projectId);
+    rerender();
+  };
+
+  // Zurückziehen: Der Link verliert seinen Inhalt und gilt wieder als nicht
+  // veröffentlicht. Bestehende Daten am Projekt bleiben unangetastet.
+  window._ftUnpublishClientPortal = function (projectId) {
+    if (!window.confirm("Kundenportal zurückziehen? Der Link zeigt danach nichts mehr.")) return;
+    var share = sharesOf(projectId);
+    share.portalReleased = false;
+    share.publishedAt = null;
+    var ref = share.portalToken ? portalRef(share.portalToken) : null;
+    if (ref) ref.remove().catch(function () {});
+    save();
+    notify("ok", "Kundenportal", "Zurückgezogen — der Link zeigt nichts mehr.");
+    rerender();
+  };
+
   // Nach jeder relevanten Aenderung aufrufen. Gebuendelt, damit Tippen in einem
-  // Feld nicht pro Anschlag schreibt.
+  // Feld nicht pro Anschlag schreibt. Wirkt nur auf ein freigegebenes Portal.
   var _portalTimers = {};
   function refreshClientPortal(projectId) {
     if (!projectId || !sharesOf(projectId).portalToken) return;
+    if (!portalRelease(projectId).published) return;
     if (_portalTimers[projectId]) return;
     _portalTimers[projectId] = setTimeout(function () {
       delete _portalTimers[projectId];
@@ -4142,34 +4301,34 @@
   }
   window._ftRefreshClientPortal = refreshClientPortal;
 
+  // Der Link existiert erst nach der Freigabe. Vorher gibt es bewusst KEINEN
+  // String, den man versehentlich kopieren und verschicken könnte.
   function clientPortalLink(projectId) {
     var core = W();
     var token = sharesOf(projectId).portalToken;
-    return core && token ? core.clientPortalUrl(token) : "";
+    if (!core || !token) return "";
+    return portalRelease(projectId).published ? core.clientPortalUrl(token) : "";
   }
   window._ftClientPortalLink = clientPortalLink;
 
-  // Derselbe sichere flowertech.ch-Kundenlink, nur direkt auf das
-  // Offertenformular. Kein management-xo2-pro-Link, keine Mail.
-  function clientQuoteLink(projectId) {
-    var link = clientPortalLink(projectId);
-    return link ? link + "#offerte" : "";
-  }
-  window._ftClientQuoteLink = clientQuoteLink;
-
-  // Der Kundenlink muss dort erreichbar sein, wo man ihn braucht: am Projekt
-  // und in der Offerte — nicht nur in einem Reiter, den man erst finden muss.
-  // Legt den Zugang an, falls es noch keinen gibt: ein Projekt ohne Kundenlink
-  // waere hier eine leere Zeile ohne Erklaerung.
+  /* Der Kundenportal-Link ist der ZWEITE Link. Vor der Freigabe gibt es hier
+     bewusst keinen kopierbaren String, sondern den internen Zustand und die
+     Liste dessen, was noch fehlt. So kann niemand versehentlich eine leere
+     Seite verschicken — und der Fragebogen-Link bleibt der Link der Phase 1. */
   function clientLinkRowHtml(projectId, label) {
-    if (!projectId) return "";
-    if (!sharesOf(projectId).portalToken) publishClientPortal(projectId);
+    var core = W();
+    if (!projectId || !core) return "";
+    var state = portalRelease(projectId);
+    if (!state.published) {
+      return '<div class="ft-legal-note"><b>' + esc(core.LINK_LABELS.portalUnpublished) + "</b><br>" +
+        esc(state.reason) + "</div>";
+    }
     var link = clientPortalLink(projectId);
     if (!link) {
-      return '<div class="ft-legal-note">Der Kundenlink konnte nicht erzeugt werden — ' +
+      return '<div class="ft-legal-note">Der Kundenportal-Link konnte nicht erzeugt werden — ' +
         "ohne Firebase-Zugang gibt es keine Kundenseite.</div>";
     }
-    return '<div class="ft-link-row"><span>' + esc(label || "Kundenlink") + "</span>" +
+    return '<div class="ft-link-row"><span>' + esc(label || core.LINK_LABELS.portal) + "</span>" +
       '<input readonly value="' + attr(link) + '" onclick="this.select()">' +
       '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) + '\')">Kopieren</button>' +
       '<a class="btn sm ghost" href="' + attr(link) + '" target="_blank" rel="noopener">Öffnen</a></div>';
@@ -4213,10 +4372,11 @@
   // Zeile — und pro Neuzeichnen.
   window._ftCopyProjectLink = function (projectId) {
     if (!projectId) return;
-    if (!sharesOf(projectId).portalToken) publishClientPortal(projectId);
+    var state = portalRelease(projectId);
+    if (!state.published) return notify("warn", "Kundenportal", state.reason);
     var link = clientPortalLink(projectId);
-    if (!link) return notify("warn", "Kundenlink", "Ohne Firebase-Zugang gibt es keine Kundenseite.");
-    copyText(link, "Kundenlink kopiert");
+    if (!link) return notify("warn", "Kundenportal", "Ohne Firebase-Zugang gibt es keine Kundenseite.");
+    copyText(link, "Kundenportal-Link kopiert");
   };
 
   // ── Kundenmail aus Vorlage ──────────────────────────────────────────────
@@ -4532,11 +4692,8 @@
 
   function clientPortalHtml(projectId) {
     var core = W();
-    // Auch aeltere Vorgaenge, die vor der Kundenseite entstanden sind, sollen
-    // hier sofort einen Kundenlink haben — sonst waere „Offerte beim Kunden
-    // anfragen" ausgerechnet dort leer. ensureToken legt nur an, wenn nichts da
-    // ist; ein zweiter Aufruf aendert nichts.
-    if (!sharesOf(projectId).portalToken) publishClientPortal(projectId);
+    // BEWUSST kein Veröffentlichen beim Rendern: Das Kundenportal entsteht
+    // durch eine Entscheidung, nicht dadurch, dass jemand einen Reiter öffnet.
     var project = projectById(projectId) || {};
     var links = shareLinks(projectId);
     var share = sharesOf(projectId);
@@ -4561,13 +4718,25 @@
           : '<div class="mini">' + esc(hint) + "</div>");
     }
 
+    var release = portalRelease(projectId);
     var status = share.publishError
       ? '<div class="ft-legal-note">⚠ ' + esc(share.publishError) + "</div>"
-      : share.publishedAt
-        ? '<div class="ft-ready">✓ Kundenseite ist online · Stand ' + esc(dateTime(share.publishedAt)) + "</div>"
-        : '<div class="mini">Die Kundenseite wird beim nächsten Speichern veröffentlicht.</div>';
+      : release.published
+        ? '<div class="ft-ready">✓ Kundenportal ist online · Stand ' +
+          esc(dateTime(share.publishedAt || share.portalReleasedAt)) + "</div>"
+        : '<div class="ft-legal-note"><b>' + esc(core ? core.LINK_LABELS.portalUnpublished : "Nicht veröffentlicht") +
+          "</b><br>" + esc(release.reason) + "</div>";
 
-    var quoteLink = clientQuoteLink(projectId);
+    // Die Checkliste ist die Wahrheit, nicht nur eine Erinnerung: Solange ein
+    // Punkt fehlt, verweigert die Freigabe den Dienst.
+    var checklist = core
+      ? '<div class="ft-steps mt-2">' + core.PORTAL_RELEASE_REQUIREMENTS.map(function (r) {
+          var done = release.missing.indexOf(r.label) < 0;
+          return '<span class="ft-step' + (done ? " done" : "") + '">' +
+            (done ? "✓ " : "○ ") + esc(r.label) + "</span>";
+        }).join("") + "</div>"
+      : "";
+
     var quote = project.ftQuoteRequest || null;
     var quoteState = quote
       ? '<div class="ft-ready">✓ Offertenanfrage eingegangen · ' + esc(dateTime(quote.submittedAt)) +
@@ -4588,15 +4757,22 @@
     }) : { accepted: false, outdated: false, version: "" };
     var questions = project.ftPortalQuestions || [];
 
-    var portalCard = '<div class="card p-4"><h3>Kundenportal</h3><div class="sep"></div>' +
-      '<div class="mini">Ein Link, alles drin: Vorschau, Änderungswünsche, AGB und Rückfragen. ' +
-      "Er wird nicht automatisch verschickt — du entscheidest, wann die Kundschaft ihn bekommt.</div>" +
-      '<div class="ft-link-row mt-2"><span>Kundenlink</span>' +
-        '<input readonly value="' + attr(kundenLink) + '">' +
-        '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(kundenLink) +
-          '\')">Kundenlink kopieren</button>' +
-        (kundenLink ? '<a class="btn sm ghost" href="' + attr(kundenLink) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
-      "</div>" +
+    var portalCard = '<div class="card p-4"><h3>Kundenportal — Phase 2</h3><div class="sep"></div>' +
+      '<div class="mini">Der ZWEITE Link. Er zeigt Vorschau, Leistungsbeschreibung, Offerte, Vertrag, AGB, ' +
+      "Änderungswünsche und Rückfragen — und existiert erst, wenn all das steht und du ihn " +
+      "bewusst veröffentlichst. Der Fragebogen-Link der Phase 1 ist ein anderer Link.</div>" +
+      checklist +
+      status +
+      (release.published
+        ? clientLinkRowHtml(projectId, core ? core.LINK_LABELS.portal : "Kundenportal-Link") +
+          '<div class="ft-quick mt-2">' +
+            '<button class="btn sm" onclick="window._ftPublishClientView(\'' + attr(projectId) +
+              '\')">Jetzt aktualisieren</button>' +
+            '<button class="btn sm ghost" onclick="window._ftUnpublishClientPortal(\'' + attr(projectId) +
+              '\')">Zurückziehen</button></div>'
+        : '<div class="ft-quick mt-2"><button class="btn primary"' + (release.ready ? "" : " disabled") +
+            ' onclick="window._ftReleaseClientPortal(\'' + attr(projectId) +
+            '\')">Kundenportal veröffentlichen</button></div>') +
       '<div class="ft-steps mt-2">' + portal.steps.map(function (st) {
         return '<span class="ft-step' + (st.done ? " done" : "") + (st.current ? " active" : "") + '">' +
           esc(st.label) + "</span>";
@@ -4631,18 +4807,17 @@
       : "";
 
     return portalCard + quoteCard + '<div class="ft-grid-2 mt-3">' +
-      '<div class="card p-4"><h3>Veröffentlichung</h3><div class="sep"></div>' +
-        '<div class="mini">Jedes Projekt hat automatisch sein Kundenportal auf flowertech.ch. ' +
-        "Es entsteht beim Anlegen und aktualisiert sich bei jeder Änderung — du musst nichts veröffentlichen.</div>" +
-        '<div class="ft-link-row mt-2"><span>Zugang erneuern</span>' +
-          '<input readonly value="' + attr(kundenLink) + '">' +
-          '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) +
-            '\',\'portalToken\')">Neu</button></div>' +
-        status +
-        '<div class="mini mt-2">Der Link wird bewusst NICHT automatisch verschickt — du entscheidest, wann ' +
-        "die Kundschaft ihn bekommt. „Neu\u201c widerruft den alten Link samt Inhalt.</div>" +
-        '<div class="ft-quick mt-2"><button class="btn sm" onclick="window._ftPublishClientView(\'' +
-          attr(projectId) + '\')">Jetzt aktualisieren</button></div>' +
+      '<div class="card p-4"><h3>Zugänge</h3><div class="sep"></div>' +
+        '<div class="mini">Zwei getrennte Links, zwei Phasen. Der Fragebogen-Link steht im Reiter ' +
+        "„Kundenanfragen\u201c — er zeigt nie eine Vorschau. Der Kundenportal-Link entsteht erst nach " +
+        "der Veröffentlichung oben.</div>" +
+        (release.published
+          ? '<div class="ft-link-row mt-2"><span>Zugang erneuern</span>' +
+              '<input readonly value="' + attr(kundenLink) + '">' +
+              '<button class="btn sm ghost" onclick="window._ftRotateToken(\'' + attr(projectId) +
+                '\',\'portalToken\')">Neu</button></div>' +
+            '<div class="mini mt-2">„Neu\u201c widerruft den alten Link samt Inhalt.</div>'
+          : '<div class="mini mt-2">Noch kein Kundenportal-Link — er entsteht mit der Veröffentlichung.</div>') +
         '<div class="sep"></div>' +
         '<div class="ft-link-row"><span>Bedarfsformular</span>' +
           '<input readonly value="' + attr(links.form) + '">' +

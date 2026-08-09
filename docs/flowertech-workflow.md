@@ -1,57 +1,292 @@
-# FlowerTech — Kundenworkflow, Kundenlinks und n8n
+# FlowerTech — Kundenablauf: zwei Links, zwei Phasen
 
 Der FlowerTech-Kundenprozess läuft vollständig in Quantus, auf der ganz normalen
 Projektseite (`#/projects/<id>`). Es gibt keine zweite App und kein zweites
 Datenmodell: Aufgaben sind Quantus-Aufgaben, Mails laufen über die bestehende
 Gmail-Anbindung, Offerten und Rechnungen bleiben die vorhandenen FlowerTech-Dokumente.
 
-## 1. Der Prozess
+## 0. Die zwei Links — die wichtigste Regel
+
+Es gibt **genau zwei** öffentliche Links, und sie werden nie verwechselt:
+
+| | Phase 1 | Phase 2 |
+| --- | --- | --- |
+| **Name** | **Fragebogen-Link** (auch: Briefing-Link) | **Kundenportal-Link** |
+| **Adresse** | `flowertech.ch/fragebogen.html?e=<Einladungstoken>` | `flowertech.ch/kunde.html?t=<Portaltoken>` |
+| **Inhalt** | Kundendaten, Bedarf, Vision Room | Vorschau, Verwaltung, Änderungswünsche, Rückfragen, Versionen/Freigabe, Angebot, Vertrag, AGB |
+| **Zeigt Vorschau?** | **nie** | ja |
+| **Existiert ab** | dem Anlegen des Fragebogens | der ausdrücklichen Veröffentlichung |
+| **Erzeugt** | beim Absenden: **1 Projekt + 1 Aufgabe** | nichts — er zeigt nur |
+
+Der Begriff **„Kundenlink" gibt es nicht mehr.** Er war die Ursache der
+Vermischung: Ein Link, der einmal Fragebogen und einmal Vorschau meinte, führt
+zwangsläufig dazu, dass eine leere Kundenseite als Fragebogen verschickt wird.
+Die Beschriftungen stehen als Daten in `LINK_LABELS` (`flowertech-workflow-core.js`)
+und werden von Oberfläche, Dokumentation und Tests gemeinsam benutzt.
+
+## 1. Der Ablauf als Grafik
+
+```
+╔══════════════════ PHASE 1 · KUNDEN-BRIEFING (vor dem Projekt) ══════════════════╗
+║                                                                                 ║
+║  flowertech.ch (öffentlich)              Quantus                                ║
+║  ──────────────────────────              ───────                                ║
+║  Vision Room  ─── kind:"inquiry" ──▶  ANFRAGE                                   ║
+║  (ohne Einladung)                     · kein Projekt                            ║
+║  Kontaktformular ─────────────────▶   · kein Vorgang, keine Nummer              ║
+║                                            │                                    ║
+║                                            │  „Fragebogen-Link kopieren"        ║
+║                                            │  Kundendaten & Vision Room –       ║
+║                                            ▼  noch keine Vorschau               ║
+║                                       FRAGEBOGEN  (flowertech/intakeForms/<e>)  ║
+║                                            │                                    ║
+║   fragebogen.html?e=<Token>  ◀─────────────┘                                    ║
+║   ┌───────────────────────────────────────────────────────┐                     ║
+║   │ Projekt-/Firmenname · Kontaktperson · E-Mail          │                     ║
+║   │ Telefon · Adresse                                     │                     ║
+║   │ Bisherige Website/URL · Iststand · Anbieter · Preis   │                     ║
+║   │ Ziel · Seiten/Inhalte · Funktionen · Stil/Referenzen  │                     ║
+║   │ Budget · Termin · eigene Fragen                       │                     ║
+║   │ ┌───────────────────────────────────────────────────┐ │                     ║
+║   │ │ VISION ROOM — Teil DESSELBEN Fragebogens:         │ │                     ║
+║   │ │ Idee + Funktionen als zwei Antworten              │ │                     ║
+║   │ └───────────────────────────────────────────────────┘ │                     ║
+║   └───────────────────────────┬───────────────────────────┘                     ║
+║                               │  EIN Absenden (kind:"intake")                   ║
+║                               ▼                                                 ║
+║                    ┌──────────────────────────┐                                 ║
+║                    │ genau 1 PROJEKT          │  idempotent: der Schlüssel      ║
+║                    │ genau 1 AUFGABE          │  hängt am Einladungstoken,      ║
+║                    │  „Offertenanfrage …"     │  Reload/Doppelklick wirken      ║
+║                    │ + Anfrage-Dokument       │  genau einmal                   ║
+║                    │ + HTML-Vorlage           │                                 ║
+║                    │ + Claude-Code-Prompt     │                                 ║
+║                    └──────────────────────────┘                                 ║
+║                    KEIN Kundenportal. Phase 1 endet hier.                       ║
+╚═════════════════════════════════════════════════════════════════════════════════╝
+                                     │
+                                     ▼
+╔═════════ PHASE 2 · INTERNE ERSTELLUNG UND KUNDENPORTAL (nach dem Briefing) ═════╗
+║                                                                                 ║
+║   Prompt kopieren ──▶ Claude Code ──▶ HTML hochladen (Vorschau)                 ║
+║        ▲                                    │                                   ║
+║        └──── Vorlage/Prompt herunter- und wieder hochladbar                     ║
+║                                             ▼                                   ║
+║   Leistungsbeschreibung · Offerte mit Kosten · Vertrag · AGB                    ║
+║                                             │                                   ║
+║                    ┌────────────────────────┴────────────────────────┐          ║
+║                    │  Checkliste vollständig?                        │          ║
+║                    │  Vorschau ✓ Leistung ✓ Offerte ✓ Vertrag ✓ AGB ✓│          ║
+║                    └────────────────────────┬────────────────────────┘          ║
+║                     nein │                  │ ja                                ║
+║                          ▼                  ▼                                   ║
+║       „Kundenportal – noch    [ Kundenportal veröffentlichen ]  ← Entscheidung  ║
+║        nicht veröffentlicht"                │                                   ║
+║        (intern sichtbar,                    ▼                                   ║
+║         KEIN kopierbarer Link)   flowertech/clientPortals/<t>                   ║
+║                                             │                                   ║
+║                                             ▼                                   ║
+║                              kunde.html?t=<Portaltoken>                         ║
+║   ┌─────────────────────────────────────────────────────────────────┐           ║
+║   │ Website-Vorschau (sandboxed) · Verwaltung/Admin-Link             │           ║
+║   │ Änderungswünsche mit Status · zusätzliche Rückfragen             │           ║
+║   │ Versionen/Freigabe · Angebot mit Kosten · Vertrag · AGB          │           ║
+║   └─────────────────────────────────────────────────────────────────┘           ║
+║                                   │                                             ║
+║          Änderungswunsch / Antwort / AGB-Zustimmung ──▶ zurück nach Quantus     ║
+╚═════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Die Phasen des Vorgangs selbst (`WORKFLOW_STAGES`) bleiben unverändert:
 
 ```
 Lead → Bestandesaufnahme → Angebot / Vertrag → Umsetzung → Änderungsrunde → Freigabe / Abschluss
 ```
 
-Die Phasen liegen in `public/flowertech-workflow-core.js` (`WORKFLOW_STAGES`) und
-werden an allen Stellen gleich benannt: Projektseite, Pipeline und Kundenansicht.
-Alte Phasenschlüssel (`discovery`, `won`, `lost`) bleiben lesbar.
+Sie werden an allen Stellen gleich benannt: Projektseite, Pipeline und
+Kundenportal. Alte Phasenschlüssel (`discovery`, `won`, `lost`) bleiben lesbar.
 
-**Interesse erfassen:** FlowerTech → Reiter *Projekte* → *Interesse erfassen*.
-Dort werden Projektname, Typ (Website oder Programm), Kundendaten,
-Budget/Preisvorstellung und der bisherige Anbieterpreis erfasst. Beim Anlegen
-entstehen automatisch die beiden Freigabe-Links (Bedarfsformular, Kundenansicht).
+## 2. Phase 1 im Einzelnen
 
-## 1a. Der Prozess als Arbeitsliste
+### 2a. Die Anfrage erzeugt kein Projekt
 
-Auf `#/flowertech` steht zuoberst **Nächster Schritt** — kein Menü, sondern das,
-was der Datenstand gerade verlangt. Die Logik liegt in `nextProcessSteps()` im
-geteilten Kern:
+Was über den öffentlichen Vision Room oder das Kontaktformular hereinkommt, ist
+eine **Anfrage** — kein Projekt, kein Direktauftrag, keine Offerte und keine
+Nummer. Ein Projekt vor der Antwort der Kundschaft wäre eine Behauptung: Es
+stünde leer in der Liste und müsste von Hand aufgeräumt werden, wenn nie jemand
+antwortet.
 
-| Schritt | erscheint, wenn |
+An jeder Anfrage steht deshalb genau ein nächster Schritt: **Fragebogen-Link
+kopieren**. Beschriftung und Hilfetext sagen unmissverständlich, was der Link
+zeigt — *„Kundendaten & Vision Room – noch keine Vorschau"*. Ein zweiter Klick
+erzeugt keinen zweiten Fragebogen, sondern liefert denselben Link.
+
+### 2b. Der Fragebogen fragt, was gebraucht wird
+
+`DEFAULT_INTAKE_QUESTIONS` deckt die Pflichtthemen ab; `INTAKE_REQUIRED_TOPICS`
+und `intakeCoverage()` prüfen das als Daten, damit die Oberfläche warnt und der
+Test es beweist:
+
+| Thema | Rolle bzw. Frage |
 | --- | --- |
-| Anfrage → Projekt | eine Website-Anfrage noch kein Projekt ist |
-| Bedarf aufnehmen | ein Projekt in Lead/Bestandesaufnahme ohne Briefing steht |
-| Angebot erstellen | ein Briefing da ist, aber keine gültige Offerte |
-| Änderungen abarbeiten | offene Änderungswünsche existieren |
-| Freigabe einholen | ein Projekt in der Freigabephase wartet |
+| Projekt-/Firmenname | `projectTitle`, `company` |
+| Kontaktperson, E-Mail, Telefon, Adresse | `contactName`, `contactEmail`, `contactPhone`, `address` |
+| Bisherige Website / URL | `currentUrl` |
+| Technischer/inhaltlicher Iststand | Frage `iststand` |
+| Bisheriger Anbieter | `currentProvider` |
+| Bisher bezahlter Preis (optional) | `currentPrice` |
+| Ziel | `need` |
+| Seiten / Inhalte | Fragen `pages`, `content` |
+| Funktionen | Frage `features` + Vision Room |
+| Stil / Referenzen | Frage `design` |
+| Budget, Zeitrahmen | `budget`, `deadline` |
+| Eigene Fragen der Kundschaft | Frage `fragen` |
+| Vision Room | Fragen mit `vision: "idea"` / `"features"` |
 
-Jeder Eintrag ist ein Knopf, der genau dort landet, wo weitergearbeitet wird.
-Ist nichts offen, steht das auch so da.
+Der Fragebogen bleibt frei bearbeitbar — Fragen lassen sich ergänzen, umsortieren
+und entfernen. Fällt er unter die Pflichtthemen, sagt die Oberfläche das, statt
+es stillschweigend hinzunehmen.
 
-**Anfrage → Projekt** ist ein vollständiger Schritt, nicht nur ein Knopf. In
-einem Zug entstehen:
+### 2c. Der Vision Room gehört zum Fragebogen
 
-* das FlowerTech-Projekt mit Kundendaten, Typ (aus dem Interesse abgeleitet) und
-  Startphase *Bestandesaufnahme* — der Lead ist ja schon da,
-* beide Freigabe-Links (Bedarfsformular, Kundenansicht),
-* ein **Bedarfsentwurf aus der Nachricht** der Anfrage, sofern sie als
-  Zielbeschreibung taugt,
-* die Zuordnung der bereits angelegten Anfrage-Aufgabe zum neuen Projekt,
-* der Vermerk an der Anfrage, dass sie umgewandelt wurde.
+Der Vision Room ist **kein zweiter Kanal**, sondern zwei Fragen desselben
+Fragebogens: die Idee und die gewünschten Funktionen. Die Seite stellt sie als
+Mindmap mit anklickbaren Vorschlägen dar; die Werte landen in denselben Feldern
+wie jede andere Antwort und gehen mit **einem** Absenden hinaus.
 
-Eine bereits umgewandelte Anfrage legt kein zweites Projekt an, sondern öffnet
-das bestehende.
+Damit ist ausgeschlossen, was vorher passierte: dass ein Vision-Room-Beitrag
+einen eigenen Direktauftrag oder ein zweites Projekt erzeugt.
 
-## 1b. Die Weggabelung: Offerte zuerst oder Direktprojekt
+| Aufruf | Wirkung |
+| --- | --- |
+| `fragebogen.html?e=<Token>` | Vision Room ist Teil des Fragebogens, ein Absenden |
+| `flowertech.ch/#vision` ohne Einladung | wird zur **Anfrage** (`kind:"inquiry"`) |
+| `flowertech.ch/?e=<Token>#vision` | verweist auf `fragebogen.html?e=…`, kein zweiter Eingang |
+| `kind:"vision"` am Einladungstoken | wird als Antwort in denselben Fragebogen übernommen |
+| `kind:"vision"` am Offerten-Token (`?v=`) | ergänzt den Bedarf des bestehenden Vorgangs |
+
+### 2d. Das Absenden: genau ein Projekt, genau eine Aufgabe
+
+Erst ein **gültiges** Absenden erzeugt einen Vorgang. Es entstehen in einem Zug:
+
+* **genau ein** FlowerTech-Projekt mit Kundendaten, Iststand, Budget und Termin,
+* **genau eine** Aufgabe *„Offertenanfrage bearbeiten: …"* — eine ganz normale
+  Quantus-Aufgabe, damit sie in der zentralen Aufgaben-App erscheint,
+* das **Anfrage-Dokument** mit allen Antworten, unverändert und intern,
+* eine **HTML-Vorlage** aus den Antworten,
+* der **Claude-Code-Prompt**.
+
+Idempotent auf drei Ebenen: Der Idempotenz-Schlüssel hängt serverseitig am
+Einladungstoken (`ft_intake_<token>`), der Fragebogen kennt sein Projekt, und die
+Einreichungs-ID steht am Fragebogen. Reload und Doppelklick wirken genau einmal.
+
+**Ein Kundenportal entsteht hier ausdrücklich nicht.**
+
+## 3. Phase 2 im Einzelnen
+
+### 3a. Der Claude-Code-Prompt
+
+Das Projekt besitzt sofort einen individuellen Prompt (`buildProjectPrompt()`).
+Er enthält **alle website-relevanten** Wünsche aus Standard- und Freifragen sowie
+dem Vision Room:
+
+* Projektkontext (Art, Phase, **Budgetrahmen**, **Wunschtermin**),
+* **Bisherige Lösung**: Ist-Website/URL, bisheriger Anbieter, bisher bezahlter Preis,
+* alle Antworten des Fragebogens, jede unter ihrer eigenen Überschrift,
+* **Vision Room** als eigener Abschnitt (Idee und Funktionen),
+* Änderungswünsche und beantwortete Rückfragen,
+* Vorgaben zu Technik, Zugänglichkeit und Sprache.
+
+**Kontakt- und Adressdaten bleiben intern.** Sie gehen nur mit, wenn ich das am
+Projekt ausdrücklich wähle (`includeContact`); ohne Wahl steht dort
+*„(intern hinterlegt)"*. In einen öffentlichen Snapshot gelangen sie nie.
+
+### 3b. Vorschau, Vorlage und Verwaltung
+
+Aus Claude Code kommt das fertige HTML zurück. Im Projekt (Reiter *Vorschau &
+Prompt*) lassen sich **Vorlage und Prompt herunterladen, ändern und wieder
+hochladen**. Hochgeladenes HTML wird entschärft (`sanitizeTemplateHtml`) und im
+Kundenportal zusätzlich in einem `sandbox`-iframe gezeigt — zwei Schichten.
+
+Optional werden **Vorschau-Link** und **Verwaltung/Admin-Link** hinterlegt; nur
+vollständige HTTPS-Adressen erscheinen beim Kunden.
+
+### 3c. Die Freigabe des Kundenportals
+
+Der zweite Link entsteht erst, wenn es etwas zu zeigen gibt **und** ich ihn
+bewusst veröffentliche. Die Bedingung liegt in `portalReleaseState()` — also im
+Kern, nicht in der Anzeige. Eine Prüfung, die nur angezeigt wird, ist mit einem
+Klick umgangen.
+
+| Voraussetzung | erfüllt, wenn |
+| --- | --- |
+| Website-Vorschau | eine HTML-Vorlage oder eine HTTPS-Vorschau-URL da ist |
+| Leistungsbeschreibung | mindestens ein aktiver Block Text trägt |
+| Offerte mit Kosten | eine Offerte Kunde, Leistung und Preis > 0 hat |
+| Vertrag | mindestens eine Klausel Text trägt |
+| AGB | ein AGB-Entwurf Text trägt |
+
+Vorher gibt es **keinen kopierbaren Link** — weder am Projekt, noch in der
+Offerte, noch in der Projektliste. Sichtbar ist ausschliesslich der interne
+Zustand **„Kundenportal – noch nicht veröffentlicht"** samt Liste des Fehlenden.
+Ein Token darf vorbereitet sein; ein öffentlich lesbarer Snapshot entsteht nicht.
+
+*Zurückziehen* löscht den Snapshot und setzt den Zustand zurück. *Neu* erneuert
+den Token und widerruft den alten Link samt Inhalt.
+
+### 3d. Was das veröffentlichte Kundenportal zeigt
+
+Das Portal entspricht dem Beispiel „Sämi":
+
+* sichtbare **Website-Vorschau** (Frontend) und **Verwaltung/Admin-Link**, falls hinterlegt,
+* **strukturierte Änderungswünsche mit Status**,
+* **zusätzliche Rückfragen** mit Antwortmöglichkeit,
+* **Versionen und Freigabe**,
+* **Angebot mit Kosten** (Summen, keine Rechnungsdetails),
+* **Vertrag** und **AGB**.
+
+### 3e. AGB-Zustimmung ist versioniert
+
+Die Zustimmung ist ein Ereignis mit **Fassung und Zeitpunkt**, kein Häkchen.
+`termsState()` vergleicht die zugestimmte Fassung mit der aktuellen:
+
+| Zustand | Portal zeigt |
+| --- | --- |
+| keine Zustimmung | Text und Zustimmungsformular |
+| Zustimmung zur aktuellen Fassung | „Zugestimmt am … (Fassung n)" |
+| Zustimmung zu einer **älteren** Fassung | Hinweis auf die Änderung, Formular **erneut** |
+
+Eine geänderte Fassung macht damit zwingend eine neue Zustimmung nötig; die alte
+gilt sichtbar als veraltet statt stillschweigend weiter.
+
+## 4. Eine Offerte ohne Projekt erfindet keinen Link
+
+Eine unvollständige Offerte bleibt eine **Offertenanfrage**: kein Versand, keine
+Offertennummer. Der Hinweis benennt, was fehlt — und **erfindet keinen Link**:
+
+* **ohne Projekt** verlangt sie eine Projektzuordnung bzw. verweist auf die Anfrage,
+* **mit Projekt** verweist sie auf den Fragebogen-Link der Phase 1; das
+  Kundenportal gibt es an dieser Stelle noch gar nicht.
+
+## 5. Migration und Abwärtskompatibilität
+
+**Es werden keine Daten angefasst.** Bestehende Projekte und Angebote bleiben
+unverändert; alles wird beim *Lesen* abgeleitet:
+
+| Fall | Verhalten |
+| --- | --- |
+| Projekt ohne `ftRoute` | Weg wird gelesen (Offerte vorhanden → *Offerte zuerst*, sonst *Direktprojekt*) |
+| Projekt mit `portalToken`, aber ohne `portalReleased` | gilt als **nicht veröffentlicht**; der Token bleibt erhalten, der Snapshot wird erst mit der Freigabe geschrieben |
+| Bereits veröffentlichter Snapshot | bleibt lesbar; `published` fehlt dort und wird von der Kundenseite als „veröffentlicht" gelesen |
+| Antworten als Liste **oder** als Zuordnung | beide Formen laufen über `intakeAnswerMap()` zusammen |
+
+> **Behobener Fehler:** Der Fragebogen sendet seine Antworten als Liste
+> (`{answers:[{key,answer}]}`), die Funktion normalisierte aber gegen eine
+> Zuordnung (`{key: wert}`). Jede korrekt ausgefüllte Einreichung kam deshalb als
+> „unvollständig" mit HTTP 400 zurück — es entstand **nie** ein Projekt.
+> `intakeAnswerMap()` führt beide Formen zusammen.
+
+## 6. Die Weggabelung: Offerte zuerst oder Direktprojekt
 
 Jeder neue Vorgang startet auf **genau einem** von zwei Wegen. Es gibt keine
 dritte, unklare Route.
@@ -62,8 +297,10 @@ dritte, unklare Route.
 | **Direktprojekt** | Bedarf → Leistung & Vertrag → Umsetzung → Änderungen → Freigabe | bewusst übersprungen, sichtbar markiert |
 
 Die Wahl steht zuoberst auf `#/flowertech` unter **Neue Zusammenarbeit starten**.
-Auch **Anfrage → Projekt** legt nichts mehr ohne Wahl an, sondern öffnet dieselbe
-Entscheidung.
+Sie betrifft nur die *interne* Führung eines Vorgangs, nicht die zwei Links: Ein
+Projekt entsteht in beiden Wegen ausschliesslich aus einem abgesendeten
+Fragebogen (Phase 1), und ein Kundenportal entsteht in beiden Wegen erst mit der
+ausdrücklichen Veröffentlichung (Phase 2).
 
 **Kein paralleles Datenmodell.** Ein Angebotsvorgang *ist* ein
 FlowerTech-Projekt. Wird die Offerte angenommen, wird dasselbe Projekt zum
@@ -87,20 +324,24 @@ Absenden entsteht **ohne manuelle Nacharbeit** ein FlowerTech-Direktprojekt:
 Titel aus der Idee, Typ aus der Art, Funktionen als Bedarf und als normale
 Quantus-Aufgaben, Route `direct`, Phase *Bestandesaufnahme*.
 
-## 1c. Datenverträge
+## 7. Datenverträge
 
 **`POST /.netlify/functions/flowertech-portal`**
 
 ```json
 {
-  "kind": "vision",
-  "token": "<optional: 24–64 Zeichen [A-Za-z0-9_-]>",
-  "payload": { "type": "Website|Web-Programm|Web-App",
-               "idea": "…", "features": ["…"], "email": "…" },
+  "kind": "intake",
+  "token": "<Einladungstoken: 24–64 Zeichen [A-Za-z0-9_-]>",
+  "payload": { "answers": [ { "key": "need", "answer": "…" } ] },
   "idempotencyKey": "ft_…",
   "website": ""
 }
 ```
+
+Die Antworten dürfen als **Liste** (`{answers:[{key,answer}]}`, so sendet der
+Fragebogen) oder als **Zuordnung** (`{key: wert}`, so sendet n8n) kommen;
+`intakeAnswerMap()` führt beide zusammen. Was nicht gefragt wurde, kommt nicht
+durch — der veröffentlichte Fragebogen ist die serverseitige Grenze.
 
 Antworten: `201 {ok, submissionId}` · `200 {ok, duplicate:true}` ·
 `400` (unbrauchbar/ungültiger Token) · `401` (keine Herkunft, keine Signatur) ·
@@ -108,31 +349,38 @@ Antworten: `201 {ok, submissionId}` · `200 {ok, duplicate:true}` ·
 
 **Zuordnung:**
 
-| Token | Wirkung |
-| --- | --- |
-| keiner | neuer Vorgang → Direktprojekt. Nur aus dem Browser und nur von erlaubter Herkunft. |
-| `shares[projectId].visionToken` | Ausarbeitung zur Offerte dieses Vorgangs |
-| `shares[projectId].formToken` | Bedarfsformular |
-| `shares[projectId].portalToken` | Änderungswunsch |
+| Art | Token | Wirkung |
+| --- | --- | --- |
+| `inquiry` / `quote` / `vision` | keiner | **Anfrage** in Quantus. Kein Projekt, kein Direktauftrag. Nur aus dem Browser und nur von erlaubter Herkunft. |
+| `intake` | `intakes[id].inviteToken` | Fragebogen beantwortet → **genau ein** Projekt + **genau eine** Aufgabe |
+| `vision` / `quote` | `intakes[id].inviteToken` | Vision-Beitrag zu **demselben** Fragebogen — kein zweiter Vorgang |
+| `vision` | `shares[projectId].visionToken` | Ausarbeitung zur Offerte dieses Vorgangs |
+| `briefing` | `shares[projectId].formToken` | Bedarfsformular |
+| `change` / `quote` / `terms` / `answer` | `shares[projectId].portalToken` | Kundenportal (nur nach Freigabe versendet) |
 
-**Persistierte Felder** am Projekt: `ftRoute`, `ftRouteDecidedAt`,
+Jeder Token öffnet genau die Wege, für die er ausgegeben wurde. Ein
+Einladungstoken kann keinen Änderungswunsch einschleusen und ein Portaltoken
+keinen Fragebogen beantworten.
+
+**Persistierte Felder** am Projekt: `ftCurrentUrl`, `ftCurrentProvider`,
+`currentProviderPrice`, `ftIntakeDocument`, `ftTemplate`, `ftPrompt`, `ftVision`,
+`ftTermsConsent`, `ftPortalQuestions`, `ftRoute`, `ftRouteDecidedAt`,
 `ftRouteSource`, `ftOfferAttachment {kind, visionToken, exampleUrl}`,
-`ftVision`, `ftOutcome`, `sourceVisionId`.
+`ftOutcome`, `sourceIntakeId`.
+Am Freigabe-Eintrag (`shares[projectId]`): `portalToken`, `portalReleased`,
+`portalReleasedAt`, `publishedAt`, `publishError`.
 
 **Sicherheit:** Der Token steht im öffentlichen Link, enthält aber keine
 Projekt-ID und keinen Zugang zu Quantus. Herkunftsprüfung, Honeypot, Grössen-
 und Ratenlimit gelten unverändert; der Idempotenz-Schlüssel verhindert
 Doppelanlagen bei Doppelklick und Wiederholung.
 
-### Migration und Abwärtskompatibilität
+### Abwärtskompatibilität
 
-**Es werden keine Daten angefasst.** Bestehende Projekte tragen kein `ftRoute`;
-ihr Weg wird beim *Lesen* abgeleitet: Wer bereits eine Offerte hat, gilt als
-*Offerte zuerst*, alle anderen als *Direktprojekt*. Damit hat jedes Projekt
-genau einen Weg, ohne Migrationsschritt und ohne dass sich für bestehende
-Vorgänge etwas ändert.
+Siehe Abschnitt 5. Kurz: Bestehende Projekte tragen kein `ftRoute`; ihr Weg wird
+beim *Lesen* abgeleitet. Es wird kein einziges Datum angefasst.
 
-## 2. Bedarfsformular
+## 8. Bedarfsformular (intern und n8n)
 
 Ein Feldset, drei Verwendungen — definiert in `BRIEFING_FIELDS`:
 
@@ -148,15 +396,15 @@ Aus einer Antwort entstehen:
 * **normale Quantus-Aufgaben** (`sourceBriefingKey` verhindert Duplikate),
 * eine erste Leistungsbeschreibung aus den Vorlagen.
 
-## 3. Änderungswünsche
+## 9. Änderungswünsche
 
-Jeder Änderungswunsch — intern erfasst oder vom Kunden über die Kundenansicht —
+Jeder Änderungswunsch — intern erfasst oder von der Kundschaft über das Kundenportal —
 wird zu einer echten Quantus-Aufgabe (`source: "flowertech-change"`,
 `sourceChangeRequestId`). Damit erscheint er automatisch in der zentralen
 Aufgaben-App. Der Status des Wunsches folgt der Aufgabe: Aufgabe erledigt →
 Wunsch erledigt. Die Aufgabe bleibt führend.
 
-## 4. Angebot, Vertrag, AGB, Datenschutz
+## 10. Angebot, Vertrag, AGB, Datenschutz
 
 Vier Editoren mit demselben Aufbau: jeder Abschnitt ist ein eigener Block mit
 Titel, Text, Variablen, Reihenfolge und An/Aus. Die Startvorlagen sind
@@ -178,23 +426,28 @@ stehen, damit keine Lücke übersehen wird.
 > „Vor Verwendung rechtlich prüfen". Sie sind keine Rechtsberatung und keine
 > Zusicherung rechtlicher Verbindlichkeit.
 
-## 5. Kundenansicht
+## 11. Das Kundenportal (Phase 2)
 
-`flowertech-kunde.html?t=<token>` zeigt der Kundschaft: Typ, Phase,
-Kostenübersicht, Leistungsbeschreibung, Termine, Änderungswünsche mit Status,
-Versionen/Freigabe, Kontakt sowie — falls hinterlegt — Links zu Vorschau und
-Verwaltung/Admin.
+`kunde.html?t=<Portaltoken>` zeigt der Kundschaft: Website-Vorschau, Verwaltung/
+Admin-Link, Typ, Phase, Kostenübersicht, Leistungsbeschreibung, Termine,
+Änderungswünsche mit Status, Rückfragen, Versionen/Freigabe, Vertrag und AGB.
 
 Die Seite liest einen **datensparsamen Snapshot** aus
-`flowertech/clientPortals/<token>`. Der Snapshot entsteht erst, wenn im Projekt
-*Kundenansicht veröffentlichen* gedrückt wird. Vorher zeigt die Seite einen
-freundlichen Leerzustand. Interne Notizen, Rechnungsdetails und der Kontaktverlauf
-sind nicht enthalten (Nachrichten nur, wenn ausdrücklich `shared`).
+`flowertech/clientPortals/<token>` — eine Positivliste im Kern
+(`buildClientSnapshot`). Der Snapshot entsteht **erst mit der ausdrücklichen
+Veröffentlichung** (Abschnitt 3c) und trägt `published: true`. Interne Notizen,
+Rechnungsdetails, Kontaktdaten und der Kontaktverlauf sind nicht enthalten;
+`CLIENT_SNAPSHOT_FORBIDDEN_KEYS` wird im Test gegen echte Projektdaten geprüft.
+
+Käme je ein Snapshot ohne Freigabe dort an, zeigt die Kundenseite ihn **nicht**,
+sondern sagt, dass der Bereich noch nicht freigegeben ist — zwei Schichten statt
+einer.
 
 Links lassen sich jederzeit erneuern (*Neu*) — der alte Link funktioniert danach
-nicht mehr.
+nicht mehr. *Zurückziehen* löscht den Snapshot und setzt den Zustand auf
+„noch nicht veröffentlicht".
 
-## 6. Mails
+## 12. Mails
 
 Zuordnung ausschliesslich über den **ausdrücklichen Projektkontext**:
 
@@ -205,7 +458,7 @@ Zuordnung ausschliesslich über den **ausdrücklichen Projektkontext**:
 Es findet keine allgemeine Postfachüberwachung statt. Alle Mails bleiben
 zusätzlich normal im Posteingang; die Projektseite verlinkt sie nur.
 
-## 7. Claude-Code-Prompt
+## 13. Claude-Code-Prompt (Reiter im Projekt)
 
 Reiter *Claude-Prompt* erzeugt aus Briefing und offenen Änderungswünschen einen
 fertigen Prompt mit Kopierfunktion. Zwei Dinge sind wählbar:
@@ -225,9 +478,12 @@ Beispielmodus bleiben Änderungswünsche bewusst draussen — der Bedarf ist dor
 der ganze Auftrag.
 
 **Welche Daten mitgehen** — **Kundendaten, Preise und interne Notizen sind
-standardmässig ausgeschaltet**, in jedem Modus.
+standardmässig ausgeschaltet**, in jedem Modus. Dieselbe Wahl steuert den
+Projekt-Prompt aus Abschnitt 3a: Ist *Kundendaten* eingeschaltet, wandern
+Kontakt- und Adressdaten in den Code-Prompt — ausdrücklich als intern
+gekennzeichnet und nie in einen öffentlichen Snapshot.
 
-## 8. n8n: „FlowerTech: Lead → Projekt & Aufgaben"
+## 14. n8n: „FlowerTech: Lead → Projekt & Aufgaben"
 
 Import: `n8n/flowertech-lead-to-project.workflow.json` (Workflow → Import from File).
 
@@ -303,7 +559,7 @@ und ist keine Variable.
 
 ### Testablauf
 
-1. In Quantus ein FlowerTech-Testprojekt anlegen und im Reiter *Kundenansicht*
+1. In Quantus ein FlowerTech-Testprojekt anlegen und im Reiter *Kundenportal*
    den **Formular-Token** aus dem Link kopieren (der Teil nach `?t=`).
 2. `FLOWERTECH_WEBHOOK_SECRET` in Netlify setzen und neu deployen.
 3. In n8n den Workflow importieren, das Credential anlegen, in beiden Nodes
@@ -343,15 +599,16 @@ curl -sS -X POST "https://management-xo2-pro.netlify.app/.netlify/functions/flow
   -d '{"token":"<TOKEN>","kind":"change","payload":{"title":"Logo tauschen"}}'
 ```
 
-## 9. Datenablage
+## 15. Datenablage
 
 | Pfad | Inhalt |
 | --- | --- |
-| `flowertech/submissions/<id>` | Roheingänge aus Formular, Kundenansicht und n8n |
+| `flowertech/submissions/<id>` | Roheingänge aus Fragebogen, Vision Room, Kundenportal und n8n |
 | `flowertech/submissionKeys/<key>` | verarbeitete Idempotenz-Schlüssel |
-| `flowertech/clientPortals/<token>` | veröffentlichter Kunden-Snapshot |
+| `flowertech/intakeForms/<einladungstoken>` | veröffentlichter Fragebogen (Phase 1) |
+| `flowertech/clientPortals/<portaltoken>` | freigegebener Kundenportal-Snapshot (Phase 2) |
 | `flowertech/rateLimits/<hash>/<stunde>` | IP-Ratenlimit (gehasht, kein Klartext) |
 
-In der App (`APP.state.data.flowertech`): `briefings`, `changeRequests`,
-`contentDocs`, `contracts`, `legalDocs`, `shares`, `promptPrefs`,
-`processedSubmissions`.
+In der App (`APP.state.data.flowertech`): `intakes`, `inquiries`, `briefings`,
+`changeRequests`, `contentDocs`, `contracts`, `legalDocs`, `shares`,
+`promptPrefs`, `promptModes`, `processedSubmissions`.

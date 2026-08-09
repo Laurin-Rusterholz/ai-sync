@@ -270,14 +270,26 @@ function renderAt(hash) {
   ok(!/createEntity\("project"[\s\S]{0,400}?ftOutcome/.test(source),
     "bei der Entscheidung entsteht ein zweites Projekt");
 
-  // Vision Room → Direktprojekt, genau einmal.
-  ok(/function createProjectFromVision\(entry\)/.test(source), "der Vision-Room-Trigger fehlt");
-  ok(/p\.sourceVisionId === entry\.id/.test(source),
-    "derselbe Vision-Eingang könnte zwei Projekte anlegen");
-  ok(/entry\.kind === "vision" && !entry\.token/.test(source),
-    "eine Vision ohne Token wird nicht als neuer Vorgang behandelt");
+  // Vision Room: KEIN Direktprojekt mehr. Ohne Einladung entsteht eine Anfrage,
+  // mit Einladung eine Antwort auf denselben Fragebogen.
+  ok(!/function createProjectFromVisionQuote/.test(source),
+    "der alte Weg „Vision Room → Direktprojekt“ existiert weiterhin");
+  ok(/function createInquiryFromSubmission\(entry\)/.test(source),
+    "eine Vision ohne Einladung wird nicht zur Anfrage");
+  ok(/function applyVisionToIntake\(intakeId, entry\)/.test(source),
+    "eine Vision mit Einladung wird nicht in denselben Fragebogen übernommen");
+  ok(/\["inquiry", "vision", "quote"\]\.indexOf\(entry\.kind\)/.test(source),
+    "die tokenlosen Eingänge laufen nicht gemeinsam in den Anfrage-Weg");
   ok(/function applyVision\(projectId, payload\)/.test(source),
-    "eine Vision mit Token ergänzt kein bestehendes Projekt");
+    "eine Vision am Offerten-Token ergänzt kein bestehendes Projekt");
+
+  // Phase 2: das Kundenportal ist kein Nebenprodukt des Renderns.
+  ok(/function portalRelease\(projectId\)/.test(source), "die Freigabe-Prüfung des Portals fehlt");
+  ok(/function releaseClientPortal\(projectId\)/.test(source), "das bewusste Veröffentlichen fehlt");
+  ok(/if \(!portalRelease\(projectId\)\.published\) return share\.portalToken \|\| null;/.test(source),
+    "ein nicht freigegebenes Portal schreibt trotzdem einen öffentlichen Snapshot");
+  ok(!/publishClientPortal\(projectId\);\n\s*\/\/ Der Bedarf startet/.test(source),
+    "beim Anlegen eines Projekts entsteht weiterhin sofort ein Kundenportal");
 }
 
 // ── 11. Der Vision Room sendet wirklich an Quantus ────────────────────────
@@ -289,14 +301,23 @@ function renderAt(hash) {
     const page = fs.readFileSync(visionPage, "utf8");
     ok(/flowertech-portal/.test(page), "der Vision Room ruft die Quantus-Funktion nicht auf");
     // Aus dem „Senden" wird eine echte Offertenanfrage — kein Mail-Entwurf.
-    ok(/kind: 'quote'/.test(page), "der Vision Room sendet die falsche Art");
+    // Aus dem oeffentlichen Vision Room wird eine ANFRAGE — nie ein Projekt.
+    ok(/kind: 'inquiry'/.test(page), "der Vision Room sendet die falsche Art");
+    ok(!/kind: 'quote'/.test(page),
+      "der Vision Room legt weiterhin direkt eine Offertenanfrage an");
     ok(/source: 'vision-room'/.test(page), "die Herkunft der Anfrage fehlt");
+    ok(/Fragebogen-Link/.test(page),
+      "die Seite verspricht keinen Fragebogen-Link als nächsten Schritt");
     ok(!/vrSend\.dataset\.mailto/.test(page), "der Vision Room faellt weiterhin auf ein Mailprogramm zurueck");
     ok(!/Direktversand nicht möglich/.test(page), "der Mail-Rueckfalltext steht weiterhin auf der Seite");
     ok(/idempotencyKey/.test(page), "der Vision Room sichert nicht gegen Doppeleinreichung");
     ok(/id="vrHp"/.test(page), "dem Vision Room fehlt der Honeypot");
-    ok(/URLSearchParams\(location\.search\)\.get\('v'\)/.test(page),
-      "der Vision Room liest den Zuordnungs-Token nicht");
+    // Mit Einladung gehoert der Vision Room in den Fragebogen — ein zweiter
+    // Eingang wuerde einen zweiten Vorgang erzeugen.
+    ok(/URLSearchParams\(location\.search\)\.get\('e'\)/.test(page),
+      "der Vision Room erkennt eine bestehende Einladung nicht");
+    ok(/fragebogen\.html\?e=/.test(page),
+      "mit Einladung wird nicht auf den Fragebogen verwiesen");
     ok(/\{24,64\}/.test(page), "der Token wird nicht auf Form geprüft");
     const toml = fs.readFileSync("/workspace/flowertech/netlify.toml", "utf8");
     ok(/connect-src[^;]*management-xo2-pro/.test(toml),
@@ -365,32 +386,36 @@ function renderAt(hash) {
   }) === 0, "ein fremder Token wird angenommen");
 }
 
-// ── 14. Vision ohne Token legt genau EINEN Vorgang an ─────────────────────
-// Seit der Zusammenfuehrung muendet der Vision Room in den Kundenanfrage-Weg:
-// Es entsteht ein Anfrage-Dokument und genau eine Aufgabe — kein Sonderweg.
+// ── 14. Vision ohne Einladung legt KEIN Projekt an ───────────────────────
+// Die strikte Trennung der Phasen: Ohne abgesendeten Fragebogen entsteht kein
+// Vorgang. Der oeffentliche Vision Room erzeugt eine Anfrage, deren naechster
+// Schritt der Fragebogen-Link ist.
 {
   const { win } = renderAt("#/flowertech");
-  const projects = win.APP.state.data.entities.projects;
+  const data = win.APP.state.data;
+  const projects = data.entities.projects;
+  const before = Object.keys(projects).length;
   const entry = {
-    id: "sub_neu", kind: "vision", token: null,
+    id: "sub_neu", kind: "inquiry", token: null,
     payload: { type: "Web-App", idea: "Mitgliederverwaltung",
                features: ["Login", "Beitragsliste"], email: "verein@muster.ch" },
   };
-  ok(win._ftIngestSubmissions({ sub_neu: entry }) === 1, "die Vision erzeugt kein Direktprojekt");
-  const created = Object.values(projects).filter((p) => p.sourceVisionId === "sub_neu");
-  ok(created.length === 1, `es entstanden ${created.length} Projekte statt genau eines`);
-  ok(created[0].ftRouteSource === "vision-room", "die Herkunft „Vision Room“ fehlt am Vorgang");
-  ok(created[0].ftIntakeDocument && created[0].ftIntakeDocument.answers.length,
-    "der Vision-Eingang erzeugt kein Anfrage-Dokument");
-  ok(created[0].deliveryType === "program", "Web-App wurde nicht als Programm erkannt");
-  const visionTasks = Object.values(win.APP.state.data.entities.tasks)
-    .filter((t) => t.source === "flowertech-intake");
-  ok(visionTasks.length === 1, `es entstanden ${visionTasks.length} Aufgaben statt genau einer`);
+  ok(win._ftIngestSubmissions({ sub_neu: entry }) === 1, "die Vision wurde nicht verarbeitet");
+  ok(Object.keys(projects).length === before,
+    "aus dem oeffentlichen Vision Room ist ein Projekt entstanden");
 
-  // Derselbe Eingang ein zweites Mal: kein zweites Projekt.
-  win._ftIngestSubmissions({ sub_neu: entry });
-  ok(Object.values(projects).filter((p) => p.sourceVisionId === "sub_neu").length === 1,
-    "derselbe Vision-Eingang hat ein zweites Projekt angelegt");
+  const inquiries = Object.values(data.flowertech.inquiries || {});
+  ok(inquiries.length === 1, `es entstand keine Anfrage (${inquiries.length})`);
+  ok(inquiries[0].message.includes("Mitgliederverwaltung"), "die Idee fehlt an der Anfrage");
+  ok(inquiries[0].message.includes("Login"), "die Vision-Funktionen fehlen an der Anfrage");
+  ok(Object.values(data.entities.tasks).filter((t) => t.source === "flowertech-intake").length === 0,
+    "es entstand eine Fragebogen-Aufgabe, obwohl niemand geantwortet hat");
+
+  // Derselbe Eingang ein zweites Mal: keine zweite Anfrage, kein Projekt.
+  win._ftIngestSubmissions({ sub_neu2: entry });
+  ok(Object.values(data.flowertech.inquiries || {}).length === 1,
+    "derselbe Vision-Eingang hat eine zweite Anfrage angelegt");
+  ok(Object.keys(projects).length === before, "der zweite Eingang hat ein Projekt angelegt");
 }
 
 // ── 15. Die Beilage blockiert den Versand wirklich (Korrektur 2) ──────────
@@ -578,9 +603,35 @@ function renderAt(hash) {
   ok(win.__mails.length === 2, "eine Rechnung wird von der Beilagenpflicht blockiert");
 }
 
-// ── 22. Kundenseite entsteht bei JEDEM Anlageweg automatisch ──────────────
+/* Ein Projekt, das alles hat, was das Kundenportal zeigen soll. Wird von den
+   Freigabe-Pruefungen unten benutzt, damit dort die Freigabe geprueft wird und
+   nicht das Zusammensuchen der Inhalte. */
+function makeReleasable(win, projectId) {
+  const data = win.APP.state.data;
+  const ft = data.flowertech;
+  const project = data.entities.projects[projectId];
+  project.ftTemplate = { html: "<h1>Entwurf</h1>", updatedAt: "2026-08-08T10:00:00.000Z" };
+  ft.contentDocs = ft.contentDocs || {};
+  ft.contentDocs[projectId] = { blocks: [{ title: "Leistung", body: "Wir bauen.", enabled: true }] };
+  ft.contracts = ft.contracts || {};
+  ft.contracts[projectId] = { sections: [{ key: "parteien", title: "1", body: "Text", enabled: true }] };
+  ft.legalDocs = ft.legalDocs || {};
+  ft.legalDocs[projectId] = { agb: { sections: [{ key: "k", title: "AGB", body: "Text", enabled: true }] } };
+  ft.offers = (ft.offers || []).concat([{
+    id: "of_rel_" + projectId, projectId, status: "draft", history: [],
+    client: { company: "Muster AG" },
+    items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }],
+  }]);
+  return project;
+}
+
+// ── 22. Das Kundenportal entsteht bei KEINEM Anlageweg automatisch ────────
+// Der Kern der Korrektur: Phase 1 endet mit Projekt, Prompt und Aufgabe. Der
+// zweite Link entsteht erst durch eine ausdrueckliche Veroeffentlichung.
 {
-  const portalKeys = (win) => Object.keys(win.__portals);
+  // Der Recorder faengt jeden RTDB-Pfad; hier zaehlen nur Kundenportale.
+  const portalKeys = (win) => Object.keys(win.__portals)
+    .filter((k) => k.indexOf("flowertech/clientPortals/") === 0);
 
   // a) Manuell mit gewaehltem Weg
   {
@@ -588,16 +639,11 @@ function renderAt(hash) {
     win.APP.state.data.flowertech.ui = { newRoute: "offer_first" };
     win.document.getElementById = (id) => (id === "ftWfTitle" ? { value: "Manuell" } : { value: "" });
     win._ftCreateWorkflowProject();
-    const keys = portalKeys(win);
-    ok(keys.length === 1, `manueller Weg legte ${keys.length} Kundenseiten an statt genau einer`);
-    ok(/^flowertech\/clientPortals\/[A-Za-z0-9_-]{24,64}$/.test(keys[0]),
-      `der Snapshot-Pfad stimmt nicht: ${keys[0]}`);
-    ok(win.__portals[keys[0]].title === "Manuell", "der Snapshot trägt nicht den Projektnamen");
-    ok(!JSON.stringify(win.__portals[keys[0]]).includes("project_"),
-      "eine interne Projekt-ID steht im Snapshot");
+    ok(portalKeys(win).length === 0,
+      `beim Anlegen entstanden ${portalKeys(win).length} Kundenportale statt keinem`);
   }
 
-  // b) Anfrage → Projekt (mit ausdruecklicher Wegwahl)
+  // b) Anfrage → Projekt
   {
     const { win } = renderAt("#/flowertech");
     win.APP.state.data.flowertech.inquiries = {
@@ -605,25 +651,90 @@ function renderAt(hash) {
                message: "Wir hätten gerne eine neue Website mit Buchung." },
     };
     win._ftInquiryToProject("inq_1", "direct");
-    ok(portalKeys(win).length === 1, "aus einer Anfrage entsteht keine Kundenseite");
-    // Zweiter Klick: kein zweites Projekt, keine zweite Seite.
-    win._ftInquiryToProject("inq_1", "direct");
-    ok(portalKeys(win).length === 1, "der zweite Klick legte eine zweite Kundenseite an");
+    ok(portalKeys(win).length === 0, "aus einer Anfrage entsteht sofort ein Kundenportal");
   }
 
-  // c) Vision Room → Direktprojekt
+  // c) Fragebogen abgesendet: genau EIN Projekt, genau EINE Aufgabe,
+  //    aber KEIN Kundenportal.
   {
     const { win } = renderAt("#/flowertech");
-    const entry = { id: "sub_v", kind: "vision", token: null,
-      payload: { type: "Website", idea: "Neue Seite", features: ["Kontakt"], email: "v@muster.ch" } };
-    win._ftIngestSubmissions({ sub_v: entry });
-    ok(portalKeys(win).length === 1, "das Vision-Direktprojekt bekommt keine Kundenseite");
-    win._ftIngestSubmissions({ sub_v: entry });
-    ok(portalKeys(win).length === 1, "derselbe Vision-Eingang legte eine zweite Kundenseite an");
+    const data = win.APP.state.data;
+    win._ftNewIntake();
+    const intake = Object.values(data.flowertech.intakes)[0];
+    const answers = intake.questions.map((q) => ({
+      key: q.key,
+      answer: q.key === "email" ? "kundin@muster.ch"
+        : q.type === "date" ? "2026-10-01"
+        : q.type === "select" ? (q.options || [""])[0]
+        : "Antwort " + q.key,
+    }));
+    ok(win._ftIngestSubmissions({
+      sub_i: { id: "sub_i", kind: "intake", token: intake.inviteToken,
+               createdAt: "2026-08-08T10:00:00.000Z", payload: { answers } },
+    }) === 1, "der abgesendete Fragebogen wurde nicht verarbeitet");
+
+    const projects = Object.values(data.entities.projects);
+    ok(projects.length === 1, `es entstanden ${projects.length} Projekte statt genau einem`);
+    const intakeTasks = Object.values(data.entities.tasks).filter((t) => t.source === "flowertech-intake");
+    ok(intakeTasks.length === 1, `es entstanden ${intakeTasks.length} Aufgaben statt genau einer`);
+    ok(/Offertenanfrage/.test(intakeTasks[0].title),
+      `die Aufgabe heisst nicht „Offertenanfrage“: ${intakeTasks[0].title}`);
+    ok(portalKeys(win).length === 0,
+      "der abgesendete Fragebogen erzeugt sofort ein Kundenportal — Phase 2 vor Phase 2");
+    ok(projects[0].ftPrompt && projects[0].ftPrompt.text,
+      "das Projekt hat keinen individuellen Claude-Code-Prompt");
+
+    // Reload/Doppelklick: dieselbe Einreichung wirkt genau einmal.
+    win._ftIngestSubmissions({
+      sub_i2: { id: "sub_i", kind: "intake", token: intake.inviteToken, payload: { answers } },
+    });
+    ok(Object.values(data.entities.projects).length === 1, "ein zweites Absenden legte ein zweites Projekt an");
+    ok(Object.values(data.entities.tasks)
+      .filter((t) => t.source === "flowertech-intake").length === 1,
+      "ein zweites Absenden erzeugte eine zweite Aufgabe");
   }
 }
 
+// ── 22b. Erst die Freigabe erzeugt den Kundenportal-Link ──────────────────
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  data.entities.projects.prj_1 = { id: "prj_1", title: "Freigabe", projectType: "flowertech",
+    pipelineStage: "build", client: {} };
+  data.flowertech.shares = { prj_1: { portalToken: "p".repeat(28) } };
+  const key = "flowertech/clientPortals/" + "p".repeat(28);
+
+  // Unvollstaendig: die Freigabe verweigert sich, es wird nichts geschrieben.
+  win._ftReleaseClientPortal("prj_1");
+  ok(!win.__portals[key], "ein unvollstaendiges Kundenportal wurde veröffentlicht");
+  ok(win._ftClientPortalLink("prj_1") === "", "es gibt bereits einen Kundenportal-Link");
+  const fehlt = win._ftPortalRelease("prj_1").missing;
+  ok(fehlt.length === 5, `es werden ${fehlt.length} von 5 fehlenden Punkten benannt`);
+
+  // Vollstaendig, aber noch nicht freigegeben: weiterhin kein Link.
+  makeReleasable(win, "prj_1");
+  ok(win._ftPortalRelease("prj_1").ready, "die Vollstaendigkeit wird nicht erkannt");
+  ok(!win._ftPortalRelease("prj_1").published, "vollstaendig gilt bereits als veröffentlicht");
+  ok(win._ftClientPortalLink("prj_1") === "",
+    "ohne ausdrueckliche Freigabe existiert bereits ein Kundenportal-Link");
+  ok(!win.__portals[key], "ohne Freigabe wurde ein oeffentlicher Snapshot geschrieben");
+
+  // Freigabe: jetzt — und erst jetzt — entsteht der Link samt Snapshot.
+  win._ftReleaseClientPortal("prj_1");
+  ok(win.__portals[key], "nach der Freigabe fehlt der Snapshot");
+  ok(win.__portals[key].published === true, "der Snapshot weist sich nicht als veröffentlicht aus");
+  ok(win._ftClientPortalLink("prj_1") === "https://flowertech.ch/kunde.html?t=" + "p".repeat(28),
+    "nach der Freigabe fehlt der Kundenportal-Link");
+
+  // Zurueckziehen: der Link zeigt nichts mehr.
+  win.confirm = () => true;
+  win._ftUnpublishClientPortal("prj_1");
+  ok(!win.__portals[key], "das Zurueckziehen loescht den Snapshot nicht");
+  ok(win._ftClientPortalLink("prj_1") === "", "nach dem Zurueckziehen gibt es weiterhin einen Link");
+}
+
 // ── 23. Snapshot wird bei relevanten Änderungen nachgezogen ───────────────
+// … aber nur bei einem freigegebenen Portal.
 {
   const { win } = renderAt("#/flowertech");
   const data = win.APP.state.data;
@@ -632,9 +743,15 @@ function renderAt(hash) {
   data.flowertech.shares = { prj_1: { portalToken: "p".repeat(28) } };
   const key = "flowertech/clientPortals/" + "p".repeat(28);
 
+  // Ohne Freigabe zieht nichts nach — sonst entstuende der Snapshot durch die
+  // Hintertuer.
   win._ftSetProjectStage("prj_1", "build");
-  ok(win.__portals[key], "nach dem Phasenwechsel wurde kein Snapshot geschrieben");
-  ok(win.__portals[key].stageLabel === "Umsetzung", "die neue Phase steht nicht im Snapshot");
+  ok(!win.__portals[key], "ohne Freigabe wurde durch eine Aenderung ein Snapshot geschrieben");
+
+  makeReleasable(win, "prj_1");
+  win._ftReleaseClientPortal("prj_1");
+  ok(win.__portals[key], "nach der Freigabe fehlt der Snapshot");
+  ok(win.__portals[key].stageLabel === "Umsetzung", "die Phase steht nicht im Snapshot");
 
   win._ftSetProjectField("prj_1", "previewUrl", "https://vorschau.muster.ch");
   ok(win.__portals[key].previewUrl.startsWith("https://vorschau.muster.ch"),
@@ -658,7 +775,8 @@ function renderAt(hash) {
   data.entities.projects.prj_1 = { id: "prj_1", title: "R", projectType: "flowertech", pipelineStage: "build" };
   const alt = "a".repeat(28);
   data.flowertech.shares = { prj_1: { portalToken: alt } };
-  win._ftPublishClientPortal("prj_1");
+  makeReleasable(win, "prj_1");
+  win._ftReleaseClientPortal("prj_1");
   const altKey = "flowertech/clientPortals/" + alt;
   ok(win.__portals[altKey], "der erste Snapshot wurde nicht geschrieben");
 
@@ -669,7 +787,7 @@ function renderAt(hash) {
   ok(win.__portals["flowertech/clientPortals/" + neu], "unter dem neuen Token liegt kein Snapshot");
 }
 
-// ── 25. UI: Kundenseite statt „veröffentlichen" ───────────────────────────
+// ── 25. UI: das Kundenportal ist eine Entscheidung ────────────────────────
 {
   const source = fs.readFileSync(path.join(root, "public/flowertech.js"), "utf8");
   ok(/function publishClientPortal\(projectId\)/.test(source), "die zentrale Veröffentlichung fehlt");
@@ -678,10 +796,15 @@ function renderAt(hash) {
     "der Snapshot wird nicht mehr über die geprüfte Positivliste im Kern gebaut");
   ok(!/projectId: projectId,\s*\n\s*title: project\.title/.test(source),
     "der alte Snapshot mit interner Projekt-ID ist zurück");
-  ok(/_ftClientPortalLink/.test(source), "der Kundenlink ist nicht abrufbar");
+  ok(/_ftClientPortalLink/.test(source), "der Kundenportal-Link ist nicht abrufbar");
   // Der Link wird nie automatisch verschickt.
   ok(!/gmailCompose[\s\S]{0,200}clientPortalUrl/.test(source),
-    "der Kundenlink wird automatisch per Mail verschickt");
+    "der Kundenportal-Link wird automatisch per Mail verschickt");
+  // Die Begriffe der zwei Phasen stehen in der Oberflaeche.
+  ok(/Fragebogen-Link kopieren/.test(source), "an der Anfrage fehlt „Fragebogen-Link kopieren“");
+  ok(/Kundendaten &amp; Vision Room – noch keine Vorschau/.test(source),
+    "der eindeutige Hilfetext zum Fragebogen-Link fehlt");
+  ok(/Kundenportal veröffentlichen/.test(source), "die bewusste Veröffentlichung fehlt in der Oberfläche");
 }
 
 console.log(`flowertech topnav runtime: ok (${checks} Pruefungen)`);
