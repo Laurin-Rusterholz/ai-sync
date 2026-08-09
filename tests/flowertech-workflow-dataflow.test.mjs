@@ -741,4 +741,62 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
   eq(W.clientStageProgress("discovery").label, "Bestandesaufnahme", "alte Phasen brechen den Fortschritt");
 }
 
+// ── 14. Prompt-Modi, insbesondere der Beispielmodus ────────────────────────
+// Vorher gab es nur "setze die offenen Punkte um". Fuer ein frisches Projekt
+// ohne Aenderungswuensche liess sich damit kein brauchbarer Prompt bauen.
+{
+  const context = {
+    project: { title: "Website Gärtnerei", deliveryType: "website", budget: 4500,
+      client: { company: "Gärtnerei Muster", email: "anna@muster.ch" } },
+    briefing,
+    changeRequests: [{ title: "Bild tauschen", status: "new", detail: "Titelbild" }],
+    notes: [{ text: "interne Notiz" }],
+  };
+  const include = {};
+  W.PROMPT_DATA_OPTIONS.forEach((o) => { include[o.key] = o.default; });
+
+  eq(W.PROMPT_MODES.map((m) => m.key), ["demo", "implement", "changes", "review"],
+    "die Prompt-Modi stimmen nicht");
+  for (const m of W.PROMPT_MODES) {
+    ok(m.label && m.hint && m.instruction, `Modus ${m.key} ist unvollstaendig`);
+  }
+
+  // Beispielmodus: aus dem Bedarf einen zeigbaren Entwurf.
+  const demo = W.buildClaudePrompt(context, include, { mode: "demo" });
+  ok(/BEISPIEL-Entwurf/.test(demo), "der Beispielmodus verlangt keinen Entwurf");
+  ok(/Platzhalter/.test(demo), "der Beispielmodus verlangt keine Platzhalter-Inhalte");
+  ok(/Keine echten Kundendaten/.test(demo), "der Beispielmodus erlaubt echte Kundendaten");
+  ok(/Handy, Tablet und Computer/.test(demo), "der Beispielmodus fordert keine Darstellung auf allen Geraeten");
+  // Der Bedarf ist der ganze Auftrag — Aenderungswuensche waeren nur Rauschen.
+  ok(!/Änderungswünsche/.test(demo), "der Beispielmodus schleppt Änderungswünsche mit");
+  ok(/Kontaktformular/.test(demo), "der Beispielmodus überträgt die gewünschten Funktionen nicht");
+  ok(/Startseite/.test(demo), "der Beispielmodus überträgt die Seiten nicht");
+  // Datensparsamkeit gilt auch hier.
+  ok(!/anna@muster\.ch/.test(demo), "der Beispielmodus überträgt ungefragt Kundendaten");
+  ok(!/4500/.test(demo), "der Beispielmodus überträgt ungefragt das Budget");
+
+  // Die anderen Modi.
+  const implement = W.buildClaudePrompt(context, include, { mode: "implement" });
+  ok(/Setze die offenen Punkte um/.test(implement), "der Umsetzungsmodus fehlt");
+  ok(/Bild tauschen/.test(implement), "der Umsetzungsmodus laesst die Änderungswünsche weg");
+
+  const changes = W.buildClaudePrompt(context, include, { mode: "changes" });
+  ok(/ausschliesslich die offenen Änderungswünsche/.test(changes), "der Änderungsmodus fehlt");
+  ok(/NICHT um/.test(changes), "der Änderungsmodus erlaubt stillschweigende Umfangserweiterungen");
+
+  const review = W.buildClaudePrompt(context, include, { mode: "review" });
+  ok(/ohne etwas zu ändern/.test(review), "der Prüfmodus ändert am Stand");
+
+  // Jeder Modus liefert eine andere Anweisung.
+  const enden = [demo, implement, changes, review].map((p) => p.slice(p.indexOf("## Was ich von dir brauche")));
+  eq(new Set(enden).size, 4, "zwei Modi erzeugen denselben Auftrag");
+
+  // Ohne Modusangabe bleibt das bisherige Verhalten.
+  eq(W.buildClaudePrompt(context, include), implement,
+    "ohne Modusangabe aendert sich der Prompt");
+  // Ein unbekannter Modus faellt sauber zurueck.
+  eq(W.promptModeInstruction("gibtesnicht"), W.promptModeInstruction("implement"),
+    "ein unbekannter Modus faellt nicht auf den Umsetzungsmodus zurueck");
+}
+
 console.log(`flowertech workflow dataflow: ok (${checks} Pruefungen)`);

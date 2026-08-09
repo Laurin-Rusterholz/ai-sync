@@ -1704,6 +1704,57 @@ export function buildMessageDraft(key, vars) {
 /* ── Claude-Code-Prompt ──────────────────────────────────────────────────── */
 // Datensparsam: Der Aufrufer wählt, was übertragen wird. Ohne Auswahl bleiben
 // Kundendaten und Preise draussen.
+// Wofuer der Prompt gedacht ist. Ohne Modus liess sich nur "setze die offenen
+// Punkte um" erzeugen — fuer ein frisches Projekt ohne Aenderungswuensche
+// nutzlos. Der Beispielmodus baut aus dem Bedarf einen zeigbaren Entwurf.
+export const PROMPT_MODES = [
+  {
+    key: "demo",
+    label: "Beispiel bauen",
+    hint: "Aus dem Bedarf einen zeigbaren Entwurf erzeugen — noch ohne echte Inhalte.",
+    instruction:
+      "Baue daraus einen vollständigen, lauffähigen BEISPIEL-Entwurf, den ich der Kundschaft zeigen kann.\n\n" +
+      "- Alle beschriebenen Seiten bzw. Bereiche und Funktionen sind angelegt und bedienbar.\n" +
+      "- Inhalte sind Platzhalter: erfundene, aber zur Branche passende Texte und Bilder. " +
+      "Markiere sie sichtbar als Beispiel, damit niemand sie für endgültig hält.\n" +
+      "- Keine echten Kundendaten, keine echten Preise, keine erfundenen Referenzen oder Bewertungen.\n" +
+      "- Läuft eigenständig und ohne Konten oder Schlüssel; externe Dienste werden nur angedeutet.\n" +
+      "- Funktioniert auf Handy, Tablet und Computer.\n" +
+      "- Schreib mir am Schluss in drei bis fünf Sätzen, was du angenommen hast und welche " +
+      "Entscheidungen die Kundschaft noch treffen muss.",
+  },
+  {
+    key: "implement",
+    label: "Umsetzen",
+    hint: "Die offenen Punkte im bestehenden Projekt umsetzen.",
+    instruction:
+      "Setze die offenen Punkte um. Halte dich an den beschriebenen Umfang, frage nach, bevor du " +
+      "den Umfang erweiterst, und erkläre Änderungen in einem Satz pro Punkt.",
+  },
+  {
+    key: "changes",
+    label: "Nur Änderungswünsche",
+    hint: "Ausschliesslich die offenen Änderungswünsche abarbeiten.",
+    instruction:
+      "Arbeite ausschliesslich die offenen Änderungswünsche ab — nichts darüber hinaus. Wenn ein Wunsch " +
+      "unklar ist oder den vereinbarten Umfang sprengt, setze ihn NICHT um, sondern schreib mir, was du " +
+      "wissen musst und was er kosten würde.",
+  },
+  {
+    key: "review",
+    label: "Prüfen",
+    hint: "Den aktuellen Stand gegen den Bedarf prüfen, ohne etwas zu ändern.",
+    instruction:
+      "Prüfe den aktuellen Stand gegen den beschriebenen Bedarf, ohne etwas zu ändern. Nenne mir, was " +
+      "fehlt, was nicht zum Bedarf passt und was der Kundschaft auffallen wird — nach Wichtigkeit sortiert.",
+  },
+];
+
+export function promptModeInstruction(mode) {
+  const hit = PROMPT_MODES.find((m) => m.key === mode);
+  return (hit || PROMPT_MODES.find((m) => m.key === "implement")).instruction;
+}
+
 export const PROMPT_DATA_OPTIONS = [
   { key: "briefing", label: "Briefing (Ziel, Zielgruppe, Funktionen)", default: true },
   { key: "changes", label: "Offene Änderungswünsche", default: true },
@@ -1713,8 +1764,15 @@ export const PROMPT_DATA_OPTIONS = [
   { key: "internal", label: "Interne Notizen", default: false },
 ];
 
-export function buildClaudePrompt({ project = {}, briefing = {}, changeRequests = [], notes = [] } = {}, include = {}) {
+export function buildClaudePrompt(
+  { project = {}, briefing = {}, changeRequests = [], notes = [] } = {},
+  include = {},
+  { mode = "implement" } = {}
+) {
   const on = (key) => include[key] === true;
+  // Im Beispielmodus gibt es noch nichts umzusetzen — der Bedarf ist der
+  // ganze Auftrag. Aenderungswuensche waeren dort nur Rauschen.
+  const isDemo = mode === "demo";
   const type = deliveryLabel(project.deliveryType || briefing.deliveryType);
   const out = [];
   out.push("# Auftrag: " + (project.title || "FlowerTech-Projekt"));
@@ -1756,7 +1814,7 @@ export function buildClaudePrompt({ project = {}, briefing = {}, changeRequests 
     out.push("");
   }
 
-  if (on("changes")) {
+  if (on("changes") && !isDemo) {
     const openChanges = (changeRequests || []).filter((c) => c.status !== "done" && c.status !== "rejected");
     out.push("## Offene Änderungswünsche (" + openChanges.length + ")");
     if (!openChanges.length) out.push("(keine)");
@@ -1781,8 +1839,7 @@ export function buildClaudePrompt({ project = {}, briefing = {}, changeRequests 
   }
 
   out.push("## Was ich von dir brauche");
-  out.push("Setze die offenen Punkte um. Halte dich an den beschriebenen Umfang, frage nach, bevor du " +
-    "den Umfang erweiterst, und erkläre Änderungen in einem Satz pro Punkt.");
+  out.push(promptModeInstruction(mode));
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
 
@@ -2063,7 +2120,7 @@ const API = {
   CONTRACT_SECTIONS, CONTRACT_TITLE_TEMPLATE, CONTRACT_INTRO_NOTICE, buildContractDraft, contractToText,
   LEGAL_TEMPLATES, buildLegalDraft,
   MESSAGE_TEMPLATES, buildMessageDraft,
-  PROMPT_DATA_OPTIONS, buildClaudePrompt,
+  PROMPT_MODES, promptModeInstruction, PROMPT_DATA_OPTIONS, buildClaudePrompt,
   isShareToken, formUrl, portalUrl,
   CLIENT_PORTAL_BASE, clientPortalUrl, intakeFormUrl, clientStageProgress, buildClientSnapshot,
   clientSafeUrl: safeUrl, CLIENT_SNAPSHOT_FORBIDDEN_KEYS,

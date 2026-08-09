@@ -2914,6 +2914,7 @@
     ft.legalDocs = ft.legalDocs && typeof ft.legalDocs === "object" ? ft.legalDocs : {};
     ft.shares = ft.shares && typeof ft.shares === "object" ? ft.shares : {};
     ft.promptPrefs = ft.promptPrefs && typeof ft.promptPrefs === "object" ? ft.promptPrefs : {};
+    ft.promptModes = ft.promptModes && typeof ft.promptModes === "object" ? ft.promptModes : {};
     return ft;
   }
 
@@ -3540,6 +3541,28 @@
     return include;
   }
 
+  window._ftSetPromptMode = function (projectId, mode) {
+    var ft = wf();
+    if (!ft) return;
+    ft.promptModes[projectId] = mode;
+    save();
+    rerender();
+  };
+
+  function promptMode(projectId) {
+    var ft = wf();
+    var stored = ft && ft.promptModes[projectId];
+    var core = W();
+    var known = core && core.PROMPT_MODES.some(function (m) { return m.key === stored; });
+    if (known) return stored;
+    // Ohne Wahl: Ist noch nichts gebaut, ist "Beispiel bauen" der sinnvolle
+    // Start — sonst das Umsetzen.
+    var hasChanges = changesOf(projectId).some(function (c) {
+      return c.status !== "done" && c.status !== "rejected";
+    });
+    return hasChanges ? "implement" : "demo";
+  }
+
   function claudePromptText(projectId) {
     var core = W();
     if (!core) return "";
@@ -3548,7 +3571,7 @@
       briefing: briefingOf(projectId) || {},
       changeRequests: changesOf(projectId),
       notes: (wf() ? wf().notes : []).filter(function (n) { return n.projectId === projectId; }),
-    }, promptInclude(projectId));
+    }, promptInclude(projectId), { mode: promptMode(projectId) });
   }
   window._ftClaudePrompt = claudePromptText;
 
@@ -4708,7 +4731,19 @@
         ' onchange="window._ftTogglePromptData(\'' + attr(projectId) + "','" + opt.key + '\',this.checked)"> ' +
         esc(opt.label) + "</label>";
     }).join("");
+    var mode = promptMode(projectId);
+    var modeButtons = core.PROMPT_MODES.map(function (m) {
+      return '<button class="ft-mode' + (mode === m.key ? " on" : "") + '" title="' + attr(m.hint) +
+        '" onclick="window._ftSetPromptMode(\'' + attr(projectId) + "','" + m.key + '\')">' +
+        esc(m.label) + "</button>";
+    }).join("");
+    var activeMode = core.PROMPT_MODES.find(function (m) { return m.key === mode; });
+
     return '<div class="card p-4"><h3>Claude-Code-Prompt</h3><div class="sep"></div>' +
+      '<div class="mini">Wofür ist der Prompt?</div>' +
+      '<div class="ft-modes mt-2">' + modeButtons + "</div>" +
+      '<div class="mini mt-1">' + esc(activeMode ? activeMode.hint : "") + "</div>" +
+      '<div class="sep"></div>' +
       '<div class="mini">Wähle bewusst aus, welche Daten in den Prompt wandern. Kundendaten, Preise und ' +
       "interne Notizen sind standardmässig NICHT enthalten.</div>" +
       '<div class="ft-checks mt-2">' + options + "</div>" +
@@ -5007,6 +5042,11 @@
     ".ft-qa p{margin:3px 0 0;white-space:pre-wrap;font-size:12.5px;color:var(--text2)}" +
     "@media(max-width:780px){.ft-q-meta{grid-template-columns:1fr}.ft-preview{height:320px}}" +
     ".ft-addr{display:flex;flex-wrap:wrap;gap:6px}" +
+    ".ft-modes{display:flex;flex-wrap:wrap;gap:6px}" +
+    ".ft-mode{border:1px solid var(--border);background:var(--panel2);color:var(--muted);border-radius:9px;" +
+      "padding:6px 12px;cursor:pointer;font-size:12.5px}" +
+    ".ft-mode:hover{background:var(--hover);color:var(--text)}" +
+    ".ft-mode.on{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--ft),var(--ft2))}" +
     ".ft-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}" +
     "@media(max-width:780px){.ft-brief-grid,.ft-checks{grid-template-columns:1fr}" +
       ".ft-cr{grid-template-columns:1fr;align-items:stretch}.ft-link-row span{min-width:0}}" +
