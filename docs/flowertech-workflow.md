@@ -276,7 +276,10 @@ unverändert; alles wird beim *Lesen* abgeleitet:
 | Fall | Verhalten |
 | --- | --- |
 | Projekt ohne `ftRoute` | Weg wird gelesen (Offerte vorhanden → *Offerte zuerst*, sonst *Direktprojekt*) |
-| Projekt mit `portalToken`, aber ohne `portalReleased` | gilt als **nicht veröffentlicht**; der Token bleibt erhalten, der Snapshot wird erst mit der Freigabe geschrieben |
+| Projekt mit `portalToken` **und** `publishedAt` (Altbestand) | zählt als **erteilte Freigabe** — der bereits verschickte Link funktioniert weiter und wird weiter nachgezogen, sofern der Vorgang vollständig ist. Rein lesend abgeleitet, es wird nichts geschrieben. |
+| Altbestand, aber **unvollständig** | bleibt draussen: kein Link, keine Aktualisierung. Der alte Snapshot bleibt lesbar, wird aber nicht mehr überschrieben — genau das halb leere Portal, das diese Trennung abschafft. |
+| Projekt mit `portalReleased: false` | ausdrücklich zurückgezogen; ein vorhandenes `publishedAt` hebt das **nicht** auf |
+| Neues Projekt ohne `publishedAt` | gilt als **nicht veröffentlicht**; der Token darf vorbereitet sein, der Snapshot entsteht erst mit der Freigabe |
 | Bereits veröffentlichter Snapshot | bleibt lesbar; `published` fehlt dort und wird von der Kundenseite als „veröffentlicht" gelesen |
 | Antworten als Liste **oder** als Zuordnung | beide Formen laufen über `intakeAnswerMap()` zusammen |
 

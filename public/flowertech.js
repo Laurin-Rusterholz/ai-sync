@@ -358,7 +358,7 @@
     return created;
   }
 
-  // Eingänge aus den geteilten Kundenlinks verarbeiten. Ein Eintrag wirkt genau
+  // Eingänge aus den geteilten Links verarbeiten. Ein Eintrag wirkt genau
   // einmal (Idempotenz-Schlüssel) und nur, wenn sein Token zu einem Projekt
   // gehört. Unbekannte Token werden ignoriert, nicht geraten.
   function ingestSubmissions(raw) {
@@ -371,7 +371,7 @@
     Object.keys(ft.shares || {}).forEach(function (projectId) {
       var share = ft.shares[projectId] || {};
       // Jeder Token oeffnet genau die Wege, fuer die er gedacht ist — nicht
-      // mehr. Der Kundenlink traegt Aenderungswunsch UND Offertenanfrage,
+      // mehr. Der Portaltoken traegt Aenderungswunsch UND Offertenanfrage,
       // weil beides auf derselben Kundenseite steht.
       if (share.formToken) byToken[share.formToken] = { projectId: projectId, kinds: ["briefing"] };
       if (share.portalToken) byToken[share.portalToken] = { projectId: projectId, kinds: ["change", "quote"] };
@@ -379,7 +379,7 @@
       // nie und liefe ins Leere.
       if (share.visionToken) byToken[share.visionToken] = { projectId: projectId, kinds: ["vision", "quote"] };
     });
-    // Der Kundenlink traegt zusaetzlich Zustimmung und Rueckantwort.
+    // Der Portaltoken traegt zusaetzlich Zustimmung und Rueckantwort.
     Object.keys(byToken).forEach(function (token) {
       if (byToken[token].kinds.indexOf("change") >= 0) {
         byToken[token].kinds = byToken[token].kinds.concat(["terms", "answer"]);
@@ -574,7 +574,7 @@
     var project = projectById(projectId);
     if (!core || !ft || !project) return false;
     var quote = core.normalizeQuoteRequest(payload, { now: now() });
-    // Ueber den Kundenlink ist der Vorgang bereits zugeordnet — die E-Mail ist
+    // Ueber den Portaltoken ist der Vorgang bereits zugeordnet — die E-Mail ist
     // dort freiwillig. Pflicht ist allein der Bedarf.
     if (!core.quoteRequestIsUsable(quote)) return false;
 
@@ -1948,7 +1948,7 @@
             ? '<span class="mini">Fehlende Angaben holst du über den Fragebogen-Link der Kundenanfrage ' +
               "(Reiter „Kundenanfragen\u201c) — das Kundenportal kommt erst danach.</span>"
             : '<span class="mini">Diese Offerte gehört zu keinem Projekt. Ordne sie unten einem Projekt zu ' +
-              "oder bearbeite die zugehörige Anfrage — einen Kundenlink gibt es hier nicht.</span>") +
+              "oder bearbeite die zugehörige Anfrage — hier wird kein Link erfunden.</span>") +
           "</div>";
       }
     }
@@ -1978,8 +1978,8 @@
 
       deadlineWarning +
       completeness +
-      // Der Kundenlink gehoert auch hierher: Wer an der Offerte sitzt, will
-      // ihn kopieren, ohne den Vorgang zu wechseln.
+      // Der Stand des Kundenportals gehoert auch hierher: Wer an der Offerte
+      // sitzt, will ihn sehen, ohne den Vorgang zu wechseln.
       (doc.projectId
         ? '<div class="ft-linkbar">' + clientLinkRowHtml(doc.projectId, "Kundenportal-Link") + "</div>"
         : '<div class="mini mt-2">Dieses Dokument gehört noch zu keinem Projekt — ' +
@@ -4212,8 +4212,16 @@
       }),
       hasContract: (blocksOf(contractOf(projectId)) || []).some(function (b) { return String(b.body || "").trim(); }),
       hasTerms: !!String((termsForProject(projectId) || {}).body || "").trim(),
-      released: share.portalReleased === true,
-      releasedAt: share.portalReleasedAt || "",
+      // Abwärtskompatibilität, rein lesend: Vorgänge aus der Zeit vor dieser
+      // Trennung wurden beim Anlegen automatisch veröffentlicht. Ihr Portal ist
+      // bei der Kundschaft bereits im Umlauf — es darf nicht dadurch dunkel
+      // werden, dass es den Knopf damals noch nicht gab. Ein vorhandenes
+      // publishedAt zählt deshalb als erteilte Freigabe. Vollständig sein muss
+      // der Vorgang trotzdem; ein halb leeres Portal ist genau das, was diese
+      // Trennung abschafft. Es wird kein Datum geschrieben.
+      released: share.portalReleased === true
+        || (share.portalReleased !== false && !!share.publishedAt),
+      releasedAt: share.portalReleasedAt || share.publishedAt || "",
     });
   }
   window._ftPortalRelease = portalRelease;

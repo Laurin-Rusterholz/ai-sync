@@ -590,7 +590,7 @@ export function normalizeQuoteRequest(raw, { now = new Date().toISOString() } = 
 
 // Ohne Rueckkanal keine Anfrage: Kommt sie ueber den Vision Room, kennt
 // FlowerTech die Person noch gar nicht — dort ist die E-Mail deshalb Pflicht.
-// Ueber den Projekt-Kundenlink ist der Vorgang bereits zugeordnet; dann ist
+// Ueber den Portaltoken des Projekts ist der Vorgang bereits zugeordnet; dann ist
 // sie freiwillig.
 export function quoteRequestIsUsable(quote, { requireEmail = false } = {}) {
   if (!quote || !String(quote.need || "").trim()) return false;
@@ -1429,7 +1429,7 @@ export function nextProcessSteps({
     steps.push({
       key: "quote",
       label: "Offertenanfrage bearbeiten",
-      hint: "Über den Kundenlink eingegangen — Angaben prüfen und Offerte erstellen.",
+      hint: "Über das Kundenportal eingegangen — Angaben prüfen und Offerte erstellen.",
       count: openQuotes.length,
       items: openQuotes.map((p) => ({
         id: p.id,
