@@ -208,8 +208,24 @@ zusätzlich normal im Posteingang; die Projektseite verlinkt sie nur.
 ## 7. Claude-Code-Prompt
 
 Reiter *Claude-Prompt* erzeugt aus Briefing und offenen Änderungswünschen einen
-fertigen Prompt mit Kopierfunktion. Was übertragen wird, ist auswählbar —
-**Kundendaten, Preise und interne Notizen sind standardmässig ausgeschaltet.**
+fertigen Prompt mit Kopierfunktion. Zwei Dinge sind wählbar:
+
+**Wofür der Prompt ist** (`PROMPT_MODES`):
+
+| Modus | Auftrag an Claude Code |
+| --- | --- |
+| **Beispiel bauen** | Aus dem Bedarf einen vollständigen, lauffähigen Entwurf bauen, den man der Kundschaft zeigen kann — Platzhalter-Inhalte sichtbar als Beispiel markiert, keine echten Kundendaten, Preise oder erfundenen Referenzen, läuft ohne Konten und Schlüssel, auf allen Geräten. |
+| Umsetzen | Die offenen Punkte im bestehenden Projekt umsetzen. |
+| Nur Änderungswünsche | Ausschliesslich die offenen Wünsche, nichts darüber hinaus. |
+| Prüfen | Den Stand gegen den Bedarf prüfen, ohne etwas zu ändern. |
+
+Ohne eigene Wahl schlägt das Projekt den passenden Modus vor: **Beispiel bauen**,
+solange keine offenen Änderungswünsche existieren, sonst **Umsetzen**. Im
+Beispielmodus bleiben Änderungswünsche bewusst draussen — der Bedarf ist dort
+der ganze Auftrag.
+
+**Welche Daten mitgehen** — **Kundendaten, Preise und interne Notizen sind
+standardmässig ausgeschaltet**, in jedem Modus.
 
 ## 8. n8n: „FlowerTech: Lead → Projekt & Aufgaben"
 
