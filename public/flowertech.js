@@ -4212,8 +4212,16 @@
       }),
       hasContract: (blocksOf(contractOf(projectId)) || []).some(function (b) { return String(b.body || "").trim(); }),
       hasTerms: !!String((termsForProject(projectId) || {}).body || "").trim(),
-      released: share.portalReleased === true,
-      releasedAt: share.portalReleasedAt || "",
+      // Abwärtskompatibilität, rein lesend: Vorgänge aus der Zeit vor dieser
+      // Trennung wurden beim Anlegen automatisch veröffentlicht. Ihr Portal ist
+      // bei der Kundschaft bereits im Umlauf — es darf nicht dadurch dunkel
+      // werden, dass es den Knopf damals noch nicht gab. Ein vorhandenes
+      // publishedAt zählt deshalb als erteilte Freigabe. Vollständig sein muss
+      // der Vorgang trotzdem; ein halb leeres Portal ist genau das, was diese
+      // Trennung abschafft. Es wird kein Datum geschrieben.
+      released: share.portalReleased === true
+        || (share.portalReleased !== false && !!share.publishedAt),
+      releasedAt: share.portalReleasedAt || share.publishedAt || "",
     });
   }
   window._ftPortalRelease = portalRelease;

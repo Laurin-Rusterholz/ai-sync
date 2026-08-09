@@ -733,6 +733,48 @@ function makeReleasable(win, projectId) {
   ok(win._ftClientPortalLink("prj_1") === "", "nach dem Zurueckziehen gibt es weiterhin einen Link");
 }
 
+// ── 22c. Bestehende Vorgänge werden nicht dunkel ─────────────────────────
+// Vorgänge aus der Zeit vor der Trennung wurden beim Anlegen automatisch
+// veröffentlicht; ihr Link ist bei der Kundschaft im Umlauf. Er darf nicht
+// deshalb aufhören zu funktionieren, weil es den Freigabeknopf damals noch
+// nicht gab. Rein lesend abgeleitet — es wird nichts migriert.
+{
+  const { win } = renderAt("#/flowertech");
+  const data = win.APP.state.data;
+  data.entities.projects.prj_alt = { id: "prj_alt", title: "Schon beim Kunden",
+    projectType: "flowertech", pipelineStage: "build", client: {} };
+  // So sah ein Vorgang unter dem alten Code aus: Token und publishedAt, aber
+  // kein portalReleased.
+  data.flowertech.shares = { prj_alt: { portalToken: "p".repeat(28), publishedAt: "2026-08-01T09:00:00.000Z" } };
+  makeReleasable(win, "prj_alt");
+
+  ok(win._ftPortalRelease("prj_alt").published,
+    "ein bereits veröffentlichter Vorgang gilt plötzlich als unveröffentlicht");
+  ok(win._ftClientPortalLink("prj_alt") === "https://flowertech.ch/kunde.html?t=" + "p".repeat(28),
+    "der bereits verschickte Kundenportal-Link funktioniert nicht mehr");
+
+  // Er zieht auch weiterhin nach.
+  win._ftSetProjectStage("prj_alt", "approval");
+  ok(win.__portals["flowertech/clientPortals/" + "p".repeat(28)],
+    "ein bestehender Vorgang wird nicht mehr aktualisiert");
+
+  // Ein zurückgezogener Vorgang bleibt zurückgezogen — publishedAt hebt das
+  // ausdrückliche Nein nicht auf.
+  data.flowertech.shares.prj_alt.portalReleased = false;
+  ok(!win._ftPortalRelease("prj_alt").published,
+    "ein ausdrücklich zurückgezogenes Portal lebt wegen publishedAt wieder auf");
+
+  // Ein unvollständiger Altvorgang bleibt draussen: genau das halb leere
+  // Portal, das diese Trennung abschafft.
+  data.entities.projects.prj_leer = { id: "prj_leer", title: "Alt und leer",
+    projectType: "flowertech", pipelineStage: "lead", client: {} };
+  data.flowertech.shares.prj_leer = { portalToken: "q".repeat(28), publishedAt: "2026-08-01T09:00:00.000Z" };
+  ok(!win._ftPortalRelease("prj_leer").published,
+    "ein leerer Altvorgang gilt weiterhin als veröffentlicht");
+  ok(win._ftClientPortalLink("prj_leer") === "",
+    "ein leerer Altvorgang liefert weiterhin einen Kundenportal-Link");
+}
+
 // ── 23. Snapshot wird bei relevanten Änderungen nachgezogen ───────────────
 // … aber nur bei einem freigegebenen Portal.
 {
