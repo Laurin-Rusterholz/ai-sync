@@ -352,6 +352,41 @@ const answersFor = (win, intakeId, values) => {
   return CORE.normalizeIntakeAnswers(intake.questions, values).answers;
 };
 
+/* Jede Pflichtfrage beantwortet — sonst prüft der Test die Pflichtprüfung
+   statt das, was er prüfen will. Einzelne Werte lassen sich überschreiben. */
+const vollstaendig = (win, intakeId, overrides = {}) => {
+  const intake = win.APP.state.data.flowertech.intakes[intakeId];
+  const values = {};
+  intake.questions.forEach((q) => {
+    values[q.key] = q.type === "date" ? "2026-10-01"
+      : q.type === "email" ? "kundin@muster.ch"
+      : q.type === "select" ? (q.options || [""])[0]
+      : "Antwort " + q.key;
+  });
+  return answersFor(win, intakeId, Object.assign(values, overrides));
+};
+
+/* Ein Projekt, das alles hat, was das Kundenportal zeigt — damit die Freigabe
+   geprüft werden kann und nicht das Zusammensuchen der Inhalte. */
+const freigebbarMachen = (win, projectId) => {
+  const ft = win.APP.state.data.flowertech;
+  const project = win.APP.state.data.entities.projects[projectId];
+  if (project && !(project.ftTemplate && project.ftTemplate.html)) {
+    project.ftTemplate = { html: "<h1>Entwurf</h1>", updatedAt: "2026-08-08T10:00:00.000Z" };
+  }
+  ft.contentDocs = ft.contentDocs || {};
+  ft.contentDocs[projectId] = { blocks: [{ title: "Leistung", body: "Wir bauen.", enabled: true }] };
+  ft.contracts = ft.contracts || {};
+  ft.contracts[projectId] = { sections: [{ key: "parteien", title: "1", body: "Text", enabled: true }] };
+  ft.offers = (ft.offers || []).concat([{
+    id: "of_" + projectId, projectId, status: "draft", history: [],
+    client: { company: "Muster AG" },
+    items: [{ id: "it_1", description: "Website", qty: 1, price: 4500 }],
+  }]);
+  win._ftBuildLegal(projectId, "agb", true);
+  win._ftReleaseClientPortal(projectId);
+};
+
 // ── 9. Anlegen: ein Fragebogen, kein Projekt ─────────────────────────────
 {
   const { win, data, written } = makeSandbox();
@@ -408,9 +443,17 @@ const answersFor = (win, intakeId, values) => {
     payload: {
       intakeTitle: intake.title,
       answers: answersFor(win, intakeId, {
-        company: "Beiz AG", name: "Anna Muster", email: "anna@beiz.ch", phone: "079 000 00 00",
+        projekt: "Beiz AG", company: "Beiz AG", name: "Anna Muster", email: "anna@beiz.ch",
+        phone: "079 000 00 00", adresse: "Bahnhofstrasse 1, 8000 Zürich",
         kind: "Website", need: "Website mit Speisekarte und Reservation",
-        features: "Speisekarte\nReservation", budget: "4200", deadline: "2026-10-01",
+        "website-url": "https://alt.beiz.ch", iststand: "Alte WordPress-Seite, sehr langsam",
+        anbieter: "Webagentur Muster", "bisheriger-preis": "1800",
+        features: "Speisekarte\nReservation", pages: "Startseite\nKontakt",
+        design: "Warm, Holz, viel Bild", content: "Bilder vorhanden, Texte fehlen",
+        budget: "4200", deadline: "2026-10-01",
+        fragen: "Wie lange dauert das?",
+        "vision-idee": "Gäste sollen direkt einen Tisch reservieren",
+        "vision-funktionen": "Tischreservation\nSpeisekarte digital",
       }),
     },
   };
@@ -442,9 +485,35 @@ const answersFor = (win, intakeId, values) => {
   ok((project.ftTemplate.html || "").includes("<!doctype html>"), "es gibt keine Standardvorlage");
   ok(project.ftPrompt.text.includes("Speisekarte"), "der Prompt enthält die Antworten nicht");
 
-  // Das Kundenportal ist veröffentlicht.
-  const portalToken = data.flowertech.shares[project.id].portalToken;
-  ok(written["flowertech/clientPortals/" + portalToken], "das Kundenportal wurde nicht veröffentlicht");
+  // Der Iststand der bisherigen Lösung haengt am Projekt.
+  ok(project.ftCurrentUrl === "https://alt.beiz.ch", "die bisherige Website fehlt am Projekt");
+  ok(project.ftCurrentProvider === "Webagentur Muster", "der bisherige Anbieter fehlt am Projekt");
+  ok(project.currentProviderPrice === 1800, "der bisher bezahlte Preis fehlt am Projekt");
+
+  // Der Vision Room gehoert zum selben Briefing — kein zweiter Vorgang.
+  ok(project.ftVision && project.ftVision.idea.includes("Tisch"),
+    "die Vision-Room-Idee haengt nicht am Projekt");
+  ok((project.ftVision.features || []).includes("Tischreservation"),
+    "die Vision-Room-Funktionen fehlen am Projekt");
+
+  // Der Prompt ist vollständig: alle website-relevanten Wünsche stehen drin.
+  const prompt = project.ftPrompt.text;
+  ["https://alt.beiz.ch", "Webagentur Muster", "1800.00", "4200.00", "2026-10-01",
+   "Tischreservation", "Warm, Holz", "Bilder vorhanden", "Wie lange dauert das?",
+  ].forEach((teil) => {
+    ok(prompt.includes(teil), `im Prompt fehlt: ${teil}`);
+  });
+  // Kontaktdaten bleiben ohne ausdrueckliche Wahl draussen.
+  ok(!prompt.includes("anna@beiz.ch"), "die E-Mail steht ungefragt im Code-Prompt");
+  ok(!prompt.includes("Bahnhofstrasse"), "die Adresse steht ungefragt im Code-Prompt");
+  ok(prompt.includes("(intern hinterlegt)"), "die Kontaktfelder werden nicht als intern ausgewiesen");
+
+  // Phase 2 hat noch nicht begonnen: KEIN Kundenportal, kein oeffentlicher
+  // Snapshot, kein versendbarer zweiter Link.
+  ok(!Object.keys(written).some((k) => k.indexOf("flowertech/clientPortals/") === 0),
+    "beim Absenden des Fragebogens entstand bereits ein Kundenportal");
+  ok(win._ftClientPortalLink(project.id) === "",
+    "es gibt bereits einen Kundenportal-Link, obwohl nichts veröffentlicht wurde");
   ok(written["flowertech/intakeForms/" + intake.inviteToken].status === "answered",
     "der öffentliche Fragebogen zeigt weiterhin ein offenes Formular");
 
@@ -497,12 +566,21 @@ const answersFor = (win, intakeId, values) => {
   const intake = data.flowertech.intakes[intakeId];
   win._ftIngestSubmissions({
     sub_1: { id: "sub_1", kind: "intake", token: intake.inviteToken,
-      payload: { answers: answersFor(win, intakeId, {
-        name: "Anna", email: "anna@beiz.ch", kind: "Website", need: "Website mit Speisekarte" }) } },
+      payload: { answers: vollstaendig(win, intakeId, {
+        name: "Anna", email: "anna@beiz.ch", kind: "Website",
+        need: "Website mit Speisekarte" }) } },
   });
   const project = Object.values(data.entities.projects)[0];
+
+  // Phase 2 beginnt mit einer Entscheidung: erst die Freigabe erzeugt Portal
+  // und Snapshot. Vorher gibt es beides nicht.
+  ok(!Object.keys(written).some((k) => k.indexOf("flowertech/clientPortals/") === 0),
+    "das Kundenportal entstand ohne Freigabe");
+  freigebbarMachen(win, project.id);
   const portalToken = data.flowertech.shares[project.id].portalToken;
   const key = "flowertech/clientPortals/" + portalToken;
+  ok(written[key], "nach der Freigabe fehlt der Kundenportal-Snapshot");
+  ok(written[key].published === true, "der Snapshot weist sich nicht als veröffentlicht aus");
 
   ok(written[key].preview.html.includes("<!doctype html>"), "die Vorschau fehlt im Portal");
   ok(written[key].portal.label === "Vorschau", "der Portalfortschritt stimmt nicht");
@@ -521,7 +599,6 @@ const answersFor = (win, intakeId, values) => {
   ok(written[key].portal.label === "Änderungen", "der Fortschritt bewegt sich nicht");
 
   // AGB-Zustimmung.
-  win._ftBuildLegal(project.id, "agb", true);
   const version = win._ftTermsForProject(project.id).version;
   ok(version, "es gibt keine AGB-Fassung");
   ok(written[key].terms.body.length > 50, "die AGB stehen nicht im Portal");
@@ -572,10 +649,11 @@ const answersFor = (win, intakeId, values) => {
   const intake = data.flowertech.intakes[intakeId];
   win._ftIngestSubmissions({
     sub_1: { id: "sub_1", kind: "intake", token: intake.inviteToken,
-      payload: { answers: answersFor(win, intakeId, {
+      payload: { answers: vollstaendig(win, intakeId, {
         name: "Anna", email: "a@b.ch", kind: "Website", need: "Ein Hofladen im Netz" }) } },
   });
   const project = Object.values(data.entities.projects)[0];
+  freigebbarMachen(win, project.id);
   const portalKey = "flowertech/clientPortals/" + data.flowertech.shares[project.id].portalToken;
 
   // Ersetzen (Upload) — der Reader wird direkt getrieben.
@@ -640,8 +718,12 @@ const answersFor = (win, intakeId, values) => {
 
   const html = win.viewFlowerTech().replace(/<style>[\s\S]*?<\/style>/g, "");
   ok(html.includes("Kundenanfragen"), "der Bereich Kundenanfragen fehlt");
-  ok(html.includes("Link kopieren"), "der Link lässt sich nicht kopieren");
+  ok(html.includes("Fragebogen-Link kopieren"), "der Fragebogen-Link lässt sich nicht kopieren");
   ok(html.includes(win._ftIntakeLink(intakeId)), "der öffentliche Link steht nicht in der Oberfläche");
+  // Der Link der Phase 1 ist eindeutig beschriftet und verspricht keine Vorschau.
+  ok(html.includes("Kundendaten &amp; Vision Room – noch keine Vorschau"),
+    "der eindeutige Hilfetext zum Fragebogen-Link fehlt");
+  ok(!/>\s*Kundenlink\b/.test(html), "der mehrdeutige Begriff „Kundenlink“ steht weiterhin da");
   ok(/＋ Frage/.test(html), "Fragen lassen sich nicht ergänzen");
   ok(/_ftRemoveIntakeQuestion/.test(html), "Fragen lassen sich nicht entfernen");
   ok(/_ftMoveIntakeQuestion/.test(html), "Fragen lassen sich nicht umsortieren");
@@ -649,10 +731,11 @@ const answersFor = (win, intakeId, values) => {
   ok(/entsteht genau ein Projekt/.test(html), "der Ablauf wird nicht erklärt");
 }
 
-// ── 15. Der Kundenlink ist dort, wo man ihn sucht ────────────────────────
-// Produktions-Rueckmeldung: „Ich kann in Quantus von einer Offerte oder einem
-// Projekt aus den Link nicht kopieren." Er lag nur im Reiter „Kundenportal" —
-// dort sucht ihn niemand, der gerade an einer Offerte sitzt.
+// ── 15. Der Kundenportal-Link erscheint erst, wenn es ihn gibt ───────────
+// Fruehere Rueckmeldung: „Ich kann den Link nirgends kopieren." Antwort ist
+// NICHT, ihn ueberall zu erfinden — sondern ueberall denselben, ehrlichen
+// Zustand zu zeigen: vor der Freigabe „noch nicht veröffentlicht", danach den
+// echten Link.
 {
   const { win, data } = makeSandbox();
   data.entities.projects.prj_1 = {
@@ -662,39 +745,51 @@ const answersFor = (win, intakeId, values) => {
   data.flowertech.shares = {};
   const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
 
-  // a) Am Projekt — auf JEDEM Reiter, nicht nur im Kundenportal.
+  // a) Vor der Freigabe: auf JEDEM Reiter derselbe klare Zustand, nie ein Link.
   for (const tab of ["workflow", "angebot", "vertrag", "vorschau", "kunde"]) {
     data.flowertech.ui = { projectTab: tab };
     const html = strip(win.ftProjectPanel("prj_1"));
-    const token = data.flowertech.shares.prj_1.portalToken;
-    ok(/^[A-Za-z0-9_-]{24,64}$/.test(token || ""), `Reiter ${tab}: es entstand kein Kundenlink`);
-    const link = "https://flowertech.ch/kunde.html?t=" + token;
-    ok(html.includes(link), `Reiter ${tab}: der Kundenlink steht nicht auf der Projektseite`);
+    ok(html.includes("Kundenportal – noch nicht veröffentlicht"),
+      `Reiter ${tab}: der Zustand des Kundenportals fehlt`);
+    ok(!/https:\/\/flowertech\.ch\/kunde\.html/.test(html),
+      `Reiter ${tab}: es wird ein Kundenportal-Link gezeigt, den es nicht gibt`);
+  }
+
+  // b) Nach der Freigabe: derselbe Link, ueberall erreichbar.
+  freigebbarMachen(win, "prj_1");
+  const token = data.flowertech.shares.prj_1.portalToken;
+  const link = "https://flowertech.ch/kunde.html?t=" + token;
+  for (const tab of ["workflow", "angebot", "vertrag", "vorschau", "kunde"]) {
+    data.flowertech.ui = { projectTab: tab };
+    const html = strip(win.ftProjectPanel("prj_1"));
+    ok(html.includes(link), `Reiter ${tab}: der Kundenportal-Link fehlt auf der Projektseite`);
     ok(html.includes("_ftCopyLink('" + link + "')"), `Reiter ${tab}: der Link lässt sich nicht kopieren`);
     ok(/>Öffnen</.test(html), `Reiter ${tab}: der Link lässt sich nicht öffnen`);
   }
 
-  // b) In der Offerte — ohne den Vorgang zu wechseln.
+  // c) In der Offerte — ohne den Vorgang zu wechseln.
   win._ftNewDoc("offer", "prj_1");
-  const doc = data.flowertech.offers[0];
+  const doc = data.flowertech.offers.find((o) => o.id !== "of_prj_1");
   data.flowertech.activeTab = "offers";
   data.flowertech.ui = { docId: doc.id, docKind: "offer" };
   const offerHtml = strip(win.viewFlowerTech());
-  const token = data.flowertech.shares.prj_1.portalToken;
-  const link = "https://flowertech.ch/kunde.html?t=" + token;
-  ok(offerHtml.includes(link), "in der Offerte fehlt der Kundenlink");
-  ok(/🔗 Kundenlink/.test(offerHtml), "in der Aktionszeile der Offerte fehlt der Kundenlink");
-  ok(offerHtml.includes("_ftCopyLink('" + link + "')"), "der Kundenlink der Offerte lässt sich nicht kopieren");
+  ok(offerHtml.includes(link), "in der Offerte fehlt der Kundenportal-Link");
+  ok(/🔗 Kundenportal-Link/.test(offerHtml), "in der Aktionszeile der Offerte fehlt der Kundenportal-Link");
 
-  // c) Eine Offerte ohne Projekt erfindet keinen Link, sondern sagt, was fehlt.
+  // d) Eine Offerte ohne Projekt erfindet keinen Link, sondern verlangt eine
+  //    Projektzuordnung.
   win._ftNewDoc("offer");
-  const frei = data.flowertech.offers[0];
-  ok(!frei.projectId, "die neue Offerte hängt bereits an einem Projekt");
+  const frei = data.flowertech.offers.find((o) => !o.projectId);
+  ok(frei, "die neue Offerte hängt bereits an einem Projekt");
   data.flowertech.ui = { docId: frei.id, docKind: "offer" };
   const freiHtml = strip(win.viewFlowerTech());
   ok(/gehört noch zu keinem Projekt/.test(freiHtml),
-    "eine Offerte ohne Projekt erklärt den fehlenden Kundenlink nicht");
-  ok(!/🔗 Kundenlink/.test(freiHtml), "eine Offerte ohne Projekt bietet einen erfundenen Link an");
+    "eine Offerte ohne Projekt erklärt den fehlenden Link nicht");
+  ok(/Ordne sie unten einem Projekt zu/.test(freiHtml),
+    "eine Offerte ohne Projekt verlangt keine Projektzuordnung");
+  ok(!/🔗 Kundenportal-Link/.test(freiHtml), "eine Offerte ohne Projekt bietet einen erfundenen Link an");
+  ok(!/https:\/\/flowertech\.ch\/kunde\.html/.test(freiHtml),
+    "eine Offerte ohne Projekt zeigt trotzdem eine Kundenseite");
 }
 
 // ── 16. In der Projektliste: kopieren, ohne zu öffnen ────────────────────
@@ -713,15 +808,14 @@ const answersFor = (win, intakeId, values) => {
   ok(!(data.flowertech.shares || {}).prj_1, "das blosse Anzeigen der Liste legt Kundenlinks an");
   ok(Object.keys(written).length === 0, "das blosse Anzeigen der Liste schreibt Snapshots");
 
-  // Erst der Klick erzeugt ihn.
-  // Der Rueckfallweg der Zwischenablage braucht ein Textfeld — hier genuegt
-  // ein Doppel, geprueft wird der Zugang, nicht die Zwischenablage.
+  // Auch der Klick erzeugt kein Kundenportal: Ein Link, den es noch nicht gibt,
+  // wird nicht durch Kopieren erzeugt — der Knopf sagt, was fehlt.
   const area = { value: "", style: {}, select() {}, focus() {}, remove() {} };
   win.document.createElement = () => area;
   win._ftCopyProjectLink("prj_1");
-  const token = data.flowertech.shares.prj_1.portalToken;
-  ok(/^[A-Za-z0-9_-]{24,64}$/.test(token || ""), "beim Klick entsteht kein Kundenlink");
-  ok(written["flowertech/clientPortals/" + token], "beim Klick wird die Kundenseite nicht veröffentlicht");
+  ok(!Object.keys(written).some((k) => k.indexOf("flowertech/clientPortals/") === 0),
+    "der Kopierknopf veröffentlicht ein Kundenportal");
+  ok(win._ftClientPortalLink("prj_1") === "", "der Kopierknopf erzeugt einen Link aus dem Nichts");
 }
 
 console.log(`flowertech kundenanfrage: ok (${checks} Pruefungen)`);

@@ -332,15 +332,16 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   ok(quoteTasks(data).length === 0, "ein unbekannter Token wird geraten statt ignoriert");
 }
 
-// ── 11. Vision Room ohne Token: Vorgang + genau eine Aufgabe ──────────────
-// Der Vision Room muendet in denselben Kundenanfrage-Weg: Es entsteht ein
-// Anfrage-Dokument, kein Sonderweg.
+// ── 11. Vision Room ohne Einladung: ANFRAGE, kein Projekt ────────────────
+// Die zentrale Trennung: Ohne abgesendeten Fragebogen entsteht KEIN Projekt.
+// Der oeffentliche Vision Room erzeugt eine Anfrage, deren naechster Schritt
+// der Fragebogen-Link ist.
 {
   const { win, data } = makeSandbox();
   win.viewFlowerTech();
   const eingang = {
     sub_v: {
-      id: "sub_v", kind: "quote", createdAt: "2026-08-08T10:00:00.000Z",
+      id: "sub_v", kind: "inquiry", createdAt: "2026-08-08T10:00:00.000Z",
       payload: {
         need: "Eine App, mit der Familien Aufgaben und Termine gemeinsam organisieren.",
         email: "familie@muster.ch", type: "Web-App", features: ["Erinnerungen"], source: "vision-room",
@@ -350,29 +351,44 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   ok(win._ftIngestSubmissions(eingang) === 1, "die Vision-Room-Anfrage wurde nicht verarbeitet");
 
   const projects = Object.values(data.entities.projects);
-  ok(projects.length === 1, `es entstanden ${projects.length} Vorgaenge statt einem`);
-  const p = projects[0];
-  ok(p.title.includes("Familien"), `der Vorgang traegt nicht die Idee: ${p.title}`);
-  ok(p.ftRoute === "offer_first", "der Vision-Room-Eingang wird nicht als Offertenweg gefuehrt");
-  ok(p.deliveryType === "program", "die Art aus dem Vision Room fehlt");
-  ok(p.ftRouteSource === "vision-room", "die Herkunft „Vision Room“ fehlt");
-  ok(p.ftIntakeDocument && p.ftIntakeDocument.answers.length,
-    "der Vision Room erzeugt kein Anfrage-Dokument");
-  const intakeTasks = tasksOf(data).filter((t) => t.source === "flowertech-intake");
-  ok(intakeTasks.length === 1, `es entstanden ${intakeTasks.length} Aufgaben statt genau einer`);
+  ok(projects.length === 0,
+    `aus dem Vision Room entstanden ${projects.length} Projekte — es darf keines entstehen`);
+  const inquiries = Object.values(data.flowertech.inquiries || {});
+  ok(inquiries.length === 1, `es entstand keine Anfrage (${inquiries.length})`);
+  ok(inquiries[0].email === "familie@muster.ch", "der Rueckkanal fehlt an der Anfrage");
+  ok(inquiries[0].message.includes("Familien"), "die Idee fehlt an der Anfrage");
+  ok(inquiries[0].message.includes("Erinnerungen"), "die Vision-Funktionen fehlen an der Anfrage");
+  ok(inquiries[0].source === "vision-room", "die Herkunft fehlt");
+
+  // Es entsteht auch keine Offertenanfrage-Aufgabe und kein Anfrage-Dokument.
+  ok(tasksOf(data).filter((t) => t.source === "flowertech-intake").length === 0,
+    "der Vision Room erzeugt eine Fragebogen-Aufgabe, obwohl niemand geantwortet hat");
 
   // Ohne Rueckkanal keine Anfrage — sonst waere sie nicht beantwortbar.
   win._ftIngestSubmissions({
-    sub_w: { id: "sub_w", kind: "quote", payload: { need: "Etwas", source: "vision-room" } },
+    sub_w: { id: "sub_w", kind: "inquiry", payload: { need: "Etwas", source: "vision-room" } },
   });
-  ok(Object.values(data.entities.projects).length === 1,
-    "eine Anfrage ohne Rueckkanal legt trotzdem einen Vorgang an");
+  ok(Object.values(data.flowertech.inquiries || {}).length === 1,
+    "eine Anfrage ohne Rueckkanal wird trotzdem angelegt");
 
-  // Wiederholung derselben Einreichung: kein zweiter Vorgang, keine zweite Aufgabe.
+  // Wiederholung derselben Einreichung: keine zweite Anfrage.
   win._ftIngestSubmissions({ sub_v2: Object.assign({}, eingang.sub_v) });
-  ok(Object.values(data.entities.projects).length === 1, "eine Wiederholung legt einen zweiten Vorgang an");
-  ok(tasksOf(data).filter((t) => t.source === "flowertech-intake").length === 1,
-    "eine Wiederholung erzeugt eine zweite Aufgabe");
+  ok(Object.values(data.flowertech.inquiries || {}).length === 1,
+    "eine Wiederholung legt eine zweite Anfrage an");
+  ok(Object.values(data.entities.projects).length === 0,
+    "eine Wiederholung legt doch ein Projekt an");
+
+  // Der naechste Schritt ist der Fragebogen-Link — und er legt kein Projekt an.
+  const inquiryId = inquiries[0].id;
+  const intake = win._ftIntakeForInquiry(inquiryId);
+  ok(intake && intake.inviteToken, "an der Anfrage entsteht kein Fragebogen mit Einladungstoken");
+  ok(intake.inquiryId === inquiryId, "der Fragebogen haengt nicht an der Anfrage");
+  ok(Object.values(data.entities.projects).length === 0,
+    "das Erzeugen des Fragebogen-Links legt bereits ein Projekt an");
+  // Zweiter Klick: derselbe Fragebogen, kein zweiter.
+  ok(win._ftIntakeForInquiry(inquiryId).id === intake.id,
+    "ein zweiter Klick erzeugt einen zweiten Fragebogen");
+  ok(Object.keys(data.flowertech.intakes).length === 1, "es entstanden mehrere Fragebogen");
 }
 
 // ── 12. Keine leere OF-Nummer, kein „Versendet" ohne Pflichtdaten ─────────
@@ -416,7 +432,9 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   ok(doc.sentAt, "der Versandzeitpunkt fehlt");
 }
 
-// ── 13. Kundenansicht: Kundenlink statt Mail-Entwurf ──────────────────────
+// ── 13. Kundenportal: der ZWEITE Link — erst nach der Freigabe ───────────
+// Vorher gibt es bewusst keinen kopierbaren Link, sondern den internen Stand
+// „Kundenportal – noch nicht veröffentlicht" samt Liste des Fehlenden.
 {
   const { win, data } = makeSandbox();
   data.entities.projects.prj_1 = {
@@ -425,24 +443,58 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   data.flowertech = { shares: { prj_1: { portalToken: TOKEN } }, ui: { projectTab: "kunde" } };
   win.viewFlowerTech();
 
-  const link = win._ftClientQuoteLink("prj_1");
+  // Ohne Freigabe: kein Link, nirgends.
+  ok(win._ftClientPortalLink("prj_1") === "",
+    "vor der Freigabe existiert bereits ein versendbarer Kundenportal-Link");
+  const vorher = win.ftProjectPanel("prj_1").replace(/<style>[\s\S]*?<\/style>/g, "");
+  ok(vorher.includes("Kundenportal – noch nicht veröffentlicht"),
+    "der Zustand „noch nicht veröffentlicht“ steht nicht im Projekt");
+  ok(!vorher.includes("https://flowertech.ch/kunde.html?t=" + TOKEN),
+    "der Portallink steht im Projekt, obwohl nichts veröffentlicht ist");
+  ok(/Website-Vorschau/.test(vorher) && /AGB/.test(vorher),
+    "es wird nicht benannt, was für die Veröffentlichung noch fehlt");
+
+  // Eine Freigabe ohne Inhalt wird verweigert — die Prüfung liegt im Pfad,
+  // nicht nur in der Anzeige.
+  win._ftReleaseClientPortal("prj_1");
+  ok(data.flowertech.shares.prj_1.portalReleased !== true,
+    "ein leeres Kundenportal liess sich veröffentlichen");
+  ok(win._ftClientPortalLink("prj_1") === "", "nach der verweigerten Freigabe gibt es doch einen Link");
+
+  // Vollständig: Vorschau, Leistungsbeschreibung, Offerte, Vertrag, AGB.
+  const p = data.entities.projects.prj_1;
+  p.ftTemplate = { html: "<h1>Entwurf</h1>", updatedAt: "2026-08-08T10:00:00.000Z" };
+  data.flowertech.contentDocs = { prj_1: { blocks: [{ title: "Leistung", body: "Wir bauen.", enabled: true }] } };
+  data.flowertech.contracts = { prj_1: { sections: [{ key: "parteien", title: "1", body: "Text", enabled: true }] } };
+  data.flowertech.legalDocs = { prj_1: { agb: { sections: [{ key: "k", title: "AGB", body: "Text", enabled: true }] } } };
+  win._ftNewDoc("offer", "prj_1");
+  const offer = data.flowertech.offers[0];
+  offer.client = { company: "Beiz AG" };
+  offer.items[0].description = "Website inkl. Reservation";
+  offer.items[0].price = 4500;
+  win._ftRefreshTotals ? win._ftRefreshTotals("offer", offer.id) : null;
+
+  ok(win._ftPortalRelease("prj_1").ready,
+    "trotz vollständiger Angaben gilt das Kundenportal als unvollständig: " +
+      win._ftPortalRelease("prj_1").missing.join(", "));
+  win._ftReleaseClientPortal("prj_1");
+  ok(data.flowertech.shares.prj_1.portalReleased === true, "die Freigabe wurde nicht festgehalten");
+
   const clientLink = win._ftClientPortalLink("prj_1");
-  ok(link === "https://flowertech.ch/kunde.html?t=" + TOKEN + "#offerte",
-    `der Kundenlink stimmt nicht: ${link}`);
   ok(clientLink === "https://flowertech.ch/kunde.html?t=" + TOKEN,
     `der Portallink stimmt nicht: ${clientLink}`);
-  ok(!/management-xo2-pro/.test(link), "der kopierte Link zeigt auf die interne Verwaltung");
-  ok(!/^mailto:/.test(link), "der Kundenlink ist eine Mailadresse");
+  ok(!/management-xo2-pro/.test(clientLink), "der kopierte Link zeigt auf die interne Verwaltung");
+  ok(!/^mailto:/.test(clientLink), "der Kundenportal-Link ist eine Mailadresse");
 
-  // Die Kundenansicht des Projekts — dieselbe Funktion, die der Browser ruft.
   const html = win.ftProjectPanel("prj_1").replace(/<style>[\s\S]*?<\/style>/g, "");
   ok(html.includes("Kundenportal"), "die Sektion „Kundenportal“ fehlt in der Projektansicht");
-  ok(html.includes("Kundenlink kopieren"), "der Knopf „Kundenlink kopieren“ fehlt");
-  ok(html.includes(clientLink), "der Kundenlink steht nicht in der Sektion");
+  ok(html.includes(clientLink), "der Kundenportal-Link steht nicht in der Sektion");
   ok(/>Öffnen</.test(html), "der Knopf „Öffnen“ fehlt");
+  // Der Begriff „Kundenlink" ist abgeschafft — er hat die zwei Links vermischt.
+  ok(!/>\s*Kundenlink\b/.test(html), "die alte Beschriftung „Kundenlink“ steht weiterhin im Projekt");
 }
 
-// ── 13b. Auch aeltere Vorgaenge ohne Kundenlink bekommen einen ────────────
+// ── 13b. Ein aelterer Vorgang bekommt NICHT still ein Portal ──────────────
 {
   const { win, data } = makeSandbox();
   data.entities.projects.prj_alt = {
@@ -453,10 +505,12 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   win.viewFlowerTech();
 
   const html = win.ftProjectPanel("prj_alt").replace(/<style>[\s\S]*?<\/style>/g, "");
-  const token = data.flowertech.shares.prj_alt.portalToken;
-  ok(/^[A-Za-z0-9_-]{24,64}$/.test(token || ""), "ein aelterer Vorgang bekommt keinen Kundenlink");
-  ok(html.includes("https://flowertech.ch/kunde.html?t=" + token),
-    "der Kundenlink fehlt bei einem aelteren Vorgang");
+  ok(!(data.flowertech.shares.prj_alt || {}).portalToken,
+    "beim blossen Ansehen entsteht ein Portaltoken — ein Schreibvorgang pro Neuzeichnen");
+  ok(!/https:\/\/flowertech\.ch\/kunde\.html/.test(html),
+    "ein aelterer Vorgang zeigt einen Kundenportal-Link, obwohl nie veröffentlicht wurde");
+  ok(html.includes("Kundenportal – noch nicht veröffentlicht"),
+    "der interne Zustand des Portals fehlt bei einem aelteren Vorgang");
 }
 
 // ── 14. Unvollstaendige Offerte sagt, was fehlt — und wie es weitergeht ───
@@ -476,8 +530,10 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   const html = win.viewFlowerTech().replace(/<style>[\s\S]*?<\/style>/g, "");
   ok(html.includes("Noch keine Offerte"), "die unvollstaendige Offerte wird als Offerte ausgegeben");
   ok(html.includes("Offertenanfrage"), "der Vorgang wird nicht als Offertenanfrage benannt");
-  ok(html.includes("Kundenlink zum Ausfüllen kopieren"),
+  ok(html.includes("Fragebogen-Link"),
     "es wird kein Weg angeboten, die Luecke zu schliessen");
+  ok(!/Kundenlink/.test(html),
+    "die unvollstaendige Offerte erfindet weiterhin einen „Kundenlink“");
   ok(html.includes("Entwurf (Offertenanfrage)"),
     "eine Offerte ohne Nummer erscheint als „—“ statt als Entwurf");
 }

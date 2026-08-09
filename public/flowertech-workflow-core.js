@@ -22,6 +22,33 @@ export const LEGAL_REVIEW_NOTICE =
   "ENTWURF — Schweizer Vorlage. Vor dem Einsatz rechtlich prüfen lassen. " +
   "Dieser Text ist keine Rechtsberatung und keine Zusicherung rechtlicher Verbindlichkeit.";
 
+/* ── Die zwei Links, die zwei Phasen ─────────────────────────────────────
+ * Der ganze Kundenablauf hat GENAU ZWEI oeffentliche Links, und sie duerfen
+ * nie miteinander verwechselt werden:
+ *
+ *   Phase 1 — Fragebogen-Link (Briefing-Link)
+ *       fragebogen.html?e=<Einladungstoken>
+ *       Kundendaten, Bedarf UND Vision Room in EINER Einladung.
+ *       Zeigt NIE Vorschau, Änderungswünsche, Angebot, Vertrag oder AGB.
+ *       Erzeugt beim Absenden genau EIN Projekt und genau EINE Aufgabe.
+ *
+ *   Phase 2 — Kundenportal-Link
+ *       kunde.html?t=<Portaltoken>
+ *       Entsteht ERST, wenn Vorschau, Leistungsbeschreibung, Offerte,
+ *       Vertrag und AGB stehen und ich bewusst veröffentlicht habe.
+ *
+ * Die Beschriftungen stehen hier, damit UI, Tests und Dokumentation
+ * dieselben Worte benutzen. „Kundenlink" ist bewusst kein Begriff mehr —
+ * er hat genau die Verwechslung erzeugt, die dieser Ablauf ausschliesst.
+ * --------------------------------------------------------------------- */
+export const LINK_LABELS = {
+  intake: "Fragebogen-Link",
+  intakeAlt: "Briefing-Link",
+  intakeHint: "Kundendaten & Vision Room – noch keine Vorschau",
+  portal: "Kundenportal-Link",
+  portalUnpublished: "Kundenportal – noch nicht veröffentlicht",
+};
+
 /* ── Kundenprozess ───────────────────────────────────────────────────────── */
 // Der FlowerTech-Kundenweg. Die Reihenfolge ist die Reihenfolge im UI.
 export const WORKFLOW_STAGES = [
@@ -679,6 +706,9 @@ export const INTAKE_ROLES = [
   { key: "need", label: "Bedarf / Ziel" },
   { key: "budget", label: "Budgetrahmen" },
   { key: "deadline", label: "Wunschtermin" },
+  { key: "currentUrl", label: "Bisherige Website / URL" },
+  { key: "currentProvider", label: "Bisheriger Anbieter" },
+  { key: "currentPrice", label: "Bisher bezahlter Preis" },
 ];
 const INTAKE_ROLE_KEYS = INTAKE_ROLES.map((r) => r.key).filter(Boolean);
 // Rollen, deren Antwort Kontaktdaten sind. Sie gehoeren ins Projekt, aber
@@ -688,31 +718,99 @@ export const INTAKE_CONTACT_ROLES = ["company", "contactName", "contactEmail", "
 export const DEFAULT_INTAKE_TITLE = "Ihre Angaben für FlowerTech";
 export const DEFAULT_INTAKE_INTRO =
   "Damit wir Ihnen etwas Passendes bauen können, brauchen wir ein paar Angaben. " +
-  "Was Sie noch nicht wissen, lassen Sie einfach leer — wir fragen nach.";
+  "Was Sie noch nicht wissen, lassen Sie einfach leer — wir fragen nach. " +
+  "Am Schluss bauen Sie im Vision Room Ihre Idee zusammen — das gehört zu denselben Angaben.";
+
+/* Der Vision Room ist KEIN zweiter Kanal, sondern zwei Fragen desselben
+ * Fragebogens. Die Seite stellt sie als Mindmap dar; abgesendet werden sie
+ * gemeinsam mit allen anderen Antworten. Deshalb entsteht auch aus einem
+ * Vision-Room-Beitrag nie ein zweiter Vorgang. */
+export const VISION_QUESTION_KEYS = { idea: "vision-idee", features: "vision-funktionen" };
 
 export const DEFAULT_INTAKE_QUESTIONS = [
+  { key: "projekt", role: "projectTitle", type: "text", label: "Projekt- / Firmenname", required: true,
+    hint: "Wie sollen wir das Vorhaben bei uns nennen?" },
   { key: "company", role: "company", type: "text", label: "Firma / Organisation" },
-  { key: "name", role: "contactName", type: "text", label: "Ihr Name", required: true },
+  { key: "name", role: "contactName", type: "text", label: "Ansprechperson", required: true },
   { key: "email", role: "contactEmail", type: "email", label: "E-Mail", required: true,
     hint: "Damit wir Ihnen antworten können." },
-  { key: "phone", role: "contactPhone", type: "tel", label: "Telefon" },
+  { key: "phone", role: "contactPhone", type: "tel", label: "Telefon", required: true },
+  { key: "adresse", role: "address", type: "text", label: "Adresse", required: true,
+    hint: "Strasse, PLZ, Ort — für Offerte und Vertrag." },
   { key: "kind", role: "", type: "select", label: "Was brauchen Sie?", required: true,
     options: ["Website", "Web-Programm", "Web-App", "Weiss ich noch nicht"] },
-  { key: "need", role: "need", type: "textarea", label: "Was soll damit erreicht werden?", required: true,
+  { key: "website-url", role: "currentUrl", type: "text", label: "Bisherige Website / URL",
+    hint: "Falls vorhanden — sonst leer lassen." },
+  { key: "iststand", role: "", type: "textarea", label: "Iststand: Technik und Inhalte",
+    hint: "Was läuft heute, womit ist es gebaut, was stört Sie daran?" },
+  { key: "anbieter", role: "currentProvider", type: "text", label: "Bisheriger Anbieter",
+    hint: "Wer betreut die Seite heute?" },
+  { key: "bisheriger-preis", role: "currentPrice", type: "text", label: "Bisher bezahlter Preis (CHF, optional)",
+    hint: "Freiwillig — hilft uns beim fairen Vergleich." },
+  { key: "need", role: "need", type: "textarea", label: "Ziel: Was soll damit erreicht werden?", required: true,
     hint: "Ein paar Sätze genügen. Zum Beispiel: mehr Anfragen, weniger Papierkram." },
   { key: "audience", role: "", type: "textarea", label: "Wer benutzt es?" },
+  { key: "pages", role: "", type: "textarea", label: "Seiten / Inhalte",
+    hint: "Eine pro Zeile, z. B. Startseite, Über uns, Angebot, Kontakt." },
   { key: "features", role: "", type: "textarea", label: "Gewünschte Funktionen",
     hint: "Eine pro Zeile — gerne unvollständig." },
-  { key: "pages", role: "", type: "textarea", label: "Seiten / Bereiche" },
-  { key: "design", role: "", type: "textarea", label: "Design-Wünsche",
-    hint: "Farben, Stil, Vorbilder — gerne Links zu Seiten, die Ihnen gefallen." },
   { key: "content", role: "", type: "textarea", label: "Inhalte (Texte, Bilder, Logo)",
     hint: "Was ist schon vorhanden, was müssten wir erstellen?" },
-  { key: "current", role: "", type: "textarea", label: "Aktuelles System" },
+  { key: "design", role: "", type: "textarea", label: "Stil und Referenzen",
+    hint: "Farben, Stil, Vorbilder — gerne Links zu Seiten, die Ihnen gefallen." },
   { key: "budget", role: "budget", type: "text", label: "Budgetrahmen (CHF)" },
   { key: "deadline", role: "deadline", type: "date", label: "Wunschtermin" },
+  { key: "fragen", role: "", type: "textarea", label: "Ihre eigenen Fragen an uns",
+    hint: "Was möchten Sie von uns wissen? Wir beantworten es in der Rückmeldung." },
+  { key: VISION_QUESTION_KEYS.idea, role: "", type: "text", vision: "idea",
+    label: "Vision Room: Ihre Idee in einem Satz",
+    hint: "Zum Beispiel: «Eine Seite, auf der Kundschaft direkt einen Termin bucht.»" },
+  { key: VISION_QUESTION_KEYS.features, role: "", type: "textarea", vision: "features",
+    label: "Vision Room: Funktionen, die Sie sich vorstellen",
+    hint: "Eine pro Zeile. Wählen Sie aus den Vorschlägen oder tragen Sie eigene ein." },
   { key: "notes", role: "", type: "textarea", label: "Sonstiges" },
 ];
+
+/* ── Vollständigkeit des Fragebogens ─────────────────────────────────────
+ * Der Fragebogen ist frei bearbeitbar — er darf aber nicht unter das fallen,
+ * was für Offerte, Vertrag und Umsetzung gebraucht wird. Die Liste ist Daten,
+ * damit UI und Test dieselbe Wahrheit benutzen: die UI warnt, der Test beweist.
+ * --------------------------------------------------------------------- */
+export const INTAKE_REQUIRED_TOPICS = [
+  { key: "projectTitle", label: "Projekt-/Firmenname", roles: ["projectTitle", "company"] },
+  { key: "contactName", label: "Kontaktperson", roles: ["contactName"] },
+  { key: "contactEmail", label: "E-Mail", roles: ["contactEmail"] },
+  { key: "contactPhone", label: "Telefon", roles: ["contactPhone"] },
+  { key: "address", label: "Adresse", roles: ["address"] },
+  { key: "currentUrl", label: "Bisherige Website / URL", roles: ["currentUrl"] },
+  { key: "currentState", label: "Technischer/inhaltlicher Iststand", keys: ["iststand"] },
+  { key: "currentProvider", label: "Bisheriger Anbieter", roles: ["currentProvider"] },
+  { key: "currentPrice", label: "Bisher bezahlter Preis", roles: ["currentPrice"] },
+  { key: "goal", label: "Ziel", roles: ["need"] },
+  { key: "pages", label: "Seiten/Inhalte", keys: ["pages", "content"] },
+  { key: "features", label: "Funktionen", keys: ["features", VISION_QUESTION_KEYS.features] },
+  { key: "design", label: "Stil/Referenzen", keys: ["design"] },
+  { key: "budget", label: "Budget", roles: ["budget"] },
+  { key: "deadline", label: "Zeitrahmen", roles: ["deadline"] },
+  { key: "ownQuestions", label: "Eigene Fragen", keys: ["fragen"] },
+  { key: "vision", label: "Vision Room", vision: true },
+];
+
+// Welche Pflichtthemen deckt dieser Fragebogen ab? Nur lesend — es wird
+// nichts erzwungen, damit ein bestehender Fragebogen weiter funktioniert.
+export function intakeCoverage(questions) {
+  const qs = normalizeIntakeQuestions(questions);
+  const roles = new Set(qs.map((q) => q.role).filter(Boolean));
+  const keys = new Set(qs.map((q) => q.key));
+  const hasVision = qs.some((q) => q.vision);
+  const missing = INTAKE_REQUIRED_TOPICS.filter((topic) => {
+    if (topic.vision) return !hasVision;
+    if ((topic.roles || []).some((r) => roles.has(r))) return false;
+    if ((topic.keys || []).some((k) => keys.has(k))) return false;
+    return true;
+  });
+  return { complete: missing.length === 0, missing: missing.map((t) => t.label) };
+}
 
 function slug(value, fallback) {
   const out = String(value == null ? "" : value).toLowerCase()
@@ -741,6 +839,9 @@ export function normalizeIntakeQuestions(raw) {
       required: !!q.required,
       hint: text(q.hint, 300),
       options: type === "select" ? list_(q.options, 20, 120) : [],
+      // Vision-Room-Fragen sind normale Fragen mit einer besonderen Darstellung.
+      // Der Wert sagt der Seite, welche Rolle die Frage in der Mindmap spielt.
+      vision: q.vision === "idea" || q.vision === "features" ? q.vision : "",
     });
   });
   return out.slice(0, 40);
@@ -748,11 +849,26 @@ export function normalizeIntakeQuestions(raw) {
 // list() heisst intern anders, damit der Name oben lesbar bleibt.
 const list_ = list;
 
+/* Der Fragebogen sendet seine Antworten als LISTE ({answers:[{key,answer}]}),
+ * n8n und interne Aufrufe als ZUORDNUNG ({key: wert}). Beide Formen sind
+ * gültig und müssen hier zusammenlaufen — sonst kommt eine korrekt ausgefüllte
+ * Einreichung als „unvollständig" zurück, obwohl sie vollständig ist. */
+export function intakeAnswerMap(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const list = Array.isArray(src.answers) ? src.answers : (Array.isArray(src) ? src : null);
+  if (!list) return src;
+  const map = {};
+  list.forEach((a) => {
+    if (a && typeof a === "object" && a.key) map[a.key] = a.answer;
+  });
+  return map;
+}
+
 // Die Antworten werden gegen die Fragen normalisiert: Was nicht gefragt wurde,
 // kommt nicht durch. Das ist die serverseitige Grenze des Fragebogens.
 export function normalizeIntakeAnswers(questions, raw, { now = new Date().toISOString() } = {}) {
   const qs = normalizeIntakeQuestions(questions);
-  const src = raw && typeof raw === "object" ? raw : {};
+  const src = intakeAnswerMap(raw);
   const answers = qs.map((q) => {
     const value = src[q.key];
     let answer;
@@ -761,9 +877,18 @@ export function normalizeIntakeAnswers(questions, raw, { now = new Date().toISOS
     else if (q.type === "select") answer = q.options.includes(text(value, 120)) ? text(value, 120) : "";
     else if (q.type === "email") answer = text(value, 160).toLowerCase();
     else answer = text(value, 400);
-    return { key: q.key, label: q.label, type: q.type, role: q.role, answer };
+    return { key: q.key, label: q.label, type: q.type, role: q.role, vision: q.vision || "", answer };
   });
   return { answers, submittedAt: now };
+}
+
+// Der Vision-Room-Teil einer Antwort — als ganz normale Antworten, nicht als
+// eigener Vorgang. Wird für Prompt und Projektbeschreibung gebraucht.
+export function visionFromAnswers(answers) {
+  const find = (role) => (answers || []).find((a) => a.vision === role);
+  const idea = String((find("idea") || {}).answer || "").trim();
+  const features = list(String((find("features") || {}).answer || ""), 40, 160);
+  return { idea, features, present: !!(idea || features.length) };
 }
 
 export function answerByRole(answers, role) {
@@ -805,7 +930,18 @@ export function projectFromIntake({ intake = {}, answers = [], now = new Date().
     || (need ? need.replace(/\s+/g, " ").slice(0, 80) : "")
     || text(intake.title, 80) || "Kundenanfrage";
   const free = (answers || []).filter((a) => !INTAKE_CONTACT_ROLES.includes(a.role) && String(a.answer || "").trim());
+  const vision = visionFromAnswers(answers);
   return {
+    // Der Iststand der bisherigen Lösung gehört ans Projekt, nicht nur in den
+    // Fliesstext: er steuert Offerte, Vergleichspreis und Code-Prompt.
+    ftCurrentUrl: answerByRole(answers, "currentUrl"),
+    ftCurrentProvider: answerByRole(answers, "currentProvider"),
+    currentProviderPrice: money(answerByRole(answers, "currentPrice")),
+    // Der Vision Room ist Teil DIESES Briefings — er hängt am selben Projekt
+    // und erzeugt niemals einen zweiten Vorgang.
+    ftVision: vision.present
+      ? { idea: vision.idea, features: vision.features, source: "fragebogen", submittedAt: now }
+      : null,
     title,
     description: [
       "Aus dem FlowerTech-Fragebogen „" + (text(intake.title, 120) || DEFAULT_INTAKE_TITLE) + "“.",
@@ -886,6 +1022,50 @@ export function portalProgress({ project = {}, hasPreview = false, changes = [],
     total: PORTAL_STEPS.length,
     openChanges: openChanges.length,
     steps: PORTAL_STEPS.map((s, n) => ({ label: s.label, done: n < index, current: n === index })),
+  };
+}
+
+/* ── Freigabe des Kundenportals ──────────────────────────────────────────
+ * Das Kundenportal ist der ZWEITE Link. Er existiert erst, wenn er etwas zu
+ * zeigen hat: Vorschau, Leistungsbeschreibung, Offerte, Vertrag und AGB — und
+ * wenn ich ihn bewusst veröffentliche. Vorher darf er nirgends als Link zum
+ * Versenden erscheinen; ein vorbereiteter Token ist intern sichtbar als
+ * „Kundenportal – noch nicht veröffentlicht".
+ *
+ * Warum als Daten: Damit UI, Snapshot und Test dieselbe Bedingung benutzen.
+ * Eine Bedingung, die nur in der Anzeige steht, ist mit einem Klick umgangen.
+ * --------------------------------------------------------------------- */
+export const PORTAL_RELEASE_REQUIREMENTS = [
+  { key: "preview", label: "Website-Vorschau" },
+  { key: "service", label: "Leistungsbeschreibung" },
+  { key: "offer", label: "Offerte mit Kosten" },
+  { key: "contract", label: "Vertrag" },
+  { key: "terms", label: "AGB" },
+];
+
+export function portalReleaseState({
+  hasPreview = false, hasService = false, hasOffer = false,
+  hasContract = false, hasTerms = false, released = false, releasedAt = "",
+} = {}) {
+  const have = {
+    preview: !!hasPreview, service: !!hasService,
+    offer: !!hasOffer, contract: !!hasContract, terms: !!hasTerms,
+  };
+  const missing = PORTAL_RELEASE_REQUIREMENTS
+    .filter((r) => !have[r.key])
+    .map((r) => r.label);
+  const ready = missing.length === 0;
+  return {
+    ready,
+    missing,
+    published: !!released && ready,
+    releasedAt: released && ready ? String(releasedAt || "") : "",
+    // Ein Token darf vorbereitet sein — als Link zum Versenden gilt er erst
+    // nach der Freigabe. Diese Beschriftung ist die einzige, die vorher gilt.
+    label: (released && ready) ? LINK_LABELS.portal : LINK_LABELS.portalUnpublished,
+    reason: ready
+      ? (released ? "" : "Das Kundenportal ist vorbereitet, aber noch nicht veröffentlicht.")
+      : "Noch nicht vollständig — es fehlt: " + missing.join(", ") + ".",
   };
 }
 
@@ -999,6 +1179,7 @@ ${cards.map((a) => `      <div class="card"><h3>${esc(a.label)}</h3><p>${esc(a.a
 export function buildProjectPrompt({
   project = {}, document: doc = {}, changes = [], questions = [],
   templateName = "", company = {}, now = new Date().toISOString(),
+  includeContact = false,
 } = {}) {
   const out = [];
   out.push("# Auftrag: " + (project.title || "FlowerTech-Projekt"));
@@ -1011,12 +1192,35 @@ export function buildProjectPrompt({
   out.push("## Projektkontext");
   out.push("- Art: " + (project.deliveryType === "program" ? "Programm / Anwendung" : "Website"));
   out.push("- Phase: " + stageLabel(project.pipelineStage));
-  if (project.budget != null) out.push("- Budgetrahmen: CHF " + Number(project.budget).toFixed(2));
-  if (project.dueDate) out.push("- Wunschtermin: " + project.dueDate);
+  // Budget und Termin sind website-relevant: sie bestimmen Umfang und Tiefe.
+  out.push("- Budgetrahmen: " + (project.budget != null
+    ? "CHF " + Number(project.budget).toFixed(2) : "nicht angegeben"));
+  out.push("- Wunschtermin: " + (project.dueDate || "nicht angegeben"));
   out.push("- Anbieter: " + (company.name || "FlowerTech"));
   out.push("- Vorlage: " + (templateName || "FlowerTech-Standardvorlage"));
   out.push("- Stand: " + now);
   out.push("");
+
+  // Der Iststand: die bisherige Lösung ist der Massstab, an dem die Kundschaft
+  // das Ergebnis misst. Er darf im Prompt nie fehlen.
+  out.push("## Bisherige Lösung (Iststand)");
+  out.push("");
+  out.push("- Bisherige Website / URL: " + (project.ftCurrentUrl || "keine angegeben"));
+  out.push("- Bisheriger Anbieter: " + (project.ftCurrentProvider || "nicht angegeben"));
+  out.push("- Bisher bezahlter Preis: " + (project.currentProviderPrice != null
+    ? "CHF " + Number(project.currentProviderPrice).toFixed(2) : "nicht angegeben"));
+  out.push("");
+
+  // Kontaktdaten bleiben intern. Sie wandern NUR mit, wenn ich das ausdrücklich
+  // wähle — und auch dann nur hierher, nie in einen öffentlichen Snapshot.
+  if (includeContact) {
+    const c = project.client || {};
+    out.push("## Kontaktdaten (intern — nicht auf der Website veröffentlichen)");
+    out.push("");
+    out.push([c.company, c.name, c.email, c.phone, c.street].filter(Boolean).join(" · ") || "(keine Angaben)");
+    out.push("");
+  }
+
   out.push("## Erstes Dokument — Antworten der Kundschaft");
   out.push("");
   out.push("Fragebogen: " + (doc.intakeTitle || DEFAULT_INTAKE_TITLE));
@@ -1027,14 +1231,43 @@ export function buildProjectPrompt({
     out.push("_Noch keine Antworten erfasst._");
   } else {
     answered.forEach((a) => {
-      // Kontaktdaten gehoeren nicht in einen Prompt, der eine Website baut.
-      const value = INTAKE_CONTACT_ROLES.includes(a.role) ? "(intern hinterlegt)" : a.answer;
+      // Kontaktdaten gehoeren nicht in einen Prompt, der eine Website baut —
+      // ausser ich habe sie oben ausdrücklich freigegeben.
+      const isContact = INTAKE_CONTACT_ROLES.includes(a.role);
+      if (isContact && !includeContact) {
+        out.push("### " + a.label);
+        out.push("");
+        out.push("(intern hinterlegt)");
+        out.push("");
+        return;
+      }
       out.push("### " + a.label);
       out.push("");
-      out.push(String(value));
+      out.push(String(a.answer));
       out.push("");
     });
   }
+
+  // Der Vision Room gehört zum selben Briefing — seine Ideen und Funktionen
+  // sind Auftragsinhalt, nicht Beiwerk.
+  const vision = (doc.answers || []).length
+    ? visionFromAnswers(doc.answers)
+    : (project.ftVision
+      ? { idea: project.ftVision.idea || "", features: project.ftVision.features || [], present: true }
+      : { idea: "", features: [], present: false });
+  out.push("## Vision Room — die Idee der Kundschaft");
+  out.push("");
+  if (!vision.present) out.push("_Nichts erfasst._");
+  else {
+    if (vision.idea) out.push("Idee: " + vision.idea);
+    if (vision.features.length) {
+      out.push("");
+      out.push("Gewünschte Funktionen aus dem Vision Room:");
+      vision.features.forEach((f) => out.push("- " + f));
+    }
+  }
+  out.push("");
+
   out.push("## Änderungswünsche");
   out.push("");
   const openChanges = (changes || []).filter((c) => c.status !== "rejected");
@@ -1107,7 +1340,7 @@ export function normalizePortalQuestion(raw, { now = new Date().toISOString() } 
  * Reine Funktion — keine DOM-Kenntnis, deshalb testbar.
  * --------------------------------------------------------------------- */
 export const PROCESS_STEPS = [
-  { key: "inquiry", label: "Anfrage → Projekt", stage: "lead" },
+  { key: "inquiry", label: "Fragebogen-Link schicken", stage: "lead" },
   { key: "quote", label: "Offertenanfrage bearbeiten", stage: "lead" },
   { key: "briefing", label: "Bedarf aufnehmen", stage: "intake" },
   { key: "offer", label: "Angebot erstellen", stage: "proposal" },
@@ -1117,6 +1350,42 @@ export const PROCESS_STEPS = [
   { key: "changes", label: "Änderungen abarbeiten", stage: "revision" },
   { key: "approval", label: "Freigabe einholen", stage: "approval" },
 ];
+
+/* ── Anfrage aus dem öffentlichen Vision Room ────────────────────────────
+ * Der Vision Room auf flowertech.ch ist ohne Einladung öffentlich. Was dort
+ * ankommt, ist eine ANFRAGE — kein Projekt und kein Direktauftrag. Erst wenn
+ * ich darauf den Fragebogen-Link schicke und die Kundschaft ihn absendet,
+ * entsteht ein Projekt. Sonst stünden Projekte in der Liste, zu denen nie
+ * jemand geantwortet hat, und der Ablauf hätte zwei Eingänge statt einem.
+ * --------------------------------------------------------------------- */
+export function inquiryFromVision(raw, { now = new Date().toISOString(), id = "" } = {}) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const idea = text(r.idea || r.need, 400);
+  const features = list(r.features, 40, 160);
+  const type = text(r.type || r.visionType, 40);
+  return {
+    id: id || "",
+    name: text(r.name, 120),
+    company: text(r.company, 160),
+    email: text(r.email || r.contactEmail, 160).toLowerCase(),
+    phone: text(r.phone, 60),
+    service: type || "Vision Room",
+    message: [
+      idea ? "Idee: " + idea : "",
+      features.length ? "Gewünschte Funktionen:\n- " + features.join("\n- ") : "",
+    ].filter(Boolean).join("\n\n"),
+    source: "vision-room",
+    status: "new",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function inquiryFromVisionIsUsable(inquiry) {
+  return !!(inquiry
+    && String(inquiry.message || "").trim()
+    && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(inquiry.email || ""));
+}
 
 // Eine Anfrage gilt als offen, solange kein Projekt daraus entstanden ist und
 // sie nicht ausdruecklich abgelehnt wurde.
@@ -1137,10 +1406,12 @@ export function nextProcessSteps({
   if (openInquiries.length) {
     steps.push({
       key: "inquiry",
-      label: "Anfrage → Projekt",
+      label: "Fragebogen-Link schicken",
+      // Kein Projekt an dieser Stelle: Der Fragebogen-Link ist der ganze
+      // Schritt. Kundendaten & Vision Room – noch keine Vorschau.
       hint: openInquiries.length === 1
-        ? "Eine Anfrage wartet darauf, ein Projekt zu werden."
-        : openInquiries.length + " Anfragen warten darauf, Projekte zu werden.",
+        ? "Eine Anfrage wartet auf den Fragebogen-Link (Kundendaten & Vision Room – noch keine Vorschau)."
+        : openInquiries.length + " Anfragen warten auf den Fragebogen-Link.",
       count: openInquiries.length,
       items: openInquiries.map((i) => ({
         id: i.id,
@@ -1759,7 +2030,9 @@ export const PROMPT_DATA_OPTIONS = [
   { key: "briefing", label: "Briefing (Ziel, Zielgruppe, Funktionen)", default: true },
   { key: "changes", label: "Offene Änderungswünsche", default: true },
   { key: "tech", label: "Aktuelles System / Technik", default: true },
-  { key: "client", label: "Kundendaten (Name, Firma, E-Mail)", default: false },
+  // Kontakt- und Adressdaten sind intern. Diese Wahl steuert BEIDE Prompts:
+  // den Reiter-Prompt und den Projekt-Prompt (buildProjectPrompt).
+  { key: "client", label: "Kontakt- und Adressdaten (Name, Firma, E-Mail, Telefon, Adresse)", default: false },
   { key: "prices", label: "Preise und Budget", default: false },
   { key: "internal", label: "Interne Notizen", default: false },
 ];
@@ -1921,7 +2194,7 @@ export function buildClientSnapshot({
   project = {}, company = {}, content = [], milestones = [], changes = [],
   versions = [], costs = {}, quote = null, prefill = {}, now = new Date().toISOString(),
   previewHtml = "", previewUpdatedAt = "", terms = {}, consent = null,
-  questions = [], intakeDocument = null,
+  questions = [], intakeDocument = null, release = null,
 } = {}) {
   const stage = clientStageProgress(project.pipelineStage);
   const preview = sanitizeTemplateHtml(previewHtml);
@@ -1932,6 +2205,11 @@ export function buildClientSnapshot({
   return {
     // Kein projectId, keine Token, keine E-Mail-Adresse der Kundschaft.
     schema: 1,
+    // Ein Snapshot entsteht nur nach ausdrücklicher Freigabe. Das Feld ist die
+    // zweite Schicht: Selbst wenn je ein unfertiger Snapshot geschrieben würde,
+    // erkennt die Kundenseite ihn und zeigt keinen halben Vorgang.
+    published: release ? !!release.published : true,
+    releasedAt: release ? String(release.releasedAt || "") : "",
     title: String(project.title || "Projekt").slice(0, 160),
     deliveryType: project.deliveryType === "program" ? "program" : "website",
     stage: stage.key,
@@ -2109,6 +2387,9 @@ const API = {
   INTAKE_QUESTION_TYPES, INTAKE_ROLES, INTAKE_CONTACT_ROLES, DEFAULT_INTAKE_TITLE,
   DEFAULT_INTAKE_INTRO, DEFAULT_INTAKE_QUESTIONS, normalizeIntakeQuestions, normalizeIntakeAnswers,
   answerByRole, intakeAnswersUsable, buildIntakeDocument, projectFromIntake, buildIntakeTask,
+  intakeAnswerMap, LINK_LABELS, VISION_QUESTION_KEYS, INTAKE_REQUIRED_TOPICS, intakeCoverage, visionFromAnswers,
+  PORTAL_RELEASE_REQUIREMENTS, portalReleaseState,
+  inquiryFromVision, inquiryFromVisionIsUsable,
   PORTAL_STEPS, portalProgress, MAX_TEMPLATE_BYTES, MAX_PROMPT_BYTES, sanitizeTemplateHtml,
   defaultTemplateHtml, buildProjectPrompt, termsState, normalizePortalQuestion,
   QUOTE_REQUEST_STATUSES, quoteStatusLabel, QUOTE_REQUEST_FIELDS, normalizeQuoteRequest,
