@@ -45,6 +45,8 @@ export const LINK_LABELS = {
   intake: "Fragebogen-Link",
   intakeAlt: "Briefing-Link",
   intakeHint: "Kundendaten & Vision Room – noch keine Vorschau",
+  intakeCreate: "Fragebogen-Link erstellen",
+  intakeCopy: "Fragebogen-Link kopieren",
   portal: "Kundenportal-Link",
   portalUnpublished: "Kundenportal – noch nicht veröffentlicht",
 };
@@ -665,6 +667,98 @@ export function offerSendableState({ doc = {}, total = 0 } = {}) {
       ? "Noch keine vollständige Offerte — es fehlt: " + missing.join(", ") +
         ". Bis dahin bleibt der Vorgang eine Offertenanfrage."
       : "",
+  };
+}
+
+/* ── Offerte ohne Projekt: der optionale Fragebogen-Link ─────────────────
+ * Eine Offerte ohne Projekt ist ein vollwertiger und haeufiger Startpunkt.
+ * Sie darf gepflegt, gedruckt und versendet werden, ohne dass vorher ein
+ * Projekt angelegt oder — schlimmer — ein fremdes Projekt ausgewaehlt wird.
+ * Ob sie versandfertig ist, entscheidet allein offerSendableState(); der
+ * Fragebogen-Link sperrt weder Speichern noch Versenden.
+ *
+ * Fehlen Kundendaten, gibt es dafuer einen eigenen, freiwilligen Weg: den
+ * Fragebogen-Link GENAU DIESER Offerte. Er zeigt ausschliesslich das Briefing
+ * samt Vision Room — nie eine Vorschau und nie das Kundenportal, das an dieser
+ * Stelle noch gar nicht existiert. Er darf ausdruecklich auch fuer eine noch
+ * unfertige Offerte verschickt werden; genau dafuer ist er da.
+ *
+ * Sendet die Kundschaft ihn ab, entsteht genau ein Projekt und genau eine
+ * Aufgabe „Offertenanfrage", und diese Offerte wird dem neuen Projekt
+ * ZUGEORDNET — unveraendert, ohne zweite Kopie.
+ * --------------------------------------------------------------------- */
+export function offerBriefingLinkState({ offer = null, intake = null } = {}) {
+  const doc = offer && typeof offer === "object" ? offer : {};
+  const form = intake && typeof intake === "object" ? intake : null;
+  const token = form && isShareToken(form.inviteToken) ? form.inviteToken : "";
+  const url = token ? intakeFormUrl(token) : "";
+  const base = { label: LINK_LABELS.intakeCopy, hint: LINK_LABELS.intakeHint, token, url };
+
+  // Mit Projekt fuehrt der Weg ueber den Vorgang: dort steht der Fragebogen
+  // der Phase 1, und das Kundenportal entsteht erst mit der Veroeffentlichung.
+  if (String(doc.projectId || "")) {
+    return Object.assign({}, base, {
+      mode: "project",
+      projectId: String(doc.projectId),
+      explain: "Diese Offerte gehört zu einem Vorgang. Fehlende Angaben holst du über den "
+        + "Fragebogen-Link dieses Projekts; das Kundenportal entsteht erst mit der "
+        + "ausdrücklichen Veröffentlichung.",
+    });
+  }
+
+  // Beantwortet: Projekt und Aufgabe sind entstanden, die Offerte haengt dran.
+  if (form && String(form.projectId || "")) {
+    return Object.assign({}, base, {
+      mode: "answered",
+      projectId: String(form.projectId),
+      explain: "Der Fragebogen ist beantwortet. Daraus entstand genau ein Projekt mit genau einer "
+        + "Aufgabe „Offertenanfrage“ — diese Offerte wurde ihm zugeordnet und bleibt unverändert.",
+    });
+  }
+
+  if (url) {
+    return Object.assign({}, base, {
+      mode: "copy",
+      projectId: "",
+      explain: "Dieser Fragebogen-Link gehört zu genau dieser Offerte. Er zeigt der Kundschaft "
+        + "Kundendaten und Vision Room — nie eine Vorschau und nie das Kundenportal. Du darfst ihn "
+        + "auch für eine noch unfertige Offerte verschicken; Speichern und Versenden bleiben "
+        + "davon unberührt. Sendet die Kundschaft ihn ab, entsteht genau ein Projekt mit genau "
+        + "einer Aufgabe „Offertenanfrage“, und diese Offerte wird ihm zugeordnet.",
+    });
+  }
+
+  return Object.assign({}, base, {
+    mode: "create",
+    label: LINK_LABELS.intakeCreate,
+    projectId: "",
+    explain: "Diese Offerte gehört zu keinem Projekt — das ist in Ordnung und ändert am Versand "
+      + "nichts. Fehlen dir Kundendaten, erstelle den optionalen Fragebogen-Link dieser Offerte: "
+      + "Kundendaten und Vision Room, ohne Vorschau. Antwortet die Kundschaft, entsteht genau ein "
+      + "Projekt mit genau einer Aufgabe, und diese Offerte wird ihm zugeordnet.",
+  });
+}
+
+// Die Zuordnung ist idempotent und haengt nichts um: Ein Reload, ein zweites
+// Absenden oder ein spaeter Nachzuegler darf keine zweite Offerte und keine
+// zweite Zuordnung erzeugen — und eine Offerte, die bereits zu einem anderen
+// Vorgang gehoert, bleibt dort.
+export function offerProjectLinkPlan({ offer = null, projectId = "" } = {}) {
+  const doc = offer && typeof offer === "object" ? offer : null;
+  const target = String(projectId || "");
+  if (!doc || !doc.id || !target) {
+    return { link: false, state: "missing", reason: "Ohne Offerte und ohne Projekt gibt es nichts zuzuordnen." };
+  }
+  const current = String(doc.projectId || "");
+  if (!current) {
+    return { link: true, state: "new", reason: "Die Offerte wird diesem Projekt zugeordnet — unverändert, ohne Kopie." };
+  }
+  if (current === target) {
+    return { link: false, state: "already", reason: "Die Offerte gehört bereits zu diesem Projekt." };
+  }
+  return {
+    link: false, state: "foreign",
+    reason: "Diese Offerte gehört bereits zu einem anderen Vorgang und wird nicht umgehängt.",
   };
 }
 
@@ -2394,6 +2488,7 @@ const API = {
   defaultTemplateHtml, buildProjectPrompt, termsState, normalizePortalQuestion,
   QUOTE_REQUEST_STATUSES, quoteStatusLabel, QUOTE_REQUEST_FIELDS, normalizeQuoteRequest,
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
+  offerBriefingLinkState, offerProjectLinkPlan,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,

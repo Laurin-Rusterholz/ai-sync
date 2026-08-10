@@ -355,4 +355,29 @@ const TOKEN = "t".repeat(32);
   }
 }
 
+/* ══ 9. Auch eine Offerte OHNE Projekt kennt nur diese zwei Links ══════════
+   Der Fragebogen-Link steht ihr offen — der Kundenportal-Link nicht. Die
+   ausführliche Absicherung des Ablaufs steht in
+   tests/flowertech-offerte-ohne-projekt.test.mjs. */
+{
+  const frei = { id: "of_1", projectId: null };
+  const zustaende = [
+    CORE.offerBriefingLinkState({ offer: frei, intake: null }),
+    CORE.offerBriefingLinkState({ offer: frei, intake: { inviteToken: TOKEN } }),
+    CORE.offerBriefingLinkState({ offer: frei, intake: { inviteToken: TOKEN, projectId: "prj_1" } }),
+    CORE.offerBriefingLinkState({ offer: { id: "of_2", projectId: "prj_1" }, intake: null }),
+  ];
+  zustaende.forEach((state) => {
+    ok(state.hint === CORE.LINK_LABELS.intakeHint, `dem Zustand ${state.mode} fehlt der Hilfetext der Phase 1`);
+    ok(!String(state.url || "").includes("kunde.html"),
+      `der Zustand ${state.mode} bietet die Kundenseite als Fragebogen an`);
+    ok(!/Kundenportal-Link/.test(state.explain),
+      `der Zustand ${state.mode} verspricht den Link der Phase 2`);
+  });
+  ok(zustaende[0].label === CORE.LINK_LABELS.intakeCreate && zustaende[0].url === "",
+    "ohne Fragebogen wird trotzdem ein Link angeboten");
+  ok(zustaende[1].url === CORE.intakeFormUrl(TOKEN),
+    "der Link der Offerte ohne Projekt ist nicht der Fragebogen-Link");
+}
+
 console.log(`flowertech zwei links: ok (${checks} Pruefungen)`);
