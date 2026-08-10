@@ -284,13 +284,26 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
   ok(!W.contractToText(ohneSignatur, {}).includes("Unterschriften"),
     "ein abgewaehlter Block erscheint trotzdem im Text");
 
-  for (const kind of ["agb", "privacy"]) {
-    const doc = W.buildLegalDraft(kind, context);
-    eq(doc.status, "draft", `${kind} startet nicht als Entwurf`);
+  /* Datenschutz bleibt ein bearbeitbarer Projektentwurf. Die AGB sind es seit
+     August 2026 NICHT mehr: Sie kommen zentral und unveraenderlich, damit auf
+     jedem Kundenlink, im Portal und in jedem Prompt derselbe Text steht. */
+  {
+    const doc = W.buildLegalDraft("privacy", context);
+    eq(doc.status, "draft", "privacy startet nicht als Entwurf");
     ok(/rechtlich prüfen|vor Veröffentlichung/i.test(doc.intro + " " + doc.legalNotice),
-      `${kind} traegt keinen Pruefhinweis`);
-    ok(doc.sections.length > 0 && doc.sections.every((s) => s.body),
-      `${kind} hat leere Abschnitte`);
+      "privacy traegt keinen Pruefhinweis");
+    ok(doc.sections.length > 0 && doc.sections.every((s) => s.body), "privacy hat leere Abschnitte");
+    ok(doc.editable !== false, "privacy darf weiterhin bearbeitet werden");
+  }
+  {
+    const doc = W.buildLegalDraft("agb", context);
+    eq(doc.status, "standard", "die AGB sind kein Projektentwurf mehr");
+    eq(doc.editable, false, "die AGB sind bearbeitbar geworden");
+    eq(doc.version, W.STANDARD_TERMS.version, "die AGB tragen nicht die zentrale Fassungsnummer");
+    ok(/rechtlich freigeben|rechtlich prüfen/i.test(doc.intro + " " + doc.legalNotice),
+      "die AGB tragen keinen Pruefhinweis");
+    ok(doc.sections.length > 0 && doc.sections.every((s) => s.body), "die AGB haben leere Abschnitte");
+    ok(doc.sections.every((s) => s.editable === false), "einzelne AGB-Abschnitte sind bearbeitbar");
   }
   eq(W.buildLegalDraft("gibtesnicht", context).kind, "agb",
     "eine unbekannte Vorlagenart faellt nicht sauber zurueck");
@@ -767,8 +780,13 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
   ok(/Platzhalter/.test(demo), "der Beispielmodus verlangt keine Platzhalter-Inhalte");
   ok(/Keine echten Kundendaten/.test(demo), "der Beispielmodus erlaubt echte Kundendaten");
   ok(/Handy, Tablet und Computer/.test(demo), "der Beispielmodus fordert keine Darstellung auf allen Geraeten");
-  // Der Bedarf ist der ganze Auftrag — Aenderungswuensche waeren nur Rauschen.
-  ok(!/Änderungswünsche/.test(demo), "der Beispielmodus schleppt Änderungswünsche mit");
+  /* Der Bedarf ist der ganze Auftrag — die Aenderungswuensche DES PROJEKTS
+     waeren dort nur Rauschen. Geprueft wird deshalb der Abschnitt, nicht das
+     blosse Wort: Seit die zentralen Standard-AGB in jedem Prompt stehen, kommt
+     "Änderungswünsche" auch in deren Ziffer 6 vor, und das ist richtig so. */
+  ok(!/## Offene Änderungswünsche/.test(demo), "der Beispielmodus schleppt Änderungswünsche mit");
+  ok(!new RegExp(context.changeRequests.map((c) => c.title).join("|")).test(demo),
+    "der Beispielmodus nennt einzelne Änderungswünsche des Projekts");
   ok(/Kontaktformular/.test(demo), "der Beispielmodus überträgt die gewünschten Funktionen nicht");
   ok(/Startseite/.test(demo), "der Beispielmodus überträgt die Seiten nicht");
   // Datensparsamkeit gilt auch hier.

@@ -715,7 +715,10 @@ function makeReleasable(win, projectId) {
   ok(!win.__portals[key], "ein unvollstaendiges Kundenportal wurde veröffentlicht");
   ok(win._ftClientPortalLink("prj_1") === "", "es gibt bereits einen Kundenportal-Link");
   const fehlt = win._ftPortalRelease("prj_1").missing;
-  ok(fehlt.length === 5, `es werden ${fehlt.length} von 5 fehlenden Punkten benannt`);
+  // Vier statt fuenf: Die AGB sind seit August 2026 zentral und immer vorhanden,
+  // sie koennen darum gar nicht mehr fehlen.
+  ok(fehlt.length === 4, `es werden ${fehlt.length} von 4 fehlenden Punkten benannt`);
+  ok(!fehlt.includes("AGB"), "die zentralen AGB werden als fehlend gemeldet");
 
   // Vollstaendig, aber noch nicht freigegeben: weiterhin kein Link.
   makeReleasable(win, "prj_1");

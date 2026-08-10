@@ -218,9 +218,19 @@ const ok = (condition, message) => { assert.ok(condition, message); checks++; };
   ok(CORE.portalProgress({ hasPreview: true, changes: [{ status: "new" }] }).openChanges === 1,
     "offene Änderungswünsche werden nicht gezaehlt");
 
+  /* Die AGB sind seit August 2026 zentral: massgebend ist STANDARD_TERMS.version,
+     nicht mehr eine je Projekt gepflegte Fassung. Der frueher hier uebergebene
+     `terms`-Stand darf die Fassung deshalb NICHT mehr bestimmen — sonst haette
+     jedes Projekt seine eigene, und niemand koennte sagen, welchem Text eine
+     Kundin zugestimmt hat. */
+  const zentral = CORE.STANDARD_TERMS.version;
   const terms = { version: "2-2026-08-08", title: "AGB", body: "Text" };
+  ok(CORE.termsState({ terms }).version === zentral,
+    "eine Projektfassung ueberstimmt die zentrale Fassung");
+  ok(CORE.termsState({ terms }).title === CORE.STANDARD_TERMS.title,
+    "der Projekttitel ueberstimmt den zentralen Titel");
   ok(!CORE.termsState({ terms }).accepted, "ohne Zustimmung gilt zugestimmt");
-  ok(CORE.termsState({ terms, consent: { version: "2-2026-08-08", acceptedAt: "x" } }).accepted,
+  ok(CORE.termsState({ terms, consent: { version: zentral, acceptedAt: "x" } }).accepted,
     "eine erteilte Zustimmung wird nicht erkannt");
   const alt = CORE.termsState({ terms, consent: { version: "1-2026-01-01", acceptedAt: "x" } });
   ok(!alt.accepted && alt.outdated,
@@ -254,8 +264,21 @@ const ok = (condition, message) => { assert.ok(condition, message); checks++; };
   ok(snap.preview.html === "<h1>Vorschau</h1>", "die Vorschau wird nicht entschaerft");
   ok(snap.preview.sanitized.includes("Skripte"), "es wird nicht benannt, was entfernt wurde");
   ok(snap.portal.label === "Vorschau", "der Portalfortschritt fehlt");
-  ok(snap.terms.body === "Bedingungen" && snap.terms.accepted === false, "die AGB fehlen im Portal");
-  ok(snap.terms.notice.includes("ENTWURF"), "der Prüfhinweis zum Rechtstext fehlt");
+  /* Im Portal stehen die zentralen Standard-AGB — nicht mehr der Projekttext.
+     Der frueher hier uebergebene Text ("Bedingungen") darf ausdruecklich NICHT
+     mehr durchschlagen; sonst gaebe es wieder so viele Fassungen wie Projekte. */
+  ok(snap.terms.body === CORE.standardTermsText(), "im Portal steht nicht die zentrale AGB-Fassung");
+  ok(snap.terms.version === CORE.STANDARD_TERMS.version, "im Portal fehlt der zentrale Versionsstand");
+  ok(snap.terms.editable === false, "die AGB sind im Portal bearbeitbar");
+  ok(!snap.terms.body.includes("Bedingungen\n") && snap.terms.body !== "Bedingungen",
+    "der Projekttext ueberstimmt die zentrale Fassung");
+  ok(snap.terms.accepted === false, "ohne Zustimmung gilt zugestimmt");
+  /* Der Pruefhinweis muss beides sagen: dass es ein Entwurf ist und dass die
+     rechtliche Freigabe noch aussteht. Frueher stand hier das Wort "ENTWURF"
+     in Grossbuchstaben; entscheidend ist die Aussage, nicht die Schreibweise. */
+  ok(/entwurf/i.test(snap.terms.notice) && /rechtlich freigeben|rechtlich prüfen/i.test(snap.terms.notice),
+    "der Prüfhinweis zum Rechtstext fehlt");
+  ok(/0\.1/.test(snap.terms.notice), "der Prüfhinweis nennt die Testfassung nicht");
   ok(snap.questions.length === 1 && snap.questions[0].question === "Logo als Datei?",
     "die Rückfragen fehlen im Portal");
   ok(snap.intake.answers.length === 1 && snap.intake.answers[0].label === "Ziel",

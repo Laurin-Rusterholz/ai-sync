@@ -61,15 +61,20 @@ const VERSENDET = {
 // ── 1. Die Stufen sagen, was sie zeigen und was nicht ─────────────────────
 {
   const keys = CORE.CUSTOMER_AREA_STAGES.map((s) => s.key);
-  ok(keys.join(",") === "intake,offer,preview,admin",
+  // Der Vertrag ist als eigene Stufe dazugekommen: Der eine Kundenlink zeigt
+  // seit August 2026 die vollstaendige Kundensicht.
+  ok(keys.join(",") === "intake,offer,preview,contract,admin",
     `die Stufen des Kundenbereichs stimmen nicht: ${keys.join(",")}`);
   CORE.CUSTOMER_AREA_STAGES.forEach((stage) => {
     ok(stage.label && stage.shows && stage.hides, `Stufe „${stage.key}“ ist nicht vollständig beschrieben`);
   });
   ok(/Entwürfe nie/.test(CORE.CUSTOMER_AREA_STAGES[1].hides),
     "die Offerten-Stufe sagt nicht, dass Entwürfe draussen bleiben");
-  ok(/Freigabe/.test(CORE.CUSTOMER_AREA_STAGES[3].hides),
+  const stufe = (key) => CORE.CUSTOMER_AREA_STAGES.find((s) => s.key === key);
+  ok(/Freigabe/.test(stufe("admin").hides),
     "die Verwaltungs-Stufe nennt die eigene Freigabe nicht");
+  ok(/Freigabe/.test(stufe("contract").hides),
+    "die Vertrags-Stufe nennt die eigene Freigabe nicht");
 }
 
 // ── 2. Entwurf ist keine Offerte ──────────────────────────────────────────
@@ -188,8 +193,24 @@ const VERSENDET = {
   ok(stufe3.tiles.preview.feedback === true, "die Vorschau erlaubt keine Änderungswünsche");
   ok(stufe3.tiles.admin.url === "https://admin.lehner.ch/login", "die Verwaltungs-Adresse fehlt");
   ok(stufe3.url === stufe1.url, "die Adresse ändert sich auf der letzten Stufe");
-  ok(stufe3.visibleLabels.length === 4 && stufe3.hiddenLabels.length === 0,
-    "auf der letzten Stufe ist nicht alles sichtbar");
+  /* Vier von fuenf: Der Vertrag ist als eigene Stufe dazugekommen und hier
+     bewusst nicht freigegeben — genau das soll man sehen. */
+  ok(stufe3.visibleLabels.length === 4, `sichtbar sind ${stufe3.visibleLabels.length} Stufen statt vier`);
+  ok(stufe3.hiddenLabels.join(",") === "Vertrag",
+    `verborgen ist nicht nur der Vertrag: ${stufe3.hiddenLabels.join(",")}`);
+
+  // Mit freigegebenem Vertrag ist wirklich alles sichtbar — auf derselben Adresse.
+  const mitVertrag = CORE.customerAreaState({
+    project: Object.assign({}, PROJEKT, {
+      previewUrl: "https://vorschau.lehner.ch/entwurf", ftCustomerPreview: { released: true },
+      adminUrl: "https://admin.lehner.ch/login", ftCustomerAdmin: { released: true },
+      ftCustomerContract: { released: true },
+    }),
+    intake, offers: [VERSENDET], offerAmount: 4500, prompt: PROMPT_DA,
+    contractHtml: "<h1>Projektauftrag</h1>", contractTitle: "Projektauftrag",
+  });
+  ok(mitVertrag.hiddenLabels.length === 0, "mit freigegebenem Vertrag bleibt etwas verborgen");
+  ok(mitVertrag.url === stufe1.url, "die Adresse ändert sich mit dem Vertrag");
 
   ok(CORE.customerAreaState({ project: PROJEKT, intake: null }).stage === "none",
     "ohne Kundenlink entsteht trotzdem eine Stufe");
