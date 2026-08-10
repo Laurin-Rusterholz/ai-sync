@@ -63,7 +63,9 @@ const VERSENDET = {
   const keys = CORE.CUSTOMER_AREA_STAGES.map((s) => s.key);
   // Der Vertrag ist als eigene Stufe dazugekommen: Der eine Kundenlink zeigt
   // seit August 2026 die vollstaendige Kundensicht.
-  ok(keys.join(",") === "intake,offer,preview,contract,admin",
+  // AGB und TEST-Übersicht sind als eigene Stufen dazugekommen: Die Anzeige
+  // soll zeigen, was auf dem einen Link wirklich steht.
+  ok(keys.join(",") === "intake,offer,preview,terms,testService,contract,admin",
     `die Stufen des Kundenbereichs stimmen nicht: ${keys.join(",")}`);
   CORE.CUSTOMER_AREA_STAGES.forEach((stage) => {
     ok(stage.label && stage.shows && stage.hides, `Stufe „${stage.key}“ ist nicht vollständig beschrieben`);
@@ -195,9 +197,12 @@ const VERSENDET = {
   ok(stufe3.url === stufe1.url, "die Adresse ändert sich auf der letzten Stufe");
   /* Vier von fuenf: Der Vertrag ist als eigene Stufe dazugekommen und hier
      bewusst nicht freigegeben — genau das soll man sehen. */
-  ok(stufe3.visibleLabels.length === 4, `sichtbar sind ${stufe3.visibleLabels.length} Stufen statt vier`);
-  ok(stufe3.hiddenLabels.join(",") === "Vertrag",
-    `verborgen ist nicht nur der Vertrag: ${stufe3.hiddenLabels.join(",")}`);
+  /* Fuenf von sieben: Fragebogen, Offerte, Vorschau, AGB und Verwaltung stehen
+     da. Verborgen sind der noch nicht freigegebene Vertrag und die
+     TEST-Uebersicht, die hier gar nicht gesetzt ist. */
+  ok(stufe3.hiddenLabels.join(",") === "Leistungsübersicht · TEST,Vertrag",
+    `verborgen ist etwas anderes: ${stufe3.hiddenLabels.join(",")}`);
+  ok(stufe3.visibleLabels.includes("Standard-AGB"), "die AGB gelten als unsichtbar");
 
   // Mit freigegebenem Vertrag ist wirklich alles sichtbar — auf derselben Adresse.
   const mitVertrag = CORE.customerAreaState({
@@ -209,7 +214,8 @@ const VERSENDET = {
     intake, offers: [VERSENDET], offerAmount: 4500, prompt: PROMPT_DA,
     contractHtml: "<h1>Projektauftrag</h1>", contractTitle: "Projektauftrag",
   });
-  ok(mitVertrag.hiddenLabels.length === 0, "mit freigegebenem Vertrag bleibt etwas verborgen");
+  ok(mitVertrag.hiddenLabels.join(",") === "Leistungsübersicht · TEST",
+    `mit freigegebenem Vertrag bleibt zu viel verborgen: ${mitVertrag.hiddenLabels.join(",")}`);
   ok(mitVertrag.url === stufe1.url, "die Adresse ändert sich mit dem Vertrag");
 
   ok(CORE.customerAreaState({ project: PROJEKT, intake: null }).stage === "none",
@@ -393,8 +399,11 @@ function offerteAn(ctx, projectId) {
   ok(/Fragebogen – Kundendaten &amp; Vision Room/.test(html), "Stufe 1 fehlt in der Karte");
   ok(/Es ist noch keine Offerte versendet/.test(html),
     "die Karte sagt nicht, warum die Offerte noch nicht sichtbar ist");
-  ok(/Vertrag, AGB und das Kundenportal bleiben ausserhalb dieses Links/.test(html),
-    "die Karte sagt nicht, was ausserhalb dieses Links bleibt");
+  /* Umgedreht: Der eine Link traegt seit dem Lehner-Lauf AGB und Vertrag. Die
+     Karte muss das sagen — und dass nie ein zweiter Link entsteht. */
+  ok(/Eine Adresse für alles/.test(html), "die Karte erklärt die eine Adresse nicht");
+  ok(/zweiter Link entsteht nie/.test(html), "die Karte verspricht keinen einzigen Link");
+  ok(!/ausserhalb dieses Links/.test(html), "die Karte behauptet weiter, etwas bleibe draussen");
   ok(Object.keys(data.entities.projects).length === 1, "es entstand ein zweites Projekt");
 }
 

@@ -743,8 +743,9 @@ const freigebbarMachen = (win, projectId) => {
   ok(html.includes("Kundenanfragen"), "der Bereich Kundenanfragen fehlt");
   ok(html.includes("Fragebogen-Link kopieren"), "der Fragebogen-Link lässt sich nicht kopieren");
   ok(html.includes(win._ftIntakeLink(intakeId)), "der öffentliche Link steht nicht in der Oberfläche");
-  // Der Link der Phase 1 ist eindeutig beschriftet und verspricht keine Vorschau.
-  ok(html.includes("Kundendaten &amp; Vision Room – noch keine Vorschau"),
+  // Der eine Link ist eindeutig beschriftet: Er beschreibt das Mitwachsen.
+  // Der genaue Wortlaut steht im Kern (LINK_LABELS.intakeHint) und wird dort geprueft.
+  ok(html.includes("Die eine Kundenadresse"),
     "der eindeutige Hilfetext zum Fragebogen-Link fehlt");
   ok(!/>\s*Kundenlink\b/.test(html), "der mehrdeutige Begriff „Kundenlink“ steht weiterhin da");
   ok(/＋ Frage/.test(html), "Fragen lassen sich nicht ergänzen");
@@ -809,7 +810,7 @@ const freigebbarMachen = (win, projectId) => {
   const freiHtml = strip(win.viewFlowerTech());
   ok(/Fragebogen-Link erstellen/.test(freiHtml),
     "eine Offerte ohne Projekt bietet den Fragebogen-Link nicht an");
-  ok(/Kundendaten &amp; Vision Room – noch keine Vorschau/.test(freiHtml),
+  ok(/Die eine Kundenadresse/.test(freiHtml),
     "der Hilfetext des Fragebogen-Links fehlt an der Offerte ohne Projekt");
   ok(!/kein Link erfunden/.test(freiHtml),
     "die Offerte ohne Projekt behauptet weiterhin, es werde kein Link erfunden");

@@ -45,7 +45,9 @@ const TOKEN = "e".repeat(32);
     "der Knopf „Fragebogen-Link erstellen“ ist nicht benannt");
   ok(CORE.LINK_LABELS.intakeCopy === "Fragebogen-Link kopieren",
     "der Knopf „Fragebogen-Link kopieren“ ist nicht benannt");
-  ok(CORE.LINK_LABELS.intakeHint === "Kundendaten & Vision Room – noch keine Vorschau",
+  // Der Hilfetext beschreibt seit dem Lehner-Lauf, was der Link WIRD, nicht
+  // was ihm fehlt — "noch keine Vorschau" war ab der Freigabe schlicht falsch.
+  ok(CORE.LINK_LABELS.intakeHint === "Die eine Kundenadresse – waechst mit Fragebogen, Vorschau, Offerte, AGB und Vertrag",
     "der Hilfetext des Fragebogen-Links stimmt nicht");
 }
 
@@ -221,7 +223,7 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   const html = strip(win.viewFlowerTech());
   ok(/Fragebogen-Link erstellen/.test(html), "der Knopf „Fragebogen-Link erstellen“ fehlt an der Offerte");
   ok(/_ftCreateOfferIntakeLink\('/.test(html), "der Knopf ist nicht verdrahtet");
-  ok(/Kundendaten &amp; Vision Room – noch keine Vorschau/.test(html),
+  ok(/Die eine Kundenadresse/.test(html),
     "der Hilfetext fehlt an der Offerte ohne Projekt");
   ok(!/kein Link erfunden/.test(html), "der widerrufene Satz steht weiterhin in der Oberfläche");
   ok(!/Ordne sie unten einem Projekt zu/.test(html), "die Offerte verlangt weiterhin eine Projektzuordnung");

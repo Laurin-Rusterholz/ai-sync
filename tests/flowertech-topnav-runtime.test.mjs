@@ -853,7 +853,7 @@ function makeReleasable(win, projectId) {
     "der Kundenportal-Link wird automatisch per Mail verschickt");
   // Die Begriffe der zwei Phasen stehen in der Oberflaeche.
   ok(/Fragebogen-Link kopieren/.test(source), "an der Anfrage fehlt „Fragebogen-Link kopieren“");
-  ok(/Kundendaten &amp; Vision Room – noch keine Vorschau/.test(source),
+  ok(/Die eine Kundenadresse/.test(source),
     "der eindeutige Hilfetext zum Fragebogen-Link fehlt");
   ok(/Kundenportal veröffentlichen/.test(source), "die bewusste Veröffentlichung fehlt in der Oberfläche");
 }

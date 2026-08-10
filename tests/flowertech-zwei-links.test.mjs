@@ -38,7 +38,9 @@ const TOKEN = "t".repeat(32);
   ok(CORE.LINK_LABELS.intake === "Fragebogen-Link", "der Link der Phase 1 heisst nicht „Fragebogen-Link“");
   ok(CORE.LINK_LABELS.intakeAlt === "Briefing-Link", "die zweite erlaubte Bezeichnung fehlt");
   ok(CORE.LINK_LABELS.portal === "Kundenportal-Link", "der Link der Phase 2 heisst nicht „Kundenportal-Link“");
-  ok(CORE.LINK_LABELS.intakeHint === "Kundendaten & Vision Room – noch keine Vorschau",
+  // Der Hilfetext beschreibt seit dem Lehner-Lauf, was der Link WIRD, nicht
+  // was ihm fehlt — "noch keine Vorschau" war ab der Freigabe schlicht falsch.
+  ok(CORE.LINK_LABELS.intakeHint === "Die eine Kundenadresse – waechst mit Fragebogen, Vorschau, Offerte, AGB und Vertrag",
     "der eindeutige Hilfetext der Phase 1 stimmt nicht");
   ok(CORE.LINK_LABELS.portalUnpublished === "Kundenportal – noch nicht veröffentlicht",
     "der interne Zustand der Phase 2 ist nicht benannt");

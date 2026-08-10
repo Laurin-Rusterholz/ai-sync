@@ -522,3 +522,94 @@ console.log(
   "  Passwort und Transfercode werden gar nicht erst erfasst — nur die\n" +
   "  Bestätigung, dass sie auf sicherem Weg übermittelt wurden."
 );
+
+/* ══ Abnahmefehler aus dem echten Lehner-Lauf ════════════════════════════
+ * (1) prompt.md kannte die freigegebene Test-Leistungsübersicht nicht — die
+ *     AGB und die Kachel waren nur in buildClaudePrompt gelandet, prompt.md
+ *     entsteht aber aus buildProjectPrompt.
+ * (2) Die Oberfläche sprach weiter vom „zweiten Link" und von „noch keine
+ *     Vorschau", obwohl alles auf derselben Adresse wächst.
+ * ---------------------------------------------------------------------- */
+
+pruefe("prompt.md enthält die freigegebene Test-Übersicht mit beiden Adressen", () => {
+  const prompt = C.buildProjectPrompt({
+    project: {
+      title: "Lehner", ftCurrentUrl: "https://alt.example.org/",
+      ftTestServiceTile: {
+        released: true, title: "Website-Neukonzept Brumag*CH",
+        currentUrl: "https://www.bkh-brumag.ch/index.php",
+        previewUrl: "https://beispiel-lehner.netlify.app/",
+      },
+    },
+    document: {},
+  });
+  ["Website-Neukonzept Brumag*CH", "https://www.bkh-brumag.ch/index.php",
+    "https://beispiel-lehner.netlify.app/", "Kosten noch offen",
+  ].forEach((teil) => assert.ok(prompt.includes(teil), "prompt.md fehlt: " + teil));
+  // Ein alter Stand wird benannt, nicht still ersetzt.
+  assert.ok(prompt.includes("alt.example.org"), "der gespeicherte Iststand verschwindet stillschweigend");
+  assert.match(prompt, /Massgebend für diesen Testlauf/);
+  // Kein Preis — auch nicht als Null.
+  const block = prompt.split("TEST, unverbindlich")[1].split("\n## ")[0];
+  assert.ok(!/CHF/.test(block), "die Test-Übersicht im Prompt nennt eine Währung");
+  assert.ok(!/0\.00/.test(block), "die Test-Übersicht im Prompt zeigt 0.00");
+  assert.match(prompt, /keinen Preis und keinen Betrag/);
+});
+
+pruefe("Ohne Freigabe steht die Test-Übersicht auch nicht im prompt.md", () => {
+  const prompt = C.buildProjectPrompt({
+    project: { title: "L", ftTestServiceTile: { released: false, title: "Geheim" } }, document: {},
+  });
+  assert.ok(!prompt.includes("Geheim"));
+  assert.ok(!prompt.includes("TEST, unverbindlich"));
+});
+
+pruefe("Beide Prompt-Wege tragen dieselben zentralen AGB", () => {
+  const projekt = { title: "L" };
+  const a = C.buildProjectPrompt({ project: projekt, document: {} });
+  const b = C.buildClaudePrompt({ project: projekt }, {}, { mode: "implement" });
+  [a, b].forEach((p, i) => {
+    assert.ok(p.includes(C.STANDARD_TERMS_PROMPT_HEADING), "AGB fehlen im Prompt " + i);
+    assert.ok(p.includes("19. Schlussbestimmungen"), "AGB unvollständig im Prompt " + i);
+  });
+});
+
+pruefe("Die Stufenliste nennt AGB und Test-Übersicht", () => {
+  const keys = C.CUSTOMER_AREA_STAGES.map((s) => s.key);
+  ["intake", "offer", "terms", "testService", "contract", "admin"].forEach((k) => {
+    assert.ok(keys.includes(k), "die Stufenliste kennt nicht: " + k);
+  });
+  const agb = C.CUSTOMER_AREA_STAGES.find((s) => s.key === "terms");
+  assert.match(agb.hides, /Nichts/, "die AGB werden als bedingt dargestellt");
+  const test = C.CUSTOMER_AREA_STAGES.find((s) => s.key === "testService");
+  assert.match(test.hides, /widerrufbar/);
+  assert.match(test.hides, /nie mit Preis/);
+});
+
+pruefe("Die Sichtbarkeit meldet die Test-Übersicht statt „keine Offerte versendet“", () => {
+  const mit = C.customerAreaState({
+    project: { id: "p", ftTestServiceTile: { released: true, title: "T" } },
+    intake: INTAKE(TOKEN_A),
+  });
+  const offerStufe = mit.stages.find((s) => s.key === "offer");
+  assert.match(offerStufe.reason, /TEST-Leistungsübersicht/,
+    "die Oberfläche meldet weiter „keine Offerte versendet“");
+  assert.ok(mit.stages.find((s) => s.key === "terms").visible, "die AGB gelten als unsichtbar");
+  assert.ok(mit.stages.find((s) => s.key === "testService").visible, "die Test-Übersicht gilt als unsichtbar");
+
+  // Ohne Testkachel bleibt die alte, dann zutreffende Begründung.
+  const ohne = C.customerAreaState({ project: { id: "p" }, intake: INTAKE(TOKEN_A) });
+  assert.match(ohne.stages.find((s) => s.key === "offer").reason, /noch keine Offerte versendet/);
+});
+
+pruefe("Der Hilfetext des Links beschreibt das Mitwachsen, nicht ein Fehlen", () => {
+  assert.ok(!/noch keine Vorschau/.test(C.LINK_LABELS.intakeHint),
+    "der Hilfetext sagt weiter „noch keine Vorschau“");
+  assert.match(C.LINK_LABELS.intakeHint, /wächst|waechst/i);
+});
+
+console.log(
+  "Abnahme Lehner: prompt.md trägt die freigegebene Test-Übersicht samt Ist- und\n" +
+  "  Vorschau-Adresse und ohne Preis; beide Prompt-Wege tragen dieselben AGB;\n" +
+  "  Stufenliste und Begründungen sprechen von EINER mitwachsenden Adresse."
+);
