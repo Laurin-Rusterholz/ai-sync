@@ -297,8 +297,14 @@ export const LINK_LABELS = {
   // Die vollständige Beschriftung der Zeile. Sie nennt in einem Atemzug, was
   // der Link zeigt und was er NICHT zeigt — genau daran hat sich die
   // Verwechslung mit dem Kundenportal bisher entzündet.
-  intakeFull: "Fragebogen-Link – Kundendaten & Vision Room, keine Vorschau",
-  intakeCopied: "Fragebogen-Link kopiert – Kundendaten & Vision Room, keine Vorschau",
+  /* Zwei Zustaende derselben EINEN Adresse. Der Link ist am Anfang wirklich
+     nur der Fragebogen — sobald aber die Vorschau freigegeben ist, waere
+     "keine Vorschau" schlicht gelogen. Welche Fassung gilt, entscheidet
+     intakeLinkLabel() anhand dessen, was wirklich freigegeben ist. */
+  intakeFull: "Kundenadresse – Fragebogen & Vision Room, Standard-AGB",
+  intakeFullGrown: "Kundenadresse – Fragebogen, Vorschau, Standard-AGB und mehr",
+  intakeCopied: "Kundenadresse kopiert – Fragebogen & Vision Room, Standard-AGB",
+  intakeCopiedGrown: "Kundenadresse kopiert – Fragebogen, Vorschau, Standard-AGB und mehr",
   // Der administrative Rückweg nach einer Test- oder Fehleingabe. Er setzt
   // ausschliesslich die Antwort zurück — nie den Link und nie den Vorgang.
   intakeReset: "Fragebogen zurücksetzen",
@@ -935,7 +941,8 @@ export function offerSendableState({ doc = {}, total = 0 } = {}) {
  *
  * Fehlen Kundendaten, gibt es dafuer einen eigenen, freiwilligen Weg: den
  * Fragebogen-Link GENAU DIESER Offerte. Er zeigt ausschliesslich das Briefing
- * samt Vision Room — nie eine Vorschau und nie das Kundenportal, das an dieser
+ * samt Vision Room und, sobald freigegeben, Vorschau, AGB und Vertrag. Nie
+ * dagegen das getrennte Kundenportal, das an dieser
  * Stelle noch gar nicht existiert. Er darf ausdruecklich auch fuer eine noch
  * unfertige Offerte verschickt werden; genau dafuer ist er da.
  *
@@ -943,7 +950,10 @@ export function offerSendableState({ doc = {}, total = 0 } = {}) {
  * Aufgabe „Offertenanfrage", und diese Offerte wird dem neuen Projekt
  * ZUGEORDNET — unveraendert, ohne zweite Kopie.
  * --------------------------------------------------------------------- */
-export function offerBriefingLinkState({ offer = null, intake = null } = {}) {
+export function offerBriefingLinkState({
+  offer = null, intake = null,
+  previewVisible = false, testServiceVisible = false, contractVisible = false,
+} = {}) {
   const doc = offer && typeof offer === "object" ? offer : {};
   const form = intake && typeof intake === "object" ? intake : null;
   const token = form && isShareToken(form.inviteToken) ? form.inviteToken : "";
@@ -976,11 +986,9 @@ export function offerBriefingLinkState({ offer = null, intake = null } = {}) {
     return Object.assign({}, base, {
       mode: "copy",
       projectId: "",
-      explain: "Dieser Fragebogen-Link gehört zu genau dieser Offerte. Er zeigt der Kundschaft "
-        + "Kundendaten und Vision Room — nie eine Vorschau und nie das Kundenportal. Du darfst ihn "
-        + "auch für eine noch unfertige Offerte verschicken; Speichern und Versenden bleiben "
-        + "davon unberührt. Sendet die Kundschaft ihn ab, entsteht genau ein Projekt mit genau "
-        + "einer Aufgabe „Offertenanfrage“, und diese Offerte wird ihm zugeordnet.",
+      explain: intakeLinkExplain({ previewVisible, testServiceVisible, contractVisible, scope: "offer" })
+        + " Du darfst sie auch für eine noch unfertige Offerte verschicken; Speichern und "
+        + "Versenden bleiben davon unberührt.",
     });
   }
 
@@ -1468,13 +1476,52 @@ export function intakeBinding(intake) {
   return { mode: "creates", projectId: "", answered: false };
 }
 
-export function projectIntakeLinkState({ project = null, intake = null } = {}) {
+/* Welche Beschriftung gilt — und welcher Satz darunter steht.
+ *
+ * Anlass: Nach der Freigabe der Vorschau stand oben weiter "keine Vorschau"
+ * und darunter "nie eine Vorschau und nie das Kundenportal". Beides war ab
+ * diesem Moment falsch und widersprach der einen Adresse.
+ *
+ * Die Texte rechnen deshalb neu mit dem tatsaechlichen Stand statt fest zu
+ * stehen. Die AGB werden immer genannt: Sie sind auf jeder gueltigen
+ * Einladung da. */
+export function intakeLinkLabel({ previewVisible = false, copied = false } = {}) {
+  if (copied) return previewVisible ? LINK_LABELS.intakeCopiedGrown : LINK_LABELS.intakeCopied;
+  return previewVisible ? LINK_LABELS.intakeFullGrown : LINK_LABELS.intakeFull;
+}
+
+export function intakeLinkExplain({
+  previewVisible = false, testServiceVisible = false, contractVisible = false, scope = "project",
+} = {}) {
+  const gehoert = scope === "offer"
+    ? "Diese eine Adresse gehört zu genau dieser Offerte."
+    : "Diese eine Adresse gehört zu genau diesem Projekt.";
+  const zeigt = ["den Fragebogen samt Vision Room", "die zentralen Standard-AGB"];
+  if (previewVisible) zeigt.push("die freigegebene Vorschau samt Änderungswünschen");
+  if (testServiceVisible) zeigt.push("die unverbindliche TEST-Leistungsübersicht (ohne Preis)");
+  if (contractVisible) zeigt.push("den freigegebenen Vertrag");
+  const letzte = zeigt.pop();
+  const aufzaehlung = zeigt.length ? zeigt.join(", ") + " und " + letzte : letzte;
+  const folge = scope === "offer"
+    ? "Sendet die Kundschaft ihn ab, entsteht genau ein Projekt mit genau einer Aufgabe " +
+      "„Offertenanfrage“, und diese Offerte wird ihm zugeordnet."
+    : "Antwortet die Kundschaft, wird dieses Projekt aktualisiert; es entsteht kein zweites " +
+      "Projekt und höchstens eine Aufgabe „Offertenanfrage“.";
+  return gehoert + " Sie zeigt " + aufzaehlung + ". Sie wird nie ersetzt und nie erneuert — " +
+    "was dazukommt, erscheint auf derselben Adresse. " + folge;
+}
+
+export function projectIntakeLinkState({
+  project = null, intake = null,
+  previewVisible = false, testServiceVisible = false, contractVisible = false,
+} = {}) {
   const item = project && typeof project === "object" ? project : null;
   const form = intake && typeof intake === "object" ? intake : null;
   const token = form && isShareToken(form.inviteToken) ? form.inviteToken : "";
   const url = token ? intakeFormUrl(token) : "";
   const base = {
-    label: LINK_LABELS.intakeFull,
+    label: intakeLinkLabel({ previewVisible }),
+    previewVisible, testServiceVisible, contractVisible,
     hint: LINK_LABELS.intakeHint,
     copyLabel: LINK_LABELS.intakeCopy,
     openLabel: LINK_LABELS.intakeOpen,
@@ -1516,10 +1563,7 @@ export function projectIntakeLinkState({ project = null, intake = null } = {}) {
   }
   return Object.assign({}, base, {
     mode: "copy",
-    explain: "Dieser Fragebogen-Link gehört zu genau diesem Projekt. Er zeigt der Kundschaft "
-      + "Kundendaten, Bestandesaufnahme und Vision Room — nie eine Vorschau und nie das "
-      + "Kundenportal. Antwortet die Kundschaft, wird dieses Projekt aktualisiert; es entsteht "
-      + "kein zweites Projekt und höchstens eine Aufgabe „Offertenanfrage“.",
+    explain: intakeLinkExplain({ previewVisible, testServiceVisible, contractVisible }),
   });
 }
 
@@ -3780,6 +3824,7 @@ const API = {
   TEST_SERVICE_COST_STATUS, TEST_SERVICE_NOTICE, TEST_SERVICE_FORBIDDEN_KEYS,
   customerTestServiceTile,
   customerContractRelease, customerContractTile,
+  intakeLinkLabel, intakeLinkExplain,
   DOMAIN_ACCESS_QUESTION_KEY, DOMAIN_ACCESS_CHOICES, DOMAIN_TRANSFER_CHOICE,
   DOMAIN_TRANSFER_QUESTIONS, SENSITIVE_ANSWER_PATTERN, isSensitiveAnswer, redactSensitiveAnswers,
   WORKFLOW_STAGES, LEGACY_STAGE_ALIASES, stageIndex, stageLabel, nextStage, previousStage,

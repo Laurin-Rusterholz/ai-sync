@@ -613,3 +613,60 @@ console.log(
   "  Vorschau-Adresse und ohne Preis; beide Prompt-Wege tragen dieselben AGB;\n" +
   "  Stufenliste und Begründungen sprechen von EINER mitwachsenden Adresse."
 );
+
+/* ══ Haupttexte folgen dem tatsächlichen Stand ═══════════════════════════
+ * Live-Befund: Nach der Freigabe der Vorschau stand oben weiter
+ * „Fragebogen-Link – Kundendaten & Vision Room, keine Vorschau" und darunter
+ * „nie eine Vorschau und nie das Kundenportal". Beides war ab diesem Moment
+ * falsch und widersprach der einen Adresse.
+ * ---------------------------------------------------------------------- */
+
+pruefe("Keine Beschriftung behauptet mehr „keine Vorschau“", () => {
+  Object.entries(C.LINK_LABELS).forEach(([key, wert]) => {
+    assert.ok(!/keine Vorschau|nie eine Vorschau/i.test(String(wert)),
+      `LINK_LABELS.${key} verspricht weiter keine Vorschau: ${wert}`);
+  });
+});
+
+pruefe("Die Beschriftung wechselt mit der Freigabe der Vorschau", () => {
+  const zu = C.intakeLinkLabel({ previewVisible: false });
+  const auf = C.intakeLinkLabel({ previewVisible: true });
+  assert.notEqual(zu, auf, "die Beschriftung bleibt gleich");
+  assert.match(auf, /Vorschau/, "die gewachsene Beschriftung nennt die Vorschau nicht");
+  assert.match(zu, /AGB/, "auch am Anfang gehören die AGB dazu");
+  assert.match(auf, /AGB/);
+  // Auch die Meldung nach dem Kopieren.
+  assert.match(C.intakeLinkLabel({ previewVisible: true, copied: true }), /kopiert/);
+  assert.match(C.intakeLinkLabel({ previewVisible: true, copied: true }), /Vorschau/);
+});
+
+pruefe("Der erklärende Satz nennt genau das, was wirklich draufsteht", () => {
+  const anfang = C.intakeLinkExplain({});
+  assert.match(anfang, /Fragebogen samt Vision Room/);
+  assert.match(anfang, /Standard-AGB/);
+  assert.ok(!/Vorschau/.test(anfang), "ohne Freigabe wird eine Vorschau versprochen");
+  assert.ok(!/nie eine Vorschau/.test(anfang), "der alte Widerspruch steht weiter da");
+
+  const voll = C.intakeLinkExplain({ previewVisible: true, testServiceVisible: true, contractVisible: true });
+  ["Fragebogen samt Vision Room", "Standard-AGB", "freigegebene Vorschau",
+    "TEST-Leistungsübersicht", "freigegebenen Vertrag",
+  ].forEach((teil) => assert.ok(voll.includes(teil), "im Satz fehlt: " + teil));
+  assert.match(voll, /derselben Adresse/, "der Satz sagt nicht, dass alles auf einer Adresse steht");
+  assert.ok(!/Kundenportal/.test(voll), "der Satz spricht weiter vom Kundenportal");
+});
+
+pruefe("Der Link-Zustand trägt die Beschriftung zum Stand", () => {
+  const intake = { inviteToken: TOKEN_A };
+  const zu = C.projectIntakeLinkState({ project: { id: "p" }, intake });
+  const auf = C.projectIntakeLinkState({ project: { id: "p" }, intake, previewVisible: true });
+  assert.equal(zu.label, C.intakeLinkLabel({ previewVisible: false }));
+  assert.equal(auf.label, C.intakeLinkLabel({ previewVisible: true }));
+  assert.ok(!/keine Vorschau/.test(auf.explain + auf.label));
+  assert.match(auf.explain, /freigegebene Vorschau/);
+});
+
+console.log(
+  "Haupttexte: Beschriftung und erklärender Satz folgen der Freigabe — ohne\n" +
+  "  Vorschau wird keine versprochen, mit Vorschau steht sie da. Nirgends mehr\n" +
+  "  „keine Vorschau“ oder „nie das Kundenportal“ als Aussage über den einen Link."
+);

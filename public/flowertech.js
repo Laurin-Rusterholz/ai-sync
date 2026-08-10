@@ -1912,7 +1912,8 @@
      deshalb kein Zwang zur Projektzuordnung, sondern ein klarer optionaler
      Knopf: „Fragebogen-Link erstellen“, danach „Fragebogen-Link kopieren“.
      Der Link gehört zu genau dieser Offerte, zeigt Kundendaten & Vision Room
-     und nie eine Vorschau — das Kundenportal bleibt der zweite Link der
+     und — je nach Freigabe — Vorschau, AGB und Vertrag. Das getrennte
+     Kundenportal ist Altbestand und bleibt der zweite Link der
      Phase 2 und entsteht erst mit der ausdrücklichen Veröffentlichung.
      ------------------------------------------------------------------- */
   function offerBriefingRowHtml(doc) {
@@ -2515,7 +2516,8 @@
 
     var head = '<div class="card p-4 mb-3"><h3>Kundenanfragen — Phase 1</h3><div class="sep"></div>' +
       '<div class="mini">So beginnt eine Zusammenarbeit: Fragebogen anlegen, Fragen anpassen, ' +
-      "<b>Fragebogen-Link</b> an die Kundschaft geben. Der Link zeigt Kundendaten &amp; Vision Room — " +
+      "<b>die eine Kundenadresse</b> an die Kundschaft geben. Sie zeigt Fragebogen, Vision Room " +
+      "und die Standard-AGB und waechst mit jeder Freigabe — " +
       "Die eine Kundenadresse: Sie beginnt beim Fragebogen und waechst mit " +
       "Vorschau, Offerte, AGB und Vertrag. Die Antwort erzeugt das Projekt, nicht umgekehrt.</div>" +
       '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftNewIntake()">' +
@@ -4030,7 +4032,15 @@
     var core = W();
     var project = projectById(projectId);
     if (!core || !project) return null;
-    return core.projectIntakeLinkState({ project: project, intake: intakeOfProject(projectId) });
+    // Der Stand entscheidet ueber die Beschriftung: Ist die Vorschau
+    // freigegeben, darf oben nicht "keine Vorschau" stehen.
+    var area = customerArea(projectId);
+    return core.projectIntakeLinkState({
+      project: project, intake: intakeOfProject(projectId),
+      previewVisible: !!(area && area.tiles && area.tiles.preview),
+      testServiceVisible: !!(area && area.tiles && area.tiles.testService),
+      contractVisible: !!(area && area.tiles && area.tiles.contract),
+    });
   }
   window._ftProjectIntakeState = projectIntakeState;
 
@@ -4059,7 +4069,10 @@
     if (!link) return notify("warn", "Fragebogen", "Ohne Firebase-Zugang gibt es keinen Fragebogen-Link.");
     // Der Erfolgshinweis nennt ausdrücklich, WELCHER Link kopiert wurde — die
     // Verwechslung mit dem Kundenportal-Link entstand genau hier.
-    copyText(link, core ? core.LINK_LABELS.intakeCopied : "Fragebogen-Link kopiert");
+    var st = projectIntakeState(projectId);
+    copyText(link, core
+      ? core.intakeLinkLabel({ previewVisible: !!(st && st.previewVisible), copied: true })
+      : "Kundenadresse kopiert");
     rerender();
   };
 
@@ -4074,7 +4087,7 @@
     // Die Zeile trägt IMMER dieselbe vollständige Beschriftung — auch dann,
     // wenn es den Link noch gar nicht gibt. Nur so ist von Anfang an klar,
     // welcher der beiden Links hier entsteht.
-    var head = '<div class="ft-link-row ft-link-intake"><span>' + esc(core.LINK_LABELS.intakeFull) + "</span>";
+    var head = '<div class="ft-link-row ft-link-intake"><span>' + esc(state.label || core.LINK_LABELS.intakeFull) + "</span>";
     if (state.mode === "create") {
       return head +
         '<button class="btn sm primary" onclick="window._ftCreateProjectIntakeLink(\'' + attr(projectId) +
@@ -4082,7 +4095,7 @@
           "</button></div>" +
         '<div class="mini">' + esc(state.explain) + "</div>";
     }
-    return '<div class="ft-link-row ft-link-intake"><span>' + esc(core.LINK_LABELS.intakeFull) + "</span>" +
+    return '<div class="ft-link-row ft-link-intake"><span>' + esc(state.label || core.LINK_LABELS.intakeFull) + "</span>" +
       '<input readonly value="' + attr(state.url) + '" onclick="this.select()">' +
       '<button class="btn sm primary" onclick="window._ftCopyProjectIntakeLink(\'' + attr(projectId) +
         '\')" title="' + attr(core.LINK_LABELS.intakeHint) + '">' + esc(core.LINK_LABELS.intakeCopy) + "</button>" +
@@ -5613,8 +5626,11 @@
 
     return portalCard + quoteCard + '<div class="ft-grid-2 mt-3">' +
       '<div class="card p-4"><h3>Zugänge</h3><div class="sep"></div>' +
-        '<div class="mini">Zwei getrennte Links, zwei Phasen. Der Fragebogen-Link gehört zu genau ' +
-        "diesem Projekt und steht hier direkt — er zeigt nie eine Vorschau. Der Kundenportal-Link " +
+        '<div class="ft-legal-note">⚠ <b>Alte Ansicht — nicht mehr benutzen.</b> Sie stammt aus der ' +
+        "Zeit mit zwei getrennten Links. Heute bekommt die Kundschaft genau EINE Adresse, die " +
+        "mitwaechst; ein zweiter Link wird nicht mehr verschickt. Der Block bleibt nur stehen, " +
+        "damit bereits verschickte Portal-Links weiter auffindbar sind.</div>" +
+        '<div class="mini">Der Kundenportal-Link ' +
         "entsteht erst nach der Veröffentlichung oben.</div>" +
         projectIntakeRowHtml(projectId) +
         '<div class="sep"></div>' +
