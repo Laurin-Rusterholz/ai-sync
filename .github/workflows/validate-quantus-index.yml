@@ -12,6 +12,12 @@ on:
       - "tests/quantus-career-model-entry.test.mjs"
       - "tests/gmail-network-retry.test.mjs"
       - "tests/flowertech-projects.test.mjs"
+      # Die FlowerTech-Prüfungen sichern den Kundenablauf ab — ohne sie im
+      # Filter lief die Suite bei einer Änderung an genau diesen Dateien nicht.
+      - "tests/flowertech-*.test.mjs"
+      - "public/flowertech-workflow-core.js"
+      - "netlify/functions/flowertech-*.mjs"
+      - "netlify/lib/flowertech-core.mjs"
       - "public/flowertech.js"
       - "tests/career-model-learning.test.mjs"
       - "tests/career-model-ideas.test.mjs"
