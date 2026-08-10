@@ -348,7 +348,7 @@ function beantwortetesProjekt(extra = {}, antworten = {}) {
 
   // Die Karte zeigt wieder die unbeantwortete Zeile.
   const html = panelOf(win, "prj_lehner");
-  ok(/Fragebogen-Link – Kundendaten &amp; Vision Room, keine Vorschau/.test(html),
+  ok(/Kundenadresse – Fragebogen &amp; Vision Room, Standard-AGB/.test(html),
     "die Karte trägt nicht wieder die vollständige Beschriftung");
   ok(!/Fragebogen beantwortet/.test(html), "die Karte behauptet weiterhin, der Fragebogen sei beantwortet");
   ok(!/Fragebogen zurücksetzen/.test(html), "der Rücksetz-Knopf steht nach dem Zurücksetzen weiterhin da");

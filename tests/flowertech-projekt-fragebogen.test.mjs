@@ -47,15 +47,26 @@ const TOKEN = "p".repeat(32);
 
 // ── 1. Die Beschriftungen trennen die zwei Phasen ─────────────────────────
 {
-  ok(CORE.LINK_LABELS.intakeFull === "Fragebogen-Link – Kundendaten & Vision Room, keine Vorschau",
+  /* Die Beschriftung ist seit dem Live-Befund nicht mehr fest: Ist die Vorschau
+     freigegeben, darf oben nicht "keine Vorschau" stehen. Geprueft wird darum
+     der Wechsel, nicht ein einzelner Wortlaut. */
+  ok(CORE.LINK_LABELS.intakeFull === "Kundenadresse – Fragebogen & Vision Room, Standard-AGB",
     `die vollständige Beschriftung stimmt nicht: ${CORE.LINK_LABELS.intakeFull}`);
-  ok(/keine Vorschau/.test(CORE.LINK_LABELS.intakeFull),
-    "die Beschriftung sagt nicht, dass es keine Vorschau gibt");
+  ok(CORE.intakeLinkLabel({ previewVisible: true }) !== CORE.LINK_LABELS.intakeFull,
+    "die Beschriftung wechselt nicht mit der freigegebenen Vorschau");
+  ok(!/keine Vorschau/.test(CORE.intakeLinkLabel({ previewVisible: true })),
+    "die Beschriftung behauptet weiter „keine Vorschau“");
+  // Umgedreht: Vor der Freigabe wird keine Vorschau VERSPROCHEN — aber der
+  // Link wird auch nicht mehr als "ohne Vorschau" beschriftet.
+  ok(!/Vorschau/.test(CORE.LINK_LABELS.intakeFull),
+    "die Beschriftung verspricht vor der Freigabe eine Vorschau");
   ok(!/Kundenportal/.test(CORE.LINK_LABELS.intakeFull),
     "die Beschriftung des Fragebogen-Links nennt das Kundenportal");
   ok(CORE.LINK_LABELS.intakeOpen === "Fragebogen öffnen", "der Öffnen-Knopf ist nicht benannt");
-  ok(/Fragebogen-Link kopiert/.test(CORE.LINK_LABELS.intakeCopied),
+  ok(/kopiert/.test(CORE.LINK_LABELS.intakeCopied),
     "der Erfolgshinweis beim Kopieren nennt den Link nicht");
+  ok(/kopiert/.test(CORE.intakeLinkLabel({ previewVisible: true, copied: true })),
+    "der Erfolgshinweis fehlt bei freigegebener Vorschau");
   ok(/Vision Room/.test(CORE.LINK_LABELS.intakeCopied),
     "der Erfolgshinweis sagt nicht, was der kopierte Link zeigt");
 }
@@ -252,8 +263,9 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   ok(/Fragebogen-Link erstellen/.test(html),
     "die FlowerTech-Karte von „Lehner“ bietet keinen Fragebogen-Link an");
   ok(/_ftCreateProjectIntakeLink\('prj_lehner'\)/.test(html), "der Knopf ist nicht verdrahtet");
-  ok(/Kundendaten &amp; Vision Room, keine Vorschau/.test(html),
-    "die Karte sagt nicht, was der Fragebogen-Link zeigt");
+  ok(/Vision Room/.test(html) && /Kundenadresse|Standard-AGB/.test(html),
+    "die Karte sagt nicht, was die Kundenadresse zeigt");
+  ok(!/keine Vorschau/.test(html), "die Karte behauptet weiter „keine Vorschau“");
   // Der zweite Link bleibt, was er war: unveröffentlicht und getrennt benannt.
   ok(/Kundenportal – noch nicht veröffentlicht/.test(html),
     "der Kundenportal-Link ist ohne Veröffentlichung nicht als solcher gekennzeichnet");
@@ -334,7 +346,7 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   await new Promise((resolve) => setImmediate(resolve));
   const hinweis = win.__toasts[win.__toasts.length - 1];
   ok(hinweis && hinweis.type === "ok", "das Kopieren meldet keinen Erfolg");
-  ok(/Fragebogen-Link kopiert/.test(hinweis.message),
+  ok(/kopiert/.test(hinweis.message) && /Fragebogen|Kundenadresse/.test(hinweis.message),
     `der Erfolgshinweis ist nicht verständlich: ${hinweis && hinweis.message}`);
   ok(!/Kundenportal/.test(hinweis.message), "der Erfolgshinweis nennt das Kundenportal");
 }
@@ -510,8 +522,10 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   ok(fragebogenZeile.includes(fragebogen), "die Fragebogen-Zeile enthält den Fragebogen-Link nicht");
   ok(!fragebogenZeile.includes(portal), "in der Fragebogen-Zeile steht der Kundenportal-Link");
   ok(!/kunde\.html/.test(fragebogenZeile), "die Fragebogen-Zeile verweist auf das Kundenportal");
-  ok(/Kundendaten &amp; Vision Room, keine Vorschau/.test(fragebogenZeile),
+  ok(/Vision Room/.test(fragebogenZeile) && /Standard-AGB/.test(fragebogenZeile),
     "die Fragebogen-Zeile ist nicht vollständig beschriftet");
+  ok(!/keine Vorschau/.test(fragebogenZeile),
+    "die Fragebogen-Zeile behauptet weiter „keine Vorschau“");
 
   const portalZeile = html.slice(html.indexOf("Phase 2 · Kundenportal"));
   ok(!portalZeile.includes(fragebogen), "in der Kundenportal-Zeile steht der Fragebogen-Link");
