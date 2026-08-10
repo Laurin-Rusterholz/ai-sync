@@ -294,7 +294,10 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   ok(!veroeffentlicht.includes(intake.id), "die interne Fragebogen-ID steht im öffentlichen Fragebogen");
   // Positivliste: veröffentlicht wird ausschliesslich, was die Kundschaft zum
   // Ausfüllen braucht. Alles aus Phase 2 hat hier nichts verloren.
-  const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "updatedAt"];
+  // „generation" ist die Fassung des Fragebogens — eine blosse Zahl, damit der
+  // Eingang eine Antwort nach einem Zurücksetzen nicht für eine Wiederholung
+  // der alten hält. Sie trägt nichts Internes und nichts aus Phase 2.
+  const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "generation", "updatedAt"];
   Object.keys(written[pfad]).forEach((key) => {
     ok(erlaubt.includes(key), `der öffentliche Fragebogen trägt das Feld „${key}“`);
   });

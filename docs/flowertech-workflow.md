@@ -399,6 +399,60 @@ Vorschau, Vertrag, AGB, Kosten oder Kundenportal (Positivliste in
 
 Belegt in `tests/flowertech-projekt-fragebogen.test.mjs`.
 
+### Fragebogen zurücksetzen — der Rückweg nach einer Fehleingabe
+
+Eine Testeingabe oder ein Fehlversuch der Kundschaft schliesst den Fragebogen:
+Der öffentliche Link gilt als beantwortet, die Kundschaft kommt nicht mehr
+hinein. **„Neu"** hilft dort nicht — es tauscht den Token und macht genau den
+Link ungültig, der bereits verschickt wurde.
+
+Deshalb trägt die FlowerTech-Karte am **beantworteten** Fragebogen einen
+zweiten, ausdrücklich administrativen Knopf:
+
+```
+✓ Fragebogen beantwortet · Stand 08.08.2026 11:00
+[↺ Fragebogen zurücksetzen]   Setzt ausschliesslich Antwortstatus,
+                              Antwortzeitpunkt und Fragebogen-Payload zurück.
+```
+
+* **Nur sichtbar, wenn beantwortet.** Vorher steht der Knopf nicht da, nach dem
+  Zurücksetzen wieder nicht (`projectIntakeLinkState().canReset`).
+* **Nur in der App.** Die Kundenseite (`flowertech-kunde.html`) und der
+  öffentliche Eingang kennen kein Zurücksetzen — es ist keine Kundeneingabe.
+* **Nie ohne Bestätigung.** Der Text nennt beide Seiten:
+
+| Zurückgesetzt wird | Erhalten bleibt |
+| --- | --- |
+| Antwortstatus (gilt wieder als unbeantwortet) | Fragebogen-Link **samt Token** — derselbe Link bleibt gültig |
+| Antwortzeitpunkt | Projekt mit Titel, Phase, Notizen und Verlauf |
+| Fragebogen-Payload am Projekt (`ftIntakeDocument`) | Kundendaten, Budget und Preise |
+| | Offerten, Verträge, AGB und Kundenportal |
+| | **Alle Aufgaben, auch die bestehende „Offertenanfrage"** |
+
+Aus dem Fragebogen ergänzte Kundendaten bleiben ausdrücklich stehen — sie sind
+Projektdaten, kein Fragebogen-Zustand.
+
+**Danach:** Die Karte zeigt wieder *„Fragebogen-Link – Kundendaten & Vision
+Room, keine Vorschau"* ohne Beantwortet-Vermerk, und derselbe Link zeigt wieder
+eine leere Form (der veröffentlichte Fragebogen steht sofort wieder auf `open`).
+
+**Die erneute Einreichung** findet robust dasselbe Projekt: Das Zurücksetzen
+setzt `boundProjectId` ausdrücklich auf dieses Projekt — auch bei einem
+Fragebogen, aus dem das Projekt einst entstanden ist. Sie aktualisiert damit
+diesen einen Vorgang und legt wegen des unveränderten Aufgabenschlüssels
+(`<projektId>:intake`) **keine zweite Aufgabe** an.
+
+**Die Fassung (`generation`).** Der Eingang macht den Fragebogen pro Einladung
+idempotent (`ft_intake_<token>`). Ohne Gegenmassnahme wäre die erste Antwort
+nach dem Zurücksetzen eine „Wiederholung" und würde stillschweigend verworfen —
+der Link zeigte eine leere Form, das Absenden liefe ins Leere. Deshalb zählt das
+Zurücksetzen `formGeneration` hoch, `publishIntakeForm()` veröffentlicht die
+Zahl, und der Eingang hängt sie an den Schlüssel (`ft_intake_<token>_g2`).
+Fassung 1 behält bewusst den alten Schlüssel: bereits verschickte Fragebögen
+bleiben genau so idempotent wie bisher.
+
+Belegt in `tests/flowertech-fragebogen-reset.test.mjs`.
+
 ## 5. Migration und Abwärtskompatibilität
 
 **Es werden keine Daten angefasst.** Bestehende Projekte und Angebote bleiben
