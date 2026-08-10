@@ -407,11 +407,16 @@
       // Fragebogen: eigener Tokenkreis, eigener Weg. Der Vision Room gehört zu
       // DIESER Einladung — eine Vision-Eingabe mit Einladungstoken ist deshalb
       // eine Antwort auf denselben Fragebogen und niemals ein zweiter Vorgang.
-      if (["intake", "vision", "quote"].indexOf(entry.kind) >= 0 && byInvite[entry.token]) {
+      // Ein Änderungswunsch gehört dazu, sobald der Kundenbereich seine
+      // Vorschau-Kachel zeigt: Dann ist derselbe Link auch der Weg, dazu
+      // strukturiert Rückmeldung zu geben.
+      if (["intake", "vision", "quote", "change"].indexOf(entry.kind) >= 0 && byInvite[entry.token]) {
         var intakeId = byInvite[entry.token];
         var done = entry.kind === "intake"
           ? applyIntakeSubmission(intakeId, entry)
-          : applyVisionToIntake(intakeId, entry);
+          : entry.kind === "change"
+            ? applyCustomerAreaChange(intakeId, entry)
+            : applyVisionToIntake(intakeId, entry);
         if (done) handled++;
         ft.processedSubmissions[key] = now();
         return;
@@ -1176,6 +1181,14 @@
     if (kind === "invoice" && status === "paid" && !doc.paidAt) {
       doc.paidAt = now();
       bookInvoicePayment(doc);
+    }
+    // Der Versand ist der Auslöser der Stufe 2: GENAU DER Kundenlink, den die
+    // Kundschaft schon hat, trägt ab jetzt zusätzlich die Kachel „Offerte".
+    // Ein Entwurf löst das nie aus — hierher kommt nur ein echter Versand.
+    if (kind === "offer" && status === "sent" && doc.projectId) {
+      if (window._ftRefreshCustomerArea(doc.projectId)) {
+        notify("ok", "Kundenbereich", "Die Offerte steht jetzt im Kundenbereich — derselbe Link wie bisher.");
+      }
     }
     if (kind === "offer" && status === "accepted") {
       if (!doc.acceptedAt) doc.acceptedAt = now();
@@ -3068,6 +3081,9 @@
     return {
       form: share.formToken ? core.formUrl(origin, share.formToken) : "",
       portal: share.portalToken ? core.portalUrl(origin, share.portalToken) : "",
+      // Der EINE Kundenlink. Er steht in jeder Vorlage, die nach aussen geht —
+      // damit die Kundschaft nie eine zweite Adresse lernen muss.
+      customer: projectIntakeLink(projectId),
     };
   }
 
@@ -3692,9 +3708,58 @@
     catch (e) { return null; }
   }
 
-  // Der veröffentlichte Fragebogen trägt nur, was die Kundschaft sehen soll:
-  // Titel, Einleitung, Fragen, Status. Keine internen IDs, keine Projektdaten,
-  // keine Kontaktangaben anderer Vorgänge.
+  /* ── Der Kundenbereich hinter dem einen Link ───────────────────────────
+     Der Fragebogen-Link ist nicht nur ein Formular: Er ist die EINE Adresse,
+     die die Kundschaft bekommt, und er wächst mit dem Vorgang. Was auf welcher
+     Stufe sichtbar ist, entscheidet der Kern (customerAreaState) — hier wird
+     nur zusammengetragen, was er dafür braucht.
+     ------------------------------------------------------------------- */
+  function projectOfIntake(intake) {
+    var core = W();
+    if (!core || !intake) return null;
+    var binding = core.intakeBinding(intake);
+    return binding.projectId ? projectById(binding.projectId) : null;
+  }
+
+  function customerAreaInput(intake, project) {
+    var core = W();
+    var offers = project ? docsOfProject("offer", project.id) : [];
+    var offer = core ? core.customerAreaOffer(offers) : null;
+    return {
+      project: project || null,
+      intake: intake || null,
+      offers: offers,
+      offerAmount: offer ? docTotals(offer).rounded : null,
+      // Das Dokument ist dasselbe, das ich drucke — im Kern zusätzlich
+      // entschärft, bevor es hinausgeht.
+      offerDocumentHtml: offer ? printHtml("offer", offer) : "",
+      prompt: project ? (project.ftPrompt || null) : null,
+      today: today(),
+    };
+  }
+
+  function customerArea(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return null;
+    return core.customerAreaState(customerAreaInput(intakeOfProject(projectId), project));
+  }
+  window._ftCustomerArea = customerArea;
+
+  // Nach jeder Entscheidung, die den Kundenbereich verändert (Offerte
+  // versendet, Vorschau oder Verwaltung freigegeben), wird genau dieser eine
+  // Link neu veröffentlicht — nie ein zweiter erzeugt.
+  function refreshCustomerArea(projectId) {
+    var intake = intakeOfProject(projectId);
+    if (!intake) return false;
+    publishIntakeForm(intake.id);
+    return true;
+  }
+  window._ftRefreshCustomerArea = refreshCustomerArea;
+
+  // Der veröffentlichte Kundenbereich trägt nur, was die Kundschaft sehen soll:
+  // Titel, Einleitung, Fragen, Status — und die freigegebenen Kacheln. Keine
+  // internen IDs, keine Entwürfe, keine Kontaktangaben anderer Vorgänge.
   function publishIntakeForm(intakeId) {
     var core = W();
     var ft = wf();
@@ -3706,20 +3771,10 @@
       intake.publishError = "Kein Firebase-Zugang — der Fragebogen ist noch nicht online.";
       return intake.inviteToken;
     }
-    ref.set({
-      schema: 1,
-      title: intake.title || core.DEFAULT_INTAKE_TITLE,
-      intro: intake.intro || core.DEFAULT_INTAKE_INTRO,
-      questions: core.normalizeIntakeQuestions(intake.questions || []),
-      status: intake.status === "closed" ? "closed" : (intake.projectId ? "answered" : "open"),
-      company: { name: (ft.company && ft.company.name) || "FlowerTech" },
-      // Die Fassung des Fragebogens — eine blosse Zahl, nichts Internes. Der
-      // Eingang hängt seinen Idempotenz-Schlüssel daran: Nach einem
-      // Zurücksetzen ist die neue Einreichung dadurch keine Wiederholung der
-      // alten und wird nicht als Duplikat verworfen.
-      generation: core.intakeFormGeneration(intake),
-      updatedAt: now(),
-    }).then(function () {
+    ref.set(core.customerAreaSnapshot(Object.assign(
+      customerAreaInput(intake, projectOfIntake(intake)),
+      { company: ft.company || {}, now: now() }
+    ))).then(function () {
       intake.publishedAt = now();
       intake.publishError = "";
       save();
@@ -4040,9 +4095,30 @@
             "Fragebogen-Payload zurück. Link, Projekt, Kundendaten, Budget, Offerten, Kundenportal " +
             "und Aufgaben bleiben unverändert.</span></div>"
         : "") +
-      '<div class="mini">' + esc(state.explain) + "</div>";
+      '<div class="mini">' + esc(state.explain) + "</div>" +
+      customerStagesHtml(projectId);
   }
   window._ftProjectIntakeRow = projectIntakeRowHtml;
+
+  /* Was die Kundschaft hinter diesem einen Link JETZT sieht — und was nicht.
+     Beides steht da, Zeile für Zeile: Die Stufen sind der Grund, warum es nur
+     eine Adresse gibt, und ohne diese Liste wüsste ich nie, was gerade
+     draussen ist. */
+  function customerStagesHtml(projectId) {
+    var area = customerArea(projectId);
+    if (!area || !area.hasLink) return "";
+    return '<div class="ft-stages">' +
+      '<div class="ft-stages-head">Hinter diesem Link sichtbar</div>' +
+      area.stages.map(function (stage) {
+        return '<div class="ft-stage' + (stage.visible ? " on" : "") + '">' +
+          '<span class="ft-stage-dot">' + (stage.visible ? "✓" : "○") + "</span>" +
+          '<span class="ft-stage-body"><b>' + esc(stage.label) + "</b> — " +
+          esc(stage.visible ? stage.shows : (stage.reason || stage.hides)) + "</span></div>";
+      }).join("") +
+      '<div class="mini">Vertrag, AGB und das Kundenportal bleiben ausserhalb dieses Links — ' +
+        "sie haben ihre eigene Freigabe.</div></div>";
+  }
+  window._ftCustomerStagesHtml = customerStagesHtml;
 
   /* ── Fragebogen zurücksetzen ───────────────────────────────────────────
      Nach einer Test- oder Fehleingabe soll DERSELBE, bereits verschickte Link
@@ -4094,6 +4170,75 @@
     return true;
   }
   window._ftResetProjectIntake = resetProjectIntake;
+
+  /* ── Stufe 3: Vorschau und Verwaltung ausdrücklich freigeben ───────────
+     Eine Adresse einzutragen heisst nicht, sie zu zeigen. An einer halben
+     Vorschau wird tagelang gearbeitet — sie geht erst mit einer ausdrücklichen
+     Entscheidung an die Kundschaft, und die Verwaltung noch einmal mit einer
+     eigenen. Beides ist jederzeit widerrufbar; der Link bleibt derselbe.
+     ------------------------------------------------------------------- */
+  function setCustomerRelease(projectId, field, on, label) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var area = customerArea(projectId);
+    var gate = field === "ftCustomerPreview" ? area.preview : area.admin;
+    if (on && !gate.url) {
+      notify("warn", label, gate.reason);
+      return false;
+    }
+    if (on && field === "ftCustomerPreview" && !gate.promptReady) {
+      notify("warn", label, gate.reason);
+      return false;
+    }
+    if (on && field === "ftCustomerAdmin" && !area.preview.visible) {
+      notify("warn", label, "Die Verwaltung erscheint erst mit der freigegebenen Vorschau.");
+      return false;
+    }
+    project[field] = { released: !!on, releasedAt: on ? now() : "" };
+    project.updatedAt = now();
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({
+      id: id(), at: now(), channel: "note",
+      text: label + (on ? " im Kundenbereich freigegeben." : " aus dem Kundenbereich zurückgezogen."),
+    });
+    // Widerruf wirkt sofort: Die Kachel verschwindet mit dieser Veröffentlichung.
+    refreshCustomerArea(projectId);
+    save();
+    rerender();
+    notify("ok", label, on
+      ? label + " ist jetzt im Kundenbereich sichtbar — derselbe Link wie bisher."
+      : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
+    return true;
+  }
+
+  window._ftReleaseCustomerPreview = function (projectId, on) {
+    return setCustomerRelease(projectId, "ftCustomerPreview", on, "Website-Vorschau");
+  };
+  window._ftReleaseCustomerAdmin = function (projectId, on) {
+    return setCustomerRelease(projectId, "ftCustomerAdmin", on, "Verwaltung");
+  };
+
+  /* Ein Änderungswunsch aus dem Kundenbereich. Er kommt mit dem Einladungs-
+     token — also über denselben Link, den die Kundschaft ohnehin hat. Er wird
+     nur angenommen, wenn die Vorschau-Kachel wirklich freigegeben ist: Vorher
+     gibt es dort nichts zu kommentieren, und ein Token soll nie mehr öffnen,
+     als die Stufe hergibt. */
+  function applyCustomerAreaChange(intakeId, entry) {
+    var core = W();
+    var intake = intakeById(intakeId);
+    if (!core || !intake) return false;
+    var project = projectOfIntake(intake);
+    if (!project) return false;
+    var area = customerArea(project.id);
+    if (!area || !area.tiles.preview) return false;
+    var cr = core.normalizeChangeRequest(
+      Object.assign({}, entry.payload || {}, { origin: "client" }), { now: now() });
+    if (!core.changeRequestIsUsable(cr)) return false;
+    addChangeRequest(project.id, cr);
+    return true;
+  }
+  window._ftApplyCustomerAreaChange = applyCustomerAreaChange;
 
   /* Die Antwort auf einen projektgebundenen Fragebogen. Sie erzeugt KEIN
      zweites Projekt: Sie ergänzt dieses Projekt (Gepflegtes bleibt stehen),
@@ -4418,12 +4563,18 @@
      hochladen. Der Upload ersetzt bewusst — sonst wüsste niemand, welche
      Fassung gerade gilt.
      ------------------------------------------------------------------- */
-  function buildPromptFor(projectId) {
+  /* Alles, woraus der projektspezifische Prompt gebaut wird — an einer Stelle,
+     damit Prompt, Quellenliste und die Liste der fehlenden Angaben dieselbe
+     Wahrheit benutzen. Wächst der Vorgang, wächst der Prompt mit. */
+  function promptContext(projectId) {
     var core = W();
     var ft = wf();
     var project = projectById(projectId);
-    if (!core || !ft || !project) return "";
-    return core.buildProjectPrompt({
+    if (!core || !ft || !project) return { project: {} };
+    var offers = docsOfProject("offer", projectId);
+    var offer = core.customerAreaOffer(offers);
+    var content = contentOf(projectId);
+    return {
       project: project,
       document: project.ftIntakeDocument || {},
       changes: changesOf(projectId),
@@ -4433,8 +4584,21 @@
       // Kontakt- und Adressdaten bleiben intern. Sie gehen NUR mit, wenn ich
       // das am Projekt ausdrücklich wähle — Standard ist aus.
       includeContact: promptInclude(projectId).client === true,
+      briefing: briefingOf(projectId) || null,
+      content: (content && content.sections) || [],
+      // Nur eine WIRKLICH versendete Offerte ist verbindlicher Lieferumfang.
+      offer: offer,
+      offerAmount: offer ? docTotals(offer).rounded : null,
       now: now(),
-    });
+    };
+  }
+  window._ftPromptContext = promptContext;
+
+  function buildPromptFor(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return "";
+    return core.buildProjectPrompt(promptContext(projectId));
   }
   window._ftBuildPrompt = buildPromptFor;
 
@@ -5171,6 +5335,33 @@
       "Wird die Aufgabe erledigt, springt der Wunsch automatisch auf \u201eErledigt\u201c.</div>";
   }
 
+  /* Die zwei Freigaben der Stufe 3. Jede ist eine eigene Entscheidung und
+     jederzeit widerrufbar — der Kundenlink bleibt dabei derselbe. */
+  function customerReleaseHtml(projectId) {
+    var area = customerArea(projectId);
+    if (!area) return "";
+    var row = function (title, gate, fn, hint) {
+      var on = !!gate.visible;
+      return '<div class="ft-release-row">' +
+        '<div><b>' + esc(title) + "</b>" +
+          '<div class="mini">' + esc(on ? hint : (gate.reason || hint)) + "</div></div>" +
+        '<button class="btn sm ' + (on ? "ghost" : "primary") + '" onclick="window.' + fn + "('" +
+          attr(projectId) + "'," + (on ? "false" : "true") + ')">' +
+          (on ? "Zurückziehen" : "Freigeben") + "</button></div>";
+    };
+    if (!area.hasLink) {
+      return '<div class="mini mt-2">Für die Freigabe braucht dieses Projekt zuerst seinen ' +
+        "Kundenlink (Karte „Zugänge“ nebenan).</div>";
+    }
+    return '<div class="sep"></div>' +
+      '<div class="mini">Freigaben für den Kundenbereich — sie wandern in genau den Link, ' +
+        "den die Kundschaft schon hat.</div>" +
+      row("Website-Vorschau & Änderungswünsche", area.preview, "_ftReleaseCustomerPreview",
+        "Die Kundschaft sieht die Vorschau und kann dazu Änderungswünsche melden.") +
+      row("Verwaltung", area.admin, "_ftReleaseCustomerAdmin",
+        "Die Kundschaft sieht die Verwaltungsadresse.");
+  }
+
   function clientPortalHtml(projectId) {
     var core = W();
     // BEWUSST kein Veröffentlichen beim Rendern: Das Kundenportal entsteht
@@ -5317,9 +5508,10 @@
         '<div class="ft-kpi"><span>Bezahlt</span><strong>' + money(costs.paid) + "</strong></div>" +
         '<div class="ft-kpi"><span>Offen</span><strong>' + money(costs.open) + "</strong></div></div>" +
         urlField("Vorschau-Link (zeigt die Kundschaft)", "previewUrl",
-          "Sobald hier eine HTTPS-Adresse steht, erscheint sie auf der Kundenseite.") +
+          "Die Adresse allein zeigt noch nichts — sie wird unten ausdrücklich freigegeben.") +
         urlField("Verwaltung / Admin (optional)", "adminUrl",
           "Nur setzen, wenn die Kundschaft dort wirklich etwas verwalten kann.") +
+        customerReleaseHtml(projectId) +
       "</div></div>" +
       '<div class="card p-4 mt-3"><h3>Versionen &amp; Freigabe</h3><div class="sep"></div>' +
         '<div class="ft-inline-form"><input id="ftVersionLabel" placeholder="Was ist neu? z. B. Entwurf Startseite">' +
@@ -5380,7 +5572,89 @@
       "</div>";
   }
 
+  /* ── Der Reiter „Claude-Prompt" ────────────────────────────────────────
+     Er zeigt den vollständigen, automatisch erzeugten Prompt dieses Projekts —
+     aus ALLEN bisherigen Daten: Fragebogen, Vision Room, Kundendaten, Budget
+     und Frist, Leistungsbeschreibung, versendete Offerte und Änderungswünsche.
+     Dazu, was er woher hat, wie frisch das ist und was noch fehlt.
+
+     Der Reiter war bisher leer, wo kein internes Bedarfsformular ausgefüllt
+     war: Er las ausschliesslich das Briefing. Genau das ist hier behoben — der
+     Projekt-Prompt ist die Grundlage, der datensparsame Claude-Code-Prompt
+     bleibt daneben bestehen.
+     ------------------------------------------------------------------- */
   function promptHtml(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return "";
+    var stored = project.ftPrompt || {};
+    var text = stored.text || buildPromptFor(projectId);
+    var sources = core.projectPromptSources(promptContext(projectId));
+    var missing = core.projectPromptMissing(promptContext(projectId));
+    var template = project.ftTemplate || {};
+    var area = customerArea(projectId);
+
+    var sourceRows = sources.map(function (s) {
+      return '<div class="ft-row"><span>' + (s.present ? "✓" : "○") + " " + esc(s.label) +
+        '<small> · ' + esc(s.detail) + (s.at ? " · " + esc(dateTime(s.at)) : "") + "</small></span>" +
+        "<strong>" + (s.present ? "vorhanden" : "offen") + "</strong></div>";
+    }).join("");
+
+    return '<div class="card p-4"><h3>Projektspezifischer Prompt</h3><div class="sep"></div>' +
+      '<div class="mini">' + esc(stored.name || "prompt.md") + " · " +
+        esc(stored.source === "hochgeladen" ? "hochgeladen" : "automatisch aus dem aktuellen Stand erzeugt") +
+        (stored.updatedAt ? " · Stand " + esc(dateTime(stored.updatedAt)) : "") + "</div>" +
+      '<pre class="ft-prompt">' + esc(text) + "</pre>" +
+      '<div class="ft-quick mt-2">' +
+        '<button class="btn sm primary" onclick="window._ftCopyPrompt(\'' + attr(projectId) +
+          '\')">Prompt kopieren</button>' +
+        '<button class="btn sm" onclick="window._ftDownloadPrompt(\'' + attr(projectId) +
+          '\')">⭳ .md herunterladen</button>' +
+        '<button class="btn sm" onclick="window._ftDownloadTemplate(\'' + attr(projectId) +
+          '\')">⭳ HTML-Vorlage herunterladen</button>' +
+        '<label class="btn sm ghost ft-upload">⭱ HTML-Vorlage hochladen' +
+          '<input type="file" accept=".html,.htm,text/html" onchange="window._ftUploadTemplate(\'' +
+            attr(projectId) + '\',this)"></label>' +
+        '<button class="btn sm ghost" onclick="window._ftCopyClaudePrompt(\'' + attr(projectId) +
+          '\')">Prompt für Claude Code kopieren</button>' +
+        '<button class="btn sm ghost" onclick="window._ftRegeneratePrompt(\'' + attr(projectId) +
+          '\')">Neu erzeugen</button>' +
+      "</div>" +
+      '<div class="mini mt-2">Der Upload legt die Vorlage nur am Projekt ab — er ' +
+        "veröffentlicht nichts. Sichtbar wird eine Vorschau erst über die ausdrückliche " +
+        "Freigabe im Reiter „Kundenportal“." +
+        (template.name ? " Zuletzt: " + esc(template.name) + " · " + esc(dateTime(template.updatedAt)) : "") +
+      "</div></div>" +
+
+      '<div class="card p-4 mt-3"><h3>Quellen und Stand</h3><div class="sep"></div>' +
+        '<div class="mini">Woraus dieser Prompt gebaut ist. Was offen ist, wird im Prompt ' +
+        "ausdrücklich als offen benannt — statt erfunden.</div>" + sourceRows +
+        (missing.length
+          ? '<div class="ft-legal-note mt-2">Fehlende Angaben: ' + esc(missing.join(", ")) + ".</div>"
+          : '<div class="ft-ready mt-2">✓ Alle Angaben für einen belastbaren Prompt sind da.</div>') +
+      "</div>" +
+
+      (area && area.hasLink
+        ? '<div class="card p-4 mt-3"><h3>Vorschau und Verwaltung beim Kunden</h3><div class="sep"></div>' +
+          '<div class="mini">Genau die hier hinterlegten Adressen erscheinen — nach der Freigabe — ' +
+          "in den zwei Kacheln des Kundenbereichs.</div>" +
+          '<div class="ft-row"><span>Website-Vorschau<small> · ' +
+            esc(area.preview.url || "keine Adresse hinterlegt") + "</small></span><strong>" +
+            (area.preview.visible ? "sichtbar" : "nicht sichtbar") + "</strong></div>" +
+          '<div class="ft-row"><span>Verwaltung<small> · ' +
+            esc(area.admin.url || "keine Adresse hinterlegt") + "</small></span><strong>" +
+            (area.admin.visible ? "sichtbar" : "nicht sichtbar") + "</strong></div>" +
+          (area.preview.visible || area.admin.visible ? "" :
+            '<div class="mini mt-2">' + esc(area.preview.reason || area.admin.reason) + "</div>") +
+          "</div>"
+        : "") +
+
+      promptOptionsHtml(projectId);
+  }
+
+  // Der datensparsame Claude-Code-Prompt behält seine eigene Karte: Modus und
+  // Datenauswahl gehören zu ihm, nicht zum Projekt-Prompt.
+  function promptOptionsHtml(projectId) {
     var core = W();
     if (!core) return "";
     var include = promptInclude(projectId);
@@ -5689,6 +5963,17 @@
     ".ft-intake-reset .mini{flex:1;min-width:200px}" +
     ".btn.ft-danger{border-color:rgba(197,48,48,.45);color:#e06767}" +
     ".btn.ft-danger:hover{background:rgba(197,48,48,.12)}" +
+    /* Die Stufen des Kundenbereichs: was hinter dem einen Link sichtbar ist —
+       und was ausdruecklich noch nicht. Beides steht da, nicht nur das eine. */
+    ".ft-stages{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}" +
+    ".ft-stages-head{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;" +
+      "color:var(--muted);font-weight:700;margin-bottom:5px}" +
+    ".ft-stage{display:flex;gap:7px;align-items:flex-start;font-size:12px;color:var(--muted);margin-bottom:4px}" +
+    ".ft-stage.on{color:var(--text)}" +
+    ".ft-stage-dot{width:14px;flex:none;text-align:center}" +
+    ".ft-release-row{display:flex;gap:10px;align-items:center;justify-content:space-between;" +
+      "border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-top:8px}" +
+    ".ft-release-row .mini{margin-top:2px}" +
     ".ft-link-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}" +
     ".ft-link-row span{font-size:12px;color:var(--muted);min-width:120px}" +
     ".ft-link-intake>span{color:var(--text);font-weight:600;min-width:220px}" +

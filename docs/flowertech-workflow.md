@@ -453,6 +453,89 @@ bleiben genau so idempotent wie bisher.
 
 Belegt in `tests/flowertech-fragebogen-reset.test.mjs`.
 
+## 4g. Der Kundenbereich: EIN Link, der mitwächst
+
+Die Kundschaft lernt genau **eine** Adresse — den projektgebundenen
+Fragebogen-Link. Er wird nie ersetzt und nie erneuert; er wächst in Stufen.
+
+| Stufe | Sichtbar ab | Zeigt | Zeigt nie |
+| --- | --- | --- | --- |
+| **1 · Fragebogen** | immer, sobald der Link existiert | Kundendaten, Bestandesaufnahme, Vision Room | Offerte, Vorschau, Verwaltung, Vertrag, AGB |
+| **2 · Offerte** | eine Offerte ist **wirklich versendet** (`status` ∈ sent/accepted/declined/expired **und** `sentAt` gesetzt) | Dokument, Betrag (inkl. MWST), Gültigkeit, Status | jeden Entwurf |
+| **3 · Vorschau** | HTTPS-`previewUrl` **+** erzeugter Prompt **+** ausdrückliche Freigabe | die Vorschau-Adresse und den Weg für Änderungswünsche | alles ohne Freigabe |
+| **3 · Verwaltung** | HTTPS-`adminUrl` **+** eigene Freigabe **+** sichtbare Vorschau | die Verwaltungs-Adresse | die Verwaltung vor der Vorschau |
+
+Der Kern rechnet das in `customerAreaState()`; veröffentlicht wird
+`customerAreaSnapshot()` — dieselbe **Positivliste** wie bisher, ergänzt um
+`stage` und `tiles`:
+
+```json
+{
+  "schema": 1, "title": "…", "intro": "…", "questions": [ … ],
+  "status": "open", "company": {"name": "FlowerTech"}, "generation": 1,
+  "stage": "intake | offer | preview",
+  "tiles": {
+    "offer":   {"label":"Offerte","number":"OF-2026-001","amount":4864.5,"currency":"CHF",
+                "validUntil":"2026-09-30","expired":false,"status":"sent","statusLabel":"Versendet",
+                "sentAt":"…","document":{"html":"…","url":""}},
+    "preview": {"label":"Website-Vorschau & Änderungswünsche","url":"https://…","feedback":true},
+    "admin":   {"label":"Verwaltung","url":"https://…"}
+  },
+  "updatedAt": "…"
+}
+```
+
+`null` bei einer Kachel heisst ausdrücklich **noch nicht** — die Seite zeigt
+dann gar nichts, statt etwas Halbes. Weiterhin gilt: keine Projekt-ID, keine
+Kontaktdaten, keine internen Notizen, kein Vertrag, keine AGB, kein
+Kundenportal. Das Offertendokument geht durch `sanitizeTemplateHtml()` — kein
+Skript, keine eingebettete Seite, kein Ereignis-Attribut.
+
+**Ausgelöst wird die Veröffentlichung** von genau drei Entscheidungen: eine
+Offerte auf „Versendet" setzen, die Vorschau freigeben, die Verwaltung
+freigeben. Jede davon ist widerrufbar; der Widerruf entfernt die Kachel mit der
+nächsten Veröffentlichung — der **Link bleibt gültig**.
+
+**In der Mail** steht dieselbe Adresse: `{{kundenbereichLink}}` ist in der
+Offertenvorlage verdrahtet und kommt aus `shareLinks().customer`.
+
+**Änderungswünsche** kommen über denselben Link (`kind: "change"` mit dem
+Einladungstoken). Sie werden nur angenommen, solange die Vorschau-Kachel
+wirklich freigegeben ist — vorher gibt es nichts zu kommentieren.
+
+**Das Kundenportal (`kunde.html`) bleibt unberührt**: eigener Token, eigene
+Freigabe, eigener Snapshot. Bereits verschickte Portal-Links funktionieren
+unverändert weiter.
+
+> Gerendert wird der Kundenbereich von `flowertech.ch/fragebogen.html`. Diese
+> Seite liegt ausserhalb dieses Repos; hier stehen Datenvertrag, Freigaben und
+> Veröffentlichung.
+
+## 4h. Der Reiter „Claude-Prompt"
+
+Der Reiter zeigt den **vollständigen, automatisch erzeugten Prompt dieses
+Projekts** — nicht mehr nur das interne Bedarfsformular. Er entsteht aus allem,
+was da ist: Fragebogen, Vision Room, Kundendaten, Budget und Frist,
+Leistungsbeschreibung, versendete Offerte und Änderungswünsche.
+
+Gliederung (`buildProjectPrompt()`): Projektkontext · Ziel und Zielgruppe ·
+Bestehende Seite (Iststand) · Antworten aus dem Fragebogen · Vision Room ·
+Inhalte · Funktionen · Design · Daten, SEO und Barrierefreiheit · Budget und
+Termin · Lieferumfang · Änderungswünsche · Rückfragen · Vorgaben ·
+**Nicht erfinden** · **Konkrete nächste Schritte**.
+
+Dazu im Reiter: **Quellen und Stand** (`projectPromptSources()`) und die
+**fehlenden Angaben** (`projectPromptMissing()`) — dieselbe Liste steht im
+Prompt unter „Offen und deshalb nicht zu erfinden", damit die Lücke benannt und
+nicht gefüllt wird.
+
+Knöpfe: *Prompt kopieren* · *.md herunterladen* · *HTML-Vorlage herunterladen* ·
+*HTML-Vorlage hochladen* · *Prompt für Claude Code kopieren*. Der Upload legt
+die Vorlage **nur am Projekt** ab — er veröffentlicht nichts. Sichtbar wird eine
+Vorschau ausschliesslich über die Freigabe aus Abschnitt 4g.
+
+Belegt in `tests/flowertech-kundenbereich-prompt.test.mjs`.
+
 ## 5. Migration und Abwärtskompatibilität
 
 **Es werden keine Daten angefasst.** Bestehende Projekte und Angebote bleiben
@@ -542,6 +625,7 @@ Antworten: `201 {ok, submissionId}` · `200 {ok, duplicate:true}` ·
 | `inquiry` / `quote` / `vision` | keiner | **Anfrage** in Quantus. Kein Projekt, kein Direktauftrag. Nur aus dem Browser und nur von erlaubter Herkunft. |
 | `intake` | `intakes[id].inviteToken` | Fragebogen beantwortet → **genau ein** Projekt + **genau eine** Aufgabe |
 | `vision` / `quote` | `intakes[id].inviteToken` | Vision-Beitrag zu **demselben** Fragebogen — kein zweiter Vorgang |
+| `change` | `intakes[id].inviteToken` | Änderungswunsch aus dem Kundenbereich — **nur** solange die Vorschau-Kachel freigegeben ist (Abschnitt 4g) |
 | `vision` | `shares[projectId].visionToken` | Ausarbeitung zur Offerte dieses Vorgangs |
 | `briefing` | `shares[projectId].formToken` | Bedarfsformular |
 | `change` / `quote` / `terms` / `answer` | `shares[projectId].portalToken` | Kundenportal (nur nach Freigabe versendet) |
@@ -554,11 +638,13 @@ keinen Fragebogen beantworten.
 `currentProviderPrice`, `ftIntakeDocument`, `ftTemplate`, `ftPrompt`, `ftVision`,
 `ftTermsConsent`, `ftPortalQuestions`, `ftRoute`, `ftRouteDecidedAt`,
 `ftRouteSource`, `ftOfferAttachment {kind, visionToken, exampleUrl}`,
-`ftOutcome`, `sourceIntakeId`.
+`ftOutcome`, `sourceIntakeId`, `previewUrl`, `adminUrl`,
+`ftCustomerPreview {released, releasedAt}`, `ftCustomerAdmin {released, releasedAt}`.
 Am Freigabe-Eintrag (`shares[projectId]`): `portalToken`, `portalReleased`,
 `portalReleasedAt`, `publishedAt`, `publishError`.
 Am Fragebogen (`intakes[id]`): `inviteToken`, `status`, `projectId`,
-`submissionId`, `answeredAt` und die Herkunft — `inquiryId` (aus einer Anfrage)
+`submissionId`, `answeredAt`, `formGeneration`, `resetAt`, `resetCount`
+und die Herkunft — `inquiryId` (aus einer Anfrage)
 **oder** `offerId` (aus einer Offerte ohne Projekt, siehe Abschnitt 4).
 Am Offertendokument: `projectId` — bei der Zuordnung aus dem Fragebogen das
 **einzige** geänderte Feld neben `updatedAt` und dem Verlaufseintrag.
