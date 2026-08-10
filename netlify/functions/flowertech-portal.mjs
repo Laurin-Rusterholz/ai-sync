@@ -167,6 +167,10 @@ export default async (req) => {
   const createdAt = new Date().toISOString();
 
   let payload;
+  // Die Fassung des veröffentlichten Fragebogens. Sie zählt hoch, sobald der
+  // Fragebogen in der App zurückgesetzt wurde, und geht in den Idempotenz-
+  // Schlüssel ein (siehe unten). Fassung 1 ist der Normalfall.
+  let intakeGeneration = 1;
   if (kind === "intake") {
     // Der Fragebogen wird gegen SEINE Fragen geprüft, nicht gegen ein festes
     // Schema: Der veröffentlichte Fragebogen ist die Wahrheit. Was nicht
@@ -175,6 +179,8 @@ export default async (req) => {
     if (!published || published.status === "closed") {
       return json(req, { error: "Dieser Fragebogen ist nicht (mehr) verfügbar." }, 404);
     }
+    const generation = Number(published.generation);
+    if (Number.isFinite(generation) && generation >= 1) intakeGeneration = Math.floor(generation);
     const questions = normalizeIntakeQuestions(published.questions || []);
     if (!questions.length) {
       return json(req, { error: "Dieser Fragebogen enthält keine Fragen." }, 409);
@@ -253,8 +259,15 @@ export default async (req) => {
   // Token, nicht am Inhalt. Ein Reload oder ein zweites Absenden liefert damit
   // dieselbe Einreichung zurück, statt einen zweiten Vorgang zu erzeugen — und
   // zwar unabhaengig davon, was der Browser als idempotencyKey mitschickt.
+  //
+  // Die Fassung gehoert dazu: Wird der Fragebogen in der App zurueckgesetzt,
+  // zaehlt sie hoch. Ohne sie waere die erste Antwort nach dem Zuruecksetzen
+  // eine Wiederholung der alten und wuerde stillschweigend verworfen — der
+  // Link zeigte dann zwar eine leere Form, aber das Absenden liefe ins Leere.
+  // Fassung 1 behaelt bewusst den alten Schluessel: Bereits verschickte
+  // Fragebogen bleiben genau so idempotent wie bisher.
   const key = kind === "intake"
-    ? `ft_intake_${token}`.slice(0, 80)
+    ? `ft_intake_${token}${intakeGeneration > 1 ? `_g${intakeGeneration}` : ""}`.slice(0, 80)
     : String(body.idempotencyKey
       || idempotencyKey({ token, kind, ...payload, title: payload.title || payload.need || payload.idea }))
       .slice(0, 80);

@@ -53,6 +53,10 @@ export const LINK_LABELS = {
   // Verwechslung mit dem Kundenportal bisher entzündet.
   intakeFull: "Fragebogen-Link – Kundendaten & Vision Room, keine Vorschau",
   intakeCopied: "Fragebogen-Link kopiert – Kundendaten & Vision Room, keine Vorschau",
+  // Der administrative Rückweg nach einer Test- oder Fehleingabe. Er setzt
+  // ausschliesslich die Antwort zurück — nie den Link und nie den Vorgang.
+  intakeReset: "Fragebogen zurücksetzen",
+  intakeResetDone: "Fragebogen zurückgesetzt – derselbe Link zeigt wieder eine leere Form",
   portal: "Kundenportal-Link",
   portalUnpublished: "Kundenportal – noch nicht veröffentlicht",
 };
@@ -1138,10 +1142,14 @@ export function projectIntakeLinkState({ project = null, intake = null } = {}) {
     hint: LINK_LABELS.intakeHint,
     copyLabel: LINK_LABELS.intakeCopy,
     openLabel: LINK_LABELS.intakeOpen,
+    resetLabel: LINK_LABELS.intakeReset,
     token,
     url,
     projectId: item ? String(item.id || "") : "",
     answeredAt: "",
+    // Der Rücksetz-Knopf ist ein Sonderfall und kein Normalweg: Er steht
+    // ausschliesslich an einem bereits beantworteten Fragebogen.
+    canReset: false,
   };
   if (!item || !item.id) {
     return Object.assign({}, base, {
@@ -1164,6 +1172,7 @@ export function projectIntakeLinkState({ project = null, intake = null } = {}) {
     return Object.assign({}, base, {
       mode: "answered",
       answeredAt,
+      canReset: true,
       explain: "Der Fragebogen dieses Projekts ist beantwortet. Die Angaben stehen an diesem Projekt — "
         + "ein zweites Projekt ist dabei ausdrücklich nicht entstanden. Der Link bleibt derselbe; "
         + "eine erneute Antwort ergänzt dasselbe Projekt.",
@@ -1175,6 +1184,118 @@ export function projectIntakeLinkState({ project = null, intake = null } = {}) {
       + "Kundendaten, Bestandesaufnahme und Vision Room — nie eine Vorschau und nie das "
       + "Kundenportal. Antwortet die Kundschaft, wird dieses Projekt aktualisiert; es entsteht "
       + "kein zweites Projekt und höchstens eine Aufgabe „Offertenanfrage“.",
+  });
+}
+
+/* ── Fragebogen zurücksetzen ─────────────────────────────────────────────
+ * Eine Testeingabe oder ein Fehlversuch der Kundschaft schliesst den
+ * Fragebogen: Der öffentliche Link gilt als beantwortet, die Kundschaft kommt
+ * nicht mehr hinein. Bisher half nur „Neu" — und das macht genau den Link
+ * ungültig, der schon verschickt wurde.
+ *
+ * Deshalb dieser Rückweg. Er ist eng gefasst und sagt es auch:
+ *
+ *   ZURÜCKGESETZT wird ausschliesslich die ANTWORT — Antwortstatus,
+ *   Antwortzeitpunkt, Einreichungsvermerk und der Fragebogen-Payload
+ *   (das Anfrage-Dokument am Projekt).
+ *
+ *   ERHALTEN bleiben Link und Token, das Projekt samt Kundendaten, Budget,
+ *   Preisen, Offerten, Verträgen und Kundenportal — und sämtliche Aufgaben,
+ *   allen voran „Offertenanfrage".
+ *
+ * Die Bindung wird beim Zurücksetzen ausdrücklich auf dieses Projekt gesetzt
+ * (`boundProjectId`). Damit findet auch eine erneute Einreichung robust
+ * denselben Vorgang: Sie aktualisiert dieses Projekt und legt wegen des
+ * unveränderten Aufgabenschlüssels (`<projektId>:intake`) keine zweite
+ * Aufgabe an. `formGeneration` zählt hoch, damit der Eingang die neue
+ * Einreichung nicht für eine Wiederholung der alten hält.
+ *
+ * Reine Funktion: Sie rechnet und formuliert, sie schreibt nichts.
+ * --------------------------------------------------------------------- */
+export const INTAKE_RESET_CLEARS = [
+  "der Antwortstatus (der Fragebogen gilt wieder als unbeantwortet)",
+  "der Antwortzeitpunkt",
+  "der gespeicherte Fragebogen-Payload am Projekt (Anfrage-Dokument)",
+];
+
+export const INTAKE_RESET_KEEPS = [
+  "der Fragebogen-Link samt Token — derselbe Link bleibt gültig",
+  "das Projekt mit Titel, Phase, Notizen und Verlauf",
+  "Kundendaten, Budget und Preise",
+  "Offerten, Verträge, AGB und das Kundenportal",
+  "alle Aufgaben, auch die bestehende „Offertenanfrage“",
+];
+
+// Die Fassung des veröffentlichten Fragebogens. Sie beginnt bei 1 und zählt
+// mit jedem Zurücksetzen hoch; Fragebögen aus der Zeit davor haben keine und
+// gelten deshalb als Fassung 1.
+export function intakeFormGeneration(intake) {
+  const value = Number(intake && intake.formGeneration);
+  return Number.isFinite(value) && value >= 1 ? Math.floor(value) : 1;
+}
+
+export function intakeResetPlan({ project = null, intake = null, now = new Date().toISOString() } = {}) {
+  const item = project && typeof project === "object" ? project : null;
+  const form = intake && typeof intake === "object" ? intake : null;
+  const projectId = item ? String(item.id || "") : "";
+  const token = form && isShareToken(form.inviteToken) ? form.inviteToken : "";
+  const base = {
+    allowed: false,
+    reason: "",
+    label: LINK_LABELS.intakeReset,
+    projectId,
+    token,
+    url: token ? intakeFormUrl(token) : "",
+    clears: INTAKE_RESET_CLEARS.slice(),
+    keeps: INTAKE_RESET_KEEPS.slice(),
+    confirmText: "",
+    intakePatch: null,
+    projectClears: [],
+    generation: 0,
+    logText: "",
+  };
+  const deny = (reason) => Object.assign({}, base, { reason });
+
+  if (!projectId || !form) return deny("Ohne Projekt und Fragebogen gibt es nichts zurückzusetzen.");
+  // Ein fremder Fragebogen wird nie über ein Projekt zurückgesetzt.
+  const bound = String(form.boundProjectId || "");
+  const created = String(form.projectId || "");
+  if (bound !== projectId && created !== projectId) {
+    return deny("Dieser Fragebogen gehört nicht zu diesem Projekt.");
+  }
+  if (!token) return deny("Dieser Fragebogen hat keinen gültigen Link.");
+  const answered = !!(form.answeredAt || created || form.status === "answered");
+  if (!answered) return deny("Dieser Fragebogen ist noch nicht beantwortet — es gibt nichts zurückzusetzen.");
+
+  const generation = intakeFormGeneration(form) + 1;
+  const list = (entries) => entries.map((entry) => "• " + entry).join("\n");
+  return Object.assign({}, base, {
+    allowed: true,
+    generation,
+    intakePatch: {
+      // Die Bindung ausdrücklich an dieses Projekt — auch für einen
+      // Fragebogen, AUS DEM dieses Projekt entstanden ist. Sonst legte die
+      // nächste Einreichung ein zweites Projekt an.
+      boundProjectId: projectId,
+      projectId: "",
+      submissionId: "",
+      answeredAt: "",
+      status: "open",
+      formGeneration: generation,
+      resetAt: now,
+      resetCount: (Number(form.resetCount) || 0) + 1,
+      updatedAt: now,
+      // Der Token bleibt bewusst unangetastet: Der verschickte Link muss
+      // weiter funktionieren — das ist der ganze Zweck dieses Weges.
+    },
+    projectClears: ["ftIntakeDocument"],
+    confirmText: "Fragebogen dieses Projekts wirklich zurücksetzen?\n\n"
+      + "Zurückgesetzt wird NUR:\n" + list(INTAKE_RESET_CLEARS) + "\n\n"
+      + "Erhalten bleiben:\n" + list(INTAKE_RESET_KEEPS) + "\n\n"
+      + "Danach zeigt derselbe Link wieder eine leere Form. Eine neue Einreichung "
+      + "gehört wieder zu genau diesem Projekt und erzeugt keine zweite Aufgabe.",
+    logText: "Fragebogen zurückgesetzt — Antwortstatus, Antwortzeitpunkt und Fragebogen-Payload "
+      + "entfernt. Link, Projektdaten, Offerten, Kundenportal und Aufgaben unverändert.",
   });
 }
 
@@ -2644,6 +2765,7 @@ const API = {
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
   offerBriefingLinkState, offerProjectLinkPlan,
   intakeBinding, projectIntakeLinkState, intakeUpdateForProject,
+  INTAKE_RESET_CLEARS, INTAKE_RESET_KEEPS, intakeFormGeneration, intakeResetPlan,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,

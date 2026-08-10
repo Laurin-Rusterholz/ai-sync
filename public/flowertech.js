@@ -3713,6 +3713,11 @@
       questions: core.normalizeIntakeQuestions(intake.questions || []),
       status: intake.status === "closed" ? "closed" : (intake.projectId ? "answered" : "open"),
       company: { name: (ft.company && ft.company.name) || "FlowerTech" },
+      // Die Fassung des Fragebogens — eine blosse Zahl, nichts Internes. Der
+      // Eingang hängt seinen Idempotenz-Schlüssel daran: Nach einem
+      // Zurücksetzen ist die neue Einreichung dadurch keine Wiederholung der
+      // alten und wird nicht als Duplikat verworfen.
+      generation: core.intakeFormGeneration(intake),
       updatedAt: now(),
     }).then(function () {
       intake.publishedAt = now();
@@ -4021,13 +4026,74 @@
         '\')" title="' + attr(core.LINK_LABELS.intakeHint) + '">' + esc(core.LINK_LABELS.intakeCopy) + "</button>" +
       '<a class="btn sm ghost" href="' + attr(state.url) + '" target="_blank" rel="noopener">' +
         esc(core.LINK_LABELS.intakeOpen) + "</a></div>" +
-      (state.mode === "answered"
+      (state.canReset
         ? '<div class="ft-ready">✓ Fragebogen beantwortet · Stand ' + esc(dateTime(state.answeredAt)) +
-          " — die Angaben stehen an diesem Projekt, ein zweites Projekt entstand nicht.</div>"
+          " — die Angaben stehen an diesem Projekt, ein zweites Projekt entstand nicht.</div>" +
+          // Der Rückweg nach einer Test- oder Fehleingabe. Er steht NUR hier,
+          // an einem bereits beantworteten Fragebogen, und nur in der App —
+          // die Kundenseite kennt ihn nicht.
+          '<div class="ft-link-row ft-intake-reset">' +
+          '<button class="btn sm ghost ft-danger" onclick="window._ftResetProjectIntake(\'' + attr(projectId) +
+            '\')" title="' + attr(core.LINK_LABELS.intakeResetDone) + '">↺ ' +
+            esc(core.LINK_LABELS.intakeReset) + "</button>" +
+          '<span class="mini">Setzt ausschliesslich Antwortstatus, Antwortzeitpunkt und ' +
+            "Fragebogen-Payload zurück. Link, Projekt, Kundendaten, Budget, Offerten, Kundenportal " +
+            "und Aufgaben bleiben unverändert.</span></div>"
         : "") +
       '<div class="mini">' + esc(state.explain) + "</div>";
   }
   window._ftProjectIntakeRow = projectIntakeRowHtml;
+
+  /* ── Fragebogen zurücksetzen ───────────────────────────────────────────
+     Nach einer Test- oder Fehleingabe soll DERSELBE, bereits verschickte Link
+     wieder als unbeantwortet gelten. „Neu" kann das nicht: Es tauscht den
+     Token und macht genau diesen Link ungültig.
+
+     Zurückgesetzt wird deshalb ausschliesslich die Antwort — Antwortstatus,
+     Antwortzeitpunkt, Einreichungsvermerk und der Fragebogen-Payload am
+     Projekt. Nicht angefasst werden Token und Link, Projekt und Kundendaten,
+     Budget und Preise, Offerten, Verträge, Kundenportal und sämtliche
+     Aufgaben — allen voran die bestehende „Offertenanfrage". Sie bleibt
+     stehen, und weil der Aufgabenschlüssel (`<projektId>:intake`) unverändert
+     ist, legt auch eine erneute Einreichung keine zweite an.
+
+     Was zurückgesetzt wird, entscheidet der Kern (intakeResetPlan) — samt der
+     Bestätigung, die genau diese Folgen benennt.
+     ------------------------------------------------------------------- */
+  function resetProjectIntake(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) {
+      notify("warn", "Fragebogen", "Dieses Projekt ist nicht mehr da.");
+      return false;
+    }
+    var intake = intakeOfProject(projectId);
+    var plan = core.intakeResetPlan({ project: project, intake: intake, now: now() });
+    if (!plan.allowed) {
+      notify("warn", core.LINK_LABELS.intakeReset, plan.reason);
+      return false;
+    }
+    // Ohne ausdrückliche Bestätigung geschieht nichts. Der Text nennt beide
+    // Seiten: was verschwindet und was ausdrücklich bleibt.
+    if (typeof confirm === "function" && !confirm(plan.confirmText)) return false;
+
+    Object.keys(plan.intakePatch).forEach(function (key) { intake[key] = plan.intakePatch[key]; });
+    plan.projectClears.forEach(function (key) { delete project[key]; });
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({ id: id(), at: now(), channel: "note", text: plan.logText });
+    project.updatedAt = now();
+    // Der Prompt beschreibt den aktuellen Stand — ohne Fragebogen-Payload also
+    // auch ohne dessen Angaben. Er wird neu erzeugt, nicht stehen gelassen.
+    regeneratePrompt(projectId);
+    // Und der öffentliche Link zeigt wieder eine leere Form: Der
+    // veröffentlichte Fragebogen steht sofort wieder auf „open".
+    publishIntakeForm(intake.id);
+    save();
+    rerender();
+    notify("ok", core.LINK_LABELS.intakeReset, core.LINK_LABELS.intakeResetDone);
+    return true;
+  }
+  window._ftResetProjectIntake = resetProjectIntake;
 
   /* Die Antwort auf einen projektgebundenen Fragebogen. Sie erzeugt KEIN
      zweites Projekt: Sie ergänzt dieses Projekt (Gepflegtes bleibt stehen),
@@ -5617,6 +5683,12 @@
       "background:linear-gradient(180deg,rgba(232,121,169,.10),transparent)}" +
     ".ft-linkbar-intake .ft-phase{color:#e879a9}" +
     ".ft-linkbar-intake .ft-link-row+.mini,.ft-linkbar-intake .ft-ready{margin-top:6px}" +
+    /* Der Rücksetz-Knopf ist ausdrücklich kein Normalweg: eigene Farbe, eigene
+       Zeile, und daneben in einem Satz, was er tut und was er nicht tut. */
+    ".ft-intake-reset{margin-top:8px;align-items:flex-start}" +
+    ".ft-intake-reset .mini{flex:1;min-width:200px}" +
+    ".btn.ft-danger{border-color:rgba(197,48,48,.45);color:#e06767}" +
+    ".btn.ft-danger:hover{background:rgba(197,48,48,.12)}" +
     ".ft-link-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}" +
     ".ft-link-row span{font-size:12px;color:var(--muted);min-width:120px}" +
     ".ft-link-intake>span{color:var(--text);font-weight:600;min-width:220px}" +
