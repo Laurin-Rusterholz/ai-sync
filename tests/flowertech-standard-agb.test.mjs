@@ -670,3 +670,18 @@ console.log(
   "  Vorschau wird keine versprochen, mit Vorschau steht sie da. Nirgends mehr\n" +
   "  „keine Vorschau“ oder „nie das Kundenportal“ als Aussage über den einen Link."
 );
+
+pruefe("Auch Stufenbeschreibung und Nächster-Schritt behaupten nichts Falsches", () => {
+  const intake = C.CUSTOMER_AREA_STAGES.find((s) => s.key === "intake");
+  assert.ok(!/keine AGB/.test(intake.hides),
+    "die Fragebogen-Stufe meldet die AGB als fehlend: " + intake.hides);
+  assert.match(intake.hides, /mit ihrer Freigabe dazu/,
+    "die Stufe sagt nicht, dass das Fehlende noch dazukommt");
+  // Kein sichtbarer Text im Kern behauptet mehr „keine Vorschau" über den Link.
+  const schritt = C.nextProcessSteps({ inquiries: [{ id: "i", status: "new" }] })
+    .find((s) => s.key === "inquiry");
+  if (schritt) {
+    assert.ok(!/keine Vorschau/.test(schritt.hint), "der nächste Schritt sagt „keine Vorschau“");
+    assert.match(schritt.hint, /Standard-AGB/);
+  }
+});

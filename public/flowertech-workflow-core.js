@@ -1699,7 +1699,10 @@ export const CUSTOMER_AREA_STAGES = [
     key: "intake",
     label: "Fragebogen – Kundendaten & Vision Room",
     shows: "Kundendaten, Bestandesaufnahme und Vision Room zum Ausfüllen.",
-    hides: "Keine Offerte, keine Vorschau, keine Verwaltung, kein Vertrag, keine AGB.",
+    // Die AGB stehen hier bewusst NICHT als "fehlt": Sie sind auf jeder
+    // gueltigen Einladung da. Genannt wird nur, was wirklich erst mit einer
+    // Freigabe dazukommt.
+    hides: "Noch keine Offerte, keine Vorschau, kein Vertrag und keine Verwaltung — die kommen mit ihrer Freigabe dazu.",
   },
   {
     key: "offer",
@@ -2785,10 +2788,10 @@ export function nextProcessSteps({
     steps.push({
       key: "inquiry",
       label: "Fragebogen-Link schicken",
-      // Kein Projekt an dieser Stelle: Der Fragebogen-Link ist der ganze
-      // Schritt. Kundendaten & Vision Room – noch keine Vorschau.
+      // Kein Projekt an dieser Stelle: Die eine Kundenadresse ist der ganze
+      // Schritt. Sie beginnt beim Fragebogen und waechst mit dem Vorgang.
       hint: openInquiries.length === 1
-        ? "Eine Anfrage wartet auf den Fragebogen-Link (Kundendaten & Vision Room – noch keine Vorschau)."
+        ? "Eine Anfrage wartet auf die Kundenadresse (Fragebogen & Vision Room, Standard-AGB)."
         : openInquiries.length + " Anfragen warten auf den Fragebogen-Link.",
       count: openInquiries.length,
       items: openInquiries.map((i) => ({

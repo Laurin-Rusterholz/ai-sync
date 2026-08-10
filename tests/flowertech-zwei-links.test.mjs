@@ -334,8 +334,10 @@ const TOKEN = "t".repeat(32);
   const schritt = schritte.find((s) => s.key === "inquiry");
   ok(schritt, "eine offene Anfrage taucht nicht in den nächsten Schritten auf");
   ok(schritt.label === "Fragebogen-Link schicken", `der Schritt heisst: ${schritt.label}`);
-  ok(/Vision Room – noch keine Vorschau/.test(schritt.hint),
+  ok(/Vision Room/.test(schritt.hint) && /Standard-AGB/.test(schritt.hint),
     `der Schritt erklärt den Link nicht eindeutig: ${schritt.hint}`);
+  ok(!/keine Vorschau/.test(schritt.hint),
+    `der Schritt behauptet weiter „keine Vorschau“: ${schritt.hint}`);
 }
 
 /* ══ 10. Die Seiten halten die Trennung ein ════════════════════════════════ */
