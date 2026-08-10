@@ -2598,7 +2598,14 @@
       "</div>" +
       '<div class="mini mt-2">Der Prompt ist die Eingabe für die spätere HTML-Erstellung. Er enthält ' +
         "die Antworten aus dem Fragebogen, die Änderungswünsche, die Rückfragen und den Projektkontext. " +
-        "Ein Upload ersetzt ihn bewusst.</div></div>";
+        "Ein Upload ersetzt ihn bewusst.</div></div>" +
+
+      /* Der Prompt ist nur der Anfang: Gebaut und veröffentlicht wird die
+         Website von Claude Code, und was zurückkommt, ist EINE Adresse. Genau
+         deshalb steht der Schritt hier — direkt unter dem Prompt, aus dem er
+         entsteht — und nicht nur im Kundenportal. */
+      '<div class="card p-4 mt-3"><h3>Claude-Code-Rückgabe</h3><div class="sep"></div>' +
+      claudeHandoffHtml(projectId) + "</div>";
   }
 
   // ==========================================================================

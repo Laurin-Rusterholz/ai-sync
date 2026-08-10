@@ -508,6 +508,75 @@ const letzterToast = (win) => win.__toasts[win.__toasts.length - 1] || {};
   ok(!/requestedAt|confirmedAt/.test(roh), "der interne Ablauf der Rückgabe steht im Datensatz");
 }
 
+// ── 9. Die Oberfläche zeigt den Schritt — und behauptet nichts Falsches ───
+{
+  const tab = (win, projectId, key) => {
+    win._ftSetProjectTab(projectId, key);
+    return String(win.ftWorkflowPanel(projectId)).replace(/<style>[\s\S]*?<\/style>/g, "");
+  };
+
+  // (a) Ohne Zugang: freigegeben, aber nicht veröffentlicht — und es steht da.
+  const ohne = lehner({ firebase: "none" });
+  ohne.win._ftSetProjectField("prj_lehner", "previewUrl", LEHNER_URL);
+  ohne.win._ftReleaseCustomerPreview("prj_lehner", true);
+  const promptOhne = tab(ohne.win, "prj_lehner", "prompt");
+  ok(!/<strong>sichtbar<\/strong>/.test(promptOhne),
+    "die Oberfläche meldet „sichtbar“, obwohl nichts veröffentlicht wurde");
+  ok(/freigegeben, nicht veröffentlicht/.test(promptOhne),
+    "der Unterschied zwischen Freigabe und Veröffentlichung steht nicht da");
+  ok(/alten Stand/.test(promptOhne), "es wird nicht gesagt, was die Kundschaft stattdessen sieht");
+
+  // (b) Mit Zugang: jetzt darf „sichtbar“ dastehen.
+  const ctx = lehner();
+  ctx.win._ftSetProjectField("prj_lehner", "previewUrl", LEHNER_URL);
+  ctx.win._ftReleaseCustomerPreview("prj_lehner", true);
+  await new Promise((r) => setTimeout(r, 0));
+  const promptDa = tab(ctx.win, "prj_lehner", "prompt");
+  ok(/<strong>sichtbar<\/strong>/.test(promptDa),
+    "nach bestätigter Veröffentlichung fehlt die Meldung „sichtbar“");
+  // Und die Herkunft steht dabei — als Test/Manuell, nicht als Claude-Ergebnis.
+  ok(/Test-\/Manuell-Vorschau/.test(promptDa),
+    "die manuelle Herkunft der Vorschau wird nicht benannt");
+  ok(!/Quelle: Claude Code/.test(promptDa),
+    "eine manuelle Adresse wird als Claude-Code-Ergebnis ausgegeben");
+
+  // (c) Der Schritt selbst — in „Vorschau & Prompt“ UND im „Kundenportal“.
+  const vorschau = tab(ctx.win, "prj_lehner", "vorschau");
+  ok(/Claude-Code-Rückgabe/.test(vorschau),
+    "der Schritt fehlt im Reiter „Vorschau & Prompt“");
+  ok(/_ftClaudeHandoffRequest|_ftClaudeHandoffConfirm|ftClaudeReturnUrl/.test(vorschau),
+    "der Schritt in „Vorschau & Prompt“ lässt sich nicht bedienen");
+  const portal = tab(ctx.win, "prj_lehner", "kunde");
+  ok(/Claude-Code-Rückgabe/.test(portal), "der Schritt fehlt in der Oberfläche");
+  ["Warte auf Claude Code", "Rückgabe-Link prüfen", "freigegeben"].forEach((label) => {
+    ok(portal.includes(label), `die Station „${label}“ fehlt in der Oberfläche`);
+  });
+  ok(/_ftClaudeHandoffRequest/.test(portal), "der Weg zur Übergabe fehlt");
+  ok(/Vertrag/.test(portal), "der Vertrag hat keinen erreichbaren Schalter");
+
+  // (d) Nach der Bestätigung: die Oberfläche nennt Claude Code als Quelle.
+  ctx.win._ftClaudeHandoffRequest("prj_lehner");
+  ctx.win._ftClaudeHandoffReturn("prj_lehner", LEHNER_URL);
+  const zurPruefung = tab(ctx.win, "prj_lehner", "kunde");
+  ok(/ftClaudeReturnUrl/.test(zurPruefung), "das Feld für die Rückgabe-Adresse fehlt");
+  ok(/_ftClaudeHandoffConfirm/.test(zurPruefung), "der Weg zur Bestätigung fehlt");
+
+  ctx.win._ftClaudeHandoffConfirm("prj_lehner");
+  ctx.win._ftReleaseCustomerPreview("prj_lehner", true);
+  await new Promise((r) => setTimeout(r, 0));
+  ok(/Quelle: Claude Code/.test(tab(ctx.win, "prj_lehner", "prompt")),
+    "die bestätigte Rückgabe wird nicht als Claude-Code-Quelle ausgewiesen");
+
+  // (e) Und das Feld-Ablesen funktioniert wirklich.
+  const feld = lehner();
+  feld.win.__fields = { ftClaudeReturnUrl: { value: LEHNER_URL } };
+  feld.win._ftClaudeHandoffRequest("prj_lehner");
+  ok(feld.win._ftClaudeHandoffReturnFromField("prj_lehner") === true,
+    "die Rückgabe liess sich nicht aus dem Feld übernehmen");
+  ok(feld.win._ftCustomerArea("prj_lehner").claude.status === "review",
+    "die aus dem Feld übernommene Rückgabe steht nicht zur Prüfung");
+}
+
 console.log(`Claude-Code-Rückgabe & Veröffentlichungsnachweis: ${checks} Prüfungen.`);
 console.log("  Freigabe und Veröffentlichung sind zwei Dinge; „sichtbar\" verlangt den Nachweis.");
 console.log("  Warte auf Claude Code → Rückgabe-Link prüfen → freigegeben; manuelle Adressen");
