@@ -298,7 +298,13 @@ function renderAt(hash) {
 {
   const visionPage = "/workspace/flowertech/index.html";
   if (fs.existsSync(visionPage)) {
-    const page = fs.readFileSync(visionPage, "utf8");
+    // Der Vision Room ist inzwischen EIN Baustein für Startseite und
+    // Fragebogen: Die Startseite bindet ihn ein, die Logik steht in
+    // visionroom.js. Geprüft wird deshalb beides zusammen — sonst ginge die
+    // Prüfung ins Leere, sobald etwas in den Baustein wandert.
+    const component = "/workspace/flowertech/visionroom.js";
+    const page = fs.readFileSync(visionPage, "utf8")
+      + (fs.existsSync(component) ? fs.readFileSync(component, "utf8") : "");
     ok(/flowertech-portal/.test(page), "der Vision Room ruft die Quantus-Funktion nicht auf");
     // Aus dem „Senden" wird eine echte Offertenanfrage — kein Mail-Entwurf.
     // Aus dem oeffentlichen Vision Room wird eine ANFRAGE — nie ein Projekt.

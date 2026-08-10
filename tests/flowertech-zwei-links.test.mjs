@@ -333,12 +333,31 @@ const TOKEN = "t".repeat(32);
     const fragebogen = fs.readFileSync(path.join(ft, "fragebogen.html"), "utf8");
     const kunde = fs.readFileSync(path.join(ft, "kunde.html"), "utf8");
 
-    // Phase 1 zeigt NICHTS aus Phase 2.
+    // Der Fragebogen-Link ist der EINE Kundenlink: Er wächst um Offerte,
+    // Vorschau und Verwaltung — aber ausschliesslich aus den Kacheln, die
+    // Quantus ausdrücklich freigibt (customerAreaSnapshot). Vertrag, AGB und
+    // das Kundenportal bleiben ausserhalb; sie haben ihre eigene Freigabe.
+    // Kommentare erreichen niemanden und dürfen benennen, was hier nicht
+    // hingehört.
+    const lieferbar = fragebogen
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
     ok(/kind: "intake"|kind: 'intake'/.test(fragebogen), "der Fragebogen sendet die falsche Art");
     ok(!/clientPortals/.test(fragebogen), "der Fragebogen liest den Kundenportal-Snapshot");
-    [/Vorschau/, /Änderungswunsch/, /Offerte/, /Vertrag/, /\bAGB\b/].forEach((re) => {
-      ok(!re.test(fragebogen), `der Fragebogen zeigt Inhalte der Phase 2: ${re}`);
+    [/\bVertrag\b/, /\bAGB\b/, /kunde\.html/].forEach((re) => {
+      ok(!re.test(lieferbar), `der Fragebogen-Link zeigt, was nicht an ihn gehört: ${re}`);
     });
+    // Die Stufen entstehen aus dem veröffentlichten Datensatz — nicht aus
+    // einer zweiten Adresse und nicht aus einem zweiten Abruf.
+    ok(/data\.tiles/.test(fragebogen),
+      "die Kundenseite liest die Kacheln nicht — der Kundenbereich bliebe unsichtbar");
+    ok((fragebogen.match(/intakeForms/g) || []).length === 1,
+      "der Fragebogen holt seinen Stand an mehr als einer Stelle");
+    // Ein Entwurf erreicht die Kundschaft nie: Die Seite prüft den echten
+    // Versand selbst, zusätzlich zur Freigabe in Quantus.
+    ok(/sentAt/.test(fragebogen) && /OFFER_STATES/.test(fragebogen),
+      "die Kundenseite prüft den Versandstatus der Offerte nicht selbst");
 
     // Der Vision Room steht IM Fragebogen und wird mit ihm abgeschickt.
     ok(/id="visionRoom"/.test(fragebogen), "der Vision Room fehlt im Fragebogen");
