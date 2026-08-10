@@ -1852,6 +1852,120 @@ function releaseFlag(raw) {
   return { released: value.released === true, releasedAt: String(value.releasedAt || "") };
 }
 
+/* ── Die Claude-Code-Rückgabe ────────────────────────────────────────────
+ * Der verbindliche Weg zu einer Projekt-Website hat vier Stationen, und die
+ * dritte ist die, an der bisher gelogen wurde:
+ *
+ *   Quantus erzeugt den projektspezifischen Prompt
+ *     → Codex übergibt HTML-, Datei- und Deploy-Arbeit an Claude Code
+ *     → Claude Code veröffentlicht und liefert EINE konkrete HTTPS-Adresse
+ *     → Codex trägt genau diese Adresse hier ein, sie wird bestätigt
+ *     → erst dann ist die reguläre Freigabe auf dem Kundenlink möglich.
+ *
+ * Der Sinn der Bestätigung: Eine von Hand irgendwo abgeschriebene Adresse ist
+ * kein Claude-Code-Ergebnis. Sie darf höchstens als ausdrückliche manuelle
+ * Testvorschau hinausgehen — nie als erledigte Claude-Vorschau. Deshalb zählt
+ * hier nicht „irgendeine URL steht da", sondern: Diese Adresse ist Zeichen für
+ * Zeichen die bestätigte Rückgabe.
+ * --------------------------------------------------------------------- */
+export const CLAUDE_HANDOFF_SOURCE = "claude-code";
+export const PREVIEW_SOURCE_MANUAL = "manuell";
+
+export const CLAUDE_HANDOFF_STEPS = [
+  {
+    key: "open",
+    label: "Noch nicht übergeben",
+    hint: "Der Prompt ist da, aber es wartet noch kein Auftrag bei Claude Code.",
+  },
+  {
+    key: "waiting",
+    label: "Warte auf Claude Code",
+    hint: "Der Auftrag ist übergeben. Claude Code baut und veröffentlicht die Website.",
+  },
+  {
+    key: "review",
+    label: "Rückgabe-Link prüfen",
+    hint: "Eine HTTPS-Adresse ist zurückgekommen. Sie wird geprüft und bestätigt, bevor sie zählt.",
+  },
+  {
+    key: "confirmed",
+    label: "freigegeben",
+    hint: "Die Rückgabe ist bestätigt — die reguläre Vorschau-Freigabe ist ab hier möglich.",
+  },
+];
+
+export function claudeHandoff(project = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const raw = item.ftClaudeHandoff && typeof item.ftClaudeHandoff === "object"
+    ? item.ftClaudeHandoff : {};
+  return {
+    requestedAt: String(raw.requestedAt || ""),
+    // Auch hier gilt die einzige Regel für Adressen: echtes HTTPS oder nichts.
+    returnedUrl: safeUrl(raw.returnedUrl),
+    returnedAt: String(raw.returnedAt || ""),
+    confirmedAt: String(raw.confirmedAt || ""),
+    note: text(raw.note, 300),
+  };
+}
+
+/* Rein rechnend: Wo steht die Rückgabe, und ist die hinterlegte Vorschau-
+ * Adresse wirklich das, was Claude Code geliefert hat? */
+export function claudeHandoffState({ project = {} } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const hand = claudeHandoff(item);
+  const previewUrl = safeUrl(item.previewUrl);
+  const confirmed = !!hand.confirmedAt && !!hand.returnedUrl;
+  const status = confirmed ? "confirmed"
+    : hand.returnedUrl ? "review"
+      : hand.requestedAt ? "waiting" : "open";
+  const step = CLAUDE_HANDOFF_STEPS.find((s) => s.key === status) || CLAUDE_HANDOFF_STEPS[0];
+  const index = CLAUDE_HANDOFF_STEPS.indexOf(step);
+  // Die Vorschau-Adresse zählt nur als Claude-Code-Ergebnis, wenn sie exakt
+  // die bestätigte Rückgabe ist. Alles andere ist manuell — und heisst so.
+  const matchesPreview = confirmed && !!previewUrl && previewUrl === hand.returnedUrl;
+  const previewSource = !previewUrl ? ""
+    : matchesPreview ? CLAUDE_HANDOFF_SOURCE : PREVIEW_SOURCE_MANUAL;
+
+  // Zwei verschiedene Fragen, zwei verschiedene Sätze: Wo steht der Ablauf —
+  // und woher stammt die Adresse, die gerade als Vorschau hinterlegt ist.
+  let reason = "";
+  if (status === "open") reason = "Der Auftrag ist noch nicht an Claude Code übergeben.";
+  else if (status === "waiting") reason = "Es ist noch keine Rückgabe-Adresse von Claude Code da.";
+  else if (status === "review") reason = "Die Rückgabe-Adresse ist noch nicht bestätigt.";
+  else if (!previewUrl) reason = "Die bestätigte Rückgabe ist noch nicht als Vorschau-Adresse übernommen.";
+
+  let previewSourceReason = "";
+  if (!previewUrl) previewSourceReason = "Es ist keine Vorschau-Adresse hinterlegt.";
+  else if (matchesPreview) previewSourceReason = "Die Vorschau ist die bestätigte Claude-Code-Rückgabe.";
+  else {
+    previewSourceReason = "Die hinterlegte Vorschau-Adresse ist nicht die bestätigte "
+      + "Claude-Code-Rückgabe — sie gilt als manuelle Testvorschau.";
+  }
+
+  return {
+    status,
+    statusLabel: step.label,
+    hint: step.hint,
+    requestedAt: hand.requestedAt,
+    returnedUrl: hand.returnedUrl,
+    returnedAt: hand.returnedAt,
+    confirmedAt: hand.confirmedAt,
+    note: hand.note,
+    confirmed,
+    matchesPreview,
+    previewSource,
+    source: CLAUDE_HANDOFF_SOURCE,
+    // Genau dann darf die REGULÄRE Vorschau-Freigabe „erledigte Claude-
+    // Vorschau" heissen. Sonst höchstens „manuelle Testvorschau".
+    regularReady: matchesPreview,
+    reason, previewSourceReason,
+    steps: CLAUDE_HANDOFF_STEPS.map((s, n) => ({
+      key: s.key, label: s.label, hint: s.hint,
+      done: n < index, current: n === index,
+    })),
+  };
+}
+
 export function customerPreviewRelease({ project = {}, prompt = null } = {}) {
   const item = project && typeof project === "object" ? project : {};
   const url = safeUrl(item.previewUrl);
@@ -1859,6 +1973,11 @@ export function customerPreviewRelease({ project = {}, prompt = null } = {}) {
   const promptText = prompt && typeof prompt === "object" ? String(prompt.text || "") : "";
   const promptReady = !!promptText.trim();
   const ready = !!url && promptReady;
+  const handoff = claudeHandoffState({ project: item });
+  // Herkunft der Adresse — sie entscheidet über die Beschriftung, nicht über
+  // das Erscheinen. Eine freigegebene Adresse verschwindet nie still.
+  const source = handoff.previewSource;
+  const claudeConfirmed = source === CLAUDE_HANDOFF_SOURCE;
   let reason = "";
   if (!url) reason = "Es fehlt eine vollständige HTTPS-Vorschau-Adresse.";
   else if (!promptReady) reason = "Der projektspezifische Prompt ist noch nicht erzeugt.";
@@ -1867,6 +1986,12 @@ export function customerPreviewRelease({ project = {}, prompt = null } = {}) {
     url, promptReady, ready,
     released: flag.released, releasedAt: flag.releasedAt,
     visible: ready && flag.released,
+    // Woher die Adresse kommt und ob sie als erledigte Claude-Vorschau gelten
+    // darf. `provisional` heisst: Sie geht nur als Testvorschau hinaus.
+    source, claudeConfirmed,
+    provisional: !!url && !claudeConfirmed,
+    handoff,
+    sourceReason: handoff.previewSourceReason,
     reason,
   };
 }
@@ -1921,6 +2046,34 @@ export function customerContractTile({ project = {}, documentHtml = "", title = 
   };
 }
 
+/* ── Der Nachweis, dass der Kundenlink wirklich neu geschrieben wurde ─────
+ * Eine Freigabe in Quantus ist eine Absicht. Sichtbar wird sie erst, wenn der
+ * Datensatz unter `flowertech/intakeForms/<token>` tatsächlich neu geschrieben
+ * ist. Genau diese zwei Dinge wurden bisher verwechselt: Quantus meldete
+ * „sichtbar", während das Schreiben stillschweigend fehlgeschlagen war — und
+ * auf der Kundenadresse stand weiterhin der alte Stand.
+ *
+ * Rein rechnend. `ok` heisst: zuletzt angefordert UND danach bestätigt
+ * geschrieben, ohne Fehler und ohne offenen Versuch.
+ * --------------------------------------------------------------------- */
+export function intakePublication({ intake = null } = {}) {
+  const form = intake && typeof intake === "object" ? intake : {};
+  const publishedAt = String(form.publishedAt || "");
+  const requestedAt = String(form.publishRequestedAt || "");
+  const error = text(form.publishError, 300);
+  const pending = form.publishPending === true;
+  // Ein Versuch, der nach der letzten Bestätigung angestossen wurde, ist noch
+  // nicht angekommen — der veröffentlichte Stand ist dann veraltet.
+  const stale = !!requestedAt && requestedAt > publishedAt;
+  const ok = !!publishedAt && !error && !pending && !stale;
+  let reason = "";
+  if (pending) reason = "Der Kundenlink wird gerade veröffentlicht.";
+  else if (error) reason = error;
+  else if (!publishedAt) reason = "Der Kundenlink wurde noch nie veröffentlicht.";
+  else if (stale) reason = "Seit der letzten Änderung ist die Veröffentlichung nicht bestätigt.";
+  return { ok, pending, stale, error, publishedAt, requestedAt, reason };
+}
+
 /* Der Zustand des Kundenbereichs — für Quantus UND für die Veröffentlichung.
  * Rein rechnend: Er liest, er schreibt nicht und er veröffentlicht nichts. */
 export function customerAreaState({
@@ -1943,6 +2096,11 @@ export function customerAreaState({
     label: "Website-Vorschau & Änderungswünsche",
     url: preview.url,
     releasedAt: preview.releasedAt,
+    // Woher diese Adresse stammt. Eine bestätigte Claude-Code-Rückgabe ist die
+    // fertige Vorschau; alles andere geht ausdrücklich als Testvorschau
+    // hinaus — die Kundschaft soll den Unterschied lesen können.
+    source: preview.source,
+    provisional: preview.provisional,
     // Die Kundschaft darf zu genau dieser Stufe Änderungswünsche melden. Ohne
     // dieses Feld nimmt weder die Seite noch Quantus einen Wunsch entgegen.
     feedback: true,
@@ -1984,8 +2142,12 @@ export function customerAreaState({
     contract: contractTile ? "" : contract.reason,
     admin: adminTile ? "" : admin.reason,
   };
+  // Der Nachweis der Veröffentlichung. „freigegeben" und „steht wirklich auf
+  // der Kundenadresse" sind zwei verschiedene Dinge — `live` ist das zweite.
+  const publication = intakePublication({ intake: form });
   const stages = CUSTOMER_AREA_STAGES.map((stage) => Object.assign({}, stage, {
     visible: !!visible[stage.key],
+    live: !!visible[stage.key] && publication.ok,
     reason: reasons[stage.key] || "",
   }));
   // Die Stufe folgt weiterhin dem Projektfortschritt. AGB und Testkachel
@@ -2011,6 +2173,11 @@ export function customerAreaState({
     stages,
     visibleLabels: stages.filter((s) => s.visible).map((s) => s.label),
     hiddenLabels: stages.filter((s) => !s.visible).map((s) => s.label),
+    // `liveLabels` ist die einzige Liste, die behaupten darf, die Kundschaft
+    // sehe etwas: Sie verlangt zusätzlich den Veröffentlichungsnachweis.
+    liveLabels: stages.filter((s) => s.live).map((s) => s.label),
+    publication,
+    claude: claudeHandoffState({ project: item || {} }),
     preview, admin, contract,
   };
 }
@@ -3232,6 +3399,32 @@ export function buildContractDraft(context = {}) {
   };
 }
 
+/* Derselbe Vertrag als Dokument für den Kundenlink. Er entsteht aus genau den
+ * Abschnitten, die auch der Text trägt — nichts wird ergänzt und nichts
+ * weggelassen. Entschärft wird er danach im Kern (customerContractRelease) und
+ * ein zweites Mal auf der öffentlichen Seite, die ihn zusätzlich in einen
+ * `sandbox`-iframe sperrt. */
+export function contractToHtml(contract, vars) {
+  const c = contract || {};
+  const esc = (value) => String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const absatz = (body) => String(body || "").split(/\n{2,}/)
+    .map((part) => "<p>" + esc(part).replace(/\n/g, "<br>") + "</p>").join("");
+  const sections = (c.sections || []).filter((s) => s.enabled !== false)
+    .map((s) => "<section><h2>" + esc(s.title || "") + "</h2>"
+      + absatz(renderTemplate(s.body || "", vars || {})) + "</section>").join("");
+  return "<!doctype html><html lang=\"de\"><head><meta charset=\"utf-8\"><title>"
+    + esc(c.title || "Projektauftrag") + "</title><style>"
+    + "body{font:13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+    + "color:#111;margin:0;padding:24px}h1{font-size:20px;margin:0 0 6px}"
+    + "h2{font-size:14px;margin:18px 0 4px}.note{color:#7a5a00;margin:0 0 4px}"
+    + "</style></head><body><h1>" + esc(c.title || "Projektauftrag") + "</h1>"
+    + "<p class=\"note\">" + esc(c.intro || CONTRACT_INTRO_NOTICE) + "</p>"
+    + "<p class=\"note\">" + esc(c.legalNotice || LEGAL_REVIEW_NOTICE) + "</p>"
+    + sections + "</body></html>";
+}
+
 export function contractToText(contract, vars) {
   const c = contract || {};
   const head = [
@@ -3855,11 +4048,16 @@ const API = {
   CUSTOMER_AREA_STAGES, CUSTOMER_OFFER_STATUSES, MAX_CUSTOMER_DOCUMENT_BYTES,
   customerOfferIsPublic, customerAreaOffer, customerOfferTile,
   customerPreviewRelease, customerAdminRelease, customerAreaState, customerAreaSnapshot,
+  // Der Nachweis der Veröffentlichung und die verbindliche Claude-Code-Rückgabe.
+  intakePublication,
+  CLAUDE_HANDOFF_SOURCE, PREVIEW_SOURCE_MANUAL, CLAUDE_HANDOFF_STEPS,
+  claudeHandoff, claudeHandoffState,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,
   SERVICE_DESCRIPTION_TEMPLATES, WHY_FLOWERTECH_CARD, buildServiceDescription,
-  CONTRACT_SECTIONS, CONTRACT_TITLE_TEMPLATE, CONTRACT_INTRO_NOTICE, buildContractDraft, contractToText,
+  CONTRACT_SECTIONS, CONTRACT_TITLE_TEMPLATE, CONTRACT_INTRO_NOTICE, buildContractDraft,
+  contractToText, contractToHtml,
   LEGAL_TEMPLATES, buildLegalDraft,
   MESSAGE_TEMPLATES, buildMessageDraft,
   PROMPT_MODES, promptModeInstruction, PROMPT_DATA_OPTIONS, buildClaudePrompt,
