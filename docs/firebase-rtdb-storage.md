@@ -53,3 +53,32 @@ Beispiel (nur authentifizierte Nutzer):
 sonst waeren die laufend geschriebenen API-Keys oeffentlich lesbar. Wer die Regeln
 (noch) nicht gesichert hat, kann RTDB per `storage.rtdbSync = false` deaktivieren,
 bis die Regeln stehen.
+
+## Zugang der Netlify-Functions (Firebase Admin)
+Die Functions sprechen RTDB und Storage über die REST-APIs an und brauchen dafür
+ein Zugriffstoken. Es gibt genau zwei Wege, in dieser Reihenfolge:
+
+1. **Refresh-Token eines Google-Kontos** — `FIREBASE_OAUTH_REFRESH_TOKEN`.
+2. **Dienstkonto** — `FIREBASE_SERVICE_ACCOUNT_JSON` oder
+   `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY`.
+
+Für Weg 1 muss der Refresh-Token bei *derselben* OAuth-Anwendung erneuert werden,
+bei der er ausgestellt wurde. Deshalb gibt es ein eigenes Variablenpaar:
+
+| Variable | Bedeutung |
+| --- | --- |
+| `FIREBASE_OAUTH_CLIENT_ID` | client_id der OAuth-Anwendung des Firebase-Refresh-Tokens |
+| `FIREBASE_OAUTH_CLIENT_SECRET` | zugehöriges client_secret |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Fallback (Kalender/Mail), wenn das Paar oben fehlt |
+
+Regeln (geprüft in `tests/firebase-oauth-client.test.mjs`):
+
+- **Beide** Firebase-Variablen gesetzt → sie haben Vorrang.
+- **Beide** fehlen → unveränderter Google-Fallback, samt bisheriger Fehlermeldung.
+- **Genau eine** gesetzt → Fehler mit Namen der fehlenden Variable. Es wird nie die
+  `client_id` der einen mit dem `client_secret` der anderen Anwendung gemischt;
+  Google beantwortet solche Paare mit `invalid_client`.
+
+Typisches Symptom eines falschen Paares: Der Firebase-Versand bricht mit
+„Firebase OAuth-Refresh fehlgeschlagen: invalid_client" (oder `invalid_grant`) ab.
+Alle Werte sind Netlify-Umgebungsvariablen — sie stehen nie im Repository.

@@ -332,6 +332,73 @@ wirklich schliesst:
 
 In beiden Fällen gilt: Das Kundenportal gibt es an dieser Stelle noch gar nicht.
 
+## 4e. Der Fragebogen-Link eines BESTEHENDEN Projekts
+
+Ein Projekt muss nicht aus einem Fragebogen entstanden sein. „Lehner" etwa wurde
+von Hand angelegt — und hatte damit gar keinen Fragebogen-Link. In der
+FlowerTech-Karte der Projektseite stand allein der Kundenportal-Link. Genau daraus
+entstand die Verwechslung: Wer Kundendaten einholen wollte, griff zum einzigen
+sichtbaren Link, dem der Phase 2.
+
+Deshalb trägt **jedes** FlowerTech-Projekt seinen eigenen Fragebogen-Link, direkt
+unter dem Kopf der FlowerTech-Karte und auf jedem Reiter:
+
+```
+Phase 1 · Fragebogen
+  Fragebogen-Link – Kundendaten & Vision Room, keine Vorschau
+  [ https://flowertech.ch/fragebogen.html?e=… ]  [Fragebogen-Link kopieren] [Fragebogen öffnen]
+
+Phase 2 · Kundenportal
+  Kundenportal – noch nicht veröffentlicht   (bzw. der Link nach der Freigabe)
+```
+
+* **Noch kein Link** → Knopf **„Fragebogen-Link erstellen"**. Er legt genau einen
+  Fragebogen an, gebunden an dieses Projekt, und veröffentlicht ihn. Danach stehen
+  Kopieren und Öffnen sofort bereit.
+* **Reload und Doppelklick** treffen denselben Fragebogen und denselben Token —
+  ein bereits verschickter Link bleibt gültig.
+* Das Kopieren meldet ausdrücklich, **welcher** Link kopiert wurde:
+  *„Fragebogen-Link kopiert – Kundendaten & Vision Room, keine Vorschau"*.
+* Der Kundenportal-Link erscheint unverändert **erst nach der ausdrücklichen
+  Veröffentlichung** (Abschnitt 3c). Die Zweiphasen-Sicherheit bleibt unberührt.
+
+### Die Bindung: `boundProjectId` ≠ `projectId`
+
+| Feld am Fragebogen | Bedeutung |
+| --- | --- |
+| `boundProjectId` | Der Fragebogen **gehört zu** diesem bestehenden Projekt. |
+| `projectId` | Aus diesem Fragebogen **ist** ein Projekt entstanden (Erstweg). |
+
+Beides im selben Feld zu führen wäre genau die Vermischung, die hier aufgeräumt
+wird: `projectId` schliesst den öffentlichen Fragebogen sofort als „beantwortet".
+`intakeBinding()` liest die Bindung; ein Projekt, das aus einem Fragebogen
+entstanden ist, zeigt weiterhin genau diesen einen Fragebogen — nie einen zweiten.
+
+### Was die Antwort auslöst
+
+| Fragebogen | Antwort erzeugt |
+| --- | --- |
+| ohne Bindung (Anfrage / Offerte ohne Projekt) | **1 Projekt + 1 Aufgabe „Offertenanfrage"** — unverändert |
+| **gebunden** an ein bestehendes Projekt | **kein zweites Projekt.** Das Projekt wird aktualisiert; höchstens **eine** Aufgabe „Offertenanfrage" |
+
+Die Aufgabe hängt bei beiden Wegen am selben Schlüssel (`<projektId>:intake`) —
+ein zweiter Eingang, ein Reload oder ein Doppelaufruf legt nichts nach.
+
+`intakeUpdateForProject()` entscheidet, was übernommen wird: **ergänzen, nicht
+überschreiben.** Gepflegte Angaben (Firma, Budget, Termin) bleiben stehen, leere
+werden gefüllt. Zwei Ausnahmen mit Absicht:
+
+* Der **Vision Room** wird nachgeführt — er ist die jüngste Aussage der Kundschaft.
+* Die Phase springt von `lead` auf `intake`; weiter fortgeschrittene Phasen werden
+  **nicht** zurückgedreht.
+
+Ein Kundenportal entsteht dabei ausdrücklich nicht. Der veröffentlichte Fragebogen
+trägt weiterhin nur Titel, Einleitung, Fragen, Status und Firmenname — nie
+Vorschau, Vertrag, AGB, Kosten oder Kundenportal (Positivliste in
+`publishIntakeForm()`).
+
+Belegt in `tests/flowertech-projekt-fragebogen.test.mjs`.
+
 ## 5. Migration und Abwärtskompatibilität
 
 **Es werden keine Daten angefasst.** Bestehende Projekte und Angebote bleiben

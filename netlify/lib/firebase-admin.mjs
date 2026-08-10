@@ -43,15 +43,68 @@ function serviceAccountFromEnv() {
   );
 }
 
-function userRefreshTokenFromEnv() {
-  const refreshToken = env("FIREBASE_OAUTH_REFRESH_TOKEN");
-  if (!refreshToken) return null;
-  const clientId = env("GOOGLE_CLIENT_ID");
-  const clientSecret = env("GOOGLE_CLIENT_SECRET");
-  if (!clientId || !clientSecret) {
+/* ── Welche OAuth-Zugangsdaten erneuern den Firebase-Refresh? ─────────────
+ * Der Firebase-Versand hing bisher an GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET.
+ * Das ist genau dann falsch, wenn der Refresh-Token zu einer ANDEREN
+ * OAuth-Anwendung gehört als der Kalender-/Mail-Zugang: Google gibt dann
+ * „invalid_client" oder „invalid_grant" zurück, und der Versand steht still.
+ *
+ * Deshalb gibt es ein eigenes Paar, FIREBASE_OAUTH_CLIENT_ID und
+ * FIREBASE_OAUTH_CLIENT_SECRET. Die Regeln sind bewusst schlicht:
+ *
+ *   • Beide gesetzt  → sie haben Vorrang (Quelle „firebase").
+ *   • Beide fehlen   → exakt der bisherige Google-Fallback (Quelle „google"),
+ *                      samt der bisherigen Fehlermeldung.
+ *   • Genau eines    → Fehler mit Namen der fehlenden Variable. Ein halbes
+ *                      Paar wird NIE mit der anderen Anwendung gemischt —
+ *                      client_id der einen und client_secret der anderen
+ *                      ergeben ein Zugangsdatum, das es nirgends gibt.
+ *
+ * Reine Funktion, damit die Auswahl geprüft werden kann, ohne dass irgendwo
+ * ein echtes Zugangsdatum liegen muss.
+ * --------------------------------------------------------------------- */
+const FIREBASE_OAUTH_VARS = { id: "FIREBASE_OAUTH_CLIENT_ID", secret: "FIREBASE_OAUTH_CLIENT_SECRET" };
+
+export function resolveOAuthClient({
+  refreshToken = "",
+  firebaseClientId = "",
+  firebaseClientSecret = "",
+  googleClientId = "",
+  googleClientSecret = "",
+} = {}) {
+  const clean = (value) => String(value == null ? "" : value).trim();
+  const token = clean(refreshToken);
+  if (!token) return null;
+
+  const ftId = clean(firebaseClientId);
+  const ftSecret = clean(firebaseClientSecret);
+  if (ftId && ftSecret) {
+    return { refreshToken: token, clientId: ftId, clientSecret: ftSecret, source: "firebase" };
+  }
+  if (ftId || ftSecret) {
+    const missing = ftId ? FIREBASE_OAUTH_VARS.secret : FIREBASE_OAUTH_VARS.id;
+    throw new Error(
+      `${missing} fehlt. ${FIREBASE_OAUTH_VARS.id} und ${FIREBASE_OAUTH_VARS.secret} gehören zusammen — ` +
+      "ein halbes Paar wird nicht mit GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET gemischt."
+    );
+  }
+
+  const googleId = clean(googleClientId);
+  const googleSecret = clean(googleClientSecret);
+  if (!googleId || !googleSecret) {
     throw new Error("FIREBASE_OAUTH_REFRESH_TOKEN benötigt GOOGLE_CLIENT_ID und GOOGLE_CLIENT_SECRET.");
   }
-  return { refreshToken, clientId, clientSecret };
+  return { refreshToken: token, clientId: googleId, clientSecret: googleSecret, source: "google" };
+}
+
+export function userRefreshTokenFromEnv() {
+  return resolveOAuthClient({
+    refreshToken: env("FIREBASE_OAUTH_REFRESH_TOKEN"),
+    firebaseClientId: env(FIREBASE_OAUTH_VARS.id),
+    firebaseClientSecret: env(FIREBASE_OAUTH_VARS.secret),
+    googleClientId: env("GOOGLE_CLIENT_ID"),
+    googleClientSecret: env("GOOGLE_CLIENT_SECRET"),
+  });
 }
 
 function base64url(value) {

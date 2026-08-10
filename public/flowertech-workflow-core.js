@@ -47,6 +47,12 @@ export const LINK_LABELS = {
   intakeHint: "Kundendaten & Vision Room – noch keine Vorschau",
   intakeCreate: "Fragebogen-Link erstellen",
   intakeCopy: "Fragebogen-Link kopieren",
+  intakeOpen: "Fragebogen öffnen",
+  // Die vollständige Beschriftung der Zeile. Sie nennt in einem Atemzug, was
+  // der Link zeigt und was er NICHT zeigt — genau daran hat sich die
+  // Verwechslung mit dem Kundenportal bisher entzündet.
+  intakeFull: "Fragebogen-Link – Kundendaten & Vision Room, keine Vorschau",
+  intakeCopied: "Fragebogen-Link kopiert – Kundendaten & Vision Room, keine Vorschau",
   portal: "Kundenportal-Link",
   portalUnpublished: "Kundenportal – noch nicht veröffentlicht",
 };
@@ -1088,6 +1094,154 @@ export function buildIntakeTask({ project = {}, document: doc = {}, projectId = 
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/* ── Der Fragebogen-Link eines BESTEHENDEN Projekts ──────────────────────
+ * Bisher gab es den Fragebogen-Link nur dort, wo noch kein Projekt war: an
+ * einer Anfrage oder an einer Offerte ohne Projekt. Ein Projekt wie „Lehner",
+ * das ohne Fragebogen entstanden ist, hatte gar keinen — und im FlowerTech-
+ * Block der Projektseite stand allein der Kundenportal-Link. Genau daraus
+ * entstand die Verwechslung: Wer Kundendaten einholen wollte, griff zum
+ * einzigen sichtbaren Link — dem der Phase 2.
+ *
+ * Deshalb trägt jedes Projekt einen eigenen, projektgebundenen Fragebogen-
+ * Link. Er ist der Link der Phase 1 und bleibt es:
+ *
+ *   • Er zeigt Kundendaten, Bestandesaufnahme und Vision Room — nie Vorschau,
+ *     Vertrag, AGB, Kosten oder Kundenportal.
+ *   • Er ist sichtbar, BEVOR ein Kundenportal existiert. Der Kundenportal-Link
+ *     erscheint weiterhin erst nach der ausdrücklichen Veröffentlichung.
+ *   • Seine Antwort erzeugt KEIN zweites Projekt. Sie aktualisiert genau
+ *     dieses Projekt und sorgt für höchstens eine Aufgabe „Offertenanfrage".
+ *
+ * Die Bindung steht in `boundProjectId` und nicht in `projectId`: `projectId`
+ * heisst weiterhin „aus diesem Fragebogen ist ein Projekt ENTSTANDEN". Beides
+ * im selben Feld zu führen, wäre genau die Vermischung, die hier gerade
+ * aufgeräumt wird.
+ * --------------------------------------------------------------------- */
+export function intakeBinding(intake) {
+  const form = intake && typeof intake === "object" ? intake : {};
+  const bound = String(form.boundProjectId || "");
+  const created = String(form.projectId || "");
+  if (bound) return { mode: "bound", projectId: bound, answered: !!created || !!form.answeredAt };
+  if (created) return { mode: "created", projectId: created, answered: true };
+  return { mode: "creates", projectId: "", answered: false };
+}
+
+export function projectIntakeLinkState({ project = null, intake = null } = {}) {
+  const item = project && typeof project === "object" ? project : null;
+  const form = intake && typeof intake === "object" ? intake : null;
+  const token = form && isShareToken(form.inviteToken) ? form.inviteToken : "";
+  const url = token ? intakeFormUrl(token) : "";
+  const base = {
+    label: LINK_LABELS.intakeFull,
+    hint: LINK_LABELS.intakeHint,
+    copyLabel: LINK_LABELS.intakeCopy,
+    openLabel: LINK_LABELS.intakeOpen,
+    token,
+    url,
+    projectId: item ? String(item.id || "") : "",
+    answeredAt: "",
+  };
+  if (!item || !item.id) {
+    return Object.assign({}, base, {
+      mode: "none", label: LINK_LABELS.intakeFull, url: "", token: "",
+      explain: "Ohne Projekt gibt es keinen projektgebundenen Fragebogen-Link.",
+    });
+  }
+  if (!url) {
+    return Object.assign({}, base, {
+      mode: "create",
+      label: LINK_LABELS.intakeCreate,
+      url: "", token: "",
+      explain: "Dieses Projekt hat noch keinen Fragebogen-Link. Erstelle ihn, um Kundendaten, "
+        + "Bestandesaufnahme und Vision Room einzuholen — ohne Vorschau, ohne Vertrag, ohne AGB. "
+        + "Der Kundenportal-Link ist ein anderer Link und entsteht erst mit der Veröffentlichung.",
+    });
+  }
+  const answeredAt = String((form && (form.answeredAt || "")) || "");
+  if (answeredAt) {
+    return Object.assign({}, base, {
+      mode: "answered",
+      answeredAt,
+      explain: "Der Fragebogen dieses Projekts ist beantwortet. Die Angaben stehen an diesem Projekt — "
+        + "ein zweites Projekt ist dabei ausdrücklich nicht entstanden. Der Link bleibt derselbe; "
+        + "eine erneute Antwort ergänzt dasselbe Projekt.",
+    });
+  }
+  return Object.assign({}, base, {
+    mode: "copy",
+    explain: "Dieser Fragebogen-Link gehört zu genau diesem Projekt. Er zeigt der Kundschaft "
+      + "Kundendaten, Bestandesaufnahme und Vision Room — nie eine Vorschau und nie das "
+      + "Kundenportal. Antwortet die Kundschaft, wird dieses Projekt aktualisiert; es entsteht "
+      + "kein zweites Projekt und höchstens eine Aufgabe „Offertenanfrage“.",
+  });
+}
+
+/* Was übernimmt die Antwort in ein BESTEHENDES Projekt?
+ * Grundsatz: ergänzen, nicht überschreiben. Gepflegte Angaben sind Arbeit —
+ * eine später eingehende Antwort darf sie nicht wegwischen. Ausnahme ist der
+ * Vision Room: er ist die jüngste Aussage der Kundschaft über ihre Idee und
+ * ersetzt deshalb die vorherige (so hält es auch der Weg über die Einladung).
+ * Reine Funktion: sie rechnet, sie schreibt nicht. */
+export function intakeUpdateForProject({ project = {}, answers = [], now = new Date().toISOString() } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const client = item.client && typeof item.client === "object" ? item.client : {};
+  const vision = visionFromAnswers(answers);
+  const patch = {};
+  const clientPatch = {};
+  const filled = [];
+  const kept = [];
+
+  const take = (label, current, value, apply) => {
+    if (!String(value == null ? "" : value).trim() && value !== 0) return;
+    if (String(current == null ? "" : current).trim()) { kept.push(label); return; }
+    apply();
+    filled.push(label);
+  };
+
+  [
+    ["Firma", "company", "company"],
+    ["Ansprechperson", "name", "contactName"],
+    ["E-Mail", "email", "contactEmail"],
+    ["Telefon", "phone", "contactPhone"],
+    ["Adresse", "street", "address"],
+  ].forEach(([label, field, role]) => {
+    const value = answerByRole(answers, role);
+    take(label, client[field], value, () => { clientPatch[field] = value; });
+  });
+
+  take("Bisherige Website", item.ftCurrentUrl, answerByRole(answers, "currentUrl"),
+    () => { patch.ftCurrentUrl = answerByRole(answers, "currentUrl"); });
+  take("Bisheriger Anbieter", item.ftCurrentProvider, answerByRole(answers, "currentProvider"),
+    () => { patch.ftCurrentProvider = answerByRole(answers, "currentProvider"); });
+
+  const price = money(answerByRole(answers, "currentPrice"));
+  if (price != null && item.currentProviderPrice == null) {
+    patch.currentProviderPrice = price;
+    filled.push("Bisheriger Preis");
+  } else if (price != null) kept.push("Bisheriger Preis");
+
+  const budget = money(answerByRole(answers, "budget"));
+  if (budget != null && item.budget == null) { patch.budget = budget; filled.push("Budget"); }
+  else if (budget != null) kept.push("Budget");
+
+  take("Wunschtermin", item.dueDate, answerByRole(answers, "deadline"),
+    () => { patch.dueDate = answerByRole(answers, "deadline"); });
+
+  // Der Vision Room gehört zum selben Fragebogen und erzeugt nie einen
+  // zweiten Vorgang — er wird am bestehenden Projekt nachgeführt.
+  if (vision.present) {
+    patch.ftVision = { idea: vision.idea, features: vision.features, source: "fragebogen", submittedAt: now };
+  }
+
+  // Die Bestandesaufnahme IST mit dem Fragebogen erfolgt. Weiter fortgeschrittene
+  // Phasen werden dabei nicht zurückgedreht.
+  const stage = String(item.pipelineStage || "lead");
+  if (stage === "lead" || !stage) patch.pipelineStage = "intake";
+
+  patch.updatedAt = now;
+  return { patch, client: clientPatch, filled, kept, vision };
 }
 
 /* ── Kundenportal: Fortschritt, Vorlage, Zustimmung ──────────────────────
@@ -2489,6 +2643,7 @@ const API = {
   QUOTE_REQUEST_STATUSES, quoteStatusLabel, QUOTE_REQUEST_FIELDS, normalizeQuoteRequest,
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
   offerBriefingLinkState, offerProjectLinkPlan,
+  intakeBinding, projectIntakeLinkState, intakeUpdateForProject,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,
