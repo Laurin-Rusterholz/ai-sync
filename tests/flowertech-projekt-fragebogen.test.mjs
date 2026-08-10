@@ -296,11 +296,17 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   // Ausfüllen braucht. Alles aus Phase 2 hat hier nichts verloren.
   // „generation" ist die Fassung des Fragebogens — eine blosse Zahl, damit der
   // Eingang eine Antwort nach einem Zurücksetzen nicht für eine Wiederholung
-  // der alten hält. Sie trägt nichts Internes und nichts aus Phase 2.
-  const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "generation", "updatedAt"];
+  // der alten hält. „stage" und „tiles" tragen den mitwachsenden Kundenbereich;
+  // auf Stufe 1 sind alle Kacheln leer. Nichts davon ist intern.
+  const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "generation",
+    "stage", "tiles", "updatedAt"];
   Object.keys(written[pfad]).forEach((key) => {
     ok(erlaubt.includes(key), `der öffentliche Fragebogen trägt das Feld „${key}“`);
   });
+  // Stufe 1 heisst Stufe 1: keine Offerte, keine Vorschau, keine Verwaltung.
+  ok(written[pfad].stage === "intake", `der frische Fragebogen steht auf Stufe „${written[pfad].stage}“`);
+  ok(!written[pfad].tiles.offer && !written[pfad].tiles.preview && !written[pfad].tiles.admin,
+    "auf Stufe 1 steht bereits eine Kachel im Kundenbereich");
   ok(!/kunde\.html|portalToken|previewUrl|adminUrl|ftTemplate|ftContract|termsConsent/.test(veroeffentlicht),
     "der öffentliche Fragebogen trägt Vorschau, Vertrag, AGB oder Kundenportal");
   // Der Vision Room gehört dazu — als zwei ganz normale Fragen dieses Bogens.

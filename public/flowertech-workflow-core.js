@@ -1299,6 +1299,227 @@ export function intakeResetPlan({ project = null, intake = null, now = new Date(
   });
 }
 
+/* ── Der Kundenbereich: EIN Link, der mitwächst ──────────────────────────
+ * Die Kundschaft bekommt genau EINE Adresse — den projektgebundenen
+ * Fragebogen-Link. Er wird nie ersetzt und nie erneuert; er wächst.
+ *
+ *   Stufe 1 · Fragebogen   immer. Kundendaten, Bestandesaufnahme, Vision Room.
+ *   Stufe 2 · Offerte      sobald eine Offerte WIRKLICH versendet ist.
+ *   Stufe 3 · Vorschau     sobald Vorschau-Adresse und Prompt bereit sind UND
+ *                          ich sie ausdrücklich freigebe. Dazu die Verwaltung,
+ *                          aber nur mit eigener, ausdrücklicher Freigabe.
+ *
+ * Der Grundsatz ist eine POSITIVLISTE: Was hier nicht ausdrücklich gebaut
+ * wird, verlässt Quantus nicht. Ein Entwurf ist kein Dokument: Eine Offerte
+ * ohne echten Versand (`sentAt`) erscheint nie, egal wie sie heisst. Vertrag,
+ * AGB und Kundenportal bleiben, wo sie sind — hinter ihrer eigenen Freigabe.
+ * --------------------------------------------------------------------- */
+export const CUSTOMER_AREA_STAGES = [
+  {
+    key: "intake",
+    label: "Fragebogen – Kundendaten & Vision Room",
+    shows: "Kundendaten, Bestandesaufnahme und Vision Room zum Ausfüllen.",
+    hides: "Keine Offerte, keine Vorschau, keine Verwaltung, kein Vertrag, keine AGB.",
+  },
+  {
+    key: "offer",
+    label: "Offerte",
+    shows: "Die versendete Offerte: Dokument, Betrag, Gültigkeit und Status.",
+    hides: "Entwürfe nie — erst der wirkliche Versand macht eine Offerte sichtbar.",
+  },
+  {
+    key: "preview",
+    label: "Website-Vorschau & Änderungswünsche",
+    shows: "Die freigegebene Vorschau-Adresse und der Weg, Änderungswünsche zu melden.",
+    hides: "Erscheint erst mit Vorschau-Adresse, fertigem Prompt und ausdrücklicher Freigabe.",
+  },
+  {
+    key: "admin",
+    label: "Verwaltung",
+    shows: "Die Verwaltungs-Adresse, mit der die Kundschaft selbst etwas pflegen kann.",
+    hides: "Nur mit eigener, ausdrücklicher Freigabe — und nie vor der Vorschau.",
+  },
+];
+
+// Eine Offerte ist für die Kundschaft erst dann da, wenn sie wirklich raus ist.
+// `sentAt` ist der Beweis: Es entsteht ausschliesslich im Versandpfad.
+export const CUSTOMER_OFFER_STATUSES = ["sent", "accepted", "declined", "expired"];
+
+export function customerOfferIsPublic(offer) {
+  const doc = offer && typeof offer === "object" ? offer : null;
+  if (!doc) return false;
+  if (!CUSTOMER_OFFER_STATUSES.includes(String(doc.status || ""))) return false;
+  return !!String(doc.sentAt || "").trim();
+}
+
+// Von mehreren versendeten Offerten zählt die jüngste — sie ist der Stand.
+export function customerAreaOffer(offers) {
+  return (Array.isArray(offers) ? offers : [])
+    .filter(customerOfferIsPublic)
+    .slice()
+    .sort((a, b) => String(b.sentAt || "").localeCompare(String(a.sentAt || "")))[0] || null;
+}
+
+const OFFER_STATUS_LABELS = {
+  sent: "Versendet", accepted: "Angenommen", declined: "Abgelehnt", expired: "Abgelaufen",
+};
+
+// Das Offertendokument geht entschärft hinaus — dieselbe Regel wie bei der
+// Vorlage: kein Skript, keine eingebettete Seite, kein Ereignis-Attribut.
+export const MAX_CUSTOMER_DOCUMENT_BYTES = 200 * 1024;
+
+export function customerOfferTile({
+  offer = null, amount = null, documentHtml = "", documentUrl = "", today = "",
+} = {}) {
+  if (!customerOfferIsPublic(offer)) return null;
+  const clean = sanitizeTemplateHtml(documentHtml, { max: MAX_CUSTOMER_DOCUMENT_BYTES });
+  const validUntil = /^\d{4}-\d{2}-\d{2}$/.test(String(offer.validUntil || "")) ? String(offer.validUntil) : "";
+  const status = String(offer.status);
+  return {
+    label: "Offerte",
+    number: text(offer.number, 40),
+    title: text(offer.title, 200),
+    amount: amount == null || amount === "" ? null : Math.round(Number(amount) * 100) / 100,
+    currency: "CHF",
+    validUntil,
+    // Abgelaufen heisst abgelaufen — auch wenn der Status noch „versendet" sagt.
+    expired: !!(validUntil && today && validUntil < today),
+    status,
+    statusLabel: OFFER_STATUS_LABELS[status] || status,
+    sentAt: String(offer.sentAt || ""),
+    document: { html: clean.html, url: safeUrl(documentUrl) },
+  };
+}
+
+/* Freigaben der Stufe 3. Beide sind ausdrücklich: Eine Adresse einzutragen
+ * heisst noch lange nicht, sie zu zeigen — an einer halbfertigen Vorschau
+ * arbeitet man tagelang, bevor sie jemand sehen darf. */
+function releaseFlag(raw) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  return { released: value.released === true, releasedAt: String(value.releasedAt || "") };
+}
+
+export function customerPreviewRelease({ project = {}, prompt = null } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const url = safeUrl(item.previewUrl);
+  const flag = releaseFlag(item.ftCustomerPreview);
+  const promptText = prompt && typeof prompt === "object" ? String(prompt.text || "") : "";
+  const promptReady = !!promptText.trim();
+  const ready = !!url && promptReady;
+  let reason = "";
+  if (!url) reason = "Es fehlt eine vollständige HTTPS-Vorschau-Adresse.";
+  else if (!promptReady) reason = "Der projektspezifische Prompt ist noch nicht erzeugt.";
+  else if (!flag.released) reason = "Die Vorschau ist bereit, aber noch nicht freigegeben.";
+  return {
+    url, promptReady, ready,
+    released: flag.released, releasedAt: flag.releasedAt,
+    visible: ready && flag.released,
+    reason,
+  };
+}
+
+export function customerAdminRelease({ project = {}, previewVisible = false } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const url = safeUrl(item.adminUrl);
+  const flag = releaseFlag(item.ftCustomerAdmin);
+  let reason = "";
+  if (!url) reason = "Es ist keine vollständige HTTPS-Verwaltungsadresse hinterlegt.";
+  else if (!previewVisible) reason = "Die Verwaltung erscheint erst mit der freigegebenen Vorschau.";
+  else if (!flag.released) reason = "Die Verwaltungsadresse ist hinterlegt, aber nicht freigegeben.";
+  return {
+    url, released: flag.released, releasedAt: flag.releasedAt,
+    visible: !!url && previewVisible && flag.released,
+    reason,
+  };
+}
+
+/* Der Zustand des Kundenbereichs — für Quantus UND für die Veröffentlichung.
+ * Rein rechnend: Er liest, er schreibt nicht und er veröffentlicht nichts. */
+export function customerAreaState({
+  project = null, intake = null, offers = [], offerAmount = null,
+  offerDocumentHtml = "", offerDocumentUrl = "", prompt = null, today = "",
+} = {}) {
+  const item = project && typeof project === "object" && project.id ? project : null;
+  const form = intake && typeof intake === "object" ? intake : null;
+  const token = form && isShareToken(form.inviteToken) ? form.inviteToken : "";
+  const url = token ? intakeFormUrl(token) : "";
+  const offer = item ? customerAreaOffer(offers) : null;
+  const offerTile = item ? customerOfferTile({
+    offer, amount: offerAmount, documentHtml: offerDocumentHtml, documentUrl: offerDocumentUrl, today,
+  }) : null;
+  const preview = customerPreviewRelease({ project: item || {}, prompt });
+  const admin = customerAdminRelease({ project: item || {}, previewVisible: preview.visible });
+
+  const previewTile = preview.visible ? {
+    label: "Website-Vorschau & Änderungswünsche",
+    url: preview.url,
+    releasedAt: preview.releasedAt,
+    // Die Kundschaft darf zu genau dieser Stufe Änderungswünsche melden. Ohne
+    // dieses Feld nimmt weder die Seite noch Quantus einen Wunsch entgegen.
+    feedback: true,
+  } : null;
+  const adminTile = admin.visible ? {
+    label: "Verwaltung",
+    url: admin.url,
+    releasedAt: admin.releasedAt,
+    note: "Nur für die Pflege der eigenen Inhalte.",
+  } : null;
+
+  const visible = { intake: !!url, offer: !!offerTile, preview: !!previewTile, admin: !!adminTile };
+  const reasons = {
+    intake: url ? "" : "Dieses Projekt hat noch keinen Kundenlink.",
+    offer: offerTile ? "" : (offer ? "" : "Es ist noch keine Offerte versendet — Entwürfe bleiben innen."),
+    preview: previewTile ? "" : preview.reason,
+    admin: adminTile ? "" : admin.reason,
+  };
+  const stages = CUSTOMER_AREA_STAGES.map((stage) => Object.assign({}, stage, {
+    visible: !!visible[stage.key],
+    reason: reasons[stage.key] || "",
+  }));
+  const highest = ["admin", "preview", "offer", "intake"].find((key) => visible[key]) || "none";
+  const stage = highest === "admin" ? "preview" : highest;
+
+  return {
+    url, token, hasLink: !!url,
+    stage,
+    stageLabel: (CUSTOMER_AREA_STAGES.find((s) => s.key === stage) || {}).label || "Noch kein Kundenlink",
+    tiles: { offer: offerTile, preview: previewTile, admin: adminTile },
+    stages,
+    visibleLabels: stages.filter((s) => s.visible).map((s) => s.label),
+    hiddenLabels: stages.filter((s) => !s.visible).map((s) => s.label),
+    preview, admin,
+  };
+}
+
+/* Was wirklich veröffentlicht wird. Stufe 1 ist Wort für Wort das, was der
+ * Fragebogen immer schon trug — die Stufen 2 und 3 kommen als eigene Kacheln
+ * dazu. Keine Projekt-ID, kein Token eines anderen Wegs, keine internen
+ * Notizen, kein Vertrag, keine AGB, kein Kundenportal. */
+export function customerAreaSnapshot({
+  intake = null, project = null, offers = [], offerAmount = null,
+  offerDocumentHtml = "", offerDocumentUrl = "", prompt = null,
+  company = {}, questions = null, now = new Date().toISOString(), today = "",
+} = {}) {
+  const form = intake && typeof intake === "object" ? intake : {};
+  const area = customerAreaState({
+    project, intake: form, offers, offerAmount, offerDocumentHtml, offerDocumentUrl, prompt, today,
+  });
+  return {
+    schema: 1,
+    title: text(form.title, 200) || DEFAULT_INTAKE_TITLE,
+    intro: multiline(form.intro, 2000) || DEFAULT_INTAKE_INTRO,
+    questions: normalizeIntakeQuestions(questions || form.questions || []),
+    status: form.status === "closed" ? "closed" : (form.projectId ? "answered" : "open"),
+    company: { name: text(company && company.name, 120) || "FlowerTech" },
+    generation: intakeFormGeneration(form),
+    // Die Stufe und die Kacheln. `null` heisst ausdrücklich „noch nicht" —
+    // die Seite zeigt dann gar nichts, statt etwas Halbes.
+    stage: area.stage,
+    tiles: area.tiles,
+    updatedAt: now,
+  };
+}
+
 /* Was übernimmt die Antwort in ein BESTEHENDES Projekt?
  * Grundsatz: ergänzen, nicht überschreiben. Gepflegte Angaben sind Arbeit —
  * eine später eingehende Antwort darf sie nicht wegwischen. Ausnahme ist der
@@ -1545,10 +1766,21 @@ ${cards.map((a) => `      <div class="card"><h3>${esc(a.label)}</h3><p>${esc(a.a
  * Antworten, die Vorlage, die Aenderungswuensche und den Projektkontext.
  * Fehlt etwas, faellt es in der spaeteren Umsetzung stillschweigend weg.
  * --------------------------------------------------------------------- */
+// Eine Antwort über ihren Fragebogen-Schlüssel. Rollen decken nur die festen
+// Felder ab; Ziel, Zielgruppe, Seiten, Funktionen, Inhalte und Stil stehen in
+// frei benannten Fragen und wären sonst im Prompt nicht auffindbar.
+export function answerByKey(answers, key) {
+  const hit = (answers || []).find((a) => a.key === key && String(a.answer || "").trim());
+  return hit ? String(hit.answer).trim() : "";
+}
+
 export function buildProjectPrompt({
   project = {}, document: doc = {}, changes = [], questions = [],
   templateName = "", company = {}, now = new Date().toISOString(),
   includeContact = false,
+  // Neu und rein ergänzend: Was sonst nur im Kopf oder in anderen Reitern
+  // stand — Bedarf, Leistungsbeschreibung und die versendete Offerte.
+  briefing = null, content = [], offer = null, offerAmount = null,
 } = {}) {
   const out = [];
   out.push("# Auftrag: " + (project.title || "FlowerTech-Projekt"));
@@ -1570,14 +1802,35 @@ export function buildProjectPrompt({
   out.push("- Stand: " + now);
   out.push("");
 
+  // Ab hier stehen die Angaben thematisch — nicht in der Reihenfolge, in der
+  // sie zufällig erfasst wurden. Jede Rubrik nennt ausdrücklich, wenn nichts
+  // da ist: „nicht angegeben" ist eine Information, eine Lücke ist keine.
+  const answers = (doc && doc.answers) || [];
+  const brief = briefing && typeof briefing === "object" ? briefing : {};
+  const fromAnswers = (key) => answerByKey(answers, key);
+  const bullets = (values, fallback) => {
+    const items = (values || []).filter(Boolean);
+    if (!items.length) { out.push(fallback); return; }
+    items.forEach((v) => out.push("- " + v));
+  };
+
+  out.push("## Ziel und Zielgruppe");
+  out.push("");
+  out.push("- Ziel: " + (fromAnswers("need") || answerByRole(answers, "need") || brief.goal
+    || project.description || "nicht angegeben"));
+  out.push("- Zielgruppe: " + (fromAnswers("audience") || brief.audience || "nicht angegeben"));
+  out.push("");
+
   // Der Iststand: die bisherige Lösung ist der Massstab, an dem die Kundschaft
   // das Ergebnis misst. Er darf im Prompt nie fehlen.
-  out.push("## Bisherige Lösung (Iststand)");
+  out.push("## Bestehende Seite (Iststand)");
   out.push("");
   out.push("- Bisherige Website / URL: " + (project.ftCurrentUrl || "keine angegeben"));
   out.push("- Bisheriger Anbieter: " + (project.ftCurrentProvider || "nicht angegeben"));
   out.push("- Bisher bezahlter Preis: " + (project.currentProviderPrice != null
     ? "CHF " + Number(project.currentProviderPrice).toFixed(2) : "nicht angegeben"));
+  out.push("- Technischer und inhaltlicher Iststand: " + (fromAnswers("iststand")
+    || brief.currentSystem || "nicht angegeben"));
   out.push("");
 
   // Kontaktdaten bleiben intern. Sie wandern NUR mit, wenn ich das ausdrücklich
@@ -1637,6 +1890,80 @@ export function buildProjectPrompt({
   }
   out.push("");
 
+  // ── Die Rubriken, aus denen die Seite wirklich gebaut wird ────────────
+  out.push("## Inhalte");
+  out.push("");
+  out.push("Seiten / Bereiche:");
+  bullets(list(fromAnswers("pages") || (brief.pages || []).join("\n"), 40, 200),
+    "_Nicht angegeben — Struktur aus Ziel und Zielgruppe ableiten und im Ergebnis benennen._");
+  out.push("");
+  out.push("Vorhandenes Material (Texte, Bilder, Logo): "
+    + (fromAnswers("content") || "nicht angegeben"));
+  const contentBlocks = (Array.isArray(content) ? content : [])
+    .filter((b) => b && b.enabled !== false && String(b.body || "").trim());
+  if (contentBlocks.length) {
+    out.push("");
+    out.push("Vereinbarte Leistungsbeschreibung:");
+    contentBlocks.slice(0, 30).forEach((b) => {
+      out.push("- **" + text(b.title, 160) + "** — " + multiline(b.body, 1200).replace(/\n+/g, " "));
+    });
+  }
+  out.push("");
+
+  out.push("## Funktionen");
+  out.push("");
+  bullets(
+    list(fromAnswers("features"), 40, 200).concat(vision.features || [], brief.features || []),
+    "_Keine ausdrücklich genannt — nur das Nötige bauen und nichts dazuerfinden._"
+  );
+  out.push("");
+
+  out.push("## Design");
+  out.push("");
+  out.push("- Stil und Referenzen: " + (fromAnswers("design") || brief.designWishes || "nicht angegeben"));
+  out.push("- Ohne Vorgabe gilt: ruhig, sachlich, gut lesbar — nichts Verspieltes behaupten.");
+  out.push("");
+
+  out.push("## Daten, SEO und Barrierefreiheit");
+  out.push("");
+  out.push("- Nur Daten erheben, die eine genannte Funktion wirklich braucht; jedes Formular");
+  out.push("  sagt, wofür die Angaben verwendet werden.");
+  out.push("- Titel, Beschreibung und eine sinnvolle Überschriftenhierarchie pro Seite.");
+  out.push("- Sprechende Alternativtexte, sichtbarer Fokus, Bedienung per Tastatur, Kontrast");
+  out.push("  mindestens AA. Keine reinen Farbcodierungen.");
+  out.push("- Keine Tracker und keine externen Schriften ohne ausdrückliche Anweisung.");
+  out.push("");
+
+  out.push("## Budget und Termin");
+  out.push("");
+  out.push("- Budgetrahmen: " + (project.budget != null
+    ? "CHF " + Number(project.budget).toFixed(2) : "nicht angegeben"));
+  out.push("- Wunschtermin: " + (project.dueDate || "nicht angegeben"));
+  out.push("- Der Rahmen begrenzt den Umfang: Was nicht hineinpasst, wird benannt statt");
+  out.push("  stillschweigend weggelassen.");
+  out.push("");
+
+  // Die versendete Offerte ist der verbindliche Lieferumfang. Sie steht hier
+  // ohne Kontaktdaten — die bleiben intern, genau wie oben.
+  out.push("## Lieferumfang");
+  out.push("");
+  if (offer && typeof offer === "object") {
+    out.push("Versendete Offerte" + (offer.number ? " " + text(offer.number, 40) : "")
+      + (offer.title ? " — " + text(offer.title, 200) : ""));
+    if (offerAmount != null && offerAmount !== "") {
+      out.push("Betrag: CHF " + Number(offerAmount).toFixed(2));
+    }
+    if (offer.validUntil) out.push("Gültig bis: " + offer.validUntil);
+    out.push("");
+    const items = (offer.items || []).filter((i) => i && String(i.description || "").trim());
+    if (!items.length) out.push("_Keine Positionen erfasst._");
+    else items.forEach((i) => out.push("- " + text(i.description, 200)
+      + (String(i.detail || "").trim() ? ": " + text(i.detail, 400) : "")));
+  } else {
+    out.push("_Noch keine Offerte versendet — der Umfang ergibt sich aus den Angaben oben._");
+  }
+  out.push("");
+
   out.push("## Änderungswünsche");
   out.push("");
   const openChanges = (changes || []).filter((c) => c.status !== "rejected");
@@ -1671,7 +1998,114 @@ export function buildProjectPrompt({
   out.push("- Texte aus den Angaben oben ableiten. Wo etwas fehlt: knapp und ehrlich formulieren,");
   out.push("  statt Zahlen, Referenzen oder Auszeichnungen zu erfinden.");
   out.push("");
+
+  // Die zwei Abschnitte, an denen sich später entscheidet, ob das Ergebnis
+  // brauchbar ist: die harte Grenze und der nächste Schritt.
+  out.push("## Nicht erfinden");
+  out.push("");
+  out.push("- Keine Preise, Zahlen, Öffnungszeiten, Adressen oder Telefonnummern erfinden.");
+  out.push("- Keine Referenzen, Bewertungen, Auszeichnungen, Zertifikate oder Partnerlogos.");
+  out.push("- Keine Team- oder Personenangaben, die oben nicht stehen.");
+  out.push("- Keine rechtlichen Texte (AGB, Datenschutz, Impressum) ausformulieren — Platzhalter");
+  out.push("  setzen und im Ergebnis benennen.");
+  out.push("- Fehlt etwas, schreib es als offene Frage auf, statt es plausibel zu füllen.");
+  out.push("");
+
+  const missing = projectPromptMissing({ project, document: doc, briefing: brief, offer });
+  out.push("## Konkrete nächste Schritte");
+  out.push("");
+  out.push("1. Die Struktur aus „Inhalte“ umsetzen — eine Datei, lauffähig ohne Build.");
+  out.push("2. Die genannten Funktionen anlegen und bedienbar machen.");
+  out.push("3. Am Schluss in drei bis fünf Sätzen aufschreiben: was angenommen wurde, was");
+  out.push("   fehlt und welche Entscheidungen die Kundschaft noch treffen muss.");
+  if (missing.length) {
+    out.push("");
+    out.push("Offen und deshalb nicht zu erfinden:");
+    missing.forEach((m) => out.push("- " + m));
+  }
+  out.push("");
   return out.join("\n");
+}
+
+/* Was für einen belastbaren Prompt noch fehlt. Dieselbe Liste steht im Prompt
+ * („Offen und deshalb nicht zu erfinden") und im Reiter — eine Wahrheit, zwei
+ * Orte. Rein lesend. */
+export function projectPromptMissing({ project = {}, document: doc = {}, briefing = null, offer = null } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const brief = briefing && typeof briefing === "object" ? briefing : {};
+  const answers = (doc && doc.answers) || [];
+  const has = (key, role) => !!(answerByKey(answers, key) || (role ? answerByRole(answers, role) : ""));
+  const missing = [];
+  if (!has("need", "need") && !brief.goal && !item.description) missing.push("Ziel des Vorhabens");
+  if (!has("audience") && !brief.audience) missing.push("Zielgruppe");
+  if (!has("pages") && !(brief.pages || []).length) missing.push("Seiten / Struktur");
+  if (!has("features") && !(brief.features || []).length
+    && !((item.ftVision || {}).features || []).length) missing.push("Gewünschte Funktionen");
+  if (!has("design") && !brief.designWishes) missing.push("Stil und Referenzen");
+  if (!has("content")) missing.push("Vorhandene Inhalte (Texte, Bilder, Logo)");
+  if (item.budget == null) missing.push("Budgetrahmen");
+  if (!item.dueDate) missing.push("Wunschtermin");
+  if (!offer) missing.push("Versendete Offerte als verbindlicher Lieferumfang");
+  return missing;
+}
+
+/* Woher der Prompt seine Angaben nimmt — für den Reiter, damit sichtbar ist,
+ * worauf er beruht und wie frisch das ist. */
+export function projectPromptSources({
+  project = {}, document: doc = {}, changes = [], questions = [],
+  briefing = null, content = [], offer = null,
+} = {}) {
+  const answered = ((doc && doc.answers) || []).filter((a) => String(a.answer || "").trim());
+  const item = project && typeof project === "object" ? project : {};
+  const vision = item.ftVision || {};
+  const brief = briefing && typeof briefing === "object" ? briefing : {};
+  return [
+    {
+      key: "intake", label: "Fragebogen", present: answered.length > 0,
+      detail: answered.length ? answered.length + " beantwortete Fragen" : "keine Antworten",
+      at: String((doc && doc.submittedAt) || ""),
+    },
+    {
+      key: "vision", label: "Vision Room", present: !!(vision.idea || (vision.features || []).length),
+      detail: (vision.features || []).length ? (vision.features || []).length + " Funktionen" : (vision.idea ? "Idee erfasst" : "nichts erfasst"),
+      at: String(vision.submittedAt || ""),
+    },
+    {
+      key: "client", label: "Kundendaten", present: !!(item.client && (item.client.company || item.client.name)),
+      detail: "bleiben intern, ausser ausdrücklich freigegeben", at: "",
+    },
+    {
+      key: "frame", label: "Budget und Termin", present: item.budget != null || !!item.dueDate,
+      detail: [item.budget != null ? "CHF " + Number(item.budget).toFixed(2) : "", item.dueDate || ""]
+        .filter(Boolean).join(" · ") || "nicht angegeben",
+      at: "",
+    },
+    {
+      key: "briefing", label: "Bedarf (intern erfasst)", present: !!(brief.goal || (brief.features || []).length),
+      detail: brief.goal ? "Ziel erfasst" : ((brief.features || []).length ? "Funktionen erfasst" : "nichts erfasst"),
+      at: String(brief.updatedAt || ""),
+    },
+    {
+      key: "content", label: "Leistungsbeschreibung",
+      present: (Array.isArray(content) ? content : []).some((b) => b && String(b.body || "").trim()),
+      detail: (Array.isArray(content) ? content : []).length + " Abschnitte", at: "",
+    },
+    {
+      key: "offer", label: "Offerte", present: !!offer,
+      detail: offer ? ("versendet" + (offer.number ? " · " + offer.number : "")) : "noch keine versendet",
+      at: String((offer && offer.sentAt) || ""),
+    },
+    {
+      key: "changes", label: "Änderungswünsche",
+      present: (changes || []).some((c) => c && c.status !== "rejected"),
+      detail: (changes || []).filter((c) => c && c.status !== "rejected").length + " offen oder erledigt", at: "",
+    },
+    {
+      key: "questions", label: "Rückfragen",
+      present: (questions || []).some((q) => String((q || {}).answer || "").trim()),
+      detail: (questions || []).filter((q) => String((q || {}).answer || "").trim()).length + " beantwortet", at: "",
+    },
+  ];
 }
 
 /* ── AGB-Zustimmung im Portal ────────────────────────────────────────────
@@ -2026,6 +2460,9 @@ export function contractVariables({ project = {}, company = {}, briefing = {}, m
     // Links (nur gesetzt, wenn ein Freigabe-Link existiert)
     formularLink: links.form || "",
     kundenLink: links.portal || "",
+    // Der EINE Kundenbereich-Link: derselbe, den die Kundschaft schon für den
+    // Fragebogen bekommen hat. Er wird nie ersetzt — er wächst.
+    kundenbereichLink: links.customer || "",
   };
 }
 
@@ -2316,6 +2753,8 @@ export const MESSAGE_TEMPLATES = [
     "Anbei mein Angebot für {{projektname}}. Die Leistungsbeschreibung sagt in einfachen Worten, was " +
     "enthalten ist und wie wir vorgehen.\n\n" +
     "Preis: CHF {{preis_chf}} {{mwst_hinweis}}\n\n" +
+    "Die Offerte liegt auch in deinem Bereich — es ist derselbe Link wie beim Fragebogen:\n\n" +
+    "{{kundenbereichLink}}\n\n" +
     "Wenn etwas fehlt oder anders sein soll, sag es mir — wir passen das an, bevor du zusagst.\n\n" +
     "Freundliche Grüsse\n{{flowertech_name}}" },
   { key: "progress", stage: "build", subject: "Zwischenstand {{projektname}}", body:
@@ -2761,11 +3200,15 @@ const API = {
   inquiryFromVision, inquiryFromVisionIsUsable,
   PORTAL_STEPS, portalProgress, MAX_TEMPLATE_BYTES, MAX_PROMPT_BYTES, sanitizeTemplateHtml,
   defaultTemplateHtml, buildProjectPrompt, termsState, normalizePortalQuestion,
+  answerByKey, projectPromptMissing, projectPromptSources,
   QUOTE_REQUEST_STATUSES, quoteStatusLabel, QUOTE_REQUEST_FIELDS, normalizeQuoteRequest,
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
   offerBriefingLinkState, offerProjectLinkPlan,
   intakeBinding, projectIntakeLinkState, intakeUpdateForProject,
   INTAKE_RESET_CLEARS, INTAKE_RESET_KEEPS, intakeFormGeneration, intakeResetPlan,
+  CUSTOMER_AREA_STAGES, CUSTOMER_OFFER_STATUSES, MAX_CUSTOMER_DOCUMENT_BYTES,
+  customerOfferIsPublic, customerAreaOffer, customerOfferTile,
+  customerPreviewRelease, customerAdminRelease, customerAreaState, customerAreaSnapshot,
   PROCESS_STEPS, inquiryIsOpen, nextProcessSteps, projectFromInquiry,
   costOverview,
   renderTemplate, templateVariables, contractVariables,
