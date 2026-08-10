@@ -22,6 +22,249 @@ export const LEGAL_REVIEW_NOTICE =
   "ENTWURF — Schweizer Vorlage. Vor dem Einsatz rechtlich prüfen lassen. " +
   "Dieser Text ist keine Rechtsberatung und keine Zusicherung rechtlicher Verbindlichkeit.";
 
+/* ── Die zentrale FlowerTech-Standard-AGB ────────────────────────────────
+ * EINE Fassung fuer alle. Sie ist bewusst KEIN Projektdokument:
+ *
+ *   • Sie steht hier im Code, nicht in den Projektdaten. Damit ist sie auf
+ *     jedem Kundenlink, in jedem Quantus-Projekt und in jedem erzeugten
+ *     Prompt Zeichen fuer Zeichen dieselbe.
+ *   • Sie ist eingefroren (Object.freeze, rekursiv). Ein Projekt, ein
+ *     Formular oder eine Kundeneingabe kann sie nicht ueberschreiben — der
+ *     Versuch schlaegt im strict mode fehl und bleibt sonst wirkungslos.
+ *   • Sie traegt eine Fassungsnummer. Aendert sich der Text, aendert sich die
+ *     Nummer, und erteilte Zustimmungen gelten sichtbar als veraltet.
+ *
+ * Warum das so streng ist: Eine pro Projekt bearbeitbare AGB heisst, dass
+ * niemand mehr sagen kann, welchem Text eine Kundin zugestimmt hat. Genau
+ * das soll hier nicht passieren.
+ *
+ * STAND: Test-/Entwurfsversion. Es gibt noch keine juristisch freigegebene
+ * Fassung. Der Text ist nach Schweizer Praxis geschrieben, ersetzt aber keine
+ * anwaltliche Pruefung und sichert keine rechtliche Verbindlichkeit zu.
+ * --------------------------------------------------------------------- */
+export const STANDARD_TERMS_VERSION = "0.1-test";
+
+export const STANDARD_TERMS_TITLE = "FlowerTech Standard-AGB";
+
+export const STANDARD_TERMS_NOTICE =
+  "FlowerTech Standard-AGB · Test-/Entwurfsversion 0.1 · vor produktivem Einsatz rechtlich freigeben";
+
+export const STANDARD_TERMS_INTRO =
+  "Diese Bedingungen gelten einheitlich für alle Dienstleistungen von FlowerTech und werden nicht " +
+  "je Projekt angepasst. Massgebend ist immer die hier genannte Fassung. Es handelt sich um eine " +
+  "Test-/Entwurfsversion: Sie ist noch nicht rechtlich geprüft, stellt keine Rechtsberatung dar und " +
+  "sagt keine rechtliche Verbindlichkeit zu.";
+
+const STANDARD_TERMS_SECTIONS_RAW = [
+  { key: "geltung", title: "1. Geltungsbereich und Rangfolge", body:
+    "Diese Allgemeinen Geschäftsbedingungen gelten für Dienstleistungen von FlowerTech, insbesondere " +
+    "Konzeption, Gestaltung, Umsetzung, Betreuung und Weiterentwicklung von Websites und Web-Anwendungen. " +
+    "Sie gelten für die gesamte Geschäftsbeziehung, auch für Folgeaufträge, sofern nichts anderes " +
+    "schriftlich vereinbart ist.\n\n" +
+    "Widersprechen sich Dokumente, gilt in dieser Reihenfolge: erstens die schriftliche Einzelvereinbarung " +
+    "oder der Projektauftrag, zweitens die angenommene Offerte, drittens diese Bedingungen. Abweichende " +
+    "Bedingungen der Kundschaft gelten nur, soweit FlowerTech ihnen ausdrücklich zugestimmt hat." },
+
+  { key: "vertragsschluss", title: "2. Offerten und Zustandekommen des Vertrags", body:
+    "Angaben auf der Website, in Präsentationen und in Vorgesprächen sind unverbindlich. Ein Vertrag " +
+    "kommt zustande, wenn die Kundschaft eine Offerte annimmt oder FlowerTech einen Auftrag schriftlich " +
+    "bestätigt und mit der Ausführung beginnt.\n\n" +
+    "Offerten sind während der darin genannten Frist gültig; fehlt eine Frist, beträgt sie 30 Tage ab " +
+    "Ausstellung. Vorschauen, Entwürfe, Muster und Testfassungen sind Arbeitsstände und keine Offerte. " +
+    "Ohne ausgewiesene Kosten besteht keine Preiszusage." },
+
+  { key: "leistungen", title: "3. Leistungsumfang", body:
+    "Geschuldet ist, was in der Offerte oder im Projektauftrag beschrieben ist. Leistungen, die dort nicht " +
+    "genannt sind, sind nicht Vertragsbestandteil. FlowerTech erbringt die Leistungen fachgerecht und mit " +
+    "der branchenüblichen Sorgfalt.\n\n" +
+    "FlowerTech darf Hilfspersonen und Subunternehmen beiziehen und bleibt für deren Arbeit " +
+    "verantwortlich. Gestalterische und technische Lösungswege wählt FlowerTech nach fachlichem Ermessen, " +
+    "soweit der vereinbarte Zweck erreicht wird." },
+
+  { key: "mitwirkung", title: "4. Mitwirkung der Kundschaft", body:
+    "Die Kundschaft stellt die nötigen Inhalte, Zugänge, Ansprechpersonen und Entscheide rechtzeitig und " +
+    "in brauchbarer Form bereit und benennt eine entscheidungsbefugte Kontaktperson.\n\n" +
+    "Verzögert sich die Mitwirkung, verschieben sich Termine entsprechend. Mehraufwand, der durch fehlende, " +
+    "verspätete oder nachträglich geänderte Zulieferungen entsteht, wird nach Aufwand verrechnet; " +
+    "FlowerTech weist darauf vor der Ausführung hin." },
+
+  { key: "termine", title: "5. Termine", body:
+    "Termine sind Richtwerte, sofern sie nicht ausdrücklich als verbindlich bezeichnet sind. Verbindliche " +
+    "Termine setzen voraus, dass die Mitwirkungspflichten erfüllt sind und der Leistungsumfang unverändert " +
+    "bleibt.\n\n" +
+    "Kommt es zu Verzögerungen, informieren sich die Parteien gegenseitig ohne Verzug und einigen sich auf " +
+    "einen neuen Termin." },
+
+  { key: "aenderungen", title: "6. Änderungen am Umfang", body:
+    "Änderungswünsche nimmt FlowerTech entgegen und beurteilt ihre Auswirkung auf Umfang, Termin und Preis. " +
+    "Ein Änderungswunsch wird erst ausgeführt, wenn die Kundschaft die mitgeteilte Auswirkung bestätigt " +
+    "hat.\n\n" +
+    "Ohne bestätigte Auswirkung besteht weder eine Pflicht zur Ausführung noch eine Preiszusage." },
+
+  { key: "preise", title: "7. Preise, Zahlung und Verzug", body:
+    "Preise verstehen sich in Schweizer Franken, zuzüglich einer allfälligen Mehrwertsteuer und " +
+    "zuzüglich Auslagen Dritter. Bei Arbeiten nach Aufwand wird der tatsächliche Aufwand zu den " +
+    "vereinbarten Ansätzen verrechnet.\n\n" +
+    "Rechnungen sind innert 30 Tagen ab Rechnungsdatum ohne Abzug zahlbar, sofern nichts anderes vereinbart " +
+    "ist. FlowerTech darf Teil- und Akontorechnungen stellen. Nach Ablauf der Zahlungsfrist tritt Verzug " +
+    "ohne Mahnung ein; FlowerTech darf Verzugszins nach gesetzlicher Regelung verlangen und laufende " +
+    "Arbeiten bis zum Zahlungseingang einstellen." },
+
+  { key: "abnahme", title: "8. Abnahme", body:
+    "FlowerTech meldet die Fertigstellung. Die Kundschaft prüft die Leistung innert 14 Tagen und meldet " +
+    "Abweichungen von der vereinbarten Beschreibung schriftlich.\n\n" +
+    "Erfolgt innert dieser Frist keine Meldung oder wird die Leistung produktiv eingesetzt, gilt sie als " +
+    "abgenommen. Unwesentliche Abweichungen hindern die Abnahme nicht; sie werden nachgebessert." },
+
+  { key: "rechte", title: "9. Rechte an den Ergebnissen", body:
+    "Mit vollständiger Bezahlung erhält die Kundschaft das zeitlich und räumlich unbeschränkte Recht, " +
+    "die vereinbarten Arbeitsergebnisse für den vertraglich vorgesehenen Zweck zu nutzen.\n\n" +
+    "Nicht übertragen werden Rechte an Werkzeugen, Bausteinen, Bibliotheken und wiederverwendbaren " +
+    "Verfahren, die FlowerTech unabhängig vom Auftrag entwickelt hat oder entwickelt; daran erhält die " +
+    "Kundschaft ein einfaches Nutzungsrecht im Rahmen des Ergebnisses. Rechte Dritter, insbesondere an " +
+    "Schriften, Bildern und Software, richten sich nach deren Lizenzen." },
+
+  { key: "kundeninhalte", title: "10. Inhalte der Kundschaft und Rechte Dritter", body:
+    "Für Inhalte, die die Kundschaft liefert oder selbst pflegt, ist die Kundschaft verantwortlich. Sie " +
+    "sichert zu, über die nötigen Rechte zu verfügen und keine rechtswidrigen Inhalte zu veröffentlichen.\n\n" +
+    "Werden Dritte deswegen gegen FlowerTech vorstellig, hält die Kundschaft FlowerTech im Rahmen ihrer " +
+    "Verantwortung schadlos. FlowerTech prüft gelieferte Inhalte nicht auf rechtliche Zulässigkeit." },
+
+  { key: "drittleistungen", title: "11. Drittleistungen", body:
+    "Hosting, Domains, Zertifikate, Lizenzen, Zahlungsdienste, Schnittstellen und ähnliche Leistungen " +
+    "Dritter sind nicht Bestandteil der Leistung, soweit sie nicht ausdrücklich vereinbart sind. Es gelten " +
+    "die Bedingungen und Preise des jeweiligen Anbieters.\n\n" +
+    "Für Verfügbarkeit, Änderungen oder Einstellung solcher Dienste steht FlowerTech nicht ein. Werden " +
+    "sie im Auftrag der Kundschaft beschafft, geschieht dies auf deren Rechnung." },
+
+  { key: "maengel", title: "12. Mängel", body:
+    "Weicht eine Leistung von der vereinbarten Beschreibung ab, bessert FlowerTech innert angemessener Frist " +
+    "nach. Die Kundschaft meldet Abweichungen so genau wie möglich und ermöglicht deren Nachvollzug.\n\n" +
+    "Ausgenommen sind Abweichungen, die auf Änderungen durch die Kundschaft oder Dritte, auf unsachgemässe " +
+    "Nutzung, auf gelieferte Inhalte oder auf Dienste Dritter zurückgehen. Schlägt die Nachbesserung " +
+    "wiederholt fehl, kann die Kundschaft eine angemessene Herabsetzung der Vergütung verlangen." },
+
+  { key: "keine_zusicherung", title: "13. Was nicht geschuldet ist", body:
+    "Nicht geschuldet sind ein bestimmter wirtschaftlicher Erfolg, eine bestimmte Auffindbarkeit in " +
+    "Suchmaschinen, eine bestimmte Zahl von Besuchen oder Abschlüssen, die Verfügbarkeit fremder " +
+    "Plattformen sowie die rechtliche Zulässigkeit von Inhalten der Kundschaft.\n\n" +
+    "Eine ununterbrochene Verfügbarkeit wird nur geschuldet, soweit sie ausdrücklich und mit messbaren " +
+    "Werten vereinbart ist." },
+
+  { key: "haftung", title: "14. Haftung", body:
+    "FlowerTech haftet für Schäden aus Absicht und grober Fahrlässigkeit. Bei leichter Fahrlässigkeit " +
+    "ist die Haftung ausgeschlossen, soweit das Gesetz dies zulässt.\n\n" +
+    "Nicht ausgeschlossen wird die Haftung für Personenschäden sowie in weiteren Fällen, in denen ein " +
+    "Ausschluss nach zwingendem Recht unwirksam wäre. Die Haftung für Hilfspersonen richtet sich nach " +
+    "denselben Grundsätzen. Für Datenverlust haftet FlowerTech nur, soweit die Kundschaft eine dem Stand " +
+    "der Technik entsprechende Sicherung vorgenommen hat." },
+
+  { key: "datenschutz", title: "15. Datenschutz und Vertraulichkeit", body:
+    "Beide Parteien behandeln Angaben, die ihnen aus der Zusammenarbeit bekannt werden und nicht offenkundig " +
+    "sind, vertraulich; diese Pflicht besteht auch nach Vertragsende fort.\n\n" +
+    "Personendaten bearbeitet FlowerTech nach dem Schweizer Datenschutzrecht und nur, soweit dies für die " +
+    "Anbahnung, Durchführung und Abwicklung des Auftrags nötig ist. Einzelheiten stehen in der " +
+    "Datenschutzerklärung. Bearbeitet FlowerTech Personendaten im Auftrag, wird dies gesondert geregelt." },
+
+  { key: "beendigung", title: "16. Laufzeit und Beendigung", body:
+    "Projektaufträge enden mit der Abnahme. Dauerleistungen laufen auf unbestimmte Zeit und können von " +
+    "beiden Seiten mit einer Frist von 30 Tagen auf das Monatsende gekündigt werden, sofern nichts anderes " +
+    "vereinbart ist.\n\n" +
+    "Aus wichtigem Grund kann jede Partei jederzeit kündigen. Bereits erbrachte Leistungen werden in jedem " +
+    "Fall nach Aufwand vergütet." },
+
+  { key: "referenz", title: "17. Referenznennung", body:
+    "FlowerTech darf abgeschlossene Arbeiten unter Nennung des Kundennamens als Referenz zeigen, sofern die " +
+    "Kundschaft dem nicht widerspricht. Ein Widerspruch ist jederzeit und ohne Begründung möglich und wird " +
+    "innert angemessener Frist umgesetzt. Vertrauliche Inhalte werden nie gezeigt." },
+
+  { key: "hoehere_gewalt", title: "18. Ausserordentliche Ereignisse", body:
+    "Ereignisse ausserhalb des Einflussbereichs einer Partei — etwa Ausfälle von Netzen oder Diensten " +
+    "Dritter, behördliche Anordnungen oder Naturereignisse — befreien für ihre Dauer von der " +
+    "Leistungspflicht. Die betroffene Partei informiert ohne Verzug." },
+
+  { key: "schluss", title: "19. Schlussbestimmungen", body:
+    "Änderungen und Ergänzungen bedürfen der Schriftform; als Schriftform gilt auch die Bestätigung per " +
+    "E-Mail. Ist eine Bestimmung unwirksam, bleiben die übrigen gültig; an die Stelle der unwirksamen " +
+    "tritt eine Regelung, die dem verfolgten Zweck am nächsten kommt.\n\n" +
+    "FlowerTech kann diese Bedingungen für künftige Aufträge anpassen; massgebend ist die bei " +
+    "Vertragsschluss geltende Fassung. Es gilt Schweizer Recht unter Ausschluss des Kollisionsrechts und " +
+    "des UN-Kaufrechts. Gerichtsstand ist der Sitz von FlowerTech, soweit nicht ein zwingender Gerichtsstand " +
+    "besteht." },
+];
+
+/* Rekursiv einfrieren. Das ist der Unterschied zwischen „ist nicht dafuer
+ * vorgesehen" und „geht nicht": Wer versucht, an einem Projekt einen
+ * AGB-Abschnitt zu aendern, aendert nichts. */
+function tiefEinfrieren(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    Object.keys(value).forEach((k) => tiefEinfrieren(value[k]));
+  }
+  return value;
+}
+
+export const STANDARD_TERMS_SECTIONS = tiefEinfrieren(
+  STANDARD_TERMS_SECTIONS_RAW.map((s) => ({ key: s.key, title: s.title, body: s.body }))
+);
+
+/* Die eine Fassung, wie sie ueberall erscheint. Immer dasselbe Objekt —
+ * eingefroren, ohne Projektbezug, ohne Platzhalter. Bewusst OHNE
+ * renderTemplate(): ein Platzhalter waere eine Stelle, an der ein Projekt
+ * doch wieder Einfluss naehme. */
+export const STANDARD_TERMS = tiefEinfrieren({
+  kind: "agb",
+  scope: "standard",
+  editable: false,
+  title: STANDARD_TERMS_TITLE,
+  version: STANDARD_TERMS_VERSION,
+  notice: STANDARD_TERMS_NOTICE,
+  intro: STANDARD_TERMS_INTRO,
+  sections: STANDARD_TERMS_SECTIONS,
+});
+
+export function standardTerms() { return STANDARD_TERMS; }
+
+/* Fliesstext der AGB — fuer den Prompt, fuer die Zustimmung im Portal und
+ * ueberall dort, wo kein HTML gebraucht wird. Immer aus derselben Quelle
+ * gerechnet, damit die Fassungen nicht auseinanderlaufen koennen. */
+export function standardTermsText() {
+  const teile = [STANDARD_TERMS.title + " · Fassung " + STANDARD_TERMS.version, STANDARD_TERMS.notice, "",
+    STANDARD_TERMS.intro, ""];
+  STANDARD_TERMS.sections.forEach((s) => { teile.push(s.title, s.body, ""); });
+  return teile.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/* Ein kurzer Fingerabdruck des Textes. Damit koennen Tests belegen, dass auf
+ * dem Kundenlink, in Quantus und im Prompt WIRKLICH derselbe Wortlaut steht —
+ * und nicht nur dieselbe Fassungsnummer darueber. */
+export function standardTermsFingerprint() {
+  const text = STANDARD_TERMS.version + "\n" + standardTermsText();
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 + c + i, 0x85ebca6b) >>> 0;
+  }
+  return (h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0"));
+}
+
+/* Die AGB-Kachel fuer den Kundenlink. Sie haengt an keiner Freigabe und an
+ * keinem Projekt: Jede gueltige Einladung zeigt dieselbe Fassung. Was hier
+ * NICHT drinsteht, ist genauso wichtig — kein Vertrag, keine Zustimmung, kein
+ * Projektbezug. Die AGB sind allgemein; der Vertrag ist es nicht. */
+export function standardTermsTile() {
+  return {
+    label: STANDARD_TERMS.title,
+    version: STANDARD_TERMS.version,
+    notice: STANDARD_TERMS.notice,
+    intro: STANDARD_TERMS.intro,
+    editable: false,
+    sections: STANDARD_TERMS.sections.map((s) => ({ title: s.title, body: s.body })),
+  };
+}
+
 /* ── Die zwei Links, die zwei Phasen ─────────────────────────────────────
  * Der ganze Kundenablauf hat GENAU ZWEI oeffentliche Links, und sie duerfen
  * nie miteinander verwechselt werden:
@@ -829,6 +1072,82 @@ export const DEFAULT_INTAKE_INTRO =
  * Fragebogens. Die Seite stellt sie als Mindmap dar; abgesendet werden sie
  * gemeinsam mit allen anderen Antworten. Deshalb entsteht auch aus einem
  * Vision-Room-Beitrag nie ein zweiter Vorgang. */
+/* ── Domain & Zugang ─────────────────────────────────────────────────────
+ * Vier Wege, und nur einer davon braucht Details. Die Detailfragen erscheinen
+ * ausschliesslich bei "uebertragen" (showIf).
+ *
+ * WARUM HIER KEINE ZUGANGSDATEN STEHEN — das ist der wichtigste Teil:
+ *
+ * Der Fragebogen wird unter flowertech/intakeForms/<token> veroeffentlicht und
+ * vom Browser OHNE Anmeldung gelesen; der Token steht in der Adresszeile. Die
+ * Antworten wandern anschliessend in die Projektdaten und von dort in den
+ * Projekt-Prompt. In dieser Kette gibt es keine Stelle, an der ein Passwort
+ * oder ein Transfercode wirklich geschuetzt waere.
+ *
+ * Deshalb werden Loginname, Passwort und Transfercode hier GAR NICHT ERST
+ * ABGEFRAGT. Der Fragebogen fragt nur, ob die Zugangsdaten bereits auf einem
+ * sicheren Weg uebergeben wurden. Was nie erfasst wird, kann auch nicht
+ * verloren gehen — das ist der einzige Schutz, der ohne neuen, wirklich
+ * abgesicherten Kanal haltbar ist.
+ * --------------------------------------------------------------------- */
+export const DOMAIN_ACCESS_QUESTION_KEY = "domain-weg";
+
+export const DOMAIN_ACCESS_CHOICES = [
+  { key: "behalten", label: "Bestehende Domain beibehalten" },
+  { key: "neu", label: "Neue Domain registrieren oder wechseln" },
+  { key: "uebertragen", label: "Bestehende Domain übertragen" },
+  { key: "offen", label: "Noch offen – Beratung gewünscht" },
+];
+
+export const DOMAIN_TRANSFER_CHOICE = "Bestehende Domain übertragen";
+
+/* Fragen, die bei einer Uebertragung wirklich noetig sind — und alle
+ * unkritisch: Sie benennen, WO die Domain liegt, nicht WIE man hineinkommt. */
+export const DOMAIN_TRANSFER_QUESTIONS = [
+  { key: "domain-name", label: "Domainname", type: "text",
+    hint: "Zum Beispiel meine-firma.ch", showIf: { key: DOMAIN_ACCESS_QUESTION_KEY, value: DOMAIN_TRANSFER_CHOICE } },
+  { key: "domain-registrar", label: "Registrar / Anbieter", type: "text",
+    hint: "Wo die Domain heute liegt (z. B. Hostpoint, Infomaniak, GoDaddy).",
+    showIf: { key: DOMAIN_ACCESS_QUESTION_KEY, value: DOMAIN_TRANSFER_CHOICE } },
+  { key: "domain-inhaber", label: "Kontoinhaber", type: "text",
+    hint: "Auf wen das Konto beim Anbieter läuft.",
+    showIf: { key: DOMAIN_ACCESS_QUESTION_KEY, value: DOMAIN_TRANSFER_CHOICE } },
+  /* Die Zugangs-E-Mail beim Registrar wird BEWUSST nicht gefragt. Sie ist der
+     Wiederherstellungsweg fuer die Domain und gehoert damit zu den Zugangs-
+     daten, nicht zu den Koordinationsangaben. Ein E-Mail-Feld ohne Kontakt-
+     rolle wanderte ausserdem ungefiltert in den Projekt-Prompt. */
+  { key: "domain-zugang-uebermittelt", label: "Zugangsdaten sicher übermittelt", type: "select",
+    options: ["Noch nicht", "Ja, auf sicherem Weg übermittelt"],
+    hint: "Zugangs-E-Mail, Loginname, Passwort und Transfercode (Auth-Code) fragen wir hier " +
+      "bewusst NICHT ab — dieses Formular ist dafür nicht der richtige Ort. Wir melden uns und " +
+      "vereinbaren einen sicheren Weg. Bitte tragen Sie hier nie ein Passwort ein.",
+    showIf: { key: DOMAIN_ACCESS_QUESTION_KEY, value: DOMAIN_TRANSFER_CHOICE } },
+];
+
+/* Antwortschluessel, die niemals in eine Kundenansicht, einen Prompt, eine
+ * Angebotskachel, eine E-Mail oder ein Protokoll gehoeren. Der Fragebogen
+ * erfasst sie gar nicht; diese Liste faengt ab, was aus alten Staenden oder
+ * ueber einen selbst angelegten Fragebogen doch hereinkaeme. */
+export const SENSITIVE_ANSWER_PATTERN =
+  /(passwor[dt]|kennwort|transfercode|auth[- ]?code|authinfo|epp|zugangsdaten|login|benutzername|username|secret|token|api[- ]?key|zugangs[- ]?e[- ]?mail)/i;
+
+export function isSensitiveAnswer(entry = {}) {
+  const key = String(entry.key || "");
+  const label = String(entry.label || "");
+  // Die ausdrueckliche Bestaetigungsfrage ist kein Geheimnis — sie enthaelt
+  // nur "ja" oder "noch nicht".
+  if (key === "domain-zugang-uebermittelt") return false;
+  return SENSITIVE_ANSWER_PATTERN.test(key) || SENSITIVE_ANSWER_PATTERN.test(label);
+}
+
+/* Filtert Geheimnisse heraus und sagt, dass etwas gefiltert wurde. Wird an
+ * jeder Stelle benutzt, an der Antworten den internen Bereich verlassen. */
+export function redactSensitiveAnswers(answers = []) {
+  const list = Array.isArray(answers) ? answers : [];
+  const kept = list.filter((a) => !isSensitiveAnswer(a));
+  return { answers: kept, removed: list.length - kept.length };
+}
+
 export const VISION_QUESTION_KEYS = { idea: "vision-idee", features: "vision-funktionen" };
 
 export const DEFAULT_INTAKE_QUESTIONS = [
@@ -872,6 +1191,14 @@ export const DEFAULT_INTAKE_QUESTIONS = [
   { key: VISION_QUESTION_KEYS.features, role: "", type: "textarea", vision: "features",
     label: "Vision Room: Funktionen, die Sie sich vorstellen",
     hint: "Eine pro Zeile. Wählen Sie aus den Vorschlägen oder tragen Sie eigene ein." },
+  /* Domain & Zugang. Die Auswahl steht immer da; die Detailfragen erscheinen
+     nur bei "Bestehende Domain übertragen" (showIf). Zugangsdaten werden
+     bewusst nicht erfasst — siehe DOMAIN_TRANSFER_QUESTIONS. */
+  { key: DOMAIN_ACCESS_QUESTION_KEY, role: "", type: "select",
+    label: "Domain & Zugang",
+    options: DOMAIN_ACCESS_CHOICES.map((c) => c.label),
+    hint: "Wie soll es mit Ihrer Internetadresse weitergehen?" },
+  ...DOMAIN_TRANSFER_QUESTIONS,
   { key: "notes", role: "", type: "textarea", label: "Sonstiges" },
 ];
 
@@ -946,6 +1273,12 @@ export function normalizeIntakeQuestions(raw) {
       // Vision-Room-Fragen sind normale Fragen mit einer besonderen Darstellung.
       // Der Wert sagt der Seite, welche Rolle die Frage in der Mindmap spielt.
       vision: q.vision === "idea" || q.vision === "features" ? q.vision : "",
+      /* Bedingte Frage: Sie erscheint nur, wenn eine andere Frage einen
+         bestimmten Wert traegt. Ohne showIf ist die Frage immer da — dieses
+         Feld aendert an bestehenden Fragebogen also nichts. */
+      showIf: q.showIf && typeof q.showIf === "object" && text(q.showIf.key, 60)
+        ? { key: slug(q.showIf.key, ""), value: text(q.showIf.value, 200) }
+        : null,
     });
   });
   return out.slice(0, 40);
@@ -1334,6 +1667,12 @@ export const CUSTOMER_AREA_STAGES = [
     hides: "Erscheint erst mit Vorschau-Adresse, fertigem Prompt und ausdrücklicher Freigabe.",
   },
   {
+    key: "contract",
+    label: "Vertrag",
+    shows: "Den freigegebenen Projektauftrag zum Nachlesen und Ausdrucken.",
+    hides: "Nur mit eigener, ausdrücklicher Freigabe — ein Entwurf erscheint nie.",
+  },
+  {
     key: "admin",
     label: "Verwaltung",
     shows: "Die Verwaltungs-Adresse, mit der die Kundschaft selbst etwas pflegen kann.",
@@ -1391,6 +1730,58 @@ export function customerOfferTile({
   };
 }
 
+/* ── Unverbindliche Test-Leistungskachel ─────────────────────────────────
+ * Eine ausdrückliche Ausnahme, und sie ist bewusst NICHT der Offertenweg:
+ *
+ *   • Sie erscheint nur nach eigener, jederzeit widerrufbarer Freigabe
+ *     (`released === true`). Ein blosser Eintrag genügt nicht.
+ *   • Sie trägt WEDER Betrag NOCH Währung NOCH Status NOCH `sentAt`. Diese
+ *     Felder gibt es hier gar nicht — deshalb kann auch nie „CHF 0.00"
+ *     erscheinen. Ein fehlender Betrag ist kein Betrag von null.
+ *   • Sie ist als Test und als unverbindlich ausgezeichnet und löst nichts
+ *     aus: keinen Versand, keine Rechnung, keinen Statuswechsel.
+ *
+ * Die echten Offertenregeln (customerOfferTile: nur mit echtem Versandstatus
+ * UND `sentAt`) bleiben davon vollständig unberührt — die beiden Wege teilen
+ * keine Zeile Code.
+ * --------------------------------------------------------------------- */
+export const TEST_SERVICE_COST_STATUS = "Kosten noch offen — keine verbindliche Preisangabe";
+
+export const TEST_SERVICE_NOTICE =
+  "Unverbindliche Testansicht. Das ist keine Offerte: nichts wurde versendet, " +
+  "es besteht keine Preiszusage und es entsteht keine Rechnung.";
+
+// Felder, die diese Kachel niemals tragen darf. Der Test prüft dagegen.
+export const TEST_SERVICE_FORBIDDEN_KEYS = [
+  "amount", "currency", "total", "price", "sum", "betrag",
+  "status", "statusLabel", "sentAt", "number", "validUntil", "document",
+];
+
+export function customerTestServiceTile({ project = {} } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const raw = item.ftTestServiceTile && typeof item.ftTestServiceTile === "object"
+    ? item.ftTestServiceTile : null;
+  // Ohne ausdrückliche Freigabe gibt es die Kachel nicht. Widerrufen heisst
+  // `released` auf false setzen — sie verschwindet beim nächsten Verteilen.
+  if (!raw || raw.released !== true) return null;
+  const title = text(raw.title, 200);
+  if (!title) return null;
+  return {
+    label: "Leistungsübersicht · TEST",
+    test: true,
+    binding: false,
+    title,
+    // Der Kostenstand ist ein Satz, keine Zahl. Genau deshalb steht hier ein
+    // Text und kein Feld, das sich zu 0.00 formatieren liesse.
+    costStatus: TEST_SERVICE_COST_STATUS,
+    summary: multiline(raw.summary, 2000),
+    currentUrl: safeUrl(raw.currentUrl),
+    previewUrl: safeUrl(raw.previewUrl),
+    releasedAt: String(raw.releasedAt || ""),
+    notice: TEST_SERVICE_NOTICE,
+  };
+}
+
 /* Freigaben der Stufe 3. Beide sind ausdrücklich: Eine Adresse einzutragen
  * heisst noch lange nicht, sie zu zeigen — an einer halbfertigen Vorschau
  * arbeitet man tagelang, bevor sie jemand sehen darf. */
@@ -1433,11 +1824,47 @@ export function customerAdminRelease({ project = {}, previewVisible = false } = 
   };
 }
 
+/* Der Vertrag auf dem einen Link. Er ist projektindividuell — anders als die
+ * AGB — und braucht deshalb eine eigene, ausdrückliche Freigabe. Ein Entwurf
+ * erscheint nie: Es zählt allein der Schalter, den ich bewusst umlege.
+ *
+ * Was hinausgeht, ist das entschärfte Dokument, sonst nichts. Keine internen
+ * Notizen, keine Kalkulation, keine Kontaktlisten — der Vertrag ist ein
+ * Dokument, kein Fenster in den Vorgang. */
+export function customerContractRelease({ project = {}, documentHtml = "" } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const flag = releaseFlag(item.ftCustomerContract);
+  const clean = sanitizeTemplateHtml(documentHtml, { max: MAX_CUSTOMER_DOCUMENT_BYTES });
+  const hasDoc = !!clean.html.trim();
+  let reason = "";
+  if (!hasDoc) reason = "Es ist noch kein Vertragstext erfasst.";
+  else if (!flag.released) reason = "Der Vertrag steht, ist aber noch nicht freigegeben.";
+  return {
+    html: clean.html, hasDoc,
+    released: flag.released, releasedAt: flag.releasedAt,
+    visible: hasDoc && flag.released,
+    reason,
+  };
+}
+
+export function customerContractTile({ project = {}, documentHtml = "", title = "" } = {}) {
+  const state = customerContractRelease({ project, documentHtml });
+  if (!state.visible) return null;
+  return {
+    label: "Vertrag",
+    title: text(title, 200) || "Projektauftrag",
+    releasedAt: state.releasedAt,
+    document: { html: state.html },
+    notice: "Bitte in Ruhe durchlesen. Bei Fragen melden Sie sich — wir gehen ihn gerne mit Ihnen durch.",
+  };
+}
+
 /* Der Zustand des Kundenbereichs — für Quantus UND für die Veröffentlichung.
  * Rein rechnend: Er liest, er schreibt nicht und er veröffentlicht nichts. */
 export function customerAreaState({
   project = null, intake = null, offers = [], offerAmount = null,
   offerDocumentHtml = "", offerDocumentUrl = "", prompt = null, today = "",
+  contractHtml = "", contractTitle = "",
 } = {}) {
   const item = project && typeof project === "object" && project.id ? project : null;
   const form = intake && typeof intake === "object" ? intake : null;
@@ -1465,44 +1892,75 @@ export function customerAreaState({
     note: "Nur für die Pflege der eigenen Inhalte.",
   } : null;
 
-  const visible = { intake: !!url, offer: !!offerTile, preview: !!previewTile, admin: !!adminTile };
+  // Die AGB hängen an keiner Freigabe und an keinem Projekt: Jede gültige
+  // Einladung zeigt dieselbe zentrale Fassung. Sie sind allgemein — anders als
+  // der Vertrag, der weiterhin aussen vor bleibt.
+  const termsTile = standardTermsTile();
+  const testServiceTile = item ? customerTestServiceTile({ project: item }) : null;
+  const contract = customerContractRelease({ project: item || {}, documentHtml: contractHtml });
+  const contractTile = item
+    ? customerContractTile({ project: item, documentHtml: contractHtml, title: contractTitle })
+    : null;
+
+  const visible = {
+    intake: !!url, offer: !!offerTile, preview: !!previewTile,
+    contract: !!contractTile, admin: !!adminTile,
+  };
   const reasons = {
     intake: url ? "" : "Dieses Projekt hat noch keinen Kundenlink.",
     offer: offerTile ? "" : (offer ? "" : "Es ist noch keine Offerte versendet — Entwürfe bleiben innen."),
     preview: previewTile ? "" : preview.reason,
+    contract: contractTile ? "" : contract.reason,
     admin: adminTile ? "" : admin.reason,
   };
   const stages = CUSTOMER_AREA_STAGES.map((stage) => Object.assign({}, stage, {
     visible: !!visible[stage.key],
     reason: reasons[stage.key] || "",
   }));
-  const highest = ["admin", "preview", "offer", "intake"].find((key) => visible[key]) || "none";
+  const highest = ["admin", "contract", "preview", "offer", "intake"].find((key) => visible[key]) || "none";
   const stage = highest === "admin" ? "preview" : highest;
 
   return {
     url, token, hasLink: !!url,
     stage,
     stageLabel: (CUSTOMER_AREA_STAGES.find((s) => s.key === stage) || {}).label || "Noch kein Kundenlink",
-    tiles: { offer: offerTile, preview: previewTile, admin: adminTile },
+    tiles: {
+      offer: offerTile,
+      preview: previewTile,
+      admin: adminTile,
+      // Immer dabei, immer gleich, nie projektabhängig.
+      terms: termsTile,
+      // Nur nach ausdrücklicher, widerrufbarer Freigabe.
+      testService: testServiceTile,
+      contract: contractTile,
+    },
     stages,
     visibleLabels: stages.filter((s) => s.visible).map((s) => s.label),
     hiddenLabels: stages.filter((s) => !s.visible).map((s) => s.label),
-    preview, admin,
+    preview, admin, contract,
   };
 }
 
 /* Was wirklich veröffentlicht wird. Stufe 1 ist Wort für Wort das, was der
  * Fragebogen immer schon trug — die Stufen 2 und 3 kommen als eigene Kacheln
  * dazu. Keine Projekt-ID, kein Token eines anderen Wegs, keine internen
- * Notizen, kein Vertrag, keine AGB, kein Kundenportal. */
+ * Notizen, kein Vertrag, kein Kundenportal.
+ *
+ * Die Standard-AGB sind seit dieser Fassung ausdrücklich DABEI, und das ist
+ * kein Widerspruch zur Positivliste: Sie sind ein allgemeines, öffentliches
+ * Dokument ohne jeden Projektbezug — auf jedem Kundenlink dieselbe Fassung,
+ * aus dem Code, nicht aus den Projektdaten. Der VERTRAG bleibt draussen; der
+ * ist projektindividuell und gehört hinter seine eigene Freigabe. */
 export function customerAreaSnapshot({
   intake = null, project = null, offers = [], offerAmount = null,
   offerDocumentHtml = "", offerDocumentUrl = "", prompt = null,
   company = {}, questions = null, now = new Date().toISOString(), today = "",
+  contractHtml = "", contractTitle = "",
 } = {}) {
   const form = intake && typeof intake === "object" ? intake : {};
   const area = customerAreaState({
     project, intake: form, offers, offerAmount, offerDocumentHtml, offerDocumentUrl, prompt, today,
+    contractHtml, contractTitle,
   });
   return {
     schema: 1,
@@ -1625,12 +2083,18 @@ export function portalProgress({ project = {}, hasPreview = false, changes = [],
  * Warum als Daten: Damit UI, Snapshot und Test dieselbe Bedingung benutzen.
  * Eine Bedingung, die nur in der Anzeige steht, ist mit einem Klick umgangen.
  * --------------------------------------------------------------------- */
+/* Was vor der Veroeffentlichung des Kundenportals dastehen muss.
+ *
+ * Die AGB standen hier frueher als fuenfter Punkt — als etwas, das man je
+ * Projekt erst verfassen musste. Seit sie zentral sind, sind sie immer da:
+ * Ein Haken, der sich nie abhaken laesst, weil er schon gesetzt ist, ist
+ * keine Pruefung, sondern Rauschen. Die Fassung selbst wird stattdessen im
+ * Portal ausgewiesen (siehe buildClientSnapshot.terms). */
 export const PORTAL_RELEASE_REQUIREMENTS = [
   { key: "preview", label: "Website-Vorschau" },
   { key: "service", label: "Leistungsbeschreibung" },
   { key: "offer", label: "Offerte mit Kosten" },
   { key: "contract", label: "Vertrag" },
-  { key: "terms", label: "AGB" },
 ];
 
 export function portalReleaseState({
@@ -2114,11 +2578,14 @@ export function projectPromptSources({
  * ein Entwurf nach Schweizer Praxis (siehe LEGAL_REVIEW_NOTICE).
  * --------------------------------------------------------------------- */
 export function termsState({ terms = {}, consent = null } = {}) {
-  const version = text(terms.version, 40) || "1";
+  /* Massgebend ist immer die zentrale Fassung. `terms` darf sie nicht mehr
+     überstimmen — sonst hinge die Zustimmung an einem Text, den ein Projekt
+     verändert haben könnte. */
+  const version = STANDARD_TERMS.version;
   const accepted = !!(consent && consent.acceptedAt && consent.version === version);
   return {
     version,
-    title: text(terms.title, 200) || "Allgemeine Geschäftsbedingungen (Entwurf)",
+    title: STANDARD_TERMS.title,
     accepted,
     acceptedAt: accepted ? String(consent.acceptedAt) : "",
     // Veraltete Zustimmung: Es gab eine, aber zu einer anderen Fassung.
@@ -2673,20 +3140,16 @@ export function contractToText(contract, vars) {
  * Verbindliche FlowerTech-Starttexte, wortgetreu als bearbeitbare Blöcke.
  * ---------------------------------------------------------------------- */
 export const LEGAL_TEMPLATES = {
+  /* Die AGB stehen NICHT mehr hier. Sie sind zentral (STANDARD_TERMS) und
+     nicht projektweise bearbeitbar; dieser Eintrag verweist nur noch darauf,
+     damit alte Aufrufe mit kind:"agb" weiterhin etwas Sinnvolles bekommen.
+     Zwei Wortlaute an zwei Orten wären genau der Fehler, den die zentrale
+     Fassung verhindern soll. */
   agb: {
-    title: "AGB — Kurzfassung (Entwurf)",
-    intro: "Bearbeitbare FlowerTech-Vorlage für Schweizer Projekte. Vor Verwendung rechtlich prüfen.",
-    sections: [
-      { key: "kurzfassung", title: "AGB-Kurzfassung", body:
-        "Diese AGB gelten ergänzend zu bestätigten FlowerTech-Angeboten. Der konkrete Projektauftrag hat bei " +
-        "Widersprüchen Vorrang. Angebote sind {{angebotsgueltigkeit_tage}} Tage gültig. Kundenseitige Inhalte " +
-        "und Rechte daran verantwortet die Kundin/der Kunde. Externe Dienste, Domains, Hosting, Lizenzen und " +
-        "Zahlungsanbieter können eigene Bedingungen und Kosten haben. Projektkommunikation und Freigaben " +
-        "erfolgen vorrangig im FlowerTech-Projekt; Änderungen gelten erst nach bestätigter Auswirkung. Eine " +
-        "bestimmte wirtschaftliche Wirkung, Auffindbarkeit, Verfügbarkeit externer Plattformen oder rechtliche " +
-        "Zulässigkeit kundenseitiger Inhalte wird nicht geschuldet. Im Übrigen gelten die Regelungen zu " +
-        "Zahlung, Abnahme, Rechten, Datenschutz, Haftung und Schweizer Recht aus dem Projektauftrag." },
-    ],
+    title: STANDARD_TERMS_TITLE,
+    intro: STANDARD_TERMS_INTRO,
+    standard: true,
+    sections: [],
   },
   privacy: {
     title: "Datenschutz — Kurzinformation (Entwurf)",
@@ -2710,6 +3173,25 @@ export const LEGAL_TEMPLATES = {
 
 export function buildLegalDraft(kind, context = {}) {
   const key = LEGAL_TEMPLATES[kind] ? kind : "agb";
+  /* AGB sind kein Projektentwurf mehr. Wer sie hier anfordert, bekommt die
+     zentrale Fassung — unveränderlich und als solche gekennzeichnet. Damit
+     bleibt der Aufrufer bestehen (rückwärtskompatibel), aber es entsteht
+     keine zweite, projekteigene Fassung mehr. */
+  if (key === "agb") {
+    return {
+      kind: "agb",
+      scope: "standard",
+      editable: false,
+      title: STANDARD_TERMS.title,
+      intro: STANDARD_TERMS.intro,
+      status: "standard",
+      version: STANDARD_TERMS.version,
+      legalNotice: STANDARD_TERMS.notice,
+      sections: STANDARD_TERMS.sections.map((sec) => ({
+        key: sec.key, title: sec.title, body: sec.body, enabled: true, editable: false, variables: [],
+      })),
+    };
+  }
   const tpl = LEGAL_TEMPLATES[key];
   const vars = contractVariables(context);
   return {
@@ -2869,6 +3351,16 @@ export function buildClaudePrompt(
     out.push("");
   }
 
+  /* Geheimnisse verlassen den internen Bereich nicht — auch nicht ueber einen
+     selbst angelegten Fragebogen oder einen alten Stand. Zweite Schicht: Der
+     Fragebogen erfasst sie gar nicht erst. */
+  const sicher = redactSensitiveAnswers(project.intakeAnswers || []);
+  if (sicher.removed) {
+    out.push("> Hinweis: " + sicher.removed + " Antwort(en) mit Zugangsdaten wurden bewusst " +
+      "nicht in diesen Prompt übernommen.");
+    out.push("");
+  }
+
   if (on("briefing")) {
     out.push("## Briefing");
     if (briefing.goal) out.push("Ziel: " + briefing.goal);
@@ -2921,7 +3413,33 @@ export function buildClaudePrompt(
 
   out.push("## Was ich von dir brauche");
   out.push(promptModeInstruction(mode));
+
+  /* Die Standard-AGB stehen in JEDEM Prompt, Wort für Wort gleich, und zwar
+     unabhängig von den Datenschaltern oben. Sie sind kein Projektinhalt: Wer
+     sie hier projektweise anpasste, hätte am Ende so viele Fassungen wie
+     Projekte — und niemand könnte mehr sagen, welcher Text gilt. */
+  out.push("");
+  out.push(standardTermsPromptSection());
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
+
+/* Der geschützte Abschnitt, wie er in jedem Prompt erscheint. Eigene Funktion,
+   damit Tests ihn Zeichen für Zeichen mit der Kachel und der Quantus-Ansicht
+   vergleichen können. */
+export const STANDARD_TERMS_PROMPT_HEADING =
+  "## FlowerTech Standard-AGB — zentral, nicht projektweise ändern";
+
+export function standardTermsPromptSection() {
+  return [
+    STANDARD_TERMS_PROMPT_HEADING,
+    "",
+    "Dieser Abschnitt ist geschützt: Er ist für alle FlowerTech-Projekte identisch und",
+    "wird zentral im Code gepflegt (flowertech-workflow-core.js). Nicht projektweise",
+    "ändern, nicht kürzen, nicht umformulieren und nicht aus Kundeneingaben überschreiben.",
+    "Fassung " + STANDARD_TERMS.version + " · Fingerabdruck " + standardTermsFingerprint() + ".",
+    "",
+    standardTermsText(),
+  ].join("\n");
 }
 
 /* ── Freigabe-Links ──────────────────────────────────────────────────────── */
@@ -3093,13 +3611,19 @@ export function buildClientSnapshot({
       updatedAt: preview.html.trim() ? String(previewUpdatedAt || now) : "",
       sanitized: preview.removed,
     },
+    // Die AGB im Kundenportal: die zentrale Fassung, nicht der Projekttext.
+    // `terms` wird bewusst nur noch für die Zustimmung ausgewertet — der
+    // Wortlaut kommt aus dem Code, damit im Portal und auf dem Kundenlink
+    // dasselbe steht.
     terms: (function () {
       const state = termsState({ terms, consent });
       return {
         title: state.title,
         version: state.version,
-        body: String(terms.body || "").slice(0, 40000),
-        notice: LEGAL_REVIEW_NOTICE,
+        body: standardTermsText(),
+        sections: STANDARD_TERMS.sections.map((sec) => ({ title: sec.title, body: sec.body })),
+        editable: false,
+        notice: STANDARD_TERMS.notice,
         accepted: state.accepted,
         acceptedAt: state.acceptedAt,
         outdated: state.outdated,
@@ -3118,7 +3642,7 @@ export function buildClientSnapshot({
     intake: intakeDocument ? {
       title: String(intakeDocument.intakeTitle || "").slice(0, 200),
       submittedAt: intakeDocument.submittedAt || "",
-      answers: (intakeDocument.answers || [])
+      answers: redactSensitiveAnswers(intakeDocument.answers || []).answers
         .filter((a) => !INTAKE_CONTACT_ROLES.includes(a.role) && String(a.answer || "").trim())
         .slice(0, 40)
         .map((a) => ({ label: String(a.label).slice(0, 200), answer: String(a.answer).slice(0, 4000) })),
@@ -3184,6 +3708,16 @@ export function isDuplicate(key, seen) {
 /* ── Browser-Bridge ──────────────────────────────────────────────────────── */
 const API = {
   LEGAL_REVIEW_NOTICE,
+  // Die zentrale Standard-AGB und die unverbindliche TEST-Leistungskachel.
+  STANDARD_TERMS, STANDARD_TERMS_VERSION, STANDARD_TERMS_TITLE, STANDARD_TERMS_NOTICE,
+  STANDARD_TERMS_INTRO, STANDARD_TERMS_SECTIONS, STANDARD_TERMS_PROMPT_HEADING,
+  standardTerms, standardTermsText, standardTermsFingerprint, standardTermsTile,
+  standardTermsPromptSection,
+  TEST_SERVICE_COST_STATUS, TEST_SERVICE_NOTICE, TEST_SERVICE_FORBIDDEN_KEYS,
+  customerTestServiceTile,
+  customerContractRelease, customerContractTile,
+  DOMAIN_ACCESS_QUESTION_KEY, DOMAIN_ACCESS_CHOICES, DOMAIN_TRANSFER_CHOICE,
+  DOMAIN_TRANSFER_QUESTIONS, SENSITIVE_ANSWER_PATTERN, isSensitiveAnswer, redactSensitiveAnswers,
   WORKFLOW_STAGES, LEGACY_STAGE_ALIASES, stageIndex, stageLabel, nextStage, previousStage,
   DELIVERY_TYPES, deliveryLabel,
   CHANGE_STATUSES, changeStatusLabel,

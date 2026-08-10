@@ -3024,21 +3024,19 @@
     var ft = wf();
     return (ft && ft.legalDocs[projectId] && ft.legalDocs[projectId][kind]) || null;
   }
-  // Die AGB fuer das Kundenportal: der bearbeitete Entwurf des Projekts, sonst
-  // nichts. Ohne gepflegten Text gibt es im Portal auch keine Zustimmung —
-  // niemand soll etwas abnicken, das gar nicht dasteht.
-  function termsForProject(projectId) {
-    var doc = legalOf(projectId, "agb");
-    if (!doc) return { title: "", body: "", version: "" };
-    var body = (doc.sections || []).map(function (sec) {
-      return (sec.title ? sec.title + "\n" : "") + (sec.body || "");
-    }).join("\n\n").trim();
+  // Die AGB fuers Kundenportal: IMMER die zentrale Fassung aus dem Kern.
+  // Frueher stand hier der pro Projekt bearbeitete Entwurf — damit gab es so
+  // viele AGB wie Projekte, und niemand konnte sagen, welchem Text eine
+  // Kundin zugestimmt hat. Der projectId-Parameter bleibt fuer die Aufrufer
+  // stehen, wird aber bewusst nicht mehr gelesen.
+  function termsForProject() {
+    var core = W();
+    if (!core) return { title: "", body: "", version: "" };
     return {
-      title: doc.title || "Allgemeine Geschäftsbedingungen (Entwurf)",
-      body: body,
-      // Die Fassung wandert in die Zustimmung: Wird der Text geändert, gilt
-      // die alte Zustimmung sichtbar als veraltet.
-      version: String(doc.version || 1) + "-" + String(doc.updatedAt || "").slice(0, 10),
+      title: core.STANDARD_TERMS.title,
+      body: core.standardTermsText(),
+      version: core.STANDARD_TERMS.version,
+      editable: false,
     };
   }
   window._ftTermsForProject = termsForProject;
@@ -3481,6 +3479,11 @@
     var core = W();
     var ft = wf();
     if (!core || !ft) return;
+    // Die AGB sind zentral: Es gibt nichts aufzubauen und nichts zu erneuern.
+    if (kind === "agb") {
+      notify("warn", "AGB", "Die Standard-AGB gelten zentral für alle Projekte und werden hier nicht bearbeitet.");
+      return;
+    }
     ft.legalDocs[projectId] = ft.legalDocs[projectId] || {};
     if (ft.legalDocs[projectId][kind] && !force
       && !window.confirm("Vorlage neu aufbauen? Eigene Änderungen gehen verloren.")) return;
@@ -3502,6 +3505,9 @@
   function blocksOf(doc) { return (doc && (doc.sections || doc.blocks)) || []; }
 
   window._ftBlockSet = function (projectId, scope, blockKey, field, value) {
+    // Zweite Schicht: Selbst ein direkter Aufruf aus der Konsole ändert an den
+    // AGB nichts. Die Oberfläche zeigt dafür gar keine Felder mehr.
+    if (scope === "agb") return;
     var doc = docOfScope(projectId, scope);
     var block = blocksOf(doc).find(function (b) { return b.key === blockKey; });
     if (!block) return;
@@ -4211,6 +4217,58 @@
       : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
     return true;
   }
+
+  /* ── Unverbindliche Test-Leistungskachel ────────────────────────────────
+     Eine ausdrueckliche Ausnahme vom normalen Weg — und sie bleibt eine:
+     Der Offertenweg (Entwurf → Versand → sichtbar) ist unveraendert. Diese
+     Kachel versendet nichts, legt keine Rechnung an und traegt keinen Betrag.
+     Sie erscheint nur nach eigener Freigabe und verschwindet mit dem Widerruf.
+     ------------------------------------------------------------------- */
+  var TEST_TILE_FIELDS = ["title", "summary", "currentUrl", "previewUrl"];
+
+  window._ftSetTestServiceTile = function (projectId, field, value) {
+    var project = projectById(projectId);
+    if (!project || TEST_TILE_FIELDS.indexOf(field) < 0) return;
+    var tile = project.ftTestServiceTile && typeof project.ftTestServiceTile === "object"
+      ? project.ftTestServiceTile : {};
+    tile[field] = String(value == null ? "" : value);
+    project.ftTestServiceTile = tile;
+    project.updatedAt = now();
+    save();
+    // Nur nachziehen, wenn die Kachel wirklich draussen ist — sonst
+    // veroeffentlicht jedes Tippen einen Zwischenstand.
+    if (tile.released === true) refreshCustomerArea(projectId);
+  };
+
+  window._ftReleaseTestService = function (projectId, on) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var tile = project.ftTestServiceTile && typeof project.ftTestServiceTile === "object"
+      ? project.ftTestServiceTile : {};
+    if (on && !String(tile.title || "").trim()) {
+      notify("warn", "Test-Kachel", "Ohne Titel gibt es nichts zu zeigen.");
+      return false;
+    }
+    tile.released = !!on;
+    tile.releasedAt = on ? now() : "";
+    project.ftTestServiceTile = tile;
+    project.updatedAt = now();
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({
+      id: id(), at: now(), channel: "note",
+      text: on
+        ? "TEST-Leistungskachel im Kundenbereich freigegeben (unverbindlich, ohne Preis, ohne Versand)."
+        : "TEST-Leistungskachel aus dem Kundenbereich zurueckgezogen.",
+    });
+    refreshCustomerArea(projectId);
+    save();
+    rerender();
+    notify("ok", "Test-Kachel", on
+      ? "Sichtbar auf dem bestehenden Kundenlink — als TEST gekennzeichnet, ohne Preis. Es wurde nichts versendet."
+      : "Nicht mehr sichtbar. Der Link bleibt gueltig.");
+    return true;
+  };
 
   window._ftReleaseCustomerPreview = function (projectId, on) {
     return setCustomerRelease(projectId, "ftCustomerPreview", on, "Website-Vorschau");
@@ -5251,8 +5309,45 @@
       "sie erscheinen automatisch in der zentralen Aufgaben-App.</div>";
   }
 
+  /* Die zentrale Standard-AGB — nur ansehen, nichts bearbeiten.
+     Es gibt bewusst kein Titelfeld, keine Textfelder, keinen "Abschnitt
+     hinzufügen" und keinen Freigabeknopf: Die Fassung gilt für alle Projekte
+     gleich und steht im Code, nicht in den Projektdaten. Wer sie ändern will,
+     ändert sie dort — und dann überall auf einmal. */
+  function standardTermsHtml() {
+    var core = W();
+    if (!core || !core.STANDARD_TERMS) return '<div class="ft-empty">Kern nicht geladen.</div>';
+    var t = core.STANDARD_TERMS;
+    var head = '<div class="ft-doc-head">' +
+      "<strong>" + esc(t.title) + "</strong>" +
+      '<span class="badge">Fassung ' + esc(t.version) + " · zentral</span>" +
+      '<span class="badge">nicht bearbeitbar</span>' +
+      '<button class="btn sm" onclick="window._ftCopyStandardTerms()">Kopieren</button>' +
+      "</div>";
+    var hinweis = '<div class="ft-legal-note">⚠ ' + esc(t.notice) + "</div>" +
+      '<div class="mini mt-2">Diese Fassung erscheint unverändert auf jedem FlowerTech-Kundenlink, ' +
+      "im Kundenportal und in jedem erzeugten Projekt-Prompt. Sie lässt sich hier nicht bearbeiten und " +
+      "nicht pro Projekt abweichen — genau das ist ihr Zweck. Geändert wird sie zentral in " +
+      "<code>public/flowertech-workflow-core.js</code>; dabei steigt die Fassungsnummer und erteilte " +
+      "Zustimmungen gelten sichtbar als veraltet.</div>";
+    var intro = '<p class="mini mt-2">' + esc(t.intro) + "</p>";
+    var body = t.sections.map(function (sec) {
+      return '<div class="ft-block"><div class="ft-block-head"><strong>' + esc(sec.title) + "</strong></div>" +
+        '<pre class="ft-block-read">' + esc(sec.body) + "</pre></div>";
+    }).join("");
+    return head + hinweis + intro + body;
+  }
+
+  window._ftCopyStandardTerms = function () {
+    var core = W();
+    if (!core) return;
+    copyText(core.standardTermsText(), "Standard-AGB kopiert (Fassung " + core.STANDARD_TERMS.version + ")");
+  };
+
   function blockEditorHtml(projectId, scope, doc, label) {
     var core = W();
+    // AGB gehen nie durch den Editor — egal, wer ihn mit welchem Dokument ruft.
+    if (scope === "agb") return standardTermsHtml();
     if (!doc) {
       return '<div class="ft-empty">Noch nicht erstellt.</div>';
     }
@@ -5359,7 +5454,42 @@
       row("Website-Vorschau & Änderungswünsche", area.preview, "_ftReleaseCustomerPreview",
         "Die Kundschaft sieht die Vorschau und kann dazu Änderungswünsche melden.") +
       row("Verwaltung", area.admin, "_ftReleaseCustomerAdmin",
-        "Die Kundschaft sieht die Verwaltungsadresse.");
+        "Die Kundschaft sieht die Verwaltungsadresse.") +
+      testServiceHtml(projectId);
+  }
+
+  /* Die Test-Kachel im Bedienfeld. Bewusst unterhalb der normalen Freigaben
+     und sichtbar als Ausnahme beschriftet — damit niemand sie fuer den
+     Offertenweg haelt. */
+  function testServiceHtml(projectId) {
+    var project = projectById(projectId) || {};
+    var tile = project.ftTestServiceTile && typeof project.ftTestServiceTile === "object"
+      ? project.ftTestServiceTile : {};
+    var on = tile.released === true;
+    var core = W();
+    var kosten = core ? core.TEST_SERVICE_COST_STATUS : "Kosten noch offen";
+    var feld = function (key, label, platzhalter) {
+      return "<label class=\"ft-test-f\"><span>" + esc(label) + "</span>" +
+        '<input value="' + attr(tile[key] || "") + '" placeholder="' + attr(platzhalter || "") +
+        '" oninput="window._ftSetTestServiceTile(\'' + attr(projectId) + "','" + key + "',this.value)\"></label>";
+    };
+    return '<div class="sep"></div>' +
+      '<div class="ft-legal-note">⚠ Ausnahme, nur fuer Testlaeufe: eine unverbindliche ' +
+        "Leistungsuebersicht ohne Preis. Sie ist <b>keine Offerte</b> — es wird nichts versendet, " +
+        "keine Rechnung angelegt und kein Status veraendert. Der normale Weg (Offerte erst nach " +
+        "Versand und mit Kosten) bleibt unveraendert.</div>" +
+      '<div class="ft-test-grid">' +
+        feld("title", "Titel der Leistung", "Website-Neukonzept …") +
+        feld("summary", "Kurzbeschreibung (freiwillig)", "Worum es geht") +
+        feld("currentUrl", "Bestehende Website (HTTPS)", "https://…") +
+        feld("previewUrl", "Vorschau / Vorschlag (HTTPS)", "https://…") +
+      "</div>" +
+      '<div class="ft-release-row"><div><strong>Leistungsuebersicht · TEST</strong>' +
+        '<div class="mini">Kostenstand auf der Kachel: „' + esc(kosten) + '“. ' +
+        "Ein Betrag wird nie angezeigt — auch keine Null.</div></div>" +
+        '<button class="btn sm ' + (on ? "ghost" : "primary") + '" onclick="window._ftReleaseTestService(\'' +
+          attr(projectId) + "'," + (on ? "false" : "true") + ')">' +
+          (on ? "Zurueckziehen" : "Freigeben") + "</button></div>";
   }
 
   function clientPortalHtml(projectId) {
@@ -5926,6 +6056,14 @@
     ".ft-hint{font-size:11px;color:var(--muted);opacity:.85}" +
     ".ft-doc-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}" +
     ".ft-doc-title{flex:1;min-width:180px;font-weight:600}" +
+    /* Die zentrale AGB wird gelesen, nicht bearbeitet: Fliesstext statt
+       Eingabefeld, damit auf einen Blick klar ist, dass hier nichts zu tippen
+       ist. Umbrueche bleiben erhalten, lange Zeilen brechen trotzdem um. */
+    ".ft-test-grid{display:grid;gap:8px;margin:10px 0}" +
+    ".ft-test-f{display:grid;gap:4px;font-size:.85em;color:var(--text2)}" +
+    ".ft-test-f input{width:100%}" +
+    ".ft-block-read{margin:0;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;" +
+    "font:inherit;line-height:1.55;color:var(--text2);background:transparent;border:0}" +
     ".ft-legal-note{border:1px solid rgba(240,180,60,.45);background:rgba(240,180,60,.12);color:var(--text2);" +
       "border-radius:10px;padding:9px 11px;font-size:12px;line-height:1.5;margin-bottom:12px}" +
     ".ft-block{border:1px solid var(--border);border-radius:12px;padding:11px;margin-bottom:10px;background:var(--panel2)}" +

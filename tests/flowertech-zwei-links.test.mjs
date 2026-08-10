@@ -205,11 +205,16 @@ const TOKEN = "t".repeat(32);
   ok(!leer.published, "ein leeres Kundenportal gilt als veröffentlicht");
   ok(leer.label === CORE.LINK_LABELS.portalUnpublished,
     "vor der Freigabe trägt der Zugang die falsche Beschriftung");
-  ok(leer.missing.length === 5, `es werden ${leer.missing.length} von 5 fehlenden Punkten benannt`);
+  // Vier statt fuenf: Die AGB sind seit August 2026 zentral und immer vorhanden,
+  // sie koennen darum gar nicht mehr fehlen.
+  ok(leer.missing.length === 4, `es werden ${leer.missing.length} von 4 fehlenden Punkten benannt`);
+  ok(!leer.missing.includes("AGB"), "die zentralen AGB werden als fehlend gemeldet");
 
-  // Jede einzelne Lücke blockiert — es gibt keine „fast fertige" Freigabe.
+  /* Jede einzelne Lücke blockiert — es gibt keine „fast fertige" Freigabe.
+     hasTerms steht nicht mehr in der Liste: Die AGB sind zentral und immer da,
+     eine Luecke kann dort gar nicht entstehen. */
   const alle = { hasPreview: true, hasService: true, hasOffer: true, hasContract: true, hasTerms: true };
-  ["hasPreview", "hasService", "hasOffer", "hasContract", "hasTerms"].forEach((key) => {
+  ["hasPreview", "hasService", "hasOffer", "hasContract"].forEach((key) => {
     const ohne = CORE.portalReleaseState(Object.assign({}, alle, { [key]: false, released: true }));
     ok(!ohne.ready && !ohne.published, `ohne ${key} liesse sich das Kundenportal veröffentlichen`);
   });
@@ -258,12 +263,17 @@ const TOKEN = "t".repeat(32);
 
 /* ══ 8. AGB-Zustimmung ist versioniert ═════════════════════════════════════ */
 {
+  /* Massgebend ist die ZENTRALE Fassung — eine je Projekt gepflegte kann sie
+     nicht mehr ueberstimmen. Sonst haenge die Zustimmung an einem Text, den
+     ein Projekt veraendert haben koennte. */
+  const zentral = CORE.STANDARD_TERMS.version;
   const terms = { title: "AGB", version: "2" };
   const ohne = CORE.termsState({ terms, consent: null });
   ok(!ohne.accepted && !ohne.outdated, "ohne Zustimmung gilt bereits etwas als zugestimmt");
-  ok(ohne.version === "2", "die Fassung wird nicht ausgewiesen");
+  ok(ohne.version === zentral, "die zentrale Fassung wird nicht ausgewiesen");
+  ok(ohne.version !== "2", "eine Projektfassung ueberstimmt die zentrale Fassung");
 
-  const passend = CORE.termsState({ terms, consent: { version: "2", acceptedAt: NOW } });
+  const passend = CORE.termsState({ terms, consent: { version: zentral, acceptedAt: NOW } });
   ok(passend.accepted, "eine Zustimmung zur aktuellen Fassung zählt nicht");
   ok(passend.acceptedAt === NOW, "der Zeitpunkt der Zustimmung fehlt");
   ok(!passend.outdated, "eine gültige Zustimmung gilt als veraltet");
@@ -284,7 +294,10 @@ const TOKEN = "t".repeat(32);
     consent: { version: "2", acceptedAt: NOW },
     now: NOW,
   });
-  ok(snapshot.terms.version === "3", "im Portal steht die falsche Fassung");
+  ok(snapshot.terms.version === zentral, "im Portal steht nicht die zentrale Fassung");
+  ok(snapshot.terms.body === CORE.standardTermsText(), "im Portal steht nicht der zentrale Wortlaut");
+  ok(!snapshot.terms.body.includes("Text der Fassung 3"),
+    "ein Projekttext ueberstimmt die zentrale Fassung im Portal");
   ok(snapshot.terms.accepted === false, "im Portal gilt die alte Zustimmung weiter");
   ok(snapshot.terms.outdated === true, "im Portal fehlt der Hinweis auf die geänderte Fassung");
 }
@@ -345,7 +358,12 @@ const TOKEN = "t".repeat(32);
       .replace(/^\s*\/\/.*$/gm, "");
     ok(/kind: "intake"|kind: 'intake'/.test(fragebogen), "der Fragebogen sendet die falsche Art");
     ok(!/clientPortals/.test(fragebogen), "der Fragebogen liest den Kundenportal-Snapshot");
-    [/\bVertrag\b/, /\bAGB\b/, /kunde\.html/].forEach((re) => {
+    /* Vertrag UND zentrale Standard-AGB gehoeren seit August 2026 ausdruecklich
+       auf DIESEN einen Link: Er ist die vollstaendige Kundensicht und waechst
+       mit dem Projekt. Der Vertrag haengt weiter an einer eigenen Freigabe, die
+       AGB an gar keiner (sie sind fuer alle gleich).
+       Streng verboten bleibt, was einen ZWEITEN Link oeffnete. */
+    [/kunde\.html/, /clientPortals/, /portalToken/].forEach((re) => {
       ok(!re.test(lieferbar), `der Fragebogen-Link zeigt, was nicht an ihn gehört: ${re}`);
     });
     // Die Stufen entstehen aus dem veröffentlichten Datensatz — nicht aus
