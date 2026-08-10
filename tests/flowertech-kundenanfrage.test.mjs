@@ -776,17 +776,22 @@ const freigebbarMachen = (win, projectId) => {
   ok(offerHtml.includes(link), "in der Offerte fehlt der Kundenportal-Link");
   ok(/🔗 Kundenportal-Link/.test(offerHtml), "in der Aktionszeile der Offerte fehlt der Kundenportal-Link");
 
-  // d) Eine Offerte ohne Projekt erfindet keinen Link, sondern verlangt eine
-  //    Projektzuordnung.
+  // d) Eine Offerte ohne Projekt bietet den optionalen Fragebogen-Link an —
+  //    aber weiterhin kein Kundenportal. Der vollständige Ablauf steht in
+  //    tests/flowertech-offerte-ohne-projekt.test.mjs.
   win._ftNewDoc("offer");
   const frei = data.flowertech.offers.find((o) => !o.projectId);
   ok(frei, "die neue Offerte hängt bereits an einem Projekt");
   data.flowertech.ui = { docId: frei.id, docKind: "offer" };
   const freiHtml = strip(win.viewFlowerTech());
-  ok(/gehört noch zu keinem Projekt/.test(freiHtml),
-    "eine Offerte ohne Projekt erklärt den fehlenden Link nicht");
-  ok(/Ordne sie unten einem Projekt zu/.test(freiHtml),
-    "eine Offerte ohne Projekt verlangt keine Projektzuordnung");
+  ok(/Fragebogen-Link erstellen/.test(freiHtml),
+    "eine Offerte ohne Projekt bietet den Fragebogen-Link nicht an");
+  ok(/Kundendaten &amp; Vision Room – noch keine Vorschau/.test(freiHtml),
+    "der Hilfetext des Fragebogen-Links fehlt an der Offerte ohne Projekt");
+  ok(!/kein Link erfunden/.test(freiHtml),
+    "die Offerte ohne Projekt behauptet weiterhin, es werde kein Link erfunden");
+  ok(!/Ordne sie unten einem Projekt zu/.test(freiHtml),
+    "die Offerte ohne Projekt verlangt weiterhin eine Projektzuordnung");
   ok(!/🔗 Kundenportal-Link/.test(freiHtml), "eine Offerte ohne Projekt bietet einen erfundenen Link an");
   ok(!/https:\/\/flowertech\.ch\/kunde\.html/.test(freiHtml),
     "eine Offerte ohne Projekt zeigt trotzdem eine Kundenseite");

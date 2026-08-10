@@ -38,7 +38,8 @@ und werden von Oberfläche, Dokumentation und Tests gemeinsam benutzt.
 ║                                            │  „Fragebogen-Link kopieren"        ║
 ║                                            │  Kundendaten & Vision Room –       ║
 ║                                            ▼  noch keine Vorschau               ║
-║                                       FRAGEBOGEN  (flowertech/intakeForms/<e>)  ║
+║  Offerte OHNE Projekt ──────────────▶ FRAGEBOGEN  (flowertech/intakeForms/<e>)  ║
+║  (versendbar, ohne Projektzwang)      · hängt via intake.offerId an der Offerte ║
 ║                                            │                                    ║
 ║   fragebogen.html?e=<Token>  ◀─────────────┘                                    ║
 ║   ┌───────────────────────────────────────────────────────┐                     ║
@@ -61,6 +62,7 @@ und werden von Oberfläche, Dokumentation und Tests gemeinsam benutzt.
 ║                    │ + Anfrage-Dokument       │  genau einmal                   ║
 ║                    │ + HTML-Vorlage           │                                 ║
 ║                    │ + Claude-Code-Prompt     │                                 ║
+║                    │ + dieselbe Offerte       │  zugeordnet, nicht kopiert      ║
 ║                    └──────────────────────────┘                                 ║
 ║                    KEIN Kundenportal. Phase 1 endet hier.                       ║
 ╚═════════════════════════════════════════════════════════════════════════════════╝
@@ -259,14 +261,76 @@ Die Zustimmung ist ein Ereignis mit **Fassung und Zeitpunkt**, kein Häkchen.
 Eine geänderte Fassung macht damit zwingend eine neue Zustimmung nötig; die alte
 gilt sichtbar als veraltet statt stillschweigend weiter.
 
-## 4. Eine Offerte ohne Projekt erfindet keinen Link
+## 4. Eine Offerte ohne Projekt ist ein vollwertiger Startpunkt
+
+Eine Offerte **ohne Projekt** ist der häufige Normalfall, kein Sonderfall und
+kein Fehler. Sie lässt sich anlegen, pflegen, drucken und **versenden**, ohne
+dass vorher ein Projekt angelegt oder — schlimmer — ein fremdes Projekt (etwa
+„Projekt Sämi") ausgewählt werden muss. Ob sie versandfertig ist, entscheidet
+allein `offerSendableState()`: Kunde, mindestens eine Leistung, ein Preis > 0.
+Ein Projekt steht in dieser Prüfung **nicht**.
+
+### 4a. Der optionale Fragebogen-Link an der Offerte
+
+Fehlen Kundendaten, gibt es dafür an genau dieser Offerte einen klaren
+**optionalen** Knopf:
+
+| Zustand | Knopf | Hilfetext |
+| --- | --- | --- |
+| noch kein Link | **Fragebogen-Link erstellen** | *Kundendaten & Vision Room – noch keine Vorschau* |
+| Link vorhanden | **Fragebogen-Link kopieren** | dieselbe Zeile, dazu *Öffnen* |
+
+Der Zustand kommt aus `offerBriefingLinkState()` im Kern — Oberfläche, Tests und
+Dokumentation lesen dieselbe Wahrheit.
+
+* Der Link gehört zu **genau dieser Offerte** (`intake.offerId`). Ein zweiter
+  Klick erzeugt keinen zweiten Fragebogen, sondern liefert denselben Link.
+* Er öffnet **nur** `fragebogen.html?e=<Einladungstoken>` — Kundendaten und
+  Vision Room. **Nie** das Kundenportal, nie eine Vorschau.
+* Er darf ausdrücklich für eine **noch unfertige** Offerte verschickt werden;
+  genau dafür ist er da.
+* Er **sperrt nichts**: Speichern und Versenden der Offerte laufen unabhängig
+  vom Fragebogen weiter. Die Offerte bleibt eine Offerte.
+
+### 4b. Was die Antwort der Kundschaft auslöst
+
+Sendet die Kundschaft den Fragebogen ab, entsteht **genau einmal**:
+
+| | wird erzeugt | Idempotenz |
+| --- | --- | --- |
+| Projekt | genau **1** | `intake.projectId` gesetzt → zweiter Durchlauf tut nichts |
+| Aufgabe „Offertenanfrage …" | genau **1** | `sourceIntakeKey = <projektId>:intake` |
+| Offertenzuordnung | genau **1** | `offerProjectLinkPlan()`: `new` / `already` / `foreign` |
+| Anfrage-Dokument, Vorlage, Prompt | je 1 | am Projekt |
+
+Die Offerte wird dem neuen Projekt **zugeordnet, nicht kopiert**: gesetzt wird
+ausschliesslich `offer.projectId`, dazu ein Eintrag im Dokumentverlauf. Inhalt,
+Positionen, Preise und Nummer bleiben unverändert. Eine Offerte, die bereits zu
+einem anderen Vorgang gehört, wird **nicht umgehängt** (`state: "foreign"`).
+
+Reload, Doppelklick und ein wiederholter Eingang wirken damit auf drei Ebenen
+genau einmal: Serverschlüssel `ft_intake_<token>`, `processedSubmissions` in der
+App und die drei Prüfungen oben.
+
+### 4c. Nach der Antwort
+
+Die strukturierten Angaben stehen danach **an der verknüpften Offerte** und im
+Projekt. In der Offerte lassen sie sich auf Klick übernehmen — und zwar nur in
+**leere** Felder; Bestehendes wird nie überschrieben. Der Projekt-Prompt enthält
+alle website-relevanten Antworten samt Vision Room (`buildProjectPrompt`), danach
+entsteht die Vorschau und erst zuletzt, bewusst getrennt, der Kundenportal-Link
+der Phase 2.
+
+### 4d. Der Hinweis an einer unvollständigen Offerte
 
 Eine unvollständige Offerte bleibt eine **Offertenanfrage**: kein Versand, keine
-Offertennummer. Der Hinweis benennt, was fehlt — und **erfindet keinen Link**:
+Offertennummer. Der Hinweis benennt, was fehlt, und zeigt den Weg, der die Lücke
+wirklich schliesst:
 
-* **ohne Projekt** verlangt sie eine Projektzuordnung bzw. verweist auf die Anfrage,
-* **mit Projekt** verweist sie auf den Fragebogen-Link der Phase 1; das
-  Kundenportal gibt es an dieser Stelle noch gar nicht.
+* **ohne Projekt** → der Fragebogen-Link dieser Offerte (freiwillig, sperrt nichts),
+* **mit Projekt** → der Fragebogen-Link der Phase 1 am Vorgang.
+
+In beiden Fällen gilt: Das Kundenportal gibt es an dieser Stelle noch gar nicht.
 
 ## 5. Migration und Abwärtskompatibilität
 
@@ -372,6 +436,11 @@ keinen Fragebogen beantworten.
 `ftOutcome`, `sourceIntakeId`.
 Am Freigabe-Eintrag (`shares[projectId]`): `portalToken`, `portalReleased`,
 `portalReleasedAt`, `publishedAt`, `publishError`.
+Am Fragebogen (`intakes[id]`): `inviteToken`, `status`, `projectId`,
+`submissionId`, `answeredAt` und die Herkunft — `inquiryId` (aus einer Anfrage)
+**oder** `offerId` (aus einer Offerte ohne Projekt, siehe Abschnitt 4).
+Am Offertendokument: `projectId` — bei der Zuordnung aus dem Fragebogen das
+**einzige** geänderte Feld neben `updatedAt` und dem Verlaufseintrag.
 
 **Sicherheit:** Der Token steht im öffentlichen Link, enthält aber keine
 Projekt-ID und keinen Zugang zu Quantus. Herkunftsprüfung, Honeypot, Grössen-

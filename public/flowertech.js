@@ -1891,6 +1891,57 @@
     return kind === "invoice" ? "Entwurf" : "Entwurf (Offertenanfrage)";
   }
 
+  /* ── Der Fragebogen-Link einer Offerte OHNE Projekt ──────────────────────
+     Eine Offerte ohne Projekt ist ein vollwertiger Startpunkt. Hier steht
+     deshalb kein Zwang zur Projektzuordnung, sondern ein klarer optionaler
+     Knopf: „Fragebogen-Link erstellen“, danach „Fragebogen-Link kopieren“.
+     Der Link gehört zu genau dieser Offerte, zeigt Kundendaten & Vision Room
+     und nie eine Vorschau — das Kundenportal bleibt der zweite Link der
+     Phase 2 und entsteht erst mit der ausdrücklichen Veröffentlichung.
+     ------------------------------------------------------------------- */
+  function offerBriefingRowHtml(doc) {
+    var core = W();
+    if (!core || !doc) return "";
+    var state = offerBriefingState(doc.id);
+    if (!state) return "";
+    var call = state.mode === "create" ? "_ftCreateOfferIntakeLink" : "_ftCopyOfferIntakeLink";
+    var project = state.projectId ? projectById(state.projectId) : null;
+    return '<div class="ft-linkbar"><div class="ft-link-row"><span>' + esc(core.LINK_LABELS.intake) + "</span>" +
+      (state.url ? '<input readonly value="' + attr(state.url) + '" onclick="this.select()">' : "") +
+      '<button class="btn sm primary" onclick="window.' + call + "('" + attr(doc.id) + '\')" ' +
+        'title="' + attr(core.LINK_LABELS.intakeHint) + '">' + esc(state.label) + "</button>" +
+      (state.url ? '<a class="btn sm ghost" href="' + attr(state.url) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
+      "</div>" +
+      '<div class="mini"><b>' + esc(state.hint) + "</b> — " + esc(state.explain) + "</div>" +
+      (project
+        ? '<div class="ft-ready">✓ Projekt „' + esc(project.title || "") + '“ entstanden — diese Offerte ist ihm zugeordnet.</div>'
+        : "") +
+      "</div>";
+  }
+
+  /* Nach der Antwort der Kundschaft stehen die strukturierten Angaben an der
+     verknüpften Offerte — nicht nur im Projekt. Wer die Offerte fertigstellt,
+     hat damit genau die Daten vor sich, für die der Fragebogen da war. Die
+     Offerte selbst bleibt unverändert: Übernommen wird nur auf Klick, und nur
+     in Felder, die noch leer sind. */
+  function offerIntakeFactsHtml(doc) {
+    if (!doc || !doc.projectId) return "";
+    var project = projectById(doc.projectId) || {};
+    var intakeDoc = project.ftIntakeDocument;
+    var answers = ((intakeDoc || {}).answers || [])
+      .filter(function (a) { return String(a.answer || "").trim(); });
+    if (!answers.length) return "";
+    return '<div class="card p-3 mt-2"><h4 class="ft-sub">Kundendaten aus dem Fragebogen</h4>' +
+      '<div class="mini">Eingegangen ' + esc(dateTime(intakeDoc.submittedAt)) +
+        " · unverändert festgehalten · stehen ebenso am Projekt „" + esc(project.title || "") + "“.</div>" +
+      answers.map(function (a) {
+        return '<div class="ft-answer"><strong>' + esc(a.label) + "</strong><p>" + esc(a.answer) + "</p></div>";
+      }).join("") +
+      '<div class="ft-quick mt-2"><button class="btn sm" onclick="window._ftOfferAdoptIntakeClient(\'' +
+        attr(doc.id) + '\')" title="Füllt nur leere Felder — Bestehendes bleibt stehen">' +
+        "Kundendaten in die Offerte übernehmen</button></div></div>";
+  }
+
   function docEditor(kind, doc) {
     var isInvoice = kind === "invoice";
     var statuses = isInvoice ? INVOICE_STATUSES : OFFER_STATUSES;
@@ -1937,18 +1988,20 @@
     if (!isInvoice) {
       var gate = offerReadyToSend(doc);
       if (!gate.ready) {
-        // Es wird KEIN Link erfunden. Ohne Projekt verweist die Offerte auf die
-        // Anfrage und verlangt eine Projektzuordnung; mit Projekt führt der Weg
-        // über den Fragebogen der Phase 1 — nie über ein Kundenportal, das es
-        // an dieser Stelle noch gar nicht gibt.
+        // Ohne Projekt bleibt die Offerte eine Offerte: Der Hinweis benennt nur
+        // die fehlenden Pflichtdaten und zeigt den freiwilligen Weg, sie zu
+        // holen — den Fragebogen-Link GENAU DIESER Offerte. Mit Projekt führt
+        // der Weg über den Fragebogen der Phase 1 — in beiden Fällen nie über
+        // ein Kundenportal, das es an dieser Stelle noch gar nicht gibt.
         completeness = '<div class="ft-alert warn"><span><strong>Noch keine Offerte — Offertenanfrage.</strong> ' +
           "Es fehlt: " + esc((gate.missing || []).join(", ") || "Pflichtdaten") +
           ". Solange bleibt „Versendet\u201c gesperrt und es wird keine Offertennummer vergeben.</span>" +
           (doc.projectId
             ? '<span class="mini">Fehlende Angaben holst du über den Fragebogen-Link der Kundenanfrage ' +
               "(Reiter „Kundenanfragen\u201c) — das Kundenportal kommt erst danach.</span>"
-            : '<span class="mini">Diese Offerte gehört zu keinem Projekt. Ordne sie unten einem Projekt zu ' +
-              "oder bearbeite die zugehörige Anfrage — hier wird kein Link erfunden.</span>") +
+            : '<span class="mini">Fehlen dir Kundendaten? Der Fragebogen-Link dieser Offerte holt sie ein — ' +
+              "auch für eine noch unfertige Offerte. Er ist freiwillig und sperrt weder Speichern " +
+              "noch Versenden.</span>") +
           "</div>";
       }
     }
@@ -1979,11 +2032,16 @@
       deadlineWarning +
       completeness +
       // Der Stand des Kundenportals gehoert auch hierher: Wer an der Offerte
-      // sitzt, will ihn sehen, ohne den Vorgang zu wechseln.
+      // sitzt, will ihn sehen, ohne den Vorgang zu wechseln. Ohne Projekt steht
+      // an derselben Stelle der freiwillige Fragebogen-Link DIESER Offerte —
+      // und weiterhin kein Kundenportal.
       (doc.projectId
         ? '<div class="ft-linkbar">' + clientLinkRowHtml(doc.projectId, "Kundenportal-Link") + "</div>"
-        : '<div class="mini mt-2">Dieses Dokument gehört noch zu keinem Projekt — ' +
-          "ordne es unten einem zu, dann steht hier der Stand des Kundenportals.</div>") +
+        : isInvoice
+          ? '<div class="mini mt-2">Diese Rechnung gehört noch zu keinem Projekt — ' +
+            "ordne sie unten einem zu, dann steht hier der Stand des Kundenportals.</div>"
+          : offerBriefingRowHtml(doc)) +
+      (isInvoice ? "" : offerIntakeFactsHtml(doc)) +
       docFactsHtml(kind, doc) +
 
       '<h4 class="ft-sub">Eckdaten</h4><div class="ft-field-grid">' +
@@ -2441,6 +2499,7 @@
         '<div class="ft-doc-main"><strong>' + esc(intake.title || "Kundenanfrage") + "</strong>" +
         '<div class="mini">' + esc([
           (intake.questions || []).length + " Fragen",
+          intake.offerId ? "zur Offerte " + (intake.offerLabel || "") : "",
           project ? "Projekt: " + project.title : "noch keine Antwort",
           dateTime(intake.updatedAt),
         ].filter(Boolean).join(" · ")) + "</div></div>" +
@@ -3725,6 +3784,132 @@
     rerender();
   };
 
+  /* ── Fragebogen-Link an einer Offerte OHNE Projekt ───────────────────────
+     Eine Offerte ohne Projekt ist ein vollwertiger Startpunkt: erstellen,
+     speichern, versenden — ohne vorher ein Projekt anzulegen und ohne ein
+     fremdes Projekt auszuwählen. Fehlen Kundendaten, gibt es dafür diesen
+     freiwilligen Weg: den Fragebogen-Link GENAU DIESER Offerte.
+
+     Er zeigt ausschliesslich das Briefing samt Vision Room — nie eine
+     Vorschau, nie das Kundenportal. Ein zweiter Klick erzeugt keinen zweiten
+     Fragebogen, sondern liefert denselben Link (Zuordnung über offerId).
+     ------------------------------------------------------------------- */
+  function intakeForOffer(offerId) {
+    var core = W();
+    var ft = wf();
+    var doc = docById("offer", offerId);
+    if (!core || !ft || !doc) return null;
+    var existing = Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
+      .find(function (i) { return i && i.offerId === offerId; });
+    if (existing) return existing;
+
+    var intakeId = id();
+    var client = doc.client || {};
+    var intake = {
+      id: intakeId,
+      // Die Zuordnung hängt an der Offerte, nicht am Inhalt: Reload und
+      // Doppelklick treffen denselben Fragebogen.
+      offerId: offerId,
+      title: core.DEFAULT_INTAKE_TITLE,
+      intro: core.DEFAULT_INTAKE_INTRO,
+      deliveryType: "website",
+      questions: core.normalizeIntakeQuestions(core.DEFAULT_INTAKE_QUESTIONS),
+      inviteToken: makeToken(),
+      status: "open",
+      // Nur als interner Hinweis in der Liste — der veröffentlichte Fragebogen
+      // trägt davon nichts (publishIntakeForm ist eine Positivliste).
+      offerLabel: doc.number || doc.title || client.company || client.name || "",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    ft.intakes[intakeId] = intake;
+    doc.updatedAt = now();
+    pushHistory(doc, "briefing", "Fragebogen-Link erstellt — " + core.LINK_LABELS.intakeHint);
+    publishIntakeForm(intakeId);
+    save();
+    return intake;
+  }
+  window._ftIntakeForOffer = intakeForOffer;
+
+  // Der Zustand, den die Offerte anzeigt: erstellen, kopieren, beantwortet.
+  function offerBriefingState(offerId) {
+    var core = W();
+    var ft = wf();
+    var doc = docById("offer", offerId);
+    if (!core || !ft || !doc) return null;
+    var intake = Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
+      .find(function (i) { return i && i.offerId === offerId; }) || null;
+    return core.offerBriefingLinkState({ offer: doc, intake: intake });
+  }
+  window._ftOfferBriefingState = offerBriefingState;
+
+  window._ftCreateOfferIntakeLink = function (offerId) {
+    var core = W();
+    var intake = intakeForOffer(offerId);
+    if (!intake) return notify("warn", "Fragebogen", "Diese Offerte ist nicht mehr da.");
+    rerender();
+    var link = intakeLink(intake.id);
+    notify("ok", "Fragebogen", link
+      ? "Fragebogen-Link für diese Offerte erstellt — " + (core ? core.LINK_LABELS.intakeHint : "")
+      : "Ohne Firebase-Zugang gibt es noch keinen Fragebogen-Link.");
+  };
+
+  window._ftCopyOfferIntakeLink = function (offerId) {
+    var core = W();
+    var intake = intakeForOffer(offerId);
+    if (!intake) return notify("warn", "Fragebogen", "Diese Offerte ist nicht mehr da.");
+    var link = intakeLink(intake.id);
+    if (!link) return notify("warn", "Fragebogen", "Ohne Firebase-Zugang gibt es keinen Fragebogen-Link.");
+    copyText(link, (core ? core.LINK_LABELS.intake : "Fragebogen-Link") + " kopiert — " +
+      (core ? core.LINK_LABELS.intakeHint : ""));
+    rerender();
+  };
+
+  /* Die Offerte wird dem neuen Projekt ZUGEORDNET — unverändert und ohne
+     zweite Kopie. Die Entscheidung liegt im Kern (offerProjectLinkPlan),
+     damit sie idempotent bleibt: ein zweiter Durchlauf ordnet nicht erneut
+     zu, und eine Offerte eines anderen Vorgangs wird nicht umgehängt. */
+  function linkOfferToProject(offerId, projectId) {
+    var core = W();
+    var doc = docById("offer", offerId);
+    if (!core || !doc) return false;
+    var plan = core.offerProjectLinkPlan({ offer: doc, projectId: projectId });
+    if (!plan.link) return false;
+    doc.projectId = projectId;
+    doc.updatedAt = now();
+    pushHistory(doc, "linked", "Dem Projekt aus dem Fragebogen zugeordnet — Inhalt unverändert.");
+    return true;
+  }
+  window._ftLinkOfferToProject = linkOfferToProject;
+
+  /* Die Antworten der Kundschaft in die Offerte übernehmen — auf Klick und
+     nur in leere Felder. Automatisch geschieht das bewusst nicht: Die Offerte
+     wird dem Projekt zugeordnet, nicht überschrieben. */
+  window._ftOfferAdoptIntakeClient = function (offerId) {
+    var doc = docById("offer", offerId);
+    if (!doc || !doc.projectId) return;
+    var project = projectById(doc.projectId) || {};
+    var from = project.client || {};
+    doc.client = doc.client || {};
+    var taken = [];
+    [["company", "Firma"], ["name", "Name"], ["email", "E-Mail"], ["phone", "Telefon"],
+      ["street", "Adresse"]].forEach(function (field) {
+      var value = String(from[field[0]] || "").trim();
+      if (value && !String(doc.client[field[0]] || "").trim()) {
+        doc.client[field[0]] = value;
+        taken.push(field[1]);
+      }
+    });
+    if (!taken.length) {
+      return notify("ok", "Kundendaten", "Alles schon eingetragen — es wurde nichts überschrieben.");
+    }
+    doc.updatedAt = now();
+    pushHistory(doc, "client", "Kundendaten aus dem Fragebogen übernommen: " + taken.join(", "));
+    save();
+    rerender();
+    notify("ok", "Kundendaten", "Übernommen: " + taken.join(", ") + ". Bestehendes blieb unverändert.");
+  };
+
   window._ftOpenIntakeForInquiry = function (inquiryId) {
     var ft = wf();
     var intake = intakeForInquiry(inquiryId);
@@ -3904,6 +4089,10 @@
       };
     }
     createIntakeTask(projectId, built, doc);
+    // Kam der Fragebogen von einer Offerte ohne Projekt, wird GENAU DIESE
+    // Offerte dem neuen Projekt zugeordnet — unverändert und ohne zweite
+    // Kopie. Die Zuordnung ist idempotent: ein zweiter Durchlauf tut nichts.
+    if (intake.offerId) linkOfferToProject(intake.offerId, projectId);
     ensureToken(projectId, "formToken");
     // BEWUSST kein Kundenportal an dieser Stelle. Phase 1 endet hier: Es gibt
     // ein Projekt, den vollständigen Prompt und eine Aufgabe. Der zweite Link
