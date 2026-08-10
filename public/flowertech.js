@@ -3730,10 +3730,25 @@
     return binding.projectId ? projectById(binding.projectId) : null;
   }
 
+  /* Der Vertragstext für den Kundenlink. Zwei Schichten, bevor er überhaupt
+     angeboten wird: Der Entwurf bleibt innen (nur `released` zählt), und die
+     Kachel selbst entsteht erst mit der eigenen Freigabe am Projekt.
+
+     Dieser Durchstich fehlte: Der Kern kannte `contractHtml` seit jeher, es
+     wurde ihm aber nie übergeben — die Vertragskachel konnte deshalb auf dem
+     Kundenlink gar nicht erscheinen, egal welcher Schalter umgelegt war. */
+  function contractDocumentHtml(projectId) {
+    var core = W();
+    var doc = contractOf(projectId);
+    if (!core || !doc || doc.status !== "released") return "";
+    return core.contractToHtml(doc, wfVars(projectId));
+  }
+
   function customerAreaInput(intake, project) {
     var core = W();
     var offers = project ? docsOfProject("offer", project.id) : [];
     var offer = core ? core.customerAreaOffer(offers) : null;
+    var contract = project ? contractOf(project.id) : null;
     return {
       project: project || null,
       intake: intake || null,
@@ -3742,6 +3757,8 @@
       // Das Dokument ist dasselbe, das ich drucke — im Kern zusätzlich
       // entschärft, bevor es hinausgeht.
       offerDocumentHtml: offer ? printHtml("offer", offer) : "",
+      contractHtml: project ? contractDocumentHtml(project.id) : "",
+      contractTitle: (contract && contract.title) || "",
       prompt: project ? (project.ftPrompt || null) : null,
       today: today(),
     };
@@ -3760,38 +3777,77 @@
   // Link neu veröffentlicht — nie ein zweiter erzeugt.
   function refreshCustomerArea(projectId) {
     var intake = intakeOfProject(projectId);
-    if (!intake) return false;
-    publishIntakeForm(intake.id);
-    return true;
+    // Kein Fragebogen heisst: Es gibt gar keine Kundenadresse, auf der etwas
+    // erscheinen könnte. Das ist ein Misserfolg und wird auch so gemeldet.
+    if (!intake) {
+      return {
+        ok: false, token: "", pending: false,
+        error: "Dieses Projekt hat keinen Kundenlink — es gibt nichts zu veröffentlichen.",
+        done: Promise.resolve(false),
+      };
+    }
+    return publishIntakeForm(intake.id);
   }
   window._ftRefreshCustomerArea = refreshCustomerArea;
 
   // Der veröffentlichte Kundenbereich trägt nur, was die Kundschaft sehen soll:
   // Titel, Einleitung, Fragen, Status — und die freigegebenen Kacheln. Keine
   // internen IDs, keine Entwürfe, keine Kontaktangaben anderer Vorgänge.
+  /* Veröffentlichen heisst schreiben — und Schreiben kann scheitern.
+     Bisher verschwand genau das: Ohne Firebase-Zugang oder bei einem Fehler im
+     `set()` wurde still ein Vermerk gesetzt, während der Aufrufer weiterlief
+     und Erfolg meldete. Auf der Kundenadresse stand derweil der alte Stand.
+
+     Deshalb gibt diese Funktion jetzt Auskunft: `ok` für den bereits
+     bestätigten Fall, `pending` mit `done` für den laufenden Versuch, `error`
+     für den Fehlschlag. `token` bleibt daneben stehen, damit die Aufrufer, die
+     nur den Link brauchen, unverändert weiterarbeiten. */
+  function publishResult(extra) {
+    return Object.assign({ ok: false, pending: false, token: "", error: "", done: Promise.resolve(false) }, extra || {});
+  }
+
   function publishIntakeForm(intakeId) {
     var core = W();
     var ft = wf();
     var intake = intakeById(intakeId);
-    if (!core || !ft || !intake) return "";
-    if (!intake.inviteToken) { intake.inviteToken = makeToken(); intake.updatedAt = now(); }
-    var ref = intakeRef(intake.inviteToken);
-    if (!ref) {
-      intake.publishError = "Kein Firebase-Zugang — der Fragebogen ist noch nicht online.";
-      return intake.inviteToken;
+    if (!core || !ft || !intake) {
+      return publishResult({ error: "Der Fragebogen ist nicht auffindbar." });
     }
-    ref.set(core.customerAreaSnapshot(Object.assign(
+    if (!intake.inviteToken) { intake.inviteToken = makeToken(); intake.updatedAt = now(); }
+    var token = intake.inviteToken;
+    var ref = intakeRef(token);
+    if (!ref) {
+      intake.publishPending = false;
+      intake.publishError = "Kein Firebase-Zugang — der Fragebogen ist noch nicht online.";
+      save();
+      return publishResult({ token: token, error: intake.publishError });
+    }
+    // Der Versuch wird VOR dem Schreiben festgehalten. Solange er neuer ist als
+    // die letzte Bestätigung, gilt der veröffentlichte Stand als veraltet —
+    // und niemand darf „sichtbar" behaupten.
+    intake.publishRequestedAt = now();
+    intake.publishPending = true;
+    intake.publishError = "";
+    var done = ref.set(core.customerAreaSnapshot(Object.assign(
       customerAreaInput(intake, projectOfIntake(intake)),
       { company: ft.company || {}, now: now() }
     ))).then(function () {
       intake.publishedAt = now();
+      intake.publishPending = false;
       intake.publishError = "";
       save();
+      rerender();
+      return true;
     }).catch(function (e) {
+      intake.publishPending = false;
       intake.publishError = (e && e.message) || "Der Fragebogen konnte nicht veröffentlicht werden.";
       save();
+      // Ohne dieses Nachzeichnen blieb der Fehlschlag unsichtbar, bis zufällig
+      // etwas anderes die Oberfläche neu baute.
+      rerender();
+      return false;
     });
-    return intake.inviteToken;
+    return publishResult({ token: token, pending: true, done: done });
   }
   window._ftPublishIntakeForm = publishIntakeForm;
 
@@ -4203,8 +4259,15 @@
     var project = projectById(projectId);
     if (!core || !project) return false;
     var area = customerArea(projectId);
-    var gate = field === "ftCustomerPreview" ? area.preview : area.admin;
-    if (on && !gate.url) {
+    var gate = field === "ftCustomerPreview" ? area.preview
+      : field === "ftCustomerContract" ? area.contract : area.admin;
+    // Der Vertrag hängt an einem freigegebenen Dokument, nicht an einer
+    // Adresse — ein Entwurf geht nie hinaus.
+    if (on && field === "ftCustomerContract" && !gate.hasDoc) {
+      notify("warn", label, gate.reason);
+      return false;
+    }
+    if (on && field !== "ftCustomerContract" && !gate.url) {
       notify("warn", label, gate.reason);
       return false;
     }
@@ -4216,21 +4279,64 @@
       notify("warn", label, "Die Verwaltung erscheint erst mit der freigegebenen Vorschau.");
       return false;
     }
-    project[field] = { released: !!on, releasedAt: on ? now() : "" };
+    // Eine Vorschau, die nicht die bestätigte Claude-Code-Rückgabe ist, geht
+    // ausdrücklich als manuelle Testvorschau hinaus — nie als erledigte
+    // Claude-Vorschau. Der Vermerk hängt an der Freigabe, nicht am Gedächtnis.
+    var manuell = field === "ftCustomerPreview" && on && !area.preview.claudeConfirmed;
+    project[field] = {
+      released: !!on,
+      releasedAt: on ? now() : "",
+      mode: on && field === "ftCustomerPreview"
+        ? (manuell ? "manuell" : core.CLAUDE_HANDOFF_SOURCE) : "",
+    };
     project.updatedAt = now();
     project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
     project.ftContactLog.unshift({
       id: id(), at: now(), channel: "note",
-      text: label + (on ? " im Kundenbereich freigegeben." : " aus dem Kundenbereich zurückgezogen."),
+      text: label + (on
+        ? (manuell
+          ? " als MANUELLE Testvorschau freigegeben (keine bestätigte Claude-Code-Rückgabe)."
+          : " im Kundenbereich freigegeben.")
+        : " aus dem Kundenbereich zurückgezogen."),
     });
     // Widerruf wirkt sofort: Die Kachel verschwindet mit dieser Veröffentlichung.
-    refreshCustomerArea(projectId);
+    var published = refreshCustomerArea(projectId);
     save();
     rerender();
-    notify("ok", label, on
-      ? label + " ist jetzt im Kundenbereich sichtbar — derselbe Link wie bisher."
-      : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
+    reportRelease(projectId, label, on, manuell, published);
     return true;
+  }
+
+  /* Gemeldet wird erst, was wirklich geschehen ist. „Sichtbar" darf nur
+     dastehen, wenn der Kundenlink nachweislich neu geschrieben wurde — vorher
+     ist es eine Absicht, kein Zustand. Genau diese Verwechslung war der Grund,
+     weshalb Quantus die Vorschau als sichtbar meldete, während auf
+     flowertech.ch/fragebogen.html nichts stand. */
+  function reportRelease(projectId, label, on, manuell, published) {
+    var zusatz = manuell
+      ? " Sie ist als manuelle Testvorschau gekennzeichnet — keine bestätigte Claude-Code-Rückgabe."
+      : "";
+    if (published && published.error) {
+      return notify("err", label, "Nicht veröffentlicht: " + published.error
+        + " Die Freigabe steht, die Kundenadresse zeigt sie noch nicht.");
+    }
+    if (published && published.pending) {
+      notify("info", label, on ? "Wird veröffentlicht …" : "Wird zurückgezogen …");
+      published.done.then(function (erfolg) {
+        if (!erfolg) {
+          var intake = intakeOfProject(projectId);
+          return notify("err", label, "Die Veröffentlichung ist fehlgeschlagen — "
+            + ((intake && intake.publishError) || "der Kundenlink zeigt noch den alten Stand."));
+        }
+        notify("ok", label, on
+          ? label + " steht jetzt auf dem Kundenlink — derselbe Link wie bisher." + zusatz
+          : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
+      });
+      return undefined;
+    }
+    return notify("ok", label, on
+      ? label + " steht jetzt auf dem Kundenlink — derselbe Link wie bisher." + zusatz
+      : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
   }
 
   /* ── Unverbindliche Test-Leistungskachel ────────────────────────────────
@@ -4276,12 +4382,26 @@
         ? "TEST-Leistungskachel im Kundenbereich freigegeben (unverbindlich, ohne Preis, ohne Versand)."
         : "TEST-Leistungskachel aus dem Kundenbereich zurueckgezogen.",
     });
-    refreshCustomerArea(projectId);
+    var published = refreshCustomerArea(projectId);
     save();
     rerender();
-    notify("ok", "Test-Kachel", on
-      ? "Sichtbar auf dem bestehenden Kundenlink — als TEST gekennzeichnet, ohne Preis. Es wurde nichts versendet."
-      : "Nicht mehr sichtbar. Der Link bleibt gueltig.");
+    // Auch hier gilt: „sichtbar" erst nach dem bestätigten Schreiben.
+    if (published && published.error) {
+      notify("err", "Test-Kachel", "Nicht veröffentlicht: " + published.error
+        + " Die Freigabe steht, die Kundenadresse zeigt sie noch nicht.");
+    } else if (published && published.pending) {
+      published.done.then(function (erfolg) {
+        notify(erfolg ? "ok" : "err", "Test-Kachel", erfolg
+          ? (on
+            ? "Steht jetzt auf dem bestehenden Kundenlink — als TEST gekennzeichnet, ohne Preis. Es wurde nichts versendet."
+            : "Nicht mehr sichtbar. Der Link bleibt gueltig.")
+          : "Die Veröffentlichung ist fehlgeschlagen — der Kundenlink zeigt noch den alten Stand.");
+      });
+    } else {
+      notify("ok", "Test-Kachel", on
+        ? "Steht jetzt auf dem bestehenden Kundenlink — als TEST gekennzeichnet, ohne Preis. Es wurde nichts versendet."
+        : "Nicht mehr sichtbar. Der Link bleibt gueltig.");
+    }
     return true;
   };
 
@@ -4290,6 +4410,127 @@
   };
   window._ftReleaseCustomerAdmin = function (projectId, on) {
     return setCustomerRelease(projectId, "ftCustomerAdmin", on, "Verwaltung");
+  };
+  window._ftReleaseCustomerContract = function (projectId, on) {
+    return setCustomerRelease(projectId, "ftCustomerContract", on, "Vertrag");
+  };
+
+  /* ── Der Schritt „Claude-Code-Rückgabe" ─────────────────────────────────
+     Der verbindliche Ablauf: Quantus erzeugt den projektspezifischen Prompt →
+     Codex übergibt HTML-, Datei- und Deploy-Arbeit an Claude Code → Claude Code
+     veröffentlicht und liefert genau EINE HTTPS-Adresse zurück → diese Adresse
+     wird hier eingetragen und bestätigt → erst dann ist die reguläre Freigabe
+     auf dem Kundenlink eine erledigte Claude-Vorschau.
+
+     Wichtig ist, was hier NICHT geht: eine von Hand irgendwo abgeschriebene
+     Adresse als Claude-Code-Ergebnis ausgeben. Bestätigt wird ausschliesslich
+     die Adresse, die als Rückgabe eingetragen wurde — und die Vorschau gilt
+     nur dann als Claude-Ergebnis, wenn sie Zeichen für Zeichen dieselbe ist.
+     ------------------------------------------------------------------- */
+  function handoffOf(project) {
+    return project.ftClaudeHandoff && typeof project.ftClaudeHandoff === "object"
+      ? project.ftClaudeHandoff : {};
+  }
+
+  function logHandoff(project, text) {
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({ id: id(), at: now(), channel: "note", text: text });
+    project.updatedAt = now();
+  }
+
+  // Schritt 1: Der Auftrag ist draussen — ab hier wird gewartet.
+  window._ftClaudeHandoffRequest = function (projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var prompt = project.ftPrompt || {};
+    if (!String(prompt.text || "").trim()) {
+      notify("warn", "Claude-Code-Rückgabe",
+        "Ohne projektspezifischen Prompt gibt es nichts zu übergeben.");
+      return false;
+    }
+    var hand = handoffOf(project);
+    project.ftClaudeHandoff = {
+      requestedAt: now(),
+      // Ein neuer Auftrag hebt eine frühere Bestätigung auf: Was zurückkommt,
+      // ist eine neue Rückgabe und wird neu geprüft.
+      returnedUrl: "", returnedAt: "", confirmedAt: "",
+      note: hand.note || "",
+    };
+    logHandoff(project, "Auftrag an Claude Code übergeben — warte auf die Rückgabe-Adresse.");
+    save();
+    rerender();
+    notify("ok", "Claude-Code-Rückgabe", "Status: Warte auf Claude Code.");
+    return true;
+  };
+
+  // Schritt 2: Die Rückgabe kommt an. Sie wird eingetragen, nicht geglaubt.
+  window._ftClaudeHandoffReturn = function (projectId, url) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var sauber = core.clientSafeUrl(url);
+    if (!sauber) {
+      notify("warn", "Claude-Code-Rückgabe",
+        "Als Rückgabe zählt ausschliesslich eine vollständige HTTPS-Adresse.");
+      return false;
+    }
+    var hand = handoffOf(project);
+    project.ftClaudeHandoff = {
+      requestedAt: hand.requestedAt || now(),
+      returnedUrl: sauber,
+      returnedAt: now(),
+      // Eintragen ist noch nicht bestätigen — das ist der ganze Punkt.
+      confirmedAt: "",
+      note: hand.note || "",
+    };
+    logHandoff(project, "Rückgabe-Adresse von Claude Code eingetragen: " + sauber + " (noch nicht bestätigt).");
+    save();
+    rerender();
+    notify("ok", "Claude-Code-Rückgabe", "Status: Rückgabe-Link prüfen.");
+    return true;
+  };
+
+  // Schritt 3: Bestätigen — und genau diese Adresse als Vorschau übernehmen.
+  window._ftClaudeHandoffConfirm = function (projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var hand = handoffOf(project);
+    var sauber = core.clientSafeUrl(hand.returnedUrl);
+    if (!sauber) {
+      notify("warn", "Claude-Code-Rückgabe", "Es liegt keine gültige Rückgabe-Adresse vor.");
+      return false;
+    }
+    project.ftClaudeHandoff = Object.assign({}, hand, { returnedUrl: sauber, confirmedAt: now() });
+    // Die bestätigte Rückgabe IST die Vorschau-Adresse. Nichts wird abgetippt.
+    project.previewUrl = sauber;
+    logHandoff(project, "Claude-Code-Rückgabe bestätigt und als Vorschau-Adresse übernommen: " + sauber);
+    save();
+    rerender();
+    notify("ok", "Claude-Code-Rückgabe",
+      "Bestätigt. Die reguläre Vorschau-Freigabe ist jetzt möglich.");
+    return true;
+  };
+
+  window._ftClaudeHandoffReturnFromField = function (projectId) {
+    var feld = document.getElementById("ftClaudeReturnUrl");
+    var wert = ((feld || {}).value || "").trim();
+    if (!window._ftClaudeHandoffReturn(projectId, wert)) return false;
+    if (feld) feld.value = "";
+    return true;
+  };
+
+  // Zurück auf Anfang — ohne die Vorschau-Adresse still zu verändern.
+  window._ftClaudeHandoffReset = function (projectId) {
+    var project = projectById(projectId);
+    if (!project) return false;
+    project.ftClaudeHandoff = { requestedAt: "", returnedUrl: "", returnedAt: "", confirmedAt: "", note: "" };
+    logHandoff(project, "Claude-Code-Rückgabe zurückgesetzt.");
+    save();
+    rerender();
+    notify("ok", "Claude-Code-Rückgabe", "Zurückgesetzt — der Ablauf beginnt von vorn.");
+    return true;
   };
 
   /* Ein Änderungswunsch aus dem Kundenbereich. Er kommt mit dem Einladungs-
@@ -5466,11 +5707,84 @@
     return '<div class="sep"></div>' +
       '<div class="mini">Freigaben für den Kundenbereich — sie wandern in genau den Link, ' +
         "den die Kundschaft schon hat.</div>" +
+      claudeHandoffHtml(projectId) +
       row("Website-Vorschau & Änderungswünsche", area.preview, "_ftReleaseCustomerPreview",
         "Die Kundschaft sieht die Vorschau und kann dazu Änderungswünsche melden.") +
+      previewSourceHtml(area.preview) +
+      row("Vertrag", area.contract, "_ftReleaseCustomerContract",
+        "Die Kundschaft liest den freigegebenen Projektauftrag auf demselben Link.") +
       row("Verwaltung", area.admin, "_ftReleaseCustomerAdmin",
         "Die Kundschaft sieht die Verwaltungsadresse.") +
       testServiceHtml(projectId);
+  }
+
+  /* Freigegeben ist nicht dasselbe wie sichtbar. Sichtbar heisst: Der
+     Datensatz hinter dem Kundenlink trägt es wirklich. */
+  function sichtbarkeit(visible, publication) {
+    if (!visible) return "nicht sichtbar";
+    if (publication && publication.ok) return "sichtbar";
+    if (publication && publication.pending) return "wird veröffentlicht …";
+    return "freigegeben, nicht veröffentlicht";
+  }
+
+  /* Woher die freigegebene Vorschau stammt — im Klartext, direkt unter dem
+     Schalter. Eine manuelle Adresse wird nie als Claude-Ergebnis ausgegeben. */
+  function previewSourceHtml(preview) {
+    if (!preview || !preview.url) return "";
+    if (preview.claudeConfirmed) {
+      return '<div class="ft-ready">✓ Quelle: Claude Code · bestätigte Rückgabe' +
+        (preview.handoff && preview.handoff.confirmedAt
+          ? " · Stand " + esc(dateTime(preview.handoff.confirmedAt)) : "") + "</div>";
+    }
+    return '<div class="ft-legal-note">⚠ Quelle: manuell eingetragen — <b>Test-/Manuell-Vorschau</b>, ' +
+      "keine bestätigte Claude-Code-Rückgabe. " + esc(preview.sourceReason || "") + "</div>";
+  }
+
+  /* Der Schritt „Claude-Code-Rückgabe" als das, was er ist: drei Stationen,
+     die nacheinander erledigt werden. Der Status steht oben, die jeweils
+     nächste Handlung darunter. */
+  function claudeHandoffHtml(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return "";
+    var state = core.claudeHandoffState({ project: project });
+    var schritte = state.steps.map(function (s) {
+      return '<span class="badge' + (s.current ? " on" : "") + '">' +
+        (s.done ? "✓ " : s.current ? "▶ " : "") + esc(s.label) + "</span>";
+    }).join(" ");
+
+    var aktion = "";
+    if (state.status === "open") {
+      aktion = '<button class="btn sm primary" onclick="window._ftClaudeHandoffRequest(\'' +
+        attr(projectId) + '\')">An Claude Code übergeben</button>';
+    } else if (state.status === "waiting" || state.status === "review") {
+      aktion = '<div class="ft-inline-form">' +
+        '<input id="ftClaudeReturnUrl" placeholder="Rückgabe-URL von Claude Code (https://…)" value="">' +
+        '<button class="btn sm primary" onclick="window._ftClaudeHandoffReturnFromField(\'' +
+          attr(projectId) + '\')">Rückgabe eintragen</button></div>' +
+        (state.status === "review"
+          ? '<div class="ft-row"><span>Zurückgegeben<small> · ' + esc(state.returnedUrl) +
+              (state.returnedAt ? " · " + esc(dateTime(state.returnedAt)) : "") + "</small></span>" +
+              '<button class="btn sm primary" onclick="window._ftClaudeHandoffConfirm(\'' +
+              attr(projectId) + '\')">Prüfen &amp; bestätigen</button></div>'
+          : "");
+    } else {
+      aktion = '<div class="ft-ready">✓ Bestätigt: ' + esc(state.returnedUrl) +
+        (state.confirmedAt ? " · Stand " + esc(dateTime(state.confirmedAt)) : "") + "</div>";
+    }
+
+    return '<div class="sep"></div>' +
+      '<div class="ft-release-row"><div><b>Claude-Code-Rückgabe</b>' +
+        '<div class="mini">Quantus erzeugt den Prompt · Codex übergibt an Claude Code · ' +
+        "Claude Code veröffentlicht und liefert die HTTPS-Adresse zurück · sie wird hier " +
+        "bestätigt · erst dann ist die reguläre Vorschau-Freigabe eine erledigte " +
+        "Claude-Vorschau.</div></div>" +
+        '<button class="btn sm ghost" onclick="window._ftClaudeHandoffReset(\'' +
+          attr(projectId) + '\')">Zurücksetzen</button></div>' +
+      '<div class="ft-addr">' + schritte + "</div>" +
+      '<div class="mini mt-2">Status: <b>' + esc(state.statusLabel) + "</b> · " + esc(state.hint) + "</div>" +
+      aktion +
+      (state.reason ? '<div class="mini mt-2">' + esc(state.reason) + "</div>" : "");
   }
 
   /* Die Test-Kachel im Bedienfeld. Bewusst unterhalb der normalen Freigaben
@@ -5787,14 +6101,23 @@
         ? '<div class="card p-4 mt-3"><h3>Vorschau und Verwaltung beim Kunden</h3><div class="sep"></div>' +
           '<div class="mini">Genau die hier hinterlegten Adressen erscheinen — nach der Freigabe — ' +
           "in den zwei Kacheln des Kundenbereichs.</div>" +
+          /* „sichtbar" behauptet etwas über die Kundenadresse — das darf hier
+             nur stehen, wenn der Kundenlink nachweislich neu geschrieben wurde.
+             Vorher ist es eine Freigabe, kein Zustand. Genau diese Verwechslung
+             liess Quantus die Vorschau als sichtbar melden, während auf
+             flowertech.ch/fragebogen.html nichts stand. */
           '<div class="ft-row"><span>Website-Vorschau<small> · ' +
             esc(area.preview.url || "keine Adresse hinterlegt") + "</small></span><strong>" +
-            (area.preview.visible ? "sichtbar" : "nicht sichtbar") + "</strong></div>" +
+            sichtbarkeit(area.preview.visible, area.publication) + "</strong></div>" +
+          previewSourceHtml(area.preview) +
           '<div class="ft-row"><span>Verwaltung<small> · ' +
             esc(area.admin.url || "keine Adresse hinterlegt") + "</small></span><strong>" +
-            (area.admin.visible ? "sichtbar" : "nicht sichtbar") + "</strong></div>" +
+            sichtbarkeit(area.admin.visible, area.publication) + "</strong></div>" +
           (area.preview.visible || area.admin.visible ? "" :
             '<div class="mini mt-2">' + esc(area.preview.reason || area.admin.reason) + "</div>") +
+          (area.publication.ok ? "" :
+            '<div class="ft-legal-note mt-2">⚠ ' + esc(area.publication.reason) +
+            " Bis dahin zeigt die Kundenadresse den alten Stand.</div>") +
           "</div>"
         : "") +
 

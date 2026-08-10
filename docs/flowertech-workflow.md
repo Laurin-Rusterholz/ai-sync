@@ -511,6 +511,83 @@ unverändert weiter.
 > Seite liegt ausserhalb dieses Repos; hier stehen Datenvertrag, Freigaben und
 > Veröffentlichung.
 
+### 4g-1. Freigegeben ist nicht sichtbar
+
+Eine Freigabe in Quantus ist eine **Absicht**. Sichtbar wird sie erst, wenn der
+Datensatz unter `flowertech/intakeForms/<token>` wirklich neu geschrieben ist.
+Diese zwei Dinge wurden verwechselt — mit dem Ergebnis, dass Quantus am Projekt
+Lehner „sichtbar" meldete, während auf `flowertech.ch/fragebogen.html?e=<token>`
+keine Vorschau stand:
+
+* `publishIntakeForm()` schrieb asynchron und meldete nichts zurück; ohne
+  Firebase-Zugang setzte es still einen Vermerk und lief weiter.
+* `refreshCustomerArea()` gab in jedem Fall „true" zurück.
+* `setCustomerRelease()` las diesen Rückgabewert gar nicht erst und meldete
+  ausnahmslos „ist jetzt im Kundenbereich sichtbar".
+* `contractHtml`/`contractTitle` wurden dem Kern nie übergeben — die
+  Vertragskachel konnte auf dem Kundenlink gar nicht erscheinen.
+
+Seither gilt:
+
+| Grösse | Bedeutung |
+| --- | --- |
+| `preview.visible` / `stage.visible` | freigegeben — die Absicht steht |
+| `publication.ok` | der Kundenlink wurde **bestätigt neu geschrieben** |
+| `stage.live`, `liveLabels` | beides zusammen — nur das darf „sichtbar" heissen |
+
+`publishIntakeForm()` liefert `{ ok, pending, token, error, done }`;
+`refreshCustomerArea()` reicht das durch; `setCustomerRelease()` meldet erst
+nach dem bestätigten Schreiben Erfolg und sonst den Fehlschlag im Klartext.
+`intakePublication()` rechnet den Nachweis aus `publishedAt`,
+`publishRequestedAt`, `publishPending` und `publishError`.
+
+### 4g-2. Der Schritt „Claude-Code-Rückgabe"
+
+Der verbindliche Weg zu einer Projekt-Website — und die Stelle, an der die
+Vorschau ihre Herkunft bekommt:
+
+```text
+Quantus erzeugt den projektspezifischen Prompt
+  → Codex übergibt alle HTML-, Datei- und Deploy-Aufgaben an Claude Code
+  → Claude Code erstellt, veröffentlicht und liefert EINE HTTPS-Rückgabe-URL
+  → Codex trägt genau diese URL in Quantus ein und bestätigt sie
+  → erst dann ist die reguläre Freigabe eine erledigte Claude-Vorschau
+```
+
+Vier Stationen (`CLAUDE_HANDOFF_STEPS`, gerechnet in `claudeHandoffState()`):
+
+| Status | Beschriftung | Bedeutung |
+| --- | --- | --- |
+| `open` | Noch nicht übergeben | Es wartet kein Auftrag bei Claude Code |
+| `waiting` | **Warte auf Claude Code** | Übergeben, noch keine Rückgabe |
+| `review` | **Rückgabe-Link prüfen** | HTTPS-Adresse eingetragen, nicht bestätigt |
+| `confirmed` | **freigegeben** | Bestätigt — reguläre Freigabe möglich |
+
+Am Projekt steht das in `ftClaudeHandoff` (`requestedAt`, `returnedUrl`,
+`returnedAt`, `confirmedAt`). Bedient wird es mit `_ftClaudeHandoffRequest`,
+`_ftClaudeHandoffReturn`, `_ftClaudeHandoffConfirm`, `_ftClaudeHandoffReset`.
+
+Die Regeln, die das Ganze überhaupt erst verbindlich machen:
+
+* Als Rückgabe zählt **ausschliesslich eine vollständige HTTPS-Adresse**.
+* Eintragen ist nicht bestätigen. Erst die Bestätigung übernimmt die Adresse
+  als `previewUrl` — sie wird nie abgetippt.
+* Die Vorschau gilt nur dann als Claude-Ergebnis, wenn `previewUrl` **Zeichen
+  für Zeichen** die bestätigte Rückgabe ist. Wird sie danach von Hand
+  ausgetauscht, ist sie sofort wieder manuell.
+* Eine manuelle Adresse **verschwindet nicht** — sie erscheint vollständig,
+  wird aber als `source: "manuell"`, `provisional: true` veröffentlicht und auf
+  der Kundenseite als **Testvorschau · Zwischenstand** benannt. Sie wird nie als
+  erledigte Claude-Vorschau ausgegeben; die Freigabe vermerkt das im
+  Kontaktverlauf und in `ftCustomerPreview.mode`.
+* Ein neuer Auftrag an Claude Code hebt eine frühere Bestätigung auf.
+
+> Der heutige Lehner-Link (`https://beispiel-lehner.netlify.app/`) ist genau
+> das: eine **manuelle Testvorschau**, kein Claude-Code-Ergebnis.
+
+Der Kundenlink bleibt dabei, was er ist: **eine** Adresse, die mit den Freigaben
+wächst. Belegt in `tests/flowertech-claude-rueckgabe.test.mjs`.
+
 ## 4h. Der Reiter „Claude-Prompt"
 
 Der Reiter zeigt den **vollständigen, automatisch erzeugten Prompt dieses
