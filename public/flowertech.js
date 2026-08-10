@@ -3807,8 +3807,7 @@
 
      Deshalb gibt diese Funktion jetzt Auskunft: `ok` für den bereits
      bestätigten Fall, `pending` mit `done` für den laufenden Versuch, `error`
-     für den Fehlschlag. `token` bleibt daneben stehen, damit die Aufrufer, die
-     nur den Link brauchen, unverändert weiterarbeiten. */
+     für den Fehlschlag. `token` sagt daneben, welcher Kundenlink gemeint war. */
   function publishResult(extra) {
     return Object.assign({ ok: false, pending: false, token: "", error: "", done: Promise.resolve(false) }, extra || {});
   }
@@ -4323,27 +4322,25 @@
     var zusatz = manuell
       ? " Sie ist als manuelle Testvorschau gekennzeichnet — keine bestätigte Claude-Code-Rückgabe."
       : "";
+    var gelungen = function () {
+      notify("ok", label, on
+        ? label + " steht jetzt auf dem Kundenlink — derselbe Link wie bisher." + zusatz
+        : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
+    };
     if (published && published.error) {
-      return notify("err", label, "Nicht veröffentlicht: " + published.error
+      notify("err", label, "Nicht veröffentlicht: " + published.error
         + " Die Freigabe steht, die Kundenadresse zeigt sie noch nicht.");
-    }
-    if (published && published.pending) {
+    } else if (published && published.pending) {
       notify("info", label, on ? "Wird veröffentlicht …" : "Wird zurückgezogen …");
       published.done.then(function (erfolg) {
-        if (!erfolg) {
-          var intake = intakeOfProject(projectId);
-          return notify("err", label, "Die Veröffentlichung ist fehlgeschlagen — "
-            + ((intake && intake.publishError) || "der Kundenlink zeigt noch den alten Stand."));
-        }
-        notify("ok", label, on
-          ? label + " steht jetzt auf dem Kundenlink — derselbe Link wie bisher." + zusatz
-          : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
+        if (erfolg) return gelungen();
+        var intake = intakeOfProject(projectId);
+        notify("err", label, "Die Veröffentlichung ist fehlgeschlagen — "
+          + ((intake && intake.publishError) || "der Kundenlink zeigt noch den alten Stand."));
       });
-      return undefined;
+    } else {
+      gelungen();
     }
-    return notify("ok", label, on
-      ? label + " steht jetzt auf dem Kundenlink — derselbe Link wie bisher." + zusatz
-      : label + " ist nicht mehr sichtbar. Der Link bleibt gültig.");
   }
 
   /* ── Unverbindliche Test-Leistungskachel ────────────────────────────────
