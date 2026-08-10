@@ -496,11 +496,14 @@
     };
     intake.updatedAt = now();
 
-    // Noch keine Antwort? Dann wartet die Vision auf das Absenden des
-    // Fragebogens — sie erzeugt bewusst nichts von sich aus.
-    if (!intake.projectId) { save(); return true; }
+    // Noch keine Antwort UND kein gebundenes Projekt? Dann wartet die Vision
+    // auf das Absenden des Fragebogens — sie erzeugt bewusst nichts von sich
+    // aus. Hängt der Fragebogen an einem bestehenden Projekt, gehört sie
+    // dorthin; auch dann entsteht kein zweiter Vorgang.
+    var target = core.intakeBinding(intake).projectId;
+    if (!target) { save(); return true; }
 
-    var project = projectById(intake.projectId);
+    var project = projectById(target);
     if (!project) { save(); return true; }
     var doc = project.ftIntakeDocument || { answers: [] };
     doc.answers = (doc.answers || []).map(function (a) {
@@ -515,7 +518,7 @@
     project.ftIntakeDocument = doc;
     project.ftVision = { idea: idea, features: features, source: "fragebogen", submittedAt: now() };
     project.updatedAt = now();
-    regeneratePrompt(intake.projectId);
+    regeneratePrompt(target);
     save();
     notify("ok", "Vision Room", "Ergänzung zum Fragebogen übernommen");
     return true;
@@ -2182,12 +2185,20 @@
       '<button class="btn sm" onclick="window._ftAiProjectReport(\'' + attr(project.id) + '\')">✨ KI-Statusbericht</button>' +
       '<button class="btn sm ghost" onclick="location.hash=\'#/flowertech\'">FlowerTech öffnen</button>' +
       "</div></div>" +
-      // Direkt unter dem Kopf, auf jedem Reiter: der Link, den die Kundschaft
-      // bekommt. Er war bisher nur im Reiter „Kundenportal" — dort sucht ihn
-      // niemand, der gerade an einer Offerte arbeitet.
-      '<div class="ft-linkbar">' + clientLinkRowHtml(project.id, "Kundenportal-Link") +
+      // Direkt unter dem Kopf, auf jedem Reiter: die zwei Links der zwei
+      // Phasen — getrennt beschriftet, in der richtigen Reihenfolge.
+      //
+      //   Phase 1: der Fragebogen-Link. Er steht IMMER da, auch ohne
+      //            Kundenportal — er ist der Weg, Kundendaten einzuholen.
+      //   Phase 2: der Kundenportal-Link. Er erscheint weiterhin erst nach
+      //            der ausdrücklichen Veröffentlichung.
+      '<div class="ft-linkbar ft-linkbar-intake"><div class="ft-phase">Phase 1 · Fragebogen</div>' +
+      projectIntakeRowHtml(project.id) + "</div>" +
+      '<div class="ft-linkbar"><div class="ft-phase">Phase 2 · Kundenportal</div>' +
+      clientLinkRowHtml(project.id, "Kundenportal-Link") +
       '<div class="mini">Zeigt der Kundschaft Vorschau, Änderungswünsche, AGB und Rückfragen. ' +
-      "Wird nie automatisch verschickt — du entscheidest, wann sie ihn bekommt.</div></div>";
+      "Wird nie automatisch verschickt — du entscheidest, wann sie ihn bekommt. " +
+      "Das ist NICHT der Fragebogen-Link darüber.</div></div>";
 
     var kpis = '<div class="ft-kpis">' +
       '<div class="ft-kpi"><span>Offene Aufgaben</span><strong>' + open.length + "</strong></div>" +
@@ -2407,7 +2418,10 @@
     var core = W();
     var link = intakeLink(intake.id);
     var coverage = core.intakeCoverage(intake.questions || []);
-    var project = intake.projectId ? projectById(intake.projectId) : null;
+    // Der Vorgang dieses Fragebogens: entweder der daraus ENTSTANDENE oder der,
+    // an den er von Anfang an GEBUNDEN ist.
+    var binding = core.intakeBinding(intake);
+    var project = binding.projectId ? projectById(binding.projectId) : null;
     var doc = project && project.ftIntakeDocument;
     var set = "window._ftSetIntakeField('" + attr(intake.id) + "',";
 
@@ -2418,7 +2432,7 @@
           return '<div class="ft-answer"><strong>' + esc(a.label) + "</strong><p>" + esc(a.answer) + "</p></div>";
         }).join("") +
         '<div class="ft-quick mt-2"><button class="btn sm primary" onclick="window._ftOpenProjectAt(\'' +
-          attr(intake.projectId) + '\',\'vorschau\')">→ Projekt öffnen: ' + esc(project.title) + "</button></div></div>"
+          attr(binding.projectId) + '\',\'vorschau\')">→ Projekt öffnen: ' + esc(project.title) + "</button></div></div>"
       : "";
 
     return '<div class="card p-4 mb-3">' +
@@ -2446,9 +2460,14 @@
         : intake.publishedAt
           ? '<div class="ft-ready">✓ Fragebogen ist online · Stand ' + esc(dateTime(intake.publishedAt)) + "</div>"
           : '<div class="mini">Wird beim nächsten Speichern veröffentlicht.</div>') +
-      '<div class="mini mt-2">Der Link erzeugt noch nichts. Erst wenn die Kundschaft absendet, ' +
-        "entsteht genau ein Projekt mit Anfrage-Dokument und genau einer Aufgabe " +
-        "\u201eOffertenanfrage\u201c.</div>" +
+      (binding.mode === "bound"
+        ? '<div class="mini mt-2">Dieser Fragebogen gehört zum Projekt <b>' +
+          esc((project && project.title) || binding.projectId) + "</b>. Die Antwort erzeugt " +
+          "ausdrücklich KEIN zweites Projekt: Sie aktualisiert dieses Projekt und sorgt für " +
+          "höchstens eine Aufgabe \u201eOffertenanfrage\u201c.</div>"
+        : '<div class="mini mt-2">Der Link erzeugt noch nichts. Erst wenn die Kundschaft absendet, ' +
+          "entsteht genau ein Projekt mit Anfrage-Dokument und genau einer Aufgabe " +
+          "\u201eOffertenanfrage\u201c.</div>") +
       (coverage.complete
         ? '<div class="ft-ready">✓ Der Fragebogen deckt alle Pflichtangaben ab.</div>'
         : '<div class="ft-legal-note">⚠ Es fehlen noch Fragen zu: ' + esc(coverage.missing.join(", ")) +
@@ -3865,6 +3884,185 @@
     rerender();
   };
 
+  /* ── Fragebogen-Link eines BESTEHENDEN Projekts ─────────────────────────
+     Der Link der Phase 1, jetzt auch dort, wo das Projekt schon da ist. Er
+     hängt über `boundProjectId` an genau diesem Projekt: Reload, Doppelklick
+     und ein zweiter Aufruf treffen denselben Fragebogen und denselben Token,
+     damit ein bereits verschickter Link gültig bleibt.
+
+     Er zeigt ausschliesslich Kundendaten, Bestandesaufnahme und Vision Room —
+     nie Vorschau, Vertrag, AGB, Kosten oder Kundenportal. Der Kundenportal-
+     Link bleibt der zweite Link und erscheint weiterhin erst nach der
+     ausdrücklichen Veröffentlichung.
+     ------------------------------------------------------------------- */
+  function intakeOfProject(projectId) {
+    var ft = wf();
+    if (!ft || !projectId) return null;
+    var list = Object.keys(ft.intakes || {}).map(function (key) { return ft.intakes[key]; });
+    // Zuerst der ausdrücklich gebundene Fragebogen. Ist keiner da, zählt auch
+    // der Fragebogen, AUS DEM dieses Projekt entstanden ist — sonst stünde an
+    // einem so entstandenen Projekt ein zweiter Link derselben Phase.
+    return list.find(function (i) { return i && i.boundProjectId === projectId; })
+      || list.find(function (i) { return i && i.projectId === projectId; })
+      || null;
+  }
+  window._ftIntakeOfProject = intakeOfProject;
+
+  function intakeForProject(projectId) {
+    var core = W();
+    var ft = wf();
+    var project = projectById(projectId);
+    if (!core || !ft || !project) return null;
+    var existing = intakeOfProject(projectId);
+    if (existing) {
+      // Ein bestehender Fragebogen wird gebunden, nicht ersetzt: derselbe
+      // Token, derselbe verschickte Link.
+      if (!existing.boundProjectId) {
+        existing.boundProjectId = projectId;
+        existing.updatedAt = now();
+        save();
+      }
+      return existing;
+    }
+
+    var intakeId = id();
+    var intake = {
+      id: intakeId,
+      // Die Bindung an das Projekt. NICHT projectId: das hiesse „aus diesem
+      // Fragebogen ist ein Projekt entstanden" und würde den öffentlichen
+      // Fragebogen sofort als beantwortet schliessen.
+      boundProjectId: projectId,
+      title: core.DEFAULT_INTAKE_TITLE,
+      intro: core.DEFAULT_INTAKE_INTRO,
+      deliveryType: project.deliveryType === "program" ? "program" : "website",
+      questions: core.normalizeIntakeQuestions(core.DEFAULT_INTAKE_QUESTIONS),
+      inviteToken: makeToken(),
+      status: "open",
+      // Nur intern, damit die Liste der Kundenanfragen lesbar bleibt — der
+      // veröffentlichte Fragebogen trägt davon nichts (Positivliste).
+      projectLabel: project.title || "",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    ft.intakes[intakeId] = intake;
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({
+      id: id(), at: now(), channel: "note",
+      text: "Fragebogen-Link dieses Projekts erstellt — " + core.LINK_LABELS.intakeHint + ".",
+    });
+    project.updatedAt = now();
+    publishIntakeForm(intakeId);
+    save();
+    return intake;
+  }
+  window._ftIntakeForProject = intakeForProject;
+
+  // Der Zustand, den die FlowerTech-Karte anzeigt: erstellen, kopieren,
+  // beantwortet. Ohne Seiteneffekt — er legt nichts an.
+  function projectIntakeState(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return null;
+    return core.projectIntakeLinkState({ project: project, intake: intakeOfProject(projectId) });
+  }
+  window._ftProjectIntakeState = projectIntakeState;
+
+  function projectIntakeLink(projectId) {
+    var intake = intakeOfProject(projectId);
+    return intake ? intakeLink(intake.id) : "";
+  }
+  window._ftProjectIntakeLink = projectIntakeLink;
+
+  window._ftCreateProjectIntakeLink = function (projectId) {
+    var core = W();
+    var intake = intakeForProject(projectId);
+    if (!intake) return notify("warn", "Fragebogen", "Dieses Projekt ist nicht mehr da.");
+    rerender();
+    var link = intakeLink(intake.id);
+    notify(link ? "ok" : "warn", "Fragebogen", link
+      ? "Fragebogen-Link für dieses Projekt erstellt — " + (core ? core.LINK_LABELS.intakeHint : "")
+      : "Ohne Firebase-Zugang gibt es noch keinen Fragebogen-Link.");
+  };
+
+  window._ftCopyProjectIntakeLink = function (projectId) {
+    var core = W();
+    var intake = intakeForProject(projectId);
+    if (!intake) return notify("warn", "Fragebogen", "Dieses Projekt ist nicht mehr da.");
+    var link = intakeLink(intake.id);
+    if (!link) return notify("warn", "Fragebogen", "Ohne Firebase-Zugang gibt es keinen Fragebogen-Link.");
+    // Der Erfolgshinweis nennt ausdrücklich, WELCHER Link kopiert wurde — die
+    // Verwechslung mit dem Kundenportal-Link entstand genau hier.
+    copyText(link, core ? core.LINK_LABELS.intakeCopied : "Fragebogen-Link kopiert");
+    rerender();
+  };
+
+  /* Die Zeile, die der Fragebogen-Link auf der Projektseite bekommt. Sie ist
+     bewusst NICHT clientLinkRowHtml: andere Beschriftung, andere Phase,
+     anderer Empfängerkreis — und sie steht auch dann da, wenn es noch gar
+     kein Kundenportal gibt. */
+  function projectIntakeRowHtml(projectId) {
+    var core = W();
+    var state = projectIntakeState(projectId);
+    if (!core || !state || state.mode === "none") return "";
+    // Die Zeile trägt IMMER dieselbe vollständige Beschriftung — auch dann,
+    // wenn es den Link noch gar nicht gibt. Nur so ist von Anfang an klar,
+    // welcher der beiden Links hier entsteht.
+    var head = '<div class="ft-link-row ft-link-intake"><span>' + esc(core.LINK_LABELS.intakeFull) + "</span>";
+    if (state.mode === "create") {
+      return head +
+        '<button class="btn sm primary" onclick="window._ftCreateProjectIntakeLink(\'' + attr(projectId) +
+          '\')" title="' + attr(core.LINK_LABELS.intakeHint) + '">' + esc(core.LINK_LABELS.intakeCreate) +
+          "</button></div>" +
+        '<div class="mini">' + esc(state.explain) + "</div>";
+    }
+    return '<div class="ft-link-row ft-link-intake"><span>' + esc(core.LINK_LABELS.intakeFull) + "</span>" +
+      '<input readonly value="' + attr(state.url) + '" onclick="this.select()">' +
+      '<button class="btn sm primary" onclick="window._ftCopyProjectIntakeLink(\'' + attr(projectId) +
+        '\')" title="' + attr(core.LINK_LABELS.intakeHint) + '">' + esc(core.LINK_LABELS.intakeCopy) + "</button>" +
+      '<a class="btn sm ghost" href="' + attr(state.url) + '" target="_blank" rel="noopener">' +
+        esc(core.LINK_LABELS.intakeOpen) + "</a></div>" +
+      (state.mode === "answered"
+        ? '<div class="ft-ready">✓ Fragebogen beantwortet · Stand ' + esc(dateTime(state.answeredAt)) +
+          " — die Angaben stehen an diesem Projekt, ein zweites Projekt entstand nicht.</div>"
+        : "") +
+      '<div class="mini">' + esc(state.explain) + "</div>";
+  }
+  window._ftProjectIntakeRow = projectIntakeRowHtml;
+
+  /* Die Antwort auf einen projektgebundenen Fragebogen. Sie erzeugt KEIN
+     zweites Projekt: Sie ergänzt dieses Projekt (Gepflegtes bleibt stehen),
+     legt das Anfrage-Dokument ab, führt den Vision Room nach und sorgt über
+     denselben Schlüssel wie der Erstweg für HÖCHSTENS EINE Aufgabe
+     „Offertenanfrage". */
+  function applyIntakeToProject(projectId, intake, answers, opts) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var options = opts || {};
+    var doc = core.buildIntakeDocument({
+      intake: intake, answers: answers, now: options.submittedAt || now(),
+    });
+    var update = core.intakeUpdateForProject({ project: project, answers: answers, now: now() });
+
+    project.ftIntakeDocument = doc;
+    Object.keys(update.patch).forEach(function (key) { project[key] = update.patch[key]; });
+    project.client = project.client || {};
+    Object.keys(update.client).forEach(function (key) { project.client[key] = update.client[key]; });
+    project.sourceIntakeId = project.sourceIntakeId || (intake && intake.id) || null;
+
+    project.ftContactLog = Array.isArray(project.ftContactLog) ? project.ftContactLog : [];
+    project.ftContactLog.unshift({
+      id: id(), at: now(), channel: "note",
+      text: options.logText || "Fragebogen dieses Projekts ausgefüllt eingegangen.",
+    });
+    // Genau eine Aufgabe: derselbe Schlüssel wie beim Erstweg (projektId +
+    // ":intake"). Ein zweiter Eingang findet sie und legt nichts nach.
+    createIntakeTask(projectId, project, doc);
+    regeneratePrompt(projectId);
+    return true;
+  }
+  window._ftApplyIntakeToProject = applyIntakeToProject;
+
   /* Die Offerte wird dem neuen Projekt ZUGEORDNET — unverändert und ohne
      zweite Kopie. Die Entscheidung liegt im Kern (offerProjectLinkPlan),
      damit sie idempotent bleibt: ein zweiter Durchlauf ordnet nicht erneut
@@ -4024,13 +4222,33 @@
     var intake = intakeById(intakeId);
     if (!core || !ft || !intake) return false;
     var submissionId = entry.id || null;
-    if (intake.projectId && projectById(intake.projectId)) return false;
+    var binding = core.intakeBinding(intake);
+    // Gebundener Fragebogen: Das Projekt gibt es bereits. Es darf kein zweites
+    // entstehen — die Antwort aktualisiert genau dieses eine.
+    var bound = binding.mode === "bound" ? projectById(binding.projectId) : null;
+    if (!bound && intake.projectId && projectById(intake.projectId)) return false;
     if (submissionId && intake.submissionId === submissionId) return false;
 
     var payload = entry.payload || {};
     var normalized = core.normalizeIntakeAnswers(intake.questions || [], answersToMap(payload.answers), { now: now() });
     var check = core.intakeAnswersUsable(intake.questions || [], normalized.answers);
     if (!check.usable) return false;
+
+    if (bound) {
+      if (!applyIntakeToProject(bound.id, intake, normalized.answers, {
+        submittedAt: entry.createdAt || now(),
+        logText: "Fragebogen „" + (intake.title || "") + "“ ausgefüllt eingegangen.",
+      })) return false;
+      intake.projectId = bound.id;
+      intake.submissionId = submissionId;
+      intake.answeredAt = entry.createdAt || now();
+      intake.status = "answered";
+      intake.updatedAt = now();
+      publishIntakeForm(intake.id);
+      save();
+      notify("ok", "Kundenanfrage", "Fragebogen beantwortet — Projekt aktualisiert: " + (bound.title || ""));
+      return true;
+    }
 
     var projectId = createProjectForIntake(intake, normalized.answers, {
       submittedAt: entry.createdAt || now(),
@@ -5005,9 +5223,11 @@
 
     return portalCard + quoteCard + '<div class="ft-grid-2 mt-3">' +
       '<div class="card p-4"><h3>Zugänge</h3><div class="sep"></div>' +
-        '<div class="mini">Zwei getrennte Links, zwei Phasen. Der Fragebogen-Link steht im Reiter ' +
-        "„Kundenanfragen\u201c — er zeigt nie eine Vorschau. Der Kundenportal-Link entsteht erst nach " +
-        "der Veröffentlichung oben.</div>" +
+        '<div class="mini">Zwei getrennte Links, zwei Phasen. Der Fragebogen-Link gehört zu genau ' +
+        "diesem Projekt und steht hier direkt — er zeigt nie eine Vorschau. Der Kundenportal-Link " +
+        "entsteht erst nach der Veröffentlichung oben.</div>" +
+        projectIntakeRowHtml(projectId) +
+        '<div class="sep"></div>' +
         (release.published
           ? '<div class="ft-link-row mt-2"><span>Zugang erneuern</span>' +
               '<input readonly value="' + attr(kundenLink) + '">' +
@@ -5388,8 +5608,18 @@
     ".ft-linkbar{border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:12px;" +
       "background:var(--panel2)}" +
     ".ft-linkbar .ft-link-row{margin-bottom:0}" +
+    /* Die beiden Phasen tragen sichtbar verschiedene Farben und Titel. Wer den
+       Fragebogen-Link sucht, soll ihn nicht mit dem Kundenportal verwechseln
+       koennen — die Verwechslung war der ganze Fehler. */
+    ".ft-phase{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);" +
+      "font-weight:700;margin-bottom:6px}" +
+    ".ft-linkbar-intake{border-color:rgba(232,121,169,.45);" +
+      "background:linear-gradient(180deg,rgba(232,121,169,.10),transparent)}" +
+    ".ft-linkbar-intake .ft-phase{color:#e879a9}" +
+    ".ft-linkbar-intake .ft-link-row+.mini,.ft-linkbar-intake .ft-ready{margin-top:6px}" +
     ".ft-link-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}" +
     ".ft-link-row span{font-size:12px;color:var(--muted);min-width:120px}" +
+    ".ft-link-intake>span{color:var(--text);font-weight:600;min-width:220px}" +
     ".ft-link-row input{flex:1;min-width:160px;font-size:11.5px}" +
     ".ft-inline-label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-top:10px}" +
     /* Kundenanfrage: Fragen bearbeiten */

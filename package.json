@@ -15,17 +15,18 @@
     "test:career-model": "node tests/career-model-core.test.mjs && node tests/career-model-app.structure.test.mjs && node tests/career-model-learning.test.mjs && node tests/career-model-ideas.test.mjs",
     "test:universal-sync": "node tests/quantus-universal-bootstrap.test.mjs && node tests/quantus-bundles.test.mjs",
     "test:firebase-sdk": "node tests/firebase-sdk-loading.test.mjs && node tests/sticky-board-split.test.mjs",
+    "test:firebase-oauth": "node tests/firebase-oauth-client.test.mjs",
     "test:gmail": "node tests/gmail-network-retry.test.mjs",
     "test:flowertech-projects": "node tests/flowertech-projects.test.mjs && node tests/flowertech-topnav-runtime.test.mjs",
     "test:persistence": "node tests/persistence.test.mjs",
     "test:journal-editor": "node tests/journal-editor-typing-cost.test.mjs",
     "test:browser": "bash -n scripts/deploy-neko-hostinger.sh && node tests/quantus-browser-module.test.mjs && node tests/quantus-browser-layout-runtime.test.mjs && bash tests/neko-smoke-failure-modes.test.sh",
     "check:career-model": "node --check public/quantus-bundle-loader.js && node --check public/career-model-core.js && node --check public/career-model.js && node --check public/quantus-device-sync.js && node --check public/quantus-universal-ui.js && npm test",
-    "test": "npm run test:index-parser && npm run test:english-c1-entry && npm run test:career-model-entry && npm run test:career-model && npm run test:universal-sync && npm run test:firebase-sdk && npm run test:gmail && npm run test:flowertech-projects && npm run test:persistence && npm run test:journal-editor && npm run test:browser && npm run test:navigation && npm run test:sticky-export && npm run test:flowertech-portal && npm run test:flowertech-workflow",
+    "test": "npm run test:index-parser && npm run test:english-c1-entry && npm run test:career-model-entry && npm run test:career-model && npm run test:universal-sync && npm run test:firebase-sdk && npm run test:firebase-oauth && npm run test:gmail && npm run test:flowertech-projects && npm run test:persistence && npm run test:journal-editor && npm run test:browser && npm run test:navigation && npm run test:sticky-export && npm run test:flowertech-portal && npm run test:flowertech-workflow",
     "test:navigation": "node tests/quantus-navigation-search.test.mjs && node tests/quantus-app-search-runtime.test.mjs",
     "test:sticky-export": "node tests/sticky-board-export.test.mjs && node tests/sticky-board-export-runtime.test.mjs",
     "test:flowertech-portal": "node tests/flowertech-portal-auth.test.mjs",
-    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs && node tests/flowertech-kundenanfrage.test.mjs && node tests/flowertech-zwei-links.test.mjs && node tests/flowertech-offerte-ohne-projekt.test.mjs"
+    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs && node tests/flowertech-kundenanfrage.test.mjs && node tests/flowertech-zwei-links.test.mjs && node tests/flowertech-offerte-ohne-projekt.test.mjs && node tests/flowertech-projekt-fragebogen.test.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.11",
