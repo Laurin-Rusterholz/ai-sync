@@ -287,7 +287,10 @@ export function standardTermsTile() {
 export const LINK_LABELS = {
   intake: "Fragebogen-Link",
   intakeAlt: "Briefing-Link",
-  intakeHint: "Kundendaten & Vision Room – noch keine Vorschau",
+  // Der eine Kundenlink waechst. Der Hilfetext sagt darum, was er WIRD, nicht
+  // was er (noch) nicht ist — "noch keine Vorschau" war spaetestens ab der
+  // Freigabe schlicht falsch.
+  intakeHint: "Die eine Kundenadresse – waechst mit Fragebogen, Vorschau, Offerte, AGB und Vertrag",
   intakeCreate: "Fragebogen-Link erstellen",
   intakeCopy: "Fragebogen-Link kopieren",
   intakeOpen: "Fragebogen öffnen",
@@ -1667,6 +1670,18 @@ export const CUSTOMER_AREA_STAGES = [
     hides: "Erscheint erst mit Vorschau-Adresse, fertigem Prompt und ausdrücklicher Freigabe.",
   },
   {
+    key: "terms",
+    label: "Standard-AGB",
+    shows: "Die zentrale FlowerTech-Fassung samt Versionsstand — auf jedem Kundenlink dieselbe.",
+    hides: "Nichts. Sie hängt an keiner Freigabe und lässt sich nicht projektweise ändern.",
+  },
+  {
+    key: "testService",
+    label: "Leistungsübersicht · TEST",
+    shows: "Eine unverbindliche Übersicht mit Kostenstand statt Betrag.",
+    hides: "Nur nach ausdrücklicher, jederzeit widerrufbarer Freigabe — und nie mit Preis.",
+  },
+  {
     key: "contract",
     label: "Vertrag",
     shows: "Den freigegebenen Projektauftrag zum Nachlesen und Ausdrucken.",
@@ -1897,6 +1912,7 @@ export function customerAreaState({
   // der Vertrag, der weiterhin aussen vor bleibt.
   const termsTile = standardTermsTile();
   const testServiceTile = item ? customerTestServiceTile({ project: item }) : null;
+  const testServiceKachel = !!testServiceTile;
   const contract = customerContractRelease({ project: item || {}, documentHtml: contractHtml });
   const contractTile = item
     ? customerContractTile({ project: item, documentHtml: contractHtml, title: contractTitle })
@@ -1904,12 +1920,20 @@ export function customerAreaState({
 
   const visible = {
     intake: !!url, offer: !!offerTile, preview: !!previewTile,
+    // Die AGB sind immer da, sobald es den Link gibt.
+    terms: !!url, testService: !!testServiceTile,
     contract: !!contractTile, admin: !!adminTile,
   };
   const reasons = {
     intake: url ? "" : "Dieses Projekt hat noch keinen Kundenlink.",
-    offer: offerTile ? "" : (offer ? "" : "Es ist noch keine Offerte versendet — Entwürfe bleiben innen."),
+    offer: offerTile ? ""
+      : testServiceKachel
+        ? "Statt einer Offerte ist die unverbindliche TEST-Leistungsübersicht sichtbar (ohne Preis)."
+        : "Es ist noch keine Offerte versendet — Entwürfe bleiben innen.",
     preview: previewTile ? "" : preview.reason,
+    terms: url ? "" : "Dieses Projekt hat noch keinen Kundenlink.",
+    testService: testServiceTile ? ""
+      : "Noch nicht freigegeben — sie erscheint erst auf Knopfdruck und ist widerrufbar.",
     contract: contractTile ? "" : contract.reason,
     admin: adminTile ? "" : admin.reason,
   };
@@ -1917,6 +1941,9 @@ export function customerAreaState({
     visible: !!visible[stage.key],
     reason: reasons[stage.key] || "",
   }));
+  // Die Stufe folgt weiterhin dem Projektfortschritt. AGB und Testkachel
+  // zaehlen dafuer bewusst nicht: Die einen sind immer da, die andere ist eine
+  // Ausnahme fuer Testlaeufe — beide sagen nichts ueber den Stand aus.
   const highest = ["admin", "contract", "preview", "offer", "intake"].find((key) => visible[key]) || "none";
   const stage = highest === "admin" ? "preview" : highest;
 
@@ -2297,6 +2324,38 @@ export function buildProjectPrompt({
     || brief.currentSystem || "nicht angegeben"));
   out.push("");
 
+  /* Die freigegebene TEST-Leistungsübersicht.
+   *
+   * Sie stand bis dahin nur auf dem Kundenlink — der erzeugte prompt.md kannte
+   * sie nicht und nannte weiter die alte, im Projekt gespeicherte Adresse. Wer
+   * eine Vorschau freigibt und dann "Neu erzeugen" drückt, erwartet zu Recht,
+   * dass beides zusammenpasst.
+   *
+   * Was hier bewusst NICHT steht: ein Betrag. Die Kachel trägt keinen, und der
+   * Prompt darf auch keinen erfinden — deshalb der ausdrückliche Hinweis. */
+  const testTile = customerTestServiceTile({ project });
+  if (testTile) {
+    out.push("## Freigegebene Leistungsübersicht — TEST, unverbindlich");
+    out.push("");
+    out.push("- Leistung: " + testTile.title);
+    if (testTile.currentUrl) out.push("- Bestehende Website: " + testTile.currentUrl);
+    if (testTile.previewUrl) out.push("- Vorschau / Vorschlag: " + testTile.previewUrl);
+    out.push("- Kosten: " + testTile.costStatus);
+    if (testTile.summary) out.push("- Kurzbeschreibung: " + testTile.summary);
+    out.push("");
+    out.push("Diese Übersicht ist ausdrücklich als Test freigegeben: keine Offerte, kein Versand,");
+    out.push("keine Rechnung. Nenne im Ergebnis keinen Preis und keinen Betrag.");
+    // Alte Testdaten im Projekt werden nicht überschrieben, aber benannt —
+    // sonst stehen zwei Adressen im Prompt und niemand weiss, welche gilt.
+    const gespeichert = safeUrl(project.ftCurrentUrl);
+    if (testTile.currentUrl && gespeichert && gespeichert !== testTile.currentUrl) {
+      out.push("");
+      out.push("Hinweis: Im Projekt steht als bisherige Website noch " + gespeichert + ".");
+      out.push("Massgebend für diesen Testlauf ist die oben genannte Adresse.");
+    }
+    out.push("");
+  }
+
   // Kontaktdaten bleiben intern. Sie wandern NUR mit, wenn ich das ausdrücklich
   // wähle — und auch dann nur hierher, nie in einen öffentlichen Snapshot.
   if (includeContact) {
@@ -2487,6 +2546,11 @@ export function buildProjectPrompt({
     out.push("Offen und deshalb nicht zu erfinden:");
     missing.forEach((m) => out.push("- " + m));
   }
+  out.push("");
+  /* Die zentralen Standard-AGB stehen in JEDEM Projektprompt — genau wie im
+     Claude-Prompt. Zwei Prompt-Wege mit zwei verschiedenen Rechtsständen wären
+     genau der Fehler, den die zentrale Fassung verhindern soll. */
+  out.push(standardTermsPromptSection());
   out.push("");
   return out.join("\n");
 }

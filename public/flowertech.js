@@ -2516,7 +2516,8 @@
     var head = '<div class="card p-4 mb-3"><h3>Kundenanfragen — Phase 1</h3><div class="sep"></div>' +
       '<div class="mini">So beginnt eine Zusammenarbeit: Fragebogen anlegen, Fragen anpassen, ' +
       "<b>Fragebogen-Link</b> an die Kundschaft geben. Der Link zeigt Kundendaten &amp; Vision Room — " +
-      "noch keine Vorschau. Ihre Antwort erzeugt das Projekt, nicht umgekehrt.</div>" +
+      "Die eine Kundenadresse: Sie beginnt beim Fragebogen und waechst mit " +
+      "Vorschau, Offerte, AGB und Vertrag. Die Antwort erzeugt das Projekt, nicht umgekehrt.</div>" +
       '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftNewIntake()">' +
       "＋ Neue Kundenanfrage</button></div></div>";
 
@@ -2677,7 +2678,7 @@
       // Der nächste Schritt an einer Anfrage ist der Fragebogen-Link — nicht
       // ein Projekt. Das Projekt entsteht erst mit dem Absenden.
       return '<button class="ft-step-item" onclick="window._ftCopyInquiryIntakeLink(\'' + attr(item.id) +
-        '\')" title="Kundendaten &amp; Vision Room – noch keine Vorschau">🔗 ' + label + "</button>";
+        '\')" title="Die eine Kundenadresse – waechst mit dem Projekt">🔗 ' + label + "</button>";
     }
     var tab = stepKey === "briefing" ? "bedarf" : stepKey === "offer" ? "angebot"
       : stepKey === "changes" ? "aenderungen" : stepKey === "quote" ? "kunde" : "workflow";
@@ -2884,11 +2885,11 @@
               ">" + esc(status[1]) + "</option>";
           }).join("") + "</select>" +
           '<button class="btn sm mt-2 primary" onclick="window._ftCopyInquiryIntakeLink(\'' + attr(inquiry.id) +
-            '\')" title="Kundendaten &amp; Vision Room – noch keine Vorschau">🔗 Fragebogen-Link kopieren</button>' +
+            '\')" title="Die eine Kundenadresse – waechst mit dem Projekt">🔗 Fragebogen-Link kopieren</button>' +
           '<button class="btn sm mt-2" onclick="window._ftOpenIntakeForInquiry(\'' + attr(inquiry.id) +
             '\')">Fragebogen bearbeiten</button>' +
           '<button class="btn sm mt-2" onclick="window._ftAiReply(\'' + attr(inquiry.id) + '\')">KI-Antwort</button>' +
-          '<div class="mini mt-2">Kundendaten &amp; Vision Room – noch keine Vorschau. ' +
+          '<div class="mini mt-2">Die eine Kundenadresse – sie waechst mit dem Projekt. ' +
             "Erst das Absenden erzeugt ein Projekt.</div></div></div>";
       }).join("") : empty("Noch keine Anfragen unter flowertech/inquiries")) + "</div>";
 
@@ -4121,8 +4122,9 @@
           '<span class="ft-stage-body"><b>' + esc(stage.label) + "</b> — " +
           esc(stage.visible ? stage.shows : (stage.reason || stage.hides)) + "</span></div>";
       }).join("") +
-      '<div class="mini">Vertrag, AGB und das Kundenportal bleiben ausserhalb dieses Links — ' +
-        "sie haben ihre eigene Freigabe.</div></div>";
+      '<div class="mini">Eine Adresse für alles: Die Standard-AGB stehen immer da ' +
+        "(zentral, ohne Freigabe), Vorschau, Vertrag und die TEST-Übersicht jeweils nach " +
+        "eigener, widerrufbarer Freigabe. Ein zweiter Link entsteht nie.</div></div>";
   }
   window._ftCustomerStagesHtml = customerStagesHtml;
 
@@ -5560,7 +5562,8 @@
     var questions = project.ftPortalQuestions || [];
 
     var portalCard = '<div class="card p-4"><h3>Kundenportal — Phase 2</h3><div class="sep"></div>' +
-      '<div class="mini">Der ZWEITE Link. Er zeigt Vorschau, Leistungsbeschreibung, Offerte, Vertrag, AGB, ' +
+      '<div class="mini">Altbestand: Das getrennte Kundenportal. Neue Vorgaenge brauchen es nicht — ' +
+      'die Kundschaft bekommt genau EINE Adresse, die mitwaechst. Er zeigt Vorschau, Leistungsbeschreibung, Offerte, Vertrag, AGB, ' +
       "Änderungswünsche und Rückfragen — und existiert erst, wenn all das steht und du ihn " +
       "bewusst veröffentlichst. Der Fragebogen-Link der Phase 1 ist ein anderer Link.</div>" +
       checklist +
