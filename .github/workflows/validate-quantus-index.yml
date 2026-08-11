@@ -28,6 +28,7 @@ on:
       - "public/career-model.css"
       - "tests/quantus-browser-module.test.mjs"
       - "tests/quantus-browser-layout-runtime.test.mjs"
+      - "tests/flowertech-projekt-cockpit.test.mjs"
       - "tests/neko-proxy-detect.test.sh"
       - "tests/neko-smoke-failure-modes.test.sh"
       - "netlify.toml"

@@ -2199,20 +2199,22 @@
       '<button class="btn sm" onclick="window._ftAiProjectReport(\'' + attr(project.id) + '\')">✨ KI-Statusbericht</button>' +
       '<button class="btn sm ghost" onclick="location.hash=\'#/flowertech\'">FlowerTech öffnen</button>' +
       "</div></div>" +
-      // Direkt unter dem Kopf, auf jedem Reiter: die zwei Links der zwei
-      // Phasen — getrennt beschriftet, in der richtigen Reihenfolge.
+      // Direkt unter dem Kopf: das Cockpit. Es ersetzt die beiden technischen
+      // Phasenwaende ("Phase 1 · Fragebogen", "Phase 2 · Kundenportal") durch
+      // EINE Kundenadresse, vier Schritte und vier Kacheln.
       //
-      //   Phase 1: der Fragebogen-Link. Er steht IMMER da, auch ohne
-      //            Kundenportal — er ist der Weg, Kundendaten einzuholen.
-      //   Phase 2: der Kundenportal-Link. Er erscheint weiterhin erst nach
-      //            der ausdrücklichen Veröffentlichung.
-      '<div class="ft-linkbar ft-linkbar-intake"><div class="ft-phase">Phase 1 · Fragebogen</div>' +
-      projectIntakeRowHtml(project.id) + "</div>" +
-      '<div class="ft-linkbar"><div class="ft-phase">Phase 2 · Kundenportal</div>' +
-      clientLinkRowHtml(project.id, "Kundenportal-Link") +
-      '<div class="mini">Zeigt der Kundschaft Vorschau, Änderungswünsche, AGB und Rückfragen. ' +
-      "Wird nie automatisch verschickt — du entscheidest, wann sie ihn bekommt. " +
-      "Das ist NICHT der Fragebogen-Link darüber.</div></div>";
+      // Der Kundenportal-Link ist damit nicht verschwunden: Er war nie ein
+      // zweiter Kundenweg, sondern ein interner Sonderfall. Er lebt weiter im
+      // Reiter „Kundenportal" — bestehende Altlinks bleiben gueltig, er redet
+      // hier oben nur nicht mehr mit.
+      ftProjectCockpitHtml(project.id) +
+      // Was hinter dem einen Link JETZT sichtbar ist, und der Rueckweg nach
+      // einer Fehleingabe: eingeklappt, weil es Detail ist und nicht der Weg.
+      '<details class="ft-more"><summary>Mehr / intern — Fragebogen-Status, Vorlage, Prompt und Rückgabe</summary>' +
+      '<div class="ft-more-body">' + projectIntakeRowHtml(project.id, { hideCreate: true }) +
+      '<div class="ft-linkbar mt-2">' + clientLinkRowHtml(project.id, "Kundenportal-Link") +
+      '<div class="mini">Interner Sonderweg mit eigener Adresse. Der Regelweg für die ' +
+      "Kundschaft ist der Kundenlink oben.</div></div></div></details>";
 
     var kpis = '<div class="ft-kpis">' +
       '<div class="ft-kpi"><span>Offene Aufgaben</span><strong>' + open.length + "</strong></div>" +
@@ -4138,14 +4140,252 @@
     rerender();
   };
 
+
+  /* ── Projekt-Cockpit ────────────────────────────────────────────────────
+     Ersetzt die beiden Phasenwaende ("Phase 1 · Fragebogen", "Phase 2 ·
+     Kundenportal") am Kopf der Projektseite. Statt zwei technischer Bloecke
+     steht hier: was zu tun ist, womit, und was die Kundschaft davon sieht.
+
+     Der Kern rechnet den Zustand (projectCockpitState) — hier wird nur noch
+     gezeichnet. Kein zweiter Wahrheitsbegriff ueber Freigaben.
+     ------------------------------------------------------------------- */
+  function cockpitState(projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project || typeof core.projectCockpitState !== "function") return null;
+    return core.projectCockpitState({
+      project: project,
+      area: customerArea(projectId),
+      intakeState: projectIntakeState(projectId),
+    });
+  }
+  window._ftCockpitState = cockpitState;
+
+  function cockpitActionButton(projectId, action, label, kind) {
+    var cls = "btn sm " + (kind || "");
+    if (action === "create") {
+      return '<button class="' + cls + '" onclick="window._ftCreateProjectIntakeLink(\'' + attr(projectId) +
+        '\')">' + esc(label) + "</button>";
+    }
+    if (action === "copy") {
+      return '<button class="' + cls + '" onclick="window._ftCopyProjectIntakeLink(\'' + attr(projectId) +
+        '\')">' + esc(label) + "</button>";
+    }
+    if (action === "check") {
+      return '<button class="' + cls + '" onclick="window._ftCockpitCheckPreview(\'' + attr(projectId) +
+        '\')">' + esc(label) + "</button>";
+    }
+    if (action === "release") {
+      return '<button class="' + cls + '" onclick="window._ftCockpitReleasePreview(\'' + attr(projectId) +
+        '\')">' + esc(label) + "</button>";
+    }
+    if (action === "customerView") {
+      return '<button class="' + cls + '" onclick="window._ftCockpitOpenCustomerView(\'' + attr(projectId) +
+        '\')">' + esc(label) + "</button>";
+    }
+    return "";
+  }
+
+  function ftProjectCockpitHtml(projectId) {
+    var st = cockpitState(projectId);
+    if (!st) return "";
+    var core = W();
+    var L = core.COCKPIT_LABELS;
+
+    // ── Aktionsleiste ────────────────────────────────────────────────────
+    // Der primaere Knopf sagt, was jetzt dran ist — nie "erstellen", wenn die
+    // Adresse schon da ist.
+    var actions = '<div class="ft-ck-actions">' +
+      cockpitActionButton(projectId, st.link.primary.action, st.link.primary.label, "primary") +
+      (st.link.exists
+        ? '<a class="btn sm ghost" href="' + attr(st.link.url) + '" target="_blank" rel="noopener">' +
+          esc(L.linkOpen) + "</a>"
+        : "") +
+      (st.customerView.enabled
+        ? cockpitActionButton(projectId, "customerView", L.customerView, "ghost")
+        : '<button class="btn sm ghost" disabled title="' + attr(st.customerView.reason) + '">' +
+          esc(L.customerView) + "</button>") +
+      "</div>";
+
+    var linkRow = '<div class="ft-ck-link">' +
+      (st.link.exists
+        ? '<input readonly value="' + attr(st.link.url) + '" onclick="this.select()" aria-label="Kundenlink">'
+        : '<div class="ft-ck-nolink">' + esc(L.linkCreateHint) + "</div>") +
+      actions + "</div>";
+
+    // ── Vorschau-Link einfuegen ──────────────────────────────────────────
+    // Immer sichtbar, auch bevor es etwas einzufuegen gibt: Der Nutzer kopiert
+    // die Adresse aus dem Claude-Code-Chat und braucht das Feld genau dann.
+    var p = st.paste;
+    var paste = '<div class="ft-ck-paste" data-status="' + attr(p.status) + '">' +
+      '<label class="ft-ck-paste-label" for="ftCkPreview">' + esc(L.pasteLabel) + "</label>" +
+      '<div class="ft-ck-paste-row">' +
+      '<input id="ftCkPreview" type="url" inputmode="url" spellcheck="false" placeholder="https://…" ' +
+        'value="' + attr(p.entered) + '" ' +
+        'onchange="window._ftCockpitStorePreview(\'' + attr(projectId) + '\',this.value)" ' +
+        'onkeydown="if(event.key===\'Enter\'){event.preventDefault();window._ftCockpitCheckPreview(\'' +
+          attr(projectId) + '\',this.value);}">' +
+      '<button class="btn sm' + (p.canCheck ? " primary" : "") + '" onclick="window._ftCockpitCheckPreview(\'' +
+        attr(projectId) + '\')">' + esc(L.pasteCheck) + "</button>" +
+      // Freigeben erscheint erst nach positiver Pruefung — vorher waere es ein
+      // Knopf, der nichts darf.
+      (p.canRelease
+        ? cockpitActionButton(projectId, "release", L.pasteRelease, "primary")
+        : '<button class="btn sm ghost" disabled title="' + attr(p.releaseReason || "") + '">' +
+          esc(L.pasteRelease) + "</button>") +
+      "</div>" +
+      '<div class="ft-ck-paste-hint' + (p.status === "invalid" ? " bad" : (p.status === "released" ? " good" : "")) +
+        '">' + esc(p.hint) + "</div></div>";
+
+    // ── Vier Schritte ────────────────────────────────────────────────────
+    var steps = '<ol class="ft-ck-steps">' + st.steps.map(function (step) {
+      return '<li class="ft-ck-step' + (step.current ? " current" : "") + '" data-status="' + attr(step.status) + '">' +
+        '<span class="ft-ck-step-n">' + step.n + "</span>" +
+        '<span class="ft-ck-step-body"><b>' + esc(step.label) + "</b>" +
+        '<span class="ft-ck-step-status">' + esc(step.statusLabel) + "</span></span>" +
+        // Kein zweiter Knopf fuer dieselbe Aktion: Steht sie schon in der
+        // Leiste oben, waere er nur Wiederholung — und genau die Doppelung
+        // war der Ausgangsbefund.
+        (step.current && step.next && step.next.action !== st.link.primary.action
+          ? cockpitActionButton(projectId, step.next.action, step.next.label, "ghost") : "") +
+        "</li>";
+    }).join("") + "</ol>";
+
+    // ── Vier Kacheln ─────────────────────────────────────────────────────
+    // Immer alle vier — leere sind praezise deaktiviert, nicht verschwunden.
+    var tiles = '<div class="ft-ck-tiles">' + st.tiles.map(function (tile) {
+      return '<div class="ft-ck-tile' + (tile.available ? " on" : "") + '" data-tile="' + attr(tile.key) + '">' +
+        '<div class="ft-ck-tile-head"><b>' + esc(tile.label) + "</b>" +
+        '<span class="ft-ck-tile-state">' + esc(tile.status) + "</span></div>" +
+        (tile.note ? '<div class="ft-ck-tile-note">' + esc(tile.note) + "</div>" : "") +
+        '<div class="ft-ck-tile-foot">' +
+        (tile.canOpen
+          ? '<a class="btn sm ghost" href="' + attr(tile.url) + '" target="_blank" rel="noopener">Öffnen</a>'
+          : '<button class="btn sm ghost" disabled title="' + attr(tile.reason) + '">Öffnen</button>') +
+        "</div>" +
+        (tile.available ? "" : '<div class="ft-ck-tile-reason">' + esc(tile.reason) + "</div>") +
+        "</div>";
+    }).join("") + "</div>";
+
+    return '<section class="ft-cockpit">' +
+      '<div class="ft-ck-top"><div class="ft-ck-story">' + esc(st.linkStory) + "</div></div>" +
+      linkRow + paste + steps + tiles + "</section>";
+  }
+  window.ftProjectCockpit = ftProjectCockpitHtml;
+
+  /* ── Cockpit-Aktionen ───────────────────────────────────────────────────
+     Der eingefuegte Vorschau-Link wird projektbezogen gespeichert — auch dann,
+     wenn er (noch) keine gueltige HTTPS-Adresse ist. Ein Tippfehler, der beim
+     Neuzeichnen kommentarlos verschwindet, ist schlimmer als ein sichtbarer.
+     ------------------------------------------------------------------- */
+  function cockpitHandoff(project) {
+    return project.ftClaudeHandoff && typeof project.ftClaudeHandoff === "object"
+      ? project.ftClaudeHandoff : {};
+  }
+
+  window._ftCockpitStorePreview = function (projectId, value) {
+    var project = projectById(projectId);
+    if (!project) return false;
+    var raw = String(value == null ? "" : value).trim();
+    var hand = cockpitHandoff(project);
+    if (String(hand.returnedUrl || "") === raw) return true;
+    project.ftClaudeHandoff = Object.assign({}, hand, {
+      requestedAt: hand.requestedAt || now(),
+      returnedUrl: raw,
+      returnedAt: raw ? now() : "",
+      // Eine neue Adresse ist weder geprueft noch bestaetigt.
+      checkedAt: "", confirmedAt: "",
+    });
+    project.updatedAt = now();
+    save();
+    return true;
+  };
+
+  window._ftCockpitCheckPreview = function (projectId, value) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var feld = document.getElementById("ftCkPreview");
+    var raw = value != null ? String(value) : ((feld || {}).value || "");
+    raw = raw.trim();
+    window._ftCockpitStorePreview(projectId, raw);
+    var sauber = core.clientSafeUrl(raw);
+    if (!sauber) {
+      notify("warn", "Vorschau-Link",
+        raw ? "Das ist keine vollständige HTTPS-Adresse."
+          : "Füge zuerst die Adresse aus dem Claude-Code-Chat ein.");
+      rerender();
+      return false;
+    }
+    var hand = cockpitHandoff(project);
+    project.ftClaudeHandoff = Object.assign({}, hand, {
+      returnedUrl: sauber, returnedAt: hand.returnedAt || now(), checkedAt: now(),
+    });
+    project.updatedAt = now();
+    save();
+    rerender();
+    notify("ok", "Vorschau-Link", "Geprüft — jetzt für die Kundschaft freigebbar.");
+    return true;
+  };
+
+  /* Freigeben heisst hier zweierlei, und beides gehoert zusammen: Die
+     geprueffte Adresse wird als Vorschau-Adresse des Projekts uebernommen
+     (bestaetigte Rueckgabe), und die Vorschau-Kachel wird freigegeben. Ohne
+     den ersten Schritt gaebe es nichts freizugeben, ohne den zweiten saehe die
+     Kundschaft nichts. */
+  window._ftCockpitReleasePreview = function (projectId) {
+    var core = W();
+    var project = projectById(projectId);
+    if (!core || !project) return false;
+    var draft = core.previewLinkDraft({ project: project });
+    if (!draft.valid) {
+      notify("warn", "Vorschau-Link", "Es liegt keine gültige HTTPS-Adresse vor.");
+      return false;
+    }
+    if (!draft.checked) {
+      notify("warn", "Vorschau-Link", "Bitte zuerst „" + core.COCKPIT_LABELS.pasteCheck + "“.");
+      return false;
+    }
+    // Die bestehende Schutzregel (Prompt muss stehen) gilt unveraendert — das
+    // Cockpit nennt jetzt nur den Grund, statt stumm nichts zu tun.
+    var st = cockpitState(projectId);
+    if (st && st.paste && !st.paste.canRelease && !st.paste.released) {
+      notify("warn", "Vorschau-Link", st.paste.releaseReason || "Die Freigabe ist noch nicht möglich.");
+      return false;
+    }
+    // Bestaetigen uebernimmt die Adresse als Vorschau — derselbe Weg wie
+    // bisher, damit die Herkunft ("Claude-Code-Rueckgabe") erhalten bleibt.
+    if (typeof window._ftClaudeHandoffConfirm === "function") window._ftClaudeHandoffConfirm(projectId);
+    else { project.previewUrl = draft.url; save(); }
+    if (typeof window._ftReleaseCustomerPreview === "function") window._ftReleaseCustomerPreview(projectId, true);
+    rerender();
+    notify("ok", "Kundenansicht", "Die Vorschau ist für die Kundschaft freigegeben.");
+    return true;
+  };
+
+  window._ftCockpitOpenCustomerView = function (projectId) {
+    var st = cockpitState(projectId);
+    if (!st || !st.customerView.enabled) {
+      notify("warn", "Kundenansicht", (st && st.customerView.reason) || "Es gibt noch keinen Kundenlink.");
+      return false;
+    }
+    window.open(st.customerView.url, "_blank", "noopener");
+    return true;
+  };
+
   /* Die Zeile, die der Fragebogen-Link auf der Projektseite bekommt. Sie ist
      bewusst NICHT clientLinkRowHtml: andere Beschriftung, andere Phase,
      anderer Empfängerkreis — und sie steht auch dann da, wenn es noch gar
      kein Kundenportal gibt. */
-  function projectIntakeRowHtml(projectId) {
+  function projectIntakeRowHtml(projectId, opts) {
     var core = W();
     var state = projectIntakeState(projectId);
     if (!core || !state || state.mode === "none") return "";
+    // Im internen Bereich unter dem Cockpit steht der Einstieg NICHT noch
+    // einmal: „Kundenlink erstellen" gibt es genau einmal, oben.
+    if (opts && opts.hideCreate && state.mode === "create") {
+      return '<div class="mini">' + esc(state.explain) + "</div>";
+    }
     // Die Zeile trägt IMMER dieselbe vollständige Beschriftung — auch dann,
     // wenn es den Link noch gar nicht gibt. Nur so ist von Anfang an klar,
     // welcher der beiden Links hier entsteht.
@@ -6435,6 +6675,68 @@
     /* Die beiden Phasen tragen sichtbar verschiedene Farben und Titel. Wer den
        Fragebogen-Link sucht, soll ihn nicht mit dem Kundenportal verwechseln
        koennen — die Verwechslung war der ganze Fehler. */
+    /* ── Projekt-Cockpit ────────────────────────────────────────────────
+       Ruhig und kompakt: Der erste Blick soll den Weg zeigen, nicht die
+       Technik. Alles haengt an den Quantus-Variablen, damit Dark und Light
+       gleich gut aussehen. */
+    ".ft-cockpit{border:1px solid var(--border);border-radius:14px;background:var(--panel);" +
+      "padding:14px 16px;margin:0 0 16px;display:flex;flex-direction:column;gap:12px}" +
+    ".ft-ck-story{font-size:12px;line-height:1.5;color:var(--muted)}" +
+    ".ft-ck-link{display:flex;align-items:center;gap:8px;flex-wrap:wrap}" +
+    ".ft-ck-link input{flex:1 1 320px;min-width:0;font-size:12.5px;padding:7px 10px;border-radius:9px;" +
+      "border:1px solid var(--border);background:var(--panel2);color:var(--text)}" +
+    ".ft-ck-nolink{flex:1 1 320px;min-width:0;font-size:12.5px;color:var(--muted);padding:7px 0}" +
+    ".ft-ck-actions{display:flex;gap:6px;flex-wrap:wrap}" +
+    ".ft-cockpit .btn[disabled]{opacity:.45;cursor:not-allowed}" +
+    /* Der Einfuege-Bereich ist immer da — er ist der Punkt, an dem der von
+       Claude Code gelieferte Link ins Projekt kommt. */
+    ".ft-ck-paste{border:1px solid var(--border);border-radius:11px;background:var(--panel2);padding:10px 12px}" +
+    ".ft-ck-paste-label{display:block;font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px}" +
+    ".ft-ck-paste-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}" +
+    ".ft-ck-paste-row input{flex:1 1 300px;min-width:0;font-size:12.5px;padding:7px 10px;border-radius:9px;" +
+      "border:1px solid var(--border);background:var(--panel);color:var(--text);font-family:inherit}" +
+    ".ft-ck-paste-hint{font-size:11.5px;color:var(--muted);margin-top:6px}" +
+    ".ft-ck-paste-hint.bad{color:var(--danger)}" +
+    ".ft-ck-paste-hint.good{color:var(--ok)}" +
+    ".ft-ck-paste[data-status=\"invalid\"]{border-color:var(--danger)}" +
+    /* Vier Schritte, eine Zeile auf dem Desktop. */
+    ".ft-ck-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;list-style:none;margin:0;padding:0}" +
+    ".ft-ck-step{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border-radius:11px;" +
+      "border:1px solid var(--border);background:var(--panel2);min-width:0}" +
+    ".ft-ck-step.current{border-color:var(--accent);background:var(--accent-soft)}" +
+    ".ft-ck-step[data-status=\"done\"] .ft-ck-step-n{background:var(--ok);color:#0b1a12;border-color:transparent}" +
+    ".ft-ck-step-n{flex:0 0 auto;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;" +
+      "font-size:11px;font-weight:700;border:1px solid var(--border);color:var(--muted);background:var(--panel)}" +
+    ".ft-ck-step-body{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 auto}" +
+    ".ft-ck-step-body b{font-size:12.5px;color:var(--text)}" +
+    ".ft-ck-step-status{font-size:11px;color:var(--muted);line-height:1.35}" +
+    /* Vier Kacheln — die Kundensicht. Desktop eine Zeile, mobil gestapelt. */
+    ".ft-ck-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}" +
+    ".ft-ck-tile{display:flex;flex-direction:column;gap:6px;padding:10px 11px;border-radius:11px;" +
+      "border:1px solid var(--border);background:var(--panel2);min-width:0;opacity:.62}" +
+    ".ft-ck-tile.on{opacity:1;border-color:var(--accent-soft)}" +
+    ".ft-ck-tile-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;min-width:0}" +
+    ".ft-ck-tile-head b{font-size:12.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+    ".ft-ck-tile-state{font-size:10.5px;color:var(--muted);white-space:nowrap}" +
+    ".ft-ck-tile.on .ft-ck-tile-state{color:var(--ok)}" +
+    ".ft-ck-tile-note{font-size:11px;color:var(--muted)}" +
+    ".ft-ck-tile-reason{font-size:10.5px;color:var(--muted);line-height:1.35}" +
+    ".ft-ck-tile-foot{margin-top:auto}" +
+    /* Alles Interne bleibt erreichbar, aber eingeklappt. */
+    ".ft-more{border:1px solid var(--border);border-radius:12px;background:var(--panel2);margin:0 0 16px}" +
+    ".ft-more>summary{cursor:pointer;padding:9px 13px;font-size:12px;color:var(--muted);list-style:none}" +
+    ".ft-more>summary::-webkit-details-marker{display:none}" +
+    ".ft-more>summary:before{content:\"\\25B8 \";display:inline-block;margin-right:6px;transition:transform .15s}" +
+    ".ft-more[open]>summary:before{transform:rotate(90deg)}" +
+    ".ft-more-body{padding:0 13px 13px}" +
+    "@media(max-width:900px){" +
+      ".ft-ck-steps{grid-template-columns:repeat(2,1fr)}" +
+      ".ft-ck-tiles{grid-template-columns:repeat(2,1fr)}}" +
+    "@media(max-width:620px){" +
+      ".ft-ck-steps{grid-template-columns:1fr}" +
+      ".ft-ck-tiles{grid-template-columns:1fr}" +
+      ".ft-ck-link input,.ft-ck-paste-row input{flex:1 1 100%}" +
+      ".ft-ck-actions{width:100%}}" +
     ".ft-phase{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);" +
       "font-weight:700;margin-bottom:6px}" +
     ".ft-linkbar-intake{border-color:rgba(232,121,169,.45);" +
