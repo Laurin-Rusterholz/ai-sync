@@ -4010,6 +4010,303 @@ export function isDuplicate(key, seen) {
 }
 
 /* ── Browser-Bridge ──────────────────────────────────────────────────────── */
+
+/* ── Projekt-Cockpit ──────────────────────────────────────────────────────
+ * Die Projektseite zeigte bisher zwei technische Waende ("PHASE 1 ·
+ * FRAGEBOGEN", "PHASE 2 · KUNDENPORTAL") und den Knopf "Fragebogen-Link
+ * erstellen" — auch dann noch, wenn der Link laengst existierte und ich ihn
+ * eigentlich KOPIEREN wollte. Zwei Adressen in der Sprache, eine in der Sache.
+ *
+ * Das Cockpit dreht das um. Es gibt genau EINEN Kundenlink, und er waechst:
+ * zuerst Fragebogen, Kundendaten und Vision Room — spaeter dieselbe Adresse
+ * mit Offerte, Website-Vorschau, Verwaltung und AGB. Der zweite Link, der
+ * hier frueher stand, war nie ein zweiter Kundenweg, sondern ein interner
+ * Sonderfall; er bleibt erreichbar, redet aber nicht mehr mit.
+ *
+ * Diese Datei rechnet ausschliesslich den ZUSTAND. Kein DOM, kein Speichern,
+ * kein Netz — damit jede Beschriftung und jede Freigabebedingung ohne Browser
+ * pruefbar bleibt.
+ * ---------------------------------------------------------------------- */
+
+// Die Worte der Oberflaeche. Sie stehen hier, damit UI und Tests dieselben
+// benutzen — und damit "Erstellen" nie wieder dort steht, wo der Nutzer
+// Kopieren erwartet.
+export const COCKPIT_LABELS = {
+  linkCreate: "Kundenlink erstellen",
+  linkCreateHint: "Kundendaten und Vision Room anfragen",
+  linkCopy: "Kundenlink kopieren",
+  linkOpen: "Kundenlink öffnen",
+  linkCopied: "Kundenlink kopiert",
+  // Exakt so verlangt: Der Nutzer kopiert die Adresse aus dem Claude-Code-Chat
+  // und fuegt sie hier ein. Kein anderer Weg, keine erfundene Adresse.
+  pasteLabel: "Vorschau-Link aus dem Claude-Code-Chat einfügen",
+  pasteCheck: "Link prüfen",
+  pasteRelease: "Für Kundschaft freigeben",
+  customerView: "Kundenansicht öffnen",
+};
+
+// Der eine Weg, in vier Schritten. Mehr Schritte hatte die Seite vorher —
+// verstanden hat sie deshalb niemand.
+export const COCKPIT_STEPS = [
+  { key: "link", n: 1, label: "Kundenlink" },
+  { key: "answer", n: 2, label: "Kundschaft antwortet" },
+  { key: "preview", n: 3, label: "Vorschau-Link einfügen" },
+  { key: "release", n: 4, label: "Kundenansicht freigeben" },
+];
+
+// Die vier Kacheln der Kundensicht. Sie stehen fest — auch leer, damit die
+// Orientierung nicht davon abhaengt, wie weit ein Projekt gerade ist.
+export const COCKPIT_TILES = [
+  { key: "offer", label: "Offerte" },
+  { key: "preview", label: "Website-Vorschau" },
+  { key: "admin", label: "Verwaltung" },
+  { key: "terms", label: "AGB & Kunde" },
+];
+
+/* Der eingefuegte Vorschau-Link, bevor er irgendwo hinausgeht.
+ *
+ * Drei Zustaende, die sich nicht vermischen duerfen:
+ *   eingefuegt  — steht am Projekt, ist aber ungeprueft
+ *   geprueft    — als HTTPS-Adresse bestaetigt ("Link prüfen")
+ *   freigegeben — die Kundschaft sieht sie
+ *
+ * `checkedAt` gab es frueher nicht. Bestehende Projekte haben nur
+ * `confirmedAt` — eine bestaetigte Rueckgabe war immer schon geprueft, also
+ * zaehlt sie hier als geprueft. Ohne diese Migration staende ein laengst
+ * freigegebenes Projekt ploetzlich wieder auf "ungeprueft". */
+export function previewLinkDraft({ project = {} } = {}) {
+  const item = project && typeof project === "object" ? project : {};
+  const hand = item.ftClaudeHandoff && typeof item.ftClaudeHandoff === "object" ? item.ftClaudeHandoff : {};
+  const entered = String(hand.returnedUrl || "").trim();
+  const url = safeUrl(entered);
+  const confirmedAt = String(hand.confirmedAt || "");
+  // Migrationssicher: eine bestaetigte Rueckgabe gilt als geprueft.
+  const checkedAt = String(hand.checkedAt || "") || (confirmedAt ? confirmedAt : "");
+  const previewUrl = safeUrl(item.previewUrl);
+  const flag = releaseFlag(item.ftCustomerPreview);
+
+  let status = "empty";
+  let hint = "Noch kein Vorschau-Link eingefügt.";
+  if (entered && !url) {
+    status = "invalid";
+    hint = "Das ist keine vollständige HTTPS-Adresse — sie beginnt mit https:// und hat einen Domainnamen.";
+  } else if (url && !checkedAt) {
+    status = "pasted";
+    hint = "Eingefügt, aber noch nicht geprüft.";
+  } else if (url && checkedAt && !flag.released) {
+    status = "checked";
+    hint = "Geprüft. Jetzt kann die Kundschaft sie sehen.";
+  } else if (url && flag.released) {
+    status = "released";
+    hint = "Für die Kundschaft freigegeben.";
+  }
+
+  return {
+    // Die Rohangabe bleibt sichtbar, auch wenn sie ungueltig ist — sonst
+    // verschwindet ein Tippfehler kommentarlos und niemand weiss, warum.
+    entered, url, valid: !!url,
+    checked: !!url && !!checkedAt, checkedAt,
+    confirmedAt, released: !!flag.released, releasedAt: flag.releasedAt,
+    previewUrl,
+    // Steht die gepruefte Adresse wirklich als Vorschau am Projekt?
+    applied: !!url && !!previewUrl && previewUrl === url,
+    status, hint,
+    canCheck: !!url && !checkedAt,
+    // Freigeben erst nach positiver Pruefung — das ist die ganze Bedingung.
+    canRelease: !!url && !!checkedAt && !flag.released,
+    label: COCKPIT_LABELS.pasteLabel,
+    checkLabel: COCKPIT_LABELS.pasteCheck,
+    releaseLabel: COCKPIT_LABELS.pasteRelease,
+  };
+}
+
+/* Der ganze Cockpit-Zustand: Aktionsleiste, vier Schritte, vier Kacheln.
+ * `area` ist das Ergebnis von customerAreaState(), `intakeState` das von
+ * projectIntakeLinkState() — beide bleiben die einzige Wahrheit ueber
+ * Freigaben; das Cockpit erfindet keine eigene. */
+export function projectCockpitState({
+  project = null, area = null, intakeState = null,
+} = {}) {
+  const item = project && typeof project === "object" ? project : null;
+  const view = area && typeof area === "object" ? area : null;
+  const intakeInfo = intakeState && typeof intakeState === "object" ? intakeState : null;
+  const url = String((view && view.url) || (intakeInfo && intakeInfo.url) || "");
+  const hasLink = !!url;
+  const answered = !!(intakeInfo && intakeInfo.answeredAt);
+  const draft = previewLinkDraft({ project: item || {} });
+  /* Die bestehende Schutzregel bleibt: Eine Vorschau geht nur hinaus, wenn der
+     projektspezifische Prompt steht. Das Cockpit umgeht sie nicht — es sagt
+     nur endlich, WARUM der Knopf nicht darf. */
+  const previewGate = (view && view.preview && typeof view.preview === "object") ? view.preview : null;
+  const gateOpen = !previewGate || previewGate.promptReady !== false;
+  /* Bewusst NICHT previewGate.reason: Der nennt die fehlende Vorschau-Adresse,
+     weil sie erst mit der Freigabe ans Projekt wandert. Hier fehlt aber der
+     Prompt — und nur das ist die Bedingung, die der Nutzer erfüllen kann. */
+  const gateReason = gateOpen ? ""
+    : "Der projektspezifische Prompt ist noch nicht erzeugt — er entsteht unter „Mehr / intern“.";
+  if (!gateOpen && draft.canRelease) {
+    draft.canRelease = false;
+    draft.hint = gateReason;
+  }
+  draft.releaseReason = draft.canRelease ? ""
+    : (!gateOpen ? gateReason
+      : draft.released ? "Bereits freigegeben."
+        : "Erst nach erfolgreicher Prüfung möglich.");
+  const tilesIn = (view && view.tiles) || {};
+  const stagesIn = (view && Array.isArray(view.stages)) ? view.stages : [];
+  const reasonOf = (key) => {
+    const hit = stagesIn.find((s) => s.key === key);
+    return hit ? String(hit.reason || "") : "";
+  };
+
+  // ── Aktionsleiste ──────────────────────────────────────────────────────
+  // Ohne Link: erstellen. Mit Link: kopieren. Nie "erstellen" sagen, wenn die
+  // Adresse schon existiert — genau das war der irrefuehrende Knopf.
+  const link = hasLink
+    ? {
+      exists: true, url,
+      primary: { action: "copy", label: COCKPIT_LABELS.linkCopy },
+      secondary: [{ action: "open", label: COCKPIT_LABELS.linkOpen, url }],
+      hint: "Die eine Kundenadresse – wächst mit Fragebogen, Vorschau, Offerte und AGB",
+    }
+    : {
+      exists: false, url: "",
+      primary: { action: "create", label: COCKPIT_LABELS.linkCreate },
+      secondary: [],
+      hint: COCKPIT_LABELS.linkCreateHint,
+    };
+
+  // "Kundenansicht öffnen" ist kein Dauerknopf: Ohne Kundenlink gibt es nichts
+  // zu oeffnen, und ein toter Knopf ist schlimmer als ein deaktivierter.
+  const customerView = {
+    label: COCKPIT_LABELS.customerView,
+    url: hasLink ? url : "",
+    enabled: hasLink,
+    reason: hasLink ? "" : "Es gibt noch keinen Kundenlink.",
+  };
+
+  // ── Vier Schritte, je genau ein Status und eine naechste Aktion ─────────
+  const stepState = {
+    link: hasLink ? "done" : "todo",
+    answer: answered ? "done" : (hasLink ? "waiting" : "blocked"),
+    preview: draft.released ? "done"
+      : draft.checked ? "ready"
+        : draft.valid ? "pasted"
+          : draft.status === "invalid" ? "invalid" : "todo",
+    release: draft.released ? "done" : (draft.checked ? "ready" : "blocked"),
+  };
+  const stepText = {
+    link: {
+      done: "Kundenlink steht",
+      todo: "Noch kein Kundenlink",
+    },
+    answer: {
+      done: "Fragebogen beantwortet",
+      waiting: "Link verschickt – Antwort offen",
+      blocked: "Wartet auf den Kundenlink",
+    },
+    preview: {
+      done: "Vorschau ist freigegeben",
+      ready: "Geprüft – bereit zur Freigabe",
+      pasted: "Eingefügt – noch nicht geprüft",
+      invalid: "Keine gültige HTTPS-Adresse",
+      todo: "Noch kein Vorschau-Link",
+    },
+    release: {
+      done: "Kundschaft sieht die Vorschau",
+      ready: "Freigabe möglich",
+      blocked: "Wartet auf die Prüfung",
+    },
+  };
+  const stepAction = {
+    link: hasLink ? { action: "copy", label: COCKPIT_LABELS.linkCopy } : { action: "create", label: COCKPIT_LABELS.linkCreate },
+    answer: hasLink && !answered ? { action: "copy", label: COCKPIT_LABELS.linkCopy } : null,
+    preview: draft.canCheck ? { action: "check", label: COCKPIT_LABELS.pasteCheck }
+      : (!draft.valid ? { action: "paste", label: COCKPIT_LABELS.pasteLabel } : null),
+    release: draft.canRelease ? { action: "release", label: COCKPIT_LABELS.pasteRelease }
+      : (draft.released ? { action: "customerView", label: COCKPIT_LABELS.customerView } : null),
+  };
+  const steps = COCKPIT_STEPS.map((step) => ({
+    key: step.key, n: step.n, label: step.label,
+    status: stepState[step.key],
+    statusLabel: (stepText[step.key] || {})[stepState[step.key]] || "",
+    next: stepAction[step.key] || null,
+    current: false,
+  }));
+  // Genau ein Schritt ist der aktuelle: der erste, der noch nicht "done" ist.
+  const currentIndex = steps.findIndex((s) => s.status !== "done");
+  if (currentIndex >= 0) steps[currentIndex].current = true;
+
+  // ── Vier Kacheln, immer alle vier ──────────────────────────────────────
+  // Leer heisst deaktiviert mit Begruendung, nicht verschwunden: Wer nicht
+  // sieht, dass es eine Offerten-Kachel GIBT, sucht sie auch nicht.
+  const tileInfo = {
+    offer: (() => {
+      const tile = tilesIn.offer || null;
+      // Ein Preis darf ausdruecklich offen sein — "Kosten noch offen" ist eine
+      // Aussage, kein fehlender Wert.
+      const amount = tile && tile.amount != null ? tile.amount : null;
+      return {
+        available: !!tile,
+        url: (tile && tile.documentUrl) || "",
+        note: tile ? (amount == null ? "Kosten noch offen" : "") : "",
+        reason: reasonOf("offer"),
+      };
+    })(),
+    preview: (() => {
+      const tile = tilesIn.preview || null;
+      return {
+        available: !!tile,
+        url: (tile && tile.url) || draft.url || "",
+        note: tile && tile.provisional ? "Testvorschau" : "",
+        reason: reasonOf("preview"),
+      };
+    })(),
+    admin: (() => {
+      const tile = tilesIn.admin || null;
+      return {
+        available: !!tile,
+        url: (tile && tile.url) || safeUrl((item || {}).adminUrl) || "",
+        note: "",
+        reason: reasonOf("admin"),
+      };
+    })(),
+    terms: (() => {
+      const tile = tilesIn.terms || null;
+      return {
+        available: !!tile && hasLink,
+        url: hasLink ? url : "",
+        note: tile && tile.version ? "Fassung " + tile.version : "",
+        reason: hasLink ? "" : "Es gibt noch keinen Kundenlink.",
+      };
+    })(),
+  };
+  const tiles = COCKPIT_TILES.map((tile) => {
+    const info = tileInfo[tile.key] || { available: false, url: "", note: "", reason: "" };
+    return {
+      key: tile.key, label: tile.label,
+      available: !!info.available,
+      status: info.available ? "sichtbar" : "noch nicht freigegeben",
+      note: info.note || "",
+      url: info.url || "",
+      /* Oeffnen spiegelt die Kundensicht: Was die Kundschaft nicht sieht,
+         laesst sich hier auch nicht oeffnen — sonst behauptet ein aktiver
+         Knopf eine Freigabe, die es nicht gibt. Die Adresse bleibt am
+         Zustand haengen und ist ab der Freigabe sofort nutzbar. */
+      canOpen: !!info.url && !!info.available,
+      reason: info.available ? "" : (info.reason || "Noch nicht freigegeben."),
+    };
+  });
+
+  return {
+    hasLink, url, answered,
+    link, customerView, paste: draft, steps, tiles,
+    // Der Satz, der die zwei-Link-Sprache abloest.
+    linkStory: "Eine Adresse für die Kundschaft: zuerst Fragebogen, Kundendaten und Vision Room – "
+      + "später wächst dieselbe Seite um Offerte, Website-Vorschau, Verwaltung und AGB.",
+  };
+}
+
 const API = {
   LEGAL_REVIEW_NOTICE,
   // Die zentrale Standard-AGB und die unverbindliche TEST-Leistungskachel.
@@ -4021,6 +4318,7 @@ const API = {
   customerTestServiceTile,
   customerContractRelease, customerContractTile,
   intakeLinkLabel, intakeLinkExplain,
+  COCKPIT_LABELS, COCKPIT_STEPS, COCKPIT_TILES, previewLinkDraft, projectCockpitState,
   DOMAIN_ACCESS_QUESTION_KEY, DOMAIN_ACCESS_CHOICES, DOMAIN_TRANSFER_CHOICE,
   DOMAIN_TRANSFER_QUESTIONS, SENSITIVE_ANSWER_PATTERN, isSensitiveAnswer, redactSensitiveAnswers,
   WORKFLOW_STAGES, LEGACY_STAGE_ALIASES, stageIndex, stageLabel, nextStage, previousStage,

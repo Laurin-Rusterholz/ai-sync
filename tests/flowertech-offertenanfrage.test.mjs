@@ -490,8 +490,24 @@ const quoteTasks = (data) => tasksOf(data).filter((t) => t.source === "flowertec
   ok(html.includes("Kundenportal"), "die Sektion „Kundenportal“ fehlt in der Projektansicht");
   ok(html.includes(clientLink), "der Kundenportal-Link steht nicht in der Sektion");
   ok(/>Öffnen</.test(html), "der Knopf „Öffnen“ fehlt");
-  // Der Begriff „Kundenlink" ist abgeschafft — er hat die zwei Links vermischt.
-  ok(!/>\s*Kundenlink\b/.test(html), "die alte Beschriftung „Kundenlink“ steht weiterhin im Projekt");
+  /* „Kundenlink" war einmal verboten, weil er die zwei Links vermischte. Das
+     Cockpit loest dasselbe Problem an der Wurzel: Es gibt oben genau EINE
+     Kundenadresse, und der Kundenportal-Link — der interne Sonderweg — steht
+     nicht mehr gleichrangig daneben, sondern im eingeklappten Bereich. Der
+     Begriff ist damit eindeutig und ausdruecklich gewuenscht; gepruefft wird
+     jetzt die Eindeutigkeit statt eines Wortverbots. */
+  ok(/Kundenlink kopieren|Kundenlink erstellen/.test(html),
+    "das Cockpit benennt die eine Kundenadresse nicht");
+  ok(!/Phase 1 · Fragebogen/.test(html) && !/Phase 2 · Kundenportal/.test(html),
+    "die zwei technischen Phasenwaende stehen wieder oben auf der Projektseite");
+  // Der Portallink ist nicht verschwunden, aber er konkurriert nicht mehr:
+  // er steht hinter dem eingeklappten „Mehr / intern".
+  const intern = html.slice(html.indexOf('<details class="ft-more"'));
+  ok(intern.includes(clientLink),
+    "der Kundenportal-Link steht nicht im eingeklappten internen Bereich");
+  // Und die zwei Begriffe bleiben unterscheidbar.
+  ok(/Vorschau-Link aus dem Claude-Code-Chat einfügen/.test(html),
+    "die Eingabe für den Vorschau-Link fehlt");
 }
 
 // ── 13b. Ein aelterer Vorgang bekommt NICHT still ein Portal ──────────────

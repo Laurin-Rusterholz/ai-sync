@@ -260,18 +260,26 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   projektLehner(data);
 
   const html = panelOf(win, "prj_lehner");
-  ok(/Fragebogen-Link erstellen/.test(html),
-    "die FlowerTech-Karte von „Lehner“ bietet keinen Fragebogen-Link an");
+  /* Ohne Adresse heisst der Knopf „Kundenlink erstellen" — und NUR dort. Der
+     frueher doppelte „Fragebogen-Link erstellen" im Detailbereich ist weg:
+     Ein Einstieg, eine Stelle. */
+  ok(/Kundenlink erstellen/.test(html),
+    "die FlowerTech-Karte von „Lehner“ bietet keinen Kundenlink an");
+  ok(!/Fragebogen-Link erstellen/.test(html),
+    "„Fragebogen-Link erstellen“ steht ein zweites Mal auf der Projektseite");
   ok(/_ftCreateProjectIntakeLink\('prj_lehner'\)/.test(html), "der Knopf ist nicht verdrahtet");
-  ok(/Vision Room/.test(html) && /Kundenadresse|Standard-AGB/.test(html),
+  ok(/Vision Room/.test(html) && /Kundendaten/.test(html),
     "die Karte sagt nicht, was die Kundenadresse zeigt");
   ok(!/keine Vorschau/.test(html), "die Karte behauptet weiter „keine Vorschau“");
-  // Der zweite Link bleibt, was er war: unveröffentlicht und getrennt benannt.
+  // Der interne Sonderweg bleibt erreichbar — aber eingeklappt, nicht als
+  // zweite Wand neben dem Kundenlink.
   ok(/Kundenportal – noch nicht veröffentlicht/.test(html),
     "der Kundenportal-Link ist ohne Veröffentlichung nicht als solcher gekennzeichnet");
   ok(!/kunde\.html/.test(html), "ohne Veröffentlichung steht ein Kundenportal-Link in der Karte");
-  ok(/Phase 1 · Fragebogen/.test(html) && /Phase 2 · Kundenportal/.test(html),
-    "die zwei Phasen sind in der Karte nicht getrennt beschriftet");
+  ok(!/Phase 1 · Fragebogen/.test(html) && !/Phase 2 · Kundenportal/.test(html),
+    "die zwei technischen Phasenwaende stehen wieder oben auf der Projektseite");
+  ok(/<details class="ft-more"/.test(html),
+    "der interne Bereich ist nicht eingeklappt");
 
   // Der Knopf allein legt nichts an.
   ok(Object.keys(data.flowertech.intakes || {}).length === 0,
@@ -517,19 +525,26 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   ok(/fragebogen\.html/.test(fragebogen) && /kunde\.html/.test(portal),
     "die beiden Links zeigen nicht auf getrennte Seiten");
 
-  // Jede Zeile trägt ihre eigene, unverwechselbare Beschriftung.
-  const fragebogenZeile = html.slice(html.indexOf("Phase 1 · Fragebogen"), html.indexOf("Phase 2 · Kundenportal"));
-  ok(fragebogenZeile.includes(fragebogen), "die Fragebogen-Zeile enthält den Fragebogen-Link nicht");
-  ok(!fragebogenZeile.includes(portal), "in der Fragebogen-Zeile steht der Kundenportal-Link");
-  ok(!/kunde\.html/.test(fragebogenZeile), "die Fragebogen-Zeile verweist auf das Kundenportal");
-  ok(/Vision Room/.test(fragebogenZeile) && /Standard-AGB/.test(fragebogenZeile),
-    "die Fragebogen-Zeile ist nicht vollständig beschriftet");
-  ok(!/keine Vorschau/.test(fragebogenZeile),
-    "die Fragebogen-Zeile behauptet weiter „keine Vorschau“");
+  /* Die Trennung bleibt — sie sitzt nur nicht mehr in zwei Phasenwaenden,
+     sondern in zwei Bereichen: oben das Cockpit mit der EINEN Kundenadresse,
+     darunter eingeklappt der interne Sonderweg. Kein Link darf in den
+     jeweils anderen Bereich lecken. */
+  const cockpit = html.slice(html.indexOf('<section class="ft-cockpit">'),
+                             html.indexOf('<details class="ft-more"'));
+  ok(cockpit.length > 200, "das Cockpit wurde nicht gefunden");
+  ok(cockpit.includes(fragebogen), "das Cockpit zeigt die Kundenadresse nicht");
+  ok(!cockpit.includes(portal), "im Cockpit steht der interne Kundenportal-Link");
+  ok(!/kunde\.html/.test(cockpit), "das Cockpit verweist auf das Kundenportal");
+  ok(/Vision Room/.test(cockpit) && /AGB/.test(cockpit),
+    "das Cockpit sagt nicht, was die Kundenadresse zeigt");
+  ok(!/keine Vorschau/.test(cockpit), "das Cockpit behauptet weiter „keine Vorschau“");
+  // Und der Knopf heisst hier Kopieren, weil die Adresse existiert.
+  ok(/Kundenlink kopieren/.test(cockpit) && !/Kundenlink erstellen/.test(cockpit),
+    "das Cockpit bietet „erstellen“ an, obwohl die Adresse längst existiert");
 
-  const portalZeile = html.slice(html.indexOf("Phase 2 · Kundenportal"));
-  ok(!portalZeile.includes(fragebogen), "in der Kundenportal-Zeile steht der Fragebogen-Link");
-  ok(/Kundenportal-Link/.test(portalZeile), "die Kundenportal-Zeile ist nicht beschriftet");
+  const intern = html.slice(html.indexOf('<details class="ft-more"'));
+  ok(intern.includes(portal), "der Kundenportal-Link fehlt im internen Bereich");
+  ok(/Kundenportal-Link/.test(intern), "der interne Bereich ist nicht beschriftet");
 }
 
 console.log(`flowertech projekt-fragebogen: ok (${checks} Pruefungen)`);
