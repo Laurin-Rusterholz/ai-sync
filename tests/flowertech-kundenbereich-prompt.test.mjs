@@ -729,4 +729,65 @@ function offerteAn(ctx, projectId) {
   ok(/"change"/.test(kinds[1]), "der Eingang nimmt keine Änderungswünsche entgegen");
 }
 
+/* ══ Teil 4 — Der Prompt sagt, woher er kommt und wofür er ist ═══════════ */
+
+// ── 17. Fassung, Ziel und Herkunft jeder Datenklasse ─────────────────────
+{
+  /* Ein Prompt ohne Fassung laesst sich spaeter nicht mehr zuordnen: Man sieht
+     ein Ergebnis und weiss nicht, nach welcher Anleitung es entstand. Und ohne
+     die Angabe, WOFUER die Ausgabe bestimmt ist, entstand schon eine Fassung
+     mit eigener Kopfzeile und eigenen Reitern — im Kundenlink standen danach
+     zwei Anwendungen ineinander. */
+  const leer = CORE.buildProjectPrompt({ project: { title: "Ohne alles" } });
+
+  ok(/Prompt-Fassung: ft-prompt-/.test(leer), "der Prompt nennt seine Fassung nicht");
+  ok(CORE.PROMPT_VERSION && /^ft-prompt-/.test(CORE.PROMPT_VERSION),
+    "die Prompt-Fassung ist nicht als solche benannt");
+
+  // Wofür die Ausgabe bestimmt ist — und was sie deshalb NICHT bauen soll.
+  ok(/Wofür das Ergebnis bestimmt ist/.test(leer), "der Prompt sagt nicht, wofür er ist");
+  ok(/FlowerTech-Kundenlink/.test(leer), "der Prompt nennt das Ziel nicht");
+  ok(/keine Präsentationshülle/.test(leer),
+    "der Prompt verbietet die zweite Hülle um die Website nicht");
+  ok(/eigene\s+Wunsch- oder Feedback-Seite/.test(leer.replace(/\n/g, " ")),
+    "der Prompt verbietet eine eigene Wunschseite nicht");
+  ok(/sprechende `id`s/.test(leer),
+    "der Prompt verlangt keine benannten Abschnitte für die Elementauswahl");
+
+  // Herkunft jeder Datenklasse — und „fehlend statt erfunden“ als Angabe.
+  ok(/## Herkunft der Angaben/.test(leer), "der Prompt nennt seine Quellen nicht");
+  [
+    "Fragebogen", "Vision Room", "Projektangabe currentUrl", "Projektangabe previewUrl",
+    "Offertenstand", "Offerte/Kostenstatus", "Vertrag/Zustimmung",
+    "Standard-AGB", "Kundenlink", "Projektnotizen", "Projektinhalte",
+  ].forEach((quelle) => {
+    ok(leer.includes(quelle), `die Quelle „${quelle}“ fehlt in der Herkunftsliste`);
+  });
+  // Ohne Daten steht ueberall FEHLT — nichts wird als vorhanden ausgegeben.
+  const zeilen = CORE.promptSources({ project: {}, document: {} });
+  ok(zeilen.filter((z) => /— FEHLT$/.test(z)).length >= 9,
+    "ohne Daten meldet die Herkunftsliste zu wenig als fehlend");
+  ok(zeilen.some((z) => /Standard-AGB/.test(z) && !/FEHLT/.test(z)),
+    "die zentralen Standard-AGB gelten als fehlend");
+  ok(!zeilen.some((z) => /kein 0 |keine 0 /.test(z)), "die Herkunftsliste stolpert über Nullen");
+
+  // Mit Daten verschwindet das FEHLT genau dort — und nur dort.
+  const voll = CORE.promptSources({
+    project: { currentUrl: "https://alt.example/", previewUrl: "https://neu.example/" },
+    document: { answers: [{ key: "a", answer: "ja" }], vision: { ideas: [] } },
+    offer: { number: "OF-1" }, changes: [{ id: "c1" }], questions: [{ id: "q1" }],
+    content: [{ id: "i1" }],
+  });
+  ok(!voll.some((z) => /currentUrl.*FEHLT|previewUrl.*FEHLT|Fragebogen.*FEHLT/.test(z)),
+    "vorhandene Angaben werden als fehlend ausgegeben");
+  ok(/1 freigegebene Änderungswünsche/.test(voll.join(" ")),
+    "freigegebene Änderungswünsche zählen nicht mit");
+
+  // Die harte Grenze bleibt: keine Preise, keine AGB, keine Erfindungen.
+  ok(/## Nicht erfinden/.test(leer), "die Grenze „nicht erfinden“ fehlt");
+  ok(/Keine Preise/.test(leer), "der Prompt erlaubt erfundene Preise");
+  ok(/Keine rechtlichen Texte \(AGB, Datenschutz, Impressum\) ausformulieren/.test(leer),
+    "der Prompt erlaubt eigene AGB");
+}
+
 console.log(`flowertech kundenbereich & prompt: ok (${checks} Pruefungen)`);

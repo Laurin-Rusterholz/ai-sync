@@ -188,9 +188,27 @@ const briefing = W.normalizeBriefing(RAW, { now: NOW });
   eq(task.projectId, "prj_1", "die Aufgabe haengt nicht am Projekt");
   eq(task.priority, 1, "die Prioritaet des Wunsches geht verloren");
   eq(task.sourceChangeRequestId, "cr_1", "die Aufgabe verweist nicht auf den Wunsch");
-  ok(task.title.startsWith("Änderung: "), "die Aufgabe ist nicht als Änderung erkennbar");
+  /* Der Titel sagt in der Aufgabenliste sofort, worum es geht: Art, Bereich
+     und Stelle. Aus dem Kundenlink kommt der Titel schon als
+     „Website – <Abschnitt>" — dann steht der Bereich nicht zweimal drin. */
+  ok(task.title.startsWith("Änderungswunsch "), "die Aufgabe ist nicht als Änderungswunsch erkennbar");
+  ok(task.title.includes("Startseite"), "der Bereich fehlt im Titel der Aufgabe");
+  const ausLink = W.buildChangeRequestTask(
+    { ...cr, title: "Website – Über uns", area: "Website" }, "prj_1", { now: NOW });
+  eq(ausLink.title, "Änderungswunsch Website – Über uns",
+    "der Titel aus dem Kundenlink wird doppelt beschriftet");
+
   ok(task.description.includes("Startseite"), "der Bereich fehlt in der Aufgabe");
   ok(task.description.includes("Anna Muster"), "die anfragende Person fehlt in der Aufgabe");
+  ok(task.description.includes("Eingegangen: "), "der Zeitpunkt fehlt in der Aufgabe");
+  /* Der Wortlaut der Kundschaft steht ZUERST — die Einordnung darunter. */
+  ok(task.description.indexOf("— Änderungswunsch —") > 0,
+    "die Einordnung steht über dem Wortlaut");
+  // Der Einladungstoken oeffnet den Kundenlink und gehoert nie in eine Aufgabe.
+  ok(!/[A-Za-z0-9_-]{24,}/.test(task.title), "im Titel der Aufgabe steht ein Token");
+  const mitProjekt = W.buildChangeRequestTask(cr, "prj_1", { now: NOW, projectTitle: "Lehner" });
+  ok(mitProjekt.description.includes("Projekt: Lehner"),
+    "die Aufgabe nennt das Projekt nicht");
   ok(!("kind" in task) && !("type" in task), "der Aenderungswunsch fuehrt eine eigene Aufgabenart ein");
 
   // Die zentrale Aufgaben-App bleibt fuehrend: der Wunsch folgt der Aufgabe.
