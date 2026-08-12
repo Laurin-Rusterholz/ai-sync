@@ -3359,7 +3359,10 @@
     var ft = wf();
     if (!core || !ft) return null;
     var entry = Object.assign({ id: id(), projectId: projectId }, normalized);
-    var taskId = window.createEntity("task", core.buildChangeRequestTask(entry, projectId, { now: now() }));
+    var projekt = projectById(projectId);
+    var taskId = window.createEntity("task", core.buildChangeRequestTask(entry, projectId, {
+      now: now(), projectTitle: (projekt && projekt.title) || "",
+    }));
     entry.taskId = taskId || null;
     ft.changeRequests.unshift(entry);
     refreshClientPortal(projectId);

@@ -566,17 +566,33 @@ export function changeRequestIsUsable(cr) {
 }
 
 // Ein Änderungswunsch wird zu einer echten Quantus-Aufgabe.
-export function buildChangeRequestTask(changeRequest, projectId, { now = new Date().toISOString() } = {}) {
+export function buildChangeRequestTask(changeRequest, projectId, { now = new Date().toISOString(), projectTitle = "" } = {}) {
   const cr = changeRequest || {};
+  const bereich = String(cr.area || "").trim();
+  const titel = String(cr.title || "").trim() || "Ohne Titel";
+  /* Der Titel sagt in der Aufgabenliste sofort, worum es geht: Art, Bereich
+     und die Stelle. Aus dem Kundenlink kommt der Titel bereits als
+     „Website – <Abschnitt>"; dann waere „Website" zweimal drin. */
+  const kopf = bereich && titel.indexOf(bereich) !== 0
+    ? "Änderungswunsch " + bereich + " – " + titel
+    : "Änderungswunsch " + titel;
   return {
-    title: "Änderung: " + (cr.title || "Ohne Titel"),
+    title: kopf.slice(0, 200),
+    /* Die Beschreibung traegt den Wortlaut der Kundschaft und daneben, woran
+       er haengt: Bereich, Herkunft, Projekt und Zeitpunkt. Was die Kundschaft
+       ueber die Elementauswahl mitgeschickt hat (Seite, Abschnitt, angetipptes
+       Element), steht im Wortlaut selbst und wird nicht umsortiert. Der
+       Einladungstoken gehoert NICHT hierher: Er oeffnet den Kundenlink. */
     description: [
-      cr.area ? "Bereich: " + cr.area : "",
-      cr.requestedBy ? "Gewünscht von: " + cr.requestedBy : "",
-      cr.origin === "internal" ? "Quelle: intern" : "Quelle: Kunde",
-      "",
       cr.detail || "",
-    ].filter((line, i) => line || i === 3).join("\n"),
+      "",
+      "— Änderungswunsch —",
+      bereich ? "Bereich: " + bereich : "",
+      cr.requestedBy ? "Gewünscht von: " + cr.requestedBy : "",
+      cr.origin === "internal" ? "Quelle: intern" : "Quelle: Kundenlink (flowertech.ch)",
+      projectTitle ? "Projekt: " + projectTitle : "",
+      "Eingegangen: " + (cr.createdAt || now),
+    ].filter((line, i) => line || i === 1).join("\n"),
     status: "todo",
     priority: cr.priority || 2,
     category: "flowertech",
@@ -2479,6 +2495,47 @@ export function answerByKey(answers, key) {
   return hit ? String(hit.answer).trim() : "";
 }
 
+/* Die Fassung des Prompts. Sie steht im Prompt selbst — ohne sie laesst sich
+   an einem Ergebnis nicht mehr feststellen, nach welcher Anleitung es gebaut
+   wurde. Bei inhaltlichen Aenderungen an dieser Anleitung hochzaehlen. */
+export const PROMPT_VERSION = "ft-prompt-2";
+
+/* Woher jede Datenklasse kommt — und was fehlt. „Fehlend statt erfunden" ist
+   keine Bitte, sondern eine Angabe: Was hier als fehlend steht, darf im
+   Ergebnis nicht auftauchen. */
+export function promptSources({
+  project = {}, document: doc = {}, briefing = null, offer = null,
+  changes = [], questions = [], content = [],
+} = {}) {
+  /* Zwei Formulierungen, damit beide Faelle lesbar bleiben: „3 Antworten …"
+     und „keine Antworten … — FEHLT". */
+  const da = (vorhanden, text, fehltText, quelle) =>
+    (vorhanden ? text : fehltText) + " (" + quelle + ")" + (vorhanden ? "" : " — FEHLT");
+  const antworten = (doc && Array.isArray(doc.answers) ? doc.answers : [])
+    .filter((a) => String(a && a.answer || "").trim()).length;
+  return [
+    da(antworten > 0, antworten + " Antworten aus dem Fragebogen",
+      "keine Antworten aus dem Fragebogen", "Fragebogen"),
+    da(!!(doc && doc.vision), "Vision Room", "kein Vision Room", "Vision Room"),
+    da(!!project.currentUrl, "bestehende Website", "keine bestehende Website",
+      "Projektangabe currentUrl"),
+    da(!!project.previewUrl, "Referenz-/Vorschau-Adresse", "keine Referenz-/Vorschau-Adresse",
+      "Projektangabe previewUrl"),
+    da(!!offer, "versendete Offerte", "keine versendete Offerte", "Offertenstand"),
+    da(!!(project.ftCostStatus || offer), "Kostenstand", "kein Kostenstand",
+      "Offerte/Kostenstatus"),
+    da(!!(project.ftContract || project.ftTermsAcceptedAt), "Vertragsstand",
+      "kein Vertragsstand", "Vertrag/Zustimmung"),
+    "Standard-AGB (zentrale Fassung, unveränderlich)",
+    da(changes.length > 0, changes.length + " freigegebene Änderungswünsche",
+      "keine freigegebenen Änderungswünsche", "Kundenlink"),
+    da(questions.length > 0, questions.length + " offene Rückfragen",
+      "keine offenen Rückfragen", "Projektnotizen"),
+    da(content.length > 0, "Leistungsbeschreibung", "keine Leistungsbeschreibung",
+      "Projektinhalte"),
+  ];
+}
+
 export function buildProjectPrompt({
   project = {}, document: doc = {}, changes = [], questions = [],
   templateName = "", company = {}, now = new Date().toISOString(),
@@ -2494,6 +2551,32 @@ export function buildProjectPrompt({
   out.push("Alles Nötige (CSS, kleine Interaktionen) gehört in diese Datei. Keine externen");
   out.push("Abhängigkeiten, kein Build-Schritt, keine erfundenen Inhalte: Was unten nicht");
   out.push("steht, wird nicht behauptet.");
+  out.push("");
+  /* Wofür das Ergebnis bestimmt ist. Ohne diesen Absatz entstand schon eine
+     Fassung mit eigener Kopfzeile, eigenen Reitern und eigener Wunschseite —
+     im Kundenlink standen danach zwei Anwendungen ineinander. */
+  out.push("## Wofür das Ergebnis bestimmt ist");
+  out.push("");
+  out.push("Die Ausgabe wird im FlowerTech-Kundenlink gezeigt: dort steht sie als");
+  out.push("eingebettete Vorschau neben der Verwaltung und der Änderungsleiste.");
+  out.push("Deshalb:");
+  out.push("- Liefere die WEBSITE, keine Präsentationshülle darum. Keine eigene");
+  out.push("  Kopfzeile mit Reitern wie „Website / Verwaltung / Vorschau“, keine eigene");
+  out.push("  Wunsch- oder Feedback-Seite — die stellt der Kundenlink.");
+  out.push("- Die Startseite liegt auf „/“. Unterseiten sind normale Seiten, nicht");
+  out.push("  Reiter einer Hülle.");
+  out.push("- Abschnitte bekommen sprechende `id`s und je eine Überschrift. Die");
+  out.push("  Elementauswahl im Kundenlink meldet damit „Abschnitt X“ statt „div“.");
+  out.push("- Die Seite muss im Rahmen bedienbar bleiben: keine Ausbruchsversuche");
+  out.push("  (`window.top`), keine erzwungene Vollbildumleitung.");
+  out.push("");
+  out.push("## Herkunft der Angaben");
+  out.push("");
+  out.push("Prompt-Fassung: " + PROMPT_VERSION + " · erzeugt " + String(now).slice(0, 10));
+  out.push("Jede Angabe unten stammt aus einer benannten Quelle. Steht dort nichts,");
+  out.push("FEHLT sie — dann wird sie als offene Frage notiert und nicht gefüllt:");
+  promptSources({ project, document: doc, briefing, offer, changes, questions, content })
+    .forEach((z) => out.push("- " + z));
   out.push("");
   out.push("## Projektkontext");
   out.push("- Art: " + (project.deliveryType === "program" ? "Programm / Anwendung" : "Website"));
@@ -4336,7 +4419,8 @@ const API = {
   PORTAL_RELEASE_REQUIREMENTS, portalReleaseState,
   inquiryFromVision, inquiryFromVisionIsUsable,
   PORTAL_STEPS, portalProgress, MAX_TEMPLATE_BYTES, MAX_PROMPT_BYTES, sanitizeTemplateHtml,
-  defaultTemplateHtml, buildProjectPrompt, termsState, normalizePortalQuestion,
+  defaultTemplateHtml, buildProjectPrompt, PROMPT_VERSION, promptSources,
+  termsState, normalizePortalQuestion,
   answerByKey, projectPromptMissing, projectPromptSources,
   QUOTE_REQUEST_STATUSES, quoteStatusLabel, QUOTE_REQUEST_FIELDS, normalizeQuoteRequest,
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
