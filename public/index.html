@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn · 2026-08-08" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-fluid-save · 2026-08-12" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -82819,8 +82819,12 @@ body:has(#pdfedRoot) #app{content-visibility:hidden}
 .jb-input::placeholder{color:var(--panel)}
 .jb-toast{position:fixed;bottom:48px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 32px;border-radius:16px;font-size:10px;font-weight:700;z-index:10200;opacity:0;transition:opacity .3s;pointer-events:none;text-transform:uppercase;letter-spacing:.2em;box-shadow:0 8px 32px rgba(0,0,0,.5)}
 /* Editor fullscreen */
+/* Sanfter Auftritt der Vollbild-Overlays: reine Deckkraft, kein Versatz —
+   der Compositor erledigt das, Layout und Caret bleiben unberuehrt. */
+@keyframes jbOverlayIn{from{opacity:0}to{opacity:1}}
+.jb-container.active{animation:jbOverlayIn .25s ease-out}
 .jb-editor{position:fixed;inset:0;background:var(--bg);z-index:10050;display:none;flex-direction:column}
-.jb-editor.active{display:flex}
+.jb-editor.active{display:flex;animation:jbOverlayIn .22s ease-out}
 .jb-editor-header{padding:12px 16px;border-bottom:1px solid var(--panel);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
 .jb-editor-body{flex:1;overflow-y:auto;display:flex}
 .jb-editor-content{flex:1;padding:32px 96px;display:flex;flex-direction:column;align-items:center;overflow-y:auto}
@@ -82887,7 +82891,7 @@ body:has(#pdfedRoot) #app{content-visibility:hidden}
 .jb-delay-btn.active{border-color:rgba(245,158,11,.7);background:rgba(245,158,11,.15)}
 /* Self letter read */
 .jb-read-view{position:fixed;inset:0;background:var(--bg);z-index:10060;display:none;flex-direction:column}
-.jb-read-view.active{display:flex}
+.jb-read-view.active{display:flex;animation:jbOverlayIn .22s ease-out}
 /* Fonts */
 .jb-font-inter{font-family:'Inter',sans-serif}
 .jb-font-lora{font-family:'Lora',serif}
@@ -82972,7 +82976,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
           </div>
         </div>
         <input type="text" id="jbEditorTitle" class="jb-editor-title" placeholder="Haupttitel..." oninput="jbAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbEditorArea').focus()}">
-        <div id="jbEditorArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Beginne deine Erzählung..." spellcheck="true" oninput="jbOnWrite()"></div>
+        <div id="jbEditorArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Beginne deine Erzählung..." spellcheck="true" oninput="jbOnWrite(event)"></div>
       </div>
     </div>
   </div>
@@ -83037,7 +83041,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     <div class="jb-editor-content">
       <div class="jb-editor-wrap">
         <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." oninput="jbSLAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
-        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." spellcheck="true" oninput="jbApplyTypography();jbSLAutoSave()"></div>
+        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." spellcheck="true" oninput="if(!event.inputType||event.inputType==='insertText'||event.inputType==='insertCompositionText')jbApplyTypography();jbSLAutoSave()"></div>
       </div>
     </div>
   </div>
@@ -83134,9 +83138,25 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   let _jbSLFont = "jb-font-inter";
   let _jbAutoSaveTimer = null;
   let _jbSLAutoSaveTimer = null;
+  let _jbLastDocSaveAt = 0;
+  let _jbSLLastSaveAt = 0;
 
   function jd() { return APP.state.data.journal; }
   function jbEsc(s) { const d = document.createElement("div"); d.textContent = String(s || ""); return d.innerHTML; }
+
+  // Wortzahlen fuer Start- und Archiv-Ansicht: das HTML jedes Werks bei jedem
+  // Rendern neu zu strippen waechst mit Anzahl und Laenge der Eintraege. Der
+  // Cache haelt das Ergebnis, solange sich das Werk nicht aendert.
+  const _jbWcCache = new Map();
+  function jbDocWordCount(d) {
+    const stamp = d.updatedAt || 0;
+    const hit = _jbWcCache.get(d.id);
+    if (hit && hit.stamp === stamp) return hit.wc;
+    const txt = String(d.content || "").replace(/<[^>]+>/g, " ").trim();
+    const wc = txt ? txt.split(/\s+/).filter(Boolean).length : 0;
+    _jbWcCache.set(d.id, { stamp: stamp, wc: wc });
+    return wc;
+  }
 
   // ====== OPEN / CLOSE ======
   function openJournalBooklet() {
@@ -83217,8 +83237,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // bringen: der Browser arbeitet bei jeder Aenderung erneut den gesamten
   // Schreibbereich durch. Auf dem Handy korrigiert ohnehin die Tastatur,
   // deshalb dort von Anfang an sparsam.
-  function jbTuneEditorForLength(len) {
-    var area = document.getElementById("jbEditorArea");
+  function jbTuneEditorForLength(len, areaOverride) {
+    var area = areaOverride || document.getElementById("jbEditorArea");
     if (!area) return;
     var long = len >= JB_LONG_DOC_CHARS || jbIsHandheld();
     if (area.classList.contains("jb-long") === long) return;
@@ -83353,9 +83373,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // wirklich sofort geschehen muss — alles Uebrige waechst mit der Textlaenge
   // und wuerde das Tippen mit jedem Absatz zaeher machen.
   var _jbLastKeystroke = 0;
-  window.jbOnWrite = function() {
+  window.jbOnWrite = function(e) {
     _jbLastKeystroke = Date.now();
-    jbApplyTypography();
+    // Ersetzungen nur beim echten Zeichen-Tippen: bei Loeschen, Einfuegen und
+    // vor allem Rueckgaengig wuerde die Regel sonst das eben Zurueckgenommene
+    // sofort wieder herstellen — Strg+Z liefe ins Leere.
+    var it = e && e.inputType;
+    if (!it || it === "insertText" || it === "insertCompositionText") jbApplyTypography();
     jbScheduleWritingMeta();
     var ed = document.getElementById("jbEditor");
     if (ed && ed.classList.contains("jb-calm")) jbMarkCurrentParagraph();
@@ -83364,9 +83388,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   // Wird von scheduleSave() gefragt: laeuft gerade eine Schreibsitzung?
   // Solange getippt wird, bleibt das Sichern lokal (siehe scheduleSave).
+  // Der Zukunftsbrief-Editor zaehlt mit — auch dort schreibt man lange Texte,
+  // und der Voll-Sync (Pull-Merge-Push) waere beim Tippen genauso teuer.
   window.jbIsTyping = function() {
     var ed = document.getElementById("jbEditor");
-    if (!ed || !ed.classList.contains("active")) return false;
+    var sl = document.getElementById("jbSelfLetterEditor");
+    var open = (ed && ed.classList.contains("active")) || (sl && sl.classList.contains("active"));
+    if (!open) return false;
     return Date.now() - _jbLastKeystroke < 2500;
   };
 
@@ -83390,7 +83418,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       if (key === "enter") { e.preventDefault(); window.jbCloseEditor(); return; }
     }
     if (e.key === "Escape") {
-      if (editor.classList.contains("jb-calm")) { e.preventDefault(); window.jbToggleCalm(); }
+      // Nur den Ruhe-Modus verlassen — der spaeter registrierte Escape-Handler
+      // wuerde sonst im selben Tastendruck auch noch den Editor schliessen.
+      if (editor.classList.contains("jb-calm")) { e.preventDefault(); e.stopImmediatePropagation(); window.jbToggleCalm(); }
     }
   });
 
@@ -83410,12 +83440,16 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     });
   });
 
+  // Folgen zwei Meldungen dicht aufeinander, darf der Timer der ersten die
+  // zweite nicht vorzeitig ausblenden.
+  var _jbToastTimer = null;
   function jbToast(msg) {
     const t = document.getElementById("jbToast");
     if (!t) return;
     t.textContent = msg;
     t.style.opacity = "1";
-    setTimeout(() => { t.style.opacity = "0"; }, 2000);
+    clearTimeout(_jbToastTimer);
+    _jbToastTimer = setTimeout(() => { t.style.opacity = "0"; }, 2000);
   }
 
   // ====== NAVIGATION ======
@@ -83439,7 +83473,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function jbViewHome() {
     const j = jd();
     const docCount = j.documents.length;
-    const wordCount = j.documents.reduce((acc, d) => acc + (d.content ? d.content.replace(/<[^>]*>/g, "").split(/\s+/).filter(Boolean).length : 0), 0);
+    const wordCount = j.documents.reduce((acc, d) => acc + jbDocWordCount(d), 0);
     const letterCount = j.selfLetters.length;
     const inboxUnread = j.selfLetters.filter(l => l.delivered && !l.readAt);
     const outbox = j.selfLetters.filter(l => !l.delivered);
@@ -83488,7 +83522,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
     const recent = [...j.documents].sort((a,b) => b.updatedAt - a.updatedAt).slice(0, 4);
     const recentHtml = recent.map(d => {
-      const wc = d.content ? d.content.replace(/<[^>]*>/g,"").split(/\s+/).filter(Boolean).length : 0;
+      const wc = jbDocWordCount(d);
       return `<div onclick="jbOpenDocument('${d.id}')" style="padding:18px 20px;border:1px solid var(--panel);border-radius:16px;cursor:pointer;background:rgba(24,24,27,.1);transition:all .2s" onmouseenter="this.style.borderColor='#3f3f46'" onmouseleave="this.style.borderColor='#1a1a1a'">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">
           <span style="font-size:12px;color:#fff;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${jbEsc(d.title || "Unbenannt")}</span>
@@ -83559,14 +83593,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       return d.toLocaleDateString("de-CH", { day: "2-digit", month: "short", year: "numeric" });
     };
     
-    const wordCount = (html) => {
-      if (!html) return 0;
-      const txt = html.replace(/<[^>]+>/g, " ").trim();
-      return txt.split(/\s+/).filter(Boolean).length;
-    };
-    
     const html = docs.length ? docs.map(d => {
-      const wc = wordCount(d.content);
+      const wc = jbDocWordCount(d);
       const dateStr = formatDate(d.updatedAt);
       const typeLabel = typeLabels[d.type] || d.type;
       return `<div style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;background:rgba(24,24,27,.1);border:1px solid var(--panel);border-radius:16px;transition:all .2s" onmouseenter="this.style.background='rgba(24,24,27,.3)';this.style.borderColor='#3f3f46'" onmouseleave="this.style.background='rgba(24,24,27,.1)';this.style.borderColor='#1a1a1a'">
@@ -83741,9 +83769,17 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // ganzen Text laufen, bevor wir sie abschalten koennen.
     _jbLastMetaWords = -1;
     _jbHereEl = null;
+    // Frisch geoeffnet = gesichert: der 10-s-Zwangsspeicher zaehlt ab jetzt.
+    _jbLastDocSaveAt = Date.now();
+    jbSetEditorStatus("Bereit");
     jbTuneEditorForLength(String(doc.content || "").replace(/<[^>]*>/g, "").length);
     document.getElementById("jbEditorTitle").value = doc.title;
-    document.getElementById("jbEditorArea").innerHTML = doc.content || "<div><br></div>";
+    // Frueher gespeicherte Ruhe-Modus-Marker beim Laden abstreifen.
+    let loadContent = doc.content || "<div><br></div>";
+    if (loadContent.indexOf("jb-here") !== -1) {
+      loadContent = loadContent.replace(/ class="jb-here"/g, "").replace(/(class="[^"]*?) ?\bjb-here\b/g, "$1");
+    }
+    document.getElementById("jbEditorArea").innerHTML = loadContent;
     document.getElementById("jbEditorFont").value = doc.font || "jb-font-inter";
     jbUpdateFont();
     // Letter header
@@ -83764,11 +83800,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // Bei einem angefangenen Text direkt in den Schreibbereich — nicht in den
     // Titel, den man dann erst wieder verlassen muesste.
     var areaEl = document.getElementById("jbEditorArea");
-    if (doc.title && (areaEl.innerText || "").trim()) {
+    if (doc.title && jbEditorPlainText(areaEl).trim()) {
       var r = document.createRange();
       r.selectNodeContents(areaEl); r.collapse(false);
       var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
       areaEl.focus();
+      // Dorthin scrollen, wo der Cursor steht — sonst zeigt die Ansicht den
+      // Anfang und springt beim ersten Anschlag ans Ende.
+      var sc = areaEl.closest(".jb-editor-content");
+      if (sc) sc.scrollTop = sc.scrollHeight;
     } else {
       document.getElementById("jbEditorTitle").focus();
     }
@@ -83792,8 +83832,27 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   }
   window.jbOpenDocument = jbOpenDocument;
 
+  // Statuszeile links im Kopf: solange Aenderungen offen sind „Speichert …",
+  // danach „Gespeichert HH:MM". Laeuft bei jedem Anschlag mit — deshalb nur
+  // bei echtem Wechsel ins DOM schreiben.
+  var _jbStatusShown = null;
+  function jbSetEditorStatus(text) {
+    if (text === _jbStatusShown) return;
+    _jbStatusShown = text;
+    var el = document.getElementById("jbEditorStatus");
+    if (el) el.textContent = text;
+  }
+
+  // Die Buendelung setzt sich mit jedem Anschlag zurueck. Wer minutenlang ohne
+  // 2-Sekunden-Pause schreibt, haette sonst KEINEN einzigen Speicherstand —
+  // deshalb spaetestens alle 10 s sichern, auch mitten im Tippen. Das bleibt
+  // billig: waehrend des Schreibens speichert scheduleSave() nur lokal
+  // (siehe remoteSaveOnHold), der Voll-Sync wartet auf die Tipppause.
+  var JB_MAX_UNSAVED_MS = 10000;
   function jbAutoSave() {
     clearTimeout(_jbAutoSaveTimer);
+    jbSetEditorStatus("Speichert …");
+    if (Date.now() - _jbLastDocSaveAt >= JB_MAX_UNSAVED_MS) { jbSaveCurrentDoc(true); return; }
     _jbAutoSaveTimer = setTimeout(() => jbSaveCurrentDoc(true), 2000);
   }
   window.jbAutoSave = jbAutoSave;
@@ -83801,8 +83860,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function jbSaveCurrentDoc(silent) {
     const doc = jd().documents.find(d => d.id === _jbCurrentDocId);
     if (!doc) return;
+    _jbLastDocSaveAt = Date.now();
     const title = document.getElementById("jbEditorTitle").value;
-    const content = document.getElementById("jbEditorArea").innerHTML;
+    let content = document.getElementById("jbEditorArea").innerHTML;
+    // Der Ruhe-Modus-Marker ist Ansichtszustand, kein Inhalt: gespeichert
+    // wuerde er beim naechsten Oeffnen einen beliebigen Absatz markieren, und
+    // jede Cursorbewegung im Ruhe-Modus saehe wie eine Textaenderung aus.
+    if (content.indexOf("jb-here") !== -1) {
+      content = content.replace(/ class="jb-here"/g, "").replace(/(class="[^"]*?) ?\bjb-here\b/g, "$1");
+    }
     const recipientId = document.getElementById("jbEditorRecipient")?.value || "";
     const font = document.getElementById("jbEditorFont").value;
     // Perf: scheduleSave() serialisiert den GESAMTEN App-State (JSON.stringify +
@@ -83810,16 +83876,19 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // Formatier-Toggle, Fokuswechsel — sparen wir uns das komplett.
     const unchanged = doc.title === title && doc.content === content
       && (doc.recipientId || "") === recipientId && doc.font === font;
-    if (unchanged) { if (!silent) jbToast("Gesichert"); return; }
-    doc.title = title;
-    doc.content = content;
-    doc.recipientId = recipientId;
-    doc.font = font;
-    doc.updatedAt = Date.now();
-    scheduleSave();
+    if (!unchanged) {
+      doc.title = title;
+      doc.content = content;
+      doc.recipientId = recipientId;
+      doc.font = font;
+      doc.updatedAt = Date.now();
+      scheduleSave();
+      // Die Wortzahl zieht gebuendelt nach — ein synchroner Volltext-Scan pro
+      // Speichervorgang waere beim 10-s-Zwangsspeichern mitten im Tippen.
+      jbScheduleWritingMeta();
+    }
     if (!silent) jbToast("Gesichert");
-    document.getElementById("jbEditorStatus").textContent = "Gespeichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"});
-    jbUpdateWritingMeta();
+    jbSetEditorStatus("Gespeichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"}));
   }
 
   // Send current entry to Mobile App
@@ -84018,6 +84087,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     document.getElementById("jbEditor").classList.remove("active");
     clearTimeout(_jbAutoSaveTimer);
     jbSaveCurrentDoc(true);
+    // Nie Beschriebenes verlaesst das Archiv still.
+    const doc = jd().documents.find(d => d.id === _jbCurrentDocId);
+    if (doc && jbEntryIsEmpty(doc)) {
+      jd().documents = jd().documents.filter(d => d.id !== doc.id);
+      _jbWcCache.delete(doc.id);
+      scheduleSave();
+    }
     _jbCurrentDocId = null;
     document.getElementById("jbEditorSidebar").classList.remove("open");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
@@ -84027,6 +84103,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   window.jbDeleteDoc = function(id) {
     if (!confirm("Dieses Werk permanent löschen?")) return;
     jd().documents = jd().documents.filter(d => d.id !== id);
+    _jbWcCache.delete(id);
     scheduleSave();
     jbNav("docs");
   };
@@ -84048,9 +84125,23 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     jbAutoSave();
   };
 
+  // Lora und Inconsolata standen zwar im Menue, geladen wurde aber nur Inter —
+  // die Auswahl fiel still auf eine Systemschrift zurueck. Die Webfonts kommen
+  // jetzt beim ersten Gebrauch dazu, ohne den App-Start zu belasten.
+  var _jbFontsRequested = false;
+  function jbEnsureFonts(font) {
+    if (_jbFontsRequested || !font || font === "jb-font-inter") return;
+    _jbFontsRequested = true;
+    var l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = "https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400&family=Inconsolata:wght@400;700&display=swap";
+    document.head.appendChild(l);
+  }
+
   window.jbUpdateFont = function() {
     const font = document.getElementById("jbEditorFont").value;
     const ed = document.getElementById("jbEditorArea");
+    jbEnsureFonts(font);
     ["jb-font-inter","jb-font-lora","jb-font-inconsolata"].forEach(f => ed.classList.remove(f));
     ed.classList.add(font);
     _jbCurrentFont = font;
@@ -84130,16 +84221,29 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // ausschliesslich im DOM: „Senden" war der einzige Weg, ihn zu speichern.
   // Editor zu, Ansicht gewechselt, Seite neu geladen — alles weg. Deshalb wird
   // der Brief jetzt wie jedes andere Dokument laufend als Entwurf gesichert.
-  function jbSLIsEmpty(draft) {
-    if (!draft) return true;
-    const text = String(draft.content || "").replace(/<[^>]*>/g, "").trim();
-    return !String(draft.title || "").trim() && !text;
+  // Gilt fuer Zukunftsbrief-Entwuerfe wie fuer Werke: leer ist, was weder
+  // Titel noch sichtbaren Text hat (leere Absaetze zaehlen nicht).
+  function jbEntryIsEmpty(entry) {
+    if (!entry) return true;
+    const text = String(entry.content || "").replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
+    return !String(entry.title || "").trim() && !text;
+  }
+
+  // Gleiche Status-Disziplin wie im Dokument-Editor: nur bei echtem Wechsel
+  // ins DOM schreiben, die Funktion laeuft bei jedem Anschlag mit.
+  var _jbSLStatusShown = null;
+  function jbSetSLStatus(text) {
+    if (text === _jbSLStatusShown) return;
+    _jbSLStatusShown = text;
+    var el = document.getElementById("jbSLStatus");
+    if (el) el.textContent = text;
   }
 
   function jbSaveSelfLetterDraft() {
     const titleEl = document.getElementById("jbSLTitle");
     const areaEl = document.getElementById("jbSLArea");
     if (!titleEl || !areaEl) return;
+    _jbSLLastSaveAt = Date.now();
     const draft = {
       title: titleEl.value,
       content: areaEl.innerHTML,
@@ -84148,9 +84252,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       customDate: document.getElementById("jbSLCustomDate")?.value || "",
       updatedAt: Date.now()
     };
+    // Auch ein langer Zukunftsbrief schaltet in den sparsamen Modus —
+    // Rechtschreibpruefung und Feinsatz kosten dort dasselbe wie im Werk-Editor.
+    jbTuneEditorForLength(String(draft.content || "").replace(/<[^>]*>/g, "").length, areaEl);
     // Ein leerer Brief soll keinen Entwurf hinterlassen, sonst meldet sich beim
     // naechsten Oeffnen ein „wiederhergestellter" Brief ohne Inhalt.
-    const next = jbSLIsEmpty(draft) ? null : draft;
+    const next = jbEntryIsEmpty(draft) ? null : draft;
     // Perf: nur speichern, wenn sich am Entwurf wirklich etwas geändert hat —
     // scheduleSave() serialisiert sonst grundlos den gesamten App-State.
     const prev = jd().selfLetterDraft;
@@ -84161,23 +84268,29 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       jd().selfLetterDraft = next;
       scheduleSave();
     }
-    const status = document.getElementById("jbSLStatus");
-    if (status) {
-      status.textContent = jd().selfLetterDraft
-        ? "Entwurf gesichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"})
-        : "";
-    }
+    jbSetSLStatus(jd().selfLetterDraft
+      ? "Entwurf gesichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"})
+      : "");
   }
 
   function jbSLAutoSave() {
     clearTimeout(_jbSLAutoSaveTimer);
+    // Zaehlt als Schreibsitzung: haelt den Voll-Sync zurueck (jbIsTyping).
+    _jbLastKeystroke = Date.now();
+    jbSetSLStatus("Speichert …");
+    // Auch hier: Dauerschreiben ohne Pause darf den Entwurf nicht ewig
+    // ungesichert lassen — spaetestens alle 10 s in den Datenstand.
+    if (Date.now() - _jbSLLastSaveAt >= JB_MAX_UNSAVED_MS) { jbSaveSelfLetterDraft(); return; }
     _jbSLAutoSaveTimer = setTimeout(jbSaveSelfLetterDraft, 2000);
   }
   window.jbSLAutoSave = jbSLAutoSave;
 
   function jbApplySelfLetterDraft(draft) {
     document.getElementById("jbSLTitle").value = draft?.title || "";
-    document.getElementById("jbSLArea").innerHTML = draft?.content || "<div><br></div>";
+    const slArea = document.getElementById("jbSLArea");
+    // Sparsamen Modus vor dem Einsetzen entscheiden — wie im Werk-Editor.
+    jbTuneEditorForLength(String(draft?.content || "").replace(/<[^>]*>/g, "").length, slArea);
+    slArea.innerHTML = draft?.content || "<div><br></div>";
     const font = draft?.font || "jb-font-inter";
     document.getElementById("jbSLFont").value = font;
     _jbSLFont = font;
@@ -84188,8 +84301,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     const dateEl = document.getElementById("jbSLCustomDate");
     if (dateEl) dateEl.value = draft?.customDate || "";
     jbUpdateDeliveryPreview();
-    const status = document.getElementById("jbSLStatus");
-    if (status) status.textContent = draft ? "Entwurf wiederhergestellt" : "";
+    _jbSLLastSaveAt = Date.now();
+    jbSetSLStatus(draft ? "Entwurf wiederhergestellt" : "");
   }
 
   window.jbStartNewSelfLetter = function() {
@@ -84202,7 +84315,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   // Bewusster Neuanfang — der einzige Weg, einen Entwurf zu verlieren.
   window.jbDiscardSelfLetterDraft = function() {
-    if (!jbSLIsEmpty(jd().selfLetterDraft) && !confirm("Entwurf verwerfen und neu beginnen?")) return;
+    if (!jbEntryIsEmpty(jd().selfLetterDraft) && !confirm("Entwurf verwerfen und neu beginnen?")) return;
     clearTimeout(_jbSLAutoSaveTimer);
     jd().selfLetterDraft = null;
     scheduleSave();
@@ -84211,10 +84324,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   };
 
   window.jbCloseSelfLetterEditor = function() {
-    // Vor dem Schliessen sichern, nicht erst nach Ablauf der Autosave-Pause.
+    // Erst schliessen, dann sichern — wie im Werk-Editor: solange der Editor
+    // offen ist, haelt scheduleSave() den Remote-Push zurueck (jbIsTyping).
+    // Die Felder sind auch im ausgeblendeten Editor noch auslesbar.
+    document.getElementById("jbSelfLetterEditor").classList.remove("active");
     clearTimeout(_jbSLAutoSaveTimer);
     jbSaveSelfLetterDraft();
-    document.getElementById("jbSelfLetterEditor").classList.remove("active");
     document.getElementById("jbSLSidebar").classList.remove("open");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
   };
@@ -84233,9 +84348,27 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     jbSLAutoSave();
   };
 
+  // Dieselben Tastaturerwartungen wie im Dokument-Editor — vorher landete
+  // ⌘/Strg+S hier im „Seite speichern"-Dialog des Browsers.
+  document.addEventListener("keydown", function(e) {
+    var editor = document.getElementById("jbSelfLetterEditor");
+    if (!editor || !editor.classList.contains("active")) return;
+    var mod = e.metaKey || e.ctrlKey;
+    if (!mod || e.shiftKey || e.altKey) return;
+    var key = String(e.key || "").toLowerCase();
+    if (key === "b" || key === "i" || key === "u") {
+      e.preventDefault();
+      window.jbFormatSL({ b: "bold", i: "italic", u: "underline" }[key]);
+      return;
+    }
+    if (key === "s") { e.preventDefault(); clearTimeout(_jbSLAutoSaveTimer); jbSaveSelfLetterDraft(); return; }
+    if (key === "enter") { e.preventDefault(); window.jbCloseSelfLetterEditor(); }
+  });
+
   window.jbUpdateSLFont = function() {
     const font = document.getElementById("jbSLFont").value;
     const ed = document.getElementById("jbSLArea");
+    jbEnsureFonts(font);
     ["jb-font-inter","jb-font-lora","jb-font-inconsolata"].forEach(f => ed.classList.remove(f));
     ed.classList.add(font);
     _jbSLFont = font;
@@ -84298,12 +84431,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       delivered: false, readAt: null
     };
     jd().selfLetters.push(letter);
-    // Der Brief ist jetzt echt — der Entwurf wird gegenstandslos.
+    // Der Brief ist jetzt echt — der Entwurf wird gegenstandslos. Der Editor
+    // schliesst vor dem Speichern, damit der Push nicht in der Tippsperre haengt.
+    document.getElementById("jbSelfLetterEditor").classList.remove("active");
+    document.getElementById("jbSLSidebar").classList.remove("open");
     clearTimeout(_jbSLAutoSaveTimer);
     jd().selfLetterDraft = null;
     scheduleSave();
-    document.getElementById("jbSelfLetterEditor").classList.remove("active");
-    document.getElementById("jbSLSidebar").classList.remove("open");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
     jbToast("Brief in die Zukunft gesendet! 💌");
     jbNav("home");
@@ -84389,6 +84523,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       </div>`;
     const rc = document.getElementById("jbReadContent");
     rc.innerHTML = letter.content;
+    jbEnsureFonts(letter.font);
     rc.className = "jb-richtext " + (letter.font || "jb-font-inter");
     document.getElementById("jbReadView").classList.add("active");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
@@ -84457,7 +84592,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     jbPushChat("user", userText);
     input.value = "";
     loader.style.display = "block";
-    const editorText = document.getElementById("jbEditorArea").innerText.substring(0, 3000);
+    // jbEditorPlainText statt innerText: innerText erzwingt ein Layout des
+    // gesamten Schreibbereichs.
+    const editorText = jbEditorPlainText(document.getElementById("jbEditorArea")).slice(0, 3000);
     const ideasCtx = jd().topics.map(t => t.text).join(" | ");
     const sysPrompt = `Du bist ein literarischer Mentor im Journal Booklet. Aktueller Text: ${editorText}. Bisherige Ideen: ${ideasCtx}. Hilf dem Nutzer, den Text zu verbessern. Antworte präzise auf Deutsch.`;
     fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiToken}`, {
@@ -84578,6 +84715,36 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     a.download = `${filename}.html`;
     a.click();
   };
+
+  // ══ Notbremse: alles Offene in den Datenstand schreiben ══════════════════
+  // Der Editor sichert gebuendelt (2 s). Schliesst man den Tab oder wechselt
+  // ihn innerhalb dieser Pause, lagen die letzten Anschlaege nur im DOM — die
+  // App-eigene Flush-Logik konnte sie nicht sehen, weil sie noch gar nicht im
+  // Modell waren. jbFlush() holt sie ohne Wartezeit ab und stoesst danach den
+  // Sofort-Schreibvorgang der Hauptapp an.
+  // Muss in DIESEM Modul stehen: _jbCurrentDocId, die Autosave-Timer und die
+  // Save-Funktionen sind modul-lokal. Ausserhalb wirft jeder Aufruf einen
+  // ReferenceError, den das try/catch verschluckt — die Notbremse greift dann
+  // nie, und genau die Anschlaege vor dem Tab-Wechsel gehen verloren.
+  function jbFlush() {
+    try {
+      const container = document.getElementById("journalBookletContainer");
+      if (!container || !APP?.state?.data?.journal) return;
+      if (_jbCurrentDocId && document.getElementById("jbEditor")?.classList.contains("active")) {
+        clearTimeout(_jbAutoSaveTimer);
+        jbSaveCurrentDoc(true);
+      }
+      if (document.getElementById("jbSelfLetterEditor")?.classList.contains("active")) {
+        clearTimeout(_jbSLAutoSaveTimer);
+        jbSaveSelfLetterDraft();
+      }
+      if (typeof flushLocalSave === "function") flushLocalSave();
+    } catch (e) { console.warn("[JournalBooklet] Flush fehlgeschlagen:", e); }
+  }
+  window.jbFlush = jbFlush;
+  window.addEventListener("pagehide", jbFlush);
+  window.addEventListener("beforeunload", jbFlush);
+  document.addEventListener("visibilitychange", function() { if (document.hidden) jbFlush(); });
 
   // Check arrived letters periodically
   setInterval(jbCheckArrivedLetters, 60000);
@@ -84708,32 +84875,6 @@ function gSet(){try{const s=JSON.parse(localStorage.getItem(SKEY)||'{}');if(!s.a
 function sSet(d){localStorage.setItem(SKEY,JSON.stringify(d))}
 async function callGPT(prompt,mt){const s=gSet();const gk=APP?.state?.settings?.geminiApiKey||s.geminiKey||'';if(gk){try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+gk,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});if(r.ok){const d=await r.json();const t=d.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||null;if(t)return t}}catch(e){console.log('Gemini callGPT failed:',e)}}const ok=s.openaiKey;if(ok){try{const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+ok},body:JSON.stringify({model:'gpt-4o-mini',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.choices?.[0]?.message?.content?.trim()||null}}catch(e){}}const ck=s.apiKey;if(ck){try{const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ck,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:mt||500,messages:[{role:'user',content:prompt}]})});if(r.ok){const d=await r.json();return d.content?.map(c=>c.text||'').join('').trim()||null}}catch(e){}}nhToastMsg('API Key fehlt (Gemini/OpenAI/Anthropic)');return null}
 async function extractPDF(file){const b64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)});const k=gSet().apiKey;if(!k){nhToastMsg('Claude API Key fehlt');return null}nhToastMsg('PDF wird extrahiert…');try{const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:8000,messages:[{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:'Extract the complete text from this PDF. Return ONLY the raw text, no comments. Keep paragraphs.'}]}]})});if(!resp.ok){nhToastMsg('PDF Fehler');return null}const d=await resp.json();nhToastMsg('✓ PDF extrahiert');return d.content?.map(c=>c.text||'').join('').trim();}catch(e){nhToastMsg(e.message);return null}}
-
-  // ══ Notbremse: alles Offene in den Datenstand schreiben ══════════════════
-  // Der Editor sichert gebuendelt (2 s). Schliesst man den Tab oder wechselt
-  // ihn innerhalb dieser Pause, lagen die letzten Anschlaege nur im DOM — die
-  // App-eigene Flush-Logik konnte sie nicht sehen, weil sie noch gar nicht im
-  // Modell waren. jbFlush() holt sie ohne Wartezeit ab und stoesst danach den
-  // Sofort-Schreibvorgang der Hauptapp an.
-  function jbFlush() {
-    try {
-      const container = document.getElementById("journalBookletContainer");
-      if (!container || !APP?.state?.data?.journal) return;
-      if (_jbCurrentDocId && document.getElementById("jbEditor")?.classList.contains("active")) {
-        clearTimeout(_jbAutoSaveTimer);
-        jbSaveCurrentDoc(true);
-      }
-      if (document.getElementById("jbSelfLetterEditor")?.classList.contains("active")) {
-        clearTimeout(_jbSLAutoSaveTimer);
-        jbSaveSelfLetterDraft();
-      }
-      if (typeof flushLocalSave === "function") flushLocalSave();
-    } catch (e) { console.warn("[JournalBooklet] Flush fehlgeschlagen:", e); }
-  }
-  window.jbFlush = jbFlush;
-  window.addEventListener("pagehide", jbFlush);
-  window.addEventListener("beforeunload", jbFlush);
-  document.addEventListener("visibilitychange", function() { if (document.hidden) jbFlush(); });
 
 /* ── Cloud — handled by main app's scheduleSave(), no separate sync ── */
 /* All NH data is stored in APP.state.data.entities (nhNews, nhTopics etc.)

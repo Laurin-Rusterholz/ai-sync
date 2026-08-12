@@ -166,10 +166,11 @@ for (const fn of ["jbWordCount", "jbUpdateWritingMeta", "jbMarkCurrentParagraph"
   assert.ok(index.includes(`function ${fn}(`), `${fn}() fehlt`);
 }
 assert.match(index, /window\.jbToggleCalm = function\(\)/, "der Ruhe-Modus fehlt");
-assert.match(index, /window\.jbOnWrite = function\(\)/, "jbOnWrite\(\) fehlt");
+assert.match(index, /window\.jbOnWrite = function\(/, "jbOnWrite\(\) fehlt");
 // Der Schreibbereich haengt am neuen Sammelaufruf.
 const writeArea = index.split("\n").find((line) => line.includes('id="jbEditorArea"'));
-assert.ok(writeArea && writeArea.includes("jbOnWrite()"), "der Schreibbereich ruft jbOnWrite\(\) nicht");
+assert.ok(writeArea && writeArea.includes("jbOnWrite(event)"),
+  "der Schreibbereich ruft jbOnWrite\(event\) nicht — ohne das Ereignis kann die Zeichenersetzung Rueckgaengig nicht respektieren");
 assert.ok(writeArea && writeArea.includes('spellcheck="true"'), "die Rechtschreibpruefung ist im Schreibbereich aus");
 // Lesbare Zeilenlaenge und Platz unter dem Cursor.
 assert.match(index, /\.jb-richtext\{[^}]*max-width:66ch/, "die Zeilenlaenge ist nicht begrenzt");
