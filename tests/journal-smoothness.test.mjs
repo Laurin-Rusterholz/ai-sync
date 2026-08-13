@@ -263,4 +263,27 @@ ok(/Ruhe-Modus-Marker beim Laden abstreifen/.test(jbSource)
     "jbTuneEditorForLength kennt keinen zweiten Schreibbereich");
 }
 
+// ── 15. Tippen trifft immer den Text ───────────────────────────────────────
+// Produktionsbefund: Editor offen, Status "Gespeichert", aber kein Anschlag
+// kam an — der Fokus lag nach Tab-Wechsel/Klick ins Leere auf dem Dokument.
+{
+  ok(jbSource.includes("function jbFocusAreaAtEnd(area)"), "die Fokus-Rettung fehlt");
+  ok(jbSource.includes("function jbActiveWritingArea()"), "jbActiveWritingArea() fehlt");
+  const rec = jbSource.slice(jbSource.indexOf("function jbActiveWritingArea()"), jbSource.indexOf("function jbFlush()"));
+  ok(rec.length > 0 && /e\.key\.length !== 1/.test(rec),
+    "die Fokus-Rettung beschraenkt sich nicht auf druckbare Zeichen — Pfeiltasten und Escape wuerden den Fokus stehlen");
+  ok(/isContentEditable/.test(rec),
+    "die Fokus-Rettung wuerde auch aus fokussierten Eingabefeldern stehlen");
+  ok(/mousedown/.test(rec) && /jb-editor-wrap/.test(rec),
+    "ein Klick in die freie Schreibflaeche setzt den Cursor nicht in den Text");
+}
+
+// ── 16. Der Quick-Assistent hat im Journal Pause ───────────────────────────
+{
+  ok(/body\.jb-open #qc-fab,body\.jb-open #qc-panel\{display:none!important\}/.test(index),
+    "der schwebende KI-Knopf (hoechster z-index der Seite) liegt weiterhin ueber der Schreibumgebung");
+  ok(/body:has\(#jbEditor\.active\) #qc-fab/.test(index),
+    "ohne jb-open-Klasse (Router-Randfall) bleibt der KI-Knopf im Editor sichtbar");
+}
+
 console.log(`journal smoothness: ok (${checks} Pruefungen)`);

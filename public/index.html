@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-fluid-save · 2026-08-12" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-focus-fix · 2026-08-13" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -84716,6 +84716,51 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     a.click();
   };
 
+  // ══ Tippen trifft immer den Text ═════════════════════════════════════════
+  // Nach Tab-Wechseln oder Klicks ins Leere liegt der Fokus schnell auf dem
+  // Dokument selbst — der Editor ist offen, aber Anschlaege verpuffen. Ein
+  // druckbares Zeichen holt den Fokus zurueck an die Schreibstelle, und ein
+  // Klick in die freie Schreibflaeche setzt den Cursor ans Textende. Niemand
+  // muss die (unsichtbaren) Grenzen des Schreibbereichs treffen.
+  function jbFocusAreaAtEnd(area) {
+    if (!area) return;
+    area.focus();
+    try {
+      var r = document.createRange();
+      r.selectNodeContents(area); r.collapse(false);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+    } catch (e) {}
+  }
+
+  function jbActiveWritingArea() {
+    if (document.getElementById("jbEditor")?.classList.contains("active")) return document.getElementById("jbEditorArea");
+    if (document.getElementById("jbSelfLetterEditor")?.classList.contains("active")) return document.getElementById("jbSLArea");
+    return null;
+  }
+
+  document.addEventListener("keydown", function(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!e.key || e.key.length !== 1) return;      // nur druckbare Zeichen
+    var area = jbActiveWritingArea();
+    if (!area) return;
+    var a = document.activeElement;
+    if (a && (a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")) return;
+    if (a && a.tagName === "BUTTON" && e.key === " ") return;   // Leertaste darf Knoepfe druecken
+    // Fokus noch waehrend des keydown setzen — das Zeichen landet dann im Text.
+    jbFocusAreaAtEnd(area);
+  });
+
+  ["jbEditor", "jbSelfLetterEditor"].forEach(function(edId) {
+    var content = document.getElementById(edId)?.querySelector(".jb-editor-content");
+    if (!content) return;
+    content.addEventListener("mousedown", function(e) {
+      var wrap = e.target && e.target.classList && e.target.classList.contains("jb-editor-wrap");
+      if (e.target !== content && !wrap) return;   // nur Klicks ins Leere, nicht in Felder
+      e.preventDefault();
+      jbFocusAreaAtEnd(edId === "jbEditor" ? document.getElementById("jbEditorArea") : document.getElementById("jbSLArea"));
+    });
+  });
+
   // ══ Notbremse: alles Offene in den Datenstand schreiben ══════════════════
   // Der Editor sichert gebuendelt (2 s). Schliesst man den Tab oder wechselt
   // ihn innerhalb dieser Pause, lagen die letzten Anschlaege nur im DOM — die
@@ -85067,6 +85112,16 @@ window.openResearchHubTicket=function(){openResearchHub()};
 #qc-fab.open{background:linear-gradient(135deg,var(--danger),var(--pink))}
 #qc-fab svg{width:26px;height:26px;transition:transform .25s}
 #qc-fab.open svg{transform:rotate(90deg)}
+/* Im Daily Journal hat der Quick-Assistent Pause: sein schwebender Knopf
+   (hoechster z-index der Seite) laege sonst ueber der Schreibumgebung.
+   body.jb-open deckt den Normalfall ab; die :has()-Regeln greifen auch dann,
+   wenn ein Editor-Overlay offen ist, waehrend der Router die jb-open-Klasse
+   bereits entfernt hat. Browser ohne :has() ignorieren nur diese Zeilen. */
+body.jb-open #qc-fab,body.jb-open #qc-panel{display:none!important}
+body:has(#journalBookletContainer.active) #qc-fab,body:has(#journalBookletContainer.active) #qc-panel,
+body:has(#jbEditor.active) #qc-fab,body:has(#jbEditor.active) #qc-panel,
+body:has(#jbSelfLetterEditor.active) #qc-fab,body:has(#jbSelfLetterEditor.active) #qc-panel,
+body:has(#jbReadView.active) #qc-fab,body:has(#jbReadView.active) #qc-panel{display:none!important}
 
 /* ── Panel ── */
 #qc-panel{
