@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-focus-fix · 2026-08-13" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix · 2026-08-13" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -82838,8 +82838,11 @@ body:has(#pdfedRoot) #app{content-visibility:hidden}
    springt das Auge, darueber verliert es die Zeile. Der Schreibbereich waechst
    unten mit, damit der Cursor nie am Fensterrand klebt. */
 .jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none;
-  max-width:66ch;margin:0 auto;padding-bottom:45vh;
+  max-width:66ch;margin:0;padding-bottom:45vh;
   caret-color:var(--accent);text-wrap:pretty;hyphens:auto;-webkit-hyphens:auto}
+/* Die Lesebreite (66ch) begrenzt nur die Zeile — die Spalte selbst beginnt an
+   derselben Kante wie der Titel. Zentriert (margin:auto) sass der Text je nach
+   Schrift 26-95px rechts vom Titel: alles wirkte gegeneinander verschoben. */
 .jb-richtext:empty::before{content:attr(data-placeholder);color:var(--panel)}
 .jb-richtext>div,.jb-richtext>p{margin:0 0 .85em}
 .jb-richtext ul,.jb-richtext ol{padding-left:1.4em;margin:1em 0}
@@ -82902,7 +82905,10 @@ body:has(#pdfedRoot) #app{content-visibility:hidden}
 .jb-container ::-webkit-scrollbar-thumb{background:var(--panel2)}
 .jb-toolbar-btn{padding:6px 12px;background:var(--panel);border:none;border-radius:6px;color:var(--text);cursor:pointer;transition:background .15s}
 .jb-toolbar-btn:hover{background:var(--panel)}
-select.jb-select{appearance:none;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E") no-repeat right .5rem center/1em;padding:6px 2rem 6px 12px;border:1px solid var(--panel);border-radius:6px;color:var(--text);font-size:10px;text-transform:uppercase;outline:none;cursor:pointer}
+/* width:auto schlaegt das globale input,select{width:100%} der Haupt-App —
+   sonst dehnt sich das Schrift-Menue ueber die ganze Kopfzeile und schiebt
+   Werkzeuge und Geistesblitz-Feld an die Raender. */
+select.jb-select{appearance:none;width:auto;background:var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E") no-repeat right .5rem center/1em;padding:6px 2rem 6px 12px;border:1px solid var(--panel);border-radius:6px;color:var(--text);font-size:10px;text-transform:uppercase;outline:none;cursor:pointer}
 select.jb-select option{background:var(--panel);color:var(--text)}
 </style>
 

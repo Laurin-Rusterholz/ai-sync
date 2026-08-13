@@ -286,4 +286,16 @@ ok(/Ruhe-Modus-Marker beim Laden abstreifen/.test(jbSource)
     "ohne jb-open-Klasse (Router-Randfall) bleibt der KI-Knopf im Editor sichtbar");
 }
 
+// ── 17. Nichts ist gegeneinander verschoben ────────────────────────────────
+// Produktionsbefund: Die Textspalte (66ch, zentriert) begann je nach Schrift
+// 26-95px rechts vom Titel, und das Schrift-Menue erbte width:100% aus den
+// globalen Formular-Stilen der Haupt-App — es dehnte sich fast 1000px breit
+// durch die Kopfzeile und schob die Werkzeuge an die Raender.
+{
+  ok(/\.jb-richtext\{[^}]*max-width:66ch;margin:0;/.test(index),
+    "die Textspalte zentriert sich wieder selbst — sie beginnt dann rechts vom Titel statt an derselben Kante");
+  ok(/select\.jb-select\{[^}]*width:auto/.test(index),
+    "select.jb-select erbt wieder width:100% aus den globalen Formular-Stilen — das Schrift-Menue dehnt sich ueber die ganze Kopfzeile");
+}
+
 console.log(`journal smoothness: ok (${checks} Pruefungen)`);
