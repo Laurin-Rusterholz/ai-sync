@@ -12594,13 +12594,26 @@ let _syncLockActive = false; // Prevents saves during incoming cross-device sync
 // wird sofort geflusht, dazu greift weiterhin das 5s-Sicherheitsnetz unten.
 var _localSaveTimer = null;
 var _localSaveDirty = false;
+// Waehrend im Journal wirklich geschrieben wird, ist dieser Voll-Snapshot die
+// teuerste Einzelheit auf dem Faden, der auch die Anschlaege verarbeitet:
+// JSON.stringify des GESAMTEN Datenbestands + localStorage-Write, synchron.
+// Bei gewachsenem Bestand sind das leicht ein paar hundert Millisekunden — und
+// die kamen bisher alle zwei Sekunden mitten im Satz. Genau das fuehlt sich an
+// wie „das Schreiben bricht staendig ab": Zeichen kommen verzoegert oder gar
+// nicht an. Beim Schreiben genuegt ein ruhigerer Takt; Tipppause, Fokuswechsel,
+// Tab-Wechsel und Schliessen holen die Sicherung sofort nach (flushLocalSave,
+// jbFlush, pagehide/visibilitychange) — es geht also nichts verloren.
+var LOCAL_SAVE_IDLE_MS = 400;
+var LOCAL_SAVE_WRITING_MS = 5000;
 function scheduleLocalSave() {
   _localSaveDirty = true;
   if (_localSaveTimer) return;
+  var writing = false;
+  try { writing = typeof remoteSaveOnHold === "function" && remoteSaveOnHold(); } catch (e) {}
   _localSaveTimer = setTimeout(function() {
     _localSaveTimer = null;
     if (_localSaveDirty) saveLocalData();
-  }, 400);
+  }, writing ? LOCAL_SAVE_WRITING_MS : LOCAL_SAVE_IDLE_MS);
 }
 function flushLocalSave() {
   if (_localSaveTimer) { clearTimeout(_localSaveTimer); _localSaveTimer = null; }
@@ -82825,8 +82838,20 @@ body:has(#pdfedRoot) #app{content-visibility:hidden}
 .jb-container.active{animation:jbOverlayIn .25s ease-out}
 .jb-editor{position:fixed;inset:0;background:var(--bg);z-index:10050;display:none;flex-direction:column}
 .jb-editor.active{display:flex;animation:jbOverlayIn .22s ease-out}
+/* Vollbild: das Overlay ist zwar schon position:fixed;inset:0 — im echten
+   Vollbild rechnet der Browser das aber gegen den Bildschirm, und ohne eigene
+   Groesse blieb rund um die Schreibflaeche ein Rand des Hintergrunds stehen.
+   dvh statt vh wegen der ein- und ausfahrenden Leisten auf dem Handy. */
+.jb-editor:fullscreen,.jb-editor:-webkit-full-screen,
+.jb-read-view:fullscreen,.jb-read-view:-webkit-full-screen{width:100vw;height:100vh;height:100dvh;background:var(--bg)}
+/* Was ausserhalb des Vollbild-Elements liegt, zeichnet der Browser nicht mehr —
+   was dort noch Platz beansprucht, ist im Vollbild reine Stoerung. */
+body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!important}
 .jb-editor-header{padding:12px 16px;border-bottom:1px solid var(--panel);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
-.jb-editor-body{flex:1;overflow-y:auto;display:flex}
+/* Nur EIN Scroll-Behaelter: .jb-editor-content. Lagen zwei ineinander, scrollte
+   der Browser beim Zeilenumbruch mal den einen, mal den anderen — die Schreib-
+   stelle sprang oder verschwand unter dem Rand. */
+.jb-editor-body{flex:1;overflow:hidden;display:flex;min-height:0}
 .jb-editor-content{flex:1;padding:32px 96px;display:flex;flex-direction:column;align-items:center;overflow-y:auto}
 @media(max-width:768px){.jb-editor-content{padding:16px}}
 .jb-editor-wrap{width:100%;max-width:768px}
@@ -83047,7 +83072,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     <div class="jb-editor-content">
       <div class="jb-editor-wrap">
         <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." oninput="jbSLAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
-        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." spellcheck="true" oninput="if(!event.inputType||event.inputType==='insertText'||event.inputType==='insertCompositionText')jbApplyTypography();jbSLAutoSave()"></div>
+        <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." spellcheck="true" oninput="if((!event.inputType||event.inputType==='insertText')&&!event.isComposing)jbApplyTypography();jbSLAutoSave()"></div>
       </div>
     </div>
   </div>
@@ -83239,6 +83264,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // Ab dieser Laenge schaltet der Schreibbereich in den sparsamen Modus.
   var JB_LONG_DOC_CHARS = 6000;
 
+  // So lange nach dem letzten Anschlag gilt die Schreibsitzung als laufend.
+  var JB_TYPING_WINDOW_MS = 6000;
+
   // Rechtschreibpruefung und Feinsatz kosten bei langen Texten mehr, als sie
   // bringen: der Browser arbeitet bei jeder Aenderung erneut den gesamten
   // Schreibbereich durch. Auf dem Handy korrigiert ohnehin die Tastatur,
@@ -83329,6 +83357,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     _jbHereEl = block;
   }
 
+  // Solange die Tastatur ein Wort noch zusammensetzt — Wortvorschlaege auf
+  // Android/iOS, Diakritika, Spracheingabe — darf niemand am Text herumschreiben.
+  // Jeder Eingriff bricht die laufende Komposition ab: das Wort wird doppelt
+  // eingesetzt, verschluckt, oder der Cursor springt mitten im Satz weg. Genau
+  // das war das „es bricht staendig ab" beim Schreiben auf dem Handy.
+  var _jbComposing = false;
+  document.addEventListener("compositionstart", function() { _jbComposing = true; });
+  document.addEventListener("compositionend", function() { _jbComposing = false; });
+
   // Deutsche Typografie beim Tippen: „Anfuehrungszeichen", Gedankenstrich und
   // Auslassungspunkte. Ersetzt wird nur direkt hinter dem Cursor und nur, wenn
   // das Muster eindeutig ist — nichts wird nachtraeglich umgeschrieben.
@@ -83340,6 +83377,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   ];
 
   function jbApplyTypography() {
+    if (_jbComposing) return false;              // die Tastatur ist noch am Wort
     var sel = window.getSelection();
     if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
     var range = sel.getRangeAt(0);
@@ -83384,8 +83422,10 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // Ersetzungen nur beim echten Zeichen-Tippen: bei Loeschen, Einfuegen und
     // vor allem Rueckgaengig wuerde die Regel sonst das eben Zurueckgenommene
     // sofort wieder herstellen — Strg+Z liefe ins Leere.
+    // insertCompositionText stand hier frueher mit in der Liste — dabei ist das
+    // genau der Fall, in dem die Tastatur das Wort noch in der Hand haelt.
     var it = e && e.inputType;
-    if (!it || it === "insertText" || it === "insertCompositionText") jbApplyTypography();
+    if ((!it || it === "insertText") && !(e && e.isComposing)) jbApplyTypography();
     jbScheduleWritingMeta();
     var ed = document.getElementById("jbEditor");
     if (ed && ed.classList.contains("jb-calm")) jbMarkCurrentParagraph();
@@ -83401,7 +83441,10 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     var sl = document.getElementById("jbSelfLetterEditor");
     var open = (ed && ed.classList.contains("active")) || (sl && sl.classList.contains("active"));
     if (!open) return false;
-    return Date.now() - _jbLastKeystroke < 2500;
+    // 2,5 s waren zu knapp: wer kurz nachdenkt, bevor der naechste Absatz
+    // beginnt, loeste damit mitten in der Pause den vollen Pull-Merge-Push aus —
+    // und schrieb dann in einen Tab, der gerade den ganzen Datenbestand kopiert.
+    return Date.now() - _jbLastKeystroke < JB_TYPING_WINDOW_MS;
   };
 
   // Tastatur: was man von einem Textprogramm erwartet.
@@ -83785,7 +83828,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (loadContent.indexOf("jb-here") !== -1) {
       loadContent = loadContent.replace(/ class="jb-here"/g, "").replace(/(class="[^"]*?) ?\bjb-here\b/g, "$1");
     }
-    document.getElementById("jbEditorArea").innerHTML = loadContent;
+    var loadArea = document.getElementById("jbEditorArea");
+    loadArea.innerHTML = loadContent;
+    // Der Absatztrenner ist je nach Browser <div> oder <p>; festgelegt sieht die
+    // Eingabetaste ueberall gleich aus — und die Absatz-Stile greifen sicher.
+    try { document.execCommand("defaultParagraphSeparator", false, "div"); } catch (e) {}
+    jbEnsureBlocks(loadArea);
     document.getElementById("jbEditorFont").value = doc.font || "jb-font-inter";
     jbUpdateFont();
     // Letter header
@@ -84101,6 +84149,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       scheduleSave();
     }
     _jbCurrentDocId = null;
+    window.jbExitFullscreen();      // sonst steht das Archiv im Vollbild
     document.getElementById("jbEditorSidebar").classList.remove("open");
     if (typeof window.updateTabBarVisibility === "function") window.updateTabBarVisibility();
     jbNav("docs");
@@ -84156,15 +84205,60 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   window.jbToggleSidebar = function() { document.getElementById("jbEditorSidebar").classList.toggle("open"); };
 
   // ====== FULLSCREEN ======
-  window.jbToggleFullscreen = function() {
-    const c = document.getElementById("jbEditor") || document.getElementById("jbSelfLetterEditor");
-    if (!c) return;
-    if (!document.fullscreenElement) {
-      c.requestFullscreen?.().catch(() => {});
-    } else {
-      document.exitFullscreen?.().catch(() => {});
+  // Frueher stand hier `getElementById("jbEditor") || getElementById("jbSelfLetterEditor")`.
+  // Das erste Element existiert immer — im Zeitkapsel-Editor ging deshalb der
+  // ausgeblendete Werk-Editor ins Vollbild: ein schwarzer Bildschirm ueber dem
+  // Brief, in den man weiterschrieb, ohne etwas zu sehen.
+  function jbFullscreenHost() {
+    var ids = ["jbReadView", "jbSelfLetterEditor", "jbEditor"];
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById(ids[i]);
+      if (el && el.classList.contains("active")) return el;
     }
+    return null;
+  }
+  function jbFullscreenEl() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+  window.jbExitFullscreen = function() {
+    if (!jbFullscreenEl()) return false;
+    try {
+      if (document.exitFullscreen) document.exitFullscreen().catch(function(){});
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } catch (e) {}
+    return true;
   };
+  window.jbToggleFullscreen = function() {
+    if (window.jbExitFullscreen()) return;
+    var c = jbFullscreenHost();
+    if (!c) return;
+    var request = c.requestFullscreen || c.webkitRequestFullscreen;
+    if (!request) { jbToast("Vollbild wird hier nicht unterstützt"); return; }
+    try {
+      var r = request.call(c);
+      if (r && r.catch) r.catch(function() { jbToast("Vollbild vom Browser abgelehnt"); });
+    } catch (e) { jbToast("Vollbild vom Browser abgelehnt"); }
+  };
+
+  // Beim Wechsel ins Vollbild und zurueck legt der Browser den Fokus auf das
+  // Vollbild-Element — der Schreibbereich verliert ihn, und der naechste
+  // Anschlag verpuffte oder landete am Textende. Also: Fokus und Cursorstelle
+  // zurueck an die Schreibstelle, und die Meldungen mit ins Vollbild nehmen
+  // (was ausserhalb des Vollbild-Elements liegt, zeichnet der Browser nicht).
+  function jbOnFullscreenChange() {
+    var fs = jbFullscreenEl();
+    document.body.classList.toggle("jb-fullscreen", !!fs);
+    var toast = document.getElementById("jbToast");
+    if (fs && toast && !fs.contains(toast)) fs.appendChild(toast);
+    else if (!fs && toast) {
+      var home = document.getElementById("journalBookletContainer");
+      if (home && toast.parentNode !== home) home.appendChild(toast);
+    }
+    var area = jbActiveWritingArea();
+    if (area) setTimeout(function() { jbRestoreCaret(area); }, 0);
+  }
+  document.addEventListener("fullscreenchange", jbOnFullscreenChange);
+  document.addEventListener("webkitfullscreenchange", jbOnFullscreenChange);
 
   // ====== GEMINI API KEY (use main app key as fallback) ======
   function jbGetGeminiKey() {
@@ -84297,6 +84391,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     // Sparsamen Modus vor dem Einsetzen entscheiden — wie im Werk-Editor.
     jbTuneEditorForLength(String(draft?.content || "").replace(/<[^>]*>/g, "").length, slArea);
     slArea.innerHTML = draft?.content || "<div><br></div>";
+    try { document.execCommand("defaultParagraphSeparator", false, "div"); } catch (e) {}
+    jbEnsureBlocks(slArea);
     const font = draft?.font || "jb-font-inter";
     document.getElementById("jbSLFont").value = font;
     _jbSLFont = font;
@@ -84330,6 +84426,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   };
 
   window.jbCloseSelfLetterEditor = function() {
+    window.jbExitFullscreen();
     // Erst schliessen, dann sichern — wie im Werk-Editor: solange der Editor
     // offen ist, haelt scheduleSave() den Remote-Push zurueck (jbIsTyping).
     // Die Felder sind auch im ausgeblendeten Editor noch auslesbar.
@@ -84744,6 +84841,38 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     return null;
   }
 
+  // Wo stand der Cursor zuletzt IM Text? Der Fokus geht im Alltag staendig kurz
+  // verloren — Werkzeugleiste, Schrift-Menue, Vollbildwechsel, Tab-Rueckkehr.
+  // Ihn danach ans Textende zu setzen, war die eigentliche Zumutung: wer mitten
+  // im dritten Absatz arbeitete, schrieb ploetzlich unten weiter. Gemerkt wird
+  // nur die Stelle, nichts wird angefasst — das kostet nichts.
+  var _jbCaretRange = null;
+  document.addEventListener("selectionchange", function() {
+    var area = jbActiveWritingArea();
+    if (!area) return;
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    var r = sel.getRangeAt(0);
+    if (!r.startContainer || !area.contains(r.startContainer)) return;
+    try { _jbCaretRange = r.cloneRange(); } catch (e) {}
+  });
+
+  // Fokus zurueck an die Schreibstelle: erst die gemerkte, sonst ans Ende.
+  function jbRestoreCaret(area) {
+    if (!area) return;
+    var r = _jbCaretRange;
+    if (r && r.startContainer && area.contains(r.startContainer)
+        && document.contains(r.startContainer)) {
+      area.focus();
+      try {
+        var s = window.getSelection();
+        s.removeAllRanges(); s.addRange(r);
+        return;
+      } catch (e) {}
+    }
+    jbFocusAreaAtEnd(area);
+  }
+
   document.addEventListener("keydown", function(e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!e.key || e.key.length !== 1) return;      // nur druckbare Zeichen
@@ -84753,7 +84882,96 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (a && (a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")) return;
     if (a && a.tagName === "BUTTON" && e.key === " ") return;   // Leertaste darf Knoepfe druecken
     // Fokus noch waehrend des keydown setzen — das Zeichen landet dann im Text.
-    jbFocusAreaAtEnd(area);
+    jbRestoreCaret(area);
+  });
+
+  // ══ Absaetze ═════════════════════════════════════════════════════════════
+  // Ein contenteditable ohne eigene Absatzpflege haengt nach dem Einfuegen von
+  // Text lose Textknoten direkt unter den Schreibbereich. Die Eingabetaste
+  // zerlegt die dann nach Browser-Gutduenken — mal entsteht ein Absatz, mal nur
+  // ein Zeilenumbruch, mal wandert der Cursor an eine unerwartete Stelle. Ein
+  // Textprogramm arbeitet in Bloecken, also stellen wir Bloecke sicher.
+  var JB_INLINE = /^(BR|SPAN|A|B|I|U|EM|STRONG|CODE|IMG|SUB|SUP|S|MARK|FONT|SMALL)$/;
+  function jbEnsureBlocks(area) {
+    if (!area) return;
+    var n = area.firstChild, wrap = null;
+    while (n) {
+      var next = n.nextSibling;
+      if (n.nodeType === 1 && !JB_INLINE.test(n.nodeName)) {
+        wrap = null;                                  // schon ein Block
+      } else if (n.nodeType === 3 && !n.textContent.trim() && !wrap) {
+        // reiner Zwischenraum zwischen zwei Bloecken — nichts zu tun
+      } else {
+        if (!wrap) { wrap = document.createElement("div"); area.insertBefore(wrap, n); }
+        wrap.appendChild(n);                          // zusammenhaengender Lauf
+      }
+      n = next;
+    }
+    if (!area.firstChild) {
+      var d = document.createElement("div");
+      d.appendChild(document.createElement("br"));
+      area.appendChild(d);
+    }
+  }
+
+  // Der Absatz, in dem der Cursor steht. Ein frisch angelegter, noch leerer
+  // Absatz hat kein eigenes Cursor-Rechteck — ein Rueckgriff auf das
+  // Elternelement liefert dort das gesamte Schreibfeld und damit Unsinn.
+  function jbCaretBlock(area) {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    var node = sel.getRangeAt(0).startContainer;
+    if (node && node.nodeType === 1) node = node.childNodes[sel.getRangeAt(0).startOffset] || node;
+    while (node && node !== area && node.parentNode !== area) node = node.parentNode;
+    return node && node !== area && node.nodeType === 1 ? node : null;
+  }
+
+  // Nach einem neuen Absatz soll die Schreibstelle sichtbar bleiben. Vorher
+  // rutschte sie beim Absatzwechsel unter den unteren Rand: man tippte weiter,
+  // ohne zu sehen, was man schrieb, und musste von Hand nachscrollen.
+  // Laeuft nur bei der Eingabetaste — einmal pro Absatz, nicht pro Zeichen.
+  function jbKeepCaretInView(area) {
+    var box = area && area.closest(".jb-editor-content");
+    var block = box && jbCaretBlock(area);
+    if (!block) return;
+    var r = block.getBoundingClientRect();
+    var view = box.getBoundingClientRect();
+    // Unter dem letzten Viertel wird es unangenehm: dort steht die Zeile am
+    // Rand, und auf dem Handy oft hinter der eingeblendeten Tastatur.
+    var pad = Math.min(180, view.height * 0.28);
+    if (r.bottom > view.bottom - pad) box.scrollTop += r.bottom - (view.bottom - pad);
+    else if (r.top < view.top + 24) box.scrollTop -= (view.top + 24) - r.top;
+  }
+
+  ["jbEditorArea", "jbSLArea"].forEach(function(areaId) {
+    var area = document.getElementById(areaId);
+    if (!area) return;
+
+    area.addEventListener("keydown", function(e) {
+      if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+      // Erst den Browser den Absatz setzen lassen, dann nachziehen.
+      setTimeout(function() { jbKeepCaretInView(area); }, 0);
+    });
+
+    // Einfuegen wie in einem Textfeld: der Text, seine Absaetze — sonst nichts.
+    // Fremdes HTML aus dem Netz bringt Schriftgroessen, Farben und ganze
+    // Layouttabellen mit; eingefuegte Bilder landen als Daten-URL im Werk und
+    // von dort in jeder Sicherung, bis der Speicher voll ist und gar nichts
+    // mehr gesichert wird. Beides hat im Schreibbereich nichts verloren.
+    area.addEventListener("paste", function(e) {
+      var cb = e.clipboardData || window.clipboardData;
+      if (!cb) return;
+      var text = cb.getData("text/plain");
+      if (typeof text !== "string") return;
+      e.preventDefault();
+      text = text.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n");
+      // Ueber insertText: der Rueckgaengig-Verlauf des Browsers bleibt heil.
+      try { document.execCommand("insertText", false, text); }
+      catch (err) { return; }
+      jbEnsureBlocks(area);
+      if (areaId === "jbEditorArea") jbAutoSave(); else jbSLAutoSave();
+      jbKeepCaretInView(area);
+    });
   });
 
   ["jbEditor", "jbSelfLetterEditor"].forEach(function(edId) {
@@ -84803,6 +85021,10 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // Escape key handler
   document.addEventListener("keydown", function(e) {
     if (e.key === "Escape") {
+      // Im Vollbild beendet Escape das Vollbild — und sonst nichts. Frueher
+      // schloss derselbe Tastendruck auch den Editor: man wollte nur die
+      // Bildschirmfuellung verlassen und stand ploetzlich wieder im Archiv.
+      if (jbFullscreenEl()) { window.jbExitFullscreen(); e.stopPropagation(); return; }
       if (document.getElementById("jbReadView").classList.contains("active")) { jbCloseReadView(); e.stopPropagation(); return; }
       if (document.getElementById("jbSelfLetterEditor").classList.contains("active")) { jbCloseSelfLetterEditor(); e.stopPropagation(); return; }
       if (document.getElementById("jbEditor").classList.contains("active")) { jbCloseEditor(); e.stopPropagation(); return; }
@@ -88860,28 +89082,11 @@ window._editorAIAction = async function(action) {
   }
 };
 
-// Word-Count Beobachter für jbEditorArea
-(function() {
-  function updateCounter() {
-    const el = document.getElementById('jbEditorArea') || document.querySelector('.jb-editor-area');
-    if (!el) return;
-    const text = el.textContent || '';
-    const words = text.trim().split(/\s+/).filter(w => w.length).length;
-    const chars = text.length;
-    const minutes = Math.max(1, Math.ceil(words / 220));
-    
-    let counter = document.getElementById('editorWordCounter');
-    if (!counter) {
-      counter = document.createElement('div');
-      counter.id = 'editorWordCounter';
-      counter.style.cssText = 'position:fixed;bottom:14px;right:14px;background:rgba(20,20,24,0.95);backdrop-filter:blur(8px);padding:6px 12px;border-radius:20px;font-size:11px;color:var(--text2);border:1px solid var(--panel);z-index:100;font-weight:600';
-      document.body.appendChild(counter);
-    }
-    counter.textContent = `${words} Wörter · ${chars} Zeichen · ~${minutes} min`;
-    counter.style.display = el.offsetParent ? 'block' : 'none';
-  }
-  setInterval(() => { if (!document.hidden) updateCounter(); }, 1500);
-})();
+// Die frueher hier stehende Wortzahl-Anzeige (alle 1,5 s ein Durchlauf durch den
+// gesamten Schreibtext plus offsetParent-Zugriff, der ein Layout erzwingt) war
+// im Editor nie zu sehen: sie lag mit z-index 100 unter dem Editor-Overlay
+// (z-index 10050). Gezaehlt wird die Wortzahl im Kopf des Editors — dort
+// gebuendelt und nur, wenn sich etwas geaendert hat (jbUpdateWritingMeta).
 
 console.log('✨ Enhanced Features Package v1.0 geladen — Cmd+K für Spotlight');
 
