@@ -144,6 +144,9 @@ function loadParagraphTools(sel) {
 }
 
 // ── 3. Beim Absatzwechsel bleibt die Schreibstelle sichtbar ───────────────
+// Gescrollt wird nach der SCHREIBSTELLE, nicht nach dem ganzen Absatz: bei
+// einem langen Absatz hiesse das sonst „Cursor oben, nachgescrollt bis zum
+// Ende" — die Ansicht springt vom Text weg, obwohl alles sichtbar war.
 {
   const area = el("DIV");
   const p = el("DIV", [txt("Neuer Absatz")]);
@@ -152,28 +155,53 @@ function loadParagraphTools(sel) {
   box.rect = { top: 50, bottom: 700, height: 650 };
   box.scrollTop = 0;
   area.closest = () => box;
-  const sel = { rangeCount: 1, getRangeAt: () => ({ startContainer: p.firstChild, startOffset: 0 }) };
+  let caretRect = null;                       // was der Browser fuer den Cursor meldet
+  const sel = {
+    rangeCount: 1,
+    getRangeAt: () => ({
+      startContainer: p.firstChild, startOffset: 0,
+      getClientRects: () => (caretRect ? [caretRect] : []),
+      getBoundingClientRect: () => caretRect || { top: 0, bottom: 0, width: 0, height: 0 }
+    })
+  };
   const { jbKeepCaretInView } = loadParagraphTools(sel);
-
-  // a) Absatz unter dem sichtbaren Bereich → es wird nachgezogen.
-  p.rect = { top: 690, bottom: 720, height: 30 };
-  jbKeepCaretInView(area);
-  ok(box.scrollTop > 0, "der neue Absatz liegt unter dem Rand und es wird nicht nachgescrollt");
   const pad = Math.min(180, 650 * 0.28);
+
+  // a) Schreibstelle unter dem sichtbaren Bereich -> es wird nachgezogen.
+  caretRect = { top: 690, bottom: 720, width: 0, height: 30 };
+  jbKeepCaretInView(area);
+  ok(box.scrollTop > 0, "die Schreibstelle liegt unter dem Rand und es wird nicht nachgescrollt");
   ok(Math.round(box.scrollTop) === Math.round(720 - (700 - pad)),
     `es wird zu weit oder zu kurz gescrollt (scrollTop=${box.scrollTop})`);
 
-  // b) Absatz mitten im Blick → nichts anfassen, kein Ruckeln.
+  // b) Schreibstelle mitten im Blick -> nichts anfassen, kein Ruckeln.
   box.scrollTop = 0;
-  p.rect = { top: 300, bottom: 330, height: 30 };
+  caretRect = { top: 300, bottom: 330, width: 0, height: 30 };
   jbKeepCaretInView(area);
-  ok(box.scrollTop === 0, "ein sichtbarer Absatz loest trotzdem ein Scrollen aus");
+  ok(box.scrollTop === 0, "eine sichtbare Schreibstelle loest trotzdem ein Scrollen aus");
 
-  // c) Absatz ueber dem Rand (Rueckwaerts-Sprung) → nach oben nachziehen.
+  // c) Schreibstelle oberhalb des Rands (Rueckwaerts-Sprung) -> nachziehen.
   box.scrollTop = 400;
-  p.rect = { top: 10, bottom: 40, height: 30 };
+  caretRect = { top: 10, bottom: 40, width: 0, height: 30 };
   jbKeepCaretInView(area);
-  ok(box.scrollTop < 400, "ein Absatz oberhalb des Rands wird nicht sichtbar gemacht");
+  ok(box.scrollTop < 400, "eine Schreibstelle oberhalb des Rands wird nicht sichtbar gemacht");
+
+  // d) Langer Absatz, Cursor OBEN darin: der Absatz reicht weit nach unten, die
+  //    Schreibstelle steht aber bequem im Blick -> nicht scrollen.
+  box.scrollTop = 0;
+  p.rect = { top: 100, bottom: 2000, height: 1900 };
+  caretRect = { top: 110, bottom: 140, width: 0, height: 30 };
+  jbKeepCaretInView(area);
+  ok(box.scrollTop === 0,
+    "bei einem langen Absatz wird bis zu dessen Ende gescrollt statt zur Schreibstelle — die Ansicht springt vom Text weg");
+
+  // e) Leerer Absatz (kein Cursor-Rechteck) -> Rueckfall auf den Absatz.
+  box.scrollTop = 0;
+  caretRect = null;
+  p.rect = { top: 690, bottom: 720, height: 30 };
+  jbKeepCaretInView(area);
+  ok(box.scrollTop > 0,
+    "in einem leeren Absatz gibt es kein Cursor-Rechteck — ohne Rueckfall auf den Absatz wird gar nicht mehr nachgescrollt");
 }
 
 // ── 4. Nur EIN Scroll-Behaelter ────────────────────────────────────────────
@@ -383,16 +411,24 @@ function loadParagraphTools(sel) {
 {
   ok(!/\.jb-richtext\{[^}]*text-wrap:pretty/.test(index),
     "text-wrap:pretty steht wieder im Schreibbereich — jedes Zusammenfuehren zweier Absaetze hinterlaesst dann ein <span style=\"text-wrap-mode:initial\">");
-  ok(/var JB_ARTIFACT_PROP =/.test(jbSource) && /font-size/.test(jbSource.slice(jbSource.indexOf("var JB_ARTIFACT_PROP ="), jbSource.indexOf("var JB_ARTIFACT_PROP =") + 300)),
+  ok(/var JB_MERGE_PROP = \/\^\(font-size/.test(jbSource),
     "die Aufraeum-Liste kennt font-size nicht — Text, den man in eine Ueberschrift zieht, behaelt seine alte Groesse");
-  ok(/function jbStripWrapSpans\(root\)/.test(jbSource) && /sp\.className \|\| !jbIsArtifactStyle/.test(jbSource),
+  ok(/jbStripWrapSpans\(block \|\| area, true\)/.test(jbSource),
+    "beim Zusammenfuehren wird die weite Aufraeum-Liste nicht benutzt");
+  ok(/jbStripWrapSpans\(area\);/.test(jbSource) || /jbStripWrapSpans\(area\)/.test(jbSource),
+    "beim Oeffnen eines Werks wird gar nicht mehr aufgeraeumt");
+  ok(!/jbStripWrapSpans\(area, true\)/.test(jbSource),
+    "beim Oeffnen wird die weite Liste benutzt — eine gewollte Schriftgroesse aus einem alten Werk ginge dabei verloren");
+  ok(/function jbStripWrapSpans\(root, wide\)/.test(jbSource) && /sp\.className \|\| !jbIsArtifactStyle/.test(jbSource),
     "es werden Spans mit eigenen Formatierungen mit entfernt — das waere Datenverlust");
-  const afterDel = jbSource.slice(jbSource.indexOf("function jbAfterDelete(area)"), jbSource.indexOf("function jbAfterDelete(area)") + 900);
-  ok(/jbStripWrapSpans\(block \|\| area\)/.test(afterDel),
+  const afterDel = jbSource.slice(jbSource.indexOf("function jbAfterDelete(area)"), jbSource.indexOf("function jbAfterDelete(area)") + 1600);
+  ok(/jbStripWrapSpans\(block \|\| area, true\)/.test(afterDel),
     "nach dem Loeschen wird der betroffene Absatz nicht aufgeraeumt");
-  ok(/area\.innerHTML = "<div><br><\/div>"/.test(afterDel),
-    "ein leergeraeumter Schreibbereich (Alles markieren + Loeschen) bekommt keinen ersten Absatz zurueck");
-  ok(/String\(e\.inputType \|\| ""\)\.indexOf\("delete"\) === 0/.test(jbSource),
+  ok(/function jbEnsureTypingBlock\(area\)/.test(jbSource) && /it\.indexOf\("insert"\) === 0\) jbEnsureTypingBlock/.test(jbSource),
+    "ein leergeraeumter Schreibbereich (Alles markieren + Loeschen) bekommt beim Weiterschreiben keinen Absatz zurueck");
+  ok(!/area\.innerHTML = "<div><br><\/div>"/.test(afterDel),
+    "beim Loeschen wird weiterhin innerHTML neu geschrieben — das kostet einen zusaetzlichen Rueckgaengig-Schritt");
+  ok(/it\.indexOf\("delete"\) === 0\) jbAfterDelete\(area\)/.test(jbSource),
     "der Aufraeumer haengt nicht am Loesch-Ereignis");
 }
 
@@ -403,6 +439,60 @@ function loadParagraphTools(sel) {
     "ein leeres Zitat haengt beim Enter das naechste Zitat an — aus dem Zitat kommt man nur noch ueber die Werkzeugleiste heraus");
   ok(/e\.shiftKey/.test(enter),
     "Shift+Enter (Zeilenumbruch) wird mitbehandelt, obwohl es das Zitat nicht verlassen soll");
+}
+
+// ── 19. Der Abgleich darf keine Journal-Einträge verlieren ────────────────
+// mergeData() baut sein Ergebnis aus einer Kopie des LOKALEN Standes und ergaenzt
+// nur die Bereiche, fuer die es einen Zweig gibt. Fuer das Journal gab es keinen:
+// ein auf dem Handy geschriebener Eintrag verschwand beim naechsten Abgleich des
+// Rechners — und dessen Push loeschte ihn auch auf dem Server. Der Test laesst
+// die ECHTE Funktion gegen zwei Datenstaende laufen.
+{
+  const start = index.indexOf("function mergeData(local, remote) {");
+  const end = index.indexOf("\nfunction ", start + 10);
+  ok(start > 0 && end > start, "mergeData() wurde in index.html nicht gefunden");
+  const source = index.slice(start, end);
+
+  const fn = new Function(
+    "idbBackup", "localStorage", "normalizeData", "mergeAndPersistDeleteLog",
+    "flattenDeleteLog", "mergeEntity", "entityTimestamp", "console",
+    source + "\nreturn mergeData;"
+  );
+  const mergeData = fn(
+    () => {}, { getItem: () => null, setItem() {} }, (d) => d, () => ({}), () => ({}),
+    (a, b) => b, (e) => Number(e && (e.updatedAt || e.createdAt)) || 0, { log() {}, warn() {} }
+  );
+
+  const doc = (id, t, ts) => ({ id, type: "diary", title: t, content: "<div>" + t + "</div>", createdAt: ts, updatedAt: ts });
+  const local = {
+    entities: { tasks: {} },
+    journal: { documents: [doc("a", "Am Rechner", 1000)], selfLetters: [], topics: [], contacts: [], settings: { name: "Ich" } }
+  };
+  const remote = {
+    entities: { tasks: {} },
+    journal: {
+      documents: [doc("b", "Am Handy", 2000), doc("a", "Am Rechner (aelter)", 500)],
+      selfLetters: [{ id: "L1", title: "Brief", updatedAt: 10, delivered: true }],
+      topics: [{ id: "t1", text: "Idee", createdAt: 5 }], contacts: [], settings: { street: "Hauptstrasse" }
+    }
+  };
+  const merged = mergeData(local, remote);
+  const ids = (merged.journal.documents || []).map((d) => d.id).sort();
+  ok(ids.join(",") === "a,b",
+    `der Abgleich verliert Journal-Werke: uebrig blieben [${ids.join(", ")}] statt [a, b]`);
+  const a = merged.journal.documents.find((d) => d.id === "a");
+  ok(a.title === "Am Rechner",
+    `bei gleicher Id gewinnt der aeltere Stand: "${a.title}"`);
+  ok((merged.journal.selfLetters || []).length === 1 && merged.journal.selfLetters[0].delivered === true,
+    "Zeitkapsel-Briefe der Gegenseite gehen verloren oder verlieren ihren Zustellvermerk");
+  ok((merged.journal.topics || []).length === 1, "Ideen der Gegenseite gehen verloren");
+  ok(merged.journal.settings.name === "Ich" && merged.journal.settings.street === "Hauptstrasse",
+    "die Absenderangaben werden nicht zusammengefuehrt");
+
+  // Geraet ohne eigenes Journal: der Bestand der Gegenseite muss ankommen.
+  const leer = mergeData({ entities: { tasks: {} } }, remote);
+  ok((leer.journal?.documents || []).length === 2,
+    "auf einem Geraet ohne eigenes Journal loescht der Abgleich den gesamten Bestand");
 }
 
 console.log(`journal writing flow: ok (${checks} Pruefungen)`);

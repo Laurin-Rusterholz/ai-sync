@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix · 2026-08-13" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge · 2026-08-18" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -10576,10 +10576,19 @@ try {
       const localTs = new Date(APP.state.data?.meta?.updatedAt || 0).getTime();
       const remoteTs = ev.data.ts;
       if (remoteTs > localTs + 500) {
-        console.log('[Sync] BroadcastChannel: other tab has newer data, reloading...');
+        // Frueher wurde der Datenstand hier KOMPLETT ersetzt — ohne Ruecksicht
+        // auf noch nicht gesicherte Aenderungen und ohne Zusammenfuehren. Wer im
+        // Journal schrieb, waehrend ein zweiter Tab sicherte, verlor den Absatz,
+        // an dem er gerade sass. Zusammenfuehren statt ersetzen, und waehrend
+        // einer Schreibsitzung gar nicht erst anfassen (der naechste Abgleich
+        // holt es nach).
+        if (typeof remoteSaveOnHold === 'function' && remoteSaveOnHold()) return;
+        console.log('[Sync] BroadcastChannel: other tab has newer data, merging...');
         const freshData = loadLocalData();
         if (freshData && freshData.entities) {
-          APP.state.data = freshData;
+          APP.state.data = (typeof mergeData === 'function')
+            ? mergeData(APP.state.data, freshData)
+            : freshData;
           if (typeof render === 'function') render();
           toast("info", "Synced", "Data loaded from other tab");
         }
@@ -11234,6 +11243,55 @@ function mergeData(local, remote) {
     });
   }
   
+  // ── Journal Booklet ──
+  // Fehlte komplett. merged ist eine Kopie des LOKALEN Standes; ohne eigenen
+  // Zweig blieb der Journal-Teil der Gegenseite unberuecksichtigt. Ein auf dem
+  // Handy geschriebener Eintrag verschwand damit beim naechsten Abgleich des
+  // Rechners — und dessen anschliessender Push loeschte ihn auch noch auf dem
+  // Server. Auf einem Geraet ohne eigenes Journal loeschte derselbe Weg das
+  // GESAMTE Journal.
+  // Vereinigt wird nach Id, bei Kollision gewinnt der neuere Zeitstempel.
+  // Bewusst keine Loeschungen: ein wieder auftauchender Eintrag ist zumutbar,
+  // ein verlorener nicht.
+  if (remote.journal && typeof remote.journal === "object") {
+    const _lj = (merged.journal && typeof merged.journal === "object") ? merged.journal : {};
+    const _rj = remote.journal;
+    const _union = (a, b, tsKey) => {
+      const map = new Map();
+      const put = (it) => {
+        if (!it || !it.id) return;
+        const cur = map.get(it.id);
+        if (!cur) { map.set(it.id, it); return; }
+        const lt = Number(cur[tsKey] || cur.createdAt || 0);
+        const rt = Number(it[tsKey] || it.createdAt || 0);
+        const win = rt > lt ? it : cur;
+        // Einmal zugestellt, immer zugestellt — sonst meldet sich ein
+        // Zeitkapsel-Brief auf dem anderen Geraet ein zweites Mal.
+        if (cur.delivered || it.delivered) win.delivered = true;
+        map.set(it.id, win);
+      };
+      (Array.isArray(a) ? a : []).forEach(put);
+      (Array.isArray(b) ? b : []).forEach(put);
+      return Array.from(map.values());
+    };
+    const _newerDraft = () => {
+      const l = _lj.selfLetterDraft, r = _rj.selfLetterDraft;
+      if (!l) return r || null;
+      if (!r) return l;
+      return Number(r.updatedAt || 0) > Number(l.updatedAt || 0) ? r : l;
+    };
+    const _settings = Object.assign({}, _rj.settings || {});
+    for (const [k, v] of Object.entries(_lj.settings || {})) if (v !== "" && v != null) _settings[k] = v;
+    merged.journal = {
+      documents: _union(_lj.documents, _rj.documents, "updatedAt"),
+      selfLetters: _union(_lj.selfLetters, _rj.selfLetters, "updatedAt"),
+      topics: _union(_lj.topics, _rj.topics, "createdAt"),
+      contacts: _union(_lj.contacts, _rj.contacts, "createdAt"),
+      selfLetterDraft: _newerDraft(),
+      settings: _settings
+    };
+  }
+
   // ── Merge timers ──
   if (remote.timers) {
     merged.timers = merged.timers || {};
@@ -19447,16 +19505,27 @@ function renderMain() {
   let html = "";
   
   // Close full-screen overlays that don't match current route
+  // Diese Abbauliste schliesst Overlays, wenn man WEGNAVIGIERT. Sie lief aber
+  // bei JEDEM Rendern — und Rendern passiert auch ohne Routenwechsel (Sync-
+  // Merge, Nachricht aus einem anderen Tab, diverse Handler). Wer das Journal
+  // ueber den Knopf im Startbildschirm geoeffnet hatte (der die Route gar nicht
+  // umstellt), dem riss das naechste Rendern die Umgebung unter den Fuessen weg:
+  // Container nicht mehr aktiv, body.jb-open fort, der schwebende KI-Knopf
+  // wieder ueber dem Text. Abgebaut wird jetzt nur bei echtem Routenwechsel.
+  var _routeChanged = route !== window._lastOverlayRoute;
+  window._lastOverlayRoute = route;
   try {
-    if (route !== "notes") { const c = document.getElementById("noteflowContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
-    if (route !== "articles") { const _rhc = document.getElementById("researchHubContainer"); if (_rhc && _rhc.classList.contains("active")) _rhc.classList.remove("active"); }
-    if (route !== "readinghub") { const c = document.getElementById("readingHubContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
-    if (route !== "learn") { const c = document.getElementById("recallLabOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
-    if (route !== "visionboard") { const c = document.getElementById("visionBoardOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
-    if (route !== "journal") { const c = document.getElementById("journalBookletContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); document.body.classList.remove("jb-open"); }
-    // Die Browser-Buehne liegt neben #main und muss deshalb aktiv ausgeblendet
-    // werden. Der Stream bleibt vorerst stehen (siehe quantusBrowserLeave).
-    if (route !== "browser") { quantusBrowserLeave(); }
+    if (_routeChanged) {
+      if (route !== "notes") { const c = document.getElementById("noteflowContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
+      if (route !== "articles") { const _rhc = document.getElementById("researchHubContainer"); if (_rhc && _rhc.classList.contains("active")) _rhc.classList.remove("active"); }
+      if (route !== "readinghub") { const c = document.getElementById("readingHubContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
+      if (route !== "learn") { const c = document.getElementById("recallLabOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
+      if (route !== "visionboard") { const c = document.getElementById("visionBoardOverlay"); if (c && c.style.display !== "none") c.style.display = "none"; }
+      if (route !== "journal") { const c = document.getElementById("journalBookletContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); document.body.classList.remove("jb-open"); }
+      // Die Browser-Buehne liegt neben #main und muss deshalb aktiv ausgeblendet
+      // werden. Der Stream bleibt vorerst stehen (siehe quantusBrowserLeave).
+      if (route !== "browser") { quantusBrowserLeave(); }
+    }
   } catch(e) {}
   
   // ═══ Globaler App-Lock-Check ═══
@@ -26701,6 +26770,11 @@ window._thsInitFocusMode = function(soundscape) {
   if (window._thsEscHandler) document.removeEventListener('keydown', window._thsEscHandler);
   window._thsEscHandler = (ev) => {
     if (ev.key === 'Escape') {
+      if (!document.body.classList.contains('thesis-focus')) {   // laengst verlassen
+        document.removeEventListener('keydown', window._thsEscHandler);
+        window._thsEscHandler = null;
+        return;
+      }
       window.thsToggleFocus();
       document.removeEventListener('keydown', window._thsEscHandler);
       window._thsEscHandler = null;
@@ -28956,6 +29030,15 @@ window.thsToggleFocus = function() {
   const willEnterFocus = !wasFocusMode;
   thsSetState({ focusMode: willEnterFocus });
   if (wasFocusMode) {  // wird ausgeschaltet
+    // Der Escape-Handler des Fokus-Modus meldete sich nur ab, wenn man den
+    // Modus MIT Escape verliess. Wer den Knopf nahm, schleppte ihn durch die
+    // ganze Sitzung: ein Escape im Journal (Ruhe-Modus verlassen, Editor
+    // schliessen) schaltete dann den Fokus-Modus wieder ein — samt
+    // body.thesis-focus, das die Werkzeugleisten ausblendet.
+    if (window._thsEscHandler) {
+      document.removeEventListener('keydown', window._thsEscHandler);
+      window._thsEscHandler = null;
+    }
     document.body.classList.remove('thesis-focus');
     window.thsStopSoundscape();
     window.thsStopPomodoro();
@@ -54484,10 +54567,13 @@ document.addEventListener("keydown", function(e) {
     || _focused.tagName === "TEXTAREA" || _focused.tagName === "SELECT");
 
   // Prüfe alle definierten Shortcuts
-  if (_inField) {
-    // beim Schreiben: die Tastatur gehoert dem Text
-  } else if (_matchSC("save", e)) {
+  // Sichern ist die eine Ausnahme: es gehoert auch beim Schreiben der App —
+  // sonst faengt der Browser Strg+S mit „Seite speichern unter" ab. Der Journal-
+  // Editor hat dafuer seinen eigenen Handler und kommt hier gar nicht an.
+  if (_matchSC("save", e)) {
     e.preventDefault(); doSave(false); return;
+  } else if (_inField) {
+    // beim Schreiben: die Tastatur gehoert dem Text
   } else if (_matchSC("undo", e)) {
     e.preventDefault(); undo(); return;
   } else if (_matchSC("search", e)) {
@@ -63381,6 +63467,11 @@ async function init() {
   setInterval(async () => {
     if (isManualTransferMode()) return;
     if (document.hidden || !navigator.onLine || !isAutoSyncEnabled()) return;
+    // scheduleSave() haelt den Voll-Sync beim Schreiben zurueck — dieser Wecker
+    // tat es nicht. Alle 30 s lief deshalb mitten im Satz ein kompletter
+    // Durchlauf: Datenbestand holen, mergen, LOKAL sichern, die ganze App neu
+    // rendern und wieder hochladen. Das ist der spuerbare Hakler beim Schreiben.
+    if (typeof remoteSaveOnHold === "function" && remoteSaveOnHold()) return;
     if (_syncLockActive) return;
     if (APP.state.storage._saving) return;
     if (Date.now() - _lastRemoteCheckAt < 25000) return;
@@ -65244,6 +65335,14 @@ function initRecallLabApp() {
   document.addEventListener("keydown", function(ev) {
     if (currentRLRoute !== "rl-review") return;
     if (ev.target.tagName==="INPUT"||ev.target.tagName==="TEXTAREA") return;
+    // currentRLRoute wird beim Verlassen des Recall Lab NIE zurueckgesetzt: wer
+    // zuletzt Karten gelernt hat, schleppt "rl-review" durch die ganze Sitzung.
+    // Oeffnete er danach das Journal, verschluckte diese Zeile dort JEDES Enter
+    // und JEDE Leertaste (ein contenteditable ist ein DIV — die Pruefung oben
+    // greift nicht) und deckte im Hintergrund Karteikarten auf.
+    if (ev.target && ev.target.isContentEditable) return;
+    var _rlActive = document.getElementById("rl-content");
+    if (!_rlActive || !_rlActive.offsetParent) return;   // Lernansicht nicht sichtbar
     if (ev.key===" "||ev.key==="Enter") { ev.preventDefault(); window.rlRevealAnswer(); }
     else if (answerRevealed&&ev.key==="1") window.rlRateCard("again");
     else if (answerRevealed&&ev.key==="2") window.rlRateCard("hard");
@@ -68402,6 +68501,17 @@ function renderShortcutEditor() {
     }
     // Focus trap for recording
     _shortcutRecordHandler = function(e) {
+      // Wer die Aufnahme startet und dann weiternavigiert, liess diesen Handler
+      // in der Erfassungsphase am Dokument haengen: der naechste Tastendruck
+      // IRGENDWO in der App — etwa der erste Buchstabe im Journal — wurde
+      // verschluckt und still als neues Kuerzel gespeichert. Ist die Liste nicht
+      // mehr da, gibt es nichts aufzunehmen.
+      if (!document.getElementById("shortcutEditorList")) {
+        _shortcutRecordingId = null;
+        document.removeEventListener("keydown", _shortcutRecordHandler, true);
+        _shortcutRecordHandler = null;
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -82820,7 +82930,10 @@ body:has(#noteflowContainer.active) #app,
 body:has(#researchHubContainer.active) #app,
 body:has(#readingHubContainer.active) #app,
 body:has(#reflect-overlay) #app,
-body:has(#pdfedRoot) #app{content-visibility:hidden}
+/* #pdfedRoot wird EINMAL angelegt und nie wieder entfernt — nur .active
+   schaltet es sichtbar. Ohne .active in der Bedingung blieb die Haupt-App
+   nach dem ersten Oeffnen des PDF-Editors dauerhaft ungerendert. */
+body:has(#pdfedRoot.active) #app{content-visibility:hidden}
 .jb-nav h1{font-size:24px;font-weight:700;letter-spacing:-.05em;color:var(--text)}
 .jb-nav h1 span{color:var(--muted)}
 .jb-nav-links{display:flex;gap:16px;font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);overflow-x:auto;padding:8px 0}
@@ -82861,11 +82974,34 @@ body:has(#pdfedRoot) #app{content-visibility:hidden}
    was dort noch Platz beansprucht, ist im Vollbild reine Stoerung. */
 body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!important}
 .jb-editor-header{padding:12px 16px;border-bottom:1px solid var(--panel);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+/* Die Kopfzeile sitzt ueber dem Schreibfeld — jede Aenderung ihrer Hoehe
+   verschiebt den gesamten Text darunter. Genau das geschah beim Mitzaehlen der
+   Woerter: sobald die Zahl eine Stelle mehr bekam („999" -> „1'000"), brach die
+   Zeile um. Nachgemessen bei 1024px Fensterbreite: 46px -> 51px, bei 900px bis
+   82px — der Text sprang bei jeder Aktualisierung. (Windows-Laptops mit 125 %
+   Skalierung landen genau in diesem Bereich: 1366 Geraetepixel = 1093 CSS-px.)
+   Auf dem Rechner darf die Kopfzeile deshalb nicht mehr umbrechen; auf dem
+   Handy, wo sie ohnehin zweizeilig ist, tritt stattdessen die Wortzahl ab. */
+@media(min-width:769px){.jb-editor-header{flex-wrap:nowrap;overflow:hidden}
+  .jb-editor-header>div{min-width:0}
+  /* Auch INNERHALB der Kopfzeile darf nichts umbrechen: wurde es eng, brach die
+     Beschriftung des Ruhe-Knopfes auf zwei Zeilen und machte die Kopfzeile
+     genauso hoeher. Platz gibt stattdessen das Geistesblitz-Feld ab. */
+  .jb-editor-header button,.jb-editor-header select,.jb-editor-header .jb-writing-meta,
+  .jb-editor-header>div>div{white-space:nowrap;flex-shrink:0}
+  .jb-editor-header input{flex-shrink:1;min-width:0}}
+@media(max-width:768px){.jb-writing-meta{display:none}}
 /* Nur EIN Scroll-Behaelter: .jb-editor-content. Lagen zwei ineinander, scrollte
    der Browser beim Zeilenumbruch mal den einen, mal den anderen — die Schreib-
    stelle sprang oder verschwand unter dem Rand. */
 .jb-editor-body{flex:1;overflow:hidden;display:flex;min-height:0}
-.jb-editor-content{flex:1;padding:32px 96px;display:flex;flex-direction:column;align-items:center;overflow-y:auto}
+/* scrollbar-gutter:stable haelt den Platz des Rollbalkens IMMER frei. Auf
+   Windows nimmt der klassische Rollbalken echte Breite ein: sobald der Text
+   ueber eine Seite hinauswuchs (oder wieder darunter fiel), sprang die
+   zentrierte Textspalte um ein paar Pixel zur Seite — bei jedem Wachsen und
+   Schrumpfen erneut. Auf Systemen mit ueberlagerten Rollbalken aendert die
+   Zeile nichts. */
+.jb-editor-content{flex:1;padding:32px 96px;display:flex;flex-direction:column;align-items:center;overflow-y:auto;scrollbar-gutter:stable}
 @media(max-width:768px){.jb-editor-content{padding:16px}}
 .jb-editor-wrap{width:100%;max-width:768px}
 .jb-editor-title{font-size:48px;font-weight:700;width:100%;color:var(--text);background:transparent!important;border:none!important;outline:none;font-family:inherit;padding:0!important;border-radius:0!important;line-height:1.15;letter-spacing:-.02em}
@@ -82876,8 +83012,14 @@ body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!import
    springt das Auge, darueber verliert es die Zeile. Der Schreibbereich waechst
    unten mit, damit der Cursor nie am Fensterrand klebt. */
 .jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none;
-  max-width:66ch;margin:0;padding-bottom:45vh;
+  max-width:66ch;margin:0;padding-bottom:45vh;display:flow-root;
   caret-color:var(--accent);hyphens:auto;-webkit-hyphens:auto}
+/* display:flow-root haelt die Aussenabstaende der Absaetze IM Schreibbereich.
+   Ohne das rutschte der obere Abstand einer Ueberschrift oder eines Zitats aus
+   dem Bereich heraus (Margin Collapse) und schob den GANZEN Text nach unten —
+   gemessen 24px, und zwar genau in dem Moment, in dem man die erste Zeile als
+   Ueberschrift formatierte oder das wieder zuruecknahm. So sehen Abstaende aus,
+   die scheinbar aus dem Nichts auftauchen. */
 /* text-wrap:pretty stand hier und kostete mehr, als es einbrachte: fuehrte man
    mit der Rueckschritt-Taste zwei Absaetze zusammen, packte Chrome den
    verschobenen Text in ein <span style="text-wrap-mode:initial"> — bei jedem
@@ -82887,7 +83029,14 @@ body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!import
 /* Die Lesebreite (66ch) begrenzt nur die Zeile — die Spalte selbst beginnt an
    derselben Kante wie der Titel. Zentriert (margin:auto) sass der Text je nach
    Schrift 26-95px rechts vom Titel: alles wirkte gegeneinander verschoben. */
-.jb-richtext:empty::before{content:attr(data-placeholder);color:var(--panel)}
+/* Der Schreibbereich ist nie wirklich leer — er traegt immer einen ersten
+   Absatz, damit die Eingabetaste sauber arbeitet. Der Platzhalter kam deshalb
+   nie zum Vorschein. Er liegt jetzt ueber der ersten Zeile statt in ihr und
+   erscheint auch beim leeren Startabsatz. */
+.jb-richtext{position:relative}
+.jb-richtext:empty::before,
+.jb-richtext:has(>div:only-child>br:only-child)::before{content:attr(data-placeholder);color:var(--panel);
+  position:absolute;top:0;left:0;pointer-events:none}
 .jb-richtext>div,.jb-richtext>p{margin:0 0 .85em}
 .jb-richtext ul,.jb-richtext ol{padding-left:1.4em;margin:1em 0}
 .jb-richtext li{margin:.3em 0}
@@ -82911,7 +83060,12 @@ body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!import
 @media (hover:none){.jb-editor.jb-calm .jb-editor-header{opacity:.55}}
 .jb-editor.jb-calm .jb-richtext>*{opacity:.32;transition:opacity .35s}
 .jb-editor.jb-calm .jb-richtext>.jb-here,.jb-editor.jb-calm .jb-richtext:not(:focus-within)>*{opacity:1}
-.jb-writing-meta{display:flex;gap:14px;align-items:center;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+/* Feste Breite und Ziffern gleicher Laufweite: sonst wuchs die Anzeige mit
+   jeder Stelle („999" -> „1'000") und schob die Werkzeuge rechts davon beim
+   Schreiben seitlich weg. */
+.jb-writing-meta{display:flex;gap:14px;align-items:center;justify-content:center;min-width:186px;
+  font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap;
+  font-variant-numeric:tabular-nums}
 .jb-writing-meta b{color:var(--text2);font-weight:700}
 @media(max-width:768px){.jb-richtext{font-size:17px;padding-bottom:35vh}.jb-editor-title{font-size:32px}}
 /* Kein violetter Fokus-Ring im Schreibbereich (globale :focus-visible-Regel überschreiben) */
@@ -82943,6 +83097,22 @@ body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!import
 /* Self letter read */
 .jb-read-view{position:fixed;inset:0;background:var(--bg);z-index:10060;display:none;flex-direction:column}
 .jb-read-view.active{display:flex;animation:jbOverlayIn .22s ease-out}
+/* Ctrl+P im Editor ergab eine leere Seite: die Druckregeln des NoteFlow-Moduls
+   blenden .jb-container/.jb-editor pauschal aus. Steht der Editor offen, wird
+   ER gedruckt — Werkzeugleiste und Seitenspalte bleiben draussen. Die Regeln
+   stehen spaeter im Dokument und sind spezifischer, deshalb gewinnen sie. */
+@media print{
+  body:has(#jbEditor.active) #app,body:has(#jbEditor.active) .jb-container,
+  body:has(#jbEditor.active) .jb-editor-header,body:has(#jbEditor.active) .jb-sidebar,
+  body:has(#jbEditor.active) #browserTabBar{display:none!important}
+  body:has(#jbEditor.active) #jbEditor{display:block!important;position:static!important;background:#fff!important}
+  body:has(#jbEditor.active) .jb-editor-body,body:has(#jbEditor.active) .jb-editor-content,
+  body:has(#jbEditor.active) .jb-editor-wrap{display:block!important;overflow:visible!important;
+    height:auto!important;max-width:none!important;padding:0!important}
+  body:has(#jbEditor.active) .jb-editor-title{color:#000!important;font-size:24pt!important}
+  body:has(#jbEditor.active) .jb-richtext{color:#000!important;max-width:none!important;
+    padding-bottom:0!important;font-size:12pt!important;min-height:0!important}
+}
 /* Fonts */
 .jb-font-inter{font-family:'Inter',sans-serif}
 .jb-font-lora{font-family:'Lora',serif}
@@ -82975,8 +83145,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     </div>
   </nav>
   <main class="jb-main" id="jbMainContent"></main>
-  <div class="jb-toast" id="jbToast"></div>
 </div>
+<!-- Die Meldungszeile steht bewusst AUSSERHALB des Booklet-Containers: der ist
+     position:fixed mit z-index 9990 und bildet damit einen eigenen Stapel-
+     kontext. Darin eingesperrt konnte der Toast den Editor (z-index 10050) nie
+     ueberdecken — „Gesichert", „Ruhe-Modus an" und jede Fehlermeldung waren
+     beim Schreiben schlicht unsichtbar. -->
+<div class="jb-toast" id="jbToast"></div>
 
 <!-- Journal Editor -->
 <div class="jb-editor" id="jbEditor">
@@ -82984,7 +83159,10 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     <!-- Left: Navigation -->
     <button onclick="jbCloseEditor()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;letter-spacing:.15em;text-transform:uppercase;white-space:nowrap">← Zurück</button>
     <div style="width:1px;height:14px;background:var(--panel);flex-shrink:0"></div>
-    <div id="jbEditorStatus" style="font-size:9px;color:var(--panel3);text-transform:uppercase;font-weight:600;white-space:nowrap">Bereit</div>
+    <!-- Feste Breite: der Text wechselt beim Schreiben zwischen „Speichert …"
+         und „Gespeichert 14:32" — ohne feste Breite verschob das alle zwei
+         Sekunden die ganze mittlere Werkzeuggruppe zur Seite. -->
+    <div id="jbEditorStatus" style="font-size:9px;color:var(--panel3);text-transform:uppercase;font-weight:600;white-space:nowrap;min-width:124px">Bereit</div>
     
     <!-- Center: Formatting -->
     <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px">
@@ -83400,11 +83578,18 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // Deutsche Typografie beim Tippen: „Anfuehrungszeichen", Gedankenstrich und
   // Auslassungspunkte. Ersetzt wird nur direkt hinter dem Cursor und nur, wenn
   // das Muster eindeutig ist — nichts wird nachtraeglich umgeschrieben.
+  // Ersetzt wird IMMER nur das Zeichen unmittelbar vor dem Cursor. Frueher
+  // gingen die Anfuehrungszeichen-Regeln ueber das Zeichen davor mit hinweg und
+  // fuegten es wieder ein — und ein Leerzeichen, das der Browser neu einsetzt,
+  // wird zum geschuetzten Leerzeichen (&nbsp;). Bei jedem Anfuehrungszeichen
+  // wuchs so ein hartes Leerzeichen in den Text, das beim Umbruch als
+  // ploetzlicher Abstand auffiel und im PDF-Export (Blocksatz) klaffte.
+  // m[1] ist der Kontext VOR dem Zeichen — er bleibt unangetastet stehen.
   var JB_TYPO = [
     { re: /--$/, out: "–" },        // Gedankenstrich
     { re: /\.\.\.$/, out: "…" },     // Auslassungspunkte
-    { re: /(^|[\s(\[])"$/, out: "$1„" },
-    { re: /([^\s(\[])"$/, out: "$1“" }
+    { re: /(^|[\s(\[])"$/, out: "„" },
+    { re: /([^\s(\[])"$/, out: "“" }
   ];
 
   function jbApplyTypography() {
@@ -83420,8 +83605,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       var rule = JB_TYPO[i];
       var m = before.match(rule.re);
       if (!m) continue;
-      var replacement = rule.out.replace("$1", m[1] || "");
-      var cut = m[0].length;
+      var replacement = rule.out;
+      var cut = m[0].length - (m[1] ? m[1].length : 0);   // nur das Zeichen selbst
       // Ueber die Auswahl ersetzen statt textContent direkt zu setzen: nur so
       // bleibt der Rueckgaengig-Verlauf des Browsers erhalten. Ein Textprogramm,
       // in dem Strg+Z nicht mehr funktioniert, ist unbrauchbar.
@@ -83835,7 +84020,11 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   window.jbStartNew = function(type) {
     const id = Date.now().toString();
     jd().documents.push({ id, type, title: "", content: "", recipientId: "", createdAt: Date.now(), updatedAt: Date.now(), font: "jb-font-inter" });
-    scheduleSave();
+    // Nicht sofort sichern: ein noch leeres Werk gehoert nicht in den
+    // Datenbestand. Wer es nur aufmacht und wieder zumacht, hinterliess sonst
+    // nach einem Neuladen ein „Unbenannt" im Archiv (beim regulaeren Schliessen
+    // raeumt jbCloseEditor es weg — ein Neuladen kommt dem zuvor). Der erste
+    // Anschlag sichert es ohnehin.
     document.getElementById("jbModalSelection").style.display = "none";
     jbOpenDocument(id);
   };
@@ -83954,6 +84143,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (content.indexOf("jb-here") !== -1) {
       content = content.replace(/ class="jb-here"/g, "").replace(/(class="[^"]*?) ?\bjb-here\b/g, "$1");
     }
+    // Wer am Absatzende ein Leerzeichen stehen laesst und dann die Eingabetaste
+    // drueckt, bekommt vom Browser ein geschuetztes Leerzeichen an den Schluss
+    // gesetzt (sonst fiele das gewoehnliche weg). Sichtbar ist es im Editor
+    // nicht, im Blocksatz des PDF-Exports schon — und mit jedem Absatz sammelt
+    // sich mehr davon an. Am Absatzende hat es nichts zu suchen.
+    // Nur hinter echtem Inhalt: ein Absatz, der NUR aus einem geschuetzten
+    // Leerzeichen besteht, ist eine bewusst gesetzte Leerzeile — ohne den
+    // Vorlauf wuerde daraus ein hoehenloser, nicht mehr anklickbarer Absatz.
+    content = content.replace(/([^>\s])(?:&nbsp;|\u00A0)+(?=<\/(?:div|p|h[1-6]|blockquote|li)>)/gi, "$1");
     const recipientId = document.getElementById("jbEditorRecipient")?.value || "";
     const font = document.getElementById("jbEditorFont").value;
     // Perf: scheduleSave() serialisiert den GESAMTEN App-State (JSON.stringify +
@@ -84151,8 +84349,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         btn.innerHTML = '⚠ Local only';
         btn.style.background = 'linear-gradient(135deg,var(--warn),var(--warn))';
       }
-      setTimeout(() => {
-        btn.innerHTML = orig;
+      // Zwei Sendungen dicht hintereinander: der erste Wecker hat „orig" noch
+      // als „✓ Sent!" gelesen und schrieb das zurueck — der Knopf blieb fuer
+      // immer auf der Erfolgsmeldung stehen.
+      clearTimeout(window._jbSendBtnTimer);
+      window._jbSendBtnTimer = setTimeout(() => {
+        btn.innerHTML = '📱 To Mobile';
         btn.style.background = 'linear-gradient(135deg,var(--accent),var(--accent))';
       }, 2800);
     }
@@ -84281,9 +84483,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     document.body.classList.toggle("jb-fullscreen", !!fs);
     var toast = document.getElementById("jbToast");
     if (fs && toast && !fs.contains(toast)) fs.appendChild(toast);
-    else if (!fs && toast) {
-      var home = document.getElementById("journalBookletContainer");
-      if (home && toast.parentNode !== home) home.appendChild(toast);
+    else if (!fs && toast && toast.parentNode !== document.body) {
+      document.body.appendChild(toast);
     }
     var area = jbActiveWritingArea();
     if (area) setTimeout(function() { jbRestoreCaret(area); }, 0);
@@ -84448,7 +84649,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   // Bewusster Neuanfang — der einzige Weg, einen Entwurf zu verlieren.
   window.jbDiscardSelfLetterDraft = function() {
-    if (!jbEntryIsEmpty(jd().selfLetterDraft) && !confirm("Entwurf verwerfen und neu beginnen?")) return;
+    // Gefragt wurde bisher nach dem GESPEICHERTEN Entwurf. Wer gerade erst zu
+    // schreiben begonnen hatte (die Sicherung buendelt zwei Sekunden), verlor
+    // seinen Text ohne Rueckfrage. Massgeblich ist, was auf dem Schirm steht.
+    var _slLive = {
+      title: document.getElementById("jbSLTitle")?.value || "",
+      content: document.getElementById("jbSLArea")?.innerHTML || ""
+    };
+    if ((!jbEntryIsEmpty(jd().selfLetterDraft) || !jbEntryIsEmpty(_slLive))
+        && !confirm("Entwurf verwerfen und neu beginnen?")) return;
     clearTimeout(_jbSLAutoSaveTimer);
     jd().selfLetterDraft = null;
     scheduleSave();
@@ -84775,8 +84984,28 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     reader.onload = (ev) => {
       try {
         const imported = JSON.parse(ev.target.result);
-        if (confirm("Bestehende Journal-Daten werden überschrieben. Fortfahren?")) {
-          APP.state.data.journal = imported;
+        // Frueher landete hier ALLES, was sich als JSON lesen liess — auch eine
+        // Liste, eine Zahl oder die Sicherung einer anderen App. Danach war
+        // jd().documents undefiniert und das Journal in jeder Ansicht kaputt,
+        // ohne Weg zurueck. Was nicht wie ein Journal aussieht, kommt nicht rein.
+        const arr = (v) => Array.isArray(v) ? v : [];
+        if (!imported || typeof imported !== "object" || Array.isArray(imported)
+            || !(Array.isArray(imported.documents) || Array.isArray(imported.selfLetters)
+                 || Array.isArray(imported.topics) || Array.isArray(imported.contacts))) {
+          alert("Das ist keine Journal-Sicherung — nichts wurde geändert.");
+          return;
+        }
+        const docs = arr(imported.documents).length;
+        const letters = arr(imported.selfLetters).length;
+        if (confirm(`Bestehende Journal-Daten werden überschrieben:\n${docs} Werke, ${letters} Zeitkapsel-Briefe aus der Datei.\nFortfahren?`)) {
+          APP.state.data.journal = {
+            documents: arr(imported.documents),
+            selfLetters: arr(imported.selfLetters),
+            topics: arr(imported.topics),
+            contacts: arr(imported.contacts),
+            selfLetterDraft: imported.selfLetterDraft || null,
+            settings: (imported.settings && typeof imported.settings === "object") ? imported.settings : (jd().settings || {})
+          };
           scheduleSave();
           jbNav("home");
           jbToast("Import erfolgreich");
@@ -84888,16 +85117,24 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     try { _jbCaretRange = r.cloneRange(); } catch (e) {}
   });
 
-  // Fokus zurueck an die Schreibstelle: erst die gemerkte, sonst ans Ende.
+  // Fokus zurueck an die Schreibstelle. Reihenfolge mit Bedacht: zuerst
+  // bekommt der BROWSER den Vortritt — er merkt sich die Schreibstelle in einem
+  // contenteditable selbst und stellt sie beim Fokussieren wieder her. Nur wenn
+  // danach keine Stelle im Text steht, setzen wir die gemerkte, und erst als
+  // letztes ans Textende. Frueher haben wir immer unsere gemerkte Stelle
+  // erzwungen — war sie veraltet, sprang der Cursor bei jedem Anschlag dorthin
+  // zurueck, und die Absaetze landeten irgendwo.
   function jbRestoreCaret(area) {
     if (!area) return;
+    area.focus();
+    var sel = window.getSelection();
+    if (sel && sel.rangeCount && sel.getRangeAt(0).startContainer
+        && area.contains(sel.getRangeAt(0).startContainer)) return;
     var r = _jbCaretRange;
     if (r && r.startContainer && area.contains(r.startContainer)
         && document.contains(r.startContainer)) {
-      area.focus();
       try {
-        var s = window.getSelection();
-        s.removeAllRanges(); s.addRange(r);
+        sel.removeAllRanges(); sel.addRange(r);
         return;
       } catch (e) {}
     }
@@ -84932,24 +85169,29 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // landeten im gespeicherten Werk und veraenderten dort Umbruch und Groesse.
   // Entfernt werden nur Spans, die ausschliesslich solche Aussehens-
   // Eigenschaften tragen — eigene Formatierungen bleiben unangetastet.
-  var JB_ARTIFACT_PROP = /^(text-wrap|text-wrap-mode|text-wrap-style|white-space-collapse|font-size|line-height|hyphens|-webkit-hyphens|-webkit-text-size-adjust)$/i;
-  function jbIsArtifactStyle(style) {
+  // Zwei Schaerfegrade. Umbruch-Eigenschaften setzt kein Mensch von Hand — die
+  // duerfen ueberall weg. Eine Schriftgroesse dagegen KOENNTE aus einem alten,
+  // formatiert eingefuegten Text stammen; sie wird nur dort entfernt, wo sie
+  // gerade eben beim Zusammenfuehren zweier Absaetze entstanden ist.
+  var JB_WRAP_PROP = /^(text-wrap|text-wrap-mode|text-wrap-style|white-space-collapse|hyphens|-webkit-hyphens)$/i;
+  var JB_MERGE_PROP = /^(font-size|line-height|-webkit-text-size-adjust)$/i;
+  function jbIsArtifactStyle(style, wide) {
     var parts = String(style || "").split(";"), seen = 0;
     for (var i = 0; i < parts.length; i++) {
       var p = parts[i].trim();
       if (!p) continue;
       var name = p.slice(0, p.indexOf(":")).trim();
-      if (!JB_ARTIFACT_PROP.test(name)) return false;
+      if (!JB_WRAP_PROP.test(name) && !(wide && JB_MERGE_PROP.test(name))) return false;
       seen++;
     }
     return seen > 0;
   }
-  function jbStripWrapSpans(root) {
+  function jbStripWrapSpans(root, wide) {
     if (!root || !root.querySelectorAll) return;
     var spans = root.querySelectorAll("span[style]");
     for (var i = 0; i < spans.length; i++) {
       var sp = spans[i];
-      if (sp.className || !jbIsArtifactStyle(sp.getAttribute("style"))) continue;
+      if (sp.className || !jbIsArtifactStyle(sp.getAttribute("style"), wide)) continue;
       while (sp.firstChild) sp.parentNode.insertBefore(sp.firstChild, sp);
       sp.parentNode.removeChild(sp);
     }
@@ -84962,22 +85204,22 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // Ruhe-Modus findet keinen Absatz zum Hervorheben.
   function jbAfterDelete(area) {
     if (!area) return;
-    if (!area.querySelector("div,p,h1,h2,h3,h4,blockquote,ul,ol,pre")) {
-      if (!(area.textContent || "").trim()) {
-        area.innerHTML = "<div><br></div>";
-        try {
-          var r = document.createRange();
-          r.setStart(area.firstChild, 0); r.collapse(true);
-          var sel = window.getSelection();
-          sel.removeAllRanges(); sel.addRange(r);
-        } catch (e) {}
-        return;
-      }
-      jbEnsureBlocks(area);
-      return;
-    }
     var block = jbCaretBlock(area);
-    jbStripWrapSpans(block || area);
+    jbStripWrapSpans(block || area, true);     // hier auch Groessen-Artefakte
+  }
+
+  // Nach „alles markieren und loeschen" steht der Schreibbereich ohne einen
+  // einzigen Absatz da — dort verhaelt sich die Eingabetaste unberechenbar und
+  // der Ruhe-Modus findet nichts zum Hervorheben. Repariert wird das aber erst,
+  // wenn wirklich wieder geschrieben wird: raeumten wir gleich beim Loeschen
+  // auf, kostete das einen zusaetzlichen Rueckgaengig-Schritt, und der erste
+  // Strg+Z holte nur unsere Reparatur zurueck statt des geloeschten Eintrags.
+  function jbEnsureTypingBlock(area) {
+    if (!area || area.querySelector("div,p,h1,h2,h3,h4,blockquote,ul,ol,pre")) return;
+    var rebuilt = false;
+    try { rebuilt = document.execCommand("formatBlock", false, "div"); } catch (e) {}
+    if (rebuilt && area.querySelector("div,p")) return;
+    jbEnsureBlocks(area);
   }
 
   function jbEnsureBlocks(area) {
@@ -85009,10 +85251,32 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function jbCaretBlock(area) {
     var sel = window.getSelection();
     if (!sel || !sel.rangeCount) return null;
-    var node = sel.getRangeAt(0).startContainer;
-    if (node && node.nodeType === 1) node = node.childNodes[sel.getRangeAt(0).startOffset] || node;
+    var range = sel.getRangeAt(0);
+    var node = range.startContainer;
+    if (node && node.nodeType === 1) {
+      // Am ENDE des Schreibfeldes zeigt der Versatz hinter das letzte Kind —
+      // dann ist der betroffene Absatz das Kind davor, nicht „keiner".
+      node = node.childNodes[range.startOffset] || node.childNodes[range.startOffset - 1]
+        || node.lastChild || node;
+    }
     while (node && node !== area && node.parentNode !== area) node = node.parentNode;
     return node && node !== area && node.nodeType === 1 ? node : null;
+  }
+
+  // Das Rechteck der Schreibstelle selbst — eine Zeile hoch. Frueher wurde
+  // hierfuer der ganze Absatz genommen; bei einem langen Absatz hiess das:
+  // Cursor oben, aber nachgescrollt wurde bis zu seinem ENDE. Die Ansicht sprang
+  // dann vom Text weg, obwohl die Schreibstelle laengst sichtbar war.
+  function jbCaretRect(area) {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    var range = sel.getRangeAt(0);
+    var rects = range.getClientRects();
+    if (rects && rects.length) return rects[rects.length - 1];
+    var r = range.getBoundingClientRect();
+    if (r && (r.width || r.height)) return r;
+    var block = jbCaretBlock(area);              // leerer Absatz: kein Caret-Rechteck
+    return block ? block.getBoundingClientRect() : null;
   }
 
   // Nach einem neuen Absatz soll die Schreibstelle sichtbar bleiben. Vorher
@@ -85021,9 +85285,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // Laeuft nur bei der Eingabetaste — einmal pro Absatz, nicht pro Zeichen.
   function jbKeepCaretInView(area) {
     var box = area && area.closest(".jb-editor-content");
-    var block = box && jbCaretBlock(area);
-    if (!block) return;
-    var r = block.getBoundingClientRect();
+    var r = box && jbCaretRect(area);
+    if (!r) return;
     var view = box.getBoundingClientRect();
     // Unter dem letzten Viertel wird es unangenehm: dort steht die Zeile am
     // Rand, und auf dem Handy oft hinter der eingeblendeten Tastatur.
@@ -85041,7 +85304,10 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       // Aus einem leeren Zitat fuehrt die Eingabetaste zurueck in den normalen
       // Text. Der Browser haengt sonst ein leeres Zitat ans naechste — man kommt
       // nur noch mit der Werkzeugleiste wieder heraus.
-      var block = !e.shiftKey && jbCaretBlock(area);
+      // Nur bei stehendem Cursor: liegt eine Auswahl vor, soll die Eingabetaste
+      // sie ganz normal ersetzen.
+      var _sel = window.getSelection();
+      var block = (!e.shiftKey && _sel && _sel.isCollapsed) ? jbCaretBlock(area) : null;
       if (block && block.nodeName === "BLOCKQUOTE" && !(block.textContent || "").trim()) {
         e.preventDefault();
         var d = document.createElement("div");
@@ -85062,7 +85328,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     });
 
     area.addEventListener("input", function(e) {
-      if (String(e.inputType || "").indexOf("delete") === 0) jbAfterDelete(area);
+      var it = String(e.inputType || "");
+      if (it.indexOf("delete") === 0) jbAfterDelete(area);
+      else if (it.indexOf("insert") === 0) jbEnsureTypingBlock(area);
     });
 
     // Einfuegen wie in einem Textfeld: der Text, seine Absaetze — sonst nichts.
@@ -85124,11 +85392,75 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       var r = below ? null : jbCaretFromPoint(e.clientX, e.clientY, area);
       if (!r) { jbFocusAreaAtEnd(area); return; }
       area.focus();
+      var sel = window.getSelection();
       try {
-        var sel = window.getSelection();
         sel.removeAllRanges(); sel.addRange(r);
-      } catch (err) { jbFocusAreaAtEnd(area); }
+      } catch (err) { jbFocusAreaAtEnd(area); return; }
+
+      // Das preventDefault oben nimmt dem Browser auch das Aufziehen einer
+      // Markierung aus dem Rand heraus — genau die Geste, mit der man einen
+      // Absatz von der Seite her markiert. Also fuehren wir sie selbst weiter:
+      // die Stelle vom Mausdruck bleibt der Anker, das Ziehen zieht das andere
+      // Ende mit, das Loslassen beendet es.
+      var anchorNode = r.startContainer, anchorOffset = r.startOffset;
+      var onMove = function(ev) {
+        // Wird ausserhalb des Fensters losgelassen, kommt kein mouseup mehr an —
+        // die Markierung liefe sonst weiter dem Zeiger hinterher.
+        if (!ev.buttons) { onUp(); return; }
+        var to = jbCaretFromPoint(ev.clientX, ev.clientY, area);
+        if (!to) return;
+        try { sel.setBaseAndExtent(anchorNode, anchorOffset, to.startContainer, to.startOffset); }
+        catch (err2) {}
+      };
+      var onUp = function() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     });
+  });
+
+  // ══ Tastatur-Schirm ══════════════════════════════════════════════════════
+  // Die Haupt-App haengt ein gutes Dutzend Tastatur-Handler an das Dokument.
+  // Mehrere davon fragen nur nach INPUT/TEXTAREA — ein contenteditable ist aber
+  // ein DIV, und so griffen sie mitten ins Schreiben hinein. Ein belegter Fall:
+  // wer zuletzt im Recall Lab Karten gelernt hatte, dessen Enter und Leertaste
+  // verschluckte dessen Handler im Journal vollstaendig ("Enter geht ueberhaupt
+  // nicht"). Einzelne Handler zu flicken heilt immer nur den naechsten Fall.
+  //
+  // Deshalb hier die Grundsatzloesung: Tastendruecke, die IM Schreibbereich
+  // entstehen, kommen gar nicht erst bis zum Dokument. Der Schirm haengt am
+  // Editor-Overlay — die Schreibflaeche selbst und alles darin (Werkzeugleiste,
+  // Felder) haben ihre Ereignisse da laengst gesehen; nur die App-weiten
+  // Handler dahinter gehen leer aus.
+  //
+  // Bewusst durchgelassen wird:
+  //  · Escape          — schliesst Ruhe-Modus, Editor, Booklet (Handler am Dokument)
+  //  · ⌘/Strg+B/I/U/S/↵ — die eigenen Editor-Kuerzel (ebenfalls am Dokument)
+  //  · alles, solange der Fokus NICHT in einem Feld steht — sonst kaeme die
+  //    Fokus-Rettung nicht mehr zum Zug (Fokus auf einem Knopf, dann tippen).
+  // Kuerzel, die absichtlich ueberall gelten (Strg+K fuer die Befehlspalette,
+  // "?" fuer die Kuerzel-Uebersicht), haengen in der Erfassungsphase am
+  // Dokument und laufen ohnehin VOR dem Schirm.
+  function jbKeyShield(e) {
+    if (e.key === "Escape") return;
+    var a = document.activeElement;
+    var editable = !!a && (a.isContentEditable || a.tagName === "INPUT"
+      || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
+    if (!editable) return;
+    if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+      var k = String(e.key || "").toLowerCase();
+      if (k === "b" || k === "i" || k === "u" || k === "s" || k === "enter") return;
+    }
+    e.stopPropagation();
+  }
+  ["jbEditor", "jbSelfLetterEditor", "jbReadView"].forEach(function(id) {
+    var host = document.getElementById(id);
+    if (!host) return;
+    host.addEventListener("keydown", jbKeyShield);
+    host.addEventListener("keypress", jbKeyShield);
+    host.addEventListener("keyup", jbKeyShield);
   });
 
   // ══ Notbremse: alles Offene in den Datenstand schreiben ══════════════════
