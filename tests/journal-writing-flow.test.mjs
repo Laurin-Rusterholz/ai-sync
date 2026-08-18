@@ -495,4 +495,83 @@ function loadParagraphTools(sel) {
     "auf einem Geraet ohne eigenes Journal loescht der Abgleich den gesamten Bestand");
 }
 
+// ── 20. Der Fokus bleibt dort, wo geschrieben wird ────────────────────────
+// focus() auf einem contenteditable setzt den Cursor an den TEXTANFANG. Und ein
+// Auswahlfeld behaelt nach der Wahl mit der Maus die Tastatur: getippte Zeichen
+// landeten in seiner Schnellsuche, die still Schrift bzw. Empfaenger umstellte.
+{
+  const titleRow = index.split("\n").find((l) => l.includes('id="jbEditorTitle"'));
+  ok(titleRow && /jbFocusText\('jbEditorArea'\)/.test(titleRow),
+    "die Eingabetaste im Titel springt weiterhin per focus() in den Text — und damit an dessen Anfang statt an die Schreibstelle");
+  const slRow = index.split("\n").find((l) => l.includes('id="jbSLTitle"'));
+  ok(slRow && /jbFocusText\('jbSLArea'\)/.test(slRow), "dasselbe fehlt im Zeitkapsel-Editor");
+
+  const restore = jbSource.slice(jbSource.indexOf("function jbRestoreCaret(area)"), jbSource.indexOf("function jbRestoreCaret(area)") + 1200);
+  ok(restore.indexOf("var had =") < restore.indexOf("area.focus()"),
+    "jbRestoreCaret fragt die Auswahl erst NACH dem Fokussieren ab — dann sieht es den Cursor, den der Browser gerade an den Textanfang gesetzt hat");
+
+  const font = jbSource.slice(jbSource.indexOf("window.jbUpdateFont = function()"), jbSource.indexOf("window.jbUpdateFont = function()") + 900);
+  ok(/jbRestoreCaret\(ed\)/.test(font),
+    "nach der Schriftwahl behaelt das Auswahlfeld die Tastatur — Getipptes landet in seiner Schnellsuche statt im Text");
+  const slFont = jbSource.slice(jbSource.indexOf("window.jbUpdateSLFont = function()"), jbSource.indexOf("window.jbUpdateSLFont = function()") + 700);
+  ok(/jbRestoreCaret\(ed\)/.test(slFont), "dasselbe fehlt bei der Schriftwahl im Zeitkapsel-Editor");
+  const recipientRow = index.split("\n").find((l) => l.includes('id="jbEditorRecipient"'));
+  ok(recipientRow && /jbFocusText\('jbEditorArea'\)/.test(recipientRow),
+    "nach der Empfaengerwahl bleibt die Tastatur im Auswahlfeld — die Schnellsuche verstellt dort still den Empfaenger");
+
+  // Auswahlfelder duerfen weder den Schirm noch die Fokus-Rettung blockieren.
+  const shield = jbSource.slice(jbSource.indexOf("function jbKeyShield(e)"), jbSource.indexOf("function jbKeyShield(e)") + 700);
+  ok(!/tagName === "SELECT"/.test(shield),
+    "der Tastatur-Schirm behandelt Auswahlfelder wie Schreibfelder und haelt die Tasten dort fest");
+  const rescue = jbSource.slice(jbSource.indexOf("function jbActiveWritingArea()"), jbSource.indexOf("// ══ Absaetze"));
+  ok(!/a\.tagName === "SELECT"/.test(rescue),
+    "die Fokus-Rettung ueberspringt Auswahlfelder — dort getippte Zeichen kommen nie im Text an");
+
+  for (const fnName of ["window.jbFormat = function(cmd, val)", "window.jbFormatSL = function(cmd, val)"]) {
+    const body = jbSource.slice(jbSource.indexOf(fnName), jbSource.indexOf(fnName) + 600);
+    ok(/tagName === "INPUT" \|\| _act/.test(body) || /tagName === "INPUT"/.test(body),
+      `${fnName}: Fett/Kursiv aus dem Titel heraus reisst den Cursor weiterhin in den Fliesstext`);
+  }
+}
+
+// ── 21. Datenwege: Import, reiner Text, leerer Brief, Geist-Eintraege ─────
+{
+  ok(/return d\.innerHTML\.replace\(\/"\/g, "&quot;"\)/.test(jbSource),
+    "jbEsc schuetzt das Anfuehrungszeichen nicht — ein Name mit Anfuehrungszeichen bricht aus dem value-Attribut aus und wird still abgeschnitten");
+
+  const imp = jbSource.slice(jbSource.indexOf("window.jbImportData = function(e)"), jbSource.indexOf("window.jbImportData = function(e)") + 2200);
+  ok(/Object\.assign\(\{\}, imported, \{/.test(imp),
+    "der Import baut das Journal aus einem festen Bauplan — alles Weitere (z. B. der KI-Verlauf) faellt dabei weg");
+  ok(/Array\.isArray\(imported\.documents\)/.test(imp),
+    "der Import prueft nicht mehr, ob die Datei ueberhaupt ein Journal ist");
+
+  const open = jbSource.slice(jbSource.indexOf("function jbOpenDocument(id)"), jbSource.indexOf("function jbOpenDocument(id)") + 1600);
+  ok(/loadContent\.indexOf\("<"\) === -1/.test(open),
+    "ein Werk aus reinem Text verliert beim Oeffnen alle Zeilenumbrueche — und der naechste Anschlag sichert diesen Verlust");
+
+  const send = jbSource.slice(jbSource.indexOf("window.jbSendSelfLetter = function()"), jbSource.indexOf("window.jbSendSelfLetter = function()") + 900);
+  ok(/textContent \|\| ""\)\.replace\(\/\\u00A0\/g, " "\)\.trim\(\)/.test(send),
+    "ein Brief aus lauter Leerzeichen reist weiterhin in die Zukunft");
+
+  const openBooklet = jbSource.slice(jbSource.indexOf("function openJournalBooklet()"), jbSource.indexOf("function openJournalBooklet()") + 900);
+  ok(/!jbEntryIsEmpty\(d\)/.test(openBooklet),
+    "nie beschriebene Werke bleiben nach einem Neuladen als Unbenannt im Archiv stehen");
+}
+
+// ── 22. Exporte stehen auf weissem Papier ─────────────────────────────────
+// Die Oberflaechen-Variablen richten sich nach dem Erscheinungsbild der App —
+// auf einer weissen Seite ergibt das im hellen Bild hellgrauen Text auf Weiss.
+{
+  const pdf = jbSource.slice(jbSource.indexOf("function _jbDoPDF(doc)"), jbSource.indexOf("function _jbDoPDF(doc)") + 3000);
+  ok(!/color:var\(--panel\)/.test(pdf) && !/background:var\(--text\)/.test(pdf),
+    "der PDF-Export malt weiterhin mit den Farben der Oberflaeche auf weisses Papier");
+  ok(/jbEditorTitle"\)\?\.value/.test(pdf),
+    "der PDF-Export nimmt den zuletzt gesicherten Titel, waehrend der Text live aus dem Schreibbereich kommt");
+  const htmlExp = jbSource.slice(jbSource.indexOf("window.jbExportHTML = function()"), jbSource.indexOf("window.jbExportHTML = function()") + 2600);
+  ok(!/var\(--/.test(htmlExp),
+    "der HTML-Export nutzt Farb-Variablen, die es ausserhalb der App gar nicht gibt");
+  ok(/\.jb-read-view \.jb-richtext\{padding-bottom:0/.test(index),
+    "die Leseansicht erbt weiterhin den Fussraum des Schreibbereichs — hinter einem kurzen Brief steht eine halbe leere Seite");
+}
+
 console.log(`journal writing flow: ok (${checks} Pruefungen)`);
