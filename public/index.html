@@ -54472,8 +54472,21 @@ document.addEventListener("keydown", function(e) {
     return ev.key.toLowerCase() === s.key.toLowerCase();
   }
   
+  // Tastenkuerzel gehoeren der App — aber nicht, solange jemand schreibt.
+  // Ohne diese Ruecksicht war Strg+Z im Journal-Editor tot: preventDefault
+  // nahm dem Browser das Rueckgaengig weg und stattdessen lief der App-weite
+  // Schritt (der mit dem Text gar nichts zu tun hat). Strg+1..5 sprang mitten
+  // im Satz in eine andere Ansicht, Strg+N legte eine Aufgabe an. In einem
+  // Textfeld hat kein globales Kuerzel etwas verloren — Strg+K (Palette) haengt
+  // an einem eigenen Handler und bleibt ueberall erreichbar.
+  var _focused = document.activeElement;
+  var _inField = !!_focused && (_focused.isContentEditable || _focused.tagName === "INPUT"
+    || _focused.tagName === "TEXTAREA" || _focused.tagName === "SELECT");
+
   // Prüfe alle definierten Shortcuts
-  if (_matchSC("save", e)) {
+  if (_inField) {
+    // beim Schreiben: die Tastatur gehoert dem Text
+  } else if (_matchSC("save", e)) {
     e.preventDefault(); doSave(false); return;
   } else if (_matchSC("undo", e)) {
     e.preventDefault(); undo(); return;
@@ -82864,7 +82877,13 @@ body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!import
    unten mit, damit der Cursor nie am Fensterrand klebt. */
 .jb-richtext{width:100%;min-height:500px;font-size:18px;line-height:1.8;color:var(--text);outline:none;
   max-width:66ch;margin:0;padding-bottom:45vh;
-  caret-color:var(--accent);text-wrap:pretty;hyphens:auto;-webkit-hyphens:auto}
+  caret-color:var(--accent);hyphens:auto;-webkit-hyphens:auto}
+/* text-wrap:pretty stand hier und kostete mehr, als es einbrachte: fuehrte man
+   mit der Rueckschritt-Taste zwei Absaetze zusammen, packte Chrome den
+   verschobenen Text in ein <span style="text-wrap-mode:initial"> — bei jedem
+   Zusammenfuehren eines. Diese Spans landeten im gespeicherten Werk und
+   veraenderten dort den Umbruch. Nachgemessen: ohne pretty bleibt aus
+   „Erster|Zweiter" sauber „ErsterZweiter". */
 /* Die Lesebreite (66ch) begrenzt nur die Zeile — die Spalte selbst beginnt an
    derselben Kante wie der Titel. Zentriert (margin:auto) sass der Text je nach
    Schrift 26-95px rechts vom Titel: alles wirkte gegeneinander verschoben. */
@@ -82886,6 +82905,10 @@ body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!import
    an der geschrieben wird, ohne den Zusammenhang wegzunehmen. */
 .jb-editor.jb-calm .jb-editor-header{opacity:.12;transition:opacity .35s}
 .jb-editor.jb-calm .jb-editor-header:hover,.jb-editor.jb-calm .jb-editor-header:focus-within{opacity:1}
+/* Ohne Mauszeiger gibt es kein :hover — auf dem Handy war die Werkzeugleiste im
+   Ruhe-Modus damit unsichtbar UND unauffindbar. Dort tritt sie zurueck, ohne zu
+   verschwinden; eine Beruehrung (focus-within) holt sie ganz zurueck. */
+@media (hover:none){.jb-editor.jb-calm .jb-editor-header{opacity:.55}}
 .jb-editor.jb-calm .jb-richtext>*{opacity:.32;transition:opacity .35s}
 .jb-editor.jb-calm .jb-richtext>.jb-here,.jb-editor.jb-calm .jb-richtext:not(:focus-within)>*{opacity:1}
 .jb-writing-meta{display:flex;gap:14px;align-items:center;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
@@ -83342,6 +83365,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (!area) return;
     var sel = window.getSelection();
     var node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+    // Steht der Cursor direkt am Schreibfeld (nach einem Klick neben den Text,
+    // nach Alles-Loeschen), zeigte die Schleife unten ins Leere: kein Absatz
+    // markiert, und im Ruhe-Modus lag damit der GESAMTE Text bei 32 % Deckkraft.
+    // Der betroffene Absatz ist das Kind an der Cursorstelle.
+    if (node === area && sel.rangeCount && node.childNodes) {
+      var off = sel.getRangeAt(0).startOffset;
+      node = node.childNodes[off] || node.childNodes[off - 1] || node.lastChild || node;
+    }
     var block = null;
     while (node && node !== area) {
       if (node.parentNode === area) { block = node; break; }
@@ -84892,8 +84923,66 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // ein Zeilenumbruch, mal wandert der Cursor an eine unerwartete Stelle. Ein
   // Textprogramm arbeitet in Bloecken, also stellen wir Bloecke sicher.
   var JB_INLINE = /^(BR|SPAN|A|B|I|U|EM|STRONG|CODE|IMG|SUB|SUP|S|MARK|FONT|SMALL)$/;
+
+  // Fuehrt man zwei Absaetze mit der Rueckschritt-Taste zusammen, packt der
+  // Browser den verschobenen Text in ein <span style="...">, um sein Aussehen
+  // zu konservieren: beim Umbruch-Feinsatz ein text-wrap-mode, beim Zusammen-
+  // fuehren mit einer Ueberschrift eine font-size. Gemeint ist beides nicht —
+  // wer Text in eine Ueberschrift zieht, will ihn ALS Ueberschrift. Die Spans
+  // landeten im gespeicherten Werk und veraenderten dort Umbruch und Groesse.
+  // Entfernt werden nur Spans, die ausschliesslich solche Aussehens-
+  // Eigenschaften tragen — eigene Formatierungen bleiben unangetastet.
+  var JB_ARTIFACT_PROP = /^(text-wrap|text-wrap-mode|text-wrap-style|white-space-collapse|font-size|line-height|hyphens|-webkit-hyphens|-webkit-text-size-adjust)$/i;
+  function jbIsArtifactStyle(style) {
+    var parts = String(style || "").split(";"), seen = 0;
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i].trim();
+      if (!p) continue;
+      var name = p.slice(0, p.indexOf(":")).trim();
+      if (!JB_ARTIFACT_PROP.test(name)) return false;
+      seen++;
+    }
+    return seen > 0;
+  }
+  function jbStripWrapSpans(root) {
+    if (!root || !root.querySelectorAll) return;
+    var spans = root.querySelectorAll("span[style]");
+    for (var i = 0; i < spans.length; i++) {
+      var sp = spans[i];
+      if (sp.className || !jbIsArtifactStyle(sp.getAttribute("style"))) continue;
+      while (sp.firstChild) sp.parentNode.insertBefore(sp.firstChild, sp);
+      sp.parentNode.removeChild(sp);
+    }
+  }
+
+  // Nach dem Loeschen aufraeumen: Artefakt-Spans im betroffenen Absatz, und ein
+  // leergeraeumter Schreibbereich (Alles markieren + Loeschen) bekommt seinen
+  // ersten Absatz zurueck. Ohne den steht der Cursor in einem Bereich ohne
+  // Bloecke — die Eingabetaste verhaelt sich dort unberechenbar und der
+  // Ruhe-Modus findet keinen Absatz zum Hervorheben.
+  function jbAfterDelete(area) {
+    if (!area) return;
+    if (!area.querySelector("div,p,h1,h2,h3,h4,blockquote,ul,ol,pre")) {
+      if (!(area.textContent || "").trim()) {
+        area.innerHTML = "<div><br></div>";
+        try {
+          var r = document.createRange();
+          r.setStart(area.firstChild, 0); r.collapse(true);
+          var sel = window.getSelection();
+          sel.removeAllRanges(); sel.addRange(r);
+        } catch (e) {}
+        return;
+      }
+      jbEnsureBlocks(area);
+      return;
+    }
+    var block = jbCaretBlock(area);
+    jbStripWrapSpans(block || area);
+  }
+
   function jbEnsureBlocks(area) {
     if (!area) return;
+    jbStripWrapSpans(area);
     var n = area.firstChild, wrap = null;
     while (n) {
       var next = n.nextSibling;
@@ -84949,8 +85038,31 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
     area.addEventListener("keydown", function(e) {
       if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey) return;
+      // Aus einem leeren Zitat fuehrt die Eingabetaste zurueck in den normalen
+      // Text. Der Browser haengt sonst ein leeres Zitat ans naechste — man kommt
+      // nur noch mit der Werkzeugleiste wieder heraus.
+      var block = !e.shiftKey && jbCaretBlock(area);
+      if (block && block.nodeName === "BLOCKQUOTE" && !(block.textContent || "").trim()) {
+        e.preventDefault();
+        var d = document.createElement("div");
+        d.appendChild(document.createElement("br"));
+        block.parentNode.replaceChild(d, block);
+        try {
+          var r = document.createRange();
+          r.setStart(d, 0); r.collapse(true);
+          var sel = window.getSelection();
+          sel.removeAllRanges(); sel.addRange(r);
+        } catch (err) {}
+        jbKeepCaretInView(area);
+        if (areaId === "jbEditorArea") jbAutoSave(); else jbSLAutoSave();
+        return;
+      }
       // Erst den Browser den Absatz setzen lassen, dann nachziehen.
       setTimeout(function() { jbKeepCaretInView(area); }, 0);
+    });
+
+    area.addEventListener("input", function(e) {
+      if (String(e.inputType || "").indexOf("delete") === 0) jbAfterDelete(area);
     });
 
     // Einfuegen wie in einem Textfeld: der Text, seine Absaetze — sonst nichts.
@@ -84974,14 +85086,48 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     });
   });
 
+  // Die Textspalte ist schmaler als die Schreibflaeche (Lesebreite). Ein Klick
+  // rechts neben eine Zeile — beim Zurueckspringen in einen frueheren Absatz die
+  // natuerlichste Bewegung ueberhaupt — landete deshalb NICHT im Text, sondern
+  // warf den Cursor ans Ende des ganzen Werks. Rueckwaerts arbeiten war damit
+  // unmoeglich, und im Ruhe-Modus stand danach der gesamte Text im Halbdunkel,
+  // weil gar kein Absatz mehr markiert war.
+  // Jetzt wird die Klickstelle in die Textspalte hineingezogen: seitlich neben
+  // einer Zeile landet der Cursor an ihrem Anfang bzw. Ende, unterhalb des
+  // letzten Absatzes am Textende.
+  function jbCaretFromPoint(x, y, area) {
+    var b = area.getBoundingClientRect();
+    var cx = Math.min(Math.max(x, b.left + 1), b.right - 1);
+    var cy = Math.min(Math.max(y, b.top + 1), b.bottom - 1);
+    var r = null;
+    try {
+      if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(cx, cy);
+      else if (document.caretPositionFromPoint) {
+        var pos = document.caretPositionFromPoint(cx, cy);
+        if (pos) { r = document.createRange(); r.setStart(pos.offsetNode, pos.offset); r.collapse(true); }
+      }
+    } catch (err) { return null; }
+    return r && r.startContainer && area.contains(r.startContainer) ? r : null;
+  }
+
   ["jbEditor", "jbSelfLetterEditor"].forEach(function(edId) {
     var content = document.getElementById(edId)?.querySelector(".jb-editor-content");
     if (!content) return;
     content.addEventListener("mousedown", function(e) {
       var wrap = e.target && e.target.classList && e.target.classList.contains("jb-editor-wrap");
       if (e.target !== content && !wrap) return;   // nur Klicks ins Leere, nicht in Felder
+      var area = edId === "jbEditor" ? document.getElementById("jbEditorArea") : document.getElementById("jbSLArea");
+      if (!area) return;
       e.preventDefault();
-      jbFocusAreaAtEnd(edId === "jbEditor" ? document.getElementById("jbEditorArea") : document.getElementById("jbSLArea"));
+      var last = area.lastElementChild;
+      var below = !last || e.clientY > last.getBoundingClientRect().bottom;
+      var r = below ? null : jbCaretFromPoint(e.clientX, e.clientY, area);
+      if (!r) { jbFocusAreaAtEnd(area); return; }
+      area.focus();
+      try {
+        var sel = window.getSelection();
+        sel.removeAllRanges(); sel.addRange(r);
+      } catch (err) { jbFocusAreaAtEnd(area); }
     });
   });
 

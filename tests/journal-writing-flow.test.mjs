@@ -52,6 +52,14 @@ class N {
     return this.nodeType === 3 ? this._text : this.childNodes.map((c) => c.textContent).join("");
   }
   get firstChild() { return this.childNodes[0] || null; }
+  get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
+  get classList() {
+    const set = (this._cls = this._cls || new Set());
+    return {
+      add: (n) => set.add(n), remove: (n) => set.delete(n), contains: (n) => set.has(n),
+      toggle: (n, f) => { const want = f === undefined ? !set.has(n) : !!f; if (want) set.add(n); else set.delete(n); return want; }
+    };
+  }
   get nextSibling() {
     const p = this.parentNode;
     if (!p) return null;
@@ -280,6 +288,121 @@ function loadParagraphTools(sel) {
     "die verdeckte Wortzahl-Schleife laeuft wieder mit");
   ok(/function jbUpdateWritingMeta\(\)/.test(jbSource),
     "die Wortzahl im Editor-Kopf fehlt — dann waere die Anzeige ersatzlos weg");
+}
+
+// ── 13. Ein Klick neben die Zeile landet IN der Zeile ─────────────────────
+// Die Textspalte ist schmaler als die Schreibflaeche. Ein Klick rechts neben
+// einen frueheren Absatz — die natuerlichste Bewegung beim Zurueckarbeiten —
+// warf den Cursor ans Ende des ganzen Werks. Nachgemessen in Chromium: vorher
+// „Absatz 0 (Element DIV)" = Textende, jetzt „Absatz 2 @12".
+{
+  const click = jbSource.slice(jbSource.indexOf('content.addEventListener("mousedown"'), jbSource.indexOf('  // ══ Notbremse:'));
+  ok(jbSource.includes("function jbCaretFromPoint(x, y, area)"),
+    "jbCaretFromPoint fehlt — ohne sie gibt es nur ‚ans Textende'");
+  ok(/jbCaretFromPoint\(e\.clientX, e\.clientY, area\)/.test(click),
+    "der Klick in die freie Flaeche setzt den Cursor weiterhin blind ans Textende");
+  ok(/lastElementChild/.test(click) && /below/.test(click),
+    "es wird nicht unterschieden, ob unter den Text oder neben eine Zeile geklickt wurde");
+  ok(/jbFocusAreaAtEnd\(area\)/.test(click),
+    "unter dem letzten Absatz (und wenn keine Stelle bestimmbar ist) fehlt der Rueckfall aufs Textende");
+  const fromPoint = jbSource.slice(jbSource.indexOf("function jbCaretFromPoint(x, y, area)"), jbSource.indexOf('["jbEditor", "jbSelfLetterEditor"]'));
+  ok(/Math\.min\(Math\.max\(x, b\.left \+ 1\), b\.right - 1\)/.test(fromPoint),
+    "die Klickstelle wird nicht in die Textspalte hineingezogen — seitlich daneben findet der Browser keine Textstelle");
+  ok(/caretRangeFromPoint/.test(fromPoint) && /caretPositionFromPoint/.test(fromPoint),
+    "nur eine der beiden Browser-Fassungen wird genutzt");
+}
+
+// ── 14. Ruhe-Modus: es ist immer ein Absatz hervorgehoben ─────────────────
+// Steht der Cursor direkt am Schreibfeld (nach einem Klick neben den Text,
+// nach Alles-Loeschen), fand die Absatzsuche nichts — im Ruhe-Modus lag damit
+// der GESAMTE Text bei 32 % Deckkraft. Genau das ist „Ruhe-Modus kaputt".
+{
+  const start = index.indexOf("  function jbWordCount(text) {");
+  const end = index.indexOf("  function jbToast(msg) {", start);
+  ok(start > 0 && end > start, "der Schreibkomfort-Block wurde nicht gefunden");
+
+  const area = el("DIV", [el("DIV", [txt("eins")]), el("DIV", [txt("zwei")]), el("DIV", [txt("drei")])]);
+  const editor = el("DIV");
+  editor.classList.add("jb-calm");
+  let range = { startContainer: area, startOffset: 3 };     // Cursor am Feld, hinter allem
+  const doc = {
+    getElementById: (id) => ({ jbEditorArea: area, jbEditor: editor }[id] || null),
+    addEventListener: () => {},
+    createElement: () => el("DIV"),
+    createRange: () => ({ setStart() {}, setEnd() {} }),
+    execCommand: () => true
+  };
+  const win = {
+    getSelection: () => ({ rangeCount: 1, isCollapsed: true, getRangeAt: () => range, removeAllRanges() {}, addRange() {} }),
+    matchMedia: () => ({ matches: false })
+  };
+  const fn = new Function(
+    "document", "window", "localStorage", "requestAnimationFrame", "setTimeout", "clearTimeout",
+    "jbAutoSave", "jbSaveCurrentDoc", "_jbAutoSaveTimer",
+    index.slice(start, end) + "\nreturn jbMarkCurrentParagraph;"
+  );
+  const mark = fn(doc, win, { getItem: () => null, setItem() {} }, (f) => f(), () => 0, () => {}, () => {}, () => {}, null);
+
+  mark();
+  ok(area.childNodes[2].classList.contains("jb-here"),
+    "steht der Cursor am Schreibfeld statt in einem Absatz, wird gar kein Absatz hervorgehoben — im Ruhe-Modus verdunkelt sich dann der ganze Text");
+  range = { startContainer: area, startOffset: 1 };
+  mark();
+  ok(area.childNodes[1].classList.contains("jb-here") && !area.childNodes[2].classList.contains("jb-here"),
+    "die Hervorhebung folgt der Cursorstelle am Schreibfeld nicht");
+}
+
+// ── 15. Ruhe-Modus bleibt ohne Mauszeiger bedienbar ───────────────────────
+{
+  ok(/@media \(hover:none\)\{\.jb-editor\.jb-calm \.jb-editor-header\{opacity:\.55\}\}/.test(index),
+    "auf dem Handy (kein :hover) bleibt die Werkzeugleiste im Ruhe-Modus bei 12 % — unsichtbar und unauffindbar");
+  ok(/\.jb-editor\.jb-calm \.jb-editor-header:hover,\.jb-editor\.jb-calm \.jb-editor-header:focus-within\{opacity:1\}/.test(index),
+    "die Werkzeugleiste kommt bei Hover/Beruehrung nicht mehr zurueck");
+}
+
+// ── 16. Globale Tastenkuerzel schweigen, solange jemand schreibt ──────────
+// Strg+Z war im Editor tot: preventDefault nahm dem Browser das Rueckgaengig
+// weg und stattdessen lief der App-weite Schritt. Strg+1..5 sprang mitten im
+// Satz in eine andere Ansicht.
+{
+  const hStart = index.indexOf("  // Global shortcuts – dynamisch aus Settings");
+  const h = index.slice(hStart, index.indexOf('  // Escape: Modal oder SlidePanel schließen', hStart));
+  ok(hStart > 0 && h.length > 0, "der globale Kuerzel-Handler wurde nicht gefunden");
+  ok(/var _inField =/.test(h) && /isContentEditable/.test(h),
+    "der globale Kuerzel-Handler prueft nicht, ob gerade in ein Feld geschrieben wird");
+  ok(h.indexOf("if (_inField)") < h.indexOf('_matchSC("undo", e)'),
+    "die Feld-Pruefung liegt hinter dem Rueckgaengig-Kuerzel — Strg+Z bliebe im Editor tot");
+  ok(h.indexOf("if (_inField)") < h.indexOf('_matchSC("gotoDash", e)'),
+    "die Navigations-Kuerzel greifen weiterhin mitten im Satz");
+}
+
+// ── 17. Absaetze zusammenfuehren hinterlaesst keine Aussehens-Spans ───────
+// Chrome konserviert beim Verschmelzen das Aussehen des verschobenen Textes in
+// einem <span style="…"> — text-wrap-mode beim Feinsatz, font-size beim
+// Zusammenfuehren mit einer Ueberschrift. Beides landete im gespeicherten Werk.
+{
+  ok(!/\.jb-richtext\{[^}]*text-wrap:pretty/.test(index),
+    "text-wrap:pretty steht wieder im Schreibbereich — jedes Zusammenfuehren zweier Absaetze hinterlaesst dann ein <span style=\"text-wrap-mode:initial\">");
+  ok(/var JB_ARTIFACT_PROP =/.test(jbSource) && /font-size/.test(jbSource.slice(jbSource.indexOf("var JB_ARTIFACT_PROP ="), jbSource.indexOf("var JB_ARTIFACT_PROP =") + 300)),
+    "die Aufraeum-Liste kennt font-size nicht — Text, den man in eine Ueberschrift zieht, behaelt seine alte Groesse");
+  ok(/function jbStripWrapSpans\(root\)/.test(jbSource) && /sp\.className \|\| !jbIsArtifactStyle/.test(jbSource),
+    "es werden Spans mit eigenen Formatierungen mit entfernt — das waere Datenverlust");
+  const afterDel = jbSource.slice(jbSource.indexOf("function jbAfterDelete(area)"), jbSource.indexOf("function jbAfterDelete(area)") + 900);
+  ok(/jbStripWrapSpans\(block \|\| area\)/.test(afterDel),
+    "nach dem Loeschen wird der betroffene Absatz nicht aufgeraeumt");
+  ok(/area\.innerHTML = "<div><br><\/div>"/.test(afterDel),
+    "ein leergeraeumter Schreibbereich (Alles markieren + Loeschen) bekommt keinen ersten Absatz zurueck");
+  ok(/String\(e\.inputType \|\| ""\)\.indexOf\("delete"\) === 0/.test(jbSource),
+    "der Aufraeumer haengt nicht am Loesch-Ereignis");
+}
+
+// ── 18. Aus dem leeren Zitat fuehrt die Eingabetaste heraus ───────────────
+{
+  const enter = jbSource.slice(jbSource.indexOf('area.addEventListener("keydown"'), jbSource.indexOf('area.addEventListener("paste"'));
+  ok(/nodeName === "BLOCKQUOTE"/.test(enter) && /textContent \|\| ""\)\.trim\(\)/.test(enter),
+    "ein leeres Zitat haengt beim Enter das naechste Zitat an — aus dem Zitat kommt man nur noch ueber die Werkzeugleiste heraus");
+  ok(/e\.shiftKey/.test(enter),
+    "Shift+Enter (Zeilenumbruch) wird mitbehandelt, obwohl es das Zitat nicht verlassen soll");
 }
 
 console.log(`journal writing flow: ok (${checks} Pruefungen)`);
