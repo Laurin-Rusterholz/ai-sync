@@ -83097,6 +83097,11 @@ body.jb-fullscreen #browserTabBar,body.jb-fullscreen #qc-fab{display:none!import
 /* Self letter read */
 .jb-read-view{position:fixed;inset:0;background:var(--bg);z-index:10060;display:none;flex-direction:column}
 .jb-read-view.active{display:flex;animation:jbOverlayIn .22s ease-out}
+/* Die Leseansicht setzt fuer die Schrift dieselbe Klasse wie der Schreibbereich
+   — und erbte damit dessen Fussraum (45vh, damit der Cursor beim Schreiben nie
+   am unteren Rand klebt) und die Mindesthoehe. Hinter einem kurzen Brief stand
+   dadurch eine halbe leere Bildschirmseite. */
+.jb-read-view .jb-richtext{padding-bottom:0;min-height:0;max-width:none}
 /* Ctrl+P im Editor ergab eine leere Seite: die Druckregeln des NoteFlow-Moduls
    blenden .jb-container/.jb-editor pauschal aus. Steht der Editor offen, wird
    ER gedruckt — Werkzeugleiste und Seitenspalte bleiben draussen. Die Regeln
@@ -83200,14 +83205,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
             <div id="jbSenderPreview" style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.2em;white-space:pre-line"></div>
             <div style="width:100%;max-width:300px">
               <span style="font-size:8px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.15em;display:block;margin-bottom:8px">Empfänger</span>
-              <select id="jbEditorRecipient" onchange="jbAutoSave()" class="jb-select" style="width:100%;font-size:14px;text-transform:none;text-align:right;padding:8px 2rem 8px 12px">
+              <select id="jbEditorRecipient" onchange="jbAutoSave();window.jbFocusText('jbEditorArea')" class="jb-select" style="width:100%;font-size:14px;text-transform:none;text-align:right;padding:8px 2rem 8px 12px">
                 <option value="">Kontakt auswählen...</option>
               </select>
             </div>
             <div id="jbDatePreview" style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.2em"></div>
           </div>
         </div>
-        <input type="text" id="jbEditorTitle" class="jb-editor-title" placeholder="Haupttitel..." oninput="jbAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbEditorArea').focus()}">
+        <input type="text" id="jbEditorTitle" class="jb-editor-title" placeholder="Haupttitel..." oninput="jbAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();window.jbFocusText('jbEditorArea')}">
         <div id="jbEditorArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Beginne deine Erzählung..." spellcheck="true" oninput="jbOnWrite(event)"></div>
       </div>
     </div>
@@ -83272,7 +83277,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   <div class="jb-editor-body">
     <div class="jb-editor-content">
       <div class="jb-editor-wrap">
-        <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." oninput="jbSLAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('jbSLArea').focus()}">
+        <input type="text" id="jbSLTitle" class="jb-editor-title" placeholder="Betreff..." oninput="jbSLAutoSave()" onkeydown="if(event.key==='Enter'){event.preventDefault();window.jbFocusText('jbSLArea')}">
         <div id="jbSLArea" contenteditable="true" class="jb-richtext jb-font-inter" data-placeholder="Liebe/r zukünftige/r ich..." spellcheck="true" oninput="if((!event.inputType||event.inputType==='insertText')&&!event.isComposing)jbApplyTypography();jbSLAutoSave()"></div>
       </div>
     </div>
@@ -83374,7 +83379,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   let _jbSLLastSaveAt = 0;
 
   function jd() { return APP.state.data.journal; }
-  function jbEsc(s) { const d = document.createElement("div"); d.textContent = String(s || ""); return d.innerHTML; }
+  // innerHTML schuetzt &, < und > — aber NICHT das Anfuehrungszeichen. Die
+  // Setup-Werte (Name, Strasse, Ort) landen in value="…"; ein Anfuehrungszeichen
+  // darin brach das Attribut auf und der Rest des Wertes verschwand still.
+  function jbEsc(s) {
+    const d = document.createElement("div");
+    d.textContent = String(s || "");
+    return d.innerHTML.replace(/"/g, "&quot;");
+  }
 
   // Wortzahlen fuer Start- und Archiv-Ansicht: das HTML jedes Werks bei jedem
   // Rendern neu zu strippen waechst mit Anzahl und Laenge der Eintraege. Der
@@ -83392,6 +83404,16 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   // ====== OPEN / CLOSE ======
   function openJournalBooklet() {
+    // Ein Werk, das nur geoeffnet und nie beschrieben wurde, raeumt jbCloseEditor
+    // weg — ein Neuladen kommt dem aber zuvor. Beim naechsten Oeffnen des
+    // Booklets sind solche „Unbenannt"-Reste faellig.
+    try {
+      const _docs = jd().documents;
+      if (Array.isArray(_docs)) {
+        const _clean = _docs.filter((d) => d && (d.id === _jbCurrentDocId || !jbEntryIsEmpty(d)));
+        if (_clean.length !== _docs.length) { jd().documents = _clean; scheduleSave(); }
+      }
+    } catch (e) {}
     const c = document.getElementById("journalBookletContainer");
     if (!c) return;
     // Ensure journal data exists
@@ -84045,6 +84067,15 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     document.getElementById("jbEditorTitle").value = doc.title;
     // Frueher gespeicherte Ruhe-Modus-Marker beim Laden abstreifen.
     let loadContent = doc.content || "<div><br></div>";
+    // Werke aus frueheren Fassungen (und vom Handy) liegen teils als reiner
+    // Text vor. Ohne Umwandlung fasst der Schreibbereich sie zu EINEM Absatz
+    // zusammen — alle Zeilenumbrueche weg, und der naechste Anschlag sichert
+    // diesen Verlust.
+    if (loadContent.indexOf("<") === -1) {
+      loadContent = loadContent.split(/\r?\n/)
+        .map((line) => line.trim() ? "<div>" + jbEsc(line) + "</div>" : "<div><br></div>")
+        .join("") || "<div><br></div>";
+    }
     if (loadContent.indexOf("jb-here") !== -1) {
       loadContent = loadContent.replace(/ class="jb-here"/g, "").replace(/(class="[^"]*?) ?\bjb-here\b/g, "$1");
     }
@@ -84398,6 +84429,11 @@ select.jb-select option{background:var(--panel);color:var(--text)}
 
   // ====== FORMAT & FONT ======
   window.jbFormat = function(cmd, val) {
+    // Steht der Cursor im Titel, im Geistesblitz-Feld oder im Assistenten, ist
+    // hier nichts zu formatieren — und der Fokuswechsel unten haette den Cursor
+    // mitten im Wort in den Fliesstext gerissen.
+    var _act = document.activeElement;
+    if (_act && (_act.tagName === "INPUT" || _act.tagName === "TEXTAREA")) return;
     if (cmd === "formatBlock") {
       const sel = window.getSelection();
       if (sel.rangeCount > 0) {
@@ -84433,6 +84469,11 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     ["jb-font-inter","jb-font-lora","jb-font-inconsolata"].forEach(f => ed.classList.remove(f));
     ed.classList.add(font);
     _jbCurrentFont = font;
+    // Nach der Auswahl mit der Maus behaelt das Menue die Tastatur. Wer
+    // weiterschrieb, tippte in die Schnellsuche des Auswahlfeldes: nichts kam im
+    // Text an, „M" sprang auf „Mono" und speicherte still eine Schrift, die
+    // niemand gewaehlt hatte, und die Leertaste klappte das Menue wieder auf.
+    jbRestoreCaret(ed);
   };
 
   window.jbToggleSidebar = function() { document.getElementById("jbEditorSidebar").classList.toggle("open"); };
@@ -84678,6 +84719,8 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   };
 
   window.jbFormatSL = function(cmd, val) {
+    var _actSL = document.activeElement;
+    if (_actSL && (_actSL.tagName === "INPUT" || _actSL.tagName === "TEXTAREA")) return;
     if (cmd === "formatBlock") {
       const sel = window.getSelection();
       if (sel.rangeCount > 0) {
@@ -84715,6 +84758,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     ["jb-font-inter","jb-font-lora","jb-font-inconsolata"].forEach(f => ed.classList.remove(f));
     ed.classList.add(font);
     _jbSLFont = font;
+    jbRestoreCaret(ed);          // wie im Werk-Editor: Tastatur zurueck in den Text
   };
 
   window.jbToggleSLSidebar = function() { document.getElementById("jbSLSidebar").classList.toggle("open"); };
@@ -84764,7 +84808,10 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     const title = document.getElementById("jbSLTitle").value.trim();
     const content = document.getElementById("jbSLArea").innerHTML;
     if (!title) { jbToast("Bitte Betreff eingeben"); return; }
-    if (!content || content === "<div><br></div>") { jbToast("Bitte Nachricht schreiben"); return; }
+    // Frueher wurde nur gegen genau einen leeren Absatz geprueft: zwei leere
+    // Absaetze oder ein paar Leerzeichen reisten als „Nachricht" in die Zukunft.
+    const _plain = (document.getElementById("jbSLArea").textContent || "").replace(/\u00A0/g, " ").trim();
+    if (!_plain) { jbToast("Bitte Nachricht schreiben"); return; }
     if (!_jbSelectedDelay) { jbToast("Bitte Lieferzeit wählen"); jbToggleSLSidebar(); return; }
     const deliveryDate = jbCalcDeliveryDate();
     if (!deliveryDate) { jbToast("Ungültiges Datum"); return; }
@@ -84998,14 +85045,17 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         const docs = arr(imported.documents).length;
         const letters = arr(imported.selfLetters).length;
         if (confirm(`Bestehende Journal-Daten werden überschrieben:\n${docs} Werke, ${letters} Zeitkapsel-Briefe aus der Datei.\nFortfahren?`)) {
-          APP.state.data.journal = {
+          // Von der Datei ausgehen und nur die bekannten Listen geradebiegen:
+          // ein hier aufgezaehlter Bauplan wuerde alles verwerfen, was das
+          // Journal sonst noch mitfuehrt (etwa den KI-Verlauf).
+          APP.state.data.journal = Object.assign({}, imported, {
             documents: arr(imported.documents),
             selfLetters: arr(imported.selfLetters),
             topics: arr(imported.topics),
             contacts: arr(imported.contacts),
             selfLetterDraft: imported.selfLetterDraft || null,
             settings: (imported.settings && typeof imported.settings === "object") ? imported.settings : (jd().settings || {})
-          };
+          });
           scheduleSave();
           jbNav("home");
           jbToast("Import erfolgreich");
@@ -85039,21 +85089,28 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (doc.type === "letter") {
       const cover = document.createElement("div");
       cover.style.cssText = "padding:25mm;min-height:297mm;box-sizing:border-box;background:white;color:black;position:relative;page-break-after:always;";
+      // Feste Druckfarben: die Oberflaechen-Variablen richten sich nach dem
+      // gewaehlten Erscheinungsbild. Auf dem weissen Blatt ergab das im hellen
+      // Bild hellgrauen Text auf Weiss — und der Empfaengerkasten bekam die
+      // TEXTfarbe als Hintergrund, also Weiss auf Weiss.
       cover.innerHTML = `<div style="width:100%;display:flex;flex-direction:column;align-items:flex-end;text-align:right">
-        <div style="font-size:10pt;color:var(--muted);margin-bottom:60mm;line-height:1.6">${s.name||""}<br>${s.street||""}<br>${s.city||""}</div>
-        <div style="font-size:12pt;border:1px solid var(--text);padding:12mm;width:90mm;text-align:left;background:var(--text)">
-          <span style="font-size:8pt;color:var(--muted);text-transform:uppercase;margin-bottom:8px;display:block;letter-spacing:1px">Empfänger</span>
-          ${recipient ? `<strong>${recipient.first} ${recipient.last}</strong><br>${recipient.street}<br>${recipient.city}` : '<em style="color:var(--text2)">Kein Empfänger</em>'}
-        </div></div><div style="position:absolute;bottom:25mm;right:25mm;font-size:8pt;color:var(--text2)">Journal Booklet</div>`;
+        <div style="font-size:10pt;color:#555;margin-bottom:60mm;line-height:1.6">${jbEsc(s.name||"")}<br>${jbEsc(s.street||"")}<br>${jbEsc(s.city||"")}</div>
+        <div style="font-size:12pt;border:1px solid #111;padding:12mm;width:90mm;text-align:left;background:#fff;color:#111">
+          <span style="font-size:8pt;color:#555;text-transform:uppercase;margin-bottom:8px;display:block;letter-spacing:1px">Empfänger</span>
+          ${recipient ? `<strong>${jbEsc(recipient.first)} ${jbEsc(recipient.last)}</strong><br>${jbEsc(recipient.street)}<br>${jbEsc(recipient.city)}` : '<em style="color:#777">Kein Empfänger</em>'}
+        </div></div><div style="position:absolute;bottom:25mm;right:25mm;font-size:8pt;color:#777">Journal Booklet</div>`;
       container.appendChild(cover);
     }
     const content = document.createElement("div");
-    content.style.cssText = "padding:25mm;min-height:297mm;box-sizing:border-box;background:white;color:var(--panel);";
+    content.style.cssText = "padding:25mm;min-height:297mm;box-sizing:border-box;background:white;color:#111;";
     let h = "";
-    if (doc.type === "letter") h += `<div style="text-align:right;margin-bottom:15mm;font-size:10pt;color:var(--muted)">${(s.city||"").split(" ").pop()||"Ort"}, den ${new Date().toLocaleDateString("de-DE")}</div>`;
-    h += `<h1 style="font-size:22pt;margin:0 0 8mm;font-weight:700;border-bottom:2px solid #000;padding-bottom:6px">${doc.title||"Ohne Titel"}</h1>`;
+    if (doc.type === "letter") h += `<div style="text-align:right;margin-bottom:15mm;font-size:10pt;color:#555">${jbEsc((s.city||"").split(" ").pop()||"Ort")}, den ${new Date().toLocaleDateString("de-DE")}</div>`;
+    // Der Titel kommt aus dem Feld, nicht aus dem zuletzt gesicherten Stand:
+    // der Text darunter wird ja auch live aus dem Schreibbereich genommen.
+    const _liveTitle = document.getElementById("jbEditorTitle")?.value || doc.title || "";
+    h += `<h1 style="font-size:22pt;margin:0 0 8mm;font-weight:700;border-bottom:2px solid #000;padding-bottom:6px">${jbEsc(_liveTitle || "Ohne Titel")}</h1>`;
     h += `<div style="font-size:11pt;line-height:1.7;text-align:justify">${document.getElementById("jbEditorArea").innerHTML}</div>`;
-    if (doc.type === "letter") h += `<div style="margin-top:20mm;font-size:11pt">Mit freundlichen Grüssen,<br><br><br><strong>${s.name||""}</strong></div>`;
+    if (doc.type === "letter") h += `<div style="margin-top:20mm;font-size:11pt">Mit freundlichen Grüssen,<br><br><br><strong>${jbEsc(s.name||"")}</strong></div>`;
     content.innerHTML = h;
     container.appendChild(content);
     const filename = (doc.title || "Dokument").trim().replace(/[^a-zA-Z0-9äöüÄÖÜß\s-]/g, "");
@@ -85067,11 +85124,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (!doc) return;
     const fonts = {"jb-font-inter":"font-family:'Inter',sans-serif","jb-font-lora":"font-family:'Lora',serif","jb-font-inconsolata":"font-family:'Inconsolata',monospace"};
     const selectedStyle = fonts[doc.font] || fonts["jb-font-inter"];
-    const filename = (doc.title || "Dokument").trim().replace(/[^a-zA-Z0-9äöüÄÖÜß\s-]/g, "");
-    const html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>${doc.title||"Dokument"}</title>
+    // Titel und Dateiname aus dem FELD — der Text darunter wird ebenfalls live
+    // aus dem Schreibbereich genommen; ein soeben geaenderter Titel fehlte sonst.
+    const liveTitle = document.getElementById("jbEditorTitle")?.value || doc.title || "";
+    const filename = (liveTitle || "Dokument").trim().replace(/[^a-zA-Z0-9äöüÄÖÜß\s-]/g, "");
+    const html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>${jbEsc(liveTitle||"Dokument")}</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Lora:wght@400;700&family=Inconsolata:wght@400;700&display=swap" rel="stylesheet">
-<style>*{box-sizing:border-box}body{background:#f8f9fa;padding:60px 20px;color:var(--panel);${selectedStyle};line-height:1.8;margin:0}.container{max-width:750px;margin:auto;background:white;padding:80px;box-shadow:0 4px 24px rgba(0,0,0,.08);border-radius:8px}h1{font-size:2.5em;margin-bottom:.5em;border-bottom:2px solid var(--panel);padding-bottom:12px}h3{font-size:1.3em;color:var(--panel2);margin-top:1.5em}blockquote{border-left:3px solid var(--text);padding-left:20px;color:var(--muted);font-style:italic;margin:1.5em 0}.meta{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--text2);margin-bottom:2.5rem}</style>
-</head><body><div class="container"><div class="meta">${new Date().toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"})}</div><h1>${doc.title||"Ohne Titel"}</h1><div class="content">${document.getElementById("jbEditorArea").innerHTML}</div></div></body></html>`;
+<style>*{box-sizing:border-box}body{background:#f8f9fa;padding:60px 20px;color:#1c1e21;${selectedStyle};line-height:1.8;margin:0}.container{max-width:750px;margin:auto;background:white;padding:80px;box-shadow:0 4px 24px rgba(0,0,0,.08);border-radius:8px}h1{font-size:2.5em;margin-bottom:.5em;border-bottom:2px solid #1c1e21;padding-bottom:12px}h3{font-size:1.3em;color:#33363a;margin-top:1.5em}blockquote{border-left:3px solid #b9bcc0;padding-left:20px;color:#5a5e63;font-style:italic;margin:1.5em 0}.meta{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:#7b7f85;margin-bottom:2.5rem}</style>
+</head><body><div class="container"><div class="meta">${new Date().toLocaleDateString("de-DE",{day:"numeric",month:"long",year:"numeric"})}</div><h1>${jbEsc(liveTitle||"Ohne Titel")}</h1><div class="content">${document.getElementById("jbEditorArea").innerHTML}</div></div></body></html>`;
     const blob = new Blob([html], {type:"text/html"});
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -85094,6 +85154,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
     } catch (e) {}
   }
+
+  // focus() auf einem contenteditable setzt den Cursor an den ANFANG des Textes.
+  // Vom Titel aus mit der Eingabetaste in den Text zu springen landete deshalb
+  // ganz oben — mitten in einem langen Eintrag ein Sprung ins Nichts, und das
+  // naechste Wort stand vor dem ersten Satz.
+  window.jbFocusText = function(areaId) {
+    jbRestoreCaret(document.getElementById(areaId));
+  };
 
   function jbActiveWritingArea() {
     if (document.getElementById("jbEditor")?.classList.contains("active")) return document.getElementById("jbEditorArea");
@@ -85126,9 +85194,17 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // zurueck, und die Absaetze landeten irgendwo.
   function jbRestoreCaret(area) {
     if (!area) return;
-    area.focus();
+    // Wichtig: VOR dem Fokussieren nachsehen. Lag die Auswahl schon im Text
+    // (Fokus auf einem Knopf, der Text behaelt die Markierung), bleibt sie
+    // unangetastet. Fragt man erst NACH dem focus(), sieht man den Cursor, den
+    // der Browser gerade selbst an den Textanfang gesetzt hat — vom Titel aus
+    // landete man damit vor dem ersten Satz statt an der Schreibstelle.
     var sel = window.getSelection();
-    if (sel && sel.rangeCount && sel.getRangeAt(0).startContainer
+    var had = !!(sel && sel.rangeCount && sel.getRangeAt(0).startContainer
+      && area.contains(sel.getRangeAt(0).startContainer));
+    area.focus();
+    sel = window.getSelection();
+    if (had && sel && sel.rangeCount && sel.getRangeAt(0).startContainer
         && area.contains(sel.getRangeAt(0).startContainer)) return;
     var r = _jbCaretRange;
     if (r && r.startContainer && area.contains(r.startContainer)
@@ -85147,7 +85223,12 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     var area = jbActiveWritingArea();
     if (!area) return;
     var a = document.activeElement;
-    if (a && (a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")) return;
+    // Auswahlfelder stehen hier bewusst nicht: sie haben zwar den Fokus, aber
+    // ein getipptes Zeichen gehoert in den Text und nicht in ihre Schnellsuche
+    // (die dort still die Schrift oder den Empfaenger umstellen wuerde).
+    // Pfeiltasten und Eingabetaste sind keine druckbaren Zeichen und bleiben
+    // dem Menue erhalten.
+    if (a && (a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA")) return;
     if (a && a.tagName === "BUTTON" && e.key === " ") return;   // Leertaste darf Knoepfe druecken
     // Fokus noch waehrend des keydown setzen — das Zeichen landet dann im Text.
     jbRestoreCaret(area);
@@ -85446,8 +85527,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   function jbKeyShield(e) {
     if (e.key === "Escape") return;
     var a = document.activeElement;
-    var editable = !!a && (a.isContentEditable || a.tagName === "INPUT"
-      || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
+    // SELECT bewusst NICHT als Schreibfeld: sonst haelt der Schirm die Tasten
+    // beim Auswahlfeld fest und die Fokus-Rettung kommt nie zum Zug.
+    var editable = !!a && (a.isContentEditable || a.tagName === "INPUT" || a.tagName === "TEXTAREA");
     if (!editable) return;
     if ((e.metaKey || e.ctrlKey) && !e.altKey) {
       var k = String(e.key || "").toLowerCase();
