@@ -574,4 +574,48 @@ function loadParagraphTools(sel) {
     "die Leseansicht erbt weiterhin den Fussraum des Schreibbereichs — hinter einem kurzen Brief steht eine halbe leere Seite");
 }
 
+// ── 23. „An Mobile senden" sagt, warum es nicht ging ──────────────────────
+// Produktionsbefund: der Knopf zeigte „⚠ Local only" — und sonst nichts. Der
+// Grund stand bestenfalls in der Konsole. Dazu kamen zwei echte Fehler: die
+// Anfrage ging OHNE Auth-Kopfzeile hinaus (der uebrige Abgleich schickt sie
+// mit; ist SYNC_AUTH_TOKEN gesetzt, antwortet der Server mit 401), und sie
+// sprach ausschliesslich den Netlify-Endpunkt an, waehrend der regulaere
+// Abgleich ueber Firebase/RTDB laeuft.
+{
+  const send = jbSource.slice(jbSource.indexOf("window.jbSendToMobile = async function()"),
+    jbSource.indexOf("window.jbCloseEditor = function()"));
+  ok(send.length > 500, "jbSendToMobile wurde nicht gefunden");
+
+  ok(/function jbAuthHeaders\(\)/.test(jbSource),
+    "die Auth-Kopfzeile fehlt — buildStorageAuthHeaders() der Hauptapp liegt in einer fremden Kapsel und ist hier NICHT erreichbar");
+  ok(!/buildStorageAuthHeaders\(/.test(send),
+    "es wird weiterhin buildStorageAuthHeaders() aufgerufen — die Funktion liegt in einer fremden Kapsel, der Aufruf lief ins Leere");
+  ok(/const _authHdrs = jbAuthHeaders\(\);/.test(send) && /headers: _authHdrs/.test(send),
+    "das Holen geht weiterhin ohne Auth-Kopfzeile hinaus");
+  ok(/'Content-Type': 'application\/json' \}, jbAuthHeaders\(\)\)/.test(send),
+    "das Senden geht weiterhin ohne Auth-Kopfzeile hinaus");
+
+  ok(/remotePut\(payload, \{ force: true \}\)/.test(send),
+    "scheitert der eine Endpunkt, gibt es keinen Rueckfall auf den regulaeren Abgleich");
+  ok(/pushError = jbPushReason\(putResp\.status, hint\)/.test(send),
+    "der Statuscode wird nicht in einen Satz uebersetzt");
+  ok(/btn\.title = 'Nicht gesendet: '/.test(send),
+    "der Knopf verraet den Grund nicht");
+  ok(/navigator\.onLine/.test(send),
+    "ein Abbruch ohne Verbindung meldet weiterhin nur „Failed to fetch\"");
+
+  // Die Uebersetzung selbst laeuft als ECHTE Funktion.
+  const start = jbSource.indexOf("function jbPushReason(status, hint)");
+  const end = jbSource.indexOf("\n  }", start) + 4;
+  const jbPushReason = new Function(jbSource.slice(start, end) + "\nreturn jbPushReason;")();
+  ok(/401/.test(jbPushReason(401, "")) && /Auth-Token/.test(jbPushReason(401, "")),
+    "401 wird nicht als Zugangsproblem erklaert");
+  ok(/404/.test(jbPushReason(404, "")) && /blob-put/.test(jbPushReason(404, "")),
+    "404 nennt nicht den fehlenden Endpunkt");
+  ok(/gross/.test(jbPushReason(413, "")), "413 wird nicht als zu grosser Datenstand erklaert");
+  ok(/Server-Fehler/.test(jbPushReason(500, "Firebase Admin ist nicht konfiguriert."))
+    && /Firebase Admin/.test(jbPushReason(500, "Firebase Admin ist nicht konfiguriert.")),
+    "bei 500 fehlt die Begruendung des Servers");
+}
+
 console.log(`journal writing flow: ok (${checks} Pruefungen)`);
