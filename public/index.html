@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge · 2026-08-18" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason · 2026-08-19" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -84205,6 +84205,34 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     jbSetEditorStatus("Gespeichert " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"}));
   }
 
+  // Die Auth-Kopfzeile des Abgleichs. buildStorageAuthHeaders() der Hauptapp
+  // liegt in einer fremden Kapsel und ist hier NICHT erreichbar — ein Aufruf
+  // waere still wirkungslos geblieben. Deshalb dieselbe Regel hier lokal:
+  // Token mit oder ohne „Bearer", gesendet wird immer mit.
+  function jbAuthHeaders() {
+    var h = {};
+    try {
+      var t = APP && APP.state && APP.state.settings && APP.state.settings.storage
+        && APP.state.settings.storage.authToken;
+      if (t) {
+        t = String(t).trim();
+        h["Authorization"] = t.toLowerCase().indexOf("bearer ") === 0 ? t : ("Bearer " + t);
+      }
+    } catch (e) {}
+    return h;
+  }
+
+  // Was der Server mit einer Zahl sagt, in einem Satz. Ohne das stand am Knopf
+  // nur „nur lokal" — und die Ursache lag im Zweifel in der Konsole.
+  function jbPushReason(status, hint) {
+    if (status === 401 || status === 403) return 'Zugang abgelehnt (' + status + ') — Auth-Token in den Einstellungen prüfen';
+    if (status === 404) return 'Endpunkt nicht gefunden (404) — blob-put ist nicht veröffentlicht';
+    if (status === 413) return 'Datenstand zu gross (413)';
+    if (status === 412) return 'Server hat zwischenzeitlich einen neueren Stand (412)';
+    if (status >= 500) return 'Server-Fehler (' + status + ')' + (hint ? ': ' + hint : '');
+    return 'HTTP ' + status + (hint ? ': ' + hint : '');
+  }
+
   // Send current entry to Mobile App
   window.jbSendToMobile = async function() {
     console.log('[jbSendToMobile] CALLED', { docId: _jbCurrentDocId });
@@ -84299,8 +84327,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       let remoteData = null;
       try {
         console.log('[jbSendToMobile] Pulling remote state...');
+        // MIT Auth-Kopfzeile: ist auf dem Server SYNC_AUTH_TOKEN gesetzt, weist
+        // er jede Anfrage ohne sie mit 401 ab. Der uebrige Abgleich schickt sie
+        // laengst mit (buildStorageAuthHeaders) — nur dieser Weg hier nicht.
+        const _authHdrs = jbAuthHeaders();
         const getResp = await fetch(getUrl + (getUrl.includes('?') ? '&' : '?') + '_ts=' + Date.now(), {
           cache: 'no-store',
+          headers: _authHdrs,
         });
         console.log('[jbSendToMobile] GET status:', getResp.status, getResp.statusText);
         if (getResp.ok) {
@@ -84344,7 +84377,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       console.log('[jbSendToMobile] PUT request starting...');
       const putResp = await fetch(putUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, jbAuthHeaders()),
         body: bodyStr,
       });
       console.log('[jbSendToMobile] PUT status:', putResp.status, putResp.statusText);
@@ -84358,13 +84391,45 @@ select.jb-select option{background:var(--panel);color:var(--text)}
           try { saveLocalData(); } catch(e) {}
         }
       } else {
-        pushError = 'HTTP ' + putResp.status;
+        // Sagen, WORAN es liegt. Nur „lokal" liess einen ratlos zurueck.
         const txt = await putResp.text().catch(() => '');
-        console.warn('[jbSendToMobile] ❌ PUT FAILED', putResp.status, txt);
+        let hint = '';
+        try { hint = (JSON.parse(txt) || {}).error || ''; } catch (e) { hint = (txt || '').slice(0, 120); }
+        pushError = jbPushReason(putResp.status, hint);
+        console.warn('[jbSendToMobile] PUT FAILED', putResp.status, txt);
+
+        // Rueckfall auf den regulaeren Abgleich der App: der spricht die
+        // eingerichteten Anbieter (Firebase/RTDB) an — und die Handy-App liest
+        // ueber blob-get denselben Datenbestand. Scheitert also nur dieser eine
+        // Endpunkt, kommt der Eintrag trotzdem an.
+        if (typeof remotePut === 'function') {
+          try {
+            console.log('[jbSendToMobile] Fallback ueber den regulaeren Abgleich...');
+            const alt = await remotePut(payload, { force: true });
+            if (alt && alt.ok) {
+              saved = true;
+              pushError = null;
+              APP.state.data.mobilePushes = payload.mobilePushes;
+              if (typeof saveLocalData === 'function') { try { saveLocalData(); } catch(e) {} }
+              console.log('[jbSendToMobile] Fallback erfolgreich ueber', alt.provider);
+            }
+          } catch (e2) { console.warn('[jbSendToMobile] Fallback fehlgeschlagen:', e2); }
+        }
       }
     } catch(e) {
-      pushError = e.message || String(e);
-      console.error('[jbSendToMobile] ❌ EXCEPTION:', e);
+      // „Failed to fetch" sagt niemandem etwas. Der haeufigste Grund ist, dass
+      // gerade keine Verbindung steht — der zweite, dass der Endpunkt vom
+      // Server gar nicht ausgeliefert wird.
+      pushError = !navigator.onLine
+        ? 'keine Verbindung'
+        : ('Server nicht erreichbar' + (e && e.message ? ' (' + e.message + ')' : ''));
+      console.error('[jbSendToMobile] EXCEPTION:', e);
+      if (typeof remotePut === 'function' && typeof window.buildRemoteAppPayload === 'function') {
+        try {
+          const alt = await remotePut(window.buildRemoteAppPayload(), { force: true });
+          if (alt && alt.ok) { saved = true; pushError = null; }
+        } catch (e2) {}
+      }
     }
     
     console.log('[jbSendToMobile] Final result: saved=' + saved + ', error=' + pushError);
@@ -84374,10 +84439,13 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (btn) {
       const orig = btn.innerHTML;
       if (saved) {
-        btn.innerHTML = '✓ Sent!';
+        btn.innerHTML = '✓ Gesendet';
+        btn.title = 'Zuletzt ans Handy geschickt: ' + new Date().toLocaleTimeString('de-CH', {hour:'2-digit',minute:'2-digit'});
         btn.style.background = 'linear-gradient(135deg,var(--ok),var(--ok))';
       } else {
-        btn.innerHTML = '⚠ Local only';
+        btn.innerHTML = '⚠ nur lokal';
+        btn.title = 'Nicht gesendet: ' + (pushError || 'unbekannter Grund')
+          + ' — der Eintrag ist gesichert und geht beim nächsten erfolgreichen Abgleich mit.';
         btn.style.background = 'linear-gradient(135deg,var(--warn),var(--warn))';
       }
       // Zwei Sendungen dicht hintereinander: der erste Wecker hat „orig" noch
@@ -84391,10 +84459,11 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     }
     
     if (typeof toast === 'function') {
-      if (saved) toast('ok', '📱 Mobile', 'Journal entry sent to Mobile');
-      else toast('warn', '⚠️ Push failed', pushError || 'Saved locally — sync next time');
+      if (saved) toast('ok', 'Mobile', 'Eintrag ans Handy geschickt');
+      else toast('warn', 'Nicht gesendet', (pushError || 'Grund unbekannt')
+        + ' — gesichert, geht beim nächsten Abgleich mit');
     } else {
-      jbToast(saved ? '📱 An Mobile gesendet' : ('⚠️ Push fehlgeschlagen: ' + (pushError || 'unbekannt')));
+      jbToast(saved ? 'An Mobile gesendet' : ('Nicht gesendet: ' + (pushError || 'unbekannt')));
     }
   };
 
