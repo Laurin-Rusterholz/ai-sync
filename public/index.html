@@ -11301,6 +11301,58 @@ function mergeData(local, remote) {
     }
   }
   
+  // ── Alle uebrigen Bereiche: nichts still fallen lassen ───────────────────
+  // merged ist eine Kopie des LOKALEN Standes. Jeder Bereich ohne eigenen Zweig
+  // oben behielt damit stumm den lokalen Wert — der Stand der Gegenseite fiel
+  // weg, und der anschliessende Push loeschte ihn auch auf dem Server. Genau so
+  // verschwand das Journal; dieselbe Luecke bestand fuer ein gutes Dutzend
+  // weiterer Bereiche (eigene Seiten, Leseliste, Vorlagen, Handbuch …).
+  //
+  // Die Regeln sind bewusst vorsichtig — es soll nichts Lokales verlieren:
+  //  · Bereich lokal unbekannt        → den der Gegenseite uebernehmen
+  //  · Listen von Dingen MIT Id       → vereinigen, bei Kollision der neuere
+  //  · Zuordnungen (Objekt-Karten)    → vereinigen, bei Kollision der neuere
+  //  · Reihenfolgen, Zahlen, Schalter → lokal behalten (wie bisher)
+  {
+    const handled = new Set(['entities', 'meta', 'version', 'journal', 'timers', 'weekPlan',
+      'weekPlanningMatrix', 'dailyBriefing', 'dayEnded', 'recallLabData',
+      'reflections', 'quickTodos', 'pinnedItems', 'weeklyGoals', 'activityLog',
+      'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots', 'aiChats']);
+    const stamp = (o) => Number(new Date(o?.updatedAt || o?.modifiedAt || o?.createdAt || 0)) || 0;
+    const unionList = (l, r) => {
+      const hasIds = (a) => a.length === 0 || a.every((x) => x && typeof x === 'object' && x.id);
+      if (!hasIds(l) || !hasIds(r)) return l;          // Reihenfolge/Primitive: lokal behaelt Recht
+      const map = new Map();
+      l.forEach((x) => map.set(x.id, x));
+      r.forEach((x) => {
+        const cur = map.get(x.id);
+        if (!cur) { map.set(x.id, x); return; }
+        if (stamp(x) > stamp(cur)) map.set(x.id, x);
+      });
+      return Array.from(map.values());
+    };
+    const unionMap = (l, r) => {
+      const out = Object.assign({}, r, l);              // lokal gewinnt als Grundlage
+      for (const [k, rv] of Object.entries(r)) {
+        const lv = l[k];
+        if (lv && rv && typeof lv === 'object' && typeof rv === 'object'
+            && stamp(rv) > stamp(lv)) out[k] = rv;
+      }
+      return out;
+    };
+    for (const key of Object.keys(remote || {})) {
+      if (key.startsWith('_') || handled.has(key)) continue;
+      const rv = remote[key];
+      if (rv == null) continue;
+      const lv = merged[key];
+      if (lv == null) { merged[key] = rv; continue; }
+      if (Array.isArray(lv) && Array.isArray(rv)) { merged[key] = unionList(lv, rv); continue; }
+      if (typeof lv === 'object' && typeof rv === 'object'
+          && !Array.isArray(lv) && !Array.isArray(rv)) { merged[key] = unionMap(lv, rv); }
+      // Zahlen, Zeichenketten, Schalter: der lokale Wert bleibt stehen.
+    }
+  }
+
   // ── Meta ──
   merged.meta = merged.meta || {};
   merged.meta.updatedAt = new Date(Math.max(
@@ -73486,6 +73538,38 @@ window.addWeeklyGoal = addWeeklyGoal;
 window.openWeeklyGoalModal = openWeeklyGoalModal;
 window.playCelebration = playCelebration;
 
+// Die App besteht aus gekapselten Modulen (jeder <script>-Block eine eigene
+// Hülle); gemeinsam gilt nur, was hier an window haengt. Fuer die folgenden
+// Funktionen fehlte dieser Schritt — und weil die Aufrufer sie brav mit
+// `typeof X === "function"` absichern, blieb jeder Aufruf STILL wirkungslos:
+//
+//   · flushLocalSave  — die Notbremse des Journals stiess das sofortige
+//                       Schreiben nie an; die letzten Anschlaege vor dem
+//                       Schliessen des Tabs konnten verloren gehen.
+//   · mergeData/normalizeData — „Aus Firebase laden und ZUSAMMENFUEHREN"
+//                       ersetzte in Wahrheit den gesamten lokalen Stand.
+//   · logDeletion     — im Newsroom geloeschte Artikel bekamen keinen
+//                       Grabstein und kamen beim naechsten Abgleich zurueck.
+//   · refreshReadingHubShadowCache — der Buecher-Schattenstand blieb alt.
+//   · saveLocalData, saveSettings, sanitizeApiKey, getTaskSeconds,
+//     getProjectSeconds, startOfWeek — dasselbe Muster.
+window.saveLocalData = saveLocalData;
+window.flushLocalSave = flushLocalSave;
+window.mergeData = mergeData;
+window.normalizeData = normalizeData;
+window.saveSettings = saveSettings;
+window.logDeletion = logDeletion;
+window.sanitizeApiKey = typeof sanitizeApiKey === "function" ? sanitizeApiKey : undefined;
+window.getTaskSeconds = typeof getTaskSeconds === "function" ? getTaskSeconds : undefined;
+window.getProjectSeconds = typeof getProjectSeconds === "function" ? getProjectSeconds : undefined;
+window.startOfWeek = typeof startOfWeek === "function" ? startOfWeek : undefined;
+window.refreshReadingHubShadowCache = typeof refreshReadingHubShadowCache === "function" ? refreshReadingHubShadowCache : undefined;
+window.getGeminiKey = typeof getGeminiKey === "function" ? getGeminiKey : undefined;
+window.renderAiEnrichmentsBox = typeof renderAiEnrichmentsBox === "function" ? renderAiEnrichmentsBox : undefined;
+window.getFileIcon = typeof getFileIcon === "function" ? getFileIcon : undefined;
+window.formatFileSize = typeof formatFileSize === "function" ? formatFileSize : undefined;
+window._kvSave = typeof _kvSave === "function" ? _kvSave : undefined;
+
 // ==================== RULES / GESETZBÜCHER ====================
 function getRulesData() {
   if (!APP.state.data.rules) APP.state.data.rules = { books: [] };
@@ -84229,7 +84313,16 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     if (status === 404) return 'Endpunkt nicht gefunden (404) — blob-put ist nicht veröffentlicht';
     if (status === 413) return 'Datenstand zu gross (413)';
     if (status === 412) return 'Server hat zwischenzeitlich einen neueren Stand (412)';
-    if (status >= 500) return 'Server-Fehler (' + status + ')' + (hint ? ': ' + hint : '');
+    if (status >= 500) {
+      // Der haeufigste 500er hier ist kein Programmfehler, sondern ein
+      // abgelaufener Server-Zugang: Google verlangt fuer das hinterlegte
+      // Refresh-Token eine erneute Anmeldung („invalid_rapt"). Betroffen sind
+      // dann ALLE Netlify-Funktionen — auch das Lesen der Handy-App.
+      if (/invalid_rapt|OAuth-Refresh|reauth|invalid_grant|Firebase Admin ist nicht konfiguriert/i.test(hint || '')) {
+        return 'Server-Zugang zu Firebase abgelaufen — in Netlify FIREBASE_SERVICE_ACCOUNT_JSON hinterlegen (Dienstkonto statt Refresh-Token)';
+      }
+      return 'Server-Fehler (' + status + ')' + (hint ? ': ' + hint : '');
+    }
     return 'HTTP ' + status + (hint ? ': ' + hint : '');
   }
 
@@ -84402,16 +84495,22 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         // eingerichteten Anbieter (Firebase/RTDB) an — und die Handy-App liest
         // ueber blob-get denselben Datenbestand. Scheitert also nur dieser eine
         // Endpunkt, kommt der Eintrag trotzdem an.
-        if (typeof remotePut === 'function') {
+        // window.remotePutByKey statt remotePut: remotePut() liegt — wie schon
+        // buildStorageAuthHeaders — in einer fremden Kapsel und ist von hier aus
+        // NICHT erreichbar. Die Bedingung war damit immer falsch und der
+        // Rueckfall lief nie. (Im Browser nachgemessen: typeof remotePut ===
+        // "undefined", remotePutByKey === "function".)
+        if (typeof window.remotePutByKey === 'function') {
           try {
             console.log('[jbSendToMobile] Fallback ueber den regulaeren Abgleich...');
-            const alt = await remotePut(payload, { force: true });
+            const alt = await window.remotePutByKey(blobKey, payload, { force: true, shadowToOthers: true });
             if (alt && alt.ok) {
               saved = true;
               pushError = null;
               APP.state.data.mobilePushes = payload.mobilePushes;
               if (typeof saveLocalData === 'function') { try { saveLocalData(); } catch(e) {} }
               console.log('[jbSendToMobile] Fallback erfolgreich ueber', alt.provider);
+              jbToast('Gesendet über ' + (alt.provider || 'Abgleich'));
             }
           } catch (e2) { console.warn('[jbSendToMobile] Fallback fehlgeschlagen:', e2); }
         }
@@ -84424,9 +84523,10 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         ? 'keine Verbindung'
         : ('Server nicht erreichbar' + (e && e.message ? ' (' + e.message + ')' : ''));
       console.error('[jbSendToMobile] EXCEPTION:', e);
-      if (typeof remotePut === 'function' && typeof window.buildRemoteAppPayload === 'function') {
+      if (typeof window.remotePutByKey === 'function' && typeof window.buildRemoteAppPayload === 'function') {
         try {
-          const alt = await remotePut(window.buildRemoteAppPayload(), { force: true });
+          const _key = (APP.state.settings?.storage?.blobKey) || 'app-data.json';
+          const alt = await window.remotePutByKey(_key, window.buildRemoteAppPayload(), { force: true, shadowToOthers: true });
           if (alt && alt.ok) { saved = true; pushError = null; }
         } catch (e2) {}
       }
