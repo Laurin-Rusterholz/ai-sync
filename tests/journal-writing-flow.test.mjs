@@ -595,8 +595,10 @@ function loadParagraphTools(sel) {
   ok(/'Content-Type': 'application\/json' \}, jbAuthHeaders\(\)\)/.test(send),
     "das Senden geht weiterhin ohne Auth-Kopfzeile hinaus");
 
-  ok(/remotePut\(payload, \{ force: true \}\)/.test(send),
+  ok(/window\.remotePutByKey\(blobKey, payload, \{ force: true/.test(send),
     "scheitert der eine Endpunkt, gibt es keinen Rueckfall auf den regulaeren Abgleich");
+  ok(!/await remotePut\(/.test(send),
+    "der Rueckfall ruft remotePut() auf — die Funktion liegt in einer fremden Kapsel, die Bedingung davor ist immer falsch und der Rueckfall lief nie");
   ok(/pushError = jbPushReason\(putResp\.status, hint\)/.test(send),
     "der Statuscode wird nicht in einen Satz uebersetzt");
   ok(/btn\.title = 'Nicht gesendet: '/.test(send),
@@ -613,9 +615,15 @@ function loadParagraphTools(sel) {
   ok(/404/.test(jbPushReason(404, "")) && /blob-put/.test(jbPushReason(404, "")),
     "404 nennt nicht den fehlenden Endpunkt");
   ok(/gross/.test(jbPushReason(413, "")), "413 wird nicht als zu grosser Datenstand erklaert");
-  ok(/Server-Fehler/.test(jbPushReason(500, "Firebase Admin ist nicht konfiguriert."))
-    && /Firebase Admin/.test(jbPushReason(500, "Firebase Admin ist nicht konfiguriert.")),
+  ok(/Server-Fehler/.test(jbPushReason(500, "Datenbank kaputt")) && /Datenbank kaputt/.test(jbPushReason(500, "Datenbank kaputt")),
     "bei 500 fehlt die Begruendung des Servers");
+  // Der haeufigste 500er ist ein abgelaufener Server-Zugang — der bekommt eine
+  // Handlungsanweisung statt einer Google-Fehlernummer.
+  for (const echt of ["Firebase OAuth-Refresh fehlgeschlagen: reauth related error (invalid_rapt)",
+                      "Firebase Admin ist nicht konfiguriert."]) {
+    ok(/FIREBASE_SERVICE_ACCOUNT_JSON/.test(jbPushReason(500, echt)),
+      `der abgelaufene Server-Zugang wird nicht erklaert: ${jbPushReason(500, echt)}`);
+  }
 }
 
 console.log(`journal writing flow: ok (${checks} Pruefungen)`);
