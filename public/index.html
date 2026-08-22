@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason · 2026-08-19" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard · 2026-08-22" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -84672,7 +84672,14 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     return true;
   };
   window.jbToggleFullscreen = function() {
-    if (window.jbExitFullscreen()) return;
+    var cur = jbFullscreenEl();
+    var ours = cur && (cur.id === "jbEditor" || cur.id === "jbSelfLetterEditor" || cur.id === "jbReadView");
+    // Nur wenn UNSER Editor im Vollbild steht, steigt der Knopf aus. Haengt
+    // etwas anderes im Vollbild (der Browser-Vollbildmodus einer anderen
+    // Ansicht), uebernimmt der Editor es einfach — requestFullscreen wechselt
+    // das Vollbild-Element, ohne den Modus zu verlassen. Frueher stieg der
+    // Knopf dann nur aus, und ein zweiter Druck war noetig.
+    if (ours) { window.jbExitFullscreen(); return; }
     var c = jbFullscreenHost();
     if (!c) return;
     var request = c.requestFullscreen || c.webkitRequestFullscreen;
@@ -85472,9 +85479,52 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     jbEnsureBlocks(area);
   }
 
+  // Ein „der Hoehe nach" geschriebener Eintrag — jedes Zeichen in einem
+  // eigenen Absatz — entsteht, wenn der Cursor zwischen zwei Anschlaegen immer
+  // wieder auf die Wurzel des Schreibfeldes faellt. Was auch immer ihn dorthin
+  // wirft: der SCHADEN soll nicht bestehen bleiben. Laeufe von mindestens acht
+  // aufeinanderfolgenden Ein-Zeichen-Absaetzen werden beim Oeffnen wieder zu
+  // einem Absatz zusammengefuegt. Bewusst eng gefasst (nur einzelne Zeichen,
+  // nur lange Laeufe, nur schlichte Absaetze) — eine gewollte kurze Zeile wie
+  // „Ja." bleibt stehen.
+  function jbRepairShatteredRuns(area) {
+    if (!area || !area.children || area.children.length < 8) return;
+    var kids = Array.prototype.slice.call(area.children);
+    // Ein Splitter ist ein schlichter Absatz mit hoechstens EINEM Zeichen —
+    // auch ein leerer (<div><br></div>): so sieht das Leerzeichen zwischen
+    // zwei zerhackten Woertern aus. Er gehoert zum Lauf und wird beim
+    // Zusammenfuegen wieder zum Leerzeichen.
+    var isShard = function(el) {
+      if (!el || el.nodeName !== "DIV" || el.attributes.length) return false;
+      if (el.children.length > 1) return false;
+      if (el.children.length === 1 && el.children[0].nodeName !== "BR") return false;
+      return (el.textContent || "").trim().length <= 1;
+    };
+    var i = 0;
+    while (i < kids.length) {
+      var j = i, letters = 0;
+      while (j < kids.length && isShard(kids[j])) {
+        if ((kids[j].textContent || "").trim()) letters++;
+        j++;
+      }
+      // Mindestens acht Splitter, davon mindestens sechs echte Zeichen — eine
+      // Folge gewollter Leerzeilen bleibt so unangetastet.
+      if (j - i >= 8 && letters >= 6) {
+        var text = kids.slice(i, j).map(function(el) {
+          var t = (el.textContent || "").trim();
+          return t || " ";
+        }).join("").replace(/\s+/g, " ").trim();
+        kids[i].textContent = text;
+        for (var k = i + 1; k < j; k++) area.removeChild(kids[k]);
+      }
+      i = Math.max(j, i + 1);
+    }
+  }
+
   function jbEnsureBlocks(area) {
     if (!area) return;
     jbStripWrapSpans(area);
+    jbRepairShatteredRuns(area);
     var n = area.firstChild, wrap = null;
     while (n) {
       var next = n.nextSibling;
@@ -85577,10 +85627,22 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       setTimeout(function() { jbKeepCaretInView(area); }, 0);
     });
 
+    var _caretRaf = 0;
     area.addEventListener("input", function(e) {
       var it = String(e.inputType || "");
       if (it.indexOf("delete") === 0) jbAfterDelete(area);
       else if (it.indexOf("insert") === 0) jbEnsureTypingBlock(area);
+      // Sicherstellen, dass man sieht, was man schreibt — bei JEDEM Zeichen,
+      // nicht nur beim Absatzwechsel. Normalerweise scrollt der Browser die
+      // Schreibstelle selbst nach; im Vollbild tat er es nicht zuverlaessig
+      // („wenn ich im Vollbild schreibe, zeigt es mir nichts an"). Gebremst
+      // auf ein Bild pro Wiederholung, und jbKeepCaretInView scrollt nur,
+      // wenn die Stelle wirklich draussen ist — im Normalfall kostet das nichts.
+      if (_caretRaf) return;
+      _caretRaf = requestAnimationFrame(function() {
+        _caretRaf = 0;
+        jbKeepCaretInView(area);
+      });
     });
 
     // Einfuegen wie in einem Textfeld: der Text, seine Absaetze — sonst nichts.

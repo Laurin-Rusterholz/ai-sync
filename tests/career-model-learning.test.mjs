@@ -111,7 +111,10 @@ function makeState() {
   assert.equal(due.length, 1);
   assert.equal(due[0].id, cards[1].id);
 
-  const stats = Core.reviewStats(state);
+  // MIT Stichtag: reviewStats reicht ihn an dueCards durch. Ohne ihn rechnet
+  // die Statistik mit dem ECHTEN Heute — und dieser Test wurde am 20.08.2026
+  // von selbst rot, als die oben gesetzte Faelligkeit in der Vergangenheit lag.
+  const stats = Core.reviewStats(state, { todayKey: "2026-08-06" });
   assert.equal(stats.total, 2);
   assert.equal(stats.due, 1);
   assert.equal(stats.started, 1);
