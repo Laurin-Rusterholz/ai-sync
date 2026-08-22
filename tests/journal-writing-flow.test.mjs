@@ -626,4 +626,67 @@ function loadParagraphTools(sel) {
   }
 }
 
+// ── 24. Vollbild: sehen, was man schreibt — und Schaeden heilen ───────────
+// Produktionsbefund: „wenn ich im Vollbildmodus schreibe, zeigt es mir nichts
+// an — und dann steht der Text der Hoehe nach da" (jedes Zeichen ein Absatz).
+{
+  const inputH = jbSource.slice(jbSource.indexOf('area.addEventListener("input"'), jbSource.indexOf('area.addEventListener("paste"'));
+  ok(/requestAnimationFrame/.test(inputH) && /jbKeepCaretInView\(area\)/.test(inputH),
+    "die Schreibstelle wird nur beim Absatzwechsel nachgezogen — im Vollbild verschwand sie beim Tippen aus dem Bild");
+
+  const toggle = jbSource.slice(jbSource.indexOf("window.jbToggleFullscreen = function()"), jbSource.indexOf("window.jbToggleFullscreen = function()") + 1200);
+  ok(/cur\.id === "jbEditor"/.test(toggle),
+    "der Vollbild-Knopf steigt auch dann nur aus, wenn etwas ANDERES im Vollbild haengt — statt es zu uebernehmen");
+
+  ok(/function jbRepairShatteredRuns\(area\)/.test(jbSource) && /jbRepairShatteredRuns\(area\);/.test(jbSource),
+    "zerhackte Eintraege (jedes Zeichen ein Absatz) werden beim Oeffnen nicht repariert");
+
+  // Die Reparatur als ECHTE Funktion gegen das Mini-DOM.
+  const start = index.indexOf("  function jbRepairShatteredRuns(area)");
+  const end = index.indexOf("  function jbEnsureBlocks(area)", start);
+  ok(start > 0 && end > start, "jbRepairShatteredRuns wurde nicht gefunden");
+  const mk = (t) => {
+    const d = el("DIV");
+    d.attributes = { length: 0 };
+    if (t === "") d.appendChild(el("BR", [])), d.children_= null; else d.appendChild(txt(t));
+    return d;
+  };
+  // Mini-DOM um children/removeChild/textContent-Setter ergaenzen
+  const areaFor = (parts) => {
+    const a = el("DIV");
+    parts.forEach((t) => {
+      const d = el("DIV");
+      d.attributes = { length: 0 };
+      if (t === "") d.appendChild(el("BR"));
+      else d.appendChild(txt(t));
+      a.appendChild(d);
+    });
+    Object.defineProperty(a, "children", { get() { return this.childNodes.filter((c) => c.nodeType === 1); } });
+    a.removeChild = function(n) { n.detach(); };
+    a.childNodes.forEach((d) => {
+      Object.defineProperty(d, "children", { get() { return this.childNodes.filter((c) => c.nodeType === 1); } });
+      Object.defineProperty(d, "textContent", {
+        get() { return this.childNodes.map((c) => c.nodeType === 3 ? c._text : "").join(""); },
+        set(v) { this.childNodes.length = 0; this.appendChild(txt(v)); }
+      });
+    });
+    return a;
+  };
+  const repair = new Function(index.slice(start, end) + "\nreturn jbRepairShatteredRuns;")();
+
+  const kaputt = areaFor("Wer ich bin".split("").map((c) => c === " " ? "" : c));
+  repair(kaputt);
+  ok(kaputt.children.length === 1 && kaputt.children[0].textContent === "Wer ich bin",
+    `der zerhackte Eintrag wird nicht wieder zusammengefuegt: ${kaputt.children.length} Absaetze, "${kaputt.children[0] && kaputt.children[0].textContent}"`);
+
+  const gedicht = areaFor(["Ja.", "Nein.", "Vielleicht."]);
+  repair(gedicht);
+  ok(gedicht.children.length === 3, "gewollte kurze Zeilen werden faelschlich zusammengefuegt");
+
+  const leerzeilen = areaFor(["", "", "", "", "", "", "", "", "", ""]);
+  repair(leerzeilen);
+  ok(leerzeilen.children.length === 10,
+    "eine Folge gewollter Leerzeilen wird faelschlich zu einem Absatz zusammengefuegt");
+}
+
 console.log(`journal writing flow: ok (${checks} Pruefungen)`);
