@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -111210,7 +111210,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // Erweitert um pass und card(_)number; auf ALLE Typen angewandt.
   const POLARIS_SENSITIVE_RE = /(password|passwort|pass|pin|iban|bic|api[_-]?key|apikey|secret|token|card_?number|cardnumber|cvv)/i;
   // Steuerfelder des inbox-Eintrags, die NICHT in die App-Entität wandern.
-  const POLARIS_INBOX_CONTROL = ["op", "ts", "updatedAt", "createdAt", "processedAt", "processedBy", "id", "inboxId"];
+  const POLARIS_INBOX_CONTROL = ["op", "ts", "updatedAt", "createdAt", "processedAt", "processedBy", "id", "inboxId", "claim"];
 
   const POLARIS_TZ = "Europe/Zurich";
   const PL_MODES = ["idle","listening","thinking","speaking"];
@@ -112317,6 +112317,48 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       return { mode: "map", map: e[key], viaApi: false };
     } catch(err){ console.error("Polaris-Inbox: Speicher-Auflösung fehlgeschlagen", type, err); return null; }
   }
+  // ── Anspruch auf einen Inbox-Eintrag ──────────────────────────────────────
+  // Zwei Geraete hoeren gleichzeitig auf polaris/inbox. Ohne Absprache wendet
+  // jedes dieselbe Zeile an. Der Anspruch ist deshalb eine RTDB-Transaktion
+  // auf einem eigenen Kindknoten — atomar, genau ein Gewinner.
+  //
+  // Bewusst KEIN processedAt vor der Anwendung: stuerzt das Geraet zwischen
+  // Anspruch und Anwendung ab, waere die Operation sonst dauerhaft verloren.
+  // Stattdessen traegt der Anspruch eine Frist. Laeuft sie ab, darf ein
+  // anderes Geraet ihn uebernehmen und die Operation nachholen.
+  //
+  // Semantik:
+  //   claim { by, at }  – wer arbeitet gerade daran, seit wann
+  //   processedAt/By    – allein die Marke fuer ERFOLGREICH angewendet
+  // Wiederanlauf: abgelaufener Anspruch (> PL_INBOX_CLAIM_MS) ist frei; das
+  // eigene Geraet darf seinen Anspruch jederzeit erneuern (Wiederholung nach
+  // einem voruebergehenden Fehler). Ohne Firebase-SDK (REST-Rueckfall) gibt es
+  // keine Transaktion — dort bleibt es beim bisherigen Verhalten, also
+  // mindestens einmal. Das ist eine bewusste, benannte Grenze.
+  const PL_INBOX_CLAIM_MS = 60000;
+  const _plInboxInFlight = new Set();
+  async function plInboxClaim(type, inboxId){
+    const dev = (typeof window.getOrCreateDeviceId === "function") ? window.getOrCreateDeviceId() : "web";
+    const ref = plDbRef("polaris/inbox/" + type + "/" + inboxId + "/claim");
+    if (!ref) return { ok: true, mode: "kein-sdk", by: dev };
+    try {
+      const committed = await new Promise(function(resolve, reject){
+        ref.transaction(function(current){
+          const jetzt = Date.now();
+          // Fremder, noch frischer Anspruch → abbrechen (undefined = Abbruch).
+          if (current && current.by && current.by !== dev &&
+              (jetzt - Number(current.at || 0)) < PL_INBOX_CLAIM_MS) return;
+          return { by: dev, at: jetzt };
+        }, function(error, ok){ if (error) reject(error); else resolve(ok); }, false);
+      });
+      return { ok: !!committed, mode: "transaktion", by: dev };
+    } catch(e){
+      console.warn("Polaris-Inbox: Anspruch fehlgeschlagen — Eintrag wird uebersprungen",
+                   type, inboxId, (e && e.message) || e);
+      return { ok: false, mode: "fehler", by: dev };
+    }
+  }
+
   async function plInboxApply(type, inboxId, entry){
     try {
       const rawType = String(type || "");
@@ -112332,15 +112374,45 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const s = plSettings();
       if (!s.inboxMap) s.inboxMap = {};
       const mapKey = rawType + "/" + inboxId;
-      const appId = s.inboxMap[mapKey] || null;
+      let appId = s.inboxMap[mapKey] || null;
       let existing = null;
       if (appId){
         existing = (store.mode === "array")
           ? (store.arr.find(function(x){ return x && x.id === appId; }) || null)
           : (store.map[appId] || null);
       }
+      // Ohne eigenen Index-Eintrag zusaetzlich ueber die Id des Eintrags
+      // aufloesen. Sowohl der Schluessel des Inbox-Knotens als auch record.id
+      // tragen die ECHTE Entitaets-Id — das Tablet spiegelt sie so
+      // (quantus-tablet-version public/app.js, mirrorOperation). Weil
+      // s.inboxMap geraetelokal ist, fand ein Geraet mit leerem Index nichts,
+      // und plInboxDecide machte aus einem op:"update" ein "create": so
+      // entstand eine zweite Notiz mit frischer uuid statt einer Aktualisierung.
+      if (!existing){
+        const kandidat = String((entry && entry.id) || inboxId || "");
+        if (kandidat){
+          const treffer = (store.mode === "array")
+            ? (store.arr.find(function(x){ return x && x.id === kandidat; }) || null)
+            : (store.map[kandidat] || null);
+          if (treffer){
+            appId = kandidat;
+            existing = treffer;
+            s.inboxMap[mapKey] = kandidat;   // ab jetzt auch im eigenen Index
+            plScheduleSave();
+          }
+        }
+      }
       const action = plInboxDecide(existing, entry);
       if (action === "skip") return;
+
+      // Der Anspruch unten schreibt in denselben Knoten und laesst den
+      // on("value")-Listener erneut feuern — processedAt steht dann noch nicht.
+      // Ohne diesen Riegel liefe dieselbe Operation im selben Tab doppelt.
+      if (_plInboxInFlight.has(mapKey)) return;
+      _plInboxInFlight.add(mapKey);
+
+      const anspruch = await plInboxClaim(rawType, inboxId);
+      if (!anspruch.ok){ _plInboxInFlight.delete(mapKey); return; }
 
       // Datenfelder aufbereiten: BLOCK-Feldfilter (scrub) + Steuerfelder entfernen
       const data = plInboxScrub(entry);
@@ -112389,8 +112461,10 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         const dev = (typeof window.getOrCreateDeviceId === "function") ? window.getOrCreateDeviceId() : "web";
         await plDbSet("polaris/inbox/" + type + "/" + inboxId + "/processedBy", dev);
       } catch(e){ console.error("Polaris-Inbox: processedAt-Markierung fehlgeschlagen", e); }
+      _plInboxInFlight.delete(mapKey);
     } catch(err){
       console.error("Polaris-Inbox: Merge fehlgeschlagen", type, inboxId, err);
+      try { _plInboxInFlight.delete(rawType + "/" + inboxId); } catch(e2){}
     }
   }
 
