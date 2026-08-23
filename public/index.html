@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6884,7 +6884,72 @@ async function rtdbJsonPut(key, data, options = {}) {
     return { ok: false, authRequired: true, reason: 'auth_required', provider: 'rtdb' };
   }
   let payload = data;
+  const isMainRecord = key === (APP.state.settings?.storage?.blobKey || 'app-data.json');
   try {
+    const path = RTDB_NODE + '/' + rtdbNodeKey(key);
+    const ref = rtdbDbRef(path);
+
+    // ── Hauptdatensatz: Lesen, Pruefen und Schreiben in EINEM Zug ──────────
+    // Bisher lief hier ein Lesevorgang, danach ein ref.set() — zwischen beiden
+    // lag ein ungeschuetztes Fenster, und ohne erfolgreichen Lesevorgang wurde
+    // bedingungslos ueberschrieben. Das Tablet macht es mit ref.transaction()
+    // laengst richtig (quantus-tablet-version public/app.js, transactionOperation);
+    // dasselbe Muster jetzt auch hier: die Datenbank liefert den aktuellen
+    // Stand in die Funktion, wir mergen darin und geben den vereinigten
+    // Wrapper zurueck. Aendert sich der Knoten zwischendurch, ruft Firebase
+    // die Funktion mit dem neuen Stand erneut auf.
+    if (isMainRecord && ref) {
+      let merged = false;
+      let finalPayload = data;
+      const myDevice = getOrCreateDeviceId();
+      const txn = await new Promise((resolve, reject) => {
+        ref.transaction((current) => {
+          let remoteData = null;
+          if (current && typeof current.data === 'string') {
+            try { remoteData = JSON.parse(current.data); } catch(e) { remoteData = null; }
+          } else if (current && current.data && typeof current.data === 'object') {
+            remoteData = current.data;
+          }
+          let out = data;
+          if (remoteData) {
+            const remoteTs = getDataTimestamp(remoteData);
+            const localTs = getDataTimestamp(data);
+            const remoteDevice = remoteData?.meta?.lastSavedBy || '';
+            const localDevice = data?.meta?.lastSavedBy || myDevice;
+            const foreign = !!remoteDevice && remoteDevice !== localDevice;
+            // Fremdes Geraet ODER neuerer Serverstand: erst verlustfrei
+            // vereinigen, dann schreiben. Nie bedingungslos ersetzen.
+            if (foreign || remoteTs > localTs) {
+              out = (typeof options.mergeFn === 'function') ? options.mergeFn(data, remoteData) : data;
+              merged = true;
+            }
+          }
+          finalPayload = out;
+          return {
+            data: JSON.stringify(out),
+            updatedAt: (out && out.meta && out.meta.updatedAt) || new Date().toISOString(),
+            savedAt: Date.now(),
+            savedBy: myDevice,
+          };
+        }, (error, committed) => {
+          if (error) reject(error); else resolve({ committed });
+        }, false);
+      });
+      if (!txn.committed) {
+        rememberCloudFailure('rtdb', { error: new Error('transaction_aborted') });
+        return { ok: false, reason: 'transaction_aborted', provider: 'rtdb' };
+      }
+      payload = finalPayload;
+      APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now();
+      APP.state.storage.lastRemoteProvider = 'rtdb';
+      APP.state.storage.etag = null;
+      rememberCloudSuccess('rtdb');
+      return { ok: true, status: 200, provider: 'rtdb', data: payload, merged };
+    }
+
+    // ── Alle uebrigen Schluessel: unveraendert ─────────────────────────────
+    // Nebenstaende (RecallLab-Delta, ReadingHub) haben kein Mehr-Geraete-
+    // Problem und bleiben beim bisherigen Weg.
     if (typeof options.mergeFn === 'function') {
       // lastSeen vor dem GET lesen — rtdbJsonGet setzt lastRemoteSeenAt als
       // Nebeneffekt auf remoteTs, sonst wäre shouldMerge unten immer false.
@@ -6899,15 +6964,19 @@ async function rtdbJsonPut(key, data, options = {}) {
       }
     }
     const wrap = { data: JSON.stringify(payload), updatedAt: (payload && payload.meta && payload.meta.updatedAt) || new Date().toISOString(), savedAt: Date.now(), savedBy: getOrCreateDeviceId() };
-    const path = RTDB_NODE + '/' + rtdbNodeKey(key);
-    const ref = rtdbDbRef(path);
     if (ref) {
       await ref.set(wrap);
+    } else if (isMainRecord) {
+      // Ohne SDK gibt es keine Transaktion. Der Hauptdatensatz wird dann NICHT
+      // ueber REST bedingungslos ueberschrieben — lieber kein Schreibvorgang
+      // als ein blindes Ersetzen des Serverstandes.
+      rememberCloudFailure('rtdb', { error: new Error('no_sdk_no_transaction') });
+      return { ok: false, reason: 'no_sdk_no_transaction', provider: 'rtdb' };
     } else {
       const resp = await fetchWithTimeout(RTDB_DB_URL + '/' + path + '.json', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(wrap) }, 15000);
       if (!resp.ok) { rememberCloudFailure('rtdb', { status: resp.status }); return { ok: false, status: resp.status, provider: 'rtdb' }; }
     }
-    if (key === (APP.state.settings?.storage?.blobKey || 'app-data.json')) {
+    if (isMainRecord) {
       APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now();
       APP.state.storage.lastRemoteProvider = 'rtdb';
       APP.state.storage.etag = null;
