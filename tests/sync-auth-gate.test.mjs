@@ -274,8 +274,8 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
     },
   };
   const APP = { state: { storage: { status: "auth_required" } } };
-  const make = (doc) => new Function("document", "APP", "getLang",
-    cut("function updateSyncChip() {") + "\nreturn updateSyncChip;")(doc, APP, () => "de");
+  const make = (doc, sticky = true) => new Function("document", "APP", "getLang", "authRequiredSticky",
+    cut("function updateSyncChip() {") + "\nreturn updateSyncChip;")(doc, APP, () => "de", () => sticky);
   const doc = { getElementById: (id) => (id === "syncNotice" ? el : null) };
   const render = make(doc);
 
@@ -291,12 +291,13 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
   ok(el.className === "", "auth_required darf nicht als Warnung eingefaerbt werden");
 
   APP.state.storage.status = "offline";
-  render();
+  const renderOhneAuth = make(doc, false);
+  renderOhneAuth();
   ok(el.hidden === false && el.className === "sn-warn",
     "der Offline-Fall wird nicht als Warnung dargestellt");
 
   APP.state.storage.status = "saved";
-  render();
+  renderOhneAuth();
   ok(el.hidden === true, "bei saved bleibt der Streifen sichtbar");
   ok(el.attrs["aria-label"] === undefined, "aria-label bleibt nach dem Ausblenden stehen");
 
@@ -519,9 +520,9 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
       return null;
     },
   };
-  const zeichne = new Function("document", "APP", "getLang",
+  const zeichne = new Function("document", "APP", "getLang", "authRequiredSticky",
     cut("function updateSyncChip() {") + "\nreturn updateSyncChip;")(
-    { getElementById: (id) => (id === "syncNotice" ? el : null) }, h.APP, () => "de");
+    { getElementById: (id) => (id === "syncNotice" ? el : null) }, h.APP, () => "de", () => true);
   zeichne();
 
   ok(el.hidden === false, "nach dem echten Lesevorgang bleibt der Streifen verborgen");
@@ -530,6 +531,240 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
   ok(el.attrs["aria-label"] === "Anmeldung erforderlich — Daten nicht synchronisiert",
     "aria-label fehlt am Ende der Kette");
   ok(el._link && el._link.textContent === "Anmelden", "der Anmeldeweg fehlt am Ende der Kette");
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * STICKY — der Anmeldemangel haengt nicht mehr am status-Feld
+ *
+ * V2 ist daran gescheitert: der Hinweis stand korrekt, aber drei Sekunden
+ * nach dem Start vergab ensureExternalProjectIds() fehlende Projekt-Ids und
+ * rief scheduleSave(). Das setzte status="dirty" (der Streifen verschwand),
+ * und der doSave-Riegel machte daraus "offline" (der Streifen kam mit dem
+ * falschen Text zurueck). Danach startete kein Kernzugriff mehr — RTDB ohne
+ * Nutzer, Firebase fuenf Minuten im Backoff nach "Failed to fetch" — also
+ * setzte nichts "auth_required" wieder. Der Hinweis blieb 2m14s falsch.
+ *
+ * Der Zustand liegt jetzt in _authRequiredSticky und wird VOR status geprueft.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+// Die echten Zustandsfunktionen zusammen mit dem echten Renderer.
+function stickyHarness({ lang = "de" } = {}) {
+  const el = {
+    hidden: true, className: "", innerHTML: "", textContent: "", attrs: {},
+    setAttribute(k, v) { this.attrs[k] = v; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    querySelector(sel) {
+      if (sel === ".sn-text") return this._text || (this._text = { textContent: "" });
+      if (sel === ".sn-link") return /sn-link/.test(this.innerHTML)
+        ? (this._link || (this._link = { textContent: "" })) : null;
+      return null;
+    },
+  };
+  const APP = { state: { storage: { status: "idle" }, settings: { storage: {} } } };
+  const health = { rtdb: { failCount: 0, backoffUntil: 0, lastError: "", lastStatus: 0 },
+                   firebase: { failCount: 0, backoffUntil: 0, lastError: "", lastStatus: 0 } };
+  const src = [
+    cutTo("var _coreAuthResolved = false;", "function coreAuthCurrentUser() {"),
+    cut("function coreAuthCurrentUser() {"),
+    cut("function noteCoreAuthState(user) {"),
+    cut("function isAuthDeniedError(e) {"),
+    cut("function rememberCoreAuthRequired(provider) {"),
+    cut("function rememberCloudFailure(provider, info = {}) {"),
+    cut("function updateSyncChip() {"),
+  ].join("\n");
+  const api = new Function(
+    "window", "firebase", "APP", "document", "console", "getLang",
+    "_cloudHealth", "persistCloudHealth", "Date",
+    src + "\nreturn { noteCoreAuthState, rememberCoreAuthRequired, rememberCloudFailure," +
+          " updateSyncChip, authRequiredSticky, markAuf: (v) => { _authRequiredSticky = v; }," +
+          " markCoreReadOk: () => { _authRequiredSticky = false; } };")(
+    { firebase: {} }, {}, APP,
+    { getElementById: (id) => (id === "syncNotice" ? el : null) },
+    { log() {}, warn() {}, error() {} }, () => lang, health, () => {}, Date);
+  return { api, el, APP, health };
+}
+
+const AUTH_DE = "Anmeldung erforderlich — Daten nicht synchronisiert";
+const OFF_DE  = "Server nicht erreichbar — nur lokaler Stand, kein Upload";
+
+// ── S-1: der exakte Livelauf ─────────────────────────────────────────────
+{
+  const h = stickyHarness();
+  h.api.rememberCoreAuthRequired("rtdb");
+  ok(h.el.hidden === false && h.el._text.textContent === AUTH_DE,
+    "nach dem erkannten Anmeldemangel fehlt der Auth-Hinweis");
+  ok(h.el._link && h.el._link.textContent === "Anmelden", "der Anmeldelink fehlt");
+
+  // scheduleSave() drei Sekunden nach dem Start (ensureExternalProjectIds)
+  h.APP.state.storage.status = "dirty";
+  h.api.updateSyncChip();
+  ok(h.el.hidden === false && h.el._text.textContent === AUTH_DE,
+    "ein scheduleSave() (dirty) laesst den Auth-Hinweis verschwinden");
+
+  // doSave(true) mit _coreReadOk === false: der Riegel schreibt "offline"
+  h.APP.state.storage.status = "offline";
+  h.APP.state.storage.message = "Lokal gespeichert — kein Serverstand gelesen";
+  h.api.updateSyncChip();
+  ok(h.el._text.textContent === AUTH_DE,
+    `der doSave-Riegel verdraengt den Auth-Hinweis: "${h.el._text.textContent}"`);
+  ok(h.el._link && h.el._link.textContent === "Anmelden",
+    "nach dem doSave-Riegel fehlt der Anmeldelink");
+
+  // Nebenprovider faellt aus (ReadingHub -> Firebase Storage, "Failed to fetch")
+  h.api.rememberCloudFailure("firebase", { error: new Error("Failed to fetch") });
+  h.api.updateSyncChip();
+  ok(h.el._text.textContent === AUTH_DE,
+    "ein Nebenproviderfehler verdraengt den Auth-Hinweis");
+  ok(h.health.firebase.backoffUntil > 0, "der Netzfehler setzt keinen Backoff mehr");
+  ok(h.el.attrs["aria-label"] === AUTH_DE, "aria-label traegt nicht den Auth-Text");
+
+  // und ueber weitere Statuswechsel hinweg
+  for (const st of ["saving", "saved", "error", "conflict", "idle"]) {
+    h.APP.state.storage.status = st;
+    h.api.updateSyncChip();
+    ok(h.el.hidden === false && h.el._text.textContent === AUTH_DE,
+      `status "${st}" verdraengt den Auth-Hinweis`);
+  }
+}
+
+// ── S-2: echte Anmeldung + saved -> verborgen ────────────────────────────
+{
+  const h = stickyHarness();
+  h.api.rememberCoreAuthRequired("rtdb");
+  ok(h.el.hidden === false, "Vorbedingung: der Hinweis steht");
+  h.api.noteCoreAuthState({ uid: "u1" });          // echter Nutzer
+  ok(h.api.authRequiredSticky() === false, "die Anmeldung loescht das Flag nicht sofort");
+  h.APP.state.storage.status = "saved";
+  h.api.updateSyncChip();
+  ok(h.el.hidden === true, "nach Anmeldung und saved bleibt der Streifen sichtbar");
+  ok(h.el.attrs["aria-label"] === undefined, "aria-label bleibt nach dem Ausblenden stehen");
+}
+
+// ── S-3: angemeldet, aber Kern-GET scheitert -> Offline OHNE Link ────────
+{
+  const h = stickyHarness();
+  h.api.noteCoreAuthState({ uid: "u1" });
+  h.APP.state.storage.status = "offline";
+  h.api.updateSyncChip();
+  ok(h.el.hidden === false, "der Offline-Hinweis fehlt");
+  ok(h.el._text.textContent === OFF_DE, `falscher Text: "${h.el._text.textContent}"`);
+  ok(!/sn-link/.test(h.el.innerHTML), "der Offline-Hinweis bietet faelschlich einen Anmeldelink");
+  ok(h.el.className === "sn-warn", "der Offline-Fall wird nicht als Warnung dargestellt");
+}
+
+// ── S-4: markCoreReadOk loescht defensiv ─────────────────────────────────
+{
+  const mark = cut("function markCoreReadOk()");
+  ok(/_authRequiredSticky = false/.test(mark),
+    "markCoreReadOk() loescht das Flag nicht defensiv");
+  const h = stickyHarness();
+  h.api.rememberCoreAuthRequired("rtdb");
+  h.api.markCoreReadOk();
+  ok(h.api.authRequiredSticky() === false, "das Flag ueberlebt einen erfolgreichen Kernlesevorgang");
+}
+
+// ── S-5: die 16-Faelle-Matrix ────────────────────────────────────────────
+{
+  const alle = ["idle", "dirty", "saving", "saved", "error", "conflict", "offline", "auth_required"];
+  for (const sticky of [true, false]) {
+    for (const st of alle) {
+      const h = stickyHarness();
+      h.api.markAuf(sticky);
+      h.APP.state.storage.status = st;
+      h.api.updateSyncChip();
+      if (sticky) {
+        ok(h.el.hidden === false && h.el._text.textContent === AUTH_DE,
+          `Sticky=true + status="${st}": kein Auth-Hinweis`);
+      } else if (st === "offline") {
+        ok(h.el.hidden === false && h.el._text.textContent === OFF_DE,
+          `Sticky=false + offline: kein Offline-Hinweis`);
+      } else {
+        ok(h.el.hidden === true, `Sticky=false + status="${st}": der Streifen ist sichtbar`);
+      }
+    }
+  }
+}
+
+// ── S-6: Prioritaetsregel im Quelltext ───────────────────────────────────
+// Rutscht die Flag-Pruefung hinter die status-Auswertung, kehrt V2 zurueck.
+{
+  const chip = cut("function updateSyncChip() {");
+  const flagPos = chip.indexOf("authRequiredSticky()");
+  const statusPos = chip.indexOf("APP?.state?.storage?.status");
+  const zweigPos = chip.indexOf("if (!authNoetig");
+  ok(flagPos > 0, "der Renderer liest das Flag nicht");
+  ok(statusPos > flagPos, "die status-Auswertung steht VOR der Flag-Pruefung");
+  ok(zweigPos > flagPos && zweigPos > statusPos, "der Ausblendzweig steht falsch");
+  ok(!/authNoetig = s === 'auth_required'/.test(chip),
+    "der Auth-Fall wird weiterhin aus dem status-Feld abgeleitet");
+  const remember = cut("function rememberCoreAuthRequired(provider) {");
+  ok(/_authRequiredSticky = true/.test(remember), "rememberCoreAuthRequired setzt das Flag nicht");
+  const note = cut("function noteCoreAuthState(user) {");
+  ok(/_authRequiredSticky = !user/.test(note), "noteCoreAuthState fuehrt das Flag nicht nach");
+}
+
+// ── S-7: der 3-Sekunden-Ausloeser bleibt harmlos ─────────────────────────
+// ensureExternalProjectIds() laeuft per setTimeout(…, 3000) und ruft
+// scheduleSave(), sobald es eine externalId nachtraegt. scheduleSave() setzt
+// status="dirty" — genau der Ausloeser aus dem Livelauf.
+{
+  ok(/setTimeout\(\(\) => \{ window\.ensureExternalProjectIds\(\); \}, 3000\)/.test(index),
+    "der 3-Sekunden-Ausloeser sieht anders aus als angenommen");
+  ok(/if \(changed\) scheduleSave\(\);/.test(index),
+    "ensureExternalProjectIds ruft kein scheduleSave mehr");
+  const sched = cut("function scheduleSave() {");
+  ok(/storage\.status = "dirty"/.test(sched), "scheduleSave setzt kein dirty mehr");
+
+  const h = stickyHarness();
+  h.api.rememberCoreAuthRequired("rtdb");
+  h.APP.state.storage.status = "dirty";     // das tut scheduleSave()
+  h.api.updateSyncChip();
+  ok(h.el.hidden === false && h.el._text.textContent === AUTH_DE,
+    "der 3-Sekunden-Ausloeser entfernt den Anmeldehinweis weiterhin");
+}
+
+// ── S-8: _coreReadOk und der doSave-Riegel bleiben unangetastet ──────────
+{
+  const doSave = cut("async function doSave(silent = false) {");
+  ok(/if \(!forceRemote && !_coreReadOk\)/.test(doSave),
+    "der _coreReadOk-Riegel in doSave wurde abgeschwaecht");
+  ok(/no_successful_read/.test(doSave), "der Riegel meldet seinen Grund nicht mehr");
+  ok(/ref\.transaction\(/.test(index), "die RTDB-Transaktion wurde veraendert");
+  ok(/coreKeyAuthGate\(key\)/.test(index), "das Provider-Gate wurde veraendert");
+}
+
+// ── S-9: V3-Vorbereitung — der Login raeumt den Backoff, bevor er liest ──
+// Nach dem beobachteten Lauf steht Firebase fuenf Minuten im Backoff und RTDB
+// mangels Nutzer auf nicht verfuegbar. Trifft die Anmeldung ein, muss
+// resyncAfterAuth() beide zuruecksetzen BEVOR es liest — sonst kaeme der
+// Marker erst nach Ablauf des Backoffs.
+{
+  const reihenfolge = [];
+  const src = cutTo("var _coreReadOk = false;", "window.coreReadOk") +
+              cutTo("var _authResyncDone = false;", "async function resyncAfterAuth(reason) {") +
+              cut("async function resyncAfterAuth(reason) {");
+  const APP = { state: { settings: {}, storage: {}, ui: {}, data: { entities: {} } } };
+  const api = new Function(
+    "APP", "console", "window", "coreAuthCurrentUser", "isManualTransferMode", "resetCloudSyncHealth",
+    "remoteGet", "mergeData", "normalizeData", "restoreReadingHubShadowFromData",
+    "restoreExtraLocalKeys", "mergeRemoteSettings", "saveSettings", "saveLocalData", "render",
+    "updateSyncChip", "toast", "t",
+    src + "\nreturn { resyncAfterAuth };")(
+    APP, { log() {}, warn() {} }, {}, () => ({ uid: "u1" }), () => false,
+    (p) => reihenfolge.push("reset:" + p),
+    async () => { reihenfolge.push("read"); return { ok: true, data: { entities: {}, meta: { updatedAt: "2026-08-23T14:08:59.753Z" }, marker: "Q-S4" } }; },
+    (l, r) => ({ ...l, ...r }), (d) => d, () => {}, () => {}, (a) => a, () => {}, () => {}, () => {},
+    () => {}, () => {}, (k) => k);
+
+  const res = await api.resyncAfterAuth("login");
+  ok(res.ok === true && res.pushed === false, "der nachgeholte Abgleich liest nicht oder pusht");
+  ok(reihenfolge.indexOf("reset:rtdb") >= 0 && reihenfolge.indexOf("reset:firebase") >= 0,
+    "resyncAfterAuth setzt nicht beide Provider zurueck");
+  ok(reihenfolge.indexOf("reset:rtdb") < reihenfolge.indexOf("read") &&
+     reihenfolge.indexOf("reset:firebase") < reihenfolge.indexOf("read"),
+    `der Backoff wird erst NACH dem Lesevorgang geraeumt: ${reihenfolge.join(" -> ")}`);
+  ok(APP.state.data.marker === "Q-S4", "der Marker kommt beim nachgeholten Abgleich nicht an");
 }
 
 console.log(`sync auth gate: ok (${checks} Pruefungen)`);

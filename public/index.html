@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6229,6 +6229,15 @@ var _coreAuthResolved = false;      // onAuthStateChanged mindestens einmal gefe
 var _coreAuthUser = null;           // zuletzt gesehener Firebase-Nutzer
 var _coreAuthReadyP = null;
 var CORE_AUTH_TIMEOUT_MS = 6000;    // endlich: haengt nie, wenn Auth ausbleibt
+// Der Anmeldemangel bekommt ein EIGENES Flag. Er hing bisher an
+// APP.state.storage.status — einem Feld, das siebenunddreissig Stellen
+// beschreiben. Im Livelauf reichte ein scheduleSave() ("dirty") drei Sekunden
+// nach dem Start, um den Hinweis zu verdrängen; der doSave-Riegel machte
+// daraus "offline", und weil danach kein Kernzugriff mehr startete (RTDB ohne
+// Nutzer, Firebase fuenf Minuten im Backoff), kam "auth_required" nie zurueck.
+var _authRequiredSticky = false;
+function authRequiredSticky() { return _authRequiredSticky === true; }
+window.authRequiredSticky = authRequiredSticky;
 
 function coreAuthCurrentUser() {
   try {
@@ -6247,6 +6256,9 @@ function noteCoreAuthState(user) {
   _coreAuthResolved = true;
   _coreAuthUser = user || null;
   if (vorher !== nachher) _coreAuthReadyP = null;
+  // Geklaert und niemand da -> der Hinweis gilt. Steht ein echter Nutzer da,
+  // faellt er SOFORT: "Anmeldung erforderlich" waere ab diesem Moment falsch.
+  _authRequiredSticky = !user;
 }
 // Aufgeloest, sobald ein Nutzer da ist ODER onAuthStateChanged einmal gefeuert
 // hat ODER die Frist ablaeuft. Liefert IMMER { user } und wirft nie.
@@ -6289,6 +6301,7 @@ function isAuthDeniedError(e) {
 // Fehlende Anmeldung ist KEIN Netzfehler: kein Backoff setzen, sonst sperrt
 // sich der Rechner die spaeter eintreffende Anmeldung selbst aus.
 function rememberCoreAuthRequired(provider) {
+  _authRequiredSticky = true;
   if (_cloudHealth[provider]) {
     _cloudHealth[provider].lastStatus = 401;
     _cloudHealth[provider].lastError = 'auth_required';
@@ -10886,7 +10899,8 @@ let _initProtectionUntil = 0; // Prevents sync from overwriting data right after
 // gelesen? Solange nicht, darf nichts automatisch hochgeladen werden: ein
 // Push aus einem nie abgeglichenen Stand loescht fremde Aenderungen.
 var _coreReadOk = false;
-function markCoreReadOk() { _coreReadOk = true; }
+// Defensiv: ein gelungener Kernlesevorgang beweist, dass die Anmeldung traegt.
+function markCoreReadOk() { _coreReadOk = true; _authRequiredSticky = false; }
 function coreReadOk() { return _coreReadOk; }
 window.coreReadOk = coreReadOk;
 
@@ -13304,8 +13318,12 @@ function updateSyncChip() {
   try {
     const el = document.getElementById('syncNotice');
     if (!el) return;                       // fehlender Anker wirft nicht
+    // VORRANG: der Anmeldemangel wird zuerst geprueft und aus dem eigenen
+    // Flag gelesen — nicht aus status. dirty, saving, saved, error, offline
+    // und Fehler von Nebenprovidern koennen ihn damit nicht mehr verdraengen.
+    const authNoetig = authRequiredSticky();
     const s = APP?.state?.storage?.status;
-    if (s !== 'auth_required' && s !== 'offline') {
+    if (!authNoetig && s !== 'offline') {
       el.hidden = true;
       el.textContent = '';
       el.removeAttribute('aria-label');
@@ -13314,7 +13332,6 @@ function updateSyncChip() {
       return;
     }
     const en = (typeof getLang === 'function' && getLang() === 'en');
-    const authNoetig = s === 'auth_required';
     const text = authNoetig
       ? (en ? 'Sign-in required — data is not being synchronised'
             : 'Anmeldung erforderlich — Daten nicht synchronisiert')
