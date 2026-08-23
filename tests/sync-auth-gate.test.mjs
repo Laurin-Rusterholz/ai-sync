@@ -211,15 +211,110 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
   ok(pushes === 0, "der zweite Aufruf hat gepusht");
 }
 
-// ── 6. Die Anmeldung ist im Sync-Chip beschriftet ─────────────────────────
+// ── 6. Der Anmeldehinweis zeichnet in ein WIRKLICH vorhandenes Ziel ───────
+// Die frueheren Beschriftungen lagen in updateSyncChip() hinter der Suche
+// nach #syncChip/#syncStatus — Markup, das nie existiert hat. Die Funktion
+// brach an ihrem ersten Zeilenpaar ab, jede Beschriftung war wirkungslos.
 {
   const chip = cut("function updateSyncChip() {");
-  ok(/auth_required: "Anmeldung erforderlich"/.test(chip),
-    "der Sync-Chip hat keine Beschriftung fuer auth_required");
-  ok(/auth_required: "Sign-in required"/.test(chip),
-    "die englische Beschriftung fuer auth_required fehlt");
-  ok(/auth_required: "danger"/.test(chip),
-    "auth_required wird im Chip nicht hervorgehoben");
+  ok(/getElementById\('syncNotice'\)/.test(chip),
+    "updateSyncChip zeichnet nicht in den Streifen #syncNotice");
+  ok(!/\$\("#syncChip"\)|\$\("#syncStatus"\)/.test(chip),
+    "updateSyncChip sucht weiterhin das nie vorhandene #syncChip/#syncStatus");
+  ok(/Anmeldung erforderlich \u2014 Daten nicht synchronisiert/.test(chip),
+    "der geforderte Wortlaut fehlt");
+  ok(/aria-live/.test(chip) && /aria-label/.test(chip),
+    "aria-live oder aria-label fehlen");
+  ok(/href="#\/drive"/.test(chip),
+    "der Hinweis bietet keinen Weg zur Anmeldung ueber die vorhandene Route #/drive");
+}
+
+// ── 6b. Kein Renderziel darf ins Leere zeigen ─────────────────────────────
+// Die Fehlerklasse hinter V2: eine Renderfunktion sucht per $("#…") oder
+// getElementById eine id, die im Markup gar nicht steht. Der Aufruf scheitert
+// still, und niemand sieht etwas. Diese Schleife haelt genau das fest.
+{
+  for (const id of ["syncNotice", "toasts", "main", "app"]) {
+    ok(new RegExp(`id="${id}"`).test(index),
+      `#${id} wird im Code gesucht, steht aber nicht im Markup`);
+  }
+  ok(!/id="syncChip"|id="syncStatus"/.test(index),
+    "unerwartet: #syncChip/#syncStatus stehen doch im Markup — dann ist die Umstellung falsch");
+  ok(!/\$\("#syncChip"\)/.test(index) && !/\$\("#syncStatus"\)/.test(index),
+    "es gibt weiterhin einen Zugriff auf das nie vorhandene #syncChip/#syncStatus");
+}
+
+// ── 6c. Der Streifen liegt ausserhalb von #main ───────────────────────────
+{
+  const bodyStart = index.indexOf("<body");
+  const appStart = index.indexOf('id="app"', bodyStart);
+  const appEnd = index.indexOf('<div class="toast-container"', bodyStart);
+  const noticePos = index.indexOf('id="syncNotice"', bodyStart);
+  ok(noticePos > appStart, "#syncNotice steht vor der App-Huelle");
+  ok(noticePos < appEnd + 400 && noticePos > index.indexOf('id="main"'),
+    "#syncNotice sitzt nicht neben dem Toast-Behaelter");
+  const mainOpen = index.indexOf('id="main"');
+  const mainClose = index.indexOf("</main>", mainOpen);
+  ok(!(noticePos > mainOpen && noticePos < mainClose),
+    "#syncNotice liegt innerhalb von #main und wuerde von render() geloescht");
+}
+
+// ── 6d. Echter Stub-DOM-Test der Renderfunktion ──────────────────────────
+{
+  const el = {
+    hidden: true, className: "", innerHTML: "", textContent: "", attrs: {},
+    setAttribute(k, v) { this.attrs[k] = v; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    querySelector(sel) {
+      if (!/sn-text|sn-link/.test(this.innerHTML)) return null;
+      if (sel === ".sn-text") return this._text || (this._text = { textContent: "" });
+      if (sel === ".sn-link") return /sn-link/.test(this.innerHTML)
+        ? (this._link || (this._link = { textContent: "" })) : null;
+      return null;
+    },
+  };
+  const APP = { state: { storage: { status: "auth_required" } } };
+  const make = (doc) => new Function("document", "APP", "getLang",
+    cut("function updateSyncChip() {") + "\nreturn updateSyncChip;")(doc, APP, () => "de");
+  const doc = { getElementById: (id) => (id === "syncNotice" ? el : null) };
+  const render = make(doc);
+
+  render();
+  ok(el.hidden === false, "bei auth_required bleibt der Streifen verborgen");
+  ok(el._text.textContent === "Anmeldung erforderlich \u2014 Daten nicht synchronisiert",
+    `falscher Wortlaut: "${el._text.textContent}"`);
+  ok(el.attrs["aria-live"] === "polite", "aria-live fehlt oder ist falsch");
+  ok(el.attrs["aria-label"] === "Anmeldung erforderlich \u2014 Daten nicht synchronisiert",
+    "aria-label traegt nicht den Hinweistext");
+  ok(el.attrs["role"] === "status", "role=status fehlt");
+  ok(el._link && el._link.textContent === "Anmelden", "der Anmeldeknopf fehlt oder ist unbeschriftet");
+  ok(el.className === "", "auth_required darf nicht als Warnung eingefaerbt werden");
+
+  APP.state.storage.status = "offline";
+  render();
+  ok(el.hidden === false && el.className === "sn-warn",
+    "der Offline-Fall wird nicht als Warnung dargestellt");
+
+  APP.state.storage.status = "saved";
+  render();
+  ok(el.hidden === true, "bei saved bleibt der Streifen sichtbar");
+  ok(el.attrs["aria-label"] === undefined, "aria-label bleibt nach dem Ausblenden stehen");
+
+  // Fehlender Anker darf NICHT werfen.
+  const leer = make({ getElementById: () => null });
+  let warf = false;
+  try { APP.state.storage.status = "auth_required"; leer(); } catch (e) { warf = true; }
+  ok(warf === false, "ohne #syncNotice wirft updateSyncChip");
+}
+
+// ── 6e. Persistenz ueber render() hinweg ─────────────────────────────────
+// render() ersetzt ausschliesslich #main. Ein Streifen daneben ueberlebt das.
+{
+  const nodes = { main: { innerHTML: "<p>alt</p>" }, syncNotice: { hidden: false, weg: false } };
+  const doc = { getElementById: (id) => nodes[id] || null };
+  nodes.main.innerHTML = "";                       // das tut render()
+  ok(doc.getElementById("syncNotice") !== null && nodes.syncNotice.hidden === false,
+    "der Streifen ueberlebt ein render() nicht");
 }
 
 // ── 7. onAuthStateChanged holt den Abgleich nach ──────────────────────────
@@ -399,6 +494,42 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
   ok(h.api.isAuthDeniedError(netz) === false, "isAuthDeniedError haelt einen Netzfehler fuer einen Anmeldefehler");
   ok(h.api.isAuthDeniedError(Object.assign(new Error("x"), { code: "storage/unauthorized" })) === true,
     "isAuthDeniedError erkennt storage/unauthorized nicht");
+}
+
+
+// ── I-4: die ganze Kette bis ins DOM ─────────────────────────────────────
+// Auth = null -> echtes remoteGetByKey -> Status -> echtes updateSyncChip ->
+// sichtbarer Streifen. Genau die Luecke, an der V2 gescheitert ist: der
+// Status stimmte, nur sah ihn niemand.
+{
+  const h = buildIntegration();
+  const p = h.api.remoteGetByKey("app-data.json", { force: true });
+  h.resolveNoUser();
+  await p;
+  ok(h.APP.state.storage.status === "auth_required", "der Status wurde nicht gesetzt");
+
+  const el = {
+    hidden: true, className: "", innerHTML: "", textContent: "", attrs: {},
+    setAttribute(k, v) { this.attrs[k] = v; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    querySelector(sel) {
+      if (sel === ".sn-text") return this._text || (this._text = { textContent: "" });
+      if (sel === ".sn-link") return /sn-link/.test(this.innerHTML)
+        ? (this._link || (this._link = { textContent: "" })) : null;
+      return null;
+    },
+  };
+  const zeichne = new Function("document", "APP", "getLang",
+    cut("function updateSyncChip() {") + "\nreturn updateSyncChip;")(
+    { getElementById: (id) => (id === "syncNotice" ? el : null) }, h.APP, () => "de");
+  zeichne();
+
+  ok(el.hidden === false, "nach dem echten Lesevorgang bleibt der Streifen verborgen");
+  ok(el._text.textContent === "Anmeldung erforderlich — Daten nicht synchronisiert",
+    `im DOM steht "${el._text.textContent}"`);
+  ok(el.attrs["aria-label"] === "Anmeldung erforderlich — Daten nicht synchronisiert",
+    "aria-label fehlt am Ende der Kette");
+  ok(el._link && el._link.textContent === "Anmelden", "der Anmeldeweg fehlt am Ende der Kette");
 }
 
 console.log(`sync auth gate: ok (${checks} Pruefungen)`);

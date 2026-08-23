@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -1028,6 +1028,19 @@
        sichtbar ist. Ueber dem Browser-Stream gingen so Klicks an Quantus statt
        an das Remote-Chromium. Die Toasts selbst bleiben anklickbar. */
     .toast-container{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:10px;pointer-events:none}
+    /* Dauerhafter Sync-/Anmeldehinweis. Matt auf Schiefer, Koralle als
+       Gefahrenton — kein grelles Rot, kein reines Weiss. Der Streifen laesst
+       Klicks durch; nur der Anmeldeknopf nimmt sie an. z-index gleichauf mit
+       .sb-contextmenu: die wird dynamisch spaeter an body gehaengt und
+       gewinnt damit den Gleichstand, waehrend der Streifen ueber allen
+       Vollbild-Overlays (bis 2147483646) bleibt. */
+    #syncNotice{position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;gap:12px;padding:7px 14px;background:var(--panel);color:var(--text);border-bottom:2px solid #D96B5B;box-shadow:var(--shadow);font-size:12px;font-weight:700;letter-spacing:.01em;pointer-events:none}
+    #syncNotice[hidden]{display:none}
+    #syncNotice .sn-dot{width:8px;height:8px;border-radius:50%;background:#D96B5B;flex:none}
+    #syncNotice .sn-link{pointer-events:auto;color:#D96B5B;text-decoration:none;font-weight:800;border:1px solid #D96B5B;border-radius:999px;padding:2px 10px}
+    #syncNotice .sn-link:hover{background:rgba(217,107,91,.14)}
+    #syncNotice.sn-warn{border-bottom-color:var(--warn)}
+    #syncNotice.sn-warn .sn-dot{background:var(--warn)}
     .toast{padding:14px 18px;background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:12px;min-width:300px;box-shadow:var(--shadow);animation:slideIn .3s ease;pointer-events:auto}
     .toast.ok{border-left-color:var(--ok)}
     .toast.warn{border-left-color:var(--warn)}
@@ -5575,6 +5588,13 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
   </div>
   <div class="panel-body" id="slidePanelBody"></div>
 </div>
+
+<!-- Dauerhafter Sync-/Anmeldehinweis.
+     Bewusst als direktes <body>-Kind neben dem Toast-Behaelter und NICHT im
+     Topbar: render() ersetzt nur #main, und die Vollbild-Overlays (NoteFlow,
+     ReadingHub, Sticky Board, Quantus Browser) legen sich per position:fixed
+     ueber die gesamte Shell. Nur hier bleibt der Hinweis in jeder Ansicht. -->
+<div id="syncNotice" hidden></div>
 
 <!-- Toast Container -->
 <div class="toast-container" id="toasts"></div>
@@ -13269,47 +13289,47 @@ async function doSave(silent = false) {
 }
 
 function updateSyncChip() {
-  const chip = $("#syncChip");
-  const status = $("#syncStatus");
-  if (!chip || !status) return;
-  
-  // Add logbook button if not present
-  if (chip.parentElement && !chip.parentElement.querySelector('[data-action="open-sync-logbook"]')) {
-    const logBtn = document.createElement('button');
-    logBtn.className = 'chip';
-    logBtn.style.cssText = 'cursor:pointer;font-size:11px;padding:4px 8px;margin-left:4px';
-    logBtn.setAttribute('data-action', 'open-sync-logbook');
-    logBtn.textContent = '📋';
-    logBtn.title = 'Sync-Logbuch';
-    chip.parentElement.insertBefore(logBtn, chip.nextSibling);
-  }
-  
-  const dot = chip.querySelector(".dot");
-  
-  const s = APP.state.storage.status;
-  const statusLabels = getLang() === "en" ? {
-    idle: "Ready", dirty: "Unsaved", saving: "Syncing...",
-    saved: "Saved", error: "Error", conflict: "Conflict", offline: "Offline",
-    auth_required: "Sign-in required"
-  } : {
-    idle: "Bereit", dirty: "Ungespeichert", saving: "Speichere...",
-    saved: "Gespeichert", error: "Fehler", conflict: "Konflikt", offline: "Offline",
-    auth_required: "Anmeldung erforderlich"
-  };
-  status.textContent = statusLabels[s] || s;
-  chip.title = APP.state.storage.message || status.textContent;
-  status.title = APP.state.storage.message || status.textContent;
-  
-  chip.className = "chip " + ({
-    idle: "",
-    dirty: "warn",
-    saving: "accent",
-    saved: "ok",
-    error: "danger",
-    conflict: "warn",
-    offline: "warn",
-    auth_required: "danger",
-  }[s] || "");
+  // Frueher suchte diese Funktion #syncChip/#syncStatus. Dieses Markup hat
+  // NIE existiert — die Historie kennt kein einziges Vorkommen, und die
+  // Funktion brach an ihrem ersten Zeilenpaar ab. Alle Aufrufstellen liefen
+  // ins Leere: kein Sync-Status war je sichtbar, auch "Offline", "Fehler"
+  // und "Konflikt" nicht. Die tote Logik ist entfernt; gezeichnet wird jetzt
+  // in den Streifen #syncNotice, ein direktes <body>-Kind neben dem
+  // Toast-Behaelter. Der liegt ausserhalb von #main (render() ersetzt nur
+  // #main) und ueber den Vollbild-Overlays — also in JEDER Ansicht sichtbar.
+  try {
+    const el = document.getElementById('syncNotice');
+    if (!el) return;                       // fehlender Anker wirft nicht
+    const s = APP?.state?.storage?.status;
+    if (s !== 'auth_required' && s !== 'offline') {
+      el.hidden = true;
+      el.textContent = '';
+      el.removeAttribute('aria-label');
+      el.removeAttribute('role');
+      el.removeAttribute('aria-live');
+      return;
+    }
+    const en = (typeof getLang === 'function' && getLang() === 'en');
+    const authNoetig = s === 'auth_required';
+    const text = authNoetig
+      ? (en ? 'Sign-in required — data is not being synchronised'
+            : 'Anmeldung erforderlich — Daten nicht synchronisiert')
+      : (en ? 'Server unreachable — local data only, no upload'
+            : 'Server nicht erreichbar — nur lokaler Stand, kein Upload');
+    el.className = authNoetig ? '' : 'sn-warn';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.setAttribute('aria-label', text);
+    // Der Anmeldeweg ist die vorhandene Route #/drive: viewDrive() bettet
+    // drive.html ein, dort sitzt der Google-Login. Die Firebase-Sitzung gilt
+    // pro Herkunft und steht danach auch der Hauptapp zur Verfuegung.
+    el.innerHTML = '<span class="sn-dot"></span><span class="sn-text"></span>'
+      + (authNoetig ? '<a class="sn-link" href="#/drive"></a>' : '');
+    el.querySelector('.sn-text').textContent = text;
+    const link = el.querySelector('.sn-link');
+    if (link) link.textContent = en ? 'Sign in' : 'Anmelden';
+    el.hidden = false;
+  } catch(e) { /* Anzeige darf den Abgleich nie stoeren */ }
 }
 
 // ============================================================================
