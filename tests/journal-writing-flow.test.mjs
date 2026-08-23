@@ -452,11 +452,17 @@ function loadParagraphTools(sel) {
   const end = index.indexOf("\nfunction ", start + 10);
   ok(start > 0 && end > start, "mergeData() wurde in index.html nicht gefunden");
   const source = index.slice(start, end);
+  // mergeData liest die Sperrliste TRANSPORT_ROOTS (Schatten-/Transportwurzeln,
+  // die der Payloadbau beim Push ohnehin neu erzeugt). Sie gehoert mit in den
+  // Ausschnitt, sonst laeuft die echte Funktion hier ins Leere.
+  const trStart = index.indexOf("const TRANSPORT_ROOTS = new Set([");
+  ok(trStart > 0, "TRANSPORT_ROOTS wurde in index.html nicht gefunden");
+  const transportSrc = index.slice(trStart, index.indexOf("]);", trStart) + 3);
 
   const fn = new Function(
     "idbBackup", "localStorage", "normalizeData", "mergeAndPersistDeleteLog",
     "flattenDeleteLog", "mergeEntity", "entityTimestamp", "console",
-    source + "\nreturn mergeData;"
+    transportSrc + "\n" + source + "\nreturn mergeData;"
   );
   const mergeData = fn(
     () => {}, { getItem: () => null, setItem() {} }, (d) => d, () => ({}), () => ({}),

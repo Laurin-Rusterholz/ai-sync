@@ -29,10 +29,15 @@ function loadMergeData() {
   const start = index.indexOf("function mergeData(local, remote) {");
   const end = index.indexOf("\nfunction ", start + 10);
   ok(start > 0 && end > start, "mergeData() wurde in index.html nicht gefunden");
+  // TRANSPORT_ROOTS mitschneiden: mergeData liest die Sperrliste, und der Test
+  // soll die ECHTE Liste pruefen, nicht eine nachgebaute.
+  const trStart = index.indexOf("const TRANSPORT_ROOTS = new Set([");
+  ok(trStart > 0, "TRANSPORT_ROOTS wurde in index.html nicht gefunden");
+  const transportSrc = index.slice(trStart, index.indexOf("]);", trStart) + 3);
   const fn = new Function(
     "idbBackup", "localStorage", "normalizeData", "mergeAndPersistDeleteLog",
     "flattenDeleteLog", "mergeEntity", "entityTimestamp", "console",
-    index.slice(start, end) + "\nreturn mergeData;"
+    transportSrc + "\n" + index.slice(start, end) + "\nreturn mergeData;"
   );
   return fn(
     () => {}, { getItem: () => null, setItem() {} }, (d) => d, () => ({}), () => ({}),
@@ -264,6 +269,142 @@ function leerWie(wert) {
     "der bestehende weekPlan-Zweig wurde veraendert");
   ok(/'weekPlanningMatrix', 'dailyBriefing', 'dayEnded', 'recallLabData',/.test(src),
     "das handled-Set wurde veraendert");
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Fachwurzeln mit fuehrendem _ ueberleben ebenfalls
+ *
+ * Das Sicherheitsnetz uebersprang zunaechst pauschal jeden Schluessel mit
+ * fuehrendem _. Die Begruendung stimmte fuer die Schatten- und
+ * Transportfelder — sie werden beim Push ohnehin neu gebaut — und war fuer
+ * die Fachdaten falsch: _importedBelege, _nextBelegNr, _importedRechnungen
+ * und _importedInboxIds werden beim Beleg-, Rechnungs- und Inbox-Import
+ * direkt in APP.state.data gepflegt und haben KEINEN Wiederherstellungsweg.
+ *
+ * Gehen sie im Abgleich verloren, werden bereits importierte Belege erneut
+ * eingelesen und die laufende Belegnummer faellt auf 1 zurueck. Der Weg dahin
+ * ist der Startabgleich auf einem frischen Profil: lokal fehlen sie, remote
+ * sind sie da, der Merge verwirft sie, und der naechste Voll-Push loescht sie
+ * auch auf dem Server.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+// Die echte Sperrliste aus index.html — nicht nachgebaut.
+function ladeTransportRoots() {
+  const a = index.indexOf("const TRANSPORT_ROOTS = new Set([");
+  ok(a > 0, "TRANSPORT_ROOTS wurde nicht gefunden");
+  return new Function(index.slice(a, index.indexOf("]);", a) + 3) + "\nreturn TRANSPORT_ROOTS;")();
+}
+
+// Die tatsaechlich in APP.state.data gepflegten _-Wurzeln aus dem Quelltext.
+// Bewusst NICHT aus emptyData(): dort stehen sie gar nicht, sie entstehen erst
+// beim ersten Import. Genau daran ging die erste Fassung des Tests vorbei.
+function gepflegteUnterstrichWurzeln() {
+  const treffer = index.match(/APP\.state\.data\.(_[A-Za-z0-9]+)/g) || [];
+  return [...new Set(treffer.map((t) => t.split(".").pop()))].sort();
+}
+
+// ── 7. Die vier bekannten Fachfelder ueberleben namentlich ────────────────
+{
+  const FACH = {
+    _importedBelege: ["B1", "B2"],
+    _nextBelegNr: 7,
+    _importedRechnungen: ["R1"],
+    _importedInboxIds: ["I1"],
+  };
+  for (const [k, wert] of Object.entries(FACH)) {
+    const local = { entities: { tasks: {} } };                  // lokal fehlt es
+    const remote = { entities: { tasks: {} }, [k]: wert };
+    const m = mergeData(local, remote);
+    ok(Object.prototype.hasOwnProperty.call(m, k),
+      `${k} ueberlebt den Abgleich nicht — Dubletten beim naechsten Import`);
+    ok(JSON.stringify(m[k]) === JSON.stringify(wert),
+      `${k} wurde veraendert: ${JSON.stringify(m[k])}`);
+  }
+  // Alle vier gleichzeitig, wie im Livebestand.
+  const m = mergeData({ entities: { tasks: {} } }, { entities: { tasks: {} }, ...FACH });
+  for (const k of Object.keys(FACH)) {
+    ok(Object.prototype.hasOwnProperty.call(m, k), `${k} fehlt im gemeinsamen Durchlauf`);
+  }
+}
+
+// ── 8. _nextBelegNr wird NUR ergaenzt, nie ueberschrieben ─────────────────
+// Bewusst missing-only: eine Divergenzstrategie (hoechster Zaehler gewinnt)
+// ist ein eigener Vorgang und nicht Teil dieses Hotfixes.
+{
+  const m = mergeData({ entities: { tasks: {} }, _nextBelegNr: 12 },
+                      { entities: { tasks: {} }, _nextBelegNr: 3 });
+  ok(m._nextBelegNr === 12,
+    `der lokale Zaehler wurde vom Netz ueberschrieben: ${m._nextBelegNr}`);
+  const m2 = mergeData({ entities: { tasks: {} }, _importedBelege: ["B1"] },
+                       { entities: { tasks: {} }, _importedBelege: ["B9"] });
+  ok(JSON.stringify(m2._importedBelege) === '["B1"]',
+    "das Netz ueberschreibt eine vorhandene lokale Liste");
+}
+
+// ── 9. Unbekannte kuenftige _-Felder ueberleben ebenfalls ─────────────────
+{
+  const m = mergeData({ entities: { tasks: {} } },
+                      { entities: { tasks: {} }, _futureFeatureX: { a: 1 } });
+  ok(Object.prototype.hasOwnProperty.call(m, "_futureFeatureX"),
+    "ein kuenftiges, hier unbekanntes _-Feld faellt weg — die Sperrliste wirkt als Praefix-Regel");
+  ok(m._futureFeatureX.a === 1, "der Inhalt des unbekannten Feldes wurde veraendert");
+}
+
+// ── 10. Transportfelder bleiben ausgenommen ──────────────────────────────
+{
+  const TR = ladeTransportRoots();
+  ok(TR.size >= 13, `die Sperrliste wirkt zu kurz (${TR.size} Eintraege)`);
+  for (const k of ["_settings", "_uiFilters", "_uiFlags", "_budgetTab", "_budgetTxFilter",
+                   "_extraLocal", "_deleteLog", "_readingHubBooks", "_readingHubCloud",
+                   "_readingHubAnnotations", "_readingHubVocabulary",
+                   "_readingHubBookmarks", "_readingHubSettings"]) {
+    ok(TR.has(k), `${k} fehlt in TRANSPORT_ROOTS`);
+  }
+  // Keines der vier Fachfelder darf in der Sperrliste stehen.
+  for (const k of ["_importedBelege", "_nextBelegNr", "_importedRechnungen", "_importedInboxIds"]) {
+    ok(!TR.has(k), `${k} steht faelschlich in TRANSPORT_ROOTS und ginge weiter verloren`);
+  }
+  // Und sie werden nicht in den Datenstand kopiert.
+  const remote = { entities: { tasks: {} } };
+  for (const k of TR) remote[k] = { ausRemote: true };
+  const m = mergeData({ entities: { tasks: {} } }, remote);
+  const kopiert = [...TR].filter((k) => Object.prototype.hasOwnProperty.call(m, k));
+  ok(kopiert.length === 0,
+    `Transportfelder wurden in den Datenstand kopiert: ${kopiert.join(", ")}`);
+}
+
+// ── 11. Jede real gepflegte _-Wurzel ist entweder Transport oder bewahrt ──
+// Der Test liest die Wurzeln aus dem Quelltext, damit ein kuenftiges Feld
+// nicht unbemerkt durchfaellt.
+{
+  const gepflegt = gepflegteUnterstrichWurzeln();
+  ok(gepflegt.length >= 10, `zu wenige gepflegte _-Wurzeln gefunden (${gepflegt.length})`);
+  for (const k of ["_importedBelege", "_nextBelegNr", "_importedRechnungen", "_importedInboxIds"]) {
+    ok(gepflegt.includes(k), `${k} wird im Quelltext nicht mehr in APP.state.data gepflegt`);
+  }
+  const TR = ladeTransportRoots();
+  const fach = gepflegt.filter((k) => !TR.has(k));
+  const remote = { entities: { tasks: {} } };
+  for (const k of fach) remote[k] = { ausRemote: true };
+  const m = mergeData({ entities: { tasks: {} } }, remote);
+  const verloren = fach.filter((k) => !Object.prototype.hasOwnProperty.call(m, k));
+  ok(verloren.length === 0,
+    `diese gepflegten Fachwurzeln ueberleben den Abgleich nicht: ${verloren.join(", ")}`);
+}
+
+// ── 12. Riegel gegen die Rueckkehr der pauschalen Praefix-Regel ───────────
+{
+  const src = index.slice(index.indexOf("function mergeData(local, remote) {"),
+                          index.indexOf("\nfunction ", index.indexOf("function mergeData(local, remote) {") + 10));
+  const netz = src.slice(src.indexOf("Sicherheitsnetz: kein Wurzelfeld"));
+  ok(!/if \(key\.startsWith\('_'\)\) continue;/.test(netz),
+    "das Sicherheitsnetz ueberspringt wieder pauschal alle _-Wurzeln");
+  ok(/if \(TRANSPORT_ROOTS\.has\(key\)\) continue;/.test(netz),
+    "das Sicherheitsnetz nutzt die Sperrliste nicht");
+  // Der bestehende Auffangzweig bleibt unveraendert — er hat andere Semantik.
+  ok(/if \(key\.startsWith\('_'\) \|\| handled\.has\(key\)\) continue;/.test(src),
+    "der bestehende Auffangzweig wurde veraendert");
 }
 
 console.log(`sync merge: ok (${checks} Pruefungen)`);

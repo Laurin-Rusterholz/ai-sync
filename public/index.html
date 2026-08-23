@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6666,6 +6666,34 @@ function restoreExtraLocalKeys(remoteData, opts = {}) {
   }
   return n;
 }
+// ── Schatten- und Transportwurzeln ────────────────────────────────────────
+// Die einzigen Wurzeln mit fuehrendem _, die beim Push ohnehin neu entstehen
+// oder verschwinden. Massgeblich ist der Payloadbau unmittelbar darunter:
+// buildLocalAppSnapshot() ueberschreibt _settings, _uiFilters, _uiFlags,
+// _budgetTab und _budgetTxFilter aus APP.state.*, loescht _extraLocal,
+// _deleteLog und die ReadingHub-Schattenfelder und setzt _readingHubBooks /
+// _readingHubCloud aus dem ReadingHub-Schatten neu; buildRemoteAppPayload()
+// baut _extraLocal und _deleteLog anschliessend frisch auf. Ein Verlust
+// dieser Felder im Abgleich ist damit folgenlos.
+//
+// ALLE UEBRIGEN _-Wurzeln sind Fachdaten in APP.state.data und haben KEINEN
+// Wiederherstellungsweg: _importedBelege, _nextBelegNr, _importedRechnungen
+// und _importedInboxIds werden beim Beleg-, Rechnungs- und Inbox-Import
+// direkt dort gepflegt und nur ueber den Spread in buildLocalAppSnapshot
+// mitgeschickt. getSyncStats zaehlt _importedBelege folgerichtig neben
+// reflections und quickTodos als Nutzdaten. Gehen sie im Abgleich verloren,
+// werden bereits importierte Belege erneut eingelesen und die laufende
+// Belegnummer faellt auf 1 zurueck.
+//
+// Deshalb ist die Liste eine SPERRLISTE und keine Praefix-Regel: was hier
+// nicht steht, wird bewahrt — auch kuenftige, hier noch unbekannte _-Felder.
+const TRANSPORT_ROOTS = new Set([
+  '_settings', '_uiFilters', '_uiFlags', '_budgetTab', '_budgetTxFilter',
+  '_extraLocal', '_deleteLog',
+  '_readingHubBooks', '_readingHubCloud', '_readingHubAnnotations',
+  '_readingHubVocabulary', '_readingHubBookmarks', '_readingHubSettings',
+]);
+
 function buildLocalAppSnapshot() {
   const snapshot = { ...(APP.state.data || {}) };
   if (APP.state.settings) snapshot._settings = APP.state.settings;
@@ -11808,11 +11836,15 @@ function mergeData(local, remote) {
   // Diese Schleife ergaenzt AUSSCHLIESSLICH fehlende Schluessel und
   // ueberschreibt nie einen bereits gemergten Wert. Das handled-Set bleibt
   // unangetastet, und jeder vorhandene Zweig behaelt seine Zusammenfuehrung.
-  // Transportfelder mit fuehrendem _ bleiben aussen vor: _settings,
-  // _extraLocal und _deleteLog haben eigene Wege (restoreExtraLocalKeys,
-  // mergeAndPersistDeleteLog) und werden beim Push neu gebaut.
+  // Bewahren ist die Vorgabe. Ausgenommen sind ausschliesslich die Schatten-
+  // und Transportwurzeln aus TRANSPORT_ROOTS, die der Payloadbau beim Push
+  // ohnehin neu erzeugt oder entfernt. Eine pauschale Regel auf das fuehrende
+  // _ waere falsch: _importedBelege, _nextBelegNr, _importedRechnungen und
+  // _importedInboxIds sind Fachdaten ohne Wiederherstellungsweg und fielen
+  // sonst genauso still weg wie zuvor weekPlan. Kuenftige, hier unbekannte
+  // _-Felder werden damit ebenfalls bewahrt.
   for (const key of Object.keys(remote || {})) {
-    if (key.startsWith('_')) continue;
+    if (TRANSPORT_ROOTS.has(key)) continue;
     if (!Object.prototype.hasOwnProperty.call(merged, key)) {
       merged[key] = remote[key];
     }
