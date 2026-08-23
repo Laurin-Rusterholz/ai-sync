@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -13666,11 +13666,17 @@ function handleIdeaPostitPointerUp(e){
 // ============================================================================
 // CRUD OPERATIONS
 // ============================================================================
-function createEntity(kind, data) {
+// forcedId (optional): eine vorgegebene Id statt einer neu erzeugten. Rein
+// additiv — ohne dieses Argument bleibt alles wie bisher. Gebraucht wird es
+// vom Polaris-Inbox-Merge: dort MUSS die Erzeugung deterministisch sein,
+// sonst legen zwei Geraete nach einem Absturz zwei Kopien desselben Eintrags
+// an (F-23 C). Die Steuerfelder sind vorher aus data entfernt, ...data kann
+// die Id also nicht ueberschreiben.
+function createEntity(kind, data, forcedId) {
   const map = getEntityMap(kind);
   if (!map) return null;
   
-  const id = uuid();
+  const id = (typeof forcedId === "string" && forcedId) ? forcedId : uuid();
   const now = nowIso();
   const entity = {
     id,
@@ -112337,8 +112343,23 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   // mindestens einmal. Das ist eine bewusste, benannte Grenze.
   const PL_INBOX_CLAIM_MS = 60000;
   const _plInboxInFlight = new Set();
+  // Der Anspruch braucht eine Kennung pro LISTENER-INSTANZ, nicht pro Geraet.
+  // getOrCreateDeviceId ist pro Browserprofil stabil: zwei gleichzeitig offene
+  // Tabs desselben Profils traegen dieselbe Geraete-Id, der Anspruch liesse
+  // beide zu (eigener Anspruch darf jederzeit erneuert werden), und
+  // _plInboxInFlight ist nur tablokal — beide wendeten parallel an.
+  // processedBy behaelt bewusst die stabile Geraete-Id: dort geht es um die
+  // Herkunft, nicht um den Ausschluss.
+  let _plInboxOwner = null;
+  function plInboxOwner(){
+    if (!_plInboxOwner){
+      const dev = (typeof window.getOrCreateDeviceId === "function") ? window.getOrCreateDeviceId() : "web";
+      _plInboxOwner = dev + "#" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    }
+    return _plInboxOwner;
+  }
   async function plInboxClaim(type, inboxId){
-    const dev = (typeof window.getOrCreateDeviceId === "function") ? window.getOrCreateDeviceId() : "web";
+    const dev = plInboxOwner();
     const ref = plDbRef("polaris/inbox/" + type + "/" + inboxId + "/claim");
     if (!ref) return { ok: true, mode: "kein-sdk", by: dev };
     try {
@@ -112360,8 +112381,15 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   }
 
   async function plInboxApply(type, inboxId, entry){
+    // rawType und mapKey stehen AUSSERHALB des try. Vorher lagen sie darin;
+    // im catch waren sie damit lexikalisch unsichtbar, das Aufraeumen warf
+    // einen ReferenceError, der wiederum verschluckt wurde — der Schluessel
+    // blieb nach jedem Fehler dauerhaft im Riegel, und derselbe Tab konnte den
+    // Eintrag nie wiederholen (F-23 A).
+    const rawType = String(type || "");
+    const mapKey = rawType + "/" + inboxId;
+    let belegt = false;   // haben WIR den Riegel gesetzt?
     try {
-      const rawType = String(type || "");
       const low = rawType.toLowerCase();
       // VERBINDLICHE Sicherheitsgrenze: Tresor-/Bank-Typen immer ablehnen.
       if (POLARIS_BLOCKED_TYPES.has(low)){
@@ -112373,7 +112401,6 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       if (!entry || typeof entry !== "object" || entry.processedAt) return;
       const s = plSettings();
       if (!s.inboxMap) s.inboxMap = {};
-      const mapKey = rawType + "/" + inboxId;
       let appId = s.inboxMap[mapKey] || null;
       let existing = null;
       if (appId){
@@ -112410,9 +112437,10 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       // Ohne diesen Riegel liefe dieselbe Operation im selben Tab doppelt.
       if (_plInboxInFlight.has(mapKey)) return;
       _plInboxInFlight.add(mapKey);
+      belegt = true;
 
       const anspruch = await plInboxClaim(rawType, inboxId);
-      if (!anspruch.ok){ _plInboxInFlight.delete(mapKey); return; }
+      if (!anspruch.ok) return;
 
       // Datenfelder aufbereiten: BLOCK-Feldfilter (scrub) + Steuerfelder entfernen
       const data = plInboxScrub(entry);
@@ -112424,16 +112452,24 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const genId = function(){ return (typeof window.uuid === "function") ? window.uuid() : ("pol_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)); };
 
       if (action === "create"){
+        // Deterministisch aus der Id des Eintrags erzeugen, nicht zufaellig.
+        // Sonst ist der Wiederanlauf nicht idempotent: erzeugt Geraet A eine
+        // Entitaet mit frischer uuid und stuerzt VOR processedAt ab, findet
+        // Geraet B nach Ablauf der Frist nichts wieder (die Zuordnung lag nur
+        // lokal) und erzeugt eine zweite. Mit der Eintrags-Id als Entitaets-Id
+        // findet B den Datensatz — und selbst wenn A ihn nie hochgeladen hat,
+        // erzeugt B ihn unter DERSELBEN Id: nach dem Merge bleibt es einer.
         let newId;
+        const festeId = String((entry && entry.id) || inboxId || "") || null;
         if (store.mode === "array"){
-          newId = genId();
+          newId = festeId || genId();
           store.arr.push(Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data)); // Array: pushen
           plScheduleSave();
         } else if (store.viaApi){
-          newId = window.createEntity(store.kind, data); // uuid + createdAt/updatedAt + scheduleSave
+          newId = window.createEntity(store.kind, data, festeId); // feste Id + createdAt/updatedAt + scheduleSave
           if (!newId) throw new Error("createEntity fehlgeschlagen");
         } else {
-          newId = genId(); // Direktschreibung
+          newId = festeId || genId(); // Direktschreibung
           store.map[newId] = Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data);
           plScheduleSave();
         }
@@ -112461,10 +112497,12 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         const dev = (typeof window.getOrCreateDeviceId === "function") ? window.getOrCreateDeviceId() : "web";
         await plDbSet("polaris/inbox/" + type + "/" + inboxId + "/processedBy", dev);
       } catch(e){ console.error("Polaris-Inbox: processedAt-Markierung fehlgeschlagen", e); }
-      _plInboxInFlight.delete(mapKey);
     } catch(err){
       console.error("Polaris-Inbox: Merge fehlgeschlagen", type, inboxId, err);
-      try { _plInboxInFlight.delete(rawType + "/" + inboxId); } catch(e2){}
+    } finally {
+      // Immer freigeben — auch wenn die Anwendung geworfen hat. Sonst bleibt
+      // der Eintrag fuer diesen Tab dauerhaft gesperrt.
+      if (belegt) _plInboxInFlight.delete(mapKey);
     }
   }
 

@@ -65,6 +65,10 @@ function makeClaimStore() {
   };
 }
 
+// Wie das echte uuid(): global eindeutig, NICHT pro Harness. Sonst vergaeben
+// zwei Attrappen zufaellig dieselbe Id und der Wiederanlauf-Test (C) waere
+// gegenstandslos.
+let _uuidZaehler = 0;
 function harness({ notes = {}, inboxMap = {}, deviceId = "dev_frisch_profil", claim = null, daten = null } = {}) {
   const c = claim || makeClaimStore();
   const log = { createEntity: [], updateEntity: [], activity: [], saves: 0 };
@@ -73,8 +77,8 @@ function harness({ notes = {}, inboxMap = {}, deviceId = "dev_frisch_profil", cl
     APP: { state: { data: daten || { entities: { notes } } } },
     getEntityMap: (kind) => (kind === "note" ? notes : null),
     getOrCreateDeviceId: () => deviceId,
-    createEntity: (kind, data) => {
-      const id = "uuid-" + (log.createEntity.length + 1);
+    createEntity: (kind, data, forcedId) => {
+      const id = (typeof forcedId === "string" && forcedId) ? forcedId : ("uuid-" + (++_uuidZaehler));
       log.createEntity.push({ kind, id, data });
       notes[id] = Object.assign({ id, createdAt: "neu", updatedAt: "neu" }, data);
       return id;
@@ -84,7 +88,7 @@ function harness({ notes = {}, inboxMap = {}, deviceId = "dev_frisch_profil", cl
     render: () => {},
   };
   const api = new Function(...DEPS, INBOX_SRC +
-    "\nreturn { plInboxDecide, plInboxApply, plInboxClaim };")(
+    "\nreturn { plInboxDecide, plInboxApply, plInboxClaim, inFlight: _plInboxInFlight, owner: plInboxOwner };")(
     win, { log() {}, warn() {}, error: (...a) => { if (process.env.PL_DEBUG) console.error("  [inbox]", ...a); } }, Date,
     new Set(["password", "vault"]),
     JSON.parse(JSON.stringify(["op","ts","updatedAt","createdAt","processedAt","processedBy","id","inboxId","claim"])),
@@ -95,7 +99,7 @@ function harness({ notes = {}, inboxMap = {}, deviceId = "dev_frisch_profil", cl
     () => { log.saves++; }, (...a) => log.activity.push(a),
     c.plDbSet, c.plDbRef,
   );
-  return { api, log, notes, settings, claimStore: c };
+  return { api, log, notes, settings, claimStore: c, win };
 }
 
 const LONDON = "mo7ob010bvrg76mk0";
@@ -162,7 +166,8 @@ const spiegel = (id, titel, ts) => ({
   ok(anwendungen === 1, `die Operation wurde ${anwendungen}-mal angewendet statt genau einmal`);
   ok(c.log.transactions >= 2, "der Anspruch lief nicht als Transaktion");
   const claimKnoten = c.knoten["polaris/inbox/note/" + LONDON + "/claim"];
-  ok(claimKnoten && ["dev_aaa", "dev_bbb"].includes(claimKnoten.by), "der Anspruch traegt kein Geraet");
+  ok(claimKnoten && /^dev_(aaa|bbb)#/.test(String(claimKnoten.by)),
+    `der Anspruch traegt keine Instanz-Kennung: ${claimKnoten && claimKnoten.by}`);
 }
 
 // ── 4. Idempotenz: create, update und delete mehrfach ────────────────────
@@ -214,7 +219,7 @@ const spiegel = (id, titel, ts) => ({
   const h = harness({ notes, inboxMap: {}, deviceId: "dev_nachfolger", claim: c });
   await h.api.plInboxApply("note", LONDON, spiegel(LONDON, TITEL_NEU, "2026-08-23T20:26:57.950Z"));
   ok(h.log.updateEntity.length === 1, "nach abgelaufener Frist wurde die Operation nicht nachgeholt");
-  ok(c.knoten["polaris/inbox/note/" + LONDON + "/claim"].by === "dev_nachfolger",
+  ok(/^dev_nachfolger#/.test(String(c.knoten["polaris/inbox/note/" + LONDON + "/claim"].by)),
     "der abgelaufene Anspruch wurde nicht uebernommen");
   ok(c.log.sets.some((p) => p.endsWith("/processedAt")), "processedAt wurde nach dem Erfolg nicht gesetzt");
   ok(c.log.sets.some((p) => p.endsWith("/processedBy")), "processedBy wurde nicht gesetzt");
@@ -257,6 +262,130 @@ const spiegel = (id, titel, ts) => ({
   ok(daten.meta.lastSavedBy === "tablet-app",
     "der Inbox-Pfad hat meta.lastSavedBy ueberschrieben");
   ok(daten._nextBelegNr === 7 && daten._importedBelege.length === 1, "Fachwurzeln wurden veraendert");
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Die drei Blocker aus der Remote-Gegenpruefung
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+// ── A. Wirft die Anwendung, wird der Riegel trotzdem frei ────────────────
+// Vorher lagen rawType und mapKey INNERHALB des try; im catch waren sie
+// lexikalisch unsichtbar, das Aufraeumen warf einen ReferenceError, der
+// verschluckt wurde — der Schluessel blieb dauerhaft gesperrt.
+{
+  const notes = { [LONDON]: { id: LONDON, title: TITEL_ALT, updatedAt: "2026-08-23T20:14:00.000Z" } };
+  const h = harness({ notes, inboxMap: {} });
+  let werfen = true;
+  const echt = h.api;                       // updateEntity aus dem Fenster ersetzen
+  const eintrag = spiegel(LONDON, TITEL_NEU, "2026-08-23T20:26:57.950Z");
+  h.win.updateEntity = () => { if (werfen) throw new Error("Anwendung fehlgeschlagen"); h.log.updateEntity.push({ id: LONDON }); notes[LONDON].title = TITEL_NEU; };
+
+  await echt.plInboxApply("note", LONDON, eintrag);
+  ok(echt.inFlight.size === 0,
+    `nach einem Fehler bleiben ${echt.inFlight.size} Eintraege im Riegel — der Tab kann sie nie wiederholen`);
+  ok(notes[LONDON].title === TITEL_ALT, "trotz Wurf wurde angewendet");
+
+  werfen = false;                            // Wiederholung muss jetzt greifen
+  await echt.plInboxApply("note", LONDON, eintrag);
+  ok(notes[LONDON].title === TITEL_NEU, "die Wiederholung nach einem Fehler wirkt nicht");
+  ok(echt.inFlight.size === 0, "der Riegel bleibt nach dem erfolgreichen Lauf belegt");
+}
+
+// ── A2. Auch ein fehlgeschlagener Anspruch belegt den Riegel nicht ───────
+{
+  const c = makeClaimStore();
+  c.knoten["polaris/inbox/note/" + LONDON + "/claim"] = { by: "fremd#xyz", at: Date.now() };
+  const notes = { [LONDON]: { id: LONDON, title: TITEL_ALT, updatedAt: "2026-08-23T20:14:00.000Z" } };
+  const h = harness({ notes, inboxMap: {}, claim: c });
+  await h.api.plInboxApply("note", LONDON, spiegel(LONDON, TITEL_NEU, "2026-08-23T20:26:57.950Z"));
+  ok(h.log.updateEntity.length === 0, "der fremde Anspruch wurde uebergangen");
+  ok(h.api.inFlight.size === 0, "ein abgelehnter Anspruch laesst den Riegel belegt");
+}
+
+// ── B. Zwei Tabs DESSELBEN Geraets → genau eine Anwendung ───────────────
+// getOrCreateDeviceId ist pro Browserprofil stabil. Ohne eigene Kennung je
+// Listener-Instanz haetten beide Tabs denselben Anspruch erneuern duerfen.
+{
+  const c = makeClaimStore();
+  const notes = { [LONDON]: { id: LONDON, title: TITEL_ALT, updatedAt: "2026-08-23T20:14:00.000Z" } };
+  const tabA = harness({ notes, inboxMap: {}, deviceId: "dev_gleiches_geraet", claim: c });
+  const tabB = harness({ notes, inboxMap: {}, deviceId: "dev_gleiches_geraet", claim: c });
+  ok(tabA.api.owner() !== tabB.api.owner(),
+    "beide Tabs desselben Geraets teilen dieselbe Anspruchskennung");
+  ok(tabA.api.owner().startsWith("dev_gleiches_geraet#"), "die Kennung nennt das Geraet nicht");
+
+  const eintrag = spiegel(LONDON, TITEL_NEU, "2026-08-23T20:26:57.950Z");
+  await Promise.all([
+    tabA.api.plInboxApply("note", LONDON, eintrag),
+    tabB.api.plInboxApply("note", LONDON, eintrag),
+  ]);
+  const anwendungen = tabA.log.updateEntity.length + tabB.log.updateEntity.length;
+  ok(anwendungen === 1, `zwei Tabs desselben Geraets wendeten ${anwendungen}-mal an`);
+  ok(tabA.log.createEntity.length + tabB.log.createEntity.length === 0, "ein Tab legte eine Kopie an");
+  ok(Object.keys(notes).length === 1, `es entstanden ${Object.keys(notes).length} Notizen`);
+}
+
+// ── C. Wiederanlauf bei UNBEKANNTER Id ist idempotent ───────────────────
+// Geraet A erzeugt und stuerzt VOR processedAt ab. Nach Ablauf der Frist
+// uebernimmt Geraet B mit leerem inboxMap. Weil die Erzeugung deterministisch
+// aus der Eintrags-Id erfolgt, entsteht keine zweite Entitaet.
+{
+  const NEU = "n8n-unbekannt-1";
+  const eintrag = { id: NEU, title: "Von n8n", op: "update", ts: 1, updatedAt: "2026-08-23T21:00:00.000Z" };
+
+  // A: erzeugt, dann Absturz vor processedAt (plDbSet wirft)
+  const cA = makeClaimStore();
+  const setEcht = cA.plDbSet;
+  cA.plDbSet = async (pfad, wert) => {
+    if (pfad.endsWith("/processedAt")) throw new Error("Absturz vor processedAt");
+    return setEcht(pfad, wert);
+  };
+  const notesA = {};
+  const a = harness({ notes: notesA, inboxMap: {}, deviceId: "dev_A", claim: cA });
+  await a.api.plInboxApply("note", NEU, eintrag);
+  const idA = Object.keys(notesA)[0];
+  ok(Object.keys(notesA).length === 1, "Geraet A hat nichts erzeugt");
+  ok(idA === NEU, `Geraet A erzeugte "${idA}" statt der Eintrags-Id — nicht deterministisch`);
+  ok(!cA.log.sets.some((p) => p.endsWith("/processedAt")), "processedAt wurde trotz Absturz gesetzt");
+
+  // B: eigener Tab, eigener leerer Index, eigener lokaler Stand (A hat nie gepusht).
+  // Die Frist ist abgelaufen.
+  cA.knoten["polaris/inbox/note/" + NEU + "/claim"].at = Date.now() - 120000;
+  const notesB = {};
+  const b = harness({ notes: notesB, inboxMap: {}, deviceId: "dev_B", claim: cA });
+  await b.api.plInboxApply("note", NEU, eintrag);
+  const idB = Object.keys(notesB)[0];
+  ok(Object.keys(notesB).length === 1, "Geraet B hat nichts erzeugt");
+  ok(idB === idA,
+    `B erzeugte "${idB}" statt "${idA}" — nach dem Merge entstuenden zwei Entitaeten`);
+
+  // Und wenn B den Stand von A bereits gemergt hat: kein zweiter Datensatz.
+  const notesC = { [NEU]: Object.assign({}, notesA[NEU]) };
+  const cc = harness({ notes: notesC, inboxMap: {}, deviceId: "dev_C", claim: cA });
+  cA.knoten["polaris/inbox/note/" + NEU + "/claim"].at = Date.now() - 120000;
+  await cc.api.plInboxApply("note", NEU, eintrag);
+  ok(Object.keys(notesC).length === 1,
+    `nach dem Merge erzeugte der Wiederanlauf ${Object.keys(notesC).length} Entitaeten`);
+  ok(cc.log.createEntity.length === 0, "der Wiederanlauf legte eine Kopie an");
+}
+
+// ── C2. Quelltextregeln zu den drei Blockern ────────────────────────────
+{
+  const apply = INBOX_SRC.slice(INBOX_SRC.indexOf("async function plInboxApply"));
+  ok(/const rawType = String\(type \|\| ""\);\s*\n\s*const mapKey/.test(INBOX_SRC),
+    "rawType/mapKey liegen wieder innerhalb des try");
+  ok(/\} finally \{[\s\S]{0,200}?if \(belegt\) _plInboxInFlight\.delete\(mapKey\);/.test(apply),
+    "der Riegel wird nicht in einem finally freigegeben");
+  ok(/function plInboxOwner\(\)/.test(INBOX_SRC), "die Kennung je Listener-Instanz fehlt");
+  ok(/const dev = plInboxOwner\(\);/.test(INBOX_SRC), "der Anspruch nutzt die Instanz-Kennung nicht");
+  ok(/const festeId = String\(\(entry && entry\.id\) \|\| inboxId \|\| ""\)/.test(apply),
+    "die Erzeugung ist nicht deterministisch");
+  ok(/window\.createEntity\(store\.kind, data, festeId\)/.test(apply),
+    "createEntity bekommt die feste Id nicht");
+  // processedBy behaelt die stabile Geraete-Id
+  ok(/getOrCreateDeviceId\(\) : "web";\s*\n\s*await plDbSet\(.*processedBy/.test(apply) ||
+     /const dev = \(typeof window\.getOrCreateDeviceId/.test(apply),
+    "processedBy nutzt nicht mehr die stabile Geraete-Id");
 }
 
 console.log(`polaris inbox dedupe: ok (${checks} Pruefungen)`);
