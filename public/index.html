@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard · 2026-08-22" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm · 2026-08-22" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -11464,7 +11464,11 @@ function loadSettings() {
     const mergedShortcuts = { ...defaults.shortcuts };
     if (parsed.shortcuts) {
       for (const [k, v] of Object.entries(parsed.shortcuts)) {
-        if (mergedShortcuts[k]) mergedShortcuts[k] = { ...mergedShortcuts[k], ...v };
+        if (!mergedShortcuts[k]) continue;
+        // Kaputte Aufnahmen von frueher aussortieren: eine Sondertaste ohne
+        // Steuerung ist nie ein gewolltes Kuerzel — zurueck auf den Standard.
+        if (v && v.key && !v.ctrl && (String(v.key).length > 1 || v.key === " ")) continue;
+        mergedShortcuts[k] = { ...mergedShortcuts[k], ...v };
       }
     }
     return {
@@ -54600,6 +54604,11 @@ document.addEventListener("keydown", function(e) {
   function _matchSC(name, ev) {
     const s = _sc[name];
     if (!s || !s.key) return false;
+    // Sondertasten (Enter, Leertaste, Tab, Backspace …) nur MIT Steuerung:
+    // die Kuerzel-Aufnahme konnte frueher einen verirrten Tastendruck als
+    // Kuerzel speichern — ein blankes „Enter" als Speichern-Kuerzel fing dann
+    // jedes Enter der ganzen App ab.
+    if (!s.ctrl && (s.key.length > 1 || s.key === " ")) return false;
     if (s.ctrl && !(ev.ctrlKey || ev.metaKey)) return false;
     if (!s.ctrl && (ev.ctrlKey || ev.metaKey)) return false;
     if (s.shift && !ev.shiftKey) return false;
@@ -85609,7 +85618,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       var _sel = window.getSelection();
       var block = (!e.shiftKey && _sel && _sel.isCollapsed) ? jbCaretBlock(area) : null;
       if (block && block.nodeName === "BLOCKQUOTE" && !(block.textContent || "").trim()) {
-        e.preventDefault();
+        (e.__jbPreventDefault || e.preventDefault).call(e);
         var d = document.createElement("div");
         d.appendChild(document.createElement("br"));
         block.parentNode.replaceChild(d, block);
@@ -85755,6 +85764,26 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // Kuerzel, die absichtlich ueberall gelten (Strg+K fuer die Befehlspalette,
   // "?" fuer die Kuerzel-Uebersicht), haengen in der Erfassungsphase am
   // Dokument und laufen ohnehin VOR dem Schirm.
+  // Der Schirm unten (jbKeyShield) stoppt App-Handler in der BUBBLE-Phase.
+  // Handler in der CAPTURE-Phase laufen aber VOR ihm — und genau dort haengen
+  // mehrere Module am Dokument. Ein einziges preventDefault dort, und Enter
+  // ist im Editor tot, ohne dass irgendwo ein Fehler auftaucht.
+  // Deshalb der Riegel ganz vorne, am Fenster in der Capture-Phase (frueher
+  // geht nicht): fuer Tasten OHNE Steuerung/Alt, die im Schreibbereich landen,
+  // wird preventDefault entwaffnet. Fremde Handler laufen weiter, koennen die
+  // Eingabe aber nicht mehr verhindern. Die EIGENEN Handler des Editors
+  // benutzen das aufgehobene Original (__jbPreventDefault) — fuer sie aendert
+  // sich nichts. Escape bleibt unangetastet (Vollbild/Ruhe-Modus/Schliessen).
+  function jbDisarmForeignPrevent(e) {
+    var a = document.activeElement;
+    if (!a || (a.id !== "jbEditorArea" && a.id !== "jbSLArea")) return;
+    if (e.key === "Escape" || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.__jbPreventDefault = e.preventDefault.bind(e);
+    e.preventDefault = function() {};
+  }
+  window.addEventListener("keydown", jbDisarmForeignPrevent, true);
+  window.addEventListener("keypress", jbDisarmForeignPrevent, true);
+
   function jbKeyShield(e) {
     if (e.key === "Escape") return;
     var a = document.activeElement;
