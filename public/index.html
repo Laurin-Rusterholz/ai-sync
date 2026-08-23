@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -11070,7 +11070,20 @@ async function syncFreshness(reason) {
         console.log('[Sync] ' + reason + ': Remote was ' + Math.round((remoteTs - localTs) / 1000) + 's newer — merged local');
 
         try {
-          await remotePut(buildRemoteAppPayload());
+          // Frueher stand hier ein direkter remotePut(). Der umging doSave
+          // vollstaendig — und damit die Push-Sperre _coreReadOk, den
+          // Sync-Lock und den Riegel des Auth-Resyncs. Nach einem
+          // Auth-Resync-Timeout mit _coreReadOk === false haette dieser Weg
+          // trotzdem geschrieben. Jetzt geht er regulaer ueber doSave(true):
+          // entweder es schreibt sofort, oder es merkt den Stand ueber
+          // _saveDirty vor und das Sicherheitsnetz holt ihn nach — beides
+          // unter allen bestehenden Riegeln. Der local-newer-Zweig unten macht
+          // es seit je genauso; jetzt sind beide Zweige gleich.
+          const nachMerge = await doSave(true);
+          if (nachMerge && nachMerge.ok === false) {
+            console.log('[Sync] ' + reason + ': Push nach Merge zurueckgestellt (' +
+                        (nachMerge.reason || 'unbekannt') + ').');
+          }
         } catch(e) {
           console.warn('[Sync] Post-merge push failed:', e);
         }

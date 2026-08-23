@@ -66,6 +66,8 @@ const PRELUDE = `
   function isManualTransferMode(){ return false; }
   function isAutoSyncEnabled(){ return true; }
   function remoteSaveOnHold(){ return false; }
+  function hasAnyCloudProviderAvailable(){ return true; }
+  function getDataTimestamp(d){ return new Date((d && d.meta && d.meta.updatedAt) || 0).getTime() || 0; }
   function countEntities(){ return 10; }
   function updateSyncChip(){}
   function saveLocalData(){}
@@ -81,6 +83,8 @@ const PRELUDE = `
   function mergeRemoteSettings(a){ return a; }
   function saveSettings(){}
   function idbBackup(){}
+  function createEntity(){}
+  function nowIso(){ return new Date().toISOString(); }
   function buildRemoteAppPayload(){ return { meta: { updatedAt: new Date().toISOString() } }; }
   async function remoteGet(o){ spy.remoteGet++; return remoteGetImpl(o); }
   async function remotePut(){ spy.remotePut++; spy.writes++; return { ok: true, status: 200 }; }
@@ -110,6 +114,7 @@ function harness() {
          setDirty: function(v){ _saveDirty = v; },
          setLock: function(v){ _syncLockActive = v; },
          setRemoteGet: function(fn){ remoteGetImpl = fn; },
+         setCoreReadOk: function(v){ _coreReadOk = v; },
          forceRunning: function(startedAt){ _authResyncRunning = true; _authResyncStartedAt = startedAt; },
        };`;
   const APP = { state: { storage: {}, settings: { storage: { autoSave: true } }, ui: {}, data: { entities: {}, meta: {} } } };
@@ -241,14 +246,145 @@ function harness() {
 
 // ── 7. Nicht angefasster Bestand (Commit 2/3 und F-20 bleiben offen) ─────
 {
-  ok(/await remotePut\(buildRemoteAppPayload\(\)\);/.test(index),
-    "der direkte remotePut-Pfad in syncFreshness wurde veraendert — das ist Commit 2");
+  // Commit 2/B hat diesen Pfad eingereiht — der Riegel prueft jetzt das
+  // Gegenteil: es darf KEIN direkter remotePut in syncFreshness zurueckkehren.
+  ok(!/await remotePut\(buildRemoteAppPayload\(\)\);\s*\}\s*catch/.test(index),
+    "der direkte remotePut-Pfad in syncFreshness ist zurueckgekehrt");
   ok(/if \(remote\.weekPlan && remote\.weekPlan\.days\)/.test(index),
     "der weekPlan-Zweig wurde veraendert — das ist Commit 3");
   ok(/const snap = await ref\.once\('value'\);/.test(index),
     "die SDK-Zeitgrenze wurde angefasst — das ist F-20/P1.2");
   ok(/if \(_authResyncDone\) return \{ ok: false, reason: 'already_done' \};/.test(index),
     "die _authResyncDone-Semantik wurde veraendert — das ist F-20/P1.2");
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * COMMIT 2/B — der Remote-neuer-Zweig schreibt nicht mehr an doSave vorbei
+ *
+ * syncFreshness rief in diesem Zweig frueher direkt remotePut(). Das umging
+ * doSave vollstaendig — und damit die Push-Sperre _coreReadOk, den Sync-Lock
+ * und den Riegel des Auth-Resyncs. Nach einem Auth-Resync-Timeout mit
+ * _coreReadOk === false haette dieser Weg trotzdem geschrieben.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+// Ein Serverstand, der NEUER ist als der lokale — der Zweig, um den es geht.
+function remoteNeuer() {
+  const jetzt = Date.now();
+  return {
+    local:  new Date(jetzt - 20000).toISOString(),
+    remote: new Date(jetzt).toISOString(),
+  };
+}
+async function laufRemoteNeuer(h, { lock = false, coreReadOk = true, resyncStartedAt = null } = {}) {
+  const ts = remoteNeuer();
+  h.APP.state.data.meta = { updatedAt: ts.local };
+  h.setRemoteGet(async () => ({
+    ok: true,
+    data: { entities: {}, meta: { updatedAt: ts.remote }, vomServer: true },
+  }));
+  h.setCoreReadOk(coreReadOk);
+  h.setLock(lock);
+  if (resyncStartedAt !== null) h.forceRunning(resyncStartedAt);
+  return h.syncFreshness("test_remote_newer");
+}
+
+// ── B-1: kein direkter remotePut mehr in syncFreshness ───────────────────
+{
+  const sf = cut("async function syncFreshness(reason) {");
+  ok(!/await remotePut\(/.test(sf),
+    "syncFreshness ruft weiterhin direkt remotePut() und umgeht damit alle Riegel");
+  ok(/await doSave\(true\)/.test(sf),
+    "der Remote-neuer-Zweig geht nicht ueber doSave");
+  const zweigRoh = sf.slice(sf.indexOf("Remote was"), sf.indexOf("} else if (localTs"));
+  // Kommentarzeilen ausblenden: der Ersatzkommentar nennt remotePut absichtlich.
+  const zweig = zweigRoh.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  ok(/doSave\(true\)/.test(zweig), "der Remote-neuer-Zweig selbst ruft doSave nicht");
+  ok(!/remotePut\(/.test(zweig), "im Remote-neuer-Zweig steht noch ein remotePut");
+}
+
+// ── B-2: unter _authResyncRunning schreibt der Zweig nicht ───────────────
+{
+  const h = harness();
+  const r = await laufRemoteNeuer(h, { resyncStartedAt: Date.now() });
+  ok(r === false, "syncFreshness laeuft trotz laufendem Auth-Resync weiter");
+  ok(h.spy.writes === 0, "der Remote-neuer-Zweig hat waehrend des Auth-Resyncs geschrieben");
+}
+
+// ── B-3: nach Auth-Resync-Maximalalter, _coreReadOk=false ────────────────
+// Der Riegel hat sich selbst geloest, ein Serverstand wurde nie bestaetigt.
+// Die tragende Regel ist "kein Write OHNE bestaetigten Lesevorgang" — nicht
+// "nie ein Write". Beide Faelle werden deshalb getrennt festgehalten.
+{
+  // a) Der eigene Lesevorgang von syncFreshness scheitert ebenfalls
+  //    -> nichts wird geschrieben, _coreReadOk bleibt false.
+  const h = harness();
+  h.forceRunning(Date.now() - 31000);          // Maximalalter ueberschritten
+  ok(h.authResyncActive() === false, "das Maximalalter loest den Riegel nicht");
+  h.setCoreReadOk(false);
+  h.setRemoteGet(async () => ({ ok: false, reason: "read_failed" }));
+  const r = await h.syncFreshness("nach_timeout");
+  ok(r === false, "syncFreshness meldet Erfolg trotz gescheitertem Lesevorgang");
+  ok(h.spy.writes === 0,
+    "nach dem Auth-Resync-Timeout wurde geschrieben, obwohl kein Serverstand bestaetigt war");
+  ok(h.spy.remotePut === 0, "es lief ein remotePut ohne bestaetigten Lesevorgang");
+  ok(h.coreReadOk() === false, "ein gescheiterter Lesevorgang setzt faelschlich _coreReadOk");
+}
+{
+  // b) Der eigene Lesevorgang gelingt: DANN ist der Stand bestaetigt
+  //    (markCoreReadOk in syncFreshness), und der Push ist zulaessig.
+  //    Ohne diesen Zweig waere jede Sitzung nach einem einzigen Timeout
+  //    dauerhaft schreibblind — das waere kein Schutz, sondern ein Ausfall.
+  const h = harness();
+  h.forceRunning(Date.now() - 31000);
+  h.setCoreReadOk(false);
+  const r = await laufRemoteNeuer(h, { coreReadOk: false });
+  ok(r === true, "der Zweig hat den Serverstand nicht gemergt");
+  ok(h.APP.state.data.vomServer === true, "der neuere Serverstand wurde nicht uebernommen");
+  ok(h.coreReadOk() === true,
+    "der bestaetigte Lesevorgang von syncFreshness setzt _coreReadOk nicht");
+  ok(h.spy.writes === 1,
+    "nach einem bestaetigten Lesevorgang wird der gemergte Stand nicht hochgeladen");
+}
+
+// ── B-4: unter Sync-Lock schreibt der Zweig nicht sofort ─────────────────
+{
+  const h = harness();
+  await laufRemoteNeuer(h, { lock: true, coreReadOk: true });
+  ok(h.spy.writes === 0, "der Remote-neuer-Zweig hat trotz Sync-Lock sofort geschrieben");
+  ok(h.dirty() === true, "der zurueckgestellte Push wurde nicht ueber _saveDirty vorgemerkt");
+}
+
+// ── B-5: der regulaer erlaubte Fall schreibt weiterhin ───────────────────
+{
+  const h = harness();
+  const r = await laufRemoteNeuer(h, { lock: false, coreReadOk: true });
+  ok(r === true, "der Remote-neuer-Zweig meldet keinen Durchlauf");
+  ok(h.APP.state.data.vomServer === true, "der Serverstand wurde nicht gemergt");
+  ok(h.spy.writes === 1, `im erlaubten Fall wurde ${h.spy.writes}-mal geschrieben statt einmal`);
+  ok(h.spy.remotePut === 1, "der Schreibvorgang lief nicht ueber remotePut");
+}
+
+// ── B-6: der Zweig endet in doSave und erbt dessen Push-Sperre ───────────
+// Der frueher direkte remotePut kannte diese Sperre nicht. Der Nachweis, dass
+// sie jetzt greift, gehoert an doSave selbst: ohne bestaetigten Lesevorgang
+// und ohne Sperr-Lock kehrt es mit eigenem Grund um und schreibt nicht.
+{
+  const h = harness();
+  h.setCoreReadOk(false);
+  h.setLock(false);
+  const ds = await h.doSave(true);
+  ok(ds && ds.reason === "no_successful_read",
+    `doSave laesst ohne bestaetigten Lesevorgang durch (Grund "${ds && ds.reason}")`);
+  ok(h.spy.writes === 0, "ohne bestaetigten Lesevorgang wurde geschrieben");
+  ok(h.spy.remotePut === 0, "es lief ein remotePut ohne bestaetigten Lesevorgang");
+}
+
+// ── B-7: der local-newer-Zweig bleibt unveraendert ───────────────────────
+{
+  const sf = cut("async function syncFreshness(reason) {");
+  ok(/Local is newer, pushing to remote\.\.\.[\s\S]{0,80}await doSave\(true\)/.test(sf),
+    "der local-newer-Zweig wurde veraendert");
 }
 
 console.log(`sync auth write race: ok (${checks} Pruefungen)`);
