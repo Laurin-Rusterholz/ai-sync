@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm · 2026-08-22" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -5653,6 +5653,13 @@ function initFirebaseNow() {
       if (firebase.auth) {
         firebase.auth().onAuthStateChanged(function (user) {
           if (user) console.log('🔑 Firebase angemeldet als', user.email || user.uid);
+          else console.warn('🔒 Firebase nicht angemeldet — appStore ist unter der Regel "auth != null" weder les- noch schreibbar.');
+          // Anmeldezustand fuer den Kern-Abgleich mitschreiben. Beide
+          // Funktionen stehen im selben Script-Block und sind hochgezogen.
+          try { noteCoreAuthState(user); } catch (e) {}
+          // Kommt die Anmeldung ERST NACH einem gescheiterten Startlesevorgang,
+          // wird der Kern-Abgleich einmalig nachgeholt — nur lesen und mergen.
+          try { if (user) resyncAfterAuth('auth_state_changed'); } catch (e) {}
         });
       }
     } catch (authErr) {
@@ -6190,12 +6197,104 @@ function isBlobSyncConfigured() {
 function isFirebaseCloudAvailable() {
   return !!firebaseStorage;
 }
+// ── Anmeldung als Voraussetzung des Kern-Abgleichs ────────────────────────
+// Die RTDB-Regel fuer appStore lautet "auth != null". Der Kern-Abgleich hat
+// bisher gelesen und geschrieben, ohne auf die Anmeldung zu warten. Auf einem
+// frischen Rechner kam jeder Zugriff als permission_denied zurueck, wurde in
+// rtdbJsonGet stumm verschluckt und endete als "Remote load failed" — waehrend
+// der Rechner anschliessend seinen ungeprueften Stand hochlud. Das Gmail-Modul
+// macht es weiter unten laengst richtig (rtdbAuthReady); hier fehlte dasselbe.
+// var statt let: der Block laeuft frueh, TDZ waere hier ein echtes Risiko.
+var _coreAuthResolved = false;      // onAuthStateChanged mindestens einmal gefeuert
+var _coreAuthUser = null;           // zuletzt gesehener Firebase-Nutzer
+var _coreAuthReadyP = null;
+var CORE_AUTH_TIMEOUT_MS = 6000;    // endlich: haengt nie, wenn Auth ausbleibt
+
+function coreAuthCurrentUser() {
+  try {
+    if (window.firebase && firebase.auth) return firebase.auth().currentUser || _coreAuthUser;
+  } catch(e) {}
+  return _coreAuthUser;
+}
+// Jeden Zustandswechsel mitschreiben (verdrahtet in initFirebaseNow).
+// Wechselt der Nutzer, wird ein bereits aufgeloestes Versprechen verworfen:
+// sonst haelt eine Aufloesung mit null die ganze Sitzung lang fest, dass
+// niemand angemeldet sei — und die spaeter eintreffende Anmeldung bliebe
+// wirkungslos.
+function noteCoreAuthState(user) {
+  var vorher = _coreAuthUser && _coreAuthUser.uid;
+  var nachher = user && user.uid;
+  _coreAuthResolved = true;
+  _coreAuthUser = user || null;
+  if (vorher !== nachher) _coreAuthReadyP = null;
+}
+// Aufgeloest, sobald ein Nutzer da ist ODER onAuthStateChanged einmal gefeuert
+// hat ODER die Frist ablaeuft. Liefert IMMER { user } und wirft nie.
+function coreAuthReady() {
+  // Ein aktuell vorhandener Nutzer schlaegt jedes zwischengespeicherte
+  // Versprechen. Ohne diesen Vorrang liefert ein einmal mit null
+  // aufgeloestes Versprechen dauerhaft "kein Nutzer" — auch nach dem Login.
+  var jetzt = coreAuthCurrentUser();
+  if (jetzt) { _coreAuthResolved = true; return Promise.resolve({ user: jetzt }); }
+  if (_coreAuthReadyP) return _coreAuthReadyP;
+  _coreAuthReadyP = new Promise(function(resolve) {
+    var done = false;
+    var finish = function() { if (done) return; done = true; resolve({ user: coreAuthCurrentUser() }); };
+    try {
+      if (!(window.firebase && firebase.auth)) { finish(); return; }
+      var auth = firebase.auth();
+      if (auth.currentUser) { noteCoreAuthState(auth.currentUser); finish(); return; }
+      var unsub = auth.onAuthStateChanged(function(u) {
+        noteCoreAuthState(u);
+        try { unsub && unsub(); } catch(e) {}
+        finish();
+      }, function() { finish(); });
+      setTimeout(finish, CORE_AUTH_TIMEOUT_MS);
+    } catch(e) { finish(); }
+  });
+  return _coreAuthReadyP;
+}
+// Erkennt Rechte-/Anmeldefehler des Firebase-SDK. Bewusst eng gefasst:
+// Netzfehler (Failed to fetch, Timeout, CORS) duerfen hier NICHT hineinfallen,
+// die brauchen weiterhin den normalen Backoff.
+function isAuthDeniedError(e) {
+  var code = String((e && e.code) || '').toLowerCase();
+  var msg = String((e && e.message) || e || '').toLowerCase();
+  if (code.indexOf('permission_denied') >= 0 || code.indexOf('permission-denied') >= 0) return true;
+  if (code.indexOf('unauthenticated') >= 0 || code.indexOf('unauthorized') >= 0) return true;
+  if (code.indexOf('auth/') === 0) return true;
+  if (msg.indexOf('permission_denied') >= 0 || msg.indexOf('permission denied') >= 0) return true;
+  return false;
+}
+// Fehlende Anmeldung ist KEIN Netzfehler: kein Backoff setzen, sonst sperrt
+// sich der Rechner die spaeter eintreffende Anmeldung selbst aus.
+function rememberCoreAuthRequired(provider) {
+  if (_cloudHealth[provider]) {
+    _cloudHealth[provider].lastStatus = 401;
+    _cloudHealth[provider].lastError = 'auth_required';
+    persistCloudHealth();
+  }
+  try {
+    if (APP && APP.state && APP.state.storage) {
+      APP.state.storage.status = 'auth_required';
+      APP.state.storage.message = 'Anmeldung erforderlich — Daten nicht synchronisiert';
+    }
+    if (typeof updateSyncChip === 'function') updateSyncChip();
+  } catch(e) {}
+}
+window.coreAuthReady = coreAuthReady;
+
 // Firebase Realtime Database (RTDB): nicht CORS-geblockt, kein ~5-MB-Limit.
-// Verfügbar, sobald das Firebase-SDK geladen ist und nicht explizit deaktiviert.
+// Verfuegbar, wenn das SDK geladen ist, RTDB nicht abgeschaltet wurde UND
+// nicht feststeht, dass niemand angemeldet ist.
 function isRtdbCloudAvailable() {
   try {
     if (APP?.state?.settings?.storage?.rtdbSync === false) return false;
-    return !!(window.firebase && firebase.app);
+    if (!(window.firebase && firebase.app)) return false;
+    // Der tatsaechliche Anmeldezustand zaehlt mit: ist er geklaert und es gibt
+    // keinen Nutzer, ist appStore unter "auth != null" nicht erreichbar.
+    if (_coreAuthResolved && !coreAuthCurrentUser()) return false;
+    return true;
   } catch(e) { return false; }
 }
 // Bevorzugter Cloud-Provider für den App-Datensatz. Dauerhafte Speicherung
@@ -6733,6 +6832,13 @@ function rtdbDbRef(path) {
 }
 async function rtdbJsonGet(key, options = {}) {
   if (!shouldTryCloudProvider('rtdb', options)) return { ok: false, skipped: true, provider: 'rtdb' };
+  // Erst anmelden lassen, dann lesen. Ohne Nutzer gar nicht erst anfragen —
+  // ein permission_denied wurde unten im catch stumm verschluckt.
+  const _gate = await coreAuthReady();
+  if (!_gate.user) {
+    rememberCoreAuthRequired('rtdb');
+    return { ok: false, authRequired: true, reason: 'auth_required', provider: 'rtdb' };
+  }
   const path = RTDB_NODE + '/' + rtdbNodeKey(key);
   try {
     let wrap = null;
@@ -6756,12 +6862,27 @@ async function rtdbJsonGet(key, options = {}) {
     rememberCloudSuccess('rtdb');
     return { ok: true, data, provider: 'rtdb' };
   } catch(e) {
+    // permission_denied des SDK hat keinen HTTP-Status und wurde bisher wie
+    // ein beliebiger Fehler behandelt: generischer Backoff, keine Meldung —
+    // und anschliessend fiel der Abgleich auf den Firebase-Storage-Schatten.
+    if (isAuthDeniedError(e)) {
+      rememberCoreAuthRequired('rtdb');
+      return { ok: false, authRequired: true, reason: 'permission_denied', error: e, provider: 'rtdb' };
+    }
     rememberCloudFailure('rtdb', { error: e });
     return { ok: false, error: e, provider: 'rtdb' };
   }
 }
 async function rtdbJsonPut(key, data, options = {}) {
   if (!shouldTryCloudProvider('rtdb', options)) return { ok: false, skipped: true, provider: 'rtdb' };
+  // Ohne Nutzer nicht schreiben. Ein Schreibvorgang, dem kein erfolgreicher
+  // Lesevorgang vorausging, ist genau der Weg, auf dem fremde Aenderungen
+  // verschwinden.
+  const _gate = await coreAuthReady();
+  if (!_gate.user) {
+    rememberCoreAuthRequired('rtdb');
+    return { ok: false, authRequired: true, reason: 'auth_required', provider: 'rtdb' };
+  }
   let payload = data;
   try {
     if (typeof options.mergeFn === 'function') {
@@ -6794,6 +6915,12 @@ async function rtdbJsonPut(key, data, options = {}) {
     rememberCloudSuccess('rtdb');
     return { ok: true, status: 200, provider: 'rtdb', data: payload };
   } catch(e) {
+    // Gilt auch fuer einen Fehler aus der Transaktion: der wird hierher
+    // durchgereicht.
+    if (isAuthDeniedError(e)) {
+      rememberCoreAuthRequired('rtdb');
+      return { ok: false, authRequired: true, reason: 'permission_denied', error: e, provider: 'rtdb' };
+    }
     rememberCloudFailure('rtdb', { error: e });
     return { ok: false, error: e, provider: 'rtdb' };
   }
@@ -6805,23 +6932,54 @@ function getCloudProviderOrder(preferProvider) {
   order.push('rtdb', 'firebase');
   return Array.from(new Set(order));
 }
+// Der Kern-Datensatz haengt an der RTDB. Faellt RTDB mangels Anmeldung aus,
+// wird isRtdbCloudAvailable() false, primaryCloudProvider() liefert 'firebase'
+// — und der Abgleich las den Firebase-Storage-SCHATTEN. Der ist bis zu 45 s
+// alt und wird nur vom Rechner geschrieben: der markerlose Altstand galt
+// dann als "erfolgreich gelesen". Deshalb gatet der Kernschluessel selbst,
+// VOR jeder Provider-Auswahl.
+function isCoreDataKey(key) {
+  try { return key === (APP.state.settings?.storage?.blobKey || 'app-data.json'); } catch(e) { return false; }
+}
+async function coreKeyAuthGate(key) {
+  if (!isCoreDataKey(key)) return null;
+  const gate = await coreAuthReady();
+  if (gate.user) return null;
+  rememberCoreAuthRequired('rtdb');
+  return { ok: false, authRequired: true, reason: 'auth_required', provider: 'rtdb' };
+}
 async function remoteGetByKey(key, options = {}) {
+  const _blocked = await coreKeyAuthGate(key);
+  if (_blocked) return _blocked;
   if (!hasAnyCloudProviderAvailable(options)) return { ok: false, skipped: true, reason: 'no_provider' };
   let last = null;
+  let authRequired = false;
   for (const provider of getCloudProviderOrder(options.preferProvider)) {
     if (!shouldTryCloudProvider(provider, options)) continue;
     const res = provider === 'rtdb' ? await rtdbJsonGet(key, options)
       : provider === 'firebase' ? await firebaseJsonGet(key, options)
       : await netlifyBlobGet(key, options);
     if (res.ok) return res;
+    if (res.authRequired) {
+      // Beim Kernschluessel NICHT weiterlaufen: ein Storage-Schatten wuerde
+      // sonst einen veralteten Stand als Erfolg zurueckmelden.
+      if (isCoreDataKey(key)) return res;
+      authRequired = true;
+    }
     last = res;
     if (res.status === 412) return res;
   }
-  return last || { ok: false, reason: 'unavailable' };
+  // Fehlende Anmeldung nach oben sichtbar machen — sie ist kein Netzfehler
+  // und braucht eine andere Meldung als "offline".
+  if (last && authRequired) last.authRequired = true;
+  return last || { ok: false, reason: 'unavailable', authRequired };
 }
 async function remotePutByKey(key, data, options = {}) {
+  const _blocked = await coreKeyAuthGate(key);
+  if (_blocked) return _blocked;
   if (!hasAnyCloudProviderAvailable(options)) return { ok: false, skipped: true, reason: 'no_provider' };
   let last = null;
+  let authRequired = false;
   for (const provider of getCloudProviderOrder(options.preferProvider)) {
     if (!shouldTryCloudProvider(provider, options)) continue;
     const res = provider === 'rtdb' ? await rtdbJsonPut(key, data, options)
@@ -6847,10 +7005,15 @@ async function remotePutByKey(key, data, options = {}) {
       }
       return res;
     }
+    if (res.authRequired) {
+      if (isCoreDataKey(key)) return res;
+      authRequired = true;
+    }
     last = res;
     if (res.status === 412) return res;
   }
-  return last || { ok: false, reason: 'failed' };
+  if (last && authRequired) last.authRequired = true;
+  return last || { ok: false, reason: 'failed', authRequired };
 }
 window.addEventListener('unhandledrejection', function(ev) {
   const msg = String(ev?.reason?.message || ev?.reason || '');
@@ -10630,6 +10793,64 @@ window.addEventListener('storage', (ev) => {
 
 let _initProtectionUntil = 0; // Prevents sync from overwriting data right after load
 
+// Wurde der Serverstand in dieser Sitzung mindestens EINMAL erfolgreich
+// gelesen? Solange nicht, darf nichts automatisch hochgeladen werden: ein
+// Push aus einem nie abgeglichenen Stand loescht fremde Aenderungen.
+var _coreReadOk = false;
+function markCoreReadOk() { _coreReadOk = true; }
+function coreReadOk() { return _coreReadOk; }
+window.coreReadOk = coreReadOk;
+
+// Nachgeholter Kern-Abgleich, wenn die Anmeldung ERST NACH einem
+// gescheiterten Startlesevorgang eintrifft. Bewusst NUR lesen, mergen, lokal
+// sichern und neu zeichnen — KEIN Push. Laeuft hoechstens einmal pro Sitzung.
+var _authResyncDone = false;
+async function resyncAfterAuth(reason) {
+  if (_authResyncDone) return { ok: false, reason: 'already_done' };
+  if (_coreReadOk) return { ok: false, reason: 'read_already_ok' };
+  if (!coreAuthCurrentUser()) return { ok: false, reason: 'no_user' };
+  if (isManualTransferMode()) return { ok: false, reason: 'manual_mode' };
+  _authResyncDone = true;
+  console.log('[Sync] Anmeldung nachgetragen (' + (reason || 'auth') + ') — Kern-Abgleich wird einmalig nachgeholt (nur lesen).');
+  // Der Backoff stammt aus den Fehlversuchen VOR der Anmeldung und waere jetzt
+  // gegenstandslos.
+  try { resetCloudSyncHealth('rtdb'); resetCloudSyncHealth('firebase'); } catch(e) {}
+  try {
+    const result = await remoteGet({ force: true });
+    if (!result.ok || !result.data) {
+      console.warn('[Sync] Nachgeholter Abgleich fehlgeschlagen:', (result && (result.reason || result.provider)) || 'unbekannt');
+      return { ok: false, reason: 'read_failed', pushed: false };
+    }
+    APP.state.data = mergeData(APP.state.data, normalizeData(result.data));
+    try { restoreReadingHubShadowFromData(result.data); } catch(e) {}
+    try { restoreExtraLocalKeys(result.data); } catch(e) {}
+    try {
+      if (result.data._settings) {
+        APP.state.settings = mergeRemoteSettings(APP.state.settings, result.data._settings);
+        saveSettings(APP.state.settings);
+      }
+      if (result.data._uiFilters) APP.state.ui.filters = { ...APP.state.ui.filters, ...result.data._uiFilters };
+      if (result.data._uiFlags) {
+        APP.state.ui.flags = APP.state.ui.flags || {};
+        Object.assign(APP.state.ui.flags, result.data._uiFlags);
+      }
+    } catch(e) {}
+    markCoreReadOk();
+    saveLocalData();
+    try { if (typeof render === 'function') render(); } catch(e) {}
+    APP.state.storage.status = 'saved';
+    APP.state.storage.message = t('saved');
+    updateSyncChip();
+    toast('ok', 'Angemeldet', 'Daten nachgeladen und zusammengefuehrt');
+    // Bewusst KEIN Push an dieser Stelle.
+    return { ok: true, merged: true, pushed: false };
+  } catch(e) {
+    console.warn('[Sync] Nachgeholter Abgleich warf:', e);
+    return { ok: false, reason: 'threw', pushed: false };
+  }
+}
+window.resyncAfterAuth = resyncAfterAuth;
+
 async function syncFreshness(reason) {
   if (_syncFreshnessPromise) return _syncFreshnessPromise;
   _syncFreshnessPromise = (async () => {
@@ -10640,6 +10861,7 @@ async function syncFreshness(reason) {
     try {
       const result = await remoteGet();
       if (!result.ok || !result.data) return false;
+      markCoreReadOk();
 
       const remoteTs = new Date(result.data.meta?.updatedAt || 0).getTime();
       const localTs = new Date(APP.state.data?.meta?.updatedAt || 0).getTime();
@@ -10739,6 +10961,7 @@ async function pullAndMergeBeforeSave(reason) {
       const result = await remoteGet({ force: true });
       _lastRemoteCheckAt = Date.now();
       if (!result.ok || !result.data) return { ok: true, merged: false, reason: 'no_remote' };
+      markCoreReadOk();
 
       const myDevice = getOrCreateDeviceId();
       const remoteDevice = result.data?.meta?.lastSavedBy || '';
@@ -12870,6 +13093,17 @@ async function doSave(silent = false) {
   saveLocalData();
 
   const forceRemote = !silent;
+  // Kein automatischer Push, solange der Serverstand in dieser Sitzung noch
+  // nie erfolgreich gelesen wurde. Vorher wurde nach einem gescheiterten
+  // Startlesevorgang trotzdem hochgeladen — der Rechner ersetzte damit einen
+  // Stand, den er nie gesehen hatte. Manuelles Speichern bleibt erlaubt.
+  if (!forceRemote && !_coreReadOk) {
+    APP.state.storage.status = APP.state.storage.status === 'auth_required' ? 'auth_required' : 'offline';
+    if (APP.state.storage.status !== 'auth_required') APP.state.storage.message = 'Lokal gespeichert — kein Serverstand gelesen';
+    updateSyncChip();
+    APP.state.storage._saving = false;
+    return { ok: false, reason: 'no_successful_read', pushed: false };
+  }
   if (!forceRemote && !isAutoSyncEnabled()) {
     APP.state.storage.status = "saved";
     APP.state.storage.message = t("saved");
@@ -12986,16 +13220,18 @@ function updateSyncChip() {
   const s = APP.state.storage.status;
   const statusLabels = getLang() === "en" ? {
     idle: "Ready", dirty: "Unsaved", saving: "Syncing...",
-    saved: "Saved", error: "Error", conflict: "Conflict", offline: "Offline"
+    saved: "Saved", error: "Error", conflict: "Conflict", offline: "Offline",
+    auth_required: "Sign-in required"
   } : {
     idle: "Bereit", dirty: "Ungespeichert", saving: "Speichere...",
-    saved: "Gespeichert", error: "Fehler", conflict: "Konflikt", offline: "Offline"
+    saved: "Gespeichert", error: "Fehler", conflict: "Konflikt", offline: "Offline",
+    auth_required: "Anmeldung erforderlich"
   };
   status.textContent = statusLabels[s] || s;
   chip.title = APP.state.storage.message || status.textContent;
   status.title = APP.state.storage.message || status.textContent;
   
-  chip.className = "chip " + {
+  chip.className = "chip " + ({
     idle: "",
     dirty: "warn",
     saving: "accent",
@@ -13003,7 +13239,8 @@ function updateSyncChip() {
     error: "danger",
     conflict: "warn",
     offline: "warn",
-  }[s];
+    auth_required: "danger",
+  }[s] || "");
 }
 
 // ============================================================================
@@ -63377,6 +63614,7 @@ async function init() {
     try { /* sync block */
       const result = await remoteGet();
       if (result.ok && result.data) {
+        markCoreReadOk();
         const remoteTs = new Date(result.data.meta?.updatedAt || 0).getTime();
         const localTs = new Date(APP.state.data?.meta?.updatedAt || 0).getTime();
         const localCount = countEntities(APP.state.data);
@@ -63429,12 +63667,28 @@ async function init() {
           updateSyncChip();
         }
       } else {
-        APP.state.storage.status = "offline";
-        console.log("Remote load failed, using local data");
+        // Fehlende Anmeldung ist etwas anderes als "offline" und braucht eine
+        // eigene, sichtbare Meldung. Vorher stand hier nur ein console.log.
+        if (result && result.authRequired) {
+          APP.state.storage.status = "auth_required";
+          APP.state.storage.message = "Anmeldung erforderlich — Daten nicht synchronisiert";
+          console.warn('[Sync] Kein Firebase-Nutzer angemeldet — appStore ist unter der Regel "auth != null" nicht lesbar. ' +
+                       'Der lokale Stand wird angezeigt und NICHT hochgeladen. Anmeldung: Drive-Modul, "Mit Google anmelden".');
+          toast("warn", "Anmeldung erforderlich", "Daten werden nicht synchronisiert");
+        } else {
+          APP.state.storage.status = "offline";
+          APP.state.storage.message = "Lokaler Stand — Server nicht erreichbar";
+          console.warn('[Sync] Serverstand nicht gelesen (' +
+                       ((result && (result.reason || result.provider)) || 'unbekannt') +
+                       ') — lokaler Stand wird angezeigt, kein automatischer Push.');
+        }
+        updateSyncChip();
       }
     } catch (e) {
       console.warn("Remote load failed:", e);
       APP.state.storage.status = "offline";
+      APP.state.storage.message = "Lokaler Stand — Server nicht erreichbar";
+      updateSyncChip();
     }
   } else {
     APP.state.storage.status = "offline";
@@ -63442,10 +63696,11 @@ async function init() {
   
   // After startup sync is complete, push merged data to remote if needed
   _initProtectionUntil = 0;
-  // Only push if local data actually has entities (avoid wiping remote)
-  if (navigator.onLine && countEntities(APP.state.data) > 0 && APP.state.storage.status !== "saved") {
-    try { await doSave(true); } catch(e) {}
-  }
+  // Frueher stand hier ein automatischer doSave(true). Er lief GENAU DANN,
+  // wenn der Startlesevorgang gescheitert war (status "offline") — und lud den
+  // ungeprueften lokalen Stand hoch. Genau so verschwanden Aenderungen anderer
+  // Geraete. Ersatzlos entfernt: nach einem Lesefehler wird nicht gepusht.
+  // Kommt die Anmeldung nach, holt resyncAfterAuth() den Abgleich lesend nach.
   
   // Listen for online/offline events
   window.addEventListener("online", async () => {
