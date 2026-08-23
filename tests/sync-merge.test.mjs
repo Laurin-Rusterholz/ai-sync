@@ -135,4 +135,135 @@ const mergeData = loadMergeData();
   ok(/key\.startsWith\('_'\)/.test(src), "Transportfelder werden im Auffangzweig nicht ausgenommen");
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Leere Wurzelfelder ueberleben den Abgleich
+ *
+ * Bereiche MIT eigenem Merge-Zweig sind vom Auffangzweig ausgenommen (sie
+ * stehen im handled-Set). Prueft so ein Zweig auf ein UNTERfeld — weekPlan auf
+ * .days — oder schlicht auf Wahrheit — dayEnded —, faellt ein leerer bzw.
+ * falsy Remote-Wert doppelt durch: der eigene Zweig greift nicht, und der
+ * Auffangzweig sieht ihn nicht.
+ *
+ * Live gemessen: der Rechner schrieb den kanonischen Datensatz mit 54 statt 55
+ * Wurzelfeldern zurueck. Verloren ging weekPlan — exakt {}, zwei JSON-Bytes.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+// Das kanonische Wurzelschema kommt aus emptyData() selbst, damit der Test
+// mitwaechst, wenn ein Bereich dazukommt.
+function ladeEmptyData() {
+  const start = index.indexOf("function emptyData() {");
+  const end = index.indexOf("\nfunction ", start + 10);
+  ok(start > 0 && end > start, "emptyData() wurde in index.html nicht gefunden");
+  return new Function("SCHEMA_VERSION", "nowIso",
+    index.slice(start, end) + "\nreturn emptyData;")(2, () => "2026-01-01T00:00:00.000Z")();
+}
+
+// Der leere bzw. falsy Schemawert zu einem Musterwert.
+function leerWie(wert) {
+  if (Array.isArray(wert)) return [];
+  if (wert && typeof wert === "object") return {};
+  if (typeof wert === "boolean") return false;
+  if (typeof wert === "number") return 0;
+  if (typeof wert === "string") return "";
+  return null;
+}
+
+// ── 1. weekPlan = {} ueberlebt, auch wenn es lokal fehlt ──────────────────
+{
+  const local = { entities: { tasks: {} } };                    // KEIN weekPlan
+  const remote = { entities: { tasks: {} }, weekPlan: {} };
+  const m = mergeData(local, remote);
+  ok(Object.prototype.hasOwnProperty.call(m, "weekPlan"),
+    "ein leeres weekPlan der Gegenseite verschwindet — genau der 55->54-Verlust");
+  ok(JSON.stringify(m.weekPlan) === "{}", `weekPlan wurde veraendert: ${JSON.stringify(m.weekPlan)}`);
+}
+
+// ── 2. falsy dayEnded ueberlebt den Zyklus ────────────────────────────────
+{
+  for (const wert of [false, 0, ""]) {
+    const local = { entities: { tasks: {} } };                  // KEIN dayEnded
+    const remote = { entities: { tasks: {} }, dayEnded: wert };
+    const m = mergeData(local, remote);
+    ok(Object.prototype.hasOwnProperty.call(m, "dayEnded"),
+      `dayEnded = ${JSON.stringify(wert)} ueberlebt den Abgleich nicht`);
+    ok(m.dayEnded === wert,
+      `dayEnded wurde von ${JSON.stringify(wert)} auf ${JSON.stringify(m.dayEnded)} veraendert`);
+  }
+  // Ein wahrer Wert wird weiterhin vom eigenen Zweig uebernommen.
+  const m2 = mergeData({ entities: { tasks: {} } },
+                       { entities: { tasks: {} }, dayEnded: "2026-08-23" });
+  ok(m2.dayEnded === "2026-08-23", "der bestehende dayEnded-Zweig wurde veraendert");
+}
+
+// ── 3. Der nichtleere weekPlan-Merge bleibt unveraendert ──────────────────
+{
+  const local = {
+    entities: { tasks: {} },
+    weekPlan: { days: { mo: { tasks: ["a"] } }, generatedAt: "2026-08-01" },
+  };
+  const remote = {
+    entities: { tasks: {} },
+    weekPlan: { days: { mo: { tasks: ["b"] }, di: { tasks: ["c"] } }, generatedAt: "2026-08-20" },
+  };
+  const m = mergeData(local, remote);
+  ok(m.weekPlan.days.mo.tasks.sort().join(",") === "a,b",
+    `die Aufgaben eines Tages werden nicht mehr vereinigt: ${JSON.stringify(m.weekPlan.days.mo.tasks)}`);
+  ok(m.weekPlan.days.di.tasks.join(",") === "c", "ein nur remote vorhandener Tag geht verloren");
+  ok(m.weekPlan.generatedAt === "2026-08-20", "der neuere generatedAt-Zeitstempel gewinnt nicht mehr");
+}
+
+// ── 4. Schemaweit: JEDES Wurzelfeld ueberlebt seinen leeren Schemawert ────
+// Prueft die Klasse, nicht nur die zwei bekannten Faelle.
+{
+  const schema = ladeEmptyData();
+  const wurzeln = Object.keys(schema).filter((k) => !k.startsWith("_"));
+  ok(wurzeln.length > 20, `das Wurzelschema wirkt zu klein (${wurzeln.length} Felder)`);
+
+  const remote = { entities: { tasks: {} } };
+  for (const k of wurzeln) {
+    if (k === "entities") continue;                 // bleibt der Traeger des Merges
+    const leer = leerWie(schema[k]);
+    if (leer === null) continue;                    // kein sinnvoller Leerwert
+    remote[k] = leer;
+  }
+  const local = { entities: { tasks: {} } };        // lokal existiert KEINES davon
+  const m = mergeData(local, remote);
+
+  const fehlend = Object.keys(remote).filter(
+    (k) => !Object.prototype.hasOwnProperty.call(m, k));
+  ok(fehlend.length === 0,
+    `diese Wurzelfelder ueberleben ihren leeren Schemawert nicht: ${fehlend.join(", ")}`);
+
+  const remoteWurzeln = Object.keys(remote).filter((k) => !k.startsWith("_")).length;
+  const mergedWurzeln = Object.keys(m).filter((k) => !k.startsWith("_")).length;
+  ok(mergedWurzeln >= remoteWurzeln,
+    `die Zahl der Wurzelfelder ist gesunken: ${remoteWurzeln} -> ${mergedWurzeln}`);
+}
+
+// ── 5. Das Netz ueberschreibt nie einen bereits gemergten Wert ────────────
+{
+  const local = { entities: { tasks: {} }, weekPlan: { days: { mo: { tasks: ["lokal"] } } } };
+  const remote = { entities: { tasks: {} }, weekPlan: {} };
+  const m = mergeData(local, remote);
+  ok(m.weekPlan.days.mo.tasks.join(",") === "lokal",
+    "ein leerer Remote-Wert ueberschreibt den lokalen Stand");
+}
+
+// ── 6. Quelltextregeln ───────────────────────────────────────────────────
+{
+  const src = index.slice(index.indexOf("function mergeData(local, remote) {"),
+                          index.indexOf("\nfunction ", index.indexOf("function mergeData(local, remote) {") + 10));
+  ok(/Sicherheitsnetz: kein Wurzelfeld darf still verschwinden/.test(src),
+    "das Sicherheitsnetz fehlt");
+  ok(src.indexOf("Sicherheitsnetz: kein Wurzelfeld") > src.indexOf("// ── Meta ──"),
+    "das Sicherheitsnetz steht vor dem Meta-Block und wuerde ueberschrieben");
+  ok(/hasOwnProperty\.call\(merged, key\)/.test(src),
+    "das Netz prueft nicht auf einen bereits vorhandenen Schluessel");
+  ok(/if \(remote\.weekPlan && remote\.weekPlan\.days\)/.test(src),
+    "der bestehende weekPlan-Zweig wurde veraendert");
+  ok(/'weekPlanningMatrix', 'dailyBriefing', 'dayEnded', 'recallLabData',/.test(src),
+    "das handled-Set wurde veraendert");
+}
+
 console.log(`sync merge: ok (${checks} Pruefungen)`);

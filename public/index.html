@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -11795,7 +11795,29 @@ function mergeData(local, remote) {
       }
     } catch(e) { console.warn('RecallLab merge:', e); }
   }
-  
+
+  // ── Sicherheitsnetz: kein Wurzelfeld darf still verschwinden ─────────────
+  // Bereiche MIT eigenem Zweig sind vom Auffang-Merge oben ausgenommen (sie
+  // stehen im handled-Set). Prueft so ein Zweig auf ein UNTERfeld — weekPlan
+  // auf .days — oder schlicht auf Wahrheit — dayEnded —, dann faellt ein
+  // leerer bzw. falsy Remote-Wert doppelt durch: der eigene Zweig greift
+  // nicht, und der Auffang-Merge sieht ihn nicht. Der Wrapper wurde dann ohne
+  // das Feld geschrieben. Live sank die Zahl der Wurzelfelder so von 55 auf
+  // 54; verloren ging weekPlan, das exakt {} war (2 JSON-Bytes).
+  //
+  // Diese Schleife ergaenzt AUSSCHLIESSLICH fehlende Schluessel und
+  // ueberschreibt nie einen bereits gemergten Wert. Das handled-Set bleibt
+  // unangetastet, und jeder vorhandene Zweig behaelt seine Zusammenfuehrung.
+  // Transportfelder mit fuehrendem _ bleiben aussen vor: _settings,
+  // _extraLocal und _deleteLog haben eigene Wege (restoreExtraLocalKeys,
+  // mergeAndPersistDeleteLog) und werden beim Push neu gebaut.
+  for (const key of Object.keys(remote || {})) {
+    if (key.startsWith('_')) continue;
+    if (!Object.prototype.hasOwnProperty.call(merged, key)) {
+      merged[key] = remote[key];
+    }
+  }
+
   return normalizeData(merged);
 }
 
