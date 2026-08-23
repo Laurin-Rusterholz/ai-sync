@@ -39,7 +39,10 @@ function cutInbox() {
 const INBOX_SRC = cutInbox();
 
 const DEPS = [
-  "window", "console", "Date",
+  // APP zusaetzlich zu window: plResolveStore greift im Direktmap-Zweig auf das
+  // globale APP zu, nicht auf window.APP. Im Browser ist das dieselbe Bindung,
+  // in der Attrappe waere es sonst ein verschluckter ReferenceError.
+  "window", "APP", "console", "Date",
   "POLARIS_BLOCKED_TYPES", "POLARIS_INBOX_CONTROL", "POLARIS_SENSITIVE_RE",
   "POLARIS_TYPE_MAP", "POLARIS_CANON_TYPES", "plSettings", "plParseTs", "plTypeLabel",
   "plScheduleSave", "plInboxActivity", "plDbSet", "plDbRef",
@@ -69,7 +72,7 @@ function makeClaimStore() {
 // zwei Attrappen zufaellig dieselbe Id und der Wiederanlauf-Test (C) waere
 // gegenstandslos.
 let _uuidZaehler = 0;
-function harness({ notes = {}, inboxMap = {}, deviceId = "dev_frisch_profil", claim = null, daten = null } = {}) {
+function harness({ notes = {}, inboxMap = {}, deviceId = "dev_frisch_profil", claim = null, daten = null, canon = ["note"] } = {}) {
   const c = claim || makeClaimStore();
   const log = { createEntity: [], updateEntity: [], activity: [], saves: 0 };
   const settings = { inboxMap };
@@ -80,20 +83,25 @@ function harness({ notes = {}, inboxMap = {}, deviceId = "dev_frisch_profil", cl
     createEntity: (kind, data, forcedId) => {
       const id = (typeof forcedId === "string" && forcedId) ? forcedId : ("uuid-" + (++_uuidZaehler));
       log.createEntity.push({ kind, id, data });
-      notes[id] = Object.assign({ id, createdAt: "neu", updatedAt: "neu" }, data);
+      // wie das echte createEntity seit dem Prototyp-Fix: defineProperty,
+      // damit auch die Id "__proto__" eine EIGENE Eigenschaft wird
+      Object.defineProperty(notes, id, { value: Object.assign({ id, createdAt: "neu", updatedAt: "neu" }, data),
+        writable: true, enumerable: true, configurable: true });
       return id;
     },
-    updateEntity: (kind, id, data) => { log.updateEntity.push({ kind, id, data }); Object.assign(notes[id], data); },
+    updateEntity: (kind, id, data) => { log.updateEntity.push({ kind, id, data });
+      const ziel = Object.prototype.hasOwnProperty.call(notes, id) ? notes[id] : null;
+      if (ziel) Object.assign(ziel, data); },
     nowIso: () => "2026-08-23T20:26:57.950Z",
     render: () => {},
   };
   const api = new Function(...DEPS, INBOX_SRC +
     "\nreturn { plInboxDecide, plInboxApply, plInboxClaim, inFlight: _plInboxInFlight, owner: plInboxOwner };")(
-    win, { log() {}, warn() {}, error: (...a) => { if (process.env.PL_DEBUG) console.error("  [inbox]", ...a); } }, Date,
+    win, win.APP, { log() {}, warn() {}, error: (...a) => { if (process.env.PL_DEBUG) console.error("  [inbox]", ...a); } }, Date,
     new Set(["password", "vault"]),
     JSON.parse(JSON.stringify(["op","ts","updatedAt","createdAt","processedAt","processedBy","id","inboxId","claim"])),
     /password|passwort|secret|token/i,
-    { note: { kind: "note" } }, new Set(["note"]), () => settings,
+    { note: { kind: "note" } }, new Set(canon), () => settings,
     (v) => (v == null ? 0 : (typeof v === "number" ? v : Date.parse(v) || 0)),
     () => "Notiz",
     () => { log.saves++; }, (...a) => log.activity.push(a),
@@ -387,5 +395,241 @@ const spiegel = (id, titel, ts) => ({
      /const dev = \(typeof window\.getOrCreateDeviceId/.test(apply),
     "processedBy nutzt nicht mehr die stabile Geraete-Id");
 }
+
+// ── P. Prototyp-Schluessel als Entitaets-Id ─────────────────────────────
+// polaris/inbox ist derzeit ohne Anmeldung beschreibbar (F-02), und RTDB
+// erlaubt "__proto__" als Kindschluessel. Zwei getrennte Loecher:
+//   SCHREIBEN  map["__proto__"] = entity legt keine Entitaet an, sondern
+//              tauscht den Prototyp der Map. hasOwnProperty false, Object.keys
+//              leer — der Datensatz existiert nicht.
+//   LESEN      map["toString"] liefert die geerbte Funktion, also truthy. Der
+//              Aufrufer haelt sie fuer eine bestehende Entitaet und der
+//              Update-Pfad legt danach ein Object.assign auf
+//              Object.prototype.toString — ab da sieht JEDES Objekt der App
+//              die fremden Felder.
+const PROTO_IDS = ["__proto__", "constructor", "toString"];
+const protoUnberuehrt = () => PROTO_IDS.every((k) =>
+  !Object.prototype.hasOwnProperty.call(Object.prototype[k] || {}, "title"));
+
+for (const BOES of PROTO_IDS) {
+  const eintrag = (titel, ts) => ({
+    id: BOES, title: titel, op: "update", ts: Date.parse(ts), updatedAt: ts, source: "quantus-tablet",
+  });
+
+  // P1 — frisches Geraet, leerer Index: erzeugen, aber prototypsicher
+  const notes = {};
+  const h = harness({ notes, inboxMap: {} });
+  const protoVorher = Object.getPrototypeOf(notes);
+  await h.api.plInboxApply("note", BOES, eintrag("Erst", "2026-08-23T20:00:00.000Z"));
+
+  ok(Object.getPrototypeOf(h.notes) === protoVorher,
+    `Id "${BOES}": der Prototyp der Entitaetskarte wurde ausgetauscht`);
+  ok(Object.prototype.hasOwnProperty.call(h.notes, BOES),
+    `Id "${BOES}": es entstand keine EIGENE Eigenschaft (hasOwnProperty false)`);
+  ok(Object.keys(h.notes).includes(BOES),
+    `Id "${BOES}": Object.keys enthaelt die Id nicht — der Datensatz waere unsichtbar`);
+  ok(Object.keys(h.notes).length === 1,
+    `Id "${BOES}": ${Object.keys(h.notes).length} eigene Entitaeten statt genau einer`);
+  ok(h.notes[BOES] && h.notes[BOES].title === "Erst",
+    `Id "${BOES}": die Entitaet traegt den Titel nicht`);
+  ok(h.log.createEntity.length === 1 && h.log.updateEntity.length === 0,
+    `Id "${BOES}": ein geerbtes Object.prototype-Mitglied wurde als bestehende Entitaet gelesen ` +
+    `(create=${h.log.createEntity.length}, update=${h.log.updateEntity.length})`);
+  ok(protoUnberuehrt(),
+    `Id "${BOES}": Object.prototype wurde beschrieben — Pollution ueber den Update-Pfad`);
+
+  // P2 — zweiter Verbraucher, eigener leerer Index, gemeinsamer Datenstand:
+  //      idempotent, also aktualisieren statt eine zweite Entitaet anlegen
+  const claim2 = makeClaimStore();
+  const h2 = harness({ notes: h.notes, inboxMap: {}, deviceId: "dev_zweit", claim: claim2 });
+  await h2.api.plInboxApply("note", BOES, eintrag("Zweit", "2026-08-23T21:00:00.000Z"));
+
+  ok(h2.log.createEntity.length === 0,
+    `Id "${BOES}": der zweite Verbraucher legte eine Kopie an`);
+  ok(Object.keys(h2.notes).length === 1,
+    `Id "${BOES}": nach dem Wiederanlauf ${Object.keys(h2.notes).length} Entitaeten`);
+  ok(h2.notes[BOES].title === "Zweit",
+    `Id "${BOES}": der neuere Stand kam nicht an`);
+  ok(Object.getPrototypeOf(h2.notes) === protoVorher && protoUnberuehrt(),
+    `Id "${BOES}": der Wiederanlauf veraenderte einen Prototyp`);
+
+  // P3 — geerbter Name NIE als bestehende Entitaet, auch nicht ueber den Index
+  const h3 = harness({ notes: {}, inboxMap: { ["note/" + BOES]: BOES } });
+  await h3.api.plInboxApply("note", BOES, eintrag("Dritt", "2026-08-23T22:00:00.000Z"));
+  ok(h3.log.updateEntity.length === 0,
+    `Id "${BOES}": ein Index-Eintrag auf eine NICHT vorhandene Entitaet fuehrte zu einem Update ` +
+    `auf ein geerbtes Mitglied`);
+  ok(Object.keys(h3.notes).length === 1 && protoUnberuehrt(),
+    `Id "${BOES}": ueber den Index entstand kein sauberer eigener Datensatz`);
+}
+
+// P4 — die normale Tablet-Id verhaelt sich unveraendert
+{
+  const notes = { [LONDON]: { id: LONDON, title: TITEL_ALT, updatedAt: "2026-08-23T20:14:00.000Z" } };
+  const h = harness({ notes, inboxMap: {} });
+  await h.api.plInboxApply("note", LONDON, spiegel(LONDON, TITEL_NEU, "2026-08-23T20:26:57.950Z"));
+  ok(h.log.createEntity.length === 0 && h.log.updateEntity.length === 1,
+    "die normale Tablet-Id wird nicht mehr exakt aktualisiert");
+  ok(h.log.updateEntity[0].id === LONDON && h.notes[LONDON].title === TITEL_NEU,
+    "die bestehende Notiz wurde nicht getroffen");
+  ok(Object.keys(h.notes).length === 1, "aus einer Notiz wurden mehrere");
+}
+
+// P5 — "__proto__" als FELDname der Nutzlast wird nicht uebernommen.
+// Object.assign(ziel, data) benutzt [[Set]] und wuerde damit den Prototyp des
+// Ziels tauschen statt ein Feld zu setzen.
+{
+  const notes = {};
+  const h = harness({ notes, inboxMap: {} });
+  const nutzlast = JSON.parse('{"id":"feld-1","title":"Harmlos","op":"update","ts":1,' +
+    '"updatedAt":"2026-08-23T20:00:00.000Z","__proto__":{"polluted":true}}');
+  await h.api.plInboxApply("note", "feld-1", nutzlast);
+  const e = h.notes["feld-1"];
+  ok(e && Object.getPrototypeOf(e) === Object.prototype,
+    "der Prototyp der erzeugten Entitaet wurde ueber ein Nutzlast-Feld getauscht");
+  ok(({}).polluted === undefined, "Object.prototype traegt jetzt ein Feld aus der Nutzlast");
+  ok(!Object.prototype.hasOwnProperty.call(e, "__proto__"),
+    "das Feld __proto__ wurde in die Entitaet uebernommen");
+}
+
+// P5b — DIREKTMAP-Zweig (store.viaApi === false). Dort schreibt und liest
+// plInboxApply ohne Umweg ueber createEntity/updateEntity; genau in diesem
+// Zweig stand vorher Object.assign(store.map["toString"], data) — ein
+// Object.assign auf Object.prototype.toString, sichtbar fuer die ganze App.
+{
+  const DIREKT = "idee";   // kanonisch, aber ohne kind → e["polaris_idee"]
+  for (const BOES of PROTO_IDS) {
+    const daten = { entities: {} };
+    const h = harness({ daten, inboxMap: {}, canon: ["note", DIREKT] });
+    const eintrag = (t, ts) => ({ id: BOES, title: t, op: "update", ts: Date.parse(ts), updatedAt: ts });
+
+    await h.api.plInboxApply(DIREKT, BOES, eintrag("Erst", "2026-08-23T20:00:00.000Z"));
+    const map = daten.entities["polaris_" + DIREKT];
+    ok(map && Object.prototype.hasOwnProperty.call(map, BOES),
+      `Direktmap, Id "${BOES}": keine eigene Eigenschaft angelegt`);
+    ok(Object.keys(map).length === 1 && map[BOES].title === "Erst",
+      `Direktmap, Id "${BOES}": ${map ? Object.keys(map).length : 0} Eintraege statt genau einem`);
+    ok(Object.getPrototypeOf(map) === Object.prototype,
+      `Direktmap, Id "${BOES}": der Prototyp der Karte wurde getauscht`);
+    ok(protoUnberuehrt() && Object.keys(Object.prototype).length === 0,
+      `Direktmap, Id "${BOES}": Object.prototype wurde beschrieben`);
+
+    // zweiter Durchlauf auf demselben Stand: aktualisieren, nicht verdoppeln
+    const h2 = harness({ daten, inboxMap: {}, deviceId: "dev_zweit", claim: makeClaimStore(), canon: ["note", DIREKT] });
+    await h2.api.plInboxApply(DIREKT, BOES, eintrag("Zweit", "2026-08-23T21:00:00.000Z"));
+    ok(Object.keys(map).length === 1 && map[BOES].title === "Zweit",
+      `Direktmap, Id "${BOES}": der Wiederanlauf war nicht idempotent`);
+    ok(protoUnberuehrt(), `Direktmap, Id "${BOES}": der Wiederanlauf beschrieb Object.prototype`);
+  }
+}
+
+// P6 — Quelltextregeln: kein roher Map-Zugriff mehr auf diesem Pfad
+{
+  const apply = INBOX_SRC.slice(INBOX_SRC.indexOf("async function plInboxApply"));
+  ok(/Object\.prototype\.hasOwnProperty\.call\(map, id\)/.test(INBOX_SRC),
+    "plOwn prueft nicht auf eine eigene Eigenschaft");
+  ok(/Object\.defineProperty\(map, id, \{ value: wert, writable: true, enumerable: true, configurable: true \}\)/.test(INBOX_SRC),
+    "plSetOwn schreibt nicht prototypsicher");
+  ok(!/store\.map\[(appId|kandidat|newId|k)\]/.test(apply),
+    "es gibt wieder einen rohen store.map[...]-Zugriff im Apply-Pfad");
+  ok(/plOwn\(store\.map, appId\)/.test(apply) && /plOwn\(store\.map, kandidat\)/.test(apply),
+    "Index-Treffer und Kandidat laufen nicht ueber plOwn");
+  ok(/plSetOwn\(store\.map, newId,/.test(apply),
+    "die Direkterzeugung schreibt nicht ueber plSetOwn");
+  ok(/let appId = plOwnStr\(s\.inboxMap, mapKey\);/.test(apply),
+    "der Index wird nicht als eigene Eigenschaft gelesen");
+  ok(/if \(k === "__proto__"\) return;/.test(INBOX_SRC),
+    "plInboxScrub laesst __proto__ als Feldnamen durch");
+}
+
+// ── Q. Kern-CRUD: dieselbe Semantik fuer get/update/delete ───────────────
+// createEntity, getEntity und deleteEntity liegen im Kernblock, nicht im
+// Inbox-Ausschnitt. Sie werden hier einzeln herausgeschnitten und gegen
+// Attrappen ausgefuehrt — es sind die ECHTEN Funktionen.
+{
+  const schnipsel = (name) => {
+    const a = index.indexOf("\nfunction " + name + "(");
+    ok(a > 0, `die Funktion ${name} wurde in index.html nicht gefunden`);
+    const b = index.indexOf("\n}", a) + 2;
+    return index.slice(a, b);
+  };
+  const KERN = ["ownEntity", "setOwnEntity", "getEntity", "createEntity", "updateEntity", "deleteEntity"]
+    .map(schnipsel).join("\n");
+
+  const bauen = () => {
+    const notes = {};
+    const APP = { state: { data: { entities: { notes }, meta: {}, pinnedItems: [] }, undoStack: [] } };
+    let zaehler = 0;
+    const api = new Function("APP", "getEntityMap", "uuid", "nowIso", "logActivity", "logDeletion",
+      "scheduleSave", "deepClone", "updateUndoButton", "cleanupLinks",
+      KERN + "\nreturn { getEntity, createEntity, updateEntity, deleteEntity };")(
+      APP, (k) => (k === "note" ? notes : null), () => "uuid-" + (++zaehler), () => "jetzt",
+      () => {}, () => {}, () => {}, (o) => JSON.parse(JSON.stringify(o)), () => {}, () => {});
+    return { api, notes, APP };
+  };
+
+  for (const BOES of PROTO_IDS) {
+    const { api, notes } = bauen();
+    const protoVorher = Object.getPrototypeOf(notes);
+
+    // getEntity darf ein geerbtes Mitglied nicht als Entitaet melden
+    // Ein Wurf ist genauso ein Fehlschlag wie ein falscher Rueckgabewert: auf dem
+    // Vorgaengerstand liest updateEntity die geerbte Funktion und wirft dann in
+    // deepClone (JSON.stringify einer Funktion ist undefined). Deshalb einfangen
+    // statt den Lauf abbrechen zu lassen.
+    const ruf = (f) => { try { return f(); } catch (e) { return e.constructor.name + ": " + e.message; } };
+    ok(ruf(() => api.getEntity("note", BOES)) === null,
+      `getEntity("${BOES}") meldete ein geerbtes Object.prototype-Mitglied als Entitaet`);
+    ok(ruf(() => api.updateEntity("note", BOES, { title: "VERGIFTET" })) === false,
+      `updateEntity("${BOES}") lehnte ein nicht vorhandenes Ziel nicht sauber ab`);
+    ok(ruf(() => api.deleteEntity("note", BOES)) === false,
+      `deleteEntity("${BOES}") lehnte ein geerbtes Mitglied nicht sauber ab`);
+    ok(!Object.prototype.hasOwnProperty.call(Object.prototype[BOES] || {}, "title"),
+      `Object.prototype.${BOES} wurde beschrieben`);
+
+    // createEntity legt eine eigene, aufzaehlbare Eigenschaft an
+    const id = api.createEntity("note", { title: "Echt" }, BOES);
+    ok(id === BOES, `createEntity gab "${id}" statt "${BOES}" zurueck`);
+    ok(Object.prototype.hasOwnProperty.call(notes, BOES) && Object.keys(notes).includes(BOES),
+      `createEntity("${BOES}") legte keine eigene, aufzaehlbare Eigenschaft an`);
+    ok(Object.getPrototypeOf(notes) === protoVorher, `createEntity("${BOES}") tauschte den Prototyp`);
+    ok(Object.keys(notes).length === 1, `nach createEntity ${Object.keys(notes).length} Eintraege`);
+
+    // Speichern und Neuladen erhaelt sie
+    const rt = JSON.parse(JSON.stringify(notes));
+    ok(Object.prototype.hasOwnProperty.call(rt, BOES) && Object.keys(rt).includes(BOES),
+      `nach JSON-Runde ist "${BOES}" keine eigene Eigenschaft mehr`);
+    ok(Object.getPrototypeOf(rt) === Object.prototype,
+      `die JSON-Runde tauschte den Prototyp bei "${BOES}"`);
+    ok(rt[BOES] && rt[BOES].title === "Echt", `nach der JSON-Runde fehlt der Inhalt von "${BOES}"`);
+
+    // und ab jetzt greifen get/update/delete darauf
+    ok(api.getEntity("note", BOES) === notes[BOES], `getEntity findet die eigene Entitaet "${BOES}" nicht`);
+    ok(api.updateEntity("note", BOES, { title: "Neu" }) === true && notes[BOES].title === "Neu",
+      `updateEntity trifft die eigene Entitaet "${BOES}" nicht`);
+    ok(api.deleteEntity("note", BOES) === true && !Object.prototype.hasOwnProperty.call(notes, BOES),
+      `deleteEntity entfernt die eigene Entitaet "${BOES}" nicht`);
+    ok(Object.getPrototypeOf(notes) === protoVorher, `deleteEntity("${BOES}") tauschte den Prototyp`);
+  }
+
+  // normale Ids unveraendert
+  {
+    const { api, notes } = bauen();
+    const id = api.createEntity("note", { title: "Normal" });
+    ok(id === "uuid-1" && notes[id].title === "Normal", "eine normale Id verhaelt sich nicht mehr wie bisher");
+    ok(api.getEntity("note", id) === notes[id], "getEntity findet eine normale Entitaet nicht");
+    ok(api.updateEntity("note", id, { title: "N2" }) === true && notes[id].title === "N2",
+      "updateEntity trifft eine normale Entitaet nicht");
+    const feste = api.createEntity("note", { title: "Fest" }, "tablet-id-1");
+    ok(feste === "tablet-id-1" && notes["tablet-id-1"].title === "Fest",
+      "die feste Id aus F-23 C funktioniert nicht mehr");
+    ok(api.deleteEntity("note", id) === true && !(id in notes), "deleteEntity entfernt eine normale Entitaet nicht");
+    ok(api.getEntity("note", "gibtsnicht") === null, "getEntity meldet eine unbekannte Id als Treffer");
+  }
+}
+
+// Abschluss: Object.prototype traegt nach allen Laeufen keine fremden Felder
+ok(Object.keys(Object.prototype).length === 0,
+  `Object.prototype hat aufzaehlbare Eigenschaften: ${Object.keys(Object.prototype).join(", ")}`);
 
 console.log(`polaris inbox dedupe: ok (${checks} Pruefungen)`);

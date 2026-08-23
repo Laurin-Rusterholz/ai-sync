@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -13481,6 +13481,34 @@ function updateSyncChip() {
 // ============================================================================
 // ENTITY HELPERS
 // ============================================================================
+// Prototypsichere Map-Zugriffe (F-23 Nachtrag).
+// Eine Entitaets-Id kommt aus der RTDB und darf "__proto__", "constructor"
+// oder "toString" heissen. Zwei Loecher folgen daraus:
+//   SCHREIBEN  map["__proto__"] = entity  legt KEINE Entitaet an, sondern
+//              tauscht den Prototyp der Map aus. hasOwnProperty ist false,
+//              Object.keys leer — der Datensatz ist weg.
+//   LESEN      map[id] findet geerbte Object.prototype-Mitglieder. map["toString"]
+//              liefert eine Funktion, also truthy: der Aufrufer haelt sie fuer
+//              eine bestehende Entitaet. Im Update-Pfad landet danach ein
+//              Object.assign auf Object.prototype.toString — ab da sieht JEDES
+//              Objekt der App die fremden Felder.
+// Deshalb laufen alle Entitaets-Zugriffe ueber diese beiden Helfer.
+function ownEntity(map, id) {
+  if (!map || typeof id !== "string" || !id) return null;
+  if (!Object.prototype.hasOwnProperty.call(map, id)) return null;   // nur EIGENE
+  const v = map[id];
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;  // nur echte Entitaeten
+  return v;
+}
+function setOwnEntity(map, id, entity) {
+  // defineProperty statt map[id] = entity: legt auch fuer "__proto__" eine
+  // eigene, aufzaehlbare Eigenschaft an, ohne den Prototyp zu beruehren.
+  // JSON.stringify/parse erhaelt sie als own property (JSON.parse benutzt
+  // CreateDataProperty, nicht Set) — Speichern und Neuladen bleiben heil.
+  Object.defineProperty(map, id, { value: entity, writable: true, enumerable: true, configurable: true });
+  return entity;
+}
+
 function getEntityMap(kind) {
   const e = APP.state.data.entities;
   const maps = {
@@ -13526,7 +13554,7 @@ function getEntityMap(kind) {
 
 function getEntity(kind, id) {
   const map = getEntityMap(kind);
-  return map ? map[id] : null;
+  return map ? ownEntity(map, id) : null;
 }
 
 function getEntityDisplayName(kind, entity) {
@@ -13685,7 +13713,7 @@ function createEntity(kind, data, forcedId) {
     ...data,
   };
   
-  map[id] = entity;
+  setOwnEntity(map, id, entity);
   APP.state.data.meta.updatedAt = now;
   
   // Log activity
@@ -13722,7 +13750,7 @@ function updateEntity(kind, id, patch) {
 
 function deleteEntity(kind, id) {
   const map = getEntityMap(kind);
-  const entity = map ? map[id] : null;
+  const entity = map ? ownEntity(map, id) : null;
   if (!entity) return false;
   
   // Store for undo
@@ -74885,6 +74913,8 @@ window.createEntity = createEntity;
 window.updateEntity = updateEntity;
 window.deleteEntity = deleteEntity;
 window.getEntityMap = getEntityMap;
+window.ownEntity = ownEntity;
+window.setOwnEntity = setOwnEntity;
 window.togglePin = togglePin;
 window.isPinned = isPinned;
 window.getEntityDisplayName = getEntityDisplayName;
@@ -112273,8 +112303,13 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
     const out = {};
     Object.keys(obj).forEach(function(k){
       if (POLARIS_SENSITIVE_RE.test(k)) return; // Feld komplett weglassen
+      // "__proto__" als FELDname: jedes spaetere Object.assign(ziel, data)
+      // wuerde damit den Prototyp des Ziels tauschen statt ein Feld zu setzen
+      // (Object.assign benutzt [[Set]]). Kein legitimes Fachfeld — weglassen.
+      if (k === "__proto__") return;
       const v = obj[k];
-      out[k] = (v && typeof v === "object") ? plInboxScrub(v) : v;
+      Object.defineProperty(out, k, { value: (v && typeof v === "object") ? plInboxScrub(v) : v,
+        writable: true, enumerable: true, configurable: true });
     });
     return out;
   }
@@ -112300,6 +112335,28 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
   //   { mode:"array", arr }               → Array-Modul (push/patch/remove)
   //   { mode:"map", map, viaApi, kind }   → Entity-Map (createEntity/direct)
   // null → unbekannter, nicht-kanonischer Typ (wird ignoriert + geloggt).
+  // Prototypsichere Map-Zugriffe, lokal im Modul (Skript-Bloecke sehen einander
+  // nicht; eine typeof-abgesicherte window-Bruecke wuerde hier still ausfallen).
+  // Warum ueberhaupt: Inbox-Ids kommen aus polaris/inbox, und dieser Knoten ist
+  // derzeit ohne Anmeldung beschreibbar (F-02). Eine Id "__proto__" wuerde beim
+  // Schreiben den Prototyp tauschen statt eine Entitaet anzulegen, und "toString"
+  // wuerde beim Lesen als bestehende Entitaet durchgehen.
+  function plOwn(map, id){
+    if (!map || typeof id !== "string" || !id) return null;
+    if (!Object.prototype.hasOwnProperty.call(map, id)) return null;
+    const v = map[id];
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    return v;
+  }
+  function plSetOwn(map, id, wert){
+    Object.defineProperty(map, id, { value: wert, writable: true, enumerable: true, configurable: true });
+    return wert;
+  }
+  function plOwnStr(obj, key){   // Index-Eintrag: nur eigene, nicht-leere Zeichenkette
+    if (!obj || typeof key !== "string" || !Object.prototype.hasOwnProperty.call(obj, key)) return null;
+    const v = obj[key];
+    return (typeof v === "string" && v) ? v : null;
+  }
   function plResolveStore(type){
     try {
       const desc = POLARIS_TYPE_MAP[type];
@@ -112401,12 +112458,12 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       if (!entry || typeof entry !== "object" || entry.processedAt) return;
       const s = plSettings();
       if (!s.inboxMap) s.inboxMap = {};
-      let appId = s.inboxMap[mapKey] || null;
+      let appId = plOwnStr(s.inboxMap, mapKey);
       let existing = null;
       if (appId){
         existing = (store.mode === "array")
           ? (store.arr.find(function(x){ return x && x.id === appId; }) || null)
-          : (store.map[appId] || null);
+          : plOwn(store.map, appId);
       }
       // Ohne eigenen Index-Eintrag zusaetzlich ueber die Id des Eintrags
       // aufloesen. Sowohl der Schluessel des Inbox-Knotens als auch record.id
@@ -112420,11 +112477,11 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
         if (kandidat){
           const treffer = (store.mode === "array")
             ? (store.arr.find(function(x){ return x && x.id === kandidat; }) || null)
-            : (store.map[kandidat] || null);
+            : plOwn(store.map, kandidat);
           if (treffer){
             appId = kandidat;
             existing = treffer;
-            s.inboxMap[mapKey] = kandidat;   // ab jetzt auch im eigenen Index
+            plSetOwn(s.inboxMap, mapKey, kandidat);   // ab jetzt auch im eigenen Index
             plScheduleSave();
           }
         }
@@ -112470,23 +112527,23 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
           if (!newId) throw new Error("createEntity fehlgeschlagen");
         } else {
           newId = festeId || genId(); // Direktschreibung
-          store.map[newId] = Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data);
+          plSetOwn(store.map, newId, Object.assign({ id: newId, createdAt: iso, updatedAt: iso }, data));
           plScheduleSave();
         }
-        s.inboxMap[mapKey] = newId;
+        plSetOwn(s.inboxMap, mapKey, newId);
         plScheduleSave(); // Index persistieren
         plInboxActivity(rawType, "erstellt", label);
       } else if (action === "update"){
         if (store.mode === "array"){ Object.assign(existing, data, { updatedAt: iso }); plScheduleSave(); } // Array: Element per id patchen
         else if (store.viaApi){ window.updateEntity(store.kind, appId, data); }
-        else { Object.assign(store.map[appId], data, { updatedAt: iso }); plScheduleSave(); }
+        else { Object.assign(existing, data, { updatedAt: iso }); plScheduleSave(); }
         plInboxActivity(rawType, "aktualisiert", label);
       } else if (action === "delete"){
         if (store.mode === "array"){
           const i = store.arr.findIndex(function(x){ return x && x.id === appId; });
           if (i >= 0){ store.arr.splice(i, 1); plScheduleSave(); } // Array: Element entfernen (per Vorgabe)
         } else if (store.viaApi){ window.updateEntity(store.kind, appId, { status: "deleted" }); } // Map: Soft-Delete
-        else { store.map[appId].status = "deleted"; store.map[appId].updatedAt = iso; plScheduleSave(); }
+        else { existing.status = "deleted"; existing.updatedAt = iso; plScheduleSave(); }
         plInboxActivity(rawType, "gelöscht", label);
       }
       if (typeof window.render === "function") try { window.render(); } catch(e){}
@@ -112544,7 +112601,7 @@ quantus-orb.polaris-voice--speaking{animation:polarisOrbSpeak 1.1s ease-in-out i
       const store = plResolveStore(String(type || ""));
       if (!store) return [];
       if (store.mode === "array") return store.arr.slice();
-      return Object.keys(store.map).map(function(k){ return store.map[k]; });
+      return Object.keys(store.map).map(function(k){ return plOwn(store.map, k); }).filter(Boolean);
     } catch(e){ console.error("Polaris-Inbox: list fehlgeschlagen", type, e); return []; }
   }
   // ── Listener starten (on('value') auf die ganze Inbox; REST-Poll-Fallback) ──
