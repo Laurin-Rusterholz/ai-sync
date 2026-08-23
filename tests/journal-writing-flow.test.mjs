@@ -95,7 +95,7 @@ function loadParagraphTools(sel) {
     createElement: (name) => el(name.toUpperCase()),
     execCommand: () => true
   };
-  const window = { getSelection: () => sel };
+  const window = { getSelection: () => sel, addEventListener: () => {} };
   const fn = new Function(
     "document", "window", "setTimeout", "jbAutoSave", "jbSLAutoSave", "jbFocusAreaAtEnd",
     source + "\nreturn { jbEnsureBlocks: jbEnsureBlocks, jbCaretBlock: jbCaretBlock, jbKeepCaretInView: jbKeepCaretInView };"
@@ -687,6 +687,39 @@ function loadParagraphTools(sel) {
   repair(leerzeilen);
   ok(leerzeilen.children.length === 10,
     "eine Folge gewollter Leerzeilen wird faelschlich zu einem Absatz zusammengefuegt");
+}
+
+// ── 25. Kein fremder Handler kann Enter im Schreibbereich toeten ──────────
+// Der Schirm (jbKeyShield) stoppt App-Handler in der BUBBLE-Phase — Handler in
+// der CAPTURE-Phase laufen VOR ihm. Ein preventDefault dort, und Enter ist im
+// Editor tot, ohne Fehlermeldung. Der Riegel am Fenster (Capture, fruehester
+// Punkt) entwaffnet preventDefault fuer Tasten ohne Steuerung im Schreibbereich;
+// die eigenen Handler nutzen das aufgehobene Original.
+{
+  ok(/function jbDisarmForeignPrevent\(e\)/.test(jbSource),
+    "der Capture-Riegel fehlt — ein fremder Capture-Handler kann Enter im Editor wieder toeten");
+  ok(/window\.addEventListener\("keydown", jbDisarmForeignPrevent, true\)/.test(jbSource),
+    "der Riegel haengt nicht in der Capture-Phase am Fenster — dann laeuft er nicht VOR den fremden Handlern");
+  const disarm = jbSource.slice(jbSource.indexOf("function jbDisarmForeignPrevent(e)"), jbSource.indexOf("function jbDisarmForeignPrevent(e)") + 600);
+  ok(/e\.key === "Escape" \|\| e\.ctrlKey \|\| e\.metaKey \|\| e\.altKey/.test(disarm),
+    "der Riegel entwaffnet auch Escape oder Steuerungs-Kombis — Vollbild-Ausstieg und Kuerzel wuerden brechen");
+  ok(/__jbPreventDefault = e\.preventDefault\.bind\(e\)/.test(disarm),
+    "das Original wird nicht aufgehoben — die eigenen Handler koennten nichts mehr verhindern");
+  ok(/\(e\.__jbPreventDefault \|\| e\.preventDefault\)\.call\(e\)/.test(jbSource),
+    "der Zitat-Ausstieg nutzt das aufgehobene Original nicht — er waere vom eigenen Riegel entwaffnet");
+}
+
+// ── 26. Ein kaputtes gespeichertes Kuerzel faengt kein blankes Enter mehr ──
+// Die Kuerzel-Aufnahme konnte frueher jeden verirrten Tastendruck speichern —
+// auch „Enter" ohne Steuerung als Speichern-Kuerzel. Danach fing der globale
+// Handler jedes Enter der ganzen App ab.
+{
+  const sc = index.slice(index.indexOf("function _matchSC(name, ev)"), index.indexOf("function _matchSC(name, ev)") + 700);
+  ok(/s\.key\.length > 1 \|\| s\.key === " "/.test(sc),
+    "_matchSC laesst Sondertasten ohne Steuerung als Kuerzel zu — ein gespeichertes blankes Enter toetet jedes Enter der App");
+  const ls = index.slice(index.indexOf("const mergedShortcuts = { ...defaults.shortcuts };"), index.indexOf("const mergedShortcuts = { ...defaults.shortcuts };") + 700);
+  ok(/String\(v\.key\)\.length > 1 \|\| v\.key === " "/.test(ls),
+    "beim Laden werden kaputte Aufnahmen nicht aussortiert — der Schrott bleibt in den Einstellungen");
 }
 
 console.log(`journal writing flow: ok (${checks} Pruefungen)`);
