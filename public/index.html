@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -13286,6 +13286,10 @@ async function doSave(silent = false) {
   
   updateSyncChip();
   APP.state.storage._saving = false;
+  // Ergebnis explizit melden. Der Erfolgspfad gab bisher undefined zurueck —
+  // von aussen war damit nicht erkennbar, ob der Serverstand wirklich
+  // geschrieben wurde. Genau das braucht das RecallLab-Delta-Polling.
+  return { ok: APP.state.storage.status === "saved", status: APP.state.storage.status };
 }
 
 function updateSyncChip() {
@@ -63901,10 +63905,24 @@ async function init() {
         console.log('[Auto] Mobile-Delta-Polling angewendet:', r.applied);
         // Nach dem Mergen Push, damit der gemergte Stand in die Cloud kommt
         if (typeof doSave === 'function') {
-          await doSave(true).catch(e => console.warn('[Auto] Save nach Mobile-Merge failed:', e));
-          // Delta nach erfolgreichem Save als konsumiert markieren
-          if (typeof clearMobileRecallLabDelta === 'function') {
-            clearMobileRecallLabDelta().catch(e => console.warn('[Auto] Delta-Clear failed:', e));
+          const gespeichert = await doSave(true).catch(e => {
+            console.warn('[Auto] Save nach Mobile-Merge failed:', e);
+            return { ok: false, reason: 'threw' };
+          });
+          // Das Delta ist die EINZIGE Quelle der vom Handy gelernten Karten.
+          // Es wurde bisher unabhaengig vom Ergebnis geleert — also auch dann,
+          // wenn der Push abgelehnt wurde (etwa mit no_successful_read, solange
+          // in dieser Sitzung noch kein Serverstand gelesen wurde). Dann stand
+          // der gemergte Stand nur noch lokal. Jetzt wird nur nach einem
+          // wirklich erfolgreichen Save geleert; sonst bleibt das Delta liegen
+          // und der naechste Durchlauf holt es erneut.
+          if (gespeichert && gespeichert.ok === true) {
+            if (typeof clearMobileRecallLabDelta === 'function') {
+              clearMobileRecallLabDelta().catch(e => console.warn('[Auto] Delta-Clear failed:', e));
+            }
+          } else {
+            console.warn('[Auto] Mobile-Delta bleibt stehen — Save nicht erfolgreich (' +
+                         ((gespeichert && (gespeichert.reason || gespeichert.status)) || 'unbekannt') + ').');
           }
         } else if (typeof scheduleSave === 'function') {
           scheduleSave();
