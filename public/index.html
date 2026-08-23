@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -10908,12 +10908,53 @@ window.coreReadOk = coreReadOk;
 // gescheiterten Startlesevorgang eintrifft. Bewusst NUR lesen, mergen, lokal
 // sichern und neu zeichnen — KEIN Push. Laeuft hoechstens einmal pro Sitzung.
 var _authResyncDone = false;
+
+// Riegel fuer die Dauer des nachgeholten Abgleichs.
+//
+// Ohne ihn lief Folgendes: das Schliessen des Anmeldefensters gab dem Tab den
+// Fokus zurueck, der focus-Handler startete syncFreshness, das nahm den
+// local-newer-Zweig und rief doSave(true). Der Sperr-Riegel dort kehrte um —
+// setzte aber _saveDirty = true. Das freie 5-Sekunden-Sicherheitsnetz sah das
+// kurz darauf, rief doSave erneut, und weil der Resync inzwischen
+// markCoreReadOk() gesetzt hatte, lief der Schreibvorgang durch. Ergebnis: ein
+// stiller Write wenige Sekunden nach der Anmeldung.
+//
+// Der Riegel traegt einen Zeitstempel statt eines reinen Schalters: bleibt der
+// Abgleich haengen, laeuft das finally nie, und ein reiner Schalter wuerde die
+// Sitzung dauerhaft blockieren. Nach AUTH_RESYNC_MAX_MS loest er sich daher
+// selbst, meldet das sichtbar — und weil _coreReadOk dabei konservativ false
+// bleibt, unterdrueckt die Push-Sperre in doSave weiterhin jeden Schreibvorgang.
+// (Die fehlende Zeitgrenze am SDK-Aufruf selbst bleibt F-20/P1.2.)
+var AUTH_RESYNC_MAX_MS = 30000;
+var _authResyncRunning = false;
+var _authResyncStartedAt = 0;
+function authResyncActive() {
+  if (!_authResyncRunning) return false;
+  if (Date.now() - _authResyncStartedAt > AUTH_RESYNC_MAX_MS) {
+    _authResyncRunning = false;
+    console.warn('[Sync] Auth-Resync-Timeout nach ' + Math.round(AUTH_RESYNC_MAX_MS / 1000) +
+                 ' s — der Riegel loest sich selbst. Der Serverstand wurde NICHT gelesen, ' +
+                 '_coreReadOk bleibt false, es wird nichts hochgeladen.');
+    try {
+      if (APP && APP.state && APP.state.storage) {
+        APP.state.storage.status = 'offline';
+        APP.state.storage.message = 'Angemeldet, aber kein Serverstand geladen — kein Upload';
+      }
+      if (typeof updateSyncChip === 'function') updateSyncChip();
+    } catch(e) {}
+    return false;
+  }
+  return true;
+}
+window.authResyncActive = authResyncActive;
 async function resyncAfterAuth(reason) {
   if (_authResyncDone) return { ok: false, reason: 'already_done' };
   if (_coreReadOk) return { ok: false, reason: 'read_already_ok' };
   if (!coreAuthCurrentUser()) return { ok: false, reason: 'no_user' };
   if (isManualTransferMode()) return { ok: false, reason: 'manual_mode' };
   _authResyncDone = true;
+  _authResyncRunning = true;
+  _authResyncStartedAt = Date.now();
   console.log('[Sync] Anmeldung nachgetragen (' + (reason || 'auth') + ') — Kern-Abgleich wird einmalig nachgeholt (nur lesen).');
   // Der Backoff stammt aus den Fehlversuchen VOR der Anmeldung und waere jetzt
   // gegenstandslos.
@@ -10945,17 +10986,27 @@ async function resyncAfterAuth(reason) {
     APP.state.storage.message = t('saved');
     updateSyncChip();
     toast('ok', 'Angemeldet', 'Daten nachgeladen und zusammengefuehrt');
-    // Bewusst KEIN Push an dieser Stelle.
+    // Erfolg wird ausdruecklich protokolliert. Vorher schwieg dieser Zweig —
+    // im Livelauf war deshalb nicht erkennbar, dass der Abgleich gelungen war
+    // und damit die Push-Sperre gefallen ist.
+    console.log('[Sync] Nachgeholter Abgleich erfolgreich — Serverstand gelesen und gemergt, kein Push.');
     return { ok: true, merged: true, pushed: false };
   } catch(e) {
     console.warn('[Sync] Nachgeholter Abgleich warf:', e);
     return { ok: false, reason: 'threw', pushed: false };
+  } finally {
+    // Riegel bei Erfolg WIE Fehler garantiert loesen.
+    _authResyncRunning = false;
   }
 }
 window.resyncAfterAuth = resyncAfterAuth;
 
 async function syncFreshness(reason) {
   if (_syncFreshnessPromise) return _syncFreshnessPromise;
+  // Waehrend des nachgeholten Abgleichs kein zweiter Leser: syncFreshness
+  // landet sonst im local-newer-Zweig bei doSave(true) und hinterlaesst dort
+  // ein gesetztes _saveDirty, das das 5-Sekunden-Netz still hochlaedt.
+  if (authResyncActive()) return false;
   _syncFreshnessPromise = (async () => {
     if (!navigator.onLine) return false;
     if (!isAutoSyncEnabled()) return false;
@@ -13164,6 +13215,8 @@ function remoteSaveOnHold() {
 setInterval(function() {
   if (isManualTransferMode()) return;
   if (remoteSaveOnHold()) return;
+  // Genau dieses Netz hat den stillen Write nach der Anmeldung ausgeloest.
+  if (authResyncActive()) return;
   if (_saveDirty && APP.state.settings.storage.autoSave) {
     _saveDirty = false;
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -13173,6 +13226,11 @@ setInterval(function() {
 }, 5000);
 
 async function doSave(silent = false) {
+  // Waehrend des nachgeholten Abgleichs sofort umkehren — und ausdruecklich
+  // OHNE _saveDirty zu setzen. Die uebrigen Riegel weiter unten verschieben
+  // den Schreibvorgang nur; genau diese Verschiebung hat im Livelauf
+  // geschrieben, sobald der Riegel fiel.
+  if (authResyncActive()) return { ok: false, reason: 'auth_resync_running', pushed: false };
   if (isManualTransferMode()) {
     if (silent) {
       saveLocalData();
