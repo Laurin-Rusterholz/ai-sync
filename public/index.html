@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -117895,7 +117895,7 @@ Dateien zu identifizieren.
       else if (a === "dup") duplicateNote(n.id);
       else if (a === "mdcopy") { copyText(noteToMarkdown(n)); toastMsg("Als Markdown kopiert"); }
       else if (a === "export") exportMd(n);
-      else if (a === "del") deleteNote(n.id);
+      else if (a === "del") deleteNote(String(n.id));   // Id festhalten, nicht die Referenz
     });
   }
   function noteContextMenu(id, x, y) {
@@ -117913,7 +117913,7 @@ Dateien zu identifizieren.
       if (a === "open") openPage(id);
       else if (a === "fav") { toggleFav(id); renderSidebar(); renderTopbar(); }
       else if (a === "dup") duplicateNote(id);
-      else if (a === "del") deleteNote(id);
+      else if (a === "del") deleteNote(String(id));
     });
   }
   function nbContextMenu(id, x, y) {
@@ -118037,9 +118037,25 @@ Dateien zu identifizieren.
     toastMsg("Seite dupliziert");
   }
   function deleteNote(id) {
-    const n = notesMap()[id];
-    if (!n) return;
-    if (!confirm(`Seite «${n.title || "Ohne Titel"}» löschen?`)) return;
+    // Das Ziel wird HIER festgelegt und danach nicht mehr neu bestimmt.
+    // confirm() haelt den Ablauf an; in dieser Zeit kann ein Wolken-Abgleich
+    // laufen und APP.state.data KOMPLETT ersetzen (mergeData gibt ein neues
+    // Objekt zurueck). Alles, was danach noch ueber eine vor dem Dialog
+    // gemerkte Objektreferenz oder ueber eine Position in einer Liste geht,
+    // zeigt dann ins Leere oder — schlimmer — auf einen anderen Datensatz.
+    // Die Id ist eine Zeichenkette und ueberlebt den Austausch; sie ist das
+    // einzige, was wir ueber den Dialog hinweg mitnehmen (F-25).
+    const zielId = String(id || "");
+    if (!zielId) return;
+    const vorher = notesMap()[zielId];
+    if (!vorher) return;
+    const titel = vorher.title || "Ohne Titel";
+    if (!confirm(`Seite «${titel}» löschen?`)) return;
+    // Ab hier NICHT mehr `vorher` benutzen: nach dem Dialog gilt nur der
+    // aktuelle Stand, nachgeschlagen ueber dieselbe feste Id.
+    const aktuell = notesMap()[zielId];
+    if (!aktuell) return;   // ein anderes Geraet war schneller
+    const notizbuchId = aktuell.notebookId || null;
     // Ueber den generischen Pfad loeschen statt direkt aus der Karte. NUR
     // deleteEntity legt ueber logDeletion einen Grabstein an; ohne ihn holt der
     // naechste Abgleich die Seite von einem anderen Geraet zurueck, weil
@@ -118056,12 +118072,13 @@ Dateien zu identifizieren.
       toastMsg("Löschen nicht möglich");
       return;
     }
-    if (!window.deleteEntity("note", id)) return;
+    if (!window.deleteEntity("note", zielId)) return;
     // Erst nach erfolgreicher Loeschung die Notizbuch-Liste nachziehen —
-    // cleanupLinks kennt notebook.notes nicht.
-    syncNbArrays(id, n.notebookId || null, null);
+    // cleanupLinks kennt notebook.notes nicht. Das Notizbuch stammt aus dem
+    // Stand NACH dem Dialog, nicht aus der gemerkten Referenz.
+    syncNbArrays(zielId, notizbuchId, null);
     save();
-    if (S.noteId === id) {
+    if (S.noteId === zielId) {
       const all = Object.values(notesMap()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
       S.noteId = all.length ? all[0].id : null;
     }

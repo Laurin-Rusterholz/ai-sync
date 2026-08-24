@@ -51,7 +51,7 @@ function kern({ notes = {}, pinnedItems = [], localStorage: ls = speicher() } = 
     "APP", "localStorage", "getEntityMap", "uuid", "nowIso", "logActivity", "scheduleSave",
     "deepClone", "updateUndoButton", "cleanupLinks", "JSON",
     KERN + "\nreturn { deleteEntity, logDeletion, getDeleteLog };")(
-    APP, ls, (k) => (k === "note" ? notes : null), () => "uuid", () => "jetzt",
+    APP, ls, (k) => (k === "note" ? APP.state.data.entities.notes : null), () => "uuid", () => "jetzt",
     (...a) => protokoll.aktivitaet.push(a), () => { protokoll.saves++; },
     (o) => JSON.parse(JSON.stringify(o)), () => {}, () => {}, JSON);
   return { api, APP, notes, ls, protokoll };
@@ -136,9 +136,80 @@ const notiz = (id, ueber = {}) => ({
 {
   ok(!/delete notesMap\(\)\[/.test(NOTEFLOW),
     "deleteNote loescht weiterhin direkt aus der Notizkarte");
-  ok(/window\.deleteEntity\("note", id\)/.test(NOTEFLOW),
-    "deleteNote geht nicht ueber den generischen Pfad");
+  ok(/window\.deleteEntity\("note", zielId\)/.test(NOTEFLOW),
+    "deleteNote geht nicht ueber den generischen Pfad mit fester Id");
+  ok(/const zielId = String\(id \|\| ""\);/.test(NOTEFLOW),
+    "die Id wird nicht im Moment der Nutzeraktion fixiert");
+  ok(!/syncNbArrays\(id,/.test(NOTEFLOW) && /syncNbArrays\(zielId, notizbuchId, null\)/.test(NOTEFLOW),
+    "die Notizbuch-Liste laeuft nicht ueber die feste Id und den Stand nach dem Dialog");
   ok(/logDeletion\(kind, id\)/.test(KERN), "deleteEntity legt keinen Grabstein an");
+}
+
+// ── 6. C1: Loeschen waehrend eines spaeten Abgleichs ─────────────────────
+// Der Nutzer dupliziert eine Seite und loescht die Kopie. Waehrend der
+// Bestaetigungsdialog offen steht, landet ein Wolken-Abgleich und ERSETZT
+// APP.state.data vollstaendig — neue Objekte, andere Reihenfolge, und die
+// Kopie ist inzwischen in ein anderes Notizbuch gewandert.
+// Erwartet: das Original bleibt, genau die Kopie ist weg, ein Grabstein steht,
+// und die Notizbuch-Liste wird am AKTUELLEN Notizbuch nachgezogen.
+{
+  const ORIG = "n-orig", KOPIE = "n-kopie";
+  const notes = {
+    [ORIG]: notiz(ORIG, { title: "London", notebookId: "nb-alt" }),
+    [KOPIE]: notiz(KOPIE, { title: "London (Kopie)", notebookId: "nb-alt" }),
+  };
+  const h = noteflow({
+    notes, pinnedItems: ["note:" + KOPIE, "note:" + ORIG],
+    beiConfirm: () => {
+      // der Abgleich: ein KOMPLETT neues Datenobjekt, wie es mergeData liefert
+      h.kern.APP.state.data = {
+        entities: {
+          notes: {
+            [KOPIE]: notiz(KOPIE, { title: "London (Kopie)", notebookId: "nb-neu",
+              updatedAt: "2026-08-23T21:00:00.000Z" }),
+            [ORIG]: notiz(ORIG, { title: "London", notebookId: "nb-alt",
+              updatedAt: "2026-08-23T21:00:00.000Z" }),
+          },
+        },
+        meta: {}, pinnedItems: ["note:" + KOPIE, "note:" + ORIG],
+      };
+    },
+  });
+  h.api.deleteNote(KOPIE);
+
+  const uebrig = h.kern.APP.state.data.entities.notes;
+  ok(Object.prototype.hasOwnProperty.call(uebrig, ORIG),
+    "das Original wurde geloescht — der Abgleich hat das Loeschziel verschoben");
+  ok(!Object.prototype.hasOwnProperty.call(uebrig, KOPIE),
+    "die beabsichtigte Kopie ist noch da");
+  ok(Object.keys(uebrig).length === 1,
+    `nach dem Loeschen ${Object.keys(uebrig).length} Seiten statt einer`);
+
+  const log = JSON.parse(h.kern.ls.getItem("_delete_log") || "{}");
+  ok(log.note && log.note[KOPIE] > 0, "fuer die Kopie entstand kein Grabstein");
+  ok(!log.note[ORIG], "fuer das Original entstand ein Grabstein");
+
+  ok(h.kern.APP.state.data.pinnedItems.join() === "note:" + ORIG,
+    "der Favoriten-Eintrag wurde nicht am neuen Datenstand geraeumt");
+  ok(h.protokoll.nbSync.length === 1 && h.protokoll.nbSync[0][0] === KOPIE,
+    "die Notizbuch-Liste wurde fuer die falsche Seite nachgezogen");
+  ok(h.protokoll.nbSync[0][1] === "nb-neu",
+    `die Notizbuch-Liste lief gegen "${h.protokoll.nbSync[0][1]}" statt gegen das ` +
+    "aktuelle Notizbuch — die Angabe stammt aus der Referenz von VOR dem Dialog");
+}
+
+// ── 7. Waehrend des Dialogs von anderer Seite geloescht: sauber aufgeben ──
+{
+  const notes = { n1: notiz("n1") };
+  const h = noteflow({
+    notes,
+    beiConfirm: () => { h.kern.APP.state.data = { entities: { notes: {} }, meta: {}, pinnedItems: [] }; },
+  });
+  h.api.deleteNote("n1");
+  ok(h.protokoll.nbSync.length === 0,
+    "es wurde eine Notizbuch-Liste fuer eine bereits verschwundene Seite nachgezogen");
+  ok(h.kern.ls.getItem("_delete_log") === null,
+    "fuer eine bereits verschwundene Seite entstand ein Grabstein");
 }
 
 console.log(`delete tombstone: ok (${checks} Pruefungen)`);
