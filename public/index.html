@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -118040,10 +118040,26 @@ Dateien zu identifizieren.
     const n = notesMap()[id];
     if (!n) return;
     if (!confirm(`Seite «${n.title || "Ohne Titel"}» löschen?`)) return;
+    // Ueber den generischen Pfad loeschen statt direkt aus der Karte. NUR
+    // deleteEntity legt ueber logDeletion einen Grabstein an; ohne ihn holt der
+    // naechste Abgleich die Seite von einem anderen Geraet zurueck, weil
+    // mergeData eine fehlende id als "auf der Gegenseite neu" liest. Genau so
+    // kam eine geloeschte Seite wieder hoch (F-25).
+    // deleteEntity raeumt pinnedItems gleich mit: es entfernt "note:<id>" — das
+    // ist derselbe Schluessel, den pinnedKey(id) hier baut. Verweise anderer
+    // Entitaeten und der Rueckgaengig-Schritt kommen ebenfalls von dort.
+    // Kein "if (typeof … === 'function')"-Zweig, der still nichts tut: fehlt der
+    // Export, waere das Ergebnis eine Loeschung OHNE Grabstein — also lieber
+    // hoerbar abbrechen (CLAUDE.md, Fallstrick 1).
+    if (typeof window.deleteEntity !== "function") {
+      console.error("NoteFlow: window.deleteEntity fehlt — Loeschung abgebrochen, sonst entstuende kein Grabstein.");
+      toastMsg("Löschen nicht möglich");
+      return;
+    }
+    if (!window.deleteEntity("note", id)) return;
+    // Erst nach erfolgreicher Loeschung die Notizbuch-Liste nachziehen —
+    // cleanupLinks kennt notebook.notes nicht.
     syncNbArrays(id, n.notebookId || null, null);
-    delete notesMap()[id];
-    const d = APP.state.data;
-    if (Array.isArray(d.pinnedItems)) d.pinnedItems = d.pinnedItems.filter((k) => k !== pinnedKey(id));
     save();
     if (S.noteId === id) {
       const all = Object.values(notesMap()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
