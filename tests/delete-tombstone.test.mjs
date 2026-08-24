@@ -28,6 +28,13 @@ function funktion(name, praefix = "function ") {
   const ende = praefix.startsWith("  ") ? "\n  }\n" : "\n}\n";
   return index.slice(a, index.indexOf(ende, a) + ende.length);
 }
+// Optional: auf einem aelteren Stand fehlt unionDeleteLogs noch. Ohne diese
+// Nachsicht scheiterte die Gegenprobe am fehlenden NAMEN statt am Verhalten —
+// durchgefallen aus dem falschen Grund. So laeuft der alte Code echt weiter und
+// zeigt, was er mit dem Grabstein wirklich macht.
+function funktionOptional(name) {
+  return index.indexOf("\nfunction " + name + "(") > 0 ? funktion(name) : "";
+}
 const KERN = ["getDeleteLog", "logDeletion", "ownEntity", "getEntity", "deleteEntity"]
   .map((n) => funktion(n)).join("\n");
 const NOTEFLOW = funktion("deleteNote", "  function ");
@@ -210,6 +217,150 @@ const notiz = (id, ueber = {}) => ({
     "es wurde eine Notizbuch-Liste fuer eine bereits verschwundene Seite nachgezogen");
   ok(h.kern.ls.getItem("_delete_log") === null,
     "fuer eine bereits verschwundene Seite entstand ein Grabstein");
+}
+
+// ── Merge-Seite: die ECHTEN Grabstein-Funktionen laden ───────────────────
+// Anders als tests/sync-merge.test.mjs werden mergeAndPersistDeleteLog und
+// flattenDeleteLog hier NICHT ausgestubbt — sie sind der Gegenstand.
+function mergeLader(ls) {
+  const a = index.indexOf("function mergeData(local, remote) {");
+  const b = index.indexOf("\nfunction ", a + 10);
+  ok(a > 0 && b > a, "mergeData wurde in index.html nicht gefunden");
+  const tr = index.indexOf("const TRANSPORT_ROOTS = new Set([");
+  const hilfen = funktionOptional("unionDeleteLogs") + "\n" +
+    ["getDeleteLog", "mergeAndPersistDeleteLog", "flattenDeleteLog",
+      "entityTimestamp", "mergeEntity"].map((n) => funktion(n)).join("\n");
+  return new Function(
+    "idbBackup", "localStorage", "normalizeData", "console", "JSON", "Date", "Number", "Object",
+    index.slice(tr, index.indexOf("]);", tr) + 3) + "\n" + hilfen + "\n" +
+    index.slice(a, b) +
+    "\nreturn { mergeData, getDeleteLog, unionDeleteLogs: typeof unionDeleteLogs === 'function' ? unionDeleteLogs : null };")(
+    () => {}, ls, (d) => d, { log() {}, warn() {} }, JSON, Date, Number, Object);
+}
+
+// buildRemoteAppPayload samt buildLocalAppSnapshot — der Push-Weg
+function pushLader(ls, APP) {
+  const hilfen = funktionOptional("unionDeleteLogs") + "\n" +
+    ["getDeleteLog", "buildLocalAppSnapshot", "buildRemoteAppPayload"]
+      .map((n) => funktion(n)).join("\n");
+  return new Function(
+    "APP", "localStorage", "safeJsonParse", "collectExtraLocalKeys", "getReadingHubShadowCache",
+    "getOrCreateDeviceId", "_cloudHealth", "console", "JSON", "Date", "Number", "Object",
+    hilfen + "\nreturn buildRemoteAppPayload;")(
+    APP, ls, () => null, () => ({}), () => null, () => "dev-test", {}, { log() {}, warn() {} },
+    JSON, Date, Number, Object);
+}
+
+const JETZT = Date.now();
+const TAG = 24 * 60 * 60 * 1000;
+const iso = (ms) => new Date(ms).toISOString();
+
+// ── 8. Voll-Push eines stale Clients entfernt keinen fremden Grabstein ───
+// Geraet A loescht eine Notiz und legt den Grabstein an. Geraet B kennt ihn
+// nicht (leerer lokaler Speicher) und schreibt seinen kompletten Stand.
+{
+  const ls = speicher();                       // Geraet B: kein eigener Grabstein
+  const { mergeData } = mergeLader(ls);
+  const fremderGrabstein = { note: { "n-weg": JETZT - TAG } };
+
+  const lokal = { entities: { notes: { "n-bleibt": notiz("n-bleibt") } } };
+  const fern = {
+    entities: { notes: { "n-bleibt": notiz("n-bleibt") } },
+    _deleteLog: fremderGrabstein,
+  };
+  const m = mergeData(lokal, fern);
+
+  ok(m._deleteLog && m._deleteLog.note && m._deleteLog.note["n-weg"] === JETZT - TAG,
+    `der fremde Grabstein fehlt im gemergten Stand: ${JSON.stringify(m._deleteLog)}`);
+  ok(JSON.parse(ls.getItem("_delete_log") || "{}").note?.["n-weg"] === JETZT - TAG,
+    "der fremde Grabstein wurde nicht lokal uebernommen");
+
+  // und der Voll-Push von B traegt ihn weiter
+  const APP = { state: { data: m, settings: null, ui: {} } };
+  const payload = pushLader(ls, APP)();
+  ok(payload._deleteLog?.note?.["n-weg"] === JETZT - TAG,
+    `der Voll-Push hat den fremden Grabstein entfernt: ${JSON.stringify(payload._deleteLog)}`);
+}
+
+// ── 8b. Auch wenn die localStorage-Schreibung still fehlschlaegt ─────────
+// Beide Setter schlucken den Fehler in einem leeren catch (privater Modus,
+// volles Kontingent). Dann traegt allein der Grabsteinstand in den Daten.
+{
+  const ls = speicher();
+  ls.setItem = () => { throw new Error("QuotaExceeded"); };
+  const { mergeData } = mergeLader(ls);
+  const m = mergeData(
+    { entities: { notes: {} } },
+    { entities: { notes: {} }, _deleteLog: { note: { "n-weg": JETZT - TAG } } });
+  ok(m._deleteLog?.note?.["n-weg"] === JETZT - TAG,
+    "ohne funktionierenden localStorage geht der Grabstein im Merge verloren");
+
+  const APP = { state: { data: m, settings: null, ui: {} } };
+  const payload = pushLader(ls, APP)();
+  ok(payload._deleteLog?.note?.["n-weg"] === JETZT - TAG,
+    "ohne funktionierenden localStorage traegt der Push den Grabstein nicht weiter");
+}
+
+// ── 8c. Union ist eine Einbahnstrasse: nichts geht weg, spaeter gewinnt ──
+{
+  const ls = speicher();
+  const { unionDeleteLogs } = mergeLader(ls);
+  ok(typeof unionDeleteLogs === "function", "unionDeleteLogs fehlt");
+  if (typeof unionDeleteLogs !== "function") throw new Error("unionDeleteLogs fehlt");
+  const u = unionDeleteLogs(
+    { note: { a: 100, b: 500 } },
+    { note: { b: 200, c: 300 }, task: { t1: 700 } });
+  ok(u.note.a === 100 && u.note.c === 300, "der Union hat einseitige Eintraege verloren");
+  ok(u.note.b === 500, `bei einer Kollision gewann ${u.note.b} statt des spaeteren 500`);
+  ok(u.task.t1 === 700, "ein ganzer Eimer ging verloren");
+  ok(Object.keys(unionDeleteLogs(null, undefined)).length === 0, "leere Eingaben werfen");
+  ok(!("x" in (unionDeleteLogs({ note: { x: 0 } }, null).note || {})),
+    "ein Zeitstempel 0 wurde als gueltiger Grabstein uebernommen");
+}
+
+// ── 9. Wiederbelebung: gueltiger Grabstein schlaegt den fernen Datensatz ──
+{
+  const ls = speicher();
+  ls.setItem("_delete_log", JSON.stringify({ note: { "n-tot": JETZT - 1000 } }));
+  const { mergeData } = mergeLader(ls);
+  const m = mergeData(
+    { entities: { notes: {} } },
+    { entities: { notes: {
+      // ferner Stand ist AELTER als die Loeschung -> darf nicht wiederkommen
+      "n-tot": notiz("n-tot", { updatedAt: iso(JETZT - 5000), createdAt: iso(JETZT - 6000) }),
+      "n-lebt": notiz("n-lebt", { updatedAt: iso(JETZT - 500) }),
+    } } });
+
+  ok(!Object.prototype.hasOwnProperty.call(m.entities.notes, "n-tot"),
+    "eine geloeschte Notiz wurde wiederbelebt");
+  ok(Object.prototype.hasOwnProperty.call(m.entities.notes, "n-lebt"),
+    "eine nicht geloeschte Notiz ging beim Merge verloren");
+}
+
+// ── 9b. Der Grabstein gilt NICHT rueckwirkend fuer eine neuere Fassung ───
+// Wurde die Notiz nach der Loeschung anderswo erneut bearbeitet, gewinnt die
+// Bearbeitung — sonst waere jede Neuanlage unter derselben Id verloren.
+{
+  const ls = speicher();
+  ls.setItem("_delete_log", JSON.stringify({ note: { "n-neu": JETZT - 5000 } }));
+  const { mergeData } = mergeLader(ls);
+  const m = mergeData(
+    { entities: { notes: {} } },
+    { entities: { notes: { "n-neu": notiz("n-neu", { updatedAt: iso(JETZT - 100) }) } } });
+  ok(Object.prototype.hasOwnProperty.call(m.entities.notes, "n-neu"),
+    "eine nach der Loeschung bearbeitete Notiz wurde vom alten Grabstein getilgt");
+}
+
+// ── 10. Quelltextregeln zum Merge ───────────────────────────────────────
+{
+  const mA = index.indexOf("function mergeData(local, remote) {");
+  const mergeSrc = index.slice(mA, index.indexOf("\nfunction ", mA + 10));
+  ok(/merged\._deleteLog = JSON\.parse\(JSON\.stringify\(combinedDeleteLog\)\)/.test(mergeSrc),
+    "mergeData legt den vereinten Grabsteinstand nicht in die gemergten Daten");
+  ok(/unionDeleteLogs\(getDeleteLog\(\), APP\.state\.data && APP\.state\.data\._deleteLog\)/.test(index),
+    "der Push vereint die beiden Grabsteinquellen nicht");
+  ok(/tombTs > 0 && itemTs > 0 && tombTs > itemTs/.test(mergeSrc),
+    "die Wiederbelebungssperre fehlt");
 }
 
 console.log(`delete tombstone: ok (${checks} Pruefungen)`);

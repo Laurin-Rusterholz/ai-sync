@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union · 2026-08-23" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6725,7 +6725,14 @@ function buildRemoteAppPayload() {
   payload._extraLocal = collectExtraLocalKeys();
   // Tombstones mitsenden, damit echte Löschungen über alle Geräte propagieren
   // (sonst "Geister-Wiederauferstehung" gelöschter Items auf Geräten ohne Tombstone).
-  try { payload._deleteLog = getDeleteLog(); } catch(e) {}
+  // Aus BEIDEN Quellen vereinen: dem lokalen Speicher und dem Grabsteinstand, den
+  // der letzte Merge in die Daten gelegt hat. Ein Voll-Push darf einen fremden
+  // Grabstein nie entfernen — auch dann nicht, wenn die localStorage-Schreibung
+  // still fehlgeschlagen ist. unionDeleteLogs nimmt pro id den spaeteren Wert und
+  // laesst nichts weg.
+  try {
+    payload._deleteLog = unionDeleteLogs(getDeleteLog(), APP.state.data && APP.state.data._deleteLog);
+  } catch(e) {}
   if (!payload.meta) payload.meta = {};
   payload.meta.updatedAt = new Date().toISOString();
   payload.meta.lastSavedBy = getOrCreateDeviceId();
@@ -11298,6 +11305,25 @@ function mergeAndPersistDeleteLog(remoteLog) {
   try { localStorage.setItem('_delete_log', JSON.stringify(local)); } catch(e) {}
   return local;
 }
+// Vereint zwei Grabsteinlogs, ohne irgendetwas zu speichern. Pro id gewinnt der
+// SPAETERE Zeitstempel; ein Log ohne einen Eintrag kann einen vorhandenen nie
+// entfernen. Genau das macht den Union zur Einbahnstrasse: ein Geraet, das
+// einen Grabstein nicht kennt, kann ihn nicht loeschen.
+function unionDeleteLogs(a, b) {
+  const out = {};
+  for (const quelle of [a, b]) {
+    if (!quelle || typeof quelle !== 'object') continue;
+    for (const [type, bucket] of Object.entries(quelle)) {
+      if (!bucket || typeof bucket !== 'object') continue;
+      if (!out[type]) out[type] = {};
+      for (const [id, ts] of Object.entries(bucket)) {
+        const t = Number(ts) || 0;
+        if (t > 0 && (!out[type][id] || t > out[type][id])) out[type][id] = t;
+      }
+    }
+  }
+  return out;
+}
 // Baut aus einem (verschachtelten) Delete-Log eine flache id→Zeitstempel-Map.
 // Wichtig: umgeht das Singular/Plural-Bucket-Problem (logDeletion speichert mal
 // 'task', mal 'nhNews') — beim Merge zählt nur die id, nicht der Bucket-Name.
@@ -11467,6 +11493,16 @@ function mergeData(local, remote) {
   // Wiederauferstehung). Danach flache id→ts-Map (umgeht Singular/Plural-Buckets).
   const combinedDeleteLog = mergeAndPersistDeleteLog(remote._deleteLog);
   const tombstones = flattenDeleteLog(combinedDeleteLog);
+  // Der vereinte Stand gehoert AUCH in die gemergten Daten, nicht nur in den
+  // lokalen Speicher. Vorher trug merged._deleteLog schlicht die Kopie des
+  // lokalen Logs (merged ist ein tiefer Klon von local), und _deleteLog steht in
+  // TRANSPORT_ROOTS — der Auffangzweig am Ende laesst es also unberuehrt. Solange
+  // buildRemoteAppPayload das Log aus localStorage neu aufbaut, faellt das nicht
+  // auf; scheitert dort aber eine Schreibung (privater Modus, volles Kontingent —
+  // beide Setter schlucken den Fehler in einem leeren catch), verschwindet der
+  // Grabstein wieder. Als eigene Kopie, damit spaetere logDeletion-Aufrufe den
+  // gemergten Stand nicht nachtraeglich veraendern.
+  merged._deleteLog = JSON.parse(JSON.stringify(combinedDeleteLog));
 
   // ── Merge entity collections ──
   const allEntityKeys = new Set([

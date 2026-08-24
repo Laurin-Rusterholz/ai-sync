@@ -93,12 +93,23 @@ const mergeData = loadMergeData();
 }
 
 // ── 3. Transportfelder gehoeren nicht in den Datenstand ────────────────────
-// _deleteLog, _settings & Co. reisen im Payload mit und werden an anderer
-// Stelle ausgewertet — im gemergten Datenbestand haben sie nichts verloren.
+// _settings & Co. reisen im Payload mit und werden an anderer Stelle
+// ausgewertet — im gemergten Datenbestand haben sie nichts verloren.
+//
+// AUSNAHME _deleteLog, seit F-25 Commit 3: der vereinte Grabsteinstand steht
+// bewusst IM gemergten Datenbestand. Bis dahin lebte er allein in localStorage,
+// und beide Setter schlucken einen Fehler in einem leeren catch (privater
+// Modus, volles Kontingent). Scheiterte die Schreibung, baute
+// buildRemoteAppPayload das Log aus dem alten Speicherstand neu auf und der
+// Voll-Push entfernte den fremden Grabstein wieder — die geloeschte Entitaet
+// kam zurueck. buildLocalAppSnapshot loescht _deleteLog weiterhin aus dem
+// Schnappschuss, buildRemoteAppPayload setzt es aus BEIDEN Quellen neu; an der
+// Transportnatur des Feldes aendert sich also nichts.
+// Verhalten dazu: tests/delete-tombstone.test.mjs, Bloecke 8 und 8b.
 {
   const m = mergeData({ entities: { tasks: {} } }, { entities: { tasks: {} }, _deleteLog: { x: 1 }, _settings: { a: 1 } });
-  ok(!("_deleteLog" in m) && !("_settings" in m),
-    "Transportfelder werden in den Datenstand uebernommen");
+  ok(!("_settings" in m), "Transportfelder werden in den Datenstand uebernommen");
+  ok("_deleteLog" in m, "der vereinte Grabsteinstand fehlt im gemergten Datenbestand");
 }
 
 // ── 4. Das Journal hat weiterhin seinen eigenen, genaueren Zweig ───────────
@@ -365,13 +376,18 @@ function gepflegteUnterstrichWurzeln() {
   for (const k of ["_importedBelege", "_nextBelegNr", "_importedRechnungen", "_importedInboxIds"]) {
     ok(!TR.has(k), `${k} steht faelschlich in TRANSPORT_ROOTS und ginge weiter verloren`);
   }
-  // Und sie werden nicht in den Datenstand kopiert.
+  // Und der Auffangzweig kopiert sie nicht in den Datenstand.
+  // _deleteLog ist ausgenommen: es steht seit F-25 Commit 3 im Datenstand, aber
+  // NICHT als Kopie aus dem Remote-Payload — mergeData setzt dort ausschliesslich
+  // das Ergebnis von unionDeleteLogs. Der Unterschied wird unten geprueft.
   const remote = { entities: { tasks: {} } };
   for (const k of TR) remote[k] = { ausRemote: true };
   const m = mergeData({ entities: { tasks: {} } }, remote);
-  const kopiert = [...TR].filter((k) => Object.prototype.hasOwnProperty.call(m, k));
+  const kopiert = [...TR].filter((k) => k !== "_deleteLog" && Object.prototype.hasOwnProperty.call(m, k));
   ok(kopiert.length === 0,
     `Transportfelder wurden in den Datenstand kopiert: ${kopiert.join(", ")}`);
+  ok(!("ausRemote" in (m._deleteLog || {})),
+    "_deleteLog wurde roh aus dem Remote-Payload uebernommen statt vereint");
 }
 
 // ── 11. Jede real gepflegte _-Wurzel ist entweder Transport oder bewahrt ──
