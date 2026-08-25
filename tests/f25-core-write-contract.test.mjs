@@ -205,7 +205,13 @@ for (const k of ["app-data_json", "app-data#json", "app-data/json"]) {
   // Die Zusammenfassung ist eine reine Funktion und wird direkt geprueft.
   const aktuell = { entities: { notes: { a: 1, b: 2 }, tasks: { t: 1 } }, meta: {}, journal: {} };
   const backup = { entities: { notes: { a: 1, b: 2, c: 3 }, tasks: {} }, meta: {}, weekPlan: {} };
-  const d = skript.diffZusammenfassung(aktuell, backup);
+  // Seit M2b nimmt diffZusammenfassung die BEWERTUNG des Ist-Standes entgegen,
+  // nicht rohe Daten — damit "fehlt" und "unlesbar" nicht als leerer Stand
+  // durchrutschen koennen. Der Datenvertrag selbst steht in
+  // tests/f25-restore-core-contract.test.mjs.
+  const d = skript.diffZusammenfassung(
+    skript.bewerteAktuellenStand({ exists: true, data: JSON.stringify(aktuell), parsed: aktuell }),
+    backup, {});
   ok(d.wurzelfelder.nurAktuell.join() === "journal",
     `verlorene Wurzelfelder: ${d.wurzelfelder.nurAktuell.join()}`);
   ok(d.wurzelfelder.nurBackup.join() === "weekPlan",
@@ -230,7 +236,12 @@ for (const k of ["app-data_json", "app-data#json", "app-data/json"]) {
   ok(/firebaseDbSet\(/.test(src), "der Restore schreibt nicht direkt in die RTDB");
   ok(!/blob-put|writeAppDataText/.test(ohneKommentare(src)),
     "der Restore laeuft ueber die Fassade — dann traefe ihn die If-Match-Pflicht");
-  ok(/restore-log/.test(src) && /writeFile\(ziel/.test(src), "es wird kein Protokoll geschrieben");
+  // Seit M2b laeuft das Protokoll ueber schreibeIntent/aktualisiereIntent mit
+  // fsync statt ueber ein einfaches writeFile; die Reihenfolge (Intent vor
+  // Write) prueft tests/f25-restore-core-contract.test.mjs ausfuehrbar.
+  ok(/restore-log/.test(src) && /schreibeIntent\(/.test(src) && /aktualisiereIntent\(/.test(src),
+    "es wird kein Protokoll geschrieben");
+  ok(/await fh\.sync\(\)/.test(src), "das Protokoll wird nicht gefsynct");
   ok(skript.LOG_DIR.startsWith("work/"), `das Protokoll landet in "${skript.LOG_DIR}" statt unter work/`);
   ok(/--dry-run/.test(src), "es gibt keinen Weg, die Zusammenfassung ohne Schreibvorgang zu sehen");
 }
