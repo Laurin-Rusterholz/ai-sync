@@ -580,37 +580,48 @@ function loadParagraphTools(sel) {
     "die Leseansicht erbt weiterhin den Fussraum des Schreibbereichs — hinter einem kurzen Brief steht eine halbe leere Seite");
 }
 
-// ── 23. „An Mobile senden" sagt, warum es nicht ging ──────────────────────
-// Produktionsbefund: der Knopf zeigte „⚠ Local only" — und sonst nichts. Der
-// Grund stand bestenfalls in der Konsole. Dazu kamen zwei echte Fehler: die
-// Anfrage ging OHNE Auth-Kopfzeile hinaus (der uebrige Abgleich schickt sie
-// mit; ist SYNC_AUTH_TOKEN gesetzt, antwortet der Server mit 401), und sie
-// sprach ausschliesslich den Netlify-Endpunkt an, waehrend der regulaere
-// Abgleich ueber Firebase/RTDB laeuft.
+// ── 23. „An Mobile senden" schreibt nur ueber den Trichter ───────────────
+// Produktionsbefund war zweistufig. Zuerst: der Knopf zeigte „⚠ Local only" —
+// und sonst nichts; der Grund stand bestenfalls in der Konsole. Dann (F-25):
+// dieser Weg war einer der schlimmsten kanonischen Schreibpfade der App.
+//   a) ein roher fetch(putUrl, {method:'PUT'}) auf blob-put — ohne ETag, ohne
+//      If-Match, ohne mergeData. Nur mobilePushes wurde von Hand
+//      zusammengefuehrt, alles andere war ein Vollstand-Ersetzen.
+//   b) scheiterte der vorangehende GET, ging der LOKALE Vollstand hinaus. Ein
+//      Geraet, das den Server nicht einmal LESEN konnte, ueberschrieb dessen
+//      kompletten Inhalt.
+//   c) zwei Rueckfaelle auf remotePutByKey mit force: true.
+// Seit F-25 v3 gibt es genau einen Weg: window.canonicalWrite. Die frueheren
+// Zusicherungen zu Auth-Kopfzeilen und Rueckfall galten dem Direktweg — den es
+// nicht mehr gibt; die Anmeldung liegt jetzt in der Anbieterschicht.
 {
   const send = jbSource.slice(jbSource.indexOf("window.jbSendToMobile = async function()"),
     jbSource.indexOf("window.jbCloseEditor = function()"));
   ok(send.length > 500, "jbSendToMobile wurde nicht gefunden");
 
-  ok(/function jbAuthHeaders\(\)/.test(jbSource),
-    "die Auth-Kopfzeile fehlt — buildStorageAuthHeaders() der Hauptapp liegt in einer fremden Kapsel und ist hier NICHT erreichbar");
-  ok(!/buildStorageAuthHeaders\(/.test(send),
-    "es wird weiterhin buildStorageAuthHeaders() aufgerufen — die Funktion liegt in einer fremden Kapsel, der Aufruf lief ins Leere");
-  ok(/const _authHdrs = jbAuthHeaders\(\);/.test(send) && /headers: _authHdrs/.test(send),
-    "das Holen geht weiterhin ohne Auth-Kopfzeile hinaus");
-  ok(/'Content-Type': 'application\/json' \}, jbAuthHeaders\(\)\)/.test(send),
-    "das Senden geht weiterhin ohne Auth-Kopfzeile hinaus");
-
-  ok(/window\.remotePutByKey\(blobKey, payload, \{ force: true/.test(send),
-    "scheitert der eine Endpunkt, gibt es keinen Rueckfall auf den regulaeren Abgleich");
-  ok(!/await remotePut\(/.test(send),
-    "der Rueckfall ruft remotePut() auf — die Funktion liegt in einer fremden Kapsel, die Bedingung davor ist immer falsch und der Rueckfall lief nie");
-  ok(/pushError = jbPushReason\(putResp\.status, hint\)/.test(send),
-    "der Statuscode wird nicht in einen Satz uebersetzt");
+  const code = send.replace(/^\s*\/\/.*$/gm, "");   // Regeln pruefen Code, nicht Prosa
+  ok(!/fetch\(/.test(code),
+    "es gibt weiterhin einen rohen HTTP-Schreibvorgang am Abgleich vorbei");
+  ok(!/remotePutByKey\(/.test(code),
+    "es gibt weiterhin einen Rueckfall auf remotePutByKey");
+  ok(!/force/.test(code), "es wird weiterhin irgendwo force gesetzt");
+  ok(!/buildLocalAppSnapshot|buildRemoteAppPayload/.test(code),
+    "bei einem Fehler geht weiterhin der lokale Vollstand hinaus");
+  ok(/window\.canonicalWrite\(/.test(code),
+    "der Versand laeuft nicht ueber den Schreibtrichter");
+  ok(/requireRemoteRead: true/.test(code),
+    "ohne gelesenen Serverstand darf NICHT geschrieben werden (F-08) — die Bedingung fehlt");
+  ok(/remote_read_failed/.test(code),
+    "ein nicht lesbarer Serverstand wird dem Nutzer nicht als Grund genannt");
   ok(/btn\.title = 'Nicht gesendet: '/.test(send),
     "der Knopf verraet den Grund nicht");
+  ok(/jbPushReason\(res\.status/.test(code),
+    'ein Server-Statuscode wird nicht mehr in einen Satz uebersetzt — die Erklaerung zum abgelaufenen Server-Zugang (F-01) waere verloren');
   ok(/navigator\.onLine/.test(send),
     "ein Abbruch ohne Verbindung meldet weiterhin nur „Failed to fetch\"");
+  // mobilePushes werden weiterhin zusammengefuehrt, jetzt aber IM Trichter
+  ok(/basis\.mobilePushes = Object\.values\(nachId\)/.test(code),
+    "die mobilePushes werden nicht mehr zusammengefuehrt");
 
   // Die Uebersetzung selbst laeuft als ECHTE Funktion.
   const start = jbSource.indexOf("function jbPushReason(status, hint)");

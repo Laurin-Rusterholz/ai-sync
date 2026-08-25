@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write · 2026-08-24" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated · 2026-08-24" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -12476,9 +12476,12 @@ async function manualTransferPush(silent = false) {
     console.warn('[ManualPush] Mobile-Delta-Merge unerwarteter Fehler:', e);
   }
 
-  // Clear stale ETags for manual push (user explicitly wants to overwrite)
-  APP.state.storage.etag = null;
-  for (const k in _remoteEtags) delete _remoteEtags[k];
+  // Frueher wurden hier ALLE ETags geloescht ("der Nutzer will ja
+  // ueberschreiben"). Genau das machte aus einem manuellen Push ein blindes
+  // Ersetzen: ohne If-Match kann der Server einen fremden Stand nicht mehr
+  // schuetzen, und dessen Grabsteine gingen mit (F-25). Der Wunsch "jetzt
+  // hochladen" heisst nicht "fremde Aenderungen verwerfen" — canonicalWrite
+  // liest, merged und schreibt bedingt.
 
   const now = new Date().toISOString();
   const transferVersionId = buildManualVersionId('cloud');
@@ -12493,9 +12496,28 @@ async function manualTransferPush(silent = false) {
   console.log('[ManualPush] Lokale Statistik VOR Push:', formatSyncStatsShort(localStatsBefore), localStatsBefore);
   console.log('[ManualPush] Pushing to cloud. Entities:', countEntities(payload), 'Providers: Netlify=' + isBlobSyncConfigured() + ', Firebase=' + isFirebaseCloudAvailable());
 
+  // EIN Schreibvorgang durch den Trichter statt zwei Direktschreibungen pro
+  // Anbieter. canonicalWrite bedient die Anbieterreihenfolge selbst und spiegelt
+  // den committeten Stand in den zweiten Speicher.
   const appResults = [];
-  if (isBlobSyncConfigured()) appResults.push(await netlifyBlobPut(APP.state.settings.storage.blobKey, payload, { force: true }));
-  if (isFirebaseCloudAvailable()) appResults.push(await firebaseJsonPut(APP.state.settings.storage.blobKey, payload, { force: true }));
+  const pushRes = await canonicalWrite(payload);
+  appResults.push(pushRes);
+  if (pushRes.ok && pushRes.mergedRemote && !silent) {
+    // F-21: sichtbar machen, WAS dabei zusammengefuehrt wurde. Vorher sah der
+    // Nutzer nur "hochgeladen" — auch dann, wenn der Push fremde Aenderungen
+    // ueberfahren hatte.
+    const vorher = countEntities(payload);
+    const nachher = countEntities(pushRes.data || payload);
+    const dazu = Math.max(0, nachher - vorher);
+    toast('info', 'Zusammengefuehrt',
+      dazu > 0
+        ? (dazu + ' Eintrag/Eintraege vom Server uebernommen und mit hochgeladen')
+        : 'Serverstand gelesen und mit dem lokalen Stand zusammengefuehrt');
+  }
+  if (!pushRes.ok) {
+    console.error('[ManualPush] Kein Schreibvorgang:', pushRes.reason || pushRes.status);
+    if (!silent) toast('error', 'Nicht hochgeladen', 'Grund: ' + (pushRes.reason || pushRes.status || 'unbekannt'));
+  }
 
   const rhPayload = buildReadingHubCloudPayload();
   rhPayload.syncedAt = now;
@@ -12532,13 +12554,12 @@ async function manualTransferPush(silent = false) {
 
     // Bei Mismatch: 1x Retry mit force
     if (verifyStatus === 'mismatch') {
-      console.log('[ManualPush] 🔄 Retry mit force wegen Diskrepanz...');
+      console.log('[ManualPush] 🔄 Wiederholung (Lesen/Mergen/CAS) wegen Diskrepanz...');
       if (!silent) toast('info', 'Verifikation', 'Unvollständig — wiederhole Upload...');
-      // _retry412 entfaellt: es existierte nur, um die Force-Wiederholung ohne
-      // If-Match auszuloesen. Die gibt es nicht mehr — dieser Aufruf laeuft jetzt
-      // durch dieselbe Lesen-Mergen-neuer-ETag-Schleife wie jeder andere.
-      if (isBlobSyncConfigured()) await netlifyBlobPut(APP.state.settings.storage.blobKey, payload, { force: true, mergeFn: mergeData });
-      if (isFirebaseCloudAvailable()) await firebaseJsonPut(APP.state.settings.storage.blobKey, payload, { force: true });
+      // Auch die Wiederholung laeuft durch den Trichter. Kein force, kein
+      // direkter firebaseJsonPut ungepruefter Daten: der Schatten entsteht in
+      // remotePutByKey aus dem committeten Stand.
+      await canonicalWrite(payload);
       // Erneut verifizieren
       try {
         const readBack2 = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
@@ -12982,7 +13003,9 @@ window._headerPush = async function() {
     const payload = (typeof buildRemoteAppPayload === 'function') ? buildRemoteAppPayload() : APP.state.data;
     if (!APP.state.data.meta) APP.state.data.meta = {};
     APP.state.data.meta.updatedAt = new Date().toISOString();
-    const result = await remotePut(payload, { force: true });
+    // Kein force auf dem Kernschluessel: remotePut ist der Trichter, er liest
+    // und merged vorher. Ein "Push" ersetzt nicht mehr blind.
+    const result = await remotePut(payload);
     if (result && result.ok) {
       try { APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now(); } catch(e) {}
       // ReadingHub (Notizen/Vokabeln/Lesezeichen/Bücher-Liste) liegt in einem eigenen
@@ -13230,6 +13253,7 @@ window.clearMobileRecallLabDelta = clearMobileRecallLabDelta;
 // Expose cloud sync functions for ReadingHub module (separate IIFE)
 window.remoteGetByKey = remoteGetByKey;
 window.remotePutByKey = remotePutByKey;
+window.canonicalWrite = canonicalWrite;
 window.buildReadingHubCloudPayload = buildReadingHubCloudPayload;
 window.persistReadingHubCloudPayload = persistReadingHubCloudPayload;
 window.mergeReadingHubPayloads = mergeReadingHubPayloads;
@@ -13572,7 +13596,7 @@ async function doSave(silent = false) {
   const payload = buildRemoteAppPayload();
 
   // Save to remote
-  const result = await remotePut(payload, { force: forceRemote });
+  const result = await remotePut(payload);   // forceRemote wirkt nicht mehr auf den Kernschluessel
   
   if (result.ok) {
     APP.state.storage.status = "saved";
@@ -13595,7 +13619,7 @@ async function doSave(silent = false) {
         saveLocalData();
         render();
         // Retry save with merged data
-        const retry = await remotePut(buildRemoteAppPayload(), { force: true });
+        const retry = await remotePut(buildRemoteAppPayload());
         if (retry.ok) {
           APP.state.storage.status = "saved";
           APP.state.storage.message = t("saved");
@@ -85037,21 +85061,16 @@ select.jb-select option{background:var(--panel);color:var(--text)}
   // liegt in einer fremden Kapsel und ist hier NICHT erreichbar — ein Aufruf
   // waere still wirkungslos geblieben. Deshalb dieselbe Regel hier lokal:
   // Token mit oder ohne „Bearer", gesendet wird immer mit.
-  function jbAuthHeaders() {
-    var h = {};
-    try {
-      var t = APP && APP.state && APP.state.settings && APP.state.settings.storage
-        && APP.state.settings.storage.authToken;
-      if (t) {
-        t = String(t).trim();
-        h["Authorization"] = t.toLowerCase().indexOf("bearer ") === 0 ? t : ("Bearer " + t);
-      }
-    } catch (e) {}
-    return h;
-  }
 
   // Was der Server mit einer Zahl sagt, in einem Satz. Ohne das stand am Knopf
   // nur „nur lokal" — und die Ursache lag im Zweifel in der Konsole.
+
+  // Send current entry to Mobile App
+  // Uebersetzt einen Server-Statuscode in einen Satz. Der rohe HTTP-Weg ist
+  // fort, die Statuscodes sind es nicht: canonicalWrite reicht bei einem
+  // Netlify-Fehler weiterhin res.status durch. Besonders der 500er zaehlt —
+  // der haeufigste Grund ist ein abgelaufener Server-Zugang (F-01), und der
+  // bekommt hier eine Handlungsanweisung statt einer Google-Fehlernummer.
   function jbPushReason(status, hint) {
     if (status === 401 || status === 403) return 'Zugang abgelehnt (' + status + ') — Auth-Token in den Einstellungen prüfen';
     if (status === 404) return 'Endpunkt nicht gefunden (404) — blob-put ist nicht veröffentlicht';
@@ -85070,7 +85089,6 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     return 'HTTP ' + status + (hint ? ': ' + hint : '');
   }
 
-  // Send current entry to Mobile App
   window.jbSendToMobile = async function() {
     console.log('[jbSendToMobile] CALLED', { docId: _jbCurrentDocId });
     
@@ -85149,114 +85167,63 @@ select.jb-select option{background:var(--panel);color:var(--text)}
     let saved = false;
     let pushError = null;
     try {
-      // Settings holen mit Fallback zu Defaults
-      const s = (APP.state.settings && APP.state.settings.storage) || {};
-      const blobKey = s.blobKey || 'app-data.json';
-      const putUrlTpl = s.putUrl || '/.netlify/functions/blob-put?key={key}';
-      const getUrlTpl = s.getUrl || '/.netlify/functions/blob-get?key={key}';
-      const putUrl = putUrlTpl.replace('{key}', encodeURIComponent(blobKey));
-      const getUrl = getUrlTpl.replace('{key}', encodeURIComponent(blobKey));
-      
-      console.log('[jbSendToMobile] PUT URL:', putUrl);
-      console.log('[jbSendToMobile] GET URL:', getUrl);
-      
-      // Schritt 1: Aktuellen Remote-State holen (damit wir nicht andere Devices' Updates überschreiben)
-      let remoteData = null;
-      try {
-        console.log('[jbSendToMobile] Pulling remote state...');
-        // MIT Auth-Kopfzeile: ist auf dem Server SYNC_AUTH_TOKEN gesetzt, weist
-        // er jede Anfrage ohne sie mit 401 ab. Der uebrige Abgleich schickt sie
-        // laengst mit (buildStorageAuthHeaders) — nur dieser Weg hier nicht.
-        const _authHdrs = jbAuthHeaders();
-        const getResp = await fetch(getUrl + (getUrl.includes('?') ? '&' : '?') + '_ts=' + Date.now(), {
-          cache: 'no-store',
-          headers: _authHdrs,
-        });
-        console.log('[jbSendToMobile] GET status:', getResp.status, getResp.statusText);
-        if (getResp.ok) {
-          remoteData = await getResp.json();
-          console.log('[jbSendToMobile] Remote has mobilePushes:', Array.isArray(remoteData?.mobilePushes) ? remoteData.mobilePushes.length : 'no');
-        }
-      } catch(e) {
-        console.warn('[jbSendToMobile] pull failed, will push local state', e);
-      }
-      
-      // Schritt 2: Payload bauen — bevorzuge Remote-State, packe nur mobilePushes drauf
-      const payload = (remoteData && typeof remoteData === 'object') 
-        ? remoteData 
-        : (typeof window.buildLocalAppSnapshot === 'function' ? window.buildLocalAppSnapshot() : { ...APP.state.data });
-      
-      // mobilePushes mergen: nimm das aktuellere von beiden, dann unser Update reinpatchen
-      if (!Array.isArray(payload.mobilePushes)) payload.mobilePushes = [];
-      // Unser eben hinzugefügter/aktualisierter Push muss IM payload landen
-      const localPushes = APP.state.data.mobilePushes;
-      // Merge: alle aus payload.mobilePushes übernehmen, dann localPushes drüber merge by id
-      const mergedById = {};
-      [...payload.mobilePushes, ...localPushes].forEach(p => {
-        if (!p || !p.id) return;
-        const ex = mergedById[p.id];
-        if (!ex || (p.sentAt || '') >= (ex.sentAt || '')) mergedById[p.id] = p;
-      });
-      payload.mobilePushes = Object.values(mergedById)
-        .sort((a,b) => (b.sentAt||'').localeCompare(a.sentAt||''))
-        .slice(0, 50);
-      
-      console.log('[jbSendToMobile] Merged mobilePushes count:', payload.mobilePushes.length);
-      console.log('[jbSendToMobile] Latest push:', payload.mobilePushes[0]);
-      
-      payload.meta = payload.meta || {};
-      payload.meta.updatedAt = new Date().toISOString();
-      
-      const bodyStr = JSON.stringify(payload);
-      console.log('[jbSendToMobile] Payload size:', (bodyStr.length / 1024).toFixed(1) + ' KB');
-      
-      // Schritt 3: Push (PUT)
-      console.log('[jbSendToMobile] PUT request starting...');
-      const putResp = await fetch(putUrl, {
-        method: 'PUT',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, jbAuthHeaders()),
-        body: bodyStr,
-      });
-      console.log('[jbSendToMobile] PUT status:', putResp.status, putResp.statusText);
-      
-      if (putResp.ok) {
-        saved = true;
-        console.log('[jbSendToMobile] ✅ PUT SUCCESS');
-        // Auch lokal mergen damit nächster Pull konsistent ist
-        APP.state.data.mobilePushes = payload.mobilePushes;
-        if (typeof saveLocalData === 'function') {
-          try { saveLocalData(); } catch(e) {}
-        }
+      // Schritt 1-3 in EINEM Trichter-Aufruf (F-25 v3).
+      //
+      // Vorher liefen hier drei kanonische Schreibwege nebeneinander, alle drei
+      // ohne Bedingung:
+      //   a) ein roher fetch(putUrl, {method:'PUT'}) auf blob-put — ohne ETag,
+      //      ohne If-Match, ohne mergeData. Nur mobilePushes wurde von Hand
+      //      zusammengefuehrt, alles andere war ein Vollstand-Ersetzen.
+      //   b) scheiterte der vorangehende GET, wurde der LOKALE Vollstand
+      //      geschickt (buildLocalAppSnapshot). Damit ueberschrieb ein Geraet,
+      //      das den Server gar nicht lesen konnte, dessen kompletten Inhalt.
+      //   c) zwei Rueckfaelle auf remotePutByKey mit force: true.
+      //
+      // Jetzt: canonicalWrite liest den Serverstand, unser mutateFn haengt die
+      // mobilePushes daran, mergeData vereinigt, und geschrieben wird per CAS.
+      // requireRemoteRead: ohne gelesenen Serverstand gibt es KEINEN
+      // Schreibvorgang, sondern einen sichtbaren Fehler (F-08).
+      if (typeof window.canonicalWrite !== 'function') {
+        pushError = 'Abgleich nicht verfuegbar';
+        console.error('[jbSendToMobile] window.canonicalWrite fehlt — kein Schreibvorgang.');
       } else {
-        // Sagen, WORAN es liegt. Nur „lokal" liess einen ratlos zurueck.
-        const txt = await putResp.text().catch(() => '');
-        let hint = '';
-        try { hint = (JSON.parse(txt) || {}).error || ''; } catch (e) { hint = (txt || '').slice(0, 120); }
-        pushError = jbPushReason(putResp.status, hint);
-        console.warn('[jbSendToMobile] PUT FAILED', putResp.status, txt);
+        const res = await window.canonicalWrite(function (fern) {
+          const basis = fern || {};
+          const ausFern = Array.isArray(basis.mobilePushes) ? basis.mobilePushes : [];
+          const lokal = Array.isArray(APP.state.data.mobilePushes) ? APP.state.data.mobilePushes : [];
+          // mobilePushes zusammenfuehren: pro id der spaetere sentAt gewinnt.
+          const nachId = {};
+          [...ausFern, ...lokal].forEach(function (pu) {
+            if (!pu || !pu.id) return;
+            const ex = nachId[pu.id];
+            if (!ex || (pu.sentAt || '') >= (ex.sentAt || '')) nachId[pu.id] = pu;
+          });
+          basis.mobilePushes = Object.values(nachId)
+            .sort(function (x, y) { return (y.sentAt || '').localeCompare(x.sentAt || ''); })
+            .slice(0, 50);
+          console.log('[jbSendToMobile] mobilePushes nach Merge:', basis.mobilePushes.length);
+          return basis;
+        }, { requireRemoteRead: true });
 
-        // Rueckfall auf den regulaeren Abgleich der App: der spricht die
-        // eingerichteten Anbieter (Firebase/RTDB) an — und die Handy-App liest
-        // ueber blob-get denselben Datenbestand. Scheitert also nur dieser eine
-        // Endpunkt, kommt der Eintrag trotzdem an.
-        // window.remotePutByKey statt remotePut: remotePut() liegt — wie schon
-        // buildStorageAuthHeaders — in einer fremden Kapsel und ist von hier aus
-        // NICHT erreichbar. Die Bedingung war damit immer falsch und der
-        // Rueckfall lief nie. (Im Browser nachgemessen: typeof remotePut ===
-        // "undefined", remotePutByKey === "function".)
-        if (typeof window.remotePutByKey === 'function') {
-          try {
-            console.log('[jbSendToMobile] Fallback ueber den regulaeren Abgleich...');
-            const alt = await window.remotePutByKey(blobKey, payload, { force: true, shadowToOthers: true });
-            if (alt && alt.ok) {
-              saved = true;
-              pushError = null;
-              APP.state.data.mobilePushes = payload.mobilePushes;
-              if (typeof saveLocalData === 'function') { try { saveLocalData(); } catch(e) {} }
-              console.log('[jbSendToMobile] Fallback erfolgreich ueber', alt.provider);
-              jbToast('Gesendet über ' + (alt.provider || 'Abgleich'));
-            }
-          } catch (e2) { console.warn('[jbSendToMobile] Fallback fehlgeschlagen:', e2); }
+        if (res && res.ok) {
+          saved = true;
+          pushError = null;
+          if (res.data && Array.isArray(res.data.mobilePushes)) {
+            APP.state.data.mobilePushes = res.data.mobilePushes;
+          }
+          if (typeof saveLocalData === 'function') { try { saveLocalData(); } catch (e) {} }
+          console.log('[jbSendToMobile] Gesendet ueber', res.provider);
+        } else {
+          // Kein Rueckfall auf einen unbedingten Schreibvorgang. Sichtbar sagen,
+          // woran es lag.
+          const grund = (res && (res.reason || res.status)) || 'unbekannt';
+          pushError = grund === 'remote_read_failed'
+            ? 'Serverstand nicht lesbar — nichts gesendet'
+            : grund === 'auth_required' ? 'nicht angemeldet'
+            : (typeof res.status === 'number' && res.status >= 400)
+              ? jbPushReason(res.status, '')
+              : ('Abgleich fehlgeschlagen (' + grund + ')');
+          console.error('[jbSendToMobile] Kein Schreibvorgang:', grund);
         }
       }
     } catch(e) {
@@ -85267,13 +85234,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
         ? 'keine Verbindung'
         : ('Server nicht erreichbar' + (e && e.message ? ' (' + e.message + ')' : ''));
       console.error('[jbSendToMobile] EXCEPTION:', e);
-      if (typeof window.remotePutByKey === 'function' && typeof window.buildRemoteAppPayload === 'function') {
-        try {
-          const _key = (APP.state.settings?.storage?.blobKey) || 'app-data.json';
-          const alt = await window.remotePutByKey(_key, window.buildRemoteAppPayload(), { force: true, shadowToOthers: true });
-          if (alt && alt.ok) { saved = true; pushError = null; }
-        } catch (e2) {}
-      }
+      // Rueckfall B ersatzlos entfernt. Er schickte den LOKALEN Vollstand mit
+      // force — und zwar genau dann, wenn die Lage ohnehin unklar war. Ein
+      // Fehler ist ein Fehler; er wird gemeldet, nicht ueberschrieben (F-08).
     }
     
     console.log('[jbSendToMobile] Final result: saved=' + saved + ', error=' + pushError);
