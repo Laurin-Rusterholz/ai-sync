@@ -239,8 +239,13 @@ for (const k of ["app-data_json", "app-data#json", "app-data/json"]) {
   // Seit M2b laeuft das Protokoll ueber schreibeIntent/aktualisiereIntent mit
   // fsync statt ueber ein einfaches writeFile; die Reihenfolge (Intent vor
   // Write) prueft tests/f25-restore-core-contract.test.mjs ausfuehrbar.
-  ok(/restore-log/.test(src) && /schreibeIntent\(/.test(src) && /aktualisiereIntent\(/.test(src),
+  // Seit M2c legt der Intent exklusiv an (schreibeIntentExklusiv, "wx") und
+  // wird nur ueber den im Prozess gehaltenen Pfad aktualisiert. Reihenfolge und
+  // Kollisionsfestigkeit pruefen tests/f25-restore-core-contract.test.mjs.
+  ok(/restore-log/.test(src) && /schreibeIntentExklusiv\(/.test(src) && /aktualisiereIntent\(/.test(src),
     "es wird kein Protokoll geschrieben");
+  ok(/erwerbeLock\(/.test(src) && /gibLockFrei\(/.test(src),
+    "es gibt keinen Exklusiv-Lock gegen zwei gleichzeitige Restores");
   ok(/await fh\.sync\(\)/.test(src), "das Protokoll wird nicht gefsynct");
   ok(skript.LOG_DIR.startsWith("work/"), `das Protokoll landet in "${skript.LOG_DIR}" statt unter work/`);
   ok(/--dry-run/.test(src), "es gibt keinen Weg, die Zusammenfassung ohne Schreibvorgang zu sehen");
