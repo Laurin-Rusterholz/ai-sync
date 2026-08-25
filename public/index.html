@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union · 2026-08-23" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write · 2026-08-24" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6767,23 +6767,51 @@ async function netlifyBlobGet(key, options = {}) {
   }
 }
 async function netlifyBlobPut(key, data, options = {}) {
+  const _g = coreWriteGuard('netlifyBlobPut', key, options);
+  if (_g) return canonicalWrite(data, options);
   if (!shouldTryCloudProvider('netlify', options)) return { ok: false, skipped: true, provider: 'netlify' };
   const s = APP.state.settings.storage;
   const url = s.putUrl.replace('{key}', encodeURIComponent(key));
   const headers = { 'Content-Type': 'application/json', ...buildStorageAuthHeaders(s.authToken) };
-  const etag = (options.force && options._retry412) ? null : (key === s.blobKey ? APP.state.storage.etag : _remoteEtags[key]);
+  // Der ETag wird NIE mehr unterdrueckt. Die Wiederholung nach 412 laeuft mit
+  // dem FRISCHEN ETag aus dem Lesevorgang, nicht ohne If-Match.
+  const etag = (key === s.blobKey ? APP.state.storage.etag : _remoteEtags[key]);
   if (etag) headers['If-Match'] = etag;
   try {
     const resp = await fetchWithTimeout(url, { method: 'PUT', headers, body: JSON.stringify(data) }, 12000);
     if (!resp.ok) {
-      // On 412 (ETag conflict): retry once without If-Match when force is set
-      if (resp.status === 412 && options.force && !options._retry412) {
-        console.log('[CloudSync] Netlify PUT 412 ETag conflict → retrying without If-Match');
-        if (key === s.blobKey) APP.state.storage.etag = null;
-        else delete _remoteEtags[key];
-        return netlifyBlobPut(key, data, { ...options, _retry412: true });
+      // 412 heisst: seit unserem ETag hat jemand anders geschrieben.
+      // Frueher lief hier bei force eine Wiederholung OHNE If-Match und mit
+      // UNVERAENDERTEM Koerper — also genau das blinde Ersetzen, das der ETag
+      // verhindern soll. Der fremde Stand wurde damit weggeworfen, samt seiner
+      // Grabsteine (F-25).
+      // Jetzt: aktuellen Stand LESEN, lokal MERGEN und das Ergebnis mit dem
+      // frischen ETag senden. Genau ein Versuch — die bestehende Grenze bleibt.
+      if (resp.status === 412 && !options._retry412) {
+        const aktuell = await netlifyBlobGet(key, { force: true });
+        if (!aktuell.ok || !aktuell.data) {
+          console.warn('[CloudSync] Netlify PUT 412 → Serverstand nicht lesbar, kein Schreibvorgang');
+          rememberCloudFailure('netlify', { status: 412 });
+          return { ok: false, status: 412, reason: 'etag_conflict_read_failed', provider: 'netlify' };
+        }
+        if (typeof options.mergeFn !== 'function') {
+          // Ohne Merge waere jede Wiederholung ein Ersetzen. Dann lieber nicht.
+          console.warn('[CloudSync] Netlify PUT 412 ohne mergeFn → kein Schreibvorgang');
+          rememberCloudFailure('netlify', { status: 412 });
+          return { ok: false, status: 412, reason: 'etag_conflict_no_merge_fn', provider: 'netlify' };
+        }
+        console.log('[CloudSync] Netlify PUT 412 → Serverstand gelesen, gemergt, erneut mit frischem ETag');
+        // netlifyBlobGet hat den neuen ETag bereits hinterlegt; force bleibt aus,
+        // damit die Wiederholung nicht doch noch an einer Force-Regel vorbeilaeuft.
+        return netlifyBlobPut(key, options.mergeFn(data, aktuell.data), { ...options, force: false, _retry412: true });
       }
-      if (resp.status !== 412) rememberCloudFailure('netlify', { status: resp.status });
+      if (resp.status === 412) {
+        // Zweiter 412 in Folge: sichtbar aufgeben statt erzwingen.
+        console.error('[CloudSync] Netlify PUT: ETag-Konflikt bleibt nach Merge-Wiederholung bestehen — nicht geschrieben.');
+        rememberCloudFailure('netlify', { status: 412 });
+        return { ok: false, status: 412, reason: 'etag_conflict_persists', provider: 'netlify' };
+      }
+      rememberCloudFailure('netlify', { status: resp.status });
       return { ok: false, status: resp.status, provider: 'netlify' };
     }
     const newEtag = resp.headers.get('ETag');
@@ -6843,6 +6871,8 @@ async function firebaseJsonGet(key, options = {}) {
   }
 }
 async function firebaseJsonPut(key, data, options = {}) {
+  const _g = coreWriteGuard('firebaseJsonPut', key, options);
+  if (_g) return canonicalWrite(data, options);
   if (!shouldTryCloudProvider('firebase', options)) return { ok: false, skipped: true, provider: 'firebase' };
   if (window._firebaseCorsBlocked) return { ok: false, skipped: true, provider: 'firebase', corsBlocked: true };
   let payload = data;
@@ -6942,6 +6972,8 @@ async function rtdbJsonGet(key, options = {}) {
   }
 }
 async function rtdbJsonPut(key, data, options = {}) {
+  const _g = coreWriteGuard('rtdbJsonPut', key, options);
+  if (_g) return canonicalWrite(data, options);
   if (!shouldTryCloudProvider('rtdb', options)) return { ok: false, skipped: true, provider: 'rtdb' };
   // Ohne Nutzer nicht schreiben. Ein Schreibvorgang, dem kein erfolgreicher
   // Lesevorgang vorausging, ist genau der Weg, auf dem fremde Aenderungen
@@ -6969,6 +7001,7 @@ async function rtdbJsonPut(key, data, options = {}) {
     if (isMainRecord && ref) {
       let merged = false;
       let finalPayload = data;
+      let abortReason = null;
       const myDevice = getOrCreateDeviceId();
       const txn = await new Promise((resolve, reject) => {
         ref.transaction((current) => {
@@ -6980,16 +7013,28 @@ async function rtdbJsonPut(key, data, options = {}) {
           }
           let out = data;
           if (remoteData) {
-            const remoteTs = getDataTimestamp(remoteData);
-            const localTs = getDataTimestamp(data);
-            const remoteDevice = remoteData?.meta?.lastSavedBy || '';
-            const localDevice = data?.meta?.lastSavedBy || myDevice;
-            const foreign = !!remoteDevice && remoteDevice !== localDevice;
-            // Fremdes Geraet ODER neuerer Serverstand: erst verlustfrei
-            // vereinigen, dann schreiben. Nie bedingungslos ersetzen.
-            if (foreign || remoteTs > localTs) {
-              out = (typeof options.mergeFn === 'function') ? options.mergeFn(data, remoteData) : data;
+            // BEDINGUNGSLOS mergen. Vorher lief der Merge nur bei
+            // (fremdes Geraet ODER neuerer Serverstand). Beide Bedingungen sind
+            // als Torwaechter untauglich:
+            //   lastSavedBy trennt GERAETE, nicht Browser-Tabs. Zwei Tabs
+            //   desselben Rechners tragen dieselbe Kennung, foreign war false.
+            //   Der Zeitstempel half dann auch nicht: der stale Tab hat den
+            //   spaeteren, weil er gerade erst gespeichert hat. Also
+            //   out = data — der ganze Serverstand wurde durch den veralteten
+            //   Stand des Tabs ERSETZT, samt der Grabsteine, die der andere Tab
+            //   gerade angelegt hatte. Die geloeschte Notiz kam zurueck (F-25).
+            // lastSavedBy bleibt Diagnose- und Polling-Signal (Anzeige,
+            // Frischepruefung) und entscheidet hier nichts mehr.
+            if (typeof options.mergeFn === 'function') {
+              out = options.mergeFn(data, remoteData);
               merged = true;
+            } else {
+              // Kein Merge moeglich und ein Serverstand vorhanden: NICHT
+              // schreiben. undefined bricht die Transaktion ab, der Knoten
+              // bleibt unberuehrt. Lieber kein Schreibvorgang als ein blindes
+              // Ersetzen — dasselbe Prinzip wie im SDK-losen Zweig unten.
+              abortReason = 'no_merge_fn';
+              return undefined;
             }
           }
           finalPayload = out;
@@ -7004,15 +7049,19 @@ async function rtdbJsonPut(key, data, options = {}) {
         }, false);
       });
       if (!txn.committed) {
-        rememberCloudFailure('rtdb', { error: new Error('transaction_aborted') });
-        return { ok: false, reason: 'transaction_aborted', provider: 'rtdb' };
+        const grund = abortReason || 'transaction_aborted';
+        rememberCloudFailure('rtdb', { error: new Error(grund) });
+        return { ok: false, reason: grund, provider: 'rtdb' };
       }
       payload = finalPayload;
       APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now();
       APP.state.storage.lastRemoteProvider = 'rtdb';
       APP.state.storage.etag = null;
       rememberCloudSuccess('rtdb');
-      return { ok: true, status: 200, provider: 'rtdb', data: payload, merged };
+      // committedByTransaction markiert: dieses payload ist GENAU der Stand, den
+      // die kanonische Merge-Transaktion committet hat. Der Shadow-Write haengt
+      // daran (siehe remotePutByKey).
+      return { ok: true, status: 200, provider: 'rtdb', data: payload, merged, committedByTransaction: true };
     }
 
     // ── Alle uebrigen Schluessel: unveraendert ─────────────────────────────
@@ -7112,6 +7161,8 @@ async function remoteGetByKey(key, options = {}) {
   return last || { ok: false, reason: 'unavailable', authRequired };
 }
 async function remotePutByKey(key, data, options = {}) {
+  const _g = coreWriteGuard('remotePutByKey', key, options);
+  if (_g) return canonicalWrite(data, options);
   const _blocked = await coreKeyAuthGate(key);
   if (_blocked) return _blocked;
   if (!hasAnyCloudProviderAvailable(options)) return { ok: false, skipped: true, reason: 'no_provider' };
@@ -7123,22 +7174,44 @@ async function remotePutByKey(key, data, options = {}) {
       : provider === 'firebase' ? await firebaseJsonPut(key, data, options)
       : await netlifyBlobPut(key, data, options);
     if (res.ok) {
-      // Shadow-Write: denselben Datensatz zusätzlich im zweiten Firebase-
-      // Speicher schreiben (gedrosselt, fire-and-forget).
-      if (options.shadowToOthers && isAutoSyncEnabled()) {
+      // Shadow-Write: denselben Datensatz zusätzlich im zweiten Speicher
+      // ablegen (gedrosselt, fire-and-forget).
+      //
+      // Der Schatten spiegelt AUSSCHLIESSLICH einen Stand, den unmittelbar
+      // zuvor die kanonische Merge-Transaktion committet hat. Vorher stand hier
+      // `res.data || data`: fehlte res.data, ging der ungepruefte lokale Stand
+      // mit force in den anderen Speicher — ein Voll-Push ohne jeden Merge.
+      // Der Schatten wird zurueckgelesen (remoteGetByKey als zweiter Anbieter,
+      // fetchRemoteCandidates ohnehin), ein solcher Stand kaeme also spaeter als
+      // Wahrheit zurueck und braechte geloeschte Eintraege mit (F-25).
+      // Fehlt die Kennzeichnung, unterbleibt der Schatten — ein veralteter
+      // Schatten ist harmlos (er traegt den aelteren Zeitstempel und verliert
+      // beim Kandidatenvergleich), ein falscher ist es nicht.
+      const kanonisch = res.committedByTransaction === true && !!res.data;
+      if (options.shadowToOthers && isAutoSyncEnabled() && kanonisch) {
         const now = Date.now();
         if (now - _lastShadowWriteAt > (options.shadowIntervalMs || 45000)) {
           _lastShadowWriteAt = now;
-          const shadowData = res.data || data;
+          const shadowData = res.data;   // exakt der committete Stand, kein Rueckfall
           ['rtdb', 'firebase'].forEach(other => {
             if (other === provider) return;
-            if (!shouldTryCloudProvider(other, { force: true })) return;
-            const putFn = other === 'rtdb' ? rtdbJsonPut : firebaseJsonPut;
-            Promise.resolve().then(() => putFn(key, shadowData, { force: true })).catch(e => {
+            // Nie in den kanonischen Knoten schatten: das waere ein
+            // Schreibvorgang ohne eigenen Merge (Leitsatz F-25 v2). Greift
+            // heute nicht, weil kanonisch nur fuer provider === 'rtdb' gilt —
+            // steht hier, damit eine kuenftige Reihenfolge es nicht aufreisst.
+            if (other === 'rtdb') return;
+            if (!shouldTryCloudProvider(other)) return;
+            const putFn = firebaseJsonPut;
+            // Kein force auf dem Kernschluessel — nirgends. Der Trichter-Token
+            // ist hier legitim: shadowData IST der Stand, den die kanonische
+            // Merge-Transaktion soeben committet hat (siehe kanonisch oben).
+            Promise.resolve().then(() => putFn(key, shadowData, { _viaCanonicalWrite: true })).catch(e => {
               console.warn('[CloudSync] Shadow-Write (' + other + ') fehlgeschlagen:', e?.message || e);
             });
           });
         }
+      } else if (options.shadowToOthers && isAutoSyncEnabled() && !kanonisch) {
+        console.info('[CloudSync] Shadow-Write unterlassen: kein Stand aus der kanonischen Merge-Transaktion (' + provider + ').');
       }
       return res;
     }
@@ -12095,8 +12168,91 @@ async function remoteGet(options = {}) {
   return remoteGetByKey(APP.state.settings.storage.blobKey, { preferProvider: primaryCloudProvider(), ...options });
 }
 
+// ═══ EIN EINZIGER SCHREIBTRICHTER FUER DEN KERNSCHLUESSEL ═══════════════════
+// Leitsatz: kein Schreibvorgang auf app-data ohne unmittelbar vorherigen Merge
+// gegen den AKTUELLEN Serverstand. Vorher gab es zehn Wege daran vorbei —
+// manualTransferPush, _headerPush, jbSendToMobile samt beider Rueckfaelle, die
+// 412-Wiederholung, der Schatten. Jeder davon schrieb einen Vollstand mit
+// force und loeschte dabei fremde Aenderungen samt ihrer Grabsteine (F-25).
+//
+// canonicalWrite macht IMMER dieselben vier Schritte:
+//   1. LESEN   frischer Serverstand (force nur auf dem LESEweg)
+//   2. BASIS   Nutzlast oder mutateFn(fernerStand) — so kann der Aufrufer auf
+//              dem echten Serverstand aufsetzen statt auf einer alten Kopie
+//   3. MERGEN  mergeData samt Grabstein-Union
+//   4. CAS     RTDB-Transaktion bzw. Netlify If-Match; nie ohne Bedingung
+// Bleibt ein Konflikt nach der bestehenden Grenze bestehen, gibt es einen
+// sichtbaren Fehler — niemals einen Force-Rueckfall.
+const CANONICAL_WRITE_MAX_ATTEMPTS = 2;
+
+// Waechter fuer die Low-Level-Schreibfunktionen. Ein Aufruf auf den
+// Kernschluessel ohne den Trichter wird NICHT ausgefuehrt, sondern umgeleitet.
+// Umleiten statt abbrechen, damit kein Aufrufer still verstummt; die Warnung
+// benennt die Stelle, damit sie migriert wird.
+function coreWriteGuard(fnName, key, options) {
+  if (!isCoreDataKey(key)) return null;
+  if (options && options._viaCanonicalWrite) return null;
+  console.warn('[CanonicalWrite] ' + fnName + '() auf den Kernschluessel ohne Trichter — umgeleitet auf canonicalWrite(). Aufrufer bitte migrieren.');
+  return { redirect: true };
+}
+
+async function canonicalWrite(quelle, options = {}) {
+  const key = (APP.state.settings?.storage?.blobKey) || 'app-data.json';
+  let letzte = null;
+  for (let versuch = 1; versuch <= CANONICAL_WRITE_MAX_ATTEMPTS; versuch++) {
+    // 1) LESEN
+    const remote = await remoteGetByKey(key, { force: true, preferProvider: primaryCloudProvider() });
+    if (!remote.ok && remote.authRequired) {
+      return { ok: false, authRequired: true, reason: 'auth_required', provider: 'canonicalWrite' };
+    }
+    const fern = (remote.ok && remote.data) ? normalizeData(remote.data) : null;
+    if (!remote.ok && options.requireRemoteRead) {
+      // Fuer Aufrufer, die ohne gelesenen Serverstand gar nichts schreiben
+      // duerfen (jbSendToMobile): lieber sichtbar scheitern als den lokalen
+      // Vollstand darueberlegen.
+      console.error('[CanonicalWrite] Serverstand nicht lesbar — kein Schreibvorgang.');
+      return { ok: false, reason: 'remote_read_failed', provider: 'canonicalWrite' };
+    }
+
+    // 2) BASIS
+    let basis;
+    try {
+      basis = (typeof quelle === 'function') ? quelle(fern) : quelle;
+    } catch(e) {
+      console.error('[CanonicalWrite] mutateFn hat geworfen — kein Schreibvorgang.', e);
+      return { ok: false, reason: 'mutate_fn_threw', error: e, provider: 'canonicalWrite' };
+    }
+    if (!basis || typeof basis !== 'object') {
+      return { ok: false, reason: 'no_payload', provider: 'canonicalWrite' };
+    }
+
+    // 3) MERGEN
+    const vereint = fern ? mergeData(basis, fern) : basis;
+    if (!vereint.meta) vereint.meta = {};
+    vereint.meta.updatedAt = new Date().toISOString();
+    vereint.meta.lastSavedBy = getOrCreateDeviceId();
+
+    // 4) CAS-SCHREIBEN — force wird NIE weitergereicht
+    const res = await remotePutByKey(key, vereint, {
+      preferProvider: primaryCloudProvider(),
+      shadowToOthers: options.shadowToOthers !== false,
+      mergeFn: mergeData,
+      _viaCanonicalWrite: true,
+    });
+    if (res.ok) return { ...res, data: vereint, mergedRemote: !!fern, attempts: versuch };
+    letzte = res;
+    const konflikt = res.status === 412
+      || res.reason === 'transaction_aborted'
+      || res.reason === 'etag_conflict_persists';
+    if (!konflikt) return res;   // echter Fehler: sofort sichtbar, keine Wiederholung
+  }
+  console.error('[CanonicalWrite] Konflikt bleibt nach ' + CANONICAL_WRITE_MAX_ATTEMPTS + ' Versuchen bestehen — NICHT geschrieben.');
+  return { ...(letzte || {}), ok: false, reason: 'canonical_write_conflict', provider: 'canonicalWrite' };
+}
+
 async function remotePut(data, options = {}) {
-  return remotePutByKey(APP.state.settings.storage.blobKey, data, { preferProvider: primaryCloudProvider(), shadowToOthers: true, mergeFn: mergeData, ...options });
+  // Der Kernschluessel laeuft ausschliesslich durch den Trichter.
+  return canonicalWrite(data, options);
 }
 
 function buildManualVersionId(prefix = 'v') {
@@ -12378,7 +12534,10 @@ async function manualTransferPush(silent = false) {
     if (verifyStatus === 'mismatch') {
       console.log('[ManualPush] 🔄 Retry mit force wegen Diskrepanz...');
       if (!silent) toast('info', 'Verifikation', 'Unvollständig — wiederhole Upload...');
-      if (isBlobSyncConfigured()) await netlifyBlobPut(APP.state.settings.storage.blobKey, payload, { force: true, _retry412: true });
+      // _retry412 entfaellt: es existierte nur, um die Force-Wiederholung ohne
+      // If-Match auszuloesen. Die gibt es nicht mehr — dieser Aufruf laeuft jetzt
+      // durch dieselbe Lesen-Mergen-neuer-ETag-Schleife wie jeder andere.
+      if (isBlobSyncConfigured()) await netlifyBlobPut(APP.state.settings.storage.blobKey, payload, { force: true, mergeFn: mergeData });
       if (isFirebaseCloudAvailable()) await firebaseJsonPut(APP.state.settings.storage.blobKey, payload, { force: true });
       // Erneut verifizieren
       try {

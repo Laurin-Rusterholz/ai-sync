@@ -51,6 +51,10 @@ const DEPS = [
   "updateSyncChip", "shouldTryCloudProvider", "rememberCloudSuccess", "rememberCloudFailure",
   "RTDB_NODE", "RTDB_DB_URL", "rtdbNodeKey", "rtdbDbRef", "fetchWithTimeout",
   "getDataTimestamp", "getOrCreateDeviceId",
+  // Seit F-25 v3 traegt rtdbJsonPut den Trichter-Waechter. Hier wird der Weg
+  // INNERHALB des Trichters geprueft (Anmeldetor), also gibt der Waechter null
+  // zurueck und canonicalWrite darf gar nicht erst gerufen werden.
+  "coreWriteGuard", "canonicalWrite",
 ];
 
 function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
@@ -92,6 +96,7 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
     async () => { throw new Error("fetchWithTimeout darf hier nicht laufen"); },
     (d) => new Date(d?.meta?.updatedAt || 0).getTime() || 0,
     () => "dev_test_local",
+    () => null, async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
   );
   return { api, log, APP, health, fireAuth: (u) => authCb && authCb(u) };
 }
@@ -131,7 +136,7 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
 // ── 2b. Ohne Nutzer wird auch NICHT geschrieben ───────────────────────────
 {
   const h = buildHarness({ authMode: "async" });
-  const p = h.api.rtdbJsonPut("app-data.json", { meta: { updatedAt: "2026-08-23T14:00:00.000Z" } }, { force: true });
+  const p = h.api.rtdbJsonPut("app-data.json", { meta: { updatedAt: "2026-08-23T14:00:00.000Z" } }, { _viaCanonicalWrite: true });
   h.fireAuth(null);
   const res = await p;
   ok(res.ok === false && res.authRequired === true, "ohne Nutzer wurde ein Schreibvorgang zugelassen");

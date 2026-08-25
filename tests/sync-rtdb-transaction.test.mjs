@@ -38,7 +38,12 @@ const DEPS = [
   "RTDB_NODE", "RTDB_DB_URL", "rtdbNodeKey", "rtdbDbRef", "fetchWithTimeout",
   "getDataTimestamp", "getOrCreateDeviceId", "rememberCloudSuccess", "rememberCloudFailure",
   "rtdbJsonGet", "rememberCoreAuthRequired", "isAuthDeniedError",
+  // Seit F-25 v3 traegt jede Low-Level-Schreibfunktion den Trichter-Waechter.
+  // Hier wird der Weg INNERHALB des Trichters geprueft, also gibt der Waechter
+  // null zurueck; canonicalWrite darf gar nicht erst gerufen werden.
+  "coreWriteGuard", "canonicalWrite",
 ];
+const OHNE_TRICHTER = [() => null, async () => { throw new Error("canonicalWrite darf hier nicht greifen"); }];
 // Die echte Fehlereinstufung mitlaufen lassen: ein permission_denied aus der
 // Transaktion muss als Anmeldefehler herauskommen, nicht als Netzfehler.
 const isAuthDeniedError = new Function("e", cut("function isAuthDeniedError(e) {") + "\nreturn isAuthDeniedError(e);");
@@ -78,6 +83,7 @@ function build(refBundle, { blobKey = "app-data.json", device = "dev_desktop_1" 
     () => device, () => {}, (p, i) => { fails.push(i); },
     async () => ({ ok: false, provider: "rtdb" }),
     () => { APP.state.storage.status = "auth_required"; }, isAuthDeniedError,
+    ...OHNE_TRICHTER,
   );
   return { fn, APP, fails };
 }
@@ -134,15 +140,26 @@ const wrapOf = (payload, savedBy) => ({
   ok(JSON.parse(b.log.written.data).nurRemote === true, "der neuere Serverstand ging verloren");
 }
 
-// ── 3. Eigener, aelterer Serverstand: kein unnoetiger Merge ───────────────
+// ── 3. Eigener, aelterer Serverstand: JETZT ebenfalls Merge ───────────────
+// Bis F-25 Commit 4 stand hier das Gegenteil: bei eigener Geraete-Id und
+// aelterem Serverstand wurde der Merge als "unnoetig" uebersprungen. Genau
+// dieses Loch nutzte der veraltete zweite Tab desselben Rechners — er hat den
+// SPAETEREN Zeitstempel und dieselbe lastSavedBy, also griff kein Torwaechter,
+// und sein Voll-Stand ersetzte den Serverstand samt der Grabsteine darin.
+// lastSavedBy trennt Geraete, nicht Tabs. Der Merge laeuft deshalb immer; dass
+// der eigene neuere Stand gewinnt, entscheidet mergeData per LWW — nicht ein
+// vorgeschalteter Torwaechter.
 {
   const remote = { entities: {}, meta: { updatedAt: "2026-08-23T12:00:00.000Z", lastSavedBy: "dev_desktop_1" } };
   const local = { entities: {}, neu: true, meta: { updatedAt: "2026-08-23T14:00:00.000Z", lastSavedBy: "dev_desktop_1" } };
   const b = makeRef({ serverValues: [wrapOf(remote, "dev_desktop_1")] });
   const { fn } = build(b);
   const res = await fn("app-data.json", local, { mergeFn });
-  ok(res.ok === true && res.merged === false, "ein eigener, aelterer Serverstand loest einen Merge aus");
+  ok(res.ok === true && res.merged === true,
+    "ein eigener, aelterer Serverstand wird nicht gemergt — der veraltete Tab kann wieder ersetzen");
   ok(JSON.parse(b.log.written.data).neu === true, "der eigene neuere Stand wurde nicht geschrieben");
+  ok(res.committedByTransaction === true,
+    "das Ergebnis ist nicht als Stand der kanonischen Merge-Transaktion gekennzeichnet");
 }
 
 // ── 4. Leerer Knoten: schreiben, nicht scheitern ──────────────────────────
@@ -213,6 +230,7 @@ const wrapOf = (payload, savedBy) => ({
     "appStore", "https://rtdb.example", (k) => k, () => null,
     async () => { restCalls++; return { ok: true }; },
     () => 1, () => "dev_desktop_1", () => {}, () => {}, async () => ({ ok: false }),
+    undefined, undefined, ...OHNE_TRICHTER,
   );
   const res = await fn("app-data.json", local, {});
   ok(res.ok === false && res.reason === "no_sdk_no_transaction",
