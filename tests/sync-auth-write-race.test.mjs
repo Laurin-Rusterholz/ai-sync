@@ -67,6 +67,9 @@ const PRELUDE = `
   function isAutoSyncEnabled(){ return true; }
   function remoteSaveOnHold(){ return false; }
   function hasAnyCloudProviderAvailable(){ return true; }
+  // Seit F-25 v5 fragt die Frischepruefung schluesselbewusst nach den
+  // CAS-faehigen Kern-Anbietern statt nach irgendeinem Anbieter.
+  function hasCoreCloudProviderAvailable(){ return true; }
   function getDataTimestamp(d){ return new Date((d && d.meta && d.meta.updatedAt) || 0).getTime() || 0; }
   function countEntities(){ return 10; }
   function updateSyncChip(){}

@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6373,8 +6373,27 @@ function shouldTryCloudProvider(provider, options = {}) {
   }
   return true;
 }
-function hasAnyCloudProviderAvailable(options = {}) {
-  return shouldTryCloudProvider('firebase', options) || shouldTryCloudProvider('rtdb', options);
+// Schluesselbewusst: fuer den Kerndatensatz zaehlen genau die Anbieter, die
+// ihn auch schreiben duerfen — dieselbe CORE_PROVIDER_ORDER, nicht eine zweite,
+// unabhaengig gepflegte Liste. Vorher stand hier firebase || rtdb: eine reine
+// Netlify-Einrichtung (kein RTDB-SDK, kein Storage) meldete faelschlich
+// no_provider, obwohl der Netlify-CAS-Weg bereitstand. Firebase Storage
+// dagegen zaehlt fuer den Kern gar nicht mehr mit — es kann kein
+// Compare-and-Swap und darf ihn nicht schreiben; es als "verfuegbar" zu
+// zaehlen haette einen Schreibvorgang angestossen, der dann am Riegel scheitert.
+// Ohne Schluessel bleibt das alte Verhalten fuer Nebenschluessel.
+function hasAnyCloudProviderAvailable(options = {}, key) {
+  if (key !== undefined && isCoreDataKey(key)) {
+    return CORE_PROVIDER_ORDER.some((p) => shouldTryCloudProvider(p, options));
+  }
+  return shouldTryCloudProvider('firebase', options)
+    || shouldTryCloudProvider('rtdb', options)
+    || shouldTryCloudProvider('netlify', options);
+}
+// Fuer Aufrufer ohne Schluessel, die den Kerndatensatz meinen (Frischepruefung,
+// Vor-Push-Abgleich): dieselbe Pruefung mit dem eingestellten Kernschluessel.
+function hasCoreCloudProviderAvailable(options = {}) {
+  return hasAnyCloudProviderAvailable(options, (APP?.state?.settings?.storage?.blobKey) || 'app-data.json');
 }
 function rememberCloudSuccess(provider) {
   if (!_cloudHealth[provider]) return;
@@ -7261,7 +7280,7 @@ async function coreKeyAuthGate(key) {
 async function remoteGetByKey(key, options = {}) {
   const _blocked = await coreKeyAuthGate(key);
   if (_blocked) return _blocked;
-  if (!hasAnyCloudProviderAvailable(options)) return { ok: false, skipped: true, reason: 'no_provider' };
+  if (!hasAnyCloudProviderAvailable(options, key)) return { ok: false, skipped: true, reason: 'no_provider' };
   let last = null;
   let authRequired = false;
   for (const provider of getCloudProviderOrder(options.preferProvider, key)) {
@@ -7289,7 +7308,7 @@ async function remotePutByKey(key, data, options = {}) {
   if (_g) return canonicalWrite(data, options);
   const _blocked = await coreKeyAuthGate(key);
   if (_blocked) return _blocked;
-  if (!hasAnyCloudProviderAvailable(options)) return { ok: false, skipped: true, reason: 'no_provider' };
+  if (!hasAnyCloudProviderAvailable(options, key)) return { ok: false, skipped: true, reason: 'no_provider' };
   let last = null;
   let authRequired = false;
   for (const provider of getCloudProviderOrder(options.preferProvider, key)) {
@@ -11253,7 +11272,7 @@ async function syncFreshness(reason) {
   _syncFreshnessPromise = (async () => {
     if (!navigator.onLine) return false;
     if (!isAutoSyncEnabled()) return false;
-    if (!hasAnyCloudProviderAvailable()) return false;
+    if (!hasCoreCloudProviderAvailable()) return false;
     _lastRemoteCheckAt = Date.now();
     try {
       const result = await remoteGet();
@@ -11359,7 +11378,7 @@ async function pullAndMergeBeforeSave(reason) {
     try {
       if (!navigator.onLine) return { ok: true, merged: false, reason: 'offline' };
       if (!isAutoSyncEnabled()) return { ok: true, merged: false, reason: 'autosync_off' };
-      if (!hasAnyCloudProviderAvailable()) return { ok: true, merged: false, reason: 'no_provider' };
+      if (!hasCoreCloudProviderAvailable()) return { ok: true, merged: false, reason: 'no_provider' };
 
       // lastSeen MUSS vor dem GET festgehalten werden: remoteGet() setzt
       // lastRemoteSeenAt als Nebeneffekt auf den Zeitstempel der eben geholten
@@ -12618,11 +12637,14 @@ async function manualTransferPush(silent = false) {
     if (!silent) toast('warn', 'Offline', 'Keine Cloud-Verbindung');
     return { ok: false, reason: 'offline' };
   }
-  if (!isBlobSyncConfigured() && !isFirebaseCloudAvailable()) {
+  // Fuer den Kerndatensatz zaehlen nur CAS-faehige Ziele. Firebase Storage
+  // stand hier als Alternative — es kann den Kern aber gar nicht schreiben,
+  // der Push waere am Riegel gescheitert statt hier sauber abzubrechen.
+  if (!hasCoreCloudProviderAvailable({ force: true })) {
     APP.state.storage.status = 'error';
     APP.state.storage.message = 'Kein Cloud-Ziel konfiguriert';
     updateSyncChip();
-    if (!silent) toast('warn', 'Cloud', 'Weder Netlify noch Firebase verfügbar');
+    if (!silent) toast('warn', 'Cloud', 'Kein Ziel mit Compare-and-Swap verfügbar (RTDB oder Netlify)');
     return { ok: false, reason: 'no_provider' };
   }
 

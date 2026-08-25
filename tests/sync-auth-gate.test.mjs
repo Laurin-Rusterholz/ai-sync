@@ -388,7 +388,9 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
     cut("function isRtdbCloudAvailable() {"),
     cut("function primaryCloudProvider() {"),
     cut("function shouldTryCloudProvider(provider, options = {}) {"),
-    cut("function hasAnyCloudProviderAvailable(options = {}) {"),
+    // Signatur seit F-25 v5 schluesselbewusst: fuer den Kern zaehlen genau die
+    // Anbieter aus CORE_PROVIDER_ORDER.
+    cut("function hasAnyCloudProviderAvailable(options = {}, key) {"),
     cut("function rememberCloudSuccess(provider) {"),
     cut("function rememberCloudFailure(provider, info = {}) {"),
     // Signatur seit F-25 v4: der Schluessel entscheidet die Reihenfolge — der
