@@ -116,8 +116,12 @@ const [ENC, RAW, COLON] = attachmentReadKeys(K, E, F);
   for (const n of ["_textBlobKey(", "_textBlobKeyLegacyRaw(", "_textBlobKeyLegacyColon("]) {
     ok(!src.includes(n), `der Lesepfad baut den Schluessel zusaetzlich selbst: ${n}`);
   }
-  ok(!/migrate|delete/i.test(src), "der Lesepfad migriert oder loescht");
-  ok(!/netlifyBlobPut|method: 'PUT'/.test(src), "der Lesepfad schreibt");
+  // Die Regel meint AKTIONEN, nicht Woerter: seit M1b prueft der Lesepfad
+  // data.deleted === true (terminaler Grabstein) — das ist ein Lesevorgang.
+  ok(!/netlifyBlobPut|remotePutByKey|method:\s*['"]PUT['"]|method:\s*['"]DELETE['"]/.test(src),
+    "der Lesepfad schreibt oder loescht");
+  ok(!/migrateCoreBlobKey|_textBlobKeyLegacy\w+\s*=|textKey\s*=/.test(src),
+    "der Lesepfad migriert einen Schluessel");
 }
 
 // ── e) Kanonischer Decoder: Alias-Formen abweisen ───────────────────────

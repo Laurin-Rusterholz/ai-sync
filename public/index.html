@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -7949,10 +7949,17 @@ window._loadExtractedText = async function(kind, entityId, fileId) {
   }
   // Beide Wege gehen ueber DIESELBE Liste in DERSELBEN Reihenfolge:
   // kanonisch, dann rohes Altformat, dann Doppelpunkt-Altformat.
+  // Ein Grabstein auf dem KANONISCHEN Schluessel ist terminal: der Text wurde
+  // bewusst geloescht. Danach darf kein Altformat mehr einspringen — sonst
+  // brachte ein liegengebliebener Legacy-Text den geloeschten Inhalt zurueck.
+  // Ein Grabstein auf einem ALTschluessel beendet die Suche nicht: dort kann er
+  // aus einer frueheren Loeschung stammen, waehrend der kanonische Stand gilt.
+  const _istTerminal = (r) => !!(r && r.ok && r.data && r.data.deleted === true);
   if (typeof netlifyBlobGet === 'function') {
-    for (const k of schluessel) {
+    for (let i = 0; i < schluessel.length; i++) {
       try {
-        const result = await netlifyBlobGet(k, { force: true });
+        const result = await netlifyBlobGet(schluessel[i], { force: true });
+        if (i === 0 && _istTerminal(result)) return null;
         if (result?.ok && result.data?.text) return result.data.text;
       } catch (err) {
         // weiter zum nächsten
@@ -7965,12 +7972,13 @@ window._loadExtractedText = async function(kind, entityId, fileId) {
   try {
     const s = APP.state.settings.storage;
     if (!s?.getUrl) return null;
-    for (const k of schluessel) {
+    for (let i = 0; i < schluessel.length; i++) {
       try {
-        const url = s.getUrl.replace('{key}', encodeURIComponent(k));
+        const url = s.getUrl.replace('{key}', encodeURIComponent(schluessel[i]));
         const resp = await fetch(url);
         if (resp.ok) {
           const data = await resp.json();
+          if (i === 0 && data && data.deleted === true) return null;   // terminal
           if (data?.text) return data.text;
         }
       } catch (err) {
@@ -13586,6 +13594,12 @@ window.fetchRemoteCandidates = fetchRemoteCandidates;
 window.pickLatestRemoteCandidate = pickLatestRemoteCandidate;
 window.netlifyBlobGet = netlifyBlobGet;
 window.netlifyBlobPut = netlifyBlobPut;
+// Der Loeschmarker fuer Anhangstexte liegt in einem ANDEREN Skript-Block. Ohne
+// diese Exporte koennte er den kanonischen Schluessel dort gar nicht bauen —
+// und ein typeof-Zweig haette still nichts getan (CLAUDE.md, Fallstrick 1).
+window._textBlobKey = _textBlobKey;
+window._attKeyByteLength = _attKeyByteLength;
+window.ATTACHMENT_KEY_MAX_BYTES = ATTACHMENT_KEY_MAX_BYTES;
 window.firebaseJsonGet = firebaseJsonGet;
 window.firebaseJsonPut = firebaseJsonPut;
 window.buildRemoteAppPayload = buildRemoteAppPayload;
@@ -72138,10 +72152,47 @@ window.handleClick = function(e){
       : 'Datei "' + fName + '" wirklich löschen?')) return;
     const sPath = fileObj.storagePath;
     if (sPath && !istDriveRef) deleteFromFirebase(sPath);
-    // Text-Blob (Netlify) löschen falls extrahiert
-    if (fileObj.textExtracted && fileObj.textKey && typeof netlifyBlobPut === 'function') {
-      // Wir überschreiben mit leerem Objekt — kein Delete-Endpoint
-      netlifyBlobPut(fileObj.textKey, { text: '', deleted: true, deletedAt: new Date().toISOString() }).catch(() => {});
+    // Text-Blob (Netlify) als geloescht markieren — es gibt keinen Delete-Endpunkt,
+    // also wird ein Grabstein { text:'', deleted:true } geschrieben.
+    //
+    // Geschrieben wird IMMER der KANONISCHE Schluessel aus kind/entityId/fileId,
+    // nie fileObj.textKey. Der traegt bei Altbestaenden noch ein Altformat, und
+    // ein Schreibvorgang dorthin waere eine Aenderung an einem Altobjekt — im
+    // Freeze ausgeschlossen. textKey bleibt reine LESE-Referenz.
+    //
+    // P2-AUFRAEUMPUNKT: verwaiste Legacy-Anhangtexte (roh-__ und Doppelpunkt),
+    // zu denen ein kanonischer Grabstein existiert, spaeter einsammeln und
+    // entfernen. Bis dahin bleiben sie liegen; der terminale Grabstein im
+    // Lesepfad sorgt dafuer, dass sie nicht mehr sichtbar werden.
+    if (fileObj.textExtracted) {
+      const _put = window.netlifyBlobPut, _key = window._textBlobKey,
+            _len = window._attKeyByteLength, _max = window.ATTACHMENT_KEY_MAX_BYTES;
+      if (typeof _put !== 'function' || typeof _key !== 'function' || typeof _len !== 'function') {
+        // Kein stiller Ausfall: fehlt ein Export, wird das gesagt.
+        console.error('[TextExtract] Loeschmarker nicht moeglich — fehlende Exporte (netlifyBlobPut/_textBlobKey/_attKeyByteLength).');
+      } else {
+        let tsKey = null;
+        try { tsKey = _key(fKind, fId, fileObj.id); }
+        catch (keyErr) { console.warn('[TextExtract] Loeschmarker-Key nicht baubar:', keyErr?.message || keyErr); }
+        if (tsKey) {
+          const tsBytes = _len(tsKey);
+          if (tsBytes > _max) {
+            // Kein Kuerzen, kein Hashen, und KEIN Schreibvorgang auf einen
+            // Altschluessel als Ersatz. Die Datei-Referenz wird trotzdem entfernt.
+            console.warn('[TextExtract] Loeschmarker-Key zu lang — Legacy-Text bleibt, P2-Cleanup (' +
+              tsBytes + ' > ' + _max + ' Bytes)');
+          } else {
+            // Ueber den normalen Nebenschluessel-Pfad, und das Ergebnis wird
+            // sichtbar. Ein blindes .catch(() => {}) taeuschte Erfolg vor.
+            _put(tsKey, { text: '', deleted: true, deletedAt: new Date().toISOString() })
+              .then((r) => {
+                if (r && r.ok) console.log('[TextExtract] Loeschmarker gesetzt:', tsKey);
+                else console.warn('[TextExtract] Loeschmarker NICHT gesetzt:', (r && (r.reason || r.status)) || 'unbekannt', tsKey);
+              })
+              .catch((err) => console.warn('[TextExtract] Loeschmarker fehlgeschlagen:', err?.message || err, tsKey));
+          }
+        }
+      }
     }
     _entDel.files.splice(fIdx, 1);
     _entDel.updatedAt = new Date().toISOString();
