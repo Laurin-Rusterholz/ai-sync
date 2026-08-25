@@ -22,6 +22,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { jsonEtag, firebaseNodeKey } from "../netlify/lib/firebase-admin.mjs";
+// Seit F-25 M2 prueft writeAppDataText zuerst die Schluesselpolitik.
+import { classifyBlobKey } from "../netlify/lib/blob-key-policy.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const src = fs.readFileSync(path.join(root, "netlify/lib/firebase-admin.mjs"), "utf8");
@@ -43,11 +45,11 @@ const { koerper, unwrap } = ladeWriteAppDataText();
 function bauen({ current = null, serverEtag = "srv-1", setzenOk = true } = {}) {
   const log = { gets: 0, sets: [] };
   const fn = new Function(
-    "firebaseDbGetWithEtag", "firebaseDbSet", "appStorePath", "jsonEtag", "JSON", "Date", "Error",
+    "firebaseDbGetWithEtag", "firebaseDbSet", "appStorePath", "jsonEtag", "classifyBlobKey", "JSON", "Date", "Error",
     unwrap + "\n" + koerper + "\nreturn writeAppDataText;")(
     async () => { log.gets++; return { exists: current !== null, value: current, serverEtag }; },
     async (p, v) => { log.sets.push({ path: p, value: v }); return { ok: setzenOk }; },
-    (k) => "appStore/" + firebaseNodeKey(k), jsonEtag, JSON, Date, Error);
+    (k) => "appStore/" + firebaseNodeKey(k), jsonEtag, classifyBlobKey, JSON, Date, Error);
   return { fn, log };
 }
 

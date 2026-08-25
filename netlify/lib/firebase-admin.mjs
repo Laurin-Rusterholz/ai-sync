@@ -1,3 +1,4 @@
+import { firebaseNodeKey, classifyBlobKey } from "./blob-key-policy.mjs";
 // Firebase Admin access without a browser SDK. Netlify Functions authenticate
 // with a service account and call the official RTDB / Cloud Storage REST APIs.
 import { createHash, createSign } from "node:crypto";
@@ -249,9 +250,10 @@ export async function firebaseStorageDelete(path) {
   }
 }
 
-export function firebaseNodeKey(key) {
-  return String(key || "app-data.json").replace(/[.#$\[\]\/]/g, "_");
-}
+// Der Sanitizer steht in der Policy-Datei und wird hier nur DURCHGEREICHT. Zwei
+// Implementierungen derselben Regel liefen frueher oder spaeter auseinander —
+// und dann wuerde die Politik einen anderen Knoten meinen als die Ablage.
+export { firebaseNodeKey };
 
 function appStorePath(key = "app-data.json") {
   return `appStore/${firebaseNodeKey(key)}`;
@@ -304,6 +306,17 @@ export async function writeAppDataText(key, text, { ifMatch = null, ifNoneMatch 
   } catch {
     throw new Error("Invalid JSON");
   }
+  // DIESELBE Politik wie im HTTP-Handler, aus derselben Quelle. Ein direkter
+  // Aufrufer dieser Funktion darf nicht an blob-put vorbei schreiben koennen;
+  // beide Wege muessen fuer jeden Schluessel dasselbe Ergebnis liefern.
+  const politik = classifyBlobKey(key);
+  if (politik.kind === "denied") {
+    return { ok: false, denied: true, reason: politik.reason, detail: politik.detail || null, etag: null, parsed };
+  }
+  if (politik.kind === "core" && !ifMatch && ifNoneMatch !== "*") {
+    return { ok: false, preconditionRequired: true, reason: "precondition_required", etag: null, parsed };
+  }
+
   const etag = jsonEtag(text);
   const path = appStorePath(key);
 

@@ -19,6 +19,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// Seit F-25 M2 bezieht blob-put die Schluesselpolitik aus einer eigenen Datei.
+import * as POLITIK from "../netlify/lib/blob-key-policy.mjs";
 import { firebaseNodeKey } from "../netlify/lib/firebase-admin.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -48,7 +50,9 @@ const KERN_VARIANTEN = [
 // Echte Nebenschluessel dieser App — repoweit erhoben, nicht erfunden.
 const NEBEN = [
   "recalllab-mobile.json", "readinghub-data.json", "_diagnose-test.json",
-  "attachment-text__note__n1__f1",
+  // Seit F-25 M2 nur noch die KANONISCH kodierte Form; das rohe Altformat ist
+  // lesbar, aber nicht mehr schreibbar (siehe f25-blob-key-policy).
+  "attachment-text__" + POLITIK.attSegEncode("note") + "__" + POLITIK.attSegEncode("n1") + "__" + POLITIK.attSegEncode("f1"),
 ];
 
 // ── 1. Der Knoten ist derselbe — das ist die Voraussetzung des Befunds ──
@@ -65,12 +69,12 @@ const NEBEN = [
 // ── 2. SERVER: jede Variante bekommt ohne If-Match 428 ─────────────────
 {
   const quelle = blobPut
-    .replace(/^import .*$/m, "")
+    .replace(/^import .*$/gm, "")   // blob-put importiert seit M2 aus zwei Dateien
     .replace(/^export const config = .*$/m, "")
     .replace(/^export default /m, "const handler = ");
-  const handler = new Function("writeAppDataText", "firebaseNodeKey", "Netlify", "Response", "URL", "TextEncoder", "String",
+  const handler = new Function("writeAppDataText", "firebaseNodeKey", "classifyBlobKey", "BLOB_KEY_MAX_BYTES", "RTDB_KEY_LIMIT_BYTES", "Netlify", "Response", "URL", "TextEncoder", "String",
     quelle + "\nreturn handler;")(
-    async () => ({ ok: true, etag: "etag-neu" }), firebaseNodeKey,
+    async () => ({ ok: true, etag: "etag-neu" }), firebaseNodeKey, POLITIK.classifyBlobKey, POLITIK.BLOB_KEY_MAX_BYTES, POLITIK.RTDB_KEY_LIMIT_BYTES,
     { env: { get: () => null } }, Response, URL, TextEncoder, String);
   const anfrage = (key, ifMatch) => ({
     method: "PUT",
@@ -143,9 +147,17 @@ const NEBEN = [
 
 // ── 5. Quelltextregeln ─────────────────────────────────────────────────
 {
+  // Seit F-25 M2 liegt die Erkennung in netlify/lib/blob-key-policy.mjs — EINE
+  // Quelle fuer blob-put UND writeAppDataText. Die Zusicherung gilt weiter, nur
+  // eine Datei weiter.
+  const politikSrc = ohneKommentare(fs.readFileSync(path.join(root, "netlify/lib/blob-key-policy.mjs"), "utf8"));
   const server = ohneKommentare(blobPut);
-  ok(/firebaseNodeKey\(String\(key \|\| ""\)\) === CORE_NODE/.test(server),
-    "der Server erkennt den Kern weiterhin an der Zeichenkette statt am Knoten");
+  ok(/firebaseNodeKey\(String\(key \|\| ""\)\) === CORE_NODE/.test(politikSrc),
+    "der Kern wird weiterhin an der Zeichenkette statt am Knoten erkannt");
+  ok(/classifyBlobKey\(key\)/.test(server),
+    "blob-put bezieht die Politik nicht aus der gemeinsamen Datei");
+  ok(/politik\.kind === "core" && !ifMatch/.test(server) && /status: 428/.test(server),
+    "der Server laesst einen unbedingten Core-PUT weiterhin durch");
   const client = ohneKommentare(funktion("isCoreDataKey"));
   ok(/rtdbNodeKey\(key\) === rtdbNodeKey\(CORE_BLOB_KEY\)/.test(client),
     "der Client erkennt den Kern weiterhin an der Zeichenkette statt am Knoten");

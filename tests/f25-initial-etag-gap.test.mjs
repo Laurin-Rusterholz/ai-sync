@@ -19,6 +19,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// Seit F-25 M2 bezieht blob-put die Schluesselpolitik aus einer eigenen Datei.
+import * as POLITIK from "../netlify/lib/blob-key-policy.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const index = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
@@ -151,15 +153,15 @@ function client({ getEtag = "etag-1", getStatus = 200, putEtag = "etag-2", start
 // Der echte Handler aus netlify/functions/blob-put.mjs, gegen Attrappen.
 {
   const quelle = blobPut
-    .replace(/^import .*$/m, "")
+    .replace(/^import .*$/gm, "")   // blob-put importiert seit M2 aus zwei Dateien
     .replace(/^export const config = .*$/m, "")
     .replace(/^export default /m, "const handler = ");
   // firebaseNodeKey seit F-25 v6: der Kern wird am KNOTEN erkannt, nicht an der
   // Zeichenkette. Die echte Funktion mitgeben, keine nachgebaute.
   const { firebaseNodeKey } = await import("../netlify/lib/firebase-admin.mjs");
-  const handler = new Function("writeAppDataText", "firebaseNodeKey", "Netlify", "Response", "URL", "TextEncoder", "String",
+  const handler = new Function("writeAppDataText", "firebaseNodeKey", "classifyBlobKey", "BLOB_KEY_MAX_BYTES", "RTDB_KEY_LIMIT_BYTES", "Netlify", "Response", "URL", "TextEncoder", "String",
     quelle + "\nreturn handler;")(
-    async () => ({ ok: true, etag: "etag-neu" }), firebaseNodeKey,
+    async () => ({ ok: true, etag: "etag-neu" }), firebaseNodeKey, POLITIK.classifyBlobKey, POLITIK.BLOB_KEY_MAX_BYTES, POLITIK.RTDB_KEY_LIMIT_BYTES,
     { env: { get: () => null } }, Response, URL, TextEncoder, String);
 
   const anfrage = (key, ifMatch) => ({
@@ -199,7 +201,9 @@ function client({ getEtag = "etag-1", getStatus = 200, putEtag = "etag-2", start
   ok(/before: etag, after: newEtag/.test(put), "der Beweis bindet Vorher nicht an Nachher");
   ok(/precondition_required/.test(put), "ein 428 vom Server wird nicht benannt");
   const server = ohneKommentare(blobPut);
-  ok(/isCoreKey\(key\) && !ifMatch/.test(server) && /status: 428/.test(server),
+  // Seit F-25 M2 klassifiziert blob-put ueber die gemeinsame Politik
+  // (netlify/lib/blob-key-policy.mjs); die Zusicherung gilt weiter.
+  ok(/politik\.kind === "core" && !ifMatch/.test(server) && /status: 428/.test(server),
     "der Server laesst einen unbedingten Core-PUT weiterhin durch");
 }
 

@@ -19,6 +19,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// Seit F-25 M2 bezieht blob-put die Schluesselpolitik aus einer eigenen Datei.
+import * as POLITIK from "../netlify/lib/blob-key-policy.mjs";
 import { firebaseNodeKey } from "../netlify/lib/firebase-admin.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -38,7 +40,11 @@ const FAMILIEN = [
   { name: "_diagnose-test.json", muster: /'_diagnose-test\.json'/, beispiel: "_diagnose-test.json",
     zweck: "Selbsttest der Speicherstrecke" },
   { name: "attachment-text__*", muster: /attachment-text__\$\{kind\}__\$\{entityId\}__\$\{fileId\}/,
-    beispiel: "attachment-text__note__n1__f1",
+    // Seit F-25 M2 ist nur die KANONISCH kodierte Form beschreibbar; das rohe
+    // Altformat bleibt LESBAR, aber nicht mehr schreibbar — es ist nicht
+    // eindeutig zerlegbar (eine Id mit "__" sprengt die Segmentzahl).
+    beispiel: "attachment-text__" + POLITIK.attSegEncode("note") + "__" + POLITIK.attSegEncode("n1") + "__" + POLITIK.attSegEncode("f1"),
+    altBeispiel: "attachment-text__note__n1__f1",
     zweck: "extrahierter Text von Anhaengen — DYNAMISCH und unbegrenzt" },
 ];
 
@@ -88,12 +94,12 @@ const FAMILIEN = [
 // ── 3. SERVER: die Nebenschluessel behalten ihre Semantik ──────────────
 {
   const quelle = blobPut
-    .replace(/^import .*$/m, "")
+    .replace(/^import .*$/gm, "")   // blob-put importiert seit M2 aus zwei Dateien
     .replace(/^export const config = .*$/m, "")
     .replace(/^export default /m, "const handler = ");
-  const handler = new Function("writeAppDataText", "firebaseNodeKey", "Netlify", "Response", "URL", "TextEncoder", "String",
+  const handler = new Function("writeAppDataText", "firebaseNodeKey", "classifyBlobKey", "BLOB_KEY_MAX_BYTES", "RTDB_KEY_LIMIT_BYTES", "Netlify", "Response", "URL", "TextEncoder", "String",
     quelle + "\nreturn handler;")(
-    async () => ({ ok: true, etag: "e2" }), firebaseNodeKey,
+    async () => ({ ok: true, etag: "e2" }), firebaseNodeKey, POLITIK.classifyBlobKey, POLITIK.BLOB_KEY_MAX_BYTES, POLITIK.RTDB_KEY_LIMIT_BYTES,
     { env: { get: () => null } }, Response, URL, TextEncoder, String);
   const anfrage = (key, ifMatch) => ({
     method: "PUT",
@@ -102,6 +108,14 @@ const FAMILIEN = [
     text: async () => JSON.stringify({ a: 1 }),
   });
 
+  // Das rohe Altformat ist seit M2 nicht mehr BESCHREIBBAR.
+  {
+    const alt = FAMILIEN.find((f) => f.altBeispiel);
+    const r = await handler(anfrage(alt.altBeispiel, null));
+    ok(r.status === 403,
+      `das rohe Altformat "${alt.altBeispiel}" ist weiterhin beschreibbar (${r.status}) — ` +
+      "es ist nicht eindeutig zerlegbar und darf nur noch gelesen werden");
+  }
   for (const f of FAMILIEN) {
     const ohne = await handler(anfrage(f.beispiel, null));
     ok(ohne.status === 200,

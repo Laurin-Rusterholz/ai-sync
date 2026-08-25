@@ -1,4 +1,5 @@
-import { writeAppDataText, firebaseNodeKey } from "../lib/firebase-admin.mjs";
+import { writeAppDataText } from "../lib/firebase-admin.mjs";
+import { classifyBlobKey, BLOB_KEY_MAX_BYTES, RTDB_KEY_LIMIT_BYTES } from "../lib/blob-key-policy.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -19,18 +20,13 @@ const MAX_BODY_BYTES = 20 * 1024 * 1024;
 // einem zwischengespeicherten Stand laeuft und die Riegel nicht kennt.
 // Massgeblich ist der Schluessel des Datenstands selbst, nicht die Nebenkeys
 // (readinghub, recalllab, Anhangstexte) — die haben kein Mehrgeraeteproblem.
-const CORE_KEY = "app-data.json";
-// Massgeblich ist nicht die Schreibweise des Schluessels, sondern der KNOTEN,
-// auf dem er landet. firebaseNodeKey ersetzt . # $ [ ] / durch _, also zeigen
-// "app-data.json", "app-data_json", "app-data#json", "app-data/json" und jede
-// weitere Variante auf DENSELBEN Knoten appStore/app-data_json. Eine Pruefung
-// auf die Zeichenkette "app-data.json" liess alle anderen Varianten am
-// If-Match-Riegel vorbei — ein Aufrufer haette den Kerndatensatz unter einem
-// leicht anderen Namen unbedingt ueberschreiben koennen.
-const CORE_NODE = firebaseNodeKey(CORE_KEY);
-function isCoreKey(key) {
-  return firebaseNodeKey(String(key || "")) === CORE_NODE;
-}
+// Die Schluesselpolitik steht in ../lib/blob-key-policy.mjs und gilt fuer BEIDE
+// Schreibwege — diesen HTTP-Handler und writeAppDataText. Sie kennt drei
+// Ausgaenge: core (If-Match-Pflicht), side (erlaubte Nebenfamilie) und denied.
+// Default ist DENY: ein Schluessel, der zu keiner der vier Familien passt, wird
+// gar nicht erst geschrieben.
+// Groessengrenze: BLOB_KEY_MAX_BYTES (700) liegt bewusst unter dem
+// RTDB_KEY_LIMIT_BYTES (768) — 68 Bytes Reserve.
 
 export default async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -60,8 +56,22 @@ export default async (req) => {
     }
     try { JSON.parse(body); } catch (e) { return Response.json({ error: "Invalid JSON" }, { status: 400, headers: cors }); }
 
+    const politik = classifyBlobKey(key);
+    if (politik.kind === "denied") {
+      return Response.json(
+        {
+          error: "Forbidden",
+          detail: "Dieser Schluessel darf nicht beschrieben werden.",
+          reason: politik.reason,
+          hint: politik.detail || undefined,
+          key,
+        },
+        { status: 403, headers: cors }
+      );
+    }
+
     const ifMatch = req.headers.get("If-Match");
-    if (isCoreKey(key) && !ifMatch) {
+    if (politik.kind === "core" && !ifMatch) {
       return Response.json(
         {
           error: "Precondition Required",
@@ -74,6 +84,20 @@ export default async (req) => {
     // If-None-Match: * ist der einzige Weg, ein fehlendes Dokument anzulegen.
     const ifNoneMatch = req.headers.get("If-None-Match");
     const saved = await writeAppDataText(key, body, { ifMatch, ifNoneMatch });
+    // Beide Wege teilen dieselbe Politik; kaeme hier trotzdem eine Ablehnung
+    // zurueck, liefen sie auseinander — das waere ein Fehler, kein Normalfall.
+    if (saved.denied) {
+      return Response.json(
+        { error: "Forbidden", detail: "Schluesselpolitik", reason: saved.reason, key },
+        { status: 403, headers: cors }
+      );
+    }
+    if (saved.preconditionRequired) {
+      return Response.json(
+        { error: "Precondition Required", detail: "Der Kerndatensatz wird nur bedingt geschrieben.", key },
+        { status: 428, headers: { ...cors, "Allow": "PUT, POST, OPTIONS" } }
+      );
+    }
     if (saved.conflict) {
       // reason unterscheidet die Faelle, damit ein 412 nicht raetselhaft bleibt:
       // no_current      = kein Stand da, aber eine Vorbedingung genannt
