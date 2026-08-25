@@ -66,11 +66,23 @@ const FAMILIEN = [
     `neue Schluessel im Quelltext, die der Vertrag nicht kennt: ${unbekannt.join(", ")} — ` +
     "vor einem Whitelist-Riegel klaeren, sonst bricht er sie still");
 
-  // Schluesselbauer: nur der eine bekannte, dynamische
-  const bauer = (index.match(/^\s*(function|const)\s+_?\w*[Bb]lobKey\w*\s*[=(]/gm) || [])
-    .map((z) => z.trim());
-  ok(bauer.length <= 3,
-    `es gibt ${bauer.length} Schluesselbauer — jeder erzeugt potenziell eine eigene Familie: ${bauer.join(" | ")}`);
+  // Schluesselbauer namentlich, nicht gezaehlt: ein neuer NAME ist die Meldung
+  // wert, eine geaenderte Zahl allein nicht. Seit M1 gibt es neben dem
+  // kanonischen Bauplan zwei reine LESE-Helfer fuer die Altformate — sie
+  // erzeugen keine neue Familie, sie lesen die bestehende.
+  const BEKANNTE_BAUER = new Set([
+    "migrateCoreBlobKey",        // Einstellungsmigration, kein Schluesselbau
+    "_textBlobKey",              // kanonisch, kodiert (M1)
+    "_textBlobKeyLegacyRaw",     // nur lesen: Altformat mit rohen Segmenten
+    "_textBlobKeyLegacyColon",   // nur lesen: Altformat mit Doppelpunkten
+  ]);
+  const bauer = (index.match(/^\s*(?:function|const)\s+(_?\w*[Bb]lobKey\w*)\s*[=(]/gm) || [])
+    .map((z) => (z.match(/(_?\w*[Bb]lobKey\w*)\s*[=(]/) || [])[1])
+    .filter(Boolean);
+  const neueBauer = bauer.filter((n) => !BEKANNTE_BAUER.has(n));
+  ok(neueBauer.length === 0,
+    `neue Schluesselbauer, die der Vertrag nicht kennt: ${neueBauer.join(", ")} — ` +
+    "jeder erzeugt potenziell eine eigene Familie");
 }
 
 // ── 3. SERVER: die Nebenschluessel behalten ihre Semantik ──────────────

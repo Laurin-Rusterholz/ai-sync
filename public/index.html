@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -7784,10 +7784,59 @@ window._extractTextFromFile = async function(file) {
   }
 };
 
-// Speichere extrahierten Text in Netlify Blob
-// Generiert sicheren Blob-Key (keine Sonderzeichen außer _ und -)
+// ── Kanonischer Codec fuer Anhangstext-Schluessel ────────────────────────
+// Der alte Bauplan setzte kind, entityId und fileId ROH zwischen "__". Beides
+// ging schief:
+//   Zeichenraum  Seit F-23 kann eine Entitaets-Id von aussen kommen
+//                (plInboxApply reicht den polaris/inbox-Schluessel als forcedId
+//                an createEntity weiter, ohne Bereinigung). RTDB-Schluessel
+//                verbieten nur . # $ [ ] / — Leerzeichen, Umlaute, @ + : ,
+//                sind erlaubt und landeten damit im Blob-Schluessel.
+//   Trenner      Eine Id, die selbst "__" enthaelt, sprengt die Segmentzahl:
+//                aus vier Segmenten werden fuenf. Der Schluessel war damit
+//                nicht eindeutig zerlegbar — "a__b"+"c" und "a"+"b__c" ergaben
+//                dieselbe Zeichenkette.
+//
+// Jedes Segment wird deshalb kodiert: UTF-8 → base64url (RFC 4648 §5, Alphabet
+// A-Za-z0-9-_, ohne Padding), danach jedes "_" zu "~". Das Ergebnisalphabet ist
+// exakt [A-Za-z0-9~-]; ein Segment kann den Trenner "__" nicht mehr erzeugen,
+// und die Zerlegung ist eindeutig. Die Dekodierung ist exakt invers.
+function _attSegEncode(segment) {
+  const s = (segment == null) ? '' : String(segment);
+  if (!s) throw new Error('_attSegEncode: leeres Segment');
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin)
+    .replace(/\+/g, '-')     // base64 → base64url
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')      // ohne Padding
+    .replace(/_/g, '~');     // und "_" raus, damit "__" unmoeglich wird
+}
+function _attSegDecode(enc) {
+  const s = (enc == null) ? '' : String(enc);
+  if (!s) throw new Error('_attSegDecode: leeres Segment');
+  if (!/^[A-Za-z0-9~-]+$/.test(s)) throw new Error('_attSegDecode: fremdes Alphabet');
+  let b64 = s.replace(/~/g, '_')   // zuerst zurueck nach base64url
+    .replace(/-/g, '+')            // dann base64url → base64
+    .replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';   // Padding fuer atob wiederherstellen
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+// Der Schluessel fuer JEDEN NEUEN Schreibvorgang.
 function _textBlobKey(kind, entityId, fileId) {
+  return 'attachment-text__' + _attSegEncode(kind) + '__' + _attSegEncode(entityId) + '__' + _attSegEncode(fileId);
+}
+// Nur zum LESEN alter Staende. Nicht schreiben, nicht migrieren — im Freeze wird
+// nichts umgeschrieben. Aufraeumen ist ein P2-Punkt.
+function _textBlobKeyLegacyRaw(kind, entityId, fileId) {
   return `attachment-text__${kind}__${entityId}__${fileId}`;
+}
+function _textBlobKeyLegacyColon(kind, entityId, fileId) {
+  return `attachment-text:${kind}:${entityId}:${fileId}`;
 }
 
 window._saveExtractedText = async function(kind, entityId, fileId, text) {
@@ -7848,8 +7897,11 @@ window._saveExtractedText = async function(kind, entityId, fileId, text) {
 window._loadExtractedText = async function(kind, entityId, fileId) {
   if (typeof netlifyBlobGet !== 'function') return null;
   const key = _textBlobKey(kind, entityId, fileId);
-  const oldKey = `attachment-text:${kind}:${entityId}:${fileId}`;
-  for (const k of [key, oldKey]) {
+  // Lesereihenfolge: neuer kodierter Schluessel, dann die beiden Altformate.
+  // Geschrieben wird ausschliesslich der erste — Altstaende bleiben unberuehrt.
+  for (const k of [key,
+    _textBlobKeyLegacyRaw(kind, entityId, fileId),
+    _textBlobKeyLegacyColon(kind, entityId, fileId)]) {
     try {
       const result = await netlifyBlobGet(k, { force: true });
       if (result?.ok && result.data?.text) return result.data.text;
