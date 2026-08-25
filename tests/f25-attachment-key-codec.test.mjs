@@ -132,13 +132,18 @@ for (const [k, e, f] of [["meeting", "a__b", "c"], ["note", "Übergabe", "f_abc_
     "das rohe Altformat wurde veraendert");
   ok(_textBlobKeyLegacyColon("note", "n1", "f1") === "attachment-text:note:n1:f1",
     "das Doppelpunkt-Altformat wurde veraendert");
-  const laden = ohneKommentare(index.slice(index.indexOf("window._loadExtractedText = async function"),
-    index.indexOf("window._loadExtractedText = async function") + 1400));
-  const reihenfolge = ["_textBlobKey(kind, entityId, fileId)", "_textBlobKeyLegacyRaw(", "_textBlobKeyLegacyColon("]
-    .map((n) => laden.indexOf(n));
-  ok(reihenfolge.every((i) => i >= 0), "eines der drei Formate fehlt im Lesepfad");
+  // Seit M1a bestimmt EINE Funktion die Lesereihenfolge; der Lesepfad baut
+  // keinen Schluessel mehr selbst (siehe f25-attachment-read-contract).
+  const vertrag = ohneKommentare(schnipsel("attachmentReadKeys"));
+  const reihenfolge = ["_textBlobKey(", "_textBlobKeyLegacyRaw(", "_textBlobKeyLegacyColon("]
+    .map((n) => vertrag.indexOf(n));
+  ok(reihenfolge.every((i) => i >= 0), "eines der drei Formate fehlt im Lesekey-Vertrag");
   ok(reihenfolge[0] < reihenfolge[1] && reihenfolge[1] < reihenfolge[2],
     `die Lesereihenfolge stimmt nicht: kodiert/raw/colon liegen bei ${reihenfolge.join(", ")}`);
+  const laden = ohneKommentare(index.slice(index.indexOf("window._loadExtractedText = async function"),
+    index.indexOf("window._loadExtractedText = async function") + 1800));
+  ok(/attachmentReadKeys\(kind, entityId, fileId\)/.test(laden),
+    "der Lesepfad geht nicht ueber den Vertrag");
 }
 
 // ── 6. Geschrieben wird AUSSCHLIESSLICH das kodierte Format ────────────
@@ -148,7 +153,8 @@ for (const [k, e, f] of [["meeting", "a__b", "c"], ["note", "Übergabe", "f_abc_
   // ueber fileObj.textKey, das ebenfalls daraus stammt.
   const schreiben = ohneKommentare(index.slice(index.indexOf("window._saveExtractedText = async function"),
     index.indexOf("window._saveExtractedText = async function") + 1600));
-  ok(/const key = _textBlobKey\(kind, entityId, fileId\);/.test(schreiben),
+  // Seit M1a steht der Schluesselbau in einem eigenen try (Bytegrenze/Wurf).
+  ok(/key = _textBlobKey\(kind, entityId, fileId\);/.test(schreiben),
     "der Schreibpfad baut den Schluessel nicht mehr ueber _textBlobKey");
   ok(!/LegacyRaw|LegacyColon/.test(schreiben),
     "der Schreibpfad greift auf ein Altformat zurueck — im Freeze wird nichts umgeschrieben");

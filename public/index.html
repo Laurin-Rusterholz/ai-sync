@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -7824,7 +7824,15 @@ function _attSegDecode(enc) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  // KANONIZITAET. base64 hat Alias-Formen: die ueberzaehligen Bits im letzten
+  // Zeichen muessen null sein. "AA" und "AB" dekodieren beide zum Byte 0x00,
+  // aber nur "AA" ist kanonisch. Ohne diese Pruefung gaebe es fuer denselben
+  // Inhalt mehrere gueltige Schluessel — und damit wieder Mehrdeutigkeit, genau
+  // das, was der Codec beseitigen soll. M2 muss serverseitig DENSELBEN
+  // Algorithmus fahren, sonst weichen Client und Server auseinander.
+  if (_attSegEncode(text) !== s) throw new Error('_attSegDecode: nicht-kanonische Kodierung');
+  return text;
 }
 // Der Schluessel fuer JEDEN NEUEN Schreibvorgang.
 function _textBlobKey(kind, entityId, fileId) {
@@ -7838,6 +7846,25 @@ function _textBlobKeyLegacyRaw(kind, entityId, fileId) {
 function _textBlobKeyLegacyColon(kind, entityId, fileId) {
   return `attachment-text:${kind}:${entityId}:${fileId}`;
 }
+// DER Lesekey-Vertrag. Genau EINE Stelle bestimmt, welche Schluessel in welcher
+// Reihenfolge probiert werden. Vorher gab es zwei Konstruktionen: die Schleife
+// ueber den Helper probierte alle drei, der direkte fetch-Rueckfall aber nur den
+// kodierten. Lief der Helper in einen Backoff (skipped), fand der Rueckfall
+// keinen einzigen Altstand mehr — der Text war weg, obwohl er dalag.
+function attachmentReadKeys(kind, entityId, fileId) {
+  return [
+    _textBlobKey(kind, entityId, fileId),          // kanonisch (M1)
+    _textBlobKeyLegacyRaw(kind, entityId, fileId), // Altformat mit rohen Segmenten
+    _textBlobKeyLegacyColon(kind, entityId, fileId), // Altformat mit Doppelpunkten
+  ];
+}
+// Der fertige Schluessel wird in UTF-8-BYTES gemessen, nicht in JS-Zeichen. Ein
+// Umlaut ist ein Zeichen, aber zwei Bytes; ein Emoji vier. Wer in Zeichen misst,
+// misst am Speicher vorbei.
+const ATTACHMENT_KEY_MAX_BYTES = 700;
+function _attKeyByteLength(key) {
+  return new TextEncoder().encode(String(key == null ? '' : key)).length;
+}
 
 window._saveExtractedText = async function(kind, entityId, fileId, text) {
   if (!text || text.length < 10) return false;
@@ -7845,8 +7872,26 @@ window._saveExtractedText = async function(kind, entityId, fileId, text) {
     console.warn('[TextExtract] netlifyBlobPut nicht verfügbar');
     return false;
   }
-  const key = _textBlobKey(kind, entityId, fileId);
-  console.log('[TextExtract] Speichere unter key:', key, '— ', text.length, 'Zeichen');
+  // Der Schluesselbau steht VOR dem try und kann werfen (leeres Segment). Er
+  // bekommt deshalb sein eigenes try: _saveExtractedText liefert sauber false
+  // und sagt warum, statt unbehandelt zu werfen.
+  let key;
+  try {
+    key = _textBlobKey(kind, entityId, fileId);
+  } catch (keyErr) {
+    console.warn('[TextExtract] Anhangtext-Key nicht baubar, Extraktion nicht persistiert:', keyErr?.message || keyErr);
+    return false;
+  }
+  const keyBytes = _attKeyByteLength(key);
+  if (keyBytes > ATTACHMENT_KEY_MAX_BYTES) {
+    // KEIN gekuerzter und KEIN gehashter Ersatz: beides erzeugte einen
+    // Schluessel, der nicht mehr eindeutig auf das Tripel zurueckfuehrt. Lieber
+    // kein Textcache als ein mehrdeutiger. Der Anhang selbst bleibt unberuehrt.
+    console.warn('[TextExtract] Anhangtext-Key zu lang, Extraktion nicht persistiert (' +
+      keyBytes + ' > ' + ATTACHMENT_KEY_MAX_BYTES + ' Bytes)');
+    return false;
+  }
+  console.log('[TextExtract] Speichere unter key:', key, '—', keyBytes, 'Bytes,', text.length, 'Zeichen');
   try {
     const result = await netlifyBlobPut(key, {
       text: text,
@@ -7895,29 +7940,42 @@ window._saveExtractedText = async function(kind, entityId, fileId, text) {
 
 // Lade extrahierten Text wieder
 window._loadExtractedText = async function(kind, entityId, fileId) {
-  if (typeof netlifyBlobGet !== 'function') return null;
-  const key = _textBlobKey(kind, entityId, fileId);
-  // Lesereihenfolge: neuer kodierter Schluessel, dann die beiden Altformate.
-  // Geschrieben wird ausschliesslich der erste — Altstaende bleiben unberuehrt.
-  for (const k of [key,
-    _textBlobKeyLegacyRaw(kind, entityId, fileId),
-    _textBlobKeyLegacyColon(kind, entityId, fileId)]) {
-    try {
-      const result = await netlifyBlobGet(k, { force: true });
-      if (result?.ok && result.data?.text) return result.data.text;
-    } catch (err) {
-      // weiter zum nächsten
+  let schluessel;
+  try {
+    schluessel = attachmentReadKeys(kind, entityId, fileId);
+  } catch (err) {
+    console.warn('[TextExtract] Lesekey nicht baubar:', err?.message || err);
+    return null;
+  }
+  // Beide Wege gehen ueber DIESELBE Liste in DERSELBEN Reihenfolge:
+  // kanonisch, dann rohes Altformat, dann Doppelpunkt-Altformat.
+  if (typeof netlifyBlobGet === 'function') {
+    for (const k of schluessel) {
+      try {
+        const result = await netlifyBlobGet(k, { force: true });
+        if (result?.ok && result.data?.text) return result.data.text;
+      } catch (err) {
+        // weiter zum nächsten
+      }
     }
   }
-  // Direkt-Fallback wenn Backoff aktiv
+  // Direkt-Rueckfall, wenn der Helper fehlt oder im Backoff steckt. Er probiert
+  // JEDEN Schluessel der Liste — vorher nur den kanonischen, womit ein Altstand
+  // in genau dieser Lage unauffindbar war.
   try {
     const s = APP.state.settings.storage;
     if (!s?.getUrl) return null;
-    const url = s.getUrl.replace('{key}', encodeURIComponent(key));
-    const resp = await fetch(url);
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data?.text) return data.text;
+    for (const k of schluessel) {
+      try {
+        const url = s.getUrl.replace('{key}', encodeURIComponent(k));
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data?.text) return data.text;
+        }
+      } catch (err) {
+        // weiter zum nächsten
+      }
     }
   } catch (err) {
     // Ignorieren
