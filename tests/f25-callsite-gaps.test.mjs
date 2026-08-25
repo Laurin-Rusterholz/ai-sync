@@ -39,7 +39,7 @@ const stand = (notizen, extra) => ({
 });
 
 // ── canonicalWrite mit echten Abhaengigkeiten ───────────────────────────
-function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true }] } = {}) {
+function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true, data: { committet: true }, casProof: { kind: "rtdb-transaction" } }] } = {}) {
   const log = { lesen: 0, puts: [] };
   const APP = { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } };
   let i = 0;
@@ -83,10 +83,10 @@ function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true
   ok(gesehen === fern, "mutateFn bekam nicht den gelesenen Serverstand");
 }
 
-// ── 3. requireRemoteRead: kein Lesevorgang -> KEIN Schreibvorgang ───────
+// ── 3. Lesepflicht: kein Lesevorgang -> KEIN Schreibvorgang ────────────
 {
   const t = trichter({ leseFehler: true });
-  const res = await t.fn(stand({}), { requireRemoteRead: true });
+  const res = await t.fn(stand({}));   // ohne Optionsflag: die Regel gilt immer
   ok(res.ok === false && res.reason === "remote_read_failed",
     `ohne lesbaren Serverstand kam "${res.reason}" statt remote_read_failed`);
   ok(t.log.puts.length === 0,
@@ -197,8 +197,10 @@ function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true
   const jb = ohneKommentare(index.slice(index.indexOf("window.jbSendToMobile = async function()"),
     index.indexOf("window.jbCloseEditor = function()")));
   ok(jb.length > 500, "jbSendToMobile wurde nicht gefunden");
-  ok(/window\.canonicalWrite\(/.test(jb) && /requireRemoteRead: true/.test(jb),
-    "jbSendToMobile laeuft nicht mit requireRemoteRead ueber den Trichter");
+  ok(/window\.canonicalWrite\(/.test(jb),
+    "jbSendToMobile laeuft nicht ueber den Trichter");
+  ok(!/requireRemoteRead/.test(jb),
+    "jbSendToMobile setzt weiterhin ein Flag fuer die Lesepflicht — die gilt jetzt immer");
   ok(!/fetch\(/.test(jb), "jbSendToMobile schreibt weiterhin roh per fetch am Abgleich vorbei");
   ok(!/remotePutByKey\(/.test(jb), "jbSendToMobile hat weiterhin einen Rueckfall auf remotePutByKey");
   ok(!/buildLocalAppSnapshot|buildRemoteAppPayload/.test(jb),

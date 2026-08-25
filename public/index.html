@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards · 2026-08-24" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6825,6 +6825,23 @@ async function netlifyBlobPut(key, data, options = {}) {
       return { ok: false, status: resp.status, provider: 'netlify' };
     }
     const newEtag = resp.headers.get('ETag');
+    // CAS-BEWEIS auf dem Netlify-Weg: der Server muss eine NEUE Version
+    // bestaetigen. Fehlt der ETag oder ist er derselbe wie der gesendete, wissen
+    // wir nicht, ob unser Stand ueberhaupt angekommen ist — HTTP 200 allein ist
+    // kein Beweis. Auf dem Kernschluessel gilt das strikt: lieber ein sichtbarer
+    // Fehler als ein stiller Upload, der nichts bewegt hat.
+    if (isCoreDataKey(key)) {
+      if (!newEtag) {
+        console.error('[CloudSync] Netlify PUT ohne ETag in der Antwort — kein CAS-Beweis, kein Erfolg.');
+        rememberCloudFailure('netlify', { status: resp.status });
+        return { ok: false, status: resp.status, reason: 'no_cas_proof_missing_etag', provider: 'netlify' };
+      }
+      if (etag && newEtag === etag) {
+        console.error('[CloudSync] Netlify PUT: ETag unveraendert — der Server hat keine neue Version bestaetigt, kein CAS-Beweis.');
+        rememberCloudFailure('netlify', { status: resp.status });
+        return { ok: false, status: resp.status, reason: 'no_cas_proof_unchanged_etag', provider: 'netlify' };
+      }
+    }
     if (newEtag) _remoteEtags[key] = newEtag;
     if (key === s.blobKey) {
       APP.state.storage.etag = newEtag || null;
@@ -6832,7 +6849,10 @@ async function netlifyBlobPut(key, data, options = {}) {
       APP.state.storage.lastRemoteProvider = 'netlify';
     }
     rememberCloudSuccess('netlify');
-    return { ok: true, status: resp.status, provider: 'netlify', data };
+    return {
+      ok: true, status: resp.status, provider: 'netlify', data,
+      casProof: isCoreDataKey(key) ? { kind: 'netlify-etag', etag: newEtag, vorher: etag || null } : undefined,
+    };
   } catch(e) {
     rememberCloudFailure('netlify', { error: e });
     return { ok: false, error: e, provider: 'netlify' };
@@ -7054,8 +7074,8 @@ async function rtdbJsonPut(key, data, options = {}) {
             savedAt: Date.now(),
             savedBy: myDevice,
           };
-        }, (error, committed) => {
-          if (error) reject(error); else resolve({ committed });
+        }, (error, committed, snapshot) => {
+          if (error) reject(error); else resolve({ committed, snapshot });
         }, false);
       });
       if (!txn.committed) {
@@ -7063,7 +7083,25 @@ async function rtdbJsonPut(key, data, options = {}) {
         rememberCloudFailure('rtdb', { error: new Error(grund) });
         return { ok: false, reason: grund, provider: 'rtdb' };
       }
-      payload = finalPayload;
+      // CAS-BEWEIS: nicht das vorab gebaute out, sondern der Stand, den die
+      // Datenbank TATSAECHLICH committet hat. committed=true allein genuegt
+      // nicht — ohne den Schnappschuss wissen wir nicht, WAS drinsteht, und
+      // genau das ist der Unterschied zwischen "der Server hat 200 gesagt" und
+      // "unser Stand liegt dort".
+      let committetStand = null;
+      let committetHuelle = null;
+      try { committetHuelle = txn.snapshot && typeof txn.snapshot.val === 'function' ? txn.snapshot.val() : null; } catch(e) { committetHuelle = null; }
+      if (committetHuelle && typeof committetHuelle.data === 'string') {
+        try { committetStand = JSON.parse(committetHuelle.data); } catch(e) { committetStand = null; }
+      } else if (committetHuelle && committetHuelle.data && typeof committetHuelle.data === 'object') {
+        committetStand = committetHuelle.data;
+      }
+      if (!committetStand) {
+        console.error('[CloudSync] RTDB-Transaktion committet, aber ohne verwertbaren Schnappschuss — kein CAS-Beweis, kein Erfolg.');
+        rememberCloudFailure('rtdb', { error: new Error('no_cas_snapshot') });
+        return { ok: false, reason: 'no_cas_snapshot', provider: 'rtdb' };
+      }
+      payload = committetStand;
       APP.state.storage.lastRemoteSeenAt = getDataTimestamp(payload) || Date.now();
       APP.state.storage.lastRemoteProvider = 'rtdb';
       APP.state.storage.etag = null;
@@ -7071,7 +7109,17 @@ async function rtdbJsonPut(key, data, options = {}) {
       // committedByTransaction markiert: dieses payload ist GENAU der Stand, den
       // die kanonische Merge-Transaktion committet hat. Der Shadow-Write haengt
       // daran (siehe remotePutByKey).
-      return { ok: true, status: 200, provider: 'rtdb', data: payload, merged, committedByTransaction: true };
+      return {
+        ok: true, status: 200, provider: 'rtdb',
+        data: payload,          // EXAKT der committete Stand aus dem Schnappschuss
+        merged, committedByTransaction: true,
+        casProof: {
+          kind: 'rtdb-transaction',
+          savedAt: committetHuelle.savedAt || null,
+          updatedAt: committetHuelle.updatedAt || null,
+          savedBy: committetHuelle.savedBy || null,
+        },
+      };
     }
 
     // ── Alle uebrigen Schluessel: unveraendert ─────────────────────────────
@@ -7197,7 +7245,10 @@ async function remotePutByKey(key, data, options = {}) {
       // Fehlt die Kennzeichnung, unterbleibt der Schatten — ein veralteter
       // Schatten ist harmlos (er traegt den aelteren Zeitstempel und verliert
       // beim Kandidatenvergleich), ein falscher ist es nicht.
-      const kanonisch = res.committedByTransaction === true && !!res.data;
+      // Der Schatten haengt am CAS-BEWEIS, nicht an einer blossen Kennzeichnung:
+      // gespiegelt wird nur ein Stand, den die RTDB-Transaktion nachweislich
+      // committet hat. Firebase Storage ist damit reiner Post-Commit-Schatten.
+      const kanonisch = !!(res.casProof && res.casProof.kind === 'rtdb-transaction' && res.data);
       if (options.shadowToOthers && isAutoSyncEnabled() && kanonisch) {
         const now = Date.now();
         if (now - _lastShadowWriteAt > (options.shadowIntervalMs || 45000)) {
@@ -12215,14 +12266,17 @@ async function canonicalWrite(quelle, options = {}) {
     if (!remote.ok && remote.authRequired) {
       return { ok: false, authRequired: true, reason: 'auth_required', provider: 'canonicalWrite' };
     }
-    const fern = (remote.ok && remote.data) ? normalizeData(remote.data) : null;
-    if (!remote.ok && options.requireRemoteRead) {
-      // Fuer Aufrufer, die ohne gelesenen Serverstand gar nichts schreiben
-      // duerfen (jbSendToMobile): lieber sichtbar scheitern als den lokalen
-      // Vollstand darueberlegen.
+    // Ein erfolgreicher, FRISCHER Lesevorgang ist Pflicht — ohne Ausnahme und
+    // ohne Optionsflag. requireRemoteRead gibt es nicht mehr: es liess jedem
+    // Aufrufer die Wahl, ohne Serverstand zu schreiben, und genau diese Wahl
+    // war der Fehler. Offline oder kein erreichbares Backend heisst: sichtbarer
+    // Fehler, kein stiller Upload. Eine Warteschlange kommt spaeter (P1.2),
+    // eine Force-Hintertuer nicht.
+    if (!remote.ok || !remote.data) {
       console.error('[CanonicalWrite] Serverstand nicht lesbar — kein Schreibvorgang.');
       return { ok: false, reason: 'remote_read_failed', provider: 'canonicalWrite' };
     }
+    const fern = normalizeData(remote.data);
 
     // 2) BASIS
     let basis;
@@ -12237,7 +12291,7 @@ async function canonicalWrite(quelle, options = {}) {
     }
 
     // 3) MERGEN
-    const vereint = fern ? mergeData(basis, fern) : basis;
+    const vereint = mergeData(basis, fern);
     if (!vereint.meta) vereint.meta = {};
     vereint.meta.updatedAt = new Date().toISOString();
     vereint.meta.lastSavedBy = getOrCreateDeviceId();
@@ -12249,7 +12303,26 @@ async function canonicalWrite(quelle, options = {}) {
       mergeFn: mergeData,
       _viaCanonicalWrite: true,
     });
-    if (res.ok) return { ...res, data: vereint, mergedRemote: !!fern, attempts: versuch };
+    if (res.ok) {
+      // 5) CAS-BEWEIS PRUEFEN. Ein res.ok ohne Beweis ist KEIN Erfolg — auch
+      // dann nicht, wenn ein Backend HTTP 200 gemeldet hat. Firebase Storage
+      // kann per Bauart keinen liefern (ein Datei-Upload hat kein
+      // Compare-and-Swap); ein solcher Erfolg wird deshalb als Fehler gewertet.
+      const beweis = res.casProof;
+      const gueltig = beweis && (beweis.kind === 'rtdb-transaction' || beweis.kind === 'netlify-etag');
+      if (!gueltig) {
+        console.error('[CanonicalWrite] Schreibvorgang ohne CAS-Beweis (' + (res.provider || '?') +
+          ') — als FEHLER gewertet, der Stand gilt NICHT als gespeichert.');
+        return {
+          ok: false, reason: 'no_cas_proof', provider: res.provider || 'canonicalWrite',
+          status: res.status, attempts: versuch,
+        };
+      }
+      // res.data ist EXAKT der committete Stand aus Schnappschuss bzw.
+      // Serverantwort — nicht das vorab gebaute vereint. Der Unterschied ist der
+      // Punkt: was wir schicken wollten, ist nicht, was gespeichert wurde.
+      return { ...res, mergedRemote: true, attempts: versuch, casProof: beweis };
+    }
     letzte = res;
     const konflikt = res.status === 412
       || res.reason === 'transaction_aborted'
@@ -85191,8 +85264,9 @@ select.jb-select option{background:var(--panel);color:var(--text)}
       //
       // Jetzt: canonicalWrite liest den Serverstand, unser mutateFn haengt die
       // mobilePushes daran, mergeData vereinigt, und geschrieben wird per CAS.
-      // requireRemoteRead: ohne gelesenen Serverstand gibt es KEINEN
-      // Schreibvorgang, sondern einen sichtbaren Fehler (F-08).
+      // Ohne gelesenen Serverstand gibt es KEINEN Schreibvorgang, sondern einen
+      // sichtbaren Fehler (F-08). Das ist seit v4 die Regel des Trichters
+      // selbst, kein Wunsch dieses Aufrufers mehr.
       if (typeof window.canonicalWrite !== 'function') {
         pushError = 'Abgleich nicht verfuegbar';
         console.error('[jbSendToMobile] window.canonicalWrite fehlt — kein Schreibvorgang.');
@@ -85213,7 +85287,7 @@ select.jb-select option{background:var(--panel);color:var(--text)}
             .slice(0, 50);
           console.log('[jbSendToMobile] mobilePushes nach Merge:', basis.mobilePushes.length);
           return basis;
-        }, { requireRemoteRead: true });
+        });
 
         if (res && res.ok) {
           saved = true;

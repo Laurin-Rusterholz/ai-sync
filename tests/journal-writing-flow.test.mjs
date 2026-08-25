@@ -609,8 +609,8 @@ function loadParagraphTools(sel) {
     "bei einem Fehler geht weiterhin der lokale Vollstand hinaus");
   ok(/window\.canonicalWrite\(/.test(code),
     "der Versand laeuft nicht ueber den Schreibtrichter");
-  ok(/requireRemoteRead: true/.test(code),
-    "ohne gelesenen Serverstand darf NICHT geschrieben werden (F-08) — die Bedingung fehlt");
+  ok(!/buildLocalAppSnapshot|buildRemoteAppPayload/.test(code),
+    "ohne gelesenen Serverstand darf NICHT der lokale Vollstand hinausgehen (F-08)");
   ok(/remote_read_failed/.test(code),
     "ein nicht lesbarer Serverstand wird dem Nutzer nicht als Grund genannt");
   ok(/btn\.title = 'Nicht gesendet: '/.test(send),

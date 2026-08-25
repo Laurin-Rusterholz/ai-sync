@@ -61,7 +61,14 @@ function makeRef({ serverValues = [null], committed = true, error = null } = {})
         let out = null;
         for (const v of serverValues) { log.txnCalls++; out = updateFn(v); }
         log.written = out;
-        setTimeout(() => cb(error, error ? false : committed, null), 0);
+        // Der echte SDK reicht im dritten Argument den COMMITTETEN Stand zurueck.
+        // Vorher gab die Attrappe null — damit lief die CAS-Beweispflicht aus
+        // F-25 v4 ins Leere, und der Test haette einen Erfolg ohne Beweis
+        // durchgewinkt. Bei abgebrochener Transaktion gibt es keinen Stand.
+        const snapshot = (!error && committed && out !== undefined)
+          ? { val: () => out, exists: () => !!out }
+          : null;
+        setTimeout(() => cb(error, error ? false : committed, snapshot), 0);
       },
     },
   };
@@ -158,6 +165,8 @@ const wrapOf = (payload, savedBy) => ({
   ok(res.ok === true && res.merged === true,
     "ein eigener, aelterer Serverstand wird nicht gemergt — der veraltete Tab kann wieder ersetzen");
   ok(JSON.parse(b.log.written.data).neu === true, "der eigene neuere Stand wurde nicht geschrieben");
+  ok(res.casProof && res.casProof.kind === "rtdb-transaction",
+    "der Erfolg traegt keinen CAS-Beweis aus dem Schnappschuss");
   ok(res.committedByTransaction === true,
     "das Ergebnis ist nicht als Stand der kanonischen Merge-Transaktion gekennzeichnet");
 }

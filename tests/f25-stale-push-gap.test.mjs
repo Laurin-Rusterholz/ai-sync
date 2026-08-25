@@ -152,7 +152,7 @@ const stand = (notizen, meta) => ({
   const put = new Function(
     "APP", "shouldTryCloudProvider", "buildStorageAuthHeaders", "rememberCloudFailure",
     "rememberCloudSuccess", "getDataTimestamp", "_remoteEtags", "fetchWithTimeout",
-    "coreWriteGuard", "canonicalWrite", "console", "JSON", "Date", "encodeURIComponent",
+    "coreWriteGuard", "canonicalWrite", "isCoreDataKey", "console", "JSON", "Date", "encodeURIComponent",
     src + "\nreturn netlifyBlobPut;")(
     APP, () => true, () => ({}), () => {}, () => {},
     (d) => Date.parse(d?.meta?.updatedAt) || 0, {},
@@ -171,6 +171,7 @@ const stand = (notizen, meta) => ({
     },
     () => null,
     async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
+    (k) => k === "app-data.json",
     { log() {}, warn() {}, error() {} }, JSON, Date, encodeURIComponent);
 
   const res = await put("app-data.json", unser, { mergeFn: mergeData, _viaCanonicalWrite: true });
@@ -179,6 +180,8 @@ const stand = (notizen, meta) => ({
   ok(log.gets === 1, `Teilfall 2: der Serverstand wurde nicht gelesen (${log.gets} Lesevorgaenge)`);
   ok(log.puts.length === 2, `Teilfall 2: ${log.puts.length} Schreibversuche statt zwei`);
   const zweiter = log.puts[1] || { ifMatch: null, body: {} };
+  ok(res.casProof && res.casProof.kind === "netlify-etag" && res.casProof.etag === "etag-danach",
+    `Teilfall 2: der Erfolg traegt keinen CAS-Beweis: ${JSON.stringify(res.casProof)}`);
   ok(zweiter.ifMatch === serverEtag,
     `Teilfall 2: die Wiederholung lief mit If-Match "${zweiter.ifMatch}" statt mit dem frischen ETag — ` +
     "eine Wiederholung ohne If-Match ersetzt den fremden Stand blind");
@@ -217,7 +220,7 @@ const stand = (notizen, meta) => ({
 
   // a) kanonische Transaktion hat committet -> Schatten spiegelt GENAU DAS
   geschattet.length = 0;
-  await bauen({ ok: true, provider: "rtdb", data: committet, committedByTransaction: true })(
+  await bauen({ ok: true, provider: "rtdb", data: committet, casProof: { kind: "rtdb-transaction" } })(
     "app-data.json", lokal, { shadowToOthers: true, _viaCanonicalWrite: true });
   await new Promise((r) => setTimeout(r, 5));
   ok(geschattet.length === 1, `Teilfall 3a: ${geschattet.length} Schattenschreibvorgaenge statt einem`);
@@ -226,15 +229,15 @@ const stand = (notizen, meta) => ({
 
   // b) Erfolg OHNE Kennzeichnung -> gar kein Schatten
   geschattet.length = 0;
-  await bauen({ ok: true, provider: "rtdb", data: committet })(
+  await bauen({ ok: true, provider: "rtdb", data: committet, committedByTransaction: true })(
     "app-data.json", lokal, { shadowToOthers: true, _viaCanonicalWrite: true });
   await new Promise((r) => setTimeout(r, 5));
   ok(geschattet.length === 0,
-    "Teilfall 3b: ohne Kennzeichnung der kanonischen Transaktion wurde trotzdem geschattet");
+    "Teilfall 3b: ohne CAS-Beweis wurde trotzdem geschattet (committedByTransaction allein genuegt nicht)");
 
   // c) Erfolg ohne res.data -> kein Rueckfall auf den ungepruefen lokalen Stand
   geschattet.length = 0;
-  await bauen({ ok: true, provider: "rtdb", committedByTransaction: true })(
+  await bauen({ ok: true, provider: "rtdb", casProof: { kind: "rtdb-transaction" } })(
     "app-data.json", lokal, { shadowToOthers: true, _viaCanonicalWrite: true });
   await new Promise((r) => setTimeout(r, 5));
   ok(geschattet.length === 0,
@@ -244,8 +247,8 @@ const stand = (notizen, meta) => ({
   const putSrc = ohneKommentare(funktionAsync("remotePutByKey"));
   ok(!/res\.data \|\| data/.test(putSrc),
     "Teilfall 3: der Rueckfall res.data || data steht noch im Quelltext");
-  ok(/committedByTransaction === true/.test(putSrc),
-    "Teilfall 3: der Schatten haengt nicht an der kanonischen Merge-Transaktion");
+  ok(/casProof && res\.casProof\.kind === 'rtdb-transaction'/.test(putSrc),
+    "Teilfall 3: der Schatten haengt nicht am CAS-Beweis der kanonischen Transaktion");
   ok(/if \(other === 'rtdb'\) return;/.test(putSrc),
     "Teilfall 3: der Schatten darf weiterhin in den kanonischen Knoten schreiben");
 }
