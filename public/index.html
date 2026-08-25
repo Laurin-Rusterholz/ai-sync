@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -7443,9 +7443,25 @@ function isImageFile(filename) {
 // diese hier ist die einzige.
 const ATTACHMENT_KIND_STORES = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
 
+// Ein Aufloeser fuer ALLE Anhang-Bereiche. Vorher hatte jeder seine eigene
+// Kopie der Liste und seinen eigenen stillen Ruecksprung; genau daran wurde die
+// Divergenz bei invoice erst nach Monaten sichtbar.
+function attachmentStoreFor(kind, wo) {
+  const coll = ATTACHMENT_KIND_STORES[kind];
+  if (!coll) {
+    console.error('[Anhang] Anhangtyp ' + kind + ' nicht unterstützt — Mapping fehlt' + (wo ? ' (' + wo + ')' : ''));
+    return null;
+  }
+  return coll;
+}
+function attachmentEntity(kind, entityId, wo) {
+  const coll = attachmentStoreFor(kind, wo);
+  if (!coll) return null;
+  return APP.state.data.entities[coll]?.[entityId] || null;
+}
+
 function renderFileAttachments(kind, entityId) {
-  const e = APP.state.data.entities;
-  const entity = e[ATTACHMENT_KIND_STORES[kind]]?.[entityId];
+  const entity = attachmentEntity(kind, entityId, 'anzeigen');
   if (!entity) return '';
   const files = entity.files || [];
   if (!entity.fileFolders) entity.fileFolders = [];
@@ -8002,7 +8018,7 @@ window._loadExtractedText = async function(kind, entityId, fileId) {
 // 🔄 Manuelle Re-Indexierung einer bereits hochgeladenen Datei
 // Lädt sie aus Firebase, extrahiert den Text und speichert ihn in Netlify Blob
 window._reindexFile = async function(kind, entityId, fileId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const fileObj = (entity.files || []).find(f => f.id === fileId);
@@ -8080,7 +8096,7 @@ window._reindexFile = async function(kind, entityId, fileId) {
 
 // 🔄 Alle nicht-indexierten Dateien einer Entity re-indexieren
 window._reindexAllFiles = async function(kind, entityId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !Array.isArray(entity.files)) return;
   const toIndex = entity.files.filter(f => !f.textExtracted && f.url && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes((f.name || '').split('.').pop().toLowerCase()));
@@ -9057,7 +9073,7 @@ window._aiSaveAsNote = function(kind, entityId, content) {
 window._handleFileSelect = async function(fileList, kind, entityId, folderId) {
   if (!fileList || fileList.length === 0) return;
   if (!firebaseStorage) { toast('error', 'Firebase', 'Firebase nicht verbunden – Seite neu laden; bleibt es dabei, blockiert ein Adblocker/Proxy die Firebase-Domains'); return; }
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.files) entity.files = [];
@@ -9196,7 +9212,7 @@ window._toggleFileFolder = function(kind, entityId, folderId) {
 window._createFileFolder = function(kind, entityId) {
   const name = prompt('Ordnername:');
   if (!name || !name.trim()) return;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   if (!entity.fileFolders) entity.fileFolders = [];
@@ -9208,7 +9224,7 @@ window._createFileFolder = function(kind, entityId) {
 };
 
 window._renameFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -9223,7 +9239,7 @@ window._renameFileFolder = function(kind, entityId, folderId) {
 };
 
 window._renameFile = function(kind, entityId, idx) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files) return;
   const file = entity.files[idx];
@@ -9244,7 +9260,7 @@ window._renameFile = function(kind, entityId, idx) {
 };
 
 window._deleteFileFolder = function(kind, entityId, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
@@ -9264,7 +9280,7 @@ window._deleteFileFolder = function(kind, entityId, folderId) {
 };
 
 window._moveFileToFolder = function(kind, entityId, fileIdx, folderId) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+  const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files?.[fileIdx]) return;
   if (folderId) {
@@ -9296,8 +9312,7 @@ window._dropFileOnFolder = function(e, kind, entityId, folderId) {
 };
 
 function openFilePreview(kind, entityId, fileIdx) {
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
-  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+  const entity = attachmentEntity(kind, entityId, 'Vorschau');
   if (!entity || !entity.files?.[fileIdx]) return;
   const f = entity.files[fileIdx];
   
@@ -13606,6 +13621,8 @@ window.netlifyBlobPut = netlifyBlobPut;
 // diese Exporte koennte er den kanonischen Schluessel dort gar nicht bauen —
 // und ein typeof-Zweig haette still nichts getan (CLAUDE.md, Fallstrick 1).
 window.ATTACHMENT_KIND_STORES = ATTACHMENT_KIND_STORES;
+window.attachmentStoreFor = attachmentStoreFor;
+window.attachmentEntity = attachmentEntity;
 window._textBlobKey = _textBlobKey;
 window._attKeyByteLength = _attKeyByteLength;
 window.ATTACHMENT_KEY_MAX_BYTES = ATTACHMENT_KEY_MAX_BYTES;
@@ -72045,8 +72062,14 @@ window.handleClick = function(e){
     const fKind = el.dataset.kind;
     const fId = el.dataset.id;
     const fIdx = parseInt(el.dataset.fileIdx, 10);
-    const _km = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
-    const _ent = APP.state.data.entities[_km[fKind]]?.[fId];
+    // Dieselbe Liste wie Anzeigen, Vorschau, Herunterladen und Loeschen. Sie
+    // liegt in einem anderen Skript-Block, kommt also ueber window
+    // (CLAUDE.md, Fallstrick 1). Fehlt der Export, wird das gesagt.
+    if (typeof window.attachmentEntity !== 'function') {
+      console.error('[Anhang] Anhangtyp ' + fKind + ' nicht unterstützt — Mapping fehlt (attachmentEntity nicht exportiert)');
+      return;
+    }
+    const _ent = window.attachmentEntity(fKind, fId, 'umbenennen');
     if (!_ent || !_ent.files?.[fIdx]) return;
     const curName = _ent.files[fIdx].name;
     const ext = curName.includes('.') ? '.' + curName.split('.').pop() : '';
@@ -72064,8 +72087,15 @@ window.handleClick = function(e){
   if (action === "download-file") {
     e.preventDefault();
     e.stopPropagation();
-    const _km2 = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas' };
-    const _ent2 = APP.state.data.entities[_km2[el.dataset.kind]]?.[el.dataset.id];
+    if (typeof window.attachmentEntity !== 'function') {
+      console.error('[Anhang] Anhangtyp ' + el.dataset.kind + ' nicht unterstützt — Mapping fehlt (attachmentEntity nicht exportiert)');
+      return;
+    }
+    // Bei unbekanntem Typ meldete der Zweig "Datei nicht gefunden" —
+    // irrefuehrend: die Datei war da, nur der Typ fehlte in der Liste. Deshalb
+    // ZUERST den Typ pruefen und abbrechen, bevor die Datei-Meldung greift.
+    if (!window.attachmentStoreFor(el.dataset.kind, 'herunterladen')) return;
+    const _ent2 = window.attachmentEntity(el.dataset.kind, el.dataset.id, 'herunterladen');
     const fileIdx = parseInt(el.dataset.fileIdx, 10);
     const file = _ent2?.files?.[fileIdx];
     if (!file) { toast("warn", "Fehler", "Datei nicht gefunden"); return; }
@@ -72148,21 +72178,14 @@ window.handleClick = function(e){
     const fKind = el.dataset.kind;
     const fId = el.dataset.id;
     const fIdx = parseInt(el.dataset.fileIdx, 10);
-    // Dieselbe Liste wie renderFileAttachments — sie liegt in einem anderen
-    // Skript-Block und kommt darum ueber window (CLAUDE.md, Fallstrick 1).
-    const _stores = window.ATTACHMENT_KIND_STORES;
-    if (!_stores) {
-      console.error('[Anhang] Anhangtyp ' + fKind + ' nicht löschbar — Mapping fehlt (ATTACHMENT_KIND_STORES nicht exportiert)');
+    // Derselbe Aufloeser wie in den vier anderen Anhang-Bereichen.
+    if (typeof window.attachmentEntity !== 'function') {
+      console.error('[Anhang] Anhangtyp ' + fKind + ' nicht unterstützt — Mapping fehlt (attachmentEntity nicht exportiert)');
       return;
     }
-    const _coll = _stores[fKind];
-    if (!_coll) {
-      // Kein stiller Ruecksprung mehr: genau so verschwand das Loeschen von
-      // Rechnungsanhaengen, ohne dass irgendwo etwas stand.
-      console.error('[Anhang] Anhangtyp ' + fKind + ' nicht löschbar — Mapping fehlt');
-      return;
-    }
-    const _entDel = APP.state.data.entities[_coll]?.[fId];
+    // Kein stiller Ruecksprung: genau so verschwand das Loeschen von
+    // Rechnungsanhaengen, ohne dass irgendwo etwas stand.
+    const _entDel = window.attachmentEntity(fKind, fId, 'löschen');
     if (!_entDel || !_entDel.files?.[fIdx]) return;
     const fileObj = _entDel.files[fIdx];
     const fName = fileObj.name;

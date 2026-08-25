@@ -62,14 +62,16 @@ const ZWEIG = loeschzweig();
     "invoice fehlt in der gemeinsamen Liste — genau der Typ, an dem es aufflog");
 
   const render = ohneKommentare(schnipsel("renderFileAttachments"));
-  ok(/ATTACHMENT_KIND_STORES\[kind\]/.test(render),
+  // Seit M1d geht renderFileAttachments ueber den gemeinsamen Aufloeser, der
+  // die Liste liest — die Zusicherung gilt weiter, nur eine Ebene tiefer.
+  ok(/attachmentEntity\(kind, entityId/.test(render),
     "renderFileAttachments liest nicht die gemeinsame Liste");
   ok(!/const kindMap = \{ task:/.test(render),
     "renderFileAttachments fuehrt weiterhin eine eigene Liste");
 
   const a = index.indexOf('if (action === "delete-file")');
   const zweig = ohneKommentare(loeschzweig());
-  ok(/window\.ATTACHMENT_KIND_STORES/.test(zweig),
+  ok(/window\.attachmentEntity\(/.test(zweig),
     "der Loeschzweig liest nicht die gemeinsame Liste");
   ok(!/const _km3 = \{/.test(zweig), "der Loeschzweig fuehrt weiterhin eine eigene Liste");
   ok(/window\.ATTACHMENT_KIND_STORES = ATTACHMENT_KIND_STORES;/.test(index),
@@ -85,8 +87,13 @@ function loeschen({ kind = "invoice", entityId = "inv-1", fileIdx = 0, bestaetig
   const entities = {};
   if (STORES[kind]) entities[STORES[kind]] = { [entityId]: entity };
   const APP = { state: { data: { entities } } };
+  const konsole = { log: (...a) => log.info.push(a.join(" ")), warn: (...a) => log.warn.push(a.join(" ")), error: (...a) => log.error.push(a.join(" ")) };
+  // Seit M1d laeuft der Zweig ueber den gemeinsamen Aufloeser — den ECHTEN.
+  const A = (n) => { const i = index.indexOf("\nfunction " + n + "("); return index.slice(i, index.indexOf("\n}\n", i) + 3); };
+  const aufloeser = new Function("APP", "ATTACHMENT_KIND_STORES", "console",
+    A("attachmentStoreFor") + A("attachmentEntity") + "\nreturn { attachmentStoreFor, attachmentEntity };")(APP, STORES, konsole);
   const win = storesDa
-    ? { ATTACHMENT_KIND_STORES: STORES, netlifyBlobPut: async (k, v) => { log.puts.push({ key: k, wert: v }); return { ok: true }; },
+    ? { ...aufloeser, ATTACHMENT_KIND_STORES: STORES, netlifyBlobPut: async (k, v) => { log.puts.push({ key: k, wert: v }); return { ok: true }; },
         _textBlobKey, _attKeyByteLength, ATTACHMENT_KEY_MAX_BYTES: MAX }
     : { netlifyBlobPut: async () => ({ ok: true }), _textBlobKey, _attKeyByteLength, ATTACHMENT_KEY_MAX_BYTES: MAX };
 
@@ -96,7 +103,7 @@ function loeschen({ kind = "invoice", entityId = "inv-1", fileIdx = 0, bestaetig
   ;
   fn("delete-file", { dataset: { kind, id: entityId, fileIdx: String(fileIdx) } }, APP, win,
     () => { log.confirms++; return bestaetigen; },
-    { log: (...a) => log.info.push(a.join(" ")), warn: (...a) => log.warn.push(a.join(" ")), error: (...a) => log.error.push(a.join(" ")) },
+    konsole,
     Date,
     (p) => log.firebaseDeletes.push(p),
     () => { log.saves++; },
@@ -140,7 +147,7 @@ for (const kind of KINDS) {
 {
   const h = loeschen({ kind: "gibtsnicht", entityId: "x" });
   await new Promise((r) => setTimeout(r, 2));
-  ok(h.log.error.some((z) => /Anhangtyp gibtsnicht nicht löschbar/.test(z) && /Mapping fehlt/.test(z)),
+  ok(h.log.error.some((z) => /Anhangtyp gibtsnicht nicht unterstützt/.test(z) && /Mapping fehlt/.test(z)),
     `ein unbekanntes kind kehrt still zurueck: ${JSON.stringify(h.log.error)}`);
   ok(h.log.confirms === 0, "bei unbekanntem kind wurde trotzdem gefragt");
   ok(h.log.firebaseDeletes.length === 0 && h.log.puts.length === 0,
@@ -150,7 +157,7 @@ for (const kind of KINDS) {
   // fehlender Export ist dieselbe Klasse und faellt ebenso auf
   const h = loeschen({ kind: "invoice", storesDa: false });
   await new Promise((r) => setTimeout(r, 2));
-  ok(h.log.error.some((z) => /nicht löschbar/.test(z) && /Mapping fehlt/.test(z)),
+  ok(h.log.error.some((z) => /nicht unterstützt/.test(z) && /Mapping fehlt/.test(z)),
     `ein fehlender Export bleibt still: ${JSON.stringify(h.log.error)}`);
   ok(h.log.confirms === 0, "ohne Export wurde trotzdem gefragt");
 }
