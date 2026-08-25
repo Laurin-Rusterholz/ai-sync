@@ -111,18 +111,29 @@ for (const [wert, was] of [
   ok(b.log.sets.length === 1, "ohne If-Match fand kein Schreibvorgang statt");
 }
 
-// ── 6. Bewusste Erstanlage nur ueber If-None-Match: * ───────────────────
+// ── 6. KEINE Erstanlage mehr — auch nicht mit If-None-Match: * ──────────
+// VERTRAGSAENDERUNG v6 -> final, 2026-08-25: die fruehere
+// If-None-Match-Erstanlage ist BEWUSST entfernt. Sie gab dem Kerndatensatz eine
+// zweite Schreibform, war von aussen ueber eine Kopfzeile ausloesbar und
+// hinterliess keine Spur — ein geloeschter Kernknoten liess sich per HTTP neu
+// befuellen. Grund fuer die Entfernung: ein Kern-Restore soll bewusst und
+// auditiert geschehen. Dafuer gibt es scripts/restore-core.mjs — lokal, mit
+// Pflichtflag, Diff-Zusammenfassung, interaktiver Bestaetigung und Protokoll.
 {
   const b = bauen({ current: null });
   const res = await b.fn("app-data.json", NEU, { ifNoneMatch: "*" });
-  ok(res.ok === true, `Erstanlage mit If-None-Match:* wurde abgelehnt (${res.reason})`);
-  ok(b.log.sets.length === 1, "Erstanlage schrieb nicht");
+  ok(res.ok !== true,
+    "If-None-Match:* legt den fehlenden Kerndatensatz weiterhin an — die Ausnahme steht noch");
+  ok(res.preconditionRequired === true,
+    `If-None-Match:* liefert "${res.reason}" statt precondition_required`);
+  ok(b.log.sets.length === 0, "If-None-Match:*: es ging ein Schreibvorgang hinaus");
 
-  const b2 = bauen({ current: huelle(STAND_A) });
-  const res2 = await b2.fn("app-data.json", NEU, { ifNoneMatch: "*" });
-  ok(res2.ok === false && res2.reason === "already_exists",
-    `Erstanlage auf einen vorhandenen Stand: "${res2.reason}" statt already_exists`);
-  ok(b2.log.sets.length === 0, "Erstanlage ueberschrieb einen vorhandenen Stand");
+  // Und der Kernfall bleibt: kein Stand + If-Match = 412, null Writes.
+  const b2 = bauen({ current: null });
+  const res2 = await b2.fn("app-data.json", NEU, { ifMatch: ETAG_A });
+  ok(res2.ok === false && res2.conflict === true && res2.reason === "no_current",
+    `kein Stand mit If-Match: "${res2.reason}" statt no_current`);
+  ok(b2.log.sets.length === 0, "kein Stand mit If-Match: es ging ein Firebase-PUT hinaus");
 }
 
 // ── 7. Quelltextregeln ─────────────────────────────────────────────────
@@ -135,7 +146,8 @@ for (const [wert, was] of [
   ok(/no_current/.test(w) && /etag_mismatch/.test(w), "die Konfliktgruende fehlen");
   ok(w.indexOf("no_current") < w.indexOf("firebaseDbSet"),
     "der logische Vergleich steht NACH dem Schreibvorgang");
-  ok(/ifNoneMatch === "\*"/.test(w), "es gibt keinen expliziten Weg fuer eine Erstanlage");
+  ok(!/ifNoneMatch/.test(w),
+    "writeAppDataText kennt weiterhin ifNoneMatch — der Kern hat wieder zwei Schreibformen");
   // mutateAppData ist ein eigener, serverseitig frischer Pfad und bleibt unberuehrt
   const m = src.slice(src.indexOf("export async function mutateAppData("));
   ok(/const current = await firebaseDbGetWithEtag\(path\);/.test(m) && /ifMatch: current\.serverEtag/.test(m),

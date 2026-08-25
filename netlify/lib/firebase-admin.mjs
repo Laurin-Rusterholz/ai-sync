@@ -296,10 +296,19 @@ export async function readAppDataDocument(key = "app-data.json") {
 // der Eintraege, die die Loeschung gerade entfernt hatte (F-25).
 // Ein fehlender aktueller Stand ist ein KONFLIKT, kein Freibrief.
 //
-// Eine bewusste Erstanlage gibt es weiterhin, aber nur als eigener, expliziter
-// Weg: ifNoneMatch: "*" schreibt ausschliesslich dann, wenn NICHTS da ist. Ein
-// normaler PUT legt nie an.
-export async function writeAppDataText(key, text, { ifMatch = null, ifNoneMatch = null, savedBy = "netlify-function" } = {}) {
+// ENDGUELTIGER KERNVERTRAG (2026-08-25, ersetzt die Ausnahme aus v6-Commit J):
+// Fuer den Kerndatensatz gibt es GENAU EINE Schreibform — mit gueltigem
+// If-Match. Keine Erstanlage-Ausnahme, kein If-None-Match, auf keinem Pfad.
+// Ein fehlendes Kerndokument wird ueber den normalen Schreibweg NIE erzeugt.
+// Grund: eine Erstanlage per Header ist von aussen ausloesbar und hinterlaesst
+// keine Spur. Ein Kern-Restore soll bewusst und auditiert geschehen — dafuer
+// gibt es scripts/restore-core.mjs, lokal, mit Bestaetigung und Protokoll.
+//
+// Der ifNoneMatch-Parameter ist entfallen: der Callsite-Scan fand keinen
+// einzigen realen Nutzer. blob-get verwendet If-None-Match fuer bedingte
+// LESEvorgaenge (304) — das ist ein anderer Kopf auf einem anderen Weg und
+// bleibt unberuehrt.
+export async function writeAppDataText(key, text, { ifMatch = null, savedBy = "netlify-function" } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -313,7 +322,8 @@ export async function writeAppDataText(key, text, { ifMatch = null, ifNoneMatch 
   if (politik.kind === "denied") {
     return { ok: false, denied: true, reason: politik.reason, detail: politik.detail || null, etag: null, parsed };
   }
-  if (politik.kind === "core" && !ifMatch && ifNoneMatch !== "*") {
+  if (politik.kind === "core" && !ifMatch) {
+    // Byteidentisch zur Aussage des HTTP-Handlers (428 Precondition Required).
     return { ok: false, preconditionRequired: true, reason: "precondition_required", etag: null, parsed };
   }
 
@@ -336,11 +346,6 @@ export async function writeAppDataText(key, text, { ifMatch = null, ifNoneMatch 
         return { ok: false, conflict: true, reason: "etag_mismatch", etag: null, parsed };
       }
     }
-    // Erstanlage: nur wenn ausdruecklich verlangt UND wirklich nichts da ist.
-    if (ifNoneMatch === "*" && currentData != null) {
-      return { ok: false, conflict: true, reason: "already_exists", etag: null, parsed };
-    }
-
     // 2) Erst JETZT der innere Server-ETag-CAS gegen ein Wettrennen zwischen
     //    Lesen und Schreiben. Er sichert nur diese kurze Luecke ab und ist NIE
     //    ein Ersatz fuer den logischen Vergleich oben.

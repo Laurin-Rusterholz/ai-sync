@@ -81,9 +81,11 @@ export default async (req) => {
         { status: 428, headers: { ...cors, "Allow": "PUT, POST, OPTIONS" } }
       );
     }
-    // If-None-Match: * ist der einzige Weg, ein fehlendes Dokument anzulegen.
-    const ifNoneMatch = req.headers.get("If-None-Match");
-    const saved = await writeAppDataText(key, body, { ifMatch, ifNoneMatch });
+    // Kein If-None-Match mehr: der Kerndatensatz kennt genau EINE Schreibform,
+    // mit gueltigem If-Match. Eine Erstanlage per Kopfzeile gibt es nicht —
+    // ein Kern-Restore laeuft ueber scripts/restore-core.mjs, lokal, bewusst
+    // und protokolliert.
+    const saved = await writeAppDataText(key, body, { ifMatch });
     // Beide Wege teilen dieselbe Politik; kaeme hier trotzdem eine Ablehnung
     // zurueck, liefen sie auseinander — das waere ein Fehler, kein Normalfall.
     if (saved.denied) {
@@ -102,7 +104,6 @@ export default async (req) => {
       // reason unterscheidet die Faelle, damit ein 412 nicht raetselhaft bleibt:
       // no_current      = kein Stand da, aber eine Vorbedingung genannt
       // etag_mismatch   = jemand anders hat inzwischen geschrieben
-      // already_exists  = Erstanlage verlangt, es gibt aber schon einen Stand
       return Response.json(
         { error: "ETag conflict", reason: saved.reason || "etag_mismatch" },
         { status: 412, headers: cors }
