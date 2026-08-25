@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -7434,10 +7434,18 @@ function isImageFile(filename) {
   return ['jpg','jpeg','png','gif','webp','svg'].includes(ext);
 }
 
+// Welche Entitaetstypen Anhaenge tragen — EINE Liste fuer Anzeigen UND Loeschen.
+// Vorher fuehrte jeder Zweig seine eigene: renderFileAttachments kannte
+// invoice:'invoices', der delete-file-Zweig nicht. Rechnungsanhaenge liessen
+// sich anzeigen, aber nicht loeschen — der Handler kehrte vor confirm,
+// Firebase-Loeschung, Grabstein, splice, scheduleSave und render zurueck, und
+// zwar STILL. Zwei Listen fuer dieselbe Frage gehen irgendwann auseinander;
+// diese hier ist die einzige.
+const ATTACHMENT_KIND_STORES = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+
 function renderFileAttachments(kind, entityId) {
   const e = APP.state.data.entities;
-  const kindMap = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
-  const entity = e[kindMap[kind]]?.[entityId];
+  const entity = e[ATTACHMENT_KIND_STORES[kind]]?.[entityId];
   if (!entity) return '';
   const files = entity.files || [];
   if (!entity.fileFolders) entity.fileFolders = [];
@@ -13597,6 +13605,7 @@ window.netlifyBlobPut = netlifyBlobPut;
 // Der Loeschmarker fuer Anhangstexte liegt in einem ANDEREN Skript-Block. Ohne
 // diese Exporte koennte er den kanonischen Schluessel dort gar nicht bauen —
 // und ein typeof-Zweig haette still nichts getan (CLAUDE.md, Fallstrick 1).
+window.ATTACHMENT_KIND_STORES = ATTACHMENT_KIND_STORES;
 window._textBlobKey = _textBlobKey;
 window._attKeyByteLength = _attKeyByteLength;
 window.ATTACHMENT_KEY_MAX_BYTES = ATTACHMENT_KEY_MAX_BYTES;
@@ -72139,8 +72148,21 @@ window.handleClick = function(e){
     const fKind = el.dataset.kind;
     const fId = el.dataset.id;
     const fIdx = parseInt(el.dataset.fileIdx, 10);
-    const _km3 = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses' };
-    const _entDel = APP.state.data.entities[_km3[fKind]]?.[fId];
+    // Dieselbe Liste wie renderFileAttachments — sie liegt in einem anderen
+    // Skript-Block und kommt darum ueber window (CLAUDE.md, Fallstrick 1).
+    const _stores = window.ATTACHMENT_KIND_STORES;
+    if (!_stores) {
+      console.error('[Anhang] Anhangtyp ' + fKind + ' nicht löschbar — Mapping fehlt (ATTACHMENT_KIND_STORES nicht exportiert)');
+      return;
+    }
+    const _coll = _stores[fKind];
+    if (!_coll) {
+      // Kein stiller Ruecksprung mehr: genau so verschwand das Loeschen von
+      // Rechnungsanhaengen, ohne dass irgendwo etwas stand.
+      console.error('[Anhang] Anhangtyp ' + fKind + ' nicht löschbar — Mapping fehlt');
+      return;
+    }
+    const _entDel = APP.state.data.entities[_coll]?.[fId];
     if (!_entDel || !_entDel.files?.[fIdx]) return;
     const fileObj = _entDel.files[fIdx];
     const fName = fileObj.name;
