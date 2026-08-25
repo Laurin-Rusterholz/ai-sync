@@ -391,7 +391,12 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
     cut("function hasAnyCloudProviderAvailable(options = {}) {"),
     cut("function rememberCloudSuccess(provider) {"),
     cut("function rememberCloudFailure(provider, info = {}) {"),
-    cut("function getCloudProviderOrder(preferProvider) {"),
+    // Signatur seit F-25 v4: der Schluessel entscheidet die Reihenfolge — der
+    // Kerndatensatz kennt nur rtdb und netlify, beide CAS-faehig.
+    // Die ECHTE Kern-Reihenfolge mitschneiden, nicht nachbauen.
+    (() => { const i = index.indexOf("const CORE_PROVIDER_ORDER = ["); return index.slice(i, index.indexOf("];", i) + 2); })(),
+    cut("function getCloudProviderOrder(preferProvider, key) {"),
+    cut("function migratePrimaryProvider(settings) {"),
     cut("function isCoreDataKey(key) {"),
     cut("async function coreKeyAuthGate(key) {"),
     cut("async function rtdbJsonGet(key, options = {}) {"),
@@ -494,7 +499,18 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
   const res2 = await h2.api.remoteGetByKey("app-data.json", { force: true });
   ok(!res2.authRequired, "ein Netzfehler wird faelschlich als Anmeldefehler behandelt");
   ok(h2.health.rtdb.backoffUntil > 0, "ein Netzfehler setzt keinen Backoff mehr");
-  ok(h2.log.storageReads === 1, "bei einem Netzfehler entfaellt der zulaessige Storage-Rueckfall");
+  // Bis F-25 v4 stand hier das Gegenteil: bei einem Netzfehler galt der
+  // Storage-Schatten als zulaessiger Rueckfall beim LESEN. Seit v4 ist Firebase
+  // Storage vollstaendig aus der Kern-Reihenfolge (Lesen UND Schreiben) heraus.
+  // Grund: der Schatten wird nur nach einem nachgewiesenen Commit
+  // fortgeschrieben und kann darum beliebig veraltet sein. Ihn als Quelle zu
+  // lesen ist genau der Weg, auf dem geloeschte Eintraege zurueckkommen — der
+  // gelesene Altstand wird zur Basis des naechsten Merge. Fuer den Kern bleiben
+  // rtdb und netlify; beide koennen Compare-and-Swap und zeigen denselben Knoten.
+  ok(h2.log.storageReads === 0,
+    `bei einem Netzfehler wurde der Storage-Schatten ${h2.log.storageReads}-mal als Quelle gelesen — ein beliebig alter Stand haette als Wahrheit gegolten`);
+  ok(h2.log.netlifyReads === 1,
+    "bei einem Netzfehler uebernimmt nicht der Netlify-Weg (derselbe Knoten, CAS-faehig)");
 
   ok(h.api.isAuthDeniedError(denied) === true, "isAuthDeniedError erkennt permission_denied nicht");
   ok(h.api.isAuthDeniedError(netz) === false, "isAuthDeniedError haelt einen Netzfehler fuer einen Anmeldefehler");
