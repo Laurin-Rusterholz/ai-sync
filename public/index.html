@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated · 2026-08-24" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards · 2026-08-24" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6799,6 +6799,16 @@ async function netlifyBlobPut(key, data, options = {}) {
           console.warn('[CloudSync] Netlify PUT 412 ohne mergeFn → kein Schreibvorgang');
           rememberCloudFailure('netlify', { status: 412 });
           return { ok: false, status: 412, reason: 'etag_conflict_no_merge_fn', provider: 'netlify' };
+        }
+        // Ohne frischen ETag waere die Wiederholung ein Schreibvorgang OHNE
+        // If-Match — also wieder unbedingt. Der Lesevorgang kann erfolgreich
+        // sein und trotzdem keinen ETag liefern (Proxy entfernt ihn, Fassade
+        // setzt ihn nicht). Dann wird abgebrochen, nicht geschrieben.
+        const frisch = (key === s.blobKey ? APP.state.storage.etag : _remoteEtags[key]);
+        if (!frisch) {
+          console.error('[CloudSync] Netlify PUT 412 → kein frischer ETag, kein Schreibvorgang (eine Wiederholung ohne If-Match waere unbedingt).');
+          rememberCloudFailure('netlify', { status: 412 });
+          return { ok: false, status: 412, reason: 'etag_conflict_no_etag', provider: 'netlify' };
         }
         console.log('[CloudSync] Netlify PUT 412 → Serverstand gelesen, gemergt, erneut mit frischem ETag');
         // netlifyBlobGet hat den neuen ETag bereits hinterlegt; force bleibt aus,
