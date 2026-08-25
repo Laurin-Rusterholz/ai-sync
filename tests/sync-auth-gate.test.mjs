@@ -399,6 +399,9 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
     (() => { const i = index.indexOf("const CORE_PROVIDER_ORDER = ["); return index.slice(i, index.indexOf("];", i) + 2); })(),
     cut("function getCloudProviderOrder(preferProvider, key) {"),
     cut("function migratePrimaryProvider(settings) {"),
+    // Der Kernschluessel ist seit F-25 v6 eine Konstante, und isCoreDataKey
+    // vergleicht den KNOTEN. Die echte Konstante mitschneiden, nicht nachbauen.
+    (() => { const i = index.indexOf("const CORE_BLOB_KEY = "); return index.slice(i, index.indexOf(";", i) + 1); })(),
     cut("function isCoreDataKey(key) {"),
     cut("async function coreKeyAuthGate(key) {"),
     cut("async function rtdbJsonGet(key, options = {}) {"),

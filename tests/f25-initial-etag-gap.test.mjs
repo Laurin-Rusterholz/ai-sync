@@ -154,9 +154,12 @@ function client({ getEtag = "etag-1", getStatus = 200, putEtag = "etag-2", start
     .replace(/^import .*$/m, "")
     .replace(/^export const config = .*$/m, "")
     .replace(/^export default /m, "const handler = ");
-  const handler = new Function("writeAppDataText", "Netlify", "Response", "URL", "TextEncoder", "String",
+  // firebaseNodeKey seit F-25 v6: der Kern wird am KNOTEN erkannt, nicht an der
+  // Zeichenkette. Die echte Funktion mitgeben, keine nachgebaute.
+  const { firebaseNodeKey } = await import("../netlify/lib/firebase-admin.mjs");
+  const handler = new Function("writeAppDataText", "firebaseNodeKey", "Netlify", "Response", "URL", "TextEncoder", "String",
     quelle + "\nreturn handler;")(
-    async () => ({ ok: true, etag: "etag-neu" }),
+    async () => ({ ok: true, etag: "etag-neu" }), firebaseNodeKey,
     { env: { get: () => null } }, Response, URL, TextEncoder, String);
 
   const anfrage = (key, ifMatch) => ({

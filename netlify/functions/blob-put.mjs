@@ -1,4 +1,4 @@
-import { writeAppDataText } from "../lib/firebase-admin.mjs";
+import { writeAppDataText, firebaseNodeKey } from "../lib/firebase-admin.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -20,8 +20,16 @@ const MAX_BODY_BYTES = 20 * 1024 * 1024;
 // Massgeblich ist der Schluessel des Datenstands selbst, nicht die Nebenkeys
 // (readinghub, recalllab, Anhangstexte) — die haben kein Mehrgeraeteproblem.
 const CORE_KEY = "app-data.json";
+// Massgeblich ist nicht die Schreibweise des Schluessels, sondern der KNOTEN,
+// auf dem er landet. firebaseNodeKey ersetzt . # $ [ ] / durch _, also zeigen
+// "app-data.json", "app-data_json", "app-data#json", "app-data/json" und jede
+// weitere Variante auf DENSELBEN Knoten appStore/app-data_json. Eine Pruefung
+// auf die Zeichenkette "app-data.json" liess alle anderen Varianten am
+// If-Match-Riegel vorbei — ein Aufrufer haette den Kerndatensatz unter einem
+// leicht anderen Namen unbedingt ueberschreiben koennen.
+const CORE_NODE = firebaseNodeKey(CORE_KEY);
 function isCoreKey(key) {
-  return String(key || "") === CORE_KEY;
+  return firebaseNodeKey(String(key || "")) === CORE_NODE;
 }
 
 export default async (req) => {

@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6345,6 +6345,22 @@ function primaryCloudProvider() {
   }
   return isRtdbCloudAvailable() ? 'rtdb' : (isBlobSyncConfigured() ? 'netlify' : 'rtdb');
 }
+// Der Kernschluessel ist eine KONSTANTE, kein Einstellungswert. Er zeigt auf
+// genau einen RTDB-Knoten (appStore/app-data_json); ihn frei setzen zu koennen
+// hiess, den Kerndatensatz unter einem anderen Namen anzulegen — der Server
+// haette ihn dann nicht als Kern erkannt und ohne If-Match beschrieben.
+const CORE_BLOB_KEY = 'app-data.json';
+// Ein gespeicherter Altwert wird beim Laden verworfen und protokolliert.
+function migrateCoreBlobKey(settings) {
+  try {
+    const alt = settings?.storage?.blobKey;
+    if (settings?.storage && alt !== CORE_BLOB_KEY) {
+      settings.storage.blobKey = CORE_BLOB_KEY;
+      if (alt) console.warn('[CloudSync] Gespeicherter Blob-Key "' + alt + '" verworfen — der Kerndatensatz liegt fest auf "' + CORE_BLOB_KEY + '".');
+    }
+  } catch(e) {}
+  return settings;
+}
 // Einmalige Migration eines gespeicherten Altwerts.
 function migratePrimaryProvider(settings) {
   try {
@@ -7267,8 +7283,16 @@ function getCloudProviderOrder(preferProvider, key) {
 // alt und wird nur vom Rechner geschrieben: der markerlose Altstand galt
 // dann als "erfolgreich gelesen". Deshalb gatet der Kernschluessel selbst,
 // VOR jeder Provider-Auswahl.
+// Wie serverseitig: massgeblich ist der KNOTEN, nicht die Schreibweise.
+// firebaseNodeKey/rtdbNodeKey ersetzen . # $ [ ] / durch _ — "app-data.json",
+// "app-data_json", "app-data#json" und weitere Varianten zeigen alle auf
+// appStore/app-data_json. Ein Zeichenkettenvergleich liess die Varianten am
+// Trichter vorbei.
 function isCoreDataKey(key) {
-  try { return key === (APP.state.settings?.storage?.blobKey || 'app-data.json'); } catch(e) { return false; }
+  try {
+    if (typeof key !== 'string' || !key) return false;
+    return rtdbNodeKey(key) === rtdbNodeKey(CORE_BLOB_KEY);
+  } catch(e) { return false; }
 }
 async function coreKeyAuthGate(key) {
   if (!isCoreDataKey(key)) return null;
@@ -12165,7 +12189,7 @@ function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     const defaults = defaultSettings();
-    if (!raw) return migratePrimaryProvider(defaults);
+    if (!raw) return migrateCoreBlobKey(migratePrimaryProvider(defaults));
 
     const parsed = JSON.parse(raw) || {};
     const mergedShortcuts = { ...defaults.shortcuts };
@@ -12178,16 +12202,16 @@ function loadSettings() {
         mergedShortcuts[k] = { ...mergedShortcuts[k], ...v };
       }
     }
-    return migratePrimaryProvider({
+    return migrateCoreBlobKey(migratePrimaryProvider({
       ...defaults,
       ...parsed,
       storage: { ...defaults.storage, ...(parsed.storage || {}) },
       openai: { ...defaults.openai, ...(parsed.openai || {}) },
       ui: { ...defaults.ui, ...(parsed.ui || {}) },
       shortcuts: mergedShortcuts,
-    });
+    }));
   } catch {
-    return migratePrimaryProvider(defaultSettings());
+    return migrateCoreBlobKey(migratePrimaryProvider(defaultSettings()));
   }
 }
 
@@ -63874,7 +63898,7 @@ async function init() {
             </div>
             ` : ''}
             
-            <label class="col-12">Blob Key<input type="text" id="setBlobKey" value="${esc(APP.state.settings.storage.blobKey)}" /></label>
+            <label class="col-12">Blob Key<input type="text" id="setBlobKey" value="${esc(APP.state.settings.storage.blobKey)}" readonly disabled title="Fest — der Kerndatensatz liegt auf genau einem Knoten" style="opacity:.6;cursor:not-allowed" /><small class="muted">Fest. Ein abweichender Schluessel wuerde einen zweiten Kerndatensatz anlegen, den der Server nicht als Kern erkennt.</small></label>
             <label class="col-12">GET URL<input type="text" id="setGetUrl" value="${esc(APP.state.settings.storage.getUrl)}" /></label>
             <label class="col-12">PUT URL<input type="text" id="setPutUrl" value="${esc(APP.state.settings.storage.putUrl)}" /></label>
             <label class="col-12">Auth Token<input type="text" id="setAuthToken" value="${esc(APP.state.settings.storage.authToken)}" placeholder="Leer lassen falls SYNC_AUTH_TOKEN nicht gesetzt" /></label>
@@ -69408,7 +69432,9 @@ function initNoteFlow() {
 
 // Settings modal save
 window.saveSettingsModal = function() {
-  APP.state.settings.storage.blobKey = $("#setBlobKey")?.value || "app-data.json";
+  // Der Kernschluessel wird NICHT mehr aus dem Formular uebernommen — er ist
+  // eine Konstante. Das Feld ist nur noch Anzeige.
+  APP.state.settings.storage.blobKey = CORE_BLOB_KEY;
   APP.state.settings.storage.getUrl = $("#setGetUrl")?.value || "";
   APP.state.settings.storage.putUrl = $("#setPutUrl")?.value || "";
   APP.state.settings.storage.authToken = $("#setAuthToken")?.value || "";
