@@ -63,9 +63,18 @@ export default async (req) => {
         { status: 428, headers: { ...cors, "Allow": "PUT, POST, OPTIONS" } }
       );
     }
-    const saved = await writeAppDataText(key, body, { ifMatch });
+    // If-None-Match: * ist der einzige Weg, ein fehlendes Dokument anzulegen.
+    const ifNoneMatch = req.headers.get("If-None-Match");
+    const saved = await writeAppDataText(key, body, { ifMatch, ifNoneMatch });
     if (saved.conflict) {
-      return Response.json({ error: "ETag conflict" }, { status: 412, headers: cors });
+      // reason unterscheidet die Faelle, damit ein 412 nicht raetselhaft bleibt:
+      // no_current      = kein Stand da, aber eine Vorbedingung genannt
+      // etag_mismatch   = jemand anders hat inzwischen geschrieben
+      // already_exists  = Erstanlage verlangt, es gibt aber schon einen Stand
+      return Response.json(
+        { error: "ETag conflict", reason: saved.reason || "etag_mismatch" },
+        { status: 412, headers: cors }
+      );
     }
     if (!saved.ok) throw new Error("Firebase hat den Datenstand nicht gespeichert.");
     const newEtag = saved.etag;

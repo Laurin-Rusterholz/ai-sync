@@ -283,7 +283,21 @@ export async function readAppDataDocument(key = "app-data.json") {
   return { exists: true, data, parsed, etag: wrap?.etag || jsonEtag(data), wrap };
 }
 
-export async function writeAppDataText(key, text, { ifMatch = null, savedBy = "netlify-function" } = {}) {
+// Der Server ersetzt eine Client-Vorbedingung NIE stillschweigend durch eine
+// eigene. Frueher stand hier
+//     if (ifMatch && currentData != null && currentLogicalEtag !== ifMatch)
+// — die Bedingung `currentData != null` liess den Vergleich AUSFALLEN, sobald
+// der Knoten fehlte oder nicht auspackbar war. Der Client sagte "schreibe nur,
+// wenn der Stand noch A ist", der Server fand gar keinen Stand, uebersprang die
+// Pruefung und rekonstruierte das Dokument aus der Client-Nutzlast. Wurde der
+// Knoten zwischendurch geloescht, kam so der ganze alte Stand zurueck — samt
+// der Eintraege, die die Loeschung gerade entfernt hatte (F-25).
+// Ein fehlender aktueller Stand ist ein KONFLIKT, kein Freibrief.
+//
+// Eine bewusste Erstanlage gibt es weiterhin, aber nur als eigener, expliziter
+// Weg: ifNoneMatch: "*" schreibt ausschliesslich dann, wenn NICHTS da ist. Ein
+// normaler PUT legt nie an.
+export async function writeAppDataText(key, text, { ifMatch = null, ifNoneMatch = null, savedBy = "netlify-function" } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -297,9 +311,26 @@ export async function writeAppDataText(key, text, { ifMatch = null, savedBy = "n
     const current = await firebaseDbGetWithEtag(path);
     const currentData = unwrapData(current.value);
     const currentLogicalEtag = current.value?.etag || (currentData != null ? jsonEtag(currentData) : null);
-    if (ifMatch && currentData != null && currentLogicalEtag !== ifMatch) {
-      return { ok: false, conflict: true, etag: null, parsed };
+
+    // 1) LOGISCHER VERGLEICH — immer, wenn der Client eine Vorbedingung nennt.
+    //    Er steht VOR jedem Schreibvorgang; faellt er durch, gibt es NULL
+    //    Firebase-PUTs, keinen Nebenschreibvorgang, keinen Schatten.
+    if (ifMatch) {
+      if (currentData == null || !currentLogicalEtag) {
+        return { ok: false, conflict: true, reason: "no_current", etag: null, parsed };
+      }
+      if (currentLogicalEtag !== ifMatch) {
+        return { ok: false, conflict: true, reason: "etag_mismatch", etag: null, parsed };
+      }
     }
+    // Erstanlage: nur wenn ausdruecklich verlangt UND wirklich nichts da ist.
+    if (ifNoneMatch === "*" && currentData != null) {
+      return { ok: false, conflict: true, reason: "already_exists", etag: null, parsed };
+    }
+
+    // 2) Erst JETZT der innere Server-ETag-CAS gegen ein Wettrennen zwischen
+    //    Lesen und Schreiben. Er sichert nur diese kurze Luecke ab und ist NIE
+    //    ein Ersatz fuer den logischen Vergleich oben.
     const wrap = {
       data: text,
       etag,
