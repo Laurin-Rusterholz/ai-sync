@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding · 2026-08-25" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6769,6 +6769,16 @@ async function netlifyBlobGet(key, options = {}) {
       return { ok: false, status: resp.status, provider: 'netlify' };
     }
     const etag = resp.headers.get('ETag');
+    // Ein Lesevorgang auf den Kernschluessel OHNE nichtleeren ETag ist kein
+    // brauchbarer Lesevorgang. Der ETag ist das einzige, woran der naechste
+    // Schreibvorgang sich binden kann; ohne ihn gaebe es nur einen
+    // unbedingten PUT. Ein vom Proxy entfernter ETag ist kein Freifahrtschein —
+    // dann wird sichtbar abgebrochen und gar nicht erst geschrieben.
+    if (isCoreDataKey(key) && !etag) {
+      console.error('[CloudSync] Netlify GET ohne ETag auf den Kerndatensatz — als FEHLGESCHLAGEN gewertet (ohne ETag kaeme nur ein unbedingter Schreibvorgang).');
+      rememberCloudFailure('netlify', { status: resp.status });
+      return { ok: false, status: resp.status, reason: 'read_without_etag', provider: 'netlify' };
+    }
     if (etag) _remoteEtags[key] = etag;
     if (key === s.blobKey) {
       APP.state.storage.etag = etag || null;
@@ -6793,6 +6803,15 @@ async function netlifyBlobPut(key, data, options = {}) {
   // Der ETag wird NIE mehr unterdrueckt. Die Wiederholung nach 412 laeuft mit
   // dem FRISCHEN ETag aus dem Lesevorgang, nicht ohne If-Match.
   const etag = (key === s.blobKey ? APP.state.storage.etag : _remoteEtags[key]);
+  // Auf dem Kernschluessel ist der Request-ETag PFLICHT — und zwar vor dem
+  // Netzwerkaufruf. Bisher galt: kein ETag, kein If-Match, PUT trotzdem raus.
+  // Der Response-ETag danach beweist nur, DASS geschrieben wurde, nicht dass
+  // BEDINGT geschrieben wurde; er wurde faelschlich zum CAS-Beweis hochgestuft.
+  // Ohne Vorher-Wert gibt es hier gar keinen Request mehr.
+  if (isCoreDataKey(key) && !etag) {
+    console.error('[CloudSync] Netlify PUT auf den Kerndatensatz ohne If-Match abgewiesen — ein unbedingter Schreibvorgang ist kein CAS.');
+    return { ok: false, reason: 'missing_if_match', provider: 'netlify' };
+  }
   if (etag) headers['If-Match'] = etag;
   try {
     const resp = await fetchWithTimeout(url, { method: 'PUT', headers, body: JSON.stringify(data) }, 12000);
@@ -6832,6 +6851,14 @@ async function netlifyBlobPut(key, data, options = {}) {
         // damit die Wiederholung nicht doch noch an einer Force-Regel vorbeilaeuft.
         return netlifyBlobPut(key, options.mergeFn(data, aktuell.data), { ...options, force: false, _retry412: true });
       }
+      if (resp.status === 428) {
+        // Der Server verlangt If-Match auf dem Kerndatensatz. Hier kann das nur
+        // noch bedeuten, dass ein alter, zwischengespeicherter Client laeuft —
+        // der eigene Riegel oben haette den Request sonst gar nicht rausgelassen.
+        console.error('[CloudSync] Netlify PUT 428: der Server verlangt If-Match auf dem Kerndatensatz. Seite neu laden (alter Client?).');
+        rememberCloudFailure('netlify', { status: 428 });
+        return { ok: false, status: 428, reason: 'precondition_required', provider: 'netlify' };
+      }
       if (resp.status === 412) {
         // Zweiter 412 in Folge: sichtbar aufgeben statt erzwingen.
         console.error('[CloudSync] Netlify PUT: ETag-Konflikt bleibt nach Merge-Wiederholung bestehen — nicht geschrieben.');
@@ -6853,7 +6880,7 @@ async function netlifyBlobPut(key, data, options = {}) {
         rememberCloudFailure('netlify', { status: resp.status });
         return { ok: false, status: resp.status, reason: 'no_cas_proof_missing_etag', provider: 'netlify' };
       }
-      if (etag && newEtag === etag) {
+      if (newEtag === etag) {
         console.error('[CloudSync] Netlify PUT: ETag unveraendert — der Server hat keine neue Version bestaetigt, kein CAS-Beweis.');
         rememberCloudFailure('netlify', { status: resp.status });
         return { ok: false, status: resp.status, reason: 'no_cas_proof_unchanged_etag', provider: 'netlify' };
@@ -6868,7 +6895,10 @@ async function netlifyBlobPut(key, data, options = {}) {
     rememberCloudSuccess('netlify');
     return {
       ok: true, status: resp.status, provider: 'netlify', data,
-      casProof: isCoreDataKey(key) ? { kind: 'netlify-etag', etag: newEtag, vorher: etag || null } : undefined,
+      // Der Beweis bindet VORHER an NACHHER: before ist der gesendete If-Match,
+      // after der bestaetigte neue ETag. Erst dieses Paar zeigt, dass BEDINGT
+      // geschrieben wurde — ein after allein zeigt nur, dass geschrieben wurde.
+      casProof: isCoreDataKey(key) ? { kind: 'netlify-etag', before: etag, after: newEtag } : undefined,
     };
   } catch(e) {
     rememberCloudFailure('netlify', { error: e });
@@ -7132,6 +7162,8 @@ async function rtdbJsonPut(key, data, options = {}) {
         merged, committedByTransaction: true,
         casProof: {
           kind: 'rtdb-transaction',
+          committed: true,
+          snapshot: txn.snapshot || null,   // die Referenz selbst, nicht nur ihr Inhalt
           savedAt: committetHuelle.savedAt || null,
           updatedAt: committetHuelle.updatedAt || null,
           savedBy: committetHuelle.savedBy || null,
@@ -12350,8 +12382,18 @@ async function canonicalWrite(quelle, options = {}) {
       // dann nicht, wenn ein Backend HTTP 200 gemeldet hat. Firebase Storage
       // kann per Bauart keinen liefern (ein Datei-Upload hat kein
       // Compare-and-Swap); ein solcher Erfolg wird deshalb als Fehler gewertet.
+      // Ein Beweis ist nur gueltig, wenn er an den GELESENEN Zustand gebunden
+      // ist. Bei Netlify heisst das: before (gesendeter If-Match) und after
+      // (bestaetigter neuer ETag) sind beide nichtleer UND verschieden. Ein
+      // after ohne before beweist nur, dass geschrieben wurde — nicht, dass
+      // bedingt geschrieben wurde. Bei RTDB uebernimmt die Transaktion diese
+      // Bindung, der Beweis muss aber committed und einen Schnappschuss tragen.
       const beweis = res.casProof;
-      const gueltig = beweis && (beweis.kind === 'rtdb-transaction' || beweis.kind === 'netlify-etag');
+      const nichtleer = (v) => typeof v === 'string' ? v.length > 0 : !!v;
+      const gueltig = !!beweis && (
+        (beweis.kind === 'rtdb-transaction' && beweis.committed === true && !!beweis.snapshot) ||
+        (beweis.kind === 'netlify-etag' && nichtleer(beweis.before) && nichtleer(beweis.after) && beweis.before !== beweis.after)
+      );
       if (!gueltig) {
         console.error('[CanonicalWrite] Schreibvorgang ohne CAS-Beweis (' + (res.provider || '?') +
           ') — als FEHLER gewertet, der Stand gilt NICHT als gespeichert.');

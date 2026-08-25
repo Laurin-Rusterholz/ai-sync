@@ -180,8 +180,11 @@ const stand = (notizen, meta) => ({
   ok(log.gets === 1, `Teilfall 2: der Serverstand wurde nicht gelesen (${log.gets} Lesevorgaenge)`);
   ok(log.puts.length === 2, `Teilfall 2: ${log.puts.length} Schreibversuche statt zwei`);
   const zweiter = log.puts[1] || { ifMatch: null, body: {} };
-  ok(res.casProof && res.casProof.kind === "netlify-etag" && res.casProof.etag === "etag-danach",
-    `Teilfall 2: der Erfolg traegt keinen CAS-Beweis: ${JSON.stringify(res.casProof)}`);
+  // Der Beweis bindet seit v5 VORHER an NACHHER: before ist der gesendete
+  // If-Match, after der bestaetigte neue ETag.
+  ok(res.casProof && res.casProof.kind === "netlify-etag"
+      && res.casProof.before === serverEtag && res.casProof.after === "etag-danach",
+    `Teilfall 2: der Erfolg traegt keinen an den gelesenen Zustand gebundenen CAS-Beweis: ${JSON.stringify(res.casProof)}`);
   ok(zweiter.ifMatch === serverEtag,
     `Teilfall 2: die Wiederholung lief mit If-Match "${zweiter.ifMatch}" statt mit dem frischen ETag — ` +
     "eine Wiederholung ohne If-Match ersetzt den fremden Stand blind");
@@ -220,7 +223,7 @@ const stand = (notizen, meta) => ({
 
   // a) kanonische Transaktion hat committet -> Schatten spiegelt GENAU DAS
   geschattet.length = 0;
-  await bauen({ ok: true, provider: "rtdb", data: committet, casProof: { kind: "rtdb-transaction" } })(
+  await bauen({ ok: true, provider: "rtdb", data: committet, casProof: { kind: "rtdb-transaction", committed: true, snapshot: { val: () => ({}) } } })(
     "app-data.json", lokal, { shadowToOthers: true, _viaCanonicalWrite: true });
   await new Promise((r) => setTimeout(r, 5));
   ok(geschattet.length === 1, `Teilfall 3a: ${geschattet.length} Schattenschreibvorgaenge statt einem`);
@@ -237,7 +240,7 @@ const stand = (notizen, meta) => ({
 
   // c) Erfolg ohne res.data -> kein Rueckfall auf den ungepruefen lokalen Stand
   geschattet.length = 0;
-  await bauen({ ok: true, provider: "rtdb", casProof: { kind: "rtdb-transaction" } })(
+  await bauen({ ok: true, provider: "rtdb", casProof: { kind: "rtdb-transaction", committed: true, snapshot: { val: () => ({}) } } })(
     "app-data.json", lokal, { shadowToOthers: true, _viaCanonicalWrite: true });
   await new Promise((r) => setTimeout(r, 5));
   ok(geschattet.length === 0,

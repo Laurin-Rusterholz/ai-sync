@@ -39,7 +39,7 @@ const stand = (notizen, extra) => ({
 });
 
 // ── canonicalWrite mit echten Abhaengigkeiten ───────────────────────────
-function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true, data: { committet: true }, casProof: { kind: "rtdb-transaction" } }] } = {}) {
+function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true, data: { committet: true }, casProof: { kind: "rtdb-transaction", committed: true, snapshot: { val: () => ({}) } } }] } = {}) {
   const log = { lesen: 0, puts: [] };
   const APP = { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } };
   let i = 0;

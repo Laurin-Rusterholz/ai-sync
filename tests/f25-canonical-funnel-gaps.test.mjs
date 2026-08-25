@@ -74,7 +74,7 @@ function trichter({ leseErgebnis = { ok: true, data: stand({}) }, putErgebnisse 
 // ── B1/B3: nur mit Beweis, und res.data ist der committete Stand ────────
 {
   const committet = stand({ ausDerDatenbank: { id: "x" } }, { istCommittet: true });
-  const t = trichter({ putErgebnisse: [{ ok: true, provider: "rtdb", data: committet, casProof: { kind: "rtdb-transaction" } }] });
+  const t = trichter({ putErgebnisse: [{ ok: true, provider: "rtdb", data: committet, casProof: { kind: "rtdb-transaction", committed: true, snapshot: { val: () => ({}) } } }] });
   const res = await t.fn(stand({}));
   ok(res.ok === true, `B1: ein Schreibvorgang MIT Beweis wurde abgelehnt (${res.reason})`);
   ok(res.data === committet,
@@ -93,6 +93,27 @@ function trichter({ leseErgebnis = { ok: true, data: stand({}) }, putErgebnisse 
   const t = trichter({ putErgebnisse: [{ ok: true, provider: "rtdb", data: stand({}), casProof: { kind: "irgendwas" } }] });
   const res = await t.fn(stand({}));
   ok(res.ok === false && res.reason === "no_cas_proof", "B1: ein unbekannter Beweistyp wird akzeptiert");
+}
+// ── B9 (v5): der Beweis muss an den GELESENEN Zustand gebunden sein ─────
+// Ein Response-ETag ohne Request-If-Match beweist nur, DASS geschrieben wurde,
+// nicht dass BEDINGT geschrieben wurde.
+for (const [beweis, was] of [
+  [{ kind: "netlify-etag", before: "gleich", after: "gleich" }, "before == after"],
+  [{ kind: "netlify-etag", before: "", after: "neu" }, "leeres before"],
+  [{ kind: "netlify-etag", before: null, after: "neu" }, "fehlendes before — genau die v4-Luecke"],
+  [{ kind: "netlify-etag", before: "alt", after: "" }, "leeres after"],
+  [{ kind: "netlify-etag", before: "alt" }, "fehlendes after"],
+  [{ kind: "rtdb-transaction" }, "Transaktion ohne committed/snapshot"],
+  [{ kind: "rtdb-transaction", committed: true }, "Transaktion ohne snapshot"],
+]) {
+  const t = trichter({ putErgebnisse: [{ ok: true, provider: "netlify", data: stand({}), casProof: beweis }] });
+  const res = await t.fn(stand({}));
+  ok(res.ok === false && res.reason === "no_cas_proof",
+    `B9: ein Beweis mit ${was} wurde akzeptiert — er ist nicht an den gelesenen Zustand gebunden`);
+}
+{
+  const t = trichter({ putErgebnisse: [{ ok: true, provider: "netlify", data: stand({}), casProof: { kind: "netlify-etag", before: "alt", after: "neu" } }] });
+  ok((await t.fn(stand({}))).ok === true, "B9: ein vollstaendig gebundener Beweis wird abgelehnt");
 }
 
 // ── B2: Lesepflicht ohne Hintertuer ────────────────────────────────────
@@ -164,8 +185,9 @@ function netlify({ etagVorher = "alt", antwortEtag = "neu" } = {}) {
 {
   const n = netlify({ etagVorher: "alt", antwortEtag: "neu" });
   const res = await n.fn("app-data.json", stand({}), { mergeFn: (a) => a, _viaCanonicalWrite: true });
-  ok(res.ok === true && res.casProof?.kind === "netlify-etag" && res.casProof.etag === "neu",
-    `B5/B6: ein frischer ETag wird nicht als Beweis ausgestellt: ${JSON.stringify(res.casProof)}`);
+  ok(res.ok === true && res.casProof?.kind === "netlify-etag"
+      && res.casProof.before === "alt" && res.casProof.after === "neu",
+    `B5/B6: der Beweis bindet nicht Vorher an Nachher: ${JSON.stringify(res.casProof)}`);
   ok(n.log.puts[0].ifMatch === "alt", "B5/B6: der Schreibvorgang lief ohne If-Match");
 }
 {
@@ -245,7 +267,7 @@ function netlify({ etagVorher = "alt", antwortEtag = "neu" } = {}) {
   const committet = stand({}, { _deleteLog: fremderGrabstein });
   const t = trichter({
     leseErgebnis: { ok: true, data: fern },
-    putErgebnisse: [{ ok: true, provider: "rtdb", data: committet, casProof: { kind: "rtdb-transaction" } }],
+    putErgebnisse: [{ ok: true, provider: "rtdb", data: committet, casProof: { kind: "rtdb-transaction", committed: true, snapshot: { val: () => ({}) } } }],
   });
   const res = await t.fn(veraltet);
   ok(t.log.lesen === 1, "Lage 1: es wurde nicht vor dem Schreiben gelesen");
@@ -264,7 +286,7 @@ function netlify({ etagVorher = "alt", antwortEtag = "neu" } = {}) {
 //     nie ein Storage-Direktwrite.
 {
   const committet = stand({}, { ueberNetlify: true });
-  const t = trichter({ putErgebnisse: [{ ok: true, provider: "netlify", data: committet, casProof: { kind: "netlify-etag", etag: "neu" } }] });
+  const t = trichter({ putErgebnisse: [{ ok: true, provider: "netlify", data: committet, casProof: { kind: "netlify-etag", before: "alt", after: "neu" } }] });
   const res = await t.fn(stand({}));
   ok(res.ok === true && res.provider === "netlify" && res.data === committet,
     "Lage 2: der Netlify-CAS-Weg wird nicht als vollwertiger Erfolg akzeptiert");
