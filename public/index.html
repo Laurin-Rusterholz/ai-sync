@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity · 2026-08-25" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell · 2026-08-26" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -754,14 +754,27 @@
     }
     @media(max-width:900px){.grid-2,.grid-3,.grid-4,.grid-5{grid-template-columns:1fr}}
     @media(max-width:900px){
-      .app{grid-template-columns:1fr}
+      /* M1: Die Collapse-Basisregel (.app.sidebar-collapsed, Spezifitaet 0,2,0)
+         schlaegt eine Media-Regel mit nur .app (0,1,0) — Media Queries erhoehen
+         die Spezifitaet NICHT. Vorher blieben eingeklappt deshalb DREI Spuren
+         (0 | minmax(0,1fr) | auto) stehen, waehrend topbar/main hier nach
+         Spalte 1 wandern: also in die 0-Spur. Gemessen: main 51,98 px,
+         topbar 15,99 px. Beide Selektoren gehoeren daher in dieselbe Regel.
+         minmax(0,1fr) statt 1fr: 1fr ist minmax(auto,1fr) und behaelt einen
+         Min-Content-Boden — genau daran wuchs main auf 1165 px, viewport-
+         unabhaengig bei 390 wie bei 820. */
+      .app,
+      .app.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}
       .sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;z-index:500;box-shadow:var(--shadow-lg)}
       .app:not(.sidebar-collapsed) .sidebar{transform:translateX(0)}
       .app.sidebar-collapsed .sidebar{transform:translateX(-100%)}
       .sidebar-toggle-btn{left:8px;top:60px}
       .app:not(.sidebar-collapsed) .sidebar-toggle-btn{left:248px}
-      .topbar{grid-column:1}
-      .main{grid-column:1;grid-row:2;padding:12px}
+      /* Grid-Items haben min-width:auto. Ohne diese Null kann ein einziges
+         nicht schrumpfbares Kind die Spur wieder aufblasen — dann traegt der
+         minmax(0,…) oben nichts. */
+      .topbar{grid-column:1;min-width:0}
+      .main{grid-column:1;grid-row:2;padding:12px;min-width:0}
       .page{max-width:100%}
     }
     @media(max-width:600px){
@@ -3635,14 +3648,19 @@ body.mode-computer .apps-list{max-width:none;display:grid;grid-template-columns:
 body.mode-laptop .main .page{max-width:1400px}
 
 /* ── Tablet: kompakt, Sidebar als Overlay, keine Seitenpanels ── */
-body.mode-tablet .app{grid-template-columns:1fr}
+/* M1: gleiche Spur wie im Media-Block. body.mode-tablet .app ist (0,2,1) und
+   schlaegt .app.sidebar-collapsed (0,2,0) bereits; der Collapse-Selektor steht
+   trotzdem daneben, damit die Regel fuer sich lesbar bleibt und eine kuenftige
+   spezifischere Collapse-Regel sie nicht still aushebelt. */
+body.mode-tablet .app,
+body.mode-tablet .app.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}
 body.mode-tablet .sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;z-index:500;box-shadow:var(--shadow-lg)}
 body.mode-tablet .app:not(.sidebar-collapsed) .sidebar{transform:translateX(0)}
 body.mode-tablet .app.sidebar-collapsed .sidebar{transform:translateX(-100%)}
 body.mode-tablet .sidebar-toggle-btn{left:8px;top:60px}
 body.mode-tablet .app:not(.sidebar-collapsed) .sidebar-toggle-btn{left:248px}
-body.mode-tablet .topbar{grid-column:1}
-body.mode-tablet .main{grid-column:1;padding:12px}
+body.mode-tablet .topbar{grid-column:1;min-width:0}
+body.mode-tablet .main{grid-column:1;padding:12px;min-width:0}
 body.mode-tablet .main .page{max-width:100%}
 body.mode-tablet #globalIdeaInput,body.mode-tablet #globalUpdateInput{display:none}
 body.mode-tablet .panel-dock{display:none !important}
@@ -110938,7 +110956,23 @@ html.theme-light .card{box-shadow:none}
 
   function lmSetting(){ try { return localStorage.getItem(LM_KEY) || "auto"; } catch(e){ return "auto"; } }
   function detectMode(){ var w = window.innerWidth; return w >= 1720 ? "computer" : (w >= 1100 ? "laptop" : "tablet"); }
-  function effectiveMode(){ var s = lmSetting(); return MODE_META[s] ? s : detectMode(); }
+  // M1: Eine fixierte Wahl darf einen schmalen Viewport NICHT uebersteuern.
+  // Vorher genuegte ein gespeichertes "laptop", damit MODE_META[s] truthy war —
+  // detectMode() wurde dann nie befragt, und body trug bei 390x844 wie bei
+  // 820x1180 die Klasse mode-laptop. Genau dort haengt aber die gesamte
+  // Schmal-Darstellung (body.mode-tablet .app / .sidebar / .topbar / .main).
+  //
+  // Die gespeicherte Wahl bleibt UNANGETASTET: lmSetting() liest weiter, was
+  // der Nutzer gesetzt hat, und oberhalb der Schwelle gilt sie wieder. Sie wird
+  // hier nur nicht angewandt. Wer bewusst "tablet" fixiert, behaelt das auch
+  // auf einem breiten Bildschirm — die Enge wird erzwungen, nie die Weite.
+  function effectiveMode(){
+    var s = lmSetting();
+    var erkannt = detectMode();
+    if (!MODE_META[s]) return erkannt;      // "auto" oder Unbekanntes
+    if (erkannt === "tablet") return "tablet";
+    return s;
+  }
   function maxPanels(){ var m = effectiveMode(); return m === "computer" ? 3 : (m === "laptop" ? 1 : 0); }
 
   var _prevMode = null;
@@ -110947,11 +110981,22 @@ html.theme-light .card{box-shadow:none}
     document.body.classList.remove("mode-computer", "mode-laptop", "mode-tablet");
     document.body.classList.add("mode-" + m);
     // Beim Wechsel in den Tablet-Modus Sidebar einklappen (sie überlagert dort den Inhalt)
+    //
+    // M1: Der Eintritt muss zuverlaessig sein. Vorher wurde _prevMode auch dann
+    // auf "tablet" gesetzt, wenn #app noch gar nicht im Dokument stand — der
+    // Uebergang galt als erledigt, die Sidebar blieb offen und lag als fixiertes
+    // Overlay (z-index 500) ueber dem Inhalt ab x=0. Genau so traf ein Klick auf
+    // eine sichtbare App-Kachel den darunterliegenden Sidebar-Knopf.
+    // Jetzt gilt der Uebergang erst als vollzogen, wenn er auch angewendet
+    // wurde; sonst bleibt _prevMode stehen und der naechste Lauf holt es nach.
+    // Oberhalb der Schwelle aendert das nichts: dort wird nie eingeklappt.
+    var uebergangOffen = false;
     if (m === "tablet" && _prevMode !== "tablet") {
       var appEl = document.getElementById("app");
       if (appEl) appEl.classList.add("sidebar-collapsed");
+      else uebergangOffen = true;
     }
-    _prevMode = m;
+    if (!uebergangOffen) _prevMode = m;
     var btn = document.getElementById("btnLayoutMode");
     if (btn) {
       btn.textContent = MODE_META[m].icon;
