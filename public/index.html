@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet+folder-sheets+firebase-rearm+sidebar-close · 2026-08-27" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close · 2026-08-27" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -117585,10 +117585,100 @@ Dateien zu identifizieren.
   const chTitle = (ch) => (ch && (ch.title || ch.name)) || "Kapitel";
 
   // ═══ ÖFFNEN / SCHLIESSEN — sofort, ohne Fake-Ladescreen ══════════════════
+  // ═══ M2 — SEITENLEISTE AUF SCHMALEN GERAETEN ════════════════════════════
+  // BEFUND: bei <=900 px ist .nf2-side position:absolute mit z-index 20 und
+  // liegt damit ueber .nf2-main (ohne position, ohne z-index). Der Umschalter
+  // #nf2SideToggle sitzt als erstes Kind der Topbar bei x ~ 12 — also unter der
+  // offenen Seitenleiste und unerreichbar. Sichtbar war an dieser Stelle nur
+  // das ✕ der Seitenleisten-Kopfzeile, und das ruft close(): es verliess die
+  // ganze App statt die Leiste zu schliessen. Einen Backdrop gab es nicht.
+  //
+  // Konsequenz: auf einem Telefon oeffnete NoteFlow mit sichtbarer Leiste ueber
+  // dem Inhalt und OHNE Weg zurueck. Deshalb drei Dinge zusammen: die Leiste
+  // startet auf schmalen Geraeten eingeklappt, es gibt einen eigenen
+  // Schliessknopf IN der Leiste, und hinter ihr liegt ein Scrim.
+  function istSchmal() {
+    try {
+      if (window.matchMedia) return window.matchMedia("(max-width:900px)").matches;
+    } catch (e) {}
+    // Ohne matchMedia lieber die Breite lesen als raten.
+    return (window.innerWidth || 0) > 0 && window.innerWidth <= 900;
+  }
+  function sideOffen() {
+    const r = $("#nf2Root");
+    return !!r && !r.classList.contains("side-hidden");
+  }
+  /*
+   * Der EINZIGE Weg, den Zustand der Seitenleiste zu aendern. Er fasst NoteFlow
+   * selbst nie an — kein close(), keine Navigation, kein Routenwechsel.
+   * Er haelt aria-expanded am Umschalter nach und schiebt den Fokus dorthin,
+   * wo der Nutzer weiterarbeitet: beim Oeffnen in die Leiste, beim Schliessen
+   * zurueck auf den Umschalter. Sonst haengt der Fokus auf einem Element, das
+   * gerade unsichtbar geworden ist.
+   */
+  function setSide(offen) {
+    const r = $("#nf2Root");
+    if (!r) return;
+    r.classList.toggle("side-hidden", !offen);
+    const t = $("#nf2SideToggle");
+    if (t) t.setAttribute("aria-expanded", offen ? "true" : "false");
+    const sc = $("#nf2Scrim");
+    if (sc) sc.setAttribute("aria-hidden", offen ? "false" : "true");
+    if (!istSchmal()) return;   // auf breiten Schirmen kein Fokussprung
+    // Der Fokus geht beim Oeffnen bewusst NICHT in #nf2Search: auf einem
+    // Telefon faehrt dann ungefragt die Bildschirmtastatur hoch und deckt die
+    // halbe Leiste zu, die man gerade sehen wollte. Anker ist der Schliesser —
+    // ein Bedienelement, kein Eingabefeld. In die Suche kommt der Fokus erst
+    // durch eine bewusste Nutzeraktion.
+    try {
+      if (offen) { const sc = $("#nf2SideClose"); if (sc) sc.focus(); }
+      else if (t) t.focus();
+    } catch (e) {}
+  }
+
+  /*
+   * RESPONSIVE EINTRITT (Codex-Review 3)
+   *
+   * open() allein genuegt nicht: wer NoteFlow auf dem Desktop geoeffnet hat und
+   * dann das Fenster verkleinert oder das Tablet dreht, ueberschreitet die
+   * 900er-Grenze OHNE dass open() noch einmal laeuft. Die Leiste bliebe offen
+   * — und laege damit wieder ueber dem Inhalt und ueber ihrem eigenen
+   * Umschalter, also genau im Befund.
+   *
+   * Der Vertrag ist bewusst schmal:
+   *   - genau EINE Registrierung (S.mqEintritt), idempotent bei jedem Aufruf;
+   *   - er reagiert nur auf den ECHTEN Uebergang nach schmal (e.matches);
+   *   - er schliesst dann AUSSCHLIESSLICH die Seitenleiste;
+   *   - zurueck nach breit tut er GAR NICHTS: kein Oeffnen, keine Navigation,
+   *     kein open(), kein close(). Sonst ueberschriebe er bei jedem Drehen die
+   *     Wahl des Nutzers und koennte mit setSide in eine Schleife geraten.
+   *   - er ruehrt weder Datenmodell noch Abgleich an.
+   */
+  function registriereResponsiveEintritt() {
+    if (S.mqEintritt) return;
+    let mq = null;
+    try { mq = window.matchMedia && window.matchMedia("(max-width:900px)"); } catch (e) { mq = null; }
+    if (!mq) return;
+    const beiUebergang = (e) => {
+      if (!e || !e.matches) return;            // zurueck nach breit: nichts tun
+      const c = container();
+      if (!c || !c.classList.contains("active")) return;   // NoteFlow ist zu
+      if (!sideOffen()) return;                // schon eingeklappt
+      setSide(false);                          // nur die Leiste, nie die App
+    };
+    try {
+      if (mq.addEventListener) mq.addEventListener("change", beiUebergang);
+      else if (mq.addListener) mq.addListener(beiUebergang);
+      else return;
+    } catch (e) { return; }
+    S.mqEintritt = beiUebergang;   // Merker UND Registrierung in einem
+  }
+
   function open(noteId) {
     const c = container();
     if (!c) return;
     injectCSS();
+    registriereResponsiveEintritt();
     const already = c.classList.contains("active") && !!$("#nf2Root");
     if (already) flushSave(); // nichts verlieren, falls der Router mitten im Tippen erneut öffnet
     c.className = "noteflow-container active nf2-host " + S.theme;
@@ -117607,6 +117697,11 @@ Dateien zu identifizieren.
     // Router-Zustand angleichen — sonst schliesst eine spätere Navigation das Panel
     const wantHash = "#/notes" + (S.noteId ? "/" + S.noteId : "");
     if (location.hash.indexOf("#/notes") !== 0) { try { history.replaceState(null, "", wantHash); } catch (e) { location.hash = wantHash; } }
+    // Auf schmalen Geraeten startet die Leiste eingeklappt: sonst liegt sie
+    // ueber dem Inhalt und ueber ihrem eigenen Umschalter. Auf breiten
+    // Schirmen bleibt der Zustand unangetastet.
+    if (istSchmal() && !already) setSide(false);
+    else setSide(sideOffen());
     renderSidebar();
     renderPage();
   }
@@ -117636,11 +117731,12 @@ Dateien zu identifizieren.
   function buildShell() {
     appEl().innerHTML = `
       <div class="nf2" id="nf2Root">
-        <aside class="nf2-side" id="nf2Side">
+        <aside class="nf2-side" id="nf2Side" aria-label="Seiten und Notizbücher">
           <div class="nf2-side-head">
-            <div class="nf2-ws" title="Zurück zu Quantus" id="nf2Back"><span class="nf2-ws-ic">📝</span><span class="nf2-ws-name">NoteFlow</span></div>
-            <button class="nf2-iconbtn" id="nf2ThemeBtn" title="Design umschalten">◐</button>
-            <button class="nf2-iconbtn" id="nf2CloseBtn" title="Schliessen (Esc)">✕</button>
+            <div class="nf2-ws" title="Zurück zu Quantus" id="nf2Back" role="button" aria-label="Zurück zu Quantus"><span class="nf2-ws-ic">📝</span><span class="nf2-ws-name">NoteFlow</span><span class="nf2-ws-back">← Quantus</span></div>
+            <button class="nf2-iconbtn" id="nf2ThemeBtn" title="Design umschalten" aria-label="Design umschalten">◐</button>
+            <button class="nf2-iconbtn" id="nf2CloseBtn" title="NoteFlow schliessen (Esc)" aria-label="NoteFlow schliessen">✕</button>
+            <button class="nf2-iconbtn nf2-sideclose" id="nf2SideClose" title="Seitenleiste schliessen" aria-label="Seitenleiste schliessen" aria-controls="nf2Side">‹</button>
           </div>
           <div class="nf2-search-wrap"><input class="nf2-search" id="nf2Search" placeholder="Suchen…"></div>
           <div class="nf2-tree" id="nf2Tree"></div>
@@ -117649,9 +117745,10 @@ Dateien zu identifizieren.
             <button class="nf2-newnb" id="nf2NewNb" title="Neues Notizbuch">📓＋</button>
           </div>
         </aside>
+        <div class="nf2-scrim" id="nf2Scrim" aria-hidden="true"></div>
         <main class="nf2-main" id="nf2Main">
           <div class="nf2-topbar">
-            <button class="nf2-iconbtn nf2-sidetoggle" id="nf2SideToggle" title="Seitenleiste">☰</button>
+            <button class="nf2-iconbtn nf2-sidetoggle" id="nf2SideToggle" title="Seitenleiste" aria-label="Seitenleiste" aria-controls="nf2Side" aria-expanded="true">☰</button>
             <div class="nf2-crumbs" id="nf2Crumbs"></div>
             <div class="nf2-top-actions">
               <span class="nf2-savestate" id="nf2SaveState"></span>
@@ -117673,7 +117770,14 @@ Dateien zu identifizieren.
     $("#nf2Back").onclick = close;
     $("#nf2CloseBtn").onclick = close;
     $("#nf2ThemeBtn").onclick = toggleTheme;
-    $("#nf2SideToggle").onclick = () => $("#nf2Root").classList.toggle("side-hidden");
+    // M2: Der Umschalter geht durch setSide() — ein Trichter statt drei Wege,
+    // damit aria-expanded und der Scrim nie auseinanderlaufen.
+    $("#nf2SideToggle").onclick = () => setSide(!sideOffen());
+    // Diese beiden Wege schliessen AUSSCHLIESSLICH die Seitenleiste. Sie rufen
+    // bewusst NICHT close(): das wuerde NoteFlow verlassen. Genau diese
+    // Verwechslung war der Befund — sichtbar war nur das ✕ der Kopfzeile.
+    $("#nf2SideClose").onclick = () => setSide(false);
+    $("#nf2Scrim").onclick = () => setSide(false);
     $("#nf2NewPage").onclick = () => newNote(null, null);
     $("#nf2NewNb").onclick = newNotebook;
     $("#nf2Search").addEventListener("input", (e) => { S.search = e.target.value; renderSidebar(); });
@@ -117715,6 +117819,10 @@ Dateien zu identifizieren.
       if ($("#nf2Menu").style.display !== "none") { hideMenu(); e.preventDefault(); e.stopPropagation(); return; }
       const bub = $("#nf2Bubble");
       if (bub && bub.style.display !== "none") { bub.style.display = "none"; return; }
+      // M2: Ist die Leiste auf einem schmalen Geraet offen, schliesst Escape
+      // ZUERST nur sie. Vorher verliess dieselbe Taste sofort die ganze App —
+      // dieselbe Verwechslung wie beim ✕.
+      if (istSchmal() && sideOffen()) { setSide(false); e.preventDefault(); e.stopPropagation(); return; }
       e.preventDefault(); e.stopPropagation(); close(); return;
     }
     const mod = e.ctrlKey || e.metaKey;
@@ -117874,6 +117982,10 @@ Dateien zu identifizieren.
     S.view = "page";
     const c = container();
     if (!c || !c.classList.contains("active")) { open(id); return; }
+    // M2: Auf schmalen Geraeten deckt die Leiste den Inhalt ab. Wer eine Seite
+    // waehlt, will sie lesen — also gibt die Leiste den Platz frei. Auf breiten
+    // Schirmen bleibt sie stehen, dort verdeckt sie nichts.
+    if (istSchmal()) setSide(false);
     renderSidebar();
     renderPage();
   }
@@ -119253,6 +119365,14 @@ Dateien zu identifizieren.
 .nf2-side{width:262px;flex-shrink:0;background:var(--n2-side);border-right:1px solid var(--n2-line);display:flex;flex-direction:column;transition:margin-left .18s ease}
 .nf2.side-hidden .nf2-side{margin-left:-262px}
 .nf2-side-head{display:flex;align-items:center;gap:4px;padding:10px 10px 6px}
+/* M2: Beide Elemente sind auf breiten Schirmen ohne Box — dort verdeckt die
+   Leiste nichts, ein Backdrop waere Unfug und der Schliesser ueberfluessig.
+   Sichtbar werden sie ausschliesslich im 900er-Block weiter unten. */
+.nf2-scrim{display:none}
+.nf2-sideclose{display:none}
+/* Der Klartext-Rueckweg "← Quantus" ersetzt schmal das NoteFlow-Branding.
+   Auf breiten Schirmen bleibt die bestehende Darstellung unveraendert. */
+.nf2-ws-back{display:none}
 .nf2-ws{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:5px 8px;border-radius:6px;cursor:pointer;font-weight:600;font-size:14px}
 .nf2-ws:hover{background:var(--n2-hover)}
 .nf2-iconbtn{width:28px;height:28px;border:0;background:transparent;color:var(--n2-txt2);border-radius:6px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .1s}
@@ -119432,7 +119552,39 @@ Dateien zu identifizieren.
 .nf2-sw-hl[data-c="gray"] .nf2-sw-dot{background:var(--nf-hl-gray)} .nf2-sw-hl[data-c="red"] .nf2-sw-dot{background:var(--nf-hl-red)} .nf2-sw-hl[data-c="orange"] .nf2-sw-dot{background:var(--nf-hl-orange)} .nf2-sw-hl[data-c="yellow"] .nf2-sw-dot{background:var(--nf-hl-yellow)} .nf2-sw-hl[data-c="green"] .nf2-sw-dot{background:var(--nf-hl-green)} .nf2-sw-hl[data-c="blue"] .nf2-sw-dot{background:var(--nf-hl-blue)} .nf2-sw-hl[data-c="purple"] .nf2-sw-dot{background:var(--nf-hl-purple)} .nf2-sw-hl[data-c="pink"] .nf2-sw-dot{background:var(--nf-hl-pink)}
 .nf2-host.light{--nf-fg-gray:#787066;--nf-fg-red:#e03e3e;--nf-fg-orange:#d9730d;--nf-fg-yellow:#cb912f;--nf-fg-green:#0f7b6c;--nf-fg-blue:#0b6bcb;--nf-fg-purple:#6940a5;--nf-fg-pink:#ad1a72;--nf-hl-gray:#e3e2e0;--nf-hl-red:#ffe2dd;--nf-hl-orange:#fadec9;--nf-hl-yellow:#fdecc8;--nf-hl-green:#dbeddb;--nf-hl-blue:#d3e5ef;--nf-hl-purple:#e8deee;--nf-hl-pink:#f5e0e9}
 .nf2-host.dark{--nf-fg-gray:#9b9b9b;--nf-fg-red:#ff7369;--nf-fg-orange:#ffa344;--nf-fg-yellow:#ffdc49;--nf-fg-green:#4dab9a;--nf-fg-blue:#529cff;--nf-fg-purple:#b18aff;--nf-fg-pink:#ff5eb6;--nf-hl-gray:rgba(255,255,255,.11);--nf-hl-red:rgba(255,115,105,.28);--nf-hl-orange:rgba(255,163,68,.26);--nf-hl-yellow:rgba(255,214,64,.26);--nf-hl-green:rgba(77,171,154,.30);--nf-hl-blue:rgba(82,156,255,.28);--nf-hl-purple:rgba(177,138,255,.30);--nf-hl-pink:rgba(255,94,182,.26)}
-@media(max-width:900px){.nf2-side{position:absolute;z-index:20;height:100%;box-shadow:8px 0 30px var(--n2-sh)}.nf2.side-hidden .nf2-side{margin-left:-262px;box-shadow:none}.nf2-page{padding:24px 20px 30vh}.nf2-page.home{padding:20px 16px 20vh}.nf2-gutter{left:-30px}.nf2-title{font-size:32px}.nf2-home-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}
+@media(max-width:900px){.nf2-side{position:absolute;z-index:20;height:100%;box-shadow:8px 0 30px var(--n2-sh)}.nf2.side-hidden .nf2-side{margin-left:-262px;box-shadow:none}
+/* ── M2: Seitenleiste als Overlay, mit Weg zurueck ──────────────────────────
+   Stapelordnung: main (1) < Scrim (15) < Seitenleiste (20). Der Scrim liegt
+   also ueber dem Inhalt, aber unter der Leiste — ein Tipp daneben schliesst,
+   statt versehentlich im Text zu landen. Er erscheint nur, wenn die Leiste
+   offen ist; eingeklappt (margin-left:-262px) deckt nichts mehr etwas ab und
+   der Umschalter bei x ~ 12 ist wieder frei.
+   Kein !important: .nf2:not(.side-hidden) .nf2-scrim ist spezifischer als die
+   Basisregel .nf2-scrim und gewinnt regulaer. */
+.nf2-main{position:relative;z-index:1}
+.nf2:not(.side-hidden) .nf2-scrim{display:block;position:absolute;inset:0;z-index:15;background:rgba(0,0,0,.42)}
+.nf2-sideclose{display:inline-flex}
+/* Touch-Ziele: 28 px sind mit dem Daumen nicht sicher zu treffen. 44 px ist
+   das Mindestmass; die Topbar ist 46 px hoch, es passt ohne Umbau.
+   AUSDRUECKLICH NICHT global auf .nf2-iconbtn: die Basis bleibt bei 28 px, und
+   auf breiten Schirmen misst #nf2SideToggle weiterhin 27,99 px. Vergroessert
+   werden nur die Steuerungen, die hier wirklich ein Daumen trifft. Die
+   Selektoren sind zweiklassig und schlagen die einklassige Basisregel
+   regulaer — kein !important. */
+.nf2-sidetoggle,
+.nf2-sideclose,
+.nf2-side-head .nf2-iconbtn,
+.nf2-top-actions .nf2-iconbtn{width:44px;height:44px}
+/* ── Eindeutige Schliesswege (Codex-Review 4) ───────────────────────────────
+   Ein Tooltip hilft einem Daumen nicht. Nebeneinander waren "✕" (verlaesst
+   NoteFlow) und "‹" (schliesst die Leiste) fuer Sehende nicht zu trennen.
+   Auf schmalen Geraeten verschwindet daher das mehrdeutige ✕, und der
+   App-Rueckweg sagt im Klartext, wohin er fuehrt. */
+.nf2-side-head #nf2CloseBtn{display:none}
+.nf2-ws{min-height:44px}
+.nf2-ws .nf2-ws-ic,
+.nf2-ws .nf2-ws-name{display:none}
+.nf2-ws .nf2-ws-back{display:inline}.nf2-page{padding:24px 20px 30vh}.nf2-page.home{padding:20px 16px 20vh}.nf2-gutter{left:-30px}.nf2-title{font-size:32px}.nf2-home-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}
 `;
     document.head.appendChild(st);
   }
