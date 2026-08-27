@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell · 2026-08-26" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet · 2026-08-26" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -885,6 +885,43 @@
     .modal-body{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px}
 .modal-body textarea{min-height:120px;resize:vertical}
     .modal-footer{display:flex;gap:10px;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--border);flex-shrink:0}
+
+    /* ── UMBENENNEN-BLATT ──────────────────────────────────────────────────
+       Ersetzt den nativen prompt() beim Umbenennen einer Datei. Ein nativer
+       Dialog haelt den ganzen Renderer an — auf dem Telefon ist er weder
+       gestaltbar noch zuverlaessig bedienbar, und er blockiert jede
+       Fernsteuerung.
+       Eigener Behaelter statt des gemeinsamen #modalBackdrop: das Blatt darf
+       keinen anderen Modalnutzer verdraengen und keiner ihn.
+       OBEN angedockt, nicht unten: die Bildschirmtastatur waechst von unten
+       herein. Ein Bottom-Sheet waere genau von ihr verdeckt — samt Speichern
+       und Abbrechen. So stehen Feld und Knoepfe in den obersten ~220 px. */
+    .qs-sheet-back{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1600;display:none;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto}
+    .qs-sheet-back.open{display:flex}
+    .qs-sheet{width:min(520px,100%);box-sizing:border-box;background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:0 24px 64px rgba(0,0,0,.5);padding:18px;margin-top:8vh}
+    .qs-sheet h3{margin:0 0 4px;font-size:16px;font-weight:800}
+    .qs-sheet .qs-sheet-hint{margin:0 0 12px;font-size:12px;color:var(--muted)}
+    .qs-sheet label{display:block;font-size:12px;font-weight:700;margin-bottom:6px}
+    /* min-width:0 am Feld: ohne sie sprengt ein langer Name die Flexzeile und
+       die Seite bekommt eine horizontale Kante. */
+    .qs-sheet-row{display:flex;align-items:center;gap:8px}
+    .qs-sheet-row input{flex:1;min-width:0;box-sizing:border-box;height:48px;padding:0 12px;font-size:16px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-family:inherit}
+    .qs-sheet-row input:focus{outline:2px solid var(--accent);outline-offset:1px}
+    .qs-sheet-ext{flex-shrink:0;font-size:14px;font-weight:700;color:var(--muted);max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .qs-sheet-err{margin:8px 0 0;font-size:12px;font-weight:700;color:var(--danger)}
+    .qs-sheet-err[hidden]{display:none}
+    .qs-sheet-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+    /* 44 px ist das Mindestmass fuer einen Daumen; 48 gibt etwas Luft. */
+    .qs-sheet-actions button{min-height:48px;min-width:112px;padding:0 18px;font-size:15px;font-weight:700;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer;font-family:inherit}
+    .qs-sheet-actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+    .qs-sheet-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+    @media(max-width:900px){
+      /* Noch weiter hoch und Knoepfe auf volle Breite: auf 390 px ist ein
+         112-px-Knopf am Rand mit dem Daumen unangenehm zu treffen. */
+      .qs-sheet{margin-top:12px}
+      .qs-sheet-actions{flex-direction:column-reverse}
+      .qs-sheet-actions button{width:100%}
+    }
 /* Modal Form Responsive */
 .modal-body .form{display:flex;flex-direction:column;gap:14px}
 .modal-body .form > div[style*="grid"]{display:grid !important}
@@ -3343,6 +3380,25 @@ textarea::placeholder, input::placeholder {
 .file-folder-body{border-top:1px solid var(--border);padding:6px 8px;display:none}
 .file-folder-body.open{display:block}
 .file-folder-body .file-item{border-radius:8px}
+
+/* ── Datei-Aktionen auf Telefon und Tablet ──────────────────────────────────
+   Live gemessen: [title="Umbenennen"] misst 28,5 x 24,7 px — mit dem Daumen
+   nicht sicher zu treffen. Fuenf Knoepfe (plus Ordner-Auswahl) nebeneinander
+   passen bei 390 px aber nicht in eine Zeile, wenn jeder 44 px breit ist:
+   .file-item ist flex und .file-actions stand auf flex-shrink:0, die Zeile
+   waere ueber den Rand gewachsen. Deshalb duerfen Zeile und Aktionsgruppe hier
+   umbrechen — mehr Hoehe statt einer horizontalen Kante.
+   Desktop bleibt unberuehrt: alles steht im 900er-Block. */
+@media(max-width:900px){
+  .file-item{flex-wrap:wrap}
+  .file-item .file-actions{flex-wrap:wrap;flex-shrink:1;min-width:0;gap:6px;margin-left:auto}
+  .file-item .file-actions button,
+  .file-actions button{min-width:44px;min-height:44px;padding:0 6px;font-size:16px;
+    display:inline-flex;align-items:center;justify-content:center}
+  /* Die Ordner-Auswahl steht in derselben Reihe und wird sonst zum
+     Fremdkoerper zwischen 44-px-Zielen. */
+  .file-item .file-actions select{min-height:44px}
+}
 .file-folder-body .file-upload-zone{margin:6px 0;padding:12px;border-width:1.5px}
 .file-folder-body .file-upload-zone .upload-icon{font-size:18px;margin-bottom:2px}
 .file-folder-body .file-upload-zone .upload-text{font-size:11px}
@@ -9256,25 +9312,153 @@ window._renameFileFolder = function(kind, entityId, folderId) {
   toast('ok', '📁', 'Ordner umbenannt');
 };
 
+// ── Namensteilung: Basis und Endung ────────────────────────────────────────
+// Nur der letzte Punkt zaehlt, und ein fuehrender Punkt ist keine Endung
+// (".gitignore" ist ein Name, keine Erweiterung). Genau diese Regel galt schon
+// im alten prompt-Pfad; sie steht jetzt an einer Stelle statt in einem
+// Funktionsrumpf, damit der Test sie messen kann.
+function splitDateiname(name) {
+  const n = String(name == null ? '' : name);
+  const p = n.lastIndexOf('.');
+  return p > 0 ? { basis: n.slice(0, p), endung: n.slice(p) } : { basis: n, endung: '' };
+}
+window.splitDateiname = splitDateiname;
+
+/*
+ * EIN APP-EIGENES UMBENENNEN-BLATT statt prompt().
+ *
+ * BEFUND: window._renameFile rief prompt(). Ein nativer Dialog haelt den
+ * gesamten Renderer an — auf Telefon und Tablet ist er weder gestaltbar noch
+ * zuverlaessig bedienbar, und er blockiert jede Fernsteuerung vollstaendig.
+ *
+ * Das Blatt bringt seinen eigenen Behaelter mit (nicht #modalBackdrop): so
+ * verdraengt es keinen anderen Modalnutzer und keiner verdraengt es.
+ * Es liefert das Ergebnis ueber onSpeichern; die Aufrufer bleiben schlank.
+ *
+ * Der Fokus kehrt beim Schliessen dorthin zurueck, wo er herkam — sonst steht
+ * er auf einem Element, das gerade verschwunden ist.
+ */
+function openRenameSheet(opt) {
+  const alt = document.getElementById('qsRenameSheet');
+  if (alt) alt.remove();
+  const rueckgabeZiel = document.activeElement;
+
+  const back = document.createElement('div');
+  back.className = 'qs-sheet-back';
+  back.id = 'qsRenameSheet';
+  back.innerHTML = `
+    <div class="qs-sheet" role="dialog" aria-modal="true" aria-labelledby="qsRenameTitle">
+      <h3 id="qsRenameTitle">${esc(opt.titel || 'Umbenennen')}</h3>
+      <p class="qs-sheet-hint">${esc(opt.hinweis || '')}</p>
+      <label for="qsRenameInput">${esc(opt.feldLabel || 'Name')}</label>
+      <div class="qs-sheet-row">
+        <input id="qsRenameInput" type="text" autocomplete="off" autocapitalize="off"
+               spellcheck="false" aria-describedby="qsRenameErr" value="${esc(opt.wert || '')}">
+        ${opt.suffix ? `<span class="qs-sheet-ext" aria-label="Endung bleibt erhalten">${esc(opt.suffix)}</span>` : ''}
+      </div>
+      <p class="qs-sheet-err" id="qsRenameErr" role="alert" hidden></p>
+      <div class="qs-sheet-actions">
+        <button type="button" id="qsRenameCancel">Abbrechen</button>
+        <button type="button" id="qsRenameSave" class="primary">Speichern</button>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  back.classList.add('open');
+
+  const feld = back.querySelector('#qsRenameInput');
+  const fehler = back.querySelector('#qsRenameErr');
+  const abbrechenBtn = back.querySelector('#qsRenameCancel');
+  const speichernBtn = back.querySelector('#qsRenameSave');
+
+  function schliessen() {
+    document.removeEventListener('keydown', beiTaste, true);
+    back.remove();
+    try { if (rueckgabeZiel && rueckgabeZiel.focus) rueckgabeZiel.focus(); } catch (e) {}
+  }
+  function abbrechen() { schliessen(); }
+  function speichern() {
+    const wert = String(feld.value || '').trim();
+    if (!wert) {
+      // Leer heisst NICHT schliessen. Der alte Pfad warf hier einen Toast und
+      // liess den Dialog verschwinden — der Nutzer musste von vorn anfangen.
+      fehler.textContent = opt.leerMeldung || 'Der Name darf nicht leer sein.';
+      fehler.hidden = false;
+      try { feld.focus(); } catch (e) {}
+      return;
+    }
+    schliessen();
+    opt.onSpeichern(wert);
+  }
+  function beiTaste(e) {
+    if (!document.getElementById('qsRenameSheet')) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); abbrechen(); return; }
+    if (e.key === 'Enter' && e.target === feld) { e.preventDefault(); e.stopPropagation(); speichern(); return; }
+    // Fokusfalle: drei Elemente, im Kreis. Ohne sie wandert Tab hinter das
+    // Blatt in die Seite darunter, die gerade gar nicht bedienbar sein soll.
+    if (e.key === 'Tab') {
+      const kette = [feld, abbrechenBtn, speichernBtn];
+      const i = kette.indexOf(document.activeElement);
+      if (i === -1) return;
+      const naechster = e.shiftKey
+        ? kette[(i - 1 + kette.length) % kette.length]
+        : kette[(i + 1) % kette.length];
+      e.preventDefault();
+      try { naechster.focus(); } catch (err) {}
+    }
+  }
+
+  abbrechenBtn.onclick = abbrechen;
+  speichernBtn.onclick = speichern;
+  // Ein Tipp neben das Blatt bricht ab — wie Abbrechen, ohne Aenderung.
+  back.onclick = (e) => { if (e.target === back) abbrechen(); };
+  document.addEventListener('keydown', beiTaste, true);
+
+  try { feld.focus(); feld.select(); } catch (e) {}
+  return { schliessen, feld, speichernBtn, abbrechenBtn, fehler };
+}
+window.openRenameSheet = openRenameSheet;
+
 window._renameFile = function(kind, entityId, idx) {
   const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
   if (!entity || !entity.files) return;
   const file = entity.files[idx];
   if (!file) return;
-  // Trenne Name vom Extension damit User die Endung nicht versehentlich ändert
-  const dotPos = file.name.lastIndexOf('.');
-  const baseName = dotPos > 0 ? file.name.slice(0, dotPos) : file.name;
-  const ext = dotPos > 0 ? file.name.slice(dotPos) : '';
-  const newBase = prompt('Neuer Dateiname (ohne Endung):', baseName);
-  if (newBase === null) return; // Abbruch
-  const trimmed = newBase.trim();
-  if (!trimmed) { toast('warn', 'Name darf nicht leer sein'); return; }
-  file.name = trimmed + ext;
-  entity.updatedAt = new Date().toISOString();
-  scheduleSave();
-  render();
-  toast('ok', '✏️', 'Datei umbenannt');
+  // Das Ziel wird HIER als ID festgehalten, nicht als Position und nicht als
+  // Objektreferenz. Waehrend das Blatt offen ist, kann ein Abgleich laufen und
+  // APP.state.data komplett ersetzen; eine Position zeigte danach auf eine
+  // andere Datei, eine Referenz ins Leere. Dieselbe Lehre wie beim Loeschpfad
+  // (F-25). Faellt die Id, bleibt der bisherige Index als Rueckfall.
+  const zielId = file.id || null;
+  const { basis, endung } = splitDateiname(file.name);
+
+  openRenameSheet({
+    titel: 'Datei umbenennen',
+    hinweis: endung ? 'Die Endung ' + endung + ' bleibt automatisch erhalten.' : '',
+    feldLabel: 'Neuer Dateiname (ohne Endung)',
+    wert: basis,
+    suffix: endung,
+    leerMeldung: 'Der Dateiname darf nicht leer sein.',
+    onSpeichern: function(neueBasis) {
+      // Ab hier gilt nur der AKTUELLE Stand, nachgeschlagen ueber dieselbe
+      // feste Id.
+      const ent = APP.state.data.entities[kindMap[kind]]?.[entityId];
+      if (!ent || !Array.isArray(ent.files)) return;
+      const ziel = zielId
+        ? ent.files.find(function(f) { return f && f.id === zielId; })
+        : ent.files[idx];
+      if (!ziel) { toast('warn', 'Datei nicht mehr vorhanden'); return; }
+      const neuerName = neueBasis + splitDateiname(ziel.name).endung;
+      if (neuerName === ziel.name) return;   // nichts geaendert, nichts schreiben
+      // NUR der Name. id, textKey, textExtractStatus, storagePath und url
+      // bleiben, wie sie sind — es ist dieselbe Datei, sie heisst nur anders.
+      ziel.name = neuerName;
+      ent.updatedAt = new Date().toISOString();
+      scheduleSave();   // genau einmal: der bestehende Trichter, kein zweiter Weg
+      render();
+      toast('ok', '✏️', 'Datei umbenannt');
+    },
+  });
 };
 
 window._deleteFileFolder = function(kind, entityId, folderId) {
