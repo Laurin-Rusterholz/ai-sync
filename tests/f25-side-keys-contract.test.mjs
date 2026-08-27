@@ -81,6 +81,12 @@ const FAMILIEN = [
     "_textBlobKey",              // kanonisch, kodiert (M1)
     "_textBlobKeyLegacyRaw",     // nur lesen: Altformat mit rohen Segmenten
     "_textBlobKeyLegacyColon",   // nur lesen: Altformat mit Doppelpunkten
+    // F-28: liest den KONFIGURIERTEN Kernschluessel und faellt auf
+    // CORE_BLOB_KEY zurueck, wenn APP.state.settings noch null ist (Bootlauf).
+    // Er baut nichts: der Rueckgabewert ist entweder der gespeicherte Wert oder
+    // dieselbe Konstante, die der Vertrag ohnehin kennt. Ohne ihn stand an
+    // dreizehn Stellen eine ungesicherte Kette, die im Startfenster warf.
+    "coreBlobKey",
   ]);
   const bauer = (index.match(/^\s*(?:function|const)\s+(_?\w*[Bb]lobKey\w*)\s*[=(]/gm) || [])
     .map((z) => (z.match(/(_?\w*[Bb]lobKey\w*)\s*[=(]/) || [])[1])

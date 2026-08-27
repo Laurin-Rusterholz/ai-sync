@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close · 2026-08-27" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard · 2026-08-27" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6462,6 +6462,48 @@ function primaryCloudProvider() {
 // hiess, den Kerndatensatz unter einem anderen Namen anzulegen — der Server
 // haette ihn dann nicht als Kern erkannt und ohne If-Match beschrieben.
 const CORE_BLOB_KEY = 'app-data.json';
+
+/*
+ * F-28 — DER SCHLUESSEL DES KERNDATENSATZES, SICHER GELESEN.
+ *
+ * BEFUND (live, S3b): remoteGet() las APP.state.settings.storage.blobKey ohne
+ * Absicherung. APP.state.settings ist aber der ANFANGSWERT null (siehe die
+ * APP-Definition) und wird erst im Bootlauf durch loadSettings() ersetzt. Der
+ * Firebase-Auth-Listener steht viel frueher in der Datei; kommt die Anmeldung
+ * hinein, bevor der Bootlauf so weit ist, wirft die Kette:
+ *
+ *     TypeError: Cannot read properties of null (reading 'storage')
+ *
+ * Genau diese Meldung stand im Livelauf. resyncAfterAuth fing sie zwar ab, aber
+ * der nachgeholte Kern-Abgleich fand damit nicht statt — und weil markCoreReadOk
+ * unterhalb des Wurfs steht, blieb _coreReadOk fuer die ganze Sitzung false.
+ *
+ * Ein Fragezeichen an jeder der zehn Aufrufstellen waere ein Flickenteppich.
+ * Stattdessen EINE Stelle, die den Schluessel aufloest — dieselbe Regel wie
+ * beim Schreibtrichter: ein Weg, nicht zehn.
+ *
+ * Der Rueckfall ist derselbe Wert, den canonicalWrite schon immer benutzt hat
+ * (CORE_BLOB_KEY). Damit aendert sich am Verhalten NICHTS, solange settings da
+ * ist — es faellt nur der Absturz weg, wenn es noch fehlt.
+ */
+function coreBlobKey() {
+  try {
+    const k = APP && APP.state && APP.state.settings && APP.state.settings.storage
+      && APP.state.settings.storage.blobKey;
+    return (typeof k === 'string' && k) ? k : CORE_BLOB_KEY;
+  } catch (e) { return CORE_BLOB_KEY; }
+}
+window.coreBlobKey = coreBlobKey;
+
+// Dasselbe fuer den Auto-Speichern-Schalter: das 5-Sekunden-Netz las ihn
+// ebenfalls ungesichert und warf im selben Fenster — dort still, weil es in
+// einem setInterval steht und niemand die Ausnahme sieht.
+function autoSaveAn() {
+  try {
+    const s = APP && APP.state && APP.state.settings && APP.state.settings.storage;
+    return !s || s.autoSave !== false;
+  } catch (e) { return false; }
+}
 // Ein gespeicherter Altwert wird beim Laden verworfen und protokolliert.
 function migrateCoreBlobKey(settings) {
   try {
@@ -12892,7 +12934,7 @@ function saveLocalData() {
 // REMOTE STORAGE ADAPTER
 // ============================================================================
 async function remoteGet(options = {}) {
-  return remoteGetByKey(APP.state.settings.storage.blobKey, { preferProvider: primaryCloudProvider(), ...options });
+  return remoteGetByKey(coreBlobKey(), { preferProvider: primaryCloudProvider(), ...options });
 }
 
 // ═══ EIN EINZIGER SCHREIBTRICHTER FUER DEN KERNSCHLUESSEL ═══════════════════
@@ -13295,7 +13337,7 @@ async function manualTransferPush(silent = false) {
     let verifyStatus = 'ok';
     let verifyDiffs = [];
     try {
-      const readBack = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+      const readBack = await fetchRemoteCandidates(coreBlobKey());
       const latest = pickLatestRemoteCandidate(readBack);
       if (latest && latest.data) {
         const remoteStatsAfter = getSyncStats(latest.data);
@@ -13324,7 +13366,7 @@ async function manualTransferPush(silent = false) {
       await canonicalWrite(payload);
       // Erneut verifizieren
       try {
-        const readBack2 = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+        const readBack2 = await fetchRemoteCandidates(coreBlobKey());
         const latest2 = pickLatestRemoteCandidate(readBack2);
         if (latest2 && latest2.data) {
           const stats2 = getSyncStats(latest2.data);
@@ -13413,7 +13455,7 @@ async function manualTransferPull(silent = false) {
   const firebaseOk = isFirebaseCloudAvailable();
   console.log('[ManualPull] Providers: Netlify=' + netlifyOk + ', Firebase=' + firebaseOk + ', BlobKey=' + (APP.state.settings?.storage?.blobKey || '?'));
 
-  const appCandidates = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+  const appCandidates = await fetchRemoteCandidates(coreBlobKey());
   const chosen = pickLatestRemoteCandidate(appCandidates);
   if (!chosen || !chosen.data) {
     // Build diagnostic error message
@@ -13629,7 +13671,7 @@ window._replaceFromServer = async function() {
     // liefert nur den ERSTEN antwortenden Provider. Hält der (z. B. Firebase)
     // einen fast leeren Stand, meldet der Dialog "Server hat nur 1 Einträge",
     // obwohl ein anderer Provider die vollständigen Daten hat.
-    const candidates = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+    const candidates = await fetchRemoteCandidates(coreBlobKey());
     const result = pickLatestRemoteCandidate(candidates);
     if (!result || !result.data) {
       const errs = (candidates._errors || []).map(e => cloudProviderLabel(e.provider || '?') + (e.status ? ': HTTP ' + e.status : e.skipped ? ': nicht konfiguriert' : ': Fehler'));
@@ -13782,7 +13824,7 @@ window._headerPush = async function() {
       // "Hochgeladen" wirklich heisst, dass die Daten (inkl. Habits) auch ankamen.
       let verifyNote = '';
       try {
-        const back = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+        const back = await fetchRemoteCandidates(coreBlobKey());
         const latest = pickLatestRemoteCandidate(back);
         if (latest && latest.data) {
           const diffs = diffSyncStats(localStats, getSyncStats(latest.data));
@@ -13809,7 +13851,7 @@ window._manualPullFromServer = async function() {
     // WICHTIG: NICHT über pullAndMergeBeforeSave gehen — das bricht im Manual-Modus
     // (autoSync aus) sofort ab und tut NICHTS, meldet aber "fertig". Stattdessen hier
     // direkt holen + mergen, damit der Download in JEDEM Modus funktioniert.
-    const candidates = await fetchRemoteCandidates(APP.state.settings.storage.blobKey);
+    const candidates = await fetchRemoteCandidates(coreBlobKey());
     const chosen = pickLatestRemoteCandidate(candidates);
     if (!chosen || !chosen.data) {
       const errs = (candidates._errors || []).map(e => {
@@ -13878,7 +13920,7 @@ window._connectToMobile = async function() {
 
   const newGet = base + '/.netlify/functions/blob-get?key={key}';
   const newPut = base + '/.netlify/functions/blob-put?key={key}';
-  const key = APP.state.settings.storage.blobKey || 'app-data.json';
+  const key = coreBlobKey();   // der Rueckfall steckt im Helfer
 
   if (resultEl) resultEl.innerHTML = '<div style="color:var(--accent)">🔄 Setze URLs und teste Verbindung…</div>';
 
@@ -14219,7 +14261,7 @@ function scheduleSave() {
     scheduleLocalSave();
     return;
   }
-  if (!APP.state.settings.storage.autoSave) return;
+  if (!autoSaveAn()) return;
   _saveDirty = true;
   APP.state.storage.status = "dirty";
   APP.state.storage.message = t("changes");
@@ -14274,7 +14316,7 @@ setInterval(function() {
   if (remoteSaveOnHold()) return;
   // Genau dieses Netz hat den stillen Write nach der Anmeldung ausgeloest.
   if (authResyncActive()) return;
-  if (_saveDirty && APP.state.settings.storage.autoSave) {
+  if (_saveDirty && autoSaveAn()) {
     _saveDirty = false;
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     _lastSaveTime = Date.now();
@@ -64542,7 +64584,7 @@ async function init() {
             </div>
             ` : ''}
             
-            <label class="col-12">Blob Key<input type="text" id="setBlobKey" value="${esc(APP.state.settings.storage.blobKey)}" readonly disabled title="Fest — der Kerndatensatz liegt auf genau einem Knoten" style="opacity:.6;cursor:not-allowed" /><small class="muted">Fest. Ein abweichender Schluessel wuerde einen zweiten Kerndatensatz anlegen, den der Server nicht als Kern erkennt.</small></label>
+            <label class="col-12">Blob Key<input type="text" id="setBlobKey" value="${esc(coreBlobKey())}" readonly disabled title="Fest — der Kerndatensatz liegt auf genau einem Knoten" style="opacity:.6;cursor:not-allowed" /><small class="muted">Fest. Ein abweichender Schluessel wuerde einen zweiten Kerndatensatz anlegen, den der Server nicht als Kern erkennt.</small></label>
             <label class="col-12">GET URL<input type="text" id="setGetUrl" value="${esc(APP.state.settings.storage.getUrl)}" /></label>
             <label class="col-12">PUT URL<input type="text" id="setPutUrl" value="${esc(APP.state.settings.storage.putUrl)}" /></label>
             <label class="col-12">Auth Token<input type="text" id="setAuthToken" value="${esc(APP.state.settings.storage.authToken)}" placeholder="Leer lassen falls SYNC_AUTH_TOKEN nicht gesetzt" /></label>
@@ -110359,7 +110401,7 @@ window.addEventListener("hashchange", function(){
 (function(){
   var DB_URL = "https://jupidu-36804-default-rtdb.europe-west1.firebasedatabase.app";
   var NODE = "appStore";
-  function fbKey(){ try { return String((window.APP&&APP.state&&APP.state.settings&&APP.state.settings.storage&&APP.state.settings.storage.blobKey)||"app-data.json").replace(/[.#$\[\]\/]/g,"_"); } catch(e){ return "main"; } }
+  function fbKey(){ try { return String((window.coreBlobKey ? window.coreBlobKey() : "app-data.json")).replace(/[.#$\[\]\/]/g,"_"); } catch(e){ return "main"; } }
   function fbDb(){ try { if (window.firebase && firebase.app) return firebase.app().database(DB_URL); } catch(e){} return null; }
   function tt(t,a,b){ if (typeof window.toast==="function") window.toast(t,a,b); }
 

@@ -121,7 +121,14 @@ function harness() {
          forceRunning: function(startedAt){ _authResyncRunning = true; _authResyncStartedAt = startedAt; },
        };`;
   const APP = { state: { storage: {}, settings: { storage: { autoSave: true } }, ui: {}, data: { entities: {}, meta: {} } } };
-  return new Function("APP", "coreAuthCurrentUser", src)(APP, () => ({ uid: "u1" }));
+  // F-28: das 5-Sekunden-Netz liest den Auto-Speichern-Schalter nicht mehr
+  // direkt, sondern ueber autoSaveAn() — sonst wirft es im Startfenster, wenn
+  // APP.state.settings noch null ist. Die Attrappe bildet genau das ab.
+  const autoSaveAn = () => {
+    const st = APP && APP.state && APP.state.settings && APP.state.settings.storage;
+    return !st || st.autoSave !== false;
+  };
+  return new Function("APP", "coreAuthCurrentUser", "autoSaveAn", src)(APP, () => ({ uid: "u1" }), autoSaveAn);
 }
 
 // ── 1. Der exakte Livelauf: kein Write vor bestaetigtem GET+Merge ─────────
