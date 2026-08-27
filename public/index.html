@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet+folder-sheets · 2026-08-27" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet+folder-sheets+firebase-rearm · 2026-08-27" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -7116,6 +7116,45 @@ function rtdbDbRef(path) {
   try { if (window.firebase && firebase.app) return firebase.app().database(RTDB_DB_URL).ref(path); } catch(e) {}
   return null;
 }
+
+/*
+ * EINMALIGER NACHZIEHER, WENN FIREBASE ERST SPAETER DA IST.
+ *
+ * BEFUND: rtdbDbRef() liefert null, solange das Firebase-SDK noch nicht geladen
+ * ist — ein reines Startfenster von Sekundenbruchteilen. Module wie Smarter und
+ * Leseplan werteten dieses null aber als "offline" und markierten sich SOFORT
+ * als frisch geladen (loaded = true, loadedAt = jetzt). Danach griff nur noch
+ * die 60-Sekunden-Frischepruefung ihrer eigenen Ansicht — und die auch nur,
+ * wenn diese Ansicht ueberhaupt neu rendert. Der Offline-Hinweis blieb also
+ * mindestens eine Minute stehen, obwohl Firebase laengst bereit war.
+ *
+ * Statt die Frist zu verkuerzen (das wuerde bei echtem Ausfall im Kreis
+ * rendern) wartet dieser Nachzieher auf das Ereignis selbst: er prueft kurz
+ * getaktet, ob rtdbDbRef wieder etwas liefert, und ruft dann GENAU EINMAL
+ * zurueck. Je Kennung ist immer nur ein Waechter unterwegs; laeuft die Frist ab,
+ * gibt er auf und ueberlaesst das Feld der bestehenden 60-Sekunden-Regel.
+ */
+var _firebaseBereitWaechter = {};
+function wennFirebaseBereit(kennung, fn, maxMs) {
+  if (typeof fn !== 'function') return;
+  if (rtdbDbRef('.info')) { fn(); return; }          // schon da
+  if (_firebaseBereitWaechter[kennung]) return;      // laeuft bereits
+  var frist = Date.now() + (maxMs || 20000);
+  var t = setInterval(function () {
+    if (rtdbDbRef('.info')) {
+      clearInterval(t);
+      delete _firebaseBereitWaechter[kennung];
+      try { fn(); } catch (e) { console.warn('[FirebaseBereit] ' + kennung + ':', e); }
+      return;
+    }
+    if (Date.now() > frist) {
+      clearInterval(t);
+      delete _firebaseBereitWaechter[kennung];
+    }
+  }, 400);
+  _firebaseBereitWaechter[kennung] = t;
+}
+window.wennFirebaseBereit = wennFirebaseBereit;
 async function rtdbJsonGet(key, options = {}) {
   if (!shouldTryCloudProvider('rtdb', options)) return { ok: false, skipped: true, provider: 'rtdb' };
   // Erst anmelden lassen, dann lesen. Ohne Nutzer gar nicht erst anfragen —
@@ -17984,6 +18023,10 @@ async function smarterLoad() {
     // und jeder Re-Render plant eine überflüssige Nachladung.
     SMARTER.noFirebase = true; SMARTER.loaded = true; SMARTER.loadedAt = Date.now();
     render();
+    // Der Zustand oben bleibt, wie er war — die Offline-Ansicht braucht ihn.
+    // Neu ist nur: sobald Firebase wirklich da ist, wird EINMAL nachgeladen,
+    // statt bis zu einer Minute auf die naechste Frischepruefung zu warten.
+    wennFirebaseBereit('smarter', function () { SMARTER.loaded = false; smarterLoad(); });
     return;
   }
   SMARTER.loading = true; SMARTER.noFirebase = false; SMARTER.error = null;
@@ -19289,7 +19332,13 @@ async function leseplanEnsureConfig(db) {
 async function leseplanLoad() {
   if (LESEPLAN.loading) return;
   const db = leseplanRootRef();
-  if (!db) { LESEPLAN.noFirebase = true; LESEPLAN.loaded = true; LESEPLAN.loadedAt = Date.now(); render(); return; }
+  if (!db) {
+    LESEPLAN.noFirebase = true; LESEPLAN.loaded = true; LESEPLAN.loadedAt = Date.now();
+    render();
+    // Derselbe Nachzieher wie bei Smarter — der Zwilling desselben Befunds.
+    wennFirebaseBereit('leseplan', function () { LESEPLAN.loaded = false; leseplanLoad(); });
+    return;
+  }
   LESEPLAN.loading = true; LESEPLAN.noFirebase = false; LESEPLAN.error = null;
   try {
     await leseplanEnsureConfig(db);
