@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet · 2026-08-26" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet+folder-sheets · 2026-08-27" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -9283,18 +9283,37 @@ window._toggleFileFolder = function(kind, entityId, folderId) {
   render();
 };
 
+// Die beiden Ordner-Wege liefen bis hierher ueber prompt() — derselbe Blocker
+// wie beim Datei-Umbenennen: ein nativer Dialog haelt den Renderer an, ist auf
+// dem Telefon nicht bedienbar und blockiert jede Fernsteuerung. Sie gehen jetzt
+// durch dasselbe app-eigene Blatt (openRenameSheet, weiter unten im selben
+// Script-Block deklariert und damit hochgezogen).
 window._createFileFolder = function(kind, entityId) {
-  const name = prompt('Ordnername:');
-  if (!name || !name.trim()) return;
   const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
-  const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
-  if (!entity) return;
-  if (!entity.fileFolders) entity.fileFolders = [];
-  entity.fileFolders.push({ id: 'ff_' + Date.now().toString(36), name: name.trim(), createdAt: new Date().toISOString() });
-  entity.updatedAt = new Date().toISOString();
-  scheduleSave();
-  render();
-  toast('ok', '📁', 'Ordner erstellt');
+  // Die Entitaet wird VOR dem Blatt geprueft: ein Dialog fuer etwas, das es
+  // gar nicht gibt, ist eine Sackgasse. Der alte Pfad fragte zuerst und merkte
+  // erst danach, dass er nichts anzulegen hatte.
+  if (!APP.state.data.entities[kindMap[kind]]?.[entityId]) return;
+
+  openRenameSheet({
+    titel: 'Neuer Ordner',
+    hinweis: 'Der Ordner wird bei diesem Eintrag angelegt.',
+    feldLabel: 'Ordnername',
+    wert: '',
+    leerMeldung: 'Der Ordnername darf nicht leer sein.',
+    onSpeichern: function(name) {
+      // Ab hier gilt nur der AKTUELLE Stand: waehrend das Blatt offen war,
+      // kann ein Abgleich APP.state.data ersetzt haben.
+      const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
+      if (!entity) { toast('warn', 'Eintrag nicht mehr vorhanden'); return; }
+      if (!entity.fileFolders) entity.fileFolders = [];
+      entity.fileFolders.push({ id: 'ff_' + Date.now().toString(36), name: name, createdAt: new Date().toISOString() });
+      entity.updatedAt = new Date().toISOString();
+      scheduleSave();   // genau einmal, der bestehende Trichter
+      render();
+      toast('ok', '📁', 'Ordner erstellt');
+    },
+  });
 };
 
 window._renameFileFolder = function(kind, entityId, folderId) {
@@ -9303,13 +9322,29 @@ window._renameFileFolder = function(kind, entityId, folderId) {
   if (!entity) return;
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
   if (!folder) return;
-  const newName = prompt('Neuer Ordnername:', folder.name);
-  if (!newName || !newName.trim()) return;
-  folder.name = newName.trim();
-  entity.updatedAt = new Date().toISOString();
-  scheduleSave();
-  render();
-  toast('ok', '📁', 'Ordner umbenannt');
+  // Nur die Id wird ueber das Blatt hinweg mitgenommen, nicht die Referenz.
+  const altName = folder.name;
+
+  openRenameSheet({
+    titel: 'Ordner umbenennen',
+    hinweis: '',
+    feldLabel: 'Neuer Ordnername',
+    wert: altName,
+    leerMeldung: 'Der Ordnername darf nicht leer sein.',
+    onSpeichern: function(neuerName) {
+      const ent = APP.state.data.entities[kindMap[kind]]?.[entityId];
+      const ziel = (ent && Array.isArray(ent.fileFolders))
+        ? ent.fileFolders.find(function(f) { return f && f.id === folderId; })
+        : null;
+      if (!ziel) { toast('warn', 'Ordner nicht mehr vorhanden'); return; }
+      if (neuerName === ziel.name) return;   // nichts geaendert, nichts schreiben
+      ziel.name = neuerName;
+      ent.updatedAt = new Date().toISOString();
+      scheduleSave();   // genau einmal, der bestehende Trichter
+      render();
+      toast('ok', '📁', 'Ordner umbenannt');
+    },
+  });
 };
 
 // ── Namensteilung: Basis und Endung ────────────────────────────────────────
