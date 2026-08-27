@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard · 2026-08-27" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify · 2026-08-27" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -6538,7 +6538,18 @@ function shouldTryCloudProvider(provider, options = {}) {
     const isNetworkError = /Failed to fetch|NetworkError|Load failed|ERR_|CORS/i.test(state.lastError || '');
     if (isNetworkError) return false;
     // For other errors (412, 5xx), force overrides backoff
-    if (force) return true;
+    //
+    // F-26 — ignoreBackoff hebt GENAU DIESE Sperre auf, sonst nichts.
+    //
+    // Der Lesevorgang in canonicalWrite laeuft mit force:true und kommt hier
+    // durch; der Schreibvorgang derselben Runde lief ohne und blieb haengen.
+    // Ergebnis: gelesen ja, geschrieben nein, gemeldet "offline" — obwohl der
+    // Anbieter nachweislich in derselben Sekunde geantwortet hat. force selbst
+    // duerfen wir dem Schreibvorgang nicht geben: es wuerde oben auch
+    // isAutoSyncEnabled() aushebeln, und ein Schreibvorgang bei
+    // abgeschaltetem Abgleich ist etwas voellig anderes als einer trotz
+    // Rueckzugsfrist.
+    if (force || options.ignoreBackoff) return true;
     return false;
   }
   return true;
@@ -7308,6 +7319,23 @@ async function rtdbJsonPut(key, data, options = {}) {
       let finalPayload = data;
       let abortReason = null;
       const myDevice = getOrCreateDeviceId();
+      /*
+       * F-26 — EINE KENNUNG FUER DIESEN SCHREIBVERSUCH.
+       *
+       * BEFUND (live, S3b): die Transaktion meldete "disconnect", der Client
+       * wertete das als Fehlschlag und fiel zum naechsten Anbieter durch — und
+       * der Commit WAR trotzdem erfolgt (Grabstein und entfernte Entitaet
+       * nachweisbar). Der Ausgang war schlicht unbekannt, und niemand hat
+       * nachgesehen.
+       *
+       * Nachsehen ging bisher auch nicht: der gespeicherte Wrapper trug nur
+       * savedBy — die GERAETE-Kennung, nicht die dieses Versuchs. Zwei
+       * Versuche desselben Geraets waren daran nicht zu unterscheiden.
+       *
+       * Diese Kennung macht den Ausgang entscheidbar: steht sie nach einem
+       * unklaren Fehler im Knoten, ist genau UNSER Versuch durchgekommen.
+       */
+      const versuchsId = 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
       const txn = await new Promise((resolve, reject) => {
         ref.transaction((current) => {
           let remoteData = null;
@@ -7348,9 +7376,15 @@ async function rtdbJsonPut(key, data, options = {}) {
             updatedAt: (out && out.meta && out.meta.updatedAt) || new Date().toISOString(),
             savedAt: Date.now(),
             savedBy: myDevice,
+            attemptId: versuchsId,
           };
         }, (error, committed, snapshot) => {
-          if (error) reject(error); else resolve({ committed, snapshot });
+          // Ein FEHLER heisst: Ausgang unbekannt. committed === false ohne
+          // Fehler heisst: definitiv nicht geschrieben. Das sind zwei
+          // verschiedene Lagen, und bisher wurden sie gleich behandelt.
+          if (error) reject(Object.assign(error instanceof Error ? error : new Error(String(error)),
+            { __ambiguous: true, __versuchsId: versuchsId }));
+          else resolve({ committed, snapshot });
         }, false);
       });
       if (!txn.committed) {
@@ -7441,6 +7475,64 @@ async function rtdbJsonPut(key, data, options = {}) {
     if (isAuthDeniedError(e)) {
       rememberCoreAuthRequired('rtdb');
       return { ok: false, authRequired: true, reason: 'permission_denied', error: e, provider: 'rtdb' };
+    }
+    /*
+     * F-26 — UNKLARER AUSGANG: NACHSEHEN, NICHT DURCHFALLEN.
+     *
+     * Ein Fehler aus der Transaktion heisst NICHT "nicht geschrieben", sondern
+     * "Ausgang unbekannt". Bisher endete beides gleich: als Fehlschlag, worauf
+     * remotePutByKey zum naechsten Anbieter durchfiel — mit einem Koerper, der
+     * gegen den VOR-Transaktions-Stand gemergt war. Der If-Match-Riegel hat das
+     * abgefangen, aber nur, weil der gesunde RTDB-Lesevorgang den ETag genullt
+     * hatte. Verlassen wollen wir uns darauf nicht.
+     *
+     * Jetzt wird der Knoten gelesen und die Versuchskennung verglichen. Drei
+     * Ausgaenge, drei verschiedene Antworten:
+     *   unsere Kennung steht dort  -> der Commit IST erfolgt: Erfolg melden,
+     *                                 mit eigenem CAS-Beweis
+     *   eine andere Kennung        -> unser Versuch kam nicht durch: normaler
+     *                                 Fehlschlag, Wiederholung erlaubt
+     *   nicht lesbar               -> weiterhin unbekannt: ambiguous, KEIN
+     *                                 Anbieterwechsel, kein Schreibvorgang
+     */
+    if (e && e.__ambiguous && isMainRecord) {
+      let nachgelesen = null;
+      try {
+        const ref2 = rtdbDbRef(RTDB_NODE + '/' + rtdbNodeKey(key));
+        if (ref2 && typeof ref2.once === 'function') {
+          const snap = await ref2.once('value');
+          nachgelesen = snap && typeof snap.val === 'function' ? snap.val() : null;
+        }
+      } catch (leseFehler) { nachgelesen = undefined; }
+
+      if (nachgelesen === undefined) {
+        rememberCloudFailure('rtdb', { error: e });
+        return { ok: false, ambiguous: true, reason: 'ambiguous_unverified', error: e, provider: 'rtdb' };
+      }
+      const wrap = (nachgelesen && typeof nachgelesen === 'object') ? nachgelesen : {};
+      // Die Kennung reist am Fehler mit — die Variable aus dem
+      // Transaktionsblock ist hier nicht mehr sichtbar.
+      if (wrap.attemptId && wrap.attemptId === e.__versuchsId) {
+        let stand = null;
+        try { stand = typeof wrap.data === 'string' ? JSON.parse(wrap.data) : (wrap.data || null); } catch (_) { stand = null; }
+        if (!stand) {
+          // Kennung passt, Inhalt unlesbar: wir wissen, DASS geschrieben wurde,
+          // aber nicht WAS. Das ist kein CAS-Beweis — also kein Erfolg.
+          rememberCloudFailure('rtdb', { error: new Error('ambiguous_no_snapshot') });
+          return { ok: false, ambiguous: true, reason: 'ambiguous_unverified', error: e, provider: 'rtdb' };
+        }
+        APP.state.storage.lastRemoteSeenAt = getDataTimestamp(stand) || Date.now();
+        APP.state.storage.lastRemoteProvider = 'rtdb';
+        APP.state.storage.etag = null;
+        rememberCloudSuccess('rtdb');
+        return {
+          ok: true, status: 200, provider: 'rtdb', data: stand, committedByTransaction: true,
+          casProof: { kind: 'rtdb-ambiguous-verified', committed: true, attemptId: wrap.attemptId, snapshot: wrap,
+            savedAt: wrap.savedAt || null, updatedAt: wrap.updatedAt || null },
+        };
+      }
+      rememberCloudFailure('rtdb', { error: e });
+      return { ok: false, reason: 'ambiguous_not_applied', error: e, provider: 'rtdb' };
     }
     rememberCloudFailure('rtdb', { error: e });
     return { ok: false, error: e, provider: 'rtdb' };
@@ -7558,7 +7650,13 @@ async function remotePutByKey(key, data, options = {}) {
       // Der Schatten haengt am CAS-BEWEIS, nicht an einer blossen Kennzeichnung:
       // gespiegelt wird nur ein Stand, den die RTDB-Transaktion nachweislich
       // committet hat. Firebase Storage ist damit reiner Post-Commit-Schatten.
-      const kanonisch = !!(res.casProof && res.casProof.kind === 'rtdb-transaction' && res.data);
+      // 'rtdb-ambiguous-verified' zaehlt hier gleichwertig: der Stand stammt aus
+      // einem RUECKLESEVORGANG des Kernknotens, in dem unsere Versuchskennung
+      // stand — also aus genau dem committeten Wrapper, nur eine Runde spaeter
+      // gelesen. Kein Rueckfall auf lokale Daten (F-26).
+      const kanonisch = !!(res.casProof
+        && (res.casProof.kind === 'rtdb-transaction' || res.casProof.kind === 'rtdb-ambiguous-verified')
+        && res.data);
       if (options.shadowToOthers && isAutoSyncEnabled() && kanonisch) {
         const now = Date.now();
         if (now - _lastShadowWriteAt > (options.shadowIntervalMs || 45000)) {
@@ -7590,6 +7688,20 @@ async function remotePutByKey(key, data, options = {}) {
       if (isCoreDataKey(key)) return res;
       authRequired = true;
     }
+    // F-26: UNKLARER AUSGANG BEENDET DIE REIHE.
+    //
+    // Ein Anbieterwechsel nach einem unklaren RTDB-Ausgang wuerde einen Koerper
+    // hochladen, der gegen den VOR-Transaktions-Stand gemergt ist — waehrend
+    // moeglicherweise bereits unsere Transaktion drinsteht. Das ist genau der
+    // blinde Ueberschreiber, den F-25 beseitigt hat. Lieber ohne Ergebnis
+    // zurueck: der naechste Durchlauf liest zuerst.
+    // ambiguous_not_applied ebenso: der Ausgang ist zwar BEKANNT (nichts
+    // geschrieben), aber der richtige naechste Schritt ist eine neue
+    // Transaktion, nicht ein anderer Anbieter — dessen Koerper stammt aus
+    // demselben veralteten Merge. Ohne diesen Riegel ueberschreibt der
+    // Netlify-Fehlschlag ausserdem 'last', und canonicalWrite sieht den
+    // wiederholbaren Grund gar nicht mehr.
+    if (isCoreDataKey(key) && (res.ambiguous || res.reason === 'ambiguous_not_applied')) return res;
     last = res;
     if (res.status === 412) return res;
   }
@@ -13010,6 +13122,11 @@ async function canonicalWrite(quelle, options = {}) {
       shadowToOthers: options.shadowToOthers !== false,
       mergeFn: mergeData,
       _viaCanonicalWrite: true,
+      // Der Lesevorgang oben ist soeben durchgekommen — derselbe Anbieter, in
+      // derselben Runde. Eine Rueckzugsfrist aus einem frueheren Fehler jetzt
+      // noch auf den Schreibvorgang anzuwenden, waere ein Widerspruch in sich
+      // (F-26). Netzfehler bleiben auch damit gesperrt.
+      ignoreBackoff: true,
     });
     if (res.ok) {
       // 5) CAS-BEWEIS PRUEFEN. Ein res.ok ohne Beweis ist KEIN Erfolg — auch
@@ -13024,8 +13141,15 @@ async function canonicalWrite(quelle, options = {}) {
       // Bindung, der Beweis muss aber committed und einen Schnappschuss tragen.
       const beweis = res.casProof;
       const nichtleer = (v) => typeof v === 'string' ? v.length > 0 : !!v;
+      // 'rtdb-ambiguous-verified' ist der dritte gueltige Beweis (F-26): die
+      // Transaktion meldete einen Fehler, der Rueckleseweg fand aber UNSERE
+      // Versuchskennung im Knoten. Die Bindung an den gelesenen Zustand liegt
+      // weiterhin bei der Transaktion — nur der Nachweis kommt eine Runde
+      // spaeter. Ohne attemptId ist das kein Beweis, sondern eine Vermutung:
+      // savedBy allein unterscheidet zwei Versuche desselben Geraets nicht.
       const gueltig = !!beweis && (
         (beweis.kind === 'rtdb-transaction' && beweis.committed === true && !!beweis.snapshot) ||
+        (beweis.kind === 'rtdb-ambiguous-verified' && beweis.committed === true && nichtleer(beweis.attemptId) && !!beweis.snapshot) ||
         (beweis.kind === 'netlify-etag' && nichtleer(beweis.before) && nichtleer(beweis.after) && beweis.before !== beweis.after)
       );
       if (!gueltig) {
@@ -13042,8 +13166,13 @@ async function canonicalWrite(quelle, options = {}) {
       return { ...res, mergedRemote: true, attempts: versuch, casProof: beweis };
     }
     letzte = res;
+    // ambiguous_not_applied ist gesichert NICHT geschrieben — das ist ein
+    // Konflikt wie ein abgebrochener Transaktionsversuch und darf wiederholt
+    // werden. ambiguous_unverified faellt bewusst NICHT darunter: solange der
+    // Ausgang unbekannt ist, wird nicht noch einmal geschrieben.
     const konflikt = res.status === 412
       || res.reason === 'transaction_aborted'
+      || res.reason === 'ambiguous_not_applied'
       || res.reason === 'etag_conflict_persists';
     if (!konflikt) return res;   // echter Fehler: sofort sichtbar, keine Wiederholung
   }
@@ -14448,6 +14577,17 @@ async function doSave(silent = false) {
       APP.state.storage.status = "error";
       toast("warn", "Konflikt", "Lokal gesichert — manuell synchronisieren");
     }
+  } else if (result.ambiguous) {
+    // F-26: NICHT "offline" MELDEN, WENN DER AUSGANG UNBEKANNT IST.
+    //
+    // "Lokal gespeichert" heisst fuer den Nutzer: der Server hat nichts. Das
+    // ist bei einem unklaren Ausgang moeglicherweise falsch — und die falsche
+    // Richtung: er sichert von Hand nach, waehrend sein Stand oben liegt. Der
+    // verifizierte Fall kommt gar nicht hier an (der meldet ok), hier landet
+    // nur der wirklich unentschiedene.
+    APP.state.storage.status = "error";
+    APP.state.storage.message = "Serverstand unklar";
+    if (!silent) toast("warn", "Ungeklärt", "Der Server hat den Schreibvorgang nicht bestätigt — beim nächsten Abgleich wird geprüft, was oben liegt");
   } else {
     // Remote save failed, but local save succeeded
     APP.state.storage.status = "offline";

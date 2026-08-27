@@ -276,8 +276,20 @@ function netlify({ etagVorher = "alt", antwortEtag = "neu" } = {}) {
     "Lage 1: der fremde Grabstein hat den Schreibvorgang des veralteten Clients nicht ueberlebt");
   // Der Schatten haengt am Beweis — vor dem Commit gibt es keinen Storage-Write.
   const rp = ohneKommentare(funktionAsync("remotePutByKey"));
-  ok(/const kanonisch = !!\(res\.casProof && res\.casProof\.kind === 'rtdb-transaction' && res\.data\);/.test(rp),
-    "Lage 1: der Storage-Schatten haengt nicht am CAS-Beweis — er koennte vor dem Commit schreiben");
+  // Die Bedingung darf zwei Beweisarten kennen (F-26: der verifizierte ambigue
+  // Ausgang ist derselbe committete Stand, nur eine Runde spaeter belegt) —
+  // aber sie muss weiterhin an einem BEWEIS und an res.data haengen.
+  ok(/const kanonisch = !!\(res\.casProof$/m.test(rp) || /const kanonisch = !!\(res\.casProof &&/.test(rp),
+    "Lage 1: der Storage-Schatten haengt nicht mehr an res.casProof — er koennte vor dem Commit schreiben");
+  {
+    const a = rp.indexOf("const kanonisch =");
+    const bed = rp.slice(a, rp.indexOf(";", a));
+    ok(/&& res\.data\)/.test(bed), "Lage 1: der Schatten haengt nicht mehr an res.data");
+    const arten = (bed.match(/kind === '([a-z-]+)'/g) || []).map((m) => m.split("'")[1]).sort();
+    ok(arten.join(",") === "rtdb-ambiguous-verified,rtdb-transaction",
+      `Lage 1: schattende Beweisarten [${arten.join(", ")}] — erwartet genau rtdb-transaction ` +
+      "und rtdb-ambiguous-verified");
+  }
   ok(rp.indexOf("const kanonisch") < rp.indexOf("shadowToOthers"),
     "Lage 1: der Beweis wird erst nach der Schatten-Entscheidung geprueft");
 }

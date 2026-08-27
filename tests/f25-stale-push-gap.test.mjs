@@ -247,11 +247,40 @@ const stand = (notizen, meta) => ({
     "Teilfall 3c: ohne res.data wurde der ungeprueffte lokale Stand geschattet — " +
     "genau der Rueckfall res.data || data");
 
+  // d) F-26: der verifizierte ambigue Ausgang ist ein GLEICHWERTIGER Beweis.
+  // Der Stand stammt aus einem Rueckleseweg des Kernknotens, in dem unsere
+  // Versuchskennung stand — also aus genau dem committeten Wrapper.
+  geschattet.length = 0;
+  await bauen({ ok: true, provider: "rtdb", data: committet,
+    casProof: { kind: "rtdb-ambiguous-verified", committed: true, attemptId: "w_x", snapshot: {} } })(
+    "app-data.json", lokal, { shadowToOthers: true, _viaCanonicalWrite: true });
+  await new Promise((r) => setTimeout(r, 5));
+  ok(geschattet.length === 1, `Teilfall 3d: ${geschattet.length} Schattenschreibvorgaenge statt einem`);
+  ok(geschattet[0] === committet, "Teilfall 3d: der Schatten spiegelt nicht den zurueckgelesenen Stand");
+
+  // e) Eine FREMDE Beweisart schattet nicht. Sonst waere die Regel in d) nur
+  // eine Tuer, die offen steht.
+  geschattet.length = 0;
+  await bauen({ ok: true, provider: "rtdb", data: committet,
+    casProof: { kind: "irgendwas", committed: true, snapshot: {} } })(
+    "app-data.json", lokal, { shadowToOthers: true, _viaCanonicalWrite: true });
+  await new Promise((r) => setTimeout(r, 5));
+  ok(geschattet.length === 0, "Teilfall 3e: eine unbekannte Beweisart hat geschattet");
+
   const putSrc = ohneKommentare(funktionAsync("remotePutByKey"));
   ok(!/res\.data \|\| data/.test(putSrc),
     "Teilfall 3: der Rueckfall res.data || data steht noch im Quelltext");
-  ok(/casProof && res\.casProof\.kind === 'rtdb-transaction'/.test(putSrc),
+  // Genau zwei Beweisarten duerfen schatten — beide aus einer RTDB-Transaktion,
+  // die eine unmittelbar, die andere eine Runde spaeter nachgewiesen (F-26).
+  ok(/res\.casProof\.kind === 'rtdb-transaction'/.test(putSrc),
     "Teilfall 3: der Schatten haengt nicht am CAS-Beweis der kanonischen Transaktion");
+  {
+    const arten = (putSrc.match(/res\.casProof\.kind === '([a-z-]+)'/g) || [])
+      .map((m) => m.split("'")[1]).sort();
+    ok(arten.join(",") === "rtdb-ambiguous-verified,rtdb-transaction",
+      `Teilfall 3: schattende Beweisarten [${arten.join(", ")}] — erwartet genau ` +
+      "rtdb-transaction und rtdb-ambiguous-verified");
+  }
   ok(/if \(other === 'rtdb'\) return;/.test(putSrc),
     "Teilfall 3: der Schatten darf weiterhin in den kanonischen Knoten schreiben");
 }

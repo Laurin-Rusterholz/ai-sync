@@ -17,15 +17,25 @@
  * (rtdbJsonGet, Erfolgszweig), und remoteGetByKey kehrt beim ersten Erfolg
  * zurueck — ein Netlify-GET, der einen ETag liefern koennte, findet nie statt.
  *
+ * DER FIX (jetzt gebaut)
+ * Jeder Transaktionsversuch traegt eine VERSUCHSKENNUNG (attemptId) bis in den
+ * gespeicherten Wrapper. Meldet die Transaktion einen FEHLER — Ausgang
+ * unbekannt, nicht "nicht geschrieben" —, liest rtdbJsonPut den Kernknoten
+ * zurueck und vergleicht:
+ *   unsere Kennung steht dort -> Erfolg, Beweis 'rtdb-ambiguous-verified'
+ *   fremde/keine Kennung      -> 'ambiguous_not_applied' (Wiederholung erlaubt)
+ *   nicht lesbar              -> 'ambiguous_unverified', KEIN Anbieterwechsel
+ * Erst diese Kennung macht den Ausgang entscheidbar: savedBy allein ist die
+ * GERAETE-Kennung und unterscheidet zwei Versuche desselben Geraets nicht — das
+ * war der offene Punkt in Abschnitt 4.
+ *
  * WAS DIESER WAECHTER TUT
- * Abschnitt 1 haelt den HEUTIGEN, fail-closed Zustand fest. Diese Pruefungen
- * sind scharf: faellt eine, ist ein unbedingter oder ungedeckter Kern-Write
- * moeglich geworden.
- * Abschnitt 2 beschreibt die GEWUENSCHTE, noch NICHT gebaute Invariante
- * (Read-after-ambiguous-error) als sichtbares TODO. Sie ist rot und laesst die
- * Suite bewusst gruen — F-26 ist erfasst, nicht behoben.
- * Abschnitt 3 ist die Sicherheitsinvariante zu Abschnitt 2 (siehe unten).
- * Abschnitt 4 haelt die offene Kausalitaetsfrage fest.
+ * Abschnitt 1 misst den ambiguen Livefall: der Commit IST erfolgt, und der
+ * Client meldet das jetzt auch — mit CAS-Beweis, ohne Anbieterwechsel.
+ * Abschnitt 2 misst die drei Ausgaenge einzeln, inklusive der Fassung, in der
+ * NICHTS geschrieben wurde und in der der Rueckleseweg selbst scheitert.
+ * Abschnitt 3 ist die Sicherheitsinvariante (siehe unten).
+ * Abschnitt 4 misst die Versuchskennung und die Symmetrie der Rueckzugsfrist.
  *
  * SICHERHEITSINVARIANTE FUER JEDEN SPAETEREN FIX (Abschnitt 3)
  * Ein Netlify-GET nach dem ambiguen RTDB-Ausgang darf NICHT einfach denselben
@@ -43,7 +53,7 @@
  * ausdruecklich NICHT Gegenstand von F-26. F-26 fragt nur: Ist der Ausgang
  * bekannt? P1.2 fragt: Was tun, wenn er bekannt und "nicht geschrieben" ist.
  *
- * KEIN PRODUKTIONSCODE. Kein Netz. Die Attrappe fuer fetchWithTimeout wirft,
+ * KEIN NETZ. Die Attrappe fuer fetchWithTimeout wirft,
  * falls doch jemand hinausgreift.
  */
 import fs from "node:fs";
@@ -95,15 +105,23 @@ const KERN_KEY = "app-data.json";
 const NOTE_WEG = "813197f9-ccbc-4fbc-adf5-ae273277baec";
 const GRABSTEIN_TS = 1787738501400;
 
-function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous" } = {}) {
-  const z = { rtdbGet: 0, rtdbTxn: 0, netGet: 0, netPut: 0, serverCommits: 0 };
+function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous",
+                   commitAngewendet = true, rueckleseFehler = false,
+                   fremdeKennung = null, backoffBis = 0 } = {}) {
+  const z = { rtdbGet: 0, rtdbTxn: 0, netGet: 0, netPut: 0, serverCommits: 0, rueckLesen: 0 };
   const meldungen = [];
+  // Der Server haelt den VOLLSTAENDIGEN Wrapper — samt attemptId. Genau daran
+  // haengt der Fix: ein Test, der nur .data behaelt, koennte die Verifikation
+  // gar nicht messen.
   let SERVER = {
     data: JSON.stringify({
       entities: { notes: { behalten: { id: "behalten" }, [NOTE_WEG]: { id: NOTE_WEG } } },
       meta: { updatedAt: "2026-08-26T09:00:00.000Z" },
     }),
     etag: "srv-1",
+    savedAt: 1787738000000,
+    savedBy: "geraet-fremd",
+    attemptId: fremdeKennung || "w_vorher",
   };
   let gesendeterIfMatch = "__nie_aufgerufen__";
 
@@ -114,7 +132,10 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous" } = {}) {
     storage: { etag: "ALT-ETAG-aus-frueherem-Netlify-Lesevorgang", lastRemoteSeenAt: 0 },
     data: {},
   } };
-  const _cloudHealth = { rtdb: {}, netlify: {}, firebase: {}, lastGoodProvider: null };
+  const _cloudHealth = {
+    rtdb: backoffBis ? { backoffUntil: backoffBis, lastError: "disconnect", failCount: 1 } : {},
+    netlify: {}, firebase: {}, lastGoodProvider: null,
+  };
   const _remoteEtags = {};
   const isCoreDataKey = (k) => k === KERN_KEY;
 
@@ -146,12 +167,25 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous" } = {}) {
     transaction(updateFn, onComplete) {
       z.rtdbTxn++;
       const neu = updateFn({ data: SERVER.data });
-      if (transaktion === "ambiguous") {
-        if (neu !== undefined) { SERVER = { data: neu.data, etag: "srv-2" }; z.serverCommits++; }
+      // Nur der ERSTE Versuch ist unklar; ein Wiederholungsversuch laeuft
+      // sauber durch. So misst Abschnitt 2 die Erholung statt einer Schleife.
+      const jetztAmbig = transaktion === "ambiguous" && z.rtdbTxn === 1;
+      if (jetztAmbig) {
+        if (neu !== undefined && commitAngewendet) {
+          SERVER = { ...neu, etag: "srv-2" };   // VOLLER Wrapper, attemptId inklusive
+          z.serverCommits++;
+        }
         onComplete(new Error("transaction at /appStore/app-data_json failed: disconnect"), false, null);
       } else {
+        if (neu !== undefined) { SERVER = { ...neu, etag: "srv-2" }; z.serverCommits++; }
         onComplete(null, true, { val: () => neu });
       }
+    },
+    // Der Rueckleseweg des Fixes.
+    async once() {
+      z.rueckLesen++;
+      if (rueckleseFehler) throw new Error("read failed: disconnect");
+      return { val: () => SERVER };
     },
   }) : null;
 
@@ -190,6 +224,7 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous" } = {}) {
   return {
     api, z, meldungen, APP, _cloudHealth,
     server: () => JSON.parse(SERVER.data),
+    wrapper: () => SERVER,
     ifMatch: () => gesendeterIfMatch,
   };
 }
@@ -201,7 +236,7 @@ const NACH_DEM_LOESCHEN = {
   meta: { updatedAt: "2026-08-26T10:01:41.416Z" },
 };
 
-// ═══ 1. HEUTIGER ZUSTAND: fail-closed. Diese Pruefungen sind scharf. ═════
+// ═══ 1. DER LIVEFALL: Commit erfolgt, Client meldet es jetzt auch ══
 const u = umgebung();
 const res = await u.api.canonicalWrite(NACH_DEM_LOESCHEN);
 
@@ -215,75 +250,104 @@ ok(u.server().entities.notes[NOTE_WEG] === undefined,
 ok(u.server()._deleteLog?.note?.[NOTE_WEG] === GRABSTEIN_TS,
   "der Grabstein ist serverseitig nicht angekommen");
 
-// Kein zweiter Anbieter hat den Kern angefasst.
+// DER FIX: es wurde zurueckgelesen, und zwar genau einmal.
+ok(u.z.rueckLesen === 1,
+  `Rueckleseweg ${u.z.rueckLesen}x statt 1x — der Ausgang wurde nicht verifiziert (F-26)`);
+
+// Und das Ergebnis stimmt jetzt mit dem Server ueberein.
+ok(res.ok === true,
+  `ein serverseitig erfolgter Commit wird als Fehlschlag gemeldet (reason ${res.reason}) — ` +
+  "der Server traegt den neueren Stand, der Client sagt das Gegenteil");
+ok(res.provider === "rtdb",
+  `Resultat meldet provider "${res.provider}" statt rtdb — die Diagnose zeigt auf den falschen Speicher`);
+ok(res.casProof && res.casProof.kind === "rtdb-ambiguous-verified",
+  `CAS-Beweis ${JSON.stringify(res.casProof && res.casProof.kind)} statt rtdb-ambiguous-verified`);
+ok(res.casProof && typeof res.casProof.attemptId === "string" && res.casProof.attemptId.length > 0,
+  "der Beweis traegt keine Versuchskennung — dann ist er eine Vermutung, kein Beweis");
+ok(res.casProof && res.casProof.attemptId === u.wrapper().attemptId,
+  "die Kennung im Beweis ist nicht die, die serverseitig steht");
+ok(res.mergedRemote === true, "canonicalWrite hat den verifizierten Ausgang nicht als Erfolg durchgereicht");
+
+// Der zurueckgemeldete Stand ist der SERVERSTAND, nicht der lokal gebaute.
+ok(res.data && res.data._deleteLog?.note?.[NOTE_WEG] === GRABSTEIN_TS,
+  "das Resultat traegt nicht den zurueckgelesenen Serverstand");
+
+// KEIN Anbieterwechsel. Der Riegel wurde gar nicht erst gebraucht.
 ok(u.z.netGet === 0, `Netlify-GET ${u.z.netGet} statt 0 — es wurde nachtraeglich ein ETag geholt`);
 ok(u.z.netPut === 0,
   `Netlify-NETZWERK-PUT ${u.z.netPut} statt 0 — DER RIEGEL IST OFFEN: ein unbedingter Kern-Write ` +
   "auf einen soeben committeten Stand ist wieder moeglich (F-25-Verlustklasse)");
 ok(u.ifMatch() === "__nie_aufgerufen__", "es ging doch ein Netlify-PUT hinaus");
 
-// Der gesunde RTDB-Read nullt den ETag — deshalb kann der Failover nicht.
+// Genau ein Versuch: verifiziert heisst fertig, nicht wiederholen.
+ok(u.z.rtdbTxn === 1, "es lief eine zweite Transaktion, obwohl der Commit verifiziert war");
+
+// Der gesunde RTDB-Read nullt den ETag — die Ursachenkette des Befunds bleibt
+// gemessen, auch wenn sie jetzt nicht mehr zum Schaden fuehrt.
 ok(u.APP.state.storage.etag === null,
   `storage.etag ist ${JSON.stringify(u.APP.state.storage.etag)} statt null — ` +
-  "der gesunde RTDB-Lesevorgang nullt ihn nicht mehr; die Ursachenkette des Befunds hat sich verschoben");
+  "der gesunde RTDB-Lesevorgang nullt ihn nicht mehr; die Ursachenkette hat sich verschoben");
 
-// Das Clientresultat: fail-closed, aber mit dem FALSCHEN Anbieter und der
-// falschen Ursache. Der RTDB-Fehler wird in remotePutByKey von 'last'
-// ueberschrieben und ueberlebt nur in der Konsole.
-ok(res.ok === false, "der Schreibvorgang meldete Erfolg, obwohl der Ausgang unbekannt war");
-ok(res.reason === "missing_if_match",
-  `Clientresultat "${res.reason}" statt missing_if_match`);
-ok(res.provider === "netlify",
-  `Clientresultat meldet provider "${res.provider}" — erwartet netlify (der RTDB-Fehler geht verloren)`);
-ok(!res.casProof, "es wurde ein CAS-Beweis gemeldet, obwohl nichts bedingt geschrieben wurde");
-
-// Genau ein Versuch: der Grund ist kein Konflikt, also keine Wiederholung.
-ok(res.attempts === undefined && u.z.rtdbTxn === 1,
-  "es lief eine zweite Transaktion — ein ambiguer Ausgang darf nicht blind wiederholt werden");
-
-// Die drei Live-Meldungen, in dieser Reihenfolge.
-ok(/rtdb temporarily paused/.test(u.meldungen[0] || ""),
-  `erste Meldung: ${JSON.stringify(u.meldungen[0])} — erwartet die rtdb-Pause`);
-ok(/disconnect/.test(u.meldungen[0] || ""), "die Pause nennt den Verbindungsabbruch nicht");
-ok(/ohne If-Match abgewiesen/.test(u.meldungen[1] || ""),
-  `zweite Meldung: ${JSON.stringify(u.meldungen[1])} — erwartet die Riegel-Meldung`);
-
-// Das Backoff-Fenster: 'disconnect' trifft keinen Netz-Regex, also die
-// Zaehlregel — rund fuenf Sekunden, in denen der Kern-Write deterministisch
-// scheitert. Kein Zufall, ein Fenster.
+// ═══ 2. DIE DREI AUSGAENGE, EINZELN ═════════════════════════════
+// (a) Fehler gemeldet, NICHTS geschrieben. Das ist ein gewoehnlicher
+// Fehlschlag — Wiederholung erlaubt, und der zweite Versuch kommt durch.
 {
-  const bis = u._cloudHealth.rtdb.backoffUntil || 0;
-  const ms = bis - Date.now();
-  ok(ms > 3000 && ms <= 5000, `rtdb-Backoff ${ms} ms — erwartet rund 5000 (5000 * failCount)`);
+  const v = umgebung({ commitAngewendet: false });
+  const r = await v.api.canonicalWrite(NACH_DEM_LOESCHEN);
+  ok(v.z.rueckLesen === 1, `(a) Rueckleseweg ${v.z.rueckLesen}x statt 1x`);
+  ok(v.z.rtdbTxn === 2,
+    `(a) ${v.z.rtdbTxn} Transaktionen statt 2 — ein gesichert NICHT geschriebener Versuch muss ` +
+    "wiederholt werden duerfen");
+  ok(r.ok === true, `(a) der Wiederholungsversuch scheitert (${r.reason})`);
+  ok(r.casProof && r.casProof.kind === "rtdb-transaction",
+    "(a) der Wiederholungsversuch liefert keinen regulaeren Transaktionsbeweis");
+  ok(v.z.netPut === 0, `(a) Netlify-PUT ${v.z.netPut} statt 0 — es wurde doch durchgefallen`);
 }
 
-// ═══ 2. F-26 — DIE NOCH NICHT GEBAUTE INVARIANTE (TODO/SKIP) ════════════
-// Read-after-ambiguous-error: nach einem Schreibvorgang mit unbekanntem
-// Ausgang muss der Client den Kernknoten LESEN und den Ausgang feststellen,
-// statt zum naechsten Anbieter durchzufallen.
-todo(res.ok === true,
-  "F-26: ein serverseitig erfolgter Commit wird dem Aufrufer weiterhin als Fehlschlag gemeldet " +
-  "(Read-after-ambiguous-error fehlt) — der Server traegt den neueren Stand, der Client sagt das Gegenteil");
-todo(res.ambiguous === true || res.reason === "ambiguous_unverified",
-  "F-26: der unbekannte Ausgang wird nicht als solcher gekennzeichnet — 'nicht geschrieben' und " +
-  "'Ausgang unbekannt' sind im Resultat immer noch dasselbe");
-todo(u.z.netGet > 0 || (res.casProof && /ambiguous/.test(res.casProof.kind || "")),
-  "F-26: es findet keine Verifikation des RTDB-Ausgangs statt — weder ein Lesevorgang noch ein Beweis");
-todo(res.provider === "rtdb",
-  "F-26: der Ausloeser (rtdb) geht im Resultat verloren, gemeldet wird der Folgeanbieter (netlify) — " +
-  "die Diagnose zeigt auf den falschen Speicher");
-
-// Es gibt heute keine Read-after-error-Verifikation im Quelltext. Die einzige
-// Read-back-Pruefung haengt am ERFOLGSzweig des manuellen Transferpfads
-// (if (okResults.length > 0)) und ist damit in genau diesem Fall unzustaendig.
+// (b) Fehler gemeldet, EIN FREMDER Versuch steht im Knoten. Auch das ist
+// entscheidbar: unsere Kennung fehlt, also kam unser Versuch nicht durch.
 {
-  const rb = index.indexOf("const readBack = await fetchRemoteCandidates(");
-  const davor = rb > 0 ? index.slice(Math.max(0, rb - 400), rb) : "";
-  ok(rb > 0 && /okResults\.length > 0/.test(davor),
-    "die bekannte Read-back-Pruefung sitzt nicht mehr am Erfolgszweig — die Lagebeschreibung von F-26 stimmt nicht mehr");
-  todo(false,
-    "F-26: die einzige Read-back-Verifikation laeuft nur nach ERFOLG und nur im manuellen Transferpfad; " +
-    "der automatische Speicherweg hat keine");
+  const v = umgebung({ commitAngewendet: false, fremdeKennung: "w_anderesGeraet" });
+  const r = await v.api.canonicalWrite(NACH_DEM_LOESCHEN);
+  ok(v.z.rueckLesen === 1, `(b) Rueckleseweg ${v.z.rueckLesen}x statt 1x`);
+  ok(v.z.rtdbTxn === 2, `(b) ${v.z.rtdbTxn} Transaktionen statt 2`);
+  ok(r.ok === true, `(b) der Wiederholungsversuch scheitert (${r.reason})`);
+}
+
+// (c) Fehler gemeldet, RUECKLESEN SCHEITERT AUCH. Jetzt ist der Ausgang
+// wirklich unbekannt — und dann wird NICHT geschrieben: kein Anbieterwechsel,
+// keine blinde Wiederholung, aber eine ehrliche Kennzeichnung.
+{
+  const v = umgebung({ rueckleseFehler: true });
+  const r = await v.api.canonicalWrite(NACH_DEM_LOESCHEN);
+  ok(v.z.rueckLesen === 1, `(c) Rueckleseweg ${v.z.rueckLesen}x statt 1x`);
+  ok(r.ok === false, "(c) unbekannter Ausgang wurde als Erfolg gemeldet");
+  ok(r.ambiguous === true,
+    "(c) der unbekannte Ausgang ist nicht als solcher gekennzeichnet — 'nicht geschrieben' und " +
+    "'Ausgang unbekannt' waeren im Resultat wieder dasselbe");
+  ok(r.reason === "ambiguous_unverified", `(c) reason "${r.reason}" statt ambiguous_unverified`);
+  ok(r.provider === "rtdb", `(c) provider "${r.provider}" statt rtdb — der Ausloeser geht verloren`);
+  ok(!r.casProof, "(c) es wurde ein CAS-Beweis gemeldet, obwohl nichts bewiesen ist");
+  ok(v.z.netGet === 0 && v.z.netPut === 0,
+    `(c) Anbieterwechsel trotz unbekanntem Ausgang (GET ${v.z.netGet}, PUT ${v.z.netPut}) — ` +
+    "der Koerper waere gegen den VOR-Transaktions-Stand gemergt (F-25-Verlustklasse)");
+  ok(v.z.rtdbTxn === 1,
+    `(c) ${v.z.rtdbTxn} Transaktionen — bei unbekanntem Ausgang darf NICHT blind wiederholt werden`);
+}
+
+// (d) Und der Nutzer bekommt bei unbekanntem Ausgang nicht "Lokal gespeichert"
+// zu lesen. Das ist die falsche Richtung: er sichert von Hand nach, waehrend
+// sein Stand moeglicherweise schon oben liegt.
+{
+  const ds = index.indexOf("\n  const result = await remotePut(payload);");
+  const koerper = ds > 0 ? index.slice(ds, index.indexOf("\n  updateSyncChip();", ds)) : "";
+  ok(ds > 0, "der Ergebniszweig von doSave wurde nicht gefunden");
+  const ambigZweig = koerper.indexOf("result.ambiguous");
+  const offlineZweig = koerper.indexOf('APP.state.storage.message = "Lokal gespeichert"');
+  ok(ambigZweig > 0, "doSave kennt den unbekannten Ausgang nicht — er faellt in den offline-Zweig");
+  ok(ambigZweig < offlineZweig,
+    "der offline-Zweig kommt vor der Ambiguitaetspruefung — dann faengt er sie ab");
+  ok(/Serverstand unklar/.test(koerper), "die Statusmeldung fuer den unbekannten Ausgang fehlt");
 }
 
 // P1.2 grenzt daran an, ist aber NICHT Teil von F-26: eine Warteschlange fuer
@@ -319,15 +383,13 @@ ok(!/_writeQueue|schreibWarteschlange|pendingWrites/.test(quelle),
   ok(v.z.rtdbTxn === 0, "einheitlicher RTDB-Ausfall: es lief trotzdem eine RTDB-Transaktion");
 }
 
-// ═══ 4. KAUSALITAETSALTERNATIVE — offen, bewusst nicht angetastet ════════
+// ═══ 4. DIE VERSUCHSKENNUNG UND DIE RUECKZUGSFRIST ══════════════
 // deleteEntity() und das anschliessende NoteFlow-save() rufen BEIDE den
-// Scheduler. Der konkrete Livelauf kann deshalb nicht belegen, ob der
-// fehlergemeldete Versuch SELBST committete oder ob ein spaeterer
-// Scheduler-Durchlauf den Stand schrieb und der erste tatsaechlich nichts tat.
-// Beide Verlaeufe erzeugen dieselbe Beobachtung (Grabstein remote da, Client
-// meldet Fehler). Unterscheidbar waeren sie nur mit einer Write-Attempt-Id, die
-// den Schreibvorgang bis in den gespeicherten Wrapper markiert.
-// Die Schedulerlogik wird in diesem Auftrag NICHT geaendert.
+// Scheduler. Ohne Versuchskennung waren zwei Verlaeufe ununterscheidbar: der
+// fehlergemeldete Versuch committete selbst — oder ein spaeterer
+// Scheduler-Durchlauf schrieb den Stand und der erste tat nichts. Beide
+// erzeugen dieselbe Beobachtung. Die Kennung entscheidet es.
+// Die Schedulerlogik selbst ist unveraendert.
 {
   const de = index.indexOf("\nfunction deleteEntity(");
   const deKoerper = index.slice(de, index.indexOf("\n}\n", de));
@@ -338,18 +400,63 @@ ok(!/_writeQueue|schreibWarteschlange|pendingWrites/.test(quelle),
   ok(/const save = \(\) => \{ try \{ window\.scheduleSave/.test(index),
     "das NoteFlow-save() geht nicht mehr ueber window.scheduleSave — die Doppelanstoss-Lage hat sich geaendert");
 
-  // Der gespeicherte Wrapper traegt savedAt/savedBy/updatedAt — savedBy ist die
-  // GERAETE-Kennung, keine Kennung DIESES Schreibversuchs. Damit laesst sich
-  // ein Commit keinem Versuch zuordnen.
-  ok(/savedBy: myDevice/.test(quelle),
-    "der Wrapper traegt savedBy nicht mehr aus der Geraetekennung — die Zuordnungsluecke hat sich geaendert");
-  ok(!/attemptId|writeAttempt|versuchsId/i.test(quelle),
-    "es gibt bereits eine Write-Attempt-Id im Schreibpfad — dann ist die Kausalitaetsfrage entscheidbar " +
-    "und dieser Abschnitt veraltet");
-  todo(false,
-    "F-26: ohne Write-Attempt-Id im gespeicherten Wrapper laesst sich nicht entscheiden, ob der " +
-    "fehlergemeldete Versuch selbst committete oder ein spaeterer Scheduler-Durchlauf");
+  // Der gespeicherte Wrapper traegt jetzt BEIDES: savedBy (welches Geraet) und
+  // attemptId (welcher Versuch). Ohne das zweite ist F-26 nicht entscheidbar.
+  ok(/savedBy: myDevice/.test(quelle), "der Wrapper traegt savedBy nicht mehr aus der Geraetekennung");
+  ok(/attemptId: versuchsId/.test(quelle),
+    "der gespeicherte Wrapper traegt keine Versuchskennung — dann ist der Ausgang nicht entscheidbar");
+
+  // Die Kennung muss pro VERSUCH neu sein, nicht pro Geraet — sonst
+  // unterscheidet sie genau das nicht, wofuer es sie gibt.
+  {
+    const v = umgebung({ commitAngewendet: false });
+    // Erster Versuch scheitert (nichts geschrieben), zweiter committet.
+    // Die Kennung im Knoten stammt damit vom ZWEITEN Versuch.
+    const vorher = v.wrapper().attemptId;
+    await v.api.canonicalWrite(NACH_DEM_LOESCHEN);
+    ok(v.wrapper().attemptId !== vorher,
+      "die Versuchskennung im Knoten hat sich nicht geaendert — sie ist nicht versuchsgebunden");
+    ok(/^w_/.test(v.wrapper().attemptId || ""),
+      `Versuchskennung ${JSON.stringify(v.wrapper().attemptId)} — erwartet das Praefix w_`);
+  }
+
+  // Und der Fehler traegt die Kennung bis in den catch. Ohne das koennte der
+  // Rueckleseweg gar nicht vergleichen: die Variable aus dem
+  // Transaktionsblock ist dort nicht mehr sichtbar.
+  ok(/__versuchsId: versuchsId/.test(quelle),
+    "die Versuchskennung reist nicht am Fehler mit — der catch kann nicht vergleichen");
+  ok(/__ambiguous: true/.test(quelle),
+    "der Transaktionsfehler wird nicht als unklarer Ausgang markiert");
 }
+
+// DIE RUECKZUGSFRIST — die zweite Haelfte von F-26.
+// canonicalWrite liest mit force:true und kommt an einer laufenden
+// Rueckzugsfrist vorbei; der Schreibvorgang derselben Runde lief ohne und
+// blieb haengen. Ergebnis: gelesen ja, geschrieben nein, gemeldet "offline" —
+// obwohl der Anbieter nachweislich in derselben Sekunde geantwortet hat.
+{
+  const v = umgebung({ transaktion: "ok", backoffBis: Date.now() + 5000 });
+  const r = await v.api.canonicalWrite(NACH_DEM_LOESCHEN);
+  ok(v.z.rtdbGet === 1, `Rueckzugsfrist: RTDB-GET ${v.z.rtdbGet} statt 1 — der Lesevorgang kommt nicht durch`);
+  ok(v.z.rtdbTxn === 1,
+    `Rueckzugsfrist: RTDB-Transaktion ${v.z.rtdbTxn} statt 1 — der Schreibvorgang bleibt an einer Frist ` +
+    "haengen, an der der Lesevorgang derselben Runde soeben vorbeikam");
+  ok(r.ok === true, `Rueckzugsfrist: der Schreibvorgang scheitert (${r.reason})`);
+  ok(v.z.netPut === 0, `Rueckzugsfrist: Netlify-PUT ${v.z.netPut} statt 0 — es wurde durchgefallen`);
+}
+
+// Ein NETZfehler bleibt gesperrt — ignoreBackoff hebt genau eine Sperre auf,
+// nicht die Spam-Bremse.
+ok(/if \(force \|\| options\.ignoreBackoff\) return true;/.test(quelle),
+  "ignoreBackoff wirkt nicht mehr innerhalb des Rueckzugsfenster-Zweigs");
+{
+  const netzZweig = quelle.slice(quelle.indexOf("const isNetworkError"), quelle.indexOf("ignoreBackoff) return true"));
+  ok(/if \(isNetworkError\) return false;/.test(netzZweig),
+    "die Netzfehlersperre steht nicht mehr VOR der ignoreBackoff-Ausnahme — Netzfehler waeren nicht mehr gebremst");
+}
+// Und ignoreBackoff darf den Abgleichsschalter nicht aushebeln.
+ok(/if \(!force && !isAutoSyncEnabled\(\)\) return false;/.test(quelle),
+  "die isAutoSyncEnabled-Sperre haengt nicht mehr allein an force — ignoreBackoff koennte sie mit aufreissen");
 
 // ── Bericht ─────────────────────────────────────────────────────────────
 if (luecken.length) {
@@ -357,6 +464,9 @@ if (luecken.length) {
   luecken.forEach((l) => console.error("   - " + l));
   process.exit(1);
 }
-console.log(`f26 ambiguous rtdb commit gap: ok (${checks - offen.length} Pruefungen)`);
-console.log(`   TODO/SKIP — F-26 offen, ${offen.length} Invariante(n) noch rot (Suite bleibt bewusst gruen):`);
-offen.forEach((t) => console.log("   ~ " + t));
+console.log(`f26 ambiguous rtdb commit: ok (${checks} Pruefungen)`);
+if (offen.length) {
+  console.error("   TODO-Reste vorhanden, obwohl F-26 gebaut ist — bitte aufraeumen:");
+  offen.forEach((t) => console.error("   ~ " + t));
+  process.exit(1);
+}
