@@ -914,6 +914,8 @@
     /* 44 px ist das Mindestmass fuer einen Daumen; 48 gibt etwas Luft. */
     .qs-sheet-actions button{min-height:48px;min-width:112px;padding:0 18px;font-size:15px;font-weight:700;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer;font-family:inherit}
     .qs-sheet-actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+    /* Loeschen sieht anders aus als Speichern — sonst ist jede Frage gleich. */
+    .qs-sheet-actions button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
     .qs-sheet-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     @media(max-width:900px){
       /* Noch weiter hoch und Knoepfe auf volle Breite: auf 390 px ist ein
@@ -9307,7 +9309,14 @@ window._createFileFolder = function(kind, entityId) {
       const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
       if (!entity) { toast('warn', 'Eintrag nicht mehr vorhanden'); return; }
       if (!entity.fileFolders) entity.fileFolders = [];
-      entity.fileFolders.push({ id: 'ff_' + Date.now().toString(36), name: name, createdAt: new Date().toISOString() });
+      // Ein reiner Zeitstempel reicht als Id NICHT: zwei Ordner in derselben
+      // Millisekunde bekaemen dieselbe, und find(f => f.id === folderId) traefe
+      // danach den falschen — beim Umbenennen wie beim Loeschen. Ein
+      // Zufallsanteil wie bei den Dateien und bei _kvAddFolder schliesst das aus.
+      entity.fileFolders.push({
+        id: 'ff_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+        name: name, createdAt: new Date().toISOString(),
+      });
       entity.updatedAt = new Date().toISOString();
       scheduleSave();   // genau einmal, der bestehende Trichter
       render();
@@ -9453,6 +9462,78 @@ function openRenameSheet(opt) {
 }
 window.openRenameSheet = openRenameSheet;
 
+/*
+ * DASSELBE FUER JA/NEIN-FRAGEN.
+ *
+ * confirm() hat denselben Fehler wie prompt(): es haelt den Renderer an, ist
+ * auf dem Telefon nicht gestaltbar und blockiert jede Fernsteuerung. Und es
+ * kann nicht warnen — eine Loeschung sieht aus wie jede andere Frage.
+ *
+ * Eigener Behaelter (#qsConfirmSheet), eigene Id: so koennen Umbenennen- und
+ * Bestaetigungsblatt einander nicht verdraengen, und ein Ja darf ein zweites
+ * Blatt oeffnen (Ordner anlegen aus "keine Ordner vorhanden").
+ *
+ * Der Fokus liegt auf ABBRECHEN, nicht auf dem Bestaetigen. Wer eine
+ * Loeschfrage wegtippt oder Enter drueckt, soll nichts verlieren.
+ */
+function openConfirmSheet(opt) {
+  const alt = document.getElementById('qsConfirmSheet');
+  if (alt) alt.remove();
+  const rueckgabeZiel = document.activeElement;
+
+  const back = document.createElement('div');
+  back.className = 'qs-sheet-back';
+  back.id = 'qsConfirmSheet';
+  const zeilen = String(opt.text || '').split('\n')
+    .map(function (z) { return '<p class="qs-sheet-hint">' + esc(z) + '</p>'; }).join('');
+  back.innerHTML = `
+    <div class="qs-sheet" role="alertdialog" aria-modal="true"
+         aria-labelledby="qsConfirmTitle" aria-describedby="qsConfirmText">
+      <h3 id="qsConfirmTitle">${esc(opt.titel || 'Bestätigen')}</h3>
+      <div id="qsConfirmText">${zeilen}</div>
+      <div class="qs-sheet-actions">
+        <button type="button" id="qsConfirmCancel">${esc(opt.abbrechenLabel || 'Abbrechen')}</button>
+        <button type="button" id="qsConfirmOk" class="${opt.gefahr ? 'danger' : 'primary'}">${esc(opt.jaLabel || 'Ja')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  back.classList.add('open');
+
+  const jaBtn = back.querySelector('#qsConfirmOk');
+  const neinBtn = back.querySelector('#qsConfirmCancel');
+
+  function schliessen() {
+    document.removeEventListener('keydown', beiTaste, true);
+    back.remove();
+    try { if (rueckgabeZiel && rueckgabeZiel.focus) rueckgabeZiel.focus(); } catch (e) {}
+  }
+  function nein() { schliessen(); }
+  function ja() { schliessen(); opt.onBestaetigen(); }
+  function beiTaste(e) {
+    if (!document.getElementById('qsConfirmSheet')) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); nein(); return; }
+    if (e.key === 'Tab') {
+      // Zwei Elemente: vor und zurueck sind derselbe Wechsel. Bewusst so
+      // geschrieben statt mit einer Richtungsrechnung, die hier nichts
+      // unterscheiden koennte.
+      const kette = [neinBtn, jaBtn];
+      const i = kette.indexOf(document.activeElement);
+      if (i === -1) return;
+      e.preventDefault();
+      try { kette[i === 0 ? 1 : 0].focus(); } catch (err) {}
+    }
+  }
+  jaBtn.onclick = ja;
+  neinBtn.onclick = nein;
+  back.onclick = (e) => { if (e.target === back) nein(); };
+  document.addEventListener('keydown', beiTaste, true);
+
+  // Fokus auf Abbrechen: die sichere Seite.
+  try { neinBtn.focus(); } catch (e) {}
+  return { schliessen, jaBtn, neinBtn };
+}
+window.openConfirmSheet = openConfirmSheet;
+
 window._renameFile = function(kind, entityId, idx) {
   const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
@@ -9503,17 +9584,32 @@ window._deleteFileFolder = function(kind, entityId, folderId) {
   const folder = (entity.fileFolders || []).find(f => f.id === folderId);
   if (!folder) return;
   const folderFiles = (entity.files || []).filter(f => f.folderId === folderId);
-  const msg = folderFiles.length > 0
-    ? `Ordner "${folder.name}" mit ${folderFiles.length} Datei(en) löschen?\nDateien werden in "Unsortiert" verschoben.`
-    : `Ordner "${folder.name}" wirklich löschen?`;
-  if (!confirm(msg)) return;
-  // Move files to unsorted
-  (entity.files || []).forEach(f => { if (f.folderId === folderId) delete f.folderId; });
-  entity.fileFolders = (entity.fileFolders || []).filter(f => f.id !== folderId);
-  entity.updatedAt = new Date().toISOString();
-  scheduleSave();
-  render();
-  toast('ok', '📁', 'Ordner gelöscht');
+  const text = folderFiles.length > 0
+    ? `Der Ordner "${folder.name}" enthält ${folderFiles.length} Datei(en).\nDie Dateien bleiben erhalten und wandern nach "Unsortiert".`
+    : `Der Ordner "${folder.name}" ist leer.`;
+
+  openConfirmSheet({
+    titel: 'Ordner löschen?',
+    text: text,
+    jaLabel: 'Löschen',
+    gefahr: true,
+    onBestaetigen: function () {
+      // Ab hier gilt nur der AKTUELLE Stand — waehrend das Blatt offen war,
+      // kann ein Abgleich APP.state.data ersetzt haben.
+      const ent = APP.state.data.entities[kindMap[kind]]?.[entityId];
+      if (!ent) { toast('warn', 'Eintrag nicht mehr vorhanden'); return; }
+      if (!(ent.fileFolders || []).some(function (f) { return f && f.id === folderId; })) {
+        toast('warn', 'Ordner nicht mehr vorhanden');
+        return;
+      }
+      (ent.files || []).forEach(f => { if (f.folderId === folderId) delete f.folderId; });
+      ent.fileFolders = (ent.fileFolders || []).filter(f => f.id !== folderId);
+      ent.updatedAt = new Date().toISOString();
+      scheduleSave();   // genau einmal, der bestehende Trichter
+      render();
+      toast('ok', '📁', 'Ordner gelöscht');
+    },
+  });
 };
 
 window._moveFileToFolder = function(kind, entityId, fileIdx, folderId) {
@@ -40287,17 +40383,27 @@ window._kvDeleteNote = function(pid, area, noteId) {
 
 // ════════ FOLDERS & FILE MANAGEMENT ════════
 window._kvAddFolder = function(pid, area, parentId) {
-  const name = prompt('Ordnername:');
-  if (!name?.trim()) return;
+  // Erst pruefen, dann fragen: ein Dialog fuer ein nicht vorhandenes Projekt
+  // ist eine Sackgasse.
+  if (!APP.state.data.entities.projects[pid]) return;
+  openRenameSheet({
+    titel: 'Neuer Ordner',
+    hinweis: 'Der Ordner wird in diesem Bereich angelegt.',
+    feldLabel: 'Ordnername',
+    wert: '',
+    leerMeldung: 'Der Ordnername darf nicht leer sein.',
+    onSpeichern: function (name) {
   const p = APP.state.data.entities.projects[pid]; if (!p) return;
   p._custom[area].folders.push({
     id: 'f_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
-    name: name.trim(), parentId: parentId || null,
+    name: name, parentId: parentId || null,
     createdAt: new Date().toISOString()
   });
   _kvSave(pid);
   toast('ok','📁','Ordner erstellt');
   render();
+    },
+  });
 };
 
 window._kvAddSubFolder = function(pid, area, parentId) {
@@ -40316,7 +40422,13 @@ window._kvRenameFolder = function(pid, area, folderId) {
 };
 
 window._kvDeleteFolder = function(pid, area, folderId) {
-  if (!confirm('Ordner löschen? Dateien werden auf "Ohne Ordner" verschoben.')) return;
+  if (!APP.state.data.entities.projects[pid]) return;
+  openConfirmSheet({
+    titel: 'Ordner löschen?',
+    text: 'Die Dateien bleiben erhalten und wandern nach "Ohne Ordner".\nUnterordner werden mit gelöscht.',
+    jaLabel: 'Löschen',
+    gefahr: true,
+    onBestaetigen: function () {
   const p = APP.state.data.entities.projects[pid]; if (!p) return;
   const a = p._custom[area];
   // Files aus dem Ordner ent-zuordnen
@@ -40327,6 +40439,8 @@ window._kvDeleteFolder = function(pid, area, folderId) {
   a.folders = a.folders.filter(f => f.id !== folderId && f.parentId !== folderId);
   _kvSave(pid);
   render();
+    },
+  });
 };
 
 window._kvToggleFolder = function(pid, area, folderId) {
@@ -40367,9 +40481,12 @@ window._kvAssignFolderFile = function(pid, area, fileId) {
   const a = p._custom[area];
   const folders = a.folders || [];
   if (folders.length === 0) {
-    if (confirm('Keine Ordner vorhanden. Jetzt einen erstellen?')) {
-      window._kvAddFolder(pid, area);
-    }
+    openConfirmSheet({
+      titel: 'Keine Ordner vorhanden',
+      text: 'In diesem Bereich gibt es noch keinen Ordner. Jetzt einen anlegen?',
+      jaLabel: 'Ordner anlegen',
+      onBestaetigen: function () { window._kvAddFolder(pid, area); },
+    });
     return;
   }
   const current = a.fileTags[fileId]?.folderId || '';
@@ -45306,7 +45423,22 @@ function editProgramFolder(folderId) {
 }
 
 function deleteProgramFolder(folderId) {
-  if (!confirm("Ordner und alle enthaltenen Links löschen?")) return;
+  const anzahl = Object.values(APP.state.data.entities.programLinks || {})
+    .filter(function (l) { return l && l.folderId === folderId; }).length;
+  openConfirmSheet({
+    titel: 'Ordner löschen?',
+    text: anzahl > 0
+      ? 'Die ' + anzahl + ' enthaltenen Link(s) werden MIT gelöscht.'
+      : 'Der Ordner ist leer.',
+    jaLabel: 'Löschen',
+    gefahr: true,
+    onBestaetigen: function () { deleteProgramFolderJetzt(folderId); },
+  });
+}
+
+// Der eigentliche Vorgang, getrennt vom Fragen — so bleibt der Rumpf unveraendert
+// und die Bestaetigung ist nur eine Klammer davor.
+function deleteProgramFolderJetzt(folderId) {
   
   // Links im Ordner löschen
   const links = Object.values(APP.state.data.entities.programLinks || {});

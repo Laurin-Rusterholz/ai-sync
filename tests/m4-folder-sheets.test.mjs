@@ -34,14 +34,15 @@ const klick = (k, was) => {
 };
 
 // ═══ Die echten Funktionen gegen DOM-Attrappen ══════════════════════════
-function welt({ ordner = null, entitaetDa = true } = {}) {
+function welt({ ordner = null, entitaetDa = true, zeitEingefroren = false } = {}) {
   const protokoll = { scheduleSave: 0, render: 0, toasts: [], fokus: [], nativ: [] };
   const knoten = {};
   const mach = (id) => ({
     id, value: "", textContent: "", hidden: false, onclick: null,
     focus() { protokoll.fokus.push(this.id); welt._aktiv = this; }, select() {},
   });
-  for (const id of ["qsRenameInput", "qsRenameErr", "qsRenameCancel", "qsRenameSave"]) knoten[id] = mach(id);
+  for (const id of ["qsRenameInput", "qsRenameErr", "qsRenameCancel", "qsRenameSave",
+    "qsConfirmOk", "qsConfirmCancel"]) knoten[id] = mach(id);
   const ausloeser = mach("ausloeser");
 
   let hoerer = [], blatt = null;
@@ -62,7 +63,7 @@ function welt({ ordner = null, entitaetDa = true } = {}) {
       return el;
     },
     body: { appendChild(el) { blatt = el; } },
-    getElementById(id) { return id === "qsRenameSheet" ? blatt : (knoten[id] || null); },
+    getElementById(id) { return (id === "qsRenameSheet" || id === "qsConfirmSheet") ? blatt : (knoten[id] || null); },
     addEventListener(t, fn) { if (t === "keydown") hoerer.push(fn); },
     removeEventListener(t, fn) { hoerer = hoerer.filter((h) => h !== fn); },
   };
@@ -89,12 +90,21 @@ function welt({ ordner = null, entitaetDa = true } = {}) {
     const e = index.indexOf("\n}\nwindow.openRenameSheet", a);
     return e > a ? index.slice(a, e + 3) : "";
   })();
-  const quelle = blattQuelle +
+  const bestaetigenQuelle = (() => {
+    const a = index.indexOf("function openConfirmSheet(opt) {");
+    if (a < 0) return "";
+    const e = index.indexOf("\n}\nwindow.openConfirmSheet", a);
+    return e > a ? index.slice(a, e + 3) : "";
+  })();
+  const quelle = blattQuelle + "\n" + bestaetigenQuelle +
+    "\n" + schnitt("window._deleteFileFolder = function(kind, entityId, folderId) {") +
     "\n" + schnitt("window._createFileFolder = function(kind, entityId) {") +
     "\n" + schnitt("window._renameFileFolder = function(kind, entityId, folderId) {") +
     "\nreturn { openRenameSheet: typeof openRenameSheet === 'function' ? openRenameSheet : null," +
+    " openConfirmSheet: typeof openConfirmSheet === 'function' ? openConfirmSheet : null," +
     " _createFileFolder: window._createFileFolder || null," +
-    " _renameFileFolder: window._renameFileFolder || null };";
+    " _renameFileFolder: window._renameFileFolder || null," +
+    " _deleteFileFolder: window._deleteFileFolder || null };";
 
   const nativ = (name) => (nachricht, vorgabe) => {
     protokoll.nativ.push(name);
@@ -110,7 +120,14 @@ function welt({ ordner = null, entitaetDa = true } = {}) {
     (a, b, c) => protokoll.toasts.push([a, b, c].join("|")),
     () => { protokoll.scheduleSave++; }, () => { protokoll.render++; },
     {}, nativ("prompt"), nativ("alert"), nativ("confirm"),
-    Date, String, Array, Object, { log() {}, warn() {}, error() {} });
+    // Eingefrorene Zeit: nur so laesst sich pruefen, ob zwei Ordner in DERSELBEN
+    // Millisekunde verschiedene Ids bekommen. Mit der echten Uhr ginge der Test
+    // zufaellig durch.
+    zeitEingefroren
+      ? Object.assign(function () { return new Date(1787738501400); },
+          { now: () => 1787738501400 })
+      : Date,
+    String, Array, Object, { log() {}, warn() {}, error() {} });
 
   const taste = (key) => hoerer.forEach((h) => h({
     key, target: knoten.qsRenameInput, preventDefault() {}, stopPropagation() {},
@@ -288,10 +305,132 @@ for (const [was, tu] of [
   }
 }
 
+// ═══ 2b. ORDNER-ID: kollisionsfest ═════════════════════════════════════
+// 'ff_' + Date.now().toString(36) allein reicht nicht: zwei Ordner in DERSELBEN
+// Millisekunde bekaemen dieselbe Id, und find(f => f.id === folderId) traefe
+// danach den falschen — beim Umbenennen wie beim Loeschen.
+{
+  const w = welt({ zeitEingefroren: true });
+  if (w.api._createFileFolder) {
+    w.api._createFileFolder("task", "b2d07c59");
+    w.knoten.qsRenameInput.value = "Erster";
+    w.taste("Enter");
+    w.api._createFileFolder("task", "b2d07c59");
+    w.knoten.qsRenameInput.value = "Zweiter";
+    w.taste("Enter");
+    const ids = w.entity.fileFolders.map((f) => f.id);
+    ok(w.entity.fileFolders.length === 3, `es liegen ${w.entity.fileFolders.length} Ordner statt 3`);
+    ok(new Set(ids).size === ids.length,
+      `zwei Ordner in derselben Millisekunde teilen sich eine Id: ${ids.join(", ")}`);
+  }
+}
+
+// ═══ 2c. BESTAETIGUNGS-BLATT ═══════════════════════════════════════════
+{
+  const w = welt();
+  ok(!!w.api.openConfirmSheet, "openConfirmSheet existiert nicht — confirm() bleibt der einzige Weg");
+  if (w.api.openConfirmSheet) {
+    let gerufen = 0;
+    w.api.openConfirmSheet({ titel: "Test", text: "Zeile eins\nZeile zwei",
+      jaLabel: "Löschen", gefahr: true, onBestaetigen: () => { gerufen++; } });
+    ok(w.blattOffen(), "das Bestaetigungsblatt wurde nicht geoeffnet");
+    ok(w.protokoll.nativ.length === 0, `es lief ein nativer Dialog (${w.protokoll.nativ.join(",")})`);
+    // Der Fokus liegt auf ABBRECHEN — wer eine Loeschfrage wegtippt, verliert nichts.
+    ok(w.protokoll.fokus[0] === "qsConfirmCancel",
+      `beim Oeffnen bekam "${w.protokoll.fokus[0]}" den Fokus statt Abbrechen`);
+    ok(gerufen === 0, "die Aktion lief schon beim blossen Oeffnen");
+
+    klick(w.knoten.qsConfirmOk, "Ja-Knopf");
+    ok(gerufen === 1, `nach Ja lief die Aktion ${gerufen}x`);
+    ok(!w.blattOffen(), "das Blatt blieb nach Ja offen");
+    ok(w.protokoll.fokus[w.protokoll.fokus.length - 1] === "ausloeser", "der Fokus kam nicht zurueck");
+    ok(w.hoererZahl() === 0, "der Tastatur-Hoerer blieb angemeldet");
+  }
+}
+for (const [was, tu] of [
+  ["Abbrechen", (w) => klick(w.knoten.qsConfirmCancel, "Abbrechen")],
+  ["Escape", (w) => w.taste("Escape")],
+]) {
+  const w = welt();
+  if (!w.api.openConfirmSheet) break;
+  let gerufen = 0;
+  w.api.openConfirmSheet({ titel: "Test", text: "x", onBestaetigen: () => { gerufen++; } });
+  tu(w);
+  ok(gerufen === 0, `${was}: die Aktion lief trotzdem`);
+  ok(!w.blattOffen(), `${was}: das Blatt blieb offen`);
+  ok(w.hoererZahl() === 0, `${was}: der Tastatur-Hoerer blieb angemeldet`);
+}
+
+// ═══ 2d. ORDNER LOESCHEN (Anhangbereich) ═══════════════════════════════
+{
+  const w = welt();
+  ok(!!w.api._deleteFileFolder, "_deleteFileFolder wurde nicht geladen");
+  if (w.api._deleteFileFolder) {
+    w.api._deleteFileFolder("task", "b2d07c59", "ff_alt");
+    ok(w.protokoll.nativ.length === 0,
+      `DER BEFUND: das Loeschen rief einen nativen Dialog (${w.protokoll.nativ.join(",")})`);
+    ok(w.blattOffen(), "das Bestaetigungsblatt wurde nicht geoeffnet");
+    ok(w.entity.fileFolders.length === 1, "der Ordner verschwand schon vor der Bestaetigung");
+    ok(w.protokoll.scheduleSave === 0, "es wurde vor der Bestaetigung geschrieben");
+
+    klick(w.knoten.qsConfirmOk, "Ja-Knopf");
+    ok(w.entity.fileFolders.length === 0, "der Ordner wurde nicht geloescht");
+    // Die Dateien bleiben — sie wandern nur nach "Unsortiert".
+    ok(w.entity.files.length === 1, `es sind ${w.entity.files.length} Dateien uebrig statt 1`);
+    ok(w.entity.files[0].folderId === undefined,
+      `die Datei traegt weiterhin folderId "${w.entity.files[0].folderId}"`);
+    ok(w.entity.files[0].id === "f_1", "die Datei-Id hat sich geaendert");
+    ok(w.protokoll.scheduleSave === 1, `scheduleSave lief ${w.protokoll.scheduleSave}x statt genau einmal`);
+  }
+}
+// Abbrechen loescht nichts.
+{
+  const w = welt();
+  if (w.api._deleteFileFolder) {
+    w.api._deleteFileFolder("task", "b2d07c59", "ff_alt");
+    klick(w.knoten.qsConfirmCancel, "Abbrechen");
+    ok(w.entity.fileFolders.length === 1, "Abbrechen loeschte den Ordner trotzdem");
+    ok(w.entity.files[0].folderId === "ff_alt", "Abbrechen loeste die Dateizuordnung");
+    ok(w.protokoll.scheduleSave === 0, "Abbrechen schrieb");
+  }
+}
+// Waehrend des Blatts verschwunden: sauber aufgeben.
+{
+  const w = welt();
+  if (w.api._deleteFileFolder) {
+    w.api._deleteFileFolder("task", "b2d07c59", "ff_alt");
+    w.entity.fileFolders.length = 0;
+    klick(w.knoten.qsConfirmOk, "Ja-Knopf");
+    ok(w.protokoll.scheduleSave === 0, "fuer einen verschwundenen Ordner wurde geschrieben");
+    ok(w.entity.files[0].folderId === "ff_alt", "die Dateizuordnung wurde trotzdem geloest");
+  }
+}
+// Ein unbekannter Ordner oeffnet gar kein Blatt.
+{
+  const w = welt();
+  if (w.api._deleteFileFolder) {
+    w.api._deleteFileFolder("task", "b2d07c59", "ff_gibtsnicht");
+    ok(!w.blattOffen(), "fuer einen unbekannten Ordner wurde eine Loeschfrage gestellt");
+  }
+}
+
 // ═══ 3. QUELLTEXT ══════════════════════════════════════════════════════
-for (const [name, kopf] of [
-  ["_createFileFolder", "window._createFileFolder = function(kind, entityId) {"],
-  ["_renameFileFolder", "window._renameFileFolder = function(kind, entityId, folderId) {"],
+// Jede Stelle bekommt IHREN Vertrag: welches Blatt sie oeffnet und ueber
+// welchen Speicherweg sie schreibt. Die kv-Wege benutzen _kvSave(pid), nicht
+// scheduleSave() — eine Sammelregel haette hier das Falsche behauptet.
+for (const { name, kopf, blatt, speichern } of [
+  { name: "_createFileFolder", kopf: "window._createFileFolder = function(kind, entityId) {",
+    blatt: "openRenameSheet", speichern: "scheduleSave()" },
+  { name: "_renameFileFolder", kopf: "window._renameFileFolder = function(kind, entityId, folderId) {",
+    blatt: "openRenameSheet", speichern: "scheduleSave()" },
+  { name: "_deleteFileFolder", kopf: "window._deleteFileFolder = function(kind, entityId, folderId) {",
+    blatt: "openConfirmSheet", speichern: "scheduleSave()" },
+  { name: "_kvAddFolder", kopf: "window._kvAddFolder = function(pid, area, parentId) {",
+    blatt: "openRenameSheet", speichern: "_kvSave(pid)" },
+  { name: "_kvDeleteFolder", kopf: "window._kvDeleteFolder = function(pid, area, folderId) {",
+    blatt: "openConfirmSheet", speichern: "_kvSave(pid)" },
+  { name: "_kvAssignFolderFile", kopf: "window._kvAssignFolderFile = function(pid, area, fileId) {",
+    blatt: "openConfirmSheet", speichern: null },
 ]) {
   const a = index.indexOf(kopf);
   ok(a > 0, `${name} wurde nicht gefunden`);
@@ -300,11 +439,45 @@ for (const [name, kopf] of [
   for (const nativ of ["prompt(", "alert(", "confirm("]) {
     ok(!koerper.includes(nativ), `${name} enthaelt weiterhin ${nativ}`);
   }
-  ok(/openRenameSheet\(/.test(koerper), `${name} oeffnet nicht das app-eigene Blatt`);
-  const n = (koerper.match(/scheduleSave\(\)/g) || []).length;
-  ok(n === 1, `${name} ruft scheduleSave ${n}x — erwartet genau einmal`);
+  ok(koerper.includes(blatt + "("), `${name} oeffnet nicht ${blatt}`);
+  if (speichern) {
+    const n = koerper.split(speichern).length - 1;
+    ok(n === 1, `${name} ruft ${speichern} ${n}x — erwartet genau einmal`);
+  }
   ok(!/canonicalWrite|remotePutByKey|doSave\(/.test(koerper),
     `${name} umgeht den bestehenden Speicherweg`);
+}
+
+{
+  const a = index.indexOf("function deleteProgramFolder(folderId) {");
+  ok(a > 0, "deleteProgramFolder wurde nicht gefunden");
+  if (a > 0) {
+    const koerper = index.slice(a, index.indexOf("\n}\n", a)).replace(/^\s*\/\/.*$/gm, "");
+    for (const nativ of ["prompt(", "alert(", "confirm("]) {
+      ok(!koerper.includes(nativ), `deleteProgramFolder enthaelt weiterhin ${nativ}`);
+    }
+    ok(/openConfirmSheet\(/.test(koerper), "deleteProgramFolder fragt nicht ueber das Blatt");
+  }
+}
+// Es darf im gesamten Ordner-Umfeld kein nativer Dialog mehr uebrig sein.
+for (const rest of ["prompt('Ordnername:')", `confirm('Ordner löschen?`,
+  "Keine Ordner vorhanden. Jetzt einen erstellen?", 'confirm("Ordner und alle enthaltenen Links']) {
+  ok(!index.includes(rest), `im Quelltext steht noch: ${rest}`);
+}
+// Das Bestaetigungsblatt selbst ist barrierearm und benutzt keinen nativen Weg.
+{
+  const a = index.indexOf("function openConfirmSheet(opt) {");
+  ok(a > 0, "openConfirmSheet wurde nicht gefunden");
+  if (a > 0) {
+    const b = index.slice(a, index.indexOf("\n}\nwindow.openConfirmSheet", a));
+    ok(/role="alertdialog"/.test(b), "das Bestaetigungsblatt ist kein alertdialog");
+    ok(/aria-modal="true"/.test(b), "aria-modal fehlt");
+    ok(/aria-describedby="qsConfirmText"/.test(b), "der Text ist dem Dialog nicht zugeordnet");
+    ok(/neinBtn\.focus\(\)/.test(b), "der Fokus liegt nicht auf Abbrechen");
+    for (const nativ of ["prompt(", "alert(", "confirm("]) {
+      ok(!b.replace(/^\s*\/\/.*$/gm, "").includes(nativ), `openConfirmSheet enthaelt ${nativ}`);
+    }
+  }
 }
 
 // ═══ 4. Fremde Bereiche unberuehrt ════════════════════════════════════
