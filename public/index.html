@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet+folder-sheets+firebase-rearm · 2026-08-27" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+rename-sheet+folder-sheets+firebase-rearm+sidebar-close · 2026-08-27" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -568,6 +568,18 @@
     
     .sidebar-toggle-btn{position:fixed;top:60px;left:232px;width:28px;height:28px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;z-index:500;transition:left 0.3s ease,transform 0.2s ease}
     .sidebar-toggle-btn:hover{background:var(--accent);color:var(--text)}
+    /* ── SEITENLEISTE SCHLIESSEN ───────────────────────────────────────────
+       BEFUND (Telefon): die Seitenleiste liegt bei <=900 px als fixiertes
+       Overlay (z-index 500) ueber dem Inhalt, und der EINZIGE Weg zurueck war
+       ein 28x28-Knopf bei left:248px — genau auf der Lupe der Topbar. Kein
+       Backdrop, kein sichtbarer Schliesser in der Leiste selbst. Wer sie
+       geoeffnet hatte, kam nicht mehr heraus.
+       Jetzt drei offensichtliche Wege: Tipp daneben, ✕ in der Kopfzeile, und
+       der bisherige Umschalter — auf Telefongroesse gebracht.
+       Auf breiten Schirmen aendert sich nichts: dort verdeckt die Leiste
+       nichts, Backdrop und ✕ bleiben ohne Box. */
+    .sidebar-scrim{display:none}
+    .sidebar-close-btn{display:none}
     .app.sidebar-collapsed .sidebar-toggle-btn{transform:rotate(180deg)}
     
     .sidebar-nav{flex:1;overflow-y:auto;padding:8px 10px;scrollbar-width:none;-ms-overflow-style:none}
@@ -768,7 +780,17 @@
       .sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;z-index:500;box-shadow:var(--shadow-lg)}
       .app:not(.sidebar-collapsed) .sidebar{transform:translateX(0)}
       .app.sidebar-collapsed .sidebar{transform:translateX(-100%)}
-      .sidebar-toggle-btn{left:8px;top:60px}
+      /* Der Scrim liegt UNTER der Leiste (500) und ueber dem Inhalt, damit ein
+         Tipp daneben schliesst statt im Dashboard zu landen. Der Umschalter
+         steht spaeter im Markup mit demselben z-index und bleibt oben. */
+      .app:not(.sidebar-collapsed) .sidebar-scrim{display:block;position:fixed;inset:0;z-index:490;background:rgba(0,0,0,.45)}
+      .sidebar-close-btn{display:inline-flex;align-items:center;justify-content:center;
+        width:44px;height:44px;border:none;background:transparent;color:var(--text);
+        font-size:18px;border-radius:10px;cursor:pointer;flex-shrink:0}
+      .sidebar-close-btn:hover{background:var(--panel2)}
+      /* 28 px trifft kein Daumen. Die Leiste ist 240 px breit — bei left:248
+         steht der Knopf frei daneben. */
+      .sidebar-toggle-btn{left:8px;top:60px;width:44px;height:44px;font-size:16px}
       .app:not(.sidebar-collapsed) .sidebar-toggle-btn{left:248px}
       /* Grid-Items haben min-width:auto. Ohne diese Null kann ein einziges
          nicht schrumpfbares Kind die Spur wieder aufblasen — dann traegt der
@@ -3715,7 +3737,13 @@ body.mode-tablet .app.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}
 body.mode-tablet .sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;z-index:500;box-shadow:var(--shadow-lg)}
 body.mode-tablet .app:not(.sidebar-collapsed) .sidebar{transform:translateX(0)}
 body.mode-tablet .app.sidebar-collapsed .sidebar{transform:translateX(-100%)}
-body.mode-tablet .sidebar-toggle-btn{left:8px;top:60px}
+/* Dasselbe im Tablet-Modus — er traegt die Schmal-Darstellung auch im Band
+   901..1099, wo der 900er-Media-Block nicht mehr greift. */
+body.mode-tablet .app:not(.sidebar-collapsed) .sidebar-scrim{display:block;position:fixed;inset:0;z-index:490;background:rgba(0,0,0,.45)}
+body.mode-tablet .sidebar-close-btn{display:inline-flex;align-items:center;justify-content:center;
+  width:44px;height:44px;border:none;background:transparent;color:var(--text);
+  font-size:18px;border-radius:10px;cursor:pointer;flex-shrink:0}
+body.mode-tablet .sidebar-toggle-btn{left:8px;top:60px;width:44px;height:44px;font-size:16px}
 body.mode-tablet .app:not(.sidebar-collapsed) .sidebar-toggle-btn{left:248px}
 body.mode-tablet .topbar{grid-column:1;min-width:0}
 body.mode-tablet .main{grid-column:1;padding:12px;min-width:0}
@@ -5322,6 +5350,8 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
         </div>
       </div>
       <button class="sidebar-pin-btn" id="sidebarPinBtn" title="Sidebar anpinnen">📌</button>
+      <button class="sidebar-close-btn" id="sidebarCloseBtn" title="Seitenleiste schliessen"
+              aria-label="Seitenleiste schliessen" aria-controls="sidebar">✕</button>
     </div>
     <nav class="sidebar-nav" id="sidebarNav">
       <!-- Wird dynamisch gefüllt -->
@@ -5358,9 +5388,15 @@ html.embed-mode .main{grid-column:1 !important;grid-row:1 !important;padding:12p
       </button>
     </div>
   </aside>
-  
+
+  <!-- Backdrop hinter der Seitenleiste: nur auf schmalen Geraeten sichtbar.
+       Ein Tipp daneben schliesst — die uebliche Geste, wenn ein Panel den
+       Inhalt verdeckt. -->
+  <div class="sidebar-scrim" id="sidebarScrim" aria-hidden="true"></div>
+
   <!-- Sidebar Toggle Button -->
-  <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="Sidebar ein-/ausblenden">◀</button>
+  <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="Sidebar ein-/ausblenden"
+          aria-controls="sidebar" aria-expanded="true">◀</button>
 
   <!-- Topbar - Clean Apple Design -->
   <header class="topbar" id="topbar">
@@ -56360,18 +56396,58 @@ function init() {
   }
   
   // Sidebar toggle button - mit Document-Level-Delegation als Fallback
+  /*
+   * EIN WEG, DEN ZUSTAND DER SEITENLEISTE ZU SETZEN.
+   *
+   * BEFUND (Telefon): bei <=900 px liegt die Leiste als fixiertes Overlay ueber
+   * dem Inhalt, und der einzige Weg zurueck war ein 28x28-Knopf bei left:248px
+   * — genau auf der Lupe der Topbar. Kein Backdrop, kein sichtbarer Schliesser
+   * in der Leiste. Wer sie geoeffnet hatte, kam nicht mehr heraus.
+   *
+   * Der Umschalter, das neue ✕ und der Backdrop gehen jetzt durch DIESELBE
+   * Funktion — so koennen Beschriftung, aria-expanded und der gemerkte Zustand
+   * nicht auseinanderlaufen. Sie fasst nur die Seitenleiste an: keine
+   * Navigation, kein Datenmodell, kein Abgleich.
+   */
+  function setSidebarCollapsed(zu) {
+    const app = $("#app");
+    if (!app) return;
+    app.classList.toggle("sidebar-collapsed", !!zu);
+    const btn = $("#sidebarToggleBtn");
+    if (btn) {
+      btn.textContent = zu ? "▶" : "◀";
+      btn.setAttribute("aria-expanded", zu ? "false" : "true");
+    }
+    const scrim = $("#sidebarScrim");
+    if (scrim) scrim.setAttribute("aria-hidden", zu ? "true" : "false");
+    try { localStorage.setItem("sidebar-collapsed", zu ? "1" : "0"); } catch(e){}
+  }
+  window.setSidebarCollapsed = setSidebarCollapsed;
+
+  const sidebarScrim = $("#sidebarScrim");
+  if (sidebarScrim) {
+    // Ein Tipp daneben schliesst — und NUR das. Kein close, keine Navigation.
+    sidebarScrim.onclick = function(evt) {
+      evt.stopPropagation();
+      setSidebarCollapsed(true);
+    };
+  }
+  const sidebarCloseBtn = $("#sidebarCloseBtn");
+  if (sidebarCloseBtn) {
+    sidebarCloseBtn.onclick = function(evt) {
+      evt.stopPropagation();
+      evt.preventDefault();
+      setSidebarCollapsed(true);
+    };
+  }
+
   const sidebarToggleBtn = $("#sidebarToggleBtn");
   if (sidebarToggleBtn) {
     sidebarToggleBtn.onclick = function(evt) {
       evt.stopPropagation();
       evt.preventDefault();
       const app = $("#app");
-      if (app) {
-        app.classList.toggle("sidebar-collapsed");
-        const isCollapsed = app.classList.contains("sidebar-collapsed");
-        this.textContent = isCollapsed ? "▶" : "◀";
-        try { localStorage.setItem("sidebar-collapsed", isCollapsed ? "1" : "0"); } catch(e){}
-      }
+      if (app) setSidebarCollapsed(!app.classList.contains("sidebar-collapsed"));
     };
     // Sidebar-Zustand aus localStorage wiederherstellen
     try {

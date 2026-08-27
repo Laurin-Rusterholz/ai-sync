@@ -23,7 +23,7 @@
     "test:browser": "bash -n scripts/deploy-neko-hostinger.sh && node tests/quantus-browser-module.test.mjs && node tests/quantus-browser-layout-runtime.test.mjs && bash tests/neko-smoke-failure-modes.test.sh",
     "check:career-model": "node --check public/quantus-bundle-loader.js && node --check public/career-model-core.js && node --check public/career-model.js && node --check public/quantus-device-sync.js && node --check public/quantus-universal-ui.js && npm test",
     "test": "npm run test:index-parser && npm run test:english-c1-entry && npm run test:career-model-entry && npm run test:career-model && npm run test:universal-sync && npm run test:firebase-sdk && npm run test:firebase-oauth && npm run test:gmail && npm run test:flowertech-projects && npm run test:persistence && npm run test:journal-editor && npm run test:browser && npm run test:layout && npm run test:navigation && npm run test:sticky-export && npm run test:flowertech-portal && npm run test:flowertech-workflow",
-    "test:layout": "node tests/m1-responsive-shell.test.mjs && node tests/m3-rename-sheet.test.mjs && node tests/m4-folder-sheets.test.mjs && node tests/m5-firebase-rearm.test.mjs",
+    "test:layout": "node tests/m1-responsive-shell.test.mjs && node tests/m3-rename-sheet.test.mjs && node tests/m4-folder-sheets.test.mjs && node tests/m5-firebase-rearm.test.mjs && node tests/m6-sidebar-close.test.mjs",
     "test:navigation": "node tests/quantus-navigation-search.test.mjs && node tests/quantus-app-search-runtime.test.mjs",
     "test:sticky-export": "node tests/sticky-board-export.test.mjs && node tests/sticky-board-export-runtime.test.mjs",
     "test:flowertech-portal": "node tests/flowertech-portal-auth.test.mjs && node tests/flowertech-projekt-cockpit.test.mjs",
