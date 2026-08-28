@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify · 2026-08-27" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones · 2026-08-28" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -62800,7 +62800,10 @@ case "quick-idea-save": {
 
     case "delete-account": {
       const id = el.dataset.id;
-      delete APP.state.data.entities.accounts[id];
+      // Ueber deleteEntity(), NICHT per delete: nur dieser Weg schreibt einen
+      // Grabstein (logDeletion). Ohne ihn holt der Merge des naechsten
+      // Geraets den Eintrag zurueck — dieselbe Verlustklasse wie F-25.
+      if (!deleteEntity("account", id)) return;
       toast("ok", "Deleted", "Account deleted");
       closeModal();
       scheduleSave();
@@ -62859,7 +62862,10 @@ case "quick-idea-save": {
 
     case "delete-subscription": {
       const id = el.dataset.id;
-      delete APP.state.data.entities.subscriptions[id];
+      // Ueber deleteEntity(), NICHT per delete: nur dieser Weg schreibt einen
+      // Grabstein (logDeletion). Ohne ihn holt der Merge des naechsten
+      // Geraets den Eintrag zurueck — dieselbe Verlustklasse wie F-25.
+      if (!deleteEntity("subscription", id)) return;
       toast("ok", "Deleted", "Subscription deleted");
       closeModal();
       scheduleSave();
@@ -62915,7 +62921,10 @@ case "quick-idea-save": {
 
     case "delete-transaction": {
       const id = el.dataset.id;
-      delete APP.state.data.entities.transactions[id];
+      // Ueber deleteEntity(), NICHT per delete: nur dieser Weg schreibt einen
+      // Grabstein (logDeletion). Ohne ihn holt der Merge des naechsten
+      // Geraets den Eintrag zurueck — dieselbe Verlustklasse wie F-25.
+      if (!deleteEntity("transaction", id)) return;
       toast("ok", "Deleted", "Transaction deleted");
       closeModal();
       scheduleSave();
@@ -62925,18 +62934,32 @@ case "quick-idea-save": {
 
     // ==================== BUDGET TAB & FILTER HANDLERS ====================
     case "budget-tab": {
+      /*
+       * BEFUND: ein Klick auf einen Budget-Reiter rief scheduleSave() — also
+       * Pull, Merge und Push des GESAMTEN Datenstandes, nur um zu vermerken,
+       * welcher Reiter offen ist. Fuenf Reiter durchzuklicken loeste fuenf
+       * vollstaendige Wolkenschreibvorgaenge aus.
+       *
+       * Der Reiter ist reiner Ansichtszustand. Er gehoert lokal gesichert,
+       * damit er ein Neuladen ueberlebt — aber er ist keinen Push wert, und
+       * synchronisiert gehoert er schon gar nicht: sonst springt das Handy
+       * auf den Reiter, den man am Tablet zuletzt geoeffnet hat.
+       *
+       * Die Zuweisung an APP.state.data._budgetTab war zusaetzlich
+       * ueberfluessig: buildLocalAppSnapshot() setzt das Feld ohnehin aus
+       * APP.state.ui.budgetTab.
+       */
       APP.state.ui = APP.state.ui || {};
       APP.state.ui.budgetTab = el.dataset.tab;
-      APP.state.data._budgetTab = el.dataset.tab;
-      scheduleSave();
+      scheduleLocalSave();
       render();
       break;
     }
     case "budget-tx-filter": {
+      // Gleiche Ueberlegung wie beim Reiter: ein Filter ist Ansichtszustand.
       APP.state.ui = APP.state.ui || {};
       APP.state.ui.budgetTxFilter = el.dataset.filter;
-      APP.state.data._budgetTxFilter = el.dataset.filter;
-      scheduleSave();
+      scheduleLocalSave();
       render();
       break;
     }
@@ -62997,7 +63020,10 @@ case "quick-idea-save": {
     }
     case "delete-creditcard": {
       const id = el.dataset.id;
-      delete APP.state.data.entities.creditCards[id];
+      // Ueber deleteEntity(), NICHT per delete: nur dieser Weg schreibt einen
+      // Grabstein (logDeletion). Ohne ihn holt der Merge des naechsten
+      // Geraets den Eintrag zurueck — dieselbe Verlustklasse wie F-25.
+      if (!deleteEntity("creditCard", id)) return;
       toast("ok", "Deleted", "Credit card deleted");
       closeModal(); scheduleSave(); render();
       break;
@@ -63123,7 +63149,10 @@ case "quick-idea-save": {
     }
     case "delete-financial-goal": {
       const id = el.dataset.id;
-      delete APP.state.data.entities.financialGoals[id];
+      // Ueber deleteEntity(), NICHT per delete: nur dieser Weg schreibt einen
+      // Grabstein (logDeletion). Ohne ihn holt der Merge des naechsten
+      // Geraets den Eintrag zurueck — dieselbe Verlustklasse wie F-25.
+      if (!deleteEntity("financialGoal", id)) return;
       toast("ok", "Deleted", "Savings goal deleted");
       closeModal(); scheduleSave(); render();
       break;
