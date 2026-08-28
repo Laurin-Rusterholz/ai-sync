@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones · 2026-08-28" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete · 2026-08-28" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -49658,7 +49658,7 @@ function checkMonthlyAiReport() {
 
 function processFutureTransactions() {
   const today = todayYmd();
-  const transactions = Object.values(APP.state.data.entities.transactions || {});
+  const transactions = budgetWerte(APP.state.data.entities.transactions);
   let changed = false;
   for (const t of transactions) {
     if (t.isFuture && t.scheduledDate && t.scheduledDate <= today) {
@@ -49687,7 +49687,7 @@ function processFutureTransactions() {
 
 function processCreditCardSettlements() {
   const today = new Date(todayYmd());
-  const creditCards = Object.values(APP.state.data.entities.creditCards || {});
+  const creditCards = budgetWerte(APP.state.data.entities.creditCards);
   let changed = false;
   for (const cc of creditCards) {
     if (!cc.isActive || !cc.linkedAccountId || cc.usedBalance <= 0) continue;
@@ -49724,7 +49724,7 @@ function processCreditCardSettlements() {
 
 function processPurchaseProposalReminders() {
   const today = todayYmd();
-  const proposals = Object.values(APP.state.data.entities.purchaseProposals || {});
+  const proposals = budgetWerte(APP.state.data.entities.purchaseProposals);
   let changed = false;
   for (const pp of proposals) {
     if (pp.status === "pending" && pp.pendingUntil && pp.pendingUntil <= today && !pp.reminderShown) {
@@ -49751,11 +49751,11 @@ async function runBudgetAiAnalysis() {
   if (!resultDiv) return;
   resultDiv.innerHTML = `<div style="display:flex;align-items:center;gap:8px"><span class="spinner"></span> Analyse läuft...</div>`;
 
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
-  const transactions = Object.values(APP.state.data.entities.transactions || {}).filter(t => !t.isFuture);
-  const creditCards = Object.values(APP.state.data.entities.creditCards || {});
-  const subscriptions = Object.values(APP.state.data.entities.subscriptions || {}).filter(s => s.isActive);
-  const goals = Object.values(APP.state.data.entities.financialGoals || {}).filter(g => !g.isCompleted);
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
+  const transactions = budgetWerte(APP.state.data.entities.transactions).filter(t => !t.isFuture);
+  const creditCards = budgetWerte(APP.state.data.entities.creditCards);
+  const subscriptions = budgetWerte(APP.state.data.entities.subscriptions).filter(s => s.isActive);
+  const goals = budgetWerte(APP.state.data.entities.financialGoals).filter(g => !g.isCompleted);
 
   const today = todayYmd();
   const currentMonth = today.slice(0, 7);
@@ -49806,9 +49806,9 @@ async function aiAssessPurchaseProposal(proposalId) {
   const pp = getEntity("purchaseProposal", proposalId);
   if (!pp) return;
 
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
   const totalBalance = accounts.reduce((s, a) => s + (a.balance || 0), 0);
-  const subscriptions = Object.values(APP.state.data.entities.subscriptions || {}).filter(s => s.isActive);
+  const subscriptions = budgetWerte(APP.state.data.entities.subscriptions).filter(s => s.isActive);
   const monthlyExpenses = subscriptions.filter(s => s.type === "expense").reduce((s, sub) => s + (sub.amount || 0), 0);
 
   try {
@@ -51202,13 +51202,27 @@ function editInvoiceDueDate(invoiceId) {
   toast("ok", "Aktualisiert");
 }
 
+/*
+ * BEFUND: Das Handy loescht weich — es setzt deleted:true, statt den Eintrag zu
+ * entfernen. Genau so ueberlebt eine Loeschung den Merge. Die Budget-Ansichten
+ * lasen die Sammlungen aber roh mit Object.values(): eine am Handy geloeschte
+ * Buchung stand hier weiter in der Liste UND in jeder Summe.
+ *
+ * budgetWerte() ist der eine Lesezugang fuer alle Budget-Sammlungen. Es
+ * filtert dieselben zwei Flaggen wie die Handy-App (alive): deleted und
+ * archived.
+ */
+function budgetWerte(map) {
+  return Object.values(map || {}).filter(x => x && !x.deleted && !x.archived);
+}
+
 function viewBudget() {
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
-  const allTransactions = Object.values(APP.state.data.entities.transactions || {});
-  const subscriptions = Object.values(APP.state.data.entities.subscriptions || {});
-  const creditCards = Object.values(APP.state.data.entities.creditCards || {});
-  const financialGoals = Object.values(APP.state.data.entities.financialGoals || {});
-  const purchaseProposals = Object.values(APP.state.data.entities.purchaseProposals || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
+  const allTransactions = budgetWerte(APP.state.data.entities.transactions);
+  const subscriptions = budgetWerte(APP.state.data.entities.subscriptions);
+  const creditCards = budgetWerte(APP.state.data.entities.creditCards);
+  const financialGoals = budgetWerte(APP.state.data.entities.financialGoals);
+  const purchaseProposals = budgetWerte(APP.state.data.entities.purchaseProposals);
   const today = todayYmd();
   
   // Process future transactions + credit card settlements
@@ -54248,7 +54262,7 @@ function openCreateAccountModal() {
 }
 
 function openCreateSubscriptionModal() {
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
   const accountOptions = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
   
   openModal("New Subscription", `
@@ -54277,9 +54291,9 @@ function openCreateSubscriptionModal() {
 }
 
 function openCreateTransactionModal() {
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
   const projects = Object.values(APP.state.data.entities.projects || {});
-  const creditCards = Object.values(APP.state.data.entities.creditCards || {}).filter(cc => cc.isActive);
+  const creditCards = budgetWerte(APP.state.data.entities.creditCards).filter(cc => cc.isActive);
   const accountOptions = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
   const projectOptions = projects.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join("");
   const ccOptions = creditCards.map(cc => `<option value="${cc.id}">${esc(cc.name)} (${formatMoney(cc.limit - cc.usedBalance)} frei)</option>`).join("");
@@ -54318,7 +54332,7 @@ function openCreateTransactionModal() {
 
 // ==================== CREDIT CARD MODALS ====================
 function openCreateCreditCardModal() {
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
   const accountOptions = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
   openModal("Neue Kreditkarte", `
     <div class="form">
@@ -54353,7 +54367,7 @@ function openCCBookingModal(ccId) {
 
 // ==================== FINANCIAL GOAL MODALS ====================
 function openCreateGoalModal() {
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
   const accountOptions = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
   openModal("New Savings Goal", `
     <div class="form">
@@ -54378,7 +54392,7 @@ function openContributeToGoalModal(goalId) {
   const goal = getEntity("financialGoal", goalId);
   if (!goal) return;
   const remaining = Math.max(0, goal.targetAmount - goal.currentAmount);
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
   const accountOptions = accounts.map(a => `<option value="${a.id}" ${goal.linkedAccountId === a.id ? "selected" : ""}>${esc(a.name)} (${formatMoney(a.balance)} CHF)</option>`).join("");
   openModal(`Einzahlung: ${esc(goal.name)}`, `
     <div class="form">
@@ -54421,7 +54435,7 @@ function openCreateProposalModal() {
 
 // ==================== FUTURE TRANSACTION MODAL ====================
 function openCreateFutureTxModal() {
-  const accounts = Object.values(APP.state.data.entities.accounts || {});
+  const accounts = budgetWerte(APP.state.data.entities.accounts);
   const accountOptions = accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -54476,7 +54490,7 @@ function openCreateMessageModal() {
 
 // ==================== AUTO-PROCESSING FUNCTIONS ====================
 function processSubscriptions() {
-  const subscriptions = Object.values(APP.state.data.entities.subscriptions || {});
+  const subscriptions = budgetWerte(APP.state.data.entities.subscriptions);
   const today = nowIso().slice(0, 10);
   let changed = false;
   
@@ -62815,7 +62829,7 @@ case "quick-idea-save": {
       const id = el.dataset.id;
       const sub = getEntity("subscription", id);
       if (!sub) return;
-      const accounts = Object.values(APP.state.data.entities.accounts || {});
+      const accounts = budgetWerte(APP.state.data.entities.accounts);
       const accountOptions = accounts.map(a => `<option value="${a.id}" ${sub.accountId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
       openModal("Edit Subscription", `
         <div class="form">
@@ -62877,7 +62891,7 @@ case "quick-idea-save": {
       const id = el.dataset.id;
       const tx = getEntity("transaction", id);
       if (!tx) return;
-      const accounts = Object.values(APP.state.data.entities.accounts || {});
+      const accounts = budgetWerte(APP.state.data.entities.accounts);
       const accountOptions = accounts.map(a => `<option value="${a.id}" ${tx.accountId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
       const projects = Object.values(APP.state.data.entities.projects || {});
       const projectOptions = projects.map(p => `<option value="${p.id}" ${(tx.linkedProjects || [])[0] === p.id ? "selected" : ""}>${esc(p.title)}</option>`).join("");
@@ -62987,7 +63001,7 @@ case "quick-idea-save": {
       const id = el.dataset.id;
       const cc = getEntity("creditCard", id);
       if (!cc) return;
-      const accounts = Object.values(APP.state.data.entities.accounts || {});
+      const accounts = budgetWerte(APP.state.data.entities.accounts);
       const accountOptions = accounts.map(a => `<option value="${a.id}" ${cc.linkedAccountId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
       openModal("Kreditkarte bearbeiten", `
         <div class="form">
@@ -63110,7 +63124,7 @@ case "quick-idea-save": {
       const id = el.dataset.id;
       const g = getEntity("financialGoal", id);
       if (!g) return;
-      const accounts = Object.values(APP.state.data.entities.accounts || {});
+      const accounts = budgetWerte(APP.state.data.entities.accounts);
       const accountOptions = accounts.map(a => `<option value="${a.id}" ${g.linkedAccountId === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
       openModal("Edit Savings Goal", `
         <div class="form">

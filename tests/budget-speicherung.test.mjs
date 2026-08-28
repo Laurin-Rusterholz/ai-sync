@@ -137,6 +137,40 @@ ok(/'_budgetTab', '_budgetTxFilter'/.test(index),
 ok(/snapshot\._budgetTab = APP\.state\.ui\.budgetTab/.test(index),
   'der Reiter wird nicht mehr aus APP.state.ui in den Schnappschuss gesetzt');
 
+// ═══ 4. WEICH GELOESCHTES VERSCHWINDET AUCH HIER ═══════════════════════
+// Das Handy loescht weich (deleted:true) — so ueberlebt die Loeschung den
+// Merge. Die Budget-Ansichten lasen die Sammlungen aber roh: eine am Handy
+// geloeschte Buchung stand hier weiter in der Liste UND in jeder Summe.
+{
+  const SAMM = ['accounts', 'transactions', 'subscriptions', 'creditCards', 'financialGoals', 'purchaseProposals'];
+  SAMM.forEach((coll) => {
+    const roh = new RegExp('Object\\.values\\(APP\\.state\\.data\\.entities\\.' + coll + ' \\|\\| \\{\\}\\)');
+    ok(!roh.test(AKTIV),
+      `DER BEFUND: ${coll} wird wieder roh mit Object.values gelesen — am Handy geloeschte ` +
+      'Eintraege stehen dann wieder in Liste und Summen');
+  });
+  ok(/function budgetWerte\(map\)/.test(index), 'budgetWerte gibt es nicht mehr');
+
+  // Der Filter wird ECHT ausgefuehrt, nicht nur im Quelltext gesucht.
+  // TOLERANT: auf einem Stand ohne budgetWerte wuerde ein direkter Aufruf den
+  // Lauf mit einer ReferenceError beenden — rot aus dem falschen Grund.
+  const a = index.indexOf('\nfunction budgetWerte(map) {');
+  const fn = a > 0
+    ? new Function('Object', index.slice(a, index.indexOf('\n}\n', a) + 3) + '\nreturn budgetWerte;')(Object)
+    : () => { throw new Error('budgetWerte fehlt'); };
+  const rufe = (arg) => { try { return fn(arg) || []; } catch (e) { return null; } };
+  const raus = rufe({
+    t1: { id: 't1', amount: -10 },
+    t2: { id: 't2', amount: -20, deleted: true },
+    t3: { id: 't3', amount: -30, archived: true },
+    t4: null,
+  });
+  ok(raus && raus.length === 1 && raus[0].id === 't1',
+    `budgetWerte liefert ${JSON.stringify((raus || []).map(x => x && x.id))} — erwartet nur t1`);
+  ok((rufe(null) || []).length === 0, 'budgetWerte stolpert ueber eine fehlende Sammlung');
+  ok((rufe(undefined) || []).length === 0, 'budgetWerte stolpert ueber undefined');
+}
+
 if (luecken.length) {
   console.error(`BUDGET SPEICHERUNG — ${luecken.length} von ${checks} Pruefungen:`);
   luecken.forEach((l) => console.error('   - ' + l));
