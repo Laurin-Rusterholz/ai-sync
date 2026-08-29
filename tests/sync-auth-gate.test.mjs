@@ -230,8 +230,16 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
     "der geforderte Wortlaut fehlt");
   ok(/aria-live/.test(chip) && /aria-label/.test(chip),
     "aria-live oder aria-label fehlen");
-  ok(/href="#\/drive"/.test(chip),
-    "der Hinweis bietet keinen Weg zur Anmeldung ueber die vorhandene Route #/drive");
+  // Frueher stand hier href="#/drive". Genau das war der Fehler: der Streifen
+  // schickt einen NACH #/drive, und ein Link auf denselben Hash loest kein
+  // hashchange aus — auf der Drive-Ansicht tat der Knopf nichts. Der Weg zur
+  // Anmeldung ist geblieben, er fuehrt jetzt nur direkt dorthin statt in eine
+  // Ansicht, in der der Login in einem Iframe sitzt.
+  // Ausfuehrlich geprueft in tests/sync-notice-signin.test.mjs.
+  ok(/class="sn-link"/.test(chip),
+    "der Hinweis bietet keinen Weg zur Anmeldung");
+  ok(/quantusSignIn\(\)/.test(chip),
+    "der Anmeldeknopf meldet nicht an — er weist hoechstens den Weg");
 }
 
 // ── 6b. Kein Renderziel darf ins Leere zeigen ─────────────────────────────
@@ -273,8 +281,13 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
     querySelector(sel) {
       if (!/sn-text|sn-link/.test(this.innerHTML)) return null;
       if (sel === ".sn-text") return this._text || (this._text = { textContent: "" });
+      // Der Knopf traegt jetzt einen Klick-Hoerer (er meldet selbst an, statt
+      // auf #/drive zu verlinken — siehe sync-notice-signin.test.mjs). Ohne
+      // addEventListener wirft updateSyncChip, und weil die Funktion ihre
+      // Ausnahmen bewusst schluckt, bliebe der Streifen einfach verborgen.
       if (sel === ".sn-link") return /sn-link/.test(this.innerHTML)
-        ? (this._link || (this._link = { textContent: "" })) : null;
+        ? (this._link || (this._link = { textContent: "", disabled: false, hoerer: [],
+            addEventListener(t, f) { this.hoerer.push([t, f]); } })) : null;
       return null;
     },
   };
@@ -541,8 +554,10 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
     removeAttribute(k) { delete this.attrs[k]; },
     querySelector(sel) {
       if (sel === ".sn-text") return this._text || (this._text = { textContent: "" });
+      // wie oben: der Knopf bekommt einen Klick-Hoerer
       if (sel === ".sn-link") return /sn-link/.test(this.innerHTML)
-        ? (this._link || (this._link = { textContent: "" })) : null;
+        ? (this._link || (this._link = { textContent: "", disabled: false, hoerer: [],
+            addEventListener(t, f) { this.hoerer.push([t, f]); } })) : null;
       return null;
     },
   };
@@ -557,6 +572,8 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
   ok(el.attrs["aria-label"] === "Anmeldung erforderlich — Daten nicht synchronisiert",
     "aria-label fehlt am Ende der Kette");
   ok(el._link && el._link.textContent === "Anmelden", "der Anmeldeweg fehlt am Ende der Kette");
+  ok(el._link && el._link.hoerer.some(([t]) => t === "click"),
+    "am Anmeldeknopf haengt am Ende der Kette kein Klick-Hoerer — genau so war er vorher tot");
 }
 
 
@@ -583,7 +600,8 @@ function stickyHarness({ lang = "de" } = {}) {
     querySelector(sel) {
       if (sel === ".sn-text") return this._text || (this._text = { textContent: "" });
       if (sel === ".sn-link") return /sn-link/.test(this.innerHTML)
-        ? (this._link || (this._link = { textContent: "" })) : null;
+        ? (this._link || (this._link = { textContent: "", disabled: false, hoerer: [],
+            addEventListener(t, f) { this.hoerer.push([t, f]); } })) : null;   // Knopf mit Klick-Hoerer
       return null;
     },
   };

@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete · 2026-08-28" />
+  <meta name="quantus-build" content="app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
   <link rel="mask-icon" href="/favicon.svg" color="#86a895" />
@@ -1111,7 +1111,8 @@
     #syncNotice{position:fixed;top:0;left:0;right:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;gap:12px;padding:7px 14px;background:var(--panel);color:var(--text);border-bottom:2px solid #D96B5B;box-shadow:var(--shadow);font-size:12px;font-weight:700;letter-spacing:.01em;pointer-events:none}
     #syncNotice[hidden]{display:none}
     #syncNotice .sn-dot{width:8px;height:8px;border-radius:50%;background:#D96B5B;flex:none}
-    #syncNotice .sn-link{pointer-events:auto;color:#D96B5B;text-decoration:none;font-weight:800;border:1px solid #D96B5B;border-radius:999px;padding:2px 10px}
+    #syncNotice .sn-link{pointer-events:auto;color:#D96B5B;text-decoration:none;font-weight:800;border:1px solid #D96B5B;border-radius:999px;padding:2px 10px;background:transparent;font-family:inherit;font-size:inherit;line-height:inherit;cursor:pointer}
+    #syncNotice .sn-link[disabled]{opacity:.55;cursor:progress}
     #syncNotice .sn-link:hover{background:rgba(217,107,91,.14)}
     #syncNotice.sn-warn{border-bottom-color:var(--warn)}
     #syncNotice.sn-warn .sn-dot{background:var(--warn)}
@@ -5783,6 +5784,14 @@ function initFirebaseNow() {
     // damit RTDB-Regeln mit "auth != null" nachvollziehbar bleiben.
     try {
       if (firebase.auth) {
+        // Rueckkehr aus dem Redirect-Ausweg abschliessen. Ohne diesen Aufruf
+        // verschwindet ein Fehler von dort still — der Nutzer kaeme zurueck
+        // und stuende wieder vor demselben Hinweisstreifen, ohne Grund.
+        try {
+          firebase.auth().getRedirectResult().catch(function (e) {
+            if (e && e.code) console.warn('Anmeldung ueber Redirect fehlgeschlagen:', e.code);
+          });
+        } catch (e) {}
         firebase.auth().onAuthStateChanged(function (user) {
           if (user) console.log('🔑 Firebase angemeldet als', user.email || user.uid);
           else console.warn('🔒 Firebase nicht angemeldet — appStore ist unter der Regel "auth != null" weder les- noch schreibbar.');
@@ -14603,6 +14612,90 @@ async function doSave(silent = false) {
   return { ok: APP.state.storage.status === "saved", status: APP.state.storage.status };
 }
 
+// ── Anmelden aus dem Hinweisstreifen ────────────────────────────────────────
+// BEFUND: der Knopf im Streifen war ein <a href="#/drive">. Der Streifen
+// schickt einen aber genau DORTHIN — und ein Link auf den Hash, auf dem man
+// schon steht, loest kein hashchange aus. Im Browser nachgemessen: Hash
+// vorher #/drive, Hash nachher #/drive, nichts passiert. Der Knopf war
+// anklickbar (elementFromPoint trifft ihn, pointer-events:auto greift), er
+// hatte nur nichts zu tun.
+//
+// Und selbst von anderswo meldete er nicht an, sondern brachte einen nur in
+// die Drive-Ansicht, wo der eigentliche Login unten links in einem IFRAME
+// sitzt. Dort ist er am schlechtesten aufgehoben: drive.html vermerkt selbst,
+// dass der Redirect-Ausweg im Iframe an X-Frame-Options scheitert — ein
+// blockiertes Popup endet dort in einer Sackgasse
+// (auth/operation-not-supported-in-this-environment).
+//
+// Die Hauptapp laedt firebase-auth-compat ohnehin (initFirebaseNow) und laeuft
+// top-level. Also meldet der Streifen jetzt selbst an: Popup, und wenn das
+// blockiert ist, der Redirect — der hier, anders als im Iframe, erlaubt ist.
+// Die Firebase-Sitzung gilt pro Herkunft und entsperrt Drive gleich mit.
+// Die Fehlertexte sind bewusst dieselben wie in drive.html: derselbe Fehler
+// soll nicht an zwei Stellen verschieden heissen.
+function signInFehlerText(e) {
+  const code = String((e && e.code) || '');
+  const msg = String((e && e.message) || '');
+  if (code.indexOf('api-key') >= 0 || msg.indexOf('api-key') >= 0 || msg.indexOf('API key not valid') >= 0)
+    return 'API-Key lehnt Firebase Auth ab: In der Google-Cloud-Konsole (APIs & Dienste \u2192 Anmeldedaten \u2192 Browser-Key) die \u201eIdentity Toolkit API\u201c bei den API-Einschraenkungen erlauben — und in Firebase unter Authentication einmal \u201eGet started\u201c klicken.';
+  if (code === 'auth/operation-not-allowed')
+    return 'Google-Provider ist in Firebase nicht aktiviert (Authentication \u2192 Sign-in method \u2192 Google).';
+  if (code === 'auth/unauthorized-domain')
+    return 'Diese Domain fehlt in Firebase unter Authentication \u2192 Settings \u2192 Autorisierte Domains.';
+  if (code === 'auth/network-request-failed')
+    return 'Netzwerkfehler — Verbindung/Adblocker pruefen.';
+  return 'Fehler: ' + (code || msg || 'unbekannt');
+}
+
+var _signInLaeuft = false;
+async function quantusSignIn() {
+  if (_signInLaeuft) return { ok: false, reason: 'busy' };   // ein Popup genuegt
+  // Ohne SDK bleibt der alte Weg: in die Drive-Ansicht, dort von Hand. Auch
+  // hier gilt die Falle von oben — steht der Hash schon auf #/drive, feuert
+  // kein hashchange. Dann wird direkt neu gezeichnet.
+  if (!(window.firebase && firebase.auth)) {
+    const vorher = location.hash;
+    try { if (typeof navigate === 'function') navigate('drive'); else location.hash = '#/drive'; }
+    catch (e) { location.hash = '#/drive'; }
+    if (location.hash === vorher) { try { typeof render === 'function' && render(); } catch (e) {} }
+    return { ok: false, reason: 'no_sdk' };
+  }
+  _signInLaeuft = true;
+  try {
+    if (typeof initFirebaseNow === 'function') { try { initFirebaseNow(); } catch (e) {} }
+    const auth = firebase.auth();
+    const provider = new firebase.auth.GoogleAuthProvider();
+    let cred = null;
+    try {
+      cred = await auth.signInWithPopup(provider);
+    } catch (e) {
+      if (e && e.code === 'auth/popup-closed-by-user') return { ok: false, reason: 'cancelled' };
+      if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/cancelled-popup-request')) {
+        // Hier top-level und damit erlaubt — im Iframe waere genau das der
+        // Punkt, an dem drive.html aufgeben muss.
+        await auth.signInWithRedirect(provider);
+        return { ok: true, reason: 'redirect' };      // die Seite laedt neu
+      }
+      throw e;
+    }
+    const user = (cred && cred.user) || auth.currentUser;
+    // Der Streifen haengt am eigenen Flag, nicht an storage.status: beides
+    // muss jetzt nachgezogen werden, sonst steht der Hinweis weiter da.
+    try { if (typeof noteCoreAuthState === 'function') noteCoreAuthState(user); } catch (e) {}
+    try { if (typeof updateSyncChip === 'function') updateSyncChip(); } catch (e) {}
+    try { if (typeof resyncAfterAuth === 'function') resyncAfterAuth('sync_notice_signin'); } catch (e) {}
+    try { toast('ok', 'Angemeldet', (user && (user.email || user.displayName)) || 'Google'); } catch (e) {}
+    return { ok: true, user: user };
+  } catch (e) {
+    console.error('Anmeldung fehlgeschlagen:', e);
+    try { toast('error', 'Anmeldung fehlgeschlagen', signInFehlerText(e)); } catch (e2) {}
+    return { ok: false, error: e };
+  } finally {
+    _signInLaeuft = false;
+  }
+}
+window.quantusSignIn = quantusSignIn;
+
 function updateSyncChip() {
   // Frueher suchte diese Funktion #syncChip/#syncStatus. Dieses Markup hat
   // NIE existiert — die Historie kennt kein einziges Vorkommen, und die
@@ -14641,11 +14734,22 @@ function updateSyncChip() {
     // Der Anmeldeweg ist die vorhandene Route #/drive: viewDrive() bettet
     // drive.html ein, dort sitzt der Google-Login. Die Firebase-Sitzung gilt
     // pro Herkunft und steht danach auch der Hauptapp zur Verfuegung.
+    // Ein KNOPF, kein Link: der Link zeigte auf #/drive — also auf die Ansicht,
+    // in die der Streifen ohnehin schickt. Stand man schon dort, loeste er
+    // kein hashchange aus und tat nichts.
     el.innerHTML = '<span class="sn-dot"></span><span class="sn-text"></span>'
-      + (authNoetig ? '<a class="sn-link" href="#/drive"></a>' : '');
+      + (authNoetig ? '<button type="button" class="sn-link"></button>' : '');
     el.querySelector('.sn-text').textContent = text;
     const link = el.querySelector('.sn-link');
-    if (link) link.textContent = en ? 'Sign in' : 'Anmelden';
+    if (link) {
+      link.textContent = en ? 'Sign in' : 'Anmelden';
+      // Der Streifen ist ein direktes <body>-Kind und wird bei jedem Aufruf neu
+      // gezeichnet: der Hoerer haengt am frischen Knopf, es sammelt sich nichts an.
+      link.addEventListener('click', function () {
+        link.disabled = true;
+        Promise.resolve(quantusSignIn()).catch(function () {}).then(function () { link.disabled = false; });
+      });
+    }
     el.hidden = false;
   } catch(e) { /* Anzeige darf den Abgleich nie stoeren */ }
 }
