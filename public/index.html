@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -10512,9 +10512,8 @@ const QUANTUS_NOTE_CLASSES = window.QuantusNotesCore?.NOTE_CLASSES || {
 };
 
 function quantusPreferredTags(data) {
-  const notes = Object.values(data?.entities?.notes || {});
   const tags = [];
-  notes.forEach(note => (note.tags || []).forEach(tag => tags.push(tag)));
+  quantusLiveNotes(data).forEach(note => (note.tags || []).forEach(tag => tags.push(tag)));
   return window.QuantusNotesCore.normalizeTags(tags);
 }
 
@@ -10547,9 +10546,7 @@ function quantusNoteSourceExists(source, data) {
 }
 
 function quantusGetTagSuggestions(query, exclude) {
-  return window.QuantusNotesCore.tagSuggestions(
-    Object.values(APP.state.data?.entities?.notes || {}), query, exclude
-  );
+  return window.QuantusNotesCore.tagSuggestions(quantusLiveNotes(), query, exclude);
 }
 
 function createQuantusNote(input, options = {}) {
@@ -10609,6 +10606,19 @@ function createQuantusNote(input, options = {}) {
 
 function quantusIsDeletedEntity(item) {
   return !!(item && (item.deleted || item.archived || item.status === "deleted" || item.deletedAt));
+}
+
+// Mobile/Tablet loeschen als Entity-Tombstone (deleted/status/deletedAt) und
+// lassen die Entitaet im gemeinsamen Datensatz stehen; auch markDeleted in
+// migrateQuantusNotes erzeugt diese Form. Jede Listen-/Such-/Zaehl-Ansicht
+// muss sie ausblenden (Review P2-1). Bewusst OHNE `archived`: eine archivierte
+// Notiz ist kein Grabstein.
+function quantusIsTombstonedNote(note) {
+  return !!(note && (note.deleted === true || note.status === "deleted" || note.deletedAt));
+}
+function quantusLiveNotes(data) {
+  return Object.values((data || APP.state.data)?.entities?.notes || {})
+    .filter(note => note && !quantusIsTombstonedNote(note));
 }
 
 function quantusIdeaIdentityFromNote(note) {
@@ -10858,7 +10868,8 @@ function openQuantusNoteComposer(config = {}) {
     ? config.allowedClasses.filter(key => QUANTUS_NOTE_CLASSES[key])
     : Object.keys(QUANTUS_NOTE_CLASSES);
   if (source.app !== "noteflow") allowed = allowed.filter(key => key !== "general");
-  if (!allowed.length) allowed = [config.noteClass || "research"];
+  // Auch der Fallback darf fuer Fach-Apps nie "general" anbieten (Review D8).
+  if (!allowed.length) allowed = [config.noteClass && !(source.app !== "noteflow" && config.noteClass === "general") ? config.noteClass : "research"];
   const initialClass = allowed.includes(config.noteClass) ? config.noteClass : (allowed.includes("general") ? "general" : allowed[0]);
   const notebooks = Object.values(APP.state.data?.entities?.notebooks || {}).sort((a,b) => String(a.title || "").localeCompare(String(b.title || ""), "de-CH"));
   const initialTags = quantusNormalizeTags(config.tags || [], APP.state.data);
@@ -10979,6 +10990,8 @@ function openQuantusIdeaComposer(prefill = "", context = {}) {
 }
 
 window.QUANTUS_NOTE_CLASSES = QUANTUS_NOTE_CLASSES;
+window.quantusIsTombstonedNote = quantusIsTombstonedNote;
+window.quantusLiveNotes = quantusLiveNotes;
 window.quantusNormalizeTags = quantusNormalizeTags;
 window.quantusGetTagSuggestions = quantusGetTagSuggestions;
 window.quantusNoteSourceExists = quantusNoteSourceExists;
@@ -17972,8 +17985,9 @@ function searchAllData(term) {
   
   const searchIn = (text) => (text || "").toLowerCase().includes(term);
   
-  // Notizen durchsuchen
-  Object.values(e.notes || {}).forEach(n => {
+  // Notizen durchsuchen — Entity-Tombstones (Mobile/Tablet-Loeschungen)
+  // gehoeren nicht in Suchtreffer (Review P2-1).
+  quantusLiveNotes().forEach(n => {
     if (searchIn(n.title) || searchIn(n.content) || (n.tags || []).some(t => searchIn(t))) {
       results.notes.push(n);
     }
@@ -38122,9 +38136,10 @@ window.prjRemoveRetroItem = function(id, section, idx) {
 function renderProjectNotebookSection(p, id) {
   const e = APP.state.data.entities;
   const notebook = p.notebookId ? e.notebooks?.[p.notebookId] : null;
-  const contextualNotes = Object.values(e.notes || {}).filter(n => n.source?.entityType === "project" && n.source?.entityId === id);
+  const contextualNotes = quantusLiveNotes().filter(n => n.source?.entityType === "project" && n.source?.entityId === id);
   const notebookNotes = [...(notebook ? (notebook.notes || []).map(nid => e.notes?.[nid]).filter(Boolean) : []), ...contextualNotes]
-    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx);
+    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx)
+    .filter(n => !quantusIsTombstonedNote(n));
   
   return `<div class="card mb-4">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -38183,9 +38198,10 @@ window.projDeleteNote = function(projectId, noteId) {
 function renderStrategyNotebookSection(s, id) {
   const e = APP.state.data.entities;
   const notebook = s.notebookId ? e.notebooks?.[s.notebookId] : null;
-  const contextualNotes = Object.values(e.notes || {}).filter(n => n.source?.entityType === "strategy" && n.source?.entityId === id);
+  const contextualNotes = quantusLiveNotes().filter(n => n.source?.entityType === "strategy" && n.source?.entityId === id);
   const notebookNotes = [...(notebook ? (notebook.notes || []).map(nid => e.notes?.[nid]).filter(Boolean) : []), ...contextualNotes]
-    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx);
+    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx)
+    .filter(n => !quantusIsTombstonedNote(n));
   
   return `<div class="card mb-4">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -38250,9 +38266,10 @@ window.strategyDeleteNote = function(strategyId, noteId) {
 function renderConceptNotebookSection(c, id) {
   const e = APP.state.data.entities;
   const notebook = c.notebookId ? e.notebooks?.[c.notebookId] : null;
-  const contextualNotes = Object.values(e.notes || {}).filter(n => n.source?.entityType === "concept" && n.source?.entityId === id);
+  const contextualNotes = quantusLiveNotes().filter(n => n.source?.entityType === "concept" && n.source?.entityId === id);
   const notebookNotes = [...(notebook ? (notebook.notes || []).map(nid => e.notes?.[nid]).filter(Boolean) : []), ...contextualNotes]
-    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx);
+    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx)
+    .filter(n => !quantusIsTombstonedNote(n));
   
   return `<div style="background:var(--accent-soft);border:1px solid var(--accent-soft);border-radius:10px;padding:14px;margin-bottom:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -41869,9 +41886,10 @@ function viewLearningProjectDetail(id) {
 
   // Notebook info
   const notebook = p.notebookId ? e.notebooks?.[p.notebookId] : null;
-  const contextualNotes = Object.values(e.notes || {}).filter(n => n.source?.entityType === "project" && String(n.source?.entityId || "") === String(id));
+  const contextualNotes = quantusLiveNotes().filter(n => n.source?.entityType === "project" && String(n.source?.entityId || "") === String(id));
   const notebookNotes = [...(notebook ? (notebook.notes || []).map(nid => e.notes?.[nid]).filter(Boolean) : []), ...contextualNotes]
-    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx);
+    .filter((n,idx,all) => all.findIndex(x => x.id === n.id) === idx)
+    .filter(n => !quantusIsTombstonedNote(n));
 
   // RecallLab deck info
   let deckInfo = { cards: 0, due: 0, newC: 0, name: '' };
@@ -43460,8 +43478,8 @@ function viewNotes() {
   const e = APP.state.data.entities;
   const filters = APP.state.ui.filters.notes || {};
   const selectedNotebook = APP.state.ui.selectedNotebook;
-  
-  let notes = Object.values(e.notes);
+
+  let notes = quantusLiveNotes();
   const notebooks = Object.values(e.notebooks).sort((a, b) => (a.order || 0) - (b.order || 0));
   
   // Filter by notebook - AUCH Notizen mit passendem Tag anzeigen
@@ -63087,12 +63105,14 @@ case "save-summary-as-note": {
   const nbId = el.dataset.nbId;
   const summary = APP.state.ui.lastAiSummary;
   if (summary && nbId) {
-    createEntity("note", {
+    const nb = APP.state.data.entities.notebooks?.[nbId];
+    createQuantusNote({
       title: `Zusammenfassung - ${fmtDate(todayYmd())}`,
       content: summary,
+      noteClass: "research", researchKind: "ai-summary",
       notebookId: nbId,
-      tags: ["zusammenfassung", "ki-generiert"],
-      createdAt: nowIso()
+      tags: [nb?.title || "Notizbuch", "KI-generiert"],
+      source: { app: "noteflow", entityType: "notebook", entityId: nbId, label: nb?.title || "Notizbuch", route: "#/notebooks/" + nbId },
     });
     scheduleSave();
     closeModal();
@@ -118714,6 +118734,13 @@ Dateien zu identifizieren.
   const uid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
   const E = () => (window.APP && APP.state && APP.state.data && APP.state.data.entities) || {};
   const notesMap = () => { const e = E(); if (!e.notes) e.notes = {}; return e.notes; };
+  // Entity-Tombstones (Loeschungen von Mobile/Tablet bzw. markDeleted aus der
+  // Migration) bleiben im Datensatz, gehoeren aber in keine Liste, keinen
+  // Zaehler und keine Suche (Review P2-1).
+  const noteTombstoned = (n) => typeof window.quantusIsTombstonedNote === "function"
+    ? window.quantusIsTombstonedNote(n)
+    : !!(n && (n.deleted === true || n.status === "deleted" || n.deletedAt));
+  const liveNotes = () => Object.values(notesMap()).filter((n) => n && !noteTombstoned(n));
   const nbMap = () => { const e = E(); if (!e.notebooks) e.notebooks = {}; return e.notebooks; };
   const chMap = () => { const e = E(); if (!e.chapters) e.chapters = {}; return e.chapters; };
   const save = () => { try { window.scheduleSave && window.scheduleSave(); } catch (e) {} };
@@ -118867,7 +118894,7 @@ Dateien zu identifizieren.
     if (already && sameNote && typing) { renderSidebar(); return; } // Editor nicht unter den Fingern wegrendern
     if (noteId && notesMap()[noteId]) { S.noteId = noteId; S.view = "page"; }
     if (!S.noteId || !note()) {
-      const all = Object.values(notesMap()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      const all = liveNotes().sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
       S.noteId = all.length ? all[0].id : null;
     }
     // Router-Zustand angleichen — sonst schliesst eine spätere Navigation das Panel
@@ -119099,7 +119126,7 @@ Dateien zu identifizieren.
   function renderSidebar() {
     const tree = $("#nf2Tree");
     if (!tree) return;
-    const notes = Object.values(notesMap());
+    const notes = liveNotes();
     const searching = !!S.search.trim();
     const vis = searching ? notes.filter(matchesSearch) : notes;
     const byNb = {};
@@ -119326,7 +119353,7 @@ Dateien zu identifizieren.
     return t.slice(0, len || 140);
   }
   function filteredHomeNotes(q) {
-    return Object.values(notesMap())
+    return liveNotes()
       .filter(matchesHomeFilter)
       .filter(n => matchesHomeSearch(n, q || ""))
       .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
@@ -119353,21 +119380,21 @@ Dateien zu identifizieren.
 
     const chip = (id, label, count) => `<button class="nf2-hfilter${S.homeFilter === id ? " active" : ""}" data-hf="${esc(id)}">${esc(label)}${count != null ? ` <span class="nf2-hfilter-c">${count}</span>` : ""}</button>`;
     let filters = chip("all", "Alle", Object.keys(notesMap()).length);
-    const favCount = Object.values(notesMap()).filter((n) => isFav(n.id)).length;
+    const favCount = liveNotes().filter((n) => isFav(n.id)).length;
     if (favCount) filters += chip("fav", "★ Favoriten", favCount);
-    const inboxCount = Object.values(notesMap()).filter((n) => !n.notebookId).length;
+    const inboxCount = liveNotes().filter((n) => !n.notebookId).length;
     filters += chip("_inbox", "📥 Inbox", inboxCount);
     Object.keys(window.QUANTUS_NOTE_CLASSES || {}).forEach(key => {
-      const count = Object.values(notesMap()).filter(n => n.noteClass === key).length;
+      const count = liveNotes().filter(n => n.noteClass === key).length;
       filters += chip("class:" + key, (NOTE_CLASS_ICONS[key] || "📝") + " " + noteClassLabel(key), count);
     });
-    nbs.forEach((nb) => { const c = Object.values(notesMap()).filter((n) => n.notebookId === nb.id).length; filters += chip(nb.id, "📓 " + (nb.title || "Notizbuch"), c); });
+    nbs.forEach((nb) => { const c = liveNotes().filter((n) => n.notebookId === nb.id).length; filters += chip(nb.id, "📓 " + (nb.title || "Notizbuch"), c); });
     const tagCounts = new Map();
-    Object.values(notesMap()).forEach(n => (n.tags || []).forEach(tag => tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1)));
+    liveNotes().forEach(n => (n.tags || []).forEach(tag => tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1)));
     [...tagCounts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0], "de-CH")).slice(0, 8)
       .forEach(([tag,count]) => { filters += chip("tag:" + encodeURIComponent(tag), "#" + tag, count); });
     const sourceCounts = new Map();
-    Object.values(notesMap()).forEach(n => { const app = n.source?.app || "noteflow"; sourceCounts.set(app, (sourceCounts.get(app) || 0) + 1); });
+    liveNotes().forEach(n => { const app = n.source?.app || "noteflow"; sourceCounts.set(app, (sourceCounts.get(app) || 0) + 1); });
     [...sourceCounts.entries()].sort((a,b) => b[1] - a[1]).forEach(([app,count]) => { filters += chip("source:" + app, "↗ " + app, count); });
 
     let cards = notes.map(noteCardHtml).join("");
@@ -120012,7 +120039,7 @@ Dateien zu identifizieren.
     const match = (ent) => !q || entTitle(ent).toLowerCase().includes(q);
     Object.values(E().tasks || {}).filter((t) => t.status !== "done").filter(match).slice(0, 5).forEach((x) => push("task", x));
     Object.values(E().projects || {}).filter(match).slice(0, 4).forEach((x) => push("project", x));
-    Object.values(notesMap()).filter((n) => n.id !== S.noteId).filter(match).slice(0, 4).forEach((x) => push("note", x));
+    liveNotes().filter((n) => n.id !== S.noteId).filter(match).slice(0, 4).forEach((x) => push("note", x));
     return out.slice(0, 10);
   }
   function maybeMention() {
@@ -120339,7 +120366,7 @@ Dateien zu identifizieren.
       });
     });
     // Notizen, die diese Seite per Mention erwähnen
-    Object.values(notesMap()).forEach((other) => {
+    liveNotes().forEach((other) => {
       if (other.id === n.id) return;
       if ((other.content || "").indexOf('data-id="' + n.id + '"') >= 0) refs.push({ kind: "note", id: other.id, title: entTitle(other) });
     });
@@ -120477,9 +120504,9 @@ Dateien zu identifizieren.
       }
       else if (a === "ren") { const t = window.prompt("Notizbuch umbenennen:", nb.title || ""); if (t != null && t.trim()) { nb.title = t.trim(); nb.updatedAt = nowIso(); save(); renderSidebar(); renderTopbar(); } }
       else if (a === "del") {
-        const count = Object.values(notesMap()).filter((n) => n.notebookId === id).length;
+        const count = liveNotes().filter((n) => n.notebookId === id).length;
         if (!confirm(`Notizbuch «${nb.title || ""}» löschen? ${count} Seite(n) wandern in die Inbox.`)) return;
-        Object.values(notesMap()).forEach((n) => { if (n.notebookId === id) { n.notebookId = null; n.chapterId = null; } });
+        liveNotes().forEach((n) => { if (n.notebookId === id) { n.notebookId = null; n.chapterId = null; } });
         Object.values(chMap()).forEach((c) => { if (c.notebookId === id) delete chMap()[c.id]; });
         delete nbMap()[id];
         save(); renderSidebar(); renderTopbar();
@@ -120501,7 +120528,7 @@ Dateien zu identifizieren.
       else if (a === "ren") { const t = window.prompt("Kapitel umbenennen:", chTitle(ch)); if (t != null && t.trim()) { ch.title = t.trim(); save(); renderSidebar(); } }
       else if (a === "del") {
         if (!confirm(`Kapitel «${ch.title || ""}» löschen? Seiten bleiben im Notizbuch.`)) return;
-        Object.values(notesMap()).forEach((n) => { if (n.chapterId === id) n.chapterId = null; });
+        liveNotes().forEach((n) => { if (n.chapterId === id) n.chapterId = null; });
         delete chMap()[id];
         save(); renderSidebar(); renderTopbar();
       }
@@ -120627,7 +120654,7 @@ Dateien zu identifizieren.
     syncNbArrays(zielId, notizbuchId, null);
     save();
     if (S.noteId === zielId) {
-      const all = Object.values(notesMap()).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      const all = liveNotes().sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
       S.noteId = all.length ? all[0].id : null;
     }
     renderSidebar();
