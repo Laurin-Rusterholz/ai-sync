@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="quantus-notes-core.js"></script>
 <script>
 (function(){ try {
   var m = localStorage.getItem("quantus_themeMode") || "dark";
@@ -239,7 +240,7 @@ label.fld{display:block;margin:0 0 6px;font-size:12px;color:var(--muted);font-we
 .goal .tick{flex:none;width:16px;height:16px;border-radius:5px;background:var(--accent-soft);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;font-size:10px;margin-top:1px}
 .lt-prog{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted)}
 .fig-lbl{font-size:11px;fill:var(--muted)} .fig-val{font-size:12px;font-weight:700;fill:var(--text)}
-@media (max-width:560px){ .wrap{padding:16px 12px 90px} .tb-brand small{display:none} .pagehead h1{font-size:21px} .hbar{grid-template-columns:56px 1fr 26px} }
+@media (max-width:560px){ .wrap{padding:16px 12px 90px} .tb-brand small,.bm-note-label{display:none} .pagehead h1{font-size:21px} .hbar{grid-template-columns:56px 1fr 26px} }
 </style>
 </head>
 <body>
@@ -247,6 +248,7 @@ label.fld{display:block;margin:0 0 6px;font-size:12px;color:var(--muted);font-we
   <a class="tb-back" href="index.html" title="Zurück zu Quantus">‹ Quantus</a>
   <div class="tb-brand"><img src="emblem.svg" alt="">BM-Prüfung <small>Quantus · Prüfungscoach</small></div>
   <div class="tb-spacer"></div>
+  <button class="tb-btn" data-action="bm-learning-note" title="Lernnotiz in NoteFlow erstellen">✎ <span class="bm-note-label">Lernnotiz</span></button>
   <button class="tb-btn" data-action="pomodoro" id="pomo" title="Lern-Timer (Pomodoro)">◷ <span id="pomo-t">25:00</span></button>
   <button class="tb-btn" data-action="nav-search" title="Suche">⌕</button>
   <button class="tb-btn" data-action="nav-settings" title="Einstellungen">⚙</button>
@@ -350,6 +352,158 @@ function saveAufg(key){ persist("aufg", U.aufg[key], key); }
 function saveNote(key){ persist("notes", U.notes[key]||null, key); }
 function saveConfig(){ persist("config", U.config); }
 function saveChat(){ U.chat=U.chat.slice(-40); persist("chat", U.chat); }
+
+/* ── Zentrale Quantus-Lernnotizen ────────────────────────────────────────
+   BM-Fortschritt und die kleine Arbeitsnotiz pro Thema bleiben im eigenen
+   Firebase-Bereich. Dauerhafte Lernnotizen werden dagegen ausschliesslich über
+   die zentrale Quantus-Factory erstellt. Da bm.html als Satellit in der Regel
+   die Haupt-App im selben Tab ersetzt, lädt eine unsichtbare Same-Origin-
+   Brücke deren aktuellen (inkl. Remote-Merge) Zustand. Dadurch gelten exakt
+   dieselbe Inbox-, Schema- und Sync-Logik wie bei einer Notiz in NoteFlow. */
+var BM_MAIN_DATA_KEY="mgmt-v4-data";
+var bmQuantusFrame=null, bmQuantusReady=null, bmLearningDraft=null;
+
+function bmUsableQuantusWindow(candidate){
+  try{
+    return candidate && candidate!==window && typeof candidate.createQuantusNote==="function" &&
+      candidate.APP && candidate.APP.state && candidate.APP.state.data &&
+      candidate.APP.state.data.entities && candidate.APP.state.data.entities.notes ? candidate : null;
+  }catch(e){ return null; }
+}
+function bmFindQuantusWindow(){
+  var candidates=[];
+  try{ if(window.parent&&window.parent!==window) candidates.push(window.parent); }catch(e){}
+  try{ if(window.opener&&!window.opener.closed) candidates.push(window.opener); }catch(e){}
+  try{ if(bmQuantusFrame&&bmQuantusFrame.contentWindow) candidates.push(bmQuantusFrame.contentWindow); }catch(e){}
+  for(var i=0;i<candidates.length;i++){ var found=bmUsableQuantusWindow(candidates[i]); if(found) return found; }
+  return null;
+}
+function bmGetQuantusWindow(){
+  var ready=bmFindQuantusWindow();
+  if(ready) return Promise.resolve(ready);
+  if(bmQuantusReady) return bmQuantusReady;
+  bmQuantusReady=new Promise(function(resolve,reject){
+    var started=Date.now(), timer=null, finished=false;
+    function finish(err,win){
+      if(finished) return; finished=true; if(timer) clearInterval(timer);
+      if(err){ bmQuantusReady=null; reject(err); } else resolve(win);
+    }
+    function check(){
+      var win=bmFindQuantusWindow();
+      if(win) return finish(null,win);
+      if(Date.now()-started>25000) finish(new Error("NoteFlow konnte nicht geladen werden. Bitte öffne Quantus einmal und versuche es erneut."));
+    }
+    if(!bmQuantusFrame){
+      bmQuantusFrame=document.createElement("iframe");
+      bmQuantusFrame.id="bm-quantus-note-bridge";
+      bmQuantusFrame.title="Quantus Notiz-Synchronisierung";
+      bmQuantusFrame.setAttribute("aria-hidden","true");
+      bmQuantusFrame.tabIndex=-1;
+      bmQuantusFrame.style.cssText="position:fixed;width:1px;height:1px;left:-10000px;top:-10000px;border:0;opacity:0;pointer-events:none";
+      bmQuantusFrame.src="index.html?embed=1#/notes";
+      bmQuantusFrame.addEventListener("load",check);
+      document.body.appendChild(bmQuantusFrame);
+    }
+    timer=setInterval(check,250); check();
+  });
+  return bmQuantusReady;
+}
+function bmMainNotes(){
+  var win=bmFindQuantusWindow();
+  try{ if(win) return Object.values(win.APP.state.data.entities.notes||{}); }catch(e){}
+  try{
+    var data=JSON.parse(localStorage.getItem(BM_MAIN_DATA_KEY)||"null");
+    return Object.values((data&&data.entities&&data.entities.notes)||{});
+  }catch(e){ return []; }
+}
+function bmNormalizeTags(tags){
+  var core=window.QuantusNotesCore;
+  if(core&&core.normalizeTags){
+    var preferred=[]; bmMainNotes().forEach(function(n){ (n.tags||[]).forEach(function(t){preferred.push(t);}); });
+    return core.normalizeTags(tags,preferred);
+  }
+  var seen={},out=[]; (tags||[]).forEach(function(t){ t=String(t||"").trim(); var k=t.toLowerCase(); if(t&&!seen[k]){seen[k]=1;out.push(t);} }); return out;
+}
+function bmRefreshTagSuggestions(){
+  var input=document.getElementById("bm-note-tags"), list=document.getElementById("bm-note-tag-list"); if(!input||!list) return;
+  var parts=input.value.split(","), query=(parts.pop()||"").trim();
+  var complete=bmNormalizeTags(parts);
+  var notes=bmMainNotes().concat([{tags:["BM Vorbereitung"]}]), suggestions=[];
+  if(window.QuantusNotesCore&&window.QuantusNotesCore.tagSuggestions) suggestions=window.QuantusNotesCore.tagSuggestions(notes,query,complete);
+  // Der Optionswert traegt die bereits gewaehlten Tags als Praefix. Chromium
+  // zeigt eine Option nur, wenn ihr Wert den Feldinhalt enthaelt — mit dem
+  // nackten Einzeltag blieben die Vorschlaege ab dem ersten Komma unsichtbar,
+  // und eine Auswahl haette alle Tags ersetzt (Review P2-2).
+  list.innerHTML=suggestions.slice(0,30).map(function(tag){
+    return '<option value="'+esc(complete.concat([tag]).join(", "))+'"></option>';
+  }).join("");
+}
+function bmLearningContext(key,preset){
+  preset=preset||{}; var rec=key&&IDX.byKey[key], label=rec?rec.thema.titel:"BM Vorbereitung";
+  var tags=["BM Vorbereitung"];
+  if(rec){ tags.push(rec.fach,label); }
+  if(preset.tags) tags=tags.concat(preset.tags);
+  var route=rec?("bm.html"+themaLink(rec)):("bm.html"+(location.hash||"#/dashboard"));
+  return {
+    key:key||null,
+    title:preset.title!=null?preset.title:(rec?("Lernnotiz: "+label):"BM-Lernnotiz"),
+    content:preset.content||"",
+    tags:bmNormalizeTags(tags),
+    source:preset.source||{
+      app:"bmpruefung", entityType:rec?"bm-topic":"program", entityId:rec?key:"bm-preparation",
+      label:label, route:route
+    }
+  };
+}
+function bmOpenLearningNote(key,preset){
+  bmLearningDraft=bmLearningContext(key,preset);
+  openModal('<h2>Lernnotiz erstellen</h2>'
+    +'<p class="muted" style="margin:0 0 14px">Die Notiz wird als <strong>Lernnotiz</strong> ohne Notizbuch in der NoteFlow-Inbox gespeichert. Quelle: '+esc(bmLearningDraft.source.label)+'</p>'
+    +'<label class="fld" for="bm-note-title">Titel</label><input type="text" id="bm-note-title" value="'+esc(bmLearningDraft.title)+'" placeholder="Titel der Lernnotiz">'
+    +'<label class="fld" for="bm-note-content" style="margin-top:12px">Was möchtest du dir merken?</label><textarea id="bm-note-content" rows="7" placeholder="Erkenntnis, Erklärung, Fehler oder Merksatz …">'+esc(bmLearningDraft.content)+'</textarea>'
+    +'<label class="fld" for="bm-note-tags" style="margin-top:12px">Schlagwörter</label><input type="text" id="bm-note-tags" data-action="bm-note-tags" list="bm-note-tag-list" value="'+esc(bmLearningDraft.tags.join(", "))+'" placeholder="Schlagwort tippen …"><datalist id="bm-note-tag-list"></datalist>'
+    +'<div class="muted" style="font-size:11px;margin-top:5px">Bestehende Schlagwörter werden während der Eingabe gefiltert vorgeschlagen. „BM Vorbereitung“ bleibt zur Zuordnung erhalten.</div>'
+    +'<div id="bm-note-error" role="alert" class="dangerc" style="min-height:20px;font-size:12px;margin-top:8px"></div>'
+    +'<div class="btnrow" style="justify-content:flex-end;margin-top:8px"><button class="btn" data-action="modal-close">Abbrechen</button><button class="btn primary" id="bm-note-save" data-action="bm-note-save">In NoteFlow speichern</button></div>');
+  setTimeout(function(){ bmRefreshTagSuggestions(); var input=document.getElementById("bm-note-content"); if(input) input.focus(); },0);
+}
+function bmSaveLearningNote(){
+  var title=((document.getElementById("bm-note-title")||{}).value||"").trim();
+  var content=((document.getElementById("bm-note-content")||{}).value||"").trim();
+  var rawTags=((document.getElementById("bm-note-tags")||{}).value||"").split(",");
+  var error=document.getElementById("bm-note-error"), button=document.getElementById("bm-note-save");
+  var draft=bmLearningDraft||bmLearningContext(null,{}), source=draft.source;
+  if(!title&&!content){ if(error) error.textContent="Bitte einen Titel oder Inhalt eingeben."; return; }
+  var tags=bmNormalizeTags(["BM Vorbereitung"].concat(rawTags));
+  if(button){ button.disabled=true; button.innerHTML='<span class="spin"></span> NoteFlow wird geladen …'; }
+  bmGetQuantusWindow().then(function(win){
+    var id=win.createQuantusNote({
+      title:title||content.slice(0,72)||"BM-Lernnotiz", content:content,
+      noteClass:"learning", learningKind:"bm-preparation", tags:tags, notebookId:null,
+      source:source
+    });
+    if(bmLearningDraft===draft) bmLearningDraft=null;
+    openModal('<h2>✓ Lernnotiz gespeichert</h2><p class="muted">Sie liegt in der NoteFlow-Inbox und ist mit „BM Vorbereitung“ sowie deinem Themenkontext verschlagwortet.</p>'
+      +'<div class="btnrow" style="justify-content:flex-end;margin-top:16px"><button class="btn" data-action="modal-close">Hier weiterlernen</button><button class="btn primary" data-action="bm-open-noteflow" data-note-id="'+esc(id)+'">NoteFlow öffnen</button></div>');
+    toast("Lernnotiz in NoteFlow gespeichert");
+  }).catch(function(err){
+    if(error) error.textContent=err&&err.message?err.message:"Lernnotiz konnte nicht gespeichert werden.";
+    if(button){ button.disabled=false; button.textContent="In NoteFlow speichern"; }
+  });
+}
+function bmOpenQuizLearningNote(){
+  var item=quiz&&quiz.items&&quiz.items[quiz.idx]; if(!item) return;
+  var topic=(item.rec&&item.rec.thema&&item.rec.thema.titel)||quiz.title||"Prüfungsfrage";
+  var fach=(item.rec&&item.rec.fach)||"BM Vorbereitung";
+  var route="bm.html"+(quiz.backHash||location.hash||"#/dashboard");
+  if(item.rec&&IDX.byKey[themaKey(item.rec.fachKey,item.rec.thema.id)]) route="bm.html"+themaLink(IDX.byKey[themaKey(item.rec.fachKey,item.rec.thema.id)]);
+  bmOpenLearningNote(null,{
+    title:"Lernnotiz: "+topic,
+    content:"Frage: "+(item.a.frage||"")+"\n\nLösung: "+(item.a.loesung||"")+"\n\nMeine Erkenntnis:\n",
+    tags:[fach,topic],
+    source:{app:"bmpruefung",entityType:"bm-question",entityId:item.key||("question-"+quiz.idx),label:topic,route:route}
+  });
+}
 function recordActivity(correct){
   var t=todayISO(); var a=U.activity[t]||{a:0,c:0}; a.a++; if(correct) a.c++; U.activity[t]=a;
   // Streak
@@ -583,7 +737,7 @@ function lessonTopicCard(r){ var t=r.thema, m=themaMastery(r), na=(t.aufgaben||[
   if(goals) h+='<div class="lt-block"><div class="cap">Lernziele</div>'+goals+'</div>';
   if(merk) h+='<div class="lt-block"><div class="cap">Merksätze</div><div class="chips">'+merk+'</div></div>';
   h+='<div class="lt-prog"><span>'+Math.round(m*100)+'% geübt</span><div class="bar"><span style="width:'+(m*100).toFixed(0)+'%"></span></div><span>'+seen+'/'+na+' Aufg.</span></div>';
-  h+='<div class="btnrow"><a class="btn sm primary" href="'+themaLink(r)+'">Thema öffnen</a><a class="btn sm ghost" href="#/buch/'+encodeURIComponent(r.fachKey)+'">Lehrbuch</a></div></div></div>';
+  h+='<div class="btnrow"><a class="btn sm primary" href="'+themaLink(r)+'">Thema öffnen</a><a class="btn sm ghost" href="#/buch/'+encodeURIComponent(r.fachKey)+'">Lehrbuch</a><button class="btn sm" data-action="bm-learning-note" data-key="'+esc(r.key)+'">✎ Lernnotiz</button></div></div></div>';
   return h; }
 
 /* ── Modal ─────────────────────────────────────────────────────────────── */
@@ -756,6 +910,7 @@ function viewThema(app,key){
   html+='<div class="btnrow" style="margin-bottom:16px">'
     +'<button class="btn primary" data-action="quiz-thema" data-key="'+esc(key)+'">↻ Repetition ('+na+')</button>'
     +'<a class="btn" href="#/buch/'+encodeURIComponent(rec.fachKey)+'">▤ Lehrbuch</a>'
+    +'<button class="btn" data-action="bm-learning-note" data-key="'+esc(key)+'">✎ Lernnotiz</button>'
     +'<button class="btn violet" data-action="ai-explain" data-key="'+esc(key)+'">✦ Erklär mir das</button>'
     +'<button class="btn" data-action="ai-simplify" data-key="'+esc(key)+'">Einfacher</button>'
     +'<button class="btn" data-action="ai-summary" data-key="'+esc(key)+'">Zusammenfassung</button>'
@@ -780,9 +935,9 @@ function viewThema(app,key){
   if((t.beispiele||[]).length){ html+='<div class="section-title" style="margin:16px 0 6px;font-size:13px">Beispiele</div><ul class="list-clean">'+t.beispiele.map(function(b){return '<li><span class="beispiel">'+esc(b)+'</span></li>';}).join("")+'</ul>'; }
   html+='</div>';
 
-  html+='<div class="card" style="margin-top:14px"><label class="fld">Notizbuch (automatisch in Firebase gespeichert)</label>'
+  html+='<div class="card" style="margin-top:14px"><label class="fld">BM-Arbeitsnotiz zu diesem Thema</label>'
     +'<textarea id="note-input" data-action="note-input" data-key="'+esc(key)+'" placeholder="Deine Notizen …">'+esc(note)+'</textarea>'
-    +'<div class="muted" style="font-size:11px;margin-top:5px" id="note-status"></div></div>';
+    +'<div style="display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;margin-top:7px"><div class="muted" style="font-size:11px" id="note-status">Diese Arbeitsnotiz bleibt im BM-Bereich.</div><button class="btn sm" data-action="bm-learning-note" data-key="'+esc(key)+'" data-prefill="1">Als Lernnotiz in NoteFlow speichern</button></div></div>';
   app.innerHTML=html;
 }
 
@@ -827,6 +982,7 @@ function renderQuiz(app){
       +'<div class="btnrow"><button class="btn primary" data-action="quiz-reveal">Lösung anzeigen</button><button class="btn violet" data-action="ai-grade">✦ KI bewertet meine Antwort</button></div>'; }
   if(quiz.revealed){
     html+='<div class="reveal"><div class="lbl">Lösung</div><div class="los">'+esc(a.loesung)+'</div>'+(a.erklaerung?'<div class="lbl">Erklärung</div><div class="prose" style="font-size:13.5px">'+md(a.erklaerung)+'</div>':'')+'</div>';
+    html+='<div class="btnrow" style="margin-top:10px"><button class="btn sm" data-action="bm-quiz-learning-note">✎ Frage als Lernnotiz festhalten</button></div>';
     if(isMC){ var auto=quiz.chosen!=null&&quiz.chosen===ci;
       html+='<div class="selfgrade"><div class="muted" style="font-size:13px;flex:1;align-self:center">'+(quiz.chosen==null?"Nicht beantwortet":(auto?"✓ Richtig gewählt":"✗ Falsch gewählt"))+'</div><button class="btn sm" data-action="quiz-grade" data-ok="1">Richtig</button><button class="btn sm" data-action="quiz-grade" data-ok="0">Falsch</button></div>'; }
     else html+='<div class="selfgrade"><button class="btn primary" style="flex:1" data-action="quiz-grade" data-ok="1">✓ Gewusst</button><button class="btn" style="flex:1" data-action="quiz-grade" data-ok="0">✗ Nicht gewusst</button></div>';
@@ -999,7 +1155,7 @@ function viewSettings(app){
     +'<div class="card" style="margin-bottom:12px"><label class="fld">Themen pro Tag in der Tageslektion</label><div class="btnrow"><button class="btn sm'+(((U.config.topicsPerDay||2)===1)?" primary":"")+'" data-action="set-perday" data-n="1">1 Thema</button><button class="btn sm'+(((U.config.topicsPerDay||2)===2)?" primary":"")+'" data-action="set-perday" data-n="2">2 Themen</button></div><div class="muted" style="font-size:12px;margin-top:6px">Steuert, wie viele der Wochenthemen die Tageslektion pro Tag zeigt (1 = ruhiger, 2 = schneller durch den Stoff).</div></div>'
     +'<div class="card" style="margin-bottom:12px"><label class="fld">Beherrschungs-Schwelle „gemeistert"</label><div class="muted" style="font-size:13px">Ein Thema gilt ab '+(MASTER*100)+'% als gemeistert (aus dem Leitner-Lernstand der Aufgaben).</div></div>'
     +'<div class="card" style="margin-bottom:12px"><h3>KI-Quelle</h3><p class="muted" style="font-size:13px">Die KI nutzt automatisch den <strong>in Quantus hinterlegten Anthropic-Key</strong> (Quantus → Einstellungen → API-Keys, gleiche Browser-Origin) und ruft die Anthropic-API direkt auf. Ohne hinterlegten Key läuft es über den n8n-Webhook <span class="mono">'+CFG.WH_CHAT+'</span> (Key serverseitig im n8n-Credential). Kein Key im Code.</p><div style="margin-top:8px">'+(storedAnthropicKey()?'<span class="badge ok">✓ Anthropic-Key aus Quantus erkannt</span>':'<span class="badge warn">Kein Quantus-Key auf diesem Gerät → n8n-Webhook wird genutzt</span>')+'</div></div>'
-    +'<div class="card"><h3>Speicherung</h3><p class="muted" style="font-size:13px">Alle Daten (Fortschritt, Notizen, Fehler-Queue, Zieldatum, Chat) liegen in Firebase RTDB unter <span class="mono">'+CFG.NS+'/</span>. Lokaler Cache für schnelles Laden/Offline.</p><div class="btnrow" style="margin-top:8px"><button class="btn sm" data-action="reload-fb">Neu von Firebase laden</button></div></div>';
+    +'<div class="card"><h3>Speicherung</h3><p class="muted" style="font-size:13px">BM-Fortschritt, Arbeitsnotizen, Fehler-Queue, Zieldatum und Chat liegen in Firebase RTDB unter <span class="mono">'+CFG.NS+'/</span>. Lernnotizen werden dagegen zentral in NoteFlow gespeichert, landen ohne gewähltes Notizbuch in der Inbox und tragen „BM Vorbereitung“ als Schlagwort. Lokaler Cache für schnelles Laden/Offline.</p><div class="btnrow" style="margin-top:8px"><button class="btn sm" data-action="reload-fb">Neu von Firebase laden</button></div></div>';
 }
 
 /* ── Pomodoro ──────────────────────────────────────────────────────────── */
@@ -1022,6 +1178,17 @@ document.addEventListener("click", function(e){
     case "pomodoro": togglePomodoro(); break;
     case "modal-close": closeModal(); break;
     case "modal-bg": if(e.target===el) closeModal(); break;
+    case "bm-learning-note": {
+      var noteKey=el.getAttribute("data-key")||null, preset=null;
+      if(el.getAttribute("data-prefill")==="1"){
+        var scratch=document.getElementById("note-input");
+        preset={content:scratch?scratch.value:(U.notes[fbKey(noteKey)]||"")};
+      }
+      bmOpenLearningNote(noteKey,preset); break;
+    }
+    case "bm-note-save": bmSaveLearningNote(); break;
+    case "bm-quiz-learning-note": bmOpenQuizLearningNote(); break;
+    case "bm-open-noteflow": location.href="index.html#/notes"; break;
     case "exam-ask": askExamDate(); break;
     case "exam-save": { var v=(document.getElementById("ex-date")||{}).value; if(v){ U.config.examDate=v; U.config.planStart=todayISO(); saveConfig(); closeModal(); toast("Lernplan erstellt"); route(); } break; }
     case "set-exam-save": { var v2=(document.getElementById("set-exam")||{}).value; U.config.examDate=v2||null; if(v2&&!U.config.planStart) U.config.planStart=todayISO(); saveConfig(); toast("Gespeichert"); route(); break; }
@@ -1082,6 +1249,7 @@ document.addEventListener("input", function(e){ var el=e.target;
     notePending=function(){ var fk=fbKey(k); if((el.value||"").trim()) U.notes[fk]=el.value; else delete U.notes[fk]; saveNote(k); if(st)st.textContent="✓ gespeichert"; };
     clearTimeout(noteTimer); noteTimer=setTimeout(flushNote, 600); }
   if(el.getAttribute&&el.getAttribute("data-action")==="search-live"){ runSearch(el.value); }
+  if(el.getAttribute&&el.getAttribute("data-action")==="bm-note-tags"){ bmRefreshTagSuggestions(); }
 });
 window.addEventListener("pagehide", flushNote);
 window.addEventListener("beforeunload", flushNote);
