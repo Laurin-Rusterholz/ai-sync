@@ -426,10 +426,17 @@ function bmNormalizeTags(tags){
 }
 function bmRefreshTagSuggestions(){
   var input=document.getElementById("bm-note-tags"), list=document.getElementById("bm-note-tag-list"); if(!input||!list) return;
-  var parts=input.value.split(","), query=(parts.pop()||"").trim(), exclude=parts;
+  var parts=input.value.split(","), query=(parts.pop()||"").trim();
+  var complete=bmNormalizeTags(parts);
   var notes=bmMainNotes().concat([{tags:["BM Vorbereitung"]}]), suggestions=[];
-  if(window.QuantusNotesCore&&window.QuantusNotesCore.tagSuggestions) suggestions=window.QuantusNotesCore.tagSuggestions(notes,query,exclude);
-  list.innerHTML=suggestions.slice(0,30).map(function(tag){return '<option value="'+esc(tag)+'"></option>';}).join("");
+  if(window.QuantusNotesCore&&window.QuantusNotesCore.tagSuggestions) suggestions=window.QuantusNotesCore.tagSuggestions(notes,query,complete);
+  // Der Optionswert traegt die bereits gewaehlten Tags als Praefix. Chromium
+  // zeigt eine Option nur, wenn ihr Wert den Feldinhalt enthaelt — mit dem
+  // nackten Einzeltag blieben die Vorschlaege ab dem ersten Komma unsichtbar,
+  // und eine Auswahl haette alle Tags ersetzt (Review P2-2).
+  list.innerHTML=suggestions.slice(0,30).map(function(tag){
+    return '<option value="'+esc(complete.concat([tag]).join(", "))+'"></option>';
+  }).join("");
 }
 function bmLearningContext(key,preset){
   preset=preset||{}; var rec=key&&IDX.byKey[key], label=rec?rec.thema.titel:"BM Vorbereitung";
