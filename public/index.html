@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -88675,19 +88675,28 @@ function mkTI(id,init=[]){
   const w=document.getElementById(id);if(!w)return{get:()=>[]};
   let tags=typeof window.quantusNormalizeTags==='function'?window.quantusNormalizeTags(init):[...new Set(init)];
   const listId=id+'-suggestions';
-  const r=(draft='')=>{
-    const suggestions=typeof window.quantusGetTagSuggestions==='function'?window.quantusGetTagSuggestions(draft,tags):[];
-    w.innerHTML=tags.map((t,i)=>`<span class="ti-t">${esc(t)}<span class="x" data-i="${i}">&times;</span></span>`).join('')+
-      `<input list="${esc(listId)}" placeholder="Tag + Enter…" value="${esc(draft)}" autocomplete="off"/><datalist id="${esc(listId)}">${suggestions.slice(0,30).map(t=>`<option value="${esc(t)}"></option>`).join('')}</datalist>`;
-    const inp=w.querySelector('input');
-    inp.addEventListener('input',()=>{const value=inp.value;r(value);w.querySelector('input')?.focus()});
-    inp.addEventListener('keydown',e=>{
-      if(e.key==='Enter'){e.preventDefault();e.stopPropagation();const v=inp.value.trim();if(v){tags=typeof window.quantusNormalizeTags==='function'?window.quantusNormalizeTags([...tags,v]):[...new Set([...tags,v])];r()}else inp.value=''}
-      if(e.key==='Backspace'&&!inp.value&&tags.length){tags.pop();r()}
-    });
-    w.querySelectorAll('.x').forEach(x=>x.addEventListener('click',()=>{tags.splice(+x.dataset.i,1);r()}));
+  // Beim Tippen wird NUR die Vorschlagsliste aktualisiert, nie das Eingabefeld
+  // neu gebaut: ein Re-Render pro input-Event setzte den Caret auf 0 und
+  // verdrehte die Eingabe (aus "Buch" wurde "hcuB") — Review P1-2.
+  const refreshList=()=>{
+    const inp=w.querySelector('input'),dl=w.querySelector('datalist');if(!inp||!dl)return;
+    const suggestions=typeof window.quantusGetTagSuggestions==='function'?window.quantusGetTagSuggestions(inp.value.trim(),tags):[];
+    dl.innerHTML=suggestions.slice(0,30).map(t=>`<option value="${esc(t)}"></option>`).join('');
   };
-  w.onclick=()=>w.querySelector('input')?.focus();r();return{get:()=>[...tags]};
+  const r=(focus=false)=>{
+    w.innerHTML=tags.map((t,i)=>`<span class="ti-t">${esc(t)}<span class="x" data-i="${i}">&times;</span></span>`).join('')+
+      `<input list="${esc(listId)}" placeholder="Tag + Enter…" autocomplete="off"/><datalist id="${esc(listId)}"></datalist>`;
+    const inp=w.querySelector('input');
+    inp.addEventListener('input',refreshList);
+    inp.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();e.stopPropagation();const v=inp.value.trim();if(v){tags=typeof window.quantusNormalizeTags==='function'?window.quantusNormalizeTags([...tags,v]):[...new Set([...tags,v])];r(true)}else inp.value=''}
+      if(e.key==='Backspace'&&!inp.value&&tags.length){tags.pop();r(true)}
+    });
+    w.querySelectorAll('.x').forEach(x=>x.addEventListener('click',()=>{tags.splice(+x.dataset.i,1);r(true)}));
+    refreshList();
+    if(focus)inp.focus();
+  };
+  w.onclick=e=>{if(!e.target.closest('.x'))w.querySelector('input')?.focus()};r();return{get:()=>[...tags]};
 }
 
 /* ── Post-it Detail — EDITABLE ── */

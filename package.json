@@ -10,7 +10,7 @@
     "test:backup": "node scripts/backup-blob.test.mjs",
     "test:flowertech": "node scripts/flowertech-sync.test.mjs",
     "test:index-parser": "node tests/quantus-index-parser-repair.test.mjs",
-    "test:notes": "node tests/quantus-notes-core.test.mjs && node tests/quantus-notes-integration.test.mjs && node tests/quantus-notes-security.test.mjs && node tests/quantus-notes-lifecycle.test.mjs",
+    "test:notes": "node tests/quantus-notes-core.test.mjs && node tests/quantus-notes-integration.test.mjs && node tests/quantus-notes-security.test.mjs && node tests/quantus-notes-lifecycle.test.mjs && node tests/newsroom-tag-input.test.mjs",
     "test:english-c1-entry": "node tests/quantus-english-c1-entry.test.mjs",
     "test:career-model-entry": "node tests/quantus-career-model-entry.test.mjs",
     "test:career-model": "node tests/career-model-core.test.mjs && node tests/career-model-app.structure.test.mjs && node tests/career-model-learning.test.mjs && node tests/career-model-ideas.test.mjs",
