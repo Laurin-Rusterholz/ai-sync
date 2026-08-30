@@ -157,4 +157,32 @@ reset();
   ok(d.entities.notes.n1, "Wiederhergestellte Note ueberlebt die naechste Normalisierung");
 }
 
-console.log(`Notiz-Lebenszyklus (Bundle-Delete/Undo/Grabsteine): ok (${checks} Pruefungen)`);
+// ── Zeitstempel entscheidet die Sync-Richtung; Status wandert als ideaStatus ──
+// (Review D9/P2-4: eine aeltere Note darf frischere Board-Aenderungen nicht
+// ueberschreiben; der Bearbeitungsstatus muss die Geraete ueberleben.)
+reset();
+{
+  const d = sandbox.APP.state.data;
+  d.entities.notes["idea-note-i1"] = { id: "idea-note-i1", title: "Alt", content: "alter Text", noteClass: "idea", tags: ["Kat"], notebookId: null, dedupeKey: "ideas:i1", source: { app: "ideas", entityType: "idea", entityId: "i1", label: "Alt", route: "#/ideas/i1" }, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+  d.entities.ideas.i1 = { id: "i1", noteId: "idea-note-i1", centralNoteId: "idea-note-i1", title: "Neu vom Board", text: "frischer Text", content: "frischer Text", category: "Kat", tags: ["Kat"], status: "processed", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" };
+  run("migrateQuantusNotes(APP.state.data)");
+  eq(d.entities.notes["idea-note-i1"].content, "frischer Text", "juengere Idea-Aenderung gewinnt gegen aeltere Note");
+  eq(d.entities.notes["idea-note-i1"].ideaStatus, "processed", "Status wandert in die Note (ideaStatus)");
+  run("migrateQuantusNotes(APP.state.data)");
+  eq(d.entities.notes["idea-note-i1"].content, "frischer Text", "idempotent");
+}
+reset();
+{
+  const d = sandbox.APP.state.data;
+  d.entities.notes["idea-note-i1"] = { id: "idea-note-i1", title: "Neu von Mobile", content: "mobiler Text", noteClass: "idea", tags: ["Kat"], ideaStatus: "archived", notebookId: null, dedupeKey: "ideas:i1", source: { app: "ideas", entityType: "idea", entityId: "i1", label: "Neu", route: "#/ideas/i1" }, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" };
+  d.entities.ideas.i1 = { id: "i1", noteId: "idea-note-i1", centralNoteId: "idea-note-i1", title: "Alt", text: "alter Text", content: "alter Text", category: "Kat", tags: ["Kat"], status: "open", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+  run("migrateQuantusNotes(APP.state.data)");
+  eq(d.entities.ideas.i1.text, "mobiler Text", "juengere Note gewinnt gegen aeltere Projektion");
+  eq(d.entities.ideas.i1.status, "archived", "note.ideaStatus setzt den Board-Status");
+}
+
+// ── Buchstatus-Paritaet: in_progress ist "lese ich" (wie auf dem Tablet) ──
+eq(vm.runInContext("window.QuantusNotesCore.normalizeBookStatus('in_progress')", sandbox), "reading",
+  "in_progress wird geraeteuebergreifend als reading gelesen");
+
+console.log(`Notiz-Lebenszyklus (Bundle-Delete/Undo/Grabsteine/Status-Sync): ok (${checks} Pruefungen)`);

@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -6651,7 +6651,7 @@ function normalizeReadingHubBookRecord(book) {
     ? core.normalizeBookStatus(book.status)
     : (['registered', 'reading', 'paused', 'completed', 'abandoned'].includes(rawStatus)
       ? rawStatus
-      : ({ new: 'registered', unread: 'registered', read: 'completed', done: 'completed' }[rawStatus] || 'registered'));
+      : ({ new: 'registered', unread: 'registered', read: 'completed', done: 'completed', in_progress: 'reading' }[rawStatus] || 'registered'));
   const pages = Array.isArray(book.pages) ? book.pages : [];
   return {
     ...book,
@@ -10714,6 +10714,7 @@ function ensureIdeaCentralNote(idea, preferIdea = false) {
       title: idea.title || String(idea.text || idea.content || "").slice(0, 80) || "Idee",
       content: idea.text || idea.content || idea.description || idea.title || "",
       noteClass: "idea", tags: idea.tags, notebookId: null, dedupeKey,
+      ideaStatus: idea.status || "open",
       source: { app: "ideas", entityType: "idea", entityId: idea.id, label: idea.title || "Idee", route: "#/ideas/" + idea.id }
     });
     idea.noteId = noteId;
@@ -10728,6 +10729,7 @@ function ensureIdeaCentralNote(idea, preferIdea = false) {
     central.title = idea.title || central.title;
     central.content = idea.text || idea.content || idea.description || central.content;
     central.tags = quantusNormalizeTags(idea.tags, APP.state.data);
+    if (idea.status) central.ideaStatus = idea.status;
     central.noteClass = "idea";
     central.notebookId = central.notebookId || null;
     central.source = quantusNormalizeNoteSource(central.source, { app: "ideas", entityType: "idea", entityId: idea.id, label: idea.title || "Idee", route: "#/ideas/" + idea.id });
@@ -10738,6 +10740,7 @@ function ensureIdeaCentralNote(idea, preferIdea = false) {
     idea.text = central.content || idea.text || "";
     idea.content = central.content || idea.content || "";
     idea.tags = quantusNormalizeTags(central.tags, APP.state.data);
+    if (central.ideaStatus) idea.status = central.ideaStatus;
     idea.category = idea.tags[0] || category;
   }
   return central;
@@ -10802,6 +10805,34 @@ function migrateQuantusNotes(data) {
     note.updatedAt = note.updatedAt || note.createdAt;
   });
 
+  // Beide Darstellungen einer Idee gleichen sich über den Zeitstempel ab:
+  // eine ältere Note darf frischere Board-/Fremdgeräte-Änderungen nicht
+  // überschreiben und umgekehrt (Review D9). Der Bearbeitungsstatus wandert
+  // dabei als note.ideaStatus über die Geräte (Review P2-4) — Mobile führt
+  // ihn in ideaMeta.status und spiegelt ihn in dieses Feld.
+  const syncIdeaPair = (idea, note) => {
+    idea.noteId = note.id;
+    idea.centralNoteId = note.id;
+    const ideaTs = new Date(idea.updatedAt || idea.createdAt || 0).getTime() || 0;
+    const noteTs = new Date(note.updatedAt || note.createdAt || 0).getTime() || 0;
+    if (ideaTs > noteTs) {
+      note.title = idea.title || note.title || "Idee";
+      note.content = idea.text || idea.content || idea.description || note.content || "";
+      note.tags = window.QuantusNotesCore.normalizeTags([idea.category, ...(idea.tags || [])].filter(Boolean), preferred);
+      if (idea.status) note.ideaStatus = idea.status;
+      note.updatedAt = idea.updatedAt || note.updatedAt;
+    } else {
+      idea.title = note.title || String(note.content || "").slice(0, 80) || idea.title || "Idee";
+      idea.text = note.content || "";
+      idea.content = note.content || "";
+      idea.tags = window.QuantusNotesCore.normalizeTags(note.tags, preferred);
+      if (note.ideaStatus) idea.status = note.ideaStatus;
+      idea.updatedAt = note.updatedAt || idea.updatedAt || idea.createdAt;
+    }
+    idea.category = idea.tags?.[0] || idea.category || "Unkategorisiert";
+    if (!Array.isArray(idea.tags) || !idea.tags.length) idea.tags = window.QuantusNotesCore.normalizeTags([idea.category], preferred);
+  };
+
   // Eine auf Mobile/Tablet direkt in entities.notes erstellte Idee bekommt
   // einen kleinen Legacy-Verweis für das bestehende Desktop-Board. Der Text
   // bleibt dabei kanonisch in der Note; das Board kann so auch neue, rein
@@ -10826,14 +10857,7 @@ function migrateQuantusNotes(data) {
       };
       e.ideas[ideaId] = idea;
     }
-    idea.noteId = note.id;
-    idea.centralNoteId = note.id;
-    idea.title = note.title || String(note.content || "").slice(0, 80) || "Idee";
-    idea.text = note.content || "";
-    idea.content = note.content || "";
-    idea.tags = window.QuantusNotesCore.normalizeTags(note.tags, preferred);
-    idea.category = idea.tags[0] || idea.category || "Unkategorisiert";
-    idea.updatedAt = note.updatedAt || idea.updatedAt || idea.createdAt;
+    syncIdeaPair(idea, note);
   });
 
   // Legacy-Ideen erhalten deterministisch genau eine zentrale Notiz. Wir bauen
@@ -10855,22 +10879,15 @@ function migrateQuantusNotes(data) {
         title: idea.title || String(idea.text || idea.content || "").slice(0, 80) || "Idee",
         content: idea.text || idea.content || idea.description || idea.title || "",
         noteClass: "idea", tags: idea.tags, notebookId: null, dedupeKey,
+        ideaStatus: idea.status || "open",
         source: { app: "ideas", entityType: "idea", entityId: idea.id, label: idea.title || "Idee", route: "#/ideas/" + idea.id },
         createdAt: idea.createdAt || now, updatedAt: now
       }, { preferredTags: preferred, now });
       e.notes[noteId] = central;
     }
-    idea.noteId = central.id;
-    idea.centralNoteId = central.id;
-    // Sobald die zentrale Note existiert, ist sie die Text- und Tag-Quelle.
-    // Board-spezifische Felder wie Position, Farbe und Status bleiben im
-    // Legacy-Verweis und werden nicht in die Note gezwungen.
-    idea.title = central.title || idea.title || "Idee";
-    idea.text = central.content || "";
-    idea.content = central.content || "";
-    idea.tags = window.QuantusNotesCore.normalizeTags(central.tags, preferred);
-    idea.category = idea.tags[0] || category;
-    idea.updatedAt = central.updatedAt || idea.updatedAt || idea.createdAt;
+    // Zeitstempel entscheidet die Richtung; Board-spezifische Felder wie
+    // Position und Farbe bleiben in jedem Fall im Legacy-Verweis.
+    syncIdeaPair(idea, central);
   });
   return data;
 }

@@ -185,7 +185,7 @@
 
   function normalizeBookStatus(status) {
     const value = asText(status).trim().toLocaleLowerCase("de-CH");
-    if (["reading", "lese ich", "am lesen", "lesend"].includes(value)) return "reading";
+    if (["reading", "lese ich", "am lesen", "lesend", "in_progress", "in progress"].includes(value)) return "reading";
     if (["paused", "pause", "pausiert"].includes(value)) return "paused";
     if (["completed", "read", "done", "gelesen", "fertig"].includes(value)) return "completed";
     if (["abandoned", "dropped", "abgebrochen"].includes(value)) return "abandoned";
