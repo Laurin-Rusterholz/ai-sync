@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button · 2026-08-29" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -15702,7 +15702,32 @@ function deleteEntity(kind, id) {
     scheduleSave();
     return true;
   }
-  
+
+  // Die NOTE-Seite desselben Aggregats muss sich beim Loeschen genauso
+  // verhalten: bliebe die Board-Projektion stehen, wuerde migrateQuantusNotes
+  // die geloeschte Note beim naechsten Start aus ihr neu erzeugen — bei
+  // Composer-Ideen unter einer frischen, nie tombstonten id (Review P1-1,
+  // Probe S2/S2b). Deshalb wird hier auf das Idea-Bundle umgelenkt.
+  if (kind === "note") {
+    const ideas = APP.state.data.entities.ideas || {};
+    const identity = typeof quantusIdeaIdentityFromNote === "function" ? quantusIdeaIdentityFromNote(entity) : "";
+    const linkedIdeaIds = Object.values(ideas).filter(idea => idea && (
+      idea.noteId === id || idea.centralNoteId === id || (identity && String(idea.id) === identity)
+    )).map(idea => String(idea.id));
+    if (linkedIdeaIds.length) {
+      linkedIdeaIds.forEach(ideaId => deleteEntity("idea", ideaId));
+      // Defensiv: haengt die Note an keinem Bundle-Backup (inkonsistente
+      // Altdaten), wird sie hier direkt samt Grabstein entfernt.
+      if (ownEntity(map, id)) {
+        if (typeof logDeletion === "function") logDeletion("note", id);
+        delete map[id];
+        APP.state.data.meta.updatedAt = nowIso();
+        scheduleSave();
+      }
+      return !ownEntity(map, id);
+    }
+  }
+
   // Store for undo
   const backup = deepClone(entity);
   
@@ -16186,7 +16211,12 @@ function undo() {
   } else if (item.action === "delete") {
     const map = getEntityMap(item.kind);
     if (map) {
-      map[item.id] = item.backup;
+      // Frischer Zeitstempel + Grabstein raeumen — sonst traegt die
+      // wiederhergestellte Entitaet ihr altes updatedAt, der Loesch-Grabstein
+      // ist juenger, und die naechste Normalisierung/der naechste Merge
+      // entfernt sie sofort wieder (Review P3/D6, Probe S7).
+      map[item.id] = { ...item.backup, updatedAt: nowIso() };
+      clearDeletion(item.kind, item.id);
     }
   } else if (item.action === "deleteIdeaBundle") {
     const restoredAt = nowIso();
