@@ -500,7 +500,12 @@ const letzterToast = (win) => win.__toasts[win.__toasts.length - 1] || {};
   // Und weiterhin nichts Internes — die Positivliste bleibt eine.
   const roh = JSON.stringify(snapshot);
   ok(!roh.includes("prj_lehner"), "die Projekt-ID steht im veröffentlichten Datensatz");
-  ok(!roh.includes("rita@lehner.ch"), "die Mailadresse der Kundschaft steht im Datensatz");
+  // Die Kontaktdaten der Kundschaft stehen seit der Vorbelegung an genau EINER
+  // Stelle im Datensatz: in prefill.values, damit der Bogen sie vorbelegt.
+  // Sonst nirgends (tests/flowertech-kundenlink-vorbelegung.test.mjs).
+  const ohneVorbelegung = JSON.stringify(Object.assign({}, snapshot, { prefill: null }));
+  ok(!ohneVorbelegung.includes("rita@lehner.ch"),
+    "die Mailadresse der Kundschaft steht ausserhalb der Vorbelegung im Datensatz");
   ok(!/portalToken|ftContactLog|ftClaudeHandoff|kunde\.html/.test(roh),
     "interne Felder stehen im veröffentlichten Datensatz");
   // Die Rückgabe-Adresse selbst darf hinaus — sie IST die Vorschau. Der Weg

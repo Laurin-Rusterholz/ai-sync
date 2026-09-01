@@ -385,8 +385,11 @@ const TOKEN = "t".repeat(32);
     ok(/id="visionRoom"/.test(fragebogen), "der Vision Room fehlt im Fragebogen");
     ok(/q\.vision === "idea"/.test(fragebogen) && /q\.vision === "features"/.test(fragebogen),
       "der Vision Room ist nicht an die Fragen des Fragebogens gebunden");
+    // Drei Abrufe, und nur diese: den Fragebogen laden, die Antworten senden und
+    // die Abschrift der veroeffentlichten Inhalte von der Herkunft der Vorschau
+    // lesen (fuer die Verwaltung). Ein vierter waere ein zweiter Weg.
     const sendungen = (fragebogen.match(/fetch\(/g) || []).length;
-    ok(sendungen === 2, `der Fragebogen sendet an ${sendungen} Stellen statt zweimal (laden + senden)`);
+    ok(sendungen === 3, `der Fragebogen sendet an ${sendungen} Stellen statt dreimal (laden + senden + Inhalte lesen)`);
 
     // Phase 2 zeigt nichts ohne Freigabe.
     ok(/data\.published === false/.test(kunde),

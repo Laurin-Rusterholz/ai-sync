@@ -241,7 +241,9 @@ function beantwortetesProjekt(extra = {}, antworten = {}) {
       id: "sub_test", kind: "intake", token: intake.inviteToken, createdAt: "2026-08-08T09:00:00.000Z",
       payload: {
         intakeTitle: intake.title,
-        answers: vollstaendig(ctx.win, intake.id, Object.assign({
+        // Die Firma stand VORBELEGT auf dem Bogen; die Kundschaft lässt sie so
+        // (eine Änderung wäre eine Korrektur und gewinnt, 4g-3).
+        answers: vollstaendig(ctx.win, intake.id, Object.assign({ company: "Lehner GmbH" }, {
           projekt: "TESTEINGABE", need: "Test test test", "vision-idee": "Test",
         }, antworten)),
       },
@@ -366,8 +368,16 @@ function beantwortetesProjekt(extra = {}, antworten = {}) {
   const veroeffentlicht = JSON.stringify(written[pfad]);
   ok(!veroeffentlicht.includes("prj_lehner") && !veroeffentlicht.includes(intake.id),
     "der öffentliche Fragebogen trägt nach dem Zurücksetzen interne IDs");
-  ok(!/Antwort |TESTEINGABE|test@test\.ch/.test(veroeffentlicht),
+  /* Die alten ANTWORTEN sind weg. Was aus ihnen ins Projekt ergänzt wurde
+     (E-Mail, bisherige Website …), bleibt ausdrücklich Projektdatum — und steht
+     deshalb als Vorbelegung wieder auf dem Bogen (4g-3), nirgends sonst. */
+  const ohneVorbelegung = JSON.stringify(Object.assign({}, written[pfad], { prefill: null }));
+  ok(!/Antwort |TESTEINGABE|test@test\.ch/.test(ohneVorbelegung),
     "der öffentliche Fragebogen trägt die alten Antworten — er ist nicht leer");
+  ok(!/TESTEINGABE/.test(veroeffentlicht),
+    "der Projektname aus der Testeingabe wurde als Vorbelegung ausgegeben — er steht nicht am Projekt");
+  ok(written[pfad].prefill && written[pfad].prefill.values.email === "test@test.ch",
+    "die am Projekt verbliebene E-Mail ist nach dem Zurücksetzen nicht vorbelegt");
   ok(!/kunde\.html|portalToken|ftTemplate|ftContract|termsConsent/.test(veroeffentlicht),
     "der öffentliche Fragebogen trägt Vorschau, Vertrag, AGB oder Kundenportal");
 }

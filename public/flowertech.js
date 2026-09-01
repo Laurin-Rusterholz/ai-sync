@@ -747,6 +747,11 @@
         // Kundeneingänge aus den geteilten Links (Bedarfsformular, Änderungs-
         // wünsche). Zuordnung ausschliesslich über den Freigabe-Token des
         // Projekts — nichts wird „irgendwie" erraten.
+        // Bestehende Kundenlinks: fehlt draussen die Vorbelegung oder ist sie
+        // veraltet, wird einmal neu veroeffentlicht — derselbe Link.
+        try { refreshIntakePrefills(); }
+        catch (error) { console.warn("[FlowerTech] Vorbelegung:", error && error.message); }
+
         submissionRef = db.ref("flowertech/submissions");
         submissionRef.on("value", function (snapshot) {
           try { ingestSubmissions(snapshot.val() || {}); }
@@ -839,6 +844,7 @@
     project.updatedAt = now();
     save();
     refreshClientPortal(projectId);
+    schedulePrefillRefresh(projectId);
   };
 
   window._ftCreateTask = function () {
@@ -2163,6 +2169,10 @@
     var ft = state();
     var project = projectById(projectId);
     if (!ft || !project || project.projectType !== "flowertech") return "";
+    // Die Vorbelegung des Kundenlinks zieht nach, sobald das Projekt gezeigt
+    // wird — einmal, dann stimmt sie (publishIntakeForm haelt sie fest).
+    try { refreshIntakePrefills(project.id); }
+    catch (error) { console.warn("[FlowerTech] Vorbelegung:", error && error.message); }
 
     var list = tasksOfProject(project.id);
     var open = list.filter(function (task) { return task.status !== "done"; });
@@ -2288,6 +2298,8 @@
     project.client[field] = value;
     project.updatedAt = now();
     save();
+    // Der Kundenlink zeigt diese Angaben vorbelegt — er zieht nach.
+    schedulePrefillRefresh(projectId);
   };
 
   // ── Projektliste (ersetzt die frühere Kachelansicht) ────────────────────
@@ -3756,6 +3768,64 @@
     return core.contractToHtml(doc, wfVars(projectId));
   }
 
+  /* ── Vorbelegung des Kundenlinks ────────────────────────────────────────
+     Bekanntes wird zusammengetragen, der Kern (intakePrefill) entscheidet,
+     was davon in welches Feld passt. Hier steht nur, WO in Quantus die
+     Angaben liegen: Projekt, Kundendaten am Projekt, die verknuepfte Person,
+     die Organisation, die Anfrage (Lead), die Offerte, das Briefing.
+
+     Die verknuepfte Person ist nur dann eine: Genau eine Person, die dieses
+     Projekt verknuepft hat (oder zur Organisation des Projekts gehoert). Bei
+     mehreren zaehlt die mit der am Projekt gepflegten E-Mail — sonst keine.
+     Raten waere Erfinden. */
+  function linkedPersonOf(project) {
+    var root = data();
+    if (!project || !root || !root.entities) return null;
+    var persons = Object.keys(root.entities.persons || {}).map(function (k) {
+      return Object.assign({ id: k }, root.entities.persons[k] || {});
+    });
+    var linked = persons.filter(function (p) {
+      return Array.isArray(p.linkedProjects) && p.linkedProjects.indexOf(project.id) >= 0;
+    });
+    if (!linked.length && project.organizationId) {
+      linked = persons.filter(function (p) { return p.organizationId === project.organizationId; });
+    }
+    if (linked.length === 1) return linked[0];
+    if (linked.length > 1) {
+      var email = String((project.client && project.client.email) || "").trim().toLowerCase();
+      var hit = email ? linked.filter(function (p) {
+        return (p.emails || []).some(function (e) {
+          var v = e && typeof e === "object" ? (e.address || e.value || e.email) : e;
+          return String(v || "").trim().toLowerCase() === email;
+        });
+      }) : [];
+      return hit.length === 1 ? hit[0] : null;
+    }
+    return null;
+  }
+
+  function intakePrefillFor(intake, project) {
+    var core = W();
+    var ft = wf();
+    var root = data();
+    if (!core || !ft || !intake) return null;
+    var inquiries = ft.inquiries || {};
+    var inquiryId = intake.inquiryId || (project && project.sourceInquiryId) || "";
+    var inquiry = inquiryId && inquiries[inquiryId] ? Object.assign({ id: inquiryId }, inquiries[inquiryId]) : null;
+    var organization = project && project.organizationId && root && root.entities && root.entities.organizations
+      ? (root.entities.organizations[project.organizationId] || null) : null;
+    return core.intakePrefill({
+      intake: intake,
+      project: project || null,
+      inquiry: inquiry,
+      person: linkedPersonOf(project),
+      organization: organization,
+      offer: intake.offerId ? docById("offer", intake.offerId) : null,
+      briefing: project ? briefingOf(project.id) : null,
+    });
+  }
+  window._ftIntakePrefill = intakePrefillFor;
+
   function customerAreaInput(intake, project) {
     var core = W();
     var offers = project ? docsOfProject("offer", project.id) : [];
@@ -3773,6 +3843,8 @@
       contractTitle: (contract && contract.title) || "",
       prompt: project ? (project.ftPrompt || null) : null,
       today: today(),
+      // Die Vorbelegung: nur Bekanntes, im Kern gefiltert.
+      prefill: intakePrefillFor(intake, project),
     };
   }
 
@@ -3839,8 +3911,15 @@
     intake.publishRequestedAt = now();
     intake.publishPending = true;
     intake.publishError = "";
+    var input = customerAreaInput(intake, projectOfIntake(intake));
+    // Was vorbelegt wurde und woher — das bleibt am Fragebogen in Quantus.
+    // Hinaus gehen nur Fassung und Werte (intakePrefillSnapshot im Kern).
+    intake.prefill = input.prefill ? {
+      version: input.prefill.version, values: input.prefill.values,
+      sources: input.prefill.sources, labels: input.prefill.labels, at: now(),
+    } : { version: core.INTAKE_PREFILL_VERSION, values: {}, sources: {}, labels: [], at: now() };
     var done = ref.set(core.customerAreaSnapshot(Object.assign(
-      customerAreaInput(intake, projectOfIntake(intake)),
+      input,
       { company: ft.company || {}, now: now() }
     ))).then(function () {
       intake.publishedAt = now();
@@ -3861,6 +3940,42 @@
     return publishResult({ token: token, pending: true, done: done });
   }
   window._ftPublishIntakeForm = publishIntakeForm;
+
+  /* Bestehende Kundenlinks bekommen die Vorbelegung, ohne dass sich der Link
+     aendert: Ein offener Fragebogen, dessen veroeffentlichte Vorbelegung fehlt,
+     eine aeltere Fassung traegt oder nicht mehr dem entspricht, was innen
+     bekannt ist, wird einmal neu veroeffentlicht. Beantwortete und
+     geschlossene Boegen bleiben unangetastet — sie zeigen kein Formular. */
+  function refreshIntakePrefills(projectId) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft) return 0;
+    var count = 0;
+    Object.keys(ft.intakes || {}).forEach(function (intakeId) {
+      var intake = ft.intakes[intakeId];
+      // Ohne Firebase-Zugang gibt es nichts nachzuziehen — und keinen Grund,
+      // bei jedem Aufbau der Seite einen Fehlvermerk zu setzen.
+      if (!intake || !intakeRef(intake.inviteToken)) return;
+      var project = projectOfIntake(intake);
+      if (projectId && (!project || project.id !== projectId)) return;
+      if (!core.intakePrefillStale({ intake: intake, prefill: intakePrefillFor(intake, project) })) return;
+      publishIntakeForm(intakeId);
+      count++;
+    });
+    return count;
+  }
+  window._ftRefreshIntakePrefills = refreshIntakePrefills;
+
+  // Nach dem Bearbeiten von Kundendaten: gebuendelt, nicht bei jedem Zeichen.
+  var prefillTimers = {};
+  function schedulePrefillRefresh(projectId) {
+    if (!projectId) return;
+    clearTimeout(prefillTimers[projectId]);
+    prefillTimers[projectId] = setTimeout(function () {
+      delete prefillTimers[projectId];
+      refreshIntakePrefills(projectId);
+    }, 1500);
+  }
 
   function intakeLink(intakeId) {
     var core = W();
@@ -4421,9 +4536,24 @@
             "und Aufgaben bleiben unverändert.</span></div>"
         : "") +
       '<div class="mini">' + esc(state.explain) + "</div>" +
+      intakePrefillLineHtml(intakeOfProject(projectId)) +
       customerStagesHtml(projectId);
   }
   window._ftProjectIntakeRow = projectIntakeRowHtml;
+
+  /* Was die Kundschaft auf dem Bogen vorfindet — und woher es stammt. Nur
+     intern, nur lesbar: Frage und Quelle, keine ID. */
+  function intakePrefillLineHtml(intake) {
+    if (!intake || intake.answeredAt || intake.status === "closed") return "";
+    var prefill = intake.prefill;
+    if (!prefill || !prefill.labels || !prefill.labels.length) {
+      return '<div class="mini ft-prefill">Vorbelegt für die Kundschaft: nichts — bekannte Angaben ' +
+        "(Kundendaten, verknüpfte Person, Anfrage) fehlen noch. Unbekanntes bleibt leer.</div>";
+    }
+    return '<div class="mini ft-prefill">Vorbelegt für die Kundschaft (Fassung ' +
+      esc(String(prefill.version || "")) + "): " + prefill.labels.map(esc).join(" · ") +
+      ". Alles bleibt für die Kundschaft editierbar.</div>";
+  }
 
   /* Was die Kundschaft hinter diesem einen Link JETZT sieht — und was nicht.
      Beides steht da, Zeile für Zeile: Die Stufen sind der Grund, warum es nur
@@ -4814,7 +4944,12 @@
     var doc = core.buildIntakeDocument({
       intake: intake, answers: answers, now: options.submittedAt || now(),
     });
-    var update = core.intakeUpdateForProject({ project: project, answers: answers, now: now() });
+    var update = core.intakeUpdateForProject({
+      project: project, answers: answers, now: now(),
+      // Was die Kundschaft vorgefunden hat: Aendert sie genau das, gewinnt
+      // ihre Angabe — sie korrigiert, was wir ihr gezeigt haben.
+      prefill: intake && intake.prefill ? intake.prefill : null,
+    });
 
     project.ftIntakeDocument = doc;
     Object.keys(update.patch).forEach(function (key) { project[key] = update.patch[key]; });
@@ -4827,6 +4962,12 @@
       id: id(), at: now(), channel: "note",
       text: options.logText || "Fragebogen dieses Projekts ausgefüllt eingegangen.",
     });
+    if (update.corrected && update.corrected.length) {
+      project.ftContactLog.unshift({
+        id: id(), at: now(), channel: "note",
+        text: "Die Kundschaft hat vorbelegte Angaben korrigiert: " + update.corrected.join(", ") + ".",
+      });
+    }
     // Genau eine Aufgabe: derselbe Schlüssel wie beim Erstweg (projektId +
     // ":intake"). Ein zweiter Eingang findet sie und legt nichts nach.
     createIntakeTask(projectId, project, doc);
@@ -6754,6 +6895,7 @@
     ".btn.ft-danger:hover{background:rgba(197,48,48,.12)}" +
     /* Die Stufen des Kundenbereichs: was hinter dem einen Link sichtbar ist —
        und was ausdruecklich noch nicht. Beides steht da, nicht nur das eine. */
+    ".ft-prefill{margin-top:6px;padding:6px 8px;border-left:2px solid var(--border);opacity:.9}" +
     ".ft-stages{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}" +
     ".ft-stages-head{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;" +
       "color:var(--muted);font-weight:700;margin-bottom:5px}" +

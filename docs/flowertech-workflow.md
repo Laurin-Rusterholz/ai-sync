@@ -434,7 +434,9 @@ Projektdaten, kein Fragebogen-Zustand.
 
 **Danach:** Die Karte zeigt wieder *„Fragebogen-Link – Kundendaten & Vision
 Room, keine Vorschau"* ohne Beantwortet-Vermerk, und derselbe Link zeigt wieder
-eine leere Form (der veröffentlichte Fragebogen steht sofort wieder auf `open`).
+eine unbeantwortete Form (der veröffentlichte Fragebogen steht sofort wieder auf
+`open`) — vorbelegt mit dem, was am Projekt steht, auch mit Kundendaten, die
+aus der zurückgesetzten Antwort ergänzt wurden (Abschnitt 4g-3).
 
 **Die erneute Einreichung** findet robust dasselbe Projekt: Das Zurücksetzen
 setzt `boundProjectId` ausdrücklich auf dieses Projekt — auch bei einem
@@ -587,6 +589,61 @@ Die Regeln, die das Ganze überhaupt erst verbindlich machen:
 
 Der Kundenlink bleibt dabei, was er ist: **eine** Adresse, die mit den Freigaben
 wächst. Belegt in `tests/flowertech-claude-rueckgabe.test.mjs`.
+
+### 4g-3. Vorbelegt, nicht erfunden
+
+Was FlowerTech über die Kundschaft schon weiss, steht auf dem Kundenlink
+bereits im Bogen — sie muss es nicht ein zweites Mal abtippen. Beim Projekt
+„Reinigungsunternehmen Aljia" heisst das: Projekt-/Firmenname, Ansprechperson
+„Herr Aljia", E-Mail und die Art „Website" sind vorbelegt; Firma, Telefon,
+Adresse, Termin und Vision Room bleiben leer, weil sie niemand kennt.
+
+`intakePrefill()` im Kern rechnet das — rein lesend — aus dem, was in Quantus
+gepflegt ist, in dieser Verlässlichkeitsreihenfolge:
+
+| Quelle | Füllt |
+| --- | --- |
+| Projekt | Projekt-/Firmenname (Titel), Art (`deliveryType`), bisherige Website/Anbieter/Preis, Budget, Wunschtermin, Vision Room (`ftVision`) |
+| Kundendaten am Projekt (`client`) | Firma, Ansprechperson, E-Mail, Telefon, Adresse |
+| verknüpfte Person (`linkedProjects` bzw. Organisation des Projekts) | dieselben Felder — nur, wenn die Person **eindeutig** ist |
+| Organisation | Firma |
+| Anfrage (Lead) | Name, Firma, E-Mail, Telefon, Art (so, wie die Kundschaft sie nannte) |
+| Offerte ohne Projekt | Kundendaten der Offerte |
+| Briefing | Ziel |
+
+Regeln, die das Ganze ehrlich halten:
+
+* **Nur Bekanntes.** Die Standard-Art eines frisch angelegten Fragebogens ist
+  keine Kenntnis und wird nicht vorbelegt. Zwei verknüpfte Personen ohne
+  Anhaltspunkt heisst: keine. Unbekannt bleibt leer.
+* **Nur, was ins Feld passt.** Eine Auswahl nur aus ihren Optionen, ein Datum
+  nur als JJJJ-MM-TT, eine E-Mail nur, wenn sie wie eine aussieht. Geheimnisse
+  (`isSensitiveAnswer`) nie.
+* **Herkunft innen, Werte aussen.** Am Fragebogen in Quantus steht
+  `intake.prefill` mit `values`, `sources` und lesbaren `labels`
+  („Ansprechperson ← Kundendaten am Projekt"); die Karte zeigt sie. Der
+  veröffentlichte Datensatz trägt nur `prefill: { version, values }` nach
+  Frageschlüssel — keine Quelle, keine Projekt- oder Personen-ID, keine Notiz.
+* **Versioniert.** `INTAKE_PREFILL_VERSION` ist die Fassung der Regel. Ein
+  offener Fragebogen, dessen veröffentlichte Vorbelegung fehlt, eine ältere
+  Fassung trägt oder nicht mehr dem Bekannten entspricht
+  (`intakePrefillStale()`), wird einmal neu veröffentlicht — beim Verbinden
+  mit Firebase, beim Anzeigen des Projekts und gebündelt nach dem Bearbeiten
+  der Kundendaten. **Derselbe Link, derselbe Token.** Beantwortete und
+  geschlossene Bögen bleiben in Ruhe.
+* **Die Kundschaft hat das letzte Wort.** Jedes vorbelegte Feld bleibt ein
+  normales Feld; beim Senden zählt, was dann darin steht. Korrigiert die
+  Kundschaft genau einen Wert, den wir ihr gezeigt haben, übernimmt das Projekt
+  die Korrektur (`intakeUpdateForProject({ prefill })`, benannt in
+  `corrected` und im Kontaktverlauf). Gepflegte Angaben, die **nicht**
+  vorbelegt waren, bleiben wie bisher stehen.
+
+Die Kundenseite (`fragebogen.html`, ausserhalb dieses Repos) liest
+`prefill.values` nach dem Rendern in die Felder und baut den Vision Room
+danach auf — er beginnt so mit Art, Idee und Funktionen. Ein Datensatz ohne
+`prefill` verhält sich dort wie bisher.
+
+Belegt in `tests/flowertech-kundenlink-vorbelegung.test.mjs`.
 
 ## 4h. Der Reiter „Claude-Prompt"
 

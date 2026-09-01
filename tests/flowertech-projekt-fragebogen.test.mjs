@@ -319,7 +319,10 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   // der alten hält. „stage" und „tiles" tragen den mitwachsenden Kundenbereich;
   // auf Stufe 1 sind alle Kacheln leer. Nichts davon ist intern.
   const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "generation",
-    "stage", "tiles", "updatedAt"];
+    "stage", "tiles", "updatedAt",
+    // Die Vorbelegung: Fassung und Werte nach Frageschluessel — nur Bekanntes,
+    // keine Herkunft, keine ID (tests/flowertech-kundenlink-vorbelegung.test.mjs).
+    "prefill"];
   Object.keys(written[pfad]).forEach((key) => {
     ok(erlaubt.includes(key), `der öffentliche Fragebogen trägt das Feld „${key}“`);
   });
@@ -418,7 +421,14 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
 
   // Das Projekt wurde ergänzt, nicht überschrieben.
   ok(project.ftIntakeDocument, "das Anfrage-Dokument fehlt am Projekt");
-  ok(project.client.company === "Lehner GmbH", "die gepflegte Firma wurde überschrieben");
+  /* Die Firma stand als „Lehner GmbH" VORBELEGT auf dem Bogen; die Kundschaft
+     hat sie zu „Lehner AG" korrigiert — und diese Korrektur gewinnt (4g-3).
+     Gepflegtes, das NICHT vorbelegt war, bleibt weiterhin stehen: geprüft im
+     Kernteil oben (Test 4) und in tests/flowertech-kundenlink-vorbelegung. */
+  ok(project.client.company === "Lehner AG",
+    `die Korrektur der vorbelegten Firma wurde verworfen: ${project.client.company}`);
+  ok(project.ftContactLog.some((e) => /korrigiert/.test(e.text) && /Firma/.test(e.text)),
+    "der Verlauf benennt die Korrektur der Firma nicht");
   ok(project.client.name === "Rita Lehner", "die Ansprechperson wurde nicht ergänzt");
   ok(project.client.email === "rita@lehner.ch", "die E-Mail wurde nicht ergänzt");
   ok(project.budget === 30000, "das gepflegte Budget wurde überschrieben");

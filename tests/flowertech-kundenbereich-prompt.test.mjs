@@ -232,7 +232,10 @@ const VERSENDET = {
     offerAmount: 4500, company: { name: "FlowerTech" }, now: "2026-08-09T10:00:00.000Z",
   });
   const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "generation",
-    "stage", "tiles", "updatedAt"];
+    "stage", "tiles", "updatedAt",
+    // Die Vorbelegung: Fassung und Werte nach Frageschluessel — nur Bekanntes,
+    // keine Herkunft, keine ID (tests/flowertech-kundenlink-vorbelegung.test.mjs).
+    "prefill"];
   Object.keys(snapshot).forEach((key) => {
     ok(erlaubt.includes(key), `der Kundenbereich trägt das Feld „${key}“`);
   });
@@ -351,6 +354,9 @@ function projektMitKundenlink(extra = {}) {
       payload: {
         intakeTitle: intake.title,
         answers: vollstaendig(ctx.win, intake.id, {
+          // Firma und Termin standen VORBELEGT auf dem Bogen; die Kundschaft
+          // lässt sie so (eine Änderung wäre eine Korrektur und gewinnt, 4g-3).
+          company: "Lehner GmbH", deadline: "2026-11-01",
           projekt: "Lehner", need: "Mehr Reservationen über die Seite",
           audience: "Stammgäste und Laufkundschaft",
           pages: "Startseite\nMenü\nKontakt",
