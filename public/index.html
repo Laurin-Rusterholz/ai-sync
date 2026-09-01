@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module · 2026-09-01" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder · 2026-09-01" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -104379,6 +104379,8 @@ console.log('📚 Leseliste geladen');
     threadGroup: false,     // Thread-/Konversations-Gruppierung an/aus
     density: (function(){ try { return localStorage.getItem("gmlDensity")||"comfortable"; } catch(e){ return "comfortable"; } })(),
     helpOpen: false,        // Shortcut-Hilfe-Overlay
+    vacation: null,         // zuletzt geladene VacationSettings (users.settings.getVacation)
+    _vacDraft: null,        // Formularentwurf zwischen Bearbeiten- und Vorschau-Schritt
   };
 
   var SYS_LABELS = [
@@ -104960,6 +104962,7 @@ console.log('📚 Leseliste geladen');
       + '</div><div class="page-actions" style="display:flex;gap:8px;flex-wrap:wrap">'
       +   '<button class="btn" onclick="gmailToggleHelp()" title="Tastatur-Shortcuts (Taste: ?)">⌨ Shortcuts</button>'
       +   '<button class="btn" onclick="gmailRefresh()">🔄 Aktualisieren</button>'
+      +   '<button class="btn'+(GM.vacation&&GM.vacation.enableAutoReply?" primary":"")+'" onclick="gmailVacationOpen()" title="Automatische Abwesenheitsantwort verwalten">🌴 Abwesenheit'+(GM.vacation&&GM.vacation.enableAutoReply?' <span style="opacity:.85">· aktiv</span>':'')+'</button>'
       +   '<button class="btn" onclick="gmailDisconnect()" title="Google-Konto trennen">🔌 Trennen</button>'
       + '</div></div>'
       + '<div class="gml-searchbar">'
@@ -106509,6 +106512,171 @@ console.log('📚 Leseliste geladen');
     toast("ok","Getrennt","Google-Konto wurde getrennt");
     rerender();
   };
+
+  // ── Abwesenheitsantwort (VacationSettings) ──────────────────────────────
+  // Gmail verwaltet die automatische Abwesenheitsantwort serverseitig (GET/PUT
+  // /users/me/settings/vacation, Scope gmail.settings.basic — bereits Teil der
+  // Verbindung). Das vom Nutzer gewählte Enddatum ist inklusive gemeint,
+  // Gmails endTime ist exklusiv (die Grenze schliesst den Endzeitpunkt selbst
+  // aus), deshalb +1 Tag beim Senden und -1 Tag beim Einlesen fürs Formular.
+  // Ein PUT geschieht ausschliesslich in gmailVacationConfirm() — also nur
+  // nach einem ausdrücklichen Klick auf die Vorschau-Bestätigung.
+  function vacYmdToLocalMs(ymd){
+    if (!ymd) return null;
+    var p = String(ymd).split("-");
+    if (p.length!==3) return null;
+    var d = new Date(Number(p[0]), Number(p[1])-1, Number(p[2]), 0, 0, 0, 0);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
+  function vacMsToYmd(ms){
+    if (ms==null) return "";
+    var n = Number(ms); if (!isFinite(n)) return "";
+    var d = new Date(n);
+    if (isNaN(d.getTime())) return "";
+    var mm = String(d.getMonth()+1).padStart(2,"0"), dd = String(d.getDate()).padStart(2,"0");
+    return d.getFullYear()+"-"+mm+"-"+dd;
+  }
+  function vacFmtDateDe(ymd){
+    var p = String(ymd||"").split("-");
+    return p.length===3 ? (p[2]+"."+p[1]+"."+p[0]) : (ymd||"");
+  }
+
+  window.gmailVacationOpen = async function(){
+    if (typeof window.openModal!=="function") return;
+    toast("info","Lädt…","Abwesenheitseinstellungen werden geladen");
+    var v = null, loadErr = null;
+    try { v = await gmApi("GET","/users/me/settings/vacation"); }
+    catch(e){ loadErr = e; }
+    if (loadErr){
+      if (loadErr.status===403){ vacShow403(loadErr); return; }
+      window.openModal("🌴 Abwesenheit",
+        '<div style="padding:2px"><p>Abwesenheitseinstellungen konnten nicht geladen werden.</p><p style="color:var(--muted);font-size:12.5px">'+esc(loadErr.message||"")+'</p></div>',
+        '<button class="btn primary" onclick="gmailVacationOpen()">Erneut versuchen</button><button class="btn" data-action="close-modal">Schliessen</button>');
+      return;
+    }
+    GM.vacation = v || {};
+    window.openModal("🌴 Automatische Abwesenheitsantwort", vacFormHtml(GM.vacation), vacFormFooter());
+  };
+
+  function vacFormHtml(v){
+    var startYmd = vacMsToYmd(v.startTime);
+    var endYmd = v.endTime!=null ? vacMsToYmd(Number(v.endTime)-1) : "";
+    var subject = v.responseSubject || "";
+    var body = v.responseBodyPlainText || v.responseBodyHtml || "";
+    return ''
+      + '<div style="display:flex;flex-direction:column;gap:12px;padding:2px">'
+      +   '<label style="display:flex;align-items:center;gap:8px;font-weight:600">'
+      +     '<input type="checkbox" id="gmlVacActive"'+(v.enableAutoReply?" checked":"")+'> Automatische Abwesenheitsantwort aktiv'
+      +   '</label>'
+      +   '<div style="display:flex;gap:10px;flex-wrap:wrap">'
+      +     '<label style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:140px">Erster Tag<input type="date" id="gmlVacStart" value="'+esc(startYmd)+'"></label>'
+      +     '<label style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:140px">Letzter Tag (inklusive)<input type="date" id="gmlVacEnd" value="'+esc(endYmd)+'"></label>'
+      +   '</div>'
+      +   '<p style="font-size:11.5px;color:var(--muted);margin:-6px 0 0">Beide Felder leer lassen für eine unbefristete Abwesenheitsantwort.</p>'
+      +   '<label style="display:flex;flex-direction:column;gap:3px">Betreff<input type="text" id="gmlVacSubject" value="'+esc(subject)+'" placeholder="Automatische Abwesenheitsantwort"></label>'
+      +   '<label style="display:flex;flex-direction:column;gap:3px">Antworttext<textarea id="gmlVacBody" rows="6" placeholder="Ich bin derzeit abwesend und antworte nach meiner Rückkehr.">'+esc(body)+'</textarea></label>'
+      +   '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="gmlVacContacts"'+(v.restrictToContacts?" checked":"")+'> Nur an meine Kontakte antworten</label>'
+      +   '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="gmlVacDomain"'+(v.restrictToDomain?" checked":"")+'> Nur innerhalb meiner Organisation/Domain antworten</label>'
+      + '</div>';
+  }
+  function vacFormFooter(){
+    return '<button class="btn primary" onclick="gmailVacationReview()">Weiter zur Vorschau →</button>'
+      + '<button class="btn" data-action="close-modal">Abbrechen</button>';
+  }
+
+  function vacReadForm(){
+    function val(id){ var el=document.getElementById(id); return el ? el.value : ""; }
+    function chk(id){ var el=document.getElementById(id); return !!(el && el.checked); }
+    return {
+      active: chk("gmlVacActive"),
+      startYmd: (val("gmlVacStart")||"").trim(),
+      endYmd: (val("gmlVacEnd")||"").trim(),
+      subject: (val("gmlVacSubject")||"").trim(),
+      body: (val("gmlVacBody")||"").trim(),
+      contacts: chk("gmlVacContacts"),
+      domain: chk("gmlVacDomain"),
+    };
+  }
+
+  window.gmailVacationReview = function(){
+    var f = vacReadForm();
+    if (f.active && !f.body){ toast("err","Antworttext fehlt","Bitte einen Antworttext eingeben, bevor die Abwesenheitsantwort aktiviert wird."); return; }
+    if (f.startYmd && f.endYmd && f.startYmd > f.endYmd){ toast("err","Ungültiger Zeitraum","Der erste Tag muss vor oder gleich dem letzten Tag liegen."); return; }
+    GM._vacDraft = f;
+    if (typeof window.openModal==="function") window.openModal("🌴 Abwesenheit – Vorschau", vacPreviewHtml(f), vacPreviewFooter(f));
+  };
+
+  function vacPreviewHtml(f){
+    var range = (f.startYmd||f.endYmd)
+      ? (esc(f.startYmd?vacFmtDateDe(f.startYmd):"(offen)")+' – '+esc(f.endYmd?vacFmtDateDe(f.endYmd):"(offen)"))
+      : "Unbefristet";
+    return ''
+      + '<div style="display:flex;flex-direction:column;gap:10px;padding:2px">'
+      +   '<div><strong>Status:</strong> '+(f.active?'<span style="color:var(--ok)">Aktiv</span>':'<span style="color:var(--muted)">Inaktiv</span>')+'</div>'
+      +   '<div><strong>Zeitraum:</strong> '+range+'</div>'
+      +   '<div><strong>Betreff:</strong> '+(f.subject?esc(f.subject):'<span style="color:var(--muted)">(kein Betreff)</span>')+'</div>'
+      +   '<div><strong>Antworttext:</strong><div style="white-space:pre-wrap;background:var(--hover);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:4px;font-size:13px">'+(f.body?esc(f.body):'<span style="color:var(--muted)">(leer)</span>')+'</div></div>'
+      +   '<div><strong>Einschränkungen:</strong> Nur Kontakte: '+(f.contacts?"Ja":"Nein")+' · Nur Organisation/Domain: '+(f.domain?"Ja":"Nein")+'</div>'
+      +   (f.active
+            ? '<p style="font-size:12px;color:var(--warn,#ff9f0a)">Automatische Abwesenheitsantwort wirklich aktivieren? Nach der Bestätigung antwortet Gmail automatisch auf eingehende Mails.</p>'
+            : '<p style="font-size:12px;color:var(--muted)">Die Abwesenheitsantwort bleibt deaktiviert. Bitte bestätigen, um diesen Stand bei Gmail zu speichern.</p>')
+      + '</div>';
+  }
+  function vacPreviewFooter(f){
+    var label = f.active ? "🌴 Jetzt aktivieren" : "Deaktiviert speichern";
+    return '<button class="btn primary" onclick="gmailVacationConfirm()">'+label+'</button>'
+      + '<button class="btn" onclick="gmailVacationOpen()">← Zurück</button>'
+      + '<button class="btn" data-action="close-modal">Abbrechen</button>';
+  }
+
+  window.gmailVacationConfirm = async function(){
+    var f = GM._vacDraft;
+    if (!f) return;
+    var payload = {
+      enableAutoReply: f.active,
+      responseSubject: f.subject,
+      responseBodyPlainText: f.body,
+      restrictToContacts: f.contacts,
+      restrictToDomain: f.domain,
+    };
+    if (f.startYmd){ var startMs = vacYmdToLocalMs(f.startYmd); if (startMs!=null) payload.startTime = String(startMs); }
+    if (f.endYmd){ var endMs = vacYmdToLocalMs(f.endYmd); if (endMs!=null) payload.endTime = String(endMs + 86400000); } // +1 Tag: inklusiv → exklusiv
+    try {
+      var res = await gmApi("PUT","/users/me/settings/vacation", { body: payload });
+      GM.vacation = res || payload;
+      GM._vacDraft = null;
+      if (window.closeModal) window.closeModal();
+      toast("ok", f.active?"Abwesenheitsantwort aktiv":"Abwesenheitsantwort gespeichert",
+        f.active?"Gmail antwortet jetzt automatisch auf eingehende Mails.":"Die automatische Antwort ist deaktiviert.");
+      rerender();
+    } catch(e){
+      if (e.status===403){ vacShow403(e); return; }
+      toast("err","Fehler beim Speichern", e.message||"Unbekannter Fehler");
+    }
+  };
+
+  // Nicht jeder 403 hier bedeutet zwingend einen fehlenden Scope — aber die
+  // vorhandene Google-Verbindung kann noch aus der Zeit vor gmail.settings.basic
+  // stammen (Consent wurde beim ursprünglichen Login erteilt, nicht danach neu
+  // eingeholt). Trennen + Neuverbinden holt den Scope über prompt=consent nach.
+  function vacShow403(e){
+    if (typeof window.openModal!=="function"){ toast("err","Zugriff verweigert","Google-Verbindung trennen und mit neuem Scope erneut verbinden (Einstellungen → Google)."); return; }
+    window.openModal("🌴 Zugriff verweigert (403)",
+      '<div style="padding:2px;display:flex;flex-direction:column;gap:8px">'
+      +   '<p>Google hat den Zugriff auf die Abwesenheitseinstellungen verweigert (HTTP 403).</p>'
+      +   '<p style="color:var(--muted);font-size:12.5px">Das passiert meist, wenn die bestehende Google-Verbindung noch aus der Zeit vor dem Berechtigungs-Scope <code>gmail.settings.basic</code> stammt. Verbindung trennen und mit dem neuen Scope erneut verbinden:</p>'
+      + '</div>',
+      '<button class="btn primary" onclick="gmailVacationReauth()">🔌 Trennen &amp; neu verbinden</button>'
+      + '<button class="btn" data-action="close-modal">Schliessen</button>');
+  }
+  window.gmailVacationReauth = async function(){
+    if (!confirm("Google-Konto trennen und danach neu verbinden?\n\nDas trennt die GESAMTE Google-Verbindung (auch Google Calendar) und löscht die serverseitig gespeicherten Tokens. Beim erneuten Verbinden wird der Scope für die Abwesenheitsantwort mit angefordert.")) return;
+    try { await gmAuthCall("logout"); } catch(e){}
+    GM.status={connected:false}; GM.messages=[]; GM.labels=[]; GM.open=null; GM.booted=false; GM.profile=null; GM.vacation=null;
+    if (window.closeModal) window.closeModal();
+    window.gmailConnect();
+  };
+
   window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); GM._classLoaded=false; loadClassifications(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else if(GM.smart==="tasksuggest") loadTaskSuggestions(); else if(GM.smart==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
   window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.smart=null; GM.open=null; loadMessages(true); };
   // Neues echtes Gmail-Label anlegen — nutzt den bestehenden Erstell-Pfad (ensureLabel →
