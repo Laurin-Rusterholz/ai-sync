@@ -2393,10 +2393,18 @@
   }
 
   /* ── Kundenanfragen: Fragebogen anlegen, Link geben, Antwort sehen ─────── */
+  // Ein Fehlschlag beim Veroeffentlichen war bisher nur sichtbar, wenn jemand
+  // GENAU diesen Fragebogen aufklappte. Der Warn-Badge haengt jetzt am
+  // Status selbst — er erscheint schon in der eingeklappten Liste.
   function intakeStatusBadge(intake) {
-    if (intake.projectId) return '<span class="badge ok">Beantwortet</span>';
-    if (intake.status === "closed") return '<span class="badge">Geschlossen</span>';
-    return '<span class="badge">Wartet auf Antwort</span>';
+    var core = W();
+    var pub = core ? core.intakePublication({ intake: intake }) : null;
+    var warn = (pub && !pub.ok && !pub.pending)
+      ? '<span class="badge warn" title="' + esc(pub.reason) + '">⚠ Kundenlink</span> '
+      : "";
+    if (intake.projectId) return warn + '<span class="badge ok">Beantwortet</span>';
+    if (intake.status === "closed") return warn + '<span class="badge">Geschlossen</span>';
+    return warn + '<span class="badge">Wartet auf Antwort</span>';
   }
 
   function intakeQuestionRow(intakeId, q, index, total) {
@@ -2466,6 +2474,8 @@
         '<button class="btn sm primary" onclick="window._ftCopyLink(\'' + attr(link) +
           '\')" title="' + attr(core.LINK_LABELS.intakeHint) + '">Fragebogen-Link kopieren</button>' +
         (link ? '<a class="btn sm ghost" href="' + attr(link) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
+        '<button class="btn sm ghost" onclick="window._ftRepublishIntakeNow(\'' + attr(intake.id) +
+          '\')" title="Denselben Link erneut veröffentlichen, ohne ihn ungültig zu machen">🔄 Erneut veröffentlichen</button>' +
         '<button class="btn sm ghost" onclick="window._ftRotateIntakeToken(\'' + attr(intake.id) +
           '\')" title="Alten Link widerrufen">Neu</button></div>' +
       '<div class="mini"><b>' + esc(core.LINK_LABELS.intakeHint) + "</b> — dieser Link zeigt der Kundschaft " +
@@ -2721,6 +2731,7 @@
     if (!ft) return '<div class="card p-4">FlowerTech wird geladen…</div>';
     initializeSync();
 
+    var core = W();
     var allProjects = projects();
     var allTasks = tasks();
     var allInquiries = inquiries();
@@ -2746,6 +2757,13 @@
       });
       var openInvoiceSum = openInvoices.reduce(function (sum, invoice) { return sum + docTotals(invoice).rounded; }, 0);
       var overdue = ft.invoices.filter(isOverdue);
+      // Sammel-Warnung: ein einzelner fehlgeschlagener Fragebogen-Link blieb
+      // bisher unsichtbar, bis genau dieses Projekt geoeffnet wurde ("trotz
+      // Synchronisierung laedt der Fragebogen nicht" — die Synchronisierung
+      // war in Ordnung, nur DIESER eine Veroeffentlichungsversuch nicht).
+      var brokenIntakes = Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
+        .map(function (intake) { return { intake: intake, pub: core.intakePublication({ intake: intake }) }; })
+        .filter(function (row) { return !row.pub.ok && !row.pub.pending; });
       content =
         startHtml() +
         processHtml() +
@@ -2759,6 +2777,14 @@
         (overdue.length ? '<div class="ft-alert"><span>' + overdue.length + " überfällige Rechnung(en) · " +
           money(overdue.reduce(function (sum, invoice) { return sum + docTotals(invoice).rounded; }, 0)) +
           '</span><button class="btn sm" onclick="window._ftSetTab(\'invoices\')">Ansehen</button></div>' : "") +
+        (brokenIntakes.length ? '<div class="card p-4 mb-3" style="border-color:var(--danger,#D96B5B)">' +
+          '<h3>⚠ Kundenlink-Probleme (' + brokenIntakes.length + ')</h3><div class="sep"></div>' +
+          brokenIntakes.map(function (row) {
+            return '<div class="ft-row"><span>' + esc(row.intake.title || "Kundenanfrage") +
+              '<small> · ' + esc(row.pub.reason) + '</small></span>' +
+              '<button class="btn sm" onclick="window._ftRepublishIntakeNow(\'' + attr(row.intake.id) +
+              '\')">🔄 Erneut veröffentlichen</button></div>';
+          }).join("") + "</div>" : "") +
         '<div class="ft-quick mb-3">' +
           '<button class="btn primary" onclick="window._ftNewDoc(\'offer\')">＋ Offerte</button>' +
           '<button class="btn primary" onclick="window._ftNewDoc(\'invoice\')">＋ Rechnung</button>' +
@@ -3831,6 +3857,10 @@
       intake.publishPending = false;
       intake.publishError = "Kein Firebase-Zugang — der Fragebogen ist noch nicht online.";
       save();
+      // Technisch protokolliert, nicht nur am Datensatz vermerkt: sonst faellt
+      // ein einzelner Fehlschlag erst auf, wenn wer zufaellig genau dieses
+      // Projekt oeffnet ("trotz Synchronisierung laedt der Fragebogen nicht").
+      console.error("[FlowerTech] Fragebogen " + token + " nicht veroeffentlicht: kein Firebase-Zugang.");
       return publishResult({ token: token, error: intake.publishError });
     }
     // Der Versuch wird VOR dem Schreiben festgehalten. Solange er neuer ist als
@@ -3853,6 +3883,7 @@
       intake.publishPending = false;
       intake.publishError = (e && e.message) || "Der Fragebogen konnte nicht veröffentlicht werden.";
       save();
+      console.error("[FlowerTech] Veroeffentlichung von Fragebogen " + token + " fehlgeschlagen:", e);
       // Ohne dieses Nachzeichnen blieb der Fehlschlag unsichtbar, bis zufällig
       // etwas anderes die Oberfläche neu baute.
       rerender();
@@ -3861,6 +3892,26 @@
     return publishResult({ token: token, pending: true, done: done });
   }
   window._ftPublishIntakeForm = publishIntakeForm;
+
+  // Manueller Reparatur-Knopf: veroeffentlicht denselben Fragebogen unter
+  // demselben, bereits an die Kundschaft verschickten Link erneut — ohne
+  // ihn ungueltig zu machen (siehe _ftRotateIntakeToken fuer den Fall, in
+  // dem der Link selbst ersetzt werden soll). Das ist der direkte, gezielte
+  // Reparaturweg fuer "Fragebogen laedt trotz Sync nicht": ein einzelner
+  // fehlgeschlagener/nie erfolgter Veroeffentlichungsversuch (z.B. weil
+  // Firebase beim urspruenglichen Anlegen noch nicht bereit war) laesst
+  // sich damit ohne Linkwechsel beheben.
+  window._ftRepublishIntakeNow = function (intakeId) {
+    notify("info", "FlowerTech", "Fragebogen wird veröffentlicht …");
+    var result = publishIntakeForm(intakeId);
+    if (result.error) { notify("err", "FlowerTech", result.error); rerender(); return; }
+    result.done.then(function (ok) {
+      if (ok) notify("ok", "FlowerTech", "Fragebogen ist wieder online.");
+      else notify("err", "FlowerTech", (intakeById(intakeId) && intakeById(intakeId).publishError) ||
+        "Veröffentlichung fehlgeschlagen — siehe Konsole.");
+      rerender();
+    });
+  };
 
   function intakeLink(intakeId) {
     var core = W();
@@ -4961,7 +5012,14 @@
     rerender();
   };
 
-  // „Neu" widerruft die alte Einladung samt veröffentlichtem Fragebogen.
+  // „Neu" widerruft die alte Einladung samt veröffentlichtem Fragebogen —
+  // das ist Absicht (der Bestaetigungsdialog sagt es), keine leere Loeschung
+  // durch Zufall (tests/flowertech-kundenanfrage.test.mjs §9 sperrt das
+  // ausdruecklich fest). Fuer den P0-Fall "Link laedt trotz Sync nicht"
+  // ist NICHT diese bewusste Revokation die Ursache, sondern ein
+  // fehlgeschlagener/wiederholbarer Veroeffentlichungsversuch — siehe
+  // publishIntakeForm()'s Retry-Logik und den "Erneut veroeffentlichen"-
+  // Knopf, der denselben Token ohne Revokation erneut schreibt.
   window._ftRotateIntakeToken = function (intakeId) {
     var intake = intakeById(intakeId);
     if (!intake) return;
