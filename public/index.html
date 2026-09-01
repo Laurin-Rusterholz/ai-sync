@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix · 2026-09-01" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks · 2026-09-01" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -3625,6 +3625,54 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
 }
 
+    /* ChatGPT-Modul: Leads, ChatGPT-Aufgaben, getrennte Zaehler (Schiefer/Leinen-Akzente) */
+    .cgm-tabs{display:flex;gap:6px;flex-wrap:wrap}
+    .cgm-count{display:inline-block;min-width:18px;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;color:#fff;margin-left:4px}
+    .sidebar-item .cgm-badges{margin-left:auto;display:inline-flex;gap:3px}
+    .sidebar-item .cgm-badges .badge{margin-left:0;color:#fff}
+    .cgl-card.unread{border-left:3px solid #D96B5B}
+    .cgl-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#D96B5B;margin-right:6px;vertical-align:middle}
+    .cgl-steps{display:flex;flex-direction:column;gap:0}
+    .cgl-step{background:var(--panel);border:1px solid var(--border);border-left:3px solid #C9A96E;border-radius:10px;padding:12px 14px;margin-bottom:10px}
+    .cgl-step.done{border-left-color:#2F8C80}
+    .cgl-step textarea{width:100%;min-height:70px}
+    .cgl-step-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+    .cgl-step-no{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--panel2);font-size:11px;font-weight:700;flex:none}
+    .cgl-checklist{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    .cgl-check{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--muted)}
+    .cgl-check.ok{background:rgba(47,140,128,.15);color:#2F8C80}
+    .cgl-close-wrap{margin:16px 0;text-align:center}
+    .btn.is-disabled{opacity:.4;cursor:not-allowed}
+    .cgt-badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;background:rgba(201,169,110,.15);color:#C9A96E;border:1px solid rgba(201,169,110,.35);margin-left:6px}
+    .cgt-section{padding:10px 14px}
+    .cgt-head{display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none}
+    .cgt-notice{margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(201,169,110,.15);border:1px solid rgba(201,169,110,.55);font-size:12px;font-weight:600}
+    .cgt-body{margin-top:8px}
+    .cgt-row{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-top:1px solid var(--border)}
+    .cgt-row.done{opacity:.55}
+    .cgt-row.done .cgt-text{text-decoration:line-through}
+    .cgt-row-main{flex:1;min-width:0}
+    .cgt-input{margin-top:8px;width:100%;font-size:12px}
+    .cgm-backlinks{margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px}
+    .cgl-assessment{margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--border)}
+    .cgl-ass-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px}
+    .cgl-ass-grid.edit{grid-template-columns:1fr;gap:4px}
+    .cgl-ass-cell{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .cgl-ass-cell.chatgpt strong{color:#2F8C80}
+    .cgl-ass-cell.cowork strong{color:#D96B5B}
+    .cgl-ass-cell.leer strong{color:var(--muted)}
+    .cgl-ass-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:3px 0;border-top:1px solid var(--border)}
+    .cgl-ass-label{flex:1;min-width:200px;font-size:12px}
+    .cgl-ass-choice{display:inline-flex;gap:4px}
+    .cgl-ass-result{margin-top:6px;font-size:12px}
+    .cgl-ass-reason{margin-top:2px;white-space:pre-wrap}
+    .cgl-perms{margin-top:4px;color:var(--muted);word-break:break-word}
+    .cgl-handover{padding:10px;border-radius:8px;border:1px dashed #C9A96E;background:rgba(201,169,110,.08)}
+    .cgl-handover textarea{width:100%;min-height:120px;margin-top:6px}
+    .cgl-packet{margin-top:6px}
+    .cgl-packet-text{white-space:pre-wrap;font-size:12px;padding:8px 10px;margin-top:4px;border-radius:6px;background:var(--panel);border:1px solid var(--border);max-height:60vh;overflow:auto}
+    @media (max-width:640px){ .cgl-ass-grid{grid-template-columns:1fr} }
+    @media (max-width:1024px){ .cgl-step{padding:10px 12px} .cgm-tabs .btn{flex:1 1 auto} }
 </style>
   <!-- Google Script entfernt - eigener Kalender wird verwendet -->
   
@@ -7826,7 +7874,7 @@ function isImageFile(filename) {
 // Firebase-Loeschung, Grabstein, splice, scheduleSave und render zurueck, und
 // zwar STILL. Zwei Listen fuer dieselbe Frage gehen irgendwann auseinander;
 // diese hier ist die einzige.
-const ATTACHMENT_KIND_STORES = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices', chatgptNote:'chatgptNotes' };
+const ATTACHMENT_KIND_STORES = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices', chatgptNote:'chatgptNotes', chatgptLead:'chatgptLeads' };
 
 // Ein Aufloeser fuer ALLE Anhang-Bereiche. Vorher hatte jeder seine eigene
 // Kopie der Liste und seinen eigenen stillen Ruecksprung; genau daran wurde die
@@ -11344,6 +11392,8 @@ function emptyData() {
       concepts: {},
       invoices: {},
       chatgptNotes: {},
+      chatgptLeads: {},   // Auftragseingang fuer den Assistenten (Teil B)
+      chatgptTasks: {},   // Sorgfaltsauftraege am Element, nur fuer den Assistenten (Teil C)
     },
     chatgptNotesMeta: { lastSessionReadAt: null },
     timers: {},
@@ -11868,11 +11918,61 @@ for (const u of Object.values(e.updates)) {
     if (!Array.isArray(cn.linkedOrganizations)) cn.linkedOrganizations = [];
     if (!Array.isArray(cn.comments)) cn.comments = [];
     if (!Array.isArray(cn.files)) cn.files = [];
+    if (!Array.isArray(cn.externalLinks)) cn.externalLinks = [];
     cn.createdAt = cn.createdAt || nowIso();
     cn.updatedAt = cn.updatedAt || nowIso();
   }
   d.chatgptNotesMeta = d.chatgptNotesMeta || {};
   d.chatgptNotesMeta.lastSessionReadAt = d.chatgptNotesMeta.lastSessionReadAt || null;
+  // Normalize chatgptLeads (Auftragseingang, Teil B)
+  e.chatgptLeads = e.chatgptLeads || {};
+  for (const l of Object.values(e.chatgptLeads)) {
+    if (!l || typeof l !== "object") continue;
+    l.title = typeof l.title === "string" ? l.title : "";
+    l.rawInput = typeof l.rawInput === "string" ? l.rawInput : "";
+    if (!["neu", "verstanden", "in_arbeit", "wartet", "abgeschlossen"].includes(l.status)) l.status = "neu";
+    l.readAt = l.readAt || null;
+    for (const f of ["interpretation", "openQuestions", "research", "plan", "execution", "result", "workflowNote"]) {
+      if (typeof l[f] !== "string") l[f] = "";
+    }
+    l.blockedReason = l.blockedReason || null;
+    l.closedAt = l.closedAt || null;
+    l.closedBy = l.closedBy || null;
+    if (!Array.isArray(l.externalLinks)) l.externalLinks = [];
+    if (!Array.isArray(l.comments)) l.comments = [];
+    if (!Array.isArray(l.files)) l.files = [];
+    // B.3 Bewertung & Zuweisung (Cowork-Abgabe). Berechtigungen: Standard "nicht erteilt".
+    if (!l.assessment || typeof l.assessment !== "object") l.assessment = {};
+    for (const k of ["menge", "werkzeug", "kontext", "quantusNaehe", "recherche", "zuschnitt"]) {
+      if (l.assessment[k] !== "chatgpt" && l.assessment[k] !== "cowork") l.assessment[k] = null;
+    }
+    if (l.assignee !== "chatgpt" && l.assignee !== "cowork") l.assignee = null;
+    l.assignmentReason = typeof l.assignmentReason === "string" ? l.assignmentReason : "";
+    l.handoverPacket = typeof l.handoverPacket === "string" && l.handoverPacket ? l.handoverPacket : null;
+    l.grantedPermissions = (typeof chatgptLeadNormalizePermissions === "function")
+      ? chatgptLeadNormalizePermissions(l.grantedPermissions)
+      : (l.grantedPermissions && typeof l.grantedPermissions === "object" ? l.grantedPermissions : { websuche:false, dateienErstellen:{ erlaubt:false, formate:[] }, externeTools:[], verboten:[] });
+    l.handoverAt = l.handoverAt || null;
+    l.returnedAt = l.returnedAt || null;
+    l.createdAt = l.createdAt || nowIso();
+    l.updatedAt = l.updatedAt || nowIso();
+  }
+  // Normalize chatgptTasks (Sorgfaltsauftraege am Element, Teil C)
+  e.chatgptTasks = e.chatgptTasks || {};
+  for (const t of Object.values(e.chatgptTasks)) {
+    if (!t || typeof t !== "object") continue;
+    t.text = typeof t.text === "string" ? t.text : "";
+    if (!["offen", "erledigt", "wartet"].includes(t.state)) t.state = "offen";
+    t.anchorKind = t.anchorKind || null;
+    t.anchorId = t.anchorId || null;
+    t.anchorLabel = t.anchorLabel || null;
+    t.createdBy = t.createdBy === "assistant" ? "assistant" : "laurin";
+    t.resolvedAt = t.resolvedAt || null;
+    t.blockedReason = t.blockedReason || null;
+    if (!Array.isArray(t.comments)) t.comments = [];
+    t.createdAt = t.createdAt || nowIso();
+    t.updatedAt = t.updatedAt || nowIso();
+  }
   e.ideas = e.ideas || {};
   e.decisions = e.decisions || {};
   e.articles = e.articles || {};
@@ -15500,49 +15600,122 @@ function setOwnEntity(map, id, entity) {
   return entity;
 }
 
+// ============================================================================
+// ENTITY KIND REGISTRY
+// ============================================================================
+// EINE Liste fuer alle Stellen, die wissen muessen, welche Entitaetstypen es
+// gibt: getEntityMap, Verknuepfungs-Modal, Verknuepfungs-Anzeige, Link-
+// Aufraeumen beim Loeschen, ChatGPT-Anker. Vorher trug jede dieser Stellen
+// eine eigene, abweichende Liste (im Aufraeumen fehlten z.B. ChatGPT Notes,
+// im Modal Personen, Protokolle, Workflows, Konzepte, Dokumente, Mails).
+//
+// Sammlungen unter entities, die hier NICHT stehen, werden automatisch
+// aufgenommen (Typname = Sammlungsname ohne Plural-s): ein spaeter dazu-
+// kommender Typ ist damit ohne Aenderung an diesem Modul verknuepfbar und
+// ankerfaehig. Wer einen neuen Typ anlegt, traegt ihn trotzdem hier ein —
+// dann stimmen Beschriftung, Symbol und Sprungziel.
+const QUANTUS_ENTITY_KINDS = [
+  { kind:"task",             store:"tasks",             label:"Aufgabe",             plural:"Aufgaben",             icon:"✅", nameField:"title",       route:"tasks" },
+  { kind:"project",          store:"projects",          label:"Projekt",             plural:"Projekte",             icon:"📦", nameField:"title",       route:"projects" },
+  { kind:"organization",     store:"organizations",     label:"Organisation",        plural:"Organisationen",       icon:"🏛️", nameField:"name",        route:"organizations" },
+  { kind:"note",             store:"notes",             label:"Notiz",               plural:"Notizen",              icon:"📝", nameField:"title",       route:"notes" },
+  { kind:"notebook",         store:"notebooks",         label:"Notizbuch",           plural:"Notizbücher",          icon:"📓", nameField:"title",       route:"notes" },
+  { kind:"book",             store:"books",             label:"Buch",                plural:"Bücher",               icon:"📕", nameField:"title",       route:"readinghub" },
+  { kind:"timeEntry",        store:"timeEntries",       label:"Zeiteintrag",         plural:"Zeiteinträge",         icon:"⏱️", nameField:"title",       route:"time" },
+  { kind:"goal",             store:"goals",             label:"Ziel",                plural:"Ziele",                icon:"🎯", nameField:"title",       route:"goals" },
+  { kind:"strategy",         store:"strategies",        label:"Strategie",           plural:"Strategien",           icon:"🧭", nameField:"title",       route:"strategies" },
+  { kind:"program",          store:"programs",          label:"Programm",            plural:"Programme",            icon:"🧩", nameField:"title",       route:"programs" },
+  { kind:"account",          store:"accounts",          label:"Konto",               plural:"Konten",               icon:"🏦", nameField:"name",        route:"budget" },
+  { kind:"transaction",      store:"transactions",      label:"Transaktion",         plural:"Transaktionen",        icon:"💰", nameField:"description", route:"budget" },
+  { kind:"subscription",     store:"subscriptions",     label:"Abo",                 plural:"Abos",                 icon:"🔁", nameField:"name",        route:"budget" },
+  { kind:"scheduledMessage", store:"scheduledMessages", label:"Nachricht",           plural:"Geplante Nachrichten", icon:"📨", nameField:"title",       route:"messages" },
+  { kind:"idea",             store:"ideas",             label:"Idee",                plural:"Ideen",                icon:"💡", nameField:"title",       route:"ideas" },
+  { kind:"meeting",          store:"meetings",          label:"Meeting",             plural:"Meetings",             icon:"🤝", nameField:"title",       route:"meetings" },
+  { kind:"tag",              store:"tags",              label:"Tag",                 plural:"Tags",                 icon:"🏷️", nameField:"name",        route:"tags", linkable:false },
+  { kind:"update",           store:"updates",           label:"Update",              plural:"Updates",              icon:"🔧", nameField:"text",        route:"updates" },
+  { kind:"calendarEvent",    store:"calendarEvents",    label:"Termin",              plural:"Termine",              icon:"📅", nameField:"title",       route:"calendar" },
+  { kind:"deck",             store:"decks",             label:"Lernkarten-Deck",     plural:"Lernkarten-Decks",     icon:"📚", nameField:"title",       route:"learn" },
+  { kind:"message",          store:"messages",          label:"Nachricht",           plural:"Nachrichten",          icon:"✉️", nameField:"title",       route:"messages" },
+  { kind:"contact",          store:"contacts",          label:"Kontakt",             plural:"Kontakte",             icon:"👤", nameField:"name",        route:null },
+  { kind:"resource",         store:"resources",         label:"Ressource",           plural:"Ressourcen",           icon:"📎", nameField:"title",       route:null },
+  { kind:"article",          store:"articles",          label:"Artikel",             plural:"Artikel",              icon:"📄", nameField:"title",       route:"articles" },
+  { kind:"annotation",       store:"annotations",       label:"Anmerkung",           plural:"Anmerkungen",          icon:"📌", nameField:"text",        route:"articles" },
+  { kind:"thought",          store:"thoughts",          label:"Gedanke",             plural:"Gedanken",             icon:"💭", nameField:"text",        route:null },
+  { kind:"theme",            store:"themes",            label:"Thema",               plural:"Themen",               icon:"🎨", nameField:"title",       route:null },
+  { kind:"ticket",           store:"tickets",           label:"Ticket",              plural:"Tickets",              icon:"🎫", nameField:"title",       route:null },
+  { kind:"conclusion",       store:"conclusions",       label:"Fazit",               plural:"Fazits",               icon:"🧾", nameField:"title",       route:null },
+  { kind:"dictEntry",        store:"dictionary",        label:"Wörterbucheintrag",   plural:"Wörterbuch",           icon:"📖", nameField:"term",        route:null },
+  { kind:"creditCard",       store:"creditCards",       label:"Kreditkarte",         plural:"Kreditkarten",         icon:"💳", nameField:"name",        route:"budget" },
+  { kind:"financialGoal",    store:"financialGoals",    label:"Finanzziel",          plural:"Finanzziele",          icon:"🎯", nameField:"title",       route:"budget" },
+  { kind:"purchaseProposal", store:"purchaseProposals", label:"Kaufvorschlag",       plural:"Kaufvorschläge",       icon:"🛒", nameField:"title",       route:null },
+  { kind:"monthlyAiReport",  store:"monthlyAiReports",  label:"KI-Monatsbericht",    plural:"KI-Monatsberichte",    icon:"📊", nameField:"title",       route:"reports" },
+  { kind:"syncConflict",     store:"syncConflicts",     label:"Sync-Konflikt",       plural:"Sync-Konflikte",       icon:"🔄", nameField:"title",       route:null, linkable:false },
+  { kind:"decision",         store:"decisions",         label:"Entscheidung",        plural:"Entscheidungen",       icon:"⚖️", nameField:"title",       route:"decisions" },
+  { kind:"invoice",          store:"invoices",          label:"Rechnung",            plural:"Rechnungen",           icon:"🧾", nameField:"title",       route:null },
+  { kind:"email",            store:"emails",            label:"Mail",                plural:"Mails (Mail Hub)",     icon:"📧", nameField:"subject",     route:"mailhub" },
+  { kind:"person",           store:"persons",           label:"Person",              plural:"Personen",             icon:"👤", nameField:"name",        route:"persons" },
+  { kind:"protocol",         store:"protocols",         label:"Protokoll",           plural:"Protokolle",           icon:"📋", nameField:"title",       route:"protocols" },
+  { kind:"workflow",         store:"workflows",         label:"Workflow",            plural:"Workflows",            icon:"🔀", nameField:"title",       route:"workflows" },
+  { kind:"workflowProgram",  store:"workflowPrograms",  label:"Workflow-Programm",   plural:"Workflow-Programme",   icon:"🗂️", nameField:"title",       route:"workflows" },
+  { kind:"concept",          store:"concepts",          label:"Konzept",             plural:"Konzepte",             icon:"🧩", nameField:"title",       route:"concepts" },
+  { kind:"thesis",           store:"theses",            label:"Dokument",            plural:"Dokumente (ThesisStudio)", icon:"📚", nameField:"title",   route:"thesis" },
+  { kind:"chapter",          store:"chapters",          label:"Kapitel",             plural:"Kapitel",              icon:"📑", nameField:"title",       route:"thesis" },
+  { kind:"chatgptNote",      store:"chatgptNotes",      label:"ChatGPT Note",        plural:"ChatGPT Notes",        icon:"🤖", nameField:"instruction", route:"chatgptnotes" },
+  { kind:"chatgptLead",      store:"chatgptLeads",      label:"ChatGPT Lead",        plural:"ChatGPT Leads",        icon:"📥", nameField:"title",       route:"chatgptnotes" },
+  { kind:"chatgptTask",      store:"chatgptTasks",      label:"ChatGPT-Aufgabe",     plural:"ChatGPT-Aufgaben",     icon:"🪶", nameField:"text",        route:"chatgptnotes", linkable:false },
+];
+// Sammlungen, die keine verknuepfbaren Elemente sind: Geheimnisse, Struktur-
+// tabellen, Eingangs-Puffer. Sie bekommen keinen automatischen Typ.
+const QUANTUS_ENTITY_STORES_EXCLUDED = new Set(["passwords", "programLinks", "programFolders", "nhInbox", "polaris"]);
+// Anker ausserhalb von entities (die Gmail-Nachricht liegt nur bei Google):
+// kein Store, aber Beschriftung, Symbol und ein Sprungziel.
+const QUANTUS_VIRTUAL_KINDS = {
+  gmailMessage: { label:"Gmail-Nachricht", plural:"Gmail-Nachrichten", icon:"📧",
+    open(id) { if (typeof window.gmailOpenFromExternal === "function") window.gmailOpenFromExternal(id); else navigate("gmail"); } },
+};
+
+function entityKindRegistry() {
+  const e = (APP.state && APP.state.data && APP.state.data.entities) || {};
+  const list = QUANTUS_ENTITY_KINDS.slice();
+  const known = new Set(list.map(k => k.store));
+  for (const store of Object.keys(e)) {
+    if (known.has(store) || QUANTUS_ENTITY_STORES_EXCLUDED.has(store)) continue;
+    const col = e[store];
+    if (!col || typeof col !== "object" || Array.isArray(col)) continue;
+    const kind = store.endsWith("ies") ? store.slice(0, -3) + "y" : store.replace(/s$/, "");
+    if (!kind || list.some(k => k.kind === kind)) continue;
+    list.push({ kind, store, label: kind.charAt(0).toUpperCase() + kind.slice(1), plural: store, icon:"📄", nameField:null, route:null, auto:true });
+  }
+  return list;
+}
+function entityKindInfo(kind) {
+  if (!kind) return null;
+  return entityKindRegistry().find(k => k.kind === kind) || null;
+}
+function entityKindForStore(store) {
+  return entityKindRegistry().find(k => k.store === store) || null;
+}
+// Feldname, unter dem ANDERE Elemente auf diesen Typ verweisen (linkedTasks …).
+function linkFieldForKindName(kind) {
+  return `linked${String(kind).charAt(0).toUpperCase() + String(kind).slice(1)}s`;
+}
+function entityDisplayLabel(kind, entity) {
+  if (!entity) return "(Gelöscht)";
+  const info = entityKindInfo(kind);
+  const v = info && info.nameField ? entity[info.nameField] : null;
+  const s = v || entity.title || entity.name || entity.subject || entity.text || entity.instruction || entity.term || entity.description || "";
+  return String(s || "(Ohne Titel)").replace(/\s+/g, " ").trim().slice(0, 80) || "(Ohne Titel)";
+}
+window.entityKindRegistry = entityKindRegistry;
+window.entityKindInfo = entityKindInfo;
+window.entityDisplayLabel = entityDisplayLabel;
+window.linkFieldForKindName = linkFieldForKindName;
+
 function getEntityMap(kind) {
   const e = APP.state.data.entities;
-  const maps = {
-    task: e.tasks,
-    project: e.projects,
-    organization: e.organizations,
-    note: e.notes,
-    book: e.books,
-    notebook: e.notebooks,
-    timeEntry: e.timeEntries,
-    goal: e.goals,
-    strategy: e.strategies,
-    program: e.programs,
-    account: e.accounts,
-    transaction: e.transactions,
-    subscription: e.subscriptions,
-    scheduledMessage: e.scheduledMessages,
-    idea: e.ideas,
-    meeting: e.meetings,
-    tag: e.tags,
-    update: e.updates,
-    calendarEvent: e.calendarEvents,
-    deck: e.decks,
-    message: e.messages,
-    contact: e.contacts,
-    resource: e.resources,
-    article: e.articles,
-    annotation: e.annotations,
-    thought: e.thoughts,
-    theme: e.themes,
-    ticket: e.tickets,
-    conclusion: e.conclusions,
-    dictEntry: e.dictionary,
-    creditCard: e.creditCards,
-    financialGoal: e.financialGoals,
-    purchaseProposal: e.purchaseProposals,
-    monthlyAiReport: e.monthlyAiReports,
-    syncConflict: e.syncConflicts,
-    decision: e.decisions,
-    invoice: e.invoices,
-    chatgptNote: e.chatgptNotes,
-  };
-  return maps[kind] || null;
+  const info = entityKindInfo(kind);
+  if (!info) return null;
+  return e[info.store] || null;
 }
 
 function getEntity(kind, id) {
@@ -15551,8 +15724,7 @@ function getEntity(kind, id) {
 }
 
 function getEntityDisplayName(kind, entity) {
-  if (!entity) return "(Gelöscht)";
-  return entity.title || entity.name || "(Ohne Titel)";
+  return entityDisplayLabel(kind, entity);
 }
 
 function kindIcon(kind) {
@@ -15579,8 +15751,10 @@ function kindIcon(kind) {
     syncConflict: "🔄",
     decision: "⚖️",
     chatgptNote: "🤖",
+    chatgptLead: "📥",
+    chatgptTask: "🪶",
   };
-  return icons[kind] || "📄";
+  return icons[kind] || (entityKindInfo(kind) || {}).icon || "📄";
 }
 
 /* ---------- UI helpers: Post-it Style for Ideas ---------- */
@@ -15854,54 +16028,22 @@ function deleteEntity(kind, id) {
 }
 
 function cleanupLinks(deletedKind, deletedId) {
+  // Generisch ueber die Registry: jedes Element jeder Sammlung verliert den
+  // Verweis auf das geloeschte Element. Vorher zwei von Hand gepflegte Listen,
+  // in denen z.B. ChatGPT Notes, Entscheidungen und Personen fehlten.
   const e = APP.state.data.entities;
-  
-  // Fields that might contain links - erweitert für alle Entity-Typen inkl. Selbst-Verknüpfungen
-  const linkFields = {
-    task: ["linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations", "linkedStrategies", "linkedGoals", "linkedCalendarEvents", "linkedMeetings", "linkedIdeas"],
-    project: ["linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations", "linkedStrategies", "linkedCalendarEvents", "linkedMeetings", "linkedIdeas", "linkedPrograms"],
-    organization: ["linkedTasks", "linkedProjects", "linkedNotes", "linkedCalendarEvents", "linkedMeetings", "linkedOrganizations"],
-    note: ["linkedTasks", "linkedProjects", "linkedOrganizations", "linkedCalendarEvents", "linkedMeetings", "linkedIdeas", "linkedNotes"],
-    goal: ["linkedTasks", "linkedStrategies", "linkedProjects", "linkedGoals"],
-    strategy: ["linkedTasks", "linkedProjects", "linkedGoals", "linkedStrategies"],
-    program: ["linkedProjects", "linkedOrganizations", "linkedPrograms"],
-    calendarEvent: ["linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations", "linkedMeetings", "linkedGoals", "linkedStrategies", "linkedIdeas", "linkedCalendarEvents"],
-    meeting: ["linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations", "linkedCalendarEvents", "linkedMeetings"],
-    idea: ["linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations", "linkedStrategies", "linkedGoals", "linkedIdeas"],
-  };
-  
-  // Map kind to field name in other entities
-  const kindToField = {
-    task: "linkedTasks",
-    project: "linkedProjects",
-    organization: "linkedOrganizations",
-    note: "linkedNotes",
-    goal: "linkedGoals",
-    strategy: "linkedStrategies",
-    calendarEvent: "linkedCalendarEvents",
-    meeting: "linkedMeetings",
-    idea: "linkedIdeas",
-    program: "linkedPrograms",
-  };
-  
-  const fieldToRemove = kindToField[deletedKind];
-  if (!fieldToRemove) return;
-  
-  // Go through all entity types
-  for (const [entityKind, fields] of Object.entries(linkFields)) {
-    if (!fields.includes(fieldToRemove)) continue;
-    const map = getEntityMap(entityKind);
-    if (!map) continue;
-    
+  const fieldToRemove = linkFieldForKindName(deletedKind);
+  for (const info of entityKindRegistry()) {
+    const map = e[info.store];
+    if (!map || typeof map !== "object" || Array.isArray(map)) continue;
     for (const entity of Object.values(map)) {
-      if (entity[fieldToRemove] && Array.isArray(entity[fieldToRemove])) {
-        const idx = entity[fieldToRemove].indexOf(deletedId);
-        if (idx >= 0) {
-          entity[fieldToRemove].splice(idx, 1);
-        }
-      }
+      if (!entity || typeof entity !== "object" || !Array.isArray(entity[fieldToRemove])) continue;
+      const idx = entity[fieldToRemove].indexOf(deletedId);
+      if (idx >= 0) entity[fieldToRemove].splice(idx, 1);
     }
   }
+  // ChatGPT-Aufgaben am geloeschten Element bleiben stehen (anchorLabel traegt
+  // den Namen weiter): Laurin soll nachvollziehen koennen, was am Datensatz war.
 }
 
 // ============================================================================
@@ -16007,44 +16149,19 @@ function renderLinkedEntitiesSection(kind, id) {
   if (!entity) return "";
   
   const e = APP.state.data.entities;
-  const kindIcons = {
-    task: "✅", project: "📦", note: "📝", organization: "🏛️", 
-    strategy: "🧭", goal: "🎯", program: "🧩", idea: "💡",
-    article: "📄", decision: "⚖️",
-    annotation: "📌",
-    update: "🔧", deck: "📚", meeting: "🤝", calendarEvent: "📅",
-    message: "✉️", transaction: "💰", chatgptNote: "🤖"
-  };
-  
-  const allLinkedFields = [
-    { field: "linkedTasks", kind: "task", store: "tasks", nameField: "title" },
-    { field: "linkedProjects", kind: "project", store: "projects", nameField: "title" },
-    { field: "linkedNotes", kind: "note", store: "notes", nameField: "title" },
-    { field: "linkedOrganizations", kind: "organization", store: "organizations", nameField: "name" },
-    { field: "linkedStrategies", kind: "strategy", store: "strategies", nameField: "title" },
-    { field: "linkedGoals", kind: "goal", store: "goals", nameField: "title" },
-    { field: "linkedPrograms", kind: "program", store: "programs", nameField: "title" },
-    { field: "linkedIdeas", kind: "idea", store: "ideas", nameField: "title" },
-    { field: "linkedUpdates", kind: "update", store: "updates", nameField: "text" },
-    { field: "linkedDecks", kind: "deck", store: "decks", nameField: "title" },
-    { field: "linkedMeetings", kind: "meeting", store: "meetings", nameField: "title" },
-    { field: "linkedCalendarEvents", kind: "calendarEvent", store: "calendarEvents", nameField: "title" },
-    { field: "linkedMessages", kind: "message", store: "messages", nameField: "title" },
-    { field: "linkedTransactions", kind: "transaction", store: "transactions", nameField: "description" },
-    { field: "linkedArticles", kind: "article", store: "articles", nameField: "title" },
-    { field: "linkedDecisions", kind: "decision", store: "decisions", nameField: "title" },
-    { field: "linkedChatgptNotes", kind: "chatgptNote", store: "chatgptNotes", nameField: "instruction" },
-  ];
-  
+  // Alle verknuepfbaren Typen aus der Registry — nicht mehr eine eigene Liste.
+  const allLinkedFields = entityKindRegistry().filter(k => k.linkable !== false)
+    .map(k => ({ field: linkFieldForKindName(k.kind), kind: k.kind, store: k.store, nameField: k.nameField || "title", icon: k.icon }));
+
   let linkedChips = [];
-  
-  allLinkedFields.forEach(({ field, kind: linkedKind, store, nameField }) => {
+
+  allLinkedFields.forEach(({ field, kind: linkedKind, store, nameField, icon: kindIconChar }) => {
     const linkedIds = entity[field] || [];
     linkedIds.forEach(linkedId => {
       const linkedEntity = e[store]?.[linkedId];
       if (linkedEntity) {
         const name = linkedEntity[nameField] || linkedEntity.title || linkedEntity.name || linkedEntity.text?.slice(0,30) || "(Ohne Titel)";
-        const icon = kindIcons[linkedKind] || "🔗";
+        const icon = kindIconChar || "🔗";
         
         // Content preview for tasks (description) and notes (content)
         let preview = "";
@@ -21777,10 +21894,7 @@ function renderSidebar() {
     const isActive = route === key;
     let badge = "";
     if(key === "tasks" && stats.open > 0) badge = `<span class="badge">${stats.open}</span>`;
-    if(key === "chatgptnotes" && typeof chatgptNotesUnreadCount === "function") {
-      const n = chatgptNotesUnreadCount();
-      if (n > 0) badge = `<span class="badge">${n}</span>`;
-    }
+    if(key === "chatgptnotes") badge = chatgptModuleBadges();
     html += `<button class="sidebar-item ${isActive?"active":""}" data-action="nav" data-route="${key}">
       <span class="icon">${app.icon}</span><span>${esc(app.label)}</span>${badge}
     </button>`;
@@ -21795,10 +21909,7 @@ function renderSidebar() {
       if(!app) return;
       const isActive = route === key;
       let badge2 = "";
-      if(key === "chatgptnotes" && typeof chatgptNotesUnreadCount === "function") {
-        const n = chatgptNotesUnreadCount();
-        if (n > 0) badge2 = `<span class="badge">${n}</span>`;
-      }
+      if(key === "chatgptnotes") badge2 = chatgptModuleBadges();
       html += `<button class="sidebar-item ${isActive?"active":""}" data-action="nav" data-route="${key}">
         <span class="icon">${app.icon}</span><span>${esc(app.label)}</span>${badge2}
       </button>`;
@@ -21889,7 +22000,7 @@ function getAllApps() {
     {key:"budget", icon:"💰", label:t("budget"), desc:getLang()==="de"?"Finanzen":"Finances"},
     {key:"messages", icon:"📨", label:t("messages"), desc:getLang()==="de"?"Geplante Nachrichten":"Scheduled messages"},
     {key:"updates", icon:"🔧", label:t("updates"), desc:getLang()==="de"?"App-Verbesserungen":"App improvements"},
-    {key:"chatgptnotes", icon:"🤖", label:t("chatgptnotes"), desc:getLang()==="de"?"Gedächtnis des Assistenten über Sitzungen hinweg":"Assistant's memory across sessions"},
+    {key:"chatgptnotes", icon:"🤖", label:t("chatgptnotes"), desc:getLang()==="de"?"Assistent: Anweisungen (Notes), Auftragseingang (Leads), Sorgfaltsaufträge (ChatGPT-Aufgaben)":"Assistant: instructions (notes), lead inbox, care tasks"},
     {key:"reports", icon:"🤖", label:t("reports"), desc:getLang()==="de"?"KI-Berichte":"AI reports"},
     {key:"rules", icon:"⚖️", label:"Rules", desc:getLang()==="de"?"Persönliche Gesetzbücher & Prinzipien":"Personal law books & principles"},
     {key:"dailybriefing", icon:"📋", label:"Daily Briefing", desc:getLang()==="de"?"Tagesplanung & Dossier-Export":"Daily planning & dossier export"},
@@ -22280,7 +22391,7 @@ function renderMain() {
     case "meetings": html = id ? viewMeetingDetail(id) : viewMeetings(); break;
     case "articles": window.openResearchHub(); return;
     case "updates": html = viewUpdates(); break;
-    case "chatgptnotes": html = viewChatgptNotes(); break;
+    case "chatgptnotes": html = viewChatgptModule(id); break;
     case "rules": html = viewRules(id); break;
     case "dailybriefing": html = viewDailyBriefing(); break;
     case "reflecta": html = viewReflecta(); break;
@@ -22333,6 +22444,7 @@ function renderMain() {
   if (mainEl) {
     mainEl.innerHTML = `<div class="page">${html}</div>`;
     quantusInjectAppNoteAction(mainEl, route, id);
+    quantusInjectChatgptSections(mainEl, route, id);
     quantusEnableTagAutocomplete(mainEl);
 // Activate scripts in custom pages (wrapped to avoid global conflicts)
     if ((APP.state.data.customPages || []).some(p => p.key === route)) {
@@ -48575,21 +48687,24 @@ function chatgptNotesUnreadCount() {
 }
 
 function chatgptNotesPatterns(all) {
-  const bySection = {}, byDay = {};
+  // Drei oder mehr Feedback-Eintraege mit demselben Tag (Feld `tags`) oder
+  // derselben promptSection: Kandidat fuer den Prompt. Nur Gruppieren und
+  // Zaehlen, keine Textanalyse.
+  const bySection = {}, byTag = {};
   all.filter(n => n.category === "feedback" && n.state !== "ueberholt").forEach(n => {
     if (n.promptSection) (bySection[n.promptSection] = bySection[n.promptSection] || []).push(n);
-    const day = n.instructionDate || (n.createdAt || "").slice(0, 10);
-    if (day) (byDay[day] = byDay[day] || []).push(n);
+    (n.tags || []).forEach(tg => { (byTag[tg] = byTag[tg] || []).push(n); });
   });
   const hints = [];
   Object.entries(bySection).forEach(([sec, arr]) => {
     if (arr.length >= 3) hints.push(`${arr.length}× Feedback zu Abschnitt ${esc(sec)} — Kandidat für den Prompt`);
   });
-  Object.entries(byDay).forEach(([day, arr]) => {
-    if (arr.length >= 3) hints.push(`${arr.length}× Feedback am ${fmtDate(day)}`);
+  Object.entries(byTag).forEach(([tg, arr]) => {
+    if (arr.length >= 3) hints.push(`${arr.length}× Feedback mit Tag „${esc(tg)}" — Kandidat für den Prompt`);
   });
   return hints;
 }
+window.chatgptNotesPatterns = chatgptNotesPatterns;
 
 function chatgptNoteFormHtml(vals) {
   vals = vals || {};
@@ -48624,6 +48739,20 @@ const CGN_CATEGORY_META = {
   entscheid: { color: "#7A8288", label: "Entscheid" },
 };
 
+// Kompakte Zeile der Verknuepfungen (immer sichtbar, ohne Aufklappen).
+function chatgptNoteLinkSummary(n) {
+  const e = APP.state.data.entities;
+  const chips = [];
+  entityKindRegistry().forEach(info => {
+    (n[linkFieldForKindName(info.kind)] || []).forEach(lid => {
+      const x = e[info.store]?.[lid];
+      if (x) chips.push(`<span class="pill sm" style="cursor:pointer" data-action="open-entity" data-kind="${info.kind}" data-id="${lid}">${info.icon} ${esc(entityDisplayLabel(info.kind, x).slice(0, 30))}</span>`);
+    });
+  });
+  (n.externalLinks || []).forEach(l => { if (l && l.url) chips.push(`<a class="pill sm" href="${esc(l.url)}" target="_blank" rel="noopener">🔗 ${esc((l.label || l.url).slice(0, 30))}</a>`); });
+  return chips.length ? `<div class="flex gap-1 mt-2" style="flex-wrap:wrap">${chips.slice(0, 8).join("")}${chips.length > 8 ? `<span class="mini">+${chips.length - 8}</span>` : ""}</div>` : "";
+}
+
 function chatgptNoteCard(n, all) {
   const meta = CGN_CATEGORY_META[n.category] || { color: "#7A8288", label: n.category || "?" };
   const superseded = n.state === "ueberholt";
@@ -48633,7 +48762,7 @@ function chatgptNoteCard(n, all) {
     <div class="card mb-3" data-cgn-card="${n.id}" style="${superseded ? "opacity:.6" : ""}">
       <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:6px">
         <div class="flex items-center gap-2" style="flex-wrap:wrap">
-          <span class="mini">${fmtDate(n.instructionDate || n.createdAt)}</span>
+          <span class="mini">${fmtDate(String(n.instructionDate || n.createdAt || "").slice(0, 10))}</span>
           <span class="pill sm" style="background:${meta.color}22;color:${meta.color};border:1px solid ${meta.color}55">${meta.label}</span>
           ${n.promptSection ? `<span class="pill sm">§ ${esc(n.promptSection)}</span>` : ""}
           ${superseded ? `<span class="pill sm" style="background:#7A828822;color:#7A8288;border:1px solid #7A828855">überholt${supersededByEntry ? ` · <a href="#" data-action="cgn-goto" data-id="${supersededByEntry.id}">neuerer Eintrag →</a>` : ""}</span>` : ""}
@@ -48647,6 +48776,7 @@ function chatgptNoteCard(n, all) {
       <div style="font-weight:600;white-space:pre-wrap">${esc(n.instruction || "")}</div>
       ${n.derived ? `<div class="mini mt-2" style="color:var(--muted);white-space:pre-wrap">${esc(n.derived)}</div>` : ""}
       ${(n.tags || []).length ? `<div class="tags mt-2">${(n.tags || []).map(tg => `<span class="tag">${esc(tg)}</span>`).join("")}</div>` : ""}
+      ${chatgptNoteLinkSummary(n)}
       <div class="mt-2" data-action="cgn-toggle-detail" data-id="${n.id}" style="cursor:pointer">
         <span class="mini" style="text-decoration:underline">Verknüpfungen, Anhänge &amp; Kommentare ${expanded ? "▲" : "▼"}</span>
       </div>
@@ -48660,6 +48790,7 @@ function chatgptNoteCard(n, all) {
             <input type="text" placeholder="Tag hinzufügen, Enter" data-action="add-tag-input" data-kind="chatgptNote" data-id="${n.id}" />
           </div>
           ${renderFileAttachments("chatgptNote", n.id)}
+          ${renderChatgptTaskSection("chatgptNote", n.id, { backlinks: false })}
           <div class="card mb-3">
             <h3>💬 Kommentare</h3>
             <div class="sep"></div>
@@ -48710,7 +48841,7 @@ function viewChatgptNotes() {
     <div class="page-header">
       <div class="page-title">
         <h2>🤖 ChatGPT Notes</h2>
-        <p>${f.mode === "all" ? `${all.length} Einträge insgesamt` : `${newItems.length} neue${newItems.length === 1 ? "" : ""} Anweisung${newItems.length === 1 ? "" : "en"} seit ${lastRead ? fmtDate(lastRead) : "je"}`}</p>
+        <p>${f.mode === "all" ? `${all.length} Einträge insgesamt` : `${newItems.length} neue${newItems.length === 1 ? "" : ""} Anweisung${newItems.length === 1 ? "" : "en"} seit ${lastRead ? fmtDate(String(lastRead).slice(0, 10)) : "je"}`}</p>
       </div>
       <div class="page-actions">
         <button class="btn ${f.mode !== "all" ? "primary" : ""}" data-action="cgn-filter-mode" data-mode="new">Seit letzter Sitzung (${newItems.length})</button>
@@ -48761,6 +48892,813 @@ function viewChatgptNotes() {
     </div>
   `;
 }
+
+// ============================================================================
+// CHATGPT-MODUL — Leads (Teil B) und ChatGPT-Aufgaben (Teil C)
+// ============================================================================
+// Drei Datentypen, drei getrennte Zaehler (Notes: neu seit letzter Sitzung,
+// Leads: ungelesen, Aufgaben: offen) — nie summiert. Alles normale Entities im
+// generischen Merge (chatgptLeads, chatgptTasks), kein Sonderweg.
+//
+// Leads erzwingen eine Denkstruktur: Abschluss nur, wenn jeder Pflichtschritt
+// dokumentiert und mindestens eine Verknuepfung gesetzt ist. Die EINE Quelle
+// dafuer ist chatgptLeadMissing() — Button, Klick-Handler und Test lesen sie.
+// Es gibt bewusst kein "trotzdem abschliessen"; die einzige Ausnahme
+// (cgl-obsolete, "Lead ist hinfaellig") gehoert Laurin und wird als solche
+// am Lead vermerkt (closedBy:"laurin").
+//
+// ChatGPT-Aufgaben haengen IMMER an einem Anker (anchorKind/anchorId) und
+// leben in einer eigenen Sammlung: sie tauchen in keiner Aufgabenliste, keiner
+// Faelligkeitszahl und keinem Aufgaben-Badge auf.
+
+const CGL_STATUS_META = {
+  neu:           { label:"Neu",           color:"#D96B5B" },
+  verstanden:    { label:"Verstanden",    color:"#2F8C80" },
+  in_arbeit:     { label:"In Arbeit",     color:"#2F8C80" },
+  wartet:        { label:"Wartet",        color:"#C9A96E" },
+  abgeschlossen: { label:"Abgeschlossen", color:"#7A8288" },
+};
+// Reihenfolge = Denkstruktur. Die Detailansicht zeigt sie genau so untereinander.
+const CGL_STEPS = [
+  { field:"interpretation", label:"Interpretation", required:true,  hint:"Was bedeutet der Auftrag? Was meint Laurin vermutlich? Worauf hat er früher geachtet?" },
+  { field:"openQuestions",  label:"Offene Fragen",  required:false, hint:"Fragen an Laurin — leer lassen, wenn keine." },
+  { field:"research",       label:"Recherche",      required:true,  hint:"Wo gesucht, was gefunden — und was NICHT gefunden." },
+  { field:"plan",           label:"Plan",           required:true,  hint:"Geplanter Ablauf, Schritt für Schritt." },
+  { field:"execution",      label:"Ausführung",     required:true,  hint:"Was tatsächlich getan wurde." },
+  { field:"result",         label:"Ergebnis",       required:true,  hint:"Ergebnis und wo es in Quantus liegt." },
+  { field:"workflowNote",   label:"Workflow-Notiz", required:false, hint:"Wiederverwendbares Vorgehen für ähnliche Aufträge." },
+];
+const CGL_LEAD_STATUSES = ["neu", "verstanden", "in_arbeit", "wartet", "abgeschlossen"];
+// Bewertungsraster (B.3): sechs Kriterien, je "chatgpt" oder "cowork". Der
+// Assistent fuellt es VOR der Ausfuehrung aus — auch wenn er den Lead selbst
+// bearbeitet. Laurin will nachher sehen, warum etwas NICHT abgegeben wurde.
+const CGL_ASSESSMENT = [
+  { key:"menge",        label:"Menge",         hint:"Menge an Text zum Lesen und Erzeugen" },
+  { key:"werkzeug",     label:"Werkzeug",      hint:"Braucht es Dateien, Code, Auswertungen?" },
+  { key:"kontext",      label:"Kontext",       hint:"Braucht es die Gesprächshistorie und Laurins Gewohnheiten?" },
+  { key:"quantusNaehe", label:"Quantus-Nähe",  hint:"Wie viele Schritte laufen in Quantus?" },
+  { key:"recherche",    label:"Recherche",     hint:"Reicht der Bestand, oder braucht es externe Recherche?" },
+  { key:"zuschnitt",    label:"Zuschnitt",     hint:"Klar abgegrenztes Paket oder iterativ?" },
+];
+const CGL_ASSIGNEES = { chatgpt:"ChatGPT", cowork:"Claude Cowork" };
+// Standard ueberall "nein" bzw. leer. Was nicht ausdruecklich erteilt wurde,
+// gilt als nicht erteilt — es gibt bewusst keine "alles erlauben"-Abkuerzung.
+function chatgptLeadDefaultPermissions() {
+  return { websuche:false, dateienErstellen:{ erlaubt:false, formate:[] }, externeTools:[], verboten:[] };
+}
+function chatgptLeadNormalizePermissions(p) {
+  const d = chatgptLeadDefaultPermissions();
+  if (!p || typeof p !== "object") return d;
+  const de = p.dateienErstellen;
+  return {
+    websuche: p.websuche === true,
+    dateienErstellen: {
+      erlaubt: !!(de && typeof de === "object" ? de.erlaubt === true : de === true),
+      formate: Array.isArray(de && de.formate) ? de.formate.map(x => String(x).trim()).filter(Boolean) : [],
+    },
+    externeTools: Array.isArray(p.externeTools) ? p.externeTools.map(x => String(x).trim()).filter(Boolean) : [],
+    verboten: Array.isArray(p.verboten) ? p.verboten.map(x => String(x).trim()).filter(Boolean) : [],
+  };
+}
+function chatgptLeadAssessmentTally(a) {
+  a = a && typeof a === "object" ? a : {};
+  let chatgpt = 0, cowork = 0, filled = 0;
+  for (const c of CGL_ASSESSMENT) {
+    if (a[c.key] === "chatgpt") { chatgpt++; filled++; }
+    else if (a[c.key] === "cowork") { cowork++; filled++; }
+  }
+  const complete = filled === CGL_ASSESSMENT.length;
+  const suggested = !complete ? null : (cowork > chatgpt ? "cowork" : "chatgpt");
+  return { chatgpt, cowork, filled, complete, suggested };
+}
+window.chatgptLeadAssessmentTally = chatgptLeadAssessmentTally;
+window.chatgptLeadDefaultPermissions = chatgptLeadDefaultPermissions;
+window.chatgptLeadNormalizePermissions = chatgptLeadNormalizePermissions;
+const CGT_TASK_STATES = ["offen", "erledigt", "wartet"];
+
+// fmtDate() erwartet YYYY-MM-DD; Zeitstempel (ISO) vorher auf den Tag kuerzen.
+function cgFmtDay(v) { return fmtDate(String(v || "").slice(0, 10)); }
+function chatgptLeadLinkCount(lead) {
+  if (!lead || typeof lead !== "object") return 0;
+  let n = 0;
+  for (const [k, v] of Object.entries(lead)) {
+    if (/^linked[A-Z]/.test(k) && Array.isArray(v)) n += v.length;
+  }
+  return n;
+}
+// Reine Funktion: was fehlt noch zum Abschliessen? Leere Liste = abschliessbar.
+function chatgptLeadMissing(lead) {
+  if (!lead) return ["Lead nicht gefunden"];
+  const missing = [];
+  if (!String(lead.title || "").trim()) missing.push("Titel");
+  if (!String(lead.rawInput || "").trim()) missing.push("Wortlaut");
+  for (const s of CGL_STEPS) {
+    if (s.required && !String(lead[s.field] || "").trim()) missing.push(s.label);
+    if (s.field === "plan") {
+      // B.3: Bewertung und Zuweisung — Pflicht auch bei Eigenbearbeitung.
+      const tally = chatgptLeadAssessmentTally(lead.assessment);
+      if (!tally.complete) missing.push(tally.filled ? `Bewertungsraster (${CGL_ASSESSMENT.length - tally.filled} von ${CGL_ASSESSMENT.length} Kriterien offen)` : "Bewertungsraster");
+      if (!CGL_ASSIGNEES[lead.assignee]) missing.push("Zuweisung (ChatGPT oder Cowork)");
+      if (!String(lead.assignmentReason || "").trim()) missing.push("Begründung der Zuweisung");
+    }
+  }
+  if (chatgptLeadLinkCount(lead) === 0) missing.push("mindestens eine Verknüpfung");
+  return missing;
+}
+function chatgptLeadAssignmentDone(lead) {
+  return chatgptLeadAssessmentTally(lead?.assessment).complete && !!CGL_ASSIGNEES[lead?.assignee] && !!String(lead?.assignmentReason || "").trim();
+}
+function chatgptLeadProgress(lead) {
+  const req = CGL_STEPS.filter(s => s.required);
+  const done = req.filter(s => String(lead?.[s.field] || "").trim()).length
+    + (chatgptLeadAssignmentDone(lead) ? 1 : 0)
+    + (chatgptLeadLinkCount(lead) > 0 ? 1 : 0);
+  return { done, total: req.length + 2 };
+}
+function chatgptLeadsUnreadCount() {
+  return Object.values(APP.state.data.entities.chatgptLeads || {})
+    .filter(l => l && typeof l === "object" && !l.readAt && l.status !== "abgeschlossen").length;
+}
+function chatgptTasksOpenCount() {
+  return Object.values(APP.state.data.entities.chatgptTasks || {})
+    .filter(t => t && typeof t === "object" && t.state === "offen").length;
+}
+function chatgptModuleBadges() {
+  const parts = [];
+  const n1 = chatgptNotesUnreadCount(), n2 = chatgptLeadsUnreadCount(), n3 = chatgptTasksOpenCount();
+  if (n1) parts.push(`<span class="badge" style="background:#2F8C80" title="${n1} neue Anweisung(en) seit letzter Sitzung">${n1}</span>`);
+  if (n2) parts.push(`<span class="badge" style="background:#D96B5B" title="${n2} ungelesene(r) Lead(s)">${n2}</span>`);
+  if (n3) parts.push(`<span class="badge" style="background:#C9A96E" title="${n3} offene ChatGPT-Aufgabe(n)">${n3}</span>`);
+  return parts.length ? `<span class="cgm-badges">${parts.join("")}</span>` : "";
+}
+
+// ── Anker ──────────────────────────────────────────────────────────────────
+// {label, exists, icon, kindLabel, virtual} fuer einen Anker: Entity aus der
+// Registry oder ein virtueller Typ (Gmail-Nachricht, nicht in entities).
+function chatgptAnchorInfo(kind, id, fallbackLabel) {
+  const virtual = QUANTUS_VIRTUAL_KINDS[kind];
+  if (virtual) return { label: fallbackLabel || virtual.label, exists: !!id, virtual: true, icon: virtual.icon, kindLabel: virtual.label, kindPlural: virtual.plural };
+  const info = entityKindInfo(kind);
+  if (!info) return { label: fallbackLabel || "?", exists: false, icon:"📄", kindLabel: kind || "?", kindPlural: kind || "?" };
+  const entity = id ? getEntity(kind, id) : null;
+  return { label: entity ? entityDisplayLabel(kind, entity) : (fallbackLabel || "(Gelöscht)"), exists: !!entity, icon: info.icon, kindLabel: info.label, kindPlural: info.plural || info.label };
+}
+function chatgptAnchorOpen(kind, id) {
+  const virtual = QUANTUS_VIRTUAL_KINDS[kind];
+  if (virtual) { virtual.open(id); return true; }
+  const info = entityKindInfo(kind);
+  const route = routeForKind(kind);
+  if (info && (info.route || route !== "dashboard")) { navigate(route, id); return true; }
+  if (getEntity(kind, id)) { openSlidePanel(kind, id); return true; }
+  return false;
+}
+// Anlegen NUR mit Anker. Ohne aufloesbaren Anker: null, nichts angelegt.
+function createChatgptTask(anchorKind, anchorId, text, opts) {
+  opts = opts || {};
+  text = String(text || "").trim();
+  const say = (t, a, b) => { if (typeof toast === "function") toast(t, a, b); };
+  if (!text) return null;
+  if (!anchorKind || !anchorId) { say("warn", "Kein Anker", "Eine ChatGPT-Aufgabe braucht ein Element, an dem sie hängt."); return null; }
+  const anchor = chatgptAnchorInfo(anchorKind, anchorId, opts.anchorLabel);
+  if (!anchor.exists) { say("warn", "Anker fehlt", "Das Element wurde nicht gefunden — Aufgabe nicht angelegt."); return null; }
+  return createEntity("chatgptTask", {
+    text, state: "offen", anchorKind, anchorId, anchorLabel: anchor.label,
+    createdBy: opts.createdBy === "assistant" ? "assistant" : "laurin",
+    resolvedAt: null, blockedReason: null, comments: [],
+  });
+}
+function chatgptTasksFor(kind, id) {
+  return Object.values(APP.state.data.entities.chatgptTasks || {})
+    .filter(t => t && typeof t === "object" && t.anchorKind === kind && String(t.anchorId) === String(id))
+    .sort((a, b) => {
+      const ao = a.state === "erledigt" ? 1 : 0, bo = b.state === "erledigt" ? 1 : 0;
+      if (ao !== bo) return ao - bo;
+      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+    });
+}
+function chatgptTaskRow(t, withAnchor) {
+  const who = t.createdBy === "assistant" ? "Assistent" : "Laurin";
+  let anchorHtml = "";
+  if (withAnchor) {
+    const a = chatgptAnchorInfo(t.anchorKind, t.anchorId, t.anchorLabel);
+    anchorHtml = `${a.icon} <a href="#" data-action="cgt-goto" data-id="${t.id}">${esc(a.label)}</a>${a.exists ? "" : ' <span style="color:#D96B5B">(Element nicht mehr vorhanden)</span>'} · `;
+  }
+  const extra = t.state === "wartet" ? ` · <span style="color:#C9A96E">wartet: ${esc(t.blockedReason || "")}</span>`
+    : (t.state === "erledigt" && t.resolvedAt ? ` · erledigt ${cgFmtDay(t.resolvedAt)}` : "");
+  const actions = t.state !== "erledigt"
+    ? `<button class="btn sm ghost" data-action="cgt-done" data-id="${t.id}" title="Erledigt">✓</button><button class="btn sm ghost" data-action="cgt-wait" data-id="${t.id}" title="Wartet — Information fehlt">⏸</button>`
+    : `<button class="btn sm ghost" data-action="cgt-reopen" data-id="${t.id}" title="Wieder öffnen">↩</button>`;
+  return `
+    <div class="cgt-row${t.state === "erledigt" ? " done" : ""}" data-cgt-id="${t.id}">
+      <div class="cgt-row-main">
+        <div class="cgt-text">${esc(t.text)}</div>
+        <div class="mini" style="color:var(--muted)">${anchorHtml}${cgFmtDay(t.createdAt)} · ${who}${extra}</div>
+      </div>
+      <div class="item-actions">${actions}</div>
+    </div>`;
+}
+// Der Abschnitt am Element: fuer Laurin ein kleiner Sand-Marker mit Anzahl,
+// zugeklappt; fuer den Assistenten der deutliche Hinweis, sobald etwas offen
+// ist. Zusaetzlich die Rueckverweise (Leads/Notes, die hierher zeigen), damit
+// eine Verknuepfung auch in Ansichten sichtbar ist, die ihre Chips von Hand
+// zeichnen (Aufgabe, Projekt …) statt ueber renderLinkedEntitiesSection.
+function renderChatgptTaskSection(kind, id, opts) {
+  opts = opts || {};
+  const tasks = chatgptTasksFor(kind, id);
+  const open = tasks.filter(t => t.state !== "erledigt");
+  const done = tasks.filter(t => t.state === "erledigt");
+  const key = `${kind}:${id}`;
+  const expanded = APP.state.ui.cgtExpanded === key;
+  const labelAttr = opts.label ? ` data-label="${esc(opts.label)}"` : "";
+  const backlinks = opts.backlinks === false ? "" : renderChatgptBacklinks(kind, id);
+  const badge = open.length ? `<span class="cgt-badge" title="${open.length} offene ChatGPT-Aufgabe(n)">🪶 ${open.length}</span>` : "";
+  return `
+    <div class="card mb-4 cgt-section" data-cgt-anchor="${esc(key)}">
+      <div class="cgt-head" data-action="cgt-toggle" data-key="${esc(key)}">
+        <span class="mini">🤖 ChatGPT</span>${badge}
+        <span class="mini" style="margin-left:auto">${expanded ? "▲" : "▼"}</span>
+      </div>
+      ${open.length ? `<div class="cgt-notice">🤖 ${open.length} offene ChatGPT-Aufgabe${open.length > 1 ? "n" : ""} an diesem Element — Assistent: bitte abarbeiten.</div>` : ""}
+      <div class="cgt-body"${expanded ? "" : " hidden"}>
+        ${backlinks}
+        ${open.map(t => chatgptTaskRow(t, false)).join("")}
+        ${done.length ? `<details class="cgt-done-list"><summary class="mini" style="cursor:pointer">Erledigt (${done.length})</summary>${done.map(t => chatgptTaskRow(t, false)).join("")}</details>` : ""}
+        ${!tasks.length ? `<div class="mini" style="color:var(--muted)">Keine ChatGPT-Aufgaben.</div>` : ""}
+        <input type="text" class="cgt-input" placeholder="ChatGPT-Aufgabe — Enter genügt (z.B. „Adresse nachtragen“)" data-action="cgt-inline-input" data-kind="${esc(kind)}" data-id="${esc(id)}"${labelAttr} />
+      </div>
+    </div>`;
+}
+function renderChatgptBacklinks(kind, id) {
+  const entity = getEntity(kind, id);
+  if (!entity) return "";
+  const chips = [];
+  const e = APP.state.data.entities;
+  [["chatgptLead", "linkedChatgptLeads", e.chatgptLeads], ["chatgptNote", "linkedChatgptNotes", e.chatgptNotes]].forEach(([k, field, store]) => {
+    (entity[field] || []).forEach(lid => {
+      const x = store?.[lid];
+      if (!x) return;
+      const icon = k === "chatgptLead" ? "📥" : "🤖";
+      const label = entityDisplayLabel(k, x);
+      chips.push(`<span class="entity-chip" style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:11px"><span style="cursor:pointer" data-action="nav" data-route="chatgptnotes" data-id="${k === "chatgptLead" ? lid : ""}">${icon} ${esc(label.slice(0, 40))}</span></span>`);
+    });
+  });
+  return chips.length ? `<div class="cgm-backlinks">${chips.join("")}</div>` : "";
+}
+// Route → Typ (Umkehrung von routeForKind) fuer die generische Einblendung.
+function kindForRoute(route) {
+  const explicit = { tasks:"task", projects:"project", organizations:"organization", goals:"goal", strategies:"strategy",
+    programs:"program", ideas:"idea", meetings:"meeting", decisions:"decision", persons:"person", protocols:"protocol",
+    workflows:"workflow", concepts:"concept", thesis:"thesis", chatgptnotes:"chatgptLead" };
+  if (explicit[route]) return explicit[route];
+  const info = entityKindRegistry().find(k => k.route === route);
+  return info ? info.kind : null;
+}
+// Haengt den ChatGPT-Abschnitt an jede Detailansicht, die ueber renderMain
+// laeuft — ohne jede einzelne Ansicht anzufassen. Overlays (NoteFlow, Gmail,
+// Mail Hub) rufen renderChatgptTaskSection selbst auf.
+function quantusInjectChatgptSections(mainEl, route, id) {
+  try {
+    if (!id || !mainEl || mainEl.querySelector(".cgt-section")) return;
+    const kind = kindForRoute(route);
+    if (!kind || kind === "chatgptLead") return;
+    if (!getEntity(kind, id)) return;
+    const host = mainEl.querySelector(".page") || mainEl;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = renderChatgptTaskSection(kind, id);
+    if (wrap.firstElementChild) host.appendChild(wrap.firstElementChild);
+  } catch (err) { console.warn("ChatGPT-Abschnitt konnte nicht eingeblendet werden:", err); }
+}
+// Abschnitt an Ort und Stelle neu zeichnen (funktioniert in #main wie in
+// Overlays), Seitenleiste nachziehen. Ohne Abschnitt im DOM: ganze Ansicht.
+function chatgptTaskSectionRefresh(el, kind, id, label) {
+  const sec = el && el.closest ? el.closest(".cgt-section") : null;
+  if (sec) {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = renderChatgptTaskSection(kind, id, { label });
+    if (wrap.firstElementChild) sec.replaceWith(wrap.firstElementChild);
+    try { renderSidebar(); } catch (e) {}
+    return;
+  }
+  render();
+}
+
+// ── Modul-Rahmen: drei Reiter, drei Zaehler ────────────────────────────────
+function chatgptModuleTabs(active) {
+  const nNotes = chatgptNotesUnreadCount(), nLeads = chatgptLeadsUnreadCount(), nTasks = chatgptTasksOpenCount();
+  const tab = (key, label, n, color, sub) =>
+    `<button class="btn ${active === key ? "primary" : ""}" data-action="nav" data-route="chatgptnotes"${sub ? ` data-id="${sub}"` : ""}>${label}${n ? ` <span class="cgm-count" style="background:${color}">${n}</span>` : ""}</button>`;
+  return `<div class="cgm-tabs mb-3">
+    ${tab("notes", "🧠 Notes", nNotes, "#2F8C80", "")}
+    ${tab("leads", "📥 Leads", nLeads, "#D96B5B", "leads")}
+    ${tab("tasks", "🪶 ChatGPT-Aufgaben", nTasks, "#C9A96E", "tasks")}
+  </div>`;
+}
+function viewChatgptModule(id) {
+  if (id === "leads") return chatgptModuleTabs("leads") + viewChatgptLeads();
+  if (id === "tasks") return chatgptModuleTabs("tasks") + viewChatgptTasks();
+  if (id && ownEntity(APP.state.data.entities.chatgptLeads || {}, id)) return chatgptModuleTabs("leads") + viewChatgptLeadDetail(id);
+  return chatgptModuleTabs("notes") + viewChatgptNotes();
+}
+
+// ── Leads ──────────────────────────────────────────────────────────────────
+// Raster als kompakte Zeile mit zwei Spalten, Ergebnis ("4 : 2 → Cowork"),
+// Begruendung darunter, Berechtigungen als Zeile — alles ohne Klick sichtbar.
+function chatgptLeadPermissionsLine(l) {
+  const p = chatgptLeadNormalizePermissions(l.grantedPermissions);
+  const yes = v => v ? "✓" : "–";
+  const parts = [
+    `Websuche ${yes(p.websuche)}`,
+    `Dateien ${p.dateienErstellen.erlaubt ? "✓" + (p.dateienErstellen.formate.length ? " (" + esc(p.dateienErstellen.formate.join(", ")) + ")" : "") : "–"}`,
+    `Tools: ${p.externeTools.length ? esc(p.externeTools.join(", ")) : "keine"}`,
+    `Verboten: ${p.verboten.length ? esc(p.verboten.join(", ")) : "–"}`,
+  ];
+  return `<div class="cgl-perms mini">🔐 ${parts.join(" · ")}</div>`;
+}
+function chatgptLeadAssessmentSummary(l, opts) {
+  opts = opts || {};
+  const a = l.assessment && typeof l.assessment === "object" ? l.assessment : {};
+  const tally = chatgptLeadAssessmentTally(a);
+  const cells = CGL_ASSESSMENT.map(c => {
+    const v = a[c.key];
+    return `<span class="cgl-ass-cell ${v || "leer"}" title="${esc(c.hint)}">${esc(c.label)}: <strong>${v === "chatgpt" ? "ChatGPT" : v === "cowork" ? "Cowork" : "—"}</strong></span>`;
+  }).join("");
+  const assignee = CGL_ASSIGNEES[l.assignee] || "nicht zugewiesen";
+  const result = `${tally.chatgpt} : ${tally.cowork} → <strong>${esc(assignee)}</strong>${!tally.complete ? ` <span style="color:#D96B5B">(${tally.filled}/${CGL_ASSESSMENT.length} bewertet)</span>` : ""}`;
+  const handover = l.assignee === "cowork"
+    ? `<div class="mini" style="color:var(--muted)">${l.handoverAt ? `Übergeben ${fmtDateTime(l.handoverAt)}` : "noch nicht übergeben"}${l.returnedAt ? ` · zurück ${fmtDateTime(l.returnedAt)}` : ""}${l.handoverPacket ? "" : " · <span style=\"color:#D96B5B\">kein Übergabepaket</span>"}</div>`
+    : "";
+  return `
+    <div class="cgl-assessment">
+      <div class="cgl-ass-grid">${cells}</div>
+      <div class="cgl-ass-result">${result}</div>
+      ${String(l.assignmentReason || "").trim() ? `<div class="mini cgl-ass-reason">${esc(l.assignmentReason)}</div>` : (opts.compact ? "" : `<div class="mini" style="color:#D96B5B">Begründung der Zuweisung fehlt.</div>`)}
+      ${chatgptLeadPermissionsLine(l)}
+      ${handover}
+      ${l.handoverPacket ? `<details class="cgl-packet"><summary class="mini" style="cursor:pointer">📦 Übergabepaket (Wortlaut, ${String(l.handoverPacket).length} Zeichen)</summary><div class="cgl-packet-text">${esc(l.handoverPacket)}</div></details>` : ""}
+    </div>`;
+}
+function chatgptLeadCard(l) {
+  const meta = CGL_STATUS_META[l.status] || CGL_STATUS_META.neu;
+  const p = chatgptLeadProgress(l);
+  const unread = !l.readAt && l.status !== "abgeschlossen";
+  const raw = String(l.rawInput || "");
+  return `
+    <div class="card mb-2 cgl-card${unread ? " unread" : ""}" data-action="cgl-open" data-id="${l.id}" style="cursor:pointer">
+      <div class="flex justify-between items-center" style="gap:8px;flex-wrap:wrap">
+        <div style="font-weight:600;flex:1;min-width:200px">${unread ? '<span class="cgl-dot" title="Ungelesen"></span>' : ""}${esc(l.title || "(Ohne Titel)")}</div>
+        <span class="pill sm" style="background:${meta.color}22;color:${meta.color};border:1px solid ${meta.color}55">${meta.label}${l.closedBy === "laurin" ? " · hinfällig" : ""}</span>
+        <span class="mini">${cgFmtDay(l.createdAt)}</span>
+      </div>
+      <div class="mini mt-1" style="color:var(--muted);white-space:pre-wrap">${esc(raw.slice(0, 160))}${raw.length > 160 ? "…" : ""}</div>
+      ${chatgptLeadAssessmentSummary(l, { compact: true })}
+      ${l.status !== "abgeschlossen" ? `<div class="progress mt-2" style="height:4px"><div class="bar ${p.done === p.total ? "ok" : "accent"}" style="width:${Math.round(p.done / p.total * 100)}%"></div></div>` : ""}
+      ${l.status === "wartet" && l.blockedReason ? `<div class="mini mt-1" style="color:#C9A96E">⏸ ${esc(l.blockedReason)}</div>` : ""}
+    </div>`;
+}
+function viewChatgptLeads() {
+  const all = Object.values(APP.state.data.entities.chatgptLeads || {}).filter(l => l && typeof l === "object")
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const unread = all.filter(l => !l.readAt && l.status !== "abgeschlossen");
+  const active = all.filter(l => l.readAt && ["neu", "verstanden", "in_arbeit"].includes(l.status));
+  const waiting = all.filter(l => l.readAt && l.status === "wartet");
+  const closed = all.filter(l => l.status === "abgeschlossen")
+    .sort((a, b) => String(b.closedAt || "").localeCompare(String(a.closedAt || "")));
+  const group = (title, list, color) => list.length
+    ? `<h3 class="mt-3 mb-2" style="color:${color}">${title} (${list.length})</h3>${list.map(chatgptLeadCard).join("")}` : "";
+  return `
+    <div class="page-header">
+      <div class="page-title">
+        <h2>📥 Lead-Eingang</h2>
+        <p>${unread.length} ungelesen · ${active.length + waiting.length} offen · ${closed.length} abgeschlossen</p>
+      </div>
+    </div>
+    <div class="card mb-3">
+      <div class="mini mb-2" style="color:var(--muted)">Neuer Lead — Titel und Wortlaut, mehr nicht. Enter im Titel springt ins Textfeld, Strg/⌘+Enter legt an.</div>
+      <input type="text" id="cglQuickTitle" data-action="cgl-quick-title" placeholder="Titel" class="mb-2" style="width:100%" />
+      <textarea id="cglQuickText" data-action="cgl-quick-text" rows="3" placeholder="Wortlaut des Auftrags — genau so, wie du ihn meinst" style="width:100%"></textarea>
+      <div class="flex justify-end mt-2"><button class="btn primary" data-action="cgl-quick-create">📥 Lead anlegen</button></div>
+    </div>
+    ${group("🔴 Ungelesen", unread, "#D96B5B")}
+    ${group("🟢 Neu / In Arbeit", active, "#2F8C80")}
+    ${group("🟡 Wartet", waiting, "#C9A96E")}
+    ${!all.length ? `<div class="mini text-center">Noch keine Leads.</div>` : ""}
+    ${closed.length ? `<details class="mt-4"><summary class="mini" style="cursor:pointer">Abgeschlossen (${closed.length})</summary><div class="mt-2">${closed.map(chatgptLeadCard).join("")}</div></details>` : ""}
+  `;
+}
+function chatgptLeadStatusBoxHtml(l) {
+  const p = chatgptLeadProgress(l);
+  const closed = l.status === "abgeschlossen";
+  const links = chatgptLeadLinkCount(l);
+  const stepDone = s => !!String(l[s.field] || "").trim();
+  return `
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:8px">
+      <div><strong>Fortschritt</strong> <span class="mini">${p.done}/${p.total}</span></div>
+      ${!closed ? `<label class="mini" style="display:flex;align-items:center;gap:6px">Status
+        <select data-action="cgl-status" data-id="${l.id}">
+          ${["neu", "verstanden", "in_arbeit", "wartet"].map(s => `<option value="${s}" ${l.status === s ? "selected" : ""}>${CGL_STATUS_META[s].label}</option>`).join("")}
+        </select></label>` : ""}
+    </div>
+    <div class="progress mt-2" style="height:6px"><div class="bar ${p.done === p.total ? "ok" : "accent"}" style="width:${Math.round(p.done / p.total * 100)}%"></div></div>
+    <div class="cgl-checklist">
+      ${CGL_STEPS.filter(s => s.required).map(s => `<span class="cgl-check ${stepDone(s) ? "ok" : ""}">${stepDone(s) ? "☑" : "☐"} ${s.label}</span>${s.field === "plan" ? `<span class="cgl-check ${chatgptLeadAssignmentDone(l) ? "ok" : ""}">${chatgptLeadAssignmentDone(l) ? "☑" : "☐"} Bewertung &amp; Zuweisung</span>` : ""}`).join("")}
+      <span class="cgl-check ${links ? "ok" : ""}">${links ? "☑" : "☐"} Verknüpfung</span>
+    </div>
+    ${l.status === "wartet" ? `<div class="mt-2"><label class="mini">Was fehlt? (Pflicht bei „Wartet“)
+      ${closed ? `<div>${esc(l.blockedReason || "")}</div>` : `<input type="text" data-action="cgl-field" data-id="${l.id}" data-field="blockedReason" value="${esc(l.blockedReason || "")}" placeholder="Welche Information fehlt?" style="width:100%" />`}
+    </label></div>` : ""}`;
+}
+function chatgptLeadCloseBoxHtml(l) {
+  if (l.status === "abgeschlossen") return "";
+  const missing = chatgptLeadMissing(l);
+  const title = missing.length ? "Fehlt noch: " + missing.join(", ") : "Alle Schritte dokumentiert — Lead kann abgeschlossen werden";
+  return `
+    <div class="cgl-close-wrap" title="${esc(title)}">
+      <button class="btn primary${missing.length ? " is-disabled" : ""}" data-action="cgl-close" data-id="${l.id}" aria-disabled="${missing.length ? "true" : "false"}">✅ Lead abschliessen</button>
+      ${missing.length
+        ? `<div class="mini mt-1" style="color:#D96B5B">Fehlt noch: ${esc(missing.join(", "))}</div>`
+        : `<div class="mini mt-1" style="color:#2F8C80">Bereit zum Abschluss.</div>`}
+    </div>`;
+}
+// Bewertung & Zuweisung als eigener Schritt (nach Plan, vor Ausfuehrung).
+function chatgptLeadAssessmentBoxHtml(l) {
+  const closed = l.status === "abgeschlossen";
+  const a = l.assessment && typeof l.assessment === "object" ? l.assessment : {};
+  const tally = chatgptLeadAssessmentTally(a);
+  const p = chatgptLeadNormalizePermissions(l.grantedPermissions);
+  const done = chatgptLeadAssignmentDone(l);
+  const stepNo = CGL_STEPS.findIndex(s => s.field === "plan") + 2;
+  const grid = closed ? chatgptLeadAssessmentSummary(l) : `
+    <div class="cgl-ass-grid edit">
+      ${CGL_ASSESSMENT.map(c => `
+        <div class="cgl-ass-row" title="${esc(c.hint)}">
+          <span class="cgl-ass-label">${esc(c.label)}<span class="mini" style="color:var(--muted)"> — ${esc(c.hint)}</span></span>
+          <span class="cgl-ass-choice">
+            <button class="btn sm ${a[c.key] === "chatgpt" ? "primary" : "ghost"}" data-action="cgl-assess" data-id="${l.id}" data-key="${c.key}" data-value="chatgpt">ChatGPT</button>
+            <button class="btn sm ${a[c.key] === "cowork" ? "primary" : "ghost"}" data-action="cgl-assess" data-id="${l.id}" data-key="${c.key}" data-value="cowork">Cowork</button>
+          </span>
+        </div>`).join("")}
+    </div>
+    <div class="cgl-ass-result">${tally.chatgpt} : ${tally.cowork} → ${tally.complete ? `<strong>Vorschlag: ${CGL_ASSIGNEES[tally.suggested]}</strong>` : `<span style="color:#D96B5B">${tally.filled}/${CGL_ASSESSMENT.length} bewertet</span>`}</div>
+    <div class="form mt-2">
+      <label class="col-4">Zuweisung *
+        <select data-action="cgl-assignee" data-id="${l.id}">
+          <option value="" ${!l.assignee ? "selected" : ""}>— wählen —</option>
+          <option value="chatgpt" ${l.assignee === "chatgpt" ? "selected" : ""}>ChatGPT (selbst)</option>
+          <option value="cowork" ${l.assignee === "cowork" ? "selected" : ""}>Claude Cowork (abgeben)</option>
+        </select>
+      </label>
+      <label class="col-8">Begründung * <span class="mini" style="color:var(--muted)">ein Satz — auch, wenn NICHT abgegeben wird</span>
+        <input type="text" data-action="cgl-field" data-id="${l.id}" data-field="assignmentReason" value="${esc(l.assignmentReason || "")}" placeholder="Warum so entschieden?" />
+      </label>
+    </div>
+    ${l.assignee === "cowork" ? `
+      <div class="cgl-handover mt-2">
+        <div class="mini mb-1"><strong>Übergabe an Claude Cowork</strong> — Cowork hat keinen Zugriff auf Quantus. Was hier nicht steht, existiert für Cowork nicht.</div>
+        <details ${l.handoverPacket ? "" : "open"}>
+          <summary class="mini" style="cursor:pointer">Übergabepaket (Wortlaut)${l.handoverPacket ? ` · ${String(l.handoverPacket).length} Zeichen` : ' · <span style="color:#D96B5B">fehlt</span>'}</summary>
+          <textarea rows="8" data-action="cgl-field" data-id="${l.id}" data-field="handoverPacket" placeholder="Das vollständige Paket, so wie es an Cowork geht.">${esc(l.handoverPacket || "")}</textarea>
+        </details>
+        <div class="mini mt-2 mb-1"><strong>Erteilte Berechtigungen</strong> — Standard: nicht erteilt. Was hier nicht steht, ist nicht erlaubt.</div>
+        <div class="form">
+          <label class="col-6" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-action="cgl-perm" data-id="${l.id}" data-perm="websuche" ${p.websuche ? "checked" : ""} /> Websuche</label>
+          <label class="col-6" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-action="cgl-perm" data-id="${l.id}" data-perm="dateienErstellen" ${p.dateienErstellen.erlaubt ? "checked" : ""} /> Dateien erstellen</label>
+          <label class="col-6">Erlaubte Formate (Komma)<input type="text" data-action="cgl-perm" data-id="${l.id}" data-perm="dateienFormate" value="${esc(p.dateienErstellen.formate.join(", "))}" placeholder="z.B. pdf, docx" ${p.dateienErstellen.erlaubt ? "" : "disabled"} /></label>
+          <label class="col-6">Externe Tools (Komma)<input type="text" data-action="cgl-perm" data-id="${l.id}" data-perm="externeTools" value="${esc(p.externeTools.join(", "))}" placeholder="keine" /></label>
+          <label class="col-12">Ausdrücklich verboten (Komma)<input type="text" data-action="cgl-perm" data-id="${l.id}" data-perm="verboten" value="${esc(p.verboten.join(", "))}" placeholder="z.B. Mails senden, Daten löschen" /></label>
+        </div>
+        <div class="flex gap-2 mt-2" style="flex-wrap:wrap;align-items:center">
+          ${l.handoverAt ? `<span class="mini">Übergeben ${fmtDateTime(l.handoverAt)}</span>` : `<button class="btn sm" data-action="cgl-handover" data-id="${l.id}">📤 Übergeben (Zeitpunkt setzen)</button>`}
+          ${l.handoverAt && !l.returnedAt ? `<button class="btn sm" data-action="cgl-returned" data-id="${l.id}">📥 Zurück von Cowork</button>` : ""}
+          ${l.returnedAt ? `<span class="mini">Zurück ${fmtDateTime(l.returnedAt)}</span>` : ""}
+        </div>
+        ${chatgptLeadPermissionsLine(l)}
+      </div>` : chatgptLeadPermissionsLine(l)}`;
+  return `
+    <div class="cgl-step ${done ? "done" : ""}" id="cglAssessBox">
+      <div class="cgl-step-head"><span class="cgl-step-no">${stepNo}</span><strong>Bewertung &amp; Zuweisung</strong> <span class="mini" style="color:#D96B5B">Pflicht</span></div>
+      <div class="mini mb-1" style="color:var(--muted)">Sechs Kriterien, je ChatGPT oder Cowork. Danach Zuweisung und ein Satz Begründung — auch bei Eigenbearbeitung.</div>
+      ${grid}
+    </div>`;
+}
+function viewChatgptLeadDetail(id) {
+  const l = ownEntity(APP.state.data.entities.chatgptLeads || {}, id);
+  if (!l) return `<div class="card">Lead nicht gefunden. <a href="#/chatgptnotes/leads">Zurück zum Eingang</a></div>`;
+  const meta = CGL_STATUS_META[l.status] || CGL_STATUS_META.neu;
+  const closed = l.status === "abgeschlossen";
+  const links = chatgptLeadLinkCount(l);
+  const stepDone = s => !!String(l[s.field] || "").trim();
+  const planIdx = CGL_STEPS.findIndex(s => s.field === "plan");
+  const steps = CGL_STEPS.map((s, i) => (i === planIdx + 1 ? chatgptLeadAssessmentBoxHtml(l) : "") + `
+    <div class="cgl-step ${stepDone(s) ? "done" : ""}">
+      <div class="cgl-step-head"><span class="cgl-step-no">${i + 1 + (i > planIdx ? 1 : 0)}</span><strong>${s.label}</strong>${s.required ? ' <span class="mini" style="color:#D96B5B">Pflicht</span>' : ' <span class="mini" style="color:var(--muted)">optional</span>'}</div>
+      <div class="mini mb-1" style="color:var(--muted)">${esc(s.hint)}</div>
+      ${closed
+        ? `<div style="white-space:pre-wrap">${esc(l[s.field] || "") || '<span class="mini" style="color:var(--muted)">—</span>'}</div>`
+        : `<textarea rows="${s.required ? 4 : 2}" data-action="cgl-field" data-id="${id}" data-field="${s.field}" placeholder="${esc(s.hint)}">${esc(l[s.field] || "")}</textarea>`}
+    </div>`).join("");
+  return `
+    <div class="page-header">
+      <div class="page-title">
+        <h2>📥 ${esc(l.title || "(Ohne Titel)")}</h2>
+        <p>Erfasst ${fmtDateTime(l.createdAt)}${l.readAt ? ` · gelesen ${fmtDateTime(l.readAt)}` : ' · <strong style="color:#D96B5B">ungelesen</strong>'}${l.closedAt ? ` · abgeschlossen ${fmtDateTime(l.closedAt)}${l.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : ""}` : ""}</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn" data-action="nav" data-route="chatgptnotes" data-id="leads">← Eingang</button>
+        ${!l.readAt && !closed ? `<button class="btn good" data-action="cgl-mark-read" data-id="${id}">📖 Gelesen (Assistent)</button>` : ""}
+        <span class="pill" style="background:${meta.color}22;color:${meta.color};border:1px solid ${meta.color}55">${meta.label}${l.closedBy === "laurin" ? " · hinfällig" : ""}</span>
+      </div>
+    </div>
+    <div class="card mb-3">
+      <h3>Wortlaut (Laurin)</h3>
+      <div class="sep"></div>
+      <div style="white-space:pre-wrap;font-weight:500">${esc(l.rawInput || "")}</div>
+      ${l.obsoleteReason ? `<div class="mini mt-2" style="color:#7A8288">Hinfällig, weil: ${esc(l.obsoleteReason)}</div>` : ""}
+    </div>
+    <div class="card mb-3" id="cglStatusBox">${chatgptLeadStatusBoxHtml(l)}</div>
+    <div class="cgl-steps">${steps}</div>
+    <div class="cgl-step ${links ? "done" : ""}">
+      <div class="cgl-step-head"><span class="cgl-step-no">${CGL_STEPS.length + 2}</span><strong>Verknüpfungen</strong> <span class="mini" style="color:#D96B5B">mindestens eine</span></div>
+      ${renderLinkedEntitiesSection("chatgptLead", id)}
+    </div>
+    ${renderFileAttachments("chatgptLead", id)}
+    <div class="card mb-3">
+      <h3>💬 Kommentare</h3>
+      <div class="sep"></div>
+      ${(l.comments || []).map(c => `<div class="comment"><div class="comment-header"><span class="comment-time">${fmtDateTime(c.createdAt)}</span><button class="btn sm ghost" data-action="delete-comment" data-kind="chatgptLead" data-entity-id="${id}" data-comment-id="${c.id}">🗑</button></div><div class="comment-text">${esc(c.text)}</div></div>`).join("") || `<div class="mini">Keine Kommentare.</div>`}
+      <input type="text" placeholder="Kommentar eingeben, Enter zum Senden" data-action="add-comment-input" data-kind="chatgptLead" data-id="${id}" class="mt-2" style="width:100%" />
+    </div>
+    <div id="cglCloseBox">${chatgptLeadCloseBoxHtml(l)}</div>
+    ${!closed ? `<div class="mt-3 text-center"><a href="#" class="mini" style="color:var(--muted)" data-action="cgl-obsolete" data-id="${id}">Lead ist hinfällig (Ausnahme, nur Laurin)</a></div>` : ""}
+  `;
+}
+function chatgptLeadRefreshBoxes(id, forceAssess) {
+  const l = ownEntity(APP.state.data.entities.chatgptLeads || {}, id);
+  if (!l) return;
+  const s = document.getElementById("cglStatusBox"); if (s) s.innerHTML = chatgptLeadStatusBoxHtml(l);
+  const c = document.getElementById("cglCloseBox"); if (c) c.innerHTML = chatgptLeadCloseBoxHtml(l);
+  const a = document.getElementById("cglAssessBox");
+  // Den Bewertungskasten nicht unter einem tippenden Cursor wegziehen —
+  // ausser der Ausloeser war ein Klick/Umschalter darin (forceAssess).
+  // Bei Textfeld-Aenderungen (change feuert beim Verlassen, oft direkt vor
+  // einem Klick in den Kasten) NICHT neu zeichnen — sonst landet der Klick
+  // auf einem ersetzten Element und geht verloren.
+  if (a && forceAssess) {
+    const wrap = document.createElement("div"); wrap.innerHTML = chatgptLeadAssessmentBoxHtml(l);
+    if (wrap.firstElementChild) a.replaceWith(wrap.firstElementChild);
+  }
+  document.querySelectorAll(".cgl-step textarea[data-action='cgl-field']").forEach(ta => {
+    const step = ta.closest(".cgl-step");
+    if (step) step.classList.toggle("done", !!String(l[ta.dataset.field] || "").trim());
+  });
+}
+function createChatgptLead(title, rawInput) {
+  title = String(title || "").trim();
+  rawInput = String(rawInput || "").trim();
+  if (!title && !rawInput) return null;
+  if (!title) title = rawInput.split("\n")[0].slice(0, 80);
+  if (!rawInput) rawInput = title;
+  return createEntity("chatgptLead", {
+    title, rawInput, status: "neu", readAt: null,
+    interpretation: "", openQuestions: "", research: "", plan: "", execution: "", result: "", workflowNote: "",
+    blockedReason: null, closedAt: null, closedBy: null, externalLinks: [], comments: [], files: [],
+    assessment: { menge: null, werkzeug: null, kontext: null, quantusNaehe: null, recherche: null, zuschnitt: null },
+    assignee: null, assignmentReason: "", handoverPacket: null,
+    grantedPermissions: chatgptLeadDefaultPermissions(), handoverAt: null, returnedAt: null,
+  });
+}
+
+// ── ChatGPT-Aufgaben: Sammelansicht ────────────────────────────────────────
+function viewChatgptTasks() {
+  const all = Object.values(APP.state.data.entities.chatgptTasks || {}).filter(t => t && typeof t === "object");
+  const open = all.filter(t => t.state === "offen");
+  const waiting = all.filter(t => t.state === "wartet");
+  const done = all.filter(t => t.state === "erledigt")
+    .sort((a, b) => String(b.resolvedAt || "").localeCompare(String(a.resolvedAt || "")));
+  const byKind = {};
+  [...open, ...waiting].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .forEach(t => (byKind[t.anchorKind] = byKind[t.anchorKind] || []).push(t));
+  const groups = Object.keys(byKind).sort((a, b) => byKind[b].length - byKind[a].length).map(k => {
+    const a = chatgptAnchorInfo(k, null);
+    return `<div class="card mb-3"><h3>${a.icon} ${esc(a.kindPlural)} (${byKind[k].length})</h3><div class="sep"></div>${byKind[k].map(t => chatgptTaskRow(t, true)).join("")}</div>`;
+  }).join("");
+  return `
+    <div class="page-header">
+      <div class="page-title">
+        <h2>🪶 ChatGPT-Aufgaben</h2>
+        <p>${open.length} offen · ${waiting.length} wartet · ${done.length} erledigt — Sorgfaltsaufträge am Element, nur für den Assistenten. Nicht Teil der Aufgabenliste.</p>
+      </div>
+    </div>
+    ${groups || `<div class="mini text-center">Keine offenen ChatGPT-Aufgaben. Anlegen: am Element im Abschnitt „🤖 ChatGPT“ (Enter genügt).</div>`}
+    ${done.length ? `<details class="mt-3"><summary class="mini" style="cursor:pointer">Erledigt (${done.length})</summary><div class="card mt-2">${done.slice(0, 100).map(t => chatgptTaskRow(t, true)).join("")}</div></details>` : ""}
+  `;
+}
+
+// ── Handler (Klick, Enter, Change) ─────────────────────────────────────────
+function chatgptModuleHandleAction(action, el, e) {
+  const id = el.dataset.id;
+  const leads = APP.state.data.entities.chatgptLeads || (APP.state.data.entities.chatgptLeads = {});
+  const tasks = APP.state.data.entities.chatgptTasks || (APP.state.data.entities.chatgptTasks = {});
+  const stop = () => { if (e && e.preventDefault) e.preventDefault(); if (e && e.stopPropagation) e.stopPropagation(); };
+  switch (action) {
+    // ── Leads ──
+    case "cgl-open": stop(); navigate("chatgptnotes", id); return;
+    case "cgl-quick-create": {
+      stop();
+      const title = $("#cglQuickTitle")?.value || "", text = $("#cglQuickText")?.value || "";
+      const nid = createChatgptLead(title, text);
+      if (!nid) { toast("warn", "Lead", "Bitte Titel oder Wortlaut eingeben."); return; }
+      render();
+      toast("ok", "Lead erfasst", "Liegt ungelesen im Eingang.");
+      setTimeout(() => $("#cglQuickTitle")?.focus(), 30);
+      return;
+    }
+    case "cgl-mark-read": {
+      stop();
+      const l = ownEntity(leads, id); if (!l) return;
+      if (!l.readAt) { l.readAt = nowIso(); l.updatedAt = nowIso(); scheduleSave(); }
+      render();
+      return;
+    }
+    case "cgl-close": {
+      stop();
+      const l = ownEntity(leads, id); if (!l) return;
+      const missing = chatgptLeadMissing(l);
+      if (missing.length) { toast("warn", "Noch nicht abschliessbar", "Fehlt noch: " + missing.join(", ")); return; }
+      l.status = "abgeschlossen"; l.closedAt = nowIso(); l.closedBy = "assistant"; l.updatedAt = nowIso();
+      if (!l.readAt) l.readAt = l.closedAt;
+      scheduleSave(); render();
+      toast("ok", "Lead abgeschlossen", l.title || "");
+      return;
+    }
+    case "cgl-obsolete": {
+      stop();
+      const l = ownEntity(leads, id); if (!l) return;
+      const reason = prompt("Nur Laurin: Warum ist dieser Lead hinfällig? (Der Assistent schliesst Leads ausschliesslich über die dokumentierten Schritte.)");
+      if (!reason || !reason.trim()) return;
+      if (!confirm("Lead ohne Denkstruktur schliessen? Das ist Laurins Ausnahme — sie wird am Lead vermerkt.")) return;
+      l.status = "abgeschlossen"; l.closedAt = nowIso(); l.closedBy = "laurin"; l.obsoleteReason = reason.trim(); l.updatedAt = nowIso();
+      if (!l.readAt) l.readAt = l.closedAt;
+      scheduleSave(); render();
+      toast("ok", "Als hinfällig geschlossen", l.title || "");
+      return;
+    }
+    case "cgl-assess": {
+      stop();
+      const l = ownEntity(leads, id); if (!l || l.status === "abgeschlossen") return;
+      const key = el.dataset.key, value = el.dataset.value;
+      if (!CGL_ASSESSMENT.some(c => c.key === key) || !CGL_ASSIGNEES[value]) return;
+      if (!l.assessment || typeof l.assessment !== "object") l.assessment = {};
+      l.assessment[key] = l.assessment[key] === value ? null : value;
+      if (!l.readAt) l.readAt = nowIso();
+      l.updatedAt = nowIso();
+      scheduleSave();
+      chatgptLeadRefreshBoxes(l.id, true);
+      return;
+    }
+    case "cgl-handover": case "cgl-returned": {
+      stop();
+      const l = ownEntity(leads, id); if (!l || l.status === "abgeschlossen") return;
+      if (action === "cgl-handover") {
+        if (!String(l.handoverPacket || "").trim()) { toast("warn", "Übergabepaket fehlt", "Ohne Paket existiert der Auftrag für Cowork nicht."); return; }
+        l.handoverAt = nowIso();
+      } else l.returnedAt = nowIso();
+      l.updatedAt = nowIso();
+      scheduleSave();
+      chatgptLeadRefreshBoxes(l.id, true);
+      return;
+    }
+    // ── ChatGPT-Aufgaben ──
+    case "cgt-toggle": {
+      stop();
+      const key = el.dataset.key;
+      APP.state.ui.cgtExpanded = APP.state.ui.cgtExpanded === key ? null : key;
+      const [kind, ...rest] = String(key).split(":");
+      const label = el.closest(".cgt-section")?.querySelector("[data-action='cgt-inline-input']")?.dataset.label;
+      chatgptTaskSectionRefresh(el, kind, rest.join(":"), label);
+      return;
+    }
+    case "cgt-done": case "cgt-reopen": case "cgt-wait": {
+      stop();
+      const t = ownEntity(tasks, id); if (!t) return;
+      if (action === "cgt-done") { t.state = "erledigt"; t.resolvedAt = nowIso(); t.blockedReason = null; }
+      else if (action === "cgt-reopen") { t.state = "offen"; t.resolvedAt = null; }
+      else {
+        const reason = prompt("Was fehlt, damit die Aufgabe erledigt werden kann?", t.blockedReason || "");
+        if (!reason || !reason.trim()) { toast("warn", "Wartet", "„Wartet“ braucht eine Begründung — was fehlt?"); return; }
+        t.state = "wartet"; t.blockedReason = reason.trim();
+      }
+      t.updatedAt = nowIso();
+      scheduleSave();
+      chatgptTaskSectionRefresh(el, t.anchorKind, t.anchorId, t.anchorLabel);
+      return;
+    }
+    case "cgt-goto": {
+      stop();
+      const t = ownEntity(tasks, id); if (!t) return;
+      if (!chatgptAnchorOpen(t.anchorKind, t.anchorId)) toast("warn", "Kein Sprungziel", "Für dieses Element gibt es keine Detailansicht.");
+      return;
+    }
+  }
+}
+function chatgptModuleHandleKeydown(e, el, action) {
+  if (action === "cgt-inline-input" && e.key === "Enter") {
+    e.preventDefault();
+    const kind = el.dataset.kind, id = el.dataset.id;
+    const nid = createChatgptTask(kind, id, el.value, { anchorLabel: el.dataset.label, createdBy: "laurin" });
+    if (!nid) return true;
+    el.value = "";
+    APP.state.ui.cgtExpanded = `${kind}:${id}`;
+    chatgptTaskSectionRefresh(el, kind, id, el.dataset.label);
+    setTimeout(() => document.querySelector(`.cgt-section[data-cgt-anchor="${CSS.escape(kind + ":" + id)}"] .cgt-input`)?.focus(), 30);
+    return true;
+  }
+  if (action === "cgl-field" && e.key === "Enter" && el.tagName === "INPUT") {
+    e.preventDefault();
+    el.blur();   // change-Ereignis → speichern
+    return true;
+  }
+  if (action === "cgl-quick-title" && e.key === "Enter") {
+    e.preventDefault();
+    $("#cglQuickText")?.focus();
+    return true;
+  }
+  if (action === "cgl-quick-text" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    chatgptModuleHandleAction("cgl-quick-create", el, e);
+    return true;
+  }
+  return false;
+}
+function chatgptModuleHandleChange(el) {
+  const action = el.dataset.action;
+  const leads = APP.state.data.entities.chatgptLeads || {};
+  if (action === "cgl-field") {
+    const l = ownEntity(leads, el.dataset.id); if (!l) return true;
+    const field = el.dataset.field;
+    if (!CGL_STEPS.some(s => s.field === field) && !["blockedReason", "assignmentReason", "handoverPacket"].includes(field)) return true;
+    l[field] = String(el.value || "").trim();
+    // Wer einen Schritt dokumentiert, hat den Lead gelesen.
+    if (!l.readAt) l.readAt = nowIso();
+    if (l.status === "neu" && field === "interpretation" && l.interpretation) l.status = "verstanden";
+    l.updatedAt = nowIso();
+    scheduleSave();
+    chatgptLeadRefreshBoxes(l.id);
+    try { renderSidebar(); } catch (err) {}
+    return true;
+  }
+  if (action === "cgl-assignee") {
+    const l = ownEntity(leads, el.dataset.id); if (!l) return true;
+    const v = el.value;
+    l.assignee = CGL_ASSIGNEES[v] ? v : null;
+    if (!l.grantedPermissions) l.grantedPermissions = chatgptLeadDefaultPermissions();
+    if (!l.readAt) l.readAt = nowIso();
+    l.updatedAt = nowIso();
+    scheduleSave();
+    chatgptLeadRefreshBoxes(l.id, true);
+    return true;
+  }
+  if (action === "cgl-perm") {
+    const l = ownEntity(leads, el.dataset.id); if (!l) return true;
+    const p = chatgptLeadNormalizePermissions(l.grantedPermissions);
+    const list = v => String(v || "").split(",").map(x => x.trim()).filter(Boolean);
+    switch (el.dataset.perm) {
+      case "websuche": p.websuche = el.checked === true; break;
+      case "dateienErstellen": p.dateienErstellen.erlaubt = el.checked === true; if (!p.dateienErstellen.erlaubt) p.dateienErstellen.formate = []; break;
+      case "dateienFormate": p.dateienErstellen.formate = p.dateienErstellen.erlaubt ? list(el.value) : []; break;
+      case "externeTools": p.externeTools = list(el.value); break;
+      case "verboten": p.verboten = list(el.value); break;
+      default: return true;
+    }
+    l.grantedPermissions = p;
+    l.updatedAt = nowIso();
+    scheduleSave();
+    chatgptLeadRefreshBoxes(l.id, el.type === "checkbox");
+    return true;
+  }
+  if (action === "cgl-status") {
+    const l = ownEntity(leads, el.dataset.id); if (!l) return true;
+    const next = el.value;
+    if (!CGL_LEAD_STATUSES.includes(next) || next === "abgeschlossen") { el.value = l.status; return true; }
+    if (next === "wartet" && !l.blockedReason) {
+      const reason = prompt("„Wartet“ braucht einen Grund — was fehlt?");
+      if (!reason || !reason.trim()) { el.value = l.status; return true; }
+      l.blockedReason = reason.trim();
+    }
+    l.status = next;
+    if (!l.readAt) l.readAt = nowIso();
+    l.updatedAt = nowIso();
+    scheduleSave(); render();
+    return true;
+  }
+  return false;
+}
+window.chatgptLeadMissing = chatgptLeadMissing;
+window.chatgptLeadsUnreadCount = chatgptLeadsUnreadCount;
+window.chatgptTasksOpenCount = chatgptTasksOpenCount;
+window.createChatgptTask = createChatgptTask;
+window.createChatgptLead = createChatgptLead;
+window.renderChatgptTaskSection = renderChatgptTaskSection;
+window.chatgptModuleHandleAction = chatgptModuleHandleAction;
 
 // ============================================================================
 // PROGRAM BUTTONS HELPER FUNCTIONS
@@ -55703,66 +56641,25 @@ function openLinkModal(srcKind, srcId) {
   }
   
   // Quell-Element Name ermitteln
-  const srcName = entity.title || entity.name || entity.text?.slice(0,40) || "(Ohne Titel)";
-  const kindLabels = {
-    task: "✅ Aufgabe", project: "📦 Projekt", note: "📝 Notiz", organization: "🏛️ Organisation",
-    strategy: "🧭 Strategie", goal: "🎯 Ziel", program: "🧩 Programm", idea: "💡 Idee",
-    update: "🔧 Update", deck: "📚 Deck", meeting: "🤝 Meeting", calendarEvent: "📅 Termin",
-    message: "✉️ Nachricht", transaction: "💰 Transaktion", decision: "⚖️ Entscheidung",
-    chatgptNote: "🤖 ChatGPT Note"
-  };
-  
-  // Kategorien für Gruppierung
-  const categories = {
-    tasks: { icon: "✅", name: "Aufgaben", items: [] },
-    projects: { icon: "📦", name: "Projekte", items: [] },
-    calendarEvents: { icon: "📅", name: "Kalender-Termine", items: [] },
-    meetings: { icon: "🤝", name: "Meetings", items: [] },
-    notes: { icon: "📝", name: "Notizen", items: [] },
-    organizations: { icon: "🏛️", name: "Organisationen", items: [] },
-    goals: { icon: "🎯", name: "Ziele", items: [] },
-    strategies: { icon: "🧭", name: "Strategien", items: [] },
-    programs: { icon: "🧩", name: "Programme", items: [] },
-    ideas: { icon: "💡", name: "Ideen", items: [] },
-    decisions: { icon: "⚖️", name: "Entscheidungen", items: [] },
-    chatgptNotes: { icon: "🤖", name: "ChatGPT Notes", items: [] },
-    other: { icon: "📎", name: "Sonstige", items: [] }
-  };
-  
-  // Elemente sammeln und kategorisieren
-  if (e.tasks) Object.values(e.tasks).filter(t => t.id !== srcId).forEach(t => 
-    categories.tasks.items.push({ kind: "task", id: t.id, name: t.title || "(Ohne Titel)", date: t.dueDate }));
-  if (e.projects) Object.values(e.projects).filter(p => p.id !== srcId).forEach(p => 
-    categories.projects.items.push({ kind: "project", id: p.id, name: p.title || "(Ohne Titel)" }));
-  if (e.calendarEvents) Object.values(e.calendarEvents).filter(ce => ce.id !== srcId).forEach(ce => 
-    categories.calendarEvents.items.push({ kind: "calendarEvent", id: ce.id, name: ce.title || "(Ohne Titel)", date: ce.date }));
-  if (e.meetings) Object.values(e.meetings).filter(m => m.id !== srcId).forEach(m => 
-    categories.meetings.items.push({ kind: "meeting", id: m.id, name: m.title || "(Ohne Titel)", date: m.date }));
-  if (e.notes) Object.values(e.notes).filter(n => n.id !== srcId).forEach(n => 
-    categories.notes.items.push({ kind: "note", id: n.id, name: n.title || "(Ohne Titel)" }));
-  if (e.organizations) Object.values(e.organizations).filter(o => o.id !== srcId).forEach(o => 
-    categories.organizations.items.push({ kind: "organization", id: o.id, name: o.name || "(Ohne Name)" }));
-  if (e.goals) Object.values(e.goals).filter(g => g.id !== srcId).forEach(g => 
-    categories.goals.items.push({ kind: "goal", id: g.id, name: g.title || "(Ohne Titel)" }));
-  if (e.strategies) Object.values(e.strategies).filter(s => s.id !== srcId).forEach(s => 
-    categories.strategies.items.push({ kind: "strategy", id: s.id, name: s.title || "(Ohne Titel)" }));
-  if (e.programs) Object.values(e.programs).filter(p => p.id !== srcId).forEach(p => 
-    categories.programs.items.push({ kind: "program", id: p.id, name: p.title || "(Ohne Titel)" }));
-  if (e.ideas) Object.values(e.ideas).filter(i => i.id !== srcId).forEach(i => 
-    categories.ideas.items.push({ kind: "idea", id: i.id, name: i.title || i.text?.slice(0,30) || "(Ohne Titel)" }));
-  if (e.decisions) Object.values(e.decisions).filter(d => d.id !== srcId).forEach(d =>
-    categories.decisions.items.push({ kind: "decision", id: d.id, name: d.title || "(Ohne Titel)" }));
-  if (e.chatgptNotes) Object.values(e.chatgptNotes).filter(c => c.id !== srcId).forEach(c =>
-    categories.chatgptNotes.items.push({ kind: "chatgptNote", id: c.id, name: (c.instruction || "(Ohne Text)").slice(0, 40), icon: "🤖" }));
-  if (e.updates) Object.values(e.updates).filter(u => u.id !== srcId).forEach(u => 
-    categories.other.items.push({ kind: "update", id: u.id, name: u.text?.slice(0,40) || "(Ohne Text)", icon: "🔧" }));
-  if (e.decks) Object.values(e.decks).filter(d => d.id !== srcId).forEach(d => 
-    categories.other.items.push({ kind: "deck", id: d.id, name: d.title || "(Ohne Titel)", icon: "📚" }));
-  if (e.messages) Object.values(e.messages).filter(m => m.id !== srcId).forEach(m => 
-    categories.other.items.push({ kind: "message", id: m.id, name: m.title || "(Ohne Titel)", icon: "✉️" }));
-  if (e.transactions) Object.values(e.transactions).filter(tx => tx.id !== srcId).forEach(tx => 
-    categories.other.items.push({ kind: "transaction", id: tx.id, name: tx.title || tx.description || "(Ohne Titel)", icon: "💰" }));
-  
+  const srcName = entityDisplayLabel(srcKind, entity);
+  const kindLabels = {};
+  // Kategorien und Elemente aus der Registry: jeder Typ mit Sammlung unter
+  // entities ist waehlbar — auch einer, der spaeter dazukommt.
+  const categories = {};
+  entityKindRegistry().forEach(info => {
+    kindLabels[info.kind] = `${info.icon} ${info.label}`;
+    if (info.linkable === false) return;
+    const col = e[info.store];
+    if (!col || typeof col !== "object" || Array.isArray(col)) return;
+    const items = [];
+    for (const item of Object.values(col)) {
+      if (!item || typeof item !== "object" || !item.id || item.id === srcId) continue;
+      if (item.deleted === true || item._deleted === true) continue;
+      items.push({ kind: info.kind, id: item.id, name: entityDisplayLabel(info.kind, item), date: item.dueDate || item.date || undefined, icon: info.icon });
+    }
+    if (items.length) categories[info.store] = { icon: info.icon, name: info.plural || info.label, items };
+  });
+
   // Gesamtzahl
   const totalItems = Object.values(categories).reduce((sum, cat) => sum + cat.items.length, 0);
   
@@ -55800,20 +56697,14 @@ function openLinkModal(srcKind, srcId) {
   
   // Bereits verknüpfte Elemente anzeigen
   const existingLinksInternal = [];
-  const allLinkedFields = ["linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations", "linkedStrategies", "linkedGoals", "linkedPrograms", "linkedIdeas", "linkedCalendarEvents", "linkedMeetings"];
-  allLinkedFields.forEach(field => {
-    const ids = entity[field] || [];
+  entityKindRegistry().forEach(info => {
+    const ids = entity[linkFieldForKindName(info.kind)] || [];
     ids.forEach(lid => {
-      const kind = field.replace("linked", "").replace(/s$/, "").toLowerCase();
-      const store = field.replace("linked", "").charAt(0).toLowerCase() + field.replace("linked", "").slice(1);
-      const linked = e[store]?.[lid];
-      if (linked) {
-        const name = linked.title || linked.name || linked.text?.slice(0,30) || "(Ohne Titel)";
-        existingLinksInternal.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--panel3);border-radius:6px;font-size:11px;margin:2px">${kindLabels[kind.replace(/event$/, "Event")] || "🔗"} ${esc(name.slice(0,25))}</span>`);
-      }
+      const linked = e[info.store]?.[lid];
+      if (linked) existingLinksInternal.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--panel3);border-radius:6px;font-size:11px;margin:2px">${info.icon} ${esc(entityDisplayLabel(info.kind, linked).slice(0,25))}</span>`);
     });
   });
-  
+
   openModal("🔗 Verknüpfung erstellen", `
     <!-- Quelle anzeigen -->
     <div style="background:linear-gradient(135deg,var(--panel2),var(--panel3));padding:12px 16px;border-radius:10px;margin-bottom:16px;border:1px solid var(--border)">
@@ -57826,6 +58717,12 @@ function handleClick(e) {
   // Leseplan-Modul: alle data-action="leseplan-…" an den Modul-Dispatcher geben
   if (action && action.indexOf("leseplan-") === 0) {
     try { leseplanHandleAction(action, el, e); } catch(err) { console.warn("Leseplan-Action:", err); }
+    return;
+  }
+
+  // ChatGPT-Modul: Leads (cgl-…) und ChatGPT-Aufgaben (cgt-…) an den Modul-Dispatcher
+  if (action && (action.indexOf("cgl-") === 0 || action.indexOf("cgt-") === 0)) {
+    try { chatgptModuleHandleAction(action, el, e); } catch(err) { console.warn("ChatGPT-Modul-Action:", err); }
     return;
   }
 
@@ -65151,7 +66048,13 @@ window.handleClick = handleClick;
 
 function handleChange(e) {
   const el = e.target;
-  
+
+  // ChatGPT-Modul: Lead-Schritte und -Status
+  if (el.dataset && ["cgl-field", "cgl-status", "cgl-assignee", "cgl-perm"].includes(el.dataset.action)) {
+    chatgptModuleHandleChange(el);
+    return;
+  }
+
   // Handle Quick ToDo checkbox toggle
   if (el.type === "checkbox" && el.dataset.action === "toggle-quick-todo") {
     const todoId = el.dataset.id;
@@ -65388,6 +66291,10 @@ function handleKeydown(e) {
   
   const el = e.target;
   const action = el.dataset.action;
+
+  if (action && (action.indexOf("cgl-") === 0 || action.indexOf("cgt-") === 0)) {
+    if (chatgptModuleHandleKeydown(e, el, action)) return;
+  }
   
   if (action === "add-comment-input") {
     const text = el.value?.trim();
@@ -71941,8 +72848,11 @@ function routeForKind(kind){
     tag: "tags",
     article: "articles",
     chatgptNote: "chatgptnotes",
+    chatgptLead: "chatgptnotes",
   };
-  return map[kind] || "dashboard";
+  if (map[kind]) return map[kind];
+  const info = typeof entityKindInfo === "function" ? entityKindInfo(kind) : null;
+  return (info && info.route) || "dashboard";
 }
 
 /* ---------- Linking system fix (plural fields) ---------- */
@@ -72039,7 +72949,12 @@ function linkFieldForKind(kind, targetKind){
       note: "linkedNotes",
     }
   };
-  return M[kind]?.[targetKind] || null;
+  if (M[kind]?.[targetKind]) return M[kind][targetKind];
+  // Kein Eintrag in der Tabelle: die allgemeine Konvention linked<Typ>s gilt fuer
+  // jeden Typ der Registry (ChatGPT Notes/Leads, Personen, Mails, Dokumente …).
+  const info = (typeof entityKindInfo === "function") ? entityKindInfo(targetKind) : null;
+  if (info && info.linkable !== false) return linkFieldForKindName(targetKind);
+  return null;
 }
 function ensureArray(obj, field){
   if (!obj) return [];
@@ -72090,22 +73005,9 @@ try {
     return true;
   };
 
-  cleanupLinks = function(deletedKind, deletedId){
-    const e = APP.state.data.entities;
-    const kinds = ["task","project","organization","note","goal","strategy","program"];
-    for (const k of kinds){
-      const map = getEntityMap(k);
-      if (!map) continue;
-      for (const ent of Object.values(map)){
-        const fields = [
-          "linkedTasks","linkedProjects","linkedOrganizations","linkedNotes","linkedStrategies","linkedGoals"
-        ];
-        for (const f of fields){
-          if (Array.isArray(ent[f])) ent[f] = ent[f].filter(x => x !== deletedId);
-        }
-      }
-    }
-  };
+  // cleanupLinks wird NICHT mehr ueberschrieben: die Kernfunktion arbeitet
+  // generisch ueber die Entity-Kind-Registry (alle Sammlungen, alle Felder);
+  // die frueheren sieben Typen und sechs Felder hier liessen Verweise stehen.
 } catch(e){ console.warn("v5 patch: linking override failed", e); }
 
 /* ---------- Time tracking: include running timers + avoid duplicate in project sums ---------- */
@@ -72259,10 +73161,25 @@ function buildSearchIndex(){
       kind: "chatgptNote",
       id: cn.id,
       title: (cn.instruction || "(Ohne Text)").slice(0, 80),
-      subtitle: `${cn.category || "auftrag"}${cn.state === "ueberholt" ? " · überholt" : ""} · ${fmtDate(cn.instructionDate || cn.createdAt)}`,
+      subtitle: `${cn.category || "auftrag"}${cn.state === "ueberholt" ? " · überholt" : ""} · ${fmtDate(String(cn.instructionDate || cn.createdAt || "").slice(0, 10))}`,
       content: [cn.instruction, cn.derived, commentText].filter(Boolean).join(" "),
       tags: cn.tags || [],
       updatedAt: cn.updatedAt || cn.createdAt || "",
+    });
+  }
+
+  // chatgptLeads — Auftraege an den Assistenten samt Denkstruktur
+  for (const l of Object.values(e.chatgptLeads || {})) {
+    if (!l || typeof l !== "object") continue;
+    const stepText = ["interpretation", "research", "plan", "execution", "result", "workflowNote", "openQuestions"].map(f => l[f] || "").join(" ");
+    items.push({
+      kind: "chatgptLead",
+      id: l.id,
+      title: (l.title || "(Ohne Titel)").slice(0, 80),
+      subtitle: `Lead · ${l.status || "neu"} · ${fmtDate(String(l.createdAt || "").slice(0, 10))}`,
+      content: [l.rawInput, stepText, (l.comments || []).map(c => c.text).join(" ")].filter(Boolean).join(" "),
+      tags: [],
+      updatedAt: l.updatedAt || l.createdAt || "",
     });
   }
 
@@ -72662,6 +73579,8 @@ function viewNotesWorkspace(noteId){
               <button class="btn sm" data-action="open-link-modal" data-kind="note" data-id="${openNote.id}">➕ Verknüpfen</button>
             </div>
           </div>
+
+          ${renderChatgptTaskSection("note", openNote.id)}
 
           <div class="card mt-3" style="padding:14px">
             <h3>🔗 Externe Links</h3>
@@ -98122,6 +99041,7 @@ console.log('📚 Leseliste geladen');
       
       <div style="margin-top:18px">
         ${window.renderFileAttachments ? window.renderFileAttachments("email", id) : ''}
+        ${window.renderChatgptTaskSection ? window.renderChatgptTaskSection("email", id) : ''}
       </div>
     </div>`;
   };
@@ -104909,6 +105829,7 @@ console.log('📚 Leseliste geladen');
       + renderKiPanel(o)
       + renderApptCard(o)
       + renderAttachments(o)
+      + (window.renderChatgptTaskSection ? window.renderChatgptTaskSection("gmailMessage", o.id, { label: o.subject || "(kein Betreff)", backlinks: false }) : "")
       + '<div class="gml-bodywrap">'+bodyIframe(o.html, o.text)+'</div>';
   }
   // ── Anhänge im Reader: Liste aus o.attachRefs (collectAttachmentRefs beim Öffnen) ──
@@ -111264,10 +112185,10 @@ window.addEventListener("hashchange", function(){
     strategy:"strategies", idea:"ideas", meeting:"meetings",
     organization:"organizations", program:"programs", decision:"decisions",
     article:"articles", update:"updates", contact:"persons", person:"persons",
-    calendarEvent:"calendar", deck:"learn", chatgptNote:"chatgptnotes"
+    calendarEvent:"calendar", deck:"learn", chatgptNote:"chatgptnotes", chatgptLead:"chatgptnotes"
   };
   // Kinds mit Verknüpfungs-Modal
-  const LINK_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","organization","program","calendarEvent","decision","chatgptNote"]);
+  const LINK_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","organization","program","calendarEvent","decision","chatgptNote","chatgptLead"]);
   // Kinds, für die generisches Duplizieren sicher ist
   const DUP_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","decision","update"]);
   // Kinds mit Schnellansicht (openSlidePanel)
@@ -111278,7 +112199,7 @@ window.addEventListener("hashchange", function(){
     idea:"Idee", meeting:"Meeting", organization:"Organisation", program:"Programm",
     decision:"Entscheidung", article:"Artikel", update:"Update", contact:"Kontakt",
     person:"Person", calendarEvent:"Termin", deck:"Deck", annotation:"Anmerkung",
-    thought:"Gedanke", notebook:"Notizbuch", chatgptNote:"ChatGPT Note"
+    thought:"Gedanke", notebook:"Notizbuch", chatgptNote:"ChatGPT Note", chatgptLead:"ChatGPT Lead"
   };
   const DEFAULT_TITLE = {
     task:"Neue Aufgabe", project:"Neues Projekt", note:"Neue Notiz", goal:"Neues Ziel",
