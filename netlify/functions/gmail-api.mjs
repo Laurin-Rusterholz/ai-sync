@@ -44,12 +44,16 @@ const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 //                            DELETE     /users/me/settings/filters/<id>    echter Gmail-
 //                            Filter „von Absender/Domain → Posteingang überspringen +
 //                            Quantus/Blockiert"; braucht Scope gmail.settings.basic)
+//   users.settings.getVacation    GET /users/me/settings/vacation
+//   users.settings.updateVacation PUT /users/me/settings/vacation
+//                            Gmail verwaltet die Abwesenheitsantwort serverseitig;
+//                            Schreiben braucht ebenfalls gmail.settings.basic.
 // The "(?!send\/)" guard keeps the literal send endpoint from also matching the
 // "<id>/modify" shape, so a bogus "/messages/send/modify" is rejected up front.
 // messages/<id>/attachments/<attachmentId> (GET, read-only) ergänzt — für Anhang-Inhalt
 // (Termin-Erkennung / Entwurfs-Kontext). Vom bestehenden Scope gmail.modify abgedeckt,
 // kein neuer OAuth-Scope, keine weiteren Pfade.
-const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify|\/attachments\/[^/?#]+)?)?|threads(\/[^/?#]+(\/modify)?)?|settings\/filters(\/[^/?#]+)?)$/;
+const ALLOWED_PATH = /^\/users\/me\/(profile|labels(\/[^/?#]+)?|messages(\/(?!send\/)[^/?#]+(\/modify|\/attachments\/[^/?#]+)?)?|threads(\/[^/?#]+(\/modify)?)?|settings\/(filters(\/[^/?#]+)?|vacation))$/;
 
 async function callGoogle(method, fullUrl, bodyObj, token) {
   const init = {
@@ -86,6 +90,9 @@ export default async (req) => {
 
   if (!ALLOWED_METHODS.has(method)) return json({ error: "Method not allowed: " + method }, 400);
   if (!ALLOWED_PATH.test(path)) return json({ error: "Path not allowed: " + path }, 400);
+  if (path === "/users/me/settings/vacation" && method !== "GET" && method !== "PUT") {
+    return json({ error: "Method not allowed for vacation settings: " + method }, 400);
+  }
 
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
