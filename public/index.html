@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint · 2026-08-30" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module · 2026-09-01" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -7826,7 +7826,7 @@ function isImageFile(filename) {
 // Firebase-Loeschung, Grabstein, splice, scheduleSave und render zurueck, und
 // zwar STILL. Zwei Listen fuer dieselbe Frage gehen irgendwann auseinander;
 // diese hier ist die einzige.
-const ATTACHMENT_KIND_STORES = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices' };
+const ATTACHMENT_KIND_STORES = { task:'tasks', project:'projects', note:'notes', organization:'organizations', goal:'goals', strategy:'strategies', program:'programs', meeting:'meetings', idea:'ideas', message:'scheduledMessages', email:'emails', concept:'concepts', thesis:'theses', invoice:'invoices', chatgptNote:'chatgptNotes' };
 
 // Ein Aufloeser fuer ALLE Anhang-Bereiche. Vorher hatte jeder seine eigene
 // Kopie der Liste und seinen eigenen stillen Ruecksprung; genau daran wurde die
@@ -10140,6 +10140,7 @@ const TRANSLATIONS = {
     "dashboard": "Dashboard", "apps": "Apps", "today": "Mein Tag", "learn": "Lernen",
     "weekplanning": "Wochenplanung", "tasks": "Aufgaben", "messages": "Nachrichten",
     "projects": "Projekte", "ideas": "Ideen", "meetings": "Meetings", "updates": "Updates",
+    "chatgptnotes": "ChatGPT Notes",
     "budget": "Budget", "chat": "Polaris", "knowledge": "Wissensbasis", "notes": "Notizen",
     "calendar": "Kalender", "goals": "Ziele", "strategies": "Strategien",
     "programs": "Programme", "organizations": "Organisationen", "time": "Zeit",
@@ -10229,6 +10230,7 @@ const TRANSLATIONS = {
     "dashboard": "Dashboard", "apps": "Apps", "today": "My Day", "learn": "Learn",
     "weekplanning": "Week Planning", "tasks": "Tasks", "messages": "Messages",
     "projects": "Projects", "ideas": "Ideas", "meetings": "Meetings", "updates": "Updates",
+    "chatgptnotes": "ChatGPT Notes",
     "budget": "Budget", "chat": "Polaris", "knowledge": "Knowledge Base", "notes": "Notes",
     "calendar": "Calendar", "goals": "Goals", "strategies": "Strategies",
     "programs": "Programs", "organizations": "Organizations", "time": "Time",
@@ -10333,7 +10335,7 @@ const ROUTE_DEFS = [
   {key:"statistics", icon:"📊"}, {key:"reports", icon:"🤖"}, {key:"reflecta", icon:"🪞"},
   {key:"decisions", icon:"⚖️"}, {key:"journal", icon:"✍️"},
   {key:"quantusproject", icon:"🛠️"}, {key:"smarter", icon:"🎓"},
-  {key:"leseplan", icon:"📖"},
+  {key:"leseplan", icon:"📖"}, {key:"chatgptnotes", icon:"🤖"},
 ];
 function getRoutes() {
   return ROUTE_DEFS.map(r => ({...r, label: t(r.key), hash: "#/" + r.key}));
@@ -11341,7 +11343,9 @@ function emptyData() {
       workflowPrograms: {},
       concepts: {},
       invoices: {},
+      chatgptNotes: {},
     },
+    chatgptNotesMeta: { lastSessionReadAt: null },
     timers: {},
     pinnedItems: [], // ["task:id", "project:id", ...]
     weeklyGoals: [], // {id, weekStart, type, target, current}
@@ -11845,7 +11849,31 @@ for (const u of Object.values(e.updates)) {
   u.createdAt = u.createdAt || nowIso();
   u.updatedAt = u.updatedAt || nowIso();
   u.completedAt = u.completedAt || null;
-}  e.ideas = e.ideas || {};
+}
+  // Normalize chatgptNotes
+  e.chatgptNotes = e.chatgptNotes || {};
+  for (const cn of Object.values(e.chatgptNotes)) {
+    cn.category = cn.category || "auftrag";
+    cn.state = cn.state || "aktiv";
+    cn.instructionDate = cn.instructionDate || (cn.createdAt || nowIso()).slice(0, 10);
+    cn.instruction = cn.instruction || "";
+    cn.derived = cn.derived || "";
+    cn.supersededBy = cn.supersededBy || null;
+    cn.supersedes = cn.supersedes || null;
+    cn.promptSection = cn.promptSection || null;
+    if (!Array.isArray(cn.tags)) cn.tags = [];
+    if (!Array.isArray(cn.linkedTasks)) cn.linkedTasks = [];
+    if (!Array.isArray(cn.linkedProjects)) cn.linkedProjects = [];
+    if (!Array.isArray(cn.linkedNotes)) cn.linkedNotes = [];
+    if (!Array.isArray(cn.linkedOrganizations)) cn.linkedOrganizations = [];
+    if (!Array.isArray(cn.comments)) cn.comments = [];
+    if (!Array.isArray(cn.files)) cn.files = [];
+    cn.createdAt = cn.createdAt || nowIso();
+    cn.updatedAt = cn.updatedAt || nowIso();
+  }
+  d.chatgptNotesMeta = d.chatgptNotesMeta || {};
+  d.chatgptNotesMeta.lastSessionReadAt = d.chatgptNotesMeta.lastSessionReadAt || null;
+  e.ideas = e.ideas || {};
   e.decisions = e.decisions || {};
   e.articles = e.articles || {};
   e.annotations = e.annotations || {};
@@ -13407,7 +13435,8 @@ function mergeData(local, remote) {
     const handled = new Set(['entities', 'meta', 'version', 'journal', 'timers', 'weekPlan',
       'weekPlanningMatrix', 'dailyBriefing', 'dayEnded', 'recallLabData',
       'reflections', 'quickTodos', 'pinnedItems', 'weeklyGoals', 'activityLog',
-      'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots', 'aiChats']);
+      'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots', 'aiChats',
+      'chatgptNotesMeta']);
     const stamp = (o) => Number(new Date(o?.updatedAt || o?.modifiedAt || o?.createdAt || 0)) || 0;
     const unionList = (l, r) => {
       const hasIds = (a) => a.length === 0 || a.every((x) => x && typeof x === 'object' && x.id);
@@ -13441,6 +13470,19 @@ function mergeData(local, remote) {
           && !Array.isArray(lv) && !Array.isArray(rv)) { merged[key] = unionMap(lv, rv); }
       // Zahlen, Zeichenketten, Schalter: der lokale Wert bleibt stehen.
     }
+  }
+
+  // ── Merge chatgptNotesMeta ──
+  // lastSessionReadAt ist ein reiner Zeitstempel-Marker (kein per-Id-Objekt),
+  // der Auffangzweig unten haette ihn ueber unionMap()/stamp() nie erkannt
+  // (stamp() liest .updatedAt VOM WERT, ein String hat das nicht) und immer
+  // den lokalen Wert behalten — ein Geraet, das "gelesen" markiert, haette das
+  // nie auf ein anderes Geraet uebertragen. Deshalb ein eigener, kleiner Zweig:
+  // der neuere Zeitstempel gewinnt, wie bei jedem anderen Feld mit Uhrzeit.
+  {
+    const l = local.chatgptNotesMeta?.lastSessionReadAt || null;
+    const r = remote.chatgptNotesMeta?.lastSessionReadAt || null;
+    merged.chatgptNotesMeta = { lastSessionReadAt: (l && r) ? (l > r ? l : r) : (l || r || null) };
   }
 
   // ── Meta ──
@@ -15498,6 +15540,7 @@ function getEntityMap(kind) {
     syncConflict: e.syncConflicts,
     decision: e.decisions,
     invoice: e.invoices,
+    chatgptNote: e.chatgptNotes,
   };
   return maps[kind] || null;
 }
@@ -15535,6 +15578,7 @@ function kindIcon(kind) {
     monthlyAiReport: "📊",
     syncConflict: "🔄",
     decision: "⚖️",
+    chatgptNote: "🤖",
   };
   return icons[kind] || "📄";
 }
@@ -15969,7 +16013,7 @@ function renderLinkedEntitiesSection(kind, id) {
     article: "📄", decision: "⚖️",
     annotation: "📌",
     update: "🔧", deck: "📚", meeting: "🤝", calendarEvent: "📅",
-    message: "✉️", transaction: "💰"
+    message: "✉️", transaction: "💰", chatgptNote: "🤖"
   };
   
   const allLinkedFields = [
@@ -15989,6 +16033,7 @@ function renderLinkedEntitiesSection(kind, id) {
     { field: "linkedTransactions", kind: "transaction", store: "transactions", nameField: "description" },
     { field: "linkedArticles", kind: "article", store: "articles", nameField: "title" },
     { field: "linkedDecisions", kind: "decision", store: "decisions", nameField: "title" },
+    { field: "linkedChatgptNotes", kind: "chatgptNote", store: "chatgptNotes", nameField: "instruction" },
   ];
   
   let linkedChips = [];
@@ -21704,7 +21749,7 @@ function renderSidebar() {
   const alwaysShow = ["dashboard","settings"];
   
   // Pinned sidebar apps (stored in data)
-  const pinnedSidebar = APP.state.data.sidebarPinnedApps || ["today","tasks","projects","notes","smarter","chat"];
+  const pinnedSidebar = APP.state.data.sidebarPinnedApps || ["today","tasks","projects","notes","smarter","chat","chatgptnotes"];
   
   // Pinned section = always-show + pinned from settings
   const pinnedKeys = [...alwaysShow, ...pinnedSidebar.filter(k => !alwaysShow.includes(k))];
@@ -21732,12 +21777,16 @@ function renderSidebar() {
     const isActive = route === key;
     let badge = "";
     if(key === "tasks" && stats.open > 0) badge = `<span class="badge">${stats.open}</span>`;
+    if(key === "chatgptnotes" && typeof chatgptNotesUnreadCount === "function") {
+      const n = chatgptNotesUnreadCount();
+      if (n > 0) badge = `<span class="badge">${n}</span>`;
+    }
     html += `<button class="sidebar-item ${isActive?"active":""}" data-action="nav" data-route="${key}">
       <span class="icon">${app.icon}</span><span>${esc(app.label)}</span>${badge}
     </button>`;
   });
   html += `</div>`;
-  
+
   // ── Recent section (last 30 min, not pinned) ──
   if(recentKeys.length){
     html += `<div class="sidebar-section"><div class="sidebar-section-title">🕐 ZULETZT</div>`;
@@ -21745,8 +21794,13 @@ function renderSidebar() {
       const app = allApps.find(a=>a.key===key);
       if(!app) return;
       const isActive = route === key;
+      let badge2 = "";
+      if(key === "chatgptnotes" && typeof chatgptNotesUnreadCount === "function") {
+        const n = chatgptNotesUnreadCount();
+        if (n > 0) badge2 = `<span class="badge">${n}</span>`;
+      }
       html += `<button class="sidebar-item ${isActive?"active":""}" data-action="nav" data-route="${key}">
-        <span class="icon">${app.icon}</span><span>${esc(app.label)}</span>
+        <span class="icon">${app.icon}</span><span>${esc(app.label)}</span>${badge2}
       </button>`;
     });
     html += `</div>`;
@@ -21835,6 +21889,7 @@ function getAllApps() {
     {key:"budget", icon:"💰", label:t("budget"), desc:getLang()==="de"?"Finanzen":"Finances"},
     {key:"messages", icon:"📨", label:t("messages"), desc:getLang()==="de"?"Geplante Nachrichten":"Scheduled messages"},
     {key:"updates", icon:"🔧", label:t("updates"), desc:getLang()==="de"?"App-Verbesserungen":"App improvements"},
+    {key:"chatgptnotes", icon:"🤖", label:t("chatgptnotes"), desc:getLang()==="de"?"Gedächtnis des Assistenten über Sitzungen hinweg":"Assistant's memory across sessions"},
     {key:"reports", icon:"🤖", label:t("reports"), desc:getLang()==="de"?"KI-Berichte":"AI reports"},
     {key:"rules", icon:"⚖️", label:"Rules", desc:getLang()==="de"?"Persönliche Gesetzbücher & Prinzipien":"Personal law books & principles"},
     {key:"dailybriefing", icon:"📋", label:"Daily Briefing", desc:getLang()==="de"?"Tagesplanung & Dossier-Export":"Daily planning & dossier export"},
@@ -22225,6 +22280,7 @@ function renderMain() {
     case "meetings": html = id ? viewMeetingDetail(id) : viewMeetings(); break;
     case "articles": window.openResearchHub(); return;
     case "updates": html = viewUpdates(); break;
+    case "chatgptnotes": html = viewChatgptNotes(); break;
     case "rules": html = viewRules(id); break;
     case "dailybriefing": html = viewDailyBriefing(); break;
     case "reflecta": html = viewReflecta(); break;
@@ -22362,6 +22418,7 @@ window.qxRouteHtml = function(route){
       case "ideas": return viewIdeas();
       case "meetings": return viewMeetings();
       case "updates": return viewUpdates();
+      case "chatgptnotes": return viewChatgptNotes();
       case "dailybriefing": return viewDailyBriefing();
       case "reflecta": return viewReflecta();
       case "habits": return viewHabits();
@@ -48501,6 +48558,207 @@ function viewUpdates() {
 }
 
 // ============================================================================
+// VIEW: CHATGPT NOTES
+// ============================================================================
+// Gedächtnis des Assistenten über Sitzungen hinweg. Zwei Nutzungsmomente
+// bestimmen das Design: vor jeder Sitzung ("was kam seit letztem Mal dazu?")
+// und am Tagesende (Anweisungen nachtragen). Entries werden nie inhaltlich
+// editiert — nur "abgelöst" (neuer Eintrag, alter wird "ueberholt") oder für
+// reine Tippfehler "korrigiert". Lebt als normale Entity (chatgptNotes) im
+// generischen Sync/Merge — kein Sonderweg.
+
+function chatgptNotesUnreadCount() {
+  const lastRead = APP.state.data.chatgptNotesMeta?.lastSessionReadAt || null;
+  const notes = Object.values(APP.state.data.entities.chatgptNotes || {});
+  if (!lastRead) return notes.length;
+  return notes.filter(n => (n.createdAt || "") > lastRead).length;
+}
+
+function chatgptNotesPatterns(all) {
+  const bySection = {}, byDay = {};
+  all.filter(n => n.category === "feedback" && n.state !== "ueberholt").forEach(n => {
+    if (n.promptSection) (bySection[n.promptSection] = bySection[n.promptSection] || []).push(n);
+    const day = n.instructionDate || (n.createdAt || "").slice(0, 10);
+    if (day) (byDay[day] = byDay[day] || []).push(n);
+  });
+  const hints = [];
+  Object.entries(bySection).forEach(([sec, arr]) => {
+    if (arr.length >= 3) hints.push(`${arr.length}× Feedback zu Abschnitt ${esc(sec)} — Kandidat für den Prompt`);
+  });
+  Object.entries(byDay).forEach(([day, arr]) => {
+    if (arr.length >= 3) hints.push(`${arr.length}× Feedback am ${fmtDate(day)}`);
+  });
+  return hints;
+}
+
+function chatgptNoteFormHtml(vals) {
+  vals = vals || {};
+  const cat = vals.category || "feedback";
+  return `
+    <div class="form">
+      <label class="col-6">Datum der Anweisung<input type="date" id="cgnFormDate" value="${esc(vals.instructionDate || todayYmd())}" /></label>
+      <label class="col-6">Kategorie
+        <select id="cgnFormCategory">
+          <option value="auftrag" ${cat === "auftrag" ? "selected" : ""}>Auftrag</option>
+          <option value="feedback" ${cat === "feedback" ? "selected" : ""}>Feedback</option>
+          <option value="konvention" ${cat === "konvention" ? "selected" : ""}>Konvention</option>
+          <option value="entscheid" ${cat === "entscheid" ? "selected" : ""}>Entscheid</option>
+        </select>
+      </label>
+      <label class="col-12">Wortlaut — so nah wie möglich am Original *<textarea id="cgnFormInstruction" rows="4" placeholder="Was genau wurde gesagt?">${esc(vals.instruction || "")}</textarea></label>
+      <label class="col-12">Ableitung — was der Assistent konkret daraus macht *<textarea id="cgnFormDerived" rows="3" placeholder="Was folgt daraus?">${esc(vals.derived || "")}</textarea></label>
+      <label class="col-6">Betroffener Prompt-Abschnitt (optional)<input type="text" id="cgnFormSection" value="${esc(vals.promptSection || "")}" placeholder="z.B. 6.1" /></label>
+      <label class="col-6">Tags (Komma-getrennt)<input type="text" id="cgnFormTags" value="${esc((vals.tags || []).join(", "))}" /></label>
+    </div>
+  `;
+}
+
+const CGN_CATEGORY_META = {
+  auftrag: { color: "#D96B5B", label: "Auftrag" },
+  feedback: { color: "#2F8C80", label: "Feedback" },
+  konvention: { color: "#C9A96E", label: "Konvention" },
+  entscheid: { color: "#7A8288", label: "Entscheid" },
+};
+
+function chatgptNoteCard(n, all) {
+  const meta = CGN_CATEGORY_META[n.category] || { color: "#7A8288", label: n.category || "?" };
+  const superseded = n.state === "ueberholt";
+  const supersededByEntry = n.supersededBy ? all.find(x => x.id === n.supersededBy) : null;
+  const expanded = APP.state.ui.cgnExpanded === n.id;
+  return `
+    <div class="card mb-3" data-cgn-card="${n.id}" style="${superseded ? "opacity:.6" : ""}">
+      <div class="flex justify-between items-center mb-2" style="flex-wrap:wrap;gap:6px">
+        <div class="flex items-center gap-2" style="flex-wrap:wrap">
+          <span class="mini">${fmtDate(n.instructionDate || n.createdAt)}</span>
+          <span class="pill sm" style="background:${meta.color}22;color:${meta.color};border:1px solid ${meta.color}55">${meta.label}</span>
+          ${n.promptSection ? `<span class="pill sm">§ ${esc(n.promptSection)}</span>` : ""}
+          ${superseded ? `<span class="pill sm" style="background:#7A828822;color:#7A8288;border:1px solid #7A828855">überholt${supersededByEntry ? ` · <a href="#" data-action="cgn-goto" data-id="${supersededByEntry.id}">neuerer Eintrag →</a>` : ""}</span>` : ""}
+        </div>
+        <div class="item-actions">
+          ${!superseded ? `<button class="btn sm" data-action="cgn-supersede" data-id="${n.id}" title="Inhaltliche Änderung: alter Eintrag bleibt sichtbar">↻ Ablösen</button>` : ""}
+          <button class="btn sm ghost" data-action="cgn-correct" data-id="${n.id}" title="Nur für Tippfehler, keine inhaltliche Änderung">✎ Korrigieren</button>
+          <button class="btn sm ghost danger" data-action="cgn-delete" data-id="${n.id}" title="Löschen">🗑</button>
+        </div>
+      </div>
+      <div style="font-weight:600;white-space:pre-wrap">${esc(n.instruction || "")}</div>
+      ${n.derived ? `<div class="mini mt-2" style="color:var(--muted);white-space:pre-wrap">${esc(n.derived)}</div>` : ""}
+      ${(n.tags || []).length ? `<div class="tags mt-2">${(n.tags || []).map(tg => `<span class="tag">${esc(tg)}</span>`).join("")}</div>` : ""}
+      <div class="mt-2" data-action="cgn-toggle-detail" data-id="${n.id}" style="cursor:pointer">
+        <span class="mini" style="text-decoration:underline">Verknüpfungen, Anhänge &amp; Kommentare ${expanded ? "▲" : "▼"}</span>
+      </div>
+      ${expanded ? `
+        <div class="mt-3">
+          ${renderLinkedEntitiesSection("chatgptNote", n.id)}
+          <div class="card mb-3">
+            <h3>🏷️ Tags</h3>
+            <div class="sep"></div>
+            <div class="tags mb-2">${(n.tags || []).map(tg => `<span class="tag">${esc(tg)}<span class="remove" data-action="remove-tag" data-kind="chatgptNote" data-id="${n.id}" data-tag="${esc(tg)}">×</span></span>`).join("") || '<span class="mini">Keine Tags</span>'}</div>
+            <input type="text" placeholder="Tag hinzufügen, Enter" data-action="add-tag-input" data-kind="chatgptNote" data-id="${n.id}" />
+          </div>
+          ${renderFileAttachments("chatgptNote", n.id)}
+          <div class="card mb-3">
+            <h3>💬 Kommentare</h3>
+            <div class="sep"></div>
+            ${(n.comments || []).map(c => `
+              <div class="comment">
+                <div class="comment-header">
+                  <span class="comment-time">${fmtDateTime(c.createdAt)}</span>
+                  <button class="btn sm ghost" data-action="delete-comment" data-kind="chatgptNote" data-entity-id="${n.id}" data-comment-id="${c.id}">🗑</button>
+                </div>
+                <div class="comment-text">${esc(c.text)}</div>
+              </div>
+            `).join("") || `<div class="mini">Keine Kommentare.</div>`}
+            <input type="text" placeholder="Kommentar eingeben, Enter zum Senden" data-action="add-comment-input" data-kind="chatgptNote" data-id="${n.id}" class="mb-3 mt-2" />
+          </div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function viewChatgptNotes() {
+  const e = APP.state.data.entities;
+  APP.state.ui.filters = APP.state.ui.filters || {};
+  const f = APP.state.ui.filters.chatgptNotes = APP.state.ui.filters.chatgptNotes || { mode: "new" };
+  const lastRead = APP.state.data.chatgptNotesMeta?.lastSessionReadAt || null;
+
+  const all = Object.values(e.chatgptNotes || {}).sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const newItems = lastRead ? all.filter(n => (n.createdAt || "") > lastRead) : all.slice();
+
+  let list = f.mode === "all" ? all : newItems;
+  if (f.category) list = list.filter(n => n.category === f.category);
+  if (f.state) list = list.filter(n => n.state === f.state);
+  if (f.tag) list = list.filter(n => (n.tags || []).includes(f.tag));
+  if (f.dateFrom) list = list.filter(n => (n.instructionDate || "") >= f.dateFrom);
+  if (f.dateTo) list = list.filter(n => (n.instructionDate || "") <= f.dateTo);
+  if (f.query && f.query.trim()) {
+    const q = f.query.trim().toLowerCase();
+    list = list.filter(n => {
+      const hay = [n.instruction, n.derived, ...(n.comments || []).map(c => c.text)].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  const hints = chatgptNotesPatterns(all);
+  const allTags = [...new Set(all.flatMap(n => n.tags || []))];
+
+  return `
+    <div class="page-header">
+      <div class="page-title">
+        <h2>🤖 ChatGPT Notes</h2>
+        <p>${f.mode === "all" ? `${all.length} Einträge insgesamt` : `${newItems.length} neue${newItems.length === 1 ? "" : ""} Anweisung${newItems.length === 1 ? "" : "en"} seit ${lastRead ? fmtDate(lastRead) : "je"}`}</p>
+      </div>
+      <div class="page-actions">
+        <button class="btn ${f.mode !== "all" ? "primary" : ""}" data-action="cgn-filter-mode" data-mode="new">Seit letzter Sitzung (${newItems.length})</button>
+        <button class="btn ${f.mode === "all" ? "primary" : ""}" data-action="cgn-filter-mode" data-mode="all">Alle (${all.length})</button>
+        <button class="btn good" data-action="cgn-mark-read">✅ Als gelesen markieren</button>
+        <button class="btn primary" data-action="cgn-create">➕ Neuer Eintrag</button>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <input type="text" id="cgnQuickCapture" data-action="cgn-quick-capture" placeholder="Schnellerfassung (Kategorie: Feedback, heute) — Enter zum Speichern…" />
+    </div>
+
+    ${hints.length ? `
+      <div class="card mb-3" style="border-color:#D96B5B">
+        <h3>🔁 Wiederkehrende Themen</h3>
+        <div class="sep"></div>
+        ${hints.map(h => `<div class="mini mb-1">${h}</div>`).join("")}
+      </div>
+    ` : ""}
+
+    <div class="card mb-3">
+      <div class="flex gap-2" style="flex-wrap:wrap;align-items:center">
+        <select data-action="filter-chatgptNotes" data-field="category">
+          <option value="">Alle Kategorien</option>
+          <option value="auftrag" ${f.category === "auftrag" ? "selected" : ""}>Auftrag</option>
+          <option value="feedback" ${f.category === "feedback" ? "selected" : ""}>Feedback</option>
+          <option value="konvention" ${f.category === "konvention" ? "selected" : ""}>Konvention</option>
+          <option value="entscheid" ${f.category === "entscheid" ? "selected" : ""}>Entscheid</option>
+        </select>
+        <select data-action="filter-chatgptNotes" data-field="state">
+          <option value="">Alle Status</option>
+          <option value="aktiv" ${f.state === "aktiv" ? "selected" : ""}>Aktiv</option>
+          <option value="ueberholt" ${f.state === "ueberholt" ? "selected" : ""}>Überholt</option>
+        </select>
+        <select data-action="filter-chatgptNotes" data-field="tag">
+          <option value="">Alle Tags</option>
+          ${allTags.map(tg => `<option value="${esc(tg)}" ${f.tag === tg ? "selected" : ""}>${esc(tg)}</option>`).join("")}
+        </select>
+        <input type="date" value="${f.dateFrom || ""}" data-action="filter-chatgptNotes" data-field="dateFrom" title="Von" />
+        <input type="date" value="${f.dateTo || ""}" data-action="filter-chatgptNotes" data-field="dateTo" title="Bis" />
+        <input type="text" value="${esc(f.query || "")}" placeholder="🔍 Suche in Wortlaut, Ableitung, Kommentaren…" data-action="filter-chatgptNotes" data-field="query" style="flex:1;min-width:220px" />
+      </div>
+    </div>
+
+    <div>
+      ${list.map(n => chatgptNoteCard(n, all)).join("") || `<div class="mini text-center">Keine Einträge.</div>`}
+    </div>
+  `;
+}
+
+// ============================================================================
 // PROGRAM BUTTONS HELPER FUNCTIONS
 // ============================================================================
 
@@ -55446,7 +55704,8 @@ function openLinkModal(srcKind, srcId) {
     task: "✅ Aufgabe", project: "📦 Projekt", note: "📝 Notiz", organization: "🏛️ Organisation",
     strategy: "🧭 Strategie", goal: "🎯 Ziel", program: "🧩 Programm", idea: "💡 Idee",
     update: "🔧 Update", deck: "📚 Deck", meeting: "🤝 Meeting", calendarEvent: "📅 Termin",
-    message: "✉️ Nachricht", transaction: "💰 Transaktion", decision: "⚖️ Entscheidung"
+    message: "✉️ Nachricht", transaction: "💰 Transaktion", decision: "⚖️ Entscheidung",
+    chatgptNote: "🤖 ChatGPT Note"
   };
   
   // Kategorien für Gruppierung
@@ -55462,6 +55721,7 @@ function openLinkModal(srcKind, srcId) {
     programs: { icon: "🧩", name: "Programme", items: [] },
     ideas: { icon: "💡", name: "Ideen", items: [] },
     decisions: { icon: "⚖️", name: "Entscheidungen", items: [] },
+    chatgptNotes: { icon: "🤖", name: "ChatGPT Notes", items: [] },
     other: { icon: "📎", name: "Sonstige", items: [] }
   };
   
@@ -55486,8 +55746,10 @@ function openLinkModal(srcKind, srcId) {
     categories.programs.items.push({ kind: "program", id: p.id, name: p.title || "(Ohne Titel)" }));
   if (e.ideas) Object.values(e.ideas).filter(i => i.id !== srcId).forEach(i => 
     categories.ideas.items.push({ kind: "idea", id: i.id, name: i.title || i.text?.slice(0,30) || "(Ohne Titel)" }));
-  if (e.decisions) Object.values(e.decisions).filter(d => d.id !== srcId).forEach(d => 
+  if (e.decisions) Object.values(e.decisions).filter(d => d.id !== srcId).forEach(d =>
     categories.decisions.items.push({ kind: "decision", id: d.id, name: d.title || "(Ohne Titel)" }));
+  if (e.chatgptNotes) Object.values(e.chatgptNotes).filter(c => c.id !== srcId).forEach(c =>
+    categories.chatgptNotes.items.push({ kind: "chatgptNote", id: c.id, name: (c.instruction || "(Ohne Text)").slice(0, 40), icon: "🤖" }));
   if (e.updates) Object.values(e.updates).filter(u => u.id !== srcId).forEach(u => 
     categories.other.items.push({ kind: "update", id: u.id, name: u.text?.slice(0,40) || "(Ohne Text)", icon: "🔧" }));
   if (e.decks) Object.values(e.decks).filter(d => d.id !== srcId).forEach(d => 
@@ -65140,7 +65402,29 @@ function handleKeydown(e) {
       render();
     }
   }
-  
+
+  if (action === "cgn-quick-capture") {
+    const text = el.value?.trim();
+    if (text) {
+      const cid = createEntity("chatgptNote", {
+        category: "feedback",
+        instructionDate: todayYmd(),
+        instruction: text,
+        derived: "",
+        state: "aktiv",
+        supersededBy: null,
+        supersedes: null,
+        promptSection: null,
+        tags: [],
+        linkedTasks: [], linkedProjects: [], linkedNotes: [], linkedOrganizations: [],
+        comments: [], files: [],
+      });
+      el.value = "";
+      render();
+      toast("ok", "Erfasst", "Eintrag wurde gespeichert — Ableitung kann nachgetragen werden");
+    }
+  }
+
   if (el.id === "chatInput") {
     $("[data-action='send-chat']")?.click();
   }
@@ -71652,6 +71936,7 @@ function routeForKind(kind){
     update: "updates",
     tag: "tags",
     article: "articles",
+    chatgptNote: "chatgptnotes",
   };
   return map[kind] || "dashboard";
 }
@@ -71961,6 +72246,22 @@ function buildSearchIndex(){
     });
   }
   
+  // chatgptNotes — Gedächtnis des Assistenten; muss ueber die Volltextsuche
+  // (Polaris) auffindbar sein, sonst findet der Assistent alte Anweisungen nur
+  // über die "seit letzter Sitzung"-Ansicht selbst.
+  for (const cn of Object.values(e.chatgptNotes || {})) {
+    const commentText = (cn.comments || []).map(c => c.text).join(" ");
+    items.push({
+      kind: "chatgptNote",
+      id: cn.id,
+      title: (cn.instruction || "(Ohne Text)").slice(0, 80),
+      subtitle: `${cn.category || "auftrag"}${cn.state === "ueberholt" ? " · überholt" : ""} · ${fmtDate(cn.instructionDate || cn.createdAt)}`,
+      content: [cn.instruction, cn.derived, commentText].filter(Boolean).join(" "),
+      tags: cn.tags || [],
+      updatedAt: cn.updatedAt || cn.createdAt || "",
+    });
+  }
+
   // Recall Lab / Flashcards
   const flashcards = APP.state.data.flashcards || [];
   for (const fc of flashcards){
@@ -79315,7 +79616,167 @@ Beginne mit den kritischen/hohen Prioritäten.`;
     }
     return;
   }
-  
+
+  // ========== CHATGPT NOTES HANDLER ==========
+  if (action === "cgn-filter-mode") {
+    e.preventDefault();
+    e.stopPropagation();
+    APP.state.ui.filters = APP.state.ui.filters || {};
+    APP.state.ui.filters.chatgptNotes = APP.state.ui.filters.chatgptNotes || {};
+    APP.state.ui.filters.chatgptNotes.mode = el.dataset.mode;
+    render();
+    return;
+  }
+
+  if (action === "cgn-mark-read") {
+    e.preventDefault();
+    e.stopPropagation();
+    APP.state.data.chatgptNotesMeta = APP.state.data.chatgptNotesMeta || {};
+    APP.state.data.chatgptNotesMeta.lastSessionReadAt = nowIso();
+    scheduleSave();
+    render();
+    toast("ok", "Als gelesen markiert", "Seit-letzter-Sitzung-Zähler zurückgesetzt");
+    return;
+  }
+
+  if (action === "cgn-toggle-detail" && id) {
+    e.preventDefault();
+    e.stopPropagation();
+    APP.state.ui.cgnExpanded = APP.state.ui.cgnExpanded === id ? null : id;
+    render();
+    return;
+  }
+
+  if (action === "cgn-goto" && id) {
+    e.preventDefault();
+    e.stopPropagation();
+    APP.state.ui.filters = APP.state.ui.filters || {};
+    APP.state.ui.filters.chatgptNotes = APP.state.ui.filters.chatgptNotes || {};
+    APP.state.ui.filters.chatgptNotes.mode = "all";
+    APP.state.ui.cgnExpanded = id;
+    render();
+    setTimeout(() => { document.querySelector(`[data-cgn-card="${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }, 50);
+    return;
+  }
+
+  if (action === "cgn-create") {
+    e.preventDefault();
+    e.stopPropagation();
+    openModal("➕ Neuer ChatGPT-Notes-Eintrag", chatgptNoteFormHtml({}), `
+      <button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" data-action="cgn-save-new">Erstellen</button>`);
+    return;
+  }
+
+  if (action === "cgn-save-new") {
+    e.preventDefault();
+    e.stopPropagation();
+    const instruction = ($("#cgnFormInstruction")?.value || "").trim();
+    const derived = ($("#cgnFormDerived")?.value || "").trim();
+    if (!instruction || !derived) { toast("warn", "Pflichtfelder fehlen", "Wortlaut und Ableitung sind Pflicht"); return; }
+    const tags = ($("#cgnFormTags")?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+    createEntity("chatgptNote", {
+      instructionDate: $("#cgnFormDate")?.value || todayYmd(),
+      category: $("#cgnFormCategory")?.value || "feedback",
+      instruction, derived,
+      promptSection: ($("#cgnFormSection")?.value || "").trim() || null,
+      tags,
+      state: "aktiv", supersededBy: null, supersedes: null,
+      linkedTasks: [], linkedProjects: [], linkedNotes: [], linkedOrganizations: [],
+      comments: [], files: [],
+    });
+    closeModal();
+    render();
+    toast("ok", "Erstellt", "Eintrag wurde hinzugefügt");
+    return;
+  }
+
+  if (action === "cgn-supersede" && id) {
+    e.preventDefault();
+    e.stopPropagation();
+    const old = APP.state.data.entities.chatgptNotes?.[id];
+    if (!old) return;
+    openModal("↻ Eintrag ablösen", `
+      <div class="mini mb-2" style="color:var(--muted)">Der alte Eintrag bleibt als „überholt" sichtbar und verweist auf den neuen. Für reine Tippfehler „Korrigieren" verwenden statt Ablösen.</div>
+      ${chatgptNoteFormHtml(old)}
+    `, `
+      <button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" data-action="cgn-save-supersede" data-id="${id}">Ablösen &amp; speichern</button>`);
+    return;
+  }
+
+  if (action === "cgn-save-supersede" && id) {
+    e.preventDefault();
+    e.stopPropagation();
+    const old = APP.state.data.entities.chatgptNotes?.[id];
+    if (!old) return;
+    const instruction = ($("#cgnFormInstruction")?.value || "").trim();
+    const derived = ($("#cgnFormDerived")?.value || "").trim();
+    if (!instruction || !derived) { toast("warn", "Pflichtfelder fehlen", "Wortlaut und Ableitung sind Pflicht"); return; }
+    const tags = ($("#cgnFormTags")?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+    const newId = createEntity("chatgptNote", {
+      instructionDate: $("#cgnFormDate")?.value || todayYmd(),
+      category: $("#cgnFormCategory")?.value || old.category || "feedback",
+      instruction, derived,
+      promptSection: ($("#cgnFormSection")?.value || "").trim() || null,
+      tags,
+      state: "aktiv", supersededBy: null, supersedes: id,
+      linkedTasks: [], linkedProjects: [], linkedNotes: [], linkedOrganizations: [],
+      comments: [], files: [],
+    });
+    old.state = "ueberholt";
+    old.supersededBy = newId;
+    old.updatedAt = nowIso();
+    scheduleSave();
+    closeModal();
+    render();
+    toast("ok", "Abgelöst", "Neuer Eintrag ersetzt den alten — die Historie bleibt erhalten");
+    return;
+  }
+
+  if (action === "cgn-correct" && id) {
+    e.preventDefault();
+    e.stopPropagation();
+    const n = APP.state.data.entities.chatgptNotes?.[id];
+    if (!n) return;
+    openModal("✎ Tippfehler korrigieren", `
+      <div class="mini mb-2" style="color:var(--danger,#D96B5B)">Nur für Schreibfehler. Für inhaltliche Änderungen bitte „Ablösen" verwenden — sonst geht die Historie verloren.</div>
+      <div class="form">
+        <label class="col-12">Wortlaut<textarea id="cgnCorrectInstruction" rows="4">${esc(n.instruction || "")}</textarea></label>
+        <label class="col-12">Ableitung<textarea id="cgnCorrectDerived" rows="3">${esc(n.derived || "")}</textarea></label>
+      </div>
+    `, `
+      <button class="btn" data-action="close-modal">Abbrechen</button>
+      <button class="btn primary" data-action="cgn-save-correct" data-id="${id}">Korrektur speichern</button>`);
+    return;
+  }
+
+  if (action === "cgn-save-correct" && id) {
+    e.preventDefault();
+    e.stopPropagation();
+    const n = APP.state.data.entities.chatgptNotes?.[id];
+    if (!n) return;
+    n.instruction = ($("#cgnCorrectInstruction")?.value || "").trim() || n.instruction;
+    n.derived = ($("#cgnCorrectDerived")?.value || "").trim();
+    n.updatedAt = nowIso();
+    scheduleSave();
+    closeModal();
+    render();
+    toast("ok", "Korrigiert", "Tippfehler behoben");
+    return;
+  }
+
+  if (action === "cgn-delete" && id) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirm(`Eintrag wirklich löschen? Für inhaltliche Änderungen ist „Ablösen" der richtige Weg — Löschen entfernt die Historie unwiderruflich.`)) {
+      deleteEntity("chatgptNote", id);
+      render();
+      toast("ok", "Gelöscht", "Eintrag entfernt");
+    }
+    return;
+  }
+
   // ========== KALENDER HANDLER ==========
   
   // Ganztags-Events ein-/ausklappen
@@ -110631,10 +111092,10 @@ window.addEventListener("hashchange", function(){
     strategy:"strategies", idea:"ideas", meeting:"meetings",
     organization:"organizations", program:"programs", decision:"decisions",
     article:"articles", update:"updates", contact:"persons", person:"persons",
-    calendarEvent:"calendar", deck:"learn"
+    calendarEvent:"calendar", deck:"learn", chatgptNote:"chatgptnotes"
   };
   // Kinds mit Verknüpfungs-Modal
-  const LINK_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","organization","program","calendarEvent","decision"]);
+  const LINK_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","organization","program","calendarEvent","decision","chatgptNote"]);
   // Kinds, für die generisches Duplizieren sicher ist
   const DUP_KINDS = new Set(["task","project","note","goal","strategy","idea","meeting","decision","update"]);
   // Kinds mit Schnellansicht (openSlidePanel)
@@ -110645,7 +111106,7 @@ window.addEventListener("hashchange", function(){
     idea:"Idee", meeting:"Meeting", organization:"Organisation", program:"Programm",
     decision:"Entscheidung", article:"Artikel", update:"Update", contact:"Kontakt",
     person:"Person", calendarEvent:"Termin", deck:"Deck", annotation:"Anmerkung",
-    thought:"Gedanke", notebook:"Notizbuch"
+    thought:"Gedanke", notebook:"Notizbuch", chatgptNote:"ChatGPT Note"
   };
   const DEFAULT_TITLE = {
     task:"Neue Aufgabe", project:"Neues Projekt", note:"Neue Notiz", goal:"Neues Ziel",
@@ -119069,6 +119530,36 @@ Dateien zu identifizieren.
     if (mod && (e.key === "n" || e.key === "N") && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); newNote(null, null); }
     // Anstreichen: Ctrl/Cmd+Shift+H
     if (mod && e.shiftKey && (e.key === "h" || e.key === "H")) { e.preventDefault(); e.stopPropagation(); styleSelection("hl", "yellow"); }
+    // Titel und Bloecke sind je eigene contenteditable-Elemente — natives
+    // Select-All markiert deshalb nur das gerade fokussierte davon. Steht der
+    // Fokus in einem dieser Editorfelder, markieren wir stattdessen die
+    // gesamte Notiz (Titel + alle Bloecke) selbst.
+    if (mod && !e.shiftKey && !e.altKey && (e.key === "a" || e.key === "A") && isNoteflowEditableTarget(e.target)) {
+      e.preventDefault();
+      e.stopPropagation();
+      selectAllNote();
+    }
+  }
+
+  function isNoteflowEditableTarget(target) {
+    if (!target || !target.closest) return false;
+    if (target.closest("#nf2Title")) return true;
+    const wrap = blocksEl();
+    return !!(wrap && target.closest(".nf2-bc") && wrap.contains(target));
+  }
+
+  function selectAllNote() {
+    const wrap = blocksEl();
+    const bcs = wrap ? $$(".nf2-bc", wrap) : [];
+    if (!bcs.length) return;
+    const titleEl = $("#nf2Title");
+    const last = bcs[bcs.length - 1];
+    const range = document.createRange();
+    range.setStart(titleEl || bcs[0], 0);
+    range.setEnd(last, last.childNodes.length);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 
   // ═══ SIDEBAR (Seitenbaum) ═════════════════════════════════════════════════
@@ -119160,6 +119651,9 @@ Dateien zu identifizieren.
     </div>`;
   }
 
+  function isNbPinned(id) { return (typeof window.isPinned === "function") && window.isPinned("notebook", id); }
+  function toggleNbPin(id) { if (typeof window.togglePin === "function") window.togglePin("notebook", id); }
+
   function renderSidebar() {
     const tree = $("#nf2Tree");
     if (!tree) return;
@@ -119172,82 +119666,67 @@ Dateien zu identifizieren.
 
     let html = "";
 
-    // ── Feste Navigation (immer sichtbar) ──
+    // ── Feste Navigation (immer sichtbar) — bleibt der Einstieg in ALLE
+    // Notizen/die Inbox; die Baumansicht darunter zeigt bewusst nur, was
+    // angepinnt ist, damit die Sidebar uebersichtlich bleibt.
     if (!searching) {
       html += `<div class="nf2-nav">
         <div class="nf2-navitem${S.view === "home" && S.homeFilter === "all" ? " active" : ""}" data-nav="home"><span class="nf2-item-ic">🗂️</span><span class="nf2-item-t">Alle Notizen</span><span class="nf2-item-count">${notes.length}</span></div>
         <div class="nf2-navitem${S.view === "home" && S.homeFilter === "_inbox" ? " active" : ""}" data-filter="_inbox"><span class="nf2-item-ic">📥</span><span class="nf2-item-t">Inbox</span><span class="nf2-item-count">${notes.filter(n => !n.notebookId).length}</span></div>
       </div>`;
-      html += `<div class="nf2-sec">Notizklassen</div>`;
-      Object.keys(window.QUANTUS_NOTE_CLASSES || {}).forEach(key => {
-        const count = notes.filter(n => n.noteClass === key).length;
-        html += `<div class="nf2-item${S.view === "home" && S.homeFilter === "class:" + key ? " active" : ""}" data-filter="class:${key}"><span class="nf2-item-ic">${NOTE_CLASS_ICONS[key] || "📝"}</span><span class="nf2-item-t">${esc(noteClassLabel(key))}</span><span class="nf2-item-count">${count}</span></div>`;
-      });
     }
 
-    // ── Favoriten ──
+    // ── Angepinnte Notizen ──
     const favs = vis.filter((n) => isFav(n.id));
     if (favs.length) {
-      html += `<div class="nf2-sec">★ Favoriten</div>`;
+      html += `<div class="nf2-sec">📌 Notizen</div>`;
       sortNotes(favs).forEach((n) => { html += noteItem(n, 0); });
+    } else if (!searching) {
+      html += `<div class="nf2-sec">📌 Notizen</div><div class="nf2-empty-side">Keine angepinnten Notizen</div>`;
     }
 
-    // ── Zuletzt bearbeitet (Schnellzugriff, flach — löst „ich finde Notizen nicht") ──
-    if (!searching && notes.length) {
-      const recent = sortNotes(notes.slice()).slice(0, 6);
-      html += `<div class="nf2-sec">Zuletzt bearbeitet</div>`;
-      recent.forEach((n) => { html += noteItem(n, 0); });
-    }
-
-    html += `<div class="nf2-sec">Notizbücher</div>`;
-
-    // Notebooks — standardmäßig eingeklappt
-    const nbs = Object.values(nbMap()).sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
-    nbs.forEach((nb) => {
-      const key = collapsedKey("nb", nb.id);
-      const isOpen = searching ? true : !!S.open[key];
-      const nbNotes = byNb[nb.id] || [];
-      if (searching && !nbNotes.length) return;
-      html += `<div class="nf2-item nf2-nb" data-nb="${nb.id}">
-        <span class="nf2-chev${isOpen ? " open" : ""}" data-chev="${key}">▸</span>
-        <span class="nf2-item-ic">📓</span>
-        <span class="nf2-item-t">${esc(nb.title || "Notizbuch")}</span>
-        <span class="nf2-item-count">${nbNotes.length}</span>
-        <button class="nf2-item-add" data-addnote="${nb.id}" title="Seite hinzufügen">＋</button>
-      </div>`;
-      if (isOpen) {
-        const chapters = Object.values(chMap()).filter((c) => c.notebookId === nb.id);
-        const usedByCh = new Set();
-        chapters.forEach((ch) => {
-          const chNotes = nbNotes.filter((n) => n.chapterId === ch.id);
-          chNotes.forEach((n) => usedByCh.add(n.id));
-          if (searching && !chNotes.length) return;
-          const ckey = collapsedKey("ch", ch.id);
-          const cOpen = searching ? true : !!S.open[ckey];
-          html += `<div class="nf2-item nf2-ch" data-ch="${ch.id}" style="padding-left:24px">
-            <span class="nf2-chev${cOpen ? " open" : ""}" data-chev="${ckey}">▸</span>
-            <span class="nf2-item-ic">📑</span>
-            <span class="nf2-item-t">${esc(chTitle(ch))}</span>
-            <button class="nf2-item-add" data-addnote="${nb.id}" data-addch="${ch.id}" title="Seite hinzufügen">＋</button>
-          </div>`;
-          if (cOpen) sortNotes(chNotes).forEach((n) => { html += noteItem(n, 2); });
-        });
-        sortNotes(nbNotes.filter((n) => !usedByCh.has(n.id))).forEach((n) => { html += noteItem(n, 1); });
+    if (!searching) {
+      // ── Angepinnte Notizbücher ──
+      const nbs = Object.values(nbMap()).filter((nb) => isNbPinned(nb.id)).sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+      html += `<div class="nf2-sec">📌 Notizbücher</div>`;
+      if (!nbs.length) html += `<div class="nf2-empty-side">Keine angepinnten Notizbücher</div>`;
+      nbs.forEach((nb) => {
+        const key = collapsedKey("nb", nb.id);
+        const isOpen = !!S.open[key];
+        const nbNotes = byNb[nb.id] || [];
+        html += `<div class="nf2-item nf2-nb" data-nb="${nb.id}">
+          <span class="nf2-chev${isOpen ? " open" : ""}" data-chev="${key}">▸</span>
+          <span class="nf2-item-ic">📓</span>
+          <span class="nf2-item-t">${esc(nb.title || "Notizbuch")}</span>
+          <span class="nf2-item-count">${nbNotes.length}</span>
+          <button class="nf2-item-add" data-addnote="${nb.id}" title="Seite hinzufügen">＋</button>
+        </div>`;
+        if (isOpen) {
+          const chapters = Object.values(chMap()).filter((c) => c.notebookId === nb.id);
+          const usedByCh = new Set();
+          chapters.forEach((ch) => {
+            const chNotes = nbNotes.filter((n) => n.chapterId === ch.id);
+            chNotes.forEach((n) => usedByCh.add(n.id));
+            const ckey = collapsedKey("ch", ch.id);
+            const cOpen = !!S.open[ckey];
+            html += `<div class="nf2-item nf2-ch" data-ch="${ch.id}" style="padding-left:24px">
+              <span class="nf2-chev${cOpen ? " open" : ""}" data-chev="${ckey}">▸</span>
+              <span class="nf2-item-ic">📑</span>
+              <span class="nf2-item-t">${esc(chTitle(ch))}</span>
+              <button class="nf2-item-add" data-addnote="${nb.id}" data-addch="${ch.id}" title="Seite hinzufügen">＋</button>
+            </div>`;
+            if (cOpen) sortNotes(chNotes).forEach((n) => { html += noteItem(n, 2); });
+          });
+          sortNotes(nbNotes.filter((n) => !usedByCh.has(n.id))).forEach((n) => { html += noteItem(n, 1); });
+        }
+      });
+    } else {
+      // Suche durchsucht weiterhin ALLE Notizen, nicht nur angepinnte.
+      const nonFav = vis.filter((n) => !isFav(n.id));
+      if (nonFav.length) {
+        html += `<div class="nf2-sec">Weitere Treffer</div>`;
+        sortNotes(nonFav).forEach((n) => { html += noteItem(n, 0); });
       }
-    });
-
-    // Inbox (ohne Notizbuch) — standardmäßig eingeklappt
-    const inbox = byNb[""] || [];
-    if (inbox.length || !searching) {
-      const ikey = collapsedKey("nb", "_inbox");
-      const iOpen = searching ? true : !!S.open[ikey];
-      html += `<div class="nf2-item nf2-nb" data-nb="_inbox">
-        <span class="nf2-chev${iOpen ? " open" : ""}" data-chev="${ikey}">▸</span>
-        <span class="nf2-item-ic">📥</span><span class="nf2-item-t">Inbox</span>
-        <span class="nf2-item-count">${inbox.length}</span>
-        <button class="nf2-item-add" data-addnote="" title="Seite hinzufügen">＋</button>
-      </div>`;
-      if (iOpen) sortNotes(inbox).forEach((n) => { html += noteItem(n, 1); });
     }
 
     if (searching && !vis.length) html += `<div class="nf2-empty-side">Keine Treffer</div>`;
@@ -120530,9 +121009,11 @@ Dateien zu identifizieren.
     });
   }
   function nbContextMenu(id, x, y) {
+    const pinned = isNbPinned(id);
     const items = [
       { a: "add", ic: "＋", t: "Neue Seite" },
       { a: "addch", ic: "📑", t: "Neues Kapitel" },
+      { a: "pin", ic: pinned ? "📍" : "📌", t: pinned ? "Aus Sidebar lösen" : "An Sidebar anpinnen" },
       { a: "ren", ic: "✎", t: "Umbenennen" },
       { a: "del", ic: "🗑", t: "Notizbuch löschen" },
     ];
@@ -120546,6 +121027,7 @@ Dateien zu identifizieren.
         const t = window.prompt("Kapitel-Name:", "");
         if (t && t.trim()) addChapter(id, t.trim());
       }
+      else if (a === "pin") { toggleNbPin(id); renderSidebar(); }
       else if (a === "ren") { const t = window.prompt("Notizbuch umbenennen:", nb.title || ""); if (t != null && t.trim()) { nb.title = t.trim(); nb.updatedAt = nowIso(); save(); renderSidebar(); renderTopbar(); } }
       else if (a === "del") {
         const count = liveNotes().filter((n) => n.notebookId === id).length;
@@ -120553,6 +121035,7 @@ Dateien zu identifizieren.
         liveNotes().forEach((n) => { if (n.notebookId === id) { n.notebookId = null; n.chapterId = null; } });
         Object.values(chMap()).forEach((c) => { if (c.notebookId === id) delete chMap()[c.id]; });
         delete nbMap()[id];
+        if (pinned) toggleNbPin(id);
         save(); renderSidebar(); renderTopbar();
       }
     });
