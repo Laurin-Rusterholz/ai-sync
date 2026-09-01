@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder · 2026-09-01" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix · 2026-09-01" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -48612,6 +48612,10 @@ function chatgptNoteFormHtml(vals) {
     </div>
   `;
 }
+// Der Create/Ablösen-Handler fuer chatgptNotes lebt aus historischen Gruenden
+// in einem ANDEREN <script>-Block (einer eigenen IIFE) als diese Funktion —
+// ohne window-Export waere sie dort unsichtbar (CLAUDE.md, Fallstrick 1).
+window.chatgptNoteFormHtml = chatgptNoteFormHtml;
 
 const CGN_CATEGORY_META = {
   auftrag: { color: "#D96B5B", label: "Auftrag" },
@@ -79662,7 +79666,7 @@ Beginne mit den kritischen/hohen Prioritäten.`;
   if (action === "cgn-create") {
     e.preventDefault();
     e.stopPropagation();
-    openModal("➕ Neuer ChatGPT-Notes-Eintrag", chatgptNoteFormHtml({}), `
+    openModal("➕ Neuer ChatGPT-Notes-Eintrag", window.chatgptNoteFormHtml({}), `
       <button class="btn" data-action="close-modal">Abbrechen</button>
       <button class="btn primary" data-action="cgn-save-new">Erstellen</button>`);
     return;
@@ -79698,7 +79702,7 @@ Beginne mit den kritischen/hohen Prioritäten.`;
     if (!old) return;
     openModal("↻ Eintrag ablösen", `
       <div class="mini mb-2" style="color:var(--muted)">Der alte Eintrag bleibt als „überholt" sichtbar und verweist auf den neuen. Für reine Tippfehler „Korrigieren" verwenden statt Ablösen.</div>
-      ${chatgptNoteFormHtml(old)}
+      ${window.chatgptNoteFormHtml(old)}
     `, `
       <button class="btn" data-action="close-modal">Abbrechen</button>
       <button class="btn primary" data-action="cgn-save-supersede" data-id="${id}">Ablösen &amp; speichern</button>`);
