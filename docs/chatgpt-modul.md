@@ -65,6 +65,16 @@ als `closedBy:"laurin"`, `obsoleteReason`.
 `readAt` setzt der Assistent mit „📖 Gelesen" oder automatisch, sobald er einen
 Schritt ausfuellt. `wartet` verlangt `blockedReason`.
 
+**Persistenz der Freitextfelder:** jede Eingabe (`input`) landet sofort im
+Lead (`chatgptLeadApplyField`), gespeichert wird gebuendelt ueber
+`scheduleSaveDebounced("cgl-field:<id>", 500)` — `flushPendingSaves` holt das
+bei `pagehide`/`beforeunload`/`visibilitychange` nach. `change` bleibt der
+finale Commit (trimmt, speichert sofort). Vor jedem `renderMain()` und beim
+Verlassen werden alle Felder aus dem DOM uebernommen (`chatgptLeadCommitDom`),
+damit weder ein Hintergrund-Render (`syncFreshness`) noch ein programm-
+gesteuertes `.value =` etwas verliert; der Fokus kehrt danach ins Feld zurueck.
+Fortschritt und Abschluss rechnen ausschliesslich aus dem Lead-Objekt.
+
 Raster, Zuweisung und Berechtigungen stehen **ohne Klick** auf der Lead-Karte
 im Eingang und im Detail (`chatgptLeadAssessmentSummary`).
 
