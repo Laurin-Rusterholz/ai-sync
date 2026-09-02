@@ -385,8 +385,13 @@ const TOKEN = "t".repeat(32);
     ok(/id="visionRoom"/.test(fragebogen), "der Vision Room fehlt im Fragebogen");
     ok(/q\.vision === "idea"/.test(fragebogen) && /q\.vision === "features"/.test(fragebogen),
       "der Vision Room ist nicht an die Fragen des Fragebogens gebunden");
+    // Fuenf Abrufe, und nur diese: den Fragebogen laden, die Antworten senden,
+    // die Abschrift der veroeffentlichten Inhalte lesen (Verwaltung) und fuer
+    // den Vision Room eine Datei hochladen bzw. entfernen. Die Antworten gehen
+    // weiterhin an genau EINE Stelle — ein zweiter Antwortweg waere ein Fehler.
     const sendungen = (fragebogen.match(/fetch\(/g) || []).length;
-    ok(sendungen === 2, `der Fragebogen sendet an ${sendungen} Stellen statt zweimal (laden + senden)`);
+    ok(sendungen === 5, `der Fragebogen sendet an ${sendungen} Stellen statt fuenfmal (laden + senden + Inhalte + Upload + Entfernen)`);
+    ok((fragebogen.match(/kind: "intake"/g) || []).length === 1, "die Antworten gehen an mehr als einer Stelle ab");
 
     // Phase 2 zeigt nichts ohne Freigabe.
     ok(/data\.published === false/.test(kunde),

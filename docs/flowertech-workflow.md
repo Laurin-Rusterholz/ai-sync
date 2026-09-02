@@ -434,7 +434,9 @@ Projektdaten, kein Fragebogen-Zustand.
 
 **Danach:** Die Karte zeigt wieder *„Fragebogen-Link – Kundendaten & Vision
 Room, keine Vorschau"* ohne Beantwortet-Vermerk, und derselbe Link zeigt wieder
-eine leere Form (der veröffentlichte Fragebogen steht sofort wieder auf `open`).
+eine unbeantwortete Form (der veröffentlichte Fragebogen steht sofort wieder auf
+`open`) — vorbelegt mit dem, was am Projekt steht, auch mit Kundendaten, die
+aus der zurückgesetzten Antwort ergänzt wurden (Abschnitt 4g-3).
 
 **Die erneute Einreichung** findet robust dasselbe Projekt: Das Zurücksetzen
 setzt `boundProjectId` ausdrücklich auf dieses Projekt — auch bei einem
@@ -587,6 +589,113 @@ Die Regeln, die das Ganze überhaupt erst verbindlich machen:
 
 Der Kundenlink bleibt dabei, was er ist: **eine** Adresse, die mit den Freigaben
 wächst. Belegt in `tests/flowertech-claude-rueckgabe.test.mjs`.
+
+### 4g-3. Vorbelegt, nicht erfunden
+
+Was FlowerTech über die Kundschaft schon weiss, steht auf dem Kundenlink
+bereits im Bogen — sie muss es nicht ein zweites Mal abtippen. Beim Projekt
+„Reinigungsunternehmen Aljia" heisst das: Projekt-/Firmenname, Ansprechperson
+„Herr Aljia", E-Mail und die Art „Website" sind vorbelegt; Firma, Telefon,
+Adresse, Termin und Vision Room bleiben leer, weil sie niemand kennt.
+
+`intakePrefill()` im Kern rechnet das — rein lesend — aus dem, was in Quantus
+gepflegt ist, in dieser Verlässlichkeitsreihenfolge:
+
+| Quelle | Füllt |
+| --- | --- |
+| Projekt | Projekt-/Firmenname (Titel), Art (`deliveryType`), bisherige Website/Anbieter/Preis, Budget, Wunschtermin, Vision Room (`ftVision`) |
+| Kundendaten am Projekt (`client`) | Firma, Ansprechperson, E-Mail, Telefon, Adresse |
+| verknüpfte Person (`linkedProjects` bzw. Organisation des Projekts) | dieselben Felder — nur, wenn die Person **eindeutig** ist |
+| Organisation | Firma |
+| Anfrage (Lead) | Name, Firma, E-Mail, Telefon, Art (so, wie die Kundschaft sie nannte) |
+| Offerte ohne Projekt | Kundendaten der Offerte |
+| Briefing | Ziel |
+
+Regeln, die das Ganze ehrlich halten:
+
+* **Nur Bekanntes.** Die Standard-Art eines frisch angelegten Fragebogens ist
+  keine Kenntnis und wird nicht vorbelegt. Zwei verknüpfte Personen ohne
+  Anhaltspunkt heisst: keine. Unbekannt bleibt leer.
+* **Nur, was ins Feld passt.** Eine Auswahl nur aus ihren Optionen, ein Datum
+  nur als JJJJ-MM-TT, eine E-Mail nur, wenn sie wie eine aussieht. Geheimnisse
+  (`isSensitiveAnswer`) nie.
+* **Herkunft innen, Werte aussen.** Am Fragebogen in Quantus steht
+  `intake.prefill` mit `values`, `sources` und lesbaren `labels`
+  („Ansprechperson ← Kundendaten am Projekt"); die Karte zeigt sie. Der
+  veröffentlichte Datensatz trägt nur `prefill: { version, values }` nach
+  Frageschlüssel — keine Quelle, keine Projekt- oder Personen-ID, keine Notiz.
+* **Versioniert.** `INTAKE_PREFILL_VERSION` ist die Fassung der Regel. Ein
+  offener Fragebogen, dessen veröffentlichte Vorbelegung fehlt, eine ältere
+  Fassung trägt oder nicht mehr dem Bekannten entspricht
+  (`intakePrefillStale()`), wird einmal neu veröffentlicht — beim Verbinden
+  mit Firebase, beim Anzeigen des Projekts und gebündelt nach dem Bearbeiten
+  der Kundendaten. **Derselbe Link, derselbe Token.** Beantwortete und
+  geschlossene Bögen bleiben in Ruhe.
+* **Die Kundschaft hat das letzte Wort.** Jedes vorbelegte Feld bleibt ein
+  normales Feld; beim Senden zählt, was dann darin steht. Korrigiert die
+  Kundschaft genau einen Wert, den wir ihr gezeigt haben, übernimmt das Projekt
+  die Korrektur (`intakeUpdateForProject({ prefill })`, benannt in
+  `corrected` und im Kontaktverlauf). Gepflegte Angaben, die **nicht**
+  vorbelegt waren, bleiben wie bisher stehen.
+
+Die Kundenseite (`fragebogen.html`, ausserhalb dieses Repos) liest
+`prefill.values` nach dem Rendern in die Felder und baut den Vision Room
+danach auf — er beginnt so mit Art, Idee und Funktionen. Ein Datensatz ohne
+`prefill` verhält sich dort wie bisher.
+
+Belegt in `tests/flowertech-kundenlink-vorbelegung.test.mjs`.
+
+### 4g-4. Dateien im Vision Room
+
+Die Kundschaft lädt Logos, Bilder, Designentwürfe und andere Referenzdateien
+direkt im Vision Room des Fragebogens hoch — freiwillig, klar beschriftet,
+mehrere auf einmal. Der Weg benutzt die bestehende Firebase-Ablage
+(Storage für die Bytes, RTDB für Metadaten); **im RTDB liegt nie ein Byte der
+Datei und nie Base64.**
+
+```text
+Browser  ─PUT Roh-Bytes─▶  flowertech-upload?e=<token>
+                            │  Typ aus den ersten Bytes, Grösse, Anzahl, Ratenlimit
+                            ├─▶ Storage  flowertech/intakes/<token>/<fileId>.<ext>
+                            └─▶ RTDB     flowertech/intakeUploads/<token>/<fileId>
+                                         { id, name, type, size, storagePath, uploadedAt, status }
+Absenden des Bogens  ─▶  payload.files = [fileId, …]
+                            │  flowertech-portal prüft: eigene, vorhandene Ids
+                            ├─▶ submissions/<id>.payload.files = Metadaten aus der RTDB
+                            └─▶ intakeUploads/<token>/<fileId>.status = "submitted", submissionId
+Quantus  ─▶  project.ftIntakeDocument.files (Referenzen) · Karte · Prompt
+```
+
+| Grenze (`INTAKE_UPLOAD_LIMITS`, gespiegelt auf der Seite) | Wert | Meldung an die Kundschaft |
+| --- | --- | --- |
+| Typen | PNG, JPG/JPEG, WEBP, PDF — erkannt an den Bytes, nicht am Header | „Dieser Dateityp wird nicht unterstützt. Erlaubt sind PNG, JPG, WEBP und PDF." |
+| HEIC/HEIF | **nicht** unterstützt — es gibt keine Umwandlungs-Pipeline | „HEIC-Bilder können wir nicht verarbeiten. Bitte exportieren Sie das Bild als JPG oder PNG." |
+| Grösse | 5 MB pro Datei (Netlify nimmt höchstens 6 MB je Aufruf an) | „Die Datei ist grösser als 5 MB. …" (HTTP 413) |
+| Anzahl | 10 Dateien pro Einladung | „Es sind höchstens 10 Dateien möglich. …" (HTTP 409) |
+| Ratenlimit | 60 Uploads pro Stunde und IP | HTTP 429 |
+| Zugang | nur erlaubte Herkünfte, nur ein **offener** Fragebogen-Token | 401 / 403 / 404 |
+
+**Zuordnung.** Der Token ist die Adresse: Datei → `intakeUploads/<token>` →
+Fragebogen → `intakeBinding()` → Projekt, Anfrage (Lead) oder Offerte. Nach dem
+Absenden trägt der Upload-Eintrag zusätzlich `submissionId`, das
+Anfrage-Dokument am Projekt `files[]` samt `storagePath` unter dem Token, und
+`project.sourceIntakeId` den Fragebogen. Eine Datei unter einem fremden Token
+wird an jeder Stelle verworfen (`normalizeIntakeFiles({ token })`).
+
+**Entfernen** ist möglich, solange die Datei nicht abgesendet ist (DELETE,
+danach HTTP 409). **Anzeigen** in Quantus: Projektkarte, Fragebogen-Detail und
+Offertenansicht listen Name, Typ und Grösse; „Öffnen" holt die Adresse über
+die angemeldete Firebase-Session (`firebaseStorage.ref(path).getDownloadURL()`),
+ausschliesslich unter `flowertech/intakes/`. Der Prompt nennt die Dateien
+unter „Inhalte".
+
+**Manuell nötig, einmalig:** Die Firebase-Storage-Regeln müssen angemeldetes
+Lesen unter `flowertech/intakes/**` erlauben (Schreiben geschieht serverseitig
+über das Dienstkonto und braucht keine Regel). Der veröffentlichte Fragebogen
+(`intakeForms`) trägt von den Dateien nichts.
+
+Belegt in `tests/flowertech-vision-upload.test.mjs` (Kern, Upload-Funktion,
+Eingang, Quantus — alle wirklich ausgeführt, mit RTDB-/Storage-Doppel).
 
 ## 4h. Der Reiter „Claude-Prompt"
 

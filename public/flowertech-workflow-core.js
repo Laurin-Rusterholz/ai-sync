@@ -1374,7 +1374,7 @@ export function intakeAnswersUsable(questions, answers) {
 }
 
 // Das „erste Dokument": die vollstaendige erste Eingabe, unveraendert.
-export function buildIntakeDocument({ intake = {}, answers = [], now = new Date().toISOString() } = {}) {
+export function buildIntakeDocument({ intake = {}, answers = [], files = [], now = new Date().toISOString() } = {}) {
   return {
     kind: "intake",
     intakeTitle: text(intake.title, 200) || DEFAULT_INTAKE_TITLE,
@@ -1384,6 +1384,10 @@ export function buildIntakeDocument({ intake = {}, answers = [], now = new Date(
       key: a.key, label: a.label, type: a.type, role: a.role || "",
       answer: String(a.answer == null ? "" : a.answer),
     })),
+    // Die im Vision Room hochgeladenen Dateien — als Referenz, nie als Inhalt.
+    // Der Token der Einladung haengt am Pfad; darueber bleibt jede Datei dem
+    // Fragebogen und damit Projekt, Anfrage oder Offerte zuordenbar.
+    files: normalizeIntakeFiles(files, { token: isShareToken(intake.inviteToken) ? intake.inviteToken : "" }),
   };
 }
 
@@ -2212,14 +2216,14 @@ export function customerAreaSnapshot({
   intake = null, project = null, offers = [], offerAmount = null,
   offerDocumentHtml = "", offerDocumentUrl = "", prompt = null,
   company = {}, questions = null, now = new Date().toISOString(), today = "",
-  contractHtml = "", contractTitle = "",
+  contractHtml = "", contractTitle = "", prefill = null,
 } = {}) {
   const form = intake && typeof intake === "object" ? intake : {};
   const area = customerAreaState({
     project, intake: form, offers, offerAmount, offerDocumentHtml, offerDocumentUrl, prompt, today,
     contractHtml, contractTitle,
   });
-  return {
+  const snapshot = {
     schema: 1,
     title: text(form.title, 200) || DEFAULT_INTAKE_TITLE,
     intro: multiline(form.intro, 2000) || DEFAULT_INTAKE_INTRO,
@@ -2233,6 +2237,11 @@ export function customerAreaSnapshot({
     tiles: area.tiles,
     updatedAt: now,
   };
+  // Die Vorbelegung: nur Fassung und Werte, und nur, wenn es welche gibt. Ein
+  // Datensatz ohne dieses Feld bleibt genau der, der er bisher war.
+  const vorbelegt = intakePrefillSnapshot(prefill);
+  if (vorbelegt) snapshot.prefill = vorbelegt;
+  return snapshot;
 }
 
 /* Was übernimmt die Antwort in ein BESTEHENDES Projekt?
@@ -2241,7 +2250,9 @@ export function customerAreaSnapshot({
  * Vision Room: er ist die jüngste Aussage der Kundschaft über ihre Idee und
  * ersetzt deshalb die vorherige (so hält es auch der Weg über die Einladung).
  * Reine Funktion: sie rechnet, sie schreibt nicht. */
-export function intakeUpdateForProject({ project = {}, answers = [], now = new Date().toISOString() } = {}) {
+export function intakeUpdateForProject({
+  project = {}, answers = [], now = new Date().toISOString(), prefill = null,
+} = {}) {
   const item = project && typeof project === "object" ? project : {};
   const client = item.client && typeof item.client === "object" ? item.client : {};
   const vision = visionFromAnswers(answers);
@@ -2249,10 +2260,31 @@ export function intakeUpdateForProject({ project = {}, answers = [], now = new D
   const clientPatch = {};
   const filled = [];
   const kept = [];
+  const corrected = [];
 
-  const take = (label, current, value, apply) => {
+  // Was die Kundschaft auf dem Bogen VORGEFUNDEN hat: die veroeffentlichte
+  // Vorbelegung, nach Rolle. Aendert sie genau diesen Wert, ist das eine
+  // Korrektur dessen, was wir ihr gezeigt haben — und die gewinnt. Ein
+  // gepflegter Wert, der NICHT vorbelegt war, bleibt weiterhin stehen.
+  const shownValues = prefill && prefill.values && typeof prefill.values === "object" ? prefill.values : {};
+  const shownByRole = (role) => {
+    const entry = (answers || []).find((a) => a && a.role === role && shownValues[a.key] != null);
+    return entry ? String(shownValues[entry.key]).trim() : "";
+  };
+
+  const take = (label, current, value, apply, role) => {
     if (!String(value == null ? "" : value).trim() && value !== 0) return;
-    if (String(current == null ? "" : current).trim()) { kept.push(label); return; }
+    const before = String(current == null ? "" : current).trim();
+    if (before) {
+      const shown = role ? shownByRole(role) : "";
+      if (shown && shown === before && String(value).trim() !== before) {
+        apply();
+        corrected.push(label);
+        return;
+      }
+      kept.push(label);
+      return;
+    }
     apply();
     filled.push(label);
   };
@@ -2265,13 +2297,13 @@ export function intakeUpdateForProject({ project = {}, answers = [], now = new D
     ["Adresse", "street", "address"],
   ].forEach(([label, field, role]) => {
     const value = answerByRole(answers, role);
-    take(label, client[field], value, () => { clientPatch[field] = value; });
+    take(label, client[field], value, () => { clientPatch[field] = value; }, role);
   });
 
   take("Bisherige Website", item.ftCurrentUrl, answerByRole(answers, "currentUrl"),
-    () => { patch.ftCurrentUrl = answerByRole(answers, "currentUrl"); });
+    () => { patch.ftCurrentUrl = answerByRole(answers, "currentUrl"); }, "currentUrl");
   take("Bisheriger Anbieter", item.ftCurrentProvider, answerByRole(answers, "currentProvider"),
-    () => { patch.ftCurrentProvider = answerByRole(answers, "currentProvider"); });
+    () => { patch.ftCurrentProvider = answerByRole(answers, "currentProvider"); }, "currentProvider");
 
   const price = money(answerByRole(answers, "currentPrice"));
   if (price != null && item.currentProviderPrice == null) {
@@ -2284,7 +2316,7 @@ export function intakeUpdateForProject({ project = {}, answers = [], now = new D
   else if (budget != null) kept.push("Budget");
 
   take("Wunschtermin", item.dueDate, answerByRole(answers, "deadline"),
-    () => { patch.dueDate = answerByRole(answers, "deadline"); });
+    () => { patch.dueDate = answerByRole(answers, "deadline"); }, "deadline");
 
   // Der Vision Room gehört zum selben Fragebogen und erzeugt nie einen
   // zweiten Vorgang — er wird am bestehenden Projekt nachgeführt.
@@ -2298,7 +2330,369 @@ export function intakeUpdateForProject({ project = {}, answers = [], now = new D
   if (stage === "lead" || !stage) patch.pipelineStage = "intake";
 
   patch.updatedAt = now;
-  return { patch, client: clientPatch, filled, kept, vision };
+  return { patch, client: clientPatch, filled, kept, corrected, vision };
+}
+
+/* ── Dateien im Vision Room ───────────────────────────────────────────────
+ * Logos, Bilder, Designentwuerfe und andere Referenzen kann die Kundschaft
+ * direkt im Vision Room hochladen. Der Weg:
+ *
+ *   Browser → flowertech-upload (Roh-Bytes, kein Base64)
+ *           → Firebase Storage  flowertech/intakes/<token>/<fileId>.<ext>
+ *           → RTDB              flowertech/intakeUploads/<token>/<fileId>
+ *                               (nur Metadaten: id, name, type, size,
+ *                                storagePath, uploadedAt, status)
+ *   Absenden des Bogens → payload.files = [fileId, …]
+ *           → der Eingang haengt die Metadaten an die Einreichung
+ *           → Quantus legt sie am Projekt ab (ftIntakeDocument.files)
+ *
+ * Die Zuordnung ist der Token: Er fuehrt zum Fragebogen, und der zu Projekt,
+ * Anfrage (Lead) oder Offerte (intakeBinding). Im RTDB liegt nie ein Byte der
+ * Datei — nur die Referenz. Der veroeffentlichte Fragebogen
+ * (flowertech/intakeForms) traegt gar nichts davon.
+ *
+ * Grenzen — hier EINMAL, fuer Eingang, Quantus und (gespiegelt) die Seite:
+ * --------------------------------------------------------------------- */
+export const INTAKE_UPLOAD_LIMITS = {
+  maxBytes: 5 * 1024 * 1024,    // 5 MB pro Datei (Netlify nimmt hoechstens 6 MB je Aufruf an)
+  maxFiles: 10,                 // pro Einladung
+  maxNameLength: 120,
+};
+
+// Erlaubte Typen → Dateiendung. HEIC fehlt mit Absicht: Es gibt keine
+// Umwandlungs-Pipeline, und ein HEIC liesse sich weder in Quantus noch in
+// der Vorschau zuverlaessig anzeigen. Die Fehlermeldung sagt, was zu tun ist.
+export const INTAKE_UPLOAD_TYPES = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+};
+
+export const INTAKE_UPLOAD_MESSAGES = {
+  type: "Dieser Dateityp wird nicht unterstützt. Erlaubt sind PNG, JPG, WEBP und PDF.",
+  heic: "HEIC-Bilder können wir nicht verarbeiten. Bitte exportieren Sie das Bild als JPG oder PNG.",
+  size: "Die Datei ist grösser als 5 MB. Bitte verkleinern Sie sie oder wählen Sie eine kleinere Fassung.",
+  count: "Es sind höchstens 10 Dateien möglich. Bitte entfernen Sie eine, um eine andere hochzuladen.",
+  empty: "Die Datei ist leer.",
+  gone: "Eine hochgeladene Datei ist nicht mehr da. Bitte laden Sie sie erneut hoch.",
+};
+
+/* Der Typ aus den ersten Bytes — nicht aus dem, was der Browser behauptet.
+ * Liefert den MIME-Typ, "image/heic" fuer den ausdruecklich abgelehnten Fall
+ * oder "" fuer Unbekanntes. */
+export function sniffUploadType(bytes) {
+  const b = bytes && bytes.length ? bytes : [];
+  const at = (i) => (i < b.length ? b[i] : -1);
+  const ascii = (from, len) => {
+    let s = "";
+    for (let i = from; i < from + len && i < b.length; i++) s += String.fromCharCode(b[i]);
+    return s;
+  };
+  if (at(0) === 0x89 && ascii(1, 3) === "PNG") return "image/png";
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return "image/jpeg";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") return "image/webp";
+  if (ascii(0, 4) === "%PDF") return "application/pdf";
+  if (ascii(4, 4) === "ftyp" && /^(heic|heix|hevc|hevx|mif1|msf1)$/.test(ascii(8, 4))) return "image/heic";
+  return "";
+}
+
+export function isIntakeFileId(value) {
+  return /^f_[A-Za-z0-9_-]{8,40}$/.test(String(value || ""));
+}
+
+// Der Name, wie er gezeigt wird: ohne Pfad, ohne Steuerzeichen, begrenzt.
+export function intakeFileName(value, type) {
+  const base = String(value == null ? "" : value).split(/[\\/]/).pop();
+  const clean = text(base.replace(/[\x00-\x1f\x7f]/g, " "), INTAKE_UPLOAD_LIMITS.maxNameLength);
+  const ext = INTAKE_UPLOAD_TYPES[type] || "";
+  if (clean) return clean;
+  return ext ? "datei." + ext : "datei";
+}
+
+export function intakeFileSizeLabel(size) {
+  const n = Number(size) || 0;
+  if (n >= 1024 * 1024) return (Math.round(n / (1024 * 1024) * 10) / 10).toLocaleString("de-CH") + " MB";
+  if (n >= 1024) return Math.round(n / 1024) + " KB";
+  return n + " B";
+}
+
+/* Metadaten einer Datei — ueberall dieselbe Pruefung: gueltige Id, erlaubter
+ * Typ, Groesse innerhalb der Grenze, Pfad unter dem Token dieser Einladung.
+ * Alles andere wird verworfen, nicht repariert. */
+export function normalizeIntakeFile(raw, { token = "" } = {}) {
+  const f = raw && typeof raw === "object" ? raw : {};
+  const id = String(f.id || "");
+  const type = String(f.type || "");
+  const size = Math.floor(Number(f.size));
+  if (!isIntakeFileId(id) || !INTAKE_UPLOAD_TYPES[type]) return null;
+  if (!Number.isFinite(size) || size <= 0 || size > INTAKE_UPLOAD_LIMITS.maxBytes) return null;
+  const storagePath = String(f.storagePath || "");
+  if (token && storagePath && storagePath.indexOf("flowertech/intakes/" + token + "/") !== 0) return null;
+  return {
+    id,
+    name: intakeFileName(f.name, type),
+    type,
+    size,
+    storagePath: storagePath || "",
+    uploadedAt: String(f.uploadedAt || ""),
+  };
+}
+
+export function normalizeIntakeFiles(list, { token = "" } = {}) {
+  const raw = Array.isArray(list) ? list : [];
+  const seen = new Set();
+  const out = [];
+  raw.forEach((entry) => {
+    const file = normalizeIntakeFile(entry, { token });
+    if (!file || seen.has(file.id)) return;
+    seen.add(file.id);
+    if (out.length < INTAKE_UPLOAD_LIMITS.maxFiles) out.push(file);
+  });
+  return out;
+}
+
+/* ── Vorbelegung des Kundenlinks ─────────────────────────────────────────
+ * Was FlowerTech ueber die Kundschaft schon weiss, soll sie nicht ein zweites
+ * Mal abtippen muessen: Projekt-/Firmenname, Ansprechperson, E-Mail, Art des
+ * Vorhabens, bisherige Website, Budget, Wunschtermin, Vision Room.
+ *
+ * Drei Regeln, in dieser Reihenfolge:
+ *
+ *   1. Nur Bekanntes. Jeder Wert stammt aus einem gepflegten Feld — Projekt,
+ *      Kundendaten am Projekt, verknuepfte Person, Organisation, Anfrage
+ *      (Lead), Offerte, Briefing. Ein Vorgabewert, den niemand eingetragen
+ *      hat (etwa die Standard-Art eines frisch angelegten Fragebogens), ist
+ *      keine Kenntnis und wird NICHT vorbelegt. Unbekannt bleibt leer.
+ *   2. Nur, was in das Feld passt. Eine Auswahl wird nur vorbelegt, wenn der
+ *      Wert eine ihrer Optionen ist; ein Datum nur als JJJJ-MM-TT; eine
+ *      E-Mail nur, wenn sie wie eine aussieht. Geheimnisse (siehe
+ *      isSensitiveAnswer) werden nie vorbelegt.
+ *   3. Herkunft innen, Werte aussen. `sources` sagt fuer jedes Feld, woher der
+ *      Wert kommt — das bleibt in Quantus. Veroeffentlicht werden nur
+ *      `version` und `values`, ohne Projekt-ID, ohne Personen-ID, ohne Notiz.
+ *
+ * `version` ist die Fassung dieser Vorbelegungsregel. Ein Fragebogen, der mit
+ * einer aelteren (oder gar keiner) Fassung veroeffentlicht wurde, wird beim
+ * naechsten Start einmal neu veroeffentlicht — so bekommen bestehende Links
+ * die Vorbelegung, ohne dass sich der Link aendert.
+ *
+ * Rein rechnend: liest, schreibt nicht, veroeffentlicht nichts.
+ * --------------------------------------------------------------------- */
+export const INTAKE_PREFILL_VERSION = 1;
+
+export const INTAKE_PREFILL_SOURCE_LABELS = {
+  project: "Projekt",
+  client: "Kundendaten am Projekt",
+  person: "verknüpfte Person",
+  organization: "Organisation",
+  inquiry: "Anfrage",
+  offer: "Offerte",
+  briefing: "Briefing",
+  vision: "Vision Room am Projekt",
+  intake: "Vision-Room-Entwurf",
+};
+
+// Die Art des Vorhabens, wie sie das Projekt kennt → die Option des Bogens.
+const DELIVERY_TYPE_OPTIONS = { website: "Website", program: "Web-Programm" };
+const KIND_OPTION_MARKERS = ["Website", "Web-Programm", "Web-App"];
+
+function pickOption(options, wanted) {
+  const w = text(wanted, 120).toLowerCase();
+  if (!w) return "";
+  const hit = (Array.isArray(options) ? options : []).find((o) => text(o, 120).toLowerCase() === w);
+  return hit ? text(hit, 120) : "";
+}
+
+// Die Auswahlfrage nach der Art des Vorhabens — dieselbe Erkennung wie auf
+// der Kundenseite: mindestens zwei der bekannten Optionen.
+export function isKindQuestion(q) {
+  if (!q || q.type !== "select" || !Array.isArray(q.options)) return false;
+  return q.options.filter((o) => KIND_OPTION_MARKERS.includes(String(o))).length >= 2;
+}
+
+function ymd(value) {
+  const v = text(value, 40);
+  return /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : "";
+}
+
+function numberText(value) {
+  if (value == null || value === "") return "";
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? String(n) : "";
+}
+
+function firstText(value, max) {
+  const list_ = Array.isArray(value) ? value : [value];
+  for (const entry of list_) {
+    const v = entry && typeof entry === "object"
+      ? text(entry.address || entry.value || entry.email || entry.number || entry.phone, max)
+      : text(entry, max);
+    if (v) return v;
+  }
+  return "";
+}
+
+function addressLine(value) {
+  if (!value) return "";
+  if (typeof value !== "object") return text(value, 300);
+  const street = text(value.street || value.address, 160);
+  const place = [text(value.zip, 20), text(value.city, 120)].filter(Boolean).join(" ");
+  return [street, place].filter(Boolean).join(", ");
+}
+
+function personName(person) {
+  const p = person && typeof person === "object" ? person : {};
+  const name = text(p.name, 160);
+  if (name) return name;
+  return text([p.firstName, p.lastName].filter(Boolean).join(" "), 160);
+}
+
+export function intakePrefill({
+  intake = null, project = null, inquiry = null, person = null, organization = null,
+  offer = null, briefing = null, questions = null,
+} = {}) {
+  const form = intake && typeof intake === "object" ? intake : {};
+  const qs = normalizeIntakeQuestions(questions || form.questions || []);
+  const item = project && typeof project === "object" ? project : {};
+  const client = item.client && typeof item.client === "object" ? item.client : {};
+  const lead = inquiry && typeof inquiry === "object" ? inquiry : {};
+  const who = person && typeof person === "object" ? person : {};
+  const org = organization && typeof organization === "object" ? organization : {};
+  const quote = offer && typeof offer === "object" ? offer : {};
+  const quoteClient = quote.client && typeof quote.client === "object" ? quote.client : {};
+  const brief = briefing && typeof briefing === "object" ? briefing : {};
+  const vision = item.ftVision && typeof item.ftVision === "object" ? item.ftVision : null;
+  const draft = form.visionDraft && typeof form.visionDraft === "object" ? form.visionDraft : null;
+
+  // Der erste bekannte Wert gewinnt — die Reihenfolge ist die Verlaesslichkeit:
+  // was am Projekt gepflegt ist, vor der Person, vor der Anfrage.
+  const first = (pairs) => {
+    for (const [source, raw] of pairs) {
+      const value = text(raw, 400);
+      if (value) return { value, source };
+    }
+    return null;
+  };
+
+  const byRole = {
+    projectTitle: first([
+      ["project", item.title], ["client", client.company], ["organization", org.name],
+      ["inquiry", lead.company], ["offer", quoteClient.company],
+    ]),
+    company: first([
+      ["client", client.company], ["organization", org.name], ["person", who.company],
+      ["inquiry", lead.company], ["offer", quoteClient.company],
+    ]),
+    contactName: first([
+      ["client", client.name], ["person", personName(who)], ["inquiry", lead.name],
+      ["offer", quote.contactPerson || quoteClient.name],
+    ]),
+    contactEmail: first([
+      ["client", client.email], ["person", firstText(who.emails, 160)], ["inquiry", lead.email],
+      ["offer", quoteClient.email],
+    ]),
+    contactPhone: first([
+      ["client", client.phone], ["person", firstText(who.phones, 60)], ["inquiry", lead.phone],
+      ["offer", quoteClient.phone],
+    ]),
+    address: first([
+      ["client", addressLine(client)], ["person", addressLine(who.address)], ["offer", addressLine(quoteClient)],
+    ]),
+    currentUrl: first([["project", item.ftCurrentUrl]]),
+    currentProvider: first([["project", item.ftCurrentProvider]]),
+    currentPrice: first([["project", numberText(item.currentProviderPrice)]]),
+    need: first([["briefing", brief.goal]]),
+    budget: first([["project", numberText(item.budget)]]),
+    deadline: first([["project", ymd(item.dueDate)]]),
+  };
+
+  // Die Art des Vorhabens: aus der Anfrage (so, wie die Kundschaft sie nannte)
+  // oder aus dem gepflegten Projektfeld. NICHT aus der Standard-Art des
+  // Fragebogens — die hat niemand ausgewaehlt.
+  const kindOf = (options) => {
+    const fromLead = pickOption(options, lead.service);
+    if (fromLead) return { value: fromLead, source: "inquiry" };
+    for (const [source, type] of [["project", item.deliveryType], ["offer", quote.deliveryType]]) {
+      const mapped = pickOption(options, DELIVERY_TYPE_OPTIONS[String(type || "")]);
+      if (mapped) return { value: mapped, source };
+    }
+    return null;
+  };
+
+  const visionIdea = first([["vision", vision && vision.idea], ["intake", draft && draft.idea]]);
+  const visionFeatures = (() => {
+    for (const [source, raw] of [["vision", vision && vision.features], ["intake", draft && draft.features]]) {
+      const items = list(raw, 40, 160);
+      if (items.length) return { value: items.join("\n"), source };
+    }
+    return null;
+  })();
+
+  const values = {};
+  const sources = {};
+  qs.forEach((q) => {
+    if (isSensitiveAnswer(q)) return;                       // Geheimnisse nie
+    let hit = null;
+    if (q.vision === "idea") hit = visionIdea;
+    else if (q.vision === "features") hit = visionFeatures;
+    else if (q.role && byRole[q.role]) hit = byRole[q.role];
+    else if (isKindQuestion(q)) hit = kindOf(q.options);
+    if (!hit || !hit.value) return;
+    let value = hit.value;
+    // Nur, was in das Feld passt.
+    if (q.type === "select") value = pickOption(q.options, value);
+    else if (q.type === "date") value = ymd(value);
+    else if (q.type === "email") value = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value) ? value.toLowerCase() : "";
+    else if (q.type === "number") value = numberText(value);
+    else if (q.type !== "textarea") value = text(value, 400);
+    if (!value) return;
+    values[q.key] = value;
+    sources[q.key] = hit.source;
+  });
+
+  const keys = Object.keys(values);
+  return {
+    version: INTAKE_PREFILL_VERSION,
+    values,
+    sources,
+    count: keys.length,
+    // Fuer die Karte in Quantus: welche Frage woher — lesbar, nicht als ID.
+    labels: keys.map((key) => {
+      const q = qs.find((entry) => entry.key === key) || {};
+      return (q.label || key) + " ← " + (INTAKE_PREFILL_SOURCE_LABELS[sources[key]] || sources[key]);
+    }),
+  };
+}
+
+/* Was davon nach aussen geht: Fassung und Werte, nach Frageschluessel. Keine
+ * Herkunft, keine IDs, nichts Internes. `null`, wenn es nichts vorzubelegen
+ * gibt — ein alter Datensatz ohne dieses Feld und ein neuer ohne Werte sehen
+ * fuer die Seite gleich aus. */
+export function intakePrefillSnapshot(prefill) {
+  const p = prefill && typeof prefill === "object" ? prefill : null;
+  const values = p && p.values && typeof p.values === "object" ? p.values : {};
+  const out = {};
+  Object.keys(values).forEach((key) => {
+    const value = multiline(values[key], 4000);
+    if (value) out[key] = value;
+  });
+  if (!Object.keys(out).length) return null;
+  const version = Number(p.version);
+  return { version: Number.isFinite(version) && version >= 1 ? Math.floor(version) : INTAKE_PREFILL_VERSION, values: out };
+}
+
+// Braucht dieser Fragebogen eine neue Veroeffentlichung, damit die Vorbelegung
+// draussen dem entspricht, was innen bekannt ist? Nur fuer offene Boegen —
+// ein beantworteter oder geschlossener zeigt kein Formular mehr.
+export function intakePrefillStale({ intake = null, prefill = null } = {}) {
+  const form = intake && typeof intake === "object" ? intake : {};
+  if (!isShareToken(form.inviteToken)) return false;
+  if (form.status === "closed" || form.projectId || form.answeredAt) return false;
+  const stored = form.prefill && typeof form.prefill === "object" ? form.prefill : null;
+  if (!stored || Number(stored.version) !== INTAKE_PREFILL_VERSION) return true;
+  if (!prefill) return false;
+  return JSON.stringify(stored.values || {}) !== JSON.stringify(prefill.values || {});
 }
 
 /* ── Kundenportal: Fortschritt, Vorlage, Zustimmung ──────────────────────
@@ -2719,6 +3113,12 @@ export function buildProjectPrompt({
   out.push("");
   out.push("Vorhandenes Material (Texte, Bilder, Logo): "
     + (fromAnswers("content") || "nicht angegeben"));
+  const kundenDateien = normalizeIntakeFiles(doc && doc.files);
+  if (kundenDateien.length) {
+    out.push("");
+    out.push("Von der Kundschaft hochgeladene Dateien (in Quantus am Projekt, Reiter Fragebogen):");
+    kundenDateien.forEach((f) => out.push("- " + f.name + " (" + f.type + ", " + intakeFileSizeLabel(f.size) + ")"));
+  }
   const contentBlocks = (Array.isArray(content) ? content : [])
     .filter((b) => b && b.enabled !== false && String(b.body || "").trim());
   if (contentBlocks.length) {
@@ -4426,6 +4826,12 @@ const API = {
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
   offerBriefingLinkState, offerProjectLinkPlan,
   intakeBinding, projectIntakeLinkState, intakeUpdateForProject,
+  // Dateien im Vision Room: Grenzen, Typen, Metadaten — nie Inhalte.
+  INTAKE_UPLOAD_LIMITS, INTAKE_UPLOAD_TYPES, INTAKE_UPLOAD_MESSAGES, sniffUploadType,
+  isIntakeFileId, intakeFileName, intakeFileSizeLabel, normalizeIntakeFile, normalizeIntakeFiles,
+  // Die Vorbelegung des Kundenlinks: bekannte Angaben, nichts Erfundenes.
+  INTAKE_PREFILL_VERSION, INTAKE_PREFILL_SOURCE_LABELS, isKindQuestion,
+  intakePrefill, intakePrefillSnapshot, intakePrefillStale,
   INTAKE_RESET_CLEARS, INTAKE_RESET_KEEPS, intakeFormGeneration, intakeResetPlan,
   CUSTOMER_AREA_STAGES, CUSTOMER_OFFER_STATUSES, MAX_CUSTOMER_DOCUMENT_BYTES,
   customerOfferIsPublic, customerAreaOffer, customerOfferTile,

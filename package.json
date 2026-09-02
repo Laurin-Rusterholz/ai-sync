@@ -28,7 +28,7 @@
     "test:navigation": "node tests/quantus-navigation-search.test.mjs && node tests/quantus-app-search-runtime.test.mjs",
     "test:sticky-export": "node tests/sticky-board-export.test.mjs && node tests/sticky-board-export-runtime.test.mjs",
     "test:flowertech-portal": "node tests/flowertech-portal-auth.test.mjs && node tests/flowertech-projekt-cockpit.test.mjs",
-    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs && node tests/flowertech-kundenanfrage.test.mjs && node tests/flowertech-zwei-links.test.mjs && node tests/flowertech-offerte-ohne-projekt.test.mjs && node tests/flowertech-projekt-fragebogen.test.mjs && node tests/flowertech-fragebogen-reset.test.mjs && node tests/flowertech-kundenbereich-prompt.test.mjs && node tests/flowertech-standard-agb.test.mjs && node tests/flowertech-claude-rueckgabe.test.mjs"
+    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs && node tests/flowertech-kundenanfrage.test.mjs && node tests/flowertech-zwei-links.test.mjs && node tests/flowertech-offerte-ohne-projekt.test.mjs && node tests/flowertech-projekt-fragebogen.test.mjs && node tests/flowertech-fragebogen-reset.test.mjs && node tests/flowertech-kundenbereich-prompt.test.mjs && node tests/flowertech-standard-agb.test.mjs && node tests/flowertech-claude-rueckgabe.test.mjs && node tests/flowertech-kundenlink-vorbelegung.test.mjs && node tests/flowertech-vision-upload.test.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.11",

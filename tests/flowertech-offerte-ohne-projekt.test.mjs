@@ -251,7 +251,12 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   ok(written[pfad], "der Fragebogen wurde nicht veröffentlicht");
   const veroeffentlicht = JSON.stringify(written[pfad]);
   ok(!veroeffentlicht.includes(doc.id), "die Offerten-ID steht im öffentlichen Fragebogen");
-  ok(!veroeffentlicht.includes("Beiz AG"), "Kontaktdaten stehen im öffentlichen Fragebogen");
+  // Die Kundendaten der Offerte gehen als Vorbelegung hinaus (prefill.values),
+  // damit die Kundschaft sie nicht nochmals abtippt — und ausschliesslich dort.
+  ok(written[pfad].prefill && written[pfad].prefill.values.company === "Beiz AG",
+    "die Firma der Offerte ist auf dem Fragebogen nicht vorbelegt");
+  ok(!JSON.stringify(Object.assign({}, written[pfad], { prefill: null })).includes("Beiz AG"),
+    "Kontaktdaten stehen ausserhalb der Vorbelegung im öffentlichen Fragebogen");
   ok(!veroeffentlicht.includes(intake.id), "die interne Fragebogen-ID steht im öffentlichen Fragebogen");
 
   // Weder Projekt noch Aufgabe noch Kundenportal — der Link erzeugt nichts.
