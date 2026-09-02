@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all · 2026-09-02" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input · 2026-09-02" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -22312,6 +22312,13 @@ window.clearWorkSchedule = function() {
 function renderMain() {
   const { route, id } = parseHash();
   let html = "";
+  // Lead-Freitextfelder aus dem DOM ins Modell holen, BEVOR die Ansicht neu
+  // aufgebaut wird — sonst loescht ein Hintergrund-Render (syncFreshness alle
+  // 30 s) den gerade getippten Text, und ein Commit NACH dem Aufbau haette
+  // veraltetes HTML gezeigt, das der naechste Commit zurueckschreibt.
+  // Danach Fokus und Cursor ins Feld zurueckgeben.
+  const _cglFocus = (typeof chatgptLeadEditingField === "function") ? chatgptLeadEditingField() : null;
+  if (typeof chatgptLeadCommitDom === "function") { try { chatgptLeadCommitDom(document.getElementById("main")); } catch (e) {} }
   
   // Close full-screen overlays that don't match current route
   // Diese Abbauliste schliesst Overlays, wenn man WEGNAVIGIERT. Sie lief aber
@@ -22446,6 +22453,7 @@ function renderMain() {
   const mainEl = $("#main");
   if (mainEl) {
     mainEl.innerHTML = `<div class="page">${html}</div>`;
+    if (_cglFocus && typeof chatgptLeadRestoreFocus === "function") chatgptLeadRestoreFocus(_cglFocus);
     quantusInjectAppNoteAction(mainEl, route, id);
     quantusInjectChatgptSections(mainEl, route, id);
     quantusEnableTagAutocomplete(mainEl);
@@ -49719,19 +49727,87 @@ function chatgptModuleHandleKeydown(e, el, action) {
   }
   return false;
 }
+// ── Persistenz der Lead-Freitextfelder ──────────────────────────────────────
+// Befund (P0): die Texte kamen NUR ueber change (Fokusverlust) ins Modell.
+// Wer bei fokussiertem Feld hart neu lud, wessen Browser-Agent .value setzte,
+// oder wem syncFreshness() alle 30 s die Ansicht neu zeichnete, verlor den
+// Text — Fortschritt und Abschluss lasen danach folgerichtig leere Werte.
+// Jetzt: jede Eingabe (input) landet sofort im Lead, das Speichern ist
+// gebuendelt (scheduleSaveDebounced → wird bei pagehide/visibilitychange
+// mit flushPendingSaves nachgeholt), change bleibt der finale Commit, und
+// vor jedem Render sowie beim Verlassen werden die Felder aus dem DOM
+// uebernommen (chatgptLeadCommitDom) — auch ohne je ein Ereignis.
+const CGL_TEXT_FIELDS = new Set(["blockedReason", "assignmentReason", "handoverPacket"]);
+function chatgptLeadIsTextField(field) {
+  return CGL_STEPS.some(s => s.field === field) || CGL_TEXT_FIELDS.has(field);
+}
+// Schreibt EINEN Wert ins Lead. final=true (change/Commit) trimmt, waehrend
+// des Tippens bleibt der Text roh (sonst frisst die Uebernahme Leerzeichen).
+function chatgptLeadApplyField(l, field, value, final) {
+  if (!l || !chatgptLeadIsTextField(field)) return false;
+  const next = final ? String(value == null ? "" : value).trim() : String(value == null ? "" : value);
+  const cur = String(l[field] == null ? "" : l[field]);
+  if (next === cur) return false;
+  l[field] = next;
+  // Wer einen Schritt dokumentiert, hat den Lead gelesen.
+  if (!l.readAt) l.readAt = nowIso();
+  if (l.status === "neu" && field === "interpretation" && String(l.interpretation || "").trim()) l.status = "verstanden";
+  l.updatedAt = nowIso();
+  scheduleSaveDebounced("cgl-field:" + l.id, final ? 0 : 500);
+  return true;
+}
+// Alle Lead-Felder, die gerade im DOM stehen, ins Modell uebernehmen.
+// Laeuft vor jedem Render und beim Verlassen der Seite; ohne Aenderung
+// passiert nichts (keine unnoetigen Speichervorgaenge).
+function chatgptLeadCommitDom(root) {
+  const scope = root || document;
+  const leads = APP.state && APP.state.data && APP.state.data.entities && APP.state.data.entities.chatgptLeads;
+  if (!leads || !scope || !scope.querySelectorAll) return 0;
+  let changed = 0;
+  scope.querySelectorAll('[data-action="cgl-field"]').forEach(el => {
+    const l = ownEntity(leads, el.dataset.id);
+    if (l && chatgptLeadApplyField(l, el.dataset.field, el.value, false)) changed++;
+  });
+  return changed;
+}
+function chatgptLeadEditingField() {
+  const a = document.activeElement;
+  if (!a || !a.dataset || a.dataset.action !== "cgl-field") return null;
+  let start = null, end = null;
+  try { start = a.selectionStart; end = a.selectionEnd; } catch (e) {}
+  return { id: a.dataset.id, field: a.dataset.field, start, end };
+}
+function chatgptLeadRestoreFocus(info) {
+  if (!info) return;
+  const el = document.querySelector(`[data-action="cgl-field"][data-id="${CSS.escape(info.id)}"][data-field="${CSS.escape(info.field)}"]`);
+  if (!el) return;
+  try { el.focus({ preventScroll: true }); if (info.start != null) el.setSelectionRange(info.start, info.end == null ? info.start : info.end); } catch (e) {}
+}
+function chatgptLeadFlushAll() {
+  try { chatgptLeadCommitDom(document); } catch (e) {}
+  try { flushPendingSaves(); } catch (e) {}
+}
+// Beim Tippen: sofort ins Modell, Fortschritt/Abschluss mitziehen.
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (!el || !el.dataset || el.dataset.action !== "cgl-field") return;
+  const leads = APP.state.data.entities.chatgptLeads || {};
+  const l = ownEntity(leads, el.dataset.id); if (!l) return;
+  if (chatgptLeadApplyField(l, el.dataset.field, el.value, false)) chatgptLeadRefreshBoxes(l.id);
+});
+window.addEventListener("pagehide", chatgptLeadFlushAll);
+window.addEventListener("beforeunload", chatgptLeadFlushAll);
+document.addEventListener("visibilitychange", () => { if (document.hidden) chatgptLeadFlushAll(); });
+window.chatgptLeadApplyField = chatgptLeadApplyField;
+window.chatgptLeadCommitDom = chatgptLeadCommitDom;
+
 function chatgptModuleHandleChange(el) {
   const action = el.dataset.action;
   const leads = APP.state.data.entities.chatgptLeads || {};
   if (action === "cgl-field") {
     const l = ownEntity(leads, el.dataset.id); if (!l) return true;
-    const field = el.dataset.field;
-    if (!CGL_STEPS.some(s => s.field === field) && !["blockedReason", "assignmentReason", "handoverPacket"].includes(field)) return true;
-    l[field] = String(el.value || "").trim();
-    // Wer einen Schritt dokumentiert, hat den Lead gelesen.
-    if (!l.readAt) l.readAt = nowIso();
-    if (l.status === "neu" && field === "interpretation" && l.interpretation) l.status = "verstanden";
-    l.updatedAt = nowIso();
-    scheduleSave();
+    // Finaler Commit (Fokusverlust): trimmen und sofort speichern.
+    chatgptLeadApplyField(l, el.dataset.field, el.value, true);
     chatgptLeadRefreshBoxes(l.id);
     try { renderSidebar(); } catch (err) {}
     return true;
