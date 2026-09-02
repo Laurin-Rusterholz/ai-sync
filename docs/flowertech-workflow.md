@@ -645,6 +645,58 @@ danach auf — er beginnt so mit Art, Idee und Funktionen. Ein Datensatz ohne
 
 Belegt in `tests/flowertech-kundenlink-vorbelegung.test.mjs`.
 
+### 4g-4. Dateien im Vision Room
+
+Die Kundschaft lädt Logos, Bilder, Designentwürfe und andere Referenzdateien
+direkt im Vision Room des Fragebogens hoch — freiwillig, klar beschriftet,
+mehrere auf einmal. Der Weg benutzt die bestehende Firebase-Ablage
+(Storage für die Bytes, RTDB für Metadaten); **im RTDB liegt nie ein Byte der
+Datei und nie Base64.**
+
+```text
+Browser  ─PUT Roh-Bytes─▶  flowertech-upload?e=<token>
+                            │  Typ aus den ersten Bytes, Grösse, Anzahl, Ratenlimit
+                            ├─▶ Storage  flowertech/intakes/<token>/<fileId>.<ext>
+                            └─▶ RTDB     flowertech/intakeUploads/<token>/<fileId>
+                                         { id, name, type, size, storagePath, uploadedAt, status }
+Absenden des Bogens  ─▶  payload.files = [fileId, …]
+                            │  flowertech-portal prüft: eigene, vorhandene Ids
+                            ├─▶ submissions/<id>.payload.files = Metadaten aus der RTDB
+                            └─▶ intakeUploads/<token>/<fileId>.status = "submitted", submissionId
+Quantus  ─▶  project.ftIntakeDocument.files (Referenzen) · Karte · Prompt
+```
+
+| Grenze (`INTAKE_UPLOAD_LIMITS`, gespiegelt auf der Seite) | Wert | Meldung an die Kundschaft |
+| --- | --- | --- |
+| Typen | PNG, JPG/JPEG, WEBP, PDF — erkannt an den Bytes, nicht am Header | „Dieser Dateityp wird nicht unterstützt. Erlaubt sind PNG, JPG, WEBP und PDF." |
+| HEIC/HEIF | **nicht** unterstützt — es gibt keine Umwandlungs-Pipeline | „HEIC-Bilder können wir nicht verarbeiten. Bitte exportieren Sie das Bild als JPG oder PNG." |
+| Grösse | 5 MB pro Datei (Netlify nimmt höchstens 6 MB je Aufruf an) | „Die Datei ist grösser als 5 MB. …" (HTTP 413) |
+| Anzahl | 10 Dateien pro Einladung | „Es sind höchstens 10 Dateien möglich. …" (HTTP 409) |
+| Ratenlimit | 60 Uploads pro Stunde und IP | HTTP 429 |
+| Zugang | nur erlaubte Herkünfte, nur ein **offener** Fragebogen-Token | 401 / 403 / 404 |
+
+**Zuordnung.** Der Token ist die Adresse: Datei → `intakeUploads/<token>` →
+Fragebogen → `intakeBinding()` → Projekt, Anfrage (Lead) oder Offerte. Nach dem
+Absenden trägt der Upload-Eintrag zusätzlich `submissionId`, das
+Anfrage-Dokument am Projekt `files[]` samt `storagePath` unter dem Token, und
+`project.sourceIntakeId` den Fragebogen. Eine Datei unter einem fremden Token
+wird an jeder Stelle verworfen (`normalizeIntakeFiles({ token })`).
+
+**Entfernen** ist möglich, solange die Datei nicht abgesendet ist (DELETE,
+danach HTTP 409). **Anzeigen** in Quantus: Projektkarte, Fragebogen-Detail und
+Offertenansicht listen Name, Typ und Grösse; „Öffnen" holt die Adresse über
+die angemeldete Firebase-Session (`firebaseStorage.ref(path).getDownloadURL()`),
+ausschliesslich unter `flowertech/intakes/`. Der Prompt nennt die Dateien
+unter „Inhalte".
+
+**Manuell nötig, einmalig:** Die Firebase-Storage-Regeln müssen angemeldetes
+Lesen unter `flowertech/intakes/**` erlauben (Schreiben geschieht serverseitig
+über das Dienstkonto und braucht keine Regel). Der veröffentlichte Fragebogen
+(`intakeForms`) trägt von den Dateien nichts.
+
+Belegt in `tests/flowertech-vision-upload.test.mjs` (Kern, Upload-Funktion,
+Eingang, Quantus — alle wirklich ausgeführt, mit RTDB-/Storage-Doppel).
+
 ## 4h. Der Reiter „Claude-Prompt"
 
 Der Reiter zeigt den **vollständigen, automatisch erzeugten Prompt dieses

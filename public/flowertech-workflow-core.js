@@ -1374,7 +1374,7 @@ export function intakeAnswersUsable(questions, answers) {
 }
 
 // Das „erste Dokument": die vollstaendige erste Eingabe, unveraendert.
-export function buildIntakeDocument({ intake = {}, answers = [], now = new Date().toISOString() } = {}) {
+export function buildIntakeDocument({ intake = {}, answers = [], files = [], now = new Date().toISOString() } = {}) {
   return {
     kind: "intake",
     intakeTitle: text(intake.title, 200) || DEFAULT_INTAKE_TITLE,
@@ -1384,6 +1384,10 @@ export function buildIntakeDocument({ intake = {}, answers = [], now = new Date(
       key: a.key, label: a.label, type: a.type, role: a.role || "",
       answer: String(a.answer == null ? "" : a.answer),
     })),
+    // Die im Vision Room hochgeladenen Dateien — als Referenz, nie als Inhalt.
+    // Der Token der Einladung haengt am Pfad; darueber bleibt jede Datei dem
+    // Fragebogen und damit Projekt, Anfrage oder Offerte zuordenbar.
+    files: normalizeIntakeFiles(files, { token: isShareToken(intake.inviteToken) ? intake.inviteToken : "" }),
   };
 }
 
@@ -2329,6 +2333,125 @@ export function intakeUpdateForProject({
   return { patch, client: clientPatch, filled, kept, corrected, vision };
 }
 
+/* ── Dateien im Vision Room ───────────────────────────────────────────────
+ * Logos, Bilder, Designentwuerfe und andere Referenzen kann die Kundschaft
+ * direkt im Vision Room hochladen. Der Weg:
+ *
+ *   Browser → flowertech-upload (Roh-Bytes, kein Base64)
+ *           → Firebase Storage  flowertech/intakes/<token>/<fileId>.<ext>
+ *           → RTDB              flowertech/intakeUploads/<token>/<fileId>
+ *                               (nur Metadaten: id, name, type, size,
+ *                                storagePath, uploadedAt, status)
+ *   Absenden des Bogens → payload.files = [fileId, …]
+ *           → der Eingang haengt die Metadaten an die Einreichung
+ *           → Quantus legt sie am Projekt ab (ftIntakeDocument.files)
+ *
+ * Die Zuordnung ist der Token: Er fuehrt zum Fragebogen, und der zu Projekt,
+ * Anfrage (Lead) oder Offerte (intakeBinding). Im RTDB liegt nie ein Byte der
+ * Datei — nur die Referenz. Der veroeffentlichte Fragebogen
+ * (flowertech/intakeForms) traegt gar nichts davon.
+ *
+ * Grenzen — hier EINMAL, fuer Eingang, Quantus und (gespiegelt) die Seite:
+ * --------------------------------------------------------------------- */
+export const INTAKE_UPLOAD_LIMITS = {
+  maxBytes: 5 * 1024 * 1024,    // 5 MB pro Datei (Netlify nimmt hoechstens 6 MB je Aufruf an)
+  maxFiles: 10,                 // pro Einladung
+  maxNameLength: 120,
+};
+
+// Erlaubte Typen → Dateiendung. HEIC fehlt mit Absicht: Es gibt keine
+// Umwandlungs-Pipeline, und ein HEIC liesse sich weder in Quantus noch in
+// der Vorschau zuverlaessig anzeigen. Die Fehlermeldung sagt, was zu tun ist.
+export const INTAKE_UPLOAD_TYPES = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+};
+
+export const INTAKE_UPLOAD_MESSAGES = {
+  type: "Dieser Dateityp wird nicht unterstützt. Erlaubt sind PNG, JPG, WEBP und PDF.",
+  heic: "HEIC-Bilder können wir nicht verarbeiten. Bitte exportieren Sie das Bild als JPG oder PNG.",
+  size: "Die Datei ist grösser als 5 MB. Bitte verkleinern Sie sie oder wählen Sie eine kleinere Fassung.",
+  count: "Es sind höchstens 10 Dateien möglich. Bitte entfernen Sie eine, um eine andere hochzuladen.",
+  empty: "Die Datei ist leer.",
+  gone: "Eine hochgeladene Datei ist nicht mehr da. Bitte laden Sie sie erneut hoch.",
+};
+
+/* Der Typ aus den ersten Bytes — nicht aus dem, was der Browser behauptet.
+ * Liefert den MIME-Typ, "image/heic" fuer den ausdruecklich abgelehnten Fall
+ * oder "" fuer Unbekanntes. */
+export function sniffUploadType(bytes) {
+  const b = bytes && bytes.length ? bytes : [];
+  const at = (i) => (i < b.length ? b[i] : -1);
+  const ascii = (from, len) => {
+    let s = "";
+    for (let i = from; i < from + len && i < b.length; i++) s += String.fromCharCode(b[i]);
+    return s;
+  };
+  if (at(0) === 0x89 && ascii(1, 3) === "PNG") return "image/png";
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return "image/jpeg";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") return "image/webp";
+  if (ascii(0, 4) === "%PDF") return "application/pdf";
+  if (ascii(4, 4) === "ftyp" && /^(heic|heix|hevc|hevx|mif1|msf1)$/.test(ascii(8, 4))) return "image/heic";
+  return "";
+}
+
+export function isIntakeFileId(value) {
+  return /^f_[A-Za-z0-9_-]{8,40}$/.test(String(value || ""));
+}
+
+// Der Name, wie er gezeigt wird: ohne Pfad, ohne Steuerzeichen, begrenzt.
+export function intakeFileName(value, type) {
+  const base = String(value == null ? "" : value).split(/[\\/]/).pop();
+  const clean = text(base.replace(/[\x00-\x1f\x7f]/g, " "), INTAKE_UPLOAD_LIMITS.maxNameLength);
+  const ext = INTAKE_UPLOAD_TYPES[type] || "";
+  if (clean) return clean;
+  return ext ? "datei." + ext : "datei";
+}
+
+export function intakeFileSizeLabel(size) {
+  const n = Number(size) || 0;
+  if (n >= 1024 * 1024) return (Math.round(n / (1024 * 1024) * 10) / 10).toLocaleString("de-CH") + " MB";
+  if (n >= 1024) return Math.round(n / 1024) + " KB";
+  return n + " B";
+}
+
+/* Metadaten einer Datei — ueberall dieselbe Pruefung: gueltige Id, erlaubter
+ * Typ, Groesse innerhalb der Grenze, Pfad unter dem Token dieser Einladung.
+ * Alles andere wird verworfen, nicht repariert. */
+export function normalizeIntakeFile(raw, { token = "" } = {}) {
+  const f = raw && typeof raw === "object" ? raw : {};
+  const id = String(f.id || "");
+  const type = String(f.type || "");
+  const size = Math.floor(Number(f.size));
+  if (!isIntakeFileId(id) || !INTAKE_UPLOAD_TYPES[type]) return null;
+  if (!Number.isFinite(size) || size <= 0 || size > INTAKE_UPLOAD_LIMITS.maxBytes) return null;
+  const storagePath = String(f.storagePath || "");
+  if (token && storagePath && storagePath.indexOf("flowertech/intakes/" + token + "/") !== 0) return null;
+  return {
+    id,
+    name: intakeFileName(f.name, type),
+    type,
+    size,
+    storagePath: storagePath || "",
+    uploadedAt: String(f.uploadedAt || ""),
+  };
+}
+
+export function normalizeIntakeFiles(list, { token = "" } = {}) {
+  const raw = Array.isArray(list) ? list : [];
+  const seen = new Set();
+  const out = [];
+  raw.forEach((entry) => {
+    const file = normalizeIntakeFile(entry, { token });
+    if (!file || seen.has(file.id)) return;
+    seen.add(file.id);
+    if (out.length < INTAKE_UPLOAD_LIMITS.maxFiles) out.push(file);
+  });
+  return out;
+}
+
 /* ── Vorbelegung des Kundenlinks ─────────────────────────────────────────
  * Was FlowerTech ueber die Kundschaft schon weiss, soll sie nicht ein zweites
  * Mal abtippen muessen: Projekt-/Firmenname, Ansprechperson, E-Mail, Art des
@@ -2990,6 +3113,12 @@ export function buildProjectPrompt({
   out.push("");
   out.push("Vorhandenes Material (Texte, Bilder, Logo): "
     + (fromAnswers("content") || "nicht angegeben"));
+  const kundenDateien = normalizeIntakeFiles(doc && doc.files);
+  if (kundenDateien.length) {
+    out.push("");
+    out.push("Von der Kundschaft hochgeladene Dateien (in Quantus am Projekt, Reiter Fragebogen):");
+    kundenDateien.forEach((f) => out.push("- " + f.name + " (" + f.type + ", " + intakeFileSizeLabel(f.size) + ")"));
+  }
   const contentBlocks = (Array.isArray(content) ? content : [])
     .filter((b) => b && b.enabled !== false && String(b.body || "").trim());
   if (contentBlocks.length) {
@@ -4697,6 +4826,9 @@ const API = {
   quoteRequestIsUsable, quoteRequestLabel, buildQuoteRequestTask, offerSendableState,
   offerBriefingLinkState, offerProjectLinkPlan,
   intakeBinding, projectIntakeLinkState, intakeUpdateForProject,
+  // Dateien im Vision Room: Grenzen, Typen, Metadaten — nie Inhalte.
+  INTAKE_UPLOAD_LIMITS, INTAKE_UPLOAD_TYPES, INTAKE_UPLOAD_MESSAGES, sniffUploadType,
+  isIntakeFileId, intakeFileName, intakeFileSizeLabel, normalizeIntakeFile, normalizeIntakeFiles,
   // Die Vorbelegung des Kundenlinks: bekannte Angaben, nichts Erfundenes.
   INTAKE_PREFILL_VERSION, INTAKE_PREFILL_SOURCE_LABELS, isKindQuestion,
   intakePrefill, intakePrefillSnapshot, intakePrefillStale,

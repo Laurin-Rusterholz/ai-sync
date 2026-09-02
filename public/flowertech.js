@@ -1947,6 +1947,41 @@
      hat damit genau die Daten vor sich, für die der Fragebogen da war. Die
      Offerte selbst bleibt unverändert: Übernommen wird nur auf Klick, und nur
      in Felder, die noch leer sind. */
+  /* ── Dateien aus dem Vision Room ─────────────────────────────────────────
+     Was die Kundschaft hochgeladen hat, steht als Referenz am Anfrage-
+     Dokument (ftIntakeDocument.files) — Name, Typ, Groesse, Ablagepfad. Die
+     Bytes liegen in Firebase Storage; geoeffnet wird ueber die angemeldete
+     Firebase-Session (dieselbe wie fuer QR-Codes und Vorlagen). Die Storage-
+     Regeln muessen dafuer angemeldetes Lesen unter flowertech/intakes/**
+     erlauben. */
+  function intakeFilesHtml(doc) {
+    var core = W();
+    var files = core ? core.normalizeIntakeFiles(doc && doc.files) : [];
+    if (!files.length) return "";
+    return '<div class="ft-intake-files"><h4 class="ft-sub">Dateien der Kundschaft (Vision Room)</h4>' +
+      files.map(function (f) {
+        return '<div class="ft-intake-file"><span>' + esc(f.name) + '</span><span class="mini">' +
+          esc(f.type) + " · " + esc(core.intakeFileSizeLabel(f.size)) + "</span>" +
+          (f.storagePath
+            ? '<button class="btn sm ghost" onclick="window._ftOpenIntakeFile(\'' + attr(f.storagePath) + '\')">Öffnen</button>'
+            : "") +
+          "</div>";
+      }).join("") + "</div>";
+  }
+
+  window._ftOpenIntakeFile = function (storagePath) {
+    var path = String(storagePath || "");
+    if (path.indexOf("flowertech/intakes/") !== 0) return notify("warn", "Datei", "Unbekannter Ablageort.");
+    if (!window.firebaseStorage) return notify("warn", "Datei", "Ohne Firebase-Anmeldung lässt sich die Datei nicht öffnen.");
+    var fenster = window.open ? window.open("", "_blank", "noopener") : null;
+    window.firebaseStorage.ref(path).getDownloadURL().then(function (url) {
+      if (fenster) fenster.location = url; else window.open(url, "_blank", "noopener");
+    }).catch(function (error) {
+      if (fenster) fenster.close();
+      notify("err", "Datei", "Die Datei liess sich nicht öffnen: " + ((error && error.message) || error));
+    });
+  };
+
   function offerIntakeFactsHtml(doc) {
     if (!doc || !doc.projectId) return "";
     var project = projectById(doc.projectId) || {};
@@ -1957,6 +1992,7 @@
     return '<div class="card p-3 mt-2"><h4 class="ft-sub">Kundendaten aus dem Fragebogen</h4>' +
       '<div class="mini">Eingegangen ' + esc(dateTime(intakeDoc.submittedAt)) +
         " · unverändert festgehalten · stehen ebenso am Projekt „" + esc(project.title || "") + "“.</div>" +
+      intakeFilesHtml(intakeDoc) +
       answers.map(function (a) {
         return '<div class="ft-answer"><strong>' + esc(a.label) + "</strong><p>" + esc(a.answer) + "</p></div>";
       }).join("") +
@@ -2456,6 +2492,7 @@
     var answers = doc
       ? '<div class="card p-4 mt-3"><h3>Erstes Dokument — die Antworten</h3><div class="sep"></div>' +
         '<div class="mini">Eingegangen ' + esc(dateTime(doc.submittedAt)) + " · unverändert festgehalten.</div>" +
+        intakeFilesHtml(doc) +
         (doc.answers || []).filter(function (a) { return String(a.answer || "").trim(); }).map(function (a) {
           return '<div class="ft-answer"><strong>' + esc(a.label) + "</strong><p>" + esc(a.answer) + "</p></div>";
         }).join("") +
@@ -4537,6 +4574,8 @@
         : "") +
       '<div class="mini">' + esc(state.explain) + "</div>" +
       intakePrefillLineHtml(intakeOfProject(projectId)) +
+      // Was die Kundschaft im Vision Room hochgeladen hat — direkt am Projekt.
+      intakeFilesHtml((projectById(projectId) || {}).ftIntakeDocument) +
       customerStagesHtml(projectId);
   }
   window._ftProjectIntakeRow = projectIntakeRowHtml;
@@ -4942,7 +4981,7 @@
     if (!core || !project) return false;
     var options = opts || {};
     var doc = core.buildIntakeDocument({
-      intake: intake, answers: answers, now: options.submittedAt || now(),
+      intake: intake, answers: answers, files: options.files || [], now: options.submittedAt || now(),
     });
     var update = core.intakeUpdateForProject({
       project: project, answers: answers, now: now(),
@@ -5150,6 +5189,7 @@
     if (bound) {
       if (!applyIntakeToProject(bound.id, intake, normalized.answers, {
         submittedAt: entry.createdAt || now(),
+        files: payload.files || [],
         logText: "Fragebogen „" + (intake.title || "") + "“ ausgefüllt eingegangen.",
       })) return false;
       intake.projectId = bound.id;
@@ -5165,6 +5205,7 @@
 
     var projectId = createProjectForIntake(intake, normalized.answers, {
       submittedAt: entry.createdAt || now(),
+      files: payload.files || [],
       logText: "Fragebogen „" + (intake.title || "") + "“ ausgefüllt eingegangen.",
     });
     if (!projectId) return false;
@@ -5191,7 +5232,7 @@
     if (!core || !ft) return "";
     var options = opts || {};
     var doc = core.buildIntakeDocument({
-      intake: intake, answers: answers, now: options.submittedAt || now(),
+      intake: intake, answers: answers, files: options.files || [], now: options.submittedAt || now(),
     });
     var built = core.projectFromIntake({ intake: intake, answers: answers, now: now() });
     built.sourceIntakeId = intake.id || null;
@@ -6896,6 +6937,8 @@
     /* Die Stufen des Kundenbereichs: was hinter dem einen Link sichtbar ist —
        und was ausdruecklich noch nicht. Beides steht da, nicht nur das eine. */
     ".ft-prefill{margin-top:6px;padding:6px 8px;border-left:2px solid var(--border);opacity:.9}" +
+    ".ft-intake-files{margin:10px 0}.ft-intake-file{display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border)}" +
+    ".ft-intake-file span:first-child{flex:1;font-weight:600;word-break:break-word}" +
     ".ft-stages{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}" +
     ".ft-stages-head{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;" +
       "color:var(--muted);font-weight:700;margin-bottom:5px}" +

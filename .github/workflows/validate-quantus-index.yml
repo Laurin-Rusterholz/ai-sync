@@ -18,6 +18,7 @@ on:
       - "public/flowertech-workflow-core.js"
       - "netlify/functions/flowertech-*.mjs"
       - "netlify/lib/flowertech-core.mjs"
+      - "netlify/lib/firebase-admin.mjs"
       - "public/flowertech.js"
       - "tests/career-model-learning.test.mjs"
       - "tests/career-model-ideas.test.mjs"
