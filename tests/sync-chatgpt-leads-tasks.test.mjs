@@ -96,7 +96,7 @@ const leadRules = new Function("window",
   sliceConst("const CGL_ASSESSMENT = [") + "\n" +
   'const CGL_ASSIGNEES = { chatgpt:"ChatGPT", cowork:"Claude Cowork" };\n' +
   sliceFn("function chatgptLeadAssessmentTally(a) {") + "\n" +
-  sliceFn("function chatgptLeadLinkCount(lead) {") + "\n" +
+  sliceFn("function chatgptLeadIdList(v) {") + "\n" + sliceFn("function chatgptLeadBacklinkCount(lead) {") + "\n" + sliceFn("function chatgptLeadLinkCount(lead) {") + "\n" +
   sliceFn("function chatgptLeadMissing(lead) {") + "\n" +
   sliceFn("function chatgptLeadDefaultPermissions() {") + "\n" +
   sliceFn("function chatgptLeadNormalizePermissions(p) {") + "\n" +

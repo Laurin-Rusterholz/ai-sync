@@ -59,7 +59,7 @@ const fns = new Function("APP", "window", "document", "nowIso", "scheduleSaveDeb
   sliceFn("function chatgptLeadApplyField(l, field, value, final) {") + "\n" +
   sliceFn("function chatgptLeadCommitDom(root) {") + "\n" +
   sliceFn("function chatgptLeadAssessmentTally(a) {") + "\n" +
-  sliceFn("function chatgptLeadLinkCount(lead) {") + "\n" +
+  sliceFn("function chatgptLeadIdList(v) {") + "\n" + sliceFn("function chatgptLeadBacklinkCount(lead) {") + "\n" + sliceFn("function chatgptLeadLinkCount(lead) {") + "\n" +
   sliceFn("function chatgptLeadMissing(lead) {") + "\n" +
   sliceFn("function chatgptLeadAssignmentDone(lead) {") + "\n" +
   sliceFn("function chatgptLeadProgress(lead) {") + "\n" +

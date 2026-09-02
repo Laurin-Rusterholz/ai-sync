@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input · 2026-09-02" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy · 2026-09-02" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -48989,12 +48989,42 @@ const CGT_TASK_STATES = ["offen", "erledigt", "wartet"];
 
 // fmtDate() erwartet YYYY-MM-DD; Zeitstempel (ISO) vorher auf den Tag kuerzen.
 function cgFmtDay(v) { return fmtDate(String(v || "").slice(0, 10)); }
+// Zaehlt alle Verknuepfungen eines Leads — so, wie die Verknuepfungsanzeige
+// sie zeigt. Befund (P0): ein externer Link war sichtbar, der Abschluss
+// meldete trotzdem "mindestens eine Verknuepfung". Gezaehlt wurden nur
+// linked<Typ>s-Arrays am Lead selbst. Jetzt zaehlen ausserdem:
+//  · externalLinks mit URL (die Anzeige fuehrt sie als Verknuepfung),
+//  · linked<Typ>s, die Firebase als Objekt statt Array zurueckgibt,
+//  · einseitige Alt-Verknuepfungen: ein Element, das den Lead in
+//    linkedChatgptLeads fuehrt, ohne dass der Lead die Gegenseite kennt
+//    (vor dem Rueckfall in linkFieldForKind blieb genau das stehen).
+function chatgptLeadIdList(v) {
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (v && typeof v === "object") return Object.values(v).filter(Boolean);
+  return [];
+}
+function chatgptLeadBacklinkCount(lead) {
+  try {
+    if (!lead || !lead.id || typeof APP === "undefined" || !APP.state || !APP.state.data) return 0;
+    const e = APP.state.data.entities || {};
+    let n = 0;
+    for (const [store, col] of Object.entries(e)) {
+      if (store === "chatgptLeads" || !col || typeof col !== "object" || Array.isArray(col)) continue;
+      for (const item of Object.values(col)) {
+        if (item && typeof item === "object" && chatgptLeadIdList(item.linkedChatgptLeads).includes(lead.id)) n++;
+      }
+    }
+    return n;
+  } catch (e) { return 0; }
+}
 function chatgptLeadLinkCount(lead) {
   if (!lead || typeof lead !== "object") return 0;
   let n = 0;
   for (const [k, v] of Object.entries(lead)) {
-    if (/^linked[A-Z]/.test(k) && Array.isArray(v)) n += v.length;
+    if (/^linked[A-Z]/.test(k)) n += chatgptLeadIdList(v).length;
   }
+  n += chatgptLeadIdList(lead.externalLinks).filter(l => l && typeof l === "object" && String(l.url || "").trim()).length;
+  if (n === 0) n += chatgptLeadBacklinkCount(lead);
   return n;
 }
 // Reine Funktion: was fehlt noch zum Abschliessen? Leere Liste = abschliessbar.
