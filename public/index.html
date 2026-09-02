@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks · 2026-09-01" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all · 2026-09-02" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -3653,6 +3653,9 @@ a[href]:not([class]):hover{text-decoration:underline;text-underline-offset:2px}
     .cgt-row.done .cgt-text{text-decoration:line-through}
     .cgt-row-main{flex:1;min-width:0}
     .cgt-input{margin-top:8px;width:100%;font-size:12px}
+    .cgt-quick-results{position:absolute;left:0;right:0;top:100%;z-index:50;max-height:260px;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+    .cgt-quick-item{padding:8px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)}
+    .cgt-quick-item:hover{background:var(--panel2)}
     .cgm-backlinks{margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px}
     .cgl-assessment{margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--border)}
     .cgl-ass-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px}
@@ -49118,13 +49121,13 @@ function renderChatgptTaskSection(kind, id, opts) {
         <span class="mini">🤖 ChatGPT</span>${badge}
         <span class="mini" style="margin-left:auto">${expanded ? "▲" : "▼"}</span>
       </div>
+      <input type="text" class="cgt-input" placeholder="🪶 ChatGPT-Aufgabe hinterlassen — Enter genügt" data-action="cgt-inline-input" data-kind="${esc(kind)}" data-id="${esc(id)}"${labelAttr} />
       ${open.length ? `<div class="cgt-notice">🤖 ${open.length} offene ChatGPT-Aufgabe${open.length > 1 ? "n" : ""} an diesem Element — Assistent: bitte abarbeiten.</div>` : ""}
       <div class="cgt-body"${expanded ? "" : " hidden"}>
         ${backlinks}
         ${open.map(t => chatgptTaskRow(t, false)).join("")}
         ${done.length ? `<details class="cgt-done-list"><summary class="mini" style="cursor:pointer">Erledigt (${done.length})</summary>${done.map(t => chatgptTaskRow(t, false)).join("")}</details>` : ""}
         ${!tasks.length ? `<div class="mini" style="color:var(--muted)">Keine ChatGPT-Aufgaben.</div>` : ""}
-        <input type="text" class="cgt-input" placeholder="ChatGPT-Aufgabe — Enter genügt (z.B. „Adresse nachtragen“)" data-action="cgt-inline-input" data-kind="${esc(kind)}" data-id="${esc(id)}"${labelAttr} />
       </div>
     </div>`;
 }
@@ -49468,6 +49471,56 @@ function createChatgptLead(title, rawInput) {
 }
 
 // ── ChatGPT-Aufgaben: Sammelansicht ────────────────────────────────────────
+// Element-Suche fuer die Schnellerfassung: alle verknuepfbaren Typen der
+// Registry, Treffer nach Name. Gmail-Nachrichten liegen nicht in entities —
+// dort bleibt das Feld in der Nachricht selbst der Weg.
+function chatgptAnchorSearch(query, limit) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return [];
+  const e = APP.state.data.entities;
+  const out = [];
+  for (const info of entityKindRegistry()) {
+    if (info.linkable === false || info.kind === "chatgptTask") continue;
+    const col = e[info.store];
+    if (!col || typeof col !== "object") continue;
+    for (const item of Object.values(col)) {
+      if (!item || typeof item !== "object" || !item.id || item.deleted === true) continue;
+      const label = entityDisplayLabel(info.kind, item);
+      if (label.toLowerCase().indexOf(q) < 0) continue;
+      out.push({ kind: info.kind, id: item.id, label, icon: info.icon, kindLabel: info.label, rank: label.toLowerCase().indexOf(q) });
+      if (out.length >= 200) break;
+    }
+  }
+  out.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
+  return out.slice(0, limit || 12);
+}
+function chatgptQuickRenderResults(query) {
+  const box = document.getElementById("cgtQuickResults");
+  if (!box) return;
+  const hits = chatgptAnchorSearch(query);
+  if (!hits.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.innerHTML = hits.map(h => `<div class="cgt-quick-item" data-action="cgt-quick-pick" data-kind="${esc(h.kind)}" data-id="${esc(h.id)}" data-label="${esc(h.label)}" data-icon="${esc(h.icon)}">${h.icon} ${esc(h.label)} <span class="mini" style="color:var(--muted)">${esc(h.kindLabel)}</span></div>`).join("");
+  box.hidden = false;
+}
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (el && el.dataset && el.dataset.action === "cgt-quick-anchor") chatgptQuickRenderResults(el.value);
+});
+function chatgptQuickCaptureHtml() {
+  const anchor = APP.state.ui.cgtQuickAnchor || null;
+  return `
+    <div class="card mb-3" id="cgtQuick">
+      <div class="mini mb-2" style="color:var(--muted)">Schnell erfassen: Element suchen und wählen, Auftrag tippen, Enter. Der Anker bleibt für weitere Aufträge stehen.</div>
+      <div class="flex gap-2" style="flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:1;min-width:220px;position:relative">
+          <input type="text" id="cgtQuickAnchor" data-action="cgt-quick-anchor" placeholder="🔍 Element (Organisation, Aufgabe, Person, Mail …)" value="${anchor ? esc(anchor.label) : ""}" autocomplete="off" style="width:100%" />
+          <div id="cgtQuickResults" class="cgt-quick-results" hidden></div>
+        </div>
+        <input type="text" id="cgtQuickText" data-action="cgt-quick-text" placeholder="${anchor ? "Auftrag, z.B. „Adresse nachtragen“ — Enter" : "zuerst ein Element wählen"}" style="flex:2;min-width:240px" ${anchor ? "" : "disabled"} />
+      </div>
+      ${anchor ? `<div class="mini mt-2">Anker: ${anchor.icon || "📄"} <strong>${esc(anchor.label)}</strong> <a href="#" data-action="cgt-quick-clear" title="Anker entfernen">✕</a> · <a href="#" data-action="cgt-goto-anchor" data-kind="${esc(anchor.kind)}" data-id="${esc(anchor.id)}">öffnen</a></div>` : ""}
+    </div>`;
+}
 function viewChatgptTasks() {
   const all = Object.values(APP.state.data.entities.chatgptTasks || {}).filter(t => t && typeof t === "object");
   const open = all.filter(t => t.state === "offen");
@@ -49488,7 +49541,8 @@ function viewChatgptTasks() {
         <p>${open.length} offen · ${waiting.length} wartet · ${done.length} erledigt — Sorgfaltsaufträge am Element, nur für den Assistenten. Nicht Teil der Aufgabenliste.</p>
       </div>
     </div>
-    ${groups || `<div class="mini text-center">Keine offenen ChatGPT-Aufgaben. Anlegen: am Element im Abschnitt „🤖 ChatGPT“ (Enter genügt).</div>`}
+    ${chatgptQuickCaptureHtml()}
+    ${groups || `<div class="mini text-center">Keine offenen ChatGPT-Aufgaben. Anlegen: oben über die Schnellerfassung, am Element im Abschnitt „🤖 ChatGPT“ oder per Rechtsklick auf ein Element.</div>`}
     ${done.length ? `<details class="mt-3"><summary class="mini" style="cursor:pointer">Erledigt (${done.length})</summary><div class="card mt-2">${done.slice(0, 100).map(t => chatgptTaskRow(t, true)).join("")}</div></details>` : ""}
   `;
 }
@@ -49598,6 +49652,25 @@ function chatgptModuleHandleAction(action, el, e) {
       if (!chatgptAnchorOpen(t.anchorKind, t.anchorId)) toast("warn", "Kein Sprungziel", "Für dieses Element gibt es keine Detailansicht.");
       return;
     }
+    case "cgt-quick-pick": {
+      stop();
+      APP.state.ui.cgtQuickAnchor = { kind: el.dataset.kind, id: el.dataset.id, label: el.dataset.label, icon: el.dataset.icon };
+      render();
+      setTimeout(() => $("#cgtQuickText")?.focus(), 30);
+      return;
+    }
+    case "cgt-quick-clear": {
+      stop();
+      APP.state.ui.cgtQuickAnchor = null;
+      render();
+      setTimeout(() => $("#cgtQuickAnchor")?.focus(), 30);
+      return;
+    }
+    case "cgt-goto-anchor": {
+      stop();
+      if (!chatgptAnchorOpen(el.dataset.kind, el.dataset.id)) toast("warn", "Kein Sprungziel", "Für dieses Element gibt es keine Detailansicht.");
+      return;
+    }
   }
 }
 function chatgptModuleHandleKeydown(e, el, action) {
@@ -49610,6 +49683,23 @@ function chatgptModuleHandleKeydown(e, el, action) {
     APP.state.ui.cgtExpanded = `${kind}:${id}`;
     chatgptTaskSectionRefresh(el, kind, id, el.dataset.label);
     setTimeout(() => document.querySelector(`.cgt-section[data-cgt-anchor="${CSS.escape(kind + ":" + id)}"] .cgt-input`)?.focus(), 30);
+    return true;
+  }
+  if (action === "cgt-quick-anchor" && e.key === "Enter") {
+    e.preventDefault();
+    const first = document.querySelector("#cgtQuickResults .cgt-quick-item");
+    if (first) chatgptModuleHandleAction("cgt-quick-pick", first, e);
+    return true;
+  }
+  if (action === "cgt-quick-text" && e.key === "Enter") {
+    e.preventDefault();
+    const anchor = APP.state.ui.cgtQuickAnchor;
+    if (!anchor) { toast("warn", "Kein Anker", "Zuerst ein Element wählen."); return true; }
+    const nid = createChatgptTask(anchor.kind, anchor.id, el.value, { anchorLabel: anchor.label, createdBy: "laurin" });
+    if (!nid) return true;
+    toast("ok", "ChatGPT-Aufgabe angelegt", `${anchor.label}: ${String(el.value).trim().slice(0, 60)}`);
+    render();
+    setTimeout(() => $("#cgtQuickText")?.focus(), 30);
     return true;
   }
   if (action === "cgl-field" && e.key === "Enter" && el.tagName === "INPUT") {
@@ -112357,6 +112447,14 @@ window.addEventListener("hashchange", function(){
       items.push({icon:"👁",label:"Schnellansicht", onClick:()=> window.openSlidePanel(kind,id)});
     if(LINK_KINDS.has(kind) && typeof window.openLinkModal==="function")
       items.push({icon:"🔗",label:"Verknüpfen", onClick:()=> window.openLinkModal(kind,id)});
+    // Sorgfaltsauftrag an den Assistenten — im Vorbeigehen, ohne das Element zu oeffnen.
+    if(typeof window.createChatgptTask==="function" && kind!=="chatgptTask")
+      items.push({icon:"🪶",label:"ChatGPT-Aufgabe", onClick:()=>{
+        const t = prompt("ChatGPT-Aufgabe für " + (name || KIND_LABEL[kind] || kind) + ":");
+        if(!t || !t.trim()) return;
+        const tid = safe(()=> window.createChatgptTask(kind, id, t, { createdBy:"laurin" }));
+        if(tid){ rerender(); notify("ok","ChatGPT-Aufgabe angelegt", t.trim().slice(0,60)); }
+      }});
     if(typeof window.togglePin==="function"){
       const pinned=isPinnedSafe(kind,id);
       items.push({icon:pinned?"📍":"📌",label:pinned?"Lösen":"Anpinnen", onClick:()=>{ window.togglePin(kind,id); rerender(); notify("ok", pinned?"Gelöst":"Angepinnt", KIND_LABEL[kind]||kind); }});
@@ -120582,6 +120680,7 @@ Dateien zu identifizieren.
     if (!S.listeners) {
       S.listeners = true;
       document.addEventListener("keydown", onGlobalKey, true);
+      document.addEventListener("copy", onNoteCopy, true);
       document.addEventListener("selectionchange", onSelChange);
       document.addEventListener("pointerdown", (e) => {
         const m = $("#nf2Menu");
@@ -120653,6 +120752,38 @@ Dateien zu identifizieren.
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
+  }
+
+  // Strg+C nach Strg+A: die Markierung ueberspannt mehrere contenteditable-
+  // Hosts (Titel + jeder Block ist einer). Der Browser kopiert dann nur den
+  // Teil im fokussierten Host — der Rest der Notiz fehlte in der Zwischen-
+  // ablage. Ueberspannt die Markierung mindestens zwei Hosts, bauen wir Text
+  // und HTML der ganzen Markierung selbst (ohne Gutter-Knoepfe).
+  function noteSelectionClipboard(sel) {
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    const box = document.createElement("div");
+    box.appendChild(range.cloneContents());
+    box.querySelectorAll(".nf2-gutter,.nf2-gbtn,.nf2-callout-ic").forEach((n) => n.remove());
+    box.querySelectorAll(".nf2-check").forEach((n) => n.replaceWith(document.createTextNode(n.textContent.trim() ? "☑ " : "☐ ")));
+    box.querySelectorAll(".nf2-hrline").forEach((n) => n.replaceWith(document.createTextNode("---")));
+    const units = Array.from(box.querySelectorAll(".nf2-title, .nf2-block"));
+    if (units.length < 2) return null;   // innerhalb EINES Hosts kopiert der Browser selbst richtig
+    const text = units.map((u) => String(u.textContent || "").replace(/\u00a0/g, " ")).join("\n");
+    const html = units.map((u) => u.classList.contains("nf2-title")
+      ? "<h1>" + u.innerHTML + "</h1>"
+      : "<p>" + ((u.querySelector(".nf2-bc") || u).innerHTML) + "</p>").join("\n");
+    return { text, html };
+  }
+  function onNoteCopy(e) {
+    const c = container();
+    if (!c || !c.classList.contains("active")) return;
+    if (!isNoteflowEditableTarget(document.activeElement)) return;
+    const data = noteSelectionClipboard(window.getSelection());
+    if (!data || !e.clipboardData) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", data.text);
+    e.clipboardData.setData("text/html", data.html);
   }
 
   // ═══ SIDEBAR (Seitenbaum) ═════════════════════════════════════════════════
@@ -120779,17 +120910,23 @@ Dateien zu identifizieren.
     }
 
     if (!searching) {
-      // ── Angepinnte Notizbücher ──
-      const nbs = Object.values(nbMap()).filter((nb) => isNbPinned(nb.id)).sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
-      html += `<div class="nf2-sec">📌 Notizbücher</div>`;
-      if (!nbs.length) html += `<div class="nf2-empty-side">Keine angepinnten Notizbücher</div>`;
+      // ── Notizbücher: ALLE, angepinnte zuoberst ──
+      // Nur Angepinntes zu zeigen liess die Notizbuecher aus der Sidebar
+      // verschwinden; wer keines angepinnt hatte, fand seine Buecher nur noch
+      // ueber "Alle Notizen". Jetzt stehen alle da, angepinnte vorne mit 📌.
+      const nbs = Object.values(nbMap()).sort((a, b) => {
+        const pa = isNbPinned(a.id) ? 0 : 1, pb = isNbPinned(b.id) ? 0 : 1;
+        return pa - pb || String(a.title || "").localeCompare(String(b.title || ""));
+      });
+      html += `<div class="nf2-sec">📓 Notizbücher</div>`;
+      if (!nbs.length) html += `<div class="nf2-empty-side">Keine Notizbücher</div>`;
       nbs.forEach((nb) => {
         const key = collapsedKey("nb", nb.id);
         const isOpen = !!S.open[key];
         const nbNotes = byNb[nb.id] || [];
         html += `<div class="nf2-item nf2-nb" data-nb="${nb.id}">
           <span class="nf2-chev${isOpen ? " open" : ""}" data-chev="${key}">▸</span>
-          <span class="nf2-item-ic">📓</span>
+          <span class="nf2-item-ic">${isNbPinned(nb.id) ? "📌" : "📓"}</span>
           <span class="nf2-item-t">${esc(nb.title || "Notizbuch")}</span>
           <span class="nf2-item-count">${nbNotes.length}</span>
           <button class="nf2-item-add" data-addnote="${nb.id}" title="Seite hinzufügen">＋</button>
