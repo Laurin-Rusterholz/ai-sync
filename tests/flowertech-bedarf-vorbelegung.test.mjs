@@ -14,18 +14,21 @@
  *      Teil der Felder löschte deshalb alle übrigen: ein Formularausschnitt
  *      räumte den gepflegten Rest ab.
  *
- *   3. Der Kundenlink kam leer an. Die Seite (fragebogen.html) liest seit
- *      ihrer Vorbelegung `prefill.values` — Quantus hat dieses Feld aber nie
- *      geschickt.
+ *   3. Der Kundenlink kam trotz Vorbelegung leer an. Sie gibt es seit dem
+ *      01.09.2026 (intakePrefill), sie rechnet aber aus Projekt, Person,
+ *      Anfrage und Offerte — nicht aus dem intern erfassten Bedarf. Solange
+ *      die Kundenakte leer war und der Bedarf (siehe 1.) gar nicht erst
+ *      gespeichert wurde, gab es schlicht nichts vorzubelegen.
  *
  * Bewiesen wird hier:
  *   · Erfasstes wird gespeichert, sobald überhaupt etwas dasteht — und was
  *     schon dastand, bleibt stehen.
  *   · Aufgaben und Leistungsbeschreibung entstehen weiterhin erst, wenn der
  *     Bedarf reif ist (E-Mail und Ziel). Eine Preisofferte entsteht dabei nie.
- *   · Der veröffentlichte Kundenlink trägt Name, Firma, E-Mail und Lieferart —
- *     und NUR, was wirklich hinterlegt ist. Unbekanntes (Telefon, Adresse)
- *     wird nicht erfunden.
+ *   · Der erfasste Bedarf erreicht die Vorbelegung des Kundenlinks — als
+ *     LETZTE Quelle, hinter allem Gepflegten. Unbekanntes (Telefon, Adresse)
+ *     wird nicht erfunden, die Vorgabe des internen Formulars ("Website")
+ *     gilt nicht als Auswahl der Kundschaft.
  *
  * Teil 1 prüft die reine Logik, Teil 2 führt flowertech.js wirklich aus.
  */
@@ -84,92 +87,42 @@ const NOW = "2026-09-07T10:00:00.000Z";
   ok(korrigiert.firstSeenAt === NOW, "die erste Erfassung wird nicht festgehalten");
 }
 
-/* ══ Teil 2 · Die Vorbelegung: nur Bekanntes, nichts Erfundenes ════════════ */
+/* ══ Teil 2 · Der erfasste Bedarf erreicht die Vorbelegung ════════════════
+   Die Vorbelegung des Kundenlinks (intakePrefill) rechnet aus Projekt, Person,
+   Anfrage und Offerte. Was FlowerTech eben erst intern aufgenommen hat, stand
+   in keiner dieser Quellen — solange die Kundenakte leer ist, blieb der Bogen
+   leer. Der Bedarf steht deshalb ZULETZT in der Reihe: Gepflegtes gewinnt. */
 {
   const fragen = CORE.DEFAULT_INTAKE_QUESTIONS;
-  const projekt = {
-    id: "prj_1", title: "Interner Arbeitsname · nicht für die Kundschaft",
-    deliveryType: "website",
-    client: { name: "Jule Dal", company: "FlowerTech", email: "juledal19@gmail.com" },
-  };
-  const values = CORE.intakePrefillValues({ questions: fragen, project: projekt });
-  ok(values.name === "Jule Dal", "die Ansprechperson wird nicht vorbelegt");
-  ok(values.company === "FlowerTech", "die Firma wird nicht vorbelegt");
-  ok(values.email === "juledal19@gmail.com", "die E-Mail wird nicht vorbelegt");
-  ok(values.kind === "Website", `die Lieferart wird nicht vorbelegt: ${values.kind}`);
+  const bedarf = CORE.mergeBriefing(null, {
+    contactName: "Jule Dal", contactEmail: "juledal19@gmail.com", company: "FlowerTech",
+  }, { now: NOW });
 
-  // Unbekanntes wird nicht erfunden — das ist der wichtigste Teil.
-  ok(!("phone" in values), "ein Telefon wird erfunden, obwohl keines hinterlegt ist");
-  ok(!("adresse" in values), "eine Adresse wird erfunden, obwohl keine hinterlegt ist");
-  ok(!("projekt" in values), "der interne Arbeitsname wird der Kundschaft vorgelegt");
-  ok(!("need" in values) && !("budget" in values),
-    "Ziel oder Budget werden vorbelegt — die soll die Kundschaft selbst sagen");
-
-  // Was hinterlegt IST, geht mit: Telefon und Adresse aus der Kundenakte.
-  const mitAdresse = CORE.intakePrefillValues({
-    questions: fragen,
-    project: Object.assign({}, projekt, {
-      client: Object.assign({}, projekt.client, {
-        phone: "079 000 00 00", street: "Blumenweg 3", zip: "8000", city: "Zürich",
-      }),
-    }),
+  const ausBedarf = CORE.intakePrefill({
+    intake: { questions: fragen }, project: { id: "prj_1", client: {} }, briefing: bedarf,
   });
-  ok(mitAdresse.phone === "079 000 00 00", "ein hinterlegtes Telefon wird nicht vorbelegt");
-  ok(mitAdresse.adresse === "Blumenweg 3, 8000 Zürich",
-    `die hinterlegte Adresse wird falsch zusammengesetzt: ${mitAdresse.adresse}`);
+  ok(ausBedarf.values.email === "juledal19@gmail.com",
+    "die intern erfasste E-Mail erreicht die Vorbelegung nicht");
+  ok(ausBedarf.values.name === "Jule Dal" && ausBedarf.values.company === "FlowerTech",
+    "Name oder Firma aus dem Bedarf erreichen die Vorbelegung nicht");
 
-  // Der interne Bedarf ist die zweite Quelle — die gepflegte Kundenakte gewinnt.
-  const ausBedarf = CORE.intakePrefillValues({
-    questions: fragen,
-    project: { id: "prj_2", client: {} },
-    briefing: CORE.mergeBriefing(null, {
-      contactEmail: "juledal19@gmail.com", company: "FlowerTech", deliveryType: "program",
-    }, { now: NOW }),
-  });
-  ok(ausBedarf.email === "juledal19@gmail.com", "der erfasste Bedarf belegt die E-Mail nicht vor");
-  ok(ausBedarf.kind === "Web-Programm", `die Lieferart aus dem Bedarf stimmt nicht: ${ausBedarf.kind}`);
+  // Unbekanntes wird nicht erfunden.
+  ok(!("phone" in ausBedarf.values), "ein Telefon wird erfunden, obwohl keines hinterlegt ist");
+  ok(!("adresse" in ausBedarf.values), "eine Adresse wird erfunden, obwohl keine hinterlegt ist");
+  // Und die Art des Vorhabens nicht aus der Vorgabe des internen Formulars.
+  ok(!("kind" in ausBedarf.values),
+    "die Vorgabe des Bedarfsformulars wird als Auswahl der Kundschaft ausgegeben");
 
-  const vorrang = CORE.intakePrefillValues({
-    questions: fragen,
-    project: { id: "prj_3", client: { email: "akte@flowertech.ch" } },
+  // Die gepflegte Kundenakte hat Vorrang vor dem Bedarf.
+  const vorrang = CORE.intakePrefill({
+    intake: { questions: fragen },
+    project: { id: "prj_2", client: { email: "akte@flowertech.ch" } },
     briefing: CORE.mergeBriefing(null, { contactEmail: "bedarf@flowertech.ch" }, { now: NOW }),
   });
-  ok(vorrang.email === "akte@flowertech.ch", "der Bedarf überstimmt die gepflegte Kundenakte");
-
-  // Ist nichts bekannt, gibt es keine Vorbelegung — der Bogen bleibt wie zuvor.
-  eq(CORE.intakePrefillValues({ questions: fragen, project: { id: "x", client: {} } }), {},
-    "ohne hinterlegte Angaben entsteht trotzdem eine Vorbelegung");
-
-  // Nur, was in das Feld passt: eine Auswahl ohne passende Option bleibt leer.
-  const engeAuswahl = CORE.intakePrefillValues({
-    questions: [{ key: "art", label: "Art", type: "select", options: ["Website", "Web-App"] }],
-    project: { id: "y", deliveryType: "program", client: {} },
-  });
-  eq(engeAuswahl, {}, "es wird eine Option vorbelegt, die es gar nicht gibt");
+  ok(vorrang.values.email === "akte@flowertech.ch", "der Bedarf überstimmt die gepflegte Kundenakte");
 }
 
-/* ══ Teil 3 · Der veröffentlichte Datensatz trägt die Vorbelegung ══════════ */
-{
-  const snapshot = CORE.customerAreaSnapshot({
-    intake: { title: "Ihre Angaben", questions: CORE.DEFAULT_INTAKE_QUESTIONS },
-    project: { id: "prj_1", client: { name: "Jule Dal", email: "juledal19@gmail.com" }, deliveryType: "website" },
-    now: NOW,
-  });
-  ok(snapshot.prefill && snapshot.prefill.version === CORE.INTAKE_PREFILL_VERSION,
-    "der veröffentlichte Datensatz trägt keine Vorbelegung");
-  ok(snapshot.prefill.values.email === "juledal19@gmail.com",
-    "die E-Mail fehlt in der veröffentlichten Vorbelegung");
-
-  // Ohne bekannte Angaben fehlt das Feld ganz: ältere Bögen verhalten sich
-  // unverändert, und ein leeres Objekt landet nicht in der Datenbank.
-  const ohne = CORE.customerAreaSnapshot({
-    intake: { title: "Ihre Angaben", questions: CORE.DEFAULT_INTAKE_QUESTIONS },
-    project: null, now: NOW,
-  });
-  ok(!("prefill" in ohne), "ohne bekannte Angaben steht eine leere Vorbelegung im Datensatz");
-}
-
-/* ══ Teil 4 · Eine halbe Bedingung ist keine Bedingung ═════════════════════
+/* ══ Teil 3 · Eine halbe Bedingung ist keine Bedingung ═════════════════════
    Eine bedingte Frage ohne Wert hiess bisher „sichtbar, solange die andere
    Frage LEER ist". Die Frage verschwand also genau dann, wenn die vorige
    beantwortet war — und fiel damit still aus der Pflichtfeldprüfung. Genau so
@@ -187,7 +140,7 @@ const NOW = "2026-09-07T10:00:00.000Z";
     "eine vollständige Bedingung geht verloren");
 }
 
-/* ══ Teil 5 · Laufzeit: die E-Mail bleibt stehen ═══════════════════════════ */
+/* ══ Teil 4 · Laufzeit: die E-Mail bleibt stehen ═══════════════════════════ */
 let seed = 0;
 function makeSandbox() {
   const data = { entities: { projects: {}, tasks: {}, notes: {} }, flowertech: {}, meta: {} };

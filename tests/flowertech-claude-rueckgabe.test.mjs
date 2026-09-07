@@ -494,27 +494,18 @@ const letzterToast = (win) => win.__toasts[win.__toasts.length - 1] || {};
   // Die Felder, die `fragebogen.html` wirklich anfasst.
   ["schema", "title", "intro", "questions", "status", "company", "stage", "tiles", "updatedAt"]
     .forEach((key) => ok(key in snapshot, `dem Datensatz fehlt „${key}“`));
-  ok(snapshot.prefill && snapshot.prefill.values && typeof snapshot.prefill.values === "object",
-    "dem Datensatz fehlt die Vorbelegung");
   ["testService", "offer", "preview", "contract", "admin", "terms"]
     .forEach((key) => ok(key in snapshot.tiles, `den Kacheln fehlt „${key}“`));
 
   // Und weiterhin nichts Internes — die Positivliste bleibt eine.
   const roh = JSON.stringify(snapshot);
   ok(!roh.includes("prj_lehner"), "die Projekt-ID steht im veröffentlichten Datensatz");
-  /* Vorbelegung (07.09.2026): Die eigenen Angaben der Kundschaft — Name, Firma,
-     E-Mail, Art des Vorhabens — duerfen im Datensatz stehen, damit sie im
-     Kundenlink vorbelegt sind und nicht ein zweites Mal abgetippt werden
-     muessen. Das ist eine bewusste Aenderung dieser Positivliste und geht nur
-     so weit: Sie stehen ausschliesslich in `prefill.values`, es sind
-     ausschliesslich Angaben DIESER Kundschaft ueber sich selbst, und der Link
-     traegt ohnehin nur ihren eigenen Vorgang. Alles Uebrige bleibt draussen —
-     das prueft der Rest dieses Abschnitts unveraendert. */
+  // Die Kontaktdaten der Kundschaft stehen seit der Vorbelegung an genau EINER
+  // Stelle im Datensatz: in prefill.values, damit der Bogen sie vorbelegt.
+  // Sonst nirgends (tests/flowertech-kundenlink-vorbelegung.test.mjs).
   const ohneVorbelegung = JSON.stringify(Object.assign({}, snapshot, { prefill: null }));
   ok(!ohneVorbelegung.includes("rita@lehner.ch"),
     "die Mailadresse der Kundschaft steht ausserhalb der Vorbelegung im Datensatz");
-  ok(Object.values(snapshot.prefill.values).includes("rita@lehner.ch"),
-    "die bekannte Mailadresse fehlt in der Vorbelegung des Kundenlinks");
   ok(!/portalToken|ftContactLog|ftClaudeHandoff|kunde\.html/.test(roh),
     "interne Felder stehen im veröffentlichten Datensatz");
   // Die Rückgabe-Adresse selbst darf hinaus — sie IST die Vorschau. Der Weg

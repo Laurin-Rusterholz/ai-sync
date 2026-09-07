@@ -59,7 +59,8 @@ ok(/if \(typeof logDeletion === 'function'\) logDeletion\(kind, id\);/.test(inde
   'deleteEntity schreibt keinen Grabstein mehr — dann nuetzt der Umweg nichts');
 // getEntityMap muss alle fuenf Arten kennen, sonst gibt deleteEntity still false.
 Object.values(ARTEN).forEach((kind) => {
-  ok(new RegExp('\\b' + kind + ':\\s*e\\.').test(index),
+  // Seit der Entity-Kind-Registry steht die Art als { kind:"account", store:"accounts" }.
+  ok(new RegExp('\\b' + kind + ':\\s*e\\.|kind:"' + kind + '"').test(index),
     `getEntityMap kennt die Art ${kind} nicht — deleteEntity gaebe still false zurueck`);
 });
 

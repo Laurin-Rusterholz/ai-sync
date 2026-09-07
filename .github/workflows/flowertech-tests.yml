@@ -7,10 +7,10 @@
 # dachte: Dieses Repository hat keinen Bauschritt, ein Fehler faellt erst im
 # Browser auf.
 #
-# Bewusst NUR die FlowerTech-Suiten: `npm test` laeuft ueber die ganze App und
-# ist an einer anderen, aelteren Stelle rot (tests/gmail-vacation-responder —
-# die Ferienantwort-Oberflaeche fehlt in index.html). Ein Lauf, der ohnehin rot
-# ist, prueft nichts; diese Auswahl ist gruen und haelt genau das fest.
+# Bewusst nur die FlowerTech-Suiten: Sie laufen in Sekunden und sagen genau
+# etwas ueber diesen Teil. `npm test` prueft die ganze App (und ist ebenfalls
+# gruen) — dauert aber laenger, als es fuer eine Aenderung an FlowerTech
+# braucht.
 name: FlowerTech Tests
 
 on:

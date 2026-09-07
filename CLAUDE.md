@@ -174,6 +174,26 @@ wirkt dann in ganz anderen Ansichten weiter.
 werden — und ein Handler prueft zusaetzlich selbst, ob sein Modul ueberhaupt
 noch sichtbar ist.
 
+### 5. Verknuepfungen laufen ueber EINE Registry — und ein spaeter Patch-Block ueberschreibt `linkEntities`
+
+Welche Entitaetstypen es gibt, weiss `QUANTUS_ENTITY_KINDS` (Block 1, vor
+`getEntityMap`); `entityKindRegistry()` nimmt jede weitere Sammlung unter
+`entities` automatisch dazu. `getEntityMap`, das Verknuepfungs-Modal, die
+Verknuepfungs-Anzeige, `cleanupLinks` und die ChatGPT-Anker lesen nur noch
+diese Liste. Vorher trug jede dieser Stellen eine eigene — und im
+v5-Patch-Block (`linkFieldForKind`, ~Zeile 72850) wird `linkEntities` ein
+zweites Mal definiert: mit einer Whitelist pro Typ-Paar, die fuer Unbekanntes
+`null` liefert. Die Funktion gab dann `true` zurueck, ohne etwas zu verknuepfen.
+Seit dem Rueckfall auf `linked<Typ>s` gilt die Konvention fuer jeden Typ der
+Registry.
+
+**Regel:** Ein neuer Typ kommt in `QUANTUS_ENTITY_KINDS` (Label, Symbol, Route)
+— nicht in eine der alten Listen. Wer ein Feld `linked…` erwartet, prueft
+`typeof window.linkEntities` im Browser, nicht die Definition in Block 1.
+
+Das ChatGPT-Modul (Notes, Leads, ChatGPT-Aufgaben) ist in
+`docs/chatgpt-modul.md` beschrieben.
+
 ## Testen
 
 `npm test` laeuft ohne Netz und ohne Abhaengigkeiten. Die Tests schneiden

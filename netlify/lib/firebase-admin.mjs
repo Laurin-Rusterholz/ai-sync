@@ -214,6 +214,16 @@ export async function firebaseDbSet(path, value, { ifMatch = null } = {}) {
   return { ok: true, conflict: false };
 }
 
+export async function firebaseDbUpdate(path, patch) {
+  const response = await adminFetch(databaseUrl(path), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) throw new Error(`Firebase RTDB PATCH fehlgeschlagen (HTTP ${response.status}).`);
+  return { ok: true };
+}
+
 export async function firebaseDbRemove(path) {
   const response = await adminFetch(databaseUrl(path), { method: "DELETE" });
   if (!response.ok) throw new Error(`Firebase RTDB DELETE fehlgeschlagen (HTTP ${response.status}).`);

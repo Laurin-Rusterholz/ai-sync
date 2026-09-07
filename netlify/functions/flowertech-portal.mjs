@@ -25,13 +25,14 @@
  * server-zu-server-Aufrufe, z. B. aus n8n. Niemals im Client, niemals im Repo.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { firebaseDbGet, firebaseDbSet } from "../lib/firebase-admin.mjs";
+import * as admin from "../lib/firebase-admin.mjs";
 import {
   normalizeBriefing, briefingIsUsable,
   normalizeChangeRequest, changeRequestIsUsable,
   normalizeVisionSubmission, visionIsUsable,
   normalizeQuoteRequest, quoteRequestIsUsable,
   normalizeIntakeQuestions, normalizeIntakeAnswers, intakeAnswersUsable,
+  normalizeIntakeFiles, isIntakeFileId, INTAKE_UPLOAD_LIMITS, INTAKE_UPLOAD_MESSAGES,
   isShareToken, idempotencyKey,
 } from "../../public/flowertech-workflow-core.js";
 
@@ -80,12 +81,12 @@ function clientHash(req) {
   return createHash("sha256").update(`${ip}:${env("FLOWERTECH_RATE_SALT") || "flowertech"}`).digest("hex").slice(0, 24);
 }
 
-async function enforceRateLimit(req) {
+async function enforceRateLimit(req, db) {
   const hour = new Date().toISOString().slice(0, 13).replace(/[-T:]/g, "");
   const path = `flowertech/rateLimits/${clientHash(req)}/${hour}`;
-  const current = Number(await firebaseDbGet(path) || 0);
+  const current = Number(await db.get(path) || 0);
   if (current >= RATE_LIMIT_PER_HOUR) return false;
-  await firebaseDbSet(path, current + 1);
+  await db.set(path, current + 1);
   return true;
 }
 
@@ -102,7 +103,15 @@ function machineCallAuthorized(req) {
   return diff === 0;
 }
 
-export default async (req) => {
+/* Die Firebase-Zugriffe als Abhaengigkeit: Der Test fuehrt den Eingang damit
+   wirklich aus — ohne Netz, mit einem Doppel der RTDB. */
+export function createPortalHandler(deps = {}) {
+  const db = {
+    get: deps.dbGet || admin.firebaseDbGet,
+    set: deps.dbSet || admin.firebaseDbSet,
+    update: deps.dbUpdate || admin.firebaseDbUpdate,
+  };
+  return async (req) => {
   const headers = cors(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (req.method !== "POST") return json(req, { error: "Method not allowed" }, 405);
@@ -171,11 +180,12 @@ export default async (req) => {
   // Fragebogen in der App zurückgesetzt wurde, und geht in den Idempotenz-
   // Schlüssel ein (siehe unten). Fassung 1 ist der Normalfall.
   let intakeGeneration = 1;
+  let intakeFiles = [];
   if (kind === "intake") {
     // Der Fragebogen wird gegen SEINE Fragen geprüft, nicht gegen ein festes
     // Schema: Der veröffentlichte Fragebogen ist die Wahrheit. Was nicht
     // gefragt wurde, kommt nicht durch — das ist die serverseitige Grenze.
-    const published = await firebaseDbGet(`flowertech/intakeForms/${token}`);
+    const published = await db.get(`flowertech/intakeForms/${token}`);
     if (!published || published.status === "closed") {
       return json(req, { error: "Dieser Fragebogen ist nicht (mehr) verfügbar." }, 404);
     }
@@ -193,11 +203,28 @@ export default async (req) => {
         missing: check.missing,
       }, 400);
     }
+    // Die im Vision Room hochgeladenen Dateien: Der Bogen schickt nur ihre
+    // Ids. Jede muss unter DIESEM Token hochgeladen und noch nicht abgesendet
+    // sein — die Metadaten kommen aus der RTDB, nie aus dem Aufruf.
+    const fileIds = Array.isArray(body.payload?.files) ? body.payload.files.map(String) : [];
+    if (fileIds.length > INTAKE_UPLOAD_LIMITS.maxFiles) {
+      return json(req, { error: INTAKE_UPLOAD_MESSAGES.count }, 400);
+    }
+    const uploads = fileIds.length ? (await db.get(`flowertech/intakeUploads/${token}`) || {}) : {};
+    const files = [];
+    for (const id of fileIds) {
+      const entry = isIntakeFileId(id) ? uploads[id] : null;
+      if (!entry || entry.status === "removed") return json(req, { error: INTAKE_UPLOAD_MESSAGES.gone }, 400);
+      files.push(entry);
+    }
+    intakeFiles = normalizeIntakeFiles(files, { token });
+    if (intakeFiles.length !== fileIds.length) return json(req, { error: INTAKE_UPLOAD_MESSAGES.gone }, 400);
     payload = {
       // Bewusst KEINE interne ID: Der Token ist die Zuordnung, und der
       // veröffentlichte Fragebogen soll nichts Internes tragen.
       intakeTitle: String(published.title || ""),
       answers: normalized.answers,
+      files: intakeFiles,
       submittedAt: createdAt,
       source: "kundenanfrage",
     };
@@ -271,26 +298,36 @@ export default async (req) => {
     : String(body.idempotencyKey
       || idempotencyKey({ token, kind, ...payload, title: payload.title || payload.need || payload.idea }))
       .slice(0, 80);
-  const existing = await firebaseDbGet(`flowertech/submissionKeys/${key}`);
+  const existing = await db.get(`flowertech/submissionKeys/${key}`);
   if (existing) return json(req, { ok: true, duplicate: true, submissionId: existing }, 200);
 
-  if (!fromMachine && !await enforceRateLimit(req)) {
+  if (!fromMachine && !await enforceRateLimit(req, db)) {
     return json(req, { error: "Zu viele Anfragen. Bitte später erneut versuchen." }, 429);
   }
 
   const id = `sub_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
   try {
-    await firebaseDbSet(`flowertech/submissions/${id}`, {
+    await db.set(`flowertech/submissions/${id}`, {
       id, token: token || null, kind, payload, createdAt,
       via: fromMachine ? "machine" : "web",
       idempotencyKey: key,
     });
-    await firebaseDbSet(`flowertech/submissionKeys/${key}`, id);
+    await db.set(`flowertech/submissionKeys/${key}`, id);
+    // Die Dateien gehoeren jetzt zu dieser Einreichung: nicht mehr loeschbar,
+    // und die Zuordnung steht auch am Upload-Eintrag selbst.
+    for (const file of intakeFiles) {
+      await db.update(`flowertech/intakeUploads/${token}/${file.id}`, {
+        status: "submitted", submissionId: id, submittedAt: createdAt,
+      });
+    }
     return json(req, { ok: true, submissionId: id }, 201);
   } catch (e) {
     console.error("[flowertech-portal]", e.message);
     return json(req, { error: "Die Angaben konnten nicht gespeichert werden." }, 500);
   }
-};
+  };
+}
+
+export default createPortalHandler();
 
 export const config = { path: "/.netlify/functions/flowertech-portal" };
