@@ -1,0 +1,49 @@
+# Die FlowerTech-Pruefungen laufen bei jeder Aenderung.
+#
+# Anlass (07.09.2026): Drei Befunde am laufenden Betrieb — die intern erfasste
+# E-Mail liess sich nicht speichern, der Kundenlink kam leer an, und die
+# Pflichtfeldanzeige nannte weniger, als wirklich offen war. Die Tests dazu gab
+# es (tests/flowertech-*.test.mjs), ausgefuehrt hat sie aber nur, wer daran
+# dachte: Dieses Repository hat keinen Bauschritt, ein Fehler faellt erst im
+# Browser auf.
+#
+# Bewusst NUR die FlowerTech-Suiten: `npm test` laeuft ueber die ganze App und
+# ist an einer anderen, aelteren Stelle rot (tests/gmail-vacation-responder —
+# die Ferienantwort-Oberflaeche fehlt in index.html). Ein Lauf, der ohnehin rot
+# ist, prueft nichts; diese Auswahl ist gruen und haelt genau das fest.
+name: FlowerTech Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  pruefen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: FlowerTech — Ablauf, Kundenlink, Bedarf
+        run: |
+          npm run test:flowertech-projects
+          npm run test:flowertech-portal
+          npm run test:flowertech-workflow
+          node scripts/flowertech-sync.test.mjs
+
+      # Ohne Bauwerkzeug ist ein Tippfehler erst zur Laufzeit ein Fehler.
+      - name: Die FlowerTech-Dateien sind syntaktisch heil
+        run: |
+          fehler=0
+          for f in public/flowertech.js public/flowertech-workflow-core.js; do
+            node --check "$f" || { echo "FEHLER in $f"; fehler=1; }
+          done
+          exit $fehler

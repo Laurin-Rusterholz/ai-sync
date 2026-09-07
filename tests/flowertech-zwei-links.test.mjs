@@ -385,8 +385,28 @@ const TOKEN = "t".repeat(32);
     ok(/id="visionRoom"/.test(fragebogen), "der Vision Room fehlt im Fragebogen");
     ok(/q\.vision === "idea"/.test(fragebogen) && /q\.vision === "features"/.test(fragebogen),
       "der Vision Room ist nicht an die Fragen des Fragebogens gebunden");
-    const sendungen = (fragebogen.match(/fetch\(/g) || []).length;
-    ok(sendungen === 2, `der Fragebogen sendet an ${sendungen} Stellen statt zweimal (laden + senden)`);
+    /* Wohin die Seite spricht — als AUFZAEHLUNG, nicht als Zahl.
+       Die fruehere Zaehlung ("genau zwei fetch") war eine Zahl ohne Aussage:
+       Sie wurde rot, sobald der Fragebogen etwas Zulaessiges dazubekam — den
+       Mehrfach-Upload des Vision Rooms (hochladen und entfernen) und das Lesen
+       der EIGENEN Website fuer die Verwaltungsansicht. Verboten ist nicht die
+       Anzahl, sondern eine fremde Gegenstelle. Genau das steht jetzt hier. */
+    const erlaubteZiele = [
+      { re: /FORM_BASE/, was: "den eigenen Fragebogen laden" },
+      { re: /UPLOAD_ENDPOINT/, was: "Dateien des Vision Rooms hochladen und entfernen" },
+      { re: /PORTAL_ENDPOINT/, was: "die Antworten senden" },
+      { re: /adressen\[i\]/, was: "die Abschrift der eigenen Website lesen" },
+    ];
+    const aufrufe = lieferbar.match(/(?:window\.)?fetch\([^\n]*/g) || [];
+    ok(aufrufe.length > 0, "die Seite ruft gar nichts mehr ab");
+    aufrufe.forEach((zeile) => {
+      ok(erlaubteZiele.some((ziel) => ziel.re.test(zeile)),
+        `der Fragebogen sendet an eine unbekannte Stelle: ${zeile.trim().slice(0, 80)}`);
+    });
+    // Und jede erlaubte Stelle wird auch wirklich noch gebraucht.
+    erlaubteZiele.forEach((ziel) => {
+      ok(aufrufe.some((zeile) => ziel.re.test(zeile)), `der Fragebogen kann nicht mehr: ${ziel.was}`);
+    });
 
     // Phase 2 zeigt nichts ohne Freigabe.
     ok(/data\.published === false/.test(kunde),

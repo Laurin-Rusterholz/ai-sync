@@ -231,15 +231,30 @@ const VERSENDET = {
     offers: [VERSENDET, { status: "draft", title: "Geheimer Entwurf" }],
     offerAmount: 4500, company: { name: "FlowerTech" }, now: "2026-08-09T10:00:00.000Z",
   });
-  const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "generation",
-    "stage", "tiles", "updatedAt"];
+  const erlaubt = ["schema", "title", "intro", "questions", "prefill", "status", "company",
+    "generation", "stage", "tiles", "updatedAt"];
   Object.keys(snapshot).forEach((key) => {
     ok(erlaubt.includes(key), `der Kundenbereich trägt das Feld „${key}“`);
   });
   const roh = JSON.stringify(snapshot);
   ok(!roh.includes("prj_1"), "die Projekt-ID steht im Kundenbereich");
   ok(!roh.includes("Geheimer Entwurf"), "ein Offerten-ENTWURF steht im Kundenbereich");
-  ok(!roh.includes("rita@lehner.ch"), "die Mailadresse der Kundschaft steht im Kundenbereich");
+  /* Vorbelegung (07.09.2026): Die eigenen Angaben der Kundschaft — Name, Firma,
+     E-Mail, Art des Vorhabens — duerfen im Datensatz stehen, damit sie im
+     Kundenlink vorbelegt sind und nicht ein zweites Mal abgetippt werden
+     muessen. Das ist eine bewusste Aenderung dieser Positivliste und geht nur
+     so weit: Sie stehen ausschliesslich in `prefill.values`, es sind
+     ausschliesslich Angaben DIESER Kundschaft ueber sich selbst, und der Link
+     traegt ohnehin nur ihren eigenen Vorgang. Alles Uebrige bleibt draussen —
+     das prueft der Rest dieses Abschnitts unveraendert. */
+  const ohneVorbelegung = JSON.stringify(Object.assign({}, snapshot, { prefill: null }));
+  ok(!ohneVorbelegung.includes("rita@lehner.ch"),
+    "die Mailadresse der Kundschaft steht ausserhalb der Vorbelegung im Kundenbereich");
+  ok(Object.values(snapshot.prefill.values).includes("rita@lehner.ch")
+    && Object.values(snapshot.prefill.values).includes("Lehner GmbH"),
+    "E-Mail und Firma fehlen in der Vorbelegung");
+  // Das Budget ist eine interne Zahl und gehört auch nicht in die Vorbelegung.
+  ok(!roh.includes("30000"), "der Budgetrahmen steht im Kundenbereich");
   ok(!roh.includes("intern"), "ein interner Verlaufseintrag steht im Kundenbereich");
   ok(!/portalToken|termsConsent|ftContract|kunde\.html/.test(roh),
     "Vertrag, AGB oder Kundenportal stehen im Kundenbereich");

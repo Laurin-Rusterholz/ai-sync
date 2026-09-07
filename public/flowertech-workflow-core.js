@@ -464,6 +464,68 @@ export function briefingIsUsable(briefing) {
   return !!(briefing && briefing.contactEmail && briefing.goal && briefing.goal.length >= 10);
 }
 
+/* Traegt dieser Bedarf ueberhaupt etwas? Gebraucht, um zu entscheiden, ob es
+ * etwas zu speichern gibt — nicht, ob es fuer den naechsten Schritt reicht. */
+export function briefingHasContent(briefing) {
+  const b = briefing || {};
+  return BRIEFING_FIELDS.some(({ key }) => {
+    const value = b[key];
+    if (Array.isArray(value)) return value.length > 0;
+    if (value == null) return false;
+    // deliveryType hat immer einen Wert (Vorgabe "website") und zaehlt deshalb
+    // nicht als Inhalt — sonst waere ein leeres Formular "ausgefuellt".
+    if (key === "deliveryType") return false;
+    return String(value).trim() !== "";
+  });
+}
+
+/* Was fuer den naechsten Schritt (Aufgaben, Leistungsbeschreibung) noch fehlt —
+ * als Beschriftungen, damit die Oberflaeche es benennen kann statt pauschal
+ * "E-Mail und Ziel werden benoetigt" zu melden. */
+export function briefingMissingFields(briefing) {
+  const b = briefing || {};
+  const fehlt = [];
+  if (!b.contactEmail) fehlt.push("E-Mail");
+  if (!b.goal || b.goal.length < 10) fehlt.push("Ziel");
+  return fehlt;
+}
+
+/* Bestehenden Bedarf mit neuen Eingaben zusammenfuehren.
+ * ---------------------------------------------------------------------------
+ * Befund (07.09.2026): Die intern erfasste E-Mail liess sich nicht speichern —
+ * sie stand nach dem Uebernehmen wieder leer da. Zwei Ursachen, beide hier:
+ *
+ *   1. Gespeichert wurde ALLES oder NICHTS. Wer die E-Mail eintrug, aber das
+ *      Ziel noch nicht kannte, verlor die E-Mail wieder (siehe applyBriefing
+ *      in flowertech.js).
+ *   2. normalizeBriefing() baut jedes Feld neu auf. Ein Aufruf mit nur einem
+ *      Teil der Felder loeschte damit alle uebrigen — ein Formular, das nur
+ *      einen Ausschnitt zeigt, raeumte den Rest ab.
+ *
+ * Diese Funktion fuellt fehlende oder leere Eingaben aus dem bestehenden Stand
+ * auf und normalisiert erst danach. Sie ueberschreibt nur, was wirklich neu
+ * eingetragen wurde. */
+export function mergeBriefing(current, raw, { now = new Date().toISOString() } = {}) {
+  const base = current && typeof current === "object" ? current : {};
+  const incoming = raw && typeof raw === "object" ? raw : {};
+  const leer = (value) => {
+    if (value == null) return true;
+    if (Array.isArray(value)) return value.length === 0;
+    return String(value).trim() === "";
+  };
+  const merged = {};
+  BRIEFING_FIELDS.forEach(({ key }) => {
+    const value = Object.prototype.hasOwnProperty.call(incoming, key) ? incoming[key] : undefined;
+    merged[key] = leer(value) ? base[key] : value;
+  });
+  merged.source = text(incoming.source, 40) || text(base.source, 40) || "form";
+  const out = normalizeBriefing(merged, { now });
+  // Wann der Bedarf zuerst erfasst wurde, bleibt stehen; submittedAt ist der
+  // Stand der letzten Aenderung.
+  out.firstSeenAt = text(base.firstSeenAt, 40) || text(base.submittedAt, 40) || now;
+  return out;
+}
+
 // Aus der Antwort werden strukturierte Projektfelder. Bewusst konservativ:
 // vorhandene, gepflegte Werte werden nicht überschrieben.
 export function projectFieldsFromBriefing(briefing, current = {}) {
@@ -1277,6 +1339,76 @@ function slug(value, fallback) {
   return out || fallback;
 }
 
+/* ── Vorbelegung des Kundenlinks ─────────────────────────────────────────
+ * Befund (07.09.2026): Die Kundschaft bekam einen leeren Bogen, obwohl Name,
+ * Firma, E-Mail und die Art des Vorhabens intern laengst erfasst waren. Die
+ * Seite (fragebogen.html) liest seit ihrer Vorbelegung `prefill.values` — nur
+ * geschickt hat Quantus dieses Feld nie.
+ *
+ * Grundsatz: Es wird ausschliesslich weitergegeben, was wirklich hinterlegt
+ * ist. Nichts wird erraten, nichts zusammengesetzt, was nicht dasteht — ein
+ * erfundenes Telefon oder eine erfundene Adresse waere schlimmer als ein
+ * leeres Feld. Und alles bleibt aenderbar: Beim Senden zaehlt, was die
+ * Kundschaft im Feld stehen laesst.
+ *
+ * Weitergegeben werden nur die Angaben der Kundschaft ueber sich selbst
+ * (Kontaktrollen, Projektname) und die Art des Vorhabens. Interne Zahlen —
+ * Budget, bisher bezahlter Preis, Notizen — gehoeren nicht in einen oeffentlich
+ * lesbaren Datensatz.
+ * --------------------------------------------------------------------- */
+export const INTAKE_PREFILL_VERSION = 1;
+
+// Die Auswahl "Was brauchen Sie?" heisst im Bogen anders als im Projekt.
+export const DELIVERY_OPTION_LABELS = { website: "Website", program: "Web-Programm" };
+const DELIVERY_OPTION_HINTS = ["Website", "Web-Programm", "Web-App"];
+
+// Ist das die Frage nach der Art des Vorhabens? Erkannt wird sie an ihren
+// Optionen — genau wie im Fragebogen selbst, damit beide dieselbe Frage
+// meinen, auch wenn ihr Schluessel anders lautet.
+function istLieferartFrage(q) {
+  if (!q || q.type !== "select") return false;
+  return (q.options || []).filter((o) => DELIVERY_OPTION_HINTS.includes(String(o))).length >= 2;
+}
+
+export function intakePrefillValues({ questions = [], project = null, briefing = null } = {}) {
+  const qs = normalizeIntakeQuestions(questions);
+  const item = project && typeof project === "object" ? project : {};
+  const client = item.client && typeof item.client === "object" ? item.client : {};
+  const b = briefing && typeof briefing === "object" ? briefing : {};
+  const ort = [text(client.zip, 20), text(client.city, 80)].filter(Boolean).join(" ");
+  const adresse = [text(client.street, 120), ort].filter(Boolean).join(", ");
+  /* Der interne Bedarf ist die zweite Quelle: Was dort erfasst wurde, steht
+     oft schon da, bevor die Kundenakte gepflegt ist. Die Kundenakte hat
+     Vorrang — sie ist die gepflegte Fassung. */
+  const nachRolle = {
+    /* Der Projektname wird BEWUSST nicht vorbelegt. Er ist nach der ersten
+       Antwort ein interner Arbeitsname (er wird umbenannt, er traegt manchmal
+       einen Vermerk) — er gehoert dem Vorgang, nicht der Kundschaft. Ein
+       zurueckgesetzter Bogen zeigte damit den alten internen Titel. Firma und
+       Ansprechperson genuegen; den Namen des Vorhabens sagt die Kundschaft
+       selbst. */
+    company: text(client.company, 160) || text(b.company, 160),
+    contactName: text(client.name, 120) || text(b.contactName, 120),
+    contactEmail: text(client.email, 160) || text(b.contactEmail, 160),
+    contactPhone: text(client.phone, 60) || text(b.contactPhone, 60),
+    address: adresse,
+  };
+  const art = ["website", "program"].includes(item.deliveryType) ? item.deliveryType
+    : (["website", "program"].includes(b.deliveryType) ? b.deliveryType : "");
+  const values = {};
+  qs.forEach((q) => {
+    let value = nachRolle[q.role] || "";
+    if (!value && art && istLieferartFrage(q)) value = DELIVERY_OPTION_LABELS[art] || "";
+    if (!value) return;
+    // Nur, was in das Feld passt — sonst stuende dort etwas, das die Seite
+    // ohnehin verwerfen muesste.
+    if (q.type === "select" && !(q.options || []).includes(value)) return;
+    if (q.type === "date" || q.type === "number") return;
+    values[q.key] = value;
+  });
+  return values;
+}
+
 export function normalizeIntakeQuestions(raw) {
   const list = Array.isArray(raw) ? raw : [];
   const seen = new Set();
@@ -1302,8 +1434,18 @@ export function normalizeIntakeQuestions(raw) {
       vision: q.vision === "idea" || q.vision === "features" ? q.vision : "",
       /* Bedingte Frage: Sie erscheint nur, wenn eine andere Frage einen
          bestimmten Wert traegt. Ohne showIf ist die Frage immer da — dieses
-         Feld aendert an bestehenden Fragebogen also nichts. */
-      showIf: q.showIf && typeof q.showIf === "object" && text(q.showIf.key, 60)
+         Feld aendert an bestehenden Fragebogen also nichts.
+
+         Es braucht BEIDES: Schluessel und Wert. Eine Bedingung mit leerem Wert
+         hiess bisher "sichtbar, solange die andere Frage LEER ist" — die Frage
+         verschwand also genau dann, wenn die Kundschaft die vorhergehende
+         beantwortet hatte. Sie war damit auch aus der Pflichtfeldpruefung
+         verschwunden: Der Bogen meldete eine Pflichtangabe nicht mehr als
+         fehlend, obwohl nie etwas eingetragen worden war (Befund 07.09.2026 am
+         Kundenlink, Blatt 2). Eine halb ausgefuellte Bedingung ist keine
+         Bedingung — die Frage steht dann einfach immer da. */
+      showIf: q.showIf && typeof q.showIf === "object"
+        && text(q.showIf.key, 60) && text(q.showIf.value, 200)
         ? { key: slug(q.showIf.key, ""), value: text(q.showIf.value, 200) }
         : null,
     });
@@ -2212,18 +2354,26 @@ export function customerAreaSnapshot({
   intake = null, project = null, offers = [], offerAmount = null,
   offerDocumentHtml = "", offerDocumentUrl = "", prompt = null,
   company = {}, questions = null, now = new Date().toISOString(), today = "",
-  contractHtml = "", contractTitle = "",
+  contractHtml = "", contractTitle = "", briefing = null,
 } = {}) {
   const form = intake && typeof intake === "object" ? intake : {};
   const area = customerAreaState({
     project, intake: form, offers, offerAmount, offerDocumentHtml, offerDocumentUrl, prompt, today,
     contractHtml, contractTitle,
   });
+  const fragen = normalizeIntakeQuestions(questions || form.questions || []);
+  /* Was FlowerTech ueber diese Kundschaft schon weiss, geht mit — damit sie es
+     nicht ein zweites Mal abtippt. Nur Hinterlegtes; ist nichts bekannt, fehlt
+     das Feld ganz und die Seite verhaelt sich wie zuvor. */
+  const vorbelegt = intakePrefillValues({ questions: fragen, project, briefing });
   return {
     schema: 1,
     title: text(form.title, 200) || DEFAULT_INTAKE_TITLE,
     intro: multiline(form.intro, 2000) || DEFAULT_INTAKE_INTRO,
-    questions: normalizeIntakeQuestions(questions || form.questions || []),
+    questions: fragen,
+    ...(Object.keys(vorbelegt).length
+      ? { prefill: { version: INTAKE_PREFILL_VERSION, values: vorbelegt } }
+      : {}),
     status: form.status === "closed" ? "closed" : (form.projectId ? "answered" : "open"),
     company: { name: text(company && company.name, 120) || "FlowerTech" },
     generation: intakeFormGeneration(form),
@@ -4408,6 +4558,8 @@ const API = {
   DELIVERY_TYPES, deliveryLabel,
   CHANGE_STATUSES, changeStatusLabel,
   BRIEFING_FIELDS, normalizeBriefing, briefingIsUsable, projectFieldsFromBriefing, buildBriefingTasks,
+  mergeBriefing, briefingHasContent, briefingMissingFields,
+  INTAKE_PREFILL_VERSION, DELIVERY_OPTION_LABELS, intakePrefillValues,
   normalizeChangeRequest, changeRequestIsUsable, buildChangeRequestTask, changeStatusFromTask,
   ROUTES, routeLabel, routeOf, routeIsExplicit, routeSkipsOffer, offerDecisionState,
   OFFER_ATTACHMENTS, isHttpUrl, offerAttachmentState,

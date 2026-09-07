@@ -366,8 +366,26 @@ function beantwortetesProjekt(extra = {}, antworten = {}) {
   const veroeffentlicht = JSON.stringify(written[pfad]);
   ok(!veroeffentlicht.includes("prj_lehner") && !veroeffentlicht.includes(intake.id),
     "der öffentliche Fragebogen trägt nach dem Zurücksetzen interne IDs");
-  ok(!/Antwort |TESTEINGABE|test@test\.ch/.test(veroeffentlicht),
+  /* Der Bogen selbst ist leer — keine Antwort, kein Antwortblock. */
+  const ohneVorbelegung = JSON.stringify(
+    Object.assign({}, written[pfad], { prefill: null }));
+  ok(!/Antwort |TESTEINGABE/.test(ohneVorbelegung),
     "der öffentliche Fragebogen trägt die alten Antworten — er ist nicht leer");
+  ok(!ohneVorbelegung.includes("test@test.ch"),
+    "die Mailadresse steht ausserhalb der Vorbelegung im zurückgesetzten Bogen");
+  ok(!(written[pfad].answers || written[pfad].submission),
+    "der zurückgesetzte Bogen trägt weiterhin einen Antwortblock");
+  /* Die Kontaktangaben der Kundschaft sind KEINE alte Antwort in diesem Sinn:
+     Sie stehen in der Kundenakte und werden seit der Vorbelegung (07.09.2026)
+     wieder ins Feld geschrieben — ein zurückgesetzter Bogen soll nicht
+     verlangen, dass jemand seinen eigenen Namen ein zweites Mal eintippt.
+     Aber nur diese Angaben: Kontakt und Art des Vorhabens, nichts sonst. */
+  const erlaubteVorbelegung = ["company", "name", "email", "phone", "adresse", "kind"];
+  Object.keys((written[pfad].prefill || {}).values || {}).forEach((key) => {
+    ok(erlaubteVorbelegung.includes(key), `die Vorbelegung trägt das Feld „${key}“`);
+  });
+  ok(((written[pfad].prefill || {}).values || {}).email === "test@test.ch",
+    "die bekannte Mailadresse fehlt in der Vorbelegung des zurückgesetzten Bogens");
   ok(!/kunde\.html|portalToken|ftTemplate|ftContract|termsConsent/.test(veroeffentlicht),
     "der öffentliche Fragebogen trägt Vorschau, Vertrag, AGB oder Kundenportal");
 }

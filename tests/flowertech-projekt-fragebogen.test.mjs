@@ -318,8 +318,11 @@ const vollstaendig = (win, intakeId, overrides = {}) => {
   // Eingang eine Antwort nach einem Zurücksetzen nicht für eine Wiederholung
   // der alten hält. „stage" und „tiles" tragen den mitwachsenden Kundenbereich;
   // auf Stufe 1 sind alle Kacheln leer. Nichts davon ist intern.
-  const erlaubt = ["schema", "title", "intro", "questions", "status", "company", "generation",
-    "stage", "tiles", "updatedAt"];
+  // „prefill" traegt, was FlowerTech ueber DIESE Kundschaft schon weiss (Name,
+  // Firma, E-Mail, Art des Vorhabens) — damit sie es nicht zweimal eintippt.
+  // Nur Hinterlegtes, nichts Erfundenes, nichts Internes.
+  const erlaubt = ["schema", "title", "intro", "questions", "prefill", "status", "company",
+    "generation", "stage", "tiles", "updatedAt"];
   Object.keys(written[pfad]).forEach((key) => {
     ok(erlaubt.includes(key), `der öffentliche Fragebogen trägt das Feld „${key}“`);
   });
