@@ -3324,14 +3324,26 @@
   // Aus einer Antwort werden strukturierte Projektfelder UND normale
   // Quantus-Aufgaben. Keine eigene Aufgabenart — deshalb erscheinen sie
   // automatisch in der zentralen Aufgaben-App.
+  /* Befund (07.09.2026): Die intern eingetragene E-Mail stand nach dem
+     Uebernehmen wieder leer da. Der Grund sass hier: Ohne Ziel (mindestens
+     zehn Zeichen) galt der ganze Bedarf als unbrauchbar und wurde VERWORFEN —
+     samt der eben erfassten E-Mail. Beim naechsten Aufbau der Ansicht las das
+     Formular den (leeren) gespeicherten Stand und zeigte ein leeres Feld.
+
+     Jetzt gilt: Erfasstes wird gespeichert, sobald ueberhaupt etwas dasteht.
+     Zusammengefuehrt wird mit dem bestehenden Stand (mergeBriefing) — ein
+     Formularausschnitt raeumt den Rest nicht mehr ab. Was fuer den naechsten
+     Schritt fehlt, wird benannt statt pauschal abgelehnt; Aufgaben und
+     Leistungsbeschreibung entstehen weiterhin erst, wenn der Bedarf reif ist
+     (E-Mail und Ziel). Preise entstehen dabei keine — zuerst der Bedarf. */
   function applyBriefing(projectId, raw, options) {
     var core = W();
     var ft = wf();
     var project = projectById(projectId);
     if (!core || !ft || !project) return 0;
-    var briefing = core.normalizeBriefing(raw, { now: now() });
-    if (!core.briefingIsUsable(briefing)) {
-      notify("warn", "Bedarf", "E-Mail und Ziel werden benötigt");
+    var briefing = core.mergeBriefing(ft.briefings[projectId], raw, { now: now() });
+    if (!core.briefingHasContent(briefing)) {
+      notify("warn", "Bedarf", "Es ist noch nichts eingetragen.");
       return 0;
     }
     ft.briefings[projectId] = briefing;
@@ -3340,19 +3352,23 @@
     Object.keys(patch).forEach(function (key) { project[key] = patch[key]; });
     project.updatedAt = now();
 
+    var reif = core.briefingIsUsable(briefing);
     var created = 0;
-    if (options && options.createTasks) created = createBriefingTasks(projectId, briefing);
+    if (reif && options && options.createTasks) created = createBriefingTasks(projectId, briefing);
 
     // Leistungsbeschreibung als Startvorlage erzeugen, sofern noch keine da ist.
-    if (!ft.contentDocs[projectId]) {
+    if (reif && !ft.contentDocs[projectId]) {
       ft.contentDocs[projectId] = core.buildServiceDescription(project, briefing, companyContext(projectId));
     }
-    if (core.stageIndex(project.pipelineStage) < core.stageIndex("intake")) {
+    if (reif && core.stageIndex(project.pipelineStage) < core.stageIndex("intake")) {
       project.pipelineStage = "intake";
     }
     save();
     refreshClientPortal(projectId);
-    notify("ok", "Bedarf", created ? ("Übernommen · " + created + " Aufgaben erstellt") : "Bedarf übernommen");
+    var fehlt = core.briefingMissingFields(briefing);
+    notify(reif ? "ok" : "warn", "Bedarf", reif
+      ? (created ? ("Übernommen · " + created + " Aufgaben erstellt") : "Bedarf übernommen")
+      : ("Gespeichert · für Aufgaben fehlt noch: " + fehlt.join(", ")));
     rerender();
     return created;
   }
@@ -5965,13 +5981,35 @@
       status + decisionBlock + "</div>";
   }
 
+  /* Was am Projekt schon gepflegt ist, gehoert auch ins Bedarfsformular.
+     Sonst stand die Vertriebs-E-Mail in der Kundenakte, das Feld daneben aber
+     leer — und wer nichts eintrug, veroeffentlichte einen leeren Kundenlink.
+     Der erfasste Bedarf hat Vorrang; ergaenzt wird nur, was dort fehlt. */
+  function briefingVorgabe(projectId) {
+    var project = projectById(projectId);
+    if (!project) return {};
+    var client = (project.client && typeof project.client === "object") ? project.client : {};
+    return {
+      contactName: client.name || "",
+      contactEmail: client.email || "",
+      contactPhone: client.phone || "",
+      company: client.company || "",
+      deliveryType: project.deliveryType || "",
+      budget: project.budget == null ? "" : project.budget,
+      currentProviderPrice: project.currentProviderPrice == null ? "" : project.currentProviderPrice,
+      deadline: project.dueDate || "",
+    };
+  }
+
   function briefingFormHtml(projectId) {
     var core = W();
     if (!core) return "";
     var briefing = briefingOf(projectId) || {};
+    var vorgabe = briefingVorgabe(projectId);
     var fields = core.BRIEFING_FIELDS.map(function (field) {
       var value = briefing[field.key];
       if (Array.isArray(value)) value = value.join("\n");
+      if (value == null || value === "") value = vorgabe[field.key];
       if (value == null) value = "";
       var hint = field.hint ? '<small class="ft-hint">' + esc(field.hint) + "</small>" : "";
       var input;
@@ -5990,6 +6028,8 @@
     return '<div class="ft-brief-grid">' + fields + "</div>" +
       '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftSaveBriefing(\'' + attr(projectId) +
       '\')">Bedarf übernehmen &amp; Aufgaben erstellen</button></div>' +
+      '<div class="mini mt-2">Jede Eingabe wird gespeichert, auch wenn der Bedarf noch nicht ' +
+      "vollständig ist. Aufgaben entstehen, sobald E-Mail und Ziel dastehen.</div>" +
       '<div class="mini mt-2">Aus den Angaben entstehen Projektfelder und ganz normale Quantus-Aufgaben — ' +
       "sie erscheinen automatisch in der zentralen Aufgaben-App.</div>";
   }
