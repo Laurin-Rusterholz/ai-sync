@@ -265,20 +265,29 @@ export function standardTermsTile() {
   };
 }
 
-/* ── Die zwei Links, die zwei Phasen ─────────────────────────────────────
- * Der ganze Kundenablauf hat GENAU ZWEI oeffentliche Links, und sie duerfen
- * nie miteinander verwechselt werden:
+/* ── Die EINE Kundenadresse (und der alte zweite Link) ───────────────────
+ * Aktualisiert 11.09.2026: Die Beschreibung stammte aus der Zeit mit zwei
+ * getrennten Links und widersprach der Oberflaeche ("waechst mit Vorschau,
+ * Offerte, AGB und Vertrag" oben, "zeigt NIE Vorschau, Angebot, Vertrag oder
+ * AGB" unten). So ist es heute:
  *
- *   Phase 1 — Fragebogen-Link (Briefing-Link)
+ *   Die eine Kundenadresse — Fragebogen-Link (Briefing-Link)
  *       fragebogen.html?e=<Einladungstoken>
- *       Kundendaten, Bedarf UND Vision Room in EINER Einladung.
- *       Zeigt NIE Vorschau, Änderungswünsche, Angebot, Vertrag oder AGB.
- *       Erzeugt beim Absenden genau EIN Projekt und genau EINE Aufgabe.
+ *       Am Anfang: Fragebogen samt Vision Room und die zentralen Standard-AGB.
+ *       Sie WAECHST auf derselben Adresse: freigegebene Vorschau samt
+ *       Aenderungswuenschen, TEST-Leistungsuebersicht, freigegebener Vertrag —
+ *       jedes Stueck erst mit seiner ausdruecklichen Freigabe (customerAreaState).
+ *       Sie wird nie ersetzt und nie erneuert.
+ *       Antwortet die Kundschaft, entsteht genau EIN Projekt und genau EINE
+ *       Aufgabe; ist der Bogen bereits gebunden, wird dieses Projekt
+ *       aktualisiert.
+ *       Den gueltigen Satz dazu rechnet intakeLinkExplain() — er ist die
+ *       einzige Stelle, an der diese Aufzaehlung formuliert wird.
  *
- *   Phase 2 — Kundenportal-Link
+ *   Kundenportal-Link — der alte Sonderweg
  *       kunde.html?t=<Portaltoken>
- *       Entsteht ERST, wenn Vorschau, Leistungsbeschreibung, Offerte,
- *       Vertrag und AGB stehen und ich bewusst veröffentlicht habe.
+ *       Aus der Zeit vor der einen Adresse. Er wird nicht mehr verschickt;
+ *       bereits verschickte Portal-Links bleiben gueltig und auffindbar.
  *
  * Die Beschriftungen stehen hier, damit UI, Tests und Dokumentation
  * dieselben Worte benutzen. „Kundenlink" ist bewusst kein Begriff mehr —
@@ -1661,6 +1670,69 @@ export function intakeAliasReport({ intakes = {}, projectId = "", projectExists 
     // Wahr, sobald mindestens ein Link eine Antwort NICHT hierher bringt.
     hasBlindLink: links.some((l) => l.route !== "updates"),
     checkedAt: now,
+  };
+}
+
+/* ── Einen Fragebogen aus seinem VEROEFFENTLICHTEN Stand wiederherstellen ──
+ * Befund (11.09.2026, belegt ueber die Auskunft in der Oberflaeche): Der am
+ * 02.09. versendete Link pf-… laedt oeffentlich einwandfrei — mit Fragen und
+ * Vorbelegung —, in Quantus gibt es zu diesem Token aber KEINEN Fragebogen
+ * mehr. Der veroeffentlichte Datensatz unter flowertech/intakeForms/<token>
+ * hat also ueberlebt, der interne Datensatz nicht.
+ *
+ * Diese Funktion rechnet daraus den internen Datensatz zurueck. Sie ist
+ * bewusst eng:
+ *   · Der TOKEN bleibt, wie er ist — der Link der Kundschaft aendert sich nie.
+ *   · Die FRAGEN kommen unveraendert aus der Veroeffentlichung. Es wird
+ *     nichts neu erfunden; ohne Fragen gibt es keine Wiederherstellung.
+ *   · Titel, Einleitung, Status, Fassung und die veroeffentlichte Vorbelegung
+ *     werden uebernommen, damit der Stand drinnen dem draussen entspricht.
+ *   · Die Bindung an ein Projekt kommt von aussen (ausdrueckliche Wahl) und
+ *     wird nie geraten.
+ *   · Es wird nichts veroeffentlicht und nichts freigegeben: Die Kundenseite
+ *     bleibt exakt so, wie sie ist.
+ * Sie rechnet nur — geschrieben wird beim Aufrufer. */
+export function intakeFromPublished({
+  token = "", published = null, projectId = "", id = "", now = new Date().toISOString(),
+} = {}) {
+  const snapshot = published && typeof published === "object" ? published : null;
+  const tokenText = text(token, 120);
+  if (!tokenText) return { ok: false, reason: "kein Token angegeben", intake: null };
+  if (!snapshot) return { ok: false, reason: "zu diesem Token ist nichts veröffentlicht", intake: null };
+  const questions = normalizeIntakeQuestions(snapshot.questions || []);
+  if (!questions.length) {
+    return { ok: false, reason: "der veröffentlichte Fragebogen trägt keine Fragen", intake: null };
+  }
+  const status = ["open", "answered", "closed"].includes(snapshot.status) ? snapshot.status : "open";
+  const generation = Number(snapshot.generation);
+  const vorbelegt = intakePrefillSnapshot(snapshot.prefill);
+  const intake = {
+    id: text(id, 60) || ("in_" + tokenText.slice(0, 12)),
+    title: text(snapshot.title, 200) || DEFAULT_INTAKE_TITLE,
+    intro: multiline(snapshot.intro, 2000) || "",
+    questions,
+    inviteToken: tokenText,                       // unveraendert — nie ein neuer Link
+    status,
+    formGeneration: Number.isFinite(generation) && generation >= 1 ? Math.floor(generation) : 1,
+    // Der Bogen IST veroeffentlicht; sein Stand steht im Datensatz selbst.
+    publishedAt: text(snapshot.updatedAt, 40) || now,
+    createdAt: now,
+    updatedAt: now,
+    // Woher dieser Datensatz stammt — damit spaeter niemand raten muss.
+    restoredFrom: "published-intake-form",
+    restoredAt: now,
+  };
+  if (vorbelegt) intake.prefill = vorbelegt;
+  const ziel = text(projectId, 80);
+  if (ziel) intake.boundProjectId = ziel;
+  return {
+    ok: true, reason: "", intake,
+    summary: {
+      token: tokenText, title: intake.title, questionCount: questions.length, status,
+      generation: intake.formGeneration, publishedAt: intake.publishedAt,
+      prefillKeys: vorbelegt && vorbelegt.values ? Object.keys(vorbelegt.values).sort() : [],
+      boundTo: ziel,
+    },
   };
 }
 
@@ -5008,7 +5080,7 @@ const API = {
   isIntakeFileId, intakeFileName, intakeFileSizeLabel, normalizeIntakeFile, normalizeIntakeFiles,
   // Die Vorbelegung des Kundenlinks: bekannte Angaben, nichts Erfundenes.
   INTAKE_PREFILL_VERSION, INTAKE_PREFILL_SOURCE_LABELS, isKindQuestion,
-  INTAKE_ANSWER_ROUTES, intakeAnswerRoute, intakeAliasReport,
+  INTAKE_ANSWER_ROUTES, intakeAnswerRoute, intakeAliasReport, intakeFromPublished,
   intakePrefill, intakePrefillSnapshot, intakePrefillStale,
   INTAKE_RESET_CLEARS, INTAKE_RESET_KEEPS, intakeFormGeneration, intakeResetPlan,
   CUSTOMER_AREA_STAGES, CUSTOMER_OFFER_STATUSES, MAX_CUSTOMER_DOCUMENT_BYTES,

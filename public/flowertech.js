@@ -2530,9 +2530,15 @@
         (link ? '<a class="btn sm ghost" href="' + attr(link) + '" target="_blank" rel="noopener">Öffnen</a>' : "") +
         '<button class="btn sm ghost" onclick="window._ftRotateIntakeToken(\'' + attr(intake.id) +
           '\')" title="Alten Link widerrufen">Neu</button></div>' +
-      '<div class="mini"><b>' + esc(core.LINK_LABELS.intakeHint) + "</b> — dieser Link zeigt der Kundschaft " +
-        "ausschliesslich den Fragebogen samt Vision Room. Nie Vorschau, Angebot, Vertrag oder AGB; " +
-        "die stehen erst im Kundenportal der Phase 2.</div>" +
+      /* Befund (11.09.2026): Oben stand „Kundenadresse – Fragebogen & Vision
+         Room, Standard-AGB … waechst mit Vorschau, Offerte, AGB und Vertrag",
+         hier unten „Nie Vorschau, Angebot, Vertrag oder AGB; die stehen erst
+         im Kundenportal der Phase 2". Beides zusammen ergab keinen Sinn — der
+         zweite Satz stammt aus der Zeit mit zwei getrennten Links.
+         Jetzt steht hier derselbe Satz wie ueberall sonst: aus dem Kern,
+         gerechnet aus dem, was WIRKLICH freigegeben ist. */
+      '<div class="mini"><b>' + esc(core.LINK_LABELS.intakeHint) + "</b> — " +
+        esc(core.intakeLinkExplain(linkFreigaben(binding.projectId))) + "</div>" +
       (intake.publishError
         ? '<div class="ft-legal-note">⚠ ' + esc(intake.publishError) + "</div>"
         : intake.publishedAt
@@ -2594,6 +2600,114 @@
   };
   window._ftClearTokenLookup = function () { tokenAuskunft = null; rerender(); };
 
+  /* ── Wiederherstellung aus dem veroeffentlichten Fragebogen ─────────────
+     Befund (11.09.2026): Der am 02.09. versendete Link laedt oeffentlich
+     einwandfrei, in Quantus fehlt der zugehoerige Fragebogen. Damit findet
+     eine Antwort darauf ihren Vorgang nicht.
+
+     Zwei getrennte Schritte, beide sichtbar, der erste ohne jede Aenderung:
+       1. LESEN — was steht draussen, und liegen zu diesem Token Antworten?
+       2. ZUORDNEN — den Fragebogen aus genau diesem Stand wiederherstellen
+          und einem ausdruecklich gewaehlten Projekt zuordnen.
+     Der Token bleibt, die Fragen kommen unveraendert von draussen, es wird
+     nichts veroeffentlicht, nichts freigegeben und nichts verschickt. */
+  window._ftLoadPublishedIntake = function () {
+    if (!tokenAuskunft) return;
+    var token = tokenAuskunft.token;
+    var ref = intakeRef(token);
+    if (!ref) {
+      tokenAuskunft.ladeFehler = "Kein Firebase-Zugang — der veröffentlichte Stand ist nicht lesbar.";
+      rerender();
+      return;
+    }
+    tokenAuskunft.laedt = true;
+    rerender();
+    var db = null;
+    try { db = firebase.app().database(RTDB); } catch (e) {}
+    Promise.all([
+      ref.once("value"),
+      db ? db.ref("flowertech/submissions").once("value") : Promise.resolve(null),
+    ]).then(function (res) {
+      var ft = wf();
+      var veroeffentlicht = (res[0] && res[0].val()) || null;
+      var eingaenge = (res[1] && res[1].val()) || {};
+      tokenAuskunft.laedt = false;
+      tokenAuskunft.geladen = true;
+      tokenAuskunft.veroeffentlicht = veroeffentlicht;
+      // Liegengebliebene Antworten zu genau diesem Token — nur gelesen.
+      tokenAuskunft.eingaenge = Object.keys(eingaenge).map(function (key) {
+        var e = eingaenge[key] || {};
+        return {
+          key: key, kind: e.kind || "", createdAt: e.createdAt || "",
+          verarbeitet: !!(ft && ft.processedSubmissions && ft.processedSubmissions[key]),
+          antworten: (e.payload && Array.isArray(e.payload.answers)) ? e.payload.answers.length : 0,
+        };
+      }).filter(function (e, i, alle) {
+        var roh = eingaenge[e.key] || {};
+        return String(roh.token || "") === token;
+      }).sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+      rerender();
+    }).catch(function (e) {
+      tokenAuskunft.laedt = false;
+      tokenAuskunft.ladeFehler = (e && e.message) || "Der veröffentlichte Stand konnte nicht gelesen werden.";
+      rerender();
+    });
+  };
+
+  window._ftRestoreIntakeFromPublished = function () {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft || !tokenAuskunft || !tokenAuskunft.veroeffentlicht) return;
+    var token = tokenAuskunft.token;
+    // Nie blind anlegen: Ein vorhandener Fragebogen wird nicht angetastet.
+    var schon = Object.keys(ft.intakes || {}).find(function (k) {
+      return (ft.intakes[k] || {}).inviteToken === token;
+    });
+    if (schon) { notify("warn", "Fragebogen", "Zu diesem Token gibt es bereits einen Fragebogen."); return; }
+    var wahl = document.getElementById("ftRestoreProjekt");
+    var projectId = wahl ? String(wahl.value || "") : "";
+    if (!projectId || !projectById(projectId)) {
+      notify("warn", "Fragebogen", "Bitte zuerst das Projekt wählen, zu dem dieser Fragebogen gehört.");
+      return;
+    }
+    var gerechnet = core.intakeFromPublished({
+      token: token, published: tokenAuskunft.veroeffentlicht, projectId: projectId,
+      id: "in_wh_" + token.slice(0, 10), now: now(),
+    });
+    if (!gerechnet.ok) { notify("warn", "Fragebogen", gerechnet.reason); return; }
+    if (!confirm("Fragebogen aus dem veröffentlichten Stand wiederherstellen?\n\n" +
+      "· Der Link bleibt unverändert: " + token + "\n" +
+      "· " + gerechnet.summary.questionCount + " Fragen werden unverändert übernommen\n" +
+      "· Zuordnung zum Projekt: " + ((projectById(projectId) || {}).title || projectId) + "\n\n" +
+      "Es wird nichts veröffentlicht, nichts freigegeben und nichts verschickt. " +
+      "Die Kundenseite bleibt genau so, wie sie ist.")) return;
+    ft.intakes[gerechnet.intake.id] = gerechnet.intake;
+    save();
+    notify("ok", "Fragebogen", "Wiederhergestellt und dem Projekt zugeordnet. Eingegangene Antworten " +
+      "zu diesem Link werden beim nächsten Abgleich verarbeitet.");
+    tokenAuskunft = { token: token, ergebnis: intakeByToken(token) };
+    rerender();
+  };
+
+  /* Der schmale Rueckweg: Nur ein WIEDERHERGESTELLTER Fragebogen ohne Antwort
+     laesst sich wieder entfernen. Ein echter, beantworteter Bogen niemals. */
+  window._ftUndoRestoredIntake = function (intakeId) {
+    var ft = wf();
+    var intake = intakeById(intakeId);
+    if (!ft || !intake) return;
+    if (intake.restoredFrom !== "published-intake-form" || intake.answeredAt || intake.submissionId) {
+      notify("warn", "Fragebogen", "Nur eine Wiederherstellung ohne Antwort lässt sich zurücknehmen.");
+      return;
+    }
+    if (!confirm("Wiederherstellung zurücknehmen?\n\nDer Fragebogen-Datensatz wird entfernt. " +
+      "Der veröffentlichte Link bleibt unverändert bestehen.")) return;
+    delete ft.intakes[intakeId];
+    save();
+    notify("ok", "Fragebogen", "Wiederherstellung zurückgenommen.");
+    tokenAuskunft = null;
+    rerender();
+  };
+
   function tokenAuskunftHtml() {
     var eingabe = tokenAuskunft ? tokenAuskunft.token : "";
     var block = "";
@@ -2605,7 +2719,8 @@
           '<div class="mini"><b>Antwort darauf:</b> ' + esc(r.routeLabel || "unbekannt") + "</div>" +
           '<div class="mini">Zu diesem Token gibt es in dieser Quantus-Fassung keinen Fragebogen. ' +
           "Eine eingehende Antwort wird NICHT als erledigt abgehakt — sie bleibt liegen und wird " +
-          "verarbeitet, sobald der passende Fragebogen wieder da ist.</div></div>";
+          "verarbeitet, sobald der passende Fragebogen wieder da ist.</div>" +
+          wiederherstellenHtml() + "</div>";
       } else {
         var project = r.projectId ? projectById(r.projectId) : null;
         var bindung = r.binding === "bound" ? "an ein Projekt gebunden"
@@ -2638,6 +2753,62 @@
       '<button class="btn primary" onclick="window._ftLookupToken()">Auskunft anzeigen</button>' +
       (tokenAuskunft ? '<button class="btn ghost" onclick="window._ftClearTokenLookup()">Zurücksetzen</button>' : "") +
       "</div>" + block + "</div>";
+  }
+
+  /* Was zu einem unbekannten Token TATSAECHLICH draussen steht — und was an
+     Antworten dazu liegen geblieben ist. Erst lesen, dann entscheiden. */
+  function wiederherstellenHtml() {
+    var a = tokenAuskunft;
+    if (!a) return "";
+    if (a.ladeFehler) return '<div class="ft-legal-note mt-2">⚠ ' + esc(a.ladeFehler) + "</div>";
+    if (a.laedt) return '<div class="mini mt-2">Lese den veröffentlichten Stand …</div>';
+    if (!a.geladen) {
+      return '<div class="ft-quick mt-2">' +
+        '<button class="btn" onclick="window._ftLoadPublishedIntake()">' +
+        "Veröffentlichten Fragebogen laden (nur lesen)</button></div>" +
+        '<div class="mini">Liest <code>flowertech/intakeForms/' + esc(a.token) + "</code> und die " +
+        "eingegangenen Antworten zu diesem Token. Es wird dabei nichts verändert.</div>";
+    }
+    if (!a.veroeffentlicht) {
+      return '<div class="mini mt-2">Zu diesem Token ist auch <b>draussen nichts veröffentlicht</b>. ' +
+        "Es gibt nichts wiederherzustellen — der Link war entweder nie gültig oder wurde widerrufen.</div>";
+    }
+    var core = W();
+    var vorschau = core.intakeFromPublished({ token: a.token, published: a.veroeffentlicht, now: now() });
+    var eingaenge = a.eingaenge || [];
+    var offene = eingaenge.filter(function (e) { return !e.verarbeitet; });
+    var antwortText = eingaenge.length
+      ? (eingaenge.length + " Eingang/Eingänge zu diesem Token: " + eingaenge.map(function (e) {
+        return dateTime(e.createdAt) + " (" + (e.kind || "?") + ", " + e.antworten + " Antworten, " +
+          (e.verarbeitet ? "bereits verarbeitet" : "liegt noch") + ")";
+      }).join("; "))
+      : "Zu diesem Token ist bisher keine Antwort eingegangen.";
+    if (!vorschau.ok) {
+      return '<div class="mini mt-2">Draussen steht etwas, es taugt aber nicht zur Wiederherstellung: ' +
+        esc(vorschau.reason) + "</div>" + '<div class="mini">' + esc(antwortText) + "</div>";
+    }
+    var z = vorschau.summary;
+    var auswahl = projects().slice().sort(function (x, y) {
+      return String(x.title || "").localeCompare(String(y.title || ""));
+    }).map(function (p) {
+      return '<option value="' + attr(p.id) + '">' + esc(p.title || p.id) + "</option>";
+    }).join("");
+    return '<div class="ft-restore mt-2">' +
+      '<div class="mini"><b>Veröffentlicht draussen:</b> „' + esc(z.title) + "“ · " +
+      z.questionCount + " Fragen · Status " + esc(z.status) + " · Fassung " + z.generation +
+      " · Stand " + esc(dateTime(z.publishedAt)) +
+      (z.prefillKeys.length ? " · vorbelegt: " + esc(z.prefillKeys.join(", ")) : " · keine Vorbelegung") +
+      "</div>" +
+      '<div class="mini' + (offene.length ? " ft-danger" : "") + '">' + esc(antwortText) + "</div>" +
+      '<div class="ft-quick mt-2">' +
+      '<select id="ftRestoreProjekt" class="ft-input"><option value="">— Projekt wählen —</option>' +
+      auswahl + "</select>" +
+      '<button class="btn primary" onclick="window._ftRestoreIntakeFromPublished()">' +
+      "Fragebogen wiederherstellen &amp; zuordnen</button></div>" +
+      '<div class="mini">Der Link bleibt <b>unverändert</b>, die Fragen kommen unverändert aus der ' +
+      "Veröffentlichung. Es wird nichts veröffentlicht, nichts freigegeben und nichts verschickt; " +
+      "die Kundenseite bleibt genau so, wie sie ist. Eingegangene Antworten zu diesem Link werden " +
+      "danach beim nächsten Abgleich verarbeitet — sie gehen nicht verloren.</div></div>";
   }
 
   function intakesHtml() {
@@ -4792,10 +4963,16 @@
       stand.push(l.prefillKeys.length ? ("vorbelegt: " + l.prefillKeys.join(", ")) : "keine Vorbelegung");
       var bindung = l.binding === "bound" ? "an dieses Projekt gebunden"
         : (l.binding === "created" ? "hat dieses Projekt erzeugt" : "an kein Projekt gebunden");
+      var wiederhergestellt = ((wf() || {}).intakes || {})[l.intakeId] || {};
+      var rueckweg = (wiederhergestellt.restoredFrom === "published-intake-form" && !l.answeredAt)
+        ? '<button class="btn sm ghost" onclick="window._ftUndoRestoredIntake(\'' + attr(l.intakeId) +
+          '\')" title="Nur diese Wiederherstellung zurücknehmen — der Link bleibt bestehen">' +
+          "Wiederherstellung zurücknehmen</button>"
+        : "";
       return '<div class="ft-link-item ' + routeKlasse(l.route) + '">' +
         '<div class="ft-link-token"><code>' + esc(l.token || "(ohne Token)") + "</code>" +
         '<button class="btn sm ghost" onclick="window._ftCopyText(\'' + attr(intakeFormUrlOf(l.token)) +
-          '\')" title="Diesen Fragebogen-Link kopieren">Link kopieren</button></div>' +
+          '\')" title="Diesen Fragebogen-Link kopieren">Link kopieren</button>' + rueckweg + "</div>" +
         '<div class="mini"><b>Antwort darauf:</b> ' + esc(l.routeLabel) + "</div>" +
         '<div class="mini">Status: ' + esc(l.status) + " · " + esc(bindung) + " · " + esc(stand.join(" · ")) + "</div>" +
         '<div class="mini">' + esc(antwortenText(l)) + "</div>" +
@@ -4806,12 +4983,30 @@
         "stand, weiss Quantus nicht — „Link verschickt“ und „Wartet auf Antwort“ stehen am Fragebogen, " +
         "nicht an der Mail. Was eine Antwort bewirkt, steht je Link hier:"
       : "Der Fragebogen-Link dieses Projekts — mit dem, was eine Antwort darauf bewirkt:";
+    var wirksam = bericht.links.filter(function (l) { return l.route === "updates"; });
     var fuss = bericht.effectiveToken
       ? "Antworten auf <code>" + esc(bericht.effectiveToken) + "</code> aktualisieren dieses Projekt."
-      : "<b>Kein einziger dieser Links aktualisiert dieses Projekt.</b>";
+      : (wirksam.length
+        ? "Antworten auf " + wirksam.length + " dieser Links aktualisieren dieses Projekt — sie landen " +
+          "alle hier. Kein zweites Projekt entsteht."
+        : "<b>Kein einziger dieser Links aktualisiert dieses Projekt.</b>");
     return '<div class="ft-alias mt-2"><div class="mini">' + kopf + "</div>" +
       '<div class="ft-link-list mt-2">' + zeilen + "</div>" +
       '<div class="mini mt-2">' + fuss + "</div></div>";
+  }
+
+  /* Was auf dieser einen Adresse gerade freigegeben ist — Grundlage fuer den
+     erklaerenden Satz (core.intakeLinkExplain). Ohne Projekt ist noch nichts
+     freigegeben; dann nennt der Satz Fragebogen, Vision Room und AGB. */
+  function linkFreigaben(projectId) {
+    var area = projectId ? customerArea(projectId) : null;
+    var tiles = (area && area.tiles) || {};
+    return {
+      previewVisible: !!tiles.preview,
+      testServiceVisible: !!tiles.testService,
+      contractVisible: !!tiles.contract,
+      scope: "project",
+    };
   }
 
   // Die Kundenadresse zu einem Token — fuer den Kopierknopf in der Auskunft.

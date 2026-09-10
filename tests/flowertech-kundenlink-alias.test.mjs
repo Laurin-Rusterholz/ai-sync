@@ -107,7 +107,7 @@ const gibtProjekt = (id) => id === PROJEKT;
 
 /* ══ 3. Laufzeit: Karte, Vermerk und Vorbelegung ═══════════════════════════ */
 let seed = 0;
-function makeSandbox() {
+function makeSandbox(draussen = {}) {
   const data = { entities: { projects: {}, tasks: {}, notes: {} }, flowertech: {}, meta: {} };
   const written = {};
   const win = {
@@ -149,6 +149,9 @@ function makeSandbox() {
     firebase: { app: () => ({ database: () => ({ ref: (p) => ({
       set: (v) => { written[p] = v; (written.__order = written.__order || []).push(p); return Promise.resolve(); },
       remove: () => { delete written[p]; return Promise.resolve(); },
+      // Lesen: der „draussen" veroeffentlichte Stand, den der Test vorgibt.
+      once: () => Promise.resolve({ val: () => (draussen[p] === undefined ? null : draussen[p]) }),
+      on: () => {}, off: () => {},
     }) }) }) },
   };
   sandbox.globalThis = sandbox;
@@ -156,7 +159,7 @@ function makeSandbox() {
   win.navigator = sandbox.navigator; win.confirm = sandbox.confirm;
   vm.runInContext(quelle, vm.createContext(sandbox));
   win.viewFlowerTech();
-  return { win, data, written };
+  return { win, data, written, draussen };
 }
 
 {
@@ -376,6 +379,160 @@ function makeSandbox() {
   win._ftLookupToken();
   win._ftClearTokenLookup();
   eq(JSON.stringify(data), vorher, "die Token-Auskunft verändert den Datenstand");
+}
+
+/* ══ 7. Wiederherstellung aus dem veroeffentlichten Fragebogen ═════════════
+   Belegter Live-Befund (11.09.2026): Der am 02.09. versendete Link
+   pf-kXRwq0T1lOUcH7fsknz_b laedt oeffentlich einwandfrei — mit Fragen und
+   Aljia-Vorbelegung —, in Quantus gibt es zu diesem Token aber KEINEN
+   Fragebogen. Eine Antwort darauf faende ihren Vorgang nicht.
+
+   Der Weg zurueck ist bewusst eng: lesen, sehen, ausdruecklich zuordnen.
+   Kein neuer Token, keine erfundenen Fragen, keine Veroeffentlichung, keine
+   Freigabe, kein Versand — und die eingegangene Antwort geht nicht verloren. */
+{
+  const VEROEFFENTLICHT = {
+    schema: 1, title: "Ihre Angaben für FlowerTech", intro: "Kurz ein paar Fragen.",
+    questions: CORE.normalizeIntakeQuestions(CORE.DEFAULT_INTAKE_QUESTIONS),
+    prefill: { version: 1, values: { name: "Jule Dal", company: "Aljia", email: "juledal19@gmail.com" } },
+    status: "open", generation: 2, company: { name: "FlowerTech" }, updatedAt: "2026-09-02T07:05:00.000Z",
+  };
+
+  // 7a) Der Kern rechnet — eng und ohne zu raten.
+  const gerechnet = CORE.intakeFromPublished({
+    token: TOKEN_MAIL, published: VEROEFFENTLICHT, projectId: PROJEKT, now: NOW,
+  });
+  ok(gerechnet.ok, "aus dem veröffentlichten Stand entsteht kein Datensatz");
+  eq(gerechnet.intake.inviteToken, TOKEN_MAIL, "der Token wird verändert — der Link der Kundschaft bricht");
+  eq(gerechnet.intake.questions.length, VEROEFFENTLICHT.questions.length,
+    "die Fragen werden nicht unverändert übernommen");
+  eq(gerechnet.intake.questions.map((q) => q.key).join(","),
+    VEROEFFENTLICHT.questions.map((q) => q.key).join(","), "die Fragen kommen in anderer Form zurück");
+  eq(gerechnet.intake.boundProjectId, PROJEKT, "der Bogen wird nicht an das gewählte Projekt gebunden");
+  eq(gerechnet.intake.formGeneration, 2, "die veröffentlichte Fassung geht verloren");
+  eq(gerechnet.intake.restoredFrom, "published-intake-form", "die Herkunft wird nicht festgehalten");
+  ok(gerechnet.intake.prefill && gerechnet.intake.prefill.values.email === "juledal19@gmail.com",
+    "die veröffentlichte Vorbelegung geht verloren");
+
+  // Nie blind: ohne Veröffentlichung und ohne Fragen entsteht nichts.
+  ok(!CORE.intakeFromPublished({ token: TOKEN_MAIL, published: null }).ok,
+    "ohne veröffentlichten Stand wird trotzdem etwas angelegt");
+  ok(!CORE.intakeFromPublished({ token: TOKEN_MAIL, published: { title: "leer", questions: [] } }).ok,
+    "ein Bogen ohne Fragen wird trotzdem angelegt");
+  // Ohne ausdrückliche Wahl bleibt die Bindung leer — sie wird nie geraten.
+  ok(!CORE.intakeFromPublished({ token: TOKEN_MAIL, published: VEROEFFENTLICHT }).intake.boundProjectId,
+    "die Projektbindung wird geraten");
+
+  // 7b) Laufzeit: lesen → sehen → zuordnen.
+  const pfad = "flowertech/intakeForms/" + TOKEN_MAIL;
+  const eingang = {
+    id: "sub_aljia", kind: "intake", token: TOKEN_MAIL, createdAt: "2026-09-08T09:00:00.000Z",
+    payload: { answers: [
+      { key: "projekt", answer: "Website Reinigungsunternehmen Aljia" },
+      { key: "name", answer: "Jule Dal" }, { key: "email", answer: "juledal19@gmail.com" },
+      { key: "phone", answer: "079 000 00 00" }, { key: "adresse", answer: "Musterweg 1, 8000 Zürich" },
+      { key: "kind", answer: "Website" }, { key: "need", answer: "Mehr Anfragen über die Website erhalten." },
+    ] },
+  };
+  const { win, data, written } = makeSandbox({
+    [pfad]: VEROEFFENTLICHT,
+    "flowertech/submissions": { sub_aljia: eingang },
+  });
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Website Reinigungsunternehmen Aljia", projectType: "flowertech",
+    pipelineStage: "intake", client: { name: "Jule Dal", company: "Aljia", email: "juledal19@gmail.com" },
+    createdAt: "2026-08-20T06:00:00.000Z",
+  };
+  data.flowertech.intakes = {
+    in_karte: {
+      id: "in_karte", title: "Ihre Angaben", inviteToken: TOKEN_KARTE, boundProjectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open", createdAt: "2026-09-07T05:50:00.000Z",
+      publishedAt: "2026-09-07T05:50:00.000Z",
+    },
+  };
+  data.flowertech.activeTab = "intakes";
+  const ansicht = () => String(win.viewFlowerTech()).replace(/<style>[\s\S]*?<\/style>/g, "");
+  const feld = { value: TOKEN_MAIL };
+  const gewaehltesProjekt = { value: "" };
+  win.document.getElementById = (id) => (id === "ftTokenSuche" ? feld
+    : (id === "ftRestoreProjekt" ? gewaehltesProjekt : null));
+
+  win._ftLookupToken();
+  const unbekannt = ansicht();
+  ok(/keinen Fragebogen/.test(unbekannt), "der Token gilt nicht als unbekannt");
+  ok(/Veröffentlichten Fragebogen laden \(nur lesen\)/.test(unbekannt),
+    "es gibt keinen sichtbaren Weg, den veröffentlichten Stand zu lesen");
+
+  // Lesen — und nichts sonst.
+  const vorherGeschrieben = JSON.stringify(written);
+  const vorherDaten = JSON.stringify(data);
+  win._ftLoadPublishedIntake();
+  await new Promise((r) => setTimeout(r, 0));
+  const gelesen = ansicht();
+  eq(JSON.stringify(written), vorherGeschrieben, "das Lesen schreibt nach draussen");
+  eq(JSON.stringify(data), vorherDaten, "das Lesen verändert den Datenstand");
+  ok(/Veröffentlicht draussen/.test(gelesen), "der veröffentlichte Stand wird nicht angezeigt");
+  ok(/28 Fragen/.test(gelesen), `die Zahl der Fragen fehlt in der Anzeige`);
+  ok(/vorbelegt: company, email, name/.test(gelesen), "die veröffentlichte Vorbelegung wird nicht gezeigt");
+  ok(/liegt noch/.test(gelesen), "die liegengebliebene Antwort zu diesem Token wird nicht angezeigt");
+  ok(/id="ftRestoreProjekt"/.test(gelesen), "es fehlt die Auswahl, zu welchem Projekt der Bogen gehört");
+
+  // Ohne Projektwahl passiert nichts.
+  win._ftRestoreIntakeFromPublished();
+  eq(Object.keys(data.flowertech.intakes).length, 1, "ohne Projektwahl wird trotzdem etwas angelegt");
+
+  // Mit Wahl: zuordnen.
+  gewaehltesProjekt.value = PROJEKT;
+  win._ftRestoreIntakeFromPublished();
+  const neuer = Object.values(data.flowertech.intakes).find((i) => i.inviteToken === TOKEN_MAIL);
+  ok(neuer, "der Fragebogen wurde nicht wiederhergestellt");
+  eq(neuer.inviteToken, TOKEN_MAIL, "der Token wurde verändert");
+  eq(neuer.boundProjectId, PROJEKT, "der wiederhergestellte Bogen ist nicht an das Projekt gebunden");
+  eq(neuer.questions.length, VEROEFFENTLICHT.questions.length, "die Originalfragen fehlen");
+  eq(JSON.stringify(written), vorherGeschrieben,
+    "die Wiederherstellung veröffentlicht etwas — die Kundenseite muss unangetastet bleiben");
+  // Der andere Bogen bleibt, wie er war.
+  eq(data.flowertech.intakes.in_karte.inviteToken, TOKEN_KARTE, "der bestehende Fragebogen wurde verändert");
+
+  // 7c) Jetzt findet die liegengebliebene Antwort ihren Vorgang.
+  const projekteVorher = Object.keys(data.entities.projects).length;
+  win._ftIngestSubmissions({ sub_aljia: eingang });
+  eq(Object.keys(data.entities.projects).length, projekteVorher,
+    "aus der nachgereichten Antwort entsteht ein zweites Projekt");
+  const projekt = data.entities.projects[PROJEKT];
+  ok(projekt.ftIntakeDocument && (projekt.ftIntakeDocument.answers || []).length,
+    "die Antwort erreicht das belegte Projekt nicht");
+  eq(projekt.client.email, "juledal19@gmail.com", "gepflegte Kundendaten wurden überschrieben");
+  eq(data.flowertech.intakes[neuer.id].status, "answered", "der Bogen gilt nach der Antwort nicht als beantwortet");
+
+  // 7d) Der Rückweg: nur eine Wiederherstellung OHNE Antwort lässt sich zurücknehmen.
+  win._ftUndoRestoredIntake(neuer.id);
+  ok(data.flowertech.intakes[neuer.id], "ein beantworteter Bogen liess sich zurücknehmen");
+}
+
+/* ══ 8. Kein Textwiderspruch mehr ══════════════════════════════════════════
+   Befund (11.09.2026): Oben „Kundenadresse – Fragebogen & Vision Room,
+   Standard-AGB … waechst mit Vorschau, Offerte, AGB und Vertrag", unten
+   „Nie Vorschau, Angebot, Vertrag oder AGB; die stehen erst im Kundenportal
+   der Phase 2". Beides zusammen ergab keinen Sinn. */
+{
+  // Kommentare erreichen niemanden und duerfen den alten Satz benennen —
+  // geprueft wird, was WIRKLICH ausgeliefert wird.
+  const lieferbar = quelle
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  ok(!/Nie Vorschau, Angebot, Vertrag oder AGB/.test(lieferbar),
+    "der widersprüchliche Satz steht weiterhin in der Oberfläche");
+  ok(/core\.intakeLinkExplain\(linkFreigaben\(binding\.projectId\)\)/.test(quelle),
+    "der erklärende Satz kommt nicht aus der einen Stelle im Kern");
+  // Und der Satz aus dem Kern passt zur Überschrift: dieselbe Aufzählung.
+  const ohneFreigabe = CORE.intakeLinkExplain({});
+  ok(/Fragebogen samt Vision Room/.test(ohneFreigabe) && /Standard-AGB/.test(ohneFreigabe),
+    "der Satz nennt nicht, was die Adresse von Anfang an zeigt");
+  ok(!/nie eine Vorschau|Nie Vorschau/.test(ohneFreigabe), "der Satz behauptet weiterhin „nie eine Vorschau“");
+  const mitFreigabe = CORE.intakeLinkExplain({ previewVisible: true, contractVisible: true });
+  ok(/freigegebene Vorschau/.test(mitFreigabe) && /freigegebenen Vertrag/.test(mitFreigabe),
+    "nach der Freigabe nennt der Satz Vorschau und Vertrag nicht");
 }
 
 console.log(`flowertech kundenlink-alias: ok (${checks} Pruefungen)`);
