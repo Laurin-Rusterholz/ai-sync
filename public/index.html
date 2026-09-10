@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -100186,9 +100186,136 @@ console.log('📚 Leseliste geladen');
     </div>`;
   };
   
+  /* ── Der Entwurf ueberlebt den Reiterwechsel ─────────────────────────────
+     Befund (11.09.2026, neue Person „Pius M. Sueess-Bischof"): Basis
+     ausgefuellt, auf Kontakt gewechselt, dort E-Mail/Telefon/Adresse
+     erfasst, weiter zu Beruf und Verknuepfungen — und beim Zurueckwechseln
+     war Basis wieder leer. „Speichern" tat scheinbar gar nichts.
+
+     Zwei Ursachen, beide hier:
+       · Der Reiterwechsel zeichnete den Editor komplett neu, und zwar aus
+         dem GESPEICHERTEN Datensatz. Bei einer neuen Person gibt es den
+         nicht — alles Getippte war weg. Bei einer bestehenden fielen die
+         Felder auf den alten Stand zurueck.
+       · „Speichern" brach still ab: Der Anzeigename steht im Reiter Basis;
+         war der gerade nicht im DOM, galt der Name als leer. Die Warnung
+         kam als kurze Einblendung, das Fenster blieb offen — und niemand
+         sah, WELCHES Feld fehlt.
+
+     Der Editor haelt jetzt einen Entwurf: Vor jedem Reiterwechsel werden
+     alle sichtbaren Felder eingesammelt, und gezeichnet wird aus
+     „gespeichert + Entwurf". Der Entwurf lebt nur im Fenster, wird nie
+     gespeichert und beim Schliessen oder Abbrechen verworfen. */
+  window._mhPersonDraft = null;
+  function mhPersonDraftFor(personId) {
+    const d = window._mhPersonDraft;
+    return (d && d.for === (personId || "")) ? (d.werte || {}) : null;
+  }
+  function mhPersonBasis(personId) {
+    const gespeichert = (personId ? mhPersons()[personId] : null) || {};
+    return Object.assign({}, gespeichert, mhPersonDraftFor(personId) || {});
+  }
+  // Liest ALLE Felder — die gerade sichtbaren aus dem DOM, den Rest aus der
+  // Grundlage (gespeicherter Stand + bisheriger Entwurf).
+  function mhReadPersonFields(basis) {
+    const b = basis || {};
+    const $v = (id) => document.getElementById(id)?.value?.trim() || "";
+    const $vRaw = (id) => document.getElementById(id)?.value || "";
+    const da = (id) => !!document.getElementById(id);
+    const liste = (id, fallback) => {
+      const l = document.getElementById(id);
+      if (!l) return fallback || [];
+      return Array.from(l.querySelectorAll('[data-id]')).map(el => el.getAttribute('data-id'));
+    };
+    let relatedPersons = b.relatedPersons || [];
+    const relList = document.getElementById('mhpRelatedPersonsList');
+    if (relList) {
+      const ids = Array.from(relList.querySelectorAll('.mhp-rel-id')).map(el => el.value);
+      const rels = Array.from(relList.querySelectorAll('.mhp-rel-relation')).map(el => el.value.trim());
+      relatedPersons = ids.map((pid, i) => ({ personId: pid, relation: rels[i] || "" })).filter(r => r.personId);
+    }
+    return {
+      // Basis
+      name: da("mhpName") ? $v("mhpName") : (b.name || ""),
+      firstName: da("mhpFirstName") ? $v("mhpFirstName") : (b.firstName || ""),
+      lastName: da("mhpLastName") ? $v("mhpLastName") : (b.lastName || ""),
+      title: da("mhpTitle") ? $v("mhpTitle") : (b.title || ""),
+      nickname: da("mhpNickname") ? $v("mhpNickname") : (b.nickname || ""),
+      pronouns: da("mhpPronouns") ? $v("mhpPronouns") : (b.pronouns || ""),
+      birthday: da("mhpBirthday") ? $v("mhpBirthday") : (b.birthday || ""),
+      nationality: da("mhpNationality") ? $v("mhpNationality") : (b.nationality || ""),
+      languages: da("mhpLanguages")
+        ? $v("mhpLanguages").split(",").map(x => x.trim()).filter(Boolean) : (b.languages || []),
+      // Kontakt
+      emails: da("mhpEmails")
+        ? $vRaw("mhpEmails").split("\n").map(x => x.trim()).filter(Boolean) : (b.emails || []),
+      phones: da("mhpPhones")
+        ? $vRaw("mhpPhones").split("\n").map(x => x.trim()).filter(Boolean) : (b.phones || []),
+      address: da("mhpStreet")
+        ? { street: $v("mhpStreet"), zip: $v("mhpZip"), city: $v("mhpCity"), country: $v("mhpCountry") }
+        : (b.address || { street: "", zip: "", city: "", country: "" }),
+      social: da("mhpLinkedin")
+        ? { linkedin: $v("mhpLinkedin"), twitter: $v("mhpTwitter"), instagram: $v("mhpInstagram"),
+            facebook: $v("mhpFacebook"), github: $v("mhpGithub"), other: $v("mhpSocialOther") }
+        : (b.social || { linkedin: "", twitter: "", instagram: "", facebook: "", github: "", other: "" }),
+      website: da("mhpWebsite") ? $v("mhpWebsite") : (b.website || ""),
+      // Beruf
+      role: da("mhpRole") ? $v("mhpRole") : (b.role || ""),
+      organizationId: da("mhpOrg") ? (document.getElementById("mhpOrg").value || null)
+        : (b.organizationId || null),
+      company: da("mhpCompany") ? $v("mhpCompany") : (b.company || ""),
+      department: da("mhpDepartment") ? $v("mhpDepartment") : (b.department || ""),
+      skills: da("mhpSkills")
+        ? $v("mhpSkills").split(",").map(x => x.trim()).filter(Boolean) : (b.skills || []),
+      // Beziehung
+      relationshipType: da("mhpRelationshipType")
+        ? (document.getElementById("mhpRelationshipType").value || "") : (b.relationshipType || ""),
+      relationshipSince: da("mhpRelationshipSince") ? $v("mhpRelationshipSince") : (b.relationshipSince || ""),
+      lastContact: da("mhpLastContact") ? $v("mhpLastContact") : (b.lastContact || ""),
+      howWeMet: da("mhpHowWeMet") ? $vRaw("mhpHowWeMet").trim() : (b.howWeMet || ""),
+      importance: da("mhpImportance")
+        ? (parseInt(document.getElementById("mhpImportance").value) || 0) : (b.importance || 0),
+      contactFrequency: da("mhpContactFrequency")
+        ? (document.getElementById("mhpContactFrequency").value || "") : (b.contactFrequency || ""),
+      // Persoenlich
+      interests: da("mhpInterests")
+        ? $v("mhpInterests").split(",").map(x => x.trim()).filter(Boolean) : (b.interests || []),
+      familyMembers: da("mhpFamilyMembers") ? $vRaw("mhpFamilyMembers").trim() : (b.familyMembers || ""),
+      preferredGifts: da("mhpPreferredGifts") ? $vRaw("mhpPreferredGifts").trim() : (b.preferredGifts || ""),
+      foodPreferences: da("mhpFoodPreferences") ? $v("mhpFoodPreferences") : (b.foodPreferences || ""),
+      notes: da("mhpNotes") ? $vRaw("mhpNotes").trim() : (b.notes || ""),
+      tags: da("mhpTags")
+        ? $v("mhpTags").split(",").map(x => x.trim()).filter(Boolean) : (b.tags || []),
+      // Verknuepfungen
+      linkedProjects: liste('mhpLinkedProjectsList', b.linkedProjects),
+      linkedTasks: liste('mhpLinkedTasksList', b.linkedTasks),
+      linkedNotes: liste('mhpLinkedNotesList', b.linkedNotes),
+      linkedMeetings: liste('mhpLinkedMeetingsList', b.linkedMeetings),
+      linkedDecisions: liste('mhpLinkedDecisionsList', b.linkedDecisions),
+      linkedIdeas: liste('mhpLinkedIdeasList', b.linkedIdeas),
+      linkedGoals: liste('mhpLinkedGoalsList', b.linkedGoals),
+      relatedPersons: relatedPersons,
+    };
+  }
+  // Reiterwechsel: erst einsammeln, dann wechseln. Nie andersherum.
+  window.mhPersonSwitchTab = function(tab, personId) {
+    const id = personId || "";
+    if (document.getElementById("mhPersonEditorOverlay")) {
+      window._mhPersonDraft = { for: id, werte: mhReadPersonFields(mhPersonBasis(id)) };
+    }
+    window._mhPersonTab = tab;
+    mhOpenPersonEditor(personId || undefined, true);
+  };
+
   // Person Editor mit Tabs (Basis · Kontakt · Beruf · Beziehung · Persönlich · Verknüpfungen)
-  window.mhOpenPersonEditor = function(personId) {
-    const p = personId ? mhPersons()[personId] : null;
+  window.mhOpenPersonEditor = function(personId, entwurfBehalten) {
+    // Ein frisch geoeffneter Editor faengt leer an; nur der Reiterwechsel
+    // (und die Pflichtfeld-Rueckkehr) nehmen den Entwurf mit.
+    if (!entwurfBehalten) window._mhPersonDraft = null;
+    const gespeichert = personId ? mhPersons()[personId] : null;
+    const entwurf = mhPersonDraftFor(personId);
+    const p = (gespeichert || entwurf) ? Object.assign({}, gespeichert || {}, entwurf || {}) : null;
+    const istNeu = !personId;
     
     let overlay = document.getElementById("mhPersonEditorOverlay");
     if (!overlay) {
@@ -100202,14 +100329,16 @@ console.log('📚 Leseliste geladen');
     const allPersons = Object.values(mhPersons() || {}).filter(x => x.id !== personId);
     
     const tab = window._mhPersonTab || "basic";
-    const setTab = (t) => `onclick="window._mhPersonTab='${t}';mhOpenPersonEditor('${personId || ''}')"`;
+    const setTab = (t) => `onclick="window.mhPersonSwitchTab('${t}','${personId || ''}')"`;
     
+    const nameFehlt = !!(window._mhPersonDraft && window._mhPersonDraft.for === (personId || "") &&
+      window._mhPersonDraft.fehler === "name");
     const addr = p?.address || { street: "", zip: "", city: "", country: "" };
     const soc = p?.social || { linkedin: "", twitter: "", instagram: "", facebook: "", github: "", other: "" };
     
     overlay.innerHTML = `<div class="mh-modal" onclick="event.stopPropagation()" style="max-width:720px">
       <div class="mh-modal-head">
-        <span class="mh-modal-title">👤 ${p ? "Person bearbeiten" : "Neue Person"}</span>
+        <span class="mh-modal-title">👤 ${istNeu ? "Neue Person" : "Person bearbeiten"}</span>
         <button class="mh-modal-close" onclick="mhClosePersonEditor()">×</button>
       </div>
       
@@ -100242,7 +100371,8 @@ console.log('📚 Leseliste geladen');
           </div>
         </div>
         <div class="mh-field"><label class="mh-label">Anzeigename (vollständig) *</label>
-          <input type="text" id="mhpName" class="mh-input" placeholder="Wie soll Person angezeigt werden?" value="${mhEsc(p?.name || '')}" />
+          <input type="text" id="mhpName" class="mh-input" placeholder="Wie soll Person angezeigt werden?" value="${mhEsc(p?.name || '')}"${nameFehlt ? ' style="border-color:var(--danger)" aria-invalid="true" aria-describedby="mhpNameFehler"' : ''} />
+          ${nameFehlt ? `<div id="mhpNameFehler" role="alert" style="margin-top:6px;font-size:12px;color:var(--danger)">Ohne Anzeigenamen lässt sich die Person nicht speichern. Alles andere ist erhalten geblieben.</div>` : ''}
         </div>
         <div class="mh-field"><label class="mh-label">Spitzname</label>
           <input type="text" id="mhpNickname" class="mh-input" placeholder="optional" value="${mhEsc(p?.nickname || '')}" />
@@ -100564,7 +100694,7 @@ console.log('📚 Leseliste geladen');
       </div>
       <div class="mh-modal-foot">
         <button class="mh-btn ghost" onclick="mhClosePersonEditor()">Abbrechen</button>
-        <button class="mh-btn primary" onclick="mhSavePerson('${personId || ''}')">${p ? "Aktualisieren" : "Speichern"}</button>
+        <button class="mh-btn primary" onclick="mhSavePerson('${personId || ''}')">${istNeu ? "Speichern" : "Aktualisieren"}</button>
       </div>
     </div>`;
     overlay.classList.add("show");
@@ -100615,6 +100745,8 @@ console.log('📚 Leseliste geladen');
   window.mhClosePersonEditor = function() {
     const overlay = document.getElementById("mhPersonEditorOverlay");
     if (overlay) overlay.classList.remove("show");
+    // Abbrechen heisst abbrechen: der Entwurf wird verworfen, nicht gespeichert.
+    window._mhPersonDraft = null;
   };
   
   window.markPersonContacted = function(personId) {
@@ -100637,141 +100769,50 @@ console.log('📚 Leseliste geladen');
   };
   
   window.mhSavePerson = function(existingId) {
-    // Helper: liest nur wenn Element existiert (Tab kann gerade nicht aktiv sein)
-    const $v = (id) => document.getElementById(id)?.value?.trim() || "";
-    const $vRaw = (id) => document.getElementById(id)?.value || "";  // ohne trim für Textareas
-    
     const existing = APP.state.data.entities.persons[existingId] || {};
+    // Der volle Stand: gespeichert + bisheriger Entwurf + was gerade sichtbar
+    // im DOM steht. So zaehlt jeder Reiter, auch die gerade nicht offenen.
+    const w = mhReadPersonFields(Object.assign({}, existing, mhPersonDraftFor(existingId) || {}));
 
-    // Name ist Pflicht — auto-bilden aus firstName/lastName falls leer.
-    // WICHTIG: Felder des Basis-Tabs nur lesen, wenn dieser Tab im DOM ist.
-    // Sonst (z.B. beim Erfassen einer E-Mail im Kontakt-Tab) würden Name &
-    // Co. überschrieben/gelöscht — bestehende Werte müssen erhalten bleiben.
-    const basicLoaded = !!document.getElementById("mhpName");
-    let name = basicLoaded ? $v("mhpName") : (existing.name || "");
-    const firstName = basicLoaded ? $v("mhpFirstName") : (existing.firstName || "");
-    const lastName = basicLoaded ? $v("mhpLastName") : (existing.lastName || "");
-    if (!name && (firstName || lastName)) name = [firstName, lastName].filter(Boolean).join(" ");
-    if (!name) { mhToast("warn", "Name erforderlich"); return; }
+    let name = w.name;
+    if (!name && (w.firstName || w.lastName)) name = [w.firstName, w.lastName].filter(Boolean).join(" ");
+    if (!name) {
+      /* Frueher: eine kurze Einblendung, das Fenster blieb offen, und das
+         fehlende Feld lag in einem Reiter, den man gerade nicht sah — es
+         wirkte, als tue „Speichern" gar nichts. Jetzt fuehrt der Weg zum
+         Feld: Entwurf sichern, zurueck auf Basis, Feld markiert und im
+         Blick. Nichts Getipptes geht dabei verloren. */
+      window._mhPersonDraft = { for: existingId || "", werte: w, fehler: "name" };
+      window._mhPersonTab = "basic";
+      mhOpenPersonEditor(existingId || undefined, true);
+      const feld = document.getElementById("mhpName");
+      if (feld && feld.focus) feld.focus();
+      mhToast("warn", "Name fehlt", "Bitte den Anzeigenamen im Reiter „Basis\u201c ergänzen — alles andere ist erhalten.");
+      return;
+    }
 
     const now = new Date().toISOString();
     const id = existingId || mhId("prs");
     const isNew = !existingId;
-    
-    // Sammle Werte aller Tabs (nur überschreiben wenn Tab aktiv war, sonst existing-Wert behalten)
-    const wasTab = window._mhPersonTab || "basic";
-    
-    // Helper: nur überschreiben wenn das Feld im DOM existiert
-    const merge = (field, val, fallback) => document.getElementById('mhp' + field) ? val : (existing[fallback || field.charAt(0).toLowerCase() + field.slice(1)] !== undefined ? existing[fallback || field.charAt(0).toLowerCase() + field.slice(1)] : '');
-    
-    // Basis
-    const title = document.getElementById("mhpTitle") ? $v("mhpTitle") : (existing.title || "");
-    const nickname = document.getElementById("mhpNickname") ? $v("mhpNickname") : (existing.nickname || "");
-    const pronouns = document.getElementById("mhpPronouns") ? $v("mhpPronouns") : (existing.pronouns || "");
-    const birthday = document.getElementById("mhpBirthday") ? $v("mhpBirthday") : (existing.birthday || "");
-    const nationality = document.getElementById("mhpNationality") ? $v("mhpNationality") : (existing.nationality || "");
-    const languages = document.getElementById("mhpLanguages") 
-      ? $v("mhpLanguages").split(",").map(s => s.trim()).filter(Boolean) 
-      : (existing.languages || []);
-    
-    // Kontakt
-    const emails = document.getElementById("mhpEmails") 
-      ? $vRaw("mhpEmails").split("\n").map(s => s.trim()).filter(Boolean) 
-      : (existing.emails || []);
-    const phones = document.getElementById("mhpPhones") 
-      ? $vRaw("mhpPhones").split("\n").map(s => s.trim()).filter(Boolean) 
-      : (existing.phones || []);
-    const address = document.getElementById("mhpStreet") ? {
-      street: $v("mhpStreet"),
-      zip: $v("mhpZip"),
-      city: $v("mhpCity"),
-      country: $v("mhpCountry"),
-    } : (existing.address || { street: "", zip: "", city: "", country: "" });
-    const social = document.getElementById("mhpLinkedin") ? {
-      linkedin: $v("mhpLinkedin"),
-      twitter: $v("mhpTwitter"),
-      instagram: $v("mhpInstagram"),
-      facebook: $v("mhpFacebook"),
-      github: $v("mhpGithub"),
-      other: $v("mhpSocialOther"),
-    } : (existing.social || { linkedin: "", twitter: "", instagram: "", facebook: "", github: "", other: "" });
-    const website = document.getElementById("mhpWebsite") ? $v("mhpWebsite") : (existing.website || "");
-    
-    // Beruf
-    const role = document.getElementById("mhpRole") ? $v("mhpRole") : (existing.role || "");
-    const organizationId = document.getElementById("mhpOrg") ? (document.getElementById("mhpOrg").value || null) : (existing.organizationId || null);
-    const company = document.getElementById("mhpCompany") ? $v("mhpCompany") : (existing.company || "");
-    const department = document.getElementById("mhpDepartment") ? $v("mhpDepartment") : (existing.department || "");
-    const skills = document.getElementById("mhpSkills") 
-      ? $v("mhpSkills").split(",").map(s => s.trim()).filter(Boolean) 
-      : (existing.skills || []);
-    
-    // Beziehung
-    const relationshipType = document.getElementById("mhpRelationshipType") ? (document.getElementById("mhpRelationshipType").value || "") : (existing.relationshipType || "");
-    const relationshipSince = document.getElementById("mhpRelationshipSince") ? $v("mhpRelationshipSince") : (existing.relationshipSince || "");
-    const lastContact = document.getElementById("mhpLastContact") ? $v("mhpLastContact") : (existing.lastContact || "");
-    const howWeMet = document.getElementById("mhpHowWeMet") ? $vRaw("mhpHowWeMet").trim() : (existing.howWeMet || "");
-    const importance = document.getElementById("mhpImportance") ? parseInt(document.getElementById("mhpImportance").value) || 0 : (existing.importance || 0);
-    const contactFrequency = document.getElementById("mhpContactFrequency") ? (document.getElementById("mhpContactFrequency").value || "") : (existing.contactFrequency || "");
-    
-    // Persönlich
-    const interests = document.getElementById("mhpInterests") 
-      ? $v("mhpInterests").split(",").map(s => s.trim()).filter(Boolean) 
-      : (existing.interests || []);
-    const familyMembers = document.getElementById("mhpFamilyMembers") ? $vRaw("mhpFamilyMembers").trim() : (existing.familyMembers || "");
-    const preferredGifts = document.getElementById("mhpPreferredGifts") ? $vRaw("mhpPreferredGifts").trim() : (existing.preferredGifts || "");
-    const foodPreferences = document.getElementById("mhpFoodPreferences") ? $v("mhpFoodPreferences") : (existing.foodPreferences || "");
-    const notes = document.getElementById("mhpNotes") ? $vRaw("mhpNotes").trim() : (existing.notes || "");
-    const tags = document.getElementById("mhpTags") 
-      ? $v("mhpTags").split(",").map(s => s.trim()).filter(Boolean) 
-      : (existing.tags || []);
-    
-    // Verknüpfungen
-    const getLinkedIds = (listId) => {
-      const list = document.getElementById(listId);
-      if (!list) return null;  // signal: not loaded
-      return Array.from(list.querySelectorAll('[data-id]')).map(el => el.getAttribute('data-id'));
-    };
-    const linkedProjects = getLinkedIds('mhpLinkedProjectsList') || existing.linkedProjects || [];
-    const linkedTasks = getLinkedIds('mhpLinkedTasksList') || existing.linkedTasks || [];
-    const linkedNotes = getLinkedIds('mhpLinkedNotesList') || existing.linkedNotes || [];
-    const linkedMeetings = getLinkedIds('mhpLinkedMeetingsList') || existing.linkedMeetings || [];
-    const linkedDecisions = getLinkedIds('mhpLinkedDecisionsList') || existing.linkedDecisions || [];
-    const linkedIdeas = getLinkedIds('mhpLinkedIdeasList') || existing.linkedIdeas || [];
-    const linkedGoals = getLinkedIds('mhpLinkedGoalsList') || existing.linkedGoals || [];
-    
-    // Verwandte Personen
-    let relatedPersons = existing.relatedPersons || [];
-    const relList = document.getElementById('mhpRelatedPersonsList');
-    if (relList) {
-      const ids = Array.from(relList.querySelectorAll('.mhp-rel-id')).map(el => el.value);
-      const rels = Array.from(relList.querySelectorAll('.mhp-rel-relation')).map(el => el.value.trim());
-      relatedPersons = ids.map((pid, i) => ({ personId: pid, relation: rels[i] || "" })).filter(r => r.personId);
-    }
-    
+
     APP.state.data.entities.persons[id] = {
       ...existing,
-      id, name, firstName, lastName, title, nickname, pronouns, birthday, nationality, languages,
-      emails, phones, address, social, website,
-      role, organizationId, company, department, skills,
-      relationshipType, relationshipSince, lastContact, howWeMet, importance, contactFrequency,
-      interests, familyMembers, preferredGifts, foodPreferences,
-      notes, tags,
-      linkedProjects, linkedTasks, linkedNotes, linkedMeetings, linkedDecisions, linkedIdeas, linkedGoals,
-      relatedPersons,
+      ...w,
+      id, name,
       interactions: existing.interactions || [],
       createdAt: existing.createdAt || now,
       updatedAt: now,
     };
-    
+
     mhSave();
+    window._mhPersonDraft = null;
     mhClosePersonEditor();
-    mhToast("ok", "👤 Gespeichert", name);
+    mhToast("ok", "\ud83d\udc64 Gespeichert", name);
     window._mhPersonTab = "basic";  // Reset für nächstes Öffnen
     if (isNew) window.navigate("persons", id);
     else mhRender();
   };
-  
+
   window.mhDeletePerson = function(id) {
     const p = mhPersons()[id];
     if (!p) return;
