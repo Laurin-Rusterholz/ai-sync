@@ -1,0 +1,269 @@
+/*
+ * Zwei Kundenlinks an EINEM Projekt — welcher zaehlt?
+ * ---------------------------------------------------------------------------
+ * Befund (10.09.2026, Projekt e543fc2e-064a-4b93-a75e-2f543ef3263d):
+ * Die Projektkarte zeigte
+ *     https://flowertech.ch/fragebogen.html?e=YsJLRllvKkIT3f03O4WzrS49
+ * die tatsaechlich am 02.09. versendete Mail dagegen
+ *     https://flowertech.ch/fragebogen.html?e=pf-kXRwq0T1lOUcH7fsknz_b
+ *
+ * Erstens: Beide sind gewoehnliche Einladungstoken desselben Generators —
+ * 24 Zeichen aus [A-Za-z0-9-_]. Ein fuehrendes "pf-" ist Zufall der
+ * Zufallsauswahl, kein Praefix und keine zweite Tokenart. Das prueft dieser
+ * Test am echten Generator-Alphabet, damit niemand weiter danach sucht.
+ *
+ * Zweitens — die eigentliche Frage: Aktualisieren beide Tokens dasselbe
+ * Projekt? Das entscheidet NICHT der Status „Link verschickt" und auch nicht
+ * „Wartet auf Antwort" (beides steht am Fragebogen und weiss nichts von einer
+ * Mail), sondern allein die Bindung des Fragebogens:
+ *
+ *   · gebunden (boundProjectId) → die Antwort aktualisiert genau dieses Projekt
+ *   · nicht gebunden, hat aber sein Projekt schon erzeugt (projectId)
+ *                              → die Antwort wird VERWORFEN
+ *   · weder noch               → die Antwort erzeugt ein NEUES Projekt
+ *
+ * Diese Regeln stehen in applyIntakeSubmission; intakeAliasReport() rechnet
+ * sie fuer jeden Link des Projekts aus, und die Projektkarte zeigt das
+ * Ergebnis. Dazu: Eine nicht uebernommene Antwort verschwindet nicht mehr
+ * spurlos, und die Vorbelegung wird fuer JEDEN Link des Projekts nachgezogen —
+ * nicht nur fuer den, den die Karte gerade anzeigt.
+ *
+ * Es wird nichts verschickt, nichts freigegeben und nichts ueberschrieben.
+ */
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import vm from "node:vm";
+import { fileURLToPath } from "node:url";
+
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const CORE = (await import(path.join(root, "public/flowertech-workflow-core.js"))).default;
+const quelle = fs.readFileSync(path.join(root, "public/flowertech.js"), "utf8");
+
+let checks = 0;
+const ok = (b, m) => { assert.ok(b, m); checks++; };
+const eq = (a, b, m) => { assert.deepEqual(a, b, m); checks++; };
+
+const PROJEKT = "e543fc2e-064a-4b93-a75e-2f543ef3263d";
+const TOKEN_KARTE = "YsJLRllvKkIT3f03O4WzrS49";
+const TOKEN_MAIL = "pf-kXRwq0T1lOUcH7fsknz_b";
+const NOW = "2026-09-10T21:00:00.000Z";
+
+/* ══ 1. „pf-" ist kein Praefix ═════════════════════════════════════════════ */
+{
+  const alphabet = /var chars = "([^"]+)";/.exec(quelle);
+  ok(alphabet, "der Token-Generator (makeToken) wurde nicht gefunden");
+  const zeichen = alphabet[1];
+  eq(zeichen, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_",
+    "das Alphabet des Token-Generators hat sich geaendert");
+  ok(/var bytes = new Uint8Array\(24\);/.test(quelle), "die Tokenlaenge ist nicht mehr 24");
+  [TOKEN_KARTE, TOKEN_MAIL].forEach((t) => {
+    eq(t.length, 24, `der Token ${t} hat nicht die Laenge des Generators`);
+    ok(t.split("").every((c) => zeichen.includes(c)),
+      `der Token ${t} enthaelt Zeichen, die der Generator nie erzeugt`);
+  });
+  ok(!/"pf-"|'pf-'/.test(quelle), "es gibt doch einen Sonderfall „pf-“ im Code");
+}
+
+/* ══ 2. Was eine Antwort auf jeden Token bewirkt ═══════════════════════════ */
+const gibtProjekt = (id) => id === PROJEKT;
+{
+  const gebunden = { id: "in_a", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT, createdAt: "2026-09-02T06:00:00.000Z" };
+  const erzeugte = { id: "in_b", inviteToken: TOKEN_KARTE, projectId: PROJEKT, createdAt: "2026-08-20T06:00:00.000Z" };
+  const frisch = { id: "in_c", inviteToken: "cccccccccccccccccccccccc", createdAt: "2026-09-05T06:00:00.000Z" };
+
+  eq(CORE.intakeAnswerRoute({ intake: gebunden, projectId: PROJEKT, projectExists: gibtProjekt }).route, "updates",
+    "eine Antwort auf den gebundenen Bogen aktualisiert das Projekt nicht");
+  eq(CORE.intakeAnswerRoute({ intake: erzeugte, projectId: PROJEKT, projectExists: gibtProjekt }).route, "dropped",
+    "eine Antwort auf den Bogen, der das Projekt erzeugt hat, gilt faelschlich als wirksam");
+  eq(CORE.intakeAnswerRoute({ intake: frisch, projectId: PROJEKT, projectExists: gibtProjekt }).route, "creates",
+    "ein ungebundener Bogen ohne Projekt erzeugt kein neues Projekt mehr");
+
+  const bericht = CORE.intakeAliasReport({
+    intakes: { in_a: gebunden, in_b: erzeugte }, projectId: PROJEKT, projectExists: gibtProjekt, now: NOW,
+  });
+  eq(bericht.count, 2, "der Bericht findet nicht beide Kundenlinks");
+  ok(bericht.ambiguous, "zwei Kundenlinks gelten nicht als mehrdeutig");
+  ok(bericht.hasBlindLink, "der Link, der eine Antwort verwirft, faellt nicht auf");
+  eq(bericht.effectiveToken, TOKEN_MAIL,
+    `der wirksame Token stimmt nicht: ${bericht.effectiveToken}`);
+  // Feste Reihenfolge (aelteste zuerst) — nicht die Schluesselreihenfolge.
+  eq(bericht.links.map((l) => l.token), [TOKEN_KARTE, TOKEN_MAIL],
+    "die Reihenfolge der Links haengt weiterhin an der Schluesselreihenfolge");
+  eq(bericht.links.map((l) => l.route), ["dropped", "updates"], "die Zuordnung je Link stimmt nicht");
+
+  // Ein einzelner Link ist kein Fall fuer die Warnung.
+  const einer = CORE.intakeAliasReport({ intakes: { in_a: gebunden }, projectId: PROJEKT, projectExists: gibtProjekt });
+  ok(!einer.ambiguous && !einer.hasBlindLink, "ein einzelner, gebundener Link gilt als Problem");
+
+  // Zwei gebundene: beide wirksam, keiner ist DER eine.
+  const zwei = CORE.intakeAliasReport({
+    intakes: { in_a: gebunden, in_d: { id: "in_d", inviteToken: "dddddddddddddddddddddddd", boundProjectId: PROJEKT, createdAt: "2026-09-03T06:00:00.000Z" } },
+    projectId: PROJEKT, projectExists: gibtProjekt,
+  });
+  eq(zwei.effectiveToken, "", "bei zwei wirksamen Links wird trotzdem einer als DER eine ausgegeben");
+  ok(zwei.ambiguous, "zwei gebundene Links gelten nicht als mehrdeutig");
+}
+
+/* ══ 3. Laufzeit: Karte, Vermerk und Vorbelegung ═══════════════════════════ */
+let seed = 0;
+function makeSandbox() {
+  const data = { entities: { projects: {}, tasks: {}, notes: {} }, flowertech: {}, meta: {} };
+  const written = {};
+  const win = {
+    APP: { state: { data } },
+    FlowerTechWorkflow: CORE,
+    location: { hash: "#/flowertech", origin: "https://example.test", pathname: "/index.html" },
+    addEventListener() {}, removeEventListener() {},
+    scheduleSave() {}, render() {},
+    toast(type, title, message) { win.__toasts.push({ type, title, message }); },
+    __written: written, __toasts: [],
+    createEntity: (kind, payload) => {
+      const store = kind === "project" ? data.entities.projects : data.entities.tasks;
+      const newId = kind + "_" + (Object.keys(store).length + 1) + "_" + (seed++);
+      store[newId] = Object.assign({ id: newId }, payload);
+      return newId;
+    },
+    esc: (v) => String(v == null ? "" : v)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
+    uuid: () => "u_" + (seed++),
+    nowIso: () => NOW,
+    todayYmd: () => "2026-09-10",
+    crypto: { getRandomValues: (a) => { seed++; a.forEach((_, i) => { a[i] = (i * 37 + seed * 13) % 256; }); } },
+    setTimeout: (fn) => { if (typeof fn === "function") fn(); return 0; },
+    prompt: () => "",
+  };
+  win.window = win;
+  const sandbox = {
+    window: win,
+    document: {
+      readyState: "complete", getElementById: () => null, querySelector: () => null, addEventListener() {},
+      createElement: () => ({ style: {}, remove() {}, click() {}, setAttribute() {}, focus() {}, select() {} }),
+      body: { appendChild() {}, removeChild() {}, classList: { toggle() {}, remove() {} } },
+      execCommand: () => true,
+    },
+    location: win.location, setTimeout: win.setTimeout, clearTimeout: () => {},
+    console: { warn() {}, log() {}, error() {} },
+    navigator: { clipboard: { writeText: () => Promise.resolve() } },
+    confirm: () => true, APP: win.APP,
+    firebase: { app: () => ({ database: () => ({ ref: (p) => ({
+      set: (v) => { written[p] = v; (written.__order = written.__order || []).push(p); return Promise.resolve(); },
+      remove: () => { delete written[p]; return Promise.resolve(); },
+    }) }) }) },
+  };
+  sandbox.globalThis = sandbox;
+  win.document = sandbox.document; win.firebase = sandbox.firebase;
+  win.navigator = sandbox.navigator; win.confirm = sandbox.confirm;
+  vm.runInContext(quelle, vm.createContext(sandbox));
+  win.viewFlowerTech();
+  return { win, data, written };
+}
+
+{
+  const { win, data, written } = makeSandbox();
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Aljia", projectType: "flowertech", pipelineStage: "intake",
+    client: { name: "Jule Dal", company: "Aljia", email: "juledal19@gmail.com" },
+    createdAt: "2026-08-20T06:00:00.000Z",
+  };
+  const ft = data.flowertech;
+  ft.intakes = {
+    in_alt: {
+      id: "in_alt", title: "Ihre Angaben", inviteToken: TOKEN_KARTE, projectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "answered", answeredAt: "2026-08-25T10:00:00.000Z",
+      createdAt: "2026-08-20T06:00:00.000Z",
+    },
+    in_mail: {
+      id: "in_mail", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open",
+      createdAt: "2026-09-02T06:00:00.000Z",
+    },
+  };
+
+  // 3a) Die Auskunft gibt es zur Laufzeit — mit den echten Projektdaten.
+  const bericht = win._ftIntakeAliasReport(PROJEKT);
+  eq(bericht.count, 2, "die Laufzeit findet nicht beide Kundenlinks");
+  eq(bericht.effectiveToken, TOKEN_MAIL, "die Laufzeit nennt den falschen wirksamen Token");
+
+  // 3b) Die Projektkarte verschweigt den zweiten Link nicht mehr.
+  const karte = String(win._ftProjectIntakeRow(PROJEKT));
+  ok(karte.includes(TOKEN_MAIL) && karte.includes(TOKEN_KARTE),
+    "die Projektkarte nennt nicht beide Tokens");
+  ok(/2 Kundenlinks an diesem Projekt/.test(karte), "die Karte warnt nicht vor der Mehrdeutigkeit");
+  ok(/verworfen/.test(karte), "die Karte sagt nicht, dass ein Link Antworten verwirft");
+
+  // 3c) Die Vorbelegung wird fuer JEDEN offenen Link nachgezogen — auch fuer
+  //     den, den die Karte nicht als ersten zeigt.
+  const vorher = Object.keys(written).length;
+  win._ftRefreshIntakePrefills(PROJEKT);
+  ok(written["flowertech/intakeForms/" + TOKEN_MAIL],
+    "der tatsaechlich versendete Link bekommt die Vorbelegung nicht");
+  const vorbelegt = (written["flowertech/intakeForms/" + TOKEN_MAIL].prefill || {}).values || {};
+  eq(vorbelegt.email, "juledal19@gmail.com",
+    `die hinterlegte E-Mail fehlt in der Vorbelegung des versendeten Links: ${JSON.stringify(vorbelegt)}`);
+  ok(!written["flowertech/intakeForms/" + TOKEN_KARTE],
+    "ein beantworteter Bogen wird unnoetig neu veroeffentlicht");
+  ok(Object.keys(written).length > vorher, "es wurde gar nichts veroeffentlicht");
+
+  // 3d) Eine Antwort auf den Bogen, der sein Projekt schon erzeugt hat, wird
+  //     nicht uebernommen — aber sie verschwindet auch nicht mehr spurlos.
+  const vorherProjekte = Object.keys(data.entities.projects).length;
+  win._ftIngestSubmissions({
+    sub_spaet: {
+      id: "sub_spaet", kind: "intake", token: TOKEN_KARTE, createdAt: "2026-09-10T20:00:00.000Z",
+      payload: { answers: [{ key: "email", answer: "jemand@example.test" }] },
+    },
+  });
+  eq(Object.keys(data.entities.projects).length, vorherProjekte,
+    "aus der verworfenen Antwort entsteht ein zweites Projekt");
+  const vermerk = (ft.intakes.in_alt.unhandledAnswers || [])[0];
+  ok(vermerk && vermerk.token === TOKEN_KARTE,
+    "die nicht uebernommene Antwort wird nicht am Fragebogen vermerkt");
+  ok(/erzeugt/.test(vermerk.reason || ""), `der Vermerk nennt den Grund nicht: ${vermerk && vermerk.reason}`);
+  ok(win.__toasts.some((t) => t.type === "warn" && /nicht uebernommen/.test(t.message || "")),
+    "es wird nicht gemeldet, dass eine Antwort liegen blieb");
+  // Und die Kundendaten des Projekts bleiben, wie sie waren.
+  eq(data.entities.projects[PROJEKT].client.email, "juledal19@gmail.com",
+    "die verworfene Antwort hat Kundendaten ueberschrieben");
+}
+
+/* ══ 4. Auskunft zu GENAU EINEM Token ══════════════════════════════════════
+   Die Frage aus der Abnahme lautet nicht „welche Links hat das Projekt",
+   sondern „was passiert, wenn auf den tatsaechlich versendeten Link
+   geantwortet wird". Genau darauf antwortet _ftIntakeByToken — lesend. */
+{
+  const { win, data } = makeSandbox();
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Aljia", projectType: "flowertech", client: {},
+    createdAt: "2026-08-20T06:00:00.000Z",
+  };
+  data.flowertech.intakes = {
+    in_mail: {
+      id: "in_mail", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open", createdAt: "2026-09-02T06:00:00.000Z",
+    },
+    in_frei: {
+      id: "in_frei", title: "Ohne Projekt", inviteToken: "ffffffffffffffffffffffff",
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open", createdAt: "2026-09-04T06:00:00.000Z",
+    },
+  };
+
+  const gemailt = win._ftIntakeByToken(TOKEN_MAIL);
+  eq(gemailt.known, true, "der versendete Token wird nicht gefunden");
+  eq(gemailt.route, "updates", "eine Antwort auf den versendeten Token gilt nicht dem Projekt");
+  eq(gemailt.projectId, PROJEKT, "der versendete Token zeigt auf ein anderes Projekt");
+  eq(gemailt.projectTitle, "Aljia", "der Projektname fehlt in der Auskunft");
+
+  const frei = win._ftIntakeByToken("ffffffffffffffffffffffff");
+  eq(frei.route, "creates", "ein ungebundener Bogen erzeugt laut Auskunft kein neues Projekt");
+
+  const fremd = win._ftIntakeByToken("zzzzzzzzzzzzzzzzzzzzzzzz");
+  eq(fremd.known, false, "ein unbekannter Token gilt als bekannt");
+  ok(/bleibt liegen/.test(fremd.routeLabel), "die Auskunft sagt nicht, was mit einer Antwort passiert");
+
+  // Der Statuswert allein beweist nichts — er steht am Bogen, nicht an der Mail.
+  eq(gemailt.status, "open", "der Status des versendeten Bogens stimmt nicht");
+  eq(gemailt.answeredAt, "", "der Bogen gilt faelschlich als beantwortet");
+}
+
+console.log(`flowertech kundenlink-alias: ok (${checks} Pruefungen)`);

@@ -1568,6 +1568,95 @@ export function intakeBinding(intake) {
   return { mode: "creates", projectId: "", answered: false };
 }
 
+/* ── Mehrere Kundenlinks an EINEM Projekt ────────────────────────────────
+ * Befund (10.09.2026, Projekt e543fc2e…): Die Projektkarte zeigte den Token
+ * A, die tatsaechlich am 02.09. versendete Mail trug den Token B. Beide sind
+ * gueltige Einladungstoken desselben Generators (24 Zeichen aus
+ * [A-Za-z0-9-_]; ein fuehrendes "pf-" ist Zufall, kein Praefix).
+ *
+ * Moeglich ist das, weil ein Projekt MEHRERE Fragebogen-Datensaetze haben
+ * kann — jeder mit eigenem Einladungstoken — und intakeOfProject() den
+ * ersten Treffer einer ungeordneten Schluesselliste nimmt. Welcher Link
+ * angezeigt wird, haengt damit von der Reihenfolge im Objekt ab, nicht von
+ * der Wirklichkeit.
+ *
+ * Diese Funktion rechnet, sie schreibt nichts. Sie beantwortet die einzige
+ * Frage, die zaehlt: Was passiert mit einer ANTWORT auf jeden dieser Tokens?
+ * Die Regeln stammen 1:1 aus applyIntakeSubmission (flowertech.js):
+ *
+ *   · gebunden (boundProjectId) und Projekt vorhanden
+ *        → die Antwort aktualisiert GENAU dieses Projekt.
+ *   · nicht gebunden, aber projectId zeigt auf ein vorhandenes Projekt
+ *        → die Antwort wird VERWORFEN (der Bogen hat sein Projekt schon
+ *          erzeugt; ein zweites soll nicht entstehen).
+ *   · weder noch
+ *        → die Antwort erzeugt ein NEUES Projekt.
+ *
+ * "Link verschickt" oder "Wartet auf Antwort" sind dafuer kein Nachweis:
+ * Beides steht am Fragebogen-Datensatz und sagt nichts darueber, welcher
+ * Token in einer Mail stand. Nachweisbar ist nur, was hier steht. */
+export const INTAKE_ANSWER_ROUTES = {
+  updates: "aktualisiert dieses Projekt",
+  dropped: "wird verworfen (Bogen hat sein Projekt bereits erzeugt)",
+  creates: "erzeugt ein NEUES Projekt",
+  other: "aktualisiert ein ANDERES Projekt",
+};
+
+export function intakeAnswerRoute({ intake = null, projectId = "", projectExists = () => false } = {}) {
+  const binding = intakeBinding(intake);
+  if (binding.mode === "bound" && projectExists(binding.projectId)) {
+    return { route: String(binding.projectId) === String(projectId) ? "updates" : "other", projectId: binding.projectId };
+  }
+  const created = String((intake && intake.projectId) || "");
+  if (created && projectExists(created)) return { route: "dropped", projectId: created };
+  return { route: "creates", projectId: "" };
+}
+
+export function intakeAliasReport({ intakes = {}, projectId = "", projectExists = () => false, now = new Date().toISOString() } = {}) {
+  const alle = intakes && typeof intakes === "object" ? intakes : {};
+  const gehoert = (intake) => {
+    const b = intakeBinding(intake);
+    return String(b.projectId || "") === String(projectId);
+  };
+  const links = Object.keys(alle)
+    .filter((id) => alle[id] && gehoert(alle[id]))
+    // Feste Reihenfolge: aelteste zuerst. Ohne sie haengt die Anzeige an der
+    // Schluesselreihenfolge des Objekts — genau das war der Befund.
+    .sort((a, b) => String((alle[a] || {}).createdAt || "").localeCompare(String((alle[b] || {}).createdAt || "")) || a.localeCompare(b))
+    .map((id) => {
+      const intake = alle[id] || {};
+      const weg = intakeAnswerRoute({ intake, projectId, projectExists });
+      return {
+        intakeId: id,
+        token: text(intake.inviteToken, 120),
+        title: text(intake.title, 200),
+        createdAt: text(intake.createdAt, 40),
+        binding: intakeBinding(intake).mode,
+        status: text(intake.status, 40) || "open",
+        answeredAt: text(intake.answeredAt, 40),
+        publishedAt: text(intake.publishedAt, 40),
+        publishPending: !!intake.publishPending,
+        publishError: text(intake.publishError, 300),
+        prefillKeys: intake.prefill && intake.prefill.values && typeof intake.prefill.values === "object"
+          ? Object.keys(intake.prefill.values).sort() : [],
+        route: weg.route,
+        routeLabel: INTAKE_ANSWER_ROUTES[weg.route] || weg.route,
+      };
+    });
+  const wirksam = links.filter((l) => l.route === "updates");
+  return {
+    projectId: String(projectId || ""),
+    links,
+    count: links.length,
+    ambiguous: links.length > 1,
+    // Der eine Link, der eine Antwort wirklich an dieses Projekt bringt.
+    effectiveToken: wirksam.length === 1 ? wirksam[0].token : "",
+    // Wahr, sobald mindestens ein Link eine Antwort NICHT hierher bringt.
+    hasBlindLink: links.some((l) => l.route !== "updates"),
+    checkedAt: now,
+  };
+}
+
 /* Welche Beschriftung gilt — und welcher Satz darunter steht.
  *
  * Anlass: Nach der Freigabe der Vorschau stand oben weiter "keine Vorschau"
@@ -4912,6 +5001,7 @@ const API = {
   isIntakeFileId, intakeFileName, intakeFileSizeLabel, normalizeIntakeFile, normalizeIntakeFiles,
   // Die Vorbelegung des Kundenlinks: bekannte Angaben, nichts Erfundenes.
   INTAKE_PREFILL_VERSION, INTAKE_PREFILL_SOURCE_LABELS, isKindQuestion,
+  INTAKE_ANSWER_ROUTES, intakeAnswerRoute, intakeAliasReport,
   intakePrefill, intakePrefillSnapshot, intakePrefillStale,
   INTAKE_RESET_CLEARS, INTAKE_RESET_KEEPS, intakeFormGeneration, intakeResetPlan,
   CUSTOMER_AREA_STAGES, CUSTOMER_OFFER_STATUSES, MAX_CUSTOMER_DOCUMENT_BYTES,
