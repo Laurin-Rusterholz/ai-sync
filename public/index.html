@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart · 2026-09-10" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name · 2026-09-10" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -105830,10 +105830,53 @@ console.log('📚 Leseliste geladen');
   }
   function decodeEntities(s){ try { var d=new DOMParser().parseFromString(String(s),"text/html"); return d.body.textContent||s; } catch(e){ return s; } }
   function parseAddr(s){ s=String(s||"").trim(); var m=/^(.*?)\s*<([^>]+)>\s*$/.exec(s); if(m){ var n=m[1].trim().replace(/^"|"$/g,""); return { name:n||m[2], email:m[2] }; } return { name:s, email:s }; }
-  function splitAddrs(s){ return String(s||"").split(",").map(function(x){ return parseAddr(x.trim()); }).filter(function(a){ return a.email; }); }
+  /* Eine Empfaengerzeile in ihre Adressen zerlegen.
+     Befund (10.09.2026): Zerlegt wurde stur an jedem Komma. Ein Anzeigename
+     mit Komma — "Muster, Anna" <anna@muster.ch>, im Geschaeftsverkehr die
+     Regel — zerfiel damit in zwei Bruchstuecke, und im An-Feld landete
+     '"Muster, anna@muster.ch'. Kommas innerhalb von Anfuehrungszeichen oder
+     spitzen Klammern trennen deshalb nicht mehr. */
+  function gmlSplitList(s){
+    var text = String(s||""), teile = [], akt = "", inQuote = false, inWinkel = false;
+    for (var i=0;i<text.length;i++){
+      var c = text[i];
+      if (c === '"' && text[i-1] !== "\\") { inQuote = !inQuote; akt += c; continue; }
+      if (!inQuote && c === "<") inWinkel = true;
+      if (!inQuote && c === ">") inWinkel = false;
+      if ((c === "," || c === ";") && !inQuote && !inWinkel){ teile.push(akt); akt = ""; continue; }
+      akt += c;
+    }
+    teile.push(akt);
+    return teile.map(function(t){ return t.trim(); }).filter(Boolean);
+  }
+  function splitAddrs(s){ return gmlSplitList(s).map(function(x){ return parseAddr(x); }).filter(function(a){ return a.email; }); }
 
-  // Die eigene(n) Adresse(n) — Grundlage jeder Antwort-Entscheidung.
-  function gmailMe(){ return String((GM.profile&&GM.profile.emailAddress)||"").trim().toLowerCase(); }
+  /* Der Anzeigename einer Empfaengerzeile — nur wenn er wirklich einer ist.
+     Befund (10.09.2026): Entwuerfe zeigten «adresse <adresse>» und bei
+     mehreren Empfaengern «a, b <a, b>». Ursache: toName wurde mit
+     parseAddr(ganzeZeile).name gefuellt, und parseAddr gibt ohne spitze
+     Klammern die EINGABE als Namen zurueck — bei einer nackten Adresse also
+     die Adresse, bei einer Liste die ganze Liste. Ein Name ist nur ein Name,
+     wenn genau EIN Empfaenger dasteht und er sich von seiner Adresse
+     unterscheidet. */
+  function gmlToName(zeile){
+    var adressen = splitAddrs(zeile);
+    if (adressen.length !== 1) return "";
+    var a = adressen[0];
+    var name = String(a.name||"").trim().replace(/^"|"$/g, "");
+    return (name && name.toLowerCase() !== String(a.email||"").trim().toLowerCase()) ? name : "";
+  }
+
+  /* Die eigene Adresse — Grundlage jeder Antwort-Entscheidung.
+     Sie kommt aus dem Profil ODER aus dem Anmeldestand. Der Profilabruf
+     schluckt seinen Fehler still (loadProfile: catch → GM.profile=null); war
+     er ausgefallen, hielt die Antwort-Regel eine gesendete Mail fuer eine
+     fremde und adressierte wieder einen selbst. GM.status.email traegt
+     dieselbe Adresse aus der Anmeldung und faengt genau das ab. */
+  function gmailMe(){
+    var aus = (GM.profile && GM.profile.emailAddress) || (GM.status && GM.status.email) || "";
+    return String(aus).trim().toLowerCase();
+  }
 
   /* Der Gegenkontakt einer Nachricht — wem eine Antwort wirklich gilt.
    * ---------------------------------------------------------------------------
@@ -105884,9 +105927,21 @@ console.log('📚 Leseliste geladen');
       nimm([from], to);
       if (all){ nimm(an, cc); nimm(kopie, cc); }
     }
+    /* Zuletzt: Ein Antwortfeld darf nicht leer aufgehen. Wer eine Adresse
+       vor sich sieht und trotzdem ein leeres An-Feld bekommt, haelt den
+       Composer fuer kaputt — zu Recht. Der Reihe nach das Naechstbeste
+       nehmen, auch wenn es die eigene Adresse ist (dann ist es wirklich eine
+       Nachricht an sich selbst). Fehlt BEIDES — Absender und Empfaenger, wie
+       bei einer Nachricht ohne From-Kopfzeile und ohne geladenes Profil —
+       bleibt das Feld leer; genau das meldet der Aufrufer dann auch. */
     if (!to.length){
-      var selbst = fromEmail || Object.keys(mich)[0] || "";
-      if (selbst) to.push(selbst);
+      var rest = [];
+      an.forEach(function(a){ if (a.email) rest.push(a.email); });
+      kopie.forEach(function(a){ if (a.email) rest.push(a.email); });
+      if (fromEmail) rest.push(fromEmail);
+      var eigenAdresse = Object.keys(mich)[0];
+      if (eigenAdresse) rest.push(eigenAdresse);
+      if (rest.length) to.push(rest[0]);
     }
     return { to: to.join(", "), cc: cc.join(", "), ownMessage: eigene };
   }
@@ -107496,12 +107551,12 @@ console.log('📚 Leseliste geladen');
     try {
       var ctx = GM._composeCtx||{};
       var src = ctx.source||{};
-      var toA = parseAddr(to);
       var links = gmlComposeLinks();
       var le = links[0]||null;
       var draft = {
         to:to, cc:cc, bcc:bcc, subject:subject,
-        toName: toA.name || "",
+        // Nur ein echter Anzeigename — sonst leer (siehe gmlToName).
+        toName: gmlToName(to),
         draftBody: body,
         threadId: ctx.threadId||"",
         messageId: (src.id)||"",
@@ -107591,12 +107646,12 @@ console.log('📚 Leseliste geladen');
     if (!to){ toast("err","Empfänger fehlt","Für „Später senden“ braucht es mindestens eine An-Adresse."); return; }
     GM._composeBusy=true;
     try {
-      var ctx=GM._composeCtx||{}; var src=ctx.source||{}; var toA=parseAddr(to);
+      var ctx=GM._composeCtx||{}; var src=ctx.source||{};
       var links=gmlComposeLinks();
       var le=links[0]||null;
       var draft={
         to:to, cc:cc, bcc:bcc, subject:subject,
-        toName: toA.name||"",
+        toName: gmlToName(to),
         draftBody: body,
         threadId: ctx.threadId||"",
         messageId: (src.id)||"",
@@ -107661,7 +107716,7 @@ console.log('📚 Leseliste geladen');
               if (card){ var ck=card.getAttribute("data-k"), ci=card.getAttribute("data-i"); if (les.some(function(x){ return x&&x.kind===ck&&String(x.id)===ci; })) loadEntityInbox(ck,ci); }
             } catch(_){}
           }
-          toast("ok","🕒 Geplante Mail gesendet","An "+(d.toName||d.to||"")+(d.subject?(" · "+d.subject):""));
+          toast("ok","🕒 Geplante Mail gesendet","An "+gmlDraftTo(d).label+(d.subject?(" · "+d.subject):""));
         } catch(e){
           var att=(Number(d.sendAttempts)||0)+1;
           var upd = att>=5
@@ -108532,14 +108587,30 @@ console.log('📚 Leseliste geladen');
     if (!GM.drafts || !GM.drafts.length) return head + '<div class="gml-empty"><div style="font-size:44px">🤖</div><p>Keine offenen KI-Entwürfe.</p><p style="font-size:12px;color:var(--muted)">Der n8n-Workflow „GmailQuantusAIDraft" legt hier Antwort-Entwürfe ab.</p></div>';
     return head + '<div class="gml-draft-list">'+GM.drafts.map(renderDraftRow).join("")+'</div>';
   }
+  /* Wie ein Entwurf seinen Empfaenger zeigt.
+     Befund (10.09.2026): In der Liste stand «adresse <adresse>», bei mehreren
+     Empfaengern sogar «a, b <a, b>». Die Anzeige setzte Name UND Adresse
+     nebeneinander — und in `toName` stand (aus der alten Speicherung) genau
+     dieselbe Adresse beziehungsweise die ganze Liste.
+     Bereits gespeicherte Entwuerfe werden dabei NICHT angefasst: Was schon in
+     der Datenbank steht, bleibt dort; hier wird nur entschieden, was davon
+     eine zusaetzliche Auskunft ist. Ein Name, der die Adresse selbst ist oder
+     ein @ enthaelt, ist keine. */
+  function gmlDraftTo(d){
+    var addr = String((d && d.to) || "").trim();
+    var name = String((d && d.toName) || "").trim();
+    if (name && (name.toLowerCase() === addr.toLowerCase() || name.indexOf("@") >= 0)) name = "";
+    return { name: name, addr: addr, label: name || addr || "(Empfänger?)" };
+  }
   function renderDraftRow(d){
-    var who = esc(d.toName || d.to || "(Empfänger?)");
+    var empf = gmlDraftTo(d);
+    var who = esc(empf.label);
     var preview = esc((d.draftBody||"").replace(/\s+/g," ").trim().slice(0,180));
     var org = findOrgForEmail(d.to||"");
     var orgBadge = org ? '<div class="gml-org-badge'+(orgInstructions(org)?'':' muted')+'" title="'+(orgInstructions(org)?"KI-Anweisungen dieser Organisation werden angewendet":"Erkannte Organisation – keine E-Mail-Anweisungen hinterlegt")+'">🏢 '+esc(org.name||"Organisation")+(orgInstructions(org)?' · Anweisungen aktiv':'')+'</div>' : '';
     var istGeplant = d.status==="scheduled";
     return '<div class="gml-draft">'
-      + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(d.to&&d.toName?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(d.to)+'&gt;</span>':'')+'</span><span class="gml-draft-date">'+(istGeplant?('🕒 geplant: '+esc(gmlFmtSendAt(d.sendAt))):('🤖 '+esc(fmtDate(draftTs(d)))))+'</span></div>'
+      + '<div class="gml-draft-head"><span class="gml-draft-to">↩️ '+who+(empf.name&&empf.addr?' <span style="color:var(--muted);font-weight:400">&lt;'+esc(empf.addr)+'&gt;</span>':'')+'</span><span class="gml-draft-date">'+(istGeplant?('🕒 geplant: '+esc(gmlFmtSendAt(d.sendAt))):('🤖 '+esc(fmtDate(draftTs(d)))))+'</span></div>'
       + '<div class="gml-draft-subj">'+esc(d.subject||"(kein Betreff)")+'</div>'
       + orgBadge
       + '<div class="gml-draft-prev">'+(preview||'<span style="color:var(--muted)">(leerer Entwurf)</span>')+'</div>'
@@ -108551,7 +108622,7 @@ console.log('📚 Leseliste geladen');
   window.gmailRefreshDrafts = function(){ loadDrafts(); };
   // Paket 2: offene KI-Entwürfe (read-only) für Heute-Fokus.
   window.gmailOpenDrafts = function(){
-    try { return (GM.drafts||[]).filter(function(d){ return (d.status||"pending")==="pending"; }).map(function(d){ return { subject:d.subject||"(ohne Betreff)", to:d.toName||d.to||"" }; }); }
+    try { return (GM.drafts||[]).filter(function(d){ return (d.status||"pending")==="pending"; }).map(function(d){ return { subject:d.subject||"(ohne Betreff)", to:gmlDraftTo(d).label }; }); }
     catch(e){ return []; }
   };
   // Geplanten Versand stoppen — Entwurf bleibt als "pending" erhalten.
@@ -109382,7 +109453,7 @@ console.log('📚 Leseliste geladen');
       +'</span></h3>';
     // Verknüpfte Entwürfe (RTDB) — anklickbar, öffnen den Verfassen-Dialog vorbefüllt.
     var draftsHtml = drafts.length ? ('<div class="gml-ei-drafts"><div class="gml-ei-subhead">✏️ Entwürfe ('+drafts.length+')</div><div class="gml-ei-list">'
-      + drafts.map(function(d){ var lbl=d.status==="scheduled"?("🕒 "+gmlFmtSendAt(d.sendAt)):"Entwurf"; return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(d.toName||d.to||"(Empfänger?)")+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(lbl)+'</span></div>'; }).join("")
+      + drafts.map(function(d){ var lbl=d.status==="scheduled"?("🕒 "+gmlFmtSendAt(d.sendAt)):"Entwurf"; return '<div class="gml-ei-row" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')"><span class="gml-ei-from">✏️ '+esc(gmlDraftTo(d).label)+'</span><span class="gml-ei-subj">'+esc(d.subject||"(kein Betreff)")+'</span><span class="gml-ei-date">'+esc(lbl)+'</span></div>'; }).join("")
       + '</div></div>') : '';
     // Leerzustand je Element-Art: Org/Person zeigt alles adressbasierte, Projekt/
     // Aufgabe bewusst nur Gesendetes + Antworten + manuell Verknüpftes.

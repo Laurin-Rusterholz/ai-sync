@@ -220,6 +220,36 @@ const stand = (routinen, extra = {}) => Object.assign({
     `der Abhak-Fortschritt eines Geraets geht verloren: [${daten}]`);
 }
 
+/* ══ 7b. Was VOR der Korrektur geloescht wurde ══════════════════════════
+ * Diese Loeschungen haben keinen Grabstein — sie sind nirgends vermerkt.
+ * Genau deshalb passiert mit ihnen NICHTS: Aus dem blossen Fehlen auf einer
+ * Seite wird keine Loeschabsicht abgeleitet. Solche Habits bleiben stehen
+ * (auch wenn sie damals wieder auftauchten), bis sie jemand in der neuen
+ * Fassung ein einziges Mal erneut loescht — dann entsteht der Grabstein und
+ * sie bleiben weg. Nichts verschwindet auf Verdacht, und ein Aufraeumen "auf
+ * Verdacht" gibt es bewusst nicht.
+ */
+{
+  const ls = speicher();                          // KEIN Grabstein irgendwo
+  const mergeData = mergeMit(ls);
+  // Der alte Fall: lokal geloescht (ohne Grabstein), der Server kennt ihn noch.
+  const m = mergeData(stand([]), stand([HABIT()]));
+  eq(m.dailyBriefing.routines.length, 1,
+    "eine Loeschung ohne Grabstein wird nachtraeglich als Loeschung gedeutet");
+  // Und die Gegenrichtung: nur lokal vorhanden, dem Server unbekannt.
+  const m2 = mergeData(stand([HABIT()]), stand([]));
+  eq(m2.dailyBriefing.routines.length, 1,
+    "ein dem Server unbekannter Habit wird als geloescht behandelt");
+  // Ein Eintrag ohne jeden Zeitstempel wird selbst mit Grabstein behalten:
+  // ohne Vergleichsmass wird nicht geloescht.
+  const ls2 = speicher();
+  const { api } = grabsteine(ls2);
+  api.logDeletion("routine", "rt_ohne_zeit");
+  eq(mergeMit(ls2)(stand([]), stand([{ id: "rt_ohne_zeit", text: "Ohne Zeitstempel", completions: [] }]))
+    .dailyBriefing.routines.length, 1,
+    "ein Eintrag ohne Zeitstempel wird auf Verdacht entfernt");
+}
+
 // ── 8. Die No-Braine-Bruecke legt eine geloeschte Routine nicht neu an ────
 {
   const quelle = funktion("nbGeloescht", "  function ") + "\n" + funktion("reconcileHabits", "  function ");
