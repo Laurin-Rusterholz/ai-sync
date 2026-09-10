@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy · 2026-09-02" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart · 2026-09-10" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -13106,6 +13106,39 @@ function flattenDeleteLog(log) {
   return flat;
 }
 
+/* Grabsteine auf eine LISTE mit ids anwenden.
+ * ---------------------------------------------------------------------------
+ * Die Entity-Sammlungen (entities.*) fragen die Grabsteine seit jeher ab, die
+ * LISTEN daneben nicht: dailyBriefing.routines (die Habits), beliefs,
+ * sentItems, customRoutines und die Listen auf oberster Ebene wurden schlicht
+ * per id vereinigt. Damit war jede Loeschung eine Einladung zur Rueckkehr: Was
+ * auf einem Geraet weg war, brachte die Gegenseite beim naechsten Abgleich
+ * wieder mit — auf Rechner, Handy und Tablet.
+ *
+ * Es gilt genau dieselbe Regel wie bei den Entities, damit sich Loeschungen
+ * ueberall gleich verhalten und der Ausgang nicht davon abhaengt, WER zuerst
+ * synchronisiert:
+ *
+ *   Der Grabstein gewinnt nur, wenn sein Zeitstempel ECHT NEUER ist als der
+ *   des Eintrags. Beide muessen > 0 sein; fehlt der Zeitstempel des Eintrags,
+ *   wird im Zweifel BEHALTEN (kein Datenverlust).
+ *
+ * Daraus folgt beides, was gefordert ist: Ein aelterer Client- oder Serverstand
+ * kann eine Loeschung nicht rueckgaengig machen (seine Eintraege sind aelter als
+ * der Grabstein), und eine spaetere, bewusste Aenderung am selben Eintrag
+ * gewinnt gegen einen aelteren Grabstein. Der Ausgang haengt nur an den
+ * Zeitstempeln, nicht an der Reihenfolge des Abgleichs. */
+function applyTombstonesToList(list, tombstones) {
+  if (!Array.isArray(list)) return list;
+  const graves = tombstones || {};
+  return list.filter((item) => {
+    if (!item || typeof item !== 'object' || !item.id) return true;
+    const tombTs = graves[item.id] || 0;
+    const itemTs = entityTimestamp(item);
+    return !(tombTs > 0 && itemTs > 0 && tombTs > itemTs);
+  });
+}
+
 // ── Field-level merge for individual entities ──
 // Count total entities across all collections (for sync safety checks)
 function countEntities(data) {
@@ -13332,7 +13365,9 @@ function mergeData(local, remote) {
         if (!map[item.id]) map[item.id] = item;
         else map[item.id] = mergeEntity(map[item.id], item);
       }
-      merged[key] = Object.values(map);
+      // Ohne diesen Schritt holt die Vereinigung jeden geloeschten Eintrag der
+      // Gegenseite zurueck — die Union kennt nur „fehlt hier, also neu dort".
+      merged[key] = applyTombstonesToList(Object.values(map), tombstones);
     } else if (localArr.length > 0 && typeof localArr[0] === 'string') {
       merged[key] = [...new Set([...localArr, ...remoteArr])];
     } else {
@@ -13399,11 +13434,19 @@ function mergeData(local, remote) {
       }
       return Object.values(map);
     };
-    merged.dailyBriefing.beliefs = mergeById(merged.dailyBriefing.beliefs, remote.dailyBriefing.beliefs);
-    merged.dailyBriefing.routines = mergeRoutinesById(merged.dailyBriefing.routines, remote.dailyBriefing.routines);
-    merged.dailyBriefing.sentItems = mergeById(merged.dailyBriefing.sentItems, remote.dailyBriefing.sentItems);
+    /* Nach JEDER Vereinigung die Grabsteine anwenden. Die Habits
+       (dailyBriefing.routines) waren der auffaellige Fall: Eine geloeschte
+       Routine stand nach dem naechsten Herunterladen wieder da, weil die
+       Gegenseite sie noch kannte und die Vereinigung sie als „neu" las. */
+    merged.dailyBriefing.beliefs = applyTombstonesToList(
+      mergeById(merged.dailyBriefing.beliefs, remote.dailyBriefing.beliefs), tombstones);
+    merged.dailyBriefing.routines = applyTombstonesToList(
+      mergeRoutinesById(merged.dailyBriefing.routines, remote.dailyBriefing.routines), tombstones);
+    merged.dailyBriefing.sentItems = applyTombstonesToList(
+      mergeById(merged.dailyBriefing.sentItems, remote.dailyBriefing.sentItems), tombstones);
     // Merge customRoutines by ID
-    merged.dailyBriefing.customRoutines = mergeById(merged.dailyBriefing.customRoutines || [], remote.dailyBriefing.customRoutines || []);
+    merged.dailyBriefing.customRoutines = applyTombstonesToList(
+      mergeById(merged.dailyBriefing.customRoutines || [], remote.dailyBriefing.customRoutines || []), tombstones);
     // Merge dailyLog per date (take the one with more data)
     const localLog = merged.dailyBriefing.dailyLog || {};
     const remoteLog = remote.dailyBriefing.dailyLog || {};
@@ -26473,7 +26516,11 @@ window.dedupHabits = function() {
     base.updatedAt = new Date().toISOString();
   }
 
-  // Duplikate aus dem Array entfernen
+  /* Auch die zusammengefuehrten Duplikate brauchen Grabsteine: Ihre
+     Completions leben im Behalter weiter, die verwaisten ids sind endgueltig
+     weg. Ohne Grabstein brachte der naechste Abgleich genau die Duplikate
+     zurueck, die eben aufgeraeumt wurden. */
+  idsToRemove.forEach(id => logDeletion('routine', id));
   APP.state.data.dailyBriefing.routines = routines.filter(r => !idsToRemove.has(r.id));
   return idsToRemove.size;
 };
@@ -27020,6 +27067,13 @@ window.saveHabit = function(existingId) {
     subUnits,
     archived: false,
     createdAt: isNew ? new Date().toISOString() : (existing?.createdAt || new Date().toISOString()),
+    /* Zeitstempel der letzten bewussten Aenderung an der DEFINITION. Er
+       entscheidet beim Abgleich gegen einen Grabstein: Wer eine Routine nach
+       einer Loeschung anderswo erneut bearbeitet, will sie offensichtlich
+       behalten — dann gewinnt sie. Abhaken (Completions) setzt ihn bewusst
+       NICHT: Ein Haken auf einem Geraet, das die Loeschung noch nicht kennt,
+       darf die Routine nicht wiederbeleben. */
+    updatedAt: new Date().toISOString(),
     completions: existing?.completions || [],
   };
 
@@ -27067,7 +27121,15 @@ window.deleteHabit = function(habitId) {
   if (!confirm('Routine wirklich löschen? Verlauf geht verloren.')) return;
   const habits = getHabits();
   const idx = habits.findIndex(r => r.id === habitId);
+  const weg = idx >= 0 ? habits[idx] : null;
   if (idx >= 0) habits.splice(idx, 1);
+  /* Der Grabstein ist der eigentliche Loeschvorgang. Ohne ihn ist „geloescht"
+     nur der lokale Zustand dieses Geraets: Der naechste Abgleich sieht die
+     Routine auf der Gegenseite, liest sie als neu und holt sie zurueck.
+     Zusaetzlich die No-Braine-Kennung, damit auch die Bruecke
+     (/nobraine/habitdefs → routines) sie nicht neu anlegt. */
+  logDeletion('routine', habitId);
+  if (weg && weg.nbHabitId) logDeletion('routine', 'nb:' + weg.nbHabitId);
   scheduleSave();
   closeHabitEditor();
   render();
@@ -77726,6 +77788,9 @@ window.mergeData = mergeData;
 window.normalizeData = normalizeData;
 window.saveSettings = saveSettings;
 window.logDeletion = logDeletion;
+// getDeleteLog gehoert dazu: Die No-Braine-Bruecke (eigener Script-Block) muss
+// VOR dem Anlegen einer Routine nachsehen koennen, ob sie geloescht wurde.
+window.getDeleteLog = getDeleteLog;
 window.sanitizeApiKey = typeof sanitizeApiKey === "function" ? sanitizeApiKey : undefined;
 window.getTaskSeconds = typeof getTaskSeconds === "function" ? getTaskSeconds : undefined;
 window.getProjectSeconds = typeof getProjectSeconds === "function" ? getProjectSeconds : undefined;
@@ -78778,12 +78843,37 @@ window.searchAllData = searchAllData;
   function recipeName(id){ var r=S.recipes[id]; return (r && r.name) ? r.name : null; }
   function brief(){ var A=window.APP; var d=A && A.state && A.state.data; if(!d) return null; if(!d.dailyBriefing) d.dailyBriefing={ routines:[], timeBlocks:{} }; if(!Array.isArray(d.dailyBriefing.routines)) d.dailyBriefing.routines=[]; if(!d.dailyBriefing.timeBlocks) d.dailyBriefing.timeBlocks={}; return d.dailyBriefing; }
 
+  /* Wurde diese Routine in Quantus geloescht?
+     ---------------------------------------------------------------------
+     Die Bruecke legt zu jeder Definition eine Routine an, wenn keine mit
+     dieser nbHabitId existiert. Genau das machte jede Loeschung in Quantus
+     wirkungslos: Die Routine war binnen 200 ms wieder da — noch vor jedem
+     Abgleich, auf jedem Geraet. Der Grabstein aus dem Loeschvorgang
+     (logDeletion 'routine') haelt sie jetzt draussen.
+     Ausnahme: Ist die Definition NACH der Loeschung entstanden, ist sie ein
+     neuer Vorsatz und darf erscheinen. /nobraine wird dabei nur GELESEN —
+     die Bruecke schreibt dort nichts. */
+  function nbGeloescht(routineId, nbId, def){
+    var log=null;
+    try { if (typeof window.getDeleteLog === "function") log = window.getDeleteLog(); } catch(e){}
+    if(!log || typeof log!=="object") return false;
+    var ts=0;
+    Object.keys(log).forEach(function(bucket){
+      var eintraege=log[bucket]; if(!eintraege || typeof eintraege!=="object") return;
+      [routineId, "nb:"+nbId].forEach(function(k){ var t=Number(eintraege[k])||0; if(t>ts) ts=t; });
+    });
+    if(!ts) return false;
+    var erstellt = Date.parse((def && def.erstellt) || "") || 0;
+    return !(erstellt && erstellt > ts);
+  }
+
   // Habits: habitdefs → routines (Upsert per nbHabitId), completions aus /nobraine/habits als Autorität
   function reconcileHabits(){
     var b=brief(); if(!b) return false; var routines=b.routines; var changed=false;
     Object.keys(S.defs||{}).forEach(function(id){
       var def=S.defs[id]||{}; var r=routines.find(function(x){ return x.nbHabitId===id; });
       if(def.aktiv===false){ if(r && !r.archived){ r.archived=true; changed=true; } return; }
+      if(!r && nbGeloescht("rt_nb_"+String(id).slice(0,12), id, def)) return;
       if(!r){ routines.push({ id:"rt_nb_"+String(id).slice(0,12), nbHabitId:id, source:"nobraine", text:def.name||"Habit", icon:def.icon||"🔁", color:"#3e8e87", frequency:"daily", customDays:[], target:1, unit:"", subUnits:[], archived:false, createdAt:new Date().toISOString(), completions:[], subCompletions:[] }); changed=true; }
       else { if(def.name && r.text!==def.name){ r.text=def.name; changed=true; } if(def.icon && r.icon!==def.icon){ r.icon=def.icon; changed=true; } if(r.archived){ r.archived=false; changed=true; } }
     });
@@ -86154,6 +86244,13 @@ document.addEventListener("click", function(e) {
       break;
     }
     case "db-remove-routine": {
+      // Grabstein zuerst — sonst ist die Routine nach dem naechsten Abgleich
+      // wieder da (die Gegenseite kennt sie noch).
+      var weg = (db.routines||[]).find(function(r){ return r.id === el.dataset.id; });
+      if (typeof window.logDeletion === "function"){
+        window.logDeletion("routine", el.dataset.id);
+        if (weg && weg.nbHabitId) window.logDeletion("routine", "nb:" + weg.nbHabitId);
+      }
       db.routines = db.routines.filter(function(r){return r.id !== el.dataset.id});
       if (window.scheduleSave) window.scheduleSave();
       if (window.render) window.render();
@@ -87029,6 +87126,13 @@ document.addEventListener("click", function(e) {
       break;
     }
     case "db-remove-routine": {
+      // Grabstein zuerst — sonst ist die Routine nach dem naechsten Abgleich
+      // wieder da (die Gegenseite kennt sie noch).
+      var weg = (db.routines||[]).find(function(r){ return r.id === el.dataset.id; });
+      if (typeof window.logDeletion === "function"){
+        window.logDeletion("routine", el.dataset.id);
+        if (weg && weg.nbHabitId) window.logDeletion("routine", "nb:" + weg.nbHabitId);
+      }
       db.routines = db.routines.filter(function(r){return r.id !== el.dataset.id});
       if (window.scheduleSave) window.scheduleSave();
       if (window.render) window.render();
@@ -91965,6 +92069,11 @@ function processCommands(text){
     if (idx < 0) return `⚠️ Routine "${keyRaw}" nicht gefunden`;
     const removed = routines[idx];
     routines.splice(idx, 1);
+    // Ohne Grabstein loescht der KI-Befehl nur auf diesem Geraet.
+    if (typeof window.logDeletion === "function"){
+      window.logDeletion("routine", removed.id);
+      if (removed.nbHabitId) window.logDeletion("routine", "nb:" + removed.nbHabitId);
+    }
     changed = true;
     return `🗑️ Routine "${removed.text || keyRaw}" gelöscht`;
   });
@@ -105723,6 +105832,65 @@ console.log('📚 Leseliste geladen');
   function parseAddr(s){ s=String(s||"").trim(); var m=/^(.*?)\s*<([^>]+)>\s*$/.exec(s); if(m){ var n=m[1].trim().replace(/^"|"$/g,""); return { name:n||m[2], email:m[2] }; } return { name:s, email:s }; }
   function splitAddrs(s){ return String(s||"").split(",").map(function(x){ return parseAddr(x.trim()); }).filter(function(a){ return a.email; }); }
 
+  // Die eigene(n) Adresse(n) — Grundlage jeder Antwort-Entscheidung.
+  function gmailMe(){ return String((GM.profile&&GM.profile.emailAddress)||"").trim().toLowerCase(); }
+
+  /* Der Gegenkontakt einer Nachricht — wem eine Antwort wirklich gilt.
+   * ---------------------------------------------------------------------------
+   * Befund (10.09.2026): Wer in Quantus auf eine SELBST GESENDETE Mail
+   * antwortete, bekam die eigene Adresse ins An-Feld. Der Grund war die
+   * Annahme, der Gegenkontakt stehe immer im Absender: `to: parseAddr(o.from)`.
+   * Bei einer Mail aus „Gesendet" ist der Absender aber man selbst — die
+   * Antwort ging an einen selbst, und die Kundschaft hoerte nichts.
+   *
+   * Die Regel, wie sie auch ein Mailprogramm anwendet:
+   *   · Fremde Mail  → Antwort an den Absender; „Allen" ergaenzt An + Kopie.
+   *   · Eigene Mail  → Antwort an die urspruenglichen Empfaenger (An);
+   *                    „Allen" ergaenzt die Kopie. Steht niemand in An,
+   *                    zaehlen die Kopie-Empfaenger.
+   *   · Die eigene Adresse faellt IMMER heraus (keine Selbstadressierung),
+   *     Adressen werden ohne Ansehen der Gross-/Kleinschreibung entdoppelt,
+   *     und die Reihenfolge des Originals bleibt erhalten.
+   *   · Bleibt gar nichts uebrig, ist es wirklich eine Notiz an sich selbst —
+   *     dann steht die eigene Adresse dort, statt ein leeres Feld zu zeigen.
+   *
+   * Reine Funktion (kein DOM, kein GM): so ist sie pruefbar und ueberall
+   * gleich — Antworten, Allen antworten, KI-Antwort, Antwort aus einem
+   * Element heraus. */
+  function gmailReplyTargets(msg, me, all){
+    var mich = {};
+    (Array.isArray(me) ? me : [me]).forEach(function(x){
+      var e = String(x||"").trim().toLowerCase(); if (e) mich[e] = 1;
+    });
+    var from = parseAddr((msg&&msg.from)||"");
+    var fromEmail = String(from.email||"").trim();
+    var eigene = !!fromEmail && !!mich[fromEmail.toLowerCase()];
+    var an = splitAddrs((msg&&msg.to)||"");
+    var kopie = splitAddrs((msg&&msg.cc)||"");
+    var gesehen = {}, to = [], cc = [];
+    function nimm(liste, ziel){
+      liste.forEach(function(a){
+        var e = String(a.email||"").trim(); if (!e) return;
+        var k = e.toLowerCase();
+        if (mich[k] || gesehen[k]) return;
+        gesehen[k] = 1; ziel.push(e);
+      });
+    }
+    if (eigene){
+      nimm(an, to);
+      if (!to.length) nimm(kopie, to);
+      else if (all) nimm(kopie, cc);
+    } else {
+      nimm([from], to);
+      if (all){ nimm(an, cc); nimm(kopie, cc); }
+    }
+    if (!to.length){
+      var selbst = fromEmail || Object.keys(mich)[0] || "";
+      if (selbst) to.push(selbst);
+    }
+    return { to: to.join(", "), cc: cc.join(", "), ownMessage: eigene };
+  }
+
   function fmtDate(ms){
     if (!ms) return "";
     var d=new Date(ms), now=new Date();
@@ -106748,7 +106916,7 @@ console.log('📚 Leseliste geladen');
     var subs=mails.map(function(m){ return m.subject; }).filter(Boolean);
     if (subs.length) ctx+="Bisheriger Mailverlauf (Betreffzeilen): "+subs.join("; ")+"\n";
     var draft=await gmlAI("Verfasse einen höflichen, präzisen Antwort-Entwurf auf Deutsch."+(ctx?" Berücksichtige diesen Kontext aus meinem System:\n"+ctx:""), o, { tokens:700 });
-    window.gmailCompose({ title:"KI-Antwort mit Kontext", to:a.email, subject:"Re: "+((o.subject)||""), body:draft||"", threadId:o.threadId||null, inReplyTo:o.messageId||null, references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null, source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:gmlBodyText(o) } });
+    window.gmailCompose({ title:"KI-Antwort mit Kontext", to:gmailReplyTargets(o, gmailMe(), false).to, subject:"Re: "+((o.subject)||""), body:draft||"", threadId:o.threadId||null, inReplyTo:o.messageId||null, references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null, source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:gmlBodyText(o) } });
   };
   // 8) KI: Aktionen extrahieren → mehrere Aufgaben-Vorschläge
   window.gmailExtractActions = async function(){
@@ -107106,16 +107274,9 @@ console.log('📚 Leseliste geladen');
   function replyInternal(all){
     var o = GM.open; if (!o) return;
     var fromA = parseAddr(o.from);
-    var me = ((GM.profile&&GM.profile.emailAddress)||"").toLowerCase();
-    var cc = [];
-    if (all){
-      // Dedup case-insensitively; never Cc the sender or ourselves.
-      var seen = {}; seen[fromA.email.toLowerCase()] = 1; if (me) seen[me] = 1;
-      splitAddrs(o.to).concat(splitAddrs(o.cc)).forEach(function(ad){
-        var em=ad.email.toLowerCase();
-        if (em && !seen[em]){ seen[em]=1; cc.push(ad.email); }
-      });
-    }
+    // Wer der Gegenkontakt ist, entscheidet gmailReplyTargets — bei einer
+    // gesendeten Mail sind das die urspruenglichen Empfaenger, nicht man selbst.
+    var ziele = gmailReplyTargets(o, gmailMe(), all);
     var subject = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
     // Ist der Thread bereits mit einem Element verknüpft, die Antwort daran gebunden lassen.
     var linkedEnts = o.threadId ? gmlEntitiesForThread(o.threadId) : [];
@@ -107124,7 +107285,7 @@ console.log('📚 Leseliste geladen');
     // eingerücktes Zitat angehängt (replyQuote → buildMime), ganz ohne „>"-Zeichen.
     window.gmailCompose({
       title: all?"Allen antworten":"Antworten",
-      to: fromA.email, cc: cc.join(", "), subject: subject,
+      to: ziele.to, cc: ziele.cc, subject: subject,
       body: "",
       replyQuote: { fromName: (fromA.name||fromA.email||""), date: o.internalDate||0, text: (o.text||htmlToText(o.html)||"") },
       threadId: o.threadId, inReplyTo: o.messageId, references: ((o.references?o.references+" ":"")+(o.messageId||"")).trim(),
@@ -108225,7 +108386,7 @@ console.log('📚 Leseliste geladen');
   window.gmailUseReplyVariant = function(key){
     var o=GM.open, v=GM._replyVariants && GM._replyVariants[key]; if(!o||!v) return;
     if(window.closeModal) window.closeModal();
-    var email=(String(o.from||"").match(/<([^>]+)>/)||[])[1] || o.from || "";
+    var email=gmailReplyTargets(o, gmailMe(), false).to;
     var subj=/^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
     window.gmailCompose({ title:"Antwort", to:email, subject:subj, body:v, threadId:o.threadId||null, inReplyTo:o.messageId||null, references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null, source:{ id:o.id, threadId:o.threadId||"", from:o.from, subject:o.subject, body:(o.text||htmlToText(o.html)||"") } });
   };
@@ -109177,10 +109338,11 @@ console.log('📚 Leseliste geladen');
       await gmailEnsureReady();
       var msg = await gmApi("GET","/users/me/messages/"+encodeURIComponent(msgId), { query:{ format:"full" } });
       var h = headerMap(msg.payload), bodies = extractBodies(msg.payload);
-      var o = { id:msg.id, threadId:msg.threadId, from:h.from||"", subject:h.subject||"", messageId:h["message-id"]||"", references:h.references||"", text:bodies.text, html:bodies.html };
-      var a = parseAddr(o.from);
+      // An/Kopie gehoeren dazu: Bei einer selbst gesendeten Mail steht der
+      // Gegenkontakt dort — nicht im Absender.
+      var o = { id:msg.id, threadId:msg.threadId, from:h.from||"", to:h.to||"", cc:h.cc||"", subject:h.subject||"", messageId:h["message-id"]||"", references:h.references||"", text:bodies.text, html:bodies.html };
       var subj = /^re:/i.test(o.subject||"") ? o.subject : ("Re: "+(o.subject||""));
-      window.gmailCompose({ title:"↩︎ Antwort", to:a.email, subject:subj,
+      window.gmailCompose({ title:"↩︎ Antwort", to:gmailReplyTargets(o, gmailMe(), false).to, subject:subj,
         threadId:o.threadId||null, inReplyTo:o.messageId||null,
         references:((o.references?o.references+" ":"")+(o.messageId||"")).trim()||null,
         linkedEntity:{ kind:kind, id:id },
