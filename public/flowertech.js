@@ -418,6 +418,13 @@
             ? applyCustomerAreaChange(intakeId, entry)
             : applyVisionToIntake(intakeId, entry);
         if (done) handled++;
+        /* Befund (10.09.2026): Eine Antwort, die NICHT uebernommen wurde, galt
+           trotzdem als erledigt — sie verschwand spurlos. Genau das droht bei
+           einem Projekt mit zwei Kundenlinks: Der Bogen, der sein Projekt
+           schon erzeugt hat, verwirft jede weitere Antwort (applyIntakeSubmission).
+           Sie wird jetzt am Fragebogen vermerkt und gemeldet; uebernommen wird
+           weiterhin nichts automatisch, und ueberschrieben schon gar nichts. */
+        else if (entry.kind === "intake") vermerkeUnzugeordnet(intakeId, key, entry);
         ft.processedSubmissions[key] = now();
         return;
       }
@@ -4202,7 +4209,21 @@
   function intakeOfProject(projectId) {
     var ft = wf();
     if (!ft || !projectId) return null;
-    var list = Object.keys(ft.intakes || {}).map(function (key) { return ft.intakes[key]; });
+    /* Feste Reihenfolge: aelteste zuerst.
+       Befund (10.09.2026): Hat ein Projekt MEHRERE Fragebogen — jeder mit
+       eigenem Einladungstoken —, entschied bisher die Schluesselreihenfolge
+       des Objekts, welcher Link auf der Karte steht. Am Projekt e543fc2e…
+       zeigte die Karte deshalb einen anderen Token als die tatsaechlich
+       versendete Mail. Die Reihenfolge ist jetzt nachvollziehbar, und die
+       Karte weist ausserdem auf jeden weiteren Link hin
+       (intakeAliasHtml) — verschwinden lassen darf man keinen davon. */
+    var list = Object.keys(ft.intakes || {})
+      .map(function (key) { return ft.intakes[key]; })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        return String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+          || String(a.id || "").localeCompare(String(b.id || ""));
+      });
     // Zuerst der ausdrücklich gebundene Fragebogen. Ist keiner da, zählt auch
     // der Fragebogen, AUS DEM dieses Projekt entstanden ist — sonst stünde an
     // einem so entstandenen Projekt ein zweiter Link derselben Phase.
@@ -4210,6 +4231,61 @@
       || list.find(function (i) { return i && i.projectId === projectId; })
       || null;
   }
+
+  /* Alle Kundenlinks dieses Projekts — mit der Frage, was eine ANTWORT auf
+     jeden davon bewirkt. Rein lesend (der Kern rechnet, hier wird nur
+     nachgeschaut, welche Projekte es wirklich gibt). */
+  function intakeAliasReport(projectId) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft || !projectId || typeof core.intakeAliasReport !== "function") return null;
+    return core.intakeAliasReport({
+      intakes: ft.intakes || {},
+      projectId: projectId,
+      projectExists: function (id) { return !!projectById(id); },
+      now: now(),
+    });
+  }
+  window._ftIntakeAliasReport = intakeAliasReport;
+
+  /* Auskunft zu EINEM Token — die Frage aus der Abnahme lautet ja nicht
+     „welche Links hat das Projekt", sondern „was passiert, wenn jemand auf
+     GENAU DIESEN Link antwortet". Rein lesend, ohne jede Aenderung. */
+  function intakeByToken(token) {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft || !token) return null;
+    var id = Object.keys(ft.intakes || {}).find(function (k) {
+      return (ft.intakes[k] || {}).inviteToken === token;
+    });
+    if (!id) {
+      return {
+        token: token, known: false, route: "unknown",
+        routeLabel: "Zu diesem Token gibt es in Quantus keinen Fragebogen — eine Antwort darauf " +
+          "findet ihren Vorgang nicht und bleibt liegen.",
+      };
+    }
+    var intake = ft.intakes[id] || {};
+    var binding = core.intakeBinding(intake);
+    var weg = core.intakeAnswerRoute({
+      intake: intake, projectId: binding.projectId,
+      projectExists: function (x) { return !!projectById(x); },
+    });
+    var project = binding.projectId ? projectById(binding.projectId) : null;
+    return {
+      token: token, known: true, intakeId: id, title: intake.title || "",
+      binding: binding.mode, projectId: binding.projectId || "",
+      projectTitle: (project && project.title) || "",
+      status: intake.status || "open", answeredAt: intake.answeredAt || "",
+      publishedAt: intake.publishedAt || "", publishError: intake.publishError || "",
+      prefillKeys: (intake.prefill && intake.prefill.values && typeof intake.prefill.values === "object")
+        ? Object.keys(intake.prefill.values).sort() : [],
+      unhandledAnswers: Array.isArray(intake.unhandledAnswers) ? intake.unhandledAnswers : [],
+      route: weg.route,
+      routeLabel: (core.INTAKE_ANSWER_ROUTES && core.INTAKE_ANSWER_ROUTES[weg.route]) || weg.route,
+    };
+  }
+  window._ftIntakeByToken = intakeByToken;
   window._ftIntakeOfProject = intakeOfProject;
 
   function intakeForProject(projectId) {
@@ -4590,6 +4666,7 @@
         : "") +
       '<div class="mini">' + esc(state.explain) + "</div>" +
       intakePrefillLineHtml(intakeOfProject(projectId)) +
+      intakeAliasHtml(projectId) +
       // Was die Kundschaft im Vision Room hochgeladen hat — direkt am Projekt.
       intakeFilesHtml((projectById(projectId) || {}).ftIntakeDocument) +
       customerStagesHtml(projectId);
@@ -4598,6 +4675,38 @@
 
   /* Was die Kundschaft auf dem Bogen vorfindet — und woher es stammt. Nur
      intern, nur lesbar: Frage und Quelle, keine ID. */
+  /* Der Hinweis, den es am Projekt e543fc2e… gebraucht haette: Dieses Projekt
+     hat mehr als einen Kundenlink. Er nennt jeden Token, seinen Stand und —
+     das Entscheidende — was eine ANTWORT darauf bewirkt. Nur Anzeige; es wird
+     nichts umgehaengt, nichts geloescht und nichts verschickt. */
+  function intakeAliasHtml(projectId) {
+    var bericht = intakeAliasReport(projectId);
+    if (!bericht || (!bericht.ambiguous && !bericht.hasBlindLink)) return "";
+    var zeilen = bericht.links.map(function (l) {
+      var stand = [];
+      if (l.answeredAt) stand.push("beantwortet");
+      else if (l.publishPending) stand.push("Veröffentlichung läuft");
+      else if (l.publishError) stand.push("Veröffentlichung fehlgeschlagen");
+      else if (l.publishedAt) stand.push("veröffentlicht");
+      else stand.push("nie veröffentlicht");
+      if (l.prefillKeys.length) stand.push("vorbelegt: " + l.prefillKeys.join(", "));
+      else stand.push("keine Vorbelegung");
+      var warn = l.route !== "updates";
+      return '<li' + (warn ? ' class="ft-danger"' : "") + "><code>" + esc(l.token || "(ohne Token)") + "</code> — " +
+        esc(l.routeLabel) + " · " + esc(stand.join(" · ")) + "</li>";
+    }).join("");
+    return '<div class="ft-alias mini mt-2">' +
+      "<b>Achtung: " + bericht.links.length + " Kundenlinks an diesem Projekt.</b> " +
+      "Welcher davon in einer Mail stand, weiss Quantus nicht — „Link verschickt“ und " +
+      "„Wartet auf Antwort“ stehen am Fragebogen, nicht an der Mail. Was eine Antwort bewirkt, " +
+      "steht hier:" +
+      "<ul>" + zeilen + "</ul>" +
+      (bericht.effectiveToken
+        ? "Nur <code>" + esc(bericht.effectiveToken) + "</code> aktualisiert dieses Projekt."
+        : "<b>Kein einziger dieser Links aktualisiert dieses Projekt.</b>") +
+      "</div>";
+  }
+
   function intakePrefillLineHtml(intake) {
     if (!intake || intake.answeredAt || intake.status === "closed") return "";
     var prefill = intake.prefill;
@@ -5184,6 +5293,36 @@
   // Aus der Antwort entsteht der Vorgang — genau einmal. Zwei Sperren: die
   // Einreichung ist am Fragebogen vermerkt, und der Fragebogen kennt sein
   // Projekt. Ein Reload oder ein zweites Absenden ändert deshalb nichts.
+  /* Eine eingegangene, aber nicht uebernommene Fragebogen-Antwort festhalten.
+     Additiv: Es wird nichts ueberschrieben und nichts abgeschickt — der
+     Vermerk haengt am Fragebogen (hoechstens fuenf, neueste zuerst) und
+     erscheint auf der Projektkarte. */
+  function vermerkeUnzugeordnet(intakeId, key, entry) {
+    var core = W();
+    var intake = intakeById(intakeId);
+    if (!intake) return;
+    var grund = "unbekannt";
+    if (entry && entry.id && intake.submissionId === entry.id) grund = "bereits verarbeitet (gleiche Einreichung)";
+    else if (!intake.boundProjectId && intake.projectId && projectById(intake.projectId)) {
+      grund = "dieser Bogen hat sein Projekt bereits erzeugt — weitere Antworten werden verworfen";
+    } else if (core && typeof core.intakeAnswerRoute === "function") {
+      var weg = core.intakeAnswerRoute({
+        intake: intake, projectId: intake.boundProjectId || intake.projectId || "",
+        projectExists: function (id) { return !!projectById(id); },
+      });
+      grund = (core.INTAKE_ANSWER_ROUTES && core.INTAKE_ANSWER_ROUTES[weg.route]) || weg.route;
+    }
+    if (!Array.isArray(intake.unhandledAnswers)) intake.unhandledAnswers = [];
+    intake.unhandledAnswers.unshift({
+      at: now(), submissionId: (entry && entry.id) || key || "", token: (entry && entry.token) || "", reason: grund,
+    });
+    intake.unhandledAnswers = intake.unhandledAnswers.slice(0, 5);
+    intake.updatedAt = now();
+    save();
+    notify("warn", "Fragebogen",
+      "Eine eingegangene Antwort wurde nicht uebernommen (" + grund + "). Sie ist am Fragebogen vermerkt.");
+  }
+
   function applyIntakeSubmission(intakeId, entry) {
     var core = W();
     var ft = wf();
