@@ -189,7 +189,7 @@ function makeSandbox() {
   const karte = String(win._ftProjectIntakeRow(PROJEKT));
   ok(karte.includes(TOKEN_MAIL) && karte.includes(TOKEN_KARTE),
     "die Projektkarte nennt nicht beide Tokens");
-  ok(/2 Kundenlinks an diesem Projekt/.test(karte), "die Karte warnt nicht vor der Mehrdeutigkeit");
+  ok(/2 Fragebogen-Links an diesem Projekt/.test(karte), "die Karte warnt nicht vor der Mehrdeutigkeit");
   ok(/verworfen/.test(karte), "die Karte sagt nicht, dass ein Link Antworten verwirft");
 
   // 3c) Die Vorbelegung wird fuer JEDEN offenen Link nachgezogen — auch fuer
@@ -264,6 +264,118 @@ function makeSandbox() {
   // Der Statuswert allein beweist nichts — er steht am Bogen, nicht an der Mail.
   eq(gemailt.status, "open", "der Status des versendeten Bogens stimmt nicht");
   eq(gemailt.answeredAt, "", "der Bogen gilt faelschlich als beantwortet");
+}
+
+/* ══ 5. Die Auskunft ist BEDIENBAR — ohne Konsole ══════════════════════════
+   Abnahme-Vorgabe (10.09.2026): Interne window-Funktionen und versteckte
+   Anwendungsdaten duerfen nicht ueber die Konsole ausgelesen werden. Die
+   Auskunft muss in der Oberflaeche stehen und ueber Knoepfe bedienbar sein. */
+{
+  const { win, data } = makeSandbox();
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Aljia", projectType: "flowertech", client: {},
+    createdAt: "2026-08-20T06:00:00.000Z",
+  };
+  data.flowertech.intakes = {
+    in_alt: {
+      id: "in_alt", title: "Ihre Angaben", inviteToken: TOKEN_KARTE, projectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "answered",
+      answeredAt: "2026-08-25T10:00:00.000Z", createdAt: "2026-08-20T06:00:00.000Z",
+      unhandledAnswers: [{ at: "2026-09-10T20:00:00.000Z", reason: "dieser Bogen hat sein Projekt bereits erzeugt", token: TOKEN_KARTE }],
+    },
+    in_mail: {
+      id: "in_mail", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open", createdAt: "2026-09-02T06:00:00.000Z",
+    },
+  };
+
+  // 5a) Der Block am Projekt zeigt Status, Bindung, Wirkung und Antworten.
+  const karte = String(win._ftProjectIntakeRow(PROJEKT));
+  ok(karte.includes(TOKEN_KARTE) && karte.includes(TOKEN_MAIL), "die Karte zeigt nicht beide Tokens");
+  ok(/aktualisiert dieses Projekt/.test(karte), "die Wirkung einer Antwort fehlt");
+  ok(/wird verworfen/.test(karte), "der Link, der Antworten verwirft, ist nicht als solcher zu sehen");
+  ok(/an dieses Projekt gebunden/.test(karte) && /hat dieses Projekt erzeugt/.test(karte),
+    "die Bindung je Link fehlt");
+  ok(/Status: answered/.test(karte) && /Status: open/.test(karte), "der Status je Link fehlt");
+  ok(/Antwort eingegangen am/.test(karte), "eine vorhandene Antwort wird nicht angezeigt");
+  ok(/NICHT übernommen/.test(karte), "eine liegengebliebene Antwort wird nicht angezeigt");
+  ok(/keine Antwort eingegangen/.test(karte), "beim offenen Bogen fehlt die Aussage zur Antwort");
+  ok(/_ftCopyText/.test(karte), "die Links lassen sich nicht kopieren");
+
+  // 5a2) Und im Problemfall steht sie OBEN — nicht in einem eingeklappten
+  //      Bereich, den niemand aufmacht. Genau daran scheiterte die Abnahme.
+  const panel = String(win.ftProjectPanel(PROJEKT));
+  const details = panel.indexOf('<details class="ft-more"');
+  ok(details > 0, "der eingeklappte Detailbereich der Projektseite wurde nicht gefunden");
+  // Der Token allein beweist nichts — er steht oben ohnehin als Kundenadresse.
+  // Entscheidend ist der Auskunftsblock (ft-alias) mit beiden Tokens.
+  ok(panel.indexOf('class="ft-alias') < details,
+    "die Warnung zur Zuordnung steht erst im eingeklappten Bereich");
+  const oben = panel.slice(0, details);
+  ok(oben.includes(TOKEN_MAIL) && oben.includes(TOKEN_KARTE),
+    "die Warnung ganz oben nennt nicht beide Tokens");
+  ok(/wird verworfen/.test(oben), "oben fehlt die Aussage, dass ein Link Antworten verwirft");
+
+  // 5b) Auch mit nur EINEM Link steht die Auskunft da (nicht nur im Fehlerfall).
+  delete data.flowertech.intakes.in_alt;
+  ok(/Der Fragebogen-Link dieses Projekts/.test(String(win._ftProjectIntakeRow(PROJEKT))),
+    "bei einem einzigen Link verschwindet die Auskunft wieder");
+  // Im ruhigen Fall bleibt oben aber Ruhe: keine Warnung ueber dem Detailbereich.
+  const ruhig = String(win.ftProjectPanel(PROJEKT));
+  ok(ruhig.indexOf('class="ft-alias') > ruhig.indexOf('<details class="ft-more"'),
+    "ohne Problem steht die Auskunft trotzdem als Warnung ganz oben");
+}
+
+/* ══ 6. Die Token-Suche in „Kundenanfragen" ════════════════════════════════ */
+{
+  const { win, data } = makeSandbox();
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Aljia", projectType: "flowertech", client: {}, createdAt: "2026-08-20T06:00:00.000Z",
+  };
+  data.flowertech.intakes = {
+    in_mail: {
+      id: "in_mail", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open", createdAt: "2026-09-02T06:00:00.000Z",
+    },
+  };
+  data.flowertech.activeTab = "intakes";
+
+  // Das Eingabefeld und der Knopf stehen in der Ansicht.
+  const ansicht = () => String(win.viewFlowerTech()).replace(/<style>[\s\S]*?<\/style>/g, "");
+  const leer = ansicht();
+  ok(/id="ftTokenSuche"/.test(leer), "das Eingabefeld für die Token-Auskunft fehlt");
+  ok(/window\._ftLookupToken\(\)/.test(leer), "der Knopf „Auskunft anzeigen“ fehlt");
+  ok(/Fragebogen-Link prüfen/.test(leer), "die Auskunft hat keine sichtbare Überschrift");
+
+  // Der Knopf liest das sichtbare Feld — hier die Attrappe dafür.
+  const feld = { value: "" };
+  win.document.getElementById = (id) => (id === "ftTokenSuche" ? feld : null);
+
+  feld.value = TOKEN_MAIL;
+  win._ftLookupToken();
+  const gefunden = ansicht();
+  ok(gefunden.includes(TOKEN_MAIL), "der gesuchte Token steht nicht in der Auskunft");
+  ok(/aktualisiert dieses Projekt/.test(gefunden), "die Wirkung einer Antwort fehlt in der Auskunft");
+  ok(/Projekt: Aljia/.test(gefunden), "das zugehörige Projekt wird nicht genannt");
+  ok(/_ftOpenProject/.test(gefunden), "das Projekt lässt sich aus der Auskunft nicht öffnen");
+
+  // Auch die ganze Kundenadresse ist erlaubt.
+  feld.value = "https://flowertech.ch/fragebogen.html?e=" + TOKEN_MAIL;
+  win._ftLookupToken();
+  ok(ansicht().includes(TOKEN_MAIL), "eine ganze Adresse wird nicht auf den Token zurückgeführt");
+
+  // Ein Token, den diese Fassung nicht kennt.
+  feld.value = TOKEN_KARTE;
+  win._ftLookupToken();
+  const unbekannt = ansicht();
+  ok(/keinen Fragebogen/.test(unbekannt), "ein unbekannter Token wird nicht als solcher benannt");
+  ok(/bleibt liegen/.test(unbekannt), "es fehlt die Aussage, was mit einer Antwort darauf geschieht");
+
+  // Und das Wichtigste: Die Auskunft SCHREIBT NICHTS.
+  const vorher = JSON.stringify(data);
+  win._ftLookupToken();
+  win._ftClearTokenLookup();
+  eq(JSON.stringify(data), vorher, "die Token-Auskunft verändert den Datenstand");
 }
 
 console.log(`flowertech kundenlink-alias: ok (${checks} Pruefungen)`);

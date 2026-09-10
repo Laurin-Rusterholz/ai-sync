@@ -1639,6 +1639,13 @@ export function intakeAliasReport({ intakes = {}, projectId = "", projectExists 
         publishError: text(intake.publishError, 300),
         prefillKeys: intake.prefill && intake.prefill.values && typeof intake.prefill.values === "object"
           ? Object.keys(intake.prefill.values).sort() : [],
+        // Eingegangene Antworten, die NICHT uebernommen wurden — sie gehoeren
+        // in die Auskunft, sonst faellt genau das nicht auf.
+        unhandledAnswers: Array.isArray(intake.unhandledAnswers)
+          ? intake.unhandledAnswers.slice(0, 5).map((u) => ({
+            at: text(u && u.at, 40), reason: text(u && u.reason, 200), token: text(u && u.token, 120),
+          })) : [],
+        submissionId: text(intake.submissionId, 120),
         route: weg.route,
         routeLabel: INTAKE_ANSWER_ROUTES[weg.route] || weg.route,
       };
