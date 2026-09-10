@@ -2261,6 +2261,12 @@
       // Reiter „Kundenportal" — bestehende Altlinks bleiben gueltig, er redet
       // hier oben nur nicht mehr mit.
       ftProjectCockpitHtml(project.id) +
+      /* Stimmt die Zuordnung nicht, steht das OBEN — nicht in einem
+         eingeklappten Bereich. Genau daran scheiterte die Abnahme: Die Karte
+         zeigte einen Token, die versendete Mail einen anderen, und nichts wies
+         darauf hin. Im Normalfall (ein Link, der Antworten hierher bringt)
+         bleibt es ruhig; die vollstaendige Liste steht unten im Detailbereich. */
+      intakeAliasWarnHtml(project.id) +
       // Was hinter dem einen Link JETZT sichtbar ist, und der Rueckweg nach
       // einer Fehleingabe: eingeklappt, weil es Detail ist und nicht der Weg.
       '<details class="ft-more"><summary>Mehr / intern — Fragebogen-Status, Vorlage, Prompt und Rückgabe</summary>' +
@@ -2565,6 +2571,75 @@
       "</div>" + answers;
   }
 
+  /* ── Token-Auskunft: „Welcher Link ist das?" ───────────────────────────
+     Befund aus der Abnahme (10.09.2026): Ein Projekt zeigte den einen Token,
+     die versendete Mail trug einen anderen. Die Antwort auf „was passiert,
+     wenn jemand auf DIESEN Link antwortet" darf nicht in einer Konsole
+     liegen — sie gehoert in die Oberflaeche.
+
+     Hier steht sie: Token einsetzen, Knopf druecken, Auskunft lesen. Rein
+     lesend — es wird nichts gespeichert (die Eingabe lebt nur, solange die
+     Ansicht offen ist), nichts umgehaengt, nichts freigegeben, nichts
+     verschickt und keine Antwort erzeugt. */
+  var tokenAuskunft = null;      // { token, ergebnis } — nur Anzeige
+
+  window._ftLookupToken = function () {
+    var feld = document.getElementById("ftTokenSuche");
+    var token = feld ? String(feld.value || "").trim() : "";
+    // Auch eine ganze Kundenadresse ist erlaubt — der Token daraus genuegt.
+    var ausUrl = /[?&]e=([^&#\s]+)/.exec(token);
+    if (ausUrl) token = decodeURIComponent(ausUrl[1]);
+    tokenAuskunft = token ? { token: token, ergebnis: intakeByToken(token) } : null;
+    rerender();
+  };
+  window._ftClearTokenLookup = function () { tokenAuskunft = null; rerender(); };
+
+  function tokenAuskunftHtml() {
+    var eingabe = tokenAuskunft ? tokenAuskunft.token : "";
+    var block = "";
+    if (tokenAuskunft) {
+      var r = tokenAuskunft.ergebnis || {};
+      if (!r.known) {
+        block = '<div class="ft-link-item danger mt-2"><div class="ft-link-token"><code>' +
+          esc(tokenAuskunft.token) + "</code></div>" +
+          '<div class="mini"><b>Antwort darauf:</b> ' + esc(r.routeLabel || "unbekannt") + "</div>" +
+          '<div class="mini">Zu diesem Token gibt es in dieser Quantus-Fassung keinen Fragebogen. ' +
+          "Eine eingehende Antwort wird NICHT als erledigt abgehakt — sie bleibt liegen und wird " +
+          "verarbeitet, sobald der passende Fragebogen wieder da ist.</div></div>";
+      } else {
+        var project = r.projectId ? projectById(r.projectId) : null;
+        var bindung = r.binding === "bound" ? "an ein Projekt gebunden"
+          : (r.binding === "created" ? "hat sein Projekt bereits erzeugt" : "an kein Projekt gebunden");
+        var stand = [];
+        if (r.publishError) stand.push("Veröffentlichung fehlgeschlagen");
+        else if (r.publishedAt) stand.push("veröffentlicht " + dateTime(r.publishedAt));
+        else stand.push("nie veröffentlicht");
+        stand.push(r.prefillKeys && r.prefillKeys.length
+          ? ("vorbelegt: " + r.prefillKeys.join(", ")) : "keine Vorbelegung");
+        block = '<div class="ft-link-item ' + routeKlasse(r.route) + ' mt-2">' +
+          '<div class="ft-link-token"><code>' + esc(r.token) + "</code>" +
+          (project ? '<button class="btn sm" onclick="window._ftOpenProject(\'' + attr(r.projectId) +
+            '\')">Projekt öffnen</button>' : "") + "</div>" +
+          '<div class="mini"><b>Antwort darauf:</b> ' + esc(r.routeLabel) + "</div>" +
+          '<div class="mini">Fragebogen: ' + esc(r.title || "(ohne Titel)") + " · Status: " +
+          esc(r.status) + " · " + esc(bindung) +
+          (project ? " · Projekt: " + esc(project.title || r.projectId) : " · kein Projekt") + "</div>" +
+          '<div class="mini">' + esc(stand.join(" · ")) + "</div>" +
+          '<div class="mini">' + esc(antwortenText(r)) + "</div></div>";
+      }
+    }
+    return '<div class="card p-4 mb-3"><h3>Fragebogen-Link prüfen</h3><div class="sep"></div>' +
+      '<div class="mini">Token oder ganze Kundenadresse einsetzen — die Auskunft sagt, zu welchem ' +
+      "Fragebogen er gehört, an welchem Projekt er hängt und <b>was mit einer Antwort darauf " +
+      "geschieht</b>. Nur lesen: Es wird nichts gespeichert, nichts freigegeben und nichts verschickt.</div>" +
+      '<div class="ft-quick mt-2">' +
+      '<input id="ftTokenSuche" class="ft-input" style="min-width:320px" placeholder="z. B. YsJLRllvKkIT3f03O4WzrS49 oder die ganze Adresse" value="' +
+        attr(eingabe) + '">' +
+      '<button class="btn primary" onclick="window._ftLookupToken()">Auskunft anzeigen</button>' +
+      (tokenAuskunft ? '<button class="btn ghost" onclick="window._ftClearTokenLookup()">Zurücksetzen</button>' : "") +
+      "</div>" + block + "</div>";
+  }
+
   function intakesHtml() {
     var ft = wf();
     if (!ft) return "";
@@ -2579,7 +2654,7 @@
       "Die eine Kundenadresse: Sie beginnt beim Fragebogen und waechst mit " +
       "Vorschau, Offerte, AGB und Vertrag. Die Antwort erzeugt das Projekt, nicht umgekehrt.</div>" +
       '<div class="ft-quick mt-2"><button class="btn primary" onclick="window._ftNewIntake()">' +
-      "＋ Neue Kundenanfrage</button></div></div>";
+      "＋ Neue Kundenanfrage</button></div></div>" + tokenAuskunftHtml();
 
     if (!list.length) {
       return head + '<div class="card p-4">' + empty("Noch keine Kundenanfrage. Lege eine an und gib den Link weiter.") + "</div>";
@@ -4675,36 +4750,74 @@
 
   /* Was die Kundschaft auf dem Bogen vorfindet — und woher es stammt. Nur
      intern, nur lesbar: Frage und Quelle, keine ID. */
-  /* Der Hinweis, den es am Projekt e543fc2e… gebraucht haette: Dieses Projekt
-     hat mehr als einen Kundenlink. Er nennt jeden Token, seinen Stand und —
-     das Entscheidende — was eine ANTWORT darauf bewirkt. Nur Anzeige; es wird
-     nichts umgehaengt, nichts geloescht und nichts verschickt. */
-  function intakeAliasHtml(projectId) {
+  /* ── „Kundenlinks & Zuordnung" — sichtbar am Projekt ────────────────────
+     Befund (10.09.2026): Die Karte zeigte einen Token, die versendete Mail
+     einen anderen. Wer wissen will, welcher Link welche Antwort wohin bringt,
+     soll das SEHEN — nicht in einer Konsole nachschlagen muessen.
+
+     Dieser Block steht deshalb immer da, sobald es einen Kundenlink gibt: je
+     Link der Token, sein Stand, die Bindung, was eine Antwort darauf bewirkt,
+     die Vorbelegung und die vorhandenen Antworten. Reine Anzeige — es wird
+     nichts umgehaengt, nichts freigegeben, nichts verschickt. */
+  function routeKlasse(route) {
+    return route === "updates" ? "ok" : (route === "other" ? "warn" : "danger");
+  }
+  function antwortenText(link) {
+    var teile = [];
+    if (link.answeredAt) teile.push("Antwort eingegangen am " + dateTime(link.answeredAt));
+    else teile.push("keine Antwort eingegangen");
+    var offen = Array.isArray(link.unhandledAnswers) ? link.unhandledAnswers : [];
+    if (offen.length) {
+      teile.push(offen.length + " eingegangene Antwort(en) NICHT übernommen: " +
+        offen.map(function (u) { return dateTime(u.at) + " (" + (u.reason || "Grund unbekannt") + ")"; }).join("; "));
+    }
+    return teile.join(" · ");
+  }
+  // Nur der Problemfall — fuer die Stelle ganz oben am Projekt.
+  function intakeAliasWarnHtml(projectId) {
     var bericht = intakeAliasReport(projectId);
     if (!bericht || (!bericht.ambiguous && !bericht.hasBlindLink)) return "";
+    return intakeAliasHtml(projectId);
+  }
+
+  function intakeAliasHtml(projectId) {
+    var bericht = intakeAliasReport(projectId);
+    if (!bericht || !bericht.links.length) return "";
     var zeilen = bericht.links.map(function (l) {
       var stand = [];
-      if (l.answeredAt) stand.push("beantwortet");
-      else if (l.publishPending) stand.push("Veröffentlichung läuft");
+      if (l.publishPending) stand.push("Veröffentlichung läuft");
       else if (l.publishError) stand.push("Veröffentlichung fehlgeschlagen");
-      else if (l.publishedAt) stand.push("veröffentlicht");
+      else if (l.publishedAt) stand.push("veröffentlicht " + dateTime(l.publishedAt));
       else stand.push("nie veröffentlicht");
-      if (l.prefillKeys.length) stand.push("vorbelegt: " + l.prefillKeys.join(", "));
-      else stand.push("keine Vorbelegung");
-      var warn = l.route !== "updates";
-      return '<li' + (warn ? ' class="ft-danger"' : "") + "><code>" + esc(l.token || "(ohne Token)") + "</code> — " +
-        esc(l.routeLabel) + " · " + esc(stand.join(" · ")) + "</li>";
+      stand.push(l.prefillKeys.length ? ("vorbelegt: " + l.prefillKeys.join(", ")) : "keine Vorbelegung");
+      var bindung = l.binding === "bound" ? "an dieses Projekt gebunden"
+        : (l.binding === "created" ? "hat dieses Projekt erzeugt" : "an kein Projekt gebunden");
+      return '<div class="ft-link-item ' + routeKlasse(l.route) + '">' +
+        '<div class="ft-link-token"><code>' + esc(l.token || "(ohne Token)") + "</code>" +
+        '<button class="btn sm ghost" onclick="window._ftCopyText(\'' + attr(intakeFormUrlOf(l.token)) +
+          '\')" title="Diesen Fragebogen-Link kopieren">Link kopieren</button></div>' +
+        '<div class="mini"><b>Antwort darauf:</b> ' + esc(l.routeLabel) + "</div>" +
+        '<div class="mini">Status: ' + esc(l.status) + " · " + esc(bindung) + " · " + esc(stand.join(" · ")) + "</div>" +
+        '<div class="mini">' + esc(antwortenText(l)) + "</div>" +
+        "</div>";
     }).join("");
-    return '<div class="ft-alias mini mt-2">' +
-      "<b>Achtung: " + bericht.links.length + " Kundenlinks an diesem Projekt.</b> " +
-      "Welcher davon in einer Mail stand, weiss Quantus nicht — „Link verschickt“ und " +
-      "„Wartet auf Antwort“ stehen am Fragebogen, nicht an der Mail. Was eine Antwort bewirkt, " +
-      "steht hier:" +
-      "<ul>" + zeilen + "</ul>" +
-      (bericht.effectiveToken
-        ? "Nur <code>" + esc(bericht.effectiveToken) + "</code> aktualisiert dieses Projekt."
-        : "<b>Kein einziger dieser Links aktualisiert dieses Projekt.</b>") +
-      "</div>";
+    var kopf = bericht.links.length > 1
+      ? "<b>" + bericht.links.length + " Fragebogen-Links an diesem Projekt.</b> Welcher davon in einer Mail " +
+        "stand, weiss Quantus nicht — „Link verschickt“ und „Wartet auf Antwort“ stehen am Fragebogen, " +
+        "nicht an der Mail. Was eine Antwort bewirkt, steht je Link hier:"
+      : "Der Fragebogen-Link dieses Projekts — mit dem, was eine Antwort darauf bewirkt:";
+    var fuss = bericht.effectiveToken
+      ? "Antworten auf <code>" + esc(bericht.effectiveToken) + "</code> aktualisieren dieses Projekt."
+      : "<b>Kein einziger dieser Links aktualisiert dieses Projekt.</b>";
+    return '<div class="ft-alias mt-2"><div class="mini">' + kopf + "</div>" +
+      '<div class="ft-link-list mt-2">' + zeilen + "</div>" +
+      '<div class="mini mt-2">' + fuss + "</div></div>";
+  }
+
+  // Die Kundenadresse zu einem Token — fuer den Kopierknopf in der Auskunft.
+  function intakeFormUrlOf(token) {
+    var core = W();
+    return (core && token && typeof core.intakeFormUrl === "function") ? core.intakeFormUrl(token) : "";
   }
 
   function intakePrefillLineHtml(intake) {
@@ -6957,6 +7070,17 @@
     ".ft-history-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12.5px}" +
     ".ft-history-row span:nth-child(2){flex:1;min-width:0}.ft-history-row small{color:var(--muted);white-space:nowrap}" +
     ".ft-history-icon{width:20px;text-align:center;color:var(--muted)}" +
+    /* Kundenlinks & Zuordnung: je Link eine ruhige Zeile, farbig nur dort, wo
+       eine Antwort NICHT beim erwarteten Projekt landet. */
+    ".ft-link-list{display:grid;gap:8px}" +
+    ".ft-link-item{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel2)}" +
+    ".ft-link-item.ok{border-left:3px solid var(--ok,#30d158)}" +
+    ".ft-link-item.warn{border-left:3px solid var(--warn,#ff9f0a)}" +
+    ".ft-link-item.danger{border-left:3px solid var(--danger,#ff453a)}" +
+    ".ft-link-token{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}" +
+    ".ft-link-token code{font-size:12px;word-break:break-all}" +
+    ".ft-alias{padding:12px;border-radius:12px;border:1px solid var(--border);background:var(--panel)}" +
+    ".ft-input{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)}" +
     ".ft-doc-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);cursor:pointer}" +
     ".ft-doc-main{flex:1;min-width:0}.ft-doc-side{display:flex;align-items:center;gap:12px;white-space:nowrap}" +
     ".ft-status{font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}" +
