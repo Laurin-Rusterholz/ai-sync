@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -8036,6 +8036,19 @@ function renderFileAttachments(kind, entityId) {
           <button onclick="window._createFileFolder('${kind}','${entityId}')" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;padding:4px 10px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:4px;transition:all .15s" title="Neuen Ordner erstellen">📁+ Ordner</button>
         </div>
       </h3>
+      ${(window._reindexFrage && window._reindexFrage.kind === kind && window._reindexFrage.entityId === entityId) ? `
+        <div role="alertdialog" aria-labelledby="reindexFrage" style="padding:12px;margin-bottom:10px;background:rgba(255,159,10,.08);border:1px solid rgba(255,159,10,.5);border-radius:10px;font-size:12px">
+          <div id="reindexFrage" style="font-weight:700;margin-bottom:6px">${window._reindexFrage.namen.length} Datei(en) jetzt indexieren?</div>
+          <ul style="margin:0 0 8px;padding-left:18px;color:var(--muted)">
+            ${window._reindexFrage.namen.slice(0, 8).map(n => `<li>${esc(n)}</li>`).join('')}
+            ${window._reindexFrage.namen.length > 8 ? `<li>… und ${window._reindexFrage.namen.length - 8} weitere</li>` : ''}
+          </ul>
+          <div style="color:var(--muted);margin-bottom:10px">Es wird nur Text aus den Dateien gelesen — nichts geändert, nichts gelöscht, nichts verschickt. Je nach Größe dauert das Sekunden bis Minuten und läuft im Hintergrund; du kannst weiterarbeiten.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="window._reindexBestaetigen()" style="background:var(--accent);border:0;color:#fff;cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600">Ja, indexieren</button>
+            <button onclick="window._reindexAbbrechen()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12px">Abbrechen</button>
+          </div>
+        </div>` : ''}
       ${!fbOk ? `<div style="padding:8px 12px;margin-bottom:10px;background:rgba(255,159,10,.1);border:1px solid rgba(255,159,10,.3);border-radius:8px;font-size:11px;color:var(--warn)">⚠️ Firebase nicht verbunden — Uploads und Cloud-Sync pausieren. Seite neu laden; bleibt es dabei, blockiert ein Adblocker/Firmen-Proxy <code>firebasedatabase.app</code> bzw. <code>firebasestorage.googleapis.com</code>. <button onclick="window.initFirebaseNow && window.initFirebaseNow() && render()" style="margin-left:4px;padding:2px 8px;border:1px solid rgba(255,159,10,.5);background:transparent;color:var(--warn);border-radius:5px;cursor:pointer;font-size:11px">Erneut verbinden</button></div>` : ''}
       ${renderUploadZone('')}
       ${foldersHtml}
@@ -8530,18 +8543,44 @@ window._reindexFile = async function(kind, entityId, fileId) {
   window._extractQueueProcess();
 };
 
-// 🔄 Alle nicht-indexierten Dateien einer Entity re-indexieren
-window._reindexAllFiles = async function(kind, entityId) {
+/* 🔄 Alle nicht-indexierten Dateien einer Entity re-indexieren
+   ---------------------------------------------------------------------------
+   Die Rueckfrage ist sichtbares HTML, kein window.confirm. Befund
+   (11.09.2026, Fernsteuerung bei gesperrtem Rechner): Der native Dialog haelt
+   den ganzen Browser an — er laesst sich weder anklicken noch annehmen, und
+   die Indexierung war damit von aussen gar nicht mehr ausloesbar. Ein Dialog,
+   den man nicht wegklicken kann, ist kein Schutz, sondern eine Sackgasse. */
+function _reindexKandidaten(kind, entityId) {
   const kindMap = ATTACHMENT_KIND_STORES;   // eine Liste, kein Duplikat (F-25 M1d)
   const entity = APP.state.data.entities[kindMap[kind]]?.[entityId];
-  if (!entity || !Array.isArray(entity.files)) return;
-  const toIndex = entity.files.filter(f => !f.textExtracted && f.url && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes((f.name || '').split('.').pop().toLowerCase()));
+  if (!entity || !Array.isArray(entity.files)) return [];
+  return entity.files.filter(f => !f.textExtracted && f.url
+    && ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt']
+      .includes((f.name || '').split('.').pop().toLowerCase()));
+}
+
+window._reindexAllFiles = function(kind, entityId) {
+  const toIndex = _reindexKandidaten(kind, entityId);
   if (toIndex.length === 0) { toast('info', 'Alle indexiert', 'Keine Dateien zu indexieren'); return; }
-  if (!confirm(`${toIndex.length} Datei(en) re-indexieren?\n\nDas kann je nach Größe einige Sekunden bis Minuten dauern. Du kannst weiterarbeiten — läuft im Hintergrund.`)) return;
+  // Erst fragen — geschrieben wird nichts, es wird nur gezeigt.
+  window._reindexFrage = { kind, entityId, namen: toIndex.map(f => f.name || '(ohne Namen)') };
+  render();
+};
+
+window._reindexAbbrechen = function() { window._reindexFrage = null; render(); };
+
+// Der zweite, ausdrueckliche Schritt — erst hier laeuft etwas los.
+window._reindexBestaetigen = function() {
+  const frage = window._reindexFrage;
+  window._reindexFrage = null;
+  if (!frage) return;
+  const toIndex = _reindexKandidaten(frage.kind, frage.entityId);
+  render();
+  if (toIndex.length === 0) { toast('info', 'Alle indexiert', 'Keine Dateien zu indexieren'); return; }
   toast('info', '🔄 Re-Index gestartet', toIndex.length + ' Dateien werden nacheinander verarbeitet');
   for (const f of toIndex) {
     // Nicht awaiten — Queue macht das schon sequentiell
-    window._reindexFile(kind, entityId, f.id);
+    window._reindexFile(frage.kind, frage.entityId, f.id);
   }
 };
 
