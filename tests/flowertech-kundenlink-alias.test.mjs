@@ -703,9 +703,14 @@ function makeSandbox(draussen = {}) {
   ok(CORE.intakePrefillStale({ intake: gewoehnlich, prefill: innen }),
     "die Vorbelegung gewöhnlicher Links wird nicht mehr nachgezogen");
   // Und sobald jemand ausdrücklich veröffentlicht hat, gilt wieder das Übliche.
-  const freigegeben = Object.assign({}, intake, { publishRequestedAt: "2026-09-11T22:00:00.000Z" });
+  const freigegeben = Object.assign({}, intake, { restoreReleasedAt: "2026-09-11T22:00:00.000Z" });
   ok(CORE.intakePrefillStale({ intake: freigegeben, prefill: innen }),
     "nach einer ausdrücklichen Veröffentlichung bleibt der Link für immer stehen");
+  /* Ein blosser SCHREIBVERSUCH loest den Schutz dagegen nicht — das war der
+     Denkfehler der ersten Fassung (siehe Abschnitt 13). */
+  const nurVersucht = Object.assign({}, intake, { publishRequestedAt: "2026-09-11T22:00:00.000Z" });
+  ok(!CORE.intakePrefillStale({ intake: nurVersucht, prefill: innen }),
+    "ein automatischer Schreibversuch hebt den Schutz weiterhin auf");
 
   // Der Befund selbst: Was ein solcher Schreibvorgang enthalten HAETTE.
   const wuerde = CORE.customerAreaSnapshot({ intake, project: { id: PROJEKT, title: "Aljia" },
@@ -773,6 +778,89 @@ function makeSandbox(draussen = {}) {
   ok(/nicht bestätigt/.test(CORE.intakePublication({ intake: data.flowertech.intakes.in_wh }).reason)
     || CORE.intakePublication({ intake: data.flowertech.intakes.in_wh }).stale,
     "der Kern hält den unbestätigten Versuch nicht mehr fest");
+}
+
+/* ══ 13. Der Schutz haelt auch fuer BEREITS wiederhergestellte Boegen ═════
+   Live-Befund (11.09.2026, nach PR239): Im Aljia-Projekt stand nun zwar
+   „Veroeffentlichung nicht bestaetigt" statt „Veroeffentlichung laeuft" —
+   die Zeile „Originalstand — wird nicht von selbst neu veroeffentlicht"
+   fehlte aber vollstaendig. „Wiederherstellung zuruecknehmen" war weiterhin
+   da, die Herkunft also vorhanden.
+
+   Die Ursache war kein fehlender Datenumzug, sondern die Bedingung selbst:
+   Sie lautete „restoredFrom gesetzt UND kein publishRequestedAt". Nur setzt
+   publishRequestedAt JEDER Schreibversuch — auch der automatische. Der eine
+   Lauf, der vor der Reparatur schon durchgegangen war, hatte den Schutz
+   damit gegen sich selbst aufgehoben. Genau dieser Datensatz war also gar
+   nicht geschuetzt.
+
+   Ein Schutz, den die Maschine selbst aufheben kann, ist keiner. Er weicht
+   jetzt nur noch einer ausdruecklichen Handlung. */
+{
+  // Der Datensatz, wie er nach dem 23:41-Restore und dem automatischen
+  // Versuch wirklich dasteht.
+  const liveStand = {
+    id: "in_wh", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+    questions: CORE.normalizeIntakeQuestions(CORE.DEFAULT_INTAKE_QUESTIONS), status: "open",
+    restoredFrom: "published-intake-form", restoredAt: "2026-09-11T21:41:00.000Z",
+    createdAt: "2026-09-11T21:41:00.000Z",
+    publishedAt: "2026-09-02T06:59:00.000Z",
+    publishRequestedAt: "2026-09-11T21:42:00.000Z",   // der automatische Lauf
+    formGeneration: 1,
+    prefill: { version: CORE.INTAKE_PREFILL_VERSION, values: { name: "Jule Dal", company: "Aljia" } },
+  };
+  const innen = { version: CORE.INTAKE_PREFILL_VERSION,
+    values: { name: "Jule Dal", company: "Aljia", need: "Mehr Anfragen über die Website" } };
+
+  ok(!CORE.intakePrefillStale({ intake: liveStand, prefill: innen }),
+    "der bereits wiederhergestellte Bogen wird weiterhin von selbst neu veröffentlicht");
+  // Und die Auskunft sagt es auch — das war die fehlende Zeile.
+  const bericht = CORE.intakeAliasReport({
+    projectId: PROJEKT, intakes: { in_wh: liveStand },
+    project: { id: PROJEKT, title: "Aljia" },
+  });
+  ok(bericht.links[0].restoredUntouched,
+    "der Originalstand ist im Bericht weiterhin nicht erkennbar");
+  // Der unbestaetigte Versuch bleibt trotzdem sichtbar — er ist ja geschehen.
+  ok(CORE.intakePublication({ intake: liveStand }).stale,
+    "der unbestätigte automatische Versuch wird jetzt verschwiegen");
+
+  // Laufzeit: Karte und Nachziehen.
+  const { win, data, written } = makeSandbox();
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Website Reinigungsunternehmen Aljia", projectType: "flowertech",
+    pipelineStage: "intake", createdAt: "2026-08-20T06:00:00.000Z",
+    client: { name: "Jule Dal", company: "Aljia", email: "juledal19@gmail.com" },
+    ftBriefing: { need: "Mehr Anfragen über die Website" },
+  };
+  data.flowertech.intakes = { in_wh: JSON.parse(JSON.stringify(liveStand)) };
+  const vorher = JSON.stringify(written);
+  eq(win._ftRefreshIntakePrefills(PROJEKT), 0,
+    "der bereits wiederhergestellte Bogen wird beim Nachziehen doch neu veröffentlicht");
+  eq(JSON.stringify(written), vorher, "es wurde nach draussen geschrieben");
+  const karte = String(win._ftProjectIntakeRow(PROJEKT));
+  ok(/Originalstand/.test(karte), "die Zeile „Originalstand“ fehlt weiterhin an der Karte");
+  ok(/Veröffentlichung nicht bestätigt/.test(karte),
+    "der unbestätigte Versuch steht nicht mehr an der Karte");
+
+  /* Und der Weg zurueck in den Normalbetrieb: EINE ausdrueckliche
+     Veroeffentlichung — nicht die Maschine — loest den Schutz. */
+  win._ftPublishIntakeForm("in_wh");
+  ok(data.flowertech.intakes.in_wh.restoreReleasedAt,
+    "eine ausdrückliche Veröffentlichung löst den Schutz nicht");
+  ok(!win._ftIntakeAliasReport(PROJEKT).links[0].restoredUntouched,
+    "nach der ausdrücklichen Veröffentlichung gilt der Bogen weiterhin als unberührt");
+  ok(CORE.intakePrefillStale({
+    intake: data.flowertech.intakes.in_wh, prefill: innen,
+  }), "nach der ausdrücklichen Veröffentlichung bleibt der Link für immer stehen");
+
+  // Der automatische Lauf dagegen loest ihn NIE — auch nicht nebenbei.
+  const zweite = makeSandbox();
+  zweite.data.entities.projects[PROJEKT] = data.entities.projects[PROJEKT];
+  zweite.data.flowertech.intakes = { in_wh: JSON.parse(JSON.stringify(liveStand)) };
+  zweite.win._ftRefreshIntakePrefills(PROJEKT);
+  ok(!zweite.data.flowertech.intakes.in_wh.restoreReleasedAt,
+    "das automatische Nachziehen hebt den Schutz gegen sich selbst auf");
 }
 
 console.log(`flowertech kundenlink-alias: ok (${checks} Pruefungen)`);
