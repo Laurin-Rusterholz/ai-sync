@@ -1650,7 +1650,7 @@ export function intakeAliasReport({ intakes = {}, projectId = "", projectExists 
         publishStale: intakePublication({ intake }).stale,
         publishError: text(intake.publishError, 300),
         // Ein Originalstand, den nichts von selbst neu veroeffentlicht.
-        restoredUntouched: intake.restoredFrom === "published-intake-form" && !intake.publishRequestedAt,
+        restoredUntouched: intake.restoredFrom === "published-intake-form" && !intake.restoreReleasedAt,
         prefillKeys: intake.prefill && intake.prefill.values && typeof intake.prefill.values === "object"
           ? Object.keys(intake.prefill.values).sort() : [],
         // Eingegangene Antworten, die NICHT uebernommen wurden — sie gehoeren
@@ -2956,10 +2956,22 @@ export function intakePrefillStale({ intake = null, prefill = null } = {}) {
      so, wie sie ist." Eine Zusage, die der naechste Speichervorgang bricht,
      ist keine.
 
-     Der Bogen bleibt deshalb unangetastet, bis jemand ihn ausdruecklich
-     veroeffentlicht (eine Freigabe tut das und setzt publishRequestedAt).
-     Danach gilt wieder das Uebliche. */
-  if (form.restoredFrom === "published-intake-form" && !form.publishRequestedAt) return false;
+     Der Bogen bleibt deshalb unangetastet, bis jemand ihn AUSDRUECKLICH
+     veroeffentlicht — etwa mit einer Freigabe. Erst das setzt
+     restoreReleasedAt; danach gilt wieder das Uebliche.
+
+     Zweiter Befund (11.09.2026, an genau diesem Datensatz): Hier stand erst
+     „!form.publishRequestedAt". Das war falsch, denn publishRequestedAt setzt
+     JEDER Schreibversuch — auch der automatische. Der eine Lauf, der vor
+     dieser Reparatur schon durchgegangen war, hatte den Schutz damit gegen
+     sich selbst aufgehoben: Der wiederhergestellte Bogen im Aljia-Projekt war
+     ueberhaupt nicht geschuetzt, und die Zeile „Originalstand" fehlte
+     folgerichtig. Ein Schutz, den die Maschine selbst aufheben kann, ist
+     keiner — er wird nur noch von einer ausdruecklichen Handlung geloest.
+     Weil restoreReleasedAt neu ist und kein bestehender Datensatz es traegt,
+     stehen alle frueher wiederhergestellten Boegen ab sofort unter Schutz;
+     eine Wanderung der Daten braucht es dafuer nicht. */
+  if (form.restoredFrom === "published-intake-form" && !form.restoreReleasedAt) return false;
   const stored = form.prefill && typeof form.prefill === "object" ? form.prefill : null;
   if (!stored || Number(stored.version) !== INTAKE_PREFILL_VERSION) return true;
   if (!prefill) return false;

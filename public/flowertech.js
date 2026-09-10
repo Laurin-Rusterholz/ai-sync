@@ -4325,7 +4325,13 @@
     return Object.assign({ ok: false, pending: false, token: "", error: "", done: Promise.resolve(false) }, extra || {});
   }
 
-  function publishIntakeForm(intakeId) {
+  /* `automatisch: true` kommt vom Nachziehen der Vorbelegung — also von der
+     Maschine. Alles andere ist eine ausdrueckliche Handlung (eine Freigabe,
+     ein Knopf) und darf deshalb den Schutz eines wiederhergestellten
+     Originalstands loesen. Diese Unterscheidung fehlte zuerst, und weil jeder
+     Versuch publishRequestedAt setzt, hob der automatische Lauf den Schutz
+     gegen sich selbst auf. */
+  function publishIntakeForm(intakeId, opts) {
     var core = W();
     var ft = wf();
     var intake = intakeById(intakeId);
@@ -4345,6 +4351,11 @@
     // die letzte Bestätigung, gilt der veröffentlichte Stand als veraltet —
     // und niemand darf „sichtbar" behaupten.
     intake.publishRequestedAt = now();
+    // Ausdruecklich veroeffentlicht: ab jetzt ist es kein unberuehrter
+    // Originalstand mehr, und die Vorbelegung wird wieder nachgezogen.
+    if (!(opts && opts.automatisch) && intake.restoredFrom === "published-intake-form" && !intake.restoreReleasedAt) {
+      intake.restoreReleasedAt = now();
+    }
     intake.publishPending = true;
     intake.publishError = "";
     var input = customerAreaInput(intake, projectOfIntake(intake));
@@ -4395,7 +4406,7 @@
       var project = projectOfIntake(intake);
       if (projectId && (!project || project.id !== projectId)) return;
       if (!core.intakePrefillStale({ intake: intake, prefill: intakePrefillFor(intake, project) })) return;
-      publishIntakeForm(intakeId);
+      publishIntakeForm(intakeId, { automatisch: true });
       count++;
     });
     return count;
