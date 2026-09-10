@@ -34,10 +34,16 @@ function loadMergeData() {
   const trStart = index.indexOf("const TRANSPORT_ROOTS = new Set([");
   ok(trStart > 0, "TRANSPORT_ROOTS wurde in index.html nicht gefunden");
   const transportSrc = index.slice(trStart, index.indexOf("]);", trStart) + 3);
+  // applyTombstonesToList gehoert zum Merge (Grabsteine auf Listen mit id) und
+  // wird ECHT mitgeschnitten statt nachgebaut — sonst prueft der Test eine
+  // Attrappe statt der Funktion, die im Browser laeuft.
+  const atStart = index.indexOf("function applyTombstonesToList(list, tombstones) {");
+  ok(atStart > 0, "applyTombstonesToList() wurde in index.html nicht gefunden");
+  const atSrc = index.slice(atStart, index.indexOf("\n}\n", atStart) + 3);
   const fn = new Function(
     "idbBackup", "localStorage", "normalizeData", "mergeAndPersistDeleteLog",
     "flattenDeleteLog", "mergeEntity", "entityTimestamp", "console",
-    transportSrc + "\n" + index.slice(start, end) + "\nreturn mergeData;"
+    atSrc + "\n" + transportSrc + "\n" + index.slice(start, end) + "\nreturn mergeData;"
   );
   return fn(
     () => {}, { getItem: () => null, setItem() {} }, (d) => d, () => ({}), () => ({}),
