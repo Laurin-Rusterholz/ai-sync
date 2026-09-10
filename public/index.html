@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -11453,8 +11453,10 @@ function emptyData() {
       counters: {},      // laufende Nummern je Jahr (offer_2026, invoice_2026)
       company: {},       // Absenderdaten für Offerten/Rechnungen
       ui: {},
-      syncStatus: "idle",
-      lastSyncAt: null,
+      // syncStatus/lastSyncAt lagen frueher hier — also im synchronisierten
+      // Datenstand. Dadurch stand der Kopf dauerhaft auf „Synchronisiert…",
+      // weil der Laufzeitstand eines anderen Geraets mitreiste. Der Stand
+      // lebt jetzt nur noch im jeweiligen Tab (flowertech.js: syncStand).
     },
     rules: { books: [] },
   };
@@ -11496,8 +11498,10 @@ function normalizeData(data) {
   d.flowertech.counters = d.flowertech.counters && typeof d.flowertech.counters === "object" ? d.flowertech.counters : {};
   d.flowertech.company = d.flowertech.company && typeof d.flowertech.company === "object" ? d.flowertech.company : {};
   d.flowertech.ui = d.flowertech.ui && typeof d.flowertech.ui === "object" ? d.flowertech.ui : {};
-  d.flowertech.syncStatus = d.flowertech.syncStatus || "idle";
-  d.flowertech.lastSyncAt = d.flowertech.lastSyncAt || null;
+  // Altlast aus fruehereren Staenden abraeumen: reiner Laufzeitzustand, der
+  // nie haette synchronisiert werden duerfen (siehe Kommentar oben).
+  delete d.flowertech.syncStatus;
+  delete d.flowertech.lastSyncAt;
   e.organizations = e.organizations || {};
   e.notes = e.notes || {};
   e.books = e.books || {};

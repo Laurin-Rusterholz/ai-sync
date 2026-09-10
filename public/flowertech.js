@@ -79,7 +79,10 @@
     if (ft.company.vatRate == null) ft.company.vatRate = VAT_DEFAULT;
     if (ft.company.paymentDays == null) ft.company.paymentDays = 30;
     ft.ui = ft.ui && typeof ft.ui === "object" ? ft.ui : {};
-    ft.syncStatus = ft.syncStatus || "idle";
+    // Kein syncStatus/lastSyncAt mehr im Datenstand — der Anzeigestand der
+    // Synchronisation gehoert dem Tab, nicht den Daten (siehe syncStand).
+    delete ft.syncStatus;
+    delete ft.lastSyncAt;
     return ft;
   }
 
@@ -712,11 +715,49 @@
     return String(location.hash || "").split("/")[1] === "flowertech";
   }
 
+  /* ── Der Anzeigestand der Synchronisation ───────────────────────────────
+     Befund (11.09.2026): Der Kopf stand dauerhaft auf „Synchronisiert… ·
+     Zuletzt 22:19", auch nach einem Reload. Der Grund ist die Ablage:
+     syncStatus und lastSyncAt lagen in data.flowertech — also im
+     SYNCHRONISIERTEN Datenstand. Damit galt:
+
+       · Ein „syncing" wurde gespeichert, wanderte in die Wolke und kam auf
+         jedem Geraet und nach jedem Reload zurueck — auch dann, wenn hier
+         gerade gar nichts lief.
+       · Der Stand eines ANDEREN Geraets (oder ein aelterer Serverstand)
+         konnte den eigenen ueberschreiben; „Zuletzt" zeigte dann eine
+         fremde Uhrzeit.
+       · Und weil beides zusammen dieselbe Anzeige speist, war an ihr nicht
+         mehr zu erkennen, ob es hier wirklich stillsteht.
+
+     Ein Laufzeitzustand gehoert nicht in die Daten. Er lebt jetzt nur in
+     diesem Tab, wird nie gespeichert und nie synchronisiert. „Zuletzt"
+     meint ausschliesslich: Wann sind in DIESER Sitzung zuletzt Daten
+     angekommen. Steht nichts da, ist auch nichts angekommen — genau das
+     soll man sehen. */
+  var syncStand = { status: "idle", seit: Date.now(), zuletzt: null };
+  var syncWecker = null;
+  function setSyncStand(status) {
+    if (syncStand.status !== status) syncStand.seit = Date.now();
+    syncStand.status = status;
+    // Bleibt es haengen, soll man das SEHEN, ohne erst irgendwohin zu klicken:
+    // ein einziger spaeter Blick auf den Stand, kein Dauerticken.
+    if (syncWecker) { clearTimeout(syncWecker); syncWecker = null; }
+    if (status === "syncing") {
+      syncWecker = setTimeout(function () {
+        syncWecker = null;
+        if (syncStand.status === "syncing") rerender();
+      }, 21000);
+    }
+  }
+  function syncDatenAngekommen() { syncStand.zuletzt = now(); setSyncStand("connected"); }
+  window._ftSyncStand = function () { return { status: syncStand.status, seit: syncStand.seit, zuletzt: syncStand.zuletzt }; };
+
   function initializeSync() {
     if (initialized || !state()) return;
     initialized = true;
     if (!window.firebase || !firebase.auth || !firebase.app) {
-      state().syncStatus = "unavailable";
+      setSyncStand("unavailable");
       return;
     }
     firebase.auth().onAuthStateChanged(function (user) {
@@ -724,7 +765,7 @@
       var ft = state();
       if (!ft) return;
       if (!user) {
-        ft.syncStatus = "login_required";
+        setSyncStand("login_required");
         if (routeIsFlowerTech()) rerender();
         return;
       }
@@ -732,7 +773,7 @@
         var db = firebase.app().database(RTDB);
         inquiryRef = db.ref("flowertech/inquiries");
         videoRef = db.ref("flowertech/videos");
-        ft.syncStatus = "syncing";
+        setSyncStand("syncing");
 
         inquiryRef.on("value", function (snapshot) {
           var raw = snapshot.val() || {};
@@ -741,12 +782,11 @@
             return Object.assign({ id: entry[0] }, entry[1] || {});
           });
           var created = syncInquiryTasks(list);
-          ft.lastSyncAt = now();
-          ft.syncStatus = "connected";
+          syncDatenAngekommen();
           if (!created) save();
           if (routeIsFlowerTech()) rerender();
         }, function (error) {
-          ft.syncStatus = "error";
+          setSyncStand("error");
           console.warn("[FlowerTech] Inquiry-Sync:", error && error.message);
           if (routeIsFlowerTech()) rerender();
         });
@@ -770,16 +810,15 @@
 
         videoRef.on("value", function (snapshot) {
           ft.videos = snapshot.val() || {};
-          ft.lastSyncAt = now();
-          ft.syncStatus = "connected";
+          syncDatenAngekommen();
           save();
           if (routeIsFlowerTech()) rerender();
         }, function (error) {
-          ft.syncStatus = "error";
+          setSyncStand("error");
           console.warn("[FlowerTech] Video-Sync:", error && error.message);
         });
       } catch (error) {
-        ft.syncStatus = "error";
+        setSyncStand("error");
         console.warn("[FlowerTech] Firebase:", error.message);
       }
     });
@@ -1805,7 +1844,7 @@
     if (!window.firebase || !firebase.auth().currentUser) {
       return notify("warn", "Firebase-Anmeldung", "Bitte zuerst in AI Sync mit Google anmelden");
     }
-    ft.syncStatus = "syncing";
+    setSyncStand("syncing");
     rerender();
     try {
       var db = firebase.app().database(RTDB);
@@ -1819,13 +1858,12 @@
         return Object.assign({ id: entry[0] }, entry[1] || {});
       });
       var created = syncInquiryTasks(list);
-      ft.lastSyncAt = now();
-      ft.syncStatus = "connected";
+      syncDatenAngekommen();
       save();
       notify("ok", "FlowerTech synchronisiert", created ? created + " neue Aufgabe(n)" : "Keine Duplikate, alles aktuell");
       rerender();
     } catch (error) {
-      ft.syncStatus = "error";
+      setSyncStand("error");
       notify("err", "FlowerTech", error.message);
       rerender();
     }
@@ -2665,7 +2703,7 @@
     });
     if (schon) { notify("warn", "Fragebogen", "Zu diesem Token gibt es bereits einen Fragebogen."); return; }
     var wahl = document.getElementById("ftRestoreProjekt");
-    var projectId = wahl ? String(wahl.value || "") : "";
+    var projectId = String((wahl && wahl.value) || tokenAuskunft.projectId || "");
     if (!projectId || !projectById(projectId)) {
       notify("warn", "Fragebogen", "Bitte zuerst das Projekt wählen, zu dem dieser Fragebogen gehört.");
       return;
@@ -2675,12 +2713,53 @@
       id: "in_wh_" + token.slice(0, 10), now: now(),
     });
     if (!gerechnet.ok) { notify("warn", "Fragebogen", gerechnet.reason); return; }
-    if (!confirm("Fragebogen aus dem veröffentlichten Stand wiederherstellen?\n\n" +
-      "· Der Link bleibt unverändert: " + token + "\n" +
-      "· " + gerechnet.summary.questionCount + " Fragen werden unverändert übernommen\n" +
-      "· Zuordnung zum Projekt: " + ((projectById(projectId) || {}).title || projectId) + "\n\n" +
-      "Es wird nichts veröffentlicht, nichts freigegeben und nichts verschickt. " +
-      "Die Kundenseite bleibt genau so, wie sie ist.")) return;
+    /* Die Rueckfrage ist ein SICHTBARER Block in der Karte, kein
+       window.confirm. Befund (11.09.2026): Der native Dialog haelt den
+       ganzen Browser an — Bedienhilfen und Fernsteuerung kommen nicht an
+       ihm vorbei (Klick laeuft in eine Zeitueberschreitung, das Annehmen
+       des Dialogs scheitert). Ein Dialog, den man nicht wegklicken kann,
+       ist kein Schutz, sondern eine Sackgasse. */
+    tokenAuskunft.bestaetigen = {
+      projectId: projectId,
+      projectTitle: (projectById(projectId) || {}).title || projectId,
+      questionCount: gerechnet.summary.questionCount,
+    };
+    rerender();
+  };
+
+  /* Die gewaehlte Zuordnung gehoert in den Zustand, nicht nur ins DOM.
+     Befund (Handy, 11.09.2026): Zwischen Auswahl und Klick zeichnete die App
+     neu — das <select> stand wieder auf „— Projekt wählen —", und der Klick
+     lief ins Leere. Wer langsamer tippt, klickt oder fernsteuert, traf den
+     Knopf nie. */
+  window._ftRestoreProjektWahl = function (projectId) {
+    if (!tokenAuskunft) return;
+    tokenAuskunft.projectId = String(projectId || "");
+  };
+
+  window._ftCancelRestore = function () {
+    if (!tokenAuskunft) return;
+    delete tokenAuskunft.bestaetigen;
+    rerender();
+  };
+
+  // Der zweite, ausdrueckliche Schritt — erst hier wird geschrieben.
+  window._ftConfirmRestoreIntake = function () {
+    var core = W();
+    var ft = wf();
+    if (!core || !ft || !tokenAuskunft || !tokenAuskunft.bestaetigen) return;
+    var token = tokenAuskunft.token;
+    var projectId = tokenAuskunft.bestaetigen.projectId;
+    if (!projectById(projectId)) { notify("warn", "Fragebogen", "Das gewählte Projekt gibt es nicht mehr."); return; }
+    var schon = Object.keys(ft.intakes || {}).find(function (k) {
+      return (ft.intakes[k] || {}).inviteToken === token;
+    });
+    if (schon) { notify("warn", "Fragebogen", "Zu diesem Token gibt es bereits einen Fragebogen."); return; }
+    var gerechnet = core.intakeFromPublished({
+      token: token, published: tokenAuskunft.veroeffentlicht, projectId: projectId,
+      id: "in_wh_" + token.slice(0, 10), now: now(),
+    });
+    if (!gerechnet.ok) { notify("warn", "Fragebogen", gerechnet.reason); return; }
     ft.intakes[gerechnet.intake.id] = gerechnet.intake;
     save();
     notify("ok", "Fragebogen", "Wiederhergestellt und dem Projekt zugeordnet. Eingegangene Antworten " +
@@ -2691,6 +2770,20 @@
 
   /* Der schmale Rueckweg: Nur ein WIEDERHERGESTELLTER Fragebogen ohne Antwort
      laesst sich wieder entfernen. Ein echter, beantworteter Bogen niemals. */
+  // Auch hier: sichtbare Rueckfrage in der Zeile statt window.confirm.
+  var undoBestaetigung = null;
+  window._ftAskUndoRestoredIntake = function (intakeId) {
+    var intake = intakeById(intakeId);
+    if (!intake) return;
+    if (intake.restoredFrom !== "published-intake-form" || intake.answeredAt || intake.submissionId) {
+      notify("warn", "Fragebogen", "Nur eine Wiederherstellung ohne Antwort lässt sich zurücknehmen.");
+      return;
+    }
+    undoBestaetigung = intakeId;
+    rerender();
+  };
+  window._ftCancelUndoRestored = function () { undoBestaetigung = null; rerender(); };
+
   window._ftUndoRestoredIntake = function (intakeId) {
     var ft = wf();
     var intake = intakeById(intakeId);
@@ -2699,8 +2792,7 @@
       notify("warn", "Fragebogen", "Nur eine Wiederherstellung ohne Antwort lässt sich zurücknehmen.");
       return;
     }
-    if (!confirm("Wiederherstellung zurücknehmen?\n\nDer Fragebogen-Datensatz wird entfernt. " +
-      "Der veröffentlichte Link bleibt unverändert bestehen.")) return;
+    undoBestaetigung = null;
     delete ft.intakes[intakeId];
     save();
     notify("ok", "Fragebogen", "Wiederherstellung zurückgenommen.");
@@ -2788,11 +2880,30 @@
         esc(vorschau.reason) + "</div>" + '<div class="mini">' + esc(antwortText) + "</div>";
     }
     var z = vorschau.summary;
+    var gewaehlt = String(a.projectId || "");
     var auswahl = projects().slice().sort(function (x, y) {
       return String(x.title || "").localeCompare(String(y.title || ""));
     }).map(function (p) {
-      return '<option value="' + attr(p.id) + '">' + esc(p.title || p.id) + "</option>";
+      return '<option value="' + attr(p.id) + '"' + (p.id === gewaehlt ? " selected" : "") + ">" +
+        esc(p.title || p.id) + "</option>";
     }).join("");
+    if (a.bestaetigen) {
+      var b = a.bestaetigen;
+      return '<div class="ft-restore ft-confirm mt-2" role="alertdialog" aria-labelledby="ftRestoreFrage">' +
+        '<div id="ftRestoreFrage"><b>Fragebogen wirklich wiederherstellen und zuordnen?</b></div>' +
+        "<ul class=\"mini\">" +
+        "<li>Der Link bleibt unverändert: <code>" + esc(a.token) + "</code></li>" +
+        "<li>" + b.questionCount + " Fragen werden unverändert aus der Veröffentlichung übernommen</li>" +
+        "<li>Zuordnung zum Projekt: <b>" + esc(b.projectTitle) + "</b></li>" +
+        "</ul>" +
+        '<div class="mini">Es wird nichts veröffentlicht, nichts freigegeben und nichts verschickt — ' +
+        "die Kundenseite bleibt genau so, wie sie ist. Rückgängig machbar, solange keine Antwort " +
+        "eingegangen ist.</div>" +
+        '<div class="ft-quick mt-2">' +
+        '<button class="btn primary" onclick="window._ftConfirmRestoreIntake()">Ja, wiederherstellen</button>' +
+        '<button class="btn ghost" onclick="window._ftCancelRestore()">Abbrechen</button>' +
+        "</div></div>";
+    }
     return '<div class="ft-restore mt-2">' +
       '<div class="mini"><b>Veröffentlicht draussen:</b> „' + esc(z.title) + "“ · " +
       z.questionCount + " Fragen · Status " + esc(z.status) + " · Fassung " + z.generation +
@@ -2801,7 +2912,8 @@
       "</div>" +
       '<div class="mini' + (offene.length ? " ft-danger" : "") + '">' + esc(antwortText) + "</div>" +
       '<div class="ft-quick mt-2">' +
-      '<select id="ftRestoreProjekt" class="ft-input"><option value="">— Projekt wählen —</option>' +
+      '<select id="ftRestoreProjekt" class="ft-input" onchange="window._ftRestoreProjektWahl(this.value)">' +
+      '<option value="">— Projekt wählen —</option>' +
       auswahl + "</select>" +
       '<button class="btn primary" onclick="window._ftRestoreIntakeFromPublished()">' +
       "Fragebogen wiederherstellen &amp; zuordnen</button></div>" +
@@ -3289,8 +3401,14 @@
     return "<style>" + STYLES + "</style>" +
       '<div class="ft-shell"><div class="ft-head"><div class="ft-brand"><div class="ft-mark">🌸</div>' +
       '<div><h1 style="margin:0">FlowerTech</h1><div class="mini">' + esc(ft.company.tagline || "") + "</div></div></div>" +
-      '<div class="ft-sync"><div>' + esc(syncLabels[ft.syncStatus] || ft.syncStatus) + "</div><div>" +
-      (ft.lastSyncAt ? "Zuletzt " + dateTime(ft.lastSyncAt) : "Noch nicht synchronisiert") +
+      '<div class="ft-sync"><div>' + esc(syncLabels[syncStand.status] || syncStand.status) +
+      (syncStand.status === "syncing" && Date.now() - syncStand.seit > 20000
+        ? ' <span class="ft-danger">— seit ' + Math.round((Date.now() - syncStand.seit) / 1000) +
+          " s keine Antwort von Firebase</span>"
+        : "") + "</div><div>" +
+      (syncStand.zuletzt
+        ? "Zuletzt " + dateTime(syncStand.zuletzt)
+        : "In dieser Sitzung sind noch keine Daten angekommen") +
       '</div><button class="btn sm mt-2" onclick="window._ftSyncNow()">Jetzt synchronisieren</button></div></div>' +
       (ft.ui.aiBusy ? '<div class="ft-alert"><span>' + esc(ft.ui.aiBusy) + "</span></div>" : "") +
       // KEINE Bereichsleiste mehr. Ist ein Bereich geoeffnet, steht nur eine
@@ -4964,11 +5082,17 @@
       var bindung = l.binding === "bound" ? "an dieses Projekt gebunden"
         : (l.binding === "created" ? "hat dieses Projekt erzeugt" : "an kein Projekt gebunden");
       var wiederhergestellt = ((wf() || {}).intakes || {})[l.intakeId] || {};
-      var rueckweg = (wiederhergestellt.restoredFrom === "published-intake-form" && !l.answeredAt)
-        ? '<button class="btn sm ghost" onclick="window._ftUndoRestoredIntake(\'' + attr(l.intakeId) +
-          '\')" title="Nur diese Wiederherstellung zurücknehmen — der Link bleibt bestehen">' +
-          "Wiederherstellung zurücknehmen</button>"
-        : "";
+      var rueckweg = "";
+      if (wiederhergestellt.restoredFrom === "published-intake-form" && !l.answeredAt) {
+        rueckweg = (undoBestaetigung === l.intakeId)
+          ? '<span class="ft-confirm-inline">Wirklich zurücknehmen? ' +
+            '<button class="btn sm ft-danger" onclick="window._ftUndoRestoredIntake(\'' + attr(l.intakeId) +
+            '\')">Ja, zurücknehmen</button>' +
+            '<button class="btn sm ghost" onclick="window._ftCancelUndoRestored()">Abbrechen</button></span>'
+          : '<button class="btn sm ghost" onclick="window._ftAskUndoRestoredIntake(\'' + attr(l.intakeId) +
+            '\')" title="Nur diese Wiederherstellung zurücknehmen — der Link bleibt bestehen">' +
+            "Wiederherstellung zurücknehmen</button>";
+      }
       return '<div class="ft-link-item ' + routeKlasse(l.route) + '">' +
         '<div class="ft-link-token"><code>' + esc(l.token || "(ohne Token)") + "</code>" +
         '<button class="btn sm ghost" onclick="window._ftCopyText(\'' + attr(intakeFormUrlOf(l.token)) +
@@ -7276,6 +7400,16 @@
     ".ft-link-token code{font-size:12px;word-break:break-all}" +
     ".ft-alias{padding:12px;border-radius:12px;border:1px solid var(--border);background:var(--panel)}" +
     ".ft-input{padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)}" +
+    // Die Rueckfrage vor dem Wiederherstellen ist bewusst SICHTBARES HTML und
+    // kein window.confirm: ein nativer Dialog blockiert den ganzen Browser,
+    // laesst sich nicht vorlesen, nicht bedienen wenn der Rechner gesperrt
+    // ist — und in der Fernsteuerung ueberhaupt nicht wegklicken.
+    ".ft-restore{display:grid;gap:8px}" +
+    ".ft-confirm{padding:12px;border-radius:12px;border:1px solid var(--warn,#ff9f0a);background:rgba(255,159,10,.08)}" +
+    ".ft-confirm .mini{margin:6px 0 10px;padding-left:18px}" +
+    ".ft-confirm-row{display:flex;gap:8px;flex-wrap:wrap}" +
+    ".ft-confirm-inline{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px}" +
+    ".ft-danger{color:#e06767}" +
     ".ft-doc-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);cursor:pointer}" +
     ".ft-doc-main{flex:1;min-width:0}.ft-doc-side{display:flex;align-items:center;gap:12px;white-space:nowrap}" +
     ".ft-status{font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}" +
