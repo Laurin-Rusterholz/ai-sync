@@ -668,4 +668,111 @@ function makeSandbox(draussen = {}) {
     "nach der Freigabe nennt der Satz Vorschau und Vertrag nicht");
 }
 
+/* ══ 11. Der wiederhergestellte Bogen bleibt in Ruhe ══════════════════════
+   Live-Befund (11.09.2026, nach der Wiederherstellung von pf-…): Die
+   Projektkarte zeigte „Veroeffentlichung laeuft", und nach dem Neuladen trug
+   die Vorbelegung ein Feld mehr (need). Die Frage war: aendert das normale
+   Speichern den wiederhergestellten Originalstand, oder stimmt nur die
+   Anzeige nicht? Beides war dran.
+
+   a) Es war ein echter Schreibversuch. Der naechste gewoehnliche
+      Speichervorgang fand die Vorbelegung „veraltet" und schrieb den Bogen
+      unter flowertech/intakeForms/<token> neu — entgegen der Zusage beim
+      Wiederherstellen („Es wird nichts veroeffentlicht … die Kundenseite
+      bleibt genau so, wie sie ist"). Die FRAGEN ueberstanden das
+      unveraendert; sie kommen aus dem wiederhergestellten Datensatz.
+   b) Und die Anzeige log obendrein: publishPending lag im synchronisierten
+      Datenstand. Ueberlebte es einen Neustart, lief das Laufband ewig weiter,
+      obwohl gar kein Schreibversuch mehr existierte. */
+{
+  const intake = {
+    id: "in_wh", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+    questions: CORE.normalizeIntakeQuestions(CORE.DEFAULT_INTAKE_QUESTIONS), status: "open",
+    restoredFrom: "published-intake-form", restoredAt: NOW, createdAt: NOW,
+    publishedAt: "2026-09-02T06:59:00.000Z", formGeneration: 1,
+    prefill: { version: CORE.INTAKE_PREFILL_VERSION, values: { name: "Jule Dal", company: "Aljia" } },
+  };
+  // Innen ist inzwischen mehr bekannt als draussen steht — genau der Fall.
+  const innen = { version: CORE.INTAKE_PREFILL_VERSION,
+    values: { name: "Jule Dal", company: "Aljia", need: "Mehr Anfragen über die Website" } };
+
+  ok(!CORE.intakePrefillStale({ intake, prefill: innen }),
+    "der wiederhergestellte Originalstand gilt weiterhin als „veraltet“ und wird neu veröffentlicht");
+  // Ein gewoehnlicher Bogen dagegen wird sehr wohl nachgezogen.
+  const gewoehnlich = Object.assign({}, intake, { restoredFrom: "" });
+  ok(CORE.intakePrefillStale({ intake: gewoehnlich, prefill: innen }),
+    "die Vorbelegung gewöhnlicher Links wird nicht mehr nachgezogen");
+  // Und sobald jemand ausdrücklich veröffentlicht hat, gilt wieder das Übliche.
+  const freigegeben = Object.assign({}, intake, { publishRequestedAt: "2026-09-11T22:00:00.000Z" });
+  ok(CORE.intakePrefillStale({ intake: freigegeben, prefill: innen }),
+    "nach einer ausdrücklichen Veröffentlichung bleibt der Link für immer stehen");
+
+  // Der Befund selbst: Was ein solcher Schreibvorgang enthalten HAETTE.
+  const wuerde = CORE.customerAreaSnapshot({ intake, project: { id: PROJEKT, title: "Aljia" },
+    company: { name: "FlowerTech" }, prefill: innen, now: NOW });
+  eq(wuerde.questions.length, intake.questions.length,
+    "eine Neuveröffentlichung würde die Originalfragen verändern");
+  eq(wuerde.questions.map((q) => q.key).join(","), intake.questions.map((q) => q.key).join(","),
+    "eine Neuveröffentlichung würde die Reihenfolge der Originalfragen verändern");
+  eq(wuerde.generation, 1, "eine Neuveröffentlichung würde die Fassung hochzählen");
+  ok(wuerde.prefill && wuerde.prefill.values.need,
+    "der Befund stimmt nicht: die Vorbelegung wäre gar nicht gewachsen");
+
+  // Laufzeit: Der gewoehnliche Nachzieh-Lauf ruehrt den Bogen nicht mehr an.
+  const { win, data, written } = makeSandbox();
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Website Reinigungsunternehmen Aljia", projectType: "flowertech",
+    pipelineStage: "intake", createdAt: "2026-08-20T06:00:00.000Z",
+    client: { name: "Jule Dal", company: "Aljia", email: "juledal19@gmail.com" },
+    ftBriefing: { need: "Mehr Anfragen über die Website" },
+  };
+  data.flowertech.intakes = { in_wh: JSON.parse(JSON.stringify(intake)) };
+  const vorher = JSON.stringify(written);
+  eq(win._ftRefreshIntakePrefills(PROJEKT), 0,
+    "der wiederhergestellte Bogen wird beim normalen Speichern doch neu veröffentlicht");
+  eq(JSON.stringify(written), vorher,
+    "es wurde nach draussen geschrieben — die Kundenseite muss unangetastet bleiben");
+
+  // Und die Karte sagt, warum sie nichts tut.
+  const bericht = win._ftIntakeAliasReport(PROJEKT);
+  ok(bericht.links[0].restoredUntouched, "der Originalstand ist im Bericht nicht erkennbar");
+  data.flowertech.activeTab = "projects";
+  const karte = String(win._ftProjectIntakeRow(PROJEKT));
+  ok(/Originalstand/.test(karte), "die Karte sagt nicht, dass der Originalstand unangetastet bleibt");
+  ok(!/Veröffentlichung läuft/.test(karte), "die Karte behauptet weiterhin einen laufenden Schreibvorgang");
+}
+
+/* ══ 12. „Veroeffentlichung laeuft" endet mit dem Tab ═════════════════════
+   publishPending heisst „in DIESEM Tab laeuft gerade ein Schreibversuch".
+   Das Versprechen dazu lebt im Speicher und stirbt mit der Seite. Lag das
+   Merkmal im synchronisierten Datenstand, kam es nach jedem Neuladen und von
+   jedem anderen Geraet zurueck — und das Laufband endete nie. */
+{
+  const { win, data } = makeSandbox();
+  data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Aljia", projectType: "flowertech", pipelineStage: "intake",
+    createdAt: "2026-08-20T06:00:00.000Z",
+  };
+  // So sah der Datenstand nach dem Neuladen aus: ein Versuch, den niemand mehr hält.
+  data.flowertech.intakes = {
+    in_wh: {
+      id: "in_wh", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open", createdAt: NOW,
+      publishedAt: "2026-09-02T06:59:00.000Z", publishRequestedAt: "2026-09-11T22:19:00.000Z",
+      publishPending: true,
+    },
+  };
+  data.flowertech.activeTab = "projects";
+  win.viewFlowerTech();                              // ein Aufbau wie nach dem Reload
+  ok(!("publishPending" in data.flowertech.intakes.in_wh),
+    "ein Schreibversuch aus einer früheren Sitzung bleibt im Datenstand liegen");
+  const karte = String(win._ftProjectIntakeRow(PROJEKT));
+  ok(!/Veröffentlichung läuft/.test(karte), "die Karte zeigt weiterhin ein Laufband ohne Vorgang");
+  ok(/Veröffentlichung nicht bestätigt/.test(karte),
+    "der unbestätigte Versuch wird verschwiegen — er ist etwas anderes als „veröffentlicht“");
+  ok(/nicht bestätigt/.test(CORE.intakePublication({ intake: data.flowertech.intakes.in_wh }).reason)
+    || CORE.intakePublication({ intake: data.flowertech.intakes.in_wh }).stale,
+    "der Kern hält den unbestätigten Versuch nicht mehr fest");
+}
+
 console.log(`flowertech kundenlink-alias: ok (${checks} Pruefungen)`);

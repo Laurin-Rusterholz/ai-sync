@@ -83,6 +83,18 @@
     // Synchronisation gehoert dem Tab, nicht den Daten (siehe syncStand).
     delete ft.syncStatus;
     delete ft.lastSyncAt;
+    /* Dasselbe eine Ebene tiefer: publishPending heisst „in DIESEM Tab laeuft
+       gerade ein Schreibversuch". Das Versprechen dazu lebt im Speicher und
+       stirbt mit der Seite. Ueberlebte das Merkmal einen Neustart (oder kam
+       es von einem anderen Geraet), stand auf der Projektkarte fuer immer
+       „Veroeffentlichung laeuft" — Befund vom 11.09.2026 am Link pf-….
+
+       publishRequestedAt bleibt: Der Zeitstempel ist echte Geschichte. Ist er
+       neuer als publishedAt, gilt die Veroeffentlichung als nicht bestaetigt —
+       und genau das steht dann da, statt eines Laufbands, das nie endet. */
+    Object.keys(ft.intakes || {}).forEach(function (k) {
+      if (ft.intakes[k]) delete ft.intakes[k].publishPending;
+    });
     return ft;
   }
 
@@ -5076,8 +5088,11 @@
       var stand = [];
       if (l.publishPending) stand.push("Veröffentlichung läuft");
       else if (l.publishError) stand.push("Veröffentlichung fehlgeschlagen");
+      else if (l.publishStale) stand.push("Veröffentlichung nicht bestätigt");
       else if (l.publishedAt) stand.push("veröffentlicht " + dateTime(l.publishedAt));
       else stand.push("nie veröffentlicht");
+      // Sichtbar machen, was der wiederhergestellte Bogen zusagt.
+      if (l.restoredUntouched) stand.push("Originalstand — wird nicht von selbst neu veröffentlicht");
       stand.push(l.prefillKeys.length ? ("vorbelegt: " + l.prefillKeys.join(", ")) : "keine Vorbelegung");
       var bindung = l.binding === "bound" ? "an dieses Projekt gebunden"
         : (l.binding === "created" ? "hat dieses Projekt erzeugt" : "an kein Projekt gebunden");

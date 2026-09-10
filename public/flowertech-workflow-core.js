@@ -1645,7 +1645,12 @@ export function intakeAliasReport({ intakes = {}, projectId = "", projectExists 
         answeredAt: text(intake.answeredAt, 40),
         publishedAt: text(intake.publishedAt, 40),
         publishPending: !!intake.publishPending,
+        // Angefordert, aber nie bestaetigt geschrieben — das ist etwas
+        // anderes als „laeuft gerade" und muss auch anders dastehen.
+        publishStale: intakePublication({ intake }).stale,
         publishError: text(intake.publishError, 300),
+        // Ein Originalstand, den nichts von selbst neu veroeffentlicht.
+        restoredUntouched: intake.restoredFrom === "published-intake-form" && !intake.publishRequestedAt,
         prefillKeys: intake.prefill && intake.prefill.values && typeof intake.prefill.values === "object"
           ? Object.keys(intake.prefill.values).sort() : [],
         // Eingegangene Antworten, die NICHT uebernommen wurden — sie gehoeren
@@ -2937,6 +2942,24 @@ export function intakePrefillStale({ intake = null, prefill = null } = {}) {
   const form = intake && typeof intake === "object" ? intake : {};
   if (!isShareToken(form.inviteToken)) return false;
   if (form.status === "closed" || form.projectId || form.answeredAt) return false;
+  /* Ein wiederhergestellter Originalstand wird NICHT von selbst neu
+     veroeffentlicht. Befund (11.09.2026): Nach der Wiederherstellung des am
+     02.09. versendeten Bogens stand auf der Projektkarte „Veroeffentlichung
+     laeuft", und nach dem Neuladen trug die Vorbelegung ploetzlich ein Feld
+     mehr (need). Das war kein Anzeigefehler: Der naechste gewoehnliche
+     Speichervorgang fand die Vorbelegung „veraltet" und schrieb den Bogen
+     unter flowertech/intakeForms/<token> neu.
+
+     Die Fragen ueberstanden das unveraendert — sie kommen aus dem
+     wiederhergestellten Datensatz. Aber die Zusage beim Wiederherstellen
+     lautet: „Es wird nichts veroeffentlicht … die Kundenseite bleibt genau
+     so, wie sie ist." Eine Zusage, die der naechste Speichervorgang bricht,
+     ist keine.
+
+     Der Bogen bleibt deshalb unangetastet, bis jemand ihn ausdruecklich
+     veroeffentlicht (eine Freigabe tut das und setzt publishRequestedAt).
+     Danach gilt wieder das Uebliche. */
+  if (form.restoredFrom === "published-intake-form" && !form.publishRequestedAt) return false;
   const stored = form.prefill && typeof form.prefill === "object" ? form.prefill : null;
   if (!stored || Number(stored.version) !== INTAKE_PREFILL_VERSION) return true;
   if (!prefill) return false;
