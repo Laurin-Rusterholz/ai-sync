@@ -18,6 +18,21 @@
  *   3. Thread mit mehreren Beteiligten (niemand faellt weg, niemand doppelt).
  * Dazu: Die eigene Adresse taucht NIE als Empfaenger auf — ausser die Mail
  * ging wirklich nur an einen selbst.
+ *
+ * NACHTRAG (10.09.2026, Live-Abnahme). Die Regel allein genuegte nicht — der
+ * Wert muss auch im Feld ANKOMMEN. Drei weitere Befunde, hier mitgeprueft:
+ *
+ *   · Das An-Feld ging leer auf. Ohne geladenes Profil (loadProfile schluckt
+ *     seinen Fehler still) hielt die Regel eine gesendete Mail fuer eine
+ *     fremde und nahm den Absender — bei einer Nachricht ganz ohne
+ *     From-Kopfzeile blieb dann gar nichts uebrig.
+ *   · Ein Anzeigename mit Komma ("Muster, Anna" <anna@muster.ch>) zerfiel
+ *     beim Zerlegen der Empfaengerzeile in zwei Bruchstuecke.
+ *   · Entwuerfe zeigten «adresse <adresse>», bei mehreren Empfaengern
+ *     «a, b <a, b>»: toName trug die Adresse selbst.
+ *
+ * Deshalb prueft dieser Test nicht nur die Regel, sondern die ganze Kette bis
+ * zum WIRKLICHEN Markup des An-Feldes (row('gmlTo', …) aus gmailCompose).
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -45,7 +60,7 @@ function block(name) {
   return index.slice(a, index.indexOf(ende, a) + ende.length);
 }
 
-const QUELLE = [einzeiler("parseAddr"), einzeiler("splitAddrs"), block("gmailReplyTargets")].join("\n");
+const QUELLE = [einzeiler("parseAddr"), block("gmlSplitList"), einzeiler("splitAddrs"), block("gmailReplyTargets")].join("\n");
 const gmailReplyTargets = new Function(QUELLE + "\nreturn gmailReplyTargets;")();
 
 const ICH = "contact@laurin-rusterholz.ch";
@@ -167,6 +182,104 @@ const ICH = "contact@laurin-rusterholz.ch";
   // ohne sie kann sie den Gegenkontakt einer gesendeten Mail nicht kennen.
   ok(/var o = \{ id:msg\.id, threadId:msg\.threadId, from:h\.from\|\|"", to:h\.to\|\|"", cc:h\.cc\|\|""/.test(index),
     "gmailReplyFromEntity liest An/Kopie der Nachricht nicht mehr mit");
+}
+
+// ── 10. Die Kette bis ins Feld: prefill.to landet wirklich im An-Feld ─────
+// Der Live-Befund war ein LEERES An-Feld — die Regel allein beweist also
+// nichts. Hier laeuft der echte Feldbauer aus gmailCompose (row) mit dem
+// echten esc gegen das Ergebnis der echten Regel.
+{
+  const escSrc = index.slice(index.indexOf("const esc = (s) =>"), index.indexOf("\n", index.indexOf("const esc = (s) =>")));
+  const rowStart = index.indexOf("\n    function row(id,label,value,o){ o=o||{};");
+  ok(rowStart > 0, "der Feldbauer row() aus gmailCompose wurde nicht gefunden");
+  const rowEnde = "\n    }\n";
+  const rowSrc = index.slice(rowStart, index.indexOf(rowEnde, rowStart) + rowEnde.length);
+  const row = new Function(escSrc + "\n" + rowSrc + "\nreturn row;")();
+
+  const feld = (wert) => row("gmlTo", "An", wert, { ph: "Name oder E-Mail eingeben…", tail: "", ac: true });
+
+  const gesendet = { from: "Laurin Rusterholz <" + ICH + ">", to: "Kundschaft GmbH <info@kundschaft.ch>", cc: "" };
+  const html = feld(gmailReplyTargets(gesendet, ICH, false).to);
+  ok(/id="gmlTo"/.test(html), "das An-Feld traegt seine Kennung nicht mehr");
+  ok(/value="info@kundschaft\.ch"/.test(html),
+    `das An-Feld kommt nicht gefuellt heraus: ${(/value="([^"]*)"/.exec(html) || [])[1]}`);
+  ok(!/value=""/.test(html), "das An-Feld geht leer auf");
+
+  // Und der Weg dorthin ist wirklich verdrahtet: gmailCompose gibt prefill.to
+  // an genau dieses Feld weiter, replyInternal fuellt prefill.to aus der Regel.
+  ok(/row\('gmlTo','An',prefill\.to,/.test(index),
+    "gmailCompose fuellt das An-Feld nicht mehr aus prefill.to");
+  ok(/to: ziele\.to, cc: ziele\.cc, subject: subject,/.test(index),
+    "replyInternal gibt das Ergebnis der Regel nicht an den Composer weiter");
+}
+
+// ── 11. Ohne geladenes Profil bleibt die Antwort richtig ──────────────────
+// loadProfile() schluckt seinen Fehler still (GM.profile=null). Fiel er aus,
+// galt die eigene Mail als fremde — und die Antwort ging wieder an einen
+// selbst. Die eigene Adresse kommt deshalb auch aus dem Anmeldestand.
+{
+  ok(/\(GM\.profile && GM\.profile\.emailAddress\) \|\| \(GM\.status && GM\.status\.email\)/.test(index),
+    "gmailMe() kennt nur das Profil — faellt es aus, adressiert die Antwort wieder einen selbst");
+}
+
+// ── 12. Kein leeres An-Feld, was auch immer die Nachricht hergibt ─────────
+{
+  const faelle = [
+    ["ohne From-Kopfzeile, ohne Profil", { from: "", to: "info@kundschaft.ch", cc: "" }, "", "info@kundschaft.ch"],
+    ["ohne From-Kopfzeile, mit Profil", { from: "", to: "info@kundschaft.ch", cc: "" }, ICH, "info@kundschaft.ch"],
+    ["nur Kopie-Empfaenger", { from: ICH, to: "", cc: "info@kundschaft.ch" }, ICH, "info@kundschaft.ch"],
+    ["gar nichts ausser mir", { from: ICH, to: ICH, cc: "" }, ICH, ICH],
+  ];
+  faelle.forEach(([was, mail, me, erwartet]) => {
+    const t = gmailReplyTargets(mail, me, false).to;
+    eq(t, erwartet, `${was}: das An-Feld wird ${t ? "falsch" : "leer"} gefuellt (${JSON.stringify(t)})`);
+  });
+}
+
+// ── 13. Anzeigename mit Komma zerfaellt nicht mehr ────────────────────────
+{
+  const gmlSplitList = new Function(block("gmlSplitList") + "\nreturn gmlSplitList;")();
+  eq(gmlSplitList('"Muster, Anna" <anna@muster.ch>, bernd@beispiel.ch').length, 2,
+    "eine Empfaengerzeile mit Komma im Anzeigenamen wird falsch zerlegt");
+
+  const mail = { from: '"Muster, Anna" <anna@muster.ch>', to: ICH, cc: "" };
+  eq(gmailReplyTargets(mail, ICH, false).to, "anna@muster.ch",
+    "ein Anzeigename mit Komma landet als Bruchstueck im An-Feld");
+
+  const gesendet = { from: ICH, to: '"Kundschaft GmbH, Einkauf" <info@kundschaft.ch>, zwei@kundschaft.ch', cc: "" };
+  eq(gmailReplyTargets(gesendet, ICH, false).to, "info@kundschaft.ch, zwei@kundschaft.ch",
+    "bei mehreren Empfaengern mit Komma-Namen stimmt die Liste nicht");
+}
+
+// ── 14. Entwuerfe: «adresse <adresse>» verschwindet, ohne Daten anzufassen ─
+{
+  const gmlToName = new Function(
+    [einzeiler("parseAddr"), block("gmlSplitList"), einzeiler("splitAddrs"), block("gmlToName")].join("\n")
+    + "\nreturn gmlToName;")();
+  eq(gmlToName("adresse@x.ch"), "", "eine nackte Adresse wird als Anzeigename gespeichert");
+  eq(gmlToName("a@x.ch, b@x.ch"), "", "eine ganze Empfaengerliste wird als Anzeigename gespeichert");
+  eq(gmlToName("Anna Muster <anna@muster.ch>"), "Anna Muster", "ein echter Anzeigename geht verloren");
+  eq(gmlToName('"Muster, Anna" <anna@muster.ch>'), "Muster, Anna",
+    "ein Anzeigename mit Komma geht verloren");
+
+  const gmlDraftTo = new Function(block("gmlDraftTo") + "\nreturn gmlDraftTo;")();
+  // Genau die Entwuerfe, die heute schon in der Datenbank liegen — sie werden
+  // nur ANDERS ANGEZEIGT, nicht angefasst.
+  const alt = { to: "adresse@x.ch", toName: "adresse@x.ch" };
+  eq(gmlDraftTo(alt).label, "adresse@x.ch", "der Alt-Entwurf zeigt seinen Empfaenger nicht");
+  eq(gmlDraftTo(alt).name, "", "der Alt-Entwurf zeigt weiterhin «adresse <adresse>»");
+  const altListe = { to: "a@x.ch, b@x.ch", toName: "a@x.ch, b@x.ch" };
+  eq(gmlDraftTo(altListe).name, "", "die Empfaengerliste erscheint weiterhin doppelt");
+  eq(gmlDraftTo(altListe).label, "a@x.ch, b@x.ch", "die Empfaengerliste fehlt in der Anzeige");
+  const echt = { to: "anna@muster.ch", toName: "Anna Muster" };
+  eq(gmlDraftTo(echt).name, "Anna Muster", "ein echter Anzeigename verschwindet aus der Anzeige");
+  eq(gmlDraftTo(echt).addr, "anna@muster.ch", "die Adresse fehlt neben dem Namen");
+  // Der Entwurf selbst bleibt unveraendert — die Anzeige rechnet nur.
+  eq(JSON.stringify(alt), JSON.stringify({ to: "adresse@x.ch", toName: "adresse@x.ch" }),
+    "die Anzeige veraendert den gespeicherten Entwurf");
+  // Und beim Speichern entsteht der Fehler gar nicht erst.
+  ok(/toName: gmlToName\(to\),/.test(index) && !/toName: toA\.name/.test(index),
+    "das Speichern legt weiterhin die Adresse als Anzeigenamen ab");
 }
 
 console.log(`gmail antwort-empfaenger: ok (${checks} Pruefungen)`);
