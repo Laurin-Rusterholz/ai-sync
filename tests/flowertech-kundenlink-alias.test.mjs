@@ -477,13 +477,58 @@ function makeSandbox(draussen = {}) {
   ok(/liegt noch/.test(gelesen), "die liegengebliebene Antwort zu diesem Token wird nicht angezeigt");
   ok(/id="ftRestoreProjekt"/.test(gelesen), "es fehlt die Auswahl, zu welchem Projekt der Bogen gehört");
 
-  // Ohne Projektwahl passiert nichts.
+  // Ohne Projektwahl passiert nichts — und es kommt auch keine Rueckfrage.
   win._ftRestoreIntakeFromPublished();
   eq(Object.keys(data.flowertech.intakes).length, 1, "ohne Projektwahl wird trotzdem etwas angelegt");
+  ok(!/wirklich wiederherstellen/i.test(ansicht()),
+    "ohne gewähltes Projekt erscheint trotzdem eine Rückfrage");
 
-  // Mit Wahl: zuordnen.
+  /* 7b') Mit Wahl: erst die SICHTBARE Rueckfrage — geschrieben wird noch nicht.
+     Live-Befund (11.09.2026): Hier stand ein window.confirm. Der native
+     Dialog haelt den ganzen Browser an; per Fernsteuerung liess er sich
+     weder anklicken (Zeitueberschreitung) noch annehmen. Die Rueckfrage ist
+     jetzt gewoehnliches HTML in der Karte. */
   gewaehltesProjekt.value = PROJEKT;
   win._ftRestoreIntakeFromPublished();
+  const gefragt = ansicht();
+  eq(Object.keys(data.flowertech.intakes).length, 1,
+    "die Rückfrage hat den Fragebogen schon geschrieben — sie muss folgenlos sein");
+  ok(/wirklich wiederherstellen/i.test(gefragt), "es erscheint keine sichtbare Rückfrage");
+  ok(/role="alertdialog"/.test(gefragt), "die Rückfrage ist für Bedienhilfen nicht als solche erkennbar");
+  ok(gefragt.includes(TOKEN_MAIL), "die Rückfrage nennt den Token nicht");
+  ok(/28 Fragen/.test(gefragt), "die Rückfrage nennt die Zahl der Fragen nicht");
+  ok(/Website Reinigungsunternehmen Aljia/.test(gefragt), "die Rückfrage nennt das Zielprojekt nicht");
+  ok(/_ftConfirmRestoreIntake\(\)/.test(gefragt) && /Ja, wiederherstellen/.test(gefragt),
+    "der Rückfrage fehlt der zustimmende Knopf");
+  ok(/_ftCancelRestore\(\)/.test(gefragt) && /Abbrechen/.test(gefragt),
+    "der Rückfrage fehlt der ablehnende Knopf");
+
+  // Abbrechen aendert nichts — und fuehrt zurueck auf den gelesenen Stand.
+  const vorAbbruch = JSON.stringify(data);
+  win._ftCancelRestore();
+  eq(JSON.stringify(data), vorAbbruch, "das Abbrechen verändert den Datenstand");
+  const abgebrochen = ansicht();
+  ok(!/wirklich wiederherstellen/i.test(abgebrochen), "die Rückfrage bleibt nach dem Abbrechen stehen");
+  ok(/Veröffentlicht draussen/.test(abgebrochen), "nach dem Abbrechen ist der gelesene Stand verschwunden");
+
+  /* Die gewaehlte Zuordnung haelt ein Neuzeichnen aus. Befund am Handy
+     (11.09.2026): Zwischen Auswahl und Klick zeichnete die App neu, das
+     <select> stand wieder auf „— Projekt wählen“, und der Klick lief ins
+     Leere — wer langsamer klickt oder fernsteuert, traf den Knopf nie. Die
+     Wahl gehoert deshalb in den Zustand, nicht nur ins DOM. */
+  win._ftRestoreProjektWahl(PROJEKT);
+  gewaehltesProjekt.value = "";              // so, als haette die App neu gezeichnet
+  ok(ansicht().includes('value="' + PROJEKT + '" selected'),
+    "die gewählte Zuordnung wird beim Neuzeichnen nicht wieder gesetzt");
+  win._ftRestoreIntakeFromPublished();
+  ok(/wirklich wiederherstellen/i.test(ansicht()),
+    "nach dem Neuzeichnen läuft der Knopf wieder ins Leere");
+  win._ftCancelRestore();
+
+  // Und nun ausdruecklich zustimmen.
+  gewaehltesProjekt.value = PROJEKT;
+  win._ftRestoreIntakeFromPublished();
+  win._ftConfirmRestoreIntake();
   const neuer = Object.values(data.flowertech.intakes).find((i) => i.inviteToken === TOKEN_MAIL);
   ok(neuer, "der Fragebogen wurde nicht wiederhergestellt");
   eq(neuer.inviteToken, TOKEN_MAIL, "der Token wurde verändert");
@@ -506,8 +551,96 @@ function makeSandbox(draussen = {}) {
   eq(data.flowertech.intakes[neuer.id].status, "answered", "der Bogen gilt nach der Antwort nicht als beantwortet");
 
   // 7d) Der Rückweg: nur eine Wiederherstellung OHNE Antwort lässt sich zurücknehmen.
+  win._ftAskUndoRestoredIntake(neuer.id);
   win._ftUndoRestoredIntake(neuer.id);
   ok(data.flowertech.intakes[neuer.id], "ein beantworteter Bogen liess sich zurücknehmen");
+
+  // 7e) Und der Rückweg selbst fragt ebenfalls sichtbar — am Projekt.
+  const b = makeSandbox();
+  b.data.entities.projects[PROJEKT] = {
+    id: PROJEKT, title: "Website Reinigungsunternehmen Aljia", projectType: "flowertech",
+    pipelineStage: "intake", createdAt: "2026-08-20T06:00:00.000Z",
+  };
+  b.data.flowertech.intakes = {
+    in_wh: {
+      id: "in_wh", title: "Ihre Angaben", inviteToken: TOKEN_MAIL, boundProjectId: PROJEKT,
+      questions: CORE.DEFAULT_INTAKE_QUESTIONS, status: "open", restoredFrom: "published-intake-form",
+      createdAt: NOW, publishedAt: "2026-09-02T06:59:00.000Z",
+    },
+  };
+  const projektAnsicht = () => String(b.win._ftProjectIntakeRow(PROJEKT));
+  ok(/_ftAskUndoRestoredIntake\(/.test(projektAnsicht()), "der Rückweg ist am Projekt nicht sichtbar");
+  b.win._ftAskUndoRestoredIntake("in_wh");
+  const rueckfrage = projektAnsicht();
+  ok(/Wirklich zurücknehmen\?/.test(rueckfrage), "der Rückweg fragt nicht sichtbar nach");
+  ok(b.data.flowertech.intakes.in_wh, "die blosse Rückfrage hat schon gelöscht");
+  b.win._ftCancelUndoRestored();
+  ok(b.data.flowertech.intakes.in_wh, "das Abbrechen hat gelöscht");
+  ok(!/Wirklich zurücknehmen\?/.test(projektAnsicht()), "die Rückfrage bleibt nach dem Abbrechen stehen");
+  b.win._ftAskUndoRestoredIntake("in_wh");
+  b.win._ftUndoRestoredIntake("in_wh");
+  ok(!b.data.flowertech.intakes.in_wh, "die Wiederherstellung liess sich nicht zurücknehmen");
+}
+
+/* ══ 9. Kein window.confirm auf dem Reparaturweg ═══════════════════════════
+   Live-Befund (11.09.2026, Fernsteuerung): Nach „Wiederherstellen" blieb ein
+   nativer confirm-Dialog stehen. Input.dispatchMouseEvent lief in eine
+   Zeitueberschreitung, getJsDialog meldete „confirm", das Annehmen scheiterte
+   an Emulation.setFocusEmulationEnabled — der gesperrte Rechner kam nicht
+   mehr an den Dialog heran. Ein Dialog, den man nicht wegklicken kann, ist
+   kein Schutz. Die Rueckfragen dieses Weges sind deshalb HTML.
+   (Andere, aeltere confirm-Aufrufe im Modul bleiben unangetastet — hier geht
+   es allein um den Reparaturweg.) */
+{
+  const funktion = (name) => {
+    const start = quelle.indexOf("window." + name + " = function");
+    assert.ok(start > -1, `${name} wurde nicht gefunden`);
+    const ende = quelle.indexOf("\n  };", start);
+    return quelle.slice(start, ende > -1 ? ende : start + 4000);
+  };
+  ["_ftRestoreIntakeFromPublished", "_ftConfirmRestoreIntake", "_ftCancelRestore",
+   "_ftAskUndoRestoredIntake", "_ftUndoRestoredIntake"].forEach((n) => {
+    ok(!/(^|[^.\w])confirm\s*\(/.test(funktion(n)),
+      `${n} haelt den Browser weiterhin mit einem nativen confirm an`);
+  });
+  // Die zweite Stufe muss es wirklich geben — sonst waere die Rueckfrage nur Zierde.
+  ok(/tokenAuskunft\.bestaetigen = \{/.test(quelle), "die Rückfrage merkt sich nichts");
+  ok(/if \(a\.bestaetigen\)/.test(quelle), "die Rückfrage wird nicht gezeichnet");
+}
+
+/* ══ 10. Der Sync-Kopf zeigt DIESES Geraet ════════════════════════════════
+   Live-Befund (11.09.2026): Der Kopf stand dauerhaft auf „Synchronisiert… ·
+   Zuletzt 22:19" — auch nach einem Reload, auch wenn nichts lief. Kein
+   Stillstand des Abgleichs, sondern ein Anzeigefehler mit echter Ursache:
+   syncStatus/lastSyncAt lagen in data.flowertech, also im synchronisierten
+   Datenstand. Ein „syncing" wurde gespeichert, reiste in die Wolke und kam
+   ueberall zurueck; „Zuletzt" konnte die Uhrzeit eines fremden Geraets sein.
+   Laufzeitzustand gehoert nicht in die Daten. */
+{
+  ok(!/data\.flowertech\.syncStatus = |ft\.syncStatus = "/.test(quelle),
+    "der Sync-Stand wird weiterhin in den Datenstand geschrieben");
+  ok(/delete ft\.syncStatus;/.test(quelle) && /delete ft\.lastSyncAt;/.test(quelle),
+    "die Altlast im Datenstand wird nicht abgeräumt");
+  const index = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
+  ok(/delete d\.flowertech\.syncStatus;/.test(index),
+    "der Startzustand legt syncStatus weiterhin im Datenstand an");
+  ok(!/^\s+syncStatus: "idle",$/m.test(index), "syncStatus steht weiterhin im Grunddatenstand");
+
+  const { win, data } = makeSandbox();
+  data.flowertech.activeTab = "projects";
+  // Ein alter, mitsynchronisierter Stand darf die Anzeige nicht mehr faerben.
+  data.flowertech.syncStatus = "syncing";
+  data.flowertech.lastSyncAt = "2026-09-10T22:19:00.000Z";
+  const kopf = String(win.viewFlowerTech()).replace(/<style>[\s\S]*?<\/style>/g, "");
+  ok(!/22:19/.test(kopf), "die Anzeige zeigt weiterhin die mitgereiste Uhrzeit eines anderen Geräts");
+  ok(/noch keine Daten angekommen/.test(kopf),
+    "ohne Abgleich in dieser Sitzung behauptet der Kopf trotzdem etwas");
+  ok(win._ftSyncStand().status !== "syncing",
+    "der Anzeigestand übernimmt den mitsynchronisierten Wert „syncing“");
+  eq(win._ftSyncStand().zuletzt, null, "der Anzeigestand übernimmt die mitsynchronisierte Uhrzeit");
+  // Und der alte Ballast verschwindet aus den Daten, sobald sie angefasst werden.
+  ok(!("syncStatus" in data.flowertech), "syncStatus bleibt im Datenstand liegen");
+  ok(!("lastSyncAt" in data.flowertech), "lastSyncAt bleibt im Datenstand liegen");
 }
 
 /* ══ 8. Kein Textwiderspruch mehr ══════════════════════════════════════════
