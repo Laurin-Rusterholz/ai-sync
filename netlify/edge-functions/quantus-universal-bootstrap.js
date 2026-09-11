@@ -22,6 +22,20 @@ export function injectUniversalAssets(html) {
 // meldete „This edge function has crashed" und die ganze App war weg.
 // Ein abgerissener Rumpf darf die Seite nicht mitnehmen — und ein Fehler beim
 // Umschreiben erst recht nicht.
+// Siehe Begruendung in quantus-app-registry.js: ein gefangener Fehler ohne
+// Spur ist ein verlorener Beleg. Nur Funktion, Phase, Fehlerart und -text —
+// keine Adressen, keine Inhalte, keine Nutz- oder Maildaten.
+function edgeLog(phase, err) {
+  try {
+    console.error(JSON.stringify({
+      fn: "quantus-universal-bootstrap",
+      phase: phase,
+      error: (err && err.name) || "Error",
+      message: String((err && err.message) || err || "").slice(0, 300)
+    }));
+  } catch (_e) { /* Logging darf nie selbst zum Problem werden */ }
+}
+
 function bootstrapAusfall(grund) {
   return new Response(
     "<!doctype html><meta charset=\"utf-8\"><title>Quantus – kurz nicht erreichbar</title>"
@@ -42,12 +56,14 @@ export default async function quantusUniversalBootstrap(request, context) {
   try {
     html = await response.text();
   } catch (err) {
+    edgeLog("body-read", err);
     return bootstrapAusfall("Rumpf abgerissen");
   }
   let transformed;
   try {
     transformed = injectUniversalAssets(html);
   } catch (err) {
+    edgeLog("transform", err);
     transformed = html;                          // lieber ohne Zusatz als gar nicht
   }
   const headers = new Headers(response.headers);

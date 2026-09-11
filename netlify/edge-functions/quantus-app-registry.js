@@ -154,6 +154,22 @@ export function readBuildTag(source) {
 //     Dann eine kurze, NICHT zwischengespeicherte 503 mit Retry-After statt
 //     eines Absturzes — ein erneuter Versuch trifft sofort wieder auf die
 //     normale Auslieferung.
+// Ein gefangener Fehler ohne Spur ist ein verlorener Beleg: ohne Meldung im
+// Edge-Log liesse sich nicht mehr sehen, ob Abrisse weiterhin auftreten — die
+// Seite bliebe still bedienbar und das Problem unsichtbar. Geloggt wird nur,
+// was zur Einordnung noetig ist: Funktion, Phase, Fehlerart und -text. KEINE
+// Adressen, keine Inhalte, keine Nutz- oder Maildaten.
+function edgeLog(phase, err) {
+  try {
+    console.error(JSON.stringify({
+      fn: "quantus-app-registry",
+      phase: phase,
+      error: (err && err.name) || "Error",
+      message: String((err && err.message) || err || "").slice(0, 300)
+    }));
+  } catch (_e) { /* Logging darf nie selbst zum Problem werden */ }
+}
+
 function edgeAusfall(grund) {
   return new Response(
     "<!doctype html><meta charset=\"utf-8\"><title>Quantus – kurz nicht erreichbar</title>"
@@ -173,12 +189,14 @@ export default async function handler(request, context) {
   try {
     original = await response.text();
   } catch (err) {
+    edgeLog("body-read", err);
     return edgeAusfall("Rumpf abgerissen");
   }
   let transformed;
   try {
     transformed = injectQuantusApps(original);
   } catch (err) {
+    edgeLog("transform", err);
     transformed = original;                      // lieber ohne Verweise als gar nicht
   }
   const headers = new Headers(response.headers);

@@ -43,6 +43,17 @@ let checks = 0;
 const luecken = [];
 const ok = (bedingung, text) => { checks++; if (!bedingung) luecken.push(text); };
 
+// ── Hilfe: console.error mitschneiden, ohne die Ausgabe zu stoeren ────────
+function mitLog(fn) {
+  const echt = console.error;
+  const zeilen = [];
+  console.error = (...a) => { zeilen.push(a.map(String).join(" ")); };
+  return Promise.resolve()
+    .then(fn)
+    .then((r) => { console.error = echt; return { ergebnis: r, zeilen }; },
+          (e) => { console.error = echt; throw e; });
+}
+
 // ── Hilfen: eine Antwort, deren Rumpf beim Lesen abreisst ─────────────────
 function antwortMitAbriss(contentType = "text/html; charset=utf-8") {
   return {
@@ -62,11 +73,29 @@ const anfrage = { method: "GET" };
 
 // ═══ 1. Abgerissener Rumpf: keine Ausnahme, keine Zwischenspeicherung ═════
 for (const [name, fn] of [["app-registry", registry], ["universal-bootstrap", bootstrap]]) {
-  let antwort = null, geflogen = null;
+  let antwort = null, geflogen = null, logZeilen = [];
   try {
-    antwort = await fn(anfrage, { next: () => Promise.resolve(antwortMitAbriss()) });
+    const r = await mitLog(() => fn(anfrage, { next: () => Promise.resolve(antwortMitAbriss()) }));
+    antwort = r.ergebnis; logZeilen = r.zeilen;
   } catch (e) { geflogen = e; }
   ok(!geflogen, `${name}: die Ausnahme fliegt weiterhin nach oben (${geflogen && geflogen.message}) — Netlify zeigt dann den Absturz und die App ist weg`);
+  // Ein gefangener Fehler ohne Spur waere ein verlorener Beleg: ohne Meldung
+  // im Edge-Log liesse sich nicht mehr sehen, ob Abrisse weiterhin auftreten.
+  ok(logZeilen.length === 1, `${name}: der Abriss hinterlaesst ${logZeilen.length} Meldungen statt genau einer`);
+  let eintrag = null;
+  try { eintrag = JSON.parse(logZeilen[0] || "null"); } catch (e) { eintrag = null; }
+  ok(!!eintrag, `${name}: die Meldung ist nicht auswertbar (${(logZeilen[0] || "").slice(0, 60)})`);
+  if (eintrag) {
+    ok(eintrag.fn === (name === "app-registry" ? "quantus-app-registry" : "quantus-universal-bootstrap"),
+      `${name}: die Meldung nennt die Funktion nicht (${eintrag.fn})`);
+    ok(eintrag.phase === "body-read", `${name}: die Meldung nennt die Phase nicht (${eintrag.phase})`);
+    ok(eintrag.error === "TypeError", `${name}: die Fehlerart fehlt (${eintrag.error})`);
+    ok(/error reading a body from connection/.test(eintrag.message || ""),
+      `${name}: der Originaltext des Fehlers fehlt (${eintrag.message})`);
+    // Nichts als Funktion, Phase, Fehlerart und -text — keine Nutzdaten.
+    ok(Object.keys(eintrag).sort().join(",") === "error,fn,message,phase",
+      `${name}: die Meldung traegt mehr als vereinbart (${Object.keys(eintrag).join(",")})`);
+  }
   ok(antwort && antwort.status === 503, `${name}: statt 503 kommt ${antwort && antwort.status}`);
   const cc = antwort && antwort.headers.get("cache-control") || "";
   ok(/no-store/.test(cc), `${name}: die Fehlerantwort darf nicht zwischengespeichert werden (cache-control: ${cc})`);
@@ -82,23 +111,34 @@ for (const [name, fn] of [["app-registry", registry], ["universal-bootstrap", bo
   // erzwingen — geprueft wird deshalb die Absicherung im Quelltext und, dass
   // ein unauffaelliges Dokument unveraendert durchkommt.
   const quelle = fs.readFileSync(path.join(here, "..", "netlify/edge-functions/quantus-app-registry.js"), "utf8");
-  ok(/catch \(err\) \{\s*transformed = original;/.test(quelle),
-    "app-registry: ein Fehler beim Umschreiben nimmt weiterhin die Seite mit");
+  ok(/catch \(err\) \{\s*edgeLog\("transform", err\);\s*transformed = original;/.test(quelle),
+    "app-registry: ein Fehler beim Umschreiben nimmt weiterhin die Seite mit oder bleibt ohne Spur");
   const boot = fs.readFileSync(path.join(here, "..", "netlify/edge-functions/quantus-universal-bootstrap.js"), "utf8");
-  ok(/catch \(err\) \{\s*transformed = html;/.test(boot),
-    "bootstrap: ein Fehler beim Umschreiben nimmt weiterhin die Seite mit");
+  ok(/catch \(err\) \{\s*edgeLog\("transform", err\);\s*transformed = html;/.test(boot),
+    "bootstrap: ein Fehler beim Umschreiben nimmt weiterhin die Seite mit oder bleibt ohne Spur");
   ok(/try \{\s*original = await response\.text\(\);/.test(quelle),
     "app-registry: die Lesestelle aus dem Log ist nicht abgesichert");
   ok(/try \{\s*html = await response\.text\(\);/.test(boot),
     "bootstrap: die Lesestelle aus dem Log (Zeile 23) ist nicht abgesichert");
 }
 
+// ═══ 2b. Warum der Transform-Fallback nur im Quelltext geprueft wird ══════
+// Er laesst sich von aussen nicht ehrlich ausloesen: response.text() liefert
+// immer eine Zeichenkette, und beide Umschreibewege beginnen mit String(...).
+// Ein Eingabewert, der sie zum Werfen braechte, waere kein Fall, den es in
+// Wirklichkeit gibt — und der Rumpf liesse sich danach auch nicht mehr
+// ausliefern. Dass edgeLog ueberhaupt richtig meldet, zeigt der Leseabbruch
+// oben an der echten Ausfuehrung; hier bleibt zu pruefen, dass der zweite
+// Fangarm dieselbe Meldung absetzt und den Rumpf durchreicht (Abschnitt 2).
+
 // ═══ 3. Der normale Weg bleibt unveraendert ═══════════════════════════════
 {
   const doc = '<!doctype html><html><head><meta name="quantus-build" content="pruef-2026-09-11">'
     + '</head><body><script>var x = "</body>";</script>\n'
     + '<div>{key:"polaris", icon:"x"},</div>\n  case "ruhestand":\n</body></html>';
-  const antwort = await registry(anfrage, { next: () => Promise.resolve(antwortMit(doc)) });
+  const lauf = await mitLog(() => registry(anfrage, { next: () => Promise.resolve(antwortMit(doc)) }));
+  const antwort = lauf.ergebnis;
+  ok(lauf.zeilen.length === 0, `der normale Weg meldet etwas, obwohl nichts schiefging (${lauf.zeilen[0]})`);
   ok(antwort.status === 200, `der normale Weg liefert ${antwort.status}`);
   ok(antwort.headers.get("x-quantus-build") === "pruef-2026-09-11",
     `die Bau-Kennung fehlt im Header (${antwort.headers.get("x-quantus-build")})`);
