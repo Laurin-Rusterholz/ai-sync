@@ -123,10 +123,12 @@ for (const breite of [1440, 1280, 1024]) {
     `${breite}px: die Rasterzeile der Kopfzeile sollte 52px bleiben, ist aber ${wert(".app", "grid-template-rows", breite)}`);
   ok(wert(".topbar", "flex-wrap", breite) === null,
     `${breite}px: hier darf die Kopfzeile gar nicht umbrechen`);
-  ok(wert(".topbar-right", "overflow-x", breite) === null,
-    `${breite}px: die Knopfreihe soll oberhalb der Schwelle unveraendert bleiben`);
-  ok(wert(".topbar-menu", "position", breite) === "absolute",
-    `${breite}px: die Aufklappmenues sollen am Knopf haengen bleiben`);
+  // Knopfreihe und Aufklappmenues wurden spaeter auch oberhalb der Schwelle
+  // korrigiert (derselbe Ueberlauf, andere Zahlen) — geprueft wird das in
+  // tests/kopfzeile-desktop.test.mjs. Hier zaehlt nur, dass die schmale
+  // Korrektur nichts an Kopfhoehe, Rasterzeile und Umbruch veraendert hat.
+  ok(wert(".topbar", "padding", breite) !== "8px",
+    `${breite}px: der schmale Innenabstand greift zu weit nach oben`);
 }
 
 // ═══ 2. Unterhalb 900: der Kasten waechst mit ═════════════════════════════
@@ -173,14 +175,14 @@ for (const breite of [900, 768, 390]) {
 // gewinnt bei gleicher Spezifitaet die Grundregel (genau das ist hier im
 // ersten Anlauf passiert — die Menues blieben absolut positioniert).
 const grund = REGELN.find((r) => r.selektor === ".topbar-menu" && r.fenster === null && /position\s*:\s*absolute/.test(r.deklarationen));
-const schmal = REGELN.find((r) => r.selektor === ".topbar-menu" && r.fenster === 900 && /position\s*:\s*fixed/.test(r.deklarationen));
+const schmal = REGELN.find((r) => r.selektor === ".topbar-menu" && r.fenster === 900 && /left\s*:\s*60px/.test(r.deklarationen));
 ok(!!grund && !!schmal, "Grund- oder Schmalregel fuer .topbar-menu nicht gefunden");
 if (grund && schmal) ok(schmal.ordnung > grund.ordnung,
   "die schmale Menueregel steht VOR der Grundregel — bei gleicher Spezifitaet gewinnt dann die Grundregel");
 // #pinnedDropdown traegt seine Masse inline; ohne !important zieht die
 // Stilregel gar nicht.
 const pinned = REGELN.find((r) => r.selektor === "#pinnedDropdown" && r.fenster === 900);
-ok(!!pinned && /position\s*:\s*fixed\s*!important/i.test(pinned.deklarationen),
+ok(!!pinned && /left\s*:\s*60px\s*!important/i.test(pinned.deklarationen),
   "#pinnedDropdown wird ohne !important gesetzt — die Inline-Masse im HTML gewinnen");
 ok(/id="pinnedDropdown"[^>]*style="[^"]*position:absolute/.test(index),
   "die Inline-Masse an #pinnedDropdown sind weg — dann darf das !important auch weg");

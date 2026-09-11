@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -617,7 +617,25 @@
     /* Topbar Layout */
     .topbar-left{display:flex;align-items:center;gap:8px}
     .topbar-center{flex:1;display:flex;justify-content:center;padding:0 20px}
-    .topbar-right{display:flex;align-items:center;gap:6px}
+    /* Die rechte Reihe traegt 22 bedienbare Elemente (1148px). Sie war
+       unschrumpfbar und lief deshalb auch auf dem Desktop ueber den rechten
+       Rand der Kopfzeile hinaus: bei 1440px bis x=1666 — sechs Schalter
+       ausserhalb des Fensters, darunter Einstellungen und Anzeigemodus; bei
+       1280px neun, zusaetzlich Speichern, Push und Pull. Die Seite scrollte
+       dabei nicht, es war schlicht abgeschnitten.
+       min-width:0 laesst sie schmaler werden als ihren Inhalt, overflow-x
+       macht den Rest erreichbar — dieselbe Loesung wie auf dem Handy, nur
+       dort mit verstecktem Scrollbalken. Keine Funktion faellt weg. */
+    .topbar-right{display:flex;align-items:center;gap:6px;min-width:0;
+      overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;
+      scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+    .topbar-right::-webkit-scrollbar{height:6px}
+    .topbar-right::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+    .topbar-right::-webkit-scrollbar-track{background:transparent}
+    /* Nichts in der Reihe darf schrumpfen, sonst quetscht Flexbox die
+       Schalter zusammen, statt sie scrollbar zu machen — auch die
+       Zwischencontainer nicht, die sonst ihren Inhalt abschneiden. */
+    .topbar-right *{flex-shrink:0}
     
     /* Universal Search */
     .universal-search{display:flex;align-items:center;gap:10px;background:var(--panel2);border-radius:10px;padding:8px 14px;width:100%;max-width:480px;transition:var(--transition)}
@@ -668,11 +686,8 @@
     overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
     scrollbar-width:none}
   .topbar-right::-webkit-scrollbar{display:none}
-  /* Nichts in der Reihe darf schrumpfen, sonst quetscht Flexbox die Schalter
-     zusammen, statt sie scrollbar zu machen — auch die Zwischencontainer
-     nicht (.topbar-actions und die kleinen position:relative-Huellen um
-     einzelne Schalter), die sonst ihren Inhalt abschneiden. */
-  .topbar-right *{flex-shrink:0}
+  /* flex-shrink:0 fuer alles in der Reihe steht jetzt in der Grundregel —
+     es gilt bei jeder Breite, nicht nur hier. */
   /* Die drei Aufklappmenues werden weiter unten ans Fenster gehaengt
      (siehe „Aufklappmenues der Kopfzeile auf schmalen Geraeten"). */
   .searchbar{max-width:none;flex:1}
@@ -3910,6 +3925,21 @@ body.mode-laptop .dock-panel{width:330px}
 .dock-focus-actions{display:flex;gap:6px;justify-content:center}
 /* Dropdown-Menüs (Modus & Panels) */
 .topbar-menu{display:none;position:absolute;top:42px;right:0;width:240px;background:var(--panel);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:999;padding:8px}
+/* ── Aufklappmenues haengen am Fenster, nicht am Knopf ───────────────────
+   Die drei Menues (Anzeigemodus, Seitenpanels, Angepinntes) sitzen als
+   position:absolute an ihrem Knopf IN der rechten Reihe. Seit die Reihe ein
+   scrollender Kasten ist, wuerde er sie abschneiden. Ausserdem oeffneten sie
+   schon vorher ins Leere: bei 1440px lagen Anzeigemodus- und Seitenpanel-
+   Menue bei x=1382..1622 bzw. 1338..1578, also jenseits des Fensterrands,
+   weil ihr Knopf selbst dort lag.
+   Bezugsrahmen ist die Kopfzeile (sie traegt backdrop-filter und ist damit
+   der umschliessende Block fuer fixierte Nachfahren) — rechts 8px vom Rand
+   der Kopfzeile ist genau dort, wo die Menues hingehoeren.
+   #pinnedDropdown traegt seine Masse inline im HTML, deshalb !important. */
+.topbar-menu, #pinnedDropdown{
+  position:fixed !important; top:auto !important; right:8px !important; left:auto !important;
+  max-height:70vh !important; overflow-y:auto !important;
+}
 .topbar-menu .topbar-menu-title{font-size:10px;font-weight:700;color:var(--muted);padding:6px 10px;text-transform:uppercase;letter-spacing:.5px}
 .topbar-menu-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:none;background:transparent;color:var(--text2);border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:500;text-align:left;transition:var(--transition)}
 .topbar-menu-item:hover{background:var(--panel2)}
@@ -3945,9 +3975,11 @@ body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)
    #pinnedDropdown traegt seine Masse inline, deshalb hier !important.
    Muss NACH .topbar-menu stehen: gleiche Spezifitaet, spaeter gewinnt. */
 @media (max-width: 900px) {
+  /* Schmal anders als in der Grundregel: ueber die ganze Fensterbreite statt
+     in eigener Menuebreite, mit 60px Abstand links fuer den schwebenden
+     Sidebar-Schalter (im Tabletmodus 44px bei left:8/top:60). */
   .topbar-menu, #pinnedDropdown{
-    position:fixed !important; top:auto !important; left:60px !important; right:8px !important;
-    width:auto !important; max-width:none !important; max-height:70vh !important; overflow-y:auto !important;
+    left:60px !important; width:auto !important; max-width:none !important;
   }
 }
 
@@ -116296,6 +116328,62 @@ html.theme-light .card{box-shadow:none}
   });
 
   applyLayoutMode();
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   KOPFZEILE — Mausrad ueber der rechten Knopfreihe scrollt sie seitwaerts.
+   Die Reihe ist ein seitlich scrollbarer Streifen, weil ihre 22 Bedienelemente
+   (1148px) in keine Kopfzeile passen. Mit Trackpad und Tastatur geht das von
+   selbst — ein Wisch quer, und Tabulator holt den naechsten Schalter ohnehin
+   ins Bild. Nur das gewoehnliche Mausrad kennt keine Querrichtung; ohne diese
+   paar Zeilen waeren die hinteren Schalter auf dem Desktop zwar vorhanden,
+   aber ohne Umweg ueber Umschalt+Rad nicht zu erreichen.
+   Greift ausschliesslich, wenn wirklich etwas verborgen ist, und nur bei einer
+   senkrechten Radbewegung — waagrechte Gesten und Trackpads bleiben unberuehrt.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function(){
+  "use strict";
+  var reihe = document.querySelector(".topbar-right");
+  if (!reihe) return;
+
+  /* Die drei Aufklappmenues (Anzeigemodus, Seitenpanels, Angepinntes) stehen
+     als Nachfahren IN dieser Reihe — sie sind nur ans Fenster gehaengt, nicht
+     aus dem Baum genommen. Und sie scrollen selbst senkrecht: dockMenu traegt
+     gemessene 2153px Inhalt in einem 488px hohen Kasten. Ein Rad darueber
+     blubbert also hierher hoch. Ohne diese Pruefung nahm die Reihe das
+     Ereignis an sich, fuhr seitwaerts und verhinderte mit preventDefault das
+     gemeinte Scrollen im offenen Menue — nachgemessen blieb dessen scrollTop
+     bei 0, waehrend die Reihe um 150 wanderte.
+     Ausgenommen wird jeder senkrecht scrollbare Nachfahre, unabhaengig davon,
+     wie weit er schon gescrollt ist: sonst uebernaehme die Reihe am Ende des
+     Menues unter dem Zeiger, was ebenso ueberrascht. */
+  function senkrechtScrollbarDarunter(ziel) {
+    var el = (ziel && ziel.nodeType === 3) ? ziel.parentElement : ziel;
+    while (el && el !== reihe && el.nodeType === 1) {
+      var st;
+      try { st = getComputedStyle(el); } catch (e) { st = null; }
+      if (st && /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+
+  reihe.addEventListener("wheel", function(ev){
+    // Strg+Rad (auf dem Mac auch Cmd+Rad) gehoert dem Browser: das ist Zoom,
+    // kein Scrollen. Nie abfangen.
+    if (ev.ctrlKey || ev.metaKey) return;
+    var verborgen = reihe.scrollWidth - reihe.clientWidth;
+    if (verborgen <= 1) return;                       // nichts verborgen
+    if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) return;  // schon waagrecht
+    if (senkrechtScrollbarDarunter(ev.target)) return;      // gehoert dem Menue
+    var vorher = reihe.scrollLeft;
+    reihe.scrollLeft = Math.max(0, Math.min(verborgen, vorher + ev.deltaY));
+    // Nur schlucken, wenn die Bewegung hier auch etwas bewirkt hat — sonst
+    // soll die Seite darunter weiterscrollen koennen.
+    if (reihe.scrollLeft !== vorher) ev.preventDefault();
+  }, { passive: false });
 })();
 </script>
 

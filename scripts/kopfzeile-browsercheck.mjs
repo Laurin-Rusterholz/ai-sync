@@ -49,21 +49,32 @@ const ueberlauf = (page) => page.evaluate(()=>{
     ueberlaufPx:Math.round(tief-tr.bottom), mainOben:Math.round(mr.top),
     ueberDemTitel:ueberTitel, querlauf:document.documentElement.scrollWidth>window.innerWidth+1 };
 });
-// ── 2) Sind alle Schalter erreichbar, notfalls durch Scrollen der Reihe? ──
+// ── 2) Sind alle Bedienelemente erreichbar, notfalls durch Scrollen der Reihe?
+//      OHNE Breitenfilter: auch der 30px-Sprachknopf und der 31px breite
+//      „Tag abschliessen" zaehlen mit. Ein frueherer Filter (>=34px) hat genau
+//      diese beiden aus der Messung genommen — was sie verbirgt statt prueft.
 const schalter = (page) => page.evaluate(()=>{
   const rechts=document.querySelector(".topbar-right");
-  const knoepfe=Array.from(rechts.querySelectorAll(".topbar-btn")).filter(x=>getComputedStyle(x).display!=="none");
+  const teile=Array.from(rechts.querySelectorAll("button,input,quantus-orb,[onclick]"))
+    .filter(x=>{ const cs=getComputedStyle(x); const r=x.getBoundingClientRect();
+      return cs.display!=="none" && cs.visibility!=="hidden" && r.width>0 && r.height>0; });
   const treffer=new Set();
   const pruefe=()=>{ const rb=rechts.getBoundingClientRect();
-    knoepfe.forEach((x,i)=>{ const r=x.getBoundingClientRect(); const mx=r.left+r.width/2, my=r.top+r.height/2;
-      if(r.width>=34 && mx>=Math.max(0,rb.left)-0.5 && mx<=Math.min(window.innerWidth,rb.right)+0.5
-        && my>=0 && my<=window.innerHeight
-        && document.elementFromPoint(Math.round(mx),Math.round(my))?.closest(".topbar-btn")===x) treffer.add(i); }); };
+    teile.forEach((x,i)=>{ const r=x.getBoundingClientRect();
+      const mx=Math.round(r.left+r.width/2), my=Math.round(r.top+r.height/2);
+      if(mx<Math.max(0,rb.left)-0.5 || mx>Math.min(window.innerWidth,rb.right)+0.5) return;
+      if(my<0 || my>window.innerHeight) return;
+      const t=document.elementFromPoint(mx,my);
+      if(t && (x===t || x.contains(t))) treffer.add(i); }); };
   pruefe();
-  const schritte=Math.ceil((rechts.scrollWidth-rechts.clientWidth)/Math.max(1,rechts.clientWidth))+1;
-  for(let s=1;s<=schritte;s++){ rechts.scrollLeft=s*rechts.clientWidth; pruefe(); }
+  const schritte=Math.ceil((rechts.scrollWidth-rechts.clientWidth)/Math.max(1,rechts.clientWidth))+2;
+  for(let s=1;s<=schritte;s++){ rechts.scrollLeft=s*Math.max(80,rechts.clientWidth*0.8); pruefe(); }
+  rechts.scrollLeft=rechts.scrollWidth; pruefe();
   rechts.scrollLeft=0;
-  return { gesamt:knoepfe.length, erreichbar:treffer.size,
+  const schmal=teile.map((x,i)=>({ x, i, r:x.getBoundingClientRect() })).filter(o=>o.r.width<34)
+    .map(o=>({ name:(o.x.id||o.x.getAttribute("title")||o.x.tagName).toString().slice(0,24),
+               breite:Math.round(o.r.width), erreichbar:treffer.has(o.i) }));
+  return { gesamt:teile.length, erreichbar:treffer.size, schmal,
     reiheBreite:Math.round(rechts.getBoundingClientRect().width), inhaltsbreite:rechts.scrollWidth };
 });
 // ── 3) Liegen die Aufklappmenues auf dem Bildschirm und sind sie klickbar? ─
@@ -97,7 +108,8 @@ for (const m of raus) {
   console.log(String(m.breite).padStart(5)+"px  Kopf "+String(m.kopfHoehe).padStart(3)+"px"+
     "  Ueberlauf "+String(m.ueberlaufPx).padStart(4)+"px  main ab "+String(m.mainOben).padStart(3)+
     "  Querlauf "+m.querlauf+"  ueber dem Titel: "+m.ueberDemTitel+
-    "  Schalter "+m.schalter.erreichbar+"/"+m.schalter.gesamt+
+    "  Bedienelemente "+m.schalter.erreichbar+"/"+m.schalter.gesamt+
+    "  (schmal: "+(m.schalter.schmal.map(s=>s.name+" "+s.breite+"px "+(s.erreichbar?"ok":"NICHT erreichbar")).join(", ")||"keine")+")"+
     "  Menues klickbar "+m.menues.filter(x=>x.klickbar).length+"/"+m.menues.length);
 }
 console.log(JSON.stringify(raus,null,1));
