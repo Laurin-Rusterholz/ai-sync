@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -49453,8 +49453,75 @@ function chatgptLeadStatusBoxHtml(l) {
       ${closed ? `<div>${esc(l.blockedReason || "")}</div>` : `<input type="text" data-action="cgl-field" data-id="${l.id}" data-field="blockedReason" value="${esc(l.blockedReason || "")}" placeholder="Welche Information fehlt?" style="width:100%" />`}
     </label></div>` : ""}`;
 }
+/* ── Ein Abschluss ist eine Entscheidung, kein Endzustand ────────────────
+   Befund (11.09.2026): Das Gmail-Briefing 01.08.–01.09.2026 wurde am 06.09.
+   abgeschlossen, obwohl die Anhaenge noch nicht geprueft waren. Korrektur-
+   kommentar und offene Aufgabe standen am Lead — aber ein abgeschlossener
+   Lead war nur noch lesbar: kein Statusfeld, kein Knopf, kein Weg zurueck.
+   Der Fehler liess sich dokumentieren, aber nicht beheben.
+
+   Es gibt jetzt einen sichtbaren Rueckweg in einen regulaeren Status. Was
+   dabei NICHT passiert: Der bisherige Abschluss wird nicht geloescht. Er
+   wandert mit Zeitpunkt, Urheber und (falls vorhanden) Hinfaelligkeitsgrund
+   in die Abschluss-Historie am Lead und steht dort sichtbar — zusammen mit
+   dem Zeitpunkt und der Begruendung der Wiedereroeffnung. Nichts geht
+   verloren, nichts geschieht von selbst. */
+function chatgptLeadCloseHistory(l) {
+  return Array.isArray(l && l.closeHistory) ? l.closeHistory : [];
+}
+
+function chatgptLeadReopenBoxHtml(l) {
+  const offen = window._cglReopen && window._cglReopen.id === l.id ? window._cglReopen : null;
+  if (!offen) {
+    return `
+    <div class="cgl-close-wrap">
+      <button class="btn" data-action="cgl-reopen-ask" data-id="${l.id}">↺ Lead wieder öffnen</button>
+      <div class="mini mt-1" style="color:var(--muted)">Setzt den Lead zurück in einen regulären Status. Der bisherige Abschluss bleibt als Historie am Lead erhalten.</div>
+    </div>`;
+  }
+  // Die Rueckfrage ist sichtbares HTML — ein natives confirm/prompt haelt den
+  // ganzen Browser an und ist von aussen nicht bedienbar.
+  const fehler = offen.fehler ? `<div class="mini mt-1" role="alert" style="color:#D96B5B">${esc(offen.fehler)}</div>` : "";
+  return `
+    <div class="cgl-close-wrap" role="alertdialog" aria-labelledby="cglReopenFrage" style="border:1px solid rgba(255,159,10,.5);background:rgba(255,159,10,.08);border-radius:10px;padding:12px">
+      <div id="cglReopenFrage"><strong>Lead wieder öffnen?</strong></div>
+      <div class="mini mt-1" style="color:var(--muted)">Der Abschluss vom ${fmtDateTime(l.closedAt)}${l.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : ""} bleibt als Historie erhalten — er wird nicht gelöscht.</div>
+      <label class="mini mt-2" style="display:block">Neuer Status
+        <select id="cglReopenStatus">
+          ${["neu", "verstanden", "in_arbeit", "wartet"].map(st => `<option value="${st}" ${offen.status === st ? "selected" : ""}>${CGL_STATUS_META[st].label}</option>`).join("")}
+        </select>
+      </label>
+      <label class="mini mt-2" style="display:block">Warum wieder geöffnet? <span style="color:#D96B5B">Pflicht</span>
+        <input type="text" id="cglReopenGrund" value="${esc(offen.grund || "")}" placeholder="z.B. Anhänge waren noch nicht geprüft" style="width:100%" />
+      </label>
+      <label class="mini mt-2" style="display:block">Was fehlt? <span class="mini" style="color:var(--muted)">(Pflicht nur bei „Wartet“)</span>
+        <input type="text" id="cglReopenBlocked" value="${esc(offen.blocked || l.blockedReason || "")}" placeholder="Welche Information fehlt?" style="width:100%" />
+      </label>
+      ${fehler}
+      <div class="mt-2" style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn primary" data-action="cgl-reopen-do" data-id="${l.id}">Ja, wieder öffnen</button>
+        <button class="btn ghost" data-action="cgl-reopen-cancel" data-id="${l.id}">Abbrechen</button>
+      </div>
+    </div>`;
+}
+
+function chatgptLeadCloseHistoryHtml(l) {
+  const hist = chatgptLeadCloseHistory(l);
+  if (!hist.length) return "";
+  return `
+    <div class="card mb-3">
+      <h3>↺ Abschluss-Historie (${hist.length})</h3>
+      <div class="sep"></div>
+      ${hist.map(h => `
+        <div class="mini" style="padding:6px 0;border-bottom:1px solid var(--border)">
+          Abgeschlossen ${fmtDateTime(h.closedAt)}${h.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : (h.closedBy ? " (Assistent)" : "")}${h.obsoleteReason ? ` · hinfällig, weil: ${esc(h.obsoleteReason)}` : ""}<br />
+          Wieder geöffnet ${fmtDateTime(h.reopenedAt)} → ${esc((CGL_STATUS_META[h.reopenedTo] || {}).label || h.reopenedTo || "")}${h.reason ? ` · weil: ${esc(h.reason)}` : ""}
+        </div>`).join("")}
+    </div>`;
+}
+
 function chatgptLeadCloseBoxHtml(l) {
-  if (l.status === "abgeschlossen") return "";
+  if (l.status === "abgeschlossen") return chatgptLeadReopenBoxHtml(l);
   const missing = chatgptLeadMissing(l);
   const title = missing.length ? "Fehlt noch: " + missing.join(", ") : "Alle Schritte dokumentiert — Lead kann abgeschlossen werden";
   return `
@@ -49560,6 +49627,7 @@ function viewChatgptLeadDetail(id) {
       <div style="white-space:pre-wrap;font-weight:500">${esc(l.rawInput || "")}</div>
       ${l.obsoleteReason ? `<div class="mini mt-2" style="color:#7A8288">Hinfällig, weil: ${esc(l.obsoleteReason)}</div>` : ""}
     </div>
+    ${chatgptLeadCloseHistoryHtml(l)}
     <div class="card mb-3" id="cglStatusBox">${chatgptLeadStatusBoxHtml(l)}</div>
     <div class="cgl-steps">${steps}</div>
     <div class="cgl-step ${links ? "done" : ""}">
@@ -49574,7 +49642,19 @@ function viewChatgptLeadDetail(id) {
       <input type="text" placeholder="Kommentar eingeben, Enter zum Senden" data-action="add-comment-input" data-kind="chatgptLead" data-id="${id}" class="mt-2" style="width:100%" />
     </div>
     <div id="cglCloseBox">${chatgptLeadCloseBoxHtml(l)}</div>
-    ${!closed ? `<div class="mt-3 text-center"><a href="#" class="mini" style="color:var(--muted)" data-action="cgl-obsolete" data-id="${id}">Lead ist hinfällig (Ausnahme, nur Laurin)</a></div>` : ""}
+    ${!closed ? (window._cglObsolete && window._cglObsolete.id === id ? `
+      <div class="card mb-3" role="alertdialog" aria-labelledby="cglObsoleteFrage" style="border:1px solid rgba(217,107,91,.5);background:rgba(217,107,91,.08)">
+        <div id="cglObsoleteFrage"><strong>Lead ohne Denkstruktur schliessen?</strong></div>
+        <div class="mini mt-1" style="color:var(--muted)">Das ist Laurins Ausnahme — sie wird am Lead vermerkt. Der Assistent schliesst Leads ausschliesslich über die dokumentierten Schritte. Rückgängig machbar: „Lead wieder öffnen“ bleibt danach da.</div>
+        <label class="mini mt-2" style="display:block">Warum ist dieser Lead hinfällig? <span style="color:#D96B5B">Pflicht</span>
+          <input type="text" id="cglObsoleteGrund" value="${esc(window._cglObsolete.grund || "")}" placeholder="z.B. Anfrage hat sich erledigt" style="width:100%" />
+        </label>
+        ${window._cglObsolete.fehler ? `<div class="mini mt-1" role="alert" style="color:#D96B5B">${esc(window._cglObsolete.fehler)}</div>` : ""}
+        <div class="mt-2" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" data-action="cgl-obsolete" data-id="${id}">Ja, als hinfällig schliessen</button>
+          <button class="btn ghost" data-action="cgl-obsolete-cancel" data-id="${id}">Abbrechen</button>
+        </div>
+      </div>` : `<div class="mt-3 text-center"><a href="#" class="mini" style="color:var(--muted)" data-action="cgl-obsolete-ask" data-id="${id}">Lead ist hinfällig (Ausnahme, nur Laurin)</a></div>`) : ""}
   `;
 }
 function chatgptLeadRefreshBoxes(id, forceAssess) {
@@ -49727,14 +49807,82 @@ function chatgptModuleHandleAction(action, el, e) {
       toast("ok", "Lead abgeschlossen", l.title || "");
       return;
     }
+    case "cgl-reopen-ask": {
+      stop();
+      const l = ownEntity(leads, id); if (!l || l.status !== "abgeschlossen") return;
+      window._cglReopen = { id: l.id, status: "in_arbeit", grund: "", blocked: l.blockedReason || "", fehler: "" };
+      render();
+      return;
+    }
+    case "cgl-reopen-cancel": {
+      stop();
+      window._cglReopen = null;
+      render();
+      return;
+    }
+    case "cgl-reopen-do": {
+      stop();
+      const l = ownEntity(leads, id); if (!l || l.status !== "abgeschlossen") return;
+      const status = (document.getElementById("cglReopenStatus") || {}).value || "";
+      const grund = String(((document.getElementById("cglReopenGrund") || {}).value) || "").trim();
+      const blocked = String(((document.getElementById("cglReopenBlocked") || {}).value) || "").trim();
+      const zurueck = (fehler) => {
+        window._cglReopen = { id: l.id, status, grund, blocked, fehler };
+        render();
+        toast("warn", "Noch nicht wieder geöffnet", fehler);
+      };
+      if (!["neu", "verstanden", "in_arbeit", "wartet"].includes(status)) return zurueck("Bitte einen regulären Status wählen.");
+      // Eine Wiedereroeffnung ohne Begruendung waere genau die Luecke, die
+      // den falschen Abschluss erst unsichtbar gemacht hat.
+      if (!grund) return zurueck("Bitte kurz begründen, warum der Lead wieder geöffnet wird.");
+      if (status === "wartet" && !blocked) return zurueck("„Wartet“ verlangt, was fehlt.");
+      // Der bisherige Abschluss wird nicht geloescht, sondern archiviert.
+      const hist = chatgptLeadCloseHistory(l).slice();
+      hist.push({
+        closedAt: l.closedAt || null, closedBy: l.closedBy || null,
+        obsoleteReason: l.obsoleteReason || null,
+        reopenedAt: nowIso(), reopenedTo: status, reason: grund,
+      });
+      l.closeHistory = hist;
+      l.closedAt = null; l.closedBy = null; l.obsoleteReason = null;
+      l.status = status;
+      l.blockedReason = status === "wartet" ? blocked : (l.blockedReason || null);
+      l.updatedAt = nowIso();
+      window._cglReopen = null;
+      scheduleSave(); render();
+      toast("ok", "Lead wieder geöffnet", (l.title || "") + " → " + CGL_STATUS_META[status].label);
+      return;
+    }
+    /* Der Ausnahmeweg fragte frueher mit prompt() und confirm() — dieselbe
+       Sackgasse wie ueberall: Ein nativer Dialog haelt den ganzen Browser an
+       und ist bei gesperrtem Rechner oder Bedienung von aussen nicht
+       wegzuklicken. Er ist jetzt sichtbares HTML im selben Kasten. */
+    case "cgl-obsolete-ask": {
+      stop();
+      const l = ownEntity(leads, id); if (!l || l.status === "abgeschlossen") return;
+      window._cglObsolete = { id: l.id, grund: "", fehler: "" };
+      render();
+      return;
+    }
+    case "cgl-obsolete-cancel": {
+      stop();
+      window._cglObsolete = null;
+      render();
+      return;
+    }
     case "cgl-obsolete": {
       stop();
-      const l = ownEntity(leads, id); if (!l) return;
-      const reason = prompt("Nur Laurin: Warum ist dieser Lead hinfällig? (Der Assistent schliesst Leads ausschliesslich über die dokumentierten Schritte.)");
-      if (!reason || !reason.trim()) return;
-      if (!confirm("Lead ohne Denkstruktur schliessen? Das ist Laurins Ausnahme — sie wird am Lead vermerkt.")) return;
-      l.status = "abgeschlossen"; l.closedAt = nowIso(); l.closedBy = "laurin"; l.obsoleteReason = reason.trim(); l.updatedAt = nowIso();
+      const l = ownEntity(leads, id); if (!l || l.status === "abgeschlossen") return;
+      const reason = String(((document.getElementById("cglObsoleteGrund") || {}).value) || "").trim();
+      if (!reason) {
+        window._cglObsolete = { id: l.id, grund: "", fehler: "Bitte kurz begründen, warum der Lead hinfällig ist." };
+        render();
+        toast("warn", "Noch nicht geschlossen", "Ohne Begründung nicht — das ist der Sinn der Ausnahme.");
+        return;
+      }
+      l.status = "abgeschlossen"; l.closedAt = nowIso(); l.closedBy = "laurin"; l.obsoleteReason = reason; l.updatedAt = nowIso();
       if (!l.readAt) l.readAt = l.closedAt;
+      window._cglObsolete = null;
       scheduleSave(); render();
       toast("ok", "Als hinfällig geschlossen", l.title || "");
       return;
