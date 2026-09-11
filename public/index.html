@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -640,8 +640,41 @@
   .universal-search{max-width:320px}
 }
 @media (max-width: 900px) {
-  .topbar{flex-wrap:wrap;padding:8px}
-  .topbar-center{order:3;width:100%;justify-content:flex-start;margin-top:8px}
+  /* ── Kopfzeile auf Handy und Tablet ────────────────────────────────────
+     flex-wrap:wrap laesst den Inhalt umbrechen, .topbar traegt aber eine
+     FESTE height:52px und .app eine feste Rasterzeile von 52px. Der Inhalt
+     brauchte gemessene 148px, der Kasten blieb 52px hoch: 96px ragten nach
+     unten heraus, mitten in die Seite. Der Punkt auf dem Seitentitel lieferte
+     nicht die Ueberschrift, sondern ein Kopfzeilen-Kind (voiceOrb) — die
+     Bedienelemente lagen also ueber dem Text und fingen die Klicks ab.
+     Beides bekommt jetzt eine wachsende Hoehe; min-height haelt die 52px als
+     Untergrenze, damit sich oberhalb der Schwelle nichts aendert. */
+  .app{grid-template-rows:auto minmax(0,1fr)}
+  .topbar{flex-wrap:wrap;padding:8px;height:auto;min-height:52px;row-gap:8px}
+  /* Die Suchzeile gehoert laut Bestand in eine EIGENE Reihe (order:3,
+     width:100%). Mit flex:1 1 0 auf der Knopfreihe blieb sie trotzdem in der
+     ersten Zeile haengen und schrumpfte auf 122px. flex:0 0 100% setzt die
+     vorhandene Absicht durch, statt sie zu ueberschreiben. */
+  .topbar-center{order:3;flex:0 0 100%;width:100%;justify-content:flex-start;margin-top:0}
+  /* Die Knopfreihe rechts traegt 18 Schalter (892px Inhalt). Sie konnte weder
+     schrumpfen noch umbrechen und lief bei 768px wie bei 390px bis x=900 aus
+     dem Bild — abgeschnitten und damit unerreichbar, ohne dass die Seite
+     ueberhaupt seitlich scrollte. Bei 390px waren nur 6 von 18 Schaltern zu
+     treffen. Sie wird jetzt zum seitlich scrollbaren Streifen: die Kopfzeile
+     bleibt schmal, und jeder Schalter ist mit einem Wisch erreichbar.
+     Umbrechen waere die Alternative gewesen, macht die Kopfzeile auf dem Handy
+     aber 237px hoch (gemessen) — mehr als ein Viertel des Bildschirms. */
+  .topbar-right{flex:1 1 0;min-width:0;justify-content:flex-start;
+    overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none}
+  .topbar-right::-webkit-scrollbar{display:none}
+  /* Nichts in der Reihe darf schrumpfen, sonst quetscht Flexbox die Schalter
+     zusammen, statt sie scrollbar zu machen — auch die Zwischencontainer
+     nicht (.topbar-actions und die kleinen position:relative-Huellen um
+     einzelne Schalter), die sonst ihren Inhalt abschneiden. */
+  .topbar-right *{flex-shrink:0}
+  /* Die drei Aufklappmenues werden weiter unten ans Fenster gehaengt
+     (siehe „Aufklappmenues der Kopfzeile auf schmalen Geraeten"). */
   .searchbar{max-width:none;flex:1}
   .idea-input-container{display:none}
 }
@@ -3897,6 +3930,26 @@ body.has-app-panels .app{grid-template-columns:240px minmax(0,1fr) minmax(0,var(
 body.has-app-panels .app.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr) minmax(0,var(--dock-fr,1fr))}
 /* Dock-Menü scrollbar, da jetzt alle Apps gelistet sind. */
 #dockMenu{max-height:min(72vh,600px);overflow-y:auto}
+/* ── Aufklappmenues der Kopfzeile auf schmalen Geraeten ──────────────────
+   Die drei Menues (Anzeigemodus, Seitenpanels, Angepinntes) haengen als
+   position:absolute an ihrem Knopf IN der rechten Knopfreihe. Zwei Gruende,
+   sie schmal ans Fenster zu haengen statt an den Knopf:
+     · Die Reihe ist dort ein seitlich scrollbarer Streifen — ein scrollender
+       Kasten schneidet alles ab, was aus ihm herausragt.
+     · Schon vorher lagen Anzeigemodus- und Seitenpanel-Menue bei 390px bei
+       x=616..856, also komplett ausserhalb des Bildschirms, und waren nicht
+       anklickbar. Die Reihe selbst lief ja bis x=900.
+   Der linke Rand haelt 60px Abstand, damit der schwebende Sidebar-Schalter
+   (im Tabletmodus 44px bei left:8/top:60) nicht die obere linke Ecke des
+   Menues verdeckt.
+   #pinnedDropdown traegt seine Masse inline, deshalb hier !important.
+   Muss NACH .topbar-menu stehen: gleiche Spezifitaet, spaeter gewinnt. */
+@media (max-width: 900px) {
+  .topbar-menu, #pinnedDropdown{
+    position:fixed !important; top:auto !important; left:60px !important; right:8px !important;
+    width:auto !important; max-width:none !important; max-height:70vh !important; overflow-y:auto !important;
+  }
+}
 
 /* ── Zwei-Bildschirme-Kopfzeilen: Hauptbereich + jedes App-Panel bekommen
    eine Kopfzeile mit "Bildschirm N"-Label und eigenem App-Wähler, damit sich
