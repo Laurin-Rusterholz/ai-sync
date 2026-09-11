@@ -29,10 +29,23 @@ const APP_DEFINITIONS = [
 // HTML documents, including literal </body> tags. A first-match replacement
 // therefore corrupts JavaScript by injecting assets inside such a string.
 // The document's real closing body tag is the final occurrence in the response.
+//
+// Das schliessende Tag steht am Dokumentende. Es dafuer im GANZEN Dokument zu
+// suchen, hiess bisher: das ganze Dokument kleinschreiben. Auf der 6,28 MB
+// grossen Hauptapp kostet allein das 53 ms und 12,4 MB Speicher — und es lief
+// bei JEDEM der vier Einfuegevorgaenge. Gesucht wird jetzt zuerst im Schluss;
+// nur wenn dort nichts steht, wird wie bisher das ganze Dokument geprueft.
+const SCHLUSS_FENSTER = 262144;
+function findeLetztesSchlussTag(html, closeTag) {
+  const ab = Math.max(0, html.length - SCHLUSS_FENSTER);
+  const treffer = html.slice(ab).toLowerCase().lastIndexOf(closeTag);
+  if (treffer >= 0) return ab + treffer;
+  return html.toLowerCase().lastIndexOf(closeTag);
+}
 export function insertBeforeFinalClosingTag(source, tagName, insertion) {
   const html = String(source || "");
   const closeTag = `</${String(tagName || "").toLowerCase()}>`;
-  const index = html.toLowerCase().lastIndexOf(closeTag);
+  const index = findeLetztesSchlussTag(html, closeTag);
   if (index < 0) return `${html}\n${insertion}`;
   return `${html.slice(0, index)}${insertion}\n${html.slice(index)}`;
 }
@@ -85,17 +98,22 @@ function registrationTag(app) {
   return `<script id="${app.registrationId}" src="${app.registrationScript}" defer></script>`;
 }
 
+// Alle fehlenden Tags werden gesammelt und in EINEM Durchgang eingesetzt.
+// Vorher schnitt und verband jede einzelne Einfuegung das ganze Dokument neu —
+// vier Mal 6,28 MB kopieren, wo einmal genuegt. Die Reihenfolge bleibt
+// dieselbe: jede Einfuegung landete vor dem letzten </body>, also
+// hintereinander.
 function injectRegistrationAssets(source) {
-  let html = source;
+  const html = String(source || "");
+  const tags = [];
   for (const app of APP_DEFINITIONS) {
-    if (!html.includes(`id="${app.markerId}"`)) {
-      html = insertBeforeFinalClosingTag(html, "body", markerTag(app));
-    }
+    if (!html.includes(`id="${app.markerId}"`)) tags.push(markerTag(app));
     if (!html.includes(`id="${app.registrationId}"`) && !html.includes(app.registrationScript)) {
-      html = insertBeforeFinalClosingTag(html, "body", registrationTag(app));
+      tags.push(registrationTag(app));
     }
   }
-  return html;
+  if (!tags.length) return html;
+  return insertBeforeFinalClosingTag(html, "body", tags.join("\n"));
 }
 
 export function injectQuantusApps(source) {
@@ -120,13 +138,67 @@ export function readBuildTag(source) {
   return match ? match[1] : "unknown";
 }
 
+// Aus dem Original-Edge-Log vom 11.09. 22:00:09:
+//   [quantus-universal-bootstrap] TypeError: error reading a body from
+//   connection … consumeBody … quantusUniversalBootstrap(…:23:16)
+//   … handler(quantus-app-registry.js:124:20)
+// Genau an dieser Lesestelle ist die Seite gestorben. Der Rumpf der 6,28 MB
+// grossen Hauptapp brach mitten im Lesen ab, die Ausnahme flog ungefangen nach
+// oben — Netlify zeigt dann „This edge function has crashed", und die GANZE
+// App ist nicht mehr erreichbar. Ein abgerissener Rumpf darf nie wieder die
+// Seite mitnehmen:
+//   · Bricht das Umschreiben, wird der unveraenderte Rumpf ausgeliefert.
+//     Die App laeuft dann vollstaendig, nur die beiden nachgetragenen
+//     App-Verweise fehlen.
+//   · Bricht das Lesen selbst, ist nichts mehr da, was man ausliefern koennte.
+//     Dann eine kurze, NICHT zwischengespeicherte 503 mit Retry-After statt
+//     eines Absturzes — ein erneuter Versuch trifft sofort wieder auf die
+//     normale Auslieferung.
+// Ein gefangener Fehler ohne Spur ist ein verlorener Beleg: ohne Meldung im
+// Edge-Log liesse sich nicht mehr sehen, ob Abrisse weiterhin auftreten — die
+// Seite bliebe still bedienbar und das Problem unsichtbar. Geloggt wird nur,
+// was zur Einordnung noetig ist: Funktion, Phase, Fehlerart und -text. KEINE
+// Adressen, keine Inhalte, keine Nutz- oder Maildaten.
+function edgeLog(phase, err) {
+  try {
+    console.error(JSON.stringify({
+      fn: "quantus-app-registry",
+      phase: phase,
+      error: (err && err.name) || "Error",
+      message: String((err && err.message) || err || "").slice(0, 300)
+    }));
+  } catch (_e) { /* Logging darf nie selbst zum Problem werden */ }
+}
+
+function edgeAusfall(grund) {
+  return new Response(
+    "<!doctype html><meta charset=\"utf-8\"><title>Quantus – kurz nicht erreichbar</title>"
+      + "<p style=\"font:16px system-ui;margin:3rem auto;max-width:28rem\">Die Seite konnte gerade nicht vollständig geladen werden ("
+      + grund + "). <a href=\"\" onclick=\"location.reload();return false\">Nochmals versuchen</a>.</p>",
+    { status: 503, headers: { "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store, no-cache, must-revalidate", "retry-after": "1" } }
+  );
+}
+
 export default async function handler(request, context) {
   const response = await context.next();
   const contentType = response.headers.get("content-type") || "";
   if (!response.ok || !contentType.includes("text/html")) return response;
 
-  const original = await response.text();
-  const transformed = injectQuantusApps(original);
+  let original;
+  try {
+    original = await response.text();
+  } catch (err) {
+    edgeLog("body-read", err);
+    return edgeAusfall("Rumpf abgerissen");
+  }
+  let transformed;
+  try {
+    transformed = injectQuantusApps(original);
+  } catch (err) {
+    edgeLog("transform", err);
+    transformed = original;                      // lieber ohne Verweise als gar nicht
+  }
   const headers = new Headers(response.headers);
   headers.delete("content-length");
   headers.delete("content-encoding");
