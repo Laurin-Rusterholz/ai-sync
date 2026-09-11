@@ -1,0 +1,53 @@
+{
+  "_hinweis": "Anonymisierte Nachbauten. Keine echten Mails, keine echten Namen, Adressen oder Inhalte. Nur die Struktur der gemeldeten Fälle (aktueller Text + zitierter Verlauf).",
+  "faelle": [
+    {
+      "name": "gmail-zitat-am-datum-schrieb",
+      "gemeldet": "UI schlug 04.09. 21:42 vor statt Sonntag 13.9. 16:00",
+      "subject": "Re: Treffen",
+      "text": "Hoi\n\nPasst dir diesen Sonntag, 13.9 um 16 Uhr auf den Obstmarkt?\n\nLiebe Grüsse\nA.\n\nAm 04.09.2026 um 21:42 schrieb B. Beispiel <b.beispiel@example.invalid>:\n\n> Melde dich, wenn du einen Termin hast.\n> Gruss B.",
+      "erwartet": { "datum": "2026-09-13", "zeit": "16:00" },
+      "falschWaere": { "datum": "2026-09-04", "zeit": "21:42" }
+    },
+    {
+      "name": "outlook-kopf-gesendet",
+      "gemeldet": "UI schlug 11.09. 05:02 vor statt Montag 14. September 19:00",
+      "subject": "AW: Abendessen",
+      "text": "Guten Tag\n\nWir machen das am Montag, 14. September, 19 Uhr bei mir.\n\nFreundliche Grüsse\nC.\n\n________________________________\nVon: D. Beispiel <d.beispiel@example.invalid>\nGesendet: Freitag, 11.09.2026 05:02\nAn: C. Beispiel <c.beispiel@example.invalid>\nBetreff: Abendessen\n\nHast du am Wochenende Zeit?",
+      "erwartet": { "datum": "2026-09-14", "zeit": "19:00" },
+      "falschWaere": { "datum": "2026-09-11", "zeit": "05:02" }
+    },
+    {
+      "name": "englisches-zitat-on-wrote",
+      "gemeldet": "Gleiche Bauart auf Englisch",
+      "subject": "Re: Catch up",
+      "text": "Hi\n\nHow about Tuesday 15.09.2026 at 10:30 in the office?\n\nBest\nE.\n\nOn 02.09.2026 at 08:15, F. Example <f.example@example.invalid> wrote:\n\n> Let me know when you are free.",
+      "erwartet": { "datum": "2026-09-15", "zeit": "10:30" },
+      "falschWaere": { "datum": "2026-09-02", "zeit": "08:15" }
+    },
+    {
+      "name": "nur-im-zitat-ein-datum",
+      "gemeldet": "Aktueller Text ohne Datum — hier darf KEIN Termin behauptet werden",
+      "subject": "Re: Kurz",
+      "text": "Danke, passt.\n\nAm 04.09.2026 um 21:42 schrieb G. Beispiel <g.beispiel@example.invalid>:\n\n> Treffen wir uns am 20.09.2026 um 14:00?",
+      "erwartet": null,
+      "falschWaere": { "datum": "2026-09-04", "zeit": "21:42" }
+    },
+    {
+      "name": "ohne-zitat-unveraendert",
+      "gemeldet": "Gegenprobe: eine Mail ohne Zitat muss weiterhin erkannt werden",
+      "subject": "Termin",
+      "text": "Wir sehen uns am 20.09.2026 um 14:00 im Büro.",
+      "erwartet": { "datum": "2026-09-20", "zeit": "14:00" },
+      "falschWaere": null
+    },
+    {
+      "name": "zitat-mit-groesserzeichen",
+      "gemeldet": "Zitat nur über >-Zeilen, ohne Einleitungssatz",
+      "subject": "Re: Frage",
+      "text": "Ja gerne, am 21.09.2026 um 09:00.\n\n> Am 03.09.2026 um 07:07 hatte ich gefragt\n> ob es bei dir passt.",
+      "erwartet": { "datum": "2026-09-21", "zeit": "09:00" },
+      "falschWaere": { "datum": "2026-09-03", "zeit": "07:07" }
+    }
+  ]
+}
