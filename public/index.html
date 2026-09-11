@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -8602,12 +8602,15 @@ window._reindexFile = async function(kind, entityId, fileId) {
           const kandidat = await resp.blob();
           // Eine Anmeldeseite ist kein Dokument.
           if (!/^text\/html/i.test(kandidat.type || '') || (fileObj.name || '').toLowerCase().endsWith('.html')) blob = kandidat;
-          else throw new Error('Google hat eine Anmeldeseite geliefert — die Datei ist nicht freigegeben.');
+          else throw new Error('Google hat eine Anmeldeseite geliefert — die Datei ist privat.');
         }
       } catch (e) {
         console.warn('[Re-Index] Proxy-Strategie failed:', e?.message);
         if (fileObj.source === 'gdrive'){
-          toast('warn', 'Nicht lesbar', 'Die Drive-Datei ist nicht freigegeben. In Drive „Jeder mit dem Link" erlauben, dann erneut indexieren.');
+          /* Eine Feststellung, keine Empfehlung: Ob eine Datei freigegeben
+             wird, ist eine Entscheidung ueber Zugriffsrechte — die trifft
+             niemand nebenbei, weil eine Indexierung sie bequemer machte. */
+          toast('warn', 'Nicht lesbar', 'Die Datei liegt privat in Google Drive. Ohne angemeldeten Zugriff lässt sich ihr Inhalt von hier nicht lesen; die Verknüpfung bleibt bestehen.');
         }
       }
     }
@@ -49467,11 +49470,29 @@ function chatgptTaskRow(t, withAnchor) {
   const actions = t.state !== "erledigt"
     ? `<button class="btn sm ghost" data-action="cgt-done" data-id="${t.id}" title="Erledigt">✓</button><button class="btn sm ghost" data-action="cgt-wait" data-id="${t.id}" title="Wartet — Information fehlt">⏸</button>`
     : `<button class="btn sm ghost" data-action="cgt-reopen" data-id="${t.id}" title="Wieder öffnen">↩</button>`;
+  /* Dieselbe Rueckfrage wie am Lead, nur schmaler: sichtbares HTML statt
+     eines nativen prompt(). Der Blocker ist derselbe — ein nativer Dialog
+     haelt den ganzen Tab an und ist bei gesperrtem Rechner nicht wegzuklicken.
+     Solange gefragt wird, bleibt der Stand der Aufgabe, wie er war. */
+  const wartenOffen = window._cgtWarten && window._cgtWarten.id === t.id;
+  const wartenKasten = wartenOffen ? `
+    <div class="mini" role="alertdialog" aria-labelledby="cgtWartenFrage_${t.id}" style="margin-top:6px;border:1px solid rgba(255,159,10,.5);background:rgba(255,159,10,.08);border-radius:9px;padding:9px 10px">
+      <div id="cgtWartenFrage_${t.id}"><strong>Auf „Wartet“ setzen?</strong></div>
+      <label style="display:block;margin-top:6px">Was fehlt? <span style="color:#D96B5B">Pflicht</span>
+        <input type="text" id="cgtWartenGrund" value="${esc(window._cgtWarten.grund || t.blockedReason || "")}" placeholder="Welche Information fehlt?" style="width:100%" />
+      </label>
+      ${window._cgtWarten.fehler ? `<div role="alert" style="color:#D96B5B;margin-top:4px">${esc(window._cgtWarten.fehler)}</div>` : ""}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
+        <button class="btn sm primary" data-action="cgt-warten-do" data-id="${t.id}">Auf „Wartet“ setzen</button>
+        <button class="btn sm ghost" data-action="cgt-warten-cancel" data-id="${t.id}">Abbrechen</button>
+      </div>
+    </div>` : "";
   return `
     <div class="cgt-row${t.state === "erledigt" ? " done" : ""}" data-cgt-id="${t.id}">
       <div class="cgt-row-main">
         <div class="cgt-text">${esc(t.text)}</div>
         <div class="mini" style="color:var(--muted)">${anchorHtml}${cgFmtDay(t.createdAt)} · ${who}${extra}</div>
+        ${wartenKasten}
       </div>
       <div class="item-actions">${actions}</div>
     </div>`;
@@ -49682,6 +49703,19 @@ function chatgptLeadStatusBoxHtml(l) {
       ${CGL_STEPS.filter(s => s.required).map(s => `<span class="cgl-check ${stepDone(s) ? "ok" : ""}">${stepDone(s) ? "☑" : "☐"} ${s.label}</span>${s.field === "plan" ? `<span class="cgl-check ${chatgptLeadAssignmentDone(l) ? "ok" : ""}">${chatgptLeadAssignmentDone(l) ? "☑" : "☐"} Bewertung &amp; Zuweisung</span>` : ""}`).join("")}
       <span class="cgl-check ${links ? "ok" : ""}">${links ? "☑" : "☐"} Verknüpfung</span>
     </div>
+    ${(window._cglWarten && window._cglWarten.id === l.id) ? `
+      <div class="mt-2" role="alertdialog" aria-labelledby="cglWartenFrage" style="border:1px solid rgba(255,159,10,.5);background:rgba(255,159,10,.08);border-radius:10px;padding:12px">
+        <div id="cglWartenFrage"><strong>Auf „Wartet“ setzen?</strong></div>
+        <div class="mini mt-1" style="color:var(--muted)">Solange kein Grund dasteht, bleibt der Status auf „${esc((CGL_STATUS_META[l.status] || {}).label || l.status)}“.</div>
+        <label class="mini mt-2" style="display:block">Was fehlt? <span style="color:#D96B5B">Pflicht</span>
+          <input type="text" id="cglWartenGrund" value="${esc(window._cglWarten.grund || "")}" placeholder="Welche Information fehlt?" style="width:100%" />
+        </label>
+        ${window._cglWarten.fehler ? `<div class="mini mt-1" role="alert" style="color:#D96B5B">${esc(window._cglWarten.fehler)}</div>` : ""}
+        <div class="mt-2" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn primary" data-action="cgl-warten-do" data-id="${l.id}">Auf „Wartet“ setzen</button>
+          <button class="btn ghost" data-action="cgl-warten-cancel" data-id="${l.id}">Abbrechen</button>
+        </div>
+      </div>` : ""}
     ${l.status === "wartet" ? `<div class="mt-2"><label class="mini">Was fehlt? (Pflicht bei „Wartet“)
       ${closed ? `<div>${esc(l.blockedReason || "")}</div>` : `<input type="text" data-action="cgl-field" data-id="${l.id}" data-field="blockedReason" value="${esc(l.blockedReason || "")}" placeholder="Welche Information fehlt?" style="width:100%" />`}
     </label></div>` : ""}`;
@@ -50040,6 +50074,31 @@ function chatgptModuleHandleAction(action, el, e) {
       toast("ok", "Lead abgeschlossen", l.title || "");
       return;
     }
+    case "cgl-warten-cancel": {
+      stop();
+      window._cglWarten = null;
+      render();
+      return;
+    }
+    case "cgl-warten-do": {
+      stop();
+      const l = ownEntity(leads, id); if (!l || l.status === "abgeschlossen") return;
+      const grund = String(((document.getElementById("cglWartenGrund") || {}).value) || "").trim();
+      if (!grund) {
+        window._cglWarten = { id: l.id, grund: "", fehler: "„Wartet“ braucht einen Grund — was fehlt?" };
+        render();
+        toast("warn", "Noch nicht auf Wartet", "Ohne Angabe, was fehlt, bleibt der Status, wie er war.");
+        return;
+      }
+      l.blockedReason = grund;
+      l.status = "wartet";
+      if (!l.readAt) l.readAt = nowIso();
+      l.updatedAt = nowIso();
+      window._cglWarten = null;
+      scheduleSave(); render();
+      toast("ok", "Wartet", grund);
+      return;
+    }
     case "cgl-reopen-ask": {
       stop();
       const l = ownEntity(leads, id); if (!l || l.status !== "abgeschlossen") return;
@@ -50161,13 +50220,39 @@ function chatgptModuleHandleAction(action, el, e) {
       if (action === "cgt-done") { t.state = "erledigt"; t.resolvedAt = nowIso(); t.blockedReason = null; }
       else if (action === "cgt-reopen") { t.state = "offen"; t.resolvedAt = null; }
       else {
-        const reason = prompt("Was fehlt, damit die Aufgabe erledigt werden kann?", t.blockedReason || "");
-        if (!reason || !reason.trim()) { toast("warn", "Wartet", "„Wartet“ braucht eine Begründung — was fehlt?"); return; }
-        t.state = "wartet"; t.blockedReason = reason.trim();
+        // Erst fragen — sichtbar, im Abschnitt. Der Stand bleibt bis dahin.
+        window._cgtWarten = { id: t.id, grund: t.blockedReason || "", fehler: "" };
+        chatgptTaskSectionRefresh(el, t.anchorKind, t.anchorId, t.anchorLabel);
+        return;
       }
       t.updatedAt = nowIso();
       scheduleSave();
       chatgptTaskSectionRefresh(el, t.anchorKind, t.anchorId, t.anchorLabel);
+      return;
+    }
+    case "cgt-warten-cancel": {
+      stop();
+      const t = ownEntity(tasks, id);
+      window._cgtWarten = null;
+      if (t) chatgptTaskSectionRefresh(el, t.anchorKind, t.anchorId, t.anchorLabel);
+      return;
+    }
+    case "cgt-warten-do": {
+      stop();
+      const t = ownEntity(tasks, id); if (!t) return;
+      const grund = String(((document.getElementById("cgtWartenGrund") || {}).value) || "").trim();
+      if (!grund) {
+        window._cgtWarten = { id: t.id, grund: "", fehler: "„Wartet“ braucht eine Begründung — was fehlt?" };
+        chatgptTaskSectionRefresh(el, t.anchorKind, t.anchorId, t.anchorLabel);
+        toast("warn", "Noch nicht auf Wartet", "Ohne Angabe bleibt die Aufgabe, wie sie war.");
+        return;
+      }
+      t.state = "wartet"; t.blockedReason = grund;
+      t.updatedAt = nowIso();
+      window._cgtWarten = null;
+      scheduleSave();
+      chatgptTaskSectionRefresh(el, t.anchorKind, t.anchorId, t.anchorLabel);
+      toast("ok", "Wartet", grund);
       return;
     }
     case "cgt-goto": {
@@ -50361,10 +50446,22 @@ function chatgptModuleHandleChange(el) {
     const l = ownEntity(leads, el.dataset.id); if (!l) return true;
     const next = el.value;
     if (!CGL_LEAD_STATUSES.includes(next) || next === "abgeschlossen") { el.value = l.status; return true; }
+    /* „Wartet" braucht einen Grund — die Frage danach ist sichtbares HTML.
+       Befund (11.09.2026, FlowerTech-Designlead): Hier stand ein natives
+       prompt(). Es hielt den ganzen Tab an; bei gesperrtem Rechner liess es
+       sich weder ausfuellen noch wegklicken (getJsDialog().dismiss()
+       scheitert an Emulation.setFocusEmulationEnabled). Derselbe Blocker wie
+       zuvor beim Wiederherstellen, beim Dokumentindex und beim
+       Hinfaellig-Weg — und der letzte native Dialog auf diesem Weg.
+
+       Der Status wird dabei NICHT vorab gesetzt: Das Auswahlfeld springt
+       zurueck auf den bisherigen Stand, und erst die Zusage im Kasten
+       schaltet auf „Wartet". Bricht man ab, bleibt alles, wie es war. */
     if (next === "wartet" && !l.blockedReason) {
-      const reason = prompt("„Wartet“ braucht einen Grund — was fehlt?");
-      if (!reason || !reason.trim()) { el.value = l.status; return true; }
-      l.blockedReason = reason.trim();
+      el.value = l.status;                       // nichts aendern, bevor der Grund dasteht
+      window._cglWarten = { id: l.id, grund: "", fehler: "" };
+      render();
+      return true;
     }
     l.status = next;
     if (!l.readAt) l.readAt = nowIso();

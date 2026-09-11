@@ -39,6 +39,10 @@ function schnitt(vonText, bisText, wasIst) {
 const meta = schnitt("const CGL_STATUS_META = {", "function chatgptLeadCard", "die Lead-Grunddaten");
 const boxen = schnitt("function chatgptLeadCloseHistory(l) {", "// Bewertung & Zuweisung als eigener Schritt",
   "der Abschluss-Kasten");
+const statusBox = schnitt("function chatgptLeadStatusBoxHtml(l) {", "function chatgptLeadCloseHistory(l) {",
+  "der Status-Kasten");
+const feldHandler = schnitt("  if (action === \"cgl-status\") {", "\n  return false;\n}",
+  "der Statuswechsel");
 const handler = schnitt("function chatgptModuleHandleAction(action, el, e) {",
   "function chatgptModuleHandleKeydown", "der Aktionsverteiler");
 
@@ -78,14 +82,20 @@ function bauen(lead) {
   const namen = Object.keys(scope);
   // eslint-disable-next-line no-new-func
   const zugriff = new Function(...namen,
-    "with (window) {\n" + meta + "\n" + boxen + "\n" + handler +
-    "\nreturn { closeBox: chatgptLeadCloseBoxHtml, historie: chatgptLeadCloseHistoryHtml,"
-    + " handeln: chatgptModuleHandleAction };\n}")(...namen.map((n) => scope[n]));
+    "with (window) {\n" + meta + "\n" + statusBox + "\n" + boxen + "\n" + handler +
+    "\nfunction statusWechsel(el){ const action = \"cgl-status\"; const leads = window.__leads; "
+    + feldHandler + "\n return false; }" +
+    "\nreturn { closeBox: chatgptLeadCloseBoxHtml, statusBox: chatgptLeadStatusBoxHtml,"
+    + " historie: chatgptLeadCloseHistoryHtml, handeln: chatgptModuleHandleAction,"
+    + " statusWechsel: statusWechsel };\n}")(...namen.map((n) => scope[n]));
   const klick = (action, extra = {}) => {
     Object.entries(extra).forEach(([k, v]) => felder.set(k, { value: v }));
     zugriff.handeln(action, { dataset: { id: lead.id } }, { preventDefault() {}, stopPropagation() {} });
   };
+  win.__leads = leads;
   return { win, lead, meldungen, klick, zugriff,
+    statusBox: () => String(zugriff.statusBox(lead)),
+    waehle: (wert) => zugriff.statusWechsel({ value: wert, dataset: { id: lead.id }, type: "select-one" }),
     box: () => String(zugriff.closeBox(lead)),
     hist: () => String(zugriff.historie(lead)),
     gezeichnet: () => gezeichnet };
@@ -236,6 +246,74 @@ const BRIEFING = () => ({
   // Und nichts geschieht von selbst: keine Wiedereröffnung ohne Klick.
   ok(!/closeHistory\s*=\s*\[\]/.test(quelle),
     "die Historie wird beim Laden in jeden Lead geschrieben — echte Daten würden sich von selbst ändern");
+}
+
+/* ══ 7. „Wartet" fragt sichtbar — der letzte native Dialog ist weg ═══════
+   Befund (11.09.2026, FlowerTech-Designlead): Status „In Arbeit" → „Wartet"
+   oeffnete ein natives prompt(). Es hielt den ganzen Tab an; bei gesperrtem
+   Rechner liess es sich weder ausfuellen noch wegklicken
+   (getJsDialog().dismiss() scheitert an Emulation.setFocusEmulationEnabled).
+   Derselbe Blocker wie zuvor beim Wiederherstellen, beim Dokumentindex und
+   beim Hinfaellig-Weg. */
+{
+  const t = bauen(Object.assign(BRIEFING(), { status: "in_arbeit", closedAt: null, closedBy: null }));
+  const feld = { value: "wartet", dataset: { id: t.lead.id }, type: "select-one" };
+  // Der Wechsel selbst darf NICHTS aendern, solange kein Grund dasteht.
+  t.zugriff.statusWechsel(feld);
+  eq(t.lead.status, "in_arbeit", "der Status springt auf „Wartet“, bevor ein Grund dasteht");
+  eq(feld.value, "in_arbeit", "das Auswahlfeld bleibt auf „Wartet“ stehen, obwohl nichts geschah");
+  ok(!t.lead.blockedReason, "es wurde ein Grund erfunden");
+
+  const gefragt = t.statusBox();
+  ok(/role="alertdialog"/.test(gefragt), "die Rückfrage ist für Bedienhilfen nicht erkennbar");
+  ok(/Auf „Wartet“ setzen\?/.test(gefragt), "die Rückfrage ist nicht beschriftet");
+  ok(/id="cglWartenGrund"/.test(gefragt), "es fehlt das Feld für den Grund");
+  ok(/In Arbeit/.test(gefragt), "es steht nicht da, welcher Status bis dahin gilt");
+  ok(/cgl-warten-do/.test(gefragt) && /cgl-warten-cancel/.test(gefragt),
+    "der Rückfrage fehlen die zwei Knöpfe");
+
+  // Ohne Grund geschieht nichts — und es wird gesagt, warum.
+  t.klick("cgl-warten-do", { cglWartenGrund: "  " });
+  eq(t.lead.status, "in_arbeit", "ohne Grund wurde trotzdem auf „Wartet“ gesetzt");
+  ok(/role="alert"/.test(t.statusBox()), "der fehlende Grund steht nicht sichtbar am Feld");
+
+  // Abbrechen: folgenlos.
+  t.klick("cgl-warten-cancel");
+  eq(t.lead.status, "in_arbeit", "das Abbrechen hat den Status gewechselt");
+  ok(!/Auf „Wartet“ setzen\?/.test(t.statusBox()), "die Rückfrage bleibt nach dem Abbrechen stehen");
+
+  // Mit Grund: jetzt wechselt er.
+  t.zugriff.statusWechsel({ value: "wartet", dataset: { id: t.lead.id }, type: "select-one" });
+  t.klick("cgl-warten-do", { cglWartenGrund: "Antwort der Gemeinde fehlt" });
+  eq(t.lead.status, "wartet", "mit Grund wechselt der Status nicht");
+  eq(t.lead.blockedReason, "Antwort der Gemeinde fehlt", "der Grund wurde nicht festgehalten");
+  ok(t.meldungen.some((m) => m.typ === "ok"), "der Wechsel wird nicht gemeldet");
+
+  // Ein anderer Status geht weiterhin ohne Rückfrage durch.
+  const u = bauen(Object.assign(BRIEFING(), { status: "neu", closedAt: null, closedBy: null }));
+  u.zugriff.statusWechsel({ value: "in_arbeit", dataset: { id: u.lead.id }, type: "select-one" });
+  eq(u.lead.status, "in_arbeit", "ein gewöhnlicher Statuswechsel wird blockiert");
+}
+
+/* ══ 8. Quelltext: kein natives prompt/confirm mehr im ganzen Lead ════════ */
+{
+  // Kommentare duerfen die alten Dialoge beim Namen nennen — geprueft wird,
+  // was WIRKLICH laeuft.
+  const ohneKommentar = (x) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const alles = ohneKommentar(meta + statusBox + boxen + handler + feldHandler);
+  ok(!/(^|[^.\w])(prompt|confirm)\s*\(/.test(alles),
+    "im Lead hält weiterhin ein nativer Dialog den Browser an");
+  // Und die ChatGPT-Aufgabe am Element, derselbe Weg, dieselbe Falle.
+  const aufgabe = ohneKommentar(schnitt("function chatgptTaskRow(t, withAnchor) {",
+    "// Der Abschnitt am Element", "die Aufgabenzeile"));
+  ok(/cgt-warten-do/.test(aufgabe) && /cgt-warten-cancel/.test(aufgabe),
+    "die Aufgabenzeile hat keine sichtbare Rückfrage für „Wartet“");
+  ok(!/(^|[^.\w])(prompt|confirm)\s*\(/.test(aufgabe),
+    "die Aufgabenzeile hält weiterhin den Browser an");
+  ["cgl-warten-do", "cgl-warten-cancel"].forEach((a) =>
+    ok(handler.includes(`case "${a}"`), `die Aktion ${a} fehlt`));
+  ok(/el\.value = l\.status;\s*\/\/ nichts aendern/.test(feldHandler),
+    "das Auswahlfeld wird nicht auf den bisherigen Stand zurückgesetzt");
 }
 
 console.log(`chatgpt lead wiedereroeffnen: ok (${checks} Pruefungen)`);
