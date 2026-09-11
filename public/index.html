@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -105743,6 +105743,9 @@ console.log('📚 Leseliste geladen');
 .gml-ki-chips { display:flex; gap:6px; flex-wrap:wrap; }
 .gml-ki-chip { font-size:11px; font-weight:600; color:var(--text2); background:var(--panel); border:1px solid var(--border); padding:2px 9px; border-radius:999px; }
 .gml-ki-chip.p1 { color:var(--danger); }
+/* Eine Behauptung, die nicht vom Menschen kommt, sieht auch nicht so aus. */
+.gml-ki-chip.gml-ki-warn { color:var(--warn); border-color:rgba(255,159,10,.45); background:rgba(255,159,10,.08); }
+.gml-ki-warnzeile { margin-top:8px; font-size:12px; line-height:1.55; color:var(--warn); background:rgba(255,159,10,.07); border:1px solid rgba(255,159,10,.25); border-radius:9px; padding:8px 10px; }
 .gml-ki-chip.p2 { color:var(--warn); }
 .gml-ki-text { font-size:13px; line-height:1.55; color:var(--text); white-space:pre-wrap; word-break:break-word; }
 .gml-ki-text.gml-ki-muted { color:var(--muted); font-style:italic; font-size:12.5px; }
@@ -106138,8 +106141,18 @@ console.log('📚 Leseliste geladen');
         internalDate: parseInt(msg.internalDate||"0",10) || Date.parse(h.date||"") || 0,
         messageId: h["message-id"]||"", references: h.references||"", inReplyTo: h["in-reply-to"]||"",
         html: bodies.html, text: bodies.text,
+        // Was Gmail nachreicht, wird gleich darunter geholt.
+        nachzuladen: bodies.nachzuladen || [],
         attachText: extractInlineAttachText(msg.payload), attachRefs: collectAttachmentRefs(msg.payload),
       };
+      /* Fehlt der Koerper, wird er nachgeholt — nicht als „kein Inhalt"
+         abgetan. Rein lesend, im Hintergrund, mit sichtbarem Zwischenstand. */
+      if (!GM.open.html && !GM.open.text && GM.open.nachzuladen.length){
+        var geladen = GM.open;
+        gmailLoadPendingBodies(geladen).then(function(){
+          if (GM.open && GM.open.id === geladen.id) rerender();
+        });
+      }
       if (wasUnread) markReadById(msg.id, true, true); // auto-mark read on open
     } catch(e){ GM.open = { error: e.message||"Nachricht konnte nicht geladen werden", failedId: id }; }
     finally { GM.openLoading=false; rerender(); }
@@ -106383,22 +106396,83 @@ console.log('📚 Leseliste geladen');
     return o._attachTextResolved;
   }
 
+  /* ── Warum eine volle Mail leer aussah ──────────────────────────────────
+     Befund (11.09.2026): Zwei inhaltsreiche Mails standen in Quantus als
+     „kein Inhalt" da — der Leserbrief samt Praesentation (Thread
+     1a062ec91de39422, vier Anhaenge) und die Einladung zur Hauptversammlung
+     der Spielgruppe Jupidu (Thread 1a0639b1d16ee15e, zwei PDF).
+
+     Gmail liefert den Koerper einer Nachricht nicht immer mit. Ist ein Teil
+     gross genug, steht in `body` statt `data` nur eine `attachmentId` — der
+     Inhalt muss dann in einem zweiten Aufruf geholt werden. Genau das tat
+     hier niemand: extractBodies verlangte `data`, und collectAttachmentRefs
+     sammelte nur Teile MIT Dateinamen. Ein Koerper hat keinen Dateinamen.
+     Er fiel damit durch beide Raster und war lautlos weg.
+
+     Das ist kein Spam-Befund. Es ist eine nicht abgeholte Nachlieferung —
+     und die beiden Dinge muessen im Weiteren auseinandergehalten werden.
+
+     `nachzuladen` traegt die Teile, die noch fehlen; wer sie holt, steht
+     unten in gmailLoadPendingBodies. */
   function extractBodies(payload){
-    var out={ html:"", text:"" };
+    var out={ html:"", text:"", nachzuladen:[] };
     (function walk(p){
       if (!p) return;
       var mime=(p.mimeType||"").toLowerCase();
       if (p.body && p.body.data){
         if (mime==="text/html" && !out.html) out.html=b64urlDecode(p.body.data);
         else if (mime==="text/plain" && !out.text) out.text=b64urlDecode(p.body.data);
+      } else if (p.body && p.body.attachmentId && !p.filename
+                 && (mime==="text/html" || mime==="text/plain")){
+        // Ein Koerper ohne Dateinamen: kein Anhang, sondern Text, den Gmail
+        // nachreicht. Merken statt verwerfen.
+        out.nachzuladen.push({ attachmentId:p.body.attachmentId, mimeType:mime, size:(p.body.size||0) });
       }
       if (p.parts && p.parts.length) p.parts.forEach(walk);
     })(payload);
     return out;
   }
+
+  /* Die nachgereichten Koerperteile holen. Reines Lesen: derselbe
+     Anhang-Endpunkt, den der Reader ohnehin benutzt. Es wird nichts
+     geaendert, kein Etikett gesetzt, nichts gesendet. */
+  async function gmailLoadPendingBodies(o){
+    if (!o || !Array.isArray(o.nachzuladen) || !o.nachzuladen.length) return false;
+    var offen = o.nachzuladen.slice(0, 3);
+    o.nachzuladen = [];
+    o.koerperLaedt = true;
+    var etwas = false;
+    for (var i=0;i<offen.length;i++){
+      var teil = offen[i];
+      if (teil.size && teil.size > 8*1024*1024) continue;      // sehr grosse Teile auslassen
+      try {
+        var res = await gmApi("GET","/users/me/messages/"+encodeURIComponent(o.id)
+          + "/attachments/"+encodeURIComponent(teil.attachmentId));
+        var text = res && res.data ? b64urlDecode(res.data) : "";
+        if (!text) continue;
+        if (teil.mimeType==="text/html" && !o.html){ o.html = text; etwas = true; }
+        else if (teil.mimeType==="text/plain" && !o.text){ o.text = text; etwas = true; }
+      } catch(e){ o.koerperFehler = (e && e.message) || "Der Inhalt konnte nicht geladen werden."; }
+    }
+    o.koerperLaedt = false;
+    if (!etwas && !o.koerperFehler) o.koerperFehler = "Der Inhalt konnte nicht geladen werden.";
+    return etwas;
+  }
   function htmlToText(html){ if(!html) return ""; try { var doc=new DOMParser().parseFromString(String(html),"text/html"); doc.querySelectorAll("script,style").forEach(function(n){ n.remove(); }); return (doc.body.textContent||"").replace(/\n{3,}/g,"\n\n").trim(); } catch(e){ return ""; } }
 
   // ── Safe HTML rendering: sandboxed, script-disabled iframe ──
+  /* Ein leerer Rahmen ist eine Behauptung: „diese Mail hat keinen Inhalt".
+     Das stimmt nur manchmal. Deshalb sagt der Leerfall jetzt, was wirklich
+     vorliegt — und bietet, wo es etwas zu holen gibt, den Weg dorthin an. */
+  function gmailLeerText(o){
+    if (o && o.koerperLaedt) return "Der Inhalt wird nachgeladen …";
+    if (o && o.koerperFehler) return "⚠ " + o.koerperFehler + "\n\nDie Mail ist nicht leer — ihr Inhalt liegt bei Gmail und wurde hier nicht abgeholt.";
+    if (o && Array.isArray(o.attachRefs) && o.attachRefs.length){
+      return "Diese Mail trägt keinen Text, nur " + o.attachRefs.length
+        + (o.attachRefs.length===1 ? " Anhang" : " Anhänge") + " (siehe oben).";
+    }
+    return "Diese Mail enthält keinen Textinhalt.";
+  }
   function bodyIframe(html, text){
     var content;
     if (html && html.trim()){
@@ -106603,7 +106677,7 @@ console.log('📚 Leseliste geladen');
       + renderApptCard(o)
       + renderAttachments(o)
       + (window.renderChatgptTaskSection ? window.renderChatgptTaskSection("gmailMessage", o.id, { label: o.subject || "(kein Betreff)", backlinks: false }) : "")
-      + '<div class="gml-bodywrap">'+bodyIframe(o.html, o.text)+'</div>';
+      + '<div class="gml-bodywrap">'+bodyIframe(o.html, o.text || (o.html?"":gmailLeerText(o)))+'</div>';
   }
   // ── Anhänge im Reader: Liste aus o.attachRefs (collectAttachmentRefs beim Öffnen) ──
   // Zeigt für jeden echten Anhang (Dateiname + Größe/Typ) eine klickbare Karte; Klick lädt
@@ -108485,8 +108559,18 @@ console.log('📚 Leseliste geladen');
       // Mirror the manual done state to the RTDB classification (done ist KEIN
       // KI-Feld; nur der Nutzer schreibt es). Auch lokal abgleichen, damit die
       // Smart-View-Filter konsistent bleiben.
-      try { var cc=GM.classifications[id]; if(!cc){ cc={}; GM.classifications[id]=cc; } cc.done=!isDone; } catch(e){}
+      /* Wer es war, gehoert dazu: Ohne diesen Vermerk laesst sich spaeter
+         nicht mehr sagen, ob ein „erledigt" von Hand kam oder von einem
+         Automatismus — und die Oberflaeche muesste beides gleich anzeigen. */
+      try {
+        var cc=GM.classifications[id]; if(!cc){ cc={}; GM.classifications[id]=cc; }
+        cc.done=!isDone;
+        if (!isDone){ cc.doneBy="laurin"; cc.doneAt=new Date().toISOString(); }
+        else { delete cc.doneBy; delete cc.doneAt; }
+      } catch(e){}
       rtdbPut("gmailClassifications/"+encodeURIComponent(id)+"/done", !isDone);
+      rtdbPut("gmailClassifications/"+encodeURIComponent(id)+"/doneBy", !isDone ? "laurin" : null);
+      rtdbPut("gmailClassifications/"+encodeURIComponent(id)+"/doneAt", !isDone ? new Date().toISOString() : null);
       // Drop the row from the current list when it no longer belongs there.
       var inInboxView = GM.smart==="personen" || (!GM.smart && GM.selectedLabel==="INBOX");
       if (!isDone && inInboxView) GM.messages = GM.messages.filter(function(m){return m.id!==id;});
@@ -109109,6 +109193,30 @@ console.log('📚 Leseliste geladen');
   // bzw. reason) sowie Kategorie/Priorität/Person/Antwort-Empfehlung aus der Klassifizierung
   // (/gmailClassifications/<messageId> via clsOf). Liest nur, ändert nichts. Leer, wenn die
   // messageId nicht klassifiziert ist oder die Klassifizierung nichts Anzeigbares enthält.
+  /* ── Eine Einschaetzung ist eine Einschaetzung ──────────────────────────
+     Befund (11.09.2026): Zwei inhaltsreiche Mails standen als „spam" bzw.
+     „kein Inhalt" da — der Leserbrief mit Praesentation und die Einladung
+     zur Hauptversammlung der Spielgruppe Jupidu. Die Kategorie kam aus der
+     automatischen Einschaetzung und stand hier als blosses Wort, ununter-
+     scheidbar von einer Tatsache wie „Gmail hat diese Mail als Spam
+     einsortiert". Das ist nicht dasselbe:
+
+       · Gmail-Spam ist eine Tatsache des Postfachs (Etikett SPAM).
+       · Eine Kategorie aus der Einschaetzung ist eine Vermutung — sie kann
+         auf einer Mail beruhen, deren Inhalt gar nicht vorlag.
+
+     Deshalb steht an jeder Einschaetzung jetzt dran, dass sie eine ist. Und
+     wo der Inhalt hier nicht geladen werden konnte, steht das als Warnung
+     daneben: Eine Einschaetzung ohne Inhalt traegt nicht.
+
+     Dasselbe gilt fuer „erledigt": Wer es gesetzt hat, steht seit heute im
+     Datensatz (doneBy). Fehlt der Vermerk, war es nicht der Mensch — dann
+     heisst es „automatisch, nicht bestaetigt" statt „erledigt". */
+  var GMAIL_VERMUTUNG = "Automatische Einschätzung — nicht von dir bestätigt.";
+  function gmailIstSpamVermutung(c){
+    var cat = String((c && c.category) || "").toLowerCase();
+    return cat === "spam" || cat === "junk" || cat === "werbung" || cat === "promo";
+  }
   function renderKiPanel(o){
     var c = clsOf(o); if (!c) return "";
     var summary = String(c.summary || c.reason || "").trim();
@@ -109116,14 +109224,32 @@ console.log('📚 Leseliste geladen');
     var p = c.priority;
     var prioLbl = {1:"Hoch",2:"Mittel",3:"Niedrig"}[p] || (p?("P"+p):"");
     var chips = "";
-    if (cat) chips += '<span class="gml-ki-chip">'+esc(cat)+'</span>';
-    if (p) chips += '<span class="gml-ki-chip p'+esc(String(p))+'">Priorität: '+esc(prioLbl)+'</span>';
-    if (c.isPerson===true) chips += '<span class="gml-ki-chip">👤 Person</span>';
-    if (c.generateDraft===true) chips += '<span class="gml-ki-chip">↩︎ Antwort empfohlen</span>';
-    if (!summary && !chips) return "";
+    if (cat) chips += '<span class="gml-ki-chip" title="'+esc(GMAIL_VERMUTUNG)+'">'+esc(cat)+' · vermutet</span>';
+    if (p) chips += '<span class="gml-ki-chip p'+esc(String(p))+'" title="'+esc(GMAIL_VERMUTUNG)+'">Priorität: '+esc(prioLbl)+' · vermutet</span>';
+    if (c.isPerson===true) chips += '<span class="gml-ki-chip" title="'+esc(GMAIL_VERMUTUNG)+'">👤 Person · vermutet</span>';
+    if (c.generateDraft===true) chips += '<span class="gml-ki-chip" title="'+esc(GMAIL_VERMUTUNG)+'">↩︎ Antwort empfohlen</span>';
+    // Erledigt: Tatsache nur, wenn ein Mensch es war.
+    if (c.done === true){
+      chips += c.doneBy
+        ? '<span class="gml-ki-chip" title="Von dir als erledigt markiert.">✓ von dir erledigt</span>'
+        : '<span class="gml-ki-chip gml-ki-warn" title="Diese Mail wurde nicht von dir, sondern automatisch als erledigt markiert. Bitte selbst nachsehen.">✓ erledigt · automatisch, nicht bestätigt</span>';
+    }
+    var warnungen = "";
+    // Gmails eigenes Urteil ist eine Tatsache und wird als solche benannt.
+    var gmailSpam = (o.labelIds || []).indexOf("SPAM") >= 0;
+    if (gmailSpam) warnungen += '<div class="gml-ki-warnzeile">🚫 Gmail hat diese Mail als Spam einsortiert — das ist eine Tatsache des Postfachs, keine Einschätzung.</div>';
+    else if (gmailIstSpamVermutung(c)) warnungen += '<div class="gml-ki-warnzeile">Gmail hat diese Mail NICHT als Spam einsortiert. „'+esc(cat)+'“ ist eine automatische Vermutung.</div>';
+    // Und eine Einschaetzung ohne Inhalt traegt nicht.
+    if (!String(o.html||"").trim() && !String(o.text||"").trim() && !o.koerperLaedt){
+      warnungen += '<div class="gml-ki-warnzeile">⚠ Der Inhalt dieser Mail liegt hier nicht vor'
+        + (o.koerperFehler ? " (" + esc(o.koerperFehler) + ")" : "")
+        + '. Eine automatische Einschätzung dazu ist nicht belastbar.</div>';
+    }
+    if (!summary && !chips && !warnungen) return "";
     return '<div class="gml-ki">'
-      + '<div class="gml-ki-head"><span class="gml-ki-badge">🤖 KI-Zusammenfassung</span>'+(chips?'<span class="gml-ki-chips">'+chips+'</span>':'')+'</div>'
+      + '<div class="gml-ki-head"><span class="gml-ki-badge">🤖 Automatische Einschätzung</span>'+(chips?'<span class="gml-ki-chips">'+chips+'</span>':'')+'</div>'
       + (summary ? '<div class="gml-ki-text">'+esc(summary)+'</div>' : '')
+      + warnungen
       + '</div>';
   }
 
