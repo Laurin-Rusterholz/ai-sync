@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -107571,11 +107571,50 @@ console.log('📚 Leseliste geladen');
     toast(id?"ok":"err", id?"Entscheidung erstellt":"Fehler", id?(ai?"KI-vorbereitet":"Text übernommen"):"");
   };
   // 4) Absender → Person anlegen (KI-Signatur-Extraktion)
-  window.gmailToPerson = async function(){
+  /* ── „Absender als Person speichern" fragt sichtbar ─────────────────────
+     Befund (11.09.2026): Hier stand ein window.confirm. Es hielt den ganzen
+     Tab an; bei gesperrtem Rechner war es weder anklickbar noch wegzuklicken
+     (getJsDialog zeigte confirm, dismiss scheiterte an
+     Emulation.setFocusEmulationEnabled). Derselbe Blocker wie zuvor beim
+     Wiederherstellen, beim Dokumentindex, beim Hinfaellig-Weg und beim
+     Wartestatus — und der letzte im Gmail-Hub.
+
+     Die Rueckfrage ist jetzt das gewoehnliche Fenster des Hubs (openModal):
+     gewoehnliches HTML, anklickbar wie jeder andere Knopf. Sie nennt Namen
+     und Adresse, sagt, was dabei geschieht — und was NICHT: Es wird nichts an
+     der Mail und nichts an bestehenden Personen geaendert.
+
+     Die Pruefung auf eine schon vorhandene Person steht vor UND hinter der
+     Rueckfrage: Zwischen Frage und Zusage kann ein Abgleich die Person
+     angelegt haben, und zwei Eintraege zur selben Adresse waeren genau das
+     Durcheinander, das diese Funktion vermeiden soll. */
+  window.gmailToPerson = function(){
     var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
     var a=parseAddr(o.from||""); if(!a.email){ toast("info","Keine Adresse","Absender hat keine E-Mail-Adresse."); return; }
     if (typeof personOf==="function" && personOf(o.from)){ toast("info","Bereits vorhanden","Diese Person existiert schon in Quantus."); return; }
-    if (!window.confirm("Absender "+(a.name||a.email)+" als Person in Quantus anlegen?")) return;
+    if (typeof window.openModal!=="function") return;
+    var wer = a.name || a.email;
+    window.openModal("👤 Als Person speichern",
+      '<div role="alertdialog" aria-labelledby="gmlPersonFrage" style="font-size:13px;line-height:1.55">'
+      + '<div id="gmlPersonFrage" style="font-weight:600;margin-bottom:8px">'+esc(wer)+' als Person in Quantus anlegen?</div>'
+      + '<div style="color:var(--muted);margin-bottom:8px">Adresse: '+esc(a.email)+'</div>'
+      + '<div style="color:var(--muted)">Angelegt wird ein neuer Personeneintrag mit Name und Adresse. Die Signatur dieser Mail wird dabei einmal gelesen, um Firma, Rolle und Telefon zu übernehmen — sofern sie dort stehen.</div>'
+      + '<div style="color:var(--muted);margin-top:8px">An der Mail und an bestehenden Personen ändert sich nichts.</div>'
+      + '</div>',
+      '<button class="btn primary" onclick="window.gmailToPersonConfirm()">Person anlegen</button>'
+      + '<button class="btn" onclick="closeModal()">Abbrechen</button>');
+  };
+  // Der zweite, ausdrueckliche Schritt — erst hier wird angelegt.
+  window.gmailToPersonConfirm = async function(){
+    var o=GM.open; if(!o){ toast("info","Keine Mail offen",""); return; }
+    var a=parseAddr(o.from||""); if(!a.email) return;
+    // Noch einmal: In der Zwischenzeit kann ein Abgleich sie angelegt haben.
+    if (typeof personOf==="function" && personOf(o.from)){
+      if (window.closeModal) window.closeModal();
+      toast("info","Bereits vorhanden","Diese Person existiert schon in Quantus.");
+      return;
+    }
+    if (window.closeModal) window.closeModal();
     toast("info","Person wird erstellt…","KI liest die Signatur.");
     var extra={};
     var obj=gmlJsonObj(await gmlAI("Extrahiere aus der E-Mail-Signatur Firma, Rolle und Telefon. Antworte NUR als JSON: {company, role, phone} (leere Strings wenn unbekannt).", o, { tokens:200 }));
