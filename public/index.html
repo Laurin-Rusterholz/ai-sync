@@ -109877,9 +109877,13 @@ console.log('📚 Leseliste geladen');
     if (!isNaN(cand) && cand.getTime() < jetzt.getTime()-86400000) y += 1;
     return y;
   }
-  function ruleDetectAppt(subject, text){
+  // schonBereinigt=true: der Aufrufer hat Body und Anhang bereits JEDER FUER
+  // SICH bereinigt und zusammengesetzt. Dann darf die Trennung nicht noch
+  // einmal ueber die Kombination laufen — eine Zitatmarke im Body wuerde sonst
+  // den gesamten angehaengten Anhang-Inhalt mit abschneiden.
+  function ruleDetectAppt(subject, text, schonBereinigt){
     // Nur der aktuelle Teil zaehlt; der zitierte Verlauf traegt Versanddaten.
-    var s = String(subject||"")+"\n"+apptLesbarerText(text);
+    var s = String(subject||"")+"\n"+(schonBereinigt ? String(text||"") : apptLesbarerText(text));
     var d=null,mo=null,y=null;
     var m1 = /\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/.exec(s) || /\b(\d{1,2})\.(\d{1,2})\.(\d{2})\b/.exec(s);
     if (m1){ d=+m1[1]; mo=+m1[2]; y=+m1[3]; if (y<100) y+=2000; }
@@ -109928,7 +109932,7 @@ console.log('📚 Leseliste geladen');
     return null;
   }
   // Erkennt MEHRERE Termine pro Mail → Array normalisierter Termine ([] = keiner, null = Fehler/Fallback).
-  async function aiDetectAppt(subject, text){
+  async function aiDetectAppt(subject, text, schonBereinigt){
     if (typeof window.callAI!=="function") return null;
     var sys = "Du extrahierst ALLE Termine aus E-Mails (auch mehrere). Antworte AUSSCHLIESSLICH mit EINEM JSON-ARRAY von Termin-Objekten, ohne Markdown/Erklärung. "
       + "Objekt-Schema: {\"title\":string,\"startISO\":string,\"endISO\":string,\"allDay\":boolean,\"location\":string,\"notes\":string}. "
@@ -109940,7 +109944,8 @@ console.log('📚 Leseliste geladen');
       + "beginnende Zeilen niemals als Termin ausgeben. "
       + "Im Zweifel weglassen — lieber kein Termin als ein falscher.";
     // Nur der aktuelle Teil geht an die KI — der zitierte Verlauf gar nicht erst.
-    var prompt = "Betreff: "+String(subject||"")+"\n\nText:\n"+apptLesbarerText(text).slice(0,6000)+"\n\nGib das JSON-Array zurück.";
+    var roh = schonBereinigt ? String(text||"") : apptLesbarerText(text);
+    var prompt = "Betreff: "+String(subject||"")+"\n\nText:\n"+roh.slice(0,6000)+"\n\nGib das JSON-Array zurück.";
     try {
       var txt = await window.callAI(prompt, { systemPrompt:sys, maxTokens:600 });
       var arr = apptParseJsonArray(txt);
@@ -109957,24 +109962,40 @@ console.log('📚 Leseliste geladen');
     var subject = o.subject||"";
     var bodyText = (o.text || htmlToText(o.html) || "");
     var hasAtt = !!((o.attachRefs && o.attachRefs.length) || (o.attachText && o.attachText.length));
+    var bodyLesbar = apptLesbarerText(bodyText);
     // Vorfilter auf dem AKTUELLEN Teil: ein Datum, das nur im zitierten Verlauf
     // steht, ist kein Grund für einen KI-Aufruf — es ist ein Versanddatum.
-    if (!apptHasDateHint(subject+"\n"+apptLesbarerText(bodyText)) && !hasAtt){
-      GM._apptCache[mid] = gmailZitatBefund(bodyText); return;
+    if (!apptHasDateHint(subject+"\n"+bodyLesbar) && !hasAtt){
+      GM._apptCache[mid] = gmailZitatBefund(bodyText);
+      // Dieser Zweig laeuft SYNCHRON — mitten im Aufbau der Karte, die ihn
+      // angestossen hat. Ohne eigenen Anstoss traegt der Zwischenspeicher zwar
+      // die Rueckfrage, gezeichnet wird sie aber erst beim naechsten Rendern
+      // aus anderem Anlass: beim ersten Oeffnen der Mail bliebe die Karte weg.
+      // Einen Tick spaeter, damit kein Rendern im Rendern entsteht.
+      setTimeout(rerender, 0);
+      return;
     }
     // Erst Anhang-Inhalt sammeln (inline sofort + PDF/Text via Proxy+pdfjs), dann erkennen.
     Promise.resolve(gmailGatherAttachText(o)).then(function(attachText){
-      var text = (bodyText + (attachText ? ("\n\n[Anhang-Inhalt]\n"+attachText) : "")).slice(0,9000);
-      if (!apptHasDateHint(subject+"\n"+apptLesbarerText(text))){
-        GM._apptCache[mid] = gmailZitatBefund(text); rerender(); return;   // kein Datum → kein KI-Aufruf
+      // Body und Anhang werden JEDER FUER SICH bereinigt und erst danach
+      // zusammengesetzt. Vorher hing der Anhang-Inhalt hinter dem GANZEN Body —
+      // also hinter dessen Zitat. Die Trennung schnitt an der Zitatmarke und
+      // warf den Anhang gleich mit weg: ein Termin, der nur im angehaengten
+      // PDF stand, verschwand bei jeder Antwortmail. Die Trennung laeuft
+      // deshalb nie ueber die Kombination (schonBereinigt=true).
+      var anhangLesbar = attachText ? apptLesbarerText(attachText) : "";
+      var lesbar = (bodyLesbar + (anhangLesbar ? ("\n\n[Anhang-Inhalt]\n"+anhangLesbar) : "")).slice(0,9000);
+      if (!apptHasDateHint(subject+"\n"+lesbar)){
+        GM._apptCache[mid] = gmailZitatBefund(bodyText); rerender(); return;   // kein Datum → kein KI-Aufruf
       }
-      return Promise.resolve(aiDetectAppt(subject, text)).then(function(ai){
+      return Promise.resolve(aiDetectAppt(subject, lesbar, true)).then(function(ai){
         var list, quelle;
         if (ai!==null){ list = ai; quelle = "ki"; }                                 // Array (evtl. leer)
-        else { var r = ruleDetectAppt(subject, text); list = (r && r.hasDate) ? [r] : []; quelle = "regel"; }
+        else { var r = ruleDetectAppt(subject, lesbar, true); list = (r && r.hasDate) ? [r] : []; quelle = "regel"; }
         list = (list||[]).filter(function(x){ return x && x.hasDate; });
         list.forEach(function(x){ x.quelle = quelle; });
-        GM._apptCache[mid] = list.length ? list : gmailZitatBefund(text);
+        // Die Rueckfrage speist sich aus dem Body — dort steht das Zitat.
+        GM._apptCache[mid] = list.length ? list : gmailZitatBefund(bodyText);
         rerender();
       });
     }).catch(function(){ GM._apptCache[mid] = null; rerender(); });

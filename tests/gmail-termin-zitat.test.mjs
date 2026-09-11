@@ -178,10 +178,10 @@ ok(!!handQuelle && /gmailEditDetectedAppt/.test(handQuelle) && !/gcApi|gcalQuick
   "„selbst erfassen“ trägt etwas ein, statt nur das Formular zu öffnen");
 
 // ═══ 7. Die KI bekommt nur den aktuellen Teil ═════════════════════════════
-const aiQuelle = schneide("async function aiDetectAppt(subject, text)", "function gmailDetectAppointment(o)");
+const aiQuelle = schneide("async function aiDetectAppt(subject, text, schonBereinigt)", "function gmailDetectAppointment(o)");
 ok(!!aiQuelle, "aiDetectAppt() nicht gefunden");
 if (aiQuelle) {
-  ok(/apptLesbarerText\(text\)/.test(aiQuelle),
+  ok(/schonBereinigt \? String\(text\|\|""\) : apptLesbarerText\(text\)/.test(aiQuelle),
     "der KI wird weiterhin der ganze Text samt Zitat vorgelegt");
   ok(/VERSANDdaten, keine Termine/.test(aiQuelle),
     "die KI wird nicht ausdrücklich auf Zitatdaten hingewiesen");
@@ -189,12 +189,90 @@ if (aiQuelle) {
 const detectQuelle = schneide("function gmailDetectAppointment(o)", "/* Kein Termin im aktuellen Text");
 ok(!!detectQuelle, "gmailDetectAppointment() nicht gefunden");
 if (detectQuelle) {
-  ok(/apptHasDateHint\(subject\+"\\n"\+apptLesbarerText\(bodyText\)\)/.test(detectQuelle),
+  ok(/apptHasDateHint\(subject\+"\\n"\+bodyLesbar\)/.test(detectQuelle),
     "der Vorfilter schaut weiterhin ins Zitat und löst dort KI-Aufrufe aus");
   ok(/gmailZitatBefund\(/.test(detectQuelle),
     "ohne Treffer im aktuellen Text wird der Zitatfund nicht gemeldet");
   ok(/x\.quelle = quelle/.test(detectQuelle),
     "die Herkunft (KI oder Regelweg) wird nicht mitgeführt");
+}
+
+// ═══ 8. Der ECHTE Weg: gmailDetectAppointment mit Anhang ══════════════════
+/*
+ * Der Regelweg allein reicht als Nachweis nicht. gmailDetectAppointment hängt
+ * den Anhang-Inhalt an den Body an — und hängte ihn vorher an den GANZEN Body,
+ * also hinter dessen Zitat. Die Trennung schnitt an der Zitatmarke und warf den
+ * Anhang gleich mit weg: ein Termin, der nur im angehängten PDF stand, war bei
+ * jeder Antwortmail verloren. Gemessen am Beispiel „Details stehen im Anhang"
+ * + Zitat + Anhang „Besprechung am 15. September 2026 um 10:30": erkannt wurde
+ * nichts, stattdessen erschien die Rückfragekarte.
+ *
+ * Zweitens lief der synchrone Zweig (kein Datumshinweis, kein Anhang) ohne
+ * eigenen Anstoss: der Zwischenspeicher trug die Rückfrage, gezeichnet wurde
+ * sie aber erst beim nächsten Rendern aus anderem Anlass. Beim ersten Öffnen
+ * der Mail blieb die Karte weg. Deshalb wird hier auch gezählt, wie oft
+ * rerender gerufen wurde.
+ */
+const integrationQuelle = schneide("function apptPad(n)", "function apptWhenText(a)");
+ok(!!integrationQuelle, "der Block bis gmailZitatBefund wurde nicht gefunden");
+if (integrationQuelle) {
+  const lauf = (fall) => {
+    const GM = { _apptCache: {}, open: null };
+    let rerenderRufe = 0;
+    const rerender = () => { rerenderRufe++; };
+    const api = new Function("Date", "GM", "rerender", "htmlToText", "gmailGatherAttachText", "window",
+      integrationQuelle + "\nreturn { gmailDetectAppointment };")(
+      FestesDate, GM, rerender, () => "", () => Promise.resolve(fall.attachText || ""), {});
+    api.gmailDetectAppointment({
+      id: "m1", subject: fall.subject, text: fall.bodyText, html: "",
+      attachRefs: fall.hatAnhang ? [{ id: "a1", filename: "anhang.pdf" }] : [], attachText: null,
+    });
+    return new Promise((r) => setTimeout(() => {
+      const c = GM._apptCache.m1;
+      r({ cache: c, rerenderRufe,
+        termin: Array.isArray(c) && c[0] ? { datum: c[0].startISO.slice(0, 10), zeit: c[0].startISO.slice(11, 16) } : null,
+        unsicher: !!(c && c.unsicher) });
+    }, 30));
+  };
+  for (const f of fixtures.integration) {
+    const r = await lauf(f);
+    if (f.erwartet === "rueckfrage") {
+      ok(r.unsicher && !r.termin, `${f.name}: keine Rückfragekarte (stattdessen ${JSON.stringify(r.termin)})`);
+      ok(r.rerenderRufe > 0,
+        `${f.name}: der Zwischenspeicher wird gesetzt, aber nichts neu gezeichnet — beim ersten Öffnen bliebe die Karte weg`);
+    } else {
+      ok(!!r.termin, `${f.name}: gar kein Termin erkannt (erwartet ${f.erwartet.datum} ${f.erwartet.zeit})`);
+      if (r.termin) {
+        ok(r.termin.datum === f.erwartet.datum && r.termin.zeit === f.erwartet.zeit,
+          `${f.name}: erkannt ${r.termin.datum} ${r.termin.zeit}, erwartet ${f.erwartet.datum} ${f.erwartet.zeit}`);
+      }
+      ok(r.rerenderRufe > 0, `${f.name}: nach dem Erkennen wird nicht neu gezeichnet`);
+    }
+  }
+}
+
+// Und der Weg selbst: Body und Anhang getrennt bereinigen, nie die Kombination.
+if (detectQuelle) {
+  ok(/var bodyLesbar = apptLesbarerText\(bodyText\)/.test(detectQuelle),
+    "der Body wird nicht einmalig und für sich bereinigt");
+  ok(/var anhangLesbar = attachText \? apptLesbarerText\(attachText\) : ""/.test(detectQuelle),
+    "der Anhang-Inhalt wird nicht unabhängig bereinigt");
+  ok(/aiDetectAppt\(subject, lesbar, true\)/.test(detectQuelle) && /ruleDetectAppt\(subject, lesbar, true\)/.test(detectQuelle),
+    "die Trennung läuft ein zweites Mal über die Kombination — der Anhang fiele wieder weg");
+  ok(/setTimeout\(rerender, 0\)/.test(detectQuelle),
+    "der synchrone Zweig stösst kein Neuzeichnen an");
+  ok(/gmailZitatBefund\(bodyText\)/.test(detectQuelle) && !/gmailZitatBefund\(text\)/.test(detectQuelle),
+    "die Rückfrage speist sich aus der Kombination statt aus dem Body");
+}
+// Der Schalter muss beide Wege können: ohne ihn wird weiterhin bereinigt.
+{
+  const roh = "Termin am 20.09.2026 um 10:00\n\nAm 04.09.2026 um 21:42 schrieb X:\n> alt 01.01.2026 um 07:00";
+  const ohneSchalter = api.ruleDetectAppt("", roh);
+  ok(ohneSchalter && ohneSchalter.startISO.slice(0, 10) === "2026-09-20",
+    "ohne Schalter wird nicht mehr bereinigt — der alte Aufrufweg bräche");
+  const mitSchalter = api.ruleDetectAppt("", "Termin am 20.09.2026 um 10:00", true);
+  ok(mitSchalter && mitSchalter.startISO.slice(0, 10) === "2026-09-20",
+    "mit Schalter wird bereits bereinigter Text nicht mehr gelesen");
 }
 
 ok(/name="quantus-build"[^>]*termin-zitat-getrennt/.test(index),
