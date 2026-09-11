@@ -116347,10 +116347,37 @@ html.theme-light .card{box-shadow:none}
   "use strict";
   var reihe = document.querySelector(".topbar-right");
   if (!reihe) return;
+
+  /* Die drei Aufklappmenues (Anzeigemodus, Seitenpanels, Angepinntes) stehen
+     als Nachfahren IN dieser Reihe — sie sind nur ans Fenster gehaengt, nicht
+     aus dem Baum genommen. Und sie scrollen selbst senkrecht: dockMenu traegt
+     gemessene 2153px Inhalt in einem 488px hohen Kasten. Ein Rad darueber
+     blubbert also hierher hoch. Ohne diese Pruefung nahm die Reihe das
+     Ereignis an sich, fuhr seitwaerts und verhinderte mit preventDefault das
+     gemeinte Scrollen im offenen Menue — nachgemessen blieb dessen scrollTop
+     bei 0, waehrend die Reihe um 150 wanderte.
+     Ausgenommen wird jeder senkrecht scrollbare Nachfahre, unabhaengig davon,
+     wie weit er schon gescrollt ist: sonst uebernaehme die Reihe am Ende des
+     Menues unter dem Zeiger, was ebenso ueberrascht. */
+  function senkrechtScrollbarDarunter(ziel) {
+    var el = (ziel && ziel.nodeType === 3) ? ziel.parentElement : ziel;
+    while (el && el !== reihe && el.nodeType === 1) {
+      var st;
+      try { st = getComputedStyle(el); } catch (e) { st = null; }
+      if (st && /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1) return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
+
   reihe.addEventListener("wheel", function(ev){
+    // Strg+Rad (auf dem Mac auch Cmd+Rad) gehoert dem Browser: das ist Zoom,
+    // kein Scrollen. Nie abfangen.
+    if (ev.ctrlKey || ev.metaKey) return;
     var verborgen = reihe.scrollWidth - reihe.clientWidth;
     if (verborgen <= 1) return;                       // nichts verborgen
     if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) return;  // schon waagrecht
+    if (senkrechtScrollbarDarunter(ev.target)) return;      // gehoert dem Menue
     var vorher = reihe.scrollLeft;
     reihe.scrollLeft = Math.max(0, Math.min(verborgen, vorher + ev.deltaY));
     // Nur schlucken, wenn die Bewegung hier auch etwas bewirkt hat — sonst

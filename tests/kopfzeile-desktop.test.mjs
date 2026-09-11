@@ -177,32 +177,77 @@ if (a > 0) {
     "der Radhandler ist nicht als aktiver Zuhoerer angemeldet — preventDefault waere wirkungslos");
   ok(/if \(verborgen <= 1\) return;/.test(quelle),
     "der Handler greift auch, wenn gar nichts verborgen ist");
+  ok(/if \(ev\.ctrlKey \|\| ev\.metaKey\) return;/.test(quelle),
+    "Strg+Rad wird abgefangen — das ist der Browserzoom, der gehoert nicht uns");
+  ok(/if \(senkrechtScrollbarDarunter\(ev\.target\)\) return;/.test(quelle),
+    "ein Rad aus einem senkrecht scrollbaren Nachfahren wird nicht durchgelassen");
   ok(/Math\.abs\(ev\.deltaX\) > Math\.abs\(ev\.deltaY\)\) return/.test(quelle),
     "waagrechte Gesten werden nicht durchgelassen — Trackpad-Wische wuerden doppelt wirken");
   ok(/if \(reihe\.scrollLeft !== vorher\) ev\.preventDefault\(\)/.test(quelle),
     "der Handler schluckt das Rad auch dann, wenn er nichts bewegt hat");
 
-  // Den echten Handler laufen lassen — an einer Attrappe der Reihe.
-  const reihe = { scrollWidth: 1148, clientWidth: 906, scrollLeft: 0, addEventListener(_t, f) { this._f = f; } };
-  const doc = { querySelector: () => reihe };
-  new Function("document", quelle.replace(/^[\s\S]*?\(function\(\)\{/, "(function(){"))(doc);
-  const rad = (dx, dy) => {
-    let verhindert = false;
-    reihe._f({ deltaX: dx, deltaY: dy, preventDefault() { verhindert = true; } });
-    return verhindert;
-  };
-  ok(rad(0, 100) === true && reihe.scrollLeft === 100, `senkrechtes Rad bewegt die Reihe nicht (${reihe.scrollLeft})`);
-  ok(rad(0, 1000) === true && reihe.scrollLeft === 242, `die Reihe faehrt nicht sauber ans Ende (${reihe.scrollLeft})`);
-  ok(rad(0, 100) === false && reihe.scrollLeft === 242,
+  // Den echten Handler laufen lassen — an einer Attrappe der Reihe samt
+  // Nachfahren, so wie die Aufklappmenues wirklich darin haengen.
+  const rumpf = quelle.replace(/^[\s\S]*?\(function\(\)\{/, "(function(){");
+  function bau(reihe) {
+    // getComputedStyle liefert overflowY aus dem Knoten selbst.
+    const gcs = (el) => ({ overflowY: el.overflowY || "visible" });
+    new Function("document", "getComputedStyle", rumpf)({ querySelector: () => reihe }, gcs);
+    return (ziel, dx, dy, tasten) => {
+      let verhindert = false;
+      reihe._f(Object.assign({ deltaX: dx, deltaY: dy, target: ziel,
+        preventDefault() { verhindert = true; } }, tasten || {}));
+      return verhindert;
+    };
+  }
+  const reihe = { scrollWidth: 1148, clientWidth: 906, scrollLeft: 0, nodeType: 1,
+    addEventListener(_t, f) { this._f = f; } };
+  const knopf = { nodeType: 1, parentElement: reihe, scrollHeight: 36, clientHeight: 36 };
+  const rad = bau(reihe);
+
+  ok(rad(knopf, 0, 100) === true && reihe.scrollLeft === 100, `senkrechtes Rad bewegt die Reihe nicht (${reihe.scrollLeft})`);
+  ok(rad(knopf, 0, 1000) === true && reihe.scrollLeft === 242, `die Reihe faehrt nicht sauber ans Ende (${reihe.scrollLeft})`);
+  ok(rad(knopf, 0, 100) === false && reihe.scrollLeft === 242,
     "am Ende wird das Rad weiter geschluckt, obwohl sich nichts mehr bewegt");
-  ok(rad(0, -1000) === true && reihe.scrollLeft === 0, `zurueck an den Anfang geht nicht (${reihe.scrollLeft})`);
-  ok(rad(50, 0) === false, "eine waagrechte Geste wird zusaetzlich verarbeitet");
-  const eng = { scrollWidth: 400, clientWidth: 400, scrollLeft: 0, addEventListener(_t, f) { this._f = f; } };
-  const doc2 = { querySelector: () => eng };
-  new Function("document", quelle.replace(/^[\s\S]*?\(function\(\)\{/, "(function(){"))(doc2);
-  let v = false;
-  eng._f({ deltaX: 0, deltaY: 100, preventDefault() { v = true; } });
-  ok(v === false && eng.scrollLeft === 0, "ohne verborgenen Inhalt wird das Rad trotzdem abgefangen");
+  ok(rad(knopf, 0, -1000) === true && reihe.scrollLeft === 0, `zurueck an den Anfang geht nicht (${reihe.scrollLeft})`);
+  ok(rad(knopf, 50, 0) === false, "eine waagrechte Geste wird zusaetzlich verarbeitet");
+
+  // Strg+Rad und Cmd+Rad gehoeren dem Browser (Zoom).
+  reihe.scrollLeft = 0;
+  ok(rad(knopf, 0, 120, { ctrlKey: true }) === false && reihe.scrollLeft === 0,
+    `Strg+Rad wird abgefangen — Browserzoom waere blockiert (scrollLeft ${reihe.scrollLeft})`);
+  ok(rad(knopf, 0, 120, { metaKey: true }) === false && reihe.scrollLeft === 0,
+    `Cmd+Rad wird abgefangen (scrollLeft ${reihe.scrollLeft})`);
+
+  // Rad ueber einem offenen, senkrecht scrollbaren Menue: gehoert dem Menue.
+  // (Gemessen: dockMenu hat 2153px Inhalt in einem 488px hohen Kasten und
+  //  haengt als Nachfahre in der Reihe.)
+  const menue = { nodeType: 1, parentElement: reihe, overflowY: "auto",
+    scrollHeight: 2153, clientHeight: 488 };
+  const menueZeile = { nodeType: 1, parentElement: menue, scrollHeight: 20, clientHeight: 20 };
+  reihe.scrollLeft = 0;
+  ok(rad(menue, 0, 150) === false && reihe.scrollLeft === 0,
+    `das Rad ueber dem Menue bewegt die Reihe (scrollLeft ${reihe.scrollLeft})`);
+  ok(rad(menueZeile, 0, 150) === false && reihe.scrollLeft === 0,
+    "ein Rad auf einer Zeile IM Menue wird nicht bis zum Menue hinauf erkannt");
+  // Auch beim Zurueckdrehen, und auch wenn das Menue schon gescrollt ist.
+  menue.scrollTop = 1665;
+  ok(rad(menueZeile, 0, -150) === false && reihe.scrollLeft === 0,
+    "beim Zurueckdrehen im Menue uebernimmt die Reihe doch");
+  // Ein Textknoten als Ziel darf den Aufstieg nicht abbrechen.
+  ok(rad({ nodeType: 3, parentElement: menueZeile }, 0, 150) === false && reihe.scrollLeft === 0,
+    "ein Textknoten im Menue laesst den Aufstieg scheitern");
+  // Ein nicht scrollbarer Kasten mit overflow-y:auto darf NICHT ausnehmen.
+  const kurz = { nodeType: 1, parentElement: reihe, overflowY: "auto", scrollHeight: 40, clientHeight: 40 };
+  reihe.scrollLeft = 0;
+  ok(rad(kurz, 0, 100) === true && reihe.scrollLeft === 100,
+    "ein Kasten ohne verborgenen Inhalt nimmt die Reihe faelschlich aus");
+
+  const eng = { scrollWidth: 400, clientWidth: 400, scrollLeft: 0, nodeType: 1,
+    addEventListener(_t, f) { this._f = f; } };
+  const radEng = bau(eng);
+  ok(radEng({ nodeType: 1, parentElement: eng }, 0, 100) === false && eng.scrollLeft === 0,
+    "ohne verborgenen Inhalt wird das Rad trotzdem abgefangen");
 }
 
 // ═══ 5. Was NICHT anders werden durfte ════════════════════════════════════
