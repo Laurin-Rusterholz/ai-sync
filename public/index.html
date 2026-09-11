@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -13282,15 +13282,111 @@ function entityTimestamp(item) {
   if (!item || typeof item !== 'object') return 0;
   return new Date(item.updatedAt || item.updated || item.createdAt || item.created || 0).getTime() || 0;
 }
+/* ── Nachtragslisten ueberleben den Versionsvergleich ────────────────────────
+   Befund (11.09.2026, Aufgabe „Originalunterlagen Silvan"): Um 05:02 ein
+   Kommentar erfasst (Anzeige: 5 Kommentare), danach die Person Silvia und ein
+   externer Gmail-Link angehaengt. Nach dem Neuladen standen wieder 4
+   Kommentare da, ohne Person und ohne Link; auch ein spaeterer Abgleich holte
+   den Kommentar nicht zurueck. Die vier alten Kommentare waren unversehrt, und
+   ein neu angelegter Notizeintrag hielt sich — was zum Bild passt: Eine NEUE
+   Id kollidiert mit niemandem.
+
+   Die Ursache steckt hier: mergeEntity nahm bei einer Kollision schlicht die
+   Fassung mit dem juengeren updatedAt — GANZ, Feld fuer Feld. Fuer einen Titel
+   oder ein Faelligkeitsdatum ist das richtig. Fuer einen Kommentar nicht: Ein
+   Kommentar ist kein Feld, das man ueberschreibt, sondern ein Eintrag in einer
+   Liste, die nur waechst. Beruehrte irgendein anderer Tab (oder ein anderes
+   Geraet) dieselbe Aufgabe auch nur nebenbei, trug dessen Fassung den
+   juengeren Zeitstempel — und nahm die ganze Aufgabe mit, samt des Kommentars,
+   den sie nie gesehen hatte. Lautlos.
+
+   Ein blosser Zeitstempelvergleich reicht hier nicht. „Der Eintrag ist aelter
+   als der Stand der Gegenseite" heisst NICHT „die Gegenseite hat ihn
+   geloescht" — genau daran scheiterte der erste Anlauf: Der Kommentar von
+   05:02 waere an einer Fassung von 05:03 gescheitert, obwohl diese ihn nie
+   gesehen hatte.
+
+   Deshalb dasselbe Mittel, das die App fuer geloeschte Entitaeten schon kennt:
+   ein Grabstein. Die Listen werden VEREINIGT (jeder Eintrag ueberlebt, egal
+   von welcher Seite), und geloescht bleibt nur, was ausdruecklich als
+   geloescht vermerkt ist — deleteComment und removeExternalLink schreiben den
+   Vermerk, der Abgleich vereinigt auch ihn. Keine Loeschabsicht wird mehr aus
+   blossem Fehlen abgeleitet.
+
+   Die linked…-Listen tragen keine Zeitstempel, nur Ids. Dort wird ebenfalls
+   vereinigt: Eine Verknuepfung, die verschwindet, faellt niemandem auf und
+   leitet Antworten still ins Leere; eine, die wieder auftaucht, sieht man und
+   kann sie mit einem Klick wieder entfernen. */
 function mergeEntity(local, remote) {
+  // Welche Listen nur wachsen — und wo ihre Grabsteine liegen.
+  const NACHTRAGSLISTEN = [
+    { feld: "comments", grab: "deletedComments", neuesteZuerst: true },
+    { feld: "externalLinks", grab: "deletedExternalLinks", neuesteZuerst: false },
+  ];
+  const zeit = (x) => new Date((x && (x.createdAt || x.created)) || 0).getTime() || 0;
+  function grabsteineVereinen(a, b) {
+    const raus = {};
+    [a, b].forEach((m) => {
+      if (!m || typeof m !== "object") return;
+      Object.keys(m).forEach((id) => {
+        const t = String(m[id] || "");
+        if (!raus[id] || t > raus[id]) raus[id] = t;
+      });
+    });
+    // Nicht unbegrenzt wachsen lassen: die juengsten Vermerke genuegen.
+    const ids = Object.keys(raus);
+    if (ids.length <= 300) return raus;
+    ids.sort((x, y) => String(raus[y]).localeCompare(String(raus[x])));
+    const klein = {};
+    ids.slice(0, 300).forEach((id) => { klein[id] = raus[id]; });
+    return klein;
+  }
+  function listenVereinen(a, b, tote, neuesteZuerst) {
+    const A = Array.isArray(a) ? a : [];
+    const B = Array.isArray(b) ? b : [];
+    if (!A.length && !B.length) return undefined;
+    const nach = new Map();
+    A.concat(B).forEach((x) => {
+      if (!x || typeof x !== "object" || !x.id) return;
+      if (tote && Object.prototype.hasOwnProperty.call(tote, x.id)) return;  // ausdrücklich gelöscht
+      const da = nach.get(x.id);
+      if (!da || zeit(x) > zeit(da)) nach.set(x.id, x);
+    });
+    const raus = Array.from(nach.values());
+    raus.sort((x, y) => (neuesteZuerst ? zeit(y) - zeit(x) : zeit(x) - zeit(y)));
+    return raus;
+  }
+  function linkListenVereinen(gewinner, verlierer) {
+    Object.keys(verlierer || {}).forEach((feld) => {
+      if (!/^linked[A-Z]/.test(feld)) return;
+      const fremd = verlierer[feld];
+      if (!Array.isArray(fremd) || !fremd.length) return;
+      const eigen = Array.isArray(gewinner[feld]) ? gewinner[feld] : [];
+      const bekannt = new Set(eigen.map(String));
+      const dazu = fremd.filter((x) => x != null && !bekannt.has(String(x)));
+      if (dazu.length) gewinner[feld] = eigen.concat(dazu);
+    });
+  }
+
   if (!local) return remote;
   if (!remote) return local;
 
   const localTs = entityTimestamp(local);
   const remoteTs = entityTimestamp(remote);
 
-  // Simple: take the NEWER version. No field merging, no array accumulation.
-  return remoteTs > localTs ? JSON.parse(JSON.stringify(remote)) : local;
+  // Die juengere Fassung gewinnt — wie bisher. Neu ist nur, was danach kommt.
+  const remoteGewinnt = remoteTs > localTs;
+  const gewinner = JSON.parse(JSON.stringify(remoteGewinnt ? remote : local));
+  const verlierer = remoteGewinnt ? local : remote;
+
+  NACHTRAGSLISTEN.forEach((n) => {
+    const tote = grabsteineVereinen(gewinner[n.grab], verlierer[n.grab]);
+    const liste = listenVereinen(gewinner[n.feld], verlierer[n.feld], tote, n.neuesteZuerst);
+    if (liste !== undefined) gewinner[n.feld] = JSON.parse(JSON.stringify(liste));
+    if (Object.keys(tote).length) gewinner[n.grab] = tote;
+  });
+  linkListenVereinen(gewinner, verlierer);
+  return gewinner;
 }
 
 // Übernimmt Remote-Settings beim Sync, schützt aber vorhandene lokale API-Keys:
@@ -16354,6 +16450,11 @@ function deleteComment(kind, entityId, commentId) {
   if (!entity || !entity.comments) return;
   
   entity.comments = entity.comments.filter(c => c.id !== commentId);
+  // Der Vermerk ist noetig, weil der Abgleich Kommentare VEREINIGT: Ohne ihn
+  // braechte die naechste Fassung eines anderen Geraets den Kommentar zurueck.
+  entity.deletedComments = entity.deletedComments && typeof entity.deletedComments === "object"
+    ? entity.deletedComments : {};
+  entity.deletedComments[commentId] = nowIso();
   entity.updatedAt = nowIso();
   scheduleSave();
 }
@@ -16424,6 +16525,10 @@ function removeExternalLink(kind, entityId, linkId) {
   if (!entity || !entity.externalLinks) return;
   
   entity.externalLinks = entity.externalLinks.filter(l => l.id !== linkId);
+  // Grabstein wie beim Kommentar — der Abgleich vereinigt sonst zurueck.
+  entity.deletedExternalLinks = entity.deletedExternalLinks && typeof entity.deletedExternalLinks === "object"
+    ? entity.deletedExternalLinks : {};
+  entity.deletedExternalLinks[linkId] = nowIso();
   entity.updatedAt = nowIso();
   scheduleSave();
 }
