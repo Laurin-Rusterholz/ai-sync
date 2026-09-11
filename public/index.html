@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -756,14 +756,34 @@
     .grid-12 > [class*="col-"]{min-width:0}
     @media(max-width:1200px){.grid-5{grid-template-columns:repeat(3,1fr)}}
     @media(max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr)}}
-    /* col-8/col-4 in grid-12: bei mittlerer Breite mehr Platz für Sidebar-Spalte */
+    /* ── Seitenspalten und Formularspalten sind zweierlei ──────────────────
+       .grid-12 .col-4 ist ein Nachfahren-Selektor und traf beides: die grosse
+       Seitenspalte UND jedes Feld eines Formulars, das in ihr steckt. Sobald
+       der Inhaltsbereich 1200px oder schmaler war — bei 1440px Fensterbreite
+       ist er mit Seitenleiste genau 1200 —, fielen deshalb auch Status,
+       Prioritaet und die beiden Datumsfelder auf die volle Breite. Eine
+       Detailseite wurde so zu einer einzigen, sehr langen Spalte mit ueber
+       1100px breiten Eingabefeldern, obwohl die Ansicht ein 12-Spalten-Raster
+       mitbringt. Seitensplit deshalb nur noch ueber das direkte Kind; die
+       Formularfelder bekommen ihre eigene Staffel (weiter unten). */
     @media(max-width:1500px){
-      .grid-12 .col-8{grid-column:span 7}
-      .grid-12 .col-4{grid-column:span 5}
+      .grid-12 > .col-8{grid-column:span 7}
+      .grid-12 > .col-4{grid-column:span 5}
     }
     /* Bei schmalem Viewport: vertikal stapeln statt abschneiden */
-    @media(max-width:1200px){
-      .grid-12 .col-8,.grid-12 .col-4,.grid-12 .col-7,.grid-12 .col-5,.grid-12 .col-6,.grid-12 .col-9,.grid-12 .col-3{grid-column:span 12}
+    @media(max-width:1100px){
+      .grid-12 > [class*="col-"]{grid-column:span 12}
+    }
+    /* Formularfelder: erst zwei nebeneinander, ganz schmal untereinander.
+       Unterhalb 1100 stapelt der Seitensplit — das Formular bekommt dort die
+       volle Breite und traegt seine Spalten weiter; enger wird es erst, wenn
+       auch diese volle Breite knapp wird. */
+    @media(max-width:860px){
+      .form > .col-3,.form > .col-4{grid-column:span 6}
+      .form > .col-5,.form > .col-7,.form > .col-8,.form > .col-9,.form > .col-10,.form > .col-11{grid-column:span 12}
+    }
+    @media(max-width:620px){
+      .form > [class*="col-"]{grid-column:span 12}
     }
     @media(max-width:900px){.grid-2,.grid-3,.grid-4,.grid-5{grid-template-columns:1fr}}
     @media(max-width:900px){
@@ -847,6 +867,11 @@
 
     /* Forms */
     .form{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    /* Lesebreite: ein Formular in einer Karte laeuft nicht ueber die ganze
+       Bildschirmbreite mit. Greift nur dort, wo wirklich mehr Platz da ist
+       (Computermodus, sehr breite Bildschirme, eingeklappte Seitenleiste);
+       darunter bleibt alles wie bisher. */
+    .main .card > .form{max-width:1160px}
     label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:700}
     input,textarea,select{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:11px 14px;border-radius:10px;font-size:13px;font-weight:600;width:100%;outline:none;transition:border-color .15s}
     input:focus,textarea:focus,select:focus{border-color:var(--accent);background:var(--panel3)}
@@ -984,8 +1009,14 @@
 }
 
     /* Slide Panel - Modal in der Mitte (NICHT Sidebar) */
-    .slide-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.95);width:90%;max-width:600px;max-height:80vh;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);z-index:100;display:flex;flex-direction:column;box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;transition:all .25s ease}
-    .slide-panel.open{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
+    /* Geschlossen heisst geschlossen: opacity:0 allein nimmt die Schnellansicht
+       nur dem Auge weg. Ihre Felder blieben im Tabbfluss und im Vorlesebaum —
+       nach „Vollstaendig oeffnen" standen deshalb ZWEI Statusfelder zugleich
+       bereit, das unsichtbare der Schnellansicht und das der Detailseite.
+       visibility:hidden nimmt sie wirklich heraus; der Wechsel wird erst am
+       Ende der Blende geschaltet, damit das Zuklappen weiter sichtbar bleibt. */
+    .slide-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.95);width:90%;max-width:600px;max-height:80vh;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);z-index:100;display:flex;flex-direction:column;box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;visibility:hidden;transition:opacity .25s ease,transform .25s ease,visibility 0s linear .25s}
+    .slide-panel.open{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto;visibility:visible;transition:opacity .25s ease,transform .25s ease,visibility 0s linear 0s}
     .slide-panel .panel-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--panel2);border-radius:var(--radius-lg) var(--radius-lg) 0 0}
     .slide-panel .panel-header h3{font-size:15px;font-weight:700;margin:0}
     .slide-panel .panel-body{flex:1;overflow:auto;padding:20px}
@@ -1003,8 +1034,8 @@
     .celeb-particle{position:absolute;width:8px;height:8px;border-radius:50%;animation:celebParticle 0.9s cubic-bezier(.25,.46,.45,.94) forwards}
     .celeb-ring{position:absolute;border:3px solid rgba(52,199,89,0.7);border-radius:50%;width:40px;height:40px;animation:celebRing 0.7s ease-out forwards}
     .celeb-row-flash{animation:celebGlow 0.6s ease-out}
-    .slide-panel-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99;opacity:0;pointer-events:none;transition:opacity .25s}
-    .slide-panel-backdrop.open{opacity:1;pointer-events:auto}
+    .slide-panel-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99;opacity:0;pointer-events:none;visibility:hidden;transition:opacity .25s,visibility 0s linear .25s}
+    .slide-panel-backdrop.open{opacity:1;pointer-events:auto;visibility:visible;transition:opacity .25s,visibility 0s linear 0s}
 
     /* AI Panel */
     .ai-panel{background:linear-gradient(135deg,var(--accent-soft),rgba(43,212,168,.08));border:1px solid var(--accent-soft);border-radius:14px;padding:18px}
@@ -3767,8 +3798,14 @@ try{if(location.search.indexOf("embed=1")>=0)document.documentElement.classList.
    den Topbar-Button manuell fixiert werden (localStorage: quantusLayoutMode).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Computer: gesamte Bildschirmbreite nutzen ── */
-body.mode-computer .main{padding:16px 24px 40px}
+/* ── Computer: gesamte Bildschirmbreite nutzen ──
+   Uebersichten (Karten-Raster, Tabellen, Kanban) duerfen die volle Breite
+   haben — dafuer ist der Modus da. Fliesstext und Formulare duerfen es nicht:
+   ein 2400px breites Eingabefeld liest niemand. Die Seite behaelt deshalb
+   max-width:none, einzelne Formularkarten bekommen eine Lesebreite (siehe
+   .main .card > .form weiter unten). Die Raender wachsen mit dem Bildschirm
+   mit, statt bei 24px zu kleben. */
+body.mode-computer .main{padding:20px clamp(24px,2.2vw,64px) 48px}
 body.mode-computer .main .page{max-width:none}
 body.mode-computer .apps-list{max-width:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:10px}
 /* Auf sehr breiten Screens dichtere Übersichts-Grids */
@@ -3880,12 +3917,24 @@ body.mode-computer .main-split-header{padding-left:24px;padding-right:24px}
    Seite unabhängig an, egal ob sie 30%, 50% oder 100% der Fensterbreite hat. ── */
 .main,.dock-panel.app-panel .dock-panel-body{container-type:inline-size}
 @container (max-width:1500px){
-  .grid-12 .col-8{grid-column:span 7}
-  .grid-12 .col-4{grid-column:span 5}
+  .grid-12 > .col-8{grid-column:span 7}
+  .grid-12 > .col-4{grid-column:span 5}
 }
 @container (max-width:1200px){
   .grid-5{grid-template-columns:repeat(3,1fr)}
-  .grid-12 .col-8,.grid-12 .col-4,.grid-12 .col-7,.grid-12 .col-5,.grid-12 .col-6,.grid-12 .col-9,.grid-12 .col-3{grid-column:span 12}
+}
+/* Gleiche Trennung wie im Media-Block, hier an der tatsaechlichen Breite des
+   Inhaltsbereichs gemessen: Seitensplit stapelt erst unter 1100, Formular-
+   spalten haben ihre eigene Staffel. */
+@container (max-width:1100px){
+  .grid-12 > [class*="col-"]{grid-column:span 12}
+}
+@container (max-width:760px){
+  .form > .col-3,.form > .col-4{grid-column:span 6}
+  .form > .col-5,.form > .col-7,.form > .col-8,.form > .col-9,.form > .col-10,.form > .col-11{grid-column:span 12}
+}
+@container (max-width:520px){
+  .form > [class*="col-"]{grid-column:span 12}
 }
 @container (max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr)}}
 @container (max-width:900px){
@@ -16538,6 +16587,55 @@ function renderLinkedEntitiesSection(kind, id) {
 }
 window.renderLinkedEntitiesSection = renderLinkedEntitiesSection;
 
+/*
+ * Die Verknuepfungskarten von Aufgabe, Projekt und Notiz zeichnen ihre Chips
+ * von Hand und kennen dabei nur eine feste Handvoll Sorten (Aufgabe, Projekt,
+ * Notiz, Organisation, Strategie, Ziel, Termin, Meeting, Idee). Der Auswaehler
+ * bietet dagegen JEDE verknuepfbare Sorte aus der Registry an — rund vierzig.
+ * Eine Person, eine Mail, ein Protokoll wurde also sauber auf beiden Seiten
+ * gespeichert (linkEntities schreibt src.linkedPersons UND tgt.linkedTasks),
+ * tauchte an der Aufgabe aber nie auf: der Auswaehler schloss sich, und nichts
+ * erschien — auch nicht nach Speichern und Neuladen.
+ *
+ * Diese Funktion traegt genau die Sorten nach, die die handgezeichnete Karte
+ * nicht selbst abdeckt. Die bestehenden Bloecke bleiben unangetastet, damit
+ * ihre Besonderheiten (Beschreibungsvorschau, eigene Beschriftungen) erhalten
+ * bleiben; doppelte Chips kann es nicht geben, weil `schonGezeigt` die bereits
+ * gezeichneten Felder ausnimmt.
+ */
+function weitereVerknuepfungenHtml(kind, id, schonGezeigt) {
+  const entity = getEntity(kind, id);
+  if (!entity) return "";
+  const aus = new Set(schonGezeigt || []);
+  const teile = [];
+  entityKindRegistry().forEach(info => {
+    if (info.linkable === false) return;
+    const feld = linkFieldForKindName(info.kind);
+    if (aus.has(feld)) return;
+    const ids = entity[feld];
+    if (!Array.isArray(ids) || !ids.length) return;
+    ids.forEach(lid => {
+      // getEntity statt Direktzugriff: so bleiben geloeschte Ziele (Grabstein)
+      // aussen vor, genau wie in den handgezeichneten Bloecken.
+      const ziel = getEntity(info.kind, lid);
+      if (!ziel) return;
+      const name = entityDisplayLabel(info.kind, ziel);
+      teile.push(
+        '<span class="entity-chip ' + esc(info.kind) + '" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:12px">' +
+          '<span style="cursor:pointer" data-action="open-slide" data-kind="' + esc(info.kind) + '" data-id="' + esc(lid) + '" title="' + esc(info.label || info.kind) + '">' +
+            (info.icon || "🔗") + " " + esc(name.slice(0, 40)) +
+          "</span>" +
+          '<button style="background:none;border:none;color:var(--muted);cursor:pointer;padding:2px 4px;font-size:12px;line-height:1" ' +
+            'data-action="unlink-entity" data-src-kind="' + esc(kind) + '" data-src-id="' + esc(id) + '" ' +
+            'data-tgt-kind="' + esc(info.kind) + '" data-tgt-id="' + esc(lid) + '" title="Verknüpfung entfernen">✕</button>' +
+        "</span>"
+      );
+    });
+  });
+  return teile.join("");
+}
+window.weitereVerknuepfungenHtml = weitereVerknuepfungenHtml;
+
 // ============================================================================
 // PINNING
 // ============================================================================
@@ -22652,6 +22750,27 @@ function renderMain() {
   // wieder ueber dem Text. Abgebaut wird jetzt nur bei echtem Routenwechsel.
   var _routeChanged = route !== window._lastOverlayRoute;
   window._lastOverlayRoute = route;
+  // Die Schnellansicht gehoert zu der Seite, auf der sie geoeffnet wurde. Sie
+  // hat bisher nur zugemacht, wo ein Handler es einzeln vorsah — auf jedem
+  // anderen Weg (Tastatur, Zurueck/Vorwaerts, Tab-Wechsel, Sprung von der
+  // Liste in die Detailseite derselben Route) blieb sie stehen. Deshalb hier,
+  // an genau einer Stelle, fuer alle Wege. Die Ortsmarke enthaelt die id, denn
+  // #/tasks → #/tasks/<id> ist derselbe Routenname und trotzdem ein Wechsel.
+  var _panelOrt = route + "|" + (id || "");
+  if (window._lastPanelOrt !== undefined && window._lastPanelOrt !== _panelOrt) {
+    try { if (APP.state.ui.slidePanel) closeSlidePanel(); } catch (e) {}
+    // Dasselbe fuer einen offenen Dialog — aber nur, wenn er wirklich zur
+    // verlassenen Seite gehoert. Wer erst navigiert und dann einen Dialog
+    // oeffnet, hat ihn mit der NEUEN Ortsmarke versehen; der bleibt stehen.
+    try {
+      var _mb = document.getElementById("modalBackdrop");
+      if (_mb && _mb.classList.contains("open") && window._modalOrt && window._modalOrt !== _panelOrt) {
+        closeModal();
+        window._modalOrt = null;
+      }
+    } catch (e) {}
+  }
+  window._lastPanelOrt = _panelOrt;
   try {
     if (_routeChanged) {
       if (route !== "notes") { const c = document.getElementById("noteflowContainer"); if (c && c.classList.contains("active")) c.classList.remove("active"); }
@@ -36329,6 +36448,14 @@ function viewTaskDetail(id) {
     </span>` : "";
   }).join("");
   
+  // Alles Weitere, was der Auswaehler anbietet, die neun Bloecke oben aber nicht
+  // zeichnen — allen voran Personen. Ohne das war eine hier angelegte
+  // Verknuepfung gespeichert und trotzdem unsichtbar.
+  const weitereTaskLinks = weitereVerknuepfungenHtml("task", id, [
+    "linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations",
+    "linkedStrategies", "linkedGoals", "linkedCalendarEvents", "linkedMeetings", "linkedIdeas",
+  ]);
+
   // Verknüpfte Erinnerungen finden
   const taskReminders = Object.values(e.scheduledMessages || {}).filter(m => 
     (m.linkedTasks || []).includes(id) && !m.isRead
@@ -36483,8 +36610,8 @@ function viewTaskDetail(id) {
         <div class="card mb-4">
           <h3>🔗 Verknüpfungen</h3>
           <div class="flex flex-wrap gap-2 mb-3" style="flex-wrap:wrap">
-            ${linkedTasks}${linkedProjects}${linkedNotes}${linkedOrgs}${linkedStrategies}${linkedGoals}${linkedCalendarEvents}${linkedMeetings}${linkedIdeas}
-            ${!linkedTasks && !linkedProjects && !linkedNotes && !linkedOrgs && !linkedStrategies && !linkedGoals && !linkedCalendarEvents && !linkedMeetings && !linkedIdeas ? `<div class="mini">Keine Verknüpfungen.</div>` : ""}
+            ${linkedTasks}${linkedProjects}${linkedNotes}${linkedOrgs}${linkedStrategies}${linkedGoals}${linkedCalendarEvents}${linkedMeetings}${linkedIdeas}${weitereTaskLinks}
+            ${!linkedTasks && !linkedProjects && !linkedNotes && !linkedOrgs && !linkedStrategies && !linkedGoals && !linkedCalendarEvents && !linkedMeetings && !linkedIdeas && !weitereTaskLinks ? `<div class="mini">Keine Verknüpfungen.</div>` : ""}
           </div>
           <div class="flex gap-2 flex-wrap">
             <button class="btn sm" data-action="open-link-modal" data-kind="task" data-id="${id}">➕ Verknüpfen</button>
@@ -37798,7 +37925,14 @@ function viewProjectDetail(id) {
     </span>
   `).join("");
   
-  const allProjectLinks = linkedTasks + linkedNotes + linkedOrgs + linkedStrategies + linkedPrograms + linkedMeetings + linkedCalendarEvents + linkedIdeas + projectExternalLinksHtml;
+  // Dieselbe Luecke wie bei der Aufgabe: der Auswaehler bietet jede Sorte an,
+  // gezeichnet wurden nur diese acht. Personen, Mails, Protokolle … kommen hier
+  // dazu, ohne die bestehenden Bloecke anzuruehren.
+  const weitereProjektLinks = weitereVerknuepfungenHtml("project", id, [
+    "linkedTasks", "linkedNotes", "linkedOrganizations", "linkedStrategies",
+    "linkedPrograms", "linkedMeetings", "linkedCalendarEvents", "linkedIdeas",
+  ]);
+  const allProjectLinks = linkedTasks + linkedNotes + linkedOrgs + linkedStrategies + linkedPrograms + linkedMeetings + linkedCalendarEvents + linkedIdeas + weitereProjektLinks + projectExternalLinksHtml;
   
   // Tags
   const tagsHtml = (p.tags || []).map(tag => 
@@ -48803,6 +48937,11 @@ function openSlidePanel(kind, id) {
   }
   
   body.innerHTML = html;
+  // Ein noch laufendes Aufraeumen des vorigen Schliessens abbestellen, sonst
+  // leert es gleich den frisch gefuellten Rumpf.
+  if (window._slideLeerUhr) { clearTimeout(window._slideLeerUhr); window._slideLeerUhr = null; }
+  panel.removeAttribute("aria-hidden");
+  panel.removeAttribute("inert");
   panel.classList.add("open");
   
   // Backdrop öffnen
@@ -48810,10 +48949,28 @@ function openSlidePanel(kind, id) {
   if (backdrop) backdrop.classList.add("open");
 }
 
+// Schliesst die Schnellansicht vollstaendig: Klasse weg (Blende), danach
+// Rumpf leeren. Ohne das Leeren blieben die Formularfelder der Schnellansicht
+// im Dokument stehen — unsichtbar, aber mit denselben Beschriftungen wie die
+// Detailseite. inert/aria-hidden wirken sofort, auch wo visibility noch blendet.
 function closeSlidePanel() {
   APP.state.ui.slidePanel = null;
   const slidePanel = $("#slidePanel");
-  if (slidePanel) slidePanel.classList.remove("open");
+  if (slidePanel) {
+    slidePanel.classList.remove("open");
+    slidePanel.setAttribute("aria-hidden", "true");
+    slidePanel.setAttribute("inert", "");
+    if (window._slideLeerUhr) clearTimeout(window._slideLeerUhr);
+    window._slideLeerUhr = setTimeout(function () {
+      window._slideLeerUhr = null;
+      const p = document.getElementById("slidePanel");
+      if (!p || p.classList.contains("open")) return;  // inzwischen wieder offen
+      const b = document.getElementById("slidePanelBody");
+      if (b) b.innerHTML = "";
+      const t = document.getElementById("slidePanelTitle");
+      if (t) t.textContent = "";
+    }, 280);
+  }
   
   // Backdrop schließen
   const backdrop = $("#slidePanelBackdrop");
@@ -55605,6 +55762,18 @@ function openModal(title, body, footer = "") {
   if (modalBody) modalBody.innerHTML = body;
   if (modalFooter) modalFooter.innerHTML = footer;
   if (modalBackdrop) modalBackdrop.classList.add("open");
+  // Merken, zu welcher Seite dieser Dialog gehoert. Nur so laesst sich beim
+  // naechsten Aufbau ein stehengebliebener Dialog von einem unterscheiden, der
+  // gerade absichtlich ZUR NEUEN Seite geoeffnet wurde (erst navigieren, dann
+  // fragen — dieser Ablauf kommt mehrfach vor und darf nicht abgeraeumt werden).
+  try { window._modalOrt = modalOrtJetzt(); } catch (e) { window._modalOrt = null; }
+}
+
+// Ortsmarke fuer Dialoge und Schnellansicht: Route UND id, denn
+// #/tasks -> #/tasks/<id> ist derselbe Routenname und trotzdem ein Wechsel.
+function modalOrtJetzt() {
+  const h = parseHash();
+  return h.route + "|" + (h.id || "");
 }
 
 function closeModal() {
@@ -57996,13 +58165,13 @@ document.addEventListener("click", function(e) {
       break;
     }
 
+    // Hier wurde openSlidePanel das Entity-OBJEKT uebergeben, wo eine id
+    // erwartet wird: getEntity(kind, objekt) findet nichts, die Funktion
+    // steigt sofort aus. Dass die Schnellansicht trotzdem aufging, lag am
+    // zweiten Verteiler (handleClick), der dieselbe Aktion nochmals mit der
+    // richtigen id behandelt. Dieser Weg uebergibt jetzt ebenfalls die id.
     case "open-slide":
-      const slideKind = el.dataset.kind;
-      const slideId = el.dataset.id;
-      const slideEntity = getEntity(slideKind, slideId);
-      if (slideEntity) {
-        openSlidePanel(slideKind, slideEntity);
-      }
+      openSlidePanel(el.dataset.kind, el.dataset.id);
       break;
 
     case "toggle-pin":
@@ -97048,6 +97217,19 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ─── Init ──────────────────────────────────────────────────────
+// Darf beim Start ein Vollbild-Overlay aus der gespeicherten Tabliste wieder
+// aufgezogen werden? Nur beim Neuladen derselben Seite und nur, wenn die
+// Adresse keine konkrete Route nennt.
+function hubWiederherstellenErlaubt() {
+  try {
+    const hash = (window.location.hash || '').replace(/^#\/?/, '').split('/')[0];
+    if (hash && hash !== 'dashboard') return false;
+    const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+    if (nav && typeof nav.type === 'string') return nav.type === 'reload';
+    return false;   // Ohne Auskunft lieber nicht ueberdecken
+  } catch (e) { return false; }
+}
+
 function initTabs() {
   loadTabs();
   
@@ -97089,7 +97271,27 @@ function initTabs() {
   
   // View des aktiven Tabs anwenden falls nötig — defensiv mit try/catch
   const active = _tabs.find(t => t.id === _activeTabId);
-  if (active && (active.kind === 'newsroom' || active.kind === 'readinghub' || active.kind === 'noteflow' || active.kind === 'recalllab' || active.kind === 'readlist')) {
+  // Die Tabliste liegt im localStorage und gilt fuer das ganze Browserprofil,
+  // nicht fuer den einzelnen Browsertab. Wer Quantus in einem NEUEN Browsertab
+  // mit der Basis-Adresse oeffnete, bekam deshalb das Vollbild-Overlay des
+  // zuletzt anderswo benutzten Tabs ueber die App gelegt — NoteFlow deckt mit
+  // position:fixed;inset:0 auch den Quantus-Kopf zu, und die Adresszeile sagte
+  // trotzdem Dashboard. Ausweg war nur der Griff in die Tableiste.
+  // Regel jetzt: die Adresse gewinnt.
+  //  · Ein echtes Neuladen derselben Seite stellt die Ansicht wie bisher her.
+  //  · Ein frisch geoeffneter Tab startet dort, wohin die Adresse zeigt.
+  //  · Eine Adresse mit konkreter Route (#/tasks/…) wird nie ueberdeckt.
+  // Wird nicht wiederhergestellt, wandert die Tabmarkierung auf den passenden
+  // Tab, damit Leiste und Inhalt dasselbe sagen.
+  const _hubKind = active && ['newsroom','readinghub','noteflow','recalllab','readlist'].includes(active.kind);
+  if (_hubKind && !hubWiederherstellenErlaubt()) {
+    const zurueck = _tabs.find(t => t.pinned) || _tabs.find(t => t.kind === 'hash') || _tabs[0];
+    if (zurueck && zurueck.id !== _activeTabId) {
+      _activeTabId = zurueck.id;
+      saveTabs();
+      renderTabs();
+    }
+  } else if (_hubKind) {
     setTimeout(() => {
       try {
         // Nur wenn die nötigen open-Funktionen existieren
