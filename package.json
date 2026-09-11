@@ -17,7 +17,7 @@
     "test:universal-sync": "node tests/quantus-universal-bootstrap.test.mjs && node tests/quantus-bundles.test.mjs",
     "test:firebase-sdk": "node tests/firebase-sdk-loading.test.mjs && node tests/sticky-board-split.test.mjs",
     "test:firebase-oauth": "node tests/firebase-oauth-client.test.mjs",
-    "test:gmail": "node tests/gmail-network-retry.test.mjs && node tests/gmail-vacation-responder.test.mjs && node tests/gmail-composer-empfaenger.test.mjs && node tests/gmail-inhalt-und-einschaetzung.test.mjs",
+    "test:gmail": "node tests/gmail-network-retry.test.mjs && node tests/gmail-vacation-responder.test.mjs && node tests/gmail-composer-empfaenger.test.mjs && node tests/gmail-inhalt-und-einschaetzung.test.mjs && node tests/gmail-person-dialog.test.mjs",
     "test:flowertech-projects": "node tests/flowertech-projects.test.mjs && node tests/flowertech-topnav-runtime.test.mjs",
     "test:habits-gmail": "node tests/habit-delete-sync.test.mjs && node tests/gmail-reply-recipient.test.mjs",
     "test:persons": "node tests/personen-editor-reiter.test.mjs && node tests/dokumentindex-bestaetigung.test.mjs && node tests/chatgpt-lead-wiedereroeffnen.test.mjs",
