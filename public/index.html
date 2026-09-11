@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -16586,6 +16586,55 @@ function renderLinkedEntitiesSection(kind, id) {
   `;
 }
 window.renderLinkedEntitiesSection = renderLinkedEntitiesSection;
+
+/*
+ * Die Verknuepfungskarten von Aufgabe, Projekt und Notiz zeichnen ihre Chips
+ * von Hand und kennen dabei nur eine feste Handvoll Sorten (Aufgabe, Projekt,
+ * Notiz, Organisation, Strategie, Ziel, Termin, Meeting, Idee). Der Auswaehler
+ * bietet dagegen JEDE verknuepfbare Sorte aus der Registry an — rund vierzig.
+ * Eine Person, eine Mail, ein Protokoll wurde also sauber auf beiden Seiten
+ * gespeichert (linkEntities schreibt src.linkedPersons UND tgt.linkedTasks),
+ * tauchte an der Aufgabe aber nie auf: der Auswaehler schloss sich, und nichts
+ * erschien — auch nicht nach Speichern und Neuladen.
+ *
+ * Diese Funktion traegt genau die Sorten nach, die die handgezeichnete Karte
+ * nicht selbst abdeckt. Die bestehenden Bloecke bleiben unangetastet, damit
+ * ihre Besonderheiten (Beschreibungsvorschau, eigene Beschriftungen) erhalten
+ * bleiben; doppelte Chips kann es nicht geben, weil `schonGezeigt` die bereits
+ * gezeichneten Felder ausnimmt.
+ */
+function weitereVerknuepfungenHtml(kind, id, schonGezeigt) {
+  const entity = getEntity(kind, id);
+  if (!entity) return "";
+  const aus = new Set(schonGezeigt || []);
+  const teile = [];
+  entityKindRegistry().forEach(info => {
+    if (info.linkable === false) return;
+    const feld = linkFieldForKindName(info.kind);
+    if (aus.has(feld)) return;
+    const ids = entity[feld];
+    if (!Array.isArray(ids) || !ids.length) return;
+    ids.forEach(lid => {
+      // getEntity statt Direktzugriff: so bleiben geloeschte Ziele (Grabstein)
+      // aussen vor, genau wie in den handgezeichneten Bloecken.
+      const ziel = getEntity(info.kind, lid);
+      if (!ziel) return;
+      const name = entityDisplayLabel(info.kind, ziel);
+      teile.push(
+        '<span class="entity-chip ' + esc(info.kind) + '" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;font-size:12px">' +
+          '<span style="cursor:pointer" data-action="open-slide" data-kind="' + esc(info.kind) + '" data-id="' + esc(lid) + '" title="' + esc(info.label || info.kind) + '">' +
+            (info.icon || "🔗") + " " + esc(name.slice(0, 40)) +
+          "</span>" +
+          '<button style="background:none;border:none;color:var(--muted);cursor:pointer;padding:2px 4px;font-size:12px;line-height:1" ' +
+            'data-action="unlink-entity" data-src-kind="' + esc(kind) + '" data-src-id="' + esc(id) + '" ' +
+            'data-tgt-kind="' + esc(info.kind) + '" data-tgt-id="' + esc(lid) + '" title="Verknüpfung entfernen">✕</button>' +
+        "</span>"
+      );
+    });
+  });
+  return teile.join("");
+}
+window.weitereVerknuepfungenHtml = weitereVerknuepfungenHtml;
 
 // ============================================================================
 // PINNING
@@ -36399,6 +36448,14 @@ function viewTaskDetail(id) {
     </span>` : "";
   }).join("");
   
+  // Alles Weitere, was der Auswaehler anbietet, die neun Bloecke oben aber nicht
+  // zeichnen — allen voran Personen. Ohne das war eine hier angelegte
+  // Verknuepfung gespeichert und trotzdem unsichtbar.
+  const weitereTaskLinks = weitereVerknuepfungenHtml("task", id, [
+    "linkedTasks", "linkedProjects", "linkedNotes", "linkedOrganizations",
+    "linkedStrategies", "linkedGoals", "linkedCalendarEvents", "linkedMeetings", "linkedIdeas",
+  ]);
+
   // Verknüpfte Erinnerungen finden
   const taskReminders = Object.values(e.scheduledMessages || {}).filter(m => 
     (m.linkedTasks || []).includes(id) && !m.isRead
@@ -36553,8 +36610,8 @@ function viewTaskDetail(id) {
         <div class="card mb-4">
           <h3>🔗 Verknüpfungen</h3>
           <div class="flex flex-wrap gap-2 mb-3" style="flex-wrap:wrap">
-            ${linkedTasks}${linkedProjects}${linkedNotes}${linkedOrgs}${linkedStrategies}${linkedGoals}${linkedCalendarEvents}${linkedMeetings}${linkedIdeas}
-            ${!linkedTasks && !linkedProjects && !linkedNotes && !linkedOrgs && !linkedStrategies && !linkedGoals && !linkedCalendarEvents && !linkedMeetings && !linkedIdeas ? `<div class="mini">Keine Verknüpfungen.</div>` : ""}
+            ${linkedTasks}${linkedProjects}${linkedNotes}${linkedOrgs}${linkedStrategies}${linkedGoals}${linkedCalendarEvents}${linkedMeetings}${linkedIdeas}${weitereTaskLinks}
+            ${!linkedTasks && !linkedProjects && !linkedNotes && !linkedOrgs && !linkedStrategies && !linkedGoals && !linkedCalendarEvents && !linkedMeetings && !linkedIdeas && !weitereTaskLinks ? `<div class="mini">Keine Verknüpfungen.</div>` : ""}
           </div>
           <div class="flex gap-2 flex-wrap">
             <button class="btn sm" data-action="open-link-modal" data-kind="task" data-id="${id}">➕ Verknüpfen</button>
@@ -37868,7 +37925,14 @@ function viewProjectDetail(id) {
     </span>
   `).join("");
   
-  const allProjectLinks = linkedTasks + linkedNotes + linkedOrgs + linkedStrategies + linkedPrograms + linkedMeetings + linkedCalendarEvents + linkedIdeas + projectExternalLinksHtml;
+  // Dieselbe Luecke wie bei der Aufgabe: der Auswaehler bietet jede Sorte an,
+  // gezeichnet wurden nur diese acht. Personen, Mails, Protokolle … kommen hier
+  // dazu, ohne die bestehenden Bloecke anzuruehren.
+  const weitereProjektLinks = weitereVerknuepfungenHtml("project", id, [
+    "linkedTasks", "linkedNotes", "linkedOrganizations", "linkedStrategies",
+    "linkedPrograms", "linkedMeetings", "linkedCalendarEvents", "linkedIdeas",
+  ]);
+  const allProjectLinks = linkedTasks + linkedNotes + linkedOrgs + linkedStrategies + linkedPrograms + linkedMeetings + linkedCalendarEvents + linkedIdeas + weitereProjektLinks + projectExternalLinksHtml;
   
   // Tags
   const tagsHtml = (p.tags || []).map(tag => 
