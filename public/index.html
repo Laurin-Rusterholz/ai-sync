@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -13704,18 +13704,38 @@ function mergeData(local, remote) {
     }
   }
   
-  // ── Alle uebrigen Bereiche: nichts still fallen lassen ───────────────────
-  // merged ist eine Kopie des LOKALEN Standes. Jeder Bereich ohne eigenen Zweig
-  // oben behielt damit stumm den lokalen Wert — der Stand der Gegenseite fiel
-  // weg, und der anschliessende Push loeschte ihn auch auf dem Server. Genau so
-  // verschwand das Journal; dieselbe Luecke bestand fuer ein gutes Dutzend
-  // weiterer Bereiche (eigene Seiten, Leseliste, Vorlagen, Handbuch …).
-  //
-  // Die Regeln sind bewusst vorsichtig — es soll nichts Lokales verlieren:
-  //  · Bereich lokal unbekannt        → den der Gegenseite uebernehmen
-  //  · Listen von Dingen MIT Id       → vereinigen, bei Kollision der neuere
-  //  · Zuordnungen (Objekt-Karten)    → vereinigen, bei Kollision der neuere
-  //  · Reihenfolgen, Zahlen, Schalter → lokal behalten (wie bisher)
+  /* ── Alle uebrigen Bereiche: nichts still fallen lassen ───────────────────
+     merged ist eine Kopie des LOKALEN Standes. Jeder Bereich ohne eigenen Zweig
+     oben behielt damit stumm den lokalen Wert — der Stand der Gegenseite fiel
+     weg, und der anschliessende Push loeschte ihn auch auf dem Server. Genau so
+     verschwand das Journal; dieselbe Luecke bestand fuer ein gutes Dutzend
+     weiterer Bereiche (eigene Seiten, Leseliste, Vorlagen, Handbuch …).
+
+     Befund (11.09.2026, FlowerTech): Diese Vereinigung ging nur EINE Ebene
+     tief. `data.flowertech` ist eine Karte von Karten — intakes, docs,
+     clients, videos —, und keine dieser inneren Karten traegt selbst ein
+     updatedAt. stamp() lieferte auf beiden Seiten 0, also blieb der LOKALE
+     Wert stehen: die ganze Karte, samt allem, was nur die Gegenseite kannte.
+
+     So verschwand der wiederhergestellte Fragebogen zum Token
+     pf-kXRwq0T1lOUcH7fsknz_b. Er war am 11.09. 00:04 dem Aljia-Projekt
+     zugeordnet und lag auf dem Server; ein Tab, dessen lokales flowertech
+     diesen Eintrag nicht kannte, hat beim naechsten Abgleich seine eigene
+     Karte durchgesetzt — und der Push hat den Eintrag auch auf dem Server
+     entfernt. Niemand hat etwas geloescht. Es hat einfach die falsche Seite
+     gewonnen.
+
+     Die Vereinigung geht jetzt zwei Ebenen tief:
+      · Bereich lokal unbekannt        → den der Gegenseite uebernehmen
+      · Listen von Dingen MIT Id       → vereinigen, bei Kollision der neuere
+      · DATIERTE Objekte               → der neuere gewinnt (wie bisher)
+      · UNDATIERTE Karten              → Eintrag fuer Eintrag vereinigen
+      · Reihenfolgen, Zahlen, Schalter → lokal behalten (wie bisher)
+
+     Und weil eine Vereinigung fuer sich genommen jede Loeschung rueckgaengig
+     macht, zaehlen dabei die Grabsteine: Was ausdruecklich geloescht wurde
+     (logDeletion) und dessen Grabstein neuer ist als der Eintrag, kommt nicht
+     zurueck. Keine Loeschabsicht wird aus blossem Fehlen abgeleitet. */
   {
     const handled = new Set(['entities', 'meta', 'version', 'journal', 'timers', 'weekPlan',
       'weekPlanningMatrix', 'dailyBriefing', 'dayEnded', 'recallLabData',
@@ -13723,6 +13743,15 @@ function mergeData(local, remote) {
       'workSchedule', 'todaySelectedTasks', 'backgroundDocs', 'aiSnapshots', 'aiChats',
       'chatgptNotesMeta']);
     const stamp = (o) => Number(new Date(o?.updatedAt || o?.modifiedAt || o?.createdAt || 0)) || 0;
+    // Ein Eintrag, den die Gegenseite bringt und den es hier NICHT gibt: Ist er
+    // ausdruecklich geloescht worden, und ist der Grabstein neuer als der
+    // Eintrag selbst, bleibt er weg. Sonst ist er neue Arbeit und kommt mit.
+    const begraben = (id, wert) => {
+      const t = tombstones[id] || 0;
+      if (!t) return false;
+      const s = stamp(wert);
+      return s > 0 ? t > s : true;
+    };
     const unionList = (l, r) => {
       const hasIds = (a) => a.length === 0 || a.every((x) => x && typeof x === 'object' && x.id);
       if (!hasIds(l) || !hasIds(r)) return l;          // Reihenfolge/Primitive: lokal behaelt Recht
@@ -13730,17 +13759,29 @@ function mergeData(local, remote) {
       l.forEach((x) => map.set(x.id, x));
       r.forEach((x) => {
         const cur = map.get(x.id);
-        if (!cur) { map.set(x.id, x); return; }
+        if (!cur) { if (!begraben(x.id, x)) map.set(x.id, x); return; }
         if (stamp(x) > stamp(cur)) map.set(x.id, x);
       });
       return Array.from(map.values());
     };
-    const unionMap = (l, r) => {
+    const unionMap = (l, r, tiefe) => {
+      const stufe = tiefe || 0;
       const out = Object.assign({}, r, l);              // lokal gewinnt als Grundlage
       for (const [k, rv] of Object.entries(r)) {
         const lv = l[k];
+        // Nur die Gegenseite kennt ihn — ausser er wurde ausdruecklich geloescht.
+        if (lv === undefined || lv === null) {
+          if (stufe > 0 && begraben(k, rv)) delete out[k];
+          continue;
+        }
+        if (Array.isArray(lv) && Array.isArray(rv)) { out[k] = unionList(lv, rv); continue; }
         if (lv && rv && typeof lv === 'object' && typeof rv === 'object'
-            && stamp(rv) > stamp(lv)) out[k] = rv;
+            && !Array.isArray(lv) && !Array.isArray(rv)) {
+          const ls = stamp(lv), rs = stamp(rv);
+          if (ls || rs) { if (rs > ls) out[k] = rv; }    // datiert: der neuere gewinnt
+          else if (stufe < 2) out[k] = unionMap(lv, rv, stufe + 1);   // undatierte Karte
+        }
+        // Zahlen, Zeichenketten, Schalter: der lokale Wert bleibt stehen.
       }
       return out;
     };
@@ -13752,7 +13793,7 @@ function mergeData(local, remote) {
       if (lv == null) { merged[key] = rv; continue; }
       if (Array.isArray(lv) && Array.isArray(rv)) { merged[key] = unionList(lv, rv); continue; }
       if (typeof lv === 'object' && typeof rv === 'object'
-          && !Array.isArray(lv) && !Array.isArray(rv)) { merged[key] = unionMap(lv, rv); }
+          && !Array.isArray(lv) && !Array.isArray(rv)) { merged[key] = unionMap(lv, rv, 0); }
       // Zahlen, Zeichenketten, Schalter: der lokale Wert bleibt stehen.
     }
   }

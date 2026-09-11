@@ -2806,6 +2806,10 @@
     }
     undoBestaetigung = null;
     delete ft.intakes[intakeId];
+    /* Der Grabstein ist noetig, weil der Abgleich die Fragebogen-Karte seit
+       dem Befund vom 11.09.2026 VEREINIGT: Ohne ihn braechte die naechste
+       Fassung eines anderen Geraets den zurueckgenommenen Bogen wieder. */
+    if (typeof window.logDeletion === "function") window.logDeletion("ftIntake", intakeId);
     save();
     notify("ok", "Fragebogen", "Wiederherstellung zurückgenommen.");
     tokenAuskunft = null;
