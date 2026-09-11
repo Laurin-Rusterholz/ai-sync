@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -105976,7 +105976,16 @@ console.log('📚 Leseliste geladen');
   }
   function notFromPerson(m){ var c=clsOf(m); if (c && c.category==="person") return false; return !personOf(m.from); }
 
+  /* Jede Abfrage bekommt eine Nummer; nur die JUENGSTE darf schreiben.
+     Befund (11.09.2026): Das erste Laden des Eingangs lief noch, waehrend
+     schon gesucht wurde. Die aeltere Antwort kam spaeter zurueck und
+     ueberschrieb die Suchtreffer — der Suchkopf zeigte weiter die Suche, die
+     Liste darunter den Eingang. Wer sich auf die Liste verliess, sah die
+     falschen Mails zu seiner Frage. */
   async function loadMessages(reset){
+    GM._listSeq = (GM._listSeq || 0) + 1;
+    var meineAbfrage = GM._listSeq;
+    var veraltet = function(){ return meineAbfrage !== GM._listSeq; };
     GM.listLoading = true; GM.listError = null;
     if (reset){ GM.messages=[]; GM.nextPageToken=null; GM.selected={}; GM.cursor=-1; }  // Bulk/Cursor zurücksetzen
     rerender();
@@ -105986,11 +105995,13 @@ console.log('📚 Leseliste geladen');
       var query = Object.assign({ maxResults:"25" }, spec.query||{});
       if (!reset && GM.nextPageToken) query.pageToken = GM.nextPageToken;
       var list = await gmApi("GET","/users/me/messages", { query: query });
+      if (veraltet()) return;
       GM.nextPageToken = list.nextPageToken || null;
       var ids = (list.messages||[]).map(function(m){ return m.id; });
       var metas = await gmMapPool(ids, 5, function(id){
         return gmApi("GET","/users/me/messages/"+encodeURIComponent(id), { query:{ format:"metadata", metadataHeaders:["From","To","Cc","Subject","Date"] } }).catch(function(){ return null; });
       });
+      if (veraltet()) return;
       var rows = metas.filter(Boolean).map(parseMeta);
       // Globally hide blocked senders everywhere EXCEPT the explicit "Blockiert" view.
       if (GM.smart!=="blocked") rows = rows.filter(function(m){ return !isBlocked(addrOf(m.from)); });
@@ -105998,9 +106009,15 @@ console.log('📚 Leseliste geladen');
       GM.messages = reset ? rows : GM.messages.concat(rows);
       syncIndex(rows);
     } catch(e){
+      // Auch ein Fehler der ueberholten Abfrage gehoert nicht mehr auf den Schirm.
+      if (veraltet()) return;
       if (e.status===401 || (e.data && e.data.error==="NOT_CONNECTED")){ GM.status={connected:false}; }
       else { GM.listError = e.message||"Fehler beim Laden"; }
-    } finally { GM.listLoading=false; GM.booted=true; rerender(); }
+    } finally {
+      // „Laedt noch" gehoert der juengsten Abfrage — eine ueberholte darf es
+      // nicht abschalten und auch nicht neu zeichnen.
+      if (!veraltet()){ GM.listLoading=false; GM.booted=true; rerender(); }
+    }
   }
 
   async function openMessageById(id){
@@ -106690,6 +106707,32 @@ console.log('📚 Leseliste geladen');
     } catch(e){}
     return out.slice(0,500);
   }
+  /* ── Was im Feld steht, muss auch von aussen lesbar sein ─────────────────
+     Befund (11.09.2026): Beim Verfassen einer neuen Mail schien der Empfaenger
+     zu verschwinden. Eingetippt „silviataisch@bluewin.ch", die Vorschlagsliste
+     zeigte prompt „Silvia Taisch" — und unmittelbar danach las die Pruefung
+     das An-Feld wieder leer. Betreff und Text blieben stehen.
+
+     Nachgemessen im echten Browser ist der Wert NIE verloren gewesen. Ein
+     <input> hat zwei Dinge: die Eigenschaft `value` (was wirklich drinsteht,
+     was die Vorschlagsliste liest und was beim Senden verwendet wird) und das
+     Attribut `value=""` im Markup (der Startwert). Tippen aendert nur die
+     Eigenschaft; das Attribut bleibt fuer immer so, wie es gerendert wurde.
+     Wer das Markup liest — eine Fernbedienung, ein DOM-Abzug, ein
+     Vorlese-Werkzeug — sieht deshalb ein leeres Feld, obwohl es voll ist.
+     Genau das ist hier passiert, und es erklaert auch den frueheren Befund
+     „Antwort oeffnet mit leerem An-Feld".
+
+     Es wird deshalb nichts am Wert repariert (da war nichts kaputt), sondern
+     das Attribut zieht mit: nach jeder Eingabe und nach jeder Auswahl aus der
+     Vorschlagsliste. Das aendert die Anzeige nicht — eine einmal vom Nutzer
+     beruehrte Eigenschaft folgt dem Attribut nicht mehr — macht den Inhalt
+     aber von aussen pruefbar. Genau das braucht eine Empfaengerkontrolle vor
+     dem Senden. */
+  window.gmlSpiegelWert = function(el){
+    try { if (el && el.setAttribute) el.setAttribute("value", String(el.value == null ? "" : el.value)); } catch(e){}
+  };
+
   // ⌘/Strg+Enter sendet aus jedem Eingabefeld des Verfassen-Modals.
   window.gmlComposeKey = function(e){
     if ((e.metaKey||e.ctrlKey) && (e.key==="Enter" || e.keyCode===13)){ e.preventDefault(); if (typeof window.gmailSend==="function") window.gmailSend(); }
@@ -106709,7 +106752,8 @@ console.log('📚 Leseliste geladen');
     function tbtn(cmd,label,inner){ return '<button type="button" class="gmlc-tool" onclick="gmlFmt(\''+cmd+'\')" title="'+label+'" aria-label="'+label+'">'+inner+'</button>'; }
     function row(id,label,value,o){ o=o||{};
       var input = '<input id="'+id+'" class="gmlc-input" type="text" autocomplete="off" value="'+esc(value||"")+'" placeholder="'+esc(o.ph||"")+'"'+(o.attrs?' '+o.attrs:'')
-        + (o.ac ? ' role="combobox" aria-autocomplete="list" aria-expanded="false" oninput="gmlAcInput(\''+id+'\')" onkeydown="gmlAcKey(event,\''+id+'\')" onblur="gmlAcBlur(\''+id+'\')"' : '')
+        + (o.ac ? ' role="combobox" aria-autocomplete="list" aria-expanded="false" oninput="gmlAcInput(\''+id+'\')" onkeydown="gmlAcKey(event,\''+id+'\')" onblur="gmlAcBlur(\''+id+'\')"'
+                : ' oninput="gmlSpiegelWert(this)"')
         + '>';
       if (o.ac) input = '<div class="gmlc-inwrap">'+input+'<div class="gmlc-ac" id="'+id+'_ac" role="listbox" hidden></div></div>';
       return '<div class="gmlc-row"'+(o.rowId?' id="'+o.rowId+'"':'')+(o.hidden?' hidden':'')+'>'
@@ -107506,6 +107550,7 @@ console.log('📚 Leseliste geladen');
   function gmlAcHide(id){ var box=document.getElementById(id+"_ac"); if(box){ box.hidden=true; box.innerHTML=""; } var inp=document.getElementById(id); if(inp) inp.setAttribute("aria-expanded","false"); if(GM._ac && GM._ac.id===id) GM._ac=null; }
   window.gmlAcInput = function(id){
     var inp=document.getElementById(id), box=document.getElementById(id+"_ac"); if(!inp||!box) return;
+    window.gmlSpiegelWert(inp);       // damit das Markup zeigt, was drinsteht
     var v=inp.value, token=v.slice(v.lastIndexOf(",")+1).trim().toLowerCase();
     if (token.length < 1){ gmlAcHide(id); return; }
     var scored=[]; gmlContacts().forEach(function(c){
@@ -107533,6 +107578,7 @@ console.log('📚 Leseliste geladen');
     var v=inp.value, before=v.slice(0, v.lastIndexOf(",")+1);
     var formatted=c.name ? (c.name+" <"+c.email+">") : c.email;
     inp.value=(before ? before.replace(/\s*$/,"")+" " : "")+formatted+", ";
+    window.gmlSpiegelWert(inp);
     gmlAcHide(st.id); inp.focus();
     try { var p=inp.value.length; inp.setSelectionRange(p,p); } catch(e){}
   };
