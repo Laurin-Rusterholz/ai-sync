@@ -143,8 +143,18 @@ const ID = "1jfmPGHfXqXXPfkL6zKCd3_smeO0I3ikA";
     "die Indexierung kennt den vorhandenen Download-Proxy nicht — eine verknüpfte Drive-Datei bliebe unlesbar");
   ok(/encodeURIComponent\(fileObj\.url\)/.test(reindex), "die Adresse wird nicht sauber übergeben");
   // Eine Anmeldeseite ist kein Dokument — und das wird gesagt, nicht verschwiegen.
-  ok(/Anmeldeseite/.test(reindex), "eine nicht freigegebene Datei wird stillschweigend als leer behandelt");
-  ok(/nicht freigegeben/.test(reindex), "es wird nicht gesagt, was zu tun ist");
+  ok(/Anmeldeseite/.test(reindex), "eine private Datei wird stillschweigend als leer behandelt");
+  /* Die Meldung ist eine FESTSTELLUNG, keine Empfehlung. Sie lautete zuerst
+     „In Drive ‚Jeder mit dem Link‘ erlauben" — das ist ein Rat, Zugriffsrechte
+     zu lockern, damit eine Indexierung bequemer wird. Solche Entscheidungen
+     trifft niemand nebenbei, und schon gar nicht auf Zuruf der Oberflaeche. */
+  ok(/privat in Google Drive/.test(reindex), "es wird nicht gesagt, woran es liegt");
+  ok(!/Jeder mit dem Link/.test(reindex),
+    "die Meldung empfiehlt weiterhin, die Datei öffentlich freizugeben");
+  ok(!/erlauben|freigeben|freigebe/.test(reindex),
+    "die Meldung rät weiterhin zu einer Rechteänderung");
+  ok(/Verknüpfung bleibt bestehen/.test(reindex),
+    "es wird nicht gesagt, dass die Verknüpfung erhalten bleibt");
   // Die bisherigen zwei Strategien bleiben, der Proxy kommt danach.
   ok(reindex.indexOf("Strategie 1") < reindex.indexOf("download-proxy")
     && reindex.indexOf("XHR") < reindex.indexOf("download-proxy"),
