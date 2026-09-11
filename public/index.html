@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen · 2026-09-11" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -6126,6 +6126,26 @@ window._attachFromDrive = async function(kind, entityId){
     + '<div class="upload-icon">📤</div><div class="upload-text">Neues Dokument hochladen</div><div class="upload-hint">Wird im Drive gespeichert, automatisch klassifiziert und hier angehängt · max. 50 MB</div></div>'
     + '<input type="file" id="drvPickUpload" multiple style="display:none" onchange="window._driveQuickUploadFiles(this.files,{kind:\'' + _escDrv(kind) + '\',entityId:\'' + _escDrv(entityId) + '\'});this.value=\'\'">'
     + '<div id="drvQuickLog" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'
+    /* ── Eine Datei, die schon in Google Drive liegt ──────────────────────
+       Befund (11.09.2026): Eine XLSX wurde direkt in Google Drive abgelegt
+       (1jfmPGH…). „Aus Drive" zeigte sie nicht — und konnte das auch nicht:
+       Diese Liste ist der EIGENE Index von Quantus (driveDocs in Firebase),
+       nicht der Inhalt des Google-Kontos. Und der Weg ueber „Hochladen"
+       scheiterte, weil der native Dateidialog bei gesperrtem Rechner nicht
+       bedienbar ist.
+
+       Deshalb dieser dritte Weg: Adresse oder Id einsetzen, verknuepfen. Es
+       wird NICHTS kopiert und nichts hochgeladen — die Datei bleibt, wo sie
+       ist, und Quantus haelt den Verweis. Nichts geschieht von selbst: Die
+       Id kommt von Hand, und erst ein Klick legt die Verknuepfung an. */
+    + '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px">'
+    + '<div style="font-size:12.5px;font-weight:600;margin-bottom:4px">🔗 Datei, die schon in Google Drive liegt</div>'
+    + '<div class="mini" style="margin-bottom:7px">Adresse oder Id einsetzen. Die Datei wird nur verknüpft — nichts wird kopiert oder erneut hochgeladen.</div>'
+    + '<input type="text" id="drvLinkId" placeholder="https://drive.google.com/file/d/… oder die Id" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:9px;font-size:13px;margin-bottom:6px">'
+    + '<input type="text" id="drvLinkName" placeholder="Name für die Anzeige (z. B. Budget 2026.xlsx)" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:9px;font-size:13px;margin-bottom:7px">'
+    + '<button class="btn sm primary" onclick="window._attachDriveByLink(\'' + _escDrv(kind) + '\',\'' + _escDrv(entityId) + '\')">Verknüpfen</button>'
+    + '<div id="drvLinkHinweis" class="mini" style="margin-top:6px"></div>'
+    + '</div>'
     + '<input type="text" id="drvPickSearch" placeholder="Suchen (Name, Titel, Tags, Thema, Text)…" style="width:100%;box-sizing:border-box;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:10px;font-size:13.5px;margin-bottom:10px" oninput="window._attachFromDriveFilter(this.value)">'
     + '<div id="drvPickList" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:2px"><div class="mini" style="padding:10px">⏳ Lade Drive-Dokumente…</div></div>',
     '<button class="btn" onclick="closeModal()">Schliessen</button>');
@@ -6143,6 +6163,48 @@ window._attachFromDrive = async function(kind, entityId){
     if (el) el.innerHTML = '<div class="mini" style="padding:10px;color:var(--danger)">Fehler: ' + _escDrv(e && e.message) + '</div>';
   }
 };
+/* Aus einer Drive-Adresse die Id holen — oder die Id selbst annehmen.
+   Bekannte Formen: /file/d/<id>/…, ?id=<id>, /open?id=<id>, /uc?id=<id>. */
+window._driveIdAus = function(text){
+  var t = String(text || "").trim();
+  if (!t) return "";
+  var m = /\/file\/d\/([A-Za-z0-9_-]{10,})/.exec(t)
+       || /[?&]id=([A-Za-z0-9_-]{10,})/.exec(t)
+       || /\/d\/([A-Za-z0-9_-]{10,})/.exec(t);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{10,200}$/.test(t) ? t : "";
+};
+window._attachDriveByLink = function(kind, entityId){
+  var hinweis = document.getElementById('drvLinkHinweis');
+  var sag = function(text, schlimm){
+    if (hinweis){ hinweis.textContent = text; hinweis.style.color = schlimm ? 'var(--danger)' : 'var(--muted)'; }
+  };
+  var roh = (document.getElementById('drvLinkId') || {}).value || '';
+  var id = window._driveIdAus(roh);
+  if (!id){ sag('Das sieht nicht nach einer Drive-Adresse oder Id aus.', true); return; }
+  var ent = _drvEntity(kind, entityId);
+  if (!ent){ sag('Das Element wurde nicht gefunden.', true); return; }
+  ent.files = Array.isArray(ent.files) ? ent.files : [];
+  if (ent.files.some(function(f){ return f && f.driveFileId === id; })){
+    sag('Diese Datei ist hier bereits verknüpft.', true); return;
+  }
+  var name = String(((document.getElementById('drvLinkName') || {}).value) || '').trim() || ('Drive-Datei ' + id.slice(0, 8));
+  // Die Adresse, unter der Google die Datei herausgibt — dieselbe, die auch
+  // ein Mensch im Browser bekaeme. Kein neuer Zugang, keine neue Berechtigung.
+  var url = 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(id);
+  var datei = {
+    id: 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
+    name: name, url: url, driveFileId: id, source: 'gdrive',
+    uploadedAt: new Date().toISOString(),
+  };
+  ent.files.push(datei);
+  ent.updatedAt = new Date().toISOString();
+  if (typeof scheduleSave === 'function') scheduleSave();
+  sag('Verknüpft. Die Datei liegt weiterhin nur in Google Drive.');
+  if (typeof toast === 'function') toast('ok', '🔗 Verknüpft', name + ' — nichts kopiert');
+  if (typeof render === 'function') render();
+};
+
 window._attachFromDriveFilter = function(q){
   var c = window._drvPickCache; var el = document.getElementById('drvPickList');
   if (!c || !el) return;
@@ -7920,7 +7982,7 @@ function renderFileAttachments(kind, entityId) {
          ondragend="this.style.opacity='1'">
       ${thumbHtml}
       <div class="file-info">
-        <div class="file-name" data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="${esc(f.name)}">${esc(f.name)}</div>
+        <div class="file-name" data-action="preview-file" data-kind="${kind}" data-id="${entityId}" data-file-idx="${idx}" title="${esc(f.name)}${f.source === 'gdrive' ? ' — verknüpft aus Google Drive, nicht kopiert' : ''}">${esc(f.name)}${f.source === 'gdrive' ? ' <span class="mini" style="color:var(--muted);font-weight:400">🔗 Drive</span>' : ''}</div>
         <div class="file-meta">${formatFileSize(f.size)} · ${ext.toUpperCase()}${f.uploadedAt ? ' · ' + new Date(f.uploadedAt).toLocaleDateString('de-CH') : ''}</div>
         ${(() => {
           const extractable = ['pdf','docx','txt','md','csv','json','html','xml','vtt','srt'].includes(ext);
@@ -8524,6 +8586,31 @@ window._reindexFile = async function(kind, entityId, fileId) {
       }
     }
     
+    /* Strategie 3: der vorhandene Download-Proxy. Er holt die Datei
+       serverseitig und gibt sie mit CORS-Kopf zurueck — genau das braucht
+       eine verknuepfte Google-Drive-Datei, die der Browser sonst nicht lesen
+       darf. Kein neuer Zugang: Die Funktion gibt es laengst, und sie holt nur,
+       was ohnehin oeffentlich unter dieser Adresse liegt. Ist die Datei nicht
+       freigegeben, antwortet Google mit einer Anmeldeseite — dann sagen wir
+       das, statt still nichts zu tun. */
+    if (!blob && fileObj.url){
+      try {
+        var ueber = '/.netlify/functions/download-proxy?url=' + encodeURIComponent(fileObj.url)
+          + '&name=' + encodeURIComponent(fileObj.name || 'datei');
+        const resp = await fetch(ueber);
+        if (resp.ok){
+          const kandidat = await resp.blob();
+          // Eine Anmeldeseite ist kein Dokument.
+          if (!/^text\/html/i.test(kandidat.type || '') || (fileObj.name || '').toLowerCase().endsWith('.html')) blob = kandidat;
+          else throw new Error('Google hat eine Anmeldeseite geliefert — die Datei ist nicht freigegeben.');
+        }
+      } catch (e) {
+        console.warn('[Re-Index] Proxy-Strategie failed:', e?.message);
+        if (fileObj.source === 'gdrive'){
+          toast('warn', 'Nicht lesbar', 'Die Drive-Datei ist nicht freigegeben. In Drive „Jeder mit dem Link" erlauben, dann erneut indexieren.');
+        }
+      }
+    }
     if (!blob) throw new Error('CORS blockt Download — bitte Datei neu hochladen für Indexierung');
     file = new File([blob], fileObj.name, { type: fileObj.type || blob.type });
   } catch (err) {
