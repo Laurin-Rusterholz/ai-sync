@@ -4078,8 +4078,7 @@
 
   /* Ein Kundenlink entsteht bewusst — und nur einmal. Wer kopiert, bekommt
      denselben Link oder diese Auskunft; er bekommt nie still einen neuen. */
-  var KEIN_LINK = "Hier gibt es noch keinen Kundenlink. \u201eFragebogen-Link erstellen\u201c legt ihn an \u2014 "
-    + "Kopieren erzeugt bewusst keinen und rotiert keinen bestehenden.";
+  var KEIN_LINK = "Hier gibt es noch keinen Kundenlink. Er entsteht mit \u201eFragebogen-Link erstellen\u201c.";
 
   function copyText(text, message) {
     var done = function () { notify("ok", "FlowerTech", message || "Kopiert"); };
@@ -4094,14 +4093,19 @@
     area.style.opacity = "0";
     document.body.appendChild(area);
     area.select();
-    try { document.execCommand("copy"); done(); }
-    catch (e) {
-      // Auch hier bleibt der Link erreichbar: Er steht im Feld daneben und
-      // laesst sich markieren. Nichts wird neu erzeugt.
-      notify("warn", "Kopieren", "Kopieren hat nicht geklappt — die Adresse steht im Feld daneben "
-        + "und laesst sich von Hand markieren.");
-    }
+    /* execCommand meldet einen Fehlschlag als RUECKGABEWERT false und wirft
+       dabei nichts. Wer nur try/catch prueft, meldet dann "Kopiert", obwohl
+       nichts in der Zwischenablage liegt — und die Adresse gilt als
+       weitergegeben, die niemand hat. Deshalb zaehlt hier beides: false wie
+       Ausnahme. Kopiert oder nicht — an Fragebogen, Link und Token aendert
+       dieser Weg nichts. */
+    var geklappt = false;
+    try { geklappt = document.execCommand("copy") !== false; }
+    catch (e) { geklappt = false; }
     area.remove();
+    if (geklappt) done();
+    else notify("warn", "Kopieren", "Kopieren hat nicht geklappt — die Adresse steht im Feld "
+      + "daneben und laesst sich von Hand markieren.");
   }
   window._ftCopyText = copyText;
 

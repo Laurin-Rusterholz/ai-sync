@@ -34,7 +34,7 @@ let checks = 0;
 const ok = (condition, message) => { assert.ok(condition, message); checks++; };
 
 let seed = 1;
-function sandbox() {
+function sandbox({ zwischenablageScheitert = false, execCommand = true } = {}) {
   const data = { entities: { projects: {}, tasks: {}, notes: {}, persons: {}, organizations: {} },
     flowertech: {}, meta: {} };
   const kopiert = [];
@@ -44,7 +44,7 @@ function sandbox() {
     addEventListener() {}, removeEventListener() {},
     scheduleSave() { win.__speichert++; }, render() {},
     toast(type, title, message) { win.__toasts.push({ type, title, message }); },
-    __toasts: [], __opened: [], __speichert: 0,
+    __toasts: [], __opened: [], __speichert: 0, __execCommand: 0,
     createEntity: (kind, payload) => {
       const store = kind === "project" ? data.entities.projects : data.entities.tasks;
       const newId = kind + "_" + (Object.keys(store).length + 1) + "_" + (seed++);
@@ -66,10 +66,19 @@ function sandbox() {
       addEventListener() {},
       createElement: () => ({ style: {}, remove() {}, click() {}, setAttribute() {}, focus() {}, select() {} }),
       body: { appendChild() {}, removeChild() {}, classList: { toggle() {}, remove() {} } },
-      execCommand: () => true },
+      /* Der Rueckfallweg: execCommand meldet einen Fehlschlag als false, ohne
+         zu werfen — beide Faelle sind hier einstellbar. */
+      execCommand: () => {
+        win.__execCommand++;
+        if (execCommand === "wirft") throw new Error("nicht erlaubt");
+        return execCommand;
+      } },
     location: win.location, setTimeout: win.setTimeout, clearTimeout: () => {},
     console: { warn() {}, log() {}, error() {} },
-    navigator: { clipboard: { writeText: (t) => { kopiert.push(t); return Promise.resolve(); } } },
+    navigator: { clipboard: { writeText: (t) => {
+      if (zwischenablageScheitert) return Promise.reject(new Error("verweigert"));
+      kopiert.push(t); return Promise.resolve();
+    } } },
     confirm: () => true, APP: win.APP,
     firebase: { app: () => ({ database: () => ({ ref: () => ({
       set: () => Promise.resolve(), remove: () => Promise.resolve() }) }) }) },
@@ -101,6 +110,9 @@ const warnungen = (win) => win.__toasts.filter((t) => t.type === "warn").map((t)
   ok(kopiert.length === 0, "Kopieren hat etwas in die Zwischenablage gelegt, obwohl es keinen Link gibt");
   ok(warnungen(win).some((m) => /noch keinen Kundenlink/.test(m)),
     `die Auskunft fehlt: ${JSON.stringify(warnungen(win))}`);
+  // Kundentext: verstaendlich, ohne Innereien.
+  ok(!warnungen(win).some((m) => /Token|rotier/i.test(m)),
+    `die Auskunft spricht von Innereien: ${JSON.stringify(warnungen(win))}`);
 
   // Der bewusste Schritt.
   win._ftCreateProjectIntakeLink("prj_1");
@@ -179,7 +191,54 @@ const warnungen = (win) => win.__toasts.filter((t) => t.type === "warn").map((t)
     `das Kopieren an der Anfrage hat den Bestand veraendert: ${JSON.stringify(tokens(data))}`);
 }
 
-/* ══ 3. Quelltext: kein Kopierweg ruft eine anlegende Funktion ════════════ */
+/* ══ 3. Wenn die Zwischenablage verweigert ════════════════════════════════
+   BEFUND aus der Durchsicht von PR257: Der Rueckfallweg rief
+   document.execCommand("copy") und meldete danach unbesehen Erfolg.
+   execCommand gibt einen Fehlschlag aber als false zurueck, ohne zu werfen —
+   die Meldung "kopiert" stand dann ueber einer leeren Zwischenablage, und die
+   Adresse galt als weitergegeben, die niemand hatte.
+   Geprueft werden alle drei Ausgaenge des Rueckfalls, jedes Mal mit
+   verweigerter Zwischenablage (navigator.clipboard lehnt ab). */
+async function mitRueckfall(execCommand) {
+  const { win, data } = sandbox({ zwischenablageScheitert: true, execCommand });
+  data.entities.projects.prj_1 = { id: "prj_1", title: "Beispielprojekt", projectType: "flowertech",
+    pipelineStage: "lead", client: { company: "Beispielkunde AG", email: "kontakt@example.com" } };
+  win._ftCreateProjectIntakeLink("prj_1");
+  const vorher = tokens(data).slice();
+  win.__toasts.length = 0;
+  win._ftCopyProjectIntakeLink("prj_1");
+  await takt();
+  return { win, data, vorher, nachher: tokens(data) };
+}
+{
+  // a) execCommand meldet false: kein Erfolg behaupten.
+  const { win, vorher, nachher } = await mitRueckfall(false);
+  const erfolg = win.__toasts.filter((t) => t.type === "ok");
+  const warnung = win.__toasts.filter((t) => t.type === "warn");
+  ok(win.__execCommand === 1, `der Rueckfallweg lief nicht (${win.__execCommand})`);
+  ok(erfolg.length === 0, `es wurde Erfolg gemeldet, obwohl execCommand false lieferte: ${JSON.stringify(erfolg)}`);
+  ok(warnung.length === 1 && /Feld daneben/.test(warnung[0].message),
+    `der Hinweis auf das Adressfeld fehlt: ${JSON.stringify(warnung)}`);
+  ok(JSON.stringify(vorher) === JSON.stringify(nachher), "der Fehlschlag hat den Token veraendert");
+}
+{
+  // b) execCommand wirft: dasselbe Ergebnis.
+  const { win, vorher, nachher } = await mitRueckfall("wirft");
+  ok(win.__toasts.filter((t) => t.type === "ok").length === 0, "eine Ausnahme wurde als Erfolg gemeldet");
+  ok(win.__toasts.some((t) => t.type === "warn" && /Feld daneben/.test(t.message)),
+    "nach der Ausnahme fehlt der Hinweis auf das Adressfeld");
+  ok(JSON.stringify(vorher) === JSON.stringify(nachher), "die Ausnahme hat den Token veraendert");
+}
+{
+  // c) execCommand gelingt: genau eine Bestaetigung, kein Warnhinweis.
+  const { win, vorher, nachher } = await mitRueckfall(true);
+  ok(win.__toasts.filter((t) => t.type === "ok").length === 1,
+    `der gelungene Rueckfall bestaetigt nicht genau einmal: ${JSON.stringify(win.__toasts)}`);
+  ok(!win.__toasts.some((t) => t.type === "warn"), "der gelungene Rueckfall warnt trotzdem");
+  ok(JSON.stringify(vorher) === JSON.stringify(nachher), "der Rueckfall hat den Token veraendert");
+}
+
+/* ══ 4. Quelltext: kein Kopierweg ruft eine anlegende Funktion ════════════ */
 {
   const quelle = fs.readFileSync(path.join(root, "public/flowertech.js"), "utf8");
   [["Projekt", "_ftCopyProjectIntakeLink"], ["Anfrage", "_ftCopyInquiryIntakeLink"], ["Offerte", "_ftCopyOfferIntakeLink"]]
