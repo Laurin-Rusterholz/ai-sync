@@ -134,11 +134,14 @@ async function messe(breite, hoehe, schmal){
     if (!n) return null; n.scrollTop = 60;
     return { gesetzt:n.scrollTop, hoehe:n.scrollHeight, sicht:n.clientHeight,
       ueberlauf:getComputedStyle(n).overflowY }; });
-  // Scrollen kann nur belegen, wer ueberhaupt mehr Inhalt als Platz hat. Wo die
-  // Liste ganz hineinpasst (768x1024), wird stattdessen geprueft, dass der
-  // Ueberlauf weiterhin auf „auto" steht — sonst waere Scrollen abgeschnitten.
+  /* ACHTUNG, Reichweite dieser Messung: hier wird scrollTop PROGRAMMGESTEUERT
+     gesetzt und zurueckgelesen. Das belegt, dass der Bereich scrollbar
+     eingerichtet ist und nicht abgeschnitten wurde — es ist KEIN Beweis fuer
+     Mausrad oder Wischgeste; kein Radereignis und keine Beruehrung ist im
+     Spiel. Wo die Liste ganz hineinpasst (768x1024), bleibt nur die Pruefung,
+     dass der Ueberlauf weiterhin auf „auto" steht. */
   zusichern(scroll && (scroll.hoehe > scroll.sicht ? scroll.gesetzt > 0 : /auto|scroll/.test(scroll.ueberlauf)),
-    `die Navigation scrollt weiterhin (${JSON.stringify(scroll)})`);
+    `die Navigation ist weiterhin scrollbar — programmgesteuert gemessen, nicht per Rad/Wischen (${JSON.stringify(scroll)})`);
 
   if (AUS) await page.screenshot({ path:`${AUS}/tabs-${breite}.png`, clip:{x:0,y:0,width:breite,height:Math.min(hoehe,500)} });
 
@@ -160,23 +163,52 @@ async function messe(breite, hoehe, schmal){
   zusichern(l.sbOffen, `#sidebarToggleBtn oeffnet sie wieder (x=${l.sbLinks}, ${l.sbBreit}px breit)`);
   zusichern(!l.querlauf, "kein horizontaler Seitenueberlauf");
 
-  // Tabwechsel muss weiterhin gehen: zweiten Tab anlegen und anklicken.
-  const tabwechsel = await page.evaluate(async ()=>{
-    if (typeof window.btOpenInNewTab === "function") window.btOpenInNewTab("#/tasks");
-    else location.hash = "#/tasks";
-    await new Promise(r=>setTimeout(r,600));
-    const alle = Array.from(document.querySelectorAll(".bt-tab"));
-    return { anzahl: alle.length };
+  /* Tabwechsel. Die erste Fassung war zu schwach: sie schluckte einen
+     gescheiterten Klick mit .catch(()=>{}) und pruefte danach nur „mindestens
+     ein Tab, genau einer aktiv" — das ist auch dann wahr, wenn gar kein
+     zweiter Tab entstand und gar nichts geklickt wurde.
+     Jetzt: genau zwei unterscheidbare Tabs herstellen, Zustand VOR und NACH
+     dem Klick vergleichen (aktive Tab-Id, Route, sichtbarer Seitenkopf), und
+     jeder Ausfall — fehlender zweiter Tab, blockierter Klick, unveraenderte
+     Route — ist eine offene Zusicherung. */
+  const zustand = () => page.evaluate(()=>{
+    const tabs = Array.from(document.querySelectorAll(".bt-tab"));
+    const aktiv = document.querySelector(".bt-tab.active");
+    const kopf = document.querySelector("#main .page-title h2, #main h2, #main h1");
+    return {
+      ids: tabs.map(t => t.dataset.tabId),
+      titel: tabs.map(t => (t.querySelector(".bt-tab-title")||{}).textContent || ""),
+      aktivId: aktiv ? aktiv.dataset.tabId : null,
+      aktivTitel: aktiv ? ((aktiv.querySelector(".bt-tab-title")||{}).textContent || "") : null,
+      route: location.hash,
+      seitenkopf: kopf ? (kopf.textContent || "").trim().slice(0, 40) : null,
+    };
   });
-  if (tabwechsel.anzahl > 1){
-    const zweiter = page.locator(".bt-tab").nth(0);
-    await zweiter.click({ timeout: 4000 }).catch(()=>{});
-    await page.waitForTimeout(500);
+
+  // Zweiter Tab entsteht ueber eine echte Navigation (onViewChange legt ihn an).
+  await page.evaluate(()=>{ location.hash = "#/tasks"; });
+  await page.waitForTimeout(900);
+  const vor = await zustand();
+  zusichern(vor.ids.length === 2 && new Set(vor.ids).size === 2,
+    `genau zwei unterscheidbare Tabs vorhanden (${vor.ids.length}: ${vor.titel.join(" | ")})`);
+  zusichern(vor.route === "#/tasks" && vor.aktivId === vor.ids[1],
+    `der zweite Tab ist aktiv und traegt die Route (${vor.aktivTitel} @ ${vor.route})`);
+
+  if (vor.ids.length === 2){
+    const ziel = vor.ids[0];                       // der andere Tab: Dashboard
+    const klickFehler = await page.click(`.bt-tab[data-tab-id="${ziel}"]`, { timeout: 4000 })
+      .then(()=>null, e => String(e.message).split("\n")[0]);
+    zusichern(!klickFehler, `der andere Tab laesst sich anklicken${klickFehler ? " — " + klickFehler : ""}`);
+    await page.waitForTimeout(900);
+    const nach = await zustand();
+    zusichern(nach.aktivId === ziel && nach.aktivId !== vor.aktivId,
+      `der Klick wechselt den aktiven Tab (${vor.aktivTitel} -> ${nach.aktivTitel})`);
+    zusichern(nach.route !== vor.route && nach.route.startsWith("#/dashboard"),
+      `die Route folgt dem Tab (${vor.route} -> ${nach.route})`);
+    zusichern(!!nach.seitenkopf && nach.seitenkopf !== vor.seitenkopf,
+      `der sichtbare Seiteninhalt wechselt mit (${JSON.stringify(vor.seitenkopf)} -> ${JSON.stringify(nach.seitenkopf)})`);
+    zusichern(nach.ids.length === 2, `beide Tabs bleiben stehen (${nach.ids.length})`);
   }
-  const nachher = await page.evaluate(()=>({ tabs: document.querySelectorAll(".bt-tab").length,
-    aktiv: document.querySelectorAll(".bt-tab.active").length }));
-  zusichern(nachher.tabs >= 1 && nachher.aktiv === 1,
-    `Tabwechsel funktioniert weiterhin (${nachher.tabs} Tabs, ${nachher.aktiv} aktiv)`);
 
   await ctx.close();
 }
