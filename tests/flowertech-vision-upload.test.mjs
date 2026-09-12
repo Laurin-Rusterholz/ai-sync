@@ -259,9 +259,15 @@ function liste(handler, { token = TOKEN, origin = ORIGIN } = {}) {
     "die Liste verraet den Ablageort");
   ok(r.headers.get("Cache-Control") === "no-store", "die Liste darf zwischengespeichert werden");
 
-  // Lesen ist lesen: kein Eintrag wird veraendert, kein Upload-Kontingent verbraucht.
-  ok(!fb.db.flowertech.rateLimits, "die Liste verbraucht das Upload-Kontingent");
-  ok(Object.keys(fb.db.flowertech.intakeUploads[TOKEN]).length === 2, "die Liste hat den Bestand veraendert");
+  // Lesen ist lesen: kein Eintrag wird veraendert, kein Upload-Kontingent
+  // verbraucht (das Kontingent der beiden PUTs oben bleibt stehen, wie es ist).
+  const zaehlerVorher = JSON.stringify(fb.db.flowertech.rateLimits || {});
+  const bestandVorher = JSON.stringify(fb.db.flowertech.intakeUploads[TOKEN]);
+  await liste(handler);
+  ok(JSON.stringify(fb.db.flowertech.rateLimits || {}) === zaehlerVorher,
+    "die Liste verbraucht das Upload-Kontingent");
+  ok(JSON.stringify(fb.db.flowertech.intakeUploads[TOKEN]) === bestandVorher,
+    "die Liste hat den Bestand veraendert");
 
   // Entfernte Dateien verschwinden auch aus der Liste.
   await remove(handler, "f_0000000001");
