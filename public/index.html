@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente · 2026-09-12" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf · 2026-09-12" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -67589,6 +67589,53 @@ async function init() {
     }
   }, 1000);
     
+    /* ── SEITENLEISTE: EIN Schalter, drei Wege ──────────────────────────
+       BEFUND (live gemessen, 390x844 und 768x1024): das ✕ im Kopf der Leiste
+       und der Scrim daneben taten NICHTS. Grund ist keine CSS-Frage, sondern
+       eine Dublette: diese Datei deklariert `init` zweimal (weiter oben
+       `function init()`, hier `async function init()`). Die spaetere
+       Deklaration gewinnt, die fruehere laeuft nie — und genau dort standen
+       `setSidebarCollapsed`, die Bindung des ✕ und die des Scrims. Im Browser
+       gemessen: `typeof window.setSidebarCollapsed === "undefined"`,
+       `#sidebarCloseBtn.onclick === null`, waehrend der Umschalter (hier
+       gebunden) arbeitete. Deshalb liess sich die Leiste nur ueber den
+       seitlichen Umschalter schliessen.
+       Die Dublette wird hier NICHT aufgeloest — das beruehrt den gesamten
+       Start. Stattdessen bekommt der lebende Zweig dieselbe eine Funktion,
+       damit Beschriftung, aria-expanded und gemerkter Zustand nicht wieder
+       auseinanderlaufen. */
+    function setSidebarCollapsed(zu) {
+      const app = $("#app");
+      if (!app) return;
+      app.classList.toggle("sidebar-collapsed", !!zu);
+      const btn = $("#sidebarToggleBtn");
+      if (btn) {
+        btn.textContent = zu ? "▶" : "◀";
+        btn.setAttribute("aria-expanded", zu ? "false" : "true");
+      }
+      const scrim = $("#sidebarScrim");
+      if (scrim) scrim.setAttribute("aria-hidden", zu ? "true" : "false");
+      try { localStorage.setItem("sidebar-collapsed", zu ? "1" : "0"); } catch(e){}
+    }
+    window.setSidebarCollapsed = setSidebarCollapsed;
+
+    const sidebarCloseBtn = $("#sidebarCloseBtn");
+    if (sidebarCloseBtn) {
+      sidebarCloseBtn.onclick = function(evt) {
+        evt.stopPropagation();
+        evt.preventDefault();
+        setSidebarCollapsed(true);
+      };
+    }
+    const sidebarScrim = $("#sidebarScrim");
+    if (sidebarScrim) {
+      // Ein Tipp daneben schliesst — und NUR das. Keine Navigation.
+      sidebarScrim.onclick = function(evt) {
+        evt.stopPropagation();
+        setSidebarCollapsed(true);
+      };
+    }
+
     // Sidebar toggle
     const sidebarToggleBtn = $("#sidebarToggleBtn");
     if (sidebarToggleBtn) {
@@ -67596,12 +67643,7 @@ async function init() {
         evt.stopPropagation();
         evt.preventDefault();
         const app = $("#app");
-        if (app) {
-          app.classList.toggle("sidebar-collapsed");
-          const isCollapsed = app.classList.contains("sidebar-collapsed");
-          this.textContent = isCollapsed ? "▶" : "◀";
-          try { localStorage.setItem("sidebar-collapsed", isCollapsed ? "1" : "0"); } catch(e){}
-        }
+        if (app) setSidebarCollapsed(!app.classList.contains("sidebar-collapsed"));
       };
       // Restore sidebar state from localStorage
       try {
@@ -96191,6 +96233,29 @@ console.log('✨ Newsroom/ReadingHub Integration loaded');
 #browserTabBar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 body.tabs-on { padding-top: 38px; }
 body.tabs-on .topbar { top: 38px !important; }
+
+/* BEFUND (live gemessen, 390x844 und 768x1024, body: tabs-on mode-tablet):
+   Im Tabmodus lag der Kopf der ausgeklappten Seitenleiste — Quantus, 📌 und ✕ —
+   UNTER der Tab-Leiste. document.elementsFromPoint(201,34) meldete dort .bt-tab
+   statt #sidebarCloseBtn, und ein Klick auf ✕ kam nicht an.
+   Grund: die Tab-Leiste ist fixiert und traegt z-index 2147483600, die schmale
+   Seitenleiste ist ebenfalls fixiert (top:0, z-index 500). Das body-Padding von
+   38px richtet hier nichts aus — es verschiebt nur den Fluss, ein fixiertes
+   Element haengt am Viewport. Also bekommt die Overlay-Seitenleiste denselben
+   Versatz wie alles andere im Tabmodus (vgl. .noteflow-container, .rh-sidebar,
+   .jb-container weiter unten).
+   Der Scrim rueckt mit: die Leiste soll auch dann anklickbar bleiben, wenn die
+   Seitenleiste offen ist.
+   Breite Schirme bleiben unberuehrt — dort steht die Seitenleiste in der
+   Rasterspur unter dem body-Padding und wird gar nicht ueberlagert. Der
+   seitliche #sidebarToggleBtn (top:60px) lag schon vorher unter der Leiste und
+   funktionierte; er bleibt, wo er ist. */
+body.tabs-on.mode-tablet .sidebar,
+body.tabs-on.mode-tablet .app:not(.sidebar-collapsed) .sidebar-scrim { top: 38px; }
+@media (max-width: 900px) {
+  body.tabs-on .sidebar,
+  body.tabs-on .app:not(.sidebar-collapsed) .sidebar-scrim { top: 38px; }
+}
 
 .bt-tab {
   display: flex; align-items: center; gap: 7px;
