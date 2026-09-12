@@ -309,7 +309,7 @@ function liste(handler, { token = TOKEN, origin = ORIGIN } = {}) {
 
 /* ══ 3. Der Eingang: Absenden mit und ohne Dateien ════════════════════════ */
 function absenden(portal, files, { token = TOKEN } = {}) {
-  const payload = { answers: [{ key: "name", answer: "Herr Aljia" }, { key: "email", answer: "juledal19@gmail.com" }] };
+  const payload = { answers: [{ key: "name", answer: "Beispielperson" }, { key: "email", answer: "kontakt@example.com" }] };
   if (files !== undefined) payload.files = files;
   return portal(new Request("https://q.example/.netlify/functions/flowertech-portal", {
     method: "POST", headers: { "Content-Type": "application/json", Origin: ORIGIN },
@@ -325,7 +325,7 @@ function absenden(portal, files, { token = TOKEN } = {}) {
   ok(r.status === 201 && d.ok && d.submissionId, `das Absenden ohne Dateien scheitert: ${r.status} ${JSON.stringify(d)}`);
   const sub = fb.db.flowertech.submissions[d.submissionId];
   ok(Array.isArray(sub.payload.files) && sub.payload.files.length === 0, "ohne Dateien fehlt die leere Liste");
-  ok(sub.payload.answers[0].answer === "Herr Aljia", "die Antworten fehlen in der Einreichung");
+  ok(sub.payload.answers[0].answer === "Beispielperson", "die Antworten fehlen in der Einreichung");
 }
 {
   // Mit Dateien: die Metadaten kommen aus der RTDB, nicht aus dem Aufruf.
@@ -407,9 +407,9 @@ function makeSandbox() {
 const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
 {
   const { win, data } = makeSandbox();
-  data.entities.projects.prj_aljia = { id: "prj_aljia", title: "Reinigungsunternehmen Aljia", projectType: "flowertech",
-    pipelineStage: "lead", client: { name: "Herr Aljia", email: "juledal19@gmail.com" } };
-  win._ftCreateProjectIntakeLink("prj_aljia");
+  data.entities.projects.prj_beispiel = { id: "prj_beispiel", title: "Beispielkunde Reinigung", projectType: "flowertech",
+    pipelineStage: "lead", client: { name: "Beispielperson", email: "kontakt@example.com" } };
+  win._ftCreateProjectIntakeLink("prj_beispiel");
   await new Promise((r) => setTimeout(r, 0));
   const intake = Object.values(data.flowertech.intakes)[0];
   const token = intake.inviteToken;
@@ -417,7 +417,7 @@ const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
 
   const antworten = intake.questions.map((q) => ({
     key: q.key, label: q.label, type: q.type, role: q.role || "",
-    answer: q.type === "date" ? "2026-10-01" : q.type === "email" ? "juledal19@gmail.com" : q.type === "select" ? (q.options || [""])[0] : "Antwort " + q.key,
+    answer: q.type === "date" ? "2026-10-01" : q.type === "email" ? "kontakt@example.com" : q.type === "select" ? (q.options || [""])[0] : "Antwort " + q.key,
   }));
   const dateien = [
     { id: "f_0000000001", name: "logo.png", type: "image/png", size: 1200, storagePath: "flowertech/intakes/" + token + "/f_0000000001.png", uploadedAt: "2026-09-02T09:00:00.000Z" },
@@ -427,14 +427,14 @@ const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
   const n = win._ftIngestSubmissions({ sub_1: { id: "sub_1", kind: "intake", token, createdAt: "2026-09-02T09:05:00.000Z",
     payload: { intakeTitle: intake.title, answers: antworten, files: dateien } } });
   ok(n === 1, "die Einreichung mit Dateien wurde nicht verarbeitet");
-  const project = data.entities.projects.prj_aljia;
+  const project = data.entities.projects.prj_beispiel;
   const doc = project.ftIntakeDocument;
   ok(doc && doc.files && doc.files.length === 2, `am Projekt stehen ${doc && doc.files && doc.files.length} Dateien statt zwei`);
   ok(doc.files.every((f) => f.storagePath.startsWith("flowertech/intakes/" + token + "/")), "eine fremde Datei hängt am Projekt");
   ok(doc.intakeId === intake.id && project.sourceIntakeId === intake.id, "die Zuordnung Datei → Fragebogen → Projekt fehlt");
   ok(Object.keys(data.entities.projects).length === 1, "die Dateien haben ein zweites Projekt erzeugt");
 
-  const karte = strip(win.ftProjectPanel("prj_aljia"));
+  const karte = strip(win.ftProjectPanel("prj_beispiel"));
   ok(/Dateien der Kundschaft/.test(karte) && /logo\.png/.test(karte) && /cd\.pdf/.test(karte), "die Karte zeigt die Dateien nicht");
   ok(/_ftOpenIntakeFile\('flowertech\/intakes\//.test(karte), "die Dateien lassen sich nicht öffnen");
   ok(/391 KB|390 KB/.test(karte), "die Grösse ist nicht lesbar");
