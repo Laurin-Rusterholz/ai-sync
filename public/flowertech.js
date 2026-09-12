@@ -3325,8 +3325,7 @@
             return '<option value="' + status[0] + '"' + ((inquiry.status || "new") === status[0] ? " selected" : "") +
               ">" + esc(status[1]) + "</option>";
           }).join("") + "</select>" +
-          '<button class="btn sm mt-2 primary" onclick="window._ftCopyInquiryIntakeLink(\'' + attr(inquiry.id) +
-            '\')" title="Die eine Kundenadresse – waechst mit dem Projekt">🔗 Fragebogen-Link kopieren</button>' +
+          inquiryLinkHtml(inquiry.id) +
           '<button class="btn sm mt-2" onclick="window._ftOpenIntakeForInquiry(\'' + attr(inquiry.id) +
             '\')">Fragebogen bearbeiten</button>' +
           '<button class="btn sm mt-2" onclick="window._ftAiReply(\'' + attr(inquiry.id) + '\')">KI-Antwort</button>' +
@@ -4077,6 +4076,11 @@
     setTimeout(function () { try { win.print(); } catch (e) {} }, 300);
   };
 
+  /* Ein Kundenlink entsteht bewusst — und nur einmal. Wer kopiert, bekommt
+     denselben Link oder diese Auskunft; er bekommt nie still einen neuen. */
+  var KEIN_LINK = "Hier gibt es noch keinen Kundenlink. \u201eFragebogen-Link erstellen\u201c legt ihn an \u2014 "
+    + "Kopieren erzeugt bewusst keinen und rotiert keinen bestehenden.";
+
   function copyText(text, message) {
     var done = function () { notify("ok", "FlowerTech", message || "Kopiert"); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -4090,7 +4094,13 @@
     area.style.opacity = "0";
     document.body.appendChild(area);
     area.select();
-    try { document.execCommand("copy"); done(); } catch (e) { notify("warn", "Kopieren", "Bitte manuell kopieren"); }
+    try { document.execCommand("copy"); done(); }
+    catch (e) {
+      // Auch hier bleibt der Link erreichbar: Er steht im Feld daneben und
+      // laesst sich markieren. Nichts wird neu erzeugt.
+      notify("warn", "Kopieren", "Kopieren hat nicht geklappt — die Adresse steht im Feld daneben "
+        + "und laesst sich von Hand markieren.");
+    }
     area.remove();
   }
   window._ftCopyText = copyText;
@@ -4463,13 +4473,37 @@
      Es entsteht KEIN Projekt. Der Fragebogen gehört zur Anfrage; ein zweiter
      Klick erzeugt keinen zweiten Fragebogen, sondern liefert denselben Link.
      ------------------------------------------------------------------- */
+  /* Nur nachschlagen — nie anlegen. Kopieren darf keinen Fragebogen erzeugen:
+     BEFUND (12.09.2026): Der Knopf „Fragebogen-Link kopieren" an einer Anfrage
+     rief intakeForInquiry(), und das LEGT AN, wenn nichts gefunden wird. Wer
+     kopierte, konnte damit einen zweiten Fragebogen mit neuem Token erzeugen —
+     und in der Liste stand der Link nirgends, er war nur in der Zwischenablage.
+     Ging die verloren, half nur noch „neu". */
+  function intakeOfInquiry(inquiryId) {
+    var ft = wf();
+    if (!ft || !inquiryId) return null;
+    return Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        return String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+          || String(a.id || "").localeCompare(String(b.id || ""));
+      })
+      .find(function (i) { return i.inquiryId === inquiryId; }) || null;
+  }
+  window._ftIntakeOfInquiry = intakeOfInquiry;
+
+  function intakeLinkOfInquiry(inquiryId) {
+    var intake = intakeOfInquiry(inquiryId);
+    return intake ? intakeLink(intake.id) : "";
+  }
+  window._ftInquiryIntakeLink = intakeLinkOfInquiry;
+
   function intakeForInquiry(inquiryId) {
     var core = W();
     var ft = wf();
     var inquiry = (state().inquiries || {})[inquiryId];
     if (!core || !ft || !inquiry) return null;
-    var existing = Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
-      .find(function (i) { return i && i.inquiryId === inquiryId; });
+    var existing = intakeOfInquiry(inquiryId);
     if (existing) return existing;
 
     var intakeId = id();
@@ -4494,10 +4528,43 @@
   }
   window._ftIntakeForInquiry = intakeForInquiry;
 
-  window._ftCopyInquiryIntakeLink = function (inquiryId) {
+  /* Anlegen ist ein eigener, bewusster Schritt — und nur dieser legt an. */
+  window._ftCreateInquiryIntakeLink = function (inquiryId) {
     var core = W();
     var intake = intakeForInquiry(inquiryId);
     if (!intake) return notify("warn", "Fragebogen", "Diese Anfrage ist nicht mehr da.");
+    rerender();
+    var link = intakeLink(intake.id);
+    notify(link ? "ok" : "warn", "Fragebogen", link
+      ? "Fragebogen-Link für diese Anfrage erstellt — " + (core ? core.LINK_LABELS.intakeHint : "")
+      : "Ohne Firebase-Zugang gibt es noch keinen Fragebogen-Link.");
+  };
+
+  /* Die Zeile an der Anfrage: der Link steht DA — sichtbar, markierbar, so oft
+     kopierbar, wie jemand mag. Gibt es noch keinen, steht hier der eine
+     bewusste Knopf, der ihn anlegt. */
+  function inquiryLinkHtml(inquiryId) {
+    var core = W();
+    var link = intakeLinkOfInquiry(inquiryId);
+    if (!link) {
+      return '<button class="btn sm mt-2 primary" onclick="window._ftCreateInquiryIntakeLink(\'' + attr(inquiryId) +
+        '\')" title="' + attr(core ? core.LINK_LABELS.intakeHint : "") + '">' +
+        esc(core ? core.LINK_LABELS.intakeCreate : "Fragebogen-Link erstellen") + "</button>";
+    }
+    return '<div class="ft-link-row mt-2"><span>' + esc(core ? core.LINK_LABELS.intake : "Fragebogen-Link") + "</span>" +
+      '<input readonly value="' + attr(link) + '" onclick="this.select()">' +
+      '<button class="btn sm primary" onclick="window._ftCopyInquiryIntakeLink(\'' + attr(inquiryId) +
+        '\')" title="' + attr(core ? core.LINK_LABELS.intakeHint : "") + '">' +
+        esc(core ? core.LINK_LABELS.intakeCopy : "Link kopieren") + "</button>" +
+      '<a class="btn sm ghost" href="' + attr(link) + '" target="_blank" rel="noopener">' +
+        esc(core ? core.LINK_LABELS.intakeOpen : "Öffnen") + "</a></div>";
+  }
+  window._ftInquiryLinkHtml = inquiryLinkHtml;
+
+  window._ftCopyInquiryIntakeLink = function (inquiryId) {
+    var core = W();
+    var intake = intakeOfInquiry(inquiryId);
+    if (!intake) return notify("warn", "Fragebogen", KEIN_LINK);
     var link = intakeLink(intake.id);
     if (!link) return notify("warn", "Fragebogen", "Ohne Firebase-Zugang gibt es keinen Fragebogen-Link.");
     copyText(link, (core ? core.LINK_LABELS.intake : "Fragebogen-Link") + " kopiert — " +
@@ -4515,13 +4582,25 @@
      Vorschau, nie das Kundenportal. Ein zweiter Klick erzeugt keinen zweiten
      Fragebogen, sondern liefert denselben Link (Zuordnung über offerId).
      ------------------------------------------------------------------- */
+  function intakeOfOffer(offerId) {
+    var ft = wf();
+    if (!ft || !offerId) return null;
+    return Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        return String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+          || String(a.id || "").localeCompare(String(b.id || ""));
+      })
+      .find(function (i) { return i.offerId === offerId; }) || null;
+  }
+  window._ftIntakeOfOffer = intakeOfOffer;
+
   function intakeForOffer(offerId) {
     var core = W();
     var ft = wf();
     var doc = docById("offer", offerId);
     if (!core || !ft || !doc) return null;
-    var existing = Object.keys(ft.intakes || {}).map(function (k) { return ft.intakes[k]; })
-      .find(function (i) { return i && i.offerId === offerId; });
+    var existing = intakeOfOffer(offerId);
     if (existing) return existing;
 
     var intakeId = id();
@@ -4577,8 +4656,8 @@
 
   window._ftCopyOfferIntakeLink = function (offerId) {
     var core = W();
-    var intake = intakeForOffer(offerId);
-    if (!intake) return notify("warn", "Fragebogen", "Diese Offerte ist nicht mehr da.");
+    var intake = intakeOfOffer(offerId);
+    if (!intake) return notify("warn", "Fragebogen", KEIN_LINK);
     var link = intakeLink(intake.id);
     if (!link) return notify("warn", "Fragebogen", "Ohne Firebase-Zugang gibt es keinen Fragebogen-Link.");
     copyText(link, (core ? core.LINK_LABELS.intake : "Fragebogen-Link") + " kopiert — " +
@@ -4765,8 +4844,10 @@
 
   window._ftCopyProjectIntakeLink = function (projectId) {
     var core = W();
-    var intake = intakeForProject(projectId);
-    if (!intake) return notify("warn", "Fragebogen", "Dieses Projekt ist nicht mehr da.");
+    // Nachschlagen, nicht anlegen: intakeForProject() wuerde einen Fragebogen
+    // samt neuem Token erzeugen, wenn gerade keiner gefunden wird.
+    var intake = intakeOfProject(projectId);
+    if (!intake) return notify("warn", "Fragebogen", KEIN_LINK);
     var link = intakeLink(intake.id);
     if (!link) return notify("warn", "Fragebogen", "Ohne Firebase-Zugang gibt es keinen Fragebogen-Link.");
     // Der Erfolgshinweis nennt ausdrücklich, WELCHER Link kopiert wurde — die
