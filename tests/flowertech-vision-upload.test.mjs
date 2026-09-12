@@ -204,9 +204,112 @@ function remove(handler, id, { token = TOKEN } = {}) {
   ok((await upload(handler, PNG)).status === 201, "nach dem Entfernen ist kein Platz frei");
 }
 
+/* ══ 2b. Die Liste zu EINER Einladung ═════════════════════════════════════
+   BEFUND (12.09.2026): Nach einem Neuladen des Fragebogens waren bereits
+   hochgeladene Dateien aus der Ansicht verschwunden. Sie lagen weiter in der
+   RTDB, zaehlten weiter gegen die Zehnergrenze — gingen beim Absenden aber
+   nicht mit, weil die Seite nur die Ids der laufenden Sitzung kannte. Es
+   fehlte schlicht der Weg, die eigenen Dateien zu ERFRAGEN: die Funktion
+   kannte nur PUT und DELETE.
+
+   Die Liste ist bewusst die kleinstmoegliche: genau EIN Token, nur die noch
+   nicht abgesendeten Dateien, nur id/name/type/size — kein Ablageort, keine
+   fremde Datei, keine globale Uebersicht. Dieselben Schranken wie PUT und
+   DELETE: Herkunft, Tokenform, offener Bogen. */
+function liste(handler, { token = TOKEN, origin = ORIGIN } = {}) {
+  const headers = {};
+  if (origin) headers.Origin = origin;
+  return handler(new Request("https://q.example/.netlify/functions/flowertech-upload?e=" + token,
+    { method: "GET", headers }));
+}
+{
+  const fb = firebaseDoppel(offenerBogen);
+  let n = 0;
+  const handler = createHandler(Object.assign({ newId: () => "f_" + String(++n).padStart(10, "0") }, fb.deps));
+
+  // Dieselben Grenzen wie beim Hochladen.
+  ok((await liste(handler, { origin: "" })).status === 401, "ohne Herkunft wird gelistet");
+  ok((await liste(handler, { origin: "https://fremd.example" })).status === 403, "eine fremde Herkunft darf listen");
+  ok((await liste(handler, { token: "kurz" })).status === 400, "ein unbrauchbarer Token wird gelistet");
+  ok((await liste(handler, { token: "w".repeat(32) })).status === 404, "ein unbekannter Token wird gelistet");
+  const options = await handler(new Request("https://q.example/x?e=" + TOKEN, { method: "OPTIONS", headers: { Origin: ORIGIN } }));
+  ok(/GET/.test(options.headers.get("Access-Control-Allow-Methods") || ""), "der Preflight nennt GET nicht");
+  ok(/https:\/\/flowertech\.ch/.test(options.headers.get("Access-Control-Allow-Origin") || "")
+    || options.headers.get("Access-Control-Allow-Origin") === ORIGIN, "der Preflight nennt die Herkunft nicht");
+
+  // Leer heisst leer — und sagt nichts ueber andere Einladungen.
+  const leer = await liste(handler);
+  const dLeer = await leer.json();
+  ok(leer.status === 200 && dLeer.ok === true && Array.isArray(dLeer.files) && dLeer.files.length === 0,
+    `die leere Liste fehlt: ${leer.status} ${JSON.stringify(dLeer)}`);
+
+  await upload(handler, PNG, { name: "Logo Neu.png" });
+  await upload(handler, PDF, { name: "briefing.pdf", type: "application/pdf" });
+
+  const r = await liste(handler);
+  const d = await r.json();
+  ok(r.status === 200 && d.ok === true && d.files.length === 2, `die Liste fehlt: ${r.status} ${JSON.stringify(d)}`);
+  ok(d.files[0].id === "f_0000000001" && d.files[0].name === "Logo Neu.png"
+    && d.files[0].type === "image/png" && d.files[0].size === PNG.length,
+    `die Liste traegt die Datei nicht richtig: ${JSON.stringify(d.files[0])}`);
+  ok(d.files[1].id === "f_0000000002" && d.files[1].type === "application/pdf", "die zweite Datei fehlt in der Liste");
+  ok(Object.keys(d.files[0]).sort().join(",") === "id,name,size,type",
+    `die Liste gibt mehr als noetig heraus: ${Object.keys(d.files[0]).sort().join(",")}`);
+  ok(!JSON.stringify(d).includes("storagePath") && !JSON.stringify(d).includes("flowertech/intakes/"),
+    "die Liste verraet den Ablageort");
+  ok(r.headers.get("Cache-Control") === "no-store", "die Liste darf zwischengespeichert werden");
+
+  // Lesen ist lesen: kein Eintrag wird veraendert, kein Upload-Kontingent
+  // verbraucht (das Kontingent der beiden PUTs oben bleibt stehen, wie es ist).
+  const zaehlerVorher = JSON.stringify(fb.db.flowertech.rateLimits || {});
+  const bestandVorher = JSON.stringify(fb.db.flowertech.intakeUploads[TOKEN]);
+  await liste(handler);
+  ok(JSON.stringify(fb.db.flowertech.rateLimits || {}) === zaehlerVorher,
+    "die Liste verbraucht das Upload-Kontingent");
+  ok(JSON.stringify(fb.db.flowertech.intakeUploads[TOKEN]) === bestandVorher,
+    "die Liste hat den Bestand veraendert");
+
+  // Entfernte Dateien verschwinden auch aus der Liste.
+  await remove(handler, "f_0000000001");
+  const nachDelete = await (await liste(handler)).json();
+  ok(nachDelete.files.length === 1 && nachDelete.files[0].id === "f_0000000002",
+    `nach dem Entfernen stimmt die Liste nicht: ${JSON.stringify(nachDelete.files)}`);
+
+  // Abgesendete Dateien sind gebunden — sie gehoeren nicht mehr in die Liste
+  // der noch bearbeitbaren Dateien.
+  fb.db.flowertech.intakeUploads[TOKEN].f_0000000002.status = "submitted";
+  const nachAbsenden = await (await liste(handler)).json();
+  ok(nachAbsenden.files.length === 0, `abgesendete Dateien stehen weiter in der Liste: ${JSON.stringify(nachAbsenden.files)}`);
+}
+{
+  // Fremde Dateien bleiben fremd: zwei Einladungen, zwei Listen.
+  const zweiBoegen = { flowertech: { intakeForms: {
+    [TOKEN]: offenerBogen.flowertech.intakeForms[TOKEN],
+    ["z".repeat(32)]: { status: "open", title: "Ihre Angaben", questions: offenerBogen.flowertech.intakeForms[TOKEN].questions },
+  } } };
+  const fb = firebaseDoppel(zweiBoegen);
+  let n = 0;
+  const handler = createHandler(Object.assign({ newId: () => "f_" + String(++n).padStart(10, "0") }, fb.deps));
+  await upload(handler, PNG, { name: "meins.png" });
+  await upload(handler, JPG, { name: "fremd.jpg", type: "image/jpeg", token: "z".repeat(32) });
+  const meins = await (await liste(handler)).json();
+  const fremd = await (await liste(handler, { token: "z".repeat(32) })).json();
+  ok(meins.files.length === 1 && meins.files[0].name === "meins.png", `die eigene Liste stimmt nicht: ${JSON.stringify(meins.files)}`);
+  ok(fremd.files.length === 1 && fremd.files[0].name === "fremd.jpg", "die andere Einladung sieht die falsche Datei");
+  ok(!JSON.stringify(meins).includes("fremd.jpg"), "die Liste zeigt die Datei einer anderen Einladung");
+}
+{
+  // Ein geschlossener Bogen gibt nichts heraus — wie beim Hochladen.
+  const fb = firebaseDoppel({ flowertech: { intakeForms: { [TOKEN]:
+    Object.assign({}, offenerBogen.flowertech.intakeForms[TOKEN], { status: "closed" }) } } });
+  const handler = createHandler(fb.deps);
+  const r = await liste(handler);
+  ok(r.status === 404, `ein geschlossener Bogen listet: ${r.status}`);
+}
+
 /* ══ 3. Der Eingang: Absenden mit und ohne Dateien ════════════════════════ */
 function absenden(portal, files, { token = TOKEN } = {}) {
-  const payload = { answers: [{ key: "name", answer: "Herr Aljia" }, { key: "email", answer: "juledal19@gmail.com" }] };
+  const payload = { answers: [{ key: "name", answer: "Beispielperson" }, { key: "email", answer: "kontakt@example.com" }] };
   if (files !== undefined) payload.files = files;
   return portal(new Request("https://q.example/.netlify/functions/flowertech-portal", {
     method: "POST", headers: { "Content-Type": "application/json", Origin: ORIGIN },
@@ -222,7 +325,7 @@ function absenden(portal, files, { token = TOKEN } = {}) {
   ok(r.status === 201 && d.ok && d.submissionId, `das Absenden ohne Dateien scheitert: ${r.status} ${JSON.stringify(d)}`);
   const sub = fb.db.flowertech.submissions[d.submissionId];
   ok(Array.isArray(sub.payload.files) && sub.payload.files.length === 0, "ohne Dateien fehlt die leere Liste");
-  ok(sub.payload.answers[0].answer === "Herr Aljia", "die Antworten fehlen in der Einreichung");
+  ok(sub.payload.answers[0].answer === "Beispielperson", "die Antworten fehlen in der Einreichung");
 }
 {
   // Mit Dateien: die Metadaten kommen aus der RTDB, nicht aus dem Aufruf.
@@ -304,9 +407,9 @@ function makeSandbox() {
 const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
 {
   const { win, data } = makeSandbox();
-  data.entities.projects.prj_aljia = { id: "prj_aljia", title: "Reinigungsunternehmen Aljia", projectType: "flowertech",
-    pipelineStage: "lead", client: { name: "Herr Aljia", email: "juledal19@gmail.com" } };
-  win._ftCreateProjectIntakeLink("prj_aljia");
+  data.entities.projects.prj_beispiel = { id: "prj_beispiel", title: "Beispielkunde Reinigung", projectType: "flowertech",
+    pipelineStage: "lead", client: { name: "Beispielperson", email: "kontakt@example.com" } };
+  win._ftCreateProjectIntakeLink("prj_beispiel");
   await new Promise((r) => setTimeout(r, 0));
   const intake = Object.values(data.flowertech.intakes)[0];
   const token = intake.inviteToken;
@@ -314,7 +417,7 @@ const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
 
   const antworten = intake.questions.map((q) => ({
     key: q.key, label: q.label, type: q.type, role: q.role || "",
-    answer: q.type === "date" ? "2026-10-01" : q.type === "email" ? "juledal19@gmail.com" : q.type === "select" ? (q.options || [""])[0] : "Antwort " + q.key,
+    answer: q.type === "date" ? "2026-10-01" : q.type === "email" ? "kontakt@example.com" : q.type === "select" ? (q.options || [""])[0] : "Antwort " + q.key,
   }));
   const dateien = [
     { id: "f_0000000001", name: "logo.png", type: "image/png", size: 1200, storagePath: "flowertech/intakes/" + token + "/f_0000000001.png", uploadedAt: "2026-09-02T09:00:00.000Z" },
@@ -324,14 +427,14 @@ const strip = (html) => html.replace(/<style>[\s\S]*?<\/style>/g, "");
   const n = win._ftIngestSubmissions({ sub_1: { id: "sub_1", kind: "intake", token, createdAt: "2026-09-02T09:05:00.000Z",
     payload: { intakeTitle: intake.title, answers: antworten, files: dateien } } });
   ok(n === 1, "die Einreichung mit Dateien wurde nicht verarbeitet");
-  const project = data.entities.projects.prj_aljia;
+  const project = data.entities.projects.prj_beispiel;
   const doc = project.ftIntakeDocument;
   ok(doc && doc.files && doc.files.length === 2, `am Projekt stehen ${doc && doc.files && doc.files.length} Dateien statt zwei`);
   ok(doc.files.every((f) => f.storagePath.startsWith("flowertech/intakes/" + token + "/")), "eine fremde Datei hängt am Projekt");
   ok(doc.intakeId === intake.id && project.sourceIntakeId === intake.id, "die Zuordnung Datei → Fragebogen → Projekt fehlt");
   ok(Object.keys(data.entities.projects).length === 1, "die Dateien haben ein zweites Projekt erzeugt");
 
-  const karte = strip(win.ftProjectPanel("prj_aljia"));
+  const karte = strip(win.ftProjectPanel("prj_beispiel"));
   ok(/Dateien der Kundschaft/.test(karte) && /logo\.png/.test(karte) && /cd\.pdf/.test(karte), "die Karte zeigt die Dateien nicht");
   ok(/_ftOpenIntakeFile\('flowertech\/intakes\//.test(karte), "die Dateien lassen sich nicht öffnen");
   ok(/391 KB|390 KB/.test(karte), "die Grösse ist nicht lesbar");

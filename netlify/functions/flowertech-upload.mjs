@@ -11,6 +11,15 @@
  *          → 201 { ok, file: { id, name, type, size } }
  *   DELETE /.netlify/functions/flowertech-upload?e=<token>&id=<fileId>
  *          → 200 { ok }   (nur, solange die Datei noch nicht abgesendet ist)
+ *   GET    /.netlify/functions/flowertech-upload?e=<token>
+ *          → 200 { ok, files: [ { id, name, type, size } ] }
+ *          Die noch nicht abgesendeten Dateien GENAU DIESER Einladung, damit
+ *          der Fragebogen sie nach einem Neuladen wieder zeigen, entfernen und
+ *          mitsenden kann. Ohne diesen Weg kannte die Seite nur die Ids der
+ *          laufenden Sitzung: nach einem Neuladen blieben die Dateien liegen,
+ *          zaehlten gegen die Zehnergrenze und gingen beim Absenden nicht mit.
+ *          Bewusst klein: ein Token, keine Sammelliste, kein Ablageort, keine
+ *          fremde Datei. Dieselben Schranken wie PUT und DELETE.
  *
  * Ablage:
  *   Storage  flowertech/intakes/<token>/<fileId>.<ext>
@@ -63,7 +72,7 @@ function cors(req) {
   const origin = req.headers.get("Origin") || "";
   return {
     "Access-Control-Allow-Origin": allowedOrigins().has(origin) ? origin : "https://flowertech.ch",
-    "Access-Control-Allow-Methods": "PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-FlowerTech-Filename",
     "Vary": "Origin",
     "Cache-Control": "no-store",
@@ -103,7 +112,9 @@ export function createHandler(deps = {}) {
   return async (req) => {
     const headers = cors(req);
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (req.method !== "PUT" && req.method !== "DELETE") return json(req, { error: "Method not allowed" }, 405);
+    if (req.method !== "GET" && req.method !== "PUT" && req.method !== "DELETE") {
+      return json(req, { error: "Method not allowed" }, 405);
+    }
 
     // Nur aus dem Browser, nur von erlaubten Herkuenften — wie der Eingang.
     const origin = req.headers.get("Origin") || "";
@@ -122,6 +133,21 @@ export function createHandler(deps = {}) {
     }
 
     const base = `flowertech/intakeUploads/${token}`;
+
+    /* Lesen: die eigenen, noch nicht abgesendeten Dateien. Nur was die Seite
+       zum Anzeigen, Entfernen und Mitsenden braucht — kein storagePath, kein
+       Zeitstempel, kein Status; abgesendete Dateien sind gebunden und gehoeren
+       nicht mehr in diese Liste. Die Reihenfolge folgt dem Hochladen, damit die
+       Ansicht nach einem Neuladen dieselbe bleibt. */
+    if (req.method === "GET") {
+      const vorhanden = await db.get(base) || {};
+      const files = Object.keys(vorhanden)
+        .map((k) => vorhanden[k])
+        .filter((e) => e && e.id && e.status === "uploaded")
+        .sort((a, b) => String(a.uploadedAt || "").localeCompare(String(b.uploadedAt || "")) || String(a.id).localeCompare(String(b.id)))
+        .map((e) => ({ id: String(e.id), name: String(e.name || ""), type: String(e.type || ""), size: Number(e.size) || 0 }));
+      return json(req, { ok: true, files }, 200);
+    }
 
     if (req.method === "DELETE") {
       const id = String(url.searchParams.get("id") || "");
