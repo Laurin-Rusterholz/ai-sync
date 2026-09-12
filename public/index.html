@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt · 2026-09-11" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich · 2026-09-12" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -8684,6 +8684,25 @@ window._reindexFile = async function(kind, entityId, fileId) {
   
   toast('info', '🧠 Indexierung gestartet', fileObj.name);
   
+  /* Warum das Laden scheiterte, wird unterwegs festgehalten.
+     Befund 12.09.2026 an einer privaten Drive-Verknuepfung: die Oberflaeche
+     meldete erst zutreffend „Nicht lesbar — liegt privat in Google Drive" und
+     legte gleich darauf „CORS blockt Download — bitte Datei neu hochladen"
+     darueber. Die zweite Meldung ist fuer eine Drive-VERKNUEPFUNG falsch: es
+     liegt gar keine Kopie vor, die man neu hochladen koennte, und der lokale
+     Weg ueber das Dateifeld ist auf diesem Rechner ohnehin gesperrt. Am Ende
+     stand also ein Rat, den niemand befolgen kann, ueber der richtigen Auskunft.
+     Deshalb wird der Grund gemerkt und am Schluss genau EINE Meldung gezeigt —
+     die genaueste. */
+  let ladeGrund = null;   // 'drive-anmeldung' | 'zeitweise' | null
+  // Ob eine Datei ueberhaupt aus Drive stammt. Nur dann ist eine
+  // HTML-Antwort als Anmeldeseite zu deuten.
+  const ausDrive = (function(){
+    if (fileObj.source === 'gdrive' || fileObj.driveFileId) return true;
+    try { return /(^|\.)drive\.google\.com$/i.test(new URL(fileObj.url).hostname); }
+    catch (e) { return false; }
+  })();
+
   // Datei laden — mit mehreren Strategien wegen CORS
   let file;
   try {
@@ -8734,21 +8753,33 @@ window._reindexFile = async function(kind, entityId, fileId) {
         const resp = await fetch(ueber);
         if (resp.ok){
           const kandidat = await resp.blob();
-          // Eine Anmeldeseite ist kein Dokument.
+          // Eine Anmeldeseite ist kein Dokument. Bei einer Drive-Datei ist
+          // genau das der Fall „privat, kein angemeldeter Zugriff". Bei einer
+          // frei lesbaren Drive-Datei kommen hier die echten Bytes an — die
+          // wird deshalb weiterhin ganz normal indexiert.
           if (!/^text\/html/i.test(kandidat.type || '') || (fileObj.name || '').toLowerCase().endsWith('.html')) blob = kandidat;
-          else throw new Error('Google hat eine Anmeldeseite geliefert — die Datei ist privat.');
+          else ladeGrund = ausDrive ? 'drive-anmeldung' : 'zeitweise';
+        } else {
+          // Der Proxy kam nicht durch (502/504 …). Das kann beim naechsten Mal
+          // klappen und ist kein Grund, die Datei abzuschreiben.
+          ladeGrund = 'zeitweise';
         }
       } catch (e) {
         console.warn('[Re-Index] Proxy-Strategie failed:', e?.message);
-        if (fileObj.source === 'gdrive'){
-          /* Eine Feststellung, keine Empfehlung: Ob eine Datei freigegeben
-             wird, ist eine Entscheidung ueber Zugriffsrechte — die trifft
-             niemand nebenbei, weil eine Indexierung sie bequemer machte. */
-          toast('warn', 'Nicht lesbar', 'Die Datei liegt privat in Google Drive. Ohne angemeldeten Zugriff lässt sich ihr Inhalt von hier nicht lesen; die Verknüpfung bleibt bestehen.');
-        }
+        ladeGrund = ladeGrund || 'zeitweise';
       }
     }
-    if (!blob) throw new Error('CORS blockt Download — bitte Datei neu hochladen für Indexierung');
+    /* Die genaueste Auskunft gewinnt. „Neu hochladen" steht nur noch dort, wo
+       es auch stimmen kann — nicht ueber einer Drive-Verknuepfung. */
+    if (!blob){
+      if (ladeGrund === 'drive-anmeldung'){
+        throw new Error('Google hat statt der Datei eine Seite geliefert — für private Dateien ist das die Anmeldeseite. Quantus hat keinen angemeldeten Drive-Zugriff, ohne den lässt sich der Inhalt von hier nicht lesen. Die Verknüpfung bleibt bestehen.');
+      }
+      if (ladeGrund === 'zeitweise'){
+        throw new Error('Download zurzeit nicht möglich — die Datei war gerade nicht erreichbar. Ein späterer Versuch kann klappen.');
+      }
+      throw new Error('CORS blockt Download — bitte Datei neu hochladen für Indexierung');
+    }
     file = new File([blob], fileObj.name, { type: fileObj.type || blob.type });
   } catch (err) {
     console.error('[Re-Index] Download failed:', err);
@@ -8758,7 +8789,17 @@ window._reindexFile = async function(kind, entityId, fileId) {
       indicator.innerHTML = '⚠️ ' + esc(err?.message || 'Download fehlgeschlagen') + ' <button onclick="window._reindexFile(\'' + kind + '\',\'' + entityId + '\',\'' + fileObj.id + '\')" style="background:none;border:0;color:var(--accent);cursor:pointer;text-decoration:underline;font-size:10px;padding:0;margin-left:4px">erneut versuchen</button>';
     }
     scheduleSave();
-    toast('error', 'CORS-Block', 'Bitte Datei neu hochladen — bestehende kann nicht indexiert werden');
+    // Genau eine Meldung, passend zum festgestellten Grund. Der Knopf „erneut
+    // versuchen" bleibt in jedem Fall stehen: aendert sich die Zugriffslage
+    // (Datei freigegeben, Dienst wieder erreichbar), fuehrt derselbe Weg zum
+    // Ziel. Von selbst wiederholt nichts — jeder Lauf beginnt mit einem Klick.
+    if (ladeGrund === 'drive-anmeldung'){
+      toast('warn', 'Kein Drive-Zugriff', 'Die Datei liegt privat in Google Drive und Quantus hat keinen angemeldeten Drive-Zugriff. Die Verknüpfung bleibt bestehen.');
+    } else if (ladeGrund === 'zeitweise'){
+      toast('warn', 'Download fehlgeschlagen', 'Die Datei war gerade nicht erreichbar — ein späterer Versuch kann klappen.');
+    } else {
+      toast('error', 'CORS-Block', 'Bitte Datei neu hochladen — bestehende kann nicht indexiert werden');
+    }
     return;
   }
   
