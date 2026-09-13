@@ -13,8 +13,30 @@
 import { firebaseDbGet, firebaseDbGetWithEtag, firebaseDbSet, firebaseDbRemove } from "../lib/firebase-admin.mjs";
 import { createQueue } from "../lib/mail-queue.mjs";
 import { gmailRuf } from "../lib/mail-queue-gmail.mjs";
+import { zugangPruefen, umgebungswert, json } from "../lib/mail-queue-endpunkt.mjs";
 
-export default async () => {
+/* Wer darf diesen Lauf ausloesen? Der Zeitplan — und sonst nur, wer den
+   Zugangsschluessel hat. Eine geplante Ausfuehrung schickt den naechsten
+   Termin im Rumpf mit; daran ist sie zu erkennen. Ein Fremder koennte sonst
+   faellige Mails vorzeitig hinausschicken lassen. */
+async function darfLaufen(req) {
+  if (!req || typeof req.json !== "function") return true;   // direkter Aufruf im Lauf selbst
+  let rumpf = null;
+  try { rumpf = await req.json(); } catch (e) { rumpf = null; }
+  if (rumpf && rumpf.next_run) return true;                  // vom Zeitplan gerufen
+  const tuer = zugangPruefen(req.headers && req.headers.get("Authorization"), umgebungswert("SYNC_AUTH_TOKEN"));
+  return tuer.ok;
+}
+
+export default async (req) => {
+  if (!(await darfLaufen(req))) {
+    return json({ ok: false, error: "KEIN_ZUGANG",
+      grund: "Diesen Lauf loest der Zeitplan aus. Von aussen braucht es den Zugangsschluessel." }, 401);
+  }
+  return laufen();
+};
+
+async function laufen() {
   const q = createQueue({
     dbGet: firebaseDbGet,
     dbGetEtag: async (p) => { const r = await firebaseDbGetWithEtag(p); return { value: r.value, etag: r.serverEtag }; },

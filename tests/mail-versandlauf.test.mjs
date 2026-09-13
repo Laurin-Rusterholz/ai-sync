@@ -125,12 +125,15 @@ function umgebung(optionen = {}) {
       }
       return speicher.get(p) || null;
     },
-    dbGetEtag: async (p) => ({ value: speicher.get(p) || null, etag: kennungen.get(p) || null }),
+    /* Wie die echte RTDB: auch eine LEERE Stelle hat eine Kennung
+       (null_etag). Nur damit ist „anlegen, wenn nichts da ist" atomar. */
+    dbGetEtag: async (p) => ({ value: speicher.get(p) || null, etag: kennungen.get(p) || "leer" }),
     dbSet: async (p, v, opt = {}) => {
       /* Deterministische Barriere: Wer hier einhaengt, entscheidet genau, was
          ZWISCHEN Lesen und Schreiben passiert — kein Timing, kein Zufall. */
       if (haken.vorSchreiben) await haken.vorSchreiben(p, v, opt);
-      if (opt.ifMatch && kennungen.get(p) !== opt.ifMatch) return { ok: false, conflict: true };
+      const aktuelleKennung = kennungen.get(p) || "leer";   // leere Stelle: wie RTDBs null_etag
+      if (opt.ifMatch && aktuelleKennung !== opt.ifMatch) return { ok: false, conflict: true };
       setze(p, v);
       return { ok: true, conflict: false };
     },
@@ -438,8 +441,112 @@ const MAIL = { raw: "cmF3LWJlaXNwaWVs", to: "beispiel@example.com", subject: "Be
   ok(abgewiesen, "ein fremd gewordener Lauf durfte schreiben");
   eq((await lies(eintrag.id)).claim.lauf, "jemand-anders", "der fremde Zugriff wurde ueberschrieben");
 
-  await zaun.schreibeUnbedingt(Object.assign({}, e0, { status: K.STATUS.gesendet, gmailMessageId: "msg_x" }));
-  eq((await lies(eintrag.id)).status, K.STATUS.gesendet, "der bestaetigte Versand wurde nicht festgehalten");
+  /* Der bestaetigte Versand wird trotzdem festgehalten — aber NICHT aus einem
+     alten Abzug heraus: gerechnet wird auf dem gespeicherten Stand. */
+  await zaun.festhaltenGesendet({ id: "msg_x", threadId: "thr_1", labelIds: ["SENT"] });
+  const danach = await lies(eintrag.id);
+  eq(danach.status, K.STATUS.gesendet, "der bestaetigte Versand wurde nicht festgehalten");
+  eq(danach.gmailMessageId, "msg_x", "die bestaetigte Nachricht wurde nicht vermerkt");
+  eq(danach.claim, null, "der fremde Zugriff blieb stehen");
+}
+
+/* ══ 15. Datenbank faellt AUS, nachdem Gmail bestaetigt hat ══════════════
+   Unabhaengiger Repro (Laurin, 13.09.2026): drafts/send liefert SENT zurueck,
+   und genau beim Schreiben von „gesendet" faellt die Ablage EINMAL aus. Der
+   aeussere Fehlerzweig schrieb daraufhin den Stand VOR dem Versand zurueck —
+   ohne Stufe, ohne draftId — und der naechste Lauf sandte ein zweites Mal.
+   Hier wird genau das gemessen: ein einmaliger Schreibfehler nach SENT. */
+{
+  const { q, uhr, gmail, lies, haken } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  uhr.vor(3 * STUNDE);
+  let gestoert = false;
+  haken.vorSchreiben = async (pf, wert) => {
+    if (!gestoert && wert && wert.status === K.STATUS.gesendet) {
+      gestoert = true;
+      throw new Error("Temporary database failure");
+    }
+  };
+  await q.lauf("l1");
+  haken.vorSchreiben = null;
+  eq(gmail.sendCount, 1, "die Mail ging beim ersten Lauf gar nicht raus");
+  ok(gestoert, "der Schreibfehler nach SENT ist gar nicht eingetreten — der Test misst nichts");
+
+  let e = await lies(eintrag.id);
+  ok(e.status !== K.STATUS.geplant,
+    "nach bestaetigtem Versand wurde der Eintrag wieder auf „geplant“ zurueckgestuft — der naechste Lauf sendet erneut");
+  ok(e.status === K.STATUS.unklar || e.status === K.STATUS.gesendet,
+    "der Eintrag steht nach dem Schreibfehler weder auf gesendet noch auf ungeklaert, sondern auf " + e.status);
+  ok(e.stufe === K.STUFE.senden || e.status === K.STATUS.gesendet,
+    "die Stufe „senden“ wurde vom Fehlerzweig ueberschrieben");
+  ok(e.draftId || e.status === K.STATUS.gesendet, "die draftId wurde vom Fehlerzweig geloescht");
+
+  // Und jetzt die eigentliche Frage: sendet irgendein spaeterer Lauf nach?
+  for (const l of ["l2", "l3", "l4"]) { uhr.vor(24 * STUNDE); await q.lauf(l); }
+  eq(gmail.sendCount, 1, `nach dem Schreibfehler wurden insgesamt ${gmail.sendCount} Mails gesendet`);
+
+  // Ein ungeklaerter Fall bleibt ungeklaert, bis ein Mensch entscheidet.
+  e = await lies(eintrag.id);
+  if (e.status === K.STATUS.unklar) {
+    ok(!(await q.brichAb(eintrag.id)).ok, "der ungeklaerte Eintrag liess sich abbrechen");
+    const geklaert = await q.klaereGesendet(eintrag.id);
+    ok(geklaert.ok, "die menschliche Klaerung wurde abgewiesen");
+    eq((await lies(eintrag.id)).status, K.STATUS.gesendet, "nach der Klaerung steht der Eintrag nicht auf gesendet");
+  }
+  eq(gmail.sendCount, 1, "die Klaerung hat selbst gesendet");
+}
+
+/* ══ 16. Ein Notschreibgang stuft nichts zurueck ═════════════════════════
+   Auch der letzte Ausweg darf ein gespeichertes „gesendet" nicht ueberschreiben. */
+{
+  const { q, uhr, lies, setze } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  const e0 = await lies(eintrag.id);
+  setze("mail/outbox/" + eintrag.id, Object.assign({}, e0, {
+    status: K.STATUS.gesendet, gmailMessageId: "msg_fertig", sentAt: uhr.jetzt(),
+    claim: { lauf: "ich", seit: uhr.jetzt() } }));
+  const zaun = q._zaunFuer(eintrag.id, "ich");
+  zaun.angestossen = true;
+  await zaun.festhaltenUnklar("angeblich ungeklaert");
+  eq((await lies(eintrag.id)).status, K.STATUS.gesendet, "ein gespeichertes „gesendet“ wurde zu „unklar“ zurueckgestuft");
+  await zaun.festhaltenFehler(new Error("angeblicher Fehler"));
+  eq((await lies(eintrag.id)).status, K.STATUS.gesendet, "ein gespeichertes „gesendet“ wurde vom Fehlerzweig ueberschrieben");
+}
+
+/* ══ 17. Planen ist wiederholbar ═════════════════════════════════════════
+   Repro: Die Antwort auf „plane" geht verloren, jemand klickt noch einmal.
+   Mit stabilem Anfrageschluessel entsteht KEIN zweiter Eintrag — und der
+   bestehende wird auch nicht mit der neuen Nutzlast ueberschrieben. */
+{
+  const { q, uhr, gmail, lies, speicher } = umgebung();
+  const schluessel = "abcdefgh12345678";
+  const erst = await q.plane(Object.assign({}, MAIL, { anfrageSchluessel: schluessel }));
+  ok(erst.ok, "die erste Planung scheiterte");
+  ok(!erst.bestand, "die erste Planung galt schon als Bestand");
+
+  const zweit = await q.plane(Object.assign({}, MAIL, { anfrageSchluessel: schluessel,
+    subject: "Versehentlich anders", raw: "YW5kZXJz" }));
+  ok(zweit.ok, "die Wiederholung scheiterte");
+  eq(zweit.bestand, true, "die Wiederholung gilt nicht als Bestand");
+  eq(zweit.eintrag.id, erst.eintrag.id, "die Wiederholung legte einen ZWEITEN Eintrag an");
+  eq(zweit.eintrag.subject, MAIL.subject, "die Wiederholung hat die bestehende Nutzlast ueberschrieben");
+  eq(zweit.eintrag.raw, erst.eintrag.raw, "die Wiederholung hat die Nachricht ueberschrieben");
+
+  let anzahl = 0;
+  speicher.forEach((v, k) => { if (k.startsWith("mail/outbox/")) anzahl++; });
+  eq(anzahl, 1, `nach der Wiederholung liegen ${anzahl} Eintraege im Ausgang`);
+
+  uhr.vor(3 * STUNDE);
+  await q.lauf("l");
+  eq(gmail.sendCount, 1, "aus der wiederholten Planung wurden zwei Mails");
+
+  // Ohne Schluessel bleibt es beim alten Verhalten: jeder Aufruf ein Eintrag.
+  const ohne1 = await q.plane(MAIL);
+  const ohne2 = await q.plane(MAIL);
+  ok(ohne1.eintrag.id !== ohne2.eintrag.id, "ohne Schluessel landen zwei Planungen auf derselben Stelle");
+  // Ein unbrauchbarer Schluessel wird nicht zur Ablagestelle.
+  const krumm = await q.plane(Object.assign({}, MAIL, { anfrageSchluessel: "../boese" }));
+  ok(krumm.ok && !/boese/.test(krumm.eintrag.id), "ein krummer Schluessel wurde zur Ablagestelle");
 }
 
 console.log(`mail versandlauf (Server): ok (${checks} Pruefungen)`);

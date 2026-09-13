@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung · 2026-09-13" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung+mailversand-empfaenger-idempotenz-zugang · 2026-09-13" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -107653,6 +107653,10 @@ console.log('📚 Leseliste geladen');
     var footer = '<div class="gmlc-footer">'
       + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()" title="Geht standardmässig in drei Stunden raus — bis dahin im Ausgang änderbar und abbrechbar">'+(prefill.ausgangId?'Änderung speichern':'Senden (in 3 h)')+'</button>'
       + '<button type="button" id="gmlSendLaterBtn" class="btn" onclick="gmailSendLaterMenu(event)" title="Später senden — Zeitpunkt wählen (z. B. in 1 Stunde oder morgen früh)">🕒 Später</button>'
+      /* Der ausdrückliche Sofortversand. Er ist absichtlich nicht der Standard —
+         aber er muss erreichbar sein: als bewusste Ausnahme, und als Weg, wenn
+         der Ausgang auf dem Server gesperrt ist (fehlender Zugangsschlüssel). */
+      + '<button type="button" id="gmlSendNowBtn" class="btn" onclick="gmailSendNow()" title="Ohne Wartezeit sofort an Gmail übergeben">📨 Jetzt senden</button>'
       + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe“)">💾 Entwurf speichern</button>'
       + '<button type="button" class="gmlc-iconbtn" onclick="gmlAttach()" title="Datei anhängen" aria-label="Datei anhängen">'+SVG.attach+'</button>'
       + (hasOrig ? '<button type="button" class="gmlc-iconbtn" onclick="gmlToggleQuote()" title="Zitat ein-/ausblenden" aria-label="Zitat ein-/ausblenden">'+SVG.quote+'</button>' : '')
@@ -107661,7 +107665,8 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     // linkedEntities ist die Quelle der Wahrheit; linkedEntity spiegelt das erste
     // Element (Kompatibilität mit n8n-Entwürfen und bestehenden Pfaden).
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null, linkedEntities: les0, linkedEntity: les0[0]||null, ausgangId: prefill.ausgangId||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null, linkedEntities: les0, linkedEntity: les0[0]||null, ausgangId: prefill.ausgangId||null,
+      anfrageSchluessel: (typeof gmlAnfrageSchluessel==="function" ? gmlAnfrageSchluessel() : null) };
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
@@ -108777,6 +108782,16 @@ console.log('📚 Leseliste geladen');
   }
   window.gmQueue = gmQueue;
 
+  /* Ein stabiler Schlüssel je Verfassen-Vorgang. Er macht das Planen
+     WIEDERHOLBAR: Geht die Antwort verloren und jemand klickt noch einmal,
+     landet der zweite Versuch auf derselben Stelle im Ausgang statt als
+     zweiter Eintrag — und damit später als zweite Mail. */
+  function gmlAnfrageSchluessel(){
+    try { if (window.crypto && crypto.randomUUID) return "a"+crypto.randomUUID().replace(/-/g,""); } catch(e){}
+    return "a"+Date.now().toString(36)+Math.random().toString(36).slice(2,12);
+  }
+  window.gmlAnfrageSchluessel = gmlAnfrageSchluessel;
+
   function gmlZuercherZeit(ms){
     try {
       return new Intl.DateTimeFormat("de-CH", { timeZone:"Europe/Zurich", day:"2-digit", month:"2-digit",
@@ -108810,7 +108825,8 @@ console.log('📚 Leseliste geladen');
         vorschau:String(body||"").slice(0,300), quelle:"quantus",
         koerper:String(body||""), hatAnhaenge:((GM._attachments||[]).length>0),
         inReplyTo:(ctx.inReplyTo||""), references:(ctx.references||""),
-        zitat:(ctx.replyQuote||null) };
+        zitat:(ctx.replyQuote||null),
+        anfrageSchluessel:(ctx.anfrageSchluessel||null) };
       if (ctx.threadId) anfrage.threadId = ctx.threadId;
       if (optionen.zeitpunkt) anfrage.zeitpunkt = Number(optionen.zeitpunkt);
       /* Wird ein bereits geplanter Eintrag bearbeitet, entsteht KEIN zweiter:
@@ -108825,9 +108841,18 @@ console.log('📚 Leseliste geladen');
            sie nach dem Planen nicht mehr. */
         anfrage.id = ctx.ausgangId;
         anfrage.koerperTeil = gmlBodyEntity({ body:body, quote:(ctx.replyQuote||null) });
+        /* Wer im Bearbeiten-Dialog eine Datei anhängt, erwartet sie in der
+           Mail. Sie würde sonst still verschwinden: der Körper allein trägt
+           sie nicht. Neue Anhänge kommen deshalb ausdrücklich mit und werden
+           serverseitig an die bestehende Nachricht ANGEHÄNGT — die schon
+           vorhandenen bleiben, wo sie sind. */
+        var neueAnh = (GM._attachments||[]).map(function(a){
+          return { name:(a.name||"datei"), typ:(a.type||"application/octet-stream"), daten:String(a.data||"") };
+        });
+        if (neueAnh.length) anfrage.neueAnhaenge = neueAnh;
         delete anfrage.raw; delete anfrage.quelle; delete anfrage.hatAnhaenge;
         delete anfrage.threadId; delete anfrage.inReplyTo; delete anfrage.references;
-        delete anfrage.zitat;
+        delete anfrage.zitat; delete anfrage.anfrageSchluessel;
         antwort = await gmQueue("aendere", anfrage);
       } else {
         antwort = await gmQueue("plane", anfrage);
@@ -108846,7 +108871,17 @@ console.log('📚 Leseliste geladen');
       GM.open=null;
       if (typeof gmailLadeAusgang==="function") gmailLadeAusgang();
     } catch(e){
-      toast("err","Nicht geplant",(e&&e.message)||"Die Warteschlange antwortet nicht.");
+      var text = (e&&e.message)||"Die Warteschlange antwortet nicht.";
+      /* Der Ausgang ist bewusst fail-closed: ohne hinterlegten Zugangsschlüssel
+         (SYNC_AUTH_TOKEN auf dem Server, derselbe Wert in den Quantus-
+         Einstellungen) gibt er nichts heraus und plant nichts ein. Dann bleibt
+         das Verfassen-Fenster offen und sagt, was zu tun ist — gesendet werden
+         kann trotzdem, über „📨 Jetzt senden". */
+      if (/GESPERRT|KEIN_ZUGANG|Zugangsschl/i.test(text)){
+        toast("err","Ausgang gesperrt", text + " Solange gehen Mails nur über „📨 Jetzt senden“ raus.");
+      } else {
+        toast("err","Nicht geplant", text);
+      }
     } finally {
       GM._composeBusy=false;
       var b=document.getElementById("gmlSendBtn");
@@ -108977,7 +109012,16 @@ console.log('📚 Leseliste geladen');
   function renderAusgangPane(){
     var liste=(GM.ausgang||[]);
     var head='<div class="gml-listhead"><span>🕒 Ausgang (geplant)</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+liste.length+'</span><button class="gml-mini" title="Aktualisieren" onclick="gmailLadeAusgang()">🔄</button></span></div>';
-    if (GM.ausgangFehler) return head+'<div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(GM.ausgangFehler)+'</p><p style="font-size:12px;color:var(--muted)">Der Ausgang liegt auf dem Server (<code>/.netlify/functions/mail-queue</code>). Solange er nicht antwortet, wird hier nichts geplant — gesendet aber auch nichts Doppeltes.</p></div>';
+    if (GM.ausgangFehler){
+      var gesperrt = /GESPERRT|KEIN_ZUGANG|Zugangsschl/i.test(GM.ausgangFehler);
+      return head+'<div class="gml-empty"><div style="font-size:40px">'+(gesperrt?'🔒':'⚠️')+'</div>'
+        + '<p>'+(gesperrt?'Ausgang gesperrt':'Ausgang nicht erreichbar')+'</p>'
+        + '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">'+esc(GM.ausgangFehler)+'</p>'
+        + (gesperrt
+            ? '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">So wird er aufgeschlossen: auf dem Server <code>SYNC_AUTH_TOKEN</code> setzen und denselben Wert in den Quantus-Einstellungen als Zugangsschlüssel hinterlegen. Bis dahin gehen Mails über „📨 Jetzt senden“ raus — hier wird nichts geplant und nichts doppelt gesendet.</p>'
+            : '<p style="font-size:12px;color:var(--muted)">Der Ausgang liegt auf dem Server (<code>/.netlify/functions/mail-queue</code>). Solange er nicht antwortet, wird hier nichts geplant — gesendet aber auch nichts Doppeltes.</p>')
+        + '</div>';
+    }
     var alt=(GM.drafts||[]).filter(function(d){ return d && d.status==="scheduled"; });
     var altHinweis = alt.length
       ? '<div class="gml-empty" style="text-align:left;padding:12px 14px;font-size:13px">⚠️ '+alt.length+' alte Planung(en) aus dem früheren Browser-Takt liegen unter „KI-Entwürfe". Sie werden nicht mehr von selbst gesendet — dort ausdrücklich „In den Ausgang übernehmen".</div>'
@@ -110782,9 +110826,12 @@ console.log('📚 Leseliste geladen');
       var to=(a[0]||"").trim(), subj=(a[1]||"").trim(), body=(a[2]||"").trim();
       if(!to) return "❌ Kein Empfänger";
       if(!confirm("Der KI-Assistent möchte eine E-Mail einplanen:\n\nAn: "+to+"\nBetreff: "+subj+"\n\n"+body+"\n\nSie geht in 3 Stunden raus und bleibt bis dahin im Ausgang änderbar.\n\nEinplanen?")) return "↩️ Abgebrochen";
+      if (!GM._kiSendeSchluessel) GM._kiSendeSchluessel = gmlAnfrageSchluessel();
       var geplant = await gmQueue("plane", { raw: buildRaw({to:to,subject:subj,body:body}),
         to:to, subject:subj, vorschau:String(body||"").slice(0,300),
-        koerper:String(body||""), hatAnhaenge:false, quelle:"ki-assistent" });
+        koerper:String(body||""), hatAnhaenge:false, quelle:"ki-assistent",
+        anfrageSchluessel: GM._kiSendeSchluessel });
+      GM._kiSendeSchluessel = null;
       if (typeof gmailLadeAusgang==="function") gmailLadeAusgang();
       return "🕒 Mail an "+to+" geplant — geht "+gmlZuercherZeit((geplant.eintrag||{}).sendAt)
         + " raus (Europe/Zurich). Bis dahin im Ausgang änderbar oder abbrechbar.";

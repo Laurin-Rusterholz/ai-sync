@@ -72,22 +72,60 @@ export function createQueue({
   /* ── Was die Oberfläche aufruft ──────────────────────────────────────────
      Jeder dieser Wege liest MIT Kennung und schreibt MIT derselben Kennung.
      Wer dazwischen kommt, verliert — und bekommt gesagt, warum. */
+  /* Ein Anfrageschlüssel kommt von aussen und wird zur Ablagestelle — er muss
+     deshalb ein harmloser Name sein, lang genug, um nicht zufällig zu kollidieren. */
+  function schluesselVon(wert) {
+    const s = String(wert == null ? "" : wert).trim();
+    return /^[A-Za-z0-9_-]{8,64}$/.test(s) ? s : null;
+  }
+
+  /* PLANEN IST WIEDERHOLBAR
+     Befund der unabhängigen Gegenprobe (13.09.2026): Ging die Antwort auf
+     „plane" verloren, entstand beim zweiten Klick ein ZWEITER Eintrag — und
+     damit später eine zweite Mail. Der Browser schickt deshalb einen stabilen
+     Anfrageschlüssel mit; er wird zur Kennung des Eintrags. Zweiter Versuch
+     heisst dann: dieselbe Stelle. Angelegt wird nur, wenn dort noch NICHTS
+     liegt (if-match auf die leere Stelle); liegt schon etwas, kommt genau
+     dieser Eintrag unverändert zurück. Eine Wiederholung überschreibt also
+     nie den Inhalt — auch nicht mit einer abweichenden Nutzlast. */
   async function plane(eingabe = {}) {
-    const neueKennung = eingabe.id || id();
+    const schluessel = schluesselVon(eingabe.anfrageSchluessel);
+    const neueKennung = eingabe.id || (schluessel ? "out_" + schluessel : id());
+
+    if (schluessel) {
+      const vorher = await liesMitKennung(neueKennung);
+      if (vorher.value && vorher.value.id) return { ok: true, eintrag: vorher.value, bestand: true };
+      const gebaut = baueEintrag(eingabe, neueKennung);
+      if (!gebaut.ok) return gebaut;
+      const r = await dbSet(pfad(neueKennung), gebaut.eintrag, { ifMatch: vorher.etag });
+      if (r && r.conflict) {
+        const jetztDa = await liesMitKennung(neueKennung);
+        if (jetztDa.value && jetztDa.value.id) return { ok: true, eintrag: jetztDa.value, bestand: true };
+        return { ok: false, grund: "Diese Mail wurde gerade woanders angelegt." };
+      }
+      return { ok: true, eintrag: gebaut.eintrag };
+    }
+
+    const gebaut = baueEintrag(eingabe, neueKennung);
+    if (!gebaut.ok) return gebaut;
+    const r = await dbSet(pfad(neueKennung), gebaut.eintrag);
+    if (r && r.conflict) return { ok: false, grund: "Diese Mail wurde gerade woanders angelegt." };
+    return { ok: true, eintrag: gebaut.eintrag };
+  }
+
+  function baueEintrag(eingabe, kennung) {
     /* Die eigene Message-ID wird HIER gesetzt, nicht im Browser: sie muss zur
        Nachricht gehören, die wirklich abgeschickt wird. */
     const mime = M.dekodiere(eingabe.raw || "");
-    const gesetzt = M.setzeMessageId(mime, neueKennung + "." + jetzt().toString(36) + "@" + messageIdDomain);
+    const gesetzt = M.setzeMessageId(mime, kennung + "." + jetzt().toString(36) + "@" + messageIdDomain);
     const neu = K.neuerEintrag(Object.assign({}, eingabe, {
-      id: neueKennung,
+      id: kennung,
       raw: M.kodiere(gesetzt.mime),
       messageIdKopf: gesetzt.id,
       hatAnhaenge: eingabe.hatAnhaenge !== undefined ? eingabe.hatAnhaenge : M.hatAnhaenge(gesetzt.mime),
       jetzt: jetzt(),
     }));
     if (!neu.ok) return { ok: false, grund: neu.grund };
-    const r = await dbSet(pfad(neu.eintrag.id), neu.eintrag);
-    if (r && r.conflict) return { ok: false, grund: "Diese Mail wurde gerade woanders angelegt." };
     return { ok: true, eintrag: neu.eintrag };
   }
 
@@ -115,22 +153,42 @@ export function createQueue({
   /* Ändern hält die Anhänge. Es wird NICHT die ganze Nachricht neu gebaut,
      sondern im gespeicherten MIME genau der Körper (und bei Bedarf der
      Betreff) ersetzt; jeder Anhang bleibt Zeichen für Zeichen stehen. */
+  /* WAS BEIM ÄNDERN WIRKLICH IN DER NACHRICHT LANDEN MUSS
+     Befund der unabhängigen Gegenprobe (13.09.2026): Hier wurden nur Körper
+     und Betreff ersetzt — `to`, `cc` und `bcc` gingen ausschliesslich in die
+     ANZEIGEFELDER des Eintrags. In Quantus stand danach der neue Empfänger,
+     hinausgegangen wäre die Mail an den alten. Ein Release-Blocker: Was die
+     Oberfläche zeigt, muss das sein, was Gmail zugestellt bekommt.
+     Deshalb wandern Empfänger, Betreff, Körper und neue Anhänge alle in
+     dieselbe gespeicherte MIME-Nachricht — und nur dort steht die Wahrheit. */
   function neuesRaw(e, patch) {
-    if (patch.koerperTeil === undefined && patch.koerper === undefined
-      && patch.subject === undefined && patch.raw === undefined) return null;
+    const beruehrt = ["koerperTeil", "koerper", "subject", "raw", "to", "cc", "bcc", "neueAnhaenge"]
+      .some((k) => patch[k] !== undefined);
+    if (!beruehrt) return null;
     const alt = M.dekodiere(e.raw || "");
+    let mime = alt;
     if (patch.raw !== undefined && patch.koerperTeil === undefined) {
       /* Eine komplett neue Nachricht darf nur dann kommen, wenn die alte
          keine Anhänge hat — sonst gingen sie unbemerkt verloren. */
       if (M.hatAnhaenge(alt)) return { fehler: "Diese Mail hat einen Anhang — sie lässt sich nur über den Körper ändern." };
-      const neu = M.dekodiere(patch.raw);
-      const mitId = e.messageIdKopf ? M.setzeMessageId(neu, e.messageIdKopf).mime : neu;
-      return { mime: mitId };
+      mime = M.dekodiere(patch.raw);
+      if (e.messageIdKopf) mime = M.setzeMessageId(mime, e.messageIdKopf).mime;
+    } else {
+      if (patch.koerperTeil !== undefined) mime = M.ersetzeKoerper(mime, String(patch.koerperTeil));
+      else if (patch.koerper !== undefined) mime = M.ersetzeKoerper(mime, M.textTeil(patch.koerper));
     }
-    let mime = alt;
-    if (patch.koerperTeil !== undefined) mime = M.ersetzeKoerper(mime, String(patch.koerperTeil));
-    else if (patch.koerper !== undefined) mime = M.ersetzeKoerper(mime, M.textTeil(patch.koerper));
     if (patch.subject !== undefined) mime = M.ersetzeBetreff(mime, patch.subject);
+    // Empfänger IMMER mitziehen — injektionssicher, leeres Cc/Bcc fliegt raus.
+    if (patch.to !== undefined || patch.cc !== undefined || patch.bcc !== undefined) {
+      mime = M.ersetzeEmpfaenger(mime, { to: patch.to, cc: patch.cc, bcc: patch.bcc });
+    }
+    /* Nachgereichte Anhänge kommen HINZU. Ohne diesen Weg würde eine Datei,
+       die jemand im Bearbeiten-Dialog anhängt, still verschwinden. */
+    if (Array.isArray(patch.neueAnhaenge) && patch.neueAnhaenge.length) {
+      mime = M.fuegeAnhaengeAn(mime, patch.neueAnhaenge.map((a) => (
+        typeof a === "string" ? a : M.anhangTeil({ name: a && a.name, typ: a && a.typ, daten: a && a.daten })
+      )));
+    }
     return { mime };
   }
 
@@ -139,7 +197,7 @@ export function createQueue({
       const gebaut = neuesRaw(e, patch);
       if (gebaut && gebaut.fehler) return { ok: false, grund: gebaut.fehler };
       const feld = Object.assign({}, patch);
-      delete feld.koerperTeil;
+      delete feld.koerperTeil; delete feld.neueAnhaenge;
       if (gebaut && gebaut.mime) feld.raw = M.kodiere(gebaut.mime);
       const r = K.aendere(e, feld, jetzt());
       if (r.ok && gebaut && gebaut.mime) r.eintrag.hatAnhaenge = M.hatAnhaenge(gebaut.mime);
@@ -196,32 +254,44 @@ export function createQueue({
         if (e.status === K.STATUS.gesendet) bericht.gesendet.push(e.id);
         else if (e.status === K.STATUS.unklar) bericht.ungeklaert.push(e.id);
       } catch (err) {
-        if (err && err.fremdgriff) { bericht.uebersprungen++; continue; }  // NICHTS schreiben
-        if (err && err.unklar) {
-          e = K.markiereUnklar(e, err.message, jetzt()).eintrag;
-          await zaun.schreibeUnbedingt(e);
-          bericht.ungeklaert.push(e.id);
-          continue;
-        }
-        /* Ein Fehlschlag VOR dem Senden darf wiederholt werden. War der
-           Versand schon angestossen, kommen wir hier gar nicht mehr an:
-           versende() klärt diesen Fall selbst und wirft UnklarFehler. */
-        const f = K.markiereFehler(e, err, jetzt());
-        e = f.eintrag;
-        try { await zaun.schreibe(e); } catch (zweit) { bericht.uebersprungen++; continue; }
-        (e.status === K.STATUS.fehlgeschlagen ? bericht.aufgegeben : bericht.verschoben).push(e.id);
+        if (err && err.fremdgriff) { bericht.uebersprungen++; continue; }
+        /* AB HIER NIE MEHR MIT `e` ARBEITEN.
+           Befund der unabhängigen Gegenprobe (13.09.2026): Hier stand
+           `K.markiereFehler(e, …)` mit `e` = dem Stand VOR dem Versand. Schlug
+           der Schreibgang nach einem BESTÄTIGTEN Versand fehl, machte dieser
+           Zweig daraus wieder „geplant" — Stufe und draftId waren überschrieben,
+           und der nächste Lauf sandte ein zweites Mal. Jeder Abschluss liest
+           deshalb den GESPEICHERTEN Stand und schreibt nur darauf. */
+        const schluss = err && err.unklar
+          ? await zaun.festhaltenUnklar(err.message)
+          : await zaun.festhaltenFehler(err);
+        if (!schluss) { bericht.uebersprungen++; continue; }
+        if (schluss.status === K.STATUS.gesendet) bericht.gesendet.push(schluss.id);
+        else if (schluss.status === K.STATUS.unklar) bericht.ungeklaert.push(schluss.id);
+        else if (schluss.status === K.STATUS.fehlgeschlagen) bericht.aufgegeben.push(schluss.id);
+        else bericht.verschoben.push(schluss.id);
       }
     }
     return bericht;
   }
 
-  /* Der Zaun (Fencing): Dieser Lauf schreibt nur, solange der Zugriff noch
-     ihm gehört. Läuft sein Claim ab und übernimmt ein anderer, ist jeder
-     weitere Schreibgang ein Fremdgriff — bis auf einen: einen BESTÄTIGTEN
-     Versand muss er festhalten, koste es, was es wolle. Ginge diese Auskunft
-     verloren, sendete ein späterer Lauf dieselbe Mail ein zweites Mal. */
+  /* DER ZAUN (Fencing)
+     Dieser Lauf schreibt nur, solange der Zugriff noch ihm gehört. Läuft sein
+     Claim ab und übernimmt ein anderer, ist jeder weitere Schreibgang ein
+     Fremdgriff.
+
+     Zwei Dinge sind hier wichtiger als Bequemlichkeit:
+     1. KEIN SNAPSHOT. Jeder Abschluss (gesendet, ungeklärt, Fehlschlag) liest
+        den GESPEICHERTEN Stand und rechnet auf ihm weiter. Ein mitgeführtes
+        Objekt aus der Zeit vor dem Versand darf nie zurückgeschrieben werden —
+        es enthielte weder Stufe noch draftId und machte den Versand wiederholbar.
+     2. KEINE RÜCKSTUFUNG. Was gespeichert schon „gesendet" oder „abgebrochen"
+        ist, wird von hier aus nicht mehr verändert. Auch ein Notschreibgang
+        überschreibt das nicht. */
   function zaunFuer(idWert, laufId) {
-    return {
+    const zaun = {
+      angestossen: false,        // ab hier kann die Mail draussen sein
+
       async schreibe(neu) {
         const { value: da, etag } = await liesMitKennung(idWert);
         if (!da) throw new FremdgriffFehler();
@@ -230,16 +300,63 @@ export function createQueue({
         if (r && r.conflict) throw new FremdgriffFehler();
         return neu;
       },
-      async schreibeUnbedingt(neu) {
-        for (let n = 0; n < 3; n++) {
-          const { etag } = await liesMitKennung(idWert);
-          const r = await dbSet(pfad(idWert), neu, { ifMatch: etag });
-          if (!(r && r.conflict)) return neu;
+
+      /* Ein bestätigter Versand MUSS stehenbleiben — ginge die Auskunft
+         verloren, sendete ein späterer Lauf dieselbe Mail noch einmal.
+         Gerechnet wird dabei auf dem frisch gelesenen Stand. */
+      async festhaltenGesendet(nachricht) {
+        for (let n = 0; n < 4; n++) {
+          const { value: da, etag } = await liesMitKennung(idWert);
+          if (!da) return null;
+          if (da.status === K.STATUS.gesendet) return da;       // jemand war schneller: gut so
+          const fertig = K.markiereGesendet(da, nachricht, jetzt());
+          if (!fertig.ok) return null;
+          const r = await dbSet(pfad(idWert), fertig.eintrag, { ifMatch: etag });
+          if (!(r && r.conflict)) return fertig.eintrag;
         }
-        await dbSet(pfad(idWert), neu);   // letzter Ausweg: die Wahrheit muss stehen
-        return neu;
+        /* Letzter Ausweg — aber immer noch auf dem aktuellen Stand, nie auf
+           einem alten: die Wahrheit „gesendet" darf nicht verlorengehen. */
+        const { value: da } = await liesMitKennung(idWert);
+        if (!da || da.status === K.STATUS.gesendet) return da || null;
+        const fertig = K.markiereGesendet(da, nachricht, jetzt());
+        if (!fertig.ok) return null;
+        await dbSet(pfad(idWert), fertig.eintrag);
+        return fertig.eintrag;
+      },
+
+      /* Ungeklärt: nur setzen, wenn der gespeicherte Stand nichts Besseres
+         weiss. Ein „gesendet" oder „abgebrochen" wird NICHT überschrieben. */
+      async festhaltenUnklar(grund) {
+        for (let n = 0; n < 3; n++) {
+          const { value: da, etag } = await liesMitKennung(idWert);
+          if (!da) return null;
+          if (da.status === K.STATUS.gesendet || da.status === K.STATUS.abgebrochen) return da;
+          if (da.status === K.STATUS.unklar) return da;
+          const r = await dbSet(pfad(idWert), K.markiereUnklar(da, grund, jetzt()).eintrag, { ifMatch: etag });
+          if (!(r && r.conflict)) return (await liesMitKennung(idWert)).value;
+        }
+        return (await liesMitKennung(idWert)).value || null;
+      },
+
+      /* Ein Fehlschlag VOR dem Versand darf wiederholt werden. War der Versand
+         schon angestossen — und sei es nur, dass die Stufe „senden" im Speicher
+         steht —, wird daraus KEIN Rückversuch, sondern ein ungeklärter Fall. */
+      async festhaltenFehler(fehler) {
+        const { value: da, etag } = await liesMitKennung(idWert);
+        if (!da) return null;
+        if (da.status === K.STATUS.gesendet || da.status === K.STATUS.abgebrochen) return da;
+        if (zaun.angestossen || da.stufe === K.STUFE.senden) {
+          return zaun.festhaltenUnklar("Der Versand war angestossen und liess sich nicht abschliessen ("
+            + ((fehler && fehler.message) || "Fehler") + "). Ob die Mail draussen ist, ist ungeklärt — "
+            + "es wird nichts wiederholt.");
+        }
+        const f = K.markiereFehler(da, fehler, jetzt());
+        const r = await dbSet(pfad(idWert), f.eintrag, { ifMatch: etag });
+        if (r && r.conflict) return (await liesMitKennung(idWert)).value || null;
+        return f.eintrag;
       },
     };
+    return zaun;
   }
 
   /* Wiederfinden statt raten: Gibt es zu unserer Message-ID eine Nachricht mit
@@ -277,8 +394,8 @@ export function createQueue({
   async function klaerung(e, zaun, grund) {
     const nachricht = await suchePerMessageId(e);
     if (nachricht) {
-      const fertig = K.markiereGesendet(e, nachricht, jetzt());
-      if (fertig.ok) return await zaun.schreibeUnbedingt(fertig.eintrag);
+      const festgehalten = await zaun.festhaltenGesendet(nachricht);
+      if (festgehalten) return festgehalten;
     }
     if (e.draftId) {
       let steht = null;
@@ -296,8 +413,7 @@ export function createQueue({
     if (e.gmailMessageId) {
       const m = await gmail("GET", "/users/me/messages/" + encodeURIComponent(e.gmailMessageId),
         { query: { format: "minimal" } });
-      const fertig = K.markiereGesendet(e, m, jetzt());
-      if (fertig.ok) return await zaun.schreibeUnbedingt(fertig.eintrag);
+      if (K.bestaetigtGesendet(m)) return await zaun.festhaltenGesendet(m);
       throw new UnklarFehler("Gmail bestätigt die gemerkte Nachricht nicht als gesendet.");
     }
 
@@ -339,6 +455,10 @@ export function createQueue({
     /* Stufe 2 — senden. Der Vermerk steht VOR dem Aufruf: Ab hier kann die
        Mail draussen sein, auch wenn niemand die Antwort gesehen hat. */
     e = await zaun.schreibe(K.setzeStufe(e, K.STUFE.senden, jetzt()));
+    /* Ab hier kann die Mail draussen sein. Der Zaun weiss das und lässt von
+       jetzt an keinen Rückversuch mehr zu — auch nicht, wenn ein Schreibgang
+       scheitert. */
+    zaun.angestossen = true;
     let gesendet;
     try {
       gesendet = await gmail("POST", "/users/me/drafts/send", { body: { id: e.draftId } });
@@ -359,8 +479,11 @@ export function createQueue({
           { query: { format: "minimal" } });
       } catch (err) { nachricht = gesendet; }
     }
-    const fertig = K.markiereGesendet(e, nachricht, jetzt());
-    if (fertig.ok) return await zaun.schreibeUnbedingt(fertig.eintrag);
+    if (K.bestaetigtGesendet(nachricht)) {
+      const festgehalten = await zaun.festhaltenGesendet(nachricht);
+      if (festgehalten) return festgehalten;
+      throw new UnklarFehler("Der Versand ist bestätigt, liess sich aber nicht festhalten.");
+    }
 
     // Keine Bestätigung — aber angestossen. Also klären, nicht wiederholen.
     const r = await klaerung(e, zaun, "Gmail hat den Versand nicht als SENT bestätigt.");

@@ -188,7 +188,11 @@ function databaseUrl(path) {
   return `${base.replace(/\/+$/, "")}/${safePath}.json`;
 }
 
-async function firebaseDbGetWithEtag(path) {
+/* Exportiert, weil die Mail-Warteschlange den atomaren Zugriff braucht: Lesen
+   MIT Kennung ist die Voraussetzung fuer if-match-Schreibgaenge (siehe
+   netlify/lib/mail-queue.mjs). Der Import hierauf hat den Netlify-Build von
+   e78468b zum Scheitern gebracht — die Funktion war intern. */
+export async function firebaseDbGetWithEtag(path) {
   const response = await adminFetch(databaseUrl(path), {
     headers: { "X-Firebase-ETag": "true", "Cache-Control": "no-store" },
   });

@@ -121,6 +121,27 @@ const PRUEFUNGEN = {
     && s.includes("geklaert-gesendet") && s.includes("geklaert-nicht-gesendet")
     && s.includes("Quantus wiederholt hier nichts von selbst"),
 
+  /* Wiederholbar planen: ohne stabilen Schlüssel legt ein zweiter Klick nach
+     verlorener Antwort einen zweiten Eintrag an — und damit eine zweite Mail. */
+  "die Seite schickt einen stabilen Anfrageschlüssel mit": (s) =>
+    s.includes("function gmlAnfrageSchluessel()") && s.includes("anfrageSchluessel:(ctx.anfrageSchluessel||null)")
+    && s.includes("GM._kiSendeSchluessel"),
+
+  /* Der Ausgang ist fail-closed. Wenn er gesperrt ist, darf Mail nicht
+     unbrauchbar werden: der ausdrückliche Sofortversand ist erreichbar und
+     wird genannt. */
+  "der ausdrückliche Sofortversand hat einen Knopf": (s) =>
+    s.includes('id="gmlSendNowBtn"') && s.includes('onclick="gmailSendNow()"'),
+  "ein gesperrter Ausgang wird erklärt statt verschleiert": (s) =>
+    s.includes("Ausgang gesperrt") && s.includes("SYNC_AUTH_TOKEN"),
+
+  /* Neue Anhänge beim Bearbeiten: sie reisen mit, statt still zu verschwinden. */
+  "im Bearbeiten angehängte Dateien gehen mit": (s) => {
+    const i = s.indexOf("window.gmailPlanSend");
+    const block = s.slice(i, i + 4200);
+    return i > 0 && block.includes("anfrage.neueAnhaenge = neueAnh") && block.includes("GM._attachments||[]");
+  },
+
   "der Sofortversand verlangt eine SENT-Bestätigung": (s) => {
     const i = s.indexOf("window.gmailSendNow");
     const block = s.slice(i, i + 4000);
@@ -156,6 +177,27 @@ pruefe("wiedergefunden wird über die eigene Message-ID, nicht über die Entwurf
   LAUF.includes("rfc822msgid:") && !LAUF.includes("e.draftMessageId"));
 pruefe("bei ungeklärtem Ausgang wird nichts wiederholt",
   LAUF.includes("UnklarFehler") && LAUF.includes("markiereUnklar"));
+/* Kommentare erklären den alten Fehler — geprüft wird der CODE. */
+const LAUF_CODE = LAUF.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+pruefe("nach angestossenem Versand wird kein alter Stand zurückgeschrieben",
+  LAUF.includes("festhaltenUnklar") && LAUF.includes("festhaltenFehler")
+  && !LAUF_CODE.includes("K.markiereFehler(e,") && !LAUF_CODE.includes("schreibeUnbedingt"));
+pruefe("Empfänger wandern in die gespeicherte Nachricht",
+  LAUF.includes("M.ersetzeEmpfaenger(mime,"));
+pruefe("nachgereichte Anhänge werden angehängt, nicht verworfen",
+  LAUF.includes("M.fuegeAnhaengeAn(mime,"));
+pruefe("Planen ist über einen Anfrageschlüssel wiederholbar",
+  LAUF.includes("schluesselVon") && LAUF.includes("bestand: true"));
+
+const MIME = readFileSync(path.join(WURZEL, "netlify/lib/mail-mime.mjs"), "utf8");
+pruefe("Kopfzeilenwerte werden von Zeilenschaltungen befreit (keine Einschleusung)",
+  MIME.includes("export function kopfwertSicher") && /\[\\r\\n/.test(MIME));
+
+const TUER = readFileSync(path.join(WURZEL, "netlify/lib/mail-queue-endpunkt.mjs"), "utf8");
+pruefe("der Ausgang ist fail-closed und sagt, was fehlt",
+  TUER.includes('error: "GESPERRT"') && TUER.includes("SYNC_AUTH_TOKEN"));
+pruefe("die Tür steht vor der Datenbank",
+  TUER.indexOf("zugangPruefen(") < TUER.indexOf("queueFactory()"));
 
 const FUNK = readFileSync(path.join(WURZEL, "netlify/functions/mail-queue.mjs"), "utf8");
 pruefe("die Bedien-Funktion sendet selbst nichts",

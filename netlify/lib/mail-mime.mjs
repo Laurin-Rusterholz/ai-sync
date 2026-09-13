@@ -89,6 +89,85 @@ export function ersetzeBetreff(mime, subject) {
   return zeilen.join(br) + br + br + rumpf;
 }
 
+/* Ein Kopfzeilenwert darf keine Zeilenschaltung enthalten. Sonst schreibt
+   jemand mit einem „\n" in einem Empfängerfeld eigene Kopfzeilen in die
+   Nachricht (Header-Injection) — etwa ein zusätzliches Bcc. Steuerzeichen
+   fliegen deshalb raus, bevor irgendetwas gesetzt wird. */
+export function kopfwertSicher(wert) {
+  return String(wert == null ? "" : wert)
+    .replace(/[\r\n\u2028\u2029]+/g, " ")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+    .trim();
+}
+
+/* DIE EMPFÄNGER — der Befund, der einen Release gekostet hätte:
+   `aendere` nahm to/cc/bcc entgegen und schrieb sie in die Anzeigefelder,
+   aber die GESPEICHERTE Nachricht behielt ihre alten Kopfzeilen. In Quantus
+   stand der neue Empfänger, hinaus gegangen wäre die Mail an den alten.
+   Deshalb werden die drei Felder hier im MIME mitgezogen — und ein leeres
+   Cc/Bcc entfernt die Zeile, statt eine leere stehen zu lassen.
+   `undefined` heisst „nicht anfassen", "" heisst „weg damit" (bei To nicht:
+   eine Nachricht ohne Empfänger gibt es nicht — dort bleibt der alte Wert). */
+export function ersetzeEmpfaenger(mime, { to, cc, bcc } = {}) {
+  const { kopf, rumpf, br } = trenne(mime);
+  let zeilen = kopfzeilen(kopf);
+  const setze = (name, wert, loeschbar) => {
+    if (wert === undefined) return;
+    const sauber = kopfwertSicher(wert);
+    const i = zeilen.findIndex((z) => z.toLowerCase().startsWith(name.toLowerCase() + ":"));
+    if (!sauber) {
+      if (!loeschbar) return;                       // To bleibt stehen
+      if (i >= 0) zeilen.splice(i, 1);
+      return;
+    }
+    const zeile = name + ": " + sauber;
+    if (i >= 0) zeilen[i] = zeile; else zeilen.splice(Math.max(0, zeilen.length - 1), 0, zeile);
+  };
+  setze("To", to, false);
+  setze("Cc", cc, true);
+  setze("Bcc", bcc, true);
+  return zeilen.join(br) + br + br + rumpf;
+}
+
+/* Neue Anhänge kommen HINZU, sie ersetzen nichts. Hat die Nachricht noch
+   keinen multipart/mixed-Rahmen, bekommt sie einen — der bisherige Körper
+   wird dabei zum ersten Teil. So geht beim Nachreichen einer Datei weder der
+   Text noch ein früherer Anhang verloren. */
+export function fuegeAnhaengeAn(mime, teile) {
+  const liste = (Array.isArray(teile) ? teile : []).filter((t) => String(t || "").trim());
+  if (!liste.length) return String(mime);
+  const { kopf, rumpf, br } = trenne(mime);
+  const grenze = grenzeVon(mime);
+  if (grenze) {
+    const schluss = "--" + grenze + "--";
+    const i = rumpf.lastIndexOf(schluss);
+    const vorher = i >= 0 ? rumpf.slice(0, i) : (rumpf + br);
+    const nachher = i >= 0 ? rumpf.slice(i) : schluss;
+    const neu = liste.map((t) => "--" + grenze + br + t + br).join("");
+    return kopf + br + br + vorher + neu + nachher;
+  }
+  const neueGrenze = "mix_" + Math.random().toString(36).slice(2, 10);
+  const zeilen = kopfzeilen(kopf).filter((z) => !/^content-(type|transfer-encoding):/i.test(z));
+  const alteContent = kopfzeilen(kopf).filter((z) => /^content-(type|transfer-encoding):/i.test(z));
+  zeilen.push('Content-Type: multipart/mixed; boundary="' + neueGrenze + '"');
+  const alterKoerper = (alteContent.length ? alteContent.join(br) + br + br : "") + rumpf;
+  return zeilen.join(br) + br + br
+    + "--" + neueGrenze + br + alterKoerper + br
+    + liste.map((t) => "--" + neueGrenze + br + t + br).join("")
+    + "--" + neueGrenze + "--";
+}
+
+/* Eine Anhang-Entität aus Name, Typ und base64-Daten — genau so, wie der
+   Verfassen-Dialog sie baut. */
+export function anhangTeil({ name, typ, daten }) {
+  const dateiname = kopfwertSicher(name || "datei").replace(/"/g, "'");
+  const art = kopfwertSicher(typ || "application/octet-stream").replace(/"/g, "'");
+  return 'Content-Type: ' + art + '; name="' + dateiname + '"\r\n'
+    + "Content-Transfer-Encoding: base64\r\n"
+    + 'Content-Disposition: attachment; filename="' + dateiname + '"\r\n\r\n'
+    + String(daten || "").replace(/\s+/g, "").replace(/.{76}/g, "$&\r\n");
+}
+
 /* Die Grenze eines multipart-Rumpfes aus dem Kopf lesen. */
 export function grenzeVon(mime) {
   const ct = liesKopfzeile(mime, "Content-Type");
@@ -115,9 +194,16 @@ export function ersetzeKoerper(mime, koerperTeil) {
   const { kopf, rumpf, br } = trenne(mime);
   if (!grenze) {
     /* Ohne Anhänge bringt die Körper-Entität ihre eigenen Inhaltszeilen mit —
-       alte Content-Zeilen im Kopf müssten sonst doppelt gelten. */
+       alte Content-Zeilen im Kopf müssten sonst doppelt gelten.
+
+       BEFUND aus der unabhängigen Gegenprobe (13.09.2026): Hier stand
+       `... + br + br + teil`. Damit endete der Kopf, und die Content-Zeilen
+       DER KÖRPER-ENTITÄT landeten im Rumpf — Gmail zeigte dann „Content-Type:
+       …" und den Base64-Block als Mailtext. Richtig ist EINE Zeilenschaltung:
+       die Entität bringt ihre eigene Leerzeile mit, und die trennt Kopf von
+       Inhalt. */
     const zeilen = kopfzeilen(kopf).filter((z) => !/^content-(type|transfer-encoding):/i.test(z));
-    return zeilen.join(br) + br + br + teil;
+    return zeilen.join(br) + br + teil;
   }
   const marke = "--" + grenze;
   const stellen = [];
@@ -141,4 +227,5 @@ export function textTeil(text) {
 export default {
   dekodiere, kodiere, trenne, liesKopfzeile, liesMessageId, setzeMessageId,
   ersetzeBetreff, ersetzeKoerper, grenzeVon, hatAnhaenge, textTeil,
+  ersetzeEmpfaenger, kopfwertSicher, fuegeAnhaengeAn, anhangTeil,
 };
