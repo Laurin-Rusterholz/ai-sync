@@ -13,7 +13,7 @@
 import { firebaseDbGet, firebaseDbGetWithEtag, firebaseDbSet, firebaseDbRemove } from "../lib/firebase-admin.mjs";
 import { createQueue } from "../lib/mail-queue.mjs";
 import { gmailRuf } from "../lib/mail-queue-gmail.mjs";
-import { zugangPruefen, umgebungswert, json } from "../lib/mail-queue-endpunkt.mjs";
+import { zugangPruefen, queueSchluessel, json } from "../lib/mail-queue-endpunkt.mjs";
 
 /* Wer darf diesen Lauf ausloesen? Der Zeitplan — und sonst nur, wer den
    Zugangsschluessel hat. Eine geplante Ausfuehrung schickt den naechsten
@@ -24,7 +24,7 @@ async function darfLaufen(req) {
   let rumpf = null;
   try { rumpf = await req.json(); } catch (e) { rumpf = null; }
   if (rumpf && rumpf.next_run) return true;                  // vom Zeitplan gerufen
-  const tuer = zugangPruefen(req.headers && req.headers.get("Authorization"), umgebungswert("SYNC_AUTH_TOKEN"));
+  const tuer = zugangPruefen(req.headers && req.headers.get("Authorization"), queueSchluessel());
   return tuer.ok;
 }
 

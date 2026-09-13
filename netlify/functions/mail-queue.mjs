@@ -7,7 +7,8 @@
  * POST { aktion: "plane"|"liste"|"aendere"|"abbrechen"|"sofort"
  *                |"geklaert-gesendet"|"geklaert-nicht-gesendet", … }
  *
- * FAIL-CLOSED: Ohne hinterlegten Zugangsschluessel (SYNC_AUTH_TOKEN) antwortet
+ * FAIL-CLOSED: Ohne hinterlegten Zugangsschluessel (MAIL_QUEUE_AUTH_TOKEN, ersatzweise
+ * SYNC_AUTH_TOKEN) antwortet
  * dieser Endpunkt GESPERRT und ruehrt die Datenbank nicht an — hier liegen
  * vollstaendige MIME-Nachrichten samt Anhaengen, und wer planen darf, kann in
  * fremdem Namen Mail verschicken. Der Ablauf steht in
@@ -21,7 +22,7 @@
 import { firebaseDbGet, firebaseDbGetWithEtag, firebaseDbSet, firebaseDbRemove } from "../lib/firebase-admin.mjs";
 import { createQueue } from "../lib/mail-queue.mjs";
 import { gmailRuf } from "../lib/mail-queue-gmail.mjs";
-import { bearbeiteAnfrage, umgebungswert } from "../lib/mail-queue-endpunkt.mjs";
+import { bearbeiteAnfrage, queueSchluessel } from "../lib/mail-queue-endpunkt.mjs";
 
 function warteschlange() {
   return createQueue({
@@ -35,7 +36,7 @@ function warteschlange() {
 
 export default async (req) => bearbeiteAnfrage(req, {
   queueFactory: warteschlange,
-  token: umgebungswert("SYNC_AUTH_TOKEN"),
+  token: queueSchluessel(),
 });
 
 export const config = { path: "/.netlify/functions/mail-queue" };

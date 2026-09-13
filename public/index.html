@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung+mailversand-empfaenger-idempotenz-zugang+mailversand-sofort-im-bearbeiten · 2026-09-13" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung+mailversand-empfaenger-idempotenz-zugang+mailversand-sofort-im-bearbeiten+mailversand-eigener-schluessel · 2026-09-13" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -67881,6 +67881,7 @@ async function init() {
             <label class="col-12">GET URL<input type="text" id="setGetUrl" value="${esc(APP.state.settings.storage.getUrl)}" /></label>
             <label class="col-12">PUT URL<input type="text" id="setPutUrl" value="${esc(APP.state.settings.storage.putUrl)}" /></label>
             <label class="col-12">Auth Token<input type="text" id="setAuthToken" value="${esc(APP.state.settings.storage.authToken)}" placeholder="Leer lassen falls SYNC_AUTH_TOKEN nicht gesetzt" /></label>
+            <label class="col-12">Ausgangs-Schlüssel (geplanter Mailversand)<input type="text" id="setMailQueueToken" value="${esc(APP.state.settings.storage.mailQueueToken || "")}" placeholder="Wert von MAIL_QUEUE_AUTH_TOKEN — leer: es gilt der Auth Token" /></label>
             <div class="mini" style="color:var(--muted);margin:-6px 0 14px">Token muss <strong>exakt</strong> mit der <code>SYNC_AUTH_TOKEN</code>-Env-Variable in Netlify übereinstimmen. "Bearer "-Prefix nicht nötig.</div>
             <div class="card" style="padding:12px;border:1px solid rgba(16,185,129,.25);background:rgba(16,185,129,.06);margin:8px 0 14px">
               <div style="font-weight:700;margin-bottom:6px;color:var(--ok)">☁️ Auto-Sync aktiv</div>
@@ -73420,6 +73421,8 @@ window.saveSettingsModal = function() {
   APP.state.settings.storage.getUrl = $("#setGetUrl")?.value || "";
   APP.state.settings.storage.putUrl = $("#setPutUrl")?.value || "";
   APP.state.settings.storage.authToken = $("#setAuthToken")?.value || "";
+  // Eigener Schluessel des Ausgangs; leer heisst: es gilt der Auth Token.
+  APP.state.settings.storage.mailQueueToken = $("#setMailQueueToken")?.value || "";
   APP.state.settings.storage.autoSave = $("#setAutoSave")?.checked !== false;
   APP.state.settings.storage.autoSync = $("#setAutoSync")?.checked !== false;
   APP.state.settings.storage.manualTransferMode = false;
@@ -108776,10 +108779,26 @@ console.log('📚 Leseliste geladen');
 
      Diese Seite plant, zeigt, aendert und bricht ab — gesendet wird
      ausschliesslich vom Serverlauf. */
+  /* Der Ausgang hat einen EIGENEN Schluessel (MAIL_QUEUE_AUTH_TOKEN auf dem
+     Server). Grund: Der gemeinsame SYNC_AUTH_TOKEN gilt fuer alle bestehenden
+     Endpunkte — ihn zu setzen, nur um den Ausgang aufzuschliessen, wuerde
+     zugleich blob-put, gcal-* und gmail-api verlangen, und die Mobil-App
+     schickt dort bis heute keine Kopfzeile mit. Hier wird deshalb zuerst der
+     Ausgangs-Schluessel genommen und nur ersatzweise der gemeinsame. */
+  function gmQueueKopf(){
+    try {
+      var sp = window.APP && APP.state && APP.state.settings && APP.state.settings.storage;
+      var t = sp && (sp.mailQueueToken || sp.authToken);
+      if (t){ var x = String(t).trim(); return { Authorization: x.toLowerCase().indexOf("bearer ")===0 ? x : ("Bearer "+x) }; }
+    } catch(e){}
+    return {};
+  }
+  window.gmQueueKopf = gmQueueKopf;
+
   async function gmQueue(aktion, daten){
     var antwort = await fetch("/.netlify/functions/mail-queue", {
       method:"POST",
-      headers: Object.assign({ "Content-Type":"application/json" }, authHeaders()),
+      headers: Object.assign({ "Content-Type":"application/json" }, gmQueueKopf()),
       body: JSON.stringify(Object.assign({ aktion: aktion }, daten||{})),
     });
     var text = await antwort.text();
@@ -109027,7 +109046,7 @@ console.log('📚 Leseliste geladen');
         + '<p>'+(gesperrt?'Ausgang gesperrt':'Ausgang nicht erreichbar')+'</p>'
         + '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">'+esc(GM.ausgangFehler)+'</p>'
         + (gesperrt
-            ? '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">So wird er aufgeschlossen: auf dem Server <code>SYNC_AUTH_TOKEN</code> setzen und denselben Wert in den Quantus-Einstellungen als Zugangsschlüssel hinterlegen. Bis dahin gehen Mails über „📨 Jetzt senden“ raus — hier wird nichts geplant und nichts doppelt gesendet.</p>'
+            ? '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">So wird er aufgeschlossen: auf dem Server <code>MAIL_QUEUE_AUTH_TOKEN</code> setzen (nur für den Ausgang — der gemeinsame <code>SYNC_AUTH_TOKEN</code> würde auch alle übrigen Endpunkte verlangen) und denselben Wert in den Quantus-Einstellungen als Ausgangs-Schlüssel hinterlegen. Bis dahin gehen Mails über „📨 Jetzt senden“ raus — hier wird nichts geplant und nichts doppelt gesendet.</p>'
             : '<p style="font-size:12px;color:var(--muted)">Der Ausgang liegt auf dem Server (<code>/.netlify/functions/mail-queue</code>). Solange er nicht antwortet, wird hier nichts geplant — gesendet aber auch nichts Doppeltes.</p>')
         + '</div>';
     }
@@ -110835,12 +110854,16 @@ console.log('📚 Leseliste geladen');
       var to=(a[0]||"").trim(), subj=(a[1]||"").trim(), body=(a[2]||"").trim();
       if(!to) return "❌ Kein Empfänger";
       if(!confirm("Der KI-Assistent möchte eine E-Mail einplanen:\n\nAn: "+to+"\nBetreff: "+subj+"\n\n"+body+"\n\nSie geht in 3 Stunden raus und bleibt bis dahin im Ausgang änderbar.\n\nEinplanen?")) return "↩️ Abgebrochen";
-      if (!GM._kiSendeSchluessel) GM._kiSendeSchluessel = gmlAnfrageSchluessel();
+      /* Ein frischer Schluessel je Aufruf. Ein modulweit gehaltener wuerde nach
+         einem Fehlschlag auf die NAECHSTE, andere Mail durchschlagen — der
+         Server bestaetigte dann den alten Eintrag, und die neue Mail ginge nie
+         raus. Wiederholen heisst hier: die KI erneut beauftragen, also eine
+         neue Mail. */
+      var kiSchluessel = gmlAnfrageSchluessel();
       var geplant = await gmQueue("plane", { raw: buildRaw({to:to,subject:subj,body:body}),
         to:to, subject:subj, vorschau:String(body||"").slice(0,300),
         koerper:String(body||""), hatAnhaenge:false, quelle:"ki-assistent",
-        anfrageSchluessel: GM._kiSendeSchluessel });
-      GM._kiSendeSchluessel = null;
+        anfrageSchluessel: kiSchluessel });
       if (typeof gmailLadeAusgang==="function") gmailLadeAusgang();
       return "🕒 Mail an "+to+" geplant — geht "+gmlZuercherZeit((geplant.eintrag||{}).sendAt)
         + " raus (Europe/Zurich). Bis dahin im Ausgang änderbar oder abbrechbar.";

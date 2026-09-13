@@ -124,8 +124,21 @@ const PRUEFUNGEN = {
   /* Wiederholbar planen: ohne stabilen Schlüssel legt ein zweiter Klick nach
      verlorener Antwort einen zweiten Eintrag an — und damit eine zweite Mail. */
   "die Seite schickt einen stabilen Anfrageschlüssel mit": (s) =>
-    s.includes("function gmlAnfrageSchluessel()") && s.includes("anfrageSchluessel:(ctx.anfrageSchluessel||null)")
-    && s.includes("GM._kiSendeSchluessel"),
+    s.includes("function gmlAnfrageSchluessel()") && s.includes("anfrageSchluessel:(ctx.anfrageSchluessel||null)"),
+  /* Der Schlüssel gehört zum Verfassen-Vorgang, nicht zum Modul: ein
+     liegengebliebener würde nach einem Fehlschlag auf die nächste, andere Mail
+     durchschlagen — der Server bestätigte dann den alten Eintrag. */
+  "der Schlüssel wird beim Öffnen des Verfassen-Fensters vergeben": (s) =>
+    s.includes("anfrageSchluessel: (typeof gmlAnfrageSchluessel===\"function\" ? gmlAnfrageSchluessel() : null)"),
+  "der KI-Sendeweg hält keinen Schlüssel über Aufrufe hinweg": (s) =>
+    !s.includes("GM._kiSendeSchluessel") && s.includes("var kiSchluessel = gmlAnfrageSchluessel();"),
+  /* Der Ausgang hat einen eigenen Schlüssel — der gemeinsame würde auch alle
+     übrigen Endpunkte verlangen. */
+  "der Ausgang nutzt einen eigenen Schlüssel mit Rückfall": (s) =>
+    s.includes("function gmQueueKopf()") && s.includes("sp.mailQueueToken || sp.authToken")
+    && s.includes("gmQueueKopf()"),
+  "die bestehenden Endpunkte behalten ihren Kopf": (s) =>
+    s.includes("function authHeaders()") && !/gmApi[\s\S]{0,200}gmQueueKopf/.test(s),
 
   /* Der Ausgang ist fail-closed. Wenn er gesperrt ist, darf Mail nicht
      unbrauchbar werden: der ausdrückliche Sofortversand ist erreichbar und
@@ -203,7 +216,9 @@ pruefe("Kopfzeilenwerte werden von Zeilenschaltungen befreit (keine Einschleusun
 
 const TUER = readFileSync(path.join(WURZEL, "netlify/lib/mail-queue-endpunkt.mjs"), "utf8");
 pruefe("der Ausgang ist fail-closed und sagt, was fehlt",
-  TUER.includes('error: "GESPERRT"') && TUER.includes("SYNC_AUTH_TOKEN"));
+  TUER.includes('error: "GESPERRT"') && TUER.includes("MAIL_QUEUE_AUTH_TOKEN") && TUER.includes("SYNC_AUTH_TOKEN"));
+pruefe("der Ausgang hat einen eigenen Schlüssel mit Rückfall",
+  TUER.includes("export function queueSchluessel"));
 pruefe("die Tür steht vor der Datenbank",
   TUER.indexOf("zugangPruefen(") < TUER.indexOf("queueFactory()"));
 

@@ -11,6 +11,16 @@
  * GESPERRT (503) und rührt die Datenbank nicht an. Die bestehenden
  * Gmail-Endpunkte bleiben unverändert — sie werden hier nicht still umgebaut.
  *
+ * EIGENER SCHLÜSSEL, MIT ABSICHT (Integrationsprüfung 13.09.2026):
+ * `SYNC_AUTH_TOKEN` ist der gemeinsame Schlüssel der BESTEHENDEN Endpunkte
+ * (blob-put, gcal-*, gmail-api …). Wer ihn setzt, sperrt damit auch sie — und
+ * die Mobil-App schickt bei ihren Gmail-Aufrufen bis heute keine Kopfzeile
+ * mit. Diesen Ausgang aufzuschliessen dürfte also nicht bedeuten, alles andere
+ * zuzusperren. Darum hat die Warteschlange einen EIGENEN Schlüssel:
+ *     MAIL_QUEUE_AUTH_TOKEN   (bevorzugt — betrifft nur Ausgang und Lauf)
+ *     SYNC_AUTH_TOKEN         (Rückfall, falls schon vorhanden)
+ * Ist keiner von beiden gesetzt, bleibt der Ausgang gesperrt.
+ *
  * Die Reihenfolge ist Absicht und wird geprüft: Erst die Tür, dann die
  * Warteschlange. `queueFactory` wird erst NACH bestandener Prüfung gerufen,
  * damit ein Test beweisen kann, dass ohne Schlüssel nichts gelesen wird.
@@ -28,6 +38,13 @@ export function json(daten, status = 200) {
   });
 }
 
+/* Der Schlüssel dieses Endpunkts: erst der eigene, dann der gemeinsame. */
+export function queueSchluessel(lies = umgebungswert) {
+  const eigen = String(lies("MAIL_QUEUE_AUTH_TOKEN") || "").trim();
+  if (eigen) return eigen;
+  return String(lies("SYNC_AUTH_TOKEN") || "").trim();
+}
+
 export function umgebungswert(name) {
   try {
     if (typeof Netlify !== "undefined" && Netlify.env) return Netlify.env.get(name);
@@ -41,8 +58,10 @@ export function zugangPruefen(authKopf, erwartet) {
   const schluessel = String(erwartet || "").trim();
   if (!schluessel) {
     return { ok: false, status: 503, koerper: { ok: false, error: "GESPERRT",
-      grund: "Der Ausgang ist gesperrt: Auf dem Server ist kein Zugangsschlüssel "
-        + "(SYNC_AUTH_TOKEN) hinterlegt. Ohne ihn wird weder etwas ausgeliefert noch etwas eingeplant." } };
+      grund: "Der Ausgang ist gesperrt: Auf dem Server ist kein Zugangsschlüssel hinterlegt. "
+        + "Nötig ist MAIL_QUEUE_AUTH_TOKEN (empfohlen — betrifft nur den Ausgang); ersatzweise gilt ein "
+        + "vorhandener SYNC_AUTH_TOKEN, der allerdings auch die übrigen Endpunkte verlangt. "
+        + "Ohne Schlüssel wird weder etwas ausgeliefert noch etwas eingeplant." } };
   }
   const gegeben = String(authKopf || "").trim();
   if (!gegeben) {
