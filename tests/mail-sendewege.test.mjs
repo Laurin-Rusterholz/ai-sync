@@ -71,14 +71,14 @@ const PRUEFUNGEN = {
     s.includes("gmailAltplanungUebernehmen(\\'"),
 
   "Anhänge reisen in der geplanten Nachricht mit": (s) => {
-    const i = s.indexOf("window.gmailPlanSend");
+    const i = s.indexOf("window.gmailPlanSend = async function");
     if (i < 0) return false;
     const block = s.slice(i, i + 2600);
     return block.includes("attachments:(GM._attachments||[])") && block.includes("hatAnhaenge");
   },
 
   "der Eingangs-Thread bleibt unberührt: geplant wird nur, nicht modifiziert": (s) => {
-    const i = s.indexOf("window.gmailPlanSend");
+    const i = s.indexOf("window.gmailPlanSend = async function");
     const block = s.slice(i, i + 2600);
     return i > 0 && !block.includes("/modify") && !block.includes("addLabelIds");
   },
@@ -105,7 +105,7 @@ const PRUEFUNGEN = {
      den Knopf zu sperren, wird nur der KÖRPER ersetzt — den baut die Seite und
      der Server setzt ihn an die Stelle des alten. */
   "Bearbeiten schickt den Körper, nicht eine neue Nachricht": (s) => {
-    const i = s.indexOf("window.gmailPlanSend");
+    const i = s.indexOf("window.gmailPlanSend = async function");
     const block = s.slice(i, i + 3600);
     return i > 0 && block.includes("anfrage.koerperTeil = gmlBodyEntity(") && block.includes("delete anfrage.raw");
   },
@@ -132,12 +132,20 @@ const PRUEFUNGEN = {
      wird genannt. */
   "der ausdrückliche Sofortversand hat einen Knopf": (s) =>
     s.includes('id="gmlSendNowBtn"') && s.includes('onclick="gmailSendNow()"'),
+  "im Bearbeiten-Fenster gibt es den Sofort-Knopf gar nicht": (s) =>
+    s.includes("prefill.ausgangId ? '' : '<button type=\"button\" id=\"gmlSendNowBtn\""),
+  "und die Funktion selbst weigert sich dort ebenfalls": (s) => {
+    const i = s.indexOf("window.gmailSendNow = async function(){");
+    const kopf = s.slice(i, i + 900);
+    return i > 0 && kopf.includes("GM._composeCtx.ausgangId")
+      && kopf.indexOf("GM._composeCtx.ausgangId") < kopf.indexOf("GM._composeBusy");
+  },
   "ein gesperrter Ausgang wird erklärt statt verschleiert": (s) =>
     s.includes("Ausgang gesperrt") && s.includes("SYNC_AUTH_TOKEN"),
 
   /* Neue Anhänge beim Bearbeiten: sie reisen mit, statt still zu verschwinden. */
   "im Bearbeiten angehängte Dateien gehen mit": (s) => {
-    const i = s.indexOf("window.gmailPlanSend");
+    const i = s.indexOf("window.gmailPlanSend = async function");
     const block = s.slice(i, i + 4200);
     return i > 0 && block.includes("anfrage.neueAnhaenge = neueAnh") && block.includes("GM._attachments||[]");
   },
@@ -267,6 +275,54 @@ function schneide(src, kopf) {
   GM.drafts = [{ _key: "alt1", status: "scheduled", to: "alt@example.com" }];
   pruefe("alte Browser-Planungen werden sichtbar gemeldet, nicht heimlich übernommen",
     /alte Planung/i.test(seite()) && /nicht mehr von selbst/.test(seite()));
+}
+
+/* ── Der Sofort-Knopf im Bearbeiten-Fenster ──────────────────────────────
+   Befund der unabhängigen Prüfung (13.09.2026): Der neu eingebaute Knopf
+   „📨 Jetzt senden" erschien auch beim Bearbeiten eines BEREITS GEPLANTEN
+   Eintrags. `gmailSendNow` baut die Nachricht aus dem Fenster neu — ohne die
+   Anhänge, die nur in der gespeicherten Nachricht liegen — und schickt sie
+   direkt an Gmail. Der geplante Eintrag bliebe daneben stehen und ginge später
+   ein zweites Mal raus.
+
+   Geprüft wird hier die tatsächliche Verzweigung: Die echte Funktion wird aus
+   der Datei geschnitten und ausgeführt. Mit `ausgangId` muss sie den Eintrag
+   fällig setzen und darf Gmail NICHT anfassen. */
+{
+  const quelle = schneide(JETZT, "  window.gmailSendNow = async function(){");
+  const gebaut = new Function("fenster", "GM", "gmApi", "document", "toast", "buildRaw", "closeModal",
+    "const window = fenster; " + quelle + "; return fenster.gmailSendNow;");
+
+  // Fall 1: ein geplanter Eintrag wird bearbeitet.
+  {
+    const gerufen = { plan: [], gmail: [] };
+    const fenster = { gmailPlanSend: async (o) => { gerufen.plan.push(o); return { ok: true }; } };
+    const GM = { _composeCtx: { ausgangId: "out_1" }, _attachments: [] };
+    const gmApi = async (m, p) => { gerufen.gmail.push(m + " " + p); return {}; };
+    const fn = gebaut(fenster, GM, gmApi, { getElementById: () => null }, () => {}, () => "raw", () => {});
+    const vorher = Date.now();
+    await fn();
+
+    pruefe("beim Bearbeiten wird der geplante Eintrag fällig gesetzt", gerufen.plan.length === 1);
+    pruefe("dabei geht KEIN Aufruf direkt an Gmail", gerufen.gmail.length === 0);
+    const z = gerufen.plan[0] && Number(gerufen.plan[0].zeitpunkt);
+    pruefe("der Eintrag bekommt einen Sofort-Termin", Number.isFinite(z) && z >= vorher && z <= Date.now() + 1000);
+  }
+
+  // Fall 2: eine neue Mail — hier ist der Sofortversand gewollt.
+  {
+    const gerufen = { plan: [], gmail: [] };
+    const fenster = { gmailPlanSend: async (o) => { gerufen.plan.push(o); return { ok: true }; } };
+    const GM = { _composeCtx: {}, _attachments: [] };
+    const felder = { gmlTo: { value: "beispiel@example.com" }, gmlSubject: { value: "B" }, gmlBody: { value: "T" } };
+    const gmApi = async (m, p) => { gerufen.gmail.push(m + " " + p); throw new Error("Abbruch im Test"); };
+    const fn = gebaut(fenster, GM, gmApi,
+      { getElementById: (id) => felder[id] || null }, () => {}, () => "raw", () => {});
+    await fn();
+    pruefe("bei einer neuen Mail geht der Sofortversand wirklich an Gmail",
+      gerufen.gmail.some((a) => /messages\/send/.test(a)));
+    pruefe("bei einer neuen Mail wird nicht heimlich geplant", gerufen.plan.length === 0);
+  }
 }
 
 /* ── Gegenprobe: derselbe Test gegen den Stand vor der Änderung ─────────── */
