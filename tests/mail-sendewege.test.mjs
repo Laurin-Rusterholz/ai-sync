@@ -101,6 +101,26 @@ const PRUEFUNGEN = {
   "Gmails Ansicht „Geplant“ wird nicht vorgetäuscht": (s) =>
     !s.includes('"SCHEDULED"') && !s.includes("'SCHEDULED'"),
 
+  /* Durchsicht 13.09.2026: Bearbeiten darf einen Anhang nicht kosten. Statt
+     den Knopf zu sperren, wird nur der KÖRPER ersetzt — den baut die Seite und
+     der Server setzt ihn an die Stelle des alten. */
+  "Bearbeiten schickt den Körper, nicht eine neue Nachricht": (s) => {
+    const i = s.indexOf("window.gmailPlanSend");
+    const block = s.slice(i, i + 3600);
+    return i > 0 && block.includes("anfrage.koerperTeil = gmlBodyEntity(") && block.includes("delete anfrage.raw");
+  },
+
+  "eine geplante Mail mit Anhang lässt sich bearbeiten": (s) => {
+    const i = s.indexOf("window.gmailAusgangBearbeiten");
+    const block = s.slice(i, i + 1400);
+    return i > 0 && !/hatAnhaenge\)\{ toast/.test(block) && block.includes("replyQuote:(e.zitat||null)");
+  },
+
+  "ein ungeklärter Versand wird gezeigt und nur vom Menschen geklärt": (s) =>
+    s.includes('e.status==="unklar"') && s.includes("window.gmailAusgangGeklaert")
+    && s.includes("geklaert-gesendet") && s.includes("geklaert-nicht-gesendet")
+    && s.includes("Quantus wiederholt hier nichts von selbst"),
+
   "der Sofortversand verlangt eine SENT-Bestätigung": (s) => {
     const i = s.indexOf("window.gmailSendNow");
     const block = s.slice(i, i + 4000);
@@ -124,6 +144,18 @@ pruefe("der Klartext liegt für das Bearbeiten bei", KERN.includes("koerper: tex
 pruefe("ein Anhang ist als solcher vermerkt", KERN.includes("hatAnhaenge: !!hatAnhaenge"));
 pruefe("die Antwort-Kopfzeilen überleben das Bearbeiten",
   KERN.includes("inReplyTo: text(inReplyTo") && KERN.includes("references: text(references"));
+
+const LAUF = readFileSync(path.join(WURZEL, "netlify/lib/mail-queue.mjs"), "utf8");
+pruefe("jede unumkehrbare Handlung wird VORHER vermerkt",
+  LAUF.includes("K.setzeStufe(e, K.STUFE.entwurf") && LAUF.includes("K.setzeStufe(e, K.STUFE.senden"));
+pruefe("ändern und abbrechen schreiben nur mit Kennung (CAS)",
+  LAUF.includes("async function mitVergleich") && LAUF.includes("{ ifMatch: etag }"));
+pruefe("der Lauf schreibt nur, solange der Zugriff ihm gehört (Fencing)",
+  LAUF.includes("function zaunFuer") && LAUF.includes("da.claim.lauf !== laufId"));
+pruefe("wiedergefunden wird über die eigene Message-ID, nicht über die Entwurfs-Id",
+  LAUF.includes("rfc822msgid:") && !LAUF.includes("e.draftMessageId"));
+pruefe("bei ungeklärtem Ausgang wird nichts wiederholt",
+  LAUF.includes("UnklarFehler") && LAUF.includes("markiereUnklar"));
 
 const FUNK = readFileSync(path.join(WURZEL, "netlify/functions/mail-queue.mjs"), "utf8");
 pruefe("die Bedien-Funktion sendet selbst nichts",

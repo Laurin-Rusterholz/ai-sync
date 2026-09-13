@@ -249,4 +249,58 @@ const bauen = (uhr, extra = {}) => K.neuerEintrag(Object.assign({
   eq(lang.koerper.length, 20000, "der Klartext wird nicht begrenzt");
 }
 
+/* ══ 11. Stufen und der ungeklaerte Ausgang ═══════════════════════════════
+   Durchsicht 13.09.2026: Es genuegt nicht, den Entwurf erst NACH dem Senden zu
+   vermerken. Wer nach einem Absturz nicht weiss, wie weit der vorige Lauf kam,
+   sendet ein zweites Mal. Deshalb traegt jeder Eintrag eine Stufe — und ein
+   Eintrag, bei dem der Versand angestossen war, ist tabu, bis ein Mensch
+   geklaert hat, was wirklich passiert ist. */
+{
+  const uhr = UHR(T0);
+  const e = bauen(uhr);
+  eq(e.stufe, K.STUFE.neu, "ein neuer Eintrag traegt keine Stufe");
+
+  const beimSenden = K.setzeStufe(K.uebernimm(Object.assign({}, e, { sendAt: uhr.jetzt() }), uhr.jetzt(), "l1").eintrag,
+    K.STUFE.senden, uhr.jetzt());
+  eq(beimSenden.stufe, K.STUFE.senden, "die Stufe „senden“ wird nicht festgehalten");
+
+  // Der Claim verwaist — der Eintrag wird trotzdem NICHT freigegeben.
+  uhr.vor(K.CLAIM_TIMEOUT_MS + 1000);
+  ok(!K.claimOffen(beimSenden, uhr.jetzt()), "der Claim gilt ewig");
+  ok(!K.darfAendern(beimSenden, uhr.jetzt()),
+    "ein angestossener Versand liess sich aendern — damit stuende „nicht gesendet“ ueber einer moeglicherweise gesendeten Mail");
+  ok(!K.darfAbbrechen(beimSenden, uhr.jetzt()), "ein angestossener Versand liess sich abbrechen");
+  ok(/ungeklärt|Versand/i.test(K.aendere(beimSenden, { subject: "X" }, uhr.jetzt()).grund || ""),
+    "der Grund nennt den angestossenen Versand nicht");
+
+  // Merken des Entwurfs setzt die Stufe weiter.
+  eq(K.merkeEntwurf(e, "draft_1", uhr.jetzt()).stufe, K.STUFE.entwurfOk, "der Entwurf wird nicht als vermerkt gefuehrt");
+
+  // Ungeklaert: sichtbar, aber nie wieder von selbst faellig.
+  const unklar = K.markiereUnklar(beimSenden, "Gmail hat nicht geantwortet", uhr.jetzt()).eintrag;
+  eq(unklar.status, K.STATUS.unklar, "der ungeklaerte Zustand fehlt");
+  ok(!K.istFaellig(unklar, uhr.jetzt() + 10 * STUNDE), "ein ungeklaerter Versand wird von selbst wiederholt");
+  eq(K.faellige([unklar], uhr.jetzt() + 10 * STUNDE).length, 0, "ein ungeklaerter Versand steht wieder in der Schlange");
+  eq(K.zeile(unklar, uhr.jetzt()).status, "Ungeklärt", "die Zeile verschweigt den ungeklaerten Ausgang");
+  ok(K.zeile(unklar, uhr.jetzt()).klaerung, "die Zeile bittet nicht um Klaerung");
+  ok(!K.darfAendern(unklar, uhr.jetzt()), "ein ungeklaerter Eintrag liess sich aendern");
+
+  // Klaeren kann nur ein Mensch — und beide Richtungen sind moeglich.
+  const jaGesendet = K.klaereGesendet(unklar, uhr.jetzt(), "msg_1");
+  ok(jaGesendet.ok, "die Klaerung „gesendet“ wurde abgewiesen");
+  eq(jaGesendet.eintrag.status, K.STATUS.gesendet, "nach der Klaerung steht der Eintrag nicht auf gesendet");
+  eq(jaGesendet.eintrag.geklaertDurch, "nutzer", "die Klaerung ist nicht als menschliche Entscheidung vermerkt");
+
+  const nein = K.klaereNichtGesendet(unklar, uhr.jetzt());
+  ok(nein.ok, "die Klaerung „nicht gesendet“ wurde abgewiesen");
+  eq(nein.eintrag.status, K.STATUS.geplant, "nach der Klaerung ist der Eintrag nicht wieder geplant");
+  eq(nein.eintrag.draftId, null, "der alte Entwurf blieb stehen — der naechste Lauf sendete ihn");
+  eq(nein.eintrag.stufe, K.STUFE.neu, "die alte Stufe blieb stehen");
+  ok(K.istFaellig(nein.eintrag, uhr.jetzt()), "der freigegebene Eintrag ist nicht faellig");
+
+  // Ein NICHT ungeklaerter Eintrag laesst sich so nicht „klaeren“.
+  ok(!K.klaereGesendet(e, uhr.jetzt()).ok, "eine geplante Mail liess sich zu gesendet erklaeren");
+  ok(!K.klaereNichtGesendet(e, uhr.jetzt()).ok, "eine geplante Mail liess sich als nicht gesendet erklaeren");
+}
+
 console.log(`mail versandplanung (Kern): ok (${checks} Pruefungen)`);

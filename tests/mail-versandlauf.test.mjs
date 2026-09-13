@@ -31,8 +31,18 @@ const STUNDE = 60 * 60 * 1000;
 
 /* Ein Gmail-Doppel, das sich wie die echte API verhaelt: Entwuerfe entstehen,
    verschwinden beim Senden, gesendete Nachrichten tragen SENT. */
+function msgIdAusRaw(raw) {
+  const mime = Buffer.from(String(raw || "").replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+  const m = /^message-id:\s*<([^>]+)>/im.exec(mime);
+  return m ? m[1] : null;
+}
+
 function gmailDoppel(optionen = {}) {
-  const zustand = { drafts: new Map(), messages: new Map(), aufrufe: [], sendCount: 0, fehler: null };
+  const zustand = { drafts: new Map(), messages: new Map(), aufrufe: [], sendCount: 0, fehler: null,
+    /* Barrieren: genau steuerbar, was WANN schiefgeht. `nachSenden` laeuft,
+       NACHDEM Gmail die Mail tatsaechlich verschickt hat — so laesst sich die
+       verlorene Antwort nachstellen, ohne zu raten. */
+    nachSenden: null, verlierMessageId: false };
   let n = 0;
   async function gmail(method, pfad, opt = {}) {
     zustand.aufrufe.push(method + " " + pfad);
@@ -40,8 +50,20 @@ function gmailDoppel(optionen = {}) {
     if (method === "POST" && pfad === "/users/me/drafts") {
       const draftId = "draft_" + (++n);
       const msgId = "dmsg_" + n;
-      zustand.drafts.set(draftId, { id: draftId, message: { id: msgId, threadId: (opt.body.message || {}).threadId || "thr_" + n, labelIds: ["DRAFT"] } });
+      const raw = (opt.body.message || {}).raw;
+      zustand.drafts.set(draftId, { id: draftId, rfc822: msgIdAusRaw(raw),
+        message: { id: msgId, threadId: (opt.body.message || {}).threadId || "thr_" + n, labelIds: ["DRAFT"] } });
       return zustand.drafts.get(draftId);
+    }
+    if (method === "GET" && pfad === "/users/me/messages") {
+      // users.messages.list mit q=rfc822msgid:<id> (Discovery: Parameter q)
+      const q = String((opt.query || {}).q || "");
+      const treffer = /rfc822msgid:(\S+)/.exec(q);
+      if (!treffer) return { messages: [] };
+      const gesucht = treffer[1];
+      const ids = [];
+      zustand.messages.forEach((m, k) => { if (m.rfc822 === gesucht) ids.push({ id: k }); });
+      return { messages: ids };
     }
     if (method === "GET" && /^\/users\/me\/drafts\//.test(pfad)) {
       const d = zustand.drafts.get(decodeURIComponent(pfad.split("/").pop()));
@@ -63,10 +85,14 @@ function gmailDoppel(optionen = {}) {
       if (!d) { const e = new Error("Not Found"); e.status = 404; throw e; }
       zustand.drafts.delete(opt.body.id);
       zustand.sendCount++;
+      /* Wie bei Gmail: der Entwurf ist weg, und die gesendete Nachricht hat
+         eine NEUE Id — die alte message.id des Entwurfs fuehrt ins Leere.
+         Genau das war die falsche Annahme der ersten Fassung. */
       const m = { id: "msg_" + zustand.sendCount, threadId: d.message.threadId,
         labelIds: optionen.ohneLabelInAntwort ? [] : ["SENT"] };
-      zustand.messages.set(m.id, { id: m.id, threadId: m.threadId, labelIds: ["SENT"] });
-      zustand.messages.set(d.message.id, { id: d.message.id, threadId: m.threadId, labelIds: ["SENT"] });
+      zustand.messages.set(m.id, { id: m.id, threadId: m.threadId, labelIds: ["SENT"],
+        rfc822: zustand.verlierMessageId ? "von-gmail-ersetzt" : d.rfc822 });
+      if (zustand.nachSenden) { const f = zustand.nachSenden; zustand.nachSenden = null; throw f; }
       return m;
     }
     if (method === "GET" && /^\/users\/me\/messages\//.test(pfad)) {
@@ -80,6 +106,7 @@ function gmailDoppel(optionen = {}) {
 }
 
 function umgebung(optionen = {}) {
+  const haken = { vorSchreiben: null };
   const speicher = new Map();
   let t = T0;
   const uhr = { jetzt: () => t, vor: (ms) => { t += ms; return t; } };
@@ -100,6 +127,9 @@ function umgebung(optionen = {}) {
     },
     dbGetEtag: async (p) => ({ value: speicher.get(p) || null, etag: kennungen.get(p) || null }),
     dbSet: async (p, v, opt = {}) => {
+      /* Deterministische Barriere: Wer hier einhaengt, entscheidet genau, was
+         ZWISCHEN Lesen und Schreiben passiert — kein Timing, kein Zufall. */
+      if (haken.vorSchreiben) await haken.vorSchreiben(p, v, opt);
       if (opt.ifMatch && kennungen.get(p) !== opt.ifMatch) return { ok: false, conflict: true };
       setze(p, v);
       return { ok: true, conflict: false };
@@ -108,7 +138,7 @@ function umgebung(optionen = {}) {
     gmail, jetzt: uhr.jetzt, neueId: (() => { let i = 0; return () => "out_" + (++i); })(),
   });
   const lies = async (id) => speicher.get("mail/outbox/" + id);
-  return { q, uhr, gmail: zustand, lies, speicher, setze };
+  return { q, uhr, gmail: zustand, lies, speicher, setze, haken };
 }
 
 const MAIL = { raw: "cmF3LWJlaXNwaWVs", to: "beispiel@example.com", subject: "Beispiel", threadId: "thr_1" };
@@ -172,33 +202,30 @@ const MAIL = { raw: "cmF3LWJlaXNwaWVs", to: "beispiel@example.com", subject: "Be
   eq(e.status, K.STATUS.gesendet, "der zweite Anlauf bestaetigt den Versand nicht");
 }
 
-/* ══ 4. Entwurf weg, Versand offen: NICHT noch einmal senden ═════════════ */
+/* ══ 4. Entwurf weg, Versand offen: NICHT noch einmal senden ═════════════
+   Wiedergefunden wird die Nachricht ueber UNSERE Message-ID (rfc822msgid:),
+   nicht ueber die message.id des Entwurfs: die ist nach dem Senden eine
+   andere. Genau daran waere die erste Fassung gescheitert. */
 {
-  const { q, uhr, gmail, lies, speicher, setze } = umgebung();
+  const { q, uhr, gmail, lies, setze } = umgebung();
   const { eintrag } = await q.plane(MAIL);
+  ok(eintrag.messageIdKopf, "die Planung vergibt keine eigene Message-ID");
   uhr.vor(3 * STUNDE);
-  // Zustand nachstellen: Stufe 1 gelaufen, Entwurf bei Gmail bereits gesendet
-  // (also weg), unser Eintrag weiss noch nichts davon.
+  // Zustand nachstellen: Versand war angestossen, der Entwurf ist bei Gmail
+  // weg, die Nachricht liegt mit UNSERER Message-ID im Postausgang.
   const e0 = await lies(eintrag.id);
-  const entwurf = await gmailSendeVorbei(gmail);
+  gmail.messages.set("msg_extern", { id: "msg_extern", threadId: "thr_1",
+    labelIds: ["SENT"], rfc822: e0.messageIdKopf });
   setze("mail/outbox/" + eintrag.id, Object.assign({}, e0, {
-    status: K.STATUS.sendet, claim: { lauf: "tot", seit: T0 },
-    draftId: entwurf.draftId, draftMessageId: entwurf.messageId }));
+    status: K.STATUS.sendet, stufe: K.STUFE.senden, claim: { lauf: "tot", seit: T0 },
+    draftId: "draft_weg" }));
   uhr.vor(K.CLAIM_TIMEOUT_MS + 1000);
   const vorher = gmail.sendCount;
   await q.lauf("aufraeumer");
   const e = await lies(eintrag.id);
   eq(gmail.sendCount, vorher, "der verwaiste Eintrag wurde ein zweites Mal gesendet");
   eq(e.status, K.STATUS.gesendet, "der bereits gesendete Stand wurde nicht nachgezogen");
-  ok(e.gmailMessageId, "die Nachrichten-Id fehlt nach dem Nachziehen");
-}
-
-async function gmailSendeVorbei(zustand) {
-  // Ein Entwurf, der ausserhalb unserer Warteschlange gesendet wurde.
-  const draftId = "draft_extern";
-  const messageId = "dmsg_extern";
-  zustand.messages.set(messageId, { id: messageId, threadId: "thr_1", labelIds: ["SENT"] });
-  return { draftId, messageId };
+  eq(e.gmailMessageId, "msg_extern", "es wurde die falsche Nachricht als die gesendete vermerkt");
 }
 
 /* ══ 5. Ohne SENT keine Erfolgsmeldung ═══════════════════════════════════ */
@@ -260,6 +287,159 @@ async function gmailSendeVorbei(zustand) {
     "der Lauf fasst Threads oder Labels an — der Posteingang gehoert ihm nicht");
   ok(!gmail.aufrufe.some((a) => /messages\/send/.test(a)),
     "es wurde eine Mail an der Warteschlange vorbei gesendet");
+}
+
+/* ══ 9. Die Antwort geht verloren, NACHDEM Gmail gesendet hat ═════════════
+   Das ist der Fall, an dem die erste Fassung eine zweite Mail erzeugt haette:
+   drafts/send hat gewirkt, die Antwort kam nie an, der Eintrag trug keinen
+   Vermerk. Jetzt steht die Stufe „senden" VOR dem Aufruf im Speicher, und die
+   eigene Message-ID fuehrt zur wirklich gesendeten Nachricht. */
+{
+  const { q, uhr, gmail, lies } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  uhr.vor(3 * STUNDE);
+  gmail.nachSenden = Object.assign(new Error("Verbindung abgebrochen"), { status: 502 });
+  await q.lauf("l1");
+  eq(gmail.sendCount, 1, "die Mail ging gar nicht raus");
+  let e = await lies(eintrag.id);
+  eq(e.status, K.STATUS.gesendet, "der verlorene Erfolg wurde nicht wiedergefunden");
+  ok(e.gmailMessageId && e.gmailMessageId !== "dmsg_1",
+    "es wurde die alte Entwurfs-Nachricht als gesendete vermerkt");
+
+  // Und kein spaeterer Lauf legt nach.
+  uhr.vor(2 * STUNDE);
+  await q.lauf("l2"); await q.lauf("l3");
+  eq(gmail.sendCount, 1, `nach dem verlorenen Erfolg wurden ${gmail.sendCount} Mails gesendet`);
+}
+
+/* ══ 10. Ungeklaert heisst ungeklaert — und wird nie wiederholt ═══════════
+   Wenn Gmail unsere Message-ID nicht behaelt UND der Entwurf weg ist, laesst
+   sich der Ausgang nicht feststellen. Dann wird NICHT gesendet, sondern
+   gefragt. Geklaert wird ausschliesslich durch einen Menschen. */
+{
+  const { q, uhr, gmail, lies } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  uhr.vor(3 * STUNDE);
+  gmail.verlierMessageId = true;
+  gmail.nachSenden = Object.assign(new Error("Verbindung abgebrochen"), { status: 502 });
+  await q.lauf("l1");
+  eq(gmail.sendCount, 1, "die Mail ging gar nicht raus");
+  let e = await lies(eintrag.id);
+  eq(e.status, K.STATUS.unklar, "ein ungeklaerter Ausgang wurde als etwas anderes verbucht");
+  ok(/ungeklärt|nicht feststellen|nicht beantwortet/i.test(e.letzterFehler || ""),
+    "der ungeklaerte Zustand wird nicht benannt");
+  eq(K.zeile(e, uhr.jetzt()).status, "Ungeklärt", "die Zeile sagt nicht, dass es ungeklaert ist");
+
+  for (const l of ["l2", "l3", "l4", "l5", "l6"]) { uhr.vor(STUNDE); await q.lauf(l); }
+  eq(gmail.sendCount, 1, `der ungeklaerte Eintrag wurde ${gmail.sendCount - 1}-mal wiederholt`);
+  eq((await lies(eintrag.id)).status, K.STATUS.unklar, "der ungeklaerte Eintrag wurde still weiterbewegt");
+
+  // Auch aendern und abbrechen sind hier gesperrt: niemand darf „nicht
+  // gesendet" behaupten, solange das keiner weiss.
+  ok(!(await q.aendere(eintrag.id, { subject: "X" })).ok, "ein ungeklaerter Versand liess sich bearbeiten");
+  ok(!(await q.brichAb(eintrag.id)).ok, "ein ungeklaerter Versand liess sich abbrechen");
+
+  // Der Mensch hat nachgesehen: sie ist raus.
+  const geklaert = await q.klaereGesendet(eintrag.id);
+  ok(geklaert.ok, "die Klaerung durch den Menschen wurde abgewiesen");
+  e = await lies(eintrag.id);
+  eq(e.status, K.STATUS.gesendet, "nach der Klaerung steht der Eintrag nicht auf gesendet");
+  eq(e.geklaertDurch, "nutzer", "die Klaerung ist nicht als menschliche Entscheidung vermerkt");
+  eq(gmail.sendCount, 1, "die Klaerung hat selbst gesendet");
+}
+
+/* ══ 11. Der andere Weg der Klaerung: doch nicht gesendet ════════════════ */
+{
+  const { q, uhr, gmail, lies } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  uhr.vor(3 * STUNDE);
+  gmail.verlierMessageId = true;
+  gmail.nachSenden = Object.assign(new Error("Zeitüberschreitung"), { status: 504 });
+  await q.lauf("l1");
+  eq((await lies(eintrag.id)).status, K.STATUS.unklar, "der Zustand ist nicht ungeklaert");
+
+  const klar = await q.klaereNichtGesendet(eintrag.id);
+  ok(klar.ok, "die Klaerung „nicht gesendet“ wurde abgewiesen");
+  const e = await lies(eintrag.id);
+  eq(e.status, K.STATUS.geplant, "nach der Klaerung ist der Eintrag nicht wieder geplant");
+  eq(e.draftId, null, "der alte Entwurf blieb haengen — der naechste Lauf wuerde ihn senden");
+  eq(e.stufe, K.STUFE.neu, "die alte Stufe blieb stehen");
+
+  await q.lauf("l2");
+  eq(gmail.sendCount, 2, "nach der ausdruecklichen Freigabe wurde nicht erneut gesendet");
+  eq((await lies(eintrag.id)).status, K.STATUS.gesendet, "der zweite Versand wurde nicht bestaetigt");
+}
+
+/* ══ 12. Absturz zwischen Entwurf und Vermerk ════════════════════════════
+   Der Entwurf entsteht, der Vermerk geht verloren. Das darf hoechstens einen
+   verwaisten Entwurf kosten — niemals eine zweite Mail. */
+{
+  const { q, uhr, gmail, lies, speicher, setze, haken } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  uhr.vor(3 * STUNDE);
+  let gestoert = false;
+  haken.vorSchreiben = async (pf, wert) => {
+    if (!gestoert && wert && wert.draftId) {      // genau der Vermerk „Entwurf steht"
+      gestoert = true;
+      setze(pf, speicher.get(pf));                // fremde Kennung ⇒ der Vermerk scheitert
+    }
+  };
+  await q.lauf("abgestuerzt");
+  haken.vorSchreiben = null;
+  eq(gmail.sendCount, 0, "trotz verlorenem Vermerk wurde gesendet");
+  let e = await lies(eintrag.id);
+  eq(e.stufe, K.STUFE.entwurf, "die Stufe „Entwurf unterwegs“ wurde nicht festgehalten");
+  ok(!e.draftId, "der Entwurf gilt als vermerkt, obwohl der Vermerk scheiterte");
+
+  uhr.vor(K.CLAIM_TIMEOUT_MS + 1000);
+  await q.lauf("zweiter");
+  e = await lies(eintrag.id);
+  eq(gmail.sendCount, 1, `nach dem verlorenen Vermerk gingen ${gmail.sendCount} Mails raus`);
+  eq(e.status, K.STATUS.gesendet, "der zweite Lauf bestaetigt den Versand nicht");
+}
+
+/* ══ 13. Abbrechen im Wettlauf mit dem Lauf ══════════════════════════════
+   Zwischen Lesen und Schreiben uebernimmt der Lauf den Eintrag. Der Abbruch
+   darf dann NICHT Erfolg melden — sonst steht „abgebrochen" ueber einer Mail,
+   die gerade hinausgeht. */
+{
+  const { q, uhr, gmail, lies, haken } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  uhr.vor(3 * STUNDE);
+  let einmal = false;
+  haken.vorSchreiben = async (pf, wert) => {
+    if (!einmal && wert && wert.status === K.STATUS.abgebrochen) {
+      einmal = true;
+      haken.vorSchreiben = null;
+      await q.lauf("worker");        // genau jetzt uebernimmt der Lauf und sendet
+    }
+  };
+  const abbruch = await q.brichAb(eintrag.id);
+  haken.vorSchreiben = null;
+  eq(abbruch.ok, false, "der Abbruch meldete Erfolg, obwohl der Lauf bereits sandte");
+  ok(/gesendet|Versand|ungeklärt/i.test(abbruch.grund || ""), "der Grund nennt den laufenden Versand nicht");
+  eq(gmail.sendCount, 1, "der Lauf kam gar nicht zum Zug");
+  eq((await lies(eintrag.id)).status, K.STATUS.gesendet, "der Abbruch hat den Versand ueberschrieben");
+}
+
+/* ══ 14. Der Zaun: ein fremd gewordener Lauf schreibt nicht mehr ═════════
+   Ausnahme mit Ansage: einen BESTAETIGTEN Versand haelt er trotzdem fest —
+   ginge diese Auskunft verloren, sendete ein spaeterer Lauf noch einmal. */
+{
+  const { q, uhr, lies, setze } = umgebung();
+  const { eintrag } = await q.plane(MAIL);
+  const e0 = await lies(eintrag.id);
+  setze("mail/outbox/" + eintrag.id, Object.assign({}, e0, {
+    status: K.STATUS.sendet, claim: { lauf: "jemand-anders", seit: T0 } }));
+  const zaun = q._zaunFuer(eintrag.id, "ich");
+  let abgewiesen = false;
+  try { await zaun.schreibe(Object.assign({}, e0, { subject: "geklaut" })); }
+  catch (err) { abgewiesen = !!(err && err.fremdgriff); }
+  ok(abgewiesen, "ein fremd gewordener Lauf durfte schreiben");
+  eq((await lies(eintrag.id)).claim.lauf, "jemand-anders", "der fremde Zugriff wurde ueberschrieben");
+
+  await zaun.schreibeUnbedingt(Object.assign({}, e0, { status: K.STATUS.gesendet, gmailMessageId: "msg_x" }));
+  eq((await lies(eintrag.id)).status, K.STATUS.gesendet, "der bestaetigte Versand wurde nicht festgehalten");
 }
 
 console.log(`mail versandlauf (Server): ok (${checks} Pruefungen)`);

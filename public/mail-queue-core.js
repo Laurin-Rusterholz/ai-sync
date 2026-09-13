@@ -50,8 +50,32 @@ export const STATUS = {
   gesendet: "gesendet",         // Gmail hat SENT bestaetigt — endgueltig
   abgebrochen: "abgebrochen",   // vor dem Versand zurueckgenommen — endgueltig
   fehlgeschlagen: "fehlgeschlagen", // nach MAX_VERSUCHE aufgegeben, bleibt sichtbar
+  unklar: "unklar",             // Versand angestossen, Ausgang ungeklaert — NIE automatisch wiederholen
 };
 const ENDGUELTIG = new Set([STATUS.gesendet, STATUS.abgebrochen]);
+
+/* ── Die Stufen des Versands ──────────────────────────────────────────────
+   Befund aus der Durchsicht (13.09.2026): Es genuegt NICHT, den Entwurf erst
+   nach dem Senden zu vermerken. Stuerzt der Lauf zwischen zwei Gmail-Aufrufen
+   ab — oder geht nur die Antwort verloren —, weiss der naechste Lauf sonst
+   nicht, wie weit der vorige kam, legt einen zweiten Entwurf an und sendet ein
+   zweites Mal. Deshalb wird JEDE unumkehrbare Handlung VORHER festgehalten:
+
+     ""            noch nichts angefasst
+     "entwurf"     ein drafts.create ist unterwegs (Antwort noch offen)
+     "entwurf-ok"  die draftId liegt gespeichert vor
+     "senden"      ein drafts.send ist unterwegs (Antwort noch offen)
+
+   Nur so laesst sich nach einem Absturz sagen: „Hier kann nichts draussen
+   sein" (Stufe entwurf: ein Entwurf verschickt nichts) oder „Hier ist der
+   Ausgang ungeklaert" (Stufe senden) — und im zweiten Fall wird NICHT erneut
+   gesendet, sondern gefragt. */
+export const STUFE = {
+  neu: "",
+  entwurf: "entwurf",
+  entwurfOk: "entwurf-ok",
+  senden: "senden",
+};
 
 const zahl = (v, ersatz) => (Number.isFinite(Number(v)) ? Number(v) : ersatz);
 const text = (v, max) => String(v == null ? "" : v).slice(0, max || 400);
@@ -94,6 +118,7 @@ export function neuerEintrag({
   id, raw, threadId = null, to = "", cc = "", bcc = "", subject = "",
   vorschau = "", quelle = "quantus", jetzt = 0, verzoegerungMs, zeitpunkt,
   koerper = "", hatAnhaenge = false, inReplyTo = "", references = "",
+  messageIdKopf = "", zitat = null,
 } = {}) {
   if (!text(id)) return { ok: false, grund: "Ohne Id kein Eintrag" };
   if (!text(raw, 20)) return { ok: false, grund: "Ohne Nachricht kein Versand" };
@@ -127,13 +152,23 @@ export function neuerEintrag({
          bearbeitet, muss die neue Nachricht im SELBEN Thread landen. */
       inReplyTo: text(inReplyTo, 400),
       references: text(references, 2000),
+      zitat: zitat && typeof zitat === "object" ? zitat : null,
       versuche: 0,
       claim: null,             // { lauf, seit }
+      stufe: STUFE.neu,        // wie weit der Versand gekommen ist (siehe oben)
       draftId: null,           // Stufe 1 des Versands
       gmailMessageId: null,    // Stufe 2
       gmailThreadId: null,
       sentAt: null,
       letzterFehler: null,
+      /* Unsere eigene RFC-822-Message-ID. Sie steckt im raw und ist der
+         einzige Faden, an dem sich eine Nachricht nach einem Absturz
+         WIEDERFINDEN laesst: users.messages.list kennt laut Discovery-Dokument
+         den Suchbegriff „rfc822msgid:". Ob Gmail eine mitgegebene Message-ID
+         behaelt, ist nirgends zugesichert — deshalb ist sie ein
+         BESTAETIGUNGSweg und nie ein Grund, noch einmal zu senden. */
+      messageIdKopf: text(messageIdKopf, 200) || null,
+      ungeklaertSeit: null,    // wann der Ausgang ungeklaert wurde
     },
   };
 }
@@ -151,7 +186,14 @@ export function claimOffen(eintrag, jetzt, timeoutMs = CLAIM_TIMEOUT_MS) {
 export function darfAendern(eintrag, jetzt) {
   if (!eintrag || ENDGUELTIG.has(eintrag.status)) return false;
   if (eintrag.gmailMessageId) return false;          // draussen ist draussen
+  if (eintrag.status === STATUS.unklar) return false; // erst klaeren, dann anfassen
   if (claimOffen(eintrag, jetzt)) return false;
+  /* Ein verwaister Claim gibt den Eintrag frei — ABER nur, solange kein
+     Versand angestossen war. Stand die Stufe schon auf „senden", kann die Mail
+     draussen sein; dann darf hier niemand mehr etwas aendern oder abbrechen
+     und damit „nicht gesendet" behaupten. Solche Eintraege gehen in den
+     Zustand unklar und werden ausdruecklich geklaert. */
+  if (eintrag.status === STATUS.sendet && eintrag.stufe === STUFE.senden) return false;
   return eintrag.status === STATUS.geplant || eintrag.status === STATUS.fehlgeschlagen
     || eintrag.status === STATUS.sendet;             // nur mit verwaistem Claim
 }
@@ -196,6 +238,10 @@ function begruendung(eintrag, jetzt) {
   if (!eintrag) return "Diese Mail gibt es nicht mehr.";
   if (eintrag.status === STATUS.gesendet) return "Diese Mail ist bereits gesendet.";
   if (eintrag.status === STATUS.abgebrochen) return "Diese Mail wurde abgebrochen.";
+  if (eintrag.status === STATUS.unklar || (eintrag.status === STATUS.sendet && eintrag.stufe === STUFE.senden)) {
+    return "Für diese Mail läuft oder lief bereits ein Versand — ob sie draussen ist, "
+      + "ist ungeklärt. Bitte in Gmail nachsehen und dort entscheiden.";
+  }
   if (eintrag.gmailMessageId) return "Diese Mail ist bereits bei Gmail — sie lässt sich nicht mehr ändern.";
   if (claimOffen(eintrag, jetzt)) return "Diese Mail wird gerade gesendet.";
   return "Diese Mail lässt sich nicht mehr ändern.";
@@ -205,6 +251,9 @@ function begruendung(eintrag, jetzt) {
 export function istFaellig(eintrag, jetzt, timeoutMs = CLAIM_TIMEOUT_MS) {
   if (!eintrag || ENDGUELTIG.has(eintrag.status)) return false;
   if (eintrag.status === STATUS.fehlgeschlagen) return false;
+  /* Ein ungeklaerter Ausgang wird NIE von selbst noch einmal angefasst. Hier
+     endet die Automatik und beginnt die Frage an den Menschen. */
+  if (eintrag.status === STATUS.unklar) return false;
   if (claimOffen(eintrag, jetzt, timeoutMs)) return false;   // ein Lauf ist dran
   // Ein uebernommener, aber verwaister Eintrag ist faellig — unabhaengig von
   // der Uhr: er haengt sonst fuer immer.
@@ -227,7 +276,52 @@ export function uebernimm(eintrag, jetzt, lauf) {
 
 export function merkeEntwurf(eintrag, draftId, jetzt) {
   return Object.assign({}, eintrag, { draftId: text(draftId, 120),
-    entwurfVeraltet: false, updatedAt: zahl(jetzt, 0) });
+    stufe: STUFE.entwurfOk, entwurfVeraltet: false, updatedAt: zahl(jetzt, 0) });
+}
+
+/* Die Stufe wird VOR dem Gmail-Aufruf festgehalten — deshalb ein eigener,
+   winziger Schritt statt eines Nebeneffekts. */
+export function setzeStufe(eintrag, stufe, jetzt) {
+  return Object.assign({}, eintrag, { stufe: text(stufe, 20), updatedAt: zahl(jetzt, 0) });
+}
+
+/* Ungeklaert: Ein Versand war angestossen, und weder Gmail noch unsere eigene
+   Message-ID sagen, ob die Mail draussen ist. Der Eintrag bleibt stehen,
+   sichtbar, ohne Wiederholung — die Entscheidung trifft ein Mensch. */
+export function markiereUnklar(eintrag, grund, jetzt) {
+  return { ok: true, eintrag: Object.assign({}, eintrag, {
+    status: STATUS.unklar,
+    claim: null,
+    ungeklaertSeit: zahl(jetzt, 0),
+    letzterFehler: text(grund || "Der Ausgang dieses Versands ist ungeklärt.", 300),
+    updatedAt: zahl(jetzt, 0) }) };
+}
+
+/* Die beiden ausdruecklichen Klaerungen. Beide setzen einen MENSCHEN voraus,
+   der in Gmail nachgesehen hat; automatisch geschieht hier nichts. */
+export function klaereGesendet(eintrag, jetzt, gmailMessageId = null) {
+  if (!eintrag || eintrag.status !== STATUS.unklar) {
+    return { ok: false, grund: "Nur ein ungeklärter Versand lässt sich so klären." };
+  }
+  return { ok: true, eintrag: Object.assign({}, eintrag, {
+    status: STATUS.gesendet,
+    gmailMessageId: gmailMessageId ? text(gmailMessageId, 120) : eintrag.gmailMessageId,
+    sentAt: zahl(eintrag.sentAt, 0) || zahl(jetzt, 0),
+    geklaertDurch: "nutzer", claim: null, letzterFehler: null, updatedAt: zahl(jetzt, 0) }) };
+}
+
+export function klaereNichtGesendet(eintrag, jetzt) {
+  if (!eintrag || eintrag.status !== STATUS.unklar) {
+    return { ok: false, grund: "Nur ein ungeklärter Versand lässt sich so klären." };
+  }
+  /* Der Mensch sagt: nichts angekommen. Erst dann beginnt der Versand wieder
+     bei null — ohne alten Entwurf, ohne alte Stufe, mit neuer Message-ID
+     (die vergibt die Warteschlange beim naechsten Anlauf). */
+  return { ok: true, eintrag: Object.assign({}, eintrag, {
+    status: STATUS.geplant, sendAt: zahl(jetzt, 0), stufe: STUFE.neu,
+    draftId: null, draftMessageId: null, entwurfVeraltet: false,
+    geklaertDurch: "nutzer", claim: null, versuche: 0,
+    letzterFehler: null, ungeklaertSeit: null, updatedAt: zahl(jetzt, 0) }) };
 }
 
 /* Gesendet ist erst, was Gmail mit dem Label SENT bestaetigt. Ohne diese
@@ -246,6 +340,7 @@ export function markiereGesendet(eintrag, gmailNachricht, jetzt) {
   }
   return { ok: true, eintrag: Object.assign({}, eintrag, {
     status: STATUS.gesendet,
+    stufe: STUFE.neu,
     gmailMessageId: text(gmailNachricht.id, 120),
     gmailThreadId: gmailNachricht.threadId ? text(gmailNachricht.threadId, 120) : eintrag.threadId,
     sentAt: zahl(jetzt, 0),
@@ -291,13 +386,20 @@ export function zeile(eintrag, jetzt = 0, zone = VERSANDZONE) {
       text: "Gesendet " + zeigeZeit(eintrag.sentAt, zone) + " (" + zone + ")", offen: false });
   }
   if (s === STATUS.abgebrochen) return Object.assign(marke, { geplant: false, status: "Abgebrochen", text: "Nicht gesendet", offen: false });
+  if (s === STATUS.unklar) {
+    return Object.assign(marke, { geplant: false, status: "Ungeklärt",
+      text: "Der Versand wurde angestossen, der Ausgang ist ungeklärt — bitte in Gmail nachsehen. "
+        + "Es wird nichts von selbst wiederholt.",
+      offen: true, klaerung: true });
+  }
   return Object.assign(marke, { geplant: false, status: "Fehlgeschlagen",
     text: "Nicht gesendet — " + (eintrag.letzterFehler || "Grund unbekannt"), offen: true });
 }
 
 export default {
-  VERSANDZONE, STANDARD_VERZOEGERUNG_MS, CLAIM_TIMEOUT_MS, MAX_VERSUCHE, STATUS,
+  VERSANDZONE, STANDARD_VERZOEGERUNG_MS, CLAIM_TIMEOUT_MS, MAX_VERSUCHE, STATUS, STUFE,
   plane, zeigeZeit, neuerEintrag, claimOffen, darfAendern, darfAbbrechen,
-  aendere, brichAb, sofort, istFaellig, faellige, uebernimm, merkeEntwurf,
+  aendere, brichAb, sofort, istFaellig, faellige, uebernimm, merkeEntwurf, setzeStufe,
   bestaetigtGesendet, markiereGesendet, ruecksprungMs, markiereFehler, zeile,
+  markiereUnklar, klaereGesendet, klaereNichtGesendet,
 };

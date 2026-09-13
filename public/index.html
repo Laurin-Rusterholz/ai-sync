@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h · 2026-09-13" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung · 2026-09-13" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -108809,7 +108809,8 @@ console.log('📚 Leseliste geladen');
       var anfrage = { raw:raw, to:to, cc:cc, bcc:bcc, subject:subject,
         vorschau:String(body||"").slice(0,300), quelle:"quantus",
         koerper:String(body||""), hatAnhaenge:((GM._attachments||[]).length>0),
-        inReplyTo:(ctx.inReplyTo||""), references:(ctx.references||"") };
+        inReplyTo:(ctx.inReplyTo||""), references:(ctx.references||""),
+        zitat:(ctx.replyQuote||null) };
       if (ctx.threadId) anfrage.threadId = ctx.threadId;
       if (optionen.zeitpunkt) anfrage.zeitpunkt = Number(optionen.zeitpunkt);
       /* Wird ein bereits geplanter Eintrag bearbeitet, entsteht KEIN zweiter:
@@ -108817,8 +108818,16 @@ console.log('📚 Leseliste geladen');
          keiner gewaehlt wurde — Speichern verschiebt nichts heimlich. */
       var antwort;
       if (ctx.ausgangId){
+        /* Bearbeiten tauscht NUR den Koerper der gespeicherten Nachricht —
+           deshalb geht der fertige Koerper-Teil hinaus und NICHT eine ganz
+           neue Nachricht. Nur so bleiben Anhaenge erhalten: ihre Daten stecken
+           allein in der gespeicherten MIME-Nachricht, hier im Browser liegen
+           sie nach dem Planen nicht mehr. */
         anfrage.id = ctx.ausgangId;
-        delete anfrage.quelle; delete anfrage.hatAnhaenge; delete anfrage.threadId;
+        anfrage.koerperTeil = gmlBodyEntity({ body:body, quote:(ctx.replyQuote||null) });
+        delete anfrage.raw; delete anfrage.quelle; delete anfrage.hatAnhaenge;
+        delete anfrage.threadId; delete anfrage.inReplyTo; delete anfrage.references;
+        delete anfrage.zitat;
         antwort = await gmQueue("aendere", anfrage);
       } else {
         antwort = await gmQueue("plane", anfrage);
@@ -108855,7 +108864,8 @@ console.log('📚 Leseliste geladen');
       var antwort = await gmQueue("liste", {});
       GM.ausgangFehler = null;
       GM.ausgang = (antwort.eintraege||[]).filter(function(e){
-        return e && (e.status==="geplant" || e.status==="sendet" || e.status==="fehlgeschlagen");
+        return e && (e.status==="geplant" || e.status==="sendet"
+          || e.status==="fehlgeschlagen" || e.status==="unklar");
       });
     } catch(e){ GM.ausgangFehler = (e&&e.message)||"Ausgang nicht lesbar"; }
     if (typeof rerender==="function") rerender();
@@ -108890,19 +108900,34 @@ console.log('📚 Leseliste geladen');
     if (!t || isNaN(t)){ toast("err","Ungültiger Zeitpunkt","Bitte Datum und Uhrzeit wählen."); return; }
     return window.gmailAusgangVerschieben(id, t);
   };
-  /* Bearbeiten bis zum Versand: Der Klartext liegt im Eintrag (koerper) — aus
-     der fertigen MIME-Nachricht liesse er sich nicht verlustfrei zurückholen.
-     Ein Eintrag MIT Anhang wird hier NICHT neu gebaut: die Anhangsbytes stecken
-     nur im raw, ein neu gebauter Text würde sie stillschweigend wegwerfen.
-     Dann bleibt abbrechen und neu verfassen — sichtbar statt still. */
+  /* Bearbeiten bis zum Versand — auch mit Anhang. Der Klartext liegt im
+     Eintrag (koerper); gespeichert wird beim Sichern nur der neue KÖRPER, den
+     der Server an die Stelle des alten in die bestehende Nachricht setzt.
+     Die Anhänge bleiben dabei Zeichen für Zeichen stehen (siehe
+     netlify/lib/mail-mime.mjs und tests/mail-mime.test.mjs). */
   window.gmailAusgangBearbeiten = function(id){
     var e=(GM.ausgang||[]).find(function(x){ return x.id===id; });
     if (!e){ toast("err","Nicht gefunden","Diese geplante Mail gibt es nicht mehr."); gmailLadeAusgang(); return; }
-    if (e.hatAnhaenge){ toast("info","Mail mit Anhang","Zum Ändern bitte abbrechen und neu verfassen — beim Neuschreiben ginge der Anhang verloren."); return; }
+    if (e.status==="unklar"){ toast("info","Erst klären","Für diese Mail ist ungeklärt, ob sie draussen ist — bitte zuerst in Gmail nachsehen."); return; }
     window.gmailCompose({ title:"Geplante Mail bearbeiten", to:e.to||"", cc:e.cc||"", bcc:e.bcc||"",
       subject:e.subject||"", body:e.koerper||"", threadId:e.threadId||null, ausgangId:e.id,
-      inReplyTo:e.inReplyTo||null, references:e.references||null,
-      note:'🕒 Geplant für '+esc(gmlZuercherZeit(e.sendAt))+' (Europe/Zurich). Speichern behält diesen Zeitpunkt; der Eingangs-Thread bleibt bis zum Versand unberührt.' });
+      inReplyTo:e.inReplyTo||null, references:e.references||null, replyQuote:(e.zitat||null),
+      note:'🕒 Geplant für '+esc(gmlZuercherZeit(e.sendAt))+' (Europe/Zurich). Speichern behält diesen Zeitpunkt; '
+        +(e.hatAnhaenge?'der Anhang bleibt erhalten; ':'')+'der Eingangs-Thread bleibt bis zum Versand unberührt.' });
+  };
+
+  /* Ein ungeklärter Versand wird NICHT von selbst wiederholt. Geklärt wird er
+     nur hier — von einem Menschen, der in Gmail nachgesehen hat. */
+  window.gmailAusgangGeklaert = async function(id, wie){
+    var frage = wie==="gesendet"
+      ? "Hast du in Gmail gesehen, dass diese Mail wirklich gesendet wurde?\n\nDann wird sie als gesendet vermerkt — es wird nichts versendet."
+      : "Hast du in Gmail gesehen, dass diese Mail NICHT gesendet wurde?\n\nDann wird sie erneut eingeplant und geht beim nächsten Serverlauf raus.";
+    if (!confirm(frage)) return;
+    try {
+      await gmQueue(wie==="gesendet" ? "geklaert-gesendet" : "geklaert-nicht-gesendet", { id:id });
+      toast("ok","Geklärt", wie==="gesendet" ? "Als gesendet vermerkt." : "Neu eingeplant.");
+    } catch(e){ toast("err","Nicht geklärt",(e&&e.message)||""); }
+    gmailLadeAusgang();
   };
 
   /* ── Ausgang: die Ansicht ────────────────────────────────────────────────
@@ -108912,9 +108937,26 @@ console.log('📚 Leseliste geladen');
   function gmlAusgangZeile(e){
     var wann=gmlZuercherZeit(e.sendAt);
     var kopf = e.status==="sendet" ? '📤 Wird gerade gesendet'
+      : e.status==="unklar" ? '❓ Ungeklärt — bitte in Gmail nachsehen'
       : e.status==="fehlgeschlagen" ? '⚠️ Nicht gesendet — '+esc(e.letzterFehler||"Grund unbekannt")
       : '🕒 Geplant · geht '+esc(wann)+' raus (Europe/Zurich)';
     var laeuft = e.status==="sendet";
+    /* Ungeklärt heisst: Der Versand war angestossen, und niemand weiss, ob die
+       Mail draussen ist. Hier wird nichts wiederholt und nichts behauptet —
+       hier wird gefragt. */
+    if (e.status==="unklar"){
+      return '<div class="gml-draft">'
+        + '<div class="gml-draft-head"><span class="gml-draft-to">📤 An: '+esc(e.to||"(Empfänger?)")+'</span>'
+        +   '<span class="gml-draft-date">'+kopf+'</span></div>'
+        + '<div class="gml-draft-subj">'+esc(e.subject||"(kein Betreff)")+'</div>'
+        + '<div class="gml-draft-prev">'+esc(e.letzterFehler||"Der Versand wurde angestossen, der Ausgang ist ungeklärt.")
+        +   ' Quantus wiederholt hier nichts von selbst — eine zweite Mail wäre schlimmer als eine offene Frage.'
+        +   ' Bitte in Gmail unter „Gesendet" nachsehen und hier sagen, was stimmt.</div>'
+        + '<div class="gml-draft-actions">'
+        +   '<button class="btn sm primary" onclick="gmailAusgangGeklaert(\''+jsStr(e.id)+'\',\'gesendet\')">✅ Ist gesendet</button>'
+        +   '<button class="btn sm" onclick="gmailAusgangGeklaert(\''+jsStr(e.id)+'\',\'nicht\')">↩️ Nicht gesendet — erneut einplanen</button>'
+        + '</div></div>';
+    }
     var empf = esc(e.to||"(Empfänger?)");
     var anhang = e.hatAnhaenge ? '<span title="Diese Mail hat einen Anhang — er reist in der fertigen Nachricht mit">📎</span> ' : '';
     var vorschau = esc(String(e.vorschau||e.koerper||"").replace(/\s+/g," ").trim().slice(0,180));
