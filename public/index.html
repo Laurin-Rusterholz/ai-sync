@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf · 2026-09-12" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h · 2026-09-13" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -106364,7 +106364,9 @@ console.log('📚 Leseliste geladen');
 .gml-draft-date { flex-shrink:0; font-size:11.5px; color:var(--muted); }
 .gml-draft-subj { font-weight:700; font-size:14px; color:var(--text); margin-bottom:5px; }
 .gml-draft-prev { font-size:12.5px; color:var(--muted); line-height:1.55; margin-bottom:11px; white-space:pre-wrap; max-height:84px; overflow:hidden; }
-.gml-draft-actions { display:flex; gap:8px; }
+.gml-draft-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.gml-ausgang-move { display:inline-flex; gap:6px; align-items:center; margin-left:auto; }
+.gml-ausgang-move input { font:inherit; font-size:12.5px; padding:4px 6px; border-radius:7px; border:1px solid var(--border); background:var(--bg); color:var(--text); }
 .gml-draft-actions .btn.sm { padding:5px 12px; font-size:12.5px; }
 .gml-prio { display:inline-block; min-width:15px; text-align:center; font-size:10px; font-weight:800; padding:1px 5px; border-radius:5px; margin-right:7px; vertical-align:middle; }
 .gml-prio.p1 { background:rgba(255,69,58,.18); color:var(--danger); }
@@ -107170,6 +107172,7 @@ console.log('📚 Leseliste geladen');
     var personUnread = (GM.messages||[]).filter(function(m){ return m.unread && fromPerson(m); }).length;
     var smart = navBtn(GM.smart==="personen","👤","Von Personen","gmailSelectSmart('personen')", personUnread)
       + navBtn(GM.smart==="entwuerfe","🤖","KI-Entwürfe","gmailSelectSmart('entwuerfe')", (GM.drafts&&GM.drafts.length)||0)
+      + navBtn(GM.smart==="ausgang","🕒","Ausgang (geplant)","gmailSelectSmart('ausgang')", (GM.ausgang&&GM.ausgang.length)||0)
       + navBtn(GM.smart==="later","⏰","Später","gmailSelectSmart('later')")
       + navBtn(GM.smart==="spam","🟥","Spam (Fremde)","gmailSelectSmart('spam')")
       + navBtn(GM.smart==="erledigt","✅","Erledigt","gmailSelectSmart('erledigt')");
@@ -107648,7 +107651,7 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
-      + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()">Senden</button>'
+      + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()" title="Geht standardmässig in drei Stunden raus — bis dahin im Ausgang änderbar und abbrechbar">'+(prefill.ausgangId?'Änderung speichern':'Senden (in 3 h)')+'</button>'
       + '<button type="button" id="gmlSendLaterBtn" class="btn" onclick="gmailSendLaterMenu(event)" title="Später senden — Zeitpunkt wählen (z. B. in 1 Stunde oder morgen früh)">🕒 Später</button>'
       + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe“)">💾 Entwurf speichern</button>'
       + '<button type="button" class="gmlc-iconbtn" onclick="gmlAttach()" title="Datei anhängen" aria-label="Datei anhängen">'+SVG.attach+'</button>'
@@ -107658,7 +107661,7 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     // linkedEntities ist die Quelle der Wahrheit; linkedEntity spiegelt das erste
     // Element (Kompatibilität mit n8n-Entwürfen und bestehenden Pfaden).
-    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null, linkedEntities: les0, linkedEntity: les0[0]||null };
+    GM._composeCtx = { threadId: prefill.threadId||null, inReplyTo: prefill.inReplyTo||null, references: prefill.references||null, draftKey: prefill.draftKey||null, source: prefill.source||null, replyQuote: prefill.replyQuote||null, linkedEntities: les0, linkedEntity: les0[0]||null, ausgangId: prefill.ausgangId||null };
     GM._aiUndo = null;  // KI-Undo-Verlauf je Verfassen-Sitzung zurücksetzen
     GM._attachments = [];  // Anhänge je Verfassen-Sitzung zurücksetzen
     if (typeof window.openModal==="function") window.openModal(prefill.title||"Neue E-Mail", html, footer);
@@ -108617,7 +108620,11 @@ console.log('📚 Leseliste geladen');
   // non-ASCII that slips past the per-header encoding above.
   function buildRaw(o){ return window.btoa(unescape(encodeURIComponent(buildMime(o)))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
 
-  window.gmailSend = async function(){
+  /* BIS 13.09.2026 war dies „Senden" — und es ging sofort raus. Seit dem
+     Auftrag vom 13.09.2026 plant „Senden" standardmaessig drei Stunden voraus
+     (window.gmailSend weiter unten); DIESER Weg ist der ausdrueckliche
+     Sofortversand. Er bleibt unveraendert: ein Aufruf, Gmail sendet, fertig. */
+  window.gmailSendNow = async function(){
     if (GM._composeBusy) return;
     var g=function(id){ return document.getElementById(id); };
     var to=(g("gmlTo")&&g("gmlTo").value||"").trim();
@@ -108635,6 +108642,15 @@ console.log('📚 Leseliste geladen');
       var payload = { raw: buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body, inReplyTo:ctx.inReplyTo, references:ctx.references, attachments:(GM._attachments||[]), quote:(ctx.replyQuote||null) }) };
       if (ctx.threadId) payload.threadId = ctx.threadId;
       var sentMsg = await gmApi("POST","/users/me/messages/send", { body: payload });
+      /* Gesendet heisst gesendet, wenn Gmail es bestaetigt. Fehlt das Label in
+         der Antwort, wird einmal nachgefragt — sonst stuende „Gesendet" ueber
+         einer Mail, die niemand hat. */
+      if (!(sentMsg && Array.isArray(sentMsg.labelIds) && sentMsg.labelIds.indexOf("SENT")>=0) && sentMsg && sentMsg.id){
+        try { sentMsg = await gmApi("GET","/users/me/messages/"+encodeURIComponent(sentMsg.id), { query:{ format:"minimal" } }) || sentMsg; } catch(_){}
+      }
+      if (!(sentMsg && Array.isArray(sentMsg.labelIds) && sentMsg.labelIds.indexOf("SENT")>=0)){
+        throw new Error("Gmail hat den Versand nicht bestätigt — bitte in Gmail nachsehen, bevor du erneut sendest.");
+      }
       if (window.closeModal) window.closeModal();
       toast("ok","Gesendet","E-Mail an "+to+" gesendet.");
       // Verknüpfte Elemente (mehrere möglich): entstehenden Thread an ALLE binden,
@@ -108719,17 +108735,216 @@ console.log('📚 Leseliste geladen');
   };
 
   // ── 🕒 Später senden ──
-  // Speichert den Verfassen-Stand als geplanten Entwurf (/gmailDrafts, status
-  // "scheduled" + sendAt) und versendet ihn zeitgesteuert über denselben
-  // Sende-Pfad wie „Senden" (buildRaw → messages/send, inkl. Threading &
-  // Element-Verknüpfung). Der Versand passiert clientseitig im Minuten-Takt —
-  // die App muss dazu in irgendeinem Tab/Gerät geöffnet und mit Gmail
-  // verbunden sein; verpasste Zeitpunkte werden beim nächsten App-Start
-  // nachgeholt. Ein Transaction-Claim verhindert Doppelversand aus mehreren Tabs.
+  // Seit 13.09.2026 nur noch die Zeitauswahl: Der Eintrag geht in die
+  // Server-Warteschlange (gmailPlanSend → /.netlify/functions/mail-queue),
+  // gesendet wird ausschliesslich vom Serverlauf. Der frühere clientseitige
+  // Minuten-Takt ist entfernt — er hätte neben der Warteschlange ein zweites
+  // Mal gesendet, liess Anhänge weg und markierte „gesendet", ohne Gmail zu
+  // fragen. Anhänge reisen jetzt mit, weil dieselbe MIME-Nachricht geplant
+  // wird, die auch der Sofortversand baut.
   function gmlFmtSendAt(ms){
     try { var d=new Date(Number(ms)||0); return d.toLocaleDateString("de-CH",{weekday:"short",day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"}); }
     catch(e){ return ""; }
   }
+  /* ══ Geplanter Versand ═══════════════════════════════════════════════════
+     Auftrag 13.09.2026: Ausgehende Mails gehen standardmaessig erst in DREI
+     STUNDEN raus und bleiben bis dahin in Quantus sichtbar, aenderbar und
+     abbrechbar.
+
+     Die Gmail-API kann Versand NICHT planen — nachgeschlagen im offiziellen
+     Discovery-Dokument (https://gmail.googleapis.com/$discovery/rest?version=v1,
+     Revision 20260907): weder users.messages.send noch users.drafts.send kennen
+     ein Feld dafuer, und es gibt kein Label SCHEDULED. Die Planung liegt
+     deshalb bei uns, auf dem SERVER (netlify/functions/mail-queue*), nicht in
+     einem Browser-Timer: ein geschlossener Rechner haelt nichts auf. Gmail ist
+     Versandkanal und die Quelle fuer den bestaetigten Versand; Gmails Ansicht
+     „Geplant" wird nicht vorgetaeuscht.
+
+     Diese Seite plant, zeigt, aendert und bricht ab — gesendet wird
+     ausschliesslich vom Serverlauf. */
+  async function gmQueue(aktion, daten){
+    var antwort = await fetch("/.netlify/functions/mail-queue", {
+      method:"POST",
+      headers: Object.assign({ "Content-Type":"application/json" }, authHeaders()),
+      body: JSON.stringify(Object.assign({ aktion: aktion }, daten||{})),
+    });
+    var text = await antwort.text();
+    var daten2 = null; try { daten2 = text ? JSON.parse(text) : null; } catch(_){ daten2 = null; }
+    if (!antwort.ok || (daten2 && daten2.ok === false)){
+      throw new Error((daten2 && (daten2.grund || daten2.error)) || ("Warteschlange HTTP "+antwort.status));
+    }
+    return daten2 || {};
+  }
+  window.gmQueue = gmQueue;
+
+  function gmlZuercherZeit(ms){
+    try {
+      return new Intl.DateTimeFormat("de-CH", { timeZone:"Europe/Zurich", day:"2-digit", month:"2-digit",
+        year:"numeric", hour:"2-digit", minute:"2-digit" }).format(new Date(Number(ms)));
+    } catch(e){ return new Date(Number(ms)).toLocaleString("de-CH"); }
+  }
+  window.gmlZuercherZeit = gmlZuercherZeit;
+
+  /* Plant, was gerade im Verfassen-Fenster steht. Anhaenge reisen mit: sie
+     stecken bereits in der MIME-Nachricht, die derselbe buildRaw baut wie beim
+     Sofortversand. Der Eingangsthread wird NICHT angefasst — er bleibt im
+     Posteingang, bis der Versand bestaetigt ist. */
+  window.gmailPlanSend = async function(optionen){
+    optionen = optionen || {};
+    if (GM._composeBusy) return;
+    var g=function(id){ return document.getElementById(id); };
+    var to=(g("gmlTo")&&g("gmlTo").value||"").trim();
+    var cc=(g("gmlCc")&&g("gmlCc").value||"").trim();
+    var bcc=(g("gmlBcc")&&g("gmlBcc").value||"").trim();
+    var subject=(g("gmlSubject")&&g("gmlSubject").value||"").trim();
+    var body=(g("gmlBody")&&g("gmlBody").value||"");
+    if (!to){ toast("err","Empfänger fehlt","Bitte mindestens eine An-Adresse angeben."); return; }
+    GM._composeBusy=true;
+    var sb=g("gmlSendBtn"); if(sb){ sb.disabled=true; sb.textContent="Plane…"; }
+    try {
+      var ctx = GM._composeCtx||{};
+      var raw = buildRaw({ to:to, cc:cc, bcc:bcc, subject:subject, body:body,
+        inReplyTo:ctx.inReplyTo, references:ctx.references,
+        attachments:(GM._attachments||[]), quote:(ctx.replyQuote||null) });
+      var anfrage = { raw:raw, to:to, cc:cc, bcc:bcc, subject:subject,
+        vorschau:String(body||"").slice(0,300), quelle:"quantus",
+        koerper:String(body||""), hatAnhaenge:((GM._attachments||[]).length>0),
+        inReplyTo:(ctx.inReplyTo||""), references:(ctx.references||"") };
+      if (ctx.threadId) anfrage.threadId = ctx.threadId;
+      if (optionen.zeitpunkt) anfrage.zeitpunkt = Number(optionen.zeitpunkt);
+      /* Wird ein bereits geplanter Eintrag bearbeitet, entsteht KEIN zweiter:
+         derselbe Eintrag bekommt den neuen Text. Der Zeitpunkt bleibt, solange
+         keiner gewaehlt wurde — Speichern verschiebt nichts heimlich. */
+      var antwort;
+      if (ctx.ausgangId){
+        anfrage.id = ctx.ausgangId;
+        delete anfrage.quelle; delete anfrage.hatAnhaenge; delete anfrage.threadId;
+        antwort = await gmQueue("aendere", anfrage);
+      } else {
+        antwort = await gmQueue("plane", anfrage);
+      }
+      var eintrag = antwort.eintrag || {};
+      if (window.closeModal) window.closeModal();
+      toast("ok", ctx.ausgangId?"🕒 Geändert":"🕒 Geplant",
+        "Geht "+gmlZuercherZeit(eintrag.sendAt)+" raus (Europe/Zurich). "
+        + "Bis dahin in Quantus änderbar oder abbrechbar.");
+      // Verknuepfungen wie beim Sofortversand — sie haengen am Thread, nicht am Versand.
+      var links = gmlComposeLinks();
+      if (links.length && ctx.threadId){
+        links.forEach(function(le){ try { gmlLinkThreadToEntity(le.kind, le.id, ctx.threadId); } catch(_){} });
+      }
+      if (ctx.draftKey){ setDraftStatus(ctx.draftKey, "used"); GM.drafts=(GM.drafts||[]).filter(function(d){return d._key!==ctx.draftKey;}); }
+      GM.open=null;
+      if (typeof gmailLadeAusgang==="function") gmailLadeAusgang();
+    } catch(e){
+      toast("err","Nicht geplant",(e&&e.message)||"Die Warteschlange antwortet nicht.");
+    } finally {
+      GM._composeBusy=false;
+      var b=document.getElementById("gmlSendBtn");
+      if(b){ b.disabled=false; b.textContent=((GM._composeCtx&&GM._composeCtx.ausgangId)?"Änderung speichern":"Senden (in 3 h)"); }
+    }
+  };
+  // „Senden" heisst ab jetzt: in drei Stunden. Der Sofortversand hat einen
+  // eigenen, ausdruecklichen Knopf.
+  window.gmailSend = function(){ return window.gmailPlanSend({}); };
+
+  /* ── Der Ausgang: was geplant ist, steht in Quantus ───────────────────── */
+  GM.ausgang = GM.ausgang || [];
+  window.gmailLadeAusgang = async function(){
+    try {
+      var antwort = await gmQueue("liste", {});
+      GM.ausgangFehler = null;
+      GM.ausgang = (antwort.eintraege||[]).filter(function(e){
+        return e && (e.status==="geplant" || e.status==="sendet" || e.status==="fehlgeschlagen");
+      });
+    } catch(e){ GM.ausgangFehler = (e&&e.message)||"Ausgang nicht lesbar"; }
+    if (typeof rerender==="function") rerender();
+  };
+  window.gmailAusgangAbbrechen = async function(id){
+    try { await gmQueue("abbrechen", { id:id }); toast("ok","Abgebrochen","Diese Mail geht nicht raus."); }
+    catch(e){ toast("err","Nicht abgebrochen",(e&&e.message)||""); }
+    gmailLadeAusgang();
+  };
+  window.gmailAusgangJetzt = async function(id){
+    try { await gmQueue("sofort", { id:id }); toast("ok","Wird gesendet","Der Serverlauf nimmt sie beim nächsten Takt."); }
+    catch(e){ toast("err","Nicht möglich",(e&&e.message)||""); }
+    gmailLadeAusgang();
+  };
+  window.gmailAusgangVerschieben = async function(id, ts){
+    try { await gmQueue("aendere", { id:id, zeitpunkt:Number(ts) }); toast("ok","Verschoben","Neu geplant auf "+gmlZuercherZeit(ts)+"."); }
+    catch(e){ toast("err","Nicht verschoben",(e&&e.message)||""); }
+    gmailLadeAusgang();
+  };
+
+  /* ── Ausgang: verschieben und bearbeiten ─────────────────────────────────
+     Die Zeiteingabe ist Gerätezeit (so liefert sie der Browser); bestätigt und
+     angezeigt wird danach immer Europe/Zurich — wer in Quantus „18:30" liest,
+     meint Zürich. */
+  function gmlLokalEingabe(ms){
+    var d=new Date(Number(ms)||Date.now()), p=function(n){ return String(n).length<2?("0"+n):String(n); };
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes());
+  }
+  window.gmailAusgangVerschiebenAus = function(id){
+    var el=document.querySelector('input[data-ausgang-zeit="'+id+'"]');
+    var t=(el&&el.value)?new Date(el.value).getTime():0;
+    if (!t || isNaN(t)){ toast("err","Ungültiger Zeitpunkt","Bitte Datum und Uhrzeit wählen."); return; }
+    return window.gmailAusgangVerschieben(id, t);
+  };
+  /* Bearbeiten bis zum Versand: Der Klartext liegt im Eintrag (koerper) — aus
+     der fertigen MIME-Nachricht liesse er sich nicht verlustfrei zurückholen.
+     Ein Eintrag MIT Anhang wird hier NICHT neu gebaut: die Anhangsbytes stecken
+     nur im raw, ein neu gebauter Text würde sie stillschweigend wegwerfen.
+     Dann bleibt abbrechen und neu verfassen — sichtbar statt still. */
+  window.gmailAusgangBearbeiten = function(id){
+    var e=(GM.ausgang||[]).find(function(x){ return x.id===id; });
+    if (!e){ toast("err","Nicht gefunden","Diese geplante Mail gibt es nicht mehr."); gmailLadeAusgang(); return; }
+    if (e.hatAnhaenge){ toast("info","Mail mit Anhang","Zum Ändern bitte abbrechen und neu verfassen — beim Neuschreiben ginge der Anhang verloren."); return; }
+    window.gmailCompose({ title:"Geplante Mail bearbeiten", to:e.to||"", cc:e.cc||"", bcc:e.bcc||"",
+      subject:e.subject||"", body:e.koerper||"", threadId:e.threadId||null, ausgangId:e.id,
+      inReplyTo:e.inReplyTo||null, references:e.references||null,
+      note:'🕒 Geplant für '+esc(gmlZuercherZeit(e.sendAt))+' (Europe/Zurich). Speichern behält diesen Zeitpunkt; der Eingangs-Thread bleibt bis zum Versand unberührt.' });
+  };
+
+  /* ── Ausgang: die Ansicht ────────────────────────────────────────────────
+     Eine ausgehende, geplante Zeile — ausdrücklich KEINE an sich selbst
+     geschickte Posteingangsmail und keine nachgebaute Gmail-Ansicht
+     „Geplant" (die Gmail-API kennt sie nicht, siehe Kopf dieser Datei). */
+  function gmlAusgangZeile(e){
+    var wann=gmlZuercherZeit(e.sendAt);
+    var kopf = e.status==="sendet" ? '📤 Wird gerade gesendet'
+      : e.status==="fehlgeschlagen" ? '⚠️ Nicht gesendet — '+esc(e.letzterFehler||"Grund unbekannt")
+      : '🕒 Geplant · geht '+esc(wann)+' raus (Europe/Zurich)';
+    var laeuft = e.status==="sendet";
+    var empf = esc(e.to||"(Empfänger?)");
+    var anhang = e.hatAnhaenge ? '<span title="Diese Mail hat einen Anhang — er reist in der fertigen Nachricht mit">📎</span> ' : '';
+    var vorschau = esc(String(e.vorschau||e.koerper||"").replace(/\s+/g," ").trim().slice(0,180));
+    var aktionen = laeuft
+      ? '<span style="color:var(--muted);font-size:12px">Gmail übernimmt gerade — jetzt geht nichts mehr.</span>'
+      : '<button class="btn sm" onclick="gmailAusgangBearbeiten(\'' + jsStr(e.id) + '\')">✏️ Bearbeiten</button>'
+        + '<button class="btn sm" onclick="gmailAusgangJetzt(\'' + jsStr(e.id) + '\')" title="Nicht warten — der Serverlauf nimmt sie beim nächsten Takt">📨 Jetzt senden</button>'
+        + '<button class="btn sm danger" onclick="gmailAusgangAbbrechen(\'' + jsStr(e.id) + '\')">🛑 Abbrechen</button>'
+        + '<span class="gml-ausgang-move"><input type="datetime-local" data-ausgang-zeit="'+esc(e.id)+'" value="'+esc(gmlLokalEingabe(e.sendAt))+'">'
+        + '<button class="btn sm" onclick="gmailAusgangVerschiebenAus(\'' + jsStr(e.id) + '\')">🕒 Verschieben</button></span>';
+    return '<div class="gml-draft">'
+      + '<div class="gml-draft-head"><span class="gml-draft-to">📤 An: '+anhang+empf+'</span><span class="gml-draft-date">'+kopf+'</span></div>'
+      + '<div class="gml-draft-subj">'+esc(e.subject||"(kein Betreff)")+'</div>'
+      + '<div class="gml-draft-prev">'+(vorschau||'<span style="color:var(--muted)">(leerer Text)</span>')+'</div>'
+      + '<div class="gml-draft-actions">'+aktionen+'</div>'
+      + '</div>';
+  }
+  function renderAusgangPane(){
+    var liste=(GM.ausgang||[]);
+    var head='<div class="gml-listhead"><span>🕒 Ausgang (geplant)</span><span style="display:flex;gap:8px;align-items:center"><span class="gml-listcount">'+liste.length+'</span><button class="gml-mini" title="Aktualisieren" onclick="gmailLadeAusgang()">🔄</button></span></div>';
+    if (GM.ausgangFehler) return head+'<div class="gml-empty"><div style="font-size:40px">⚠️</div><p>'+esc(GM.ausgangFehler)+'</p><p style="font-size:12px;color:var(--muted)">Der Ausgang liegt auf dem Server (<code>/.netlify/functions/mail-queue</code>). Solange er nicht antwortet, wird hier nichts geplant — gesendet aber auch nichts Doppeltes.</p></div>';
+    var alt=(GM.drafts||[]).filter(function(d){ return d && d.status==="scheduled"; });
+    var altHinweis = alt.length
+      ? '<div class="gml-empty" style="text-align:left;padding:12px 14px;font-size:13px">⚠️ '+alt.length+' alte Planung(en) aus dem früheren Browser-Takt liegen unter „KI-Entwürfe". Sie werden nicht mehr von selbst gesendet — dort ausdrücklich „In den Ausgang übernehmen".</div>'
+      : '';
+    if (!liste.length) return head+altHinweis+'<div class="gml-empty"><div style="font-size:44px">🕒</div><p>Nichts geplant.</p><p style="font-size:12px;color:var(--muted);max-width:460px;margin:8px auto 0">„Senden" plant ab jetzt standardmässig drei Stunden im Voraus. Bis dahin steht die Mail hier: änderbar, verschiebbar, abbrechbar. Hinaus schickt sie der Server — auch wenn dieser Rechner längst zu ist.</p></div>';
+    return head+altHinweis+'<div class="gml-draft-list">'+liste.map(gmlAusgangZeile).join("")+'</div>';
+  }
+  window.renderAusgangPane = renderAusgangPane;
+
   window.gmailSendLaterMenu = function(ev){
     try { if (ev) ev.stopPropagation(); } catch(_){}
     var old=document.getElementById("gmlSendLaterPop"); if (old){ old.remove(); return; }
@@ -108766,102 +108981,44 @@ console.log('📚 Leseliste geladen');
     sendAt=Number(sendAt);
     if (!sendAt || isNaN(sendAt)){ toast("err","Ungültiger Zeitpunkt",""); return; }
     if (sendAt < Date.now()+30000){ toast("err","Zeitpunkt liegt in der Vergangenheit","Bitte einen Zeitpunkt in der Zukunft wählen."); return; }
-    if (GM._composeBusy) return;
-    var g=function(id){ return document.getElementById(id); };
-    var to=(g("gmlTo")&&g("gmlTo").value||"").trim();
-    var cc=(g("gmlCc")&&g("gmlCc").value||"").trim();
-    var bcc=(g("gmlBcc")&&g("gmlBcc").value||"").trim();
-    var subject=(g("gmlSubject")&&g("gmlSubject").value||"").trim();
-    var body=(g("gmlBody")&&g("gmlBody").value||"");
-    if (!to){ toast("err","Empfänger fehlt","Für „Später senden“ braucht es mindestens eine An-Adresse."); return; }
-    GM._composeBusy=true;
-    try {
-      var ctx=GM._composeCtx||{}; var src=ctx.source||{};
-      var links=gmlComposeLinks();
-      var le=links[0]||null;
-      var draft={
-        to:to, cc:cc, bcc:bcc, subject:subject,
-        toName: gmlToName(to),
-        draftBody: body,
-        threadId: ctx.threadId||"",
-        messageId: (src.id)||"",
-        inReplyTo: ctx.inReplyTo||"",
-        references: ctx.references||"",
-        originalFrom: src.from||"",
-        originalSubject: src.subject||"",
-        originalBody: src.body||"",
-        replyQuote: ctx.replyQuote||null,
-        linkedEntity: le ? { kind:le.kind, id:le.id, title:gmlEntityLabel(le.kind,le.id) } : null,
-        linkedEntities: links.length ? links.map(function(x){ return { kind:x.kind, id:x.id, title:gmlEntityLabel(x.kind,x.id) }; }) : null,
-        source: "scheduled-send",
-        status: "scheduled",
-        sendAt: sendAt,
-        sendAttempts: 0,
-        updatedAt: Date.now()
-      };
-      if ((GM._attachments||[]).length){ toast("info","Hinweis","Anhänge werden bei „Später senden“ nicht mitgesendet — bitte sofort senden oder ohne Anhang planen."); }
-      if (ctx.draftKey){ await rtdbPatch("gmailDrafts/"+ctx.draftKey, draft); }
-      else { draft.createdAt=Date.now(); await rtdbPost("gmailDrafts", draft); }
-      if (window.closeModal) window.closeModal();
-      toast("ok","🕒 Geplant","Wird gesendet: "+gmlFmtSendAt(sendAt)+(le?(" · verknüpft mit „"+(gmlEntityLabel(le.kind,le.id)||"Element")+"“"):""));
-      GM.open=null;
-      if (typeof loadDrafts==="function") loadDrafts();
-      try { if (le && document.getElementById("gmlEntityInbox")) loadEntityInbox(le.kind, le.id); } catch(_){}
-    } catch(e){ toast("err","Planen fehlgeschlagen", e.message||"Unbekannter Fehler"); }
-    finally { GM._composeBusy=false; }
+    /* Seit 13.09.2026 geht auch dieser Weg ueber die Warteschlange auf dem
+       Server: kein Browser-Timer mehr, und Anhaenge reisen mit (der alte Weg
+       hat sie ausdruecklich weggelassen). */
+    return window.gmailPlanSend({ zeitpunkt: sendAt });
   };
-  // Minuten-Takt: fällige geplante Entwürfe senden. Claim per RTDB-Transaction
-  // (status scheduled→sending), damit bei mehreren offenen Tabs/Geräten nur
-  // EINER sendet. Fehler → Retry im nächsten Takt, nach 5 Versuchen status "error".
-  async function gmailProcessScheduledDrafts(){
-    if (GM._schedBusy) return; GM._schedBusy=true;
+  /* ── Der alte clientseitige Planversand ist stillgelegt ─────────────────
+     Bis 13.09.2026 schrieb „Spaeter senden" einen Eintrag nach /gmailDrafts
+     (status "scheduled") und ein Browser-Takt (setTimeout 8 s, setInterval
+     60 s) verschickte ihn: nur solange irgendein Tab offen war, OHNE Anhaenge
+     (attachments:[]) und mit status:"sent", ohne Gmail nach SENT zu fragen.
+     Neben der Server-Warteschlange wuerde dieser Takt ein zweites Mal senden.
+     Deshalb sendet hier nichts mehr — weder im Takt noch auf Klick.
+
+     Bereits geplante Alt-Eintraege gehen dabei NICHT verloren und werden auch
+     NICHT automatisch eingeplant: sie bleiben in „KI-Entwuerfe" sichtbar und
+     wandern nur auf ausdruecklichen Klick in die Warteschlange. Anhaenge
+     hatten sie ohnehin nie — der alte Weg hat sie gar nicht erst gespeichert.
+     ───────────────────────────────────────────────────────────────────────── */
+  window.gmailAltplanungUebernehmen = async function(key){
+    var d=(GM.drafts||[]).find(function(x){ return x._key===key; });
+    if (!d){ toast("err","Nicht gefunden","Diese alte Planung gibt es nicht mehr."); return; }
     try {
-      var data=await rtdbGet("gmailDrafts");
-      if (!data || typeof data!=="object") return;
-      var now=Date.now();
-      var due=Object.keys(data).filter(function(k){ var d=data[k]; return d && d.status==="scheduled" && typeof d.sendAt==="number" && d.sendAt<=now; });
-      if (!due.length) return;
-      await gmailEnsureReady();
-      if (!GM.status || !GM.status.connected) return; // dieses Gerät ist nicht mit Gmail verbunden — anderes Gerät übernimmt
-      for (var i=0;i<due.length && i<3;i++){
-        var key=due[i], d=data[key];
-        var dbh=rtdbDb(), claimed=false;
-        if (dbh){
-          try { var tx=await dbh.ref("gmailDrafts/"+key+"/status").transaction(function(cur){ return cur==="scheduled" ? "sending" : undefined; }); claimed=!!(tx&&tx.committed); }
-          catch(e){ claimed=false; }
-        }
-        if (!claimed) continue;
-        try {
-          var payload={ raw: buildRaw({ to:d.to, cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"", body:d.draftBody||"", inReplyTo:d.inReplyTo||null, references:d.references||null, attachments:[], quote:(d.replyQuote||null) }) };
-          if (d.threadId) payload.threadId=d.threadId;
-          var sentMsg=await gmApi("POST","/users/me/messages/send",{ body:payload });
-          await rtdbPatch("gmailDrafts/"+key,{ status:"sent", sentAt:Date.now(), updatedAt:Date.now() });
-          // Thread an ALLE verknüpften Elemente binden (linkedEntities, Fallback linkedEntity)
-          var les=Array.isArray(d.linkedEntities)?d.linkedEntities:(d.linkedEntity?[d.linkedEntity]:[]);
-          var thrId=(sentMsg&&sentMsg.threadId)||d.threadId||null;
-          if (thrId && les.length){
-            les.forEach(function(le){ if (le&&le.kind&&le.id){ try { gmlLinkThreadToEntity(le.kind,le.id,thrId); } catch(_){} } });
-            try {
-              var card=document.getElementById("gmlEntityInbox");
-              if (card){ var ck=card.getAttribute("data-k"), ci=card.getAttribute("data-i"); if (les.some(function(x){ return x&&x.kind===ck&&String(x.id)===ci; })) loadEntityInbox(ck,ci); }
-            } catch(_){}
-          }
-          toast("ok","🕒 Geplante Mail gesendet","An "+gmlDraftTo(d).label+(d.subject?(" · "+d.subject):""));
-        } catch(e){
-          var att=(Number(d.sendAttempts)||0)+1;
-          var upd = att>=5
-            ? { status:"error", lastError:(e&&e.message)||"Senden fehlgeschlagen", sendAttempts:att, updatedAt:Date.now() }
-            : { status:"scheduled", lastError:(e&&e.message)||"Senden fehlgeschlagen", sendAttempts:att, updatedAt:Date.now() };
-          await rtdbPatch("gmailDrafts/"+key, upd);
-          if (att>=5) toast("err","Geplante Mail fehlgeschlagen",(d.subject||"")+" — "+((e&&e.message)||""));
-        }
-      }
-      if (typeof loadDrafts==="function") loadDrafts();
-    } catch(e){ /* still — nächster Takt versucht es erneut */ }
-    finally { GM._schedBusy=false; }
-  }
-  setTimeout(gmailProcessScheduledDrafts, 8000);
-  setInterval(gmailProcessScheduledDrafts, 60000);
+      var raw = buildRaw({ to:d.to, cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"",
+        body:d.draftBody||"", inReplyTo:d.inReplyTo||null, references:d.references||null,
+        attachments:[], quote:(d.replyQuote||null) });
+      var anfrage = { raw:raw, to:d.to, cc:d.cc||"", bcc:d.bcc||"", subject:d.subject||"",
+        vorschau:String(d.draftBody||"").slice(0,300), koerper:String(d.draftBody||""),
+        hatAnhaenge:false, quelle:"altplanung" };
+      if (d.threadId) anfrage.threadId=d.threadId;
+      if (Number(d.sendAt)) anfrage.zeitpunkt=Number(d.sendAt);
+      var antwort = await gmQueue("plane", anfrage);
+      await setDraftStatus(key, "migrated");
+      GM.drafts=(GM.drafts||[]).filter(function(x){ return x._key!==key; });
+      toast("ok","In den Ausgang \u00fcbernommen","Geht "+gmlZuercherZeit((antwort.eintrag||{}).sendAt)+" raus (Europe/Zurich).");
+      if (typeof gmailLadeAusgang==="function") gmailLadeAusgang();
+      rerender();
+    } catch(e){ toast("err","Nicht \u00fcbernommen",(e&&e.message)||"Die Warteschlange antwortet nicht."); }
+  };
 
   // ── Folge-Aktionen nach dem Senden (Mail erledigen / Aufgabe erstellen) ──
   // Erscheint nach erfolgreichem Versand (Verfassen, Antworten, KI-Entwurf). Nutzt die
@@ -108965,6 +109122,7 @@ console.log('📚 Leseliste geladen');
     GM.listLoading = true;   // show the list spinner immediately (no empty flash)
     refreshPersonIndex(); loadBlocklist();
     loadDrafts(); loadClassifications(); loadTaskSuggestions(); loadOrgSuggestions(); // RTDB-Quellen + Nav-Badges (fire-and-forget)
+    if (typeof gmailLadeAusgang==="function") gmailLadeAusgang();   // geplante ausgehende Mails (Server-Warteschlange) fuer Badge und Ansicht
     // All load in parallel; awaiting the profile guarantees GM.profile is set
     // before reply-all (self-exclusion). Quantus labels are resolved after the
     // label list loads (used for the Erledigt state on rows).
@@ -109144,7 +109302,7 @@ console.log('📚 Leseliste geladen');
     window.gmailConnect();
   };
 
-  window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); GM._classLoaded=false; loadClassifications(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else if(GM.smart==="tasksuggest") loadTaskSuggestions(); else if(GM.smart==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
+  window.gmailRefresh = function(){ GM.open=null; refreshPersonIndex(); GM._classLoaded=false; loadClassifications(); loadProfile(); loadLabels().then(resolveQuantusLabels); if(GM.smart==="entwuerfe") loadDrafts(); else if(GM.smart==="tasksuggest") loadTaskSuggestions(); else if(GM.smart==="orgsuggest") loadOrgSuggestions(); else if(GM.smart==="ausgang"){ gmailLadeAusgang(); loadDrafts(); } else loadMessages(true); };
   window.gmailSelectLabel = function(id){ GM.selectedLabel=id; GM.query=""; GM.smart=null; GM.open=null; loadMessages(true); };
   // Neues echtes Gmail-Label anlegen — nutzt den bestehenden Erstell-Pfad (ensureLabel →
   // gmApi POST /users/me/labels). Der OAuth-Scope gmail.modify deckt das bereits ab; kein
@@ -109159,7 +109317,7 @@ console.log('📚 Leseliste geladen');
       rerender();
     } catch(e){ toast('err','Fehler', e.message||'Label konnte nicht erstellt werden'); }
   };
-  window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else if(s==="tasksuggest") loadTaskSuggestions(); else if(s==="orgsuggest") loadOrgSuggestions(); else loadMessages(true); };
+  window.gmailSelectSmart = function(s){ GM.smart=s; GM.query=""; GM.open=null; if(s==="entwuerfe") loadDrafts(); else if(s==="tasksuggest") loadTaskSuggestions(); else if(s==="orgsuggest") loadOrgSuggestions(); else if(s==="ausgang"){ gmailLadeAusgang(); loadDrafts(); } else loadMessages(true); };
   window.gmailOpenMessage = function(id){ openMessageById(id); };
   window.gmailBackToList = function(){ GM.open=null; rerender(); };
   // Erneuter Ladeversuch nach einem Netzwerkfehler — ohne Umweg über die Liste.
@@ -109754,7 +109912,9 @@ console.log('📚 Leseliste geladen');
       + '<div class="gml-draft-subj">'+esc(d.subject||"(kein Betreff)")+'</div>'
       + orgBadge
       + '<div class="gml-draft-prev">'+(preview||'<span style="color:var(--muted)">(leerer Entwurf)</span>')+'</div>'
+      + (istGeplant?'<div class="gml-draft-prev" style="color:var(--muted);font-size:12px">⚠️ Alte Planung aus dem Browser-Takt — sie wird nicht mehr von selbst gesendet. Übernimm sie in den Ausgang; Anhänge hat dieser Weg nie gespeichert.</div>':'')
       + '<div class="gml-draft-actions"><button class="btn primary sm" onclick="gmailOpenDraft(\''+jsStr(d._key)+'\')">✏️ Prüfen &amp; senden</button>'
+      + (istGeplant?'<button class="btn sm primary" onclick="gmailAltplanungUebernehmen(\''+jsStr(d._key)+'\')" title="Diese alte Planung in den Ausgang übernehmen — erst dann wird sie wirklich gesendet">📤 In den Ausgang übernehmen</button>':'')
       + (istGeplant?'<button class="btn sm" onclick="gmailUnscheduleDraft(\''+jsStr(d._key)+'\')" title="Geplanten Versand stoppen — der Entwurf bleibt erhalten">🕒 Planung aufheben</button>':'')
       + '<button class="btn sm" onclick="gmailDismissDraft(\''+jsStr(d._key)+'\')">🗑 Verwerfen</button></div>'
       + '</div>';
@@ -110460,6 +110620,7 @@ console.log('📚 Leseliste geladen');
   // Dispatch für den Hauptbereich (inkl. der neuen Vorschlags-Ansichten).
   function renderMainPane(){
     if (GM.open||GM.openLoading) return renderMessageView();
+    if (GM.smart==="ausgang") return renderAusgangPane();
     if (GM.smart==="entwuerfe") return renderDraftsPane();
     if (GM.smart==="tasksuggest") return renderTaskSuggestPane();
     if (GM.smart==="orgsuggest") return renderOrgSuggestPane();
@@ -110572,11 +110733,19 @@ console.log('📚 Leseliste geladen');
       return "📧 Von: "+(h.from||"")+"\nBetreff: "+(h.subject||"")+"\nDatum: "+(h.date||"")+"\n\n"+text;
     }
     if (cmd==="SEND"){
+      /* 13.09.2026: Auch dieser Weg sendet nicht mehr sofort. Er plant ueber
+         dieselbe Server-Warteschlange wie der Verfassen-Knopf — standardmaessig
+         drei Stunden im Voraus, bis dahin in Quantus sichtbar, aenderbar und
+         abbrechbar. Kein zweiter Sendeweg am Ausgang vorbei. */
       var to=(a[0]||"").trim(), subj=(a[1]||"").trim(), body=(a[2]||"").trim();
       if(!to) return "❌ Kein Empfänger";
-      if(!confirm("Der KI-Assistent möchte eine E-Mail senden:\n\nAn: "+to+"\nBetreff: "+subj+"\n\n"+body+"\n\nSenden?")) return "↩️ Senden abgebrochen";
-      await gmApi("POST","/users/me/messages/send",{body:{raw:buildRaw({to:to,subject:subj,body:body})}});
-      return "✅ Mail an "+to+" gesendet";
+      if(!confirm("Der KI-Assistent möchte eine E-Mail einplanen:\n\nAn: "+to+"\nBetreff: "+subj+"\n\n"+body+"\n\nSie geht in 3 Stunden raus und bleibt bis dahin im Ausgang änderbar.\n\nEinplanen?")) return "↩️ Abgebrochen";
+      var geplant = await gmQueue("plane", { raw: buildRaw({to:to,subject:subj,body:body}),
+        to:to, subject:subj, vorschau:String(body||"").slice(0,300),
+        koerper:String(body||""), hatAnhaenge:false, quelle:"ki-assistent" });
+      if (typeof gmailLadeAusgang==="function") gmailLadeAusgang();
+      return "🕒 Mail an "+to+" geplant — geht "+gmlZuercherZeit((geplant.eintrag||{}).sendAt)
+        + " raus (Europe/Zurich). Bis dahin im Ausgang änderbar oder abbrechbar.";
     }
     if (cmd==="DONE"){
       var m2=await aiResolveMsg(a[0]); if(!m2) return "❌ Mail nicht gefunden: "+(a[0]||"");
