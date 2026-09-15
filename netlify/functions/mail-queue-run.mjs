@@ -13,25 +13,39 @@
 import { firebaseDbGet, firebaseDbGetWithEtag, firebaseDbSet, firebaseDbRemove } from "../lib/firebase-admin.mjs";
 import { createQueue } from "../lib/mail-queue.mjs";
 import { gmailRuf } from "../lib/mail-queue-gmail.mjs";
-import { zugangPruefen, queueSchluessel, json } from "../lib/mail-queue-endpunkt.mjs";
+import { laufZugang, queueSchluessel, json } from "../lib/mail-queue-endpunkt.mjs";
 
-/* Wer darf diesen Lauf ausloesen? Der Zeitplan — und sonst nur, wer den
-   Zugangsschluessel hat. Eine geplante Ausfuehrung schickt den naechsten
-   Termin im Rumpf mit; daran ist sie zu erkennen. Ein Fremder koennte sonst
-   faellige Mails vorzeitig hinausschicken lassen. */
-async function darfLaufen(req) {
-  if (!req || typeof req.json !== "function") return true;   // direkter Aufruf im Lauf selbst
-  let rumpf = null;
-  try { rumpf = await req.json(); } catch (e) { rumpf = null; }
-  if (rumpf && rumpf.next_run) return true;                  // vom Zeitplan gerufen
-  const tuer = zugangPruefen(req.headers && req.headers.get("Authorization"), queueSchluessel());
-  return tuer.ok;
+/* WER DARF DIESEN LAUF AUSLOESEN?
+ *
+ * BEFUND (Durchsicht 15.09.2026): Hier stand
+ *     if (rumpf && rumpf.next_run) return true;   // „vom Zeitplan gerufen"
+ * Der Rumpf kommt vom Aufrufer. `{"next_run":"egal"}` war damit ein Ausweis,
+ * den sich jeder selbst ausstellen konnte — und ein FALSCHER Schluessel fiel
+ * auf denselben Weg zurueck und kam trotzdem durch.
+ *
+ * Der Rumpf wird hier deshalb gar nicht mehr gelesen. Entschieden wird allein
+ * in laufZugang() (netlify/lib/mail-queue-endpunkt.mjs), und zwar nach drei
+ * Faellen: kein Serverschluessel → gesperrt; Ausweis vorgezeigt → muss stimmen;
+ * kein Ausweis → der interne Weg des Zeitplans, ohne zusaetzliche Rechte.
+ * Die Begruendung steht dort ausfuehrlich. */
+export function laufErlaubt(req) {
+  const kopf = req && req.headers && typeof req.headers.get === "function"
+    ? req.headers.get("Authorization")
+    : null;
+  return laufZugang(kopf, queueSchluessel());
 }
 
 export default async (req) => {
-  if (!(await darfLaufen(req))) {
-    return json({ ok: false, error: "KEIN_ZUGANG",
-      grund: "Diesen Lauf loest der Zeitplan aus. Von aussen braucht es den Zugangsschluessel." }, 401);
+  const tuer = laufErlaubt(req);
+  if (!tuer.ok) {
+    /* Gesperrt heisst gesperrt: Ohne hinterlegten Schluessel wird NICHT
+       ersatzweise gesendet. Die Eintraege bleiben stehen und gehen raus,
+       sobald der Schluessel gesetzt ist. */
+    if (tuer.weg === "gesperrt") {
+      console.warn("[mail-queue-run] gesperrt — weder MAIL_QUEUE_AUTH_TOKEN noch "
+        + "SYNC_AUTH_TOKEN gesetzt; es wird nichts gesendet");
+    }
+    return json(tuer.koerper, tuer.status);
   }
   return laufen();
 };

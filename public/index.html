@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung+mailversand-empfaenger-idempotenz-zugang+mailversand-sofort-im-bearbeiten+mailversand-eigener-schluessel · 2026-09-13" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung+mailversand-empfaenger-idempotenz-zugang+mailversand-sofort-im-bearbeiten+mailversand-eigener-schluessel+mailversand-direkt-ist-standard · 2026-09-15" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -107654,12 +107654,15 @@ console.log('📚 Leseliste geladen');
       + '</div>';
     var hasOrig = prefill.original !== undefined && !(prefill.original && prefill.original.empty);
     var footer = '<div class="gmlc-footer">'
-      + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()" title="Geht standardmässig in drei Stunden raus — bis dahin im Ausgang änderbar und abbrechbar">'+(prefill.ausgangId?'Änderung speichern':'Senden (in 3 h)')+'</button>'
-      + '<button type="button" id="gmlSendLaterBtn" class="btn" onclick="gmailSendLaterMenu(event)" title="Später senden — Zeitpunkt wählen (z. B. in 1 Stunde oder morgen früh)">🕒 Später</button>'
-      /* Der ausdrückliche Sofortversand. Er ist absichtlich nicht der Standard —
-         aber er muss erreichbar sein: als bewusste Ausnahme, und als Weg, wenn
-         der Ausgang auf dem Server gesperrt ist (fehlender Zugangsschlüssel). */
-      + (prefill.ausgangId ? '' : '<button type="button" id="gmlSendNowBtn" class="btn" onclick="gmailSendNow()" title="Ohne Wartezeit sofort an Gmail übergeben">📨 Jetzt senden</button>')
+      /* KORREKTUR 15.09.2026: „Senden" sendet — direkt an Gmail.
+         Vom 13.09. bis zum 15.09. plante dieser Knopf standardmässig drei
+         Stunden voraus. Das war zu viel: der Normalfall ist, dass eine Mail
+         jetzt rausgehen soll. Verzögert wird nur noch, wer es ausdrücklich
+         will — über „🕒 Später" (dort sind drei Stunden der Vorschlag).
+         Der frühere zweite Knopf „📨 Jetzt senden" ist damit weg: er täte
+         genau dasselbe wie dieser hier und wäre nur noch verwirrend. */
+      + '<button id="gmlSendBtn" class="btn primary gmlc-send" onclick="gmailSend()" title="'+(prefill.ausgangId?'Änderung am geplanten Eintrag speichern — der Zeitpunkt bleibt':'Geht sofort an Gmail. Verzögert senden: „🕒 Später“')+'">'+(prefill.ausgangId?'Änderung speichern':'Senden')+'</button>'
+      + '<button type="button" id="gmlSendLaterBtn" class="btn" onclick="gmailSendLaterMenu(event)" title="Später senden — Zeitpunkt wählen (Vorschlag: in 3 Stunden). Bis dahin im Ausgang änderbar und abbrechbar">🕒 Später</button>'
       + '<button type="button" id="gmlSaveDraftBtn" class="btn gmlc-savedraft" onclick="gmailSaveDraft()" title="Entwurf in Firebase speichern (erscheint unter „KI-Entwürfe“)">💾 Entwurf speichern</button>'
       + '<button type="button" class="gmlc-iconbtn" onclick="gmlAttach()" title="Datei anhängen" aria-label="Datei anhängen">'+SVG.attach+'</button>'
       + (hasOrig ? '<button type="button" class="gmlc-iconbtn" onclick="gmlToggleQuote()" title="Zitat ein-/ausblenden" aria-label="Zitat ein-/ausblenden">'+SVG.quote+'</button>' : '')
@@ -108628,10 +108631,11 @@ console.log('📚 Leseliste geladen');
   // non-ASCII that slips past the per-header encoding above.
   function buildRaw(o){ return window.btoa(unescape(encodeURIComponent(buildMime(o)))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
 
-  /* BIS 13.09.2026 war dies „Senden" — und es ging sofort raus. Seit dem
-     Auftrag vom 13.09.2026 plant „Senden" standardmaessig drei Stunden voraus
-     (window.gmailSend weiter unten); DIESER Weg ist der ausdrueckliche
-     Sofortversand. Er bleibt unveraendert: ein Aufruf, Gmail sendet, fertig. */
+  /* DER SOFORTVERSAND — und seit dem 15.09.2026 wieder der Normalfall.
+     Vom 13.09. bis 15.09. lag „Senden" auf der Planung (drei Stunden); jetzt
+     ruft window.gmailSend fuer eine NEUE Mail wieder hierher. Ein Aufruf,
+     Gmail sendet, fertig — und „gesendet" steht erst da, wenn Gmail SENT
+     bestaetigt hat. */
   window.gmailSendNow = async function(){
     /* Wird gerade ein BEREITS GEPLANTER Eintrag bearbeitet, darf hier nichts
        direkt an Gmail gehen: Diese Funktion baut die Nachricht aus dem Fenster
@@ -108901,24 +108905,48 @@ console.log('📚 Leseliste geladen');
     } catch(e){
       var text = (e&&e.message)||"Die Warteschlange antwortet nicht.";
       /* Der Ausgang ist bewusst fail-closed: ohne hinterlegten Zugangsschlüssel
-         (SYNC_AUTH_TOKEN auf dem Server, derselbe Wert in den Quantus-
-         Einstellungen) gibt er nichts heraus und plant nichts ein. Dann bleibt
-         das Verfassen-Fenster offen und sagt, was zu tun ist — gesendet werden
-         kann trotzdem, über „📨 Jetzt senden". */
+         (MAIL_QUEUE_AUTH_TOKEN auf dem Server, derselbe Wert in den Quantus-
+         Einstellungen) gibt er nichts heraus und plant nichts ein.
+
+         HIER WIRD NICHT AUSGEWICHEN: Wer ausdrücklich plant, bekommt gesagt,
+         dass es nicht geplant ist — und es geht NICHTS raus. Eine fehlende
+         Konfiguration mit einem stillen Sofortversand zu überspielen, wäre
+         genau das Gegenteil dessen, was der Mensch angeklickt hat. Das
+         Verfassen-Fenster bleibt offen; wer die Mail trotzdem jetzt will,
+         klickt „Senden". */
       if (/GESPERRT|KEIN_ZUGANG|Zugangsschl/i.test(text)){
-        toast("err","Ausgang gesperrt", text + " Solange gehen Mails nur über „📨 Jetzt senden“ raus.");
+        toast("err","Nicht geplant — Ausgang gesperrt",
+          text + " Es wurde nichts eingeplant und nichts gesendet. Wer sie jetzt schicken will: „Senden“.");
       } else {
         toast("err","Nicht geplant", text);
       }
     } finally {
       GM._composeBusy=false;
       var b=document.getElementById("gmlSendBtn");
-      if(b){ b.disabled=false; b.textContent=((GM._composeCtx&&GM._composeCtx.ausgangId)?"Änderung speichern":"Senden (in 3 h)"); }
+      if(b){ b.disabled=false; b.textContent=((GM._composeCtx&&GM._composeCtx.ausgangId)?"Änderung speichern":"Senden"); }
     }
   };
-  // „Senden" heisst ab jetzt: in drei Stunden. Der Sofortversand hat einen
-  // eigenen, ausdruecklichen Knopf.
-  window.gmailSend = function(){ return window.gmailPlanSend({}); };
+  /* ══ Was „Senden" heisst ═════════════════════════════════════════════════
+     KORREKTUR 15.09.2026. Vom 13.09. bis zum 15.09. plante „Senden"
+     standardmaessig drei Stunden voraus. Der Normalfall ist aber, dass eine
+     Mail jetzt rausgehen soll — und mit gesperrtem Ausgang (fehlender
+     MAIL_QUEUE_AUTH_TOKEN, Stand 15.09.) ging so ueberhaupt nichts mehr raus.
+
+     Jetzt gilt:
+       „Senden"        → direkt an Gmail (window.gmailSendNow)
+       „🕒 Später"     → ausdrueckliche Planung, Vorschlag drei Stunden
+       Bearbeiten      → speichert den Text im geplanten Eintrag, der
+                         Zeitpunkt bleibt, wo er war
+
+     Was hier NICHT passiert: aus einer ausdruecklichen Planung wird nie
+     stillschweigend ein Sofortversand. Ist der Ausgang gesperrt, sagt
+     gmailPlanSend das und sendet NICHTS — eine Fehlkonfiguration wird nicht
+     umgangen. */
+  window.gmailSend = function(){
+    var ctx = (typeof GM!=="undefined" && GM._composeCtx) || {};
+    if (ctx.ausgangId) return window.gmailPlanSend({});   // Aenderung speichern, Zeit bleibt
+    return window.gmailSendNow();                         // neue Mail: direkt raus
+  };
 
   /* ── Der Ausgang: was geplant ist, steht in Quantus ───────────────────── */
   GM.ausgang = GM.ausgang || [];
@@ -109046,7 +109074,7 @@ console.log('📚 Leseliste geladen');
         + '<p>'+(gesperrt?'Ausgang gesperrt':'Ausgang nicht erreichbar')+'</p>'
         + '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">'+esc(GM.ausgangFehler)+'</p>'
         + (gesperrt
-            ? '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">So wird er aufgeschlossen: auf dem Server <code>MAIL_QUEUE_AUTH_TOKEN</code> setzen (nur für den Ausgang — der gemeinsame <code>SYNC_AUTH_TOKEN</code> würde auch alle übrigen Endpunkte verlangen) und denselben Wert in den Quantus-Einstellungen als Ausgangs-Schlüssel hinterlegen. Bis dahin gehen Mails über „📨 Jetzt senden“ raus — hier wird nichts geplant und nichts doppelt gesendet.</p>'
+            ? '<p style="font-size:12px;color:var(--muted);max-width:520px;margin:8px auto 0">So wird er aufgeschlossen: auf dem Server <code>MAIL_QUEUE_AUTH_TOKEN</code> setzen (nur für den Ausgang — der gemeinsame <code>SYNC_AUTH_TOKEN</code> würde auch alle übrigen Endpunkte verlangen) und denselben Wert in den Quantus-Einstellungen als Ausgangs-Schlüssel hinterlegen. Solange bleibt nur der Direktversand über „Senden“: geplant wird nichts, gesendet nichts Doppeltes — und der geplante Serverlauf rührt den Ausgang ohne Schlüssel ebenfalls nicht an.</p>'
             : '<p style="font-size:12px;color:var(--muted)">Der Ausgang liegt auf dem Server (<code>/.netlify/functions/mail-queue</code>). Solange er nicht antwortet, wird hier nichts geplant — gesendet aber auch nichts Doppeltes.</p>')
         + '</div>';
     }
@@ -109054,7 +109082,7 @@ console.log('📚 Leseliste geladen');
     var altHinweis = alt.length
       ? '<div class="gml-empty" style="text-align:left;padding:12px 14px;font-size:13px">⚠️ '+alt.length+' alte Planung(en) aus dem früheren Browser-Takt liegen unter „KI-Entwürfe". Sie werden nicht mehr von selbst gesendet — dort ausdrücklich „In den Ausgang übernehmen".</div>'
       : '';
-    if (!liste.length) return head+altHinweis+'<div class="gml-empty"><div style="font-size:44px">🕒</div><p>Nichts geplant.</p><p style="font-size:12px;color:var(--muted);max-width:460px;margin:8px auto 0">„Senden" plant ab jetzt standardmässig drei Stunden im Voraus. Bis dahin steht die Mail hier: änderbar, verschiebbar, abbrechbar. Hinaus schickt sie der Server — auch wenn dieser Rechner längst zu ist.</p></div>';
+    if (!liste.length) return head+altHinweis+'<div class="gml-empty"><div style="font-size:44px">🕒</div><p>Nichts geplant.</p><p style="font-size:12px;color:var(--muted);max-width:460px;margin:8px auto 0">„Senden" geht direkt an Gmail. Hier landet nur, was über „🕒 Später" ausdrücklich geplant wurde (Vorschlag: drei Stunden). Bis zum Termin ist die Mail änderbar, verschiebbar, abbrechbar — hinaus schickt sie der Server, auch wenn dieser Rechner längst zu ist.</p></div>';
     return head+altHinweis+'<div class="gml-draft-list">'+liste.map(gmlAusgangZeile).join("")+'</div>';
   }
   window.renderAusgangPane = renderAusgangPane;
@@ -109065,9 +109093,12 @@ console.log('📚 Leseliste geladen');
     var btn=document.getElementById("gmlSendLaterBtn"); if (!btn) return;
     var r=btn.getBoundingClientRect();
     function at(h,m,addDays){ var d=new Date(); d.setDate(d.getDate()+(addDays||0)); d.setHours(h,m,0,0); return d.getTime(); }
+    /* Drei Stunden stehen oben: das ist der Vorschlag der ausdruecklichen
+       Planung (STANDARD_VERZOEGERUNG_MS im Kern). Gewaehlt werden muss er
+       trotzdem — von selbst verzoegert nichts mehr. */
     var opts=[
-      { label:"In 1 Stunde", ts: Date.now()+3600000 },
-      { label:"In 3 Stunden", ts: Date.now()+3*3600000 }
+      { label:"In 3 Stunden (Vorschlag)", ts: Date.now()+3*3600000 },
+      { label:"In 1 Stunde", ts: Date.now()+3600000 }
     ];
     var heute18=at(18,0,0); if (heute18>Date.now()+5*60000) opts.push({ label:"Heute 18:00", ts:heute18 });
     opts.push({ label:"Morgen 08:00", ts:at(8,0,1) });

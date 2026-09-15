@@ -6,14 +6,21 @@
  *   2. gmailProcessScheduledDrafts (Browser-Takt)    → POST messages/send,
  *      mit attachments:[] und status:"sent" ohne Rückfrage bei Gmail
  *   3. gmailAIExec("SEND") (KI-/Entity-Composer)     → POST messages/send
- * Der Auftrag verlangt EINEN sicheren Standard: drei Stunden Verzögerung,
- * sichtbar und abbrechbar, gesendet vom Server. Ein einziger übriggebliebener
- * Sofortpfad hebt den Standard auf — und zwei parallele Sender (Takt UND
- * Warteschlange) schicken dieselbe Mail zweimal.
+ * KORREKTUR DES AUFTRAGS (15.09.2026): Der Standard ist wieder der
+ * DIREKTVERSAND. Verzögert wird nur noch, wer es ausdrücklich anklickt
+ * („🕒 Später", Vorschlag drei Stunden). Was vom 13.09. bleibt, ist die
+ * Bedingung dahinter: es darf genau EINEN Weg geben, der unmittelbar sendet
+ * (window.gmailSendNow), und der Browser-Takt von früher darf nicht
+ * zurückkommen — zwei parallele Sender schicken dieselbe Mail zweimal.
+ *
+ * Und eine zweite Bedingung, die der Live-Stand vom 15.09. nötig gemacht hat
+ * (Ausgang gesperrt, MAIL_QUEUE_AUTH_TOKEN fehlt): Eine ausdrückliche Planung
+ * darf bei gesperrtem Ausgang NICHT stillschweigend zum Sofortversand werden.
+ * Eine fehlende Konfiguration wird gesagt, nicht umgangen.
  *
  * Dieser Test liest den ausgelieferten Quelltext. Er ist bewusst grob: er
  * fragt nicht, ob eine Funktion hübsch ist, sondern ob es überhaupt noch einen
- * Weg gibt, der an der Warteschlange vorbei sendet.
+ * zweiten Weg gibt, der unmittelbar sendet.
  *
  * GEGENPROBE: Dieselben Prüfungen laufen am Ende gegen den Stand VOR der
  * Änderung (Basis-Commit). Dort müssen sie fehlschlagen — sonst prüfte dieser
@@ -45,8 +52,27 @@ const PRUEFUNGEN = {
     return i > 0 && j > i && (j - i) < 4000;
   },
 
-  "„Senden“ plant, statt zu senden": (s) =>
-    /window\.gmailSend\s*=\s*function\s*\(\)\s*\{\s*return\s+window\.gmailPlanSend\(\{\}\);\s*\}/.test(s),
+  /* 15.09.2026: „Senden" sendet wieder direkt — aber NUR bei einer neuen Mail.
+     Wird ein bereits geplanter Eintrag bearbeitet, heisst der Knopf „Änderung
+     speichern" und darf nichts hinausschicken. */
+  "„Senden“ sendet direkt — und speichert beim Bearbeiten nur": (s) => {
+    const i = s.indexOf("window.gmailSend = function()");
+    if (i < 0) return false;
+    const block = s.slice(i, i + 700);
+    return /ctx\.ausgangId\)\s*return\s+window\.gmailPlanSend\(\{\}\)/.test(block)
+      && /return\s+window\.gmailSendNow\(\)/.test(block)
+      && block.indexOf("ausgangId") < block.indexOf("gmailSendNow");
+  },
+
+  "der Knopf heisst wieder „Senden“, nicht „Senden (in 3 h)“": (s) =>
+    s.includes("prefill.ausgangId?'Änderung speichern':'Senden'") && !s.includes("'Senden (in 3 h)'"),
+
+  /* Zwei Knöpfe, die dasselbe tun, sind eine Falle: der frühere zweite
+     „📨 Jetzt senden" neben einem „Senden", das ebenfalls sofort sendet. */
+  "es gibt keinen zweiten Sofort-Knopf mehr": (s) => !s.includes("gmlSendNowBtn"),
+
+  "drei Stunden sind der Vorschlag der ausdrücklichen Planung": (s) =>
+    s.includes('label:"In 3 Stunden (Vorschlag)"'),
 
   "geplant wird über die Server-Warteschlange, nicht im Browser": (s) =>
     s.includes('fetch("/.netlify/functions/mail-queue"') &&
@@ -143,11 +169,11 @@ const PRUEFUNGEN = {
   /* Der Ausgang ist fail-closed. Wenn er gesperrt ist, darf Mail nicht
      unbrauchbar werden: der ausdrückliche Sofortversand ist erreichbar und
      wird genannt. */
-  "der ausdrückliche Sofortversand hat einen Knopf": (s) =>
-    s.includes('id="gmlSendNowBtn"') && s.includes('onclick="gmailSendNow()"'),
-  "im Bearbeiten-Fenster gibt es den Sofort-Knopf gar nicht": (s) =>
-    s.includes("prefill.ausgangId ? '' : '<button type=\"button\" id=\"gmlSendNowBtn\""),
-  "und die Funktion selbst weigert sich dort ebenfalls": (s) => {
+  /* Der Schutz aus dem Bearbeiten-Fenster bleibt: gmailSendNow baut die
+     Nachricht aus dem Fenster NEU — ohne die Anhänge, die nur in der
+     gespeicherten Nachricht liegen — und der geplante Eintrag ginge daneben
+     später ein zweites Mal raus. */
+  "beim Bearbeiten weigert sich der Sofortversand": (s) => {
     const i = s.indexOf("window.gmailSendNow = async function(){");
     const kopf = s.slice(i, i + 900);
     return i > 0 && kopf.includes("GM._composeCtx.ausgangId")
@@ -155,6 +181,24 @@ const PRUEFUNGEN = {
   },
   "ein gesperrter Ausgang wird erklärt statt verschleiert": (s) =>
     s.includes("Ausgang gesperrt") && s.includes("SYNC_AUTH_TOKEN"),
+
+  /* DER PUNKT AUS DEM LIVE-BEFUND 15.09.: Eine ausdrückliche Planung, die am
+     gesperrten Ausgang scheitert, darf NICHT still zum Sofortversand werden.
+     Geprüft am Fehlerzweig von gmailPlanSend: dort wird gemeldet — und nichts
+     gesendet. */
+  "eine gescheiterte Planung sendet nicht ersatzweise": (s) => {
+    const i = s.indexOf("window.gmailPlanSend = async function");
+    if (i < 0) return false;
+    const j = s.indexOf("window.gmailSend = function()", i);
+    const block = s.slice(i, j > i ? j : i + 6000);
+    const fehlerzweig = block.slice(block.indexOf("} catch(e){"));
+    /* Kommentare erklären den neuen Standard und nennen dabei gmailSendNow —
+       geprüft wird der CODE. */
+    const nurCode = fehlerzweig.replace(/\/\*[\s\S]*?\*\//g, "");
+    return fehlerzweig.includes("Nicht geplant")
+      && fehlerzweig.includes("nichts eingeplant und nichts gesendet")
+      && !/gmailSendNow|messages\/send|gmApi\(/.test(nurCode);
+  },
 
   /* Neue Anhänge beim Bearbeiten: sie reisen mit, statt still zu verschwinden. */
   "im Bearbeiten angehängte Dateien gehen mit": (s) => {
@@ -340,6 +384,59 @@ function schneide(src, kopf) {
   }
 }
 
+/* ── „Senden" wirklich ausführen ─────────────────────────────────────────
+   Quelltext lesen sagt nicht, was passiert. Die echte Weiche wird deshalb aus
+   der Datei geschnitten und ausgeführt — einmal für eine neue Mail, einmal für
+   einen bereits geplanten Eintrag, der nur bearbeitet wird. */
+{
+  const quelle = schneide(JETZT, "  window.gmailSend = function(){");
+  const bauen = new Function("fenster", "GM",
+    "const window = fenster; " + quelle + "; return fenster.gmailSend;");
+
+  // Fall 1: neue Mail → direkt raus (gmailSendNow), keine Planung.
+  {
+    const gerufen = { sofort: 0, plan: [] };
+    const fenster = {
+      gmailSendNow: async () => { gerufen.sofort++; return true; },
+      gmailPlanSend: async (o) => { gerufen.plan.push(o); return { ok: true }; },
+    };
+    const fn = bauen(fenster, { _composeCtx: {} });
+    await fn();
+    pruefe("eine neue Mail geht über „Senden“ SOFORT raus", gerufen.sofort === 1);
+    pruefe("eine neue Mail wird dabei nicht geplant", gerufen.plan.length === 0);
+  }
+
+  // Fall 2: ein geplanter Eintrag wird bearbeitet → nur speichern, kein Versand,
+  //         und vor allem KEIN neuer Zeitpunkt (sonst ginge er sofort raus).
+  {
+    const gerufen = { sofort: 0, plan: [] };
+    const fenster = {
+      gmailSendNow: async () => { gerufen.sofort++; return true; },
+      gmailPlanSend: async (o) => { gerufen.plan.push(o); return { ok: true }; },
+    };
+    const fn = bauen(fenster, { _composeCtx: { ausgangId: "out_1" } });
+    await fn();
+    pruefe("„Änderung speichern“ sendet nichts direkt", gerufen.sofort === 0);
+    pruefe("„Änderung speichern“ geht über den Ausgang", gerufen.plan.length === 1);
+    pruefe("„Änderung speichern“ verschiebt den Termin nicht",
+      gerufen.plan[0] && gerufen.plan[0].zeitpunkt === undefined);
+  }
+
+  // Fall 3: ohne Verfassen-Kontext darf nichts krachen — und es wird gesendet,
+  //         nicht geplant (es gibt keinen Eintrag, den man ändern könnte).
+  {
+    const gerufen = { sofort: 0, plan: [] };
+    const fenster = {
+      gmailSendNow: async () => { gerufen.sofort++; return true; },
+      gmailPlanSend: async (o) => { gerufen.plan.push(o); return { ok: true }; },
+    };
+    const fn = bauen(fenster, {});
+    await fn();
+    pruefe("ohne Kontext sendet „Senden“ und plant nicht",
+      gerufen.sofort === 1 && gerufen.plan.length === 0);
+  }
+}
+
 /* ── Gegenprobe: derselbe Test gegen den Stand vor der Änderung ─────────── */
 console.log("\n── Gegenprobe gegen " + BASIS + " (dort MUSS es fehlschlagen) ──");
 let alt = null;
@@ -365,6 +462,43 @@ if (alt) {
     durchgefallen.includes("der KI-/Entity-Composer plant ebenfalls"));
   pruefe("Gegenprobe: im alten Stand gibt es keinen Ausgang",
     durchgefallen.includes("es gibt eine ausgehende Ausgangsansicht (keine Selbstmail im Posteingang)"));
+}
+
+/* ── Zweite Gegenprobe: gegen den Stand VOM 13.–15.09. ───────────────────
+   Dort war „Senden" die Planung. Genau die Prüfungen, die den neuen Standard
+   festhalten, müssen in jenem Stand durchfallen — sonst prüfen sie nichts. */
+const ZWISCHEN = process.env.MAIL_STANDARD_BASIS_COMMIT || "721d0ab";
+console.log("\n── Gegenprobe gegen " + ZWISCHEN + " (dort plante „Senden“) ──");
+{
+  let zwischen = null;
+  try {
+    zwischen = execFileSync("git", ["show", ZWISCHEN + ":public/index.html"],
+      { cwd: WURZEL, maxBuffer: 64 * 1024 * 1024 }).toString("utf8");
+  } catch (e) {
+    console.log("  (übersprungen — " + ZWISCHEN + " nicht lesbar: " + (e && e.message) + ")");
+  }
+  if (zwischen) {
+    const mussDortFallen = [
+      "„Senden“ sendet direkt — und speichert beim Bearbeiten nur",
+      "der Knopf heisst wieder „Senden“, nicht „Senden (in 3 h)“",
+      "es gibt keinen zweiten Sofort-Knopf mehr",
+      "drei Stunden sind der Vorschlag der ausdrücklichen Planung",
+      "eine gescheiterte Planung sendet nicht ersatzweise",
+    ];
+    for (const name of mussDortFallen) {
+      let r = true;
+      try { r = !!PRUEFUNGEN[name](zwischen); } catch (e) { r = false; }
+      pruefe("Gegenprobe " + ZWISCHEN + ": " + name, r === false);
+      if (r) console.log("  ✗ hielt auch im alten Stand: " + name);
+      else console.log("  ✓ fällt dort durch: " + name);
+    }
+    /* Und dass dort wirklich geplant wurde — sonst zeigt die Gegenprobe auf
+       den falschen Stand. */
+    pruefe("Gegenprobe " + ZWISCHEN + ": dort plante „Senden“ standardmässig",
+      /window\.gmailSend\s*=\s*function\s*\(\)\s*\{\s*return\s+window\.gmailPlanSend\(\{\}\);\s*\}/.test(zwischen));
+    pruefe("Gegenprobe " + ZWISCHEN + ": dort stand „Senden (in 3 h)“ auf dem Knopf",
+      zwischen.includes("'Senden (in 3 h)'"));
+  }
 }
 
 console.log("\n" + (fehler.length ? "✗ " : "✓ ") + ok + " Prüfungen bestanden, " + fehler.length + " fehlgeschlagen");
