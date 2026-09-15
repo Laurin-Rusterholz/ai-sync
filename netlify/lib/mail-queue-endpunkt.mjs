@@ -76,6 +76,61 @@ export function zugangPruefen(authKopf, erwartet) {
   return { ok: true };
 }
 
+/* ══ Wer darf den SERVERLAUF ausloesen? ══════════════════════════════════════
+ *
+ * BEFUND (Durchsicht 15.09.2026): `mail-queue-run` liess jeden durch, dessen
+ * Anfrage ein Feld `next_run` im Rumpf trug:
+ *
+ *     if (rumpf && rumpf.next_run) return true;   // „vom Zeitplan gerufen"
+ *
+ * Der Rumpf kommt vom Aufrufer. Wer ihn schreibt, stellt sich damit selbst den
+ * Ausweis aus — `{"next_run":"egal"}` genuegte. Das ist keine Authentifizierung,
+ * das ist eine Behauptung. Sie ist ersatzlos gestrichen: HIER WIRD DER RUMPF
+ * NICHT MEHR GELESEN.
+ *
+ * Was stattdessen gilt — drei Faelle, mehr gibt es nicht:
+ *
+ *   1. KEIN SCHLUESSEL AUF DEM SERVER  → gesperrt (503), der Lauf tut nichts.
+ *      Derselbe fail-closed-Grundsatz wie beim Ausgang: Eine fehlende
+ *      Konfiguration darf nicht dazu fuehren, dass stattdessen einfach
+ *      gesendet wird. Nichts geht verloren — die Eintraege bleiben stehen und
+ *      kommen dran, sobald der Schluessel hinterlegt ist.
+ *
+ *   2. EIN AUSWEIS WIRD VORGEZEIGT     → er muss stimmen (sonst 401).
+ *      Frueher fiel ein FALSCHER Schluessel auf den `next_run`-Weg zurueck und
+ *      kam trotzdem durch. Jetzt nicht mehr: wer etwas vorzeigt, wird geprueft.
+ *
+ *   3. GAR KEIN AUSWEIS                → das ist der Weg des Zeitplans.
+ *      Netlify ruft Scheduled Functions intern; sie sind NICHT als Adresse
+ *      erreichbar („You can't invoke scheduled functions directly with a URL",
+ *      Netlify-Doku zu Scheduled Functions) und koennen keine Kopfzeile
+ *      mitschicken. Dieser Weg bekommt deshalb KEINE zusaetzlichen Rechte: der
+ *      Lauf arbeitet ohnehin nur ab, was bereits FAELLIG ist (K.faellige), und
+ *      jeder Eintrag ist ueber Claim und Kennung gegen Doppelversand
+ *      abgesichert. Die Grenze liegt hier bei der Plattform — aber sie liegt
+ *      nicht mehr bei einem Wert, den jeder Anrufer selbst hineinschreibt.
+ *
+ * Rein und ohne Request-Objekt, damit ein Test alle drei Faelle belegen kann.
+ * ═════════════════════════════════════════════════════════════════════════ */
+export function laufZugang(authKopf, erwartet) {
+  const schluessel = String(erwartet || "").trim();
+  if (!schluessel) {
+    return { ok: false, weg: "gesperrt", status: 503, koerper: { ok: false, error: "GESPERRT",
+      grund: "Der geplante Versandlauf ist gesperrt: Auf dem Server ist kein Zugangsschlüssel hinterlegt. "
+        + "Nötig ist MAIL_QUEUE_AUTH_TOKEN (empfohlen); ersatzweise gilt ein vorhandener SYNC_AUTH_TOKEN. "
+        + "Solange wird nichts gesendet — geplante Mails bleiben stehen und gehen raus, sobald der "
+        + "Schlüssel gesetzt ist." } };
+  }
+  const gegeben = String(authKopf || "").trim();
+  if (gegeben) {
+    const tuer = zugangPruefen(gegeben, schluessel);
+    return tuer.ok ? { ok: true, weg: "schluessel" } : { ok: false, weg: "abgewiesen", status: tuer.status, koerper: tuer.koerper };
+  }
+  /* Ohne Kopfzeile: der Zeitplan. Der Rumpf der Anfrage spielt dabei KEINE
+     Rolle — weder `next_run` noch sonst etwas daraus. */
+  return { ok: true, weg: "zeitplan" };
+}
+
 /* Vergleich in gleichbleibender Zeit: Ein Vergleich, der beim ersten
    abweichenden Zeichen abbricht, verrät über die Dauer, wie viel schon
    stimmte. */
@@ -137,4 +192,4 @@ export async function bearbeiteAnfrage(req, { queueFactory, token } = {}) {
   }
 }
 
-export default { bearbeiteAnfrage, zugangPruefen, umgebungswert, json, CORS };
+export default { bearbeiteAnfrage, zugangPruefen, laufZugang, queueSchluessel, umgebungswert, json, CORS };
