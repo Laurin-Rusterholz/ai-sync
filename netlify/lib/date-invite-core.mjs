@@ -85,7 +85,7 @@ export function applyInvite(rawData, invite, opts = {}) {
   data.entities.tasks[task.id] = task;
 
   data.meta = data.meta || {};
-  data.meta.updatedAt = new Date().toISOString();
+  data.meta.updatedAt = task.updatedAt;
   data.meta.lastSavedBy = "flirtai-date-invite";
 
   return { data, task };

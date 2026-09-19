@@ -1,5 +1,6 @@
 import { sanitizeInvite, validateInvite, applyInvite } from "../lib/date-invite-core.mjs";
 import { mutateAppData } from "../lib/firebase-admin.mjs";
+import { randomUUID } from "node:crypto";
 
 // Nimmt die von Cati gewählte Date-Einladung (Datum + Uhrzeit) entgegen und legt
 // daraus serverseitig eine Aufgabe im app-data.json-Blob an — genau dort, wo die
@@ -42,9 +43,11 @@ export default async (req) => {
   if (err) return Response.json({ error: err }, { status: 400, headers: cors });
 
   try {
+    const now = new Date().toISOString();
+    const id = randomUUID();
     // Firebase-Transaktion verhindert verlorene parallele App-Schreibvorgänge.
     const mutation = await mutateAppData(KEY, (current) => {
-      const applied = applyInvite(current, invite);
+      const applied = applyInvite(current, invite, { now, id });
       return { data: applied.data, result: applied.task };
     }, { savedBy: "date-invite" });
     const task = mutation.result;
@@ -54,7 +57,7 @@ export default async (req) => {
       { status: 200, headers: cors }
     );
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 500, headers: cors });
+    return Response.json({ error: e.message, code: e.code }, { status: e.status || 500, headers: cors });
   }
 };
 

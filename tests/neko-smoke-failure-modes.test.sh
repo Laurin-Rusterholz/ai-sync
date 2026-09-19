@@ -30,7 +30,8 @@ run_smoke() {
   # Erwarteter Eigentuemer. Im Fall "ownership" weicht er absichtlich vom
   # echten ab — das ist der Live-Zustand root:root aus Sicht des Skripts.
   local uid gid; uid="$(id -u)"; gid="$(id -g)"
-  if [ "${scenario}" = "ownership" ]; then uid=1000; gid=1000; fi
+  local actual_uid="${uid}" actual_gid="${gid}"
+  if [ "${scenario}" = "ownership" ]; then uid=$((uid + 1)); fi
 
   cat > "${W}/app/.env" <<EOF
 NEKO_USER_PASSWORD=geheim
@@ -111,6 +112,12 @@ STUB
   printf '#!/usr/bin/env bash\necho "203.0.113.10 neko.laurin-rusterholz.ch"\n' > "${W}/bin/getent"
   printf '#!/usr/bin/env bash\ncase "$*" in *-uln*) echo ":59000" ;; *-tln*) echo "127.0.0.1:8080" ;; esac\n' > "${W}/bin/ss"
   printf '#!/usr/bin/env bash\ncat >/dev/null 2>&1; :\n' > "${W}/bin/openssl"
+  # Die simulierte Linux-Maschine darf nicht von /proc oder GNU stat auf dem
+  # Testhost abhaengen. Alle anderen awk-Aufrufe bleiben echte Auswertungen.
+  local real_awk; real_awk="$(command -v awk)"
+  printf '#!/usr/bin/env bash\nfor arg in "$@"; do if [ "$arg" = "/proc/meminfo" ]; then echo 8192; exit 0; fi; done\nexec "%s" "$@"\n' "${real_awk}" > "${W}/bin/awk"
+  printf '#!/usr/bin/env bash\ncase "$*" in\n  "-c %%u:%%g "*) echo "%s:%s" ;;\n  "-c %%u:%%g %%a "*) echo "%s:%s 755" ;;\n  *) exec /usr/bin/stat "$@" ;;\nesac\n' \
+    "${actual_uid}" "${actual_gid}" "${actual_uid}" "${actual_gid}" > "${W}/bin/stat"
   chmod +x "${W}/bin"/*
 
   PATH="${W}/bin:${PATH}" QUANTUS_NEKO_DIR="${W}/app" NEKO_SMOKE_GAP=0 \

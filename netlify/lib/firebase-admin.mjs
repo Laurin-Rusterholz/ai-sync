@@ -377,10 +377,21 @@ export async function writeAppDataText(key, text, { ifMatch = null, savedBy = "n
 }
 
 export async function mutateAppData(key, mutator, { savedBy = "netlify-function" } = {}) {
+  const policy = classifyBlobKey(key);
+  if (policy.kind === "denied") {
+    throw Object.assign(new Error("Dieser Datensatz darf nicht beschrieben werden."), { code: "key_denied", status: 403 });
+  }
   const path = appStorePath(key);
+  const savedAt = Date.now();
+  const mutationTime = new Date(savedAt).toISOString();
+  const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
   for (let attempt = 0; attempt < 8; attempt++) {
     const current = await firebaseDbGetWithEtag(path);
     const raw = unwrapData(current.value);
+    // Ein fehlender Kern ist ein Restore-Fall, nie eine leere Arbeitsgrundlage.
+    if (policy.kind === "core" && raw == null) {
+      throw Object.assign(new Error("Der Kerndatensatz fehlt oder ist nicht lesbar."), { code: "core_unavailable", status: 503 });
+    }
     let parsed = null;
     if (raw) {
       try {
@@ -389,19 +400,36 @@ export async function mutateAppData(key, mutator, { savedBy = "netlify-function"
         parsed = null;
       }
     }
+    if (policy.kind === "core" && (!isRecord(parsed) || !isRecord(parsed.entities))) {
+      throw Object.assign(new Error("Der Kerndatensatz ist ungueltig. Es wurde nichts geschrieben."), { code: "core_invalid", status: 503 });
+    }
+    if (!current.serverEtag) {
+      throw Object.assign(new Error("Die Versionskennung des Datensatzes fehlt."), { code: "cas_etag_missing", status: 503 });
+    }
+    // Der Mutator muss synchron und nebenwirkungsfrei sein, da CAS ihn wiederholt.
     const mutation = mutator(parsed);
-    const data = mutation?.data ?? mutation;
+    if (mutation && typeof mutation.then === "function") {
+      throw Object.assign(new Error("Asynchrone Transaktionsfunktionen sind nicht erlaubt."), { code: "async_mutator", status: 500 });
+    }
+    const data = isRecord(mutation) && Object.hasOwn(mutation, "data") ? mutation.data : mutation;
+    if (policy.kind === "core" && (!isRecord(data) || !isRecord(data.entities))) {
+      throw Object.assign(new Error("Die Aenderung liefert keinen gueltigen Kerndatensatz."), { code: "mutation_invalid", status: 500 });
+    }
     const mutationResult = mutation?.result ?? null;
     const text = JSON.stringify(data);
     const wrap = {
+      ...(isRecord(current.value) ? current.value : {}),
       data: text,
       etag: jsonEtag(text),
-      updatedAt: data?.meta?.updatedAt || new Date().toISOString(),
-      savedAt: Date.now(),
+      updatedAt: data?.meta?.updatedAt || mutationTime,
+      savedAt,
       savedBy,
     };
     const saved = await firebaseDbSet(path, wrap, { ifMatch: current.serverEtag });
     if (saved.ok) return { data, result: mutationResult };
+    if (!saved.conflict) {
+      throw Object.assign(new Error("Der Ausgang des Schreibvorgangs ist unklar."), { code: "cas_outcome_unknown", status: 503 });
+    }
   }
-  throw new Error("Firebase-Transaktion ist nach mehreren Parallelkonflikten fehlgeschlagen.");
+  throw Object.assign(new Error("Firebase-Transaktion ist nach mehreren Parallelkonflikten fehlgeschlagen."), { code: "cas_exhausted", status: 503 });
 }
