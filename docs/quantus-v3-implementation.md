@@ -36,7 +36,7 @@ checkouts. No production data was read or modified for the initial code work.
 | --- | --- | --- |
 | A | Writer, automation, schema and regression inventory | Initial source inventory below; deployed service inventory still open |
 | B | Canonical states, migration, server traffic lights, closure | 590dc78 independently reviewed: 11 failing counterexamples; corrections delegated; not accepted |
-| C | Auth, four strict APIs, idempotency, entity versions, CAS | CAS and atomic idempotency component tested locally; auth delegated; HTTP integration open |
+| C | Auth, four strict APIs, idempotency, entity versions, CAS | CAS/idempotency tested; C1 auth 5ac0bf7 rejected after independent review, corrections delegated; HTTP integration open |
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Open; do not enable API-only writes yet |
 | E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 pure runtime/state package delegated; cloud integration and deployment open |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
@@ -63,7 +63,19 @@ whitespace/heading normalization. `quantus-v3-prompts.mjs` verifies the pinned
 version and hashes; eight tests cover all four slots, tampering, missing files,
 invalid versions and path traversal. This does not install or enable a runner.
 
-Package C1 (auth/cursors) remains in development. Package E1 is delegated in
+Package C1 (auth/cursors), commit `5ac0bf7`, was independently reviewed, not
+accepted or integrated. Its authored suite passes 61/62 locally; the X.509
+fixture fails on macOS. Twelve additional counterexamples fail: wrong revocation
+timestamp, missing authentication time, optional auth configuration/policy,
+principal kind and object-category confusion, service-checker role minted as a
+worker, ignored active credential expiry, unbounded unknown-kid key refresh,
+missing expected cursor object scope, malformed pages declared complete, and
+missing explicit hasMore. The public verb matrix and job-token format also need
+alignment with the concept. Corrections are in progress in Claude session
+`session_01X99qvGAx8bbM8RCqMiMqZp`. The revocation requirement is documented by
+[Firebase's session-management guide](https://firebase.google.com/docs/auth/admin/manage-sessions).
+
+Package E1 is delegated in
 Claude Code session `session_01CJXkQx2wVSo5733NENbThs`, restricted to pure runtime
 state/planning helpers and their own tests. It owns the correct lease/fencing and
 cost reservation design; package B's unsafe lease placeholder is not accepted.
@@ -85,7 +97,7 @@ cost reservation design; package B's unsafe lease placeholder is not accepted.
 | FlowerTech inquiry | `netlify/functions/flowertech-inquiry.mjs` | Persists inquiry outside core, then core task mutation. | Needs durable reconciliation/outbox contract for partial failure; not claimed atomic. |
 | FlowerTech portal/uploads | `netlify/functions/flowertech-portal.mjs`, `flowertech-upload.mjs` | Separate scoped portal/intake nodes, custom tokens and uploads. | Preserve public customer workflow; inspect imports into core and explicit allowed fields. |
 | Mail queue | `netlify/functions/mail-queue*.mjs`, `netlify/lib/mail-queue.mjs` | Separate server queue and minute runner. | Integrate authorization/content-bound outbox and unknown-outcome reconciliation, never duplicate sends. |
-| Restore | `scripts/restore-core.mjs`, `backup-blob.mjs` | Privileged recovery/full snapshots | Isolated restore drill, replay fencing, audit; never restore live and re-send old outbox. |
+| Restore | `scripts/restore-core.mjs`, `backup-blob.mjs` | Privileged recovery/full snapshots | Legacy privileged restore now refuses v3/partial-v3 snapshots and targets; exact server ETag prevents overwriting changes during operator confirmation. HTTP legacy restore, isolated v3 recovery and replay reconciliation remain cutover gates. |
 | RTDB security | `firebase/database.rules.json` | appStore read/write permits authenticated users; unrelated public satellite nodes exist. | Deny direct core writes only after client migration; do not silently break unrelated satellites. |
 
 Satellite scan and deployed writer inventory are not yet complete. Inspect
@@ -114,6 +126,11 @@ the all-writer gate passed. Do not infer production rules from checked-in rules.
   `npm audit` now reports zero vulnerabilities. Earlier audit flagged
   [ICNS parser DoS](https://github.com/advisories/GHSA-w3rx-r6r6-pgpr) and
   [JXL/HEIF parser DoS](https://github.com/advisories/GHSA-5p2g-fcmc-qvqq).
+- Legacy privileged restore: 27 new behavior tests pass, including a real call
+  through the restore orchestration with conditional in-memory storage and
+  on-disk audit writes. Concurrent changes or migration during confirmation are
+  not overwritten; missing/wildcard preconditions fail closed. Existing restore
+  contract: 218 checks pass. No actual target database was restored.
 
 These are local tests. No live acceptance, provider dispatch or trial day is
 implied. A test of the transaction helper does not prove all HTTP entry points.
@@ -175,7 +192,7 @@ implied. A test of the transaction helper does not prove all HTTP entry points.
 | T37 | Real UI handlers and window exports work | Open |
 | T38 | Existing Notes/tasks/leads/links/attachments/sync regressions | Baseline partially verified above; full new-build run open |
 | T39 | Monitor itself and failed warning delivery are monitored | Open |
-| T40 | Backup restore cannot replay external actions | Open |
+| T40 | Backup restore cannot replay external actions | Partial: unsafe legacy privileged v3 restore blocked and restore race tested; full isolated v3 recovery/reconciliation drill open |
 
 ## Next execution steps
 

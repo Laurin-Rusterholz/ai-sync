@@ -90,10 +90,14 @@ export function pruefeArgumente(args) {
  *              Restore einen Stand ueberschreiben, dessen Inhalt niemand kennt.
  */
 export function bewerteAktuellenStand(doc) {
+  if (doc && doc.wrap != null && doc.data == null) {
+    return { art: "unlesbar", daten: null, etag: doc.etag || null, updatedAt: null };
+  }
   if (!doc || doc.exists !== true || doc.data == null) {
     return { art: "fehlt", daten: null, etag: null, updatedAt: null };
   }
-  if (doc.parsed == null || typeof doc.parsed !== "object") {
+  if (doc.parsed == null || typeof doc.parsed !== "object" || Array.isArray(doc.parsed)
+      || !doc.parsed.entities || typeof doc.parsed.entities !== "object" || Array.isArray(doc.parsed.entities)) {
     return {
       art: "unlesbar", daten: null, etag: doc.etag || null, updatedAt: null,
       bytes: typeof doc.data === "string" ? Buffer.byteLength(doc.data, "utf8") : null,
@@ -103,6 +107,33 @@ export function bewerteAktuellenStand(doc) {
     art: "vorhanden", daten: doc.parsed, etag: doc.etag || null,
     updatedAt: doc.parsed?.meta?.updatedAt || null,
   };
+}
+
+// The legacy restore cannot reconcile external effects, replay receipts or lease
+// epochs. Even a partial v3 footprint requires the dedicated recovery procedure.
+export function pruefeLegacyRestoreGrenze(daten) {
+  if (!daten || typeof daten !== "object") return { ok: true };
+  const automation = daten.automation;
+  const version = automation?.schemaVersion;
+  const hasV3Ledger = automation && typeof automation === "object" && [
+    "dataRevision", "idempotencyByKey", "activeLease", "outbox",
+    "jobs", "questions", "answers", "documents", "intake",
+  ].some((key) => Object.hasOwn(automation, key));
+  const ambiguousAutomation = Object.hasOwn(daten, "automation")
+    && (!automation || typeof automation !== "object" || Array.isArray(automation));
+  const unsupportedVersion = version !== undefined
+    && (!Number.isSafeInteger(version) || version < 1 || version >= 3);
+  const hasRuns = daten.dailyBriefing && typeof daten.dailyBriefing === "object"
+    && Object.hasOwn(daten.dailyBriefing, "assistantRuns");
+  if (ambiguousAutomation || unsupportedVersion || hasV3Ledger || hasRuns) {
+    return {
+      ok: false, code: "v3_restore_requires_reconciliation",
+      grund: "Dieser Datenstand erfordert das v3-Wiederherstellungsverfahren. "
+        + "Der alte Voll-Restore darf Laufrechte, Versandnachweise und Wiederholungsschutz nicht zuruecksetzen. "
+        + "Erst Laeufe sperren, externe Aktionen abgleichen und die Wiederanlaufsperre nachweislich pruefen.",
+    };
+  }
+  return { ok: true };
 }
 
 /*
@@ -416,6 +447,8 @@ export async function fuehreRestoreAus(args, deps) {
     const geprueft = pruefeBackup(roh, args.key);
     if (!geprueft.ok) return { ok: false, schritt: "backup", grund: geprueft.grund, spur };
     spur.push("backup-geprueft");
+    const backupGrenze = pruefeLegacyRestoreGrenze(geprueft.daten);
+    if (!backupGrenze.ok) return { ...backupGrenze, schritt: "restore-grenze", spur };
 
     // 3. LOCK — VOR dem Lesen des Ist-Standes. Zwei gleichzeitige Laeufe wuerden
     //    sonst denselben Snapshot lesen und beide darauf bestaetigen.
@@ -437,6 +470,16 @@ export async function fuehreRestoreAus(args, deps) {
         grund: "aktueller Core unlesbar — Restore verweigert, manuell pruefen",
         spur,
       };
+    }
+
+    const istGrenze = pruefeLegacyRestoreGrenze(bewertung.daten);
+    if (!istGrenze.ok) return { ...istGrenze, schritt: "restore-grenze", spur };
+    // A local lock cannot stop writers on other devices or servers. Bind the
+    // final PUT to this exact read, including a genuinely absent core.
+    const serverEtag = doc?.serverEtag;
+    if (typeof serverEtag !== "string" || !serverEtag.trim() || serverEtag.trim() === "*") {
+      return { ok: false, schritt: "ist-stand", code: "restore_precondition_missing",
+        grund: "Der Serververgleich fehlt; kein unbedingter Restore erlaubt.", spur };
     }
 
     const d = diffZusammenfassung(bewertung, geprueft.daten, geprueft.meta);
@@ -469,6 +512,7 @@ export async function fuehreRestoreAus(args, deps) {
       zusammenfassung: d, bestaetigung: antwort, zeit: new Date(),
     });
     intent.laufId = lock.inhalt.laufId;
+    intent.serverEtagVorher = serverEtag;
     const angelegt = await schreibeIntentExklusiv(dir, args.key, intent, deps.fsApi, new Date());
     intentPfad = angelegt.datei;          // NUR dieser Pfad wird spaeter aktualisiert
     intent.nonce = angelegt.nonce;
@@ -477,6 +521,7 @@ export async function fuehreRestoreAus(args, deps) {
     // 9. Erst JETZT schreiben.
     const text = JSON.stringify(geprueft.daten);
     const wrap = {
+      ...(doc.wrap && typeof doc.wrap === "object" && !Array.isArray(doc.wrap) ? doc.wrap : {}),
       data: text,
       etag: deps.jsonEtag(text),
       updatedAt: geprueft.meta.updatedAt || new Date().toISOString(),
@@ -486,8 +531,9 @@ export async function fuehreRestoreAus(args, deps) {
     let ergebnis;
     try {
       spur.push("write");
-      const r = await deps.firebaseDbSet(pfad, wrap);
-      ergebnis = { ok: !!(r && r.ok), etagNachher: wrap.etag, updatedAtNachher: wrap.updatedAt };
+      const r = await deps.firebaseDbSet(pfad, wrap, { ifMatch: serverEtag });
+      ergebnis = { ok: !!(r && r.ok), conflict: r?.conflict === true,
+        etagNachher: r?.ok ? wrap.etag : null, updatedAtNachher: r?.ok ? wrap.updatedAt : null };
     } catch (e) {
       // Auch ein geworfener Schreibfehler landet im BESTEHENDEN Intent — in
       // genau der Datei, die dieser Lauf angelegt hat.
@@ -498,7 +544,11 @@ export async function fuehreRestoreAus(args, deps) {
     }
     await aktualisiereIntent(intentPfad, intent, ergebnis, deps.fsApi);
     spur.push("intent-aktualisiert:" + (ergebnis.ok ? "ok" : "fehler"));
-    return { ok: ergebnis.ok, schritt: "fertig", geschrieben: true, protokoll: intentPfad, zusammenfassung: d, spur };
+    return { ok: ergebnis.ok, schritt: ergebnis.conflict ? "konflikt" : "fertig",
+      geschrieben: ergebnis.ok, protokoll: intentPfad, zusammenfassung: d, spur,
+      ...(!ergebnis.ok ? { grund: ergebnis.conflict
+        ? "Der Serverstand wurde seit der Pruefung geaendert. Nicht geschrieben; neuen Stand zuerst erneut pruefen."
+        : "Der Server hat die Wiederherstellung nicht bestaetigt." } : {}) };
   } finally {
     // Der Lock wird IMMER freigegeben, wenn dieser Lauf ihn haelt — nach dem
     // Outcome-Update, und auch auf jedem Fehlerpfad.

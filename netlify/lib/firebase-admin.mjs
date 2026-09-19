@@ -289,14 +289,14 @@ export async function readAppDataDocument(key = "app-data.json") {
   const record = await firebaseDbGetWithEtag(appStorePath(key));
   const wrap = record.value;
   const data = unwrapData(wrap);
-  if (data == null) return { exists: false, data: null, parsed: null, etag: null, wrap };
+  if (data == null) return { exists: false, data: null, parsed: null, etag: null, serverEtag: record.serverEtag, wrap };
   let parsed = null;
   try {
     parsed = JSON.parse(data);
   } catch {
     // Compatibility endpoints return the stored bytes even if an old record is malformed.
   }
-  return { exists: true, data, parsed, etag: wrap?.etag || jsonEtag(data), wrap };
+  return { exists: true, data, parsed, etag: wrap?.etag || jsonEtag(data), serverEtag: record.serverEtag, wrap };
 }
 
 // Der Server ersetzt eine Client-Vorbedingung NIE stillschweigend durch eine

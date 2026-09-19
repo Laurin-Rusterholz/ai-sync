@@ -29,6 +29,8 @@ on:
       - "tests/career-model-ideas.test.mjs"
       - "tests/persistence.test.mjs"
       - "tests/quantus-v3-*.test.mjs"
+      - "tests/f25-restore-core-contract.test.mjs"
+      - "scripts/restore-core.mjs"
       - "public/bm.html"
       - "public/docstudio.html"
       - "public/quantus-bundles/**"
