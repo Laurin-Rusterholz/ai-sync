@@ -1,8 +1,8 @@
 # Tagesbriefing v3 — serverseitiger Datenkern (Paket B)
 
-Stand: 19.09.2026, zweite Fassung nach dem Review von 590dc78 (elf
-reproduzierte Luecken, alle behoben, je mit adversarialem Regressionstest
-R1–R11). Dieses Paket ist **bewusst nicht der produktive Cutover**. Kein
+Stand: 19.09.2026, dritte Fassung: nach dem Review von 590dc78 (R1–R11) und
+der unabhaengigen zweiten Pruefung von 6e829d5 (B2-01–B2-09), alle mit
+Gegenbeispiel-Regressionstest. Dieses Paket ist **bewusst nicht der produktive Cutover**. Kein
 Deployment, keine Provider-Aufrufe, keine Aenderung an Scheduler,
 Firebase-Regeln, Clients, CAS-Wegen (`firebase-admin.mjs`, `date-invite*`,
 `flowertech-*`) oder am Idempotenz-Umschlag (`quantus-v3-idempotency.mjs`).
@@ -18,7 +18,7 @@ Firebase-Regeln, Clients, CAS-Wegen (`firebase-admin.mjs`, `date-invite*`,
 | `netlify/lib/assistant-ampel.mjs` | `dailyAssistantTrafficLight`, `isEvaluationCurrent`, `bestandsFingerabdruck` |
 | `netlify/lib/assistant-abschluss.mjs` | `verpflichtungsmenge`, `pruefeAbschluss`, `closeRun`, `pruefeWiderspruch`, `invalidateClosure` |
 | `netlify/lib/assistant-core.mjs` | `applyCommand` (Domain-Aktion), `commandReducer` (Adapter fuer `applyIdempotentCommand`), `serializeCore` |
-| `tests/tagesbriefing-v3-kern.test.mjs` | 17 Tests, `npm run test:tagesbriefing` (auch in `npm test`) |
+| `tests/tagesbriefing-v3-kern.test.mjs` | 22 Tests, `npm run test:tagesbriefing` (auch in `npm test`) |
 
 Alle Module sind reines JavaScript **ohne `node:`-Importe** (der Test prueft
 das) und damit direkt im Browser nutzbar. Form jeder Mutation:
@@ -184,15 +184,28 @@ idempotencyByKey   gehoert dem Umschlag quantus-v3-idempotency.mjs — der Kern 
 activeLease        gehoert Paket E1 (quantus-v3-runtime-state.mjs) — der Kern liest und schreibt es NIE
 ```
 
-`requireCore` prueft alle Karten, Revisionszahlen und Laeufe; korrupte
-Strukturen sind Fehler (`CORE_*`), nichts wird geleert oder als erledigt
-gedeutet. `parseCoreDocument` lehnt `entities` als Array ab (R9). Unbekannte
-Kartenzustaende sind in der Ampel `CARD_STATE_UNKNOWN` (rot), nie
-uebersprungen.
+`pruefeKernStruktur(data)` prueft — nicht werfend — Pflichtsammlungen
+(`PFLICHT_STORES`: tasks, projects, chatgptLeads, chatgptTasks, chatgptNotes),
+jede Automation-Karte, `dataRevision` (safe integer ≥ 0, kein `Number(x)||0`),
+Migration und jeden Lauf. `requireCore` lehnt damit die Mutation ab
+(`CORE_*`, 503); die **Ampel** meldet jede Verletzung als eigenen Befund
+`CORE_INVALID` mit Pfad (rot, `evaluatedRevision: null`) und rechnet nichts
+weiter — nichts wird uebersprungen, nichts geworfen (B2-01/02).
+`parseCoreDocument` lehnt `entities` als Array ab (R9). Unbekannte
+Kartenzustaende sind `CARD_STATE_UNKNOWN` (rot).
 
-Notizen (Start, Final, Korrektur) liegen im bestehenden Notizmodul
-`entities.notes` in der Form, die `normalizeData()` erwartet, mit
-`assistantNote { kind, runDate }` und Tags `tagesbriefing` + `start|final|korrektur`.
+**Start-, Final- und Korrekturnoten sind ChatGPT Notes** in
+`entities.chatgptNotes` (Konzept 7.1, „ueberschreibe niemals eine
+unveraenderliche ChatGPT Note“), NICHT in NoteFlow (`entities.notes`, bleibt
+unberuehrt). Sie tragen genau das bestehende Schema (`category`
+auftrag|entscheid, `instruction` = Inhalt, `derived` = Titel,
+`instructionDate`, `promptSection: "tagesbriefing"`, `tags`, `state: "aktiv"`,
+`supersedes/supersededBy`, `linked*`, `comments`, `files`, `externalLinks`,
+`createdAt/updatedAt`) plus das versionierte Feld
+`assistantNote { schema: "assistant-note/3", kind, runDate, runRevision }`,
+das der Normalizer unangetastet laesst und das der Entity-Merge per Id
+uebernimmt. Eine Korrektur ist ein NEUER Eintrag mit `supersedes`; die alte
+Finalnote bleibt byteidentisch (kein `supersededBy`, kein „ueberholt“) (B2-08).
 
 ### Policy (`tagesbriefing-policy/3`) — feste Grenzen (R10)
 
@@ -231,24 +244,49 @@ operations: `CORE_MISSING`, `CORE_NOT_MIGRATED`, `POLICY_INCOMPLETE`,
 `RUN_EXCEPTION_OPEN`, `AGENT_CLAIM_IGNORED` (gelb).
 
 `validUntil` = Minimum aus TTL, Quellablauf, naechster Slotgrenze, naechstem
-`followUpAt`, naechster Frist, Job-Ablauf. `isEvaluationCurrent` verneint
-nach `validUntil`, bei anderer Revision oder anderem Bestands-Fingerabdruck.
+`followUpAt`, naechster Frist, Job-Ablauf.
+
+**Signatur** (`bestandsFingerabdruck(run, data, policy)`): kanonisches JSON
+der **vollstaendigen Projektion** — der ganze Lauf, die Policy, alle
+Quellsammlungen und Projekte, die referenzierten ChatGPT Notes, alle
+Automation-Karten (ausser Ledger und Lease) und das Strukturergebnis — keine
+Handauswahl von Feldern. `isEvaluationCurrent(evaluation, { run, data, now,
+policy })` verneint ohne Lauf/Policy, nach `validUntil`, bei Bewertung aus
+der Zukunft, bei kaputter Struktur, anderer Revision, anderer
+Policy-Version oder anderer Signatur (B2-03/04).
+
+Die Wartekarte bindet den Beleg per Fingerabdruck (`evidence.binding`):
+weicht der Beleg heute davon ab oder fehlt die Bindung, ist die Karte
+`WAIT_EVIDENCE_CHANGED`. Eine offene Frage sperrt auch ein wartendes Element,
+ausser sie ist selbst der Beleg des Wartens auf den Nutzer.
 
 ## Abschluss (R8)
 
-`closeRun`: ≥ 23:00 Ortszeit und < 04:00 des Folgetages, Startnotiz
-vorhanden, Quittungen 09 und 23, Ampel beide Achsen gruen (damit alle Quellen
-inkl. Quantus-Kern ≤ 15 min alt). Atomar: `phase=final`, `finalAt`,
-`closureRevision`, `closureCutoff`, `finalNoteId`, `closureOutcomes` =
-**vollstaendige Verpflichtungsmenge** (jedes Element mit Zustand, Version,
-Beleg; jede Karte), genau eine Finalnotiz. Wiederholung: No-op.
+`closeRun`: ≥ 23:00 Ortszeit und < 04:00 des Folgetages, Startnote vorhanden
+(als ChatGPT Note), Quittungen 09 und 23, Ampel beide Achsen gruen (damit
+alle Quellen inkl. Quantus-Kern ≤ 15 min alt). Atomar: `phase=final`,
+`finalAt`, `closureRevision`, `closureCutoff`, `finalNoteId`,
+`closureOutcomes` = **vollstaendiges Manifest** (`verpflichtungsmenge`):
+jedes Element mit Zustand und Version, bei Warten die ganze Wartekarte plus
+Identitaet des Belegs (Kennung, Art, Fingerabdruck, Bindung), jedes Projekt
+mit seinen Fristen (id, date, done), jedes Dokument mit Extraktion und
+Ergebnissen, jeder Job mit Review und Ergebnis-Hash, jede Frage/Antwort/
+jeder Eingang — nur Kennungen, Zustaende, Zeitpunkte und Fingerabdruecke,
+keine Inhaltskopien. Genau eine Finalnote. Wiederholung: No-op.
 
-`pruefeWiderspruch` vergleicht die gesamte Menge: abgeschlossen → offen,
-belegtes Warten → doing / Karte weg / Beleg getauscht, erledigte Karte →
-offen. Neuer Eingang nach `closureCutoff` ist kein Widerspruch
-(`newIntake`, `nextRunDate`). `invalidateClosure` nur bei echtem
-Widerspruch: `exception_open`, `corrections` append-only, Korrekturnotiz;
-historische Finalnotiz und `finalNoteId/finalAt/closureRevision` bleiben.
+`pruefeWiderspruch(data, {date}, {now, policy})` vergleicht das ganze
+Manifest (B2-05/06/07): `REOPENED` (abgeschlossen → offen, auch Karten),
+`WAITING_ENDED`, `WAITING_CARD_LOST`, `WAITING_CARD_CHANGED` (jedes Feld),
+`WAITING_EVIDENCE_LOST` (Beleg fehlt, anders, fremd), `WAITING_INVALID`
+(Karte besteht die volle Pruefung nicht mehr), `DOCUMENT_PROOF_LOST`
+(Extraktion/Ergebnisse/Hash), `JOB_REVIEW_LOST`, `PROJECT_DEADLINE_REOPENED`,
+`PROJECT_DEADLINE_DUE_AFTER_CLOSE`, `OBLIGATION_MISSING`. Ein verstrichenes
+`followUpAt` ist kein Widerspruch (Nachfassung ist Arbeit des naechsten
+Laufs). Neuer Eingang und neue Elemente nach `closureCutoff` sind kein
+Widerspruch (`newIntake`, `nextRunDate`). `invalidateClosure` nur bei echtem
+Widerspruch: `exception_open`, `corrections` append-only, neue Korrekturnote
+mit `supersedes`; historische Finalnote und `finalNoteId/finalAt/
+closureRevision` bleiben.
 
 ## Kommandos, Aufrufer, Umschlag (R11)
 
@@ -264,11 +302,20 @@ sichert zu: Revision +0 oder +1 je Aktion (auch `carryOverRefs` ueber
 mehrere Elemente), `idempotencyByKey` und `activeLease` byteidentisch.
 `commandReducer({ policy, actor })` ist der synchrone Adapter fuer
 `applyIdempotentCommand(current, prepared, reducer)` aus
-`quantus-v3-idempotency.mjs`: `{ data, result }` ohne reservierte Felder,
-Ablehnungen als Fehler mit `code`/`status`. Die Komposition mit dem echten
-Umschlag (51cc666) wurde lokal geprueft (Replay, 409-Konflikt bei anderem
-Inhalt, Domain-Ablehnung, No-op); der Umschlag liegt nicht auf diesem Branch,
-der Test ueberspringt diesen Teil dann.
+`quantus-v3-idempotency.mjs`. Zeit und Kennung kommen **ausschliesslich**
+aus `prepared.now`/`prepared.requestId`; ein Kommando mit eigenem `now`,
+`commandId`, `serverNow` oder `requestId` wird abgelehnt
+(`COMMAND_BODY_TIME_FORBIDDEN`), ungueltiges `prepared` ist fail-closed
+(`invalid_transaction_context`, 500). Ablehnungen werden geworfen:
+Versions-/Zustandskonflikte 409 (`VERSION_MISMATCH`, `SLOT_ALREADY_RECEIPTED`,
+`CLOSURE_BLOCKED`, `*_IMMUTABLE`, `*_ALREADY_*`, …), kaputter Kern 503, sonst
+400 (B2-09). Lokale Domain-Tests stellen `now` ueber `applyCommand`; der
+Adapter nimmt keine Body-Zeit. Die Komposition mit dem echten Umschlag
+(codex HEAD 4d68070, unveraendert seit 51cc666) wurde lokal geprueft:
+vollstaendiger Tag ueber den Umschlag, Abschluss mit Serverzeit 10:00 → 409
+ohne Schreiben, Body-Zeit → Ablehnung, Abschluss mit Serverzeit 23:05,
+Replay ohne Schreiben. Der Umschlag liegt nicht auf diesem Branch; der Test
+ueberspringt diesen Teil dann.
 
 `acquireLease`/`releaseLease` sind **entfernt**; Lease/Fencing (120 s,
 Erneuerung, Fence, staleOwner an jeder Leitungsaktion) ist Paket E1. Bis
@@ -289,6 +336,9 @@ dahin ist dieser Kern ohne Umschlag und ohne E1 nicht schreibend zu benutzen.
   Client-Schreiben braucht es dort Zweige; dieses Paket aendert keine Clients.
 * `policyRef`, `archiveRef` unbenutzt; Altstatus-Rueckschreibung
   (`legacyFuer`) ist bewusst nicht aktiv.
+* Die Ampel kann einen Beleg-Fingerabdruck nur gegen die Bindung der
+  Wartekarte pruefen, nicht gegen die Quelle selbst — das ist Sache des
+  Adapters (Paket F).
 
 ## Testabdeckung (ehrlich)
 
@@ -311,6 +361,11 @@ dahin ist dieser Kern ohne Umschlag und ohne E1 nicht schreibend zu benutzen.
 | R8 Verpflichtungsmenge inkl. Lead ohne itemRef, Widerspruch bei Reopen, Warten-Widersprueche, Historie byteidentisch, Notizen im Notizmodul | ja |
 | T22 DST, T23 Carry-over, Serialisierung | ja |
 | kein `node:`-Import in den Kernmodulen | ja |
+| B2-01/02 20 korrupte/fehlende Pflichtkarten, Stores, Revisionen, Laeufe → `CORE_INVALID` rot, kein Werfen | ja |
+| B2-03/04 22 Mutationen (Wartekarte, Beleg-Fingerabdruck/-Bindung, Quellen, Startnote, Quittungen, Phase, itemRefs, Version, Drift, Deferrals, Frage, Eingang, Projektfrist, Struktur) invalidieren die gruene Bewertung; Policy/Lauf/Kontext | ja |
+| B2-05/06/07 13 Widersprueche nach Abschluss (Beleg weg/veraendert, Karte veraendert/weg, Dokument-/Job-Nachweis weg, Projektfrist wieder offen / neu faellig, Reopen) mit Invalidierung und byteidentischer Finalnote; neuer Eingang und verstrichenes followUpAt kein Widerspruch | ja |
+| B2-08 ChatGPT-Notes-Schema, NoteFlow leer, Korrektur mit supersedes, alte Note unveraendert, fehlender Note-Eintrag rot | ja |
+| B2-09 Body-Zeit/-Kennung abgelehnt, prepared.now massgeblich (10:00 → zu frueh), ungueltiges prepared 500, 409/503/400 | ja |
 
 Nicht geprueft (nicht gebaut): HTTP, Auth, CAS-412 im echten
 `mutateAppData`, Lease/Fencing, Provider, Client-Merge, Oberflaechen.

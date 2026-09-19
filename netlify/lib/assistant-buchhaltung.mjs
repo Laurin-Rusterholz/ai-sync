@@ -147,24 +147,23 @@ export function ensureRun(input, { date }, ctx) {
   return { ok: true, data, run, created: true };
 }
 
-/* Genau EINE Startnotiz pro Tag, im bestehenden Notizmodul (entities.notes).
- * Ein zweiter Aufruf — auch mit anderer noteId — legt nichts an. */
+/* Genau EINE Startnotiz pro Tag, als ChatGPT Note (entities.chatgptNotes —
+ * das Gedaechtnis des Assistenten, Konzept 7.1), nie in NoteFlow. Ein
+ * zweiter Aufruf — auch mit anderer noteId — legt nichts an. */
 export function ensureStartNote(input, { date, noteId, title, content }, ctx) {
   ctxPruefen(ctx);
   const data = klon(requireCore(input));
   const run = runVon(data, date);
   if (!run) return fehler("RUN_MISSING", date);
   if (run.startNoteId) {
-    const vorhanden = data.entities.notes && data.entities.notes[run.startNoteId];
-    return { ok: true, data, noteId: run.startNoteId, created: false, noteExists: !!vorhanden };
+    return { ok: true, data, noteId: run.startNoteId, created: false, noteExists: !!data.entities.chatgptNotes[run.startNoteId] };
   }
   pruefeId(noteId, "noteId");
-  data.entities.notes = istKarte(data.entities.notes) ? data.entities.notes : {};
-  if (data.entities.notes[noteId]) return fehler("NOTE_ID_TAKEN", noteId);
-  data.entities.notes[noteId] = notizBauen(noteId, {
+  if (data.entities.chatgptNotes[noteId]) return fehler("NOTE_ID_TAKEN", noteId);
+  data.entities.chatgptNotes[noteId] = chatgptNoteBauen(noteId, {
     title: title || `Tagesbriefing ${date} — Start`,
-    content: content || "",
-    kind: "assistantStart", date, now: ctx.now,
+    content: content || `Tagesbriefing ${date}: Lauf ${run.id} eroeffnet.`,
+    kind: "assistantStart", date, runRevision: run.revision, now: ctx.now,
   });
   run.startNoteId = noteId;
   runAnfassen(run, ctx.now);
@@ -172,17 +171,38 @@ export function ensureStartNote(input, { date, noteId, title, content }, ctx) {
   return { ok: true, data, noteId, created: true, noteExists: true };
 }
 
-/* Eine Notiz in der Form, die normalizeData() fuer entities.notes erwartet. */
-export function notizBauen(id, { title, content, kind, date, now }) {
+/* Eine ChatGPT Note in genau der Form, die normalizeData() fuer
+ * entities.chatgptNotes erwartet (category, instruction, derived,
+ * instructionDate, promptSection, tags, state, supersedes/supersededBy,
+ * linked*, comments, files, externalLinks, createdAt/updatedAt). Das
+ * versionierte Feld assistantNote traegt die Kern-Metadaten; der Normalizer
+ * setzt nur Defaults und laesst es unangetastet. Eine ChatGPT Note wird nie
+ * inhaltlich veraendert; eine Korrektur ist ein NEUER Eintrag mit
+ * supersedes, der alte bleibt byteidentisch. */
+export const ASSISTANT_NOTE_SCHEMA = "assistant-note/3";
+const NOTE_META = Object.freeze({
+  assistantStart: Object.freeze({ category: "auftrag", tag: "start" }),
+  assistantFinal: Object.freeze({ category: "entscheid", tag: "final" }),
+  assistantCorrection: Object.freeze({ category: "entscheid", tag: "korrektur" }),
+});
+
+export function chatgptNoteBauen(id, { title, content, kind, date, runRevision, now, supersedes = null }) {
   const iso = isoAus(now);
+  const meta = NOTE_META[kind];
+  if (!meta) throw new RangeError("unbekannte Notizart " + kind);
   return {
-    id, title: String(title), content: String(content || ""),
-    tags: ["tagesbriefing", kind === "assistantFinal" ? "final" : kind === "assistantCorrection" ? "korrektur" : "start"],
-    assistantNote: { kind, runDate: date },
-    comments: [], externalLinks: [],
-    linkedTasks: [], linkedProjects: [], linkedOrganizations: [], linkedIdeas: [], linkedMeetings: [],
-    linkedGoals: [], linkedStrategies: [], linkedNotes: [], linkedCalendarEvents: [],
-    notebookId: null, order: 0,
+    id,
+    category: meta.category,
+    instruction: String(content || ""),
+    derived: String(title),
+    instructionDate: date,
+    promptSection: "tagesbriefing",
+    tags: ["tagesbriefing", meta.tag, date],
+    state: "aktiv",
+    supersedes, supersededBy: null,
+    assistantNote: { schema: ASSISTANT_NOTE_SCHEMA, kind, runDate: date, runRevision: Number.isInteger(runRevision) ? runRevision : null },
+    linkedTasks: [], linkedProjects: [], linkedNotes: [], linkedOrganizations: [],
+    comments: [], files: [], externalLinks: [],
     createdAt: iso, updatedAt: iso,
   };
 }
@@ -352,21 +372,21 @@ export function belegAufloesen(data, sourceType, sourceId, evidence) {
     const ev = a.evidenceById[String(evidence.evidenceId || "")];
     if (!ev) return { ok: false, code: "WAIT_EVIDENCE_UNKNOWN" };
     if (ev.sourceType !== sourceType || ev.sourceId !== sourceId) return { ok: false, code: "WAIT_EVIDENCE_FOREIGN" };
-    return { ok: true, ref: { kind: "evidence", evidenceId: ev.id }, kindDetail: ev.kind };
+    return { ok: true, ref: { kind: "evidence", evidenceId: ev.id, binding: ev.fingerprint }, kindDetail: ev.kind };
   }
   if (evidence.kind === "question") {
     const q = a.questionsById[String(evidence.questionId || "")];
     if (!q) return { ok: false, code: "WAIT_EVIDENCE_UNKNOWN" };
     if (q.sourceType !== sourceType || q.sourceId !== sourceId) return { ok: false, code: "WAIT_EVIDENCE_FOREIGN" };
     if (q.status !== "open") return { ok: false, code: "WAIT_QUESTION_NOT_OPEN" };
-    return { ok: true, ref: { kind: "question", questionId: q.id } };
+    return { ok: true, ref: { kind: "question", questionId: q.id, binding: "question:" + q.id + ":" + q.askedAt } };
   }
   if (evidence.kind === "job") {
     const j = a.jobsById[String(evidence.jobId || "")];
     if (!j) return { ok: false, code: "WAIT_EVIDENCE_UNKNOWN" };
     if (j.sourceType !== sourceType || j.sourceId !== sourceId) return { ok: false, code: "WAIT_EVIDENCE_FOREIGN" };
     if (!["queued", "running"].includes(j.state)) return { ok: false, code: "WAIT_JOB_NOT_ACTIVE" };
-    return { ok: true, ref: { kind: "job", jobId: j.id }, executor: j.executor };
+    return { ok: true, ref: { kind: "job", jobId: j.id, binding: "job:" + j.id + ":" + j.executor + ":" + j.inputVersion + ":" + j.createdAt }, executor: j.executor };
   }
   return { ok: false, code: "WAIT_EVIDENCE_KIND_UNKNOWN" };
 }
@@ -400,6 +420,10 @@ export function pruefeWarteKarte(data, sourceType, sourceId, karte, { now, polic
   const beleg = belegAufloesen(data, sourceType, sourceId, w.evidence);
   if (!beleg.ok) m.push(beleg.code);
   else {
+    // Bindung: die Karte traegt den Fingerabdruck des Belegs vom Zeitpunkt
+    // des Setzens. Weicht der Beleg heute davon ab (anderer Inhalt, andere
+    // Identitaet), ist die Karte nicht mehr belegt.
+    if (!beimSetzen && (typeof w.evidence.binding !== "string" || w.evidence.binding !== beleg.ref.binding)) m.push("WAIT_EVIDENCE_CHANGED");
     if (w.state === "delegated" && beleg.ref.kind !== "job") m.push("WAIT_DELEGATED_NEEDS_JOB");
     if (w.state === "delegated" && beleg.ref.kind === "job" && cpl !== String(beleg.executor).toLowerCase()) m.push("WAIT_DELEGATED_COUNTERPARTY_MISMATCH");
     if (w.state === "waiting_user" && beleg.ref.kind !== "question") m.push("WAIT_USER_NEEDS_QUESTION");

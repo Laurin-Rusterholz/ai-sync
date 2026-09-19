@@ -414,6 +414,11 @@ export function leereAutomation() {
   };
 }
 
+/* Pflichtsammlungen des Bestands: fehlen sie oder sind sie keine Karte,
+ * ist der Bestand korrupt — fuer Mutation UND Ampel. NoteFlow (entities.notes)
+ * ist keine Pflicht des Kerns und bleibt unberuehrt. */
+export const PFLICHT_STORES = Object.freeze(["tasks", "projects", "chatgptLeads", "chatgptTasks", "chatgptNotes"]);
+
 /* Karten, die requireCore als Objekt verlangt. */
 export const AUTOMATION_KARTEN = Object.freeze([
   "intakeById", "questionsById", "answersById", "documentsById", "jobsById", "outboxById",
@@ -445,6 +450,26 @@ function cyrb53(str, seed) {
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
 }
+/* Kanonisches JSON (Schluessel sortiert, undefined/Funktionen weggelassen,
+ * nicht-endliche Zahlen als null) — fuer Signaturen ueber ganze Projektionen,
+ * damit keine Handauswahl von Feldern etwas uebersehen kann. */
+export function canonicalJson(value) {
+  const seen = new Set();
+  const visit = (v) => {
+    if (v === null || typeof v === "string" || typeof v === "boolean") return JSON.stringify(v);
+    if (typeof v === "number") return Number.isFinite(v) ? JSON.stringify(v) : "null";
+    if (typeof v !== "object") return "null";
+    if (seen.has(v)) throw new TypeError("canonicalJson: zyklische Struktur");
+    seen.add(v);
+    let out;
+    if (Array.isArray(v)) out = "[" + v.map((x) => (x === undefined ? "null" : visit(x))).join(",") + "]";
+    else out = "{" + Object.keys(v).sort().filter((k) => v[k] !== undefined && typeof v[k] !== "function").map((k) => JSON.stringify(k) + ":" + visit(v[k])).join(",") + "}";
+    seen.delete(v);
+    return out;
+  };
+  return visit(value);
+}
+
 export function stringFingerprint(str) {
   const s = String(str);
   let r = "";

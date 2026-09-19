@@ -47,7 +47,8 @@ function bestand() {
         t2: { id: "t2", title: "Spaeter", status: "todo", dueDate: "2026-10-30", createdAt: t0, updatedAt: t0, comments: [] },
       },
       projects: { p1: { id: "p1", title: "Umzug", status: "active", deadlines: [{ id: "d1", title: "Kuendigung", date: "2026-09-10", done: true }], createdAt: t0, updatedAt: t0 } },
-      notes: {},
+      notes: { nf1: { id: "nf1", title: "NoteFlow bleibt", content: "unberuehrt" } },
+      chatgptNotes: {},
       chatgptLeads: {
         l1: lead("l1"),
         l2: lead("l2", { status: "abgeschlossen", closedAt: t0, closedBy: "assistant" }),
@@ -349,12 +350,15 @@ test("eine gespeicherte Bewertung gilt nur bis validUntil und nur fuer denselben
   const { data, now, date } = tagAufbauen(migriert(), { erledigt: true });
   const ev = ampel(data, date, now);
   assert.equal(ev.overall, "green");
-  assert.equal(K.isEvaluationCurrent(ev, data, now + MIN).current, true);
-  assert.equal(K.isEvaluationCurrent(ev, data, Date.parse(ev.validUntil)).reason, "EVALUATION_EXPIRED");
+  const ctxOf = (d, t) => ({ run: d.dailyBriefing.assistantRuns[date], data: d, now: t, policy: POLICY });
+  assert.equal(K.isEvaluationCurrent(ev, ctxOf(data, now + MIN)).current, true);
+  assert.equal(K.isEvaluationCurrent(ev, ctxOf(data, Date.parse(ev.validUntil))).reason, "EVALUATION_EXPIRED");
   const geaendert = K.klon(data); geaendert.entities.chatgptLeads.l1.updatedAt = new Date(now + MIN).toISOString();
-  assert.equal(K.isEvaluationCurrent(ev, geaendert, now + MIN).reason, "DATA_CHANGED");
+  assert.equal(K.isEvaluationCurrent(ev, ctxOf(geaendert, now + MIN)).reason, "DATA_CHANGED");
   const mutiert = mussOk(run(data, "registerIntake", { intakeId: "in_1", text: "Neu", channel: "mobile" }, now + MIN, USER), "intake");
-  assert.equal(K.isEvaluationCurrent(ev, mutiert, now + MIN).reason, "REVISION_CHANGED");
+  assert.equal(K.isEvaluationCurrent(ev, ctxOf(mutiert, now + MIN)).reason, "REVISION_CHANGED");
+  assert.equal(K.isEvaluationCurrent(ev, { ...ctxOf(data, now + MIN), policy: { ...POLICY, version: "3.1" } }).reason, "POLICY_CHANGED");
+  assert.equal(K.isEvaluationCurrent(ev, { ...ctxOf(data, now + MIN), run: null }).reason, "CONTEXT_MISSING");
   assert.equal(K.stringFingerprint("abc").length, 32); assert.notEqual(K.stringFingerprint("abc"), K.stringFingerprint("abd"));
   const fs = await import("node:fs");
   for (const f of ["zeit", "schema", "migration", "buchhaltung", "ampel", "abschluss", "core"]) {
@@ -402,7 +406,7 @@ test("R4: ein erfundener Beleg (mail/invented_nonexistent_mail) wird abgewiesen;
   data = erledigen(data, "chatgptTask", "c1", now);
   let ev = ampel(data, date, now);
   assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
-  assert.deepEqual(data.automation.waitingById["chatgptLead:l1"].evidence, { kind: "evidence", evidenceId: "ev_bank" });
+  assert.deepEqual(data.automation.waitingById["chatgptLead:l1"].evidence, { kind: "evidence", evidenceId: "ev_bank", binding: "sha256-0123456789abcdef" });
   for (const [name, mut, code] of [
     ["waitingSince entfernt", (w) => { delete w.waitingSince; }, "WAIT_SINCE_INVALID"],
     ["waitingSince in der Zukunft", (w) => { w.waitingSince = new Date(now + STD).toISOString(); }, "WAIT_SINCE_INVALID"],
@@ -411,6 +415,7 @@ test("R4: ein erfundener Beleg (mail/invented_nonexistent_mail) wird abgewiesen;
     ["Gegenpartei ist der Executor", (w) => { w.counterparty = "openai"; }, "WAIT_COUNTERPARTY_SELF"],
     ["Beleg gegen erfundenen getauscht", (w) => { w.evidence = { kind: "evidence", evidenceId: "ev_invented" }; }, "WAIT_EVIDENCE_UNKNOWN"],
     ["Beleg gegen fremden getauscht", (w) => { w.evidence = { kind: "evidence", evidenceId: "ev_l2" }; }, "WAIT_EVIDENCE_FOREIGN"],
+    ["Bindung entfernt", (w) => { delete w.evidence.binding; }, "WAIT_EVIDENCE_CHANGED"],
     ["followUpAt vor waitingSince", (w) => { w.followUpAt = new Date(now - 2 * STD).toISOString(); w.waitingSince = new Date(now - STD).toISOString(); }, "WAIT_FOLLOWUP_BEFORE_SINCE"],
     ["followUpAt in 90 Tagen", (w) => { w.followUpAt = new Date(now + 90 * 24 * STD).toISOString(); }, "WAIT_FOLLOWUP_IMPLAUSIBLE"],
   ]) {
@@ -711,12 +716,17 @@ test("R8: Abschlussnachweis erfasst die ganze Verpflichtungsmenge; ein Lead ohne
   assert.equal(runF.closureOutcomes["chatgptLead:l2"].state, "done");
   assert.equal(runF.closureOutcomes["chatgptLead:l1"].state, "done");
   assert.equal(runF.closureOutcomes["task:t2"].state, "doing");
-  assert.equal(Object.keys(runF.closureOutcomes).length, 5, "alle fuenf Elemente, unabhaengig von itemRefs (Belege sind keine Verpflichtungen)");
-  // Notizen liegen im bestehenden Notizmodul und sehen aus wie Notizen.
-  const note = d1.entities.notes.note_final_1;
-  assert.ok(note && Array.isArray(note.tags) && Array.isArray(note.linkedTasks) && note.notebookId === null && note.content.includes("chatgptLead:l2 → done"));
-  assert.equal(Object.values(d1.entities.notes).filter((n) => n.assistantNote?.kind === "assistantFinal").length, 1);
-  assert.equal(d1.entities.notes[runF.startNoteId].assistantNote.kind, "assistantStart");
+  assert.equal(Object.keys(runF.closureOutcomes).length, 6, "alle fuenf Elemente plus das Projekt, unabhaengig von itemRefs (Belege sind keine Verpflichtungen)");
+  // Notes liegen als ChatGPT Notes (entities.chatgptNotes) im bestehenden Schema; NoteFlow (entities.notes) bleibt unberuehrt (B2-08).
+  const note = d1.entities.chatgptNotes.note_final_1;
+  assert.ok(note && note.category === "entscheid" && note.state === "aktiv" && note.instructionDate === date && note.promptSection === "tagesbriefing");
+  assert.ok(Array.isArray(note.tags) && note.tags.includes("final") && Array.isArray(note.linkedTasks) && Array.isArray(note.files) && note.supersedes === null);
+  assert.ok(note.instruction.includes("chatgptLead:l2 → done") && note.derived.includes("Abschluss"));
+  assert.deepEqual(note.assistantNote, { schema: "assistant-note/3", kind: "assistantFinal", runDate: date, runRevision: runF.revision });
+  assert.equal(Object.values(d1.entities.chatgptNotes).filter((n) => n.assistantNote?.kind === "assistantFinal").length, 1);
+  assert.equal(d1.entities.chatgptNotes[runF.startNoteId].assistantNote.kind, "assistantStart");
+  assert.equal(d1.entities.chatgptNotes[runF.startNoteId].category, "auftrag");
+  assert.deepEqual(d1.entities.notes, bestand().entities.notes, "NoteFlow wurde angefasst");
   assert.equal(s.data.dailyBriefing.assistantRuns[date].phase, "active", "die Eingabe wurde mutiert");
   const finalnotizVorher = JSON.stringify(note);
   // Wiederholung: No-op, keine zweite Notiz.
@@ -725,18 +735,20 @@ test("R8: Abschlussnachweis erfasst die ganze Verpflichtungsmenge; ein Lead ohne
   // Genau dieser l2 wird wieder doing (reopen mit Grund): Widerspruch.
   const t1 = s.now + 10 * MIN;
   let d2 = mussOk(run(d1, "transitionState", { sourceType: "chatgptLead", sourceId: "l2", state: "doing", expectedVersion: 1, reason: "Kunde reklamiert" }, t1), "reopen l2");
-  let w = K.pruefeWiderspruch(d2, { date }, { now: t1 });
-  assert.deepEqual(w.contradictions, [{ sourceType: "chatgptLead", sourceId: "l2", was: "done", now: "doing" }]);
+  let w = K.pruefeWiderspruch(d2, { date }, { now: t1, policy: POLICY });
+  assert.deepEqual(w.contradictions, [{ sourceType: "chatgptLead", sourceId: "l2", was: "done", now: "doing", reason: "REOPENED" }]);
   // Neuer Eingang nach dem Cutoff: kein Widerspruch, naechster Lauf.
   d2 = mussOk(run(d2, "registerIntake", { intakeId: "in_neu", text: "Neu vom Handy", channel: "mobile" }, t1, USER), "intake");
-  w = K.pruefeWiderspruch(d2, { date }, { now: t1 });
+  w = K.pruefeWiderspruch(d2, { date }, { now: t1, policy: POLICY });
   assert.deepEqual(w.newIntake, [{ sourceType: "intake", sourceId: "in_neu" }]); assert.equal(w.nextRunDate, "2026-09-20");
   assert.equal(run(d2, "invalidateClosure", { date, correctionId: "note_korr_x", reason: "neu", contradiction: { sourceType: "intake", sourceId: "in_neu" } }, t1).error, "NOT_A_CONTRADICTION");
   const inv = mussOk(run(d2, "invalidateClosure", { date, correctionId: "note_korr_1", reason: "Lead l2 wieder offen", contradiction: { sourceType: "chatgptLead", sourceId: "l2" } }, t1), "invalidate");
   const runI = inv.dailyBriefing.assistantRuns[date];
   assert.equal(runI.phase, "exception_open"); assert.equal(runI.finalNoteId, "note_final_1"); assert.equal(runI.closureRevision, runF.closureRevision);
-  assert.equal(JSON.stringify(inv.entities.notes.note_final_1), finalnotizVorher, "die historische Finalnotiz wurde veraendert");
-  assert.equal(runI.corrections.length, 1); assert.equal(inv.entities.notes.note_korr_1.assistantNote.kind, "assistantCorrection");
+  assert.equal(JSON.stringify(inv.entities.chatgptNotes.note_final_1), finalnotizVorher, "die historische Finalnote wurde veraendert");
+  assert.equal(runI.corrections.length, 1); assert.equal(inv.entities.chatgptNotes.note_korr_1.assistantNote.kind, "assistantCorrection");
+  assert.equal(inv.entities.chatgptNotes.note_korr_1.supersedes, "note_final_1");
+  assert.equal(inv.entities.chatgptNotes.note_final_1.supersededBy, null, "die alte Note wird nicht angefasst, auch nicht mit supersededBy");
   assert.equal(run(inv, "invalidateClosure", { date, correctionId: "note_korr_1", reason: "nochmal", contradiction: { sourceType: "chatgptLead", sourceId: "l2" } }, t1 + MIN).already, true);
   assert.equal(run(inv, "closeRun", { date, finalNoteId: "note_final_3" }, t1).error, "RUN_EXCEPTION_OPEN");
   // Widerspruch zu geprueftem Warten: l1 wartet belegt beim Abschluss; danach Karte weg bzw. Beleg getauscht.
@@ -745,18 +757,21 @@ test("R8: Abschlussnachweis erfasst die ganze Verpflichtungsmenge; ein Lead ohne
   s2.data = mussOk(run(s2.data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "waiting_external", counterparty: "Bank", nextAction: "nachfragen", followUpAt: new Date(s2.now + 24 * STD).toISOString(), evidence: { kind: "evidence", evidenceId: "ev_bank" } }, s2.now), "wait");
   s2.data = erledigen(s2.data, "chatgptTask", "c1", s2.now); s2.data = erledigen(s2.data, "task", "t1", s2.now);
   const d3 = mussOk(run(s2.data, "closeRun", { date, finalNoteId: "note_final_w" }, s2.now), "close waiting");
-  assert.deepEqual(d3.dailyBriefing.assistantRuns[date].closureOutcomes["chatgptLead:l1"], { state: "waiting_external", version: 2, evidence: { kind: "evidence", evidenceId: "ev_bank" } });
+  const co = d3.dailyBriefing.assistantRuns[date].closureOutcomes["chatgptLead:l1"];
+  assert.equal(co.state, "waiting_external"); assert.equal(co.version, 2);
+  assert.deepEqual(co.waiting.evidence, { kind: "evidence", evidenceId: "ev_bank", binding: "0123456789abcdef0123" });
+  assert.equal(co.evidenceIdentity.fingerprint, "0123456789abcdef0123");
   const ohneKarte = K.klon(d3); delete ohneKarte.automation.waitingById["chatgptLead:l1"];
-  assert.equal(K.pruefeWiderspruch(ohneKarte, { date }, { now: s2.now + MIN }).contradictions[0].evidenceLost, true);
+  assert.equal(K.pruefeWiderspruch(ohneKarte, { date }, { now: s2.now + MIN, policy: POLICY }).contradictions[0].reason, "WAITING_CARD_LOST");
   const wiederDoing = mussOk(run(d3, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: 2, reason: "Antwort kam" }, s2.now + MIN), "doing");
-  assert.deepEqual(K.pruefeWiderspruch(wiederDoing, { date }, { now: s2.now + MIN }).contradictions.map((c) => c.now), ["doing"]);
+  assert.deepEqual(K.pruefeWiderspruch(wiederDoing, { date }, { now: s2.now + MIN, policy: POLICY }).contradictions.map((c) => c.now), ["doing"]);
   // Nach 04:00 des Folgetages ist der Tag vorbei; ein offener Lead blockiert mit Quell-Id.
   s = tagAufbauen(migriert(), { erledigt: true });
   assert.ok(run(s.data, "closeRun", { date, finalNoteId: "n" }, K.tagesEndeMs(date) + MIN).detail.some((b) => b.code === "CLOSURE_DAY_OVER"));
   const offen = tagAufbauen(migriert());
   r = run(offen.data, "closeRun", { date, finalNoteId: "n" }, offen.now);
   assert.ok(r.detail.find((b) => b.code === "COVERAGE_NOT_GREEN").detail.some((x) => x.sourceId === "l1"));
-  assert.equal(offen.data.entities.notes.n, undefined, "kein Teil-Effekt");
+  assert.equal(offen.data.entities.chatgptNotes.n, undefined, "kein Teil-Effekt");
 });
 
 /* ══ T22: DST ════════════════════════════════════════════════════════════ */
@@ -812,4 +827,209 @@ test("Carry-over uebernimmt Verweise, keine neuen Aufgaben; itemRefs tragen kein
   assert.equal(run(data, "addItemRef", { date: "2026-09-20", sourceType: "chatgptLead", sourceId: "gibtsnicht" }, now).error, "SOURCE_NOT_FOUND");
   const text = K.serializeCore(data);
   assert.equal(JSON.stringify(K.requireCore(K.parseCoreDocument({ exists: true, data: text }))), text);
+});
+
+/* ══ Zweite Pruefung (B2-01 … B2-09): Gegenbeispiele auf der Basisfixture ═ */
+function basisFixture() {
+  return { entities: { tasks: {}, projects: {}, notes: {}, chatgptNotes: {}, chatgptLeads: {}, chatgptTasks: {} } };
+}
+/* Leerer Bestand, Tag komplett aufgebaut, Ausgangsampel beide gruen. */
+function basisTag(extra = (d) => d) {
+  const date = "2026-09-19";
+  const now = K.wandzeitZuMs(date, 23, 5);
+  let data = K.migrateCore(extra(basisFixture()), { now: NOW }).data;
+  data = mussOk(run(data, "ensureRun", { date }, K.slotBeginnMs(date, "briefing04") + MIN), "ensureRun");
+  data = mussOk(run(data, "ensureStartNote", { date, noteId: "note_start" }, K.slotBeginnMs(date, "briefing04") + 2 * MIN), "start");
+  for (const sl of K.SLOT_KEYS) data = mussOk(run(data, "recordSlotReceipt", { date, slot: sl, receiptId: "r_" + sl }, K.slotBeginnMs(date, sl) + MIN), sl);
+  for (const q of POLICY.requiredSources) data = mussOk(run(data, "recordSourceCheck", { date, sourceId: q.id, cursor: "c", outcome: "ok" }, now, ADAPTER), q.id);
+  return { data, now, date };
+}
+/* Wartefall: l1 vor der Migration, addItemRef, Adapter-Beleg proof_review, setWaiting → voll gruen. */
+function warteTag() {
+  const s = basisTag((d) => { d.entities.chatgptLeads.l1 = { id: "l1", status: "in_arbeit", readAt: "2026-09-19T06:00:00Z", assignee: "chatgpt" }; return d; });
+  let { data, now, date } = s;
+  data = mussOk(run(data, "addItemRef", { date, sourceType: "chatgptLead", sourceId: "l1" }, now), "ref");
+  data = mussOk(run(data, "registerEvidence", { evidenceId: "proof_review", kind: "mail", ref: "rfc822:<review@partner.example>", sourceType: "chatgptLead", sourceId: "l1", origin: { adapter: "gmail", ref: "msg_1" }, observedAt: new Date(now - MIN).toISOString(), fingerprint: "sha256-abcdef0123456789" }, now, ADAPTER), "beleg");
+  data = mussOk(run(data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "waiting_external", counterparty: "External partner", nextAction: "Review reply", followUpAt: new Date(now + 24 * STD).toISOString(), evidence: { kind: "evidence", evidenceId: "proof_review" } }, now), "wait");
+  return { data, now, date };
+}
+const gruen = (ev, was) => { assert.equal(ev.coverage, "green", was + ": " + JSON.stringify(ev.reasons)); assert.equal(ev.operations, "green", was + ": " + JSON.stringify(ev.reasons)); };
+
+test("B2-01/02: korrupte oder fehlende Pflichtkarten, Stores und Revisionen sind in der Ampel rot — nicht uebersprungen, nicht geworfen", () => {
+  const { data, now, date } = basisTag();
+  gruen(ampel(data, date, now), "Ausgang");
+  const faelle = [
+    ["automation.questionsById", []], ["automation.documentsById", []], ["automation.jobsById", []], ["automation.evidenceById", "x"],
+    ["automation.waitingById", null], ["automation.progressById", 3], ["automation.sourceCursors", []], ["automation.migration", null],
+    ["automation.dataRevision", -1], ["automation.dataRevision", 1.5], ["automation.dataRevision", "7"], ["automation.dataRevision", Number.MAX_SAFE_INTEGER + 2],
+    ["automation.schemaVersion", 2], ["dailyBriefing.assistantRuns", []],
+    ["entities.chatgptLeads", undefined], ["entities.chatgptTasks", undefined], ["entities.tasks", undefined], ["entities.projects", []], ["entities.chatgptNotes", undefined],
+    ["entities.chatgptLeads.l9", "kaputt"],
+  ];
+  for (const [pfad, wert] of faelle) {
+    const k = K.klon(data);
+    const teile = pfad.split("."); let o = k; for (const t of teile.slice(0, -1)) o = o[t];
+    if (wert === undefined) delete o[teile.at(-1)]; else o[teile.at(-1)] = wert;
+    let ev;
+    assert.doesNotThrow(() => { ev = ampel(k, date, now); }, pfad + " wirft");
+    assert.equal(ev.operations, "red", pfad + " ist nicht rot: " + JSON.stringify(ev.reasons));
+    assert.ok(ev.reasons.some((r) => r.code === "CORE_INVALID" && r.sourceId === pfad), pfad + ": " + JSON.stringify(ev.reasons));
+    assert.equal(ev.overall, "red");
+  }
+  // Kombination aus B2-02: Store weg UND Revision -1 → beides einzeln benannt.
+  const k = K.klon(data); delete k.entities.chatgptLeads; k.automation.dataRevision = -1;
+  const ev = ampel(k, date, now);
+  assert.ok(ev.reasons.some((r) => r.code === "CORE_INVALID" && r.sourceId === "entities.chatgptLeads"));
+  assert.ok(ev.reasons.some((r) => r.code === "CORE_INVALID" && r.sourceId === "automation.dataRevision"));
+  assert.equal(ev.evaluatedRevision, null);
+  // Ein kaputter Lauf ebenso (auch der uebergebene Lauf selbst wird per Struktur geprueft).
+  const r = K.klon(data); r.dailyBriefing.assistantRuns[date].revision = "x";
+  assert.ok(hatCode(ampel(r, date, now), "CORE_INVALID", "dailyBriefing.assistantRuns." + date));
+});
+
+test("B2-03/04: eine gespeicherte gruene Bewertung wird durch JEDE Aenderung an Wartekarte, Belegen, Lauf, Quellen, Policy oder Struktur ungueltig", () => {
+  const { data, now, date } = warteTag();
+  const ev = ampel(data, date, now);
+  gruen(ev, "Wartetag");
+  const ctx = (d, t = now + 1) => ({ run: d.dailyBriefing.assistantRuns[date], data: d, now: t, policy: POLICY });
+  assert.equal(K.isEvaluationCurrent(ev, ctx(data)).current, true);
+  const mutationen = [
+    ["counterparty leer", (d) => { d.automation.waitingById["chatgptLead:l1"].counterparty = ""; }],
+    ["nextAction weg", (d) => { delete d.automation.waitingById["chatgptLead:l1"].nextAction; }],
+    ["waitingSince weg", (d) => { delete d.automation.waitingById["chatgptLead:l1"].waitingSince; }],
+    ["Belegobjekt getauscht", (d) => { d.automation.waitingById["chatgptLead:l1"].evidence = { kind: "evidence", evidenceId: "anders" }; }],
+    ["Beleg-Fingerabdruck geaendert", (d) => { d.automation.evidenceById.proof_review.fingerprint = "sha256-ffffffffffffffff"; }],
+    ["Beleg an fremdes Element gebunden", (d) => { d.automation.evidenceById.proof_review.sourceId = "l2"; }],
+    ["Beleg geloescht", (d) => { delete d.automation.evidenceById.proof_review; }],
+    ["Kernquelle unreachable", (d) => { d.dailyBriefing.assistantRuns[date].sourceChecks["quantus-core"].outcome = "unreachable"; }],
+    ["Quellzeit alt", (d) => { d.dailyBriefing.assistantRuns[date].sourceChecks["gmail-inbox"].checkedAt = "2026-09-19T10:00:00.000Z"; }],
+    ["Startnote weg", (d) => { d.dailyBriefing.assistantRuns[date].startNoteId = null; }],
+    ["Startnote-Eintrag weg", (d) => { delete d.entities.chatgptNotes.note_start; }],
+    ["Quittung 23 weg", (d) => { d.dailyBriefing.assistantRuns[date].slotReceipts.close23 = null; }],
+    ["Phase exception_open", (d) => { d.dailyBriefing.assistantRuns[date].phase = "exception_open"; }],
+    ["itemRef entfernt", (d) => { d.dailyBriefing.assistantRuns[date].itemRefs = []; }],
+    ["Lead-Version weg", (d) => { delete d.entities.chatgptLeads.l1.operationalStateVersion; }],
+    ["Lead-Zustand direkt done", (d) => { d.entities.chatgptLeads.l1.operationalState = "done"; }],
+    ["Altstatus abgeschlossen (Drift)", (d) => { d.entities.chatgptLeads.l1.status = "abgeschlossen"; }],
+    ["progress deferrals 3", (d) => { d.automation.progressById["chatgptLead:l1"].deferrals = 3; }],
+    ["neue offene Frage", (d) => { d.automation.questionsById.q9 = { id: "q9", sourceType: "chatgptLead", sourceId: "l1", text: "?", askedAt: "2026-09-19T21:00:00.000Z", status: "open", answerId: null }; }],
+    ["neuer Eingang", (d) => { d.automation.intakeById.i9 = { id: "i9", text: "x", channel: "m", status: "open", registeredAt: "2026-09-19T21:00:00.000Z" }; }],
+    ["Projektfrist faellig", (d) => { d.entities.projects.p9 = { id: "p9", status: "active", deadlines: [{ id: "d", date: "2026-09-19", done: false }] }; }],
+    ["Struktur kaputt", (d) => { d.automation.jobsById = []; }],
+  ];
+  for (const [name, mut] of mutationen) {
+    const k = K.klon(data); mut(k);
+    const neu = ampel(k, date, now + 1);
+    assert.notEqual(neu.overall, "green", name + ": Neuberechnung ist noch gruen: " + JSON.stringify(neu.reasons));
+    const c = K.isEvaluationCurrent(ev, ctx(k));
+    assert.equal(c.current, false, name + ": alte gruene Bewertung gilt noch (" + c.reason + ")");
+  }
+  // Policy-Aenderung, anderer Lauf, fehlender Kontext → nie aktuell.
+  assert.equal(K.isEvaluationCurrent(ev, { ...ctx(data), policy: { ...POLICY, sourceMaxAgeMinutes: 10 } }).reason, "DATA_CHANGED");
+  assert.equal(K.isEvaluationCurrent(ev, { ...ctx(data), policy: null }).reason, "CONTEXT_MISSING");
+  assert.equal(K.isEvaluationCurrent(ev, { ...ctx(data), run: K.leererRun(date, "3.0") }).reason, "DATA_CHANGED");
+  assert.equal(K.isEvaluationCurrent({ ...ev, overall: "green", validUntil: ev.validUntil }, { ...ctx(data), data: { entities: [] } }).reason, "CORE_INVALID");
+  assert.equal(K.isEvaluationCurrent(ev, ctx(data, now - STD)).reason, "EVALUATION_EXPIRED", "eine Bewertung aus der Zukunft gilt nicht");
+});
+
+test("B2-05/06/07: nach dem Abschluss sind verlorener Beleg, veraenderte Wartekarte, verlorene Dokument-/Job-Nachweise und wieder offene Projektfristen Widersprueche; neuer Eingang nicht", () => {
+  // Wartetag mit geprueftem Projekt (d1 erledigt), Dokument done, Job reviewed — gruen finalisiert.
+  const s = warteTag();
+  let { data, now, date } = s;
+  const p = K.klon(data); p.entities.projects.p1 = { id: "p1", status: "active", deadlines: [{ id: "d1", date: "2026-09-19", done: true }] }; data = p;
+  data = mussOk(run(data, "registerDocument", { documentId: "doc1", attachmentId: ATT("a.pdf"), name: "a.pdf", hash: H64, mime: "application/pdf", size: 10, origin: { channel: "mail", ref: "m" }, linkedTo: { sourceType: "chatgptLead", sourceId: "l1" } }, now, ADAPTER), "doc");
+  data = mussOk(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("a.txt"), extractHash: "c".repeat(64) }, now, ADAPTER), "parse");
+  data = mussOk(run(data, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done", results: [{ sourceType: "chatgptLead", sourceId: "l1" }] }, now), "doc done");
+  const d0 = K.klon(data); d0.entities.chatgptTasks.c1 = { id: "c1", text: "x", state: "offen", createdAt: "2026-09-18T00:00:00Z" };
+  data = K.migrateCore(d0, { now }).data;
+  data = mussOk(run(data, "addItemRef", { date, sourceType: "chatgptTask", sourceId: "c1" }, now), "ref c1");
+  data = mussOk(run(data, "createJob", { jobId: "j1", kind: "x", purpose: "y", sourceType: "chatgptTask", sourceId: "c1", inputVersion: 1, executor: "gemini", contextRefs: [], expiresAt: new Date(now + STD).toISOString() }, now), "job");
+  data = mussOk(run(data, "recordJobReturn", { jobId: "j1", outcome: "returned", resultRef: "r", resultHash: H64 }, now, WORKER), "ret");
+  data = mussOk(run(data, "reviewJobResult", { jobId: "j1", verdict: "accepted", reviewer: "laurin" }, now, USER), "review");
+  data = mussOk(run(data, "transitionState", { sourceType: "chatgptTask", sourceId: "c1", state: "done", expectedVersion: 2, evidence: { kind: "job", jobId: "j1" } }, now), "c1 done");
+  data = mussOk(run(data, "recordSourceCheck", { date, sourceId: "quantus-core", cursor: "c2", outcome: "ok" }, now, ADAPTER), "core");
+  gruen(ampel(data, date, now), "vor Abschluss");
+  const d1 = mussOk(run(data, "closeRun", { date, finalNoteId: "note_final" }, now), "close");
+  assert.ok(d1.dailyBriefing.assistantRuns[date].closureOutcomes["project:p1"].deadlines.d1.done);
+  const t1 = now + 10 * MIN;
+  const widerspruch = (name, mut, reason) => {
+    const k = K.klon(d1); mut(k);
+    const w = K.pruefeWiderspruch(k, { date }, { now: t1, policy: POLICY });
+    assert.ok(w.contradictions.length, name + ": kein Widerspruch obwohl live " + ampel(k, date, t1).coverage);
+    assert.ok(w.contradictions.some((c) => c.reason === reason), name + ": " + JSON.stringify(w.contradictions));
+    const c = w.contradictions.find((c) => c.reason === reason);
+    const inv = run(k, "invalidateClosure", { date, correctionId: "korr_" + reason, reason: name, contradiction: { sourceType: c.sourceType, sourceId: c.sourceId } }, t1);
+    assert.equal(inv.ok, true, name + ": " + inv.error);
+    assert.equal(inv.data.dailyBriefing.assistantRuns[date].phase, "exception_open");
+    assert.equal(JSON.stringify(inv.data.entities.chatgptNotes.note_final), JSON.stringify(d1.entities.chatgptNotes.note_final));
+  };
+  widerspruch("B2-05 Beleg geloescht", (k) => { delete k.automation.evidenceById.proof_review; }, "WAITING_EVIDENCE_LOST");
+  widerspruch("Beleg-Fingerabdruck veraendert", (k) => { k.automation.evidenceById.proof_review.fingerprint = "sha256-0000000000000000"; }, "WAITING_EVIDENCE_LOST");
+  widerspruch("B2-06 nextAction geloescht", (k) => { delete k.automation.waitingById["chatgptLead:l1"].nextAction; }, "WAITING_CARD_CHANGED");
+  widerspruch("waitingSince geloescht", (k) => { delete k.automation.waitingById["chatgptLead:l1"].waitingSince; }, "WAITING_CARD_CHANGED");
+  widerspruch("counterparty geloescht", (k) => { delete k.automation.waitingById["chatgptLead:l1"].counterparty; }, "WAITING_CARD_CHANGED");
+  widerspruch("Wartekarte weg", (k) => { delete k.automation.waitingById["chatgptLead:l1"]; }, "WAITING_CARD_LOST");
+  widerspruch("Dokument-Ergebnisse weg", (k) => { k.automation.documentsById.doc1.results = []; }, "DOCUMENT_PROOF_LOST");
+  widerspruch("Dokument-Extraktion weg", (k) => { k.automation.documentsById.doc1.parse.extractHash = null; }, "DOCUMENT_PROOF_LOST");
+  widerspruch("Dokument wieder offen", (k) => { k.automation.documentsById.doc1.status = "open"; }, "REOPENED");
+  widerspruch("Job-Review weg", (k) => { k.automation.jobsById.j1.review = null; }, "JOB_REVIEW_LOST");
+  widerspruch("B2-07 Projektfrist wieder offen", (k) => { k.entities.projects.p1.deadlines[0].done = false; }, "PROJECT_DEADLINE_REOPENED");
+  widerspruch("neue faellige offene Projektfrist", (k) => { k.entities.projects.p1.deadlines.push({ id: "d2", date: "2026-09-19", done: false }); }, "PROJECT_DEADLINE_DUE_AFTER_CLOSE");
+  widerspruch("erledigte ChatGPT-Aufgabe wieder doing", (k) => { k.entities.chatgptTasks.c1.operationalState = "doing"; }, "REOPENED");
+  // Unabhaengige neue Eingaenge nach dem Cutoff invalidieren NICHT.
+  let d2 = mussOk(run(d1, "registerIntake", { intakeId: "in_neu", text: "neu", channel: "mobile" }, t1, USER), "intake");
+  const n0 = K.klon(d2); n0.entities.chatgptLeads.l7 = { id: "l7", status: "neu", readAt: null, createdAt: new Date(t1).toISOString() }; d2 = K.migrateCore(n0, { now: t1 }).data;
+  const w = K.pruefeWiderspruch(d2, { date }, { now: t1, policy: POLICY });
+  assert.deepEqual(w.contradictions, []);
+  assert.deepEqual(w.newIntake.map((x) => x.sourceId).sort(), ["in_neu", "l7"]);
+  assert.equal(run(d2, "invalidateClosure", { date, correctionId: "k", reason: "x", contradiction: { sourceType: "intake", sourceId: "in_neu" } }, t1).error, "NOT_A_CONTRADICTION");
+  // Ein followUpAt, das nach dem Abschluss verstreicht, ist kein Widerspruch (Nachfassung ist Arbeit des naechsten Laufs).
+  assert.deepEqual(K.pruefeWiderspruch(d1, { date }, { now: now + 25 * STD, policy: POLICY }).contradictions, []);
+});
+
+test("B2-08: Start-, Final- und Korrekturnoten sind ChatGPT Notes im bestehenden Schema; NoteFlow bleibt leer; alte Notes werden nie veraendert", () => {
+  const { data, now, date } = warteTag();
+  const start = data.entities.chatgptNotes.note_start;
+  assert.deepEqual(Object.keys(start).sort(), ["assistantNote", "category", "comments", "createdAt", "derived", "externalLinks", "files", "id", "instruction", "instructionDate", "linkedNotes", "linkedOrganizations", "linkedProjects", "linkedTasks", "promptSection", "state", "supersededBy", "supersedes", "tags", "updatedAt"]);
+  assert.equal(start.category, "auftrag"); assert.equal(start.state, "aktiv"); assert.equal(start.assistantNote.schema, "assistant-note/3");
+  assert.deepEqual(data.entities.notes, {}, "NoteFlow wurde beschrieben");
+  assert.equal(run(data, "ensureStartNote", { date, noteId: "note_start_2" }, now).noop, true);
+  const d1 = mussOk(run(data, "closeRun", { date, finalNoteId: "note_final" }, now), "close");
+  assert.deepEqual(d1.entities.notes, {});
+  assert.equal(d1.entities.chatgptNotes.note_final.category, "entscheid");
+  const vorher = JSON.stringify(d1.entities.chatgptNotes.note_final);
+  const k = K.klon(d1); delete k.automation.evidenceById.proof_review;
+  const inv = mussOk(run(k, "invalidateClosure", { date, correctionId: "note_korr", reason: "Beleg weg", contradiction: { sourceType: "chatgptLead", sourceId: "l1" } }, now + MIN), "inv");
+  assert.equal(JSON.stringify(inv.entities.chatgptNotes.note_final), vorher);
+  assert.equal(inv.entities.chatgptNotes.note_korr.supersedes, "note_final");
+  assert.equal(inv.entities.chatgptNotes.note_korr.assistantNote.kind, "assistantCorrection");
+  assert.deepEqual(inv.entities.notes, {});
+  // Ein kaputter/fehlender Startnote-Eintrag ist rot, obwohl startNoteId gesetzt ist.
+  const ohne = K.klon(data); delete ohne.entities.chatgptNotes.note_start;
+  assert.ok(hatCode(ampel(ohne, date, now), "RUN_START_NOTE_MISSING"));
+});
+
+test("B2-09: der Umschlag-Adapter nimmt Zeit und Kennung nur aus prepared; Body-Zeit wird abgelehnt; ungueltiges prepared fail-closed; Versionskonflikte 409", () => {
+  const { data, now, date } = basisTag();
+  const reducer = K.commandReducer({ policy: POLICY, actor: AGENT });
+  const prepared = (t, requestId = "req_9") => ({ requestId, now: new Date(t).toISOString() });
+  // Serverzeit 10:00 UTC, Body behauptet 23:05 lokal → Body-Zeit abgelehnt; ohne Body-Zeit gilt die Serverzeit → CLOSURE_TOO_EARLY.
+  assert.throws(() => reducer(K.klon(data), { type: "closeRun", now, payload: { date, finalNoteId: "n" } }, prepared(T("2026-09-19T10:00:00.000Z"))), (e) => e.code === "COMMAND_BODY_TIME_FORBIDDEN" && e.status === 400);
+  assert.throws(() => reducer(K.klon(data), { type: "closeRun", commandId: "cmd_x", payload: { date, finalNoteId: "n" } }, prepared(now)), (e) => e.code === "COMMAND_BODY_TIME_FORBIDDEN");
+  assert.throws(() => reducer(K.klon(data), { type: "closeRun", payload: { date, finalNoteId: "n" } }, prepared(T("2026-09-19T10:00:00.000Z"))), (e) => e.code === "CLOSURE_BLOCKED" && e.status === 409 && e.detail.some((b) => b.code === "CLOSURE_TOO_EARLY"));
+  const out = reducer(K.klon(data), { type: "closeRun", payload: { date, finalNoteId: "n" } }, prepared(now));
+  assert.equal(out.data.dailyBriefing.assistantRuns[date].finalAt, new Date(now).toISOString());
+  assert.equal(out.result.finalNoteId, "n");
+  for (const bad of [undefined, null, {}, { requestId: "r" }, { requestId: "r", now: 123 }, { requestId: "r", now: "2026-09-19T21:05:00+02:00" }, { requestId: "", now: new Date(now).toISOString() }]) {
+    assert.throws(() => reducer(K.klon(data), { type: "ensureRun", payload: { date } }, bad), (e) => e.code === "invalid_transaction_context" && e.status === 500, JSON.stringify(bad));
+  }
+  // Versions-/Zustandskonflikte 409, Kernfehler 503, Formfehler 400.
+  const w = warteTag();
+  assert.throws(() => reducer(K.klon(w.data), { type: "transitionState", payload: { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: 1, reason: "x" } }, prepared(now)), (e) => e.code === "VERSION_MISMATCH" && e.status === 409);
+  assert.throws(() => reducer(K.klon(w.data), { type: "recordSlotReceipt", payload: { date, slot: "close23", receiptId: "anders" } }, prepared(now)), (e) => e.code === "SLOT_ALREADY_RECEIPTED" && e.status === 409);
+  const kaputt = K.klon(w.data); kaputt.automation.dataRevision = -1;
+  assert.throws(() => reducer(kaputt, { type: "ensureRun", payload: { date } }, prepared(now)), (e) => e.status === 503);
+  assert.throws(() => reducer(K.klon(w.data), { type: "ensureRun", payload: { date, extra: 1 } }, prepared(now)), (e) => e.code === "COMMAND_REJECTED" && e.status === 400);
+  // Lokale Domain-Tests duerfen now stellen (applyCommand), der Adapter nicht — die Kennung ist die requestId.
+  assert.equal(K.applyCommand(data, { type: "ensureRun", commandId: "lokal", now, payload: { date } }, { policy: POLICY, actor: AGENT }).ok, true);
 });

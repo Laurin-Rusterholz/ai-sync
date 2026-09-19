@@ -22,8 +22,9 @@
  * ═════════════════════════════════════════════════════════════════════════ */
 import {
   QUELLEN, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, KARTEN_ZUSTAENDE, effektiverZustand, rollenFuer,
-  validatePolicy, sourceKey, stringFingerprint,
+  validatePolicy, sourceKey, stringFingerprint, canonicalJson,
 } from "./assistant-schema.mjs";
+import { pruefeKernStruktur } from "./assistant-migration.mjs";
 import { pruefeWarteKarte, quelleFinden } from "./assistant-buchhaltung.mjs";
 import {
   assistentenTag, faelligeSlots, naechsteSlotGrenzeMs, isoAus, msAus, ZEIT, istLokalDatum,
@@ -32,35 +33,28 @@ import {
 const RANG = { green: 0, yellow: 1, red: 2 };
 function schlechter(a, b) { return RANG[a] >= RANG[b] ? a : b; }
 
-/* Fingerabdruck des Bestands, soweit er das Urteil beeinflusst. Aendert ein
- * Client irgendetwas daran, ist eine alte Bewertung nicht mehr aktuell —
- * auch wenn dataRevision (nur Kernmutationen) gleich blieb. */
-export function bestandsFingerabdruck(data) {
-  const teile = [];
-  for (const [sourceType, q] of Object.entries(QUELLEN)) {
-    const store = data.entities?.[q.store];
-    if (!store || typeof store !== "object") continue;
-    for (const id of Object.keys(store).sort()) {
-      const e = store[id];
-      if (!e || typeof e !== "object") continue;
-      teile.push(sourceType, id, String(e[q.statusField] ?? ""), String(e.operationalState ?? ""), String(e.operationalStateVersion ?? ""), String(e.updatedAt ?? ""), String(e.dueDate ?? ""), String(e.readAt ?? ""));
-    }
-  }
-  const p = data.entities?.projects;
-  if (p && typeof p === "object") for (const id of Object.keys(p).sort()) {
-    const pr = p[id];
-    if (!pr || typeof pr !== "object") continue;
-    teile.push("project", id, String(pr.status ?? ""), JSON.stringify((pr.deadlines || []).map((d) => [d.id, d.date, !!d.done])));
-  }
-  const a = data.automation || {};
-  for (const k of ["intakeById", "questionsById", "answersById", "documentsById", "jobsById", "evidenceById", "waitingById", "progressById", "sourceCursors"]) {
-    const karte = a[k] || {};
-    for (const id of Object.keys(karte).sort()) {
-      const v = karte[id] || {};
-      teile.push(k, id, String(v.status ?? v.state ?? v.outcome ?? ""), String(v.consumedAt ?? v.handledAt ?? v.checkedAt ?? v.followUpAt ?? ""), String(v.deferrals ?? ""), String(v.parse?.outcome ?? ""), String(v.review?.verdict ?? ""), String(v.waitingSince ?? ""));
-    }
-  }
-  return stringFingerprint(teile.join("\u0001"));
+/* Signatur ueber ALLES, was die Bewertung liest — als kanonisches JSON der
+ * vollstaendigen Projektion, nicht als Handauswahl von Feldern: der ganze
+ * Lauf, die Policy, alle Quellsammlungen, Projekte, die referenzierten
+ * ChatGPT Notes und alle Buchhaltungskarten (ausser Ledger und Lease, die
+ * der Kern nie liest). Aendert sich irgendetwas davon, ist eine gespeicherte
+ * Bewertung nicht mehr aktuell. */
+export function bewertungsProjektion(run, data, policy) {
+  const e = data && typeof data === "object" && data.entities && typeof data.entities === "object" ? data.entities : {};
+  const a = data && typeof data === "object" && data.automation && typeof data.automation === "object" ? data.automation : {};
+  const notes = e.chatgptNotes && typeof e.chatgptNotes === "object" ? e.chatgptNotes : {};
+  const referenziert = {};
+  for (const id of [run && run.startNoteId, run && run.finalNoteId]) if (id) referenziert[id] = notes[id] === undefined ? null : notes[id];
+  const automation = {};
+  for (const k of Object.keys(a)) if (k !== "idempotencyByKey" && k !== "activeLease") automation[k] = a[k];
+  const stores = {};
+  for (const q of Object.values(QUELLEN)) stores[q.store] = e[q.store];
+  stores.projects = e.projects;
+  return { run: run === undefined ? null : run, policy: policy === undefined ? null : policy, stores, notes: referenziert, automation, structure: pruefeKernStruktur(data) };
+}
+
+export function bestandsFingerabdruck(run, data, policy) {
+  return stringFingerprint(canonicalJson(bewertungsProjektion(run, data, policy)));
 }
 
 export function dailyAssistantTrafficLight(run, data, now, policy) {
@@ -75,12 +69,15 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
   };
   const gezaehlt = { chatgptLeads: 0, chatgptTasks: 0, tasks: 0, projects: 0, intake: 0, questions: 0, answers: 0, documents: 0, jobs: 0, evidence: 0, sources: 0 };
 
-  const bestandOk = data && typeof data === "object" && data.entities && typeof data.entities === "object" && !Array.isArray(data.entities);
-  if (!bestandOk) grund("operations", "CORE_MISSING", null, null, "kein Bestand");
+  // Struktur: jede fehlende oder korrupte Pflichtkarte, Revision oder jeder
+  // kaputte Lauf ist ein eigener roter Befund — nichts wird uebersprungen,
+  // nichts geworfen. Ein solcher Bestand ist nie gruen.
+  const struktur = pruefeKernStruktur(data);
+  for (const f of struktur) grund("operations", "CORE_INVALID", "core", f.path || null, f.code);
+  const bestandOk = !struktur.some((f) => ["CORE_SHAPE", "CORE_NO_ENTITIES"].includes(f.code));
   const pv = validatePolicy(policy);
   if (!pv.ok) grund("operations", "POLICY_INCOMPLETE", null, null, pv.errors);
-  const automation = bestandOk && data.automation && typeof data.automation === "object" ? data.automation : null;
-  if (bestandOk && (!automation || automation.schemaVersion !== 3 || !automation.migration)) grund("operations", "CORE_NOT_MIGRATED", null, null, "automation fehlt oder ist nicht migriert");
+  const automation = bestandOk && data.automation && typeof data.automation === "object" && !Array.isArray(data.automation) ? data.automation : null;
   if (!run || typeof run !== "object" || !istLokalDatum(run.date)) grund("operations", "RUN_MISSING", null, null, "kein Lauf uebergeben");
 
   const heute = assistentenTag(now);
@@ -94,14 +91,15 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
     if (run.phase === "exception_open") grund("operations", "RUN_EXCEPTION_OPEN", "run", run.id || run.date, run.invalidatedAt || null);
     if (istLokalDatum(run.date) && bestandOk) {
       const slots = faelligeSlots(run.date, now);
-      if (slots.includes("briefing04") && !(run.startNoteId && data.entities.notes && data.entities.notes[run.startNoteId])) grund("operations", "RUN_START_NOTE_MISSING", "run", run.id || run.date, run.startNoteId || null);
+      const notes = data.entities.chatgptNotes && typeof data.entities.chatgptNotes === "object" ? data.entities.chatgptNotes : {};
+      if (slots.includes("briefing04") && !(run.startNoteId && notes[run.startNoteId] && typeof notes[run.startNoteId] === "object")) grund("operations", "RUN_START_NOTE_MISSING", "run", run.id || run.date, run.startNoteId || null);
       for (const s of slots) {
         const r = run.slotReceipts && run.slotReceipts[s];
         if (!r || !r.receiptId) grund("operations", "SLOT_RECEIPT_MISSING", "run", run.id || run.date, s);
       }
     }
   }
-  if (!bestandOk || !automation) return abschluss();
+  if (!bestandOk || !automation || struktur.length) return abschluss();
   grenzen.push(naechsteSlotGrenzeMs(now));
 
   // ── Quellen: jede erforderliche Quelle (inkl. Quantus-Kern) geprueft, frisch, ohne Stoerung ──
@@ -166,6 +164,8 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
       if (w.state !== z.state) { grund("coverage", "WAITING_STATE_MISMATCH", sourceType, id, { waiting: w.state, item: z.state }); return; }
       const pr = pruefeWarteKarte(data, sourceType, id, w, { now, policy: pv.ok ? policy : null, rollen });
       if (pr.maengel.length) { grund("coverage", "WAITING_INCOMPLETE", sourceType, id, pr.maengel); return; }
+      // Eine offene Frage sperrt auch ein wartendes Element — ausser sie IST der Beleg des Wartens auf den Nutzer.
+      if (frage && !(w.evidence.kind === "question" && w.evidence.questionId === frage)) grund("coverage", "QUESTION_OPEN", sourceType, id, frage);
       if (faellig) grund("coverage", "HARD_DEADLINE_DUE", sourceType, id, due);
       const fu = msAus(w.followUpAt);
       if (fu <= now) { grund("coverage", "FOLLOWUP_DUE", sourceType, id, w.followUpAt); return; }
@@ -273,8 +273,9 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
       counted: gezaehlt,
       runDate: run && istLokalDatum(run.date) ? run.date : null,
       runPhase: run && run.phase ? run.phase : null,
-      evaluatedRevision: automation ? (Number(automation.dataRevision) || 0) : null,
-      evaluatedFingerprint: bestandOk ? bestandsFingerabdruck(data) : null,
+      evaluatedRevision: automation && Number.isSafeInteger(automation.dataRevision) && automation.dataRevision >= 0 ? automation.dataRevision : null,
+      evaluatedFingerprint: bestandsFingerabdruck(run, data, policy),
+      structureErrors: struktur,
       evaluatedAt: isoAus(now),
       validUntil: isoAus(validUntil),
       policyVersion: pv.ok ? policy.version : null,
@@ -282,12 +283,21 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
   }
 }
 
-export function isEvaluationCurrent(evaluation, data, now) {
+/* Gilt eine gespeicherte Bewertung noch? Nur wenn sie nicht abgelaufen ist,
+ * die Revision gleich blieb, der Bestand strukturell gueltig ist UND die
+ * vollstaendige Projektion (Lauf, Policy, Sammlungen, Karten, Notes)
+ * byteidentisch signiert. Ohne Lauf oder Policy: nie aktuell. */
+export function isEvaluationCurrent(evaluation, { run, data, now, policy } = {}) {
   if (!evaluation || typeof evaluation !== "object") return { current: false, reason: "EVALUATION_MISSING" };
+  if (typeof now !== "number" || !Number.isFinite(now)) return { current: false, reason: "NOW_MISSING" };
+  if (!run || typeof run !== "object" || !validatePolicy(policy).ok) return { current: false, reason: "CONTEXT_MISSING" };
+  if (evaluation.overall !== "green" && evaluation.overall !== "yellow" && evaluation.overall !== "red") return { current: false, reason: "EVALUATION_INVALID" };
   const bis = msAus(evaluation.validUntil);
-  if (!Number.isFinite(bis) || bis <= now) return { current: false, reason: "EVALUATION_EXPIRED" };
-  const rev = Number(data?.automation?.dataRevision) || 0;
-  if (evaluation.evaluatedRevision !== rev) return { current: false, reason: "REVISION_CHANGED" };
-  if (evaluation.evaluatedFingerprint !== bestandsFingerabdruck(data)) return { current: false, reason: "DATA_CHANGED" };
+  const seit = msAus(evaluation.evaluatedAt);
+  if (!Number.isFinite(bis) || !Number.isFinite(seit) || bis <= now || seit > now) return { current: false, reason: "EVALUATION_EXPIRED" };
+  if (pruefeKernStruktur(data).length) return { current: false, reason: "CORE_INVALID" };
+  if (!Number.isSafeInteger(evaluation.evaluatedRevision) || evaluation.evaluatedRevision !== data.automation.dataRevision) return { current: false, reason: "REVISION_CHANGED" };
+  if (evaluation.policyVersion !== policy.version) return { current: false, reason: "POLICY_CHANGED" };
+  if (evaluation.evaluatedFingerprint !== bestandsFingerabdruck(run, data, policy)) return { current: false, reason: "DATA_CHANGED" };
   return { current: true, reason: null };
 }

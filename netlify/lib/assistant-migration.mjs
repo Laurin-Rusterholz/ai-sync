@@ -17,7 +17,7 @@
  *     sichtbar gefuehrt, nicht geraten.
  * ═════════════════════════════════════════════════════════════════════════ */
 import {
-  SCHEMA_VERSION, STATE_MODEL_VERSION, MAPPER, QUELLEN, RUN_PHASES, AUTOMATION_KARTEN,
+  SCHEMA_VERSION, STATE_MODEL_VERSION, MAPPER, QUELLEN, RUN_PHASES, AUTOMATION_KARTEN, PFLICHT_STORES,
   leereAutomation, rollenAbleiten,
 } from "./assistant-schema.mjs";
 import { isoAus, istLokalDatum } from "./assistant-zeit.mjs";
@@ -59,7 +59,7 @@ export function pruefeBestand(parsed) {
   for (const q of Object.values(QUELLEN)) {
     if (parsed.entities[q.store] !== undefined && !istKarte(parsed.entities[q.store])) throw new CoreDocumentError("CORE_STORE_CORRUPT", `entities.${q.store} ist keine Karte.`);
   }
-  for (const k of ["notes", "projects"]) {
+  for (const k of ["notes", "projects", "chatgptNotes"]) {
     if (parsed.entities[k] !== undefined && !istKarte(parsed.entities[k])) throw new CoreDocumentError("CORE_STORE_CORRUPT", `entities.${k} ist keine Karte.`);
   }
   if (parsed.automation !== undefined && !istKarte(parsed.automation)) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", "automation ist kein Objekt.");
@@ -130,6 +130,9 @@ export function migrateCore(input, { now } = {}) {
   const bericht = { created: [], mapped: [], conflicts: [] };
   const nowIso = isoAus(now);
 
+  for (const k of PFLICHT_STORES) {
+    if (data.entities[k] === undefined) { data.entities[k] = {}; bericht.created.push("entities." + k); }
+  }
   ergaenzeAutomation(data, bericht);
   ergaenzeRuns(data, bericht);
   mappeZustaende(data, nowIso, bericht);
@@ -155,27 +158,44 @@ export function migrateCore(input, { now } = {}) {
   return { data, changed, report: { ...bericht, unknownStates: bericht.conflicts.filter((c) => c.kind === "unknown"), ambiguousStates: bericht.conflicts.filter((c) => c.kind === "ambiguous") } };
 }
 
+/* Strukturpruefung des migrierten Kerns — NICHT werfend, vollstaendig.
+ * Liefert jede Verletzung als { code, path }. Die Ampel meldet sie rot, die
+ * Mutation (requireCore) lehnt sie ab. Kein Number(x)||0, kein Ueberspringen. */
+export function pruefeKernStruktur(data) {
+  const f = [];
+  const add = (code, path) => f.push({ code, path });
+  if (!istKarte(data)) return [{ code: "CORE_SHAPE", path: "" }];
+  if (!istKarte(data.entities)) return [{ code: "CORE_NO_ENTITIES", path: "entities" }];
+  for (const k of PFLICHT_STORES) {
+    if (!istKarte(data.entities[k])) { add("CORE_STORE_MISSING", "entities." + k); continue; }
+    if (QUELLEN[Object.keys(QUELLEN).find((t) => QUELLEN[t].store === k)] || k === "chatgptNotes" || k === "projects") {
+      for (const [id, e] of Object.entries(data.entities[k])) if (!istKarte(e)) add("CORE_STORE_CORRUPT", `entities.${k}.${id}`);
+    }
+  }
+  if (data.entities.notes !== undefined && !istKarte(data.entities.notes)) add("CORE_STORE_CORRUPT", "entities.notes");
+  const a = data.automation;
+  if (!istKarte(a)) { add("CORE_NOT_MIGRATED", "automation"); return f; }
+  if (a.schemaVersion !== SCHEMA_VERSION) add("CORE_NOT_MIGRATED", "automation.schemaVersion");
+  if (!(Number.isSafeInteger(a.dataRevision) && a.dataRevision >= 0)) add("CORE_REVISION_CORRUPT", "automation.dataRevision");
+  for (const k of AUTOMATION_KARTEN) if (!istKarte(a[k])) add("CORE_AUTOMATION_CORRUPT", "automation." + k);
+  if (a.activeLease !== null && a.activeLease !== undefined && !istKarte(a.activeLease)) add("CORE_AUTOMATION_CORRUPT", "automation.activeLease");
+  if (!istKarte(a.migration)) add("CORE_NOT_MIGRATED", "automation.migration");
+  if (!istKarte(data.dailyBriefing) || !istKarte(data.dailyBriefing.assistantRuns)) add("CORE_NOT_MIGRATED", "dailyBriefing.assistantRuns");
+  else {
+    for (const [date, run] of Object.entries(data.dailyBriefing.assistantRuns)) {
+      if (!istKarte(run) || run.date !== date || !istLokalDatum(date) || !RUN_PHASES.includes(run.phase)
+          || !Array.isArray(run.itemRefs) || !istKarte(run.slotReceipts) || !istKarte(run.sourceChecks) || !Array.isArray(run.corrections)
+          || !(Number.isSafeInteger(run.revision) && run.revision >= 0)) add("CORE_RUN_CORRUPT", "dailyBriefing.assistantRuns." + date);
+    }
+  }
+  return f;
+}
+
 /* Der migrierte Kern in einem Bestand — vollstaendig geprueft, oder ein
  * Fehler. Nichts wird geleert oder ergaenzt. */
 export function requireCore(data) {
   const d = pruefeBestand(data);
-  const a = d.automation;
-  if (!istKarte(a) || a.schemaVersion !== SCHEMA_VERSION) throw new CoreDocumentError("CORE_NOT_MIGRATED", "automation fehlt oder hat eine andere schemaVersion — erst migrateCore ausfuehren.");
-  if (!(Number.isSafeInteger(a.dataRevision) && a.dataRevision >= 0)) throw new CoreDocumentError("CORE_REVISION_CORRUPT", "automation.dataRevision ist keine gueltige Revision.");
-  for (const k of AUTOMATION_KARTEN) if (!istKarte(a[k])) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", `automation.${k} fehlt oder ist keine Karte.`);
-  if (a.activeLease !== null && a.activeLease !== undefined && !istKarte(a.activeLease)) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", "automation.activeLease ist weder null noch Objekt.");
-  if (!istKarte(a.migration)) throw new CoreDocumentError("CORE_NOT_MIGRATED", "automation.migration fehlt — erst migrateCore ausfuehren.");
-  if (!istKarte(d.dailyBriefing) || !istKarte(d.dailyBriefing.assistantRuns)) throw new CoreDocumentError("CORE_NOT_MIGRATED", "dailyBriefing.assistantRuns fehlt — erst migrateCore ausfuehren.");
-  for (const [date, run] of Object.entries(d.dailyBriefing.assistantRuns)) {
-    if (!istKarte(run) || run.date !== date || !istLokalDatum(date) || !RUN_PHASES.includes(run.phase)
-        || !Array.isArray(run.itemRefs) || !istKarte(run.slotReceipts) || !istKarte(run.sourceChecks) || !Array.isArray(run.corrections)) {
-      throw new CoreDocumentError("CORE_RUN_CORRUPT", `assistantRuns.${date} ist kein gueltiger Lauf.`);
-    }
-  }
-  for (const q of Object.values(QUELLEN)) {
-    for (const [id, e] of Object.entries(d.entities[q.store] || {})) {
-      if (!istKarte(e)) throw new CoreDocumentError("CORE_STORE_CORRUPT", `entities.${q.store}.${id} ist kein Objekt.`);
-    }
-  }
+  const f = pruefeKernStruktur(d);
+  if (f.length) throw new CoreDocumentError(f[0].code, f.map((x) => x.code + "@" + x.path).join("; "));
   return d;
 }

@@ -86,18 +86,42 @@ export function applyCommand(input, command, { policy, actor } = {}) {
 }
 
 /* Adapter fuer applyIdempotentCommand(current, prepared, reducer):
- * reducer(snapshot, command, prepared) → { data, result }. Ablehnungen
- * werden als Fehler mit code/status geworfen (wie im Umschlag ueblich);
- * result enthaelt keine reservierten Felder und kein data. */
+ * reducer(snapshot, command, prepared) → { data, result }.
+ *
+ * Zeit und Kennung kommen AUSSCHLIESSLICH aus dem vertrauenswuerdigen
+ * prepared (serverseitig gestellt, kanonisch, eingefroren). Ein Kommando,
+ * das selbst now oder commandId mitbringt, wird abgelehnt — sonst koennte
+ * ein Aufrufer einen Abschluss "um 23:05" beantragen, waehrend der Server
+ * 10:00 hat. Ungueltiges prepared: fail-closed (500), nichts wird gerechnet.
+ * Ablehnungen der Domain werden geworfen: Versions-/Zustandskonflikte 409,
+ * kaputter Kern 503, sonst 400. */
+const KONFLIKT_CODES = new Set([
+  "VERSION_MISMATCH", "SOURCE_CLOSED", "TRANSITION_NOT_ALLOWED", "SLOT_ALREADY_RECEIPTED", "RUN_FINAL",
+  "RUN_EXCEPTION_OPEN", "RUN_NOT_FINAL", "NOTE_ID_TAKEN", "QUESTION_IMMUTABLE", "ANSWER_IMMUTABLE",
+  "QUESTION_NOT_OPEN", "ANSWER_ALREADY_CONSUMED", "EVIDENCE_IMMUTABLE", "DOCUMENT_IMMUTABLE",
+  "DOCUMENT_ALREADY_HANDLED", "JOB_IMMUTABLE", "JOB_ALREADY_FINISHED", "JOB_ALREADY_REVIEWED", "JOB_NOT_ACTIVE",
+  "JOB_EXPIRED", "INTAKE_IMMUTABLE", "NOT_A_CONTRADICTION", "CLOSURE_BLOCKED",
+]);
+function reducerFehler(code, status, detail) {
+  return Object.assign(new Error(code), { code, status, detail: detail == null ? null : detail });
+}
+
 export function commandReducer({ policy, actor }) {
   return function reducer(snapshot, command, prepared) {
-    const cmd = {
-      type: command.type, payload: command.payload,
-      commandId: typeof command.commandId === "string" ? command.commandId : (prepared && prepared.requestId) || "",
-      now: typeof command.now === "number" ? command.now : Date.parse(prepared && prepared.now),
-    };
+    if (!prepared || typeof prepared !== "object" || typeof prepared.requestId !== "string" || !prepared.requestId
+        || typeof prepared.now !== "string" || !Number.isFinite(Date.parse(prepared.now)) || new Date(prepared.now).toISOString() !== prepared.now) {
+      throw reducerFehler("invalid_transaction_context", 500, "prepared.now/requestId fehlen oder sind ungueltig");
+    }
+    if (!command || typeof command !== "object" || Array.isArray(command)) throw reducerFehler("COMMAND_REJECTED", 400, ["COMMAND_SHAPE"]);
+    for (const k of ["now", "commandId", "serverNow", "requestId"]) {
+      if (k in command) throw reducerFehler("COMMAND_BODY_TIME_FORBIDDEN", 400, k);
+    }
+    const cmd = { type: command.type, payload: command.payload, commandId: prepared.requestId, now: Date.parse(prepared.now) };
     const r = applyCommand(snapshot, cmd, { policy, actor });
-    if (!r.ok) throw Object.assign(new Error(r.error), { code: r.error, status: r.error === "CORE_INVALID" || r.error?.startsWith("CORE_") ? 503 : 400, detail: r.detail });
+    if (!r.ok) {
+      const status = typeof r.error === "string" && r.error.startsWith("CORE_") ? 503 : KONFLIKT_CODES.has(r.error) ? 409 : 400;
+      throw reducerFehler(r.error, status, r.detail);
+    }
     const { data, ok, noop, ...rest } = r;
     return { data, result: { ...rest, noop: !!noop } };
   };
