@@ -35,10 +35,10 @@ checkouts. No production data was read or modified for the initial code work.
 | Package | Scope | Current evidence |
 | --- | --- | --- |
 | A | Writer, automation, schema and regression inventory | Initial source inventory below; deployed service inventory still open |
-| B | Canonical states, migration, server traffic lights, closure | Delegated to Claude Code, separate review branch; not yet accepted |
+| B | Canonical states, migration, server traffic lights, closure | 590dc78 independently reviewed: 11 failing counterexamples; corrections delegated; not accepted |
 | C | Auth, four strict APIs, idempotency, entity versions, CAS | CAS and atomic idempotency component tested locally; auth delegated; HTTP integration open |
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Open; do not enable API-only writes yet |
-| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | Open |
+| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 pure runtime/state package delegated; cloud integration and deployment open |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
 | G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Open |
 | H | T01-T40, production gates, cutover, 14-day trial and final acceptance | Open |
@@ -47,6 +47,26 @@ Development delegation: Claude Code session
 `session_01Ls9ej6nh17wu9Wrd78Tugk` owns package B only. Integration owns this
 ledger, the all-writer audit and existing Firebase CAS hardening. Development
 delegation through the UI is not the eventual API-based daily runtime.
+
+Package B commit `590dc78` (branch `claude/gallant-franklin-1jx7vb`) passes its
+17 authored tests, but independent counterexamples fail: legacy status overrides
+canonical state, ambiguous waits are guessed, prose resets deferrals, invented
+evidence/missing waiting start becomes green, cancelled jobs can return, parsed
+documents can close without processing evidence, closure omissions hide later
+contradictions, array-shaped entities pass validation, policy can weaken hard
+bounds, and a second idempotency ledger conflicts with the verified envelope.
+The package has NOT been integrated or accepted. Corrections are in progress.
+
+The five versioned instructions from concept chapters 15/16 are now stored in
+`prompts/quantus-v3/`. Their operative bodies match the supplied PDF after only
+whitespace/heading normalization. `quantus-v3-prompts.mjs` verifies the pinned
+version and hashes; eight tests cover all four slots, tampering, missing files,
+invalid versions and path traversal. This does not install or enable a runner.
+
+Package C1 (auth/cursors) remains in development. Package E1 is delegated in
+Claude Code session `session_01CJXkQx2wVSo5733NENbThs`, restricted to pure runtime
+state/planning helpers and their own tests. It owns the correct lease/fencing and
+cost reservation design; package B's unsafe lease placeholder is not accepted.
 
 ## Initial writer audit
 

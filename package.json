@@ -5,9 +5,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "pretest": "npm run test:assistant-cas && npm run test:assistant-idempotency",
+    "pretest": "npm run test:assistant-cas && npm run test:assistant-idempotency && npm run test:assistant-prompts",
     "test:assistant-cas": "node --test tests/quantus-v3-cas-safety.test.mjs",
     "test:assistant-idempotency": "node --test tests/quantus-v3-idempotency.test.mjs",
+    "test:assistant-prompts": "node --test tests/quantus-v3-prompts.test.mjs",
     "backup": "node scripts/backup-blob.mjs",
     "restore": "node scripts/backup-blob.mjs --restore",
     "test:backup": "node scripts/backup-blob.test.mjs",
