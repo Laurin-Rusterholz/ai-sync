@@ -1,66 +1,58 @@
 /*
  * Tagesbriefing v3 — der serverseitige Datenkern, gegen eine gestellte Uhr.
  * ---------------------------------------------------------------------------
- * AUFTRAG (19.09.2026, Paket 1): gemeinsamer Datenkern unter netlify/lib,
- * Migration, reine Ampel- und Abschlusslogik. Kein Netz, kein Firebase, kein
- * Provider, keine Client-Aenderung. Alles Aeussere (Uhr, Ids, Policy) kommt
- * als Parameter herein — der Test faehrt die ECHTEN Funktionen.
+ * Paket B (Datenmodell, Migration, Ampel, Fragen/Antworten/Dokumente/Jobs,
+ * Abschluss). Alles Aeussere (Uhr, Ids, Policy, Aufrufer) kommt als
+ * Parameter herein — der Test faehrt die ECHTEN Funktionen, ohne Netz.
  *
- * Was hier festgenagelt wird (Auswahl aus T01–T40, soweit dieses Paket sie
- * traegt):
- *   · Migration idempotent, fremde Felder und _deleteLog bleiben, unbekannte
- *     Altstatus werden sichtbar markiert (nicht stumm "done")
- *   · fehlender/kaputter Kern ist ein Fehler, kein leerer Bestand
- *   · ein ausgelassener Lead oder eine nicht geprüfte Quelle kann nicht gruen werden
- *   · unvollstaendiges Warten (ohne Gegenpartei/nextAction/followUpAt/Evidenz)
- *     ist nicht gruen; Eigenarbeit ist kein waiting_external
- *   · drei Verschiebungen ohne anerkannten Fortschritt sind rot — auch wenn
- *     dazwischen Titel, Kommentare, Zuweisung geaendert wurden
- *   · eine Statusbehauptung des Agenten (overallGreen, operationalState:done)
- *     zaehlt nicht
- *   · Abschluss: erst ab 23:00 Zuerich, nur mit Quittungen 09 und 23, nur bei
- *     gruener Ampel; atomar mit GENAU EINER Finalnotiz; Wiederholung idempotent
- *   · Folge-Widerspruch invalidiert append-only, die Finalnotiz bleibt
- *     byteidentisch; neuer Eingang danach ist kein Widerspruch
- *   · Sommer-/Winterzeit: eindeutige Slots und stabile Slot-Schluessel
- *   · Antworten unveraenderlich und genau einmal konsumierbar
- *   · unlesbare Dokumente bleiben offen, nie "verarbeitet"
- *   · Spezialistenrueckgabe → review, nie done
- *   · Schutzfelder kommen durch kein Kommando in den Kern
+ * Die Tests R1–R11 sind die adversarialen Regressionen aus dem Review vom
+ * 19.09.2026 (590dc78, elf reproduzierte Luecken), jeweils mit dem dort
+ * beschriebenen konkreten Ablauf. Dazu: Lease entfernt (Paket E1), Kern
+ * ohne node:crypto (browserfaehig), Idempotenz nur im Transaktionsumschlag.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as K from "../netlify/lib/assistant-core.mjs";
+import { attSegEncode } from "../netlify/lib/blob-key-policy.mjs";
 
 const T = (s) => Date.parse(s);
 const MIN = 60 * 1000;
 const STD = 60 * MIN;
+const H64 = "a".repeat(64);
+const ATT = (name) => "attachment-text__" + attSegEncode("chatgptLead") + "__" + attSegEncode("l1") + "__" + attSegEncode(name);
 
 const POLICY = Object.freeze({
   ...K.POLICY_TEMPLATE,
   tenant: "laurin",
-  requiredSources: [{ id: "gmail-inbox", kind: "mail" }, { id: "gcal-heute", kind: "calendar" }],
+  requiredSources: [{ id: "quantus-core", kind: "quantus-core" }, { id: "gmail-inbox", kind: "mail" }],
 });
+const AGENT = { kind: "agent", id: "chatgpt-run" };
+const USER = { kind: "user", id: "laurin" };
+const ADAPTER = { kind: "adapter", id: "gmail-adapter" };
+const WORKER = { kind: "worker", id: "gemini-worker" };
+const SYSTEM = { kind: "system", id: "scheduler" };
 
-/* Ein kleiner, aber echter Quantus-Bestand: zwei Leads, eine ChatGPT-Aufgabe,
- * zwei Aufgaben, ein Projekt mit Frist, fremde Bereiche, ein Grabstein-Log. */
 function bestand() {
   const t0 = "2026-09-18T10:00:00.000Z";
+  const lead = (id, extra) => ({
+    id, title: "Kunden anlegen", rawInput: "…", status: "in_arbeit", readAt: t0, assignee: "chatgpt",
+    interpretation: "Neue Organisation", research: "gesucht", plan: "anlegen", execution: "angelegt", result: "#/organizations/abc",
+    assessment: { menge: "chatgpt", werkzeug: "chatgpt", kontext: "chatgpt", quantusNaehe: "chatgpt", recherche: "cowork", zuschnitt: "cowork" },
+    assignmentReason: "klein", linkedOrganizations: ["abc"], createdAt: t0, updatedAt: t0, comments: [], ...extra,
+  });
   return {
     entities: {
       tasks: {
-        t1: { id: "t1", title: "Rechnung zahlen", status: "todo", dueDate: "2026-09-19", createdAt: t0, updatedAt: t0, comments: [] },
+        t1: { id: "t1", title: "Rechnung zahlen", status: "todo", dueDate: "2026-09-19", assignee: "Anna", createdAt: t0, updatedAt: t0, comments: [] },
         t2: { id: "t2", title: "Spaeter", status: "todo", dueDate: "2026-10-30", createdAt: t0, updatedAt: t0, comments: [] },
       },
       projects: { p1: { id: "p1", title: "Umzug", status: "active", deadlines: [{ id: "d1", title: "Kuendigung", date: "2026-09-10", done: true }], createdAt: t0, updatedAt: t0 } },
       notes: {},
       chatgptLeads: {
-        l1: { id: "l1", title: "Kunden anlegen", rawInput: "…", status: "in_arbeit", readAt: t0, assignee: "chatgpt", createdAt: t0, updatedAt: t0, comments: [] },
-        l2: { id: "l2", title: "Alt", rawInput: "…", status: "abgeschlossen", readAt: t0, closedAt: t0, closedBy: "assistant", assignee: "chatgpt", createdAt: t0, updatedAt: t0, comments: [] },
+        l1: lead("l1"),
+        l2: lead("l2", { status: "abgeschlossen", closedAt: t0, closedBy: "assistant" }),
       },
-      chatgptTasks: {
-        c1: { id: "c1", text: "Namen ergaenzen", state: "offen", anchorKind: "organization", anchorId: "o1", createdAt: t0, updatedAt: t0 },
-      },
+      chatgptTasks: { c1: { id: "c1", text: "Namen ergaenzen", state: "offen", anchorKind: "organization", anchorId: "o1", createdAt: t0, updatedAt: t0 } },
     },
     journal: { documents: [{ id: "j1", content: "bleibt" }] },
     mobilePushes: [{ id: "mp1" }],
@@ -70,30 +62,30 @@ function bestand() {
   };
 }
 
-const NOW = T("2026-09-19T08:00:00+02:00");   // Samstag 08:00 Zuerich
-
-function migriert(d = bestand()) {
-  return K.migrateCore(d, { now: NOW }).data;
-}
+const NOW = T("2026-09-19T08:00:00+02:00");
+const migriert = (d = bestand()) => K.migrateCore(d, { now: NOW }).data;
 
 let cmdN = 0;
-function cmd(type, payload, now) {
-  return { type, commandId: "cmd_" + String(++cmdN).padStart(8, "0"), now, payload };
-}
-function run(data, type, payload, now) {
-  const r = K.applyCommand(data, cmd(type, payload, now), { policy: POLICY });
-  return r;
-}
-function mussOk(r, was) {
-  assert.equal(r.ok, true, `${was}: ${r.error} ${JSON.stringify(r.detail)}`);
-  return r.data;
-}
-const codes = (ev) => ev.reasons.map((r) => r.code);
+const cmd = (type, payload, now) => ({ type, commandId: "cmd_" + String(++cmdN).padStart(8, "0"), now, payload });
+const run = (data, type, payload, now, actor = AGENT) => K.applyCommand(data, cmd(type, payload, now), { policy: POLICY, actor });
+function mussOk(r, was) { assert.equal(r.ok, true, `${was}: ${r.error} ${JSON.stringify(r.detail)}`); return r.data; }
+const ver = (data, sourceType, id) => K.effektiverZustand(sourceType, K.quelleFinden(data, sourceType, id)).version;
 const hatCode = (ev, code, id) => ev.reasons.some((r) => r.code === code && (id == null || r.sourceId === id));
+const ampel = (data, date, now) => K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
 
-/* Einen Tag bis kurz vor 23:00 fahren: Lauf, Startnotiz, Quittungen 04/09/14/23,
- * Quellen frisch, alle offenen Elemente im Lauf. Liefert Bestand + Zeit. */
-function tagAufbauen(data, { date = "2026-09-19", bis = "23:05" } = {}) {
+/* Beleg vom Adapter + Abschluss ueber transitionState (mit Version). */
+function erledigen(data, sourceType, id, now, actor = AGENT) {
+  if (sourceType === "task") {
+    return mussOk(run(data, "transitionState", { sourceType, sourceId: id, state: "done", expectedVersion: ver(data, sourceType, id) }, now, USER), "done " + id);
+  }
+  const evId = "ev_done_" + id;
+  data = mussOk(run(data, "registerEvidence", { evidenceId: evId, kind: "message", ref: "msg_" + id, sourceType, sourceId: id, origin: { adapter: "gmail", ref: "thread_" + id }, observedAt: new Date(now - MIN).toISOString(), fingerprint: "fp_" + id + "_0123456789abcdef" }, now, ADAPTER), "evidence " + id);
+  return mussOk(run(data, "transitionState", { sourceType, sourceId: id, state: "done", expectedVersion: ver(data, sourceType, id), evidence: { kind: "evidence", evidenceId: evId } }, now, actor), "done " + id);
+}
+
+/* Einen Tag aufbauen: Lauf, Startnotiz, Quittungen, Quellen frisch, offene
+ * Elemente im Lauf. Danach optional alles erledigen. */
+function tagAufbauen(data, { date = "2026-09-19", bis = "23:05", erledigt = false } = {}) {
   const [h, m] = bis.split(":").map(Number);
   const now = K.wandzeitZuMs(date, h, m);
   data = mussOk(run(data, "ensureRun", { date }, K.slotBeginnMs(date, "briefing04") + MIN), "ensureRun");
@@ -103,9 +95,7 @@ function tagAufbauen(data, { date = "2026-09-19", bis = "23:05" } = {}) {
     if (at > now) continue;
     data = mussOk(run(data, "recordSlotReceipt", { date, slot: s, receiptId: "rcpt_" + s + "_" + date }, at), "receipt " + s);
   }
-  for (const s of POLICY.requiredSources) {
-    data = mussOk(run(data, "recordSourceCheck", { date, sourceId: s.id, cursor: "c1", outcome: "ok" }, now - 3 * MIN), "source " + s.id);
-  }
+  for (const s of POLICY.requiredSources) data = mussOk(run(data, "recordSourceCheck", { date, sourceId: s.id, cursor: "c1", outcome: "ok" }, now - 3 * MIN, ADAPTER), "source " + s.id);
   for (const [sourceType, q] of Object.entries(K.QUELLEN)) {
     for (const id of Object.keys(data.entities[q.store] || {})) {
       const z = K.effektiverZustand(sourceType, data.entities[q.store][id]);
@@ -113,672 +103,713 @@ function tagAufbauen(data, { date = "2026-09-19", bis = "23:05" } = {}) {
       data = mussOk(run(data, "addItemRef", { date, sourceType, sourceId: id }, now - 2 * MIN), "ref " + id);
     }
   }
+  if (erledigt) {
+    data = erledigen(data, "chatgptLead", "l1", now - 2 * MIN);
+    data = erledigen(data, "chatgptTask", "c1", now - 2 * MIN);
+    data = erledigen(data, "task", "t1", now - 2 * MIN);
+  }
   return { data, now, date };
 }
 
-/* Alle offenen Elemente "erledigen", so wie es die Oberflaeche taete (Altstatus). */
-function allesErledigen(data, at) {
-  data = K.klon(data);
-  const iso = new Date(at).toISOString();
-  for (const l of Object.values(data.entities.chatgptLeads)) if (l.status !== "abgeschlossen") { l.status = "abgeschlossen"; l.closedAt = iso; l.closedBy = "assistant"; l.updatedAt = iso; }
-  for (const c of Object.values(data.entities.chatgptTasks)) if (c.state !== "erledigt") { c.state = "erledigt"; c.resolvedAt = iso; c.updatedAt = iso; }
-  for (const t of Object.values(data.entities.tasks)) if (t.dueDate && t.dueDate <= "2026-09-19" && t.status !== "done") { t.status = "done"; t.updatedAt = iso; }
-  return data;
-}
-
-/* ══ Kern lesen: fehlend oder kaputt ist ein Fehler ══════════════════════ */
-test("fehlender oder kaputter Kern ist ein Fehler, kein leerer Bestand", () => {
-  assert.throws(() => K.parseCoreDocument(null), /CORE_MISSING|Kernbestand fehlt/);
+/* ══ Kern lesen ══════════════════════════════════════════════════════════ */
+test("fehlender, kaputter oder falsch geformter Kern ist ein Fehler, kein leerer Bestand (R9)", () => {
+  assert.throws(() => K.parseCoreDocument(null), (e) => e.code === "CORE_MISSING");
   assert.throws(() => K.parseCoreDocument({ exists: false, data: null }), (e) => e.code === "CORE_MISSING");
   assert.throws(() => K.parseCoreDocument({ exists: true, data: "{nicht json" }), (e) => e.code === "CORE_UNPARSEABLE");
-  assert.throws(() => K.parseCoreDocument({ exists: true, data: JSON.stringify({ irgendwas: 1 }) }), (e) => e.code === "CORE_NO_ENTITIES");
+  assert.throws(() => K.parseCoreDocument(JSON.stringify({ irgendwas: 1 })), (e) => e.code === "CORE_NO_ENTITIES");
+  assert.throws(() => K.parseCoreDocument(JSON.stringify({ entities: [] })), (e) => e.code === "CORE_NO_ENTITIES", "entities als Array wurde akzeptiert");
+  assert.throws(() => K.parseCoreDocument(JSON.stringify({ entities: { tasks: [] } })), (e) => e.code === "CORE_STORE_CORRUPT");
+  assert.throws(() => K.parseCoreDocument(JSON.stringify({ entities: {}, automation: "x" })), (e) => e.code === "CORE_AUTOMATION_CORRUPT");
   assert.throws(() => K.parseCoreDocument("[]"), (e) => e.code === "CORE_SHAPE");
-  const p = K.parseCoreDocument({ exists: true, data: JSON.stringify(bestand()) });
-  assert.equal(Object.keys(p.entities.chatgptLeads).length, 2);
   assert.throws(() => K.requireCore(bestand()), (e) => e.code === "CORE_NOT_MIGRATED");
+  // requireCore prueft alle Karten und Revisionszahlen — nichts wird geleert.
+  const d = migriert();
+  for (const [pfad, wert, code] of [
+    ["automation.dataRevision", -1, "CORE_REVISION_CORRUPT"], ["automation.dataRevision", 1.5, "CORE_REVISION_CORRUPT"],
+    ["automation.questionsById", [], "CORE_AUTOMATION_CORRUPT"], ["automation.evidenceById", null, "CORE_AUTOMATION_CORRUPT"],
+    ["automation.migration", null, "CORE_NOT_MIGRATED"], ["dailyBriefing.assistantRuns", [], "CORE_RUNS_CORRUPT"],
+    ["entities.chatgptLeads.l1", "kaputt", "CORE_STORE_CORRUPT"],
+  ]) {
+    const k = K.klon(d);
+    const teile = pfad.split("."); let o = k; for (const t of teile.slice(0, -1)) o = o[t]; o[teile.at(-1)] = wert;
+    assert.throws(() => K.requireCore(k), (e) => e.code === code, pfad + " → " + code);
+    const r = K.applyCommand(k, cmd("ensureRun", { date: "2026-09-19" }, NOW), { policy: POLICY, actor: AGENT });
+    assert.equal(r.ok, false, pfad); assert.equal(r.data, k, "bei Fehler bleibt die Eingabe unveraendert");
+  }
+  const kaputtRun = K.klon(d); kaputtRun.dailyBriefing.assistantRuns["2026-09-19"] = { date: "2026-09-19", phase: "sonstwas" };
+  assert.throws(() => K.requireCore(kaputtRun), (e) => e.code === "CORE_RUN_CORRUPT");
   assert.throws(() => K.migrateCore(bestand(), {}), TypeError);
 });
 
-/* ══ T: Migration idempotent, fremde Felder und _deleteLog bleiben ═══════ */
-test("Migration ist idempotent und laesst Fremdes und _deleteLog unberuehrt", () => {
+/* ══ R2 / T12: Migration ═════════════════════════════════════════════════ */
+test("Migration ist idempotent, versioniert und einmalig; Fremdes und _deleteLog bleiben", () => {
   const original = bestand();
   const vorher = JSON.stringify(original);
   const m1 = K.migrateCore(original, { now: NOW });
   assert.equal(JSON.stringify(original), vorher, "die Eingabe wurde veraendert");
   assert.equal(m1.changed, true);
   assert.equal(m1.data.automation.schemaVersion, K.SCHEMA_VERSION);
+  assert.equal(m1.data.automation.migration.stateModel, K.STATE_MODEL_VERSION);
   assert.deepEqual(m1.data.dailyBriefing.assistantRuns, {});
-  assert.deepEqual(m1.data._deleteLog, original._deleteLog);
-  assert.deepEqual(m1.data.fremdesFeld, original.fremdesFeld);
-  assert.deepEqual(m1.data.journal, original.journal);
-  assert.deepEqual(m1.data.mobilePushes, original.mobilePushes);
+  for (const k of ["_deleteLog", "fremdesFeld", "journal", "mobilePushes"]) assert.deepEqual(m1.data[k], original[k], k);
   assert.deepEqual(m1.data.dailyBriefing.routines, original.dailyBriefing.routines);
-  assert.deepEqual(m1.data.dailyBriefing.dailyLog, original.dailyBriefing.dailyLog);
-  for (const k of ["intakeById", "questionsById", "answersById", "documentsById", "jobsById", "outboxById", "idempotencyByKey", "sourceCursors"]) {
-    assert.deepEqual(m1.data.automation[k], {}, k);
-  }
+  for (const k of K.AUTOMATION_KARTEN) assert.deepEqual(m1.data.automation[k], {}, k);
   assert.equal(m1.data.automation.activeLease, null);
-  assert.equal(m1.data.automation.policyRef, null);
-
-  // Zweiter Lauf, andere Uhr: byteidentisch.
   const m2 = K.migrateCore(m1.data, { now: NOW + 5 * STD });
   assert.equal(m2.changed, false);
   assert.equal(JSON.stringify(m2.data), JSON.stringify(m1.data));
-
-  // Vorhandene, gleichwertige Struktur wird wiederverwendet, nicht ersetzt.
+  // Vorhandene, gleichwertige Struktur wird wiederverwendet.
   const mitAutomation = bestand();
   mitAutomation.automation = { schemaVersion: 3, dataRevision: 7, intakeById: { i1: { id: "i1", status: "open", text: "x" } }, eigenes: true };
   const m3 = K.migrateCore(mitAutomation, { now: NOW });
   assert.equal(m3.data.automation.dataRevision, 7);
   assert.equal(m3.data.automation.intakeById.i1.text, "x");
   assert.equal(m3.data.automation.eigenes, true);
-  assert.ok(m3.data.automation.questionsById);
+  // Korrupte vorhandene Struktur ist ein Fehler, wird nicht geleert.
+  const korrupt = bestand(); korrupt.automation = { schemaVersion: 3, dataRevision: "sieben" };
+  assert.throws(() => K.migrateCore(korrupt, { now: NOW }), (e) => e.code === "CORE_REVISION_CORRUPT");
+  const korrupt2 = bestand(); korrupt2.automation = { schemaVersion: 3, dataRevision: 0, questionsById: [] };
+  assert.throws(() => K.migrateCore(korrupt2, { now: NOW }), (e) => e.code === "CORE_AUTOMATION_CORRUPT");
 });
 
-test("Altstatus werden semantisch gemappt; Unbekanntes bleibt sichtbar unmapped", () => {
+test("R2: 'wartet' ohne Ursache wird nicht geraten; unbekannt/mehrdeutig sind Migrationskonflikte; Rollen explizit; nie erneut aus Altfeldern", () => {
   const d = bestand();
-  d.entities.chatgptLeads.l3 = { id: "l3", status: "irgendwas_altes", readAt: null, createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z" };
-  d.entities.chatgptLeads.l4 = { id: "l4", status: "in_arbeit", readAt: "2026-09-01T00:00:00Z", assignee: "cowork", handoverAt: "2026-09-02T00:00:00Z", returnedAt: null, createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z" };
+  const t0 = "2026-09-01T00:00:00Z";
+  d.entities.chatgptLeads.l3 = { id: "l3", status: "irgendwas_altes", readAt: null, createdAt: t0, updatedAt: t0 };
+  d.entities.chatgptLeads.l4 = { id: "l4", status: "in_arbeit", readAt: t0, assignee: "cowork", handoverAt: "2026-09-02T00:00:00Z", returnedAt: null, createdAt: t0, updatedAt: t0 };
   d.entities.chatgptLeads.l5 = { ...d.entities.chatgptLeads.l4, id: "l5", returnedAt: "2026-09-03T00:00:00Z" };
-  d.entities.chatgptLeads.l6 = { id: "l6", status: "abgeschlossen", closedBy: "laurin", obsoleteReason: "hinfaellig", readAt: null, createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z" };
-  d.entities.tasks.t3 = { id: "t3", status: "waiting", title: "Antwort Amt" };
+  d.entities.chatgptLeads.l6 = { id: "l6", status: "abgeschlossen", closedBy: "laurin", obsoleteReason: "hinfaellig", readAt: null, createdAt: t0, updatedAt: t0 };
+  d.entities.chatgptLeads.l7 = { id: "l7", status: "wartet", blockedReason: "Antwort der Bank", readAt: t0, createdAt: t0, updatedAt: t0 };
+  d.entities.tasks.t3 = { id: "t3", status: "waiting", title: "Antwort Amt", assignee: "Anna" };
   d.entities.tasks.t4 = { id: "t4", status: "bizarr", title: "?" };
   d.entities.chatgptTasks.c2 = { id: "c2", state: "wartet", blockedReason: "fehlt Name" };
   const m = K.migrateCore(d, { now: NOW });
   const L = m.data.entities.chatgptLeads;
-  assert.equal(L.l1.operationalState, "doing");
+  assert.equal(L.l1.operationalState, "doing"); assert.equal(L.l1.operationalStateVersion, 1);
   assert.equal(L.l2.operationalState, "done");
-  assert.equal(L.l3.operationalState, null);
-  assert.equal(L.l3.operationalStateUnmapped, true);
   assert.equal(L.l4.operationalState, "delegated");
   assert.equal(L.l5.operationalState, "review");
   assert.equal(L.l6.operationalState, "cancelled");
-  assert.equal(m.data.entities.tasks.t1.operationalState, "doing");
-  assert.equal(m.data.entities.tasks.t3.operationalState, "waiting_external");
-  assert.equal(m.data.entities.tasks.t4.operationalState, null);
-  assert.equal(m.data.entities.chatgptTasks.c2.operationalState, "waiting_user");
-  assert.deepEqual(m.data.automation.migration.unknownStates.map((u) => u.sourceId).sort(), ["l3", "t4"]);
-  assert.deepEqual(m.report.unknownStates.map((u) => u.legacyValue).sort(), ["bizarr", "irgendwas_altes"]);
-  // Der Altstatus bleibt das Feld der Oberflaeche: nichts wurde umbenannt.
-  assert.equal(L.l4.status, "in_arbeit");
-  assert.equal(m.data.entities.tasks.t3.status, "waiting");
-  // Regulaere Aufgaben behalten ihren Assignee, KI-Leads bekommen Rollen.
-  assert.deepEqual(K.rollenFuer("task", { assignee: "Anna" }), { accountable: "user", executor: "user" });
-  assert.deepEqual(K.rollenFuer("chatgptLead", { assignee: "cowork" }), { accountable: "chatgpt", executor: "claude" });
-  assert.deepEqual(K.rollenFuer("chatgptLead", { assignee: "chatgpt" }), { accountable: "chatgpt", executor: "openai" });
-  // Unbekannter Altstatus: Ampel rot mit Quell-Id, Zustandswechsel verweigert.
+  // wartet / waiting: NICHT waiting_user/waiting_external, sondern sichtbar ungeloest.
+  for (const [e, why] of [[L.l7, "ambiguous"], [m.data.entities.tasks.t3, "ambiguous"], [m.data.entities.chatgptTasks.c2, "ambiguous"], [L.l3, "unknown"], [m.data.entities.tasks.t4, "unknown"]]) {
+    assert.equal(e.operationalState, null, e.id);
+    assert.equal(e.operationalStateUnmapped, why, e.id);
+  }
+  assert.deepEqual(m.data.automation.migration.conflicts.map((c) => c.kind + ":" + c.sourceId).sort(), ["ambiguous:c2", "ambiguous:l7", "ambiguous:t3", "unknown:l3", "unknown:t4"]);
+  assert.deepEqual(m.report.ambiguousStates.map((c) => c.sourceId).sort(), ["c2", "l7", "t3"]);
+  // Altstatus und menschlicher Assignee unangetastet; Rollen explizit am Objekt.
+  assert.equal(L.l4.status, "in_arbeit"); assert.equal(m.data.entities.tasks.t3.status, "waiting"); assert.equal(m.data.entities.tasks.t3.assignee, "Anna");
+  assert.deepEqual(m.data.entities.tasks.t1.operationalRoles, { accountable: "user", executor: "user" });
+  assert.deepEqual(L.l4.operationalRoles, { accountable: "chatgpt", executor: "claude" });
+  assert.deepEqual(L.l1.operationalRoles, { accountable: "chatgpt", executor: "openai" });
+  assert.deepEqual(L.l7.operationalRoles, { accountable: "chatgpt", executor: null });
+  assert.equal(K.rollenFuer("chatgptLead", L.l4).explicit, true);
+  // Ampel: Konflikte rot mit Quell-Id; setWaiting/transition aus dem Konflikt nur zur Klaerung.
   const ev = K.dailyAssistantTrafficLight(K.leererRun("2026-09-19", "3.0"), m.data, NOW, POLICY);
-  assert.ok(hatCode(ev, "UNKNOWN_LEGACY_STATE", "l3"));
-  assert.ok(hatCode(ev, "UNKNOWN_LEGACY_STATE", "t4"));
-  const r = run(m.data, "transitionState", { sourceType: "chatgptLead", sourceId: "l3", state: "review" }, NOW);
-  assert.equal(r.ok, false); assert.equal(r.error, "UNKNOWN_LEGACY_STATE");
-  // Client aendert den Altstatus nachtraeglich → Altstatus gewinnt, nicht das alte Mapping.
-  const geaendert = K.klon(m.data);
-  geaendert.entities.chatgptLeads.l3.status = "in_arbeit";
-  assert.equal(K.effektiverZustand("chatgptLead", geaendert.entities.chatgptLeads.l3).state, "doing");
-  const m2 = K.migrateCore(geaendert, { now: NOW + STD });
-  assert.equal(m2.data.entities.chatgptLeads.l3.operationalState, "doing");
-  assert.equal(m2.data.entities.chatgptLeads.l3.operationalStateUnmapped, undefined);
-  assert.deepEqual(m2.data.automation.migration.unknownStates.map((u) => u.sourceId), ["t4"]);
+  assert.ok(hatCode(ev, "UNKNOWN_LEGACY_STATE", "l3")); assert.ok(hatCode(ev, "AMBIGUOUS_LEGACY_STATE", "l7")); assert.ok(hatCode(ev, "AMBIGUOUS_LEGACY_STATE", "t3"));
+  assert.equal(run(m.data, "transitionState", { sourceType: "chatgptLead", sourceId: "l7", state: "review", expectedVersion: 1 }, NOW).error, "UNMAPPED_NEEDS_CLARIFICATION");
+  const geklaert = mussOk(run(m.data, "transitionState", { sourceType: "chatgptLead", sourceId: "l7", state: "doing", expectedVersion: 1, reason: "geklaert: Bank hat geantwortet" }, NOW), "klaeren");
+  assert.equal(geklaert.entities.chatgptLeads.l7.operationalState, "doing");
+  assert.equal(geklaert.entities.chatgptLeads.l7.operationalStateUnmapped, undefined);
+  const m4 = K.migrateCore(geklaert, { now: NOW + STD });
+  assert.deepEqual(m4.data.automation.migration.conflicts.map((c) => c.sourceId).sort(), ["c2", "l3", "t3", "t4"], "geklaerter Konflikt verschwindet aus der Liste");
+  // Eine spaetere Migration liest NIE wieder die Altfelder: Client aendert l3 auf in_arbeit → bleibt Konflikt.
+  const geaendert = K.klon(m.data); geaendert.entities.chatgptLeads.l3.status = "in_arbeit";
+  const m5 = K.migrateCore(geaendert, { now: NOW + STD });
+  assert.equal(m5.data.entities.chatgptLeads.l3.operationalState, null);
+  assert.equal(m5.data.entities.chatgptLeads.l3.operationalStateUnmapped, "unknown");
 });
 
-/* ══ Policy: vollstaendig oder gar nicht ═════════════════════════════════ */
-test("fehlende Policy oder Quellenkonfiguration ist nie gruen", () => {
-  const d = migriert(allesErledigen(bestand(), NOW));
-  const r = K.leererRun("2026-09-19", "3.0");
-  assert.equal(K.validatePolicy(K.POLICY_TEMPLATE).ok, false, "die Vorlage ohne Quellen darf nicht gueltig sein");
-  assert.ok(K.validatePolicy(K.POLICY_TEMPLATE).errors.includes("POLICY_SOURCES_NOT_CONFIGURED"));
-  assert.equal(K.validatePolicy(POLICY).ok, true);
-  for (const p of [null, {}, { ...POLICY, requiredSources: undefined }, { ...POLICY, timezone: "UTC" }, { ...POLICY, featureFlags: { writes: "yolo", runner: "dry_run", providers: "dry_run" } }]) {
-    const ev = K.dailyAssistantTrafficLight(r, d, NOW, p);
-    assert.equal(ev.operations, "red");
-    assert.ok(hatCode(ev, "POLICY_INCOMPLETE"));
-  }
-  const ev = K.dailyAssistantTrafficLight(null, d, NOW, POLICY);
-  assert.ok(hatCode(ev, "RUN_MISSING"));
-  assert.equal(ev.overall, "red");
-  assert.equal(K.applyCommand(d, cmd("ensureRun", { date: "2026-09-19" }, NOW), { policy: null }).error, "POLICY_INVALID");
-  assert.equal(POLICY.featureFlags.writes, "dry_run");
-  assert.equal(POLICY.featureFlags.runner, "dry_run");
-  assert.equal(POLICY.featureFlags.providers, "dry_run");
-});
-
-/* ══ T: ausgelassener Lead / nicht geprüfte Seite ═══════════════════════ */
-test("ein ausgelassener Lead oder eine nicht geprüfte Quelle kann nicht gruen werden", () => {
-  let { data, now, date } = tagAufbauen(migriert(allesErledigen(bestand(), NOW)));
-  let ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
-  assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
-  assert.equal(ev.operations, "green", JSON.stringify(ev.reasons));
-
-  // Ein Lead taucht auf, den der Lauf nicht kennt (nicht in itemRefs) — der volle Bestand zaehlt.
-  const mitLead = K.klon(data);
-  mitLead.entities.chatgptLeads.l7 = { id: "l7", title: "Vergessen", rawInput: "…", status: "in_arbeit", readAt: "2026-09-19T10:00:00Z", assignee: "chatgpt", createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z" };
-  ev = K.dailyAssistantTrafficLight(mitLead.dailyBriefing.assistantRuns[date], mitLead, now, POLICY);
+/* ══ R1: operationalState fuehrend, Altstatus nur Ableitung ══════════════ */
+test("R1: ein nach der Migration geaenderter Altstatus 'abgeschlossen' macht kein done — Drift ist sichtbar; Uebergaenge brauchen Version und Beleg", () => {
+  let { data, now, date } = tagAufbauen(migriert());
+  // Alter Client schreibt status=abgeschlossen an l1 (operationalState doing).
+  const drift = K.klon(data);
+  drift.entities.chatgptLeads.l1.status = "abgeschlossen"; drift.entities.chatgptLeads.l1.closedAt = new Date(now).toISOString();
+  const z = K.effektiverZustand("chatgptLead", drift.entities.chatgptLeads.l1);
+  assert.equal(z.state, "doing", "der Altstatus hat den Serverzustand veraendert");
+  assert.deepEqual(z.drift, { legacyNow: "abgeschlossen", legacyAtMapping: "in_arbeit", expected: "in_arbeit" });
+  let ev = ampel(drift, date, now);
   assert.equal(ev.coverage, "red");
-  assert.ok(hatCode(ev, "ITEM_NOT_IN_RUN", "l7"));
-  assert.ok(hatCode(ev, "ITEM_OPEN", "l7"));
-  // Ein ungelesener Lead ist ungeklaerter Eingang.
-  mitLead.entities.chatgptLeads.l7.readAt = null;
-  ev = K.dailyAssistantTrafficLight(mitLead.dailyBriefing.assistantRuns[date], mitLead, now, POLICY);
-  assert.ok(hatCode(ev, "INTAKE_UNCLARIFIED", "l7"));
-
-  // Eine erforderliche Quelle ohne Pruefung → Betrieb rot, mit Quell-Id.
-  const ohneQuelle = K.klon(data);
-  delete ohneQuelle.dailyBriefing.assistantRuns[date].sourceChecks["gcal-heute"];
-  delete ohneQuelle.automation.sourceCursors["gcal-heute"];
-  ev = K.dailyAssistantTrafficLight(ohneQuelle.dailyBriefing.assistantRuns[date], ohneQuelle, now, POLICY);
-  assert.equal(ev.operations, "red");
-  assert.ok(hatCode(ev, "SOURCE_NOT_CHECKED", "gcal-heute"));
-
-  // Eine Quelle, die aelter als 15 Minuten ist → rot; Stoerungen sind benannt.
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + 20 * MIN, POLICY);
-  assert.ok(hatCode(ev, "SOURCE_STALE", "gmail-inbox"));
-  for (const [outcome, code] of [["auth_error", "SOURCE_AUTH_ERROR"], ["budget_exceeded", "SOURCE_BUDGET_EXCEEDED"], ["unreachable", "SOURCE_UNREACHABLE"]]) {
-    const g = mussOk(run(data, "recordSourceCheck", { date, sourceId: "gmail-inbox", cursor: "c2", outcome }, now), outcome);
-    const e2 = K.dailyAssistantTrafficLight(g.dailyBriefing.assistantRuns[date], g, now, POLICY);
-    assert.equal(e2.operations, "red");
-    assert.ok(hatCode(e2, code, "gmail-inbox"), code);
-  }
-  // Eine faellige Projektfrist zaehlt ebenfalls.
-  const mitFrist = K.klon(data);
-  mitFrist.entities.projects.p1.deadlines.push({ id: "d2", title: "Schluessel abgeben", date: "2026-09-19", done: false });
-  ev = K.dailyAssistantTrafficLight(mitFrist.dailyBriefing.assistantRuns[date], mitFrist, now, POLICY);
-  assert.ok(hatCode(ev, "PROJECT_DEADLINE_DUE", "p1"));
-  // Die Bewertung nennt Revision, Zeitpunkt und Gueltigkeit.
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
-  assert.equal(ev.evaluatedRevision, data.automation.dataRevision);
-  assert.equal(ev.evaluatedAt, new Date(now).toISOString());
-  const bis = Date.parse(ev.validUntil);
-  assert.ok(bis > now && bis <= now + 15 * MIN, "validUntil nicht laenger als die frischeste Quelle");
+  assert.ok(hatCode(ev, "LEGACY_DRIFT", "l1")); assert.ok(hatCode(ev, "ITEM_OPEN", "l1"));
+  // Umgekehrt: Altstatus zurueck auf in_arbeit nach done → Drift, aber done bleibt done.
+  let fertig = erledigen(data, "chatgptLead", "l1", now);
+  assert.equal(fertig.entities.chatgptLeads.l1.status, "in_arbeit", "der Altstatus wird in diesem Paket nicht zurueckgeschrieben");
+  assert.equal(K.effektiverZustand("chatgptLead", fertig.entities.chatgptLeads.l1).drift, null, "der zur Migration gehoerende Altwert ist keine Drift");
+  const zurueck = K.klon(fertig); zurueck.entities.chatgptLeads.l1.status = "neu";
+  assert.equal(K.effektiverZustand("chatgptLead", zurueck.entities.chatgptLeads.l1).state, "done");
+  assert.ok(hatCode(ampel(zurueck, date, now), "LEGACY_DRIFT", "l1"));
+  // transitionState: Version Pflicht, Matrix, Beleg fuer done; ein gesetzter Altstatus ist keine Freigabe.
+  assert.equal(run(drift, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done" }, now).error, "VERSION_REQUIRED");
+  assert.equal(run(drift, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 99 }, now).error, "VERSION_MISMATCH");
+  assert.equal(run(drift, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 1 }, now).error, "DONE_EVIDENCE_MISSING");
+  assert.equal(run(drift, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 1, evidence: { kind: "evidence", evidenceId: "gibtsnicht" } }, now).error, "DONE_EVIDENCE_FOREIGN");
+  assert.equal(run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "waiting_external", expectedVersion: 1 }, now).error, "USE_SET_WAITING");
+  assert.equal(run(fertig, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "review", expectedVersion: 2 }, now).error, "TRANSITION_NOT_ALLOWED");
+  assert.equal(run(fertig, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: 2 }, now).error, "REOPEN_NEEDS_REASON");
+  const wieder = mussOk(run(fertig, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: 2, reason: "Kunde meldet Fehler" }, now), "reopen");
+  assert.equal(wieder.entities.chatgptLeads.l1.operationalStateVersion, 3);
+  // Beleg eines FREMDEN Elements zaehlt nicht; unvollstaendiger Lead nicht; cancel eines Leads nur der Nutzer; Aufgabe schliesst der Nutzer.
+  const evFremd = mussOk(run(data, "registerEvidence", { evidenceId: "ev_l2", kind: "mail", ref: "m", sourceType: "chatgptLead", sourceId: "l2", origin: { adapter: "gmail", ref: "x" }, observedAt: new Date(now - MIN).toISOString(), fingerprint: "0123456789abcdef0123" }, now, ADAPTER), "ev");
+  assert.equal(run(evFremd, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 1, evidence: { kind: "evidence", evidenceId: "ev_l2" } }, now).error, "DONE_EVIDENCE_FOREIGN");
+  const unvoll = K.klon(evFremd); unvoll.entities.chatgptLeads.l1.result = "";
+  const u = run(mussOk(run(unvoll, "registerEvidence", { evidenceId: "ev_l1", kind: "mail", ref: "m", sourceType: "chatgptLead", sourceId: "l1", origin: { adapter: "gmail", ref: "x" }, observedAt: new Date(now - MIN).toISOString(), fingerprint: "0123456789abcdef0123" }, now, ADAPTER), "ev"), "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 1, evidence: { kind: "evidence", evidenceId: "ev_l1" } }, now);
+  assert.equal(u.error, "LEAD_INCOMPLETE"); assert.deepEqual(u.detail, ["result"]);
+  assert.equal(run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "cancelled", expectedVersion: 1, reason: "hinfaellig" }, now, AGENT).error, "CANCEL_REQUIRES_USER");
+  assert.equal(run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "cancelled", expectedVersion: 1, reason: "hinfaellig" }, now, USER).ok, true);
+  assert.equal(run(data, "transitionState", { sourceType: "task", sourceId: "t1", state: "done", expectedVersion: 1 }, now, AGENT).error, "DONE_EVIDENCE_MISSING", "der Agent schliesst keine Nutzeraufgabe ohne Beleg");
+  const tDone = mussOk(run(data, "transitionState", { sourceType: "task", sourceId: "t1", state: "done", expectedVersion: 1 }, now, USER), "user done");
+  assert.equal(tDone.entities.tasks.t1.assignee, "Anna"); assert.equal(tDone.entities.tasks.t1.status, "todo");
 });
 
-/* ══ Alte Offlineansicht ist nicht aktuell gruen ═════════════════════════ */
-test("eine gespeicherte Bewertung gilt nur bis validUntil und nur fuer denselben Bestand", () => {
-  const { data, now, date } = tagAufbauen(migriert(allesErledigen(bestand(), NOW)));
-  const ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
+/* ══ Policy: feste Sicherheitsvorgaben (R10) ═════════════════════════════ */
+test("R10: Policy laesst 23:00, 09+23, 15 Minuten und die Quantus-Kernquelle nicht lockern", () => {
+  assert.equal(K.validatePolicy(POLICY).ok, true);
+  assert.equal(K.validatePolicy(K.POLICY_TEMPLATE).ok, false);
+  const faelle = [
+    [{ ...POLICY, sourceMaxAgeMinutes: 60 }, "POLICY_SOURCE_MAX_AGE_MINUTES_ABOVE_LIMIT"],
+    [{ ...POLICY, closure: { earliestLocalTime: "08:00", requiredReceipts: ["process09", "close23"] } }, "POLICY_CLOSURE_TOO_EARLY"],
+    [{ ...POLICY, closure: { earliestLocalTime: "23:00", requiredReceipts: ["briefing04"] } }, "POLICY_CLOSURE_RECEIPT_REQUIRED:process09"],
+    [{ ...POLICY, closure: { earliestLocalTime: "23:00", requiredReceipts: ["process09", "close23", "mittag"] } }, "POLICY_CLOSURE_RECEIPTS_INVALID"],
+    [{ ...POLICY, closure: { earliestLocalTime: "25:99", requiredReceipts: ["process09", "close23"] } }, "POLICY_CLOSURE_TIME_INVALID"],
+    [{ ...POLICY, requiredSources: [{ id: "gmail-inbox", kind: "mail" }] }, "POLICY_CORE_SOURCE_REQUIRED"],
+    [{ ...POLICY, requiredSources: [{ id: "quantus-core", kind: "quantus-core" }] }, "POLICY_SOURCES_NOT_CONFIGURED"],
+    [{ ...POLICY, requiredSources: [], noExternalSources: true }, "POLICY_CORE_SOURCE_REQUIRED"],
+    [{ ...POLICY, deferralLimit: 10 }, "POLICY_DEFERRAL_LIMIT_ABOVE_LIMIT"],
+    [{ ...POLICY, featureFlags: { writes: "yolo", runner: "dry_run", providers: "dry_run" } }, "POLICY_FLAG_WRITES"],
+    [{ ...POLICY, timezone: "UTC" }, "POLICY_TIMEZONE"],
+  ];
+  for (const [p, code] of faelle) {
+    const v = K.validatePolicy(p);
+    assert.equal(v.ok, false, code); assert.ok(v.errors.includes(code), code + ": " + v.errors);
+    const ev = K.dailyAssistantTrafficLight(K.leererRun("2026-09-19", "3.0"), migriert(), NOW, p);
+    assert.equal(ev.operations, "red"); assert.ok(hatCode(ev, "POLICY_INCOMPLETE"));
+  }
+  assert.equal(K.validatePolicy({ ...POLICY, requiredSources: [{ id: "quantus-core", kind: "quantus-core" }], noExternalSources: true }).ok, true, "nur der Kern, ausdruecklich ohne externe Quellen, ist gueltig");
+  assert.equal(K.applyCommand(migriert(), cmd("ensureRun", { date: "2026-09-19" }, NOW), { policy: null, actor: AGENT }).error, "POLICY_INVALID");
+  // Abschluss ohne Startnotiz, ohne Kernquelle und ausserhalb 23:00–04:00 blockiert.
+  const s = tagAufbauen(migriert(), { erledigt: true });
+  const ohneStart = K.klon(s.data); ohneStart.dailyBriefing.assistantRuns[s.date].startNoteId = null;
+  let r = run(ohneStart, "closeRun", { date: s.date, finalNoteId: "n1" }, s.now);
+  assert.equal(r.error, "CLOSURE_BLOCKED"); assert.ok(r.detail.some((b) => b.code === "START_NOTE_MISSING"));
+  const ohneKern = K.klon(s.data); delete ohneKern.dailyBriefing.assistantRuns[s.date].sourceChecks["quantus-core"];
+  r = run(ohneKern, "closeRun", { date: s.date, finalNoteId: "n1" }, s.now);
+  assert.ok(r.detail.find((b) => b.code === "OPERATIONS_NOT_GREEN").detail.some((x) => x.code === "SOURCE_NOT_CHECKED" && x.sourceId === "quantus-core"));
+  const frueh = tagAufbauen(migriert(), { erledigt: true, bis: "22:59" });
+  r = run(frueh.data, "closeRun", { date: frueh.date, finalNoteId: "n1" }, frueh.now);
+  assert.ok(r.detail.some((b) => b.code === "CLOSURE_TOO_EARLY"));
+  assert.ok(r.detail.some((b) => b.code === "RECEIPT_MISSING" && b.detail === "close23"));
+});
+
+/* ══ T13: ausgelassener Lead / nicht geprüfte Seite ══════════════════════ */
+test("ein ausgelassener Lead oder eine nicht geprüfte Quelle kann nicht gruen werden; gelb vor Faelligkeit, rot faellig (R5)", () => {
+  let { data, now, date } = tagAufbauen(migriert(), { erledigt: true });
+  let ev = ampel(data, date, now);
+  assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons)); assert.equal(ev.operations, "green", JSON.stringify(ev.reasons));
+  // Nicht faellige Aufgabe t2 ist offen, aber nicht faellig → nicht rot, nicht im Lauf noetig.
+  assert.ok(!ev.reasons.some((r) => r.sourceId === "t2"));
+  // Ein migrierter Lead, den der Lauf nicht kennt: rot (nicht in itemRefs) + gelb offen.
+  const mitLead = K.migrateCore({ ...K.klon(data), entities: { ...K.klon(data.entities), chatgptLeads: { ...data.entities.chatgptLeads, l9: { id: "l9", title: "Vergessen", status: "in_arbeit", readAt: "2026-09-19T10:00:00Z", assignee: "chatgpt", createdAt: "2026-09-19T10:00:00Z", updatedAt: "2026-09-19T10:00:00Z" } } } }, { now }).data;
+  ev = ampel(mitLead, date, now);
+  assert.equal(ev.coverage, "red");
+  assert.ok(hatCode(ev, "ITEM_NOT_IN_RUN", "l9")); assert.ok(ev.reasons.some((r) => r.code === "ITEM_OPEN" && r.sourceId === "l9" && r.severity === "yellow"));
+  // Nicht migriert (kein operationalStateSource) → NOT_MIGRATED rot, nie uebersprungen.
+  const roh = K.klon(data); roh.entities.chatgptLeads.l9 = { id: "l9", status: "in_arbeit", readAt: "x" };
+  assert.ok(hatCode(ampel(roh, date, now), "NOT_MIGRATED", "l9"));
+  // Ungelesener Lead = ungeklaerter Eingang.
+  const ungelesen = K.klon(mitLead); ungelesen.entities.chatgptLeads.l9.readAt = null;
+  assert.ok(hatCode(ampel(ungelesen, date, now), "INTAKE_UNCLARIFIED", "l9"));
+  // Doing-Element MIT Faelligkeit ist rot: t1 wieder oeffnen (Nutzer).
+  const offen = mussOk(run(data, "transitionState", { sourceType: "task", sourceId: "t1", state: "doing", expectedVersion: 2, reason: "doch nicht" }, now, USER), "reopen");
+  ev = ampel(offen, date, now);
+  assert.ok(ev.reasons.some((r) => r.code === "ITEM_DUE_OPEN" && r.sourceId === "t1" && r.severity === "red"));
+  // Quellen: nicht geprueft, stale, Stoerungen — je mit Quell-Id.
+  const ohneQuelle = K.klon(data); delete ohneQuelle.dailyBriefing.assistantRuns[date].sourceChecks["gmail-inbox"];
+  ev = ampel(ohneQuelle, date, now); assert.equal(ev.operations, "red"); assert.ok(hatCode(ev, "SOURCE_NOT_CHECKED", "gmail-inbox"));
+  assert.ok(hatCode(ampel(data, date, now + 20 * MIN), "SOURCE_STALE", "gmail-inbox"));
+  for (const [outcome, code] of [["auth_error", "SOURCE_AUTH_ERROR"], ["budget_exceeded", "SOURCE_BUDGET_EXCEEDED"], ["unreachable", "SOURCE_UNREACHABLE"]]) {
+    const g = mussOk(run(data, "recordSourceCheck", { date, sourceId: "gmail-inbox", cursor: "c2", outcome }, now, ADAPTER), outcome);
+    assert.ok(hatCode(ampel(g, date, now), code, "gmail-inbox"), code);
+  }
+  assert.equal(run(data, "recordSourceCheck", { date, sourceId: "gmail-inbox", cursor: "c2", outcome: "ok" }, now, AGENT).error, "ACTOR_REJECTED", "ein Agent bestaetigt keine Quelle");
+  const mitFrist = K.klon(data); mitFrist.entities.projects.p1.deadlines.push({ id: "d2", title: "Schluessel", date: "2026-09-19", done: false });
+  assert.ok(hatCode(ampel(mitFrist, date, now), "PROJECT_DEADLINE_DUE", "p1"));
+  ev = ampel(data, date, now);
+  assert.equal(ev.evaluatedRevision, data.automation.dataRevision);
+  assert.ok(Date.parse(ev.validUntil) > now && Date.parse(ev.validUntil) <= now + 15 * MIN);
+  // Unbekannte Kartenzustaende werden nicht durch continue gruen (R9).
+  for (const [karte, wert] of [["intakeById", { id: "x", status: "whatever" }], ["jobsById", { id: "x", state: "sonst" }], ["documentsById", { id: "x", status: 7 }], ["questionsById", { id: "x", status: "" }]]) {
+    const k = K.klon(data); k.automation[karte].x = wert;
+    const e2 = ampel(k, date, now);
+    assert.equal(e2.coverage, "red", karte); assert.ok(hatCode(e2, "CARD_STATE_UNKNOWN", "x"), karte);
+  }
+});
+
+test("eine gespeicherte Bewertung gilt nur bis validUntil und nur fuer denselben Bestand; kein node:crypto im Kern", async () => {
+  const { data, now, date } = tagAufbauen(migriert(), { erledigt: true });
+  const ev = ampel(data, date, now);
   assert.equal(ev.overall, "green");
   assert.equal(K.isEvaluationCurrent(ev, data, now + MIN).current, true);
   assert.equal(K.isEvaluationCurrent(ev, data, Date.parse(ev.validUntil)).reason, "EVALUATION_EXPIRED");
-  const geaendert = K.klon(data);
-  geaendert.entities.chatgptLeads.l1.status = "in_arbeit";
-  geaendert.entities.chatgptLeads.l1.updatedAt = new Date(now + MIN).toISOString();
+  const geaendert = K.klon(data); geaendert.entities.chatgptLeads.l1.updatedAt = new Date(now + MIN).toISOString();
   assert.equal(K.isEvaluationCurrent(ev, geaendert, now + MIN).reason, "DATA_CHANGED");
-  const mutiert = mussOk(run(data, "registerIntake", { intakeId: "in_1", text: "Neu vom Handy", channel: "mobile" }, now + MIN), "intake");
+  const mutiert = mussOk(run(data, "registerIntake", { intakeId: "in_1", text: "Neu", channel: "mobile" }, now + MIN, USER), "intake");
   assert.equal(K.isEvaluationCurrent(ev, mutiert, now + MIN).reason, "REVISION_CHANGED");
+  assert.equal(K.stringFingerprint("abc").length, 32); assert.notEqual(K.stringFingerprint("abc"), K.stringFingerprint("abd"));
+  const fs = await import("node:fs");
+  for (const f of ["zeit", "schema", "migration", "buchhaltung", "ampel", "abschluss", "core"]) {
+    const src = fs.readFileSync(new URL("../netlify/lib/assistant-" + f + ".mjs", import.meta.url), "utf8");
+    assert.ok(!/from\s+["']node:/.test(src) && !/require\(/.test(src), f + " importiert Node-Module");
+  }
 });
 
-/* ══ T: unvollstaendiges Warten nicht gruen ══════════════════════════════ */
-test("Warten ohne Gegenpartei, nextAction, followUpAt oder Evidenz ist nicht gruen — Eigenarbeit ist kein waiting_external", () => {
-  const d0 = allesErledigen(bestand(), NOW);
-  d0.entities.chatgptLeads.l1 = { ...bestand().entities.chatgptLeads.l1, status: "wartet", blockedReason: "Antwort der Bank" };
-  let { data, now, date } = tagAufbauen(migriert(d0));
-  let ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
-  assert.equal(ev.coverage, "red");
-  assert.ok(hatCode(ev, "WAITING_UNVERIFIED", "l1"), "Altstatus 'wartet' ohne Evidenz darf nicht gruen sein");
-
-  const gut = { sourceType: "chatgptLead", sourceId: "l1", state: "waiting_external", counterparty: "Bank Muster AG", nextAction: "Antwort pruefen, sonst nachfassen", followUpAt: new Date(now + 2 * 24 * STD).toISOString(), evidence: { kind: "mail", ref: "msg_abc123" } };
-  for (const [name, kaputt, code] of [
-    ["ohne Gegenpartei", { ...gut, counterparty: "" }, "WAIT_COUNTERPARTY_MISSING"],
-    ["Gegenpartei ist man selbst", { ...gut, counterparty: "chatgpt" }, "WAIT_COUNTERPARTY_SELF"],
-    ["Gegenpartei ist der eigene Executor", { ...gut, counterparty: "openai" }, "WAIT_COUNTERPARTY_SELF"],
-    ["ohne nextAction", { ...gut, nextAction: " " }, "WAIT_NEXT_ACTION_MISSING"],
-    ["ohne followUpAt", { ...gut, followUpAt: null }, "WAIT_FOLLOWUP_MISSING"],
-    ["followUpAt in der Vergangenheit", { ...gut, followUpAt: new Date(now - STD).toISOString() }, "WAIT_FOLLOWUP_PAST"],
-    ["followUpAt in 90 Tagen", { ...gut, followUpAt: new Date(now + 90 * 24 * STD).toISOString() }, "WAIT_FOLLOWUP_IMPLAUSIBLE"],
-    ["ohne Evidenz", { ...gut, evidence: { kind: "mail", ref: "" } }, "WAIT_EVIDENCE_MISSING"],
-    ["waiting_external auf den Nutzer", { ...gut, counterparty: "user" }, "WAIT_EXTERNAL_IS_USER"],
-    ["waiting_user auf Dritte", { ...gut, state: "waiting_user" }, "WAIT_COUNTERPARTY_NOT_USER"],
-  ]) {
-    const r = run(data, "setWaiting", kaputt, now);
-    assert.equal(r.ok, false, name);
-    assert.equal(r.error, "WAITING_INCOMPLETE", name);
-    assert.ok(r.detail.includes(code), `${name}: ${r.detail}`);
-  }
-  // "Ich mache das spaeter" ist kein Warten: Selbst als Gegenpartei faellt durch (oben) —
-  // und ein direktes transitionState in einen Wartezustand ist verboten.
-  const t = run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "waiting_external" }, now);
-  assert.equal(t.error, "USE_SET_WAITING");
-
-  // Vollstaendiges Warten → gruen, mit Evidenz am Element sichtbar.
-  data = mussOk(run(data, "setWaiting", gut, now), "setWaiting");
-  assert.equal(data.entities.chatgptLeads.l1.operationalState, "waiting_external");
-  assert.equal(data.entities.chatgptLeads.l1.status, "wartet", "der Altstatus bleibt das Feld der Oberflaeche");
-  const w = data.automation.waitingById["chatgptLead:l1"];
-  assert.equal(w.waitingSince, new Date(now).toISOString());
-  assert.equal(w.evidence.ref, "msg_abc123");
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
+/* ══ R4 / R5 / T14: Warten nur mit geprueftem Beleg ══════════════════════ */
+test("R4: ein erfundener Beleg (mail/invented_nonexistent_mail) wird abgewiesen; Beleg nur ueber Adapter; fremde Frage/Job abgewiesen", () => {
+  let { data, now, date } = tagAufbauen(migriert(), { erledigt: false });
+  const basis = { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "waiting_external", counterparty: "Bank Muster AG", nextAction: "Antwort pruefen", followUpAt: new Date(now + 2 * 24 * STD).toISOString() };
+  let r = run(data, "setWaiting", { ...basis, evidence: { kind: "mail", ref: "invented_nonexistent_mail" } }, now);
+  assert.equal(r.error, "WAITING_INCOMPLETE"); assert.ok(r.detail.includes("WAIT_EVIDENCE_KIND_UNKNOWN"));
+  r = run(data, "setWaiting", { ...basis, evidence: { kind: "evidence", evidenceId: "ev_invented" } }, now);
+  assert.ok(r.detail.includes("WAIT_EVIDENCE_UNKNOWN"));
+  r = run(data, "setWaiting", { ...basis, evidence: { kind: "url", ref: "https://bank.example/bestaetigung" } }, now);
+  assert.ok(r.detail.includes("WAIT_EVIDENCE_KIND_UNKNOWN"), "eine URL im Text ist kein Beleg");
+  // Der Agent kann keinen Beleg registrieren — nur ein Adapter.
+  const beleg = { evidenceId: "ev_bank", kind: "mail", ref: "rfc822:<abc@bank.example>", sourceType: "chatgptLead", sourceId: "l1", origin: { adapter: "gmail", ref: "msg_18f" }, observedAt: new Date(now - 5 * MIN).toISOString(), fingerprint: "sha256-0123456789abcdef" };
+  assert.equal(run(data, "registerEvidence", beleg, now, AGENT).error, "ACTOR_REJECTED");
+  assert.equal(run(data, "registerEvidence", beleg, now, USER).error, "ACTOR_REJECTED");
+  assert.equal(K.applyCommand(data, cmd("registerEvidence", beleg, now), { policy: POLICY }).error, "ACTOR_REJECTED", "ohne Aufrufer laeuft nichts");
+  assert.equal(run(data, "registerEvidence", { ...beleg, observedAt: new Date(now + STD).toISOString() }, now, ADAPTER).error, "EVIDENCE_OBSERVED_AT_INVALID");
+  assert.equal(run(data, "registerEvidence", { ...beleg, fingerprint: "kurz" }, now, ADAPTER).error, "EVIDENCE_FINGERPRINT_INVALID");
+  data = mussOk(run(data, "registerEvidence", beleg, now, ADAPTER), "beleg");
+  assert.equal(run(data, "registerEvidence", { ...beleg, ref: "anderer" }, now, ADAPTER).error, "EVIDENCE_IMMUTABLE");
+  // Beleg eines FREMDEN Leads (l2) hilft l1 nicht.
+  data = mussOk(run(data, "registerEvidence", { ...beleg, evidenceId: "ev_l2", sourceId: "l2" }, now, ADAPTER), "beleg l2");
+  r = run(data, "setWaiting", { ...basis, evidence: { kind: "evidence", evidenceId: "ev_l2" } }, now);
+  assert.ok(r.detail.includes("WAIT_EVIDENCE_FOREIGN"));
+  // Frage/Job eines fremden Elements ebenso (c1 und t1 werden zuvor erledigt, damit der Rest des Tages gruen werden kann).
+  data = erledigen(data, "task", "t1", now);
+  data = mussOk(run(data, "askQuestion", { questionId: "q_c1", sourceType: "chatgptTask", sourceId: "c1", text: "?" }, now), "q");
+  r = run(data, "setWaiting", { ...basis, state: "waiting_user", counterparty: "user", evidence: { kind: "question", questionId: "q_c1" } }, now);
+  assert.ok(r.detail.includes("WAIT_EVIDENCE_FOREIGN"));
+  data = mussOk(run(data, "createJob", { jobId: "job_c1", kind: "recherche", purpose: "x", sourceType: "chatgptTask", sourceId: "c1", inputVersion: 1, executor: "gemini", contextRefs: [], expiresAt: new Date(now + STD).toISOString() }, now), "job c1");
+  r = run(data, "setWaiting", { ...basis, state: "delegated", counterparty: "gemini", evidence: { kind: "job", jobId: "job_c1" } }, now);
+  assert.ok(r.detail.includes("WAIT_EVIDENCE_FOREIGN"));
+  data = mussOk(run(data, "cancelJob", { jobId: "job_c1", reason: "Test" }, now), "cancel");
+  const nurQ = K.klon(data); nurQ.automation.questionsById.q_c1.status = "withdrawn";
+  data = nurQ;
+  // Passender Beleg → gruen, mit Beleg an der Karte; Kartenmanipulation faellt sofort auf (R5).
+  data = mussOk(run(data, "setWaiting", { ...basis, evidence: { kind: "evidence", evidenceId: "ev_bank" } }, now), "wait");
+  data = erledigen(data, "chatgptTask", "c1", now);
+  let ev = ampel(data, date, now);
   assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
-  assert.ok(Date.parse(ev.validUntil) <= Date.parse(w.followUpAt), "validUntil respektiert followUpAt");
-  // Nach followUpAt ist die Nachfassung faellig → nicht mehr gruen (Zeitablauf).
-  const spaeter = Date.parse(w.followUpAt) + MIN;
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, spaeter, POLICY);
-  assert.ok(hatCode(ev, "FOLLOWUP_DUE", "l1"));
-  // Die Warte-Evidenz eines Elements wird niemals in itemRefs kopiert.
-  for (const ref of data.dailyBriefing.assistantRuns[date].itemRefs) {
-    assert.deepEqual(Object.keys(ref).sort(), ["includedAt", "sourceId", "sourceType"]);
+  assert.deepEqual(data.automation.waitingById["chatgptLead:l1"].evidence, { kind: "evidence", evidenceId: "ev_bank" });
+  for (const [name, mut, code] of [
+    ["waitingSince entfernt", (w) => { delete w.waitingSince; }, "WAIT_SINCE_INVALID"],
+    ["waitingSince in der Zukunft", (w) => { w.waitingSince = new Date(now + STD).toISOString(); }, "WAIT_SINCE_INVALID"],
+    ["nextAction entfernt", (w) => { delete w.nextAction; }, "WAIT_NEXT_ACTION_MISSING"],
+    ["Gegenpartei entfernt", (w) => { w.counterparty = ""; }, "WAIT_COUNTERPARTY_MISSING"],
+    ["Gegenpartei ist der Executor", (w) => { w.counterparty = "openai"; }, "WAIT_COUNTERPARTY_SELF"],
+    ["Beleg gegen erfundenen getauscht", (w) => { w.evidence = { kind: "evidence", evidenceId: "ev_invented" }; }, "WAIT_EVIDENCE_UNKNOWN"],
+    ["Beleg gegen fremden getauscht", (w) => { w.evidence = { kind: "evidence", evidenceId: "ev_l2" }; }, "WAIT_EVIDENCE_FOREIGN"],
+    ["followUpAt vor waitingSince", (w) => { w.followUpAt = new Date(now - 2 * STD).toISOString(); w.waitingSince = new Date(now - STD).toISOString(); }, "WAIT_FOLLOWUP_BEFORE_SINCE"],
+    ["followUpAt in 90 Tagen", (w) => { w.followUpAt = new Date(now + 90 * 24 * STD).toISOString(); }, "WAIT_FOLLOWUP_IMPLAUSIBLE"],
+  ]) {
+    const k = K.klon(data); mut(k.automation.waitingById["chatgptLead:l1"]);
+    const e2 = ampel(k, date, now);
+    assert.equal(e2.coverage, "red", name);
+    assert.ok(e2.reasons.some((x) => x.code === "WAITING_INCOMPLETE" && x.sourceId === "l1" && x.detail.includes(code)), name + ": " + JSON.stringify(e2.reasons));
   }
+  // Wartekarte geloescht → unbelegt; Element wartet laut Zustand → rot.
+  const weg = K.klon(data); delete weg.automation.waitingById["chatgptLead:l1"];
+  assert.ok(hatCode(ampel(weg, date, now), "WAITING_UNVERIFIED", "l1"));
+  // Karte fuer ein Element, das gar nicht wartet → Leiche.
+  const leiche = K.klon(data); leiche.automation.waitingById["chatgptLead:l2"] = K.klon(data.automation.waitingById["chatgptLead:l1"]);
+  assert.ok(hatCode(ampel(leiche, date, now), "WAITING_CARD_ORPHAN", "l2"));
+  // Harte Frist verschwindet nicht durch Warten: t1 wartet extern, ist aber heute faellig.
+  let d2 = mussOk(run(data, "transitionState", { sourceType: "task", sourceId: "t1", state: "doing", expectedVersion: 2, reason: "offen" }, now, USER), "reopen");
+  d2 = mussOk(run(d2, "registerEvidence", { ...beleg, evidenceId: "ev_t1", sourceType: "task", sourceId: "t1" }, now, ADAPTER), "ev t1");
+  d2 = mussOk(run(d2, "setWaiting", { ...basis, sourceType: "task", sourceId: "t1", expectedVersion: 3, counterparty: "Vermieter", evidence: { kind: "evidence", evidenceId: "ev_t1" } }, now), "wait t1");
+  ev = ampel(d2, date, now);
+  assert.ok(ev.reasons.some((x) => x.code === "HARD_DEADLINE_DUE" && x.sourceId === "t1" && x.severity === "red"));
+  // Nach followUpAt: Nachfassung faellig; Eigenarbeit ist kein Warten; Wartezustaende nur via setWaiting.
+  assert.ok(hatCode(ampel(data, date, Date.parse(data.automation.waitingById["chatgptLead:l1"].followUpAt) + MIN), "FOLLOWUP_DUE", "l1"));
+  r = run(data, "setWaiting", { ...basis, expectedVersion: 2, counterparty: "chatgpt", evidence: { kind: "evidence", evidenceId: "ev_bank" } }, now);
+  assert.ok(r.detail.includes("WAIT_COUNTERPARTY_SELF"));
+  for (const ref of data.dailyBriefing.assistantRuns[date].itemRefs) assert.deepEqual(Object.keys(ref).sort(), ["includedAt", "sourceId", "sourceType"]);
 });
 
-/* ══ T: dreimal Deferral trotz Textaenderung rot ═════════════════════════ */
-test("drei Verschiebungen ohne anerkannten Fortschritt sind rot — Titel, Kommentar, Zuweisung, Retry setzen nichts zurueck", () => {
-  let { data, now, date } = tagAufbauen(migriert(allesErledigen(bestand(), NOW)));
-  // t2 (faellig 30.10.) wird beobachtet …
-  data = mussOk(run(data, "observeSource", { sourceType: "task", sourceId: "t2" }, now), "obs0");
-  assert.equal(data.automation.progressById["task:t2"].deferrals, 0);
-  const schiebe = (d, tag, aenderung) => {
-    const c = K.klon(d);
-    const t = c.entities.tasks.t2;
-    t.dueDate = tag;
-    aenderung(t);
-    t.updatedAt = new Date(now).toISOString();
-    return c;
-  };
-  data = schiebe(data, "2026-11-05", (t) => { t.title = "Spaeter (umbenannt)"; });
-  data = mussOk(run(data, "observeSource", { sourceType: "task", sourceId: "t2" }, now + STD), "obs1");
-  assert.equal(data.automation.progressById["task:t2"].deferrals, 1);
-  data = schiebe(data, "2026-11-12", (t) => { t.comments.push({ id: "k1", text: "Bin dran", createdAt: "x" }); t.assignee = "Anna"; });
-  data = mussOk(run(data, "observeSource", { sourceType: "task", sourceId: "t2" }, now + 2 * STD), "obs2");
-  assert.equal(data.automation.progressById["task:t2"].deferrals, 2);
-  data = schiebe(data, "2026-11-20", (t) => { t.retryCount = 4; t.tags = ["neu"]; });
-  data = mussOk(run(data, "observeSource", { sourceType: "task", sourceId: "t2" }, now + 3 * STD), "obs3");
+/* ══ R3 / T15: Deferrals ═════════════════════════════════════════════════ */
+test("R3: drei Verschiebungen bleiben rot — Aenderung von execution/interpretation/…, Gegenparteiwechsel, Kommentar, Retry setzen nichts zurueck; nur ein neues verifiziertes Ereignis; setWaiting zaehlt atomar", () => {
+  let { data, now, date } = tagAufbauen(migriert());
+  const beleg = { evidenceId: "ev_bank", kind: "mail", ref: "rfc822:<abc@bank.example>", sourceType: "chatgptLead", sourceId: "l1", origin: { adapter: "gmail", ref: "msg_18f" }, observedAt: new Date(now - 5 * MIN).toISOString(), fingerprint: "sha256-0123456789abcdef" };
+  data = mussOk(run(data, "registerEvidence", beleg, now, ADAPTER), "beleg");
+  const warte = (d, i, extra = {}) => mussOk(run(d, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: ver(d, "chatgptLead", "l1"), state: "waiting_external", counterparty: "Bank Muster AG", nextAction: "nachfragen (v" + i + ")", followUpAt: new Date(now + (i + 1) * 24 * STD).toISOString(), evidence: { kind: "evidence", evidenceId: "ev_bank" }, ...extra }, now + i * MIN), "wait " + i);
+  data = warte(data, 0);
+  assert.equal(data.automation.progressById["chatgptLead:l1"].deferrals, 0);
+  // Drei Verschiebungen — ATOMAR in setWaiting, ohne observeSource — dazwischen Freitext-, Kommentar-, Titel-, Retry-Aenderungen.
+  const fummel = (d, i) => { const k = K.klon(d); const l = k.entities.chatgptLeads.l1; l.execution = "Version " + i + " des Textes"; l.interpretation += " (neu)"; l.research += " (mehr)"; l.plan += " (anders)"; l.result += " (ergaenzt)"; l.title = "Umbenannt " + i; l.comments.push({ id: "k" + i, text: "dran" }); l.retryCount = i; l.updatedAt = new Date(now + i * MIN).toISOString(); return k; };
+  for (let i = 1; i <= 3; i++) { data = fummel(data, i); data = warte(data, i, { counterparty: i === 2 ? "Bank Muster AG, Filiale Sued" : "Bank Muster AG" }); }
+  assert.equal(data.automation.progressById["chatgptLead:l1"].deferrals, 3);
+  let ev = ampel(data, date, now + 4 * MIN);
+  assert.equal(ev.coverage, "red"); assert.ok(hatCode(ev, "DEFERRAL_LIMIT", "l1"));
+  // observeSource nach weiterem Freitext: bleibt 3; Statusrundreise (doing → wieder warten) ebenfalls.
+  data = fummel(data, 4);
+  let o = run(data, "observeSource", { sourceType: "chatgptLead", sourceId: "l1" }, now + 5 * MIN);
+  assert.equal(o.ok, true); assert.equal(o.data.automation.progressById["chatgptLead:l1"].deferrals, 3); data = o.data;
+  data = mussOk(run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: ver(data, "chatgptLead", "l1"), reason: "kurz selbst" }, now + 6 * MIN), "doing");
+  data = warte(data, 6);
+  assert.equal(data.automation.progressById["chatgptLead:l1"].deferrals, 4, "die Statusrundreise hat den Zaehler nicht zurueckgesetzt");
+  // Der schon vorhandene Beleg ist kein neuer Fortschritt; ein zweiter Beleg desselben Inhalts unter neuer Id ist immutable-gleich, aber eine NEUE, vom Adapter registrierte Beobachtung setzt zurueck.
+  o = run(data, "observeSource", { sourceType: "chatgptLead", sourceId: "l1" }, now + 7 * MIN);
+  assert.equal(o.ok, true); assert.equal(o.noop, true, "der schon vorhandene Beleg ist kein neuer Fortschritt");
+  data = mussOk(run(data, "registerEvidence", { ...beleg, evidenceId: "ev_bank_antwort", ref: "rfc822:<reply@bank.example>", fingerprint: "sha256-fedcba9876543210", observedAt: new Date(now + 7 * MIN).toISOString() }, now + 8 * MIN, ADAPTER), "antwort");
+  o = run(data, "observeSource", { sourceType: "chatgptLead", sourceId: "l1" }, now + 9 * MIN);
+  assert.equal(o.event, "progress"); assert.equal(o.data.automation.progressById["chatgptLead:l1"].deferrals, 0);
+  assert.equal(data.entities.chatgptLeads.l1.deferrals, undefined, "der Zaehler lebt nur im Kern");
+  // Aufgabe: dueDate dreimal nach hinten (Client), Titel/Kommentar/Assignee dazwischen → rot; Workflow-Text zaehlt NICHT als Fortschritt, eine konsumierte Nutzerantwort schon.
+  data = mussOk(run(data, "observeSource", { sourceType: "task", sourceId: "t2" }, now), "t2 obs0");
+  const schiebe = (d, tag, i) => { const k = K.klon(d); const t = k.entities.tasks.t2; t.dueDate = tag; t.title = "Spaeter " + i; t.comments.push({ id: "c" + i }); t.assignee = "Anna" + i; t.workflow = [{ id: "w" + i, done: true }]; return k; };
+  let i = 0; for (const tag of ["2026-11-05", "2026-11-12", "2026-11-20"]) { data = schiebe(data, tag, ++i); data = mussOk(run(data, "observeSource", { sourceType: "task", sourceId: "t2" }, now + i * STD), "t2 obs" + i); }
   assert.equal(data.automation.progressById["task:t2"].deferrals, 3);
-  let ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + 3 * STD, POLICY);
-  assert.equal(ev.coverage, "red");
-  assert.ok(hatCode(ev, "DEFERRAL_LIMIT", "t2"));
-  // Der Zaehler lebt nur im Kern: am Element steht nichts davon.
-  assert.equal(data.entities.tasks.t2.deferrals, undefined);
-  // Echter Fortschritt (ein Workflow-Schritt erledigt) setzt zurueck.
-  const fortschritt = K.klon(data);
-  fortschritt.entities.tasks.t2.workflow = [{ id: "w1", text: "Angebot einholen", done: true }];
-  data = mussOk(run(fortschritt, "observeSource", { sourceType: "task", sourceId: "t2" }, now + 4 * STD), "obs4");
-  assert.equal(data.automation.progressById["task:t2"].deferrals, 0);
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + 4 * STD, POLICY);
-  assert.ok(!hatCode(ev, "DEFERRAL_LIMIT", "t2"));
-  // Dasselbe fuer ein Warten, dessen followUpAt dreimal wandert.
-  const d0 = allesErledigen(bestand(), NOW);
-  d0.entities.chatgptLeads.l1.status = "in_arbeit";
-  let s = tagAufbauen(migriert(d0));
-  let w = { sourceType: "chatgptLead", sourceId: "l1", state: "waiting_external", counterparty: "Amt", nextAction: "nachfragen", followUpAt: new Date(s.now + 24 * STD).toISOString(), evidence: { kind: "mail", ref: "m1" } };
-  let dd = mussOk(run(s.data, "setWaiting", w, s.now), "w0");
-  dd = mussOk(run(dd, "observeSource", { sourceType: "chatgptLead", sourceId: "l1" }, s.now), "o0");
-  for (let i = 1; i <= 3; i++) {
-    dd = mussOk(run(dd, "setWaiting", { ...w, followUpAt: new Date(s.now + (24 + i * 24) * STD).toISOString(), nextAction: "nachfragen (v" + i + ")" }, s.now + i * MIN), "w" + i);
-    dd = mussOk(run(dd, "observeSource", { sourceType: "chatgptLead", sourceId: "l1" }, s.now + i * MIN), "o" + i);
-  }
-  assert.equal(dd.automation.progressById["chatgptLead:l1"].deferrals, 3);
-  ev = K.dailyAssistantTrafficLight(dd.dailyBriefing.assistantRuns[s.date], dd, s.now + 4 * MIN, POLICY);
-  assert.ok(hatCode(ev, "DEFERRAL_LIMIT", "l1"));
+  assert.ok(hatCode(ampel(data, date, now + 3 * STD), "DEFERRAL_LIMIT", "t2"));
+  data = mussOk(run(data, "askQuestion", { questionId: "q_t2", sourceType: "task", sourceId: "t2", text: "Bleibt der Termin?" }, now + 3 * STD), "q");
+  data = mussOk(run(data, "recordAnswer", { answerId: "a_t2", questionId: "q_t2", text: "Ja, 20.11." }, now + 3 * STD + MIN, USER), "a");
+  data = mussOk(run(data, "consumeAnswer", { answerId: "a_t2", consumer: "run" }, now + 3 * STD + 2 * MIN), "consume");
+  o = run(data, "observeSource", { sourceType: "task", sourceId: "t2" }, now + 4 * STD);
+  assert.equal(o.event, "progress"); assert.equal(o.data.automation.progressById["task:t2"].deferrals, 0);
 });
 
-/* ══ T: Agenten-Statusbehauptung zaehlt nicht ════════════════════════════ */
-test("eine Behauptung des Agenten (overallGreen, operationalState:done) aendert das Urteil nicht", () => {
-  const d0 = allesErledigen(bestand(), NOW);
-  d0.entities.chatgptLeads.l1.status = "in_arbeit";
-  let { data, now, date } = tagAufbauen(migriert(d0));
+/* ══ T16: Agentenbehauptung, Schutzfelder ════════════════════════════════ */
+test("eine Behauptung des Agenten (overallGreen, operationalState:done, Schutzfelder) aendert das Urteil nicht", () => {
+  const { data, now, date } = tagAufbauen(migriert());
   const runObj = K.klon(data.dailyBriefing.assistantRuns[date]);
-  runObj.overallGreen = true;
-  runObj.agentReport = { coverage: "green", operations: "green" };
-  runObj.userApproval = true;
+  runObj.overallGreen = true; runObj.agentReport = { coverage: "green" }; runObj.userApproval = true;
   let ev = K.dailyAssistantTrafficLight(runObj, data, now, POLICY);
+  assert.notEqual(ev.coverage, "green"); assert.ok(hatCode(ev, "ITEM_OPEN", "l1")); assert.ok(hatCode(ev, "AGENT_CLAIM_IGNORED"));
+  // Direkt hingeschriebenes done am Element ohne Kommando (kein Abschlussbeleg in der Herkunft) → unbelegte Behauptung, rot; ohne Version zusaetzlich STATE_VERSION_INVALID.
+  const beh = K.klon(data); beh.entities.chatgptLeads.l1.operationalState = "done"; delete beh.entities.chatgptLeads.l1.operationalStateVersion;
+  ev = ampel(beh, date, now);
   assert.equal(ev.coverage, "red");
-  assert.ok(hatCode(ev, "ITEM_OPEN", "l1"));
-  assert.ok(hatCode(ev, "AGENT_CLAIM_IGNORED"));
-  // Direkt am Element hingeschriebenes done ohne Altstatus-Abschluss: Behauptung, rot.
-  const beh = K.klon(data);
-  beh.entities.chatgptLeads.l1.operationalState = "done";
-  beh.entities.chatgptLeads.l1.operationalStateSource = { legacyField: "status", legacyValue: "in_arbeit", mappedAt: "x" };
-  ev = K.dailyAssistantTrafficLight(beh.dailyBriefing.assistantRuns[date], beh, now, POLICY);
-  assert.equal(ev.coverage, "red");
-  assert.ok(hatCode(ev, "STATE_CLAIM_INCONSISTENT", "l1"));
-  assert.ok(hatCode(ev, "ITEM_OPEN", "l1"));
-  // Ueber ein Kommando: done verlangt den Altstatus-Abschluss.
-  const r = run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done" }, now);
-  assert.equal(r.error, "DONE_REQUIRES_LEGACY_CLOSE");
-  // Schutzfelder kommen durch kein Kommando hinein — auch nicht verschachtelt.
+  assert.ok(hatCode(ev, "STATE_VERSION_INVALID", "l1")); assert.ok(hatCode(ev, "STATE_CLAIM_UNPROVEN", "l1"));
+  const beh2 = K.klon(data); beh2.entities.chatgptLeads.l1.operationalState = "done"; beh2.entities.chatgptLeads.l1.operationalStateVersion = 2; beh2.entities.chatgptLeads.l1.operationalStateSource.changedAt = new Date(now).toISOString();
+  assert.ok(hatCode(ampel(beh2, date, now), "STATE_CLAIM_UNPROVEN", "l1"));
+  assert.ok(!hatCode(ampel(data, date, now), "STATE_CLAIM_UNPROVEN", "l2"), "ein in der Migration abgeschlossener Lead ist belegt");
   for (const [type, payload] of [
     ["recordSlotReceipt", { date, slot: "close23", receiptId: "r", finalAt: "2026-09-19T21:00:00Z" }],
     ["addItemRef", { date, sourceType: "chatgptLead", sourceId: "l1", overallGreen: true }],
-    ["setWaiting", { sourceType: "chatgptLead", sourceId: "l1", state: "waiting_external", counterparty: "x", nextAction: "y", followUpAt: "2026-09-20T10:00:00Z", evidence: { kind: "mail", ref: "m", userApproval: true } }],
+    ["setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "waiting_external", counterparty: "x", nextAction: "y", followUpAt: "2026-09-20T10:00:00Z", evidence: { kind: "evidence", evidenceId: "e", userApproval: true } }],
     ["askQuestion", { questionId: "q_x", sourceType: "chatgptLead", sourceId: "l1", text: "?", phase: "final" }],
+    ["transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 1, operationalStateVersion: 5 }],
+    ["closeRun", { date, finalNoteId: "n", closureOutcomes: {} }],
+    ["registerIntake", { intakeId: "i", text: "x", channel: "m", idempotencyByKey: {} }],
   ]) {
-    const x = run(data, type, payload, now);
-    assert.equal(x.ok, false, type);
+    const x = run(data, type, payload, now, type === "registerIntake" ? USER : AGENT);
     assert.equal(x.error, "COMMAND_REJECTED", type);
     assert.ok(x.detail.some((e) => e.startsWith("PAYLOAD_PROTECTED:") || e.startsWith("PAYLOAD_UNKNOWN:")), type + ": " + x.detail);
   }
-  assert.equal(run(data, "closeRun", { date, finalNoteId: "n", phase: "final" }, now).error, "COMMAND_REJECTED");
   assert.equal(run(data, "nichtVorhanden", { date }, now).error, "COMMAND_REJECTED");
-  assert.equal(K.applyCommand(data, { type: "ensureRun", commandId: "kurz", now, payload: { date } }, { policy: POLICY }).error, "COMMAND_REJECTED");
+  assert.equal(K.applyCommand(data, { type: "ensureRun", commandId: "mit leerzeichen", now, payload: { date } }, { policy: POLICY, actor: AGENT }).error, "COMMAND_REJECTED");
+  assert.equal(run(data, "recordAnswer", { answerId: "a", questionId: "q", text: "x" }, now, AGENT).error, "ACTOR_REJECTED", "der Agent schreibt keine Nutzerantwort");
+  assert.equal(run(data, "recordJobReturn", { jobId: "j", outcome: "returned" }, now, AGENT).error, "ACTOR_REJECTED");
+  assert.equal(run(data, "registerDocument", { documentId: "d", attachmentId: "x", name: "n", hash: H64, mime: "a/b", size: 1, origin: {}, linkedTo: {} }, now, AGENT).error, "ACTOR_REJECTED");
 });
 
-/* ══ T: Abschluss atomar, idempotent, mit echter Notiz und 09/23 ═════════ */
-test("Abschluss: erst ab 23:00 Zuerich, nur mit Quittungen 09 und 23, nur gruen — atomar mit genau einer Finalnotiz, Wiederholung idempotent", () => {
-  const date = "2026-09-19";
-  // Vor 23:00: zu frueh, auch wenn alles andere stimmt.
-  let s = tagAufbauen(migriert(allesErledigen(bestand(), NOW)), { bis: "22:30" });
-  let r = run(s.data, "closeRun", { date, finalNoteId: "note_final_1" }, s.now);
-  assert.equal(r.ok, false);
-  assert.equal(r.error, "CLOSURE_BLOCKED");
-  assert.ok(r.detail.some((b) => b.code === "CLOSURE_TOO_EARLY"));
-  assert.ok(r.detail.some((b) => b.code === "RECEIPT_MISSING" && b.detail === "close23"));
-  assert.equal(s.data.entities.notes.note_final_1, undefined, "kein Teil-Effekt bei Ablehnung");
-  assert.equal(s.data.dailyBriefing.assistantRuns[date].phase, "active");
-
-  // Ab 23:05, aber ohne Quittung 09 → blockiert und nichts geschrieben.
-  s = tagAufbauen(migriert(allesErledigen(bestand(), NOW)));
-  const ohne09 = K.klon(s.data);
-  ohne09.dailyBriefing.assistantRuns[date].slotReceipts.process09 = null;
-  r = run(ohne09, "closeRun", { date, finalNoteId: "note_final_1" }, s.now);
-  assert.equal(r.error, "CLOSURE_BLOCKED");
-  assert.ok(r.detail.some((b) => b.code === "RECEIPT_MISSING" && b.detail === "process09"));
-  assert.ok(r.detail.some((b) => b.code === "OPERATIONS_NOT_GREEN"));
-
-  // Ein offener Lead → Abschluss blockiert, mit Quell-Id im Befund.
-  const offen = K.klon(s.data);
-  offen.entities.chatgptLeads.l1.status = "in_arbeit"; offen.entities.chatgptLeads.l1.closedAt = null;
-  r = run(offen, "closeRun", { date, finalNoteId: "note_final_1" }, s.now);
-  assert.equal(r.error, "CLOSURE_BLOCKED");
-  const cov = r.detail.find((b) => b.code === "COVERAGE_NOT_GREEN");
-  assert.ok(cov && cov.detail.some((x) => x.sourceId === "l1"));
-
-  // Quelle 20 Minuten alt → blockiert.
-  r = run(s.data, "closeRun", { date, finalNoteId: "note_final_1" }, s.now + 20 * MIN);
-  assert.equal(r.error, "CLOSURE_BLOCKED");
-  assert.ok(r.detail.find((b) => b.code === "OPERATIONS_NOT_GREEN").detail.some((x) => x.code === "SOURCE_STALE"));
-
-  // Alles erfuellt → Abschluss. Atomar: phase, finalAt, closureRevision, closureCutoff, finalNoteId, Notiz.
-  // Der Tag wurde mit OFFENEN Elementen aufgebaut (Verweise im Lauf) und dann ueber die Oberflaeche erledigt.
-  s = tagAufbauen(migriert(bestand()));
-  s.data = allesErledigen(s.data, s.now - MIN);
-  const revVorher = s.data.automation.dataRevision;
-  r = run(s.data, "closeRun", { date, finalNoteId: "note_final_1" }, s.now);
-  const d1 = mussOk(r, "closeRun");
-  const runF = d1.dailyBriefing.assistantRuns[date];
-  assert.equal(runF.phase, "final");
-  assert.equal(runF.finalAt, new Date(s.now).toISOString());
-  assert.equal(runF.closureCutoff, runF.finalAt);
-  assert.equal(runF.closureRevision, revVorher + 1);
-  assert.equal(runF.finalNoteId, "note_final_1");
-  assert.equal(runF.startNoteId, "note_start_" + date);
-  const note = d1.entities.notes.note_final_1;
-  assert.ok(note && note.title.includes("Abschluss") && note.content.includes("chatgptLead:l1 → done"));
-  assert.deepEqual(note.assistantNote, { kind: "assistantFinal", runDate: date });
-  assert.equal(Object.values(d1.entities.notes).filter((n) => n.assistantNote?.kind === "assistantFinal").length, 1);
-  assert.equal(Object.values(d1.entities.notes).filter((n) => n.assistantNote?.kind === "assistantStart").length, 1);
-  assert.equal(s.data.dailyBriefing.assistantRuns[date].phase, "active", "die Eingabe darf nicht mutiert werden");
-
-  // Wiederholung — anderer Zeitpunkt, andere Notiz-Id, andere commandId: idempotent, keine zweite Notiz.
-  const r2 = run(d1, "closeRun", { date, finalNoteId: "note_final_2" }, s.now + 5 * MIN);
-  assert.equal(r2.ok, true);
-  assert.equal(r2.already, true);
-  assert.equal(r2.finalNoteId, "note_final_1");
-  assert.equal(JSON.stringify(r2.data), JSON.stringify(d1));
-  assert.equal(r2.data.entities.notes.note_final_2, undefined);
-  // Ein fachlicher No-op hinterlaesst keine Spur (auch keinen Idempotenz-Eintrag) …
-  assert.equal(r2.noop, true);
-  assert.equal(Object.keys(r2.data.automation.idempotencyByKey).length, Object.keys(d1.automation.idempotencyByKey).length);
-  // … und eine schreibende commandId ein zweites Mal ist Wiedergabe, kein zweites Schreiben.
-  const c = cmd("registerIntake", { intakeId: "in_replay", text: "spaet", channel: "mobile" }, s.now);
-  const a1 = K.applyCommand(r2.data, c, { policy: POLICY });
-  const a2 = K.applyCommand(a1.data, c, { policy: POLICY });
-  assert.equal(a1.replayed, false); assert.equal(a2.replayed, true);
-  assert.equal(JSON.stringify(a2.data), JSON.stringify(a1.data));
-  assert.equal(K.applyCommand(a1.data, { ...c, type: "acquireLease", payload: { holder: "x", ttlMs: 60000 } }, { policy: POLICY }).error, "COMMAND_ID_REUSED");
-  // Startnotiz: eine pro Tag, auch bei anderer Id.
-  const st = run(d1, "ensureStartNote", { date, noteId: "note_start_zwei" }, s.now);
-  assert.equal(st.ok, true); assert.equal(st.created, false); assert.equal(st.noteId, "note_start_" + date);
-  assert.equal(st.data.entities.notes.note_start_zwei, undefined);
-  // Nach 04:00 des Folgetages ist der Tag vorbei.
-  const s2 = tagAufbauen(migriert(allesErledigen(bestand(), NOW)));
-  r = run(s2.data, "closeRun", { date, finalNoteId: "n" }, K.tagesEndeMs(date) + MIN);
-  assert.ok(r.detail.some((b) => b.code === "CLOSURE_DAY_OVER"));
+/* ══ R11: keine eigene Idempotenz, genau eine Revision, Umschlag-Adapter ══ */
+test("R11: der Domain-Dispatcher fuehrt keinen Ledger; Revision genau einmal (auch carryOverRefs); commandReducer passt zum Umschlag", async () => {
+  let { data, now, date } = tagAufbauen(migriert());
+  // Kein idempotencyByKey-Eintrag durch den Kern, kein stilles Replay bei gleichem commandId + anderem Inhalt.
+  const c = cmd("registerIntake", { intakeId: "in_a", text: "A", channel: "mobile" }, now);
+  const a1 = K.applyCommand(data, c, { policy: POLICY, actor: USER });
+  assert.deepEqual(a1.data.automation.idempotencyByKey, {});
+  const a2 = K.applyCommand(a1.data, { ...c, payload: { intakeId: "in_b", text: "B", channel: "mobile" } }, { policy: POLICY, actor: USER });
+  assert.equal(a2.ok, true); assert.equal(a2.replayed, undefined);
+  assert.ok(a2.data.automation.intakeById.in_b, "gleiche commandId mit anderem Inhalt wurde still als Replay behandelt");
+  assert.deepEqual(a2.data.automation.idempotencyByKey, {});
+  // Genau eine Revision je aeusserer Aktion — carryOverRefs ueber mehrere Elemente.
+  let d = mussOk(run(data, "ensureRun", { date: "2026-09-20" }, K.slotBeginnMs("2026-09-20", "briefing04")), "run2");
+  const rev = d.automation.dataRevision;
+  const co = run(d, "carryOverRefs", { fromDate: date, toDate: "2026-09-20" }, K.slotBeginnMs("2026-09-20", "briefing04"));
+  assert.equal(co.ok, true); assert.equal(co.carried.length, 4, "l1, c1, t1, t2 — alle offen im Vortag");
+  assert.equal(co.data.automation.dataRevision, rev + 1);
+  // No-op-Aktionen erhoehen nichts und geben die Eingabe zurueck.
+  const noop = run(co.data, "carryOverRefs", { fromDate: date, toDate: "2026-09-20" }, now);
+  assert.equal(noop.noop, true); assert.equal(noop.data, co.data);
+  // Ein fremder Ledger-Eintrag und eine fremde Lease bleiben byteidentisch, was auch immer der Kern tut.
+  const mitLedger = K.klon(co.data);
+  mitLedger.automation.idempotencyByKey.abc = { schemaVersion: 3, state: "committed", requestHash: "h" };
+  mitLedger.automation.activeLease = { holder: "e1-runner", fence: 7, expiresAt: "2026-09-19T21:10:00.000Z" };
+  const r3 = mussOk(run(mitLedger, "registerIntake", { intakeId: "in_c", text: "C", channel: "mobile" }, now, USER), "intake");
+  assert.deepEqual(r3.automation.idempotencyByKey, mitLedger.automation.idempotencyByKey);
+  assert.deepEqual(r3.automation.activeLease, mitLedger.automation.activeLease);
+  // Der Adapter fuer applyIdempotentCommand: synchron, {data,result}, Fehler mit code, Revision +1.
+  const reducer = K.commandReducer({ policy: POLICY, actor: USER });
+  const prepared = { requestId: "req_1", now: new Date(now).toISOString() };
+  const out = reducer(K.klon(co.data), { type: "registerIntake", payload: { intakeId: "in_d", text: "D", channel: "mobile" } }, prepared);
+  assert.ok(out.data && out.result && !("data" in out.result) && !("ok" in out.result) && !("dataRevision" in out.result) && !("replayed" in out.result));
+  assert.equal(out.data.automation.dataRevision, co.data.automation.dataRevision + 1);
+  assert.equal(out.result.entry.id, "in_d");
+  assert.throws(() => reducer(K.klon(co.data), { type: "registerIntake", payload: { intakeId: "in_d", text: "" , channel: "m" } }, prepared), (e) => e.code === "INTAKE_TEXT_MISSING" && e.status === 400);
+  // Zusammensetzen mit dem echten Umschlag, sofern er im Arbeitsbaum liegt (codex-Branch); sonst nur der Adapter.
+  try {
+    const U = await import("../netlify/lib/quantus-v3-idempotency.mjs");
+    const p = U.prepareIdempotentCommand({ tenantId: "laurin", principalId: "user:laurin", key: "k1", requestId: "req_2", now: new Date(now).toISOString(), command: { type: "registerIntake", payload: { intakeId: "in_e", text: "E", channel: "mobile" } } });
+    const r1 = U.applyIdempotentCommand(co.data, p, reducer);
+    assert.equal(r1.result.ok, true); assert.equal(r1.data.automation.intakeById.in_e.text, "E");
+    const r2 = U.applyIdempotentCommand(r1.data, p, reducer);
+    assert.equal(r2.unchanged, true); assert.equal(r2.result.replayed, true);
+  } catch (e) { if (e.code !== "ERR_MODULE_NOT_FOUND") throw e; }
+  // Lease-Kommandos gibt es im Kern nicht mehr (Paket E1).
+  assert.equal(K.COMMAND_SCHEMAS.acquireLease, undefined); assert.equal(K.COMMAND_SCHEMAS.releaseLease, undefined);
+  assert.equal(run(data, "acquireLease", { holder: "x", ttlMs: 1000 }, now).error, "COMMAND_REJECTED");
 });
 
-/* ══ T: Folgeinvalidierung, unveraenderliche Historie ═══════════════════ */
-test("ein Widerspruch nach dem Abschluss invalidiert append-only; die Finalnotiz bleibt byteidentisch; neuer Eingang geht in den naechsten Lauf", () => {
-  const date = "2026-09-19";
-  const s = tagAufbauen(migriert(bestand()));
-  s.data = allesErledigen(s.data, s.now - MIN);
-  const d1 = mussOk(run(s.data, "closeRun", { date, finalNoteId: "note_final_1" }, s.now), "closeRun");
-  const finalnotizVorher = JSON.stringify(d1.entities.notes.note_final_1);
-  const t1 = s.now + 10 * MIN;
-
-  // Neuer Eingang NACH dem Abschluss: kein Widerspruch, gehoert in den naechsten Lauf.
-  let d2 = mussOk(run(d1, "registerIntake", { intakeId: "in_neu", text: "Neue Idee vom Handy", channel: "mobile" }, t1), "intake");
-  let w = K.pruefeWiderspruch(d2, { date }, { now: t1 });
-  assert.equal(w.contradictions.length, 0);
-  assert.deepEqual(w.newIntake, [{ sourceType: "intake", sourceId: "in_neu" }]);
-  assert.equal(w.nextRunDate, "2026-09-20");
-  let inv = run(d2, "invalidateClosure", { date, correctionId: "note_korr_1", reason: "neuer Eingang", contradiction: { sourceType: "intake", sourceId: "in_neu" } }, t1);
-  assert.equal(inv.error, "NOT_A_CONTRADICTION");
-  assert.equal(inv.detail.nextRunDate, "2026-09-20");
-  assert.equal(d2.dailyBriefing.assistantRuns[date].phase, "final");
-
-  // Echter Widerspruch: ein bei Abschluss als done gezaehlter Lead wird wieder geoeffnet.
-  d2 = K.klon(d2);
-  d2.entities.chatgptLeads.l1.status = "in_arbeit"; d2.entities.chatgptLeads.l1.closedAt = null; d2.entities.chatgptLeads.l1.updatedAt = new Date(t1).toISOString();
-  w = K.pruefeWiderspruch(d2, { date }, { now: t1 });
-  assert.deepEqual(w.contradictions, [{ sourceType: "chatgptLead", sourceId: "l1", was: "done", now: "doing" }]);
-  inv = run(d2, "invalidateClosure", { date, correctionId: "note_korr_1", reason: "Lead l1 wieder offen", contradiction: { sourceType: "chatgptLead", sourceId: "l1" } }, t1);
-  const d3 = mussOk(inv, "invalidateClosure");
-  const runI = d3.dailyBriefing.assistantRuns[date];
-  assert.equal(runI.phase, "exception_open");
-  assert.equal(runI.invalidatedAt, new Date(t1).toISOString());
-  assert.equal(runI.finalNoteId, "note_final_1", "die Referenz auf die historische Finalnotiz bleibt");
-  assert.equal(runI.finalAt, d1.dailyBriefing.assistantRuns[date].finalAt);
-  assert.equal(runI.closureRevision, d1.dailyBriefing.assistantRuns[date].closureRevision);
-  assert.equal(JSON.stringify(d3.entities.notes.note_final_1), finalnotizVorher, "die historische Finalnotiz wurde veraendert");
-  assert.equal(runI.corrections.length, 1);
-  assert.equal(runI.corrections[0].invalidatedFinalNoteId, "note_final_1");
-  assert.ok(d3.entities.notes.note_korr_1 && d3.entities.notes.note_korr_1.assistantNote.kind === "assistantCorrection");
-  // Wiederholung derselben Korrektur: No-op.
-  const inv2 = run(d3, "invalidateClosure", { date, correctionId: "note_korr_1", reason: "nochmal", contradiction: { sourceType: "chatgptLead", sourceId: "l1" } }, t1 + MIN);
-  assert.equal(inv2.error, "RUN_NOT_FINAL");
-  assert.equal(inv2.data.dailyBriefing.assistantRuns[date].corrections.length, 1);
-  // Ampel: exception_open ist rot, ein erneuter Abschluss ist nicht moeglich.
-  const ev = K.dailyAssistantTrafficLight(runI, d3, t1, POLICY);
-  assert.ok(hatCode(ev, "RUN_EXCEPTION_OPEN"));
-  assert.equal(run(d3, "closeRun", { date, finalNoteId: "note_final_3" }, t1).error, "RUN_EXCEPTION_OPEN");
+/* ══ R6 / T32: Jobs ══════════════════════════════════════════════════════ */
+test("R6: cancelled → returned wird abgewiesen; Ruecklauf aendert den Lead nicht; erst geprueftes Review setzt review; stale Ergebnis nicht annehmbar; Outbox atomar, kein Versand", () => {
+  let { data, now, date } = tagAufbauen(migriert());
+  const jobP = { jobId: "job1", kind: "recherche", purpose: "Firmenregister pruefen", sourceType: "chatgptLead", sourceId: "l1", inputVersion: 1, executor: "gemini", contextRefs: [{ sourceType: "chatgptLead", sourceId: "l1" }], expiresAt: new Date(now + 4 * STD).toISOString() };
+  assert.equal(run(data, "createJob", { ...jobP, inputVersion: 2 }, now).error, "VERSION_MISMATCH");
+  assert.equal(run(data, "createJob", { ...jobP, contextRefs: [{ sourceType: "chatgptLead", sourceId: "gibtsnicht" }] }, now).error, "JOB_CONTEXT_REF_NOT_FOUND");
+  assert.equal(run(data, "createJob", { ...jobP, expiresAt: new Date(now - MIN).toISOString() }, now).error, "JOB_EXPIRES_INVALID");
+  assert.equal(run(data, "createJob", { ...jobP, purpose: " " }, now).error, "JOB_PURPOSE_MISSING");
+  assert.equal(run(data, "createJob", { ...jobP, executor: "cowork" }, now).error, "EXECUTOR_UNKNOWN");
+  const revVor = data.automation.dataRevision;
+  data = mussOk(run(data, "createJob", jobP, now), "job");
+  assert.equal(data.automation.dataRevision, revVor + 1, "Job + Outbox in einer Revision");
+  assert.deepEqual(Object.keys(data.automation.outboxById), ["job:job1"]);
+  assert.equal(data.automation.outboxById["job:job1"].mode, "dry_run"); assert.equal(data.automation.outboxById["job:job1"].dispatchedAt, null);
+  assert.equal(data.automation.jobsById.job1.inputVersion, 1); assert.equal(data.automation.jobsById.job1.mode, "dry_run");
+  // Abgebrochen → Ruecklauf abgewiesen, Lead unveraendert.
+  const abgebrochen = mussOk(run(data, "cancelJob", { jobId: "job1", reason: "ersetzt" }, now + MIN), "cancel");
+  assert.equal(abgebrochen.automation.outboxById["job:job1"].state, "cancelled");
+  const rr = run(abgebrochen, "recordJobReturn", { jobId: "job1", outcome: "returned", resultRef: "notes/x", resultHash: H64 }, now + 2 * MIN, WORKER);
+  assert.equal(rr.error, "JOB_NOT_ACTIVE");
+  assert.equal(abgebrochen.entities.chatgptLeads.l1.operationalState, "doing");
+  // Abgelaufen → abgewiesen; Ampel zeigt JOB_EXPIRED.
+  assert.equal(run(data, "recordJobReturn", { jobId: "job1", outcome: "returned", resultRef: "notes/x", resultHash: H64 }, now + 5 * STD, WORKER).error, "JOB_EXPIRED");
+  assert.ok(hatCode(ampel(data, date, now + 5 * STD), "JOB_EXPIRED", "job1"));
+  // Warten mit Job-Beleg (delegated), Gegenpartei muss der Executor sein.
+  let r = run(data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "delegated", counterparty: "claude", nextAction: "Rueckgabe pruefen", followUpAt: new Date(now + 3 * STD).toISOString(), evidence: { kind: "job", jobId: "job1" } }, now);
+  assert.ok(r.detail.includes("WAIT_DELEGATED_COUNTERPARTY_MISMATCH"));
+  data = mussOk(run(data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "delegated", counterparty: "gemini", nextAction: "Rueckgabe pruefen", followUpAt: new Date(now + 3 * STD).toISOString(), evidence: { kind: "job", jobId: "job1" } }, now), "delegated");
+  assert.equal(ampel(data, date, now).reasons.find((x) => x.code === "JOB_PENDING").severity, "yellow");
+  // Ruecklauf: nur Worker, mit Ergebnis-Hash; der Lead bleibt delegated, die Karte bleibt; Ampel verlangt Pruefung.
+  assert.equal(run(data, "recordJobReturn", { jobId: "job1", outcome: "returned", resultRef: "notes/x" }, now + STD, WORKER).error, "JOB_RESULT_HASH_INVALID");
+  data = mussOk(run(data, "recordJobReturn", { jobId: "job1", outcome: "returned", resultRef: "notes/x", resultHash: H64 }, now + STD, WORKER), "return");
+  assert.equal(data.entities.chatgptLeads.l1.operationalState, "delegated", "der Ruecklauf hat den Lead veraendert");
+  assert.equal(data.entities.chatgptLeads.l1.operationalStateVersion, 2);
+  assert.equal(data.automation.jobsById.job1.result.stale, false);
+  let ev = ampel(data, date, now + STD);
+  assert.ok(hatCode(ev, "JOB_RETURN_UNREVIEWED", "job1"));
+  assert.equal(run(data, "recordJobReturn", { jobId: "job1", outcome: "returned", resultRef: "notes/y", resultHash: H64 }, now + STD, WORKER).error, "JOB_ALREADY_FINISHED");
+  // Lead-Abschluss setzt reviewedAt NICHT automatisch: done ist blockiert, solange die Rueckgabe ungeprueft ist.
+  const beleg = mussOk(run(data, "registerEvidence", { evidenceId: "ev_l1", kind: "message", ref: "m", sourceType: "chatgptLead", sourceId: "l1", origin: { adapter: "x", ref: "y" }, observedAt: new Date(now).toISOString(), fingerprint: "0123456789abcdef0123" }, now + STD, ADAPTER), "ev");
+  assert.equal(run(beleg, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "review", expectedVersion: 2 }, now + STD).ok, true);
+  assert.equal(run(mussOk(run(beleg, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "review", expectedVersion: 2 }, now + STD), "rev"), "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 3, evidence: { kind: "evidence", evidenceId: "ev_l1" } }, now + STD).error, "JOB_RETURN_UNREVIEWED");
+  // Geprueftes Review (Agent oder Nutzer) → Lead auf review, Job-Ergebnis wird Fortschrittsereignis.
+  data = mussOk(run(data, "reviewJobResult", { jobId: "job1", verdict: "accepted", reviewer: "laurin" }, now + 2 * STD, USER), "review");
+  assert.equal(data.entities.chatgptLeads.l1.operationalState, "review");
+  assert.equal(data.automation.jobsById.job1.review.verdict, "accepted");
+  assert.equal(data.automation.waitingById["chatgptLead:l1"], undefined);
+  assert.ok(K.verifizierteEreignisse(data, "chatgptLead", "l1").includes("job:job1"));
+  assert.equal(run(data, "reviewJobResult", { jobId: "job1", verdict: "rejected", reviewer: "x" }, now, USER).error, "JOB_ALREADY_REVIEWED");
+  // Stale: Eingangsversion aelter als das Element bei Rueckgabe → nicht annehmbar.
+  let s2 = mussOk(run(data, "createJob", { ...jobP, jobId: "job2", inputVersion: 3 }, now + 2 * STD), "job2");
+  s2 = mussOk(run(s2, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: 3, reason: "weiter" }, now + 2 * STD), "doing");
+  s2 = mussOk(run(s2, "recordJobReturn", { jobId: "job2", outcome: "returned", resultRef: "notes/z", resultHash: H64 }, now + 3 * STD, WORKER), "return2");
+  assert.equal(s2.automation.jobsById.job2.result.stale, true);
+  assert.equal(run(s2, "reviewJobResult", { jobId: "job2", verdict: "accepted", reviewer: "x" }, now + 3 * STD).error, "JOB_RESULT_NOT_ACCEPTABLE");
+  s2 = mussOk(run(s2, "reviewJobResult", { jobId: "job2", verdict: "rejected", reviewer: "x", note: "stale" }, now + 3 * STD), "reject");
+  assert.equal(s2.entities.chatgptLeads.l1.operationalState, "doing");
+  // Fehlgeschlagen sichtbar; cancelJob eines delegierten Wartens holt das Element zurueck nach doing.
+  const f = mussOk(run(mussOk(run(s2, "createJob", { ...jobP, jobId: "job3", inputVersion: 4 }, now + 3 * STD), "job3"), "recordJobReturn", { jobId: "job3", outcome: "failed", error: "quota" }, now + 3 * STD + MIN, WORKER), "fail");
+  assert.ok(hatCode(ampel(f, date, now + 3 * STD + MIN), "JOB_FAILED", "job3"));
 });
 
-/* ══ T: DST eindeutige Slots ═════════════════════════════════════════════ */
-test("Europe/Zurich: Sommer- und Winterzeit ergeben eindeutige Slots und stabile Schluessel", () => {
-  // Fruehjahr 2026: 29.03. 02:00 → 03:00. Herbst 2026: 25.10. 03:00 → 02:00.
-  assert.equal(new Date(K.slotBeginnMs("2026-03-28", "briefing04")).toISOString(), "2026-03-28T03:00:00.000Z"); // CET
-  assert.equal(new Date(K.slotBeginnMs("2026-03-29", "briefing04")).toISOString(), "2026-03-29T02:00:00.000Z"); // CEST
-  assert.equal(new Date(K.slotBeginnMs("2026-10-24", "close23")).toISOString(), "2026-10-24T21:00:00.000Z");   // CEST
-  assert.equal(new Date(K.slotBeginnMs("2026-10-25", "briefing04")).toISOString(), "2026-10-25T03:00:00.000Z"); // CET
-  assert.equal(new Date(K.slotBeginnMs("2026-10-25", "close23")).toISOString(), "2026-10-25T22:00:00.000Z");
-  // Der Assistententag, der in die Umstellungsnacht hineinreicht, ist 25 bzw. 23 Stunden lang.
-  assert.equal((K.tagesEndeMs("2026-10-24") - K.slotBeginnMs("2026-10-24", "briefing04")) / STD, 25);
-  assert.equal((K.tagesEndeMs("2026-03-28") - K.slotBeginnMs("2026-03-28", "briefing04")) / STD, 23);
-  assert.equal((K.tagesEndeMs("2026-10-25") - K.slotBeginnMs("2026-10-25", "briefing04")) / STD, 24);
-  // Alle Slotzeitpunkte beider Umstellungstage sind paarweise verschieden und streng steigend.
-  for (const tag of ["2026-03-28", "2026-03-29", "2026-10-24", "2026-10-25"]) {
-    const ms = K.SLOT_KEYS.map((s) => K.slotBeginnMs(tag, s));
-    for (let i = 1; i < ms.length; i++) assert.ok(ms[i] > ms[i - 1], tag + " " + K.SLOT_KEYS[i]);
-    assert.equal(new Set(ms).size, 4);
-    // Jede Wandzeit kommt wieder als dieselbe Wandzeit heraus.
-    K.SLOTS.forEach((s, i) => { const p = K.zurichParts(ms[i]); assert.equal(p.hour, s.hour); assert.equal(K.ymd(p), tag); });
-  }
-  // Doppelte Stunde 02:xx am 25.10.: der fruehere Zeitpunkt; Luecke am 29.03.: nach vorn geschoben.
-  assert.equal(new Date(K.wandzeitZuMs("2026-10-25", 2, 30)).toISOString(), "2026-10-25T00:30:00.000Z");
-  assert.equal(K.zurichParts(K.wandzeitZuMs("2026-03-29", 2, 30)).hour, 3);
-  // 04:00-Regel: 02:30 Ortszeit gehoert zum Vortag — auch ueber die Umstellung hinweg.
-  assert.equal(K.assistentenTag(T("2026-10-25T00:30:00Z")), "2026-10-24");   // 02:30 CEST
-  assert.equal(K.assistentenTag(T("2026-10-25T01:30:00Z")), "2026-10-24");   // 02:30 CET (zweites Mal)
-  assert.equal(K.assistentenTag(T("2026-10-25T03:00:00Z")), "2026-10-25");   // 04:00 CET
-  assert.equal(K.assistentenTag(T("2026-03-29T01:59:00Z")), "2026-03-28");   // 03:59 CEST
-  assert.equal(K.assistentenTag(T("2026-03-29T02:00:00Z")), "2026-03-29");   // 04:00 CEST
-  // aktuellerSlot und naechste Grenze um die Umstellung.
-  assert.deepEqual([K.aktuellerSlot(T("2026-10-25T00:30:00Z")).date, K.aktuellerSlot(T("2026-10-25T00:30:00Z")).slot], ["2026-10-24", "close23"]);
-  assert.equal(new Date(K.naechsteSlotGrenzeMs(T("2026-10-25T00:30:00Z"))).toISOString(), "2026-10-25T03:00:00.000Z");
-  assert.deepEqual(K.faelligeSlots("2026-10-25", T("2026-10-25T13:30:00Z")), ["briefing04", "process09", "continue14"]);
-  // Slot-Schluessel: stabil, ohne Zeitanteil, mit Mandant und Policy-Version.
-  assert.equal(K.slotKey("laurin", "2026-10-25", "close23", "3.0"), "laurin:2026-10-25:close23:3.0");
-  assert.equal(K.slotKey("laurin", "2026-10-25", "close23", "3.0"), K.slotKey("laurin", "2026-10-25", "close23", "3.0"));
-  assert.notEqual(K.slotKey("laurin", "2026-10-25", "close23", "3.0"), K.slotKey("laurin", "2026-10-25", "close23", "3.1"));
-  assert.throws(() => K.slotKey("laurin", "2026-10-25", "mittag", "3.0"), RangeError);
-  assert.throws(() => K.slotKey("", "2026-10-25", "close23", "3.0"), TypeError);
-  // Eine Quittung fuer einen Slot, der noch nicht begonnen hat, wird abgelehnt; die Quittung traegt den Schluessel.
-  let d = mussOk(run(migriert(), "ensureRun", { date: "2026-10-25" }, K.slotBeginnMs("2026-10-25", "briefing04")), "run");
-  const zuFrueh = run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "r09" }, K.slotBeginnMs("2026-10-25", "process09") - MIN);
-  assert.equal(zuFrueh.error, "SLOT_NOT_STARTED");
-  d = mussOk(run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "r09" }, K.slotBeginnMs("2026-10-25", "process09")), "r09");
-  assert.equal(d.dailyBriefing.assistantRuns["2026-10-25"].slotReceipts.process09.slotKey, "laurin:2026-10-25:process09:3.0");
-  assert.equal(run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "r09" }, K.slotBeginnMs("2026-10-25", "process09") + MIN).created, false);
-  assert.equal(run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "anders" }, K.slotBeginnMs("2026-10-25", "process09") + MIN).error, "SLOT_ALREADY_RECEIPTED");
-  // Fehlende Quittung eines begonnenen Slots ist in der Ampel sichtbar.
-  const ev = K.dailyAssistantTrafficLight(d.dailyBriefing.assistantRuns["2026-10-25"], d, K.slotBeginnMs("2026-10-25", "continue14") + MIN, POLICY);
-  assert.ok(ev.reasons.some((r) => r.code === "SLOT_RECEIPT_MISSING" && r.detail === "briefing04"));
-  assert.ok(ev.reasons.some((r) => r.code === "SLOT_RECEIPT_MISSING" && r.detail === "continue14"));
-  assert.ok(!ev.reasons.some((r) => r.code === "SLOT_RECEIPT_MISSING" && r.detail === "close23"));
+/* ══ R7 / T31: Dokumente ═════════════════════════════════════════════════ */
+test("R7: Dokument braucht bestaetigte Attachment-Id, Hash, Typ, Groesse, Herkunft, Verknuepfung; parsed mit erfundenem textRef und done ohne Ergebnisse scheitern; unlesbar bleibt offen", () => {
+  let { data, now, date } = tagAufbauen(migriert(), { erledigt: true });
+  const doc = { documentId: "doc1", attachmentId: ATT("vertrag.pdf"), name: "vertrag.pdf", hash: H64, mime: "application/pdf", size: 12345, origin: { channel: "mail", ref: "msg_18f" }, linkedTo: { sourceType: "chatgptLead", sourceId: "l1" } };
+  for (const [name, kaputt, code] of [
+    ["beliebiger storageRef", { ...doc, attachmentId: "uploads/vertrag.pdf" }, "DOCUMENT_ATTACHMENT_ID_INVALID"],
+    ["Altformat-Schluessel", { ...doc, attachmentId: "attachment-text__a:b__c__d" }, "DOCUMENT_ATTACHMENT_ID_INVALID"],
+    ["ohne Hash", { ...doc, hash: "abc" }, "DOCUMENT_HASH_INVALID"],
+    ["ohne Typ", { ...doc, mime: "" }, "DOCUMENT_MIME_INVALID"],
+    ["Groesse 0", { ...doc, size: 0 }, "DOCUMENT_SIZE_INVALID"],
+    ["ohne Herkunft", { ...doc, origin: { channel: "mail" } }, "DOCUMENT_ORIGIN_MISSING"],
+    ["Verknuepfung ins Leere", { ...doc, linkedTo: { sourceType: "chatgptLead", sourceId: "nope" } }, "DOCUMENT_LINK_TARGET_NOT_FOUND"],
+  ]) { const r = run(data, "registerDocument", kaputt, now, ADAPTER); assert.equal(r.error, code, name); }
+  assert.equal(run(data, "registerDocument", doc, now, AGENT).error, "ACTOR_REJECTED");
+  data = mussOk(run(data, "registerDocument", doc, now, ADAPTER), "reg");
+  assert.equal(run(data, "registerDocument", { ...doc, hash: "b".repeat(64) }, now, ADAPTER).error, "DOCUMENT_IMMUTABLE");
+  let ev = ampel(data, date, now); assert.ok(hatCode(ev, "DOCUMENT_UNPROCESSED", "doc1"));
+  // parsed mit unbelegtem textRef → abgewiesen; von einem Agenten → abgewiesen.
+  assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: "unverified-text", extractHash: H64 }, now, ADAPTER).error, "PARSE_TEXTREF_INVALID");
+  assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("vertrag.txt") }, now, ADAPTER).error, "PARSE_EXTRACT_HASH_INVALID");
+  assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("vertrag.txt"), extractHash: H64 }, now, AGENT).error, "ACTOR_REJECTED");
+  // unlesbar → bleibt offen, done unmoeglich.
+  data = mussOk(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "unreadable", error: "verschluesseltes PDF" }, now + MIN, ADAPTER), "parse");
+  assert.equal(data.automation.documentsById.doc1.status, "open"); assert.equal(data.automation.documentsById.doc1.handledAt, null);
+  ev = ampel(data, date, now + MIN); assert.equal(ev.coverage, "red");
+  assert.ok(ev.reasons.some((r) => r.code === "DOCUMENT_UNREADABLE" && r.sourceId === "doc1" && r.detail === "verschluesseltes PDF"));
+  assert.equal(run(data, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done", results: [{ sourceType: "chatgptLead", sourceId: "l1" }] }, now + 2 * MIN).error, "DOCUMENT_NOT_PARSED");
+  // gelesen (geprueft) → immer noch offen; done nur mit konkreten, existierenden Ergebnissen.
+  data = mussOk(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("vertrag.txt"), extractHash: "c".repeat(64) }, now + 3 * MIN, ADAPTER), "parsed");
+  assert.equal(data.automation.documentsById.doc1.parse.attempts, 2);
+  assert.ok(hatCode(ampel(data, date, now + 3 * MIN), "DOCUMENT_UNHANDLED", "doc1"));
+  assert.equal(run(data, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done" }, now + 4 * MIN).error, "DOCUMENT_RESULTS_MISSING");
+  assert.equal(run(data, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done", results: [{ sourceType: "chatgptLead", sourceId: "nope" }] }, now + 4 * MIN).error, "DOCUMENT_RESULT_NOT_FOUND");
+  data = mussOk(run(data, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done", results: [{ sourceType: "chatgptLead", sourceId: "l1" }] }, now + 4 * MIN), "handled");
+  assert.deepEqual(data.automation.documentsById.doc1.results, [{ sourceType: "chatgptLead", sourceId: "l1" }]);
+  assert.ok(K.verifizierteEreignisse(data, "chatgptLead", "l1").includes("document:doc1"));
+  ev = ampel(data, date, now + 4 * MIN); assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
+  // Eingang: ungeklaert sperrt, geklaert nur mit Link oder Grund.
+  data = mussOk(run(data, "registerIntake", { intakeId: "in_1", text: "Bitte Zahnarzt anrufen", channel: "mobile" }, now + 5 * MIN, USER), "intake");
+  assert.ok(hatCode(ampel(data, date, now + 5 * MIN), "INTAKE_UNCLARIFIED", "in_1"));
+  assert.equal(run(data, "transitionState", { sourceType: "intake", sourceId: "in_1", state: "done" }, now + 6 * MIN).error, "INTAKE_DONE_NEEDS_LINK_OR_REASON");
+  data = mussOk(run(data, "transitionState", { sourceType: "intake", sourceId: "in_1", state: "done", linkTo: { sourceType: "task", sourceId: "t1" } }, now + 6 * MIN), "geklaert");
+  assert.equal(ampel(data, date, now + 6 * MIN).coverage, "green");
 });
 
-/* ══ T: Antworten nur einmal ═════════════════════════════════════════════ */
-test("Fragen sind unveraenderlich, Antworten genau einmal konsumierbar, eine offene Frage ist nie eine Freigabe", () => {
-  const d0 = allesErledigen(bestand(), NOW);
-  d0.entities.chatgptLeads.l1.status = "in_arbeit";
-  let { data, now, date } = tagAufbauen(migriert(d0));
+/* ══ T11: Antworten ══════════════════════════════════════════════════════ */
+test("Fragen sind unveraenderlich, Antworten nur vom Nutzer, genau einmal konsumierbar, eine offene Frage ist nie eine Freigabe", () => {
+  let { data, now, date } = tagAufbauen(migriert());
   data = mussOk(run(data, "askQuestion", { questionId: "q1", sourceType: "chatgptLead", sourceId: "l1", text: "Welche Firma?", date }, now), "ask");
   assert.equal(run(data, "askQuestion", { questionId: "q1", sourceType: "chatgptLead", sourceId: "l1", text: "Anderer Text" }, now).error, "QUESTION_IMMUTABLE");
   assert.equal(run(data, "askQuestion", { questionId: "q1", sourceType: "chatgptLead", sourceId: "l1", text: "Welche Firma?" }, now).created, false);
-  // Offene Frage: Element nicht abschliessbar, auch wenn der Altstatus abgeschlossen waere.
-  const geschlossen = K.klon(data);
-  geschlossen.entities.chatgptLeads.l1.status = "abgeschlossen"; geschlossen.entities.chatgptLeads.l1.closedAt = "2026-09-19T20:00:00Z";
-  assert.equal(run(geschlossen, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done" }, now).error, "QUESTION_OPEN");
-  let ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
-  assert.ok(hatCode(ev, "QUESTION_OPEN", "l1"));
-  // Warten auf den Nutzer mit der Frage als Evidenz: gruen, bis die Antwort da ist.
-  data = mussOk(run(data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", state: "waiting_user", counterparty: "user", nextAction: "Antwort einarbeiten", followUpAt: new Date(now + 3 * STD).toISOString(), evidence: { kind: "question", ref: "q1" } }, now), "wait");
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
-  assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
-  // Antwort: unveraenderlich.
-  data = mussOk(run(data, "recordAnswer", { answerId: "a1", questionId: "q1", text: "Muster AG" }, now + MIN), "answer");
-  assert.equal(data.automation.questionsById.q1.status, "answered");
-  assert.equal(run(data, "recordAnswer", { answerId: "a1", questionId: "q1", text: "Doch eine andere" }, now + 2 * MIN).error, "ANSWER_IMMUTABLE");
-  assert.equal(run(data, "recordAnswer", { answerId: "a2", questionId: "q1", text: "Zweite Antwort" }, now + 2 * MIN).error, "QUESTION_ALREADY_ANSWERED");
-  assert.equal(run(data, "recordAnswer", { answerId: "a1", questionId: "q1", text: "Muster AG" }, now + 2 * MIN).created, false);
-  // Unkonsumierte Antwort: nicht gruen (der Assistent muss sie einarbeiten).
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + MIN, POLICY);
-  assert.ok(hatCode(ev, "ANSWER_UNCONSUMED", "l1") || hatCode(ev, "ANSWER_UNCONSUMED", "a1"));
-  // Genau einmal konsumierbar — auch mit anderer commandId und anderem Konsumenten.
-  data = mussOk(run(data, "consumeAnswer", { answerId: "a1", consumer: "run_2026-09-19/process09" }, now + 3 * MIN), "consume");
-  assert.equal(data.automation.answersById.a1.consumedBy, "run_2026-09-19/process09");
-  const zweite = run(data, "consumeAnswer", { answerId: "a1", consumer: "run_2026-09-19/continue14" }, now + 4 * MIN);
-  assert.equal(zweite.error, "ANSWER_ALREADY_CONSUMED");
+  const ev0 = mussOk(run(data, "registerEvidence", { evidenceId: "ev_l1", kind: "message", ref: "m", sourceType: "chatgptLead", sourceId: "l1", origin: { adapter: "x", ref: "y" }, observedAt: new Date(now).toISOString(), fingerprint: "0123456789abcdef0123" }, now, ADAPTER), "ev");
+  assert.equal(run(ev0, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 1, evidence: { kind: "evidence", evidenceId: "ev_l1" } }, now).error, "QUESTION_OPEN");
+  assert.ok(hatCode(ampel(data, date, now), "QUESTION_OPEN", "l1"));
+  data = mussOk(run(data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "waiting_user", counterparty: "user", nextAction: "Antwort einarbeiten", followUpAt: new Date(now + 3 * STD).toISOString(), evidence: { kind: "question", questionId: "q1" } }, now), "wait");
+  data = erledigen(data, "chatgptTask", "c1", now); data = erledigen(data, "task", "t1", now);
+  let ev = ampel(data, date, now); assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
+  assert.equal(run(data, "recordAnswer", { answerId: "a1", questionId: "q1", text: "Muster AG" }, now + MIN, AGENT).error, "ACTOR_REJECTED");
+  data = mussOk(run(data, "recordAnswer", { answerId: "a1", questionId: "q1", text: "Muster AG" }, now + MIN, USER), "answer");
+  assert.equal(run(data, "recordAnswer", { answerId: "a1", questionId: "q1", text: "Doch anders" }, now + 2 * MIN, USER).error, "ANSWER_IMMUTABLE");
+  assert.equal(run(data, "recordAnswer", { answerId: "a2", questionId: "q1", text: "Zweite" }, now + 2 * MIN, USER).error, "QUESTION_NOT_OPEN");
+  assert.equal(run(data, "recordAnswer", { answerId: "a1", questionId: "q1", text: "Muster AG" }, now + 2 * MIN, USER).created, false);
+  ev = ampel(data, date, now + MIN); assert.ok(hatCode(ev, "ANSWER_UNCONSUMED", "l1") || hatCode(ev, "ANSWER_UNCONSUMED", "a1"));
+  data = mussOk(run(data, "consumeAnswer", { answerId: "a1", consumer: "run/process09" }, now + 3 * MIN), "consume");
+  assert.equal(run(data, "consumeAnswer", { answerId: "a1", consumer: "run/continue14" }, now + 4 * MIN).error, "ANSWER_ALREADY_CONSUMED");
   assert.equal(data.automation.answersById.a1.text, "Muster AG");
-  // Dieselbe commandId wiederholt: Wiedergabe, nicht "already consumed".
-  const c = cmd("consumeAnswer", { answerId: "a1", consumer: "x" }, now + 5 * MIN);
-  const frisch = mussOk(run(data, "askQuestion", { questionId: "q2", sourceType: "chatgptLead", sourceId: "l1", text: "Noch was?" }, now), "q2");
-  const mitA2 = mussOk(run(frisch, "recordAnswer", { answerId: "a9", questionId: "q2", text: "Nein" }, now), "a9");
-  const c9 = cmd("consumeAnswer", { answerId: "a9", consumer: "x" }, now + 5 * MIN);
-  const k1 = K.applyCommand(mitA2, c9, { policy: POLICY });
-  const k2 = K.applyCommand(k1.data, c9, { policy: POLICY });
-  assert.equal(k1.ok, true); assert.equal(k2.ok, true); assert.equal(k2.replayed, true);
-  void c;
+  // Die konsumierte Antwort ist ein Abschlussbeleg fuer l1 — nach dem Ende des Wartens.
+  data = mussOk(run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: 2, reason: "Antwort da" }, now + 5 * MIN), "doing");
+  data = mussOk(run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done", expectedVersion: 3, evidence: { kind: "answer", answerId: "a1" } }, now + 6 * MIN), "done");
+  assert.equal(data.entities.chatgptLeads.l1.operationalState, "done");
 });
 
-/* ══ T: unlesbare Dokumente offen statt verarbeitet ══════════════════════ */
-test("ein unlesbares Dokument bleibt offen und sichtbar — nie verarbeitet", () => {
-  let { data, now, date } = tagAufbauen(migriert(allesErledigen(bestand(), NOW)));
-  data = mussOk(run(data, "registerDocument", { documentId: "doc1", name: "vertrag.pdf", storageRef: "uploads/vertrag.pdf", mime: "application/pdf" }, now), "reg");
-  let ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
-  assert.ok(hatCode(ev, "DOCUMENT_UNPROCESSED", "doc1"));
-  data = mussOk(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "unreadable", error: "verschluesseltes PDF" }, now + MIN), "parse");
-  assert.equal(data.automation.documentsById.doc1.status, "open");
-  assert.equal(data.automation.documentsById.doc1.parse.outcome, "unreadable");
-  assert.equal(data.automation.documentsById.doc1.handledAt, null);
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + MIN, POLICY);
-  assert.equal(ev.coverage, "red");
-  assert.ok(ev.reasons.some((r) => r.code === "DOCUMENT_UNREADABLE" && r.sourceId === "doc1" && r.detail === "verschluesseltes PDF"));
-  // Unlesbar kann nicht "behandelt" werden.
-  assert.equal(run(data, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done" }, now + 2 * MIN).error, "DOCUMENT_NOT_PARSED");
-  assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed" }, now + 2 * MIN).error, "PARSE_TEXTREF_MISSING");
-  // Gelesen → immer noch offen (unbehandelt), erst transitionState → done schliesst.
-  data = mussOk(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: "attachment-text__x__y__z" }, now + 3 * MIN), "parsed");
-  assert.equal(data.automation.documentsById.doc1.parse.attempts, 2);
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + 3 * MIN, POLICY);
-  assert.ok(hatCode(ev, "DOCUMENT_UNHANDLED", "doc1"));
-  data = mussOk(run(data, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done", linkTo: { sourceType: "chatgptLead", sourceId: "l1" } }, now + 4 * MIN), "handled");
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + 4 * MIN, POLICY);
-  assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
-  // Ungeklaerter Eingang sperrt, bis er verknuepft oder begruendet geklaert ist.
-  data = mussOk(run(data, "registerIntake", { intakeId: "in_1", text: "Bitte Zahnarzt anrufen", channel: "mobile" }, now + 5 * MIN), "intake");
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + 5 * MIN, POLICY);
-  assert.ok(hatCode(ev, "INTAKE_UNCLARIFIED", "in_1"));
-  assert.equal(run(data, "transitionState", { sourceType: "intake", sourceId: "in_1", state: "done" }, now + 6 * MIN).error, "INTAKE_DONE_NEEDS_LINK_OR_REASON");
-  data = mussOk(run(data, "transitionState", { sourceType: "intake", sourceId: "in_1", state: "done", linkTo: { sourceType: "task", sourceId: "t1" } }, now + 6 * MIN), "geklaert");
-  assert.deepEqual(data.automation.intakeById.in_1.linkedTo, { sourceType: "task", sourceId: "t1" });
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + 6 * MIN, POLICY);
-  assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
+/* ══ R8 / T17 / T18: Abschluss und Widerspruch ═══════════════════════════ */
+test("R8: Abschlussnachweis erfasst die ganze Verpflichtungsmenge; ein Lead ohne itemRef, der wieder doing wird, ist ein Widerspruch; Warten-Widersprueche; Historie unveraendert", () => {
+  const date = "2026-09-19";
+  let s = tagAufbauen(migriert(), { erledigt: true });
+  // l2 ist abgeschlossen und steht in KEINEM itemRef — der Abschluss erfasst ihn trotzdem.
+  assert.ok(!s.data.dailyBriefing.assistantRuns[date].itemRefs.some((r) => r.sourceId === "l2"));
+  const revVorher = s.data.automation.dataRevision;
+  let r = run(s.data, "closeRun", { date, finalNoteId: "note_final_1" }, s.now);
+  const d1 = mussOk(r, "closeRun");
+  const runF = d1.dailyBriefing.assistantRuns[date];
+  assert.equal(runF.phase, "final"); assert.equal(runF.closureRevision, revVorher + 1); assert.equal(runF.finalNoteId, "note_final_1");
+  assert.equal(runF.closureOutcomes["chatgptLead:l2"].state, "done");
+  assert.equal(runF.closureOutcomes["chatgptLead:l1"].state, "done");
+  assert.equal(runF.closureOutcomes["task:t2"].state, "doing");
+  assert.equal(Object.keys(runF.closureOutcomes).length, 5, "alle fuenf Elemente, unabhaengig von itemRefs (Belege sind keine Verpflichtungen)");
+  // Notizen liegen im bestehenden Notizmodul und sehen aus wie Notizen.
+  const note = d1.entities.notes.note_final_1;
+  assert.ok(note && Array.isArray(note.tags) && Array.isArray(note.linkedTasks) && note.notebookId === null && note.content.includes("chatgptLead:l2 → done"));
+  assert.equal(Object.values(d1.entities.notes).filter((n) => n.assistantNote?.kind === "assistantFinal").length, 1);
+  assert.equal(d1.entities.notes[runF.startNoteId].assistantNote.kind, "assistantStart");
+  assert.equal(s.data.dailyBriefing.assistantRuns[date].phase, "active", "die Eingabe wurde mutiert");
+  const finalnotizVorher = JSON.stringify(note);
+  // Wiederholung: No-op, keine zweite Notiz.
+  const r2 = run(d1, "closeRun", { date, finalNoteId: "note_final_2" }, s.now + 5 * MIN);
+  assert.equal(r2.already, true); assert.equal(r2.noop, true); assert.equal(r2.data, d1);
+  // Genau dieser l2 wird wieder doing (reopen mit Grund): Widerspruch.
+  const t1 = s.now + 10 * MIN;
+  let d2 = mussOk(run(d1, "transitionState", { sourceType: "chatgptLead", sourceId: "l2", state: "doing", expectedVersion: 1, reason: "Kunde reklamiert" }, t1), "reopen l2");
+  let w = K.pruefeWiderspruch(d2, { date }, { now: t1 });
+  assert.deepEqual(w.contradictions, [{ sourceType: "chatgptLead", sourceId: "l2", was: "done", now: "doing" }]);
+  // Neuer Eingang nach dem Cutoff: kein Widerspruch, naechster Lauf.
+  d2 = mussOk(run(d2, "registerIntake", { intakeId: "in_neu", text: "Neu vom Handy", channel: "mobile" }, t1, USER), "intake");
+  w = K.pruefeWiderspruch(d2, { date }, { now: t1 });
+  assert.deepEqual(w.newIntake, [{ sourceType: "intake", sourceId: "in_neu" }]); assert.equal(w.nextRunDate, "2026-09-20");
+  assert.equal(run(d2, "invalidateClosure", { date, correctionId: "note_korr_x", reason: "neu", contradiction: { sourceType: "intake", sourceId: "in_neu" } }, t1).error, "NOT_A_CONTRADICTION");
+  const inv = mussOk(run(d2, "invalidateClosure", { date, correctionId: "note_korr_1", reason: "Lead l2 wieder offen", contradiction: { sourceType: "chatgptLead", sourceId: "l2" } }, t1), "invalidate");
+  const runI = inv.dailyBriefing.assistantRuns[date];
+  assert.equal(runI.phase, "exception_open"); assert.equal(runI.finalNoteId, "note_final_1"); assert.equal(runI.closureRevision, runF.closureRevision);
+  assert.equal(JSON.stringify(inv.entities.notes.note_final_1), finalnotizVorher, "die historische Finalnotiz wurde veraendert");
+  assert.equal(runI.corrections.length, 1); assert.equal(inv.entities.notes.note_korr_1.assistantNote.kind, "assistantCorrection");
+  assert.equal(run(inv, "invalidateClosure", { date, correctionId: "note_korr_1", reason: "nochmal", contradiction: { sourceType: "chatgptLead", sourceId: "l2" } }, t1 + MIN).already, true);
+  assert.equal(run(inv, "closeRun", { date, finalNoteId: "note_final_3" }, t1).error, "RUN_EXCEPTION_OPEN");
+  // Widerspruch zu geprueftem Warten: l1 wartet belegt beim Abschluss; danach Karte weg bzw. Beleg getauscht.
+  let s2 = tagAufbauen(migriert());
+  s2.data = mussOk(run(s2.data, "registerEvidence", { evidenceId: "ev_bank", kind: "mail", ref: "m", sourceType: "chatgptLead", sourceId: "l1", origin: { adapter: "gmail", ref: "x" }, observedAt: new Date(s2.now - MIN).toISOString(), fingerprint: "0123456789abcdef0123" }, s2.now, ADAPTER), "ev");
+  s2.data = mussOk(run(s2.data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", expectedVersion: 1, state: "waiting_external", counterparty: "Bank", nextAction: "nachfragen", followUpAt: new Date(s2.now + 24 * STD).toISOString(), evidence: { kind: "evidence", evidenceId: "ev_bank" } }, s2.now), "wait");
+  s2.data = erledigen(s2.data, "chatgptTask", "c1", s2.now); s2.data = erledigen(s2.data, "task", "t1", s2.now);
+  const d3 = mussOk(run(s2.data, "closeRun", { date, finalNoteId: "note_final_w" }, s2.now), "close waiting");
+  assert.deepEqual(d3.dailyBriefing.assistantRuns[date].closureOutcomes["chatgptLead:l1"], { state: "waiting_external", version: 2, evidence: { kind: "evidence", evidenceId: "ev_bank" } });
+  const ohneKarte = K.klon(d3); delete ohneKarte.automation.waitingById["chatgptLead:l1"];
+  assert.equal(K.pruefeWiderspruch(ohneKarte, { date }, { now: s2.now + MIN }).contradictions[0].evidenceLost, true);
+  const wiederDoing = mussOk(run(d3, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "doing", expectedVersion: 2, reason: "Antwort kam" }, s2.now + MIN), "doing");
+  assert.deepEqual(K.pruefeWiderspruch(wiederDoing, { date }, { now: s2.now + MIN }).contradictions.map((c) => c.now), ["doing"]);
+  // Nach 04:00 des Folgetages ist der Tag vorbei; ein offener Lead blockiert mit Quell-Id.
+  s = tagAufbauen(migriert(), { erledigt: true });
+  assert.ok(run(s.data, "closeRun", { date, finalNoteId: "n" }, K.tagesEndeMs(date) + MIN).detail.some((b) => b.code === "CLOSURE_DAY_OVER"));
+  const offen = tagAufbauen(migriert());
+  r = run(offen.data, "closeRun", { date, finalNoteId: "n" }, offen.now);
+  assert.ok(r.detail.find((b) => b.code === "COVERAGE_NOT_GREEN").detail.some((x) => x.sourceId === "l1"));
+  assert.equal(offen.data.entities.notes.n, undefined, "kein Teil-Effekt");
 });
 
-/* ══ Spezialistenrueckgabe ist review, nicht done ════════════════════════ */
-test("eine Spezialistenrueckgabe setzt das Element auf review — nie auf done", () => {
-  const d0 = allesErledigen(bestand(), NOW);
-  d0.entities.chatgptLeads.l1.status = "in_arbeit";
-  let { data, now, date } = tagAufbauen(migriert(d0));
-  data = mussOk(run(data, "createJob", { jobId: "job1", kind: "recherche", sourceType: "chatgptLead", sourceId: "l1", executor: "gemini" }, now), "job");
-  assert.equal(data.automation.jobsById.job1.mode, "dry_run");
-  data = mussOk(run(data, "setWaiting", { sourceType: "chatgptLead", sourceId: "l1", state: "delegated", counterparty: "gemini", nextAction: "Rueckgabe pruefen", followUpAt: new Date(now + 4 * STD).toISOString(), evidence: { kind: "job", ref: "job1" } }, now), "delegated");
-  let ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now, POLICY);
-  assert.ok(hatCode(ev, "JOB_PENDING", "job1"));
-  assert.equal(ev.coverage, "yellow");
-  data = mussOk(run(data, "recordJobReturn", { jobId: "job1", outcome: "returned", resultRef: "notes/xyz" }, now + STD), "return");
-  assert.equal(data.entities.chatgptLeads.l1.operationalState, "review");
-  assert.equal(data.entities.chatgptLeads.l1.status, "in_arbeit");
-  assert.equal(data.automation.waitingById["chatgptLead:l1"], undefined);
-  ev = K.dailyAssistantTrafficLight(data.dailyBriefing.assistantRuns[date], data, now + STD, POLICY);
-  assert.equal(ev.coverage, "red");
-  assert.ok(hatCode(ev, "REVIEW_PENDING", "l1"));
-  assert.ok(hatCode(ev, "JOB_RETURN_UNREVIEWED", "job1"));
-  // Erst der Abschluss ueber die Oberflaeche (Altstatus) und dann transitionState → done schliessen ab.
-  const geschlossen = K.klon(data);
-  geschlossen.entities.chatgptLeads.l1.status = "abgeschlossen"; geschlossen.entities.chatgptLeads.l1.closedAt = new Date(now + 2 * STD).toISOString();
-  const fertig = mussOk(run(geschlossen, "transitionState", { sourceType: "chatgptLead", sourceId: "l1", state: "done" }, now + 2 * STD), "done");
-  assert.ok(fertig.automation.jobsById.job1.reviewedAt);
-  ev = K.dailyAssistantTrafficLight(fertig.dailyBriefing.assistantRuns[date], fertig, now + 2 * STD, POLICY);
-  assert.equal(ev.coverage, "green", JSON.stringify(ev.reasons));
-  // Ein fehlgeschlagener Job ist sichtbar rot.
-  const f = mussOk(run(mussOk(run(data, "createJob", { jobId: "job2", kind: "x", sourceType: "chatgptLead", sourceId: "l1", executor: "claude" }, now), "j2"), "recordJobReturn", { jobId: "job2", outcome: "failed", error: "quota" }, now + MIN), "fail");
-  assert.ok(hatCode(K.dailyAssistantTrafficLight(f.dailyBriefing.assistantRuns[date], f, now + MIN, POLICY), "JOB_FAILED", "job2"));
-  assert.equal(run(data, "createJob", { jobId: "job3", kind: "x", sourceType: "chatgptLead", sourceId: "l1", executor: "cowork" }, now).error, "EXECUTOR_UNKNOWN");
+/* ══ T22: DST ════════════════════════════════════════════════════════════ */
+test("Europe/Zurich: Sommer- und Winterzeit ergeben eindeutige Slots und stabile Schluessel", () => {
+  assert.equal(new Date(K.slotBeginnMs("2026-03-28", "briefing04")).toISOString(), "2026-03-28T03:00:00.000Z");
+  assert.equal(new Date(K.slotBeginnMs("2026-03-29", "briefing04")).toISOString(), "2026-03-29T02:00:00.000Z");
+  assert.equal(new Date(K.slotBeginnMs("2026-10-24", "close23")).toISOString(), "2026-10-24T21:00:00.000Z");
+  assert.equal(new Date(K.slotBeginnMs("2026-10-25", "briefing04")).toISOString(), "2026-10-25T03:00:00.000Z");
+  assert.equal(new Date(K.slotBeginnMs("2026-10-25", "close23")).toISOString(), "2026-10-25T22:00:00.000Z");
+  assert.equal((K.tagesEndeMs("2026-10-24") - K.slotBeginnMs("2026-10-24", "briefing04")) / STD, 25);
+  assert.equal((K.tagesEndeMs("2026-03-28") - K.slotBeginnMs("2026-03-28", "briefing04")) / STD, 23);
+  for (const tag of ["2026-03-28", "2026-03-29", "2026-10-24", "2026-10-25"]) {
+    const ms = K.SLOT_KEYS.map((s) => K.slotBeginnMs(tag, s));
+    for (let i = 1; i < ms.length; i++) assert.ok(ms[i] > ms[i - 1], tag);
+    assert.equal(new Set(ms).size, 4);
+    K.SLOTS.forEach((s, i) => { const p = K.zurichParts(ms[i]); assert.equal(p.hour, s.hour); assert.equal(K.ymd(p), tag); });
+  }
+  assert.equal(new Date(K.wandzeitZuMs("2026-10-25", 2, 30)).toISOString(), "2026-10-25T00:30:00.000Z");
+  assert.equal(K.zurichParts(K.wandzeitZuMs("2026-03-29", 2, 30)).hour, 3);
+  assert.equal(K.assistentenTag(T("2026-10-25T00:30:00Z")), "2026-10-24");
+  assert.equal(K.assistentenTag(T("2026-10-25T01:30:00Z")), "2026-10-24");
+  assert.equal(K.assistentenTag(T("2026-10-25T03:00:00Z")), "2026-10-25");
+  assert.equal(K.assistentenTag(T("2026-03-29T01:59:00Z")), "2026-03-28");
+  assert.equal(K.assistentenTag(T("2026-03-29T02:00:00Z")), "2026-03-29");
+  assert.deepEqual([K.aktuellerSlot(T("2026-10-25T00:30:00Z")).date, K.aktuellerSlot(T("2026-10-25T00:30:00Z")).slot], ["2026-10-24", "close23"]);
+  assert.equal(new Date(K.naechsteSlotGrenzeMs(T("2026-10-25T00:30:00Z"))).toISOString(), "2026-10-25T03:00:00.000Z");
+  assert.equal(K.slotKey("laurin", "2026-10-25", "close23", "3.0"), "laurin:2026-10-25:close23:3.0");
+  assert.throws(() => K.slotKey("laurin", "2026-10-25", "mittag", "3.0"), RangeError);
+  let d = mussOk(run(migriert(), "ensureRun", { date: "2026-10-25" }, K.slotBeginnMs("2026-10-25", "briefing04")), "run");
+  assert.equal(run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "r09" }, K.slotBeginnMs("2026-10-25", "process09") - MIN).error, "SLOT_NOT_STARTED");
+  d = mussOk(run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "r09" }, K.slotBeginnMs("2026-10-25", "process09")), "r09");
+  assert.equal(d.dailyBriefing.assistantRuns["2026-10-25"].slotReceipts.process09.slotKey, "laurin:2026-10-25:process09:3.0");
+  assert.equal(run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "r09" }, K.slotBeginnMs("2026-10-25", "process09") + MIN).noop, true);
+  assert.equal(run(d, "recordSlotReceipt", { date: "2026-10-25", slot: "process09", receiptId: "anders" }, K.slotBeginnMs("2026-10-25", "process09") + MIN).error, "SLOT_ALREADY_RECEIPTED");
+  const ev = ampel(d, "2026-10-25", K.slotBeginnMs("2026-10-25", "continue14") + MIN);
+  assert.ok(ev.reasons.some((r) => r.code === "SLOT_RECEIPT_MISSING" && r.detail === "briefing04"));
+  assert.ok(ev.reasons.some((r) => r.code === "SLOT_RECEIPT_MISSING" && r.detail === "continue14"));
+  assert.ok(!ev.reasons.some((r) => r.code === "SLOT_RECEIPT_MISSING" && r.detail === "close23"));
+  assert.ok(hatCode(ev, "RUN_START_NOTE_MISSING"));
 });
 
-/* ══ Carry-over ohne Kopien, itemRefs ohne Statusfelder ══════════════════ */
+/* ══ T23: Carry-over ═════════════════════════════════════════════════════ */
 test("Carry-over uebernimmt Verweise, keine neuen Aufgaben; itemRefs tragen keine Statusfelder", () => {
-  const d0 = allesErledigen(bestand(), NOW);
-  d0.entities.chatgptLeads.l1.status = "in_arbeit";
-  let { data, now } = tagAufbauen(migriert(d0));
-  const tasksVorher = JSON.stringify(data.entities.tasks);
-  const leadsVorher = JSON.stringify(data.entities.chatgptLeads);
+  let { data, now } = tagAufbauen(migriert());
+  data = erledigen(data, "task", "t1", now);
+  const tasksVorher = JSON.stringify(data.entities.tasks), leadsVorher = JSON.stringify(data.entities.chatgptLeads);
   data = mussOk(run(data, "ensureRun", { date: "2026-09-20" }, K.slotBeginnMs("2026-09-20", "briefing04")), "run2");
   data = mussOk(run(data, "carryOverRefs", { fromDate: "2026-09-19", toDate: "2026-09-20" }, K.slotBeginnMs("2026-09-20", "briefing04")), "carry");
   const refs = data.dailyBriefing.assistantRuns["2026-09-20"].itemRefs;
-  // Offen geblieben: der Lead l1 und die noch nicht faellige Aufgabe t2; t1 und c1 sind erledigt.
-  assert.deepEqual(refs.map((r) => r.sourceType + ":" + r.sourceId).sort(), ["chatgptLead:l1", "task:t2"]);
-  for (const ref of refs) {
-    assert.equal(ref.carriedFrom, "2026-09-19");
-    assert.deepEqual(Object.keys(ref).sort(), ["carriedFrom", "includedAt", "sourceId", "sourceType"]);
-  }
-  assert.equal(JSON.stringify(data.entities.tasks), tasksVorher);
-  assert.equal(JSON.stringify(data.entities.chatgptLeads), leadsVorher);
+  assert.deepEqual(refs.map((r) => r.sourceType + ":" + r.sourceId).sort(), ["chatgptLead:l1", "chatgptTask:c1", "task:t2"]);
+  for (const ref of refs) { assert.equal(ref.carriedFrom, "2026-09-19"); assert.deepEqual(Object.keys(ref).sort(), ["carriedFrom", "includedAt", "sourceId", "sourceType"]); }
+  assert.equal(JSON.stringify(data.entities.tasks), tasksVorher); assert.equal(JSON.stringify(data.entities.chatgptLeads), leadsVorher);
   assert.equal(run(data, "addItemRef", { date: "2026-09-20", sourceType: "chatgptLead", sourceId: "gibtsnicht" }, now).error, "SOURCE_NOT_FOUND");
-  assert.equal(run(data, "addItemRef", { date: "2026-09-20", sourceType: "chatgptLead", sourceId: "l1" }, now).created, false);
-});
-
-/* ══ Lease ═══════════════════════════════════════════════════════════════ */
-test("Lease: nur ein Halter, Ablauf sichtbar", () => {
-  let d = migriert();
-  d = mussOk(run(d, "acquireLease", { holder: "runner-a", ttlMs: 10 * MIN }, NOW), "a");
-  assert.equal(run(d, "acquireLease", { holder: "runner-b", ttlMs: 10 * MIN }, NOW + MIN).error, "LEASE_HELD");
-  d = mussOk(run(d, "acquireLease", { holder: "runner-b", ttlMs: 10 * MIN }, NOW + 11 * MIN), "b nach Ablauf");
-  assert.equal(run(d, "releaseLease", { holder: "runner-a" }, NOW + 12 * MIN).error, "LEASE_NOT_HOLDER");
-  d = mussOk(run(d, "releaseLease", { holder: "runner-b" }, NOW + 12 * MIN), "release");
-  assert.equal(d.automation.activeLease, null);
-  // Serialisierung: wieder ein JSON-String des Vollbestands, parse → gleicher Kern.
-  const text = K.serializeCore(d);
-  const zurueck = K.parseCoreDocument({ exists: true, data: text });
-  assert.equal(JSON.stringify(K.requireCore(zurueck)), text);
+  const text = K.serializeCore(data);
+  assert.equal(JSON.stringify(K.requireCore(K.parseCoreDocument({ exists: true, data: text }))), text);
 });

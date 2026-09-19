@@ -2,33 +2,29 @@
  *
  *     dailyAssistantTrafficLight(run, data, now, policy)
  *
- * Reine Funktion. Prueft IMMER den vollstaendigen Bestand — nicht die
- * itemRefs des Laufs, nicht die Aussagen eines Agenten. Zwei Achsen:
+ * Reine, browserfaehige Funktion (kein node:crypto). Prueft IMMER den
+ * vollstaendigen Bestand — nicht die itemRefs des Laufs, nicht die Aussagen
+ * eines Agenten. Zwei Achsen:
  *
- *   coverage    Arbeitsabdeckung: sind alle aktuell machbaren oder faelligen
+ *   coverage    Arbeitsabdeckung: alle aktuell machbaren oder faelligen
  *               Schritte abgeschlossen ODER nachweislich in echtem Warten?
- *   operations  Betriebsstatus: Policy vollstaendig, Quellen frisch und
- *               ohne Stoerung, Slots quittiert, Lauf konsistent?
+ *   operations  Betriebsstatus: Policy vollstaendig, Quellen frisch und ohne
+ *               Stoerung, Slots quittiert, Startnotiz da, Lauf konsistent?
  *
- * Jede Achse ist "green" | "yellow" | "red". Jeder nicht-gruene Befund
- * traegt einen Reason-Code mit Quell-Id. Fehlende oder unvollstaendige
- * Daten ergeben NIE gruen: fehlt der Lauf, die Policy oder eine Quelle, ist
- * die Ampel rot und sagt, was fehlt.
+ * Stufen: green | yellow | red. Gelb = offen, aber nicht faellig (z. B. ein
+ * Lead in Arbeit ohne Frist, ein laufender Job). Rot = faellig, verletzt,
+ * unbelegt, unbekannt oder widerspruechlich. Nur GRUEN erlaubt den
+ * Abschluss. Fehlende oder unvollstaendige Daten sind nie gruen.
  *
- * Die Bewertung traegt evaluatedRevision, evaluatedFingerprint,
- * evaluatedAt und validUntil. validUntil ist der frueheste Zeitpunkt, an
- * dem sich das Urteil von selbst aendern kann: Ablauf einer Quelle, eine
- * Frist, ein followUpAt, die naechste Slotgrenze oder der Policy-TTL. Eine
- * Bewertung nach validUntil oder mit anderer Revision/anderem Fingerabdruck
- * ist ALT — isEvaluationCurrent() sagt das, eine alte Offlineansicht ist
- * deshalb nicht "aktuell gruen".
+ * Jede Bewertung traegt evaluatedRevision, evaluatedFingerprint,
+ * evaluatedAt und validUntil; isEvaluationCurrent() sagt, ob eine
+ * gespeicherte Bewertung noch gilt (Ablauf, Revision, Bestand).
  * ═════════════════════════════════════════════════════════════════════════ */
-import { createHash } from "node:crypto";
 import {
-  QUELLEN, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, effektiverZustand, rollenFuer,
-  validatePolicy, sourceKey,
+  QUELLEN, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, KARTEN_ZUSTAENDE, effektiverZustand, rollenFuer,
+  validatePolicy, sourceKey, stringFingerprint,
 } from "./assistant-schema.mjs";
-import { pruefeWarteEvidenz, quelleFinden } from "./assistant-buchhaltung.mjs";
+import { pruefeWarteKarte, quelleFinden } from "./assistant-buchhaltung.mjs";
 import {
   assistentenTag, faelligeSlots, naechsteSlotGrenzeMs, isoAus, msAus, ZEIT, istLokalDatum,
 } from "./assistant-zeit.mjs";
@@ -36,10 +32,9 @@ import {
 const RANG = { green: 0, yellow: 1, red: 2 };
 function schlechter(a, b) { return RANG[a] >= RANG[b] ? a : b; }
 
-/* Fingerabdruck des Bestands, soweit er das Urteil beeinflusst: Quell-
- * elemente mit Altstatus und updatedAt, Buchhaltungskarten mit Status.
- * Aendert ein Client irgendetwas daran, ist die alte Bewertung nicht mehr
- * aktuell — auch wenn dataRevision (nur Kernmutationen) gleich blieb. */
+/* Fingerabdruck des Bestands, soweit er das Urteil beeinflusst. Aendert ein
+ * Client irgendetwas daran, ist eine alte Bewertung nicht mehr aktuell —
+ * auch wenn dataRevision (nur Kernmutationen) gleich blieb. */
 export function bestandsFingerabdruck(data) {
   const teile = [];
   for (const [sourceType, q] of Object.entries(QUELLEN)) {
@@ -48,7 +43,7 @@ export function bestandsFingerabdruck(data) {
     for (const id of Object.keys(store).sort()) {
       const e = store[id];
       if (!e || typeof e !== "object") continue;
-      teile.push(sourceType, id, String(e[q.statusField] ?? ""), String(e.operationalState ?? ""), String(e.updatedAt ?? ""), String(e.dueDate ?? ""), String(e.readAt ?? ""));
+      teile.push(sourceType, id, String(e[q.statusField] ?? ""), String(e.operationalState ?? ""), String(e.operationalStateVersion ?? ""), String(e.updatedAt ?? ""), String(e.dueDate ?? ""), String(e.readAt ?? ""));
     }
   }
   const p = data.entities?.projects;
@@ -58,14 +53,14 @@ export function bestandsFingerabdruck(data) {
     teile.push("project", id, String(pr.status ?? ""), JSON.stringify((pr.deadlines || []).map((d) => [d.id, d.date, !!d.done])));
   }
   const a = data.automation || {};
-  for (const k of ["intakeById", "questionsById", "answersById", "documentsById", "jobsById", "waitingById", "progressById", "sourceCursors"]) {
+  for (const k of ["intakeById", "questionsById", "answersById", "documentsById", "jobsById", "evidenceById", "waitingById", "progressById", "sourceCursors"]) {
     const karte = a[k] || {};
     for (const id of Object.keys(karte).sort()) {
       const v = karte[id] || {};
-      teile.push(k, id, String(v.status ?? v.state ?? v.outcome ?? ""), String(v.consumedAt ?? v.handledAt ?? v.checkedAt ?? v.followUpAt ?? ""), String(v.deferrals ?? ""), String(v.parse?.outcome ?? ""));
+      teile.push(k, id, String(v.status ?? v.state ?? v.outcome ?? ""), String(v.consumedAt ?? v.handledAt ?? v.checkedAt ?? v.followUpAt ?? ""), String(v.deferrals ?? ""), String(v.parse?.outcome ?? ""), String(v.review?.verdict ?? ""), String(v.waitingSince ?? ""));
     }
   }
-  return createHash("sha256").update(teile.join("\u0001")).digest("hex").slice(0, 32);
+  return stringFingerprint(teile.join("\u0001"));
 }
 
 export function dailyAssistantTrafficLight(run, data, now, policy) {
@@ -73,54 +68,49 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
   const reasons = [];
   let coverage = "green";
   let operations = "green";
-  const grenzen = [];   // Kandidaten fuer validUntil
+  const grenzen = [];
   const grund = (achse, code, sourceType, sourceId, detail, stufe = "red") => {
     reasons.push({ axis: achse, code, sourceType: sourceType || null, sourceId: sourceId || null, detail: detail == null ? null : detail, severity: stufe });
     if (achse === "coverage") coverage = schlechter(coverage, stufe); else operations = schlechter(operations, stufe);
   };
-  const gezaehlt = { chatgptLeads: 0, chatgptTasks: 0, tasks: 0, projects: 0, intake: 0, questions: 0, answers: 0, documents: 0, jobs: 0, sources: 0 };
+  const gezaehlt = { chatgptLeads: 0, chatgptTasks: 0, tasks: 0, projects: 0, intake: 0, questions: 0, answers: 0, documents: 0, jobs: 0, evidence: 0, sources: 0 };
 
-  // ── Grundlagen: Bestand, Policy, Lauf ──────────────────────────────────
-  const bestandOk = data && typeof data === "object" && data.entities && typeof data.entities === "object";
+  const bestandOk = data && typeof data === "object" && data.entities && typeof data.entities === "object" && !Array.isArray(data.entities);
   if (!bestandOk) grund("operations", "CORE_MISSING", null, null, "kein Bestand");
   const pv = validatePolicy(policy);
   if (!pv.ok) grund("operations", "POLICY_INCOMPLETE", null, null, pv.errors);
   const automation = bestandOk && data.automation && typeof data.automation === "object" ? data.automation : null;
-  if (bestandOk && !automation) grund("operations", "CORE_NOT_MIGRATED", null, null, "automation fehlt");
+  if (bestandOk && (!automation || automation.schemaVersion !== 3 || !automation.migration)) grund("operations", "CORE_NOT_MIGRATED", null, null, "automation fehlt oder ist nicht migriert");
   if (!run || typeof run !== "object" || !istLokalDatum(run.date)) grund("operations", "RUN_MISSING", null, null, "kein Lauf uebergeben");
 
   const heute = assistentenTag(now);
   const runDate = run && istLokalDatum(run.date) ? run.date : heute;
   if (run && istLokalDatum(run.date) && run.date !== heute) grund("operations", "RUN_DATE_MISMATCH", "run", run.id || run.date, { runDate: run.date, today: heute }, "yellow");
 
-  // Behauptungen des Agenten am Lauf werden NICHT beruecksichtigt — nur sichtbar gemacht.
   if (run && typeof run === "object") {
     const behauptet = ["overallGreen", "agentReport", "claimedCoverage", "claimedOperations", "userApproval"].filter((k) => k in run);
     if (behauptet.length) grund("operations", "AGENT_CLAIM_IGNORED", "run", run.id || run.date, behauptet, "yellow");
     if (run.policyVersion && policy && policy.version && run.policyVersion !== policy.version) grund("operations", "RUN_POLICY_MISMATCH", "run", run.id || run.date, { run: run.policyVersion, policy: policy.version });
     if (run.phase === "exception_open") grund("operations", "RUN_EXCEPTION_OPEN", "run", run.id || run.date, run.invalidatedAt || null);
-  }
-
-  if (!bestandOk || !automation) {
-    return abschluss();
-  }
-
-  // ── Slots: alle Slots, die heute bereits begonnen haben, brauchen eine Quittung ──
-  if (run && istLokalDatum(run.date)) {
-    for (const s of faelligeSlots(run.date, now)) {
-      const r = run.slotReceipts && run.slotReceipts[s];
-      if (!r || !r.receiptId) grund("operations", "SLOT_RECEIPT_MISSING", "run", run.id || run.date, s);
+    if (istLokalDatum(run.date) && bestandOk) {
+      const slots = faelligeSlots(run.date, now);
+      if (slots.includes("briefing04") && !(run.startNoteId && data.entities.notes && data.entities.notes[run.startNoteId])) grund("operations", "RUN_START_NOTE_MISSING", "run", run.id || run.date, run.startNoteId || null);
+      for (const s of slots) {
+        const r = run.slotReceipts && run.slotReceipts[s];
+        if (!r || !r.receiptId) grund("operations", "SLOT_RECEIPT_MISSING", "run", run.id || run.date, s);
+      }
     }
   }
+  if (!bestandOk || !automation) return abschluss();
   grenzen.push(naechsteSlotGrenzeMs(now));
 
-  // ── Quellen: alle erforderlichen Quellen geprueft, frisch, ohne Stoerung ──
+  // ── Quellen: jede erforderliche Quelle (inkl. Quantus-Kern) geprueft, frisch, ohne Stoerung ──
   const maxAlter = (pv.ok ? policy.sourceMaxAgeMinutes : 15) * ZEIT.MINUTE;
-  const sourceChecks = (run && run.sourceChecks && typeof run.sourceChecks === "object") ? run.sourceChecks : {};
+  const sourceChecks = run && run.sourceChecks && typeof run.sourceChecks === "object" ? run.sourceChecks : {};
   if (pv.ok) {
     for (const s of policy.requiredSources) {
       gezaehlt.sources++;
-      const c = sourceChecks[s.id] || automation.sourceCursors?.[s.id] || null;
+      const c = sourceChecks[s.id] || null;
       if (!c || !c.checkedAt) { grund("operations", "SOURCE_NOT_CHECKED", "source", s.id, s.kind); continue; }
       const t = msAus(c.checkedAt);
       if (!Number.isFinite(t) || t > now) { grund("operations", "SOURCE_CHECK_INVALID", "source", s.id, c.checkedAt); continue; }
@@ -134,93 +124,79 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
     }
   }
 
-  // ── Lease ──
-  const lease = automation.activeLease;
-  if (lease && Number.isFinite(msAus(lease.expiresAt)) && msAus(lease.expiresAt) < now && run && run.phase === "active") {
-    grund("operations", "LEASE_EXPIRED", "lease", lease.holder, lease.expiresAt, "yellow");
-  }
-
   // ── Elemente: vollstaendiger Bestand ──
   const refs = new Set((run && Array.isArray(run.itemRefs) ? run.itemRefs : []).map((r) => r.sourceType + ":" + r.sourceId));
   const maxDeferrals = pv.ok ? policy.deferralLimit : 3;
-  const offeneFragenJeQuelle = new Map();
-  for (const q of Object.values(automation.questionsById || {})) {
-    if (q && q.status === "open") offeneFragenJeQuelle.set(q.sourceType + ":" + q.sourceId, q.id);
-  }
+  const offeneFragen = new Map();
+  for (const [qid, q] of Object.entries(automation.questionsById || {})) if (q && q.status === "open") offeneFragen.set(q.sourceType + ":" + q.sourceId, qid);
 
   const pruefeElement = (sourceType, id, e) => {
     const key = sourceKey(sourceType, id);
     const z = effektiverZustand(sourceType, e);
-    if (z.unmapped) { grund("coverage", "UNKNOWN_LEGACY_STATE", sourceType, id, z.legacy.legacyValue); return; }
-    if (z.inconsistent) grund("coverage", "STATE_CLAIM_INCONSISTENT", sourceType, id, { stored: z.stored, legacy: z.legacy.legacyValue });
+    if (z.unmigrated) { grund("coverage", "NOT_MIGRATED", sourceType, id, z.legacyNow); return; }
+    if (z.unmapped) { grund("coverage", z.reason === "unknown" ? "UNKNOWN_LEGACY_STATE" : "AMBIGUOUS_LEGACY_STATE", sourceType, id, z.legacyNow); return; }
+    if (z.versionInvalid) grund("coverage", "STATE_VERSION_INVALID", sourceType, id, null);
+    if (z.drift) grund("coverage", "LEGACY_DRIFT", sourceType, id, z.drift);
+    if (z.unproven) grund("coverage", "STATE_CLAIM_UNPROVEN", sourceType, id, z.state);
     if (ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) return;
 
-    // Faelligkeit / Zustaendigkeit: KI-Leads und ChatGPT-Aufgaben sind immer
-    // Arbeit des Assistenten; regulaere Aufgaben nur, wenn sie faellig sind.
-    let relevant = true;
-    if (sourceType === "task") {
-      const due = e.dueDate ? String(e.dueDate).slice(0, 10) : null;
-      relevant = !!due && due <= runDate;
-      if (due && due > runDate) grenzen.push(msAus(due + "T00:00:00Z"));
-    }
+    // Faelligkeit: harte Frist einer Aufgabe; KI-Leads und ChatGPT-Aufgaben sind stets Arbeit des Assistenten.
+    const due = sourceType === "task" && e.dueDate ? String(e.dueDate).slice(0, 10) : null;
+    const faellig = !!due && due <= runDate;
+    if (due && !faellig) grenzen.push(msAus(due + "T00:00:00Z"));
+    const assistentenArbeit = sourceType !== "task";
     if (sourceType === "chatgptLead" && !e.readAt) grund("coverage", "INTAKE_UNCLARIFIED", sourceType, id, "Lead ungelesen");
-    // Verschiebungen zaehlen unabhaengig von der Faelligkeit: wer eine Frist
-    // dreimal nach hinten schiebt, ist damit nicht "noch nicht faellig".
+
     const progress = automation.progressById?.[key];
     if (progress && Number(progress.deferrals) >= maxDeferrals) grund("coverage", "DEFERRAL_LIMIT", sourceType, id, { deferrals: progress.deferrals, limit: maxDeferrals });
-    if (!relevant) return;
+    // Eine Nutzeraufgabe, die noch nicht faellig ist, ist heute kein
+    // machbarer Schritt des Assistenten: kein Befund (Grenze fuer validUntil
+    // ist gesetzt). Alles Weitere gilt fuer Assistentenarbeit und Faelliges.
+    if (!assistentenArbeit && !faellig) return;
+    if (!refs.has(key)) grund("coverage", "ITEM_NOT_IN_RUN", sourceType, id, z.state);
 
-    if (!refs.has(key)) grund("coverage", "ITEM_NOT_IN_RUN", sourceType, id, z.state, "red");
-
-    const frage = offeneFragenJeQuelle.get(key);
+    const frage = offeneFragen.get(key);
     const rollen = rollenFuer(sourceType, e);
-    if (sourceType === "chatgptLead" && !rollen.executor) grund("coverage", "LEAD_UNASSIGNED", sourceType, id, null);
+    if (!rollen.explicit) grund("coverage", "ROLES_MISSING", sourceType, id, null);
+    if (sourceType === "chatgptLead" && !rollen.executor) grund("coverage", "LEAD_UNASSIGNED", sourceType, id, null, "yellow");
 
     if (WARTE_ZUSTAENDE.includes(z.state)) {
       const w = automation.waitingById?.[key];
       if (!w) { grund("coverage", "WAITING_UNVERIFIED", sourceType, id, z.state); return; }
       if (w.state !== z.state) { grund("coverage", "WAITING_STATE_MISMATCH", sourceType, id, { waiting: w.state, item: z.state }); return; }
-      const maengel = pruefeWarteEvidenz({ ...w, followUpAt: w.followUpAt }, { now: msAus(w.setAt) || now, policy: pv.ok ? policy : null, rollen });
-      // Ein followUpAt in der Vergangenheit ist keine Unvollstaendigkeit, sondern eine faellige Nachfassung.
-      const ohneFrist = maengel.filter((m) => m !== "WAIT_FOLLOWUP_PAST");
-      if (ohneFrist.length) { grund("coverage", "WAITING_INCOMPLETE", sourceType, id, ohneFrist); return; }
+      const pr = pruefeWarteKarte(data, sourceType, id, w, { now, policy: pv.ok ? policy : null, rollen });
+      if (pr.maengel.length) { grund("coverage", "WAITING_INCOMPLETE", sourceType, id, pr.maengel); return; }
+      if (faellig) grund("coverage", "HARD_DEADLINE_DUE", sourceType, id, due);
       const fu = msAus(w.followUpAt);
       if (fu <= now) { grund("coverage", "FOLLOWUP_DUE", sourceType, id, w.followUpAt); return; }
       grenzen.push(fu);
       if (w.evidence.kind === "question") {
-        const q = automation.questionsById?.[w.evidence.ref];
-        if (!q) grund("coverage", "WAITING_EVIDENCE_MISSING", sourceType, id, w.evidence.ref);
-        else if (q.status === "answered") grund("coverage", "ANSWER_UNCONSUMED", sourceType, id, q.answerId);
+        const q = automation.questionsById[w.evidence.questionId];
+        if (q.status === "answered") grund("coverage", "ANSWER_UNCONSUMED", sourceType, id, q.answerId);
       }
       if (w.evidence.kind === "job") {
-        const j = automation.jobsById?.[w.evidence.ref];
-        if (!j) grund("coverage", "WAITING_EVIDENCE_MISSING", sourceType, id, w.evidence.ref);
-        else if (j.state === "returned") grund("coverage", "JOB_RETURN_UNREVIEWED", sourceType, id, j.id);
-        else if (j.state === "failed") grund("coverage", "JOB_FAILED", sourceType, id, j.error || j.id);
+        const j = automation.jobsById[w.evidence.jobId];
+        if (msAus(j.expiresAt) <= now) grund("coverage", "JOB_EXPIRED", sourceType, id, j.id);
+        else grenzen.push(msAus(j.expiresAt));
       }
       return;
     }
-    if (z.state === "review") {
-      if (frage) grund("coverage", "QUESTION_OPEN", sourceType, id, frage);
-      else grund("coverage", "REVIEW_PENDING", sourceType, id, null);
-      return;
-    }
-    // doing: aktuell machbar und nicht abgeschlossen → nicht gruen.
     if (frage) grund("coverage", "QUESTION_OPEN", sourceType, id, frage);
-    grund("coverage", sourceType === "task" ? "TASK_DUE_OPEN" : "ITEM_OPEN", sourceType, id, z.state);
+    const stufe = faellig ? "red" : "yellow";
+    if (z.state === "review") { grund("coverage", faellig ? "REVIEW_DUE" : "REVIEW_PENDING", sourceType, id, due, stufe); return; }
+    grund("coverage", faellig ? "ITEM_DUE_OPEN" : "ITEM_OPEN", sourceType, id, due || z.state, stufe);
   };
 
   for (const [sourceType, q] of Object.entries(QUELLEN)) {
     const store = data.entities[q.store];
     if (!store || typeof store !== "object") continue;
     for (const [id, e] of Object.entries(store)) {
-      if (!e || typeof e !== "object") continue;
       gezaehlt[q.store]++;
+      if (!e || typeof e !== "object") { grund("coverage", "ENTITY_CORRUPT", sourceType, id, null); continue; }
       pruefeElement(sourceType, id, e);
     }
   }
 
-  // Projekte: faellige, nicht erledigte Fristen aktiver Projekte.
   for (const [id, p] of Object.entries(data.entities.projects || {})) {
     if (!p || typeof p !== "object") continue;
     gezaehlt.projects++;
@@ -233,30 +209,30 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
     }
   }
 
-  // Eingang, Fragen, Antworten, Dokumente, Jobs — die Buchhaltungskarten.
+  // ── Buchhaltungskarten: unbekannte Zustaende sind rot, nie uebersprungen ──
+  const karteOk = (art, v) => v && typeof v === "object" && KARTEN_ZUSTAENDE[art].includes(v.status ?? v.state);
   for (const [id, it] of Object.entries(automation.intakeById || {})) {
     gezaehlt.intake++;
-    if (it && it.status === "open") grund("coverage", "INTAKE_UNCLARIFIED", "intake", id, it.channel || null);
+    if (!karteOk("intake", it)) { grund("coverage", "CARD_STATE_UNKNOWN", "intake", id, it && it.status); continue; }
+    if (it.status === "open") grund("coverage", "INTAKE_UNCLARIFIED", "intake", id, it.channel || null);
   }
   for (const [id, q] of Object.entries(automation.questionsById || {})) {
     gezaehlt.questions++;
-    if (!q) continue;
-    if (q.status === "open") {
-      // Fragen zu offenen Elementen meldet pruefeElement; hier bleiben die
-      // Fragen zu abgeschlossenen oder verschwundenen Elementen — auch die
-      // sind offen und sperren.
-      const e = quelleFinden(data, q.sourceType, q.sourceId);
-      const zu = e && QUELLEN[q.sourceType] ? effektiverZustand(q.sourceType, e) : null;
-      if (!e || (zu && !zu.unmapped && ABGESCHLOSSENE_ZUSTAENDE.includes(zu.state))) grund("coverage", "QUESTION_OPEN", "question", id, q.sourceType + ":" + q.sourceId);
-    }
+    if (!karteOk("question", q)) { grund("coverage", "CARD_STATE_UNKNOWN", "question", id, q && q.status); continue; }
+    if (q.status !== "open") continue;
+    const e = quelleFinden(data, q.sourceType, q.sourceId);
+    const zu = e && QUELLEN[q.sourceType] ? effektiverZustand(q.sourceType, e) : null;
+    if (!e || (zu && !zu.unmigrated && !zu.unmapped && ABGESCHLOSSENE_ZUSTAENDE.includes(zu.state))) grund("coverage", "QUESTION_OPEN", "question", id, q.sourceType + ":" + q.sourceId);
   }
   for (const [id, a] of Object.entries(automation.answersById || {})) {
     gezaehlt.answers++;
-    if (a && !a.consumedAt) grund("coverage", "ANSWER_UNCONSUMED", "answer", id, a.questionId);
+    if (!a || typeof a !== "object" || typeof a.text !== "string") { grund("coverage", "CARD_STATE_UNKNOWN", "answer", id, null); continue; }
+    if (!a.consumedAt) grund("coverage", "ANSWER_UNCONSUMED", "answer", id, a.questionId);
   }
   for (const [id, d] of Object.entries(automation.documentsById || {})) {
     gezaehlt.documents++;
-    if (!d || d.status !== "open") continue;
+    if (!karteOk("document", d)) { grund("coverage", "CARD_STATE_UNKNOWN", "document", id, d && d.status); continue; }
+    if (d.status !== "open") continue;
     const o = d.parse?.outcome;
     if (o === "parsed") grund("coverage", "DOCUMENT_UNHANDLED", "document", id, d.name || null);
     else if (o === "unreadable" || o === "failed") grund("coverage", "DOCUMENT_UNREADABLE", "document", id, d.parse?.error || o);
@@ -264,10 +240,24 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
   }
   for (const [id, j] of Object.entries(automation.jobsById || {})) {
     gezaehlt.jobs++;
-    if (!j) continue;
-    if (j.state === "returned" && !j.reviewedAt) grund("coverage", "JOB_RETURN_UNREVIEWED", "job", id, j.sourceType + ":" + j.sourceId);
-    else if (j.state === "failed" && !j.reviewedAt) grund("coverage", "JOB_FAILED", "job", id, j.error || null);
-    else if (j.state === "queued" || j.state === "running") grund("coverage", "JOB_PENDING", "job", id, j.state, "yellow");
+    if (!karteOk("job", j)) { grund("coverage", "CARD_STATE_UNKNOWN", "job", id, j && j.state); continue; }
+    if (j.state === "returned" && !j.review) grund("coverage", "JOB_RETURN_UNREVIEWED", "job", id, j.sourceType + ":" + j.sourceId);
+    else if (j.state === "failed" && !j.review) grund("coverage", "JOB_FAILED", "job", id, j.error || null);
+    else if (["queued", "running"].includes(j.state)) {
+      if (msAus(j.expiresAt) <= now) grund("coverage", "JOB_EXPIRED", "job", id, j.expiresAt);
+      else { grund("coverage", "JOB_PENDING", "job", id, j.state, "yellow"); grenzen.push(msAus(j.expiresAt)); }
+    }
+  }
+  for (const [id, ev] of Object.entries(automation.evidenceById || {})) {
+    gezaehlt.evidence++;
+    if (!ev || typeof ev !== "object" || !ev.sourceType || !ev.sourceId || !ev.fingerprint) grund("coverage", "CARD_STATE_UNKNOWN", "evidence", id, null);
+  }
+  // Wartekarten ohne passendes Element oder ohne Wartezustand am Element sind Leichen.
+  for (const [key, w] of Object.entries(automation.waitingById || {})) {
+    const [sourceType, sourceId] = key.split(/:(.+)/);
+    const e = QUELLEN[sourceType] ? quelleFinden(data, sourceType, sourceId) : null;
+    const z = e ? effektiverZustand(sourceType, e) : null;
+    if (!e || !z || !WARTE_ZUSTAENDE.includes(z.state) || !w || w.state !== z.state) grund("coverage", "WAITING_CARD_ORPHAN", sourceType, sourceId, w && w.state);
   }
 
   return abschluss();
@@ -292,8 +282,6 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
   }
 }
 
-/* Ist eine gespeicherte Bewertung noch aktuell? Nur dann darf eine
- * Oberflaeche sie als "jetzt gruen" zeigen. */
 export function isEvaluationCurrent(evaluation, data, now) {
   if (!evaluation || typeof evaluation !== "object") return { current: false, reason: "EVALUATION_MISSING" };
   const bis = msAus(evaluation.validUntil);

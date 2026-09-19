@@ -1,29 +1,34 @@
 /* ══ Tagesbriefing v3 — Kern lesen und migrieren ════════════════════════════
  *
- * Der reale Bestand liegt als JSON-String in appStore/app-data_json (siehe
- * firebase-admin.readAppDataDocument). Dieses Modul nimmt den GEPARSTEN
- * Bestand entgegen und liefert einen neuen, migrierten Bestand zurueck —
- * ohne Netz, ohne Uhr, ohne Zufall. Der Aufrufer (spaeter: der CAS-Schreib-
- * pfad) gibt "now" herein und schreibt das Ergebnis zurueck.
+ * Der reale Bestand liegt als JSON-String in appStore/app-data_json. Dieses
+ * Modul nimmt den GEPARSTEN Bestand entgegen und liefert einen neuen,
+ * migrierten Bestand zurueck — ohne Netz, ohne Uhr, ohne Zufall.
  *
  * Regeln:
- *   · Ein fehlender oder unlesbarer Kern ist ein FEHLER. Es gibt keinen
- *     leeren Ersatzbestand, in den man dann hineinschreiben koennte — genau
- *     so entstanden frueher Datenverluste (F-25).
- *   · Die Migration ist idempotent: zweimal angewendet ergibt exakt dasselbe
- *     Ergebnis, auch mit anderem "now".
- *   · Fremde Felder, _deleteLog und alles, was der Kern nicht kennt, bleiben
- *     unveraendert.
- *   · Unbekannte Altstatus werden SICHTBAR markiert (Bericht + Feld an der
- *     Entitaet), nicht stumm nach done gedeutet.
+ *   · Ein fehlender, unlesbarer oder strukturell kaputter Kern ist ein
+ *     FEHLER. Es gibt keinen leeren Ersatzbestand, nichts wird "repariert",
+ *     indem es geleert oder als erledigt gedeutet wird (F-25).
+ *   · Die Migration ist versioniert und EINMALIG je Objekt: ein Objekt mit
+ *     operationalStateSource wird nie wieder aus seinen Altfeldern
+ *     abgeleitet — danach ist operationalState fuehrend.
+ *   · Zweimal angewendet ergibt exakt dasselbe Ergebnis, auch mit anderem now.
+ *   · Fremde Felder und _deleteLog bleiben unveraendert.
+ *   · Unbekannte und MEHRDEUTIGE Altstatus werden als Migrationskonflikt
+ *     sichtbar gefuehrt, nicht geraten.
  * ═════════════════════════════════════════════════════════════════════════ */
 import {
-  SCHEMA_VERSION, MAPPER, QUELLEN, leereAutomation,
+  SCHEMA_VERSION, STATE_MODEL_VERSION, MAPPER, QUELLEN, RUN_PHASES, AUTOMATION_KARTEN,
+  leereAutomation, rollenAbleiten,
 } from "./assistant-schema.mjs";
-import { isoAus } from "./assistant-zeit.mjs";
+import { isoAus, istLokalDatum } from "./assistant-zeit.mjs";
 
 export class CoreDocumentError extends Error {
-  constructor(code, message) { super(message || code); this.code = code; this.coreDocument = true; }
+  constructor(code, message) { super(message || code); this.code = code; this.status = 503; this.coreDocument = true; }
+}
+
+function istKarte(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    && [Object.prototype, null].includes(Object.getPrototypeOf(v));
 }
 
 /* Nimmt das Ergebnis von readAppDataDocument (oder den rohen Text) und
@@ -45,9 +50,21 @@ export function parseCoreDocument(stored) {
   return pruefeBestand(parsed);
 }
 
-function pruefeBestand(parsed) {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new CoreDocumentError("CORE_SHAPE", "Kernbestand ist kein Objekt.");
-  if (!parsed.entities || typeof parsed.entities !== "object") throw new CoreDocumentError("CORE_NO_ENTITIES", "Kernbestand ohne entities — das ist kein Quantus-Bestand.");
+/* Grundform: ein Objekt mit entities als Objekt. Jede Sammlung, die es gibt,
+ * muss ein Objekt sein; ein Array oder Primitiv an dieser Stelle ist ein
+ * korrupter Bestand, keine leere Sammlung. */
+export function pruefeBestand(parsed) {
+  if (!istKarte(parsed)) throw new CoreDocumentError("CORE_SHAPE", "Kernbestand ist kein Objekt.");
+  if (!istKarte(parsed.entities)) throw new CoreDocumentError("CORE_NO_ENTITIES", "Kernbestand ohne entities-Objekt — das ist kein Quantus-Bestand.");
+  for (const q of Object.values(QUELLEN)) {
+    if (parsed.entities[q.store] !== undefined && !istKarte(parsed.entities[q.store])) throw new CoreDocumentError("CORE_STORE_CORRUPT", `entities.${q.store} ist keine Karte.`);
+  }
+  for (const k of ["notes", "projects"]) {
+    if (parsed.entities[k] !== undefined && !istKarte(parsed.entities[k])) throw new CoreDocumentError("CORE_STORE_CORRUPT", `entities.${k} ist keine Karte.`);
+  }
+  if (parsed.automation !== undefined && !istKarte(parsed.automation)) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", "automation ist kein Objekt.");
+  if (parsed.dailyBriefing !== undefined && !istKarte(parsed.dailyBriefing)) throw new CoreDocumentError("CORE_DAILYBRIEFING_CORRUPT", "dailyBriefing ist kein Objekt.");
+  if (parsed.dailyBriefing && parsed.dailyBriefing.assistantRuns !== undefined && !istKarte(parsed.dailyBriefing.assistantRuns)) throw new CoreDocumentError("CORE_RUNS_CORRUPT", "dailyBriefing.assistantRuns ist keine Karte.");
   return parsed;
 }
 
@@ -55,66 +72,49 @@ export function klon(v) {
   return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
 }
 
-function istKarte(v) { return v && typeof v === "object" && !Array.isArray(v); }
-
 /* Wiederverwendung: was schon da ist, bleibt; nur fehlende Bereiche werden
- * angelegt. Ein vorhandener Bereich mit falschem Typ wird NICHT ueberschrieben,
- * sondern im Bericht gemeldet — sonst ginge etwas verloren. */
+ * angelegt. Ein vorhandener Bereich mit falschem Typ ist ein Fehler. */
 function ergaenzeAutomation(data, bericht) {
   const vorlage = leereAutomation();
-  if (!istKarte(data.automation)) {
-    if (data.automation !== undefined) bericht.conflicts.push({ path: "automation", found: typeof data.automation });
-    else { data.automation = vorlage; bericht.created.push("automation"); return; }
-    if (!istKarte(data.automation)) return;
-  }
+  if (data.automation === undefined) { data.automation = vorlage; bericht.created.push("automation"); return; }
   const a = data.automation;
   for (const [k, v] of Object.entries(vorlage)) {
     if (a[k] === undefined) { a[k] = v; bericht.created.push("automation." + k); continue; }
-    if (istKarte(v) && !istKarte(a[k])) bericht.conflicts.push({ path: "automation." + k, found: typeof a[k] });
+    if (istKarte(v) && !istKarte(a[k])) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", `automation.${k} ist keine Karte.`);
   }
-  if (typeof a.schemaVersion !== "number" || a.schemaVersion < SCHEMA_VERSION) {
+  if (a.schemaVersion !== SCHEMA_VERSION) {
+    if (Number.isInteger(a.schemaVersion) && a.schemaVersion > SCHEMA_VERSION) throw new CoreDocumentError("CORE_SCHEMA_NEWER", `automation.schemaVersion ${a.schemaVersion} ist neuer als ${SCHEMA_VERSION}.`);
     a.schemaVersion = SCHEMA_VERSION;
     bericht.created.push("automation.schemaVersion=" + SCHEMA_VERSION);
   }
+  if (!(Number.isSafeInteger(a.dataRevision) && a.dataRevision >= 0)) throw new CoreDocumentError("CORE_REVISION_CORRUPT", "automation.dataRevision ist keine gueltige Revision.");
 }
 
 function ergaenzeRuns(data, bericht) {
-  if (!istKarte(data.dailyBriefing)) {
-    if (data.dailyBriefing !== undefined) { bericht.conflicts.push({ path: "dailyBriefing", found: typeof data.dailyBriefing }); return; }
-    data.dailyBriefing = {};
-    bericht.created.push("dailyBriefing");
-  }
+  if (data.dailyBriefing === undefined) { data.dailyBriefing = {}; bericht.created.push("dailyBriefing"); }
   if (data.dailyBriefing.assistantRuns === undefined) {
     data.dailyBriefing.assistantRuns = {};
     bericht.created.push("dailyBriefing.assistantRuns");
-  } else if (!istKarte(data.dailyBriefing.assistantRuns)) {
-    bericht.conflicts.push({ path: "dailyBriefing.assistantRuns", found: typeof data.dailyBriefing.assistantRuns });
   }
 }
 
-/* operationalState je Entitaet ableiten. Geschrieben wird nur, wenn das
- * Feld fehlt oder der Altstatus sich seit dem letzten Mapping veraendert
- * hat (der Client hat weitergearbeitet). Ein bereits gemapptes Objekt mit
- * unveraendertem Altstatus wird nicht angefasst — deshalb ist die zweite
- * Migration ein No-op. */
+/* Einmalige Ableitung je Objekt. Ein Objekt MIT operationalStateSource wird
+ * nicht angefasst — egal, was seine Altfelder inzwischen sagen. */
 function mappeZustaende(data, nowIso, bericht) {
   for (const [sourceType, q] of Object.entries(QUELLEN)) {
     const store = data.entities[q.store];
     if (!istKarte(store)) continue;
     for (const [id, e] of Object.entries(store)) {
-      if (!istKarte(e)) continue;
+      if (!istKarte(e)) { bericht.conflicts.push({ kind: "corrupt_entity", sourceType, sourceId: id }); continue; }
+      if (istKarte(e.operationalStateSource)) continue;   // bereits migriert: fuehrend, nie erneut ableiten
       const m = MAPPER[sourceType](e);
-      const src = istKarte(e.operationalStateSource) ? e.operationalStateSource : null;
-      const unveraendert = src && src.legacyField === m.legacyField && src.legacyValue === m.legacyValue
-        && (m.unmapped ? e.operationalState === null && e.operationalStateUnmapped === true : typeof e.operationalState === "string");
-      if (unveraendert) continue;
       e.operationalState = m.operationalState;
-      e.operationalStateSource = { legacyField: m.legacyField, legacyValue: m.legacyValue, mappedAt: nowIso, note: m.note || null };
+      e.operationalStateVersion = 1;
+      e.operationalStateSource = { model: STATE_MODEL_VERSION, legacyField: m.legacyField, legacyValue: m.legacyValue, mappedAt: nowIso, note: m.note || null };
+      e.operationalRoles = rollenAbleiten(sourceType, e);
       if (m.unmapped) {
-        e.operationalStateUnmapped = true;
-        bericht.unknownStates.push({ sourceType, sourceId: id, legacyField: m.legacyField, legacyValue: m.legacyValue });
-      } else if (e.operationalStateUnmapped) {
-        delete e.operationalStateUnmapped;
+        e.operationalStateUnmapped = m.reason;
+        bericht.conflicts.push({ kind: m.reason, sourceType, sourceId: id, legacyField: m.legacyField, legacyValue: m.legacyValue });
       }
       bericht.mapped.push({ sourceType, sourceId: id, operationalState: m.operationalState });
     }
@@ -127,44 +127,55 @@ export function migrateCore(input, { now } = {}) {
   if (typeof now !== "number" || !Number.isFinite(now)) throw new TypeError("migrateCore: now (ms) fehlt");
   const bestand = pruefeBestand(input);
   const data = klon(bestand);
-  const bericht = { created: [], mapped: [], unknownStates: [], conflicts: [] };
+  const bericht = { created: [], mapped: [], conflicts: [] };
   const nowIso = isoAus(now);
 
   ergaenzeAutomation(data, bericht);
   ergaenzeRuns(data, bericht);
   mappeZustaende(data, nowIso, bericht);
 
-  const a = istKarte(data.automation) ? data.automation : null;
-  if (a) {
-    // Der Bericht wird nur beim ERSTEN Lauf angelegt bzw. wenn neue
-    // unbekannte Zustaende hinzukommen — ein wiederholter Lauf ohne Befund
-    // veraendert nichts (kein neues migratedAt).
-    const bisher = istKarte(a.migration) ? a.migration : null;
-    const unknownNeu = bericht.unknownStates;
-    if (!bisher) {
-      a.migration = { schemaVersion: SCHEMA_VERSION, migratedAt: nowIso, unknownStates: unknownNeu, conflicts: bericht.conflicts };
-    } else {
-      // Unbekannte, die inzwischen einen bekannten Status haben, verschwinden;
-      // neue kommen dazu. Ohne Unterschied bleibt das Objekt byteidentisch.
-      const vorhanden = new Set((bisher.unknownStates || []).map((u) => u.sourceType + ":" + u.sourceId));
-      const zusaetzlich = unknownNeu.filter((u) => !vorhanden.has(u.sourceType + ":" + u.sourceId));
-      const nochUnbekannt = (bisher.unknownStates || []).filter((u) => {
-        const e = data.entities?.[QUELLEN[u.sourceType]?.store]?.[u.sourceId];
-        return e && e.operationalStateUnmapped === true;
-      });
-      const neu = { ...bisher, unknownStates: [...nochUnbekannt, ...zusaetzlich], conflicts: bericht.conflicts.length ? bericht.conflicts : (bisher.conflicts || []) };
-      if (JSON.stringify(neu) !== JSON.stringify(bisher)) a.migration = neu;
-    }
-  }
+  const a = data.automation;
+  const bisher = istKarte(a.migration) ? a.migration : null;
+  // Konflikte werden gefuehrt, bis ein Kommando den Zustand gesetzt hat
+  // (operationalStateUnmapped fehlt dann am Objekt). Ohne Unterschied bleibt
+  // das Migrationsobjekt byteidentisch.
+  const nochOffen = (bisher ? bisher.conflicts || [] : []).filter((c) => {
+    if (c.kind === "corrupt_entity") return !istKarte(data.entities?.[QUELLEN[c.sourceType]?.store]?.[c.sourceId]);
+    const e = data.entities?.[QUELLEN[c.sourceType]?.store]?.[c.sourceId];
+    return e && typeof e.operationalStateUnmapped === "string";
+  });
+  const vorhanden = new Set(nochOffen.map((c) => c.kind + ":" + c.sourceType + ":" + c.sourceId));
+  const neu = bericht.conflicts.filter((c) => !vorhanden.has(c.kind + ":" + c.sourceType + ":" + c.sourceId));
+  const migration = bisher
+    ? { ...bisher, conflicts: [...nochOffen, ...neu] }
+    : { schemaVersion: SCHEMA_VERSION, stateModel: STATE_MODEL_VERSION, migratedAt: nowIso, conflicts: bericht.conflicts };
+  if (!bisher || JSON.stringify(migration) !== JSON.stringify(bisher)) a.migration = migration;
 
   const changed = JSON.stringify(data) !== JSON.stringify(bestand);
-  return { data, changed, report: bericht };
+  return { data, changed, report: { ...bericht, unknownStates: bericht.conflicts.filter((c) => c.kind === "unknown"), ambiguousStates: bericht.conflicts.filter((c) => c.kind === "ambiguous") } };
 }
 
-/* Der Kern in einem Bestand — oder ein Fehler. Kein Fallback auf {}. */
+/* Der migrierte Kern in einem Bestand — vollstaendig geprueft, oder ein
+ * Fehler. Nichts wird geleert oder ergaenzt. */
 export function requireCore(data) {
   const d = pruefeBestand(data);
-  if (!istKarte(d.automation) || d.automation.schemaVersion !== SCHEMA_VERSION) throw new CoreDocumentError("CORE_NOT_MIGRATED", "automation fehlt oder hat eine andere schemaVersion — erst migrateCore ausfuehren.");
+  const a = d.automation;
+  if (!istKarte(a) || a.schemaVersion !== SCHEMA_VERSION) throw new CoreDocumentError("CORE_NOT_MIGRATED", "automation fehlt oder hat eine andere schemaVersion — erst migrateCore ausfuehren.");
+  if (!(Number.isSafeInteger(a.dataRevision) && a.dataRevision >= 0)) throw new CoreDocumentError("CORE_REVISION_CORRUPT", "automation.dataRevision ist keine gueltige Revision.");
+  for (const k of AUTOMATION_KARTEN) if (!istKarte(a[k])) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", `automation.${k} fehlt oder ist keine Karte.`);
+  if (a.activeLease !== null && a.activeLease !== undefined && !istKarte(a.activeLease)) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", "automation.activeLease ist weder null noch Objekt.");
+  if (!istKarte(a.migration)) throw new CoreDocumentError("CORE_NOT_MIGRATED", "automation.migration fehlt — erst migrateCore ausfuehren.");
   if (!istKarte(d.dailyBriefing) || !istKarte(d.dailyBriefing.assistantRuns)) throw new CoreDocumentError("CORE_NOT_MIGRATED", "dailyBriefing.assistantRuns fehlt — erst migrateCore ausfuehren.");
+  for (const [date, run] of Object.entries(d.dailyBriefing.assistantRuns)) {
+    if (!istKarte(run) || run.date !== date || !istLokalDatum(date) || !RUN_PHASES.includes(run.phase)
+        || !Array.isArray(run.itemRefs) || !istKarte(run.slotReceipts) || !istKarte(run.sourceChecks) || !Array.isArray(run.corrections)) {
+      throw new CoreDocumentError("CORE_RUN_CORRUPT", `assistantRuns.${date} ist kein gueltiger Lauf.`);
+    }
+  }
+  for (const q of Object.values(QUELLEN)) {
+    for (const [id, e] of Object.entries(d.entities[q.store] || {})) {
+      if (!istKarte(e)) throw new CoreDocumentError("CORE_STORE_CORRUPT", `entities.${q.store}.${id} ist kein Objekt.`);
+    }
+  }
   return d;
 }

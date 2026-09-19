@@ -1,38 +1,56 @@
 /* ══ Tagesbriefing v3 — Abschluss und Invalidierung ═════════════════════════
  *
- * closeRun() ist eine REINE Mutation, die spaeter innerhalb des CAS-Schreib-
- * pfads laeuft: Bestand lesen (mit ETag) → closeRun(data, …) → Ergebnis mit
- * If-Match zurueckschreiben; bei 412 von vorn. Damit die Wiederholung
- * wortgleich ist, kommen finalNoteId und "now" von AUSSEN herein — im
- * Mutator gibt es kein Date.now(), keine UUID, keinen Nebeneffekt.
+ * closeRun() ist eine REINE Mutation fuer den CAS-Umschlag: finalNoteId und
+ * now kommen von aussen, im Mutator gibt es keine Uhr, keine UUID, keinen
+ * Nebeneffekt. Wiederholung ist ein No-op.
  *
- * Voraussetzungen (alle geprueft gegen den VOLLSTAENDIGEN Bestand):
- *   · Ortszeit ≥ 23:00 Europe/Zurich am Lauftag (und vor 04:00 des Folgetages)
- *   · Quittungen process09 und close23 (Policy: closure.requiredReceipts)
- *   · Ampel: beide Achsen gruen — das schliesst ein: alle erforderlichen
- *     Aktionen abgeschlossen oder in echtem Warten, erforderliche Quellen
- *     hoechstens sourceMaxAgeMinutes (15) alt
+ * Voraussetzungen, alle gegen den VOLLSTAENDIGEN Bestand geprueft:
+ *   · Ortszeit ≥ 23:00 Europe/Zurich am Lauftag, vor 04:00 des Folgetages
+ *   · Startnotiz vorhanden, Quittungen process09 und close23 vorhanden
+ *   · Ampel beide Achsen gruen (alle Aktionen abgeschlossen oder belegt
+ *     wartend; alle Quellen inkl. Quantus-Kern ≤ 15 Minuten alt)
  *
- * Atomar gesetzt: phase=final, finalAt, closureRevision, closureCutoff,
- * finalNoteId und GENAU EINE Finalnotiz in entities.notes. Ein zweiter
- * Aufruf fuer denselben Tag ist ein No-op (auch mit anderer finalNoteId).
- *
- * Invalidierung: ein Widerspruch NACH dem Abschluss (ein bei Abschluss als
- * erledigt gezaehltes Element ist wieder offen) oeffnet den Lauf als
- * exception_open, haengt eine Korrektur append-only an run.corrections und
- * legt eine NEUE Korrekturnotiz an. Die historische Finalnotiz bleibt
- * unveraendert. Neuer Eingang nach dem Abschluss ist KEIN Widerspruch —
- * er gehoert in den naechsten Lauf.
+ * Der Abschlussnachweis (closureOutcomes) erfasst die GESAMTE
+ * Verpflichtungsmenge zum Zeitpunkt des Abschlusses — jedes Element der
+ * Quellsammlungen mit Zustand und Beleg, jede Karte —, nicht die vom
+ * Agenten gewaehlten itemRefs. Ein spaeterer Widerspruch (ein abgeschlossenes
+ * Element wieder offen, ein belegtes Warten ohne Beleg, eine erledigte Karte
+ * wieder offen) oeffnet den Lauf als exception_open, append-only, mit
+ * eigener Korrekturnotiz; die historische Finalnotiz bleibt unveraendert.
+ * Neuer Eingang nach closureCutoff ist kein Widerspruch — er gehoert in den
+ * naechsten Lauf.
  * ═════════════════════════════════════════════════════════════════════════ */
-import { QUELLEN, ABGESCHLOSSENE_ZUSTAENDE, effektiverZustand, validatePolicy, pruefeId } from "./assistant-schema.mjs";
+import { QUELLEN, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, effektiverZustand, validatePolicy, pruefeId } from "./assistant-schema.mjs";
 import { klon, requireCore } from "./assistant-migration.mjs";
 import { bump, notizBauen, quelleFinden } from "./assistant-buchhaltung.mjs";
 import { dailyAssistantTrafficLight } from "./assistant-ampel.mjs";
 import { istLokalDatum, isoAus, msAus, wandzeitZuMs, tagesEndeMs, datumPlusTage, assistentenTag } from "./assistant-zeit.mjs";
 
 const fehler = (error, detail) => ({ ok: false, error, detail: detail == null ? null : detail });
+function istKarte(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
 
-function istKarte(v) { return v && typeof v === "object" && !Array.isArray(v); }
+/* Die Verpflichtungsmenge: Zustand jedes Elements und jeder Karte. Nur
+ * Zustandsnamen und Belegkennungen, keine Kopien. */
+export function verpflichtungsmenge(data) {
+  const out = {};
+  for (const [sourceType, q] of Object.entries(QUELLEN)) {
+    for (const [id, e] of Object.entries(data.entities[q.store] || {})) {
+      if (!istKarte(e)) { out[sourceType + ":" + id] = { state: "corrupt" }; continue; }
+      const z = effektiverZustand(sourceType, e);
+      const eintrag = { state: z.unmigrated ? "unmigrated" : z.unmapped ? "unmapped" : z.state, version: z.version };
+      const w = data.automation.waitingById[sourceType + ":" + id];
+      if (w && WARTE_ZUSTAENDE.includes(z.state)) eintrag.evidence = w.evidence;
+      out[sourceType + ":" + id] = eintrag;
+    }
+  }
+  const a = data.automation;
+  for (const [id, it] of Object.entries(a.intakeById)) out["intake:" + id] = { state: it && it.status };
+  for (const [id, d] of Object.entries(a.documentsById)) out["document:" + id] = { state: d && d.status };
+  for (const [id, j] of Object.entries(a.jobsById)) out["job:" + id] = { state: j && j.state, reviewed: !!(j && j.review) };
+  for (const [id, q] of Object.entries(a.questionsById)) out["question:" + id] = { state: q && q.status };
+  for (const [id, ans] of Object.entries(a.answersById)) out["answer:" + id] = { state: ans && ans.consumedAt ? "consumed" : "open" };
+  return out;
+}
 
 /* Prueft alle Voraussetzungen, ohne etwas zu veraendern. */
 export function pruefeAbschluss(data, { date }, { now, policy }) {
@@ -48,57 +66,33 @@ export function pruefeAbschluss(data, { date }, { now, policy }) {
   const spaetestens = tagesEndeMs(date);
   if (now < fruehestens) maengel.push({ code: "CLOSURE_TOO_EARLY", detail: { earliest: isoAus(fruehestens) } });
   if (now >= spaetestens) maengel.push({ code: "CLOSURE_DAY_OVER", detail: { dayEnd: isoAus(spaetestens) } });
-
+  if (!run.startNoteId || !data.entities.notes || !data.entities.notes[run.startNoteId]) maengel.push({ code: "START_NOTE_MISSING", detail: run.startNoteId || null });
   for (const s of policy.closure.requiredReceipts) {
     const r = run.slotReceipts && run.slotReceipts[s];
     if (!r || !r.receiptId) maengel.push({ code: "RECEIPT_MISSING", detail: s });
   }
-
   const evaluation = dailyAssistantTrafficLight(run, data, now, policy);
   if (evaluation.coverage !== "green") maengel.push({ code: "COVERAGE_NOT_GREEN", detail: evaluation.reasons.filter((r) => r.axis === "coverage") });
   if (evaluation.operations !== "green") maengel.push({ code: "OPERATIONS_NOT_GREEN", detail: evaluation.reasons.filter((r) => r.axis === "operations") });
-
   return { ok: maengel.length === 0, blockers: maengel, evaluation, run };
 }
 
-/* Der Abschluss. Gibt bei Erfolg den neuen Bestand zurueck. */
 export function closeRun(input, { date, finalNoteId }, ctx) {
   if (!ctx || typeof ctx.now !== "number") throw new TypeError("ctx.now (ms) fehlt");
   const data = klon(requireCore(input));
   const run = istKarte(data.dailyBriefing.assistantRuns[date]) ? data.dailyBriefing.assistantRuns[date] : null;
   if (!run) return fehler("RUN_MISSING", date);
-
-  // Idempotenz: bereits final → nichts tun, bestehende Notiz melden.
-  if (run.phase === "final" && run.finalNoteId) {
-    return { ok: true, data, already: true, finalNoteId: run.finalNoteId, run };
-  }
+  if (run.phase === "final" && run.finalNoteId) return { ok: true, data, already: true, finalNoteId: run.finalNoteId, run };
   if (run.phase === "exception_open") return fehler("RUN_EXCEPTION_OPEN", { invalidatedAt: run.invalidatedAt });
   pruefeId(finalNoteId, "finalNoteId");
-
   const p = pruefeAbschluss(data, { date }, ctx);
   if (!p.ok) return { ok: false, error: "CLOSURE_BLOCKED", detail: p.blockers, evaluation: p.evaluation };
-
   data.entities.notes = istKarte(data.entities.notes) ? data.entities.notes : {};
   if (data.entities.notes[finalNoteId]) return fehler("NOTE_ID_TAKEN", finalNoteId);
 
   const nowIso = isoAus(ctx.now);
-  const revision = bump(data, ctx.now);   // die Revision, die den Abschluss traegt
-
-  // Ergebnis je Element zum Zeitpunkt des Abschlusses — das ist die
-  // Vergleichsbasis fuer spaetere Widersprueche. Es werden nur
-  // Zustandsnamen festgehalten, keine Kopien der Elemente.
-  run.closureOutcomes = {};
-  for (const ref of run.itemRefs) {
-    const e = quelleFinden(data, ref.sourceType, ref.sourceId);
-    if (!e) { run.closureOutcomes[ref.sourceType + ":" + ref.sourceId] = "missing"; continue; }
-    if (QUELLEN[ref.sourceType]) {
-      const z = effektiverZustand(ref.sourceType, e);
-      run.closureOutcomes[ref.sourceType + ":" + ref.sourceId] = z.state || "unmapped";
-    } else {
-      run.closureOutcomes[ref.sourceType + ":" + ref.sourceId] = e.status || e.state || "open";
-    }
-  }
-
+  const revision = bump(data, ctx.now);
+  run.closureOutcomes = verpflichtungsmenge(data);
   run.phase = "final";
   run.finalAt = nowIso;
   run.closureRevision = revision;
@@ -107,7 +101,6 @@ export function closeRun(input, { date, finalNoteId }, ctx) {
   run.finalEvaluation = { coverage: p.evaluation.coverage, operations: p.evaluation.operations, evaluatedRevision: p.evaluation.evaluatedRevision, evaluatedFingerprint: p.evaluation.evaluatedFingerprint, evaluatedAt: p.evaluation.evaluatedAt };
   run.revision = (Number(run.revision) || 0) + 1;
   run.updatedAt = nowIso;
-
   data.entities.notes[finalNoteId] = notizBauen(finalNoteId, {
     title: `Tagesbriefing ${date} — Abschluss`,
     content: finalnotizText(run, p.evaluation),
@@ -121,62 +114,65 @@ function finalnotizText(run, evaluation) {
     `Abschluss ${run.date} um ${run.finalAt} (Revision ${run.closureRevision}).`,
     `Ampel: Arbeitsabdeckung ${evaluation.coverage}, Betrieb ${evaluation.operations}.`,
     `Quittungen: ${Object.entries(run.slotReceipts).filter(([, r]) => r && r.receiptId).map(([k]) => k).join(", ") || "keine"}.`,
-    `Elemente im Lauf: ${run.itemRefs.length}.`,
+    `Verpflichtungen geprueft: ${Object.keys(run.closureOutcomes).length}, davon im Lauf gefuehrt: ${run.itemRefs.length}.`,
   ];
-  for (const ref of run.itemRefs) zeilen.push(`- ${ref.sourceType}:${ref.sourceId} → ${run.closureOutcomes[ref.sourceType + ":" + ref.sourceId]}`);
+  for (const [key, o] of Object.entries(run.closureOutcomes)) zeilen.push(`- ${key} → ${o.state}${o.evidence ? " (Beleg " + JSON.stringify(o.evidence) + ")" : ""}`);
   return zeilen.join("\n");
 }
 
-/* Widerspruch pruefen — ohne zu veraendern. Liefert die Elemente, die beim
- * Abschluss als abgeschlossen galten und es jetzt nicht mehr sind, sowie
- * den Eingang, der NACH dem Abschluss entstand (der gehoert in den
- * naechsten Lauf, nicht in diesen). */
+/* Widerspruch pruefen — ohne zu veraendern. */
 export function pruefeWiderspruch(data, { date }, { now }) {
   const run = istKarte(data.dailyBriefing?.assistantRuns?.[date]) ? data.dailyBriefing.assistantRuns[date] : null;
   if (!run) return { ok: false, error: "RUN_MISSING" };
   if (run.phase !== "final") return { ok: true, contradictions: [], newIntake: [], nextRunDate: null, final: false };
   const cutoff = msAus(run.closureCutoff);
+  const jetzt = verpflichtungsmenge(data);
   const widersprueche = [];
-  for (const [key, outcome] of Object.entries(run.closureOutcomes || {})) {
-    if (!ABGESCHLOSSENE_ZUSTAENDE.includes(outcome)) continue;
+  for (const [key, damals] of Object.entries(run.closureOutcomes || {})) {
     const [sourceType, sourceId] = key.split(/:(.+)/);
-    const e = quelleFinden(data, sourceType, sourceId);
-    if (!e) { widersprueche.push({ sourceType, sourceId, was: outcome, now: "missing" }); continue; }
-    const jetzt = QUELLEN[sourceType] ? (effektiverZustand(sourceType, e).state || "unmapped") : (e.status || "open");
-    if (!ABGESCHLOSSENE_ZUSTAENDE.includes(jetzt)) widersprueche.push({ sourceType, sourceId, was: outcome, now: jetzt });
+    const heute = jetzt[key];
+    if (!heute) { widersprueche.push({ sourceType, sourceId, was: damals.state, now: "missing" }); continue; }
+    const geschlossenDamals = ABGESCHLOSSENE_ZUSTAENDE.includes(damals.state) || ["done", "consumed", "cancelled", "answered", "withdrawn", "expired", "failed"].includes(damals.state) || (damals.state === "returned" && damals.reviewed);
+    if (geschlossenDamals && heute.state !== damals.state && !ABGESCHLOSSENE_ZUSTAENDE.includes(heute.state) && !["done", "consumed", "cancelled"].includes(heute.state)) {
+      widersprueche.push({ sourceType, sourceId, was: damals.state, now: heute.state });
+      continue;
+    }
+    if (WARTE_ZUSTAENDE.includes(damals.state)) {
+      const belegWeg = !heute.evidence || JSON.stringify(heute.evidence) !== JSON.stringify(damals.evidence);
+      if (heute.state === "doing" || heute.state === "unmapped" || heute.state === "unmigrated" || (WARTE_ZUSTAENDE.includes(heute.state) && belegWeg)) {
+        widersprueche.push({ sourceType, sourceId, was: damals.state, now: heute.state, evidenceLost: belegWeg });
+      }
+    }
   }
   const neu = [];
-  const a = data.automation || {};
+  const a = data.automation;
   for (const [id, it] of Object.entries(a.intakeById || {})) {
     if (it && it.status === "open" && msAus(it.registeredAt) > cutoff) neu.push({ sourceType: "intake", sourceId: id });
   }
   for (const [sourceType, q] of Object.entries(QUELLEN)) {
     for (const [id, e] of Object.entries(data.entities[q.store] || {})) {
-      if (!istKarte(e)) continue;
+      if (!istKarte(e) || run.closureOutcomes[sourceType + ":" + id]) continue;
       const created = msAus(e.createdAt);
-      if (Number.isFinite(created) && created > cutoff && !ABGESCHLOSSENE_ZUSTAENDE.includes(effektiverZustand(sourceType, e).state)) neu.push({ sourceType, sourceId: id });
+      if (Number.isFinite(created) && created > cutoff) neu.push({ sourceType, sourceId: id });
     }
   }
   const nextRunDate = assistentenTag(Math.max(now, tagesEndeMs(date)));
   return { ok: true, final: true, contradictions: widersprueche, newIntake: neu, nextRunDate: nextRunDate === date ? datumPlusTage(date, 1) : nextRunDate };
 }
 
-/* Invalidierung: append-only, historische Finalnotiz bleibt. */
 export function invalidateClosure(input, { date, correctionId, reason, contradiction }, ctx) {
   if (!ctx || typeof ctx.now !== "number") throw new TypeError("ctx.now (ms) fehlt");
   const data = klon(requireCore(input));
   const run = istKarte(data.dailyBriefing.assistantRuns[date]) ? data.dailyBriefing.assistantRuns[date] : null;
   if (!run) return fehler("RUN_MISSING", date);
+  if ((run.corrections || []).some((c) => c.id === correctionId)) return { ok: true, data, already: true };
   if (run.phase !== "final") return fehler("RUN_NOT_FINAL", run.phase);
   pruefeId(correctionId, "correctionId");
   if (!String(reason || "").trim()) return fehler("REASON_MISSING");
-  if (!contradiction || !contradiction.sourceType || !contradiction.sourceId) return fehler("CONTRADICTION_MISSING");
-  // Nur ein ECHTER Widerspruch invalidiert; neuer Eingang gehoert in den naechsten Lauf.
+  if (!istKarte(contradiction) || !contradiction.sourceType || !contradiction.sourceId) return fehler("CONTRADICTION_MISSING");
   const w = pruefeWiderspruch(data, { date }, ctx);
   const passt = w.contradictions.some((c) => c.sourceType === contradiction.sourceType && c.sourceId === contradiction.sourceId);
   if (!passt) return fehler("NOT_A_CONTRADICTION", { given: contradiction, found: w.contradictions, nextRunDate: w.nextRunDate });
-  if ((run.corrections || []).some((c) => c.id === correctionId)) return { ok: true, data, already: true };
-
   data.entities.notes = istKarte(data.entities.notes) ? data.entities.notes : {};
   if (data.entities.notes[correctionId]) return fehler("NOTE_ID_TAKEN", correctionId);
 
@@ -186,14 +182,13 @@ export function invalidateClosure(input, { date, correctionId, reason, contradic
     id: correctionId, at: nowIso, revision, reason: String(reason).trim().slice(0, 500),
     contradiction: { sourceType: contradiction.sourceType, sourceId: contradiction.sourceId },
     invalidatedFinalNoteId: run.finalNoteId, invalidatedClosureRevision: run.closureRevision, invalidatedFinalAt: run.finalAt,
-    correctionNoteId: correctionId,
+    correctionNoteId: correctionId, by: ctx.actor ? ctx.actor.id : null,
   };
   run.corrections = [...(run.corrections || []), korrektur];
   run.phase = "exception_open";
   run.invalidatedAt = nowIso;
   run.revision = (Number(run.revision) || 0) + 1;
   run.updatedAt = nowIso;
-  // finalNoteId, finalAt, closureRevision, closureCutoff bleiben als Historie stehen.
   data.entities.notes[correctionId] = notizBauen(correctionId, {
     title: `Tagesbriefing ${date} — Korrektur`,
     content: `Abschluss vom ${korrektur.invalidatedFinalAt} (Notiz ${korrektur.invalidatedFinalNoteId}, Revision ${korrektur.invalidatedClosureRevision}) widerrufen: ${korrektur.reason}\nWiderspruch: ${contradiction.sourceType}:${contradiction.sourceId}`,
