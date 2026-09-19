@@ -139,28 +139,45 @@ test("keine Absage enthält ein Geheimnis — auch nicht in Bruchstücken", () =
   assert.ok(!/[0-9a-f]{64}/.test(text), "eine Absage enthält einen SHA-256-Abdruck");
 });
 
-test("C1 schaltet nichts frei: kein Handler zu den vier Routen", () => {
+test("C1 selbst schaltet nichts frei — und die C2-Routen sind schreibgesperrt", async () => {
   const namen = Object.keys(QUANTUS_V3_TOOLS);
   assert.deepEqual(namen, ["quantus_context", "quantus_read", "quantus_command", "quantus_run_status"]);
   assert.deepEqual(namen.map((n) => QUANTUS_V3_TOOLS[n].route),
     ["quantus-context", "quantus-read", "quantus-ingest", "quantus-run-status"]);
-
   for (const name of namen) {
     assert.equal(QUANTUS_V3_TOOLS[name].enabled, false, `${name} ist als freigeschaltet markiert`);
-    const datei = path.join(root, "netlify/functions", `${QUANTUS_V3_TOOLS[name].route}.mjs`);
-    assert.equal(fs.existsSync(datei), false, `es gibt bereits einen Handler ${datei}`);
   }
 
-  // Und das Sicherheitsmodul selbst schreibt nichts: kein Firebase, kein Blob.
-  // Gemessen wird am CODE, nicht an den Kommentaren — dort dürfen die Namen
-  // zur Erklärung vorkommen.
+  // Seit Paket C2 gibt es die Routendateien. Sie gehören NICHT zu C1: keines
+  // der beiden C1-Module importiert einen Handler, und umgekehrt greift keine
+  // Route unmittelbar auf C1 oder auf Daten zu — sie geht über den Dienst.
+  for (const name of namen) {
+    const datei = path.join(root, "netlify/functions", `${QUANTUS_V3_TOOLS[name].route}.mjs`);
+    if (!fs.existsSync(datei)) continue;
+    const code = ohneKommentare(fs.readFileSync(datei, "utf8"));
+    for (const [, spec] of code.matchAll(/from\s+"([^"]+)"/g)) {
+      assert.ok(["../lib/quantus-v3-service.mjs", "../lib/quantus-v3-runtime.mjs"].includes(spec),
+        `${datei} importiert ${spec}`);
+    }
+  }
+
+  // Und schreiben tun sie erst, wenn zwei Schalter ausdrücklich stehen.
+  const { writesEnabled } = await import("../netlify/lib/quantus-v3-service.mjs");
+  const standard = resolveAuthConfig(makeEnv({ tenant: TENANT }).read).config;
+  assert.equal(writesEnabled(standard, () => undefined), false, "Schreiben ist standardmässig an");
+  const scharf = resolveAuthConfig(makeEnv({ tenant: TENANT, mode: "enforce" }).read).config;
+  assert.equal(writesEnabled(scharf, () => undefined), false, "enforce allein genügt zum Schreiben");
+  assert.equal(writesEnabled(scharf, (n) => (n === "QUANTUS_V3_API_WRITES" ? "enabled" : undefined)), true);
+  assert.equal(writesEnabled(standard, (n) => (n === "QUANTUS_V3_API_WRITES" ? "enabled" : undefined)), false,
+    "die API-Freigabe allein genügt zum Schreiben");
+
+  // Das Sicherheitsmodul selbst schreibt nichts: kein Firebase, kein Blob.
+  // Gemessen wird am CODE, nicht an den Kommentaren.
   for (const datei of ["netlify/lib/quantus-v3-auth.mjs", "netlify/lib/quantus-v3-cursor.mjs"]) {
     const code = ohneKommentare(fs.readFileSync(path.join(root, datei), "utf8"));
     for (const verboten of ["firebase-admin", "writeAppDataText", "readAppDataText", "@netlify/blobs", "quantus-v3-idempotency"]) {
       assert.ok(!code.includes(verboten), `${datei} greift auf ${verboten} zu`);
     }
-    // Ausser node:, dem eigenen Paket und der geprüften JOSE-Bibliothek wird
-    // nichts importiert — insbesondere kein Datenzugriff.
     for (const [, spec] of code.matchAll(/from\s+"([^"]+)"/g)) {
       assert.ok(spec.startsWith("node:") || spec.startsWith("./quantus-v3-") || spec === "jose",
         `${datei} importiert ${spec}`);

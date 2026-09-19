@@ -56,12 +56,16 @@ const VALID_KEY_STATUS = new Set(["active", "retiring", "revoked"]);
  * dem jede Seite autorisiert wird, und ihre Höchstseitengrösse.
  */
 export const NAMED_QUERIES = Object.freeze({
-  "run.context":   Object.freeze({ scopeKind: "run",    dataCategory: "run_context", verb: "context.read", maxPageSize: 50 }),
-  "lead.context":  Object.freeze({ scopeKind: "lead",   dataCategory: "lead",        verb: "context.read", maxPageSize: 50 }),
-  "run.queue":     Object.freeze({ scopeKind: "tenant", dataCategory: "run",         verb: "context.read", maxPageSize: 100 }),
-  "run.status":    Object.freeze({ scopeKind: "tenant", dataCategory: "run_status",  verb: "context.read", maxPageSize: 100 }),
-  "notes.recent":  Object.freeze({ scopeKind: "lead",   dataCategory: "note",        verb: "context.read", maxPageSize: 50 }),
-  "policy.current":Object.freeze({ scopeKind: "tenant", dataCategory: "policy",      verb: "context.read", maxPageSize: 10 }),
+  // dataCategory  = Kategorie des SCOPE-Objekts, gegen das autorisiert wird
+  // itemCategory  = Kategorie der Einträge, die die Seite liefert
+  // Beides fällt oft zusammen — bei `notes.recent` nicht: dort hängen Notizen
+  // an einem Lead, und wer die Notizen lesen darf, entscheidet der LEAD.
+  "run.context":   Object.freeze({ scopeKind: "run",    dataCategory: "run_context", itemCategory: "run_context", verb: "context.read", maxPageSize: 50 }),
+  "lead.context":  Object.freeze({ scopeKind: "lead",   dataCategory: "lead",        itemCategory: "lead",        verb: "context.read", maxPageSize: 50 }),
+  "run.queue":     Object.freeze({ scopeKind: "tenant", dataCategory: "run",         itemCategory: "run",         verb: "context.read", maxPageSize: 100 }),
+  "run.status":    Object.freeze({ scopeKind: "tenant", dataCategory: "run_status",  itemCategory: "run_status",  verb: "context.read", maxPageSize: 100 }),
+  "notes.recent":  Object.freeze({ scopeKind: "lead",   dataCategory: "lead",        itemCategory: "note",        verb: "context.read", maxPageSize: 50 }),
+  "policy.current":Object.freeze({ scopeKind: "tenant", dataCategory: "policy",      itemCategory: "policy",      verb: "context.read", maxPageSize: 10 }),
 });
 
 /* Welche Objektart der serverseitig geladene Scope-Datensatz haben muss,
@@ -72,7 +76,7 @@ export const SCOPE_OBJECT_KINDS = Object.freeze({
   "lead.context": "lead",
   "run.queue": "run",
   "run.status": "run_status",
-  "notes.recent": "note",
+  "notes.recent": "lead",
   "policy.current": "policy",
 });
 
