@@ -36,7 +36,7 @@ checkouts. No production data was read or modified for the initial code work.
 | --- | --- | --- |
 | A | Writer, automation, schema and regression inventory | Initial source inventory below; deployed service inventory still open |
 | B | Canonical states, migration, server traffic lights, closure | Delegated to Claude Code, separate review branch; not yet accepted |
-| C | Auth, four strict APIs, idempotency, entity versions, CAS | Existing CAS hardening implemented locally; API and auth open |
+| C | Auth, four strict APIs, idempotency, entity versions, CAS | CAS and atomic idempotency component tested locally; auth delegated; HTTP integration open |
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Open; do not enable API-only writes yet |
 | E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | Open |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
@@ -119,8 +119,8 @@ implied. A test of the transaction helper does not prove all HTTP entry points.
 | T01 | Missing auth config returns 503, not access | Open |
 | T02 | Wrong user, tenant, lead or role denied | Open |
 | T03 | Unknown verb/field/path/key/oversize rejected | Open |
-| T04 | Same principal/key/body commits once | Open |
-| T05 | Changed body conflicts; lost reply replays result | Open |
+| T04 | Same principal/key/body commits once | Partial: concurrent storage/component tests; authenticated HTTP integration open |
+| T05 | Changed body conflicts; lost reply replays result | Partial: storage/component tests; authenticated HTTP integration open |
 | T06 | CAS retries do not repeat effects; exhausted retries visible | Partial: storage retry/503 tests, outbox/command tests open |
 | T07 | Missing/corrupt core aborts before mutation | Partial: production mutateAppData behavior tested; all entry points open |
 | T08 | Three clients + worker preserve answers/runs/foreign fields | Open |

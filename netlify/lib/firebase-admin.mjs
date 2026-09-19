@@ -407,8 +407,10 @@ export async function mutateAppData(key, mutator, { savedBy = "netlify-function"
       throw Object.assign(new Error("Die Versionskennung des Datensatzes fehlt."), { code: "cas_etag_missing", status: 503 });
     }
     // Der Mutator muss synchron und nebenwirkungsfrei sein, da CAS ihn wiederholt.
+    const beforeMutation = JSON.stringify(parsed);
     const mutation = mutator(parsed);
     if (mutation && typeof mutation.then === "function") {
+      Promise.resolve(mutation).catch(() => {});
       throw Object.assign(new Error("Asynchrone Transaktionsfunktionen sind nicht erlaubt."), { code: "async_mutator", status: 500 });
     }
     const data = isRecord(mutation) && Object.hasOwn(mutation, "data") ? mutation.data : mutation;
@@ -417,6 +419,12 @@ export async function mutateAppData(key, mutator, { savedBy = "netlify-function"
     }
     const mutationResult = mutation?.result ?? null;
     const text = JSON.stringify(data);
+    if (mutation?.unchanged === true) {
+      if (text !== beforeMutation) {
+        throw Object.assign(new Error("Eine unveraenderte Transaktion darf keine Daten aendern."), { code: "unchanged_mutation_invalid", status: 500 });
+      }
+      return { data, result: mutationResult };
+    }
     const wrap = {
       ...(isRecord(current.value) ? current.value : {}),
       data: text,

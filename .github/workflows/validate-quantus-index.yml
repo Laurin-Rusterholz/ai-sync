@@ -20,6 +20,7 @@ on:
       - "netlify/lib/flowertech-core.mjs"
       - "netlify/lib/firebase-admin.mjs"
       - "netlify/lib/assistant-*.mjs"
+      - "netlify/lib/quantus-v3-*.mjs"
       - "netlify/lib/date-invite-core.mjs"
       - "netlify/functions/date-invite.mjs"
       - "public/flowertech.js"
