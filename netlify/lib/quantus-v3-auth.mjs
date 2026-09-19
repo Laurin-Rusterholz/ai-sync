@@ -8,69 +8,67 @@
  *   quantus_command  → Route quantus-ingest    (Befehl/Ergebnis annehmen)
  *   quantus_run_status → Route quantus-run-status (Lauf-Status lesen)
  * Es enthält AUSSCHLIESSLICH die Prüfungen: Ausweis, Rolle, Objektrecht,
- * Transport. Es enthält KEINE Geschäftslogik, KEINEN Schreibweg und KEINEN
- * Netlify-Handler. Kein einziger Endpunkt wird durch diese Datei erreichbar —
- * das ist Absicht (Paketgrenze C1) und wird in den Tests festgehalten.
+ * Transport. Keine Geschäftslogik, kein Schreibweg, kein Netlify-Handler.
+ * Kein Endpunkt wird durch diese Datei erreichbar — Paketgrenze C1, in den
+ * Tests festgehalten.
  *
  * QUANTUS IST DAMIT NICHT ABGESICHERT. Die bestehenden Endpunkte (blob-put,
  * gcal-*, gmail-api, flowertech-*) bleiben unverändert und hängen weiter am
- * OPTIONALEN `SYNC_AUTH_TOKEN`. Dieser Token ist hier ausdrücklich KEIN
- * Sicherheitsstandard: er ist optional (fehlt er, lässt die alte Fassade
- * durch), er ist für alle Endpunkte derselbe, und er wurde im Browser
- * ausgeliefert. Nichts davon darf in v3 wiederholt werden.
+ * OPTIONALEN `SYNC_AUTH_TOKEN` — der hier ausdrücklich KEIN Standard ist.
  *
- * DIE VIER TRAGENDEN ENTSCHEIDUNGEN
+ * DIE FÜNF TRAGENDEN ENTSCHEIDUNGEN
  * ---------------------------------
  * 1. FAIL CLOSED. Fehlende oder halbe Konfiguration ⇒ 503 auth_not_configured,
- *    bevor irgendetwas gelesen wird. Kein „nicht konfiguriert = offen".
- * 2. IDENTITÄT KOMMT NIE AUS DEM INHALT. Rolle, Mandant und Objektrechte
- *    stammen aus dem geprüften Ausweis (Firebase-ID-Token, Dienst-Zugangsdatum,
- *    Job-Token) — niemals aus dem Request-Body, niemals aus Modelltext.
- *    `rejectIdentityInPayload()` weist einen Body, der so etwas behauptet,
- *    aktiv ab, statt ihn still zu ignorieren.
- * 3. LESEN WIRD WIE SCHREIBEN GEPRÜFT. `authorize()` verlangt für jedes Verb
- *    — auch für `context.read` — Datenkategorie UND Objekt. Ein Spezialist,
- *    der einen fremden Lead liest, ist derselbe Fehler wie einer, der ihn
- *    schreibt.
- * 4. ECHTE SIGNATURPRÜFUNG. Das Firebase-ID-Token wird gegen Googles
- *    öffentliche Schlüssel mit node:crypto (RS256) geprüft — nicht dekodiert.
- *    Job-Token tragen ein HMAC-SHA256 aus node:crypto mit Domänentrennung.
- *    Ein „Dekodieren und glauben" gibt es an keiner Stelle.
+ *    bevor irgendetwas gelesen wird. Auch `authorize()` ohne Serverkonfiguration
+ *    oder ohne Policy-Version entscheidet NICHT — es sperrt.
+ * 2. IDENTITÄT KOMMT NIE AUS DEM INHALT. Rolle, Mandant, Jobbindung stammen
+ *    aus dem geprüften Ausweis. Und der Ausweis bestimmt zusätzlich die ART:
+ *    Rolle, Art (user/worker/service) und Ausstellweg müssen zusammenpassen,
+ *    sonst 403. Ein Principal, der `{kind:"worker", role:"user"}` behauptet,
+ *    bekommt keine Nutzerrechte.
+ * 3. LESEN WIRD WIE SCHREIBEN GEPRÜFT — und die Datenkategorie wird aus dem
+ *    serverseitig geladenen Objekt ABGELEITET, nicht vom Aufrufer geglaubt.
+ * 4. ETABLIERTE KRYPTO. Firebase-ID-Token und eigene Job-Token werden mit
+ *    `jose` geprüft (feste Algorithmenliste, keine Eigenbauprotokolle).
+ * 5. NUR FACHVERBEN. Die Matrix kennt die Verben des Konzepts
+ *    (intake.*, lead.*, briefing.*, question.*, document.*, worker.*, run.*,
+ *    note.append) — keine generischen Sammelverben.
  *
- * PRIMÄRQUELLEN (geprüft am 19.09.2026)
- * -------------------------------------
+ * PRIMÄRQUELLEN (geprüft 19.09.2026)
+ * ----------------------------------
  * • Firebase Auth, „Verify ID tokens using a third-party JWT library":
- *   Header alg = RS256, kid aus dem X.509-Endpunkt; Payload exp in der
- *   Zukunft, iat/auth_time in der Vergangenheit, aud = Projekt-ID,
- *   iss = https://securetoken.google.com/<PROJECT_ID>, sub = uid (nicht leer,
- *   ≤ 128 Zeichen). Schlüssel von
+ *   alg = RS256, kid aus dem X.509-Endpunkt; exp in der Zukunft, iat und
+ *   auth_time in der Vergangenheit, aud = Projekt-Id,
+ *   iss = https://securetoken.google.com/<PROJECT_ID>, sub = uid (≤ 128).
+ *   Schlüssel:
  *   https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com
- *   — Auffrischung nach `max-age` der Cache-Control-Kopfzeile. Der Endpunkt
- *   wurde direkt abgefragt und liefert genau das:
- *   `cache-control: public, max-age=…, must-revalidate`.
- * • Identity Platform, Admin-API `accounts:lookup`: liefert `disabled`,
- *   `validSince`/`tokensValidAfterTime` und `tenantId` — damit werden
- *   gesperrte Nutzer und widerrufene Token erkannt. Das ist der Grund, warum
- *   die Signaturprüfung allein hier NICHT genügt.
- * • Identity Platform Mandanten: ein Token aus einem Mandanten trägt die
- *   Mandanten-Id (`firebase.tenant`, bei Client-SDKs zusätzlich `tenant_id`).
- *   Beide werden gelesen, müssen übereinstimmen und werden gegen die
- *   Serverkonfiguration UND gegen `accounts:lookup` gehalten.
+ *   Auffrischung nach `max-age` der Cache-Control-Kopfzeile. Der Endpunkt
+ *   wurde direkt abgefragt: `cache-control: public, max-age=…, must-revalidate`.
+ * • Firebase Auth, „Manage user sessions"
+ *   (https://firebase.google.com/docs/auth/admin/manage-sessions): Widerruf
+ *   wird über **auth_time** gegen `tokensValidAfterTime`/`validSince` geprüft —
+ *   NICHT über iat. Das Admin-SDK tut mit `verifyIdToken(token, true)`
+ *   dasselbe. Ein Token, das nach dem Widerruf nur neu AUSGESTELLT (iat neu),
+ *   aber nicht neu ANGEMELDET (auth_time alt) wurde, muss scheitern —
+ *   deshalb ist auth_time hier Pflichtfeld.
+ * • Identity Platform, Admin-API `accounts:lookup`: `disabled`, `validSince`,
+ *   `tenantId`.
+ * • Identity Platform Mandanten: Mandanten-Id in `firebase.tenant`
+ *   (Client-SDKs zusätzlich `tenant_id`).
  *
- * WAS HIER BEWUSST FEHLT (und im Command-Handler bewiesen werden muss)
- * -------------------------------------------------------------------
- * • Die serverseitige, atomare Ratenbegrenzung pro Principal. Dieses Modul
- *   definiert nur den VERTRAG (`RATE_LIMIT_CONTRACT`) und weigert sich, einen
- *   In-Memory-Zähler als mehrinstanzsicher durchgehen zu lassen.
- * • Die Anbindung an echte Daten (Firebase-Pfade, Blob-Keys). Cursor und
- *   Objektscope sprechen nur über benannte Abfragen — siehe
- *   quantus-v3-cursor.mjs.
+ * WAS HIER BEWUSST FEHLT (Beweis erst im Command-Handler)
+ * -------------------------------------------------------
+ * • Die serverseitige, atomare Ratenbegrenzung pro Principal: hier steht nur
+ *   der VERTRAG (`RATE_LIMIT_CONTRACT`).
+ * • Die Anbindung an echte Daten. Objekte kommen als serverseitig geladene
+ *   Datensätze herein; Cursor sprechen nur über benannte Abfragen.
  * ═══════════════════════════════════════════════════════════════════════ */
 
 import {
-  createHash, createHmac, timingSafeEqual, createPublicKey,
-  X509Certificate, verify as cryptoVerify, randomUUID,
+  createHash, createPublicKey, timingSafeEqual,
+  X509Certificate, randomUUID,
 } from "node:crypto";
+import { SignJWT, jwtVerify, errors as joseErrors } from "jose";
 
 /* ── Umgebung lesen: exakt das Muster der übrigen Netlify-Bibliotheken ──── */
 export function envRead(name) {
@@ -93,26 +91,33 @@ export const IDENTITY_TOOLKIT_BASE = "https://identitytoolkit.googleapis.com/v1"
    C1 schaltet nichts frei, ein Test hält fest, dass es zu keiner dieser Routen
    eine Netlify-Funktion gibt. */
 export const QUANTUS_V3_TOOLS = Object.freeze({
-  quantus_context:    Object.freeze({ route: "quantus-context",    verb: "context.read",       enabled: false }),
-  quantus_read:       Object.freeze({ route: "quantus-read",       verb: "object.read",        enabled: false }),
-  quantus_command:    Object.freeze({ route: "quantus-ingest",     verb: "command.submit",     enabled: false }),
-  quantus_run_status: Object.freeze({ route: "quantus-run-status", verb: "run_status.read",    enabled: false }),
+  quantus_context:    Object.freeze({ route: "quantus-context",    enabled: false }),
+  quantus_read:       Object.freeze({ route: "quantus-read",       enabled: false }),
+  quantus_command:    Object.freeze({ route: "quantus-ingest",     enabled: false }),
+  quantus_run_status: Object.freeze({ route: "quantus-run-status", enabled: false }),
 });
 
-/* Höchstgrösse eines Kommandos: 64 KiB, gemessen in UTF-8-Bytes. */
 export const COMMAND_MAX_BYTES = 64 * 1024;
-
-/* Ein Job-Token ist kurzlebig. 15 Minuten ist die Obergrenze, die beim
-   Ausstellen erzwungen wird — nicht nur beim Prüfen. */
 export const MAX_JOB_TOKEN_LIFETIME_SECONDS = 15 * 60;
 
 /* Uhrenversatz: beim ABLAUF null (ein abgelaufenes Token ist abgelaufen),
    bei iat/auth_time 60 s, weil fremde Uhren vorgehen dürfen. */
 export const CLOCK_SKEW_SECONDS = 60;
-
-/* Ein Dienst-Zugangsdatum unter dieser Länge wird gar nicht erst geprüft —
-   ein kurzes „Geheimnis" ist keines. */
 export const MIN_SERVICE_SECRET_LENGTH = 32;
+
+/* Ausstellwege. Jede Rolle hat GENAU EINEN — daran hängt, welcher Ausweis
+   sie überhaupt erzeugen darf. */
+export const ISSUERS = Object.freeze({
+  firebase: "firebase",
+  jobToken: "job_token",
+  serviceCredential: "service_credential",
+});
+
+/* Aussteller-/Zielbezeichner der eigenen Token (JWT-Felder iss/aud). */
+export const JOB_TOKEN_ISSUER = "quantus-v3/job-token";
+export const JOB_TOKEN_TYP = "quantus-v3-job+jwt";
+export const JOB_TOKEN_ALGS = Object.freeze(["HS256"]);
+export const FIREBASE_ID_TOKEN_ALGS = Object.freeze(["RS256"]);
 
 const ERROR_STATUS = Object.freeze({
   auth_not_configured: 503,
@@ -126,8 +131,7 @@ const ERROR_STATUS = Object.freeze({
 
 /* Die EINZIGE Stelle, an der eine Absage entsteht. `reason` ist immer ein
    fester Bezeichner aus dem Code — nie ein Wert aus der Anfrage, nie ein
-   Teil eines Tokens, nie ein Schlüsselname mit Inhalt. Damit kann keine
-   Absage ein Geheimnis oder einen fremden Datenbestand verraten. */
+   Teil eines Tokens. */
 export function authError(error, reason) {
   const status = ERROR_STATUS[error];
   if (!status) throw new Error(`authError: unbekannter Fehlercode ${error}`);
@@ -144,12 +148,190 @@ export function authOk(extra = {}) {
   return { ok: true, ...extra };
 }
 
-/* ══ 1. Konfiguration — fail closed, ohne je einen Wert zu nennen ═════════
+/* Endliche, ganzzahlige Sekundenangabe? Ein `exp: "99999999999"`, ein
+   `iat: NaN` oder ein `auth_time: 1.5e300` ist keine Zeit. */
+export function isFiniteSeconds(value) {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value)
+    && value > 0 && value < 4_102_444_800; // < 2100-01-01
+}
+
+/* ══ 1. Rollenmodell ═════════════════════════════════════════════════════
  *
- * Alle geschützten Auth-/Policy-Werte kommen aus GEPRÜFTER Serverkonfiguration.
- * Fehlt eine Variable oder ist sie unlesbar, nennt die Absage NUR den NAMEN
- * der Variable — niemals ihren Inhalt und niemals einen Teil davon.
+ * Die Verben sind die FACHVERBEN des Konzepts. Es gibt keine Sammelverben
+ * („command.submit"), hinter denen sich beliebige Wirkung verstecken könnte.
+ * Gelesen wird ausschliesslich über benannte Abfragen (`context.read`, siehe
+ * quantus-v3-cursor.mjs) — es gibt kein freies Lesen.
  * ------------------------------------------------------------------------ */
+
+export const VERBS = Object.freeze([
+  "context.read",           // benannte Abfrage lesen (Notes/Policy/Run/Objektkontext)
+  "intake.create", "intake.accept",
+  "task.create",
+  "lead.comment", "lead.transition", "lead.schedule",
+  "briefing.answer",        // NUR Nutzer
+  "briefing.consumeAnswer", // NUR Backend
+  "question.create", "question.resolve",
+  "document.register", "document.processed",
+  "worker.assign", "worker.return", "worker.review",
+  "run.ensure", "run.claim", "run.renew", "run.checkpoint", "run.finalize",
+  "note.append", "run.log",
+]);
+
+export const DATA_CATEGORIES = Object.freeze([
+  "intake", "task", "lead", "briefing", "briefing_answer", "question",
+  "document", "assignment", "worker_result", "run", "run_context",
+  "run_status", "note", "policy", "system_status",
+]);
+
+/* Objektart → Datenkategorie. Die Kategorie wird aus dem serverseitig
+   GELADENEN Objekt abgeleitet; was der Aufrufer behauptet, muss dazu passen.
+   Sonst liesse sich ein Policy-Datensatz als „task" lesen. */
+export const OBJECT_KIND_CATEGORY = Object.freeze({
+  intake: "intake",
+  task: "task",
+  lead: "lead",
+  briefing: "briefing",
+  briefing_answer: "briefing_answer",
+  question: "question",
+  document: "document",
+  assignment: "assignment",
+  worker_result: "worker_result",
+  run: "run",
+  run_context: "run_context",
+  run_status: "run_status",
+  note: "note",
+  policy: "policy",
+  system_status: "system_status",
+});
+
+export function dataCategoryForObjectKind(kind) {
+  const k = String(kind || "");
+  return Object.prototype.hasOwnProperty.call(OBJECT_KIND_CATEGORY, k) ? OBJECT_KIND_CATEGORY[k] : null;
+}
+
+const VERB_SET = new Set(VERBS);
+const CATEGORY_SET = new Set(DATA_CATEGORIES);
+
+/*
+ * Objektbindung:
+ *   "own"      Objekt gehört dem Principal (ownerId)
+ *   "job"      Objekt gehört GENAU dem Job, auf den das Token lautet
+ *   "assigned" Objekt ist dem Principal serverseitig zugewiesen
+ *   "tenant"   Objekt liegt im Mandanten (schwächste Bindung, nur Dienste)
+ */
+export const ROLE_POLICY = Object.freeze({
+  /* Der Mensch. Eigene Vorgänge, eigene Antworten, eigene Oberfläche.
+     `briefing.answer` gibt es NUR hier. */
+  user: Object.freeze({
+    kind: "user",
+    issuedBy: ISSUERS.firebase,
+    binding: "own",
+    verbs: Object.freeze({
+      "context.read":      ["intake", "task", "lead", "briefing", "briefing_answer", "question", "document", "run", "run_status", "note", "policy"],
+      "intake.create":     ["intake"],
+      "intake.accept":     ["intake"],
+      "task.create":       ["task"],
+      "lead.comment":      ["lead"],
+      "lead.transition":   ["lead"],
+      "lead.schedule":     ["lead"],
+      "briefing.answer":   ["briefing_answer"],
+      "question.resolve":  ["question"],
+      "document.register": ["document"],
+      "note.append":       ["note"],
+    }),
+  }),
+
+  /* Leitungsagent (OpenAI Lead API auf Cloud Run). Arbeitet NUR im
+     serverseitig zugewiesenen Kontext: delegieren (worker.assign), eigene
+     erlaubte Arbeit erledigen (lead.*, task.create, question.create),
+     Ergebnisse prüfen (worker.review), Lauf fortschreiben (run.checkpoint,
+     run.log). NIE Nutzerantworten, nie Rechte, nie Abschluss. */
+  lead_agent: Object.freeze({
+    kind: "worker",
+    issuedBy: ISSUERS.jobToken,
+    binding: "assigned",
+    verbs: Object.freeze({
+      "context.read":       ["run_context", "lead", "task", "document", "question", "note", "run", "policy"],
+      "lead.comment":       ["lead"],
+      "lead.transition":    ["lead"],
+      "lead.schedule":      ["lead"],
+      "task.create":        ["task"],
+      "question.create":    ["question"],
+      "document.processed": ["document"],
+      "worker.assign":      ["assignment"],
+      "worker.review":      ["worker_result"],
+      "run.checkpoint":     ["run"],
+      "run.log":            ["run"],
+    }),
+  }),
+
+  /* Claude-Spezialist: den Kontext SEINES Auftrags lesen, das Ergebnis an
+     diesen Auftrag zurückgeben. Sonst nichts. */
+  specialist_claude: Object.freeze({
+    kind: "worker",
+    issuedBy: ISSUERS.jobToken,
+    binding: "job",
+    verbs: Object.freeze({
+      "context.read":  ["run_context"],
+      "worker.return": ["worker_result"],
+    }),
+  }),
+
+  /* Gemini-Spezialist: identische Grenzen. */
+  specialist_gemini: Object.freeze({
+    kind: "worker",
+    issuedBy: ISSUERS.jobToken,
+    binding: "job",
+    verbs: Object.freeze({
+      "context.read":  ["run_context"],
+      "worker.return": ["worker_result"],
+    }),
+  }),
+
+  /* Scheduler (Cloud Scheduler/Tasks): Läufe anlegen, übernehmen, verlängern,
+     protokollieren. Keine Inhalte, keine Freigaben, kein Abschluss. */
+  scheduler: Object.freeze({
+    kind: "service",
+    issuedBy: ISSUERS.serviceCredential,
+    binding: "tenant",
+    verbs: Object.freeze({
+      "context.read": ["run", "run_status"],
+      "run.ensure":   ["run"],
+      "run.claim":    ["run"],
+      "run.renew":    ["run"],
+      "run.log":      ["run"],
+    }),
+  }),
+
+  /* Backend-Prüfer: rechnet den Tagesstatus, verbraucht Nutzerantworten,
+     schreibt Start-/Finalnotizen und schliesst den Lauf ab. Keine freien
+     externen Aktionen. */
+  backend_checker: Object.freeze({
+    kind: "service",
+    issuedBy: ISSUERS.serviceCredential,
+    binding: "tenant",
+    verbs: Object.freeze({
+      "context.read":           ["run", "run_status", "system_status", "note", "briefing", "briefing_answer", "policy"],
+      "briefing.consumeAnswer": ["briefing_answer"],
+      "document.processed":     ["document"],
+      "run.checkpoint":         ["run"],
+      "run.finalize":           ["run"],
+      "run.log":                ["run"],
+      "note.append":            ["note"],
+    }),
+  }),
+});
+
+export const ROLES = Object.freeze(Object.keys(ROLE_POLICY));
+
+/* Rollen nach Ausstellweg. Ein Job-Token kann NUR eine Job-Token-Rolle
+   tragen: Scheduler- und Backend-Autorität wird nie an einen Worker
+   ausgestellt (sonst hätte ein kurzlebiges Auftragstoken Abschlussrechte). */
+export const JOB_TOKEN_ROLES = Object.freeze(ROLES.filter((r) => ROLE_POLICY[r].issuedBy === ISSUERS.jobToken));
+export const SERVICE_CREDENTIAL_ROLES = Object.freeze(ROLES.filter((r) => ROLE_POLICY[r].issuedBy === ISSUERS.serviceCredential));
+export const FIREBASE_ROLES = Object.freeze(ROLES.filter((r) => ROLE_POLICY[r].issuedBy === ISSUERS.firebase));
+
+/* ══ 2. Konfiguration — fail closed, ohne je einen Wert zu nennen ═════════ */
 
 export const AUTH_CONFIG_VARS = Object.freeze({
   projectId: "QUANTUS_V3_FIREBASE_PROJECT_ID",
@@ -179,9 +361,7 @@ function sha256Hex(value) {
   return createHash("sha256").update(String(value), "utf8").digest("hex");
 }
 
-/* Zeitgleicher Vergleich zweier Hex-Digests. Ein Vergleich, der beim ersten
-   abweichenden Zeichen abbricht, verrät über die Dauer, wie viel schon stimmte
-   (dieselbe Begründung wie in mail-queue-endpunkt.mjs). */
+/* Zeitgleicher Vergleich zweier Hex-Digests. */
 function equalHex(a, b) {
   const x = Buffer.from(String(a), "utf8");
   const y = Buffer.from(String(b), "utf8");
@@ -193,11 +373,9 @@ function normalizeOrigins(raw) {
   const list = String(raw || "").split(",").map((v) => v.trim()).filter(Boolean);
   const out = [];
   for (const entry of list) {
-    // Kein Wildcard, nie. Auch nicht „https://*.example.com".
     if (entry === "*" || entry.includes("*")) return { wildcard: true };
     let url;
     try { url = new URL(entry); } catch { return { invalid: true }; }
-    // Eine Origin-Allowlist ohne TLS wäre ein offenes Fenster neben der Tür.
     if (url.protocol !== "https:") return { insecure: true };
     if (url.pathname !== "/" || url.search || url.hash) return { invalid: true };
     out.push(url.origin);
@@ -223,14 +401,23 @@ function normalizeServiceCredentials(value) {
     if (!principal || !role || !tenant) return { invalid: "service_credentials_principal" };
     if (!/^[0-9a-f]{64}$/.test(secretSha256)) return { invalid: "service_credentials_hash" };
     if (!VALID_KEY_STATUS.has(status)) return { invalid: "service_credentials_status" };
-    if (!ROLE_POLICY[role]) return { invalid: "service_credentials_role" };
-    // Ein Dienst-Zugangsdatum darf NIE eine Nutzerrolle tragen: Dienste sind
-    // keine Menschen, und die Rechte des Menschen hängen an seinem ID-Token.
-    if (role === "user") return { invalid: "service_credentials_role" };
-    out.push(Object.freeze({
-      id, principal, role, tenant, secretSha256, status,
-      notAfter: entry.notAfter ? String(entry.notAfter) : null,
-    }));
+    // NUR Rollen, deren Ausstellweg das Dienst-Zugangsdatum IST. Ein
+    // Leitungsagent oder Spezialist bekommt kein Dauer-Zugangsdatum; er
+    // arbeitet mit kurzlebigen, auftragsgebundenen Token.
+    if (!SERVICE_CREDENTIAL_ROLES.includes(role)) return { invalid: "service_credentials_role" };
+
+    // Ablauf gilt in JEDEM Status — auch bei „active". Ein Zugangsdatum mit
+    // abgelaufenem Stichtag ist abgelaufen, egal wie es beschriftet ist.
+    let notAfter = null;
+    if (entry.notAfter != null && String(entry.notAfter).trim() !== "") {
+      const parsed = Date.parse(String(entry.notAfter));
+      if (!Number.isFinite(parsed)) return { invalid: "service_credentials_not_after" };
+      notAfter = parsed;
+    }
+    // Ein auslaufendes Zugangsdatum OHNE Stichtag liefe unbegrenzt weiter.
+    if (status === "retiring" && notAfter == null) return { invalid: "service_credentials_not_after_required" };
+
+    out.push(Object.freeze({ id, principal, role, tenant, secretSha256, status, notAfter }));
   }
   if (!out.some((c) => c.status === "active")) return { invalid: "service_credentials_no_active" };
   return { credentials: Object.freeze(out) };
@@ -255,10 +442,6 @@ function normalizeSigningKeys(value, varName) {
   return { keys: Object.freeze(out) };
 }
 
-/*
- * Ergebnis: { ok: true, config } oder eine fertige 503-Absage mit `missing`
- * (Namen fehlender Variablen) bzw. `reason` (Form-Fehler). Nie ein Wert.
- */
 export function resolveAuthConfig(read = envRead) {
   const V = AUTH_CONFIG_VARS;
   const missing = [];
@@ -297,14 +480,8 @@ export function resolveAuthConfig(read = envRead) {
   const worker = normalizeSigningKeys(workerKeys.value, "worker_keys");
   if (worker.invalid) return failConfig(worker.invalid);
 
-  // Mandantenbindung: ist ein Mandant konfiguriert, MUSS jedes Nutzer-Token
-  // ihn tragen. Ist keiner konfiguriert, darf auch keiner im Token stehen —
-  // sonst wäre ein Token aus einem beliebigen Mandanten des Projekts gültig.
   const tenant = String(read(V.tenant) || "").trim();
 
-  // Standard ist dry_run. Ein Produktivrecht entsteht nur, wenn jemand die
-  // Variable BEWUSST auf "enforce" setzt — und auch dann erst, wenn ein
-  // Handler existiert, den es in diesem Paket nicht gibt.
   const modeRaw = String(read(V.mode) || "").trim().toLowerCase();
   if (modeRaw && modeRaw !== "dry_run" && modeRaw !== "enforce") return failConfig("mode_invalid");
   const mode = modeRaw || "dry_run";
@@ -331,181 +508,68 @@ function failConfig(reason) {
     missing: Object.freeze([]), body: denial.body };
 }
 
-/* ══ 2. Rollenmodell — was wer darf, und zwar beim Lesen wie beim Schreiben ═
+/* ══ 3. Die zentrale Rechteprüfung ═══════════════════════════════════════
  *
- * Die Matrix ist die einzige Quelle. Unbekannte Rolle, unbekanntes Verb,
- * unbekannte Datenkategorie ⇒ 403. Kein Default-Allow, nirgends.
- * ------------------------------------------------------------------------ */
-
-export const VERBS = Object.freeze([
-  "context.read",        // zugewiesenen Kontext lesen
-  "object.read",         // ein konkretes Objekt lesen
-  "run_status.read",     // Lauf-/Betriebsstatus lesen
-  "command.submit",      // Kommando einreichen (Hülle; Inhalt prüft der Handler)
-  "job.create",          // neuen Auftrag anlegen
-  "job.advance",         // fälligen Auftrag weiterschalten
-  "job.result.write",    // Ergebnis AN DEN EIGENEN Auftrag liefern
-  "answer.write",        // Nutzerantwort auf eine Rückfrage
-  "approval.write",      // Freigabe erteilen
-  "task.create",         // Quantus-Aufgabe anlegen
-  "mail.send",           // Mail verschicken
-  "lead.close",          // Lead schliessen
-  "lead.finalize",       // Lead endgültig abschliessen
-  "policy.write",        // Policy ändern
-  "grant.write",         // Rechte vergeben (Selbstberechtigung)
-  "system_status.compute", // Systemstatus/Abschluss berechnen
-]);
-
-export const DATA_CATEGORIES = Object.freeze([
-  "job", "job_context", "job_result", "lead", "task", "mail",
-  "user_answer", "approval", "run_status", "system_status", "policy", "grant",
-]);
-
-const VERB_SET = new Set(VERBS);
-const CATEGORY_SET = new Set(DATA_CATEGORIES);
-
-/* Objektbindung — wie eng ein Principal an ein Objekt gebunden ist:
- *   "own"    Objekt gehört dem Principal (ownerId)
- *   "job"    Objekt gehört GENAU dem Job, auf den das Token lautet
- *   "assigned" Objekt ist dem Principal zugewiesen
- *   "tenant" Objekt liegt im Mandanten des Principals (schwächste Bindung)
- */
-export const ROLE_POLICY = Object.freeze({
-  /* Der Mensch. Seine eigenen Aufträge, Antworten, Freigaben, seine Oberfläche. */
-  user: Object.freeze({
-    kind: "user",
-    binding: "own",
-    verbs: Object.freeze({
-      "context.read":      ["job_context", "lead", "task", "run_status"],
-      "object.read":       ["job", "lead", "task", "mail", "user_answer", "approval", "run_status"],
-      "run_status.read":   ["run_status"],
-      "command.submit":    ["job", "user_answer", "approval"],
-      "job.create":        ["job"],
-      "answer.write":      ["user_answer"],
-      "approval.write":    ["approval"],
-      "task.create":       ["task"],
-      "mail.send":         ["mail"],
-      "lead.close":        ["lead"],
-      "lead.finalize":     ["lead"],
-    }),
-  }),
-
-  /* Leitungsagent (OpenAI Lead API auf Cloud Run): nur ZUGEWIESENER Kontext
-     und nur BESTEHENDE, erlaubte Aufträge. Keine Nutzerantworten, keine
-     Policy, keine Selbstberechtigung — und ausdrücklich kein job.create. */
-  lead_agent: Object.freeze({
-    kind: "worker",
-    binding: "assigned",
-    verbs: Object.freeze({
-      "context.read":    ["job_context", "lead"],
-      "object.read":     ["job", "lead", "task"],
-      "run_status.read": ["run_status"],
-      "job.advance":     ["job"],
-      "job.result.write": ["job_result"],
-      "task.create":     ["task"],
-    }),
-  }),
-
-  /* Claude-Spezialist: NUR den Kontext SEINES Jobs lesen und ein Ergebnis an
-     genau diesen Job liefern. Keine Aufgabe, keine Mail, kein Abschluss. */
-  specialist_claude: Object.freeze({
-    kind: "worker",
-    binding: "job",
-    verbs: Object.freeze({
-      "context.read":     ["job_context"],
-      "job.result.write": ["job_result"],
-    }),
-  }),
-
-  /* Gemini-Spezialist: identische Grenzen. */
-  specialist_gemini: Object.freeze({
-    kind: "worker",
-    binding: "job",
-    verbs: Object.freeze({
-      "context.read":     ["job_context"],
-      "job.result.write": ["job_result"],
-    }),
-  }),
-
-  /* Scheduler (Cloud Scheduler/Tasks): fällige Jobs und Betriebsereignisse.
-     Keine Inhaltsfreigabe, keine Nutzerantwort, kein Lead-Abschluss. */
-  scheduler: Object.freeze({
-    kind: "worker",
-    binding: "tenant",
-    verbs: Object.freeze({
-      "job.advance":     ["job"],
-      "run_status.read": ["run_status"],
-    }),
-  }),
-
-  /* Backend-Prüfer: rechnet Systemstatus/Abschluss aus. Liest Status, schreibt
-     Status — und sonst nichts nach aussen. */
-  backend_checker: Object.freeze({
-    kind: "service",
-    binding: "tenant",
-    verbs: Object.freeze({
-      "object.read":           ["job", "run_status"],
-      "run_status.read":       ["run_status"],
-      "system_status.compute": ["system_status"],
-    }),
-  }),
-});
-
-/* Rollen, die ein Job-Token tragen DARF. Ein Token, das „user" behauptet,
-   wird abgewiesen: Nutzerrechte hängen am Firebase-ID-Token, nicht an einem
-   Auftragstoken. */
-export const WORKER_ROLES = Object.freeze(
-  Object.keys(ROLE_POLICY).filter((r) => ROLE_POLICY[r].kind !== "user")
-);
-
-/*
- * Die zentrale Rechteprüfung.
- *
- *   principal { kind, id, role, tenant, jobId?, assignedJobIds? }
+ *   principal { kind, id, role, tenant, issuedBy, jobId?, assignedJobIds? }
  *   verb, dataCategory
- *   object { kind, id, tenant, ownerId?, jobId?, assignedTo? }
+ *   object    serverseitig GELADENER Datensatz
+ *             { kind, id, tenant, ownerId?, jobId?, assignedTo? }
  *
- * Rückgabe: { ok: true } oder eine 403-Absage mit festem Grund.
- */
+ * Fehlt die Serverkonfiguration oder die Policy-Version, wird NICHT
+ * entschieden — das ist kein Randfall, sondern der Normalfall eines halb
+ * ausgerollten Systems.
+ * ------------------------------------------------------------------------ */
 export function authorize({ principal, verb, dataCategory, object, policyVersion, config } = {}) {
+  // (a) Ohne geprüfte Serverkonfiguration gibt es keine Entscheidung.
+  if (!config || typeof config !== "object" || !config.policyVersion) {
+    return authError("auth_not_configured", "config_missing");
+  }
+  if (!policyVersion) return authError("forbidden", "policy_version_missing");
+  if (String(policyVersion) !== String(config.policyVersion)) {
+    return authError("forbidden", "policy_version_mismatch");
+  }
+
+  // (b) Rolle, Art und Ausstellweg müssen zusammenpassen.
   if (!principal || typeof principal !== "object") return authError("forbidden", "principal_missing");
   const role = String(principal.role || "");
   const policy = Object.prototype.hasOwnProperty.call(ROLE_POLICY, role) ? ROLE_POLICY[role] : null;
   if (!policy) return authError("forbidden", "unknown_role");
+  if (String(principal.kind || "") !== policy.kind) return authError("forbidden", "principal_kind_mismatch");
+  if (String(principal.issuedBy || "") !== policy.issuedBy) return authError("forbidden", "principal_issuer_mismatch");
+  const principalId = String(principal.id || "");
+  if (!principalId) return authError("forbidden", "principal_id_missing");
+  const principalTenant = String(principal.tenant || "");
+  if (!principalTenant) return authError("forbidden", "tenant_missing");
 
+  // (c) Verb und Kategorie müssen bekannt und für die Rolle erlaubt sein.
   if (!VERB_SET.has(verb)) return authError("forbidden", "unknown_verb");
   if (!CATEGORY_SET.has(dataCategory)) return authError("forbidden", "unknown_data_category");
-
   const allowedCategories = Object.prototype.hasOwnProperty.call(policy.verbs, verb) ? policy.verbs[verb] : null;
   if (!allowedCategories) return authError("forbidden", "verb_not_allowed_for_role");
   if (!allowedCategories.includes(dataCategory)) return authError("forbidden", "data_category_not_allowed_for_role");
 
-  // Die Policy-Version ist Teil der Entscheidung: läuft der Aufrufer auf einer
-  // anderen Fassung, ist seine Annahme über seine Rechte veraltet.
-  if (config && policyVersion && String(policyVersion) !== String(config.policyVersion)) {
-    return authError("forbidden", "policy_version_mismatch");
-  }
-
+  // (d) Das Objekt. Die Kategorie wird aus seiner ART abgeleitet — was der
+  // Aufrufer behauptet, muss dazu passen, sonst liesse sich ein
+  // Policy-Datensatz als „task" lesen.
   if (!object || typeof object !== "object") return authError("forbidden", "object_missing");
+  const objectCategory = dataCategoryForObjectKind(object.kind);
+  if (!objectCategory) return authError("forbidden", "object_kind_unknown");
+  if (objectCategory !== dataCategory) return authError("forbidden", "object_kind_mismatch");
   const objectId = String(object.id || "");
   if (!objectId) return authError("forbidden", "object_id_missing");
-
-  // Mandant: immer, für jede Rolle, beim Lesen wie beim Schreiben.
-  const principalTenant = String(principal.tenant || "");
   const objectTenant = String(object.tenant || "");
-  if (!principalTenant || !objectTenant) return authError("forbidden", "tenant_missing");
+  if (!objectTenant) return authError("forbidden", "tenant_missing");
   if (principalTenant !== objectTenant) return authError("forbidden", "tenant_mismatch");
 
+  // (e) Bindung.
   switch (policy.binding) {
     case "own": {
       const owner = String(object.ownerId || "");
       if (!owner) return authError("forbidden", "object_owner_missing");
-      if (owner !== String(principal.id)) return authError("forbidden", "object_not_owned");
+      if (owner !== principalId) return authError("forbidden", "object_not_owned");
       break;
     }
     case "job": {
-      // Der Spezialist ist an GENAU EINEN Job gebunden — aus dem Token, nicht
-      // aus dem Body. Ein Objekt ohne Jobbindung ist für ihn unerreichbar.
       const boundJob = String(principal.jobId || "");
       if (!boundJob) return authError("forbidden", "job_binding_missing");
       const objectJob = String(object.jobId || "");
@@ -518,7 +582,7 @@ export function authorize({ principal, verb, dataCategory, object, policyVersion
       const objectJob = String(object.jobId || "");
       const assignedTo = String(object.assignedTo || "");
       const okByJob = objectJob && assigned.includes(objectJob);
-      const okByAssignment = assignedTo && assignedTo === String(principal.id);
+      const okByAssignment = assignedTo && assignedTo === principalId;
       if (!okByJob && !okByAssignment) return authError("forbidden", "object_not_assigned");
       break;
     }
@@ -531,17 +595,11 @@ export function authorize({ principal, verb, dataCategory, object, policyVersion
   return authOk({ role, verb, dataCategory, objectId });
 }
 
-/* ── Identität darf nie aus dem Inhalt kommen ────────────────────────────
- * Ein Body, der Rolle, Principal, Mandant, Scopes oder Rechte BEHAUPTET, wird
- * abgewiesen — nicht still ignoriert. Still ignorieren hiesse: ein Aufrufer
- * probiert es, bekommt 200 und glaubt, es habe gewirkt; und der nächste
- * Umbau übernimmt das Feld dann vielleicht doch.
- * Geprüft wird auch EINE Ebene tiefer, weil Auftragstexte gern verschachtelt
- * sind ({ auftrag: { role: "user" } }). */
+/* ── Identität darf nie aus dem Inhalt kommen ──────────────────────────── */
 export const IDENTITY_FIELDS = Object.freeze([
   "role", "roles", "principal", "principalId", "tenant", "tenantId",
   "scope", "scopes", "grants", "permissions", "capabilities", "uid",
-  "impersonate", "act_as", "actAs",
+  "impersonate", "act_as", "actAs", "issuedBy", "kind",
 ]);
 
 export function rejectIdentityInPayload(body, { depth = 2 } = {}) {
@@ -564,7 +622,7 @@ function findIdentityField(value, depth) {
   return null;
 }
 
-/* ══ 3. Firebase-ID-Token — echte Prüfung, keine Dekodierung ══════════════ */
+/* ══ 4. Firebase-ID-Token ════════════════════════════════════════════════ */
 
 function b64urlToBuffer(segment) {
   const s = String(segment || "");
@@ -573,30 +631,22 @@ function b64urlToBuffer(segment) {
   return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64");
 }
 
-/* Struktur-Zerlegung. ACHTUNG: Das Ergebnis ist KEINE Identität. Es wird
-   ausschliesslich benutzt, um kid/alg zu finden und die Signatur zu prüfen.
-   Wer diese Funktion für eine Entscheidung benutzt, hat den Fehler gemacht,
-   den dieses Paket verhindern soll. */
-export function decodeJwtStructure(token) {
+/* Nur die Kopfzeile lesen, um kid/alg zu finden. Das Ergebnis ist KEINE
+   Identität — die Prüfung macht `jose`. */
+export function readJwtHeader(token) {
   const parts = String(token || "").split(".");
-  if (parts.length !== 3) return null;
-  const headerBuf = b64urlToBuffer(parts[0]);
-  const payloadBuf = b64urlToBuffer(parts[1]);
-  const signature = b64urlToBuffer(parts[2]);
-  if (!headerBuf || !payloadBuf || !signature || !signature.length) return null;
-  let header, payload;
+  if (parts.length !== 3 || !parts[2]) return null;
+  const buf = b64urlToBuffer(parts[0]);
+  if (!buf) return null;
   try {
-    header = JSON.parse(headerBuf.toString("utf8"));
-    payload = JSON.parse(payloadBuf.toString("utf8"));
+    const header = JSON.parse(buf.toString("utf8"));
+    return header && typeof header === "object" ? header : null;
   } catch { return null; }
-  if (!header || typeof header !== "object" || !payload || typeof payload !== "object") return null;
-  return { header, payload, signature, signingInput: `${parts[0]}.${parts[1]}` };
 }
 
 /* Aus dem X.509-Zertifikat (so liefert Google die Schlüssel) wird der
    öffentliche Schlüssel — mit node:crypto, nicht von Hand. Ein reiner
-   Public-Key im PEM wird ebenfalls akzeptiert, damit Tests mit frisch
-   erzeugten, flüchtigen Schlüsseln gegen DIESELBE Prüfstrecke laufen. */
+   Public-Key im PEM wird ebenfalls akzeptiert. */
 export function publicKeyFromPem(pem) {
   const text = String(pem || "");
   if (text.includes("BEGIN CERTIFICATE")) return new X509Certificate(text).publicKey;
@@ -604,13 +654,29 @@ export function publicKeyFromPem(pem) {
 }
 
 /*
- * Der Schlüsselbezug von Google — mit Cache nach `max-age`, wie die
- * Primärdoku es verlangt. Die URL ist fest; ein Aufrufer kann sie nicht
- * umbiegen (sonst wäre der Vertrauensanker austauschbar).
+ * Der Schlüsselbezug von Google.
+ *
+ * BEFUND (Review 5ac0bf7): Die erste Fassung holte bei JEDER unbekannten kid
+ * neu — fünf gefälschte Token mit fünf erfundenen kids ergaben fünf
+ * Netzabrufe. Das ist ein unauthentifizierter Hebel auf Googles Endpunkt
+ * (und auf das eigene Funktionsbudget).
+ *
+ * Jetzt: gebündelte Auffrischung (singleflight), Abkühlzeit zwischen zwei
+ * Auffrischungen, und ein begrenztes Negativgedächtnis für kids, die es
+ * gerade nicht gibt. Ein echter Schlüsselwechsel wirkt weiterhin — spätestens
+ * nach der Abkühlzeit, und ohnehin beim Ablauf von `max-age`.
  */
-export function createGooglePublicKeySource({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
-  let cache = null;          // { keys: Map<kid, pem>, expiresAt }
-  async function refresh() {
+export function createGooglePublicKeySource({
+  fetchImpl = globalThis.fetch,
+  now = () => Date.now(),
+  refreshCooldownMs = 60_000,
+  defaultTtlMs = 300_000,
+} = {}) {
+  let cache = null;              // { pems: Map<kid,string>, keys: Map<kid,KeyObject>, expiresAt }
+  let lastRefreshAt = 0;
+  let inFlight = null;
+
+  async function doRefresh() {
     if (typeof fetchImpl !== "function") throw new Error("public_key_source_unavailable");
     const res = await fetchImpl(GOOGLE_SECURETOKEN_X509_URL, { headers: { Accept: "application/json" } });
     if (!res || !res.ok) throw new Error("public_key_fetch_failed");
@@ -618,28 +684,48 @@ export function createGooglePublicKeySource({ fetchImpl = globalThis.fetch, now 
     if (!body || typeof body !== "object") throw new Error("public_key_fetch_failed");
     const cc = String(res.headers?.get?.("cache-control") || "");
     const m = /max-age\s*=\s*(\d+)/i.exec(cc);
-    // Ohne max-age: kurz halten statt lange raten.
-    const ttlMs = (m ? Number(m[1]) : 300) * 1000;
-    cache = { keys: new Map(Object.entries(body)), expiresAt: now() + ttlMs };
+    const ttlMs = m ? Number(m[1]) * 1000 : defaultTtlMs;
+    cache = { pems: new Map(Object.entries(body)), keys: new Map(), expiresAt: now() + ttlMs };
     return cache;
   }
+
+  /* Singleflight: parallele Aufrufe teilen sich EINEN Abruf. `lastRefreshAt`
+     wird auch bei einem Fehlschlag gesetzt — sonst würde ein ausgefallener
+     Endpunkt in einer Schleife angefragt. */
+  function refresh() {
+    if (inFlight) return inFlight;
+    inFlight = doRefresh().finally(() => { lastRefreshAt = now(); inFlight = null; });
+    return inFlight;
+  }
+
+  function fromCache(kid) {
+    if (!cache || !cache.pems.has(kid)) return null;
+    if (!cache.keys.has(kid)) cache.keys.set(kid, publicKeyFromPem(cache.pems.get(kid)));
+    return cache.keys.get(kid);
+  }
+
   return {
     async get(kid) {
+      const id = String(kid || "");
+      if (!id) return null;
       if (!cache || cache.expiresAt <= now()) await refresh();
-      if (!cache.keys.has(kid)) {
-        // Unbekannte kid kann ein Schlüsselwechsel sein — EINMAL auffrischen.
-        await refresh();
-      }
-      const pem = cache.keys.get(kid);
-      return pem ? publicKeyFromPem(pem) : null;
+
+      const hit = fromCache(id);
+      if (hit) return hit;
+
+      // Unbekannte kid: höchstens EIN Abruf je Abkühlzeit. Damit kostet eine
+      // Flut gefälschter Token mit erfundenen kids nicht je einen Netzabruf,
+      // und ein echter Schlüsselwechsel wirkt trotzdem — spätestens nach der
+      // Abkühlzeit, ohne auf den Ablauf von max-age zu warten.
+      if (now() - lastRefreshAt < refreshCooldownMs) return null;
+      await refresh();
+      return fromCache(id);
     },
   };
 }
 
 /*
- * Widerruf und Sperre: ohne diesen Schritt ist ein gestohlenes, noch nicht
- * abgelaufenes Token eine Stunde lang gültig, auch wenn der Nutzer gesperrt
- * wurde. Offizieller Weg: Identity Toolkit `accounts:lookup`.
+ * Widerruf und Sperre über die offizielle Admin-API `accounts:lookup`.
  * Der Zugriffstoken kommt als Abhängigkeit herein — dieses Modul hält kein
  * Dienstkonto und liest keines.
  */
@@ -662,15 +748,13 @@ export function createIdentityToolkitUserLookup({ fetchImpl = globalThis.fetch, 
     if (!user) return null;
     return {
       disabled: user.disabled === true,
+      // validSince kommt als Sekunden-Zeichenkette.
       validSince: user.validSince != null ? Number(user.validSince) : 0,
       tenantId: user.tenantId ? String(user.tenantId) : null,
     };
   };
 }
 
-/* Die Mandanten-Id eines Tokens: Identity Platform legt sie unter
-   `firebase.tenant` ab, Client-SDKs setzen zusätzlich `tenant_id`. Stehen
-   beide da und widersprechen sich, ist das Token nicht auswertbar. */
 export function tenantFromClaims(payload) {
   const nested = payload?.firebase && typeof payload.firebase === "object" ? payload.firebase.tenant : undefined;
   const top = payload?.tenant_id;
@@ -680,63 +764,107 @@ export function tenantFromClaims(payload) {
   return { tenant: a || b || null };
 }
 
+/* jose-Fehler → fester Grund. Kein Fehlertext aus der Bibliothek wandert in
+   eine Antwort; nur unsere eigenen Bezeichner. */
+function joseReason(err, { claimReasons = {} } = {}) {
+  if (err instanceof joseErrors.JWTExpired) return "token_expired";
+  if (err instanceof joseErrors.JWSSignatureVerificationFailed) return "token_signature_invalid";
+  if (err instanceof joseErrors.JOSEAlgNotAllowed) return "token_alg_not_allowed";
+  if (err instanceof joseErrors.JWTClaimValidationFailed) {
+    const claim = String(err.claim || "");
+    return claimReasons[claim] || `token_claim_invalid_${claim || "unknown"}`;
+  }
+  if (err instanceof joseErrors.JWSInvalid || err instanceof joseErrors.JWTInvalid) return "token_malformed";
+  if (err && err.code === "QV3_KID_UNKNOWN") return "token_kid_unknown";
+  if (err && err.code === "QV3_KEY_UNAVAILABLE") return "token_key_unavailable";
+  return "token_invalid";
+}
+
 /*
  * Die echte Prüfung eines Firebase-ID-Tokens.
  *
- * Reihenfolge ist Absicht: erst Form, dann Signatur, dann Ansprüche, dann
- * Mandant, zuletzt Widerruf/Sperre (der einzige Schritt, der das Netz braucht).
- * So kostet ein gefälschtes Token keinen Netzaufruf.
+ * Reihenfolge: Form und Kopfzeile, Signatur samt Standardansprüchen (jose,
+ * feste Algorithmenliste), eigene Zusatzansprüche, Mandant, zuletzt Widerruf
+ * und Sperre — der einzige Schritt, der das Netz braucht.
+ *
+ * ACHTUNG (Review 5ac0bf7): Ein gefälschtes Token mit ERFUNDENER kid kann
+ * einen Schlüsselabruf auslösen. Deshalb hat die Schlüsselquelle Abkühlzeit
+ * und Negativgedächtnis (siehe oben) — nicht, weil es nie passiert.
  */
 export async function verifyFirebaseIdToken(idToken, {
   config, keySource, userLookup, now = () => Date.now(),
 } = {}) {
   if (!config) return authError("auth_not_configured", "config_missing");
   if (!keySource || typeof keySource.get !== "function") return authError("auth_not_configured", "public_key_source_missing");
-  // Ohne Widerrufsprüfung wird NICHT durchgelassen. Ein „geht halt gerade
-  // nicht" wäre genau der stille Öffner, den dieses Paket ausschliesst.
+  // Ohne Widerrufsprüfung wird NICHT durchgelassen.
   if (typeof userLookup !== "function") return authError("auth_not_configured", "user_lookup_missing");
 
-  const parsed = decodeJwtStructure(idToken);
-  if (!parsed) return authError("unauthorized", "token_malformed");
-
-  const alg = String(parsed.header.alg || "");
-  // RS256 und nichts anderes: „none" und HS256 sind die beiden klassischen
-  // Verwechslungsangriffe (HS256 würde den öffentlichen Schlüssel zum
-  // Geheimnis machen).
-  if (alg !== "RS256") return authError("unauthorized", "token_alg_not_rs256");
-  const kid = String(parsed.header.kid || "");
+  const header = readJwtHeader(idToken);
+  if (!header) return authError("unauthorized", "token_malformed");
+  if (String(header.alg || "") !== "RS256") return authError("unauthorized", "token_alg_not_rs256");
+  const kid = String(header.kid || "");
   if (!kid) return authError("unauthorized", "token_kid_missing");
 
-  let publicKey = null;
+  const currentDate = new Date(now());
+  let payload;
   try {
-    publicKey = await keySource.get(kid);
-  } catch {
-    return authError("unauthorized", "token_key_unavailable");
+    const verified = await jwtVerify(
+      idToken,
+      async (protectedHeader) => {
+        const key = await keySource.get(String(protectedHeader.kid || ""));
+        if (!key) {
+          const err = new Error("kid unbekannt");
+          err.code = "QV3_KID_UNKNOWN";
+          throw err;
+        }
+        return key;
+      },
+      {
+        algorithms: [...FIREBASE_ID_TOKEN_ALGS],
+        issuer: config.issuer,
+        audience: config.projectId,
+        clockTolerance: 0,
+        currentDate,
+        requiredClaims: ["sub", "iat", "exp", "auth_time"],
+      },
+    );
+    payload = verified.payload;
+  } catch (err) {
+    const reason = joseReason(err, {
+      claimReasons: {
+        aud: "token_audience_mismatch",
+        iss: "token_issuer_mismatch",
+        sub: "token_subject_invalid",
+        iat: "token_iat_invalid",
+        exp: "token_expired",
+        auth_time: "token_auth_time_invalid",
+      },
+    });
+    return authError("unauthorized", reason);
   }
-  if (!publicKey) return authError("unauthorized", "token_kid_unknown");
 
-  let signatureOk = false;
-  try {
-    signatureOk = cryptoVerify("RSA-SHA256", Buffer.from(parsed.signingInput, "utf8"), publicKey, parsed.signature);
-  } catch {
-    signatureOk = false;
-  }
-  if (!signatureOk) return authError("unauthorized", "token_signature_invalid");
-
-  const p = parsed.payload;
   const nowSec = Math.floor(now() / 1000);
 
-  if (typeof p.exp !== "number" || !(p.exp > nowSec)) return authError("unauthorized", "token_expired");
-  if (typeof p.iat !== "number" || p.iat > nowSec + CLOCK_SKEW_SECONDS) return authError("unauthorized", "token_iat_invalid");
-  if (p.auth_time != null && (typeof p.auth_time !== "number" || p.auth_time > nowSec + CLOCK_SKEW_SECONDS)) {
+  // Endliche, ganzzahlige Zeitangaben — „1e999" ist keine Sekunde.
+  if (!isFiniteSeconds(payload.exp)) return authError("unauthorized", "token_expired");
+  if (!isFiniteSeconds(payload.iat) || payload.iat > nowSec + CLOCK_SKEW_SECONDS) {
+    return authError("unauthorized", "token_iat_invalid");
+  }
+  // auth_time ist PFLICHT: der Widerruf hängt daran (Firebase, Manage user
+  // sessions). Fehlt sie oder ist sie unbrauchbar, wird nicht geprüft werden
+  // können — also wird nicht durchgelassen.
+  if (!isFiniteSeconds(payload.auth_time) || payload.auth_time > nowSec + CLOCK_SKEW_SECONDS) {
     return authError("unauthorized", "token_auth_time_invalid");
   }
-  if (String(p.aud || "") !== config.projectId) return authError("unauthorized", "token_audience_mismatch");
-  if (String(p.iss || "") !== config.issuer) return authError("unauthorized", "token_issuer_mismatch");
-  const sub = typeof p.sub === "string" ? p.sub : "";
+  if (payload.auth_time > payload.iat + CLOCK_SKEW_SECONDS) {
+    // Anmeldung nach Ausstellung gibt es nicht.
+    return authError("unauthorized", "token_auth_time_invalid");
+  }
+
+  const sub = typeof payload.sub === "string" ? payload.sub : "";
   if (!sub || sub.length > 128) return authError("unauthorized", "token_subject_invalid");
 
-  const tenantClaim = tenantFromClaims(p);
+  const tenantClaim = tenantFromClaims(payload);
   if (tenantClaim.conflict) return authError("unauthorized", "token_tenant_conflict");
   const expectedTenant = config.tenant || null;
   if (expectedTenant && tenantClaim.tenant !== expectedTenant) return authError("forbidden", "tenant_mismatch");
@@ -748,34 +876,34 @@ export async function verifyFirebaseIdToken(idToken, {
   } catch {
     return authError("unauthorized", "user_lookup_failed");
   }
-  if (!record) return authError("unauthorized", "user_unknown");
+  if (!record || typeof record !== "object") return authError("unauthorized", "user_unknown");
   if (record.disabled) return authError("forbidden", "user_disabled");
-  if (Number(record.validSince || 0) > Number(p.iat)) return authError("unauthorized", "token_revoked");
-  // Auch der Datensatz muss zum Mandanten passen — ein Token kann aus einem
-  // Mandanten stammen, dessen Nutzer inzwischen woanders liegt.
+
+  const validSince = Number(record.validSince || 0);
+  if (!Number.isFinite(validSince) || validSince < 0) return authError("unauthorized", "user_lookup_invalid");
+  // WIDERRUF: gemessen an auth_time, nicht an iat. Ein nach dem Widerruf
+  // frisch AUSGESTELLTES Token (neues iat) trägt weiterhin die ALTE
+  // Anmeldezeit — nur auth_time entlarvt es.
+  if (validSince > payload.auth_time) return authError("unauthorized", "token_revoked");
+
   const recordTenant = record.tenantId || null;
   if ((expectedTenant || null) !== (recordTenant || null)) return authError("forbidden", "tenant_mismatch");
 
   return authOk({
     principal: Object.freeze({
       kind: "user",
+      issuedBy: ISSUERS.firebase,
       id: sub,
       role: "user",
       tenant: expectedTenant || config.projectId,
       credentialId: null,
       jobId: null,
+      authTime: payload.auth_time,
     }),
   });
 }
 
-/* ══ 4. Dienstaufrufe — eigene, rotierbare Pflicht-Zugangsdaten ═══════════
- *
- * Getrennt vom Nutzerweg und getrennt von SYNC_AUTH_TOKEN. Der Server hält
- * nur den SHA-256-Abdruck; der Wert selbst steht in der Serverkonfiguration
- * des Aufrufers und nie im Browser, nie im Repo, nie in einem Test.
- * Rotation: mehrere Einträge gleichzeitig; `retiring` gilt noch bis `notAfter`,
- * `revoked` nie.
- * ------------------------------------------------------------------------ */
+/* ══ 5. Dienstaufrufe — eigene, rotierbare Pflicht-Zugangsdaten ═══════════ */
 
 export function parseAuthorizationHeader(value) {
   const raw = String(value || "").trim();
@@ -788,29 +916,27 @@ export function verifyServiceCredential(presented, { config, now = () => Date.no
   if (!config) return authError("auth_not_configured", "config_missing");
   const secret = String(presented || "");
   if (!secret) return authError("unauthorized", "credential_missing");
-  // Zu kurz ⇒ dieselbe Absage wie „falsch". Die Länge eines gültigen
-  // Zugangsdatums wird dadurch nicht ausgeplaudert.
   if (secret.length < MIN_SERVICE_SECRET_LENGTH) return authError("unauthorized", "credential_invalid");
 
   const digest = sha256Hex(secret);
   const nowMs = now();
   let matched = null;
-  // Kein frühes Verlassen der Schleife: alle Einträge werden gleich behandelt.
   for (const cred of config.serviceCredentials) {
     if (equalHex(digest, cred.secretSha256)) matched = matched || cred;
   }
   if (!matched) return authError("unauthorized", "credential_invalid");
   if (matched.status === "revoked") return authError("unauthorized", "credential_revoked");
-  if (matched.status === "retiring") {
-    const until = matched.notAfter ? Date.parse(matched.notAfter) : NaN;
-    if (!Number.isFinite(until) || until <= nowMs) return authError("unauthorized", "credential_retired");
-  }
+  // Der Stichtag gilt in JEDEM Status (Review 5ac0bf7: ein „active" mit
+  // abgelaufenem notAfter kam vorher durch).
+  if (matched.notAfter != null && matched.notAfter <= nowMs) return authError("unauthorized", "credential_expired");
+
   const policy = ROLE_POLICY[matched.role];
-  if (!policy) return authError("forbidden", "unknown_role");
+  if (!policy || policy.issuedBy !== ISSUERS.serviceCredential) return authError("forbidden", "unknown_role");
 
   return authOk({
     principal: Object.freeze({
-      kind: policy.kind === "worker" ? "worker" : "service",
+      kind: policy.kind,
+      issuedBy: ISSUERS.serviceCredential,
       id: matched.principal,
       role: matched.role,
       tenant: matched.tenant,
@@ -820,24 +946,20 @@ export function verifyServiceCredential(presented, { config, now = () => Date.no
   });
 }
 
-/* ══ 5. Job-Token für Worker — kurzlebig, audience- und jobgebunden ═══════
+/* ══ 6. Job-Token für Worker — kurzlebige, gebundene JWT ══════════════════
  *
- * Bewusst KEIN JWT: ein eigenes, minimales Format ohne `alg`-Feld kann keine
- * Algorithmus-Verwechslung erleiden. Signiert wird mit HMAC-SHA256 aus
- * node:crypto über eine Zeichenkette MIT Domänentrennung
- * (`qv3-job-token.v1|<kid>|<payload>`): derselbe Schlüssel könnte damit keinen
- * Cursor und kein anderes Token signieren.
+ * BEFUND (Review 5ac0bf7): Die erste Fassung hatte ein eigenes Tokenformat.
+ * Ein selbst erfundenes Protokoll ist auch dann eine Eigenentwicklung, wenn
+ * die Primitive stimmen — und es ist für niemanden prüfbar. Jetzt: JWT (JWS
+ * compact) über `jose`, feste Algorithmenliste (HS256), fester Aussteller,
+ * audience = Route, `job` als Pflichtanspruch, kid im Kopf für die Rotation.
+ *
+ * Scheduler- und Backend-Rollen sind hier NICHT ausstellbar: ihre Autorität
+ * hängt am Dienst-Zugangsdatum, nicht an einem Auftragstoken.
  * ------------------------------------------------------------------------ */
 
-const JOB_TOKEN_PREFIX = "qv3j1";
-const JOB_TOKEN_DOMAIN = "qv3-job-token.v1";
-
-function b64url(buf) {
-  return Buffer.from(buf).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-}
-
-function signDomain(secret, domain, kid, payloadB64) {
-  return b64url(createHmac("sha256", secret).update(`${domain}|${kid}|${payloadB64}`, "utf8").digest());
+function secretKey(secret) {
+  return new TextEncoder().encode(secret);
 }
 
 function pickKey(keys, kid) {
@@ -848,13 +970,7 @@ function activeKey(keys) {
   return keys.find((k) => k.status === "active") || null;
 }
 
-/*
- * Ausstellen. Die Lebensdauer wird HIER begrenzt, nicht erst beim Prüfen —
- * ein Token mit acht Stunden Laufzeit darf gar nicht erst entstehen.
- * `role` muss eine Worker-Rolle sein und kommt vom Aussteller, niemals aus
- * einem Auftragstext.
- */
-export function mintJobToken({
+export async function mintJobToken({
   config, audience, jobId, role, principalId, tenant,
   assignedJobIds = null, lifetimeSeconds = 300, now = () => Date.now(), jti = null,
 } = {}) {
@@ -869,30 +985,33 @@ export function mintJobToken({
   const tnt = String(tenant || "");
   if (!aud || !/^[A-Za-z0-9_.:-]{1,128}$/.test(aud)) return authError("invalid_request", "audience_invalid");
   if (!job || !/^[A-Za-z0-9_-]{1,128}$/.test(job)) return authError("invalid_request", "job_id_invalid");
-  if (!WORKER_ROLES.includes(r)) return authError("forbidden", "role_not_allowed_for_job_token");
+  if (!JOB_TOKEN_ROLES.includes(r)) return authError("forbidden", "role_not_allowed_for_job_token");
   if (!principal || !tnt) return authError("invalid_request", "principal_or_tenant_missing");
   const life = Number(lifetimeSeconds);
   if (!Number.isFinite(life) || life <= 0) return authError("invalid_request", "lifetime_invalid");
   if (life > MAX_JOB_TOKEN_LIFETIME_SECONDS) return authError("invalid_request", "lifetime_too_long");
 
   const nowSec = Math.floor(now() / 1000);
-  const payload = {
-    v: 1, aud, job, role: r, principal, tenant: tnt,
-    assigned: Array.isArray(assignedJobIds) ? assignedJobIds.map(String).slice(0, 64) : null,
+  const token = await new SignJWT({
+    job,
+    role: r,
+    tenant: tnt,
+    assigned: Array.isArray(assignedJobIds) ? assignedJobIds.map(String).slice(0, 64) : [],
     policyVersion: config.policyVersion,
-    iat: nowSec, exp: nowSec + Math.floor(life),
-    jti: String(jti || randomUUID()),
-  };
-  const payloadB64 = b64url(Buffer.from(JSON.stringify(payload), "utf8"));
-  const sig = signDomain(key.secret, JOB_TOKEN_DOMAIN, key.kid, payloadB64);
-  return authOk({ token: `${JOB_TOKEN_PREFIX}.${key.kid}.${payloadB64}.${sig}`, expiresAt: payload.exp, jti: payload.jti });
+  })
+    .setProtectedHeader({ alg: "HS256", kid: key.kid, typ: JOB_TOKEN_TYP })
+    .setIssuer(JOB_TOKEN_ISSUER)
+    .setAudience(aud)
+    .setSubject(principal)
+    .setIssuedAt(nowSec)
+    .setExpirationTime(nowSec + Math.floor(life))
+    .setJti(String(jti || randomUUID()))
+    .sign(secretKey(key.secret));
+
+  return authOk({ token, expiresAt: nowSec + Math.floor(life) });
 }
 
-/*
- * Prüfen. `expectedAudience` und `expectedJobId` sind PFLICHT: ein Aufrufer,
- * der nicht sagt, wofür das Token gelten soll, bekommt kein Ja.
- */
-export function verifyJobToken(token, {
+export async function verifyJobToken(token, {
   config, expectedAudience, expectedJobId, now = () => Date.now(),
 } = {}) {
   if (!config) return authError("auth_not_configured", "config_missing");
@@ -901,45 +1020,73 @@ export function verifyJobToken(token, {
   const wantJob = String(expectedJobId || "");
   if (!wantJob) return authError("invalid_request", "expected_job_missing");
 
-  const parts = String(token || "").split(".");
-  if (parts.length !== 4 || parts[0] !== JOB_TOKEN_PREFIX) return authError("unauthorized", "token_malformed");
-  const [, kid, payloadB64, sig] = parts;
+  const header = readJwtHeader(token);
+  if (!header) return authError("unauthorized", "token_malformed");
+  if (String(header.alg || "") !== "HS256") return authError("unauthorized", "token_alg_not_allowed");
+  if (String(header.typ || "") !== JOB_TOKEN_TYP) return authError("unauthorized", "token_typ_mismatch");
+  const kid = String(header.kid || "");
   const key = pickKey(config.workerKeys, kid);
   if (!key) return authError("unauthorized", "token_unknown_key");
   if (key.status === "revoked") return authError("unauthorized", "token_key_revoked");
 
-  const expected = signDomain(key.secret, JOB_TOKEN_DOMAIN, kid, payloadB64);
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(String(sig || ""), "utf8");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return authError("unauthorized", "token_signature_invalid");
-
-  const buf = b64urlToBuffer(payloadB64);
-  if (!buf) return authError("unauthorized", "token_malformed");
   let payload;
-  try { payload = JSON.parse(buf.toString("utf8")); } catch { return authError("unauthorized", "token_malformed"); }
-  if (!payload || typeof payload !== "object" || payload.v !== 1) return authError("unauthorized", "token_malformed");
+  try {
+    const verified = await jwtVerify(token, secretKey(key.secret), {
+      algorithms: [...JOB_TOKEN_ALGS],
+      issuer: JOB_TOKEN_ISSUER,
+      audience: aud,
+      clockTolerance: 0,
+      currentDate: new Date(now()),
+      typ: JOB_TOKEN_TYP,
+      requiredClaims: ["sub", "iat", "exp", "jti", "job", "role", "tenant", "policyVersion"],
+      maxTokenAge: MAX_JOB_TOKEN_LIFETIME_SECONDS,
+    });
+    payload = verified.payload;
+  } catch (err) {
+    const reason = joseReason(err, {
+      claimReasons: {
+        aud: "audience_mismatch",
+        iss: "token_issuer_mismatch",
+        job: "job_binding_missing",
+        role: "role_not_allowed_for_job_token",
+        tenant: "token_malformed",
+        policyVersion: "policy_version_mismatch",
+        iat: "token_iat_invalid",
+        exp: "token_expired",
+      },
+    });
+    // Eine falsche audience ist eine Rechtefrage, kein Formfehler.
+    if (reason === "audience_mismatch") return authError("forbidden", "audience_mismatch");
+    return authError("unauthorized", reason);
+  }
 
   const nowSec = Math.floor(now() / 1000);
-  if (typeof payload.exp !== "number" || !(payload.exp > nowSec)) return authError("unauthorized", "token_expired");
-  if (typeof payload.iat !== "number" || payload.iat > nowSec + CLOCK_SKEW_SECONDS) return authError("unauthorized", "token_iat_invalid");
+  if (!isFiniteSeconds(payload.exp)) return authError("unauthorized", "token_expired");
+  if (!isFiniteSeconds(payload.iat) || payload.iat > nowSec + CLOCK_SKEW_SECONDS) {
+    return authError("unauthorized", "token_iat_invalid");
+  }
   if (payload.exp - payload.iat > MAX_JOB_TOKEN_LIFETIME_SECONDS) return authError("unauthorized", "token_lifetime_too_long");
-  if (String(payload.aud || "") !== aud) return authError("forbidden", "audience_mismatch");
-  if (!payload.job) return authError("forbidden", "job_binding_missing");
-  if (String(payload.job) !== wantJob) return authError("forbidden", "job_mismatch");
-  if (String(payload.policyVersion || "") !== String(config.policyVersion)) return authError("forbidden", "policy_version_mismatch");
+
+  const job = String(payload.job || "");
+  if (!job) return authError("forbidden", "job_binding_missing");
+  if (job !== wantJob) return authError("forbidden", "job_mismatch");
+  if (String(payload.policyVersion || "") !== String(config.policyVersion)) {
+    return authError("forbidden", "policy_version_mismatch");
+  }
   const role = String(payload.role || "");
-  if (!WORKER_ROLES.includes(role)) return authError("forbidden", "role_not_allowed_for_job_token");
+  if (!JOB_TOKEN_ROLES.includes(role)) return authError("forbidden", "role_not_allowed_for_job_token");
   const tenant = String(payload.tenant || "");
-  const principalId = String(payload.principal || "");
+  const principalId = String(payload.sub || "");
   if (!tenant || !principalId) return authError("unauthorized", "token_malformed");
 
   return authOk({
     principal: Object.freeze({
-      kind: "worker",
+      kind: ROLE_POLICY[role].kind,
+      issuedBy: ISSUERS.jobToken,
       id: principalId,
       role,
       tenant,
-      jobId: String(payload.job),
+      jobId: job,
       assignedJobIds: Array.isArray(payload.assigned) ? Object.freeze(payload.assigned.map(String)) : Object.freeze([]),
       credentialId: null,
       jti: String(payload.jti || ""),
@@ -947,14 +1094,8 @@ export function verifyJobToken(token, {
   });
 }
 
-/* ── Anbieterschlüssel gehören nicht in einen Job-Kontext ────────────────
- * Ein Job-Kontext geht an einen Spezialisten. Läge dort ein Anbieter-Schlüssel
- * (Anthropic, Gemini, OpenAI), wäre er genau dort, wo Modelltext entsteht.
- * Deshalb: aktiv suchen und ablehnen, statt sich darauf zu verlassen, dass
- * niemand ihn hineinschreibt. */
+/* ── Anbieterschlüssel gehören nicht in einen Job-Kontext ──────────────── */
 const SECRET_KEY_PATTERN = /(api[_-]?key|secret|token|password|passwort|private[_-]?key|credential|authorization)/i;
-// Die Wortgrenze steht je Alternative — ein PEM-Block beginnt mit „-----",
-// davor gibt es keine, und eine gemeinsame Grenze vorn hätte ihn durchgelassen.
 const SECRET_VALUE_PATTERN =
   /(\bsk-ant-[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9]{20,}|\bAIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
 
@@ -980,14 +1121,8 @@ function scanForSecrets(value, depth) {
   return null;
 }
 
-/* ══ 6. Transport — TLS, Herkunft, Grösse, striktes JSON ══════════════════ */
+/* ══ 7. Transport — TLS, Herkunft, Grösse, striktes JSON ══════════════════ */
 
-/*
- * TLS. Hinter Netlify/Cloud Run steht der Beweis in `x-forwarded-proto`;
- * ohne Angabe wird die URL herangezogen. Kein „localhost ist auch okay":
- * dieses Paket schaltet nichts frei, ein Entwicklungsloch wäre reine Schuld
- * auf Vorrat.
- */
 export function enforceTls(req) {
   const proto = String(req?.headers?.get?.("x-forwarded-proto") || "").split(",")[0].trim().toLowerCase();
   if (proto) return proto === "https" ? authOk() : authError("forbidden", "tls_required");
@@ -998,20 +1133,12 @@ export function enforceTls(req) {
 
 /*
  * Herkunft. Zwei Welten, sauber getrennt:
- *
- *   BROWSER  — schickt `Origin`. Der Wert muss exakt in der Allowlist stehen.
- *              Ein Nutzer-Principal (Firebase-ID-Token) OHNE Origin wird
- *              abgelehnt: Browser schicken bei fremd-originierten Anfragen
- *              immer eine Origin; ihr Fehlen ist bei einem Nutzer-Token ein
- *              Hinweis auf etwas anderes als die App.
- *   DIENST   — Server-zu-Server (Cloud Run, Scheduler, Worker) hat keine
- *              Origin. Das ist legitim und wird NICHT pauschal ausgeschlossen.
- *              Schickt ein Dienst dennoch eine Origin, muss auch sie passen.
- *
- * Die Absage nennt die abgelehnte Origin NICHT und setzt keine
- * CORS-Kopfzeile — sie verrät damit auch nicht, welche Origins es gäbe.
- * Und: das hier ersetzt keine Authentisierung. CORS ist eine Browser-Regel;
- * die Tür ist der Ausweis.
+ *   BROWSER  — schickt `Origin`; der Wert muss exakt in der Allowlist stehen.
+ *              Ein Nutzer-Principal OHNE Origin wird abgelehnt.
+ *   DIENST   — Server-zu-Server hat keine Origin. Legitim, wird nicht pauschal
+ *              ausgeschlossen. Schickt er doch eine, muss sie passen.
+ * Die Absage nennt die Origin nicht und setzt keine CORS-Kopfzeile. Und sie
+ * ersetzt keine Authentisierung.
  */
 export function evaluateOrigin({ origin, principalKind, config } = {}) {
   if (!config) return authError("auth_not_configured", "config_missing");
@@ -1036,11 +1163,6 @@ export function evaluateOrigin({ origin, principalKind, config } = {}) {
   });
 }
 
-/*
- * Der Körper: strikt JSON, höchstens 64 KiB (in UTF-8-Bytes, nicht in
- * JS-Zeichen), und ein Objekt — kein Array, keine nackte Zahl. `__proto__`
- * wird abgewiesen, statt still verschluckt zu werden.
- */
 export function enforceJsonCommand({ contentType, rawBody, maxBytes = COMMAND_MAX_BYTES } = {}) {
   const ct = String(contentType || "").split(";")[0].trim().toLowerCase();
   if (ct !== "application/json") return authError("unsupported_media_type", "content_type_must_be_json");
@@ -1054,17 +1176,7 @@ export function enforceJsonCommand({ contentType, rawBody, maxBytes = COMMAND_MA
   return authOk({ value: parsed, bytes });
 }
 
-/* ══ 7. Ratenbegrenzung — der Vertrag, nicht die Illusion ═════════════════
- *
- * Netlify-Funktionen und Cloud Run laufen in MEHREREN Instanzen. Ein Zähler
- * im Arbeitsspeicher zählt deshalb pro Instanz — wer 10 Anfragen pro Minute
- * erlauben will, erlaubt bei 5 Instanzen 50. Das ist kein Schutz, und es als
- * Schutz auszugeben wäre schlimmer als keiner.
- *
- * Darum: Der Handler VERLANGT einen Speicher, der atomar hoch- und zurückzählt
- * und sich als instanzübergreifend ausweist. Fehlt er, gibt es 503 —
- * keinen stillen Erfolgspfad.
- * ------------------------------------------------------------------------ */
+/* ══ 8. Ratenbegrenzung — der Vertrag, nicht die Illusion ═════════════════ */
 
 export const RATE_LIMIT_CONTRACT = Object.freeze({
   required: Object.freeze([
@@ -1085,8 +1197,6 @@ export function requireHandlerRateLimiter(store) {
   return authOk({ store });
 }
 
-/* Der Schlüssel eines Zählers: Principal + Mandant + Verb. Nie die blosse IP —
-   ein Principal darf sich nicht hinter wechselnden Adressen verstecken. */
 export function rateLimitKey({ principal, verb } = {}) {
   const id = String(principal?.id || "");
   const tenant = String(principal?.tenant || "");
@@ -1095,9 +1205,7 @@ export function rateLimitKey({ principal, verb } = {}) {
   return `qv3:${tenant}:${role}:${id}:${String(verb || "*")}`;
 }
 
-/* Ausdrücklich NICHT mehrinstanzsicher — und sagt das selbst. `requireHandlerRateLimiter`
-   weist ihn ab; er existiert für lokale Versuche und für den Test, der beweist,
-   dass er abgewiesen wird. */
+/* Ausdrücklich NICHT mehrinstanzsicher — und sagt das selbst. */
 export function createInMemoryRateLimiter() {
   const counters = new Map();
   return {
@@ -1119,5 +1227,6 @@ export default {
   verifyServiceCredential, mintJobToken, verifyJobToken, assertNoProviderSecrets,
   enforceTls, evaluateOrigin, enforceJsonCommand,
   requireHandlerRateLimiter, rateLimitKey, createInMemoryRateLimiter,
-  QUANTUS_V3_TOOLS, ROLE_POLICY, WORKER_ROLES, RATE_LIMIT_CONTRACT,
+  QUANTUS_V3_TOOLS, ROLE_POLICY, ROLES, JOB_TOKEN_ROLES, SERVICE_CREDENTIAL_ROLES,
+  RATE_LIMIT_CONTRACT, VERBS, DATA_CATEGORIES, OBJECT_KIND_CATEGORY,
 };

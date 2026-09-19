@@ -65,9 +65,16 @@ test("halbe oder kaputte Konfiguration ist keine halbe Tür", () => {
   const faelle = [
     [AUTH_CONFIG_VARS.serviceCredentials, "{kein json"],
     [AUTH_CONFIG_VARS.serviceCredentials, "[]"],
-    [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "lead_agent", tenant: "t", secretSha256: "kurz", status: "active" }])],
+    [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "scheduler", tenant: "t", secretSha256: "kurz", status: "active" }])],
     // Eine Dienstkennung darf niemals die Nutzerrolle tragen.
     [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "user", tenant: "t", secretSha256: "a".repeat(64), status: "active" }])],
+    // … und auch keine Worker-Rolle: Leitungsagent und Spezialisten arbeiten
+    // mit kurzlebigen Auftragstoken, nicht mit einem Dauer-Zugangsdatum.
+    [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "lead_agent", tenant: "t", secretSha256: "a".repeat(64), status: "active" }])],
+    [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "specialist_claude", tenant: "t", secretSha256: "a".repeat(64), status: "active" }])],
+    // Unbrauchbarer oder fehlender Stichtag.
+    [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "scheduler", tenant: "t", secretSha256: "a".repeat(64), status: "active", notAfter: "irgendwann" }])],
+    [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "scheduler", tenant: "t", secretSha256: "a".repeat(64), status: "retiring" }])],
     // Unbekannte Rolle ⇒ Konfiguration ungültig, nicht „dann eben ohne Rechte".
     [AUTH_CONFIG_VARS.serviceCredentials, JSON.stringify([{ id: "a", principal: "p", role: "superadmin", tenant: "t", secretSha256: "a".repeat(64), status: "active" }])],
     // Nur zurückgezogene Zugangsdaten = keine gültigen.
@@ -152,9 +159,10 @@ test("C1 schaltet nichts frei: kein Handler zu den vier Routen", () => {
     for (const verboten of ["firebase-admin", "writeAppDataText", "readAppDataText", "@netlify/blobs", "quantus-v3-idempotency"]) {
       assert.ok(!code.includes(verboten), `${datei} greift auf ${verboten} zu`);
     }
-    // Ausser node: und dem eigenen Paket wird nichts importiert.
+    // Ausser node:, dem eigenen Paket und der geprüften JOSE-Bibliothek wird
+    // nichts importiert — insbesondere kein Datenzugriff.
     for (const [, spec] of code.matchAll(/from\s+"([^"]+)"/g)) {
-      assert.ok(spec.startsWith("node:") || spec.startsWith("./quantus-v3-"),
+      assert.ok(spec.startsWith("node:") || spec.startsWith("./quantus-v3-") || spec === "jose",
         `${datei} importiert ${spec}`);
     }
   }
@@ -173,3 +181,15 @@ test("die bestehenden Endpunkte bleiben unangetastet (Paketgrenze)", () => {
 function ohneKommentare(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
+
+test("die einzige neue Abhängigkeit ist die JOSE-Bibliothek", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  assert.ok(pkg.dependencies.jose, "jose ist nicht als Abhängigkeit erklärt");
+  // jose bringt selbst nichts mit — das ist der Grund für die Wahl.
+  const joseMeta = JSON.parse(fs.readFileSync(path.join(root, "node_modules/jose/package.json"), "utf8"));
+  assert.deepEqual(joseMeta.dependencies || {}, {});
+  // Und das Testskript läuft über den Dateinamen-Glob, damit neue
+  // Gegenbeispieldateien nicht vergessen werden können.
+  assert.match(pkg.scripts["test:quantus-v3"], /quantus-v3-auth-\*\.test\.mjs/);
+  assert.match(pkg.scripts.test, /test:quantus-v3/);
+});

@@ -1,8 +1,8 @@
 # Quantus v3 — Sicherheitspaket C1
 
-Dieses Dokument beschreibt das Paket **C1**: die Tür vor den vier geplanten
-v3-Werkzeugen. Es beschreibt, was geprüft wird, wie der Server konfiguriert
-sein muss, wie ein späteres Paket das benutzt — und was C1 **nicht** leistet.
+Dieses Dokument beschreibt **C1**: die Tür vor den vier geplanten v3-Werkzeugen.
+Was geprüft wird, wie der Server konfiguriert sein muss, wie ein späteres Paket
+das benutzt — und was C1 **nicht** leistet.
 
 > **Quantus ist damit nicht abgesichert und nicht umgestellt.** C1 schaltet
 > keinen Endpunkt frei. Die bestehenden Funktionen (`blob-put`, `blob-get`,
@@ -11,255 +11,256 @@ sein muss, wie ein späteres Paket das benutzt — und was C1 **nicht** leistet.
 > T01–T40, der All-Writer-Migration in Desktop/Tablet/Mobile und einem echten
 > 14-Tage-Probebetrieb.
 
+## 0. Stand der Prüfung
+
+| Fassung | Stand |
+| --- | --- |
+| `5ac0bf7` | erste Fassung, unabhängig geprüft — **nicht abgenommen** |
+| diese Fassung | zwölf gemeldete Gegenbeispiele korrigiert, je ein Test in `tests/quantus-v3-auth-gegenbeispiele.test.mjs`; Vertragsänderungen (JOSE, Fachverben) umgesetzt |
+
+Die Gegenbeispiel-Datei nennt jeden Fall mit seiner Nummer und dem gemeldeten
+Verhalten. Sie bleibt stehen, damit nichts davon zurückfällt.
+
 ## 1. Umfang
 
 | Datei | Inhalt |
 | --- | --- |
-| `netlify/lib/quantus-v3-auth.mjs` | Konfiguration (fail closed), Firebase-ID-Token-Prüfung, Dienst-Zugangsdaten, Job-Token, Rollenmatrix, Transport, Rate-Limiter-Vertrag |
+| `netlify/lib/quantus-v3-auth.mjs` | Konfiguration (fail closed), Firebase-ID-Token, Dienst-Zugangsdaten, Job-Token, Rollenmatrix, Transport, Rate-Limiter-Vertrag |
 | `netlify/lib/quantus-v3-cursor.mjs` | signierte, seitenweise Kontextcursor |
-| `tests/quantus-v3-auth-*.test.mjs` | 62 Verhaltenstests (`node:test`), ohne Netz, ohne Abhängigkeiten |
-| `tests/fixtures/quantus-v3-auth-fixtures.mjs` | flüchtige Schlüssel und Attrappen für die Tests |
+| `tests/quantus-v3-auth-*.test.mjs` | 79 Verhaltenstests (`node:test`), ohne Netz |
+| `tests/fixtures/quantus-v3-auth-fixtures.mjs` | flüchtige Schlüssel, Attrappen, X.509-Bau in reinem JS |
 
-Neue Abhängigkeiten: **keine.** In `package.json` kam nur das eigene
-Testskript `test:quantus-v3` dazu (und ein Aufruf davon am Ende von `test`).
+Abhängigkeit: **`jose`** (v6, keine Transitivabhängigkeiten) — auf Verlangen der
+Review, statt eines eigenen Tokenformats. `npm ci` ist damit Voraussetzung für
+`npm run test:quantus-v3`. Sonst nur das eigene Testskript in `package.json`.
 
-Nicht Teil von C1 und bewusst nicht angefasst: `netlify/lib/assistant-*.mjs`
-(Schema, Migration, Ampel, Abschluss), `netlify/lib/quantus-v3-idempotency.mjs`,
-`firebase-admin.mjs` inkl. `mutateAppData`, `date-invite*`,
-`flowertech-sync/inquiry`, CI, `docs/quantus-v3-implementation.md`.
+Nicht Teil von C1 und nicht angefasst: `netlify/lib/assistant-*.mjs`,
+`netlify/lib/quantus-v3-idempotency.mjs`, `firebase-admin.mjs` inkl.
+`mutateAppData`, `date-invite*`, `flowertech-sync/inquiry`, CI,
+`docs/quantus-v3-implementation.md`.
 
 ## 2. Die vier Werkzeuge
 
-| Werkzeug | Route | Verb | Stand |
-| --- | --- | --- | --- |
-| `quantus_context` | `quantus-context` | `context.read` | nicht freigeschaltet |
-| `quantus_read` | `quantus-read` | `object.read` | nicht freigeschaltet |
-| `quantus_command` | `quantus-ingest` | `command.submit` | nicht freigeschaltet |
-| `quantus_run_status` | `quantus-run-status` | `run_status.read` | nicht freigeschaltet |
+| Werkzeug | Route | Stand |
+| --- | --- | --- |
+| `quantus_context` | `quantus-context` | nicht freigeschaltet |
+| `quantus_read` | `quantus-read` | nicht freigeschaltet |
+| `quantus_command` | `quantus-ingest` | nicht freigeschaltet |
+| `quantus_run_status` | `quantus-run-status` | nicht freigeschaltet |
 
-`QUANTUS_V3_TOOLS[...].enabled` ist überall `false`; ein Test hält fest, dass
-zu keiner dieser Routen eine Netlify-Funktion existiert. Die Geschäftslogik
-bringt ein folgendes Paket.
+`QUANTUS_V3_TOOLS[...].enabled` ist überall `false`; ein Test hält fest, dass zu
+keiner dieser Routen eine Netlify-Funktion existiert und dass die beiden Module
+ausser `node:`, sich selbst und `jose` nichts importieren.
 
 ## 3. Erwartete Serverkonfiguration
 
-Alle Werte sind **Serverkonfiguration**. Keiner davon gehört in den Browser,
-in `public/`, in ein Repository oder in einen Test. Fehlt oder bricht einer,
-antwortet jede Prüfung mit **503 `auth_not_configured`** und nennt nur den
-**Namen** der Variable — nie ihren Inhalt.
+Alle Werte sind Serverkonfiguration. Keiner gehört in den Browser, nach
+`public/`, ins Repository oder in einen Test. Fehlt oder bricht einer, antwortet
+jede Prüfung mit **503 `auth_not_configured`** und nennt nur den **Namen** der
+Variable.
 
 | Variable | Pflicht | Inhalt |
 | --- | --- | --- |
-| `QUANTUS_V3_FIREBASE_PROJECT_ID` | ja | Projekt-Id; daraus folgt der erwartete Aussteller `https://securetoken.google.com/<projectId>` und die erwartete `aud` |
-| `QUANTUS_V3_POLICY_VERSION` | ja | Fassung des Rechtemodells, z. B. `v3-2026-09-19` |
-| `QUANTUS_V3_ALLOWED_ORIGINS` | ja | Kommaliste vollständiger https-Origins. Kein `*`, kein Teil-Wildcard, kein `http` |
-| `QUANTUS_V3_SERVICE_CREDENTIALS` | ja | JSON-Liste `{id, principal, role, tenant, secretSha256, status, notAfter?}` — **nur SHA-256-Abdrücke**, nie das Geheimnis |
-| `QUANTUS_V3_WORKER_TOKEN_KEYS` | ja | JSON-Liste `{kid, secret, status}` für Job-Token (HMAC-SHA256) |
-| `QUANTUS_V3_CURSOR_KEYS` | ja | JSON-Liste `{kid, secret, status}` für Cursor — **eigener Schlüsselsatz**, nicht derselbe wie oben |
-| `QUANTUS_V3_FIREBASE_TENANT` | optional | ist er gesetzt, MUSS jedes Nutzer-Token diesen Mandanten tragen; ist er nicht gesetzt, darf kein Token einen tragen |
+| `QUANTUS_V3_FIREBASE_PROJECT_ID` | ja | Projekt-Id; daraus folgen erwarteter `iss` und `aud` |
+| `QUANTUS_V3_POLICY_VERSION` | ja | Fassung des Rechtemodells |
+| `QUANTUS_V3_ALLOWED_ORIGINS` | ja | Kommaliste vollständiger https-Origins; kein `*` |
+| `QUANTUS_V3_SERVICE_CREDENTIALS` | ja | JSON-Liste `{id, principal, role, tenant, secretSha256, status, notAfter?}` — **nur SHA-256-Abdrücke** |
+| `QUANTUS_V3_WORKER_TOKEN_KEYS` | ja | JSON-Liste `{kid, secret, status}` für Job-Token |
+| `QUANTUS_V3_CURSOR_KEYS` | ja | JSON-Liste `{kid, secret, status}` für Cursor — **eigener Schlüsselsatz** |
+| `QUANTUS_V3_FIREBASE_TENANT` | optional | gesetzt ⇒ jedes Nutzer-Token muss diesen Mandanten tragen; nicht gesetzt ⇒ keines darf einen tragen |
 | `QUANTUS_V3_MODE` | optional | `dry_run` (Standard) oder `enforce` |
 
-`status` ist `active` (stellt aus und gilt), `retiring` (gilt noch; bei
-Dienst-Zugangsdaten bis `notAfter`) oder `revoked` (gilt nie). Mindestens ein
-`active`-Eintrag ist Pflicht, sonst 503. Geheimnisse sind mindestens 32 Zeichen;
-empfohlen sind 32 zufällige Bytes als Hex.
+`status`: `active` (stellt aus und gilt), `retiring` (gilt noch, bei
+Dienst-Zugangsdaten **nur mit** `notAfter`), `revoked` (gilt nie). Mindestens ein
+`active` ist Pflicht. **`notAfter` gilt in jedem Status** — auch bei `active`;
+ein unlesbarer Zeitpunkt sperrt schon die Konfiguration. Geheimnisse mindestens
+32 Zeichen; empfohlen 32 zufällige Bytes als Hex.
 
-**Rotation** (ohne Ausfall): neuen Eintrag als `active` voranstellen, alten auf
-`retiring` setzen (bei Dienst-Zugangsdaten mit `notAfter`), Aufrufer umstellen,
-alten Eintrag entfernen oder auf `revoked` setzen. Ausgestellte Job-Token und
-Cursor leben höchstens 15 Minuten; ein `revoked`-Schlüssel entwertet sie sofort.
+Dienst-Zugangsdaten gibt es **nur** für `scheduler` und `backend_checker`.
+`lead_agent` und die Spezialisten arbeiten ausschliesslich mit kurzlebigen,
+auftragsgebundenen Job-Token; ein Dauer-Zugangsdatum für sie lässt die
+Konfiguration nicht zu.
 
-`SYNC_AUTH_TOKEN` ist **kein** v3-Standard: optional, für alle alten Endpunkte
-derselbe, und im Browser gewesen. Der v3-Code liest ihn nicht.
+**Rotation:** neuen Eintrag als `active` voranstellen, alten auf `retiring` mit
+`notAfter` setzen, Aufrufer umstellen, alten entfernen oder auf `revoked`.
+Job-Token und Cursor leben höchstens 15 Minuten; ein `revoked`-Schlüssel
+entwertet sie sofort.
+
+`SYNC_AUTH_TOKEN` ist **kein** v3-Standard und wird vom v3-Code nicht gelesen.
 
 ## 4. Was geprüft wird
 
 ### 4.1 Nutzer — Firebase-ID-Token
 
-`verifyFirebaseIdToken(idToken, { config, keySource, userLookup, now })`
-prüft in dieser Reihenfolge (eine gefälschte Signatur kostet keinen Netzaufruf):
+`verifyFirebaseIdToken(idToken, { config, keySource, userLookup, now })`:
 
-1. Form; Header `alg === "RS256"` (`none`, `HS256`, `RS512` ⇒ 401), `kid` vorhanden.
-2. **Signatur** gegen Googles öffentlichen Schlüssel — `crypto.verify("RSA-SHA256", …)`,
-   Schlüssel aus
-   `https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com`,
-   zwischengespeichert nach `max-age` der `Cache-Control`-Kopfzeile, bei
-   unbekannter `kid` genau eine Auffrischung. Es wird **nie** nur dekodiert.
-3. `exp` in der Zukunft (ohne Toleranz), `iat`/`auth_time` nicht in der Zukunft
-   (60 s Uhrenversatz), `aud` = Projekt-Id, `iss` = `https://securetoken.google.com/<projectId>`,
-   `sub` nicht leer und ≤ 128 Zeichen.
-4. **Mandant**: `firebase.tenant` bzw. `tenant_id`; widersprechen sie sich, 401.
-   Erwarteter Mandant fehlt oder ist fremd ⇒ 403.
-5. **Widerruf und Sperre** über die offizielle Admin-API `accounts:lookup`:
-   `disabled` ⇒ 403 `user_disabled`; `validSince > iat` ⇒ 401 `token_revoked`;
-   `tenantId` des Datensatzes muss zur Konfiguration passen. Fällt die Abfrage
-   aus, wird **nicht** durchgelassen.
+1. Kopfzeile: `alg === "RS256"` (`none`, `HS256`, `RS512` ⇒ 401), `kid` vorhanden.
+2. **Signatur und Standardansprüche über `jose`** (`jwtVerify`, feste
+   Algorithmenliste, `issuer`, `audience`, `clockTolerance: 0`,
+   `requiredClaims: sub, iat, exp, auth_time`). Schlüssel aus Googles
+   X.509-Endpunkt.
+3. Eigene Zusatzprüfungen: endliche ganzzahlige Sekunden für `exp`, `iat`,
+   `auth_time`; `iat`/`auth_time` nicht in der Zukunft (60 s Versatz);
+   `auth_time ≤ iat`; `sub` ≤ 128 Zeichen.
+4. **Mandant**: `firebase.tenant` bzw. `tenant_id`; Widerspruch ⇒ 401; fremder
+   oder fehlender erwarteter Mandant ⇒ 403.
+5. **Widerruf und Sperre** über `accounts:lookup`: `disabled` ⇒ 403;
+   **`validSince > auth_time` ⇒ 401 `token_revoked`**. Gemessen wird an
+   `auth_time`, nicht an `iat` (Firebase „Manage user sessions"; das Admin-SDK
+   tut mit `verifyIdToken(token, true)` dasselbe) — ein nach dem Widerruf nur
+   frisch ausgestelltes Token trägt eine neue `iat`, aber die alte Anmeldezeit.
+   Fällt die Abfrage aus, wird nicht durchgelassen.
 
-`userLookup` und `keySource` kommen als Abhängigkeit herein — für Tests als
-Attrappe, in Produktion über
-`createGooglePublicKeySource()` und `createIdentityToolkitUserLookup({ getAccessToken, projectId, tenantId })`.
-Fehlt eine der beiden, ist die Antwort 503, nie 200. Dieses Modul hält selbst
-kein Dienstkonto und liest keines; den Zugriffstoken für `accounts:lookup`
-liefert der Aufrufer.
-
-Grundlage: Firebase-Anleitung „Verify ID tokens using a third-party JWT
-library" (Header- und Payload-Tabelle, Schlüsselendpunkt, `max-age`) und die
-Identity-Platform-Referenz zu `accounts:lookup` (`disabled`, `validSince`,
-`tenantId`). Der Schlüsselendpunkt wurde am 19.09.2026 direkt abgefragt und
-liefert `cache-control: public, max-age=…, must-revalidate`.
-
-Ein Wechsel auf das offizielle Admin-SDK (`verifyIdToken(token, true)`,
-`tenantManager().authForTenant()`) ist an derselben Stelle möglich: er ersetzt
-`verifyFirebaseIdToken` als Ganzes; die Schnittstelle (Token rein, Principal
-oder Absage raus) bleibt.
+**Schlüsselbezug:** Cache nach `max-age`, **Singleflight** (parallele Aufrufe
+teilen einen Abruf) und **Abkühlzeit** von 60 s: eine unbekannte `kid` löst
+höchstens einen Abruf je Abkühlzeit aus, sodass eine Flut gefälschter Token mit
+erfundenen `kid`s nicht je einen Netzabruf kostet. Ein echter Schlüsselwechsel
+wirkt trotzdem — spätestens nach der Abkühlzeit.
 
 ### 4.2 Dienste
 
-`verifyServiceCredential(presented, { config })`: eigener, rotierbarer
-Pflicht-Ausweis pro Dienst. Der Server hält nur den SHA-256-Abdruck, verglichen
-in gleichbleibender Zeit. Fehlend/falsch/zu kurz ⇒ **401** mit identischem
-Grund (die Länge verrät nichts). Rolle, Mandant und Principal stammen aus der
-Serverkonfiguration; ein Dienst kann nie die Rolle `user` tragen.
+`verifyServiceCredential`: SHA-256-Abdruck, Vergleich in gleichbleibender Zeit.
+Fehlend/falsch/zu kurz ⇒ 401 mit identischem Grund; abgelaufener `notAfter` ⇒
+401 `credential_expired`; `revoked` ⇒ 401. Rolle, Mandant und Principal kommen
+aus der Serverkonfiguration.
 
 ### 4.3 Worker
 
-`mintJobToken` / `verifyJobToken`: eigenes, minimales Format
-(`qv3j1.<kid>.<payload>.<hmac>`) — **kein JWT**, also auch keine
-`alg`-Verwechslung. Signatur HMAC-SHA256 aus `node:crypto` mit Domänentrennung
-`qv3-job-token.v1|<kid>|<payload>`; derselbe Schlüsselwert könnte keinen Cursor
-signieren. Höchstlaufzeit 15 Minuten, **beim Ausstellen** erzwungen.
-`verifyJobToken` verlangt `expectedAudience` **und** `expectedJobId`; falsche
-audience, fremder Job, fehlende Jobbindung, Ablauf, Policy-Wechsel und
-`revoked`-Schlüssel führen zur Absage. Rollen kommen vom Aussteller, nie aus
-dem Body: `role: "user"` lässt sich nicht ausstellen.
-`assertNoProviderSecrets(jobContext)` weist Anbieter-Schlüssel im Job-Kontext ab.
+`mintJobToken` / `verifyJobToken`: **JWT (JWS compact) über `jose`**, feste
+Algorithmenliste (`HS256`), fester Aussteller `quantus-v3/job-token`, eigenes
+`typ`, `kid` im Kopf für die Rotation, `job` als Pflichtanspruch. Höchstlaufzeit
+15 Minuten, beim Ausstellen erzwungen. `verifyJobToken` verlangt
+`expectedAudience` **und** `expectedJobId`. **Scheduler- und Backend-Rollen sind
+hier nicht ausstellbar** und werden auch dann abgewiesen, wenn ein Token mit
+gültigem Schlüssel signiert wurde. `assertNoProviderSecrets` weist
+Anbieter-Schlüssel im Job-Kontext ab.
 
 ### 4.4 Rollen (`authorize`)
 
-Eine Matrix, eine Quelle. Unbekannte Rolle, unbekanntes Verb, unbekannte
-Datenkategorie ⇒ **403**. Geprüft wird beim **Lesen wie beim Schreiben**:
-jedes Verb verlangt Datenkategorie und Objekt (`{kind, id, tenant, ownerId?,
-jobId?, assignedTo?}`), der Mandant immer.
+Ohne Serverkonfiguration ⇒ 503; ohne Policy-Version ⇒ 403; abweichende
+Policy-Version ⇒ 403. Rolle, **Art** (`user`/`worker`/`service`) und
+**Ausstellweg** (`firebase`/`job_token`/`service_credential`) müssen
+zusammenpassen — ein Principal, der `{kind:"worker", role:"user"}` behauptet,
+bekommt keine Nutzerrechte. Die **Datenkategorie wird aus der Art des
+serverseitig geladenen Objekts abgeleitet**; was der Aufrufer behauptet, muss
+dazu passen. Gelesen wird wie geschrieben.
 
-| Rolle | Bindung | darf |
-| --- | --- | --- |
-| `user` | eigenes Objekt (`ownerId`) | eigene Aufträge, Antworten, Freigaben, Aufgaben, Mail, Lead-Abschluss, Lesen des Eigenen |
-| `lead_agent` | zugewiesen | zugewiesenen Kontext lesen, bestehende Aufträge weiterschalten, Ergebnis schreiben, Aufgabe anlegen — **keine** Nutzerantwort, Freigabe, Policy, Rechtevergabe, Mail, Lead-Abschluss, kein `job.create` |
-| `specialist_claude` / `specialist_gemini` | genau ein Job | **nur** `context.read` auf den Kontext dieses Jobs und `job.result.write` an diesen Job — sonst nichts |
-| `scheduler` | Mandant | fällige Jobs weiterschalten, Betriebsstatus lesen — **keine** Inhaltsfreigabe |
-| `backend_checker` | Mandant | Status lesen und Systemstatus/Abschluss rechnen — **keine** externen Aktionen |
+| Rolle | Art / Ausstellweg | Bindung | Verben |
+| --- | --- | --- | --- |
+| `user` | user / firebase | eigenes Objekt | `context.read`, `intake.create`, `intake.accept`, `task.create`, `lead.comment`, `lead.transition`, `lead.schedule`, **`briefing.answer`**, `question.resolve`, `document.register`, `note.append` |
+| `lead_agent` | worker / job_token | zugewiesen | `context.read`, `lead.comment`, `lead.transition`, `lead.schedule`, `task.create`, `question.create`, `document.processed`, `worker.assign`, `worker.review`, `run.checkpoint`, `run.log` |
+| `specialist_claude` / `specialist_gemini` | worker / job_token | genau ein Auftrag | `context.read` (nur `run_context` dieses Auftrags), `worker.return` |
+| `scheduler` | service / service_credential | Mandant | `context.read` (`run`, `run_status`), `run.ensure`, `run.claim`, `run.renew`, `run.log` |
+| `backend_checker` | service / service_credential | Mandant | `context.read`, **`briefing.consumeAnswer`**, `document.processed`, `run.checkpoint`, **`run.finalize`**, `run.log`, **`note.append`** |
 
-`policy.write` und `grant.write` hat **keine** Rolle. Die Policy-Version ist
-Teil der Entscheidung: ein Aufrufer mit veralteter Fassung bekommt 403.
+`briefing.answer` gibt es nur beim Nutzer, `briefing.consumeAnswer` und
+`run.finalize` nur beim Backend — je ein Test hält das fest. Sammelverben
+(`command.submit`, `job.advance`, `mail.send`, `lead.finalize`, `policy.write`,
+`grant.write`) gibt es nicht; ein Test prüft ihre Abwesenheit.
+Domänenbedingungen (welche Übergänge, welche Pflichtfelder) sind C2.
+
 `rejectIdentityInPayload(body)` weist einen Body ab, der Rolle, Principal,
-Mandant, Scopes oder Rechte behauptet — auch eine Ebene tiefer.
+Mandant, Art, Ausstellweg, Scopes oder Rechte behauptet — auch eine Ebene tiefer.
 
 ### 4.5 Transport
 
 * `enforceTls(req)` — `x-forwarded-proto: https` oder https-URL, sonst 403.
-* `evaluateOrigin({ origin, principalKind, config })` — feste Allowlist, kein
-  Wildcard; die Absage nennt weder die abgelehnte noch die erlaubten Origins
-  und trägt keine CORS-Kopfzeile. **Browser** (`principalKind: "user"`) ohne
-  Origin ⇒ 403; **Dienst/Worker** ohne Origin ⇒ erlaubt (Server-zu-Server hat
-  keine); sendet ein Dienst doch eine, muss sie passen. CORS ersetzt nie den
-  Ausweis — eine erlaubte Origin ohne gültiges Zugangsdatum bleibt 401.
-* `enforceJsonCommand({ contentType, rawBody })` — genau `application/json`,
-  höchstens **64 KiB in UTF-8-Bytes**, Ergebnis muss ein Objekt sein,
-  `__proto__` verboten.
+* `evaluateOrigin(...)` — feste Allowlist, kein Wildcard; die Absage nennt weder
+  die abgelehnte noch die erlaubten Origins und trägt keine CORS-Kopfzeile.
+  Browser ohne Origin ⇒ 403; Dienst/Worker ohne Origin ⇒ erlaubt; sendet ein
+  Dienst eine Origin, muss sie passen. CORS ersetzt nie den Ausweis.
+* `enforceJsonCommand(...)` — genau `application/json`, höchstens **64 KiB in
+  UTF-8-Bytes**, Objekt, kein `__proto__`.
 
 ### 4.6 Ratenbegrenzung
 
-C1 liefert **keinen** Zähler, sondern den Vertrag. `requireHandlerRateLimiter`
-verlangt `atomic: true` und `scope: "shared"` und antwortet sonst 503
-`rate_limiter_not_configured`. `createInMemoryRateLimiter()` weist sich selbst
-als `multiInstanceSafe: false` aus und wird abgewiesen — Netlify und Cloud Run
-laufen mehrinstanzig, ein Zähler pro Instanz ist kein Schutz. Der Schlüssel
-(`rateLimitKey`) hängt an Principal + Mandant + Verb, nie an der IP allein.
+Nur der Vertrag: `requireHandlerRateLimiter` verlangt `atomic: true` und
+`scope: "shared"`, sonst 503 `rate_limiter_not_configured`.
+`createInMemoryRateLimiter()` weist sich selbst als `multiInstanceSafe: false`
+aus und wird abgelehnt. Schlüssel: Principal + Mandant + Verb.
 
 ### 4.7 Cursor
 
-`signCursor` / `verifyCursor` binden eine Seite an Principal, Principal-Art,
-Mandant, **benannte** Abfrage (`job.context`, `lead.context`, `job.queue`,
-`run.status`), Objektscope, Policy-Version, Datenrevision und Ablauf
-(≤ 15 min). Manipulation, fremder Principal/Mandant, andere Abfrage, grössere
-Seite, Revisions- oder Policy-Wechsel, unbekannter oder zurückgezogener
-Schlüssel ⇒ Absage. Der Scope ist eine **Id**, kein Pfad: `/`, `.`, `__`,
-Leerzeichen und alles ausserhalb `[A-Za-z0-9_-]` fallen durch, also gibt es
-weder Firebase-Pfade noch Blob-Keys im Cursor. Die Feldliste ist
-abgeschlossen — Freitext (Mailinhalt) lässt sich nicht mitgeben; der Beleg ist
-signiert, nicht verschlüsselt. `describePage` trennt `done` / `more` /
-`aborted`: eine abgebrochene Seite ist **nie** `complete: true`.
+`signCursor` / `verifyCursor`: **JWT über `jose`**, eigener Aussteller, eigenes
+`typ`, eigener Schlüsselsatz. Gebunden an Principal, Principal-Art, Mandant,
+benannte Abfrage, Objektscope, Policy-Version, Datenrevision, Seitenposition,
+Ablauf (≤ 15 min).
+
+`verifyCursor` verlangt **zwingend** `expectedQuery`, `expectedScopeKind`,
+`expectedScopeId`, `policyVersion`, `dataRevision`, `principal`, `authConfig`
+und das serverseitig geladene `scopeObject` — fehlt eines, wird gesperrt statt
+geprüft. Anschliessend läuft **`authorize()` erneut**: Rolle, Art, Ausstellweg,
+Mandant, Eigentum und Auftragsbindung werden auf **jeder Seite** neu geprüft.
+
+Benannte Abfragen: `run.context`, `lead.context`, `run.queue`, `run.status`,
+`notes.recent`, `policy.current`. Der Scope ist eine Id, kein Pfad (`/`, `.`,
+`__`, Leerzeichen fallen durch) — weder Firebase-Pfade noch Blob-Keys. Die
+Feldliste ist abgeschlossen; der Beleg ist signiert, nicht verschlüsselt.
+
+`describePage` trennt `done` / `more` / `aborted`. **`items` muss eine Liste
+brauchbarer Datensätze sein** (kein Fehlerobjekt, kein Eintrag mit `error`) und
+**`hasMore` ausdrücklich gesetzt** — sonst gilt die Seite als abgebrochen. Eine
+abgebrochene oder gedeckelte Seite ist nie `complete: true` und trägt keinen
+Folgecursor.
 
 ## 5. Integrationsschnittstelle für den Command-Handler
 
-Erwartete Reihenfolge im späteren Handler — jeder Schritt bricht ab:
-
-1. `resolveAuthConfig(envRead)` → bei `ok: false` sofort 503 mit `body`.
+1. `resolveAuthConfig(envRead)` → `ok: false` ⇒ sofort 503 mit `body`.
 2. `enforceTls(req)`.
-3. Ausweis bestimmen: `Authorization`-Kopfzeile → Firebase-ID-Token
-   (`verifyFirebaseIdToken`), Dienst-Zugangsdatum (`verifyServiceCredential`)
-   oder Job-Token (`verifyJobToken` mit der Route als audience und der Job-Id
-   **aus dem Pfad/Kontext**, nicht aus dem Body).
+3. Ausweis: Firebase-ID-Token (`verifyFirebaseIdToken`), Dienst-Zugangsdatum
+   (`verifyServiceCredential`) oder Job-Token (`verifyJobToken` mit der Route
+   als audience und der Auftrags-Id **aus dem Pfad/Kontext**, nicht aus dem Body).
 4. `evaluateOrigin({ origin, principalKind: principal.kind, config })`.
-5. `enforceJsonCommand({ contentType, rawBody })` und
-   `rejectIdentityInPayload(value)`.
-6. `requireHandlerRateLimiter(store)` und `rateLimitKey({ principal, verb })` —
-   atomarer, geteilter Zähler.
+5. `enforceJsonCommand(...)` und `rejectIdentityInPayload(value)`.
+6. `requireHandlerRateLimiter(store)` + `rateLimitKey({ principal, verb })`.
 7. `authorize({ principal, verb, dataCategory, object, policyVersion, config })`
-   für **jedes** angefasste Objekt, lesend wie schreibend.
-8. Erst danach Daten: Cursor über `verifyCursor`, Schreibwege über das
-   Idempotenz- und Schema-Paket der Nachbarsessions.
+   für **jedes** Objekt, mit dem frisch geladenen Datensatz — lesend wie
+   schreibend.
+8. Erst danach Daten: Seiten über `verifyCursor` (mit Erwartung und
+   Scope-Objekt), Schreibwege über das Idempotenz- und Schema-Paket der
+   Nachbarsessions.
 
-Alle Prüfungen geben dieselbe Form zurück: `{ ok: true, … }` oder
-`{ ok: false, status, error, reason, body }`. `body` ist das, was hinausgehen
-darf; `reason` ist immer ein fester Bezeichner aus dem Code, nie ein Wert aus
-der Anfrage.
-
-Voreinstellung ist `dry_run`. Ein Handler darf im `dry_run` prüfen und
-protokollieren, aber nichts wirksam machen; `enforce` ist eine bewusste,
-einzelne Umstellung.
+Alle Prüfungen geben `{ ok: true, … }` oder `{ ok: false, status, error, reason,
+body }` zurück. `body` darf hinaus; `reason` ist immer ein fester Bezeichner.
+Voreinstellung ist `dry_run`.
 
 ## 6. Tests
 
-`npm run test:quantus-v3` (Teil von `npm test`): 62 Fälle, ohne Netz, ohne
-Abhängigkeiten, ohne bezahlte Aufrufe. Alle Schlüssel entstehen zur Laufzeit
-(`randomBytes`, `generateKeyPairSync`) und sterben mit dem Prozess; im Repo
-steht kein Credentialwert.
+`npm run test:quantus-v3` (Teil von `npm test`): 79 Fälle über den Dateinamen-Glob
+`tests/quantus-v3-auth-*.test.mjs`, ohne Netz, ohne bezahlte Aufrufe. Alle
+Schlüssel entstehen zur Laufzeit; im Repo steht kein Credentialwert.
 
-Kryptografie wird **echt** geprüft, nicht mit einem „Mock, der ja sagt":
-ID-Token werden mit einem frischen RSA-Schlüssel signiert und danach am
-Nutzinhalt verbogen (gleiche Signatur ⇒ 401); Job-Token und Cursor ebenso mit
-HMAC. Der Zertifikatspfad (`X509Certificate`) wird mit einem zur Laufzeit
-erzeugten, selbstsignierten Zertifikat geprüft, sofern `openssl` vorhanden ist,
-sonst übersprungen.
+Kryptografie wird echt geprüft: ID-Token mit frischem RSA signiert und danach am
+Nutzinhalt verbogen (gleiche Signatur ⇒ 401); Job-Token und Cursor ebenso, samt
+`alg: none`, fremdem Aussteller, falschem `typ` und fremdem Schlüsselsatz. Das
+X.509-Zertifikat für die Zertifikatsstrecke wird **in reinem JavaScript**
+(ASN.1/DER + `node:crypto`) erzeugt — portabel, ohne `openssl`, ohne
+übersprungenen Test.
 
 ## 7. Bekannte Lücken — was C1 **nicht** beweist
 
-1. **Kein Handler, keine Kette.** Bewiesen sind die einzelnen Prüfungen. Dass
-   sie in der richtigen Reihenfolge und vollständig aufgerufen werden, kann
-   erst der Command-Handler zeigen.
-2. **Ratenbegrenzung.** Nur der Vertrag steht. Ein echter atomarer,
-   instanzübergreifender Zähler pro Principal fehlt und muss im Handler
-   nachgewiesen werden (RTDB-Transaktion, Firestore oder Redis).
-3. **Widerrufsprüfung im Betrieb.** `accounts:lookup` ist angebunden, aber
-   ungetestet gegen echte Google-Antworten; Latenz, Kontingent und das
-   Verhalten bei 429/5xx sind offen. Fail-closed heisst hier: bei Ausfall
-   keine Anmeldung.
-4. **Zertifikatsstrecke.** Geprüft wird mit erzeugten Schlüsseln und einem
-   selbstsignierten Zertifikat; die echten Google-Zertifikate samt
-   Schlüsselwechsel sieht erst der Betrieb.
-5. **Mandantenmodell.** Es gibt heute genau einen Nutzer und faktisch einen
-   Mandanten. Die Bindung ist geprüft, aber nie unter echten mehreren
+1. **Kein Handler, keine Kette.** Bewiesen sind die einzelnen Prüfungen und die
+   Neu-Autorisierung je Cursorseite. Die vollständige Reihenfolge im echten
+   HTTP-Weg zeigt erst C2.
+2. **Ratenbegrenzung.** Nur der Vertrag; der atomare, instanzübergreifende
+   Zähler pro Principal fehlt.
+3. **Widerrufsprüfung im Betrieb.** `accounts:lookup` ist angebunden, aber nie
+   gegen echte Google-Antworten gelaufen (Latenz, Kontingent, 429/5xx).
+4. **Zertifikatsstrecke.** Geprüft mit erzeugten Schlüsseln und einem selbst
+   gebauten Zertifikat; die echten Google-Zertifikate samt Schlüsselwechsel
+   sieht erst der Betrieb.
+5. **Mandantenmodell.** Die Bindung ist geprüft, aber nie unter mehreren echten
    Mandanten gelaufen.
-6. **Objektdaten.** `authorize` prüft das übergebene Objekt. Dass `ownerId`,
-   `jobId`, `assignedTo` und `tenant` beim Laden aus der Datenbank korrekt und
-   unverfälscht gefüllt werden, ist Sache des Datenzugriffs im nächsten Paket —
+6. **Objektdaten.** `authorize` prüft den übergebenen Datensatz. Dass
+   `ownerId`, `jobId`, `assignedTo`, `tenant` und `kind` frisch und
+   unverfälscht aus den autoritativen Beständen geladen werden, muss C2 zeigen —
    ein falsch gefülltes Objekt macht jede Prüfung wertlos.
-7. **Datenrevision.** Der Cursor bindet an eine Revision; woher die Revision
-   kommt und dass sie sich bei jeder Änderung ändert, ist noch nicht gebaut.
-8. **Alte Endpunkte.** `blob-put` & Co. bleiben wie sie sind. Solange ein
-   Client sie schreibend erreicht, gilt das Sicherheitsmodell von C1 nur für
-   den neuen Weg — die Aussage „Quantus ist abgesichert" ist erst nach dem
-   All-Writer-Cutover in Desktop, Tablet und Mobile zulässig.
-9. **Dry-Run.** In `dry_run` entstehen keine wirksamen Rechte. Was `enforce`
-   im Produktivsystem auslöst, ist nicht erprobt.
+7. **Datenrevision.** Der Cursor bindet an eine Revision; woher sie kommt und
+   dass sie sich bei jeder Änderung ändert, ist noch nicht gebaut.
+8. **Domänenbedingungen.** Welche Übergänge ein Verb auslösen darf, welche
+   Pflichtfelder gelten, wie Leases und Idempotenz zusammenspielen: C2 und das
+   Idempotenzpaket.
+9. **Alte Endpunkte.** `blob-put` & Co. bleiben wie sie sind. „Quantus ist
+   abgesichert" ist erst nach dem All-Writer-Cutover zulässig.
+10. **Dry-Run.** In `dry_run` entstehen keine wirksamen Rechte; was `enforce`
+    im Produktivsystem auslöst, ist nicht erprobt.

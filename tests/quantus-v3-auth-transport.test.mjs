@@ -104,7 +104,7 @@ test("CORS ersetzt keine Authentisierung", () => {
   const ausweis = verifyServiceCredential("", { config });
   assert.equal(ausweis.status, 401);
   // Und umgekehrt: gültiges Zugangsdatum von falscher Origin ⇒ 403.
-  const gut = verifyServiceCredential(env.secrets.service.lead, { config });
+  const gut = verifyServiceCredential(env.secrets.service.scheduler, { config });
   assert.equal(gut.ok, true);
   assert.equal(evaluateOrigin({ origin: "https://boese.example", principalKind: gut.principal.kind, config }).status, 403);
 });

@@ -4,95 +4,93 @@
  * ----
  * `quantus_context` und `quantus_read` liefern Kontext seitenweise. Der Cursor
  * ist das, was der Aufrufer zwischen zwei Seiten in der Hand hält — und damit
- * genau die Stelle, an der ein Aufrufer sich sonst mehr Rechte nehmen könnte,
- * als die erste Seite ihm gab: eine andere Abfrage, einen anderen Mandanten,
- * einen fremden Objektscope, eine grössere Seite.
+ * die Stelle, an der er sich sonst mehr nehmen könnte, als die erste Seite ihm
+ * gab: eine andere Abfrage, einen anderen Mandanten, einen fremden Scope,
+ * eine grössere Seite.
  *
- * Deshalb ist ein Cursor hier KEIN Zeiger auf einen Datenbankpfad, sondern ein
- * SIGNIERTER, gebundener Beleg. Er trägt:
- *     Principal · Mandant · benannte Abfrage · Objektscope ·
- *     Policy-Version · Datenrevision · Ablaufzeit · Seitenposition
- * und wird gegen genau diese Werte geprüft. Stimmt einer nicht, gibt es keine
- * zweite Seite.
+ * Deshalb ist ein Cursor KEIN Zeiger auf einen Datenbankpfad, sondern ein
+ * signiertes, gebundenes JWT (jose, feste Algorithmenliste, eigener Aussteller
+ * und eigener Schlüsselsatz). Er trägt:
+ *     Principal · Principal-Art · Mandant · benannte Abfrage · Objektscope ·
+ *     Policy-Version · Datenrevision · Seitenposition · Ablauf
+ *
+ * ZWEI BEFUNDE AUS DER REVIEW VON 5ac0bf7
+ * ---------------------------------------
+ * 1. `verifyCursor` prüfte den Cursor gegen SICH SELBST: ein Cursor auf
+ *    `lead-1` wurde auch dann angenommen, wenn der Aufruf `lead-2` lesen
+ *    wollte. Die Bindung war damit wertlos. Jetzt sind `expectedQuery`,
+ *    `expectedScopeKind` und `expectedScopeId` PFLICHT, und zusätzlich wird
+ *    die Seite NEU AUTORISIERT: `authorize()` läuft mit dem serverseitig
+ *    geladenen Scope-Objekt, auf jeder Seite, mit Rolle und Jobbindung.
+ * 2. `describePage` nannte eine Lieferung „vollständig", die gar keine Liste
+ *    war (`{error:"source-unavailable"}`), und liess `hasMore` weg. Jetzt
+ *    müssen die Daten eine echte Liste ohne Fehlermarke sein und `hasMore`
+ *    ausdrücklich gesetzt sein — sonst gilt die Seite als abgebrochen.
  *
  * WAS EIN CURSOR NIE ENTHÄLT
  * --------------------------
  * Keine Mailtexte, keine Lead-Inhalte, keine Geheimnisse, keine Firebase-Pfade
- * und keine Blob-Keys. Der Inhalt ist eine ABGESCHLOSSENE Feldliste
- * (`CURSOR_FIELDS`); ein unbekanntes Feld lässt `signCursor` scheitern, statt
- * es mitzunehmen. Wer also versucht, den Cursor als Transportmittel für Text
- * zu benutzen, bekommt beim Ausstellen eine Absage — nicht erst im Leck.
- * Der Beleg ist signiert, NICHT verschlüsselt: er ist lesbar, und genau darum
- * darf nichts Vertrauliches hinein.
- *
- * SCHLÜSSEL UND ROTATION
- * ----------------------
- * Eigene Serverschlüssel (`QUANTUS_V3_CURSOR_KEYS`), getrennt von den
- * Job-Token-Schlüsseln, mit eigener Domänentrennung in der Signatur: derselbe
- * Schlüsselwert könnte kein Job-Token signieren und umgekehrt. Rotation läuft
- * über mehrere Einträge — `active` stellt aus, `retiring` wird noch anerkannt,
- * `revoked` nie. Fehlen die Schlüssel, ist der Zustand 503, nicht „dann eben
- * ohne Cursor".
- *
- * EINE ABGEBROCHENE SEITE IST KEINE VOLLSTÄNDIGKEIT
- * -------------------------------------------------
- * `describePage()` unterscheidet drei Ausgänge: vollständig, weitere Seiten,
- * ABGEBROCHEN (Zeitbudget, Limit, Fehler). Nur der erste darf „vollständig"
- * heissen. Ein Agent, der aus einer abgebrochenen Seite „es gibt nichts
- * weiter" schliesst, zieht den falschen Schluss — deshalb trägt die Antwort
- * `complete: false` und einen Grund.
+ * und keine Blob-Keys. Die Feldliste ist abgeschlossen; der Beleg ist signiert,
+ * NICHT verschlüsselt — darum darf nichts Vertrauliches hinein.
  * ═══════════════════════════════════════════════════════════════════════ */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { envRead, authError, authOk, MIN_SERVICE_SECRET_LENGTH } from "./quantus-v3-auth.mjs";
+import { SignJWT, jwtVerify, errors as joseErrors } from "jose";
+import {
+  envRead, authError, authOk, authorize,
+  MIN_SERVICE_SECRET_LENGTH, CLOCK_SKEW_SECONDS, isFiniteSeconds,
+} from "./quantus-v3-auth.mjs";
 
 export const CURSOR_CONFIG_VARS = Object.freeze({
   cursorKeys: "QUANTUS_V3_CURSOR_KEYS",
 });
 
-const CURSOR_PREFIX = "qv3c1";
-const CURSOR_DOMAIN = "qv3-context-cursor.v1";
+export const CURSOR_ISSUER = "quantus-v3/context-cursor";
+export const CURSOR_TYP = "quantus-v3-cursor+jwt";
+export const CURSOR_ALGS = Object.freeze(["HS256"]);
 const VALID_KEY_STATUS = new Set(["active", "retiring", "revoked"]);
 
-/* Die erlaubten Abfragen. Ein Cursor kann nur auf eine dieser benannten
-   Abfragen lauten — nicht auf einen Pfad, nicht auf einen Blob-Key, nicht auf
-   „alles". Jede nennt die Objektart, auf die ihr Scope zeigt, und ihre
-   Höchstseitengrösse. */
+/*
+ * Die erlaubten Abfragen. Ein Cursor kann nur auf eine dieser benannten
+ * Abfragen lauten — nicht auf einen Pfad, nicht auf einen Blob-Key, nicht auf
+ * „alles". Jede nennt die Art ihres Scopes, die Datenkategorie, das Verb, mit
+ * dem jede Seite autorisiert wird, und ihre Höchstseitengrösse.
+ */
 export const NAMED_QUERIES = Object.freeze({
-  "job.context":   Object.freeze({ scopeKind: "job",  maxPageSize: 50,  dataCategory: "job_context" }),
-  "lead.context":  Object.freeze({ scopeKind: "lead", maxPageSize: 50,  dataCategory: "lead" }),
-  "job.queue":     Object.freeze({ scopeKind: "tenant", maxPageSize: 100, dataCategory: "job" }),
-  "run.status":    Object.freeze({ scopeKind: "tenant", maxPageSize: 100, dataCategory: "run_status" }),
+  "run.context":   Object.freeze({ scopeKind: "run",    dataCategory: "run_context", verb: "context.read", maxPageSize: 50 }),
+  "lead.context":  Object.freeze({ scopeKind: "lead",   dataCategory: "lead",        verb: "context.read", maxPageSize: 50 }),
+  "run.queue":     Object.freeze({ scopeKind: "tenant", dataCategory: "run",         verb: "context.read", maxPageSize: 100 }),
+  "run.status":    Object.freeze({ scopeKind: "tenant", dataCategory: "run_status",  verb: "context.read", maxPageSize: 100 }),
+  "notes.recent":  Object.freeze({ scopeKind: "lead",   dataCategory: "note",        verb: "context.read", maxPageSize: 50 }),
+  "policy.current":Object.freeze({ scopeKind: "tenant", dataCategory: "policy",      verb: "context.read", maxPageSize: 10 }),
 });
 
-/* Die abgeschlossene Feldliste eines Cursors. Alles andere ist ein Fehler. */
+/* Welche Objektart der serverseitig geladene Scope-Datensatz haben muss,
+   damit er zur Abfrage passt. Die Datenkategorie leitet `authorize()` selbst
+   aus der Objektart ab — hier steht nur, was zusammengehört. */
+export const SCOPE_OBJECT_KINDS = Object.freeze({
+  "run.context": "run_context",
+  "lead.context": "lead",
+  "run.queue": "run",
+  "run.status": "run_status",
+  "notes.recent": "note",
+  "policy.current": "policy",
+});
+
+/* Die abgeschlossene Feldliste des Nutzinhalts (zusätzlich zu den
+   JWT-Standardfeldern iss/sub/aud/iat/exp/jti). */
 export const CURSOR_FIELDS = Object.freeze([
-  "v", "principal", "principalKind", "tenant", "query", "scopeKind", "scopeId",
-  "policyVersion", "dataRevision", "pageSize", "pageIndex", "afterId", "exp",
+  "principalKind", "tenant", "query", "scopeKind", "scopeId",
+  "policyVersion", "dataRevision", "pageSize", "pageIndex", "afterId",
 ]);
+const JWT_STANDARD_FIELDS = Object.freeze(["iss", "sub", "aud", "iat", "exp", "jti", "nbf"]);
 
 export const MAX_PAGE_INDEX = 500;
 export const MAX_CURSOR_LIFETIME_SECONDS = 15 * 60;
 
-function b64url(buf) {
-  return Buffer.from(buf).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+function secretKey(secret) {
+  return new TextEncoder().encode(secret);
 }
 
-function b64urlToBuffer(segment) {
-  const s = String(segment || "");
-  if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
-  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
-  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64");
-}
-
-function sign(secret, kid, payloadB64) {
-  return b64url(createHmac("sha256", secret).update(`${CURSOR_DOMAIN}|${kid}|${payloadB64}`, "utf8").digest());
-}
-
-/*
- * Konfiguration. Fehlt sie oder ist sie unbrauchbar: 503, fail closed.
- * Genannt wird nur der Name der Variable.
- */
 export function resolveCursorConfig(read = envRead) {
   const raw = String(read(CURSOR_CONFIG_VARS.cursorKeys) || "").trim();
   if (!raw) {
@@ -128,41 +126,43 @@ function cursorConfigFail(reason) {
     missing: Object.freeze([]), body: denial.body };
 }
 
-/* Ein Scope-Bezeichner ist eine Id, kein Pfad. Schrägstriche, Punkte,
-   „appStore", „.json" und alles ausserhalb von [A-Za-z0-9_-] fallen durch —
-   damit kann ein Cursor nie zu einem beliebigen Firebase-Knoten oder Blob-Key
-   werden. */
+/* Ein Scope-Bezeichner ist eine Id, kein Pfad. */
 export function assertScopeId(scopeId) {
   const s = String(scopeId == null ? "" : scopeId);
   if (!s) return authError("invalid_request", "scope_id_missing");
   if (s.length > 128) return authError("invalid_request", "scope_id_too_long");
   if (!/^[A-Za-z0-9_-]+$/.test(s)) return authError("invalid_request", "scope_id_invalid");
-  // `__` ist der Segmenttrenner der Blob-Schlüssel (blob-key-policy.mjs). Eine
-  // Scope-Id, die so aussieht, könnte später als Schlüssel missverstanden
-  // werden — sie wird hier gar nicht erst zugelassen.
+  // `__` ist der Segmenttrenner der Blob-Schlüssel (blob-key-policy.mjs).
   if (s.includes("__")) return authError("invalid_request", "scope_id_invalid");
   return authOk({ scopeId: s });
 }
 
+function readHeader(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 3 || !parts[2]) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(parts[0])) return null;
+  const pad = parts[0].length % 4 === 0 ? "" : "=".repeat(4 - (parts[0].length % 4));
+  try {
+    const json = Buffer.from(parts[0].replace(/-/g, "+").replace(/_/g, "/") + pad, "base64").toString("utf8");
+    const header = JSON.parse(json);
+    return header && typeof header === "object" ? header : null;
+  } catch { return null; }
+}
+
 /*
- * Ausstellen.
- *
- * `principal` kommt aus der geprüften Identität (nie aus dem Body), `query`
- * aus NAMED_QUERIES, `dataRevision` ist der Stand der Daten, auf dem Seite 1
- * beruhte. Alles, was nicht in CURSOR_FIELDS steht, führt zur Absage.
+ * Ausstellen. `principal` kommt aus der geprüften Identität, `query` aus
+ * NAMED_QUERIES, `dataRevision` ist der Stand, auf dem die Seite beruhte.
  */
-export function signCursor({
+export async function signCursor({
   config, principal, query, scopeId, dataRevision, policyVersion,
   pageSize = 25, pageIndex = 0, afterId = null,
-  lifetimeSeconds = 300, now = () => Date.now(), extra = null,
+  lifetimeSeconds = 300, now = () => Date.now(), extra = null, jti = null,
 } = {}) {
   if (!config || !Array.isArray(config.cursorKeys)) return authError("auth_not_configured", "cursor_config_missing");
   const key = config.cursorKeys.find((k) => k.status === "active");
   if (!key) return authError("auth_not_configured", "cursor_keys_no_active");
 
-  // Kein Schlupfloch für Freitext: der Cursor hat eine abgeschlossene
-  // Feldliste, also gibt es kein „und dazu noch". Jedes zusätzliche Feld —
-  // bekannt oder nicht — ist eine Absage, nicht ein stilles Weglassen.
+  // Kein Schlupfloch für Freitext: die Feldliste ist abgeschlossen.
   if (extra != null && (typeof extra !== "object" || Object.keys(extra).length)) {
     return authError("invalid_request", "cursor_field_not_allowed");
   }
@@ -179,14 +179,11 @@ export function signCursor({
   const scope = assertScopeId(scopeId);
   if (!scope.ok) return scope;
 
-  // Streng typisiert, ohne Umwandlung: "25" ist keine Zahl. Wo stillschweigend
-  // umgewandelt wird, kommen irgendwann `true`, `[]` und `"25e9"` durch.
-  const size = pageSize;
-  if (typeof size !== "number" || !Number.isInteger(size) || size < 1 || size > named.maxPageSize) {
+  // Streng typisiert, ohne Umwandlung: "25" ist keine Zahl.
+  if (typeof pageSize !== "number" || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > named.maxPageSize) {
     return authError("invalid_request", "page_size_out_of_bounds");
   }
-  const index = pageIndex;
-  if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > MAX_PAGE_INDEX) {
+  if (typeof pageIndex !== "number" || !Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex > MAX_PAGE_INDEX) {
     return authError("invalid_request", "page_index_out_of_bounds");
   }
 
@@ -195,17 +192,15 @@ export function signCursor({
   const policy = String(policyVersion || "");
   if (!policy) return authError("invalid_request", "policy_version_missing");
 
-  if (afterId != null) {
-    const after = assertScopeId(afterId);
-    if (!after.ok) return authError("invalid_request", "after_id_invalid");
-  }
+  if (afterId != null && !assertScopeId(afterId).ok) return authError("invalid_request", "after_id_invalid");
 
   const life = Number(lifetimeSeconds);
-  if (!Number.isFinite(life) || life <= 0 || life > MAX_CURSOR_LIFETIME_SECONDS) return authError("invalid_request", "cursor_lifetime_invalid");
+  if (!Number.isFinite(life) || life <= 0 || life > MAX_CURSOR_LIFETIME_SECONDS) {
+    return authError("invalid_request", "cursor_lifetime_invalid");
+  }
 
-  const payload = {
-    v: 1,
-    principal: principalId,
+  const nowSec = Math.floor(now() / 1000);
+  const cursor = await new SignJWT({
     principalKind,
     tenant,
     query: q,
@@ -213,71 +208,119 @@ export function signCursor({
     scopeId: scope.scopeId,
     policyVersion: policy,
     dataRevision: revision,
-    pageSize: size,
-    pageIndex: index,
+    pageSize,
+    pageIndex,
     afterId: afterId == null ? null : String(afterId),
-    exp: Math.floor(now() / 1000) + Math.floor(life),
-  };
-  const payloadB64 = b64url(Buffer.from(JSON.stringify(payload), "utf8"));
-  return authOk({
-    cursor: `${CURSOR_PREFIX}.${key.kid}.${payloadB64}.${sign(key.secret, key.kid, payloadB64)}`,
-    expiresAt: payload.exp,
-  });
+  })
+    .setProtectedHeader({ alg: "HS256", kid: key.kid, typ: CURSOR_TYP })
+    .setIssuer(CURSOR_ISSUER)
+    .setAudience(`${CURSOR_ISSUER}#${q}`)
+    .setSubject(principalId)
+    .setIssuedAt(nowSec)
+    .setExpirationTime(nowSec + Math.floor(life))
+    .setJti(String(jti || `${principalId}:${q}:${pageIndex}`))
+    .sign(secretKey(key.secret));
+
+  return authOk({ cursor, expiresAt: nowSec + Math.floor(life) });
 }
 
 /*
- * Prüfen. Der Aufrufer muss sagen, WOGEGEN geprüft wird: Principal, Policy-
- * Version und aktuelle Datenrevision sind Pflicht. Ein Cursor, dessen
- * Revision nicht mehr stimmt, ist ungültig — die Seite beruhte auf einem
- * anderen Datenstand, und stillschweigend weiterzublättern hiesse, Einträge
- * zu überspringen oder doppelt zu liefern.
+ * Prüfen — gegen das, was der AUFRUF will, nicht gegen den Cursor selbst.
+ *
+ * Pflicht: `expectedQuery`, `expectedScopeKind`, `expectedScopeId`,
+ * `policyVersion`, `dataRevision`, `principal`, `authConfig` und das
+ * serverseitig geladene `scopeObject`. Fehlt eines, wird nicht geprüft,
+ * sondern gesperrt — sonst wäre die Bindung wieder nur eine Selbstauskunft.
+ *
+ * Am Ende läuft `authorize()` erneut: Rolle, Art, Ausstellweg, Mandant und
+ * Jobbindung werden auf JEDER Seite neu geprüft. Ein Spezialist, dessen
+ * Auftrag inzwischen ein anderer ist, blättert nicht weiter.
  */
-export function verifyCursor(cursor, {
-  config, principal, policyVersion, dataRevision, query = null, now = () => Date.now(),
+export async function verifyCursor(cursor, {
+  config, authConfig, principal,
+  expectedQuery, expectedScopeKind, expectedScopeId,
+  policyVersion, dataRevision, scopeObject,
+  now = () => Date.now(),
 } = {}) {
   if (!config || !Array.isArray(config.cursorKeys)) return authError("auth_not_configured", "cursor_config_missing");
+  if (!authConfig || !authConfig.policyVersion) return authError("auth_not_configured", "config_missing");
 
-  const parts = String(cursor || "").split(".");
-  if (parts.length !== 4 || parts[0] !== CURSOR_PREFIX) return authError("invalid_request", "cursor_malformed");
-  const [, kid, payloadB64, sig] = parts;
+  const wantQuery = String(expectedQuery || "");
+  const wantScopeKind = String(expectedScopeKind || "");
+  const wantScopeId = String(expectedScopeId || "");
+  if (!wantQuery) return authError("forbidden", "expected_query_missing");
+  if (!wantScopeKind) return authError("forbidden", "expected_scope_kind_missing");
+  if (!wantScopeId) return authError("forbidden", "expected_scope_id_missing");
+  if (!policyVersion) return authError("forbidden", "policy_version_missing");
+  if (!dataRevision) return authError("forbidden", "data_revision_missing");
+  if (!principal || typeof principal !== "object") return authError("forbidden", "principal_missing");
+  if (!scopeObject || typeof scopeObject !== "object") return authError("forbidden", "scope_object_missing");
+
+  const named = Object.prototype.hasOwnProperty.call(NAMED_QUERIES, wantQuery) ? NAMED_QUERIES[wantQuery] : null;
+  if (!named) return authError("forbidden", "query_not_allowed");
+
+  const header = readHeader(cursor);
+  if (!header) return authError("invalid_request", "cursor_malformed");
+  if (String(header.alg || "") !== "HS256") return authError("forbidden", "cursor_alg_not_allowed");
+  if (String(header.typ || "") !== CURSOR_TYP) return authError("invalid_request", "cursor_typ_mismatch");
+  const kid = String(header.kid || "");
   const key = config.cursorKeys.find((k) => k.kid === kid);
   if (!key) return authError("forbidden", "cursor_unknown_key");
   if (key.status === "revoked") return authError("forbidden", "cursor_key_revoked");
 
-  const expected = sign(key.secret, kid, payloadB64);
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(String(sig || ""), "utf8");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return authError("forbidden", "cursor_signature_invalid");
-
-  const buf = b64urlToBuffer(payloadB64);
-  if (!buf) return authError("invalid_request", "cursor_malformed");
   let payload;
-  try { payload = JSON.parse(buf.toString("utf8")); } catch { return authError("invalid_request", "cursor_malformed"); }
-  if (!payload || typeof payload !== "object" || payload.v !== 1) return authError("invalid_request", "cursor_malformed");
+  try {
+    const verified = await jwtVerify(cursor, secretKey(key.secret), {
+      algorithms: [...CURSOR_ALGS],
+      issuer: CURSOR_ISSUER,
+      audience: `${CURSOR_ISSUER}#${wantQuery}`,
+      typ: CURSOR_TYP,
+      clockTolerance: 0,
+      currentDate: new Date(now()),
+      requiredClaims: ["sub", "iat", "exp", "tenant", "query", "scopeKind", "scopeId", "policyVersion", "dataRevision", "pageSize", "pageIndex"],
+    });
+    payload = verified.payload;
+  } catch (err) {
+    if (err instanceof joseErrors.JWTExpired) return authError("forbidden", "cursor_expired");
+    if (err instanceof joseErrors.JWSSignatureVerificationFailed) return authError("forbidden", "cursor_signature_invalid");
+    if (err instanceof joseErrors.JOSEAlgNotAllowed) return authError("forbidden", "cursor_alg_not_allowed");
+    if (err instanceof joseErrors.JWTClaimValidationFailed) {
+      const claim = String(err.claim || "");
+      if (claim === "aud") return authError("forbidden", "cursor_query_mismatch");
+      if (claim === "iss") return authError("forbidden", "cursor_issuer_mismatch");
+      return authError("forbidden", `cursor_claim_invalid_${claim || "unknown"}`);
+    }
+    return authError("invalid_request", "cursor_malformed");
+  }
 
-  // Die Feldliste ist abgeschlossen — auch beim Prüfen. Ein Cursor mit einem
-  // zusätzlichen Feld ist keiner von uns, selbst wenn die Signatur stimmte
-  // (etwa nach einem künftigen Formatwechsel).
-  const keys = Object.keys(payload);
-  if (keys.some((k) => !CURSOR_FIELDS.includes(k))) return authError("invalid_request", "cursor_field_not_allowed");
+  // Abgeschlossene Feldliste — auch beim Prüfen, auch bei gültiger Signatur.
+  for (const k of Object.keys(payload)) {
+    if (!CURSOR_FIELDS.includes(k) && !JWT_STANDARD_FIELDS.includes(k)) {
+      return authError("invalid_request", "cursor_field_not_allowed");
+    }
+  }
 
   const nowSec = Math.floor(now() / 1000);
-  if (typeof payload.exp !== "number" || !(payload.exp > nowSec)) return authError("forbidden", "cursor_expired");
+  if (!isFiniteSeconds(payload.exp)) return authError("forbidden", "cursor_expired");
+  if (!isFiniteSeconds(payload.iat) || payload.iat > nowSec + CLOCK_SKEW_SECONDS) {
+    return authError("invalid_request", "cursor_malformed");
+  }
 
-  if (!principal || typeof principal !== "object") return authError("forbidden", "principal_missing");
-  if (String(payload.principal) !== String(principal.id || "")) return authError("forbidden", "cursor_principal_mismatch");
+  // Principal: Id, Art und Mandant.
+  if (String(payload.sub) !== String(principal.id || "")) return authError("forbidden", "cursor_principal_mismatch");
   if (String(payload.principalKind) !== String(principal.kind || "")) return authError("forbidden", "cursor_principal_mismatch");
   if (String(payload.tenant) !== String(principal.tenant || "")) return authError("forbidden", "cursor_tenant_mismatch");
 
-  const named = Object.prototype.hasOwnProperty.call(NAMED_QUERIES, payload.query) ? NAMED_QUERIES[payload.query] : null;
-  if (!named) return authError("forbidden", "query_not_allowed");
-  if (query && String(query) !== String(payload.query)) return authError("forbidden", "cursor_query_mismatch");
+  // Abfrage und Scope gegen den AUFRUF (der Befund der Review).
+  if (String(payload.query) !== wantQuery) return authError("forbidden", "cursor_query_mismatch");
   if (String(payload.scopeKind) !== named.scopeKind) return authError("forbidden", "cursor_scope_mismatch");
+  if (String(payload.scopeKind) !== wantScopeKind) return authError("forbidden", "cursor_scope_mismatch");
+  if (String(payload.scopeId) !== wantScopeId) return authError("forbidden", "cursor_scope_mismatch");
   const scope = assertScopeId(payload.scopeId);
   if (!scope.ok) return authError("invalid_request", "cursor_scope_invalid");
 
-  if (String(payload.policyVersion || "") !== String(policyVersion || "")) return authError("forbidden", "cursor_policy_changed");
-  if (String(payload.dataRevision || "") !== String(dataRevision || "")) return authError("forbidden", "cursor_revision_changed");
+  if (String(payload.policyVersion || "") !== String(policyVersion)) return authError("forbidden", "cursor_policy_changed");
+  if (String(payload.dataRevision || "") !== String(dataRevision)) return authError("forbidden", "cursor_revision_changed");
 
   if (!Number.isInteger(payload.pageSize) || payload.pageSize < 1 || payload.pageSize > named.maxPageSize) {
     return authError("invalid_request", "page_size_out_of_bounds");
@@ -287,9 +330,26 @@ export function verifyCursor(cursor, {
   }
   if (payload.afterId != null && !assertScopeId(payload.afterId).ok) return authError("invalid_request", "after_id_invalid");
 
+  // Das serverseitig geladene Objekt muss zur Abfrage und zum Scope passen …
+  const erwarteteArt = SCOPE_OBJECT_KINDS[wantQuery];
+  if (String(scopeObject.kind || "") !== erwarteteArt) return authError("forbidden", "scope_object_kind_mismatch");
+  if (String(scopeObject.id || "") !== wantScopeId) return authError("forbidden", "scope_object_mismatch");
+
+  // … und die Seite wird NEU autorisiert: Rolle, Art, Ausstellweg, Mandant,
+  // Jobbindung — auf jeder einzelnen Seite.
+  const erlaubt = authorize({
+    principal,
+    verb: named.verb,
+    dataCategory: named.dataCategory,
+    object: scopeObject,
+    policyVersion,
+    config: authConfig,
+  });
+  if (!erlaubt.ok) return erlaubt;
+
   return authOk({
     page: Object.freeze({
-      query: String(payload.query),
+      query: wantQuery,
       dataCategory: named.dataCategory,
       scopeKind: named.scopeKind,
       scopeId: scope.scopeId,
@@ -306,34 +366,45 @@ export function verifyCursor(cursor, {
  *
  *   done      alles geliefert, kein weiterer Cursor
  *   more      weitere Seiten, Cursor liegt bei
- *   aborted   abgebrochen (Zeit, Limit, Fehler) — `complete: false`, und der
- *             Grund steht dabei. Ein weiterer Cursor wird NICHT ausgegeben,
- *             weil die Position nach einem Abbruch nicht verlässlich ist.
+ *   aborted   abgebrochen (Zeitbudget, Limit, Fehler, unbrauchbare Daten):
+ *             `complete: false`, kein Folgecursor, Grund dabei.
+ *
+ * `items` MUSS eine Liste brauchbarer Einträge sein und `hasMore` ausdrücklich
+ * gesetzt — beides Befunde der Review von 5ac0bf7. Eine Fehlermeldung anstelle
+ * von Daten ist keine vollständige Seite, und eine fehlende
+ * Fortsetzungsangabe ist keine Zusicherung, dass nichts mehr kommt.
  */
-export function describePage({ items = [], hasMore = false, aborted = false, abortReason = null, nextCursor = null } = {}) {
-  const count = Array.isArray(items) ? items.length : 0;
-  if (aborted) {
-    return Object.freeze({
-      items, count, complete: false, status: "aborted",
-      reason: String(abortReason || "unknown"),
-      nextCursor: null,
-      note: "Abgebrochene Seite: kein Beweis, dass es nichts weiteres gibt.",
-    });
+export function describePage({ items, hasMore, aborted = false, abortReason = null, nextCursor = null } = {}) {
+  const abbruch = (reason, note, liste = []) => Object.freeze({
+    items: liste, count: Array.isArray(liste) ? liste.length : 0,
+    complete: false, status: "aborted", reason: String(reason), nextCursor: null,
+    note: note || "Abgebrochene Seite: kein Beweis, dass es nichts weiteres gibt.",
+  });
+
+  if (!Array.isArray(items)) {
+    return abbruch("invalid_items", "Keine Liste geliefert — das ist keine vollständige Seite, sondern ein Ausfall.");
+  }
+  for (const eintrag of items) {
+    if (!eintrag || typeof eintrag !== "object" || Array.isArray(eintrag)) {
+      return abbruch("invalid_item", "Ein Eintrag ist kein Datensatz.", items);
+    }
+    if (Object.prototype.hasOwnProperty.call(eintrag, "error")) {
+      return abbruch("item_error", "Ein Eintrag trägt eine Fehlermarke.", items);
+    }
+  }
+  if (aborted) return abbruch(abortReason || "unknown", null, items);
+  // `hasMore` ist Pflicht: „nicht gesagt" heisst nicht „nichts mehr da".
+  if (typeof hasMore !== "boolean") {
+    return abbruch("has_more_missing", "Ohne ausdrückliches hasMore gilt die Seite als abgebrochen.", items);
   }
   if (hasMore) {
-    if (!nextCursor) {
-      return Object.freeze({
-        items, count, complete: false, status: "aborted", reason: "next_cursor_missing",
-        nextCursor: null,
-        note: "Weitere Seiten angekündigt, aber kein Cursor — das gilt als Abbruch.",
-      });
-    }
-    return Object.freeze({ items, count, complete: false, status: "more", reason: null, nextCursor });
+    if (!nextCursor) return abbruch("next_cursor_missing", "Weitere Seiten angekündigt, aber kein Cursor.", items);
+    return Object.freeze({ items, count: items.length, complete: false, status: "more", reason: null, nextCursor });
   }
-  return Object.freeze({ items, count, complete: true, status: "done", reason: null, nextCursor: null });
+  return Object.freeze({ items, count: items.length, complete: true, status: "done", reason: null, nextCursor: null });
 }
 
 export default {
   resolveCursorConfig, signCursor, verifyCursor, describePage, assertScopeId,
-  NAMED_QUERIES, CURSOR_FIELDS, CURSOR_CONFIG_VARS,
+  NAMED_QUERIES, SCOPE_OBJECT_KINDS, CURSOR_FIELDS, CURSOR_CONFIG_VARS,
 };

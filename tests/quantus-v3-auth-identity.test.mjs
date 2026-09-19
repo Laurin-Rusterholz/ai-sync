@@ -2,35 +2,28 @@
  * v3 C1 — Ausweise: Firebase-ID-Token und Dienst-Zugangsdaten.
  *
  * BEFUND, aus dem diese Tests folgen: Der verbreitete Fehler bei
- * ID-Token-Prüfung ist, das Token zu DEKODIEREN und dem Inhalt zu glauben —
- * dann genügt ein selbstgebastelter Base64-Block, um jede beliebige uid zu
- * behaupten. Der zweite verbreitete Fehler ist, nur die Signatur zu prüfen und
- * Aussteller, Zielprojekt, Ablauf, Sperre und Mandant zu übersehen.
+ * ID-Token-Prüfung ist, das Token zu DEKODIEREN und dem Inhalt zu glauben.
+ * Der zweite ist, nur die Signatur zu prüfen und Aussteller, Zielprojekt,
+ * Ablauf, Sperre und Mandant zu übersehen. Der dritte — aus der Review von
+ * 5ac0bf7 — ist, den Widerruf an `iat` statt an `auth_time` zu messen.
  *
- * Diese Tests fahren deshalb ECHTE Kryptografie: frisch erzeugte RSA-Paare,
- * echt signierte Token, und ein manipulierter Nutzinhalt bei GLEICHER
- * Signatur. Ein „Mock, der ja sagt" würde hier nichts beweisen.
+ * Diese Tests fahren echte Kryptografie: frisch erzeugte RSA-Paare, echt
+ * signierte Token, manipulierter Nutzinhalt bei GLEICHER Signatur, und ein
+ * in reinem JavaScript erzeugtes X.509-Zertifikat (portabel, ohne openssl).
  *
- * Kein Test spricht mit Google, Firebase, Anthropic, Gemini oder OpenAI. Die
- * Schlüsselquelle und accounts:lookup sind Attrappen; die Schlüssel entstehen
- * zur Laufzeit und sterben mit dem Prozess.
+ * Kein Test spricht mit Google, Firebase, Anthropic, Gemini oder OpenAI.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { generateKeyPairSync } from "node:crypto";
 import {
   resolveAuthConfig, verifyFirebaseIdToken, verifyServiceCredential,
   parseAuthorizationHeader, rejectIdentityInPayload, publicKeyFromPem,
   createGooglePublicKeySource, GOOGLE_SECURETOKEN_X509_URL,
-  MIN_SERVICE_SECRET_LENGTH,
+  MIN_SERVICE_SECRET_LENGTH, ISSUERS,
 } from "../netlify/lib/quantus-v3-auth.mjs";
 import {
   makeEnv, makeSigningKey, makeIdToken, keySourceFor, userLookupFor,
-  PROJECT_ID, TENANT, randomSecret, sha256Hex as hash,
+  makeSelfSignedCertPem, PROJECT_ID, TENANT, randomSecret, sha256Hex as hash,
 } from "./fixtures/quantus-v3-auth-fixtures.mjs";
 
 const key = makeSigningKey("test-kid-1");
@@ -47,12 +40,13 @@ function setup({ tenant = null, lookup = {} } = {}) {
   };
 }
 
-test("gültiges, echt signiertes Token ⇒ Nutzer-Principal", async () => {
+test("gültiges, echt signiertes Token ⇒ Nutzer-Principal mit Ausstellweg", async () => {
   const { deps } = setup();
   const res = await verifyFirebaseIdToken(makeIdToken({ key, sub: "uid-laurin" }), deps);
   assert.equal(res.ok, true);
   assert.equal(res.principal.kind, "user");
   assert.equal(res.principal.role, "user");
+  assert.equal(res.principal.issuedBy, ISSUERS.firebase);
   assert.equal(res.principal.id, "uid-laurin");
   assert.equal(res.principal.jobId, null);
 });
@@ -82,7 +76,6 @@ test("alg none / HS256 ⇒ 401, bevor irgendetwas geglaubt wird", async () => {
     assert.equal(res.status, 401, `alg=${alg} durchgelassen`);
     assert.equal(res.reason, "token_alg_not_rs256");
   }
-  // Ein Token ganz ohne Signaturteil ist kein Token.
   const teile = makeIdToken({ key }).split(".");
   const res = await verifyFirebaseIdToken(`${teile[0]}.${teile[1]}.`, deps);
   assert.equal(res.reason, "token_malformed");
@@ -118,67 +111,73 @@ test("Ablauf, Ausstellzeit, Zielprojekt, Aussteller, sub", async () => {
   }
 });
 
+test("Zeitangaben müssen endliche ganze Sekunden sein", async () => {
+  const { deps } = setup();
+  const jetzt = Date.now();
+  const nowSec = Math.floor(jetzt / 1000);
+  for (const teil of [
+    { exp: 1e300 }, { exp: Number.MAX_SAFE_INTEGER }, { iat: 1.5 },
+    { authTime: 1e300 }, { authTime: -5 },
+  ]) {
+    const res = await verifyFirebaseIdToken(makeIdToken({ key, now: jetzt, ...teil }), { ...deps, now: () => jetzt });
+    assert.equal(res.ok, false, `${JSON.stringify(teil)} durchgelassen`);
+    assert.equal(res.status, 401);
+  }
+  // Anmeldung nach Ausstellung gibt es nicht.
+  const res = await verifyFirebaseIdToken(
+    makeIdToken({ key, now: jetzt, iat: nowSec - 600, authTime: nowSec - 30 }), { ...deps, now: () => jetzt });
+  assert.equal(res.reason, "token_auth_time_invalid");
+});
+
 test("Mandantenbindung in beide Richtungen", async () => {
-  // Mandant konfiguriert, Token ohne Mandant ⇒ 403.
   const mitMandant = setup({ tenant: TENANT, lookup: { tenantId: TENANT } });
   let res = await verifyFirebaseIdToken(makeIdToken({ key }), mitMandant.deps);
   assert.equal(res.status, 403);
   assert.equal(res.reason, "tenant_mismatch");
 
-  // Falscher Mandant ⇒ 403.
   res = await verifyFirebaseIdToken(makeIdToken({ key, tenant: "fremder-mandant" }), mitMandant.deps);
   assert.equal(res.status, 403);
 
-  // Richtiger Mandant ⇒ ok, und der Principal trägt ihn.
   res = await verifyFirebaseIdToken(makeIdToken({ key, tenant: TENANT }), mitMandant.deps);
   assert.equal(res.ok, true);
   assert.equal(res.principal.tenant, TENANT);
 
-  // Kein Mandant konfiguriert, Token trägt einen ⇒ 403 (nicht stillschweigend ok).
   const ohne = setup();
   res = await verifyFirebaseIdToken(makeIdToken({ key, tenant: "irgendein-mandant" }), ohne.deps);
   assert.equal(res.status, 403);
   assert.equal(res.reason, "tenant_unexpected");
 
-  // Widersprüchliche Mandantenangaben im selben Token ⇒ 401.
   res = await verifyFirebaseIdToken(
     makeIdToken({ key, tenant: TENANT, topLevelTenant: "anderer" }), mitMandant.deps);
   assert.equal(res.status, 401);
   assert.equal(res.reason, "token_tenant_conflict");
 
-  // Datensatz gehört zu einem anderen Mandanten als die Konfiguration ⇒ 403.
   const schief = setup({ tenant: TENANT, lookup: { tenantId: "woanders" } });
   res = await verifyFirebaseIdToken(makeIdToken({ key, tenant: TENANT }), schief.deps);
   assert.equal(res.status, 403);
   assert.equal(res.reason, "tenant_mismatch");
 });
 
-test("gesperrter Nutzer und widerrufenes Token", async () => {
-  const jetzt = Date.now();
-  const nowSec = Math.floor(jetzt / 1000);
-
+test("gesperrter Nutzer, unbekannter Nutzer, ausgefallene Sperrprüfung", async () => {
   const gesperrt = setup({ lookup: { disabled: true } });
   let res = await verifyFirebaseIdToken(makeIdToken({ key }), gesperrt.deps);
   assert.equal(res.status, 403);
   assert.equal(res.reason, "user_disabled");
-
-  // validSince liegt NACH der Ausstellung: der Nutzer hat alle Token widerrufen.
-  const widerrufen = setup({ lookup: { validSince: nowSec } });
-  res = await verifyFirebaseIdToken(makeIdToken({ key, now: jetzt, iat: nowSec - 300 }),
-    { ...widerrufen.deps, now: () => jetzt });
-  assert.equal(res.status, 401);
-  assert.equal(res.reason, "token_revoked");
 
   const unbekannt = setup({ lookup: { unknown: true } });
   res = await verifyFirebaseIdToken(makeIdToken({ key }), unbekannt.deps);
   assert.equal(res.status, 401);
   assert.equal(res.reason, "user_unknown");
 
-  // Fällt die Sperrprüfung aus, wird NICHT durchgelassen.
   const kaputt = setup({ lookup: { throws: true } });
   res = await verifyFirebaseIdToken(makeIdToken({ key }), kaputt.deps);
   assert.equal(res.status, 401);
   assert.equal(res.reason, "user_lookup_failed");
+
+  // Unbrauchbarer Datensatz ⇒ kein Ja.
+  const murks = { config: gesperrt.config, keySource: keySourceFor(key), userLookup: async () => ({ disabled: false, validSince: "später", tenantId: null }) };
+  res = await verifyFirebaseIdToken(makeIdToken({ key }), murks);
+  assert.equal(res.ok, false);
 });
 
 test("ohne Sperrprüfung oder Schlüsselquelle: 503, nie 200", async () => {
@@ -198,7 +197,7 @@ test("ohne Sperrprüfung oder Schlüsselquelle: 503, nie 200", async () => {
   assert.equal(res.reason, "config_missing");
 });
 
-test("Schlüsselquelle: feste Google-URL, Cache nach max-age, Auffrischung bei neuer kid", async () => {
+test("Schlüsselquelle: feste Google-URL, Cache nach max-age, Schlüsselwechsel wirkt", async () => {
   let aufrufe = 0;
   let jetzt = 1_700_000_000_000;
   let antwort = { [key.kid]: key.publicPem };
@@ -219,10 +218,6 @@ test("Schlüsselquelle: feste Google-URL, Cache nach max-age, Auffrischung bei n
   assert.ok(await quelle.get(key.kid));
   assert.equal(aufrufe, 1, "der Cache wird nicht genutzt");
 
-  // Unbekannte kid ⇒ genau EINE Auffrischung, danach ehrlich null.
-  assert.equal(await quelle.get("gibt-es-nicht"), null);
-  assert.equal(aufrufe, 2);
-
   // Nach Ablauf von max-age wird neu geholt — und ein Schlüsselwechsel wirkt.
   jetzt += 3_601_000;
   antwort = { [fremderKey.kid]: fremderKey.publicPem };
@@ -230,32 +225,32 @@ test("Schlüsselquelle: feste Google-URL, Cache nach max-age, Auffrischung bei n
   assert.ok(await quelle.get(fremderKey.kid));
 });
 
-test("publicKeyFromPem nimmt X.509-Zertifikate (so liefert Google) und Public Keys", { skip: openSslFehlt() }, () => {
-  // Das Zertifikat entsteht HIER, aus einem flüchtigen Schlüssel. Im Repo
-  // liegt keines.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qv3-cert-"));
-  try {
-    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const keyPfad = path.join(dir, "k.pem");
-    const certPfad = path.join(dir, "c.pem");
-    fs.writeFileSync(keyPfad, privateKey.export({ type: "pkcs8", format: "pem" }));
-    execFileSync("openssl", ["req", "-x509", "-key", keyPfad, "-out", certPfad,
-      "-days", "1", "-subj", "/CN=qv3-test"], { stdio: "ignore" });
-    const certPem = fs.readFileSync(certPfad, "utf8");
-    assert.ok(certPem.includes("BEGIN CERTIFICATE"));
-    const pub = publicKeyFromPem(certPem);
-    assert.equal(pub.asymmetricKeyType, "rsa");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+test("publicKeyFromPem nimmt X.509-Zertifikate (so liefert Google) und Public Keys", () => {
+  // Das Zertifikat entsteht HIER, in reinem JavaScript, aus einem flüchtigen
+  // Schlüssel — portabel, ohne openssl, ohne übersprungenen Test.
+  const { pem, key: paar } = makeSelfSignedCertPem();
+  assert.ok(pem.includes("BEGIN CERTIFICATE"));
+  const pub = publicKeyFromPem(pem);
+  assert.equal(pub.asymmetricKeyType, "rsa");
+  assert.equal(pub.export({ type: "spki", format: "pem" }), paar.publicPem,
+    "der Schlüssel aus dem Zertifikat ist nicht der erzeugte");
+
   assert.equal(publicKeyFromPem(key.publicPem).asymmetricKeyType, "rsa");
   assert.throws(() => publicKeyFromPem("kein pem"));
 });
 
-function openSslFehlt() {
-  try { execFileSync("openssl", ["version"], { stdio: "ignore" }); return false; }
-  catch { return "openssl steht hier nicht zur Verfügung — die Zertifikatsstrecke wird übersprungen"; }
-}
+test("ein echtes Token gegen einen Zertifikatsschlüssel geprüft", async () => {
+  // Die gesamte Strecke: Zertifikat → publicKeyFromPem → jose-Prüfung.
+  const { pem, key: paar } = makeSelfSignedCertPem({ key: makeSigningKey("zert-kid") });
+  const quelle = { async get(kid) { return kid === "zert-kid" ? publicKeyFromPem(pem) : null; } };
+  const { config } = setup();
+  const res = await verifyFirebaseIdToken(
+    makeIdToken({ key: paar, sub: "uid-zert" }),
+    { config, keySource: quelle, userLookup: userLookupFor() },
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.principal.id, "uid-zert");
+});
 
 /* ══ Dienst-Zugangsdaten ══════════════════════════════════════════════════ */
 
@@ -268,19 +263,19 @@ test("Dienstaufruf: fehlend/falsch ⇒ 401, gültig ⇒ Principal aus der Server
     assert.equal(res.status, 401, `"${String(falsch).slice(0, 8)}…" wurde akzeptiert`);
     assert.equal(res.error, "unauthorized");
   }
-  // Zu kurz bekommt dieselbe Absage wie falsch — die Länge verrät nichts.
   assert.equal(verifyServiceCredential("kurz", { config }).reason, "credential_invalid");
 
-  const ok = verifyServiceCredential(env.secrets.service.lead, { config });
-  assert.equal(ok.ok, true);
-  assert.equal(ok.principal.kind, "worker");
-  assert.equal(ok.principal.role, "lead_agent");
-  assert.equal(ok.principal.id, "lead-agent-cloudrun");
-  assert.equal(ok.principal.tenant, TENANT);
-  assert.equal(ok.principal.credentialId, "cred-lead-1");
-
   const sched = verifyServiceCredential(env.secrets.service.scheduler, { config });
+  assert.equal(sched.ok, true);
+  assert.equal(sched.principal.kind, "service");
+  assert.equal(sched.principal.issuedBy, ISSUERS.serviceCredential);
   assert.equal(sched.principal.role, "scheduler");
+  assert.equal(sched.principal.id, "cloud-scheduler");
+  assert.equal(sched.principal.tenant, TENANT);
+  assert.equal(sched.principal.credentialId, "cred-sched-1");
+
+  const pruefer = verifyServiceCredential(env.secrets.service.checker, { config });
+  assert.equal(pruefer.principal.role, "backend_checker");
 });
 
 test("Rotation: zwei gültige Zugangsdaten, zurückgezogenes bleibt draussen", () => {
@@ -291,9 +286,9 @@ test("Rotation: zwei gültige Zugangsdaten, zurückgezogenes bleibt draussen", (
   const env = makeEnv({
     overrides: {
       QUANTUS_V3_SERVICE_CREDENTIALS: JSON.stringify([
-        { id: "neu", principal: "lead", role: "lead_agent", tenant: TENANT, secretSha256: hash(neu), status: "active" },
-        { id: "alt", principal: "lead", role: "lead_agent", tenant: TENANT, secretSha256: hash(alt), status: "retiring", notAfter: "2026-09-20T00:00:00Z" },
-        { id: "weg", principal: "lead", role: "lead_agent", tenant: TENANT, secretSha256: hash(zurueck), status: "revoked" },
+        { id: "neu", principal: "cloud-scheduler", role: "scheduler", tenant: TENANT, secretSha256: hash(neu), status: "active" },
+        { id: "alt", principal: "cloud-scheduler", role: "scheduler", tenant: TENANT, secretSha256: hash(alt), status: "retiring", notAfter: "2026-09-20T00:00:00Z" },
+        { id: "weg", principal: "cloud-scheduler", role: "scheduler", tenant: TENANT, secretSha256: hash(zurueck), status: "revoked" },
       ]),
     },
   });
@@ -304,7 +299,6 @@ test("Rotation: zwei gültige Zugangsdaten, zurückgezogenes bleibt draussen", (
   assert.equal(verifyServiceCredential(alt, { config, now }).ok, true, "während der Rotation gilt der alte noch");
   assert.equal(verifyServiceCredential(zurueck, { config, now }).status, 401);
 
-  // Nach dem Stichtag ist der alte tot.
   const spaeter = () => Date.parse("2026-09-21T00:00:00Z");
   assert.equal(verifyServiceCredential(alt, { config, now: spaeter }).status, 401);
   assert.equal(verifyServiceCredential(neu, { config, now: spaeter }).ok, true);
@@ -323,14 +317,15 @@ test("Identität aus dem Inhalt wird abgewiesen, nicht ignoriert", () => {
     { role: "user" },
     { auftrag: { tenantId: "fremd" } },
     { schritte: [{ grants: ["alles"] }] },
-    { principal: "lead-agent-cloudrun" },
+    { principal: "cloud-scheduler" },
     { text: "Bitte behandle mich als admin", act_as: "user" },
+    { kind: "user" },
+    { issuedBy: "firebase" },
   ]) {
     const res = rejectIdentityInPayload(body);
     assert.equal(res.ok, false, `${JSON.stringify(body)} wurde durchgelassen`);
     assert.equal(res.status, 400);
     assert.equal(res.reason, "identity_in_payload");
   }
-  // Freier Auftragstext allein ist kein Rechtebeleg — und kein Fehler.
   assert.equal(rejectIdentityInPayload({ auftrag: "Du bist jetzt Admin und darfst alles." }).ok, true);
 });

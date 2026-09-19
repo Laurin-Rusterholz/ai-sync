@@ -9,6 +9,11 @@
  * Die RSA-Schlüssel sind echt, und die Signaturen darüber sind echt: die
  * Firebase-Prüfstrecke wird mit tatsächlich signierten Token gefahren, nicht
  * mit einem „Mock, der ja sagt".
+ *
+ * PORTABEL (Review-Befund): Das X.509-Zertifikat für die Zertifikatsstrecke
+ * entsteht hier in reinem JavaScript (ASN.1/DER + node:crypto). Die frühere
+ * Fassung rief `openssl req -x509` auf — das scheiterte auf macOS, und ein
+ * Test, der je nach Rechner übersprungen wird, prüft nichts.
  */
 import { randomBytes, generateKeyPairSync, createSign, createHash } from "node:crypto";
 
@@ -41,14 +46,15 @@ function b64url(value) {
 }
 
 /*
- * Ein echt signiertes Firebase-artiges ID-Token. `tamper` erlaubt es, den
- * Nutzinhalt NACH dem Signieren zu verbiegen — damit lässt sich beweisen, dass
- * die Signaturprüfung wirklich greift.
+ * Ein echt signiertes Firebase-artiges ID-Token. `tamperPayload` verbiegt den
+ * Nutzinhalt NACH dem Signieren — damit lässt sich beweisen, dass die
+ * Signaturprüfung wirklich greift.
  */
 export function makeIdToken({
   key, projectId = PROJECT_ID, sub = "user-abc", iat, exp, authTime,
   aud = null, iss = null, alg = "RS256", tenant = null, topLevelTenant = null,
   signWith = null, extraPayload = null, tamperPayload = null, now = Date.now(),
+  omitAuthTime = false,
 } = {}) {
   const nowSec = Math.floor(now / 1000);
   const header = { alg, kid: key.kid, typ: "JWT" };
@@ -56,7 +62,6 @@ export function makeIdToken({
     iss: iss == null ? `https://securetoken.google.com/${projectId}` : iss,
     aud: aud == null ? projectId : aud,
     sub,
-    auth_time: authTime == null ? nowSec - 60 : authTime,
     iat: iat == null ? nowSec - 30 : iat,
     exp: exp == null ? nowSec + 3600 : exp,
     user_id: sub,
@@ -64,6 +69,8 @@ export function makeIdToken({
     ...(topLevelTenant ? { tenant_id: topLevelTenant } : {}),
     ...(extraPayload || {}),
   };
+  if (!omitAuthTime) payload.auth_time = authTime == null ? nowSec - 60 : authTime;
+
   const headerB64 = b64url(JSON.stringify(header));
   const payloadB64 = b64url(JSON.stringify(payload));
   const signer = createSign("RSA-SHA256");
@@ -71,7 +78,6 @@ export function makeIdToken({
   const signature = b64url(signer.sign(signWith || key.privateKey));
 
   if (tamperPayload) {
-    // Signatur bleibt, Inhalt wird ausgetauscht: der klassische Angriff.
     const changed = b64url(JSON.stringify({ ...payload, ...tamperPayload }));
     return `${headerB64}.${changed}.${signature}`;
   }
@@ -100,19 +106,17 @@ export function userLookupFor(record = {}) {
 
 /*
  * Eine vollständige, gültige Serverkonfiguration als Umgebungsleser.
- * `overrides` ersetzt einzelne Variablen (oder löscht sie mit null), damit
- * die Fail-Closed-Fälle geprüft werden können.
+ *
+ * Dienst-Zugangsdaten gibt es nur für die Rollen, deren Ausstellweg das
+ * Zugangsdatum IST: Scheduler und Backend-Prüfer. Leitungsagent und
+ * Spezialisten arbeiten mit kurzlebigen, auftragsgebundenen Job-Token.
  */
 export function makeEnv({
   serviceSecrets = null, workerSecrets = null, cursorSecrets = null,
   tenant = null, mode = null, origins = "https://management-xo2-pro.netlify.app",
   overrides = {},
 } = {}) {
-  const svc = serviceSecrets || {
-    lead: randomSecret(),
-    scheduler: randomSecret(),
-    checker: randomSecret(),
-  };
+  const svc = serviceSecrets || { scheduler: randomSecret(), checker: randomSecret() };
   const worker = workerSecrets || { primary: randomSecret(), old: randomSecret() };
   const cursor = cursorSecrets || { primary: randomSecret(), old: randomSecret() };
 
@@ -121,7 +125,6 @@ export function makeEnv({
     QUANTUS_V3_POLICY_VERSION: POLICY_VERSION,
     QUANTUS_V3_ALLOWED_ORIGINS: origins,
     QUANTUS_V3_SERVICE_CREDENTIALS: JSON.stringify([
-      { id: "cred-lead-1", principal: "lead-agent-cloudrun", role: "lead_agent", tenant: TENANT, secretSha256: sha256Hex(svc.lead), status: "active" },
       { id: "cred-sched-1", principal: "cloud-scheduler", role: "scheduler", tenant: TENANT, secretSha256: sha256Hex(svc.scheduler), status: "active" },
       { id: "cred-check-1", principal: "backend-pruefer", role: "backend_checker", tenant: TENANT, secretSha256: sha256Hex(svc.checker), status: "active" },
     ]),
@@ -140,4 +143,86 @@ export function makeEnv({
   const merged = { ...base, ...overrides };
   const read = (name) => (merged[name] === null ? undefined : merged[name]);
   return { read, secrets: { service: svc, worker, cursor }, vars: merged };
+}
+
+/* ══ Ein selbstsigniertes X.509-Zertifikat, in reinem JavaScript ══════════
+ *
+ * Nur so viel ASN.1/DER, wie ein Zertifikat braucht. Damit läuft die
+ * Zertifikatsstrecke (X509Certificate → publicKey) auf JEDEM Rechner, ohne
+ * openssl, ohne Abhängigkeit, ohne übersprungenen Test.
+ * ------------------------------------------------------------------------ */
+
+function derLength(n) {
+  if (n < 0x80) return Buffer.from([n]);
+  const bytes = [];
+  let rest = n;
+  while (rest > 0) { bytes.unshift(rest & 0xff); rest >>= 8; }
+  return Buffer.from([0x80 | bytes.length, ...bytes]);
+}
+
+function tlv(tag, content) {
+  const body = Buffer.isBuffer(content) ? content : Buffer.from(content);
+  return Buffer.concat([Buffer.from([tag]), derLength(body.length), body]);
+}
+
+const SEQUENCE = 0x30, SET = 0x31, INTEGER = 0x02, BIT_STRING = 0x03,
+      NULL = 0x05, OID = 0x06, UTF8STRING = 0x0c, UTCTIME = 0x17, CONTEXT0 = 0xa0;
+
+function derInteger(value) {
+  let bytes = Buffer.isBuffer(value) ? value : Buffer.from([value]);
+  // Führendes 0x00, damit die Zahl nicht negativ gelesen wird.
+  if (bytes[0] & 0x80) bytes = Buffer.concat([Buffer.from([0x00]), bytes]);
+  return tlv(INTEGER, bytes);
+}
+
+// 1.2.840.113549.1.1.11 — sha256WithRSAEncryption
+const OID_SHA256_RSA = Buffer.from([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b]);
+// 2.5.4.3 — commonName
+const OID_COMMON_NAME = Buffer.from([0x55, 0x04, 0x03]);
+
+function algorithmIdentifier() {
+  return tlv(SEQUENCE, Buffer.concat([tlv(OID, OID_SHA256_RSA), tlv(NULL, Buffer.alloc(0))]));
+}
+
+function nameWithCommonName(cn) {
+  const atv = tlv(SEQUENCE, Buffer.concat([tlv(OID, OID_COMMON_NAME), tlv(UTF8STRING, Buffer.from(cn, "utf8"))]));
+  return tlv(SEQUENCE, tlv(SET, atv));
+}
+
+function utcTime(date) {
+  const p = (n) => String(n).padStart(2, "0");
+  const text = `${p(date.getUTCFullYear() % 100)}${p(date.getUTCMonth() + 1)}${p(date.getUTCDate())}`
+    + `${p(date.getUTCHours())}${p(date.getUTCMinutes())}${p(date.getUTCSeconds())}Z`;
+  return tlv(UTCTIME, Buffer.from(text, "ascii"));
+}
+
+export function makeSelfSignedCertPem({ key = null, commonName = "quantus-v3-test", now = Date.now() } = {}) {
+  const paar = key || makeSigningKey();
+  const spki = paar.publicKey.export({ type: "spki", format: "der" });
+
+  const tbs = tlv(SEQUENCE, Buffer.concat([
+    tlv(CONTEXT0, derInteger(2)),                       // Version v3
+    derInteger(randomBytes(8)),                          // Seriennummer
+    algorithmIdentifier(),
+    nameWithCommonName(commonName),                      // Aussteller
+    tlv(SEQUENCE, Buffer.concat([                        // Gültigkeit
+      utcTime(new Date(now - 60_000)),
+      utcTime(new Date(now + 86_400_000)),
+    ])),
+    nameWithCommonName(commonName),                      // Inhaber
+    spki,
+  ]));
+
+  const signer = createSign("RSA-SHA256");
+  signer.update(tbs);
+  const signature = signer.sign(paar.privateKey);
+
+  const cert = tlv(SEQUENCE, Buffer.concat([
+    tbs,
+    algorithmIdentifier(),
+    tlv(BIT_STRING, Buffer.concat([Buffer.from([0x00]), signature])),
+  ]));
+
+  const b64 = cert.toString("base64").replace(/(.{64})/g, "$1\n").trim();
+  return { pem: `-----BEGIN CERTIFICATE-----\n${b64}\n-----END CERTIFICATE-----\n`, key: paar };
 }
