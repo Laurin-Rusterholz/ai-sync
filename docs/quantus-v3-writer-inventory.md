@@ -118,6 +118,31 @@ Verified two ways:
   notes, everything not `automation`/`assistantRuns`) is unchanged — the
   fix is additive and only engages when either namespace is present.
 
+**Round 2 correction (independently reviewed, ada9665 rejected):** an empty
+server `automation` (`{}`) was adopted as a valid archived state exactly like
+`assistantRuns`, though `automation` always carries `schemaVersion`/
+`dataRevision` once v3 has written at all — now treated as the same gap as a
+fully missing namespace. A valid, present-but-different server state
+silently discarded the differing local copy with no trace — `mergeData()`
+now also marks `_v3LocalDivergence` in that case, and every write path
+retains it (quietly, non-blocking — the write still proceeds with the
+server's verbatim value). `guardV3ProtectedWrite()` is `async` and was being
+awaited from inside the synchronous, Firebase-repeatable RTDB transaction
+callback (its Promise return value is always truthy, so `if (v3Luecke)` would
+have treated every invocation as a gap); the callback now only calls the pure,
+side-effect-free `detectV3ProtectedGap()`/`detectV3LocalDivergence()`, and the
+actual `retainV3ProtectedGapLocally()`/`retainV3LocalDivergenceQuietly()` run
+exactly once, after the transaction settles. `retainV3ProtectedGapLocally()`
+previously reported "retained separately" regardless of whether the queue
+write actually committed; it now only claims success after a real
+`retainLegacy()` commit, and surfaces a failure (never throttled, unlike a
+success toast) when it does not, leaving the original untouched either way.
+The retention operation id is now a SHA-256 of the canonicalized
+`legacyOperation` with no live timestamp inside it (a fresh `capturedAt` on
+every retry made an identical retry collide with itself as
+`operation_id_conflict`; the queue's own `createdAt` already answers "first
+seen").
+
 ## Confirmed core writers
 
 | Surface | Source | Observed route | Required v3 boundary |

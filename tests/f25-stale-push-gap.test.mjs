@@ -104,7 +104,8 @@ const stand = (notizen, meta) => ({
   const put = new Function(
     "APP", "shouldTryCloudProvider", "coreAuthReady", "rememberCoreAuthRequired", "rememberCloudFailure",
     "rememberCloudSuccess", "getOrCreateDeviceId", "getDataTimestamp", "rtdbDbRef", "rtdbNodeKey",
-    "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "coreWriteGuard", "canonicalWrite", "guardV3ProtectedWrite",
+    "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "coreWriteGuard", "canonicalWrite",
+    "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceQuietly",
     "console", "JSON", "Date", "Promise", "Error",
     funktionAsync("rtdbJsonPut") + "\nreturn rtdbJsonPut;")(
     { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } },
@@ -113,7 +114,9 @@ const stand = (notizen, meta) => ({
     "appStore", "https://x", async () => ({ ok: false, status: 500 }),
     () => null,   // Waechter: hier wird der Trichter-Weg selbst geprueft
     async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
-    () => null,   // F-27: diese Fixtures kennen keinen v3-Namensraum, keine Luecke
+    // F-27: diese Fixtures kennen keinen v3-Namensraum — reine Erkennung
+    // liefert null, die (hier ungenutzte) Aufbewahrung wird nie erreicht.
+    () => null, () => null, async () => true, async () => {},
     { log() {}, warn() {}, error() {} }, JSON, Date, Promise, Error);
 
   const res = await put("app-data.json", vonB, { mergeFn: mergeData, _viaCanonicalWrite: true });

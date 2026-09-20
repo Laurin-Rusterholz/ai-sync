@@ -9,7 +9,7 @@
        tatsaechlich ausgeliefert wird:
          curl -sSI https://management-xo2-pro.netlify.app/ | grep -i x-quantus-build
        Bei jeder Aenderung an dieser Datei mitziehen. -->
-  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung+mailversand-empfaenger-idempotenz-zugang+mailversand-sofort-im-bearbeiten+mailversand-eigener-schluessel+v3-automation-revision-merge+v3-assistantruns-revision-merge+v3-protected-write-verbatim-boundary · 2026-09-20" />
+  <meta name="quantus-build" content="quantus-notes-v1+idea-note-bundle-delete+undo-clears-tombstone+mkti-stable-input+tombstone-visibility+route-tolerance+tag-autocomplete-breadth+idea-status-bridge+migration-ts-sync+note-classes+reading-title-only+shortnote+app-note-bridge+app-search-registry+sticky-export+flowertech-topnav-removed+browser-2560x1080-fullbtn+journal-align-fix+journal-writing-flow+journal-keyboard-shield+journal-sync-merge+journal-mobile-push-reason+fullscreen-caret-guard+enter-disarm+sync-auth-gate+rtdb-transaction+sync-notice+recalllab-delta-guard+auth-sticky+auth-write-race+freshness-via-dosave+merge-empty-roots+merge-business-roots+inbox-dedupe+inbox-claim-owner+proto-safe-ids+noteflow-tombstone+delete-target+tombstone-union+txn-always-merge+etag-merge-retry+shadow-committed-only+canonical-write+callsites-migrated+write-guards+cas-proof+core-provider-order+funnel-guards+etag-binding+availability-key-aware+initial-etag-guard+core-key-contract+attachment-key-codec+read-contract+text-tombstone+attachment-kind-parity+attachment-action-parity+m1-responsive-shell+m2-noteflow-sidebar+rename-sheet+folder-sheets+firebase-rearm+sidebar-close+settings-guard+ambiguous-verify+budget-tombstones+budget-soft-delete+signin-button+morgen-briefing-de+morgen-briefing-de-endpoint-hint+noteflow-selectall-fix+noteflow-pinned-sidebar+chatgpt-notes-module+gmail-vacation-responder+chatgpt-notes-formhtml-export-fix+entity-kind-registry+chatgpt-leads+chatgpt-tasks+chatgpt-task-quick-capture+noteflow-notebooks-sidebar+noteflow-copy-all+lead-fields-persist-on-input+lead-link-count-external-legacy+habit-delete-tombstones+gmail-reply-counterpart+gmail-reply-field-fill+draft-recipient-name+intake-alias-report+intake-link-auskunft+intake-restore-from-published+restore-visible-dialog+ft-sync-device-local+person-editor-draft+restored-intake-untouched+reindex-visible-dialog+restore-guard-explicit-only+lead-reopen+composer-value-mirror+gmail-stale-list-guard+comment-union-tombstones+gmail-body-refetch+einschaetzung-kenntlich+union-zwei-ebenen+drive-verknuepfen+warten-dialog-sichtbar+person-dialog-sichtbar+seitenmodus-computer+schnellansicht-lebenszyklus+tabwiederherstellung-adresse-gewinnt+dialog-ortsgebunden+verknuepfte-person-sichtbar+kopfzeile-schmal+kopfzeile-desktop+termin-zitat-getrennt+drive-meldung-ehrlich+person-dokumente+tabs-sidebarkopf+mailversand-geplant-3h+mailversand-stufen-klaerung+mailversand-empfaenger-idempotenz-zugang+mailversand-sofort-im-bearbeiten+mailversand-eigener-schluessel+v3-automation-revision-merge+v3-assistantruns-revision-merge+v3-protected-write-verbatim-boundary+v3-cas-pure-divergence-retained · 2026-09-20" />
   <script src="/quantus-notes-core.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.svg" />
@@ -7376,7 +7376,7 @@ async function netlifyBlobPut(key, data, options = {}) {
         const gemergt = options.mergeFn(data, aktuell.data);
         // F-27: geschuetzter v3-Namensraum vom gerade gelesenen Serverstand
         // nicht bestaetigt, obwohl lokal einer steht — nicht schreiben.
-        const v3Luecke = guardV3ProtectedWrite(gemergt);
+        const v3Luecke = await guardV3ProtectedWrite(gemergt);
         if (v3Luecke) {
           console.error('[CloudSync] Netlify PUT 412 → geschuetzter v3-Namensraum (' + v3Luecke.join(', ') + ') nicht bestaetigt, kein Schreibvorgang');
           rememberCloudFailure('netlify', { status: 412 });
@@ -7506,7 +7506,7 @@ async function firebaseJsonPut(key, data, options = {}) {
           // Serverstand nicht bestaetigt, obwohl lokal einer steht — dieser
           // Schreiber hat kein CAS, ein Upload waere bedingungslos. Nicht
           // schreiben.
-          const v3Luecke = guardV3ProtectedWrite(gemergt);
+          const v3Luecke = await guardV3ProtectedWrite(gemergt);
           if (v3Luecke) {
             console.error('[CloudSync] Firebase PUT → geschuetzter v3-Namensraum (' + v3Luecke.join(', ') + ') nicht bestaetigt, kein Schreibvorgang');
             return { ok: false, reason: 'v3_protected_gap', v3ProtectedGap: v3Luecke, provider: 'firebase' };
@@ -7664,6 +7664,15 @@ async function rtdbJsonPut(key, data, options = {}) {
       let merged = false;
       let finalPayload = data;
       let abortReason = null;
+      // F-27: der CAS-Callback bleibt REIN synchron, ohne jede Seitenwirkung
+      // (Firebase kann ihn beliebig oft mit wechselndem Serverstand erneut
+      // aufrufen — ein hier gestarteter Import/IndexedDB-Zugriff/Toast liefe
+      // pro Versuch erneut an, auch fuer laengst verworfene Zwischenstaende).
+      // Nur der jeweils LETZTE Versuch zaehlt: beide Variablen werden bei
+      // jedem Aufruf ueberschrieben, nie akkumuliert. Die eigentliche
+      // Aufbewahrung laeuft ERST NACH der Transaktion (siehe unten).
+      let letzterGapVersuch = null;
+      let letzteAbweichung = null;
       const myDevice = getOrCreateDeviceId();
       /*
        * F-26 — EINE KENNUNG FUER DIESEN SCHREIBVERSUCH.
@@ -7710,9 +7719,17 @@ async function rtdbJsonPut(key, data, options = {}) {
               // ihn bei Schreibkonkurrenz mit dem jeweils neuesten Serverstand
               // erneut auf. Eine erkannte Luecke bricht GENAU DIESEN Versuch
               // ab (return undefined); ein spaeterer Versuch mit inzwischen
-              // bestaetigtem Serverstand ist davon unberuehrt.
-              const v3Luecke = guardV3ProtectedWrite(out);
-              if (v3Luecke) { abortReason = 'v3_protected_gap'; return undefined; }
+              // bestaetigtem Serverstand ist davon unberuehrt. Reine Erkennung
+              // ohne Seitenwirkung (detectV3ProtectedGap) — die Aufbewahrung
+              // selbst darf hier NICHT anlaufen, siehe Kommentar oben.
+              const v3Luecke = detectV3ProtectedGap(out);
+              if (v3Luecke) {
+                abortReason = 'v3_protected_gap';
+                letzterGapVersuch = { merged: out, gaps: v3Luecke };
+                return undefined;
+              }
+              letzterGapVersuch = null;
+              letzteAbweichung = detectV3LocalDivergence(out);
               merged = true;
             } else {
               // Kein Merge moeglich und ein Serverstand vorhanden: NICHT
@@ -7742,9 +7759,17 @@ async function rtdbJsonPut(key, data, options = {}) {
       });
       if (!txn.committed) {
         const grund = abortReason || 'transaction_aborted';
+        // Aufbewahrung ERST HIER, ausserhalb der Transaktion — genau einmal,
+        // fuer genau den Versuch, der tatsaechlich zum Abbruch fuehrte.
+        if (grund === 'v3_protected_gap' && letzterGapVersuch) {
+          await retainV3ProtectedGapLocally(letzterGapVersuch.merged, letzterGapVersuch.gaps);
+        }
         rememberCloudFailure('rtdb', { error: new Error(grund) });
         return { ok: false, reason: grund, provider: 'rtdb' };
       }
+      // Committet: eine abweichende lokale Kopie neben dem gueltigen,
+      // committeten Serverstand wird jetzt (nicht blockierend) aufbewahrt.
+      if (letzteAbweichung) retainV3LocalDivergenceQuietly(letzteAbweichung).catch(() => {});
       // CAS-BEWEIS: nicht das vorab gebaute out, sondern der Stand, den die
       // Datenbank TATSAECHLICH committet hat. committed=true allein genuegt
       // nicht — ohne den Schnappschuss wissen wir nicht, WAS drinsteht, und
@@ -13718,56 +13743,136 @@ function markV3ProtectedGap(merged, namespace) {
   if (!merged._v3ProtectedGap.includes(namespace)) merged._v3ProtectedGap.push(namespace);
   return merged;
 }
-
-// Sichtbar anhalten statt rekonstruieren: der abweichende lokale Stand wird
-// GETRENNT ueber die bereits getestete, bisher ungenutzte Befehls-
-// Warteschlange aufbewahrt (openCommandQueue().retainLegacy(), quantus-v3-
-// command-client.mjs) — nie als Teil eines Root-Snapshots hochgeladen — und
-// der Nutzer gedrosselt sichtbar informiert.
-let _v3GapNotifiedAt = 0;
-async function retainV3ProtectedGapLocally(merged, gaps) {
-  try {
-    const payload = {};
-    for (const ns of gaps) {
-      payload[ns] = ns === 'assistantRuns' ? (merged.dailyBriefing && merged.dailyBriefing.assistantRuns) : merged[ns];
-    }
-    const mod = await import('/quantus-v3-command-client.mjs');
-    const gate = await coreAuthReady();
-    const accountKey = (gate && gate.user && gate.user.uid) || getOrCreateDeviceId();
-    const inhalt = JSON.stringify(payload);
-    let hash = 0;
-    for (let i = 0; i < inhalt.length; i++) hash = ((hash << 5) - hash + inhalt.charCodeAt(i)) | 0;
-    const operationId = ('v3gap_' + gaps.slice().sort().join('_') + '_' + Math.abs(hash).toString(36)).slice(0, 200);
-    const queue = await mod.openCommandQueue({});
-    try {
-      await queue.retainLegacy({
-        accountKey,
-        operationId,
-        legacyOperation: { kind: 'v3_protected_gap', namespaces: gaps, capturedAt: new Date().toISOString(), data: payload },
-      });
-    } finally { queue.close(); }
-  } catch(e) {
-    console.error('[v3] Schutz-/Retention-Handler fuer geschuetzte Namensraeume fehlgeschlagen:', e);
-  }
-  try {
-    const now = Date.now();
-    if (now - _v3GapNotifiedAt > 600000 && typeof toast === 'function') {
-      _v3GapNotifiedAt = now;
-      toast('warn', 'v3-Laufdaten nicht übertragen',
-        'Der Server konnte den geschützten Stand (' + gaps.join(', ') + ') nicht bestätigen. Der Schreibvorgang wurde angehalten; die lokale Kopie ist getrennt aufbewahrt, nicht hochgeladen.', 9000);
-    }
-  } catch(e) {}
+// Der Server haelt einen gueltigen Namensraum, der sich aber vom lokalen
+// Stand unterscheidet — kein Grund zum Anhalten (der Server gilt, verbatim),
+// aber auch kein Grund, die lokale Abweichung wortlos zu verwerfen: sie
+// koennte eine echte, nie uebertragene Absicht sein, kein blosser Nachlauf.
+function markV3LocalDivergence(merged, namespace, localSnapshot) {
+  if (!merged._v3LocalDivergence) merged._v3LocalDivergence = [];
+  merged._v3LocalDivergence.push({ namespace, snapshot: JSON.parse(JSON.stringify(localSnapshot)) });
+  return merged;
 }
-
-// Rueckgabe: Array der betroffenen Namensraeume, wenn deshalb NICHT
-// geschrieben werden darf — sonst null. Entfernt das Merkmal von merged,
-// damit es nie in einen tatsaechlich geschriebenen Stand gelangt.
-function guardV3ProtectedWrite(merged) {
+// Reine Erkennung OHNE jede Seitenwirkung — sicher innerhalb eines
+// wiederholbaren Callbacks (RTDB-Transaktion, von Firebase ggf. mehrfach mit
+// wechselndem Serverstand aufgerufen) nutzbar. Entfernt das Merkmal von
+// merged, damit es nie in einen tatsaechlich geschriebenen Stand gelangt.
+function detectV3ProtectedGap(merged) {
   if (!merged || !Array.isArray(merged._v3ProtectedGap) || !merged._v3ProtectedGap.length) return null;
   const gaps = merged._v3ProtectedGap.slice();
   delete merged._v3ProtectedGap;
-  retainV3ProtectedGapLocally(merged, gaps).catch(() => {});
   return gaps;
+}
+function detectV3LocalDivergence(merged) {
+  if (!merged || !Array.isArray(merged._v3LocalDivergence) || !merged._v3LocalDivergence.length) return null;
+  const liste = merged._v3LocalDivergence.slice();
+  delete merged._v3LocalDivergence;
+  return liste;
+}
+
+// Kollisionsarme, INHALTSSTABILE Kennung: derselbe Inhalt liefert IMMER
+// dieselbe Id (Voraussetzung fuer retainLegacy()s Wiederholungsschutz), ein
+// anderer Inhalt so gut wie nie dieselbe (SHA-256 statt eines 32-Bit-
+// Streuwerts, der auf Dauer kollidiert). Faellt Web Crypto aus (sehr alter
+// Browser), ein deterministischer, breiterer Ersatz statt eines Wurfs.
+async function stableV3RetentionId(praefix, inhalt) {
+  try {
+    const bytes = new TextEncoder().encode(inhalt);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return (praefix + '_' + hex).slice(0, 200);
+  } catch(e) {
+    let h1 = 0, h2 = 0;
+    for (let i = 0; i < inhalt.length; i++) {
+      const c = inhalt.charCodeAt(i);
+      h1 = ((h1 << 5) - h1 + c) | 0;
+      h2 = ((h2 << 7) - h2 + c * 31) | 0;
+    }
+    return (praefix + '_' + (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36)).slice(0, 200);
+  }
+}
+
+// Die eigentliche Aufbewahrung — GETRENNT ueber die bereits getestete,
+// bisher ungenutzte Befehls-Warteschlange (openCommandQueue().retainLegacy(),
+// quantus-v3-command-client.mjs), nie als Teil eines Root-Snapshots
+// hochgeladen. Liefert NUR true bei einem tatsaechlich dauerhaften Commit in
+// die Warteschlange — ein Fehlschlag hier darf NIE als Erfolg gemeldet
+// werden, das Original (beim Aufrufer) bleibt in jedem Fall unveraendert
+// stehen, es wird nichts stillschweigend verworfen.
+//
+// WICHTIG: `capturedAt` gehoert bewusst NICHT in den kanonisierten Inhalt.
+// retainLegacy()/putIntent() vergleicht bei gleicher operationId den
+// KOMPLETTEN legacyOperation-Inhalt (json(legacyOperation)) — ein frischer
+// Zeitstempel bei jedem Aufruf haette denselben, inhaltlich unveraenderten
+// Wiederholungsversuch als "anderen" Inhalt erscheinen lassen und
+// operation_id_conflict ausgeloest, obwohl es derselbe Fall ist. Ein "wann
+// zuerst gesehen" liefert bereits der Queue-Eintrag selbst (createdAt).
+async function retainV3DataLocally(kind, namespaces, dataByNamespace) {
+  let queue = null;
+  try {
+    const mod = await import('/quantus-v3-command-client.mjs');
+    const gate = await coreAuthReady();
+    const accountKey = (gate && gate.user && gate.user.uid) || getOrCreateDeviceId();
+    const legacyOperation = { kind, namespaces: namespaces.slice().sort(), data: dataByNamespace };
+    const operationId = await stableV3RetentionId('v3_' + kind, JSON.stringify(legacyOperation));
+    queue = await mod.openCommandQueue({});
+    await queue.retainLegacy({ accountKey, operationId, legacyOperation });
+    return true;
+  } catch(e) {
+    console.error('[v3] Aufbewahrung (' + kind + ') fehlgeschlagen — NICHT als aufbewahrt gemeldet, das Original bleibt unveraendert:', e);
+    return false;
+  } finally {
+    try { queue && queue.close(); } catch(e) {}
+  }
+}
+
+let _v3GapNotifiedAt = 0;
+async function retainV3ProtectedGapLocally(merged, gaps) {
+  const payload = {};
+  for (const ns of gaps) {
+    payload[ns] = ns === 'assistantRuns' ? (merged.dailyBriefing && merged.dailyBriefing.assistantRuns) : merged[ns];
+  }
+  const ok = await retainV3DataLocally('v3_protected_gap', gaps, payload);
+  try {
+    const now = Date.now();
+    // Erfolg wird gedrosselt gemeldet (sonst meldet jede Sync-Runde erneut
+    // dasselbe); ein Fehlschlag NIE gedrosselt — genau dann muss sichtbar
+    // werden, dass NICHTS aufbewahrt wurde.
+    if (typeof toast === 'function' && (!ok || now - _v3GapNotifiedAt > 600000)) {
+      _v3GapNotifiedAt = now;
+      if (ok) {
+        toast('warn', 'v3-Laufdaten nicht übertragen',
+          'Der Server konnte den geschützten Stand (' + gaps.join(', ') + ') nicht bestätigen. Der Schreibvorgang wurde angehalten; die lokale Kopie ist getrennt aufbewahrt, nicht hochgeladen.', 9000);
+      } else {
+        toast('error', 'v3-Laufdaten NICHT aufbewahrt',
+          'Der Schreibvorgang wurde angehalten, aber die getrennte Aufbewahrung der lokalen Kopie (' + gaps.join(', ') + ') ist fehlgeschlagen. Der ursprüngliche lokale Stand ist unverändert erhalten.', 12000);
+      }
+    }
+  } catch(e) {}
+  return ok;
+}
+
+// Nicht blockierend, keine Nutzermeldung: eine vom (gueltigen) Serverstand
+// abweichende lokale Kopie wird still aufbewahrt, waehrend der Schreibvorgang
+// mit dem Serverstand normal weiterlaeuft.
+async function retainV3LocalDivergenceQuietly(divergenzListe) {
+  for (const eintrag of divergenzListe) {
+    await retainV3DataLocally('v3_local_divergence', [eintrag.namespace], { [eintrag.namespace]: eintrag.snapshot }).catch(() => {});
+  }
+}
+
+// Fuer die drei nicht wiederholbaren Schreibpfade (canonicalWrite,
+// netlifyBlobPut-412-Retry, firebaseJsonPut-Remerge): erkennt UND sichert in
+// einem Aufruf. NICHT innerhalb der RTDB-Transaktion verwenden — dort muss
+// die Erkennung rein bleiben, siehe detectV3ProtectedGap/detectV3LocalDivergence.
+async function guardV3ProtectedWrite(merged) {
+  const gaps = detectV3ProtectedGap(merged);
+  if (gaps) {
+    await retainV3ProtectedGapLocally(merged, gaps);
+    return gaps;
+  }
+  const divergenz = detectV3LocalDivergence(merged);
+  if (divergenz) retainV3LocalDivergenceQuietly(divergenz).catch(() => {});
+  return null;
 }
 
 // ── Main merge function ──
@@ -13881,11 +13986,28 @@ function mergeData(local, remote) {
   // Kopie von automation/assistantRuns. Ein Merge-Zweig kann diese Trennung
   // erzwingen, aber nicht herstellen: sie muss an der Stelle gelten, die
   // einen solchen Intent ueberhaupt erst erzeugt.
+  //
+  // Gegenprobe an einer frueheren Fassung: remote.automation === {} bei
+  // lokal bereits initialisiertem v3-Kern (schemaVersion) wurde als
+  // gueltiger, leerer Serverstand VERBATIM uebernommen. Anders als bei
+  // assistantRuns ist ein leerer/unvollstaendiger automation-Stand aber
+  // NIE ein gueltiger v3-Kern — automation traegt immer schemaVersion UND
+  // dataRevision, sobald v3 einmal geschrieben hat. Ein {} oder ein
+  // Fragment ohne beide Felder ist strukturell dieselbe Luecke wie ein
+  // ganz fehlender Namensraum, nicht ein archivierter Zustand.
   {
-    const remoteAuto = (remote.automation && typeof remote.automation === 'object' && !Array.isArray(remote.automation)) ? remote.automation : null;
+    const remoteAutoRoh = (remote.automation && typeof remote.automation === 'object' && !Array.isArray(remote.automation)) ? remote.automation : null;
+    const remoteAuto = (remoteAutoRoh && Number.isSafeInteger(remoteAutoRoh.schemaVersion) && Number.isSafeInteger(remoteAutoRoh.dataRevision)) ? remoteAutoRoh : null;
     const localAuto = (local.automation && typeof local.automation === 'object' && !Array.isArray(local.automation)) ? local.automation : null;
     if (remoteAuto) {
       merged.automation = JSON.parse(JSON.stringify(remoteAuto));
+      // Der Server gilt — aber eine abweichende lokale Kopie ist damit nicht
+      // automatisch belanglos. Sie koennte eine echte, nie uebertragene
+      // Absicht sein; ein blosses Ueberschreiben ohne Spur waere wieder der
+      // stille Verlust, den dieser ganze Zweig verhindern soll.
+      if (localAuto && JSON.stringify(localAuto) !== JSON.stringify(remoteAuto)) {
+        markV3LocalDivergence(merged, 'automation', localAuto);
+      }
     } else if (localAuto && Object.keys(localAuto).length > 0) {
       markV3ProtectedGap(merged, 'automation');
     }
@@ -14054,6 +14176,12 @@ function mergeData(local, remote) {
     if (remoteRuns) {
       merged.dailyBriefing = merged.dailyBriefing || {};
       merged.dailyBriefing.assistantRuns = JSON.parse(JSON.stringify(remoteRuns));
+      // Wie bei automation: der Server gilt, aber eine abweichende lokale
+      // Kopie (z. B. ein inzwischen archivierter Lauf) wird deshalb nicht
+      // wortlos verworfen, sondern separat aufbewahrt.
+      if (localRuns && JSON.stringify(localRuns) !== JSON.stringify(remoteRuns)) {
+        markV3LocalDivergence(merged, 'assistantRuns', localRuns);
+      }
     } else if (localRuns && Object.keys(localRuns).length > 0) {
       markV3ProtectedGap(merged, 'assistantRuns');
     }
@@ -14604,7 +14732,7 @@ async function canonicalWrite(quelle, options = {}) {
     // schreiben. guardV3ProtectedWrite stoesst die Aufbewahrung
     // (retainLegacy) und die Nutzerwarnung an und liefert die betroffenen
     // Namensraeume; ohne Luecke liefert es null.
-    const v3Luecke = guardV3ProtectedWrite(vereint);
+    const v3Luecke = await guardV3ProtectedWrite(vereint);
     if (v3Luecke) {
       console.error('[CanonicalWrite] geschuetzter v3-Namensraum (' + v3Luecke.join(', ') + ') vom Server nicht bestaetigt — Schreibvorgang angehalten, lokal getrennt aufbewahrt.');
       return { ok: false, reason: 'v3_protected_gap', v3ProtectedGap: v3Luecke, provider: 'canonicalWrite' };
