@@ -4,14 +4,28 @@
  * vom Nutzer selbst lokal geplanter ChatGPT-Lauf auf seinem eigenen
  * Rechner. Diese Funktion darf KEIN eigener, konkurrierender Zeitplan sein
  * — sie reagiert AUSSCHLIESSLICH auf einen authentifizierten, von aussen
- * kommenden Aufruf des lokalen Agenten (deshalb bewusst KEIN
- * `export const config = { schedule: ... }`). Der Zugangsschutz ist
- * derselbe wie bei netlify/functions/mail-queue-run.mjs (`darfLaufen`):
- * ein gueltiger `SYNC_AUTH_TOKEN` als Bearer-Token, sonst 401.
+ * kommenden Aufruf (lokaler Agent ODER der manuelle Knopf im DailyBriefing,
+ * s. public/index.html `dbRunV3EmailBriefing`), deshalb bewusst KEIN
+ * `export const config = { schedule: ... }`.
  *
- * Aufruf (fuer den lokalen Agenten):
+ * ZUGANGSSCHLUESSEL, GETRENNT von den bestehenden Endpunkten:
+ * `SYNC_AUTH_TOKEN` ist in Netlify aktuell NICHT gesetzt — ihn jetzt neu zu
+ * setzen wuerde alle Endpunkte, die ueber `gcal-shared.mjs` `requireAuth`
+ * laufen (Gmail/gcal/blob-put/…), von "offen ohne Token" auf "Token
+ * zwingend" umschalten und damit sperren (dieselbe Falle, die
+ * netlify/lib/mail-queue-endpunkt.mjs fuer den Mail-Ausgang schon
+ * dokumentiert). Deshalb hat DIESER Endpunkt einen EIGENEN, bevorzugten
+ * Schluessel:
+ *   QUANTUS_EMAIL_AUTH_TOKEN   (bevorzugt — betrifft nur diesen Endpunkt)
+ *   SYNC_AUTH_TOKEN            (Ruckfall, NUR falls ohnehin schon gesetzt)
+ * Ist keiner von beiden gesetzt, bleibt der Endpunkt gesperrt (503) — fail
+ * closed, kein stiller Passthrough wie bei den Alt-Endpunkten ohne Token.
+ * Der Vergleich selbst (Bearer-Praefix, zeitkonstant) ist derselbe wie bei
+ * netlify/functions/mail-queue-run.mjs (`zugangPruefen`).
+ *
+ * Aufruf:
  *   POST https://<site>/.netlify/functions/quantus-v3-daily-briefing-run
- *   Authorization: Bearer <SYNC_AUTH_TOKEN>
+ *   Authorization: Bearer <QUANTUS_EMAIL_AUTH_TOKEN>
  * Antwort: JSON, u.a. {ok, sourceOutcome, drafted, ...} bzw.
  * {ok:false, blocked:"missing_configuration", missing:[...]} bei fehlender
  * Konfiguration — nie ein Geheimnis, nur Namen.
@@ -19,16 +33,24 @@
 import { runDailyBriefing, checkDailyBriefingConfig } from "../lib/quantus-v3-daily-briefing.mjs";
 import { zugangPruefen } from "../lib/mail-queue-endpunkt.mjs";
 
-function darfLaufen(req) {
-  if (!req || typeof req.headers !== "object" || req.headers === null) return true; // direkter Aufruf im Lauf selbst (Tests)
-  const erwartet = String(process.env.SYNC_AUTH_TOKEN || "").trim();
-  const tuer = zugangPruefen(req.headers.get("Authorization"), erwartet);
-  return tuer.ok;
+function pruefeZugang(req) {
+  if (!req || typeof req.headers !== "object" || req.headers === null) return { ok: true }; // direkter Aufruf im Lauf selbst (Tests)
+  const bevorzugt = String(process.env.QUANTUS_EMAIL_AUTH_TOKEN || "").trim();
+  const rueckfall = String(process.env.SYNC_AUTH_TOKEN || "").trim();
+  const tuer = zugangPruefen(req.headers.get("Authorization"), bevorzugt || rueckfall);
+  if (tuer.ok) return tuer;
+  if (tuer.status === 503) {
+    return { ok: false, status: 503, koerper: { ok: false, error: "GESPERRT",
+      grund: "Kein Zugangsschluessel konfiguriert: QUANTUS_EMAIL_AUTH_TOKEN (empfohlen, betrifft nur diesen Endpunkt) oder ersatzweise ein bereits vorhandener SYNC_AUTH_TOKEN muss in Netlify gesetzt sein." } };
+  }
+  return { ok: false, status: 401, koerper: { ok: false, error: "KEIN_ZUGANG",
+    grund: "Der Zugangsschluessel stimmt nicht mit QUANTUS_EMAIL_AUTH_TOKEN (oder ersatzweise SYNC_AUTH_TOKEN) ueberein." } };
 }
 
 export default async (req) => {
-  if (!darfLaufen(req)) {
-    return new Response(JSON.stringify({ ok: false, error: "KEIN_ZUGANG", grund: "Dieser Aufruf braucht den bestehenden SYNC_AUTH_TOKEN als Bearer-Token. Es gibt keinen Zeitplan, der ihn ersatzweise ausloest." }), { status: 401, headers: { "Content-Type": "application/json" } });
+  const zugang = pruefeZugang(req);
+  if (!zugang.ok) {
+    return new Response(JSON.stringify(zugang.koerper), { status: zugang.status, headers: { "Content-Type": "application/json" } });
   }
   const config = checkDailyBriefingConfig();
   if (!config.ok) {

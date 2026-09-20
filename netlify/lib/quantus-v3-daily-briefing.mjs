@@ -11,8 +11,13 @@
  * (`netlify/functions/quantus-v3-daily-briefing-run.mjs`), hat DESHALB
  * bewusst KEIN `export const config = { schedule: ... }`: sie darf sich
  * nicht selbst ausloesen, sondern nur auf einen authentifizierten,
- * eingehenden Aufruf reagieren (Zugangsschutz: bestehender
- * `SYNC_AUTH_TOKEN`, s. dortige `darfLaufen`).
+ * eingehenden Aufruf reagieren — entweder vom lokalen Agenten oder vom
+ * manuellen "📧 E-Mails auswerten"-Knopf im DailyBriefing
+ * (public/index.html `dbRunV3EmailBriefing`). Zugangsschutz: ein EIGENER
+ * `QUANTUS_EMAIL_AUTH_TOKEN` (bevorzugt, betrifft nur diesen Endpunkt),
+ * `SYNC_AUTH_TOKEN` nur als Ruckfall falls ohnehin gesetzt — NICHT
+ * `SYNC_AUTH_TOKEN` neu setzen, das wuerde die bestehenden Gmail/gcal/blob-
+ * Endpunkte (offen ohne Token) sperren, s. dortige `pruefeZugang`.
  *
  * `runtime/quantus-v3/src/server.mjs` (Cloud-Run-Worker, Cloud-Scheduler-
  * Ausloesung) ist ausserdem NICHT ausgerollt — `infra/quantus-v3/README.md`
