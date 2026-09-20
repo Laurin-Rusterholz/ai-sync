@@ -129,7 +129,7 @@ test("ein vollstaendig konfigurierter Lauf liest Gmail, sendet an Sonnet und spe
   const { mutateCore, readCore } = fakeCoreAccess(store);
   const ergebnis = await runDailyBriefing({
     now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
-    gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }),
+    gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0,
   });
   assert.equal(ergebnis.ok, true, JSON.stringify(ergebnis));
   assert.equal(ergebnis.drafted, true, JSON.stringify(ergebnis));
@@ -161,7 +161,7 @@ test("ohne in den Einstellungen hinterlegten Anthropic-Schluessel wird ehrlich b
 
   const store = createCasStore(seedCore({ anthropicApiKey: "" }));
   const { mutateCore, readCore } = fakeCoreAccess(store);
-  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }) });
+  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0 });
   assert.equal(ergebnis.ok, false);
   assert.equal(ergebnis.blocked, "anthropic_key_not_configured");
   assert.equal(captured.length, 0, "ohne Schluessel darf Sonnet gar nicht erst kontaktiert werden");
@@ -209,7 +209,7 @@ test("die $50/Monat-Grenze blockiert den Aufruf, BEVOR Sonnet kontaktiert wird",
   // NEUE Monatsgrenze, nicht die vorbestehende Tagesgrenze (die bei $50
   // vorbelegtem Ledger sonst zuerst greifen wuerde).
   const env = baseEnv({ QUANTUS_V3_COST_POLICY_JSON: JSON.stringify(realCostPolicy({ dayLimitMicros: 1_000_000_000, runLimitMicros: 1_000_000_000 })) });
-  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(env), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }) });
+  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(env), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0 });
   assert.equal(ergebnis.ok, false, JSON.stringify(ergebnis));
   assert.match(ergebnis.blocked, /^reserve:monthly_budget_exceeded/, JSON.stringify(ergebnis));
   assert.equal(captured.length, 0, "ueber der Monatsgrenze darf Sonnet gar nicht erst kontaktiert werden");
@@ -227,8 +227,8 @@ test("zwei gleichzeitige Zustellungen fuehren zu genau EINEM Lauf, keinem doppel
   const store = createCasStore(seedCore());
   const { mutateCore, readCore } = fakeCoreAccess(store);
   const [erste, zweite] = await Promise.all([
-    runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }) }),
-    runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }) }),
+    runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0 }),
+    runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0 }),
   ]);
   const ergebnisse = [erste, zweite];
   const uebersprungen = ergebnisse.filter((e) => e.skipped === "duplicate_delivery");
@@ -247,9 +247,143 @@ test("eine leere Gmail-Antwort (kein neuer Inhalt) markiert die Quelle ehrlich, 
 
   const store = createCasStore(seedCore());
   const { mutateCore, readCore } = fakeCoreAccess(store);
-  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }) });
+  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0 });
   assert.equal(ergebnis.ok, true, JSON.stringify(ergebnis));
   assert.equal(ergebnis.drafted, false, "ohne Nachrichten darf kein Entwurf erfunden werden");
   assert.equal(captured.length, 0, "ohne Quellinhalt wird Sonnet gar nicht erst kontaktiert");
   assert.equal(store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks.gmail.outcome, "ok");
+});
+
+// ── Review 7f614a8, Befund 1: eine lange Gmail-Abfrage darf die Pacht nicht
+// stillschweigend als noch gueltig behaupten — die Pacht wird nach dem Scan
+// mit einer FRISCHEN Uhr verlaengert, und spaetere Schritte pruefen erneut
+// frisch. ──────────────────────────────────────────────────────────────
+test("Befund 1: die Pacht wird nach einem langen Scan verlaengert — spaetere Schritte, die die urspruengliche Frist ueberschritten haetten, gelingen trotzdem", async (t) => {
+  let simTime = T0;
+  const clock = () => simTime;
+  const gmail = await startHttp(async (req, res) => {
+    const url = new URL(req.url, "http://x");
+    if (url.pathname === "/users/me/messages") return sendJson(res, 200, { messages: [{ id: "m1" }], nextPageToken: null });
+    const m = url.pathname.match(/^\/users\/me\/messages\/(.+)$/);
+    if (m) {
+      simTime += 80_000; // der Scan selbst verbraucht 80s der urspruenglichen 120s-Pacht
+      return sendJson(res, 200, { id: "m1", threadId: "m1", internalDate: String(T0), snippet: "leer", payload: { headers: [] } });
+    }
+    sendJson(res, 404, {});
+  });
+  const captured = [];
+  const anthropic = await startHttp(async (req, res) => {
+    const body = await readJson(req);
+    captured.push(body);
+    simTime += 90_000; // die Sendung selbst dauert weitere 90s — zusammen 170s, MEHR als die urspruengliche 120s-Frist
+    sendJson(res, 200, { id: "msg_1", content: [{ type: "text", text: "Zusammenfassung." }], usage: { input_tokens: 500, output_tokens: 50 } });
+  });
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+
+  const store = createCasStore(seedCore());
+  const { mutateCore, readCore } = fakeCoreAccess(store);
+  const ergebnis = await runDailyBriefing({
+    now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+    gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock,
+  });
+  // 170s Gesamtlaufzeit haetten die URSPRUENGLICHE 120s-Pacht klar
+  // ueberschritten — nur die Verlaengerung nach dem Scan (bei 80s, also
+  // noch rechtzeitig) macht den Rest ueberhaupt moeglich.
+  assert.equal(ergebnis.ok, true, `die verlaengerte Pacht haette den Lauf trotz 170s Gesamtlaufzeit tragen muessen: ${JSON.stringify(ergebnis)}`);
+  assert.equal(ergebnis.drafted, true, JSON.stringify(ergebnis));
+  assert.equal(captured.length, 1);
+});
+
+test("Befund 1: eine Pacht, die schon WAEHREND des Scans wirklich ablaeuft, wird ehrlich als verloren gemeldet, nicht stillschweigend weiterverwendet", async (t) => {
+  let simTime = T0;
+  const clock = () => simTime;
+  const gmail = await startHttp(async (req, res) => {
+    const url = new URL(req.url, "http://x");
+    if (url.pathname === "/users/me/messages") return sendJson(res, 200, { messages: [{ id: "m1" }], nextPageToken: null });
+    const m = url.pathname.match(/^\/users\/me\/messages\/(.+)$/);
+    if (m) {
+      simTime += 130_000; // laenger als die volle 120s-Pacht — sie ist beim naechsten Schritt WIRKLICH abgelaufen
+      return sendJson(res, 200, { id: "m1", threadId: "m1", internalDate: String(T0), snippet: "leer", payload: { headers: [] } });
+    }
+    sendJson(res, 404, {});
+  });
+  const captured = [];
+  const anthropic = await anthropicServer({ captured });
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+
+  const store = createCasStore(seedCore());
+  const { mutateCore, readCore } = fakeCoreAccess(store);
+  const ergebnis = await runDailyBriefing({
+    now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+    gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock,
+  });
+  assert.equal(ergebnis.ok, false, "eine wirklich abgelaufene Pacht darf NIE als noch gueltig behandelt werden: " + JSON.stringify(ergebnis));
+  assert.match(ergebnis.blocked, /^lease_lost_during_scan/, JSON.stringify(ergebnis));
+  assert.equal(captured.length, 0, "ohne gueltige Pacht darf Sonnet gar nicht erst kontaktiert werden");
+});
+
+// ── Befund 2: strikt positive Preise ──────────────────────────────────────
+test("Befund 2: ein leerer, nullwertiger oder negativer Modellpreis gilt als NICHT konfiguriert", () => {
+  for (const kaputterPreis of ["", "0", "-1", "-2000000"]) {
+    const env = baseEnv({ QUANTUS_V3_ANTHROPIC_INPUT_MICROS_PER_MTOK: kaputterPreis });
+    const status = checkDailyBriefingConfig(envReadFrom(env));
+    assert.equal(status.ok, false, `Preis "${kaputterPreis}" haette abgelehnt werden muessen`);
+    assert.ok(status.missing.includes("QUANTUS_V3_ANTHROPIC_INPUT_MICROS_PER_MTOK"), JSON.stringify(status));
+  }
+});
+
+// ── Befund 3+4: realistische Mengenbegrenzung, explizit `partial` ─────────
+test("Befund 3+4: ueber dem Mengenlimit werden keine weiteren Nachrichten abgerufen, und der Ausgang ist ausdruecklich 'partial'", async (t) => {
+  const ids1 = Array.from({ length: 25 }, (_, i) => `m${i + 1}`);
+  const ids2 = Array.from({ length: 20 }, (_, i) => `m${i + 26}`);
+  let getMessageAufrufe = 0;
+  const gmail = await startHttp(async (req, res) => {
+    const url = new URL(req.url, "http://x");
+    if (url.pathname === "/users/me/messages") {
+      const seite = url.searchParams.get("pageToken") ? { ids: ids2, next: null } : { ids: ids1, next: "p2" };
+      return sendJson(res, 200, { messages: seite.ids.map((id) => ({ id })), nextPageToken: seite.next });
+    }
+    const m = url.pathname.match(/^\/users\/me\/messages\/(.+)$/);
+    if (m) {
+      getMessageAufrufe++;
+      return sendJson(res, 200, { id: decodeURIComponent(m[1]), threadId: "x", internalDate: String(T0), snippet: "leer", payload: { headers: [] } });
+    }
+    sendJson(res, 404, {});
+  });
+  const captured = [];
+  const anthropic = await anthropicServer({ captured });
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+
+  const store = createCasStore(seedCore());
+  const { mutateCore, readCore } = fakeCoreAccess(store);
+  const ergebnis = await runDailyBriefing({
+    now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+    gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0,
+  });
+  assert.equal(ergebnis.ok, true, JSON.stringify(ergebnis));
+  assert.equal(ergebnis.sourceOutcome, "partial", `45 Nachrichten bei einem Mengenlimit von 40 duerfen NIE 'ok' ergeben: ${JSON.stringify(ergebnis)}`);
+  assert.equal(getMessageAufrufe, 40, `es duerfen genau 40 getMessage()-Aufrufe erfolgen (das Limit), nicht 45: tatsaechlich ${getMessageAufrufe}`);
+  const check = store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks.gmail;
+  assert.equal(check.outcome, "partial");
+});
+
+// ── Befund 5: ehrlicher Quellenstatus bleibt sichtbar, auch ohne Schluessel ──
+test("Befund 5: ohne Anthropic-Schluessel wird trotzdem ein ehrlicher Gmail-Quellenstatus fuer heute gespeichert", async (t) => {
+  const gmail = await gmailServer({ ids: ["m1"] });
+  const captured = [];
+  const anthropic = await anthropicServer({ captured });
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+
+  const store = createCasStore(seedCore({ anthropicApiKey: "" }));
+  const { mutateCore, readCore } = fakeCoreAccess(store);
+  const ergebnis = await runDailyBriefing({
+    now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+    gmailApiBase: gmail.base, anthropicApiBase: anthropic.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0,
+  });
+  assert.equal(ergebnis.ok, false);
+  assert.equal(ergebnis.blocked, "anthropic_key_not_configured");
+  assert.equal(captured.length, 0, "ohne Schluessel darf Sonnet gar nicht erst kontaktiert werden");
+  const check = store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks.gmail;
+  assert.ok(check, "der Gmail-Quellenstatus muss trotzdem gespeichert sein — 'kein Schluessel' heisst nicht 'gar nichts sichtbar'");
+  assert.equal(check.outcome, "ok", JSON.stringify(check));
 });
