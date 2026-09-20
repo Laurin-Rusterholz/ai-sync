@@ -34,13 +34,13 @@ checkouts. No production data was read or modified for the initial code work.
 
 | Package | Scope | Current evidence |
 | --- | --- | --- |
-| A | Writer, automation, schema and regression inventory | Initial source inventory below; deployed service inventory still open |
+| A | Writer, automation, schema and regression inventory | Initial and supplementary source inventories; deployed service inventory still open |
 | B | Canonical states, migration, server traffic lights, closure | Reviewed pure kernel 9b6a564 integrated with 27 authored + 16 independent tests; no live migration or API wiring |
-| C | Auth, four strict APIs, idempotency, entity versions, CAS | C1 33a4b3d: 88 authored and five independent tests pass; C2 independent chain review found 11 failures, fixes delegated |
+| C | Auth, four strict APIs, idempotency, entity versions, CAS | Reviewed C1/C2 1a8d08c integrated disabled; 88 + 64 authored and 5 + 13 independent tests; real domain/identity binding and MCP remain open |
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Disabled transport/IndexedDB component tested, including real Chrome recovery; no app wired yet |
-| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 8031323 passes 107 authored + nine prior independent tests; six further dispatch/runtime-reset failures delegated; E2 source work underway |
+| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 f6d6a16/307ee47 passes 120 authored + 16 independent tests; E2 1537336 has three independent failures, corrections delegated; not integrated |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
-| G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Pure routing planner delegated; provider calls and acceptance remain open |
+| G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | G1 78e6829: nine authored tests pass, five independent counterexamples fail; corrections delegated; not integrated |
 | H | T01-T40, production gates, cutover, 14-day trial and final acceptance | Open |
 
 Development delegation: Claude Code session
@@ -78,6 +78,36 @@ This is component acceptance, not complete package or release acceptance.
 Authenticated domain bindings, UI writers, source adapters, archive handling,
 actual lease/fencing checks, production migration and live tests remain open.
 The kernel contains no competing lease or idempotency implementation.
+
+### Reviewed API components
+
+The 29 new C1/C2 source, documentation and fixture/test files come from
+`1a8d08c`. All28 unadapted files match their source blobs exactly; the route
+composition test now explicitly requires the real integrated idempotency port
+instead of asserting that the module is absent. The five independent C1 and thirteen independent
+C2 tests are also checked in. The latter use genuinely signed synthetic Firebase
+credentials and the actual integrated idempotency module, not its stand-in.
+New resources correctly use expectedEntityVersion 0; a separate negative test
+rejects using the existing authorization anchor's version instead.
+
+The earlier C2 findings are fixed: each returned original object is authorized,
+page completeness requires explicit valid pagination, disabled writes cannot
+acknowledge a commit, invalid core/rate records fail closed, and active binding
+is checked with fresh time on every CAS attempt and receipt replay. Resource
+authorization and existing-object anchors are separate for create operations.
+The exact-case production domain adapter is not present yet: this is component
+acceptance, not an operational API or all-writer cutover.
+
+Writing remains disabled by default. The canonical domain adapter, identity
+access-token provider, real runtime composition and MCP bindings are still
+required. Missing configuration/ports return 503; no credentials, production
+settings, Firebase rules or existing client writers were changed. The lockfile
+adds only jose 6.2.12 and retains the reviewed image-size 2.0.4 security fix.
+The integrated suites pass93 authentication and77 API tests, with the API
+fixture explicitly reporting `checkout` for the real idempotency module.
+Full `npm test` exits0; `npm ci` reports zero vulnerabilities. The initial
+integration failures were test-wiring assumptions (script placement and a
+module expected to be absent), not suppressed runtime failures.
 
 The five versioned instructions from concept chapters 15/16 are now stored in
 `prompts/quantus-v3/`. Their operative bodies match the supplied PDF after only
@@ -122,6 +152,7 @@ cost reservation design; package B's unsafe lease placeholder is not accepted.
 | Restore | `scripts/restore-core.mjs`, `backup-blob.mjs` | Privileged recovery/full snapshots | Legacy privileged restore now refuses v3/partial-v3 snapshots and targets; exact server ETag prevents overwriting changes during operator confirmation. HTTP legacy restore, isolated v3 recovery and replay reconciliation remain cutover gates. |
 | RTDB security | `firebase/database.rules.json` | appStore read/write permits authenticated users; unrelated public satellite nodes exist. | Deny direct core writes only after client migration; do not silently break unrelated satellites. |
 
+The supplementary source audit is in `docs/quantus-v3-writer-inventory.md`.
 Satellite scan and deployed writer inventory are not yet complete. Inspect
 iframe/postMessage bridges, alternate builds, n8n and server jobs before marking
 the all-writer gate passed. Do not infer production rules from checked-in rules.
@@ -205,8 +236,24 @@ missing/expired/revoked current policy; an old-day reservation can dispatch
 against yesterday's allowance; two pre-existing reservations for the same
 unresolved content both receive dispatch permission; and deleting the entire
 initialized runtime after lease release resets the fence and cost ledger.
-All six are reproduced with real pure functions and a passing normal-dispatch
-control, then delegated. E1/E2 are not integrated or production-enabled.
+All six were reproduced with real pure functions and a passing normal-dispatch
+control. The subsequent E1 correction f6d6a16, checked at307ee47, passes all16
+independent runtime tests and120 authored tests. It adds a separate runtimeInit
+marker; explicit migration/restore handling remains a required integration gate.
+
+The E2 cloud component1537336 passes80 authored tests but fails three independent
+HTTP-level counterexamples: simultaneous same-slot delivery enters external work
+twice, work exhaustion fabricates a green evidence reference, and leadership
+renewal is deferred beyond the required60seconds. A normal signed dry-run control
+passes. The tests use genuine synthetic OIDC signatures and E2's storage stand-in,
+not the real core envelope. Corrections, including bounded in-flight work, are
+delegated. E1/E2 remain unintegrated and no Cloud deployment occurred.
+
+G1 router78e6829 passes its nine authored tests and an independent normal case,
+but five counterexamples fail: mismatched cost units, missing self-cost comparison,
+future measurements, a risk flag bypassed by task classification, and malformed
+requiredTools throwing rather than structured denial. All are delegated before
+integration. No paid call or execution authority was created by these tests.
 
 ## Existing schedule snapshot (not changed)
 
@@ -226,11 +273,11 @@ control, then delegated. E1/E2 are not integrated or production-enabled.
 
 | ID | Required behavior | Evidence/status |
 | --- | --- | --- |
-| T01 | Missing auth config returns 503, not access | Open |
-| T02 | Wrong user, tenant, lead or role denied | Open |
-| T03 | Unknown verb/field/path/key/oversize rejected | Open |
-| T04 | Same principal/key/body commits once | Partial: concurrent storage/component tests; authenticated HTTP integration open |
-| T05 | Changed body conflicts; lost reply replays result | Partial: storage/component tests; authenticated HTTP integration open |
+| T01 | Missing auth config returns 503, not access | Partial: all four real route handlers tested locally; live configuration open |
+| T02 | Wrong user, tenant, lead or role denied | Partial: signed HTTP and cursor/object tests pass; original-domain binding and live access open |
+| T03 | Unknown verb/field/path/key/oversize rejected | Partial: strict envelope and bounded streaming tests pass; final live entry points open |
+| T04 | Same principal/key/body commits once | Partial: signed HTTP uses actual idempotency helper; real domain/production storage concurrency open |
+| T05 | Changed body conflicts; lost reply replays result | Partial: actual helper, signed HTTP and Chrome queue recovery pass; enabled three-client paths open |
 | T06 | CAS retries do not repeat effects; exhausted retries visible | Partial: storage retry/503 tests, outbox/command tests open |
 | T07 | Missing/corrupt core aborts before mutation | Partial: production mutateAppData behavior tested; all entry points open |
 | T08 | Three clients + worker preserve answers/runs/foreign fields | Open |
