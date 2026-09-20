@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "pretest": "npm run test:assistant-cas && npm run test:assistant-idempotency && npm run test:assistant-prompts && npm run test:assistant-restore && npm run test:assistant-client && npm run test:assistant-core && npm run test:assistant-router",
+    "pretest": "npm run test:assistant-cas && npm run test:assistant-idempotency && npm run test:assistant-prompts && npm run test:assistant-restore && npm run test:assistant-client && npm run test:assistant-core && npm run test:assistant-router && npm run test:assistant-runtime",
     "test:assistant-cas": "node --test tests/quantus-v3-cas-safety.test.mjs",
     "test:assistant-idempotency": "node --test tests/quantus-v3-idempotency.test.mjs",
     "test:assistant-prompts": "node --test tests/quantus-v3-prompts.test.mjs",
@@ -13,6 +13,7 @@
     "test:assistant-client": "node --test tests/quantus-v3-command-client.test.mjs",
     "test:assistant-core": "node --test tests/tagesbriefing-v3-kern.test.mjs tests/quantus-v3-core-independent-*.test.mjs",
     "test:assistant-router": "node --test tests/quantus-v3-job-router.test.mjs tests/quantus-v3-router-independent.test.mjs",
+    "test:assistant-runtime": "node --test tests/quantus-v3-runtime-*.test.mjs",
     "test:quantus-v3": "node --test tests/quantus-v3-auth-*.test.mjs",
     "test:quantus-v3-c2": "node --test tests/quantus-v3-c2-*.test.mjs",
     "backup": "node scripts/backup-blob.mjs",

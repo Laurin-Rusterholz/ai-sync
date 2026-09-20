@@ -38,7 +38,7 @@ checkouts. No production data was read or modified for the initial code work.
 | B | Canonical states, migration, server traffic lights, closure | Reviewed pure kernel 9b6a564 integrated with 27 authored + 16 independent tests; no live migration or API wiring |
 | C | Auth, four strict APIs, idempotency, entity versions, CAS | Reviewed C1/C2 1a8d08c integrated disabled; 88 + 64 authored and 5 + 13 independent tests; real domain/identity binding and MCP remain open |
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Disabled transport/IndexedDB component tested, including real Chrome recovery; no app wired yet |
-| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 f6d6a16/307ee47 passes 120 authored + 16 independent tests; E2 1537336 has three independent failures, corrections delegated; not integrated |
+| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | Pure E1 f6d6a16/307ee47 integrated with 120 authored + 16 independent tests; E2 worker/cost adapter remains unintegrated under independent correction |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
 | G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Pure G1 d803f57 integrated with 14 authored + 6 independent tests; provider dispatch and actual backend attestation remain open |
 | H | T01-T40, production gates, cutover, 14-day trial and final acceptance | Open |
@@ -122,6 +122,22 @@ and malformed required tools. Plans remain non-authorizing and send nothing.
 Actual server attestation of facts, source-scoped job creation, cost reservation,
 provider execution and result acceptance still need end-to-end integration.
 No model identifiers, prices, credentials or cost approvals were created.
+
+### Reviewed runtime rules
+
+The pure E1 planning/state helpers, documentation, conditional-storage fixture
+and six authored suites are integrated unchanged from `f6d6a16` as verified at
+`307ee47`. Both independent review suites are checked in and included in
+`pretest`: all136 component tests pass. The runtime marker is also protected
+by the legacy-restore guard, including partial or damaged snapshots.
+
+These helpers enforce Zurich slot arithmetic, bounded ownership/fencing,
+checkpoint/continuation invariants, late-window limits, integer cost reservations,
+current policy at dispatch, unresolved-outcome retention and fail-closed ledger
+consistency. They do not perform HTTP work, send messages or call providers.
+No Cloud handler, provider adapter, schedule or production writer is enabled.
+Actual E2 orchestration, C3 binding, privileged recovery/migration and live
+acceptance remain required; passing pure functions does not prove the callers.
 
 The five versioned instructions from concept chapters 15/16 are now stored in
 `prompts/quantus-v3/`. Their operative bodies match the supplied PDF after only
@@ -264,7 +280,8 @@ twice, work exhaustion fabricates a green evidence reference, and leadership
 renewal is deferred beyond the required60seconds. A normal signed dry-run control
 passes. The tests use genuine synthetic OIDC signatures and E2's storage stand-in,
 not the real core envelope. Corrections, including bounded in-flight work, are
-delegated. E1/E2 remain unintegrated and no Cloud deployment occurred.
+delegated. The pure E1 helpers are integrated as described above; E2 remains
+unintegrated and no Cloud deployment occurred.
 
 An additional independent review of the E2 cost adapter307ee47 uses the actual
 integrated idempotency envelope and E1 reducers with local conditional storage.
@@ -317,13 +334,13 @@ was created by these tests.
 | T16 | Agent cannot assert green/finalAt/final note | Partial: pure strict command guard tested; authenticated HTTP binding open |
 | T17 | Atomic idempotent final note and closure | Partial: kernel and actual idempotency composition pass; endpoint/readback open |
 | T18 | Later contradiction invalidates without editing historical note | Partial: pure closure manifest and immutable-note regressions pass |
-| T19 | Lease expiry and fencing reject stale owner | Open |
-| T20 | Duplicate delivery/crash never loses or duplicates job | Open |
+| T19 | Lease expiry and fencing reject stale owner | Partial: pure E1 ownership/fencing tests pass; actual API/runtime caller timing and live acceptance open |
+| T20 | Duplicate delivery/crash never loses or duplicates job | Partial: pure E1 continuation/CAS tests pass; E2 delivery/replay corrections and live acceptance open |
 | T21 | Independent monitor detects and catches up missing slot | Open |
 | T22 | Zurich DST produces unique expected slots | Partial: pure calendar/slot tests pass; deployed scheduler evidence open |
 | T23 | 23:00 closes today; 04:00 carries references, not copies | Partial: pure cutoff/carry-over tests pass; runner composition open |
-| T24 | Time/cost exhaustion checkpoints; no false green/loop | Open |
-| T25 | Atomic parallel reservations enforce cost limit | Open |
+| T24 | Time/cost exhaustion checkpoints; no false green/loop | Partial: pure E1 budgets and checkpoints pass; HTTP in-flight deadlines and canonical closure integration open |
+| T25 | Atomic parallel reservations enforce cost limit | Partial: pure E1 conditional-storage races pass; real provider adapter replay/freshness and production CAS open |
 | T26 | Unknown mail outcome is not blindly resent | Open |
 | T27 | Changed recipient/content or revoked approval stops outbox | Open |
 | T28 | Mail cursors recover gaps with message-ID dedupe | Open |
